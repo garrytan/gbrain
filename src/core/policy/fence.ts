@@ -13,8 +13,9 @@ export const POLICY_FENCE_END = '<!--- gbrain:policy:v1:end -->';
 export const POLICY_COLUMNS = ['id', 'verb', 'decision', 'when', 'limit', 'window', 'merchant', 'note'] as const;
 export const POLICY_DECISIONS = ['allow', 'ask', 'deny'] as const;
 export type PolicyDecision = (typeof POLICY_DECISIONS)[number];
-/** L1 evaluates per-action limits only; budget windows (day, week, month) arrive with the action ledger. */
-export const POLICY_WINDOWS = ['per_action'] as const;
+/** per_action caps one action; day, week and month are budgets read from the action ledger (UTC; weeks start Monday). */
+export const POLICY_WINDOWS = ['per_action', 'day', 'week', 'month'] as const;
+export type PolicyWindow = (typeof POLICY_WINDOWS)[number];
 const MAX_RULES = 200;
 const MAX_CELL = 200;
 
@@ -26,7 +27,7 @@ export interface PolicyRule {
   decision: PolicyDecision;
   when?: RecipientClass;
   limit?: PolicyLimit;
-  window?: 'per_action';
+  window?: PolicyWindow;
   merchant?: string;
   note?: string;
 }
@@ -95,14 +96,14 @@ export function parsePolicyFence(body: string): PolicyParse & { present: boolean
     if (when && !isRecipientClass(when)) return fail(`when must be self, household, known or new, not "${when}"`, col(3));
     const parsedLimit = limit ? parseLimit(limit) : null;
     if (limit && !parsedLimit) return fail(`limit must be an amount and a currency, like 60 USD, not "${limit}"`, col(4));
-    if (window && !(POLICY_WINDOWS as readonly string[]).includes(window)) return fail(`window must be per_action (day, week and month budgets are not available yet), not "${window}"`, col(5));
+    if (window && !(POLICY_WINDOWS as readonly string[]).includes(window)) return fail(`window must be per_action, day, week or month, not "${window}"`, col(5));
     if (window && !parsedLimit) return fail('a window needs a limit', col(5));
     ids.add(id!);
     rules.push({
       id: id!, verb, decision: decision as PolicyDecision,
       ...(when ? { when: when as RecipientClass } : {}),
       ...(parsedLimit ? { limit: parsedLimit } : {}),
-      ...(window ? { window: 'per_action' as const } : {}),
+      ...(window ? { window: window as PolicyWindow } : {}),
       ...(merchant ? { merchant } : {}),
       ...(note ? { note } : {}),
     });

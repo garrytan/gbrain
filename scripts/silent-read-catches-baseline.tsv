@@ -621,7 +621,6 @@ src/core/access/caller.ts#mayActForOf	capability_refusal_swallowed	1
 src/core/access/caller.ts#mayActForOf	catch_empty	1
 src/core/access/caller.ts#resolveAudienceIdentities	capability_refusal_swallowed	1
 src/core/access/caller.ts#resolveAudienceIdentities	catch_empty	1
-src/core/access/caller.ts#stdioMemberId	catch_empty	1
 src/core/access/handover.ts#previewHandover	capability_refusal_swallowed	2
 src/core/access/labelled-only.ts#anyLabelledOnlyMember	capability_refusal_swallowed	1
 src/core/access/labelled-only.ts#labelledOnlyFor	capability_refusal_swallowed	1

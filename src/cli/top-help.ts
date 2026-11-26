@@ -123,6 +123,7 @@ TOOLS
   dedupe --preview [--json]          Likely duplicate person and company pages, with evidence; read-only
   feedback <status|reset>            retrieval feedback: learned page weights; rate answers with gbrain rate
   transcripts <ingest|status|recent> v0.46: import agent session logs + chat exports (local-only)
+  onboarding <status|off> [--json]   First-session suggestion: why it shows or not; turn it off
   dream [--dry-run] [--json]         Run the overnight maintenance cycle once (cron-friendly).
                                      See also: autopilot --install (continuous daemon).
   compile-context --target <t>       Compile a deterministic, scanned, budgeted context
@@ -131,6 +132,7 @@ TOOLS
   apple-contacts <write|status>      Change Apple Contacts through GBrain Helper; writes off by default
   memory-proposals list|show|approve|deny  QM's proposed timeline entries and links awaiting your decision
   policy init|show|allow|ask|deny|edit|accept|check  When agents may send, spend, delete or sign up for you (advisory)
+  ledger [add|confirm|digest]        What your agents did outside the brain, with evidence and totals
   facts relink [--dry-run]           Link facts saved without an entity to the entity they name
   check-resolvable [--json] [--fix]  Validate skill tree (reachability/MECE/DRY)
   report --type <name> --content ... Save timestamped report to brain/reports/

@@ -2539,14 +2539,16 @@ gbrain returns these content blocks:
 {
   "status": "unavailable",
   "reason": "lock_held",
-  "why": "This brain (/home/alice-example/.gbrain/brain.pglite) is open in another `gbrain serve` (PID 48213), usually started by another agent session, so this server cannot open it.",
+  "why": "This brain (/home/alice-example/.gbrain/brain.pglite) is open in another `gbrain serve` (PID 48213, started 2026-10-03T16:20:00.000Z), usually started by another agent session, so this server cannot open it. That is expected when two agent sessions (for example Claude Code and Codex) are open at once: nothing is broken and nothing needs fixing.",
   "brain_path": "/home/alice-example/.gbrain/brain.pglite",
   "config_path": "/home/alice-example/.gbrain/config.json",
   "lock_owner": {
     "pid": "48213",
     "transport": "stdio",
-    "serve": true
+    "serve": true,
+    "started_at": "2026-10-03T16:20:00.000Z"
   },
+  "expected": true,
   "fix": {
     "mcp": {
       "tool": "gbrain_status",
@@ -2555,11 +2557,11 @@ gbrain returns these content blocks:
     "consent": [],
     "actor": "user",
     "next": "tell_user_to_run",
-    "why": "Close the session that owns the brain (another `gbrain serve` (PID 48213), usually started by another agent session); then call gbrain_status again and this server opens the brain in place (re-checked at most every 5 s). If your client does not refresh its tool list after recovery, restart this MCP server.",
-    "user_message": "Your gbrain brain is already open in another gbrain serve (PID 48213), usually started by another agent session, so this session can't use memory right now. Close that session and I'll reconnect, or I can set up one shared gbrain server so both sessions work at once. Which do you prefer?",
+    "why": "Nothing needs fixing: once the session that owns the brain (another `gbrain serve` (PID 48213, started 2026-10-03T16:20:00.000Z), usually started by another agent session) ends, call gbrain_status again and this server opens the brain in place (re-checked at most every 5 s). If your client does not refresh its tool list after recovery, restart this MCP server.",
+    "user_message": "Your gbrain brain is open in another gbrain serve (PID 48213, started 2026-10-03T16:20:00.000Z), usually started by another agent session. That's expected with two agent sessions open, and nothing needs fixing: session-start context still reaches this session through that server, and this session's memory tools come back once that session ends. If you want both sessions to use memory tools at the same time, I can set up one shared gbrain server. Want that?",
     "requires_exclusive": false
   },
-  "user_message": "Your gbrain brain is already open in another gbrain serve (PID 48213), usually started by another agent session, so this session can't use memory right now. Close that session and I'll reconnect, or I can set up one shared gbrain server so both sessions work at once. Which do you prefer?",
+  "user_message": "Your gbrain brain is open in another gbrain serve (PID 48213, started 2026-10-03T16:20:00.000Z), usually started by another agent session. That's expected with two agent sessions open, and nothing needs fixing: session-start context still reaches this session through that server, and this session's memory tools come back once that session ends. If you want both sessions to use memory tools at the same time, I can set up one shared gbrain server. Want that?",
   "decisions": [
     {
       "id": "lock_recovery",
@@ -2567,7 +2569,7 @@ gbrain returns these content blocks:
       "options": [
         {
           "id": "close_owner",
-          "label": "Close another gbrain serve (PID 48213), usually started by another agent session; this server recovers on the next gbrain_status call."
+          "label": "Close another gbrain serve (PID 48213, started 2026-10-03T16:20:00.000Z), usually started by another agent session; this server recovers on the next gbrain_status call."
         },
         {
           "id": "share_http",
@@ -2590,7 +2592,7 @@ gbrain returns these content blocks:
     "command": "kill 48213",
     "consent": [],
     "actor": "user",
-    "why": "Stop another `gbrain serve` (PID 48213), usually started by another agent session first (or quit that session); the shared server needs the brain's single-writer lock.",
+    "why": "Stop another `gbrain serve` (PID 48213, started 2026-10-03T16:20:00.000Z), usually started by another agent session first (or quit that session); the shared server needs the brain's single-writer lock.",
     "requires_exclusive": false,
     "then": {
       "argv": [
@@ -2643,7 +2645,7 @@ gbrain returns these content blocks:
 }
 ```
 
-`reason: lock_held` names the owner (`lock_owner.pid`). `fix.next` is `tell_user_to_run` because only the user can close the other session: the agent relays `user_message` and offers `close_owner` or `share_http`. Calling `gbrain_status` again after the owner exits opens the brain in place and the full tool list arrives through `tools/list_changed`.
+`reason: lock_held` names the owner (`lock_owner.pid`, and `lock_owner.started_at` when known). `fix.next` is `tell_user_to_run` because only the user can close the other session: the agent relays `user_message` and offers `close_owner` or `share_http`. Calling `gbrain_status` again after the owner exits opens the brain in place and the full tool list arrives through `tools/list_changed`. The owner here is another agent session's stdio serve (Claude Code and Codex open at once), so the payload carries `expected: true`: tell the user nothing needs fixing, and offer `share_http` only if they want memory tools in both sessions at once.
 <!-- END GENERATED agent-protocol:transcripts -->
 
 ## The error envelope

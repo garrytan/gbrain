@@ -5,7 +5,7 @@
  *
  *   gbrain policy init [--preset <name>] [--scope owner|company]
  *   gbrain policy show [--check] [--scope owner|company] [--json]
- *   gbrain policy allow|ask|deny <verb> [--amount 60 --currency USD | --amount 60USD] [--merchant <m>] [--to self|household|known|new] [--window per_action] [--id <rule-id>] [--note <text>] [--scope owner|company]
+ *   gbrain policy allow|ask|deny <verb> [--amount 60 --currency USD | --amount 60USD] [--merchant <m>] [--to self|household|known|new] [--window per_action|day|week|month] [--id <rule-id>] [--note <text>] [--scope owner|company]
  *   gbrain policy edit [--scope owner|company]
  *   gbrain policy accept <revision> [--scope owner|company]
  *   gbrain policy check <verb> [--amount 60 --currency USD] [--merchant <m>] [--to <class>] [--json]
@@ -21,7 +21,8 @@ import { setCliExitVerdict, spawnCliChild } from '../core/cli-force-exit.ts';
 import { rethrowCapabilityRefusal } from '../core/engine-capability-refusal.ts';
 import { writeCliError } from '../cli/cli-error.ts';
 import { AGENT_VERBS, isAgentVerb, isRecipientClass } from '../core/agent-verbs.ts';
-import { formatLimit, parseLimit, parsePolicyFence, renderPolicyFence, type PolicyDecision, type PolicyLimit, type PolicyRule } from '../core/policy/fence.ts';
+import { formatLimit, parseLimit, parsePolicyFence, POLICY_WINDOWS, renderPolicyFence, type PolicyDecision, type PolicyLimit, type PolicyRule, type PolicyWindow } from '../core/policy/fence.ts';
+import { ledgerReader, usageLookup } from '../core/ledger/store.ts';
 import { DEFAULT_PRESET, POLICY_PRESETS, findPreset } from '../core/policy/presets.ts';
 import { acceptRevision, applyPolicyChange, POLICY_SCOPES, POLICY_SLUGS, renderPolicyPage, resolvePolicy, type PolicyScope } from '../core/policy/store.ts';
 import { checkPolicy, describePolicy, stateFix } from '../core/policy/check.ts';
@@ -38,7 +39,7 @@ export function usage(): string {
     '  init [--preset <name>] [--scope owner|company]       write a preset (default ask-all); gbrain policy presets lists them',
     '  show [--check] [--scope owner|company] [--json]     the policy agents are served; --check validates the page',
     '  allow|ask|deny <verb> [--amount 60 --currency USD] [--merchant <m>] [--to self|household|known|new]',
-    '                [--window per_action] [--id <rule-id>] [--note <text>] [--scope owner|company]',
+    '                [--window per_action|day|week|month] [--id <rule-id>] [--note <text>] [--scope owner|company]',
     '                                                       add or replace one rule, e.g. gbrain policy allow spend --amount 25 --currency USD',
     '  edit [--scope owner|company]                         edit the rules table in $EDITOR (needs a terminal)',
     '  accept <revision> [--scope owner|company]            approve a revision changed outside gbrain, after reviewing it',
@@ -81,14 +82,14 @@ export function ruleFromArgs(decision: PolicyDecision, args: string[]): PolicyRu
   const to = flag(args, '--to');
   if (to !== undefined && !isRecipientClass(to)) throw opError('invalid_params', `--to must be self, household, known or new, not ${to}.`, 'Pass --to self|household|known|new.');
   const window = flag(args, '--window');
-  if (window !== undefined && window !== 'per_action') throw opError('invalid_params', `--window ${window} is not available yet; per_action is.`, 'Drop --window, or pass --window per_action with --amount.');
+  if (window !== undefined && !(POLICY_WINDOWS as readonly string[]).includes(window)) throw opError('invalid_params', `--window must be per_action, day, week or month, not ${window}.`, 'Pass --window per_action (one action) or day, week or month (a budget) with --amount.');
   const limit = amountOf(args);
-  if (window && !limit) throw opError('invalid_params', '--window needs --amount.', 'Pass --amount 60 --currency USD with --window per_action.');
+  if (window && !limit) throw opError('invalid_params', '--window needs --amount.', 'Pass --amount 60 --currency USD with --window.');
   const merchant = flag(args, '--merchant');
   const note = flag(args, '--note');
-  const id = flag(args, '--id') ?? [verb, merchant ?? '', to ?? '', limit ? `upto-${limit.amount}${limit.currency}` : ''].filter(Boolean).join('-')
+  const id = flag(args, '--id') ?? [verb, merchant ?? '', to ?? '', limit ? `upto-${limit.amount}${limit.currency}` : '', window && window !== 'per_action' ? `per-${window}` : ''].filter(Boolean).join('-')
     .toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 64).replace(/^-+|-+$/g, '');
-  const rule: PolicyRule = { id, verb, decision, ...(to ? { when: to } : {}), ...(limit ? { limit } : {}), ...(window ? { window: 'per_action' as const } : {}), ...(merchant ? { merchant } : {}), ...(note ? { note } : {}) };
+  const rule: PolicyRule = { id, verb, decision, ...(to ? { when: to } : {}), ...(limit ? { limit } : {}), ...(window ? { window: window as PolicyWindow } : {}), ...(merchant ? { merchant } : {}), ...(note ? { note } : {}) };
   const parsed = parsePolicyFence(renderPolicyFence([rule]));
   if (!parsed.ok) throw opError('invalid_params', `That rule cannot be saved: ${parsed.error.message}. Nothing was changed.`, 'Shorten --merchant or --note, or pass --id with lowercase letters, digits, - or _ (at most 64).');
   return parsed.rules[0]!;
@@ -179,8 +180,8 @@ export async function runPolicy(engine: BrainEngine, args: string[]): Promise<vo
         const verb = verbOf(rest[0]);
         const to = flag(rest, '--to');
         if (to !== undefined && !isRecipientClass(to)) throw opError('invalid_params', `--to must be self, household, known or new, not ${to}.`, 'Pass --to self|household|known|new.');
-        const answer = await checkPolicy(engine, { verb, amount: amountOf(rest), merchant: flag(rest, '--merchant'), to }, ['owner', 'company']);
-        out(answer, `${answer.decision}${answer.rule_id ? ` (rule ${answer.rule_id}, ${answer.scope})` : ''}: ${answer.reason}${answer.fix ? `\nNote: ${answer.fix.why}` : ''}`);
+        const answer = await checkPolicy(engine, { verb, amount: amountOf(rest), merchant: flag(rest, '--merchant'), to }, ['owner', 'company'], { usage: usageLookup(engine, ledgerReader(false), new Date()) });
+        out(answer, `${answer.decision}${answer.rule_id ? ` (rule ${answer.rule_id}, ${answer.scope})` : ''}: ${answer.reason}${(answer.budgets ?? []).map(b => `\n${b.rule_id}: ${b.advice}`).join('')}${answer.fix ? `\nNote: ${answer.fix.why}` : ''}`);
         return;
       }
       case 'show': {

@@ -76,6 +76,13 @@ one. Automatic saving is separate from the capture decision above; while
 unanswered it comes back in a later session until the user answers or mutes
 it.
 
+A new personal brain that `gbrain setup claude-code` or `gbrain setup codex`
+created also gets the [first-session suggestion](first-session-suggestion.md):
+for the first 3 sessions within 14 days, the session-start context tells the
+agent to offer one thing it found in the brain, then one more import.
+`--no-suggestion` turns it off at install time (`gbrain onboarding off` later),
+and `--json` reports it as the `suggestion` marker next to `history`.
+
 ## States
 
 Setup reports how far the wiring is proven:

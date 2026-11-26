@@ -52,6 +52,7 @@ import { computeEffectiveDate } from '../effective-date.ts';
 export { UNATTRIBUTED_MEMORY_SLUG } from '../facts-fence.ts';
 import { folderHoldingSlug, isHoldingSlug, UNATTRIBUTED_MEMORY_SLUG } from '../facts-fence.ts';
 import { facetOfMetric, PROFILE_METRIC_PREFIX } from '../profile/facets.ts';
+import { MEMBER_PAGE_PREFIX, RESERVED_OWNER_SLUG } from '../access/principals.ts';
 
 export const FACT_DATE_SOURCES: ReadonlySet<string> = new Set(['event_date', 'date', 'published', 'filename']);
 
@@ -292,8 +293,10 @@ export function extractFactsFromFenceText(
 
     const entitySlug = isHoldingSlug(slug) ? f.entity ?? null : slug;
     const metric = normalizeMetricLabel(f.claimMetric) ?? null;
-    // Lane 3 P1: a profile metric counts only on the profile's own page or the holding page remember would put it on.
-    const profileHome = entitySlug !== null && (entitySlug === slug || slug === UNATTRIBUTED_MEMORY_SLUG || folderHoldingSlug(entitySlug) === slug);
+    // Lane 3 P1: a profile metric counts only on the profile's own page or, for the owner's or a member's page, the holding
+    // page remember would put it on.
+    const heldProfile = entitySlug !== null && (entitySlug === RESERVED_OWNER_SLUG || entitySlug.startsWith(MEMBER_PAGE_PREFIX));
+    const profileHome = entitySlug !== null && (entitySlug === slug || heldProfile && (slug === UNATTRIBUTED_MEMORY_SLUG || folderHoldingSlug(entitySlug) === slug));
 
     const row: FenceExtractedFact = {
       fact: f.claim,
