@@ -129,7 +129,9 @@ describeAddon('a Rust follower follows its primary over a socket', () => {
   });
 
   test('an empty follower gets a whole snapshot in windowed chunks, then later writes, and reaches the primary', async () => {
-    link = await followPrimary({ url: url(), token: OWNER_TOKEN, follower, stagingDir: tmp('f-staging'), onAck: a => acks.push(a), onFrame: h => received.push(String(h.t)) });
+    // Acks are recorded a little late on purpose: the follower's cursor moves inside the store before its ack is sent,
+    // so the test must never read the acks just because the cursor caught up (the race behind an earlier flake).
+    link = await followPrimary({ url: url(), token: OWNER_TOKEN, follower, stagingDir: tmp('f-staging'), onAck: a => { setTimeout(() => acks.push(a), 30); }, onFrame: h => received.push(String(h.t)) });
     await until(caughtUp);
     // An empty follower (null cursor) starts with the snapshot: no records frame it would only refuse.
     expect(received[0]).toBe('repl_snap_begin');
