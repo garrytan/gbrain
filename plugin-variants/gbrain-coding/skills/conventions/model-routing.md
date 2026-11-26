@@ -126,8 +126,8 @@ work, not what gbrain calls internally.
 
 This covers the model the agent picks for its own work. gbrain's own chat
 calls are a separate layer: with a `chat_fallback_chain` set, gbrain sends a
-refused request to the next model in the chain by itself unless
-`chat_fallback_on_refusal` is false (`gbrain doctor --only chat_fallback_chain`
+refused request to the next model in the chain by itself only when
+`chat_fallback_on_refusal` is true (`gbrain doctor --only chat_fallback_chain`
 shows both).
 
 When a model you chose refuses a request:
