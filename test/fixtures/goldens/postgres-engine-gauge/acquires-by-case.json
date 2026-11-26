@@ -307,6 +307,9 @@
       "raw": 4,
       "tx": 1
     },
+    "lockSourceRow#default": {
+      "raw": 1
+    },
     "markPagesAttendanceBlocked#default": {},
     "markPagesExtractedBatch#default": {},
     "markSourceSynced#default": {

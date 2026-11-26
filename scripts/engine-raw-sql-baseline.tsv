@@ -277,20 +277,19 @@ src/commands/takes.ts	execute_raw	2
 src/commands/trust.ts	execute_raw	1
 src/commands/upgrade.ts	execute_raw	2
 src/commands/wakeshift.ts	execute_raw	6
-src/core/access/actor.ts	execute_raw	7
+src/core/access/actor.ts	execute_raw	6
 src/core/access/attest-sources.ts	sql_template	8
-src/core/access/caller.ts	execute_raw	9
+src/core/access/caller.ts	execute_raw	1
 src/core/access/federation-exposure.ts	execute_raw	1
 src/core/access/handover.ts	execute_raw	14	GBRA-582 item 9 (handover PR 2): the new access_handovers record (v322) and the planner reads of pages, sources, access_group_members and credentials; writes go through the label and rule doors
 src/core/access/implicit-placement.ts	execute_raw	1	came from master #9625 (shared company brains: owner setup, member keys), which landed after this ratchet was cut
-src/core/access/labelled-only.ts	execute_raw	4
+src/core/access/labelled-only.ts	execute_raw	3
 src/core/access/member-facts.ts	execute_raw	2	GST-2897 B (#9670, opened before this ratchet): one access_members lookup to see whether the member a share is about is enabled; no typed engine method exists yet
 src/core/access/member-sources.ts	execute_raw	8
 src/core/access/members.ts	execute_raw	25
 src/core/access/members.ts	sql_template	1
 src/core/access/open-pages.ts	execute_raw	8	came from master #9625 (shared company brains: owner setup, member keys), which landed after this ratchet was cut
 src/core/access/open-twins.ts	execute_raw	1
-src/core/access/owner-only.ts	execute_raw	2	#9634, pre-ratchet: reads sources.config to tell whether the brain or one source is owner-only; no typed engine method exists yet
 src/core/access/owner.ts	execute_raw	1
 src/core/access/policy-migrate.ts	execute_raw	4
 src/core/access/policy.ts	execute_raw	31
@@ -322,7 +321,7 @@ src/core/backup/coverage.ts	execute_raw	2
 src/core/backup/quarantine.ts	execute_raw	9
 src/core/backup/snapshot.ts	execute_raw	5
 src/core/behavior-change-notice.ts	execute_raw	1
-src/core/belief/append.ts	execute_raw	7
+src/core/belief/append.ts	execute_raw	6
 src/core/belief/backfill.ts	execute_raw	8
 src/core/belief/changes.ts	execute_raw	2
 src/core/belief/coverage-report.ts	execute_raw	12
@@ -380,7 +379,6 @@ src/core/content-drift-sweep.ts	execute_raw	2
 src/core/context/compile-view.ts	execute_raw	1
 src/core/context/corpus-source.ts	execute_raw	2
 src/core/context/proactive-brief.ts	execute_raw	10
-src/core/context/retrieval-reflex.ts	execute_raw	6
 src/core/context/session-state.ts	execute_raw	7
 src/core/context/volunteer-events.ts	execute_raw	2
 src/core/context/volunteer.ts	execute_raw	1
@@ -431,7 +429,7 @@ src/core/db.ts	driver_call	2
 src/core/db.ts	sql_template	4
 src/core/derived-links.ts	execute_raw	10
 src/core/destructive-guard.ts	execute_raw	17
-src/core/eligibility/activation.ts	execute_raw	2
+src/core/eligibility/activation.ts	execute_raw	1
 src/core/eligibility/explain.ts	execute_raw	4
 src/core/eligibility/fence-overlay.ts	execute_raw	3	came from master #9627 (held private facts, database-only untrack), which landed after this ratchet was cut
 src/core/eligibility/generation.ts	execute_raw	1
@@ -501,7 +499,7 @@ src/core/facts/proposal-review.ts	execute_raw	3
 src/core/facts/proposal-supersede.ts	execute_raw	4
 src/core/facts/purge-overlay.ts	execute_raw	3
 src/core/facts/purge-reasons.ts	execute_raw	8
-src/core/facts/purge-verify.ts	execute_raw	22
+src/core/facts/purge-verify.ts	execute_raw	21
 src/core/facts/purge.ts	execute_raw	40	GBRA-574 F #9674 (opened before this ratchet): +1 the purge plan reads whether a fact sits on an unbacked name tag
 src/core/facts/question-recall.ts	execute_raw	1
 src/core/facts/reconcile-watermark.ts	execute_raw	6
@@ -514,7 +512,7 @@ src/core/facts/slot-tagging.ts	execute_raw	1	GBRA-574 #9668: the live person-pag
 src/core/facts/subject-infer.ts	execute_raw	1
 src/core/facts/unfenced-facts.ts	execute_raw	9	GST-3490 #10005: the sweep's unfenced read counts unfenceable rows on the server before reading only fenceable ones; moves behind a typed facts engine method with its area
 src/core/facts/withdrawal-discovery.ts	execute_raw	4
-src/core/facts/withdrawal.ts	execute_raw	17
+src/core/facts/withdrawal.ts	execute_raw	16
 src/core/facts/write-single.ts	execute_raw	3
 src/core/facts/writeback-settings.ts	execute_raw	2
 src/core/facts/writeback-audience.ts	execute_raw	1	reads access_tokens.member_id and oauth_clients.member_id to count people, not credentials, for the brain audience (GST-3180); no typed engine method exists yet
@@ -572,7 +570,6 @@ src/core/grants/shared-exposure.ts	execute_raw	3	+2: reads every live access_tok
 src/core/guard-ledger-checks.ts	execute_raw	3
 src/core/guests/admission.ts	execute_raw	3
 src/core/guests/marker.ts	execute_raw	2
-src/core/guests/note.ts	execute_raw	1
 src/core/guests/owner-credentials.ts	execute_raw	1
 src/core/guests/promote.ts	execute_raw	4
 src/core/guests/sources.ts	execute_raw	9	came from master #9625 (shared company brains: owner setup, member keys), which landed after this ratchet was cut
@@ -597,6 +594,7 @@ src/core/learning/push.ts	execute_raw	1	nightly learning PR 2: the learning_item
 src/core/learning/duplicates.ts	execute_raw	3	nightly learning PR 3: the learning_items ledger (v334) has no typed engine methods yet; the duplicate step records the top person groups' anchor pages (and counts them on a dry run); PR 2 closes duplicate questions the preview no longer offers
 src/core/learning/read.ts	execute_raw	4	nightly learning PR 1: the learning_items ledger (v334) is a new table with no typed engine methods yet; the learned read joins each pointer to its live target under the caller filters and stamps shown_at; PR 3 adds one page read-policy probe over duplicate members
 src/core/learning/stats.ts	execute_raw	1	nightly learning PR 1: the learning_items ledger (v334) is a new table with no typed engine methods yet; learned --stats reads ledger rows by night
+src/core/ledger/store.ts	execute_raw	1	GST-3824 L2 follow-up: policy_reserve waits while an action ledger write is still publishing (unfinished persistence_requests under actions/), which no engine read answers
 src/core/line-grammar-config.ts	execute_raw	2
 src/core/link-extraction.ts	execute_raw	1
 src/core/link-reconciliation.ts	execute_raw	5
@@ -724,11 +722,11 @@ src/core/page-body/segment-derive.ts	execute_raw	33
 src/core/page-body/segment-facts.ts	execute_raw	1
 src/core/page-body/segment-ledger.ts	execute_raw	1
 src/core/page-body/segment-rewrite.ts	execute_raw	9
-src/core/page-body/segmented-embedding.ts	execute_raw	8
+src/core/page-body/segmented-embedding.ts	execute_raw	7
 src/core/page-body/splice.ts	execute_raw	2
 src/core/page-body/tail-digest.ts	execute_raw	1
-src/core/page-embedding-budget.ts	execute_raw	13
-src/core/page-embedding-lease.ts	execute_raw	4
+src/core/page-embedding-budget.ts	execute_raw	7
+src/core/page-embedding-lease.ts	execute_raw	1
 src/core/page-searchability.ts	execute_raw	3
 src/core/page-spend.ts	execute_raw	4
 src/core/page-state/contextual-proof.ts	execute_raw	3
@@ -737,7 +735,7 @@ src/core/page-state/guards.ts	execute_raw	11
 src/core/page-state/image-seal.ts	execute_raw	5
 src/core/page-state/materialize.ts	execute_raw	5
 src/core/page-state/projection-status.ts	execute_raw	1
-src/core/page-state/projections.ts	execute_raw	41
+src/core/page-state/projections.ts	execute_raw	37
 src/core/page-state/rebuild-estimate.ts	execute_raw	1
 src/core/page-state/rename-alias.ts	execute_raw	11
 src/core/page-state/revision-backfill-schema.ts	execute_raw	12
@@ -747,13 +745,12 @@ src/core/page-window/bounded-lead.ts	execute_raw	2
 src/core/page-window/segmented.ts	execute_raw	5
 src/core/pages-upsert-arbiter.ts	execute_raw	6
 src/core/persistence/activation.ts	execute_raw	9
-src/core/persistence/admin-intent.ts	execute_raw	3
 src/core/persistence/admin-lock.ts	execute_raw	7
 src/core/persistence/administration.ts	execute_raw	8
 src/core/persistence/admission-origin.ts	execute_raw	1
 src/core/persistence/applied-watermark.ts	execute_raw	4
 src/core/persistence/atom-maintenance.ts	execute_raw	21
-src/core/persistence/authority.ts	execute_raw	11
+src/core/persistence/authority.ts	execute_raw	4
 src/core/persistence/blocking-effects.ts	execute_raw	2
 src/core/persistence/bounded-reads.ts	execute_raw	10
 src/core/persistence/canonical-projections.ts	execute_raw	16
@@ -790,14 +787,13 @@ src/core/persistence/diagnostics.ts	execute_raw	7
 src/core/persistence/drift-conflicts.ts	execute_raw	9
 src/core/persistence/effect-catchup.ts	execute_raw	1
 src/core/persistence/effect-facts.ts	execute_raw	8
-src/core/persistence/effect-journal.ts	execute_raw	24
-src/core/persistence/effect-links.ts	execute_raw	8
+src/core/persistence/effect-journal.ts	execute_raw	21
 src/core/persistence/effect-recovery-scan.ts	execute_raw	1
-src/core/persistence/effect-recovery.ts	execute_raw	19
+src/core/persistence/effect-recovery.ts	execute_raw	16
 src/core/persistence/effect-retry.ts	execute_raw	14
 src/core/persistence/effect-settle.ts	execute_raw	7
 src/core/persistence/effect-targets.ts	execute_raw	8
-src/core/persistence/effects.ts	execute_raw	19
+src/core/persistence/effects.ts	execute_raw	15
 src/core/persistence/embedding-noop-settle.ts	execute_raw	5
 src/core/persistence/embedding-settlement.ts	execute_raw	7
 src/core/persistence/engine-graduation.ts	execute_raw	18
@@ -835,7 +831,7 @@ src/core/persistence/import-mutations.ts	execute_raw	3
 src/core/persistence/import-prepare.ts	execute_raw	1
 src/core/persistence/import-reads.ts	execute_raw	7
 src/core/persistence/intent-redaction.ts	execute_raw	10
-src/core/persistence/journal.ts	execute_raw	65
+src/core/persistence/journal.ts	execute_raw	59
 src/core/persistence/landing-gaps.ts	execute_raw	3
 src/core/persistence/large-page-guard.ts	execute_raw	1
 src/core/persistence/legacy-locks.ts	execute_raw	1
@@ -847,7 +843,7 @@ src/core/persistence/local-edit-adoption.ts	execute_raw	6
 src/core/persistence/loop-fact-retirement.ts	execute_raw	7
 src/core/persistence/connector-fact-retirement.ts	execute_raw	3	GST-3256, modeled on loop-fact-retirement.ts: reads (FOR UPDATE under publication) the facts rows a connector wrote, expires them, and reads the source row at admission; no typed engine method exists yet
 src/core/persistence/maintenance.ts	execute_raw	3
-src/core/persistence/managed-mode.ts	execute_raw	4	the shared-skills columns writer status reports moved here from administration.ts, so a Rust brain answers them from its brain row; SQL engines keep the one statement
+src/core/persistence/managed-mode.ts	execute_raw	3
 src/core/persistence/managed-sources.ts	execute_raw	1
 src/core/persistence/managed-sync-orphans.ts	execute_raw	14
 src/core/persistence/manual-links.ts	execute_raw	8
@@ -864,7 +860,7 @@ src/core/persistence/origin-twins.ts	execute_raw	2
 src/core/persistence/orphan-bindings.ts	execute_raw	2
 src/core/persistence/overwritten-edits.ts	execute_raw	3
 src/core/persistence/owner-activity.ts	execute_raw	1
-src/core/persistence/ownership.ts	execute_raw	25
+src/core/persistence/ownership.ts	execute_raw	24
 src/core/persistence/page-advisories.ts	execute_raw	1
 src/core/persistence/page-append.ts	execute_raw	3
 src/core/persistence/page-batch.ts	execute_raw	2
@@ -872,7 +868,7 @@ src/core/persistence/page-mutations.ts	execute_raw	6
 src/core/persistence/page-prepare.ts	execute_raw	11
 src/core/persistence/page-purge.ts	execute_raw	30
 src/core/persistence/page-upload.ts	execute_raw	16
-src/core/persistence/page-visibility.ts	execute_raw	14
+src/core/persistence/page-visibility.ts	execute_raw	10
 src/core/persistence/parked-groups.ts	execute_raw	1
 src/core/persistence/pending-import.ts	execute_raw	1
 src/core/persistence/physical-root.ts	execute_raw	15
@@ -882,7 +878,7 @@ src/core/persistence/preadmit-cache.ts	execute_raw	4
 src/core/persistence/preparation-budget.ts	execute_raw	1
 src/core/persistence/prepared-maintenance.ts	execute_raw	14	GST-3612: the think take preparer reads back the take row id its takes_add wrote (page_id, row_num) inside the publication transaction, as the consolidation preparer does, so the derivation lowers that take; no typed engine method reads one take by row yet
 src/core/persistence/preview-approval.ts	execute_raw	3
-src/core/persistence/protocol.ts	execute_raw	3
+src/core/persistence/protocol.ts	execute_raw	2
 src/core/persistence/provider.ts	execute_raw	1
 src/core/persistence/publication-deadline.ts	execute_raw	1
 src/core/persistence/purge-deleted.ts	execute_raw	8	#9653: the automatic purge's read of concepts hidden by an input purge, beside the sync-tombstone hold it mirrors
@@ -914,7 +910,6 @@ src/core/persistence/skill-activation.ts	execute_raw	12
 src/core/persistence/soak-counters.ts	execute_raw	4
 src/core/persistence/source-lifecycle.ts	execute_raw	33
 src/core/persistence/staging.ts	execute_raw	4
-src/core/persistence/switches.ts	execute_raw	1
 src/core/persistence/sync-administration.ts	execute_raw	1
 src/core/persistence/sync-admission.ts	execute_raw	4
 src/core/persistence/sync-admitted.ts	execute_raw	1
@@ -979,9 +974,9 @@ src/core/persistence/unimported-file.ts	execute_raw	1
 src/core/persistence/unindexed-files.ts	execute_raw	8
 src/core/persistence/upload-streamed.ts	execute_raw	1
 src/core/persistence/valid-time-advisory.ts	execute_raw	1
-src/core/persistence/worktree-refresh.ts	execute_raw	32
+src/core/persistence/worktree-refresh.ts	execute_raw	33	P-0: +1 the refusal path's bounded lookup issues the writer-binding statement (WORKTREE_BINDING_SQL) through its bounded executeRaw, as master did, so the stalled read keeps master's 3 s statement bound and abort signal; the typed getWorktreeBinding runs on the engine's own connection outside that bound
 src/core/persistence/write-applied.ts	execute_raw	1
-src/core/persistence/writer-versions.ts	execute_raw	3
+src/core/persistence/writer-versions.ts	execute_raw	2
 src/core/pglite-statements.ts	driver_call	1
 src/core/planner-stats.ts	execute_raw	14
 src/core/post-upgrade-reembed.ts	execute_raw	1
@@ -1114,7 +1109,7 @@ src/core/search/facts-arm.ts	execute_raw	3
 src/core/search/feedback-boost.ts	execute_raw	1
 src/core/search/frontmatter-where.ts	execute_raw	1
 src/core/search/image-vector-presence.ts	execute_raw	1
-src/core/search/private-visibility.ts	execute_raw	3
+src/core/search/private-visibility.ts	execute_raw	1
 src/core/search/projection-readiness.ts	execute_raw	2
 src/core/search/projection-statistics.ts	execute_raw	11
 src/core/search/query-cache-gate.ts	execute_raw	2
@@ -1225,7 +1220,7 @@ src/core/trust/page-handlers.ts	execute_raw	7
 src/core/trust/page-write.ts	execute_raw	9
 src/core/trust/privacy-hold-reply.ts	execute_raw	1	came from master #9627 (held private facts, database-only untrack), which landed after this ratchet was cut
 src/core/trust/propagation.ts	execute_raw	4
-src/core/trust/proposals.ts	execute_raw	7
+src/core/trust/proposals.ts	execute_raw	4
 src/core/trust/provenance-drift.ts	execute_raw	3
 src/core/trust/refs.ts	execute_raw	1
 src/core/trust/release-publish.ts	execute_raw	2
@@ -1273,6 +1268,7 @@ src/shadow/checks.ts	execute_raw	9	the shadow privacy check reads the access tab
 src/shadow/fingerprints.ts	execute_raw	6	the fingerprint probe and fact-fingerprint check run the primary's own SQL functions and read its own lower(), [[:space:]], locale and facts text (gbrain_fact_fingerprint, per-code-point tables, datctype, a count of facts holding a differing code point); the comparison is against the primary's SQL by design
 src/shadow/follow.ts	execute_raw	1	selectWhere: the shadow follow producer reads page ids and the keys of rows a delete removes, on the engine or transaction the write runs on
 src/shadow/follower.ts	execute_raw	1	the shadow follower re-reads the changed keys from the primary in one read-only REPEATABLE READ transaction; only the primary's rows can say what the Rust store must hold
+src/core/config-values.ts	execute_raw	1	the keyed config read for a narrow executeRaw-only handle (a test fake or wrapper without getConfigValues); real engines take the typed getConfigValues read, and 23 config sites moved here from their own executeRaw
 src/shadow/replay-copy.ts	execute_raw	9	shadow replay: writes seed rows into a fresh PGLite replay copy (the Rust copy takes the same rows through importRelation)
 src/shadow/write-capture.ts	execute_raw	2	the write-comparison preimage copies the rows a sampled page or link write touches from the primary in one read-only snapshot, exactly as the seed reads them; only the primary's rows can seed the scratch Rust store; +1 the same snapshot counts the withdrawn and purged facts that overlay the copied pages' bodies (an overlay the scratch store does not have makes the sample uncomparable)
 src/shadow/writer-hooks.ts	execute_raw	21	the maintainer-approved writer hooks on a Postgres primary while a Rust shadow runs: catalog reads of the brain's tables and triggers, CREATE/DROP TRIGGER, the hooks advisory lock and lock timeout inside each install, repair and removal transaction, the gap rows (a repair's, and the one a removal records), and the one-transaction replace of every hook with its server-version and effectiveness checks; trigger DDL has no typed engine method and Rust never holds these hooks

@@ -1,4 +1,16 @@
+/**
+ * The reads of `gbrain sources writer status` (persistence/administration.ts, persistence/diagnostics.ts) and the
+ * helpers it shares with other writer commands: the writer diagnostics row sets, the status bindings and stopped
+ * retire requests, the onboarding preflight's sources (persistence/onboarding.ts), the blocking effects
+ * (persistence/blocking-effects.ts) and the active worktree refreshes (persistence/worktree-refresh.ts).
+ *
+ * Text keys sort in byte order (`COLLATE "C"`), so the output does not depend on the server's locale. Timestamps come
+ * back as the driver returns them (a `Date` on both SQL engines); a Rust brain answers the same rows from its records
+ * (src/core/rust-engine/store-members/writer-status.ts).
+ */
+import type { BrainEngine } from '../engine.ts';
 
+type RawSql = Pick<BrainEngine, 'executeRaw'>;
 type Time = Date | string;
 
 /** One source binding as writer status prints it, with this host's root and Git durability. */

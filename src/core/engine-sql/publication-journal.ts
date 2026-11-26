@@ -1,5 +1,21 @@
-
+/**
+ * The request-row work of a bound (worktree) publication around its files (persistence/coordinator.ts publishMutation and
+ * recoverPublication, journal.ts prepareRecovery, clearResolvedRecovery and markRecovering, page-prepare.ts, ownership.ts
+ * guardOwnership, effect-journal.ts and staging.ts upgradeRecoveryStaging).
+ *
+ * - `publicationJournalStore` (BrainEngine) returns narrow reads and writes with the row shapes those files decide on, so
+ *   the checks, the refusals and their texts stay in the persistence files and a Rust brain hands them the same store
+ *   over its own records (src/core/rust-engine/store-members/publication-journal.ts). Called on a transaction engine,
+ *   every call runs in that transaction; called on the engine, each call is its own statement.
+ * - A conditional write answers whether it changed the row (`boolean`) or returns the changed row (`null` when the
+ *   conditions held for none). A counter release below zero refuses, as the CHECK (>= 0) does.
+ * - The row locks (`FOR SHARE`, `FOR UPDATE`) are the persistence files' ordering on Postgres and PGLite; a store that
+ *   runs one write transaction at a time takes none.
+ */
+import type { BrainEngine } from '../engine.ts';
 import type { RecoveryRecord, WriteRequest } from '../persistence/model.ts';
+
+type RawSql = Pick<BrainEngine, 'executeRaw'>;
 
 // Each statement is constant text: protocol.ts PERSISTENCE_PROTOCOL_PREDICATE is written out where a statement
 // declares protocol 2 for itself (as engine-sql/persistence-claims.ts does).

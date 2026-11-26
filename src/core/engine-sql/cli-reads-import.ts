@@ -14,6 +14,15 @@ import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
 import type { GuestSourceLookupRow, SourceIncarnationRow, SourceRecordRow } from '../engine.ts';
 import { GUEST_SOURCES_HIDDEN_SQL } from '../guests/note.ts';
 
+/** The guest sources among `sourceIds` (guestSourceSql), in no particular order. */
+export async function listGuestSourceIds(exec: LegacyUnscopedRead, sourceIds: readonly string[]): Promise<string[]> {
+  if (sourceIds.length === 0) return [];
+  const { text, params } = renderFragment(sqlFragment`SELECT s.id FROM sources s WHERE s.id = ANY(${[...new Set(sourceIds)]}::text[])
+    AND ${trustedSql(guestSourceSql('s.config', 's.id'))}`);
+  const rows = await exec.executeRaw<{ id: string }>(text, params);
+  return rows.map(row => row.id);
+}
+
 /** The guest flag of a brain whose schema is behind the guest-notes migration: the config record alone (guests/marker.ts withGuestSourceSql). */
 const CONFIG_GUEST_SQL = "COALESCE(s.config->>'guest' = 'true', false)";
 
