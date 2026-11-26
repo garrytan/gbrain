@@ -531,9 +531,9 @@ impl Store {
         self.write(|tx| {
             if let Some((id, token)) = claimant_step(what) {
                 fence::begin(self, tx, fence, "publication_journal_write")?;
-                if fence.is_some() {
-                    super::held_claim_when(tx, id, fence, |record| holds_claim_for(record, token))?;
-                }
+                super::held_claim_when(self, tx, id, fence, |record| {
+                    holds_claim_for(record, token)
+                })?;
             }
             publication_journal_write_in(tx, &*self.env, what)
         })

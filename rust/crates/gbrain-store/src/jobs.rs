@@ -1345,7 +1345,20 @@ impl Store {
             new.updated_at = now;
             save(tx, Some(&old), &new)?;
             // A reclaim by this claimer overwrites the epoch of the claim it takes over.
-            fence::claim_taken(tx, CLAIM_JOB, &new.id.to_string(), spec.fence.as_ref())?;
+            let ttl = new
+                .lock_until
+                .map(|until| (until - now).div_euclid(1000))
+                .filter(|ms| *ms >= 1)
+                .map(|ms| ms as u64);
+            fence::claim_taken(
+                self,
+                tx,
+                CLAIM_JOB,
+                &new.id.to_string(),
+                spec.fence.as_ref(),
+                "claim_next_job",
+                ttl,
+            )?;
             Ok(Some(new.to_json()))
         })
     }
@@ -1378,7 +1391,7 @@ impl Store {
             if old.status != "active" || old.lock_token.as_deref() != Some(lock_token) {
                 return Ok(false);
             }
-            fence::claim_held(tx, CLAIM_JOB, &id.to_string(), fence)?;
+            fence::claim_held(self, tx, CLAIM_JOB, &id.to_string(), fence)?;
             let mut new = old.clone();
             new.lock_until = Some(now + ms_to_us(lock_duration_ms));
             new.updated_at = now;
@@ -1419,7 +1432,7 @@ impl Store {
             if old.status != "active" || old.lock_token.as_deref() != Some(lock_token) {
                 return Ok(None);
             }
-            fence::claim_held(tx, CLAIM_JOB, &id.to_string(), fence)?;
+            fence::claim_held(self, tx, CLAIM_JOB, &id.to_string(), fence)?;
             fence::claim_ended(self, tx, CLAIM_JOB, &id.to_string(), fence)?;
             let mut row = old.clone();
             row.status = "completed".into();
@@ -1498,7 +1511,7 @@ impl Store {
             if old.status != "active" || old.lock_token.as_deref() != Some(lock_token) {
                 return Ok(None);
             }
-            fence::claim_held(tx, CLAIM_JOB, &id.to_string(), fence)?;
+            fence::claim_held(self, tx, CLAIM_JOB, &id.to_string(), fence)?;
             fence::claim_ended(self, tx, CLAIM_JOB, &id.to_string(), fence)?;
             let delayed = new_status == "delayed";
             let terminal = !delayed;
@@ -1736,7 +1749,17 @@ impl Store {
             };
             put_json(tx, &key, &record)?;
             // A steal overwrites the epoch of the lock it takes over.
-            fence::claim_taken(tx, CLAIM_CYCLE_LOCK, lock_id, opts.fence.as_ref())?;
+            let ttl = (opts.ttl_minutes.is_finite() && opts.ttl_minutes > 0.0)
+                .then_some((opts.ttl_minutes * 60_000.0) as u64);
+            fence::claim_taken(
+                self,
+                tx,
+                CLAIM_CYCLE_LOCK,
+                lock_id,
+                opts.fence.as_ref(),
+                "acquire_cycle_lock",
+                ttl,
+            )?;
             let fence = format!(
                 "{}.{:06}",
                 now.div_euclid(1_000_000),
@@ -1760,7 +1783,7 @@ impl Store {
             let Some(mut held) = held_by(tx, &key, opts)? else {
                 return Ok(false);
             };
-            fence::claim_held(tx, CLAIM_CYCLE_LOCK, lock_id, opts.fence.as_ref())?;
+            fence::claim_held(self, tx, CLAIM_CYCLE_LOCK, lock_id, opts.fence.as_ref())?;
             held.ttl_expires_at = now + minutes_us(ttl);
             held.last_refreshed_at = Some(now);
             put_json(tx, &key, &held)?;
@@ -1798,7 +1821,7 @@ impl Store {
                 return Ok(false);
             }
             if as_holder {
-                fence::claim_held(tx, CLAIM_CYCLE_LOCK, lock_id, opts.fence.as_ref())?;
+                fence::claim_held(self, tx, CLAIM_CYCLE_LOCK, lock_id, opts.fence.as_ref())?;
             }
             tx.delete(&key)?;
             fence::claim_ended(self, tx, CLAIM_CYCLE_LOCK, lock_id, opts.fence.as_ref())?;
@@ -1998,8 +2021,19 @@ impl Store {
         let held = get_json::<LockRecord>(&*read, &lock_key(lock_id))?.is_some_and(|l| {
             l.acquisition_token == acquisition_token.to_lowercase() && l.ttl_expires_at > now
         });
-        if let (true, Some(fence)) = (held, fence) {
-            crate::leases::check_claim_epoch(&*read, CLAIM_CYCLE_LOCK, lock_id, fence)?;
+        if held {
+            match fence {
+                Some(fence) => {
+                    crate::leases::check_claim_epoch(&*read, CLAIM_CYCLE_LOCK, lock_id, fence)?
+                }
+                None if self.multiuser() => crate::leases::check_claim_unheld(
+                    &*read,
+                    CLAIM_CYCLE_LOCK,
+                    lock_id,
+                    self.env.clock_micros(),
+                )?,
+                None => {}
+            }
         }
         Ok(held)
     }

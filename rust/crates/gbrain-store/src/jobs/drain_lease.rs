@@ -167,7 +167,17 @@ impl Store {
                 spend_claim_token: None,
             };
             save(tx, None, &row)?;
-            fence::claim_taken(tx, CLAIM_DRAIN_LEASE, lock_token, fence)?;
+            let ttl = (ttl_minutes.is_finite() && ttl_minutes > 0.0)
+                .then_some((ttl_minutes * 60_000.0) as u64);
+            fence::claim_taken(
+                self,
+                tx,
+                CLAIM_DRAIN_LEASE,
+                lock_token,
+                fence,
+                "write_drain_lease_holder",
+                ttl,
+            )?;
             Ok(id)
         })
     }
@@ -190,7 +200,7 @@ impl Store {
             let now = self.env.now_micros();
             let rows = holder_rows(tx, lock_token)?;
             if !rows.is_empty() {
-                fence::claim_held(tx, CLAIM_DRAIN_LEASE, lock_token, fence)?;
+                fence::claim_held(self, tx, CLAIM_DRAIN_LEASE, lock_token, fence)?;
             }
             for old in &rows {
                 let mut new = old.clone();
@@ -217,7 +227,7 @@ impl Store {
             fence::begin(self, tx, fence, "release_drain_lease_holder")?;
             let rows = holder_rows(tx, lock_token)?;
             if !rows.is_empty() {
-                fence::claim_held(tx, CLAIM_DRAIN_LEASE, lock_token, fence)?;
+                fence::claim_held(self, tx, CLAIM_DRAIN_LEASE, lock_token, fence)?;
             }
             for row in &rows {
                 delete_row(tx, row)?;
