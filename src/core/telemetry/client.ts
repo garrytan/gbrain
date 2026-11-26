@@ -61,6 +61,7 @@ const COUNT_KEYS = ['command_counts', 'operation_counts', 'error_code_counts', '
 export function telemetryDir(): string {
   return join(configDir(), 'telemetry');
 }
+// nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- every caller passes a fixed file name; telemetryDir() is configDir()/telemetry
 const file = (name: string) => join(telemetryDir(), name);
 
 function writeAtomic(path: string, text: string): void {
