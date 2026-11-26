@@ -39,11 +39,14 @@ let losses = 0;
 /** Calls inside a transaction the fake fails with the store's write_conflict (a transaction it doomed) before one goes through. */
 let doomed = 0;
 const committed: string[] = [];
+/** Writes the fake took outside any transaction (a call on the engine itself, not on the transaction handle). */
+const outside: string[] = [];
 
 const fake = {
   kind: 'rust', capabilities: new Set<string>(['persistence_journal', 'transactions', 'multi_writer']),
   getConfig: async (key: string) => key === OWNER_TOKEN_IDS_CONFIG_KEY ? JSON.stringify(['tok-1']) : null,
   getPage: async (slug: unknown) => ({ slug }),
+  logIngest: async (entry: { source_ref?: unknown }) => { outside.push(String(entry?.source_ref)); },
   // The optimistic engine on a lost commit: nothing of the run is kept, and the callback runs again (at most 8 more).
   transaction: async (fn: (tx: unknown) => Promise<unknown>) => {
     for (let attempt = 1; ; attempt++) {
@@ -79,7 +82,7 @@ afterAll(async () => {
 });
 
 const undo: Array<() => void> = [];
-afterEach(() => { for (const u of undo.splice(0)) u(); losses = 0; doomed = 0; committed.length = 0; });
+afterEach(() => { for (const u of undo.splice(0)) u(); losses = 0; doomed = 0; committed.length = 0; outside.length = 0; });
 
 async function servedEngine(): Promise<BrainEngine> {
   const engine = { kind: 'rust', capabilities: new Set<string>() };
@@ -102,6 +105,20 @@ describe('a transaction over the wire that loses its commit', () => {
     let runs = 0;
     const value = await engine.transaction(async tx => { runs++; await tx.putPage(`notes/doomed-${runs}`, {} as never); return runs; });
     expect({ runs, value, committed }).toEqual({ runs: 2, value: 2, committed: ['notes/doomed-2'] });
+  });
+
+  test('a rerun after a doomed call repeats only the callback, exactly as in process: one outside write per run, one commit', async () => {
+    // The in-process optimistic engine reruns the whole callback after a doomed call (optimistic-transaction.ts), so a
+    // non-transactional call inside the callback runs once per run there too. Over the wire it must be no more than that.
+    const engine = await servedEngine();
+    doomed = 1;
+    let runs = 0;
+    await engine.transaction(async tx => {
+      runs++;
+      await engine.logIngest({ source_type: 'test', source_ref: `outside-${runs}`, pages_updated: [], summary: 'x' } as never);
+      await tx.putPage(`notes/inside-${runs}`, {} as never);
+    });
+    expect({ runs, outside, committed }).toEqual({ runs: 2, outside: ['outside-1', 'outside-2'], committed: ['notes/inside-2'] });
   });
 
   test('past the retry limit it ends revision_conflict transaction_contention and nothing is kept', async () => {
