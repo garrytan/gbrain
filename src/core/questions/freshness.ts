@@ -126,13 +126,15 @@ export function evidenceReasons(r: EvidenceJoinRow): StaleReason[] {
 /**
  * Whether the current caller reads one evidence row as its page reads would: the fact under the fact read gate, else
  * the cited page under its readers and privacy, its timeline row's event page, and its take's holder ($3, null for
- * every holder).
+ * every holder). A sentence citing a whole page was drawn from its body, takes fences included, so it is hidden when
+ * that page holds a take of a holder outside the grant.
  */
 function evidenceReadableSql(): string {
   return `CASE WHEN e.kind = 'fact' THEN f.id IS NOT NULL AND ${privateFactFilterForReader('f')}
     ELSE p.id IS NOT NULL AND ${privatePagesFilterForCaller('p')}
       AND (e.kind <> 'timeline' OR (t.id IS NOT NULL AND ${privateTimelineEventFilterForCaller('t')}))
       AND (e.kind <> 'take' OR (k.id IS NOT NULL AND ($3::text[] IS NULL OR k.holder = ANY($3::text[]))))
+      AND (e.kind <> 'page' OR $3::text[] IS NULL OR NOT EXISTS (SELECT 1 FROM takes hk WHERE hk.page_id = p.id AND NOT (hk.holder = ANY($3::text[]))))
   END`;
 }
 

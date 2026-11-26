@@ -112,6 +112,20 @@ describe('pinned questions for the owner over remote MCP (pglite, repo-less)', (
     expect(receipt.sentences.withheld).toBeGreaterThan(0);
   });
 
+  test('a world-only grant hides a sentence citing a page that holds another holder\'s take; a grant naming that holder reads it', async () => {
+    const [cited] = await engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id = $1 AND slug = $2', [a.sourceId, 'notes/widget-plan']);
+    await engine.executeRaw("INSERT INTO takes (page_id, row_num, claim, kind, holder) VALUES ($1, 9001, 'A private view of the widget plan', 'take', 'alice-example')", [cited!.id]);
+    try {
+      const narrow = await call('owner', 'questions_status', { id: pinA.id });
+      expect(narrow.isError).toBe(false);
+      expect((narrow.body as unknown as QuestionReceipt).answer!.some(s => s.text.includes('notes/widget-plan'))).toBe(false);
+      const wide = await call('owner', 'questions_status', { id: pinA.id }, { auth: { takesHoldersAllowList: ['world', 'alice-example'] } });
+      expect((wide.body as unknown as QuestionReceipt).answer!.some(s => s.text.includes('notes/widget-plan'))).toBe(true);
+    } finally {
+      await engine.executeRaw('DELETE FROM takes WHERE page_id = $1 AND row_num = 9001', [cited!.id]);
+    }
+  });
+
   test('the owner gets not_found for a pin in an ungranted source or one whose page names other readers', async () => {
     for (const id of [pinB.id, pinClosed.id]) {
       const out = await call('owner', 'questions_status', { id });
