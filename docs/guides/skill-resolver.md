@@ -392,8 +392,10 @@ that is not the owner's, with or without an audience.
 A skill whose `SKILL.md` front matter says `audience: owner` is suggested
 and pinned only in the owner's sessions. `owner` is the only defined value;
 any other non-empty `audience` (a list, a typo, `true`, a number, a mapping)
-is treated as `owner`, and so is front matter that does not parse but has an
-`audience:` line, so a mistake never makes a skill public. A catalog built before gbrain recorded
+is treated as `owner`, and so is an `Audience:` key in another letter case (a
+leading byte order mark is ignored), and an `audience:` line in front matter
+that does not parse or is never closed (no second `---`), so a mistake never
+makes a skill public. A catalog built before gbrain recorded
 audiences suggests nothing and pins nothing outside the owner's sessions
 until it is rebuilt, which happens on its own after an upgrade.
 
@@ -504,7 +506,10 @@ Adding a pin again without `--class` (to change its `--line`) keeps its
 classes; `--class owner` sets it back to the owner's sessions.
 A pin OpenClaw hides from the agent, loads from another folder, or marks
 `audience: owner` (in a conversation) is left out of the block, and setup
-names it (`skill_resolver_pin_withheld`).
+names it (`skill_resolver_pin_withheld`). After the catalog is rebuilt (a skill
+edit, or `gbrain skills index build`), conversations get no pins until the
+plugin's background refresh renders them from the new build; the turn log says
+`pins_stale: true`, and a refresh that fails is tried again on a later turn.
 
 A pin must name a skill in that catalog (`skill_resolver_pin_unknown`
 otherwise), its line is at most 100 characters with no `<` or `>`, a catalog
