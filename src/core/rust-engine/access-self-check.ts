@@ -55,6 +55,15 @@ export function withAccessStore<T>(store: object, addon: object, fn: () => T): T
   return accessStore.run({ multiuser: true, ...(typeof derive === 'function' ? { derive: derive as Deriver } : {}) }, fn);
 }
 
+/** Comparisons the self-check made in this process, and how many it refused (the CI self-check lane reads them). */
+let compared = 0;
+let refused = 0;
+
+/** The self-check's counts in this process: comparisons made and refusals raised. */
+export function accessSelfCheckStats(): { compared: number; refused: number } {
+  return { compared, refused };
+}
+
 /** The self-check is on: the store runs in multi-user mode and the access sub-switch is set. */
 export function accessSelfCheckOn(): boolean {
   const store = accessStore.getStore();
@@ -125,18 +134,19 @@ export function selfChecked<T>(member: string, request: AccessDeriveRequest, run
   if (!accessSelfCheckOn()) return run();
   let value: T | undefined;
   let refusal: unknown;
-  let refused = false;
+  let helperRefused = false;
   try {
     value = run();
   } catch (error) {
     if (!isHelperRefusal(error)) throw error;
     refusal = error;
-    refused = true;
+    helperRefused = true;
   }
   const derive = accessStore.getStore()?.derive;
   const got = derive ? storeJson(derive(accessDeriveContext(request))) : { $invalid: 'no store derivation is in context' };
-  const at = firstDifference(outcomeJson(value, refused), got);
-  if (at !== null) throw accessSelfCheckMismatch(member, request.mode, at);
-  if (refused) throw refusal;
+  const at = firstDifference(outcomeJson(value, helperRefused), got);
+  compared++;
+  if (at !== null) { refused++; throw accessSelfCheckMismatch(member, request.mode, at); }
+  if (helperRefused) throw refusal;
   return value as T;
 }
