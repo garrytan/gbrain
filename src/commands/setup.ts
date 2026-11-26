@@ -63,7 +63,7 @@ import { claudeUserSettingsPath, type ClaudeHookEvent } from '../core/bootstrap/
 import { readHarnessReceiptState } from '../core/bootstrap/format.ts';
 import { smokeStdioRegistration } from './doctor/checks/harness-wiring.ts';
 import { finishFreshSetupMigrations } from './setup-migrations.ts';
-import { teamBlocked, teamPreflight } from './access-team.ts';
+import { parseTeamRoster, teamBlocked, teamPreflight } from './access-team.ts';
 import { loginOwnerId, readServesStatus, sharedStdioHarness, servesAfterLayout, servesApply, servesLines, servesOk, servesPreflight, type EntryBinding, type ServesOutcome, type ServesPlan } from './setup-serves.ts';
 import type { McpSurface } from '../mcp/surface.ts';
 import {
@@ -241,6 +241,7 @@ function parseFlags(args: string[]): SetupFlags | string {
     for (const f of TEAM_REFUSED_FLAGS) if (args.some(a => a.split('=')[0] === f)) return `${f} is not part of --template team, which sets up a brand-new brain for a team (--members, --groups, --owner, --source); nothing was written`;
     if (!['claude-code', 'codex'].includes(positionals[0] ?? '')) return '--template team sets up the brain behind gbrain setup claude-code or codex; nothing was written';
     if (!value('--members')?.trim()) return '--template team needs --members <id,...>, the people on the team besides the owner; nothing was written';
+    try { parseTeamRoster(value('--members'), value('--groups'), value('--owner') ?? loginOwnerId() ?? 'owner'); } catch (e) { return `${(e as Error).message} Nothing was written.`; }
   }
   if (args.includes('--groups') && !team) return '--groups names the groups of --template team';
   const serves = value('--serves');
@@ -510,7 +511,7 @@ export async function runSetup(args: string[], deps: { openclaw?: { bin?: string
   }
   const brainHome = configDir();
   if (flags.teamRun && cfg) {
-    const refusal = teamPreflight(launcher, { ...flags.teamRun, owner: flags.owner ?? loginOwnerId(), source: flags.source });
+    const refusal = teamPreflight(launcher, { ...flags.teamRun, owner: flags.owner ?? loginOwnerId(), source: flags.source ?? (process.env.GBRAIN_SOURCE && isValidSourceId(process.env.GBRAIN_SOURCE) ? process.env.GBRAIN_SOURCE : null) });
     if (refusal) return refuse(refusal, out);
   }
   if (flags.harness === 'codex') {
@@ -1007,11 +1008,12 @@ function ownerTie(flags: SetupFlags, plan: ServesPlan, entry: EntryBinding, plug
  * leaves bound to nobody would read none of the household records, and every later setup run would refuse it.
  */
 function householdTieRefusal(flags: SetupFlags, plan: ServesPlan, entry: EntryBinding, plugin: boolean, tie: string | null, harness: string): OperationError | null {
-  if (flags.teamRun && !tie && !entry.member && !plugin && !plan.status?.stdio_member) {
-    const shared = sharedStdioHarness();
-    const tieOwner = plan.status?.owner ?? flags.owner ?? loginOwnerId() ?? 'owner';
-    if (shared) return opError('setup_team_unbound', `The team template sets this brain to serve several people, and ${shared} is installed on this host, so setup ties no ${harness} connection to the owner; the owner's own agent would then be refused on every read. Nothing was written.`,
-      `Run the team template on a machine without a shared stdio harness, or set up the brain alone with gbrain access team and give the owner a key over HTTP (gbrain auth create ${tieOwner}-laptop --member ${tieOwner}).`);
+  const teamOwner = plan.status?.owner ?? flags.owner ?? loginOwnerId();
+  if (flags.teamRun && !tie && (plugin || !teamOwner || entry.member !== teamOwner)) {
+    const why = plugin ? `a gbrain plugin serves this host's ${harness} connection and binds it to no member` : entry.member ? `this host's ${harness} connection is already tied to ${entry.member}, not the owner ${teamOwner}`
+      : sharedStdioHarness() ? `${sharedStdioHarness()} is installed on this host, so setup ties no ${harness} connection to the owner` : 'no owner is named to tie it to';
+    return opError('setup_team_unbound', `The team template sets this brain to serve several people, but ${why}; the owner's own agent would then not read as the owner. Nothing was written.`,
+      `Run the team template where setup can tie ${harness} to the owner, or set up the brain alone with gbrain access team and give the owner a key over HTTP (gbrain auth create ${teamOwner ?? 'owner'}-laptop --member ${teamOwner ?? 'owner'}).`);
   }
   if (!flags.householdRun || tie || entry.member || plugin || plan.status?.stdio_member || flags.householdRun.members?.trim() === 'none') return null;
   const shared = sharedStdioHarness();

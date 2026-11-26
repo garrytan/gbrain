@@ -104,6 +104,25 @@ describe('setup --template team', () => {
     expect(said(await setup(b, ['claude-code', '--template', 'office']))).toContain("unknown --template 'office'");
     expect(existsSync(join(b.home, '.gbrain'))).toBe(false);
   }, 120_000);
+
+  test('a roster that does not parse is refused before the brain or the entry is written', async () => {
+    const b = box();
+    const said = (r: CliResult) => r.stdout + r.stderr;
+    expect(said(await setup(b, ['claude-code', '--template', 'team', '--members', ' , ,', '--owner', OWNER, '--yes']))).toContain('at least one person besides the owner');
+    expect(said(await setup(b, ['claude-code', '--template', 'team', '--members', 'alice-example', '--groups', 'eng:carol-example', '--owner', OWNER, '--yes']))).toContain('carol-example is not in --members');
+    expect(existsSync(join(b.home, '.gbrain'))).toBe(false);
+    expect(existsSync(join(b.home, '.claude.json'))).toBe(false);
+  }, 120_000);
+
+  test('an enabled gbrain plugin, which binds no member, is refused before anything is written', async () => {
+    const b = box();
+    mkdirSync(join(b.home, '.claude'), { recursive: true });
+    writeFileSync(join(b.home, '.claude', 'settings.json'), JSON.stringify({ enabledPlugins: { 'gbrain@gbrain': true } }));
+    const r = await setup(b, [...TEAM, '--yes']);
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stdout + r.stderr).toContain('setup_team_unbound');
+    expect(existsSync(join(b.home, '.gbrain'))).toBe(false);
+  }, 120_000);
 });
 
 describe('per-member access by default for 2+ people (HARN-1)', () => {

@@ -179,6 +179,17 @@ describe('team template refuses a brain that is not fresh, before any write', ()
       expect(readdirSync(keyDir)).toEqual([]);
     } finally { spy.mockRestore(); }
   });
+
+  test('a re-run whose rules were recorded but never put in force issues no key', async () => {
+    expect((await run()).error).toBeUndefined();
+    await engine.executeRaw("DELETE FROM access_rules WHERE source_id = 'default'");
+    await engine.executeRaw('UPDATE access_tokens SET revoked_at = now() WHERE revoked_at IS NULL');
+    for (const f of readdirSync(keyDir)) rmSync(join(keyDir, f));
+    const r = await run();
+    expect(r.error?.code).toBe('team_template_rules_pending');
+    expect(await liveTokens()).toEqual([]);
+    expect(readdirSync(keyDir)).toEqual([]);
+  });
 });
 
 describe('team template on a repo-backed brain', () => {
@@ -219,6 +230,15 @@ describe('team template on a repo-backed brain', () => {
     await expectNothingWritten();
     expect(existsSync(join(root, '.gbrain'))).toBe(false);
   });
+
+  test('a repo folder holding files another sync strategy imports (code) is refused too', async () => {
+    mkdirSync(join(root, 'src'), { recursive: true });
+    writeFileSync(join(root, 'src', 'main.ts'), 'export const x = 1;\n');
+    const r = await run();
+    expect(r.fresh.problems.map(p => p.what)).toEqual(['source default']);
+    expect(r.fresh.problems[0]!.detail).toContain('main.ts');
+    await expectNothingWritten();
+  });
 });
 
 describe('team template inputs', () => {
@@ -226,6 +246,7 @@ describe('team template inputs', () => {
     expect(() => parseTeamRoster(undefined, undefined, OWNER)).toThrow(/at least one person besides the owner/);
     expect(() => parseTeamRoster('none', undefined, OWNER)).toThrow(/at least one person besides the owner/);
     expect(() => parseTeamRoster(OWNER, undefined, OWNER)).toThrow(/the owner/);
+    expect(() => parseTeamRoster(' , ,', undefined, OWNER)).toThrow(/at least one person besides the owner/);
     expect(() => parseTeamRoster(`${ALICE},${ALICE}`, undefined, OWNER)).toThrow(/twice/);
     expect(() => parseTeamRoster(ALICE, `eng:${BOB}`, OWNER)).toThrow(/not in --members/);
     expect(parseTeamRoster(ALICE, `eng:${ALICE}+${OWNER}`, OWNER).groups).toEqual([{ name: 'eng', id: 'team-eng', members: [ALICE, OWNER] }]);

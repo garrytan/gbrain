@@ -28,7 +28,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, readdirSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
-import { isSyncable } from '../core/sync.ts';
+import { isSyncable, SYNC_STRATEGIES } from '../core/sync.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { opError } from '../core/ops/contract.ts';
 import { hashToken } from '../core/utils.ts';
@@ -41,6 +41,7 @@ import { setMemberLabelledOnly } from '../core/access/labelled-only.ts';
 import { SERVES_KEY } from '../core/access/serves.ts';
 import { normalizeRule, type FolderRule } from '../core/access/folder-rules.ts';
 import { addFolderRules, currentFolderRules } from './access-rules.ts';
+import { appliedRules } from '../core/access/policy.ts';
 import { mintToken } from './auth-mint.ts';
 import { gitRootAbove, memberKeyDir, memberKeyName, writeKeyFile } from './access-serves.ts';
 
@@ -72,6 +73,7 @@ export function parseTeamRoster(membersSpec: string | undefined, groupsSpec: str
     if (members.includes(id)) throw usageError(`--members names ${id} twice.`, 'Name each member once.');
     members.push(id);
   }
+  if (!members.length) throw usageError('A team brain needs --members with at least one person besides the owner.', 'Name them: --members alice-example,bob-example.');
   const groups: TeamRoster['groups'] = [];
   for (const part of (groupsSpec ?? '').split(',').map(p => p.trim()).filter(Boolean)) {
     const [name, list, extra] = part.split(':');
@@ -146,7 +148,8 @@ function firstNote(root: string): string | null {
       if (st.isSymbolicLink()) continue;
       const rel = relative(root, p);
       if (st.isDirectory()) { if (!name.startsWith('.')) { const f = walk(p); if (f) return f; } continue; }
-      if (!isSyncable(rel)) continue;
+      if (!SYNC_STRATEGIES.some(strategy => isSyncable(rel, { strategy }))) continue;
+      if (rel === 'skillpack.json' && seeded.size) continue;
       if (seeded.get(rel) === createHash('sha256').update(readFileSync(p)).digest('hex')) continue;
       return p;
     }
@@ -274,7 +277,7 @@ async function plan(engine: BrainEngine, opts: TeamOpts): Promise<TeamResult> {
     `Serve the brain over HTTP for the team: gbrain serve --http (or publish it with gbrain mcp expose).`,
     ...roster.members.map(m => `Give ${join(keyDir, `${m}.key`)} to ${m} privately; on their machine: GBRAIN_REMOTE_TOKEN="$(cat ${m}.key)" gbrain connect https://<your brain>/mcp --agent claude-code --install`),
     `Check what each key reads: gbrain access check --token ${memberKeyName(roster.members[0]!)} (and gbrain access who-can-read <slug> for any page).`,
-    `Add someone later: gbrain access member add <id> --groups ${TEAM_GROUP}, gbrain access member labelled-only <id> on, gbrain access rule add --prefix people/<id>/ --readers <id> --allow-without-owner --yes, then gbrain auth create member-<id> --member <id> --sources ${source}.`,
+    `Add someone later: gbrain access member add <id> --groups ${TEAM_GROUP}, gbrain access member labelled-only <id> on, gbrain access rule add --prefix people/<id>/ --readers <id>${srcFlag(source)} --allow-without-owner --yes, then gbrain auth create member-<id> --member <id> --sources ${source}.`,
   ];
   return { template: TEMPLATE, applied: false, source_id: source, store: src.local_path && gitRootAbove(src.local_path) ? 'git' : 'database', roster, fresh: { ok: !problems.length, problems },
     steps, keys, key_dir: keyDir, reads, next };
@@ -328,6 +331,9 @@ export async function teamTemplate(engine: BrainEngine, opts: TeamOpts): Promise
       }
     }
     await engine.setConfig(SERVES_KEY, 'several');
+    const applied = await appliedRules(engine, source);
+    const missing = teamRules(roster).filter(r => !applied.some(x => x.prefix === r.prefix && sameSet(x.readable_by, r.readable_by)));
+    if (missing.length) throw opError('team_template_rules_pending', `The team rules for ${missing.map(r => r.prefix).join(', ')} are not in force yet, so no member key was issued.`, `Finish with gbrain access resume --source ${source}, then run this again.`);
     const late = await contentProblems(engine);
     if (late.length) throw opError('team_template_not_fresh', `Pages arrived while the team template ran (${late.map(p => p.detail).join('; ')}), so no member key was issued.`, 'Check who wrote the new pages (gbrain access who-can-read on each) before you run this again.');
     for (const k of result.keys.filter(x => x.action === 'mint')) {
