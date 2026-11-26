@@ -21,12 +21,29 @@
  *    prior enabled value back only while the brain row is still paused at the same epoch (compare-and-set): a real
  *    activation or deactivation during fn is kept and reported as paused_state_changed; a throw is rethrown after the
  *    restore. The evals wrote enabled=true unconditionally before, which turned a classic brain managed.
+ *  - Review round 1 regressions (each failed on the head before the fix): a config value that parses as JSON was
+ *    missed on Rust; hasColumn said no trust columns for takes and timeline entries on Rust; a page purge's key columns
+ *    were not scanned on Rust; the SQL scan lowercased a non-ASCII pattern in JavaScript but each value in the
+ *    database; activeOnly kept a deleted page's fence facts; hits were sorted in UTF-16 order on the SQL engines; a
+ *    nested pause restored too early; a cancelled request left the brain paused (Postgres); a deactivation of a
+ *    paused brain that released its pre-activation claims was undone by the restore. The lost-reply case pins the
+ *    recovery command's behavior (gbrain sources writer activate turns the brain back on with a new epoch).
  *  - Seam: none. Real engines; ids and timestamps are compared by shape, not by literal.
  */
+import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect } from 'bun:test';
-import { createSource, parityArms } from './harness.ts';
+import { createSource, parityArms, type ParityBackend } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { withEnv } from '../helpers/with-env.ts';
 import type { BrainEngine, NewFact } from '../../src/core/engine.ts';
+import { withRequestSignal } from '../../src/core/request-signal.ts';
+import { writerAdminState } from '../../src/core/persistence/admin-intent.ts';
+import { runPersistenceAdministration } from '../../src/core/persistence/administration.ts';
+import { activatePersistence } from '../../src/core/persistence/activation.ts';
+import { deactivatePersistence } from '../../src/core/persistence/deactivation.ts';
+import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -34,6 +51,16 @@ const fact = (engine: BrainEngine, text: string, entity: string | null, sourceId
   engine.insertFact({ fact: text, entity_slug: entity, visibility: 'world', source: 'test', embedding: null } as NewFact, { source_id: sourceId });
 
 const isDate = (v: unknown) => v instanceof Date && !Number.isNaN(v.getTime());
+
+/** Runs `run` with a fresh GBRAIN_HOME (the persistence administration keeps its markers and locks there). */
+async function withHome<T>(run: (home: string) => Promise<T>): Promise<T> {
+  const home = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-eval-harness-parity-')));
+  try {
+    return await withEnv({ GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, () => run(home));
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+}
 
 describe('engine parity: the eval harness reads', () => {
   parityTest('getFactsByIds returns each stored fact with its expiry and successor, by id', {
@@ -106,6 +133,15 @@ describe('engine parity: the eval harness reads', () => {
     return result;
   });
 
+  parityTest('hasColumn reports the trust tier and write origin of takes and timeline entries', {
+    methods: ['hasColumn'],
+  }, async (engine) => {
+    const probes = [['takes', 'trust_tier'], ['takes', 'write_origin'], ['timeline_entries', 'trust_tier'], ['timeline_entries', 'write_origin']] as const;
+    const result = Object.fromEntries(await Promise.all(probes.map(async ([t, c]) => [`${t}.${c}`, await engine.hasColumn(t, c)])));
+    expect(result).toEqual(Object.fromEntries(probes.map(([t, c]) => [`${t}.${c}`, true])));
+    return result;
+  });
+
   /** The slugs each token's hits are about (a hit about no page left out), sorted. */
   const slugsByToken = async (engine: BrainEngine, tokens: readonly string[], activeOnly: boolean) => {
     const out: Record<string, string[]> = {};
@@ -146,6 +182,71 @@ describe('engine parity: the eval harness reads', () => {
     expect(own).toEqual({ take: [['takes', 'notes/take-host']], timeline: [['timeline_entries', 'notes/timeline-host']] });
     expect((await engine.scanTextColumns({ pattern: 'token', activeOnly: false, limit: 2 })).length).toBe(2);
     return { ...result, own };
+  });
+
+  /** Whether any hit of the scan holds `token` in its value. */
+  const found = async (engine: BrainEngine, token: string, opts: { activeOnly?: boolean; tables?: string[] } = {}) =>
+    (await engine.scanTextColumns({ pattern: token, activeOnly: opts.activeOnly ?? false, ...(opts.tables ? { tables: opts.tables } : {}) }))
+      .some(h => h.value.toLowerCase().includes(token.toLowerCase()));
+
+  parityTest('scanTextColumns finds a token in a config value that parses as a JSON array, a JSON string or a JSON object key', {
+    methods: ['setConfig', 'scanTextColumns'],
+  }, async (engine) => {
+    await engine.setConfig('eval.scan.array', '["cfgarraytoken"]');
+    await engine.setConfig('eval.scan.string', '"cfgstringtoken"');
+    await engine.setConfig('eval.scan.key', '{"cfgkeytoken": 1}');
+    const result = { array: await found(engine, 'cfgarraytoken'), string: await found(engine, 'cfgstringtoken'), key: await found(engine, 'cfgkeytoken') };
+    expect(result).toEqual({ array: true, string: true, key: true });
+    return result;
+  });
+
+  parityTest('scanTextColumns finds the stored text of a non-ASCII pattern', {
+    methods: ['putPage', 'scanTextColumns'],
+  }, async (engine) => {
+    await engine.putPage('notes/greek', { type: 'note', title: 'Greek', compiled_truth: 'The word ΟΣ ends here.' });
+    const result = await slugsByToken(engine, ['ΟΣ'], false);
+    expect(result).toEqual({ 'ΟΣ': ['notes/greek'] });
+    return result;
+  });
+
+  parityTest('scanTextColumns finds a page purge by the content hash and source its key holds', {
+    methods: ['upsertPagePurges', 'scanTextColumns'],
+  }, async (engine) => {
+    const hash = 'cafe0123'.padEnd(64, '0');
+    await engine.upsertPagePurges({ sourceId: 'default', contentHashes: [hash], slug: 'notes/purged', requestId: null });
+    const hits = await engine.scanTextColumns({ pattern: 'cafe0123', activeOnly: false, tables: ['page_purges'] });
+    const result = hits.map(h => [h.table, h.column, h.value === hash, h.slug]);
+    expect(result).toEqual([['page_purges', 'content_hash', true, 'notes/purged']]);
+    return result;
+  });
+
+  parityTest('scanTextColumns with activeOnly leaves out every record of a deleted page, a fence fact included', {
+    methods: ['putPage', 'insertFacts', 'softDeletePages', 'scanTextColumns'],
+  }, async (engine) => {
+    await engine.putPage('notes/fenced', { type: 'note', title: 'Fenced', compiled_truth: 'A page that held fencepagetoken.' });
+    await engine.insertFacts([{ fact: 'the fence said fencefacttoken', entity_slug: null, visibility: 'world', source: 'test', embedding: null,
+      row_num: 1, source_markdown_slug: 'notes/fenced' } as NewFact & { row_num: number; source_markdown_slug: string }], { source_id: 'default' });
+    const before = { page: await found(engine, 'fencepagetoken', { activeOnly: true }), fact: await found(engine, 'fencefacttoken', { activeOnly: true }) };
+    await engine.softDeletePages(['notes/fenced'], { sourceId: 'default' });
+    const result = {
+      before,
+      live: { page: await found(engine, 'fencepagetoken', { activeOnly: true }), fact: await found(engine, 'fencefacttoken', { activeOnly: true }) },
+      all: { page: await found(engine, 'fencepagetoken'), fact: await found(engine, 'fencefacttoken') },
+    };
+    expect(result).toEqual({ before: { page: true, fact: true }, live: { page: false, fact: false }, all: { page: true, fact: true } });
+    return result;
+  });
+
+  parityTest('scanTextColumns orders hits by UTF-8 bytes before the limit', {
+    methods: ['putPage', 'scanTextColumns'],
+  }, async (engine) => {
+    await engine.putPage('notes/sort-emoji', { type: 'note', title: 'Sort one', compiled_truth: 'sortprobe x\u{1F600}' });
+    await engine.putPage('notes/sort-private', { type: 'note', title: 'Sort two', compiled_truth: 'sortprobe x\uE000' });
+    const [first] = await engine.scanTextColumns({ pattern: 'sortprobe', activeOnly: false, tables: ['pages'], limit: 1 });
+    // A negative limit is refused on every engine (test/eval-harness-sql-pin.test.ts; the Rust store member refuses it).
+    const result = { first: first?.slug ?? null };
+    expect(result).toEqual({ first: 'notes/sort-private' });
+    return result;
   });
 
   parityTest('listTextBearingColumns names the text columns of the tables the evals scan', {
@@ -221,4 +322,68 @@ describe('engine parity: the eval harness reads', () => {
       deactivated: 'paused_state_changed', afterDeactivate: { enabled: false, epoch: 2 } });
     return result;
   });
+
+  parityTest('withManagedPersistencePaused refuses a second pause on the same brain while one is held', {
+    methods: ['writerReleaseStore', 'readWriterAdminState', 'withManagedPersistencePaused'],
+  }, async (engine) => {
+    await setEnabled(engine, true);
+    const out = await engine.withManagedPersistencePaused(async () =>
+      engine.withManagedPersistencePaused(async () => 'nested').then(() => 'ok', (e: { code?: string }) => e.code ?? 'refused'));
+    const after = await brainState(engine);
+    const result = { out, enabled: after.enabled };
+    expect(result).toEqual({ out: { result: 'managed_pause_held', restore: 'restored' }, enabled: true });
+    return result;
+  });
+
+  parityTest('withManagedPersistencePaused restores the brain when its request is cancelled during fn', {
+    methods: ['writerReleaseStore', 'readWriterAdminState', 'withManagedPersistencePaused'],
+  }, async (engine) => {
+    await setEnabled(engine, true);
+    const controller = new AbortController();
+    const out = await withRequestSignal(controller.signal, () => engine.withManagedPersistencePaused(async () => { controller.abort(); return 'aborted'; }));
+    const after = await brainState(engine);
+    const result = { out, enabled: after.enabled };
+    expect(result).toEqual({ out: { result: 'aborted', restore: 'restored' }, enabled: true });
+    return result;
+  });
+
+  parityTest('withManagedPersistencePaused keeps a deactivation that released pre-activation claims during fn', {
+    methods: ['writerReleaseStore', 'readWriterAdminState', 'withManagedPersistencePaused', 'getWorktreeBinding'],
+    timeout: 60_000,
+  }, async (engine, backend: ParityBackend) => withHome(async (home) => {
+    const root = join(home, 'checkout');
+    await Bun.write(join(root, 'example.md'), 'generic example');
+    await createSource(engine, backend, 'work', {}, root);
+    try {
+      await runPersistenceAdministration(engine, 'writer_claim', { source_id: 'work', path: root, admin_intent: 'writer_claim', expected_state: await writerAdminState(engine) });
+      await setEnabled(engine, true);
+      const before = await brainState(engine);
+      const out = await engine.withManagedPersistencePaused(async () => (await deactivatePersistence(engine)).pre_activation_claims?.length ?? 0);
+      const after = await brainState(engine);
+      const result = { out, enabled: after.enabled, sameEpoch: after.epoch === before.epoch };
+      expect(result).toEqual({ out: { result: 1, restore: 'paused_state_changed' }, enabled: false, sameEpoch: true });
+      return result;
+    } finally {
+      await disposePersistenceConsumer(engine);
+    }
+  }));
+
+  parityTest('a pause whose reply was lost leaves the brain at enabled=false, and activation turns it back on with a new epoch', {
+    methods: ['writerReleaseStore', 'readWriterAdminState', 'pauseManagedPersistence'],
+    timeout: 60_000,
+  }, async (engine) => withHome(async () => {
+    try {
+      await setEnabled(engine, true);
+      const before = await brainState(engine);
+      await engine.pauseManagedPersistence();
+      const lost = await brainState(engine);
+      await activatePersistence(engine, { confirmQuiesced: true });
+      const after = await brainState(engine);
+      const result = { lost: { enabled: lost.enabled, sameEpoch: lost.epoch === before.epoch }, after: { enabled: after.enabled, epochMoved: after.epoch > before.epoch } };
+      expect(result).toEqual({ lost: { enabled: false, sameEpoch: true }, after: { enabled: true, epochMoved: true } });
+      return result;
+    } finally {
+      await disposePersistenceConsumer(engine);
+    }
+  }));
 });
