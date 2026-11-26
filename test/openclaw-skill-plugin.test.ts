@@ -1216,9 +1216,8 @@ describe.skipIf(!NODE)('session classes and the session-start brief', () => {
     expectExit(await setup(b, ['--skill-loading', 'resolve', '--owner-sender', 'owner-sender-1', '--operator-rule', rule]), 0);
     await pin(b, 'deploy-service');
     await pin(b, 'email-triage', '--brief');
-    const text = 'review the private household ledger';
-    const turn = (sender: string) => ['turn', { text, sender, session: 'agent:main:main', ctx: { sessionId: 'sess-shared' } }];
-    const out = drive(b, [turn('owner-sender-1'), turn('guest-sender-2'), turn('owner-sender-1')], undefined, { DRIVE_LOG_LINES: '3' });
+    const turn = (sender: string, text: string) => ['turn', { text, sender, session: 'agent:main:main', ctx: { sessionId: 'sess-shared' } }];
+    const out = drive(b, [turn('owner-sender-1', 'review the private household ledger'), turn('guest-sender-2', 'what is on the agenda today'), turn('owner-sender-1', 'triage the email inbox for the ledger')], undefined, { DRIVE_LOG_LINES: '3' });
     expect(out[0].appendSystemContext).toContain('<operator_rule>');
     expect(out[0].appendSystemContext).toContain('"deploy-service"');
     expect(out[0].appendContext).toContain('<session_brief>');
@@ -1230,7 +1229,9 @@ describe.skipIf(!NODE)('session classes and the session-start brief', () => {
     }
     expect(out[2].appendSystemContext).toBe(out[0].appendSystemContext);
     expect(out[2].appendSystemContext).not.toContain('owner_context_withdrawn');
-    expect(logLines(b).map((l) => [l.session_class, l.outcome, !!l.withdrawn])).toEqual([['main', 'suggested', false], ['direct', 'skipped_sender', true], ['main', 'suggested', false]]);
+    expect(out[2].appendContext).toContain('<session_brief>');
+    expect(out[2].appendContext).toContain('email-triage');
+    expect(logLines(b).map((l) => [l.session_class, l.outcome, !!l.withdrawn, !!l.brief])).toEqual([['main', 'suggested', false, true], ['direct', 'skipped_sender', true, false], ['main', 'suggested', false, true]]);
   });
 
   test('the withdrawal goes ahead of a conversation\'s own rule and pins, only while live, and never on the owner\'s own silent turns (heartbeat, cron, relay)', async () => {

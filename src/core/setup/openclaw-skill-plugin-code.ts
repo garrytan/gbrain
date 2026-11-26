@@ -507,6 +507,7 @@ async function resolveTurn(event, ctx, opts) {
   const briefDigest = briefBlock ? createHash('sha256').update(briefBlock).digest('hex').slice(0, 16) : '';
   const due = !!briefBlock && !prior && (rebrief.has(sessionKey) || briefLedger().get(briefKey) !== briefDigest);
   const finish = (line, block) => {
+    if (withdraw && !opts.selfTest && isActive(ctx)) markBriefed(briefKey, true);
     const fresh = due && !opts.selfTest && isActive(ctx);
     if (fresh) {
       rebrief.delete(sessionKey);
