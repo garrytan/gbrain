@@ -423,7 +423,10 @@ export function personSlugFromContact(c: ContactData, disambiguate = false, dir:
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 64);
-  if (!slug) return null;
+  // A non-empty name can normalize to nothing (e.g. Chinese). Keep eligible
+  // contacts using the same stable ID path as unnamed phone-only contacts.
+  if (!slug) return c.emails.length > 0 || c.phones.length > 0
+    ? contactIdSlug(c.resourceName, dir) : null;
   // Two different contacts named "John Smith" must not fight over one page —
   // the caller requests disambiguation when the base slug is already owned
   // by a DIFFERENT google_contact_id.

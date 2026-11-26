@@ -9,6 +9,7 @@ import { describe, expect, test } from 'bun:test';
 
 import {
   calendarRelPath,
+  contactIdSlug,
   htmlToText,
   isCalendarSystemMail,
   isNoiseSender,
@@ -473,6 +474,40 @@ function contact(over: Partial<ContactData> = {}): ContactData {
     ...over,
   };
 }
+
+describe('non-ASCII contact names (#10450)', () => {
+  for (const displayName of ['张三', '山田太郎', 'Иван', '😀']) {
+    for (const phoneOnly of [false, true]) {
+      test(`${displayName}: renders ${phoneOnly ? 'phone-only' : 'email'} contact with a stable ID path`, () => {
+        const c = contact({ displayName, emails: phoneOnly ? [] : ['example@example.com'],
+          phones: phoneOnly ? ['+12025550123'] : [] });
+        const expected = contactIdSlug(c.resourceName, 'google/contacts');
+        expect(personSlugFromContact(c, false, 'google/contacts')).toBe(expected);
+        expect(personSlugFromContact(c, true, 'google/contacts')).toBe(expected);
+        const page = renderPersonPage(c, false, 'google/contacts');
+        expect(page).not.toBeNull();
+        expect(page!.relPath).toBe(`${expected}.md`);
+        expect(page!.markdown).toContain(displayName);
+        expect(page!.markdown).toContain(c.resourceName);
+        expect(renderPersonPage(c, false, 'google/contacts')).toEqual(page);
+      });
+    }
+  }
+
+  test('same-name contacts keep distinct paths and contact edits keep the ID path', () => {
+    const first = contact({ displayName: '张三' });
+    const second = contact({ displayName: '张三', resourceName: 'people/c000000002' });
+    expect(personSlugFromContact(first)).not.toBe(personSlugFromContact(second));
+    expect(personSlugFromContact({ ...first, displayName: '李四', emails: ['changed@example.com'] }))
+      .toBe(personSlugFromContact(first));
+  });
+
+  test('continues to skip contacts without either email or phone', () => {
+    const c = contact({ displayName: '张三', emails: [], phones: [] });
+    expect(personSlugFromContact(c)).toBeNull();
+    expect(renderPersonPage(c)).toBeNull();
+  });
+});
 
 describe('personSlugFromContact', () => {
   test('slug from display name', () => {
