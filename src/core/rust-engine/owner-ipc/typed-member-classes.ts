@@ -392,7 +392,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'readReferrerRecordPages', 'readReferrerRows', 'readReferrerTargetCounts', 'readReferrerTypes',
   'readReflexLiveKeys', 'readReflexPages', 'readScopeSourceConfigs', 'readSessionCursor',
   'readSharedSkillDeliveryBatch', 'readSharedSkillMember',
-  'readSharedSkillPolicyRow', 'readSharedSkillRevision', 'readSharedSkillServingEpoch', 'readSharedSourceRows',
+  'readSharedSkillPackRow', 'readSharedSkillPolicyRow', 'readSharedSkillRevision', 'readSharedSkillServingEpoch', 'readSharedSourceRows',
   'readSoakCounterRows', 'readSoftDeletedAliasCounts', 'readSoleSourceId', 'readSourceArchivedForShare',
   'readSourceAttestState', 'readSourceLastCommit', 'readSourceSyncShape', 'readStaleEmbeddingCounts',
   'readSyncAdmissionSettingRow', 'readTakeRowTrust', 'readTakeTrustRef', 'readTerminalFailureGroups',

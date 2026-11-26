@@ -25,9 +25,8 @@ import { forgetSharedPacks } from './knowledge-guard.ts';
 import { assertSkillCapability, assertStoredSkillCapability, publicationEnabled, readSharedSkillPolicy, setSharedSkillPolicy } from './policy.ts';
 import { SHARED_SKILL_LIMITS, type SharedSkillFile, type SharedSkillPolicy, type SharedSkillPutInput, type SkillMetadata, type StoredSkillFile, type StoredSkillRevision } from './model.ts';
 import { assertSharedSkillRetentionCapacity, pruneSharedSkillRevisionsInTransaction, sharedSkillRetentionCapacity, sharedSkillRetentionStatus } from './retention.ts';
-import { isRustBrain, rustCheck, rustHeadKeys, rustHeads, rustPack, rustRetention, rustSource, rustWritePack } from './rust-publication.ts';
+import { isRustBrain, rustCheck, rustHeadKeys, rustHeads, rustRetention, rustSource, rustWritePack } from './rust-publication.ts';
 import { discardRustStaging, publishRustCanonicalFiles, stageRustCanonicalFiles } from './rust-canonical-files.ts';
-import { capabilityMissing } from '../rust-engine/errors.ts';
 
 interface PackRow { pack_id: string; revision: string; manifest: Record<string, unknown>; manifest_hash: string; }
 type HeadKey = Pick<StoredSkillRevision, 'name' | 'revision' | 'deleted'>;
@@ -114,11 +113,9 @@ async function sourceRoot(engine: BrainEngine, sourceId: string, incarnation: st
   }
   return { binding: { worktree_id: binding?.worktree_id ?? null, topology_generation: binding?.topology_generation ?? null }, root };
 }
-async function packRow(engine: BrainEngine, sourceId: string, incarnation: string): Promise<PackRow | undefined> {
-  if (isRustBrain(engine)) return rustPack(engine, sourceId, incarnation);
-  const [pack] = await engine.executeRaw<PackRow>('SELECT * FROM shared_skill_packs WHERE source_id=$1 AND source_incarnation=$2::uuid', [sourceId, incarnation]);
-  return pack;
-}
+/** The source incarnation's sealed pack row, through the typed member every engine serves. */
+const packRow = (engine: BrainEngine, sourceId: string, incarnation: string): Promise<PackRow | undefined> =>
+  engine.readSharedSkillPackRow(sourceId, incarnation);
 async function headKeys(engine: BrainEngine, sourceId: string, incarnation: string, packId: string): Promise<HeadKey[]> {
   if (isRustBrain(engine)) return rustHeadKeys(engine, sourceId, incarnation, packId, SHARED_SKILL_LIMITS.catalogSkills + 1);
   return engine.executeRaw<HeadKey>(`SELECT name,revision,deleted FROM shared_skill_heads
@@ -603,8 +600,8 @@ export async function adoptSharedSkillpack(ctx: OperationContext, sourceId: stri
     throw opError('permission_denied', 'Canonical pack adoption is a trusted host operation.',
       'Only the gbrain CLI on the brain host adopts canonical packs (gbrain init and the shared-content migration do it); a remote connection publishes individual skills with put_skill instead.');
   }
-  if (isRustBrain(ctx.engine)) throw capabilityMissing('persistence_journal', 'adoptSharedSkillpack');
-  const [source] = await ctx.engine.executeRaw<{ incarnation: string }>('SELECT incarnation FROM sources WHERE id=$1 AND NOT archived', [sourceId]);
+  const found = await ctx.engine.readSourceIncarnationArchived(sourceId);
+  const source = found && !found.archived ? found : undefined;
   if (!source) {
     throw opError('source_changed', 'The adoption source is not active.',
       `Source ${sourceId} is archived or not registered; adopt the pack into an active source.`,
@@ -668,7 +665,7 @@ export async function adoptSharedSkillpack(ctx: OperationContext, sourceId: stri
     for (const input of inputs) if (Object.hasOwn(accepted, input.name)) input.expected_revision = accepted[input.name];
     const acceptedInventory = (prior.authority as SkillAuthority).skillAdoptionInventory;
     if (expectedHashes && acceptedInventory) {
-      const [pack] = await ctx.engine.executeRaw<PackRow>('SELECT * FROM shared_skill_packs WHERE source_id=$1 AND source_incarnation=$2::uuid', [sourceId, source.incarnation]);
+      const pack = await packRow(ctx.engine, sourceId, source.incarnation);
       const changed = Object.keys(expectedHashes).filter(path => expectedHashes![path] !== acceptedInventory[path]);
       if (changed.length === 1 && changed[0] === 'skillpack.json' && pack?.manifest_hash === expectedHashes['skillpack.json']) {
         expectedHashes = { ...expectedHashes, 'skillpack.json': acceptedInventory['skillpack.json'] };

@@ -631,7 +631,7 @@ const INTERFACE_METHODS: readonly string[] = [
   // The reads a page write makes before admission (engine-sql/page-mutation-reads.ts).
   'readStoredPageHead', 'readVersionSourcePath',
   // The shared-skill catalog, members and delivery batches (engine-sql/shared-skill-members.ts).
-  'readSharedSkillCatalogIdentity', 'listSharedSkillCatalogHeads', 'readSharedSkillPolicyRow', 'writeSharedSkillPolicy', 'writeSharedSkillRevision',
+  'readSharedSkillCatalogIdentity', 'listSharedSkillCatalogHeads', 'readSharedSkillPackRow', 'readSharedSkillPolicyRow', 'writeSharedSkillPolicy', 'writeSharedSkillRevision',
   'readSharedSkillRevision', 'listSharedSkillFollowSources', 'lockSharedSkillBrainId', 'readSharedSkillMember', 'countSharedSkillMembers',
   'enrollSharedSkillMember', 'rebindSharedSkillMember', 'leaveSharedSkillMember', 'issueSharedSkillDeliveryBatch', 'readSharedSkillDeliveryBatch',
   'acknowledgeSharedSkillDeliveryBatch',

@@ -26,6 +26,8 @@ The end state is a full multi-user Rust server that supersedes Postgres and pgve
 
 The Rust engine does not copy PGLite's locking (D20). PGLite's locks come from running one WASM Postgres per process: one connection, one writer, and a file lock across processes. The Rust engine serves many readers, many writers and many processes on one machine, then many machines, with typed operations instead of lock primitives.
 
+The reviewed shared-skill activation (`gbrain sources writer activate --shared-skills --expected-state`, `src/core/persistence/skill-activation.ts`) re-checks the reviewed admin state and writes the activation flag inside one explicit transaction, so it relies on serialized transactions: today an explicit Rust transaction holds the store's whole writer. Once the `serialized_transactions` capability lands (groundwork G1 in `docs/designs/rust-engine/multi-user-server.md`), this site checks it and refuses `engine_capability_missing` without it. A process that is only a client of the brain's owner is refused `owner_unavailable`.
+
 ## Why
 
 Measured pain, all recorded in this repository (collected in `research/12` A.1):

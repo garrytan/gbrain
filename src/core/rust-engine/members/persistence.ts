@@ -28,6 +28,7 @@ export const PERSISTENCE_MEMBERS = {
   readSharedSkillServingEpoch: 'persistence_journal',
   readSharedSkillCatalogIdentity: 'persistence_journal',
   listSharedSkillCatalogHeads: 'persistence_journal',
+  readSharedSkillPackRow: 'persistence_journal',
   readSharedSkillPolicyRow: 'persistence_journal',
   writeSharedSkillPolicy: 'persistence_journal',
   writeSharedSkillRevision: 'persistence_journal',

@@ -27,6 +27,8 @@ function fixture(root: string | null = null) {
     ...stubSourceMembers(() => [source], { defaultHasPages: () => hasPages }),
     // The source policy reads the source through the typed readSourceState member (engine-sql/write-misc.ts).
     readSourceState: async (id: string) => (id === source.id ? { incarnation: source.incarnation, archived: false, local_path: source.local_path, config: {} } : null),
+    // The sealed pack row comes from the typed member every engine serves (engine-sql/shared-skill-members.ts).
+    readSharedSkillPackRow: async () => undefined,
     getConfig: async (key: string) => config.get(key) ?? null,
     setConfig: async (key: string, value: string) => { config.set(key, value); },
     executeRaw: async (sql: string) => {
@@ -34,7 +36,6 @@ function fixture(root: string | null = null) {
       if (sql.includes('FROM persistence_brain')) return [{ brain_id: brainId, enabled: false, skill_bundles_enabled: false }];
       if (sql.includes('FROM sources')) return [source];
       if (sql.includes('EXISTS(SELECT 1 FROM pages')) return [{ present: hasPages }];
-      if (sql.includes('FROM shared_skill_packs')) return [];
       if (sql.includes('FROM source_ingestion_receipts')) return [];
       throw new Error(`Unexpected SQL: ${sql}`);
     },
@@ -52,14 +53,17 @@ function writePack(root: string) {
 
 /**
  * Makes the fixture a Rust brain: raw SQL on shared-skill tables refuses by name, the brain singleton comes from the
- * writer admin state (managed-mode.ts) and the sealed pack from the store (rust-publication.ts) through `readPack`.
+ * writer admin state (managed-mode.ts) and the sealed pack row from the typed member, answered here by `readPack`.
  */
 function asRustBrain(f: ReturnType<typeof fixture>, readPack: (key: { sourceId: string; incarnation: string }) => Promise<unknown>) {
   Object.assign(f.ctx.engine, {
     kind: 'rust',
     readWriterAdminState: async () => JSON.stringify({ brain: { id: f.brainId, enabled: false, mode_epoch: 0, skill_bundles_enabled: false, writer_protocol_floor: 1 } }),
+    // On Rust the typed pack-row member reads the store's pack row (store-members/shared-skill-members.ts).
+    readSharedSkillPackRow: async (sourceId: string, incarnation: string) => (await readPack({ sourceId, incarnation })) ?? undefined,
     _admit: async () => {},
-    storeFor: async () => ({ brain: { readSharedSkillPack: readPack } }),
+    // The store's shared-publication flag: off, as on a brain nobody activated.
+    storeFor: async () => ({ brain: { readSharedSkillPublication: async () => ({ skill_bundles_enabled: false, writer_protocol_floor: 1 }) } }),
   });
   const sqlRead = f.ctx.engine.executeRaw.bind(f.ctx.engine);
   f.ctx.engine.executeRaw = (async (sql: string, params?: unknown[]) => {
@@ -211,6 +215,18 @@ describe('staged skill migration', () => {
     Object.assign(f.ctx.engine, { ownerRole: 'owner' });
     expect((await runSharedSkillsMigration(f.ctx)).status).toBe('conflict');
     expect(readFileSync(join(root, 'skills/memory-care/SKILL.md'), 'utf8')).toBe('private: true\nLocal instructions');
+  });
+  test('a client of a Rust brain\'s owner with no edit stops at ownership as owner_unavailable, never reading the store', async () => {
+    const root = temp(), f = fixture(root); writePack(root);
+    const storeReads: string[] = [];
+    asRustBrain(f, async () => { storeReads.push('readSharedSkillPack'); return null; });
+    expect((await runSharedSkillsMigration(f.ctx)).status).toBe('action_required');
+    Object.assign(f.ctx.engine, { ownerRole: 'client', storeFor: async () => { storeReads.push('storeFor'); throw new Error("The Rust engine's store is closed"); } });
+    storeReads.length = 0;
+    const client = await runSharedSkillsMigration(f.ctx);
+    expect(client.status).toBe('action_required');
+    expect(client.sources[0].stages.at(-1)).toMatchObject({ stage: 'ownership', status: 'action_required', code: 'owner_unavailable' });
+    expect(storeReads).toEqual([]);
   });
   test('a deferred client check keeps the evidence that refuses a moved root', async () => {
     const root = temp(), moved = temp(), f = fixture(root); writePack(root); writePack(moved);

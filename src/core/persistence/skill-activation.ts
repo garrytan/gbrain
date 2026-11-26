@@ -9,8 +9,7 @@ import { managedFilesystemDatastorePath, refreshManagedFilesystemRoots } from '.
 import { assertWriterAdminState, WRITER_INSPECTION_HINT } from './admin-intent.ts';
 import { assertWriterAdminUnlocked } from './admin-lock.ts';
 import { blockingEffectFrom, blockingEffectHint, blockingRequestHint, notQuiescedError } from './blocking-effects.ts';
-import { isRustBrain, rustActivate } from '../shared-skills/rust-publication.ts';
-import { capabilityMissing } from '../rust-engine/errors.ts';
+import { isRustBrain, isRustClient, rustActivate } from '../shared-skills/rust-publication.ts';
 import { NOT_PAGE_EMBEDDING_LEASE } from '../page-embedding-lease.ts';
 
 const registrationRequired = () => opError('writer_registration_required', 'Shared publication requires a registered canonical source root.',
@@ -21,10 +20,21 @@ const registrationRequired = () => opError('writer_registration_required', 'Shar
  * A Rust brain is never managed and has no worktree owners: the store runs the same quiescence checks (a live source
  * with a registered root, no cycle lock but page-embedding leases, no queued or recovering request, no queued or
  * recovering effect) and sets the flag in one store write. A refusal carries the message the SQL path's step gives.
+ *
+ * A reviewed `expectedState` is checked again and the flag written inside one explicit transaction, so no other write
+ * in this process (serve's MCP and admin requests included) lands between them. That holds because an explicit Rust
+ * transaction holds the store's whole writer (docs/designs/rust-engine/multi-user-server.md, "lock skips that rely on
+ * one writer"). Only the owning process reaches the store, so a client is refused before anything runs.
  */
 async function activateOnRust(engine: BrainEngine, options: { dryRun?: boolean; expectedState?: string }, quiescence: () => OperationError) {
-  if (options.expectedState !== undefined) throw capabilityMissing('persistence_journal', 'activateSharedSkillPersistence');
-  const result = await rustActivate(engine, options.dryRun === true);
+  if (isRustClient(engine)) {
+    throw opError('owner_unavailable', 'Shared publication is activated by the process that owns this brain.',
+      'Another gbrain process (such as gbrain serve, a sync or an import) holds this Rust brain, so nothing was activated. Stop it, or run the activation when no other gbrain process holds the brain.',
+      { fix: { argv: ['gbrain', 'sources', 'writer', 'status', '--json'], consent: [], actor: 'agent', why: 'Shows writer topology and the admin_state activation must name, read-only.', requires_exclusive: false } });
+  }
+  const expected = options.expectedState;
+  const result = expected === undefined ? await rustActivate(engine, options.dryRun === true)
+    : await engine.transaction(async tx => { await assertWriterAdminState(tx, expected); return rustActivate(tx, options.dryRun === true); });
   if ('registration_required' in result) throw registrationRequired();
   if ('legacy_lock' in result) throw managedQuiescence();
   if ('blocked' in result) {

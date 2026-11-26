@@ -13,7 +13,7 @@ import { sharedSkillSourcePolicyOrPreserve } from './setup-source-policy.ts';
 import { INVENTORY_LIMIT_CEILINGS, readInventoryLimits, type InventoryLimits } from './inventory-limits.ts';
 import { SHARED_SKILL_LIMITS } from './model.ts';
 import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
-import { isRustBrain, isRustClient, rustHeads, rustPack } from './rust-publication.ts';
+import { isRustBrain, isRustClient, rustHeads, rustPublicationFlag, rustSource } from './rust-publication.ts';
 
 export type MigrationPublication = 'disabled' | 'prose_only' | 'consent_required';
 export interface SharedMigrationStage {
@@ -104,11 +104,25 @@ async function liveSourceRoots(engine: OperationContext['engine']): Promise<Sour
   return (await engine.listOnboardingSources(null)).map(row => ({ id: row.id, incarnation: row.incarnation, local_path: row.local_path }));
 }
 
+/**
+ * Whether this host owns `root` as source `source`'s canonical root. A SQL brain needs the source's active worktree
+ * binding at that path; a Rust brain has no worktree owners, so its canonical root is the live source's registered
+ * path at this incarnation that no other live source shares (the check publication.ts makes before it publishes).
+ */
+async function ownsRoot(engine: OperationContext['engine'], source: SourceRoot, root: string): Promise<boolean> {
+  if (isRustBrain(engine)) {
+    const rust = await rustSource(engine, source.id);
+    return !!rust && !rust.archived && rust.incarnation === source.incarnation && !!rust.local_path
+      && resolve(rust.local_path) === root && rust.aliases.length === 0;
+  }
+  const binding = await getWorktreeBinding(engine, source.id);
+  return !!binding && binding.state === 'active' && !!binding.owner_host_id && !!binding.local_path
+    && resolve(join(binding.local_path, binding.relative_path)) === root;
+}
+
 /** The sealed pack's manifest hash for a source incarnation, or undefined without a pack. */
 async function sealedManifestHash(engine: OperationContext['engine'], sourceId: string, incarnation: string): Promise<string | undefined> {
-  if (isRustBrain(engine)) return (await rustPack(engine, sourceId, incarnation))?.manifest_hash;
-  const [pack] = await engine.executeRaw<{ manifest_hash: string }>('SELECT manifest_hash FROM shared_skill_packs WHERE source_id=$1 AND source_incarnation=$2::uuid', [sourceId, incarnation]);
-  return pack?.manifest_hash;
+  return (await engine.readSharedSkillPackRow(sourceId, incarnation))?.manifest_hash;
 }
 
 /**
@@ -118,7 +132,7 @@ async function sealedManifestHash(engine: OperationContext['engine'], sourceId: 
  */
 async function sealedSkills(engine: OperationContext['engine'], sourceId: string, incarnation: string, names: string[]): Promise<SealedSkill[]> {
   if (isRustBrain(engine)) {
-    const pack = await rustPack(engine, sourceId, incarnation);
+    const pack = await engine.readSharedSkillPackRow(sourceId, incarnation);
     if (!pack || names.length === 0) return [];
     return (await rustHeads(engine, sourceId, incarnation, pack.pack_id, names))
       .filter(revision => !revision.deleted)
@@ -176,10 +190,10 @@ export async function runSharedSkillsMigration(ctx: OperationContext, options: {
     };
     // A client of a Rust brain's owner cannot read the owner-only skill store. That is host action named by its code,
     // never a conflict: a conflict ends the run partial, and partial runs count toward the wedge.
-    const ownerOnly = async (stage: SharedMigrationStage['stage']) => {
+    const ownerOnly = async (stage: SharedMigrationStage['stage'], unchecked: string) => {
       row.status = 'action_required';
       row.stages.push({ stage, status: 'action_required', code: 'owner_unavailable', reason: `owner_unavailable: this run is a client of the process that owns this Rust brain `
-        + `(such as gbrain serve, a sync or an import), and only the owner reads its shared-skill store, so source ${source.id}'s skillpack.json change was not checked and nothing changed. `
+        + `(such as gbrain serve, a sync or an import), and only the owner reads its shared-skill store, so source ${source.id}'s ${unchecked} was not checked and nothing changed. `
         + 'Run gbrain apply-migrations again when no other gbrain process holds this brain.' });
       await persist();
     };
@@ -234,7 +248,7 @@ export async function runSharedSkillsMigration(ctx: OperationContext, options: {
         if (client && !filesDiffer && !accepted) {
           row.inventory = prior.inventory;
           row.stages.push(...(prior.stages ?? []).filter(stage => stage.stage === 'inventory' && stage.status === 'complete'));
-          await ownerOnly('inventory');
+          await ownerOnly('inventory', 'skillpack.json change');
           continue;
         }
         const reviewed = prior.inventory;
@@ -274,12 +288,15 @@ export async function runSharedSkillsMigration(ctx: OperationContext, options: {
       await pending('projection', sourcePolicy.reason);
       continue;
     }
-    if (!brain.enabled || !brain.skill_bundles_enabled) {
+    if (isRustClient(ctx.engine)) {
+      await ownerOnly('ownership', 'shared-skill activation and owner');
+      continue;
+    }
+    if (!(isRustBrain(ctx.engine) ? (await rustPublicationFlag(ctx.engine)).skill_bundles_enabled : brain.enabled && brain.skill_bundles_enabled)) {
       await pending('ownership', 'writer_not_quiesced: stop/exclude older filesystem writers and skill servers, claim the canonical root, then explicitly activate the shared-skill writer protocol.');
       continue;
     }
-    const binding = await getWorktreeBinding(ctx.engine, source.id);
-    if (!binding || binding.state !== 'active' || !binding.owner_host_id || !binding.local_path || resolve(join(binding.local_path, binding.relative_path)) !== row.root) {
+    if (!await ownsRoot(ctx.engine, source, row.root)) {
       await pending('ownership', 'writer_registration_required: register the active canonical owner for this exact source root before adoption.');
       continue;
     }
