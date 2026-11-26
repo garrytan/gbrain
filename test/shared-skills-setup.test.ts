@@ -96,6 +96,43 @@ describe('combined content root setup', () => {
     symlinkSync(root, join(root, 'alias'));
     await expect(setupSharedBrainContent(f.ctx, { root: join(root, 'alias'), fresh: true })).rejects.toMatchObject({ code: 'local_conflict' });
   });
+  test('resolves a symlinked ancestor above the brain home and a chosen root (#9925)', async () => {
+    const real = temp(), link = join(temp(), 'link'), f = fixture();
+    symlinkSync(real, link);
+    mkdirSync(join(link, 'home'));
+    await withEnv({ GBRAIN_HOME: join(link, 'home'), DATABASE_URL: undefined }, async () => {
+      const result = await setupSharedBrainContent(f.ctx, { fresh: true, dryRun: true });
+      expect(result.root).toBe(join(realpathSync(real), 'home', '.gbrain', 'content', f.brainId, 'default'));
+      const chosen = await setupSharedBrainContent(f.ctx, { fresh: true, dryRun: true, root: join(link, 'chosen') });
+      expect(chosen.root).toBe(join(realpathSync(real), 'chosen'));
+    });
+  });
+  test('still refuses a symlink inside the brain-owned content tree', async () => {
+    const home = temp(), elsewhere = temp(), f = fixture();
+    mkdirSync(join(home, '.gbrain'));
+    symlinkSync(elsewhere, join(home, '.gbrain', 'content'));
+    await withEnv({ GBRAIN_HOME: home, DATABASE_URL: undefined }, async () => {
+      await expect(setupSharedBrainContent(f.ctx, { fresh: true, dryRun: true })).rejects.toMatchObject({ code: 'local_conflict' });
+    });
+    const nested = temp(), g = fixture();
+    mkdirSync(join(nested, '.gbrain', 'content'), { recursive: true });
+    symlinkSync(elsewhere, join(nested, '.gbrain', 'content', g.brainId));
+    await withEnv({ GBRAIN_HOME: nested, DATABASE_URL: undefined }, async () => {
+      await expect(setupSharedBrainContent(g.ctx, { fresh: true, dryRun: true })).rejects.toMatchObject({ code: 'local_conflict' });
+    });
+  });
+  test('a root inside another Git worktree is refused before any checkpoint names it, so --content-root still works (#10287)', async () => {
+    const parent = temp(), f = fixture();
+    expect(Bun.spawnSync(['git', 'init', '-q', parent]).exitCode).toBe(0);
+    await withEnv({ GBRAIN_HOME: join(parent, 'home'), DATABASE_URL: undefined }, async () => {
+      await expect(setupSharedBrainContent(f.ctx, { fresh: true })).rejects.toMatchObject({ code: 'local_conflict', message: expect.stringContaining('inside another Git worktree') });
+      expect(existsSync(join(parent, 'home', '.gbrain', 'content'))).toBe(false);
+      expect(JSON.parse(f.config.get(contentSetupKey('default', f.incarnation))!).root).toBeNull();
+      const root = join(realpathSync(temp()), 'content');
+      const retry = await setupSharedBrainContent(f.ctx, { fresh: false, dryRun: true, root });
+      expect(retry).toMatchObject({ status: 'planned', root, owned_root: true, fresh_root_activation: true });
+    });
+  });
   test('preserves the isolated installation memory path', async () => {
     const installation = temp(), f = fixture(join(installation, 'memory'));
     mkdirSync(f.source.local_path!);

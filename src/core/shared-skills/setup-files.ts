@@ -1,27 +1,38 @@
 import { createHash } from 'node:crypto';
-import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { opError, OperationError } from '../ops/contract.ts';
 import { DEFAULT_INVENTORY_LIMITS, inventoryLimitKey, type InventoryLimits } from './inventory-limits.ts';
 
 export const setupHash = (content: string | Uint8Array): string => createHash('sha256').update(content).digest('hex');
 
-export function checkedContentRoot(path: string): string {
-  const root = resolve(path);
-  let current = root;
-  while (true) {
+/** The path with its deepest existing ancestor resolved through any symlinks. */
+export function resolvedPath(path: string): string {
+  const target = resolve(path);
+  let existing = target;
+  while (!existsSync(existing)) existing = dirname(existing);
+  return join(realpathSync(existing), relative(existing, target));
+}
+
+/**
+ * Refuses a symlink or file at `path` or any component up to `owned`, the top of the tree gbrain creates or controls.
+ * Ancestors above `owned` (such as macOS /var or a symlinked home) may be symlinks and are resolved in the returned path.
+ */
+export function checkedContentRoot(path: string, owned = '/'): string {
+  const root = resolve(path), top = resolve(owned);
+  let inside = true;
+  for (let current = root; ; current = dirname(current)) {
     if (existsSync(current)) {
-      const stat = lstatSync(current);
+      const stat = inside ? lstatSync(current) : statSync(current);
       if (stat.isSymbolicLink() || !stat.isDirectory()) {
         throw opError('local_conflict', 'A content-root component is not a real directory.',
           `${current} is a symlink or a file, so ${root} cannot be a content root. Choose a path whose every parent is a real directory.`);
       }
     }
-    const parent = dirname(current);
-    if (parent === current) break;
-    current = parent;
+    if (current === top) inside = false;
+    if (dirname(current) === current) break;
   }
-  return root;
+  return resolvedPath(root);
 }
 
 export interface PackInventory {
