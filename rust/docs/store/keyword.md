@@ -136,7 +136,7 @@ The postings (`keyword/index.rs`, numbers big-endian, `len` two bytes):
 | `R 0x03 len trigram page_id` | empty: one raw pg_trgm trigram of the page's title (`trgm.rs`, CRC-compacted for multibyte characters), soft-deleted pages included |
 | `R 0x04 len basename page_id` | empty: the page's slug basename, for the handle arm (a basename over 65,535 bytes has none) |
 | `R 0x05 page_id chunk_index`, `R 0x06 page_id` | the forward record: the postings the document owns, `kind(1) len(2) text` each |
-| `R 0x07 page_id chunk_index`, `R 0x08 page_id` | a pending record (store format 13): the document's whole posting set as the last write left it, `kind(1) len(2) text vlen(2) value` each; a write that removes a term writes the postings instead |
+| `R 0x07 page_id chunk_index`, `R 0x08 page_id` | a pending record (store format 13): the document's whole posting set as the last write left it, `kind(1) len(2) text vlen(2) value` each; a write that removes a term, or leaves the document with more than 512 postings, writes the postings instead |
 | `R 0x09` | the pending count: how many pending records exist (an `add_i64` counter) |
 
 The postings are the output of the same `chunk_vector` and page vector code the scan reads, so the store has one
@@ -145,11 +145,13 @@ the postings the forward record lists and the new vector lacks, and writes only 
 
 Pending records (`keyword/pending.rs`, store format 13). The postings are keyed by text, so rewriting one page's
 postings used to put or delete a few hundred keys spread over the whole record file, and the copy-on-write tree
-rewrote one leaf per key before the write's disk sync. A write instead stages each touched document: it writes the
+rewrote one leaf per key before the write's disk sync. A write instead stages each touched document. It writes the
 document's pending record, unless the document's effective postings already equal the new set, and adds one to the
-pending count for a new record. Only a write that adds terms or changes positions stages: a write that removes a term
+pending count for a new record. Only a write that adds terms or changes positions stages. A write that removes a term
 the stored postings hold (an edit, a purge, a delete) writes the document's postings at once and drops its pending
-record, so no removed text stays in a live keyword record. A document's effective postings are its pending set when it has one, else its
+record, so no removed text stays in a live keyword record. A document with more than 512 postings
+(`STAGE_MAX_POSTINGS`, which keeps what a read decodes to at most 64 pending records of 512 postings) is not staged
+either: its write goes to the postings at once. A document's effective postings are its pending set when it has one, else its
 postings. The write that brings the count to 64 also folds every pending record into the postings and forward
 records (a reindex, as above) and deletes the pending records, in the same transaction. Every reader of the postings
 (`Postings::read`, the basename and title-trigram reads) drops the pending documents from the posting lists and adds

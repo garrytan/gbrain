@@ -6,7 +6,7 @@ Folder rules keep whole folders of a source to named members (`src/core/access/f
 PGLite and Postgres the applied rulebook is four tables from schema migration v283: `access_policy_state` (one row per
 source with a rulebook), `access_rules`, `access_policy_revisions` and `access_pending_coverage`. The store keeps the
 same state under key tag `z` (`crates/gbrain-store/src/access_rules.rs`). The byte after the tag names the table;
-these additive records need no format bump of their own; this build writes store format 7 and opens formats 1-7 ([format.md](format.md)).
+these additive records need no format bump of their own; this build writes store format 13 and opens formats 1-8 and 13 ([format.md](format.md)).
 
 | Key | Value | Table |
 | --- | --- | --- |
