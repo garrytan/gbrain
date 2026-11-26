@@ -14,7 +14,7 @@ import { relationRead } from './seed.ts';
 import { MAX_PRE_LINKS, MAX_PRE_PAGES, movedOutsideFootprint, PILOT_WRITES, pageRefs, pageSet, readBack, writeFamily, type PageRef, type PreImage, type WriteEvent } from './write-compare.ts';
 import { sqlWrites } from './sql-writes.ts';
 import { memberKind } from './write-map.ts';
-import { COMPLETE_WRITE_PURGE_PROBE_SQL, COMPLETE_WRITE_SQL, ENSURE_COUNTERS_SQL, LOCK_COUNTERS_SQL } from '../core/engine-sql/persistence-journal.ts';
+import { COMPLETE_WRITE_PURGE_PROBE_SQL, COMPLETE_WRITE_SQL, ENSURE_COUNTERS_SQL, LOCK_COUNTERS_SQL, PUBLICATION_EFFECTS_SQL } from '../core/engine-sql/persistence-journal.ts';
 
 /** How long the preimage read may hold a sampled write. */
 export const PREIMAGE_TIMEOUT_MS = 2_000;
@@ -165,13 +165,17 @@ function bookkeepingStatements(sqls: readonly string[]): boolean {
 /**
  * Typed journal members and every statement each one sends (engine-sql/persistence-journal.ts): the counter rows' create-and-lock before a journaled page write, and the
  * request's completion after it. They were raw statements the rule above judged bookkeeping; as members their text is hidden from rawKind, so each is judged here by the
- * same rule on the statements it sends. A member whose statements stop passing that rule is an ordinary write again. (upsertWriteGateReceipt and insertPublicationEffects
- * are not listed: they stay ordinary writes, which fails closed.)
+ * same rule on the statements it sends. A member whose statements stop passing that rule is an ordinary write again. (upsertWriteGateReceipt is not listed: it stays an
+ * ordinary write, which fails closed.)
  */
 export const JOURNAL_MEMBER_STATEMENTS: ReadonlyMap<string, readonly string[]> = new Map([
   ['lockPersistenceCounters', [ENSURE_COUNTERS_SQL, LOCK_COUNTERS_SQL]],
   ['completeWriteRow', [COMPLETE_WRITE_SQL, COMPLETE_WRITE_PURGE_PROBE_SQL]],
+  // The publication's effects insert (persistence_effects only): a raw statement the rule judged bookkeeping until the journal moved onto this member.
+  ['insertPublicationEffects', [PUBLICATION_EFFECTS_SQL]],
 ]);
+/** The closing text seal of an imported page (engine-sql/write-guards.ts sealImportedPage): the statement AFTER_PAGE_WRITE matched by text while it was raw, pinned by test/shadow-follow-producer.test.ts. */
+const SEAL_MEMBER = 'sealImportedPage';
 const BOOKKEEPING_MEMBERS: ReadonlySet<string> = new Set([...JOURNAL_MEMBER_STATEMENTS].filter(([, sqls]) => bookkeepingStatements(sqls)).map(([name]) => name));
 const pageKey = (name: string, args: unknown[]): string => { const r = pageRefs(name === STAMP ? 'putPage' : name, name === STAMP ? [args[0], undefined, { sourceId: args[1] }] : args)[0]; return r ? `${r.source}\0${r.slug}` : ''; };
 
@@ -298,7 +302,7 @@ export function createWriteSampler(o: WriteSamplerOptions): WriteSampler {
     scope(root) {
       const sc: Scope = {
         root, log: [], samples: [], gate: null, inflight: 0, nested: 0,
-        note: (name, args, path = []) => { sc.log.push({ name, key: name === 'putPage' || name === 'createVersion' || name === STAMP ? pageKey(name, args) : '', path, ...(name === STAMP ? { args } : {}), ...(BOOKKEEPING_MEMBERS.has(name) ? { kind: 'bookkeeping' as const } : {}), ...(name === 'executeRaw' ? { kind: rawKind(args) } : {}) }); },
+        note: (name, args, path = []) => { sc.log.push({ name, key: name === 'putPage' || name === 'createVersion' || name === STAMP ? pageKey(name, args) : '', path, ...(name === STAMP ? { args } : {}), ...(BOOKKEEPING_MEMBERS.has(name) ? { kind: 'bookkeeping' as const } : name === SEAL_MEMBER ? { kind: 'seal' as const } : {}), ...(name === 'executeRaw' ? { kind: rawKind(args) } : {}) }); },
         open: () => ++sc.nested,
         drop: (id) => { for (let i = sc.log.length - 1; i >= 0; i--) if (sc.log[i]!.path.includes(id)) { sc.log.splice(i, 1); for (const s of sc.samples) if (s.at > i) s.at--; } },
         commit: () => { for (const s of sc.samples) { const bad = s.bad ?? judge(sc, s); if (bad || !s.read) uncomparable(s.op, bad ?? 'in_transaction'); else s.read(sc.log.filter((w, i) => i > s.at && w.name === STAMP && w.key === s.key).map((w) => w.args!)); } },

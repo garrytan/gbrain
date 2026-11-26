@@ -21,6 +21,9 @@ describe('image query retains date and readiness contracts outside hybrid search
     const engine = {
       getConfig: async () => null,
       getAllConfig: async () => ({}),
+      // The trust-label and freshness reads are typed members now (raw reads these stubs answered with no rows).
+      readPageTrustRows: async () => [],
+      hasNotifierCoverage: async () => false,
       executeRaw: async (sql: string) => sql.includes('AS pending') ? [{ pending: false }] : [],
       searchVector: async (_vector: Float32Array, opts: SearchOpts) => {
         options = opts;
