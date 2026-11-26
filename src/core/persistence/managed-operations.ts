@@ -15,8 +15,8 @@
  * writing transaction, not again at commit. A writer that asserted a live lease can still commit after the lease's
  * expiry time while nobody has taken the lease over. A takeover that commits between the assert and the commit puts
  * the lease row in the transaction's read set and refuses the commit (`write_conflict`; the rerun refuses
- * `lease_lost`), and the single-writer store and an explicit transaction hold the writer from assert to commit, so no
- * takeover lands in between. That late commit is safe: no other holder exists, and the owner host's native lock,
+ * `lease_lost`): a multi-user store runs explicit transactions optimistically, so the takeover lands and the late
+ * transaction keeps nothing. That late commit is safe: no other holder exists, and the owner host's native lock,
  * which a managed operation keeps beneath its lease, still excludes a same-host successor from the checkout files.
  */
 import type { BrainEngine } from '../engine.ts';

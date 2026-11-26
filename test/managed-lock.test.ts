@@ -281,33 +281,38 @@ describe('managedLock on a multi-user Rust brain', () => {
     });
   });
 
-  withAddon('F7: the expiry window is the assert, not the commit: a takeover cannot land between them, and the next write refuses', async () => {
+  withAddon('F7: the expiry window is the assert, not the commit: with no takeover the late writer commits; a takeover that commits first makes its commit lose and the retry refuses', async () => {
     await withBrain(true, async (engine, home) => {
       const path = join(home, 'locks', 'wt.lock');
       const leases = rustLeases(engine);
       const name = `managed:worktree:${WORKTREE}`;
+      // A multi-user store runs explicit transactions optimistically (rust-engine/optimistic-transaction.ts): no writer gate.
+      expect(engine.multiuser).toBe(true);
       const lock = (await managedLock(engine, 'worktree', WORKTREE, { path, waitMs: 0, timing: { ttlMs: 300, renewMs: 600_000 } }))!;
-      let takeover: Promise<unknown> | undefined;
+      // The named window: the lease is asserted live as the transaction begins; past its expiry, with no takeover, it commits.
       await engine.transaction(async tx => {
-        // The lease was asserted live as this transaction began. Past its expiry, with no takeover, the writer commits:
-        // this is the named window (documented in multi-user-server.md), not a guarantee of expiry at commit.
         await tx.setConfig('window.commit', 'yes');
         await sleep(380);
-        // A rival that wants the (now expired) lease waits for the open transaction: no takeover lands before the commit.
-        takeover = leases.acquire(name, other, 60_000);
-        let settled = false;
-        void takeover.then(() => { settled = true; });
-        await sleep(120);
-        expect(settled).toBe(false);
       });
       expect(await engine.getConfig('window.commit')).toBe('yes');
-      const rival = (await takeover) as { epoch: number } | null;
+      // A takeover that commits while the old holder's transaction is open: the old commit loses (the lease row is in its read
+      // set), its retry asserts again and refuses lease_lost / epoch_moved, and nothing it wrote is kept.
+      await lock.release();
+      const held = (await managedLock(engine, 'worktree', WORKTREE, { path, waitMs: 0, timing: { ttlMs: 300, renewMs: 600_000 } }))!;
+      let rival: { epoch: number } | null = null;
+      const refused = await refusal(() => engine.transaction(async tx => {
+        await tx.setConfig('window.late', 'no');
+        await sleep(380);
+        rival ??= (await leases.acquire(name, other, 60_000)) as { epoch: number } | null;
+      }));
       expect(rival).not.toBeNull();
-      expect(rival!.epoch).toBe(lock.tokens![0]!.epoch + 1);
-      // Once the takeover has landed, the old holder's next write is refused and writes nothing.
+      expect(rival!.epoch).toBe(held.tokens![0]!.epoch + 1);
+      expect(refused).toEqual({ code: 'lease_lost', reason: 'epoch_moved' });
+      expect(await engine.getConfig('window.late')).toBeNull();
+      // And every later write of the old holder refuses the same way.
       expect(await refusal(() => engine.transaction(async tx => { await tx.setConfig('window.after', 'no'); }))).toEqual({ code: 'lease_lost', reason: 'epoch_moved' });
       expect(await engine.getConfig('window.after')).toBeNull();
-      await lock.release();
+      await held.release();
     });
   });
 

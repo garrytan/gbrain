@@ -41,9 +41,8 @@ as before. The store itself holds no file lock, no process mutex and no busy err
 Expiry window, as written in `docs/designs/rust-engine/multi-user-server.md`: the store checks a lease's expiry when
 `assert` runs inside the writing transaction, not at commit. A writer that asserted a live lease can still commit after the
 lease's expiry time while nobody has taken the lease over. A takeover that commits between the assert and the commit puts
-the lease row in the transaction's read set and refuses the commit (`write_conflict`; the retry refuses `lease_lost`), and
-the single-writer store and an explicit transaction hold the writer from assert to commit, so no takeover lands in
-between. That late commit is safe: no other holder exists, and the owner host's native lock still excludes a same-host
+the lease row in the transaction's read set and refuses the commit (`write_conflict`; the retry refuses `lease_lost`): a
+multi-user store runs explicit transactions optimistically, so the takeover lands and the late transaction keeps nothing. That late commit is safe: no other holder exists, and the owner host's native lock still excludes a same-host
 successor from the checkout files. Takeover fencing is provided; expiry at commit is not.
 
 On an owner-IPC client the store members that answer an object of functions refuse by name (`owner-ipc/routes.ts`):
