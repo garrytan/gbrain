@@ -437,30 +437,35 @@ async function walkGmailWindow(g: GmailSweep, floorKey: 'gmail_backfill_floor_ms
     for (let i = 0; i < threadIds.length; i += BACKFILL_BATCH_THREADS) {
       if (signal?.aborted) break;
       let batchOldest = floorMs;
+      let prefixOpen = true;
       for (const tid of threadIds.slice(i, i + BACKFILL_BATCH_THREADS)) {
         if (signal?.aborted) break;
         const outcome = await attemptThread(g, tid, versions.get(tid) ?? null);
         if (outcome.kind === 'landed') {
           settled.add(tid);
-          if (outcome.newestMs > 0 && outcome.newestMs < batchOldest) batchOldest = outcome.newestMs;
+          if (prefixOpen && outcome.newestMs > 0 && outcome.newestMs < batchOldest) batchOldest = outcome.newestMs;
         } else if (outcome.kind === 'failed' || outcome.kind === 'rate_limited') {
           // A failed thread NEWER than a committed floor would fall outside
           // the resume window (`before:floor`) forever, so the batch holds the
           // floor. A rate limit is per-user: defer the rest of the batch.
           batchFailed = true;
+          prefixOpen = false;
           if (outcome.kind === 'rate_limited') break;
         } else settled.add(tid);
       }
-      if (batchFailed || deps.managed && signal?.aborted) break;
-      if (batchOldest < floorMs && (signal?.aborted || i + BACKFILL_BATCH_THREADS < threadIds.length)) {
+      if (deps.managed && signal?.aborted) break;
+      // A failed thread ends the batch's landed prefix: the proof below only moves the floor past mail it settled.
+      if (batchOldest < floorMs && (batchFailed || signal?.aborted || i + BACKFILL_BATCH_THREADS < threadIds.length)) {
         const below = signal?.aborted
           ? await list(batchOldest, floorMs, WINDOW_LIST_PAGES, AbortSignal.timeout(ABORT_PROOF_MS)).catch(() => null)
+          : batchFailed ? await list(batchOldest, floorMs, WINDOW_LIST_PAGES).catch(() => null)
           : await list(batchOldest, floorMs, WINDOW_LIST_PAGES);
         if (below?.complete && below.ids.every(m => settled.has(m.threadId))) {
           state[floorKey] = floorMs = batchOldest;
           await saveGoogleState(deps, state);
         }
       }
+      if (batchFailed) break;
     }
     if (signal?.aborted) return 'aborted';
     if (batchFailed) return 'failed';
