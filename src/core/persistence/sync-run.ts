@@ -25,7 +25,7 @@ import { prepareManagedSyncMutation, type SyncCursorOptions, type SyncIntent } f
 import { streamedSyncBodyRef, type SyncBodyRef } from './sync-streamed.ts';
 import { startClaimPhase } from './claim-phase.ts';
 import { screeningRequest } from './noop-kernel.ts';
-import { noopWaiversEnabled, prescreenedHead, raceSyncBudget, screenWaiver, syncPreparationBudgetMs, unfinishedPageRequestParams, UNFINISHED_PAGE_REQUEST_SQL, waiveNoopEntry, waiveNoopRun, waivePrescreenedRun, waiverBatchEnabled, type NoopWaiver, type WaiverRunEntry } from './sync-waivers.ts';
+import { noopWaiversEnabled, prescreenedHead, raceSyncBudget, screenWaiver, syncPreparationBudgetMs, unfinishedPageRequestParams, waiveNoopEntry, waiveNoopRun, waivePrescreenedRun, waiverBatchEnabled, type NoopWaiver, type WaiverRunEntry } from './sync-waivers.ts';
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { currentCompanyBrainSync, getCompanyBrainProfile, readCompanyBrainPlan } from '../company-brain/profile.ts';
@@ -226,12 +226,12 @@ class MissingSyncManifest extends OperationError {
 }
 async function readCursor(engine: BrainEngine, key: string, cached?: Cursor): Promise<Cursor | null> {
   if (isPassBatchKey(key)) return readPassBatch<Cursor>(key);
-  const [row] = await engine.executeRaw<{ completed_keys: [CursorHeader] }>('SELECT completed_keys FROM op_checkpoints WHERE op=$1 AND fingerprint=$2', [OP, key]);
+  const [row] = await syncRows<{ completed_keys: [CursorHeader] }>(engine, 'checkpoint_keys', [OP, key]);
   const value = row?.completed_keys?.[0];
   if (!value) return null;
   let entries = cached?.runId === value.runId ? cached.entries : undefined;
   if (!entries) {
-    const [manifest] = await engine.executeRaw<{ completed_keys: Cursor['entries'] }>('SELECT completed_keys FROM op_checkpoints WHERE op=$1 AND fingerprint=$2', [`${OP}-manifest`, value.runId]);
+    const [manifest] = await syncRows<{ completed_keys: Cursor['entries'] }>(engine, 'checkpoint_keys', [`${OP}-manifest`, value.runId]);
     entries = manifest?.completed_keys;
   }
   if (!entries || entries.length !== value.total) throw new MissingSyncManifest(value);
@@ -273,17 +273,16 @@ async function writeCursor(tx: BrainEngine, key: string, before: Cursor | null, 
   await assertDrainLease(tx, next.sourceId);
   if (before === null) {
     if (synchronous) await syncRows(tx, 'sync_commit_on');
-    await tx.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,$3::text::jsonb) ON CONFLICT DO NOTHING`, [`${OP}-manifest`, next.runId, JSON.stringify(next.entries)]);
-    const inserted = await tx.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,$3::text::jsonb) ON CONFLICT DO NOTHING RETURNING fingerprint`, [OP, key, JSON.stringify([header(next)])]);
+    await syncRows(tx, 'cursor_manifest_insert', [`${OP}-manifest`, next.runId, JSON.stringify(next.entries)]);
+    const inserted = await syncRows(tx, 'cursor_insert', [OP, key, JSON.stringify([header(next)])]);
     // #6278 (B7): what rides a fresh cursor's save (the retry schedule it consumed) commits only with the insert that won.
     if (inserted.length) await inTx?.(tx);
   } else {
     // #5984: the settings, the compare-and-swap and the manifest touch go out together; a won swap is the saved cursor.
     const [, saved] = await pipelined(tx, [
       () => synchronous ? syncRows(tx, 'sync_commit_on') : Promise.resolve([]),
-      () => tx.executeRaw(`UPDATE op_checkpoints SET completed_keys=$4::text::jsonb,updated_at=now()
-      WHERE op=$1 AND fingerprint=$2 AND completed_keys=$3::text::jsonb RETURNING fingerprint`, [OP, key, JSON.stringify([header(before)]), JSON.stringify([header(next)])]),
-      () => tx.executeRaw('UPDATE op_checkpoints SET updated_at=now() WHERE op=$1 AND fingerprint=$2', [`${OP}-manifest`, next.runId]),
+      () => syncRows(tx, 'cursor_swap', [OP, key, JSON.stringify([header(before)]), JSON.stringify([header(next)])]),
+      () => syncRows(tx, 'checkpoint_touch', [`${OP}-manifest`, next.runId]),
     ]) as [unknown, unknown[]];
     // #5988: a hold write or clear commits with the cursor step that passes its entry, never without it.
     if (saved.length) await inTx?.(tx);
@@ -589,8 +588,6 @@ const heldWrite = (held: Cursor, hold: HeldEntry, observedAt: string, entry: { b
 /** #6278: the terminal code an owner stamps on a request whose preparation never settled within its attempts (Lane A, consumer.ts). */
 export const PREPARATION_STALLED = 'preparation_stalled';
 const preparationStalled = (row: Pick<WriteRequest, 'state' | 'error_code'>) => row.state === 'failed' && outOfAttemptsHold(row.error_code);
-/** The run's page requests, as `persistence_requests_sync_run_open` indexes them. */
-const SYNC_PAGE_KINDS_SQL = "intent->>'kind' IN ('managed_sync_import','managed_sync_delete')";
 /** The `gbrain sync` arguments a hold or receipt prints to resume this cursor with its own options. */
 const resumeArgsOf = (cursor: Cursor, run: { syncOptions: SyncCursorOptions; repoPath?: string }) => cursor.resumeArgs ??
   managedSyncResumeArgs({ sourceId: cursor.sourceId, processingOptions: cursor.processingOptions, syncOptions: cursor.syncOptions ?? run.syncOptions, repoPath: run.repoPath });
@@ -617,9 +614,8 @@ async function holdUnderGate(engine: BrainEngine, input: { cursor: Cursor; key: 
     const saved = await engine.transaction(async tx => {
       assertActive();
       await tx.lockPageKeys(keys);
-      if ((await tx.executeRaw(UNFINISHED_PAGE_REQUEST_SQL, unfinishedPageRequestParams(cursor, pending))).length) return null;
-      const stale = await tx.executeRaw<{ request_id: string }>(`SELECT request_id::text AS request_id FROM persistence_requests WHERE worktree_id=$1::uuid AND intent->>'runId'=$2
-        AND ${SYNC_PAGE_KINDS_SQL} AND intent->>'index'=$3 AND state IN ('failed','cancelled','conflict')`, [cursor.binding.worktree_id, cursor.runId, String(index)]);
+      if ((await syncRows(tx, 'unfinished_page_request', unfinishedPageRequestParams(cursor, pending))).length) return null;
+      const stale = await syncRows<{ request_id: string }>(tx, 'stale_page_requests', [cursor.binding.worktree_id, cursor.runId, String(index)]);
       const converted = [...new Set([...(cursor.convertedFromFailed ?? []), ...stale.map(row => row.request_id), pending.requestId])];
       return writeCursor(tx, key, cursor, withHeldKeys(advanceHeld(base, converted, index), input.hold), async inner => {
         await heldWrite(cursor, input.hold, input.observedAt, cursor.entries[index])(inner);
@@ -1336,8 +1332,7 @@ function admitPendingWrite(engine: BrainEngine, key: string, admitting: Cursor, 
       const head = readPassBatch<Cursor>(key)?.pending;
       if (head?.requestId !== pending.requestId || digest(head.intent) !== digest(pending.intent)) throw new CursorMoved();
     } else {
-      const [held] = await tx.executeRaw<{ request_id: string | null; same: boolean | null }>(`SELECT completed_keys->0->'pending'->>'requestId' AS request_id,
-        completed_keys->0->'pending'->'intent' = $3::text::jsonb AS same FROM op_checkpoints WHERE op=$1 AND fingerprint=$2 FOR SHARE`, [OP, key, JSON.stringify(pending.intent)]);
+      const [held] = await syncRows<{ request_id: string | null; same: boolean | null }>(tx, 'pending_intent_held', [OP, key, JSON.stringify(pending.intent)]);
       if (held?.request_id !== pending.requestId || held.same !== true) throw new CursorMoved();
     }
     await assertDrainLease(tx, admitting.sourceId);
@@ -1418,7 +1413,7 @@ async function resolvePassCursor(engine: BrainEngine, input: { sourceId: string;
   const resolution = await resolveManagedCursor(engine, { sourceId: input.sourceId, incarnation: input.incarnation, company: input.company, assertActive: input.assertActive,
     readOnly: input.dryRun, foldIn: !input.remote });
   const header = resolution.waitFor && !input.dryRun
-    ? (await engine.executeRaw<{ completed_keys: [CursorHeader] }>('SELECT completed_keys FROM op_checkpoints WHERE op=$1 AND fingerprint=$2', [OP, resolution.key]))[0]?.completed_keys?.[0] : undefined;
+    ? (await syncRows<{ completed_keys: [CursorHeader] }>(engine, 'checkpoint_keys', [OP, resolution.key]))[0]?.completed_keys?.[0] : undefined;
   if (!header) return { key: resolution.key };
   return { key: resolution.key, waiting: { ...result(header, 'partial', 'writer_pending'), ...(input.remote ? {} : { retryWait: { ...resolution.waitFor!, retry_after_ms: 5000 } }) } };
 }

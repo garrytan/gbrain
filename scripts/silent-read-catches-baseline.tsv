@@ -1189,7 +1189,6 @@ src/core/persistence/sync-prepare.ts#prepareSyncMutation	promise_catch_empty	2
 src/core/persistence/sync-prescreen.ts#prescreenSyncEntries	promise_catch_empty	1
 src/core/persistence/sync-prescreen.ts#releaseKeepDbDrift	catch_empty	1
 src/core/persistence/sync-reasons.ts#withManagedReasonNotices	promise_catch_empty	1
-src/core/persistence/sync-run.ts#admitPendingWrite	capability_refusal_swallowed	1	sync 13b: the trunk's capability-refusal rule also follows a promise a transaction callback returns; this managed-persistence path never runs on a Rust brain, which refuses managed mode (managed_persistence) before it
 src/core/persistence/sync-run.ts#admitWindowGroup	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/persistence/sync-run.ts#admitWindowGroup	promise_catch_empty	1
 src/core/persistence/sync-run.ts#deferChangedEntry	catch_empty	1
@@ -1207,8 +1206,6 @@ src/core/persistence/sync-status.ts#workingHashOf	catch_empty	1
 src/core/persistence/sync-stop-class.ts#fileUnchangedSinceFreeze	catch_empty	1
 src/core/persistence/sync-tree-reuse.ts#readTreeLevelReusing	promise_catch_empty	1
 src/core/persistence/sync-waivers.ts#unchangedSyncImport	catch_empty	1
-src/core/persistence/sync-waivers.ts#waiveNoopRun	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
-src/core/persistence/sync-waivers.ts#waivePrescreenedRun	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/persistence/sync-waivers.ts#waivePrescreenedRun	promise_catch_empty	1
 src/core/persistence/sync-waivers.ts#waiverBatchEnabled	promise_catch_empty	1
 src/core/persistence/sync-write-diagnostic.ts#managedSyncWriteDiagnostic	catch_empty	1

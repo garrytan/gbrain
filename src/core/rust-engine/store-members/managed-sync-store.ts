@@ -20,10 +20,19 @@ function statementExtras(name: SyncStatementName): unknown[] {
   return name === 'knock_on_requests' ? [{ syncKnockOnOrigin: SYNC_KNOCK_ON_ORIGIN, legacyCancelMessages: [...LEGACY_KNOCK_ON_CANCEL_MESSAGES],
     legacyCancelPatterns: [...LEGACY_KNOCK_ON_CANCEL_PATTERNS], earlierPageRefusal: EARLIER_PAGE_REFUSAL_MESSAGE }] : [];
 }
+import { requestRow } from '../store-codec.ts';
+import { PAGE_REMOVAL_OPERATIONS } from '../../persistence/terminal-constants.ts';
+
+/** The statements that answer `SELECT *` of a request: the rows read as the engine's request rows (dates as `Date`). */
+const REQUEST_ROW_STATEMENTS: ReadonlySet<SyncStatementName> = new Set(['cursor_open_requests', 'request_for_update']);
+/** The values the SQL text of a statement inlines that the store reads as a trailing parameter (the page-removal operations of `supersessionSql`). */
+const INLINED_TEXT: Partial<Record<SyncStatementName, readonly unknown[]>> = { refused_checkpoint: [[...PAGE_REMOVAL_OPERATIONS]] };
 
 /** While the managed hold is on (a user's Rust brain) the statement refuses as the `executeRaw` it replaced did (managed-hold.ts). */
 export const runSyncStatement = async function runSyncStatement(this: RustEngine, brain: StoreBrain, name: SyncStatementName, params: readonly unknown[] = [], _opts?: SyncStatementOptions): Promise<unknown[]> {
   if (!managedServed(this)) return heldRefusal(this);
-  return storeCall({ member: 'runSyncStatement' }, () =>
-    (SYNC_STATEMENTS[name].kind === 'write' ? brain.syncStoreWrite(name, [...params, ...statementExtras(name)]) : brain.syncStoreRows(name, [...params, ...statementExtras(name)])) as Promise<unknown[]>);
+  const bound = [...params, ...INLINED_TEXT[name] ?? [], ...statementExtras(name)];
+  const rows = await storeCall({ member: 'runSyncStatement' }, () =>
+    (SYNC_STATEMENTS[name].kind === 'write' ? brain.syncStoreWrite(name, bound) : brain.syncStoreRows(name, bound)) as Promise<unknown[]>);
+  return REQUEST_ROW_STATEMENTS.has(name) ? rows.map(row => requestRow<object>(row)) : rows;
 };

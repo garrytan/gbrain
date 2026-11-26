@@ -32,6 +32,9 @@ import { recordedStop } from '../src/core/persistence/sync-stop-class.ts';
 import { readSyncStatus } from '../src/core/persistence/sync-status.ts';
 import { readLandingGaps } from '../src/core/persistence/landing-gaps.ts';
 import { sweepNeedsHumanHolds, recordSoakEvent } from '../src/core/persistence/soak-counters.ts';
+import { claimedPredecessor } from '../src/core/persistence/sync-window.ts';
+import { engineStallProbe } from '../src/core/persistence/sync-drain.ts';
+import { retireOrphanSliceRecords } from '../src/core/persistence/sync-cursor-key.ts';
 
 const refusal = (run: () => Promise<unknown>) => run().then(() => null, (e: { code?: string; detail?: unknown }) => ({
   code: e?.code ?? String(e), member: /member=(\w+)/.exec(String(e?.detail ?? ''))?.[1] ?? null, capability: /capability=(\w+)/.exec(String(e?.detail ?? ''))?.[1] ?? null }));
@@ -124,6 +127,7 @@ describe.skipIf(!rustArmRequested())('a user\'s Rust brain keeps refusing manage
       expect(after.page).toBeNull();
       expect(after.stamped).toBeNull();
     }), 120_000);
+
   /** The statements of the page-fault proofs, the older cursor's publication, `sync status`, the hold sweep and the freshness read (lane LM slice 2, part B). */
   const PART_B: SyncStatementName[] = ['page_revision_writer', 'request_writer', 'page_deleted_revision_writer', 'live_page_at_origin', 'manifest_entry', 'cursor_keys_locked', 'manifest_length',
     'cursor_mark_done', 'failure_supersession', 'source_company_brain', 'source_live_incarnation', 'knock_on_requests', 'live_cursor_rows', 'open_writer_requests', 'recorded_stop',
@@ -166,5 +170,22 @@ describe.skipIf(!rustArmRequested())('a user\'s Rust brain keeps refusing manage
       const after = { source: await engine.readSourceMembership('work'), page: await engine.getPage('notes/alice-example', { sourceId: 'work' }), files: readdirSync(join(root, 'notes')).sort() };
       expect(after).toEqual(before);
       expect(after.page).toBeNull();
+    }), 120_000);
+
+  test('the run, waiver, cursor-key, window, lane and stall statements refuse as the executeRaw they replaced did; no cursor row appears', () =>
+    withEnv({ GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
+      expect(engine.capabilities.has('managed_persistence')).toBe(false);
+      const names = ['cursor_manifest_insert', 'cursor_insert', 'cursor_swap', 'checkpoint_touch', 'finished_cursor_delete', 'manifest_delete_unshared', 'prefix_delete'] as const;
+      const reads = ['cursor_head_locked', 'pending_intent_held', 'unfinished_page_request', 'stale_page_requests', 'waiver_settings', 'waiver_pages', 'kernel_pages_by_slug',
+        'kernel_page_by_id', 'cursor_open_requests', 'request_for_update', 'group_predecessor', 'request_state_by_principal', 'stall_probe', 'refused_checkpoint'] as const;
+      const out: Record<string, unknown> = {};
+      for (const name of [...names, ...reads]) out[name] = await refusal(() => engine.runSyncStatement(name, ['x', 'y', 'z', 'w']));
+      // The callers reach the same refusal through syncRows: a window read, a lane turn read, the stall probe and a cursor retirement.
+      out.window = await refusal(() => claimedPredecessor(engine, { principal_kind: 'local_cli', principal_id: 'p', sequence: 5, request_id: 'r', intent: { after: '00000000-0000-4000-8000-000000000001' } } as never));
+      out.stall = await refusal(() => engineStallProbe(engine).fingerprint({ managedWrite: { write_request: { request_id: '00000000-0000-4000-8000-000000000001' } } } as never));
+      out.retire = await refusal(() => retireOrphanSliceRecords(engine, 'work', '00000000-0000-4000-8000-000000000001'));
+      expect(Object.values(out).every(value => JSON.stringify(value) === JSON.stringify(RAW))).toBe(true);
+      expect(Object.keys(out).length).toBe(names.length + reads.length + 3);
+      expect(await engine.getPage('notes/alice-example', { sourceId: 'work' })).toBeNull();
     }), 120_000);
 });

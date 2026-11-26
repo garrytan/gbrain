@@ -28,6 +28,7 @@ import { abortStop } from './sync-stop-class.ts';
 import { PUBLICATION_CEILING_DEFAULT_MS, readPublicationCeilingMs } from './publication-deadline.ts';
 import { isOwnerThisProcess, stampLastSql, WAITING_ON, type ClaimLastSql, type WaitingOn } from './claim-phase.ts';
 import { describeHostConsumer, headBlockedNext, headBlockerText, headClaimability, type HeadBlocker } from './head-blocker.ts';
+import { syncRows } from '../engine-sql/managed-sync-store.ts';
 
 export type DrainOutcome = 'synced' | 'resumable' | 'blocked';
 /** Why a drain ended short of `synced`. Each value has an error-catalogue entry (DX-A4). */
@@ -746,17 +747,9 @@ export function engineStallProbe(engine: BrainEngine, sourceId?: string): StallP
   const read = async (result: SyncResult) => {
     const requestId = result.managedWrite?.write_request.request_id;
     if (!requestId) return null;
-    const [row] = await engine.executeRaw<{ state: string; blocked_reason: string | null; recovering: boolean;
+    const [row] = await syncRows<{ state: string; blocked_reason: string | null; recovering: boolean;
       worktree_id: string | null; head_id: string | null; head_state: string | null; head_claim_phase: unknown; head_token: string | null; head_lapsed: boolean | null;
-      head_kind: string | null; owner_host_id: string | null }>(
-      `SELECT r.state, r.blocked_reason, r.recovery IS NOT NULL AS recovering, r.worktree_id::text,
-         h.id::text AS head_id, h.state AS head_state, h.claim_phase AS head_claim_phase, h.execution_token::text AS head_token,
-         (h.claim_expires_at IS NOT NULL AND h.claim_expires_at < now()) AS head_lapsed, h.intent->>'kind' AS head_kind, w.owner_host_id::text
-       FROM persistence_requests r
-       LEFT JOIN persistence_worktrees w ON w.id = r.worktree_id
-       LEFT JOIN LATERAL (SELECT e.id, e.state, e.claim_phase, e.execution_token, e.claim_expires_at, e.intent FROM persistence_requests e WHERE e.worktree_id = r.worktree_id
-         AND (e.state IN ('queued','running','recovering') OR e.recovery IS NOT NULL) ORDER BY e.sequence LIMIT 1) h ON r.worktree_id IS NOT NULL
-       WHERE r.id = $1::uuid`, [requestId]);
+      head_kind: string | null; owner_host_id: string | null }>(engine, 'stall_probe', [requestId]);
     return row ? { requestId, row } : null;
   };
   let budgets: Promise<{ syncMs: number; maintenanceMs: number; ceilingMs: number }> | undefined;

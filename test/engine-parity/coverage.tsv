@@ -124,15 +124,15 @@ disconnect	lifecycle	yes	3	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	4	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	388	no	yes	yes	serves
+transaction	lifecycle	yes	389	no	yes	yes	serves
 transactionDirect	lifecycle	yes	24	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
 listCatalogRelations	lifecycle	yes	1	no	yes	yes	serves
 readCatalogSchemaVersion	lifecycle	yes	1	no	yes	yes	serves
 listCatalogForeignKeys	lifecycle	yes	1	no	yes	yes	serves
-getPage	pages	yes	287	yes	yes	yes	serves
-readPageSnapshot	pages	yes	103	no	yes	yes	serves
+getPage	pages	yes	288	yes	yes	yes	serves
+readPageSnapshot	pages	yes	104	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	7	no	yes	yes	serves
 lockPageKeys	pages	yes	17	no	yes	yes	serves
 putPage	pages	yes	1324	yes	yes	yes	serves
@@ -145,7 +145,7 @@ softDeletePage	pages	yes	333	yes	yes	yes	serves
 softDeletePages	pages	yes	4	yes	yes	yes	serves
 restorePage	pages	yes	15	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	10	no	yes	yes	serves
-listPages	pages	yes	29	yes	yes	yes	serves
+listPages	pages	yes	33	yes	yes	yes	serves
 findPages	pages	yes	5	no	yes	yes	serves
 countPagesBy	pages	yes	1	no	yes	yes	serves
 pageTypeTotals	pages	yes	2	no	yes	yes	serves
@@ -162,7 +162,7 @@ listAllSources	pages	yes	28	no	yes	yes	serves
 updateSourceConfig	pages	yes	20	no	yes	yes	serves
 renameSource	pages	yes	1	no	yes	yes	serves
 readFederationExposedPages	pages	yes	1	no	yes	yes	serves
-getSource	pages	yes	43	no	yes	yes	serves
+getSource	pages	yes	44	no	yes	yes	serves
 listSourceLocalPaths	pages	yes	1	no	yes	yes	serves
 countRepoBoundSources	pages	yes	2	no	yes	yes	serves
 listNotifierHostSourceRows	pages	yes	3	no	yes	yes	serves
@@ -763,7 +763,7 @@ replaceDerivedAliases	sync_aliases	yes	18	no	yes	yes	serves
 refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	3	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	2	no	yes	yes	serves
-getConfig	config	yes	59	no	yes	yes	serves
+getConfig	config	yes	61	no	yes	yes	serves
 setConfig	config	yes	97	no	yes	yes	serves
 unsetConfig	config	yes	4	no	yes	yes	serves
 listConfigKeys	config	yes	5	no	yes	yes	serves
@@ -915,7 +915,7 @@ listAtomWriteReceipts	persistence_journal	yes	1	no	yes	yes	serves
 readWriteRequest	persistence_journal	yes	19	no	yes	yes	serves
 readWriteRequestsByRequestIds	persistence_journal	yes	3	no	yes	yes	serves
 readWriteRequestsByRequestId	persistence_journal	yes	1	no	yes	yes	serves
-readWriteRequestById	persistence_journal	yes	16	no	yes	yes	serves
+readWriteRequestById	persistence_journal	yes	17	no	yes	yes	serves
 listWriteRequestsByRequestIds	persistence_journal	yes	1	no	yes	yes	serves
 listWriteRequestRows	persistence_journal	yes	2	no	yes	yes	serves
 readWriteRequestProgress	persistence_journal	yes	1	no	yes	yes	serves
@@ -932,7 +932,7 @@ shareLockWriteCredential	persistence_journal	yes	1	no	yes	yes	serves
 readCounterRows	persistence_journal	yes	15	no	yes	yes	serves
 readAdmissionRate	persistence_journal	yes	3	no	yes	yes	serves
 lockPersistenceCounters	persistence_journal	yes	99	no	yes	yes	serves
-insertWriteRequest	persistence_journal	yes	128	no	yes	yes	serves
+insertWriteRequest	persistence_journal	yes	132	no	yes	yes	serves
 insertWriteRequestGroup	persistence_journal	yes	2	no	yes	yes	serves
 readOwnerHostBinding	persistence_journal	yes	1	no	yes	yes	serves
 stampWriteClaim	persistence_journal	yes	48	no	yes	yes	serves
@@ -1963,10 +1963,10 @@ readSourceState	write_misc	yes	17	no	yes	yes	serves
 readAdmissionSource	write_misc	yes	2	no	yes	yes	serves
 sharedSkillPackTablePresent	write_misc	yes	1	no	yes	yes	serves
 listSharedSkillPackRoots	write_misc	yes	1	no	yes	yes	serves
-getWorktreeBinding	write_misc	yes	36	no	yes	yes	serves
+getWorktreeBinding	write_misc	yes	39	no	yes	yes	serves
 listHostTopologyRows	write_misc	yes	2	no	yes	yes	serves
 listWorktreeMembers	write_misc	yes	2	no	yes	yes	serves
-worktreeClaimStore	write_misc	yes	61	no	yes	yes	serves
+worktreeClaimStore	write_misc	yes	67	no	yes	yes	serves
 readWriterAdminState	write_misc	yes	10	no	yes	yes	serves
 readWorktreeManifest	write_misc	yes	1	no	yes	yes	serves
 writerAdminStore	write_misc	yes	3	no	yes	yes	serves
@@ -2027,7 +2027,7 @@ topologyStore	write_misc	yes	6	no	yes	yes	serves
 refreshStore	write_misc	no	0	no	-	-	-
 groupPublishStore	write_misc	no	0	no	-	-	-
 manualLinkStore	write_misc	no	0	no	-	-	-
-runSyncStatement	write_misc	yes	3	no	yes	yes	serves
+runSyncStatement	write_misc	yes	8	no	yes	yes	serves
 listAppliedPolicyRevisions	write_misc	yes	6	no	yes	yes	serves
 readLiveMember	write_misc	yes	13	no	yes	yes	serves
 readFolderAccess	write_misc	yes	12	no	yes	yes	serves
