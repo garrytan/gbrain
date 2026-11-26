@@ -71,6 +71,7 @@ describeAddon('gbrain serve --http on a multi-user Rust brain', () => {
     await token('alice-key', 'secret-alice', 'alice-example', ['read', 'write']);
     await token('unbound-key', 'secret-unbound', null, ['read', 'write']);
     await engine.putPage('notes/hello', { type: 'note', title: 'Hello', compiled_truth: 'Hello from the owner.', timeline: '' } as never);
+    await engine.putPage('notes/diary', { type: 'note', title: 'Diary', compiled_truth: 'First entry.', timeline: '', frontmatter: { visibility: 'private' } } as never);
     await engine.disconnect();
     process.env.GBRAIN_RUST_MULTIUSER = '1';
     await engine.connect({ engine: 'rust', database_path: join(dir, 'db') } as never);
@@ -116,6 +117,14 @@ describeAddon('gbrain serve --http on a multi-user Rust brain', () => {
     // Written, or accepted and pending (a brain without lane L5's fence fix).
     expect({ ok: !r.isError || r.code === 'write_pending', code: r.isError ? r.code : undefined })
       .toEqual({ ok: true, code: r.isError ? 'write_pending' : undefined });
+  });
+
+  test('the owner\'s put_page rewrite of a private page over /mcp, naming no visibility, leaves it private (L3-F1)', async () => {
+    const revision = (await engine.getPage('notes/diary'))?.knowledge_revision;
+    const r = await callMcp('secret-owner', 'put_page', { slug: 'notes/diary', content: '---\ntitle: Diary\n---\nSecond entry.', expected_revision: revision, request_id: randomUUID() });
+    expect({ isError: r.isError, code: r.code }).toEqual({ isError: false, code: undefined });
+    const page = await engine.getPage('notes/diary');
+    expect({ body: page?.compiled_truth, visibility: page?.frontmatter.visibility ?? null }).toEqual({ body: 'Second entry.', visibility: 'private' });
   });
 
   test('another member\'s key and an unbound key are refused before any tool runs; a session never lingers', async () => {

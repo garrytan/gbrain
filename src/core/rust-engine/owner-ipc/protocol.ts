@@ -21,6 +21,10 @@
  *   owner -> client  { t: 'result', id, ok, value | error }         the call's end; exactly one per call
  *   owner -> client  { t: 'refused', error }                        the connection is refused before its hello
  *                                                                    (another OS user, or too many connections); it closes
+ *   owner -> client  { t: 'bye' }                                   multi-user owner only, last frame as it hands the brain
+ *                                                                    over: it read nothing after it, so a call still unanswered
+ *                                                                    never ran and the client sends it to the next owner
+ *                                                                    (`owner_handoff`); an older client ignores the frame
  *
  * Each call needs a hello of OWNER_IPC_VERSION first, an id not open on its connection, and a list as `args`; the owner
  * refuses anything else with `owner_ipc_protocol` and runs nothing. A hello of another version gets the owner's hello

@@ -36,6 +36,7 @@ import { encodeLengthFrame, extractTail, readLengthFrames, restoreTail, byteBudg
 import { servedGone, servedUnreachable } from './errors.ts';
 import { opError } from '../../ops/contract.ts';
 import { grouperTableOf } from '../owner-ipc/client.ts';
+import { currentReadPosition } from './read-position.ts';
 
 const DEFAULT_BUSY_BUDGET_MS = 60_000;
 const DEFAULT_RECONNECT_MS = 10_000;
@@ -441,6 +442,8 @@ export async function connectServed(url: string, opts: ConnectServedOptions = {}
     const { deadlineAt, readDeadlineAt } = callDeadline();
     const record = callerAccessRecord();
     const scope = callerScope();
+    // Read-your-writes (I-2): a token the caller holds (read-position.ts) goes with the call; only a server with positions reads it.
+    const minPosition = caps.has('positions') ? currentReadPosition() : undefined;
     const frame: Record<string, unknown> = {
       t: kind, id, [kind === 'fn' ? 'name' : 'member']: member, args: wireArgs, req: randomUUIDv7(), remote,
       ...(ropts.txn ? { txn: ropts.txn } : {}),
@@ -448,6 +451,7 @@ export async function connectServed(url: string, opts: ConnectServedOptions = {}
       ...(readDeadlineAt !== undefined ? { read_deadline_at: readDeadlineAt } : {}),
       ...(record ? { access: encodeValue(record) } : {}),
       ...(scope ? { scope } : {}),
+      ...(minPosition ? { min_position: minPosition } : {}),
     };
     return send(frame, member, callbacks, ropts.txn, signals, deadlineAt);
   };

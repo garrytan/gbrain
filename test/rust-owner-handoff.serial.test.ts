@@ -105,6 +105,32 @@ describeAddon('a Rust owner hands its brain to the next process', () => {
     } finally { await engine.disconnect(); }
   }, 120_000);
 
+  test('calls sent in the same tick the owner starts to exit: every one is answered once, none lost, none twice', async () => {
+    // The owner here is an engine of this process, so its exit starts in the very tick the client's calls are written:
+    // some reach the owner, some are still unread in the socket. An unread call never ran, so it must go to the next owner.
+    process.env.GBRAIN_RUST_MULTIUSER = '1';
+    for (let round = 0; round < 5; round++) {
+      const dir = mkdtempSync(join(tmpdir(), 'gbrain-same-tick-'));
+      dirs.push(dir);
+      const owner = await client(dir);
+      const engine = await client(dir);
+      try {
+        expect({ owner: owner.ownerRole, client: engine.ownerRole, multiuser: owner.openStore('same-tick').multiuser })
+          .toEqual({ owner: 'owner', client: 'client', multiuser: true });
+        const refs = Array.from({ length: 48 }, (_, i) => `tick-${round}-${i}`);
+        const calls = refs.map(ref => outcome(engine.logIngest({ source_type: 'test', source_ref: ref, pages_updated: [], summary: ref })));
+        const exited = owner.disconnect();
+        const results = await Promise.all(calls);
+        await exited;
+        expect({ round, failed: results.filter(r => !r.ok) }).toEqual({ round, failed: [] });
+        expect(engine.ownerRole).toBe('owner');
+        const counts = new Map<string, number>();
+        for (const row of await engine.getIngestLog({ limit: 1000 })) counts.set(row.source_ref, (counts.get(row.source_ref) ?? 0) + 1);
+        expect({ round, notOnce: refs.filter(ref => counts.get(ref) !== 1) }).toEqual({ round, notOnce: [] });
+      } finally { await engine.disconnect(); await owner.disconnect().catch(() => undefined); }
+    }
+  }, 120_000);
+
   test('an owner crash: reads in flight run again on the next owner; a write of unknown outcome is never run twice', async () => {
     process.env.GBRAIN_RUST_MULTIUSER = '1';
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-crash-'));
