@@ -132,7 +132,7 @@ withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
 listCatalogRelations	lifecycle	yes	1	no	yes	yes	serves
 readCatalogSchemaVersion	lifecycle	yes	1	no	yes	yes	serves
 listCatalogForeignKeys	lifecycle	yes	1	no	yes	yes	serves
-getPage	pages	yes	288	yes	yes	yes	serves
+getPage	pages	yes	289	yes	yes	yes	serves
 readPageSnapshot	pages	yes	102	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	7	no	yes	yes	serves
 lockPageKeys	pages	yes	17	no	yes	yes	serves
@@ -339,7 +339,7 @@ readProjectionReadinessGeneration	retrieval_coverage	yes	3	no	yes	yes	serves
 readProjectionReadiness	retrieval_coverage	yes	8	no	yes	yes	serves
 readSourceChunkerVersion	chunks	yes	2	no	yes	yes	serves
 setSourceChunkerVersion	chunks	yes	1	no	yes	yes	serves
-readWindowChunk	chunks	yes	1	no	yes	yes	serves
+readWindowChunk	chunks	yes	2	no	yes	yes	serves
 countPageChunks	chunks	yes	1	no	yes	yes	serves
 findCodeDefinitions	chunks	yes	5	no	yes	yes	serves
 listSymbolTypesForName	chunks	yes	5	no	yes	yes	serves
@@ -356,8 +356,8 @@ deleteChunksForPages	chunks	yes	3	no	yes	yes	serves
 listContextualModeCandidates	chunks	yes	1	no	yes	yes	serves
 resolveFrozenHits	chunks	yes	6	no	yes	yes	serves
 upsertChunks	chunks	yes	73	yes	yes	yes	serves
-sealChunks	chunks	yes	96	no	yes	yes	serves
-getChunks	chunks	yes	77	yes	yes	yes	serves
+sealChunks	chunks	yes	97	no	yes	yes	serves
+getChunks	chunks	yes	78	yes	yes	yes	serves
 getChunkPage	chunks	yes	14	no	yes	yes	serves
 getChunkWindows	chunks	yes	14	no	yes	yes	serves
 countStaleChunks	chunks	yes	9	no	yes	yes	serves

@@ -283,6 +283,7 @@ test/engine-parity/read-shared-sources.test.ts	5	0
 test/engine-parity/reads-privacy.test.ts	52	0
 test/engine-parity/reason-tombstones.test.ts	3	0
 test/engine-parity/recall-members.test.ts	4	0
+test/engine-parity/rechunk-chunk-ids.test.ts	1	0
 test/engine-parity/referrer-reads.test.ts	5	0
 test/engine-parity/refusal-blocker-sites.test.ts	6	0
 test/engine-parity/refusal-swallow-extract.test.ts	3	7
