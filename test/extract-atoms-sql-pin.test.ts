@@ -23,7 +23,7 @@ const MASTER = {
 
 function recorder(answer: unknown[] = []) {
   const calls: Array<{ sql: string; params: unknown[] }> = [];
-  return { calls, raw: { executeRaw: async (sql: string, params: unknown[] = []) => { calls.push({ sql, params }); return answer; } } };
+  return { calls, raw: { executeRaw: async (sql: string, params: unknown[] = []) => { calls.push({ sql, params }); return answer; } } as never };
 }
 
 const types = ['meeting', 'note'];
