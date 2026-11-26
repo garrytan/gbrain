@@ -480,7 +480,10 @@ impl Store {
             let rec = LeaseRecord {
                 name: name.to_owned(),
                 epoch: old.epoch.checked_add(1).ok_or_else(|| {
-                    StoreError::new(crate::error::INVALID_STATE, "the lease epoch cannot grow further")
+                    StoreError::new(
+                        crate::error::INVALID_STATE,
+                        "the lease epoch cannot grow further",
+                    )
                 })?,
                 token: uuid_v7(&*self.env),
                 holder: holder.clone(),
@@ -490,7 +493,11 @@ impl Store {
                 released: false,
             };
             put_json(tx, &lease_key(name), &rec)?;
-            Ok(Some(LeaseToken { name: rec.name, epoch: rec.epoch, token: rec.token }))
+            Ok(Some(LeaseToken {
+                name: rec.name,
+                epoch: rec.epoch,
+                token: rec.token,
+            }))
         })
     }
 

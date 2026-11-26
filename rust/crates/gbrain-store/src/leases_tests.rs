@@ -692,15 +692,49 @@ fn the_typed_fence_members_check_record_and_compare_claim_epochs() {
 fn a_proven_dead_holder_s_live_lease_is_taken_over_only_at_the_epoch_proved() {
     let clock = Clock::new();
     for (mode, store) in both(&clock) {
-        let dead = store.acquire_lease("consumer:h", &origin("dead"), 60_000).unwrap().unwrap();
-        assert_eq!(store.acquire_lease("consumer:h", &origin("new"), 60_000).unwrap(), None, "{mode}: live");
-        assert_eq!(store.take_over_lease("consumer:h", dead.epoch + 1, &origin("new"), 60_000).unwrap(), None, "{mode}");
-        assert_eq!(store.take_over_lease("never", 1, &origin("new"), 60_000).unwrap(), None, "{mode}");
-        let next = store.take_over_lease("consumer:h", dead.epoch, &origin("new"), 60_000).unwrap().unwrap();
+        let dead = store
+            .acquire_lease("consumer:h", &origin("dead"), 60_000)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            store
+                .acquire_lease("consumer:h", &origin("new"), 60_000)
+                .unwrap(),
+            None,
+            "{mode}: live"
+        );
+        assert_eq!(
+            store
+                .take_over_lease("consumer:h", dead.epoch + 1, &origin("new"), 60_000)
+                .unwrap(),
+            None,
+            "{mode}"
+        );
+        assert_eq!(
+            store
+                .take_over_lease("never", 1, &origin("new"), 60_000)
+                .unwrap(),
+            None,
+            "{mode}"
+        );
+        let next = store
+            .take_over_lease("consumer:h", dead.epoch, &origin("new"), 60_000)
+            .unwrap()
+            .unwrap();
         assert_eq!(next.epoch, dead.epoch + 1, "{mode}");
-        assert_eq!(reason(&store.assert_lease(&dead).unwrap_err()), "epoch_moved", "{mode}");
+        assert_eq!(
+            reason(&store.assert_lease(&dead).unwrap_err()),
+            "epoch_moved",
+            "{mode}"
+        );
         // The same proof cannot be used twice: the epoch moved.
-        assert_eq!(store.take_over_lease("consumer:h", dead.epoch, &origin("third"), 60_000).unwrap(), None, "{mode}");
+        assert_eq!(
+            store
+                .take_over_lease("consumer:h", dead.epoch, &origin("third"), 60_000)
+                .unwrap(),
+            None,
+            "{mode}"
+        );
         store.assert_lease(&next).unwrap();
     }
 }
