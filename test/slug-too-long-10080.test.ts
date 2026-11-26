@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { classifyImportHold, parseMarkdown } from '../src/core/markdown.ts';
-import { importFromFile } from '../src/core/import-file.ts';
+import { importFromContent, importFromFile } from '../src/core/import-file.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
@@ -31,11 +31,23 @@ afterAll(async () => {
   rmSync(home, { recursive: true, force: true });
 });
 
-test('the shared screen holds a slug over 255 characters and admits one of exactly 255', () => {
+test('a screen that admits a new page holds a slug over 255 characters and admits one of exactly 255', () => {
   const over = pathOfSlug(256), at = pathOfSlug(255);
   expect(over.length - 3).toBe(256);
-  expect(classifyImportHold(parseMarkdown(body, over, { validate: true }))).toMatchObject({ code: 'slug_too_long', key: 'slug' });
-  expect(classifyImportHold(parseMarkdown(body, at, { validate: true }))).toBeNull();
+  expect(classifyImportHold(parseMarkdown(body, over, { validate: true }), { createsPage: true })).toMatchObject({ code: 'slug_too_long', key: 'slug' });
+  expect(classifyImportHold(parseMarkdown(body, at, { validate: true }), { createsPage: true })).toBeNull();
+  expect(classifyImportHold(parseMarkdown(body, over, { validate: true }))).toBeNull();
+});
+
+test('a page an older sync stored under a long slug still re-imports by content and by file', async () => {
+  const rel = pathOfSlug(275), slug = rel.slice(0, -3);
+  await engine.putPage(slug, { type: 'note', title: 'Deep', compiled_truth: 'Stored by an older sync.', timeline: '' });
+  expect(await importFromContent(engine, slug, body, { noEmbed: true, forceRechunk: true })).toMatchObject({ status: 'imported' });
+  const file = join(home, 'legacy', rel);
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, body.replace('deep in', 'edited deep in'));
+  expect(await importFromFile(engine, file, rel, { noEmbed: true } as never)).toMatchObject({ status: 'imported' });
+  expect((await engine.getPage(slug))?.compiled_truth).toContain('edited deep in');
 });
 
 test('a file import skips a file whose slug is over 255 characters and stores nothing', async () => {
@@ -45,7 +57,7 @@ test('a file import skips a file whose slug is over 255 characters and stores no
   writeFileSync(file, body);
   const result = await importFromFile(engine, file, rel, { noEmbed: true } as never);
   expect(result).toEqual(expect.objectContaining({ status: 'skipped', skip_reason: 'slug_too_long', refusal: expect.objectContaining({ code: 'slug_too_long' }) }));
-  expect(await engine.executeRaw('SELECT slug FROM pages WHERE length(slug) > 255')).toEqual([]);
+  expect(await engine.executeRaw('SELECT slug FROM pages WHERE slug=$1', [rel.slice(0, -3)])).toEqual([]);
 });
 
 test('a managed sync holds the file as slug_too_long and imports the rest of the source', async () => withEnv(env, async () => {
@@ -65,4 +77,8 @@ test('a managed sync holds the file as slug_too_long and imports the rest of the
   const result = await performManagedSync(engine, { sourceId, noPull: true, noEmbed: true, noExtract: true });
   expect((result.held ?? []).map(hold => [hold.path, hold.code])).toEqual([[rel, 'slug_too_long']]);
   expect((await engine.executeRaw<{ slug: string }>('SELECT slug FROM pages WHERE source_id=$1', [sourceId])).map(row => row.slug)).toEqual(['notes/short']);
+  git('mv', rel, 'notes/deep.md'); git('-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', 'commit', '-qm', 'shorter path');
+  const moved = await performManagedSync(engine, { sourceId, noPull: true, noEmbed: true, noExtract: true });
+  expect(moved.held ?? []).toEqual([]);
+  expect((await engine.executeRaw<{ slug: string }>('SELECT slug FROM pages WHERE source_id=$1 ORDER BY slug', [sourceId])).map(row => row.slug)).toEqual(['notes/deep', 'notes/short']);
 }), 120_000);

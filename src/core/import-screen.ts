@@ -389,7 +389,7 @@ export interface ImportScreenInput {
   expectedSlug?: string | null;
   slugExempt?: (declared: string) => boolean;
   slugConflictMessage?: (found: string, expected: string) => string;
-  storedSlug?: boolean;
+  createsPage?: boolean;
   activePack?: ParseOpts['activePack'];
   /**
    * The working tree already holds bytes whose import equals the current
@@ -443,7 +443,7 @@ export function screenImportContent(input: ImportScreenInput): ImportScreenResul
   if (size) return { status: 'refused', refusal: size };
   if (codeFile) return { status: 'importable', parsed: null };
   const parsed = parseMarkdown(input.content, input.path, { validate: true, ...(input.activePack ? { activePack: input.activePack } : {}) });
-  const hold = classifyImportHold(parsed, { expectedSlug: input.expectedSlug, slugExempt: input.slugExempt, slugConflictMessage: input.slugConflictMessage, storedSlug: input.storedSlug })
+  const hold = classifyImportHold(parsed, { expectedSlug: input.expectedSlug, slugExempt: input.slugExempt, slugConflictMessage: input.slugConflictMessage, createsPage: input.createsPage })
     ?? (input.holdNoncanonicalPrivate ? noncanonicalPrivateHold(input.content, parsed.frontmatter) ?? noncanonicalReadersHold(input.content, parsed.frontmatter) : null);
   if (hold) return { status: 'refused', refusal: hold };
   const purgedAs = input.purgedPages?.size ? input.purgedPages.get(contentHash(parsed)) : undefined;

@@ -309,8 +309,6 @@ export async function importFromContent(
      * and reindex leave it unset so the guard stays armed.
      */
     allowEmptyOverwrite?: boolean;
-    /** #10080: the slug names a stored page an operation admitted as legacy (restore, revert), so slug_too_long does not hold it. */
-    storedSlug?: boolean;
     /** With no writeGate, the tier that decides whether a preserved `quarantine_override` is kept (owner tier only; present but unreadable strips it). */
     overrideTier?: unknown;
     /** #5575: the caller's trust tier and origin for this write; absent skips the write gate (owner paths). */
@@ -341,7 +339,7 @@ export async function importFromContent(
   // Reject oversized payloads before any parsing, chunking, or embedding happens.
   // Uses Buffer.byteLength to count UTF-8 bytes the same way disk size would,
   // so the network path behaves identically to the file path.
-  const screen = screenImportContent({ content, path: slug + '.md', ...(opts.storedSlug ? { storedSlug: true } : {}), ...(opts.activePack ? { activePack: opts.activePack } : {}), ...(opts.fenceScreen === undefined ? { fences: opts.fences ?? 'lenient' } : {}), ...(opts.holdNoncanonicalPrivate ? { holdNoncanonicalPrivate: true } : {}) });
+  const screen = screenImportContent({ content, path: slug + '.md', ...(opts.activePack ? { activePack: opts.activePack } : {}), ...(opts.fenceScreen === undefined ? { fences: opts.fences ?? 'lenient' } : {}), ...(opts.holdNoncanonicalPrivate ? { holdNoncanonicalPrivate: true } : {}) });
   if (screen.status === 'refused') {
     return { slug, status: screen.refusal.code === 'file_too_large' ? 'skipped' : 'error', chunks: 0, error: screen.refusal.message, refusal: screen.refusal, skip_reason: screen.refusal.code };
   }
@@ -1058,7 +1056,8 @@ export async function importFromFile(
   }
 
   const preInferenceParsed = parseMarkdown(content, relativePath, { validate: true });
-  const preInferenceHold = classifyImportHold(preInferenceParsed);
+  const pathSlug = slugifyPath(relativePath);
+  const preInferenceHold = classifyImportHold(preInferenceParsed, { createsPage: pathSlug.length <= 255 || !await engine.getPage(pathSlug, { sourceId: opts.sourceId }) });
   if (preInferenceHold) {
     return { slug: slugifyPath(relativePath), status: 'skipped', chunks: 0, error: preInferenceHold.message, refusal: preInferenceHold, skip_reason: preInferenceHold.code };
   }

@@ -2,7 +2,8 @@
  * #10357: a shared-skill pack the publisher adopted into a git-backed source root (skillpack.json, skills/ and its
  * LICENSE) is published from the database and never committed, so `gbrain backup check` read the source dirty forever.
  * Protects: while the root skillpack.json is untracked, the untracked pack files do not make the worktree dirty, and
- * the source verifies against its remote; any other change (an edited page, an untracked non-pack file) still reads
+ * the source verifies against its remote; any other change (an edited page, an untracked non-pack file, an untracked
+ * file under skills/ outside the directories skillpack.json lists) still reads
  * dirty, and pack files without an untracked root manifest still read dirty.
  */
 import { afterAll, expect, test } from 'bun:test';
@@ -53,6 +54,11 @@ test('other changes beside an untracked pack still read dirty', async () => {
   adoptPack(extra);
   writeFileSync(join(extra, 'draft.md'), '# draft\n');
   expect((await assess(extra)).state).toBe('dirty');
+  const stray = pushedRepo();
+  adoptPack(stray);
+  mkdirSync(join(stray, 'skills', 'notes-example'), { recursive: true });
+  writeFileSync(join(stray, 'skills', 'notes-example', 'page.md'), '# mine\n');
+  expect((await assess(stray)).state).toBe('dirty');
 });
 
 test('pack-shaped files without an untracked root skillpack.json still read dirty', async () => {

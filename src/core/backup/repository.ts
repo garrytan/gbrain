@@ -1,6 +1,6 @@
 import { execFile, execFileSync, spawn } from '../spawn.ts';
 import { createHash } from 'node:crypto';
-import { existsSync, realpathSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { buildGitEnv } from '../git-remote.ts';
 import { pushStatusPathForRoot, readPushStatusForRoot } from '../workspace-push.ts';
 import { readManifest } from '../bootstrap/format.ts';
@@ -80,13 +80,20 @@ const PACK_ROOT_FILES = new Set(['skillpack.json', 'LICENSE', 'NOTICE', 'PROVENA
 /**
  * #10357: a shared-skill pack the publisher adopted into a git-backed root is published from the database and queues no
  * Git effect, so its files stay untracked. While the root skillpack.json itself is untracked, the untracked pack files
- * (it, the pack-root files and skills/) are not uncommitted brain content. Anything else, a tracked pack file included, still counts.
+ * (it, the pack-root files and the skill directories it lists) are not uncommitted brain content. Anything else, a tracked
+ * pack file or an untracked file under skills/ outside the listed directories included, still counts.
  */
 function untrackedPackFilter(root: string): (line: string) => boolean {
-  let manifest = '';
-  try { manifest = git(root, ['status', '--porcelain', '--untracked-files=normal', '--', 'skillpack.json']); } catch { /* probe it as dirty */ }
+  let manifest = '', packSkills = false;
+  try {
+    manifest = git(root, ['status', '--porcelain', '-unormal', '--', 'skillpack.json']);
+    const pack = manifest === '?? skillpack.json' ? JSON.parse(readFileSync(`${root}/skillpack.json`, 'utf8')) as { skills?: unknown; shared_deps?: unknown } : {};
+    const dirs = [pack.skills, pack.shared_deps].flatMap(list => Array.isArray(list) ? list.filter((dir): dir is string => typeof dir === 'string' && dir.startsWith('skills/')) : []).map(dir => `${dir.replace(/\/+$/, '')}/`);
+    packSkills = dirs.length > 0 && git(root, ['ls-files', '--others', '--exclude-standard', '--', 'skills/']).split('\n').every(file => !file || dirs.some(dir => file.startsWith(dir)));
+  } catch { // silent-read-ok: a failed probe exempts nothing, so every untracked line still reads dirty
+  }
   if (manifest !== '?? skillpack.json') return () => false;
-  return line => line.startsWith('?? ') && (PACK_ROOT_FILES.has(line.slice(3)) || line.slice(3).startsWith('skills/'));
+  return line => line.startsWith('?? ') && (PACK_ROOT_FILES.has(line.slice(3)) || packSkills && line.slice(3).startsWith('skills/'));
 }
 
 /**

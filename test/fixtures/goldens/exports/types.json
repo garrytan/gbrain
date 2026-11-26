@@ -5730,7 +5730,7 @@
         "kind": "function",
         "name": "importFromContent",
         "signature": [
-          "(engine: BrainEngine, slug: string, content: string, opts?: { prepare?: (prepared: PreparedContentImport) => Promise<ImportResult>; history?: VersionHistory; coordinated?: boolean; boundedChunkWrites?: true; existingSnapshot?: PageSnapshot | null; prepareFrontmatter?: (page: ParsedPage) => void; noEmbed?: boolean; sourceId?: string; filename?: string; sourcePath?: string; sourceRoot?: string; fileTimes?: { birthtime?: Date; mtime?: Date; firstCommit?: Date; }; forceRechunk?: boolean; activePack?: ParseOpts[\"activePack\"]; source_kind?: string | null; source_uri?: string | null; ingested_via?: string | null; segmentedOwner?: SegmentedStagingOwner; reuseSegments?: SegmentedImport; remote?: boolean; restoreHeldRows?: boolean; householdOwner?: () => Promise<boolean>; preserveGateMarkers?: boolean; allowEmptyOverwrite?: boolean; storedSlug?: boolean; overrideTier?: unknown; writeGate?: WriteGateInput; holdNoncanonicalPrivate?: boolean; beforeCommit?: (tx: BrainEngine, slug: string) => Promise<void>; expectedBaseRevision?: string | null; onPostCommitEmbedding?: (complete: () => Promise<ImportEmbeddingResult>) => void; } & ImportFenceOptions) => Promise<ImportResult>"
+          "(engine: BrainEngine, slug: string, content: string, opts?: { prepare?: (prepared: PreparedContentImport) => Promise<ImportResult>; history?: VersionHistory; coordinated?: boolean; boundedChunkWrites?: true; existingSnapshot?: PageSnapshot | null; prepareFrontmatter?: (page: ParsedPage) => void; noEmbed?: boolean; sourceId?: string; filename?: string; sourcePath?: string; sourceRoot?: string; fileTimes?: { birthtime?: Date; mtime?: Date; firstCommit?: Date; }; forceRechunk?: boolean; activePack?: ParseOpts[\"activePack\"]; source_kind?: string | null; source_uri?: string | null; ingested_via?: string | null; segmentedOwner?: SegmentedStagingOwner; reuseSegments?: SegmentedImport; remote?: boolean; restoreHeldRows?: boolean; householdOwner?: () => Promise<boolean>; preserveGateMarkers?: boolean; allowEmptyOverwrite?: boolean; overrideTier?: unknown; writeGate?: WriteGateInput; holdNoncanonicalPrivate?: boolean; beforeCommit?: (tx: BrainEngine, slug: string) => Promise<void>; expectedBaseRevision?: string | null; onPostCommitEmbedding?: (complete: () => Promise<ImportEmbeddingResult>) => void; } & ImportFenceOptions) => Promise<ImportResult>"
         ]
       },
       {
@@ -6682,7 +6682,7 @@
         "kind": "function",
         "name": "classifyImportHold",
         "signature": [
-          "(parsed: ParsedMarkdown, ctx?: { byteLength?: number; maxBytes?: number; codeFile?: boolean; expectedSlug?: string | null; slugExempt?: (declared: string) => boolean; slugConflictMessage?: (found: string, expected: string) => string; storedSlug?: boolean; }) => ContentHold | null"
+          "(parsed: ParsedMarkdown, ctx?: { byteLength?: number; maxBytes?: number; codeFile?: boolean; expectedSlug?: string | null; slugExempt?: (declared: string) => boolean; slugConflictMessage?: (found: string, expected: string) => string; createsPage?: boolean; }) => ContentHold | null"
         ]
       },
       {

@@ -565,8 +565,8 @@ export function classifyImportHold(parsed: ParsedMarkdown, ctx: {
   /** The sync exemption: a page keeping its recorded origin keeps its declared slug. */
   slugExempt?: (declared: string) => boolean;
   slugConflictMessage?: (found: string, expected: string) => string;
-  /** The slug names a page already stored, admitted by the operation's own slug check (a restore of a legacy row). */
-  storedSlug?: boolean;
+  /** #10080: the screen admits a new page, so a slug over 255 characters (which no later operation names) is held. */
+  createsPage?: boolean;
 } = {}): ContentHold | null {
   const size = ctx.byteLength !== undefined && ctx.maxBytes !== undefined ? contentSizeHold(ctx.byteLength, ctx.maxBytes, ctx.codeFile) : null;
   if (size) return size;
@@ -592,9 +592,8 @@ export function classifyImportHold(parsed: ParsedMarkdown, ctx: {
     return { code: 'frontmatter_slug_conflict', key: 'slug',
       message: ctx.slugConflictMessage?.(parsed.slug, expected) ?? `Frontmatter slug "${parsed.slug}" does not match path-derived slug "${expected}".` };
   }
-  // #10080: a page stored under a slug longer than validatePageSlug admits could never be named by a later write or repair.
-  const slug = parsed.slug || expected;
-  if (slug && slug.length > 255 && !ctx.storedSlug) return { code: 'slug_too_long', key: 'slug', message: `The page slug is ${slug.length} characters; a slug can be at most 255, so the page was not written. Shorten the file's path (or its slug: line), then write the page again.` };
+  const slug = ctx.createsPage ? parsed.slug || expected : null;
+  if (slug && slug.length > 255) return { code: 'slug_too_long', key: 'slug', message: `The page slug is ${slug.length} characters; a slug can be at most 255, so the page was not written. Shorten the file's path (or its slug: line), then write the page again.` };
   return tagLengthHold(parsed.tags);
 }
 
