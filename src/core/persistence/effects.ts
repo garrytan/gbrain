@@ -28,6 +28,7 @@ import { isEmbedRetriableError, MAX_RATE_LIMIT_RETRIES, rateLimitDelayMs, restam
 import { AIConfigError, normalizeAIError } from '../ai/errors.ts';
 import { EMBEDDING_ZERO_NORM, isEmbeddingZeroNormError, type EmbeddingZeroNormError } from '../ai/embedding-guard.ts';
 import { isAIInvocationPolicyError, withAIInvocationPreflight } from '../ai/invocation-guard.ts';
+import { effectInstallClaim, fenceOpts } from './host-fence.ts';
 import { quoteIdentifier } from '../search/embedding-column.ts';
 import type { ResolvedColumn } from '../types.ts';
 import { acquireWorktree, acquireWorktreeWaiting, getWorktreeBinding, type WorktreeBinding } from './ownership.ts';
@@ -542,7 +543,7 @@ async function embedPage(engine: BrainEngine, config: GBrainConfig, effect: Pers
     }
     const installed = await engine.transaction(async tx => {
       await guardEffectSource(tx, effect, opts.hostId);
-      const claim = await tx.lockEffectClaimRow(effect.id);
+      const claim = await tx.lockEffectClaimRow(effect.id, effectInstallClaim(tx, effect));
       if (claim?.state !== 'running' || claim.execution_token !== effect.execution_token) throw opError('write_claim_lost', 'The embedding claim changed.',
         `Another worker took over the embedding of ${snapshot.page.slug} in source ${effect.source_id}; this attempt installed nothing and the owning claim finishes it.`,
         { fix: effectStatusFix(effect) });
@@ -614,6 +615,8 @@ async function embedSegmentedEffect(engine: BrainEngine, config: GBrainConfig, e
       if (!await renewPersistenceEffectClaim(engine, effect, { direct: true })) throw claimLost();
       await assertEmbeddingEffectEnabled(engine, config);
     }, async () => (await embed(texts, { abortSignal: o.abortSignal, maxRetries: 0 })) as Float32Array[]),
+    // L5 (G2): the install's own write checks this claim and the host fence on a multi-user Rust brain.
+    ...(effect.execution_token ? { effectClaim: { effectId: effect.id, token: effect.execution_token, ...fenceOpts(engine) } } : {}),
     beforeInstall: async tx => {
       await guardEffectSource(tx, effect, opts.hostId);
       const claim = await tx.lockEffectClaimRow(effect.id);
@@ -894,8 +897,7 @@ async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: Ef
         if (effect.worktree_id) {
           // GST-1644: an effect that runs without the worktree lock can meet another writer's publication in flight (its
           // claim live, or committed with its record not yet cleared); that is contention, not a recovery.
-          const [blocked] = await tx.executeRaw<{ publishing: boolean | null }>(`SELECT bool_and(state='running' AND claim_expires_at>now()
-            OR state IN ('committed','conflict','failed','cancelled')) AS publishing FROM persistence_requests WHERE worktree_id=$1::uuid AND recovery IS NOT NULL`, [effect.worktree_id]);
+          const blocked = await (await tx.gitEffectStore()).recoveringPublications(effect.worktree_id);
           if (blocked?.publishing === true && !lock) throw writerBusy(effect);
           if (blocked && blocked.publishing !== null) throw recoveryFirst(effect);
         }
@@ -937,14 +939,9 @@ async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: Ef
     // the worktree lock between groups instead of after the whole backlog.
     // Each yield is a claim, so attempts bound the delay under a steady stream of writes.
     if (effects.every(effect => effect.attempts <= GIT_YIELD_ATTEMPTS)) {
-      const [pending] = await engine.executeRaw<{ pending: boolean }>(`SELECT EXISTS(SELECT 1 FROM persistence_requests
-        WHERE worktree_id=$1::uuid AND state IN ('queued','running')) AS pending`, [effects[0]!.worktree_id]);
-      if (pending?.pending) {
-        await engine.executeRaw(`UPDATE persistence_effects e SET state='queued',execution_token=NULL,claim_expires_at=NULL,claim_owner=NULL,error_code='publication_pending',
-          next_attempt_at=now()+($2::double precision*interval '1 millisecond'),updated_at=now()
-          FROM jsonb_to_recordset($1::text::jsonb) AS t(id bigint,token uuid)
-          WHERE e.id=t.id AND e.execution_token=t.token AND ${PERSISTENCE_PROTOCOL_PREDICATE}`,
-        [JSON.stringify(effects.map(effect => ({ id: String(effect.id), token: effect.execution_token }))), GIT_YIELD_MS]);
+      const store = await engine.gitEffectStore();
+      if (await store.publicationsPending(effects[0]!.worktree_id!)) {
+        await store.yieldToPublications(effects.map(effect => ({ id: String(effect.id), token: effect.execution_token })), GIT_YIELD_MS);
         return;
       }
     }
@@ -969,8 +966,7 @@ async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: Ef
           // Sources sharing a worktree have their own relative roots: validate each path against its own binding.
           const own = await engine.transaction(async tx => {
             const guarded = await guardEffectSource(tx, effect, opts.hostId);
-            const blocked = await tx.executeRaw('SELECT id FROM persistence_requests WHERE worktree_id=$1::uuid AND recovery IS NOT NULL LIMIT 1', [effect.worktree_id]);
-            if (blocked.length) throw recoveryFirst(effect);
+            if (await (await tx.gitEffectStore()).worktreeRecovering(effect.worktree_id!)) throw recoveryFirst(effect);
             return guarded;
           });
           if (!own?.local_path || own.local_path !== binding.local_path) throw opError('source_changed', 'The effect canonical binding changed.',
@@ -1038,8 +1034,7 @@ async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: Ef
         const key = `${effect.source_id}\0${effect.source_incarnation}`;
         if (!guards.has(key)) guards.set(key, await engine.transaction(async tx => {
           await guardEffectSource(tx, effect, opts.hostId);
-          const blocked = await tx.executeRaw('SELECT id FROM persistence_requests WHERE worktree_id=$1::uuid AND recovery IS NOT NULL LIMIT 1', [effect.worktree_id]);
-          if (blocked.length) throw recoveryFirst(effect);
+          if (await (await tx.gitEffectStore()).worktreeRecovering(effect.worktree_id!)) throw recoveryFirst(effect);
           return null;
         }, { pipelineFirst: isPersistenceDeclaration }).catch(error => error ?? new Error('effect guard failed')));
         if (guards.get(key)) throw guards.get(key);
@@ -1052,14 +1047,7 @@ async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: Ef
     if (!recorded.length) return;
     try {
       for (const { effect } of recorded) await faultPoint(EFFECT_FAULT_POINTS.git, { effectId: effect.id, requestId: effect.request_id, sourceId: effect.source_id });
-      await engine.executeRaw(`UPDATE persistence_effects e SET
-        state=CASE WHEN jsonb_array_length(COALESCE(e.data->'parked','[]'::jsonb))>0 THEN 'failed' ELSE 'committed' END,
-        error_code=CASE WHEN jsonb_array_length(COALESCE(e.data->'parked','[]'::jsonb))>0 THEN 'targets_parked' END,
-        data=e.data-'retry_slugs'-'target_failures'-'failing_target'-'busy_retries'-'busy_since'-'busy_at',execution_token=NULL,claim_expires_at=NULL,claim_owner=NULL,
-        outcome=$2::text::jsonb,updated_at=now()
-        FROM jsonb_to_recordset($1::text::jsonb) AS t(id bigint,token uuid)
-        WHERE e.id=t.id AND e.execution_token=t.token AND e.recovery IS NULL AND ${PERSISTENCE_PROTOCOL_PREDICATE}`,
-      [JSON.stringify(recorded.map(({ effect }) => ({ id: String(effect.id), token: effect.execution_token }))), JSON.stringify(DURABILITY_NOT_ENABLED)]);
+      await (await engine.gitEffectStore()).recordPlainOutcome(recorded.map(({ effect }) => ({ id: String(effect.id), token: effect.execution_token })), JSON.stringify(DURABILITY_NOT_ENABLED));
     } catch (error) { for (const { effect, target } of recorded) await recordFailure(engine, effect, error, opts.signal, target); }
   };
   // A deferred effect that requeues itself (a page walk advancing its cursor,

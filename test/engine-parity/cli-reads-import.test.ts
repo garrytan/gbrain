@@ -297,6 +297,51 @@ describe('engine parity: CLI import reads', () => {
   });
 
   /** One flag receipt on a fact or take row, for the activation flag. */
+  parityTest('readPageTrustRows and the fact rows of readRowTrustRows carry the source precedence class (master #10320): guest external, an approved page, the source setting, chat sources, curated', { methods: ['putPage', 'insertFacts', 'readPageTrustRows', 'readRowTrustRows'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'visitors', { guest: true });
+    await createSource(engine, backend, 'ledger', { precedence: 'record' });
+    await createSource(engine, backend, 'meet', { kind: 'meetings' });
+    await createSource(engine, backend, 'conversations', {});
+    await createSource(engine, backend, 'bogus', { precedence: 'nonsense' });
+    const typed = (slug: string, sourceId: string, type: string, frontmatter: Record<string, unknown> = {}) =>
+      engine.putPage(slug, { type, title: slug, compiled_truth: `body of ${slug}`, frontmatter }, { sourceId });
+    const rows: Array<[string, string]> = [];
+    const put = async (slug: string, sourceId: string, type: string, frontmatter: Record<string, unknown> = {}) => { await typed(slug, sourceId, type, frontmatter); rows.push([sourceId, slug]); };
+    await put('notes/plain', 'default', 'note');
+    await put('notes/draft', 'default', 'facts', { claims: 'draft' });
+    await put('company/facts', 'default', 'facts', { claims: 'allowed' });
+    await put('rules/weekend', 'default', 'rule');
+    await put('rules/in-ledger', 'ledger', 'rule');
+    await put('ledgers/q1', 'ledger', 'note');
+    await put('meetings/standup', 'meet', 'note');
+    await put('chats/day', 'conversations', 'note');
+    await put('guest/facts', 'visitors', 'facts', { claims: 'allowed' });
+    await put('notes/bogus', 'bogus', 'note');
+    const pages = await engine.readPageTrustRows({ keys: rows.map(([source_id, slug]) => ({ source_id, slug })) });
+    const byPage = Object.fromEntries(sorted(pages.map(r => [`${r.source_id}/${r.slug}`, r.precedence] as const), ([k]) => k));
+    expect(byPage['default/company/facts']).toBe('approved');
+    expect(byPage['ledger/rules/in-ledger']).toBe('record');
+    expect(byPage['visitors/guest/facts']).toBe('external');
+    expect(byPage['meet/meetings/standup']).toBe('chat');
+    expect(byPage['default/notes/plain']).toBe('curated');
+    // A fact takes its precedence from the page at its source_markdown_slug.
+    const ids: Array<[number, string]> = [];
+    let n = 0;
+    for (const [sourceId, slug] of rows) {
+      const out = await engine.insertFacts([{ fact: `fact on ${slug}`, entity_slug: null, visibility: 'world', source: 'test', embedding: null, row_num: ++n, source_markdown_slug: slug }], { source_id: sourceId });
+      ids.push([out.ids[0]!, `${sourceId}/${slug}`]);
+    }
+    const nameOf = new Map(ids);
+    const facts = await engine.readRowTrustRows({ table: 'facts', ids: ids.map(([id]) => id) });
+    const byFact = Object.fromEntries(sorted(facts.map(r => [nameOf.get(Number(r.id))!, r.precedence] as const), ([k]) => k));
+    expect(byFact['default/company/facts']).toBe('approved');
+    expect(byFact['ledger/ledgers/q1']).toBe('record');
+    const bare = await engine.insertFacts([{ fact: 'no page', entity_slug: null, visibility: 'world', source: 'test', embedding: null, row_num: 99, source_markdown_slug: 'notes/missing' }], { source_id: 'meet' });
+    const bareRow = await engine.readRowTrustRows({ table: 'facts', ids: bare.ids });
+    expect(bareRow[0]!.precedence).toBe('chat');
+    return { byPage, byFact, bare: bareRow[0]!.precedence };
+  });
+
   const flag = (engine: BrainEngine, table: 'facts' | 'takes', id: number, families: string[]) => engine.upsertWriteGateReceipt({
     target_table: table, target_id: String(id), source_id: 'default', content_hash: 'h1', tier: 'agent_written',
     detector_version: 1, verdict: 'flag', reason_families: families, reasons: families.map(x => `${x} found`), detector_error: false, request_id: null,

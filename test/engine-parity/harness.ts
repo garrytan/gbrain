@@ -22,6 +22,11 @@
  * (arm-capabilities.ts): raw SQL runs on the SQL arms and must be refused by
  * the Rust arm; the Postgres-only schema migration lock runs on Postgres only.
  *
+ * A multi-writer conformance case declares `mwCase: 'Cnn'` (a string literal, read statically by coverage.ts too) and takes
+ * no `requires`: its row in multi-writer-cases.ts says per arm whether it runs, is n/a or is pending, and a `runs` cell is
+ * held to strict acceptance (`checkMwArm`). The Rust arm has two labels, `rust` and, with GBRAIN_TEST_RUST_MU_ARM=1, `rust-mu`
+ * (the same arm with the multi-user switch on).
+ *
  * `methods` is read statically by `test/engine-parity/coverage.ts` to build
  * `test/engine-parity/coverage.tsv`, so it must be an array literal of
  * string literals.
@@ -37,12 +42,17 @@ import { resetPgliteState, truncateCascade } from '../helpers/reset-pglite.ts';
 import { WRITE_GATE_SCAN_BASELINE_KEY } from '../../src/core/write-gate-schema.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
 import type { TestBackend } from '../helpers/test-backends.ts';
-import { armHas, isCapabilityRefusal, missingCapability, type EngineCapability } from './arm-capabilities.ts';
+import { armHas, isCapabilityRefusal, missingCapability, type EngineCapability, type ParityArmName } from './arm-capabilities.ts';
+import type { MwCase, MwCaseId } from './multi-writer-cases.ts';
+import { mwEntry } from './multi-writer-entries.ts';
+import { appendLedger, cellArm, type LedgerArm, type LedgerLine } from './multi-writer-ledger.ts';
 import { checkRustTally } from './rust-tally.ts';
+import * as engineCapabilitiesNamespace from '../../src/core/engine-capabilities.ts';
+const engineCapabilitiesModule = engineCapabilitiesNamespace as unknown as Record<string, unknown>;
 import { itemSetHash } from '../../src/core/generations/publish.ts';
 import { IDENTITY_DOWNGRADE_OP } from '../../src/core/persistence/sync-status-sql.ts';
 import {
-  archiveRustSource, createRustSource, newRustBrain, putRustOpCheckpointRow, rustPageDeletedAt, rustAccessBrain, openRustBrain, DIVERGENCE_NORMALIZERS, readDivergences, removeBrainDir, rustArmRequested, rustMemberCapability, rustRefusal, type DivergenceRow, createRustMember, type MemberSeed,
+  archiveRustSource, createRustSource, newRustBrain, putRustOpCheckpointRow, rustPageDeletedAt, rustAccessBrain, openRustBrain, DIVERGENCE_NORMALIZERS, readDivergences, removeBrainDir, rustArmRequested, rustMemberCapability, rustRefusal, type DivergenceRow, createRustMember, type MemberSeed, rustMuRoute, openRustBrainAt, installMuConnect, type MuConnectable, type RustMuRoute,
 } from './rust-arm.ts';
 import { isEngineMember, readStopPins, refusalFacts, rustServes, rustServesCapability, setupRefusalStep, setupStep, today, type StopPin } from './rust-refusals.ts';
 
@@ -60,6 +70,10 @@ export interface ParityArm {
   close: () => Promise<void>;
   /** Build a second, not yet connected engine of this arm and the config `connect` takes. */
   unconnected: () => { engine: BrainEngine; config: EngineConfig };
+  /** The `rust-mu` route this Rust arm was opened by (a reset reopens by the same route). */
+  muRoute?: RustMuRoute;
+  /** Connect a second engine on the same brain as `engine` (absent: the arm cannot, as PGLite). */
+  sameBrain?: () => Promise<BrainEngine>;
 }
 
 /** Per-case facilities beyond the arm's engine. */
@@ -71,6 +85,13 @@ export interface ParityContext {
    * case, so lifecycle cases (connect, disconnect) never touch the shared arm.
    */
   unconnectedEngine(): { engine: BrainEngine; config: EngineConfig };
+  /**
+   * A second CONNECTED engine on the same brain as the arm's engine. Postgres: a new PostgresEngine instance pool on the arm's
+   * database. Rust: a second RustEngine on the same brain directory, which becomes an owner-socket client of the first. PGLite
+   * is one connection: this throws `same_brain_unavailable` (a case that needs it is `n/a` there). Calls on it count toward
+   * `methods`; the harness disconnects it when the case ends.
+   */
+  sameBrainEngine(): Promise<BrainEngine>;
 }
 
 export interface ParityCaseOpts {
@@ -101,6 +122,12 @@ export interface ParityCaseOpts {
    * `due` name the code and the lane whose fix removes it. PGLite and Postgres ignore it.
    */
   rustPendingStop?: { capability: string; member: string; site: string; frame?: string; owner: string; due: string };
+  /**
+   * A multi-writer conformance case id (`'C04'`, a string literal: coverage.ts reads it statically). The case's row in
+   * multi-writer-cases.ts decides per arm whether it runs, is n/a or pending; a `runs` cell is held to strict acceptance
+   * (checkMwArm) and the case writes one line per arm to the GBRAIN_TEST_MW_LEDGER ledger. Takes no `requires`.
+   */
+  mwCase?: MwCaseId | `${MwCaseId}.${string}`;
   timeout?: number;
 }
 
@@ -110,12 +137,23 @@ function assertNever(value: never): never {
   throw new Error(`engine-parity: unhandled test backend ${String(value)}`);
 }
 
+/**
+ * Which multi-user route this process runs the Rust arm by: `off` (plain `rust`), `env` (`rust-mu-env`: the harness set
+ * GBRAIN_RUST_MULTIUSER=1 in the process) or `config` (`rust-mu-config`: the environment variable is unset and each brain
+ * carries the config row `engine.rust.multiuser`). A scenario that must know which route it runs under reads this, never the
+ * environment variable, which the config route leaves unset.
+ */
+export function rustMultiuserView(env: Record<string, string | undefined> = process.env): 'off' | 'env' | 'config' {
+  return rustMuRoute(env) ?? 'off';
+}
+
 /** The Rust arm: a new brain directory per case (reset), removed when the arm closes. */
-async function openRustArm(): Promise<ParityArm> {
-  const opened = await openRustBrain();
+async function openRustArm(route?: RustMuRoute): Promise<ParityArm> {
+  const opened = await openRustBrain(route);
   const dirs = [opened.dir];
   const arm: ParityArm = {
     backend: 'rust',
+    ...(route !== undefined && { muRoute: route }),
     engine: opened.engine as unknown as BrainEngine,
     close: async () => {
       await arm.engine.disconnect();
@@ -124,8 +162,12 @@ async function openRustArm(): Promise<ParityArm> {
     unconnected: () => {
       const brain = newRustBrain();
       dirs.push(brain.dir);
+      // On the rust-mu view the spare is seeded and its multi-user resolution required when the scenario connects it.
+      if (route !== undefined) installMuConnect(brain.engine as unknown as MuConnectable, route, () => removeBrainDir(brain.dir));
       return { engine: brain.engine as unknown as BrainEngine, config: { engine: 'pglite', database_path: brain.dir } as never };
     },
+    // The arm's current brain (a reset replaces it): the second engine is an owner-socket client of `arm.engine`.
+    sameBrain: async () => (await openRustBrainAt((arm.engine as unknown as { databasePath: string }).databasePath, route)) as unknown as BrainEngine,
   };
   return arm;
 }
@@ -134,26 +176,32 @@ async function resetRustArm(arm: ParityArm): Promise<void> {
   const previous = arm.engine as unknown as { databasePath: string };
   await arm.engine.disconnect();
   removeBrainDir(previous.databasePath);
-  arm.engine = (await openRustBrain()).engine as unknown as BrainEngine;
+  arm.engine = (await openRustBrain(arm.muRoute)).engine as unknown as BrainEngine;
   // The brain directories of every reset are removed here; the arm's own list only holds what `unconnected` made.
 }
 
-async function openArm(backend: ParityBackend): Promise<ParityArm> {
+async function openArm(backend: ParityBackend, muRoute?: RustMuRoute): Promise<ParityArm> {
   switch (backend) {
     case 'rust':
-      return openRustArm();
+      return openRustArm(muRoute);
     case 'pglite': {
       const engine = new PGLiteEngine();
       await engine.connect({ engine: 'pglite' } as never);
       await engine.initSchema();
       return { backend, engine, close: () => engine.disconnect(),
-        unconnected: () => ({ engine: new PGLiteEngine(), config: { engine: 'pglite' } }) };
+        unconnected: () => ({ engine: new PGLiteEngine(), config: { engine: 'pglite' } }),
+        sameBrain: async () => { throw Object.assign(new Error('same_brain_unavailable: PGLite is one connection, so no second engine can share its brain'), { code: 'same_brain_unavailable' }); } };
     }
     case 'postgres': {
       const { engine, databaseUrl, close } = await isolatedPersistencePostgres(process.env.DATABASE_URL!, 'instance', 4, { collation: 'en_US' });
       return { backend, engine, close,
         unconnected: () => ({ engine: new PostgresEngine(), // An instance pool, never the module-level singleton other code shares.
-        config: { engine: 'postgres', database_url: databaseUrl, poolSize: 2 } as EngineConfig }) };
+        config: { engine: 'postgres', database_url: databaseUrl, poolSize: 2 } as EngineConfig }),
+        sameBrain: async () => {
+          const second = new PostgresEngine(); // A new instance pool on the arm's database.
+          await second.connect({ engine: 'postgres', database_url: databaseUrl, poolSize: 2 } as EngineConfig);
+          return second;
+        } };
     }
     default:
       return assertNever(backend);
@@ -623,11 +671,15 @@ export const recordFactsReconcile: typeof recordFactsReconcileImpl = (...args) =
 export const recordFenceRetirement: typeof recordFenceRetirementImpl = (...args) => setupStep('recordFenceRetirement', () => recordFenceRetirementImpl(...args));
 
 /** Wrap an engine so every direct method call on the handle is recorded. */
-function recordingEngine(engine: BrainEngine, calls: Set<string>, refusals: unknown[] = []): BrainEngine {
+export function recordingEngine(engine: BrainEngine, calls: Set<string>, refusals: unknown[] = []): BrainEngine {
   return new Proxy(engine, {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver);
       if (typeof value !== 'function' || typeof prop !== 'string') return value;
+      // A Proxy must return a non-configurable, non-writable own property as it is (e.g. `openStore` on a Rust transaction
+      // clone, which `rustLeases(tx)` reads); wrapping it throws a TypeError. Such a property is not recorded.
+      const own = Object.getOwnPropertyDescriptor(target, prop);
+      if (own !== undefined && own.configurable === false && own.writable === false) return value;
       return (...args: unknown[]) => {
         calls.add(prop);
         // The transaction handle is an engine too: record the calls made on it.
@@ -663,6 +715,14 @@ async function stopWriteQueue(...engines: BrainEngine[]): Promise<void> {
   if (failure !== undefined) throw failure;
 }
 
+/** A second connected engine on the brain of `arm` (ParityContext.sameBrainEngine): recorded toward `methods`, disconnected with `extra`. */
+async function sameBrainOf(arm: ParityArm, extra: BrainEngine[], calls: Set<string>, refusals: unknown[]): Promise<BrainEngine> {
+  if (arm.sameBrain === undefined) throw new Error(`same_brain_unavailable: the ${arm.backend} arm cannot connect a second engine to its brain`);
+  const engine = await arm.sameBrain();
+  extra.push(engine);
+  return recordingEngine(engine, calls, refusals);
+}
+
 export interface ParitySuite {
   /** Run `scenario` on every arm from a reset brain; compare the returned observables. */
   parityTest<T>(name: string, opts: ParityCaseOpts, scenario: ParityScenario<T>): void;
@@ -681,18 +741,40 @@ export interface ParitySuite {
  */
 export function parityArms(backends: readonly TestBackend[]): ParitySuite {
   let arms: ParityArm[] = [];
-  const selected: ParityBackend[] = [...backends, ...(rustArmRequested() ? ['rust' as const] : [])];
+  // GBRAIN_TEST_RUST_MU_ARM=1 is the Rust arm with the multi-user switch on (label `rust-mu`); it implies the Rust arm.
+  const muRoute = rustMuRoute();
+  const selected: ParityBackend[] = [...backends, ...(rustArmRequested() || muRoute !== null ? ['rust' as const] : [])];
+  const rustLabel: 'rust' | 'rust-mu-env' | 'rust-mu-config' = muRoute === null ? 'rust' : `rust-mu-${muRoute}`;
+  const armLabel = (arm: ParityArm): LedgerArm => (arm.backend === 'rust' ? rustLabel : arm.backend);
   const testFile = callerTestFile(new Error().stack);
-  const tally: RustTally = { compared: 0, refused: 0, diverged: 0, stops: [] };
+  const tally: RustTally = { compared: 0, refused: 0, diverged: 0, standalone: 0, stops: [] };
+  const multiuserBefore = { set: false, value: undefined as string | undefined };
   // Cases this file declared, and the ones the Rust arm skipped on an `n/a` capability (rust-tally.ts).
   let registered = 0;
   let skipped = 0;
+  // rust-mu view only: compared cases the matrix runs on `rust` but holds pending on `rust-mu` (counted as the off pin counts them).
+  const muGaps: string[] = [];
+  const restoreMultiuser = (): void => {
+    if (!multiuserBefore.set) return;
+    multiuserBefore.set = false;
+    if (multiuserBefore.value === undefined) delete process.env.GBRAIN_RUST_MULTIUSER;
+    else process.env.GBRAIN_RUST_MULTIUSER = multiuserBefore.value;
+  };
   beforeAll(async () => {
     const opened: ParityArm[] = [];
     try {
-      for (const backend of selected) opened.push(await openArm(backend));
+      if (muRoute !== null) {
+        // Set after the operator-env preload (which strips GBRAIN_* variables), before the Rust arm opens. The env route turns
+        // the switch on; the config route leaves it unset, so only the brain's own config row can turn it on.
+        multiuserBefore.set = true;
+        multiuserBefore.value = process.env.GBRAIN_RUST_MULTIUSER;
+        if (muRoute === 'env') process.env.GBRAIN_RUST_MULTIUSER = '1';
+        else delete process.env.GBRAIN_RUST_MULTIUSER;
+      }
+      for (const backend of selected) opened.push(await openArm(backend, backend === 'rust' && muRoute !== null ? muRoute : undefined));
     } catch (error) {
       for (const arm of opened) await arm.close();
+      restoreMultiuser();
       throw error;
     }
     arms = opened;
@@ -701,20 +783,52 @@ export function parityArms(backends: readonly TestBackend[]): ParitySuite {
     const closing = arms;
     arms = [];
     for (const arm of closing) await arm.close();
+    restoreMultiuser();
     if (closing.some((arm) => arm.backend === 'rust')) {
-      console.log(`[rust arm] ${testFile}: ${tally.compared} equal to PGLite, ${tally.refused} stopped on a typed refusal, ${tally.diverged} expected divergences`);
+      const standalone = tally.standalone ?? 0;
+      console.log(`[${rustLabel} arm] ${testFile}: ${tally.compared} equal to PGLite, ${tally.refused} stopped on a typed refusal, ${tally.diverged} expected divergences`
+        + (standalone > 0 ? `, ${standalone} standalone (invariant only, not compared with PGLite)` : ''));
       // The ledger: each case that stopped, with the member that refused it (the tally above only counts them).
-      for (const stop of tally.stops ?? []) console.log(`[rust arm] ${testFile} stopped: "${stop.name}" on ${stop.member} (${stop.capability})${stop.pinned ? ` pinned until ${stop.pinned.due} (${stop.pinned.owner})` : ''}`);
-      const better = checkRustTally(testFile, { ...tally, skipped }, registered);
+      for (const stop of tally.stops ?? []) console.log(`[${rustLabel} arm] ${testFile} ${stop.caught ? 'caught (answer equal)' : 'stopped'}: "${stop.name}" on ${stop.member} (${stop.capability})${stop.pinned ? ` pinned until ${stop.pinned.due} (${stop.pinned.owner})` : ''}`);
+      if (muGaps.length > 0) console.log(`[${rustLabel} arm] ${testFile}: ${muGaps.length} known gap(s), skipped here and not counted as equal: the matrix holds them pending on rust-mu but runs them on rust (the pin check allows for them): ${muGaps.join(', ')}`);
+      // The standalone count is summed by checkRustTally itself (rust-tally.ts), so `skipped` stays the skipped cases only.
+      const better = checkRustTally(testFile, { ...tally, skipped, ...(muRoute !== null && { muView: true, knownGaps: muGaps.length }) }, registered);
       if (better !== null) console.log(better);
     }
   }, 60_000);
 
   function parityTest<T>(name: string, opts: ParityCaseOpts, scenario: ParityScenario<T>): void {
     registered++;
+    if (opts.mwCase !== undefined) {
+      // A multi-writer case no selected arm runs (every cell pending or n/a) must not read as a pass in a plain Bun run: it is
+      // registered as a todo that names the owners, and its per-arm ledger lines are still written when the ledger is on.
+      const row = mwEntry(opts.mwCase);
+      const labels = selected.map((backend) => (backend === 'rust' ? rustLabel : backend) as LedgerArm);
+      const plans = labels.map((label) => ({ label, plan: mwArmPlan(row, label) }));
+      if (plans.every((p) => p.plan.action === 'skip')) {
+        for (const { label, plan } of plans) if (plan.action === 'skip') appendLedger({ case: row.id, arm: label, outcome: plan.outcome, detail: plan.detail });
+        if (selected.includes('rust')) skipped++;
+        const why = [...new Set(plans.flatMap((p) => (p.plan.action === 'skip' ? [`${p.label}: ${p.plan.detail}`] : [])))].join('; ');
+        test.todo(`${name} [no selected arm runs it: ${why}]`, () => {});
+        return;
+      }
+    }
     test(name, async () => {
       expect(arms.length).toBeGreaterThan(0);
       const results: Array<{ backend: ParityBackend; value: T }> = [];
+      if (opts.mwCase !== undefined) {
+        // A multi-writer conformance case: the matrix row decides per arm, and a `runs` cell is held to strict acceptance.
+        const row = mwEntry(opts.mwCase);
+        const counts = await runMwCase<T>({ row, name, opts, arms: arms.map((arm) => mwHandle(arm, armLabel(arm), scenario)) });
+        skipped += counts.skipped;
+        tally.compared += counts.compared;
+        tally.standalone = (tally.standalone ?? 0) + counts.standalone;
+        // rust-mu view: a compared case the matrix runs on `rust` but holds pending on `rust-mu` is a known gap of the
+        // multi-user view, not a regression. It stays skipped (its scenario did not run, so it is never counted as equal);
+        // the pin check allows for it by name (rust-tally.ts `knownGaps`), so everything else is still held to the off pin.
+        if (muRoute !== null && row.reference === 'compare' && mwArmPlan(row, 'rust').action === 'run' && mwArmPlan(row, rustLabel).action === 'skip') muGaps.push(row.id);
+        return;
+      }
       for (const arm of arms) {
         await resetArm(arm);
         const calls = new Set<string>();
@@ -726,6 +840,7 @@ export function parityArms(backends: readonly TestBackend[]): ParitySuite {
             extra.push(engine);
             return { engine: recordingEngine(engine, calls, refusals), config };
           },
+          sameBrainEngine: () => sameBrainOf(arm, extra, calls, refusals),
         };
         const runs = armHas(arm.backend, opts.requires);
         if (!runs && missingCapability(opts.requires!).kind === 'n/a') {
@@ -739,10 +854,12 @@ export function parityArms(backends: readonly TestBackend[]): ParitySuite {
         try {
           if (arm.backend === 'rust') {
             const divergence = readDivergences().find((row) => row.file === testFile && row.name === name);
-            const pin = readStopPins().find((row) => row.file === testFile && row.name === name);
+            const rows = readStopPins().filter((row) => row.file === testFile && row.name === name);
+            const pin = rows.find((row) => !row.member.includes('@'));
+            const caughtPins = rows.filter((row) => row.member.includes('@'));
             try {
               await checkRustArm({ name, opts, run: () => scenario(given, arm.backend, ctx), calls, refusals,
-                reference: results[0], divergence, pin }, tally);
+                reference: results[0], divergence, pin, caughtPins }, tally);
             } finally {
               for (const engine of extra) await engine.disconnect().catch(() => undefined);
             }
@@ -795,8 +912,10 @@ function callerTestFile(stack: string | undefined): string {
 /** What the Rust arm did with each case of one file, printed when the file finishes. */
 export interface RustTally {
   compared: number; refused: number; diverged: number;
+  /** Multi-writer cases whose row is `standalone`: they passed on their inline invariant alone and are never counted as equal to PGLite. */
+  standalone?: number;
   /** The per-case ledger of stopped cases (optional: a caller that only wants the counts leaves it out). */
-  stops?: Array<{ name: string; member: string; capability: string; pinned?: StopPin }>;
+  stops?: Array<{ name: string; member: string; capability: string; pinned?: StopPin; caught?: true }>;
 }
 
 export interface RustCase<T> {
@@ -811,6 +930,22 @@ export interface RustCase<T> {
   divergence: DivergenceRow | undefined;
   /** The row of test/rust-stop-pins/ for this case, when it has one. */
   pin?: StopPin | undefined;
+  /** Rows of test/rust-stop-pins/ for refusals the case catches on its way (member `name@src/...` file). */
+  caughtPins?: StopPin[];
+}
+
+/** `member@site` of a caught refusal: the member it names and the first src/ file outside the engine that called it. */
+export function caughtSite(error: unknown): string {
+  const member = refusalFacts(error).member ?? 'unknown';
+  const frames = String((error as { stack?: unknown } | null)?.stack ?? '').split('\n');
+  for (const frame of frames) {
+    const at = /\/(src\/[^\s:()]+\.ts):\d+/.exec(frame);
+    if (!at) continue;
+    const file = at[1]!;
+    if (file.startsWith('src/core/rust-engine') || file === 'src/core/ops/contract.ts' || file === 'src/core/engine-capability-refusal.ts') continue;
+    return `${member}@${file}`;
+  }
+  return `${member}@unknown`;
 }
 
 interface RefusalVerdict {
@@ -953,9 +1088,20 @@ export async function checkRustArm<T>(c: RustCase<T>, tally: RustTally): Promise
   }
 
   if (pendingPin) throw new Error(`[rust] "${c.name}" no longer stops; remove its rustPendingStop pin (${pinText})`);
-  // It returned. A case that reaches a refusing member, or caught a refusal, must not finish as if nothing happened.
-  expect({ backend: 'rust', case: c.name, reachesRefusingMember: refusing.length > 0 && capabilities.size > 0, caughtRefusals: caught })
-    .toEqual({ backend: 'rust', case: c.name, reachesRefusingMember: false, caughtRefusals: 0 });
+  // It returned. A case that reaches a refusing member, or caught a refusal, must not finish as if nothing happened,
+  // unless every refusal it caught is pinned by member and calling file (test/rust-stop-pins/, owner and due date).
+  const caughtPins = c.caughtPins ?? [];
+  const sites = c.refusals.filter(refusedBy).map(caughtSite);
+  const unpinned = sites.filter((site) => !caughtPins.some((p) => p.member === site));
+  for (const p of caughtPins) {
+    if (p.due < today()) throw new Error(`[rust] "${c.name}": the stop pin for ${p.member} (${p.owner}) was due ${p.due} and has passed (${p.reason}); fix the member or move the date`);
+    if (!sites.includes(p.member)) throw new Error(`[rust] "${c.name}" has a row in test/rust-stop-pins/ for ${p.member} (${p.owner}, due ${p.due}) but no longer catches ${p.member}; remove the row`);
+  }
+  const pinnedMembers = new Set(caughtPins.map((p) => p.member.split('@')[0]!));
+  const stillRefusing = refusing.filter((m) => !pinnedMembers.has(m));
+  expect({ backend: 'rust', case: c.name, reachesRefusingMember: stillRefusing.length > 0 && capabilities.size > 0, caughtRefusals: unpinned.length, unpinned: [...new Set(unpinned)] })
+    .toEqual({ backend: 'rust', case: c.name, reachesRefusingMember: false, caughtRefusals: 0, unpinned: [] });
+  for (const p of caughtPins) tally.stops?.push({ name: c.name, member: p.member, capability: refusalFacts(c.refusals.find((e) => caughtSite(e) === p.member)).capability ?? 'unknown', pinned: p, caught: true });
   const missing = c.opts.methods.filter((m) => !c.calls.has(m));
   expect({ backend: 'rust', declaredButNotCalled: missing }).toEqual({ backend: 'rust', declaredButNotCalled: [] });
   const reference = c.reference!;
@@ -991,6 +1137,242 @@ function checkPendingStop(name: string, pin: NonNullable<ParityCaseOpts['rustPen
   if (message.includes('write_pending') && named) return;
   throw new Error(`[rust] "${name}" does not stop as its rustPendingStop pin says (${pinText}); update or remove the pin. `
     + `write_pending: ${message.includes('write_pending')}; typed refusals: ${JSON.stringify([...new Set(refusals.map(detail))])}; error: ${message}`);
+}
+
+// ---- multi-writer conformance cases (multi-writer-cases.ts) ----------------------------------------------------
+
+/** What an arm does with a `mwCase` case before running anything: skip it with a ledger outcome, or run it. */
+export type MwArmPlan =
+  | { action: 'run' }
+  | { action: 'skip'; outcome: 'n/a' | 'pending'; detail: string };
+
+/** What the harness reads of a matrix entry: a case row, or a variant of one (multi-writer-entries.ts `MwEntry`). */
+export type MwEntryLike = Pick<MwCase, 'cells' | 'reference' | 'needs'> & { id: string };
+
+/** The matrix cell of `row` on `label` (both `rust-mu` routes read the `rust-mu` cell): `runs` runs the case, `n/a` and `pending` skip it. */
+export function mwArmPlan(row: MwEntryLike, label: LedgerArm): MwArmPlan {
+  const cell = row.cells[cellArm(label)];
+  switch (cell.status) {
+    case 'runs': return { action: 'run' };
+    case 'n/a': return { action: 'skip', outcome: 'n/a', detail: cell.why };
+    case 'pending': return { action: 'skip', outcome: 'pending', detail: `${cell.owner}: ${cell.why}` };
+    default: return assertNever(cell);
+  }
+}
+
+/** What one arm of a `mwCase` case hands the runner once it is reset and started. */
+export interface MwArmStarted<T> {
+  run: () => Promise<T>;
+  calls: Set<string>;
+  refusals: unknown[];
+  capabilities: ReadonlySet<string> | undefined;
+  /** End of the arm's case: disconnect what the case connected, stop the write queue (`failed` keeps the case's own error first). */
+  finish(failed: boolean): Promise<void>;
+}
+
+/** An arm as `runMwCase` sees it: its label and backend, and how to start the case on it (called only when the cell runs). */
+export interface MwArmHandle<T> {
+  label: LedgerArm;
+  backend: ParityBackend;
+  /** Added to the detail of this arm's ledger lines (the rust-mu view says when the build does not resolve the switch). */
+  note?: () => string | undefined;
+  start(): Promise<MwArmStarted<T>>;
+}
+
+/** What one `mwCase` case did on the Rust arm, for the tally (rust-tally.ts): skipped cells, compared passes, standalone passes. */
+export interface MwCaseCounts { skipped: number; compared: number; standalone: number }
+
+/**
+ * Run one `mwCase` case over `arms` in order. An arm whose cell is `n/a` or `pending` is skipped (one ledger line, no reset;
+ * on Rust it counts as skipped). An arm whose cell `runs` is started and held to strict acceptance (checkMwArm). The reference
+ * is the first arm that ran the case in this process (a `standalone` row never provides one and compares nothing), so with
+ * PGLite `n/a` and no Postgres, a Rust arm has none: `prerequisite_missing`. When every arm is skipped the case passes
+ * having run nothing, and the ledger holds one `n/a` or `pending` line per arm.
+ */
+export async function runMwCase<T>(c: { row: MwEntryLike; name: string; opts: ParityCaseOpts; arms: readonly MwArmHandle<T>[]; ledger?: (line: LedgerLine) => void }): Promise<MwCaseCounts> {
+  const ledger = c.ledger ?? appendLedger;
+  const counts: MwCaseCounts = { skipped: 0, compared: 0, standalone: 0 };
+  const results: Array<{ label: LedgerArm; value: T }> = [];
+  for (const arm of c.arms) {
+    const note = arm.note?.();
+    const noted = (line: LedgerLine): void => ledger(note === undefined ? line : { ...line, detail: `${line.detail}; ${note}` });
+    const plan = mwArmPlan(c.row, arm.label);
+    if (plan.action === 'skip') {
+      noted({ case: c.row.id, arm: arm.label, outcome: plan.outcome, detail: plan.detail });
+      if (arm.backend === 'rust') counts.skipped++;
+      continue;
+    }
+    const started = await arm.start();
+    let failed = false;
+    try {
+      const reference = results[0] === undefined ? undefined : { label: results[0].label, value: results[0].value };
+      const accepted = await checkMwArm({ row: c.row, label: arm.label, backend: arm.backend, name: c.name, opts: c.opts, run: started.run, calls: started.calls,
+        refusals: started.refusals, capabilities: started.capabilities, reference, ledger: noted });
+      if (accepted.standalone) {
+        if (arm.backend === 'rust') counts.standalone++;
+      } else {
+        if (arm.backend === 'rust') counts.compared++;
+        results.push({ label: arm.label, value: accepted.value });
+      }
+    } catch (error) {
+      failed = true;
+      throw error;
+    } finally {
+      await started.finish(failed);
+    }
+  }
+  return counts;
+}
+
+/** The harness arm as a `runMwCase` handle: reset it, wrap its engine to record calls, and stop its queue when the case ends. */
+function mwHandle<T>(arm: ParityArm, label: LedgerArm, scenario: ParityScenario<T>): MwArmHandle<T> {
+  return {
+    label, backend: arm.backend,
+    start: async () => {
+      await resetArm(arm);
+      const calls = new Set<string>();
+      const refusals: unknown[] = [];
+      const extra: BrainEngine[] = [];
+      const ctx: ParityContext = {
+        unconnectedEngine: () => {
+          const { engine, config } = arm.unconnected();
+          extra.push(engine);
+          return { engine: recordingEngine(engine, calls, refusals), config };
+        },
+        sameBrainEngine: () => sameBrainOf(arm, extra, calls, refusals),
+      };
+      const given = recordingEngine(arm.engine, calls, refusals);
+      return {
+        run: () => scenario(given, arm.backend, ctx), calls, refusals, capabilities: arm.engine.capabilities as ReadonlySet<string> | undefined,
+        finish: async (failed: boolean) => {
+          // A case may already have disconnected an engine it connected; a second disconnect is harmless or refused.
+          for (const engine of extra) await engine.disconnect().catch(() => undefined);
+          await stopWriteQueue(given, arm.engine).catch((error: unknown) => { if (!failed) throw error; });
+        },
+      };
+    },
+  };
+}
+
+/** A `compare` case on a Rust arm that has no reference arm to compare with (no PGLite for the case, no DATABASE_URL). */
+class MwPrerequisiteError extends Error {}
+
+export interface MwArmCase<T> {
+  row: MwEntryLike;
+  label: LedgerArm;
+  backend: ParityBackend;
+  name: string;
+  opts: ParityCaseOpts;
+  run: () => Promise<T>;
+  calls: Set<string>;
+  /** The typed refusals the engine raised during the case, including ones the case caught. */
+  refusals: unknown[];
+  /** The engine's own capability set (`engine.capabilities`): a Rust label must report what the row `needs`. */
+  capabilities: ReadonlySet<string> | undefined;
+  /** What the first arm that ran this case in the process returned; undefined when none ran. */
+  reference: { label: LedgerArm; value: T } | undefined;
+  /** Where each outcome line goes (default: the GBRAIN_TEST_MW_LEDGER file, when set). */
+  ledger?: (line: LedgerLine) => void;
+}
+
+function isTypedRefusal(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const holders = [error, (error as { detail?: unknown }).detail, (error as { envelope?: unknown }).envelope];
+  return holders.some((h) => typeof h === 'object' && h !== null && (h as { code?: unknown }).code === 'engine_capability_missing');
+}
+
+/** How a thrown error is named in a strict-acceptance failure. */
+function describeMwStop<T>(c: MwArmCase<T>, error: unknown): string {
+  const text = String((error as { message?: unknown } | null)?.message ?? error);
+  const code = (error as { code?: unknown } | null)?.code;
+  const pin = c.opts.rustStop;
+  if (pin !== undefined && error instanceof Error && code === pin.code && error.message.includes(pin.pin)) {
+    return `a named stop (${pin.code}), which a \`runs\` cell does not accept: ${text}`;
+  }
+  if (isTypedRefusal(error)) {
+    const facts = refusalFacts(error);
+    return `a typed capability refusal (${facts.capability ?? 'unnamed capability'}${facts.member === null ? '' : ` at ${facts.member}`}), which a \`runs\` cell does not accept: ${text}`;
+  }
+  if (code === 'multi_writer_pending' || code === 'pending' || (error instanceof Error && error.name === 'PendingError')) {
+    return `a pending error, which a \`runs\` cell does not accept: ${text}`;
+  }
+  return `an error: ${text}`;
+}
+
+/**
+ * Strict acceptance of one `mwCase` case on an arm whose matrix cell is `runs`. The case passes only when the whole
+ * scenario and its inline asserts complete: a thrown typed capability refusal, a pending error or a named stop fails it
+ * (ordinary parity cases keep the refusal handling of checkRustArm), and so does a refusal the scenario caught and carried on
+ * from, or a declared member that was never called. On a Rust label a row that `needs` a capability also fails unless the
+ * engine itself reports it (`multi_writer` on `rust-mu` once the optimistic transactions land), and a `compare` case with no
+ * reference arm records `prerequisite_missing` and fails naming DATABASE_URL. A `standalone` case compares nothing.
+ * One ledger line is written for the arm, `fail` before the error is thrown. Returns the value and whether it stood alone.
+ */
+/**
+ * `multi_writer` is a multi-user capability: it lives in `MULTIUSER_CAPABILITIES` (src/core/engine-capabilities.ts), which
+ * an engine reports only while the multi-user switch is on, never in `ENGINE_CAPABILITIES` (whose sets stay unchanged with
+ * the switch off). A build without that list yet (before the optimistic-transaction work lands) has neither entry.
+ */
+export function assertMultiuserCapabilityName(name: string, mod: Record<string, unknown> = engineCapabilitiesModule): void {
+  const base = (mod.ENGINE_CAPABILITIES ?? []) as readonly string[];
+  const multiuser = mod.MULTIUSER_CAPABILITIES as readonly string[] | undefined;
+  if (base.includes(name)) throw new Error(`engine-parity: ${name} is in ENGINE_CAPABILITIES; it belongs in MULTIUSER_CAPABILITIES only`);
+  if (multiuser !== undefined && !multiuser.includes(name)) throw new Error(`engine-parity: ${name} is not in MULTIUSER_CAPABILITIES`);
+}
+
+export async function checkMwArm<T>(c: MwArmCase<T>): Promise<{ value: T; standalone: boolean }> {
+  const ledger = c.ledger ?? appendLedger;
+  const id = c.row.id;
+  const prefix = `[${c.label}] ${id} "${c.name}"`;
+  const isRust = c.backend === 'rust';
+  const accept = async (): Promise<{ value: T; standalone: boolean; detail: string }> => {
+    if (c.row.cells[cellArm(c.label)].status !== 'runs') throw new Error(`${prefix}: checkMwArm runs only a \`runs\` cell, and the ${c.label} cell is ${c.row.cells[cellArm(c.label)].status}`);
+    if (c.opts.requires !== undefined) throw new Error(`${prefix}: an mwCase case takes no \`requires\`; its matrix row decides where it runs`);
+    const needs = c.row.needs;
+    if (needs !== undefined) {
+      assertMultiuserCapabilityName(needs);
+      const has = isRust ? c.capabilities?.has(needs) === true : armHas(c.backend as ParityArmName, needs);
+      if (!has) {
+        throw new Error(`${prefix}: the matrix marks this arm \`runs\` and the case needs ${needs}, but ${isRust ? 'the engine does not report it' : 'the arm has no such capability'}`
+          + (isRust ? ` (engine.capabilities has ${[...(c.capabilities ?? [])].sort().join(', ') || 'nothing'})` : ''));
+      }
+    }
+    let value: T;
+    try {
+      value = await c.run();
+    } catch (error) {
+      throw new Error(`${prefix}: the scenario ended on ${describeMwStop(c, error)}`, { cause: error });
+    }
+    if (c.refusals.length > 0) {
+      const named = [...new Set(c.refusals.map((e) => { const f = refusalFacts(e); return f.member ?? f.capability ?? 'an unnamed member'; }))];
+      throw new Error(`${prefix}: the scenario finished, but the engine refused ${named.join(', ')} with a typed capability refusal on the way; a \`runs\` cell takes no refusal, caught or not`);
+    }
+    const missing = c.opts.methods.filter((m) => !c.calls.has(m));
+    if (missing.length > 0) throw new Error(`${prefix}: declared members never called: ${missing.join(', ')}`);
+    if (c.row.reference === 'standalone') return { value, standalone: true, detail: 'standalone: inline invariant only, not compared' };
+    if (c.reference === undefined) {
+      if (isRust) {
+        throw new MwPrerequisiteError(`${prefix}: no reference arm ran this \`compare\` case (PGLite is n/a for it and Postgres is not selected); set DATABASE_URL (with GBRAIN_TEST_ALLOW_DATABASE_URL=1) so the Postgres arm runs first`);
+      }
+      return { value, standalone: false, detail: 'reference arm' };
+    }
+    try {
+      expect({ arm: c.label, value }).toEqual({ arm: c.label, value: c.reference.value });
+    } catch (error) {
+      if (error instanceof Error) error.message = `${prefix}: differs from the ${c.reference.label} arm, the reference\n${error.message}`;
+      throw error;
+    }
+    return { value, standalone: false, detail: `equal to ${c.reference.label}` };
+  };
+  try {
+    const accepted = await accept();
+    ledger({ case: id, arm: c.label, outcome: 'pass', detail: accepted.detail });
+    return { value: accepted.value, standalone: accepted.standalone };
+  } catch (error) {
+    ledger({ case: id, arm: c.label, outcome: error instanceof MwPrerequisiteError ? 'prerequisite_missing' : 'fail',
+      detail: String((error as { message?: unknown } | null)?.message ?? error) });
+    throw error;
+  }
 }
 
 /** Sorted copy, for order-free comparisons. */

@@ -77,7 +77,10 @@ describe('the bench save failures', () => {
           // (by design, #6608). PGLite is a single-process engine (consumer-election.ts) and claims it. A Rust brain refuses
           // managed mode (capability managed_persistence, held in store-capabilities.ts), so the claim refuses by name and
           // nothing is written.
-          if (backend === 'rust') {
+          // With the hold lifted on this test engine (GBRAIN_TEST_RUST_MANAGED=1, rust-managed.ts), Rust is a
+          // single-process engine like PGLite and follows PGLite's rule below.
+          const lifted = backend === 'rust' && engine.capabilities?.has('managed_persistence') === true;
+          if (backend === 'rust' && !lifted) {
             // Named stop, by design (Garry, B2, Nov 22): managed_persistence refused by design on Rust (B2) until the
             // Rust engine carries managed mode. A capability refusal takes the in-test pin (harness.ts: assert the
             // refusal, rethrow it), so the Rust arm counts the case as stopped and never as equal.

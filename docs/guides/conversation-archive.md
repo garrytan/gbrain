@@ -125,6 +125,56 @@ days, then reads again only the conversations on the days it writes, and writes 
 thousands of sessions stays bounded in memory. Backfilled pages are searchable by keyword at once, and their
 embedding is held until you approve its cost (`gbrain embed --held --dry-run` shows it, `gbrain embed --held` runs it).
 
+## Setup history import
+
+A brain that `gbrain setup claude-code` or `gbrain setup codex` creates starts empty, so setup offers to import the
+coding-agent sessions already on the machine. It asks first, imports the newest session on the first yes, and the rest
+of the last 30 days only on a second yes. It uses the archive's own run: one redacted page per conversation per day in
+the private `conversations` source, with no model or provider call, and it never changes the archive switch.
+
+**When it is offered.** Only on the brain this setup run created. Right after its own `gbrain init`, setup writes an
+install receipt (config `onboarding.install_receipt`), which is eligible only when the brain has no pages, serves
+one person whose audience is proven, has the archive on, and setup was not pinned to a source (`--source`,
+`GBRAIN_SOURCE`), a team (`--team`) or a member (`--stdio-member`, `--serves several`). An upgraded,
+restored or imported brain never gets the offer, and `--history` on one fails with `setup_history_ineligible`.
+A brain that turns shared later is refused at the next import.
+
+**What it reads.** Session files only, and only these folders: `$CLAUDE_CONFIG_DIR/projects` or
+`~/.claude/projects` (Claude Code), `$CODEX_HOME/sessions` or `~/.codex/sessions` (Codex), and
+`~/.openclaw/agents` (OpenClaw), or `<dir>/claude-code`, `<dir>/codex` and `<dir>/openclaw` with
+`--history-dir <dir>`. The preview lists files by modification time, newest first, without opening them, and
+admits at most 500 files, 16 MiB per file, 64 MiB in all and 20,000 messages; larger files are counted as oversized
+and skipped. An import reads exactly the files its preview admitted. A session whose redaction fails is held and
+reported by harness, day and code, never by its text. Each session's working-folder name becomes its project.
+
+**How it asks.** At a terminal: the preview line, then `Import that newest session now? [Y/n]` (Enter is yes; end of
+input or 60 seconds of silence is no and leaves the offer open), then `[y/N]` for the range, which only an explicit
+`y` authorizes. With `--notes`, only the range is offered. Off a terminal or with `--json`, the offer is the
+`setup_history` decision in the first-run bundle, after `brain_shape`: its `import` option runs
+`gbrain setup <harness> --history-decision <id>` (valid 24 hours, used once; a replay reports `consumed` and imports
+nothing), its `decline` option `--history decline`. `--history none` skips for one run, `--history latest` or
+`--history <1-30>` imports at once, and `--no-extract` imports without deriving links. Every command setup prints
+for this step (the accept, decline, resume and deferred ones) repeats this run's wiring flags, such as `--no-hooks`,
+`--surface`, `--workspace` or `--source`, and quotes paths with spaces, so running it later wires the brain the same
+way. Each step runs against the brain setup itself created, never a project brain the current folder points at.
+
+**What it waits for.** The whole step has one 20-second budget. A run that reaches it stops starting new work and
+reports `partial` with a resume command; a write the brain accepted but has not published exits 10 with its
+receipts. A busy archive lock is retried twice, then fails with `archive_run_busy`. A member added while it runs
+stops it before the next day is published (`archive_audience_changed`); the pages already written are kept to the
+owner. A running `gbrain serve` that holds the brain defers it with the command to run once it stops. On a
+git-backed archive source the pages are committed with `gbrain git commit-push` and synced before links derive.
+
+**The card.** After an import setup prints what the brain now holds, each count marked `[measured]`, `[off]` (links
+with `--no-extract` or `auto_link` off) or `[unavailable]`, then three questions built from the person's own
+decision lines (lines worded as instructions are skipped), one from another harness when there is one. Setup's
+`--json` document carries `history`: `version`, `status` (`imported`, `partial`, `accepted`,
+`nothing_found`, `consumed`, `offered`, `declined`, `skipped`, `not_offered`, `deferred`,
+`failed`), `stages[]` (stage, status, sessions, days, links, held, receipts), `sessions_found`,
+`sessions_imported`, `no_history`, `decision`, `card` and `exit`. The same steps run by hand as
+`gbrain transcripts archive setup-import receipt|preview|run|decline|card`. For the first 3 sessions after setup the
+agent also gets a [first-session suggestion](first-session-suggestion.md) that names the next import.
+
 ## Old archive folders
 
 If an earlier tool already archived conversations into a folder (a home-made script or cron job), retire it in three

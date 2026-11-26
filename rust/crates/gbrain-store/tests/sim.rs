@@ -20,6 +20,12 @@
 //! beside it.
 //!
 //! Run more seeds with `GBRAIN_SIM_SEEDS=10000`; repeat one with `GBRAIN_SIM_SEED=<n>`.
+//!
+//! This file drives the single-writer store only. Its crash and recovery tests are named
+//! `embedded_one_owner_...`; each has an `#[ignore = "multi_writer"]` twin for the optimistic store, which
+//! `tests/multi_writer_sim.rs` drives through the `step_pipeline()` seam once it exists.
+
+mod common;
 
 use gbrain_sim::check::{self, Class, Committed, Model, Reopen, Violation, WriteSet};
 use gbrain_sim::trace::fnv1a;
@@ -1440,7 +1446,7 @@ fn assert_clean(totals: &Totals, label: &str) {
 // ---- the tests -------------------------------------------------------------------------------
 
 #[test]
-fn an_honest_run_matches_its_recorded_commits_and_is_sound() {
+fn embedded_one_owner_an_honest_run_matches_its_recorded_commits_and_is_sound() {
     for seed in seeds(40) {
         let disk = SimDisk::new(seed, FaultPlan::none());
         let run = workload(&disk, seed, None).unwrap();
@@ -1560,7 +1566,7 @@ fn the_integrity_check_sees_damage() {
 }
 
 #[test]
-fn a_crash_at_any_point_loses_nothing_and_tears_nothing() {
+fn embedded_one_owner_a_crash_at_any_point_loses_nothing_and_tears_nothing() {
     let totals = run_kind(Kind::Crash, 200, "crash");
     assert_clean(&totals, "crash");
     assert_eq!(totals.refused, 0, "an honest disk must always reopen");
@@ -1568,7 +1574,7 @@ fn a_crash_at_any_point_loses_nothing_and_tears_nothing() {
 }
 
 #[test]
-fn fsync_errors_and_lies_are_survived_or_refused_cleanly() {
+fn embedded_one_owner_fsync_errors_and_lies_are_survived_or_refused_cleanly() {
     let totals = run_kind(Kind::FsyncFault, 200, "fsync-fault");
     assert_clean(&totals, "fsync-fault");
 }
@@ -1650,4 +1656,31 @@ fn logged_an_honest_run_has_a_log_that_replays_to_its_records() {
         extra.0.insert(b"zz/not-logged".to_vec(), b"x".to_vec());
         assert!(check_log_replay(&*run.kv, &extra).is_err(), "seed {seed}");
     }
+}
+
+/// C19, P-H: the same check on the optimistic store, driven by the seeded scheduler through the `step_pipeline()` seam
+/// (`tests/multi_writer_sim.rs`). Twin of `embedded_one_owner_an_honest_run_matches_its_recorded_commits_and_is_sound`; pending on the sim seam.
+#[test]
+#[ignore = "multi_writer"]
+fn an_honest_run_matches_its_recorded_commits_and_is_sound_multi_writer() {
+    common::mu::pending_member::<()>(common::mu::L1_SIM, "OccKv::step_pipeline")
+        .unwrap_or_else(|e| panic!("{e}"));
+}
+
+/// C19, P-H: the same check on the optimistic store, driven by the seeded scheduler through the `step_pipeline()` seam
+/// (`tests/multi_writer_sim.rs`). Twin of `embedded_one_owner_a_crash_at_any_point_loses_nothing_and_tears_nothing`; pending on the sim seam.
+#[test]
+#[ignore = "multi_writer"]
+fn a_crash_at_any_point_loses_nothing_and_tears_nothing_multi_writer() {
+    common::mu::pending_member::<()>(common::mu::L1_SIM, "OccKv::step_pipeline")
+        .unwrap_or_else(|e| panic!("{e}"));
+}
+
+/// C19, P-H: the same check on the optimistic store, driven by the seeded scheduler through the `step_pipeline()` seam
+/// (`tests/multi_writer_sim.rs`). Twin of `embedded_one_owner_fsync_errors_and_lies_are_survived_or_refused_cleanly`; pending on the sim seam.
+#[test]
+#[ignore = "multi_writer"]
+fn fsync_errors_and_lies_are_survived_or_refused_cleanly_multi_writer() {
+    common::mu::pending_member::<()>(common::mu::L1_SIM, "OccKv::step_pipeline")
+        .unwrap_or_else(|e| panic!("{e}"));
 }

@@ -714,7 +714,9 @@ impl Store {
         if !meta.is_empty() {
             base.set_commit_meta(meta);
         }
-        base.commit_position()
+        let at = base.commit_position()?;
+        self.note_commit(at);
+        Ok(at)
     }
 
     /// Rolls the transaction back. Counters it advanced are written forward before the writer is

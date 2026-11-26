@@ -135,6 +135,38 @@ With write origin on, the native admission (`admit_write`, `submit_page_mutation
 (the open's, or `origin.incarnation`) and `writer_id`. The row the members return shows `admitter_host_id` in its
 existing column; the other two are not in any row. Off, `origin` on an admission is ignored and `extra` is unchanged.
 
+## Engine members
+
+`BrainEngine.readCommitLog(after, limit)` and `BrainEngine.lastCommitPosition()` (src/core/engine-members/commit-log.ts)
+expose the log and commit positions to TypeScript, through the addon's `Brain#readCommitLog` and
+`Brain#lastCommitPosition` (`gbrain-napi/src/families/commit_log.rs`). A page lists each record's position, commit time,
+origin, write ids and op count (the ops stay in the store). `lastCommitPosition` on the engine answers the newest
+finished write or transaction of that engine; on the engine a transaction callback received, the position that
+transaction committed at, also after it ended (null while open or after a rollback). Both refuse with
+`engine_capability_missing`, reason `commit_log`, on PGLite and Postgres and on a Rust engine whose store keeps no log;
+the Rust engine reports the `commit_log` capability only while its store keeps one. Positions cross as JavaScript
+numbers; a sequence of 2^53 or more or an index above 2^32 - 1 is refused, never truncated.
+
+## Followers and promotion
+
+`gbrain_store::follower::Follower` (`follower.rs`) keeps a copy of a commit log brain from its primary's log. It is a
+replica of the whole brain, log included: the primary's records (with its own retention), commit sequence and durable
+commit time. Its cursor is its own log's `newest`, written in the same redb transaction as the data it applied.
+
+| Call | What it does |
+|---|---|
+| `Follower::open(dir)` | Opens or creates the follower in `dir`; an empty one accepts only a snapshot. A brain without a log is refused. |
+| `apply_page(&LogPage)` / `apply_raw(lineage, &[(position, record bytes)])` | Applies the records after the cursor in one redb transaction: data ops, the records, the log meta, the sequence (pinned to the primary's) and `M\0ctime`. Records at or before the cursor are skipped, so applying twice is a no-op. A gap, a cursor the log no longer reaches, or another history refuses `snapshot_required` and changes nothing. |
+| `install_snapshot(dir, manifest)` | Validates and copies a snapshot (`Store::snapshot_to`) from one held read state, in one redb transaction that replaces every key. Refused, changing nothing: no log, another brain, a manifest mismatch, an inconsistent log, or a snapshot behind the follower on the same history. On another history it may move the follower back. |
+| `cursor()`, `lineage()`, `sequence()`, `last_commit_time()`, `records()` | What the follower holds. |
+| `promote(options)` | Starts a new timeline at the cursor and opens the brain as a logged multi-user `Store`. Its next commit is `(cursor.sequence + 1, 0)`; its commit clock starts above max(`M\0ctime`, the newest record's time). |
+
+History: the log meta keeps `lineage`, the timelines `{ id, from }` the log went through after its first one (absent
+until a promotion). Every `LogPage` carries it. A follower continues only when its own lineage is a prefix of the
+page's and every newer timeline starts at or after its cursor (`commit_log::lineage_continues`). Fencing the old
+primary before a promotion is the caller's job (lane L5's leases); the store does not fence it. Cost: a snapshot
+install is one redb transaction the size of the brain.
+
 ## Tests
 
 `tests/commit_log.rs` (both store modes): a follower that reads only the log matches the leader after every commit

@@ -111,6 +111,10 @@ const NOT_READ_BEHAVIOR = new Set([
   // Rust engine addon path: only the addon loader reads it, and no read path calls the loader yet.
   // Move it to READ_BEHAVIOR_ENV when a brain can be served by the Rust engine.
   'GBRAIN_RUST_ENGINE_ADDON',
+  // Rust multi-user write origin: stamps the host on each write the store commits; no read answers differently.
+  'GBRAIN_RUST_WRITE_ORIGIN',
+  // Rust multi-user owner-side remote check: the owner socket refuses a remote caller's write; reads run as before.
+  'GBRAIN_RUST_OWNER_REMOTE_CHECK',
   // Set by the shadow supervisor for its own child process so the child never shadows (and, as the session nonce, binds the child's asks to it); no caller exports either and no read reads them.
   'GBRAIN_SHADOW_CHILD', 'GBRAIN_SHADOW_SESSION',
   // Shadow capture's kill switch only stops recording; an answer never changes.

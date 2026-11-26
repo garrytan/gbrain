@@ -86,7 +86,7 @@ function writeLoop(engine: RustEngine, name: string, stop: { now: boolean }) {
 }
 
 describe('a Rust brain whose owner is killed mid-write', () => {
-  withAddon('a client takes over within the bound, one process owns the brain, and no acknowledged write is lost', async () => {
+  withAddon('embedded, one owner: a client takes over within the bound, one process owns the brain, and no acknowledged write is lost', async () => {
     const db = join(SCRATCH, 'brain-kill');
     const { child, lines } = await startChild('writer', db, 0);
     const engines: RustEngine[] = [];
@@ -136,8 +136,9 @@ describe('a Rust brain whose owner is killed mid-write', () => {
       for (const engine of engines) await engine.disconnect().catch(() => undefined);
     }
   }, 60_000);
+  test.todo('multi-writer (C06): after a takeover within the bound exactly one primary writes, the old primary is fenced by its token, and no acknowledged write is lost', () => {});
 
-  withAddon('a client whose owner disconnects cleanly takes the brain over on its next call', async () => {
+  withAddon('embedded, one owner: a client whose owner disconnects cleanly takes the brain over on its next call', async () => {
     const db = join(SCRATCH, 'brain-close');
     const addon = await loadRustAddon({ env: { GBRAIN_RUST_ENGINE_ADDON: BUILT } });
     const owner = openRustEngine({ addon, databasePath: db });
@@ -156,4 +157,5 @@ describe('a Rust brain whose owner is killed mid-write', () => {
       await owner.disconnect().catch(() => undefined);
     }
   }, 30_000);
+  test.todo('multi-writer (C06): a primary that hands over cleanly leaves a higher epoch to the next primary, which writes on its next call', () => {});
 });

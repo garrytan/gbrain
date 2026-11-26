@@ -1,10 +1,15 @@
 //! Many writers on one brain: what Postgres gives under row locks, the store gives under
 //! optimistic transactions. Conflicting writes serialize (each one lands once, the last committer
 //! wins, nothing is lost or mixed); disjoint writes do not wait for each other.
+//!
+//! Each test that holds in both store modes runs in both (`<name>_single`, `<name>_optimistic`, through
+//! `common::open_in`). The `embedded_one_owner_` tests assert what holds while one explicit transaction owns
+//! the writer; each has an `#[ignore = "multi_writer"]` twin for what holds once writers overlap.
 
 mod common;
 
-use common::{TempDir, open_concurrent as open};
+use common::mu::{MuStore, SingleFlightKey, TxnMode, TxnOptions, WriteOrigin};
+use common::{StoreMode, TempDir, both_modes, open_in};
 use gbrain_store::Store;
 use gbrain_store::chunks::{ChunkInput, UpsertChunksOptions};
 use gbrain_store::error::*;
@@ -60,10 +65,9 @@ fn together<T: Send + 'static>(n: usize, f: impl Fn(usize) -> T + Send + Sync + 
     handles.into_iter().map(|h| h.join().unwrap()).collect()
 }
 
-#[test]
-fn writers_of_one_page_serialize_and_each_update_lands_once() {
+fn writers_of_one_page_serialize_and_each_update_lands_once(mode: StoreMode) {
     let dir = TempDir::new("conc-same-page");
-    let store = Arc::new(open(&dir));
+    let store = Arc::new(open_in(&dir, mode));
     let submit = |s: &Store, n: usize, body: &str| {
         let r = s
             .submit_page_mutation(&mutation(&request_id(n), "w", "doc", body), None)
@@ -123,10 +127,9 @@ fn writers_of_one_page_serialize_and_each_update_lands_once() {
     }
 }
 
-#[test]
-fn concurrent_tags_links_and_timeline_entries_are_all_kept() {
+fn concurrent_tags_links_and_timeline_entries_are_all_kept(mode: StoreMode) {
     let dir = TempDir::new("conc-children");
-    let store = Arc::new(open(&dir));
+    let store = Arc::new(open_in(&dir, mode));
     put(&store, "hub", "hub body");
     for i in 0..WRITERS {
         put(&store, &format!("t/{i}"), "target");
@@ -159,10 +162,9 @@ fn concurrent_tags_links_and_timeline_entries_are_all_kept() {
     assert_eq!(ids.len(), WRITERS);
 }
 
-#[test]
-fn concurrent_chunk_writes_to_one_page_are_never_mixed() {
+fn concurrent_chunk_writes_to_one_page_are_never_mixed(mode: StoreMode) {
     let dir = TempDir::new("conc-chunks");
-    let store = Arc::new(open(&dir));
+    let store = Arc::new(open_in(&dir, mode));
     put(&store, "doc", "body");
     let revision = store
         .read_page_snapshot("doc", &ReadScope::default())
@@ -205,10 +207,9 @@ fn concurrent_chunk_writes_to_one_page_are_never_mixed() {
     assert_eq!(store.count_chunks().unwrap(), 4, "the chunk totals drifted");
 }
 
-#[test]
-fn the_same_request_submitted_concurrently_is_applied_once() {
+fn the_same_request_submitted_concurrently_is_applied_once(mode: StoreMode) {
     let dir = TempDir::new("conc-idempotent");
-    let store = Arc::new(open(&dir));
+    let store = Arc::new(open_in(&dir, mode));
     let s = store.clone();
     let receipts = together(WRITERS, move |_| {
         s.submit_page_mutation(&mutation(&request_id(1), "w", "doc", "only body"), None)
@@ -229,10 +230,9 @@ fn the_same_request_submitted_concurrently_is_applied_once() {
     assert_eq!(store.journal_outstanding().unwrap()["brain"], 0);
 }
 
-#[test]
-fn admission_limits_hold_under_concurrency() {
+fn admission_limits_hold_under_concurrency(mode: StoreMode) {
     let dir = TempDir::new("conc-admission");
-    let store = Arc::new(open(&dir));
+    let store = Arc::new(open_in(&dir, mode));
     let limits = JournalLimits {
         principal_outstanding: 3,
         brain_outstanding: 5,
@@ -269,10 +269,9 @@ fn admission_limits_hold_under_concurrency() {
     assert_eq!(per.iter().sum::<u64>(), 5);
 }
 
-#[test]
-fn concurrent_submissions_to_disjoint_pages_all_commit() {
+fn concurrent_submissions_to_disjoint_pages_all_commit(mode: StoreMode) {
     let dir = TempDir::new("conc-disjoint");
-    let store = Arc::new(open(&dir));
+    let store = Arc::new(open_in(&dir, mode));
     let s = store.clone();
     together(WRITERS, move |i| {
         for round in 0..8 {
@@ -300,10 +299,9 @@ fn page_id(page: &Value) -> u64 {
     page["id"].as_u64().unwrap()
 }
 
-#[test]
-fn explicit_transactions_commit_beside_concurrent_writers_and_ids_stay_unique() {
+fn embedded_one_owner_explicit_transactions_never_conflict_and_ids_stay_unique(mode: StoreMode) {
     let dir = TempDir::new("conc-tx");
-    let store = Arc::new(open(&dir));
+    let store = Arc::new(open_in(&dir, mode));
     let s = store.clone();
     let ids = together(WRITERS, move |i| {
         let mut ids = Vec::new();
@@ -311,7 +309,8 @@ fn explicit_transactions_commit_beside_concurrent_writers_and_ids_stay_unique() 
             let slug = format!("p/{i}-{round}");
             if i % 2 == 0 {
                 // An explicit transaction holds the writer: it must never fail with a
-                // conflict, because the caller cannot run it again.
+                // conflict, because the caller cannot run it again. (Embedded, one owner: with
+                // several writers a conflict is typed and visible; see the multi_writer twin.)
                 let tx = s.begin_transaction(false).unwrap();
                 ids.push(page_id(&put(&tx, &slug, "inside a transaction")));
                 // Read-modify-write of a page another writer also updates.
@@ -346,10 +345,9 @@ fn explicit_transactions_commit_beside_concurrent_writers_and_ids_stay_unique() 
     );
 }
 
-#[test]
-fn an_open_transaction_holds_off_other_commits_until_it_ends() {
+fn embedded_one_owner_an_open_transaction_holds_off_other_commits_until_it_ends(mode: StoreMode) {
     let dir = TempDir::new("conc-tx-exclusive");
-    let store = Arc::new(open(&dir));
+    let store = Arc::new(open_in(&dir, mode));
     put(&store, "notes/a", "before");
     let tx = store.begin_transaction(false).unwrap();
     put(&tx, "notes/a", "from the transaction");
@@ -369,10 +367,9 @@ fn an_open_transaction_holds_off_other_commits_until_it_ends() {
     assert!(page.to_string().contains("from the transaction"), "{page}");
 }
 
-#[test]
-fn a_dropped_transaction_lets_the_other_writers_go_on() {
+fn a_dropped_transaction_lets_the_other_writers_go_on(mode: StoreMode) {
     let dir = TempDir::new("conc-tx-drop");
-    let store = Arc::new(open(&dir));
+    let store = Arc::new(open_in(&dir, mode));
     let tx = store.begin_transaction(false).unwrap();
     put(&tx, "notes/a", "never committed");
     let s = store.clone();
@@ -380,4 +377,132 @@ fn a_dropped_transaction_lets_the_other_writers_go_on() {
     drop(tx);
     other.join().unwrap();
     assert_eq!(store.count_pages(None).unwrap(), 1);
+}
+
+both_modes!(writers_of_one_page_serialize_and_each_update_lands_once => writers_of_one_page_serialize_and_each_update_lands_once_single, writers_of_one_page_serialize_and_each_update_lands_once_optimistic);
+both_modes!(concurrent_tags_links_and_timeline_entries_are_all_kept => concurrent_tags_links_and_timeline_entries_are_all_kept_single, concurrent_tags_links_and_timeline_entries_are_all_kept_optimistic);
+both_modes!(concurrent_chunk_writes_to_one_page_are_never_mixed => concurrent_chunk_writes_to_one_page_are_never_mixed_single, concurrent_chunk_writes_to_one_page_are_never_mixed_optimistic);
+both_modes!(the_same_request_submitted_concurrently_is_applied_once => the_same_request_submitted_concurrently_is_applied_once_single, the_same_request_submitted_concurrently_is_applied_once_optimistic);
+both_modes!(admission_limits_hold_under_concurrency => admission_limits_hold_under_concurrency_single, admission_limits_hold_under_concurrency_optimistic);
+both_modes!(concurrent_submissions_to_disjoint_pages_all_commit => concurrent_submissions_to_disjoint_pages_all_commit_single, concurrent_submissions_to_disjoint_pages_all_commit_optimistic);
+both_modes!(embedded_one_owner_explicit_transactions_never_conflict_and_ids_stay_unique => embedded_one_owner_explicit_transactions_never_conflict_and_ids_stay_unique_single, embedded_one_owner_explicit_transactions_never_conflict_and_ids_stay_unique_optimistic);
+both_modes!(embedded_one_owner_an_open_transaction_holds_off_other_commits_until_it_ends => embedded_one_owner_an_open_transaction_holds_off_other_commits_until_it_ends_single, embedded_one_owner_an_open_transaction_holds_off_other_commits_until_it_ends_optimistic);
+both_modes!(a_dropped_transaction_lets_the_other_writers_go_on => a_dropped_transaction_lets_the_other_writers_go_on_single, a_dropped_transaction_lets_the_other_writers_go_on_optimistic);
+
+// ---- the multi-writer twins of the two embedded, one-owner tests above -----------------------------------------------------
+//
+// Each is `#[ignore = "multi_writer"]`, calls the new interfaces only through `common::mu`, and names the conformance
+// case it belongs to (tests/multi_writer_conformance.rs).
+
+fn optimistic_options(i: usize) -> TxnOptions {
+    TxnOptions {
+        mode: TxnMode::Optimistic,
+        deadline: None,
+        origin: Some(WriteOrigin {
+            host_id: format!("host-{i}"),
+            incarnation: format!("incarnation-{i}"),
+            writer_id: format!("writer-{i}"),
+        }),
+    }
+}
+
+/// C01: with several writers a conflict is typed and visible (`write_conflict`), the transaction runs again, and ids
+/// stay unique. Twin of `embedded_one_owner_explicit_transactions_never_conflict_and_ids_stay_unique`.
+#[test]
+#[ignore = "multi_writer"]
+fn explicit_transactions_conflict_with_a_typed_error_and_ids_stay_unique_multi_writer() {
+    let dir = TempDir::new("conc-tx-typed");
+    let store = Arc::new(open_in(&dir, StoreMode::Optimistic));
+    drop(
+        store
+            .begin_with(optimistic_options(0))
+            .unwrap_or_else(|e| panic!("{e}")),
+    );
+    let s = store.clone();
+    let ids = together(WRITERS, move |i| {
+        let mut ids = Vec::new();
+        for round in 0..6 {
+            loop {
+                let tx = s
+                    .begin_with(optimistic_options(i))
+                    .unwrap_or_else(|e| panic!("{e}"));
+                let id = page_id(&put(&tx, &format!("p/{i}-{round}"), "inside a transaction"));
+                put(&tx, "shared/hot", &format!("tx {i} {round}"));
+                match s.commit_position(tx) {
+                    Ok(_) => {
+                        ids.push(id);
+                        break;
+                    }
+                    Err(e) => assert_eq!(e.code, WRITE_CONFLICT, "an untyped refusal: {e}"),
+                }
+            }
+        }
+        ids
+    });
+    let all: Vec<u64> = ids.into_iter().flatten().collect();
+    let unique: BTreeSet<u64> = all.iter().copied().collect();
+    assert_eq!(
+        unique.len(),
+        all.len(),
+        "an id was handed out twice: {all:?}"
+    );
+    assert_eq!(store.count_pages(None).unwrap(), (WRITERS * 6 + 1) as u64);
+}
+
+/// C15: a commit on the same key as an open transaction conflicts or waits, and is never lost. Twin of the same-key half of
+/// `embedded_one_owner_an_open_transaction_holds_off_other_commits_until_it_ends`.
+#[test]
+#[ignore = "multi_writer"]
+fn a_commit_on_the_same_key_as_an_open_transaction_conflicts_or_waits_multi_writer() {
+    let dir = TempDir::new("conc-tx-same-key");
+    let store = Arc::new(open_in(&dir, StoreMode::Optimistic));
+    put(&store, "notes/a", "before");
+    let tx = store
+        .begin_with(optimistic_options(1))
+        .unwrap_or_else(|e| panic!("{e}"));
+    let key = SingleFlightKey {
+        source_id: "default".into(),
+        slug: "notes/a".into(),
+    };
+    store
+        .single_flight(&tx, &[key])
+        .unwrap_or_else(|e| panic!("{e}"));
+    put(&tx, "notes/a", "from the transaction");
+    let s = store.clone();
+    let other = thread::spawn(move || put(&s, "notes/a", "from another writer"));
+    thread::sleep(std::time::Duration::from_millis(100));
+    assert!(
+        !other.is_finished(),
+        "a commit on the held key landed while its single flight was open"
+    );
+    store.commit_position(tx).unwrap_or_else(|e| panic!("{e}"));
+    other.join().unwrap();
+    let page = store
+        .read_page_snapshot("notes/a", &ReadScope::default())
+        .unwrap()
+        .unwrap();
+    assert!(page.to_string().contains("from another writer"), "{page}");
+}
+
+/// C13: a commit on another key lands while a transaction is open. Twin of the other-keys half of
+/// `embedded_one_owner_an_open_transaction_holds_off_other_commits_until_it_ends`.
+#[test]
+#[ignore = "multi_writer"]
+fn a_commit_on_another_key_lands_while_a_transaction_is_open_multi_writer() {
+    let dir = TempDir::new("conc-tx-other-key");
+    let store = Arc::new(open_in(&dir, StoreMode::Optimistic));
+    put(&store, "notes/a", "before");
+    let tx = store
+        .begin_with(optimistic_options(1))
+        .unwrap_or_else(|e| panic!("{e}"));
+    put(&tx, "notes/a", "from the transaction");
+    let s = store.clone();
+    let other = thread::spawn(move || put(&s, "notes/b", "from another writer"));
+    thread::sleep(std::time::Duration::from_millis(100));
+    assert!(
+        other.is_finished(),
+        "a commit on another key waited for the open transaction"
+    );
+    other.join().unwrap();
+    store.commit_position(tx).unwrap_or_else(|e| panic!("{e}"));
 }

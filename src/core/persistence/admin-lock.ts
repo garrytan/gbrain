@@ -44,8 +44,8 @@ export async function readWriterAdminLockTyped(engine: Pick<BrainEngine, 'getCon
  * Runs inside claim, activation and transfer transactions for every caller, reviewed or internal.
  * FOR SHARE serializes with lock/unlock (FOR UPDATE) without blocking admission, which also shares this row.
  */
-export async function assertWriterAdminUnlocked(tx: SqlEngine & Pick<BrainEngine, 'getConfig'>): Promise<void> {
-  await tx.executeRaw('SELECT singleton FROM persistence_brain WHERE singleton=1 FOR SHARE');
+export async function assertWriterAdminUnlocked(tx: Pick<BrainEngine, 'getConfig' | 'topologyStore'>): Promise<void> {
+  await (await tx.topologyStore()).shareBrain();
   refuseWriterAdminLocked(await readWriterAdminLockTyped(tx));
 }
 

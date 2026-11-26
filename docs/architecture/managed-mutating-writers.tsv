@@ -8,6 +8,8 @@ op	forget	coordinator	submitForgetMutation records a coordinated withdrawal.
 op	memory_write	coordinator	Each fact is a remember write (submitRememberMutation) under a per-member child request id.
 op	memory_propose	no_canonical_write	Inserts one memory_proposals row awaiting the owner; no page changes until gbrain memory-proposals approve admits the held write to the journal under the proposal's stored authority.
 op	put_page	coordinator	submitPageMutation; unbound Postgres sources refuse unless persistence.unbound_write=database_only.
+op	log_action	coordinator	Records an agent_action page through submitPageMutation put_page (core/ledger/store.ts writeAction).
+op	policy_reserve	coordinator	Writes a proposed agent_action page with a hold through submitPageMutation put_page, under the ledger reserve lock.
 op	put_pages	coordinator	Every page is admitted as its own coordinated put_page write request, together in one journal transaction (#6007)
 op	storage_register	coordinator	submitPageMutation through the storage door (trusted local only); on a hosted shelf the card commits to its repository before it is indexed.
 op	storage_update	coordinator	submitPageMutation through the storage door bound to expected_revision (trusted local only); on a hosted shelf the change commits before it is indexed.
@@ -82,9 +84,13 @@ op	run_onboard	no_canonical_write	Runs remediation steps; each step keeps its ow
 op	run_skillopt	no_canonical_write	Skill files and proposals outside the brain database.
 op	loops_close	coordinator	open_loops state rows; the commitment fact is retired (expired, fence row struck) through the loop-fact-retirement coordinator mutation (#5869).
 op	loops_mute	no_canonical_write	Loop suppression rows.
+op	household_add	coordinator	Household record (and subject household_role) pages through put_page's coordinated mutation (submitPageMutation).
+op	household_mark	coordinator	One conditional put_page of the record (state and timeline line) through submitPageMutation.
+op	household_replace	coordinator	Rewrites household records whose placement changed, each through put_page's coordinated mutation.
 op	memory_conversation_mode	no_canonical_write	Returns the rule for the rest of the calling conversation; stores nothing.
 op	set_memory_writeback	no_canonical_write	memory.agent_writeback config row plus an mcp_request_log audit row; no page content.
 op	mute_notice	no_canonical_write	Notice mute list in <GBRAIN_HOME>/notices/muted.json; no brain table or canonical file.
+op	onboarding_off	no_canonical_write	Writes only the first-session suggestion's own config row (onboarding.first_session); no page, table row or canonical file.
 op	questions_pin	coordinator	pinned_questions side-table rows; the question page publishes through coordinated put_page (trusted local callers only).
 op	questions_refresh	coordinator	Answer and evidence pointers in the pinned_questions side tables; question page sync through coordinated put_page (trusted local callers only).
 op	questions_unpin	coordinator	pinned_questions state; the question page is archived through coordinated put_page (trusted local callers only).

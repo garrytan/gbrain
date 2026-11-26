@@ -110,6 +110,71 @@ struct CommitLog {
 }
 
 impl RedbKv {
+    /// A follower's write (`follower.rs`): runs `f` on a raw writer (no commit log, no commit clock:
+    /// the follower copies its primary's records, it does not make its own) and commits it with
+    /// commit sequence `sequence` instead of the next one, and the durable commit time raised to
+    /// at least `commit_time`. A sequence below the current one is refused. Not for a record file a
+    /// store keeps a log or a clock on.
+    pub fn replica_write<T>(
+        &self,
+        sequence: u64,
+        commit_time: Option<i64>,
+        f: impl FnOnce(&mut dyn KvWrite) -> Result<T>,
+    ) -> Result<T> {
+        self.replica_commit(sequence, false, commit_time, f)
+    }
+
+    /// `replica_write` that may also move the commit sequence back: a follower installing a
+    /// snapshot of another history (`follower.rs`), which replaces every key in the same write.
+    /// The durable commit time never moves back.
+    pub fn replica_reset<T>(
+        &self,
+        sequence: u64,
+        commit_time: Option<i64>,
+        f: impl FnOnce(&mut dyn KvWrite) -> Result<T>,
+    ) -> Result<T> {
+        self.replica_commit(sequence, true, commit_time, f)
+    }
+
+    fn replica_commit<T>(
+        &self,
+        sequence: u64,
+        allow_back: bool,
+        commit_time: Option<i64>,
+        f: impl FnOnce(&mut dyn KvWrite) -> Result<T>,
+    ) -> Result<T> {
+        if self.log.on.load(Ordering::Acquire)
+            || self
+                .log
+                .clock
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .is_some()
+        {
+            return Err(StoreError::new(
+                crate::error::INVALID_STATE,
+                "a replica write runs only on a follower's record file",
+            ));
+        }
+        let tx = self.db.begin_write().map_err(map)?;
+        let mut w = Box::new(Writer {
+            tx,
+            logged: None,
+            clock: None,
+            commit_time: None,
+            finish: self.log.finish.clone(),
+            pinned_sequence: Some(sequence),
+            allow_back,
+        });
+        let value = f(&mut *w)?;
+        if let Some(time) = commit_time {
+            let current = read_commit_time(&*w)?.unwrap_or(i64::MIN);
+            w.commit_time = Some(current.max(time));
+        }
+        w.bump_and_commit()?;
+        Ok(value)
+    }
+
     /// Opens (creating if absent) the record file at `path`. A second open of the same file,
     /// from any process, fails with `store_locked`.
     pub fn open_path(path: &Path) -> Result<Self> {
@@ -285,6 +350,19 @@ pub fn peek(path: &Path, key: &[u8]) -> Option<Vec<u8>> {
     Some(value.value().to_vec())
 }
 
+/// `peek` that tells a missing key (`Ok(None)`) from a file that cannot be read without opening it
+/// for writing (`Err`: redb must recover it first).
+pub fn peek_checked(path: &Path, key: &[u8]) -> Result<Option<Vec<u8>>> {
+    let db = Database::builder().open_read_only(path).map_err(map)?;
+    let tx = db.begin_read().map_err(map)?;
+    let table = match tx.open_table(TABLE) {
+        Ok(table) => table,
+        Err(redb::TableError::TableDoesNotExist(_)) => return Ok(None),
+        Err(e) => return Err(map(e)),
+    };
+    Ok(table.get(key).map_err(map)?.map(|v| v.value().to_vec()))
+}
+
 /// Reads one record by key, from whichever transaction the caller holds.
 type KeyLookup<'a> = dyn FnMut(&[u8]) -> Result<Option<Vec<u8>>> + 'a;
 
@@ -386,6 +464,11 @@ struct Writer {
     commit_time: Option<i64>,
     /// Held from a timed or logged commit's accept step to its bookkeeping (`CommitLog::finish`).
     finish: Arc<Mutex<()>>,
+    /// A replica write (`RedbKv::replica_write`): the commit takes this sequence instead of the
+    /// next one.
+    pinned_sequence: Option<u64>,
+    /// With `pinned_sequence`: the sequence may also move back (`RedbKv::replica_reset`).
+    allow_back: bool,
 }
 
 struct Logged {
@@ -593,7 +676,18 @@ impl Writer {
             if legacy {
                 table.remove(LEGACY_SEQ_KEY).map_err(map)?;
             }
-            let next = current + 1;
+            let next = match self.pinned_sequence {
+                Some(pinned) if pinned < current && !self.allow_back => {
+                    return Err(StoreError::new(
+                        STORE_CORRUPT,
+                        format!(
+                            "a replica write would move the commit sequence back from {current} to {pinned}"
+                        ),
+                    ));
+                }
+                Some(pinned) => pinned,
+                None => current + 1,
+            };
             table
                 .insert(SEQ_KEY, next.to_be_bytes().as_slice())
                 .map_err(map)?;
@@ -649,6 +743,8 @@ impl Kv for RedbKv {
             clock,
             commit_time: None,
             finish: self.log.finish.clone(),
+            pinned_sequence: None,
+            allow_back: false,
         }))
     }
 

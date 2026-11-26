@@ -12,7 +12,7 @@
  */
 import type { RustEngine } from '../../rust-engine.ts';
 import type { BrainEngine } from '../../engine.ts';
-import type { BeliefCoverageRow } from '../../engine-sql/belief-ledger.ts';
+import type { BeliefCoverageRow, BeliefNewestEventRow } from '../../engine-sql/belief-ledger.ts';
 import type { BeliefStateRows, BeliefStateRowsInput } from '../../engine-sql/belief-state.ts';
 import type { StoreBrain } from '../store.ts';
 import { storeCall, type StoreMember } from './common.ts';
@@ -48,6 +48,15 @@ export const listBeliefBaselinePending: Member<'listBeliefBaselinePending'> = (b
 
 export const countBeliefBaselineSlugs: Member<'countBeliefBaselineSlugs'> = (brain, sourceId, runId) =>
   storeCall({ member: 'countBeliefBaselineSlugs', sourceId }, () => brain.countBeliefBaselineSlugs(sourceId, runId));
+
+export const listBeliefDriftCandidates: Member<'listBeliefDriftCandidates'> = (brain, sourceId, incarnation) =>
+  storeCall({ member: 'listBeliefDriftCandidates', sourceId }, () => brain.listBeliefDriftCandidates(sourceId, incarnation));
+
+// The store's recorded_at carries microseconds; PGLite returns a Date, which the engine-sql member turns to ISO milliseconds.
+export const readNewestBeliefEvent: Member<'readNewestBeliefEvent'> = async (brain, sourceId, incarnation, slug) => {
+  const row = await storeCall({ member: 'readNewestBeliefEvent', sourceId }, () => brain.readNewestBeliefEvent(sourceId, incarnation, slug)) as BeliefNewestEventRow | null;
+  return row ? { ...row, recorded_at: new Date(row.recorded_at).toISOString(), id: Number(row.id) } : null;
+};
 
 export const readBeliefRedactions: Member<'readBeliefRedactions'> = (brain, sourceId, subjectKeys, fieldHashes) =>
   storeCall({ member: 'readBeliefRedactions', sourceId },

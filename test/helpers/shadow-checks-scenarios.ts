@@ -1073,8 +1073,20 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       const top = chunkOf.get(3)!;
       const reads = openReadSource(primary);
       const { PostgresEngine } = await import('../../src/core/postgres-engine.ts');
+      const url = (primary as unknown as { connectedDatabaseUrl?: string }).connectedDatabaseUrl;
       const other = new PostgresEngine();
-      await other.connect({ engine: 'postgres', database_url: (primary as unknown as { connectedDatabaseUrl?: string }).connectedDatabaseUrl, poolSize: 1 } as never);
+      await other.connect({ engine: 'postgres', database_url: url, poolSize: 1 } as never);
+      const admin = new PostgresEngine();
+      await admin.connect({ engine: 'postgres', database_url: url, poolSize: 1 } as never);
+      // A synchronous standby that never connects holds the writer between its flushed COMMIT record and the moment it becomes visible
+      // (Postgres waits for the standby before it ends the transaction), for as long as the test needs instead of commit_delay's 100 ms,
+      // which a loaded machine can miss. Every other session commits locally meanwhile. `release` clears it and lets the writer finish.
+      const release = async (): Promise<void> => {
+        await admin.executeRaw(`ALTER SYSTEM RESET synchronous_standby_names`);
+        await admin.executeRaw(`ALTER SYSTEM RESET synchronous_commit`);
+        await admin.executeRaw(`SELECT pg_reload_conf()`);
+      };
+      let writer: Promise<void> | undefined;
       try {
         const watch = createLsnWatch(reads);
         const samples = new SampleRegistry();
@@ -1082,29 +1094,42 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
         let clock = 0;
         const handler = makeAskHandler({ engine: primary, reads, dir: '/none', samples, rpc: (async () => ({})) as never, watch, now: () => (clock += 120_000) });
         const literal = `[${Array.from(vec(89)).join(',')}]`;
-        await other.executeRaw(`SET commit_delay = 100000`); // (the server's maximum, 100 ms) the writer inserts its COMMIT record, then waits before it flushes and becomes visible
-        await other.executeRaw(`SET commit_siblings = 0`);
-        const writer = other.transaction(async (tx) => { await tx.executeRaw(`UPDATE content_chunks SET embedding = $2::vector WHERE id = $1`, [top, literal]); });
-        // The writer's COMMIT record is inserted, then it waits out commit_delay before it flushes and becomes visible. Poll the insert position until it moves (the record is in), then capture inside the delay.
-        let token = '';
-        let previous = '';
-        for (let i = 0; i < 80 && !token; i++) { // the writer's UPDATE is quick, then it sits in its 100 ms delay with its COMMIT record inserted: the position stops moving while its xid is still in progress
-          const t = await watch.live();
-          if (t.split('|')[1] !== '' && t === previous) token = t; else { previous = t; await new Promise((r) => setTimeout(r, 8)); }
+        await admin.executeRaw(`ALTER SYSTEM SET synchronous_commit = 'local'`);
+        await admin.executeRaw(`ALTER SYSTEM SET synchronous_standby_names = 'gbrain_test_never_connects'`);
+        await admin.executeRaw(`SELECT pg_reload_conf()`);
+        const reloaded = async (): Promise<boolean> => (await admin.executeRaw<{ s: string }>(`SELECT current_setting('synchronous_standby_names') AS s`))[0]!.s === 'gbrain_test_never_connects';
+        for (const end = Date.now() + 15_000; !(await reloaded()) && Date.now() < end;) await new Promise((r) => setTimeout(r, 10)); // the server has passed the new settings on
+        await admin.executeRaw(`CHECKPOINT`); // the checkpointer takes the reload before this checkpoint, and it is the one that tells committing sessions a standby is named
+        let writerPid = 0;
+        let settled = false;
+        writer = other.transaction(async (tx) => {
+          await tx.executeRaw(`SET LOCAL synchronous_commit = on`);
+          writerPid = Number((await tx.executeRaw<{ p: number }>(`SELECT pg_backend_pid() AS p`))[0]!.p);
+          await tx.executeRaw(`UPDATE content_chunks SET embedding = $2::vector WHERE id = $1`, [top, literal]);
+        });
+        writer.then(() => { settled = true; }, () => { settled = true; });
+        let held = false;
+        for (const end = Date.now() + 15_000; !held && !settled && Date.now() < end;) {
+          held = writerPid > 0 && (await admin.executeRaw<{ w: string | null }>(`SELECT wait_event AS w FROM pg_stat_activity WHERE pid = $1`, [writerPid]))[0]?.w === 'SyncRep';
+          if (!held) await new Promise((r) => setTimeout(r, 10));
         }
+        expect(held).toBe(true); // the writer's COMMIT record is flushed and it waits for the standby: still in progress to every snapshot
+        const token = await watch.live();
         expect(token).not.toBe(''); expect(token.split('|')[1]).not.toBe(''); // the capture found the writer in progress: its xid is in the token
         const sid = samples.add({ op: 'searchVector', args, result: [], at: Date.now(), lsn: token }, 100);
         const seen = await primary.executeRaw<{ e: string }>(`SELECT embedding::text AS e FROM content_chunks WHERE id = $1`, [top]);
         expect(seen[0]!.e).not.toBe(literal); // the primary read (this one) still sees the old vector
+        await release();
         await writer; // the writer becomes visible, with no further WAL from anyone
         expect((await primary.executeRaw<{ e: string }>(`SELECT embedding::text AS e FROM content_chunks WHERE id = $1`, [top]))[0]!.e).toBe(literal);
         const rows = [{ payload: 'p', id: ids['open/a'] }]; // an extra Rust row the caller may read: cleared only if nothing moved
         expect(await handler({ id: 1, kind: 'privacy', sid, phase: 'sample', rows })).toEqual({ verdict: 'privacy_check_moved', complete: false });
         await expect(handler({ id: 2, kind: 'vector', sid, phase: 'sample' })).rejects.toMatchObject({ code: 'moved' });
       } finally {
-        await other.executeRaw(`SET commit_delay = 0`).catch(() => undefined);
+        await release();
+        await writer?.catch(() => undefined);
         await primary.executeRaw(`UPDATE content_chunks SET embedding = $2::vector WHERE id = $1`, [top, `[${Array.from(vec(3)).join(',')}]`]);
-        await other.disconnect(); await reads.close();
+        await other.disconnect(); await admin.disconnect(); await reads.close();
       }
     }, 60_000);
 

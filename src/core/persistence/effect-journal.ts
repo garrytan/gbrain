@@ -19,7 +19,7 @@ import { refreshFenceClear } from './worktree-refresh-schema.ts';
 import { pageBatchChildRequestIds } from './page-batch-id.ts';
 import { EFFECT_FAULT_POINTS, faultPoint } from './fault-points.ts';
 import { REARMABLE_SQL } from '../engine-sql/persistence-effect-worker.ts';
-import { fenceOpts } from './host-fence.ts';
+import { bindClaimFence, claimFenceOpts, fenceOpts } from './host-fence.ts';
 
 /**
  * `snapshot` is the publication's final read of the page, including deleted rows, in this transaction.
@@ -148,7 +148,11 @@ export async function claimPersistenceEffect(engine: BrainEngine, hostId: string
     const candidate = await tx.selectClaimableEffect<PersistenceEffect>(hostId, deadOwners);
     if (!candidate) return null;
     const token = randomUUID();
-    return tx.stampEffectClaim<PersistenceEffect>({ id: candidate.id, token, ownerJson: effectClaimStamp(token), ...fenceOpts(tx) });
+    // L5 (G6): a multi-user Rust stamp takes only an effect that is claimable now, so it is told the owners proved dead.
+    const fence = fenceOpts(tx);
+    const claimed = await tx.stampEffectClaim<PersistenceEffect>({ id: candidate.id, token, ownerJson: effectClaimStamp(token), ...fence, ...(fence.fence && deadOwners.length ? { deadOwners: [...deadOwners] } : {}) });
+    if (claimed) bindClaimFence(token, fence.fence ?? null);
+    return claimed;
   }, { pipelineFirst: isPersistenceDeclaration });
 }
 
@@ -233,25 +237,10 @@ export async function claimCoalescedGitEffects(engine: BrainEngine, hostId: stri
   if (limit <= 0) return [];
   const rows = await engine.transactionDirect(async tx => {
     await declarePersistenceProtocol(tx);
-    // The worktree-wide conditions (owner, refresh fence, recovery blocks) are one
-    // InitPlan, so the claim walks persistence_effects_pending in order and stops at
-    // $3 rows instead of probing every ready effect of the worktree.
-    return tx.executeRaw<PersistenceEffect>(`WITH ready AS (SELECT e.id,gen_random_uuid() AS token FROM persistence_effects e
-      WHERE EXISTS (SELECT 1 FROM persistence_worktrees w WHERE w.id=$2::uuid AND w.owner_host_id=$1::uuid
-        AND ${refreshFenceClear('w', 'id')}
-        AND NOT EXISTS (SELECT 1 FROM persistence_effects blocked WHERE blocked.worktree_id=w.id AND blocked.recovery IS NOT NULL)
-        AND NOT EXISTS (SELECT 1 FROM persistence_requests blocked WHERE blocked.worktree_id=w.id AND blocked.recovery IS NOT NULL))
-      AND e.worktree_id=$2::uuid AND e.kind='git' AND e.data ? 'relative_path'
-      AND NOT (e.data ? 'targets') AND NOT (e.data ? 'source_scan') AND NOT (e.data ? 'version')
-      AND (e.state='queued' OR e.state='running' AND e.claim_expires_at<now() OR ${DEAD_OWNER_EFFECT_SQL('e', '$4')}) AND e.next_attempt_at<=now()
-      AND e.recovery IS NULL
-      AND NOT EXISTS (SELECT 1 FROM persistence_effects mirror
-        WHERE mirror.request_id=e.request_id AND mirror.kind='withdrawal-mirror' AND mirror.state IN ('queued','running'))
-      ORDER BY e.next_attempt_at,e.id LIMIT $3 FOR UPDATE OF e SKIP LOCKED)
-      UPDATE persistence_effects p SET state='running',execution_token=ready.token,
-      claim_owner=jsonb_build_object('token',ready.token::text,'owner',$5::text::jsonb),
-      claim_expires_at=now()+interval '2 minutes',attempts=attempts+1,updated_at=now()
-      FROM ready WHERE p.id=ready.id RETURNING p.*`, [hostId, worktreeId, limit, [...deadOwners], JSON.stringify(claimOwner())]);
+    // One statement (engine-sql/persistence-effect-worker.ts CLAIM_COALESCED_GIT_EFFECTS_SQL): the worktree-wide
+    // conditions (owner, refresh fence, recovery blocks) are one InitPlan, so the claim walks persistence_effects_pending
+    // in order and stops at `limit` rows instead of probing every ready effect of the worktree.
+    return tx.claimCoalescedGitEffects<PersistenceEffect>({ hostId, worktreeId, limit, deadOwners, ownerJson: JSON.stringify(claimOwner()) });
   }, { pipelineFirst: isPersistenceDeclaration });
   return rows.sort((a, b) => Number(a.id) - Number(b.id));
 }
@@ -326,7 +315,7 @@ export type EffectSettler = Pick<BrainEngine, 'advanceEffectRow' | 'completeEffe
 
 /** Extends the claim's lease; `direct` runs it on the Postgres direct lane, outside the pooled transactions. */
 export async function renewPersistenceEffectClaim(engine: Pick<BrainEngine, 'renewEffectClaim'>, effect: PersistenceEffect, opts?: { direct?: boolean }): Promise<boolean> {
-  return engine.renewEffectClaim({ id: effect.id, token: effect.execution_token, ...fenceOpts(engine) }, opts);
+  return engine.renewEffectClaim({ id: effect.id, token: effect.execution_token, ...claimFenceOpts(engine, effect.execution_token) }, opts);
 }
 
 export async function advanceEffectCursor(engine: EffectSettler, effect: PersistenceEffect, slug: string): Promise<void> {
@@ -339,16 +328,16 @@ export async function advanceEffectCursor(engine: EffectSettler, effect: Persist
     await requeueEffect(engine, effect, remaining.length ? { ...data, retry_slugs: remaining, target_failures: PARK_AFTER_FAILURES - 1 } : data, null, 0);
     return;
   }
-  await engine.advanceEffectRow({ id: effect.id, token: effect.execution_token, ...fenceOpts(engine), slug });
+  await engine.advanceEffectRow({ id: effect.id, token: effect.execution_token, ...claimFenceOpts(engine, effect.execution_token), slug });
 }
 
 /** An effect with parked targets finishes as failed (`targets_parked`), never as committed. */
 export async function completeEffect(engine: Pick<BrainEngine, 'completeEffectRow'>, effect: PersistenceEffect, outcome: Record<string, unknown> = {}): Promise<void> {
   await faultPoint(EFFECT_FAULT_POINTS[effect.kind], { effectId: effect.id, requestId: effect.request_id, sourceId: effect.source_id });
-  await engine.completeEffectRow({ id: effect.id, token: effect.execution_token, ...fenceOpts(engine), outcomeJson: JSON.stringify(outcome) });
+  await engine.completeEffectRow({ id: effect.id, token: effect.execution_token, ...claimFenceOpts(engine, effect.execution_token), outcomeJson: JSON.stringify(outcome) });
 }
 export async function retryEffect(engine: Pick<BrainEngine, 'retryEffectRow'>, effect: PersistenceEffect, reason: string, delayMs = 1000): Promise<void> {
-  await engine.retryEffectRow({ id: effect.id, token: effect.execution_token, ...fenceOpts(engine), reason, delayMs });
+  await engine.retryEffectRow({ id: effect.id, token: effect.execution_token, ...claimFenceOpts(engine, effect.execution_token), reason, delayMs });
 }
 /** GBRA-133: the longest a `writer_busy` effect waits before its next claim. */
 export const BUSY_RETRY_MAX_MS = 60_000;
@@ -361,18 +350,18 @@ export async function retryBusyEffect(engine: Pick<BrainEngine, 'retryBusyEffect
   const last = Date.parse(effect.data.busy_at ?? '');
   const streak = Number.isFinite(last) && now - last < 2 * BUSY_RETRY_MAX_MS ? (effect.data.busy_retries ?? 0) + 1 : 1;
   const busy = { busy_retries: streak, busy_since: streak > 1 && effect.data.busy_since ? effect.data.busy_since : new Date(now).toISOString(), busy_at: new Date(now).toISOString() };
-  await engine.retryBusyEffectRow({ id: effect.id, token: effect.execution_token, ...fenceOpts(engine), dataJson: JSON.stringify(busy),
+  await engine.retryBusyEffectRow({ id: effect.id, token: effect.execution_token, ...claimFenceOpts(engine, effect.execution_token), dataJson: JSON.stringify(busy),
     delayMs: Math.min(BUSY_RETRY_MAX_MS, 250 * 2 ** Math.min(streak - 1, 8)) });
 }
 /** Release a claim with replacement bookkeeping; parking never applies while recovery is recorded. */
 export async function requeueEffect(engine: Pick<BrainEngine, 'requeueEffectRow'>, effect: PersistenceEffect, data: PersistenceEffect['data'], reason: string | null, delayMs: number): Promise<void> {
-  await engine.requeueEffectRow({ id: effect.id, token: effect.execution_token, ...fenceOpts(engine), dataJson: JSON.stringify(data), reason, delayMs });
+  await engine.requeueEffectRow({ id: effect.id, token: effect.execution_token, ...claimFenceOpts(engine, effect.execution_token), dataJson: JSON.stringify(data), reason, delayMs });
 }
 export async function parkEffect(engine: Pick<BrainEngine, 'parkEffectRow'>, effect: PersistenceEffect, data: PersistenceEffect['data']): Promise<void> {
-  await engine.parkEffectRow({ id: effect.id, token: effect.execution_token, ...fenceOpts(engine), dataJson: JSON.stringify(data) });
+  await engine.parkEffectRow({ id: effect.id, token: effect.execution_token, ...claimFenceOpts(engine, effect.execution_token), dataJson: JSON.stringify(data) });
 }
 export async function failEffect(engine: Pick<BrainEngine, 'failEffectRow'>, effect: PersistenceEffect, reason: string): Promise<void> {
-  await engine.failEffectRow({ id: effect.id, token: effect.execution_token, ...fenceOpts(engine), reason });
+  await engine.failEffectRow({ id: effect.id, token: effect.execution_token, ...claimFenceOpts(engine, effect.execution_token), reason });
 }
 
 /**

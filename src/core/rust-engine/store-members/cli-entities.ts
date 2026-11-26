@@ -146,6 +146,21 @@ export const readPageTitlesById: StoreMember<[ids: readonly number[]], Array<{ i
   (brain, ids) =>
     storeCall({ member: 'readPageTitlesById' }, () => brain.readPageTitlesById([...ids])) as Promise<Array<{ id: number; title: string }>>;
 
+/** `{ has_visual }` of the image page row sealed past the safe-chunk fence, or null; the store keeps no image vector, so `has_visual` is false. */
+export const readImageSealProbe: StoreMember<[sourceId: string, slug: string], { has_visual: boolean } | null> =
+  async (brain, sourceId, slug) =>
+    (await storeCall({ member: 'readImageSealProbe', slug, sourceId }, () => brain.readImageSealProbe(sourceId, slug)) as { has_visual: boolean } | null) ?? null;
+
+/** The stored chunker version of the page row with the id, live, deleted or segmented; null when no row has the id. */
+export const readPageChunkerVersion: StoreMember<[pageId: number], { chunker_version: number | null } | null> =
+  async (brain, pageId) =>
+    (await storeCall({ member: 'readPageChunkerVersion' }, () => brain.readPageChunkerVersion(pageId)) as { chunker_version: number | null } | null) ?? null;
+
+/** The newest live pages under a literal slug prefix; the store matches the prefix itself, with no LIKE escaping. */
+export const readPrefixAnchoredPages: StoreMember<[sourceId: string, prefix: string], Array<{ id: number; slug: string }>> =
+  (brain, sourceId, prefix) =>
+    storeCall({ member: 'readPrefixAnchoredPages', sourceId }, () => brain.readPrefixAnchoredPages(sourceId, prefix)) as Promise<Array<{ id: number; slug: string }>>;
+
 /** The live pages at the slugs in the sources; the store's ISO date string becomes the Date both SQL engines return. */
 export const readTextMentionPages: StoreMember<[sourceIds: readonly string[], slugs: readonly string[]], TextMentionPageRow[]> =
   async (brain, sourceIds, slugs) => {
