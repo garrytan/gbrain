@@ -5,6 +5,7 @@
  */
 import type { PageReadPolicy } from '../../types.ts';
 import type { AttendanceWindowRow, CardFindQuery, CardHitRow, CardListQuery, ChatCensusRow, PredictionLedgerEvent, PredictionQuery, PredictionRow, TakeGradeRow, TakeHorizonRow, WhoCanReadRow, CardRow, CompanyBrainEvidenceRows, MentionScanLinkRow, MentionScanPageRow, PageBodyRow, PageSourceIdRow, RetypeProbeQuery, ShelfPageRow, SourceIdScope, TargetProbeSqlRow } from '../../engine-sql/list-reads.ts';
+import { selfChecked } from '../access-self-check.ts';
 import { storeCall, takeOptions, type StoreMember } from './common.ts';
 import { storePagePolicy, storePageTextPolicy } from './private-provenance.ts';
 import { accessAllowedSql, currentCallerAccess, privatePagesFilterFragment } from '../../search/private-visibility.ts';
@@ -140,7 +141,17 @@ export const readWhoCanReadRows: StoreMember<[slug: string, sourceId: string | u
  * The store judges the member-access part alone (no privacy part) with that record: the identity, the satisfied rules,
  * the coverage, and the owner-only test in the form the SQL renders (`ownerOnlyFormIn`; none for the owner).
  */
-function memberAccessPolicy(identity: readonly string[], satisfied: readonly string[], rendered: string): Record<string, unknown> {
+/** memberAccessPolicyRendered, derived by the store under the multi-user switch; a null identity is the folder-rules read. */
+export function memberAccessPolicy(identity: readonly string[] | null, satisfied: readonly string[]): Record<string, unknown> {
+  if (identity === null) {
+    return selfChecked('readPageFolderRulesAllowed', { mode: 'member_access_policy', satisfied: [...satisfied] },
+      () => memberAccessPolicyRendered([], satisfied, ''));
+  }
+  return selfChecked('readPageAccessAllowed', { mode: 'member_access_policy', identity: [...identity], satisfied: [...satisfied] },
+    () => memberAccessPolicyRendered(identity, satisfied, accessAllowedSql('p', identity)));
+}
+
+function memberAccessPolicyRendered(identity: readonly string[], satisfied: readonly string[], rendered: string): Record<string, unknown> {
   const access = currentCallerAccess();
   return {
     honorAliases: false, entityPrivacy: false, identity: [...identity], satisfiedRuleIds: [...satisfied],
@@ -151,12 +162,12 @@ function memberAccessPolicy(identity: readonly string[], satisfied: readonly str
 
 export const readPageAccessAllowed: StoreMember<[sourceId: string, slug: string, identity: readonly string[]], boolean> = async (brain, sourceId, slug, identity) => {
   const access = currentCallerAccess();
-  const policy = memberAccessPolicy(identity, access.satisfiedRuleIds, accessAllowedSql('p', identity));
+  const policy = memberAccessPolicy(identity, access.satisfiedRuleIds);
   return (await storeCall({ member: 'readPageAccessAllowed' }, () => brain.readPageAccessAllowed(sourceId, slug, [...identity], policy))) === true;
 };
 
 export const readPageFolderRulesAllowed: StoreMember<[sourceId: string, slug: string, satisfied: readonly string[]], boolean> = async (brain, sourceId, slug, satisfied) => {
-  const policy = memberAccessPolicy([], satisfied, '');
+  const policy = memberAccessPolicy(null, satisfied);
   return (await storeCall({ member: 'readPageFolderRulesAllowed' }, () => brain.readPageFolderRulesAllowed(sourceId, slug, [...satisfied], policy))) === true;
 };
 

@@ -14,10 +14,9 @@ import type { RustEngine } from '../../rust-engine.ts';
 import type { BrainEngine } from '../../engine.ts';
 import type { BeliefCoverageRow } from '../../engine-sql/belief-ledger.ts';
 import type { BeliefStateRows, BeliefStateRowsInput } from '../../engine-sql/belief-state.ts';
-import { privatePagesFilterFragment } from '../../search/private-visibility.ts';
 import type { StoreBrain } from '../store.ts';
 import { storeCall, type StoreMember } from './common.ts';
-import { pagePolicyFlags } from './private-provenance.ts';
+import { plainPageFlags } from './private-provenance.ts';
 import { applyTransactionSettings, readTransactionSettings } from './transactions.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
@@ -90,7 +89,7 @@ export const readMovedBeliefLifetimes: Member<'readMovedBeliefLifetimes'> = (bra
  */
 export const readBeliefStateRows = async function readBeliefStateRows(this: RustEngine, brain: StoreBrain, input: BeliefStateRowsInput): Promise<BeliefStateRows> {
   const rows = await storeCall({ member: 'readBeliefStateRows', sourceId: input.sourceId }, () => brain.readBeliefStateRows({ sourceId: input.sourceId,
-    slugs: [...input.slugs], pageIds: [...input.pageIds], knownFp: input.knownFp, visibility: pagePolicyFlags(privatePagesFilterFragment('p')) })) as BeliefStateRows;
+    slugs: [...input.slugs], pageIds: [...input.pageIds], knownFp: input.knownFp, visibility: plainPageFlags('readBeliefStateRows') })) as BeliefStateRows;
   const [writerTier] = await readTransactionSettings.call(this, brain, ['gbrain.write_trust_tier']);
   if (input.planModePrev != null) await applyTransactionSettings.call(this, brain, ['plan_cache_mode'], [input.planModePrev]);
   return { ...rows, writer_tier: writerTier ?? null };

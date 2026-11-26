@@ -1,0 +1,124 @@
+name: Rust multi-user access self-check
+
+# Runs the engine parity suite's Rust arm with the multi-user access self-check on
+# (GBRAIN_RUST_MULTIUSER=1 GBRAIN_RUST_ACCESS_SELF_CHECK=1, kept through the test preload by
+# GBRAIN_TEST_KEEP_AMBIENT_ENV=1): every privacy policy a Rust store member renders is compared with the
+# store's own derivation (rust/crates/gbrain-store/src/access_derive.rs), and a difference refuses the
+# read with access_self_check_mismatch. This lane is the evidence for the multi-user gate that admits
+# keys other than the brain owner's (docs/designs/rust-engine/multi-user-server.md, M2).
+#
+# Jobs:
+#   parity  builds the addon, proves the mode is on (test/rust-access-selfcheck-mode.serial.test.ts asserts
+#           the store opened in multi-user mode and a caller read was compared), then runs half of the parity
+#           files on each of two Linux shards, one Bun process per file, and fails on any
+#           access_self_check_mismatch in the output.
+#
+# Event parity (docs/TESTING.md#event-parity), named exception: this workflow runs only on pushes to the
+# multi-user trunk branch rust-engine/multiuser, on Linux only. It is a development gate for a feature that
+# is off by default; master, pull requests and the schedule do not run it. The default-off code paths are
+# covered by the Rust engine workflow (rust-engine.yml) on every push to master.
+
+on:
+  push:
+    branches:
+      - rust-engine/multiuser
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-multiuser-selfcheck-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  parity:
+    name: Access self-check parity / linux-x64 (${{ matrix.shard }} of 2)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    steps:
+      - id: checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        timeout-minutes: 3
+        continue-on-error: true
+        with:
+          persist-credentials: false
+      - name: Check out again after a stalled first attempt
+        if: steps.checkout.outcome == 'failure'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        timeout-minutes: 3
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.4.4
+      - name: Install the pinned Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v rustup > /dev/null 2>&1; then
+            echo "::error::rustup is not installed on this runner. Use a runner image that ships rustup."
+            exit 1
+          fi
+          channel="$(sed -n 's/^channel = "\(.*\)"$/\1/p' "$GITHUB_WORKSPACE/rust/rust-toolchain.toml")"
+          test -n "$channel"
+          rustup toolchain install "$channel" --profile minimal
+          rustup default "$channel"
+          rustc --version
+      - name: Name the cache from the lock file and toolchain
+        id: cachename
+        run: echo "value=rust-addon-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust/Cargo.lock', 'rust/rust-toolchain.toml') }}" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: ${{ steps.cachename.outputs.value }}
+          restore-keys: |
+            rust-addon-${{ runner.os }}-${{ runner.arch }}-
+      - name: Build the addon
+        run: bun run rust:build
+      - name: Install dependencies (bounded, retried once)
+        timeout-minutes: 8
+        run: bun scripts/ci-bun-install.ts --frozen-lockfile --ignore-scripts
+      # The mode proof: without it, a run whose switches the preload stripped would pass while checking nothing.
+      - name: The self-check is on (the store opens multi-user and compares a caller read)
+        if: matrix.shard == 1
+        env:
+          GBRAIN_TEST_RUST_ADDON_REQUIRED: '1'
+        run: bun test --timeout=120000 test/rust-access-selfcheck-mode.serial.test.ts
+      # Every parity file whose position in the sorted list, counted from 1, leaves shard - 1 when divided by 2.
+      - name: The parity suite's Rust arm with the access self-check on
+        shell: bash
+        env:
+          GBRAIN_TEST_KEEP_AMBIENT_ENV: '1'
+          GBRAIN_RUST_MULTIUSER: '1'
+          GBRAIN_RUST_ACCESS_SELF_CHECK: '1'
+          GBRAIN_TEST_RUST_ADDON_REQUIRED: '1'
+          GBRAIN_TEST_RUST_ARM: '1'
+          SHARD: ${{ matrix.shard }}
+          SHARDS: '2'
+        run: |
+          set -euo pipefail
+          log="$RUNNER_TEMP/selfcheck-parity.log"
+          : > "$log"
+          position=0
+          ran=0
+          while IFS= read -r file; do
+            position=$((position + 1))
+            [ $(( (position - 1) % SHARDS )) -eq $(( SHARD - 1 )) ] || continue
+            [ -f "$file" ] || { echo "::error::parity file $file does not exist"; exit 1; }
+            bun test --timeout=60000 "$file" 2>&1 | tee -a "$log"
+            ran=$((ran + 1))
+          done < <(printf '%s\n' test/engine-parity/*.test.ts | LC_ALL=C sort)
+          echo "self-check parity shard $SHARD of $SHARDS: ran $ran of $position files"
+          [ "$ran" -gt 0 ] || { echo "::error::self-check parity shard $SHARD of $SHARDS ran no file"; exit 1; }
+          if grep -q 'access_self_check_mismatch' "$log"; then
+            echo "::error::the access self-check refused a read (access_self_check_mismatch); see the lines above"
+            grep -n 'access_self_check_mismatch' "$log" | head -40
+            exit 1
+          fi

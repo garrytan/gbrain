@@ -16,6 +16,7 @@ import { loadRustAddon } from '../src/core/rust-engine/addon-loader.ts';
 import { openRustEngine, type RustEngine } from '../src/core/rust-engine.ts';
 import { openPrincipalSession } from '../src/core/rust-engine/principal-session.ts';
 import { hashToken } from '../src/core/utils.ts';
+import { withCallerAccess } from '../src/core/search/private-visibility.ts';
 import { rustArmAddonPath } from './engine-parity/rust-arm.ts';
 
 const SWITCHES = ['GBRAIN_RUST_MULTIUSER'] as const;
@@ -125,6 +126,62 @@ describe('a multi-user session on a Rust store', () => {
     expect(await code(session.admit('getConfig'))).toBe('permission_denied');
     await engine.setConfig('access.owner_member', 'owner-example');
     expect(await code(session.admit('getConfig'))).toBe('permission_denied');
+  });
+
+  test('a session call reads under the record the store builds, not one the client set', async () => {
+    await engine.putPage('notes/private-example', { type: 'note', title: 'P', compiled_truth: 'x', frontmatter: { visibility: 'private' } } as never);
+    const read = () => engine.readPageHiddenFromCaller('default', 'notes/private-example', { policy: 'read' });
+    // A remote client's own record (a stranger who may not read private pages) hides the page.
+    expect(await withCallerAccess({ identity: ['member:mallory-example'], hidePrivate: true }, read)).toBe(true);
+    let derived = 0;
+    const addon = { deriveAccessPolicy: (ctx: unknown) => { derived++; return (engine.addon as unknown as { deriveAccessPolicy(c: unknown): unknown }).deriveAccessPolicy(ctx); } };
+    const session = await openPrincipalSession(store(), 'secret-owner', addon);
+    // The owner's session reads it, even inside the stranger's record, and every policy came from the store.
+    // (A write-class call: an owner's read-only call carries member lineage, which neither the store nor TypeScript
+    // models for a Rust brain yet, so both refuse it; the next lines pin that the two agree.)
+    const seen = await withCallerAccess({ identity: ['member:mallory-example'], hidePrivate: true },
+      () => session.run('readPageHiddenFromCaller', { readOnly: false }, read));
+    expect(seen).toBe(false);
+    expect(derived).toBeGreaterThan(0);
+    const lineage = await session.run('readPageHiddenFromCaller', { readOnly: true }, read).catch(e => e);
+    expect((lineage as { code?: string }).code).toBe('engine_capability_missing');
+    const tsLineage = await withCallerAccess({ identity: ['member:owner-example'], owner: true, lineage: true, hidePrivate: false }, read).catch(e => e);
+    expect((tsLineage as { code?: string }).code).toBe('engine_capability_missing');
+    session.release();
+  });
+
+  test('in a session the store refusal stands: no TypeScript policy is used instead', async () => {
+    const refusing = { deriveAccessPolicy: () => ({ $refuse: true, why: 'test refusal' }) };
+    const session = await openPrincipalSession(store(), 'secret-owner', refusing);
+    const err = await session.run('readPageHiddenFromCaller', { readOnly: true },
+      () => engine.readPageHiddenFromCaller('default', 'notes/private-example', { policy: 'read' })).catch(e => e);
+    expect((err as { code?: string }).code).toBe('engine_capability_missing');
+    expect(String((err as Error).message)).toContain('test refusal');
+    session.release();
+  });
+
+  test('the routed policy builders use the store derivation in a session call', async () => {
+    let derived = 0;
+    const addon = { deriveAccessPolicy: (ctx: unknown) => { derived++; return (engine.addon as unknown as { deriveAccessPolicy(c: unknown): unknown }).deriveAccessPolicy(ctx); } };
+    const session = await openPrincipalSession(store(), 'secret-owner', addon);
+    const local = await engine.listOriginClaimants('default', [1]);
+    const before = derived;
+    const remote = await session.run('listOriginClaimants', { readOnly: false }, () => engine.listOriginClaimants('default', [1]));
+    expect(remote).toEqual(local);
+    expect(derived).toBeGreaterThan(before);
+    // A store that refuses the no-caller flags refuses the call: no TypeScript flags are used instead.
+    const refusing = await openPrincipalSession(store(), 'secret-owner', { deriveAccessPolicy: () => ({ $refuse: true, why: 'test refusal' }) });
+    const err = await refusing.run('listOriginClaimants', { readOnly: false }, () => engine.listOriginClaimants('default', [1])).catch(e => e);
+    expect((err as { code?: string }).code).toBe('engine_capability_missing');
+    session.release();
+    refusing.release();
+  });
+
+  test('a session call on a read-only key cannot write, and a revoked session runs nothing', async () => {
+    const session = await openPrincipalSession(store(), 'secret-owner-read');
+    expect(await code(session.run('setConfig', { readOnly: false }, () => engine.setConfig('x', 'y')))).toBe('permission_denied');
+    session.release();
+    expect(await code(session.run('getConfig', { readOnly: true }, () => engine.getConfig('x')))).toBe('permission_denied');
   });
 
   test('a handle does not outlive the store that minted it', async () => {

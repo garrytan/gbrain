@@ -51,6 +51,7 @@ import {
   privateFactFilterForCaller,
   privateFactFilterForReader,
   privatePagesFilterFragment,
+  privacyPartSql,
   remoteProvenanceFloorSql,
   remoteReadFloorSql,
   readPolicyFragment,
@@ -62,7 +63,7 @@ import { ownerOnlyFactSql, ownerOnlyPageSql, ownerOnlyTakeSql, ownerOnlyTimeline
 import type { HybridSearchOpts, PostFusionOpts } from '../../search/hybrid.ts';
 import type { PageReadScope } from '../../types.ts';
 import { refuseMember } from './common.ts';
-import { accessSelfCheckMismatch, accessSelfCheckOn, selfChecked } from '../access-self-check.ts';
+import { accessDerivationOn, accessSelfCheckMismatch, selfChecked } from '../access-self-check.ts';
 
 /** The policy flags the store reads (`PrivacyPolicy` in rust/crates/gbrain-store/src/facts/privacy.rs). */
 export interface StorePrivacyPolicy {
@@ -140,6 +141,16 @@ function checkFragment(member: string, mode: string, rendered: () => string, lab
   if (normalizeConceptInputs(rendered()) !== normalizeConceptInputs(labelled())) throw accessSelfCheckMismatch(member, mode, '$fragment');
 }
 
+/** The no-caller page policy's flags (`pagePolicyFlags(privatePagesFilterFragment('p'))`), derived by the store under the multi-user switch. */
+export function plainPageFlags(member: string): StorePrivacyPolicy {
+  return selfChecked(member, { mode: 'plain_page_flags' }, () => pagePolicyFlags(privatePagesFilterFragment('p')));
+}
+
+/** Whether the privacy part honours the aliases (`pagePolicyFlags(privacyPartSql('p')).honorAliases`), derived by the store under the multi-user switch. */
+export function privacyPartAliases(member: string): boolean {
+  return selfChecked(member, { mode: 'privacy_part_aliases' }, () => pagePolicyFlags(privacyPartSql('p')).honorAliases);
+}
+
 /** The page aliases the policies judge: the fact policy's two, and `p` of a page read. */
 const PAGE_ALIASES = ['pp', 'entity_pp', 'p'] as const;
 
@@ -194,7 +205,7 @@ export function storePrivacyPolicy(
   rendered: () => string,
   opts: { callerReaders?: boolean; fragment?: StoreFactFragment } = {},
 ): StorePrivacyPolicy | undefined {
-  if (!accessSelfCheckOn()) return storePrivacyPolicyRendered(member, excludePrivate, rendered, opts);
+  if (!accessDerivationOn()) return storePrivacyPolicyRendered(member, excludePrivate, rendered, opts);
   checkFragment(member, 'fact', rendered, opts.fragment ? FACT_FRAGMENTS[opts.fragment] : undefined);
   return selfChecked(member, { mode: 'fact', excludePrivate: excludePrivate === true, fragment: opts.fragment!, callerReaders: opts.callerReaders === true },
     () => storePrivacyPolicyRendered(member, excludePrivate, rendered, opts));
@@ -280,7 +291,7 @@ export function storeMemberReadPolicy(member: string, q: { owner: boolean; ident
 
 function storeMemberReadPolicyRendered(member: string, q: { owner: boolean; identity: readonly string[]; satisfied: readonly string[] }): StorePrivacyPolicy {
   if (q.satisfied.length > 0) refuseMember(member, 'a member page whose reader meets a folder rule');
-  if (q.owner) return storeOwnerReadPolicy(member, q.identity);
+  if (q.owner) return storeOwnerReadPolicyRendered(member, q.identity);
   const text = normalizeConceptInputs(readPolicyFragment('p', q.identity, true, q.satisfied));
   const open = currentCallerAccess().restricted === false;
   const reference = renderForStoreCaller(open ? { restricted: false } : {}, () => readPolicyFragment('p', q.identity, true, []));
@@ -298,7 +309,7 @@ function storeMemberReadPolicyRendered(member: string, q: { owner: boolean; iden
  * same fragment for a fresh record of the caller's remote policy. An identity with no valid member principal renders
  * `FALSE` (the owner reads no page but its own) and refuses, and so does an identity the fragment drops as invalid.
  */
-function storeOwnerReadPolicy(member: string, identity: readonly string[]): StorePrivacyPolicy {
+function storeOwnerReadPolicyRendered(member: string, identity: readonly string[]): StorePrivacyPolicy {
   const text = normalizeConceptInputs(ownerReadPolicyFragment('p', identity, []));
   const reference = normalizeConceptInputs(renderForStoreCaller({}, () => ownerReadPolicyFragment('p', identity, [])));
   const named = identity.every(id => text.includes(`'${id}'`));
@@ -347,7 +358,7 @@ export function storePageTextPolicy(
   rendered: () => string,
   opts: { callerReaders?: boolean; noReaders?: boolean; fragment?: StorePageFragment; renderedIn?: { record: CallerAccess | null } } = {},
 ): StorePrivacyPolicy {
-  if (!accessSelfCheckOn()) return storePageTextPolicyRendered(member, rendered, opts);
+  if (!accessDerivationOn()) return storePageTextPolicyRendered(member, rendered, opts);
   const labelled = opts.fragment ? PAGE_FRAGMENTS[opts.fragment] : undefined;
   const at = opts.renderedIn;
   checkFragment(member, 'page_text', rendered, labelled && at

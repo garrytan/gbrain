@@ -12,6 +12,7 @@ import type {
 } from '../../engine-sql/write-attribution.ts';
 import { ownerOnlyTakeAllowedSql, ownerOnlyTimelineAllowedSql, privateFactFilterForReader } from '../../search/private-visibility.ts';
 import { withDates } from '../store-codec.ts';
+import { selfChecked } from '../access-self-check.ts';
 import { storeCall, type StoreMember } from './common.ts';
 import { ownerOnlyFormIn, storePrivacyPolicy, type StoreOwnerOnlyForm } from './private-provenance.ts';
 
@@ -49,8 +50,12 @@ export const readOldestVersionAttribution: StoreMember<[pageId: number], ActorAt
  * The owner-only form a take or timeline row is read under (`ownerOnlyTakeAllowedSql` / `ownerOnlyTimelineAllowedSql`):
  * 'off' for the owner or a read without excludePrivate.
  */
-function rowOwnerOnly(excludePrivate: boolean | undefined, table: 'takes' | 'timeline_entries'): StoreOwnerOnlyForm {
+export function rowOwnerOnly(excludePrivate: boolean | undefined, table: 'takes' | 'timeline_entries'): StoreOwnerOnlyForm {
   if (!excludePrivate) return 'off';
+  return selfChecked('readRowAttribution', { mode: 'row_owner_only' }, () => rowOwnerOnlyRendered(table));
+}
+
+function rowOwnerOnlyRendered(table: 'takes' | 'timeline_entries'): StoreOwnerOnlyForm {
   return ownerOnlyFormIn(table === 'takes' ? ownerOnlyTakeAllowedSql(table) : ownerOnlyTimelineAllowedSql(table), table, table);
 }
 
