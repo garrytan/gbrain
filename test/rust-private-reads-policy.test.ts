@@ -16,7 +16,7 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { storePageTextPolicy, storePrivacyPolicy } from '../src/core/rust-engine/store-members/private-provenance.ts';
-import { privatePagesFilterForCaller, privateProvenanceFilterUnderPolicy, withCallerAccess } from '../src/core/search/private-visibility.ts';
+import { privatePagesFilterForCaller, privateProvenanceFilterUnderPolicy, remoteReadFloorSql, withCallerAccess } from '../src/core/search/private-visibility.ts';
 
 const REMOTE = { hidePrivate: true, restricted: true, applyRemoteReadPolicy: true };
 const MEMBER = { ...REMOTE, identity: ['member:alice-example'] };
@@ -69,5 +69,16 @@ describe('the Rust page and fact policy translator under excludePrivate', () => 
     expect(page['no record']).toBe('served');
     expect(page['local owner']).toBe('refused');
     expect(page['remote owner']).toBe('refused');
+  });
+
+  test('the remote read floor sends the pending prefixes its text was rendered with, for a labelled-only and an ordinary caller', () => {
+    const coverage = [{ source_id: 'default', prefix: 'derived/' }];
+    const floor = (record: Record<string, unknown>) => withCallerAccess(record as never, () => storePageTextPolicy('readReflexPages', () => remoteReadFloorSql('p'), { callerReaders: true }));
+    const labelled = floor({ ...MEMBER, labelledOnly: true, lineage: true, folderCoverage: coverage, satisfiedRuleIds: ['default:r1'] });
+    expect({ coverage: labelled.folderCoverage, record: labelled.callerRecord, terms: labelled.labelledOnly })
+      .toEqual({ coverage, record: true, terms: { identity: ['member:alice-example'], satisfiedRuleIds: ['default:r1'], lineage: true, member: 'alice-example' } });
+    expect(floor({ ...MEMBER, folderCoverage: coverage }).folderCoverage).toEqual(coverage);
+    // No prefix in the record: the plain floor form, which sends none (and never the live pending prefixes of the store).
+    expect(floor({ ...MEMBER, labelledOnly: true }).folderCoverage).toBeUndefined();
   });
 });

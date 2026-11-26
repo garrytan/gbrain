@@ -33,9 +33,9 @@ function callerPolicy(member: string, part: PagePolicyPart): StorePrivacyPolicy 
     if (text === renderForStoreCaller({}, () => callerAccessAllowedSql('p'))) return off;
     const canonical = renderForStoreCaller({ ...readers, hidePrivate: true }, () => callerAccessAllowedSql('p'));
     if (text === canonical) return { ...off, ...readers };
-    // A labelled-only grant or a lineage read: the same record with the caller's folder rules and the grants (callerReference).
+    // The same record with the caller's folder rules (an ordinary member that satisfies a rule too), and with the grants when it has any.
     const reference = callerReference();
-    if (!reference || Object.keys(reference.record).length === 0) return undefined;
+    if (!reference) return undefined;
     const folders = callerFolders();
     const withGrants = renderForStoreCaller({ ...readers, ...folders, ...reference.record, hidePrivate: true }, () => callerAccessAllowedSql('p'));
     if (text !== withGrants) return undefined;

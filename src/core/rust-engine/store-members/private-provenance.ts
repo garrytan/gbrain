@@ -392,13 +392,22 @@ export function storePageTextPolicy(
     // grants or coverage: a page that names readers fails, and a pending prefix hides nothing (privacy.rs caller_record).
     const floor = renderForStoreCaller({ hidePrivate: true, ...(open ? { restricted: false } : {}) }, () => privatePagesFilterFragment('p'));
     if (text === normalizeConceptInputs(floor)) return { ...pagePolicyFlags(floor), identity: [], privateReadableSources: [], callerRecord: true };
-    // The remote read floor of a labelled-only caller: the same plain fragment ANDed with its labelled-only conjunct
-    // (remoteReadFloorSql), which reads the caller's own terms and no identity of the member-access part.
-    if (access.labelledOnly && !access.owner && access.audienceIdentities.length === 0) {
-      const terms = callerReference()?.flags.labelledOnly;
-      const record = { ...callerReaders, ...callerFolders(), labelledOnly: true, ...(access.lineage ? { lineage: true } : {}), hidePrivate: true, restricted: !open };
-      const labelledFloor = renderForStoreCaller(record, () => remoteReadFloorSql('p'));
-      if (terms && text === normalizeConceptInputs(labelledFloor)) return { ...pagePolicyFlags(labelledFloor), identity: [], privateReadableSources: [], callerRecord: true, labelledOnly: terms };
+    // The remote read floor under a caller record that holds pending folder prefixes, and that of a labelled-only caller: the plain
+    // fragment (ANDed, for a labelled-only caller, with its conjunct: remoteReadFloorSql), which reads no identity of the member-access
+    // part. Rendered with the caller's record, it hides a page under a pending prefix of the record, so the prefixes are sent with
+    // the labelled-only terms; the store reads the record's coverage, never its own live pending prefixes, for a record caller.
+    if (!access.owner && access.audienceIdentities.length === 0 && (access.labelledOnly || access.folderCoverage.length > 0)) {
+      const terms = access.labelledOnly ? callerReference()?.flags.labelledOnly : undefined;
+      const folders = callerFolders();
+      const record = { ...callerReaders, ...folders, ...(access.labelledOnly ? { labelledOnly: true } : {}), ...(access.labelledOnly && access.lineage ? { lineage: true } : {}), hidePrivate: true, restricted: !open };
+      const callerFloor = renderForStoreCaller(record, () => remoteReadFloorSql('p'));
+      if ((terms || !access.labelledOnly) && text === normalizeConceptInputs(callerFloor)) {
+        return {
+          ...pagePolicyFlags(callerFloor), identity: [], privateReadableSources: [], callerRecord: true,
+          ...(folders.folderCoverage.length ? { folderCoverage: folders.folderCoverage } : {}),
+          ...(terms ? { labelledOnly: terms } : {}),
+        };
+      }
     }
     if (!opts.callerReaders && !opts.noReaders) return undefined;
     if (opts.noReaders) {
