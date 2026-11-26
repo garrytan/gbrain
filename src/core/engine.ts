@@ -687,7 +687,8 @@ export interface FactRow {
    */
   notability: 'high' | 'medium' | 'low';
   context: string | null;
-  valid_from: Date;
+  /** Event time; null when the event date is unknown (#10288), which reads order by created_at. */
+  valid_from: Date | null;
   valid_until: Date | null;
   expired_at: Date | null;
   superseded_by: number | null;
@@ -727,7 +728,7 @@ export interface NewFact {
   entity_slug?: string | null;
   visibility?: FactVisibility;          // default 'private'
   context?: string | null;
-  valid_from?: Date;                   // default now()
+  valid_from?: Date | null;            // null or omitted: event date unknown, stored NULL (#10288)
   valid_until?: Date | null;
   /**
    * v0.46 (#3014) — explicit expiry timestamp. When set, the row is
@@ -805,9 +806,12 @@ export interface FactListOpts {
    * not by when the underlying event occurred. Off by default, so the
    * facts meta-hook's hot-memory injection cache (`facts/meta-hook.ts`,
    * a 24h recency window re-ranked by decayed confidence) keeps its
-   * creation-time semantics unchanged.
+   * creation-time semantics unchanged. #10288: an event-time read matches
+   * only facts with a known event date unless `includeUndated` is set.
    */
   eventTime?: boolean;
+  /** With `eventTime`: also return facts whose event date is unknown (valid_from NULL), placed by created_at. For unbounded timelines only, never a window. */
+  includeUndated?: boolean;
   /**
    * When true, exclude the durable audit checkpoint rows that
    * extract-conversation-facts writes into the facts table

@@ -6872,7 +6872,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "valid_from": {
         "type": "string",
-        "description": "#4206: ISO 8601 event time for the extracted facts — use when the turn is historical (importing an old transcript) so facts do not get stamped with import time. Fallback only: a date the extractor derives from the turn itself wins. Default: now()."
+        "description": "#4206: ISO 8601 event time for the extracted facts — use when the turn is historical (importing an old transcript) so facts do not get stamped with import time. Fallback only: a date the extractor derives from the turn itself wins. Omitted: the event date stays unknown."
       },
       "source_slug": {
         "type": "string",

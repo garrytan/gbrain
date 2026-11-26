@@ -93,7 +93,7 @@ export async function insertFact(
     input: NewFact,
     ctx: { source_id: string; supersedeId?: number },
   ): Promise<{ id: number; status: FactInsertStatus }> {
-    const validFrom = input.valid_from ?? new Date();
+    const validFrom = input.valid_from ?? null;
     const validUntil = input.valid_until ?? null;
     const kind = input.kind ?? 'fact';
     const visibility = input.visibility ?? 'private';
@@ -138,7 +138,7 @@ export async function insertFact(
         `)).rows;
         const id = Number(ins[0].id);
         (await tx.run(sqlFragment`UPDATE facts SET expired_at = now(), superseded_by = ${id},
-                   valid_until = CASE WHEN valid_from < ${validFrom}::timestamptz AND ${validFrom}::timestamptz < COALESCE(valid_until, now()) THEN ${validFrom}::timestamptz ELSE GREATEST(valid_from, LEAST(COALESCE(valid_until, now()), now())) END
+                   valid_until = CASE WHEN (valid_from IS NULL OR valid_from < ${validFrom}::timestamptz) AND ${validFrom}::timestamptz < COALESCE(valid_until, now()) THEN ${validFrom}::timestamptz ELSE GREATEST(valid_from, LEAST(COALESCE(valid_until, now()), now())) END
                  WHERE id = ${supersedeId} AND expired_at IS NULL`)).rows;
         return id;
       });
@@ -181,7 +181,7 @@ export async function expireFact(exec: SqlExecutor, id: number, opts?: { superse
     const result = await exec.run(sqlFragment`
       UPDATE facts SET expired_at = ${at}, superseded_by = COALESCE(${supersededBy}, superseded_by),
         valid_until = CASE WHEN ${successor}::timestamptz IS NULL THEN valid_until
-          WHEN valid_from < ${successor}::timestamptz AND ${successor}::timestamptz < COALESCE(valid_until, now()) THEN ${successor}::timestamptz
+          WHEN (valid_from IS NULL OR valid_from < ${successor}::timestamptz) AND ${successor}::timestamptz < COALESCE(valid_until, now()) THEN ${successor}::timestamptz
           ELSE GREATEST(valid_from, LEAST(COALESCE(valid_until, now()), now())) END
       WHERE id = ${id} AND expired_at IS NULL
     `);
@@ -215,7 +215,7 @@ async function insertFactRows(tx: SqlExecutor, castSuffix: EmbeddingCast,
       return {
         entity_slug: wellFormed(input.entity_slug ?? null), fact: wellFormed(input.fact), kind: input.kind ?? 'fact',
         visibility: input.visibility ?? 'private', notability: input.notability ?? 'medium', context: wellFormed(input.context ?? null),
-        valid_from: (input.valid_from ?? new Date()).toISOString(), valid_until: input.valid_until?.toISOString() ?? null,
+        valid_from: input.valid_from?.toISOString() ?? null, valid_until: input.valid_until?.toISOString() ?? null,
         expired_at: input.expired_at?.toISOString() ?? null, source: wellFormed(input.source), source_session: wellFormed(input.source_session ?? null),
         confidence: input.confidence ?? 1.0, embedding: embedding ? toPgVectorLiteral(embedding) : null,
         embedded_at: embedding ? new Date().toISOString() : null, embedding_model: embedding ? wellFormed(input.embedding_model ?? null) : null,
@@ -434,8 +434,9 @@ export async function listFactsByEntity(
     // (valid_until <= now()) at read time — exact-time, zero-maintenance.
     // History readers pass activeOnly:false and stay unfiltered. Parity with
     // the pglite engine's _listFacts predicate.
-    // GST-3170: a fact dated in the future ranks as of when it was written. Each branch keeps an index-ordered scan
-    // (idx_facts_entity_active), so the merge sorts at most 2 x (limit + offset) rows.
+    // GST-3170: a fact dated in the future ranks as of when it was written, and #10288 one with no event date as of when
+    // it was saved. Each branch keeps an index-ordered scan (idx_facts_entity_active), so the merge sorts at most
+    // 3 x (limit + offset) rows.
     const where = sqlFragment`
       WHERE source_id = ${source_id}
         AND entity_slug = ${entitySlug}${opts?.sessionId ? sqlFragment` AND source_session = ${opts.sessionId}` : sqlFragment``}
@@ -447,8 +448,9 @@ export async function listFactsByEntity(
         ${grepPat ? sqlFragment`AND fact ILIKE ${grepPat} ESCAPE '\\'` : sqlFragment``}${eligibilityClause(opts)}`;
     const rows = (await exec.run<FactRowSqlShape>(sqlFragment`
       SELECT * FROM ((SELECT * FROM facts ${where} AND valid_from <= now() ORDER BY valid_from DESC, id DESC LIMIT ${limit + offset})
-        UNION ALL (SELECT * FROM facts ${where} AND valid_from > now() ORDER BY created_at DESC, id DESC LIMIT ${limit + offset})) f
-      ORDER BY (CASE WHEN valid_from > now() THEN created_at ELSE valid_from END) DESC, id DESC
+        UNION ALL (SELECT * FROM facts ${where} AND valid_from > now() ORDER BY created_at DESC, id DESC LIMIT ${limit + offset})
+        UNION ALL (SELECT * FROM facts ${where} AND valid_from IS NULL ORDER BY created_at DESC, id DESC LIMIT ${limit + offset})) f
+      ORDER BY (CASE WHEN valid_from IS NULL OR valid_from > now() THEN created_at ELSE valid_from END) DESC, id DESC
       LIMIT ${limit} OFFSET ${offset}
     `)).rows;
     return rows.map(rowToFact);
@@ -470,6 +472,7 @@ export async function listFactsSince(
     const rows = (await exec.run<FactRowSqlShape>(sqlFragment`
       SELECT *${opts?.fingerprint ? sqlFragment`, gbrain_fact_fingerprint(fact) AS fact_fingerprint` : sqlFragment``} FROM facts
       WHERE source_id = ${source_id}
+        ${eventTime && opts?.includeUndated !== true ? sqlFragment`AND valid_from IS NOT NULL` : sqlFragment``}
         AND ${eventTime ? sqlFragment`COALESCE(valid_from, created_at)` : sqlFragment`created_at`} >= ${since}${recallNarrowing(opts)}
         ${activeOnly ? sqlFragment`AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now())` : sqlFragment``}
         ${unconsolidatedOnly ? sqlFragment`AND consolidated_at IS NULL` : sqlFragment``}
@@ -731,6 +734,7 @@ export async function findTrajectory(exec: LegacyUnscopedRead, opts: import('../
       WHERE ${useArray ? sqlFragment`source_id = ANY(${sourceIds}::text[])` : sqlFragment`source_id = ${sourceId}`}
         AND entity_slug = ${opts.entitySlug}
         AND expired_at IS NULL
+        AND valid_from IS NOT NULL
         ${remoteFilter ? visibilityClause(['world']) : sqlFragment``}${privacyClause(opts)}
         AND ${trustedSql(projectionEligibleSql('facts', 'facts', undefined))}
         AND (claim_metric IS NULL OR claim_metric !~* ${PROFILE_METRIC_SQL_PATTERN})
@@ -815,7 +819,7 @@ export interface FactRowSqlShape {
   visibility: FactVisibility;
   notability: 'high' | 'medium' | 'low';
   context: string | null;
-  valid_from: Date;
+  valid_from: Date | null;
   valid_until: Date | null;
   expired_at: Date | null;
   superseded_by: number | bigint | null;

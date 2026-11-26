@@ -990,6 +990,7 @@ async function listRowsLocal(
     if (entityTextFallbackApplies(flags, rows.length)) {
       const textRows = await engine.listFactsSince(sourceId, resolvedSince ?? new Date(0), {
         eventTime: resolvedSince ? windowEventTime : true,
+        includeUndated: !resolvedSince,
         activeOnly: !flags.includeExpired,
         limit: flags.limit,
         grep: flags.entity.toLowerCase(),
@@ -1044,6 +1045,7 @@ async function listRowsLocal(
   }
   return engine.listFactsSince(sourceId, new Date(0), {
     eventTime: true,
+    includeUndated: true,
     activeOnly: !flags.includeExpired,
     limit: flags.limit,
     grep: flags.grep ?? undefined,
@@ -1214,7 +1216,7 @@ function factRowToJson(r: FactRow): Record<string, unknown> {
     entity_slug: r.entity_slug,
     visibility: r.visibility,
     notability: r.notability,
-    valid_from: r.valid_from.toISOString(),
+    valid_from: r.valid_from?.toISOString() ?? null,
     valid_until: r.valid_until?.toISOString() ?? null,
     expired_at: r.expired_at?.toISOString() ?? null,
     superseded_by: r.superseded_by,
@@ -1359,7 +1361,7 @@ function renderToday(rows: FactRow[], windowStart: Date | null): string {
     parts.push(`## ${entity}`);
     for (const r of group) {
       const icon = KIND_ICON[r.kind];
-      const ageStr = humanAge(r.valid_from);
+      const ageStr = r.valid_from ? humanAge(r.valid_from) : `saved ${humanAge(r.created_at)}`;
       const conf = effectiveConfidence(r).toFixed(2);
       parts.push(`- ${icon} ${r.fact} (${r.kind}, ${ageStr}, conf ${conf})`);
     }
@@ -1400,7 +1402,7 @@ function renderAsContext(rows: FactRow[]): string {
   for (const r of rows) {
     const icon = KIND_ICON[r.kind];
     const tag = r.entity_slug ? ` [${r.entity_slug}]` : '';
-    const ageStr = humanAge(r.valid_from);
+    const ageStr = r.valid_from ? humanAge(r.valid_from) : `saved ${humanAge(r.created_at)}`;
     parts.push(`- ${icon}${tag} ${r.fact} (${r.kind}, ${ageStr})`);
   }
   return parts.join('\n');

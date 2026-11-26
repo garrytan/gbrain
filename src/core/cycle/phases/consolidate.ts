@@ -131,7 +131,7 @@ export const DEFAULT_CLUSTER_THRESHOLD = 0.85;
  * valid_until is already correct.
  */
 async function writeValidUntilChain(tx: BrainEngine, cluster: FactRow[]): Promise<void> {
-  const chronological = [...cluster].sort((a, b) => {
+  const chronological = cluster.filter((f): f is FactRow & { valid_from: Date } => f.valid_from !== null).sort((a, b) => {
     const t = a.valid_from.getTime() - b.valid_from.getTime();
     if (t !== 0) return t;
     return a.id - b.id;
@@ -272,10 +272,8 @@ export async function runPhaseConsolidate(
       }
 
       // Age gate: oldest must be at least minOldestAgeMs old.
-      const oldest = unconsolidated.reduce((min, f) =>
-        f.valid_from.getTime() < min.valid_from.getTime() ? f : min,
-      );
-      if (Date.now() - oldest.valid_from.getTime() < minOldestAgeMs) {
+      const oldest = Math.min(...unconsolidated.map(f => (f.valid_from ?? f.created_at).getTime()));
+      if (Date.now() - oldest < minOldestAgeMs) {
         bucketsSkipped += 1;
         continue;
       }
@@ -316,11 +314,7 @@ export async function runPhaseConsolidate(
         const best = cluster.reduce((a, b) => (b.confidence > a.confidence ? b : a));
         const avgWeight = cluster.reduce((s, f) => s + f.confidence, 0) / cluster.length;
         const sources = Array.from(new Set(cluster.map(c => c.source_session ?? c.source).filter(Boolean))).join(',');
-        const sinceISO = cluster
-          .map(c => c.valid_from)
-          .reduce((min, d) => (d < min ? d : min))
-          .toISOString()
-          .slice(0, 10);
+        const sinceISO = new Date(Math.min(...cluster.map(c => (c.valid_from ?? c.created_at).getTime()))).toISOString().slice(0, 10);
         const inputs = cluster.map(f => taint.get(f.id)!);
         const derivation = { inputs, trust: derivedWriteTrust({ channel: 'derive:consolidate', inputs }) };
 
@@ -501,8 +495,8 @@ export interface SameInstantCluster {
 const SAME_INSTANT_SAMPLES = 20;
 
 function clusterTie(cluster: FactRow[], claims: Map<number, ClaimShape>): SameInstantTie | undefined {
-  return sameInstantTies(cluster.map(f => ({ id: f.id, at: f.valid_from.getTime(), metric: claims.get(f.id)?.metric ?? null,
-    unit: claims.get(f.id)?.unit ?? null, period: claims.get(f.id)?.period ?? null })))[0];
+  return sameInstantTies(cluster.flatMap(f => f.valid_from ? [{ id: f.id, at: f.valid_from.getTime(), metric: claims.get(f.id)?.metric ?? null,
+    unit: claims.get(f.id)?.unit ?? null, period: claims.get(f.id)?.period ?? null }] : []))[0];
 }
 
 /**
@@ -616,7 +610,7 @@ export function untypedClusterThreshold(threshold: number): number {
  * pipeline ensures embeddings are computed at insertFact time.
  */
 export function clusterFacts(facts: FactRow[], threshold: number, claims: Map<number, ClaimShape> = new Map()): FactRow[][] {
-  const sorted = [...facts].sort((a, b) => b.valid_from.getTime() - a.valid_from.getTime());
+  const sorted = [...facts].sort((a, b) => (b.valid_from ?? b.created_at).getTime() - (a.valid_from ?? a.created_at).getTime());
   const clusters: FactRow[][] = [];
   for (const f of sorted) {
     if (!f.embedding || !f.embedding_model || f.embedded_text_hash !== createHash('md5').update(f.fact).digest('hex')) {

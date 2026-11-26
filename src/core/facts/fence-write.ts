@@ -99,7 +99,8 @@ export interface FenceInputFact {
   visibility: FactVisibility;
   /** Defaults to 1.0 when undefined (matches engine.insertFact behavior). */
   confidence?: number;
-  validFrom?: Date;
+  /** The event date; null or omitted: unknown, an empty fence cell (#10288). */
+  validFrom?: Date | null;
   /**
    * MEMORY_VERBS v1 (c5): remember's ttl → valid_until. Written to the
    * fence cell losslessly (formatFenceDate); the DB column derives from it on
@@ -532,7 +533,7 @@ export async function writeFactsToFence(
           confidence:  f.confidence ?? 1.0,
           visibility:  f.visibility,
           notability:  f.notability ?? 'medium',
-          validFrom:   formatFenceDate(f.validFrom ?? new Date()),
+          validFrom:   f.validFrom ? formatFenceDate(f.validFrom) : undefined,
           // MEMORY_VERBS v1 (c5): remember's ttl threads through to the fence
           // cell — was hard-coded undefined, which silently dropped expiry on
           // this path. extractFactsFromFenceText derives the DB column from it.

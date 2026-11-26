@@ -134,7 +134,7 @@ export interface FactPoolOpts {
 
 export interface FactCandidate {
   id: number; fact: string; kind: string; entity_slug: string | null; source_id: string; source: string;
-  valid_from: Date | string; valid_until: Date | string | null; created_at?: Date | string | null; claim_metric: string | null; claim_period: string | null;
+  valid_from: Date | string | null; valid_until: Date | string | null; created_at?: Date | string | null; claim_metric: string | null; claim_period: string | null;
   /** The page the fact was taken from (its observation date) and the columns copies collapse on (capture-dedup.ts). */
   source_markdown_slug?: string | null; visibility?: string; attributed_to?: import('../engine.ts').FactAttribution | null;
   /** GBRA-574 B2: the fact's slot (facts/slots.ts), when it carries one. */
@@ -219,7 +219,7 @@ function poolPredicate(scope: FactPoolScope, filters: FactPoolFilters | undefine
     clauses.push(`(f.source_id, f.entity_slug) IN (SELECT * FROM unnest(${bind(filters.entities.map(e => e.sourceId))}::text[], ${bind(filters.entities.map(e => e.slug))}::text[]))`);
   }
   if (filters?.sessionId) clauses.push(`f.source_session = ${bind(filters.sessionId)}`);
-  if (filters?.since) clauses.push(`COALESCE(f.valid_from, f.created_at) >= ${bind(filters.since.toISOString())}::text::timestamptz`);
+  if (filters?.since) clauses.push('f.valid_from IS NOT NULL', `COALESCE(f.valid_from, f.created_at) >= ${bind(filters.since.toISOString())}::text::timestamptz`);
   if (filters?.grep?.trim()) clauses.push(`f.fact ILIKE ${bind(`%${escapeLikePattern(filters.grep.trim())}%`)} ESCAPE '\\'`);
   return { where: clauses.join(' AND '), params };
 }
@@ -311,19 +311,20 @@ export async function collectFactCandidates(engine: BrainEngine, question: strin
     const named = await namedEntity(engine, question, { sourceIds, excludePrivate: scope.excludePrivate });
     if (!named) return [];
     const p = armParams(allSim ? simParams : []);
-    // GST-3170: a future-dated fact ranks as of when it was written; each branch keeps an index-ordered scan.
+    // GST-3170: a future-dated fact ranks as of when it was written, and #10288 an undated one as of when it was saved;
+    // each branch keeps an index-ordered scan.
     const arm = (order: string, from: string) => `(SELECT ${COLS}, ${allSim ? simSql : 'NULL::float8 AS similarity'} FROM facts f WHERE ${where}
        AND f.source_id = $${p.length + 1} AND f.entity_slug = $${p.length + 2} AND ${from} ORDER BY ${order} DESC, f.id DESC LIMIT $${p.length + 3})`;
     const active = await engine.executeRaw<Row>(
-      `SELECT * FROM (${arm('f.valid_from', 'f.valid_from <= now()')} UNION ALL ${arm('f.created_at', 'f.valid_from > now()')}) f
-       ORDER BY (CASE WHEN f.valid_from > now() THEN f.created_at ELSE f.valid_from END) DESC, f.id DESC LIMIT $${p.length + 3}`,
+      `SELECT * FROM (${arm('f.valid_from', 'f.valid_from <= now()')} UNION ALL ${arm('f.created_at', '(f.valid_from > now() OR f.valid_from IS NULL)')}) f
+       ORDER BY (CASE WHEN f.valid_from IS NULL OR f.valid_from > now() THEN f.created_at ELSE f.valid_from END) DESC, f.id DESC LIMIT $${p.length + 3}`,
       [...p, named.source_id, named.slug, opts.depth.entity]);
     if (!opts.history) return active;
     const ended = poolPredicate(scope, { ...opts.filters, includeExpired: true });
     const e = [...ended.params, ...(allSim ? simParams : [])];
     return [...active, ...await engine.executeRaw<Row>(
       `SELECT ${COLS}, ${allSim ? simSql : 'NULL::float8 AS similarity'} FROM facts f WHERE ${ended.where} AND ${ENDED_FACT_SQL} AND f.source_id = $${e.length + 1} AND f.entity_slug = $${e.length + 2}
-       ORDER BY (CASE WHEN f.valid_from > now() THEN f.created_at ELSE f.valid_from END) DESC, f.id DESC LIMIT $${e.length + 3}`,
+       ORDER BY (CASE WHEN f.valid_from IS NULL OR f.valid_from > now() THEN f.created_at ELSE f.valid_from END) DESC, f.id DESC LIMIT $${e.length + 3}`,
       [...e, named.source_id, named.slug, opts.depth.entity])];
   };
   // Independent arms run concurrently (separate connections on Postgres); merged in a fixed order.
@@ -405,25 +406,25 @@ const CALL_OFF_DEPTH = 50;
  * GBRA-574 B5: for each fact, the later facts that retract it or call it off, oldest first. One read of the cue facts
  * about the facts' entities, the newest CALL_OFF_DEPTH per entity, under exactly the pool's read policy (active rows
  * only, so a withdrawn, forgotten or superseded fact never comes back, nor one the caller cannot read). A cue fact
- * answers a fact when it is about the same entity in the same source, is dated strictly after it, carries a cue no
+ * answers a fact when it is about the same entity in the same source, is dated strictly after it (both dated, #10288), carries a cue no
  * negation sits a word or two before (NEGATED; a cue that starts with one, "not happening", still counts), and either
  * carries the same slot (dimension and value_hash) or, on content terms other than the entity's name and the cue words,
  * has all of its terms (at least one) in the fact or shares at least two with it.
  */
 export async function laterRetractions(engine: BrainEngine, scope: FactPoolScope, facts: readonly FactCandidate[]): Promise<Map<number, FactCandidate[]>> {
   const out = new Map<number, FactCandidate[]>();
-  const keyed = facts.filter(f => f.entity_slug);
+  const keyed = facts.filter((f): f is FactCandidate & { valid_from: Date | string } => !!f.entity_slug && f.valid_from != null);
   if (!keyed.length) return out;
   const pairs = [...new Map(keyed.map(f => [`${f.source_id}\u0000${f.entity_slug}`, f])).values()];
   const { where, params } = poolPredicate(scope, undefined);
   const n = params.length;
   const cues = await engine.executeRaw<FactCandidate>(
-    `SELECT ${COLS} FROM (SELECT f.*, row_number() OVER (PARTITION BY f.source_id, f.entity_slug ORDER BY (CASE WHEN f.valid_from > now() THEN f.created_at ELSE f.valid_from END) DESC, f.id DESC) AS call_off_rank
-       FROM facts f WHERE ${where} AND f.fact ~* $${n + 1}
+    `SELECT ${COLS} FROM (SELECT f.*, row_number() OVER (PARTITION BY f.source_id, f.entity_slug ORDER BY (CASE WHEN f.valid_from IS NULL OR f.valid_from > now() THEN f.created_at ELSE f.valid_from END) DESC, f.id DESC) AS call_off_rank
+       FROM facts f WHERE ${where} AND f.valid_from IS NOT NULL AND f.fact ~* $${n + 1}
          AND (f.source_id, f.entity_slug) IN (SELECT * FROM unnest($${n + 2}::text[], $${n + 3}::text[]))) f
      WHERE f.call_off_rank <= $${n + 4}`,
     [...params, CALL_OFF_SQL, pairs.map(f => f.source_id), pairs.map(f => f.entity_slug), CALL_OFF_DEPTH]);
-  const time = (v: Date | string) => new Date(v).getTime();
+  const time = (v: Date | string | null) => (v == null ? Number.NaN : new Date(v).getTime());
   const calledOff = (text: string) => [...text.matchAll(CALL_OFF_WORDS)].some(m => !NEGATED.test(text.slice(0, m.index)));
   const terms = (slug: string, text: string) => {
     const name = new Set(slug.toLowerCase().split(/[^\p{L}\p{N}]+/u));
@@ -432,7 +433,7 @@ export async function laterRetractions(engine: BrainEngine, scope: FactPoolScope
   for (const f of keyed) {
     const own = terms(f.entity_slug!, f.fact);
     const answers = cues.filter(r => {
-      if (r.source_id !== f.source_id || r.entity_slug !== f.entity_slug || time(r.valid_from) <= time(f.valid_from) || !calledOff(r.fact)) return false;
+      if (r.source_id !== f.source_id || r.entity_slug !== f.entity_slug || !(time(r.valid_from) > time(f.valid_from)) || !calledOff(r.fact)) return false;
       if (f.dimension && f.value_hash && r.dimension === f.dimension && r.value_hash === f.value_hash) return true;
       const theirs = [...terms(f.entity_slug!, r.fact.replace(CALL_OFF_WORDS, ' '))];
       const shared = theirs.filter(t => own.has(t)).length;
@@ -469,7 +470,13 @@ const wordsOf = (c: FactCandidate) => {
 };
 
 export const isDatedFact = (f: Pick<FactCandidate, 'valid_from' | 'created_at'>) =>
-  !!f.created_at && Math.abs(new Date(f.valid_from).getTime() - new Date(f.created_at).getTime()) > DATED_MIN_MS;
+  f.valid_from != null && !!f.created_at && Math.abs(new Date(f.valid_from).getTime() - new Date(f.created_at).getTime()) > DATED_MIN_MS;
+
+/** Newest-first sort time: the event date, or the save time when the event date is unknown (#10288). */
+export function factRecency(f: Pick<FactCandidate, 'valid_from' | 'created_at'> | undefined): number {
+  const at = f?.valid_from ?? f?.created_at;
+  return at == null ? 0 : new Date(at).getTime();
+}
 
 /**
  * Score every candidate (cosine + term share + DATED_BONUS when dated), ordered by score, newest valid_from, then id.
@@ -492,7 +499,7 @@ export function scoreFactCandidates(question: string, candidates: FactCandidate[
     const cosine = c.similarity ?? 0;
     return { candidate: c, cosine, matched: hits.length, terms: asked.length, termShare, score: cosine + scoredShare + (isDatedFact(c) ? DATED_BONUS : 0) };
   }).sort((a, b) => b.score - a.score
-    || new Date(b.candidate.valid_from).getTime() - new Date(a.candidate.valid_from).getTime()
+    || factRecency(b.candidate) - factRecency(a.candidate)
     || b.candidate.id - a.candidate.id);
 }
 

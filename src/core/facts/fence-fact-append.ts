@@ -58,7 +58,7 @@ import { pruneHoldingPageVersions } from '../page-state/versions.ts';
 
 export type FenceFactAppendInput = {
   /** The facts row to publish; `row_num` and `source_markdown_slug` are the helper's. kind and visibility default as insertFacts does. */
-  fact: NewFact & { valid_from: Date };
+  fact: NewFact & { valid_from: Date | null };
   /** The tier the new row's chunks are cut at until its facts row exists (`withPendingFenceRows`); append only. */
   pendingTier: TrustTier;
 } & (
@@ -112,7 +112,7 @@ function fenceCellFor(fact: FenceFactAppendInput['fact'], rowNum: number, slug: 
  * write created first makes this attempt conflict, and the retry appends to it. File before facts row, as an append.
  */
 export async function prepareFenceFactCreate(engine: BrainEngine, row: WriteRequest, config: GBrainConfig,
-  input: { fact: NewFact & { valid_from: Date }; pendingTier: TrustTier; frontmatter: string; heading: string; storedVisibility?: string }, signal?: AbortSignal): Promise<FenceFactAppend> {
+  input: { fact: NewFact & { valid_from: Date | null }; pendingTier: TrustTier; frontmatter: string; heading: string; storedVisibility?: string }, signal?: AbortSignal): Promise<FenceFactAppend> {
   const page = { sourceId: row.source_id, slug: row.slug };
   const [indexedMax] = await engine.executeRaw<{ n: number }>('SELECT COALESCE(MAX(row_num),0)::int AS n FROM facts WHERE source_id=$1 AND source_markdown_slug=$2', [row.source_id, row.slug]);
   const rowNum = (indexedMax?.n ?? 0) + 1;

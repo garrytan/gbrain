@@ -1,0 +1,4 @@
+---
+kind: fix
+---
+A fact saved without an event date (remember without valid_from, extract_facts without a date, or a Facts fence row with an empty date cell on a page that states no date) now stores its event date as unknown instead of the save time, so recall --since no longer returns it as a recent event. Recall shows such a fact with valid_from null and keeps its save time in created_at; general and entity recall still return it, ordered by save time, and trajectories leave it out. A stated date, a page date or a conversation timestamp is kept as before. Facts saved before this upgrade are not changed and keep the save time they were stamped with.
