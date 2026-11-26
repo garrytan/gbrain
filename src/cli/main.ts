@@ -174,7 +174,7 @@ const SELF_HELP_WITHOUT_ENGINE: Record<string, true | (() => Promise<(engine: ne
   founder: true, profile: true, 'graph-query': true, orphans: true, salience: true, think: true,
   brainstorm: true, lsd: true, migrate: true, pages: true, pricing: true, 'retrieval-upgrade': true, whoknows: true, core: true, trust: true, wakeshift: true,
   secrets: true,
-  dedupe: true, identity: true, 'apple-contacts': true, onboarding: true, value: true,
+  dedupe: true, identity: true, 'apple-contacts': true, onboarding: true, value: true, propose: true,
 };
 
 /** Returns true when the command's own help was printed. */

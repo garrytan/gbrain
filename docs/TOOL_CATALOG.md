@@ -4,7 +4,7 @@
 <!-- Regenerate: bun run scripts/generate-tool-catalog.ts -->
 <!-- Freshness-guarded by scripts/check-tool-catalog-fresh.sh (bun run verify). -->
 
-Every non-localOnly operation on the MCP surface: 196 tools across 33 areas. **Starter** marks membership in the ~43-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
+Every non-localOnly operation on the MCP surface: 198 tools across 33 areas. **Starter** marks membership in the ~43-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
 
 ## action-ledger
 
@@ -213,6 +213,8 @@ Every non-localOnly operation on the MCP surface: 196 tools across 33 areas. **S
 |---|---|---|---|---|
 | `onboarding_off` | Turn the first-session suggestion off for this install (the owner only). | write |  |  |
 | `onboarding_status` | Whether the first-session suggestion is armed on this brain, and why not when it is off: not_new_install, not_personal, window_expired, sessions_exhausted or stopped. | read |  |  |
+| `propose_decide` | Record the user's answer to one proposed job (the owner only): accepted or declined, by signal. | write |  |  |
+| `propose_jobs` | Jobs your agent could take on, found in data already in the brain with no model call: people waiting on the user, threads they owe a reply, recurring meetings with no prep page, bulk senders they never wrote to, and the same question asked in two agents. | read |  |  |
 
 ## ontology
 

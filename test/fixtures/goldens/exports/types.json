@@ -9988,7 +9988,7 @@
         "kind": "type",
         "name": "CatalogHandleOptions",
         "signature": [
-          "{ home?: string | undefined; failOpen?: boolean | undefined; deadlineMs?: number | undefined; sessionTokenBudget?: number | undefined; loadHint?: string | undefined; readRoot?: string | undefined; audience?: \"owner\" | \"others\" | undefined; hidden?: readonly string[] | undefined; namesOnly?: boolean | undefined; explainTarget?: string | undefined; router?: boolean | undefined; env?: NodeJS.ProcessEnv | undefined; now?: (() => number) | undefined; }"
+          "{ home?: string | undefined; failOpen?: boolean | undefined; deadlineMs?: number | undefined; sessionTokenBudget?: number | undefined; loadHint?: string | undefined; readRoot?: string | undefined; audience?: \"owner\" | \"others\" | undefined; hidden?: readonly string[] | undefined; namesOnly?: boolean | undefined; explainTarget?: string | undefined; router?: boolean | undefined; offline?: boolean | undefined; env?: NodeJS.ProcessEnv | undefined; now?: (() => number) | undefined; }"
         ]
       },
       {
@@ -10008,7 +10008,7 @@
         "kind": "type",
         "name": "CatalogTurnOptions",
         "signature": [
-          "{ failOpen?: boolean | undefined; deadlineMs?: number | undefined; sessionTokenBudget?: number | undefined; loadHint?: string | undefined; readRoot?: string | undefined; audience?: \"owner\" | \"others\" | undefined; hidden?: readonly string[] | undefined; namesOnly?: boolean | undefined; explainTarget?: string | undefined; router?: boolean | undefined; now?: (() => number) | undefined; }"
+          "{ failOpen?: boolean | undefined; deadlineMs?: number | undefined; sessionTokenBudget?: number | undefined; loadHint?: string | undefined; readRoot?: string | undefined; audience?: \"owner\" | \"others\" | undefined; hidden?: readonly string[] | undefined; namesOnly?: boolean | undefined; explainTarget?: string | undefined; router?: boolean | undefined; offline?: boolean | undefined; now?: (() => number) | undefined; }"
         ]
       },
       {
@@ -10085,6 +10085,7 @@
           "loadHint?: string | undefined",
           "namesOnly?: boolean | undefined",
           "now?: (() => number) | undefined",
+          "offline?: boolean | undefined",
           "readRoot?: string | undefined",
           "router?: boolean | undefined",
           "sessionTokenBudget?: number | undefined"

@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 333585,
-    "stdoutSha256": "7973f3f24c15e32fad54ad50e9a9f42eb514d6d9dba05623c1af89a93364ac74",
+    "stdoutBytes": 335647,
+    "stdoutSha256": "a41fe37dfb8e2ec551db4c9a1e2b0d53a0fe23ab8ed607fb50da3a1fa8c4a5cf",
     "toolNames": [
       "remember",
       "entity",
@@ -226,7 +226,9 @@
       "learned_keep",
       "learned_undo",
       "onboarding_status",
-      "onboarding_off"
+      "onboarding_off",
+      "propose_jobs",
+      "propose_decide"
     ],
     "tools": [
       {
@@ -10409,6 +10411,69 @@
         "schema": {
           "properties": {},
           "required": [],
+          "type": "object"
+        },
+        "scope": "write"
+      },
+      {
+        "description": "Jobs your agent could take on, found in data already in the brain with no model call: people waiting on the user, threads they owe a reply, recurring meetings with no prep page, bulk senders they never wrote to, and the same question asked in two agents. Each job has a count, the pages it rests on, a sentence, and the installed skill or gbrain command that does it. The owner only. Offer one job at a time; propose_decide records the user's yes or no.",
+        "idempotent": true,
+        "local_only": false,
+        "mutating": false,
+        "name": "propose_jobs",
+        "parameters": {
+          "days": "number?"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "days": {
+              "description": "How many days back to look (1-90, default 7).",
+              "type": "number"
+            }
+          },
+          "required": [],
+          "type": "object"
+        },
+        "scope": "read"
+      },
+      {
+        "description": "Record the user's answer to one proposed job (the owner only): accepted or declined, by signal. A declined job is not offered again at session start. Writes only the first-session record, then reads it back: say it was recorded only when verified is true.",
+        "idempotent": true,
+        "local_only": false,
+        "mutating": true,
+        "name": "propose_decide",
+        "parameters": {
+          "decision": "string",
+          "signal": "string"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "decision": {
+              "description": "The user's answer.",
+              "enum": [
+                "accepted",
+                "declined"
+              ],
+              "type": "string"
+            },
+            "signal": {
+              "description": "The job's signal, as propose_jobs returns it.",
+              "enum": [
+                "waiting_on_you",
+                "owe_reply",
+                "meeting_prep",
+                "repeat_question",
+                "bulk_senders"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "signal",
+            "decision"
+          ],
           "type": "object"
         },
         "scope": "write"
