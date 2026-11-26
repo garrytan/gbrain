@@ -70,6 +70,8 @@ use serde_json::{Map, Value, json};
 mod binding_reads;
 mod checkpoint_rows;
 mod checkpoint_validation;
+#[cfg(test)]
+mod claim_fence_tests;
 mod connector_attempts;
 mod connector_orphans;
 mod diagnostic_checkpoints;
