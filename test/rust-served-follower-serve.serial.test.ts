@@ -72,7 +72,15 @@ describeAddon('a Rust follower follows its primary over a socket', () => {
   const windows: Array<{ unacked: number; waited: boolean }> = [];
   const url = () => `gbrain+tcp://127.0.0.1:${listener.port}`;
   const newest = async () => (await store.brain.readCommitLogRaw(null, 1) as { newest: unknown }).newest;
-  const caughtUp = async () => JSON.stringify(await follower.cursor()) === JSON.stringify(await newest());
+  const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+  /**
+   * Caught up AND settled: the follower's cursor is the primary's newest commit, and the last ack it sent names that same
+   * cursor. The cursor moves inside the store before the ack is sent, so the cursor alone says nothing about the acks.
+   */
+  const caughtUp = async () => {
+    const want = await newest();
+    return same(await follower.cursor(), want) && same(acks.at(-1)?.cursor, want);
+  };
   const write = async (slug: string) => primary.putPage(slug, { type: 'note', title: slug, compiled_truth: `${slug} body`, timeline: '' } as never);
 
   beforeAll(async () => {
