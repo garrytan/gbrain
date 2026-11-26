@@ -5803,6 +5803,18 @@ More: [docs/guides/upgrades-auto-update.md#restart](../../docs/guides/upgrades-a
 
 More: [docs/guides/upgrades-auto-update.md#restart](../../docs/guides/upgrades-auto-update.md#restart)
 
+### restore_step_unsupported
+
+<a id="restore_step_unsupported"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| `gbrain backup restore` of a Rust brain stopped before it published anything: the archive holds work or state this runtime cannot make safe (unfinished write requests or recovery records, a purge that needs replay, a live OAuth client or local writer it cannot revoke yet, shared-skill publication it cannot switch off yet, a record kind it does not know), or the mode or addon cannot serve the restore. | A restored brain must not resume old work, bring purged content back or keep archived authority, and a Rust store cannot cancel requests with receipts or replay purges yet, so restore refuses by name instead of skipping the step. The restore target stays reserved with a private failed receipt and staging folder; the archive and the original brain are untouched, so running the same command again fails with restore_target_exists. | Read the reason: take a new backup of the original brain after pausing its writers, or restore with a newer release that supports the missing step, into a new absent --into. Never skip the quarantine. | user | `gbrain doctor --json` | 1 | no |
+
+Reasons: `purge_replay`, `purge_mirror_unreadable`, `pending_requests`, `recovery_required`, `archived_authority`, `shared_skill_state`, `unclassified_state`, `recovery_mode`, `restore_addon_too_old`.
+
+More: [docs/guides/troubleshooting.md#restore-step-unsupported](../../docs/guides/troubleshooting.md#restore-step-unsupported)
+
 ### result_too_large
 
 <a id="result_too_large"></a>

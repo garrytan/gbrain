@@ -601,6 +601,7 @@
     "response_too_large",
     "restart_refused",
     "restart_unverified",
+    "restore_step_unsupported",
     "result_too_large",
     "resume_spec_mismatch",
     "revision_backfill_pending",

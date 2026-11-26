@@ -3217,6 +3217,7 @@
     "response_too_large": 1,
     "restart_refused": 3,
     "restart_unverified": 1,
+    "restore_step_unsupported": 1,
     "result_too_large": 1,
     "resume_spec_mismatch": 1,
     "revision_backfill_pending": 1,
