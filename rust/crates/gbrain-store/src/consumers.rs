@@ -15,6 +15,9 @@
 //!   `version`, `segment_reader`, `capabilities`, as `ON CONFLICT DO UPDATE` sets them);
 //! - `delete_consumer_row(key)`.
 //!
+//! A renewal that carries the host fence (I-5) is refused `lease_lost` when the fence's epoch moved, so a process whose
+//! host registration was taken over stops looking live. A delete takes no fence: it removes only the caller's own row.
+//!
 //! On a store not in multi-user mode the members keep and answer nothing, as the TypeScript members did before.
 //!
 //! Each row read has the SQL shape: times as `timestamptz::text`, `renewed_age_ms` and `age_ms` as text milliseconds.
@@ -26,9 +29,10 @@ use serde_json::{Value, json};
 
 use crate::Store;
 use crate::error::{Result, StoreError};
+use crate::fence;
 use crate::keys;
 use crate::kv::{KvRead, scan_prefix};
-use crate::leases::CONSUMER_ROW;
+use crate::leases::{CONSUMER_ROW, LeaseToken};
 use crate::{get_json, put_json};
 
 /// What this binary's consumer can drain (`CONSUMER_CAPABILITIES`).
@@ -58,6 +62,10 @@ pub struct ConsumerRenewal {
     pub boot_id: Option<String>,
     #[serde(default)]
     pub process_start: Option<String>,
+    /// The host fence (I-5) of the consumer's host registration: a renewal under an epoch that moved is refused
+    /// `lease_lost` and writes nothing, so a process that no longer holds its host cannot look live. None: unchanged.
+    #[serde(default)]
+    pub fence: Option<LeaseToken>,
 }
 
 /// `ConsumerProbe`.
@@ -221,6 +229,7 @@ impl Store {
             return Ok(());
         }
         self.write(|tx| {
+            fence::begin(self, tx, r.fence.as_ref(), "renew_consumer_row")?;
             let now = self.env.now_micros();
             let purge_floor = now - r.purge_ms.saturating_mul(1000);
             for old in host_rows(tx, &r.host_id)? {

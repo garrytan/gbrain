@@ -15,6 +15,7 @@ import { openRustEngine, type RustEngine } from '../src/core/rust-engine.ts';
 import { rustLeases } from '../src/core/rust-engine/store-members/leases.ts';
 import { tryAcquireDbLock } from '../src/core/db-lock.ts';
 import { fenceFor } from '../src/core/persistence/host-fence.ts';
+import { startConsumerHeartbeat } from '../src/core/persistence/consumer-heartbeat.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { lockCycleUnderFence, registerHostLease } from './helpers/rust-host-fence.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -89,6 +90,33 @@ describe('a lease-fenced cycle-lock writer for tests', () => {
       expect(await lock!.refresh()).toBe(true);
       await lock!.release();
       expect(await rustLeases(engine).read('consumer:h1')).toBeNull();
+    });
+  });
+});
+
+describe('the consumer heartbeat row carries the host fence (I-5, host fence table)', () => {
+  const report = () => ({ restart_required: false, root_barrier_age_ms: null });
+  const paths = { host_json_path: '/h/host.json', persistence_home: '/h', minted_under: null };
+  const identity = { pid: 4242, nonce: 'n-1', pid_ns: null };
+
+  withAddon('after a takeover of the host lease, the old holder heartbeat is refused lease_lost and its row is not renewed', async () => {
+    await withEnv({ GBRAIN_RUST_MULTIUSER: '1' }, async () => {
+      const engine = await open();
+      expect(engine.openStore('test').multiuser).toBe(true);
+      const host = await registerHostLease(engine, 'consumer:h1');
+      const errors: unknown[] = [];
+      const beat = startConsumerHeartbeat(engine as unknown as BrainEngine, 'h1', { kind: 'sync', mode: 'full', report, paths, identity, everyMs: 3_600_000, onError: e => errors.push(e) });
+      await beat.renew();
+      expect(errors).toEqual([]);
+      const first = await engine.listHostConsumerRows('h1');
+      expect(first).toHaveLength(1);
+      await Bun.sleep(5);
+      await host.takeOver();
+      await beat.renew();
+      expect(errors.map(e => (e as { code?: string }).code)).toEqual(['lease_lost']);
+      expect((await engine.listHostConsumerRows('h1'))[0].renewed_at).toBe(first[0].renewed_at);
+      host.unregister();
+      await beat.stop();
     });
   });
 });

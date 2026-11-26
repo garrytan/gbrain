@@ -2030,3 +2030,54 @@ fn g16_optimistic_window_a_stall_from_the_claim_call_to_the_commit_longer_than_t
         "the window: a claim whose lease ran out between its call and its commit is expired"
     );
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// Host-fence census (I-5, host fence table): consumer heartbeat rows.
+
+fn consumer_renewal(
+    host: &str,
+    fence: Option<&LeaseToken>,
+) -> gbrain_store::consumers::ConsumerRenewal {
+    let mut renewal = json!({
+        "hostId": host, "pid": 4242, "nonce": "n-1", "pidNs": null, "kind": "full", "mode": "full",
+        "restartRequired": false, "rootBarrierAgeMs": null, "pool": null, "hostJsonPath": "/h/host.json",
+        "persistenceHome": "/h", "mintedUnder": null, "version": "v-test", "purgeMs": 600_000,
+    });
+    if let Some(fence) = fence {
+        renewal["fence"] = serde_json::to_value(fence).unwrap();
+    }
+    serde_json::from_value(renewal).unwrap()
+}
+
+/// A process whose host lease was taken over cannot keep its consumer heartbeat row alive: consumer election reads a
+/// live row as "another consumer runs here", so a stale holder's renewal would make the host defer to a process that
+/// no longer holds the host. The renewal under the old epoch is refused at commit and writes nothing.
+#[test]
+fn census_a_consumer_row_renewal_under_a_taken_over_host_lease_is_refused() {
+    let b = brain("census-consumer", true);
+    let old = b.lease("consumer:h", "a");
+    let new = b.take_over("consumer:h", &old);
+    let err = b
+        .store
+        .renew_consumer_row(&consumer_renewal("h", Some(&old)))
+        .unwrap_err();
+    assert_eq!(err.code, gbrain_store::error::LEASE_LOST, "{err}");
+    assert!(
+        b.store.list_host_consumer_rows("h").unwrap().is_empty(),
+        "a refused renewal wrote a row"
+    );
+    b.store
+        .renew_consumer_row(&consumer_renewal("h", Some(&new)))
+        .unwrap();
+    assert_eq!(b.store.list_host_consumer_rows("h").unwrap().len(), 1);
+}
+
+/// With no fence (no host registered) the renewal is exactly what it was.
+#[test]
+fn census_a_consumer_row_renewal_with_no_fence_is_unchanged() {
+    let b = brain("census-consumer-none", true);
+    b.store
+        .renew_consumer_row(&consumer_renewal("h", None))
+        .unwrap();
+    assert_eq!(b.store.list_host_consumer_rows("h").unwrap().len(), 1);
+}
