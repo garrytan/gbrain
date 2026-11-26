@@ -1149,6 +1149,7 @@ fn effect_claimed_once_then_rerun(store: Arc<Store>) {
                 token: token.into(),
                 owner_json: owner.to_string(),
                 fence: None,
+                dead_owners: Vec::new(),
             };
             tx.stamp_effect_claim(&claim).unwrap()
         });
@@ -1222,6 +1223,7 @@ fn c07_effect_claimed_once_rerun_after_host_lease_expiry() {
             token: token.into(),
             owner_json: owner.to_string(),
             fence: Some(fence.clone()),
+            dead_owners: Vec::new(),
         })
     };
     let settle = |token: &str, effect: &Value, fence: &LeaseToken| EffectSettle {
@@ -1274,6 +1276,7 @@ fn c07_effect_claimed_once_rerun_after_host_lease_expiry() {
             token: TOKEN_B.into(),
             owner_json: owner.to_string(),
             fence: Some(taken.clone()),
+            dead_owners: Vec::new(),
         })
         .unwrap()
         .expect("B claims the effect again");
@@ -1335,6 +1338,7 @@ fn c07_effect_claimed_once_by_racing_hosts_multi_writer() {
                         json!({"token": i, "owner": {"pid": 7, "nonce": "n", "start": "s"}})
                             .to_string(),
                     fence: Some(f[i].clone()),
+                    dead_owners: Vec::new(),
                 })
                 .unwrap()
             });
