@@ -19,7 +19,7 @@ import { checkError, finalizeCheckFixes, infoCheck } from '../src/commands/docto
 import { doctorCheckNames, onlyNeedsEngine, parseOnlyChecks } from '../src/commands/doctor/registry.ts';
 import { throttleDoctorHeartbeat } from '../src/commands/doctor/heartbeat.ts';
 import { agentContractCheck, agentContractEntry } from '../src/commands/doctor/checks/agent-contract.ts';
-import { readAgentContractEvents, recordAgentContractEvent } from '../src/core/agent-contract-log.ts';
+import { agentContractLogPath, readAgentContractEvents, recordAgentContractEvent } from '../src/core/agent-contract-log.ts';
 import { VERSION } from '../src/version.ts';
 import { backupCoachingDue } from '../src/core/backup/status-file.ts';
 import type { ProgressReporter } from '../src/core/progress.ts';
@@ -274,6 +274,25 @@ test('#7145: agent_contract judges the whole 7-day window, not only the newest 5
       for (let i = 0; i < 600; i++) recordAgentContractEvent({ transport: 'cli', command: 'example-op', code: 'not_found', has_suggestion: true });
       const [check] = await agentContractEntry.run({} as never) as Check[];
       expect(check).toMatchObject({ name: 'agent_contract', status: 'warn', details: { internal_errors: 1, events: 601 } });
+    });
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+test.each(['middle', 'tail'] as const)('agent_contract keeps complete events around a torn %s line', async (position) => {
+  const home = mkdtempSync(join(tmpdir(), 'gbrain-agent-contract-torn-'));
+  try {
+    await withEnv({ GBRAIN_HOME: home }, async () => {
+      recordAgentContractEvent({ transport: 'cli', command: 'jobs', code: 'internal_error' });
+      recordAgentContractEvent({ transport: 'cli', command: 'show', code: 'not_found', has_suggestion: true });
+      const [fault, normal] = readAgentContractEvents().map(event => JSON.stringify(event));
+      const fixture = position === 'middle'
+        ? [fault, '{"ts":', 'null', normal, ''].join('\n')
+        : [fault, normal, '{"ts":'].join('\n');
+      writeFileSync(agentContractLogPath(), fixture);
+
+      const [check] = await agentContractEntry.run({} as never) as Check[];
+      expect(check).toMatchObject({ name: 'agent_contract', status: 'warn', details: { internal_errors: 1, events: 2 } });
+      expect(readAgentContractEvents(1).map(event => event.command)).toEqual(['show']);
     });
   } finally { rmSync(home, { recursive: true, force: true }); }
 });

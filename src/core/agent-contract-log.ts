@@ -58,10 +58,21 @@ export function recordAgentContractEvent(event: AgentContractEvent): void {
 
 /** Read back recent events (newest last). Never throws. */
 export function readAgentContractEvents(limit = 500): Array<AgentContractEvent & { ts: string }> {
+  let content: string;
   try {
-    const lines = readFileSync(agentContractLogPath(), 'utf8').split('\n').filter(Boolean);
-    return lines.slice(-limit).map(l => JSON.parse(l));
+    content = readFileSync(agentContractLogPath(), 'utf8');
   } catch {
     return [];
   }
+  const events: Array<AgentContractEvent & { ts: string }> = [];
+  for (const line of content.split('\n')) {
+    if (!line) continue;
+    try {
+      const event: AgentContractEvent & { ts: string } = JSON.parse(line);
+      if (event && typeof event.ts === 'string' && typeof event.code === 'string') events.push(event);
+    } catch {
+      // A torn line must not hide the other records in the log.
+    }
+  }
+  return events.slice(-limit);
 }
