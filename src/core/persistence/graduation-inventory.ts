@@ -131,6 +131,7 @@ export const GRADUATION_INVENTORY: Inventory = {
     carry('needs_rederive', 'user_data', 'Derived rows hidden by purge pending re-derivation (#5575); dropping them would resurface purged-derived content.'),
     carry('oauth_clients', 'security', 'OAuth clients and their grants; client secrets stay valid.'),
     carry('oauth_grant_audit', 'security', 'OAuth grant change audit trail.'),
+    carry('oauth_refresh_rotations', 'security', 'Rotated refresh token hashes per sign-in family; dropping them loses reuse detection and the short reuse grace (#9364).'),
     carry('oauth_tokens', 'security', 'Issued OAuth access and refresh token hashes.'),
     carry('op_checkpoint_paths', 'operational', 'Resumable operation checkpoints.'),
     carry('op_checkpoints', 'operational', 'Resumable operation checkpoints.'),

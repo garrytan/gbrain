@@ -1256,6 +1256,9 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   'oauth_clients.attest_actor',
   'oauth_clients.attest_ops',
   'oauth_tokens.grant_type',
+  // #9364 (v338): migration-only like grant_type; the partial family index is created by the same migration, and
+  // oauth-grants.ts reads the column only once the v338 table exists.
+  'oauth_tokens.family_id',
   // GST-1113 (migration v293) - attest_sources, the scope sources an attested memory_write may name. Same posture as
   // v286: absent from both schema blobs; readers go through to_jsonb(row), so a schema without it reads as none.
   'access_tokens.attest_sources',

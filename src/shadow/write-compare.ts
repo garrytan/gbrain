@@ -10,7 +10,7 @@
  * Counts live in `write-comparisons.json`, written only through the locked tally below; `status` reads them.
  */
 import { randomBytes } from 'node:crypto';
-import { appendFileSync, existsSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { flushDirectory, flushFile } from '../core/fs-durable.ts';
 import { readEpoch, withLock } from './evidence-epoch.ts';
@@ -154,9 +154,35 @@ export function readWriteTally(dir: string, epochId: string | null): WriteTallyF
 
 /** How many write samples a serving process sent the child of `session` (supervisor.ts `recordSent`); the child reads it at the end of its input and counts what it never received as lost (`pipe_unflushed`). */
 export const sentPath = (dir: string, session: string): string => join(dir, `write-sent.${session.replace(/[^A-Za-z0-9_-]/g, '_')}.json`);
-/** The sent count for `session`, or null when there is none (or it is not a count; an unreadable or truncated file also reads as none, with no fault: S2b). */
-export function readSent(dir: string, session: string): number | null {
-  try { const f = JSON.parse(readFileSync(sentPath(dir, session), 'utf8')) as { session?: unknown; sent?: unknown }; return f.session === session && Number.isInteger(f.sent) && (f.sent as number) >= 0 ? f.sent as number : null; } catch { return null; } // silent-read-ok: no readable count is no count; the child then counts only what it received
+/** The most samples one receipt may stand for: a larger count is not one we can write down (it would be a long loop of durable appends at worker start), so it reads as unreadable. */
+const MAX_SENT = 1_000_000;
+/** A receipt whose file is older than this is one whose worker is gone even if its pid runs (a reused pid), or that names no pid: a live worker removes its receipt within its exit deadline. */
+const STALE_RECEIPT_MS = 10 * 60_000;
+const RECEIPT_NAME = /^write-sent\.[A-Za-z0-9_-]+\.json$/;
+export interface SentReceipt { session: string; sent: number; pid?: number; epoch_id?: string }
+/** The receipt in `path`: null when there is no such file, `'unreadable'` when there is one that cannot be used as a count (a read error such as EIO, truncated JSON, another session, a count that is not 0 to `MAX_SENT`). */
+function parseReceipt(path: string, session?: string): SentReceipt | null | 'unreadable' {
+  let text: string;
+  try { text = readFileSync(path, 'utf8'); } catch (e) { return (e as NodeJS.ErrnoException).code === 'ENOENT' ? null : 'unreadable'; }
+  try {
+    const f = JSON.parse(text) as Partial<SentReceipt>;
+    if (typeof f?.session !== 'string' || (session !== undefined && f.session !== session) || !Number.isSafeInteger(f.sent) || f.sent! < 0 || f.sent! > MAX_SENT) return 'unreadable';
+    return { session: f.session, sent: f.sent!, ...(Number.isSafeInteger(f.pid) ? { pid: f.pid } : {}), ...(typeof f.epoch_id === 'string' ? { epoch_id: f.epoch_id } : {}) };
+  } catch { return 'unreadable'; }
+}
+/** The receipt of `session`: a count, null (no receipt), or `'unreadable'` (one that is there and cannot be read: never the same as none). */
+export const readReceipt = (dir: string, session: string): SentReceipt | null | 'unreadable' => parseReceipt(sentPath(dir, session), session);
+/** The sent count for `session`: a number, null when there is no receipt, `'unreadable'` when there is one that cannot be read (the child raises a fault and leaves it). */
+export function readSent(dir: string, session: string): number | null | 'unreadable' { const r = readReceipt(dir, session); return r === null || r === 'unreadable' ? r : r.sent; }
+/**
+ * The receipts still on disk, by name: every one is a deficit nobody has recorded, so status reads each as no evidence (an unreadable one, one that names another epoch than this one, and one that names none alike:
+ * only a recorded deficit may let status read measured). With no epoch nothing is counted; a missing directory has none; a listing that fails otherwise counts one.
+ */
+export function outstandingReceipts(dir: string, epoch: string | null): string[] {
+  if (epoch === null) return [];
+  let names: string[];
+  try { names = readdirSync(dir).filter((n) => RECEIPT_NAME.test(n)).sort(); } catch (e) { return (e as NodeJS.ErrnoException).code === 'ENOENT' ? [] : ['write-sent.*']; }
+  return names.filter((name) => parseReceipt(join(dir, name)) !== null);
 }
 /** The most samples one `recordLost` call stands for (the child's own cap on a `dropped` count). */
 const MAX_LOST_PER_RECORD = 10_000;
@@ -218,6 +244,7 @@ export class WriteTally {
   private sealed = 0; // the first `sealed` pending batches were in a save that may have landed: never added to, until a durable save takes them
   private seq = 0;
   private unowned = 0; // verdicts of a client child not yet written as lost samples (flushUnowned)
+  private unownedFaulted = 0; // the count the last fault line named: a fault line is a signal, never a settlement, so the count itself stays until it is written as lost samples
   private readonly id: string;
   constructor(private readonly dir: string, private readonly epoch: () => string | null, private readonly alive: () => boolean = () => existsSync(dir), private readonly pid: number = process.pid) { this.id = `${pid}.${randomBytes(4).toString('hex')}`; }
   /** One locked read-modify-write: dead pids recovered, then this child's unsaved batches, then `change`. False when nothing was saved (the batches are kept). `fresh`: a mark under this pid is from an earlier process that had it. */
@@ -262,25 +289,46 @@ export class WriteTally {
   /**
    * The verdicts a client child (no epoch of its own) could not count: written as `no_epoch` lost samples of the epoch current on disk, for the owner child to add up, in one append per batch
    * (every `UNOWNED_BATCH` verdicts and at each save), never one durable write per verdict. The tally file itself is not touched (a client child records nothing in it). With no epoch on
-   * disk yet the count waits for the next save; at the last one (`final`) it becomes a fault line (except a disk-write failure, see S2b).
+   * disk yet the count waits for the next save; at the last one (`final`) it becomes a fault line (except a disk-write failure, a known limit in the changelog).
    */
   private flushUnowned(final: boolean): boolean {
     if (this.unowned === 0 || !this.alive()) { this.unowned = 0; return true; }
     const epoch = readEpoch(this.dir)?.epoch_id;
-    if (epoch !== undefined) { this.unowned -= recordLostCount(this.dir, epoch, 'no_epoch', this.unowned); if (this.unowned === 0) return true; } // only what was written is released: the rest waits for the next flush
-    if (final) { try { appendFault(this.dir, { ts: new Date().toISOString(), kind: 'write_samples_unrecorded', detail: `no_epoch n=${this.unowned}` }); this.unowned = 0; } catch { /* disk: the count stays in memory */ } }
+    if (epoch !== undefined) { this.unowned -= recordLostCount(this.dir, epoch, 'no_epoch', this.unowned); if (this.unowned === 0) { this.unownedFaulted = 0; return true; } } // only what was written is released: the rest waits for the next flush
+    if (final && this.unowned !== this.unownedFaulted) { try { appendFault(this.dir, { ts: new Date().toISOString(), kind: 'write_samples_unrecorded', detail: `no_epoch n=${this.unowned}`, ...(epoch ? { epoch_id: epoch } : {}) }); this.unownedFaulted = this.unowned; } catch { /* disk: the count stays in memory */ } } // status reads this fault as no evidence for the epoch; the count is kept either way
     return false;
+  }
+  /**
+   * The receipts (sent counts) of sessions that are gone, settled by an owner worker (one with an epoch): the whole sent count becomes `uncomparable` `receipt_orphaned` lost samples (what that worker had read is unknown, so this can
+   * count samples it had already tallied, never fewer), and the receipt is removed only after every one is on disk. A worker whose own epoch is no longer the manifest's settles nothing. A worker is gone when its pid is above 1 and not running, or its file is
+   * old; an unreadable receipt, a running worker's and a fresh one with no usable pid are left (status counts them). Cost: one listing of the shadow directory per call (at start and each save), and one read per receipt found.
+   */
+  private settleLeftovers(): void {
+    const epoch = this.epoch();
+    // A worker whose epoch is no longer the manifest's (a retired one) settles nothing: what it booked would be another epoch's lines, which the owner never reads, and what it removed would be gone.
+    if (epoch === null || !this.alive() || readEpoch(this.dir)?.epoch_id !== epoch) return;
+    try {
+      for (const name of readdirSync(this.dir).filter((n) => RECEIPT_NAME.test(n))) {
+        const path = join(this.dir, name); const r = parseReceipt(path);
+        if (r === null || r === 'unreadable') continue;
+        const age = Date.now() - statSync(path).mtimeMs;
+        if (!(age > STALE_RECEIPT_MS || (r.pid !== undefined && r.pid > 1 && r.pid !== this.pid && !running(r.pid)))) continue;
+        if (recordLostCount(this.dir, epoch, 'receipt_orphaned', r.sent) < r.sent) continue; // a receipt that names another epoch is settled like any other (it can only be hand-written: commands write none)
+        if (readEpoch(this.dir)?.epoch_id !== epoch) return; // the epoch moved while this was booked: the receipt stays for the new owner
+        rmSync(path, { force: true });
+      }
+    } catch { /* silent-read-ok: a receipt that could not be settled stays on disk, and status reads it as no evidence */ }
   }
   /** Publishes this pid as having a replay in flight. True only when that is durable on disk: on false the replay must not run. */
   begin(): boolean { return this.update((file) => { if (!file.in_flight.includes(this.pid)) file.in_flight.push(this.pid); }); }
   /** At child start: counts the marks of dead processes (and of an earlier process with this pid), and saves any verdict still unsaved. */
-  recover(): void { this.update(undefined, true); }
+  recover(): void { this.settleLeftovers(); this.update(undefined, true); }
   /** One more try to save batches an earlier save could not take (true when nothing is left unsaved). */
-  save(): boolean { const noted = this.flushUnowned(true); return this.epoch() === null ? noted : this.update() && noted; }
+  save(): boolean { const noted = this.flushUnowned(true); this.settleLeftovers(); return this.epoch() === null ? noted : this.update() && noted; }
   /** Counts one outcome; `ends` is a replay's own verdict, which removes its mark. */
   note(outcome: WriteOutcome, key?: string, n = 1, ends = false): void {
     const epoch = this.epoch();
-    if (epoch === null) { // a client child (another process owns the store): it records nothing in the tally, but its verdict is counted (except a disk-write failure, see S2b; see flushUnowned)
+    if (epoch === null) { // a client child (another process owns the store): it records nothing in the tally, but its verdict is counted (except a disk-write failure, a known limit in the changelog; see flushUnowned)
       if (this.alive()) { this.unowned += n; if (this.unowned >= UNOWNED_BATCH) this.flushUnowned(false); }
       return;
     }
