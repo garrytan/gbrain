@@ -42,7 +42,7 @@ Each returns what PGLite returns for a brain with the same contents.
 
 | Member | Answer | Why |
 | --- | --- | --- |
-| `readManagedModeRows()` | `[{ enabled: false }]` | The store keeps no managed brains, so a brain here is always unmanaged. |
+| `readManagedModeRows()` | `[{ enabled }]`, the stored brain mode (`writerReleaseRows({ kind: 'brain_mode' })`, `src/core/rust-engine/store-members/persistence.ts:9-15`) | The brain mode is `false` until `setBrainEnabled(true)` records an activation (`persistence/worktrees/release.rs` `brain_mode_in` and `set_brain_enabled_in`), so a new brain reads unmanaged; the answer is the stored flag, not a constant. |
 | `readLocalWriterRow(id, opts?)` | the row from `brain.readLocalWriter`, with `revoked_at` as a `Date`, or `undefined` | `lock` changes nothing: one write transaction runs at a time, so a read never overlaps a revocation. |
 | `insertLocalWriterRow(row)` | `brain.insertLocalWriterRow` | The same two unique keys as PGLite's table. |
 | `revokeLocalWriterRow(id)` | `brain.revokeLocalWriter` | An earlier revocation time stays; `false` when no registration has the id. |

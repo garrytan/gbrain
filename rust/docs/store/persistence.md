@@ -646,8 +646,11 @@ reviewed `--expected-state` check (`writerAdminState`, `assertWriterAdminState`)
 (`ownership.ts`) run as a `writerAdminTransaction` body over that store. An accept reads the
 prepared manifest with `readWorktreeManifest` before its transaction, and rebinds the content
 receipts through the store's `contentReceiptRows` and `swapConfigValue`
-(`shared-skills/receipt-root.ts`). On this
-engine the store's calls run on the transaction's store handle (`store-members/writer-admin.ts`).
+(`shared-skills/receipt-root.ts`). The store has
+the methods for that, but this engine serves only the state read: `store-members/writer-admin.ts` exports
+`readWriterAdminState` (lines 11-14, `brain.writerAdminStateText()`) and no `writerAdminStore`, and
+`store-members/transactions.ts` exports nothing (line 12). The transaction-backed writer lock and transfer calls above
+therefore still refuse a Rust brain until those members are wired.
 `lockBrain` and `{ lock: true }` do nothing: the store runs one write transaction at a time, so a
 state read in a transaction holds until it commits. `now()` is this process's clock in the SQL
 engines' format.

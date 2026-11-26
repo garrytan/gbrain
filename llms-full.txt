@@ -5877,9 +5877,12 @@ addon, and refusing a missing or mismatched one, belong to the loader (below), n
   holder opens the store and serves it on `<database_path>/.gbrain-owner.sock` (`ownerRole` `'owner'`). Any other
   process is a `'client'` that forwards each call; transactions refuse there. Limits and errors:
   `docs/designs/RUST_ENGINE.md` ("Process model").
-- **SQL-only paths.** Code that only works through SQL (migrations, cycle locks, engine migration and graduation,
+- **SQL-only paths.** Code that only works through SQL (migrations, engine migration and graduation,
   embed backfill, page-body staging) takes the kind as `EngineKind`, narrows it with `sqlEngineKind` or
-  `isRustEngineKind` (`src/core/sql-engine-kind.ts`), and refuses a Rust brain with `engine_capability_missing` reason `raw_sql` instead of treating it as Postgres.
+  `isRustEngineKind` (`src/core/sql-engine-kind.ts`), and refuses a Rust brain with `engine_capability_missing` reason `raw_sql` instead of treating it as Postgres. Cycle locks
+  are not wholly SQL-only: a Rust brain serves `acquireCycleLock`, `refreshCycleLock` and `releaseCycleLock`
+  (`src/core/rust-engine/store-members/jobs.ts:12-20`), and `readCycleLocks`, `deleteCycleLock` and `deleteCycleLockIfStale`
+  still refuse with `engine_capability_missing` (capability `minion_queue`, `src/core/rust-engine/members.ts:328-330`).
 - **On the CLI.** Commands that need raw SQL (`import`, `sources add` and others) refuse `engine_capability_missing`.
   When the source lookup is refused on a Rust brain and a source was selected (`GBRAIN_SOURCE`, a `.gbrain-source`
   file, `sources.default`) or the brain holds a source besides `default`, the command stops with that refusal instead

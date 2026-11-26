@@ -44,10 +44,12 @@ one write at a time.
 
 ## TypeScript members
 
-`src/core/rust-engine/store-members/import-members.ts` answers the seven members above on a Rust brain
-and `store-members/aliases.ts` answers `replaceDerivedAliases`. Each calls the binding method of the same
-name through `storeCall`. `setChunkerVersion` sends `String(version)`; `moveChunkIndexes` sends only the
-id, target and span of each move. The capability is `pages` for `getPageSealState`, `refreshPageOrigin`
-and `replaceDerivedAliases`, and `chunks` for the rest.
-
-The parity cases are in `test/engine-parity/import-members.test.ts`.
+The store's binding has all the methods above, but the TypeScript engine serves only one of them. The only member
+`src/core/rust-engine/store-members/import-members.ts` exports is `getPageSealState` (line 7), which calls the binding
+method of the same name through `storeCall` (capability `pages`, `src/core/rust-engine/members.ts:57`). No
+`store-members` module exports `refreshPageOrigin`, `setChunkerVersion`, `readSourceChunkerVersion`,
+`setSourceChunkerVersion`, `writeTextProjectionSeal`, `moveChunkIndexes`, `getChunkReuseRows` or
+`replaceDerivedAliases` (`store-members/aliases.ts` does not export it), so each of those still refuses a Rust brain
+with `engine_capability_missing` (capabilities `pages` and `chunks`, `members.ts:56-61, 158-161`). The native methods
+exist and the store tests run them; no TypeScript member calls them yet. `getPageSealState` is exercised in
+`test/persistence-bounded-reads.test.ts`.
