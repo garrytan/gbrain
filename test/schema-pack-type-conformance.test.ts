@@ -16,6 +16,9 @@ import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { operationsByName, type OperationContext } from '../src/core/operations.ts';
+import { parseMarkdown } from '../src/core/markdown.ts';
+import { loadPackFromFile } from '../src/core/schema-pack/loader.ts';
+import { bundledPackPath } from '../src/core/schema-pack/bundled-assets.ts';
 import { runReviewOrphans } from '../src/core/schema-pack/review.ts';
 import { runStatsCore } from '../src/core/schema-pack/stats.ts';
 import { checkSchemaPackConsistency } from '../src/commands/doctor/schema-pack-checks.ts';
@@ -79,6 +82,36 @@ function ctxOf(sourceId?: string): OperationContext {
     sourceId,
   } as unknown as OperationContext;
 }
+
+describe('original and idea filing under the default pack', () => {
+  test.each([
+    ['originals', 'original', '../skills/archive-crawler/SKILL.md'],
+    ['ideas', 'idea', '../docs/guides/idea-capture.md'],
+  ])('the %s template writes a concept with the %s subtype without a Git checkout', async (directory, subtype, file) => {
+    const template = await Bun.file(new URL(file, import.meta.url)).text();
+    const frontmatter = template.match(/^```(?:markdown|yaml)\n(---\n[\s\S]*?^---)\n/m)?.[1];
+    expect(frontmatter).toBeDefined();
+    const slug = `${directory}/example`;
+    await env(() => operationsByName.put_page!.handler(ctxOf(), {
+      slug,
+      content: `${frontmatter}\n\n# Example\n\nAn example page.\n`,
+    }));
+    const page = await engine.getPage(slug, { sourceId: 'default' });
+    expect(page).toMatchObject({ type: 'concept', frontmatter: { subtype } });
+  });
+
+  test('untyped originals and ideas keep existing folder precedence', () => {
+    const activePack = loadPackFromFile(bundledPackPath('gbrain-base-v2')!);
+    const inferred = (file: string) => parseMarkdown('# Example', file, { activePack });
+    for (const file of ['originals/example.md', 'ideas/example.md']) {
+      const page = inferred(file);
+      expect(page.type).toBe('concept');
+      expect(page.inferredSubtype).toBeUndefined();
+    }
+    expect(inferred('originals/projects/example.md').type).toBe('project');
+    expect(inferred('ideas/notes/example.md').type).toBe('note');
+  });
+});
 
 describe('#5879 orphan review counts undeclared stored types', () => {
   test('schema_review_orphans op: undeclared + untyped are orphans; declared and alias types are not', async () => {
