@@ -996,6 +996,7 @@ fn the_not_copied_list_is_pinned_sorted_and_disjoint_from_the_relations() {
             "page_segment_derivations",
             "page_segment_texts",
             "page_view_digests",
+            "page_write_guards",
             "persistence_brain",
             "persistence_consumers",
             "persistence_counters",
@@ -1043,6 +1044,20 @@ fn the_not_copied_list_is_pinned_sorted_and_disjoint_from_the_relations() {
         );
         assert!(plan.carried.iter().all(|(t, _)| *t != n.table));
     }
+}
+
+/// `page_write_guards` rows exist only to be locked (`src/core/page-state/guards.ts`: insert, then `SELECT ... FOR UPDATE`), so
+/// the table is left behind as a lock anchor and holds no gap rows: the store holds the same lock on the page key.
+#[test]
+fn page_write_guards_are_a_lock_anchor_with_no_gap_rows() {
+    let entry = NOT_COPIED
+        .iter()
+        .find(|n| n.table == "page_write_guards")
+        .unwrap();
+    assert_eq!(entry.kind, LossKind::LockAnchor);
+    assert_eq!(entry.gap_rows, None);
+    assert!(entry.read.starts_with("none:"), "{}", entry.read);
+    assert_eq!(serde_json::to_value(entry.kind).unwrap(), "lock_anchor");
 }
 
 /// `op_checkpoints` rows of the sync identity downgrade op are brain state, not machine state: the

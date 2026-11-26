@@ -22,6 +22,7 @@ mod fingerprints;
 mod remove_core;
 mod remove_history;
 mod remove_ops;
+mod remove_state;
 #[cfg(test)]
 mod tests;
 
@@ -110,6 +111,7 @@ pub(super) fn follow_spec(relation: &str) -> Option<&'static Follow> {
         .iter()
         .chain(remove_history::SPECS)
         .chain(remove_ops::SPECS)
+        .chain(remove_state::SPECS)
         .find(|(name, _)| *name == relation)
         .map(|(_, spec)| spec)
 }
@@ -1042,6 +1044,19 @@ const DEPENDENTS: &[(&str, &[Dependent])] = &[
                 &[("synthesis_page_id", "id"), ("take_page_id", "id")],
             ),
             ("page_facts_reconcile", &[("page_id", "id")]),
+            ("entity_identities", &[("page_id", "id")]),
+            (
+                "link_relationships",
+                &[("from_page_id", "id"), ("to_page_id", "id")],
+            ),
+            (
+                "link_transitions",
+                &[
+                    ("from_page_id", "id"),
+                    ("to_page_id", "id"),
+                    ("origin_page_id", "id"),
+                ],
+            ),
         ],
     ),
     (

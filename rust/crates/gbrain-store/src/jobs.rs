@@ -92,6 +92,7 @@ pub(crate) mod wake;
 
 pub(crate) use access_tokens::bind_token_member;
 pub use access_tokens::{TokenGrantColumns, TokenInsert};
+pub(crate) use access_tokens::{TokenRecord, remove_token, seed_token};
 pub use attachments::AttachmentInput;
 pub(crate) use attachments::purge_probe_attachment_rows;
 pub use checks::{

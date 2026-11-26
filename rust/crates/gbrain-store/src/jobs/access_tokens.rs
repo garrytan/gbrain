@@ -51,49 +51,49 @@ const SOURCE_GRANTS: [&str; 4] = ["default", "scalar", "federated", "none"];
 /// One `access_tokens` row. Times are microseconds. A field added after the first records were written defaults to
 /// NULL when an older record is read.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(super) struct TokenRecord {
-    pub(super) id: String,
-    pub(super) name: String,
-    pub(super) token_hash: String,
-    pub(super) scopes: Option<Vec<String>>,
-    pub(super) permissions: Value,
-    pub(super) source_grant: Option<String>,
-    pub(super) source_id: Option<String>,
-    pub(super) federated_read: Option<Vec<String>>,
-    pub(super) allowed_operations: Option<Vec<String>>,
-    pub(super) takes_holders: Option<Vec<String>>,
-    pub(super) grant_revision: i32,
+pub(crate) struct TokenRecord {
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) token_hash: String,
+    pub(crate) scopes: Option<Vec<String>>,
+    pub(crate) permissions: Value,
+    pub(crate) source_grant: Option<String>,
+    pub(crate) source_id: Option<String>,
+    pub(crate) federated_read: Option<Vec<String>>,
+    pub(crate) allowed_operations: Option<Vec<String>>,
+    pub(crate) takes_holders: Option<Vec<String>>,
+    pub(crate) grant_revision: i32,
     /// The revision the read-shared switch was set at (the birth revision, 1); None is off.
     #[serde(default)]
-    pub(super) read_shared_revision: Option<i32>,
-    pub(super) min_trust: Option<String>,
-    pub(super) revoked_at: Option<i64>,
-    pub(super) created_at: i64,
+    pub(crate) read_shared_revision: Option<i32>,
+    pub(crate) min_trust: Option<String>,
+    pub(crate) revoked_at: Option<i64>,
+    pub(crate) created_at: i64,
     /// Stamped by the bearer check, at most once a minute.
     #[serde(default)]
-    pub(super) last_used_at: Option<i64>,
+    pub(crate) last_used_at: Option<i64>,
     /// The member the token is bound to.
     #[serde(default)]
-    pub(super) member_id: Option<String>,
+    pub(crate) member_id: Option<String>,
     /// The people the token may act for (`may_act_for TEXT[]`).
     #[serde(default)]
-    pub(super) may_act_for: Option<Vec<String>>,
+    pub(crate) may_act_for: Option<Vec<String>>,
     #[serde(default)]
-    pub(super) attest_actor: Option<String>,
+    pub(crate) attest_actor: Option<String>,
     #[serde(default)]
-    pub(super) attest_ops: Option<Vec<String>>,
+    pub(crate) attest_ops: Option<Vec<String>>,
     #[serde(default)]
-    pub(super) attest_sources: Option<Vec<String>>,
+    pub(crate) attest_sources: Option<Vec<String>>,
     #[serde(default)]
-    pub(super) attest_read: Option<String>,
+    pub(crate) attest_read: Option<String>,
     #[serde(default)]
-    pub(super) reads_unscoped: Option<i64>,
+    pub(crate) reads_unscoped: Option<i64>,
     /// The private-pages grant (`'none'` or `'granted_sources'`); a record written before the store kept it reads `'none'`.
     #[serde(default = "private_default")]
-    pub(super) private_pages: String,
+    pub(crate) private_pages: String,
     /// The private-facts grant, kept the same way.
     #[serde(default = "private_default")]
-    pub(super) private_facts: String,
+    pub(crate) private_facts: String,
 }
 
 const PRIVATE_GRANTS: [&str; 2] = ["none", "granted_sources"];
@@ -146,6 +146,36 @@ pub(super) fn all_tokens(read: &dyn KvRead) -> Result<Vec<TokenRecord>> {
         true
     })?;
     bad.map_or(Ok(rows), Err)
+}
+
+/// The shadow seed (`seed/state.rs`): stores a token copied from another engine, as the primary holds it: its own id, hash,
+/// grant revision and times (nothing is minted or stamped). The table's CHECK lists and the unique `token_hash` apply.
+/// `false` when the id is held. The hash is stored as the family stores it and is never put in a message.
+pub(crate) fn seed_token(tx: &mut dyn KvWrite, record: &TokenRecord) -> Result<bool> {
+    if tx.get(&token_key(&record.id))?.is_some() {
+        return Ok(false);
+    }
+    record.check()?;
+    if all_tokens(&*tx)?
+        .iter()
+        .any(|t| t.token_hash == record.token_hash)
+    {
+        return Err(StoreError::new(
+            CONSTRAINT_VIOLATION,
+            "duplicate key value violates unique constraint \"access_tokens_token_hash_key\"",
+        ));
+    }
+    put_json(tx, &token_key(&record.id), record)?;
+    Ok(true)
+}
+
+/// The shadow follow (`seed/follow/remove_state.rs`): removes the token `id`. `false` when there is none.
+pub(crate) fn remove_token(tx: &mut dyn KvWrite, id: &str) -> Result<bool> {
+    if tx.get(&token_key(id))?.is_none() {
+        return Ok(false);
+    }
+    tx.delete(&token_key(id))?;
+    Ok(true)
 }
 
 /// `insertAccessToken(row)`: the grant columns are the values of the five grant columns (`None` is NULL); the row is born

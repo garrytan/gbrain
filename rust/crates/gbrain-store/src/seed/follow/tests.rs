@@ -609,6 +609,112 @@ fn deleting_the_page_a_link_points_to_removes_the_link_too() {
     );
 }
 
+/// Pages 7 and 9 with a membership, a state row, a dated transition (origin page 9) and a tombstone, each with its digest entry.
+fn stateful_pages() -> Store {
+    let s = linked_pages();
+    let all = fixtures();
+    for relation in [
+        "entity_identities",
+        "link_relationships",
+        "link_transitions",
+        "fact_purges",
+    ] {
+        let rows = &all.iter().find(|(name, _)| *name == relation).unwrap().1;
+        import_with_digests(&s, relation, rows);
+    }
+    s
+}
+
+#[test]
+fn a_deleted_page_takes_its_identity_link_state_and_transitions_and_their_entries() {
+    let s = stateful_pages();
+    assert_eq!(entries(&s, "entity_identities"), 1);
+    assert_eq!(entries(&s, "link_relationships"), 1);
+    assert_eq!(entries(&s, "link_transitions"), 1);
+    // Page 9 is the target of the state row and the origin of the transition: both go with it. Page 7's membership stays.
+    s.replace_relation_rows(SEED, "pages", 1, &[key(2, &[("id", "9")])], &[], &[])
+        .unwrap();
+    assert_eq!(entries(&s, "link_relationships"), 0);
+    assert_eq!(entries(&s, "link_transitions"), 0);
+    assert_eq!(entries(&s, "entity_identities"), 1);
+    let evidence = s
+        .read_link_relationship_evidence(&crate::link_queries::link_temporal::EvidenceInput {
+            keys: vec![serde_json::from_value(
+                serde_json::json!({ "from_page_id": 7, "to_page_id": 9, "link_type": "works_at" }),
+            )
+            .unwrap()],
+            origin_policy: Some(Default::default()),
+        })
+        .unwrap();
+    assert!(evidence.transitions.is_empty() && evidence.existing.is_empty());
+    // Page 7 holds the membership; deleting it takes the entry too, and the tombstone (a source row) stays.
+    s.replace_relation_rows(SEED, "pages", 1, &[key(1, &[("id", "7")])], &[], &[])
+        .unwrap();
+    assert_eq!(entries(&s, "entity_identities"), 0);
+    assert!(
+        s.list_entity_identities(&Default::default())
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(entries(&s, "fact_purges"), 1);
+}
+
+#[test]
+fn a_changed_membership_and_a_changed_token_replace_their_old_version() {
+    let s = stateful_pages();
+    let all = fixtures();
+    let token = all.iter().find(|(n, _)| *n == "access_tokens").unwrap().1[0].clone();
+    import_with_digests(&s, "access_tokens", &[token.clone()]);
+    let mut moved = all
+        .iter()
+        .find(|(n, _)| *n == "entity_identities")
+        .unwrap()
+        .1[0]
+        .clone();
+    moved.insert("entity_id".into(), Some("person/alice-2".into()));
+    moved.insert("canonical".into(), Some("f".into()));
+    let mut revoked = token;
+    revoked.insert("revoked_at".into(), Some("2026-04-01 00:00:00+00".into()));
+    let r = s
+        .replace_relation_rows(
+            SEED,
+            "entity_identities",
+            1,
+            &[key(1, &[("id", "4")])],
+            &[moved],
+            &[digv(1, 9)],
+        )
+        .unwrap();
+    assert_eq!((r.upserted, r.deleted), (1, 0));
+    let listed = s.list_entity_identities(&Default::default()).unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0]["entity_id"], "person/alice-2");
+    assert_eq!(listed[0]["canonical"], false);
+    let r = s
+        .replace_relation_rows(
+            SEED,
+            "access_tokens",
+            1,
+            &[KeyInput {
+                sort: hex(&[1]),
+                key: [(
+                    "id".to_owned(),
+                    "0a1b2c3d-0000-4000-8000-0000000000a1".to_owned(),
+                )]
+                .into(),
+            }],
+            &[revoked],
+            &[digv(1, 8)],
+        )
+        .unwrap();
+    assert_eq!((r.upserted, r.deleted), (1, 0));
+    assert!(
+        s.read_active_access_token_by_hash("hash-of-a-bearer-token")
+            .unwrap()
+            .is_none()
+    );
+}
+
 // ---- replaceInterval -------------------------------------------------------------------------
 
 #[test]
@@ -1315,6 +1421,83 @@ fn fixtures() -> Vec<(&'static str, Vec<SeedRow>)> {
                     .insert("last_used_at".into(), Some("2026-03-01 00:00:00+00".into()));
                 timestamp_nullable
             }],
+        ),
+        (
+            "entity_identities",
+            vec![row(&[
+                ("id", "4"),
+                ("entity_id", "person/alice"),
+                ("source_id", "default"),
+                ("page_id", "7"),
+                ("confidence", "0.8"),
+                ("established_by", "dedupe"),
+                ("established_at", "2026-03-01 00:00:00+00"),
+                ("canonical", "t"),
+            ])],
+        ),
+        (
+            "link_relationships",
+            vec![row(&[
+                ("from_page_id", "7"),
+                ("to_page_id", "9"),
+                ("link_type", "works_at"),
+                ("scope", "all"),
+                ("source_id", "default"),
+                ("semantics", "state"),
+                ("valid_ranges", "{[2021-04-01,)}"),
+                ("status_now", "live"),
+                ("first_start", "2021-04-01"),
+                ("last_start", "2021-04-01"),
+                ("undated_present", "0"),
+                ("undated_past", "0"),
+                ("disputed", "f"),
+                ("recorded_at", "2026-03-01 00:00:00+00"),
+                ("evidence_hash", "ev-1"),
+                ("refreshed_at", "2026-03-02 00:00:00+00"),
+            ])],
+        ),
+        (
+            "link_transitions",
+            vec![row(&[
+                ("id", "5"),
+                ("source_id", "default"),
+                ("from_page_id", "7"),
+                ("to_page_id", "9"),
+                ("link_type", "works_at"),
+                ("kind", "start"),
+                ("occurred_on", "2021-04-01"),
+                ("date_precision", "day"),
+                ("producer", "manual"),
+                ("origin_page_id", "9"),
+                ("line_hash", ""),
+                ("created_at", "2026-03-01 00:00:00+00"),
+            ])],
+        ),
+        (
+            "fact_purges",
+            vec![row(&[
+                ("source_id", "default"),
+                ("visibility", "world"),
+                ("subject", "*"),
+                ("fact_hash", &sha256_hex("owes acme money")),
+                ("request_id", "0a1b2c3d-0000-4000-8000-00000000000a"),
+                ("actor", "owner"),
+                ("reason", "forget"),
+                ("purged_at", "2026-03-04 05:06:07+00"),
+            ])],
+        ),
+        (
+            "access_tokens",
+            vec![row(&[
+                ("id", "0a1b2c3d-0000-4000-8000-0000000000a1"),
+                ("name", "agent-key"),
+                ("token_hash", "hash-of-a-bearer-token"),
+                ("created_at", "2026-03-01 00:00:00+00"),
+                ("permissions", r#"{"takes_holders": ["world"]}"#),
+                ("grant_revision", "1"),
+                ("private_pages", "none"),
+                ("private_facts", "none"),
+            ])],
         ),
     ]
 }

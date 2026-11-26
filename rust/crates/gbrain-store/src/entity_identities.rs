@@ -211,6 +211,35 @@ pub(crate) fn remove_page_rows(tx: &mut dyn KvWrite, page: &PageRecord) -> Resul
     Ok(())
 }
 
+/// The shadow seed (`seed/state.rs`): stores the membership of page `page_id` copied from another engine, with its own
+/// confidence, author, time and canonical flag, and the group index key. `false` when the page already holds a membership
+/// (a retried batch).
+pub(crate) fn seed_identity(
+    tx: &mut dyn KvWrite,
+    page_id: u64,
+    rec: &IdentityRecord,
+) -> Result<bool> {
+    if tx.get(&row_key(page_id))?.is_some() {
+        return Ok(false);
+    }
+    put_json(tx, &row_key(page_id), rec)?;
+    tx.put(&group_key(&rec.entity_id, page_id), &[])?;
+    Ok(true)
+}
+
+/// The shadow follow (`seed/follow/remove_state.rs`): removes the membership of `page_id` in the group `entity_id`, with
+/// its group index key. `false` when the page holds none, or one of another group.
+pub(crate) fn remove_identity(tx: &mut dyn KvWrite, page_id: u64, entity_id: &str) -> Result<bool> {
+    match record(tx, page_id)? {
+        Some(rec) if rec.entity_id == entity_id => {
+            tx.delete(&group_key(entity_id, page_id))?;
+            tx.delete(&row_key(page_id))?;
+            Ok(true)
+        }
+        _ => Ok(false),
+    }
+}
+
 impl Store {
     /// `linkEntityIdentityRow`: links the live page at `(source_id, slug)` into the group, moving
     /// it from any other group. False, with nothing written, when there is no live page there
