@@ -66,6 +66,21 @@ const SWEPT: Record<string, (engine: BrainEngine) => Promise<unknown>> = {
   listVersionReasonWriters: (e) => e.listVersionReasonWriters([1]),
   listPageTypesByIds: (e) => e.listPageTypesByIds([1]),
   readWithdrawalDiscovery: (e) => e.readWithdrawalDiscovery({ kind: 'sample_slugs', sourceId: 'default', ids: [1] }),
+  // Part A: the source, company-profile, guest and privacy-label members that replaced a raw statement on the import path.
+  listAllSources: (e) => e.listAllSources(),
+  markSourceSynced: (e) => e.markSourceSynced('default'),
+  listLocalPathSources: (e) => e.listLocalPathSources(),
+  listSourceRoutingRows: (e) => e.listSourceRoutingRows(),
+  countDefaultSourceSplit: (e) => e.countDefaultSourceSplit(),
+  readSourceRow: (e) => e.readSourceRow('default'),
+  listActiveSourceConfigs: (e) => e.listActiveSourceConfigs(),
+  listSourceRecords: (e) => e.listSourceRecords(),
+  readSourceIncarnation: (e) => e.readSourceIncarnation('default'),
+  hasCompanyBrainReceipt: (e) => e.hasCompanyBrainReceipt('default'),
+  readGuestSourceRow: (e) => e.readGuestSourceRow('default'),
+  ownsSchemaTables: (e) => e.ownsSchemaTables(),
+  readIgnoredPrivacyLabelPages: (e) => e.readIgnoredPrivacyLabelPages('default', { slugs: ['notes/a'] }),
+  readLivePageFrontmatter: (e) => e.readLivePageFrontmatter('default', 'notes/a'),
 };
 
 for (const [member, call] of Object.entries(SWEPT)) {

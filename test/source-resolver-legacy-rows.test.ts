@@ -4,10 +4,13 @@
  */
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { __resetSourceGuardQueryShape, resolveSourceId, resolveSourceWithTier, sourceGuardBlocksWrite } from '../src/core/source-resolver.ts';
+import { __resetSourceGuardQueryShape, explicitReadBinding, getDefaultSourcePath, resolveRegisteredLocalPathSource, resolveSourceId, resolveSourceWithTier, sourceGuardBlocksWrite } from '../src/core/source-resolver.ts';
+import { ownerSourceGateInput } from '../src/core/trust/channel.ts';
 import { sourceHasRepo } from '../src/core/search/ignored-privacy-labels.ts';
 import { PRIVACY_LABEL_KEYS } from '../src/core/search/ignored-privacy-labels.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
+import { withEnv } from './helpers/with-env.ts';
+import { withRequestConfigSnapshot } from '../src/core/config-snapshot.ts';
 
 let engine: PGLiteEngine;
 
@@ -140,5 +143,122 @@ describe('the three fault paths the final review reproduced', () => {
     expect(await sourceGuardBlocksWrite(engine, 'seed_default')).toBe(false);
     await seed('second', null, false);
     expect(await sourceGuardBlocksWrite(engine, 'seed_default')).toBe(true);
+  });
+});
+
+describe('a brain older than the source columns the import path does not need', () => {
+  // A brain of its own: the columns are dropped for good, so no other test in this file sees them gone.
+  let old: PGLiteEngine;
+  beforeAll(async () => {
+    old = new PGLiteEngine();
+    await old.connect({});
+    await old.initSchema();
+    await old.executeRaw('ALTER TABLE sources DROP COLUMN IF EXISTS contextual_retrieval_mode');
+    await old.executeRaw('ALTER TABLE sources DROP COLUMN IF EXISTS trust_frontmatter_overrides');
+    await old.executeRaw(`UPDATE sources SET local_path = '/vaults/default', config = '{"trust": {"frontmatter_overrides": false}}'::jsonb WHERE id = 'default'`);
+  }, 60_000);
+  afterAll(async () => { await old.disconnect(); });
+
+  test('getDefaultSourcePath reads a source path from a brain without the contextual-retrieval and trust-override columns', async () => {
+    // GBRAIN_SOURCE names the source, so the chain lists no registered paths and the source's own row is read.
+    expect(await withEnv({ GBRAIN_SOURCE: 'default' }, () => getDefaultSourcePath(old, '/nowhere/in/particular'))).toBe('/vaults/default');
+  });
+
+  test('the import trust gate reads the source config from a brain without those columns', async () => {
+    const gate = await ownerSourceGateInput(old, 'default', {});
+    expect(gate.origin.channel).toBe('import');
+  });
+});
+
+describe('the oldest source projection (neither newest_content_at nor archived)', () => {
+  let oldest: PGLiteEngine;
+  beforeAll(async () => {
+    oldest = new PGLiteEngine();
+    await oldest.connect({});
+    await oldest.initSchema();
+    await oldest.executeRaw(`INSERT INTO sources (id, name, local_path) VALUES ('shelf', 'shelf', '/vaults/shelf') ON CONFLICT DO NOTHING`);
+    await oldest.executeRaw('ALTER TABLE sources DROP COLUMN newest_content_at');
+    await oldest.executeRaw('ALTER TABLE sources DROP COLUMN archived');
+  }, 60_000);
+  afterAll(async () => { await oldest.disconnect(); });
+
+  test('listSourceRecords returns every source with the historical columns, `archived` absent', async () => {
+    const rows = await oldest.listSourceRecords();
+    expect(rows.map(row => row.id)).toEqual(['default', 'shelf']);
+    expect(rows.every(row => row.archived === undefined)).toBe(true);
+  });
+
+  test('bare resolution on that brain sees the sole other source through the minimal projection', async () => {
+    __resetSourceGuardQueryShape();
+    expect(await sourceGuardBlocksWrite(oldest, 'seed_default')).toBe(true);
+  });
+
+  test('a failure that is not a missing column is not read as an older schema', async () => {
+    const boom = Object.assign(new Error('permission denied for table sources'), { code: '42501' });
+    const failing = new Proxy(oldest, { get(target, key) {
+      if (key === 'executeRaw') return async () => { throw boom; };
+      const value = (target as unknown as Record<PropertyKey, unknown>)[key];
+      return typeof value === 'function' ? value.bind(target) : value;
+    } });
+    const error = await PGLiteEngine.prototype.listSourceRecords.call(failing).then(() => null, (e: unknown) => e);
+    expect(error).toBe(boom);
+  });
+});
+
+describe('a typed capability refusal is not an older brain', () => {
+  const refusal = () => Object.assign(new Error('engine_capability_missing: listLocalPathSources'), { code: 'engine_capability_missing' });
+  const timeout = () => Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' });
+
+  /** The engine with `member` failing as `fail()` says, and the calls of the members a legacy fallback would make counted. */
+  function failing(member: string, fail: () => Error) {
+    const calls: string[] = [];
+    const view = new Proxy(engine, {
+      get(target, key) {
+        if (key === member) return async () => { throw fail(); };
+        const value = (target as unknown as Record<PropertyKey, unknown>)[key];
+        if (typeof value !== 'function') return value;
+        return (...args: unknown[]) => { calls.push(String(key)); return (value as (...a: unknown[]) => unknown).apply(target, args); };
+      },
+    }) as unknown as PGLiteEngine;
+    return { view, calls };
+  }
+
+  test('the local-path listing refuses through resolution and does not fall back to the legacy rows', async () => {
+    const { view, calls } = failing('listLocalPathSources', refusal);
+    const error = await resolveRegisteredLocalPathSource(view, '/vaults/x').then(() => null, (e: unknown) => e);
+    expect((error as { code?: string } | null)?.code).toBe('engine_capability_missing');
+    expect(calls).not.toContain('listSourceRecords');
+  });
+
+  test('the same listing failing on a timeout does fall back to the legacy rows', async () => {
+    await seed('shelf', '/vaults/shelf', false);
+    const { view, calls } = failing('listLocalPathSources', timeout);
+    expect(await resolveRegisteredLocalPathSource(view, '/vaults/shelf/deep')).toBe('shelf');
+    expect(calls).toContain('listSourceRecords');
+  });
+
+  test('the request snapshot\'s routing read refuses through resolution and neither reads live nor falls back', async () => {
+    const { view, calls } = failing('listSourceRoutingRows', refusal);
+    const error = await withRequestConfigSnapshot(view, () => resolveRegisteredLocalPathSource(view, '/vaults/x')).then(() => null, (e: unknown) => e);
+    expect((error as { code?: string } | null)?.code).toBe('engine_capability_missing');
+    expect(calls).not.toContain('listLocalPathSources');
+    expect(calls).not.toContain('listSourceRecords');
+  });
+
+  test('the live routing read behind the sole-source tier refuses and does not fall back to the legacy rows', async () => {
+    await seed('default', null, false);
+    await seed('shelf', '/vaults/shelf', false);
+    const { view, calls } = failing('listSourceRoutingRows', refusal);
+    const error = await resolveSourceWithTier(view, null, '/nowhere/in/particular').then(() => null, (e: unknown) => e);
+    expect((error as { code?: string } | null)?.code).toBe('engine_capability_missing');
+    expect(calls).not.toContain('listSourceRecords');
+  });
+
+  test('the active-config read behind an explicit binding refuses and does not fall back to the legacy rows', async () => {
+    await seed('shelf', '/vaults/shelf', false);
+    const { view, calls } = failing('listActiveSourceConfigs', refusal);
+    const error = await explicitReadBinding(view, 'shelf', 'env').then(() => null, (e: unknown) => e);
+    expect((error as { code?: string } | null)?.code).toBe('engine_capability_missing');
+    expect(calls).not.toContain('listSourceRecords');
   });
 });

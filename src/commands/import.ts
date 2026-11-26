@@ -50,6 +50,8 @@ import { estimateCostFromChars, lookupEmbeddingPrice } from '../core/embedding-p
 import { getEmbeddingModel } from '../core/ai/gateway.ts';
 import { managedRootMarkerFor } from '../core/persistence/root-registry.ts';
 import { readManagedModeTyped } from '../core/persistence/ownership.ts';
+import { requestSignal } from '../core/request-signal.ts';
+import { isEngineCapabilityRefusal } from '../core/engine-capability-refusal.ts';
 import { readPageBodyPolicy } from '../core/page-body/limits.ts';
 import { importSourceRefusal } from './import-source-refusal.ts';
 
@@ -798,6 +800,9 @@ export async function runImport(
         if (e !== signal.reason && !(e instanceof Error && e.name === 'AbortError')) throw e;
         return;
       }
+      // An engine that cannot run this import refuses it; that is not this file's failure, so no file is listed as failed and no
+      // ledger row is written for it (the run ends with the refusal, as master's first raw statement ended it on a Rust brain).
+      if (isEngineCapabilityRefusal(e)) throw e;
       // #5600: an accepted managed import still publishing is not a failure; the next run resumes its request.
       if (acceptedPendingReceipt(e)) { skipped++; console.error(`  Pending: ${relativePath} was accepted and is still publishing; rerun to confirm it.`); }
       else if (await reportFileResult(opts.onFileResult, importRelPath, filePath, { status: 'error', error: e instanceof Error ? e.message : String(e) }) === 'held') { skipped++; completed.add(relativePath); } else {
@@ -971,7 +976,8 @@ export async function runImport(
   // compares to import size; warns at >=10% untyped. The doctor
   // schema_pack_consistency check (also T7) gives the persistent surface.
   // Best-effort: query failure is non-fatal.
-  if (imported > 0) {
+  // Skipped for a cancelled request: the count statement used to refuse one, and `getStats` would send its queries.
+  if (imported > 0 && !requestSignal()?.aborted) {
     try {
       const sid = sourceId ?? 'default';
       // pages.type is NOT NULL, so the untyped pages are the empty-type bucket.

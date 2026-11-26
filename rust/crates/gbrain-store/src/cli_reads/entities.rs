@@ -5,6 +5,7 @@
 //! Frontmatter values are read as PostgreSQL's `->>` reads them (see [`arrow_text`]).
 
 use crate::Store;
+use crate::access_rules::stamped;
 use crate::chunks::SAFE_FENCE_CHUNKER_VERSION;
 use crate::cli_reads::pg_text::{pg_lower, regex_char_matches};
 use crate::env::{iso, parse_iso};
@@ -567,7 +568,8 @@ impl Store {
     }
 
     /// `readIgnoredPrivacyLabelPages(sourceId, scope)`: the live pages of the source in the scope
-    /// that carry a privacy label key and no `readable_by`. The caller applies the label rule
+    /// that carry a privacy label key, no `readable_by` and no folder rule (`folder_rule_ids IS
+    /// NULL`, [`stamped`]). The caller applies the label rule
     /// (`ignoredPrivacyLabels`) and the limit.
     pub fn read_ignored_privacy_label_pages(
         &self,
@@ -589,7 +591,8 @@ impl Store {
             }
         };
         let read = self.read()?;
-        Ok(all_pages(&*read)?
+        let mut rows = Vec::new();
+        for p in all_pages(&*read)?
             .into_iter()
             .filter(|p| p.source_id == source_id && p.deleted_at_us.is_none() && in_scope(p))
             .filter(|p| !p.frontmatter.contains_key("readable_by"))
@@ -598,11 +601,17 @@ impl Store {
                     .iter()
                     .any(|k| p.frontmatter.contains_key(*k))
             })
-            .map(|p| LabelPageRow {
+        {
+            // `p.folder_rule_ids IS NULL`: a page a folder rule covers is not an unprotected label.
+            if stamped(&*read, &p.source_id, &p.slug)? {
+                continue;
+            }
+            rows.push(LabelPageRow {
                 page_type: p.page_type,
                 frontmatter: p.frontmatter,
-            })
-            .collect())
+            });
+        }
+        Ok(rows)
     }
 
     /// `listUnretiredPagesBySlugPattern(sourceId, patterns, limit)`: the live, unretired pages of the
