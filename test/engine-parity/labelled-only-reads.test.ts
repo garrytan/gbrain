@@ -21,13 +21,13 @@
  *  - Seam: members through createMember and the typed labelled-only write; folder rules through restrictFolder; the read is
  *    the real dispatchToolCall with a stdio member.
  */
-import { describe, expect } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { chunk, installChunks } from './chunk-fixtures.ts';
-import { createMember, parityArms, restrictFolder, type ParityBackend } from './harness.ts';
+import { createMember, parityArms, resetArm, restrictFolder, type ParityBackend } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { withEnv } from '../helpers/with-env.ts';
 import { setMemberLabelledOnly } from '../../src/core/access/labelled-only.ts';
@@ -36,7 +36,7 @@ import { setOwner } from '../../src/core/access/owner.ts';
 import { dispatchToolCall } from '../../src/mcp/dispatch.ts';
 import { drainProjections } from '../../src/core/page-state/projections.ts';
 
-const { parityTest } = parityArms(testBackends());
+const { arms, parityTest } = parityArms(testBackends());
 
 const CAROL = 'carol-example';
 const DANA = 'dana-example';
@@ -156,7 +156,9 @@ describe('engine parity: remote page reads of a labelled-only member and of an o
           const versions = await remote(engine, member, 'get_versions', { slug: s.slug });
           reads[s.slug] = { get: refusedOf(got) ? got : got === 'not_found' ? got : 'visible', versions: refusedOf(versions) ? versions : Array.isArray(versions) ? versions.length : versions };
         }
-        const search = await remote(engine, member, 'search', { query: WORD, limit: 50 });
+        // With lineage on, search also reads saved facts under the fact policy, which the Rust store refuses (row 32e-b-4): the
+        // named-loss case below pins it. With lineage off it is the page arm alone and answers the same on every engine.
+        const search = lineage === 'off' ? await remote(engine, member, 'search', { query: WORD, limit: 50 }) : [];
         const list = await remote(engine, member, 'list_pages', { limit: 100 });
         const backlinks = await remote(engine, member, 'get_backlinks', { slug: HUB });
         const lists = { search: refusedOf(search) ? search : slugsOf(search), list: refusedOf(list) ? list : slugsOf(list), backlinks: refusedOf(backlinks) ? backlinks : slugsOf(backlinks) };
@@ -169,7 +171,7 @@ describe('engine parity: remote page reads of a labelled-only member and of an o
           expect({ lineage, slug: s.slug, versions: (reads[s.slug] as { versions: unknown }).versions })
             .toEqual({ lineage, slug: s.slug, versions: want.includes(s.slug) ? 1 : 0 });
         }
-        expect({ lineage, search: lists.search }).toEqual({ lineage, search: [...seen].sort() });
+        if (lineage === 'off') expect({ lineage, search: lists.search }).toEqual({ lineage, search: [...seen].sort() });
         expect({ lineage, backlinks: lists.backlinks }).toEqual({ lineage, backlinks: [...seen].sort() });
         expect({ lineage, list: lists.list }).toEqual({ lineage, list: [...seen, HUB].sort() });
         return { reads, lists };
@@ -338,4 +340,27 @@ describe('engine parity: a null entry in derived_from', () => {
     expect(answers).toEqual(Object.fromEntries(rows.flatMap(r => [[`${r.id}/${CAROL}`, answerOf(r.carol)], [`${r.id}/${DANA}`, answerOf(r.dana)]])));
     return answers;
   }));
+});
+
+describe('engine parity: named loss of search under lineage (RUST_ENGINE.md, row 32e-b-4)', () => {
+  // Not a parityTest: the arms answer differently on purpose. With access.members_read_lineage on, search also matches saved facts
+  // under the fact policy of a lineage read, which the Rust store does not model, so Rust declines the whole call for every member
+  // while PGLite and Postgres answer the pages. The day Rust answers it this fails and the row goes.
+  test('with access.members_read_lineage on, search answers the readable pages on PGLite and Postgres and Rust declines it, for both members', async () => {
+    for (const arm of arms()) {
+      await resetArm(arm);
+      await inFreshHome(async () => {
+        await seedMembers(arm.engine, arm.backend);
+        await seedShapes(arm.engine);
+        await drainProjections(arm.engine);
+        await setMembersReadLineage(arm.engine, true, { remote: false });
+        for (const member of [CAROL, DANA]) {
+          const answer = await remote(arm.engine, member, 'search', { query: WORD, limit: 50 });
+          if (arm.backend === 'rust') expect({ backend: arm.backend, member, refused: refusedOf(answer) }).toEqual({ backend: arm.backend, member, refused: 'engine_capability_missing' });
+          else expect({ backend: arm.backend, member, slugs: slugsOf(answer) }).toEqual({ backend: arm.backend, member, slugs: [...VISIBLE[member]!.on].sort() });
+        }
+      });
+    }
+    expect(arms().length).toBeGreaterThan(0);
+  }, 120_000);
 });

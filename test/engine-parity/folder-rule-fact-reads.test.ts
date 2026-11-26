@@ -27,6 +27,8 @@ import { setMemberLabelledOnly } from '../../src/core/access/labelled-only.ts';
 import { setMembersReadLineage } from '../../src/core/access/lineage.ts';
 import { setOwner } from '../../src/core/access/owner.ts';
 import { dispatchToolCall } from '../../src/mcp/dispatch.ts';
+import { remoteCallerAccess } from '../../src/core/access/caller.ts';
+import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 
 const { arms, parityTest } = parityArms(testBackends());
 
@@ -35,28 +37,32 @@ const DANA = 'dana-example';
 const BOB = 'bob-example';
 const HOLDING = 'memory/unattributed';
 const CAROL_PAGE = `memory/members/${CAROL}`;
+const DANA_PAGE = `memory/members/${DANA}`;
 
 /** A fact: where its text is stored (the provenance page) and what it is about (the entity page). */
-interface Seed { id: string; text: string; provenance: string; entity: string | null }
+interface Seed { id: string; text: string; provenance: string; entity: string | null; visibility?: 'private' }
 const FACTS: readonly Seed[] = [
   { id: 'held-carol-rule', text: 'zzfact held under the rule that lists carol and dana', provenance: HOLDING, entity: 'ruled-carol/acme' },
   { id: 'held-bob-rule', text: 'zzfact held under the rule that lists bob', provenance: HOLDING, entity: 'ruled-bob/corp' },
   { id: 'held-open', text: 'zzfact held on an open page', provenance: HOLDING, entity: 'open/thing' },
   { id: 'own-page', text: 'zzfact on the member page of carol', provenance: CAROL_PAGE, entity: null },
   { id: 'open-page', text: 'zzfact on an open page', provenance: 'open/plain', entity: 'open/plain' },
+  // A private fact on the member's own member page widens the list for that member (memberFactAdmitSql), and that page sits under a rule it satisfies.
+  { id: 'own-private-carol', text: 'zzfact private on the member page of carol', provenance: CAROL_PAGE, entity: null, visibility: 'private' },
+  { id: 'own-private-dana', text: 'zzfact private on the member page of dana', provenance: DANA_PAGE, entity: null, visibility: 'private' },
   { id: 'entity-ruled-carol', text: 'zzfact kept on an open page about a company under the rule that lists carol and dana', provenance: 'open/plain', entity: 'ruled-carol/acme' },
   { id: 'entity-ruled-bob', text: 'zzfact kept on an open page about a company under the rule that lists bob', provenance: 'open/plain', entity: 'ruled-bob/corp' },
   { id: 'readers-page', text: 'zzfact on a page that names carol', provenance: 'open/readers-carol', entity: 'open/readers-carol' },
 ];
 /** The facts each member reads, by the SQL rules (a fact absent here is hidden from that member). */
 const WANT: Record<string, string[]> = {
-  [DANA]: ['held-carol-rule', 'held-open', 'open-page', 'entity-ruled-carol'],
+  [DANA]: ['held-carol-rule', 'held-open', 'open-page', 'entity-ruled-carol', 'own-private-dana'],
   [BOB]: ['held-bob-rule', 'held-open', 'open-page', 'entity-ruled-bob'],
-  [CAROL]: ['own-page'],
+  [CAROL]: ['own-page', 'own-private-carol'],
 };
 /** With access.members_read_lineage on the provenance page is judged by the member's own identity, so carol also reads the fact on the page that names her. */
-const LINEAGE_WANT: Record<string, string[]> = { ...WANT, [CAROL]: ['own-page', 'readers-page'] };
-const PAGES = ['ruled-carol/acme', 'ruled-bob/corp', 'open/thing', 'open/plain', 'open/readers-carol', CAROL_PAGE];
+const LINEAGE_WANT: Record<string, string[]> = { ...WANT, [CAROL]: ['own-page', 'own-private-carol', 'readers-page'] };
+const PAGES = ['ruled-carol/acme', 'ruled-bob/corp', 'open/thing', 'open/plain', 'open/readers-carol', CAROL_PAGE, DANA_PAGE];
 
 async function seed(engine: BrainEngine, backend: ParityBackend): Promise<void> {
   await createMember(engine, backend, { id: 'alice-example', email: 'alice@example.com' });
@@ -67,13 +73,16 @@ async function seed(engine: BrainEngine, backend: ParityBackend): Promise<void> 
   await setMemberLabelledOnly(engine, CAROL, true, { remote: false });
   await restrictFolder(engine, backend, 'default', 'ruled-carol/', 'rule', { ruleId: 'rule-carol', readers: ['member:alice-example', `member:${CAROL}`, `member:${DANA}`] });
   await restrictFolder(engine, backend, 'default', 'ruled-bob/', 'rule', { ruleId: 'rule-bob', readers: ['member:alice-example', `member:${BOB}`] });
+  // The member pages sit under a rule that lists carol, dana and alice (not bob): each member satisfies it for its own page.
+  await restrictFolder(engine, backend, 'default', 'memory/members/', 'rule', { ruleId: 'rule-members', readers: ['member:alice-example', `member:${CAROL}`, `member:${DANA}`] });
   const page = (slug: string, frontmatter: Record<string, unknown> = {}) =>
     engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `page ${slug}`, timeline: '', frontmatter }, { sourceId: 'default' });
   await page(HOLDING);
   for (const slug of ['ruled-carol/acme', 'ruled-bob/corp', 'open/thing', 'open/plain']) await page(slug);
   await page('open/readers-carol', { readable_by: [CAROL] });
   await page(CAROL_PAGE, { readable_by: [`member:${CAROL}`] });
-  const rows = FACTS.map((f, i) => ({ fact: f.text, kind: 'fact', visibility: 'world', source: 'test', entity_slug: f.entity ?? undefined, source_markdown_slug: f.provenance, row_num: i + 1 }));
+  await page(DANA_PAGE, { readable_by: [`member:${DANA}`] });
+  const rows = FACTS.map((f, i) => ({ fact: f.text, kind: 'fact', visibility: f.visibility ?? 'world', source: 'test', entity_slug: f.entity ?? undefined, source_markdown_slug: f.provenance, row_num: i + 1 }));
   for (const row of rows) await engine.insertFacts([row] as never, { source_id: 'default' });
 }
 
@@ -112,6 +121,7 @@ describe('engine parity: remote fact reads of a member under a folder rule', () 
     }, (engine, backend) => inFreshHome(async () => {
       await seed(engine, backend);
       const recent = await remote(engine, member, 'recall', {});
+      const since = factIds(await remote(engine, member, 'recall', { since: '2000-01-01T00:00:00Z' }));
       const byEntity: Record<string, unknown> = {};
       for (const f of FACTS) if (f.entity) byEntity[f.entity] = factIds(await remote(engine, member, 'recall', { entity: f.entity }));
       const pages: Record<string, unknown> = {};
@@ -122,7 +132,8 @@ describe('engine parity: remote fact reads of a member under a folder rule', () 
       const ids = factIds(recent);
       expect(ids).toEqual([...WANT[member]!].sort());
       for (const f of FACTS) if (f.entity) expect({ entity: f.entity, ids: byEntity[f.entity] }).toEqual({ entity: f.entity, ids: FACTS.filter(g => g.entity === f.entity && WANT[member]!.includes(g.id)).map(g => g.id).sort() });
-      return { ids, byEntity, pages };
+      expect(since).toEqual(ids);
+      return { ids, since, byEntity, pages };
     }));
   }
 });
@@ -131,6 +142,26 @@ describe('engine parity: remote fact reads of a member under a folder rule', () 
 const declined = (a: unknown): boolean => !!a && typeof a === 'object' && ('refused' in a || (a as { error?: unknown }).error === 'unavailable');
 
 describe('engine parity: named losses of the fact reads (RUST_ENGINE.md, row 32e-b-4)', () => {
+  // The fact list read of a member with lineage on: PGLite and Postgres answer it, and the Rust store stops at listFactsSince
+  // (the fact policy under lineage judges every provenance page by the member's lineage, which the store does not model). It
+  // is a parity case with a stop pin (test/rust-stop-pins/labelled-reads-lineage-facts.tsv), so the day Rust answers it the case
+  // fails and the row goes. Without lineage the same read is served and equal (the cases above).
+  parityTest('with access.members_read_lineage on, a labelled-only and an ordinary member read their facts on PGLite and Postgres, and the Rust store stops (row 32e-b-4)', {
+    methods: ['putPage', 'insertFacts', 'listFactsSince'], timeout: 240_000,
+  }, (engine, backend) => inFreshHome(async () => {
+    await seed(engine, backend);
+    await setMembersReadLineage(engine, true, { remote: false });
+    const answers: Record<string, string[]> = {};
+    for (const member of [CAROL, DANA]) {
+      const record = await remoteCallerAccess(engine, undefined, [], 'stdio', null, member, true);
+      expect(record.lineage).toBe(true);
+      const rows = await withCallerAccess({ ...record }, () => engine.listFactsSince('default', new Date(0), { excludePrivate: true, visibility: ['world'], limit: 50 } as never));
+      answers[member] = FACTS.filter(f => rows.some(r => String(r.fact).includes(f.text))).map(f => f.id).sort();
+    }
+    expect(answers).toEqual({ [CAROL]: [...LINEAGE_WANT[CAROL]!].sort(), [DANA]: [...LINEAGE_WANT[DANA]!].sort() });
+    return answers;
+  }));
+
   // Not a parityTest: the arms must answer differently on purpose (the SQL engines answer, Rust declines), which a parity
   // case cannot express. The day Rust answers a fact read under lineage this fails and the row goes.
   test('with access.members_read_lineage on, recall answers on PGLite and Postgres and Rust declines it, for a labelled-only and an ordinary member', async () => {

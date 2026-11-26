@@ -79,7 +79,7 @@ async function seed(engine: BrainEngine, backend: ParityBackend): Promise<void> 
 }
 
 /** carol's remote read: get_page and search through the stdio member path (the real dispatch, remote: true). */
-async function remoteRead(engine: BrainEngine, slug: string): Promise<{ get: 'visible' | 'page_not_found'; search: boolean }> {
+async function remoteRead(engine: BrainEngine, slug: string, withSearch: boolean): Promise<{ get: 'visible' | 'page_not_found'; search: boolean | null }> {
   const call = (tool: string, args: Record<string, unknown>) => dispatchToolCall(engine, tool, args, { remote: true, transport: 'stdio', sourceId: 'default', stdioMember: CAROL } as never);
   const text = (out: Awaited<ReturnType<typeof call>>) => out.content.map(part => (part as { text?: string }).text ?? '').join('');
   const refuse = (out: Awaited<ReturnType<typeof call>>) => {
@@ -93,6 +93,9 @@ async function remoteRead(engine: BrainEngine, slug: string): Promise<{ get: 'vi
     refuse(got);
     if (!/page_not_found/.test(text(got))) throw new Error(`get_page ${slug}: ${text(got).slice(0, 300)}`);
   }
+  // With lineage on, search also matches saved facts under the fact policy of a lineage read, which the Rust store refuses (row 32e-b-4,
+  // pinned in labelled-only-reads.test.ts), so the search arm is read only with lineage off.
+  if (!withSearch) return { get: got.isError ? 'page_not_found' : 'visible', search: null };
   const found = await call('search', { query: WORD, limit: 50 });
   if (found.isError) { refuse(found); throw new Error(`search ${slug}: ${text(found).slice(0, 300)}`); }
   return { get: got.isError ? 'page_not_found' : 'visible', search: text(found).includes(`"${slug}"`) };
@@ -139,6 +142,12 @@ describe('engine parity: a labelled-only member against who-can-read and the pag
         const folderRulesAllowed = await withCallerAccess({ ...record }, () => engine.readPageFolderRulesAllowed('default', s.slug, record.satisfiedRuleIds ?? []));
         const listed = Array.isArray(entry!.members) && entry!.members.includes(CAROL);
         rows[s.slug] = { members: entry!.members, listed, accessAllowed, folderRulesAllowed, labelledOnlyRecord: record.labelledOnly };
+        if (s.slug === 'open/derived-carol') {
+          // The note says what the labelled-only member reads: with lineage on a derived page is read when every origin names it
+          // (it is not listed, the listing is a known gap on every engine); with lineage off it is read by nobody labelled.
+          expect(lineage === 'on' ? /\(it is a derived page\) when every origin names them/.test(entry!.note) && !/so none of them reads it/.test(entry!.note)
+            : /so none of them reads it/.test(entry!.note)).toBe(true);
+        }
         if (s.slug === PRIVATE) {
           // A private page that names the member is listed with its own caveat (the note says the member still needs
           // private_pages: granted_sources), and its remote read is hidden on every engine: pinned, not counted as a leak.
@@ -151,18 +160,17 @@ describe('engine parity: a labelled-only member against who-can-read and the pag
     return table;
   }));
 
-  // (2) carol's remote read (get_page and search through the stdio member path). On Rust the read of a labelled-only caller
-  // refuses (readPageSnapshot declines a caller the privacy policy widens), so the case stops there under its pin row.
+  // (2) carol's remote read (get_page, and search with lineage off, through the stdio member path), the same on every engine.
   parityTest('a labelled-only member reads over the remote path only the pages that name it, the same on every engine', {
     methods: ['putPage', 'sealChunks', 'readPageSnapshot'], timeout: 240_000,
   }, (engine, backend) => inFreshHome(async () => {
     await seed(engine, backend);
     const table = await eachLineage(engine, async (lineage) => {
       const reads: Record<string, unknown> = {};
-      for (const s of SHAPES) reads[s.slug] = await remoteRead(engine, s.slug);
+      for (const s of SHAPES) reads[s.slug] = await remoteRead(engine, s.slug, lineage === 'off');
       const visible = SHAPES.filter(s => (reads[s.slug] as { get: string }).get === 'visible').map(s => s.slug);
       expect(visible).toEqual(SHAPES.map(s => s.slug).filter(slug => VISIBLE[lineage].includes(slug)));
-      expect(SHAPES.filter(s => (reads[s.slug] as { search: boolean }).search).map(s => s.slug)).toEqual(visible);
+      if (lineage === 'off') expect(SHAPES.filter(s => (reads[s.slug] as { search: boolean }).search).map(s => s.slug)).toEqual(visible);
       return reads;
     });
     return table;
