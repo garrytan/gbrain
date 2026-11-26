@@ -108,7 +108,7 @@ export function cadenceDays(value: unknown): number | null {
 }
 
 /** Frontmatter keys named like an account or card number. */
-const ACCOUNT_KEY_RE = /^(?:account|acct|card|iban|routing|bank)(?:[_ -]?(?:number|no|num|id))?$/i;
+const ACCOUNT_KEY_RE = /^(?:(?:account|acct|iban|routing)(?:[_ -]?(?:number|no|num|id))?|(?:card|bank)[_ -]?(?:number|no|num|id))$/i;
 
 function luhn(digits: string): boolean {
   let sum = 0;
@@ -120,9 +120,9 @@ function luhn(digits: string): boolean {
   return sum % 10 === 0;
 }
 
-/** True when a string holds a run shaped like a full card number (13 to 19 digits passing Luhn) or a long account number (10+ digits). */
+/** True when a string holds a run shaped like a full card number (13 to 19 digits passing Luhn) or a long account number (10+ digits); a calendar date standing alone is not a run. */
 export function looksLikeAccountNumber(value: string): boolean {
-  for (const [run] of value.matchAll(/\d[\d -]{8,24}\d/g)) {
+  for (const [run] of value.replace(/(?<![\d-])\d{4}-\d{2}-\d{2}(?![\d-])/g, ' ').matchAll(/\d[\d -]{8,24}\d/g)) {
     const digits = run.replace(/[ -]/g, '');
     if (digits.length >= 13 && digits.length <= 19 && luhn(digits)) return true;
     if (digits.length >= 10 && /^\d+$/.test(run)) return true;
@@ -130,13 +130,14 @@ export function looksLikeAccountNumber(value: string): boolean {
   return false;
 }
 
-/** Every field (dotted path) of `value` whose key or text is shaped like an account or card number. The values are never returned. */
+/** Every field (dotted path) of `value` whose key or text is shaped like an account or card number. Neither the values nor a number-shaped key is returned. */
 export function accountNumberFields(value: unknown, path = ''): string[] {
   if (typeof value === 'string') return looksLikeAccountNumber(value) ? [path || 'value'] : [];
   if (typeof value === 'number') return looksLikeAccountNumber(String(value)) ? [path || 'value'] : [];
   if (Array.isArray(value)) return value.flatMap((v, i) => accountNumberFields(v, `${path}[${i}]`));
   if (!value || typeof value !== 'object' || value instanceof Date) return [];
   return Object.entries(value as Record<string, unknown>).flatMap(([k, v]) => {
+    if (looksLikeAccountNumber(k)) return [path ? `${path}.<number-shaped key>` : '<number-shaped key>'];
     const at = path ? `${path}.${k}` : k;
     return ACCOUNT_KEY_RE.test(k) ? [at] : accountNumberFields(v, at);
   });

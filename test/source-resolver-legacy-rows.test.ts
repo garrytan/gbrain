@@ -119,15 +119,13 @@ describe('the three fault paths the final review reproduced', () => {
     expect({ source: picked.source_id, tier: picked.tier }).toEqual({ source: 'default', tier: 'seed_default' });
   });
 
-  test('sourceHasRepo reads the source with the notice bound, and gives up on a config read that does not answer', async () => {
-    let boundSeen: number | undefined;
+  test('sourceHasRepo reads the source and the repo path with the notice bound, so the database ends a stalled read', async () => {
+    const bounds: Array<number | undefined> = [];
     const stub = {
-      getSource: async (_id: string, opts?: { timeoutMs?: number }) => { boundSeen = opts?.timeoutMs; return { id: 'default', local_path: null, config: {} }; },
-      getConfig: () => new Promise<string | null>(() => {}),
+      getSource: async (_id: string, opts?: { timeoutMs?: number }) => { bounds.push(opts?.timeoutMs); return { id: 'default', local_path: null, config: {} }; },
+      getConfig: async (_key: string, opts?: { timeoutMs?: number }) => { bounds.push(opts?.timeoutMs); return null; },
     } as unknown as Parameters<typeof sourceHasRepo>[0];
-    const started = Date.now();
-    const answer = await sourceHasRepo(stub, 'default');
-    expect({ boundSeen, answer, quick: Date.now() - started < 3000 }).toEqual({ boundSeen: 1000, answer: true, quick: true });
+    expect({ answer: await sourceHasRepo(stub, 'default'), bounds }).toEqual({ answer: false, bounds: [1000, 1000] });
   });
 
   test('sourceHasRepo reads a config that is not JSON as a source with no repository', async () => {
