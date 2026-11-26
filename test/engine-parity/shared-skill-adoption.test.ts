@@ -17,6 +17,7 @@
  *    revisions, timestamps) are reduced to their shape in the returned values.
  */
 import { describe, expect } from 'bun:test';
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -66,6 +67,8 @@ async function installSingletons(engine: BrainEngine, backend: ParityBackend): P
  */
 async function withCanonicalRoot<T>(engine: BrainEngine, backend: ParityBackend, fn: (root: string) => Promise<T>): Promise<T> {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-parity-adoption-root-')));
+  // Its own Git root, so a worktree claim never walks up to a checkout that holds the temp dir (TMPDIR inside a repo).
+  execFileSync('git', ['init', '-q', root]);
   try {
     await engine.attachSourcePath('default', root);
     if (backend !== 'rust') {

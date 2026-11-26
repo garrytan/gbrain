@@ -55,15 +55,23 @@ function writePack(root: string) {
  * Makes the fixture a Rust brain: raw SQL on shared-skill tables refuses by name, the brain singleton comes from the
  * writer admin state (managed-mode.ts) and the sealed pack row from the typed member, answered here by `readPack`.
  */
-function asRustBrain(f: ReturnType<typeof fixture>, readPack: (key: { sourceId: string; incarnation: string }) => Promise<unknown>) {
+function asRustBrain(f: ReturnType<typeof fixture>, readPack: (key: { sourceId: string; incarnation: string }) => Promise<unknown>,
+  activated?: { localPath: string }) {
   Object.assign(f.ctx.engine, {
     kind: 'rust',
     readWriterAdminState: async () => JSON.stringify({ brain: { id: f.brainId, enabled: false, mode_epoch: 0, skill_bundles_enabled: false, writer_protocol_floor: 1 } }),
     // On Rust the typed pack-row member reads the store's pack row (store-members/shared-skill-members.ts).
     readSharedSkillPackRow: async (sourceId: string, incarnation: string) => (await readPack({ sourceId, incarnation })) ?? undefined,
+    // No installation has enrolled (the members stage the migration reports last).
+    listSharedMemberMigrationRows: async () => [],
     _admit: async () => {},
     // The store's shared-publication flag: off, as on a brain nobody activated.
-    storeFor: async () => ({ brain: { readSharedSkillPublication: async () => ({ skill_bundles_enabled: false, writer_protocol_floor: 1 }) } }),
+    // With `activated`, shared publication is on and the store's source row registers `localPath` with no alias.
+    storeFor: async () => ({ brain: {
+      readSharedSkillPublication: async () => (activated ? { skill_bundles_enabled: true, writer_protocol_floor: 2 } : { skill_bundles_enabled: false, writer_protocol_floor: 1 }),
+      readSharedSkillSource: async (id: string) => (activated && id === f.source.id
+        ? { id, incarnation: f.incarnation, archived: false, local_path: activated.localPath, aliases: [] } : null),
+    } }),
   });
   const sqlRead = f.ctx.engine.executeRaw.bind(f.ctx.engine);
   f.ctx.engine.executeRaw = (async (sql: string, params?: unknown[]) => {
@@ -227,6 +235,30 @@ describe('staged skill migration', () => {
     expect(client.status).toBe('action_required');
     expect(client.sources[0].stages.at(-1)).toMatchObject({ stage: 'ownership', status: 'action_required', code: 'owner_unavailable' });
     expect(storeReads).toEqual([]);
+  });
+  test('on an activated Rust brain the registered root owns the source only as an absolute path', async () => {
+    const root = temp(), f = fixture(root); writePack(root);
+    // A legacy relative path resolves against the directory that launched the upgrade; launch it from the pack itself.
+    Object.assign(f.source, { local_path: '.' });
+    asRustBrain(f, async () => null, { localPath: '.' });
+    const previous = process.cwd();
+    process.chdir(root);
+    let relative: Awaited<ReturnType<typeof runSharedSkillsMigration>>;
+    try { relative = await runSharedSkillsMigration(f.ctx, { dryRun: true }); } finally { process.chdir(previous); }
+    Object.assign(f.source, { local_path: root });
+    expect(relative.sources[0].stages.at(-1)).toMatchObject({ stage: 'ownership', status: 'action_required' });
+    expect(relative.sources[0].stages.at(-1)?.reason).toContain('writer_registration_required');
+    asRustBrain(f, async () => null, { localPath: root });
+    const absolute = await runSharedSkillsMigration(f.ctx, { dryRun: true });
+    expect(absolute.sources[0].stages.map(stage => [stage.stage, stage.status])).toContainEqual(['ownership', 'complete']);
+  });
+  test('on an activated Rust brain an empty content root stops as action required, never a conflict', async () => {
+    const root = temp(), f = fixture(root);
+    asRustBrain(f, async () => null, { localPath: root });
+    const report = await runSharedSkillsMigration(f.ctx);
+    expect(report.sources[0].stages.at(-1)).toMatchObject({ stage: 'projection', status: 'action_required' });
+    expect(report.sources[0].stages.at(-1)?.reason).toContain('packaged_pack_unsupported');
+    expect(report.status).not.toBe('conflict');
   });
   test('a deferred client check keeps the evidence that refuses a moved root', async () => {
     const root = temp(), moved = temp(), f = fixture(root); writePack(root); writePack(moved);

@@ -74,8 +74,11 @@ export const listSharedSkillCatalogHeads: StoreMember<[q: SharedSkillHeadQuery],
 
 /** The sealed pack row the store keeps for the source incarnation (readSharedSkillPack), or undefined. */
 export const readSharedSkillPackRow: StoreMember<[sourceId: string, incarnation: string], SharedSkillPackRow | undefined> =
-  async (brain, sourceId, incarnation) =>
-    (await call('readSharedSkillPackRow', () => brain.readSharedSkillPack({ sourceId, incarnation })) as SharedSkillPackRow | null) ?? undefined;
+  async (brain, sourceId, incarnation) => {
+    const row = await call('readSharedSkillPackRow', () => brain.readSharedSkillPack({ sourceId, incarnation })) as SharedSkillPackRow | null;
+    // The SQL statement selects these four columns; the store row also names its key, so it is narrowed the same way.
+    return row ? { pack_id: row.pack_id, revision: row.revision, manifest: row.manifest, manifest_hash: row.manifest_hash } : undefined;
+  };
 
 /** The store runs one write at a time, so `lock` takes no row lock. */
 export const readSharedSkillPolicyRow: StoreMember<[sourceId: string, incarnation: string, lock: boolean], { epoch: string; policy: unknown } | undefined> =

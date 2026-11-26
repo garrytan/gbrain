@@ -2,8 +2,7 @@
  * The v0.53.0 shared-content migration adopts a source's skill pack on a brain swapped from PGLite to Rust.
  *
  * 1. Protects: on a swapped Rust brain, `gbrain sources writer activate --shared-skills` with the reviewed
- *    --expected-state turns shared skills on (a stale state refuses and writes nothing; a run while gbrain serve owns
- *    the brain refuses owner_unavailable and writes nothing). An upgrade's v0.53.0 rerun then adopts the content
+ *    --expected-state turns shared skills on (a stale state refuses and writes nothing). An upgrade's v0.53.0 rerun then adopts the content
  *    root's pack into the Rust skill store, a second run changes nothing, and a later local edit to a skill file is
  *    kept and reported as a conflict, never overwritten.
  * 2. Fails on: a reviewed activation that refuses engine_capability_missing, a Rust brain that stops at
@@ -11,9 +10,10 @@
  *    writer_registration_required (the SQL worktree binding a Rust brain never has), or exits 1 on adoption's
  *    capability refusal.
  * 3. Existing coverage: test/apply-migrations-rust-swap.serial.test.ts upgrades a swapped brain with no content root;
- *    test/apply-migrations-rust-client-conflict.serial.test.ts runs the upgrade as a client of a serve.
+ *    test/apply-migrations-rust-client-conflict.serial.test.ts runs the upgrade as a client of a serve;
+ *    test/rust-skill-activation-serialized.test.ts refuses the activation from a client of the owner.
  * 4. Seam: none for the steps under test; a child process reads the sealed pack from the Rust store to check it. It
- *    runs the real CLI (`src/cli.ts`, one child per command) and a real stdio `gbrain serve`, and needs the addon
+ *    runs the real CLI (`src/cli.ts`, one child per command), and needs the addon
  *    `bun run rust:build` writes; it skips without it (GBRAIN_TEST_REQUIRE_RUST_ADDON=1 makes a missing addon an error).
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
@@ -21,8 +21,6 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSy
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { detectAddonTarget } from '../src/core/rust-engine/addon-target.ts';
-import { localIpcSocketPath } from '../src/core/context/ipc-path.ts';
-import { ownerSocketPath } from '../src/core/rust-engine/owner-ipc/protocol.ts';
 import { packagedSharedSkills } from '../src/core/shared-skills/setup-bundle.ts';
 
 const ROOT = resolve(import.meta.dir, '..');
@@ -139,22 +137,6 @@ describeRust('v0.53.0 adopts a content root\'s skill pack on a brain swapped to 
     expect(before.out).toContain('[shared-skills] team: writer_not_quiesced');
   }, 900_000);
   afterAll(() => { if (root) rmSync(root, { recursive: true, force: true }); });
-
-  // Value: protects=a reviewed activation run while gbrain serve owns the Rust brain refuses owner_unavailable and writes nothing; fails_when=the client activates, refuses with another code or changes the admin state; why_new=no test activated shared skills on a Rust brain from a client; seam=none; no_claim=PGLite has no client mode, so this step has no PGLite twin
-  test('while gbrain serve owns the brain, a reviewed activation refuses owner_unavailable and writes nothing', async () => {
-    const state = await reviewedState();
-    const serve = Bun.spawn(['bun', 'run', CLI, 'serve'], { cwd: root, env: childEnv(), stdin: 'pipe', stdout: 'ignore', stderr: 'ignore' });
-    try {
-      const socket = localIpcSocketPath(ownerSocketPath(join(root, 'brain.rust')));
-      const deadline = Date.now() + 60_000;
-      while (!existsSync(socket) && Date.now() < deadline) await Bun.sleep(250);
-      expect(existsSync(socket)).toBe(true);
-      const run = await activate(state);
-      expect({ exitCode: run.exitCode, code: errorCode(run) }).toEqual({ exitCode: 1, code: 'owner_unavailable' });
-    } finally { serve.kill(); await serve.exited; }
-    expect(await reviewedState()).toBe(state);
-    expect((await upgrade()).out).toContain('[shared-skills] team: writer_not_quiesced');
-  }, 600_000);
 
   // Value: protects=a stale --expected-state refuses as on PGLite and writes nothing; fails_when=it activates or refuses another code; why_new=a reviewed activation never ran on a Rust brain; seam=none; no_claim=none
   test('a stale --expected-state refuses writer_admin_state_changed and writes nothing', async () => {

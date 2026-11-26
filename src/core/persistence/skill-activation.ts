@@ -7,7 +7,7 @@ import type { NativeLockHandle } from './native-lock.ts';
 import { declarePersistenceProtocol } from './protocol.ts';
 import { managedFilesystemDatastorePath, refreshManagedFilesystemRoots } from './filesystem-guard.ts';
 import { assertWriterAdminState, WRITER_INSPECTION_HINT } from './admin-intent.ts';
-import { assertWriterAdminUnlocked } from './admin-lock.ts';
+import { assertWriterAdminLockValue, assertWriterAdminUnlocked, WRITER_ADMIN_LOCK_KEY } from './admin-lock.ts';
 import { blockingEffectFrom, blockingEffectHint, blockingRequestHint, notQuiescedError } from './blocking-effects.ts';
 import { isRustBrain, isRustClient, rustActivate } from '../shared-skills/rust-publication.ts';
 import { NOT_PAGE_EMBEDDING_LEASE } from '../page-embedding-lease.ts';
@@ -34,7 +34,12 @@ async function activateOnRust(engine: BrainEngine, options: { dryRun?: boolean; 
   }
   const expected = options.expectedState;
   const result = expected === undefined ? await rustActivate(engine, options.dryRun === true)
-    : await engine.transaction(async tx => { await assertWriterAdminState(tx, expected); return rustActivate(tx, options.dryRun === true); });
+    : await engine.transaction(async tx => {
+      // The reviewed state and the operator's writer-admin lock are both read inside the transaction that writes the flag.
+      await assertWriterAdminState(tx, expected);
+      assertWriterAdminLockValue(await tx.getConfig(WRITER_ADMIN_LOCK_KEY));
+      return rustActivate(tx, options.dryRun === true);
+    });
   if ('registration_required' in result) throw registrationRequired();
   if ('legacy_lock' in result) throw managedQuiescence();
   if ('blocked' in result) {

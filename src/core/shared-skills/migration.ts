@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readdirSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 import { isThinClient } from '../config.ts';
 import { opError, OperationError, type OperationContext } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
@@ -112,7 +112,8 @@ async function liveSourceRoots(engine: OperationContext['engine']): Promise<Sour
 async function ownsRoot(engine: OperationContext['engine'], source: SourceRoot, root: string): Promise<boolean> {
   if (isRustBrain(engine)) {
     const rust = await rustSource(engine, source.id);
-    return !!rust && !rust.archived && rust.incarnation === source.incarnation && !!rust.local_path
+    // A relative registered path would resolve against whatever directory launched the upgrade, so it never owns a root.
+    return !!rust && !rust.archived && rust.incarnation === source.incarnation && !!rust.local_path && isAbsolute(rust.local_path)
       && resolve(rust.local_path) === root && rust.aliases.length === 0;
   }
   const binding = await getWorktreeBinding(engine, source.id);
@@ -307,6 +308,11 @@ export async function runSharedSkillsMigration(ctx: OperationContext, options: {
         await pending('projection', 'Unmanifested source-local skills require reviewed adoption; no files or private markers were replaced.', 'shared_skills_unmanifested');
         continue;
       }
+      if (!dryRun && isRustBrain(ctx.engine)) {
+        // The packaged-pack install resumes its durable request through a raw-SQL receipt read the Rust engine refuses.
+        await pending('projection', 'packaged_pack_unsupported: installing the packaged memory pack into an empty content root is not available on a Rust brain yet. Add the pack files to the root (or adopt a reviewed pack), then run gbrain apply-migrations again; nothing was published.');
+        continue;
+      }
       if (!dryRun) {
         try {
           await installPackagedSharedSkills(ctx, source.id, ['README.md', 'LICENSE'].filter(path => existsSync(join(row.root!, path))));
@@ -341,6 +347,12 @@ export async function runSharedSkillsMigration(ctx: OperationContext, options: {
           }
         }
         row.inventory = inventorySkillpack(row.root, limits);
+        // A publication whose store commit landed but whose canonical file writes did not (a crash between them) leaves
+        // the sealed manifest ahead of the files on disk: that is still pending, never a complete projection.
+        if (!complete && await sealedManifestHash(ctx.engine, source.id, source.incarnation) !== row.inventory?.hashes['skillpack.json']) {
+          throw opError('publication_pending', 'The sealed pack and the canonical files differ after adoption.',
+            `Source ${source.id}'s sealed skillpack.json is not the one in its checkout, so the canonical file writes did not finish. Inspect the publication receipt with gbrain write-request, restore the files, then run the migration again.`);
+        }
       } catch (error) {
         // A typed capability refusal is a stop for the whole migration, not this source's pending row.
         rethrowCapabilityRefusal(error);
