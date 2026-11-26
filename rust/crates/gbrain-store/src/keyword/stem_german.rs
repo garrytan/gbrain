@@ -464,9 +464,13 @@ fn get_b_utf8(p: &[u8], mut c: i32, lb: i32) -> (i32, i32) {
     (4, (p[c as usize] as i32 & 0x7) << 18 | (b & 0x3F) << 12 | a)
 }
 
+/// Whether `ch` is in the grouping `s` over `min..=max` (the test the `*_grouping_U` functions share).
 fn in_group(s: &[u8], ch: i32, min: i32, max: i32) -> bool {
+    if !(min..=max).contains(&ch) {
+        return false;
+    }
     let ch = ch - min;
-    !(ch + min > max || ch < 0 || (s[(ch >> 3) as usize] & (1 << (ch & 7))) == 0)
+    (s[(ch >> 3) as usize] & (1 << (ch & 7))) != 0
 }
 
 /// Snowball's `SN_env` with the German locals `p1` and `p2`.
