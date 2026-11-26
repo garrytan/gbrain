@@ -429,13 +429,14 @@ const factNotFound = (id: string) => opError('fact_not_found', `No fact with id 
 
 /**
  * The fact a remote caller names, read under the rules recall and forget apply (visibility, read eligibility, the fact's
- * page and its entity's privacy), with the page it is about from the same read. A fact on the caller's own member page
- * is only withdrawn, never replaced (`own`), and that connection is never told the page such a fact is about.
+ * page and its entity's privacy), with the page it is about from the same read. A member only withdraws a fact on its
+ * own member page, never replaces it (`own`), and is never told the page such a fact is about; the owner speaking for
+ * itself does either.
  */
-async function remoteFact(ctx: OperationContext, id: number, sourceId: string, member: string | null, withdraw: boolean): Promise<{ entity_slug: string | null; own: boolean } | null> {
+async function remoteFact(ctx: OperationContext, id: number, sourceId: string, member: string | null, withdraw: boolean, owner: boolean): Promise<{ entity_slug: string | null; own: boolean } | null> {
   const excludePrivate = await resolveExcludePrivatePages(ctx.engine, true);
   const mine = member ? await readForgetTarget(ctx.engine, id, sourceId, true, excludePrivate, false, memberPageSlug(member)) : null;
-  if (mine) return withdraw ? { entity_slug: mine.entity_slug ?? null, own: true } : null;
+  if (mine) return owner ? { entity_slug: mine.entity_slug ?? null, own: false } : withdraw ? { entity_slug: mine.entity_slug ?? null, own: true } : null;
   const readable = !withdraw ? "facts.visibility = 'world'" : callerIsOwner() ? 'TRUE' : factVisibilitySql('facts', ['world']);
   const eligible = projectionEligibleSql('facts', 'facts', await resolveReadEligibility(ctx));
   const provenance = excludePrivate ? ` AND ${privateProvenanceFilterUnderPolicy('facts')}` : '';
@@ -455,7 +456,7 @@ const namesRule = (entity: string) => isRuleSlug(entity) || isRuleSlug(fallbackS
  */
 async function factEntity(ctx: OperationContext, factId: string, sourceId: string, entity: string | null, reader: { member: string | null; withdraw: boolean; owner: boolean } | null): Promise<string | null> {
   const id = Number(factId);
-  let seen = reader ? await remoteFact(ctx, id, sourceId, reader.member, reader.withdraw) : null;
+  let seen = reader ? await remoteFact(ctx, id, sourceId, reader.member, reader.withdraw, reader.owner) : null;
   if (!seen && (!reader || reader.owner)) {
     const access = currentCallerAccess();
     const reach = !reader || await ownerReachesFact(ctx.engine, id, sourceId, { identity: access.identity, satisfied: access.satisfiedRuleIds });
@@ -554,7 +555,10 @@ const intentOf = (i: CorrectInput) => digestOf([i.rule, i.scope, i.fact_id, i.co
 
 export async function runCorrect(ctx: OperationContext, p: Record<string, unknown>, opts: CorrectOptions = {}): Promise<Record<string, unknown>> {
   const remote = ctx.remote !== false;
-  if (typeof p.receipt_id === 'string' && p.rule === undefined) return p.resume === true ? resumeCorrect(ctx, p.receipt_id, opts) : correctStatus(ctx, p.receipt_id);
+  if (typeof p.receipt_id === 'string' && p.rule === undefined) {
+    if (ctx.dryRun) return { dry_run: true, action: 'correct', receipt_id: p.receipt_id };
+    return p.resume === true ? resumeCorrect(ctx, p.receipt_id, opts) : correctStatus(ctx, p.receipt_id);
+  }
   const input = parseCorrectInput(ctx, p);
   await initializeLocalPersistence(ctx);
   const principal = await requestPrincipalForContext(ctx);
@@ -581,6 +585,7 @@ export async function runCorrect(ctx: OperationContext, p: Record<string, unknow
   const entity = input.fact_id
     ? await factEntity(ctx, input.fact_id, input.source_id, input.entity, remote ? { member: author.member, withdraw: !input.corrected_fact, owner: author.owner } : null)
     : input.entity;
+  if (ctx.dryRun) return { dry_run: true, action: 'correct', scope: input.scope, rule: input.rule, fact: input.fact_id ? { action: input.corrected_fact ? 'replace' : 'withdraw', id: input.fact_id, entity } : null };
   const intent = intentOf(input);
   let prior = await readReceipt(ctx.engine, receiptId);
   if (prior && !input.request_id && (prior.state === 'committed' || prior.state === 'conflicted')) { receiptId = `cr-${randomBytes(8).toString('hex')}`; prior = null; }

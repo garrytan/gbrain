@@ -251,6 +251,28 @@ describe('who may save a rule, and whose receipt it is', () => {
     expect((await factRow(String(hidden.id)))!.expired_at).toBeNull();
   });
 
+  test('the owner speaking for itself replaces a private fact on its own member page', async () => {
+    const saved = await remote(OWNER, 'remember', { fact: 'Alice Example parks on level two.', entity: 'people/alice-example', visibility: 'private', provenance: 'test', content_origin: 'user_said' });
+    expect(saved.isError).toBe(false);
+    const id = /"id":\s*"(\d+)"/.exec(saved.text)![1]!;
+    const right = 'Alice Example parks on level three.';
+    const r = await remote(OWNER, 'correct', { rule: right, fact_id: id, corrected_fact: right, scope: 'team' });
+    expect({ isError: r.isError, state: r.json.state }).toEqual({ isError: false, state: 'committed' });
+    expect((await factRow(id))!.expired_at).not.toBeNull();
+    const [row] = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM facts WHERE fact=$1 AND expired_at IS NULL', [right]);
+    expect(row!.n).toBe(1);
+  });
+
+  test('a dry run saves no rule and changes no fact', async () => {
+    const wrong = await seedFact('Alice Example takes the early train.');
+    const rules = async () => (await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM pages WHERE slug LIKE 'rules/%'"))[0]!.n;
+    const before = await rules();
+    const r = await remote(OWNER, 'correct', { rule: 'Alice Example takes the late train.', fact_id: wrong, corrected_fact: 'Alice Example takes the late train.', scope: 'team', dry_run: true });
+    expect({ isError: r.isError, dry_run: r.json.dry_run }).toEqual({ isError: false, dry_run: true });
+    expect(await rules()).toBe(before);
+    expect((await factRow(wrong))!.expired_at).toBeNull();
+  });
+
   test('a scope me rule from a connection that acts for no member is refused', async () => {
     const r = await remote('loose', 'correct', { rule: 'I like the standing desk.', scope: 'me' });
     expect({ isError: r.isError, code: r.json.code }).toEqual({ isError: true, code: 'invalid_params' });

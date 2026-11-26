@@ -7,6 +7,7 @@
 - `gbrain correct resume <receipt>` on the brain host asks you to type a code before it finishes a correction your remote session started, the same way `gbrain rules approve` does, and refuses if the receipt changes while you answer. The host never writes another member's rule page as itself, and a status read never finishes someone else's correction without that code.
 - A correction stopped after its rule was made active finishes when resumed from another connection, instead of ending `conflicted`.
 - An approval interrupted before its correction moved on now finishes on the next read of the receipt.
+- `correct` with `dry_run: true` writes nothing and returns a preview, instead of saving the rule while reporting the fact as changed.
 - A team rule a member proposes is readable by every agent of the brain, as before approval, instead of only by the member who wrote it.
 
 ### Changed
