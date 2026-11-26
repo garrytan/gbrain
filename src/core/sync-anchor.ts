@@ -15,6 +15,7 @@ import { isWithinRoot } from './sync-git.ts';
 import { serr } from './console-prefix.ts';
 import { SOURCE_CONFIG_OBJECT_SQL } from './source-config-sql.ts';
 import { sourceConfigText } from './source-rows.ts';
+import { syncRows } from './engine-sql/managed-sync-store.ts';
 
 // v0.18.0 Step 5: source-scoped sync state helpers. When opts.sourceId
 // is set, read/write the per-source row instead of the global config
@@ -452,11 +453,7 @@ export async function resolveSlugRootMode(
   if (opts.explicitGitRoot) {
     mode = 'git-root';
   } else {
-    const rows = await engine.executeRaw<{ one: number }>(
-      `SELECT 1 AS one FROM pages
-        WHERE source_id = $1 AND deleted_at IS NULL AND slug LIKE $2 LIMIT 1`,
-      [opts.sourceId ?? 'default', `${escapeLike(opts.slugPrefix)}/%`],
-    );
+    const rows = await syncRows<{ one: number }>(engine, 'slug_prefix_probe', [opts.sourceId ?? 'default', `${escapeLike(opts.slugPrefix)}/%`]);
     mode = rows.length > 0 ? 'git-root' : 'source-root';
   }
   if (opts.dryRun !== true) {

@@ -28,6 +28,14 @@ export const SYNC_STATEMENTS = {
   source_local_path: { kind: 'read', sql: 'SELECT local_path FROM sources WHERE id=$1' },
   source_last_commit: { kind: 'read', sql: 'SELECT last_commit FROM sources WHERE id=$1 AND incarnation=$2::uuid' },
 
+  // The slug-root probe (sync-anchor.ts resolveSlugRootMode): whether a live page of the source sits under the inferred prefix.
+  slug_prefix_probe: { kind: 'read', sql: `SELECT 1 AS one FROM pages
+        WHERE source_id = $1 AND deleted_at IS NULL AND slug LIKE $2 LIMIT 1` },
+
+  // The stored timeline rows of a page, one keyset page at a time (timeline-extract.ts eachStoredTimelineRow, read by the managed extract).
+  stored_timeline_page: { kind: 'read', sql: `SELECT id, to_char(date, 'YYYY-MM-DD') AS date, date::text AS date_text, source, summary, detail FROM timeline_entries
+        WHERE page_id = $1 AND event_page_id IS NULL AND id > $2 ORDER BY id LIMIT $3` },
+
   // The config rows the pass reads (sync-held-deletions.ts).
   config_values: { kind: 'read', sql: 'SELECT key, value FROM config WHERE key = ANY($1::text[])' },
 

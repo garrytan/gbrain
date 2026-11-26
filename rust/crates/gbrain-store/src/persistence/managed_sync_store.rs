@@ -28,6 +28,7 @@ use crate::error::{Result, StoreError};
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::pages::{PageRecord, all_pages, read_page_by_id};
 use crate::sources::{read_source, source_key};
+use crate::timeline::TimelineRecord;
 use crate::{Store, get_json, keys, put_json};
 use serde_json::{Map, Value, json};
 
@@ -405,6 +406,37 @@ fn run_read(read: &dyn KvRead, env: &dyn Env, name: &str, p: &[Value]) -> Result
                     && !super::sql_like(&kind_of(r).unwrap_or_default(), "managed_sync_%")
             });
             rows(found.map(|r| json!({ "id": r.id })).into_iter().collect())
+        }
+        "stored_timeline_page" => {
+            // One keyset page of a page's own timeline rows (no event projection), by id (`date_text` is `date::text`, the date as it is stored).
+            let (page_id, after, limit) = (big(param(p, 0)?)?, big(param(p, 1)?)?, big(param(p, 2)?)?);
+            let Ok(page_id) = u64::try_from(page_id) else { return Ok(rows(vec![])) };
+            let mut out: Vec<TimelineRecord> = Vec::new();
+            let mut failure = None;
+            scan_prefix(read, &keys::timeline_prefix(page_id), false, &mut |_, v| {
+                match serde_json::from_slice::<TimelineRecord>(v) {
+                    Ok(r) if r.event_page_id.is_none() && (r.id as i64) > after => out.push(r),
+                    Ok(_) => {}
+                    Err(e) => failure = Some(StoreError::from(e)),
+                }
+                failure.is_none()
+            })?;
+            if let Some(e) = failure {
+                return Err(e);
+            }
+            out.sort_by_key(|r| r.id);
+            rows(out
+                .into_iter()
+                .take(limit.max(0) as usize)
+                .map(|r| json!({ "id": r.id, "date": r.date, "date_text": r.date, "source": r.source, "summary": r.summary, "detail": r.detail }))
+                .collect())
+        }
+        "slug_prefix_probe" => {
+            let (source, pattern) = (text(p, 0)?, text(p, 1)?);
+            let found = all_pages(read)?
+                .into_iter()
+                .any(|pg| pg.source_id == source && pg.deleted_at_us.is_none() && crate::keyword::sql_like(&pg.slug, &pattern));
+            rows(if found { vec![json!({ "one": 1 })] } else { vec![] })
         }
         "pages_for_adoption" => {
             let (source, slugs) = (text(p, 0)?, texts(p, 1)?);

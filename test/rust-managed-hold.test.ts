@@ -40,6 +40,8 @@ import { sweepNeedsHumanHolds, recordSoakEvent } from '../src/core/persistence/s
 import { claimedPredecessor } from '../src/core/persistence/sync-window.ts';
 import { engineStallProbe } from '../src/core/persistence/sync-drain.ts';
 import { retireOrphanSliceRecords } from '../src/core/persistence/sync-cursor-key.ts';
+import { resolveSlugRootMode } from '../src/core/sync-anchor.ts';
+import { eachStoredTimelineRow } from '../src/core/timeline-extract.ts';
 
 const refusal = (run: () => Promise<unknown>) => run().then(() => null, (e: { code?: string; detail?: unknown }) => ({
   code: e?.code ?? String(e), member: /member=(\w+)/.exec(String(e?.detail ?? ''))?.[1] ?? null, capability: /capability=(\w+)/.exec(String(e?.detail ?? ''))?.[1] ?? null }));
@@ -183,16 +185,36 @@ describe.skipIf(!rustArmRequested())('a Rust brain without managed_persistence k
       expect(engine.capabilities.has('managed_persistence')).toBe(false);
       const names = ['cursor_manifest_insert', 'cursor_insert', 'cursor_swap', 'checkpoint_touch', 'finished_cursor_delete', 'manifest_delete_unshared', 'prefix_delete'] as const;
       const reads = ['cursor_head_locked', 'pending_intent_held', 'unfinished_page_request', 'stale_page_requests', 'waiver_settings', 'waiver_pages', 'kernel_pages_by_slug',
-        'kernel_page_by_id', 'cursor_open_requests', 'request_for_update', 'group_predecessor', 'request_state_by_principal', 'stall_probe', 'refused_checkpoint'] as const;
+        'kernel_page_by_id', 'cursor_open_requests', 'request_for_update', 'group_predecessor', 'request_state_by_principal', 'stall_probe', 'refused_checkpoint', 'slug_prefix_probe', 'stored_timeline_page'] as const;
       const out: Record<string, unknown> = {};
       for (const name of [...names, ...reads]) out[name] = await refusal(() => engine.runSyncStatement(name, ['x', 'y', 'z', 'w']));
       // The callers reach the same refusal through syncRows: a window read, a lane turn read, the stall probe and a cursor retirement.
       out.window = await refusal(() => claimedPredecessor(engine, { principal_kind: 'local_cli', principal_id: 'p', sequence: 5, request_id: 'r', intent: { after: '00000000-0000-4000-8000-000000000001' } } as never));
       out.stall = await refusal(() => engineStallProbe(engine).fingerprint({ managedWrite: { write_request: { request_id: '00000000-0000-4000-8000-000000000001' } } } as never));
       out.retire = await refusal(() => retireOrphanSliceRecords(engine, 'work', '00000000-0000-4000-8000-000000000001'));
+      // The slug-root probe of a scoped sync (no pin stored, no explicit git root): the page probe it sent through executeRaw.
+      out.slugRoot = await refusal(() => resolveSlugRootMode(engine, { sourceId: 'work', explicitGitRoot: false, slugPrefix: 'notes', dryRun: true }));
+      // The managed extract's walk of a page's stored timeline rows: the keyset read it sent through executeRaw.
+      out.timelineRows = await refusal(() => eachStoredTimelineRow(engine as never, 1, () => undefined));
       expect(Object.values(out).every(value => JSON.stringify(value) === JSON.stringify(RAW))).toBe(true);
-      expect(Object.keys(out).length).toBe(names.length + reads.length + 3);
+      expect(Object.keys(out).length).toBe(names.length + reads.length + 5);
       expect(await engine.getPage('notes/alice-example', { sourceId: 'work' })).toBeNull();
+    }), 120_000);
+
+  test('a page with a source_path in a source-root source below its repository root is refused as before, and nothing is written', () =>
+    withEnv({ GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
+      expect(engine.capabilities.has('managed_persistence')).toBe(false);
+      const repo = join(home, 'scoped-repo');
+      mkdirSync(join(repo, 'sub'), { recursive: true });
+      execFileSync('git', ['-C', repo, 'init', '-q', '-b', 'main']);
+      await createRustSource(engine, 'scoped', { slug_root_mode: 'source-root' }, join(repo, 'sub'));
+      const page = { type: 'note' as const, title: 'Below root', compiled_truth: 'x', timeline: '', source_path: 'one.md' };
+      const refused = await refusal(() => engine.putPage('notes/below-root', page, { sourceId: 'scoped' }));
+      expect(refused).toEqual({ code: 'engine_capability_missing', member: 'putPage', capability: 'pages' });
+      expect(await engine.getPage('notes/below-root', { sourceId: 'scoped' })).toBeNull();
+      // A page with no source_path is written as before.
+      await engine.putPage('notes/no-path', { type: 'note', title: 'No path', compiled_truth: 'x', timeline: '' }, { sourceId: 'scoped' });
+      expect((await engine.getPage('notes/no-path', { sourceId: 'scoped' }))?.slug).toBe('notes/no-path');
     }), 120_000);
 });
 
