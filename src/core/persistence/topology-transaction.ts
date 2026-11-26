@@ -24,7 +24,7 @@ export async function topologyTransaction<T>(engine: BrainEngine, run: (tx: Brai
   if (!release) throw new PoolCapacityError();
   try {
     return await engine.transaction(async tx => {
-      await tx.executeRaw("SELECT set_config('synchronous_commit','on',true),set_config('lock_timeout','1s',true),set_config('statement_timeout','5s',true)");
+      await (await tx.topologyStore()).bound();
       return scoped(engine, tx, run);
     });
   } catch (error) {

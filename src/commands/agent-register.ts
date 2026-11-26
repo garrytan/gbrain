@@ -30,6 +30,7 @@ import { HARNESS_ADAPTERS } from '../core/harness/registry.ts';
  */
 import type { BrainEngine } from '../core/engine.ts';
 import { loadConfig, isThinClient } from '../core/config.ts';
+import { lacksRawSql } from '../core/engine-capabilities.ts';
 import { sqlQueryForEngine, type SqlQuery } from '../core/sql-query.ts';
 import { assertAllowedScopes } from '../core/scope.ts';
 import { assertValidSourceId, ALL_SOURCES, SOURCE_ID_RE } from '../core/source-id.ts';
@@ -452,11 +453,8 @@ export async function runAgentRegister(engine: BrainEngine | null, args: string[
     const validateSourceIds = async (ids: string[]): Promise<void> => {
       const unique = [...new Set(ids)];
       if (unique.length === 0) return;
-      const rows = await engine.executeRaw<{ id: string; archived: boolean | null }>(
-        `SELECT id, archived FROM sources WHERE id = ANY($1::text[])`,
-        [unique],
-      );
-      const found = new Map(rows.map(r => [r.id, r]));
+      // One typed single-row read per id (id, local_path, config, archived), so a brain older than v109 (no newest_content_at) reads fine.
+      const found = new Map(await Promise.all(unique.map(async id => [id, await engine.readSourceRow(id)] as const)));
       for (const id of unique) {
         const row = found.get(id);
         if (!row) {
@@ -545,11 +543,14 @@ export async function runAgentRegister(engine: BrainEngine | null, args: string[
       // Name-scoped advisory lock: no unique index exists on client_name, so
       // two concurrent registers of the same name would both pass the
       // pre-check. xact-scoped — released at COMMIT/ROLLBACK.
-      await tx.executeRaw(`SELECT pg_advisory_xact_lock(hashtext($1)::bigint)`, [registerClientNameLockKey(name)]);
+      // Single-writer assumption: the lock is skipped on the Rust engine, so the duplicate-name check below relies on
+      // the store running one write transaction at a time (rust/crates/gbrain-store/src/transactions.rs:571,
+      // begin_write_exclusive). The concurrency pin "agent register: two registers of the same name started together
+      // store one client, and the other is refused as a duplicate" (test/engine-parity/oauth-clients.test.ts) must fail
+      // if writes ever run at the same time. Multi-user write work must revisit this site.
+      if (!lacksRawSql(engine)) await tx.executeRaw(`SELECT pg_advisory_xact_lock(hashtext($1)::bigint)`, [registerClientNameLockKey(name)]);
 
-      const dupRows = columns.has('deleted_at')
-        ? await txSql`SELECT client_id FROM oauth_clients WHERE client_name = ${name} AND deleted_at IS NULL`
-        : await txSql`SELECT client_id FROM oauth_clients WHERE client_name = ${name}`;
+      const dupRows = (await tx.listOauthClients()).filter(c => c.client_name === name && c.deleted_at == null);
       if (dupRows.length > 0) {
         throw new RegisterError('duplicate_name',
           `an OAuth client named "${name}" already exists (${String(dupRows[0].client_id)}). Revoke it first (gbrain auth revoke-client "${String(dupRows[0].client_id)}") or rotate its secret with --reissue.`);
@@ -626,13 +627,14 @@ export async function ensureWorkspaceSource(
   txSql: SqlQuery,
   id: string,
 ): Promise<boolean> {
-  const existing = await txSql`SELECT id, local_path, archived FROM sources WHERE id = ${id}`;
-  if (existing.length > 0) {
-    if (existing[0].archived === true) {
+  // `readSourceRow` reads only id, local_path, config and archived, so it never fails inside the tx on a brain older than v109.
+  const existing = await tx.readSourceRow(id);
+  if (existing !== null) {
+    if (existing.archived === true) {
       throw new RegisterError('archived_source',
         `workspace source "${id}" exists but is archived — unarchive it (gbrain sources restore ${id}) or pick another name.`);
     }
-    const localPath = existing[0].local_path;
+    const localPath = existing.local_path;
     const pages = await txSql`SELECT count(*) AS n FROM pages WHERE source_id = ${id}`;
     const nPages = Number(pages[0]?.n ?? 0);
     const facts = await txSql`SELECT count(*) AS n FROM facts WHERE source_id = ${id}`;
@@ -679,7 +681,8 @@ async function mintAndProbe(
   // The tx-scoped sql is dead after COMMIT — the exchange runs on the OUTER engine.
   const provider = new GBrainOAuthProvider({
     sql: sqlQueryForEngine(engine),
-    transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))),
+    engine,
+    transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx), tx)),
   });
 
   let accessToken: string | undefined;

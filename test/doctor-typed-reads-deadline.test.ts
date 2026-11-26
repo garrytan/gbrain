@@ -56,6 +56,8 @@ const CASES: Case[] = [
   { member: 'readMaxTimelineEntryId', table: 'timeline_entries', call: (e) => e.readMaxTimelineEntryId() },
   { member: 'storedTimelineRowsByPageIds', table: 'timeline_entries', call: (e) => e.storedTimelineRowsByPageIds([1]) },
   { member: 'countSegmentedTimelinePages', table: 'timeline_entries', call: (e) => e.countSegmentedTimelinePages(['default'], 10) },
+  // The segmented-storage check's writer evidence (engine-sql/writer-versions.ts), read through segmentedWriterBlockers.
+  { member: 'readSegmentedGateEvidence', table: 'persistence_consumers', call: (e) => e.readSegmentedGateEvidence(7) },
 ];
 
 test('the bounded typed reads are exactly the members a doctor check reaches', () => {
