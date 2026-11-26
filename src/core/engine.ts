@@ -498,7 +498,6 @@ import type { ImportedPageSeal, PageIndexingState, PageOriginRow, PageOriginTarg
 import type { PageEmbeddingBudgetRow, PageEmbeddingReservation, PageEmbeddingReserveInput } from './engine-sql/page-embedding-budget.ts';
 import type { EmbeddingCompletionOpts, EmbeddingCompletionRow } from './engine-sql/embedding-install.ts';
 import type { WriteVisibilityProbe } from './engine-sql/page-visibility.ts';
-import type { SourceCheckRow } from './engine-sql/sources.ts';
 import type { NotifierStatusRow } from './engine-sql/notifier.ts';
 import type { WorktreeClaimStore } from './engine-sql/worktree-claim.ts';
 import type { WriterAdminStateOptions, WriterAdminStore } from './engine-sql/writer-admin.ts';
