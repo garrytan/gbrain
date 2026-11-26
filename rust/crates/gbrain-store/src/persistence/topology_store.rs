@@ -671,12 +671,16 @@ fn topology_rows_in(
 /// `OPEN_WRITES_SQL`: per worktree holding a queued, deferred, running or recovering request, how many, the oldest
 /// creation time and the sources bound to it (byte order of the id, `null` when none is bound).
 fn open_writes_in(read: &dyn KvRead) -> Result<Value> {
-    let mut open: std::collections::BTreeMap<String, (i64, i64)> = std::collections::BTreeMap::new();
+    let mut open: std::collections::BTreeMap<String, (i64, i64)> =
+        std::collections::BTreeMap::new();
     for r in all_requests(read)? {
         let Some(w) = worktree_of(&r) else {
             continue;
         };
-        if !matches!(r.state.as_str(), "queued" | "deferred" | "running" | "recovering") {
+        if !matches!(
+            r.state.as_str(),
+            "queued" | "deferred" | "running" | "recovering"
+        ) {
             continue;
         }
         let entry = open.entry(w).or_insert((0, r.created_at_us));

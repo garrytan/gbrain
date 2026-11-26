@@ -10,11 +10,11 @@
 //! FIFO claim does (`stamp_write_claim`).
 
 use super::write_claim_terms::{WorktreeClaims, worktree_of};
-use super::{extra_i64, held_claim_of};
 use super::{
     ClaimStamp, ClaimableSpec, all_requests, extra_is_null, extra_time, foreground_priority,
     json_text, jsonb_param, lease_end, request_by_id, uuid_param,
 };
+use super::{extra_i64, held_claim_of};
 use crate::env::{Env, iso};
 use crate::error::Result;
 use crate::journal::{max_sequence, write_request};
@@ -142,10 +142,18 @@ fn select_lane_head_in(
 }
 
 /// `CHARGE_TRANSIENT_SQL`: only a request running under the token; the count after the charge, or `None`.
-fn charge_transient_in(tx: &mut dyn KvWrite, env: &dyn Env, charge: &TransientCharge) -> Result<Option<i64>> {
+fn charge_transient_in(
+    tx: &mut dyn KvWrite,
+    env: &dyn Env,
+    charge: &TransientCharge,
+) -> Result<Option<i64>> {
     let id = uuid_param(&charge.id, "id")?;
     // A null token matches no row (`execution_token=NULL` is never true); a token that is not a uuid refuses as the cast does.
-    let token = charge.token.as_deref().map(|t| uuid_param(t, "token")).transpose()?;
+    let token = charge
+        .token
+        .as_deref()
+        .map(|t| uuid_param(t, "token"))
+        .transpose()?;
     let Some(mut record) = request_by_id(&*tx, &id)? else {
         return Ok(None);
     };
@@ -156,8 +164,13 @@ fn charge_transient_in(tx: &mut dyn KvWrite, env: &dyn Env, charge: &TransientCh
     let before = extra_i64(&record, "transient_interruptions");
     let delay_ms = (charge.base_ms * 2f64.powi(before.clamp(0, 30) as i32)).min(charge.max_ms);
     let now = env.now_micros();
-    record.extra.insert("transient_interruptions".into(), json!(before + 1));
-    record.extra.insert("next_attempt_at".into(), json!(iso(now + (delay_ms * 1000.0).round() as i64)));
+    record
+        .extra
+        .insert("transient_interruptions".into(), json!(before + 1));
+    record.extra.insert(
+        "next_attempt_at".into(),
+        json!(iso(now + (delay_ms * 1000.0).round() as i64)),
+    );
     record.updated_at_us = now;
     write_request(tx, &record)?;
     Ok(Some(before + 1))
@@ -167,11 +180,17 @@ impl Store {
     /// `chargeTransientInterruption(charge)`: `{ transient_interruptions }`, or `None` when the claim is gone.
     pub fn charge_transient_interruption(&self, charge: &TransientCharge) -> Result<Option<Value>> {
         self.write(|tx| {
-            fence::begin(self, tx, charge.fence.as_ref(), "charge_transient_interruption")?;
+            fence::begin(
+                self,
+                tx,
+                charge.fence.as_ref(),
+                "charge_transient_interruption",
+            )?;
             if charge.fence.is_some() {
                 held_claim_of(tx, &charge.id, charge.fence.as_ref())?;
             }
-            Ok(charge_transient_in(tx, &*self.env, charge)?.map(|n| json!({ "transient_interruptions": n })))
+            Ok(charge_transient_in(tx, &*self.env, charge)?
+                .map(|n| json!({ "transient_interruptions": n })))
         })
     }
 

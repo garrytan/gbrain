@@ -476,7 +476,10 @@ impl Brain {
         charge: Value,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
-            s.charge_transient_interruption(&required(charge, "chargeTransientInterruption charge")?)
+            s.charge_transient_interruption(&required(
+                charge,
+                "chargeTransientInterruption charge",
+            )?)
         })
     }
 
