@@ -2977,7 +2977,11 @@ export class PostgresEngine implements BrainEngine {
     const scope: string[] | null = opts?.sourceIds ?? (opts?.sourceId ? [opts.sourceId] : null);
     // S2: embedded_count keys on the registry-ACTIVE column (fallback to
     // legacy on a broken registry — diagnostics never crash).
+    // A cancelled request sends none of these statements (executeRaw refused it, and the import's schema warning used to read a count through it):
+    // checked before the registry lookup and again after it, since the abort can arrive while that lookup is awaited.
+    throwIfRequestAborted();
     const colId = await this.activeEmbeddingColId({ fallbackToLegacy: true });
+    throwIfRequestAborted();
     const [stats] = await sql`
       SELECT
         -- v0.26.5: exclude soft-deleted from page_count. Same posture as the
@@ -3006,6 +3010,7 @@ export class PostgresEngine implements BrainEngine {
           WHERE (${scope}::text[] IS NULL OR p.source_id = ANY(${scope}))) as timeline_entry_count
     `;
 
+    throwIfRequestAborted();
     const types = await sql`
       SELECT type, count(*)::int as count FROM pages p WHERE p.deleted_at IS NULL
         AND (${scope}::text[] IS NULL OR p.source_id = ANY(${scope}))
