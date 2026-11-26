@@ -35,6 +35,26 @@ pub trait KvWrite: KvRead + Send {
     /// may or may not have reached the disk; after a reopen it is all or nothing.
     fn commit(self: Box<Self>) -> Result<u64>;
 
+    /// [`KvWrite::commit`] with the commit's own position (`commit_log.rs`): the sequence and the
+    /// transaction's place in its group commit (0 on a single-writer store). A write that commits
+    /// nothing reports the position it saw (`CommitPosition::end_of`). `commit` is this call's
+    /// sequence on every store.
+    fn commit_position(self: Box<Self>) -> Result<crate::commit_log::CommitPosition> {
+        self.commit()
+            .map(|sequence| crate::commit_log::CommitPosition::new(sequence, 0))
+    }
+
+    /// What the commit says about itself (origin, write ids) when the store keeps a commit log.
+    /// A store without a log ignores it.
+    fn set_commit_meta(&mut self, meta: crate::commit_log::CommitMeta) {
+        let _ = meta;
+    }
+    /// Sets the commit time this write records with its data (`commit_log::CommitClock`): the
+    /// optimistic pipeline sets its batch's newest. A write that keeps no commit time ignores it.
+    fn set_commit_time(&mut self, time: i64) {
+        let _ = time;
+    }
+
     /// Takes `count` ids from the sequence kept under `key` (8-byte big-endian, the next id to
     /// hand out, 1 when absent) and returns the first. Like Postgres `nextval`: two transactions
     /// never get the same id, and ids taken by a transaction that does not commit may be lost.
@@ -179,6 +199,42 @@ pub trait Kv: Send + Sync {
     }
     /// The commit sequence of the latest commit (0 on a database nothing was committed to).
     fn version(&self) -> Result<u64>;
+    /// Starts writing a commit record for every later commit (`commit_log.rs`). The log's meta
+    /// record must already be stored (`commit_log::write_activation`). Called only while nothing
+    /// else writes (a brain's open). A store that keeps no log refuses.
+    fn enable_commit_log(&self, settings: crate::commit_log::LogSettings) -> Result<()> {
+        let _ = settings;
+        Err(crate::error::StoreError::new(
+            crate::error::INVALID_STATE,
+            "this record store cannot keep a commit log",
+        ))
+    }
+    /// Starts giving every accepted transaction a commit time from `clock` (`commit_log::CommitClock`),
+    /// kept durable with the data, and reports each to `hook` when one is given. A later call keeps the
+    /// times and replaces the hook. Called only while nothing else writes (a brain's open, or before
+    /// its first write). A store whose writer has no accept step refuses.
+    fn set_commit_clock(
+        &self,
+        clock: std::sync::Arc<dyn crate::env::Env>,
+        hook: Option<crate::commit_log::AcceptHook>,
+    ) -> Result<()> {
+        let _ = (clock, hook);
+        Err(crate::error::StoreError::new(
+            crate::error::INVALID_STATE,
+            "this record store has no accept step to keep commit times at",
+        ))
+    }
+    /// Stops the commit clock (`set_commit_clock`), if one runs: an open with multi-user mode off on
+    /// a reused adapter writes no commit time.
+    fn clear_commit_clock(&self) {}
+    /// The newest durable commit time (`None` before the first, or when no commit clock ever ran).
+    fn last_commit_time(&self) -> Result<Option<i64>> {
+        crate::redb_kv::read_commit_time(&*self.snapshot()?)
+    }
+    /// True once [`Kv::enable_commit_log`] succeeded.
+    fn commit_log_enabled(&self) -> bool {
+        false
+    }
     /// What a store with concurrent writers did since open; `None` for a single-writer store.
     fn occ_stats(&self) -> Option<crate::occ_kv::OccStatsSnapshot> {
         None

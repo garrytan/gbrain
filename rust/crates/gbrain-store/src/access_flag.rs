@@ -388,15 +388,16 @@ mod tests {
         //   `fjall_kv.rs`, and
         //   `occ_kv.rs` (its trait methods, the deadline-bounded locked begin, the commit onto
         //   the base store, and two in its `sim` feature test module);
-        // - `lib.rs`: the brain-create write, the three arms of `Store::write`'s unbound loop, and
+        // - `lib.rs`: the brain-create write, the three arms of `Store::write`'s unbound loop, the
+        //   commit log's activation (the format record and the log's meta record only), and
         //   the format upgrade (no page records; the format-5 carry-over in `seed/format_5.rs` writes
         //   purge tombstones, generations and oauth clients on it);
         // - `transactions.rs`: a transaction's base handle, exclusive (serialized) or optimistic (plain,
         //   or queued for the keys an earlier run lost on); its statements run through the bound arm
-        //   of `Store::write`. A
-        //   serialized rollback writes its counters forward on that same handle; an optimistic one
-        //   that did not commit raises them in one write of `raise_counter` operations only
-        //   (`raise_forward`), which writes no page record;
+        //   of `Store::write`. A serialized rollback writes its counters forward on that same handle,
+        //   except with the commit log on, where it drops that handle and raises its id sequences on a
+        //   second one; an optimistic one that did not commit raises them in one write of
+        //   `raise_counter` operations only (`raise_forward`). Neither writes a page record;
         // - `transactions/optimistic_tests.rs` and `transactions/review_tests.rs`, whole files under
         //   `#[cfg(test)]` that hold retry keys directly on the store's `Kv`;
         // - this module's open-time scan, the keyword index
@@ -422,7 +423,7 @@ mod tests {
             ("keyword/index_writer/tests.rs", 2),
             ("kv.rs", 7),
             ("leases_tests.rs", 3),
-            ("lib.rs", 5),
+            ("lib.rs", 6),
             ("occ_kv.rs", 8),
             ("page_body/purge_record.rs", 1),
             ("redb_kv.rs", 7),

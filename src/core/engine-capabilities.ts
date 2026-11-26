@@ -81,7 +81,15 @@ export const ENGINE_CAPABILITIES = [
  */
 export const MULTIUSER_CAPABILITIES = ['multi_writer'] as const;
 
-export type Capability = (typeof ENGINE_CAPABILITIES)[number] | (typeof MULTIUSER_CAPABILITIES)[number];
+
+/**
+ * Capabilities an engine reports about how it runs, never a reason a call is refused, so they are not
+ * `engine_capability_missing` reasons and no SQL engine reports them (I-8 in docs/designs/rust-engine/multi-user-server.md).
+ * `commit_log`: the Rust store keeps a commit log (multi-user mode, rust/docs/store/commit-log.md).
+ */
+export const MODE_CAPABILITIES = ['commit_log'] as const;
+
+export type Capability = (typeof ENGINE_CAPABILITIES)[number] | (typeof MULTIUSER_CAPABILITIES)[number] | (typeof MODE_CAPABILITIES)[number];
 
 /** The read-only capability set an engine reports. */
 export type EngineCapabilities = ReadonlySet<Capability>;

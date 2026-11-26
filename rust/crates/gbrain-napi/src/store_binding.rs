@@ -88,6 +88,13 @@ pub struct BrainOpenOptions {
     /// Multi-user mode (I-0), resolved by the caller for this brain (`GBRAIN_RUST_MULTIUSER=1` or the brain's config
     /// `engine.rust.multiuser: true`). It implies concurrent writes. Absent or false: the open is unchanged.
     pub multiuser: Option<bool>,
+    /// Multi-user sub-switch `GBRAIN_RUST_COMMIT_LOG=1`: keep a commit log (`commit_log.rs`). Counts only when the
+    /// brain runs in multi-user mode (the store resolves it, I-0.v2).
+    pub commit_log: Option<bool>,
+    /// Multi-user sub-switch `GBRAIN_RUST_WRITE_ORIGIN=1`: stamp journal rows with their write origin.
+    pub write_origin: Option<bool>,
+    /// This machine's host id (`host.json`), the write origin's `host_id`.
+    pub host_id: Option<String>,
 }
 
 #[napi]
@@ -259,6 +266,12 @@ impl Brain {
                 }
                 opts.write_gate_detector_version = options.write_gate_detector_version;
                 opts.multiuser = options.multiuser.unwrap_or(false);
+                opts.multiuser_writes = gbrain_store::MultiUserWrites {
+                    commit_log: options.commit_log.unwrap_or(false),
+                    write_origin: options.write_origin.unwrap_or(false),
+                    host_id: options.host_id,
+                    log_retention_bytes: None,
+                };
             }
             // Holding the slot while opening makes a second `open` on this handle wait, then see
             // the brain open.

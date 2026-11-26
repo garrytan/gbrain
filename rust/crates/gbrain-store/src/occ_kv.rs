@@ -40,6 +40,9 @@
 //! A failed record-file commit stops the pipeline: every later commit fails with `store_io` until
 //! the brain is opened again (the Postgres answer to a failed WAL flush is the same: stop).
 
+use crate::commit_log::{
+    AcceptHook, CommitClock, CommitMeta, CommitPosition, LogOpRef, LogSettings, LogState,
+};
 use crate::error::{Result, STORE_CLOSED, STORE_CORRUPT, StoreError, WRITE_CONFLICT};
 use crate::kv::{CounterCheck, Kv, KvRead, KvWrite};
 use crate::redb_kv::{RedbKv, reject_reserved};
@@ -374,7 +377,9 @@ struct Request {
     /// after its snapshot refuses it.
     observes_sequence: bool,
     writes: BTreeMap<Vec<u8>, Op>,
-    reply: SyncSender<Result<u64>>,
+    /// What the commit says about itself, for its commit record (when the log is on).
+    meta: CommitMeta,
+    reply: SyncSender<Result<CommitPosition>>,
 }
 
 struct Shared {
@@ -391,6 +396,12 @@ struct Shared {
     /// Messages sent to the pipeline and not yet taken by a step (`OccKv::queued_commits`).
     #[cfg(feature = "sim")]
     queued: AtomicUsize,
+    /// The commit log, once enabled: only the pipeline writes it (one record per accepted
+    /// transaction, in the batch's own record-file commit).
+    log: Mutex<Option<LogState>>,
+    log_on: AtomicBool,
+    /// The commit clock, once installed: the pipeline times each transaction it accepts.
+    clock: Mutex<Option<Arc<CommitClock>>>,
 }
 
 impl Shared {
@@ -496,13 +507,25 @@ impl Pipeline {
         // Resolved writes of the accepted transactions, last write per key.
         let mut resolved: BTreeMap<Vec<u8>, Option<Vec<u8>>> = BTreeMap::new();
         let mut latest: Option<Box<dyn KvRead + Send>> = None;
-        let mut accepted: Vec<SyncSender<Result<u64>>> = Vec::new();
+        let mut accepted: Vec<Request> = Vec::new();
         let mut touched: Vec<Vec<u8>> = Vec::new();
+        let clock = self
+            .shared
+            .clock
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone();
+        // Each accepted transaction's commit time, in accept order: each is above the one before.
+        let mut times: Vec<i64> = Vec::new();
         for req in batch {
             match self.accept(&req, next, &mut resolved, &mut latest) {
                 Ok(keys) => {
                     touched.extend(keys);
-                    accepted.push(req.reply);
+                    if let Some(clock) = &clock {
+                        let position = CommitPosition::new(next, accepted.len() as u32);
+                        times.push(clock.accept(position, times.last().copied()));
+                    }
+                    accepted.push(req);
                 }
                 Err(e) => {
                     if let Some(key) = conflict_key(&e) {
@@ -516,6 +539,9 @@ impl Pipeline {
         if accepted.is_empty() {
             return;
         }
+        let batch_time = times.last().copied();
+        let mut log = self.shared.log.lock().unwrap_or_else(|p| p.into_inner());
+        let mut append = None;
         let outcome = (|| -> Result<u64> {
             let mut tx = self.shared.base.begin_write()?;
             for (key, value) in &resolved {
@@ -524,10 +550,46 @@ impl Pipeline {
                     None => tx.delete(key)?,
                 }
             }
+            // With the log on: one record per accepted transaction, from its own buffered writes,
+            // at (sequence, place in the batch), in this same record-file commit.
+            if let Some(state) = log.as_ref() {
+                if times.len() != accepted.len() {
+                    // The log never records a made-up time: a logged commit needs the clock.
+                    return Err(StoreError::new(
+                        STORE_CORRUPT,
+                        "the commit log is on but the commit has no commit time",
+                    ));
+                }
+                let records: Vec<(CommitPosition, Vec<u8>)> = accepted
+                    .iter()
+                    .enumerate()
+                    .map(|(i, req)| {
+                        let origin = state.origin_for(&req.meta);
+                        let value = crate::commit_log::encode_record(
+                            &origin,
+                            times[i],
+                            &req.meta.write_ids,
+                            req.writes.iter().map(|(k, op)| (k.as_slice(), log_op(op))),
+                        );
+                        (CommitPosition::new(next, i as u32), value)
+                    })
+                    .collect();
+                append = Some(state.write(&mut *tx, &records)?);
+            }
+            if let Some(time) = batch_time {
+                tx.set_commit_time(time);
+            }
             tx.commit()
         })();
         match outcome {
             Ok(seq) if seq == next => {
+                if let (Some(clock), Some(time)) = (&clock, batch_time) {
+                    clock.committed(time);
+                }
+                if let (Some(state), Some(append)) = (log.as_mut(), append) {
+                    state.applied(append);
+                }
+                drop(log);
                 // A sequence raised by a direct write (a transaction rolling its counters
                 // forward) is never handed out again from memory.
                 {
@@ -551,21 +613,22 @@ impl Pipeline {
                 stats.commits.fetch_add(n, Ordering::Relaxed);
                 stats.batches.fetch_add(1, Ordering::Relaxed);
                 stats.max_batch.fetch_max(n, Ordering::Relaxed);
-                for reply in accepted {
-                    let _ = reply.send(Ok(next));
+                for (i, req) in accepted.into_iter().enumerate() {
+                    let _ = req.reply.send(Ok(CommitPosition::new(next, i as u32)));
                 }
                 let oldest = self.shared.oldest_open();
                 self.index.prune(oldest, self.version);
             }
             other => {
+                drop(log);
                 // The batch may or may not be on disk. Stop: nothing later may build on it.
                 self.shared.poisoned.store(true, Ordering::Release);
                 let message = match other {
                     Ok(seq) => format!("the record file reported sequence {seq}, expected {next}"),
                     Err(e) => e.message,
                 };
-                for reply in accepted {
-                    let _ = reply.send(Err(StoreError::io(format!(
+                for req in accepted {
+                    let _ = req.reply.send(Err(StoreError::io(format!(
                         "record store commit failed: {message}"
                     ))));
                 }
@@ -632,6 +695,16 @@ impl Pipeline {
             *latest = Some(self.shared.base.versioned_snapshot()?.0);
         }
         latest.as_ref().map_or(Ok(None), |s| s.get(key))
+    }
+}
+
+/// The commit-log form of one buffered write.
+fn log_op(op: &Op) -> LogOpRef<'_> {
+    match op {
+        Op::Put(v) => LogOpRef::Put(v),
+        Op::Delete => LogOpRef::Delete,
+        Op::Add(d) => LogOpRef::AddI64(*d),
+        Op::Max(m) => LogOpRef::RaiseCounter(*m),
     }
 }
 
@@ -713,6 +786,9 @@ impl OccKv {
             stats: Arc::new(OccStats::default()),
             #[cfg(feature = "sim")]
             queued: AtomicUsize::new(0),
+            log: Mutex::new(None),
+            log_on: AtomicBool::new(false),
+            clock: Mutex::new(None),
         });
         let pipeline = Pipeline {
             shared: shared.clone(),
@@ -880,6 +956,7 @@ impl OccKv {
             writes: BTreeMap::new(),
             guards: Vec::new(),
             observes_sequence: std::cell::Cell::new(false),
+            meta: CommitMeta::default(),
             locks,
             exclusive,
         }))
@@ -936,6 +1013,49 @@ impl Kv for OccKv {
     fn occ_stats(&self) -> Option<OccStatsSnapshot> {
         Some(self.shared.stats.snapshot())
     }
+
+    fn enable_commit_log(&self, settings: LogSettings) -> Result<()> {
+        if self
+            .shared
+            .clock
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .is_none()
+        {
+            return Err(StoreError::new(
+                crate::error::INVALID_STATE,
+                "the commit log needs the commit clock (`Kv::set_commit_clock`) first",
+            ));
+        }
+        let state = LogState::load(&*self.shared.base.snapshot()?, settings)?;
+        *self.shared.log.lock().unwrap_or_else(|p| p.into_inner()) = Some(state);
+        self.shared.log_on.store(true, Ordering::Release);
+        Ok(())
+    }
+
+    fn commit_log_enabled(&self) -> bool {
+        self.shared.log_on.load(Ordering::Acquire)
+    }
+
+    fn clear_commit_clock(&self) {
+        *self.shared.clock.lock().unwrap_or_else(|p| p.into_inner()) = None;
+    }
+
+    fn set_commit_clock(
+        &self,
+        clock: Arc<dyn crate::env::Env>,
+        hook: Option<AcceptHook>,
+    ) -> Result<()> {
+        let mut slot = self.shared.clock.lock().unwrap_or_else(|p| p.into_inner());
+        if slot.is_none() {
+            let last = crate::commit_log::floor_time(&*self.shared.base.snapshot()?)?;
+            *slot = Some(Arc::new(CommitClock::new(clock, last)));
+        }
+        if let Some(c) = slot.as_ref() {
+            c.set_hook(hook);
+        }
+        Ok(())
+    }
 }
 
 /// One optimistic write transaction.
@@ -949,6 +1069,7 @@ struct OccTxn {
     guards: Vec<(Vec<u8>, i64)>,
     /// Set by `observe_sequence` (see `Request::observes_sequence`).
     observes_sequence: std::cell::Cell<bool>,
+    meta: CommitMeta,
     locks: Option<LockGuard>,
     /// Set on an exclusive write: its commit goes here, and dropping it lets the pipeline go on.
     exclusive: Option<SyncSender<Request>>,
@@ -1274,10 +1395,19 @@ impl KvWrite for OccTxn {
         Ok(())
     }
 
+    fn set_commit_meta(&mut self, meta: CommitMeta) {
+        self.meta = meta;
+    }
+
     fn commit(self: Box<Self>) -> Result<u64> {
+        self.commit_position().map(|p| p.sequence)
+    }
+
+    fn commit_position(self: Box<Self>) -> Result<CommitPosition> {
         let mut this = self;
         if this.writes.is_empty() {
-            return Ok(this.version);
+            // Nothing to commit: the position this transaction saw, after its whole batch.
+            return Ok(CommitPosition::end_of(this.version));
         }
         let (reply, answer) = sync_channel(1);
         let request = Request {
@@ -1286,6 +1416,7 @@ impl KvWrite for OccTxn {
             guards: std::mem::take(&mut this.guards),
             writes: std::mem::take(&mut this.writes),
             observes_sequence: this.observes_sequence.get(),
+            meta: std::mem::take(&mut this.meta),
             reply,
         };
         if let Some(end) = this.exclusive.take() {

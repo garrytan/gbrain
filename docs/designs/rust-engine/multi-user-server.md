@@ -29,6 +29,20 @@ prior-art map, [multi-user-prior-art.md](../../research/rust-engine/multi-user-p
   and property tests can be written now and run today on PGLite, Postgres and the single-writer
   Rust arm, with their multi-writer cases pending.
 
+## Default on (ruled 2026-11-25)
+
+The maintainer, Slack, 2026-11-25 at 3:20 PM PST, "Do it" (decision D26 in [RUST_ENGINE.md](../RUST_ENGINE.md)):
+multi-user Rust lands on master about Dec 9 with its switch off (`GBRAIN_RUST_MULTIUSER`, default off), and Rust
+turns on by default when parity holds and no data is lost. Speed losses are measured and named but do not block.
+This replaces "default only after Rust beats Postgres on every speed axis".
+
+The bars that still gate the default:
+
+- Switch off is byte-identical: goldens, the Rust tally pins and the full parity suite on PGLite, Postgres and Rust.
+- The 22 multi-writer conformance cases pass (section "Tests to write now").
+- At least 10,000 seeded crash-replay runs, with the commit log on, lose no data.
+- CLI, JSON and MCP output is byte-identical embedded, served and with the switch on.
+
 ## What "multi-user" means here
 
 Three steps, each building on the last. They are the plan's phases M1 to M3; M4 (replication and high
@@ -404,8 +418,10 @@ impl Store {
   two hosts, so managed mode on Rust is single-host until that swap.
 
 - **I-5, cycle lock fence (2026-11-25).** On a multi-user store the cycle lock carries the host fence (the I-5 epoch
-  and token), so a host that lost its lease cannot run a cycle: its cycle writes are refused at commit like any other
-  stale holder's. With the multi-user switch off, the cycle lock is unchanged.
+  and token), so a host that lost its lease cannot run a cycle. Under optimistic transactions an old-epoch commit is
+  refused at commit; under the single writer the takeover waits for the open transaction, then the old token is
+  refused with `epoch_moved`. Multi-user mode uses optimistic transactions, so the commit-time refusal must hold
+  there. With the multi-user switch off, the cycle lock is unchanged.
 
 ### I-6. Scope (per-user access)
 

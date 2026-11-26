@@ -73,6 +73,7 @@ use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 
+use crate::commit_log::{CommitMeta, CommitPosition};
 use crate::env::Env;
 use crate::error::{
     INVALID_STATE, READ_ONLY_TRANSACTION, Result, SOURCE_CHANGED, SOURCE_NOT_FOUND, STORE_CLOSED,
@@ -433,6 +434,9 @@ struct Layer {
     /// Admission checks (`counter_below`) kept by this layer: `(key, bound)`, handed to the base when
     /// the layer merges into it (optimistic mode).
     guards: Vec<(Vec<u8>, i64)>,
+    /// What the layer's statements say about themselves for the commit record (multi-user mode):
+    /// kept and dropped with the layer's writes.
+    meta: CommitMeta,
 }
 
 impl Layer {
@@ -464,6 +468,8 @@ struct State {
     /// True once the transaction read or wrote anything (optimistic mode: a transaction that has not
     /// may take a fresh snapshot after a single-flight wait).
     touched: Cell<bool>,
+    /// The commit meta of the statements merged into the base (`Layer::meta`).
+    meta: CommitMeta,
 }
 
 /// An open transaction. Shared by the bound [`Store`] and every reader it hands out.
@@ -854,9 +860,11 @@ impl State {
             }
             parent.locks.extend(layer.locks);
             parent.guards.extend(layer.guards);
+            parent.meta.absorb(layer.meta);
             return Ok(());
         }
         self.root_locks.extend(layer.locks);
+        self.meta.absorb(layer.meta);
         self.base()?;
         for (key, op) in layer.writes {
             self.apply_base(&key, op)?;
@@ -885,6 +893,10 @@ impl State {
     /// to the highest value the transaction took, and that write commits: no other writer can take an
     /// id the transaction handed out. Optimistic: the base is dropped and the sequences are raised in a
     /// write of their own (`raise_forward`). Rolling back an ended transaction does nothing.
+    ///
+    /// With the commit log on, a serialized rollback also drops its base (it never commits) and
+    /// raises the sequences in a write of their own, as an optimistic one does: either way a
+    /// rollback's only log record holds counter operations, never data.
     fn roll_back(&mut self, kv: &Arc<dyn Kv>) -> Result<()> {
         let Some(mut base) = self.base.take() else {
             return Ok(());
@@ -892,9 +904,11 @@ impl State {
         self.savepoints.clear();
         self.statement = None;
         self.root_locks.clear();
+        // A rollback carries no write: its commit (counters only) names no request.
+        self.meta = CommitMeta::default();
         let undo = std::mem::take(&mut self.undo);
         let counters = self.take_counters();
-        if self.optimistic {
+        if self.optimistic || kv.commit_log_enabled() {
             drop(base);
             return raise_forward(kv, counters);
         }
@@ -1080,6 +1094,12 @@ impl KvWrite for StatementWriter<'_> {
             "a statement inside a transaction commits with the transaction",
         ))
     }
+    /// The statement's meta joins its layer, so it is kept or dropped with the statement.
+    fn set_commit_meta(&mut self, meta: CommitMeta) {
+        if let Some(layer) = lock(&self.0.state).statement.as_mut() {
+            layer.meta.absorb(meta);
+        }
+    }
 }
 
 /// The trait default of `raise_counter`, kept for serialized transactions (read, then put when lower).
@@ -1248,6 +1268,7 @@ impl Store {
                 undo: BTreeMap::new(),
                 optimistic,
                 touched: Cell::new(false),
+                meta: CommitMeta::default(),
             }),
             exclusive: Mutex::new(()),
             kv: self.kv.clone(),
@@ -1373,6 +1394,13 @@ impl Store {
     /// raises the transaction's id sequences (`raise_forward`) before its single-flight keys are
     /// given back.
     pub fn commit_transaction(&self) -> Result<u64> {
+        self.commit_transaction_at().map(|p| p.sequence)
+    }
+
+    /// [`Store::commit_transaction`] with the commit's own position (`commit_log.rs`). A
+    /// transaction that commits nothing (opened read-only) reports `CommitPosition::end_of` the
+    /// sequence it saw.
+    pub fn commit_transaction_at(&self) -> Result<CommitPosition> {
         let tx = self.transaction()?;
         let _exclusive = lock(&tx.exclusive);
         let mut state = lock(&tx.state);
@@ -1393,16 +1421,21 @@ impl Store {
             state.counters.clear();
             state.allocated.clear();
             state.undo.clear();
+            let meta = std::mem::take(&mut state.meta);
             if tx.opened_read_only {
                 drop(base);
-                return tx.kv.version();
+                return Ok(CommitPosition::end_of(tx.kv.version()?));
             }
-            return base.commit();
+            let mut base = base;
+            if !meta.is_empty() {
+                base.set_commit_meta(meta);
+            }
+            return base.commit_position();
         }
         // Every end that commits nothing below goes through this: data dropped, ids written
         // forward, single-flight keys given back last. A failure to write the ids forward is the
         // answer (a store failure, never a conflict to run again).
-        let abort = |state: &mut State, error: StoreError| -> Result<u64> {
+        let abort = |state: &mut State, error: StoreError| -> Result<CommitPosition> {
             let cleanup = state.roll_back(&tx.kv);
             self.vectors.clear();
             tx.release_flights();
@@ -1426,14 +1459,20 @@ impl Store {
         state.root_locks.clear();
         state.undo.clear();
         let counters = state.take_counters();
+        let meta = std::mem::take(&mut state.meta);
         drop(state);
         let outcome = if tx.opened_read_only {
             // The sequence it read at, not a later commit's.
             let seen = base.snapshot_sequence();
             drop(base);
             seen.map_or_else(|| tx.kv.version(), Ok)
+                .map(CommitPosition::end_of)
         } else {
-            base.commit()
+            let mut base = base;
+            if !meta.is_empty() {
+                base.set_commit_meta(meta);
+            }
+            base.commit_position()
         };
         // A definite refusal (a conflict, a record the pipeline could not apply) wrote nothing: its
         // ids are written forward. A store failure may or may not be on disk and stops the
