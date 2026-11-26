@@ -26,7 +26,7 @@ import type { BrainEngine } from '../engine.ts';
 import { computeContentHash } from '../ingestion/types.ts';
 import type { BuiltChronicleEvent } from './publish.ts';
 
-interface EventFields { when?: unknown; where?: unknown; kind?: unknown }
+interface EventFields { when?: unknown; where?: unknown; kind?: unknown; attributed_to?: unknown; evidence_quote?: unknown }
 
 function normalizedWhen(when: unknown): string {
   const text = typeof when === 'string' ? when : when instanceof Date ? when.toISOString() : '';
@@ -36,7 +36,8 @@ function normalizedWhen(when: unknown): string {
 
 /** The fields that tell apart events sharing who, what, depth and day. */
 function eventDiscriminator(event: EventFields | null | undefined): string {
-  return JSON.stringify([normalizedWhen(event?.when), typeof event?.where === 'string' ? event.where : '', String(event?.kind ?? '')]);
+  return JSON.stringify([normalizedWhen(event?.when), typeof event?.where === 'string' ? event.where : '', String(event?.kind ?? ''),
+    ...(event && 'attributed_to' in event ? [event.attributed_to, event.evidence_quote ?? null] : [])]);
 }
 
 function suffixedEventSlug(base: string, discriminator: string): string {
@@ -87,9 +88,9 @@ export async function resolveChronicleEventSlugs(engine: BrainEngine, sourceId: 
   events: BuiltChronicleEvent[]): Promise<BuiltChronicleEvent[]> {
   if (events.length === 0) return events;
   const candidates = new Set(events.flatMap((ev) => [ev.slug, suffixedEventSlug(ev.slug, discriminatorOf(ev))]));
-  const rows = await engine.executeRaw<{ slug: string; when: string | null; where: string | null; kind: string | null }>(
-    `SELECT slug, frontmatter->'event'->>'when' AS "when", frontmatter->'event'->>'where' AS "where", frontmatter->'event'->>'kind' AS kind
+  const rows = await engine.executeRaw<{ slug: string; event: EventFields | null }>(
+    `SELECT slug, frontmatter->'event' AS event
        FROM pages WHERE source_id=$1 AND slug = ANY($2::text[])`,
     [sourceId, [...candidates]]);
-  return assignChronicleEventSlugs(events, new Map(rows.map((r) => [r.slug, eventDiscriminator(r)])));
+  return assignChronicleEventSlugs(events, new Map(rows.map((r) => [r.slug, eventDiscriminator(r.event)])));
 }

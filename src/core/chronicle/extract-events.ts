@@ -25,6 +25,7 @@ export interface ChronicleEventProposal {
   when: string;            // ISO datetime or YYYY-MM-DD
   who: string[];           // entity slugs / names
   what: string;            // one-clause summary
+  evidence_quote?: string | null; // verbatim turn excerpt; speaker is resolved from the source, never trusted from the judge
   where?: string | null;
   kind: string;            // meeting|call|commitment|decision|… (open vocab)
 }
@@ -111,7 +112,8 @@ export function isValidProposal(e: unknown): e is ChronicleEventProposal {
     !Number.isNaN(new Date(o.when).getTime()) &&
     typeof o.what === 'string' && o.what.trim().length > 0 &&
     Array.isArray(o.who) && o.who.every((w) => typeof w === 'string') &&
-    typeof o.kind === 'string'
+    typeof o.kind === 'string' &&
+    (o.evidence_quote == null || typeof o.evidence_quote === 'string')
   );
 }
 
@@ -258,9 +260,22 @@ export function buildChronicleEvents(proposals: ChronicleEventProposal[], ctx: C
   depth: { slug: string; visibility: 'private' | 'world'; contentHash: string }, opts: { tz: string; now: Date; maxEvents: number },
 ): { events: BuiltChronicleEvent[]; dropped: ChronicleDropCounts } {
   const { kept, dropped } = screenChronicleProposals(proposals, ctx, opts.tz, opts.now, { maxEvents: opts.maxEvents });
+  const parsed = parseConversation((ctx.input.body ?? '').slice(0, JUDGE_BODY_CHARS),
+    { fallbackDate: ctx.effectiveDate?.slice(0, 10), noPolish: true, noFallback: true });
+  const conversation = ctx.input.type === 'conversation' || parsed.messages.length > 0;
+  const attribution = (ev: ChronicleEventProposal) => {
+    if (!conversation) return undefined;
+    const quote = ev.evidence_quote?.trim();
+    // An absent, invented, cross-turn or multi-speaker quote proves no speaker.
+    // Unrecognized headings can fold someone else's words into a parsed turn.
+    const speakers = new Set(quote && !parsed.unrecognized_headings?.length
+      ? parsed.messages.filter((m) => m.text.includes(quote)).map((m) => m.speaker.trim()) : []);
+    const speaker = speakers.size === 1 ? [...speakers][0] : null;
+    return { speaker: speaker || null, ...(speaker ? { quote } : {}) };
+  };
   const events = kept.map((ev) => buildChronicleEvent(ev, {
     depthSlug: depth.slug, attendees: ctx.attendees, effectiveDate: ctx.effectiveDate, tz: opts.tz,
-    visibility: depth.visibility, depthHash: depth.contentHash, isoDay, normalizeKind,
+    visibility: depth.visibility, depthHash: depth.contentHash, isoDay, normalizeKind, attribution: attribution(ev),
   }));
   return { events, dropped };
 }
@@ -330,7 +345,8 @@ export async function runChronicleExtract(
 }
 
 const JUDGE_SYSTEM = `You segment a meeting, conversation or calendar page into the discrete timeline EVENTS it records as having HAPPENED by the end of the page's date.
-Return ONLY a JSON array. Each element: {"when": YYYY-MM-DD or ISO datetime, "who": [entity slugs/names], "what": one-clause summary, "where": optional string, "kind": one of meeting|call|meal|solo|travel|work|commitment|decision|intro|conflict|milestone|event}.
+Return ONLY a JSON array. Each element: {"when": YYYY-MM-DD or ISO datetime, "who": [entity slugs/names], "what": one-clause summary, "where": optional string, "kind": one of meeting|call|meal|solo|travel|work|commitment|decision|intro|conflict|milestone|event, "evidence_quote": verbatim supporting excerpt from ONE speaker's turn when the source is a conversation}.
+For conversation sources, preserve who said a claim: provide a nonempty exact evidence_quote from that turn, not from a heading or multiple turns. Assistant claims about third parties are reports, not independently witnessed events. Do not turn an ongoing state such as "still awaiting an answer" into an event; extract the dated statement or action instead.
 Extract only what already happened: the meeting or conversation itself, what was decided, said, agreed or done in it, and earlier events the text dates. A commitment made in the meeting is an event on the meeting's day ("Amara agreed to send the deck"), never on its due date.
 Never extract plans, intentions, follow-ups, deadlines, upcoming or scheduled meetings, or anything the text places after the page's date.
 "when": the page's date for the meeting itself and for what happened in it. For an earlier event, use the day the text gives. If the text gives only a year or a month ("back in 2024", "last month"), write just that precision ("2024", "2026-03"); never invent a day such as the first of the month or year, and never move the event to the page's date.

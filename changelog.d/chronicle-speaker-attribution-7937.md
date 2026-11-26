@@ -1,0 +1,1 @@
+- Life Chronicle keeps source-grounded speaker attribution on conversation-derived event pages and timeline summaries. Missing or ambiguous evidence stays explicitly unverified instead of reading as an observed fact; prose meetings retain their rendering. Extractor version 3 allows existing pages to be reconsidered through normal discovery/backfill (#7937).

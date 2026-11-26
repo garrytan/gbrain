@@ -32,7 +32,7 @@ export type MalformedProposalCode =
   | 'who_item_not_string'
   | 'beyond_bounds';
 
-export type ProposalField = 'when' | 'what' | 'who' | 'kind';
+export type ProposalField = 'when' | 'what' | 'who' | 'kind' | 'evidence_quote';
 export type ValueShape = 'string' | 'number' | 'boolean' | 'null' | 'array' | 'object' | 'other';
 
 interface Defect { code: Exclude<MalformedProposalCode, 'beyond_bounds'>; field?: ProposalField; shape?: ValueShape }
@@ -88,7 +88,9 @@ function proposalDefect(e: unknown): Defect | null {
     if (typeof who[i] !== 'string') return { code: 'who_item_not_string', field: 'who', shape: shapeOf(who[i]) };
   }
   const kind = stringField(o, 'kind');
-  return typeof kind === 'string' ? null : kind;
+  if (typeof kind !== 'string') return kind;
+  return o.evidence_quote != null && typeof o.evidence_quote !== 'string'
+    ? { code: 'wrong_type', field: 'evidence_quote', shape: shapeOf(o.evidence_quote) } : null;
 }
 
 export function diagnoseMalformedProposals(events: readonly unknown[]): MalformedProposalDiagnostics {
