@@ -16,11 +16,16 @@
 
 use super::effect_worker::pg_uuid;
 use super::effects::all_effects;
-use super::op_checkpoint::{delete_op_checkpoint_in, insert_op_checkpoint_if_absent_in, op_checkpoint_completed_keys};
+use super::op_checkpoint::{
+    delete_op_checkpoint_in, insert_op_checkpoint_if_absent_in, op_checkpoint_completed_keys,
+};
 use super::worktree_admission::released_deferred_in;
 use super::worktrees::{SourceBindingRecord, read_host_record, source_binding_key};
 use super::write_claim_terms::worktree_of;
-use super::{WriteCompletion, read_counter, write_counter, all_requests, complete_write_row_in, extra_i64, extra_is_null, extra_time, request_by_id};
+use super::{
+    WriteCompletion, all_requests, complete_write_row_in, extra_i64, extra_is_null, extra_time,
+    read_counter, request_by_id, write_counter,
+};
 use crate::env::{Env, iso};
 use crate::error::{Result, StoreError};
 use crate::journal::{RequestRecord, write_request};
@@ -75,9 +80,17 @@ pub struct ResolvedRecovery {
     deny_unknown_fields
 )]
 pub enum GroupRead {
-    RecoveryBlocked { worktree_id: String, excluded: Vec<String> },
-    ImportRoots { host_id: String },
-    ImportCheckpoints { op: String, fingerprints: Vec<String> },
+    RecoveryBlocked {
+        worktree_id: String,
+        excluded: Vec<String>,
+    },
+    ImportRoots {
+        host_id: String,
+    },
+    ImportCheckpoints {
+        op: String,
+        fingerprints: Vec<String>,
+    },
 }
 
 /// One write of `groupPublishStore()`, named by `kind`; its result is JSON.
@@ -97,18 +110,41 @@ pub enum GroupWrite {
         lease_ms: f64,
         owner: Value,
     },
-    RenewClaims { members: Vec<ClaimMember>, lease_ms: f64 },
-    MarkDispatched { members: Vec<ClaimMember> },
-    StartPublication { members: Vec<ClaimMember> },
+    RenewClaims {
+        members: Vec<ClaimMember>,
+        lease_ms: f64,
+    },
+    MarkDispatched {
+        members: Vec<ClaimMember>,
+    },
+    StartPublication {
+        members: Vec<ClaimMember>,
+    },
     CompleteGroup {
         members: Vec<CompletionMember>,
         version: String,
         host_id: Option<String>,
     },
-    RecordRecoveries { members: Vec<RecoveryMember>, total: i64, counter_keys: Vec<String> },
-    ClearRecoveries { resolved: Vec<ResolvedRecovery>, counter_keys: Vec<String>, worktree_id: Option<String> },
-    InsertImportCheckpoints { op: String, fingerprints: Vec<String>, docs: Vec<String> },
-    DeleteImportCheckpoints { op: String, fingerprints: Vec<String>, docs: Vec<String> },
+    RecordRecoveries {
+        members: Vec<RecoveryMember>,
+        total: i64,
+        counter_keys: Vec<String>,
+    },
+    ClearRecoveries {
+        resolved: Vec<ResolvedRecovery>,
+        counter_keys: Vec<String>,
+        worktree_id: Option<String>,
+    },
+    InsertImportCheckpoints {
+        op: String,
+        fingerprints: Vec<String>,
+        docs: Vec<String>,
+    },
+    DeleteImportCheckpoints {
+        op: String,
+        fingerprints: Vec<String>,
+        docs: Vec<String>,
+    },
 }
 
 fn same(a: &str, b: &str) -> bool {
@@ -136,8 +172,14 @@ fn group_key(r: &RequestRecord) -> Option<String> {
     let kind = text(intent.get("kind"));
     let kind = kind.as_deref();
     let op = r.operation.as_str();
-    if op == "submit_job" && kind == Some("managed_maintenance_page") && is_string(intent.get("maintenance_batch")) {
-        return Some(format!("maintenance:{}", text(intent.get("maintenance_batch"))?));
+    if op == "submit_job"
+        && kind == Some("managed_maintenance_page")
+        && is_string(intent.get("maintenance_batch"))
+    {
+        return Some(format!(
+            "maintenance:{}",
+            text(intent.get("maintenance_batch"))?
+        ));
     }
     let atom = matches!(kind, Some("managed_atom_page" | "managed_atom_delete"))
         || (kind == Some("managed_generation_activate")
@@ -145,7 +187,10 @@ fn group_key(r: &RequestRecord) -> Option<String> {
     if op == "submit_job" && atom && is_string(intent.get("activationId")) {
         return Some(format!("generation:{}", text(intent.get("activationId"))?));
     }
-    if op == "put_page" && kind == Some("managed_file_import") && is_string(intent.get("import_batch")) {
+    if op == "put_page"
+        && kind == Some("managed_file_import")
+        && is_string(intent.get("import_batch"))
+    {
         return Some(format!("import:{}", text(intent.get("import_batch"))?));
     }
     if matches!(op, "put_page" | "add_timeline_entry")
@@ -177,17 +222,23 @@ fn stamped(stamp: &str, token: &str) -> Result<Value> {
 
 pub(crate) fn group_rows_in(read: &dyn KvRead, what: &GroupRead) -> Result<Value> {
     match what {
-        GroupRead::RecoveryBlocked { worktree_id, excluded } => {
+        GroupRead::RecoveryBlocked {
+            worktree_id,
+            excluded,
+        } => {
             let w = pg_uuid(worktree_id)?;
-            let skipped: Vec<String> = excluded.iter().map(|id| pg_uuid(id)).collect::<Result<_>>()?;
+            let skipped: Vec<String> = excluded
+                .iter()
+                .map(|id| pg_uuid(id))
+                .collect::<Result<_>>()?;
             let request = all_requests(read)?.iter().any(|r| {
                 worktree_of(r).is_some_and(|x| x == w)
                     && !skipped.iter().any(|id| same(id, &r.id))
                     && !extra_is_null(r, "recovery")
             });
-            let effect = all_effects(read)?
-                .iter()
-                .any(|e| e.worktree_id.as_deref().is_some_and(|x| same(x, &w)) && e.recovery.is_some());
+            let effect = all_effects(read)?.iter().any(|e| {
+                e.worktree_id.as_deref().is_some_and(|x| same(x, &w)) && e.recovery.is_some()
+            });
             Ok(json!(request || effect))
         }
         GroupRead::ImportCheckpoints { op, fingerprints } => {
@@ -211,23 +262,37 @@ pub(crate) fn group_rows_in(read: &dyn KvRead, what: &GroupRead) -> Result<Value
                     .filter(|b| same(&b.source_incarnation, &s.incarnation));
                 let (worktree_path, relative_path) = match &binding {
                     Some(b) => (
-                        read_host_record(read, &b.worktree_id.to_lowercase(), &host)?.map(|h| h.local_path),
+                        read_host_record(read, &b.worktree_id.to_lowercase(), &host)?
+                            .map(|h| h.local_path),
                         Some(b.relative_path.clone()),
                     ),
                     None => (None, None),
                 };
-                out.push(json!({ "id": s.id, "local_path": s.local_path, "worktree_path": worktree_path,
-                    "relative_path": if worktree_path.is_some() { relative_path } else { None } }));
+                out.push(
+                    json!({ "id": s.id, "local_path": s.local_path, "worktree_path": worktree_path,
+                    "relative_path": if worktree_path.is_some() { relative_path } else { None } }),
+                );
             }
             Ok(Value::Array(out))
         }
     }
 }
 
-pub(crate) fn group_write_in(tx: &mut dyn KvWrite, env: &dyn Env, what: &GroupWrite) -> Result<Value> {
+pub(crate) fn group_write_in(
+    tx: &mut dyn KvWrite,
+    env: &dyn Env,
+    what: &GroupWrite,
+) -> Result<Value> {
     let now = env.now_micros();
     match what {
-        GroupWrite::ClaimFollowers { worktree_id, head_sequence, group, max, lease_ms, owner } => {
+        GroupWrite::ClaimFollowers {
+            worktree_id,
+            head_sequence,
+            group,
+            max,
+            lease_ms,
+            owner,
+        } => {
             let w = pg_uuid(worktree_id)?;
             let after: u64 = head_sequence
                 .trim()
@@ -235,7 +300,10 @@ pub(crate) fn group_write_in(tx: &mut dyn KvWrite, env: &dyn Env, what: &GroupWr
                 .map_err(|_| StoreError::invalid("invalid input syntax for type bigint"))?;
             let all = all_requests(&*tx)?;
             let mut candidates: Vec<&RequestRecord> = Vec::new();
-            for r in all.iter().filter(|r| worktree_of(r).is_some_and(|x| x == w) && r.sequence > after) {
+            for r in all
+                .iter()
+                .filter(|r| worktree_of(r).is_some_and(|x| x == w) && r.sequence > after)
+            {
                 if matches!(r.state.as_str(), "queued" | "running" | "recovering")
                     || !extra_is_null(r, "recovery")
                     || released_deferred_in(&*tx, r)?
@@ -252,14 +320,28 @@ pub(crate) fn group_write_in(tx: &mut dyn KvWrite, env: &dyn Env, what: &GroupWr
                     || extra_time(r, "next_attempt_at").is_some_and(|t| t > now)
                     || extra_i64(r, "transient_interruptions") > 0
             };
-            let bound = candidates.iter().filter(|r| ends_prefix(r)).map(|r| r.sequence).min();
+            let bound = candidates
+                .iter()
+                .filter(|r| ends_prefix(r))
+                .map(|r| r.sequence)
+                .min();
             let mut claimed = Vec::new();
-            for r in candidates.iter().filter(|r| bound.is_none_or(|b| r.sequence < b)) {
-                if group_key(r).as_deref() != Some(group.as_str()) || r.state != "queued" || !extra_is_null(r, "recovery") {
+            for r in candidates
+                .iter()
+                .filter(|r| bound.is_none_or(|b| r.sequence < b))
+            {
+                if group_key(r).as_deref() != Some(group.as_str())
+                    || r.state != "queued"
+                    || !extra_is_null(r, "recovery")
+                {
                     break;
                 }
                 let mut record = (*r).clone();
-                let previous = record.extra.get("claim_phase").cloned().unwrap_or(Value::Null);
+                let previous = record
+                    .extra
+                    .get("claim_phase")
+                    .cloned()
+                    .unwrap_or(Value::Null);
                 let token = env.new_uuid();
                 record.state = "running".into();
                 record.updated_at_us = now;
@@ -287,7 +369,9 @@ pub(crate) fn group_write_in(tx: &mut dyn KvWrite, env: &dyn Env, what: &GroupWr
         GroupWrite::RenewClaims { members, lease_ms } => {
             let mut held = Vec::new();
             for m in members {
-                let Some(mut r) = request_by_id(&*tx, &m.id)? else { continue };
+                let Some(mut r) = request_by_id(&*tx, &m.id)? else {
+                    continue;
+                };
                 if !holds_claim(&r, &m.token) {
                     continue;
                 }
@@ -297,7 +381,8 @@ pub(crate) fn group_write_in(tx: &mut dyn KvWrite, env: &dyn Env, what: &GroupWr
                     json!(iso(now + (lease_ms * 1000.0).round() as i64)),
                 );
                 if let Some(stamp) = &m.stamp {
-                    r.extra.insert("claim_phase".into(), stamped(stamp, &m.token)?);
+                    r.extra
+                        .insert("claim_phase".into(), stamped(stamp, &m.token)?);
                 }
                 write_request(tx, &r)?;
                 held.push(json!(r.id));
@@ -307,12 +392,15 @@ pub(crate) fn group_write_in(tx: &mut dyn KvWrite, env: &dyn Env, what: &GroupWr
         GroupWrite::MarkDispatched { members } => {
             let mut marked = Vec::new();
             for m in members {
-                let Some(mut r) = request_by_id(&*tx, &m.id)? else { continue };
+                let Some(mut r) = request_by_id(&*tx, &m.id)? else {
+                    continue;
+                };
                 if !holds_claim(&r, &m.token) {
                     continue;
                 }
                 let stamp = m.stamp.as_deref().unwrap_or("null");
-                r.extra.insert("claim_phase".into(), stamped(stamp, &m.token)?);
+                r.extra
+                    .insert("claim_phase".into(), stamped(stamp, &m.token)?);
                 write_request(tx, &r)?;
                 marked.push(json!(r.id));
             }
@@ -321,7 +409,9 @@ pub(crate) fn group_write_in(tx: &mut dyn KvWrite, env: &dyn Env, what: &GroupWr
         GroupWrite::StartPublication { members } => {
             let mut started = Vec::new();
             for m in members {
-                let Some(mut r) = request_by_id(&*tx, &m.id)? else { continue };
+                let Some(mut r) = request_by_id(&*tx, &m.id)? else {
+                    continue;
+                };
                 if !holds_claim(&r, &m.token) {
                     continue;
                 }
@@ -331,11 +421,17 @@ pub(crate) fn group_write_in(tx: &mut dyn KvWrite, env: &dyn Env, what: &GroupWr
             }
             Ok(Value::Array(started))
         }
-        GroupWrite::RecordRecoveries { members, total, counter_keys } => {
+        GroupWrite::RecordRecoveries {
+            members,
+            total,
+            counter_keys,
+        } => {
             // All or nothing: the counters are reserved only when every member qualifies, as the statement does.
             let mut ready = Vec::new();
             for m in members {
-                let Some(r) = request_by_id(&*tx, &m.id)? else { continue };
+                let Some(r) = request_by_id(&*tx, &m.id)? else {
+                    continue;
+                };
                 if holds_claim(&r, &m.token) && extra_is_null(&r, "recovery") {
                     ready.push((r, m));
                 }
@@ -343,7 +439,8 @@ pub(crate) fn group_write_in(tx: &mut dyn KvWrite, env: &dyn Env, what: &GroupWr
             if ready.len() == members.len() {
                 for (mut r, m) in ready.clone() {
                     r.updated_at_us = now;
-                    r.extra.insert("recovery".into(), crate::jsonb::order(m.record.clone()));
+                    r.extra
+                        .insert("recovery".into(), crate::jsonb::order(m.record.clone()));
                     r.extra.insert("recovery_bytes".into(), json!(m.bytes));
                     write_request(tx, &r)?;
                 }
@@ -354,22 +451,32 @@ pub(crate) fn group_write_in(tx: &mut dyn KvWrite, env: &dyn Env, what: &GroupWr
                     }
                 }
             }
-            Ok(Value::Array(ready.iter().map(|(r, _)| json!(r.id)).collect()))
+            Ok(Value::Array(
+                ready.iter().map(|(r, _)| json!(r.id)).collect(),
+            ))
         }
-        GroupWrite::ClearRecoveries { resolved, counter_keys, worktree_id } => {
+        GroupWrite::ClearRecoveries {
+            resolved,
+            counter_keys,
+            worktree_id,
+        } => {
             let w = worktree_id.as_deref().map(pg_uuid).transpose()?;
             let mut cleared = Vec::new();
             let mut freed = 0i64;
             for m in resolved {
-                let Some(mut r) = request_by_id(&*tx, &m.id)? else { continue };
-                let same_record = r
-                    .extra
-                    .get("recovery")
-                    .is_some_and(|stored| crate::jsonb::order(stored.clone()) == crate::jsonb::order(m.record.clone()));
+                let Some(mut r) = request_by_id(&*tx, &m.id)? else {
+                    continue;
+                };
+                let same_record = r.extra.get("recovery").is_some_and(|stored| {
+                    crate::jsonb::order(stored.clone()) == crate::jsonb::order(m.record.clone())
+                });
                 let same_worktree = worktree_of(&r) == w;
                 if same_record
                     && same_worktree
-                    && matches!(r.state.as_str(), "committed" | "conflict" | "failed" | "cancelled")
+                    && matches!(
+                        r.state.as_str(),
+                        "committed" | "conflict" | "failed" | "cancelled"
+                    )
                 {
                     freed += extra_i64(&r, "recovery_bytes");
                     r.extra.insert("recovery".into(), Value::Null);
@@ -387,7 +494,11 @@ pub(crate) fn group_write_in(tx: &mut dyn KvWrite, env: &dyn Env, what: &GroupWr
             }
             Ok(Value::Array(cleared))
         }
-        GroupWrite::InsertImportCheckpoints { op, fingerprints, docs } => {
+        GroupWrite::InsertImportCheckpoints {
+            op,
+            fingerprints,
+            docs,
+        } => {
             for (fingerprint, doc) in fingerprints.iter().zip(docs) {
                 let completed: Value = serde_json::from_str(doc)
                     .map_err(|_| StoreError::invalid("invalid input syntax for type json"))?;
@@ -396,23 +507,34 @@ pub(crate) fn group_write_in(tx: &mut dyn KvWrite, env: &dyn Env, what: &GroupWr
             }
             Ok(Value::Null)
         }
-        GroupWrite::DeleteImportCheckpoints { op, fingerprints, docs } => {
+        GroupWrite::DeleteImportCheckpoints {
+            op,
+            fingerprints,
+            docs,
+        } => {
             for (fingerprint, doc) in fingerprints.iter().zip(docs) {
                 let expected = crate::jsonb::order(
                     serde_json::from_str::<Value>(doc)
                         .map_err(|_| StoreError::invalid("invalid input syntax for type json"))?,
                 );
-                let stored = op_checkpoint_completed_keys(&*tx, op, fingerprint)?.map(crate::jsonb::order);
+                let stored =
+                    op_checkpoint_completed_keys(&*tx, op, fingerprint)?.map(crate::jsonb::order);
                 if stored.as_ref() == Some(&expected) {
                     delete_op_checkpoint_in(tx, op, fingerprint)?;
                 }
             }
             Ok(Value::Null)
         }
-        GroupWrite::CompleteGroup { members, version, host_id } => {
+        GroupWrite::CompleteGroup {
+            members,
+            version,
+            host_id,
+        } => {
             let mut done = Vec::new();
             for m in members {
-                let Some(r) = request_by_id(&*tx, &m.id)? else { break };
+                let Some(r) = request_by_id(&*tx, &m.id)? else {
+                    break;
+                };
                 if !holds_claim(&r, &m.token) {
                     break;
                 }
@@ -434,7 +556,9 @@ pub(crate) fn group_write_in(tx: &mut dyn KvWrite, env: &dyn Env, what: &GroupWr
                     terminal_reservation: extra_i64(&r, "terminal_reservation"),
                     probe_purges: false,
                 };
-                let Some(mut row) = complete_write_row_in(tx, env, &completion)? else { break };
+                let Some(mut row) = complete_write_row_in(tx, env, &completion)? else {
+                    break;
+                };
                 row["principal_key"] = json!(m.principal_key);
                 done.push(row);
             }

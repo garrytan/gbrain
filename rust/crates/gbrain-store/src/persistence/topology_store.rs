@@ -714,10 +714,7 @@ fn open_writes_in(read: &dyn KvRead) -> Result<Value> {
 /// newest completed managed-sync request of any source's current incarnation on the worktree.
 fn owner_activity_in(read: &dyn KvRead, env: &dyn Env, ids: &[String]) -> Result<Value> {
     let now = env.now_micros();
-    let mut wanted: Vec<String> = ids
-        .iter()
-        .map(|id| id.to_lowercase())
-        .collect();
+    let mut wanted: Vec<String> = ids.iter().map(|id| id.to_lowercase()).collect();
     wanted.sort();
     wanted.dedup();
     let requests = all_requests(read)?;
@@ -734,7 +731,9 @@ fn owner_activity_in(read: &dyn KvRead, env: &dyn Env, ids: &[String]) -> Result
             .filter(|r| worktree_of(r).as_deref() == Some(id.as_str()))
             .collect();
         let sync_kind = |r: &super::RequestRecord| {
-            json_text(r.intent.get("kind")).unwrap_or_default().starts_with("managed_sync_")
+            json_text(r.intent.get("kind"))
+                .unwrap_or_default()
+                .starts_with("managed_sync_")
         };
         let foreground = here
             .iter()
@@ -755,7 +754,8 @@ fn owner_activity_in(read: &dyn KvRead, env: &dyn Env, ids: &[String]) -> Result
                 .iter()
                 .filter(|q| {
                     q.source_id == r.source_id
-                        && q.source_incarnation.eq_ignore_ascii_case(&source.incarnation)
+                        && q.source_incarnation
+                            .eq_ignore_ascii_case(&source.incarnation)
                         && q.state == "committed"
                         && sync_kind(q)
                 })
@@ -763,10 +763,18 @@ fn owner_activity_in(read: &dyn KvRead, env: &dyn Env, ids: &[String]) -> Result
                 .max();
             sync = sync.max(newest);
         }
-        let last_active = [w.heartbeat_at_us, foreground, sync].into_iter().flatten().max();
+        let last_active = [w.heartbeat_at_us, foreground, sync]
+            .into_iter()
+            .flatten()
+            .max();
         let oldest_open = here
             .iter()
-            .filter(|r| matches!(r.state.as_str(), "queued" | "deferred" | "running" | "recovering"))
+            .filter(|r| {
+                matches!(
+                    r.state.as_str(),
+                    "queued" | "deferred" | "running" | "recovering"
+                )
+            })
             .map(|r| r.created_at_us)
             .min();
         rows.push(json!({

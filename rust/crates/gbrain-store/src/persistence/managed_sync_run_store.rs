@@ -11,7 +11,8 @@
 use serde_json::{Value, json};
 
 use super::managed_sync_store::{
-    first, first_text, jsonb_param, kind_of, op_row, op_rows, opt_big, param, put_row, request_is, rows, text, texts,
+    first, first_text, jsonb_param, kind_of, op_row, op_rows, opt_big, param, put_row, request_is,
+    rows, text, texts,
 };
 use super::op_checkpoint::delete_op_checkpoint_in;
 use super::projection_queue::parse_timestamptz;
@@ -89,14 +90,23 @@ impl PageMatch {
 /// `UNFINISHED_PAGE_REQUEST_SQL`: an unfinished request for the page by worktree pending, worktree recovery, or (no worktree)
 /// source incarnation pending.
 fn unfinished_page_request(read: &dyn KvRead, p: &[Value]) -> Result<Value> {
-    let (worktree, incarnation) = (uuid_param(&text(p, 0)?, "worktreeId")?, uuid_param(&text(p, 1)?, "incarnation")?);
+    let (worktree, incarnation) = (
+        uuid_param(&text(p, 0)?, "worktreeId")?,
+        uuid_param(&text(p, 1)?, "incarnation")?,
+    );
     let page = PageMatch::of(p)?;
     let found = all_requests(read)?.into_iter().any(|r| {
         page.matches(&r)
             && (worktree_is(&r, &worktree) && (request_is(&r, &OPEN) || recovering(&r))
-                || worktree_of(&r).is_none() && same_uuid(&r.source_incarnation, &incarnation) && request_is(&r, &OPEN))
+                || worktree_of(&r).is_none()
+                    && same_uuid(&r.source_incarnation, &incarnation)
+                    && request_is(&r, &OPEN))
     });
-    Ok(rows(if found { vec![json!({ "?column?": 1 })] } else { vec![] }))
+    Ok(rows(if found {
+        vec![json!({ "?column?": 1 })]
+    } else {
+        vec![]
+    }))
 }
 
 fn kernel_row(page: &PageRecord, read: &dyn KvRead) -> Result<Value> {
@@ -126,12 +136,20 @@ fn kernel_pages(read: &dyn KvRead, wanted: &dyn Fn(&PageRecord) -> bool) -> Resu
 }
 
 /// `completed_keys->0->>key` of the cursor row `fingerprint`.
-fn cursor_first(read: &dyn KvRead, fingerprint: &str) -> Result<Option<super::housekeeping::HousekeepingRow>> {
+fn cursor_first(
+    read: &dyn KvRead,
+    fingerprint: &str,
+) -> Result<Option<super::housekeeping::HousekeepingRow>> {
     op_row(read, CURSOR_OP, fingerprint)
 }
 
 /// The read statements of this block, or `None` for a name that is not one.
-pub(super) fn read(read: &dyn KvRead, env: &dyn Env, name: &str, p: &[Value]) -> Result<Option<Value>> {
+pub(super) fn read(
+    read: &dyn KvRead,
+    env: &dyn Env,
+    name: &str,
+    p: &[Value],
+) -> Result<Option<Value>> {
     Ok(Some(match name {
         "cursor_head_locked" => match cursor_first(read, &text(p, 0)?)? {
             None => rows(vec![]),
@@ -149,25 +167,41 @@ pub(super) fn read(read: &dyn KvRead, env: &dyn Env, name: &str, p: &[Value]) ->
             Some(row) => {
                 let pending = first(&row).and_then(|v| v.get("pending"));
                 let incoming = jsonb_param(p, 2)?;
-                let same = pending.and_then(|v| v.get("intent")).map(|intent| *intent == incoming);
-                rows(vec![json!({ "request_id": pending.and_then(|v| json_text(v.get("requestId"))), "same": same })])
+                let same = pending
+                    .and_then(|v| v.get("intent"))
+                    .map(|intent| *intent == incoming);
+                rows(vec![
+                    json!({ "request_id": pending.and_then(|v| json_text(v.get("requestId"))), "same": same }),
+                ])
             }
         },
         "unfinished_page_request" => unfinished_page_request(read, p)?,
         "stale_page_requests" => {
-            let (worktree, run, index) = (uuid_param(&text(p, 0)?, "worktreeId")?, text(p, 1)?, text(p, 2)?);
+            let (worktree, run, index) = (
+                uuid_param(&text(p, 0)?, "worktreeId")?,
+                text(p, 1)?,
+                text(p, 2)?,
+            );
             let mut found: Vec<RequestRecord> = all_requests(read)?
                 .into_iter()
                 .filter(|r| {
                     worktree_is(r, &worktree)
                         && json_text(r.intent.get("runId")).as_deref() == Some(run.as_str())
-                        && matches!(kind_of(r).as_deref(), Some("managed_sync_import" | "managed_sync_delete"))
+                        && matches!(
+                            kind_of(r).as_deref(),
+                            Some("managed_sync_import" | "managed_sync_delete")
+                        )
                         && json_text(r.intent.get("index")).as_deref() == Some(index.as_str())
                         && matches!(r.state.as_str(), "failed" | "cancelled" | "conflict")
                 })
                 .collect();
             found.sort_by_key(|r| r.sequence);
-            rows(found.into_iter().map(|r| json!({ "request_id": r.request_id })).collect())
+            rows(
+                found
+                    .into_iter()
+                    .map(|r| json!({ "request_id": r.request_id }))
+                    .collect(),
+            )
         }
         "waiver_settings" => rows(vec![]),
         "waiver_pages" => {
@@ -182,7 +216,9 @@ pub(super) fn read(read: &dyn KvRead, env: &dyn Env, name: &str, p: &[Value]) ->
         }
         "kernel_pages_by_slug" | "kernel_pages_by_slug_unmanifested" => {
             let (source, slugs) = (text(p, 0)?, texts(p, 1)?);
-            kernel_pages(read, &|pg| pg.source_id == source && slugs.contains(&pg.slug))?
+            kernel_pages(read, &|pg| {
+                pg.source_id == source && slugs.contains(&pg.slug)
+            })?
         }
         "kernel_page_by_id" | "kernel_page_by_id_unmanifested" => {
             let id = super::managed_sync_store::big(param(p, 0)?)?;
@@ -201,9 +237,19 @@ pub(super) fn read(read: &dyn KvRead, env: &dyn Env, name: &str, p: &[Value]) ->
             found.sort_by_key(|r| r.sequence);
             rows(found.iter().map(RequestRecord::to_row).collect())
         }
-        "request_for_update" => rows(request_by_id(read, &text(p, 0)?)?.iter().map(RequestRecord::to_row).collect()),
+        "request_for_update" => rows(
+            request_by_id(read, &text(p, 0)?)?
+                .iter()
+                .map(RequestRecord::to_row)
+                .collect(),
+        ),
         "group_predecessor" => {
-            let (kind, id, sequence, group) = (text(p, 0)?, text(p, 1)?, super::managed_sync_store::big(param(p, 2)?)?, text(p, 3)?);
+            let (kind, id, sequence, group) = (
+                text(p, 0)?,
+                text(p, 1)?,
+                super::managed_sync_store::big(param(p, 2)?)?,
+                text(p, 3)?,
+            );
             let previous = all_requests(read)?
                 .into_iter()
                 .filter(|r| {
@@ -213,15 +259,30 @@ pub(super) fn read(read: &dyn KvRead, env: &dyn Env, name: &str, p: &[Value]) ->
                         && json_text(r.intent.get("group")).as_deref() == Some(group.as_str())
                 })
                 .max_by_key(|r| r.sequence);
-            rows(previous.map(|r| json!({ "state": r.state, "request_id": r.request_id })).into_iter().collect())
+            rows(
+                previous
+                    .map(|r| json!({ "state": r.state, "request_id": r.request_id }))
+                    .into_iter()
+                    .collect(),
+            )
         }
         "request_state_by_principal" => {
-            let (kind, id, request) = (text(p, 0)?, text(p, 1)?, uuid_param(&text(p, 2)?, "requestId")?);
-            rows(all_requests(read)?
-                .into_iter()
-                .filter(|r| r.principal_kind == kind && r.principal_id == id && same_uuid(&r.request_id, &request))
-                .map(|r| json!({ "state": r.state }))
-                .collect())
+            let (kind, id, request) = (
+                text(p, 0)?,
+                text(p, 1)?,
+                uuid_param(&text(p, 2)?, "requestId")?,
+            );
+            rows(
+                all_requests(read)?
+                    .into_iter()
+                    .filter(|r| {
+                        r.principal_kind == kind
+                            && r.principal_id == id
+                            && same_uuid(&r.request_id, &request)
+                    })
+                    .map(|r| json!({ "state": r.state }))
+                    .collect(),
+            )
         }
         "stall_probe" => stall_probe(read, env, &uuid_param(&text(p, 0)?, "id")?)?,
         "refused_checkpoint" => refused_checkpoint(read, p)?,
@@ -231,7 +292,9 @@ pub(super) fn read(read: &dyn KvRead, env: &dyn Env, name: &str, p: &[Value]) ->
 
 /// The oldest unfinished request of `r`'s worktree (`ORDER BY e.sequence LIMIT 1`), the head `r` waits behind.
 fn stall_probe(read: &dyn KvRead, env: &dyn Env, id: &str) -> Result<Value> {
-    let Some(r) = request_by_id(read, id)? else { return Ok(rows(vec![])) };
+    let Some(r) = request_by_id(read, id)? else {
+        return Ok(rows(vec![]));
+    };
     let worktree = worktree_of(&r);
     let head = match &worktree {
         Some(w) => all_requests(read)?
@@ -244,7 +307,10 @@ fn stall_probe(read: &dyn KvRead, env: &dyn Env, id: &str) -> Result<Value> {
         Some(w) => read_worktree_record(read, &w.to_lowercase())?.and_then(|w| w.owner_host_id),
         None => None,
     };
-    let lapsed = match head.as_ref().and_then(|h| json_text(h.extra.get("claim_expires_at"))) {
+    let lapsed = match head
+        .as_ref()
+        .and_then(|h| json_text(h.extra.get("claim_expires_at")))
+    {
         Some(at) => parse_timestamptz(&at, "claim_expires_at")? < env.now_micros(),
         None => false,
     };
@@ -261,13 +327,20 @@ fn stall_probe(read: &dyn KvRead, env: &dyn Env, id: &str) -> Result<Value> {
 /// (`supersessionSql`). `p[1]` carries the page-removal operations the SQL text inlines.
 fn refused_checkpoint(read: &dyn KvRead, p: &[Value]) -> Result<Value> {
     let source = text(p, 0)?;
-    let removals = texts(p, 1).map_err(|_| StoreError::invalid("refused_checkpoint needs the page-removal operations"))?;
+    let removals = texts(p, 1)
+        .map_err(|_| StoreError::invalid("refused_checkpoint needs the page-removal operations"))?;
     let all = all_requests(read)?;
-    let checkpoint = |r: &RequestRecord| kind_of(r).unwrap_or_else(|| "managed_sync_checkpoint".into()) == "managed_sync_checkpoint";
+    let checkpoint = |r: &RequestRecord| {
+        kind_of(r).unwrap_or_else(|| "managed_sync_checkpoint".into()) == "managed_sync_checkpoint"
+    };
     let found = all.iter().any(|r| {
         r.source_id == source
             && r.slug == "__managed_sync_checkpoint__"
-            && !r.extra.get("compacted").and_then(Value::as_bool).unwrap_or(false)
+            && !r
+                .extra
+                .get("compacted")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
             && r.operation == "submit_job"
             && kind_of(r).as_deref() == Some("managed_sync_checkpoint")
             && matches!(r.state.as_str(), "failed" | "conflict" | "cancelled")
@@ -279,14 +352,26 @@ fn refused_checkpoint(read: &dyn KvRead, p: &[Value]) -> Result<Value> {
                     && c.sequence > r.sequence
                     && (c.digest == r.digest && (committed || c.state == "failed" || pending)
                         || (committed || pending) && removals.contains(&c.operation)
-                        || committed && c.operation == "submit_job" && checkpoint(r) && checkpoint(c))
+                        || committed
+                            && c.operation == "submit_job"
+                            && checkpoint(r)
+                            && checkpoint(c))
             })
     });
-    Ok(rows(if found { vec![json!({ "?column?": 1 })] } else { vec![] }))
+    Ok(rows(if found {
+        vec![json!({ "?column?": 1 })]
+    } else {
+        vec![]
+    }))
 }
 
 /// The write statements of this block, or `None` for a name that is not one.
-pub(super) fn write(tx: &mut dyn KvWrite, env: &dyn Env, name: &str, p: &[Value]) -> Result<Option<Value>> {
+pub(super) fn write(
+    tx: &mut dyn KvWrite,
+    env: &dyn Env,
+    name: &str,
+    p: &[Value],
+) -> Result<Option<Value>> {
     Ok(Some(match name {
         "cursor_manifest_insert" | "cursor_insert" => {
             let (op, fingerprint) = (text(p, 0)?, text(p, 1)?);
@@ -294,7 +379,11 @@ pub(super) fn write(tx: &mut dyn KvWrite, env: &dyn Env, name: &str, p: &[Value]
                 rows(vec![])
             } else {
                 put_row(tx, env, &op, &fingerprint, jsonb_param(p, 2)?)?;
-                rows(if name == "cursor_insert" { vec![json!({ "fingerprint": fingerprint })] } else { vec![] })
+                rows(if name == "cursor_insert" {
+                    vec![json!({ "fingerprint": fingerprint })]
+                } else {
+                    vec![]
+                })
             }
         }
         "cursor_swap" => {
@@ -326,7 +415,9 @@ pub(super) fn write(tx: &mut dyn KvWrite, env: &dyn Env, name: &str, p: &[Value]
         }
         "manifest_delete_unshared" => {
             let run = text(p, 0)?;
-            let shared = op_rows(&*tx, CURSOR_OP)?.iter().any(|(_, row)| first_text(row, "runId").as_deref() == Some(run.as_str()));
+            let shared = op_rows(&*tx, CURSOR_OP)?
+                .iter()
+                .any(|(_, row)| first_text(row, "runId").as_deref() == Some(run.as_str()));
             if !shared && op_row(&*tx, MANIFEST_OP, &run)?.is_some() {
                 delete_op_checkpoint_in(tx, MANIFEST_OP, &run)?;
             }

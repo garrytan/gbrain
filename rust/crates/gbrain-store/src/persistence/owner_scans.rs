@@ -229,8 +229,6 @@ impl Store {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     const HOST: &str = "0f000000-0000-4000-8000-0000000000f1";
 
     #[test]
@@ -283,7 +281,11 @@ mod tests {
     #[test]
     fn resumable_refreshes_are_empty_without_a_refresh_and_refuse_a_non_uuid_host() {
         let s = crate::test_support::store();
-        assert!(s.list_resumable_refreshes(HOST, 60_000.0).unwrap().is_empty());
+        assert!(
+            s.list_resumable_refreshes(HOST, 60_000.0)
+                .unwrap()
+                .is_empty()
+        );
         let bad = s.list_resumable_refreshes("nope", 60_000.0).unwrap_err();
         assert_eq!(bad.message, "invalid input syntax for type uuid: \"nope\"");
     }

@@ -93,6 +93,9 @@ mod lane_head;
 mod lane_head_tests;
 #[cfg(test)]
 mod lease_order_tests;
+mod managed_sync_run_store;
+mod managed_sync_status;
+mod managed_sync_store;
 mod noop_settle;
 mod notifier;
 mod op_checkpoint;
@@ -120,9 +123,6 @@ mod sync_pass_pages;
 mod sync_run_reads;
 pub(crate) mod topology;
 mod topology_store;
-mod managed_sync_store;
-mod managed_sync_status;
-mod managed_sync_run_store;
 pub(crate) use topology::purge_probe_rows as purge_probe_topology_rows;
 mod worktree_admission;
 #[cfg(test)]
@@ -160,6 +160,7 @@ pub use topology_store::{TopologyRead, TopologyWrite};
 mod trust_scan_cursor;
 mod upkeep;
 
+pub use group_publish_store::{GroupRead, GroupWrite};
 pub(crate) use op_checkpoint::{
     delete_op_checkpoint_in, list_op_checkpoint_records_in, op_checkpoint_completed_keys,
 };
@@ -182,7 +183,6 @@ pub use purge_effects::{
 };
 pub use receipt_list::{IncarnationRequestFilter, WriteRequestListFilter};
 pub use refresh_store::{RefreshRead, RefreshWrite};
-pub use group_publish_store::{GroupRead, GroupWrite};
 pub use sync_pass_pages::{SyncImportPageQuery, SyncImportPageWindow};
 pub use sync_run_reads::SyncAdmissionEffectsQuery;
 pub use topology::TopologyChangeInsert;
@@ -712,7 +712,11 @@ pub(crate) fn read_counter(read: &dyn KvRead, key: &str) -> Result<Option<Counte
     get_json(read, &counter_key(key)?)
 }
 
-pub(crate) fn write_counter(tx: &mut dyn KvWrite, key: &str, counter: &CounterRecord) -> Result<()> {
+pub(crate) fn write_counter(
+    tx: &mut dyn KvWrite,
+    key: &str,
+    counter: &CounterRecord,
+) -> Result<()> {
     counter.check(key)?;
     put_json(tx, &counter_key(key)?, counter)
 }
