@@ -6,8 +6,8 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2409/2435
-# lifecycle: 20/22
+# covered: 2410/2435
+# lifecycle: 21/22
 # pages: 141/142
 # search: 8/8
 # search_reads: 9/9
@@ -135,24 +135,24 @@ getFactsByIds	lifecycle	yes	1	no	yes	yes	serves
 findLiveFactsByText	lifecycle	yes	1	no	yes	yes	serves
 listPageIdSlugs	lifecycle	yes	1	no	yes	yes	serves
 hasTable	lifecycle	yes	1	no	yes	yes	serves
-hasColumn	lifecycle	yes	1	no	yes	yes	serves
+hasColumn	lifecycle	yes	2	no	yes	yes	serves
 listTextBearingColumns	lifecycle	yes	1	no	yes	yes	serves
-scanTextColumns	lifecycle	yes	1	no	yes	yes	serves
-pauseManagedPersistence	lifecycle	no	0	no	-	-	-
+scanTextColumns	lifecycle	yes	6	no	yes	yes	serves
+pauseManagedPersistence	lifecycle	yes	1	no	yes	yes	serves
 restoreManagedPersistence	lifecycle	no	0	no	-	-	-
-withManagedPersistencePaused	lifecycle	yes	4	no	yes	yes	serves
+withManagedPersistencePaused	lifecycle	yes	7	no	yes	yes	serves
 getPage	pages	yes	280	yes	yes	yes	serves
 readPageSnapshot	pages	yes	100	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	7	no	yes	yes	serves
 lockPageKeys	pages	yes	17	no	yes	yes	serves
-putPage	pages	yes	1327	yes	yes	yes	serves
+putPage	pages	yes	1330	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	43	yes	yes	yes	serves
 deletePages	pages	yes	9	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	2	yes	yes	yes	serves
 softDeletePage	pages	yes	333	yes	yes	yes	serves
-softDeletePages	pages	yes	7	yes	yes	yes	serves
+softDeletePages	pages	yes	8	yes	yes	yes	serves
 restorePage	pages	yes	15	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	10	no	yes	yes	serves
 listPages	pages	yes	21	yes	yes	yes	serves
@@ -650,7 +650,7 @@ readFactTrustTier	facts	yes	2	no	yes	yes	serves
 listFenceFactRowNums	facts	yes	2	no	yes	yes	serves
 readLiveFactRowTier	facts	yes	1	no	yes	yes	serves
 insertFact	facts	yes	202	yes	yes	yes	serves
-insertFacts	facts	yes	269	no	yes	yes	serves
+insertFacts	facts	yes	270	no	yes	yes	serves
 deleteFactsForPage	facts	yes	8	no	yes	yes	serves
 expireFact	facts	yes	98	no	yes	yes	serves
 listFactsByEntity	facts	yes	62	yes	yes	yes	serves
@@ -774,7 +774,7 @@ refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	3	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	2	no	yes	yes	serves
 getConfig	config	yes	57	no	yes	yes	serves
-setConfig	config	yes	97	no	yes	yes	serves
+setConfig	config	yes	98	no	yes	yes	serves
 unsetConfig	config	yes	4	no	yes	yes	serves
 listConfigKeys	config	yes	5	no	yes	yes	serves
 getAllConfig	config	yes	2	no	yes	yes	serves
@@ -1525,7 +1525,7 @@ listWithdrawalSlugs	facts_purge	yes	5	no	yes	yes	serves
 expireFactsByWithdrawal	facts_purge	yes	8	no	yes	yes	serves
 insertFactPurge	facts_purge	yes	25	no	yes	yes	serves
 insertTakePurge	facts_purge	yes	16	no	yes	yes	serves
-upsertPagePurges	facts_purge	yes	6	no	yes	yes	serves
+upsertPagePurges	facts_purge	yes	7	no	yes	yes	serves
 expireFactsOfGonePages	facts_purge	yes	1	no	yes	yes	serves
 readPurgeSourceLocalPath	facts_purge	yes	2	no	yes	yes	serves
 listGitEffectsCarryingReason	facts_purge	yes	1	no	yes	yes	serves
@@ -1972,14 +1972,14 @@ readSourceState	write_misc	yes	17	no	yes	yes	serves
 readAdmissionSource	write_misc	yes	2	no	yes	yes	serves
 sharedSkillPackTablePresent	write_misc	yes	1	no	yes	yes	serves
 listSharedSkillPackRoots	write_misc	yes	1	no	yes	yes	serves
-getWorktreeBinding	write_misc	yes	25	no	yes	yes	serves
+getWorktreeBinding	write_misc	yes	26	no	yes	yes	serves
 listHostTopologyRows	write_misc	yes	2	no	yes	yes	serves
 listWorktreeMembers	write_misc	yes	2	no	yes	yes	serves
 worktreeClaimStore	write_misc	yes	32	no	yes	yes	serves
-readWriterAdminState	write_misc	yes	14	no	yes	yes	serves
+readWriterAdminState	write_misc	yes	18	no	yes	yes	serves
 readWorktreeManifest	write_misc	yes	1	no	yes	yes	serves
 writerAdminStore	write_misc	yes	3	no	yes	yes	serves
-writerReleaseStore	write_misc	yes	16	no	yes	yes	serves
+writerReleaseStore	write_misc	yes	20	no	yes	yes	serves
 publicationJournalStore	write_misc	yes	2	no	yes	yes	serves
 chronicleStore	write_misc	yes	2	no	yes	yes	serves
 hasExtractedEvents	write_misc	yes	1	no	yes	yes	serves
