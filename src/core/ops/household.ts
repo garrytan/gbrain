@@ -15,10 +15,11 @@ import type { Action, Notice } from '../agent-output.ts';
 import { invalidParam, readFix } from './op-fix.ts';
 import { parseSourceIdParam } from './context.ts';
 import { requestSourceScope } from './search-source-scope.ts';
-import { resolveExcludePrivatePages } from '../search/private-visibility.ts';
-import { remoteTargetHidden } from '../persistence/page-visibility.ts';
-import { pageMutationSource, requestPrincipalForContext, submitPageMutation } from '../persistence/page-mutations.ts';
-import { getWriteRequest } from '../persistence/journal.ts';
+import { callerIdentities, callerIsOwner, currentCallerAccess, resolveExcludePrivatePages } from '../search/private-visibility.ts';
+import { assertRemoteReadersValid, pageNotVisibleError, remoteTargetHidden } from '../persistence/page-visibility.ts';
+import { initializeLocalPersistence, pageMutationSource, requestPrincipalForContext, submitPageMutation } from '../persistence/page-mutations.ts';
+import { admitChangeReason } from '../persistence/change-reason.ts';
+import { assertReplayIntent, getWriteRequest, intentDigest } from '../persistence/journal.ts';
 import { parseWriteRequestId } from '../persistence/preconditions.ts';
 import { serializeMarkdown } from '../markdown.ts';
 import { assertInlineBody } from '../page-body/page-shape.ts';
@@ -29,7 +30,7 @@ import {
   RECURS, readHouseholdRecord, strictDate, strictMonthDay, type HouseholdIssue, type HouseholdKind, type HouseholdRecord,
 } from '../household/record.ts';
 import { assessHouseholdRecord, calendarDay, rankAssessments, type HouseholdAssessment, type HouseholdState } from '../household/assess.ts';
-import { aboutOf, classifySubjects, placeHouseholdFrontmatter, placeRecord, readersWiderThanTable, refuseAccountNumbers, roleClass, type SubjectClass } from '../household/placement.ts';
+import { aboutOf, classifySubjects, householdWriteAdmission, nonOwnerChildRefusal, placedReaders, placeHouseholdFrontmatter, placeRecord, readersWiderThanTable, refuseAccountNumbers, roleClass, type SubjectClass } from '../household/placement.ts';
 
 /** Records one household_due call reads at most; past it the answer is partial with no counts. */
 export const HOUSEHOLD_SCAN_CAP = 2_000;
@@ -234,6 +235,8 @@ function timelineLine(day: string, event: string, note: string | null): string {
   return `- **${day}** | household — ${event}${note ? `: ${note}` : ''}`;
 }
 
+/** On a brain that serves several people, only the owner's remote connection makes a subject a child: one refusal, whatever records exist. */
+
 /**
  * Writes `household_role` on each subject page (creating a minimal page when none exists). A subject that goes from another
  * role to child first has the records about it narrowed to adults (`audience: adults`), so none is shared for a moment.
@@ -242,43 +245,55 @@ async function classifySubjectPages(ctx: OperationContext, sourceId: string, abo
   const changed: string[] = [];
   const pinned: string[] = [];
   for (const slug of about) {
-    const snapshot = await ctx.engine.readPageSnapshot(slug, { sourceId });
+    const snapshot = await ctx.engine.readPageSnapshot(slug, { sourceId, includeDeleted: true });
     const live = snapshot && !snapshot.page.deleted_at ? snapshot : null;
+    if (snapshot && await remoteTargetHidden(ctx.engine, ctx.remote, sourceId, slug)) throw opError('page_not_found', `Page not found: ${slug}`, 'Name a subject page this connection can read.');
     if (live && String(live.page.frontmatter?.household_role ?? '') === role) continue;
     if (live) assertInlineBody(live.page, 'household_add about_role');
-    if (live && await remoteTargetHidden(ctx.engine, ctx.remote, sourceId, slug)) throw opError('page_not_found', `Page not found: ${slug}`, 'Name a subject page this connection can read.');
-    if (live && role === 'child' && roleClass(live.page.frontmatter?.household_role) === 'not_child') pinned.push(...(await replaceHouseholdRecords(ctx, sourceId, [slug], { pin: true })).replaced);
+    if (role === 'child' && roleClass(live?.page.frontmatter?.household_role) !== 'child') {
+      if (ctx.remote !== false && !callerIsOwner() && await placedReaders(ctx.engine, 'adults')) throw nonOwnerChildRefusal(slug);
+      pinned.push(...(await replaceHouseholdRecords(ctx, sourceId, [slug], { pin: true })).replaced);
+    }
     const title = live?.page.title ?? slug.split('/').pop()!.replace(/-/g, ' ');
     const fm = { ...(live?.page.frontmatter ?? {}), household_role: role };
     const content = serializeMarkdown(Object.fromEntries(Object.entries(fm).filter(([k]) => !['type', 'title', 'tags'].includes(k))),
       live?.page.compiled_truth ?? `# ${title}`, live?.page.timeline ?? '', { type: (live?.page.type ?? (slug.startsWith('people/') ? 'person' : 'note')) as never, title, tags: live?.tags ?? [] });
-    await submitPageMutation(ctx, { operation: 'put_page', params: { slug, content, source_id: sourceId, ...(live ? { expected_revision: live.revision } : {}) } });
+    await submitPageMutation(ctx, { operation: 'put_page', params: { slug, content, source_id: sourceId, ...(snapshot ? { expected_revision: snapshot.revision } : {}) } });
     changed.push(slug);
   }
   return { classified: changed, pinned };
 }
 
-/** Rewrites every record (optionally only those about `about`) whose stored placement differs from the table; `pin` first narrows each to adults. */
+/**
+ * Rewrites every record (optionally only those about `about`), archived ones included, whose stored placement differs
+ * from the table, reading frontmatter in slug order 500 at a time (a keyset, so a record deleted during the walk shifts
+ * nothing) so no source is too large; `pin` first narrows each to adults.
+ */
 export async function replaceHouseholdRecords(ctx: OperationContext, sourceId: string, about?: readonly string[], opts: { pin?: boolean } = {}): Promise<{ checked: number; replaced: string[] }> {
   const wanted = about?.length ? new Set(aboutOf(about)) : null;
-  const rows = (await ctx.engine.listPages({ type: HOUSEHOLD_TYPE as never, sourceId, sort: 'slug', limit: 100_000, omitBodies: true }) as unknown as HouseholdPage[])
-    .filter(row => !wanted || aboutOf(row.frontmatter?.about).some(s => wanted.has(s)));
-  if (rows.length > HOUSEHOLD_SCAN_CAP) throw opError('household_scale', `More than ${HOUSEHOLD_SCAN_CAP} household records are in source ${sourceId}, so none were re-placed.`, 'Archive records you no longer need, then run gbrain household replace again.');
   const replaced: string[] = [];
-  for (const { slug } of rows) {
-    const snap = await ctx.engine.readPageSnapshot(slug, { sourceId });
-    if (!snap) continue;
-    const fm = { ...(snap.page.frontmatter ?? {}) };
-    const before = JSON.stringify([fm.household_audience ?? null, fm.readable_by ?? null]);
-    if (opts.pin && fm.household_audience !== 'adults') fm.audience = 'adults';
-    await placeHouseholdFrontmatter(ctx.engine, sourceId, fm, snap.tags);
-    if (JSON.stringify([fm.household_audience ?? null, fm.readable_by ?? null]) === before) continue;
-    assertInlineBody(snap.page, 'household_replace');
-    await submitPageMutation(ctx, { operation: 'put_page', params: { slug, source_id: sourceId, expected_revision: snap.revision,
-      content: serializeRecord(fm, snap.page.title, snap.page.compiled_truth, snap.page.timeline ?? '', snap.tags) } });
-    replaced.push(slug);
+  let checked = 0;
+  for (let after: string | undefined; ;) {
+    const rows = await ctx.engine.listPages({ type: HOUSEHOLD_TYPE as never, sourceId, sort: 'slug', limit: 500, slugAfter: after, omitBodies: true }) as unknown as HouseholdPage[];
+    after = rows.at(-1)?.slug;
+    for (const row of rows) {
+      if (wanted && !aboutOf(row.frontmatter?.about).some(s => wanted.has(s))) continue;
+      checked++;
+      const snap = await ctx.engine.readPageSnapshot(row.slug, { sourceId });
+      if (!snap) continue;
+      const fm = { ...(snap.page.frontmatter ?? {}) };
+      const before = JSON.stringify([fm.household_audience ?? null, fm.readable_by ?? null]);
+      if (opts.pin && fm.household_audience !== 'adults') fm.audience = 'adults';
+      await placeHouseholdFrontmatter(ctx.engine, sourceId, fm, snap.tags);
+      if (JSON.stringify([fm.household_audience ?? null, fm.readable_by ?? null]) === before) continue;
+      assertInlineBody(snap.page, 'household_replace');
+      await submitPageMutation(ctx, { operation: 'put_page', params: { slug: row.slug, source_id: sourceId, expected_revision: snap.revision,
+        content: serializeRecord(fm, snap.page.title, snap.page.compiled_truth, snap.page.timeline ?? '', snap.tags) } });
+      replaced.push(row.slug);
+    }
+    if (rows.length < 500) break;
   }
-  return { checked: rows.length, replaced };
+  return { checked, replaced };
 }
 
 const ROLE_ENUM = [...HOUSEHOLD_ROLES];
@@ -362,16 +377,44 @@ const household_add: Operation = {
     const slug = `${decision.folder}${tail}`;
     const existing = await ctx.engine.readPageSnapshot(slug, { sourceId, includeDeleted: true });
     const requestId = parseWriteRequestId(p.request_id);
-    const replay = existing && requestId ? await getWriteRequest(ctx.engine, await requestPrincipalForContext(ctx), requestId) : null;
-    if (existing && !existing.page.deleted_at && !(replay && replay.slug === slug && replay.source_id === sourceId)) {
+    if (requestId) await initializeLocalPersistence(ctx);
+    const prior = requestId ? await getWriteRequest(ctx.engine, await requestPrincipalForContext(ctx), requestId) : null;
+    const replay = !!prior && prior.operation === 'put_page' && prior.slug === slug && prior.source_id === sourceId;
+    if (prior && !replay) throw opError('idempotency_conflict', 'The request_id already belongs to a different write, so nothing was written.', 'Use a new request_id for a new household_add.');
+    if (existing && !replay && await remoteTargetHidden(ctx.engine, ctx.remote, sourceId, slug)) throw pageNotVisibleError();
+    if (existing && !existing.page.deleted_at && !replay) {
       throw opError('household_exists', `A page already exists at ${slug}, so nothing was written.`,
         'Record an event on the existing record with household_mark, or pass slug to name this one differently.',
         { fix: readFix('Shows the existing household records.', { argv: ['gbrain', 'household', 'list', '--json'], mcp: { tool: 'household_due', arguments: { include: 'all' } } }) });
     }
     const body = capText(p.note, 2_000) ?? `# ${title}`;
-    const result = await submitPageMutation(ctx, { operation: 'put_page', params: { slug, source_id: sourceId, content: serializeRecord(fm, title, body, '', tags),
-      ...(existing?.page.deleted_at ? { expected_revision: existing.revision } : {}), ...(typeof p.request_id === 'string' ? { request_id: p.request_id } : {}) } });
-    const { classified, pinned } = role ? await classifySubjectPages(ctx, sourceId, about, role) : { classified: [], pinned: [] };
+    const recordParams: Record<string, unknown> = { slug, source_id: sourceId, content: serializeRecord(fm, title, body, '', tags),
+      ...(existing?.page.deleted_at ? { expected_revision: existing.revision } : {}), ...(role ? { reason: admitChangeReason(`household_add about_role ${role}`) } : {}) };
+    if (prior) assertReplayIntent(prior, intentDigest({ operation: 'put_page', sourceId, slug: prior.slug, callerIntent: recordParams }));
+    const remote = ctx.remote !== false;
+    const placed = remote ? await placedReaders(ctx.engine, decision.audience) : null;
+    if (placed) assertRemoteReadersValid({ readable_by: placed }, callerIdentities(), currentCallerAccess().audience);
+    if (role) for (const subject of about) {
+      const snap = await ctx.engine.readPageSnapshot(subject, { sourceId, includeDeleted: true });
+      if (snap && await remoteTargetHidden(ctx.engine, ctx.remote, sourceId, subject)) throw opError('page_not_found', `Page not found: ${subject}`, 'Name a subject page this connection can read.');
+      const live = snap && !snap.page.deleted_at ? snap.page : null;
+      if (live && String(live.frontmatter?.household_role ?? '') === role) continue;
+      if (role === 'child' && placed && !callerIsOwner()) throw nonOwnerChildRefusal(subject);
+      if (live) assertInlineBody(live, 'household_add about_role');
+      if (role === 'child') {
+        if (remote) for (const row of await ctx.engine.listPages({ type: HOUSEHOLD_TYPE as never, sourceId, sort: 'slug', limit: 100_000, omitBodies: true }) as unknown as HouseholdPage[]) {
+          if (!aboutOf(row.frontmatter?.about).includes(subject) || !await remoteTargetHidden(ctx.engine, ctx.remote, sourceId, row.slug)) continue;
+          throw opError('household_reclassify', `A household record about ${subject} is not readable by this connection, so it cannot be narrowed here, and nothing was written.`,
+            `Run gbrain household replace --about ${subject} --role child on the brain host.`);
+        }
+        continue;
+      }
+      await householdWriteAdmission(ctx.engine, sourceId, subject, { type: live?.type ?? (subject.startsWith('people/') ? 'person' : 'note'),
+        frontmatter: { ...(live?.frontmatter ?? {}), household_role: role }, tags: [] }, snap?.page ?? null, remote);
+    }
+    const subjects = role && !prior ? await classifySubjectPages(ctx, sourceId, about, role) : { classified: [], pinned: [] };
+    const result = await submitPageMutation(ctx, { operation: 'put_page', params: { ...recordParams, ...(typeof p.request_id === 'string' ? { request_id: p.request_id } : {}) } });
+    const { classified, pinned } = subjects;
     const replaced = [...new Set([...pinned, ...(classified.length ? (await replaceHouseholdRecords(ctx, sourceId, classified)).replaced : [])])].filter(s => s !== slug).sort();
     return { ...result, slug, kind, audience: decision.audience, placement_basis: decision.basis, subjects_classified: classified, records_replaced: replaced };
   },

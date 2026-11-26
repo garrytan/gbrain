@@ -8,7 +8,7 @@ import type { Action } from '../agent-output.ts';
 import type { AgentVerb, RecipientClass } from '../agent-verbs.ts';
 import { callerAccessRecord, currentCallerAccess } from '../search/private-visibility.ts';
 import { currentReadMode } from '../access/scope-read.ts';
-import { evaluatePolicy, stricterVerdict, type PolicyQuery, type PolicyVerdict } from './evaluate.ts';
+import { evaluatePolicy, stricterVerdict, type PolicyQuery, type PolicyVerdict, type WindowUsage } from './evaluate.ts';
 import { formatLimit, type PolicyLimit, type PolicyRule } from './fence.ts';
 import { CHANGE_NOTICE_MS, resolvePolicy, type PolicyScope, type PolicyState, type ServedPolicy } from './store.ts';
 
@@ -62,6 +62,21 @@ export function stateFix(p: ServedPolicy): Action | null {
 
 export interface PolicyCheckInput { verb: AgentVerb; amount?: PolicyLimit; merchant?: string; to?: RecipientClass }
 
+/** Verbs that touch money or accounts: the agent always asks the user first, whatever the policy says (requires_approval). */
+export const APPROVAL_VERBS: readonly AgentVerb[] = ['spend', 'cancel', 'sign_up', 'dispute'];
+
+/** Reads the action ledger for the windowed rules of one verb (ledger/store.ts usageLookup). */
+export type UsageLookup = (rules: readonly PolicyRule[], q: { verb: AgentVerb }) => Promise<ReadonlyMap<string, WindowUsage | null>>;
+
+export interface BudgetView { scope: PolicyScope; rule_id: string; window: string; limit: string; spent: number | null; held: number | null; left: number | null; advice: string }
+
+function budgetView(scope: PolicyScope, rule: PolicyRule, used: WindowUsage | null | undefined): BudgetView {
+  const limit = rule.limit!;
+  if (!used) return { scope, rule_id: rule.id, window: rule.window!, limit: formatLimit(limit), spent: null, held: null, left: null, advice: `advice: the ${rule.window} budget could not be read` };
+  const left = Math.max(0, Math.round((limit.amount - used.spent - used.held) * 100) / 100);
+  return { scope, rule_id: rule.id, window: rule.window!, limit: formatLimit(limit), spent: used.spent, held: used.held, left, advice: `advice: ${left} ${limit.currency} left this ${rule.window}` };
+}
+
 export interface PolicyCheckAnswer {
   decision: 'allow' | 'ask' | 'deny' | 'none';
   rule_id: string | null;
@@ -72,27 +87,37 @@ export interface PolicyCheckAnswer {
   reason: string;
   note: string;
   scopes: ScopeView[];
+  /** True for money and account verbs (APPROVAL_VERBS) and for every ask: the agent asks the user before acting. */
+  requires_approval: boolean;
+  /** The day, week and month budgets that apply to this verb: advice, never an enforced limit. */
+  budgets?: BudgetView[];
   fix?: Action;
 }
 
-export async function checkPolicy(engine: BrainEngine, q: PolicyCheckInput, scopes: PolicyScope[]): Promise<PolicyCheckAnswer> {
+export async function checkPolicy(engine: BrainEngine, q: PolicyCheckInput, scopes: PolicyScope[], opts: { usage?: UsageLookup } = {}): Promise<PolicyCheckAnswer> {
   const served = await Promise.all(scopes.map(s => resolvePolicy(engine, s)));
   const live = served.filter(p => p.state !== 'none');
   const worst = served.reduce<ServedPolicy | null>((a, b) => (!a || STATE_RANK[b.state] > STATE_RANK[a.state] ? b : a), null);
   const fix = worst ? stateFix(worst) : null;
   const common = { enforcement: POLICY_ENFORCEMENT, note: HARNESS_APPROVALS_LINE, scopes: served.map(scopeView), policy_state: worst?.state ?? 'none' as PolicyState, ...(fix ? { fix } : {}) };
+  const sensitive = APPROVAL_VERBS.includes(q.verb);
   if (!live.length) {
-    return { decision: 'none', rule_id: null, scope: null, policy_revision: null, reason: 'No agent policy is set: follow your harness\'s own approvals.', ...common };
+    return { decision: 'none', rule_id: null, scope: null, policy_revision: null, reason: 'No agent policy is set: follow your harness\'s own approvals.', requires_approval: sensitive, ...common };
   }
   let best: (PolicyVerdict & { scope: PolicyScope; revision: string | null }) | null = null;
+  const budgets: BudgetView[] = [];
   for (const p of live) {
+    const windowed = p.authoritative ? p.rules.filter(r => r.verb === q.verb && r.limit && r.window && r.window !== 'per_action') : [];
+    const usage = windowed.length && opts.usage ? await opts.usage(windowed, q) : new Map<string, WindowUsage | null>();
+    budgets.push(...windowed.map(r => budgetView(p.scope, r, usage.get(r.id))));
     const verdict: PolicyVerdict = p.authoritative
-      ? evaluatePolicy(p.rules, q as PolicyQuery)
+      ? evaluatePolicy(p.rules, q as PolicyQuery, usage)
       : { decision: 'ask', rule_id: null, reason: p.state === 'malformed' ? `the ${p.scope} policy is malformed, so every outside action asks` : `the ${p.scope} policy has no owner approval, so every outside action asks` };
     const scoped = { ...verdict, scope: p.scope, revision: p.served_revision };
     best = best ? (stricterVerdict(best, verdict) === best ? best : scoped) : scoped;
   }
-  return { decision: best!.decision, rule_id: best!.rule_id, scope: best!.scope, policy_revision: best!.revision, reason: best!.reason, ...common };
+  return { decision: best!.decision, rule_id: best!.rule_id, scope: best!.scope, policy_revision: best!.revision, reason: best!.reason,
+    requires_approval: sensitive || best!.decision === 'ask', ...(budgets.length ? { budgets } : {}), ...common };
 }
 
 export interface RuleRow { scope: PolicyScope; id: string; verb: string; decision: string; when: string | null; limit: string | null; window: string | null; merchant: string | null; note: string | null }

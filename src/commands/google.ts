@@ -1082,8 +1082,14 @@ Subcommands:
                [--account <email>] [--json]
   disconnect   remove an account's tokens  <email> [--purge-client]
                (--purge-client also removes that account's own Personal-mode client)
+  mint serve   run the local Google token socket in the foreground (for a supervisor)
+  mint status  the socket path, allowed peers and whether the write broker is on  [--json]
+  approvals    list prompts held for the owner; answer one at a terminal:
+               approvals answer <request_id> <choice>  [--json]
+  exec         run gwscli with a read-only token, redacted from its output
+               --account <email> -- gwscli <args...>
 
-Docs: docs/guides/google-connect.md`;
+Docs: docs/guides/google-connect.md, docs/guides/google-socket.md`;
 
 /**
  * `gbrain google calendars [--account <email>] [--json]`
@@ -1157,6 +1163,9 @@ export async function runGoogle(args: string[]): Promise<void> {
     const { runGoogleSetup } = await import('./google-setup.ts');
     return runGoogleSetup(rest);
   }
+  if (sub === 'mint') return (await import('./google-socket.ts')).runGoogleMint(rest);
+  if (sub === 'approvals') return (await import('./google-socket.ts')).runGoogleApprovals(rest);
+  if (sub === 'exec') return (await import('./google-socket.ts')).runGoogleExec(rest);
   console.error(`Unknown subcommand: ${sub}\n`);
   process.stdout.write(HELP + '\n');
   process.exit(2);

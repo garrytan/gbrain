@@ -774,6 +774,7 @@
         "slugsEndingIn",
         "softDeletePage",
         "softDeletePages",
+        "sourceRead",
         "sql",
         "stageManifestRows",
         "stageSegmentChunks",

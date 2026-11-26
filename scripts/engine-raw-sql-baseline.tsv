@@ -666,6 +666,7 @@ src/core/notifier/store.ts	execute_raw	15
 src/core/oauth-grants.ts	sql_template	16
 src/core/oauth-provider.ts	sql_template	22
 src/core/onboard/checks.ts	execute_raw	5
+src/core/onboard/first-session.ts	execute_raw	3	first-session suggestion: the onboarding.first_session record compare-and-swap in config (insert and update) and the pointer read of recent world-visible pages under remoteReadFloorSql; converts with setup-history.ts
 src/core/onboard/checks.ts	sql_template	2
 src/core/onboard/impact-capture.ts	execute_raw	3
 src/core/onboard/mcp-onboarding.ts	execute_raw	1

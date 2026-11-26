@@ -85,14 +85,14 @@ function recognized(key: string): string {
  */
 export async function sourceHasRepo(engine: Pick<BrainEngine, 'getSource' | 'getConfig'>, sourceId: string): Promise<boolean> {
   try {
-    // Bounded as the one statement it replaced was: the source read ends on the server after NOTICE_READ_TIMEOUT_MS, and the config read is given up on after as long.
+    // Bounded as the one statement it replaced was: the source read ends on the server after NOTICE_READ_TIMEOUT_MS, and so is the config read.
     const source = await engine.getSource(sourceId, { timeoutMs: NOTICE_READ_TIMEOUT_MS });
     if (!source) return false;
     let config: Record<string, unknown> | null;
     try { config = typeof source.config === 'string' ? JSON.parse(source.config) as Record<string, unknown> : source.config as Record<string, unknown> | null; } catch { config = null; }
     if ((source.local_path ?? '') !== '' || config?.canonical === 'git') return true;
     if (sourceId !== 'default') return false;
-    const repoPath = await Promise.race([engine.getConfig('sync.repo_path'), new Promise<never>((_, reject) => setTimeout(() => reject(new Error('notice read timed out')), NOTICE_READ_TIMEOUT_MS).unref?.())]);
+    const repoPath = await engine.getConfig('sync.repo_path', { timeoutMs: NOTICE_READ_TIMEOUT_MS });
     return (repoPath ?? '') !== '';
   } catch {
     return true;

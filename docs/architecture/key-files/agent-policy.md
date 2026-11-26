@@ -1,14 +1,14 @@
-# Key files: Agent policy and capability probe
+# Key files: Agent policy, capability probe and action ledger
 
 [Subsystem index](../KEY_FILES.md) · [Previous entries](security-continued.md). Read only the entries relevant to your change.
 Current behavior and load-bearing invariants; history belongs in Git and CHANGELOG.
-User guide: `docs/guides/agent-policy.md`. Advisory only: nothing here blocks an action.
+User guides: `docs/guides/agent-policy.md`, `docs/guides/action-ledger.md`. Advisory only: nothing here blocks an action.
 
 - `src/core/agent-verbs.ts` — The one verb vocabulary (`AGENT_VERBS`, `SPEND_PURPOSES`, `RECIPIENT_CLASSES`) shared by policy rules, the action ledger and household actions. Other lanes copy it byte for byte; change it in one PR for all.
 
 - `src/core/policy/fence.ts` — The `gbrain:policy v1` fence: strict parser (line and column on error; any unknown verb, decision, class, window or limit makes the whole fence malformed), `renderPolicyFence` (canonical form) and `policyDigest` (sha256 of the canonical form, what an approval binds).
 
-- `src/core/policy/evaluate.ts` — Merchant rules, then condition rules (amount, recipient), then the verb's plain rule; deny beats ask beats allow within a tier; a verb with no rule answers ask; a currency mismatch, or a deny or ask rule whose field (merchant, to, amount) the check leaves out, gives a provisional ask that a stricter later rule overrides; `stricterVerdict` combines scopes.
+- `src/core/policy/evaluate.ts` — Merchant rules, then condition rules (amount, recipient), then the verb's plain rule; deny beats ask beats allow within a tier; a verb with no rule answers ask; a currency mismatch, or a deny or ask rule whose field (merchant, to, amount) the check leaves out, gives a provisional ask that a stricter later rule overrides; a day, week or month limit is a budget (amount plus the window's used spend and live holds, passed in as `UsageByRule`; unreadable usage is a provisional ask); `stricterVerdict` combines scopes.
 
 - `src/core/policy/presets.ts` — `ask-all` (default) and `gskills-level-0..3`, derived from gskills levels.json at a pinned commit: every level asks before send, spend, delete and publish; level 2 denies send, spend and call.
 
@@ -27,3 +27,13 @@ User guide: `docs/guides/agent-policy.md`. Advisory only: nothing here blocks an
 - `src/core/setup/policy-line.ts` — The brain-first policy line: off by default (`brain_first.policy_line`), rendered only where policy_check is reachable (CLI, full, starter via request_tools; never verbs). `refreshPolicyLineBlocks` in `brain-first-upgrade-notice.ts` rewrites installed blocks when the setting changes.
 
 - `src/commands/doctor/checks/policy-valid.ts` — `policy_valid`: warns on malformed, unapproved or changed_outside_gbrain with the next step.
+
+- `src/core/ledger/action.ts` — The agent_action page: `actions/YYYY/MM/<id>` (`actionSlug`: time from `at`, the rest from a hash of actor and request_id, so a replay names the same page), the strict frontmatter shape (`validateActionFrontmatter`; unknown keys refused, `trust_tier` is server-stamped) and status transitions (`canTransition`; done is never edited, only reversed).
+
+- `src/core/ledger/admission.ts` — Write admission: remote writes onto an action slug, or that declare or keep type agent_action, refuse with `ledger_log_action_only`; local writes are validated strictly (`action_invalid`) and forced private.
+
+- `src/core/ledger/store.ts` — `logAction` and `policyReserve` write through the page write path as trusted internal writes after stamping the actor (`actorFor`) and computing claim_basis (a ref resolves to a page the writer can read); a replay is found by its derived write request id. `ledgerReader`: owner, local and unbound callers read every action, a member reads pages whose readable_by names it, anyone else none. `scanActions` is bounded (`LEDGER_SCAN_MAX`; past it `ledgerReport` returns state partial with no totals). `policyReserve` checks and holds under one lock (an in-process chain plus the `gbrain-ledger-reserve` db lock); an expired hold is ignored, never rewritten.
+
+- `src/core/ledger/totals.ts` — Totals per currency split by claim basis, verb and counterparty (done and not superseded only; minutes_saved never totalled), `windowUsage` for budgets, UTC `windowStart` (weeks from Monday) and the deterministic weekly digest.
+
+- `src/core/ops/ledger.ts` — `log_action`, `ledger` and `policy_reserve`. `src/commands/ledger.ts` — `gbrain ledger` (totals, add, confirm, digest); confirm refuses from an agent session or with no terminal (`ledger_confirm_required`).

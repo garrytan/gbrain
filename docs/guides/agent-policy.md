@@ -29,7 +29,7 @@ Each change asks you to type a short code from the terminal, so you see what cha
 |---|---|
 | `gbrain policy init [--preset <name>] [--scope owner\|company]` | Starts a policy from a preset (default `ask-all`). |
 | `gbrain policy presets` | Lists presets: `ask-all` and `gskills-level-0` to `gskills-level-3`, which match gskills' action levels. Every level still asks before send, spend, delete and publish. |
-| `gbrain policy allow\|ask\|deny <verb> [options]` | Adds or replaces one rule. Verbs: send, publish, spend, delete, sign_up, call, book, cancel, dispute, submit, return, use, renew, remind, other. Options: `--amount 60 --currency USD` (or `--amount 60USD`), `--merchant <name>`, `--to self\|household\|known\|new`, `--window per_action`, `--id <rule-id>`, `--note <text>`. |
+| `gbrain policy allow\|ask\|deny <verb> [options]` | Adds or replaces one rule. Verbs: send, publish, spend, delete, sign_up, call, book, cancel, dispute, submit, return, use, renew, remind, other. Options: `--amount 60 --currency USD` (or `--amount 60USD`), `--merchant <name>`, `--to self\|household\|known\|new`, `--window per_action\|day\|week\|month`, `--id <rule-id>`, `--note <text>`. |
 | `gbrain policy edit` | Opens the rules table in your editor. Needs your own terminal. |
 | `gbrain policy show [--check] [--json]` | Prints the rules; `--check` also checks the page parses and is approved. |
 | `gbrain policy check <verb> [options] [--json]` | The answer an agent gets, with the rule that decided it. |
@@ -37,6 +37,16 @@ Each change asks you to type a short code from the terminal, so you see what cha
 | `gbrain policy status [--json]` | Each scope's state and which MCP clients fetched the policy last. |
 
 How rules combine: a rule that names a merchant wins, then a rule with a condition (amount or recipient), then the verb's plain rule. When two rules match at the same level, deny beats ask and ask beats allow. A verb with no rule answers ask, and so does a check that leaves out the merchant, recipient or amount a deny or ask rule depends on. An amount in a currency the rule does not name answers ask. On a shared brain the owner policy and the company policy both apply, and the stricter answer wins; a member, group or guest credential, or an audience of several people, reads only the company policy.
+
+## Budgets
+
+A limit with `--window day`, `week` or `month` is a budget instead of a per-action cap: the amount plus what that window has already used must fit under it. gbrain reads the used part from the [action ledger](action-ledger.md): spends logged as done, plus holds that `policy_reserve` placed and that have not expired. Windows are in UTC and weeks start on Monday. Only actions the caller can read count. A budget gbrain cannot read answers ask.
+
+```bash
+gbrain policy allow spend --merchant grocer-example --amount 150 --currency USD --window week
+```
+
+`policy_check` returns each budget that applies as advice (`"advice: 40 USD left this week"`), never as an enforced limit, and `requires_approval: true` for spend, cancel, sign_up and dispute whatever the decision. To stop two agents from both spending the last of a budget, an agent calls `policy_reserve` instead of `policy_check`: it checks and holds the amount in one step.
 
 ## Who can change it
 
