@@ -49,7 +49,7 @@ import {
 import { DEFAULT_PREPARATION_POLICY } from './preparation-budget.ts';
 import { consumerConnectionRoute, consumerOnDirectLane, consumerStatementEngine } from './consumer-lane.ts';
 import { readWriteSwitchSnapshot } from './switches.ts';
-import { rustMultiuserEngine, startHostRegistration, type HostRegistrationHandle } from './host-registration.ts';
+import { processOrigin, rustMultiuserEngine, startHostRegistration, type HostRegistrationHandle } from './host-registration.ts';
 
 export type ConsumerMode = 'probing' | 'full' | 'waiter_only' | 'promoted';
 /** Consecutive ticks a recovered owner must look healthy before a promoted consumer drains back. */
@@ -236,7 +236,7 @@ export class WaiterOnlyConsumer implements PersistenceConsumerLike {
       let registration: HostRegistrationHandle | undefined;
       if (rustMultiuserEngine(this.engine)) {
         registration = startHostRegistration(this.engine, { hostId: this.opts.hostId, everyMs: this.opts.heartbeatEveryMs, ttlMs: this.opts.hostLeaseTtlMs,
-          origin: { host_id: this.opts.hostId, incarnation: this.self.nonce, writer_id: `local_consumer:${this.opts.kind}` },
+          origin: processOrigin(this.opts.hostId, `local_consumer:${this.opts.kind}`, this.self), self: this.self,
           ...(reason.startsWith('forced:') ? { forcedNonce: this.self.nonce } : {}),
           onLost: () => { void this.demote('host_lease_lost'); } });
         if (!(await registration.first) || this.stopping) {

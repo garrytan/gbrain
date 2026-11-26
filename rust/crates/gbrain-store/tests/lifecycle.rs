@@ -2,6 +2,7 @@
 
 mod common;
 
+use common::format::{admission, downgrade_to_format_1};
 use common::{TempDir, open};
 use gbrain_store::error::{FORMAT_UNKNOWN, STORE_LOCKED};
 use gbrain_store::kv::{Kv, collect_prefix, prefix_end};
@@ -35,7 +36,7 @@ fn reopening_keeps_the_brain_id_and_says_it_was_not_created() {
 }
 
 #[test]
-fn a_second_open_of_a_live_brain_is_refused_and_the_first_keeps_working() {
+fn embedded_one_owner_a_second_open_of_a_live_brain_is_refused_and_the_first_keeps_working() {
     let dir = TempDir::new("locked");
     let first = open(&dir);
     let error = Store::open_dir(&dir.path().join("brain"), OpenOptions::default())
@@ -46,6 +47,21 @@ fn a_second_open_of_a_live_brain_is_refused_and_the_first_keeps_working() {
     first.close();
     // Once the owner closes, the brain opens again.
     assert!(Store::open_dir(&dir.path().join("brain"), OpenOptions::default()).is_ok());
+}
+
+/// C17: with several writers a second opener of a live brain becomes a client of the first and is never refused, and the
+/// first keeps working. Twin of `embedded_one_owner_a_second_open_of_a_live_brain_is_refused_and_the_first_keeps_working`;
+/// pending on the server lane (the raw second-open refusal stays a permanent invariant of the raw store).
+#[test]
+#[ignore = "multi_writer"]
+fn a_second_open_of_a_live_brain_becomes_a_client_and_the_first_keeps_working_multi_writer() {
+    common::mu::pending_member::<()>(common::mu::L3_SERVER, "a second opener becomes a client")
+        .unwrap_or_else(|e| panic!("{e}"));
+    let dir = TempDir::new("locked-multi");
+    let first = open(&dir);
+    let second = Store::open_dir(&dir.path().join("brain"), OpenOptions::default())
+        .unwrap_or_else(|e| panic!("the second opener was refused: {e}"));
+    assert!(first.commit_version().is_ok() && second.commit_version().is_ok());
 }
 
 #[test]
@@ -223,71 +239,6 @@ fn kv_prefix_helpers() {
         collect_prefix(&*snapshot, b"zz", false, 10).unwrap().len(),
         0
     );
-}
-
-/// Rewrites a brain into format 1, the layout before the per-counter records: the chunk stats
-/// and the unfinished-request counters are each one JSON record, and the format record says 1.
-fn downgrade_to_format_1(brain: &std::path::Path) {
-    use gbrain_store::keys;
-    use gbrain_store::kv::{read_i64, scan_prefix};
-    let kv = RedbKv::open_path(&brain.join("records.redb")).unwrap();
-    let mut tx = kv.begin_write().unwrap();
-    let chunks = read_i64(&*tx, &keys::meta("chunk_stats/chunks")).unwrap();
-    let length = read_i64(&*tx, &keys::meta("chunk_stats/total_length")).unwrap();
-    let brain_count = read_i64(&*tx, &keys::meta("journal_outstanding")).unwrap();
-    let prefix = keys::meta("journal_outstanding/");
-    let mut principals = serde_json::Map::new();
-    let mut counter_keys = vec![
-        keys::meta("chunk_stats/chunks"),
-        keys::meta("chunk_stats/total_length"),
-        keys::meta("journal_outstanding"),
-    ];
-    scan_prefix(&*tx, &prefix, false, &mut |k, v| {
-        let name = std::str::from_utf8(&k[prefix.len()..]).unwrap().to_string();
-        let n = i64::from_le_bytes(v.try_into().unwrap());
-        principals.insert(name, n.into());
-        counter_keys.push(k.to_vec());
-        true
-    })
-    .unwrap();
-    for key in counter_keys {
-        tx.delete(&key).unwrap();
-    }
-    let put = |tx: &mut Box<dyn gbrain_store::KvWrite>, name: &str, v: serde_json::Value| {
-        tx.put(&keys::meta(name), &serde_json::to_vec(&v).unwrap())
-            .unwrap()
-    };
-    put(
-        &mut tx,
-        "chunk_stats",
-        serde_json::json!({"chunks": chunks, "total_length": length}),
-    );
-    put(
-        &mut tx,
-        "journal_counters",
-        serde_json::json!({"brain": brain_count, "principals": principals}),
-    );
-    let mut format: serde_json::Value =
-        serde_json::from_slice(&tx.get(&keys::meta("format")).unwrap().unwrap()).unwrap();
-    format["format_version"] = 1.into();
-    put(&mut tx, "format", format);
-    tx.commit().unwrap();
-    let path = brain.join("FORMAT");
-    let mut file: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-    file["format_version"] = 1.into();
-    std::fs::write(&path, serde_json::to_vec_pretty(&file).unwrap()).unwrap();
-}
-
-fn admission(n: u32) -> gbrain_store::journal::WriteAdmission {
-    serde_json::from_value(serde_json::json!({
-        "principal": {"kind": "local_cli", "id": "cli"}, "operation": "put_page",
-        "sourceId": "default", "slug": format!("notes/held-{n}"),
-        "requestId": format!("00000000-0000-4000-8000-{n:012}"),
-        "callerIntent": {"slug": format!("notes/held-{n}")},
-        "intent": {},
-    }))
-    .unwrap()
 }
 
 #[test]
