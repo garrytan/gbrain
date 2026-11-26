@@ -964,6 +964,71 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       expect(verdicts(inbox)).toEqual([['sample', undefined]]);
     }, 60_000);
 
+    test('the swap report names what criterion 5 leaves uncompared, and the warm single-write path is no longer one of them', () => {
+      const detail = row5({}).detail ?? '';
+      expect(detail).toContain(WRITE_COVERAGE_NAMED);
+      expect(WRITE_COVERAGE_NAMED).toContain('chunks, tags, aliases, timeline entries, takes, facts, fact withdrawals, open loops, sources, owner-only marks and the decide store');
+      expect(detail).not.toContain('warm single-write path');
+    });
+
+    // The warm single-write lane: a reserved connection's own transaction (Postgres only; PGLite's reserved connection has none).
+    const lane = async <T>(wrapped: BrainEngine, run: (tx: BrainEngine) => Promise<T>, opts?: Record<string, unknown>): Promise<T> =>
+      (wrapped as any).withReservedConnection((conn: any) => conn.transaction(run, opts));
+
+    test('a page write in the warm lane transaction is sampled after the commit, a rolled-back one is dropped, and the warm transaction itself is unchanged', async () => {
+      if (ctx.kind !== 'postgres') return;
+      const { inbox, wrapped } = await fresh();
+      await lane(wrapped, async (tx) => { await tx.putPage('people/una-example', page('Una Example'), { sourceId: 'default', inline: true }); expect(putEvents(inbox)).toEqual([]); });
+      expect((await primary().getPage('people/una-example'))?.title).toBe('Una Example');
+      expect((await sampleOf(inbox)).length).toBe(1);
+      expect(putEvents(inbox)[0]!.outcome).toBeUndefined(); // a full sample: the rows read before the write travel with it
+      await expect(lane(wrapped, async (tx) => { await tx.putPage('people/vic-example', page('Vic Example')); throw new Error('roll back'); })).rejects.toThrow('roll back');
+      await new Promise((r) => setTimeout(r, 300));
+      expect(putEvents(inbox)).toHaveLength(1); // nothing more: the rolled-back write is never compared
+      expect(await primary().getPage('people/vic-example')).toBeNull();
+    }, 60_000);
+
+    test('a warm-lane write is never sampled through the savepoint while another call runs: parallel inline writes and a version row all survive the commit', async () => {
+      if (ctx.kind !== 'postgres') return;
+      await ctx.reset(); await fillSeedFixture(primary());
+      await primary().putPage('people/wes-example', page('Wes Example'));
+      const { inbox, wrapped } = rig();
+      const snapshot = await primary().readPageSnapshot('people/wes-example');
+      await lane(wrapped, async (tx) => {
+        await Promise.all([
+          tx.putPage('people/xia-example', page('Xia Example'), { sourceId: 'default', inline: true }),
+          tx.putPage('people/yan-example', page('Yan Example'), { sourceId: 'default', inline: true }),
+          tx.createVersion('people/wes-example', { sourceId: 'default', preimage: snapshot } as never),
+          tx.putPage('people/wes-example', page('Wes Renamed'), { sourceId: 'default', inline: true }),
+        ]);
+      });
+      for (const slug of ['people/xia-example', 'people/yan-example']) expect(await primary().getPage(slug)).not.toBeNull();
+      expect((await primary().getPage('people/wes-example'))?.title).toBe('Wes Renamed');
+      expect(await primary().getVersions('people/wes-example')).toHaveLength(1);
+      await sampleOf(inbox, 3);
+      expect(verdicts(inbox).filter(([, reason]) => reason === 'in_transaction_busy').length).toBe(2);
+    }, 60_000);
+
+    test('the warm lane keeps its first statement first: with pipelineFirst the declaration is sent before BEGIN is answered, and every preimage statement follows it', async () => {
+      if (ctx.kind !== 'postgres') return;
+      const { inbox, wrapped } = await fresh();
+      const declaration = "SELECT set_config('gbrain.persistence_protocol','2',true)";
+      const seen: string[] = [];
+      const original = primary().executeRaw as (...a: unknown[]) => Promise<unknown>;
+      const spy = spyOn(primary(), 'executeRaw').mockImplementation(function (this: unknown, sql: unknown, ...rest: unknown[]) { if (typeof sql === 'string') seen.push(sql); return original.call(this, sql, ...rest); } as never);
+      try {
+        await lane(wrapped, async (tx) => { await tx.executeRaw(declaration); await tx.putPage('people/zed-example', page('Zed Example'), { sourceId: 'default', inline: true }); },
+          { pipelineFirst: (statement: string) => statement === declaration });
+      } finally { spy.mockRestore(); }
+      await sampleOf(inbox);
+      const first = seen.findIndex((q) => q === declaration);
+      const preimage = seen.map((q, i) => (q.includes('shadow write preimage') ? i : -1)).filter((i) => i >= 0);
+      expect(first).toBe(0);
+      expect(preimage.length).toBeGreaterThan(0);
+      expect(preimage.every((i) => i > first)).toBe(true);
+      expect((await primary().getPage('people/zed-example'))?.title).toBe('Zed Example');
+    }, 60_000);
+
     test('the journal members the sampler treats as bookkeeping send only the statements it judged: each typed member, on both dialects, sends exactly its mapped statements and nothing else', async () => {
       const record = async (dialect: 'postgres' | 'pglite', run: (exec: never) => Promise<unknown>) => {
         const sent: string[] = [];
@@ -1040,6 +1105,18 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       });
       await until(() => putEvents(inbox).length === 2);
       expect(putEvents(inbox).map((e) => (e.args as string[])[0]).sort()).toEqual(['people/ivy-example', 'people/jon-example']);
+      expect(await real(putEvents(inbox))).toMatchObject({ comparable: 2, unexplained_difference: 0, uncomparable: 0 });
+    }, 120_000);
+
+    test('a page write in the warm lane transaction is replayed and comparable (a create and an update of the same page, default contextual-retrieval mode)', async () => {
+      if (ctx.kind !== 'postgres') return;
+      await ctx.reset(); await fillSeedFixture(primary());
+      const { inbox, wrapped } = rig();
+      const run = (title: string) => (wrapped as any).withReservedConnection((conn: any) => conn.transaction(async (tx: BrainEngine) => {
+        await tx.putPage('people/abe-example', page(title), { sourceId: 'default', inline: true, contextualRetrieval: { mode: 'title', corpusGeneration: 'generation-example' } });
+      }));
+      await run('Abe Example'); await run('Abe Renamed');
+      await until(() => putEvents(inbox).length === 2);
       expect(await real(putEvents(inbox))).toMatchObject({ comparable: 2, unexplained_difference: 0, uncomparable: 0 });
     }, 120_000);
 
