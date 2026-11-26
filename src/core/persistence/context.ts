@@ -6,6 +6,7 @@ import { readPersistenceBrain } from './managed-mode.ts';
 import { settleAtCommit } from '../page-state/transactions.ts';
 import { isTrustTier, nestWriteTrust, trustRankSql, type TrustTier, type WriteTrust } from '../trust/tier.ts';
 import type { TrustTable } from '../trust/schema.ts';
+import { WRITE_CONTEXT_SETTINGS } from '../engine-sql/transaction-settings.ts';
 
 /** What the transaction-setting scopes need from the engine: typed reads and writes of `current_setting` / `set_config`. */
 type SettingsEngine = Pick<BrainEngine, 'readTransactionSettings' | 'applyTransactionSettings'>;
@@ -63,31 +64,18 @@ const nestedTrustValues = (outer: string[], trust: WriteTrust | undefined) =>
  * content row and page revision written inside (persistence/attribution-schema.ts).
  */
 export async function withCoordinatedWrite<T>(engine: BrainEngine, sourceIds: string[], fn: () => Promise<T>, attribution: WriteAttribution): Promise<T> {
-  // #6007: the persistence identity, the enclosing settings and the new settings in one round trip;
-  // nothing is set when the identity row is missing. The OFFSET 0 subquery reads the enclosing values first.
-  // A declared trust tier nests as min(outer, inner) (ranks compared in SQL); an undeclared one leaves the enclosing settings.
-  // G7a: `gbrain.git_protocol` declares that this build applies the git-canonical rules (git-declared.ts); the managed
-  // writer guard refuses rows of a git-canonical source from a writer without it (an older gbrain).
-  const names = ['gbrain.write_sources', ...ATTRIBUTION_SETTINGS, ...TRUST_SETTINGS, 'gbrain.git_protocol'];
+  // #6007: identity, enclosing settings and new settings in one round trip (engine-sql/transaction-settings.ts).
+  const names = WRITE_CONTEXT_SETTINGS;
   const [tier, origin] = trustValues(attribution.trust ?? null);
-  const [brain] = await engine.executeRaw<Record<string, string | null>>(`SELECT b.brain_id,prev.*,
-      CASE WHEN b.brain_id IS NOT NULL THEN concat(set_config('gbrain.write_sources',$1,true),set_config('gbrain.git_protocol','1',true),
-        set_config('gbrain.write_request',CASE WHEN prev.s2<>'' THEN prev.s1 ELSE $2 END,true),
-        set_config('gbrain.write_principal_kind',CASE WHEN prev.s2<>'' THEN prev.s2 ELSE $3 END,true),
-        set_config('gbrain.write_principal_id',CASE WHEN prev.s2<>'' THEN prev.s3 ELSE $4 END,true),
-        CASE WHEN $5::text<>'' THEN concat(
-          set_config('gbrain.write_trust_tier',CASE WHEN ${trustRankSql('prev.s4')}>0 AND ${trustRankSql('prev.s4')}<${trustRankSql('$5::text')} THEN prev.s4 ELSE $5::text END,true),
-          set_config('gbrain.write_origin',CASE WHEN $6::text<>'' THEN $6::text ELSE prev.s5 END,true)) END) END AS applied
-    FROM (SELECT ${names.map((name, index) => `COALESCE(current_setting('${name}',true),'') AS s${index}`).join(',')} OFFSET 0) prev
-    LEFT JOIN persistence_brain b ON b.singleton=1`,
-  [JSON.stringify(sourceIds), attribution.requestId ?? '', attribution.principal.kind, attribution.principal.id, tier, origin]);
-  if (!brain?.brain_id) {
+  const brain = await engine.setWriteContext({ sourceIds, requestId: attribution.requestId ?? null,
+    principalKind: attribution.principal.kind, principalId: attribution.principal.id, tier, origin });
+  if (!brain.brainId) {
     throw opError('writer_not_initialized', 'Persistence identity is missing.',
       'This brain has no persistence identity row, so coordinated writes cannot run and nothing was written. List the pending migrations that create it and ask the user to approve applying them.',
       { fix: { argv: ['gbrain', 'apply-migrations', '--dry-run', '--json'], consent: [], actor: 'agent', why: 'Lists the pending migrations without applying them.', requires_exclusive: false } });
   }
-  const context: PublicationContext = { brainId: brain.brain_id, sourceIds: new Set(sourceIds), active: true };
-  const previous = names.map((_, index) => brain[`s${index}`] ?? '');
+  const context: PublicationContext = { brainId: brain.brainId, sourceIds: new Set(sourceIds), active: true };
+  const previous = brain.previous;
   let failed = false;
   try {
     return await publication.run(context, async () => {

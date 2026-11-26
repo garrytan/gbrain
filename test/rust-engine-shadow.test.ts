@@ -163,7 +163,7 @@ describe('wrapper', () => {
   });
 
   test('a path the engine recorded when it connected is found through the shadow view', async () => {
-    const primary = Object.assign(fakePrimary(), { executeRaw: async () => [{ present: false }] });
+    const primary = Object.assign(fakePrimary(), { hasPersistenceTable: async () => false });
     await registerManagedFilesystemEngine(primary as never, '/brains/main.pglite');
     const view = wrapShadowEngine(primary, sink(), { sampleRate: 1 });
     expect(managedFilesystemDatastorePath(primary as never)).toBe('/brains/main.pglite');

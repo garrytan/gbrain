@@ -894,6 +894,11 @@ function countingProxy(target: PGLiteEngine, onRead?: (sql: string, params?: unk
       if (replaced !== undefined) return replaced;
       return base.executeRaw(sql, params as unknown[], opts as never);
     };
+    // The full receipt read through the typed readWriteRequestById. Only the waiter's own reads count.
+    if (key === 'readWriteRequestById') return (id: string, opts?: { signal?: AbortSignal }) => {
+      if (new Error().stack?.includes('awaitWrite')) counts.full++;
+      return base.readWriteRequestById(id, opts);
+    };
     const value = Reflect.get(base, key);
     return typeof value === 'function' ? value.bind(base) : value;
   } });
