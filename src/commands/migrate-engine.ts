@@ -30,6 +30,7 @@ import { listLiveLocks } from '../core/db-lock.ts';
 import { drainProjections, queuePageProjection } from '../core/page-state/projections.ts';
 import { carryChunkMetadata } from '../core/embed-stale.ts';
 import { normalizeAliasList } from '../core/search/alias-normalize.ts';
+import { withReservedConfigWrite } from '../core/config-snapshot.ts';
 
 interface MigrateOpts {
   targetEngine: 'postgres' | 'pglite';
@@ -387,7 +388,8 @@ export const MIGRATE_CONFIG_ENGINE_LOCAL_KEYS: ReadonlySet<string> = new Set([
  * Copy every DB-plane config row except the engine-local denylist above.
  * Subsumes the old 3-key allowlist (embedding_model / embedding_dimensions /
  * chunk_strategy — schema metadata recording what the schema was sized
- * with); those still copy, now alongside everything else.
+ * with); those still copy, now alongside everything else. The reserved agent-policy
+ * rows (an owner approval checks its own digest) copy unchanged too.
  */
 export async function copyMigrationConfig(
   source: BrainEngine,
@@ -397,14 +399,16 @@ export async function copyMigrationConfig(
   const rows = Object.keys(all).sort().map(key => ({ key, value: all[key]! }));
   const skipped: string[] = [];
   let copied = 0;
-  for (const row of rows) {
-    if (MIGRATE_CONFIG_ENGINE_LOCAL_KEYS.has(row.key)) {
-      skipped.push(row.key);
-      continue;
+  await withReservedConfigWrite(async () => {
+    for (const row of rows) {
+      if (MIGRATE_CONFIG_ENGINE_LOCAL_KEYS.has(row.key)) {
+        skipped.push(row.key);
+        continue;
+      }
+      await target.setConfig(row.key, row.value);
+      copied++;
     }
-    await target.setConfig(row.key, row.value);
-    copied++;
-  }
+  });
   return { copied, skipped };
 }
 

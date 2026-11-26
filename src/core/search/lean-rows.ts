@@ -18,7 +18,8 @@
  *     message_id, thread_id, source_subject, matched_alias (the other name the
  *     alias fan-out searched); trust_tier and origin (#5575); quoted (a
  *     fenced conversation excerpt, search/transcript-quote.ts); `provenance`
- *     only as `generated` (a machine-written page); modality when not text; stale
+ *     only as `generated` (a machine-written page); `precedence` only when
+ *     it is not `curated` (eligibility/precedence.ts); modality when not text; stale
  *     only when set (true, or the held-file object from #5988);
  *   - `delivered: { truncated: true }` whenever evidence delivery truncated;
  *     on a long page `search.long_page_unit` considered, `delivered: { unit,
@@ -82,6 +83,7 @@ export function leanRow(row: Record<string, unknown>, opts: { keepId?: boolean }
     else if (key === 'stale' && (value === true || (typeof value === 'object' && value !== null))) out[key] = value;
     else if (key === 'modality' && value !== 'text') out[key] = value;
     else if (key === 'provenance' && value === 'generated') out[key] = value;
+    else if (key === 'precedence' && value !== 'curated') out[key] = value;
     else if (key === 'delivered') {
       const d = value as { unit?: unknown; reason?: unknown; truncated?: unknown };
       const truncated = d.truncated === true ? { truncated: true } : {};

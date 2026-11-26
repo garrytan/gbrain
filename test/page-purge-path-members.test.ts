@@ -230,7 +230,7 @@ describe('the purge path calls only what the list names', () => {
     expect(await purgePathStops({ kind: 'pglite' })).toEqual([]);
     expect(await purgePathStops({ kind: 'postgres' })).toEqual([]);
     const stops = await purgePathStops({ kind: 'rust' });
-    expect(stops.length).toBeGreaterThan(0);
+    // A delete_page purge has no stop left on main: every member it calls is served (the retention purge keeps its raw sites).
     for (const stop of stops) expect(PURGE_PATH).toContain(stop.entry);
     expect(stops.map(stop => stop.name)).toEqual(PURGE_PATH
       .filter(entry => entry.entry !== 'retention' && ('site' in entry ? entry.stop : entry.refuses || rustMemberCapability(entry.member) !== null))
@@ -242,6 +242,7 @@ describe('the purge path calls only what the list names', () => {
     const stops = (await purgePathStops({ kind: 'rust' })) as Array<{ name: string; owner: string; due?: string }>;
     expect(stops.filter(stop => stop.owner !== PURGE_OWNERS.ours && !stop.due).map(stop => stop.name)).toEqual([]);
     const error = await requirePurgePathServed({ kind: 'rust' }).then(() => null, (e: unknown) => e as { message: string; detail: string });
+    if (stops.length === 0) { expect(error).toBeNull(); return; }
     expect(error?.message).toContain(`which needs ${stops[0]!.name}: `);
     expect(error?.detail).toContain(`owner="${stops[0]!.owner}" due="${stops[0]!.due}"`);
   });
