@@ -35,8 +35,8 @@ raw files beat gbrain on very long chat histories (BEAM-10M), so try it before y
 ## Facts with provenance
 
 **What it does.** Each fact the brain keeps records where it came from and when. A new fact supersedes an older one
-about the same entity when the two closely match (this matching needs an embedding key) or when the caller names the
-fact it replaces; otherwise near-duplicates can sit side by side. `gbrain forget` withdraws a fact from active memory. Pages from email, web pages
+about the same entity when the caller names the fact it replaces, and can supersede it automatically when the two closely
+match under an embedding model gbrain has a calibrated match threshold for; otherwise near-duplicates can sit side by side. `gbrain forget` withdraws a fact from active memory. Pages from email, web pages
 and tool output carry trust labels, so a later session can tell an outside claim from what you said. Guides:
 [facts on entities](entity-scoped-facts.md), [memory boundaries](memory-boundaries.md).
 
@@ -49,8 +49,8 @@ adopted an attacker's false claim in 10.2% of later sessions, against 2.8% with 
 **What it does.** A page can carry `readable_by` with members or groups, and a folder rule can cover a whole folder. Each
 member's credential is bound to that member, and search, reads, links and facts all honour it, so a member's authenticated
 agent is not handed a restricted page through those paths. That is tested on specific access paths, not a universal
-no-leak guarantee, and shared database credentials are a separate boundary these rules don't cover. The page is still an ordinary Markdown file in the brain's git repository, so
-anyone who can clone the repository can read it: keep repository access to the people every page is meant for. Guides: [access designations](access-designations.md),
+no-leak guarantee, and shared database credentials are a separate boundary these rules don't cover. Where a restricted page is committed to the brain's git repository, its file and
+history are readable by anyone who can clone the repository, so keep repository access to the people every page is meant for. Guides: [access designations](access-designations.md),
 [company brain](../tutorials/company-brain.md).
 
 **The simpler alternative.** Separate folders or separate brains per audience, or filtering results after search.
