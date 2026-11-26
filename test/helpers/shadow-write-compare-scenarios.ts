@@ -21,8 +21,12 @@ import { buildFollowStatus, readFollowerFile, renderFollowStatus } from '../../s
 import { newMirrorCounters } from '../../src/shadow/mirror.ts';
 import { writeSeedRecord } from '../../src/shadow/seed.ts';
 import { wrapShadowEngine } from '../../src/shadow/wrapper.ts';
-import { completeWriteRow, lockPersistenceCounters } from '../../src/core/engine-sql/persistence-journal.ts';
-import { createWriteSampler, JOURNAL_MEMBER_STATEMENTS, PUT_PAGE_OPTIONS, readPreimage } from '../../src/shadow/write-capture.ts';
+import { completeWriteRow, insertPublicationEffects, lockPersistenceCounters } from '../../src/core/engine-sql/persistence-journal.ts';
+import { sqlWrites } from '../../src/shadow/sql-writes.ts';
+import { sealImportedPage } from '../../src/core/engine-sql/write-guards.ts';
+import { renderFragment } from '../../src/core/engine-sql/fragment.ts';
+import { pageSearchVectorSql } from '../../src/core/fts-language.ts';
+import { bookkeepingStatements, createWriteSampler, JOURNAL_MEMBER_STATEMENTS, PUT_PAGE_OPTIONS, readPreimage } from '../../src/shadow/write-capture.ts';
 import { createWriteComparer } from '../../src/shadow/write-compare-child.ts';
 import { openRustEngine, type RustEngineAddonHandle } from '../../src/core/rust-engine.ts';
 import { readWriteTally, WriteTally, type WriteEvent } from '../../src/shadow/write-compare.ts';
@@ -1039,8 +1043,32 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
         expect(await record(dialect, (exec) => completeWriteRow(exec, completion(false) as never))).toEqual([complete!]);
         expect(await record(dialect, (exec) => completeWriteRow(exec, completion(true) as never))).toEqual([probe!]);
       }
-      expect([...JOURNAL_MEMBER_STATEMENTS.keys()].sort()).toEqual(['completeWriteRow', 'lockPersistenceCounters']); // upsertWriteGateReceipt and insertPublicationEffects are not bookkeeping: they stay ordinary writes
+      const effects = JOURNAL_MEMBER_STATEMENTS.get('insertPublicationEffects')!;
+      for (const dialect of ['postgres', 'pglite'] as const) {
+        expect(await record(dialect, (exec) => insertPublicationEffects(exec, { requestId: '00000000-0000-4000-8000-000000000000', revision: null, sourceId: 'default', sourceIncarnation: '00000000-0000-4000-8000-000000000001', worktreeId: null, effects: [{ kind: 'links', data: {} }] } as never))).toEqual([effects[0]!]);
+      }
+      expect([...JOURNAL_MEMBER_STATEMENTS.keys()].sort()).toEqual(['completeWriteRow', 'insertPublicationEffects', 'lockPersistenceCounters']); // upsertWriteGateReceipt is not bookkeeping: it stays an ordinary write
     }, 30_000);
+
+    test('insertPublicationEffects is bookkeeping only while its statement writes persistence_effects and nothing else: a statement that writes another table is an ordinary write', () => {
+      const [effects] = JOURNAL_MEMBER_STATEMENTS.get('insertPublicationEffects')!;
+      expect(sqlWrites(effects!).map((w) => `${w.kind}:${(w as { relation?: string }).relation}`)).toEqual(['relation:persistence_effects']);
+      expect(bookkeepingStatements([effects!])).toBe(true);
+      expect(bookkeepingStatements([`WITH moved AS (INSERT INTO pages (slug) VALUES ('x') RETURNING 1) ${effects!}`])).toBe(false);
+      expect(bookkeepingStatements([effects!, 'UPDATE pages SET title = title'])).toBe(false);
+    });
+
+    test('the closing seal the sampler treats as a seal is exactly the page update the sealImportedPage member sends: any other text is an ordinary write again', async () => {
+      let sent = '';
+      await sealImportedPage({ run: async (fragment: never) => { sent = renderFragment(fragment).text; return { rows: [] }; } } as never, 'notes/a',
+        { sourceId: 'default', revision: '00000000-0000-4000-8000-000000000000', timelineText: '', chunkerVersion: 1 });
+      const norm = (text: string) => text.replace(/\s+/g, ' ').replace(/\$\d+/g, '$').trim();
+      expect(norm(sent)).toBe(norm(`UPDATE pages SET chunker_version=$1,
+        text_projection_revision=CASE WHEN knowledge_revision=$2::uuid THEN knowledge_revision ELSE text_projection_revision END,
+        search_vector=CASE WHEN knowledge_revision=$2::uuid THEN ${pageSearchVectorSql('title', 'v.seal_input')} ELSE search_vector END
+        FROM (SELECT $3::text AS seal_input) v
+        WHERE pages.source_id=$4 AND pages.slug=$5 RETURNING pages.id`));
+    });
 
     test('calls made while the preimage is read keep their order behind the sampled write (a tag added right after a new page lands on it)', async () => {
       const { inbox, wrapped } = await fresh();
