@@ -28,6 +28,7 @@ import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runCli } from './helpers/cli-spawn.ts';
+import { withEnv } from './helpers/with-env.ts';
 import { openclawAgentPolicy, openclawCatalogName } from '../src/core/setup/openclaw-skill-plugin.ts';
 import { runOpenclawCli } from '../src/core/setup/openclaw-turn-plugin.ts';
 
@@ -703,16 +704,12 @@ describe.skipIf(!NODE)('session classes and the session-start brief', () => {
     expect(out[0].appendContext).not.toContain('read the SKILL.md at its path');
   });
 
-  test('a non-main agent kept to its workspace with no workspace entry reads only OpenClaw\'s default workspace for it, never any path', () => {
+  test('a non-main agent kept to its workspace with no workspace entry reads only OpenClaw\'s default workspace for it, never any path', async () => {
     const b = box();
     writeFileSync(join(b.state, 'openclaw.json'), JSON.stringify({ agents: { list: [{ id: 'main', workspace: join(b.state, 'workspace') }, { id: 'ops' }] }, tools: { fs: { workspaceOnly: true } } }));
-    const saved = { s: process.env.OPENCLAW_STATE_DIR, c: process.env.OPENCLAW_CONFIG_PATH, h: process.env.HOME };
-    process.env.OPENCLAW_STATE_DIR = b.state; delete process.env.OPENCLAW_CONFIG_PATH; process.env.HOME = b.home;
-    try {
+    await withEnv({ OPENCLAW_STATE_DIR: b.state, OPENCLAW_CONFIG_PATH: undefined, HOME: b.home }, () => {
       expect(openclawAgentPolicy('ops')).toMatchObject({ path_reads: 'workspace', workspace: join(b.state, 'workspace-ops') });
-    } finally {
-      for (const [k, v] of [['OPENCLAW_STATE_DIR', saved.s], ['OPENCLAW_CONFIG_PATH', saved.c], ['HOME', saved.h]] as const) if (v === undefined) delete process.env[k]; else process.env[k] = v;
-    }
+    });
   });
 
   test('after the worker rebuilds a catalog the plugin refreshes the state, so a skill OpenClaw now hides stops being suggested', async () => {
