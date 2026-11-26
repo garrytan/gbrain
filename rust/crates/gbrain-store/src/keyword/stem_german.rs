@@ -377,8 +377,8 @@ fn skip_utf8(p: &[u8], mut c: i32, limit: i32, n: i32) -> Option<i32> {
         c += 1;
         if b >= 0xC0 {
             while c < limit {
-                let b = p[c as usize];
-                if b >= 0xC0 || b < 0x80 {
+                // A continuation byte is `0x80..0xC0`; any other byte starts the next character.
+                if !(0x80..0xC0).contains(&p[c as usize]) {
                     break;
                 }
                 c += 1;
