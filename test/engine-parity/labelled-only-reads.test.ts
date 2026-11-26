@@ -484,12 +484,17 @@ describe('engine parity: the access part of the page policy, and a rename or ali
       { id: 'g3b', oldReaders: ['bob-example'], newReaders: ['carol-example'], carol: false },
       { id: 'g3c', oldReaders: ['carol-example'], newReaders: ['bob-example'], carol: false },
       { id: 'g3d', oldReaders: ['carol-example'], newReaders: ['carol-example', 'bob-example'], carol: true },
-    ];
+      // One extant origin names nobody (no readable_by key: ordinary lineage lets the atom through) and the other names carol: only the
+      // labelled-only walk denies, and only if it requires every origin to name the member. Both orderings.
+      { id: 'g3e', oldReaders: null, newReaders: ['carol-example'], carol: false },
+      { id: 'g3f', oldReaders: ['carol-example'], newReaders: null, carol: false },
+    ] as Array<{ id: string; oldReaders: string[] | null; newReaders: string[] | null; carol: boolean }>;
+    const front = (readers: string[] | null) => (readers ? { readable_by: readers } : {});
     for (const c of cases) {
-      await put(engine, `open/${c.id}-old`, 'note', { readable_by: c.oldReaders });
+      await put(engine, `open/${c.id}-old`, 'note', front(c.oldReaders));
       await engine.updateSlug(`open/${c.id}-old`, `open/${c.id}-new`, { sourceId: 'default' });
-      await put(engine, `open/${c.id}-new`, 'note', { readable_by: c.newReaders });
-      await put(engine, `open/${c.id}-old`, 'note', { readable_by: c.oldReaders });
+      await put(engine, `open/${c.id}-new`, 'note', front(c.newReaders));
+      await put(engine, `open/${c.id}-old`, 'note', front(c.oldReaders));
       await put(engine, `walk/${c.id}`, 'atom', { visibility: 'world', source_slug: `open/${c.id}-old` });
     }
     await setMembersReadLineage(engine, true, { remote: false });
@@ -499,6 +504,15 @@ describe('engine parity: the access part of the page policy, and a rename or ali
       answers[c.id] = refusedOf(got) ? got : got === 'not_found' ? got : 'visible';
     }
     expect(answers).toEqual(Object.fromEntries(cases.map(c => [c.id, answerOf(c.carol)])));
-    return answers;
+    // The two mixed rows are denied by the labelled-only walk alone: once the member is no longer labelled-only, the ordinary lineage rule
+    // reads both atoms (their origins name nobody or name the member), so "every origin" is what denies them, not "any".
+    await setMemberLabelledOnly(engine, CAROL, false, { remote: false });
+    const ordinary: Record<string, unknown> = {};
+    for (const id of ['g3e', 'g3f']) {
+      const got = await remote(engine, CAROL, 'get_page', { slug: `walk/${id}` });
+      ordinary[id] = refusedOf(got) ? got : got === 'not_found' ? got : 'visible';
+    }
+    expect(ordinary).toEqual({ g3e: 'visible', g3f: 'visible' });
+    return { answers, ordinary };
   }));
 });
