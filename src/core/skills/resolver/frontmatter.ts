@@ -54,6 +54,15 @@ export function restricted(v: unknown): boolean {
   return true;
 }
 
+const AUDIENCE_LINE = /^\s*["']?audience["']?\s*:/im;
+
+/** Fails closed: an `audience` key in any letter case, or, when the front matter does not parse or is never closed, any line that looks like one. */
+function ownerOnly(text: string, raw: string | null, fm: Record<string, unknown> | null): boolean {
+  if (fm) return Object.entries(fm).some(([k, v]) => k.toLowerCase() === 'audience' && restricted(v));
+  if (raw !== null) return AUDIENCE_LINE.test(raw);
+  return text.startsWith('---\n') && AUDIENCE_LINE.test(text);
+}
+
 function stringList(v: unknown): string[] {
   if (typeof v === 'string') return [cleanText(v)].filter(Boolean);
   if (!Array.isArray(v)) return [];
@@ -80,7 +89,7 @@ export function parseSkillDoc(input: string): SkillDoc {
     eligible: !(fm && (fm.eligible === false || fm.eligible === 'false')),
     deprecated: Boolean(fm && (fm.deprecated === true || fm.deprecated === 'true')),
     ...(replacedBy ? { replacedBy } : {}),
-    ...((fm ? restricted(fm.audience) : /^audience\s*:/m.test(raw)) ? { audience: 'owner' as const } : {}),
+    ...(ownerOnly(text, m ? raw : null, fm) ? { audience: 'owner' as const } : {}),
     body: boundBody(text),
   };
 }

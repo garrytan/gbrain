@@ -384,6 +384,24 @@ function ask(w, msg, ms = DEADLINE_MS) {
   });
 }
 
+// The conversation pins were rendered from one build of the catalog (pins_built_at). After any rebuild (an edit that makes a
+// pinned skill audience: owner, gbrain skills index build) they may name a skill conversations must not see, so they are
+// withheld until a refresh renders them from the new build; each such turn asks for that refresh, so a failed one is retried.
+const receiptSeen = new Map();
+function pinsCurrent(a) {
+  const file = join(HOME, 'skill-index', String(a.catalog), 'receipt.json');
+  let mtime;
+  try { mtime = statSync(file).mtimeMs; } catch { return false; }
+  let seen = receiptSeen.get(file);
+  if (!seen || seen.mtime !== mtime) {
+    let at = null;
+    try { const r = JSON.parse(readFileSync(file, 'utf8')); at = r && r.build && typeof r.build.built_at === 'string' ? r.build.built_at : null; } catch { /* a torn read: treated as changed */ }
+    seen = { mtime, at };
+    receiptSeen.set(file, seen);
+  }
+  return typeof a.pins_built_at === 'string' && seen.at === a.pins_built_at;
+}
+
 // After the worker rebuilds a catalog (a skill changed), have gbrain re-read what OpenClaw hides from each agent and
 // rewrite the state (setup --skills-index-only), so a new hidden or shadowed skill is not suggested from the new index.
 // A rebuild during the cooldown or a running refresh is not dropped: one trailing refresh runs when the cooldown ends.
@@ -443,7 +461,9 @@ async function resolveTurn(event, ctx, opts) {
   const { cls, audience } = sessionClassOf(event, ctx, a, sessionKey);
   const tier = tierOf(cls);
   const result = {};
-  const pinBlock = tier === 'owner' ? a.pinned_block : tier === 'conversation' ? a.conversation_pinned_block : '';
+  const stalePins = tier === 'conversation' && !!a.conversation_pinned_block && !pinsCurrent(a);
+  if (stalePins) refreshSoon();
+  const pinBlock = tier === 'owner' ? a.pinned_block : tier === 'conversation' && !stalePins ? a.conversation_pinned_block : '';
   const pinIds = (tier === 'owner' ? a.pinned_ids : tier === 'conversation' ? a.conversation_pinned_ids : null) || [];
   const pinsOn = a.mode === 'live' && typeof pinBlock === 'string' && pinBlock !== '';
   const briefRoute = tier === 'owner' && a.pins_route === 'first_turn';
@@ -467,7 +487,7 @@ async function resolveTurn(event, ctx, opts) {
     const brief = fresh ? pinBlock : prior && pinsOn && prior.brief && !carried(prior.brief) ? prior.brief : '';
     const ctxText = [brief, block || ''].filter(Boolean).join('\n\n');
     if (ctxText) result.appendContext = ctxText;
-    log({ agent: agentId, arm, session_class: cls, audience, ms: Date.now() - t0, pins: pinsOn ? pinIds.length : 0, ...(fresh ? { brief: true } : {}), ...line });
+    log({ agent: agentId, arm, session_class: cls, audience, ms: Date.now() - t0, pins: pinsOn ? pinIds.length : 0, ...(fresh ? { brief: true } : {}), ...(stalePins ? { pins_stale: true } : {}), ...line });
     return Object.keys(result).length ? result : undefined;
   };
   if (tier === 'silent') {

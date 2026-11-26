@@ -774,6 +774,38 @@ describe.skipIf(!NODE)('session classes and the session-start brief', () => {
     expect(readState(b).agents.main).toMatchObject({ pinned_ids: ['calendar-sync'], conversation_pinned_ids: [] });
   });
 
+  test('after a catalog rebuild, conversation pins are withheld until a refresh renders them again, so a pin later marked audience: owner never reaches a group; a failed refresh is retried', async () => {
+    const b = box();
+    expectExit(await setup(b, ['--skill-loading', 'resolve']), 0);
+    await pin(b, 'calendar-sync', '--class', 'conversation');
+    await pin(b, 'email-triage', '--class', 'conversation');
+    const group = { session: 'agent:main:telegram:group:-5', ctx: CONVERSATION('agent:main:telegram:group:-5') };
+    const first = drive(b, [['turn', { text: 'deploy the service', ...group }]], undefined, { DRIVE_LOG_LINES: '1' });
+    expect(first[0].appendSystemContext).toContain('"calendar-sync"');
+    const dir = join(b.state, 'workspace', 'skills');
+    writeFileSync(join(dir, 'calendar-sync', 'SKILL.md'), '---\nname: calendar-sync\ndescription: Use when you sync the calendar\naudience: owner\n---\nSteps.\n');
+    expect((await runCli(['skills', 'index', 'build', '--catalog', 'openclaw-main', '--dir', dir, '--harness', 'openclaw'], { env: b.env })).exitCode).toBe(0);
+    const bin = readFileSync(b.bin, 'utf8');
+    writeFileSync(b.bin, '#!/bin/sh\nexit 1\n');
+    const stale = drive(b, [
+      ['turn', { text: 'deploy the service', ...group }],
+      ['sleep', { ms: 1500 }],
+      ['turn', { text: 'deploy the service now', ...group }],
+    ], undefined, { GBRAIN_TEST_OPENCLAW_SKILL_REFRESH_MS: '1000', DRIVE_LOG_LINES: '5' });
+    expect(JSON.stringify(stale[0] ?? {})).not.toContain('calendar-sync');
+    expect(JSON.stringify(stale[2] ?? {})).not.toContain('calendar-sync');
+    const lines = logLines(b).slice(1);
+    expect(lines.filter((l) => l.pins_stale).length).toBe(2);
+    expect(lines.filter((l) => l.outcome === 'refreshed').map((l) => l.code)).toEqual(['skill_resolver_refresh_failed', 'skill_resolver_refresh_failed']);
+    writeFileSync(b.bin, bin);
+    expectExit(await setup(b, ['--skill-loading', 'resolve']), 0);
+    expect(readState(b).agents.main.conversation_pinned_ids).toEqual(['email-triage']);
+    const after = drive(b, [['turn', { text: 'deploy the service', ...group }]], undefined, { DRIVE_LOG_LINES: '6' });
+    expect(after[0].appendSystemContext).toContain('"email-triage"');
+    expect(after[0].appendSystemContext).not.toContain('calendar-sync');
+    expect(logLines(b).at(-1).pins_stale).toBeUndefined();
+  });
+
   test('a pinned skill OpenClaw hides from the agent is left out of the block and setup names it', async () => {
     const b = box();
     expectExit(await setup(b, ['--skill-loading', 'resolve']), 0);
