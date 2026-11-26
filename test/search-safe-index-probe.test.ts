@@ -1,6 +1,6 @@
 /**
  * #5004 (pre-landing review) — the `safe_index_pending` probe in
- * `src/core/ops/search.ts` (`hasUnsealedPagesInScope`) runs on EVERY empty
+ * `src/core/ops/search.ts` (`hasUnsealedPagesInScope`, through the typed `hasUnsealedPages` read) runs on EVERY empty
  * remote search/query. On a fully sealed brain it must be an index probe, not
  * a walk of every page: `NOT (COALESCE(chunker_version, 0) >= N)` is not
  * sargable. `pages.chunker_version` is `SMALLINT NOT NULL DEFAULT 1` (cjk_wave
@@ -16,6 +16,7 @@ import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { operationsByName, type OperationContext } from '../src/core/operations.ts';
 import { SAFE_FENCE_CHUNKER_VERSION } from '../src/core/search/safe-chunks.ts';
+import * as chunkReads from '../src/core/engine-sql/chunk-reads.ts';
 
 let engine: PGLiteEngine;
 const captured: Array<{ sql: string; params: unknown[] | undefined }> = [];
@@ -33,15 +34,24 @@ afterAll(async () => {
   await engine.disconnect();
 });
 
-/** The real engine, with the op-level `executeRaw` calls recorded. */
+/** Records each statement, then runs it on the real engine. */
+const recordingExec = (target: PGLiteEngine) => ({
+  executeRaw: (sql: string, params?: unknown[]) => {
+    captured.push({ sql, params });
+    return target.executeRaw(sql, params);
+  },
+});
+
+/**
+ * The real engine, with the op-level `executeRaw` calls recorded. The typed `hasUnsealedPages` read runs its
+ * engine-sql statement (engine-sql/chunk-reads.ts) on the recording executor, so its SQL text is recorded too.
+ */
 function recordingCtx(): OperationContext {
   const recording = new Proxy(engine, {
     get(target, prop) {
-      if (prop === 'executeRaw') {
-        return (sql: string, params?: unknown[]) => {
-          captured.push({ sql, params });
-          return target.executeRaw(sql, params);
-        };
+      if (prop === 'executeRaw') return recordingExec(target).executeRaw;
+      if (prop === 'hasUnsealedPages') {
+        return (scope: chunkReads.UnsealedPageScope) => chunkReads.hasUnsealedPages(recordingExec(target) as never, scope);
       }
       const value = Reflect.get(target, prop);
       return typeof value === 'function' ? value.bind(target) : value;

@@ -177,8 +177,9 @@ the script, the consumer idle-pass statement bounds
 (`test/persistence-consumer-*` files that mention idle), and the tests that read
 every file under `src/` or `test/`, named in the script's `WALKERS` list (such
 as `test/test-reads-source-smell.test.ts`). It leaves out
-`test/e2e/`, serial and slow files, and `test/setup.test.ts`. To add a file,
-change the script, not the workflow.
+`test/e2e/`, serial and slow files, and the migration ledger tests in
+`test/setup-migrations.test.ts`, which install fresh local brains. To add a
+file, change the script, not the workflow.
 
 The job is two shards on 2-vCPU runners. It is advisory: `cheap-tier`,
 `full-suite`, merge-train, the remote pregate and master-push reuse never read

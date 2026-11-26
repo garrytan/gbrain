@@ -216,6 +216,20 @@ describe('installRustAddon', () => {
     expect(tree(unattestedAddon.rustDir)).toEqual([]);
   });
 
+  test('an unreadable attestation names why in the fetch_failed message (HTTP status and rate-limit headers)', async () => {
+    const r = fakeRelease();
+    const detail = 'HTTP 403 from the GitHub attestation API (no GitHub token), x-ratelimit-remaining 0';
+    r.deps.fetchAttestation = async (_digest, onUnavailable) => {
+      onUnavailable?.(detail);
+      return null;
+    };
+    const err = await installRustAddon({}, r.deps).then(() => null, (e: unknown) => e);
+    expect(err).toBeInstanceOf(OperationError);
+    expect((err as OperationError).reason).toBe('fetch_failed');
+    expect((err as OperationError).message).toContain(`could not be read from GitHub (${detail})`);
+    expect(tree(r.rustDir)).toEqual([]);
+  });
+
   test('a manifest for another version or engine_abi is refused', async () => {
     const r = fakeRelease();
     r.assets.set(RUST_ADDON_MANIFEST_ASSET, manifestFor(r.addon, { version: '1.2.3.4' }));

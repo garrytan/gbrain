@@ -57,6 +57,7 @@ describe('copyPageToTarget — undefined-column normalization (#3194)', () => {
       // raw UPDATE right after putPage.
       executeRaw: async () => [],
       setPageAliases: async () => {}, // #6286: frontmatter aliases travel with the page
+      queuePageProjectionJob: async () => {}, // the copied page's projection is queued through the typed member
     } as unknown as BrainEngine;
     const source = {
       getChunksWithEmbeddings: async () => [],
@@ -104,6 +105,7 @@ describe('copyPageToTarget — undefined-column normalization (#3194)', () => {
       // raw UPDATE right after putPage.
       executeRaw: async () => [],
       setPageAliases: async () => {}, // #6286: frontmatter aliases travel with the page
+      queuePageProjectionJob: async () => {}, // the copied page's projection is queued through the typed member
     } as unknown as BrainEngine;
     const source = {
       getChunksWithEmbeddings: async () => [],
