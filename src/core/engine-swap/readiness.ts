@@ -34,6 +34,8 @@ export interface ShadowStatus {
     capability_missing?: number;
     /** Sampled writes outside the page and link pilot, by family (shadow/write-compare.ts). */
     capability_missing_by_family?: Record<string, number>;
+    /** Sampled pilot writes that could not be compared, by reason (shadow/write-compare.ts). */
+    uncomparable_by_reason?: Record<string, number>;
   };
   fingerprints?: {
     checked_rows?: number;
@@ -109,7 +111,7 @@ export const MIN_BENCH_PAIRS = 100;
 /** What a criterion 5 pass covers, said wherever write comparisons are shown (the shadow status line, this report). */
 export const WRITE_COVERAGE_LIMIT = 'a criterion 5 pass covers the pilot page and link writes only';
 /** The lane owner's wording for what criterion 5 leaves uncompared; the swap report appends it to the criterion 5 detail. */
-export const WRITE_COVERAGE_NAMED = 'Criterion 5 covers the pilot page and link writes (putPage, deletePage, addLink, addLinksBatch, removeLink) only (#10350, #10360, #10382, #10390). These write types are not compared and get named lines in the swap report: chunks, tags, aliases, timeline entries, takes, facts, fact withdrawals, open loops, sources, owner-only marks and the decide store.';
+export const WRITE_COVERAGE_NAMED = 'Criterion 5 covers the pilot page and link writes (putPage, deletePage, addLink, addLinksBatch, removeLink, softDeletePage, softDeletePages, refreshPageBody, stripStaleFrontmatterKeys, setEmotionalWeightBatch, removeLinksByPagesAndSource, markPagesExtractedBatch, markPagesAttendanceBlocked, setPageEmbeddingSignature) only (#10350, #10360, #10382, #10390). These write types are not compared and get named lines in the swap report: chunks, tags, aliases, timeline entries, takes, facts, fact withdrawals, open loops, sources, owner-only marks and the decide store.';
 /**
  * The named write types and the `capability_missing_by_family` keys each one reads, in the order of WRITE_COVERAGE_NAMED. A key is the first table of the
  * sampled member (`writeFamily`, src/shadow/write-compare.ts), so a type's line reads only the writes whose first table it is.
@@ -129,7 +131,7 @@ const WRITE_NAMED_TYPES: ReadonlyArray<readonly [string, readonly string[]]> = [
 ];
 const FACT_WITHDRAWALS_FAMILY = 'pages:updateSlug';
 /** A named loss, not a fix: what the sentence above does not say. It is the last line under criterion 5 and the last limit in the guide. */
-export const WRITE_COVERAGE_LOSS = 'Named loss: only putPage, deletePage, addLink, addLinksBatch and removeLink are compared, so these other page and link writes are counted capability_missing and are not compared: pages:deletePages, pages:softDeletePage, pages:softDeletePages, pages:restorePage, pages:purgeDeletedPages, pages:updateSlug, pages:refreshPageBody, pages:refreshPageOrigin, pages:updatePageContextualRetrievalState, pages:stripStaleFrontmatterKeys, pages:markPagesExtractedBatch, pages:markPagesAttendanceBlocked, pages:setPageEmbeddingSignature, pages:setChunkerVersion, pages:writeTextProjectionSeal, pages:revertToVersion, pages:setEmotionalWeightBatch, pages:invalidateWithdrawnPages, pages:createSegmentedPageShell, pages:sealSegmentedPage, pages:flipBodyGeneration, links:removeLinksByPagesAndSource, links:replaceDerivedLinks, links:replaceDerivedLinksBatch. A write that touches several tables is counted under its first table only, so the side effects of deletePages, purgeDeletedPages and updateSlug (aliases, open loops, owner-only marks, fact withdrawals) land under pages:* keys, and a type\'s line above reads only the writes whose first table it is.';
+export const WRITE_COVERAGE_LOSS = 'Named loss: only putPage, deletePage, addLink, addLinksBatch, removeLink, softDeletePage, softDeletePages, refreshPageBody, stripStaleFrontmatterKeys, setEmotionalWeightBatch, removeLinksByPagesAndSource, markPagesExtractedBatch, markPagesAttendanceBlocked and setPageEmbeddingSignature are compared, so these other page and link writes are counted capability_missing and are not compared (a follow-up comes after the opt-in): pages:deletePages, pages:restorePage, pages:purgeDeletedPages, pages:updateSlug, pages:refreshPageOrigin, pages:updatePageContextualRetrievalState, pages:setChunkerVersion, pages:writeTextProjectionSeal, pages:revertToVersion, pages:invalidateWithdrawnPages, pages:createSegmentedPageShell, pages:sealSegmentedPage, pages:flipBodyGeneration, links:replaceDerivedLinks, links:replaceDerivedLinksBatch. A write that touches several tables is counted under its first table only, so the side effects of deletePages, purgeDeletedPages and updateSlug (aliases, open loops, owner-only marks, fact withdrawals) land under pages:* keys, and a type\'s line above reads only the writes whose first table it is.';
 /** And on which brains: a PGLite brain's single connection cannot bound the read a sampled write waits for, so it samples no writes and criterion 5 stays missing. */
 export const WRITE_PGLITE_LIMIT = 'PGLite brains record no write comparisons';
 /** And by whom: only the shadow child that owns the Rust store records; a client child adds no evidence and can never make criterion 5 pass. */
@@ -257,7 +259,8 @@ function searchArms(r: Reader): Check {
 }
 
 /** The per-type lines for criterion 5: each named type with its sampled count, or "not sampled"; then every other sampled key; then the named loss. */
-function uncoveredWriteLines(byFamily: Record<string, unknown>): string[] {
+const obj = (v: unknown): Record<string, unknown> => (typeof v === 'object' && v !== null ? v as Record<string, unknown> : {});
+function uncoveredWriteLines(byFamily: Record<string, unknown>, byReason: Record<string, unknown> = {}): string[] {
   const count = (k: string): number => { const n = byFamily[k]; return num(n) && n > 0 ? n : 0; };
   const named = new Set(WRITE_NAMED_TYPES.flatMap(([, keys]) => keys));
   const lines = WRITE_NAMED_TYPES.map(([type, keys]) => {
@@ -266,7 +269,9 @@ function uncoveredWriteLines(byFamily: Record<string, unknown>): string[] {
   });
   lines.splice(6, 0, `fact withdrawals: not sampled separately (counted under ${FACT_WITHDRAWALS_FAMILY} ${count(FACT_WITHDRAWALS_FAMILY)})`);
   const other = Object.keys(byFamily).filter((k) => !named.has(k) && count(k)).map((k) => `${k} ${count(k)}`);
-  return [...lines, `other write families sampled: ${other.length ? other.join(', ') : 'none'}`, WRITE_COVERAGE_LOSS];
+  // Pilot writes that were sampled and could not be compared, each reason with its count (none, no line): they count toward no comparison.
+  const reasons = Object.entries(byReason).filter(([, n]) => num(n) && n > 0).sort(([a, x], [b, y]) => (y as number) - (x as number) || (a < b ? -1 : 1)).map(([k, n]) => `${k} ${n}`);
+  return [...lines, `other write families sampled: ${other.length ? other.join(', ') : 'none'}`, ...(reasons.length ? [`writes not compared (uncomparable), by reason: ${reasons.join(', ')}`] : []), WRITE_COVERAGE_LOSS];
 }
 
 function writeComparisons(r: Reader): Check {
@@ -286,7 +291,7 @@ function writeComparisons(r: Reader): Check {
   const byFamily = r.peek<Record<string, number>>('write_comparisons.capability_missing_by_family') ?? {};
   const named = Object.entries(byFamily).filter(([, n]) => num(n) && n > 0).map(([f, n]) => `${f} ${n}`);
   const limit = `${WRITE_COVERAGE_LIMIT}; ${WRITE_PGLITE_LIMIT}; ${WRITE_CLIENT_LIMIT}; every other write family is capability_missing${named.length ? ` (sampled so far: ${named.join(', ')})` : ''}; ${WRITE_COVERAGE_NAMED}`;
-  return { ...out, detail: out.detail ? `${out.detail}; ${limit}` : limit, lines: uncoveredWriteLines(typeof byFamily === 'object' && byFamily !== null ? byFamily : {}) };
+  return { ...out, detail: out.detail ? `${out.detail}; ${limit}` : limit, lines: uncoveredWriteLines(typeof byFamily === 'object' && byFamily !== null ? byFamily : {}, obj(r.peek<Record<string, number>>('write_comparisons.uncomparable_by_reason'))) };
 }
 
 function fingerprintsAndAllocators(r: Reader): Check {

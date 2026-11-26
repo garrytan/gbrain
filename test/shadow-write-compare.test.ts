@@ -27,7 +27,7 @@ import { encodeArgs } from '../src/shadow/codec.ts';
 import { configDir } from '../src/core/config.ts';
 import { shadowRoot } from '../src/shadow/state.ts';
 import { scratchRootDefault } from '../src/shadow/write-compare-child.ts';
-import { lostPath, movedOutsideFootprint, pageRefs, readWriteTally, recordLost, unfoldedLost, writeTallyPath, WriteTally, type WriteEvent } from '../src/shadow/write-compare.ts';
+import { ID_TARGET_WRITES, lostPath, movedOutsideFootprint, PILOT_WRITES, pageRefs, readWriteTally, recordLost, unfoldedLost, writeTallyPath, WriteTally, type WriteEvent } from '../src/shadow/write-compare.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { defineWriteCompareScenarios, fakeComparer, page, row5, settle, tallyOn, watchPreimage } from './helpers/shadow-write-compare-scenarios.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -584,4 +584,59 @@ describe('every sample the child was sent ends in the tally (sample accounting)'
       expect(t.comparable).toBe(0);
     });
   }, 30_000);
+});
+
+describe('pageRefs names the exact pages each compared write touches (source and slug, as the write matches them)', () => {
+  const at = (source: string, slug: string) => ({ source, slug });
+  test('the nine members added to the comparison resolve their exact targets: arrays, page ids and source-scoped arguments', () => {
+    expect(pageRefs('softDeletePage', ['notes/a', { sourceId: 's1' }])).toEqual([at('s1', 'notes/a')]);
+    expect(pageRefs('softDeletePages', [['notes/a', 'notes/b'], { sourceId: 's1' }])).toEqual([at('s1', 'notes/a'), at('s1', 'notes/b')]);
+    expect(pageRefs('refreshPageBody', ['notes/a', 's1', 'body', '', 'hash'])).toEqual([at('s1', 'notes/a')]);
+    expect(pageRefs('setEmotionalWeightBatch', [[{ slug: 'notes/a', source_id: 's1', weight: 1 }, { slug: 'notes/b', source_id: 's2', weight: 0 }]])).toEqual([at('s1', 'notes/a'), at('s2', 'notes/b')]);
+    expect(pageRefs('removeLinksByPagesAndSource', [[{ slug: 'notes/a', source_id: 's1' }, { slug: 'notes/b', source_id: 's2' }], { linkSource: 'markdown' }])).toEqual([at('s1', 'notes/a'), at('s2', 'notes/b')]);
+    expect(pageRefs('markPagesExtractedBatch', [[{ slug: 'notes/a', source_id: 's1' }, { slug: 'notes/b', source_id: 's2', extractedAt: '2026-01-01T00:00:00Z' }], '2026-02-01T00:00:00Z'])).toEqual([at('s1', 'notes/a'), at('s2', 'notes/b')]);
+    expect(pageRefs('markPagesAttendanceBlocked', [[{ slug: 'notes/a', source_id: 's1', revision: '00000000-0000-4000-8000-000000000001' }]])).toEqual([at('s1', 'notes/a')]);
+    expect(pageRefs('setPageEmbeddingSignature', ['notes/a', { sourceId: 's1', signature: 'm:1' }])).toEqual([at('s1', 'notes/a')]);
+    expect(pageRefs('setPageEmbeddingSignature', ['notes/a', { signature: 'm:1' }])).toEqual([at('default', 'notes/a')]); // the store writes `sourceId ?? 'default'`
+    expect(pageRefs('stripStaleFrontmatterKeys', [{ sourceId: 's1', ids: [1, 2] }])).toEqual([]); // page ids name no slug: the serving process looks them up
+  });
+
+  test('a write that names its pages across every source, or leaves a source out, names none (it is unresolved, never guessed as default)', () => {
+    expect(pageRefs('softDeletePage', ['notes/a'])).toEqual([]); // no sourceId: it hides the slug in every source
+    expect(pageRefs('softDeletePages', [['notes/a'], {}])).toEqual([]);
+    expect(pageRefs('markPagesExtractedBatch', [[{ slug: 'notes/a' }, { slug: 'notes/b', source_id: 's1' }], 'x'])).toEqual([]); // one item with no source: the whole write is unresolved
+  });
+
+  test('slugs of these writes are matched as written, not lower-cased', () => {
+    expect(pageRefs('softDeletePage', ['Notes/A', { sourceId: 's1' }])).toEqual([at('s1', 'Notes/A')]);
+  });
+});
+
+describe('every compared write has an explicit way to name its pages', () => {
+  test('each PILOT_WRITES member is listed with arguments that name a page (or a page id), so a member cannot be added with a default', () => {
+    const sample: Record<string, unknown[]> = {
+      putPage: ['notes/a', {}, { sourceId: 's1' }], deletePage: ['notes/a', { sourceId: 's1' }],
+      addLink: ['notes/a', 'notes/b', '', 'x', 'manual', undefined, undefined, { fromSourceId: 's1', toSourceId: 's1' }],
+      addLinksBatch: [[{ from_slug: 'notes/a', from_source_id: 's1', to_slug: 'notes/b', to_source_id: 's1' }]], removeLink: ['notes/a', 'notes/b', 'x', 'manual', { fromSourceId: 's1', toSourceId: 's1' }],
+      softDeletePage: ['notes/a', { sourceId: 's1' }], softDeletePages: [['notes/a'], { sourceId: 's1' }], refreshPageBody: ['notes/a', 's1', '', '', 'h'],
+      stripStaleFrontmatterKeys: [{ sourceId: 's1', ids: [1] }], setEmotionalWeightBatch: [[{ slug: 'notes/a', source_id: 's1', weight: 1 }]],
+      removeLinksByPagesAndSource: [[{ slug: 'notes/a', source_id: 's1' }], { linkSource: 'm' }], markPagesExtractedBatch: [[{ slug: 'notes/a', source_id: 's1' }], 'x'],
+      markPagesAttendanceBlocked: [[{ slug: 'notes/a', source_id: 's1', revision: 'r' }]], setPageEmbeddingSignature: ['notes/a', { sourceId: 's1', signature: 's' }],
+    };
+    expect(new Set(Object.keys(sample))).toEqual(new Set(PILOT_WRITES));
+    for (const [op, args] of Object.entries(sample)) {
+      if (ID_TARGET_WRITES.has(op)) expect(pageRefs(op, args)).toEqual([]); // named by id: the serving process looks them up
+      else expect(pageRefs(op, args).length).toBeGreaterThan(0);
+    }
+  });
+
+  test('empty lists, a non-list and a partly named list name no page; repeated pages count once', () => {
+    expect(pageRefs('softDeletePages', [[], { sourceId: 's1' }])).toEqual([]);
+    expect(pageRefs('markPagesExtractedBatch', [[], 'x'])).toEqual([]);
+    expect(pageRefs('setEmotionalWeightBatch', ['notes/a'])).toEqual([]);
+    expect(pageRefs('addLinksBatch', [[]])).toEqual([]);
+    expect(pageRefs('addLinksBatch', [[{ from_slug: 'notes/a', to_slug: 'notes/b' }, { from_slug: 'notes/c' }]])).toEqual([]);
+    expect(pageRefs('softDeletePages', [['notes/a', 'notes/a'], { sourceId: 's1' }])).toEqual([{ source: 's1', slug: 'notes/a' }]);
+    expect(pageRefs('putPage', ['', {}])).toEqual([]);
+  });
 });

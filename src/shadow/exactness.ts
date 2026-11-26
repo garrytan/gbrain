@@ -34,9 +34,11 @@ import { SHADOW_READ_MEMBERS } from './reads.ts';
 /**
  * Bump when classify.ts or this table changes what counts as a match: it starts a new evidence epoch. 3: the shadow
  * privacy, rerun and recall rules (row-identity clearance, the proof that nothing moved, tie-aware recall) replace the
- * ones an epoch of version 2 collected its records under, and those records must not count.
+ * ones an epoch of version 2 collected its records under, and those records must not count. 4: the write comparison's rules changed (a write whose pages cannot be
+ * named, whose pages are not in the copy or that has nothing to change is uncomparable, not a match; three more page columns are compared; nine more members), so a
+ * `comparable` an epoch of version 3 counted may have compared nothing and must not count.
  */
-export const SHADOW_COMPARATOR_VERSION = 3;
+export const SHADOW_COMPARATOR_VERSION = 4;
 /** The only keyword ranker Rust has (D5); the status names it so a better default ranker is a visible change. */
 export const SHADOW_KEYWORD_RANKER = 'ts_rank' as const;
 

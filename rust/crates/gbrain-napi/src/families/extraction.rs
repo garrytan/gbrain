@@ -71,6 +71,22 @@ impl Brain {
         })
     }
 
+    /// `readPageComparisonColumns(refs)`: resolves `{ source_id, slug, links_extracted_at,
+    /// links_attendance_blocked_revision, embedding_signature }` for each page the refs name.
+    /// Read only; used by the shadow write comparison, not a BrainEngine member.
+    #[napi]
+    pub fn read_page_comparison_columns<'env>(
+        &self,
+        env: &'env Env,
+        refs: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let refs: Vec<gbrain_store::extraction::ComparisonRef> =
+                required(refs, "readPageComparisonColumns refs")?;
+            s.read_page_comparison_columns(&refs)
+        })
+    }
+
     /// `markPagesAttendanceBlocked(refs)`: resolves the number of pages marked.
     #[napi]
     pub fn mark_pages_attendance_blocked<'env>(

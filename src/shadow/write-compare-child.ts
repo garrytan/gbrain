@@ -12,7 +12,7 @@ import { openRustEngine, type RustEngineAddonHandle } from '../core/rust-engine.
 import { configDir } from '../core/config.ts';
 import { safeCode } from './child-checks.ts';
 import { decodeValue, encodeValue } from './codec.ts';
-import { pageRefs, pageSet, readBack, readBackText, type WriteEvent, type WriteOutcome, type WriteTally } from './write-compare.ts';
+import { ID_TARGET_WRITES, nothingToCompare, pageRefs, pageSet, readBack, readBackText, type PageRef, type StateColumnsRead, type WriteEvent, type WriteOutcome, type WriteTally } from './write-compare.ts';
 
 /** Columns the seed always reports as unmapped and the typed read-back never shows (rust/docs/store/seed.md, "Some unmapped columns are expected": `pages.generation`, the primary's cache clock). */
 const EXPECTED_UNMAPPED: ReadonlySet<string> = new Set(['generation']);
@@ -39,6 +39,8 @@ export interface WriteComparerDeps {
  */
 export const scratchRootDefault = (): string => join(configDir(), 'scratch');
 type Verdict = [WriteOutcome, string?];
+/** The pages a sample says it touched: only well-formed refs, and none at all when any is malformed. */
+const namedPages = (v: unknown): PageRef[] => (Array.isArray(v) && v.every((r) => typeof r?.source === 'string' && r.source && typeof r?.slug === 'string' && r.slug) ? v.map((r) => ({ source: r.source, slug: r.slug })) : []);
 
 export function createWriteComparer(d: WriteComparerDeps): { handle(event: WriteEvent): void; idle(): Promise<void>; abandon(): void } {
   // Each replay gets a private (0700) directory named for this process, removed when the replay ends, whatever its outcome. Directories of processes
@@ -67,9 +69,12 @@ export function createWriteComparer(d: WriteComparerDeps): { handle(event: Write
     if (event.moved) return ['uncomparable', 'moved']; // another write landed in between: neither verdict can be trusted, a match included
     const args = decodeValue(event.args) as unknown[];
     const pre = event.pre!;
-    const targets = pageRefs(event.op, args);
-    // A delete or a link removal compares nothing when the preimage lacks the page: the copy could not be validated.
-    if (event.op === 'deletePage' && !pre.pages.some((p) => p.source_id === targets[0]!.source && p.slug === targets[0]!.slug)) return ['uncomparable', 'target_absent'];
+    // The pages come from the arguments; a write that names them by id has them looked up by the serving process, which sends them (any other write's `targets` is ignored).
+    const targets = ID_TARGET_WRITES.has(event.op) ? namedPages(event.targets) : pageRefs(event.op, args);
+    if (!targets.length) return ['uncomparable', 'target_unresolved']; // nothing to read back from either side: a match would prove nothing
+    // A write whose pages the copy does not hold, or a link removal with no link to remove, changes nothing on either side: it compares nothing.
+    const vacuous = nothingToCompare(event.op, args, targets, pre);
+    if (vacuous) return ['uncomparable', vacuous];
     runs++;
     let run = ''; let engine: Record<string, any> | null = null;
     try {
@@ -79,14 +84,23 @@ export function createWriteComparer(d: WriteComparerDeps): { handle(event: Write
       engine = (d.openEngine ?? ((addon, path) => openRustEngine({ addon, databasePath: path }) as unknown as Record<string, any>))(d.load.addon as RustEngineAddonHandle, dir);
       await engine.connect({ database_path: dir });
       const store = await engine.storeFor('seed');
+      // The three page columns the typed reads do not return come from one read-only store call. An addon without it cannot be compared (a store with no `brain` is a test double).
+      if (store.brain && typeof store.brain.readPageComparisonColumns !== 'function') return ['uncomparable', 'addon_unavailable'];
+      const columns: StateColumnsRead | undefined = store.brain && (async (refs: PageRef[]) => store.brain.readPageComparisonColumns(refs.map((r) => ({ source_id: r.source, slug: r.slug }))));
       for (const [relation, rows] of [['sources', pre.sources], ['pages', pre.pages], ['links', pre.links]] as const) {
         if (!rows.length) continue;
         const done = await store.importRelation(`write-compare-${runs}`, relation, rows);
         // The scratch store must hold exactly the rows the primary held: a skipped, dropped or lossy import, or a column it does not keep, is not that copy.
         if (done.imported !== rows.length || done.skipped || done.dropped || Object.keys(done.losses).length || done.unmapped_columns?.some((c: string) => !EXPECTED_UNMAPPED.has(c))) return ['uncomparable', 'preimage_not_loaded'];
       }
+      // A write that names pages by id needs the scratch store to hold the same ids, or it would change other pages there.
+      if (ID_TARGET_WRITES.has(event.op)) {
+        const wanted = new Set(((args[0] as { ids?: unknown[] } | undefined)?.ids ?? []).map(String));
+        const held = await Promise.all(targets.map(async (r) => String((await engine!.getPage(r.slug, { sourceId: r.source, includeDeleted: true }))?.id)));
+        if (held.some((id) => !wanted.has(id)) || new Set(held).size !== wanted.size) return ['uncomparable', 'preimage_not_loaded'];
+      }
       try { await engine[event.op](...args); for (const call of event.then ?? []) await engine.updatePageContextualRetrievalState(...decodeValue(call) as unknown[]); } catch (error) { d.onError?.('write', error); return ['uncomparable', `rust_write_failed`]; }
-      const theirs = readBackText(encodeValue(await readBack(engine, targets, pageSet(targets, pre))));
+      const theirs = readBackText(encodeValue(await readBack(engine, targets, pageSet(targets, pre), columns)));
       if (theirs === readBackText(event.post)) return ['comparable'];
       return ['unexplained_difference'];
     } finally {
