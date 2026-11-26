@@ -164,8 +164,7 @@ export async function assertLabelledOnlyCreate(engine: MemberEngine, authority: 
     [authority.sourceId, slug, folder.satisfiedRuleIds]);
   if (row?.named === true) return;
   const reader = [...named].sort().find(p => p.startsWith('member:'))?.slice('member:'.length) ?? [...named].sort()[0] ?? 'alice-example';
-  const [owner] = await engine.executeRaw<{ value: string }>('SELECT value FROM config WHERE key = $1', [OWNER_MEMBER_KEY]).catch(() => []);
-  const ownerId = owner?.value?.trim();
+  const ownerId = (await withLiveConfigRead(() => engine.getConfig(OWNER_MEMBER_KEY)).catch(() => null))?.trim();
   const ruleReaders = ownerId && ACCESS_ID_RE.test(ownerId) && ownerId !== reader ? `${reader},${ownerId}` : reader;
   throw opError('access_labelled_only_unnamed', `This connection is labelled-only, so a page it creates must name it: add readable_by: [${reader}] (or one of its groups) to the frontmatter of ${slug}, or ask the user for a page or folder rule over it that lists them; nothing was written.`,
     `Add readable_by: [${reader}] (or one of its groups) to the frontmatter and submit again with a new request_id, or ask the user to add a page or folder rule that lists it on the brain host.`,

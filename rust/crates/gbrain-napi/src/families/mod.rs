@@ -7,6 +7,7 @@ mod access_read_log;
 mod access_rules;
 mod belief_ledger;
 mod belief_purge;
+mod belief_purge_ledger;
 mod brief_reads;
 mod chronicle_events;
 mod chronicle_reads;

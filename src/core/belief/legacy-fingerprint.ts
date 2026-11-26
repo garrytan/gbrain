@@ -33,3 +33,13 @@ export const legacySubjectKeysSql = (claims: string): string => `SELECT DISTINCT
   JOIN belief_events e ON e.source_id = $1 AND e.claim_fp = x.v2
   WHERE x.v2 <> x.fp AND e.subject_kind IN ('fact','take') AND e.value IS NOT NULL
     AND gbrain_fact_fingerprint(COALESCE(e.value->>'fact', e.value->>'claim')) = x.fp`;
+
+/**
+ * SQL: the purge's redaction of purged keys (engine-sql/belief-purge-ledger.ts redactPurgedBeliefKeys) when a purged
+ * claim may have a pre-v341 fingerprint: the fact and take events recorded under that fingerprint ($4, the claims) lose
+ * their values too. Built here, beside legacySubjectKeysSql, because its placeholders are numbered by hand.
+ */
+export const REDACT_PURGED_KEYS_LEGACY_SQL = `WITH legacy AS (${legacySubjectKeysSql('$4::text[]')})\nUPDATE belief_events SET value = NULL, value_hash = NULL, prior_hash = NULL, purged = true
+    WHERE source_id = $1 AND ((subject_kind IN ('fact','take') AND (claim_fp = ANY($2::text[]) OR subject_key IN (SELECT subject_key FROM legacy)))
+        OR page_lifetime = ANY($3::uuid[]))
+      AND (purged = false OR value IS NOT NULL OR prior_hash IS NOT NULL) RETURNING id`;

@@ -438,9 +438,47 @@ The store serves the purge statements of src/core/engine-sql/belief-purge.ts
   hash. It skips one already released to that hash and one whose redacted text has that hash, and answers the purge
   request of each released row, in id order.
 - `replayPagePurges` and `countPagePurgeTombstones` live with the page purge ledger (`facts.md`, `facts/page_purges.rs`).
+- `listBeliefEventsForPurgeProbe` is the purge receipt's read of recorded history (`ledgerReports` in
+  src/core/facts/purge-verify.ts): the source's events with a recorded value and an id above `after`, the lowest 1000
+  across every incarnation, in id order. Each incarnation is a seek under `t 0x09 0x00 source \0 incarnation \0` to the
+  id after the cursor; a NaN cursor, or one past the last id, answers none. The member serves one statement of
+  engine-sql/facts-purge.ts, so it keeps the `facts` refusal class there; its case is in `belief-purge-probes.test.ts`.
 - `readPurgeReplaySchema` makes no store call: the store always has the live schema, so it answers every listed store
   and every probed table and column as present.
 - Pinned by `test/engine-parity/belief-purge-probes.test.ts` on every arm and by the unit tests in each module.
+
+## The belief-ledger half of a purge (`trust::belief_purge_ledger`)
+
+The store serves the statements of src/core/engine-sql/belief-purge-ledger.ts
+(src/core/rust-engine/store-members/belief-purge-ledger.ts): the steps belief/purge.ts and belief/preimages.ts run for a
+fact purge, a page purge and the restore replay on a source that records belief events. They keep no keys of their own.
+The statements read an event by id and events by lifetime alone; the store reads within the source the caller names
+(an event and a lifetime belong to one source). A keyset read gathers every incarnation of the source under
+`t 0x09 0x00 source \0`, sorts by id and answers at most 1000 rows after its cursor; a NaN cursor answers none.
+
+- `listDerivedStreamSlugs`: `facts:<id>` with the fact's fence page, else its entity (a fact with neither is left out),
+  `takes:<id>` with its page's slug and `pages:<id>` with its slug, rows of the source only.
+- `listMissingPreimages`: the 1-based position of each (page, revision) pair no version of the page holds. A revision that
+  is not a UUID refuses, as its `::uuid` cast does.
+- `redactPurgedBeliefKeys`: the source's fact and take events with one of the fingerprints, and every event of the
+  lifetimes, lose value, value hash and prior hash and are marked purged, unless already so; it answers how many it
+  marked. `legacyClaims` (claims that may have a pre-v341 Postgres fingerprint) matches nothing: the store has always
+  folded the one explicit list, as `readLegacyClaimFingerprints` answers none.
+- `listBeliefCarrierEvents`, `readBeliefEventValue`, `rewriteBeliefEventFields`, `rechainBeliefPriorHash`: the
+  carrying-field redaction. A rewrite keeps the event's prior hash only while an earlier event of the same subject key
+  (any kind, through the `t 0x09 0x03` subject index) has it as value hash; the re-chain moves the subject's later events
+  chained to the old hash. `value->>'field'` is the field's text, or its jsonb text when it is not a string.
+- `listBeliefQuotingRows`: unexpired facts with a context (the `BY_SOURCE` index, id order), takes with a resolution
+  source whose page is in the source, and links with a context whose origin page's source, else from page's, is the
+  source.
+- `listPageBeliefLifetimes`, `listPagePurgeLiveClaims`, `listPageVersionFenceBodies`, `listLifetimeClaimEvents`: the page
+  purge's lifetimes and claim inventory. The live claims carry the store's `gbrain_fact_fingerprint`.
+- `listPurgeCarrierVersions`: the versions among the ids whose page is in the source, with whether the page passes the
+  no-caller page policy (`privatePagesFilterFragment('p')`, sent as its flags).
+- `listKnownBeliefSubjectKeys`: the keys with an event of any kind in the source, in key order.
+- The redaction writes run in one `Store::write` each, so the member-access flag wrap applies. Pinned by
+  `test/engine-parity/belief-purge-ledger.test.ts` and `fact-purge-receipt-e2e.test.ts` on every arm, the statements by
+  `test/belief-purge-ledger-sql-pin.test.ts`, and the module's unit tests.
 
 ## Tier-only row changes (`trust::row_tier`)
 

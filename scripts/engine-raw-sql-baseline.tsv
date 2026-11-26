@@ -152,15 +152,15 @@ src/core/backfill-effective-date.ts	execute_raw	3
 src/core/backfill-skips.ts	execute_raw	2
 src/core/backup/quarantine.ts	execute_raw	9
 src/core/backup/snapshot.ts	execute_raw	5
-src/core/belief/backfill.ts	execute_raw	8
+src/core/belief/backfill.ts	execute_raw	6
 src/core/belief/changes.ts	execute_raw	2
 src/core/belief/coverage-report.ts	execute_raw	8
 src/core/belief/identity.ts	execute_raw	2
 src/core/belief/ledger.ts	execute_raw	1
 src/core/belief/page-at-time.ts	execute_raw	8
-src/core/belief/preimages.ts	execute_raw	2
+src/core/belief/preimages.ts	execute_raw	1
 src/core/belief/purge-mirror.ts	execute_raw	15
-src/core/belief/purge.ts	execute_raw	14
+src/core/belief/purge.ts	execute_raw	1
 src/core/belief/retier.ts	execute_raw	3
 src/core/bootstrap/harness-cleanup.ts	execute_raw	1
 src/core/bootstrap/harness-skills.ts	execute_raw	1
@@ -413,7 +413,7 @@ src/core/persistence/page-append.ts	execute_raw	2
 src/core/persistence/page-mutations.ts	execute_raw	2
 src/core/persistence/page-prepare.ts	execute_raw	8
 src/core/persistence/page-upload.ts	execute_raw	15
-src/core/persistence/page-visibility.ts	execute_raw	4
+src/core/persistence/page-visibility.ts	execute_raw	3
 src/core/persistence/pending-import.ts	execute_raw	1
 src/core/persistence/physical-root.ts	execute_raw	8
 src/core/persistence/plain-directory-drift.ts	execute_raw	2	#8079: reads and records whether a page revision was written with its file in step (journal receipt join plus agreement checkpoint); persistence protocol state, no typed checkpoint methods yet.

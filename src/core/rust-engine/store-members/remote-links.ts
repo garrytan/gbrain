@@ -6,15 +6,17 @@
  *
  * The store has no lock or statement timeout, so the effect transaction's limits do nothing. The writer's read policy
  * is rendered as PGLite renders it and served only when it equals the no-caller member-access rendering or a fresh
- * record's rendering for the writer's one reader identity, with or without the owner flag the owner's own call renders (the forms
- * `page_hidden` in facts/privacy.rs implements); any
- * other writer (folder rules, an owner record, a labelled-only grant, several identities) refuses with
- * `engine_capability_missing`, before any read. What each member answers and why: rust/docs/store/remote-links.md.
+ * record's rendering for the writer's one reader identity (with the folder rules it satisfies and the coverage its record
+ * names), with or without the owner flag the owner's own call renders (the forms `page_hidden` in facts/privacy.rs
+ * implements), and, for a labelled-only writer, that rendering ANDed with the labelled-only conjunct, which the store
+ * judges from the writer's identities and satisfied rules; any other writer (an owner record, several identities)
+ * refuses with `engine_capability_missing`, before any read. What each member answers and why: rust/docs/store/remote-links.md.
  */
 import type { LinksRearm, LinkTargetPage, OwnedLink, WriterReadPolicy } from '../../engine-sql/remote-links.ts';
 import { renderWriterReadPolicy } from '../../engine-sql/remote-links.ts';
+import { validQualifiedRuleId } from '../../access/folder-rules.ts';
 import type { RustEngine } from '../../rust-engine.ts';
-import { callerAccessAllowedSql, privacyPartSql } from '../../search/private-visibility.ts';
+import { callerAccessAllowedSql, labelledOnlyForSql, labelledOnlyTerms, privacyPartSql } from '../../search/private-visibility.ts';
 import type { StoreBrain } from '../store.ts';
 import { mapStoreError } from '../store-errors.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
@@ -38,8 +40,22 @@ export const deleteOwnedLinks: StoreMember<[originPageId: number | string, linkS
       brain.deleteOwnedLinks(String(originPageId), linkSource, ids.map(String))));
   };
 
-/** The store policy for the writer's read policy, or a refusal. */
+/**
+ * The store policy for the writer's read policy, or a refusal. A labelled-only writer's text is the rest of the policy ANDed
+ * with the labelled-only conjunct (`renderWriterReadPolicy`): the rest is served as for any writer, and the conjunct goes to the
+ * store as data (the sets `labelledOnlySql` embeds), once the text is shown to be exactly those two parts.
+ */
 function writerPolicy(policy: WriterReadPolicy): StorePrivacyPolicy {
+  if (!policy.labelledOnly) return unlabelledWriterPolicy(policy);
+  const rest = unlabelledWriterPolicy({ ...policy, labelledOnly: false });
+  const terms = labelledOnlyTerms({ identity: [], audienceIdentities: policy.identities, satisfiedRuleIds: policy.satisfiedRuleIds });
+  const expected = `(${renderWriterReadPolicy({ ...policy, labelledOnly: false }, 'p', false)} AND ${labelledOnlyForSql('p', policy.identities, policy.satisfiedRuleIds)})`;
+  if (renderWriterReadPolicy(policy, 'p', false) !== expected) refuseMember('readLinkTargetPages', 'a labelled-only writer whose policy is not the member-access policy and the labelled-only conjunct');
+  return { ...rest, labelledOnly: terms };
+}
+
+/** The store policy for the member-access and privacy parts of the writer's read policy, or a refusal. */
+function unlabelledWriterPolicy(policy: WriterReadPolicy): StorePrivacyPolicy {
   const text = renderWriterReadPolicy(policy, 'p', false);
   const off = { honorAliases: false, entityPrivacy: false, ownerOnly: ownerOnlyFormIn(text, 'pages', 'p') };
   const fragment = (record: Parameters<typeof renderForStoreCaller>[0]) =>
@@ -53,11 +69,23 @@ function writerPolicy(policy: WriterReadPolicy): StorePrivacyPolicy {
   }
   const [identity] = policy.identities;
   // The owner speaking for itself renders the same text without the owner-only clause (CallerAccess.owner), which `off` reads as no test.
-  const oneIdentity = (owner: boolean) => policy.identities.length === 1 && identity && text === fragment({ identity: [...identity], privateReadableSources: [], hidePrivate: true, ...(owner ? { owner } : {}) });
-  if (oneIdentity(false) || oneIdentity(true)) {
+  const oneIdentity = (owner: boolean, folders: object) => policy.identities.length === 1 && identity
+    && text === fragment({ identity: [...identity], privateReadableSources: [], hidePrivate: true, ...folders, ...(owner ? { owner } : {}) });
+  if (oneIdentity(false, {}) || oneIdentity(true, {})) {
     return { ...off, identity: [...identity], privateReadableSources: [] };
   }
-  refuseMember('readLinkTargetPages', 'a writer whose folder rules, owner record, labelled-only grant or identities widen the member-access policy');
+  // One identity under folder rules it satisfies and the pending prefixes its record names: the record's own folder access
+  // (callerRecord), as the no-identity form above, judged for that identity.
+  if (identity && (policy.satisfiedRuleIds.length || folderCoverage.length)) {
+    const folders = { satisfiedRuleIds: [...policy.satisfiedRuleIds], folderCoverage };
+    // The SQL text drops the whole set when one id is not a valid qualified id (folderRulesAllowedSql); so does the store's.
+    const satisfiedRuleIds = policy.satisfiedRuleIds.every(validQualifiedRuleId) ? folders.satisfiedRuleIds : [];
+    if (oneIdentity(false, folders) || oneIdentity(true, folders)) {
+      return { ...off, identity: [...identity], privateReadableSources: [], callerRecord: true,
+        ...(satisfiedRuleIds.length ? { satisfiedRuleIds } : {}), ...(folderCoverage.length ? { folderCoverage } : {}) };
+    }
+  }
+  refuseMember('readLinkTargetPages', 'a writer whose owner record or identities widen the member-access policy');
 }
 
 export const readLinkTargetPages: StoreMember<[sourceId: string, slugs: readonly string[], policy: WriterReadPolicy | null], LinkTargetPage[]> =

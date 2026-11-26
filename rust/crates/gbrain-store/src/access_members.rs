@@ -212,6 +212,13 @@ pub(crate) fn read_member(read: &dyn KvRead, id: &str) -> Result<Option<MemberRe
     get_json(read, &member_key(id))
 }
 
+/// `EXISTS (SELECT 1 FROM access_members WHERE labelled_only)`: whether any member row carries the
+/// labelled-only grant. Like the statement it reads every row, so a disabled or removed member still
+/// counts (a removed member keeps its flag; the grant cannot be changed once it is removed).
+pub(crate) fn any_labelled_only(read: &dyn KvRead) -> Result<bool> {
+    Ok(all_members(read)?.iter().any(|m| m.labelled_only))
+}
+
 /// `EXISTS (SELECT 1 FROM access_members WHERE id = $1 AND tombstoned_at IS NULL)`: a member
 /// with exactly this id that is not removed (a disabled member counts).
 pub(crate) fn member_not_removed(read: &dyn KvRead, id: &str) -> Result<bool> {
@@ -634,5 +641,29 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(store.read_access_members(&none).unwrap(), json!([]));
+    }
+
+    #[test]
+    fn any_labelled_only_reads_every_member_row_like_the_statement() {
+        let store = store();
+        let any = |s: &Store| any_labelled_only(&*s.read().unwrap()).unwrap();
+        for id in ["alice", "bob"] {
+            store
+                .insert_access_member(&AccessMemberInsert {
+                    id: id.into(),
+                    ..Default::default()
+                })
+                .unwrap();
+        }
+        assert!(!any(&store));
+        store.set_access_member_labelled_only("bob", true).unwrap();
+        assert!(any(&store));
+        store.set_access_member_disabled("bob", true).unwrap();
+        assert!(any(&store), "a disabled member still counts, as in SQL");
+        store.set_access_member_labelled_only("bob", false).unwrap();
+        assert!(!any(&store));
+        store.set_access_member_labelled_only("bob", true).unwrap();
+        store.tombstone_access_member("bob").unwrap();
+        assert!(any(&store), "a removed member keeps its flag, as in SQL");
     }
 }
