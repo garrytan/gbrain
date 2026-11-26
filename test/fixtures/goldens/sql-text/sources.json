@@ -77,6 +77,18 @@
           }
         ]
       },
+      "lockSourceRow": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT id, local_path, config, archived FROM sources WHERE id=$1 FOR UPDATE",
+            "textSha256": "c96279eec5f617f9eee6412cb97ea5799f1b30d4c826b2eaf5be7c7456bf2c08"
+          }
+        ]
+      },
       "markSourceSynced": {
         "default": [
           {

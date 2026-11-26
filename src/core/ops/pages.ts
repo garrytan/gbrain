@@ -33,7 +33,7 @@ import { sanitizeRemoteBody } from '../remote-body.ts';
 import { getContentFlag } from '../quarantine.ts';
 import { fileHeldField, readHeldPages } from '../persistence/held-reads.ts';
 import { bumpLastRetrievedAt } from '../last-retrieved.ts';
-import { ownerFenceView, resolveExcludePrivatePages, isPrivatePage, findPrivateOnlySlugs, isPrivatePageForCaller } from '../search/private-visibility.ts';
+import { callerIsOwner, ownerFenceView, resolveExcludePrivatePages, isPrivatePage, findPrivateOnlySlugs, isPrivatePageForCaller } from '../search/private-visibility.ts';
 import { heldRowsForCaller } from '../eligibility/fence-overlay.ts';
 import { unquoteAnyTranscriptText } from '../search/transcript-quote.ts';
 import { withIgnoredPrivacyLabelNotice } from '../search/ignored-privacy-labels.ts';
@@ -44,7 +44,7 @@ import { OperationError, opError, type Operation, type OperationContext } from '
 import { invalidParam, readFix } from './op-fix.ts';
 import { WHERE_PARAM, whereOpParam } from './where-param.ts';
 import { parseSourceIdsParam, requestSourceScope, SOURCE_IDS_PARAM } from './search-source-scope.ts';
-import { isDatetimeInputError } from '../utils.ts';
+import { isDatetimeInputError, normalizeSlug } from '../utils.ts';
 import { rethrowNamingRevisionSource } from './put-page-revision-source.ts';
 import { guardUnsourcedPutEarly, noteSuppressedSourceFlip } from '../persistence/unsourced-put-fork.ts';
 import {
@@ -464,7 +464,7 @@ const delete_page: Operation = {
       }
       return { dry_run: true, action: p.purge === true ? 'purge_page' : 'delete_page', slug: p.slug };
     }
-    if (typeof p.slug === 'string') await (await import('../household/placement.ts')).householdDeleteAdmission(ctx.engine, sourceId, p.slug, ctx.remote);
+    if (typeof p.slug === 'string') await (await import('../household/placement.ts')).householdDeleteAdmission(ctx.engine, sourceId, normalizeSlug(p.slug), ctx.remote, callerIsOwner());
     return (await import('../repair/origin-carry.ts')).deletePageCarryingPrivate(ctx, p, sourceId);
   },
   cliHints: { name: 'delete', positional: ['slug'] },
