@@ -29,7 +29,7 @@ import { transactionAborted } from './postgres-engine/transaction-abort.ts';
 import { mapStoreError } from './rust-engine/store-errors.ts';
 import { STORE_MEMBERS } from './rust-engine/store-members/index.ts';
 import { brainWithCallDeadline, endOptimisticTransactions, runOptimisticTransaction, type OptimisticTransactions } from './rust-engine/optimistic-transaction.ts';
-import { servedCapabilities } from './rust-engine/store-capabilities.ts';
+import { servedCapabilities, storeCapabilities } from './rust-engine/store-capabilities.ts';
 import { rustMultiuserFromEnv, rustMultiuserSubSwitch } from './rust-engine/multiuser-switch.ts';
 import { existingHostIdFor, hostIdFor } from './persistence/identity.ts';
 import { noteRustEngine } from './persistence/managed-operations.ts';
@@ -207,7 +207,8 @@ export class RustEngine implements BrainEngine {
 
   /** What this engine's own store serves: the served set, plus `multi_writer` in multi-user mode. */
   private _ownCapabilities(): Capability[] {
-    return this.multiuser ? [...servedCapabilities(), 'multi_writer'] : [...servedCapabilities()];
+    // A multi-user store reports the served set less what it withholds (store-capabilities.ts MULTIUSER_WITHHELD).
+    return this.multiuser ? [...storeCapabilities({ multiuser: true }), 'multi_writer'] : [...servedCapabilities()];
   }
 
   /** True between `connect()` and `disconnect()`. */
