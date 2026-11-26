@@ -2977,6 +2977,13 @@
         },
         {
           "category": "brain",
+          "elapsed_ms": "<volatile>",
+          "message": "No confirmed standing rules to check (gbrain correct saves one).",
+          "name": "rules_regression",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
           "details": {
             "conversation": null,
             "fix": "preview links: gbrain facts relink --dry-run",
@@ -4534,7 +4541,7 @@
         {
           "category": "meta",
           "elapsed_ms": "<volatile>",
-          "message": "Active pack gbrain-base-v2@1.7.0+b64f249b is current (no successor declared)",
+          "message": "Active pack gbrain-base-v2@1.7.0+f1691ae3 is current (no successor declared)",
           "name": "pack_upgrade_available",
           "status": "ok"
         },

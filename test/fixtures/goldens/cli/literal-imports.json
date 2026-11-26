@@ -61,6 +61,9 @@
       "core": [
         "./commands/core.ts"
       ],
+      "correct": [
+        "./commands/correct.ts"
+      ],
       "dedupe": [
         "./commands/dedupe.ts"
       ],
@@ -177,6 +180,9 @@
       "profile": [
         "./commands/profile.ts"
       ],
+      "propose": [
+        "./commands/propose.ts"
+      ],
       "quarantine": [
         "./commands/trust.ts",
         "./commands/quarantine.ts"
@@ -219,6 +225,9 @@
       ],
       "retrieval-upgrade": [
         "./commands/migrate-embeddings.ts"
+      ],
+      "rules": [
+        "./commands/rules.ts"
       ],
       "salience": [
         "./commands/salience.ts"
@@ -263,6 +272,9 @@
         "./core/eligibility/scan.ts",
         "./core/trust/label-lowerings.ts",
         "./core/trust/backfill.ts"
+      ],
+      "value": [
+        "./commands/value.ts"
       ],
       "wakeshift": [
         "./commands/wakeshift.ts"

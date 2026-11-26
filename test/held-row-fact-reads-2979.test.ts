@@ -148,7 +148,7 @@ for (const kind of testBackends()) {
 
       await call('local', 'remember', { fact: OWN.claim, provenance: 'chat', entity: OWN.slug, visibility: 'private', request_id: randomUUID() });
       await confirm('fact=$2', [OWN.claim]);
-      await call('bob', 'put_page', { slug: OWN.slug, content: memberPageFrontmatter(BOB) + '# Memory\n\n## Facts\n\n' + renderFactsTable([row(1, OWN.claim)] as never) + '\n', request_id: randomUUID() });
+      await call('bob', 'put_page', { slug: OWN.slug, content: memberPageFrontmatter(BOB, new Date('2026-01-01T00:00:00Z')) + '# Memory\n\n## Facts\n\n' + renderFactsTable([row(1, OWN.claim)] as never) + '\n', request_id: randomUUID() });
     }), 300_000);
     afterAll(async () => { resetGateway(); await disposePersistenceConsumer(engine); await close?.(); rmSync(home, { recursive: true, force: true }); }, 60_000);
 
