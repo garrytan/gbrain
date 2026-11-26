@@ -133,11 +133,11 @@ withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
 listCatalogRelations	lifecycle	yes	1	no	yes	yes	serves
 readCatalogSchemaVersion	lifecycle	yes	1	no	yes	yes	serves
 listCatalogForeignKeys	lifecycle	yes	1	no	yes	yes	serves
-getPage	pages	yes	289	yes	yes	yes	serves
+getPage	pages	yes	290	yes	yes	yes	serves
 readPageSnapshot	pages	yes	110	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	7	no	yes	yes	serves
 lockPageKeys	pages	yes	17	no	yes	yes	serves
-putPage	pages	yes	1392	yes	yes	yes	serves
+putPage	pages	yes	1396	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	45	yes	yes	yes	serves
@@ -649,11 +649,11 @@ readFactTrustTier	facts	yes	2	no	yes	yes	serves
 listFenceFactRowNums	facts	yes	2	no	yes	yes	serves
 readLiveFactRowTier	facts	yes	1	no	yes	yes	serves
 insertFact	facts	yes	199	yes	yes	yes	serves
-insertFacts	facts	yes	293	no	yes	yes	serves
+insertFacts	facts	yes	296	no	yes	yes	serves
 deleteFactsForPage	facts	yes	8	no	yes	yes	serves
 expireFact	facts	yes	94	no	yes	yes	serves
 listFactsByEntity	facts	yes	69	yes	yes	yes	serves
-listFactsSince	facts	yes	50	yes	yes	yes	serves
+listFactsSince	facts	yes	51	yes	yes	yes	serves
 listFactsKeyset	facts	yes	11	no	yes	yes	serves
 listFactsBySession	facts	yes	13	yes	yes	yes	serves
 listSupersessions	facts	yes	7	yes	yes	yes	serves
@@ -734,7 +734,7 @@ installSegmentedVectors	segmented_body	yes	2	no	yes	yes	serves
 listLiveEmbedSegments	segmented_body	yes	1	no	yes	yes	serves
 listSegmentChunkRows	segmented_body	yes	1	no	yes	yes	serves
 listInlineVersionTexts	versions	yes	2	no	yes	yes	serves
-createVersion	versions	yes	98	no	yes	yes	serves
+createVersion	versions	yes	99	no	yes	yes	serves
 getVersions	versions	yes	37	no	yes	yes	serves
 readLatestVersionId	versions	yes	1	no	yes	yes	serves
 readLatestVersionIdAtTier	versions	yes	1	no	yes	yes	serves
@@ -1523,7 +1523,7 @@ selectFactsReconcileDrain	facts_purge	yes	1	no	yes	yes	serves
 listRelinkCandidateRows	facts_purge	yes	1	no	yes	yes	serves
 countRelinkCandidates	facts_purge	yes	1	no	yes	yes	serves
 listSimilarActiveFacts	facts_purge	yes	4	no	yes	yes	serves
-findActiveSingleFact	facts_purge	yes	7	no	yes	yes	serves
+findActiveSingleFact	facts_purge	yes	8	no	yes	yes	serves
 listSingleFactMetadata	facts_purge	yes	2	no	yes	yes	serves
 countUnfencedFactGroups	facts_purge	yes	1	no	yes	yes	serves
 listUnfencedFactRows	facts_purge	yes	2	no	yes	yes	serves
@@ -1871,7 +1871,7 @@ listPageQuoteTiers	trust_tier_reads	yes	3	no	yes	yes	serves
 listPageTrustTiersByKey	trust_tier_reads	yes	1	no	yes	yes	serves
 lockLivePagesByKey	trust_tier_reads	yes	1	no	yes	yes	serves
 listValidTimeIdentities	trust_tier_reads	yes	4	no	yes	yes	serves
-pickValidTimeEdition	trust_tier_reads	yes	9	no	yes	yes	serves
+pickValidTimeEdition	trust_tier_reads	yes	10	no	yes	yes	serves
 listAmendmentsNotApplied	trust_tier_reads	yes	3	no	yes	yes	serves
 readPageVersionEdition	trust_tier_reads	yes	3	no	yes	yes	serves
 readCursorEdition	trust_tier_reads	yes	1	no	yes	yes	serves
@@ -1884,7 +1884,7 @@ readSourceLocalPath	memory_mutation_reads	yes	3	no	yes	yes	serves
 readFactEntitySlug	memory_mutation_reads	yes	1	no	yes	yes	serves
 hasLiveFileBackedPage	memory_mutation_reads	yes	1	no	yes	yes	serves
 factReadableUnder	memory_mutation_reads	yes	2	no	yes	yes	serves
-readRemoteForgetTier	memory_mutation_reads	yes	2	no	yes	yes	serves
+readRemoteForgetTier	memory_mutation_reads	yes	3	no	yes	yes	serves
 readForgetTarget	memory_mutation_reads	yes	2	no	yes	yes	serves
 isFactEntityUnbacked	memory_mutation_reads	yes	1	no	yes	yes	serves
 readLinkedFactCopies	memory_mutation_reads	yes	3	no	yes	yes	serves

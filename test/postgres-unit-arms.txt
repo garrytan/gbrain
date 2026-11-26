@@ -365,6 +365,7 @@ test/engine-parity/journal-typed-sites.test.ts
 test/engine-parity/keyword-visibility.test.ts
 test/engine-parity/label-guard-tiers.test.ts
 test/engine-parity/labelled-access-allowed.test.ts
+test/engine-parity/labelled-only-floor-stops.test.ts
 test/engine-parity/labelled-only-for.test.ts
 test/engine-parity/labelled-only-policy.test.ts
 test/engine-parity/labelled-only-reads.test.ts

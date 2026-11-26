@@ -18,7 +18,7 @@
  *    member (storePrivacyPolicy: "a lineage read refuses"). Each family below returns a refusal as a value ({ refused }), so an arm
  *    that still refuses fails the comparison with PGLite instead of counting as stopped.
  *  - Pending prefixes: a record that holds a pending folder prefix hides a page under it. The policy the Rust store is sent must
- *    carry the record's folder coverage with the lineage flag (a field missing there was a leak in row 32e-b-2), so a fact held on
+ *    send the record's folder coverage with the lineage flag (a field missing there was a leak in row 32e-b-2), so a fact held on
  *    a page under a pending prefix, and a fact about an entity page under one, are cases of every family.
  *  - Why existing coverage misses it: folder-rule-fact-reads.test.ts reads facts through one list read and a recall, and its
  *    lineage case was a named stop; no case called the other families under a lineage record.
@@ -266,7 +266,7 @@ const FAMILIES: readonly Family[] = [
     labelsOf(s, (await engine.listSimilarActiveFacts({ sourceId: 'default', factId: s.anchor, remote: true, excludePrivate: true, minCosine: 0, limit: 100 })).rows as never), check: (m, g) => expect(g).toEqual(LABELS.filter(l => WANT(1, m).includes(l) || l === 'gone-dana')) },
   { name: 'factReadableUnder', form: 1, run: async (engine, s) => {
     const read: string[] = [];
-    for (const [label, id] of s.ids) if (await engine.factReadableUnder({ id, sourceId: 'default', anyVisibility: false, excludePrivate: true })) read.push(label);
+    for (const [label, id] of s.ids) if (await engine.factReadableUnder({ id, sourceId: 'default', anyVisibility: false, eligibility: undefined, excludePrivate: true })) read.push(label);
     return LABELS.filter(l => read.includes(l));
   }, check: (m, g) => expect(g).toEqual(WANT(1, m)) },
   { name: 'readBriefWorldFacts', form: 2, run: async (engine, s) => labelsOf(s, await engine.readBriefWorldFacts(ALL(s))), check: (m, g) => expect(g).toEqual(WANT(2, m)) },
