@@ -35,10 +35,10 @@ for (const kind of testBackends()) {
     }, 120_000);
     afterAll(async () => { await close(); });
 
-    const put = (body: string) => engine.putPage(SLUG, { title: 'Alice Example', type: 'person', compiled_truth: body, frontmatter: {}, timeline: '' });
-    const holds = async () => (await listFenceHolds(engine, ['default'], SLUG)).map(h => `${h.kind}:${h.reason}`);
-    const active = async () => (await engine.executeRaw<{ fact: string }>(
-      'SELECT fact FROM facts WHERE source_markdown_slug = $1 AND expired_at IS NULL ORDER BY row_num', [SLUG])).map(r => r.fact);
+    const put = (body: string, slug = SLUG) => engine.putPage(slug, { title: 'Alice Example', type: 'person', compiled_truth: body, frontmatter: {}, timeline: '' });
+    const holds = async (slug = SLUG) => (await listFenceHolds(engine, ['default'], slug)).map(h => `${h.kind}:${h.reason}`);
+    const active = async (slug = SLUG) => (await engine.executeRaw<{ fact: string }>(
+      'SELECT fact FROM facts WHERE source_markdown_slug = $1 AND expired_at IS NULL ORDER BY row_num', [slug])).map(r => r.fact);
 
     test('the fence comes back unchanged: the rows stay and the hold clears', async () => {
       await put(FENCED);
@@ -53,6 +53,26 @@ for (const kind of testBackends()) {
       await runExtractFacts(engine, { slugs: [SLUG] });
       expect(await holds()).toEqual([]);
       expect(await active()).toEqual(['Alice Example founded acme-example.']);
+    }, 120_000);
+
+    test('a no_proof hold clears the same way and keeps the rows and their trust tier', async () => {
+      const slug = 'people/alice-example-2';
+      const tiers = async () => (await engine.executeRaw<{ fact: string; trust_tier: string }>(
+        'SELECT fact, trust_tier FROM facts WHERE source_markdown_slug = $1 ORDER BY row_num', [slug]));
+      await put(FENCED, slug);
+      await runExtractFacts(engine, { slugs: [slug] });
+      const before = await tiers();
+      await put('# Alice Example\n\nThe facts section was lost in an edit.\n', slug);
+      await runExtractFacts(engine, { slugs: [slug] });
+      await engine.executeRaw(
+        `UPDATE derived_generations SET held_reason = 'no_proof' WHERE state = 'held' AND held_reason = 'fence_absent' AND owner_key LIKE $1`, [`%${slug}%`]);
+      expect(await holds(slug)).toEqual(['fact_fence:no_proof']);
+
+      await put(FENCED, slug);
+      await runExtractFacts(engine, { slugs: [slug] });
+      expect(await holds(slug)).toEqual([]);
+      expect(await active(slug)).toEqual(['Alice Example founded acme-example.']);
+      expect(await tiers()).toEqual(before);
     }, 120_000);
   });
 }
