@@ -3090,6 +3090,7 @@
     "pg_connection_stuck": 1,
     "pg_pool_stalled": 1,
     "pg_statement_build_failed": 1,
+    "pg_storage_interrupted": 1,
     "pglite_busy": 1,
     "pglite_vector_index_too_large": 1,
     "plan_output_failed": 1,

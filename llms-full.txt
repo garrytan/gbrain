@@ -5368,6 +5368,7 @@ names — reasons may be added, never renamed or removed). All 16:
 | `schema_missing` | 42P01/42703 — pending migrations (`gbrain apply-migrations --yes`; excluded from the db-repair marker on the MCP mid-operation path, where it usually means code skew) |
 | `pgvector_missing` | the vector extension is absent — auto tier creates it |
 | `storage_corrupt` | XX001/XX002, or an XX000 such as `unexpected chunk number … for toast value` or `tuple concurrently deleted` — stored data is damaged; db-repair stops at manual and names the first step, `gbrain repair orphan-children` (preview, includes the torn-TOAST probe; [orphan children](guides/repair.md#orphan-children)) |
+| `storage_interrupted` | XX000 `could not open file …` / `could not read block … in file …` ending `Interrupted system call` — PostgreSQL's read of a data file was interrupted (EINTR) on the host; not damaged data, so no repair is offered; db-repair stops at manual: check the host's storage and PostgreSQL log, then the original job or write receipt before resubmitting |
 | `tls_required_default` | `postgres_tls_required`: gbrain's TLS default met a non-local server without TLS — db-repair stops at manual; turn TLS on at the server or add `sslmode=disable` ([TLS](#tls-for-postgres-connections)) |
 | `unknown` | unclassified — redacted error + `gbrain doctor` |
 

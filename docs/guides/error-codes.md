@@ -4813,6 +4813,16 @@ More: [docs/ENGINES.md#pg-pool-stalled](../../docs/ENGINES.md#pg-pool-stalled)
 
 More: [docs/ENGINES.md#pg-statement-build-failed](../../docs/ENGINES.md#pg-statement-build-failed)
 
+### pg_storage_interrupted
+
+<a id="pg_storage_interrupted"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| PostgreSQL was interrupted (EINTR, "Interrupted system call") while opening or reading one of its data files. | The operating system interrupted the server's file access: a fault on the database host (its storage or a network filesystem), not damaged rows, so no repair command applies and the statement that hit it did not finish. | PostgreSQL was interrupted reading a data file on the database host, which is not a sign of damaged rows. Check its storage and the PostgreSQL log; once it reads again, check the original job or write receipt before resubmitting. | host_admin | `gbrain doctor --json` | 1 | no |
+
+More: [docs/ENGINES.md#the-gbrain_db_access-marker](../../docs/ENGINES.md#the-gbrain_db_access-marker)
+
 ### pglite_busy
 
 <a id="pglite_busy"></a>
