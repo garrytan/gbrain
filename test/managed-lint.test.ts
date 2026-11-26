@@ -213,6 +213,14 @@ test('managed directory lint skips files managed sync never imports; a single-fi
       const single = await runLintCore({ target: join(root, 'README.md'), dryRun: true, engine, sourceId });
       expect(single).toMatchObject({ pages_scanned: 1 });
       expect(single.total_issues).toBeGreaterThan(0);
+      // A subdirectory target is judged by each file's path below the source root, not below the target.
+      const scanned = async (rel: string) => (await runLintCore({ target: join(root, rel), dryRun: true, engine, sourceId })).pages_scanned;
+      expect(await scanned('drafts')).toBe(0);
+      expect(await scanned('skills')).toBe(0);
+      expect(await scanned('notes')).toBe(2);
+      // The source's own strategy decides: a code source imports no Markdown.
+      await engine.executeRaw(`UPDATE sources SET config = config || '{"strategy":"code"}'::jsonb WHERE id=$1`, [sourceId]);
+      expect(await scanned('.')).toBe(0);
     } finally {
       await engine.setConfig('sync.exclude', '');
     }

@@ -619,6 +619,16 @@ describe('#4305 false target stamps + #4306 embed_skip-safe invalidation', () =>
   test('#10231: a database config that names the model without its provider is not converged; apply rewrites only the label', async () => {
     const sig = migrationSignature(TARGET, colDim);
     await seedModeled('qualified', 'abcde', { model: TARGET, signature: sig });
+    const vec = `[${new Array(colDim).fill(0.02).join(',')}]`;
+    await engine.executeRaw(
+      `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, notability, source, confidence, embedding, embedding_model, embedded_text_hash)
+       VALUES ('default', 'e', 'kept fact', 'fact', 'private', 'medium', 'test', 1.0, $1::vector, $2, md5('kept fact'))`,
+      [vec, TARGET],
+    );
+    const [page] = await engine.executeRaw<{ id: number }>("SELECT id FROM pages WHERE slug='qualified' AND source_id='default'");
+    await engine.addTakesBatch([{ page_id: page.id, row_num: 1, claim: 'Kept take', kind: 'take', holder: 'brain', weight: 0.6 }]);
+    await engine.executeRaw("UPDATE takes SET embedding=$1::vector, embedding_model=$2, embedded_text_hash=md5(claim), embedded_at=now() WHERE page_id=$3",
+      [vec, TARGET, page.id]);
     await engine.setConfig('embedding_model', 'text-embedding-3-small');
     await engine.setConfig('embedding_dimensions', String(colDim));
 
@@ -636,6 +646,10 @@ describe('#4305 false target stamps + #4306 embed_skip-safe invalidation', () =>
     expect(res).toMatchObject({ status: 'applied', invalidated: 0 });
     expect(await engine.getConfig('embedding_model')).toBe(TARGET);
     expect(await chunkState('qualified')).toEqual({ embedded: 1, nulls: 0 });
+    const companions = await engine.executeRaw<{ facts: number; takes: number }>(
+      `SELECT (SELECT count(*)::int FROM facts WHERE fact='kept fact' AND embedding IS NOT NULL) AS facts,
+              (SELECT count(*)::int FROM takes WHERE page_id=$1 AND embedding IS NOT NULL AND embedded_at IS NOT NULL) AS takes`, [page.id]);
+    expect(companions[0]).toEqual({ facts: 1, takes: 1 });
     const after = await verifyMigrationComplete(engine, { toModel: TARGET, toDims: colDim }, {
       filePlane: { model: TARGET, dims: colDim }, ignoreMarker: true,
     });

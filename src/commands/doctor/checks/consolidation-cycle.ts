@@ -14,6 +14,7 @@ import { isSyncDisabledConfig } from '../../../core/sync-policy.ts';
 
 /** Local alias; the shared warn-once memo lives in core so it can't fork per module. */
 const _resolveSyncFreshnessHours = resolveHoursEnv;
+const CURSOR_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?Z$/;
 
 
 /**
@@ -159,8 +160,8 @@ export async function checkPoolBudget(_engine: BrainEngine): Promise<Check> {
  * exactly what autopilot sees when deciding to skip a source. A source
  * walked in bounded windows (cycle/source-window.ts) stamps that field
  * after every window, so a window cursor with live pages after it is
- * reported as a walk in progress (#8577): a warning on a checked source,
- * a note on a sync-off one, and `details.source_windows` either way.
+ * reported as a walk in progress (#8577): a note in the message and
+ * `details.source_windows`, never a warning on its own.
  *
  * Default thresholds: warn at 6h, fail at 24h. Tighter than sync_freshness
  * because full-cycle staleness compounds (sync stale → extract stale →
@@ -191,9 +192,11 @@ export async function checkCycleFreshness(
     const issues: string[] = [];
     let hasWarnings = false;
     let hasFailures = false;
+    // A cursor in any other shape than the UTC ISO instant the window listing writes is ignored, as the queued handler does.
     const cursors = new Map(sources.flatMap((s) => {
       const at = s.config?.last_source_cycle_window_at, slug = s.config?.last_source_cycle_window_slug;
-      return typeof at === 'string' && at && typeof slug === 'string' && slug ? [[s.id, { at, slug }] as const] : [];
+      return typeof at === 'string' && CURSOR_INSTANT.test(at) && Number.isFinite(Date.parse(at)) && typeof slug === 'string' && slug
+        ? [[s.id, { at, slug }] as const] : [];
     }));
     const { young, afterCursor } = await sourcePageCensus(engine, sources.map((s) => s.id), cursors, now);
     const waiting: string[] = [];
@@ -207,7 +210,8 @@ export async function checkCycleFreshness(
         ? `'${source.id}' (${source.name})`
         : `'${source.id}'`;
       // #8577: a bounded window stamps the cycle timestamps even when it stopped at its page limit; the cursor it left
-      // (a nonempty slug) and the live pages after it say the walk of the source is not finished.
+      // (a nonempty slug) and the live pages after it say the walk of the source is not finished. The next cycle of the
+      // source walks on from the cursor, so this is a note, never a warning or a fix.
       const cursor = cursors.get(source.id);
       const remaining = afterCursor.get(source.id) ?? 0;
       if (cursor && remaining > 0) {
@@ -216,11 +220,6 @@ export async function checkCycleFreshness(
       }
       // GST-3337: a source with sync off is never stale or failing here, so nothing that acts on freshness (a dream) picks it.
       if (isSyncDisabledConfig(source.config)) { syncOff.push(display); continue; }
-      if (cursor && remaining > 0) {
-        issues.push(walking.at(-1)!);
-        firstStale ??= source.id;
-        hasWarnings = true;
-      }
       const raw = source.config?.last_full_cycle_at;
       if (typeof raw !== 'string' && young.has(source.id)) {
         waiting.push(display);
@@ -267,9 +266,8 @@ export async function checkCycleFreshness(
     }
 
     const fix = firstStale ? cycleFix(firstStale, isAvailable('chat') || isAvailable('embedding')) : undefined;
-    const offWalks = walking.filter((line) => !issues.includes(line));
     const offNote = (syncOff.length ? ` Sync off (not checked; only an explicit gbrain sync --source <id> syncs ${syncOff.length > 1 ? 'them' : 'it'}): ${syncOff.join(', ')}.` : '')
-      + (offWalks.length ? ` ${offWalks.join('; ')}.` : '');
+      + (walking.length ? ` ${walking.join('; ')}.` : '');
     const details = sourceWindows.length ? { details: { source_windows: sourceWindows } } : {};
     if (hasFailures) {
       return {

@@ -6,7 +6,11 @@
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { makeEngineChatUsageSink, type ChatUsageRecord } from '../src/core/ai/chat-usage.ts';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { makeEngineChatUsageSink, recordChatUsage, type ChatUsageRecord } from '../src/core/ai/chat-usage.ts';
+import { createEngine } from '../src/core/engine-factory.ts';
 
 function record(over: Partial<ChatUsageRecord>): ChatUsageRecord {
   return {
@@ -82,4 +86,37 @@ describe('chat usage ledger + pricing.overrides (#10424)', () => {
     await sink(record({ model: 'litellm:gateway-model', provider: 'litellm' }));
     expect(await costs()).toEqual({ 'litellm:gateway-model': null });
   });
+
+  test('a failed overrides read is not cached: the next row reads again and is priced', async () => {
+    let reads = 0;
+    const flaky = {
+      executeRaw: (sql: string, params?: unknown[]) => engine.executeRaw(sql, params),
+      getConfig: async (key: string): Promise<string | null> => { if (reads++ === 0) throw new Error('config unavailable'); return engine.getConfig(key); },
+    };
+    const sink = makeEngineChatUsageSink(flaky);
+    await sink(record({ model: 'litellm:gateway-model', provider: 'litellm' }));
+    await sink(record({ model: 'litellm:gateway-model', provider: 'acme-example' }));
+    const rows = await engine.executeRaw<{ cost_usd: string | number | null }>('SELECT cost_usd FROM chat_usage_log ORDER BY id');
+    expect(rows.map((row) => row.cost_usd === null ? null : Math.round(Number(row.cost_usd) * 1e6) / 1e6)).toEqual([null, 0.6]);
+    expect(reads).toBe(2);
+  });
+
+  test('closing the engine right after a recorded call keeps its ledger row', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-usage-close-'));
+    try {
+      const config = { engine: 'pglite' as const, database_path: join(dir, 'brain') };
+      const writer = await createEngine(config);
+      await writer.connect(config);
+      await writer.initSchema();
+      await writer.setConfig('pricing.overrides', JSON.stringify({ 'litellm:gateway-model': { input: 0.1, output: 0.5 } }));
+      recordChatUsage({ model: 'litellm:gateway-model', provider: 'litellm', usage: { input_tokens: 1_000_000, output_tokens: 1_000_000 } });
+      await writer.disconnect();
+      const reader = await createEngine(config);
+      await reader.connect(config);
+      try {
+        const rows = await reader.executeRaw<{ cost_usd: string | number | null }>('SELECT cost_usd FROM chat_usage_log');
+        expect(rows.map((row) => Math.round(Number(row.cost_usd) * 1e6) / 1e6)).toEqual([0.6]);
+      } finally { await reader.disconnect(); }
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }, 60_000);
 });

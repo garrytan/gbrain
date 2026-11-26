@@ -249,29 +249,33 @@ export const CHAT_USAGE_OVERRIDES_TTL_MS = 60_000;
  * input and output tokens at its rates), so `get_usage` reports the spend
  * the meter caps. The sink reads the overrides at most once per
  * CHAT_USAGE_OVERRIDES_TTL_MS, never once per row; a failed read keeps the
- * table price (or NULL) the record arrived with.
+ * table price (or NULL) the record arrived with, and the next row reads again.
+ * Because a row waits for that read before its INSERT, the engine's close
+ * awaits `drain()` so a row recorded just before it still lands.
  */
 export function makeEngineChatUsageSink(engine: {
   executeRaw: (sql: string, params?: unknown[]) => Promise<unknown>;
   getConfig?: (key: string) => Promise<string | null>;
-}): ChatUsageSink {
+}): ChatUsageSink & { drain(): Promise<void> } {
   let cached: { overrides: Promise<PricingOverrides | undefined>; readAt: number } | null = null;
   const pricingOverrides = (): Promise<PricingOverrides | undefined> => {
     const getConfig = engine.getConfig;
     if (!getConfig) return Promise.resolve(undefined);
     const now = Date.now();
     if (!cached || now - cached.readAt >= CHAT_USAGE_OVERRIDES_TTL_MS) {
-      cached = {
+      const entry = {
         readAt: now,
-        overrides: import('../budget/budget-tracker.ts')
-          .then(({ loadPricingOverrides }) => loadPricingOverrides({ getConfig: (key) => getConfig.call(engine, key) }))
-          // silent-read-ok: without overrides a row keeps its table price or NULL (unpriced), never a made-up cost
-          .catch(() => undefined),
+        overrides: Promise.all([getConfig.call(engine, 'pricing.overrides'), import('../budget/budget-tracker.ts')])
+          .then(([raw, { parsePricingOverrides }]) => parsePricingOverrides(raw))
+          // silent-read-ok: a failed read prices nothing from overrides and is not cached, so the next row reads again
+          .catch(() => { if (cached === entry) cached = null; return undefined; }),
       };
+      cached = entry;
     }
     return cached.overrides;
   };
-  return async (record: ChatUsageRecord): Promise<void> => {
+  const pending = new Set<Promise<void>>();
+  const write = async (record: ChatUsageRecord): Promise<void> => {
     const override = overrideFor(record.model, await pricingOverrides());
     const r = override
       ? { ...record, cost_usd: (record.input_tokens * override.input + record.output_tokens * override.output) / 1_000_000 }
@@ -293,4 +297,12 @@ export function makeEngineChatUsageSink(engine: {
       ],
     );
   };
+  const sink = (record: ChatUsageRecord): Promise<void> => {
+    const write$ = write(record);
+    pending.add(write$);
+    const settle = () => { pending.delete(write$); };
+    write$.then(settle, settle);
+    return write$;
+  };
+  return Object.assign(sink, { drain: async () => { await Promise.allSettled([...pending]); } });
 }

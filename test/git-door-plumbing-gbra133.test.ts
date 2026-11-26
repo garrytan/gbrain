@@ -269,13 +269,13 @@ describe('G2 plumbing door commit', () => {
 
   // #8321: an old Git recorded group-writable files as 100664, which `hash-object -t tree` refuses in a rebuilt tree.
   /** HEAD with `paths` re-recorded at the legacy mode 100664 (mktree keeps it raw), committed on main. */
-  function legacyModes(root: string, paths: string[]): void {
+  function legacyModes(root: string, paths: string[], legacy = '100664'): void {
     const rebuild = (dir: string): string => lines(raw(root, 'ls-tree', `HEAD:${dir}`)).map(line => {
       const [meta, name] = line.split('\t') as [string, string];
       const [mode, type, oid] = meta.split(' ') as [string, string, string];
       const path = dir ? `${dir}/${name}` : name;
       if (type === 'tree') return `${mode} tree ${paths.some(p => p.startsWith(`${path}/`)) ? mktree(rebuild(path)) : oid}\t${name}`;
-      return `${paths.includes(path) ? '100664' : mode} ${type} ${oid}\t${name}`;
+      return `${paths.includes(path) ? legacy : mode} ${type} ${oid}\t${name}`;
     }).join('\n') + '\n';
     const mktree = (listing: string) => execFileSync('git', ['-C', root, 'mktree'], { input: listing, encoding: 'utf8', env }).trim();
     const commit = git(root, 'commit-tree', mktree(rebuild('')), '-p', 'HEAD', '-m', 'legacy modes');
@@ -314,6 +314,16 @@ describe('G2 plumbing door commit', () => {
     expect(lines(git(root, 'ls-tree', '--name-only', 'HEAD:notes'))).toEqual(['a.md', 'legacy.md', 'new.md']);
     expect(rawMode(root, 'HEAD:notes', 'legacy.md')).toBe('100644');
     expect(git(root, 'status', '--porcelain')).toBe('');
+  });
+
+  test('a sibling at another legacy mode keeps its execute bit: 100775 is recorded as 100755', async () => {
+    const root = repo({ 'notes/a.md': 'a\n', 'notes/run.sh': 'echo run\n' });
+    legacyModes(root, ['notes/run.sh'], '100775');
+    expect(rawMode(root, 'HEAD:notes', 'run.sh')).toBe('100775');
+    put(root, 'notes/a.md', 'a, second revision\n');
+    await door(root, 'notes/a.md');
+    expect(git(root, 'show', 'HEAD:notes/a.md')).toBe('a, second revision');
+    expect(rawMode(root, 'HEAD:notes', 'run.sh')).toBe('100755');
   });
 
   test('a sibling whose name is not UTF-8 is carried over unchanged', async () => {

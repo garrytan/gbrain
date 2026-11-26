@@ -134,7 +134,7 @@ interface Target { rel: string; name: string; dir: string; planned: string | nul
 interface IndexSnapshot { signature: string; entries: Map<string, string> }
 
 const TREE_MODE = '40000';
-const LEGACY_FILE_MODE = '100664';
+const CANONICAL_FILE_MODES = new Set(['100644', '100755']);
 const latin1 = (text: string) => Buffer.from(text, 'utf8').toString('latin1');
 
 interface Found { start: number; end: number; mode: string; oid: Buffer }
@@ -168,15 +168,17 @@ function lookupTree(raw: Buffer, oidBytes: number, names: string[]): Map<string,
 /**
  * A raw tree with `edits` applied (an entry set, or removed by null) and every other entry's bytes kept, in Git's
  * entry order: a new name is inserted where it sorts (a directory sorts as if its name ended in '/'). The one
- * exception is the legacy group-writable mode 100664 (#8321), which `hash-object -t tree` refuses: a kept entry
- * with it is written as 100644, the mode Git's own index and porcelain commit record for the same file.
+ * exception is a legacy regular-file mode such as group-writable 100664 (#8321), which `hash-object -t tree` refuses:
+ * a kept entry with one is written as 100755 when its owner-execute bit is set, else 100644, the modes Git's own index
+ * and porcelain commit record for the same file.
  */
 function rewriteTree(dir: Dir, oidBytes: number): Buffer {
   const ops: { start: number; end: number; bytes: Buffer }[] = [];
   const inserts: { key: Buffer; bytes: Buffer }[] = [];
   eachEntry(dir.raw, oidBytes, (start, space, nul) => {
-    if (dir.raw.toString('latin1', start, space) === LEGACY_FILE_MODE && !dir.edits.has(dir.raw.toString('latin1', space + 1, nul))) {
-      ops.push({ start, end: space, bytes: Buffer.from('100644', 'latin1') });
+    const mode = dir.raw.toString('latin1', start, space);
+    if (/^100[0-7]{3}$/.test(mode) && !CANONICAL_FILE_MODES.has(mode) && !dir.edits.has(dir.raw.toString('latin1', space + 1, nul))) {
+      ops.push({ start, end: space, bytes: Buffer.from(parseInt(mode, 8) & 0o100 ? '100755' : '100644', 'latin1') });
     }
   });
   for (const [name, entry] of dir.edits) {

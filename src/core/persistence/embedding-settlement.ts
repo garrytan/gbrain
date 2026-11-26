@@ -22,11 +22,12 @@
  *   `embedding_disabled`, `embedding_unconfigured`, `projection_pending`,
  *   `no_replacement_obligation`).
  *
- * An effect of a former binding (its worktree retired by `writer deactivate`
- * or replaced by a transfer, #10434) settles only through the read-only
- * `reconciled` and `superseded` proofs, run under this host's current
- * binding of the same source incarnation; its outcome names the former
- * worktree, and one that would need a retry stays `owner_unavailable`.
+ * A single-page effect of a former binding (its worktree retired by
+ * `writer deactivate` or replaced by a transfer, #10434) settles only through
+ * the read-only `reconciled` and `superseded` proofs, run under this host's
+ * current binding of the same source incarnation after the source guard passes
+ * again for that binding; its outcome names the former worktree. A multi-target
+ * or scan effect, or one that would need a retry, stays `owner_unavailable`.
  *
  * Every state change is a compare-and-set on state, attempts, execution token
  * and recovery. A candidate that changed since planning is `changed_since_preview`.
@@ -144,8 +145,14 @@ function settleInTransaction(engine: BrainEngine, candidate: Pick<EmbeddingCandi
       }
       formerWorktreeId = effect.worktree_id;
       effect = { ...effect, worktree_id: current.worktree_id };
+      try { await guardEffectSource(tx, effect, opts.hostId); }
+      catch (retry) {
+        if (retry instanceof OperationError && ['owner_unavailable', 'source_changed'].includes(retry.code)) return { outcome: 'blocked', reason: 'owner_unavailable' };
+        throw retry;
+      }
     }
     const scanning = targetedWithdrawalEffect(effect) || effect.data.source_scan === true;
+    if (formerWorktreeId && scanning) return { outcome: 'blocked', reason: 'owner_unavailable' };
     const snapshot = await selectedEffectPage(tx, effect);
     let pendingChunks: number | undefined;
     if (scanning) {

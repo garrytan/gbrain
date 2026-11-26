@@ -255,6 +255,32 @@ for (const kind of testBackends()) {
       expect(await effect(foreign.effectId)).toEqual(foreignBefore);
     });
 
+    check('former binding: an archived source, or a multi-target effect, stays blocked and unchanged even with verified current vectors', async () => {
+      const archived = await fixture('failed');
+      await rebindToNewWorktree(archived.sourceId, archived.incarnation, archived.effectId);
+      await engine.putPage('page', { type: 'note', title: 'Changed', compiled_truth: 'Current' }, { sourceId: archived.sourceId });
+      await classicUpdate(archived.sourceId);
+      await embedVectors(archived.sourceId);
+      await engine.executeRaw('UPDATE sources SET archived=true, archived_at=now() WHERE id=$1', [archived.sourceId]);
+      const archivedBefore = await effect(archived.effectId);
+      expect(await settleEmbeddingEffect(engine, { effect_id: archived.effectId, state: 'failed', attempts: 5 }, { dryRun: false, config, hostId: localHostId() }))
+        .toEqual({ outcome: 'blocked', reason: 'owner_unavailable' });
+      expect(await effect(archived.effectId)).toEqual(archivedBefore);
+
+      const multi = await fixture('failed');
+      await rebindToNewWorktree(multi.sourceId, multi.incarnation, multi.effectId);
+      await engine.putPage('page', { type: 'note', title: 'Changed', compiled_truth: 'Current' }, { sourceId: multi.sourceId });
+      await classicUpdate(multi.sourceId);
+      await embedVectors(multi.sourceId);
+      const old = await effect(multi.effectId);
+      await engine.executeRaw('UPDATE persistence_effects SET data=$2::text::jsonb WHERE id=$1', [multi.effectId,
+        JSON.stringify({ version: 2, targets: [{ slug: 'page', page_id: old.data.page_id, revision: old.revision }] })]);
+      const multiBefore = await effect(multi.effectId);
+      expect(await settleEmbeddingEffect(engine, { effect_id: multi.effectId, state: 'failed', attempts: 5 }, { dryRun: false, config, hostId: localHostId() }))
+        .toEqual({ outcome: 'blocked', reason: 'owner_unavailable' });
+      expect(await effect(multi.effectId)).toEqual(multiBefore);
+    });
+
     check('retry_queued: a stale queued effect without vectors is re-queued, doctor stays pending, and the owner run settles it', async () => {
       const f = await fixture('stale');
       const applied = await repair(f.sourceId, true);

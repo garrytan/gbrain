@@ -233,14 +233,14 @@ describe('doctor checkCycleFreshness', () => {
       } finally { sourceWindow.pageLimit = saved; }
     }
 
-    test('a recent window that stopped at its limit warns with the pages left after the cursor, not "cycled recently"', async () => {
+    test('a recent window that stopped at its limit notes the pages left after the cursor, without a warning or a fix', async () => {
       await engine.executeRaw(`UPDATE sources SET local_path = NULL WHERE id = 'default'`);
       const stamp = await walkOneWindow('walk-example', 5, 2);
       expect(stamp.last_source_cycle_window_slug).toBe('walk-example/page-01');
       const result = await checkCycleFreshness(engine, { nowMs: NOW });
-      expect(result.status).toBe('warn');
+      expect(result.status).toBe('ok');
       expect(result.message).toContain("Source 'walk-example' is partway through a bounded page walk: 3 live page(s) after its cursor");
-      expect(result.fix?.argv).toEqual(expect.arrayContaining(['gbrain', 'dream', '--source', 'walk-example']));
+      expect(result.fix).toBeUndefined();
       expect((result as { details?: unknown }).details).toEqual({ source_windows: [{ source_id: 'walk-example',
         cursor_at: stamp.last_source_cycle_window_at, cursor_slug: 'walk-example/page-01', remaining_pages: 3 }] });
 
@@ -266,6 +266,17 @@ describe('doctor checkCycleFreshness', () => {
       expect(result.message).toContain("Sync off (not checked; only an explicit gbrain sync --source <id> syncs it): 'connector-example'.");
       expect(result.message).toContain("Source 'connector-example' is partway through a bounded page walk: 2 live page(s) after its cursor");
       expect((result as { details?: { source_windows: Array<{ remaining_pages: number }> } }).details?.source_windows[0]?.remaining_pages).toBe(2);
+    });
+
+    test('a cursor in another shape than the window listing writes is ignored, so a stale source still fails', async () => {
+      await engine.executeRaw(`UPDATE sources SET local_path = NULL WHERE id = 'default'`);
+      await seed('stale-example', agoH(72));
+      await walkOneWindow('corrupt-example', 3, 1, { syncEnabled: false });
+      await engine.executeRaw(`UPDATE sources SET config = config || '{"last_source_cycle_window_at":"not a time"}'::jsonb WHERE id = 'corrupt-example'`);
+      const result = await checkCycleFreshness(engine, { nowMs: NOW });
+      expect(result.status).toBe('fail');
+      expect(result.message).toContain("'stale-example' last cycled 72h ago");
+      expect((result as { details?: unknown }).details).toBeUndefined();
     });
   });
 });
