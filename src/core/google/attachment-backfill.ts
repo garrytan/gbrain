@@ -27,6 +27,7 @@ export async function runGoogleAttachmentBackfill(engine: BrainEngine, sourceId:
         `Source ${sourceId} is not a connected Gmail source; pass --source with a Google source that syncs Gmail.`,
         { fix: readFix('Lists the registered sources with their connector kind.', { argv: ['gbrain', 'sources', 'list', '--json'] }) });
     }
+    if (cfg.access === 'gbrainio') throw new CredentialError('gbrainio_unsupported', ' (attachment repair downloads raw attachments)');
     let tokens: GoogleAccessProvider;
     if (cfg.access === 'command') tokens = new CommandAccessProvider(cfg.tokenCommand ?? '');
     else if (cfg.access === 'env') tokens = new EnvAccessProvider(cfg.tokenEnv ?? '');

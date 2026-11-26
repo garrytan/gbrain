@@ -175,6 +175,8 @@ export interface GitHoldMeta {
   state?: FileDriftDeletedState;
   /** #6517 `file_drift`: the page survived a shared-origin delete that kept its file; the fix leads with importing the file. */
   shared_origin?: true;
+  /** LC-1 `file_drift` `side: 'deleted'`: the file is back with its deleted page's bytes (a restore); only the user's yes brings the page back. */
+  restored?: true;
   /** #6340 `concurrent_write`: the revision the entry was frozen against (the page's live revision is `page_revision`). */
   expected_revision?: string;
   /** #6340 `worktree_dirty`: sha256 of the uncommitted working-tree bytes the hold protected (`blob_oid` is the pinned blob). */
@@ -828,6 +830,7 @@ function deletedDriftFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'met
   const uncommitted = state === 'file_gone' && (record.meta.reason === 'never_committed' || record.meta.reason === 'ignored');
   const what = state === 'file_gone' && record.meta.reason === 'origin_unknown' ? `${record.path} is gone, and Git could not show whether a commit held it (its history read did not finish), so sync kept page ${slug} instead of deleting it (#7130). The --held preview reads the whole history and names the file's provenance. `
     : uncommitted ? `${record.path} is gone, but Git never committed it${record.meta.reason === 'ignored' ? ' (.gitignore excludes it)' : ''}, so its absence is no evidence of a deletion and sync kept page ${slug} instead of deleting it (#7130). Put the file back and commit it (un-ignore it first) to keep the page file-backed. `
+    : record.meta.restored && (state === 'tombstone_edited' || state === 'purged_differs') ? `${state === 'tombstone_edited' ? `Page ${slug} was deleted${revision}` : `The page of ${record.path} was purged`} and ${record.path} is back with the bytes the page had (a restore), so sync held the file instead of bringing the page back without the user. `
     : state === 'tombstone_edited' ? `Page ${slug} was deleted${revision} and ${record.path} then changed, so sync held the file instead of restoring the page or dropping the edit. `
     : state === 'purged_differs' ? `The page of ${record.path} was purged and the file differs from what the brain held, so sync held the file instead of importing it as a new page. `
     : record.meta.no_import_record ? `${record.path} is gone from the last commit, and page ${slug}${revision} has no import record that says whether it changed in the database since the file was imported, so sync held the deletion instead of removing it. `
@@ -1011,6 +1014,11 @@ export function gitHoldFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'c
         user_message: `${record.path} has a frontmatter tag longer than the ${TAG_MAX_BYTES} bytes a tag can be, so sync holds it and the rest of source ${source} keeps syncing. Shorten that tag or split it into shorter tags, commit, then run gbrain sync --source ${source} --no-pull.`,
         why: 'Tags are stored in an index whose entries have a fixed size limit; no frontmatter repair shortens a tag, and the hold re-screens when the file changes.',
         verify: { argv: ['gbrain', 'sources', 'status', source, '--json'] } };
+    case 'slug_too_long':
+      return { argv: ['gbrain', 'sources', 'status', source, '--json'], consent: [], actor: 'user', requires_exclusive: false, docs: gitHoldDocs(record.code),
+        user_message: `${record.path} would be stored under a page slug over 255 characters, which no later write, delete or repair could name, so sync holds it and the rest of source ${source} keeps syncing. Move it to a shorter path (or give it a shorter slug: line), commit, then run gbrain sync --source ${source} --no-pull.`,
+        why: 'A page slug is at most 255 characters; no repair shortens a path, and the hold re-screens when the file changes. A page an older sync already stored under such a slug can be removed with gbrain delete.',
+        verify: { argv: ['gbrain', 'sources', 'status', source, '--json'] } };
     case 'visibility_noncanonical':
       return { argv: ['gbrain', 'sources', 'status', source, '--json'], consent: [], actor: 'user', requires_exclusive: false, docs: gitHoldDocs(record.code),
         user_message: `${record.path} asks for visibility: private in a spelling page privacy does not read (another case, a block scalar, a list, a flow mapping or a merge key), so sync holds it instead of storing a world-readable page, and the rest of source ${source} keeps syncing. Write visibility: private on its own frontmatter line (lowercase key and value), commit, then run gbrain sync --source ${source} --no-pull.`,
@@ -1070,7 +1078,7 @@ export function gitHoldFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'c
           : slugs.length > 1
           ? `${record.path} belongs to one of the pages ${slugs.map(slug => JSON.stringify(slug)).join(', ')}, which an older gbrain imported without recording their file, so sync held it rather than guess or create another page. `
             + `Pick the page that is this file's and remove each other one with gbrain delete --source ${source} -- '<slug>' (recoverable for 72 h), or rename the file if none of them is its page, then run gbrain sync --source ${source} --no-pull.`
-          : `${record.path} matches page ${JSON.stringify(slugs[0] ?? '')}, which an older gbrain imported without recording its file under a slug with capitals that sync cannot write and no gbrain command can address yet, so sync held the file rather than create a second page. `
+          : `${record.path} matches page ${JSON.stringify(slugs[0] ?? '')}, which an older gbrain imported without recording its file under an older slug spelling that sync cannot write (capitals, or a decomposed Unicode accent) and no gbrain command can change yet, so sync held the file rather than create a second page. `
             + `Keep the file held (the rest of the source syncs), or rename it to a name that folds to another slug, which imports it as a new page beside the old one (the old page keeps its links), then run gbrain sync --source ${source} --no-pull.`,
         why: 'Which page a file is cannot be decided from the slugs alone, and sync never writes a slug it would have to change. Once one writable page is left, the next sync imports the file into it (same page id, links and history) and records the file as its origin; until then the rest of the source keeps syncing.',
         then: { argv: ['gbrain', 'sync', '--source', source, '--no-pull'], consent: [], actor: 'agent', requires_exclusive: false, verify,

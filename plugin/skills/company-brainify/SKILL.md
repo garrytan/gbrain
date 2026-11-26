@@ -28,7 +28,6 @@ writes_to:
   - daily/
   - projects/
   - analysis/
-upstream: company-brainify@fc834ee
 # Brain-first in its native form: Phase-1 discovery runs through gbrain
 # retrieval (query/search/takes search/recall), and every edit is grounded
 # in a full read of the actual page. writes_to lists the scan scope the
@@ -214,7 +213,19 @@ and deletes fact rows. Two rules govern it.
 - **Re-auditing an EXISTING shared brain:** the shared brain IS the target, so
   edits are in place on the SHARED repo (cd into the shared repo, never the
   personal `sync.repo_path`). Fact-row removal + re-sync applies to the shared
-  source's DB.
+  source's DB. Before Phase 5's history purge, once Phase 4 passes, run this
+  in your sanitized checkout of the shared repo. The purge clones the remote
+  fresh and takes the sanitized tree only from `$STAGING`, so copy the six
+  folders there. The team can already read every page in them, so the export
+  list is every file they now hold:
+
+  ```bash
+  STAGING="$HOME/.gbrain/backups/brainify-reaudit-$(date +%Y%m%d-%H%M%S)"
+  mkdir -p "$STAGING" && chmod 700 "$STAGING"
+  for d in people meetings daily companies projects analysis; do [ -d "$d" ] && rsync -a "$d/" "$STAGING/$d/"; done
+  for d in people meetings daily companies projects analysis; do [ -d "$d" ] && find "$d" -type f; done \
+    | LC_ALL=C sort > "$STAGING.export-list"
+  ```
 
 **Fire the [data-loss-gate](../data-loss-gate/SKILL.md) confirmation card
 BEFORE the bulk destructive edits begin.** Both targets are destructive (the
@@ -385,9 +396,11 @@ brain classifies personal and the fire-once nudge would ask the wrong question.
 ### Phase 6: Ongoing hygiene — periodic re-audit
 
 Sensitive data re-accumulates (meeting transcripts, enrichment, candid
-writes); one clean pass is a snapshot, not a state. Schedule a monthly re-audit
+writes); one clean pass is a snapshot, not a state. Offer a monthly re-audit
 (weekly for high-ingest brains) that re-runs Phases 1, 2 and 4 report-only
-(scan and flag, no edits) for human review. Wire it per
+(scan and flag, no edits) for human review, as its own yes/no: say how often
+it runs, which phases it runs, and any model spend they incur, and schedule
+it only if the user says yes. Wire it per
 [conventions/cron-via-minions.md](../conventions/cron-via-minions.md) (`gbrain jobs submit`;
 `skills/cron-scheduler/SKILL.md`, `skills/minion-orchestrator/SKILL.md`). A
 human or a gated follow-up run does the removal.
@@ -455,8 +468,7 @@ This skill guarantees:
   with the backup path as the recovery line.
 - The team brain is stamped `brain.audience=shared` at handoff, so it never
   gets the personal writeback consent nudge.
-- Routing matches the frontmatter triggers; output stays under `writes_to:`;
-  no real names, fork-specific paths or upstream-fork references.
+- Routing matches the frontmatter triggers; output stays under `writes_to:`.
 
 ## Output Format
 

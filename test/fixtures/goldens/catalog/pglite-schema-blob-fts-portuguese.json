@@ -91,6 +91,12 @@
       "git_canonical_brain.git_canonical_brain_singleton_check": "c CHECK ((singleton = 1))",
       "git_canonical_brain.git_canonical_brain_strict_sources_check": "c CHECK ((strict_sources >= 0))",
       "ingest_log.ingest_log_pkey": "p PRIMARY KEY (id)",
+      "learning_items.learning_items_kind_check": "c CHECK ((kind = ANY (ARRAY['fact_added'::text, 'you_wrote'::text, 'promise_found'::text, 'page_filled'::text, 'conflict_found'::text, 'duplicate_to_confirm'::text])))",
+      "learning_items.learning_items_pkey": "p PRIMARY KEY (id)",
+      "learning_items.learning_items_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE",
+      "learning_items.learning_items_state_check": "c CHECK ((state = ANY (ARRAY['pending'::text, 'kept'::text, 'undone'::text, 'answered'::text, 'expired'::text])))",
+      "learning_items.learning_items_target_table_check": "c CHECK ((target_table = ANY (ARRAY['facts'::text, 'decide_proposals'::text, 'open_loops'::text, 'page_versions'::text, 'pages'::text])))",
+      "learning_items.learning_items_target_uniq": "u UNIQUE (kind, target_table, target_id)",
       "link_edge_proposals.link_edge_proposals_a_to_page_id_fkey": "f FOREIGN KEY (a_to_page_id) REFERENCES pages(id) ON DELETE CASCADE",
       "link_edge_proposals.link_edge_proposals_b_to_page_id_fkey": "f FOREIGN KEY (b_to_page_id) REFERENCES pages(id) ON DELETE CASCADE",
       "link_edge_proposals.link_edge_proposals_ending_to_page_id_fkey": "f FOREIGN KEY (ending_to_page_id) REFERENCES pages(id) ON DELETE SET NULL",
@@ -395,6 +401,8 @@
       "wanted_links.wanted_links_ref_kind_check": "c CHECK ((ref_kind = ANY (ARRAY['slug'::text, 'name'::text])))",
       "wanted_links.wanted_links_reference_unique": "u UNIQUE (origin_page_id, producer, ref_kind, target_source_id, target_ref)",
       "wanted_links.wanted_links_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE",
+      "write_gate_hold_rechecks.write_gate_hold_rechecks_pkey": "p PRIMARY KEY (id)",
+      "write_gate_hold_rechecks.write_gate_hold_rechecks_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE",
       "write_gate_holds.write_gate_holds_kind_check": "c CHECK ((kind = ANY (ARRAY['fact'::text, 'take'::text])))",
       "write_gate_holds.write_gate_holds_pkey": "p PRIMARY KEY (id)",
       "write_gate_holds.write_gate_holds_status_check": "c CHECK ((status = ANY (ARRAY['held'::text, 'released'::text, 'dropped'::text])))",
@@ -557,6 +565,9 @@
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
       "ingest_log": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
+      "learning_items": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
       "link_edge_proposals": [
@@ -817,6 +828,9 @@
       "wanted_links": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
+      "write_gate_hold_rechecks": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
       "write_gate_holds": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
@@ -985,6 +999,9 @@
       "idx_timeline_page": "CREATE INDEX idx_timeline_page ON public.timeline_entries USING btree (page_id)",
       "idx_versions_page": "CREATE INDEX idx_versions_page ON public.page_versions USING btree (page_id)",
       "ingest_log_pkey": "CREATE UNIQUE INDEX ingest_log_pkey ON public.ingest_log USING btree (id)",
+      "learning_items_pkey": "CREATE UNIQUE INDEX learning_items_pkey ON public.learning_items USING btree (id)",
+      "learning_items_source_state_created_idx": "CREATE INDEX learning_items_source_state_created_idx ON public.learning_items USING btree (source_id, state, created_at)",
+      "learning_items_target_uniq": "CREATE UNIQUE INDEX learning_items_target_uniq ON public.learning_items USING btree (kind, target_table, target_id)",
       "link_edge_proposals_from_page_id_a_to_page_id_b_to_page_id__key": "CREATE UNIQUE INDEX link_edge_proposals_from_page_id_a_to_page_id_b_to_page_id__key ON public.link_edge_proposals USING btree (from_page_id, a_to_page_id, b_to_page_id, link_type, evidence_hash)",
       "link_edge_proposals_pkey": "CREATE UNIQUE INDEX link_edge_proposals_pkey ON public.link_edge_proposals USING btree (id)",
       "link_edge_proposals_status_idx": "CREATE INDEX link_edge_proposals_status_idx ON public.link_edge_proposals USING btree (source_id, status, created_at)",
@@ -1169,9 +1186,14 @@
       "wanted_links_reference_unique": "CREATE UNIQUE INDEX wanted_links_reference_unique ON public.wanted_links USING btree (origin_page_id, producer, ref_kind, target_source_id, target_ref)",
       "wanted_links_source_idx": "CREATE INDEX wanted_links_source_idx ON public.wanted_links USING btree (source_id)",
       "wanted_links_target_idx": "CREATE INDEX wanted_links_target_idx ON public.wanted_links USING btree (target_source_id, target_ref)",
-      "write_gate_holds_dedupe_idx": "CREATE UNIQUE INDEX write_gate_holds_dedupe_idx ON public.write_gate_holds USING btree (source_id, slug, fingerprint, detector_version)",
+      "write_gate_hold_rechecks_hold_idx": "CREATE INDEX write_gate_hold_rechecks_hold_idx ON public.write_gate_hold_rechecks USING btree (hold_id)",
+      "write_gate_hold_rechecks_pkey": "CREATE UNIQUE INDEX write_gate_hold_rechecks_pkey ON public.write_gate_hold_rechecks USING btree (id)",
+      "write_gate_hold_rechecks_queue_idx": "CREATE INDEX write_gate_hold_rechecks_queue_idx ON public.write_gate_hold_rechecks USING btree (queued_at, id)",
+      "write_gate_holds_bound_dedupe_idx": "CREATE UNIQUE INDEX write_gate_holds_bound_dedupe_idx ON public.write_gate_holds USING btree (source_id, page_id, fingerprint, detector_version) WHERE (page_id IS NOT NULL)",
+      "write_gate_holds_page_idx": "CREATE INDEX write_gate_holds_page_idx ON public.write_gate_holds USING btree (source_id, page_id) WHERE ((status = 'held'::text) AND (page_id IS NOT NULL))",
       "write_gate_holds_pkey": "CREATE UNIQUE INDEX write_gate_holds_pkey ON public.write_gate_holds USING btree (id)",
       "write_gate_holds_status_idx": "CREATE INDEX write_gate_holds_status_idx ON public.write_gate_holds USING btree (status, source_id, id)",
+      "write_gate_holds_unbound_dedupe_idx": "CREATE UNIQUE INDEX write_gate_holds_unbound_dedupe_idx ON public.write_gate_holds USING btree (source_id, slug, fingerprint, detector_version) WHERE ((page_id IS NULL) AND (page_candidates IS NULL))",
       "write_gate_receipts_pkey": "CREATE UNIQUE INDEX write_gate_receipts_pkey ON public.write_gate_receipts USING btree (id)",
       "write_gate_receipts_seen_idx": "CREATE INDEX write_gate_receipts_seen_idx ON public.write_gate_receipts USING btree (last_seen_at)",
       "write_gate_receipts_target_idx": "CREATE UNIQUE INDEX write_gate_receipts_target_idx ON public.write_gate_receipts USING btree (target_table, target_id, content_hash, detector_version)"
@@ -1197,6 +1219,7 @@
       "files_id_seq": "integer start=1 min=1 max=2147483647 increment=1 cycle=false cache=1 owned_by=files.id",
       "graph_generation_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=-",
       "ingest_log_id_seq": "integer start=1 min=1 max=2147483647 increment=1 cycle=false cache=1 owned_by=ingest_log.id",
+      "learning_items_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=learning_items.id",
       "link_edge_proposals_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=link_edge_proposals.id",
       "link_transitions_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=link_transitions.id",
       "links_id_seq": "integer start=1 min=1 max=2147483647 increment=1 cycle=false cache=1 owned_by=links.id",
@@ -1228,6 +1251,7 @@
       "think_ab_results_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=think_ab_results.id",
       "timeline_entries_id_seq": "integer start=1 min=1 max=2147483647 increment=1 cycle=false cache=1 owned_by=timeline_entries.id",
       "wanted_links_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=wanted_links.id",
+      "write_gate_hold_rechecks_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=write_gate_hold_rechecks.id",
       "write_gate_holds_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=write_gate_holds.id",
       "write_gate_receipts_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=write_gate_receipts.id"
     },
@@ -1922,6 +1946,26 @@
           "10 writer_segment_reader boolean/bool NULL"
         ],
         "flags": "relkind=r rls=false force_rls=false"
+      },
+      "learning_items": {
+        "columns": [
+          "1 id bigint/int8 NOT NULL DEFAULT nextval('learning_items_id_seq'::regclass)",
+          "2 run_id uuid/uuid NOT NULL",
+          "3 source_id text/text NOT NULL",
+          "4 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "5 kind text/text NOT NULL",
+          "6 target_table text/text NOT NULL",
+          "7 target_id bigint/int8 NOT NULL",
+          "8 subject_slug text/text NULL",
+          "9 subject_source_id text/text NULL",
+          "10 prior_revision text/text NULL",
+          "11 state text/text NOT NULL DEFAULT 'pending'::text",
+          "12 shown_at timestamp with time zone/timestamptz NULL",
+          "13 decided_at timestamp with time zone/timestamptz NULL",
+          "14 decided_by text/text NULL",
+          "15 member_id text/text NULL"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
       },
       "link_edge_proposals": {
         "columns": [
@@ -3255,6 +3299,17 @@
         ],
         "flags": "relkind=r rls=false force_rls=false"
       },
+      "write_gate_hold_rechecks": {
+        "columns": [
+          "1 id bigint/int8 NOT NULL DEFAULT nextval('write_gate_hold_rechecks_id_seq'::regclass)",
+          "2 source_id text/text NOT NULL",
+          "3 hold_id bigint/int8 NOT NULL",
+          "4 observed_version text/text NOT NULL",
+          "5 survivor_ids ARRAY/_int8 NOT NULL DEFAULT '{}'::bigint[]",
+          "6 queued_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
+      },
       "write_gate_holds": {
         "columns": [
           "1 id bigint/int8 NOT NULL DEFAULT nextval('write_gate_holds_id_seq'::regclass)",
@@ -3275,7 +3330,9 @@
           "16 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
           "17 last_seen_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
           "18 decided_at timestamp with time zone/timestamptz NULL",
-          "19 decided_by text/text NULL"
+          "19 decided_by text/text NULL",
+          "20 page_id bigint/int8 NULL",
+          "21 page_candidates ARRAY/_int8 NULL"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },

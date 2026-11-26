@@ -491,7 +491,8 @@ describe('runCycle — yieldBetweenPhases hook', () => {
     // #6865: 30 (added `unindexed_files` after content_repair).
     // GBRA-216: 31 (added `claim_conflicts` after edge_contradictions).
     // GBRA-438: 32 (added `bookkeeping_gc` after purge).
-    expect(hookCalls).toBe(32);
+    // Nightly learning PR 1: 33 (added `learning_derive` after schema-suggest, before purge).
+    expect(hookCalls).toBe(33);
   });
 
   test('hook exceptions do not abort the cycle', async () => {
@@ -508,8 +509,8 @@ describe('runCycle — yieldBetweenPhases hook', () => {
     // v0.41.39 (#1700) + v0.42.0.0: 22 phases (+enrich_thin, +skillopt).
     // #2653: 23 phases (+drift). #5876: 24 (+chronicle). GBRA-40 Lane D: 25 (+facts_drain). Temporal typed edges: 26 (+edge_contradictions). C4: 27 (+standing_questions).
     // #6188: 28 (+fence_repair). #6377: 29 (+content_repair). #6865: 30 (+unindexed_files).
-    // GBRA-216: 31 (+claim_conflicts). GBRA-438: 32 (+bookkeeping_gc).
-    expect(report.phases.length).toBe(32);
+    // GBRA-216: 31 (+claim_conflicts). GBRA-438: 32 (+bookkeeping_gc). Nightly learning PR 1: 33 (+learning_derive).
+    expect(report.phases.length).toBe(33);
   });
 });
 

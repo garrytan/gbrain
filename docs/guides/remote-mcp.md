@@ -440,7 +440,9 @@ PGLite is single-writer. While the service runs, host-side commands that open
 the database (`gbrain doctor`, `gbrain import`, `gbrain auth create`, a second
 `gbrain serve`) fail fast with `live_serve` — they do not wait. `gbrain sync`
 and `gbrain sweep --once` are the exceptions: they delegate into the live
-serve automatically. Administer the brain through the running server instead
+serve automatically, and so do page and fact writes (`gbrain put`,
+`gbrain remember`) and everyday reads such as `gbrain find`, `search` and
+`query` ([ENGINES.md](../ENGINES.md)). Administer the brain through the running server instead
 (`gbrain mcp admin … --admin-token-file`, `gbrain mcp grant … --admin-token-file`,
 or an authenticated owner dashboard), or move to
 Postgres for concurrent local use ([ENGINES.md](../ENGINES.md)). The success

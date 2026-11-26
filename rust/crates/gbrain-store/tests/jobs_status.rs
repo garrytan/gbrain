@@ -490,3 +490,20 @@ fn embed_backfill_by_source_reports_only_the_requested_sources() {
     assert_eq!(out[1]["last_completed_at"], Value::Null);
     assert!(b.read_embed_backfill_by_source(&[]).unwrap().is_empty());
 }
+
+#[test]
+fn no_admitted_job_owns_a_budget_so_the_budget_owner_list_is_empty() {
+    let b = brain("jobs-budget-owners");
+    assert_eq!(b.list_budget_owner_jobs().unwrap(), Vec::<Value>::new());
+    // No admit path writes the budget columns on any engine, so budget-shaped insert data leaves them null.
+    let id = add(
+        &b,
+        "work",
+        json!({"budget_remaining_cents": 500, "budget_owner_job_id": 1}),
+    );
+    assert_eq!(
+        b.get_job(id).unwrap().unwrap()["budget_remaining_cents"],
+        Value::Null
+    );
+    assert_eq!(b.list_budget_owner_jobs().unwrap(), Vec::<Value>::new());
+}

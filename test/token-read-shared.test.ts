@@ -7,7 +7,8 @@
  *    owner, another member's own source; page labels (readable_by) and private pages still apply; a deny-all grant
  *    stays deny-all with the switch on; an older build's grant write turns the switch off.
  * 2. Owner pin: every existing grant shape (no list, explicit list, none, drift, clients) resolves to the same sources
- *    with the switch off as before this change, and the migration rewrites no row.
+ *    with the switch off as before this change, and the migration rewrites no row; since GST-3747 a no-list key bound to
+ *    a member other than the owner also drops other members' personal sources.
  * 3. Fails when: a switched key loses a shared source, reads a guest or another member's source, widens a deny-all
  *    grant, or an unswitched key's read set changes.
  * 4. Real seams: tokens and clients minted by the token and grant services, verified by the serve --http verifier
@@ -131,8 +132,9 @@ for (const kind of testBackends()) {
           .toEqual({ sourceId: legacy.sourceId, allowedSources: legacy.allowedSources, hasSourceGrant: legacy.hasSourceGrant, readShared: undefined });
       }
       expect(await seen('alice-off')).toEqual([]);
-      // Today's floor for a key with no list: default plus every federated source, a guest source and bob's own included.
-      expect(await seen('floor')).toEqual(['bob', 'guest', 'handbook', 'roadmap']);
+      // The floor for a key with no list: default plus every federated source and a guest source; GST-3747: carol's key
+      // reads no personal source bound to another member, so bob's own is out.
+      expect(await seen('floor')).toEqual(['guest', 'handbook', 'roadmap']);
       expect(await seen('none')).toEqual([]);
     }, 240_000);
 

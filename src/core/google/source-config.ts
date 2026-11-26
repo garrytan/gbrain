@@ -38,10 +38,13 @@ export function parseGoogleSourceConfig(
   const dir =
     typeof config.g_dir === 'string' && config.g_dir.length > 0 ? config.g_dir : fallbackDir;
   const access =
-    config.g_access === 'command' || config.g_access === 'env' ? config.g_access : 'vault';
+    config.g_access === 'command' || config.g_access === 'env' || config.g_access === 'gbrainio' ? config.g_access : 'vault';
+  const privateSendersFile =
+    typeof config.g_private_senders_file === 'string' && config.g_private_senders_file.trim() ? config.g_private_senders_file.trim() : undefined;
   return {
     account,
-    services: services.length > 0 ? services : [...ALL_GOOGLE_SERVICES],
+    // gbrain.io reads mail only: a gbrainio source never sweeps Calendar or Contacts.
+    services: access === 'gbrainio' ? ['gmail'] : services.length > 0 ? services : [...ALL_GOOGLE_SERVICES],
     historyDays,
     ...(futureDays !== undefined ? { futureDays } : {}),
     ...(loopsExcludeLabels.length > 0 ? { loopsExcludeLabels } : {}),
@@ -55,6 +58,11 @@ export function parseGoogleSourceConfig(
     ...(typeof config.g_token_env === 'string' && config.g_token_env.trim()
       ? { tokenEnv: config.g_token_env }
       : {}),
+    ...(access === 'gbrainio'
+      ? { gbrainioCommand: typeof config.g_gbrainio_command === 'string' && config.g_gbrainio_command.trim() ? config.g_gbrainio_command.trim() : 'gbrainio' }
+      : {}),
+    ...(privateSendersFile ? { privateSendersFile } : {}),
+    ...((typeof config.g_ingest_tiers === 'boolean' ? config.g_ingest_tiers : access === 'gbrainio') ? { ingestTiers: true } : {}),
   };
 }
 
@@ -73,13 +81,17 @@ export function parseContactsDir(raw: unknown): string | null {
  * The per-source tuning keys `sources add` writes, each only when set so an
  * existing source's config keeps its exact shape (`DEFAULT_CALENDAR_ID` and
  * `CALENDAR_HORIZON_DAYS` stay parse-time fallbacks): `g_calendar_id`
- * (#5296), `g_contacts_dir` (#4845), `g_future_days` (#5442), `g_loops_exclude_labels` (#5445).
+ * (#5296), `g_contacts_dir` (#4845), `g_future_days` (#5442), `g_loops_exclude_labels` (#5445),
+ * `g_gbrainio_command` and `g_private_senders_file`.
  */
-export function googleTuningConfig(google: { calendarId?: string; contactsDir?: string; futureDays?: number; loopsExcludeLabels?: string[] }): Record<string, unknown> {
+export function googleTuningConfig(google: { calendarId?: string; contactsDir?: string; futureDays?: number; loopsExcludeLabels?: string[];
+  gbrainioCommand?: string; privateSendersFile?: string }): Record<string, unknown> {
   return {
     ...(google.calendarId && google.calendarId !== DEFAULT_CALENDAR_ID ? { g_calendar_id: google.calendarId } : {}),
     ...(google.contactsDir && google.contactsDir !== DEFAULT_CONTACTS_DIR ? { g_contacts_dir: google.contactsDir } : {}),
     ...(google.futureDays !== undefined ? { g_future_days: google.futureDays } : {}),
     ...(google.loopsExcludeLabels && google.loopsExcludeLabels.length > 0 ? { g_loops_exclude_labels: google.loopsExcludeLabels.join(',') } : {}),
+    ...(google.gbrainioCommand ? { g_gbrainio_command: google.gbrainioCommand } : {}),
+    ...(google.privateSendersFile ? { g_private_senders_file: google.privateSendersFile } : {}),
   };
 }

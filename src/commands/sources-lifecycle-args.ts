@@ -46,7 +46,7 @@ export function parseSourceLifecycleArgs(args: string[], generatedId = randomUUI
   const booleans = new Set(['json', 'dry-run', 'yes', 'confirm-destructive', 'keep-storage', 'force',
     'federated', 'no-federated', 'no-federate', 'refederate', 'no-harden']);
   const valued = new Set(['request-id', 'expected-incarnation', 'brain', 'path', 'url', 'name', 'clone-dir',
-    'pat-file', 'kind', 'account', 'access', 'token-command', 'token-env', 'services', 'history-days',
+    'pat-file', 'kind', 'account', 'access', 'token-command', 'token-env', 'gbrainio-command', 'private-senders-file', 'services', 'history-days',
     'future-days', 'loops-exclude-labels', 'contacts-dir', 'calendar-id', 'scope', 'repos', 'dir', 'app-id', 'app-pem', 'app-install',
     'provider', 'transcript', 'lookback-days', 'sync-interval-min', 'record', 'visibility', 'channels', 'timezone', 'max-requests', 'skip',
     'helper-host', 'helper-port', 'proxy', 'token-file']);
@@ -116,7 +116,8 @@ export function parseSourceLifecycleArgs(args: string[], generatedId = randomUUI
     `Give exactly one of --path (a local directory), --url (an https Git remote) or --kind (${CONNECTOR_SOURCE_KINDS.join(', ')}).`);
   // The kinds each kind-specific option applies to.
   const optionKinds: Record<string, readonly string[]> = {
-    ...Object.fromEntries(['account', 'access', 'token-command', 'services', 'future-days', 'loops-exclude-labels', 'calendar-id'].map(key => [key, ['google']])),
+    ...Object.fromEntries(['account', 'access', 'token-command', 'gbrainio-command', 'private-senders-file', 'services', 'future-days', 'loops-exclude-labels', 'calendar-id']
+      .map(key => [key, ['google']])),
     'contacts-dir': ['google', 'apple-contacts'],
     ...Object.fromEntries(['helper-host', 'helper-port', 'proxy', 'token-file'].map(key => [key, ['apple-contacts']])),
     ...Object.fromEntries(['scope', 'repos', 'app-id', 'app-pem', 'app-install'].map(key => [key, ['github']])),
@@ -166,15 +167,20 @@ export function parseSourceLifecycleArgs(args: string[], generatedId = randomUUI
   }
   if (kind === 'google') {
     const account = values.get('account')?.trim().toLowerCase();
-    const services = (values.get('services') ?? 'gmail,calendar,contacts').split(',').map(value => value.trim().toLowerCase()).filter(Boolean);
     const access = values.get('access') ?? 'vault';
+    const services = (values.get('services') ?? (access === 'gbrainio' ? 'gmail' : 'gmail,calendar,contacts')).split(',').map(value => value.trim().toLowerCase()).filter(Boolean);
     if (!account || !services.length || services.some(service => !(ALL_GOOGLE_SERVICES as readonly string[]).includes(service))) throw invalid('Google requires --account and valid --services.',
       `Pass --account with the Google account email and --services as a comma-separated subset of ${ALL_GOOGLE_SERVICES.join(',')}.`);
-    if (!['vault', 'command', 'env'].includes(access) || access === 'command' && !values.has('token-command')
-      || access === 'env' && !values.has('token-env') || access === 'vault' && (values.has('token-command') || values.has('token-env'))) {
-      throw invalid('Google access must be vault, command with --token-command, or env with --token-env.',
-        'Use --access vault (the default, with no token flags), --access command with --token-command, or --access env with --token-env.');
+    if (!['vault', 'command', 'env', 'gbrainio'].includes(access) || access === 'command' && !values.has('token-command')
+      || access === 'env' && !values.has('token-env') || (access === 'vault' || access === 'gbrainio') && (values.has('token-command') || values.has('token-env'))
+      || access !== 'gbrainio' && values.has('gbrainio-command')) {
+      throw invalid('Google access must be vault, command with --token-command, env with --token-env, or gbrainio.',
+        'Use --access vault (the default, with no token flags), --access command with --token-command, --access env with --token-env, or --access gbrainio (optionally with --gbrainio-command).');
     }
+    if (access === 'gbrainio' && services.some(service => service !== 'gmail')) throw invalid('--access gbrainio reads Gmail only.',
+      'Pass --services gmail, or leave --services out, for a source that reads mail through gbrain.io.');
+    if (values.has('private-senders-file') && !values.get('private-senders-file')?.trim()) throw invalid('--private-senders-file needs a path.',
+      'Pass --private-senders-file with the path of a file holding one address or @domain per line.');
     const futureDays = number('future-days');
     if (futureDays !== undefined && futureDays > CALENDAR_FUTURE_DAYS_MAX) throw invalid(`--future-days must be at most ${CALENDAR_FUTURE_DAYS_MAX}.`,
       `Pass --future-days between 1 and ${CALENDAR_FUTURE_DAYS_MAX} (days ahead the calendar sweep covers; default ${CALENDAR_HORIZON_DAYS}).`);
@@ -187,8 +193,10 @@ export function parseSourceLifecycleArgs(args: string[], generatedId = randomUUI
     opts.google = { account, services, historyDays: number('history-days', 90)!, calendarId: values.get('calendar-id') ?? DEFAULT_CALENDAR_ID,
       ...(contactsDir ? { contactsDir } : {}),
       ...(futureDays !== undefined ? { futureDays } : {}), ...(loopsExcludeLabels.length > 0 ? { loopsExcludeLabels } : {}),
-      dir: absolute(values.get('dir') ?? defaultCloneDir(`${id}-google`)), access: access as 'vault' | 'command' | 'env',
-      tokenCommand: values.get('token-command'), tokenEnv: values.get('token-env') };
+      dir: absolute(values.get('dir') ?? defaultCloneDir(`${id}-google`)), access: access as 'vault' | 'command' | 'env' | 'gbrainio',
+      tokenCommand: values.get('token-command'), tokenEnv: values.get('token-env'),
+      ...(values.has('gbrainio-command') ? { gbrainioCommand: values.get('gbrainio-command')!.trim() } : {}),
+      ...(values.has('private-senders-file') ? { privateSendersFile: absolute(values.get('private-senders-file')!.trim()) } : {}) };
   }
   /** The record mode, directory, visibility and schedule flags the API-backed kinds share. */
   const recordFlags = (pages: string, alwaysPrivate: string) => {

@@ -122,7 +122,7 @@
     {
       "name": "cross-modal-review",
       "path": "cross-modal-review/SKILL.md",
-      "description": "Quality gate via second model with refusal routing chain."
+      "description": "Quality gate via second model; a refusal is reported to the user."
     },
     {
       "name": "cron-scheduler",
@@ -242,7 +242,7 @@
     {
       "name": "cold-start",
       "path": "cold-start/SKILL.md",
-      "description": "Day-one brain bootstrapping: sequence the highest-leverage data sources (contacts, calendar, email, conversations, social, archives) to go from empty brain to useful brain. Uses ClawVisor for safe credential handling \u2014 agents never hold raw API keys."
+      "description": "Day-one brain bootstrapping: sequence the highest-leverage data sources (contacts, calendar, email, conversations, social, archives) to go from empty brain to useful brain. Agents never hold raw OAuth tokens or API keys: Google data comes through gbrain's own connector, an offline export, or a host's credential gateway."
     },
     {
       "name": "ask-user",

@@ -159,7 +159,7 @@ export async function applyPassRound(engine: BrainEngine, level: ShadowLevel, in
       if (!grantSees(level, entry, input.grantPrefixes) && !entry.result.settled) settleAs(entry, { settled: true, action: 'none', classAction: 'none' });
     }
   }
-  if (input.heldDeletions && !input.remote && input.admission === 'normal') await applyHeldDeletions(engine, level, input.context, state.heldDeletions);
+  if (input.heldDeletions && !input.remote && input.admission === 'normal') await applyHeldDeletions(engine, level, input.context, state.heldDeletions, input.passId);
   await applyDeleteValve(engine, level, input, state);
   if (input.remote) {
     // #6948: a remote pass writes no hold, so a path several live pages claim is left as it is for the owner's pass to hold.
@@ -364,8 +364,15 @@ async function writePassHolds(engine: BrainEngine, level: ShadowLevel, input: Pa
     } else if (r.cls === 'deleted_edited') {
       const purged = r.state === 'purged_differs';
       const slug = purged ? (await readStoredMarker(engine, level, passEntryPaths(level, entry.path).sourcePath))?.slug ?? resolveSlugForPath(passEntryPaths(level, entry.path).sourcePath) ?? null : entry.slug;
-      pending.push({ entry, code: 'file_drift', slug, kind: purged ? 'purged_differs' : 'tombstone_edited', meta: { side: 'deleted', state: purged ? 'purged_differs' : 'tombstone_edited' },
-        message: purged ? `${path}: page ${slug ?? path} was purged, and the file differs from the bytes it held, so sync held the file instead of importing it as a new page; the rest of the source synced.`
+      // LC-1: a restored file (the deleted page's own bytes back in the checkout) is held the same way, and says so.
+      const restored = r.restored === true;
+      pending.push({ entry, code: 'file_drift', slug, kind: purged ? 'purged_differs' : 'tombstone_edited', ...(!purged && entry.revision ? { pageId: entry.pageId } : {}), meta: { side: 'deleted', state: purged ? 'purged_differs' : 'tombstone_edited', ...(restored ? { restored: true as const } : {}),
+        // LC-1: the tombstone's revision, so a purge or a restore of the page since moves the hold (movedDriftHolds) and the
+        // next pass re-screens it instead of keeping a tombstone_edited hold over a page that is gone or live again.
+        ...(!purged && entry.revision ? { page_revision: entry.revision } : {}) },
+        message: purged ? (restored ? `${path}: page ${slug ?? path} was purged, and the file is back with the bytes it held, so sync held the file instead of bringing the purged page back without your yes; the rest of the source synced.`
+          : `${path}: page ${slug ?? path} was purged, and the file differs from the bytes it held, so sync held the file instead of importing it as a new page; the rest of the source synced.`)
+          : restored ? `${path}: page ${slug} was deleted in the database, and the file is back with the bytes it had, so sync held the file instead of restoring the page without your yes; the rest of the source synced.`
           : `${path}: page ${slug} was deleted in the database, and the file changed since, so sync held the file instead of reviving the page; the rest of the source synced.` });
     }
   }
@@ -383,7 +390,7 @@ export async function holdPassIdentities(engine: BrainEngine, level: ShadowLevel
     message: `${passEntryPaths(level, entry.path).path} maps to page ${slug}, whose file is gone, but its frontmatter id '${ids.file}' differs from the page's id '${ids.page}', so it is a different document; sync held it and kept the page instead of giving the file that page's facts, links and history; the rest of the source synced.` })));
 }
 
-type PendingHold = { entry: ShadowPath; code: GitHoldCode; message: string; slug: string | null; meta: Partial<GitHoldMeta>; kind: keyof PassApplyState['holds']; pageId?: null };
+type PendingHold = { entry: ShadowPath; code: GitHoldCode; message: string; slug: string | null; meta: Partial<GitHoldMeta>; kind: keyof PassApplyState['holds']; pageId?: number | null };
 const spellingKey = (sourcePath: string) => sourcePath.replaceAll('\\', '/').toLowerCase();
 /** The level's spelling twins by their folded spelling (only built when a round has one). */
 function spellingGroups(level: ShadowLevel): Map<string, string[]> {

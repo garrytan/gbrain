@@ -1,0 +1,4 @@
+---
+kind: default
+---
+The enrich_thin phase (still off unless you set cycle.enrich_thin.enabled true) now fills first the thin person and company pages of people you actually deal with: the new owner-contact order ranks pages by meetings, conversations, email threads and chronicle events from the last 90 days that link to or mention them, by open loops with them, and by a link to or from your own page, and ranks fuller pages lower. It becomes the phase's default order when gbrain can find your own page (gbrain identity names it) with no conflict; otherwise the phase keeps the inbound-links order. A cycle.enrich_thin.order you set always wins: gbrain config set cycle.enrich_thin.order inbound-links keeps the old order. Two new optional daily caps, cycle.enrich_thin.max_daily_cost_usd and cycle.enrich_thin.max_daily_pages, stop the phase for the rest of your day (brain.timezone, UTC when unset) across every run; unset, there is no daily cap, as before.

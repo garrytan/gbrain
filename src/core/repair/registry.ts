@@ -86,6 +86,7 @@ import { movedPagesRepair, MOVED_PAGES_CONSENT_TEXT, MOVED_PAGES_PURGE_FUSE_HOUR
 import { receiptCompactionRepair } from './receipt-compaction.ts';
 import { aliasesRepair } from './aliases.ts';
 import { renameIdentityRepair, RENAME_IDENTITY_CONSENT_TEXT } from './rename-identity.ts';
+import { slugSpellingRepair, SLUG_SPELLING_CONSENT_TEXT } from './slug-spelling.ts';
 import { overwrittenEditsRepair } from './overwritten-edits.ts';
 import { missingTablesRepair } from './missing-tables.ts';
 import { urlCloneFencesRepair } from './url-clone-fences.ts';
@@ -506,7 +507,7 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
       + 'writes each resolved result to a private artifact; --apply --expect <hash> applies exactly that set with request ids derived from the hash, '
       + 'resumable, per page repaired, refused or changed_since_preview. Backups are reconcile\'s own. A selected page whose canonical file is gone from the '
       + 'last commit: --prefer database recreates the file from the page, --prefer file soft-deletes exactly that page (mass-delete valve applies); a file '
-      + 'deleted only in the worktree is listed deletion_uncommitted and routed to committing the deletion or repair ghost-pages. --held [--side both|unknown|deleted '
+      + 'deleted only in the worktree is listed deletion_uncommitted and routed to restoring it (git checkout HEAD -- <path>) or committing the deletion and syncing. --held [--side both|unknown|deleted '
       + '[--state tombstone_edited|purged_differs|file_gone]] selects the source\'s held file_drift pages of one Decision (several sides or states are refused; '
       + '--side deleted needs --state): a deleted page whose file changed is restored and imported (--prefer file) or keeps its deletion while the file is '
       + 'removed by a coordinated commit (--prefer database); a purged page\'s file is imported as a new page or removed. --prefer database never overwrites a file '
@@ -603,6 +604,15 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
       + 'imports the new file onto it as an edit, retires the provisional page purge-style (soft-deleted, nothing hard-deleted) and records the '
       + 'old -> new redirect; fence rows that would collide refuse fact_rows_collide before anything is written. --close releases the purge hold and '
       + 'moves nothing. Carry is classic-only: on a managed source the preview states managed_remedy_unavailable, an apply refuses with it, and --close is the remedy. Runs only when named.',
+  },
+  'slug-spelling': {
+    handler: slugSpellingRepair, embeds: 'none', checks: ['legacy_slug_spellings'], explicit_only: true, preview_bound: true, consent: 'destructive',
+    consentText: SLUG_SPELLING_CONSENT_TEXT,
+    summary: 'Move pages stored under an older spelling of their name (capitals, or a decomposed Unicode name) to the normal slug, so a put and an import of the page work again. '
+      + 'Needs --source. The preview lists each page as move, needs_human (a page already holds the normal slug, or two stored spellings share it) or rename_file_first '
+      + '(the page\'s file in a checkout is not at the normal path: git mv it, then sync). --apply --expect <hash> --yes moves each movable page in its own transaction, '
+      + 'keeping its id, versions, tags, timeline, links, facts and attachments; the old spelling keeps resolving through an alias. A change since the preview refuses '
+      + 'changed_since_preview. Classic brains only: a managed brain refuses managed_remedy_unavailable and needs a person. Runs only when named.',
   },
   'overwritten-edits': {
     handler: overwrittenEditsRepair, embeds: 'effect', checks: ['sync_overwritten_db_edits'], explicit_only: true, preview_bound: true,

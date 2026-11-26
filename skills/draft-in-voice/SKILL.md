@@ -24,7 +24,6 @@ mutating: true
 writes_pages: true
 writes_to:
   - people/
-upstream: draft-in-voice@fc834ee
 ---
 
 # draft-in-voice — Memory-Grounded Ghostwriting
@@ -260,8 +259,7 @@ This skill guarantees:
   approval-gated path.
 - The only brain write this skill performs is the voice-profile page (and
   its back-link) under `people/`, per `writes_to:`.
-- Privacy contract preserved: no real names in examples, no fork-specific
-  filesystem path literals, no upstream-fork references; drafts never
+- Examples use placeholder names and paths; drafts never
   surface private details the subject hasn't made public.
 
 ## Output Format

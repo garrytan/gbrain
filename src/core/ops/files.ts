@@ -10,6 +10,7 @@ import { opError } from './contract.ts';
 import { hostFix, readFix } from './op-fix.ts';
 import { validateFilename, validatePageSlug, validateUploadPath } from './context.ts';
 import { privatePagesFilterForCaller, resolveExcludePrivatePages } from '../search/private-visibility.ts';
+import { legacySpellings } from './slug-params.ts';
 import { hookSessionCwd } from '../session-cwd.ts';
 import { embeddedSettingsRecord, isEmbeddedEngine } from '../embedded-engine.ts';
 
@@ -43,8 +44,8 @@ const file_list: Operation = {
   handler: async (ctx, p) => {
     const slug = p.slug as string | undefined;
     const rows = await ctx.engine.executeRaw<Record<string, unknown>>(`SELECT id, page_slug, filename, storage_path, mime_type, size_bytes, content_hash, created_at
-      FROM files f WHERE (${slug === undefined ? 'TRUE' : 'f.page_slug = $2'}) AND ${await fileReadableSql(ctx)}
-      ORDER BY ${slug === undefined ? 'page_slug, filename' : 'filename'} LIMIT $1`, slug === undefined ? [FILE_LIST_LIMIT] : [FILE_LIST_LIMIT, slug]);
+      FROM files f WHERE (${slug === undefined ? 'TRUE' : 'f.page_slug = ANY($2::text[])'}) AND ${await fileReadableSql(ctx)}
+      ORDER BY ${slug === undefined ? 'page_slug, filename' : 'filename'} LIMIT $1`, slug === undefined ? [FILE_LIST_LIMIT] : [FILE_LIST_LIMIT, legacySpellings(slug)]);
     // Postgres returns size_bytes (BIGINT) as native BigInt — JSON.stringify
     // throws on those, breaking MCP callers. PGLite returns Number already.
     // 9 PB ceiling (2^53 bytes) is far above any plausible file size.
@@ -160,6 +161,9 @@ const file_upload: Operation = {
 
     try {
       // The bytes at storagePath are now the caller's, so a conflicting row takes the caller's source and page id when that source has the page.
+      // The row names the page's slug as it is now, read by its id (FOR SHARE waits for a rename in flight), not the slug read
+      // before the storage wait: a page renamed while the bytes uploaded is listed under its new slug, also when the row already
+      // existed (the conflict branch takes the resolved slug whenever the upload binds a page).
       // #4910: stamp the storage lane (doctor image_assets / files verify
       // classify on it) and merge metadata on conflict so legacy `{}` rows
       // heal on their next content change. Real object via executeRawJsonb —
@@ -167,13 +171,14 @@ const file_upload: Operation = {
       await executeRawJsonb(
         ctx.engine,
         `INSERT INTO files (page_slug, filename, storage_path, mime_type, size_bytes, content_hash, source_id, page_id, metadata)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
+         VALUES (COALESCE((SELECT p.slug FROM pages p WHERE p.id = $8 FOR SHARE), $1), $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
          ON CONFLICT (storage_path) DO UPDATE SET
            content_hash = EXCLUDED.content_hash,
            size_bytes = EXCLUDED.size_bytes,
            mime_type = EXCLUDED.mime_type,
            source_id = CASE WHEN EXCLUDED.page_id IS NULL THEN files.source_id ELSE EXCLUDED.source_id END,
            page_id = COALESCE(EXCLUDED.page_id, files.page_id),
+           page_slug = CASE WHEN EXCLUDED.page_id IS NULL THEN files.page_slug ELSE EXCLUDED.page_slug END,
            ${FILES_METADATA_MERGE_SQL}`,
         [pageSlug, filename, storagePath, mimeType, stat.size, hash, sourceId, page?.id ?? null],
         [embedded?.metadata ?? { storage: (ctx.config.storage as { backend: string }).backend }],
@@ -361,7 +366,7 @@ const file_verify: Operation = {
     }
     const slug = p.slug as string | undefined;
     const rows = await ctx.engine.executeRaw<{ storage_path: string; page_slug: string | null }>(`SELECT storage_path, page_slug FROM files f
-      WHERE (${slug === undefined ? 'TRUE' : 'f.page_slug = $2'}) AND ${readable} ORDER BY storage_path LIMIT $1`, slug === undefined ? [FILE_LIST_LIMIT] : [FILE_LIST_LIMIT, slug]);
+      WHERE (${slug === undefined ? 'TRUE' : 'f.page_slug = ANY($2::text[])'}) AND ${readable} ORDER BY storage_path LIMIT $1`, slug === undefined ? [FILE_LIST_LIMIT] : [FILE_LIST_LIMIT, legacySpellings(slug)]);
     try { return await Promise.all(rows.map(async row => ({ ...row, present: await storage.exists(row.storage_path) }))); }
     catch (error) { throw storeUnavailable('file_verify', error); }
   },

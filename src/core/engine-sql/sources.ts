@@ -10,6 +10,8 @@ import { SOURCE_CONFIG_OBJECT_SQL } from '../source-config-sql.ts';
 import { jsonbParam, type SqlExecutor } from './executor.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
 import { sqlFragment, trustedSql } from './fragment.ts';
+import { renderFragment } from './fragment.ts';
+import { ANY_OWNER_ONLY_SQL, OWNER_ONLY_LINEAGE_PRESENT_SQL } from '../access/owner-only.ts';
 
 export async function listAllSources(exec: LegacyUnscopedRead, opts?: {
   includeArchived?: boolean;
@@ -80,6 +82,21 @@ export async function updateSourceConfig(exec: SqlExecutor, sourceId: string, pa
     return affectedRows > 0;
   }
 
+/** One source row with the columns a source check reads: its checkout path, raw config and archived flag. */
+export interface SourceCheckRow { id: string; local_path: string | null; config: unknown; archived: boolean }
+
+/** The source row, or null (`SELECT id, local_path, config, archived FROM sources WHERE id=$1`). Unscoped on master. */
+export async function readSourceRow(exec: LegacyUnscopedRead, sourceId: string): Promise<SourceCheckRow | null> {
+  const [row] = await exec.executeRaw<SourceCheckRow>('SELECT id, local_path, config, archived FROM sources WHERE id=$1', [sourceId]);
+  return row ?? null;
+}
+
+/** The source row read `FOR UPDATE`, so it cannot change before the caller's transaction ends; null when absent. */
+export async function lockSourceRow(exec: SqlExecutor, sourceId: string): Promise<SourceCheckRow | null> {
+  const [row] = await exec.executeRaw<SourceCheckRow>('SELECT id, local_path, config, archived FROM sources WHERE id=$1 FOR UPDATE', [sourceId]);
+  return row ?? null;
+}
+
 /** One source with the columns import and contextual retrieval read, or null for an unknown id. Rows come back as the driver returns them. */
 export async function getSource(exec: LegacyUnscopedRead, sourceId: string): Promise<SourceDetailRow | null> {
   const rows = await exec.executeRaw<SourceDetailRow>(
@@ -98,4 +115,25 @@ export async function getSource(exec: LegacyUnscopedRead, sourceId: string): Pro
 export async function listSourceLocalPaths(exec: LegacyUnscopedRead): Promise<string[]> {
   const { rows } = await exec.query<{ local_path: string }>(`SELECT local_path FROM sources WHERE local_path IS NOT NULL AND local_path <> ''`);
   return rows.map(r => r.local_path);
+}
+
+/** The engine's own executeRaw (or a persistence view's), so access/owner-only.ts runs the same statement on either. */
+export interface OwnerOnlyRead {
+  executeRaw<R = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<R[]>;
+}
+
+/**
+ * Does the brain hold an owner-only source, archived ones included, or (with `lineage` on, the v320 lineage function
+ * the schema carries, see access/owner-only.ts `ownerOnlyLineageReadable`) a row derived from a removed one? No row counts as yes (fail closed).
+ */
+export async function readOwnerOnlySourcesPresent(exec: OwnerOnlyRead, lineage: boolean = false): Promise<boolean> {
+  const { text, params } = renderFragment(sqlFragment`SELECT ${trustedSql(lineage ? OWNER_ONLY_LINEAGE_PRESENT_SQL : ANY_OWNER_ONLY_SQL)} AS present`);
+  const [row] = await exec.executeRaw<{ present: boolean }>(text, params);
+  return row?.present !== false;
+}
+
+/** One source's raw `config` for the owner-only test, or null when the source is missing (`sourceIsOwnerOnly`). */
+export async function readOwnerOnlySourceConfig(exec: OwnerOnlyRead, sourceId: string): Promise<{ config: unknown } | null> {
+  const rows = await exec.executeRaw<{ config: unknown }>('SELECT config FROM sources WHERE id = $1', [sourceId]);
+  return rows[0] ?? null;
 }

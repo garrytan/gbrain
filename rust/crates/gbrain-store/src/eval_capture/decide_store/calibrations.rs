@@ -11,7 +11,7 @@
 use super::receipts::{opt_int4, real_value, real4};
 use crate::error::{Result, StoreError};
 use crate::eval_capture::not_null;
-use crate::kv::{KvRead, prefix_end};
+use crate::kv::{KvRead, KvWrite, prefix_end};
 use crate::links::no_nul;
 use crate::pages::next_id;
 use crate::{Store, keys, put_json};
@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 const CALIBRATION: u8 = 0x15;
-const CALIBRATION_ID: &str = "decide_calibration_id";
+pub(crate) const CALIBRATION_ID: &str = "decide_calibration_id";
 
 fn calibration_key(id: u64) -> Vec<u8> {
     let mut out = vec![keys::EVAL_CAPTURE, CALIBRATION];
@@ -29,33 +29,33 @@ fn calibration_key(id: u64) -> Vec<u8> {
 
 /// One `decide_calibrations` row.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct CalibrationRecord {
-    id: u64,
-    slot: String,
-    call_site: String,
-    provider: String,
-    model_resolved: String,
+pub(crate) struct CalibrationRecord {
+    pub id: u64,
+    pub slot: String,
+    pub call_site: String,
+    pub provider: String,
+    pub model_resolved: String,
     /// `REAL`, as `f32::to_bits`.
-    threshold: u32,
-    min_keep: Option<i32>,
-    metric: String,
-    metric_value: Option<u32>,
-    ece: Option<u32>,
-    retest_sd: Option<u32>,
-    repack_sd: Option<u32>,
-    action_precision_lb: Option<u32>,
-    qualification: Option<String>,
-    qualified_at_us: Option<i64>,
-    policy_fingerprint: Option<String>,
-    n: i32,
-    dataset_hash: Option<String>,
-    split_hash: Option<String>,
-    calibrate_ids_hash: Option<String>,
-    calibrate_only: bool,
-    pack_shape: String,
-    created_at_us: i64,
-    retired_at_us: Option<i64>,
-    notes: Option<String>,
+    pub threshold: u32,
+    pub min_keep: Option<i32>,
+    pub metric: String,
+    pub metric_value: Option<u32>,
+    pub ece: Option<u32>,
+    pub retest_sd: Option<u32>,
+    pub repack_sd: Option<u32>,
+    pub action_precision_lb: Option<u32>,
+    pub qualification: Option<String>,
+    pub qualified_at_us: Option<i64>,
+    pub policy_fingerprint: Option<String>,
+    pub n: i32,
+    pub dataset_hash: Option<String>,
+    pub split_hash: Option<String>,
+    pub calibrate_ids_hash: Option<String>,
+    pub calibrate_only: bool,
+    pub pack_shape: String,
+    pub created_at_us: i64,
+    pub retired_at_us: Option<i64>,
+    pub notes: Option<String>,
 }
 
 impl CalibrationRecord {
@@ -151,6 +151,16 @@ fn load<R: KvRead + ?Sized>(read: &R, id: i64) -> Result<Option<CalibrationRecor
         Some(bytes) => Ok(Some(serde_json::from_slice(&bytes)?)),
         None => Ok(None),
     }
+}
+
+/// The shadow seed (`seed.rs`): stores a `decide_calibrations` row copied from another engine with
+/// its own id and times. `false` when the id already holds a row.
+pub(crate) fn seed_calibration(tx: &mut dyn KvWrite, record: &CalibrationRecord) -> Result<bool> {
+    if tx.get(&calibration_key(record.id))?.is_some() {
+        return Ok(false);
+    }
+    put_json(tx, &calibration_key(record.id), record)?;
+    Ok(true)
 }
 
 impl Store {
@@ -322,4 +332,13 @@ impl Store {
             Ok(true)
         })
     }
+}
+
+/// The shadow follow (`seed/follow.rs`): removes the calibration `id`. `false` when there is none.
+pub(crate) fn remove_calibration(tx: &mut dyn KvWrite, id: u64) -> Result<bool> {
+    if tx.get(&calibration_key(id))?.is_none() {
+        return Ok(false);
+    }
+    tx.delete(&calibration_key(id))?;
+    Ok(true)
 }

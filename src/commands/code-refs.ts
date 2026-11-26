@@ -21,7 +21,7 @@
 import type { BrainEngine } from '../core/engine.ts';
 import { errorFor, serializeError } from '../core/errors.ts';
 import { resolveCodeReadiness, readinessHint } from '../core/code-graph-readiness.ts';
-import { resolveCliCodeScope, positionalArgs, parseFlag } from './code-scope.ts';
+import { resolveCliCodeScope, positionalArgs, parseFlag, parseCodeLimit } from './code-scope.ts';
 import { codeReadFilter, type CodeReadScope } from '../core/code-intel/read-scope.ts';
 import { legacyNestedErrorDocument } from '../core/agent-output.ts';
 
@@ -106,7 +106,7 @@ export async function runCodeRefs(engine: BrainEngine, args: string[]): Promise<
     }
     process.exit(2);
   }
-  const limit = parseInt(parseFlag(args, '--limit') || '50', 10);
+  const limit = parseCodeLimit(args, 'code-refs', 50, shouldEmitJson(args));
   const language = parseFlag(args, '--lang');
   // Outside the try, matching code-callers / code-callees: the helper signals
   // usage failures with process.exit(2), and a surrounding catch would

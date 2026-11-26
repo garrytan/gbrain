@@ -13,6 +13,7 @@
  * `--apply` re-imports it), so a segmented page (Wave B) is not re-checked:
  * it is listed in the scan's `skipped` with the reason, and the scan goes on.
  */
+import { normalizeSlug } from '../core/utils.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { isQuarantined, getContentFlag, QUARANTINE_KEY, CONTENT_FLAG_KEY } from '../core/quarantine.ts';
 import { serializePageToMarkdown, serializeMarkdown } from '../core/markdown.ts';
@@ -198,7 +199,8 @@ async function runClear(engine: BrainEngine, args: string[]): Promise<void> {
     : undefined;
   // First non-flag positional after the subcommand is the slug (skip the
   // --source-id value so it can't be mistaken for the slug).
-  const slug = args.find((a, i) => !a.startsWith('--') && !(srcIdx >= 0 && i === srcIdx + 1));
+  const rawSlug = args.find((a, i) => !a.startsWith('--') && !(srcIdx >= 0 && i === srcIdx + 1));
+  const slug = rawSlug === undefined ? rawSlug : normalizeSlug(rawSlug);
   if (!slug) {
     console.error('Usage: gbrain quarantine clear <slug> [--source-id <id>] [--force] [--no-embed]');
     process.exit(2);

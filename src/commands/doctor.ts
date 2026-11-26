@@ -144,6 +144,7 @@ import { throttleDoctorHeartbeat } from './doctor/heartbeat.ts';
 import { alertRanChecks, computeAlert, printAlertReport, type DoctorAlert } from './doctor/alert.ts';
 import type { RenderContext } from '../core/agent-output.ts';
 import { recordDoctor } from '../core/telemetry/client.ts';
+import type { EngineKind } from '../core/sql-engine-kind.ts';
 export interface Check extends CheckAgentFields {
   name: string;
   status: 'ok' | 'warn' | 'fail';
@@ -241,7 +242,7 @@ export interface DoctorReport {
    * where its URL came from. Additive + optional (schema_version stays 2);
    * absent on remote/report-only paths that don't know them.
    */
-  engine?: 'postgres' | 'pglite';
+  engine?: EngineKind;
   db_url_source?: DbUrlSource | null;
   /** E2: capabilities off by choice that bound what this brain can do (e.g. `embeddings_disabled`). Additive. */
   capped_by?: string[];
@@ -284,7 +285,7 @@ function _penaltyScore(checks: Check[]): number {
  */
 export function computeDoctorReport(
   checks: Check[],
-  extras?: { engine?: 'postgres' | 'pglite'; db_url_source?: DbUrlSource | null; render?: RenderContext; run?: DoctorRunSummary; alertRan?: ReadonlySet<string> },
+  extras?: { engine?: EngineKind; db_url_source?: DbUrlSource | null; render?: RenderContext; run?: DoctorRunSummary; alertRan?: ReadonlySet<string> },
 ): DoctorReport {
   const tagged = finalizeCheckFixes(checks, extras?.render).map((c) =>
     c.category ? c : { ...c, category: categorizeCheck(c.name) },

@@ -10,7 +10,7 @@
  *   this path with manifest paths like `query/SKILL.md`.
  */
 
-import { readFileSync, existsSync, readdirSync } from 'fs';
+import { readFileSync, existsSync, readdirSync, statSync } from 'fs';
 import { basename, join, relative } from 'path';
 import { findResolverFile, findAllResolverFiles, RESOLVER_FILENAMES_LABEL } from './resolver-filenames.ts';
 import type { SkillsDirSource } from './repo-root.ts';
@@ -29,6 +29,11 @@ import {
 } from './skill-trigger-index.ts';
 import { parseSkillFrontmatter } from './skill-frontmatter.ts';
 import { SKILLS_BLOCK_BEGIN, SKILLS_BLOCK_END } from './skills/index-block.ts';
+import { isMovedSkill, movedSkillNotice } from './skillpack/moved.ts';
+import { listCatalogs, readReceipt } from './skills/resolver/catalog-files.ts';
+import { configuredSkillDirs, readResolverSection } from './skills/resolver/config.ts';
+import { IndexReader } from './skills/resolver/index-format.ts';
+import { catalogFile, resolverHome } from './skills/resolver/paths.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -58,7 +63,9 @@ export interface ResolvableIssue {
     | 'filing_missing_writes_to'
     | 'filing_unknown_directory'
     // D-CX-9: scaffolded skill still carries SKILLIFY_STUB sentinel.
-    | 'skillify_stub_unreplaced';
+    | 'skillify_stub_unreplaced'
+    // A skill moved to another catalog (skillpack/moved.ts) and no catalog here has it.
+    | 'moved_skill';
   severity: 'error' | 'warning';
   skill: string;
   message: string;
@@ -300,16 +307,84 @@ export function extractDelegationTargets(content: string): DelegationRef[] {
 }
 
 /**
+ * Whether a moved skill (skillpack/moved.ts) that the skills dir lacks is
+ * available from another catalog: a built skill-resolver catalog under the
+ * resolver home that indexes a skill of that name whose SKILL.md is still a
+ * file there, or a skill directory configured for a harness
+ * (skills.resolver.per_harness.<harness>.dirs) that holds <name>/SKILL.md. A catalog built from gbrain's own bundled
+ * skills (--bundled) never counts: it holds the copies the skills dir lacks.
+ */
+export function movedSkillAvailableElsewhere(name: string, home: string): boolean {
+  for (const catalog of listCatalogs(home)) {
+    if (readReceipt(home, catalog)?.catalog.source?.kind === 'bundled') continue;
+    let reader: IndexReader | null = null;
+    try {
+      reader = IndexReader.open(catalogFile(home, catalog, 'index.bin'));
+      for (let doc = 0; doc < reader.n; doc++) {
+        const meta = reader.meta(doc);
+        if ((meta.name === name || meta.id === name) && meta.path && (() => { try { return statSync(meta.path).isFile(); } catch { return false; } })()) return true;
+      }
+    } catch { /* an unreadable or incompatible index provides nothing */ } finally {
+      reader?.close();
+    }
+  }
+  const section = readResolverSection(home);
+  const perHarness = section.per_harness && typeof section.per_harness === 'object' ? Object.keys(section.per_harness) : [];
+  for (const harness of perHarness) {
+    let dirs: string[] = [];
+    try { dirs = configuredSkillDirs(section, harness); } catch { continue; }
+    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- dir is an absolute path the operator configured; name is a moved-skills registry name (kebab-case), only probed for existence
+    if (dirs.some(dir => { try { return statSync(join(dir, name, 'SKILL.md')).isFile(); } catch { return false; } })) return true;
+  }
+  return false;
+}
+
+/** The resolver home, resolved on first use (null when GBRAIN_HOME is invalid). */
+function lazyResolverHome(explicit: string | undefined): () => string | null {
+  let home: string | null | undefined;
+  return () => {
+    if (home === undefined) {
+      try { home = explicit ?? resolverHome(); } catch { home = null; }
+    }
+    return home;
+  };
+}
+
+/**
+ * How a skill the skills dir lacks is graded: 'present' when it moved and
+ * another catalog provides it, a moved_skill warning when it moved, the
+ * destination is set and nothing provides it, else null (graded as missing).
+ */
+function movedSkillGrade(name: string, at: string, home: () => string | null): 'present' | ResolvableIssue | null {
+  if (!isMovedSkill(name)) return null;
+  const h = home();
+  if (h && movedSkillAvailableElsewhere(name, h)) return 'present';
+  const notice = movedSkillNotice(name);
+  if (!notice) return null;
+  return {
+    type: 'moved_skill',
+    severity: 'warning',
+    skill: name,
+    message: `${at} names '${name}', which no skills folder or skill catalog here has. ${notice}`,
+    action: `Install '${name}' from where it moved, or remove its entry from ${at}`,
+  };
+}
+
+/**
  * A manifest entry whose SKILL.md is gone is a missing file, not an
  * unreachable skill (GST-3155). Pushes one missing_file error per such entry
- * and returns their resolver-form paths (`skills/<path>`).
+ * (a moved skill is graded by movedSkillGrade) and returns their
+ * resolver-form paths (`skills/<path>`).
  */
-function reportMissingManifestFiles(skillsDir: string, manifest: ManifestEntry[], issues: ResolvableIssue[]): Set<string> {
+function reportMissingManifestFiles(skillsDir: string, manifest: ManifestEntry[], issues: ResolvableIssue[], home: () => string | null): Set<string> {
   const missing = new Set<string>();
   for (const skill of manifest) {
     // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- skillsDir is the caller-resolved local skills/ dir; manifest paths are only probed for existence
     if (existsSync(join(skillsDir, skill.path))) continue;
     missing.add(`skills/${skill.path}`);
+    const moved = movedSkillGrade(skill.path.replace(/\/SKILL\.md$/, ''), 'manifest.json', home);
+    if (moved === 'present') continue;
+    if (moved) { issues.push(moved); continue; }
     issues.push({
       type: 'missing_file',
       severity: 'error',
@@ -321,6 +396,26 @@ function reportMissingManifestFiles(skillsDir: string, manifest: ManifestEntry[]
   return missing;
 }
 
+/**
+ * One missing_file error per resolver skill path whose file is gone (a moved
+ * skill is graded by movedSkillGrade instead).
+ */
+function reportMissingResolverFiles(missingFiles: Map<string, string>, issues: ResolvableIssue[], home: () => string | null): void {
+  for (const [skillPath, fullPath] of missingFiles) {
+    const moved = movedSkillGrade(skillPath.replace(/^skills\//, '').replace(/\/SKILL\.md$/, ''), 'RESOLVER.md', home);
+    if (moved === 'present') continue;
+    if (moved) { issues.push(moved); continue; }
+    issues.push({
+      type: 'missing_file',
+      severity: 'error',
+      skill: skillPath,
+      message: `RESOLVER.md references '${skillPath}' but the file doesn't exist`,
+      action: `Create the skill at '${fullPath}' or remove the resolver entry`,
+      fix: { type: 'create_stub', file: fullPath },
+    });
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Main function
 // ---------------------------------------------------------------------------
@@ -330,12 +425,16 @@ function reportMissingManifestFiles(skillsDir: string, manifest: ManifestEntry[]
  * violations, and check for DRY issues.
  *
  * @param skillsDir — path to the `skills/` directory
+ * @param opts.resolverHome — where built skill catalogs and config.json live
+ *   (default: the gbrain config dir); read only for a moved skill the skills
+ *   dir lacks.
  */
 export function checkResolvable(
   skillsDir: string,
-  opts?: { skillsDirSource?: SkillsDirSource | null },
+  opts?: { skillsDirSource?: SkillsDirSource | null; resolverHome?: string },
 ): ResolvableReport {
   const issues: ResolvableIssue[] = [];
+  const homeOnce = lazyResolverHome(opts?.resolverHome);
 
   // Load inputs via the v0.41.11 shared primitive. UNION semantics
   // across two surfaces:
@@ -348,7 +447,8 @@ export function checkResolvable(
   // Frontmatter is the source of truth (closes the #1451 drift class);
   // RESOLVER.md rows still contribute additively so the human-readable
   // dispatcher map stays load-bearing. See src/core/skill-trigger-index.ts.
-  const triggerEntries = loadSkillTriggerIndex(skillsDir);
+  const deprecatedSkills = new Set<string>();
+  const triggerEntries = loadSkillTriggerIndex(skillsDir, deprecatedSkills);
 
   // Primary RESOLVER.md path is still needed for error messages and
   // --fix targets that have to point at a concrete file. When neither
@@ -402,10 +502,12 @@ export function checkResolvable(
   // final tally, THEN construct issues. This lets the severity call factor
   // in how SPARSE trigger coverage is across the whole directory, not just
   // whether this one skill has a trigger.
-  const manifestMissingPaths = reportMissingManifestFiles(skillsDir, manifest, issues);
+  const manifestMissingPaths = reportMissingManifestFiles(skillsDir, manifest, issues, homeOnce);
   const resolved = manifest.filter(skill => !manifestMissingPaths.has(`skills/${skill.path}`)).map(skill => {
     const expectedPath = `skills/${skill.path}`;
     if (resolverSkillPaths.has(expectedPath)) return { skill, reachable: true };
+    // A deprecated skill has no triggers by design: it loads only when named.
+    if (deprecatedSkills.has(expectedPath)) return { skill, reachable: true };
     // Also check if the skill name appears in any resolver entry
     const nameInResolver = entries.some(
       e => e.skillPath.includes(skill.name) || e.trigger.includes(skill.name)
@@ -493,16 +595,7 @@ export function checkResolvable(
       else if (!orphans.has(skillName)) orphans.set(skillName, null);
     }
   }
-  for (const [skillPath, fullPath] of missingFiles) {
-    issues.push({
-      type: 'missing_file',
-      severity: 'error',
-      skill: skillPath,
-      message: `RESOLVER.md references '${skillPath}' but the file doesn't exist`,
-      action: `Create the skill at '${fullPath}' or remove the resolver entry`,
-      fix: { type: 'create_stub', file: fullPath },
-    });
-  }
+  reportMissingResolverFiles(missingFiles, issues, homeOnce);
   for (const [skillName, resolverSkillPath] of orphans) {
     if (resolverSkillPath !== null) {
       issues.push({

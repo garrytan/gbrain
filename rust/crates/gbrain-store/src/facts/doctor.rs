@@ -81,7 +81,7 @@ pub struct CoverageQuery {
 
 /// Every fact row of every source, source by source. A fact names a source that exists, so this
 /// is every row of the `facts` table.
-fn every_fact(read: &dyn KvRead) -> Result<Vec<FactRecord>> {
+pub(crate) fn every_fact(read: &dyn KvRead) -> Result<Vec<FactRecord>> {
     let mut out = Vec::new();
     for source in all_sources(read)? {
         out.extend(source_rows(read, &source.id)?);
@@ -517,14 +517,59 @@ impl Store {
     /// fingerprint, subject `*` or the row's entity, or only the page's own subject on a member
     /// page). Rows come by source id.
     pub fn count_fact_embedding_coverage(&self, q: &CoverageQuery) -> Result<Vec<Value>> {
-        const OP: &str = "countFactEmbeddingCoverage";
+        let mut groups: BTreeMap<String, [u64; 3]> = BTreeMap::new();
+        self.for_each_embeddable_fact("countFactEmbeddingCoverage", q, &mut |row, stale| {
+            let missing = row.embedding.is_none();
+            let partial = !stale
+                && row.fact.len() > EMBED_MAX_CHARS
+                && row.fact.encode_utf16().count() > EMBED_MAX_CHARS;
+            let g = groups.entry(row.source_id.clone()).or_default();
+            g[0] += u64::from(missing);
+            g[1] += u64::from(stale);
+            g[2] += u64::from(partial);
+        })?;
+        Ok(groups
+            .into_iter()
+            .map(|(source_id, g)| {
+                json!({ "source_id": source_id, "missing": g[0], "stale": g[1], "partial": g[2] })
+            })
+            .collect())
+    }
+
+    /// `countStaleFactEmbeddings({ model, dims, sourceId? })`: `{ count, chars }` of the
+    /// embeddable facts whose vector is not current for `model` and `dims` (the `stale` count of
+    /// `countFactEmbeddingCoverage`, over every source or one). `chars` sums each stale fact's
+    /// length in characters (Postgres `length(fact)`, code points).
+    pub fn count_stale_fact_embeddings(&self, q: &CoverageQuery) -> Result<Value> {
+        let (mut count, mut chars) = (0u64, 0u64);
+        self.for_each_embeddable_fact("countStaleFactEmbeddings", q, &mut |row, stale| {
+            if stale {
+                count += 1;
+                chars += row.fact.chars().count() as u64;
+            }
+        })?;
+        Ok(json!({ "count": count, "chars": chars }))
+    }
+
+    /// Calls `f` with every embeddable fact of `q`'s sources and whether its vector is stale for
+    /// `q.model` and `q.dims`. Embeddable is `eligibleFactEmbedding`: the fact is not expired,
+    /// superseded, past `valid_until` or an audit row, its source is not archived, and its page
+    /// (`source_markdown_slug`) is not soft-deleted, and no withdrawal covers it (`retainedFactEmbedding`:
+    /// a withdrawal of its source and visibility under either fingerprint, whose subject is the
+    /// fact's member page for a fact on `memory/members/...`, else `*` or the fact's entity).
+    pub(crate) fn for_each_embeddable_fact(
+        &self,
+        op: &str,
+        q: &CoverageQuery,
+        f: &mut dyn FnMut(&FactRecord, bool),
+    ) -> Result<()> {
         let texts: Vec<(&str, &str)> = std::iter::once(("model", q.model.as_str()))
             .chain(q.source_id.as_deref().map(|s| ("sourceId", s)))
             .collect();
-        no_nul(OP, &texts)?;
+        no_nul(op, &texts)?;
         if !q.dims.is_finite() || q.dims.fract() != 0.0 || q.dims.abs() > f64::from(i32::MAX) {
             return Err(StoreError::invalid(format!(
-                "{OP}: invalid input syntax for type integer: \"{}\" (dims)",
+                "{op}: invalid input syntax for type integer: \"{}\" (dims)",
                 q.dims
             )));
         }
@@ -535,7 +580,6 @@ impl Store {
             Some(id) => read_source(&*read, id)?.into_iter().collect(),
             None => all_sources(&*read)?,
         };
-        let mut groups: BTreeMap<String, [u64; 3]> = BTreeMap::new();
         for source in sources.iter().filter(|s| !s.archived) {
             for row in source_rows(&*read, &source.id)? {
                 if row.expired_at_us.is_some()
@@ -554,26 +598,14 @@ impl Store {
                 if withdrawn_for_embedding(&*read, &row)? {
                     continue;
                 }
-                let missing = row.embedding.is_none();
-                let stale = missing
+                let stale = row.embedding.is_none()
                     || row.embedding_model.as_deref() != Some(q.model.as_str())
                     || row.embedded_text_hash.as_deref() != Some(md5_hex(&row.fact).as_str())
                     || row.embedding.as_ref().map(|v| v.len() as i64) != Some(dims);
-                let partial = !stale
-                    && row.fact.len() > EMBED_MAX_CHARS
-                    && row.fact.encode_utf16().count() > EMBED_MAX_CHARS;
-                let g = groups.entry(row.source_id.clone()).or_default();
-                g[0] += u64::from(missing);
-                g[1] += u64::from(stale);
-                g[2] += u64::from(partial);
+                f(&row, stale);
             }
         }
-        Ok(groups
-            .into_iter()
-            .map(|(source_id, g)| {
-                json!({ "source_id": source_id, "missing": g[0], "stale": g[1], "partial": g[2] })
-            })
-            .collect())
+        Ok(())
     }
 }
 /// `eligibleFactEmbedding`'s withdrawal anti-join: a withdrawal of the row's claim (either fingerprint) in its source and

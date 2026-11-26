@@ -35,7 +35,7 @@
 use crate::env::iso;
 use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, Result, StoreError};
 use crate::facts::{like, read_fact, real};
-use crate::kv::{KvRead, scan_prefix};
+use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::no_nul;
 use crate::pages::next_id;
 use crate::timeline_queries::timestamptz_text;
@@ -43,8 +43,8 @@ use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-const NEXT_PROPOSAL_ID: &str = "decide_proposal_next_id";
-const NEXT_REVIEW_PROPOSAL_ID: &str = "decide_review_proposal_next_id";
+pub(crate) const NEXT_PROPOSAL_ID: &str = "decide_proposal_next_id";
+pub(crate) const NEXT_REVIEW_PROPOSAL_ID: &str = "decide_review_proposal_next_id";
 
 /// A supersede proposal.
 const PROPOSAL: u8 = 0x30;
@@ -135,6 +135,11 @@ fn read_all<T: serde::de::DeserializeOwned>(read: &dyn KvRead, prefix: &[u8]) ->
         .collect()
 }
 
+/// Every supersede proposal, in id order (the claim-pair and contested-pair reads filter them).
+pub(crate) fn all_proposals(read: &dyn KvRead) -> Result<Vec<ProposalRecord>> {
+    read_all(read, &tagged(PROPOSAL))
+}
+
 fn id_at(bytes: &[u8]) -> Result<u64> {
     keys::be8(bytes).ok_or_else(|| StoreError::new(crate::error::STORE_CORRUPT, "bad proposal id"))
 }
@@ -214,6 +219,15 @@ fn row_id(id: i64) -> Option<u64> {
     u64::try_from(id).ok()
 }
 
+/// What [`seed_proposal`] and [`seed_review_proposal`] did with a row.
+pub(crate) enum Seeded {
+    Stored,
+    /// The id already holds a row: a retried batch.
+    Present,
+    /// Another row holds the unique key named here.
+    Conflict(&'static str),
+}
+
 // ------------------------------------------------------------------ supersede proposals
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -260,6 +274,30 @@ impl ProposalRecord {
     }
 }
 
+/// The shadow seed (`seed.rs`): stores a supersede proposal copied from another engine with its
+/// own id and times, and its sweep-slot key and (for a `claim_conflicts:%` sweep) its claim-pair
+/// key as [`Store::insert_decide_proposal`] writes them.
+pub(crate) fn seed_proposal(tx: &mut dyn KvWrite, record: &ProposalRecord) -> Result<Seeded> {
+    if tx.get(&id_key(PROPOSAL, record.id))?.is_some() {
+        return Ok(Seeded::Present);
+    }
+    let slot = sweep_slot_key(&record.sweep_id, record.pair_index);
+    if tx.get(&slot)?.is_some() {
+        return Ok(Seeded::Conflict("decide_proposals (sweep_id, pair_index)"));
+    }
+    let claim = like(&record.sweep_id, "claim_conflicts:%", false)?;
+    let pair = claim_pair_key(&record.source_id, record.new_fact_id, record.old_fact_id);
+    if claim && tx.get(&pair)?.is_some() {
+        return Ok(Seeded::Conflict("decide_proposals_claim_pair_uidx"));
+    }
+    put_json(tx, &id_key(PROPOSAL, record.id), record)?;
+    tx.put(&slot, &record.id.to_be_bytes())?;
+    if claim {
+        tx.put(&pair, &record.id.to_be_bytes())?;
+    }
+    Ok(Seeded::Stored)
+}
+
 /// `NewProposal`. Every field is optional here so a missing one fails as Postgres fails it.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
@@ -282,6 +320,15 @@ pub struct DecideProposalInput {
 pub struct ListDecideProposalsOptions {
     pub status: Option<String>,
     pub limit: Option<i64>,
+}
+
+/// The filter of `listPendingContradictions`: a source, and a lower bound on the proposal's
+/// creation time (an ISO timestamp).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct PendingContradictionsFilter {
+    pub source_id: Option<String>,
+    pub since: Option<String>,
 }
 
 /// `transitionDecideProposal`: a status change and the state it records.
@@ -461,6 +508,72 @@ impl Store {
         Ok(out)
     }
 
+    /// `listPendingContradictions({ sourceId?, since? })`: the pending proposals whose two facts
+    /// are both active and in the proposal's source (a decided proposal, or a pair with a
+    /// superseded, expired or missing fact, is not listed), with the new fact's tier, entity and
+    /// claim and the claim values of both, `created_at, id` order, at most 1000.
+    pub fn list_pending_contradictions(
+        &self,
+        filter: &PendingContradictionsFilter,
+    ) -> Result<Vec<Value>> {
+        let since = match &filter.since {
+            Some(text) => Some(crate::env::parse_iso(text).ok_or_else(|| {
+                StoreError::invalid("listPendingContradictions since must be an ISO timestamp")
+            })?),
+            None => None,
+        };
+        let now = self.env.now_micros();
+        let read = self.read()?;
+        let mut rows: Vec<ProposalRecord> = read_all(&*read, &tagged(PROPOSAL))?;
+        rows.retain(|r| {
+            r.status == "pending"
+                && filter.source_id.as_ref().is_none_or(|s| *s == r.source_id)
+                && since.is_none_or(|t| r.created_at_us >= t)
+        });
+        rows.sort_by_key(|r| (r.created_at_us, r.id));
+        let mut out = Vec::new();
+        for record in rows {
+            if out.len() == 1000 {
+                break;
+            }
+            let (Some(new_id), Some(old_id)) =
+                (row_id(record.new_fact_id), row_id(record.old_fact_id))
+            else {
+                continue;
+            };
+            let (Some(new), Some(old)) = (read_fact(&*read, new_id)?, read_fact(&*read, old_id)?)
+            else {
+                continue;
+            };
+            if new.source_id != record.source_id
+                || old.source_id != record.source_id
+                || !new.active(now)
+                || !old.active(now)
+            {
+                continue;
+            }
+            out.push(json!({
+                "id": record.id,
+                "source_id": record.source_id,
+                "sweep_id": record.sweep_id,
+                "created_at": iso(record.created_at_us),
+                "new_fact_id": record.new_fact_id,
+                "old_fact_id": record.old_fact_id,
+                "new_fact": new.fact,
+                "old_fact": old.fact,
+                "trust_tier": new.tier().as_str(),
+                "entity_slug": new.entity_slug,
+                "slug": new.source_markdown_slug.or(old.source_markdown_slug),
+                "claim_metric": new.claim_metric,
+                "claim_unit": new.claim_unit,
+                "claim_period": new.claim_period,
+                "new_value": new.claim_value,
+                "old_value": old.claim_value,
+            }));
+        }
+        Ok(out)
+    }
+
     /// `transitionDecideProposal(id, from, to, state?)`: moves the proposal from `from` to `to`,
     /// stamps the decision time and records the states given (a null keeps the stored one).
     /// `false` when the proposal does not exist or is not in `from`.
@@ -557,6 +670,32 @@ impl ReviewProposalRecord {
             "receipt": self.receipt,
         })
     }
+}
+
+/// The shadow seed (`seed.rs`): stores a review proposal copied from another engine with its own
+/// id and times, and its unique key as [`Store::insert_decide_review_proposal`] writes it.
+pub(crate) fn seed_review_proposal(
+    tx: &mut dyn KvWrite,
+    record: &ReviewProposalRecord,
+) -> Result<Seeded> {
+    if tx.get(&id_key(REVIEW_PROPOSAL, record.id))?.is_some() {
+        return Ok(Seeded::Present);
+    }
+    let unique = review_key(
+        &record.kind,
+        &record.source_id,
+        &record.a_ref,
+        &record.b_ref,
+        &record.subject,
+    );
+    if tx.get(&unique)?.is_some() {
+        return Ok(Seeded::Conflict(
+            "decide_review_proposals (kind, source_id, a_ref, b_ref, subject)",
+        ));
+    }
+    put_json(tx, &id_key(REVIEW_PROPOSAL, record.id), record)?;
+    tx.put(&unique, &record.id.to_be_bytes())?;
+    Ok(Seeded::Stored)
 }
 
 /// `NewReviewProposal`. Every field is optional here so a missing one fails as Postgres fails it.
@@ -814,16 +953,32 @@ impl Rated {
 // ------------------------------------------------------------------ review queue
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct QueueRecord {
-    kind: String,
-    source_id: String,
-    a_ref: String,
-    b_ref: String,
-    evidence: Option<String>,
-    reason: String,
-    attempts: i32,
-    next_attempt_us: i64,
-    created_at_us: i64,
+pub(crate) struct QueueRecord {
+    pub kind: String,
+    pub source_id: String,
+    pub a_ref: String,
+    pub b_ref: String,
+    pub evidence: Option<String>,
+    pub reason: String,
+    pub attempts: i32,
+    pub next_attempt_us: i64,
+    pub created_at_us: i64,
+}
+
+/// The shadow seed (`seed.rs`): stores a review-queue row copied from another engine with its own
+/// attempts and times. `false` when the pair is already queued.
+pub(crate) fn seed_review_queue(tx: &mut dyn KvWrite, record: &QueueRecord) -> Result<bool> {
+    let key = queue_key(
+        &record.kind,
+        &record.source_id,
+        &record.a_ref,
+        &record.b_ref,
+    );
+    if tx.get(&key)?.is_some() {
+        return Ok(false);
+    }
+    put_json(tx, &key, record)?;
+    Ok(true)
 }
 
 /// What `applyDecideReviewQueue` runs: queue a pair, drop a row, or push a row back.
@@ -979,14 +1134,25 @@ impl Store {
 // ------------------------------------------------------------------ sweep retries
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct DeferredRecord {
-    source_id: String,
-    fact_id: i64,
-    slot: String,
-    reason: String,
-    attempts: i32,
-    next_attempt_us: i64,
-    created_at_us: i64,
+pub(crate) struct DeferredRecord {
+    pub source_id: String,
+    pub fact_id: i64,
+    pub slot: String,
+    pub reason: String,
+    pub attempts: i32,
+    pub next_attempt_us: i64,
+    pub created_at_us: i64,
+}
+
+/// The shadow seed (`seed.rs`): stores a conflict-sweep retry row copied from another engine with
+/// its own attempts and times. `false` when `(slot, source_id, fact_id)` already holds a row.
+pub(crate) fn seed_sweep_deferred(tx: &mut dyn KvWrite, record: &DeferredRecord) -> Result<bool> {
+    let key = deferred_key(&record.slot, &record.source_id, record.fact_id);
+    if tx.get(&key)?.is_some() {
+        return Ok(false);
+    }
+    put_json(tx, &key, record)?;
+    Ok(true)
 }
 
 /// What `applyDecideSweepDeferred` runs: back a fact off, hand over relinked facts, or drop a row.
@@ -1109,4 +1275,185 @@ impl Store {
             }
         }
     }
+}
+
+/// `PURGE_REVIEW_COUNTS_SQL` (a fact purge's plan): the review-queue rows, review proposals and
+/// supersede proposals of `source_id` that name a purged take (`a_ref`/`b_ref` in `refs`) or a
+/// purged fact (`new_fact_id`/`old_fact_id` in `fact_ids`), as `(q, rp, dp)`.
+pub(crate) fn purge_review_counts(
+    read: &dyn KvRead,
+    source_id: &str,
+    refs: &std::collections::HashSet<String>,
+    fact_ids: &std::collections::HashSet<i64>,
+) -> Result<(i64, i64, i64)> {
+    let names = |a: &str, b: &str| refs.contains(a) || refs.contains(b);
+    let queue: Vec<QueueRecord> = read_all(read, &tagged(REVIEW_QUEUE))?;
+    let q = queue
+        .iter()
+        .filter(|r| r.source_id == source_id && names(&r.a_ref, &r.b_ref))
+        .count();
+    let review: Vec<ReviewProposalRecord> = read_all(read, &tagged(REVIEW_PROPOSAL))?;
+    let rp = review
+        .iter()
+        .filter(|r| r.source_id == source_id && names(&r.a_ref, &r.b_ref))
+        .count();
+    let supersede: Vec<ProposalRecord> = read_all(read, &tagged(PROPOSAL))?;
+    let dp = supersede
+        .iter()
+        .filter(|r| {
+            r.source_id == source_id
+                && (fact_ids.contains(&r.new_fact_id) || fact_ids.contains(&r.old_fact_id))
+        })
+        .count();
+    Ok((q as i64, rp as i64, dp as i64))
+}
+
+/// `deletePurgeReviewQueue` (a fact purge): deletes the review-queue rows of `source_id` naming a
+/// purged fact or take (`a_ref` or `b_ref` in `refs`); how many.
+pub(crate) fn purge_review_queue(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    refs: &std::collections::HashSet<String>,
+) -> Result<u64> {
+    let rows: Vec<QueueRecord> = read_all(&*tx, &tagged(REVIEW_QUEUE))?;
+    let mut deleted = 0;
+    for r in rows {
+        if r.source_id == source_id && (refs.contains(&r.a_ref) || refs.contains(&r.b_ref)) {
+            tx.delete(&queue_key(&r.kind, &r.source_id, &r.a_ref, &r.b_ref))?;
+            deleted += 1;
+        }
+    }
+    Ok(deleted)
+}
+
+/// `deletePurgeReviewProposals` (a fact purge): deletes the review proposals of `source_id` naming
+/// a purged fact or take, with their unique-key entries; how many.
+pub(crate) fn purge_review_proposals(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    refs: &std::collections::HashSet<String>,
+) -> Result<u64> {
+    let rows: Vec<ReviewProposalRecord> = read_all(&*tx, &tagged(REVIEW_PROPOSAL))?;
+    let mut deleted = 0;
+    for r in rows {
+        if r.source_id == source_id && (refs.contains(&r.a_ref) || refs.contains(&r.b_ref)) {
+            let unique = review_key(&r.kind, &r.source_id, &r.a_ref, &r.b_ref, &r.subject);
+            if tx.get(&unique)?.as_deref() == Some(&r.id.to_be_bytes()[..]) {
+                tx.delete(&unique)?;
+            }
+            tx.delete(&id_key(REVIEW_PROPOSAL, r.id))?;
+            deleted += 1;
+        }
+    }
+    Ok(deleted)
+}
+
+/// `deletePurgeDecideProposals` (a fact purge): deletes the supersede proposals of `source_id`
+/// whose new or old fact is purged, with their sweep-slot and claim-pair entries; how many.
+pub(crate) fn purge_decide_proposals(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    fact_ids: &std::collections::HashSet<i64>,
+) -> Result<u64> {
+    let rows: Vec<ProposalRecord> = read_all(&*tx, &tagged(PROPOSAL))?;
+    let mut deleted = 0;
+    for r in rows {
+        if r.source_id != source_id
+            || !(fact_ids.contains(&r.new_fact_id) || fact_ids.contains(&r.old_fact_id))
+        {
+            continue;
+        }
+        let own = |bytes: Option<Vec<u8>>| bytes.as_deref() == Some(&r.id.to_be_bytes()[..]);
+        let slot = sweep_slot_key(&r.sweep_id, r.pair_index);
+        if own(tx.get(&slot)?) {
+            tx.delete(&slot)?;
+        }
+        let pair = claim_pair_key(&r.source_id, r.new_fact_id, r.old_fact_id);
+        if own(tx.get(&pair)?) {
+            tx.delete(&pair)?;
+        }
+        tx.delete(&id_key(PROPOSAL, r.id))?;
+        deleted += 1;
+    }
+    Ok(deleted)
+}
+
+// ------------------------------------------------------------------ the shadow follow
+
+/// The shadow follow (`seed/follow.rs`): removes the supersede proposal `id` with its sweep-slot
+/// key and claim-pair key, each only when it names the proposal. `false` when there is none.
+pub(crate) fn remove_proposal(tx: &mut dyn KvWrite, id: u64) -> Result<bool> {
+    let Some(record) = get_json::<ProposalRecord>(&*tx, &id_key(PROPOSAL, id))? else {
+        return Ok(false);
+    };
+    let slot = sweep_slot_key(&record.sweep_id, record.pair_index);
+    let pair = claim_pair_key(&record.source_id, record.new_fact_id, record.old_fact_id);
+    for key in [slot, pair] {
+        if tx.get(&key)?.as_deref() == Some(&id.to_be_bytes()[..]) {
+            tx.delete(&key)?;
+        }
+    }
+    tx.delete(&id_key(PROPOSAL, id))?;
+    Ok(true)
+}
+
+/// The shadow follow: removes the review proposal `id` with its unique key. `false` when there is
+/// none.
+pub(crate) fn remove_review_proposal(tx: &mut dyn KvWrite, id: u64) -> Result<bool> {
+    let Some(record) = get_json::<ReviewProposalRecord>(&*tx, &id_key(REVIEW_PROPOSAL, id))? else {
+        return Ok(false);
+    };
+    let unique = review_key(
+        &record.kind,
+        &record.source_id,
+        &record.a_ref,
+        &record.b_ref,
+        &record.subject,
+    );
+    if tx.get(&unique)?.as_deref() == Some(&id.to_be_bytes()[..]) {
+        tx.delete(&unique)?;
+    }
+    tx.delete(&id_key(REVIEW_PROPOSAL, id))?;
+    Ok(true)
+}
+
+/// The shadow follow: removes the review-queue row of a pair. `false` when it is not queued.
+pub(crate) fn remove_review_queue(
+    tx: &mut dyn KvWrite,
+    kind: &str,
+    source_id: &str,
+    a_ref: &str,
+    b_ref: &str,
+) -> Result<bool> {
+    if [kind, source_id, a_ref, b_ref]
+        .iter()
+        .any(|t| t.contains('\0'))
+    {
+        return Ok(false);
+    }
+    let key = queue_key(kind, source_id, a_ref, b_ref);
+    if tx.get(&key)?.is_none() {
+        return Ok(false);
+    }
+    tx.delete(&key)?;
+    Ok(true)
+}
+
+/// The shadow follow: removes the conflict-sweep retry row `(slot, source_id, fact_id)`. `false`
+/// when there is none.
+pub(crate) fn remove_sweep_deferred(
+    tx: &mut dyn KvWrite,
+    slot: &str,
+    source_id: &str,
+    fact_id: i64,
+) -> Result<bool> {
+    if slot.contains('\0') || source_id.contains('\0') {
+        return Ok(false);
+    }
+    let key = deferred_key(slot, source_id, fact_id);
+    if tx.get(&key)?.is_none() {
+        return Ok(false);
+    }
+    tx.delete(&key)?;
+    Ok(true)
 }

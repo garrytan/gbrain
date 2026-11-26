@@ -494,7 +494,21 @@ note/conversation containers;
 most-recently-touched breaks ties within the same match shape. A non-entity
 exact-title page remains a valid fallback. Multi-hit ⇒ best match's card +
 runners-up in `suggestions`. Miss ⇒ `found: false` + keyword near-misses with
-`create_safety` hints.
+`create_safety` hints. A miss is an answer only when every lookup read ran: when
+a page-lookup read fails (the alias, exact title / slug, alias-hydrate or name-variant read, or a name-variant
+candidate's retirement or redirect-target read),
+the call still answers (`found: false` with whatever the other reads found, or
+the best hit they found) and is marked degraded with the stage
+`entity_lookup_failed` (reason `timeout` or `provider_error`) in
+`_meta.retrieval.degraded`, so MCP carries `_meta.degraded` and the
+`[gbrain degraded: entity_lookup_failed]` text block and the CLI carries a
+`degraded` key (`--json`) or the same line on stderr. Exit code stays 0, as for
+every degraded result; `GBRAIN_FAIL_ON_EMPTY=1` does not turn a failed lookup
+into `no_results`, also under `GBRAIN_ENFORCED_MEMBER`. A failed lookup is never "the entity does not exist": retry
+or run `gbrain doctor`. A brain without the `page_aliases` table (before its
+migration) is not degraded: the alias arm is empty by design. An engine that
+refuses raw reads ends the call on its typed `engine_capability_missing`
+refusal instead.
 
 Response: `{ protocol_version, found, latency_ms, card?, suggestions? }`.
 Card: `{ entity{slug,title,type}, aka[], summary, last_touched{updated_at,

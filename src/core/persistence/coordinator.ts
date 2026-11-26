@@ -3,6 +3,7 @@ import { dirname } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { OperationError, opError } from '../ops/contract.ts';
+import { inStoredSlugScope } from './legacy-slug-put.ts';
 import { readFix } from '../ops/op-fix.ts';
 import type { Action } from '../agent-output.ts';
 import { pageIdentityError, rememberAcceptsPageCreatedSince } from './page-identity.ts';
@@ -767,6 +768,11 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
 
 export async function recoverPublication(engine: BrainEngine, id: string, hostId = hostIdFor(engine), alreadyLocked = false,
   terminalError?: PublicationFailure, capacityAlreadyHeld = false, hooks: PublicationHooks = {}): Promise<WriteRequest> {
+  const request = await getWriteRequestById(engine, id);
+  return inStoredSlugScope(request ?? { operation: '', slug: '' }, () => recoverPublicationRow(engine, id, hostId, alreadyLocked, terminalError, capacityAlreadyHeld, hooks));
+}
+async function recoverPublicationRow(engine: BrainEngine, id: string, hostId: string, alreadyLocked: boolean,
+  terminalError: PublicationFailure | undefined, capacityAlreadyHeld: boolean, hooks: PublicationHooks): Promise<WriteRequest> {
   let row = await getWriteRequestById(engine, id);
   if (!row) throw opError('not_found', 'Write request not found.',
     'The write request is no longer in the journal (it was compacted or never existed), so there is nothing to recover. Inspect the canonical owners for requests that still need recovery.',

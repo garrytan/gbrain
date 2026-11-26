@@ -28,16 +28,21 @@ import { estimateTokens } from '../src/core/skills/resolver/block.ts';
 import { acquireLease, holdsLease, releaseLease, tryAcquireLease } from '../src/core/skills/resolver/lock.ts';
 import { commitSession, commitSessionAsync, gcSessions, gcSessionsAsync, loadSession, sessionGcSettled, sessionKey } from '../src/core/skills/resolver/session.ts';
 import { catalogFile } from '../src/core/skills/resolver/paths.ts';
+import { parseSkillDoc } from '../src/core/skills/resolver/frontmatter.ts';
 import { appendDailyLog, appendDailyLogSync, DAILY_LOG_DAY_CAP_BYTES, dailyLogFile, LANE_LOG, readRecentDailyLog, RESOLVER_LOG } from '../src/core/skills/resolver/daily-log.ts';
 import { EXCLUDE_MAX, STAT_CHECK_SLICE } from '../src/core/skills/resolver/resolve.ts';
 import { RACY_MTIME_MS } from '../src/core/skills/resolver/build.ts';
 import { TOP_GATE_DEFAULT } from '../src/core/skills/resolver/limits.ts';
+import { DEFAULT_SESSION_TOKEN_BUDGET } from '../src/core/skills/resolver/config.ts';
+import { CODES } from '../src/core/error-registry.ts';
+import { pinnedBlockFor, writePins } from '../src/core/setup/skill-pins.ts';
+import { readResolverConfig } from '../src/core/setup/skill-resolver-config.ts';
 
 const scratch: string[] = [];
 afterAll(() => { for (const d of scratch) rmSync(d, { recursive: true, force: true }); });
 function tmp(prefix = 'skres-'): string { const d = mkdtempSync(join(tmpdir(), prefix)); scratch.push(d); return d; }
 
-interface J { id: string; name: string; description?: string; triggers?: string[]; routing?: string[]; body?: string; path?: string; eligible?: boolean }
+interface J { id: string; name: string; description?: string; triggers?: string[]; routing?: string[]; body?: string; path?: string; eligible?: boolean; deprecated?: boolean; replaced_by?: string }
 async function jsonCatalog(home: string, catalog: string, skills: J[], extra: Record<string, unknown> = {}) {
   const f = join(tmp('skres-src-'), 'catalog.json');
   writeFileSync(f, JSON.stringify(skills));
@@ -346,16 +351,18 @@ describe('sessions', () => {
     await jsonCatalog(home, 'c', [...targets, ...weak]);
     const strong = [1, 10, 18, 25, 37, 50];
     const perTurn: { turn: number; n: number; tokens: number }[] = [];
+    // pregate-literal: DEFAULT_SESSION_TOKEN_BUDGET=2000 this test pins the old budget on purpose to check pacing under a tight budget
+    const budget = 2000;
     for (let t = 1; t <= 50; t++) {
       const s = strong.indexOf(t);
       const message = s >= 0 ? `can you ${targets[s]!.name} this` : `${pool[t % 12]} ${pool[(t + 5) % 12]}`;
-      const r = await resolveSkills({ message, session_id: 'fifty', top_gate: 0 }, { home });
+      const r = await resolveSkills({ message, session_id: 'fifty', top_gate: 0 }, { home, sessionTokenBudget: budget });
       perTurn.push({ turn: t, n: r.output.suggestions.length, tokens: r.output.block_tokens });
       expect(await r.commit()).toBe(true);
     }
     for (const t of [10, 25, 50]) expect({ turn: t, n: perTurn[t - 1]!.n > 0 }).toEqual({ turn: t, n: true });
     const total = perTurn.reduce((a, x) => a + x.tokens, 0);
-    expect(total).toBeLessThanOrEqual(2000);
+    expect(total).toBeLessThanOrEqual(budget);
     expect(sessionStatus('fifty', { home }).spent).toBe(total);
     const late = perTurn.filter(x => x.turn > 12 && !strong.includes(x.turn));
     expect(late.every(x => x.n === 0)).toBe(true);
@@ -366,9 +373,23 @@ describe('sessions', () => {
     await jsonCatalog(home, 'c', BASIC);
     const key = sessionKey('on', undefined, 'k');
     await commitSession(home, key, { tokens: 1000, suggested: [], resuggested: [], reset: false });
-    expect((await resolveSkills({ message: 'reports', session_id: 'k' }, { home })).output.ranker.k).toBe(3);
+    expect((await resolveSkills({ message: 'reports', session_id: 'k' }, { home, sessionTokenBudget: 2000 })).output.ranker.k).toBe(3);
     await commitSession(home, key, { tokens: 600, suggested: [], resuggested: [], reset: false });
-    expect((await resolveSkills({ message: 'reports', session_id: 'k' }, { home })).output.ranker.k).toBe(1);
+    expect((await resolveSkills({ message: 'reports', session_id: 'k' }, { home, sessionTokenBudget: 2000 })).output.ranker.k).toBe(1);
+  });
+
+  test('with no budget set, a session gets 8,000 tokens: 2,000 spent leaves k at 5 and the block shown', async () => {
+    const home = tmp();
+    await jsonCatalog(home, 'c', BASIC);
+    await commitSession(home, sessionKey('on', undefined, 'default-budget'), { tokens: 2000, suggested: [], resuggested: [], reset: false });
+    const r = await resolveSkills({ message: 'deploy', session_id: 'default-budget' }, { home });
+    expect([r.output.budget_exhausted, r.output.ranker.k]).toEqual([false, 5]);
+    expect(r.output.block).not.toBe('');
+    expect(sessionStatus('default-budget', { home }).budget).toBe(8000);
+  });
+
+  test('the config error names the current default budget', () => {
+    expect(CODES.skill_resolver_config_invalid.suggestion).toContain(`default budget ${DEFAULT_SESSION_TOKEN_BUDGET}`);
   });
 
   test('budget exhaustion empties the block until a compaction resets the session', async () => {
@@ -376,9 +397,9 @@ describe('sessions', () => {
     await jsonCatalog(home, 'c', BASIC);
     const key = sessionKey('on', 'claude-code', 'b');
     await commitSession(home, key, { tokens: 2000, suggested: [], resuggested: [], reset: false });
-    const spent = await resolveSkills({ message: 'deploy', session_id: 'b', harness: 'claude-code' }, { home });
+    const spent = await resolveSkills({ message: 'deploy', session_id: 'b', harness: 'claude-code' }, { home, sessionTokenBudget: 2000 });
     expect([spent.output.budget_exhausted, spent.output.block]).toEqual([true, '']);
-    const reset = await resolveSkills({ message: 'deploy', session_id: 'b', harness: 'claude-code', reset_session: true }, { home });
+    const reset = await resolveSkills({ message: 'deploy', session_id: 'b', harness: 'claude-code', reset_session: true }, { home, sessionTokenBudget: 2000 });
     expect(reset.output.budget_exhausted).toBe(false);
     expect(reset.output.block).not.toBe('');
     await reset.commit();
@@ -390,10 +411,10 @@ describe('sessions', () => {
     await jsonCatalog(home, 'c', BASIC);
     await commitSession(home, sessionKey('on', 'claude-code', 'a'), { tokens: 2000, suggested: [], resuggested: [], reset: false });
     for (const message of ['ok thanks', 'zzqxv']) {
-      const r = await resolveSkills({ message, session_id: 'a', harness: 'claude-code' }, { home });
+      const r = await resolveSkills({ message, session_id: 'a', harness: 'claude-code' }, { home, sessionTokenBudget: 2000 });
       expect([r.output.no_skill, r.output.budget_exhausted, r.output.block_reason]).toEqual([true, true, message === 'zzqxv' ? 'no_match' : 'ack']);
     }
-    expect((await resolveSkills({ message: 'ok thanks', session_id: 'fresh', harness: 'claude-code' }, { home })).output.budget_exhausted).toBe(false);
+    expect((await resolveSkills({ message: 'ok thanks', session_id: 'fresh', harness: 'claude-code' }, { home, sessionTokenBudget: 2000 })).output.budget_exhausted).toBe(false);
   });
 
   test('block_reason says why a block is empty: deduped, paced, budget_exhausted, filtered, shadow', async () => {
@@ -405,12 +426,12 @@ describe('sessions', () => {
     const again = await resolveSkills({ message: 'deploy', session_id: 'd' }, { home, sessionTokenBudget: 50_000 });
     expect([again.output.block, again.output.block_reason]).toEqual(['', 'deduped']);
     await commitSession(home, sessionKey('on', undefined, 'p'), { tokens: 1000, suggested: [], resuggested: [], reset: false });
-    const paced = await resolveSkills({ message: 'team status', session_id: 'p' }, { home });
+    const paced = await resolveSkills({ message: 'team status', session_id: 'p' }, { home, sessionTokenBudget: 2000 });
     expect([paced.output.block, paced.output.block_reason]).toEqual(['', 'paced']);
     await commitSession(home, sessionKey('on', undefined, 'p'), { tokens: 1000, suggested: [], resuggested: [], reset: false });
-    expect((await resolveSkills({ message: 'team status', session_id: 'p' }, { home })).output.block_reason).toBe('budget_exhausted');
-    expect((await resolveSkills({ message: 'deploy', exclude: ['gbrain:deploy'], min_match_strength: 'name' }, { home })).output.block_reason).toBe('filtered');
-    const shadow = await resolveSkills({ message: 'deploy', shadow: true }, { home });
+    expect((await resolveSkills({ message: 'team status', session_id: 'p' }, { home, sessionTokenBudget: 2000 })).output.block_reason).toBe('budget_exhausted');
+    expect((await resolveSkills({ message: 'deploy', exclude: ['gbrain:deploy'], min_match_strength: 'name' }, { home, sessionTokenBudget: 2000 })).output.block_reason).toBe('filtered');
+    const shadow = await resolveSkills({ message: 'deploy', shadow: true }, { home, sessionTokenBudget: 2000 });
     expect([shadow.output.block_reason, shadow.shadowOutput?.block_reason]).toEqual(['shadow', null]);
   });
 
@@ -419,7 +440,7 @@ describe('sessions', () => {
     await jsonCatalog(home, 'c', BASIC);
     const key = sessionKey('on', 'claude-code', 'n');
     await commitSession(home, key, { tokens: 2000, suggested: [], resuggested: [], reset: false });
-    const r = await resolveSkills({ message: 'run the deploy skill and write the reports', session_id: 'n', harness: 'claude-code' }, { home });
+    const r = await resolveSkills({ message: 'run the deploy skill and write the reports', session_id: 'n', harness: 'claude-code' }, { home, sessionTokenBudget: 2000 });
     expect(r.output.budget_exhausted).toBe(true);
     expect(r.output.suggestions.map(s => [s.id, s.match_strength])).toEqual([['gbrain:deploy', 'named']]);
     expect(r.output.block).toContain('id: "gbrain:deploy"');
@@ -579,6 +600,24 @@ describe('block', () => {
     expect(custom.output.suggestions[0]!.path).toBe(p);
   });
 
+  test('openclaw: the path comes first unless a suggested skill sits outside the root the agent may read', async () => {
+    const home = tmp();
+    const root = tmp('skres-dir-');
+    skillDir(root, 'deploy', { name: 'deploy', description: 'Ship a service to production' });
+    await buildSkillIndex({ catalog: 'c', dirs: [root] }, { home });
+    const block = async (readRoot?: string) => (await resolveSkills({ message: 'deploy', harness: 'openclaw', top_gate: 0 }, { home, ...(readRoot === undefined ? {} : { readRoot }) })).output.block;
+    const pathFirst = 'To use one, read the SKILL.md at its path with read before acting; if that read fails, load it with skills_read({name})';
+    const nameFirst = 'To use one, load it with skills_read({name}) using its name (through dispatch_action when skills_read is not listed) before acting';
+    for (const b of [await block(), await block(root)]) {
+      expect(b).toContain(pathFirst);
+      expect(b.indexOf('read the SKILL.md')).toBeLessThan(b.indexOf('skills_read'));
+    }
+    for (const b of [await block(tmp('skres-other-')), await block('')]) {
+      expect(b).toContain(nameFirst);
+      expect(b).not.toContain('read the SKILL.md');
+    }
+  });
+
   test('codex can load by path from the block alone', async () => {
     const home = tmp();
     const root = tmp('skres-dir-');
@@ -652,16 +691,16 @@ describe('block', () => {
 });
 
 describe('catalog sources and bounds', () => {
-  test('dir: symlinks out of the root, non-invocable skills and duplicate ids are skipped with a reason', async () => {
+  test('dir: symlinks out of the root that are not skills, non-invocable skills and duplicate ids are skipped with a reason', async () => {
     const home = tmp();
     const outside = tmp('skres-out-');
-    skillDir(outside, 'leak', { name: 'leak', description: 'Outside the root' });
+    skillDir(outside, 'notes/leak', { name: 'leak', description: 'Outside the root' });
     const a = tmp('skres-a-');
     const b = tmp('skres-b-');
     skillDir(a, 'deploy', { name: 'deploy', description: 'First deploy' });
     skillDir(b, 'deploy', { name: 'deploy', description: 'Second deploy' });
     skillDir(a, 'hidden', { name: 'hidden', description: 'Not for the model', 'disable-model-invocation': true });
-    symlinkSync(join(outside, 'leak'), join(a, 'leak'));
+    symlinkSync(join(outside, 'notes'), join(a, 'leak'));
     const rec = await buildSkillIndex({ catalog: 'c', dirs: [a, b] }, { home });
     expect(rec.catalog.skill_count).toBe(1);
     const reasons = rec.catalog.skipped.map(s => s.reason).sort();
@@ -669,6 +708,32 @@ describe('catalog sources and bounds', () => {
     expect(rec.catalog.skipped.find(s => s.reason === 'duplicate_id')!.kept).toContain(a);
     const r = await resolveSkills({ message: 'deploy leak hidden' }, { home });
     expect(r.output.suggestions.map(s => s.summary)).toEqual(['First deploy']);
+  });
+
+  test('dir: skill folders and SKILL.md files symlinked in from outside the root are indexed under the link (gstack-style install)', async () => {
+    const home = tmp();
+    const checkout = tmp('skres-checkout-');
+    skillDir(checkout, 'plan-review', { name: 'plan-review', description: 'Review a plan before building it' });
+    skillDir(checkout, 'ship-it', { description: 'Ship a pull request' });
+    skillDir(checkout, 'loose', { name: 'qa-pass', description: 'Run a QA pass on the app' });
+    const root = tmp('skres-user-');
+    symlinkSync(join(checkout, 'plan-review'), join(root, 'plan-review'));
+    symlinkSync(join(checkout, 'ship-it'), join(root, 'shipper'));
+    mkdirSync(join(root, 'qa'), { recursive: true });
+    symlinkSync(join(checkout, 'loose', 'SKILL.md'), join(root, 'qa', 'SKILL.md'));
+    symlinkSync(checkout, join(root, 'whole-checkout'));
+    writeFileSync(join(checkout, 'secret.txt'), 'not a skill');
+    mkdirSync(join(root, 'notes'), { recursive: true });
+    symlinkSync(join(checkout, 'secret.txt'), join(root, 'notes', 'SKILL.md'));
+    const rec = await buildSkillIndex({ catalog: 'c', dirs: [root] }, { home });
+    expect(rec.catalog.skill_count).toBe(3);
+    expect(rec.catalog.skipped).toEqual([
+      { reason: 'symlink_outside_root', path: join(root, 'whole-checkout') },
+      { reason: 'symlink_outside_root', path: join(root, 'notes', 'SKILL.md') },
+    ]);
+    const r = await resolveSkills({ message: 'review the plan, ship the pull request, run a qa pass', top_gate: 0 }, { home });
+    expect(r.output.suggestions.map(s => s.id).sort()).toEqual(['plan-review', 'qa-pass', 'shipper']);
+    expect(r.output.suggestions.find(s => s.id === 'shipper')!.path).toBe(join(root, 'shipper', 'SKILL.md'));
   });
 
   test('from-json: ineligible entries are skipped, malformed lists refuse, a stdin snapshot is kept', async () => {
@@ -1021,5 +1086,152 @@ describe('daily logs', () => {
     writeFileSync(full, 'y'.repeat(DAILY_LOG_DAY_CAP_BYTES));
     await appendDailyLog(dir, LANE_LOG, 'z\n', now + day);
     expect(readFileSync(full, 'utf8').endsWith('z\n')).toBe(false);
+  });
+});
+
+describe('deprecated skills', () => {
+  test('a SKILL.md with deprecated: true drops out of matched suggestions but still loads when the turn names it, with its replacement in the reason', async () => {
+    const home = tmp();
+    const root = tmp('skres-dir-');
+    const old = skillDir(root, 'reports', { name: 'reports', description: 'Write weekly status reports for a team', deprecated: true, replaced_by: 'status-digest' });
+    skillDir(root, 'status-digest', { name: 'status-digest', description: 'Write a weekly status digest for a team' });
+    await buildSkillIndex({ catalog: 'c', dirs: [root] }, { home });
+    const matched = await resolveSkills({ message: 'write the weekly status reports for the team', top_k: 8, top_gate: 0 }, { home });
+    expect(matched.output.suggestions.map(s => s.id)).toEqual(['status-digest']);
+    const named = await resolveSkills({ message: 'use the reports skill', top_gate: 0 }, { home });
+    expect(named.output.suggestions[0]).toMatchObject({ id: 'reports', match_strength: 'named', path: old });
+    expect(named.output.suggestions[0]!.reason).toStartWith('named in the turn; deprecated, use status-digest instead; ');
+  });
+
+  test('a JSON entry takes deprecated and replaced_by the same way, and a deprecated that is not a boolean is refused', async () => {
+    const home = tmp();
+    await jsonCatalog(home, 'c', [...BASIC, { id: 'gbrain:old-deploy', name: 'old-deploy', description: 'Ship a service to production after the tests pass', deprecated: true }]);
+    const matched = await resolveSkills({ message: 'ship the service to production', top_k: 8, top_gate: 0 }, { home });
+    expect(matched.output.suggestions.map(s => s.id)).not.toContain('gbrain:old-deploy');
+    expect(matched.output.suggestions[0]!.id).toBe('gbrain:deploy');
+    const named = await resolveSkills({ message: 'run /old-deploy now', top_gate: 0 }, { home });
+    expect(named.output.suggestions[0]).toMatchObject({ id: 'gbrain:old-deploy', match_strength: 'named' });
+    expect(named.output.suggestions[0]!.reason).toStartWith('named in the turn; deprecated; ');
+    expect(await codeOf(jsonCatalog(tmp(), 'c', [{ id: 'a', name: 'a', deprecated: 'yes' } as unknown as J]))).toBe('skill_source_invalid');
+    expect(await codeOf(jsonCatalog(tmp(), 'c', [{ id: 'a', name: 'a', replaced_by: 3 } as unknown as J]))).toBe('skill_source_invalid');
+  });
+});
+
+describe('owner-only skills (audience: owner)', () => {
+  test('a SKILL.md with audience: owner is offered to the owner only: outside the owner it is never suggested, matched or named', async () => {
+    const home = tmp();
+    const root = tmp('skres-dir-');
+    skillDir(root, 'private-ledger', { name: 'private-ledger', description: 'Review the private household ledger and its balances', audience: 'owner' });
+    skillDir(root, 'ledger-export', { name: 'ledger-export', description: 'Export a ledger to a spreadsheet' });
+    await buildSkillIndex({ catalog: 'c', dirs: [root] }, { home });
+    const ask = (message: string, audience?: 'owner' | 'others') => resolveSkills({ message, top_k: 8, top_gate: 0 }, { home, ...(audience ? { audience } : {}) });
+    expect((await ask('review the private household ledger balances', 'owner')).output.suggestions.map(s => s.id)).toContain('private-ledger');
+    expect((await ask('review the private household ledger balances', 'others')).output.suggestions.map(s => s.id)).not.toContain('private-ledger');
+    expect((await ask('use the private-ledger skill', 'others')).output.suggestions.map(s => s.id)).not.toContain('private-ledger');
+    expect((await ask('review the private household ledger balances')).output.suggestions.map(s => s.id)).toContain('private-ledger');
+  });
+
+  test('a JSON entry takes audience the same way, its catalog hash changes with it, and a non-string audience is refused', async () => {
+    const home = tmp();
+    const a = await jsonCatalog(home, 'c', [...BASIC, { id: 'x:diary', name: 'diary', description: 'Write the owner diary entry for today' }]);
+    const b = await jsonCatalog(home, 'c', [...BASIC, { id: 'x:diary', name: 'diary', description: 'Write the owner diary entry for today', audience: 'owner' } as J]);
+    expect(b.catalog.catalog_hash).not.toBe(a.catalog.catalog_hash);
+    const others = await resolveSkills({ message: 'write the owner diary entry for today', top_k: 8, top_gate: 0 }, { home, audience: 'others' });
+    expect(others.output.suggestions.map(s => s.id)).not.toContain('x:diary');
+    expect(await codeOf(jsonCatalog(tmp(), 'c', [{ id: 'a', name: 'a', audience: 3 } as unknown as J]))).toBe('skill_source_invalid');
+  });
+
+  test('a catalog built before audiences were recorded offers nothing outside the owner and marks itself stale', async () => {
+    const home = tmp();
+    const root = tmp('skres-dir-');
+    skillDir(root, 'ledger-export', { name: 'ledger-export', description: 'Export a ledger to a spreadsheet' });
+    await buildSkillIndex({ catalog: 'c', dirs: [root] }, { home });
+    const receiptPath = catalogFile(home, 'c', 'receipt.json');
+    const receipt = JSON.parse(readFileSync(receiptPath, 'utf8'));
+    delete receipt.catalog.audiences;
+    writeFileSync(receiptPath, JSON.stringify(receipt));
+    const others = await resolveSkills({ message: 'export the ledger to a spreadsheet', top_k: 8, top_gate: 0 }, { home, audience: 'others' });
+    expect(others.output.suggestions).toEqual([]);
+    expect(others.output.meta.index_stale).toBe(true);
+    expect(existsSync(catalogFile(home, 'c', 'stale.stamp'))).toBe(true);
+    const owner = await resolveSkills({ message: 'export the ledger to a spreadsheet', top_k: 8, top_gate: 0 }, { home, audience: 'owner' });
+    expect(owner.output.suggestions.map(s => s.id)).toEqual(['ledger-export']);
+  });
+
+  test('any other audience value fails closed: a list or a typo keeps the skill to the owner', async () => {
+    const home = tmp();
+    const root = tmp('skres-dir-');
+    skillDir(root, 'ledger-typo', { name: 'ledger-typo', description: 'Review the private household ledger typo copy', audience: 'owners' });
+    mkdirSync(join(root, 'ledger-list'), { recursive: true });
+    writeFileSync(join(root, 'ledger-list', 'SKILL.md'), '---\nname: ledger-list\ndescription: Review the private household ledger list copy\naudience:\n  - owner\n---\nSteps.\n');
+    skillDir(root, 'ledger-export', { name: 'ledger-export', description: 'Export the household ledger to a spreadsheet' });
+    await buildSkillIndex({ catalog: 'c', dirs: [root] }, { home });
+    const others = await resolveSkills({ message: 'review the private household ledger', top_k: 8, top_gate: 0 }, { home, audience: 'others' });
+    expect(others.output.suggestions.map(s => s.id)).not.toContain('ledger-typo');
+    expect(others.output.suggestions.map(s => s.id)).not.toContain('ledger-list');
+    const owner = await resolveSkills({ message: 'review the private household ledger', top_k: 8, top_gate: 0 }, { home, audience: 'owner' });
+    expect(owner.output.suggestions.map(s => s.id)).toEqual(expect.arrayContaining(['ledger-typo', 'ledger-list']));
+  });
+
+  test('a non-string audience fails closed too: true, a number, a mapping, or front matter that does not parse', async () => {
+    const home = tmp();
+    const root = tmp('skres-dir-');
+    const fm = (name: string, audience: string, extra = '') => {
+      mkdirSync(join(root, name), { recursive: true });
+      writeFileSync(join(root, name, 'SKILL.md'), '---\nname: ' + name + '\ndescription: Review the private household ledger ' + name + ' copy\naudience: ' + audience + '\n' + extra + '---\nSteps.\n');
+    };
+    fm('ledger-true', 'true');
+    fm('ledger-number', '1');
+    fm('ledger-map', '\n  who: owner');
+    fm('ledger-broken', 'owner', 'triggers: [unclosed\n');
+    skillDir(root, 'ledger-export', { name: 'ledger-export', description: 'Export the household ledger to a spreadsheet' });
+    await buildSkillIndex({ catalog: 'c', dirs: [root] }, { home });
+    const ids = ['ledger-true', 'ledger-number', 'ledger-map', 'ledger-broken'];
+    const others = await resolveSkills({ message: 'review the private household ledger copy', top_k: 8, top_gate: 0 }, { home, audience: 'others' });
+    for (const id of ids) expect(others.output.suggestions.map(s => s.id)).not.toContain(id);
+    const owner = await resolveSkills({ message: 'review the private household ledger copy', top_k: 8, top_gate: 0 }, { home, audience: 'owner' });
+    expect(owner.output.suggestions.map(s => s.id)).toEqual(expect.arrayContaining(ids));
+  });
+
+  test('an audience key stays owner-only when the front matter is never closed, quotes the key or spells it in another case', () => {
+    for (const doc of [
+      '---\nname: a\ndescription: Review the ledger\naudience: owner\n\nSteps.\n',
+      '---\nname: a\n"audience": owner\ntriggers: [unclosed\n---\nSteps.\n',
+      '---\nname: a\nAudience: owner\n---\nSteps.\n',
+      '\uFEFF---\nname: a\naudience: owner\n---\nSteps.\n',
+      '---  \nname: a\naudience: owner\n\nSteps.\n',
+    ]) expect(parseSkillDoc(doc).audience).toBe('owner');
+    expect(parseSkillDoc('Steps.\naudience: owner\n').audience).toBeUndefined();
+    expect(parseSkillDoc('---\nname: a\ndescription: Review the ledger\n---\nSteps.\n').audience).toBeUndefined();
+  });
+
+  test('conversation pins from a catalog built before audiences were recorded are all withheld until it is rebuilt', async () => {
+    const home = tmp();
+    const root = tmp('skres-dir-');
+    skillDir(root, 'ledger-export', { name: 'ledger-export', description: 'Export a ledger to a spreadsheet' });
+    await buildSkillIndex({ catalog: 'openclaw-main', dirs: [root] }, { home });
+    const read = readResolverConfig(home);
+    if (read.state === 'unreadable') throw new Error('config unreadable');
+    writePins(read, 'openclaw-main', [{ name: 'ledger-export', classes: ['owner', 'conversation'] }]);
+    expect(pinnedBlockFor(home, 'openclaw-main', 'openclaw', undefined, { cls: 'conversation' }).withheld).toEqual([]);
+    const receiptPath = catalogFile(home, 'openclaw-main', 'receipt.json');
+    const receipt = JSON.parse(readFileSync(receiptPath, 'utf8'));
+    delete receipt.catalog.audiences;
+    writeFileSync(receiptPath, JSON.stringify(receipt));
+    const conversation = pinnedBlockFor(home, 'openclaw-main', 'openclaw', undefined, { cls: 'conversation' });
+    expect(conversation.withheld).toEqual(['ledger-export']);
+    expect(conversation.block).toBe('');
+    expect(pinnedBlockFor(home, 'openclaw-main', 'openclaw', undefined, { cls: 'owner' }).withheld).toEqual([]);
+  });
+
+  test('hidden ids from the caller are never suggested, and more than EXCLUDE_MAX of them still all count', async () => {
+    const home = tmp();
+    const skills: J[] = Array.from({ length: EXCLUDE_MAX + 20 }, (_, i) => ({ id: `h:${String(i).padStart(4, '0')}`, name: `chore-${i}`, description: `Handle filler chore number ${i}` }));
+    await jsonCatalog(home, 'c', skills);
+    const message = `handle filler chore number ${EXCLUDE_MAX + 19}`;
+    const shown = await resolveSkills({ message, top_k: 3, top_gate: 0 }, { home });
+    expect(shown.output.suggestions.map(s => s.id)).toContain(skills.at(-1)!.id);
+    const hidden = await resolveSkills({ message, top_k: 3, top_gate: 0 }, { home, hidden: skills.map(s => s.id) });
+    expect(hidden.output.suggestions).toEqual([]);
   });
 });

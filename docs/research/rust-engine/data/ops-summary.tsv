@@ -93,6 +93,7 @@ storage_get	storage-get		read							storage		ro
 storage_list	storage-list		read							storage		ro
 storage_register	storage-register		write	mut	localOnly	cliOnly						rw
 storage_update	storage-update		write	mut	localOnly	cliOnly						rw
+reveal_secret	reveal-secret		read							secrets	hidden	ro
 submit_job			admin	mut						jobs		rw
 get_job			admin							jobs		rw
 wait_job			admin							jobs		rw
@@ -203,3 +204,4 @@ questions_status			read							questions		ro
 questions_refresh			write	mut						questions		rw
 questions_unpin			write	mut						questions		rw
 mute_notice			write	mut				starter		admin		rw
+learned	learned		read							insights		ro

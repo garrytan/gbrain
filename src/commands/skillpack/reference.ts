@@ -13,6 +13,7 @@ import {
   runReferenceAll,
   runReferenceApply,
 } from '../../core/skillpack/reference.ts';
+import { movedSkillNotices } from '../../core/skillpack/moved.ts';
 import { findGbrainOrDie, resolveWorkspace } from './shared.ts';
 import { strictArgsRefusal } from '../../cli/strict-args.ts';
 import { exitCliError } from '../../cli/cli-error.ts';
@@ -94,6 +95,7 @@ export async function cmdReference(args: string[]): Promise<void> {
 
   const gbrainRoot = findGbrainOrDie();
   const targetWorkspace = resolveWorkspace({ workspace });
+  for (const notice of movedSkillNotices(name && !all ? [name] : [])) console.error(notice);
 
   try {
     if (apply) {

@@ -3,7 +3,7 @@ import { loadMounts } from '../core/brain-registry.ts';
 import { resolveBrainId } from '../core/brain-resolver.ts';
 import { getCliOptions } from '../core/cli-options.ts';
 import { maybeDelegateLocalAdministration, persistenceConfigForBrain } from '../core/persistence/local-client.ts';
-import { inspectLockHolder } from '../core/pglite-lock.ts';
+import { persistenceResidentOwner } from '../core/persistence/resident-owner.ts';
 import { OperationError, opError } from '../core/ops/contract.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { writeCliError } from '../cli/cli-error.ts';
@@ -28,7 +28,7 @@ export async function maybeDelegateExtractStale(hostConfig: GBrainConfig | null,
   }
   const brainId = resolveBrainId(getCliOptions().brain, process.cwd());
   const config = persistenceConfigForBrain(hostConfig, brainId, brainId === 'host' ? [] : loadMounts());
-  if (config?.engine !== 'pglite' || !config.database_path || config.database_url || !inspectLockHolder(config.database_path).held) return false;
+  if (!config || !(await persistenceResidentOwner(config))) return false;
   const invalid = (message: string, suggestion: string) => opError('invalid_params', message, suggestion,
     { fix: readFix('Prints the gbrain extract forms and flags.', { argv: ['gbrain', 'extract', '--help'] }) });
   try {

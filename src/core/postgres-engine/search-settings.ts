@@ -81,6 +81,21 @@ function currentSettingsStatement(keys: string[]): string {
 }
 
 /**
+ * The settings a read under a read deadline applies inside the deadline's transaction: JIT off when asked, the read's
+ * own settings, and its `statement_timeout` (`<n>`, `<n>ms` or `<n>s`) never past the time left. An unparsed
+ * timeout takes the time left. A read with no settings gets none, so its transaction sends no extra statement.
+ */
+export function deadlineReadSettings(opts: { jitOff?: boolean; settings?: SearchSettings | (() => SearchSettings) } | undefined, deadlineAt: number): SearchSettings {
+  const settings: Record<string, string> = { ...(opts?.jitOff ? SEARCH_JIT_OFF : {}), ...(typeof opts?.settings === 'function' ? opts.settings() : opts?.settings) };
+  if (settings.statement_timeout === undefined) return settings;
+  const left = Math.max(1, Math.ceil(deadlineAt - Date.now()));
+  const match = /^(\d+)\s*(ms|s)?$/.exec(settings.statement_timeout.trim());
+  const own = match ? Number(match[1]) * (match[2] === 's' ? 1000 : 1) : 0;
+  settings.statement_timeout = String(own > 0 && own < left ? own : left);
+  return settings;
+}
+
+/**
  * Apply `settings` for `run` on the search transaction `tx`. `nested`: `tx`
  * is a savepoint in a caller's transaction, whose values are restored after
  * `run`; a value the caller never set restores to `fallback[name]`

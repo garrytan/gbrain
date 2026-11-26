@@ -1,11 +1,24 @@
 /**
  * The skill-resolver hook lane (`GBRAIN_HOOK_LANE=skill-resolver`): its own
  * hook entry in Claude Code and its own hooks.json groups in Codex, each
- * UserPromptSubmit plus SessionStart for the compaction reset,
+ * UserPromptSubmit plus SessionStart (the compaction reset and the
+ * session-start block below),
  * written by `gbrain setup <claude-code|codex> --skill-loading resolve`
  * (src/core/setup/skill-resolver-hook.ts), and Hermes's pre_llm_call shell
  * hook (`hook user-prompt --harness hermes`). It never shares output with the
- * turn-rule, setup or plugin lanes: it prints only the <relevant_skills> block.
+ * turn-rule, setup or plugin lanes: it prints only the <relevant_skills> block,
+ * and at SessionStart only the session-start block.
+ *
+ * Session-start block (Claude Code and Codex): on every SessionStart source
+ * that starts or restores a context (SESSION_START_SOURCES: startup, resume,
+ * clear, compact) the lane prints <harness>-user's pins
+ * (skills.resolver.pins.<harness>-user, rendered in the worker by
+ * pinned-block.ts with the other harnesses' rules and cap) followed by
+ * skills.resolver.per_harness.<harness>.session_start, as
+ * hookSpecificOutput.additionalContext with hookEventName SessionStart. With
+ * neither set it prints nothing. Both parts have their own caps, so the block
+ * is held to LANE_PAYLOAD_CHARS_MAX (Claude Code's hook output cap), not to
+ * lane_payload_chars. Compaction still resets the session first.
  *
  * Wire shapes (LANE_IO): Claude Code and Codex send the prompt, session_id
  * and cwd at the top level (read whole, up to LANE_STDIN_CAP_BYTES) and take
@@ -25,7 +38,12 @@
  * with serve down and with no brain, and it always fails open: every path
  * exits 0, and a path that cannot deliver a block prints nothing.
  *
- * Deadline (50 ms from lane entry): the main thread does only async I/O (the
+ * Deadline (LANE_DEADLINE_MS for the turn, from the moment the worker has
+ * loaded and the hook's stdin has been read, after at most
+ * LANE_WORKER_START_MS from lane entry for both; the load alone can take
+ * most of the turn's 50 ms on a cold machine, and Hermes may still be
+ * piping a long conversation_history when it ends; the load time is logged
+ * as worker_ms): the main thread does only async I/O (the
  * config, stdin, the carriers, the commit) and every synchronous step (index
  * and session reads, ranking, rendering) runs in a worker thread
  * (hook-worker.ts) that checks the deadline inside each stage. The worker is
@@ -67,13 +85,28 @@
  * laneTurnSettings); unset, a turn is top_k 5 with every match, the resolver's
  * default top_gate (TOP_GATE_DEFAULT; 0 turns it off) and nothing excluded.
  *
+ * Model picker (skills.resolver.router, Claude Code and Codex only; never
+ * Hermes): the turn may call it, so once the lane reads the setting on, its
+ * deadline grows by the picker's wait (router.ts routerTimeoutMs: 1.5 s in
+ * Claude Code, 2 s in Codex; at most ROUTER_TIMEOUT_MS_CLAUDE_CODE_MAX in
+ * Claude Code and ROUTER_TIMEOUT_MS_MAX elsewhere) plus LANE_ROUTER_MARGIN_MS,
+ * so Claude Code stays inside its 3 s hook limit.
+ * The lane log line then carries router: who answered, the fallback code and
+ * the wait.
+ *
+ * Skill vectors (vectors.ts): when a turn's catalog has a vectors.bin and the
+ * picker is off, the deadline grows by VECTOR_WAIT_MS plus
+ * LANE_ROUTER_MARGIN_MS for the message's embedding (with the picker on, the
+ * embedding counts inside the picker's wait). The lane log line then carries
+ * vectors: whether the turn ranked with them, the fallback code and the wait.
+ *
  * Payload: the lane's own budget (skills.resolver.lane_payload_chars, default
  * 4000 characters of hook JSON, Hermes's included); a block that does not fit
  * is dropped whole and counted (outcome payload_dropped in the lane log).
  *
  * Lane log: <home>/skill-index/logs/lane-<UTC day>.jsonl (daily-log.ts, kept
  * 14 days), one line per turn that got past the on/off check (outcome, error
- * code, duration, catalogs; never turn text); doctor's skill_resolver check
+ * code, duration, worker_ms, catalogs; never turn text); doctor's skill_resolver check
  * reads the last day of it.
  */
 import { createHash } from 'node:crypto';
@@ -86,19 +119,24 @@ import { spawn } from '../../spawn.ts';
 import { claudeManagedSettingsPaths, claudeUserSettingsPath, codexHooksPath } from '../../bootstrap/host-specs.ts';
 import { shellWords } from '../../setup/hook-launcher.ts';
 import { isSkillResolverCommand, isSkillResolverEntry } from '../../setup/skill-resolver-lane.ts';
-import { laneOwnerSenders, laneTurnSettings, type LaneTurnSettings } from './config.ts';
+import { laneOwnerSenders, laneSessionStart, laneTurnSettings, routerSettings, type LaneTurnSettings } from './config.ts';
+import { routerTimeoutMs } from './router.ts';
+import { VECTOR_WAIT_MS } from './vectors.ts';
 import { appendDailyLog, appendDailyLogSync, LANE_LOG } from './daily-log.ts';
 import { HOOK_FIELD_CAP, readHookFields } from './hook-input.ts';
 import { assertCatalogName, catalogFile, CLAUDE_PLUGINS_CATALOG, logsDir, resolverHome } from './paths.ts';
 import { type CommitHold, commitSessionAsync, historyShrank, LANE_GC_FILES, sessionGcSettled, sessionKey, type TurnDelta } from './session.ts';
 import type { TurnOutput } from './resolve.ts';
-import type { LaneWorkerTurn } from './hook-worker.ts';
-import { laneWorkerFailed, startLaneWorker } from './lane-worker.ts';
+import type { LaneWorkerPins, LaneWorkerTurn } from './hook-worker.ts';
+import { laneWorkerFailed, laneWorkerReady, startLaneWorker } from './lane-worker.ts';
 import { releaseLease } from './lock.ts';
 
 export { WORKER_SRC_PATH } from './lane-worker.ts';
 
 export const LANE_DEADLINE_MS = 50;
+/** Added to the picker's wait when the lane may call it: delivery, the commit and the exit after the reply. */
+export const LANE_ROUTER_MARGIN_MS = 100;
+export const LANE_WORKER_START_MS = 250;
 export const LANE_STDIN_CAP_BYTES = 256 * 1024;
 export const LANE_PAYLOAD_CHARS_DEFAULT = 4000;
 export const LANE_PAYLOAD_CHARS_MIN = 500;
@@ -109,6 +147,8 @@ const SPAWN_INTERVAL_MS = 60_000;
 const COMMIT_RESERVE_MS = 10;
 /** Time kept back from the deadline after the session GC pass, for the exit. */
 const GC_RESERVE_MS = 5;
+/** The SessionStart sources that start or restore a context, so get the pinned block and the session_start text. */
+const SESSION_START_SOURCES = ['startup', 'resume', 'clear', 'compact'];
 
 export type LaneHarness = 'claude-code' | 'codex' | 'hermes';
 export { CLAUDE_PLUGINS_CATALOG };
@@ -183,7 +223,11 @@ export async function readLaneSettings(home: string, env: NodeJS.ProcessEnv): Pr
   };
 }
 
-export interface LaneLogLine { at: string; harness: string; event: string; outcome: string; code?: string; ms: number; catalogs?: string[]; dropped_chars?: number }
+export interface LaneLogLine { at: string; harness: string; event: string; outcome: string; code?: string; ms: number; worker_ms?: number; catalogs?: string[]; dropped_chars?: number; router?: LaneRouterLog; vectors?: LaneVectorsLog }
+/** The picker's part of a turn: who answered, why it fell back, its wait in ms. */
+export interface LaneRouterLog { by: 'picker' | 'words'; code?: string; ms: number }
+/** The skill vectors' part of a turn: whether it ranked with them, why not, its wait for the message's vector in ms. */
+export interface LaneVectorsLog { used: boolean; code?: string; ms: number }
 
 async function appendLaneLog(home: string, line: LaneLogLine): Promise<void> {
   try {
@@ -210,7 +254,7 @@ type LaneStdin = NodeJS.ReadableStream & { isTTY?: boolean };
 /** One hook event's fields as the harness sent them, not yet checked. */
 interface HookEvent { prompt: string; sessionId?: unknown; cwd?: unknown; source?: unknown; history?: number; firstTurn?: boolean; senderId?: string }
 /** `stdin` is the injected stream, else undefined for the process's own. */
-interface HarnessIo { read: (stdin: LaneStdin | undefined) => Promise<HookEvent | null>; render: (block: string) => string }
+interface HarnessIo { read: (stdin: LaneStdin | undefined) => Promise<HookEvent | null>; render: (block: string, event?: 'UserPromptSubmit' | 'SessionStart') => string }
 
 const HOOK_SPECIFIC_IO: HarnessIo = {
   read: async (stdin) => {
@@ -220,7 +264,7 @@ const HOOK_SPECIFIC_IO: HarnessIo = {
     const o = j as Record<string, unknown>;
     return { prompt: typeof o.prompt === 'string' ? o.prompt : '', sessionId: o.session_id, cwd: o.cwd, source: o.source };
   },
-  render: (block) => JSON.stringify({ hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: block } }),
+  render: (block, event = 'UserPromptSubmit') => JSON.stringify({ hookSpecificOutput: { hookEventName: event, additionalContext: block } }),
 };
 
 /** Each lane harness's stdin and stdout shapes. */
@@ -274,7 +318,7 @@ export interface LaneIo {
 
 const writeStdout = (s: string) => new Promise<void>((resolve, reject) => { process.stdout.write(s, (e) => (e ? reject(e) : resolve())); });
 
-interface Turn { outcome: string; code?: string; catalogs?: string[]; dropped_chars?: number }
+interface Turn { outcome: string; code?: string; catalogs?: string[]; dropped_chars?: number; router?: LaneRouterLog; vectors?: LaneVectorsLog }
 
 /** Run one lane event. Always resolves 0; at the deadline it exits the process itself. */
 export async function runSkillResolverLane(event: string, harness: LaneHarness, io: LaneIo = {}): Promise<number> {
@@ -283,17 +327,37 @@ export async function runSkillResolverLane(event: string, harness: LaneHarness, 
   const env = io.env ?? process.env;
   let home: string;
   try { home = resolverHome(env); } catch { return 0; }
-  const deadlineMs = io.deadlineMs ?? (Number(env.GBRAIN_TEST_SKILL_LANE_DEADLINE_MS) || LANE_DEADLINE_MS);
+  let deadlineMs = io.deadlineMs ?? (Number(env.GBRAIN_TEST_SKILL_LANE_DEADLINE_MS) || LANE_DEADLINE_MS);
+  const startMs = Number(env.GBRAIN_TEST_SKILL_LANE_START_MS) || LANE_WORKER_START_MS;
   const elapsed = () => performance.now() - t0;
-  const ctl: LaneCtl = { expired: false, worker: null, logged: false, commit: {} };
-  if (event === 'user-prompt') ctl.worker = startLaneWorker(env);
-  const line = (t: Turn): LaneLogLine => ({ at: new Date().toISOString(), harness, event, outcome: t.outcome, ...(t.code ? { code: t.code } : {}), ms: Math.round(elapsed() * 10) / 10, ...(t.catalogs ? { catalogs: t.catalogs } : {}), ...(t.dropped_chars ? { dropped_chars: t.dropped_chars } : {}) });
+  const ctl: LaneCtl = {
+    expired: false, worker: null, logged: false, commit: {}, inputRead: () => {},
+    extend: (extra) => { if (ctl.expired) return; deadlineMs += extra; if (ctl.turnStart !== undefined) arm(Math.max(0, turnLeft())); },
+  };
+  const inputRead = new Promise<void>((resolve) => { ctl.inputRead = resolve; });
+  ctl.worker = startLaneWorker(env);
+  const turnLeft = () => deadlineMs - (ctl.turnStart === undefined ? 0 : elapsed() - ctl.turnStart);
+  const tenths = (ms: number) => Math.round(ms * 10) / 10;
+  const line = (t: Turn): LaneLogLine => ({ at: new Date().toISOString(), harness, event, outcome: t.outcome, ...(t.code ? { code: t.code } : {}), ms: tenths(elapsed()), ...(ctl.workerMs !== undefined ? { worker_ms: tenths(ctl.workerMs) } : {}), ...(t.catalogs ? { catalogs: t.catalogs } : {}), ...(t.dropped_chars ? { dropped_chars: t.dropped_chars } : {}), ...(t.router ? { router: t.router } : {}), ...(t.vectors ? { vectors: t.vectors } : {}) });
   const log = (t: Turn) => appendLaneLog(home, line(t));
 
   const exit = io.exit ?? ((c: number) => process.exit(c));
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const deadline = new Promise<'deadline'>((resolve) => { timer = setTimeout(() => resolve('deadline'), deadlineMs); });
-  const work = laneTurn(event, harness, home, env, io, ctl, elapsed, deadlineMs).catch((): Turn => ({ outcome: 'error', code: 'skill_resolver_internal' }));
+  let fired = false;
+  let arm: (ms: number) => void = () => {};
+  const deadline = new Promise<'deadline'>((resolve) => {
+    arm = (ms: number) => { clearTimeout(timer); timer = setTimeout(() => { fired = true; resolve('deadline'); }, ms); };
+    if (!ctl.worker) { ctl.turnStart = 0; arm(deadlineMs); return; }
+    arm(startMs);
+    const loaded = laneWorkerReady().then((ok) => { if (ok && !fired && elapsed() < startMs) ctl.workerMs = elapsed(); });
+    void Promise.all([loaded, inputRead]).then(() => {
+      if (fired || elapsed() >= startMs) return;
+      ctl.turnStart = elapsed();
+      arm(deadlineMs);
+    });
+    if (env.GBRAIN_TEST_SKILL_LANE_STALL === 'start-race') { const end = performance.now() + startMs + 300; while (performance.now() < end) { /* forced main-thread stall past the start bound */ } }
+  });
+  const work = laneTurn(event, harness, home, env, io, ctl, turnLeft).catch((): Turn => ({ outcome: 'error', code: 'skill_resolver_internal' }));
   const result = await Promise.race([work, deadline]);
   if (result === 'deadline') {
     ctl.expired = true;
@@ -316,9 +380,10 @@ export async function runSkillResolverLane(event: string, harness: LaneHarness, 
   return 0;
 }
 
-interface LaneCtl { expired: boolean; worker: Worker | null; logged: boolean; commit: CommitHold }
+/** turnStart: ms after lane entry when the turn deadline started (the worker was ready, or failed, and stdin was read); workerMs: when it was ready; inputRead: stdin has been read; extend: give the turn more time (the model picker's wait). */
+interface LaneCtl { expired: boolean; worker: Worker | null; logged: boolean; commit: CommitHold; turnStart?: number; workerMs?: number; inputRead: () => void; extend: (extraMs: number) => void }
 
-async function laneTurn(event: 'user-prompt' | 'session-start', harness: LaneHarness, home: string, env: NodeJS.ProcessEnv, io: LaneIo, ctl: LaneCtl, elapsed: () => number, deadlineMs: number): Promise<Turn> {
+async function laneTurn(event: 'user-prompt' | 'session-start', harness: LaneHarness, home: string, env: NodeJS.ProcessEnv, io: LaneIo, ctl: LaneCtl, turnLeft: () => number): Promise<Turn> {
   const settings = await readLaneSettings(home, env);
   if (settings.state === 'absent') return { outcome: 'off' };
   if (settings.state === 'unreadable') { ctl.logged = true; return { outcome: 'error', code: 'skill_resolver_config_unreadable' }; }
@@ -329,6 +394,7 @@ async function laneTurn(event: 'user-prompt' | 'session-start', harness: LaneHar
   try { turnSettings = laneTurnSettings(settings.section, harness); } catch { return { outcome: 'error', code: 'skill_resolver_config_invalid' }; }
 
   const hookEvent = await LANE_IO[harness].read(io.stdin);
+  ctl.inputRead();
   if (!hookEvent) return { outcome: 'error', code: 'skill_resolve_no_input' };
   const cwd = io.cwd ?? env.GBRAIN_HOOK_CWD ?? (typeof hookEvent.cwd === 'string' ? hookEvent.cwd : process.cwd());
   const owner = await skillResolverOwner(harness, event, cwd, io.managedDir);
@@ -336,9 +402,26 @@ async function laneTurn(event: 'user-prompt' | 'session-start', harness: LaneHar
   const sessionId = typeof hookEvent.sessionId === 'string' && /^[\x21-\x7e]{1,256}$/.test(hookEvent.sessionId) ? hookEvent.sessionId : undefined;
 
   if (event === 'session-start') {
-    if (hookEvent.source !== 'compact' || !sessionId) return { outcome: 'off' };
-    await Promise.all(['on', 'shadow'].map(scope => unlink(join(home, 'skill-index', 'sessions', `${sessionKey(scope as 'on' | 'shadow', harness, sessionId)}.json`)).catch(() => {})));
-    return { outcome: 'reset' };
+    if (harness === 'hermes') return { outcome: 'off' };
+    const reset = hookEvent.source === 'compact' && !!sessionId;
+    if (reset) await Promise.all(['on', 'shadow'].map(scope => unlink(join(home, 'skill-index', 'sessions', `${sessionKey(scope as 'on' | 'shadow', harness, sessionId)}.json`)).catch(() => {})));
+    if (!SESSION_START_SOURCES.includes(hookEvent.source as string)) return { outcome: reset ? 'reset' : 'off' };
+    const pins = (settings.section.pins as Record<string, unknown> | null | undefined)?.[userCatalogName(harness)];
+    let pinned = '';
+    if (Array.isArray(pins) && pins.length > 0) {
+      const worker = ctl.worker;
+      if (!worker || laneWorkerFailed()) return { outcome: 'error', code: 'skill_resolver_internal' };
+      const posted = await askWorker(worker, { pins, harness, home });
+      if (posted.error || posted.pinned === undefined) return { outcome: 'error', code: posted.error?.code ?? 'skill_resolver_internal' };
+      pinned = posted.pinned;
+    }
+    const block = [pinned, laneSessionStart(settings.section, harness)].filter(Boolean).join('\n\n');
+    if (!block) return { outcome: reset ? 'reset' : 'off' };
+    if (ctl.expired) return { outcome: 'timeout', code: 'skill_resolve_timeout' };
+    const payload = LANE_IO[harness].render(block, 'SessionStart');
+    if (payload.length > LANE_PAYLOAD_CHARS_MAX) return { outcome: 'payload_dropped', dropped_chars: payload.length };
+    await (io.write ?? writeStdout)(`${payload}\n`);
+    return { outcome: 'delivered' };
   }
 
   const owners = laneOwnerSenders(settings.section, harness);
@@ -357,34 +440,47 @@ async function laneTurn(event: 'user-prompt' | 'session-start', harness: LaneHar
   if (project?.built) catalogs.push(project.name);
   else if (project && settings.autoRebuild) await scheduleBuild(home, project.name, ['skills', 'index', 'build', '--catalog', project.name, ...project.dirs.flatMap(d => ['--dir', d]), '--scope', 'project', '--harness', harness], spawnFn);
   if (catalogs.length === 0) return { outcome: 'no_catalog' };
+  const router = (harness === 'claude-code' || harness === 'codex') && settings.section.router === true;
+  if (router) ctl.extend(routerTimeoutMs(harness, routerSettings(settings.section)) + LANE_ROUTER_MARGIN_MS);
+  else if ((harness === 'claude-code' || harness === 'codex') && (await Promise.all(catalogs.map(c => stat(catalogFile(home, c, 'vectors.bin')).then(() => true, () => false)))).some(Boolean)) ctl.extend(VECTOR_WAIT_MS + LANE_ROUTER_MARGIN_MS);
 
   const worker = ctl.worker;
   if (!worker || laneWorkerFailed()) return { outcome: 'error', code: 'skill_resolver_internal', catalogs };
-  const posted = await new Promise<{ output?: TurnOutput; pending?: { key: string; delta: TurnDelta } | null; error?: { code: string } }>((resolve) => {
-    worker.once('message', resolve);
-    worker.once('error', () => resolve({ error: { code: 'skill_resolver_internal' } }));
-    worker.once('exit', () => resolve({ error: { code: 'skill_resolver_internal' } }));
-    worker.postMessage({ input: { message: prompt, harness, ...turnSettings, ...(sessionId ? { session_id: sessionId } : {}), ...(reset ? { reset_session: true } : {}) }, home, catalogs, deadlineMs: Math.max(1, deadlineMs - elapsed() - COMMIT_RESERVE_MS) } satisfies LaneWorkerTurn);
-  });
+  const posted = await askWorker(worker, { input: { message: prompt, harness, ...turnSettings, ...(sessionId ? { session_id: sessionId } : {}), ...(reset ? { reset_session: true } : {}) }, home, catalogs, deadlineMs: Math.max(1, turnLeft() - COMMIT_RESERVE_MS), router });
   if (posted.error || !posted.output) return { outcome: 'error', code: posted.error?.code ?? 'skill_resolver_internal', catalogs };
   const out = posted.output;
   if (out.meta.index_stale && settings.autoRebuild) await scheduleStaleRebuilds(home, catalogs, spawnFn);
-  if (out.error) return { outcome: 'error', code: out.error.code, catalogs };
-  if (ctl.expired) return { outcome: 'timeout', code: 'skill_resolve_timeout', catalogs };
+  const routerLog: LaneRouterLog | undefined = out.router ? { by: out.router.answered_by, ...(out.router.fallback ? { code: out.router.fallback.code } : {}), ms: out.router.ms } : undefined;
+  const vectors: LaneVectorsLog | undefined = out.vectors ? { used: out.vectors.used, ...(out.vectors.fallback ? { code: out.vectors.fallback.code } : {}), ms: out.vectors.ms } : undefined;
+  if (out.error) return { outcome: 'error', code: out.error.code, catalogs, router: routerLog, vectors };
+  if (ctl.expired) return { outcome: 'timeout', code: 'skill_resolve_timeout', catalogs, router: routerLog, vectors };
 
   const outcome = out.block ? 'delivered' : out.budget_exhausted ? 'budget_exhausted' : out.no_skill ? 'no_skill' : 'empty';
   if (out.block) {
     const payload = LANE_IO[harness].render(out.block);
-    if (payload.length > settings.payloadChars) return { outcome: 'payload_dropped', catalogs, dropped_chars: payload.length };
+    if (payload.length > settings.payloadChars) return { outcome: 'payload_dropped', catalogs, dropped_chars: payload.length, router: routerLog, vectors };
     await (io.write ?? writeStdout)(`${payload}\n`);
   }
   const stall = env.GBRAIN_TEST_SKILL_LANE_STALL;
   if (stall === 'commit-held' || stall === 'commit-written') ctl.commit.at = (stage) => (`commit-${stage}` === stall ? new Promise(() => {}) : Promise.resolve());
   if (posted.pending && !ctl.expired) {
-    const gc = { files: LANE_GC_FILES, until: performance.now() + deadlineMs - elapsed() - GC_RESERVE_MS };
+    const gc = { files: LANE_GC_FILES, until: performance.now() + turnLeft() - GC_RESERVE_MS };
     await commitSessionAsync(home, posted.pending.key, { ...posted.pending.delta, ...(hookEvent.history !== undefined ? { history: hookEvent.history } : {}) }, ctl.commit, gc);
   }
-  return { outcome, catalogs };
+  return { outcome, catalogs, router: routerLog, vectors };
+}
+
+interface WorkerReply { output?: TurnOutput; pending?: { key: string; delta: TurnDelta } | null; pinned?: string; error?: { code: string } }
+
+/** Post one message to the lane's worker and await its one reply, skipping its ready message (an error when the thread fails or exits first). */
+function askWorker(worker: Worker, message: LaneWorkerTurn | LaneWorkerPins): Promise<WorkerReply> {
+  return new Promise((resolve) => {
+    const onMessage = (m: WorkerReply & { ready?: boolean }) => { if (m?.ready === true) return; worker.off('message', onMessage); resolve(m); };
+    worker.on('message', onMessage);
+    worker.once('error', () => resolve({ error: { code: 'skill_resolver_internal' } }));
+    worker.once('exit', () => resolve({ error: { code: 'skill_resolver_internal' } }));
+    worker.postMessage(message);
+  });
 }
 
 const isBuilt = (home: string, name: string) => stat(catalogFile(home, name, 'receipt.json')).then(() => true, () => false);

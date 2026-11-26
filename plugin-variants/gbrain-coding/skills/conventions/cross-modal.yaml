@@ -1,5 +1,5 @@
 # Cross-Modal Review Configuration
-# Which skills review which outputs, and the refusal routing chain.
+# Which skills review which outputs, and how a refusal is reported.
 
 review_pairs:
   # After brain writes, optionally verify quality
@@ -21,15 +21,11 @@ review_pairs:
 
 refusal_routing:
   # A refusal is a result: report it to the user as a provider refusal
-  # (not a model failure), naming the model. The chain lists the models
-  # offered when another review runs.
-  chain:
-    - primary   # host default model
-    - deepseek  # DeepSeek V3.1
-    - qwen      # Qwen 3.5
-    - groq      # fast fallback
-  behavior: "report"  # report (default) or next_in_chain
-  rule: "Always show the refusal to the user. Another model reviews only when the user chooses one, or when behavior is next_in_chain; the output then names the switch."
+  # (not a model failure), naming the model, and stop that review. "report"
+  # is the only value; the removed next_in_chain is read as report, with a
+  # one-line notice.
+  behavior: "report"
+  rule: "Always show the refusal to the user, naming the model, and stop that review. Don't rerun it on another model, and never reword the request to get around a refusal."
 
 spawn_rules:
   threshold: 3  # 3+ items = spawn sub-agent

@@ -10,7 +10,8 @@
  * pages carry is only counted. Names fold with nameWords, a run of single letters in a company name read as one word
  * (strict: every word kept) and, for "likely" and conflicts, with leading titles and company suffixes dropped (variant).
  *
- * Matchers propose member sets; the finder merges proposals with the same kind and members, adds the key
+ * Matchers propose member sets; a cross-source set holding two or more pages of one source also yields those pages as
+ * an in_source group, so they can be collapsed. The finder merges proposals with the same kind and members, adds the key
  * evidence (every shared key type, with how many other pages carry a shared contact or handle value, and every
  * key type two members carry with different values), decides each class in one place (classOf, with the clean
  * rule in isCleanGroup; a cross-source group with no shared exclusive key and a vetoing key is a conflict), joins clean groups that share a page and
@@ -231,6 +232,13 @@ async function sourceTypes(engine: BrainEngine, sourceId: string, override: Find
     }
   }
   return { person, company, declared };
+}
+
+/** Every page type a source's schema pack reads as a person, across the sources that are not archived. */
+export async function personPageTypes(engine: BrainEngine): Promise<string[]> {
+  const out = new Set<string>();
+  for (const s of await engine.listAllSources()) for (const t of (await sourceTypes(engine, s.id, undefined)).person) out.add(t);
+  return [...out].sort();
 }
 
 async function loadScan(engine: BrainEngine, opts: FindDuplicatesOptions): Promise<{ scan: DuplicateScan; byKey: Map<string, EntityPage>; crowded: number; carriers: Map<string, EntityPage[]> }> {
@@ -595,7 +603,12 @@ export async function findTypedDuplicateGroups(engine: BrainEngine, opts: FindDu
         const item: DuplicateEvidence = { matcher: matcher.name, rule: e.rule, ...(e.key ? { key: e.key } : {}), ...(e.field ? { field: e.field } : {}) };
         evidence.set(evidenceKey(item), item);
       }
-      add({ kind, members, evidence, proposed: !builtin && p.class ? [p.class] : builtin ? [] : ['likely'], builtin });
+      const proposed: DuplicateClass[] = !builtin && p.class ? [p.class] : builtin ? [] : ['likely'];
+      add({ kind, members, evidence, proposed, builtin });
+      if (kind !== 'cross_source') continue;
+      for (const same of groupBy(members, m => m.source_id).values()) {
+        if (same.length > 1) add({ kind: 'in_source', members: same, evidence: new Map(evidence), proposed: [...proposed], builtin });
+      }
     }
   }
 

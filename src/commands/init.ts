@@ -18,6 +18,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { readPrimaryEmbeddingStores, readStoredEmbeddingIdentity } from '../core/stored-embedding-identity.ts';
 import { deferInitJsonError, flushInitJsonResult, initJsonError, setInitJsonResult, writeDeferredInitJsonError } from './init-json.ts';
 import { deferredEmbeddingHint, firstRunBundle, firstRunJson, harnessRegistrationCommand } from './init-first-run.ts';
+import { keptEngineConfig, reportKeptRustBrain } from './init-existing-engine.ts';
 import { keptEmbeddingIdentity, keptEmbeddingNotice, recordInitEmbedding } from './init-embedding-plane.ts';
 import { writeCliNotices } from '../core/interop-notices.ts';
 import { exitCodeForCode } from '../core/error-catalogue.ts';
@@ -120,6 +121,11 @@ async function runInitBranches(args: string[]) {
     return initMigrateOnly({ jsonOutput });
   }
 
+  // An existing rust/pglite config is the engine when no engine flag says otherwise: a Rust brain is reported
+  // and left unchanged (the store is never opened here); --non-interactive routing for a kept local config is split out.
+  const kept = keptEngineConfig(fileState, isPGLite || isSupabase || !!manualUrl || args.includes('--prefer-postgres'));
+  if (kept?.engine === 'rust') return reportKeptRustBrain(kept, jsonOutput);
+
   // v0.14: AI provider selection.
   // --embedding-model PROVIDER:MODEL (verbose) or --model PROVIDER (shorthand, picks recipe default)
   const embModelIdx = args.indexOf('--embedding-model');
@@ -182,8 +188,22 @@ async function runInitBranches(args: string[]) {
     }
   }
 
+  // --non-interactive with no engine flag keeps the brain the config file already names (PGLite or Postgres) instead
+  // of demanding --url; an env DATABASE_URL keeps its precedence in the non-interactive branch below.
+  const keptCfg = isNonInteractive && !isPGLite && !isSupabase && !manualUrl && !args.includes('--prefer-postgres') && !isThinClient(existing) ? existing : null;
+  let keptPglitePath: string | null = null;
+  let keptPostgresUrl: string | null = null;
+  const keptEngine = keptCfg?.engine;
+  switch (keptEngine) {
+    case undefined: break; // no config: the routing below is unchanged
+    case 'pglite': if (!effectiveEnvDatabaseUrl()) keptPglitePath = keptCfg?.database_path ?? gbrainPath('brain.pglite'); break;
+    case 'postgres': keptPostgresUrl = keptCfg?.database_url ?? null; break;
+    case 'rust': break; // a kept Rust brain was reported and returned above
+    default: { const unknownEngine: never = keptEngine; void unknownEngine; }
+  }
+
   // Explicit PGLite mode
-  if (!preservedPostgresUrl && (isPGLite || (!isSupabase && !manualUrl && !isNonInteractive))) {
+  if (!preservedPostgresUrl && (isPGLite || (!isSupabase && !manualUrl && (!isNonInteractive || keptPglitePath !== null)))) {
     // Smart detection: scan for .md files unless --pglite flag forces it
     if (!isPGLite && !isSupabase) {
       const fileCount = countMarkdownFiles(process.cwd());
@@ -198,7 +218,9 @@ async function runInitBranches(args: string[]) {
       }
     }
 
-    return initPGLite({ jsonOutput, apiKey, customPath, aiOpts, schemaPack, skipEmbedCheck, content });
+    // A kept config here is PGLite (a kept Rust brain returned above): it keeps its database_path unless --path names another.
+    const pglitePath = customPath ?? keptPglitePath ?? kept?.database_path ?? null;
+    return initPGLite({ jsonOutput, apiKey, customPath: pglitePath, aiOpts, schemaPack, skipEmbedCheck, content });
   }
 
   // Supabase/Postgres mode
@@ -215,6 +237,8 @@ async function runInitBranches(args: string[]) {
       databaseUrl = envUrl;
     } else if (preservedPostgresUrl) {
       databaseUrl = preservedPostgresUrl;
+    } else if (keptPostgresUrl) {
+      databaseUrl = keptPostgresUrl;
     } else {
       console.error('--non-interactive requires --url <connection_string> or GBRAIN_DATABASE_URL env var');
       process.exit(1);
@@ -1868,7 +1892,7 @@ OPTIONS
                         Default subagent driver (v0.27+)
   --no-embedding        Defer embedding setup (skips the embedding-key check)
   --surface <verbs|starter|full>  Tool surface the printed harness registration pins, listed in full
-                                  (default: starter, listing the memory verbs and request_tools)
+                                  (default per harness: Codex full; others starter, listing the memory verbs and request_tools)
   --search-mode <conservative|balanced|tokenmax>  Record the operator's search mode (no first-run ask; an existing brain's mode needs --force)
   --skip-embed-check    Skip the init-time embedding-key validation (config +
                         live test-embed). Also via GBRAIN_INIT_SKIP_EMBED_CHECK=1

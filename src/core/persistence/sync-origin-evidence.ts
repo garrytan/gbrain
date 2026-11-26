@@ -43,6 +43,12 @@ async function git(gitRoot: string, args: string[]): Promise<{ code: number; std
   }
 }
 
+/** The blob `path` (relative to `root`) held in the first parent of `commit`, the commit that deleted it; null when Git cannot say. */
+export async function blobBeforeDeletion(root: string, commit: string, path: string): Promise<string | null> {
+  const read = await git(root, ['rev-parse', '--verify', '--quiet', `${commit}^:./${path}`]);
+  return read.code === 0 ? read.stdout.trim() || null : null;
+}
+
 /** `git check-ignore --no-index -z --stdin` over `paths` (NUL-separated both ways, so any byte in a name survives). */
 function checkIgnore(gitRoot: string, paths: readonly string[]): Promise<{ code: number; stdout: string }> {
   return new Promise(resolve => {

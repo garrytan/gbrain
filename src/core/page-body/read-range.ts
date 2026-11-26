@@ -628,9 +628,8 @@ export async function projectedOutline(engine: BrainEngine, body: SegmentedBody,
     if (index + v.row.outlineCount > from && index < from + limit) needed.push(v);
     index += v.row.outlineCount;
   }
-  const meta = needed.length ? new Map((await engine.executeRaw<Record<string, unknown>>(`SELECT occurrence_id, facts_slots, outline FROM page_body_manifest
-    WHERE page_id=$1 AND occurrence_id=ANY($2::bigint[]) AND staging_id IS NULL AND gen_from<=$3 AND (gen_to IS NULL OR gen_to>$3)`,
-  [body.pageId, needed.map(v => v.row.occurrenceId), body.generation])).map(m => [Number(m.occurrence_id), m])) : new Map();
+  const meta = needed.length ? new Map((await engine.readBodyManifestOutline(body.pageId, needed.map(v => v.row.occurrenceId), body.generation))
+    .map(m => [Number(m.occurrence_id), m])) : new Map();
   index = 0;
   let next = 0;
   for (const v of visible) {

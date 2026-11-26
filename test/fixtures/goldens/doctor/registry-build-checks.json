@@ -255,6 +255,10 @@
       },
       {
         "category": "ops",
+        "name": "rust_engine_addon"
+      },
+      {
+        "category": "ops",
         "name": "ipc_socket_path"
       },
       {
@@ -464,6 +468,14 @@
       {
         "category": "brain",
         "name": "access_pages_read_by_nobody"
+      },
+      {
+        "category": "brain",
+        "name": "access_shared_source_unread"
+      },
+      {
+        "category": "brain",
+        "name": "access_disabled_member_credentials"
       },
       {
         "category": "brain",
@@ -1039,7 +1051,23 @@
       },
       {
         "category": "brain",
+        "name": "learning_note"
+      },
+      {
+        "category": "brain",
+        "name": "first_session_suggestion"
+      },
+      {
+        "category": "brain",
         "name": "memory_proposals_pending"
+      },
+      {
+        "category": "brain",
+        "name": "policy_valid"
+      },
+      {
+        "category": "brain",
+        "name": "rules_regression"
       },
       {
         "category": "brain",
@@ -1123,6 +1151,14 @@
       },
       {
         "category": "brain",
+        "name": "write_gate_hold_ambiguous"
+      },
+      {
+        "category": "brain",
+        "name": "write_gate_holds_stranded"
+      },
+      {
+        "category": "brain",
         "name": "core_memory"
       },
       {
@@ -1183,6 +1219,10 @@
       },
       {
         "category": "brain",
+        "name": "legacy_slug_spellings"
+      },
+      {
+        "category": "brain",
         "name": "purge_parked_pages"
       },
       {
@@ -1228,6 +1268,10 @@
       {
         "category": "brain",
         "name": "entity_duplicates"
+      },
+      {
+        "category": "brain",
+        "name": "dedupe_auto_links"
       },
       {
         "category": "brain",

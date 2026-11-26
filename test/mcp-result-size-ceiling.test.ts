@@ -40,9 +40,11 @@ import { asOwner } from './helpers/owner-tier.ts';
  * measured); search unchanged (3245). GBRA-81 item 2 (lean-row score at 4
  * significant digits; the fixture is now a full-surface HTTP client with a
  * read grant, so `id` stays): search 3408 -> 3356 (3196 measured), query
- * 3669 -> 3593 (3421).
+ * 3669 -> 3593 (3421). #9412 (the keyword count line now rides on every
+ * query call, as it already did on search): query 3593 -> 3870 (3685
+ * measured); search unchanged.
  */
-const CEILINGS = { search: 3356, query: 3593 };
+const CEILINGS = { search: 3356, query: 3870 };
 /**
  * The keyless fixture also gets the operator contract's degraded_recall
  * notice (F3) on every HTTP call. It is bounded on its own so the ceilings

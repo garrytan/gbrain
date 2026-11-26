@@ -31,6 +31,7 @@ import { validateSlug } from '../utils.ts';
 import { opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { jsonbParam, type SqlExecutor } from './executor.ts';
+import { HOLD_BIND_CTE, HOLD_BIND_RETURNING } from './hold-binding.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
 import { joinFragments, sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
 import { compileRowNormalizer } from './normalize.ts';
@@ -40,6 +41,30 @@ import { RELEASE_STAGED_CTE } from '../persistence/limits.ts';
 import { pageSearchVectorSql } from '../fts-language.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
 import { overlayCanonicalBodies, readPageSnapshot } from '../page-state/snapshot.ts';
+/**
+ * Segmented page storage (Wave B): one SQL implementation for both engines.
+ * Segment texts, the generation-ranged body manifest, staged chunk rows, the
+ * generation flip and garbage collection (docs: wave-b spec 1.2, 3.3-3.5, 4.2).
+ *
+ * Contracts the callers keep:
+ * - Every staged manifest row's `staging_id` names a row `openBodyStaging`
+ *   recorded; a staging is a GC root while it is open, sealed or prepared, or
+ *   while a non-terminal persistence request's `intent.body_ref` names it.
+ * - Manifest rows are staged before the chunk rows of their occurrences: a
+ *   staged chunk row no live staging's manifest row owns is garbage.
+ * - Insert-reference-before-GC: staging a text that already exists refreshes
+ *   its `created_at` under the row lock (a concurrent sweep skips the locked
+ *   row, then sees it inside the grace window), and the text sweep keeps every
+ *   text touched since the oldest live staging of its source opened, so a
+ *   text a preparation staged or deduped onto stays until its manifest row
+ *   references it, however long publication waits.
+ *
+ * Statement sizes stay bounded whatever the page size: texts by
+ * STAGE_BATCH_BYTES per engine, manifest and chunk rows by `jsonRowBatches`
+ * under the same byte bound; the flip touches O(changed rows).
+ */
+import type { SegmentedEmbedPage, SegmentedEmbedRef } from '../page-body/types.ts';
+import { currentTextProjectionFilter } from '../search/safe-chunks.ts';
 
 export const LIVE_STAGING_STATES = ['open', 'sealed', 'prepared'];
 const TERMINAL_STAGING_STATES = ['committed', 'aborted', 'expired'];
@@ -172,6 +197,18 @@ export async function readManifest(exec: LegacyUnscopedRead, pageId: number,
   return opts.lastN !== undefined ? out.reverse() : out;
 }
 
+/**
+ * `readSegmentedEmbedPage`: a segmented page that is live, sealed and in a live source, by id or by source and slug;
+ * null otherwise (inline pages included). The statement page-body/segmented-embedding.ts always sent, byte for byte.
+ */
+export async function readSegmentedEmbedPage(exec: LegacyUnscopedRead, ref: SegmentedEmbedRef): Promise<SegmentedEmbedPage | null> {
+  const where = 'id' in ref ? sqlFragment`p.id = ${ref.id}` : sqlFragment`p.source_id = ${ref.sourceId} AND p.slug = ${ref.slug}`;
+  const { rows: [row] } = await exec.run<{ id: number; slug: string; source_id: string; title: string; contextual_retrieval_mode: SegmentedEmbedPage['contextual_retrieval_mode']; body_bytes: number | string }>(sqlFragment`SELECT p.id, p.slug, p.source_id, p.title, p.contextual_retrieval_mode, p.body_bytes
+       FROM pages p JOIN sources s ON s.id = p.source_id
+      WHERE ${where} AND p.body_storage = 'segmented' AND p.deleted_at IS NULL AND NOT s.archived AND ${trustedSql(currentTextProjectionFilter('p'))}`);
+  return row ? { ...row, id: Number(row.id), body_storage: 'segmented', body_bytes: Number(row.body_bytes) } : null;
+}
+
 /** The write column and model label the chunk rows carry, resolved on this executor's handle (as upsertChunks does). */
 async function resolveChunkWrite(exec: SqlExecutor, chunks: readonly SegmentChunkInput[], embeddingColumn?: ResolvedColumn): Promise<{ column: ResolvedColumn; model: string }> {
   const { rows } = await exec.run<{ key: string; value: string }>(sqlFragment`SELECT key, value FROM config
@@ -272,15 +309,19 @@ function metaParams(meta: SegmentedPageMeta) {
 
 export async function createSegmentedPageShell(exec: SqlExecutor, slug: string, meta: SegmentedPageMeta, opts: { sourceId: string }): Promise<{ id: number }> {
   const m = metaParams(meta);
+  // The new page takes over the quarantine holds waiting for its slug in the same statement (engine-sql/hold-binding.ts).
   // origin-guard-ok: applySegmentedBody runs assertOriginUnclaimed in this transaction first
   const { rows } = await exec.run<{ id: number }>(sqlFragment`
+    WITH ins AS (
     INSERT INTO pages (source_id, slug, type, page_kind, title, compiled_truth, timeline, frontmatter, updated_at, effective_date,
       effective_date_source, import_filename, chunker_version, source_path, source_kind, source_uri, ingested_via, ingested_at,
       body_storage, body_generation, body_bytes)
     VALUES (${opts.sourceId}, ${validateSlug(slug)}, ${meta.type}, ${m.pageKind}, ${m.title}, NULL, NULL, ${m.frontmatter}, now(), ${m.effectiveDate},
       ${m.effectiveDateSource}, ${m.importFilename}, ${m.chunkerVersion ?? 0}::smallint, ${m.sourcePath}, ${m.sourceKind}, ${m.sourceUri},
       ${m.ingestedVia}, ${m.ingestedAt}, 'segmented', 0, 0)
-    RETURNING id`);
+    RETURNING ${HOLD_BIND_RETURNING}
+    ), ${HOLD_BIND_CTE}
+    SELECT id FROM ins`);
   return { id: Number(rows[0]!.id) };
 }
 

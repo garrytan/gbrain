@@ -17,6 +17,7 @@ import {
 } from '../../core/skillpack/safe-update.ts';
 import { listJournals, readJournal } from '../../core/skillpack/update-journal.ts';
 import { exitCliError } from '../../cli/cli-error.ts';
+import { movedSkillNotice } from '../../core/skillpack/moved.ts';
 import { findGbrainOrDie, resolveWorkspace } from './shared.ts';
 
 export const UPDATE_HELP =
@@ -151,6 +152,8 @@ export async function cmdPin(args: string[], pinned: boolean): Promise<void> {
     console.error(`Error: '${slug}' is not a bundled skill (gbrain skillpack list shows them).`);
     process.exit(2);
   }
+  const moved = movedSkillNotice(slug);
+  if (moved) console.error(`${moved} --update-untouched no longer updates it, pinned or not.`);
   const skillsRoot = workspaceSkillsRoot(readValue(args, '--workspace'));
   let changed: boolean;
   try {

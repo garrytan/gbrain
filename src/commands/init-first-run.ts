@@ -38,7 +38,7 @@ export interface InitFirstRunInputs {
   writeback?: boolean;
   /** Recommended skills missing from the agent workspace (`initSkillsScaffold`). */
   skillsScaffold?: { missing: string[]; argv: string[] } | null;
-  /** `gbrain init --surface`: the surface the harness registration pins (default REGISTRATION_SURFACE). */
+  /** `gbrain init --surface`: the surface the harness registration pins (default the harness's registrationProfile). */
   surface?: McpSurface;
   /** GBRA-438: the upkeep line, relayed with the block as a setting in effect; `embedding` says the capped embedding step applies. */
   upkeep?: { embedding: boolean };
@@ -295,8 +295,8 @@ export function firstRunJson(bundle: Notice[]): { notices?: unknown[]; contract_
 
 /**
  * The harness registration line for init's quickstart: the readiness
- * `harness_wiring` fix (absolute binary, `--surface starter --advertise verbs`
- * unless `gbrain init --surface` names another) for the detected harness, else the
+ * `harness_wiring` fix (absolute binary, the harness's registrationProfile, e.g.
+ * Codex `--surface full`, unless `gbrain init --surface` names another) for the detected harness, else the
  * Claude Code registration built the same way. Null when the gbrain binary
  * has no absolute path (never registered bare).
  */

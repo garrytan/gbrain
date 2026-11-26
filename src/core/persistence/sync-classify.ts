@@ -91,6 +91,13 @@ export interface SyncPathState {
   /** Under a `storage.keep_db` prefix, on a source that is not mirror-read-only. */
   keepDb: boolean;
   /**
+   * LC-1 (decision E1): a person's delete of the deleted page at `p` (the tombstone, or the purged page its marker names)
+   * removed its file (`write_through.written`), with no restore since, so the file's bytes on disk again are a restore. A
+   * delete that left the file (`sync.write_through=false`, a read-only mirror, a shared file) has none: that file never
+   * left, and the deletion stands as before. Nor has an owner purge, whose content tombstone refuses the bytes for good.
+   */
+  removedFile?: true;
+  /**
    * #7324: a page under a declared `storage.db_only` dir: its database row is canonical, so an absent file is no deletion
    * evidence. #8007: `unknown` while gbrain.yml's storage section is invalid; an absent file is then held, never deleted.
    */
@@ -117,8 +124,15 @@ export interface SyncClassified {
   /** `db_ahead`: `pending` (attested), `db_only` (moved off a recorded revision), `unproven` (no record revision). */
   sub?: 'pending' | 'db_only' | 'unproven';
   /** `drift` and `delete_drift`: the hold's side. `deleted_edited`: its state. */
-  side?: 'both' | 'unknown' | 'deleted';
+  side?: 'both' | 'unknown' | 'database' | 'deleted';
   state?: 'tombstone_edited' | 'purged_differs' | 'file_gone';
+  /**
+   * LC-1 (decision E1): a `deleted_edited` whose file holds the bytes its deleted page had and is back in the checkout after
+   * the delete removed it (a revert, a checkout of the removed file, a commit that re-adds it; `SyncPathState.removedFile`).
+   * It is held like an edited one, so the page comes back only through the file-drift preview the user agrees to. Committed
+   * mode reads the file's dirtiness first, so a removal not committed yet stays `deleted_same`.
+   */
+  restored?: true;
   /** #7130: a `delete_drift` whose file Git never committed (`never_committed`), `.gitignore` excludes, or whose history read did not answer (`origin_unknown`). */
   uncommitted?: 'never_committed' | 'ignored' | 'origin_unknown' | 'storage_invalid';
   /** `db_ahead` `db_only` under keep_db: also gets the DB-wins write. */
@@ -210,7 +224,14 @@ function afterHold(s: SyncPathState): Matched {
     const syncRestored = tombstone && s.page!.syncDeleted === true && s.level !== null;
     if (syncRestored && (s.mode !== 'committed' || CLEAN.has(s.dirty) || s.dirty === 'deleted')) return { cls: 'import', settled: false, action: 'import' };
     const deletedMarker = s.marker?.kind === 'deleted' ? s.marker : null;
-    if (!syncRestored && ((tombstone && fileSame) || (deletedMarker && s.level !== null && deletedMarker.blobOids.includes(s.level)))) return { cls: 'deleted_same', settled: true, action: 'none' };
+    const sameBytes = !syncRestored && ((tombstone && fileSame) || (deletedMarker !== null && s.level !== null && deletedMarker.blobOids.includes(s.level)));
+    // LC-1 (decision E1): the deleted page's own bytes back in the checkout after its delete removed them are a restore, which
+    // brings the page back only through the user's yes on the file-drift preview, so it is held like an edited file. A file
+    // the delete never removed, and a removal not committed yet (the file is gone from disk, or differs there, while the
+    // committed level still holds it), stay deleted_same.
+    const restored = sameBytes && s.removedFile === true && (s.mode === 'working' || CLEAN.has(s.dirty) || s.dirty === 'unknown');
+    if (restored) return { cls: 'deleted_edited', settled: false, action: 'hold', side: 'deleted', state: tombstone ? 'tombstone_edited' : 'purged_differs', restored: true };
+    if (sameBytes) return { cls: 'deleted_same', settled: true, action: 'none' };
     if (!syncRestored && (tombstone || deletedMarker) && !s.published) return { cls: 'deleted_edited', settled: false, action: 'hold', side: 'deleted', state: tombstone ? 'tombstone_edited' : 'purged_differs' };
     if (!syncRestored && s.marker?.kind === 'legacy' && s.marker.deletion && !s.fullObligation && s.level !== null && s.marker.blobOids.includes(s.level)) return { cls: 'legacy_same', settled: true, action: 'none' };
   }
@@ -228,6 +249,10 @@ function afterHold(s: SyncPathState): Matched {
     if (fileSame) {
       const sub = s.attested ? 'pending' : s.record?.revision != null ? 'db_only' : 'unproven';
       const keepDbWrite = sub === 'db_only' && s.keepDb && s.mode === 'committed' && s.dirty === 'clean';
+      // As #7931 for legacy_unverified: a hold someone asked to re-screen (`sources retry-held`, a `release_hold` apply) re-runs as
+      // database-side drift, whose import runs only when the file holds the page; otherwise it is held again. A pending door
+      // write and a storage.db_only page keep the database copy, so their retried hold stays db_ahead.
+      if (s.hold?.retried && !keepDbWrite && sub !== 'pending' && !s.dbOnly) return { cls: 'drift', settled: false, action: 'hold', side: 'database' };
       return { cls: 'db_ahead', settled: true, action: keepDbWrite ? 'keep_db' : 'none', sub,
         ...(keepDbWrite ? { keepDbWrite: true as const } : {}), ...(s.episodeUnsatisfied && sub !== 'pending' ? { fullSkipped: true as const } : {}) };
     }
@@ -266,7 +291,10 @@ function gitVerdict(state: SyncPathState): Matched {
   const wins = (match: Matched): Matched => match;
   switch (rest.cls) {
     // G8a: a page no import record proves (legacy_unverified, typically the unknown side of a held drift) takes the commit too.
-    case 'drift': case 'keep_db': case 'deleted_edited': case 'legacy_unverified': return wins({ cls: 'import', settled: false, action: 'import' });
+    // LC-1: a restored file of a deleted page keeps its deletion here, as before: the commit alone cannot tell a restore from
+    // a removal the worktree has not committed yet.
+    case 'deleted_edited': return rest.restored ? { cls: 'deleted_same', settled: true, action: 'none' } : wins({ cls: 'import', settled: false, action: 'import' });
+    case 'drift': case 'keep_db': case 'legacy_unverified': return wins({ cls: 'import', settled: false, action: 'import' });
     // GST-2519: a page under a declared storage.db_only dir is canonical in the database, so a version the database moved to
     // while Git did not move stays, as on a source that is not strict.
     case 'db_ahead': return rest.sub === 'pending' || state.dbOnly === true ? rest : wins({ cls: 'import', settled: false, action: 'import' });

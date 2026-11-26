@@ -38,6 +38,8 @@ import { entityPageMissingNotice } from '../interop-notices.ts';
 import { otherMemberSubject, ownerSpeaksForItself, peoplePageMember } from '../access/member-facts.ts';
 import { isDerivationPrivate } from '../search/private-visibility.ts';
 import { refuseGuestSourceWrite } from '../guests/admission.ts';
+import { ruleOwnerOnly } from '../rules/admission.ts';
+import { isRuleSlug } from '../rules/record.ts';
 
 export { prepareMemoryMutation } from './memory-prepare.ts';
 /** Only semantic appends without an explicit caller revision can be recomputed. */
@@ -229,6 +231,10 @@ async function inferRememberTarget(ctx: OperationContext, sourceId: string, sour
 export async function submitRememberMutation(ctx: OperationContext, params: Record<string, unknown>, waitMs?: number,
   opts: { visibilityDefaulted?: boolean } = {}): Promise<Record<string, unknown>> {
   registerMutationPreparer('remember', prepareMemoryMutation);
+  if (ctx.remote !== false && isRuleSlug(params.entity)) {
+    const refused = ruleOwnerOnly(String(params.entity));
+    throw Object.assign(verbError('scope_denied', refused.message, refused.suggestion ?? ''), { canonical: 'rule_owner_only' });
+  }
   const { visibility: _defaulted, ...withoutDefault } = params;
   const sub = await submission(ctx, 'remember', params, opts.visibilityDefaulted ? withoutDefault : params);
   if (sub.prior) { const prior = sub.prior; const settled = await waitForWrite(ctx.engine, prior, ctx.config, waitMs ?? ctx.writeWaitMs); return rememberLanded(ctx, settled, throwIfHeld(withRememberTarget(prior, () => writeResponse(settled)))); }

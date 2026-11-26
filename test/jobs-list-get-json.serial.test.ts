@@ -72,6 +72,13 @@ async function captureJobs(args: string[]): Promise<string> {
 }
 
 describe('jobs list/get --json (#3685)', () => {
+  test('list --name keeps only jobs of that type', async () => {
+    await seedJob('sync');
+    await seedJob('autopilot-cycle');
+    const doc = JSON.parse(await captureJobs(['list', '--name', 'sync', '--json'])) as Array<{ name: string }>;
+    expect(doc.map((job) => job.name)).toEqual(['sync']);
+  });
+
   test('list --json emits a parseable JSON array of jobs', async () => {
     await seedJob('sync');
     await seedJob('autopilot-cycle');

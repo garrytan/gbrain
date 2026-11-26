@@ -39,7 +39,7 @@ const SIG = {
   groupCompletion: /^WITH m AS \( SELECT \* FROM unnest\(.*\bUPDATE persistence_requests r SET state='committed'/,
   singleCompletion: /\bUPDATE persistence_requests SET state=\$2,outcome=/,
   ownershipGuard: /^SELECT owner_host_id,owner_epoch,state FROM persistence_worktrees WHERE id=\$1::uuid FOR SHARE$/,
-  pageWrite: /^(?:INSERT INTO pages\b|UPDATE pages\b)/,
+  pageWrite: /^(?:(?:WITH ins AS \(\s*)?INSERT INTO pages\b|UPDATE pages\b)/,
   recovery: /^WITH recorded AS \(UPDATE persistence_requests (?:r )?SET recovery=/,
   guard: /\bpage_write_guards\b/,
   laneTurn: /^SELECT state FROM persistence_requests WHERE principal_kind=\$1 AND principal_id=\$2 AND request_id=\$3::uuid$/,

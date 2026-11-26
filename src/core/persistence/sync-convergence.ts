@@ -75,7 +75,7 @@ function reasonOf(entry: ShadowPath): string {
     case 'spelling': return 'origins differ only by case or separator';
     case 'delete': return 'file gone from the tree; the page has no database-only change';
     case 'delete_drift': return 'file gone from the tree; the page changed in the database';
-    case 'deleted_edited': return `page deleted; file differs (${result.state})`;
+    case 'deleted_edited': return result.restored ? `page deleted; file restored (${result.state})` : `page deleted; file differs (${result.state})`;
     case 'dirty': return `working copy ${state.dirty ?? 'unknown'}`;
     case 'adopt': return 'the bytes are the attested publication';
     case 'reparse': return !state.record?.parserSame ? 'parser or schema pack changed' : !state.page?.originMatches ? 'origin changed' : 'full re-import';
@@ -83,7 +83,7 @@ function reasonOf(entry: ShadowPath): string {
     case 'import': return state.page?.live ? 'file changed; the database has no unseen change' : 'new file';
     case 'legacy_unverified': return 'no import record; unchanged since the baseline';
     case 'keep_db': return 'keep_db prefix: the database wins on a clean committed file';
-    case 'drift': return `file and database both changed (side ${result.side})`;
+    case 'drift': return result.side === 'database' ? 'the database changed since the file was last imported (side database, re-screen asked for)' : `file and database both changed (side ${result.side})`;
     default: return result.cls;
   }
 }

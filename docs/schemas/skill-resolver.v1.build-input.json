@@ -55,6 +55,14 @@
         "disable_model_invocation": {
           "type": "boolean",
           "description": "true: never indexed (recorded as skipped: not_model_invocable), like disable-model-invocation in SKILL.md."
+        },
+        "deprecated": {
+          "type": "boolean",
+          "description": "true: indexed, but suggested only when the turn names the skill, never from a word match or the model picker; like deprecated in SKILL.md."
+        },
+        "replaced_by": {
+          "type": "string",
+          "description": "The skill to use instead of a deprecated one; shown in the reason when the deprecated skill is named."
         }
       }
     },

@@ -98,6 +98,12 @@ impl Brain {
         })
     }
 
+    /// `listBudgetOwnerJobs()`: `{ owner_id, remaining_cents }` of the newest five live budget owners.
+    #[napi]
+    pub fn list_budget_owner_jobs<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_budget_owner_jobs())
+    }
+
     /// `readQueuedPageChars({ name, queue, maxChars })`: a number or null.
     #[napi]
     pub fn read_queued_page_chars<'env>(

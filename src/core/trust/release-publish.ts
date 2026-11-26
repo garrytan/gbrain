@@ -45,6 +45,7 @@ import { holdingHome, refuseUnheldFact } from '../facts/held-fact-move.ts';
 import { materializedPage, segmentedOverCeiling } from '../persistence/segmented-apply.ts';
 import { claimColumns } from '../facts/typed-claim.ts';
 import { getWriteGateHold, releaseWriteGateHold, type WriteGateHold } from '../write-gate-store.ts';
+import { holdPage, refuseCandidateHold, releaseEntitySlug, type HoldPageInput } from './hold-page.ts';
 
 export const TRUST_RELEASE_OPERATION = 'trust_release';
 export const DOOR_WAIT_MS = 60_000;
@@ -65,11 +66,14 @@ function decidedMeanwhile(holdId: number): Error {
   return opError('preview_changed', `h${holdId} was decided meanwhile; nothing was changed.`, 'Run gbrain trust review.');
 }
 
-/** Where a held fact publishes: its own fence row (index-existing) or a new row on its entity's page; null takes the database-only release. */
-function releaseTarget(hold: Pick<WriteGateHold, 'slug' | 'payload'>): { slug: string; mode: 'append' | 'index-existing'; rowNum?: number } | null {
+/**
+ * Where a held fact publishes: its own fence row (index-existing) or a new row on its entity's page; null takes the database-only release.
+ * A hold bound to a page id publishes on that page under its current name (`bound`, trust/hold-page.ts), never on the page that took its old name.
+ */
+function releaseTarget(hold: Pick<WriteGateHold, 'slug' | 'payload'>, bound: { slug: string } | null): { slug: string; mode: 'append' | 'index-existing'; rowNum?: number } | null {
   const rowNum = hold.payload.row_num;
-  if (typeof rowNum === 'number' && Number.isSafeInteger(rowNum) && hold.slug) return { slug: hold.slug, mode: 'index-existing', rowNum };
-  const entity = str(hold.payload.entity_slug);
+  if (typeof rowNum === 'number' && Number.isSafeInteger(rowNum) && hold.slug) return { slug: bound?.slug ?? hold.slug, mode: 'index-existing', rowNum };
+  const entity = releaseEntitySlug(hold, bound);
   return entity ? { slug: entity, mode: 'append' } : null;
 }
 
@@ -96,9 +100,9 @@ const cellFieldsDigest = (cell: ParsedFact | null) => digest(cell ? releaseCellF
  * and approves; null for a release that publishes the held payload instead (append, database-only, a missing page).
  * Routes the way `submitTrustRelease` does.
  */
-export async function releaseCell(engine: BrainEngine, hold: Pick<WriteGateHold, 'kind' | 'slug' | 'source_id' | 'payload'>): Promise<ParsedFact | null> {
+export async function releaseCell(engine: BrainEngine, hold: HoldPageInput & Pick<WriteGateHold, 'kind'>): Promise<ParsedFact | null> {
   if (hold.kind !== 'fact' || !(await managedPersistenceEnabled(engine))) return null;
-  const target = releaseTarget(hold);
+  const target = releaseTarget(hold, await holdPage(engine, hold));
   if (target?.mode !== 'index-existing') return null;
   const snapshot = await engine.readPageSnapshot(target.slug, { sourceId: hold.source_id, includeDeleted: true });
   return snapshot ? cellAt(engine, snapshot.page, target.rowNum!) : null;
@@ -116,23 +120,25 @@ export async function submitTrustRelease(engine: BrainEngine, holdId: number, by
   const managed = await managedPersistenceEnabled(engine);
   const hold = await getWriteGateHold(engine, holdId);
   if (!hold || hold.kind !== 'fact') return null;
+  // A bound hold whose page is gone, or one an upgrade could not tie to a page, is refused here, before any release path (the transactional one included).
+  const bound = hold.status === 'held' ? await holdPage(engine, hold) : null;
   // GST-2692: on a strict source a release with managed persistence off refuses, never a database-only release.
   if (!managed && await sourceCanonicalGit(engine, hold.source_id)) {
-    throw gitHomeRequired({ source_id: hold.source_id, slug: releaseTarget(hold)?.slug ?? UNATTRIBUTED_MEMORY_SLUG }, 'persistence_disabled', false);
+    throw gitHomeRequired({ source_id: hold.source_id, slug: releaseTarget(hold, bound)?.slug ?? UNATTRIBUTED_MEMORY_SLUG }, 'persistence_disabled', false);
   }
   if (!managed) return null;
-  let target = releaseTarget(hold);
+  let target = releaseTarget(hold, bound);
   let snapshot = target ? await engine.readPageSnapshot(target.slug, { sourceId: hold.source_id, includeDeleted: true }) : null;
   // GST-2492 PR 2: on a strict source a fact with no entity, or whose entity has no page, is released onto its holding page
   // (memory/unattributed, or its folder's under a folder rule; a held row names its entity), so it is committed to Git
   // before its database row.
-  const home = !target || !snapshot && target.mode === 'append' ? await holdingHome(engine, hold.source_id, str(hold.payload.entity_slug)) : null;
+  const home = !target || !snapshot && target.mode === 'append' ? await holdingHome(engine, hold.source_id, releaseEntitySlug(hold, bound)) : null;
   if (home && 'slug' in home) {
     target = { slug: home.slug, mode: 'append' };
     snapshot = await engine.readPageSnapshot(home.slug, { sourceId: hold.source_id, includeDeleted: true });
   }
   // GST-2676: a fact no holding page can carry (an exact page rule, an unreadable access state) refuses, never a database-only release.
-  if (home && 'refused' in home) await refuseUnheldFact(engine, hold.source_id, str(hold.payload.entity_slug)!, home.refused, false);
+  if (home && 'refused' in home) await refuseUnheldFact(engine, hold.source_id, releaseEntitySlug(hold, bound)!, home.refused, false);
   if (!target || !snapshot && !isHoldingSlug(target.slug)) return null;
   const { initializeLocalPersistence, requestPrincipalForContext } = await import('../persistence/page-mutations.ts');
   const { submissionAuthority } = await import('../persistence/authority.ts');
@@ -213,14 +219,24 @@ export async function prepareTrustReleaseMutation(engine: BrainEngine, row: Writ
     hold !== null && hold.kind === 'fact' && hold.status === 'held' && hold.last_seen_at === intent.last_seen_at && hold.source_id === row.source_id;
   const hold = await getWriteGateHold(engine, intent.hold_id);
   if (!current(hold)) throw decidedMeanwhile(intent.hold_id);
+  // A request admitted before the upgrade can name a hold the upgrade has since marked with candidate pages: refused here and again under the final lock.
+  refuseCandidateHold(hold);
   const snapshot = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id, includeDeleted: true });
   const firstHolding = !snapshot && isHoldingSlug(row.slug) && row.page_id === null && intent.mode === 'append';
   if (!firstHolding && (!snapshot || snapshot.page.deleted_at || snapshot.page.id !== row.page_id)) {
     throw pageIdentityError(Boolean(snapshot && !snapshot.page.deleted_at), `The page h${hold.id} is released into was deleted or recreated; the fact stays held.`);
   }
+  // The hold's origin page (the page its writer gated against) is one thing and the page the fact is published on is another: a conversation
+  // extraction is gated against the conversation page and may be about an entity page. Only a release that publishes on the bound page itself
+  // (an index-existing row, or an entity subject that is the hold's own page) must find the bound page's id on its target.
   const p = hold.payload;
+  const publishesOnBound = indexed || (str(p.entity_slug) !== null && str(p.entity_slug) === hold.slug);
+  if (hold.page_id !== null && publishesOnBound && snapshot?.page.id !== hold.page_id) {
+    throw pageIdentityError(Boolean(snapshot && !snapshot.page.deleted_at), `The page h${hold.id} is bound to is not the page this release was admitted for; the fact stays held.`);
+  }
+  const entity = hold.page_id !== null && str(p.entity_slug) === hold.slug ? row.slug : str(p.entity_slug);
   const fact: NewFact & { valid_from: Date } = {
-    fact: String(p.fact ?? ''), kind: (str(p.kind) ?? 'fact') as NewFact['kind'], entity_slug: str(p.entity_slug) ?? (isHoldingSlug(row.slug) ? null : row.slug),
+    fact: String(p.fact ?? ''), kind: (str(p.kind) ?? 'fact') as NewFact['kind'], entity_slug: entity ?? (isHoldingSlug(row.slug) ? null : row.slug),
     visibility: p.visibility === 'world' ? 'world' : 'private', source: str(p.source) ?? `trust release h${hold.id}`, context: str(p.context),
     source_session: str(p.source_session), confidence: 1, valid_from: str(p.valid_from) ? new Date(String(p.valid_from)) : new Date(),
     valid_until: str(p.valid_until) ? new Date(String(p.valid_until)) : null, embedding: null, embedding_model: null, ...claimColumns(p as never),
@@ -244,7 +260,10 @@ export async function prepareTrustReleaseMutation(engine: BrainEngine, row: Writ
   }
   const lockHold = async (tx: BrainEngine) => {
     await tx.executeRaw('SELECT id FROM write_gate_holds WHERE id = $1 FOR UPDATE', [intent.hold_id]);
-    if (!current(await getWriteGateHold(tx, intent.hold_id))) throw decidedMeanwhile(intent.hold_id);
+    const locked = await getWriteGateHold(tx, intent.hold_id);
+    if (!current(locked)) throw decidedMeanwhile(intent.hold_id);
+    refuseCandidateHold(locked);
+    if (locked.page_id !== hold.page_id) throw decidedMeanwhile(intent.hold_id);
   };
   const page = append.prepared;
   return {

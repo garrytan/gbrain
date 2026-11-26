@@ -204,16 +204,23 @@ for (const kind of testBackends()) {
      */
     async function withConfigReadsFailing<T>(reread: boolean, fn: () => Promise<T>): Promise<T> {
       const target = engine as unknown as Record<string, unknown>;
-      const own = { executeRaw: Object.getOwnPropertyDescriptor(engine, 'executeRaw'), getAllConfig: Object.getOwnPropertyDescriptor(engine, 'getAllConfig') };
+      const own = {
+        executeRaw: Object.getOwnPropertyDescriptor(engine, 'executeRaw'),
+        getAllConfig: Object.getOwnPropertyDescriptor(engine, 'getAllConfig'),
+        getConfigValues: Object.getOwnPropertyDescriptor(engine, 'getConfigValues'),
+      };
       const realRaw = engine.executeRaw.bind(engine);
+      const realValues = engine.getConfigValues.bind(engine);
       const timeout = () => Promise.reject(new Error('canceling statement due to statement timeout'));
+      // The serves policy is read with the other search settings first, then alone on a re-read.
+      const failsServesRead = (keys: unknown) =>
+        Array.isArray(keys) && keys.includes('access.serves') && (reread || keys.includes('search.remote_private_pages'));
       target.getAllConfig = timeout;
       target.executeRaw = (sql: string, params?: unknown[]) => {
-        const keys = params?.[0];
-        const servesRead = /FROM config WHERE key/.test(sql) && Array.isArray(keys) && keys.includes('access.serves');
-        if (servesRead && (reread || keys.includes('search.remote_private_pages'))) return timeout();
+        if (/FROM config WHERE key/.test(sql) && failsServesRead(params?.[0])) return timeout();
         return realRaw(sql, params as never);
       };
+      target.getConfigValues = (keys: readonly string[]) => (failsServesRead(keys) ? timeout() : realValues(keys));
       try { return await fn(); } finally {
         for (const [k, d] of Object.entries(own)) if (d) Object.defineProperty(engine, k, d); else delete target[k];
       }

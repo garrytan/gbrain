@@ -780,7 +780,10 @@ gstack reads both from master, so a branch's edits take effect after it merges.
   `scripts/pregate-remote-gate.sh`: on a machine under 8 cores pregate records
   the selected test files as a requires-remote obligation instead of running
   them locally (a hub file such as `src/core/config.ts` selects nearly the
-  whole suite). `UBI_OWNER=<thread code> gstack-pregate --stage tests --remote
+  whole suite). `serial_patterns` (`**/*.serial.test.*` and
+  `test/e2e/**/*.test.ts`) makes the local test lane run each matching file in
+  its own `bun test` process, since E2E files share one test database and
+  process-wide state. `UBI_OWNER=<thread code> gstack-pregate --stage tests --remote
   --spend-cap <usd> --allow-repo-commands` then runs the full Ubicloud gate on
   the working tree and clears the obligation from its
   `PREGATE_REMOTE: tree=… tests=… failed=…` line. On a clean tree whose Test and

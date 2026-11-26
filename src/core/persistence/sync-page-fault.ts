@@ -227,6 +227,14 @@ export function fileChangedAfterAdmission(done: Pick<WriteRequest, 'state' | 'er
       || (done.error_message ?? '').startsWith(KEEP_DISK_ABANDONED_PREFIX));
 }
 
+/** The message of a held deletion refused because HEAD moved past the commit its move check read (sync-prepare.ts). */
+export const HELD_DELETION_HEAD_MOVED = 'A commit landed after this held deletion was checked for a move.';
+
+/** A held deletion refused because a commit landed after its move check: the level moved, so a pass passes it over and checks it again. */
+export function heldDeletionHeadMoved(done: Pick<WriteRequest, 'state' | 'error_code' | 'error_message'>): boolean {
+  return done.state !== 'committed' && done.error_code === 'source_changed' && done.error_message === HELD_DELETION_HEAD_MOVED;
+}
+
 /** A `revision_conflict` receipt whose page really moved (its live revision differs from the frozen one); run-level conflicts stay blocking. */
 export async function pageMovedSinceAdmission(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, pending: { slug: string; pageId: number | null; intent: Pick<SyncIntent, 'expected_revision'> },
   done: Pick<WriteRequest, 'state' | 'error_code'>): Promise<{ revision: string | null } | null> {

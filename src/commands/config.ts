@@ -12,6 +12,7 @@ import {
 } from '../core/search/embedding-column.ts';
 
 import { redactPgUrl } from '../core/url-redact.ts';
+import { isDefaultSurfaceKey } from '../core/mcp-registration.ts';
 import { PUBLISH_GATE_KEYS } from '../mcp/publish-gates.ts';
 import { isConsentConfigKey, setConsentPreapproval, unsetConsentPreapproval } from '../core/consent-preapproval.ts';
 import { WRITER_ADMIN_LOCK_KEY } from '../core/persistence/admin-contract.ts';
@@ -75,7 +76,11 @@ const FILE_PLANE_DOTTED_KEYS: ReadonlySet<string> = new Set([
   'persistence.write_wait_ms',
   // Engine graduation opt-out: the pre-connect migrate router reads it engine-free.
   'migrate.graduation', 'doctor.default_budget_ms', // #6803: the CLI doctor reads it pre-connect (commands/doctor/default-budget.ts)
+  'brain_first.policy_line', // L1: setup and upgrade read it engine-free; writes go through config/reserved-keys.ts (owner-confirmed)
   'minions.terminal_hook', // #7242: a command the worker runs; local file plane only, never the shared DB plane (minions/terminal-hook.ts)
+  'mcp.default_surface_claude_code', 'mcp.default_surface_codex', 'mcp.default_surface_hermes', // I1: gbrain setup reads them engine-free (registrationProfile)
+  // GST-3849: the Google token socket reads them engine-free; the broker's own uid owns this file (core/google-socket/config.ts)
+  'google.mint_socket', 'google.broker_act', 'google.broker_allow_root_gateway', 'google.socket_peers', 'google.broker_joint_probe',
 ]);
 
 /** #5489: every self_upgrade.* reader (cli.ts startup check, autopilot,
@@ -119,7 +124,7 @@ async function unsetFilePlaneKey(key: string): Promise<boolean> {
   const { loadConfigFileOnly, saveConfig } = await import('../core/config.ts');
   const cfg = loadConfigFileOnly();
   const dot = key.indexOf('.');
-  const top = key.slice(0, dot) as 'push' | 'hooks' | 'backup' | 'mcp' | 'self_upgrade' | 'persistence' | 'migrate' | 'doctor' | 'minions';
+  const top = key.slice(0, dot) as 'push' | 'hooks' | 'backup' | 'mcp' | 'self_upgrade' | 'persistence' | 'migrate' | 'doctor' | 'minions' | 'google';
   const leaf = key.slice(dot + 1);
   const branch = cfg?.[top] as Record<string, unknown> | undefined;
   if (!cfg || !branch || !(leaf in branch)) return false;
@@ -380,6 +385,7 @@ export async function handleDbPlaneRoutedKeys(key: string, value: string): Promi
  */
 export async function tryRunConfigEngineFree(args: string[]): Promise<boolean> {
   if (args[1]?.startsWith('skills.resolver.')) return runSkillResolverKey(args);
+  if (await (await import('./config/reserved-keys.ts')).runReservedConfigKey(args)) return true;
   if (args[0] !== 'set') return false;
   const key = args[1];
   const value = args.slice(2).find((a) => !a.startsWith('-'));
@@ -590,6 +596,9 @@ async function setFilePlaneKey(key: string, value: string, tail: string[]): Prom
     console.log(`Set ${key} = ${on} (file plane: ~/.gbrain/config.json)`);
   } else if (key === 'persistence.write_wait_ms') { await setFileWriteWait(cfg, value, saveConfig);
   } else if (key === 'minions.terminal_hook') { (await import('../core/minions/terminal-hook.ts')).setTerminalHookConfig(cfg, value, saveConfig);
+  } else if (key.startsWith('google.')) {
+    try { console.log((await import('../core/google-socket/config.ts')).setGoogleSocketConfigKey(cfg, key, value, saveConfig)); }
+    catch (e) { console.error(`[config] ${(e as Error).message}. Nothing was written.`); process.exit(1); }
   } else if (key === 'doctor.default_budget_ms') { (await import('./doctor/default-budget.ts')).setDoctorDefaultBudget(cfg, value, saveConfig);
   } else if (key === 'migrate.graduation') {
     const on = isConfigTruthy(value);
@@ -606,6 +615,14 @@ async function setFilePlaneKey(key: string, value: string, tail: string[]): Prom
     cfg.backup = { ...(cfg.backup ?? {}), check_interval_days: n };
     saveConfig(cfg);
     console.log(`Set ${key} = ${n} (file plane: ~/.gbrain/config.json)`);
+  } else if (isDefaultSurfaceKey(key)) {
+    if (value !== 'full' && value !== 'starter') {
+      console.error(`[config] ${key} must be full (serve --surface full) or starter (serve --surface starter --advertise verbs); nothing was written`);
+      process.exit(1);
+    }
+    cfg.mcp = { ...(cfg.mcp ?? {}), [key.slice('mcp.'.length)]: value };
+    saveConfig(cfg);
+    console.log(`Set ${key} = ${value} (file plane: ~/.gbrain/config.json). gbrain setup uses it for new entries${key === 'mcp.default_surface_codex' ? ', and its next run moves Codex entries that follow the default; an entry pinned with --surface stays as it is' : '; an existing entry keeps its surface until you re-run setup with --surface'}.`);
   } else if (key === 'mcp.instructions') {
     // #4748: deployment identity appended to the MCP initialize contract.
     // Takes effect on the next `gbrain serve` start (the response is
@@ -733,6 +750,7 @@ export function printUsage(): void {
 
 export async function runConfig(engine: BrainEngine, args: string[]) {
   if (subcommandHelpRequested(args, ROUTERS.config)) { printUsage(); return; }
+  if (await (await import('./config/reserved-keys.ts')).runReservedConfigKey(args)) return;
   const action = args[0] as (typeof CONFIG_SUBCOMMANDS)[number] | undefined;
 
   // The writer admin lock is reserved for `gbrain sources writer lock|unlock`; --force is no escape.

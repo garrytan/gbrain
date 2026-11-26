@@ -89,7 +89,7 @@ import { DETACHED_REASON } from '../persistence/detached-pages.ts';
 import { DELETION_PROVENANCES, readDeletionProvenance, type DeletionProvenance } from '../persistence/sync-origin-evidence.ts';
 import { ghostPageNow, scanGhostSource, type GhostOwner, type GhostPage } from '../ghost-pages.ts';
 import { MASS_RECONCILE_MIN_PAGES, MASS_RECONCILE_RATIO, massReconcileAllowed } from '../sync-reconcile.ts';
-import { DATABASE_AHEAD_CODE, databaseAheadDetail, ghostFileBacked, GHOST_PURGE_FUSE_HOURS, GHOST_REPAIR_LIMIT, ghostScanRefusal, massGhosts, massRefusal, retireGhost } from './ghost-pages.ts';
+import { ghostBacking, ghostKeptDetail, ghostMoveVeto, GHOST_PURGE_FUSE_HOURS, GHOST_REPAIR_LIMIT, ghostScanRefusal, massGhosts, massRefusal, retireGhost } from './ghost-pages.ts';
 import { prepareReconcileResult } from '../persistence/reconcile-prepare.ts';
 import { canonicalOriginPage, originConflictMessage, originTwinsFix } from '../persistence/origin-guard.ts';
 import { assertReconcileOutputPath, assertReconcileSize } from '../persistence/reconcile-backup.ts';
@@ -159,7 +159,6 @@ const DELETED_CHANGES: Record<DeletedDriftChange, string> = {
   file_gone: 'the file is gone now, so nothing is left to resolve',
   live_page: 'a live page records the file again, so it is no longer a deleted-side Decision',
   no_deletion: 'no deleted page or deletion marker is left at its origin; the next sync re-classifies it',
-  deleted_same: 'the file holds the bytes the deleted page had, so the deletion already stands',
 };
 
 const ALL_DRIFTED_LIMIT = 1000;
@@ -351,6 +350,18 @@ function unknownDriftDetail(sourceId: string, { slug, reason }: UnknownDrift): s
  * (`file_drift_state_required`): its two actions are opposite. Holds an older gbrain wrote with `sides: database` have
  * no side and are listed with their single-page route.
  */
+/**
+ * #9711: the file_drift hold of a page named by --slug. On a read-only mirror the page publishes database-only, so it is
+ * compared through its hold's file (heldLiveDrift), as --held compares it; without the hold it reads as no_drift.
+ */
+async function slugFileDriftHold(engine: BrainEngine, sourceId: string, slug: string): Promise<GitHoldRecord | undefined> {
+  const [row] = await engine.executeRaw<{ record: GitHoldRecord }>(`SELECT h.completed_keys->0 AS record FROM op_checkpoints h
+    JOIN sources s ON s.id=h.completed_keys->0->>'source_id' AND s.incarnation::text=h.completed_keys->0->>'incarnation'
+    WHERE h.op=$1 AND s.id=$2 AND h.completed_keys->0->>'code'='file_drift' AND h.completed_keys->0->>'slug'=$3
+    ORDER BY (h.completed_keys->0->>'path') COLLATE "C" LIMIT 1`, [GIT_HOLD_OP, sourceId, slug]);
+  return row?.record;
+}
+
 async function selectHeld(engine: BrainEngine, sourceId: string, opts: RepairPlanOptions):
   Promise<{ targets: HeldTarget[]; before: number; notSelected: number; legacy: GitHoldRecord[]; otherProvenance: number; provenance?: Record<string, number> }> {
   const after = opts.cursor ? heldCursorPath(sourceId, opts.cursor) : null;
@@ -585,7 +596,10 @@ async function fileGonePage(engine: BrainEngine, sourceId: string, slug: string,
     return { page: { slug, prefer: 'database', exceptions: [], detach_page: { path: now.ghost.path, page_id: now.ghost.page_id, revision: now.ghost.revision, observed_at: target.hold.observed_at } },
       detail: `keeps the page database-only: no commit ever held ${now.ghost.path}, so the page holds the only copy; no file is written and the page forgets that path` };
   }
-  if (opts.prefer === 'file' && !await ghostFileBacked(engine, now.ghost, now.owner)) return { skip: DATABASE_AHEAD_CODE, detail: databaseAheadDetail(now.ghost) };
+  const backing = opts.prefer === 'file' ? await ghostBacking(engine, now.ghost, now.owner, deletedBy) : 'file_backed';
+  if (backing !== 'file_backed') return { skip: backing, detail: ghostKeptDetail(backing, now.ghost, root) };
+  const veto = opts.prefer === 'file' ? await ghostMoveVeto(engine, now.ghost, now.owner) : null;
+  if (veto) return { skip: veto.reason, detail: veto.detail.message };
   if (opts.prefer === 'file') return { page: { slug, prefer: 'file', exceptions: [], soft_delete: { ghost: now.ghost, owner: now.owner } },
     detail: `soft-deletes the page: its file ${now.ghost.path} is gone from the last commit (purged after ${GHOST_PURGE_FUSE_HOURS} h; gbrain restore ${slug} --force undoes it until then)` };
   // GST-2579: recreating the file undoes the commit that deleted it; in bulk the deletion is kept, an exact --slug names the commit and needs consent.
@@ -834,9 +848,9 @@ function item(page: ApprovedPage, index: number, hash: string, last: boolean, pr
 async function compareSelection(engine: BrainEngine, sourceId: string, opts: RepairPlanOptions): Promise<RepairPlan> {
   const held = opts.held ? await selectHeld(engine, sourceId, opts) : null;
   const selected = held ? null : await selectSlugs(engine, sourceId, opts);
-  const mirror = held ? await sourceMirrorReadOnly(engine, sourceId) : false;
+  const mirror = await sourceMirrorReadOnly(engine, sourceId);
   const targets: { slug: string | null; hold?: GitHoldRecord; mirror?: boolean }[] = held ? [...held.legacy.map(hold => ({ slug: hold.slug, hold, mirror })), ...held.targets.slice(0, HELD_WINDOW_PAGES).map(target => ({ slug: target.hold.slug, hold: target.hold, mirror }))]
-    : selected!.slugs.map(slug => ({ slug }));
+    : mirror ? await Promise.all(selected!.slugs.map(async slug => ({ slug, hold: await slugFileDriftHold(engine, sourceId, slug), mirror }))) : selected!.slugs.map(slug => ({ slug }));
   const residuals: Record<string, number> = { ...(held?.notSelected || selected?.notSelected ? { not_selected: held?.notSelected ?? selected!.notSelected } : {}), ...(held?.before ? { before_cursor: held.before } : {}) };
   const count = (key: string) => { residuals[key] = (residuals[key] ?? 0) + 1; };
   const listing: NonNullable<RepairPlan['listing']> = [];
@@ -945,7 +959,7 @@ export const fileDriftRepair: RepairHandler = {
       return { items: items.filter(entry => afterCursor(entry.cursor, after)), preview_hash: opts.expect, residuals: {} };
     }
     const held = opts.held ? await selectHeld(engine, sourceId, opts) : null;
-    const mirror = held ? await sourceMirrorReadOnly(engine, sourceId) : false;
+    const mirror = await sourceMirrorReadOnly(engine, sourceId);
     const mirrorFile = mirror && opts.prefer === 'file';
     const { slugs, classes, notSelected, unknown } = held
       ? { slugs: [], classes: new Map<string, DriftClass>(), notSelected: held.notSelected, unknown: [] as UnknownDrift[] } : await selectSlugs(engine, sourceId, opts);
@@ -988,14 +1002,16 @@ export const fileDriftRepair: RepairHandler = {
           if (targetSlug === null) { count('no_page'); listing.push({ item: `${sourceId}:${label}`, class: 'no_page', detail: 'the hold names no page; the next sync re-classifies it' }); continue; }
           const slug = targetSlug;
           await authorizeReconcile(engine, sourceId, slug);
-          const found = await heldLiveDrift(engine, sourceId, slug, { hold: target?.hold, mirror: mirrorFile });
+          const found = await heldLiveDrift(engine, sourceId, slug, { hold: target?.hold ?? (mirrorFile ? await slugFileDriftHold(engine, sourceId, slug) : undefined), mirror: mirrorFile });
           const live = opts.slugs?.length && found.reason === 'database_only' ? await unboundCollisionDrift(engine, sourceId, slug) ?? found : found;
-          if (target && (target.state === 'file_gone') !== (live.reason === 'canonical_file_missing')) {
+          // #9576: a page stored database-only (a stale mirror import) reads its missing file as database_only with nothing to compare.
+          const fileGone = live.reason === 'canonical_file_missing' || target?.state === 'file_gone' && live.reason === 'database_only' && live.still_present === false;
+          if (target && (target.state === 'file_gone') !== fileGone) {
             count('side_changed');
-            listing.push({ item: `${sourceId}:${slug}`, class: 'side_changed', detail: `its file is ${live.reason === 'canonical_file_missing' ? 'gone' : 'present'} now; gbrain sources status ${sourceId} --json shows its current Decision after the next sync` });
+            listing.push({ item: `${sourceId}:${slug}`, class: 'side_changed', detail: `its file is ${fileGone ? 'gone' : 'present'} now; gbrain sources status ${sourceId} --json shows its current Decision after the next sync` });
             continue;
           }
-          if (live.reason === 'canonical_file_missing') {
+          if (fileGone) {
             const gone = await fileGonePage(engine, sourceId, slug, opts, assessmentAt, target);
             if ('skip' in gone) {
               count(gone.skip);
@@ -1148,6 +1164,7 @@ export const fileDriftRepair: RepairHandler = {
     else if ('soft_delete' in artifact) {
       const retired = await retireGhost(ctx, artifact.soft_delete.ghost, artifact.soft_delete.owner, async () => requestId);
       outcome = retired.applied ? { applied: true, outcome: 'repaired', detail: { request_id: requestId, prefer: 'file', action: 'soft_delete' } }
+        : retired.outcome === 'refused' ? { applied: false, outcome: 'refused', reason: retired.reason, detail: { request_id: requestId, ...(retired.detail ?? {}) } }
         : { applied: false, outcome: 'changed_since_preview', reason: retired.outcome === 'file_restored' ? 'file_restored' : 'revision_conflict', detail: { request_id: requestId, message: retired.reason } };
     } else try {
       await asLocalCli(ctx.engine, () => runReconcileApply(ctx.engine, { source_id: page.source_id, slug: page.slug, preview: artifact.preview, request_id: requestId,
@@ -1172,8 +1189,9 @@ export const fileDriftRepair: RepairHandler = {
     for (const action of (details.next_actions ?? []) as string[]) lines.push(`  ${action}`);
     if (typeof details.artifact === 'string') lines.push(`  private artifact (each page's resolved result and exceptions): ${details.artifact}`);
     if (typeof details.protections === 'string') lines.push(`  ${details.protections}`);
-    for (const page of (details.pages ?? []) as Array<{ slug: string; exceptions: DriftException[] }>) {
-      for (const exception of page.exceptions) lines.push(`  kept ${page.slug} ${exception.path}: ${exception.reason}`);
+    // #9711: a comparison's pages (no --prefer) carry no exceptions.
+    for (const page of (details.pages ?? []) as Array<{ slug: string; exceptions?: DriftException[] }>) {
+      for (const exception of page.exceptions ?? []) lines.push(`  kept ${page.slug} ${exception.path}: ${exception.reason}`);
     }
     return lines;
   },

@@ -194,12 +194,7 @@ export async function appendBeliefEvents(tx: BrainEngine, input: BeliefEventDraf
  * Called after commit by each appender; readers that find an unmarked committed
  * publication call it too. A group's members share one statement and one time.
  */
-export async function markBeliefCommits(engine: Pick<BrainEngine, 'executeRaw'>, publicationIds: readonly string[]): Promise<void> {
+export async function markBeliefCommits(engine: Pick<BrainEngine, 'markBeliefCommits'>, publicationIds: readonly string[]): Promise<void> {
   if (!publicationIds.length) return;
-  await engine.executeRaw(`WITH t AS MATERIALIZED (SELECT clock_timestamp() AS at)
-    INSERT INTO belief_commit_marks (publication_id, observed_at)
-    SELECT e.publication_id, t.at FROM t, belief_events e
-    WHERE e.publication_id = ANY($1::uuid[])
-    GROUP BY e.publication_id, t.at HAVING max(e.recorded_at) <= t.at
-    ON CONFLICT (publication_id) DO NOTHING`, [[...publicationIds]]);
+  await engine.markBeliefCommits(publicationIds);
 }

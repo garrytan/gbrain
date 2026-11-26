@@ -52,17 +52,56 @@ describe('tombstonedTranscriptsForHashes — un-migrated brain vs real failure',
     expect(c.warns[0]).toContain('extract_atoms_transcript_state');
   });
 
-  test('any other error is still reported on stderr every time (assuming none tombstoned)', async () => {
+  // The stderr line names the failure class only (`timeout` or `provider_error`): a driver's message or code can carry a
+  // connection string or password. The canary has no `user:password@` part so the secrets scan stays clean.
+  const CANARY = 'VALUECANARY';
+
+  test('any other error is still reported on stderr every time (assuming none tombstoned), naming the class only', async () => {
     const c = capture();
     try {
-      const engine = throwingEngine(new Error('connection reset by peer'));
+      const engine = throwingEngine(Object.assign(
+        new Error(`connection reset by peer postgresql://db.example/brain?app=${CANARY}`), { code: '57P01' }));
       expect(await tombstonedTranscriptsForHashes(engine, 'default', ['a'.repeat(16)])).toEqual(new Set());
+      expect(await tombstonedTranscriptsForHashes(engine, 'default', ['b'.repeat(16)])).toEqual(new Set());
     } finally {
       c.restore();
     }
     expect(c.warns).toEqual([]);
+    expect(c.errors).toHaveLength(2);
+    for (const line of c.errors) {
+      expect(line).toContain('transcript tombstone check failed (assuming none tombstoned): provider_error');
+      expect(line).not.toContain(CANARY);
+      expect(line).not.toContain('://');
+      expect(line).not.toContain('connection reset');
+      expect(line).not.toContain('57P01');
+    }
+  });
+
+  test('a statement timeout names timeout, not the message or SQLSTATE', async () => {
+    const c = capture();
+    try {
+      const engine = throwingEngine(Object.assign(
+        new Error(`canceling statement due to statement timeout postgresql://db.example/brain?app=${CANARY}`), { code: '57014' }));
+      expect(await tombstonedTranscriptsForHashes(engine, 'default', ['a'.repeat(16)])).toEqual(new Set());
+    } finally {
+      c.restore();
+    }
     expect(c.errors).toHaveLength(1);
-    expect(c.errors[0]).toContain('connection reset by peer');
+    expect(c.errors[0]).toContain('assuming none tombstoned): timeout');
+    expect(c.errors[0]).not.toContain(CANARY);
+    expect(c.errors[0]).not.toContain('57014');
+  });
+
+  test('a non-Error throw prints no text of its own either', async () => {
+    const c = capture();
+    try {
+      const engine = { executeRaw: async () => { throw `postgresql://db.example/brain?app=${CANARY}`; } } as unknown as BrainEngine;
+      expect(await tombstonedTranscriptsForHashes(engine, 'default', ['a'.repeat(16)])).toEqual(new Set());
+    } finally {
+      c.restore();
+    }
+    expect(c.errors).toHaveLength(1);
+    expect(c.errors[0]).not.toContain(CANARY);
   });
 });
 

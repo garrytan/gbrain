@@ -46,6 +46,7 @@
 import { withAdmissionOrigin } from './persistence/admission-origin.ts';
 import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync, statSync, realpathSync } from 'fs';
 import { isAbsolute, join } from 'path';
+import { randomUUID } from 'node:crypto';
 import { gbrainPath, loadConfig } from './config.ts';
 import type { BrainEngine } from './engine.ts';
 import { createProgress, type ProgressReporter } from './progress.ts';
@@ -83,7 +84,7 @@ export type CyclePhase =
   //    narrative pattern statements + active bias tags. Voice-gated.
   | 'propose_takes' | 'grade_takes' | 'calibration_profile'
   | 'edge_contradictions' // temporal typed edges: LLM flags conflicts, date math closes
-  | 'claim_conflicts' // GBRA-216: keyless typed-claim conflicts filed as decide_proposals (default off)
+  | 'claim_conflicts' // GBRA-216: keyless typed-claim conflicts filed as decide_proposals (default propose)
   // #2653 — drift detection (default OFF; dream.drift.enabled). LLM-judges
   // soft-band takes against recent timeline evidence; report-only in v1
   // (writes reports/drift-<date>; auto_update mutates nothing).
@@ -94,6 +95,8 @@ export type CyclePhase =
   // Lane D — runs queued facts-absorb jobs on PGLite (no job worker there); bounded per run and per day.
   | 'facts_drain'
   | 'embed' | 'orphans' | 'purge'
+  // Nightly learning: records what this cycle learned in the learning_items ledger (src/core/learning/derive.ts).
+  | 'learning_derive'
   // GBRA-438: bookkeeping GC split out of purge (retention-bound rows and files, never a page).
   | 'bookkeeping_gc'
   // v0.39 T12: schema-suggest passive trigger (D3 + D4 plan-eng-review).
@@ -225,6 +228,7 @@ export const ALL_PHASES: CyclePhase[] = [
   // is settled; thin wrapper around runSuggest() library. Cheap (heuristic
   // by default; LLM only when chat provider configured).
   'schema-suggest',
+  'learning_derive', // nightly learning: after every producer, before purge, so each target still exists
   // v0.26.5: hard-deletes soft-deleted pages and expired archived sources past
   // the 72h recovery window. Runs last so the rest of the cycle sees the
   // recoverable set; the purge then drops what's expired.
@@ -383,6 +387,7 @@ const NEEDS_LOCK_PHASES: ReadonlySet<CyclePhase> = new Set([
   // entry covers the cycle-level coordination.
   'skillopt',
   'embed',
+  'learning_derive', // writes learning_items pointer rows
   'purge',
   'bookkeeping_gc',
 ]);
@@ -2331,9 +2336,10 @@ async function runCycleUnscoped(
         phaseResults.push(skipNoBrainDir('synthesize'));
       } else {
         progress.start('cycle.synthesize');
-        const { runPhaseSynthesize } = await import('./cycle/synthesize.ts');
+        const [{ runPhaseSynthesize }, { synthesisRotation }] = await Promise.all([import('./cycle/synthesize.ts'), import('./cycle/synthesize-source-routing.ts')]);
+        const rotation = await synthesisRotation(engine, cycleSourceId ?? 'default', !opts.sourceId && !opts.synthInputFile && !opts.synthDate && !opts.synthFrom && !opts.synthTo);
         const { result, duration_ms } = await racedTimePhase(() => runPhaseSynthesize(engine, {
-          brainDir,
+          brainDir: rotation?.turn?.brainDir ?? brainDir,
           dryRun,
           // W0 (Tier-1 #1): wrap the caller hook so this phase ALSO refreshes
           // the cycle lock (pre-fix these sites passed the raw — in production
@@ -2345,9 +2351,8 @@ async function runCycleUnscoped(
           from: opts.synthFrom,
           to: opts.synthTo,
           bypassDreamGuard: opts.synthBypassDreamGuard,
-          // #1586: scope synthesized writes to the cycle's resolved source
-          // (explicit --source wins, else derived from the checkout dir).
-          sourceId: cycleSourceId,
+          // #1586: synthesized writes go to the cycle's resolved source (--source, else the checkout), or #8669's turn.
+          sourceId: rotation?.turn?.sourceId ?? cycleSourceId, sessionsOnly: !!rotation?.turn,
           once: opts.onceForPhase === 'synthesize',
           // #4077: combined external-abort + lock-steal signal, so a
           // cancelled cycle stops judge calls, inline children, and
@@ -2361,9 +2366,9 @@ async function runCycleUnscoped(
         }), 'synthesize');
         result.duration_ms = duration_ms;
         phaseResults.push(result);
-        // v0.29: capture synthesize-written slugs so the recompute_emotional_weight
-        // phase can union them with sync's pagesAffected for incremental mode.
-        if (result.details && Array.isArray(result.details.written_slugs)) {
+        await rotation?.settle(result, dryRun);
+        // v0.29: synthesize-written slugs join sync's pagesAffected for recompute_emotional_weight's incremental mode.
+        if (!rotation?.turn && result.details && Array.isArray(result.details.written_slugs)) {
           synthesizeWrittenSlugs = result.details.written_slugs as string[];
         }
         progress.finish();
@@ -3051,6 +3056,19 @@ async function runCycleUnscoped(
           });
         }
         progress.finish();
+      }
+      await safeYield(opts.yieldBetweenPhases);
+    }
+
+    // Nightly learning: one run id per cycle, handed to the ledger pass (src/core/learning/derive.ts); it never fails the cycle.
+    if (phases.includes('learning_derive')) {
+      checkAborted(cycleSignal);
+      if (!engine) {
+        phaseResults.push({ phase: 'learning_derive', status: 'skipped', duration_ms: 0, summary: 'no database connected', details: { reason: 'no_database' } });
+      } else {
+        progress.start('cycle.learning_derive');
+        const { result, duration_ms } = await timePhase(async () => (await import('./learning/derive.ts')).runPhaseLearningDerive(engine, { runId: randomUUID(), dryRun }), 'learning_derive');
+        result.duration_ms = duration_ms; phaseResults.push(result); progress.finish();
       }
       await safeYield(opts.yieldBetweenPhases);
     }

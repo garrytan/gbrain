@@ -1,6 +1,6 @@
 {
   "golden": {
-    "count": 326,
+    "count": 332,
     "gaps": [
       17,
       18,
@@ -54,6 +54,8 @@
       "PERSISTENCE_SYNC_WATERMARK_INDEX": "93523954a30e8483717f07ec97a3e0cd062b15d8a60cc759281054b06c23bb40",
       "PLANNER_REPAIR_TABLES": "008725595e099adba279d4292661eb4a59930b777c35db43c340220f7f12e093",
       "POSTGRES_15_GATE": "09c990d8c0bd6e4ebeb3b897477748609035b0e695b5b2c6a9bf7539f7352193",
+      "SPELLING_KEY_INDEX": "b628f88d0108db25686d3d4f2c9ac694d4e65c015b771831162e60889e876ab1",
+      "SPELLING_KEY_INDEX_SQL": "33d4476063b14d9b8df54b55b659242f622ab796cc7f262549f1dff4907f5ae5",
       "TABLES": "3fc77a0fccb525f9b791098f9eae27b19adaa3f5dadbabcff2a719137cbc3ef8",
       "TOKEN_TTL_MAX_SECONDS": "f4a45bec6ec0bacc859dc57732ceb76cec7eb72f242b5a6c89d47190d0525ab4",
       "TOKEN_TTL_MIN_SECONDS": "441d8ce6bd21f753de90abd3013eaa9992a469ea60c590f1005533618199aa25",
@@ -65,6 +67,7 @@
       "buildHashIndex": "c34dfce66c3ac9d323ba298220dcad7c507a9481c663053f4833dbe158dfabe5",
       "buildIndexOnline": "aea86be06da261a76f6fad15def8f417cb5318c7991d2ded3cd86aeed82fb2cc",
       "buildOriginIndexIfClean": "cc6d16f50a4b5e303b87338700b9cded9784fc9cc9391c795bdd755e32385e6c",
+      "buildSpellingIndex": "5dc1389b1e2a6992bd0474c93830d6aad6a4155a534b20e211570a4c8185e9f7",
       "checkpointKey": "337ef776b18f428542093e27c4d570249d6a5856e5a17e4499d26a22877af34b",
       "chunkSearchVectorTriggerFnSql": "9ac61adf64b64fdef7c0b786d093bc7aeb51c561fd680823d2fc4fc720b2bc33",
       "clampOAuthTokenTtls": "b1e94ea8f5b3c3870a56b0f6d00d0a274c2e9dcad912b828848aec250732645f",
@@ -99,6 +102,7 @@
       "runMigrationStatement": "84ba969e61fe8e898dd50cf96e1643d237e521e04cd92b5ef43c5d6be75940c1",
       "schemaLockBlockedError": "fcb368711708ca5535507b34fb296d8cdeda8b9977138d2c1cdb1f117e3abd26",
       "seedConnectorDispatchAttempts": "2395a3995a6bf78776d37e72ce79b0dd15f6c6fa7f81c40612a744cb74ab01a5",
+      "serverEncoding": "c62a0c43b24be561fbdfd43466bf42132b86c5ea3c5fb1eb37fb73f3eb3a8cfc",
       "slugifyPath": "401dbca23580865d8b168dd8d84db4a6c708c6610d7cb61abafc7d0ee9809063",
       "sqlQueryForEngine": "71fb1ccec1b22cdc1662876dbd8c17ed81e9ab83485c6965cdf5caa4fc4a4ab5",
       "swapIdentityIndex": "84ac62b697a16d244b2e0eecc962fb0558a24c2a26123bc7e77f1c7bec7c1066",
@@ -108,7 +112,7 @@
       "widenIdentityIndex": "86a6176bd7637d964dbc1d3cd3b1bdfa3ca0161e1ee248c37d7380a1471282e6",
       "withSchemaLockTimeout": "95605bd3004955e11e936c7a4aa6889319b401098abf9db18ef3e48da2c3fc59"
     },
-    "latest": 331,
+    "latest": 337,
     "records": [
       {
         "handler": {
@@ -3487,8 +3491,8 @@
         "idempotent": true,
         "name": "write_gate",
         "sql": {
-          "length": 2797,
-          "sha256": "2a3434eded166927c0c55b55cb7465cb10494a55404fd6ad9b2b92c72b7f5d17"
+          "length": 4007,
+          "sha256": "03a18d3c54ff533a8cbd2c7e021f98736714bcebeb491499edc1bf46cafc095e"
         },
         "sqlFor": "absent",
         "transaction": "absent",
@@ -5408,6 +5412,103 @@
         "transaction": "absent",
         "verify": "absent",
         "version": 331
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "engine_writer_observations",
+        "sql": {
+          "length": 4019,
+          "sha256": "26fa8ac4134ddb50f21c31fe1406aeef7461f346c0f07d0f30a7c13f41aa466d"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 332
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "hold_page_id",
+        "sql": {
+          "length": 4358,
+          "sha256": "60e825768d1388056a1310a19a3d3cf639a8bebda3334f78b4f319d98434f924"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 333
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "learning_items",
+        "sql": {
+          "length": 1300,
+          "sha256": "452befb84aff2e089f1cb62b2a220222badef1996be01e691495bf5ee152df83"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 334
+      },
+      {
+        "handler": {
+          "form": "identifier",
+          "helpers": [
+            "PLANNER_REPAIR_TABLES",
+            "SPELLING_KEY_INDEX",
+            "SPELLING_KEY_INDEX_SQL",
+            "analyzeAfterIndexBuild",
+            "analyzeDeferred",
+            "analyzeYieldingToVacuum",
+            "buildIndexOnline",
+            "buildSpellingIndex",
+            "dropInvalidConcurrentIndex",
+            "lockTableForAnalyze",
+            "migrationNotice",
+            "quietMigrationNotices",
+            "serverEncoding",
+            "tableRows"
+          ],
+          "sha256": "d6b1cdfce72d12e59df6e4aedeb541b8ec914615b4e1a0defe7c9f2bec8d4711"
+        },
+        "idempotent": true,
+        "name": "pages_spelling_key_index",
+        "sql": {
+          "length": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "sqlFor": "absent",
+        "transaction": false,
+        "verify": "absent",
+        "version": 335
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "files_follow_page_slug",
+        "sql": {
+          "length": 188,
+          "sha256": "b9e49542a84f5e85a80793885b1c09597f62752a7596552e66e6b23efa848565"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 336
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "write_gate_hold_rechecks",
+        "sql": {
+          "length": 788,
+          "sha256": "773cdc50685a4fb6523f38ebf7a03b8da33596421f48bb4c7caa95dddb76b17f"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 337
       }
     ],
     "versions": [
@@ -5736,7 +5837,13 @@
       328,
       329,
       330,
-      331
+      331,
+      332,
+      333,
+      334,
+      335,
+      336,
+      337
     ]
   },
   "normalizer": "migrations-record-v1"

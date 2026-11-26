@@ -133,6 +133,24 @@ describe('eval-trajectory CLI — regression annotation in human output', () => 
     expect(out).toContain('25.0%');
   });
 
+  test('a rising lower-is-better metric is marked [REGRESSION ↑XX.X%]; a falling one is not marked', async () => {
+    await insertTyped({ entity_slug: 'cli-traj-burn', metric: 'burn', value: 150000, valid_from: new Date('2026-04-12') });
+    await insertTyped({ entity_slug: 'cli-traj-burn', metric: 'burn', value: 200000, valid_from: new Date('2026-07-08') });
+    const rose = await captureRun(['cli-traj-burn']);
+    expect(rose.out).toContain('[REGRESSION ↑33.3%]');
+    expect(rose.out).not.toContain('↓');
+    const json = JSON.parse((await captureRun(['cli-traj-burn', '--json'])).out);
+    expect(json.regressions).toHaveLength(1);
+    expect(json.regressions[0]).toMatchObject({ metric: 'burn', from_value: 150000, to_value: 200000, direction: 'up' });
+    expect(json.schema_version).toBe(1);
+
+    await insertTyped({ entity_slug: 'cli-traj-churn', metric: 'churn', value: 5, unit: 'pct', valid_from: new Date('2026-04-12') });
+    await insertTyped({ entity_slug: 'cli-traj-churn', metric: 'churn', value: 3, unit: 'pct', valid_from: new Date('2026-07-08') });
+    const fell = await captureRun(['cli-traj-churn']);
+    expect(fell.out).not.toContain('REGRESSION');
+    expect(fell.out).not.toContain('Regressions detected');
+  });
+
   test('empty entity produces the friendly no-claims message', async () => {
     const { out } = await captureRun(['cli-traj-nothing']);
     expect(out).toContain('Entity: cli-traj-nothing');

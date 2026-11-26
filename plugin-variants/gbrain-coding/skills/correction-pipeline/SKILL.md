@@ -22,7 +22,6 @@ writes_to:
   - people/
   - companies/
   - concepts/
-upstream: correction-pipeline@fc834ee
 when_to_use: "Use when the user asks: \"that's wrong\", \"that's not true\", \"I never said that\", \"where did you get that\", \"you got that wrong\"."
 ---
 
@@ -115,8 +114,8 @@ Is there a wrong fact with high confidence? Note its fact id.
 | **BRAIN_ERROR** | Wrong fact exists in a brain page | Edit the page in the brain repo, commit, re-sync |
 | **MEMORY_ERROR** | Wrong fact exists in memory files | Fix the memory file |
 | **SOUL_USER_ERROR** | Misleading passage in SOUL.md or USER.md | Fix the ANSWER BANK, re-render — never the rendered file |
-| **FACTS_TABLE_ERROR** | Wrong fact in the gbrain facts table | `recall` → `forget <fact-id>` → `remember` the correction |
-| **HALLUCINATION** | No source — LLM confabulated from partial signals | Name the contamination vector (what partial signals led to it), write a guard fact |
+| **FACTS_TABLE_ERROR** | Wrong fact in the gbrain facts table | `recall` → `correct` (rule + fact_id + corrected_fact) |
+| **HALLUCINATION** | No source — LLM confabulated from partial signals | Name the contamination vector (what partial signals led to it), save a standing rule with `correct` |
 | **STALE_DATA** | Fact was once true but is no longer | Update the source with current truth; supersede the stale fact |
 | **CROSS_CONTAMINATION** | Correct fact about person A attributed to person B | Fix attribution in the source — on BOTH entities |
 
@@ -141,19 +140,20 @@ Is there a wrong fact with high confidence? Note its fact id.
   The full interview discipline (read-back ritual, verbatim answers, backup
   behavior) lives in `skills/soul-audit/SKILL.md` — route through it for
   anything beyond a single-key fix.
-- **FACTS_TABLE_ERROR:** Expire the wrong row and write the correction with
-  provenance:
+- **FACTS_TABLE_ERROR:** One `correct` call saves the user's rule, replaces the
+  wrong fact (or withdraws it when there is no corrected fact) and returns a
+  receipt; branch on its `state` and relay `next.user_message` when `next.who`
+  is `owner`:
   ```bash
   gbrain recall <entity-slug>                                  # find the fact id
-  gbrain forget <fact-id>                                      # expire the wrong fact
-  gbrain remember "<correct fact>" \
-    --provenance "user correction, YYYY-MM-DD" --entity <entity-slug>
+  gbrain correct "<the user's rule>" --fact-id <fact-id> \
+    --corrected-fact "<correct fact>" --entity <entity-slug>
   ```
 - **HALLUCINATION:** There is no source to fix. Identify the partial signal
-  that seeded the confabulation, then write a guard so it can't reseed:
+  that seeded the confabulation, then save the user's correction as a standing
+  rule so it can't reseed (`correct` with `rule` and `entity`, no fact id):
   ```bash
-  gbrain remember "WRONG: <what was said>. RIGHT: <what is true>. Guard: <instruction to prevent recurrence>" \
-    --provenance "user correction, YYYY-MM-DD (hallucination guard)" --entity <entity-slug>
+  gbrain correct "<what is true; never say what was said>" --entity <entity-slug>
   ```
 - **STALE_DATA:** Update the source page with current truth (BRAIN_ERROR
   flow), and supersede any stale facts rows (`forget` + `remember` with the
@@ -193,7 +193,7 @@ Short report:
 |------|-------------|--------|
 | **S1 — Identity error** | Wrong facts about the user's family, heritage, history, core identity | Fix immediately. These contaminate EVERYTHING — every synthesis, every book mirror, every conversation. |
 | **S2 — Entity error** | Wrong facts about a person, company, deal in the brain | Fix brain page, check propagation |
-| **S3 — Context error** | Wrong inference about the user's current state, feelings, situation | Guard fact via `remember`. Usually hallucination. |
+| **S3 — Context error** | Wrong inference about the user's current state, feelings, situation | Standing rule via `correct`. Usually hallucination. |
 | **S4 — Minor factual** | Wrong date, wrong number, wrong detail | Fix source, no propagation check needed |
 
 ## Recurring Error Patterns to Watch
@@ -232,8 +232,7 @@ This skill guarantees:
 - Propagation is checked (whole-brain grep + `gbrain search`)
 - The user gets a clear report of what was wrong, why, and what was fixed
 - Routing matches the canonical triggers in the frontmatter
-- Privacy contract preserved: no real names, no fork-specific filesystem path
-  literals, no upstream-fork references
+- Examples use placeholder names and paths.
 
 ## Output Format
 

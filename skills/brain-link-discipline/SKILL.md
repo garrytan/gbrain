@@ -20,7 +20,6 @@ triggers:
   - "link the page in the same message"
 mutating: true
 writes_pages: false
-upstream: brain-link-on-commit@fc834ee + brain-link-report@fc834ee
 # brain_first: exempt — this skill governs outbound-message link formatting
 # and performs no entity/fact lookups. Its only network call is an HTTP
 # existence check against the user's own hosted git remote (link
@@ -206,8 +205,7 @@ This skill guarantees:
 - In-page cross-references stay relative, preserving the links/backlinks
   graph.
 - Routing matches the canonical triggers in the frontmatter.
-- Privacy contract preserved: no real names, no fork-specific filesystem
-  path literals, no upstream-fork references.
+- Examples use placeholder names and paths.
 
 ## Output Format
 

@@ -48,7 +48,7 @@ export function cliFastPath(argv: string[], env: NodeJS.ProcessEnv = process.env
 async function runSkillResolverLaneFastPath(): Promise<void> {
   const rest = parseGlobalFlags(process.argv.slice(2)).rest;
   const event = rest[1]!;
-  if (event === 'user-prompt' && process.env.GBRAIN_HOOKS !== '0') (await import('./core/skills/resolver/lane-worker.ts')).startLaneWorker();
+  if (process.env.GBRAIN_HOOKS !== '0') (await import('./core/skills/resolver/lane-worker.ts')).startLaneWorker();
   await runCliPreflight();
   if (process.env.GBRAIN_HOOKS === '0') return;
   (await import('./core/session-cwd.ts')).captureHookSessionCwd();

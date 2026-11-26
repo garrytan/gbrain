@@ -37,9 +37,13 @@ async function gitAsync(root: string, args: string[]): Promise<string | null> {
   return r.error ? null : r.stdout.trim() || null;
 }
 
+/** An empty file records nothing: a fetch that fails (remote gone) truncates FETCH_HEAD and leaves a fresh mtime (#9933). */
 function mtime(path: string | null): number {
   if (!path) return 0;
-  try { return statSync(path).mtimeMs; } catch { return 0; }
+  try {
+    const stat = statSync(path);
+    return stat.size > 0 ? stat.mtimeMs : 0;
+  } catch { return 0; }
 }
 
 /** Whether the checkout's branch tracks an upstream (a `git pull` would have something to refresh). */
@@ -61,7 +65,11 @@ export async function observeUpstream(root: string, syncedCommit: string | null)
   return { checkedAt: new Date(checkedMs), commit, behind: count === null ? null : Number(count) };
 }
 
-/** Best-effort: never fails a sync. Compares the upstream with the source's synced commit as stored after the run. */
+/**
+ * Best-effort: never fails a sync. Compares the upstream with the source's synced commit as stored after the run.
+ * A check time never moves back for the same upstream commit: a failed fetch empties FETCH_HEAD, and the reflog
+ * can be older than the no-change fetch already recorded (#9933).
+ */
 export async function recordUpstreamObservation(engine: BrainEngine, sourceId: string, repoPath?: string): Promise<void> {
   try {
     const [source] = await engine.executeRaw<{ local_path: string | null; last_commit: string | null }>(
@@ -70,7 +78,9 @@ export async function recordUpstreamObservation(engine: BrainEngine, sourceId: s
     if (!source || !root) return;
     const observed = await observeUpstream(root, source.last_commit);
     if (!observed) return;
-    await engine.executeRaw('UPDATE sources SET upstream_checked_at=$2::timestamptz,upstream_commit=$3,upstream_behind=$4 WHERE id=$1',
+    await engine.executeRaw(
+      `UPDATE sources SET upstream_checked_at = CASE WHEN upstream_commit = $3 AND upstream_checked_at > $2::timestamptz THEN upstream_checked_at ELSE $2::timestamptz END,
+        upstream_commit=$3,upstream_behind=$4 WHERE id=$1`,
       [sourceId, observed.checkedAt.toISOString(), observed.commit, observed.behind]);
   } catch {
     // Pre-migration brain or unreadable checkout: freshness stays "upstream unknown".

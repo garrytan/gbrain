@@ -240,6 +240,9 @@ export async function setupContractBrain(engine: BrainEngine): Promise<ContractB
     // Facts extraction is on only for the facts-lane cases, so no other case's
     // publications queue facts-absorb work into a later case.
     await engine.setConfig('facts.extraction_enabled', 'false');
+    // The conversation archive reads the machine's own agent sessions (~/.codex, ~/.claude); on a
+    // developer machine it imported them as pages outside the case source and failed atom_dispatch.
+    await engine.setConfig('transcripts.archive.enabled', 'off');
     await engine.setConfig('models.chat', CHAT_MODEL);
     const embedding = { model: await engine.getConfig('embedding_model') ?? 'openai:text-embedding-3-large',
       dimensions: Number(await engine.getConfig('embedding_dimensions') ?? 1536) };

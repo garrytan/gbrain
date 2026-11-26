@@ -21,7 +21,9 @@ gbrain setup claude-code --shape both --notes ~/notes --docs ~/acme-example/docs
 - **Your notes, read only.** `--notes DIR` imports the markdown in that folder
   (`gbrain import DIR --no-embed`). Setup never writes into the folder. Above 500
   markdown files it prints the import command for the agent to run as its own step,
-  so setup stays quick.
+  so setup stays quick. If the import fails or setup can't read the folder, setup
+  still finishes the rest, prints the error and the import command on stderr, and
+  exits 1.
 
 ## Company: what it writes
 
@@ -78,13 +80,20 @@ gbrain setup claude-code --shape both --notes ~/notes --docs ~/acme-example/docs
 
 `--shape both` does both parts.
 
+A `--docs` or `--transcripts` import that fails, can't read its folder, or can't run
+because the `company` source could not be set up gets the same treatment as a failed
+`--notes` import: setup finishes the rest, prints the error and the import command on
+stderr, and exits 1.
+
 ## The instruction block
 
 A short block in the agent's instruction file, next to the brain-first block
 (`~/.claude/CLAUDE.md` for Claude Code, `$CODEX_HOME/AGENTS.md` for Codex). It names the
 pages to read for the parts you chose, says to state facts about you only from `me/facts`
 and company numbers only from `company/facts`, to add decisions to `company/decisions` as
-dated entries, to save company facts with `--source company`, to quote only the dated
+dated entries, to save company facts with `--source company`, to name the readers of a
+decision the whole team should know (`readable_by: [<member>, ...]` in its frontmatter;
+a `company/` page without it is readable by everyone who can read the company source), to quote only the dated
 lines of a page whose frontmatter says `type: facts` (`me/facts` and `company/facts` do),
 and that a `status: stub` page holds no facts yet. `--no-instructions` skips it, and takes it out again if an
 earlier run wrote it.

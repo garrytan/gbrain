@@ -4,34 +4,23 @@
  * config.json `skills.resolver.pins.<catalog>` so a `--skill-loading off`
  * (which removes the derived skill-index state) never deletes them.
  *
- * gbrain ships no pins: a catalog with none renders no pinned block. Each pin
- * is a skill id that must be in the catalog's index and an optional
- * trigger-first line (one line, at most 100 characters, no angle brackets).
- * Rendering drops any pin the catalog no longer holds and reports it, so an
- * unknown name never reaches the model, and cuts the block at whole lines to
- * PIN_BLOCK_TOKEN_CAP. The same pins always render the same bytes, which keeps
- * the host's prompt cache warm.
+ * gbrain ships no pins: a catalog with none renders no pinned block. The
+ * pin rules and the renderer (unknown pins left out, PIN_BLOCK_TOKEN_CAP,
+ * same pins same bytes) live in src/core/skills/resolver/pinned-block.ts,
+ * re-exported here; this module reads and writes the config. The Claude
+ * Code and Codex hook lane prints <harness>-user's block at every
+ * SessionStart (sessionStartPinnedBlock, from the lane's worker thread).
  */
 import { existsSync, unlinkSync } from 'node:fs';
 import { atomicWriteTextFile } from '../bootstrap/atomic-write.ts';
-import { estimateTokens, loadLine, quoted } from '../skills/resolver/block.ts';
-import { IndexReader } from '../skills/resolver/index-format.ts';
-import { catalogFile, validCatalogName } from '../skills/resolver/paths.ts';
+import { catalogSkills, parsePins, renderPinnedBlock, type Pin, type PinClass, type PinnedBlock } from '../skills/resolver/pinned-block.ts';
+import { readReceipt } from '../skills/resolver/catalog-files.ts';
+import { validCatalogName } from '../skills/resolver/paths.ts';
 import { readResolverConfig, type ResolverConfigRead } from './skill-resolver-config.ts';
 
-export const PIN_LINE_MAX = 100;
+export { catalogSkillIds, catalogSkillPaths, catalogSkills, parsePins, PIN_BLOCK_TOKEN_CAP, PIN_CLASSES, PIN_LINE_MAX, pinProblem, renderPinnedBlock, sessionStartPinnedBlock, type Pin, type PinClass, type PinnedBlock } from '../skills/resolver/pinned-block.ts';
+
 export const PINS_MAX = 64;
-export const PIN_BLOCK_TOKEN_CAP = 600;
-
-export interface Pin { name: string; line?: string }
-export interface PinnedBlock { block: string; tokens: number; ids: string[]; unknown: string[]; cut: string[] }
-
-/** Why a pin is not valid as written, or null. */
-export function pinProblem(pin: Pin): string | null {
-  if (!pin.name || pin.name.length > 256 || /[\u0000-\u001f\u007f<>]/.test(pin.name)) return 'the skill name must be 1-256 visible characters with no < or >';
-  if (pin.line !== undefined && (pin.line.length === 0 || pin.line.length > PIN_LINE_MAX || /[\u0000-\u001f\u007f<>]/.test(pin.line))) return `--line must be one line of 1-${PIN_LINE_MAX} characters with no < or >`;
-  return null;
-}
 
 function section(doc: Record<string, unknown>): Record<string, unknown> {
   const s = (doc.skills as { resolver?: { pins?: unknown } } | undefined)?.resolver?.pins;
@@ -40,16 +29,7 @@ function section(doc: Record<string, unknown>): Record<string, unknown> {
 
 /** The pins for one catalog, in the operator's order; malformed entries are skipped. */
 export function readPins(read: ResolverConfigRead, catalog: string): Pin[] {
-  if (read.state !== 'ok') return [];
-  const raw = section(read.doc)[catalog];
-  if (!Array.isArray(raw)) return [];
-  return raw.flatMap((p): Pin[] => {
-    if (!p || typeof p !== 'object') return [];
-    const { name, line } = p as { name?: unknown; line?: unknown };
-    if (typeof name !== 'string') return [];
-    const pin: Pin = typeof line === 'string' ? { name, line } : { name };
-    return pinProblem(pin) ? [] : [pin];
-  });
+  return read.state === 'ok' ? parsePins(section(read.doc)[catalog]) : [];
 }
 
 /** Every catalog that has pins. */
@@ -63,7 +43,7 @@ export function writePins(read: Exclude<ResolverConfigRead, { state: 'unreadable
   const skills = (doc.skills && typeof doc.skills === 'object' && !Array.isArray(doc.skills) ? doc.skills : {}) as Record<string, unknown>;
   const resolver = (skills.resolver && typeof skills.resolver === 'object' && !Array.isArray(skills.resolver) ? skills.resolver : {}) as Record<string, unknown>;
   const all = section(doc);
-  if (pins.length) all[catalog] = pins.map((p) => (p.line ? { name: p.name, line: p.line } : { name: p.name }));
+  if (pins.length) all[catalog] = pins.map((p) => ({ name: p.name, ...(p.line ? { line: p.line } : {}), ...(p.classes ? { classes: p.classes } : {}) }));
   else delete all[catalog];
   if (Object.keys(all).length) resolver.pins = all; else delete resolver.pins;
   if (Object.keys(resolver).length) skills.resolver = resolver; else delete skills.resolver;
@@ -72,49 +52,21 @@ export function writePins(read: Exclude<ResolverConfigRead, { state: 'unreadable
   atomicWriteTextFile(read.path, `${JSON.stringify(doc, null, 2)}\n`, { freshMode: 0o600 });
 }
 
-/** The skill ids a built catalog holds, or null when it has no readable index. */
-export function catalogSkillIds(home: string, catalog: string): Set<string> | null {
-  const paths = catalogSkillPaths(home, catalog);
-  return paths ? new Set(paths.keys()) : null;
-}
-
-/** Each skill id a built catalog holds with its SKILL.md path ('' when the index has none), or null when it has no readable index. */
-export function catalogSkillPaths(home: string, catalog: string): Map<string, string> | null {
-  if (!validCatalogName(catalog)) return null;
-  const path = catalogFile(home, catalog, 'index.bin');
-  if (!existsSync(path)) return null;
-  let ix: IndexReader | null = null;
-  try {
-    ix = IndexReader.open(path);
-    const ids = new Map<string, string>();
-    for (let d = 0; d < ix.n; d++) { const m = ix.meta(d); ids.set(m.id, m.path ?? ''); }
-    return ids;
-  } catch { return null; } finally { ix?.close(); }
-}
-
 /**
- * The pinned block for one harness. With `known` set, a pin the catalog does
- * not hold is left out and listed in `unknown`; with null (no index yet)
- * nothing renders, because an unchecked name must never reach the model.
- * With paths, each line also names the skill's SKILL.md, for a harness
- * that loads a skill by reading its file.
+ * One catalog's pins rendered against its current index (what setup writes into a harness's surface); OpenClaw's lines
+ * name each SKILL.md, as its load line reads the path first. With a session class (OpenClaw), only the pins for that
+ * class render, and a pin the host hides from the agent (hidden: not visible to its model, or a shadowed copy), or an
+ * `audience: owner` skill outside the owner's class, is left out and listed in `withheld`; a catalog built before audiences
+ * were recorded withholds every conversation pin until it is rebuilt.
  */
-export function renderPinnedBlock(pins: readonly Pin[], opts: { harness?: string; known: Set<string> | null; cap?: number; paths?: ReadonlyMap<string, string> }): PinnedBlock {
-  const cap = opts.cap ?? PIN_BLOCK_TOKEN_CAP;
-  if (!opts.known) return { block: '', tokens: 0, ids: [], unknown: pins.map((p) => p.name), cut: [] };
-  const valid = pins.filter((p) => opts.known!.has(p.name));
-  const unknown = pins.filter((p) => !opts.known!.has(p.name)).map((p) => p.name);
-  const lines = valid.map((p) => `- id: ${quoted(p.name)}${p.line ? ` when: ${quoted(p.line)}` : ''}${opts.paths?.get(p.name) ? ` path: ${quoted(opts.paths.get(p.name)!)}` : ''}`);
-  const head = `Always-available skills, chosen by this agent's operator, whether or not a skill list shows them. ${loadLine(opts.harness)}`;
-  for (let kept = lines.length; kept > 0; kept--) {
-    const block = ['<pinned_skills>', head, ...lines.slice(0, kept), '</pinned_skills>'].join('\n');
-    const tokens = estimateTokens(block);
-    if (tokens <= cap) return { block, tokens, ids: valid.slice(0, kept).map((p) => p.name), unknown, cut: valid.slice(kept).map((p) => p.name) };
-  }
-  return { block: '', tokens: 0, ids: [], unknown, cut: valid.map((p) => p.name) };
-}
-
-/** One catalog's pins rendered against its current index (what setup writes into a harness's surface). */
-export function pinnedBlockFor(home: string, catalog: string, harness?: string): PinnedBlock {
-  return renderPinnedBlock(readPins(readResolverConfig(home), catalog), { harness, known: catalogSkillIds(home, catalog) });
+export function pinnedBlockFor(home: string, catalog: string, harness?: string, readRoot?: string, opts: { cls?: PinClass; hidden?: readonly string[] } = {}): PinnedBlock & { withheld: string[] } {
+  const cat = catalogSkills(home, catalog);
+  const all = readPins(readResolverConfig(home), catalog);
+  const pins = opts.cls ? all.filter((p) => (p.classes ?? ['owner']).includes(opts.cls!)) : all;
+  const unrecorded = opts.cls === 'conversation' && cat !== null && readReceipt(home, catalog)?.catalog.audiences !== 1;
+  const drop = new Set([...(opts.hidden ?? []), ...(opts.cls === 'conversation' && cat ? (unrecorded ? cat.paths.keys() : cat.ownerOnly) : [])]);
+  const withheld = cat ? pins.filter((p) => cat.paths.has(p.name) && drop.has(p.name)).map((p) => p.name) : [];
+  const known = cat ? new Set([...cat.paths.keys()].filter((id) => !drop.has(id))) : null;
+  const r = renderPinnedBlock(pins.filter((p) => !withheld.includes(p.name)), { harness, known, ...(harness === 'openclaw' && cat ? { paths: cat.paths } : {}), ...(readRoot === undefined ? {} : { readRoot }) });
+  return { ...r, withheld };
 }
