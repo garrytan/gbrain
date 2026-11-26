@@ -127,11 +127,9 @@ function settleInTransaction(engine: BrainEngine, candidate: Pick<EmbeddingCandi
     try { await guardEffectSource(tx, effect, opts.hostId); }
     catch (error) {
       if (!(error instanceof OperationError && ['owner_unavailable', 'source_changed'].includes(error.code))) throw error;
-      // A worktree retired by writer deactivate, with this host owning the source's current binding, only strands the
+      // A worktree replaced by writer deactivate or a transfer, with this host owning the source's current binding, only strands the
       // effect: the read-only superseded/reconciled proofs below still hold, but no retry can run for the old worktree.
-      const [former] = await tx.executeRaw<{ state: string; owner_host_id: string }>('SELECT state,owner_host_id::text AS owner_host_id FROM persistence_worktrees WHERE id=$1::uuid',
-        [effect.worktree_id]);
-      const current = former?.state === 'retired' && former.owner_host_id === opts.hostId ? await getWorktreeBinding(tx, effect.source_id, opts.hostId) : null;
+      const current = await getWorktreeBinding(tx, effect.source_id, opts.hostId);
       if (!current || current.worktree_id === effect.worktree_id || current.state !== 'active' || current.owner_host_id !== opts.hostId || current.source_incarnation !== effect.source_incarnation) return { outcome: 'blocked', reason: 'owner_unavailable' };
       formerBinding = true;
     }
