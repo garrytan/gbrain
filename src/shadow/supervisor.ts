@@ -105,7 +105,7 @@ export class ShadowSupervisor implements MirrorTransport {
   private sampleBytes = 0;
   /** Write samples (with the losses they carry) accepted for the current child: written down at stop, so the child can count what its pipe never delivered (`recordSent`). */
   private sentWeight = 0;
-  private sentRecorded = ''; // the session and weight `recordSent` wrote (or tried to) already
+  private sentRecorded = ''; // the session and weight whose receipt `recordSent` published already
   private stdinRef: (NodeJS.WritableStream & { writableFinished?: boolean }) | null = null;
   private readonly drainWaiters = new Set<() => void>();
   private readonly o: Required<Omit<ShadowSupervisorOptions, 'spawn' | 'recordFault' | 'stillEnabled' | 'onDirty' | 'onAsk'>> & Pick<ShadowSupervisorOptions, 'spawn' | 'recordFault' | 'stillEnabled' | 'onDirty' | 'onAsk'>;
@@ -166,12 +166,12 @@ export class ShadowSupervisor implements MirrorTransport {
    */
   recordSent(): void {
     if (!this.session || this.sentWeight === 0 || this.sentRecorded === `${this.session}:${this.sentWeight}`) return; // once per session: the child that took the receipt removes it, and one written after that would be counted again
-    this.sentRecorded = `${this.session}:${this.sentWeight}`;
     const path = sentPath(this.o.dir, this.session);
     try {
-      const epoch_id = readEpoch(this.o.dir)?.epoch_id; // the epoch the samples were sent in: a receipt of an older epoch is never booked into a newer one
-      writeFileSync(`${path}.tmp`, JSON.stringify({ session: this.session, sent: this.sentWeight, ...(this.child?.pid ? { pid: this.child.pid } : {}), ...(epoch_id ? { epoch_id } : {}) }) + '\n', { mode: 0o600 });
+      // No epoch is written: this process cannot know which epoch its worker opened (a worker that starts after a command ends may open a new one), and a wrong stamp would make the worker read its own receipt as another epoch's.
+      writeFileSync(`${path}.tmp`, JSON.stringify({ session: this.session, sent: this.sentWeight, ...(this.child?.pid ? { pid: this.child.pid } : {}) }) + '\n', { mode: 0o600 });
       renameSync(`${path}.tmp`, path);
+      this.sentRecorded = `${this.session}:${this.sentWeight}`; // only a published receipt is not written again: a failed write is tried again at stop()
     } catch { this.fault('write_samples_unrecorded', `sent_count n=${this.sentWeight}`); }
   }
 

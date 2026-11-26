@@ -303,12 +303,13 @@ export class WriteTally {
   }
   /**
    * The receipts (sent counts) of sessions that are gone, settled by an owner worker (one with an epoch): the whole sent count becomes `uncomparable` `receipt_orphaned` lost samples (what that worker had read is unknown, so this can
-   * count samples it had already tallied, never fewer), and the receipt is removed only after every one is on disk. A receipt of an older epoch is removed with no count. A worker is gone when its pid is above 1 and not running, or its file is
+   * count samples it had already tallied, never fewer), and the receipt is removed only after every one is on disk. A receipt that names another epoch than the manifest's (a stamp the serving process does not write, see supervisor.ts `recordSent`) is removed with no count; one that names none is the current epoch's. A worker whose own epoch is no longer the manifest's settles nothing. A worker is gone when its pid is above 1 and not running, or its file is
    * old; an unreadable receipt, a running worker's and a fresh one with no usable pid are left (status counts them). Cost: one listing of the shadow directory per call (at start and each save), and one read per receipt found.
    */
   private settleLeftovers(): void {
     const epoch = this.epoch();
-    if (epoch === null || !this.alive()) return;
+    // A worker whose epoch is no longer the manifest's (a retired one) settles nothing: what it booked would be another epoch's lines, which the owner never reads, and what it removed would be gone.
+    if (epoch === null || !this.alive() || readEpoch(this.dir)?.epoch_id !== epoch) return;
     try {
       for (const name of readdirSync(this.dir).filter((n) => RECEIPT_NAME.test(n))) {
         const path = join(this.dir, name); const r = parseReceipt(path);
@@ -316,6 +317,7 @@ export class WriteTally {
         const age = Date.now() - statSync(path).mtimeMs;
         if (!(age > STALE_RECEIPT_MS || (r.pid !== undefined && r.pid > 1 && r.pid !== this.pid && !running(r.pid)))) continue;
         if (r.epoch_id === undefined || r.epoch_id === epoch) { if (recordLostCount(this.dir, epoch, 'receipt_orphaned', r.sent) < r.sent) continue; }
+        if (readEpoch(this.dir)?.epoch_id !== epoch) return; // the epoch moved while this was booked: the receipt stays for the new owner
         rmSync(path, { force: true });
       }
     } catch { /* silent-read-ok: a receipt that could not be settled stays on disk, and status reads it as no evidence */ }

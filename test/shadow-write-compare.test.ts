@@ -746,15 +746,31 @@ describe('every sample the child was sent ends in the tally (sample accounting)'
     expect(stat(join(dir, 'gone')).unresolved_replays).toBeUndefined();
   });
 
-  test('a worker never books its own receipt into another epoch: a receipt of an older epoch is removed with no count', async () => {
+  test('a worker\'s own receipt is its own samples whatever epoch it names: a fresh command\'s receipt that names the previous epoch is booked under the new one, never dropped', async () => {
     await withEnv({ GBRAIN_HOME: tmp() }, async () => {
       const dir = tmp(); writeSeedRecord(dir, SEED);
-      writeFileSync(receiptFile(dir, 'sess-7'), JSON.stringify({ session: 'sess-7', sent: 10, pid: process.pid, epoch_id: 'a-retired-epoch' }));
+      writeFileSync(receiptFile(dir, 'sess-7'), JSON.stringify({ session: 'sess-7', sent: 10, pid: process.pid, epoch_id: 'the-previous-epoch' }));
       const epoch = await runChild(dir, 'sess-7', ['{"t":"write","op":"putPage"}\n']);
-      expect(readWriteTally(dir, epoch)!.uncomparable_by_reason).toEqual({ no_sample: 1 }); // before: nine pipe_unflushed under the new epoch
+      expect(readWriteTally(dir, epoch)!.uncomparable_by_reason).toMatchObject({ no_sample: 1, pipe_unflushed: 9 }); // before: removed as another epoch\'s, nothing booked (10 sent, 1 delivered)
       expect(existsSync(receiptFile(dir, 'sess-7'))).toBe(false);
     });
   }, 60_000);
+
+  test('a retired worker (its epoch is no longer the manifest\'s) settles nothing and removes no receipt; the current owner settles it whole', () => {
+    for (const stamped of [false, true]) {
+      const dir = tmp(); const old = tallyOn(dir); // epoch 1
+      const fields = { seed_id: 's', rust_addon_sha256: 'b', comparator_version: 1, adapter_version: 'x', capability_set_hash: null, readiness_policy_hash: 'p' };
+      const next = ensureEpoch(dir, fields, NOW.getTime() + 60_000).epoch_id; // the manifest moves to epoch 2
+      expect(next).not.toBe(old.epoch);
+      writeFileSync(receiptFile(dir, 'dead'), JSON.stringify({ session: 'dead', sent: 7, pid: deadPid(), ...(stamped ? { epoch_id: next } : {}) }));
+      old.tally.save(); old.tally.recover();
+      expect(existsSync(receiptFile(dir, 'dead'))).toBe(true); // before: removed, with its lines booked under epoch 1 where nobody reads them
+      const owner = new WriteTally(dir, () => next, () => true, process.pid);
+      owner.recover(); owner.save();
+      expect(readWriteTally(dir, next)!.uncomparable_by_reason).toEqual({ receipt_orphaned: 7 });
+      expect(existsSync(receiptFile(dir, 'dead'))).toBe(false);
+    }
+  });
 
   test('a receipt a dead session left is settled exactly once by an owner worker (receipt_orphaned); a live pid, a pid we cannot trust and a count we cannot trust are left alone', async () => {
     await withEnv({ GBRAIN_HOME: tmp() }, async () => {
