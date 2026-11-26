@@ -209,6 +209,7 @@ test/engine-parity/labelled-only-reads.test.ts	10	1
 test/engine-parity/large-page.test.ts	3	0
 test/engine-parity/legacy-slug-spellings-doctor.test.ts	2	0
 test/engine-parity/lifecycle.test.ts	10	1
+test/engine-parity/lineage-fact-reads.test.ts	14	0
 test/engine-parity/link-read-options.test.ts	17	0
 test/engine-parity/link-reads.test.ts	16	0
 test/engine-parity/link-temporal.test.ts	22	0
