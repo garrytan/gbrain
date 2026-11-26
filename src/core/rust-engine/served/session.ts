@@ -34,6 +34,7 @@ import {
 } from '../owner-ipc/protocol.ts';
 import { OWNER_IPC_REMOTE_READS, ownerIpcRefusal, ownerMemberOnlyReads } from '../owner-ipc/routes.ts';
 import { OWNER_RUN_OPERATION } from '../owner-ipc/whole-op.ts';
+import { frameAccessWire } from '../owner-ipc/frame-access.ts';
 import { LOCAL_OWNER, RECHECK_MS, authenticateToken, effectiveRemote, recheckToken, type AuthenticatedPrincipal, type VerifyDeps } from './auth.ts';
 import {
   servedAdminPath, servedAuthRefused, servedPositionNotReached, servedPositionRefused, servedProtocol, servedReqConflict,
@@ -316,6 +317,8 @@ export function servedSession(side: ServedServerSide, opts: ServedServerOptions,
     try {
       if (tail) { args = restoreTail(args, tail); if (access !== undefined) access = restoreTail(access, tail); }
     } catch { replyDirect(id, member, servedProtocol('frame_malformed', 'reason=tail_reference')); return; }
+    // B3: the record the call runs under is the principal's decision; the owner's narrowing claim passes unchanged.
+    try { access = frameAccessWire(principal!, access, member); } catch (error) { replyDirect(id, member, error); return; }
     // A call inside a transaction the client holds runs on that transaction at once, outside the permit queue: the
     // call that holds the transaction already holds a permit (a borrowed handle) or the writer (a client's own).
     // Not awaited: such a call may call back into the client, whose own calls on the transaction arrive behind it.
