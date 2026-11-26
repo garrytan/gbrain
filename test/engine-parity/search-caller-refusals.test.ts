@@ -171,7 +171,7 @@ describe('engine parity: search-caller reads that stopped a user command on Rust
   /**
    * The refresh's evidence read: the prefix-anchored pages come first. On Rust this case still stops, after the anchored
    * read, at retrieveEvidence's own raw reads (src/core/questions/refresh.ts, the candidate pages, published answers,
-   * facts, timeline and takes): a named stop (RUST_ENGINE.md row 57) until the questions family is ported as one whole,
+   * facts, timeline and takes): a named stop (RUST_ENGINE.md row 62) until the questions family is ported as one whole,
    * after Dec 1.
    */
   parityTest('gbrain questions refresh of a slug-prefix pin gathers the prefix-anchored pages first', {
@@ -183,7 +183,7 @@ describe('engine parity: search-caller reads that stopped a user command on Rust
     }
     const pin = { id: 1, source_id: 'default', slug: 'questions/widget-status', question: 'What is the widget status?', scope_slug_prefix: 'projects/widget/',
       scope_entity: null } as unknown as PinRow;
-    // The Rust arm's stop, by name (RUST_ENGINE.md row 57): the evidence reads are raw SQL, and a Rust brain refuses
+    // The Rust arm's stop, by name (RUST_ENGINE.md row 62): the evidence reads are raw SQL, and a Rust brain refuses
     // `gbrain questions` at dispatch, so no Rust caller reaches retrieveEvidence until the questions family is ported.
     const evidence = await retrieveEvidence(engine, pin).catch((e: unknown) => rethrowRoutedStop(e, 'executeRaw', '57'));
     const pages = evidence.filter(e => e.kind === 'page').map(e => e.page_slug);

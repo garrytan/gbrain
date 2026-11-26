@@ -529,7 +529,7 @@ describe('access member and group reads after the typed writes', () => {
   parityTest('two members that share an email both read back, so memberByEmail refuses email_ambiguous', {
     methods: ['executeRaw', 'insertAccessMember', 'readAccessMembers'], requires: 'raw_sql',
   }, async (engine) => {
-    // The Rust arm's stop, by design (RUST_ENGINE.md row 56): the store refuses a second member with the same email.
+    // The Rust arm's stop, by design (RUST_ENGINE.md row 61): the store refuses a second member with the same email.
     await engine.executeRaw('DROP INDEX IF EXISTS access_members_email_key').catch((e: unknown) => rethrowByDesignStop(e, 'executeRaw', '56'));
     try {
       await engine.insertAccessMember(member('bob-example', { email: 'shared@example.com' }));

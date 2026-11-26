@@ -204,7 +204,7 @@ describe('engine parity: access-grant reads', () => {
 
   // The member is trust-withdrawals.ts's readTrustGeneration (it throws on a missing row; the move on a trust config
   // write is pinned in trust-withdrawals.test.ts). This case pins that the cache identity read fails closed with it.
-  // The Rust arm's stop, by design (RUST_ENGINE.md row 56): Rust keeps no singleton row (this case deletes one with raw SQL).
+  // The Rust arm's stop, by design (RUST_ENGINE.md row 61): Rust keeps no singleton row (this case deletes one with raw SQL).
   parityTest('a brain with no trust_policy_state row fails the generation read, and the cache identity read fails closed', {
     methods: ['readTrustGeneration'],
   }, async (engine) => {
@@ -233,7 +233,7 @@ describe('engine parity: access-grant reads', () => {
     return result;
   }));
 
-  // The Rust arm's stop, by design (RUST_ENGINE.md row 56): Rust keeps no singleton row (this case deletes one with raw SQL).
+  // The Rust arm's stop, by design (RUST_ENGINE.md row 61): Rust keeps no singleton row (this case deletes one with raw SQL).
   parityTest('a brain with no shared_skill_state row reads a null serving epoch, and membership denies', {
     methods: ['readSharedSkillServingEpoch', 'readLocalWriterMemberGrant'],
   }, (engine) => inFreshHome(async () => {
