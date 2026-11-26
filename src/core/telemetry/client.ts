@@ -178,7 +178,7 @@ export function setTier(tier: Tier): Settings {
     return n;
   }, true, (prev, n) => {
     if (epochOf(n) !== epochOf(prev)) clearFiles(tier === 'off' ? [...SENDABLE_FILES, 'pending.jsonl'] : SENDABLE_FILES);
-    if (tier === 'off' || forcedOff()) return;
+    if (tier === 'off' || forcedOff() || !telemetryEndpoint()) return;
     const now = Date.now();
     const consent = sanitize({ ...environmentFields(), event_type: 'consent', answer: tier });
     const queued = [...readQueue().filter(freshAt(now)), ...(prev.answered_at ? [] : readHeld(now))];
@@ -306,9 +306,10 @@ function readQueue(): Row[] {
 const freshAt = (now: number) => (e: Row) => typeof e.ts === 'string' && now - Date.parse(e.ts) < EVENT_TTL_MS;
 const writeQueue = (rows: Row[]) => writeAtomic(file('events.jsonl'), rows.map(r => `${JSON.stringify(r)}\n`).join(''));
 
-/** Queue one event. Never throws; does nothing at tier off. */
+/** Queue one event. Never throws; does nothing at tier off or with no telemetry address. */
 export function recordEvent(fields: Row): void {
   try {
+    if (!telemetryEndpoint()) return;
     const settings = readSettings();
     if (forcedOff() || settings.tier === 'off') {
       if (HELD_TYPES.has(String(fields.event_type)) && awaitingAnswer()) holdForAnswer(fields);
@@ -402,7 +403,7 @@ export function flushCounts(): void {
   const batch = pending;
   const epoch = pendingEpoch;
   pending = {};
-  if (!Object.keys(batch).length) return;
+  if (!Object.keys(batch).length || !telemetryEndpoint()) return;
   try {
     const path = join(file('counts'), `${dayOf(Date.now())}.json`);
     withQueueLock(() => {
@@ -655,7 +656,7 @@ export async function fetchPulse(): Promise<PulseResult> {
  */
 export function noteRunVersion(channel?: string): void {
   try {
-    if (currentTier() === 'off') return;
+    if (currentTier() === 'off' || !telemetryEndpoint()) return;
     const settled = (s: Settings) => s.last_run_version === VERSION || (!!s.last_run_version && isNewerVersion(VERSION, s.last_run_version));
     if (settled(readSettings())) return;
     let from: string | undefined;
@@ -689,7 +690,7 @@ export function sizeBand(pages: number | null): string | undefined {
 /** At most one doctor event per day: the score band, up to 10 failing check ids and the brain size band. */
 export function recordDoctor(input: { score: number; failing: readonly string[]; pages: number | null; mode?: 'manual' | 'autopilot' | 'alert' }): void {
   try {
-    if (currentTier() === 'off') return;
+    if (currentTier() === 'off' || !telemetryEndpoint()) return;
     const today = dayOf(Date.now());
     if (readJson<{ day?: string }>('doctor.json', {}).day === today) return;
     writeJson('doctor.json', { day: today });

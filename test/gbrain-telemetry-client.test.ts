@@ -17,9 +17,15 @@ import { withEnv } from './helpers/with-env.ts';
 const ROOT = mkdtempSync(join(tmpdir(), 'gbrain-telemetry-client-'));
 let n = 0;
 
-/** Each test gets its own GBRAIN_HOME and no endpoint override. */
+/** Each test gets its own GBRAIN_HOME and a refused local address (nothing listens on port 9), so recording is on but no send can land. */
+const NO_LISTENER = 'http://127.0.0.1:9';
 const it = (name: string, fn: () => unknown) =>
-  test(name, () => withEnv({ GBRAIN_HOME: join(ROOT, `h${++n}`), GBRAIN_TELEMETRY_URL: undefined, GBRAIN_TELEMETRY: undefined }, fn));
+  test(name, () => withEnv({ GBRAIN_HOME: join(ROOT, `h${++n}`), GBRAIN_TELEMETRY_URL: NO_LISTENER, GBRAIN_TELEMETRY: undefined }, fn));
+/** Closes the 6-hour send window, so a CLI-seam test never starts a background send. */
+const closeSendWindow = () => {
+  mkdirSync(telemetryDir(), { recursive: true });
+  writeFileSync(join(telemetryDir(), 'state.json'), JSON.stringify({ last_attempt_at: new Date().toISOString() }));
+};
 afterAll(() => rmSync(ROOT, { recursive: true, force: true }));
 
 const queue = () => (existsSync(join(telemetryDir(), 'events.jsonl')) ? readFileSync(join(telemetryDir(), 'events.jsonl'), 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l)) : []);
@@ -48,6 +54,24 @@ describe('gbrain telemetry client: off by default', () => {
     expect(existsSync(telemetryDir())).toBe(false);
     expect(readSettings().tier).toBe('off');
   });
+
+  it('with no telemetry address, nothing is held, queued, counted or noted, even after a yes', () => withEnv({ GBRAIN_TELEMETRY_URL: undefined }, () => {
+    mkdirSync(join(process.env.GBRAIN_HOME!, '.gbrain'), { recursive: true });
+    const recordAll = () => {
+      recordEvent({ event_type: 'setup', harness: 'codex', outcome: 'success' });
+      recordEvent({ event_type: 'upgrade', from_version: '0.1.0', outcome: 'error' });
+      recordDoctor({ score: 80, failing: [], pages: 5 });
+      countCommand('query');
+      flushCounts();
+      noteRunVersion();
+      telemetryAfterCli(1, undefined, ['apply-migrations']);
+    };
+    recordAll();
+    expect(existsSync(telemetryDir())).toBe(false);
+    setTier('community');
+    recordAll();
+    expect(readdirSync(telemetryDir()).filter(f => !f.endsWith('.lock'))).toEqual(['settings.json']);
+  }));
 
   it('GBRAIN_TELEMETRY=off forces off over a community answer', async () => {
     setTier('community');
@@ -176,7 +200,7 @@ describe('gbrain telemetry client: what is kept', () => {
 });
 
 describe('gbrain telemetry client: sending', () => {
-  it('in tests there is no live endpoint, and no path makes a network call', async () => {
+  it('in tests there is no live endpoint, and no path makes a network call', () => withEnv({ GBRAIN_TELEMETRY_URL: undefined }, async () => {
     expect(telemetryEndpoint()).toBeNull();
     const realFetch = globalThis.fetch;
     let calls = 0;
@@ -192,7 +216,7 @@ describe('gbrain telemetry client: sending', () => {
       globalThis.fetch = realFetch;
     }
     expect(calls).toBe(0);
-  });
+  }));
 
   it('a 2xx clears what was sent and records it; the next try waits 6 hours', async () => {
     const s = standIn([200]);
@@ -335,6 +359,7 @@ describe('gbrain telemetry client: queue bounds and locks', () => {
   // Value: protects=a failed upgrade records an upgrade error event and an unknown command records nothing; fails_when=the UPGRADE_COMMANDS branch or the known-command guard in telemetryAfterCli breaks; why_new=CLI tests cover setup only; seam=none; no_claim=no spawned child or real upgrade (direct call)
   it('the CLI seam records a failed upgrade and ignores unknown commands', () => {
     setTier('anonymous');
+    closeSendWindow();
     const before = queue().length;
     telemetryAfterCli(0, undefined, ['zz-not-a-command']);
     expect(queue().length).toBe(before);
@@ -672,6 +697,7 @@ describe('gbrain telemetry client: a consent change is final for what came befor
 
   it('the CLI seam reads the command after global flags and the setup harness after its value flags', () => {
     setTier('anonymous');
+    closeSendWindow();
     telemetryAfterCli(0, undefined, ['--brain', 'sync', 'doctor']);
     const counts = JSON.parse(readFileSync(join(dir('counts'), `${today()}.json`), 'utf8')) as Record<string, { command_counts?: Record<string, number> }>;
     expect(Object.values(counts).map(b => b.command_counts)).toEqual([{ doctor: 1 }]);

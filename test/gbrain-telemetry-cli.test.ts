@@ -6,7 +6,7 @@
  * and no captured POST body may contain the canary.
  */
 import { afterAll, describe, expect, test } from 'bun:test';
-import { mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { runCli } from './helpers/cli-spawn.ts';
@@ -102,6 +102,9 @@ describe('gbrain telemetry CLI', () => {
     expect(init.exitCode).toBe(0);
     const doc = JSON.parse(init.stdout) as { notices?: Array<{ decisions?: Array<{ id: string }> }> };
     expect((doc.notices ?? []).flatMap(n => n.decisions ?? []).map(d => d.id)).not.toContain('telemetry');
+    const setup = await runCli(['setup', 'claude-code', '--instructions-only'], { home, env: { CLAUDE_CONFIG_DIR: join(home, 'claude') }, timeoutMs: 120_000 });
+    expect(setup.exitCode).toBe(0);
+    expect(existsSync(join(home, '.gbrain', 'telemetry'))).toBe(false);
   }, 240_000);
 
   test('telemetry takes one subcommand, so a flag value or a second word never picks a tier', async () => {
@@ -125,14 +128,14 @@ describe('gbrain telemetry CLI', () => {
     const dir = join(home, '.gbrain', 'telemetry');
     expect(readdirSync(dir)).toEqual(['pending.jsonl']);
     expect(readFileSync(join(dir, 'pending.jsonl'), 'utf8')).toContain('"step":"brain_create"');
-    const status = JSON.parse((await runCli(['telemetry', '--json'], { home })).stdout);
+    const status = JSON.parse((await runCli(['telemetry', '--json'], { home, env })).stdout);
     expect(status).toMatchObject({ tier: 'off', answered: false, held_events: 1 });
-    await runCli(['telemetry', 'community'], { home });
-    const show = JSON.parse((await runCli(['telemetry', 'show', '--json'], { home })).stdout) as { held_for_answer: unknown[]; next_send: Array<Record<string, unknown>> };
+    await runCli(['telemetry', 'community'], { home, env });
+    const show = JSON.parse((await runCli(['telemetry', 'show', '--json'], { home, env })).stdout) as { held_for_answer: unknown[]; next_send: Array<Record<string, unknown>> };
     expect(show.held_for_answer).toEqual([]);
     expect(show.next_send.map(e => e.event_type)).toEqual(['setup', 'consent']);
-    await runCli(['doctor', '--only', 'connection', '--json'], { home, timeoutMs: 120_000 });
-    const after = JSON.parse((await runCli(['telemetry', 'show', '--json'], { home })).stdout) as { next_send: Array<Record<string, unknown>> };
+    await runCli(['doctor', '--only', 'connection', '--json'], { home, env, timeoutMs: 120_000 });
+    const after = JSON.parse((await runCli(['telemetry', 'show', '--json'], { home, env })).stdout) as { next_send: Array<Record<string, unknown>> };
     expect(after.next_send.map(e => e.event_type)).toEqual(['setup', 'consent']);
   }, 240_000);
 });
