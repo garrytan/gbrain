@@ -57,9 +57,9 @@ for (const kind of testBackends()) describe(`index_audit and constraint indexes 
       await bare.engine.executeRaw(`INSERT INTO dup_fixture VALUES (7), (7)`);
       const failed = await bare.engine.executeRaw(`CREATE UNIQUE INDEX CONCURRENTLY dup_fixture_k_idx ON dup_fixture (k)`).then(() => 'built', (e: { code?: string }) => e.code);
       expect(failed).toBe('23505');
-      const [index] = await bare.engine.executeRaw<{ indisunique: boolean; indisvalid: boolean }>(
-        `SELECT indisunique, indisvalid FROM pg_index WHERE indexrelid = 'dup_fixture_k_idx'::regclass`);
-      expect(index).toEqual({ indisunique: true, indisvalid: false });
+      const [index] = await bare.engine.executeRaw<{ indisunique: boolean; indisvalid: boolean; indisready: boolean }>(
+        `SELECT indisunique, indisvalid, indisready FROM pg_index WHERE indexrelid = 'dup_fixture_k_idx'::regclass`);
+      expect(index).toEqual({ indisunique: true, indisvalid: false, indisready: false });
       const [check] = await indexAuditEntry.run({ engine: bare.engine, args: ['--index-audit'], progress } as unknown as DoctorContext) as Check[];
       expect(check).toMatchObject({ name: 'index_audit', status: 'warn' });
       expect(check!.message).toContain('dup_fixture_k_idx');
