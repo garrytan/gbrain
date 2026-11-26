@@ -14,12 +14,13 @@ import { decodeFenceCell, isSeparatorRow, parseRowCells } from '../fence-shared.
 import { needsDataEnvelope, parseContested, renderTrustedText, trustFields, type Contested, type TrustFields } from './labels.ts';
 import { activationSuppressedSql, contestedRefSql } from './sql.ts';
 import { GUEST_ORIGIN, guestView, loadGuestMarks, unattributedGuest, withGuestSourceSql, type GuestStamp } from '../guests/marker.ts';
+import { isPrecedence, precedenceSql } from './precedence.ts';
 
 const withFlag = (fields: TrustFields, flagged: unknown): TrustFields => (flagged === true ? { ...fields, unconfirmed: true } : fields);
 
 interface PageRef {
   page_id?: number | null; source_id?: string | null; slug: string; chunk_text?: string | null;
-  trust_tier?: string; origin?: string; unconfirmed?: true; contested?: Contested; guest?: GuestStamp;
+  trust_tier?: string; origin?: string; unconfirmed?: true; contested?: Contested; guest?: GuestStamp; precedence?: string;
   /** A saved-fact row (search/facts-arm.ts): labeled with the fact's own tier, not a page's. */
   fact_row?: { id: number };
 }
@@ -28,9 +29,11 @@ type Exec = Pick<BrainEngine, 'executeRaw'>;
 
 const key = (source: string | null | undefined, slug: string) => `${source ?? 'default'}\u0000${slug}`;
 
-type TrustRow = { id: number; source_id: string; slug: string; trust_tier: string; write_origin: unknown; flagged: boolean; guest: boolean };
+type TrustRow = { id: number; source_id: string; slug: string; trust_tier: string; write_origin: unknown; flagged: boolean; guest: boolean; precedence: unknown };
 const trustColumns = (guestSql: (config: string, id: string) => string) => `pages.id, pages.source_id, pages.slug, trust_tier, write_origin, ${activationSuppressedSql('pages', 'pages')} AS flagged,
-  ${guestSql('s.config', 'pages.source_id')} AS guest FROM pages LEFT JOIN sources s ON s.id = pages.source_id`;
+  ${guestSql('s.config', 'pages.source_id')} AS guest,
+  ${precedenceSql({ source: 's', sourceId: 'pages.source_id', guest: guestSql('s.config', 'pages.source_id'), page: 'pages' })} AS precedence
+  FROM pages LEFT JOIN sources s ON s.id = pages.source_id`;
 
 /**
  * Trust fields per page id and per (source_id, slug). GBRA-504: a row in a guest source is decided here, per row from
@@ -57,7 +60,8 @@ export async function loadPageTrust(engine: Exec, refs: readonly PageRef[], opts
   });
   const marks = rows.some(r => r.guest === true) ? await loadGuestMarks(engine, rows.filter(r => r.guest === true).map(r => Number(r.id))) : null;
   for (const row of rows) {
-    const base = withFlag(trustFields(row.trust_tier, row.write_origin), row.flagged);
+    const labeled = withFlag(trustFields(row.trust_tier, row.write_origin), row.flagged);
+    const base: TrustFields = isPrecedence(row.precedence) ? { ...labeled, precedence: row.precedence } : labeled;
     const fields: TrustFields = row.guest === true
       ? { ...base, trust_tier: minTrust(base.trust_tier, 'external_untrusted'), origin: GUEST_ORIGIN, guest: guestView(marks?.get(Number(row.id)) ?? unattributedGuest(), opts.guestWriter === true) }
       : base;
@@ -97,6 +101,7 @@ export async function stampPageTrust<T extends PageRef>(engine: Exec, rows: T[],
     row.origin = fields.guest ? GUEST_ORIGIN : lowered ? FENCE_TRUST_ORIGIN : fields.origin;
     if (fields.guest) row.guest = fields.guest;
     if (fields.unconfirmed) row.unconfirmed = true;
+    if (fields.precedence) row.precedence = fields.precedence;
   }
   await applyFenceRowTrust(engine, pageRows);
   return floor ? rows.filter(row => admitsTrust(row.trust_tier as TrustTier, floor)) : rows;
@@ -240,10 +245,17 @@ export async function stampRowTrust<T extends object>(
   const byId = new Map<number, TrustFields>();
   try {
     const contested = table === 'timeline_entries' ? 'NULL' : contestedRefSql(table, 'r');
-    const found = await engine.executeRaw<{ id: number | string; trust_tier: string; write_origin: unknown; flagged: boolean; contested: string | null }>(
-      `SELECT r.id, r.trust_tier, r.write_origin, ${activationSuppressedSql(table, 'r')} AS flagged, ${contested} AS contested FROM ${ROW_TABLES[table]} r WHERE r.id = ANY($1::bigint[])`, [ids]);
+    // C3: a fact's precedence is its source's class, or approved when it came from an allowed-claims page.
+    const facts = table === 'facts';
+    const found = await withGuestSourceSql(guestSql => engine.executeRaw<{ id: number | string; trust_tier: string; write_origin: unknown; flagged: boolean; contested: string | null; precedence?: unknown }>(
+      `SELECT r.id, r.trust_tier, r.write_origin, ${activationSuppressedSql(table, 'r')} AS flagged, ${contested} AS contested${facts
+        ? `, ${precedenceSql({ source: 'rs', sourceId: 'r.source_id', guest: guestSql('rs.config', 'r.source_id'), page: 'rp' })} AS precedence
+        FROM facts r LEFT JOIN sources rs ON rs.id = r.source_id
+        LEFT JOIN pages rp ON rp.source_id = r.source_id AND rp.slug = r.source_markdown_slug AND rp.deleted_at IS NULL`
+        : ` FROM ${ROW_TABLES[table]} r`} WHERE r.id = ANY($1::bigint[])`, [ids]));
     for (const row of found) {
-      const fields = withFlag(trustFields(row.trust_tier, row.write_origin), row.flagged);
+      const labeled = withFlag(trustFields(row.trust_tier, row.write_origin), row.flagged);
+      const fields: TrustFields = isPrecedence(row.precedence) ? { ...labeled, precedence: row.precedence } : labeled;
       const c = parseContested(row.contested);
       byId.set(Number(row.id), c ? { ...fields, contested: c } : fields);
     }

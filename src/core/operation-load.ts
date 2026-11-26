@@ -12,8 +12,10 @@
 import type { Operation } from './ops/contract.ts';
 import { withOutputRedaction } from './search/output-redaction.ts';
 import { withEngineScope } from './engine-scope.ts';
+import { isRemoteCaller, withRemoteCaller } from './remote-caller.ts';
 import { withGuestMarks } from './guests/marker.ts';
 import { OPERATION_LOADERS } from './operation-loaders.generated.ts';
+import { withNormalizedSlugParams } from './ops/slug-params.ts';
 
 // ---------------------------------------------------------------------------
 // WP4 (amendment 22) — area taxonomy.
@@ -40,7 +42,7 @@ const OP_AREAS: Record<string, string> = {
   put_raw_data: 'pages', get_raw_data: 'pages',
   fetch: 'pages', // #4039 deep-research read adapter (search/fetch pair)
   // search
-  search: 'search', search_exact: 'search', query: 'search', search_by_image: 'search', assemble_evidence: 'search',
+  search: 'search', search_exact: 'search', query: 'search', search_by_image: 'search', assemble_evidence: 'search', check_claims: 'search',
   // tags
   add_tag: 'tags', remove_tag: 'tags', get_tags: 'tags',
   // links + graph
@@ -102,6 +104,9 @@ const OP_AREAS: Record<string, string> = {
   entity_identity_list: 'entities',
   // v0.47 open-loop engine (google source kind)
   open_loops: 'loops', loops_close: 'loops', loops_mute: 'loops', loops_unmute: 'loops',
+  household_due: 'household', household_add: 'household', household_mark: 'household', household_replace: 'household',
+  correct: 'correct', // C2 standing rules (ops/correct.ts)
+  learned: 'insights', learned_keep: 'insights', learned_undo: 'insights', // nightly learning ledger (ops/learned.ts)
   questions_pin: 'questions', questions_list: 'questions', questions_status: 'questions', questions_refresh: 'questions', questions_unpin: 'questions', // C4
   // insight / signal reads
   get_recent_salience: 'insights', find_anomalies: 'insights',
@@ -117,7 +122,13 @@ const OP_AREAS: Record<string, string> = {
   schema_explain_type: 'schema', schema_review_orphans: 'schema',
   schema_apply_mutations: 'schema', reload_schema_pack: 'schema',
   // discovery
-  request_tools: 'discovery',
+  request_tools: 'discovery', capabilities: 'discovery',
+  // agent policy (advisory rules for outside actions)
+  policy_check: 'agent-policy', agent_policy: 'agent-policy', policy_reserve: 'agent-policy',
+  // action ledger (what agents did outside the brain, with evidence)
+  log_action: 'action-ledger', ledger: 'action-ledger',
+  // first-session suggestion (onboarding PR 2)
+  onboarding_status: 'onboarding', onboarding_off: 'onboarding', propose_jobs: 'onboarding', propose_decide: 'onboarding',
 };
 
 const finalized = new WeakSet<Operation>();
@@ -144,8 +155,14 @@ export function finalizeOperation(op: Operation): void {
   }
   // The handler runs in its engine's scope, so an embedded engine's AI calls use that engine's gateway (engine-scope.ts).
   // Redaction runs after the guest stamp, so a key-like sender label in a guest mark is redacted like stored text.
-  const handler = withOutputRedaction({ handler: withPrivacyHoldReplies(op, withGuestMarks(op, op.handler)), outputRedaction: op.outputRedaction });
-  op.handler = (ctx, params) => withEngineScope(ctx.engine, () => handler(ctx, params));
+  // It also runs under the remote-caller mark its context names (remote-caller.ts), so a handler a model's tool call
+  // reaches outside MCP dispatch (a subagent brain tool, a SkillOpt tool) is a remote caller too. The mark is sticky:
+  // a nested call with `remote: false` under a remote caller stays remote.
+  // Slug params are normalized outermost (ops/slug-params.ts), so every wrapper and the handler see the stored form.
+  const handler = withNormalizedSlugParams(op,
+    withOutputRedaction({ handler: withPrivacyHoldReplies(op, withGuestMarks(op, op.handler)), outputRedaction: op.outputRedaction }));
+  op.handler = (ctx, params) => withEngineScope(ctx.engine,
+    () => withRemoteCaller(isRemoteCaller() || ctx.remote !== false, () => handler(ctx, params)));
 }
 
 /** The finalized operation named `name`, loading only the module that defines it. */

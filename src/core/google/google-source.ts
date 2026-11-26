@@ -43,7 +43,7 @@ import { createProgress, startHeartbeat } from '../progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../cli-options.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
 import { atomicWriteFileSync, mkdirPrivate } from '../atomic-write.ts';
-import { importRendered, myAddressSet, type ActivePack, type GoogleSyncDeps, type GoogleSyncSummary } from './sweep-shared.ts';
+import { importRendered, isUsageLimit, markPartial, myAddressSet, type ActivePack, type GoogleSyncDeps, type GoogleSyncSummary } from './sweep-shared.ts';
 import { sourceSpeakerOwnerStamp } from '../identity/speaker-owner.ts';
 export { myAddressSet } from './sweep-shared.ts';
 import { sweepCalendar, sweepContacts } from './people-calendar-sweep.ts';
@@ -55,7 +55,10 @@ import {
   GoogleCursorExpiredError,
   PeopleClient,
   type FetchImpl,
+  type GmailReader,
 } from './google-clients.ts';
+import { GbrainioGmailReader } from './gbrainio-gmail.ts';
+import { applyTierFrontmatter, classifyThreadTier, entryHash, isPrivateThread, parsePrivateSenders, type IngestTier, type PrivateSenders } from './ingest-tiers.ts';
 import { renderThreadPage, threadRelPath } from './google-render.ts';
 import { slugifyPath } from '../sync.ts';
 import {
@@ -149,6 +152,17 @@ function writeGoogleState(dir: string, state: GoogleSourceState): void {
   atomicWriteFileSync(googleStateFile(dir), JSON.stringify(state, null, 2), { mode: 0o600 });
 }
 
+/** Reads a source's private-senders file; a missing or unreadable file throws private_senders_unreadable rather than run without it. */
+export function loadPrivateSenders(path: string): PrivateSenders {
+  let text: string;
+  try {
+    text = readFileSync(path, 'utf-8');
+  } catch (e) {
+    throw new CredentialError('private_senders_unreadable', ' (' + String((e as { code?: unknown } | null)?.code ?? 'read failed') + ')');
+  }
+  return parsePrivateSenders(text);
+}
+
 // ── Sync runner ──────────────────────────────────────────────────────────────
 
 async function saveGoogleState(deps: GoogleSyncDeps, state: GoogleSourceState): Promise<void> {
@@ -187,12 +201,12 @@ const BACKFILL_BATCH_THREADS = 25;
 
 async function processThread(
   deps: GoogleSyncDeps,
-  gmail: GmailClient,
+  gmail: GmailReader,
   threadId: string,
   activePack: ActivePack,
   summary: GoogleSyncSummary,
   countedSlugs: Set<string>,
-  seen: { thread?: GmailThreadData } = {},
+  seen: { thread?: GmailThreadData; tier?: IngestTier; slug?: string | null } = {},
   cutoffMs?: number,
 ): Promise<GmailThreadData | null> {
   const thread = await gmail.getThread(threadId, deps.cfg.account, {
@@ -212,8 +226,21 @@ async function processThread(
   // Pure noise renders no page AND skips detection — an all-noise thread
   // produces an empty verdict anyway, so nothing opens and nothing closes.
   if (!rendered) return thread;
-  const slug = await importRendered(deps, rendered.relPath, rendered.markdown, activePack, summary, countedSlugs,
+  let markdown = rendered.markdown;
+  let tier: IngestTier = 'full';
+  if (deps.cfg.ingestTiers || deps.privateSenders) {
+    const privateSenders = deps.privateSenders ?? null;
+    tier = deps.cfg.ingestTiers
+      ? await classifyThreadTier(deps.engine, thread, myAddressSet(deps.entry), privateSenders)
+      : privateSenders && isPrivateThread(thread, privateSenders) ? 'private' : 'full';
+    summary.ingestTiers = { ...summary.ingestTiers, [tier]: (summary.ingestTiers?.[tier] ?? 0) + 1 };
+    seen.tier = tier;
+    if (tier === 'none') return thread;
+    markdown = applyTierFrontmatter(markdown, tier);
+  }
+  const slug = await importRendered(deps, rendered.relPath, markdown, activePack, summary, countedSlugs,
     { thread_id: thread.threadId, message_ids: thread.messages.map((m) => m.id) });
+  seen.slug = slug;
   // #8644/#8938: a purged thread is neither detected nor extracted, and its grace hold is dropped, so its text does not
   // come back through open loops.
   if (slug === null) {
@@ -231,8 +258,9 @@ async function processThread(
   if (verdict?.withheld) summary.loopsWithheld[verdict.withheld.reason] = (summary.loopsWithheld[verdict.withheld.reason] ?? 0) + 1;
   // LLM extraction candidates: trickle + the bounded recent window only —
   // the deep historical backfill is never extracted (spend honesty, F9).
+  // Record and private pages are never read by a model, so they are never extraction candidates.
   const windowMs = LOOPS_EXTRACT_WINDOW_DAYS * 86_400_000;
-  if (newestMs > 0 && Date.now() - newestMs <= windowMs) {
+  if (tier === 'full' && newestMs > 0 && Date.now() - newestMs <= windowMs) {
     // Structural eligibility, not "everything recent": bulk mail the owner
     // never joined would otherwise both pay for model calls AND crowd real
     // threads out of the sweep.
@@ -254,12 +282,14 @@ async function processThread(
  * and throwing this; reaching here means the client's own retry budget was
  * exhausted, not that the thread is bad.
  */
-function threadFailureMessage(tid: string, rateLimited: boolean, e: unknown): string {
+function threadFailureMessage(tid: string, notCounted: boolean, usageLimit: boolean, e: unknown): string {
   return (
-    `[google] thread ${tid} failed${rateLimited ? ' (rate limited; not counted toward a hold)' : ''}: ` +
+    `[google] thread ${tid} failed${usageLimit ? ' (rate limited; not counted toward a hold)' : notCounted ? ' (not counted toward a hold)' : ''}: ` +
     `${e instanceof Error ? e.message : String(e)}`
   );
 }
+
+/** GST-3452: a provider usage or rate limit (gbrain.io's allowance, Google's quota): the sweep stops and the next sync resumes. */
 
 /**
  * #5581: current mail must be imported down to this far below the newest
@@ -285,12 +315,14 @@ type WalkOutcome = 'done' | 'failed' | 'aborted' | 'more';
 
 interface GmailSweep {
   deps: GoogleSyncDeps;
-  gmail: GmailClient;
+  gmail: GmailReader;
   state: GoogleSourceState;
   activePack: ActivePack;
   summary: GoogleSyncSummary;
   countedSlugs: Set<string>;
   holds: ConnectorHoldSession;
+  /** Window mode: threads landed or found unchanged this run, so a later page listing an older message of one is not a change. */
+  walked: Set<string>;
 }
 
 type ThreadOutcome = { kind: 'landed'; newestMs: number } | { kind: 'gone' | 'skipped' | 'failed' | 'rate_limited' };
@@ -306,12 +338,24 @@ async function attemptThread(g: GmailSweep, tid: string, version: string | null,
     g.deps.tick(`thread ${tid} held`);
     return { kind: 'skipped' };
   }
+  // Window mode re-lists recent mail every run: a thread whose newest message is the one it landed with is unchanged.
+  const known = g.gmail.supportsHistory ? undefined : g.state.gmail_window_seen?.[tid];
+  if (known && (known.v === version || g.walked.has(tid)) && !g.holds.isHeld(tid)) {
+    g.walked.add(tid);
+    g.deps.tick(`thread ${tid} unchanged`);
+    return { kind: 'landed', newestMs: known.ms };
+  }
   const seen: { thread?: GmailThreadData } = {};
   try {
     const thread = await processThread(g.deps, g.gmail, tid, g.activePack, g.summary, g.countedSlugs, seen, cutoffMs);
     g.holds.succeed(tid);
-    const newestMs = thread?.messages[thread.messages.length - 1]?.internalDateMs ?? 0;
+    const last = thread?.messages[thread.messages.length - 1];
+    const newestMs = last?.internalDateMs ?? 0;
     if (newestMs > (g.state.gmail_newest_ms ?? 0)) g.state.gmail_newest_ms = newestMs;
+    if (!g.gmail.supportsHistory && last) {
+      (g.state.gmail_window_seen ??= {})[tid] = { v: version ?? last.id, ms: newestMs };
+      g.walked.add(tid);
+    }
     g.deps.tick(`thread ${tid}`);
     return { kind: 'landed', newestMs };
   } catch (e) {
@@ -330,46 +374,74 @@ async function attemptThread(g: GmailSweep, tid: string, version: string | null,
     const classified = await g.holds.fail(tid, e, { version, slug: seen.thread ? threadRelPath(seen.thread).replace(/\.md$/, '') : null,
       meta: { sender: last?.from ?? null, subject: first?.subject ?? null, upstream_at: last ? last.dateIso : null } });
     const rateLimited = classified.scope === 'rate_limit';
+    const usageLimit = rateLimited && isUsageLimit(e);
     g.summary.failedFiles++;
-    g.deps.log(threadFailureMessage(tid, rateLimited, e));
+    g.deps.log(threadFailureMessage(tid, rateLimited, usageLimit, e));
     if (wasHeld && !rateLimited) return { kind: 'skipped' };
-    g.summary.status = 'partial';
-    return { kind: rateLimited ? 'rate_limited' : 'failed' };
+    if (usageLimit) {
+      g.summary.limitStopped = true;
+      g.summary.limitedItems = (g.summary.limitedItems ?? 0) + 1;
+    } else markPartial(g.summary, `gmail thread failed: ${e instanceof Error ? e.message : String(e)}`, true);
+    return { kind: usageLimit ? 'rate_limited' : 'failed' };
   }
 }
+
+/** Pages one window listing may take; a window holding more is narrowed until it lists completely. */
+const WINDOW_LIST_PAGES = 20;
+/** The narrowest window the walk lists; one still holding more than WINDOW_LIST_PAGES is listed in full. */
+const MIN_WINDOW_MS = 60_000;
+/** How long the one listing that proves an aborted walk's progress may take, under its own signal. */
+const ABORT_PROOF_MS = 15_000;
 
 /**
  * Drain `[lowerMs, state[floorKey])` newest→oldest, committing the floor per
  * fully-successful batch so a killed walk resumes where it stopped (F7a).
  * Shared by the historical backfill and the history-expired gap.
+ *
+ * #9129: the floor only ever moves past mail the walk has listed and settled.
+ * A listing is not in `internalDate` order (mail imported or migrated from
+ * another account keeps its old date but lists among the mail of its import
+ * date), so the oldest thread of a batch says nothing about the mail between
+ * it and the floor. The walk lists a window `[after, floor)` completely
+ * (narrowing it while a listing stops at WINDOW_LIST_PAGES), commits the
+ * window's bottom once every thread in it settled, and inside it commits a
+ * batch's oldest thread only after a listing of `[that thread, floor)` names
+ * no thread the walk has not settled.
  */
 async function walkGmailWindow(g: GmailSweep, floorKey: 'gmail_backfill_floor_ms' | 'gmail_gap_floor_ms', lowerMs: number): Promise<WalkOutcome> {
   const { deps, gmail, state } = g;
+  const signal = deps.opts.signal;
+  const settled = new Set<string>();
+  const list = async (afterMs: number, beforeMs: number, maxPages?: number, listSignal = signal) => {
+    let complete = true;
+    const ids = await gmail.listMessageIds(`after:${Math.floor(afterMs / 1000)} before:${Math.ceil(beforeMs / 1000)}`,
+      { ...(maxPages ? { maxPages, partialOk: true, onCutShort: () => { complete = false; } } : {}), ...(listSignal ? { signal: listSignal } : {}) });
+    return { ids, complete };
+  };
   let floorMs = state[floorKey] ?? Date.now() + 60_000;
+  let spanMs = floorMs - lowerMs;
   while (floorMs > lowerMs) {
-    if (deps.opts.signal?.aborted) return 'aborted';
-    const q = `after:${Math.floor(lowerMs / 1000)} before:${Math.ceil(floorMs / 1000)}`;
-    // Page-BOUNDED listing (partialOk): a busy inbox can hold far more ids
-    // than the client's 500-page safety cap; the floor cursor makes partial
-    // listings safe — each iteration takes the newest ~2,000 messages in the
-    // window, processes them, drops the floor, and re-queries.
-    const ids = await gmail.listMessageIds(q, { maxPages: 20, partialOk: true, ...(deps.opts.signal ? { signal: deps.opts.signal } : {}) });
-    if (ids.length === 0) break;
+    if (signal?.aborted) return 'aborted';
+    const afterMs = Math.max(lowerMs, floorMs - spanMs);
+    const listing = await list(afterMs, floorMs, floorMs - afterMs > MIN_WINDOW_MS ? WINDOW_LIST_PAGES : undefined);
+    if (!listing.complete) {
+      spanMs = Math.max(MIN_WINDOW_MS, Math.floor((floorMs - afterMs) / 4));
+      continue;
+    }
     // Newest-first listing → unique threads in newest-first order; a thread's
     // newest listed message id is its upstream version for the holds.
     const versions = new Map<string, string>();
-    for (const m of ids) if (!versions.has(m.threadId)) versions.set(m.threadId, m.id);
+    for (const m of listing.ids) if (!versions.has(m.threadId)) versions.set(m.threadId, m.id);
     const threadIds = [...versions.keys()];
-    let processedAny = false;
     let batchFailed = false;
-    let batchOldest = floorMs;
     for (let i = 0; i < threadIds.length; i += BACKFILL_BATCH_THREADS) {
-      if (deps.opts.signal?.aborted) break;
+      if (signal?.aborted) break;
+      let batchOldest = floorMs;
       for (const tid of threadIds.slice(i, i + BACKFILL_BATCH_THREADS)) {
-        if (deps.opts.signal?.aborted) break;
+        if (signal?.aborted) break;
         const outcome = await attemptThread(g, tid, versions.get(tid) ?? null);
         if (outcome.kind === 'landed') {
-          processedAny = true;
+          settled.add(tid);
           if (outcome.newestMs > 0 && outcome.newestMs < batchOldest) batchOldest = outcome.newestMs;
         } else if (outcome.kind === 'failed' || outcome.kind === 'rate_limited') {
           // A failed thread NEWER than a committed floor would fall outside
@@ -377,24 +449,24 @@ async function walkGmailWindow(g: GmailSweep, floorKey: 'gmail_backfill_floor_ms
           // floor. A rate limit is per-user: defer the rest of the batch.
           batchFailed = true;
           if (outcome.kind === 'rate_limited') break;
+        } else settled.add(tid);
+      }
+      if (batchFailed || deps.managed && signal?.aborted) break;
+      if (batchOldest < floorMs && (signal?.aborted || i + BACKFILL_BATCH_THREADS < threadIds.length)) {
+        const below = signal?.aborted
+          ? await list(batchOldest, floorMs, WINDOW_LIST_PAGES, AbortSignal.timeout(ABORT_PROOF_MS)).catch(() => null)
+          : await list(batchOldest, floorMs, WINDOW_LIST_PAGES);
+        if (below?.complete && below.ids.every(m => settled.has(m.threadId))) {
+          state[floorKey] = floorMs = batchOldest;
+          await saveGoogleState(deps, state);
         }
       }
-      if (batchFailed || deps.managed && deps.opts.signal?.aborted) break;
-      if (processedAny && batchOldest < floorMs) {
-        state[floorKey] = batchOldest;
-        await saveGoogleState(deps, state);
-      }
     }
-    if (deps.opts.signal?.aborted) return 'aborted';
+    if (signal?.aborted) return 'aborted';
     if (batchFailed) return 'failed';
-    if (!processedAny || batchOldest >= floorMs) {
-      // Nothing moved the floor (all held/vanished or all same-timestamp):
-      // step below the oldest listed page to guarantee termination. Only
-      // reachable with zero failures.
-      state[floorKey] = Math.max(lowerMs - 1, floorMs - 86_400_000);
-      await saveGoogleState(deps, state);
-    }
-    floorMs = state[floorKey] ?? lowerMs;
+    state[floorKey] = floorMs = afterMs;
+    await saveGoogleState(deps, state);
+    if (listing.ids.length < WINDOW_LIST_PAGES * 25) spanMs *= 2;
   }
   return 'done';
 }
@@ -422,6 +494,14 @@ async function sweepGmail(g: GmailSweep, onCurrent?: () => Promise<void>): Promi
     await saveGoogleState(deps, state);
   }
 
+  if (deps.privateSenders && await retierPrivatePages(g) === 'aborted') return false;
+
+  let currentDrained: boolean;
+  if (!gmail.supportsHistory) {
+    const recent = await walkRecentWindow(g, cutoffMs);
+    if (recent === 'aborted') return false;
+    currentDrained = recent === 'done';
+  } else {
   // Anchor the delta lane BEFORE importing anything: changes that land
   // during the backfill are replayed by history.list.
   if (!state.gmail_backfill_done && !state.gmail_history_id) {
@@ -432,7 +512,15 @@ async function sweepGmail(g: GmailSweep, onCurrent?: () => Promise<void>): Promi
     state.gmail_history_id = profile.historyId;
     await saveGoogleState(deps, state);
   }
-  if (!state.gmail_history_id) return true;
+  if (!state.gmail_history_id) {
+    // A finished backfill with no change-feed anchor is a window-mode cursor (a gbrain.io source moved to vault): anchor
+    // history now and drain from the newest landed message by window, as an expired history id does.
+    const profile = await gmail.getProfile({ ...(deps.opts.signal ? { signal: deps.opts.signal } : {}) });
+    state.gmail_gap_floor_ms = null;
+    openGmailGap(state, cutoffMs);
+    state.gmail_history_id = profile.historyId;
+    await saveGoogleState(deps, state);
+  }
 
   // ── Current mail first: delta, then any history-expired gap ──
   const delta = await drainGmailDelta(g, cutoffMs);
@@ -446,6 +534,8 @@ async function sweepGmail(g: GmailSweep, onCurrent?: () => Promise<void>): Promi
           await saveGoogleState(deps, state);
     }
   }
+  currentDrained = delta === 'done' && state.gmail_gap_floor_ms == null;
+  }
   // Held threads no listing of this run reached: re-attempt those retry-held
   // asked for or whose transient reconsideration is due. A failure keeps the
   // hold and never blocks the cursor.
@@ -455,7 +545,7 @@ async function sweepGmail(g: GmailSweep, onCurrent?: () => Promise<void>): Promi
   }
   if (await settleGraceHolds(g, cutoffMs) === 'aborted') return false;
   const isCurrent = (): boolean => {
-    if (delta !== 'done' || state.gmail_gap_floor_ms != null) return false;
+    if (!currentDrained) return false;
     if (state.gmail_backfill_done) return true;
     const floor = state.gmail_backfill_floor_ms;
     if (floor == null || state.gmail_newest_ms == null) return false;
@@ -476,6 +566,120 @@ async function sweepGmail(g: GmailSweep, onCurrent?: () => Promise<void>): Promi
     }
   }
   return isCurrent();
+}
+
+/** Window mode re-lists this far below the newest landed message, so mail that arrived late is not missed. */
+const WINDOW_OVERLAP_MS = 60 * 60_000;
+/** Window mode remembers landed threads this long; an older thread that changes is simply fetched again. */
+const WINDOW_SEEN_KEEP_MS = 3 * 86_400_000;
+
+/**
+ * Window mode (a reader with no change feed): current mail is the window from
+ * an hour below the newest landed message up to now, listed again every run
+ * and drained newest to oldest with the resumable floor walk. Unchanged
+ * threads are skipped through gmail_window_seen. Before the first backfill has
+ * started there is nothing to refresh: the backfill itself starts at now.
+ */
+async function walkRecentWindow(g: GmailSweep, cutoffMs: number): Promise<WalkOutcome> {
+  const { deps, state } = g;
+  const now = Date.now();
+  const seen = state.gmail_window_seen ?? {};
+  for (const [tid, entry] of Object.entries(seen)) if (!(entry.ms >= now - WINDOW_SEEN_KEEP_MS)) delete seen[tid];
+  state.gmail_window_seen = seen;
+  if (!state.gmail_backfill_done && state.gmail_backfill_floor_ms == null) return 'done';
+  const after = Math.max(cutoffMs, (state.gmail_newest_ms ?? state.gmail_backfill_floor_ms ?? cutoffMs) - WINDOW_OVERLAP_MS);
+  // A window an earlier run could not finish keeps its lower bound; its floor restarts at now so new mail comes first.
+  state.gmail_gap_after_ms = Math.min(state.gmail_gap_after_ms ?? after, after);
+  state.gmail_gap_floor_ms = now + 60_000;
+  const outcome = await walkGmailWindow(g, 'gmail_gap_floor_ms', state.gmail_gap_after_ms);
+  if (outcome === 'done') {
+    state.gmail_gap_after_ms = null;
+    state.gmail_gap_floor_ms = null;
+    await saveGoogleState(deps, state);
+  }
+  return outcome;
+}
+
+/**
+ * Entries added to the private-senders list since the pages were last tiered:
+ * every page of this source with one of them among its participants is fetched
+ * and written again, so it becomes private. The list's hashes are banked only
+ * when every such page was rewritten.
+ */
+const RETIER_MAX_THREADS = 200;
+
+async function retierPrivatePages(g: GmailSweep): Promise<'aborted' | void> {
+  const { deps, state } = g;
+  const list = deps.privateSenders!;
+  const banked = new Set(state.private_senders_hashes ?? []);
+  if (list.hashes.length === banked.size && list.hashes.every((h) => banked.has(h))) return;
+  const addresses = [...list.addresses].filter((a) => !banked.has(entryHash(a)));
+  const domains = [...list.domains].filter((d) => !banked.has(entryHash('@' + d)));
+  let rows: Array<{ slug: string; source_path: string | null; tid: string | null }> = [];
+  if (addresses.length > 0 || domains.length > 0) {
+    rows = await deps.engine.executeRaw<{ slug: string; source_path: string | null; tid: string | null }>(
+      `SELECT slug, source_path, frontmatter->>'thread_id' AS tid FROM pages
+        WHERE source_id = $1 AND deleted_at IS NULL AND slug LIKE 'emails/%'
+          AND NOT (COALESCE(frontmatter->>'visibility', '') = 'private' AND COALESCE(frontmatter->>'extract_atoms', '') = 'false'
+                   AND COALESCE(frontmatter->>'facts_backstop', '') = 'false')
+          AND jsonb_typeof(frontmatter->'participants') = 'array'
+          AND EXISTS (SELECT 1 FROM jsonb_array_elements_text(frontmatter->'participants') a
+                       WHERE lower(a) = ANY($2::text[]) OR split_part(lower(a), '@', 2) = ANY($3::text[]))`,
+      [deps.sourceId, addresses, domains],
+    );
+  }
+  const byThread = new Map<string, Array<{ slug: string; source_path: string | null }>>();
+  for (const r of rows) {
+    if (!r.tid || !/^[A-Za-z0-9]{1,128}$/.test(r.tid)) continue;
+    byThread.set(r.tid, [...(byThread.get(r.tid) ?? []), { slug: r.slug, source_path: r.source_path }]);
+  }
+  let failed = 0;
+  let limited = false;
+  let failure: string | null = null;
+  let rewritten = 0;
+  let unsettled = 0;
+  for (const [tid, threadPages] of [...byThread].slice(0, RETIER_MAX_THREADS)) {
+    if (deps.opts.signal?.aborted) return 'aborted';
+    const seen: { tier?: IngestTier; slug?: string | null } = {};
+    try {
+      await processThread(deps, g.gmail, tid, g.activePack, g.summary, g.countedSlugs, seen);
+    } catch (e) {
+      if (e instanceof GoogleCursorExpiredError && e.status === 404) {
+        unsettled++;
+        deps.log(`[google] thread ${tid} was not found while re-tiering; its page(s) ${threadPages.map((p) => p.slug).join(', ')} are kept as they are and it is retried next sweep`);
+        continue;
+      }
+      if (deps.managed) rethrowConnectorWriteError(e);
+      failed++;
+      deps.log(`[google] re-tiering thread ${tid} as private failed (retried next sweep): ${e instanceof Error ? e.message : String(e)}`);
+      if (isUsageLimit(e)) { limited = true; break; }
+      failure = e instanceof Error ? e.message : String(e);
+      continue;
+    }
+    if (typeof seen.slug !== 'string') {
+      unsettled++;
+      deps.log(`[google] thread ${tid} was read but no page was rewritten while re-tiering; it is retried next sweep`);
+      continue;
+    }
+    rewritten++;
+    const moved = threadPages.filter((p) => p.slug !== seen.slug);
+    if (moved.length > 0) g.summary.deleted += await deleteEmailPages(deps, moved);
+  }
+  if (rewritten > 0) {
+    deps.log(`[google] ${rewritten} page(s) rewritten as private after the private-senders list grew; on a git-backed brain, earlier commits still hold their previous text`);
+  }
+  if (failed > 0) {
+    if (limited) g.summary.limitStopped = true;
+    if (failure !== null) markPartial(g.summary, `private re-tier failed: ${failure}`);
+    return;
+  }
+  if (unsettled > 0) return;
+  if (byThread.size > RETIER_MAX_THREADS) {
+    deps.log(`[google] re-tiered ${RETIER_MAX_THREADS} of ${byThread.size} threads as private; the rest continue next sweep`);
+    return;
+  }
+  state.private_senders_hashes = [...list.hashes];
+  await saveGoogleState(deps, state);
 }
 
 /**
@@ -612,7 +816,7 @@ async function drainGmailDelta(g: GmailSweep, cutoffMs: number): Promise<WalkOut
 
 async function reconcileGmailDeletes(
   deps: GoogleSyncDeps,
-  gmail: GmailClient,
+  gmail: GmailReader,
   summary: GoogleSyncSummary,
 ): Promise<void> {
   // Enumerate the live window; anything under emails/ not in it vanished
@@ -645,18 +849,23 @@ async function reconcileGmailDeletes(
     deps.log(`[google] mass-delete guard refused ${stale.length} deletes for source ${deps.sourceId}`);
     return;
   }
+  summary.deleted += await deleteEmailPages(deps, stale);
+}
+
+async function deleteEmailPages(deps: GoogleSyncDeps, pages: Array<{ slug: string; source_path: string | null }>): Promise<number> {
   if (deps.managed) {
-    for (const page of stale) if (await deps.managed.delete(page.slug, page.source_path)) summary.deleted++;
-    return;
+    let deleted = 0;
+    for (const page of pages) if (await deps.managed.delete(page.slug, page.source_path)) deleted++;
+    return deleted;
   }
-  await deps.engine.deletePages(stale.map((s) => s.slug), { sourceId: deps.sourceId });
-  for (const s of stale) {
-    if (!s.source_path) continue;
+  await deps.engine.deletePages(pages.map((p) => p.slug), { sourceId: deps.sourceId });
+  for (const p of pages) {
+    if (!p.source_path) continue;
     // Containment guard mirrors the write path (defense-in-depth on DB rows).
-    const target = join(deps.cfg.dir, s.source_path);
+    const target = join(deps.cfg.dir, p.source_path);
     if (isWriteTargetContained(target, deps.cfg.dir)) rmSync(target, { force: true });
   }
-  summary.deleted += stale.length;
+  return pages.length;
 }
 
 // ── Extract + embed (mirrors github-source's size-gated tail) ───────────────
@@ -726,25 +935,33 @@ export async function runGoogleSync(
     async (managed, options) => options.dryRun ? connectorDryRunResult('google', sourceId) : runGoogleSyncInner(engine, sourceId, cfg, options, managed, fetchImpl, vaultOverride), pendingConnectorResult);
 }
 
-async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: GoogleSourceConfig, opts: SyncOpts,
-  managed: ManagedConnectorSync | null, fetchImpl?: FetchImpl, vaultOverride?: CredentialVault): Promise<SyncResult> {
-  if (!cfg.account) {
-    throw new Error(
-      `Google source "${sourceId}" has no account configured. Re-add it: gbrain sources add ${sourceId} --kind google --account <email>`,
-    );
-  }
-  const log = (msg: string): void => {
-    process.stderr.write(msg + '\n');
-  };
-  // Access resolution: the vault is the default; command/env modes let a
-  // stack that already holds Google access (gog, gcloud, a credential
-  // gateway) drive this source without gbrain's own OAuth flow. Non-vault
-  // modes synthesize a minimal identity entry: no meta.scopes (so the scope
-  // preflight below trusts cfg.services), no sendas_aliases (best-effort
-  // live fetch below), account from the source config.
+/**
+ * Access resolution: the vault is the default; command/env modes let a stack that already holds Google access drive
+ * the source without gbrain's own OAuth flow, and gbrainio reads Gmail through a gbrain.io terminal with no Google
+ * token at all. Non-vault modes synthesize a minimal identity entry (no meta.scopes, so the scope preflight trusts
+ * cfg.services; sendas aliases best-effort; account from the source config).
+ */
+async function resolveSyncAccess(cfg: GoogleSourceConfig, opts: SyncOpts, log: (msg: string) => void, fetchImpl?: FetchImpl,
+  vaultOverride?: CredentialVault): Promise<{ entry: CredentialEntry; tokens: GoogleAccessProvider; reader: GbrainioGmailReader | null }> {
   let entry: CredentialEntry;
   let tokens: GoogleAccessProvider;
-  if (cfg.access === 'command' || cfg.access === 'env') {
+  let reader: GbrainioGmailReader | null = null;
+  if (cfg.access === 'gbrainio') {
+    // gbrain.io holds the mailbox grant; gbrain holds no Google token, so any Google API call is refused.
+    const noToken = async (): Promise<string> => { throw new CredentialError('gbrainio_unsupported', ' (no Google token on a gbrain.io source)'); };
+    tokens = { getAccessToken: noToken, forceRefresh: noToken };
+    reader = new GbrainioGmailReader(cfg.gbrainioCommand ?? 'gbrainio', cfg.account, log);
+    entry = {
+      id: credentialId(GOOGLE_PROVIDER, cfg.account),
+      provider: GOOGLE_PROVIDER,
+      kind: 'bearer',
+      client_ref: 'byo',
+      secret: {},
+      meta: { account: cfg.account, connected_at: new Date().toISOString() },
+    };
+    const aliases = await reader.sendAsAliases(opts.signal ? { signal: opts.signal } : {});
+    if (aliases.length > 0) entry.meta.sendas_aliases = aliases;
+  } else if (cfg.access === 'command' || cfg.access === 'env') {
     tokens =
       cfg.access === 'command'
         ? new CommandAccessProvider(cfg.tokenCommand ?? '')
@@ -762,7 +979,7 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
       // token may not carry the settings scope — degrade to account-only.
       const aliases = await fetchSendAsAliases(await tokens.getAccessToken(), fetchImpl ?? fetch);
       if (aliases.length > 0) entry.meta.sendas_aliases = aliases;
-    } catch { /* account-only identity */ }
+    } catch { /* account-only identity */ } // silent-read-ok: the token may lack the Gmail settings scope; identity then falls back to the account address alone
   } else {
     const vault = vaultOverride ?? openVault();
     const vaultEntry = await vault.get(credentialId(GOOGLE_PROVIDER, cfg.account));
@@ -772,13 +989,44 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
     entry = vaultEntry;
     tokens = new GoogleTokenProvider(vault, entry.id, fetchImpl ?? fetch);
   }
+  return { entry, tokens, reader };
+}
+
+async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: GoogleSourceConfig, opts: SyncOpts,
+  managed: ManagedConnectorSync | null, fetchImpl?: FetchImpl, vaultOverride?: CredentialVault): Promise<SyncResult> {
+  if (!cfg.account) {
+    throw new Error(
+      `Google source "${sourceId}" has no account configured. Re-add it: gbrain sources add ${sourceId} --kind google --account <email>`,
+    );
+  }
+  const log = (msg: string): void => {
+    process.stderr.write(msg + '\n');
+  };
+  // GST-3452: a usage limit already spent before any mail is read (gbrain.io answers the identity reads too) stops the run
+  // as a usage limit with nothing written, so the next sync resumes; any other failure here still throws.
+  const usageLimitStop = (e: unknown): SyncResult => {
+    log(`[google] stopped at a usage limit before reading mail: ${e instanceof Error ? e.message : String(e)}; the next sync resumes`);
+    return { status: 'partial', fromCommit: null, toCommit: '', added: 0, modified: 0, deleted: 0, renamed: 0, chunksCreated: 0, embedded: 0,
+      pagesAffected: [], stopped_on: 'usage_limit' };
+  };
+  let access: Awaited<ReturnType<typeof resolveSyncAccess>>;
+  try {
+    access = await resolveSyncAccess(cfg, opts, log, fetchImpl, vaultOverride);
+  } catch (e) {
+    if (isUsageLimit(e)) return usageLimitStop(e);
+    throw e;
+  }
+  const { entry, tokens, reader } = access;
   const clientArgs = [tokens, fetchImpl ?? fetch, log, entry.meta.client_id] as const;
-  const gmail = new GmailClient(...clientArgs);
+  const gmail: GmailReader = reader ?? new GmailClient(...clientArgs);
   const calendar = new CalendarClient(...clientArgs);
   const people = new PeopleClient(...clientArgs);
   const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
   const tick = (note: string): void => progress.tick(1, note);
-  const deps: GoogleSyncDeps = { engine, sourceId, cfg, opts, entry, log, tick, exclusion: NO_EXCLUSION, extractCandidates: [], managed, processedThreads: new Set() };
+  // A configured private-senders list that cannot be read stops the run here, before any page is written.
+  const privateSenders = cfg.privateSendersFile ? loadPrivateSenders(cfg.privateSendersFile) : null;
+  const deps: GoogleSyncDeps = { engine, sourceId, cfg, opts, entry, log, tick, exclusion: NO_EXCLUSION, extractCandidates: [], managed, processedThreads: new Set(),
+    privateSenders };
 
   const summary: GoogleSyncSummary = {
     status: 'synced',
@@ -825,8 +1073,17 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
   }
   const activeServices = grantedScopes.length > 0 ? grantedServices : cfg.services;
   // #5686: every enabled service reads as the pinned account; checked before any service runs.
-  if (managed) {
-    const { email } = await resolveGoogleAccount({ gmail, calendar, people, userinfo: googleUserinfo(tokens, fetchImpl ?? fetch) }, activeServices, opts.signal);
+  if (managed && reader) {
+    // Every gbrain.io answer names its mailbox and the reader refuses a mismatch; the profile read proves the terminal answers.
+    try {
+      await reader.getProfile(opts.signal ? { signal: opts.signal } : {});
+    } catch (e) {
+      if (isUsageLimit(e)) return usageLimitStop(e);
+      throw e;
+    }
+    await managed.assertAccount({ kind: 'google', email: cfg.account });
+  } else if (managed) {
+    const { email } = await resolveGoogleAccount({ gmail: gmail as GmailClient, calendar, people, userinfo: googleUserinfo(tokens, fetchImpl ?? fetch) }, activeServices, opts.signal);
     await managed.assertAccount(email ? { kind: 'google', email } : null);
   }
 
@@ -859,7 +1116,8 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
         if (managed) rethrowConnectorWriteError(e);
         serviceFailed('contacts', e);
         serviceErrors.push(`contacts: ${e instanceof Error ? e.message : String(e)}`);
-        summary.status = 'partial';
+        if (isUsageLimit(e)) summary.limitStopped = true;
+        else markPartial(summary, `contacts sweep failed: ${e instanceof Error ? e.message : String(e)}`);
         if (isCredentialError(e)) log(e.toHuman());
         else log(`[google] contacts sweep failed: ${e instanceof Error ? e.message : String(e)}`);
       } finally {
@@ -876,7 +1134,8 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
         if (managed) rethrowConnectorWriteError(e);
         serviceFailed('calendar', e);
         serviceErrors.push(`calendar: ${e instanceof Error ? e.message : String(e)}`);
-        summary.status = 'partial';
+        if (isUsageLimit(e)) summary.limitStopped = true;
+        else markPartial(summary, `calendar sweep failed: ${e instanceof Error ? e.message : String(e)}`);
         if (isCredentialError(e)) log(e.toHuman());
         else log(`[google] calendar sweep failed: ${e instanceof Error ? e.message : String(e)}`);
       } finally {
@@ -892,19 +1151,23 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
         // sweepGmail reports thread-level failures via its return value —
         // they exit through normal returns, not throws, and stamping
         // last_sync_at over them would blind the staleness gate (H1).
-        gmailSweepOk = await sweepGmail({ deps, gmail, state, activePack, summary, countedSlugs, holds }, async () => {
+        gmailSweepOk = await sweepGmail({ deps, gmail, state, activePack, summary, countedSlugs, holds, walked: new Set() }, async () => {
           // #5581: current mail is complete but the backfill is not: bank freshness now, while the managed lease can still write.
-          if (managed && summary.status !== 'partial' && !opts.signal?.aborted) {
+          if (managed && summary.status !== 'partial' && !summary.limitStopped && !opts.signal?.aborted) {
             await managed.saveState(state, true, new Date(state.gmail_newest_ms ?? Date.now()).toISOString());
           }
         });
         reached.add('gmail');
-        if (opts.full) await reconcileGmailDeletes(deps, gmail, summary);
+        if (summary.ingestTiers) log(`[google] ingest tiers: ${Object.entries(summary.ingestTiers).map(([tier, n]) => `${tier}=${n}`).join(' ')}`);
+        // A delete scan lists the whole window in one go; gbrain.io sources read by window and keep pages of deleted mail.
+        if (opts.full && !gmail.supportsHistory) log('[google] --full delete reconcile skipped: this source reads mail through gbrain.io');
+        else if (opts.full) await reconcileGmailDeletes(deps, gmail, summary);
       } catch (e) {
         if (managed) rethrowConnectorWriteError(e);
         serviceFailed('gmail', e);
         serviceErrors.push(`gmail: ${e instanceof Error ? e.message : String(e)}`);
-        summary.status = 'partial';
+        if (isUsageLimit(e)) summary.limitStopped = true;
+        else markPartial(summary, `gmail sweep failed: ${e instanceof Error ? e.message : String(e)}`);
         if (isCredentialError(e)) log(e.toHuman());
         else log(`[google] gmail sweep failed: ${e instanceof Error ? e.message : String(e)}`);
       } finally {
@@ -918,8 +1181,10 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
     const problems = [...apiProblems, ...keptProblems];
     if (problems.length > 0 && JSON.stringify(problems) !== JSON.stringify(state.api_access?.problems)) state.api_access = { problems, at: new Date().toISOString() };
     else if (problems.length === 0 && state.api_access) state.api_access = null;
-    if (grantedScopes.length > 0 && missingServices.length > 0) summary.status = 'partial';
-    if (opts.signal?.aborted) summary.status = 'partial';
+    if (grantedScopes.length > 0 && missingServices.length > 0) markPartial(summary, `no granted scope for ${missingServices.join(', ')}`);
+    if (opts.signal?.aborted) markPartial(summary, 'run aborted');
+    const stoppedOnUsageLimit = summary.limitStopped === true && summary.status === 'synced' && summary.failedFiles === (summary.limitedItems ?? 0);
+    if (summary.limitStopped) markPartial(summary, 'usage limit reached');
     if (opts.full && summary.status === 'synced') state.last_full_at = new Date().toISOString();
 
     // #5867 managed-only 30-day catch-up and the #5868 one-shot backfill marker; never on an aborted sweep.
@@ -993,6 +1258,8 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
       } catch { /* best-effort */ }
     }
 
+    if (!opts.signal?.aborted) await import('../onboard/propose.ts').then(m => m.refreshProposalCache(engine)).catch(() => null); // lane 5 O2: the first-session job, cached off the session-start path (no-op unless armed)
+
     const changed = summary.added + summary.modified + summary.deleted > 0;
     if (activeServices.includes('gmail')) {
       log(`[google] attachment inspection (this sweep only): ${Object.entries(summary.attachmentInspection).map(([state, count]) => `${state}=${count}`).join(' ') || 'no messages inspected'}; historical completeness is not established by incremental sync.`);
@@ -1016,6 +1283,8 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
       embedded: summary.embedded,
       pagesAffected: summary.pagesAffected,
       ...(summary.failedFiles > 0 ? { failedFiles: summary.failedFiles } : {}),
+      ...(stoppedOnUsageLimit && !holds.summary().held ? { stopped_on: 'usage_limit' as const } : {}),
+      ...(summary.status === 'partial' && summary.partialCauses?.length ? { partial_causes: summary.partialCauses } : {}),
       ...(loopsEnqueue ? { loops_enqueue: loopsEnqueue } : {}),
       ...connectorHoldsResult(sourceId, holds.summary()),
     };

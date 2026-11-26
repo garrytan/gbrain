@@ -15,6 +15,7 @@ import { parseStoredActor, storedActorIdentity } from '../access/actor.ts';
 import { ownerSpeaksForItself, sameAttestedActor } from '../access/member-facts.ts';
 import { perCallWriteSource, storedPerCallWriteSource } from '../access/attest-sources.ts';
 import { pipelined, transactionMemo } from '../page-state/transactions.ts';
+import { requireOauthClientColumns } from '../engine-sql/oauth-clients.ts';
 
 function deny(message: string): never { throw new OperationError('permission_denied', message, 'Inspect the current writer registration and source/operation grants.'); }
 function strings(value: unknown): value is string[] { return Array.isArray(value) && value.every(v => typeof v === 'string'); }
@@ -100,25 +101,41 @@ export async function submissionAuthority(ctx: OperationContext, operation: stri
  * #5984: one local-writer read per transaction; a FOR SHARE read also answers a plain one. #6712 PR 4b: the read the
  * registration check just made answers the authorization that follows it (`withRegisteredLocalWriter`, once).
  */
-function localWriterRow(engine: SqlEngine, id: string, lock: boolean): Promise<Array<{ lane: string; revoked_at: unknown; grant_ceiling: LocalGrant }>> {
+/** The engine authorization reads through: its raw statements plus the typed local writer and source membership reads. */
+export type AuthorityEngine = SqlEngine & Pick<BrainEngine, 'readLiveMember' | 'hasLabelledOnlyMember' | 'getConfig' | 'readLinkedMember' | 'readLocalWriterRow' | 'readSourceMembership' | 'readWriterSlugFence' | 'readWriteVisibilityProbe' | 'readOauthClient' | 'readOAuthClientWriteGrant' | 'readAccessTokenWriteGrant' | 'shareLockWriteCredential'>;
+function localWriterRow(engine: AuthorityEngine, id: string, lock: boolean): Promise<Array<{ lane: string; revoked_at: unknown; grant_ceiling: LocalGrant }>> {
   const registered = lock ? undefined : takeRegisteredWriterRow(id);
   if (registered) return Promise.resolve([registered]);
   const key = `local-writer:${id}`;
   return transactionMemo(engine, lock ? [`${key}:share`] : [key, `${key}:share`],
-    () => engine.executeRaw<{ lane: string; revoked_at: unknown; grant_ceiling: LocalGrant }>(
-      `SELECT lane,revoked_at,grant_ceiling FROM persistence_local_writers WHERE id=$1::uuid${lock ? ' FOR SHARE' : ''}`, [id]));
+    () => engine.readLocalWriterRow(id, { lock }).then(row => row ? [row] : []));
+}
+/**
+ * The authorization's plain local writer read (`readLocalWriterRow` without a lock), answered once per shared view like
+ * the statement text it replaced. Only a row is kept: a missing writer is read again, so a registration that inserts the
+ * row and reads it back sees it. A locking read is never answered here.
+ */
+export function sharedWriterRow(target: BrainEngine, reads: Map<string, Promise<unknown>>, once: <T>(id: string, read: () => Promise<T>) => Promise<T>): BrainEngine['readLocalWriterRow'] {
+  return (id, opts) => {
+    if (opts?.lock) return target.readLocalWriterRow(id, opts);
+    const memo = JSON.stringify(['readLocalWriterRow', id]);
+    return once(memo, () => target.readLocalWriterRow(id)).then(row => {
+      if (!row) reads.delete(memo);
+      return row;
+    });
+  };
 }
 /** #5984: one membership read per source per transaction; a FOR SHARE read also answers a plain one. */
-function sourceMembership(engine: SqlEngine, sourceId: string, lock: boolean) {
+function sourceMembership(engine: AuthorityEngine, sourceId: string, lock: boolean) {
   return transactionMemo(engine, lock ? [`source-membership:${sourceId}:share`] : [`source-membership:${sourceId}`, `source-membership:${sourceId}:share`],
-    () => engine.executeRaw<{ incarnation: string; archived: boolean }>(`SELECT incarnation,archived FROM sources WHERE id=$1${lock ? ' FOR SHARE' : ''}`, [sourceId]));
+    () => engine.readSourceMembership(sourceId, { lock }).then(row => row ? [row] : []));
 }
 /**
  * #5984: the reads `authorizeStoredRequest` shares across the rows of one
  * transaction (each source's membership, each local writer), as calls a
  * caller pipelines; the rows' own checks then answer them from the memo.
  */
-export function storedAuthorizationReads(engine: SqlEngine, rows: readonly WriteRequest[], lock = false): Array<() => Promise<unknown>> {
+export function storedAuthorizationReads(engine: AuthorityEngine, rows: readonly WriteRequest[], lock = false): Array<() => Promise<unknown>> {
   const sources = [...new Set(rows.map(row => row.source_id))];
   const writers = [...new Set(rows.flatMap(row => ['local_cli', 'local_stdio'].includes(row.authority?.principal?.kind) ? [row.authority.principal.id] : []))];
   return [...sources.map(id => () => sourceMembership(engine, id, lock)), ...writers.map(id => () => localWriterRow(engine, id, lock))];
@@ -131,7 +148,7 @@ export function storedAuthorizationReads(engine: SqlEngine, rows: readonly Write
  * narrowed grant refuses here and again at publication). Admission recomputes
  * the database-only reason; published-take bookkeeping is not carried.
  */
-async function replayedAuthority(engine: SqlEngine, stored: WriteAuthority, operation: string, sourceId: string, sourceIncarnation: string, slug: string): Promise<WriteAuthority> {
+async function replayedAuthority(engine: AuthorityEngine, stored: WriteAuthority, operation: string, sourceId: string, sourceIncarnation: string, slug: string): Promise<WriteAuthority> {
   if (stored.sourceId !== sourceId || stored.sourceIncarnation !== sourceIncarnation) deny('The source was removed and re-added since the original write.');
   const { databaseOnlyReason: _reason, takeHoldersUsed: _used, ...kept } = stored;
   const a: WriteAuthority = structuredClone(kept);
@@ -145,14 +162,14 @@ async function replayedAuthority(engine: SqlEngine, stored: WriteAuthority, oper
  * #6517: whether a receipt may name another page's slug to this writer: the trusted local owner always; a remote
  * writer only when the slug is inside its prefix grant (and delegated namespace) and visible to it.
  */
-export async function slugDisclosable(engine: SqlEngine, a: WriteAuthority, slug: string): Promise<boolean> {
+export async function slugDisclosable(engine: AuthorityEngine, a: WriteAuthority, slug: string): Promise<boolean> {
   if (!a.remote) return true;
   if (!prefixAllowed(a.slugPrefixes, slug)) return false;
   if ((a.delegated || a.restrictedNamespace) && !matchesSlugAllowList(slug, a.delegatedPrefixes ?? [])) return false;
   return authorizePageVisibility(engine, a, slug).then(() => true, () => false);
 }
 /** Caller holds source guards first. FOR SHARE serializes publication against revocation. */
-export async function authorizeWrite(engine: SqlEngine, a: WriteAuthority, operation: string, page: string, lock = false): Promise<void> {
+export async function authorizeWrite(engine: AuthorityEngine, a: WriteAuthority, operation: string, page: string, lock = false): Promise<void> {
   const slug = authorizedSlug(a, page);
   if (a.version !== 1 || !a.principal || !a.sourceId || !a.sourceIncarnation) deny('Missing durable write authority.');
   assertSkillWriteScopes(a.scopes, operation, a.remote);
@@ -164,17 +181,14 @@ export async function authorizeWrite(engine: SqlEngine, a: WriteAuthority, opera
     const actor = parseStoredActor(a.actingFor);
     if (!actor) deny('The accepted attested actor is malformed.');
     // GST-1113: lock the credential row before reading its attest right, so a concurrent removal commits before or after this publication.
-    if (lock && a.principal.kind === 'oauth_client') await engine.executeRaw('SELECT 1 FROM oauth_clients WHERE client_id=$1 FOR SHARE', [a.principal.id]);
-    if (lock && a.principal.kind === 'legacy_token') await engine.executeRaw('SELECT 1 FROM access_tokens WHERE id=$1 FOR SHARE', [a.principal.id]);
+    if (lock && (a.principal.kind === 'oauth_client' || a.principal.kind === 'legacy_token')) await engine.shareLockWriteCredential(a.principal.kind, a.principal.id);
     await storedActorIdentity(engine, a.principal, actor, a.attestedOp ?? operation, storedPerCallWriteSource(a, slug) ?? undefined);
   }
   // GST-1113: the one exception to the owner's single write source (the scope page), re-checked against the live attest_sources above.
   // A live grant of no sources writes nothing, so it refuses before that exception.
   const ownSource = (source: unknown, sourcesNone: boolean) => !sourcesNone && (source === a.sourceId || storedPerCallWriteSource(a, slug) !== null);
-  const suffix = lock ? ' FOR SHARE' : '';
   if (a.principal.kind === 'oauth_client') {
-    const [row] = await engine.executeRaw<Record<string, unknown>>(`SELECT deleted_at,scope,source_id,source_grant,allowed_operations,
-      bound_slug_prefixes,bound_tools,delegated_namespace,delegated_slug_prefixes FROM oauth_clients WHERE client_id=$1${suffix}`, [a.principal.id]);
+    const row = await engine.readOAuthClientWriteGrant(a.principal.id, { lock });
     if (!row || row.deleted_at != null || !ownSource(row.source_id, row.source_grant === 'none')) deny('The owning OAuth client is revoked or its source changed.');
     const scopes = typeof row.scope === 'string' ? row.scope.split(/\s+/) : [];
     assertSkillWriteScopes(scopes, operation, a.remote);
@@ -188,8 +202,8 @@ export async function authorizeWrite(engine: SqlEngine, a: WriteAuthority, opera
     return;
   }
   if (a.principal.kind === 'legacy_token') {
-    // GST-2314: named columns, not SELECT *: inside this transaction a plan cached before a migration added a column fails 0A000.
-    const [row] = await engine.executeRaw<TokenGrantRow & { revoked_at: unknown }>(`SELECT ${await tokenGrantRowSelect(engine)},revoked_at FROM access_tokens WHERE id=$1${suffix}`, [a.principal.id]);
+    // GST-2314: the member reads named columns, not SELECT *: inside this transaction a plan cached before a migration added a column fails 0A000.
+    const row = await engine.readAccessTokenWriteGrant(a.principal.id, { lock });
     if (!row || row.revoked_at != null) deny('The owning token is revoked.');
     const grant = grantFromTokenRow(row);
     if (grant.permissionsMalformed) deny('The current legacy grant is malformed.');
@@ -213,7 +227,7 @@ export async function authorizeWrite(engine: SqlEngine, a: WriteAuthority, opera
   deny('Application authority is unavailable through submitted write requests.');
 }
 /** `pageVisibility: false` is for a caller that checks the target's visibility itself after locking the page. */
-export async function authorizeStoredRequest(engine: SqlEngine, row: WriteRequest, lock = false, opts: { pageVisibility?: boolean } = {}): Promise<void> {
+export async function authorizeStoredRequest(engine: AuthorityEngine, row: WriteRequest, lock = false, opts: { pageVisibility?: boolean } = {}): Promise<void> {
   // #5984: one membership read per source per transaction; a FOR SHARE read also answers a plain one.
   // The source lock and the writer check are sent together in lock order; a source refusal is reported first.
   await pipelined(engine, [
@@ -245,7 +259,7 @@ export async function authorizeStoredRequest(engine: SqlEngine, row: WriteReques
 }
 
 /** Receipt/replay access uses the same holder intersection as publication. */
-async function authorizeStoredTakeHolders(engine: SqlEngine, row: WriteRequest): Promise<void> {
+async function authorizeStoredTakeHolders(engine: AuthorityEngine, row: WriteRequest): Promise<void> {
   const retained = row.authority.takeHoldersUsed;
   if (retained !== undefined) {
     if (!strings(retained) || retained.length === 0) deny('The take receipt has invalid retained holder authority.');
@@ -273,7 +287,7 @@ async function authorizeStoredTakeHolders(engine: SqlEngine, row: WriteRequest):
  * #6007: one access check answers identical read-only statements once (the
  * current and the stored authority read the same writer row and visibility).
  * The memo lives for that single check and holds no locking reads. The typed
- * brain-identity and unlocked writer-row reads are memoized the same way.
+ * brain-identity, unlocked writer-row and write-visibility probe reads are memoized the same way.
  */
 function onceReads(engine: BrainEngine): BrainEngine {
   const reads = new Map<string, Promise<unknown>>();
@@ -290,6 +304,10 @@ function onceReads(engine: BrainEngine): BrainEngine {
     if (key === 'readPersistenceBrainId') return () => memo('typed:brain', () => target.readPersistenceBrainId());
     if (key === 'readLocalWriterRow') return (id: string, opts?: { lock?: boolean }) => opts?.lock ? target.readLocalWriterRow(id, opts)
       : memo(JSON.stringify(['typed:writer', id]), () => target.readLocalWriterRow(id));
+    // The visibility probe the current and the stored authority both open with (authorizePageVisibility) was one of the
+    // identical executeRaw statements answered here before it became a typed member; it still is, so a receipt read pays it once.
+    if (key === 'readWriteVisibilityProbe') return (sourceId: string, slug: string) =>
+      memo(JSON.stringify(['typed:visibility-probe', sourceId, slug]), () => target.readWriteVisibilityProbe(sourceId, slug));
     const value = Reflect.get(target, key, target);
     return typeof value === 'function' ? value.bind(target) : value;
   } });
@@ -311,7 +329,7 @@ export async function ownRequestAccessible(ctx: OperationContext, row: WriteRequ
 
 
 /** Caller holds the same principal guard as revocation/rescoping. */
-export async function authorizeTakeHolder(engine: SqlEngine, authority: WriteAuthority, holder: string): Promise<void> {
+export async function authorizeTakeHolder(engine: AuthorityEngine, authority: WriteAuthority, holder: string): Promise<void> {
   if (!authority.remote) return;
   if (!(authority.takesHolders ?? ['world']).includes(holder)) deny('The take holder exceeds the original grant.');
   let current = ['world'];
@@ -320,7 +338,8 @@ export async function authorizeTakeHolder(engine: SqlEngine, authority: WriteAut
     if (!row) deny('The owning token is revoked.');
     current = grantFromTokenRow(row).takesHolders ?? ['world'];
   } else if (authority.principal.kind === 'oauth_client') {
-    const [row] = await engine.executeRaw<{ takes_holders: unknown }>('SELECT takes_holders FROM oauth_clients WHERE client_id=$1 AND deleted_at IS NULL', [authority.principal.id]);
+    const found = await engine.readOauthClient(authority.principal.id);
+    const row = found && found.deleted_at == null ? requireOauthClientColumns(found, ['takes_holders']) : undefined;
     if (!row) deny('The owning OAuth client is revoked.');
     current = row.takes_holders == null ? ['world'] : strings(row.takes_holders) ? row.takes_holders : [];
   }

@@ -31,7 +31,6 @@ writes_to:
   - people/
   - companies/
   - sources/
-upstream: media-ingest@fc834ee
 ---
 
 # Media Ingest Skill

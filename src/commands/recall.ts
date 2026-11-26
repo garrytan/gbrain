@@ -366,6 +366,7 @@ export async function runRecall(engine: BrainEngine, args: string[]): Promise<vo
   }
 
   if (flags.watchSeconds !== null) {
+    if (!thinClient && process.env.GBRAIN_ENFORCED_MEMBER === undefined) { const t = await import('../core/search/telemetry.ts'); t.recordLookupTelemetry(engine, t.RECALL_TELEMETRY_MODE); }
     await runWatchLoop(engine, flags, sourceId, thinClient, flags.watchSeconds);
     return;
   }
@@ -775,6 +776,7 @@ async function runRecallOnce(
       : await fetchRowsLocal(engine, flags, sourceId, resolvedSince);
     if (rows.length === 0 && !pageable) rows = await entitySplitLocal(engine, flags, sourceId, resolvedSince);
     if (rows.length === 0 && cursorVariant === 'briefing' && await keylessQuestionFallback(engine, flags, sourceId)) return wallClockCursor(tStart);
+    if (cursorVariant === 'briefing') { const t = await import('../core/search/telemetry.ts'); t.recordLookupTelemetry(engine, t.RECALL_TELEMETRY_MODE); }
     if (flags.pending) {
       pendingCount = await engine.countUnconsolidatedFacts(sourceId);
     }
@@ -804,7 +806,7 @@ async function runRecallOnce(
   } else if (flags.supersessions) {
     process.stdout.write(renderSupersessions(rows));
   } else if (flags.today) {
-    process.stdout.write(renderToday(rows));
+    process.stdout.write(renderToday(rows, flags.since));
   } else {
     if (rollup) process.stdout.write(renderRollup(rollup));
     process.stdout.write(renderHumanList(rows));
@@ -1339,11 +1341,12 @@ export async function runForget(engine: BrainEngine | (() => Promise<BrainEngine
   }
 }
 
-function renderToday(rows: FactRow[]): string {
+function renderToday(rows: FactRow[], windowStart: Date | null): string {
   if (rows.length === 0) {
     return '# Hot memory — today\n\nNo facts captured today yet.\n';
   }
-  const date = new Date().toISOString().slice(0, 10);
+  const day = windowStart ?? new Date();
+  const date = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`;
   const byEntity = new Map<string, FactRow[]>();
   for (const r of rows) {
     const k = r.entity_slug ?? '(no entity)';

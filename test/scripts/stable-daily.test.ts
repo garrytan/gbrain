@@ -17,8 +17,9 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { load } from 'js-yaml';
 import { promote, renderTagMessage, scheduleAuthorized, Refusal, type GitResult } from '../../scripts/promote-stable.ts';
-import { daily, integrityFailures, parseRecord, shapeFailures, type DailyDeps, type Scoreboard, type SoakRunRow } from '../../scripts/stable-daily.ts';
+import { daily, integrityFailures, parseRecord, searchGateFailures, shapeFailures, type DailyDeps, type Scoreboard, type SoakRunRow } from '../../scripts/stable-daily.ts';
 import type { MatrixReceipt, MatrixRunRow } from '../../scripts/stable-matrix.ts';
+import { CANARY_CONTEXT, parseCanaryPosters, type CommitStatus } from '../../scripts/stable-canary.ts';
 import { parseStableRecord } from '../../src/core/stable-channel.ts';
 
 const ROOT = join(import.meta.dir, '..', '..');
@@ -29,7 +30,8 @@ const tree = (n: number) => String(n).padStart(40, 'e');
 const CLEAN: Scoreboard[] = [2, 65].map(rtt => ({
   label: `rtt${rtt}`, rtt_ms: rtt, hours: 2, elapsed_s: 7204, privacy: { probes: 40, probe_errors: 0 },
   brain: { fixture: { pages: 598_561, options: { pages: 600_000 } } },
-  gates: ['privacy_leaks', 'read_errors', 'version_skew', 'residents_alive', 'session_refusals', 'freshness_p95'].map(id => ({ id, pass: id === 'freshness_p95' ? false : true })),
+  gates: ['privacy_leaks', 'read_errors', 'version_skew', 'residents_alive', 'session_refusals', 'freshness_p95', 'search_gate_jit_on', 'search_gate_jit_off']
+    .map(id => ({ id, pass: id === 'freshness_p95' || (rtt === 65 && id.startsWith('search_gate_')) ? false : true })),
 }));
 const ok = (stdout = ''): GitResult => ({ code: 0, stdout: `${stdout}\n`, stderr: '' });
 const fail: GitResult = { code: 1, stdout: '', stderr: 'fatal: bad revision' };
@@ -55,7 +57,15 @@ interface World {
   scheduled?: boolean;
   /** The published stable.json; default: a record naming the current stable. null: none published yet. */
   published?: string | null;
+  /** Commit statuses on each release's commit, by version; 'error' fails the read. Default: the install canary passed it. */
+  canary?: Record<string, CommitStatus[] | 'error'>;
 }
+
+/** A gbrain/install-canary status on v<version>, as the canary posts it. */
+const canaryStatus = (version: string, state = 'success', over: Partial<CommitStatus> = {}): CommitStatus => ({
+  context: CANARY_CONTEXT, state, description: `v${version} run 20261123T0254Z: ${state === 'failure' ? 'fail openclaw,hermes' : 'pass'}`,
+  creator: { login: 'capy-ai[bot]' }, created_at: '2026-11-10T03:00:00Z', ...over,
+});
 
 const stableMessage = (version: string, promotedAt: string, rollback = false) =>
   `gbrain stable channel: v${version}\n\nversion: ${version}\npromoted_at: ${promotedAt}\nrollback: ${rollback}\nreason: ${rollback ? 'sync regression' : '-'}\n`;
@@ -149,6 +159,13 @@ function world(w: World) {
         return { items: (w.importantPrs ?? []).map(p => ({ number: p.number })) };
       }
       if (path.includes('/issues?')) return w.breakIssues ?? [];
+      const statuses = /\/commits\/([0-9a-f]{40})\/statuses/.exec(path);
+      if (statuses) {
+        const version = Object.entries(w.releases).find(([, c]) => sha(c) === statuses[1])?.[0];
+        const rows = version === undefined ? [] : w.canary?.[version] ?? [canaryStatus(version)];
+        if (rows === 'error') throw new Error(`gh api ${path} failed: HTTP 403: Resource not accessible by integration`);
+        return rows;
+      }
       if (path.includes('/actions/workflows/upgrade-matrix.yml/runs')) {
         const q = new URLSearchParams(path.split('?')[1] ?? '');
         const rows = matrix.filter(r => !q.get('branch') || r.head_branch === q.get('branch'));
@@ -250,6 +267,16 @@ describe('integrity gates', () => {
     expect(integrityFailures([{ label: 'rtt2', gates: [] }])).toHaveLength(5);
   });
 
+  test('the search speed gate must pass in the 2 ms cell only; a missing cell or gate fails closed', () => {
+    expect(searchGateFailures(CLEAN)).toEqual([]);
+    const slow = structuredClone(CLEAN);
+    slow[0]!.gates!.find(g => g.id === 'search_gate_jit_on')!.pass = false;
+    expect(searchGateFailures(slow)).toEqual(['rtt2: search_gate_jit_on failed']);
+    const before = CLEAN.map(b => ({ ...b, gates: b.gates!.filter(g => !g.id.startsWith('search_gate_')) }));
+    expect(searchGateFailures(before)).toEqual(['rtt2: search_gate_jit_on missing', 'rtt2: search_gate_jit_off missing']);
+    expect(searchGateFailures([CLEAN[1]!])).toEqual(['no 2 ms cell for the search speed gate']);
+  });
+
   test('a soak short of the full default shape is not promotable: a missing cell, a short run, a small requested fixture, no clean privacy probes', () => {
     expect(shapeFailures(CLEAN)).toEqual([]);
     const smoke: Scoreboard[] = [{ ...CLEAN[0]!, hours: 0.01, elapsed_s: 36, privacy: { probes: 0, probe_errors: 0 } }];
@@ -349,6 +376,15 @@ describe('daily: important fixes', () => {
     const r = await daily(w.deps);
     expect(r.action === 'promoted' && r.promotion.version).toBe('1.0.3');
     expect(w.logs.some(l => l.includes('rtt2: privacy_leaks failed'))).toBe(true);
+  });
+
+  test('a soak whose search speed gate failed in the 2 ms cell is skipped for an older one that passed', async () => {
+    const slow = structuredClone(CLEAN);
+    slow[0]!.gates!.find(g => g.id === 'search_gate_jit_off')!.pass = false;
+    const w = world(base({ importantPrs: [{ number: 30, merge: 3 }], runs: [soak(9, 3), soak(10, 4, { boards: slow })] }));
+    const r = await daily(w.deps);
+    expect(r.action === 'promoted' && r.promotion.version).toBe('1.0.3');
+    expect(w.logs.some(l => l.includes('rtt2: search_gate_jit_off failed'))).toBe(true);
   });
 
   test('a soak already running means wait; a finished soak on the newest release that did not qualify is never re-dispatched', async () => {
@@ -669,6 +705,119 @@ describe('daily: stable.json backfill (GBRA-346)', () => {
   });
 });
 
+describe('daily: the install canary gates stable', () => {
+  const old = { version: '1.0.1', commit: 1, message: stableMessage('1.0.1', '2026-11-02T05:17:00Z') };
+
+  test('a release the canary failed is skipped for an older release that passed, and the record carries the pass', async () => {
+    const w = world(base({ stable: old, runs: [soak(8, 2), soak(9, 3)], canary: { '1.0.3': [canaryStatus('1.0.3', 'failure')] } }));
+    const r = await daily(w.deps);
+    expect(r.action === 'promoted' && r.promotion.version).toBe('1.0.2');
+    expect(w.logs.some(l => l.includes('skipping v1.0.3: the install canary failed v1.0.3 (v1.0.3 run 20261123T0254Z: fail openclaw,hermes)'))).toBe(true);
+    expect(JSON.parse(w.record()!).install_canary).toBe('v1.0.2 run 20261123T0254Z: pass');
+    expect(w.tags.stable!.message).toContain('install_canary: v1.0.2 run 20261123T0254Z: pass\n');
+  });
+
+  test('no status, or a newest status that is pending, means not tested yet: the run waits, names the version, and writes nothing', async () => {
+    const started = [canaryStatus('1.0.4', 'pending', { created_at: '2026-11-10T04:00:00Z', description: 'v1.0.4 run 20261123T0400Z: started' }), canaryStatus('1.0.4', 'failure')];
+    for (const [rows, says] of [[[], 'has posted no status for it'], [started, 'newest status for it is pending']] as const) {
+      for (const dryRun of [false, true]) {
+        const w = world(base({ stable: old, runs: [soak(9, 4)], canary: { '1.0.4': [...rows], '1.0.2': [] }, dryRun }));
+        const r = await daily(w.deps);
+        expect(r).toMatchObject({ action: 'waiting', version: '1.0.4' });
+        expect(r.why).toContain('v1.0.4 is not tested yet');
+        expect(r.why).toContain(says);
+        expect(r.why).toContain('stable waits for the install canary');
+        expect(r.why).not.toMatch(/held|failed/);
+        expect([...w.pushes, ...w.posts]).toEqual([]);
+      }
+    }
+  });
+
+  test('a candidate only the canary failed holds for a maintainer, with a warning', async () => {
+    const w = world(base({ stable: old, runs: [soak(9, 4)], canary: { '1.0.4': [canaryStatus('1.0.4', 'failure')] } }));
+    const r = await daily(w.deps);
+    expect(r.action).toBe('held');
+    expect(r.why).toContain('the install canary failed v1.0.4');
+    expect(r.why).toContain('a maintainer decides');
+    expect([...w.pushes, ...w.posts]).toEqual([]);
+    expect(w.logs.some(l => l.startsWith('::warning::'))).toBe(true);
+  });
+
+  test('a status from an account off the allowlist, in another context, or naming another tag does not count', async () => {
+    const rows = [
+      canaryStatus('1.0.4', 'success', { creator: { login: 'mallory-example' } }),
+      canaryStatus('1.0.4', 'success', { creator: { login: 'garrytan' } }),
+      canaryStatus('1.0.4', 'success', { context: 'ci/other' }),
+      canaryStatus('1.0.4', 'success', { description: 'v1.0.40 run 1: pass' }),
+      canaryStatus('1.0.4', 'success', { description: 'run 1: pass v1.0.4' }),
+    ];
+    const w = world(base({ stable: old, runs: [soak(9, 4)], canary: { '1.0.4': rows } }));
+    const r = await daily(w.deps);
+    expect(r).toMatchObject({ action: 'waiting', version: '1.0.4' });
+    expect(r.why).toContain('4 gbrain/install-canary statuses ignored: not posted by capy-ai[bot] or not naming v1.0.4');
+    expect(w.pushes).toEqual([]);
+  });
+
+  test('STABLE_CANARY_POSTERS replaces the allowlist: its account counts and the default one no longer does', async () => {
+    const bot = world(base({ stable: old, runs: [soak(9, 4)], canary: { '1.0.4': [canaryStatus('1.0.4', 'success', { creator: { login: 'Canary-Bot' } })] } }));
+    bot.deps.canaryPosters = parseCanaryPosters(' canary-bot , ');
+    expect((await daily(bot.deps)).action).toBe('promoted');
+    const owner = world(base({ stable: old, runs: [soak(9, 4)] }));
+    owner.deps.canaryPosters = parseCanaryPosters('canary-bot');
+    expect((await daily(owner.deps)).action).toBe('waiting');
+  });
+
+  test('a scheduled promotion ignores a waiver: only a maintainer dispatch can waive the canary', async () => {
+    const w = world(base({ runs: [soak(9, 2)], canary: { '1.0.2': [canaryStatus('1.0.2', 'failure')] } }));
+    const run = { version: '1.0.2', soakRunUrl: `https://github.com/${REPO}/actions/runs/9`, scoreboardUrl: '', rollback: false, reason: '', matrixRunUrl: `https://github.com/${REPO}/actions/runs/${MATRIX_ID + 2}`, canaryWaiver: 'trust me' };
+    await expect(promote(w.deps, run)).rejects.toThrow(/the install canary failed v1\.0\.2/);
+    expect(w.pushes).toEqual([]);
+  });
+
+  test('a canary block on an older release does not stop the soak of a newer release that has none yet', async () => {
+    const w = world(base({ stable: old, runs: [soak(8, 2)], canary: { '1.0.2': [canaryStatus('1.0.2', 'failure')] } }));
+    const r = await daily(w.deps);
+    expect(r).toMatchObject({ action: 'soak_dispatched', version: '1.0.4' });
+    expect(r.why).toContain('the install canary failed v1.0.2');
+    expect(w.posts[0]!.path).toBe(`repos/${REPO}/actions/workflows/production-soak.yml/dispatches`);
+    expect(w.pushes).toEqual([]);
+  });
+
+  test('a newer release the canary failed and an older one it has not tested yet: the run waits for the older one', async () => {
+    const w = world(base({ stable: old, runs: [soak(8, 2), soak(9, 3), soak(10, 4)], canary: { '1.0.4': [canaryStatus('1.0.4', 'failure')], '1.0.3': [], '1.0.2': [canaryStatus('1.0.2', 'failure')] } }));
+    const r = await daily(w.deps);
+    expect(r).toMatchObject({ action: 'waiting', version: '1.0.3' });
+    expect(r.why).toContain('v1.0.3 is not tested yet');
+    expect(w.logs.some(l => l.includes('skipping v1.0.4: the install canary failed v1.0.4'))).toBe(true);
+  });
+
+  test('not tested yet past the weekly floor warns, so a stopped canary is seen; inside the week it waits quietly', async () => {
+    const late = world(base({ stable: old, runs: [soak(9, 4)], canary: { '1.0.4': [] } }));
+    expect((await daily(late.deps)).action).toBe('waiting');
+    expect(late.logs.some(l => l.startsWith('::warning::') && l.includes('past the 7-day floor') && l.includes('v1.0.4 is not tested yet'))).toBe(true);
+    const early = world(base({ runs: [soak(9, 4)], importantPrs: [{ number: 30, merge: 3, important: 'security' }], canary: { '1.0.4': [] } }));
+    expect((await daily(early.deps)).action).toBe('waiting');
+    expect(early.logs.some(l => l.startsWith('::warning::'))).toBe(false);
+  });
+
+  test('a soaked release the canary failed is skipped before its matrix is judged or dispatched', async () => {
+    const RELEASES = { '1.0.1': 1, '1.0.2': 2, '1.0.3': 3, '1.0.4': 4 };
+    const red = matrixRun(704, 4, RELEASES, { event: 'workflow_dispatch' }, { red: ['v1.0.1__pglite__keyless__repo'], cells: [{ id: 'v1.0.1__pglite__keyless__repo', from: 'v1.0.1', verdict: 'fail' }] });
+    const held = world(base({ stable: old, runs: [soak(9, 3), soak(10, 4)], matrix: [red, matrixRun(MATRIX_ID + 3, 3, RELEASES)], canary: { '1.0.4': [canaryStatus('1.0.4', 'failure')] } }));
+    expect((await daily(held.deps)).action === 'promoted').toBe(true);
+    expect(held.tags.stable!.commit).toBe(3);
+    const none = world(base({ stable: old, runs: [soak(9, 3), soak(10, 4)], matrix: [matrixRun(MATRIX_ID + 3, 3, RELEASES)], canary: { '1.0.4': [canaryStatus('1.0.4', 'failure')] } }));
+    expect((await daily(none.deps)).action).toBe('promoted');
+    expect(none.posts).toEqual([]);
+  });
+
+  test('statuses that cannot be read refuse the run instead of guessing', async () => {
+    const w = world(base({ stable: old, runs: [soak(9, 3)], canary: { '1.0.3': 'error' } }));
+    await expect(daily(w.deps)).rejects.toThrow(/install canary's statuses on v1\.0\.3 .*could not be read .*HTTP 403/);
+    expect(w.pushes).toEqual([]);
+  });
+});
+
 describe('stable-daily.yml', () => {
   const wf = load(readFileSync(join(ROOT, '.github/workflows/stable-daily.yml'), 'utf8')) as {
     on: { schedule: Array<{ cron: string }>; workflow_dispatch: { inputs: Record<string, { default: unknown; type: string }> } };
@@ -681,14 +830,14 @@ describe('stable-daily.yml', () => {
     expect(Object.keys(wf.on).sort()).toEqual(['schedule', 'workflow_dispatch']);
     expect(wf.on.schedule.map(s => s.cron)).toEqual(['17 5 * * *', '17 13 * * *']);
     expect(wf.on.workflow_dispatch.inputs.dry_run).toMatchObject({ type: 'boolean', default: true });
-    expect(wf.permissions).toEqual({ contents: 'write', actions: 'write', issues: 'read', 'pull-requests': 'read' });
+    expect(wf.permissions).toEqual({ contents: 'write', actions: 'write', issues: 'read', 'pull-requests': 'read', statuses: 'read' });
     expect(wf.concurrency).toEqual({ group: 'promote-stable', 'cancel-in-progress': false });
   });
 
   test('inputs reach the script through env only, and no dependency install runs', () => {
     const step = wf.jobs.daily.steps.find(s => s.run?.includes('scripts/stable-daily.ts'))!;
     expect(step.run).not.toContain('${{');
-    expect(step.env).toMatchObject({ STABLE_AUTO_PROMOTE: '${{ vars.STABLE_AUTO_PROMOTE }}', STABLE_SOAK_WORKFLOW: '${{ vars.STABLE_SOAK_WORKFLOW }}' });
+    expect(step.env).toMatchObject({ STABLE_AUTO_PROMOTE: '${{ vars.STABLE_AUTO_PROMOTE }}', STABLE_SOAK_WORKFLOW: '${{ vars.STABLE_SOAK_WORKFLOW }}', STABLE_CANARY_POSTERS: '${{ vars.STABLE_CANARY_POSTERS }}' });
     expect(wf.jobs.daily.steps.some(s => /bun install|npm (ci|install)/.test(s.run ?? ''))).toBe(false);
   });
 });

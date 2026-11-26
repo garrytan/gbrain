@@ -6,8 +6,9 @@
  * - `sync-origin-deleted`, fingerprint `<source>:<incarnation>:<origin>`: written by `writeOriginDeletedMarker` in
  *   the transaction of every page-row deletion of a managed Git source (`page-purge.ts`, the belief purge-mirror
  *   replay), only when it can matter: the origin is in the source's `last_commit` tree or a file backs it on disk.
- *   The classifier reads it (`sync-pass.ts` `readMarkers`: `kind`, `blob_oids`), so a purged page's unchanged file
- *   settles `deleted_same` and a changed one is held, never imported as a new page. A full round retires it by
+ *   The classifier reads it (`sync-pass.ts` `readMarkers`: `kind`, `blob_oids`), so a purged page's file is never
+ *   imported as a new page without the user: a changed one, or (LC-1) its unchanged bytes back in the checkout, is held
+ *   for the file-drift preview; a removal not committed yet settles `deleted_same`. A full round retires it by
  *   compare-and-delete (`retireOriginDeletedMarker`) when the origin is independently absent from the pinned tree
  *   and the disk, or a live page claims the origin again.
  * - `sync-deletes-withheld`, fingerprint `<source>:<incarnation>`: a round's tripped mass-delete valve (#2828),

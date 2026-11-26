@@ -1,0 +1,2 @@
+# Silent read-catch ratchet baseline (fixture). Rows: path#function<TAB>metric<TAB>count[<TAB>note].
+src/core/clean.ts#lookupPages	catch_empty	1

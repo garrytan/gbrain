@@ -190,6 +190,9 @@
               "maxItems": 3
             }
           }
+        },
+        "audiences": {
+          "const": 1
         }
       }
     },
@@ -337,6 +340,64 @@
           "const": "gbrain-estimate-tokens-v1"
         }
       }
+    },
+    "vectors": {
+      "description": "The skill vectors beside the index (vectors.bin), made by the brain's embedding model (config.json embedding_model) when the catalog is built for Claude Code, Codex or by hand in user scope; otherwise the reason it has none. A receipt from before vectors has no vectors key.",
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "model",
+            "dims",
+            "count"
+          ],
+          "properties": {
+            "model": {
+              "type": "string"
+            },
+            "dims": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "count": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "skipped"
+          ],
+          "properties": {
+            "skipped": {
+              "enum": [
+                "no_embedder",
+                "embedding_disabled",
+                "unsupported_provider",
+                "missing_key",
+                "provider_error",
+                "timeout",
+                "bad_reply",
+                "not_this_harness",
+                "project_scope",
+                "too_many_skills",
+                "stale_vectors",
+                "not_needed",
+                "unmeasured_model"
+              ]
+            },
+            "attempts": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "For provider_error, timeout and bad_reply: how many builds in a row ended that way. A turn asks for another build at most 3 times, 10 minutes apart."
+            }
+          }
+        }
+      ]
     },
     "build": {
       "type": "object",

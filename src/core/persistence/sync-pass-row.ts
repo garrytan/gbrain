@@ -56,6 +56,8 @@ export interface PassConverged {
    * any an earlier stamp carried that has not committed). Until each effect commits the source is not idle; absent: none.
    */
   writeback?: string[];
+  /** LC-1: committed-mode paths a delete's uncommitted removal settled, with their disk stat; null overflowed (no idle). Absent: none. */
+  removal_pending?: Array<{ path: string; stat: string }> | null;
   parser_fp: string;
   pack: string | null;
   selection_fp: string;
@@ -129,6 +131,8 @@ export interface ManagedSyncPassValue {
      * step ends; status names it for a pass that stopped there.
      */
     step?: { name: 'level_read' | 'drift_history'; at: string; done?: number; total?: number };
+    /** GST-3534: the commits the pass's rounds read, and how many rounds read `I⋈P` whole or patched the previous read. */
+    levels?: { heads: number; whole: number; patched: number };
   };
 }
 

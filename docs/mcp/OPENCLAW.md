@@ -62,21 +62,36 @@ so it does not certify paid-model recall or provenance.
 ## Option 2: `openclaw mcp add`
 
 OpenClaw keeps MCP servers under `mcp.servers` in `~/.openclaw/openclaw.json`
-(`openclaw config schema` shows the key path). Register gbrain with the CLI:
+(`openclaw config schema` shows the key path). Register gbrain with the CLI,
+then run `gbrain setup openclaw` so a new session knows to use it:
 
 ```bash
-openclaw mcp add gbrain --command "$(command -v gbrain)" --arg serve --arg --surface --arg starter --arg --advertise --arg verbs --env GBRAIN_HOME=$HOME
+openclaw mcp add gbrain --command "$(command -v gbrain)" --arg serve --arg --surface --arg full --env GBRAIN_HOME=$HOME
+gbrain setup openclaw
 ```
+
+The second line is not optional. Without it the tools are registered but
+nothing tells the agent to use them, and a new session answers from OpenClaw's
+own memory and chat history instead (in the [install eval](https://github.com/garrytan/harness-evals/blob/master/docs/benchmarks/2026-11-17-gbrain-install/results/README.md),
+11 of the 30 OpenClaw runs without gbrain's install block missed this way).
+See [Brain-first instructions](#brain-first-instructions).
 
 Use an absolute `--command` path: the launchd-started gateway's `PATH` does
 not include `~/.bun/bin`, so a bare `gbrain` fails to spawn. `--env` is
 optional: a PGLite brain needs no `DATABASE_URL`
 (`--env DATABASE_URL=postgresql://...` for Postgres), and `GBRAIN_HOME` only
-matters when the brain home isn't `~/.gbrain`. `--surface starter --advertise verbs`
-lists the seven-verb memory protocol ([MEMORY_VERBS v1](../protocol/MEMORY_VERBS_v1.md))
-plus `request_tools`, which reaches every other tool; drop the
-`--advertise verbs` values to list the starter set (`full` for the whole catalog) (check
-`openclaw mcp add --help` for your version's `--arg` spelling).
+matters when the brain home isn't `~/.gbrain`. `--surface full` lists every tool:
+OpenClaw, like Codex, calls `request_tools` and then never calls the tool it
+unlocks, so a narrower listing leaves those tools out of reach
+([harness-evals#609](https://github.com/garrytan/harness-evals/pull/609)). To keep
+the smaller list anyway, use `--arg --surface --arg starter --arg --advertise --arg verbs`
+(check `openclaw mcp add --help` for your version's `--arg` spelling). When the
+entry already exists on starter, `gbrain setup openclaw` reads `openclaw.json`
+(it never runs OpenClaw's CLI) and prints the exact `openclaw mcp set gbrain '<entry>'`
+line that replaces it with `--surface full`, keeping its command and env.
+When the entry holds anything else (env besides `GBRAIN_HOME` and `GBRAIN_SOURCE`,
+or extra arguments), it prints only the flags to change in the file instead, so no
+other value is printed or overwritten.
 
 Leave `GBRAIN_SOURCE` unset in the MCP env unless you deliberately want
 single-source retrieval: a pin scopes every tool (search, `get_brain_identity`
@@ -118,7 +133,7 @@ on the OpenClaw machine:
 ```bash
 gbrain init --mcp-only --issuer-url https://<brain-host> --mcp-url https://<brain-host>/mcp \
   --oauth-client-id <client_id> --oauth-client-secret <client_secret>
-openclaw mcp add gbrain --command "$(command -v gbrain)" --arg serve --arg --surface --arg starter --arg --advertise --arg verbs
+openclaw mcp add gbrain --command "$(command -v gbrain)" --arg serve --arg --surface --arg full
 ```
 
 If gbrain's bundle plugin is installed there, it already registers gbrain:
@@ -334,7 +349,8 @@ gbrain setup openclaw   # --dry-run previews; --workspace <dir> picks the agent
 It writes one short marked block into the workspace `AGENTS.md` (from
 `OPENCLAW_CONFIG_PATH` or `~/.openclaw/openclaw.json`: a sole agent's
 workspace, else `agents.defaults.workspace`, else `~/.openclaw/workspace`; with
-several agents, pass `--workspace`). Text outside the markers is never touched,
+several agents, pass `--workspace`; with `OPENCLAW_HOME` set, `~/.openclaw`
+means `$OPENCLAW_HOME/.openclaw`, as it does for OpenClaw). Text outside the markers is never touched,
 a re-run upgrades the block in place, `--no-instructions` opts out and is
 remembered, and `--remove` takes it out. A thin-client install puts the same
 block at the top of `GBRAIN-INSTRUCTIONS.md`.

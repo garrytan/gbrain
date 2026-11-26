@@ -398,6 +398,10 @@ spend. Confirm before continuing.
 
 ## Step 4: Import and Index
 
+A brain `gbrain setup claude-code` or `codex` created offers the coding sessions already on the machine as the
+`setup_history` decision: relay it, and run its `import` argv only on the user's yes; the newest session comes first
+and the last 30 days need a second yes ([setup history import](docs/guides/conversation-archive.md#setup-history-import)).
+
 Optional, when the user has chosen files to import. Keyword retrieval stays
 local; embedding and expanded query calls require separate provider consent.
 
@@ -593,6 +597,20 @@ gbrain), and checks the server with `hermes mcp test gbrain`. If it prints a
 not register Hermes's MCP server, run the command in
 [Register by hand](docs/mcp/HERMES.md#register-by-hand) and verify with
 `hermes mcp test gbrain`. Full reference: [docs/mcp/HERMES.md](docs/mcp/HERMES.md).
+
+**If you are OpenClaw:** register gbrain as your MCP server, then add the
+brain-first rule:
+
+```bash
+openclaw mcp add gbrain --command "$(command -v gbrain)" --arg serve --arg --surface --arg full --env GBRAIN_HOME=$HOME
+gbrain setup openclaw
+```
+
+Run both lines. With only the first, the tools are registered but a new session
+answers from OpenClaw's own memory and chat history instead of gbrain. Once the
+gateway runs `gbrain serve`, use the MCP tools rather than the `gbrain` CLI on a
+PGLite brain (the CLI stops with `pglite_busy`). Full reference:
+[docs/mcp/OPENCLAW.md](docs/mcp/OPENCLAW.md).
 
 **If you are Grok Build** (xAI's `grok` CLI): register gbrain as your MCP server:
 

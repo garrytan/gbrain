@@ -26,7 +26,6 @@ tools:
   - read
 mutating: false
 writes_pages: false
-upstream: context-audit@fc834ee
 when_to_use: "Use when the user asks: \"context audit\", \"context diet\", \"system prompt audit\", \"prompt compression\", \"reduce context size\"."
 ---
 

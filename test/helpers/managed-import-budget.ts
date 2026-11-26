@@ -68,7 +68,7 @@ export function publicationOf(records: StatementRecord[]): StatementRecord[] {
     group.push(record);
     if (text !== 'commit' && text !== 'rollback') continue;
     open.delete(record.conn);
-    if (text === 'commit' && group.some(r => /^INSERT INTO pages \(/.test(flat(r.sql)))) return group;
+    if (text === 'commit' && group.some(r => /^(?:WITH ins AS \( )?INSERT INTO pages \(/.test(flat(r.sql)))) return group;
   }
   throw new Error('no committed transaction inserted the page');
 }

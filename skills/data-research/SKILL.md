@@ -24,7 +24,6 @@ tools:
   - put_raw_data
   - file_upload
 mutating: true
-upstream: data-research@fc834ee
 ---
 
 # Data Research

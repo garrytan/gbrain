@@ -19,7 +19,6 @@ triggers:
 mutating: false
 writes_pages: false
 writes_to: []
-upstream: measure-before-you-fix@fc834ee
 ---
 
 # Measure Before You Fix

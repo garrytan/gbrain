@@ -6,12 +6,23 @@ import type { SqlEngine } from './model.ts';
 import { repairWedgedReservation, resolveCoordinationLock } from './coordination-lock.ts';
 import { canonicalFilesystemPath } from './root-registry.ts';
 import type { OperationError } from '../ops/contract.ts';
-import { adoptTransferredRootStamp, assertNoPhysicalRootOverlap, assertPhysicalRoot, assertPhysicalRootStamp, describeMovedPhysicalRoot, PHYSICAL_ROOT_MARKER, physicalRootDeviceChange, physicalRootError,
+import { ownershipReservationMissingError } from './owner-marker.ts';
+import { adoptTransferredRootStamp, assertNoPhysicalRootOverlap, assertPhysicalRoot, assertPhysicalRootStamp, describeMovedPhysicalRoot, lostReservationStamp, PHYSICAL_ROOT_MARKER, physicalRootDeviceChange, physicalRootError,
   physicalRootMovedError, physicalRootMovedRefusal, readPhysicalRootReservation, readPhysicalRootStamp, reservePhysicalRootRecord, restampPhysicalRootDevice, samePhysicalBirth, writePhysicalRootStamp,
   type MovedPhysicalRoot, type PhysicalRootReservation } from './physical-root-record.ts';
 
 export { assertPhysicalRoot, isPhysicalRootMetadata, readPhysicalRootReservation } from './physical-root-record.ts';
 export interface PhysicalRootClaim { hostId: string; worktreeId?: string; coordinationPath?: string; }
+/**
+ * The database facts a root claim checks: the brain id, a worktree's owner and state, and its host binding. The
+ * default reads them with SQL on `tx`; the unmanaged claim passes its claim store (engine-sql/worktree-claim.ts), so a
+ * Rust brain answers them from its binding records.
+ */
+export interface PhysicalRootFacts {
+  brainId(): Promise<string | null>;
+  worktree(id: string): Promise<{ owner_host_id: string | null; state: string } | null>;
+  hostBinding(worktreeId: string, hostId: string): Promise<{ local_path: string; coordination_path: string } | null>;
+}
 async function brainIdentity(tx: SqlEngine): Promise<string> {
   const [brain] = await tx.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1');
   if (!brain) throw physicalRootError();
@@ -29,7 +40,9 @@ export async function reservePhysicalRoot(tx: SqlEngine, path: string, opts: Phy
   const worktreeId = opts.worktreeId ?? previous?.worktreeId ?? randomUUID();
   const coordinationPath = opts.coordinationPath ?? resolveCoordinationLock(root, worktreeId, { reservation: previous?.coordinationPath }, opts.hostId).path;
   // A copied marker without its original sibling reservation is not a new root; a moved checkout is named, path-free (#8625).
-  if (!previous && existsSync(join(root, PHYSICAL_ROOT_MARKER))) throw await movedPhysicalRoot(tx, root, opts.hostId) ? physicalRootMovedError() : physicalRootError();
+  // #10260: a stamp that still identifies this exact directory lost only its reservation, which the plain self-transfer re-creates.
+  if (!previous && existsSync(join(root, PHYSICAL_ROOT_MARKER))) throw await movedPhysicalRoot(tx, root, opts.hostId) ? physicalRootMovedError()
+    : lostReservationStamp(root, { brainId }) ? ownershipReservationMissingError() : physicalRootError();
   const reservation = previous ?? reservePhysicalRootRecord(root, { brainId, worktreeId, hostId: opts.hostId, coordinationPath });
   if (reservation.brainId !== brainId || reservation.worktreeId !== worktreeId || reservation.coordinationPath !== coordinationPath) throw physicalRootError();
   const [owner] = await tx.executeRaw<{ owner_host_id: string | null }>('SELECT owner_host_id FROM persistence_worktrees WHERE id=$1::uuid', [worktreeId]);

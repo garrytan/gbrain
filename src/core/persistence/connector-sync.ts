@@ -15,7 +15,10 @@ import type { RegistryCode } from '../error-registry.ts';
 import { currentSubmissionAuthority } from '../minions/submission-authority.ts';
 import { sealPageTextProjection } from '../page-state/projections.ts';
 import { loadActivePackForEngine } from '../schema-pack/engine-resolution.ts';
-import { authorizeStoredRequest, authorizeWrite } from './authority.ts';
+import { authorizeStoredRequest, authorizeWrite, sharedWriterRow } from './authority.ts';
+import { MIRROR_READ_ONLY_SQL } from './mirror-read-only.ts';
+import { registerEngineView } from './switches.ts';
+import { SLUG_ROOT_MODE_SQL } from '../sync-anchor.ts';
 import { materializeTimeline, prepareCanonicalProjections } from './canonical-projections.ts';
 import { digest, sha256 } from './digest.ts';
 import { admitWriteInTransaction, assertReplayIntent, getWriteRequest, getWriteRequestById, intentDigest, receiptFor } from './journal.ts';
@@ -73,6 +76,57 @@ export const connectorWaitBudget = { ms: CONNECTOR_WAIT_BUDGET_MS };
 const WAIT_RESERVE_MS = 1_000;
 const COMMIT_GRACE_MS = 1_000;
 const ITEM_WAIT_MS = 5_000;
+const LEASE_SQL = `SELECT id FROM gbrain_cycle_locks
+      WHERE id=$1 AND acquisition_token=$2::uuid AND extract(epoch from acquired_at)::text=$3
+        AND ttl_expires_at>now() FOR SHARE`;
+const SOURCE_SQL = 'SELECT incarnation,archived,local_path,config FROM sources WHERE id=$1';
+/**
+ * #9990: plain reads of rows that stay put for a whole run (the lease, the source row, the owner binding, the writer
+ * grant, the mirror and slug-root modes), which one connector call (a page read, an import, a delete) used to send up to
+ * nine times each; far from the database that was most of an item's cost. Admission and publication re-check them under
+ * their locks.
+ */
+const CALL_STABLE_READS = new Set([LEASE_SQL, SOURCE_SQL, MIRROR_READ_ONLY_SQL, SLUG_ROOT_MODE_SQL]
+  .map(sql => sql.replace(/\s+/g, ' ').trim()));
+const FORGET_CALL_READS = Symbol('forgetCallReads');
+/**
+ * `engine` for one connector call: each read in CALL_STABLE_READS is sent once for the call, and so are the owner binding
+ * and the unlocked writer row, now typed members (`getWorktreeBinding`, `readLocalWriterRow`); every other statement
+ * goes through. A caller gets its own copy of each row.
+ */
+function callReads(engine: BrainEngine): BrainEngine {
+  const reads = new Map<string, Promise<Record<string, unknown>[]>>();
+  const typed = new Map<string, Promise<unknown>>();
+  const once = <T>(id: string, read: () => Promise<T>): Promise<T> => {
+    let value = typed.get(id) as Promise<T> | undefined;
+    if (!value) { value = read(); typed.set(id, value); value.catch(() => typed.delete(id)); }
+    return value;
+  };
+  return registerEngineView(new Proxy(engine, { get(target, key) {
+    if (key === FORGET_CALL_READS) return () => { reads.clear(); typed.clear(); };
+    if (key === 'readLocalWriterRow') {
+      const shared = sharedWriterRow(target, typed, once);
+      return (id: string, opts?: { lock?: boolean }) => shared(id, opts).then(row => row && structuredClone(row));
+    }
+    if (key === 'getWorktreeBinding') return (sourceId: string, hostId: string | null) =>
+      once(JSON.stringify(['getWorktreeBinding', sourceId, hostId]), () => target.getWorktreeBinding(sourceId, hostId)).then(row => row && structuredClone(row));
+    if (key === 'executeRaw') return (sql: string, params?: unknown[], opts?: { signal?: AbortSignal }) => {
+      const text = sql.replace(/\s+/g, ' ').trim();
+      const stable = CALL_STABLE_READS.has(text) && !opts?.signal;
+      const id = stable ? JSON.stringify([text, params ?? null]) : '';
+      let rows = stable ? reads.get(id) : undefined;
+      if (!rows) {
+        rows = target.executeRaw<Record<string, unknown>>(sql, params, opts);
+        if (!stable) return rows;
+        reads.set(id, rows);
+        rows.catch(() => reads.delete(id));
+      }
+      return rows.then(found => structuredClone(found));
+    };
+    const value = Reflect.get(target, key, target);
+    return typeof value === 'function' ? value.bind(target) : value;
+  } }), engine);
+}
 
 /**
  * #6831: the pages guard refused this connector item because its content matches a page purge tombstone. That is the
@@ -392,11 +446,16 @@ export async function withConnectorSync<T>(engine: BrainEngine, sourceId: string
 
 interface PendingWrite { entry: ConnectorPendingEntry; row: WriteRequest; bytes: number; counted?: 'created' | 'updated' | 'deleted' }
 
-/** A connector sweep that ended with accepted writes pending, or stopped on its wait budget, reports `partial` / `writer_pending`. */
+/**
+ * A connector sweep that ended with accepted writes pending, or stopped on its wait budget, reports `partial` / `writer_pending`.
+ * A `stopped_on` it carries stays while its writes are only pending (doctor reads that run as neither landing pages nor
+ * breaking a usage-limit chain, GST-3452) and goes when a write failed terminally, so that run reads as the failure it is.
+ */
 export function pendingConnectorResult(result: SyncResult | null, session: ManagedConnectorSync): SyncResult {
-  const base: SyncResult = result ?? { status: 'partial', fromCommit: null, toCommit: '', added: session.counts.created, modified: session.counts.updated,
-    deleted: session.counts.deleted, renamed: 0, chunksCreated: 0, embedded: 0, pagesAffected: [] };
-  return { ...base, status: 'partial', reason: session.stoppedAtDeadline ? 'timeout' : 'writer_pending' };
+  const { stopped_on, ...base }: SyncResult = result ?? { status: 'partial', fromCommit: null, toCommit: '', added: session.counts.created,
+    modified: session.counts.updated, deleted: session.counts.deleted, renamed: 0, chunksCreated: 0, embedded: 0, pagesAffected: [] };
+  return { ...base, ...(stopped_on && session.failedWriteCount === 0 ? { stopped_on } : {}), status: 'partial',
+    reason: session.stoppedAtDeadline ? 'timeout' : 'writer_pending' };
 }
 
 export class ManagedConnectorSync {
@@ -439,6 +498,8 @@ export class ManagedConnectorSync {
   private lastFailedItem: { slug: string; requestId: string } | null = null;
   /** True when this run ended with accepted writes pending, so its checkpoint did not advance. */
   deferred = false;
+  /** Admitted writes of this run that failed terminally (not purge refusals). */
+  get failedWriteCount(): number { return this.failedPending.length; }
   /** #9968: the caller's deadline stopped this sweep; the run ended partial with its state recorded. */
   stoppedAtDeadline = false;
   /** #9968: the caller's deadline (epoch ms); waiting on a retained publication never runs past it. */
@@ -466,21 +527,23 @@ export class ManagedConnectorSync {
     if (!this.lease) return;
     this.lease.signal.throwIfAborted();
     const { handle } = this.lease;
-    const [owned] = await engine.executeRaw(`SELECT id FROM gbrain_cycle_locks
-      WHERE id=$1 AND acquisition_token=$2::uuid AND extract(epoch from acquired_at)::text=$3
-        AND ttl_expires_at>now() FOR SHARE`, [handle.id, handle.acquisitionToken, handle.acquiredAt]);
+    const [owned] = await engine.executeRaw(LEASE_SQL, [handle.id, handle.acquisitionToken, handle.acquiredAt]);
     if (!owned) throw new LockStolenError(handle.id);
     this.lease.signal.throwIfAborted();
   }
   async load(): Promise<void> {
-    await this.recover('__managed_sync_checkpoint__');
+    const recover = () => this.recover('__managed_sync_checkpoint__').catch(async (error: unknown) => {
+      if (error instanceof OperationError && error.writeError === 'recovery_required') await this.recordRefusal(error).catch(() => {});
+      throw error;
+    });
+    await recover();
     if (this.retryFailed) {
       const blocked = await this.retryBlocker(this.engine);
       if (blocked) {
         await this.authorizeRetryReceipt(this.engine, blocked);
         if (!isTerminal(blocked) && !blocked.recovery) {
           writeResponse(await waitForWrite(this.engine, blocked, loadConfig() ?? { engine: this.engine.kind }, maintenancePublishWaitMs()));
-          await this.recover('__managed_sync_checkpoint__');
+          await recover();
         }
         await this.refuseRetryBlocker(this.engine);
       }
@@ -586,7 +649,7 @@ export class ManagedConnectorSync {
   private async validate(engine: BrainEngine, slug: string): Promise<WorktreeBinding | null> {
     await this.assertLease(engine);
     await validateSyncAuthority(engine, this.authority, slug);
-    const [source] = await engine.executeRaw<ConnectorSource>('SELECT incarnation,archived,local_path,config FROM sources WHERE id=$1', [this.sourceId]);
+    const [source] = await engine.executeRaw<ConnectorSource>(SOURCE_SQL, [this.sourceId]);
     if (!source || source.archived || source.incarnation !== this.source.incarnation || source.local_path !== this.source.local_path ||
         source.config.kind !== this.connector || connectorIdentity(this.connector, source.config, source.local_path).digest !== this.identity.digest) {
       throw opError('source_changed', 'The connector source changed during the sweep.',
@@ -632,8 +695,8 @@ export class ManagedConnectorSync {
     error.writeError = row.recovery || isTerminal(row) ? 'recovery_required' : 'write_pending';
     throw error;
   }
-  private async recover(slug: string): Promise<void> {
-    const binding = await this.validate(this.engine, slug);
+  private async recover(slug: string, reads: BrainEngine = this.engine): Promise<void> {
+    const binding = await this.validate(reads, slug);
     if (!binding) return;
     // #9681: a page write of this run that the owner is still publishing is not retained: the run tracks its receipt,
     // and the owner publishes nothing else on this worktree until it settles.
@@ -659,7 +722,10 @@ export class ManagedConnectorSync {
         })(),
         new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), remaining); }),
       ]).finally(() => { if (timer) clearTimeout(timer); });
-      if (progress?.drained) return;
+      if (progress?.drained) {
+        (reads as { [FORGET_CALL_READS]?: () => void })[FORGET_CALL_READS]?.();
+        return;
+      }
       if (progress) row = progress.row;
       await new Promise(resolve => setTimeout(resolve, Math.min(50, Math.max(1, deadline - performance.now()))));
     }
@@ -688,9 +754,10 @@ export class ManagedConnectorSync {
   }
   async page(slug: string) {
     slug = slugifyPath(`${slug}.md`);
-    await this.recover(slug);
+    const reads = callReads(this.engine);
+    await this.recover(slug, reads);
     const snapshot = await materializedSnapshot(this.engine, await this.engine.readPageSnapshot(slug, { sourceId: this.sourceId }));
-    if (snapshot && this.binding) await prepareFileTarget(this.engine,
+    if (snapshot && this.binding) await prepareFileTarget(reads,
       { source_id: this.sourceId, worktree_id: this.binding.worktree_id, slug }, snapshot, serializePageToMarkdown(snapshot.page, snapshot.tags));
     return snapshot?.page ?? null;
   }
@@ -1014,6 +1081,15 @@ export class ManagedConnectorSync {
       { id: handle.id, token: handle.acquisitionToken, acquiredAt: handle.acquiredAt });
     if (!written) throw new LockStolenError(handle.id);
   }
+  /** #9968: a sync whose recovery refuses on the binding's retained publication records that refusal as its failure; the rest of the stored state is kept. */
+  private async recordRefusal(error: OperationError): Promise<void> {
+    const state = await readManagedConnectorState(this.engine, this.sourceId, this.source.incarnation);
+    const requestId = error.writeRequest?.request_id ?? null;
+    this.connectorState = { ...state, last_failure: { code: 'recovery_required', message: error.message,
+      slug: requestId && requestId === this.lastFailedItem?.requestId ? this.lastFailedItem.slug : null, request_id: requestId,
+      at: new Date().toISOString(), consecutive: (state.last_failure?.consecutive ?? 0) + 1 } };
+    await this.writeState();
+  }
   /** The last run's counts, for the caller's result. */
   runCounts(): ConnectorRunCounts | null { return this.connectorState.last_run; }
   /**
@@ -1021,19 +1097,19 @@ export class ManagedConnectorSync {
    * on an unadmitted request; the item skips admission only when the no-op
    * kernel finds nothing to publish and the preparer's validation still holds.
    */
-  private async unchanged(kind: ConnectorIntentKind, slug: string, intent: ConnectorIntent, snapshot: PageSnapshot | null, sourcePath: string | null): Promise<boolean> {
+  private async unchanged(reads: BrainEngine, kind: ConnectorIntentKind, slug: string, intent: ConnectorIntent, snapshot: PageSnapshot | null, sourcePath: string | null): Promise<boolean> {
     try {
       const row = screeningRequest({ source_id: this.sourceId, source_incarnation: this.source.incarnation, slug, page_id: snapshot?.page.id ?? null,
         worktree_id: this.binding?.worktree_id ?? null, authority: this.authority.writer, intent });
-      const prepared = await prepareConnectorMutation(this.engine, row);
+      const prepared = await prepareConnectorMutation(reads, row);
       if (kind === 'connector_v2_delete') {
         if (this.binding || prepared.noop !== true) return false;
       } else {
-        const databaseOnly = !this.binding || !prepared.file && await strictPrivateImport(this.engine, this.sourceId, intent.content ?? '', sourcePath ?? `${slug}.md`, snapshot);
-        const verdict = await inspectUnchanged(this.engine, { prepared, snapshot, sourcePath, databaseOnly });
+        const databaseOnly = !this.binding || !prepared.file && await strictPrivateImport(reads, this.sourceId, intent.content ?? '', sourcePath ?? `${slug}.md`, snapshot);
+        const verdict = await inspectUnchanged(reads, { prepared, snapshot, sourcePath, databaseOnly });
         if (verdict.admitReason) return false;
       }
-      await prepared.validate?.(this.engine);
+      await prepared.validate?.(reads);
       return true;
     } catch (error) {
       if (error instanceof LockStolenError) throw error;
@@ -1045,7 +1121,8 @@ export class ManagedConnectorSync {
     Promise<{ row: WriteRequest | null; pending: boolean; created: boolean; purged?: true }> {
     await this.awaitPagePending(slug);
     await this.awaitPageMirror(slug);
-    await this.recover(slug);
+    const reads = callReads(this.engine);
+    await this.recover(slug, reads);
     const snapshot = await this.engine.readPageSnapshot(slug, { sourceId: this.sourceId, includeDeleted: true });
     if (kind === 'connector_v2_google_receipts') {
       if (!snapshot || snapshot.page.id !== extra.googlePageId) throw opError('page_identity_changed', 'The historical Gmail page was deleted or recreated.',
@@ -1056,9 +1133,9 @@ export class ManagedConnectorSync {
     }
     const target = { source_id: this.sourceId, worktree_id: this.binding?.worktree_id ?? null, slug };
     const strictPrivate = kind === 'connector_v2_import' && sourcePath && typeof extra.content === 'string'
-      ? await strictPrivateFile(this.engine, target, extra.content, sourcePath, snapshot) : null;
+      ? await strictPrivateFile(reads, target, extra.content, sourcePath, snapshot) : null;
     const file = kind === 'connector_v2_checkpoint' ? undefined : strictPrivate ? strictPrivate.file
-      : await connectorFileTarget(this.engine, target, snapshot, extra.content ?? null, sourcePath, this.canonicalRoot);
+      : await connectorFileTarget(reads, target, snapshot, extra.content ?? null, sourcePath, this.canonicalRoot);
     if (file && sourcePath && resolve(file.path) !== resolve(this.canonicalRoot!, sourcePath)) {
       throw opError('source_changed', 'The connector source path no longer names its canonical file.',
         `The recorded path of ${slug} no longer resolves to its canonical file under the root of ${this.sourceId}, so nothing was submitted. Inspect the root and binding before running gbrain sync --source ${this.sourceId} again.`,
@@ -1162,7 +1239,7 @@ export class ManagedConnectorSync {
           'Repeat the same connector sync options; an admitted replacement keeps its existing request identity.');
       } finally { await lock?.release(); }
     } else if (!row) {
-      if (page && !prior.retry && await this.unchanged(kind, slug, intent, snapshot, sourcePath)) {
+      if (page && !prior.retry && await this.unchanged(reads, kind, slug, intent, snapshot, sourcePath)) {
         this.counts.skipped_unchanged++;
         return { row: null, pending: false, created: false };
       }

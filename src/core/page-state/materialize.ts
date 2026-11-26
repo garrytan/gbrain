@@ -4,7 +4,7 @@ import { markBeliefCommits } from '../belief/append.ts';
 import { contentHash } from '../utils.ts';
 import { assertInlineBody } from '../page-body/page-shape.ts';
 import { assertPageRevision, type PageSnapshot } from './types.ts';
-import { withCoordinatedWrite } from '../persistence/context.ts';
+import { withCoordinatedWrite, withTrustKeep } from '../persistence/context.ts';
 import { maintenanceAttribution } from '../persistence/attribution.ts';
 import { coverageActive, readLedgerSource, withBeliefBatch } from '../belief/ledger.ts';
 import { createPageVersion } from './versions.ts';
@@ -33,10 +33,11 @@ export async function materializePageSnapshot(engine: BrainEngine, snapshot: Pag
       ? (await tx.executeRaw<{ content_hash: string | null }>('SELECT content_hash FROM pages WHERE id=$1', [page.id]))[0]?.content_hash : undefined;
     const hash = contentHash({ ...page, tags: current.tags });
     if (stored !== undefined && stored !== hash) await createPageVersion(tx, slug, sourceId, current);
+    // #9739: the withdrawal strike rewrites a gbrain-managed fence and authors nothing, so the page keeps its stored trust tier.
     await withCoordinatedWrite(tx, [sourceId], () => withBeliefBatch(tx, { sourceId, slugs: [slug], publicationId, op: 'withdrawal_materialize', pageEventType: 'page.view_changed', report },
-      () => tx.executeRaw(`UPDATE pages SET compiled_truth=$1,timeline=$2,content_hash=$3
+      () => withTrustKeep(tx, ['pages'], () => tx.executeRaw(`UPDATE pages SET compiled_truth=$1,timeline=$2,content_hash=$3
       WHERE id=$4 AND knowledge_revision=$5::uuid`,
-    [page.compiled_truth, page.timeline, hash, page.id, current.revision])), attribution);
+    [page.compiled_truth, page.timeline, hash, page.id, current.revision]))), attribution);
     await tx.executeRaw("SELECT set_config('gbrain.materializing_revision',$1,true)", [previous[0]?.revision ?? '']);
   });
   if (report.appended) await markBeliefCommits(engine, [publicationId]).catch(() => undefined);

@@ -62,6 +62,8 @@ export interface SyncEntry { path: string; sourcePath: string; action: 'import' 
   driftBaseline?: string;
   /** #7199: for an older side-`unknown` hold, the file's earlier committed blobs; the freeze imports when the page still holds what one imports. */
   driftHistory?: string[];
+  /** GST-3328 follow-up: the pass's history budget left those versions unread or read in part; a hold the entry gets is marked `history_unread`. */
+  driftHistoryUnread?: true;
   /** GST-2843: the pass re-checks this held path because the hold's basis or drift moved; a hold the entry gets is marked `basis_moved`. */
   basisMoved?: true;
   /** GST-2869: the pass re-checks this held path only because a retry was requested (`sources retry-held`, `sync unblock`); a hold the entry gets is marked `retry_only`. */

@@ -12,6 +12,19 @@ export const WRITER_ADMIN_LOCKED_SUGGESTION = 'Stop. The operator locked writer 
   + 'ask the operator to review and perform the claim, activation or transfer. Ordinary page and memory writes continue. '
   + `See ${WRITER_ADMIN_LOCKED_DOCS}.`;
 
+/** The lock a stored `WRITER_ADMIN_LOCK_KEY` value names (null when unset); an unreadable value reads locked. */
+export function parseWriterAdminLock(value: string | null | undefined): WriterAdminLock {
+  const unlocked: WriterAdminLock = { locked: false, set_at: null, host_id: null, generation: 0 };
+  if (!value) return unlocked;
+  let parsed: Partial<WriterAdminLock>;
+  try { parsed = JSON.parse(value) as Partial<WriterAdminLock>; }
+  catch { return { ...unlocked, locked: true }; }
+  // Anything but an explicit false stays locked: an unreadable row never unlocks administration.
+  return { locked: parsed?.locked !== false, set_at: typeof parsed?.set_at === 'string' ? parsed.set_at : null,
+    host_id: typeof parsed?.host_id === 'string' ? parsed.host_id : null,
+    generation: Number.isSafeInteger(parsed?.generation) ? parsed.generation! : 0 };
+}
+
 function parseLock(value: string | null | undefined): WriterAdminLock {
   const unlocked: WriterAdminLock = { locked: false, set_at: null, host_id: null, generation: 0 };
   if (!value) return unlocked;
@@ -26,7 +39,7 @@ function parseLock(value: string | null | undefined): WriterAdminLock {
 
 export async function readWriterAdminLock(engine: SqlEngine): Promise<WriterAdminLock> {
   const [row] = await engine.executeRaw<{ value: string }>('SELECT value FROM config WHERE key=$1', [WRITER_ADMIN_LOCK_KEY]);
-  return parseLock(row?.value);
+  return parseWriterAdminLock(row?.value);
 }
 
 /**
@@ -35,7 +48,10 @@ export async function readWriterAdminLock(engine: SqlEngine): Promise<WriterAdmi
  */
 export async function assertWriterAdminUnlocked(tx: SqlEngine): Promise<void> {
   await tx.executeRaw('SELECT singleton FROM persistence_brain WHERE singleton=1 FOR SHARE');
-  const lock = await readWriterAdminLock(tx);
+  refuseWriterAdminLocked(await readWriterAdminLock(tx));
+}
+
+function refuseWriterAdminLocked(lock: WriterAdminLock): void {
   if (!lock.locked) return;
   throw new OperationError('writer_admin_locked',
     `Writer administration is locked on this brain (${WRITER_ADMIN_LOCK_KEY}${lock.set_at ? `, set ${lock.set_at}` : ''}${lock.host_id ? ` by host ${lock.host_id}` : ''}); `

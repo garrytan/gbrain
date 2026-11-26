@@ -13,6 +13,7 @@
  * and the pipeline is untouched.
  */
 import type { SearchResult } from '../../types.ts';
+import { rethrowCapabilityRefusal } from '../../engine-capability-refusal.ts';
 import type { HybridRequest } from './request.ts';
 import type { RerankerOpts } from '../rerank.ts';
 import { type AliasHopLookup, aliasHopCanonicals, isExcludedIdentity, lookupAliasHop } from '../alias-hop.ts';
@@ -58,7 +59,10 @@ export interface IdentityLookups {
 export async function readIdentityLookups(req: HybridRequest, exactLookupOpts: ExactLookupOpts): Promise<IdentityLookups> {
   const [alias, exactHits] = await Promise.all([
     lookupAliasHop(req.engine, req.query, req.aliasHopOpts),
-    structuralExactLookup(req.engine, req.query, exactLookupOpts).catch(() => [] as SearchResult[]),
+    structuralExactLookup(req.engine, req.query, exactLookupOpts).catch((err: unknown) => {
+      rethrowCapabilityRefusal(err);
+      return [] as SearchResult[];
+    }),
   ]);
   return { alias, exactHits };
 }

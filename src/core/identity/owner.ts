@@ -18,11 +18,11 @@
 import type { BrainEngine } from '../engine.ts';
 import { ownerMemberId } from '../access/owner.ts';
 import { listMembers } from '../access/members.ts';
-import { MEMBER_PAGE_PREFIX } from '../access/principals.ts';
+import { MEMBER_PAGE_PREFIX, RESERVED_OWNER_SLUG } from '../access/principals.ts';
 import { exactIdentityStatement, type ExactIdentityRow } from '../engine-sql/exact-identity.ts';
 import { resolvePersonTypes } from '../schema-pack/entity-types.ts';
 
-export const RESERVED_OWNER_SLUG = 'memory/owner';
+export { RESERVED_OWNER_SLUG };
 
 export type OwnerIdentifierKind = 'member_email' | 'google_account' | 'member_link';
 export interface OwnerIdentifier { kind: OwnerIdentifierKind; value: string; source_id?: string; system?: string }

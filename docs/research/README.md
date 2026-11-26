@@ -9,6 +9,7 @@ a page here links them instead of copying them.
 
 | Date | What we tried | Outcome |
 |---|---|---|
+| 2026-11-23 | [Which parts beyond the storage engine should move to Rust](RUST_BEYOND_ENGINE.md) | Research only; no code changed. Nothing beyond the engine moves yet: PGLite was 63-81% of CPU on every PGLite path measured. The release binary spends about 0.5 s parsing its bundle per command; Bun's bytecode build cut a cold `get` from 0.65 s to 0.09 s on Postgres. |
 | 2026-11-21 | [Rust engine parity test audit](rust-test-audit.md) | Research only; no code changed. The parity tests caught 23 of 29 reachable injected bugs. Recommends gating pushes to the Rust trunk on checks that already exist, failing a positive case on a refused or empty answer, and letting a case declare its expected value. |
 | 2026-11-20 | [Retrieval playbooks: a search recipe served on the turn](2026-11-20-retrieval-playbooks.md) | Cut candidate; nothing built. On 14 list-or-count questions the recipe got 9 right against plain's 6, one short of the +4 bar. gbrain's served "call context_pack at session start" line fixed GPT-6.2 Sol's first call whatever the recipe said. |
 | 2026-11-20 | [Finding duplicate people and companies: head-to-head](2026-11-20-entity-dedupe-head-to-head.md) | The automatic tier stays empty for people: it joined 36 of 488 different-person pairs (7.38%) on hard cases, 0 of 188 companies. Tuned Splink beat the proposed tier (+8.26 recall, −7.54 false-merge points), so a native version of that method is planned. |
@@ -68,4 +69,5 @@ The evidence or change that would make this worth trying again.
 
 | Research | What it is |
 |---|---|
-| [Rust rewrite research maps](rust-engine/README.md) | Maps of what TypeScript gbrain and gbrain-evals do today (storage engine, agent contract, jobs, tests, evals), pinned to one commit. The plan of record is [docs/designs/RUST_ENGINE.md](../designs/RUST_ENGINE.md) (PR #9593); the draft [PLAN.md](../plans/PLAN.md) is kept as research. |
+| [Rust rewrite research maps](rust-engine/README.md) | Maps of what TypeScript gbrain and gbrain-evals do today (storage engine, agent contract, jobs, tests, evals), pinned to a reference commit, with five maps refreshed to a later one (see the pin table in that README). The plan of record is [docs/designs/RUST_ENGINE.md](../designs/RUST_ENGINE.md) (PR #9593); the draft [PLAN.md](../plans/PLAN.md) is kept as research. |
+| [executeRaw calls on the CLI path](rust-cli-executeraw-map.md) | Each `executeRaw` call that `import`, `extract` and seven read commands make on a PGLite brain, with the typed member that can replace it on a Rust brain. Pinned to one commit. |

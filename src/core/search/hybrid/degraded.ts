@@ -8,8 +8,8 @@ import { isStatementTimeoutError } from '../../retry-matcher.ts';
  * error for the enumerated degraded[] reason codes (D6). Matches both the
  * embedQueryBounded deadline rejection and AbortSignal.timeout's
  * TimeoutError/AbortError, and a Postgres statement timeout (SQLSTATE 57014,
- * the keyword and title arms' `SET LOCAL statement_timeout`). The raw error text never rides the wire — it
- * goes to stderr via warnOncePerProcess only.
+ * the keyword and title arms' `SET LOCAL statement_timeout`). The raw error text never rides the wire and
+ * never reaches stderr either: the warnings name this class only.
  */
 export function isTimeoutError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;

@@ -2,7 +2,10 @@
  * `facts_drain` cycle phase (Lane D): one bounded run of the automatic facts
  * drain (src/core/facts/drain.ts) inside the cycle, so a PGLite brain run by
  * autopilot or `gbrain dream` extracts queued `facts-absorb` jobs without
- * `gbrain jobs work`. Postgres brains have a job worker and skip the phase.
+ * `gbrain jobs work`. Postgres brains have a job worker and skip the phase,
+ * except that it warns with the command that starts one when facts-absorb jobs
+ * have waited past GBRAIN_QUEUE_NO_WORKER_WARN_HOURS (default 1) on a queue where
+ * no job is running or started in that time (overtonxyz/gbrain#2772).
  * The phase never fails the cycle: deferrals (no key, budget) report `warn`
  * with the fix; an internal error reports `warn` with the doctor command.
  *
@@ -14,6 +17,7 @@ import type { PhaseResult } from '../cycle.ts';
 import { FACTS_DRAIN_DEFERRALS, FACTS_DRAIN_WALL_MS, runFactsDrain } from '../facts/drain.ts';
 import { CYCLE_DEADLINE_RESERVE_MS } from './base-phase.ts';
 import { retryDeadFactsAbsorb, type DeadAbsorbRetryResult } from '../facts/dead-absorb-retry.ts';
+import { untakenWaitingJobs } from '../minions/no-worker.ts';
 
 export async function runPhaseFactsDrain(engine: BrainEngine | null, opts: { dryRun: boolean; signal?: AbortSignal; deadlineAtMs?: number | null }): Promise<PhaseResult> {
   const base = { phase: 'facts_drain' as const, duration_ms: 0 };
@@ -25,6 +29,15 @@ export async function runPhaseFactsDrain(engine: BrainEngine | null, opts: { dry
     ...(deadRetry.waiting_on ? { waiting_on: deadRetry.waiting_on } : {}), ...('error' in deadRetry ? { error: deadRetry.error } : {}) };
   const retryWarn = deadRetry.exhausted.length > 0 || 'error' in deadRetry;
   if (engine.kind !== 'pglite') {
+    const untaken = await untakenWaitingJobs(engine, 'facts-absorb').catch((e: unknown) => ({ error: e instanceof Error ? e.message : String(e) }));
+    if (untaken && 'error' in untaken) {
+      return { ...base, status: 'warn', details: { reason: 'no_worker_check_failed', error: untaken.error, dead_retry },
+        summary: `could not check whether a job worker runs facts-absorb jobs (${untaken.error}); run gbrain doctor --only queue_health${retryNote}` };
+    }
+    if (untaken) {
+      return { ...base, status: 'warn', details: { reason: 'no_worker', no_worker: untaken, dead_retry },
+        summary: `${untaken.waiting} facts-absorb job(s) have waited up to ${formatAge(untaken.oldest_age_seconds)} on queue '${untaken.queue}' and no job worker has run a job there in ${untaken.threshold_hours}h, so no facts are being extracted; start one: ${untaken.fix.argv!.join(' ')}${retryNote}` };
+    }
     return { ...base, status: retryWarn ? 'warn' : 'skipped', summary: `Postgres brains run facts-absorb jobs on the job worker${retryNote}`, details: { reason: 'not_applicable', dead_retry } };
   }
   if (opts.dryRun) return { ...base, status: 'skipped', summary: `dry run: no facts extracted${retryNote}`, details: { reason: 'dry_run', dead_retry } };
@@ -42,6 +55,12 @@ export async function runPhaseFactsDrain(engine: BrainEngine | null, opts: { dry
   const summary = `${r.completed} page(s) extracted (${r.facts_inserted} facts, $${r.spent_usd.toFixed(3)}), ${r.backlog_after ?? '?'} still queued` +
     (r.error ? `: ${r.error.message}` : '') + retryNote;
   return { ...base, status: FACTS_DRAIN_DEFERRALS.has(r.outcome) || r.failed > 0 || retryWarn ? 'warn' : 'ok', summary, details };
+}
+
+function formatAge(seconds: number): string {
+  if (seconds >= 86_400) return `${Math.floor(seconds / 86_400)}d`;
+  if (seconds >= 3_600) return `${Math.floor(seconds / 3_600)}h`;
+  return `${Math.max(1, Math.floor(seconds / 60))}m`;
 }
 
 function deadRetrySummary(r: DeadAbsorbRetryResult & { error?: string }): string {

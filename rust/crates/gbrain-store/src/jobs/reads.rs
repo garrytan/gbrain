@@ -325,7 +325,7 @@ impl Store {
             .map(|r| {
                 json!({
                     "id": r.id,
-                    "submission_authority": r.submission_authority.as_ref().map(jsonb),
+                    "submission_authority": r.submission_authority.as_ref().map(ordered),
                 })
             })
             .collect())
@@ -335,7 +335,7 @@ impl Store {
     pub fn get_failed_job_for_retry(&self, id: i64) -> Result<Option<Value>> {
         Ok(load(&*self.read()?, id)?
             .filter(|r| r.status == "failed" || r.status == "dead")
-            .map(|r| json!({ "name": r.name, "data": jsonb(&r.data) })))
+            .map(|r| json!({ "name": r.name, "data": ordered(&r.data) })))
     }
 
     /// `countOpenJobsByOwner`: how many `subagent` rows in a non-terminal status carry
@@ -359,13 +359,21 @@ impl Store {
         Ok(n)
     }
 
-    /// `readJobSourceState(sourceId)`: `{ archived, created_at }` of the source an agent job was
-    /// accepted against, or `None` when no source has that id. The job authority check compares
-    /// `created_at` with the stamp the job froze, so a source deleted and created again denies the job.
+    /// `readJobSourceState(sourceId)`: `{ archived, created_at, local_path, config }` of the source a
+    /// remote job was accepted against, or `None` when no source has that id. The job authority
+    /// checks compare `created_at` with the stamp the job froze, so a source deleted and created
+    /// again denies the job; a generic job (sync, import, lint) also reads the registered root and
+    /// config it runs under.
     pub fn read_job_source_state(&self, source_id: &str) -> Result<Option<Value>> {
         let read = self.read()?;
-        Ok(crate::sources::read_source(&*read, source_id)?
-            .map(|s| json!({ "archived": s.archived, "created_at": iso(s.created_at_us) })))
+        Ok(crate::sources::read_source(&*read, source_id)?.map(|s| {
+            json!({
+                "archived": s.archived,
+                "created_at": iso(s.created_at_us),
+                "local_path": s.local_path,
+                "config": s.config,
+            })
+        }))
     }
 
     /// `listJobPage`: rows newest first (`created_at DESC, id DESC`) after the cursor tuple, each

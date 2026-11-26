@@ -23,15 +23,20 @@
  *      compared with the saved set under an advisory lock; on change the set
  *      is saved, the source generation bumps, and only pages the change can
  *      affect are marked due (pages linking to a removed or retargeted
- *      target, plus pages whose text matches an added name through the real
- *      tokenizer, prefiltered by a substring superset).
+ *      target, plus pages whose text matches an added name or contains a
+ *      removed one through the real tokenizer, prefiltered by a substring
+ *      superset, one batch of pages per statement). That scan has half the
+ *      time left in the run; pages it did not reach are marked due too. With
+ *      no time left the set is not saved this run, and the source stays
+ *      pending (coverage reads it as pending even with no page due).
  *   5. Reconcile due pages (content revision, extractor version or an
  *      invalidation differs): per batch, publish only when the source
  *      generations and each page's content revision are unchanged since the
  *      scan read them (conditional publish), so an edit or a gazetteer change
  *      during the scan leaves the page due. Only plain mention rows are
  *      touched; `typed_ner` rows stay.
- *   6. Status row: state, pending pages (mention-due pages plus linkable
+ *   6. Status row (also written when a step throws or the pass is aborted:
+ *      state `failed` with the step and error): state, pending pages (mention-due pages plus linkable
  *      entity pages with stale derived aliases, counted when the pass ends
  *      or its deadline stops it), last pass, generation. `coverage` on
  *      entity cards and get_backlinks reads it.
@@ -418,8 +423,13 @@ async function refreshAliases(engine: BrainEngine, managed: boolean, sourceId: s
   return changed;
 }
 
-/** Live pages in `sourceIds` whose text the mini-gazetteer of `added` matches (real tokenizer, substring-superset prefilter). */
-async function pagesMatchingNames(engine: BrainEngine, sourceIds: string[], added: Gazetteer, allowCrossSource: boolean): Promise<number[]> {
+/**
+ * Live pages in `sourceIds` whose text the mini-gazetteer of `added` matches (real tokenizer, substring-superset prefilter),
+ * scanned in page-id order until `deadline`, PREFILTER_BATCH pages per statement whether they match or not (so one
+ * statement never reads a whole source looking for a rare name). `through` is the last page id read when the deadline stopped the scan, null
+ * when every page was read.
+ */
+async function pagesMatchingNames(engine: BrainEngine, sourceIds: string[], added: Gazetteer, allowCrossSource: boolean, deadline: number): Promise<{ ids: number[]; through: number | null }> {
   const longest = [...added.values()].flat().map(e => [...e.tokens].sort((a, b) => b.length - a.length)[0]!);
   // ASCII tokens: lower() in SQL agrees with the scanner's NFC+toLowerCase, so LIKE is a superset.
   // Otherwise every page in scope is scanned in JS.
@@ -428,30 +438,47 @@ async function pagesMatchingNames(engine: BrainEngine, sourceIds: string[], adde
   const out: number[] = [];
   let after = 0;
   for (;;) {
-    const rows = await engine.executeRaw<{ id: number; slug: string; source_id: string; body_storage: string; body: string; mention_ignore: unknown }>(
-      `SELECT id, slug, source_id, body_storage, COALESCE(title, '') || E'\\n\\n' || COALESCE(compiled_truth, '') || E'\\n\\n' || COALESCE(timeline, '') AS body,
-              frontmatter->'mention_ignore' AS mention_ignore
-         FROM pages WHERE deleted_at IS NULL AND source_id = ANY($1::text[]) AND id > $2
-          ${ascii ? `AND (body_storage = 'segmented' OR lower(COALESCE(title, '') || ' ' || COALESCE(compiled_truth, '') || ' ' || COALESCE(timeline, '')) LIKE ANY($4::text[]))` : ''}
-        ORDER BY id LIMIT $3`,
+    if (Date.now() > deadline) return { ids: out, through: after };
+    const rows = await engine.executeRaw<{ id: number; slug: string; source_id: string; body_storage: string; body: string | null; mention_ignore: unknown }>(
+      `SELECT p.id, p.slug, p.source_id, p.body_storage,
+              CASE WHEN ${ascii ? `p.body_storage = 'segmented' OR lower(COALESCE(p.title, '') || ' ' || COALESCE(p.compiled_truth, '') || ' ' || COALESCE(p.timeline, '')) LIKE ANY($4::text[])` : 'true'}
+                   THEN COALESCE(p.title, '') || E'\\n\\n' || COALESCE(p.compiled_truth, '') || E'\\n\\n' || COALESCE(p.timeline, '') END AS body,
+              p.frontmatter->'mention_ignore' AS mention_ignore
+         FROM (SELECT id FROM pages WHERE deleted_at IS NULL AND source_id = ANY($1::text[]) AND id > $2 ORDER BY id LIMIT $3) w
+         JOIN pages p ON p.id = w.id ORDER BY p.id`,
       ascii ? [sourceIds, after, PREFILTER_BATCH, patterns] : [sourceIds, after, PREFILTER_BATCH]);
     if (!rows.length) break;
     after = rows[rows.length - 1]!.id;
     for (const r of rows) {
+      if (r.body === null) continue;
       if (r.body_storage === 'segmented') { out.push(Number(r.id)); continue; }
       const hits = findMentionedEntities(r.body, added, { fromSlug: r.slug, fromSourceId: r.source_id, allowCrossSource });
       if (hits.length) out.push(Number(r.id));
     }
   }
-  return out;
+  return { ids: out, through: null };
 }
 
-function miniGazetteer(gazetteer: Gazetteer, keys: Set<string>): Gazetteer {
+/**
+ * The names a save must look for in page text: the added entries as they are, and each removed name (any case, any
+ * spacing, since the saved form no longer has it; no target, so no guard skips it) because a page that contained it may now match another name it hid, even when it had
+ * no mention link to the removed target.
+ */
+function scanGazetteer(gazetteer: Gazetteer, added: GazetteerEntryKey[], removed: GazetteerEntryKey[]): Gazetteer {
+  const keys = new Set(added.map(entryKey));
   const out: Gazetteer = new Map();
   for (const [first, bucket] of gazetteer) {
     const kept = bucket.filter(e => keys.has(entryKey(e)));
     if (kept.length) out.set(first, kept);
   }
+  const seen = new Set<string>();
+  for (const k of removed) {
+    const tokens = k.name_norm.replace(/^@/, '').toLowerCase().split(' ').filter(Boolean);
+    if (!tokens.length || seen.has(`${k.source_id}\0${tokens.join(' ')}`)) continue;
+    seen.add(`${k.source_id}\0${tokens.join(' ')}`);
+    out.set(tokens[0]!, [...out.get(tokens[0]!) ?? [], { slug: '', source_id: k.source_id, title: k.name_norm, tokens, anySpacing: true }]);
+  }
+  for (const bucket of out.values()) bucket.sort((a, b) => b.tokens.length - a.tokens.length);
   return out;
 }
 
@@ -463,9 +490,15 @@ function entryKey(e: GazetteerEntry | GazetteerEntryKey): string {
 /**
  * Diff the saved entry set of one source against `gazetteer`; on change, save
  * it, bump the generation and mark affected pages due, in one transaction under
- * the source's advisory lock. Returns whether the set changed.
+ * the source's advisory lock. Returns false when the set changed but no time
+ * was left before `deadline` to save it this run.
+ *
+ * The scan for pages naming an added or removed name gets half the time left before
+ * `deadline`. When it stops early, every page in scope it did not reach is
+ * marked due as well, so the save never waits on a scan longer than a run and
+ * the reconcile picks those pages up in resumable batches.
  */
-async function saveEntries(engine: BrainEngine, sourceId: string, gazetteer: Gazetteer, scopeSources: string[], allowCrossSource: boolean): Promise<boolean> {
+async function saveEntries(engine: BrainEngine, sourceId: string, gazetteer: Gazetteer, scopeSources: string[], allowCrossSource: boolean, deadline: number): Promise<boolean> {
   const current = gazetteerEntryKeys(gazetteer).filter(k => k.source_id === sourceId);
   const read = async (db: Pick<BrainEngine, 'executeRaw'>) => (await db.executeRaw<GazetteerEntryKey>(
     'SELECT source_id, name_norm, target_slug, case_sensitive FROM mention_gazetteer_entries WHERE source_id = $1', [sourceId]));
@@ -474,18 +507,22 @@ async function saveEntries(engine: BrainEngine, sourceId: string, gazetteer: Gaz
   const currentKeys = new Set(current.map(entryKey));
   const added = current.filter(k => !beforeKeys.has(entryKey(k)));
   const removed = before.filter(k => !currentKeys.has(entryKey(k)));
-  if (!added.length && !removed.length) return false;
+  if (!added.length && !removed.length) return true;
+  if (Date.now() > deadline) return false;
   // The first save for a source marks the whole candidate scope due (cheap); later saves only affected pages.
   const firstSave = before.length === 0;
   let candidates: number[] = [];
+  let unscannedAfter: number | null = null;
   if (!firstSave) {
     const linked = removed.length ? await engine.executeRaw<{ id: number }>(
       `SELECT DISTINCT l.from_page_id AS id FROM links l JOIN pages t ON t.id = l.to_page_id
         WHERE t.source_id = $1 AND t.slug = ANY($2::text[]) AND l.link_source = 'mentions'`,
       [sourceId, [...new Set(removed.map(k => k.target_slug))]]) : [];
-    const matched = added.length ? await pagesMatchingNames(engine, scopeSources,
-      miniGazetteer(gazetteer, new Set(added.map(entryKey))), allowCrossSource) : [];
-    candidates = [...new Set([...linked.map(r => Number(r.id)), ...matched])];
+    const scanDeadline = deadline === Infinity ? Infinity : Date.now() + Math.max(0, deadline - Date.now()) / 2;
+    const matched = added.length || removed.length ? await pagesMatchingNames(engine, scopeSources,
+      scanGazetteer(gazetteer, added, removed), allowCrossSource, scanDeadline) : { ids: [], through: null };
+    candidates = [...new Set([...linked.map(r => Number(r.id)), ...matched.ids])];
+    unscannedAfter = matched.through;
   }
   return engine.transaction(async tx => {
     await tx.executeRaw('SELECT pg_advisory_xact_lock(hashtext($1)::bigint)', [`gbrain:mention-entries:${sourceId}`]);
@@ -506,8 +543,11 @@ async function saveEntries(engine: BrainEngine, sourceId: string, gazetteer: Gaz
     }
     if (firstSave) {
       await tx.executeRaw('UPDATE page_mention_state SET mention_revision = NULL WHERE source_id = ANY($1::text[])', [scopeSources]);
-    } else if (candidates.length) {
-      await tx.executeRaw('UPDATE page_mention_state SET mention_revision = NULL WHERE page_id = ANY($1::int[])', [candidates]);
+    } else if (candidates.length || unscannedAfter !== null) {
+      await tx.executeRaw(
+        `UPDATE page_mention_state SET mention_revision = NULL
+          WHERE page_id = ANY($1::int[]) OR ($3::int IS NOT NULL AND source_id = ANY($2::text[]) AND page_id > $3::int)`,
+        [candidates, scopeSources, unscannedAfter]);
     }
     await writeStatus(tx, sourceId, { state: 'pending', bumpGeneration: true });
     return true;
@@ -667,29 +707,49 @@ export async function runMentionPass(engine: BrainEngine, opts: MentionPassOpts 
         fingerprint: `${fingerprints.get(sourceId)!};${INDEX_VERSION_STAMP}` });
     });
   }
-  for (const sourceId of sources) {
-    if (Date.now() > deadline) break;
-    result.aliasPages += await refreshAliases(engine, managed, sourceId, types.get(sourceId)!, deadline, policy);
-  }
-  // Aliases may have changed: the gazetteer the reconcile uses is built after the refresh.
-  if (result.aliasPages > 0) {
-    try { gazetteer = await buildGazetteer(engine, { policy, strict: true }); }
-    catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      for (const sourceId of sources) await writeStatus(engine, sourceId, { state: 'failed', error: message });
-      return { ...result, state: 'failed', error: message, remaining: await countMentionDuePages(engine, opts.sourceId) };
+  // A throw or an abort below stops the pass before its status write; the source it stopped on records why.
+  let step = 'alias refresh';
+  let current = sources[0];
+  try {
+    for (const sourceId of sources) {
+      if (Date.now() > deadline) break;
+      current = sourceId;
+      result.aliasPages += await refreshAliases(engine, managed, sourceId, types.get(sourceId)!, deadline, policy);
     }
+    // Aliases may have changed: the gazetteer the reconcile uses is built after the refresh.
+    if (result.aliasPages > 0) {
+      try { gazetteer = await buildGazetteer(engine, { policy, strict: true }); }
+      catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        for (const sourceId of sources) await writeStatus(engine, sourceId, { state: 'failed', error: message });
+        return { ...result, state: 'failed', error: message, remaining: await countMentionDuePages(engine, opts.sourceId) };
+      }
+    }
+    // With no time left a changed name list is not saved: its scan would only mark pages for a reconcile that cannot run.
+    step = 'name list save';
+    const unsaved = new Set<string>();
+    for (const sourceId of sources) {
+      current = sourceId;
+      if (!await saveEntries(engine, sourceId, gazetteer, allowCrossSource ? allSources : [sourceId], allowCrossSource, deadline)) unsaved.add(sourceId);
+    }
+    step = 'reconcile';
+    for (const sourceId of sources) {
+      current = sourceId;
+      await reconcileSource(engine, sourceId, gazetteer, allowCrossSource ? allSources : [sourceId], allowCrossSource, opts, deadline, result);
+      const pending = await countIndexDuePages(engine, sourceId, types.get(sourceId)!);
+      result.remaining += pending;
+      // A source whose name list is still unsaved stays pending and keeps its last completed pass time.
+      await writeStatus(engine, sourceId, unsaved.has(sourceId)
+        ? { state: 'pending', pending, error: null }
+        : { state: pending > 0 ? 'pending' : 'complete', pending, error: null, lastPassAt: passStart });
+    }
+    if (unsaved.size) result.state = 'pending';
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (current) await writeStatus(engine, current, { state: 'failed', error: `stopped in the ${step}: ${message}`.slice(0, 2000) }).catch(() => {});
+    throw error;
   }
-  for (const sourceId of sources) {
-    await saveEntries(engine, sourceId, gazetteer, allowCrossSource ? allSources : [sourceId], allowCrossSource);
-  }
-  for (const sourceId of sources) {
-    await reconcileSource(engine, sourceId, gazetteer, allowCrossSource ? allSources : [sourceId], allowCrossSource, opts, deadline, result);
-    const pending = await countIndexDuePages(engine, sourceId, types.get(sourceId)!);
-    result.remaining += pending;
-    await writeStatus(engine, sourceId, { state: pending > 0 ? 'pending' : 'complete', pending, error: null, lastPassAt: passStart });
-  }
-  result.state = result.remaining > 0 ? 'pending' : 'complete';
+  if (result.remaining > 0) result.state = 'pending';
   return result;
 }
 

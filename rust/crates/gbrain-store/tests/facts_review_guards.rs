@@ -123,7 +123,7 @@ fn a_bare_name_key_reads_under_the_privacy_of_the_page_written_at_its_directory(
             { "fact": "unpaged", "source": "s", "entity_slug": "no-page-name", "visibility": "world" },
         ]),
     );
-    let policy = json!({ "honorAliases": true, "entityPrivacy": true, "ownerOnly": "lineage" });
+    let policy = json!({ "honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn" });
     let read =
         |entity: &str| by_entity(&b, entity, json!({ "excludePrivate": policy.clone() })).len();
     assert_eq!(read("keyed-private"), 0);
@@ -132,7 +132,7 @@ fn a_bare_name_key_reads_under_the_privacy_of_the_page_written_at_its_directory(
     // without the policy every row is still there
     assert_eq!(by_entity(&b, "keyed-private", json!({})).len(), 1);
     // the provenance-only floor judges no entity page
-    let floor = json!({ "honorAliases": true, "entityPrivacy": false, "ownerOnly": "lineage" });
+    let floor = json!({ "honorAliases": true, "entityPrivacy": false, "ownerOnly": "fn" });
     assert_eq!(
         by_entity(&b, "keyed-private", json!({ "excludePrivate": floor })).len(),
         1

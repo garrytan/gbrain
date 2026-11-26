@@ -22,15 +22,20 @@ ISO strings. Derivation `createdAt` and `updatedAt` are `YYYY-MM-DDTHH:MM:SS.fff
 | `brain.readSegmentTexts(sourceId, [sha256])` | `[sha256, body]` pairs of the texts found, in request order, each sha once. The TypeScript member returns PGLite's `Map` | `readSegmentTexts` |
 | `brain.stageManifestRows(rows)` | `null` | `stageManifestRows` |
 | `brain.readManifest(pageId, { generation?, stagingId?, region?, lastN? }?)` | manifest rows by `seq`. With `stagingId`, that staging's rows; else the rows of `generation`, default the page's live `body_generation` (0 for a missing page or one with no segmented state). `lastN` keeps the last rows, still in `seq` order. An empty `region` is ignored, as in PGLite | `readManifest` |
+| `brain.readSegmentedEmbedPage({ id } \| { sourceId, slug })` | the embed fields of the page the ref names (`id`, `slug`, `source_id`, `title`, `contextual_retrieval_mode`, `body_bytes`) when its body state is segmented, it is not deleted, its source exists and is not archived, and its text projection is at its knowledge revision (sealed); `null` otherwise, an inline page included. `body_bytes` is the stored count, `null` when none was recorded (the TS member reads it as 0, as PGLite's `Number(null)` does). PGLite sends this as one `pages JOIN sources` read | `readSegmentedEmbedPage` |
 | `brain.stageSegmentChunks(pageId, generation, chunks)` | the chunk indexes, in input order, after the page's highest `chunk_index`. See "Segment chunks" | `stageSegmentChunks` |
 | `brain.createSegmentedPageShell(slug, meta, { sourceId })` | `{ id }` of a new page at body generation 0, `body_storage: 'segmented'`, `body_bytes: 0` | `createSegmentedPageShell` |
 | `brain.flipBodyGeneration(input)` | `{ retiredChunks, retireDeferred }` | `flipBodyGeneration` |
 | `brain.openBodyStaging(input)` | `null`; the staging starts `open` | `openBodyStaging` |
 | `brain.setBodyStagingState(id, state, { commitRequestId? }?)` | `null` | `setBodyStagingState` |
+| `brain.sweepSegments({ sourceId?, pageId?, graceMs?, expireStagings?, now? }?)` | `{ retiredChunksDeleted, manifestRowsDeleted, textsDeleted, stagingsExpired }`; `now` as an ISO string. See "The sweep" | `sweepSegments` |
 | `brain.readSegmentDerivations(pageId, { kind?, occurrenceIds? }?)` | derivation rows by kind, then occurrence; `[]` for an empty `occurrenceIds` | `readSegmentDerivations` |
 | `brain.upsertSegmentDerivations(rows)` | `null`. A row with the same `(page, kind, occurrence)` is replaced and keeps its `createdAt` | `upsertSegmentDerivations` |
 | `brain.retireSegmentDerivations(pageId, liveOccurrenceIds, { kind? }?)` | the number of rows deleted whose occurrence is not live | `retireSegmentDerivations` |
-| `brain.readSegmentedSealLead(pageId)` | `{ lead, revision }`: the page's stored `timeline_lead` (`""` when none) and `knowledge_revision`, or `null` for a missing page. Not a member: `sealSegmentedPage` reads it | (`sealSegmentedPage`'s page read) |
+| `brain.lockBodyStagingState(stagingId)` | the staging's state, or `null` when no staging has that id; a value that is not a uuid is refused (`invalid_argument`). The flip of a create checks it (`applySegmentedBody`) | `lockBodyStagingState` |
+| `brain.deleteUnstagedSegmentChunks(pageId, generation, keepChunkIndexes)` | `null`. Deletes the page's segment chunks at `generation` whose chunk index is not kept (rows a dead preparation staged), with their postings | `deleteUnstagedSegmentChunks` |
+| `brain.deleteRewrittenSegmentDerivations({ pageId, touchedOccurrenceIds, linkReachOccurrenceIds, pipelines, liveOccurrenceIds })` | the number of rows deleted: every row of a touched occurrence, the `links` rows of an occurrence in reach, and the rows of a listed pipeline whose occurrence is not live (`deleteRewrittenDerivations`) | `deleteRewrittenSegmentDerivations` |
+| `brain.readSegmentedSealLead(pageId)` | `{ lead, revision, slug, sourceId }`: the page's stored `timeline_lead` (`""` when none), `knowledge_revision` and identity, or `null` for a missing page. Not a member: `sealSegmentedPage` reads it | (`sealSegmentedPage`'s page read) |
 | `brain.sealSegmentedPage(pageId, timeline, expectedRevision?)` | `null`. See "The seal" | `sealSegmentedPage` |
 | `brain.refreshPageBody(slug, sourceId, compiledTruth, timeline, contentHash)` | `null`. Sets the body, timeline, hash and `updated_at` of a live inline page; a missing or soft-deleted page is left alone. A new revision only when the body or timeline changed. No re-chunk and no version. A live page's sealed search timeline goes, also when nothing changed, since PGLite's `UPDATE … SET timeline` fires the search vector trigger | `refreshPageBody` |
 
@@ -117,16 +122,18 @@ above "Segment chunks" in `rust/crates/gbrain-store/src/chunks.rs`). In one stor
 
 The chunks stay out of `getChunks` and keyword search until a flip publishes their generation. The
 TypeScript member normalises them as `upsertChunks` does (`prepareChunks`), refuses a chunk that
-carries a vector (`engine_capability_missing`: vectors are not stored) and refuses
-`opts.embeddingColumn` (PGLite takes the default model label from it). Deleting a page for good
+carries a vector (`engine_capability_missing`: vectors are not stored). It also refuses a supplied
+`opts.embeddingColumn` (`engine_capability_missing`): it does not forward the option or take the default
+model label from it, as PGLite does. Deleting a page for good
 also deletes the chunks family's segment view of the page (`chunks::forget_segment_view`).
 
 ## The seal
 
 `sealSegmentedPage(pageId, opts?)` makes a flipped segmented page's chunks and search text visible at
 its current revision, as engine-sql/page-body.ts does. The TypeScript member reads the stored lead and
-revision (`readSegmentedSealLead`), takes `opts.timelineLead` in place of the lead when given,
-sanitizes it with `sanitizeRemoteBody`, and calls `seal_segmented_page`. In one store write it:
+revision (`readSegmentedSealLead`), takes `opts.timelineLead` in place of the lead when given, sanitizes
+the chosen lead with `sanitizeRemoteBody`, and calls `seal_segmented_page` with it and the revision. It reads no
+page snapshot and overlays no withdrawal or purge rows before sealing (see below). In one store write it:
 
 1. Does nothing for a missing page.
 2. Refuses `revision_conflict` when the page's `knowledge_revision` is no longer the one read.
@@ -140,6 +147,41 @@ PGLite overlays the page's withdrawals and global purges on the stored lead firs
 identity: the seal reads the stored lead directly and the store keeps no purge markers, so the stored lead is the
 lead sealed. `readPageSnapshot` does report the page's withdrawals, for the overlay a reader applies to a
 segmented page's lead.
+
+## The sweep
+
+`sweepSegments` is PGLite's garbage collection, step for step, in one store write. Its roots are a
+segmented page's live generation, every body generation a version snapshot references, and the rows
+of live stagings. A staging is live in a live state (`open`, `sealed`, `prepared`) or while an
+outstanding persistence request names it in `intent.body_ref.staging_id`, whatever its state. The
+store reads the version generations through `pages::version_generations` and the request-held
+stagings through `journal::request_held_staging_ids`, which scans every request, whatever the journal's
+outstanding-request counter says, and keeps the staging ids that nonterminal requests name. `now` defaults to the store clock; `graceMs` to
+`SEGMENT_TEXT_GC_GRACE_MS` (one hour).
+
+1. With `expireStagings`: a live staging in scope (its page and source) that is past its hard
+   deadline, or past its idle deadline (an upload only while `open`), and that no request holds
+   becomes `expired`. Then terminal stagings (`committed`, `aborted`, `expired`) in scope that are
+   not live and unchanged for `BODY_STAGING_HARD_MS` (one day) are deleted, with their client key and
+   recorded texts. Their manifest rows stay for step 4.
+2. A page's chunks staged above its body generation go, unless a live staging stages a row of that
+   occurrence.
+3. Its chunks at or below that generation go when only dead stagings' rows name their occurrence (a
+   late batch of a write that lost the flip).
+4. Staged manifest rows of dead stagings go.
+5. Published rows outside the live generation (all of them on an inline page) go unless a version
+   snapshot's generation falls in their `[gen_from, gen_to)`.
+6. Segment texts created before `now - graceMs` go when no manifest row of any page names them, no
+   live staging of their source was created at or before them, and no live staging recorded them. A
+   `pageId` sweep considers only the texts its own deletes in steps 4 and 5 released (none when it
+   released none); a `sourceId` sweep, that source's texts; a global one, all.
+
+`retiredChunksDeleted` counts steps 2 and 3, `manifestRowsDeleted` steps 4 and 5.
+
+A version snapshot of a segmented page references the page's live generation instead of copying the
+body, as PGLite's `insertSegmentedVersion` does: it records `body_storage: 'segmented'`, the
+generation and `body_bytes`, its `compiled_truth` and `timeline` are `null`, and the version JSON
+carries those columns and the page's `content_hash` only on such a snapshot.
 
 ## Refusals
 
@@ -163,8 +205,6 @@ foreign key to the texts has no cascade).
 
 The TypeScript engine refuses these with `engine_capability_missing`:
 
-- `sweepSegments`: its roots include page versions by body generation and the journal's staging
-  references, which this family cannot read yet.
 - A segmented page inside `transaction`: the store has no transactions yet, so the parity cases that
   stage inside one stop on that refusal.
 
@@ -181,3 +221,7 @@ The TypeScript engine refuses these with `engine_capability_missing`:
   parity.
 - `upsertSegmentDerivations` never refuses `derivation_purge_pending`: the store has no fact-purge
   sweep to hold rows.
+- The sweep has no upload parts to delete and no upload byte reservations to release when it expires
+  an upload staging: the store keeps neither.
+- PGLite's text delete skips a text another writer has locked (`FOR UPDATE SKIP LOCKED`); the store
+  serializes writes, so no text is ever skipped for that reason.

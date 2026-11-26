@@ -8,7 +8,8 @@
  * - the clean case: round 2 reuses `I⋈P` and re-reads only the written pages (one changed file, one new file).
  * - a foreign page write over a pass import between rounds takes the whole read, and the page is not held (a stale reuse
  *   classifies the import again and holds it concurrent_write).
- * - another writer moving HEAD between rounds takes the whole read, and the pass imports the new commit.
+ * - another writer moving HEAD between rounds: round 2 patches round 1's read as the next pass would (`across`, GST-3534),
+ *   and the pass imports the new commit.
  * - a foreign deletion of a hold between rounds takes the whole read.
  * - #6887 through the confirm round: a both-moved path held file_drift in round 1 stays held in a reused round 2, and a path
  *   that moves on both sides between rounds is held file_drift (a stale reuse holds it concurrent_write), the edit kept.
@@ -54,7 +55,7 @@ async function dbEdit(engine: BrainEngine, ctx: OperationContext, slug: string, 
     { timeoutMs: 30_000, label: `the database-only edit of ${slug} commits` });
   await engine.setConfig('sync.write_through', 'true');
 }
-type Verdict = { round: number; confirm: { taken: boolean; reason: string | null; rows: number; narrow?: string } | null };
+type Verdict = { round: number; confirm: { taken: boolean; reason: string | null; rows: number; narrow?: string; across?: true } | null };
 /** One sync with `between` run before round 2 reads its level; the rounds' confirm verdicts and the result. */
 async function pass(engine: BrainEngine, between: () => Promise<void> = async () => {}) {
   const verdicts: Verdict[] = [];
@@ -105,11 +106,11 @@ for (const backend of testBackends()) {
       expect(await readGitHold(engine, 'default', await incarnationOf(engine), 'notes/b.md')).toBeNull();
     }), 180_000);
 
-    test('another writer moving HEAD between rounds takes the whole read, and the pass imports the new commit', () => brain(async ({ engine, root }) => {
+    test('another writer moving HEAD between rounds: round 2 patches round 1\'s read across, and the pass imports the new commit', () => brain(async ({ engine, root }) => {
       expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
       edit(root, 'notes/a', 'A committed change of notes/a.'); commit(root, 'change a');
       const run = await pass(engine, async () => { edit(root, 'notes/b', 'A commit landing mid-pass.'); commit(root, 'change b mid-pass'); });
-      expect(round2(run)).toEqual({ taken: false, reason: 'key', rows: 0 });
+      expect(round2(run)).toEqual({ taken: true, reason: null, rows: 1, narrow: 'key', across: true });
       expect({ status: run.status, held: run.held }).toEqual({ status: 'synced', held: [] });
       expect(await bodyOf(engine, 'notes/b')).toContain('A commit landing mid-pass.');
       expect((await performManagedSync(engine, OPTS)).pass).toBeUndefined();
@@ -152,7 +153,8 @@ for (const backend of testBackends()) {
         edit(root, 'notes/b', 'A committed change of notes/b mid-pass.'); commit(root, 'change b mid-pass');
       });
       expect({ status: run.status, held: run.held }).toEqual({ status: 'synced', held: [['notes/b.md', 'file_drift']] });
-      expect(round2(run)?.taken).toBe(false);
+      // GST-3534: HEAD moved, so round 2 patched round 1's read across (the foreign page write re-read with it), not a stale reuse.
+      expect(round2(run)).toMatchObject({ taken: true, across: true });
       expect(await bodyOf(engine, 'notes/b')).toContain('DBONLYMARKER a mid-pass edit.');
       expect((await readGitHold(engine, 'default', await incarnationOf(engine), 'notes/b.md'))?.code).toBe('file_drift');
     }), 180_000);

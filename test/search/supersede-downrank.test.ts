@@ -9,9 +9,9 @@
  *     leaked across the source boundary (within-source contract, matches
  *     relational-recall)
  *   - edge-existence gate: on a brain with zero `supersedes` edges the
- *     downrank query never runs; one probe per engine per TTL (memoized —
- *     second call issues zero queries); a fresh edge inside the TTL window
- *     is skipped until the probe refreshes (accepted ranking-hint delay)
+ *     downrank query never runs; a "none" answer is never memoized, so an
+ *     edge written after it is seen by the very next search; only a "some"
+ *     answer is memoized (one probe per engine per TTL, second call issues zero queries)
  *   - probe fail-open: a probe error never kills the stage
  */
 
@@ -109,7 +109,7 @@ describe('applySupersedeDownrank', () => {
     expect(results[0].score).toBe(1.0);
   });
 
-  test('existence gate: zero-edge brain skips the downrank query; probe memoized', async () => {
+  test('existence gate: zero-edge brain skips the downrank query; a zero-edge answer is never memoized', async () => {
     const solo = await engine.putPage('notes/solo', { type: 'note', title: 'Solo', compiled_truth: 'x' });
     const calls: string[] = [];
     const target = engine as unknown as Record<'hasSupersedeEdges' | 'supersedingPageSlugs', (...a: unknown[]) => unknown>;
@@ -124,27 +124,37 @@ describe('applySupersedeDownrank', () => {
       expect(calls).toEqual(['probe']);
       expect(results[0].score).toBe(1.0);
 
-      // Second call inside the TTL: memoized, zero additional queries.
+      // Second call: the zero-edge answer was not kept, so the probe runs again (a link written since must be seen).
       calls.length = 0;
       await applySupersedeDownrank([res('notes/solo', solo.id)], engine);
-      expect(calls.length).toBe(0);
+      expect(calls).toEqual(['probe']);
     } finally {
       target.hasSupersedeEdges = origProbe;
       target.supersedingPageSlugs = origRead;
     }
   });
 
-  test('edge minted inside the TTL is skipped until probe reset (ranking-hint delay)', async () => {
+  test('a positive probe is memoized: once edges exist the stage runs without re-probing', async () => {
+    const { oldId } = await putPair();
+    const calls: string[] = [];
+    const target = engine as unknown as Record<'hasSupersedeEdges', (...a: unknown[]) => unknown>;
+    const origProbe = target.hasSupersedeEdges;
+    target.hasSupersedeEdges = (...a: unknown[]) => { calls.push('probe'); return origProbe.apply(engine, a); };
+    try {
+      await applySupersedeDownrank([res('notes/stale', oldId)], engine);
+      await applySupersedeDownrank([res('notes/stale', oldId)], engine);
+      expect(calls).toEqual(['probe']);
+    } finally {
+      target.hasSupersedeEdges = origProbe;
+    }
+  });
+
+  test('an edge minted after a zero-edge probe is seen by the very next call', async () => {
     const pre = await engine.putPage('notes/pre', { type: 'note', title: 'Pre', compiled_truth: 'x' });
-    // Prime the memo on a zero-edge brain → gate caches false.
     await applySupersedeDownrank([res('notes/pre', pre.id)], engine);
 
     const { oldId } = await putPair();
     const results = [res('notes/stale', oldId)];
-    await applySupersedeDownrank(results, engine);
-    expect(results[0].superseded).toBeUndefined(); // still gated by the cached probe
-
-    _resetSupersedeProbeForTests(); // stands in for TTL expiry
     await applySupersedeDownrank(results, engine);
     expect(results[0].superseded).toBe(true);
     expect(results[0].superseded_by).toBe('notes/canon');
@@ -159,6 +169,21 @@ describe('applySupersedeDownrank', () => {
     await applySupersedeDownrank(results, stub);
     expect(results[0].superseded).toBe(true);
     expect(results[0].superseded_by).toBe('notes/canon');
+  });
+
+  test('a failed downrank read rejects (the post-fusion stage reports supersede_check_failed); a missing links table is an empty answer', async () => {
+    const failed = {
+      hasSupersedeEdges: async () => true,
+      supersedingPageSlugs: async () => { throw new Error('canceling statement due to statement timeout'); },
+    } as unknown as BrainEngine;
+    await expect(applySupersedeDownrank([res('notes/stale', 7)], failed)).rejects.toThrow(/statement timeout/);
+    const preLinks = {
+      hasSupersedeEdges: async () => true,
+      supersedingPageSlugs: async () => { throw Object.assign(new Error('relation "links" does not exist'), { code: '42P01' }); },
+    } as unknown as BrainEngine;
+    const results = [res('notes/stale', 7)];
+    await applySupersedeDownrank(results, preLinks);
+    expect(results[0].superseded).toBeUndefined();
   });
 
   test('a refused engine capability propagates from the probe and the read', async () => {

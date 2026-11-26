@@ -403,6 +403,10 @@ async function importScanned(engine: BrainEngine, input: { file: FileHandle; bom
   }
   if (parsed.typeExplicit !== true && existing && !opts.coordinated?.moved) parsed.type = existing.type;
   resolveParsedSubtype(parsed, existing);
+  if (parsed.type === 'household' || (existing && !existing.deleted_at && existing.type === 'household') || parsed.frontmatter.household_role !== undefined || existing?.frontmatter?.household_role !== undefined) {
+    return hold(slug, size, 'household write admission reads the stored page and the whole incoming one');
+  }
+  if (parsed.type === 'rule' || (existing && !existing.deleted_at && existing.type === 'rule')) return hold(slug, size, 'standing rule admission reads the stored page and the whole incoming one');
   const typeClass = parsed.typeExplicit === true && opts.activePack ? classifyStoredType(parsed.type, opts.activePack) : null;
   const typeWarning = typeClass?.kind === 'alias_of' ? { kind: 'alias_of' as const, type: parsed.type, canonical: typeClass.canonical, directory: typeClass.directory }
     : typeClass?.kind === 'undeclared' ? { kind: 'undeclared' as const, type: parsed.type } : undefined;
@@ -469,8 +473,7 @@ async function importScanned(engine: BrainEngine, input: { file: FileHandle; bom
     if (existing) await tx.createVersion(slug, preimage ? { sourceId, ...opts.history, preimage } : { sourceId, ...opts.history });
     const result = await applySegmentedBody(tx, { slug, sourceId, pageId: live?.id ?? null, prepared, meta, promotion: live?.storage === 'inline', retireMaxRows: input.policy.flipRetireMaxRows });
     await tx.updatePageContextualRetrievalState(slug, sourceId, mode, corpusGeneration);
-    await tx.executeRaw(`DELETE FROM tags t USING pages p WHERE p.id = t.page_id AND p.source_id = $1 AND p.slug = $2
-      AND t.tag_source = 'frontmatter' AND NOT (t.tag = ANY($3::text[]))`, [sourceId, slug, parsed.tags]);
+    await tx.pruneFrontmatterTags(slug, parsed.tags, { sourceId });
     await addPageTags(tx, result.pageId, parsed.tags, 'frontmatter');
     await writePageAliases(tx, slug, sourceId, { ...parsed, compiled_truth: '', timeline: '' }, opts.activePack, mentionPolicy);
     if (result.complete) await sealSegmentedPage(tx, result.pageId);

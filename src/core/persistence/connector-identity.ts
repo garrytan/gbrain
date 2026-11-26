@@ -57,6 +57,9 @@ export const CONNECTOR_LEAF_RULES: { google: Record<string, LeafClass | ElidedLe
     account: 'identity', services: 'identity', historyDays: 'identity', futureDays: 'identity', calendarId: 'identity', dir: 'identity',
     contactsDir: { elideWhen: DEFAULT_CONTACTS_DIR },
     access: 'excluded', tokenCommand: 'excluded', tokenEnv: 'excluded', loopsExcludeLabels: 'excluded',
+    // Where the gbrainio command and the private-senders file live never changes which mail a sweep reads; a grown
+    // list re-tiers the matching pages in place. Tiers decide which pages exist, so they join the identity when on.
+    gbrainioCommand: 'excluded', privateSendersFile: 'excluded', ingestTiers: { elideWhen: false },
   },
   github: {
     scope: 'identity', repos: 'identity', dir: 'identity',

@@ -34,6 +34,9 @@
       "calibration": [
         "./commands/calibration.ts"
       ],
+      "claims": [
+        "./commands/claims.ts"
+      ],
       "code-callees": [
         "./commands/code-callees.ts"
       ],
@@ -57,6 +60,9 @@
       ],
       "core": [
         "./commands/core.ts"
+      ],
+      "correct": [
+        "./commands/correct.ts"
       ],
       "dedupe": [
         "./commands/dedupe.ts"
@@ -109,6 +115,9 @@
       "guests": [
         "./commands/guests.ts"
       ],
+      "household": [
+        "./commands/household.ts"
+      ],
       "identity": [
         "./commands/identity.ts"
       ],
@@ -120,6 +129,9 @@
       ],
       "jobs": [
         "./commands/jobs.ts"
+      ],
+      "ledger": [
+        "./commands/ledger.ts"
       ],
       "loops": [
         "./commands/loops.ts"
@@ -150,14 +162,26 @@
       "onboard": [
         "./commands/onboard.ts"
       ],
+      "onboarding": [
+        "./commands/onboarding.ts"
+      ],
       "orphans": [
         "./commands/orphans.ts"
       ],
       "pages": [
         "./commands/pages.ts"
       ],
+      "policy": [
+        "./commands/policy.ts"
+      ],
       "pricing": [
         "./commands/pricing.ts"
+      ],
+      "profile": [
+        "./commands/profile.ts"
+      ],
+      "propose": [
+        "./commands/propose.ts"
       ],
       "quarantine": [
         "./commands/trust.ts",
@@ -201,6 +225,9 @@
       ],
       "retrieval-upgrade": [
         "./commands/migrate-embeddings.ts"
+      ],
+      "rules": [
+        "./commands/rules.ts"
       ],
       "salience": [
         "./commands/salience.ts"
@@ -246,8 +273,8 @@
         "./core/trust/label-lowerings.ts",
         "./core/trust/backfill.ts"
       ],
-      "waiting": [
-        "./commands/loops.ts"
+      "value": [
+        "./commands/value.ts"
       ],
       "wakeshift": [
         "./commands/wakeshift.ts"

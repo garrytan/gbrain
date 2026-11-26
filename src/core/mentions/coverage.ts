@@ -45,6 +45,7 @@ export async function readMentionCoverage(engine: Pick<BrainEngine, 'executeRaw'
   const bySource = new Map(rows.map(r => [r.source_id, r]));
   let pending = 0;
   let failed = false;
+  let unsettled = false;
   let last: string | null = null;
   for (const sourceId of sourceIds) {
     const row = bySource.get(sourceId);
@@ -57,6 +58,8 @@ export async function readMentionCoverage(engine: Pick<BrainEngine, 'executeRaw'
       continue;
     }
     if (row.state === 'failed') failed = true;
+    // A pass that had no time to save a changed name list leaves the row pending with no page counted due yet.
+    if (row.state === 'pending') unsettled = true;
     const stored = splitStoredFingerprint(row.policy_fingerprint);
     if (stored.versions !== INDEX_VERSION_STAMP) {
       // Counted by another binary: recount once (pages behind this binary's versions are due whatever their updated_at) and save it.
@@ -77,12 +80,14 @@ export async function readMentionCoverage(engine: Pick<BrainEngine, 'executeRaw'
       [sourceId, toIso(row.counted_at) ?? '-infinity', MENTION_EXTRACTOR_VERSION]);
     pending += Number(row.pending ?? 0) + Number(since?.n ?? 0);
   }
-  const state: CoverageState = !policy.enabled ? 'disabled' : failed ? 'failed' : pending > 0 ? 'pending' : 'complete';
+  const state: CoverageState = !policy.enabled ? 'disabled' : failed ? 'failed' : pending > 0 || unsettled ? 'pending' : 'complete';
   return { state, pending_pages: policy.enabled ? pending : 0, last_pass_at: last, ...(state === 'complete' ? {} : { degraded: true as const }) };
 }
 
 const WHY: Record<Exclude<CoverageState, 'complete'>, (c: MentionCoverage) => string> = {
-  pending: c => `${c.pending_pages} page(s) have not been scanned for entity names yet, so references from them are missing; ` +
+  pending: c => (c.pending_pages > 0
+    ? `${c.pending_pages} page(s) have not been scanned for entity names yet, so references from them are missing; `
+    : 'The entity name list changed and pages have not been checked against it yet, so references may be missing; ') +
     'a short or empty list is not proof that nothing else mentions this entity.',
   disabled: () => 'Mention linking is off (auto_link or mentions.auto_link is false), so only explicit links are listed, not pages that name this entity.',
   type_not_linkable: () => 'This page type is not a linkable entity type, so pages that only name it are not listed; explicit links are. ' +

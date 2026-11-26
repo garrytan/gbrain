@@ -59,7 +59,7 @@ import {
 } from '../core/sources-ops.ts';
 import { isValidRepoName } from '../core/github-source.ts';
 import { ALL_GOOGLE_SERVICES, DEFAULT_CALENDAR_ID } from '../core/google/types.ts';
-import { defaultGoogleAddTuning, parseGoogleAddFlag } from './sources-google-flags.ts';
+import { defaultGoogleAddTuning, parseGoogleAddFlag, preflightGoogleAccess } from './sources-google-flags.ts';
 import { noGrantFloorNext, reportAddOutcome } from './sources-add-next.ts';
 import {
   resolveSourceWithTier,
@@ -160,6 +160,8 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
         '       google kind: --account <email> [--services gmail,calendar,contacts] ' +
         '[--history-days <n>] [--future-days <n>] [--loops-exclude-labels <a,b>] [--contacts-dir <dir>] [--calendar-id <id>] [--dir <path>]   (connect first: gbrain google connect)\n' +
         '                    [--access vault|command|env] [--token-command "<cmd>"] [--token-env <VAR>]   (non-vault Google access: gog/gcloud/gateway)\n' +
+        '                    [--access gbrainio] [--gbrainio-command <path>]   (Gmail read through a gbrain.io terminal)\n' +
+        '                    [--private-senders-file <path>]   (threads with these addresses or @domains become owner-only pages)\n' +
         '       apple-contacts kind: --helper-host <host> --token-file <0600 json> [--helper-port <port>] [--proxy socks5h://host:port] [--contacts-dir <dir>] [--record git|database] [--dir <path>]',
     );
     process.exit(2);
@@ -338,51 +340,8 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
         );
       }
     } catch { /* preflight is best-effort */ }
-    // Access-mode validation (default vault). command/env let a stack that
-    // already holds Google access (gog, gcloud, a credential gateway) drive
-    // this source without gbrain's OAuth flow; --account stays required as
-    // the IDENTITY (From/To matching, deep-link authuser).
-    if (gAccess !== undefined && !['vault', 'command', 'env'].includes(gAccess)) {
-      console.error(`Error: unknown --access "${gAccess}". Valid: vault, command, env.`);
-      process.exit(2);
-    }
-    if (gAccess === 'command' && !gTokenCommand?.trim()) {
-      console.error('Error: --access command requires --token-command "<cmd that prints an access token>".');
-      process.exit(2);
-    }
-    if (gAccess === 'env' && !gTokenEnv?.trim()) {
-      console.error('Error: --access env requires --token-env <ENV_VAR_NAME>.');
-      process.exit(2);
-    }
-    if ((gTokenCommand || gTokenEnv) && (gAccess === undefined || gAccess === 'vault')) {
-      console.error('Error: --token-command/--token-env require --access command or --access env.');
-      process.exit(2);
-    }
-    if (gAccess === undefined || gAccess === 'vault') {
-      // Fail fast at registration when the account has no vault entry — the
-      // alternative is a source that errors on every sync.
-      const { openVault, credentialId } = await import('../core/creds/vault.ts');
-      const entry = await openVault().get(credentialId('google', gAccount!));
-      if (!entry) {
-        console.error(
-          `Error: no connected Google account "${gAccount}" in the credential vault.\n` +
-            `Connect it first: gbrain google connect --account ${gAccount}\n` +
-            `(or use another access mode: --access command --token-command "<cmd>" | --access env --token-env <VAR>)`,
-        );
-        process.exit(2);
-      }
-    } else if (gAccess === 'command') {
-      // Probe the command once at registration so a typo fails HERE, not on
-      // every future sync. Best-effort: a transient failure only warns.
-      try {
-        const { CommandAccessProvider } = await import('../core/google/access.ts');
-        await new CommandAccessProvider(gTokenCommand!).getAccessToken();
-      } catch (e) {
-        console.error(`Warning: token command probe failed (${e instanceof Error ? e.message.split('\n')[0] : String(e)}) — the source is registered, but sync will fail until the command works.`);
-      }
-    } else if (gAccess === 'env' && !(process.env[gTokenEnv!] ?? '').trim()) {
-      console.error(`Warning: $${gTokenEnv} is not set in this shell — sync will fail until it carries a live access token.`);
-    }
+    await preflightGoogleAccess({ access: gAccess, tokenCommand: gTokenCommand, tokenEnv: gTokenEnv, account: gAccount!,
+      services: args.includes('--services') ? gServices : null, tuning: gTuning });
   }
   if (ghKind && ghScope === 'repos' && ghRepos.length === 0) {
     console.error('Error: --scope repos requires --repos owner/name,owner/name.');
@@ -431,10 +390,10 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
       ? {
           google: {
             account: gAccount!,
-            services: gServices,
+            services: gAccess === 'gbrainio' ? ['gmail'] : gServices,
             ...gTuning,
             dir: ghDir ?? defaultCloneDir(`${id}-google`),
-            access: (gAccess ?? 'vault') as 'vault' | 'command' | 'env',
+            access: (gAccess ?? 'vault') as 'vault' | 'command' | 'env' | 'gbrainio',
             tokenCommand: gTokenCommand,
             tokenEnv: gTokenEnv,
           },
@@ -1983,7 +1942,9 @@ export async function runSources(engine: BrainEngine, args: string[]): Promise<v
     // v0.40.3.0 contextual retrieval (from master)
     case 'set-cr-mode': return runSetCrMode(engine, rest);
     case 'set-calendar': return (await import('./sources-set-calendar.ts')).runSetCalendar(engine, rest);
+    case 'set-access': return (await import('./sources-set-access.ts')).runSetAccess(engine, rest);
     case 'set-trust':  { const { runSetTrust } = await import('./sources-trust.ts'); return runSetTrust(engine, rest); }
+    case 'set-precedence': { const { runSetPrecedence } = await import('./sources-precedence.ts'); return runSetPrecedence(engine, rest); }
     case 'writers':    { const { runSourcesWriters } = await import('./sources-writers.ts'); return runSourcesWriters(engine, rest); }
     // #4739 non-destructive local_path pointer repair
     case 'set-path':   { const { runSetPath } = await import('./sources-set-path.ts'); return runSetPath(engine, rest); }
@@ -2094,7 +2055,9 @@ Subcommands:
                                     "default" to clear (NULL falls through
                                     to the global search.mode bundle).
   set-calendar <id> <calendar-id> [--yes]  Point a Google source at another calendar (ids: gbrain google calendars).
+  set-access <id> vault [--yes] [--json]  Move a Google source off the shared gbrain.io relay onto its own OAuth client.
   set-trust <id> <tier>|--clear     Trust default for this source's sync and import (operator_curated or lower).
+  set-precedence <id> <class>|--clear  Label rows from this source record, approved, curated, doc, chat or external.
   writers <id> [--add|--remove <w>] [--clear] [--json]  Who may write a guest source (set one up: gbrain guests init).
   set-path <id> <path> [--force]    Repair a source's local_path pointer
                                     (DB column only, never touches disk).

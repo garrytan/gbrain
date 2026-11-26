@@ -50,6 +50,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::filters::{KeywordOptions, PageFilter, row_count, source_factor};
+use super::index::{Postings, serves};
 use super::rank::ts_rank_cd;
 use super::stem::pg_lower;
 use super::tsearch::{
@@ -63,7 +64,9 @@ use crate::env::iso;
 use crate::error::{Result, StoreError};
 use crate::keys;
 use crate::kv::{KvRead, scan_prefix};
-use crate::pages::{PageRecord, SEARCH_TIMELINE_MAX_CHARS, all_pages, search_timeline};
+use crate::pages::{
+    PageRecord, SEARCH_TIMELINE_MAX_CHARS, all_pages, read_page_by_id, search_timeline,
+};
 use crate::timeline::{TimelineRecord, latest_entry_micros};
 
 /// `PAGE_TIMELINE_FTS_MAX_CHARS` (fts-language.ts): the timeline characters a page vector reads.
@@ -189,7 +192,10 @@ fn page_vector(read: &dyn KvRead, page: &PageRecord) -> Result<Arc<TsVector>> {
 /// cap). SQL never stores such a page (its trigger raises in the write, and [`check_page_vector`] raises the same here),
 /// but a store written before that check may hold one. It matches nothing; it must not fail the searches that pass over
 /// it. Any other failure is still an error.
-fn readable_page_vector(read: &dyn KvRead, page: &PageRecord) -> Result<Option<Arc<TsVector>>> {
+pub(super) fn readable_page_vector(
+    read: &dyn KvRead,
+    page: &PageRecord,
+) -> Result<Option<Arc<TsVector>>> {
     match page_vector(read, page) {
         Ok(vector) => Ok(Some(vector)),
         Err(e) if is_vector_overflow(&e) => Ok(None),
@@ -207,6 +213,23 @@ pub(crate) fn check_page_vector(read: &dyn KvRead, page: &PageRecord) -> Result<
 /// The write-time half of `pageSearchVectorSql`: the vector a seal that sends `timeline` stores for a page titled `title`.
 pub(crate) fn check_sealed_page_vector(title: &str, timeline: &str) -> Result<()> {
     sealed_vector(title, timeline).map(|_| ())
+}
+
+/// The page postings of every attempt's lexemes and the pages any attempt can match, ascending;
+/// `None` when the index does not serve the read or an attempt has no candidate bound (the scan).
+/// `Title` matches the weight-A lexemes of the same pages, so it has the same candidates.
+fn indexed_pages(read: &dyn KvRead, queries: &[&TsQuery]) -> Result<Option<(Postings, Vec<u64>)>> {
+    if !serves(read)? {
+        return Ok(None);
+    }
+    let postings = Postings::read(read, keys::KW_PAGE_POSTING, queries)?;
+    let Some(docs) = postings.candidates_of(queries) else {
+        return Ok(None);
+    };
+    let ids = docs.into_iter().map(|(id, _)| id).collect();
+    #[cfg(test)]
+    super::index::tests::served_by_index();
+    Ok(Some((postings, ids)))
 }
 
 /// `$tsq`: each text's `websearch_to_tsquery(gbrain_fts_input(t))`, ORed from the left.
@@ -318,19 +341,39 @@ impl Store {
             .collect::<Result<Vec<_>>>()?;
         let read = self.read()?;
         let mut filter = PageFilter::new(options)?;
-        let mut pages = all_pages(&*read)?;
-        pages.sort_by_key(|p| p.id);
+        let queries: Vec<&TsQuery> = windows.iter().map(|(_, _, q)| q).collect();
         let mut candidates: Vec<Candidate> = Vec::new();
-        for page in pages {
-            if filter.keeps(&*read, &page)? {
-                let Some(whole) = readable_page_vector(&*read, &page)? else {
-                    continue;
-                };
-                candidates.push(Candidate {
-                    page,
-                    whole,
-                    title: None,
-                });
+        match indexed_pages(&*read, &queries)? {
+            // The pages any attempt can match, ascending by id, each with its sparse vector.
+            Some((postings, ids)) => {
+                for id in ids {
+                    let Some(page) = read_page_by_id(&*read, id)? else {
+                        continue;
+                    };
+                    if filter.keeps(&*read, &page)? {
+                        candidates.push(Candidate {
+                            page,
+                            whole: postings.sparse((id, 0)),
+                            title: None,
+                        });
+                    }
+                }
+            }
+            None => {
+                let mut pages = all_pages(&*read)?;
+                pages.sort_by_key(|p| p.id);
+                for page in pages {
+                    if filter.keeps(&*read, &page)? {
+                        let Some(whole) = readable_page_vector(&*read, &page)? else {
+                            continue;
+                        };
+                        candidates.push(Candidate {
+                            page,
+                            whole,
+                            title: None,
+                        });
+                    }
+                }
             }
         }
         let mut factors: HashMap<usize, f64> = HashMap::new();
@@ -393,7 +436,7 @@ impl Store {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
 
     fn put(store: &Store, slug: &str, title: &str, timeline: &str) {
@@ -550,7 +593,7 @@ mod tests {
     }
 
     /// A segmented page published from one segment with `lead` as its timeline lead.
-    fn segmented(store: &Store, slug: &str, title: &str, lead: &str) {
+    pub(crate) fn segmented(store: &Store, slug: &str, title: &str, lead: &str) {
         use sha2::{Digest, Sha256};
         let staging = "66666666-6666-4666-8666-666666666666";
         let body = "one\n";

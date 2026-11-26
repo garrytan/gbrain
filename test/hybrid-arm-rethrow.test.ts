@@ -27,6 +27,8 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { sqlEngineKind } from '../src/core/sql-engine-kind.ts';
 import { isEngineCapabilityRefusal } from '../src/core/engine-capability-refusal.ts';
+import { capabilitiesForEngineKind } from '../src/core/engine-capabilities.ts';
+import { remoteAccessRefusal } from '../src/mcp/engine-access-refusal.ts';
 
 function accessError(msg = 'connect ECONNREFUSED 127.0.0.1:5432'): Error & { code: string } {
   const e = new Error(msg) as Error & { code: string };
@@ -201,6 +203,17 @@ describe('no PGLite or Postgres path raises engine_capability_missing', () => {
       }
     };
     walk(root);
-    expect(callers).toEqual(['core/sql-engine-kind.ts']);
+    // mcp/engine-access-refusal.ts refuses a remote caller only on an engine without `access_control`; PGLite and
+    // Postgres report it, so they never reach that call (pinned by the next test).
+    expect(callers.sort()).toEqual(['core/sql-engine-kind.ts', 'mcp/engine-access-refusal.ts']);
+  });
+
+  test('the MCP remote-caller refusal never fires on PGLite or Postgres', () => {
+    for (const kind of ['pglite', 'postgres'] as const) {
+      for (const remote of [true, undefined]) {
+        expect(remoteAccessRefusal({ kind, capabilities: capabilitiesForEngineKind(kind) }, 'get_page', remote)).toBeNull();
+      }
+    }
+    expect(isEngineCapabilityRefusal(remoteAccessRefusal({ kind: 'rust' }, 'get_page', true))).toBe(true);
   });
 });

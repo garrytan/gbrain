@@ -55,7 +55,8 @@ const refreshBusy = (error: unknown) => error instanceof OperationError && error
 
 function groupRefusal(error: unknown, failure: ClassifiedItemFailure): Pick<SourceReconcile, 'status' | 'error'> {
   if (!(error instanceof OperationError)) return { status: failure.class === 'transient' ? 'failed' : 'needs_user', error: { code: failure.code, message: failure.message } };
-  return { status: RETRYABLE.has(error.code) && !stoppedForGood(error) ? 'failed' : 'needs_user',
+  const retryable = RETRYABLE.has(error.code) || (error.code === 'refresh_diverged' && error.retryable === true);
+  return { status: retryable && !stoppedForGood(error) ? 'failed' : 'needs_user',
     error: { code: error.code, message: error.message, ...(error.suggestion ? { suggestion: error.suggestion } : {}), ...(error.fix ? { fix: error.fix } : {}) } };
 }
 

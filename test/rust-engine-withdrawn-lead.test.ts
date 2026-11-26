@@ -68,6 +68,24 @@ describe('the lead of a segmented page on a Rust brain', () => {
     expect(row!.compiled_truth).not.toContain(WITHDRAWN_CLAIM);
   });
 
+  withAddon('blanks only the page whose overlay failed, not every lead read with it', async () => {
+    // A withdrawal on a segmented page makes its overlay fail on this engine (no SQL), so its lead is blank. An inline
+    // page read in the same call must still show its own lead: before the fix, one failed overlay blanked them all.
+    const { engine, brain } = await openSegmentedBrain();
+    const INLINE_CLAIM = 'Kept world claim about the inline example';
+    const INLINE = `Inline intro.\n\n${renderFactsTable([
+      { rowNum: 1, claim: INLINE_CLAIM, kind: 'fact', confidence: 1, visibility: 'world', notability: 'high', active: true },
+    ] as never)}\n\nInline closing.`;
+    await engine.putPage('people/inline', { type: 'person', title: 'Inline', compiled_truth: INLINE, timeline: '' });
+    expect(await brain.insertFactWithdrawal('default', 'world', 'Some unrelated claim', 'people/example', null)).toBe(true);
+    const rows = await overlaidBoundedRows(engine, [
+      { slug: 'people/example', source_id: 'default', compiled_truth: LEAD },
+      { slug: 'people/inline', source_id: 'default', compiled_truth: INLINE },
+    ]);
+    expect(rows[0]!.compiled_truth).not.toContain(WITHDRAWN_CLAIM);
+    expect(rows[1]!.compiled_truth).toContain(INLINE_CLAIM);
+  });
+
   withAddon('is left as it is when nothing was withdrawn', async () => {
     const { engine } = await openSegmentedBrain();
     const snapshot = await engine.readPageSnapshot('people/example', { sourceId: 'default' });

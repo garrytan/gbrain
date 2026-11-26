@@ -33,6 +33,8 @@ import { claimWorktree } from '../../src/core/persistence/ownership.ts';
 import { performManagedSync } from '../../src/core/persistence/sync-run.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
 import { readGitSourceHolds } from '../../src/core/persistence/sync-holds.ts';
+import { withCoordinatedWrite } from '../../src/core/persistence/context.ts';
+import { TEST_WRITE_ATTRIBUTION } from '../helpers/write-attribution.ts';
 import { sha256 } from '../../src/core/persistence/digest.ts';
 import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
 import { withEnv } from '../helpers/with-env.ts';
@@ -156,6 +158,24 @@ describe('managed sync over the single-string ceiling', () => {
       expect(again.id).toBe(updated.id);
       expect(again.body_generation).toBe(moved.body_generation + 1);
       expect(await engine.getPage('notes/moved', { sourceId: f.sourceId })).toBeNull();
+      await disposePersistenceConsumer(engine);
+    }
+  }), 900_000);
+
+  test('a file over the read bound whose page also moved in the database is held file_drift, never streamed over the database copy', async () => withEnv(env, async () => {
+    for (const engine of engines) {
+      await engine.setConfig('pages.segmented_storage', 'on');
+      const f = await fixture(engine, { 'notes/huge.md': huge });
+      expect(await sync(engine, { sourceId: f.sourceId })).toMatchObject({ status: 'first_sync', filesImported: 1 });
+      const page = await expectStreamed(engine, f.sourceId, 'notes/huge', huge, 'notes/huge.md', true);
+      // The database moved since the import, by a write no sync request attests: its revision is not the one the import recorded.
+      await engine.transaction(tx => withCoordinatedWrite(tx, [f.sourceId], () => tx.executeRaw('UPDATE pages SET knowledge_revision=gen_random_uuid(), revision_write_request_id=NULL WHERE id=$1', [page.id]), TEST_WRITE_ATTRIBUTION));
+      // The working-tree edit streams by reference (`input_file`), so no in-memory comparison can prove it holds the page.
+      writeFileSync(join(f.root, 'notes/huge.md'), `${huge.trimEnd()}\n\n**alice-example**: a file edit made while the database moved.\n`);
+      expect((await sync(engine, { sourceId: f.sourceId, workingTree: true })).status).not.toBe('failed');
+      const holds = (await readGitSourceHolds(engine, { sourceIds: [f.sourceId] }))[0]?.holds ?? [];
+      expect(holds.map(hold => [hold.path, hold.code])).toEqual([['notes/huge.md', 'file_drift']]);
+      expect((await reconstructedPage(engine, 'notes/huge', f.sourceId)).page.body_generation).toBe(page.body_generation);
       await disposePersistenceConsumer(engine);
     }
   }), 900_000);

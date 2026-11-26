@@ -13,6 +13,8 @@ import { canonicalLookup } from '../core/model-pricing.ts';
 import { embedQueryWithPrefix } from '../core/search/query-prefix.ts';
 import { keylessThinkNotice, modelOverrideIgnoredNotice } from '../core/interop-notices.ts';
 import { applyCliOpNotices, captureOpNotice } from '../cli/op-notices.ts';
+import { exitCliError, writeCliError } from '../cli/cli-error.ts';
+import { OperationError } from '../core/ops/contract.ts';
 
 function flagValue(args: string[], name: string): string | undefined {
   const i = args.indexOf(name);
@@ -139,6 +141,15 @@ prints what would have been the input (exit 0).
   // #2556: --take persistence outputs.
   let takeRow: number | null = null;
   let takePath: string | undefined;
+  // GST-3612: a managed save or take accepted but still publishing: the answer still prints, then the CLI exits 10 with
+  // the receipt and its poll command (the write publishes under that request id). A later refusal still prints every
+  // accepted receipt before it exits.
+  const pending: OperationError[] = [];
+  const deferPending = (e: unknown): null => {
+    if (e instanceof OperationError && e.code === 'write_pending') { pending.push(e); return null; }
+    throw e;
+  };
+  const reportPending = (receipts: OperationError[]) => { for (const p of receipts) writeCliError(p, 'think', { json: false }); };
   const cfg = loadConfig();
   if (isThinClient(cfg)) {
     if (save || take) {
@@ -216,18 +227,19 @@ prints what would have been the input (exit 0).
 
       // Persist if --save (the runThink path doesn't auto-persist; CLI does it explicitly)
       if (save) {
-        const persisted = await persistSynthesis(engine, result, { sourceId, allowedSources });
-        savedSlug = persisted.slug || undefined;  // '' = persist-skip signal (#10)
-        evidenceInserted = persisted.evidenceInserted;
-        for (const w of persisted.warnings) result.warnings.push(w);
+        const persisted = await persistSynthesis(engine, result, { sourceId, allowedSources }).catch(deferPending);
+        savedSlug = persisted?.slug || undefined;  // '' = persist-skip signal (#10)
+        evidenceInserted = persisted?.evidenceInserted ?? 0;
+        for (const w of persisted?.warnings ?? []) result.warnings.push(w);
         // #1698 (F2): --save requested but no synthesis was produced (no LLM, empty,
         // or malformed) → exit non-zero. Saving nothing with exit 0 when the user
         // explicitly asked to save is itself a silent failure.
-        if (!persisted.slug) {
+        if (persisted && !persisted.slug) {
           console.error(
             'think: --save requested but no synthesis was produced (no LLM available ' +
             'or empty result) — nothing saved.',
           );
+          reportPending(pending);
           process.exit(1);
         }
       }
@@ -239,14 +251,15 @@ prints what would have been the input (exit 0).
       // posture as --save: the user explicitly asked for a persist).
       if (take && anchor) {
         const { persistTakeFromSynthesis } = await import('../core/think/persist-take.ts');
-        const persisted = await persistTakeFromSynthesis(engine, result, { anchor });
-        takeRow = persisted.take_row;
-        takePath = persisted.path;
-        for (const w of persisted.warnings) result.warnings.push(w);
-        if (persisted.take_row === null) {
+        const persisted = await persistTakeFromSynthesis(engine, result, { anchor, ...(sourceId ? { sourceId } : {}) }).catch(deferPending);
+        takeRow = persisted?.take_row ?? null;
+        takePath = persisted?.path;
+        for (const w of persisted?.warnings ?? []) result.warnings.push(w);
+        if (persisted && persisted.take_row === null) {
           console.error(
             `think: --take requested but no take row was appended (${persisted.warnings.join(', ') || 'unknown reason'}).`,
           );
+          reportPending(pending);
           process.exit(1);
         }
       }
@@ -254,6 +267,7 @@ prints what would have been the input (exit 0).
       // #1698: an unresolvable explicit --model throws here. Clean non-zero exit
       // with the actionable message, not a stack trace.
       console.error((e as Error).message);
+      reportPending(pending);
       process.exit(1);
     }
   }
@@ -276,6 +290,8 @@ prints what would have been the input (exit 0).
     take_row: takeRow,
   }, json, { op: 'think', retrieval: null });
   if (json) {
+    reportPending(pending.slice(0, -1));
+    if (pending.length) process.exit(writeCliError(pending.at(-1), 'think', { json: true, extra: jsonDoc as Record<string, unknown> }));
     console.log(JSON.stringify(jsonDoc, null, 2));
     return;
   }
@@ -303,4 +319,6 @@ prints what would have been the input (exit 0).
   if (result.warnings.length > 0) {
     console.error(`Warnings: ${result.warnings.join(', ')}`);
   }
+  reportPending(pending.slice(0, -1));
+  if (pending.length) exitCliError(pending.at(-1), 'think', { json: false });
 }

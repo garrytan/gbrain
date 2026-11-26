@@ -17,9 +17,11 @@
  *     fixture: exit 3, confirmation_required (ask_user), nothing submitted,
  *     no page changed, schema version unchanged (observational startup)
  *   → stdio serve on `verbs` and `full`: handshake with the full catalog (no
- *     status-only tool: that mode is PGLite-lock specific), the degraded
- *     recall notice as a separate `[gbrain notice ` block + _meta.gbrain_notices
- *     with content[0] still the bare result, caller mistakes as one isError
+ *     status-only tool: that mode is PGLite-lock specific), no degraded notice
+ *     on this keyless-on-purpose brain, and on a brain missing the key it is
+ *     configured to use the degraded recall notice as a separate
+ *     `[gbrain notice ` block + _meta.gbrain_notices with content[0] still the
+ *     bare result, caller mistakes as one isError
  *     block (invalid_params: class, docs_cmd and an example call; a missing
  *     page: a runnable `fix` with the MCP re-invocation), the stdio wire value
  *     for an unknown tool unchanged from v0.60.37, readiness on
@@ -152,6 +154,36 @@ function expectDegradedNotice(res: ToolResult, label: string): void {
   expect(meta.some(n => n.code === 'degraded_recall' && n.kind === 'degraded' && n.contract_version === 1)).toBe(true);
 }
 
+/** Keyless on purpose (`init --no-embedding`): keyword-only is how the brain was set up, so no degraded notice. */
+function expectNoDegradedNotice(res: ToolResult, label: string): void {
+  expect(res.isError, label).toBeFalsy();
+  expect(res.content[0].text.startsWith(NOTICE_PREFIX), `${label}: content[0] must stay the bare result`).toBe(false);
+  expect(res.content.some(c => c.text.startsWith(`${NOTICE_PREFIX}degraded_recall`)), `${label}: ${JSON.stringify(res.content.map(c => c.text.slice(0, 80)))}`).toBe(false);
+  const meta = (res._meta?.gbrain_notices ?? []) as Array<{ code: string }>;
+  expect(meta.map(n => n.code)).not.toContain('degraded_recall');
+}
+
+/** A brain with an embedding model configured but its provider key absent, the same 3 notes imported: search is degraded. */
+let missingKeyBrain: Promise<DoctorHome> | undefined;
+function brainMissingItsKey(): Promise<DoctorHome> {
+  missingKeyBrain ??= (async () => {
+    const db = await scratchDatabase();
+    const h = makeDoctorHome('agent-journey-pg-missing-key');
+    homes.push(h);
+    const init = await runGbrain(h, ['init', '--non-interactive', '--url', db.url, '--embedding-model', 'openai:text-embedding-3-small', '--skip-embed-check', '--json'], {}, 120_000);
+    expect(init.exitCode, init.stderr).toBe(0);
+    const notes = join(h.home, 'notes');
+    mkdirSync(notes, { recursive: true });
+    for (const n of ['alpha', 'beta', 'gamma']) {
+      writeFileSync(join(notes, `${n}.md`), `---\ntitle: ${n} note\n---\n\n# ${n} note\n\nThe ${MARKER} ${n} fact lives here.\n`);
+    }
+    const imported = await runGbrain(h, ['import', notes, '--no-embed']);
+    expect(imported.exitCode, imported.stderr).toBe(0);
+    return h;
+  })();
+  return missingKeyBrain;
+}
+
 describeE2E('H4: keyless agent journey on Postgres', () => {
   let h: DoctorHome;
   let db: { name: string; url: string };
@@ -234,7 +266,7 @@ describeE2E('H4: keyless agent journey on Postgres', () => {
   }, 240_000);
 
   for (const surface of ['verbs', 'full'] as const) {
-    test(`stdio serve --surface ${surface}: handshake, degraded notice channel, one-block caller mistake with fix, readiness`, async () => {
+    test(`stdio serve --surface ${surface}: handshake, degraded notice channel only for a missing key, one-block caller mistake with fix, readiness`, async () => {
       const s = await openServe(h, surface);
       try {
         timings[`initialize_${surface}_ms`] = s.initializeMs;
@@ -251,12 +283,24 @@ describeE2E('H4: keyless agent journey on Postgres', () => {
         const started = Date.now();
         const found = await call(s, op, { query: MARKER });
         timings[`first_${op}_${surface}_ms`] = Date.now() - started;
-        expectDegradedNotice(found, `${surface} ${op}`);
+        expectNoDegradedNotice(found, `${surface} ${op}`);
         const body = JSON.parse(found.content[0].text);
         expect(JSON.stringify(body)).toContain(MARKER);
         if (op === 'search') expect(Array.isArray(body)).toBe(true);
-        const again = await call(s, op, { query: MARKER });
-        expect(again.content.some(c => c.text.startsWith(`${NOTICE_PREFIX}degraded_recall`)), 'stdio delivers the degraded notice once per session').toBe(false);
+
+        // A brain missing the key it is configured to use still gets the degraded notice, once per stdio session.
+        const missingKeyHome = await brainMissingItsKey();
+        const m = await openServe(missingKeyHome, surface);
+        try {
+          const degraded = await call(m, op, { query: MARKER });
+          expectDegradedNotice(degraded, `${surface} ${op} (missing key)`);
+          expect(degraded.content[0].text).toContain(MARKER);
+          const again = await call(m, op, { query: MARKER });
+          expect(again.content.some(c => c.text.startsWith(`${NOTICE_PREFIX}degraded_recall`)), 'stdio delivers the degraded notice once per session').toBe(false);
+        } finally {
+          await m.client.close();
+        }
+        expect(networkAttempts(missingKeyHome)).toEqual([]);
 
         const mistake = expectOneBlockError(await call(s, op, { query: 5 }), `${surface} ${op} with a non-string query`);
         expect(mistake).toMatchObject({ code: 'invalid_params', class: 'caller', retryable: false, docs_cmd: ['gbrain', 'errors', 'invalid_params'] });

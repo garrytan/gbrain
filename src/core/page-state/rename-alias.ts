@@ -2,6 +2,8 @@ import type { BrainEngine } from '../engine.ts';
 import { isMissingSchemaObject } from '../utils.ts';
 import { MOVE_WITHDRAWAL_SUBJECT_SQL } from '../facts/withdrawal-schema.ts';
 import { dropRekeyDuplicates } from '../facts/ontology-rekey.ts';
+import { carryHoldsToPage } from '../write-gate-binding.ts';
+import { withTrustKeep } from '../persistence/context.ts';
 
 /**
  * Record `old -> new` in slug_aliases when a page is renamed, inside the
@@ -82,18 +84,26 @@ export async function recordSlugLineAlias(tx: Pick<BrainEngine, 'transaction'>, 
  * succeeded), so fence rows or aliases still keyed to it belong to a purged
  * page and yield to the moved ones. A secret occurrence moves only when it is the renamed page's own (its
  * page_id is that page, or the stale row a fallback rename retires, or none): an occurrence another page holds under
- * an older slug stays with that page. An ontology observation the new slug
+ * an older slug stays with that page. The page's attachments (`files` rows bound to it by page_id, or to the stale
+ * row a fallback rename retires) move too, so `file_list` finds them under the new slug. A row with no page_id stays:
+ * nothing the database keeps proves which page it belonged to (a reused name, a purged page's scrubbed rename history). An ontology observation the new slug
  * already holds is dropped before its key moves (B-10, dropRekeyDuplicates).
  * A brain whose schema predates the facts or alias tables skips them inside a
  * savepoint.
+ * #10003: the move re-keys facts and authors no text, so every fact it moves keeps its stored trust tier (the tier
+ * trigger counts entity_slug and source_markdown_slug as content), whoever calls it.
  */
 export async function moveSlugBindings(
-  tx: Pick<BrainEngine, 'transaction' | 'executeRaw'>,
+  tx: Pick<BrainEngine, 'transaction' | 'executeRaw' | 'readTransactionSettings' | 'applyTransactionSettings'>,
   sourceId: string,
   oldSlug: string,
   newSlug: string,
 ): Promise<void> {
   if (oldSlug === newSlug) return;
+  await withTrustKeep(tx, ['facts'], () => moveBindings(tx, sourceId, oldSlug, newSlug));
+}
+
+async function moveBindings(tx: Pick<BrainEngine, 'transaction' | 'executeRaw'>, sourceId: string, oldSlug: string, newSlug: string): Promise<void> {
   await tx.executeRaw(MOVE_WITHDRAWAL_SUBJECT_SQL, [sourceId, oldSlug, newSlug]);
   type Savepoint = Pick<BrainEngine, 'executeRaw'>;
   const sql = (text: string) => (savepoint: Savepoint) => savepoint.executeRaw(text, [sourceId, oldSlug, newSlug]);
@@ -109,12 +119,15 @@ export async function moveSlugBindings(
     sql(`UPDATE page_aliases SET slug = $3 WHERE source_id = $1 AND slug = $2`),
     sql(`UPDATE secret_store_occurrence SET slug = $3 WHERE source_id = $1 AND slug = $2 AND commit_sha IS NULL
        AND (page_id IS NULL OR page_id IN (SELECT id FROM pages WHERE source_id = $1 AND slug IN ($2, $3)))`),
+    // The page's attachments bound by page_id (a row bound to another page never moves by slug).
+    sql(`UPDATE files SET page_slug = $3 WHERE source_id = $1 AND page_slug = $2
+       AND page_id IN (SELECT id FROM pages WHERE source_id = $1 AND slug IN ($2, $3))`),
   ];
   for (const statement of statements) {
     try {
       await tx.transaction(savepoint => statement(savepoint));
     } catch (error) {
-      if (!isMissingSchemaObject(error, 'table', ['facts', 'page_aliases', 'secret_store_occurrence']) && !isMissingSchemaObject(error, 'column', ['dimension', 'value_hash'])) throw error;
+      if (!isMissingSchemaObject(error, 'table', ['facts', 'page_aliases', 'secret_store_occurrence', 'files']) && !isMissingSchemaObject(error, 'column', ['dimension', 'value_hash'])) throw error;
     }
   }
 }
@@ -124,8 +137,9 @@ export async function moveSlugBindings(
  * semantics (#5431) onto the row that materialized at the destination, before
  * the stale row is soft-deleted: edges where it is the source, target or
  * origin, its timeline entries, its version history and its secret store
- * occurrences (the purge cascade finds a page's originals by page id). Rows the surviving
- * page already holds under the same unique key (`links` composite key,
+ * occurrences (the purge cascade finds a page's originals by page id), its attachments (page id and slug) and its quarantine holds
+ * (`carryHoldsToPage`: a hold that differs from one the surviving page already has is kept and marked, never dropped).
+ * Rows the surviving page already holds under the same unique key (`links` composite key,
  * timeline dedup indexes) are dropped from the stale side, never duplicated.
  * Runs inside the caller's transaction and is idempotent.
  */
@@ -152,6 +166,9 @@ export async function movePageIdReferences(
     [`UPDATE timeline_entries SET event_page_id = $2 WHERE event_page_id = $1`, [fromPageId, toPageId]],
     [`UPDATE page_versions SET page_id = $2 WHERE page_id = $1`, [fromPageId, toPageId]],
     [`UPDATE secret_store_occurrence SET page_id = $2 WHERE page_id = $1`, [fromPageId, toPageId]],
+    // Attachments: the surviving page owns them now (a purge of the retired row must not take them), under its slug.
+    [`UPDATE files SET page_id = $2, page_slug = (SELECT slug FROM pages WHERE id = $2) WHERE page_id = $1`, [fromPageId, toPageId]],
   ];
   for (const [sql, params] of statements) await tx.executeRaw(sql, params);
+  await carryHoldsToPage(tx, fromPageId, toPageId);
 }

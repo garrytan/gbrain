@@ -4,7 +4,7 @@
  * capabilities"; docs/designs/refactor-wave-1/w1-inventory.md):
  *
  *   maxBindParamsPerStatement  PGLite splits code-edge inserts below 30,000
- *                              binds; Postgres keeps one statement.
+ *                              binds; Postgres at the driver's 65,533.
  *   transactionAdvisoryLocks   Postgres serializes same-entity fact inserts
  *                              with pg_advisory_xact_lock; PGLite never locks.
  *   probesEmbeddingCast        Postgres casts fact vectors to the live column
@@ -55,7 +55,7 @@ export function defineCapabilityCases(opts: { family: Family; getEngine: () => B
   test(`capabilities are the ${family} values`, () => {
     expect(engineSql(opts.getEngine()).capabilities).toEqual(family === 'pglite'
       ? { maxBindParamsPerStatement: 30_000, transactionAdvisoryLocks: false, probesEmbeddingCast: false }
-      : { maxBindParamsPerStatement: Number.POSITIVE_INFINITY, transactionAdvisoryLocks: true, probesEmbeddingCast: true });
+      : { maxBindParamsPerStatement: 65_533, transactionAdvisoryLocks: true, probesEmbeddingCast: true });
   });
 
   test('bind batching: the per-statement boundary (6 binds per unresolved edge)', async () => {
@@ -71,6 +71,15 @@ export function defineCapabilityCases(opts: { family: Family; getEngine: () => B
     const rows = await engine.executeRaw<{ n: number }>(
       `SELECT count(*)::int AS n FROM code_edges_symbol WHERE from_chunk_id = $1`, [chunk]);
     expect(rows[0].n).toBe(2 * perStatement + 1);
+  }, 60_000);
+
+  test('bind batching: a code page past the Postgres driver ceiling still inserts (#9780)', async () => {
+    const engine = opts.getEngine();
+    const chunk = await codeChunk(engine, `code/capability-ceiling-${family}`);
+    const count = Math.floor(65_533 / 6) + 1;
+    const counted = countingExecutor(engine);
+    expect(await addCodeEdges(counted.exec, unresolved(chunk, 'ceiling', count))).toBe(count);
+    expect(counted.statements()).toBe(family === 'pglite' ? Math.ceil(count / Math.floor(30_000 / 6)) : 2);
   }, 60_000);
 
   test('bind batching: concurrent overlapping writers insert each edge exactly once', async () => {

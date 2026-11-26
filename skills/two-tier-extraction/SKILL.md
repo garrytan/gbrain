@@ -24,7 +24,6 @@ writes_to:
   - people/
   - companies/
   - sources/
-upstream: two-tier-extraction@fc834ee
 ---
 
 # Two-Tier Extraction
@@ -235,7 +234,7 @@ extraction:
 
 ## Cost Model
 
-Illustrative anchors, donor-observed on a single archive run — **not a
+Illustrative anchors, observed on a single archive run — **not a
 benchmark**. Per-item costs (~$0.003 triage, ~$0.05 deep read) scale with
 current model pricing; re-anchor against your tier defaults before a run.
 
@@ -245,7 +244,7 @@ current model pricing; re-anchor against your tier defaults before a run.
 | 5,000 items | 60% | ~$15 | ~$100 | ~$115 | ~$250 |
 | 16,000 items | 70% | ~$48 | ~$240 | ~$288 | ~$800 |
 
-In the donor's runs the pattern saved roughly 50-70% versus running the
+In those runs the pattern saved roughly 50-70% versus running the
 most expensive model on everything, with no observed quality loss on
 significant content. Treat that as an observation to verify on your own
 corpus (the test-before-bulk ramp gives you the numbers), not a guarantee.
@@ -310,9 +309,12 @@ gbrain config set models.tier.deep opus   # example: pin the escalation tier
 6. **When in doubt, escalate a tier.** A false negative (missing important
    content) costs more than a false positive (deep tier on a mediocre
    thread).
-7. **Test before bulk.** Run the progressive ramp from
-   [conventions/test-before-bulk.md](../conventions/test-before-bulk.md)
-   and verify gate quality on the trial batch before committing the corpus.
+7. **Ask, then test before bulk.** Before the first paid call, show the user
+   the item count, the tiers and their models, and the estimated total (see
+   Cost Model), and get a yes and a spending cap. Then run the progressive
+   ramp from [conventions/test-before-bulk.md](../conventions/test-before-bulk.md)
+   inside that cap and verify gate quality on the trial batch before
+   committing the corpus. Escalations count against the same cap.
 
 ## When it fails
 
@@ -325,7 +327,7 @@ Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) 
 ## Anti-Patterns
 
 - **Deep tier on everything.** Wasteful. 50-70% of most archives is noise
-  (donor-observed). The triage gate exists for a reason.
+  (observed on one archive). The triage gate exists for a reason.
 - **Utility tier on everything.** Misses the depth that matters. The user's
   writing quality, emotional subtext, relationship dynamics — cheap models
   catch structure, deep models catch meaning.
@@ -382,16 +384,13 @@ This skill guarantees:
 - Model tiers resolve through the model-routing convention — no hardcoded
   model IDs.
 - Single-pass pipeline with checkpointing; no intermediate extraction files.
-- Privacy contract preserved: no real names, no fork-specific filesystem
-  path literals, no upstream-fork references.
+- Examples use placeholder names and paths.
 
-The full behavior contract is documented in the body sections above; this
-section exists for the conformance test.
+The full behavior contract is documented in the body sections above.
 
 ## Output Format
 
 Two JSON shapes are produced inline (the triage classification in Step 1
 and the deep-read extraction in Step 3); the durable output is the brain
 page written in Step 4, filed by primary subject per
-`_brain-filing-rules.md`. The literal section header here exists for the
-conformance test (`test/skills-conformance.test.ts`).
+`_brain-filing-rules.md`.

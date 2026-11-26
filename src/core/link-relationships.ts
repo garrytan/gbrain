@@ -47,6 +47,13 @@ interface AssertionRow { from_page_id: number; to_page_id: number; link_type: st
 interface TransitionRow { from_page_id: number; to_page_id: number; link_type: string; origin_id: number | null; kind: string; occurred_on: unknown; producer: string; created_at: unknown; source_id: string; origin_public: boolean }
 interface ExistingRow { from_page_id: number; to_page_id: number; link_type: string; scope: RelationshipScope; recorded_at: unknown; retired_at: unknown; evidence_hash: string }
 
+/** One `link_relationships` row as the builder writes it. */
+export interface RelationshipStateRow extends RelationshipKey {
+  scope: RelationshipScope; source_id: string; semantics: 'state' | 'event'; valid_ranges: string; status_now: string;
+  first_start: string | null; last_start: string | null; last_end: string | null; undated_present: number; undated_past: number;
+  disputed: boolean; recorded_at: string; retired_at: string | null; evidence_hash: string;
+}
+
 /** Refresh the state of `keys`. Returns the number of state rows written or removed. */
 export async function refreshRelationships(exec: RawExec, keys: Iterable<RelationshipKey>): Promise<number> {
   const rows = temporalKeys(keys);

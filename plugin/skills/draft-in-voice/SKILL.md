@@ -24,7 +24,6 @@ mutating: true
 writes_pages: true
 writes_to:
   - people/
-upstream: draft-in-voice@fc834ee
 when_to_use: "Use when the user asks: \"draft in voice\", \"write this as\", \"make this sound like\", \"ghostwrite\", \"draft a tweet as\"."
 ---
 
@@ -261,8 +260,7 @@ This skill guarantees:
   approval-gated path.
 - The only brain write this skill performs is the voice-profile page (and
   its back-link) under `people/`, per `writes_to:`.
-- Privacy contract preserved: no real names in examples, no fork-specific
-  filesystem path literals, no upstream-fork references; drafts never
+- Examples use placeholder names and paths; drafts never
   surface private details the subject hasn't made public.
 
 ## Output Format

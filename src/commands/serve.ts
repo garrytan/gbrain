@@ -313,6 +313,8 @@ async function serveBrain(
   }
   console.error(`[gbrain serve] surface=${surface} (source: ${SURFACE_SOURCE_LABEL[resolved.source]})${advertise ? ` advertise=${advertise}` : ''}`);
   void (await import('../core/serve-behavior-notice.ts')).logServeBehaviorNotice(engine, loadConfig());
+  // brain_ref for `gbrain engine status --probe`, which cannot open a PGLite brain this serve holds (serve-brain-ref.ts).
+  void import('./serve-brain-ref.ts').then(m => m.recordServeBrainRefAtStart(engine)).catch(() => undefined);
   // #6543 (A6): serve's stuck, desync and recovery events go to the pool-recovery audit `doctor --only pool_reap_health` reads.
   if (engine.kind === 'postgres') {
     const { logPoolRecovery } = await import('../core/audit/pool-recovery-audit.ts');
@@ -353,6 +355,8 @@ async function serveBrain(
   const sourceGuard = args.includes('--source-guard');
   // Opt-in warm CLI socket (core/cli-socket/server.ts): off, the serve loads nothing and reads nothing for it.
   const cliSocketOn = args.includes('--cli-socket') || MERGED_CONFIG_BY_ENGINE.get(engine)?.serve_cli_socket === true;
+  // Opt-in Google token socket (core/google-socket/server.ts, file-plane google.mint_socket): off, the serve loads none of it.
+  const googleSocketOn = (await import('../core/config.ts')).loadConfigFileOnly()?.google?.mint_socket === true;
   // Opt-in vector index prewarm (core/vector-prewarm.ts): off, the serve loads nothing and reads nothing for it.
   if (MERGED_CONFIG_BY_ENGINE.get(engine)?.serve_vector_prewarm === true) {
     void import('../core/vector-prewarm.ts').then(m => m.prewarmAtServeStart(engine, opts.log ?? ((msg: string) => console.error(msg))));
@@ -457,6 +461,7 @@ async function serveBrain(
     const mcpLogPrune = installMcpLogPrune(engine, opts, httpLog, () => false);
 
     const cliSocket = cliSocketOn ? await (await import('../core/cli-socket/server.ts')).startCliSocket(engine, httpLog) : null;
+    const googleSocket = googleSocketOn ? await (await import('../core/google-socket/server.ts')).startGoogleSocketForServe(httpLog) : null;
     try {
       await runHttp(engine, { port, tokenTtl, enableDcr, enableDcrInsecure, publicUrl, logFullParams, bind, suppressBootstrapToken, printAdminToken, surface, ...(advertise ? { advertise } : {}), adoptServer: opts.adoptServer });
     } finally {
@@ -465,6 +470,7 @@ async function serveBrain(
       idleUpkeep?.stop();
       mcpLogPrune?.stop();
       cliSocket?.close();
+      googleSocket?.close();
     }
 
     await finishHttpServe(engine, opts);

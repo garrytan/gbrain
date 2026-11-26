@@ -46,6 +46,8 @@ import { preferEntityTitleMatches } from './title-matches.ts';
 import { logVolunteerEventsFireAndForget, volunteerEventRowsFrom } from './volunteer-events.ts';
 import { boundedProjectedPrefix } from '../page-window/document.ts';
 import { boundedBodyPrefixSql, boundedRawPrefix, overlaidBoundedRows } from '../page-window/bounded-lead.ts';
+import type { ReflexPageRow, ReflexScope } from '../engine-sql/reflex-reads.ts';
+import { nullUnlessCapabilityRefusal, rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 
 /** Large pages: candidate rows carry a bounded body prefix (the synopsis reads only its first sentence). */
 const PREFIX_SQL = boundedBodyPrefixSql('p');
@@ -72,21 +74,16 @@ const PURE_CJK_RE = new RegExp(`^[${CJK_SLUG_CHARS}]+$`, 'u');
  * resolved the n-gram. Concepts and other types are excluded: their titles are
  * common phrases ("open source"). Fail-open: the alias arm already ran.
  */
-async function weakTitleHits(engine: BrainEngine, sourceIds: string[], privacySql: string, norms: string[]): Promise<PageRow[]> {
+async function weakTitleHits(engine: BrainEngine, scope: ReflexScope, norms: string[]): Promise<PageRow[]> {
   if (!norms.length) return [];
   try {
-    const rows = await engine.executeRaw<PageRow>(
-      `SELECT p.slug, p.source_id, p.title, p.type, p.frontmatter, ${PREFIX_SQL} AS compiled_truth
-         FROM pages p
-        WHERE p.deleted_at IS NULL ${privacySql}
-          AND p.source_id = ANY($1::text[])
-          AND lower(p.title) = ANY($2::text[])`,
-      [sourceIds, norms],
-    );
+    // Candidate rows carry a bounded body prefix (the synopsis reads only its first sentence).
+    const rows = await engine.readReflexPages(scope, { kind: 'titles', titlesLc: norms });
     const byTitle = new Map<string, PageRow[]>();
     for (const r of rows) byTitle.set((r.title ?? '').toLowerCase(), [...(byTitle.get((r.title ?? '').toLowerCase()) ?? []), r]);
     return [...byTitle.values()].filter((list) => list.length === 1 && WEAK_TITLE_ENTITY_TYPES.has(String(list[0].type))).map((list) => list[0]);
-  } catch {
+  } catch (err) {
+    rethrowCapabilityRefusal(err);
     return [];
   }
 }
@@ -212,14 +209,8 @@ export interface ResolvePointersOpts {
   onWithheld?: (keys: string[]) => void;
 }
 
-export interface PageRow {
-  slug: string;
-  source_id: string;
-  title: string;
-  type: string | null;
-  frontmatter: Record<string, unknown> | null;
-  compiled_truth: string | null;
-}
+/** A candidate page row: the bounded body prefix stands in for `compiled_truth`. */
+export type PageRow = ReflexPageRow;
 
 /**
  * Resolve candidates to a pointer block. Returns null when nothing resolves
@@ -239,7 +230,7 @@ export async function resolveEntitiesToPointers(
 
   // v0.46.15: weak-alias + surname arms share one kill switch (default ON).
   const lexicalArms = opts.lexicalArms !== false;
-  const privacySql = opts.excludePrivate === false ? '' : `AND ${opts.forCaller ? privatePagesFilterForCaller('p') : remoteReadFloorSql('p')}`;
+  const privacy = opts.excludePrivate === false ? 'none' : opts.forCaller ? 'caller' : 'floor';
 
   // display lookup keyed by normalized query, so resolved slugs can recover a
   // human surface form for the pointer label.
@@ -307,6 +298,7 @@ export async function resolveEntitiesToPointers(
 
   // Federated scope (v0.43 #2095): explicit sourceIds win over the scalar.
   const sourceIds = opts.sourceIds?.length ? opts.sourceIds : [sourceId];
+  const scope: ReflexScope = { sourceIds, privacy };
 
   // Ordered set of resolved (source, slug) pairs with arm provenance —
   // alias hits pushed first → higher confidence.
@@ -334,6 +326,8 @@ export async function resolveEntitiesToPointers(
   const aliasResults = await Promise.allSettled(
     sourceIds.map((src) => engine.resolveAliases(aliasNorms, { sourceId: src })),
   );
+  // A capability refusal is not a missing table: it reaches the caller instead of degrading.
+  for (const r of aliasResults) if (r.status === 'rejected') rethrowCapabilityRefusal(r.reason);
   const anyAliasSourceFailed = aliasResults.some((r) => r.status !== 'fulfilled');
   // Liveness BEFORE uniqueness: page_aliases has no FK, so a norm's hit list
   // can carry rows for deleted/renamed pages. Deciding uniqueness on raw hits
@@ -354,14 +348,11 @@ export async function resolveEntitiesToPointers(
     }
     if (hitSlugs.size) {
       try {
-        const liveRows = await engine.executeRaw<{ slug: string; source_id: string }>(
-          `SELECT p.slug, p.source_id FROM pages p
-            WHERE p.deleted_at IS NULL AND p.source_id = ANY($1::text[]) AND p.slug = ANY($2::text[]) ${privacySql}`,
-          [sourceIds, [...hitSlugs]],
-        );
+        const liveRows = await engine.readReflexLiveKeys(scope, [...hitSlugs]);
         for (const r of liveRows) liveAliasKeys.add(keyOf(r.source_id, r.slug));
         liveCheckOk = true;
-      } catch {
+      } catch (err) {
+        rethrowCapabilityRefusal(err);
         /* fall back below */
       }
     } else {
@@ -413,29 +404,12 @@ export async function resolveEntitiesToPointers(
     // whose lower(title) ends with " <token>". Patterns are pre-escaped for
     // LIKE (backslash default escape); type='person' kills the company-tail
     // class ("Labs", "Systems" as pseudo-surnames).
-    rows = useSurnameArm
-      ? await engine.executeRaw<PageRow>(
-          `SELECT p.slug, p.source_id, p.title, p.type, p.frontmatter, ${PREFIX_SQL} AS compiled_truth
-             FROM pages p
-            WHERE p.deleted_at IS NULL ${privacySql}
-              AND p.source_id = ANY($1::text[])
-              AND ( lower(p.title) = ANY($2::text[])
-                 OR p.slug = ANY($3::text[])
-                 OR p.slug LIKE ANY($4::text[])
-                 OR (lower(p.title) LIKE ANY($5::text[]) AND p.type = 'person') ) ORDER BY p.id`,
-          [sourceIds, titlesLc, exactSlugs, slugSuffixes, surnamePatterns],
-        )
-      : await engine.executeRaw<PageRow>(
-          `SELECT p.slug, p.source_id, p.title, p.type, p.frontmatter, ${PREFIX_SQL} AS compiled_truth
-             FROM pages p
-            WHERE p.deleted_at IS NULL ${privacySql}
-              AND p.source_id = ANY($1::text[])
-              AND ( lower(p.title) = ANY($2::text[])
-             OR p.slug = ANY($3::text[])
-             OR p.slug LIKE ANY($4::text[]) ) ORDER BY p.id`,
-          [sourceIds, titlesLc, exactSlugs, slugSuffixes],
-        );
-  } catch {
+    rows = await engine.readReflexPages(scope, {
+      kind: 'names', titlesLc, exactSlugs, slugSuffixes,
+      ...(useSurnameArm ? { surnamePatterns } : {}),
+    });
+  } catch (err) {
+    rethrowCapabilityRefusal(err);
     rows = [];
   }
   // Hydrate alias-resolved pages too (their bodies for the synopsis) if not in rows.
@@ -444,14 +418,10 @@ export async function resolveEntitiesToPointers(
   const aliasOnly = resolved.filter((p) => !rowByKey.has(keyOf(p.source_id, p.slug)));
   if (aliasOnly.length) {
     try {
-      const extra = await engine.executeRaw<PageRow>(
-        `SELECT p.slug, p.source_id, p.title, p.type, p.frontmatter, ${PREFIX_SQL} AS compiled_truth
-           FROM pages p
-          WHERE p.deleted_at IS NULL ${privacySql} AND p.source_id = ANY($1::text[]) AND p.slug = ANY($2::text[])`,
-        [sourceIds, aliasOnly.map((p) => p.slug)],
-      );
+      const extra = await engine.readReflexPages(scope, { kind: 'slugs', slugs: aliasOnly.map((p) => p.slug) });
       for (const r of extra) rowByKey.set(keyOf(r.source_id, r.slug), r);
-    } catch {
+    } catch (err) {
+      rethrowCapabilityRefusal(err);
       /* ignore — alias slug may be stale */
     }
   }
@@ -528,14 +498,7 @@ export async function resolveEntitiesToPointers(
     const cjkNorms = [...weakNorms].filter((n) => PURE_CJK_RE.test(n) && !armResolvedNorms.has(n));
     if (cjkNorms.length) {
       try {
-        const cjkRows = await engine.executeRaw<PageRow>(
-          `SELECT p.slug, p.source_id, p.title, p.type, p.frontmatter, ${PREFIX_SQL} AS compiled_truth
-             FROM pages p
-            WHERE p.deleted_at IS NULL ${privacySql}
-              AND p.source_id = ANY($1::text[])
-              AND ( lower(p.title) = ANY($2::text[]) OR p.slug = ANY($3::text[]) )`,
-          [sourceIds, cjkNorms, cjkNorms],
-        );
+        const cjkRows = await engine.readReflexPages(scope, { kind: 'cjkExact', norms: cjkNorms });
         const cjkHits = new Map<string, Array<{ slug: string; source_id: string }>>();
         for (const r of cjkRows) {
           rowByKey.set(keyOf(r.source_id, r.slug), r); // hydrate for synopsis
@@ -551,14 +514,15 @@ export async function resolveEntitiesToPointers(
         for (const [n, hits] of cjkHits) {
           if (hits.length === 1) push(hits[0].slug, hits[0].source_id, 'cjk-title', n);
         }
-      } catch {
+      } catch (err) {
+        rethrowCapabilityRefusal(err);
         /* fail-open — the alias arm already ran */
       }
     }
   }
 
   // Arm 2.6 — lowercase multi-word weak exact-title (#6195; see weakTitleHits).
-  if (lexicalArms && weakTitleNorms.size) for (const r of await weakTitleHits(engine, sourceIds, privacySql, [...weakTitleNorms].filter((n) => !resolved.some((x) => x.matchedNorm === n)))) {
+  if (lexicalArms && weakTitleNorms.size) for (const r of await weakTitleHits(engine, scope, [...weakTitleNorms].filter((n) => !resolved.some((x) => x.matchedNorm === n)))) {
     rowByKey.set(keyOf(r.source_id, r.slug), r); push(r.slug, r.source_id, 'weak-title', (r.title ?? '').toLowerCase());
   }
 
@@ -599,7 +563,7 @@ export async function resolveEntitiesToPointers(
 async function gatePointerCandidates(engine: BrainEngine, resolved: ReadonlyArray<{ source_id: string; slug: string }>,
   opts: ResolvePointersOpts): Promise<Map<string, TrustFields>> {
   const policy = opts.eligibility ?? await proactiveEligibility({ engine }, 'retrieval_reflex');
-  const verdicts = await pageActivationVerdicts(engine, resolved.map(r => ({ source_id: r.source_id, slug: r.slug })), policy).catch(() => null);
+  const verdicts = await pageActivationVerdicts(engine, resolved.map(r => ({ source_id: r.source_id, slug: r.slug })), policy).catch(nullUnlessCapabilityRefusal);
   const out = new Map<string, TrustFields>();
   const withheld: string[] = [];
   for (const [key, v] of verdicts ?? []) {
@@ -680,11 +644,15 @@ function wholeWordIncludes(haystack: string, needle: string): boolean {
   return new RegExp(`(^|\\W)${esc}(\\W|$)`).test(haystack);
 }
 
+/** How an agent on the starter tool list (which does not list get_page) reaches the call a pointer names. */
+export const GET_PAGE_REACH = 'If get_page is not in your tool list, call request_tools {tools: ["get_page"]} first; if it still is not callable, this connection cannot open pages, so say that rather than answer from memory.';
+
 export function renderPointerBlock(pointers: ReflexPointer[]): string {
   const lines = [
     '## Brain pages mentioned this turn',
     'You referenced entities with existing brain pages. Open the page before relying on',
     'details — do not answer from memory.',
+    GET_PAGE_REACH,
     '',
   ];
   for (const p of pointers) lines.push(renderPointerLine(p));
@@ -699,7 +667,7 @@ export function renderPointerBlock(pointers: ReflexPointer[]): string {
 export function renderPointerLine(p: Pick<ReflexPointer, 'display' | 'slug' | 'synopsis' | 'trust_tier' | 'origin' | 'unconfirmed'>): string {
   const trusted = p.trust_tier ? ` ${renderTrustedInline(p.synopsis, { trust_tier: p.trust_tier, origin: p.origin ?? 'legacy', ...(p.unconfirmed ? { unconfirmed: true as const } : {}) })}` : '';
   const syn = p.trust_tier ? (trusted ? ` —${trusted}` : '') : p.synopsis ? ` — ${p.synopsis}` : '';
-  return `- **${p.display}** → \`${p.slug}\`${syn} (use get_page before relying on details)`;
+  return `- **${p.display}** → \`${p.slug}\`${syn} (use get_page {slug: ${JSON.stringify(p.slug)}} before relying on details)`;
 }
 
 /**

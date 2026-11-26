@@ -5,8 +5,10 @@
 //!   `d 0x02 <op> 0x00 <fingerprint>`, JSON `HousekeepingRow`. This engine has no
 //!   `persistence_consumers` rows, so no live resident consumer ever blocks a claim.
 //! - The receipt reads: the budget, the compaction listing, the true-up candidates and the
-//!   compacted-reservation window. This engine has no `persistence_effects` rows, so effect bytes
-//!   are 0 and no effect is unfinished.
+//!   compacted-reservation window. A candidate's effect bytes and unsettled flag come from its
+//!   `persistence_effects` rows (`effects.rs`).
+//! - The true-up's write (`TRUE_UP_RESERVATIONS_SQL`): the compare-and-set on the reservations, the
+//!   counter release clamped at zero and the clamp count.
 //! - The capacity forecast's inputs: the principal rows, then the topology-change rows
 //!   (`topology::topology_capacity_days`). This engine has no relation size, so `tableBytes` is
 //!   null.
@@ -15,19 +17,21 @@
 //! jsonb). Times are microseconds; a day is 86,400 seconds, as `interval '1 day'` is on a UTC
 //! session.
 
+use super::effects::request_effects;
 use super::{
-    all_counters, all_requests, extra_bool, extra_i64, extra_is_null, read_counter, sql_like,
-    uuid_param,
+    add_true_up_clamped, all_counters, all_requests, extra_bool, extra_i64, extra_is_null,
+    read_counter, request_by_id, sql_like, uuid_param, write_counter,
 };
 use crate::config::read_config;
 use crate::env::{Env, iso};
 use crate::error::{Result, StoreError};
-use crate::journal::RequestRecord;
+use crate::journal::{RequestRecord, write_request};
 use crate::kv::{KvRead, KvWrite};
 use crate::timeline_queries::jsonb_text;
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
 
 const DAY_US: f64 = 86_400_000_000.0;
 /// The terminal states (`TERMINAL_STATES`).
@@ -47,7 +51,7 @@ fn compactable(r: &RequestRecord) -> bool {
 }
 
 /// `jsonb ? key`: an object's key, an array's string element, or the string itself.
-fn jsonb_has(v: &Value, key: &str) -> bool {
+pub(super) fn jsonb_has(v: &Value, key: &str) -> bool {
     match v {
         Value::Object(o) => o.contains_key(key),
         Value::Array(a) => a.iter().any(|e| e.as_str() == Some(key)),
@@ -82,13 +86,15 @@ fn days_before(env: &dyn Env, days: f64) -> i64 {
 // The host's housekeeping turn.
 
 /// One housekeeping `op_checkpoints` row: `completed_keys` and `updated_at`.
+/// The resumable-op checkpoints of `op_checkpoint.rs` share the row shape and the key.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct HousekeepingRow {
-    completed_keys: Value,
-    updated_at_us: i64,
+pub(crate) struct HousekeepingRow {
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
+    pub(crate) completed_keys: Value,
+    pub(crate) updated_at_us: i64,
 }
 
-fn turn_key(op: &str, fingerprint: &str) -> Result<Vec<u8>> {
+pub(crate) fn turn_key(op: &str, fingerprint: &str) -> Result<Vec<u8>> {
     if op.contains('\0') || fingerprint.contains('\0') {
         return Err(StoreError::invalid(
             "a housekeeping checkpoint key cannot contain NUL",
@@ -228,8 +234,20 @@ pub(crate) fn list_reservations_after_in(
         .collect())
 }
 
-/// `listTrueUpRequests(ids)`: the terminal requests among `ids`, in sequence order, with the bytes
-/// of their effect rows and whether one of those effects is not yet committed.
+/// A request's effect bytes (`EFFECT_BYTES_SQL` summed) and whether one of its effects is still
+/// `queued` or `running`.
+fn effect_bytes_unsettled(read: &dyn KvRead, request_id: &str) -> Result<(i64, bool)> {
+    let effects = request_effects(read, request_id)?;
+    Ok((
+        effects.iter().map(|e| e.bytes()).sum(),
+        effects
+            .iter()
+            .any(|e| e.state == "queued" || e.state == "running"),
+    ))
+}
+
+/// `listTrueUpRequests(ids)`: the terminal requests among `ids`, in sequence order, with their
+/// effect bytes and whether an effect is unsettled.
 pub(crate) fn list_true_up_requests_in(read: &dyn KvRead, ids: &[String]) -> Result<Vec<Value>> {
     let mut wanted = Vec::with_capacity(ids.len());
     for id in ids {
@@ -240,34 +258,106 @@ pub(crate) fn list_true_up_requests_in(read: &dyn KvRead, ids: &[String]) -> Res
         .filter(|r| terminal(r) && wanted.contains(&r.id.to_lowercase()))
         .collect();
     rows.sort_by_key(|r| r.sequence);
-    let mut out_rows = Vec::with_capacity(rows.len());
-    for r in &rows {
-        let (effect_bytes, unfinished) = super::effects::effect_totals(read, &r.id)?;
-        let row = r.to_row();
-        let mut out = serde_json::Map::new();
-        for column in [
-            "id",
-            "intent",
-            "authority",
-            "outcome",
-            "error_message",
-            "error_detail",
-            "client_request_id",
-            "terminal_reservation",
-            "principal_kind",
-            "principal_id",
-            "compacted",
-        ] {
-            out.insert(
-                column.into(),
-                row.get(column).cloned().unwrap_or(Value::Null),
-            );
-        }
-        out.insert("effect_bytes".into(), json!(effect_bytes.to_string()));
-        out.insert("unfinished".into(), json!(unfinished));
-        out_rows.push(Value::Object(out));
+    rows.iter()
+        .map(|r| {
+            let row = r.to_row();
+            let mut out = serde_json::Map::new();
+            for column in [
+                "id",
+                "intent",
+                "authority",
+                "outcome",
+                "error_message",
+                "error_detail",
+                "client_request_id",
+                "terminal_reservation",
+                "principal_kind",
+                "principal_id",
+                "compacted",
+            ] {
+                out.insert(
+                    column.into(),
+                    row.get(column).cloned().unwrap_or(Value::Null),
+                );
+            }
+            let (bytes, unsettled) = effect_bytes_unsettled(read, &r.id)?;
+            out.insert("effect_bytes".into(), json!(bytes.to_string()));
+            out.insert("unfinished".into(), json!(unsettled));
+            Ok(Value::Object(out))
+        })
+        .collect()
+}
+
+/// One request the true-up shrinks (`TrueUpReservation`): the reservation it read, what the
+/// receipt keeps and the effect bytes it was sized with, as text.
+#[derive(Debug, Clone, Deserialize)]
+pub struct TrueUpReservation {
+    pub id: String,
+    pub old: i64,
+    pub kept: i64,
+    pub effects: String,
+}
+
+/// `trueUpReservations(rows)`: each request whose reservation is still `old`, whose effect bytes
+/// are still `effects` and none of whose effects is unsettled keeps `kept`. The freed bytes,
+/// summed per counter (the brain and the request's principal), leave the counters that exist,
+/// clamped at zero; each clamped counter adds one to `persistence.true_up.clamped`. Returns the
+/// bytes given back, as text.
+pub(crate) fn true_up_reservations_in(
+    tx: &mut dyn KvWrite,
+    rows: &[TrueUpReservation],
+) -> Result<String> {
+    let mut checked = Vec::with_capacity(rows.len());
+    for row in rows {
+        let effects = row
+            .effects
+            .trim()
+            .parse::<i64>()
+            .map_err(|_| StoreError::invalid("effects is not a bigint"))?;
+        checked.push((uuid_param(&row.id, "id")?, row, effects));
     }
-    Ok(out_rows)
+    let mut freed_by_key: BTreeMap<String, i64> = BTreeMap::new();
+    let mut freed = 0i64;
+    for (id, row, effects) in checked {
+        let Some(mut record) = request_by_id(&*tx, &id)? else {
+            continue;
+        };
+        if extra_i64(&record, "terminal_reservation") != row.old {
+            continue;
+        }
+        let (bytes, unsettled) = effect_bytes_unsettled(&*tx, &record.id)?;
+        if unsettled || bytes != effects {
+            continue;
+        }
+        let released = row.old - row.kept;
+        record
+            .extra
+            .insert("terminal_reservation".into(), json!(row.kept));
+        write_request(tx, &record)?;
+        freed += released;
+        for key in [
+            "brain".to_string(),
+            format!(
+                "principal:{}:{}",
+                record.principal_kind, record.principal_id
+            ),
+        ] {
+            *freed_by_key.entry(key).or_insert(0) += released;
+        }
+    }
+    let mut clamped = 0u64;
+    for (key, released) in freed_by_key {
+        let Some(mut counter) = read_counter(&*tx, &key)? else {
+            continue;
+        };
+        if released > counter.terminal_bytes {
+            clamped += 1;
+        }
+        counter.terminal_bytes -= released.min(counter.terminal_bytes);
+        write_counter(tx, &key, &counter)?;
+    }
+    add_true_up_clamped(tx, clamped)?;
+    Ok(freed.to_string())
 }
 
 /// `UNRESOLVED_CALLER_REFUSAL_SQL(r)` is true: a caller's write refused by the writer guard or by
@@ -484,6 +574,11 @@ impl Store {
     /// `listTrueUpRequests(ids)`.
     pub fn list_true_up_requests(&self, ids: &[String]) -> Result<Vec<Value>> {
         list_true_up_requests_in(&*self.read()?, ids)
+    }
+
+    /// `trueUpReservations(rows)`: the bytes given back, as text.
+    pub fn true_up_reservations(&self, rows: &[TrueUpReservation]) -> Result<String> {
+        self.write(|tx| true_up_reservations_in(tx, rows))
     }
 
     /// `listCompactableReceipts(retentionDays)`.

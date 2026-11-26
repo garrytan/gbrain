@@ -23,7 +23,7 @@
  */
 
 import { BudgetTracker } from '../../core/budget/budget-tracker.ts';
-import { createBenchmarkBrain, resetTables } from '../longmemeval/harness.ts';
+import { type BenchmarkEngineKind, createBenchmarkBrain, resetTables } from '../longmemeval/harness.ts';
 import type { BrainEngine } from '../../core/engine.ts';
 import { ClaudeCodeAdapter } from './adapters/claude-code.ts';
 import { CodexAdapter } from './adapters/codex.ts';
@@ -61,6 +61,8 @@ export interface RunBrainBenchOpts {
   onProgress?: (note: string) => void;
   /** System One arm (`--decide`, src/eval/decide-eval-flags.ts): configures the benchmark brain and adds per-turn receipts. */
   decide?: DecideEvalRun | null;
+  /** `--engine`: the engine the benchmark brain is built on (default pglite). */
+  engine?: BenchmarkEngineKind;
 }
 
 export interface RunBrainBenchOutput {
@@ -259,7 +261,11 @@ export async function runBrainBench(
     ? new BudgetTracker({ maxCostUsd: opts.budgetUsd ?? 5, label: 'brainbench:llm' })
     : undefined;
 
-  const engine = await createBenchmarkBrain();
+  // The trust suites build their own PGLite brains: under --engine rust they would label PGLite numbers as Rust's.
+  if ((opts.engine ?? 'pglite') === 'rust' && trustFixtures.length > 0) {
+    throw new Error('--engine rust does not run the memory-trust suites yet (they always build PGLite brains); leave them out with --suite.');
+  }
+  const engine = await createBenchmarkBrain(opts.engine ?? 'pglite');
   let fixturesRun = 0;
   try {
     if (opts.decide) await configureDecideBrain(engine, opts.decide, { includeSearchPins: true });

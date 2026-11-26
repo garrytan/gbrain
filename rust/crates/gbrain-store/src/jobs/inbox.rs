@@ -7,7 +7,7 @@ fn inbox_json(r: &InboxRecord) -> Value {
         "id": r.id,
         "job_id": r.job_id,
         "sender": r.sender,
-        "payload": jsonb(&r.payload),
+        "payload": ordered(&r.payload),
         "sent_at": iso(r.sent_at),
         "read_at": r.read_at.map(iso),
     })
@@ -126,6 +126,20 @@ impl Store {
             })
             .collect();
         rows.sort_by_key(|r| (r.sent_at, r.id));
-        Ok(rows.iter().map(|r| jsonb(&r.payload)).collect())
+        Ok(rows.iter().map(|r| ordered(&r.payload)).collect())
     }
+}
+
+/// The `minion_inbox` rows a fact purge's inventory probe searches (crate::facts::purge_probe).
+pub(crate) fn purge_probe_inbox_rows(
+    read: &dyn KvRead,
+) -> Result<Vec<crate::facts::purge_probe::ProbeRow>> {
+    use crate::facts::purge_probe::{ProbeCell, ProbeRow, json_rows};
+    Ok(json_rows::<InboxRecord>(read, &prefix(INBOX))?
+        .into_iter()
+        .map(|r| ProbeRow {
+            source_id: None,
+            cells: vec![("payload", ProbeCell::jsonb(&r.payload))],
+        })
+        .collect())
 }

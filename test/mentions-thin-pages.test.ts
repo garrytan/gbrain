@@ -9,7 +9,8 @@
  * person's first name links nothing, while a one-word person title nobody
  * shares and a one-word company title still link. Regression: a handle or
  * nickname mention landing on a thin page whose title is the handle or
- * nickname; a bare first name linking to a thin first-name page.
+ * nickname; a bare first name linking to a thin first-name page; a page retired
+ * into another (merged_into, superseded_by, canonical: false) keeping its names.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import type { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -124,3 +125,21 @@ describe('frontmatter aliases and bare first names', () => {
     expect(await links('Posted by @true today.')).toEqual([]);
   });
 });
+
+describe('retired pages', () => {
+  test('a page retired into another (merged_into) collects no mentions, even with the same alias and handle', async () => {
+    await put('people/alice-example', 'person', 'Alice Example', { aliases: ['Ally'], x_handle: 'allytweets' });
+    await put('people/ally', 'person', 'Ally', { aliases: ['Ally'], x_handle: 'allytweets', merged_into: 'people/alice-example' });
+    expect(await links('Ally sent the deck.')).toEqual(['people/alice-example']);
+    expect(await links('A thread from @allytweets.')).toEqual(['people/alice-example']);
+  });
+
+  test('a superseded or non-canonical page keeps no title entry of its own', async () => {
+    await put('people/alice-example', 'person', 'Alice Example');
+    await put('people/alice-q-example', 'person', 'Alice Q Example', { superseded_by: 'people/alice-example' });
+    await put('people/alice-r-example', 'person', 'Alice R Example', { canonical: false });
+    expect(await links('Met Alice Q Example and Alice R Example.')).toEqual([]);
+    expect(await links('Met Alice Example.')).toEqual(['people/alice-example']);
+  });
+});
+

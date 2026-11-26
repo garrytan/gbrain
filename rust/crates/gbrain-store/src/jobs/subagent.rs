@@ -17,7 +17,7 @@
 //!
 //! A row is written once and then only settled: no update moves its job, turn, ordinal or stable id, so
 //! the indexes are written with the row and removed with it (deleting a job). A JSON column is kept as
-//! the value given; reads return it in the key order Postgres prints a `jsonb` (`dream::jsonb`). A
+//! the value given; reads return it in the key order Postgres prints a `jsonb` (`jsonb::ordered`). A
 //! tool `output` is kept as its JSON text, so a JSON null output stays distinct from a SQL NULL one.
 //!
 //! The same refusals the SQL has: a missing job (the foreign key), a role outside user/assistant, a
@@ -104,6 +104,7 @@ struct MessageRecord {
     job_id: i64,
     message_idx: i64,
     role: String,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     content_blocks: Value,
     tokens_in: Option<i64>,
     tokens_out: Option<i64>,
@@ -120,7 +121,7 @@ impl MessageRecord {
             "job_id": self.job_id,
             "message_idx": self.message_idx,
             "role": self.role,
-            "content_blocks": jsonb(&self.content_blocks),
+            "content_blocks": ordered(&self.content_blocks),
             "tokens_in": self.tokens_in,
             "tokens_out": self.tokens_out,
             "tokens_cache_read": self.tokens_cache_read,
@@ -140,6 +141,7 @@ struct ToolRecord {
     ordinal: Option<i64>,
     tool_use_id: String,
     tool_name: String,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     input: Value,
     status: String,
     output: Option<String>,
@@ -160,7 +162,7 @@ impl ToolRecord {
     }
 
     fn output_json(&self) -> Result<Value> {
-        Ok(self.output_value()?.map_or(Value::Null, |v| jsonb(&v)))
+        Ok(self.output_value()?.map_or(Value::Null, |v| ordered(&v)))
     }
 
     fn view(&self) -> Result<Value> {
@@ -171,7 +173,7 @@ impl ToolRecord {
             "ordinal": self.ordinal,
             "tool_use_id": self.tool_use_id,
             "tool_name": self.tool_name,
-            "input": jsonb(&self.input),
+            "input": ordered(&self.input),
             "status": self.status,
             "output": self.output_json()?,
             "error": self.error,
@@ -737,7 +739,7 @@ impl Store {
             out.push(json!({
                 "job_id": r.job_id,
                 "job_key": job.idempotency_key.clone(),
-                "input": jsonb(&r.input),
+                "input": ordered(&r.input),
                 "output": r.output_json()?,
                 "started_at": iso(r.started_at),
             }));
@@ -833,7 +835,7 @@ impl Store {
         let mut out = Vec::new();
         for (call, request_id) in &calls {
             for (id, slug) in requests.get(request_id).into_iter().flatten() {
-                out.push(json!({"request_id": id, "slug": slug, "input": jsonb(&call.input)}));
+                out.push(json!({"request_id": id, "slug": slug, "input": ordered(&call.input)}));
             }
         }
         Ok(out)
@@ -1042,6 +1044,37 @@ impl Store {
             Ok(1)
         })
     }
+}
+
+/// The `subagent_messages` rows a fact purge's inventory probe searches (crate::facts::purge_probe).
+pub(crate) fn purge_probe_message_rows(
+    read: &dyn KvRead,
+) -> Result<Vec<crate::facts::purge_probe::ProbeRow>> {
+    use crate::facts::purge_probe::{ProbeCell, ProbeRow, json_rows};
+    Ok(json_rows::<MessageRecord>(read, &prefix(MSG))?
+        .into_iter()
+        .map(|r| ProbeRow {
+            source_id: None,
+            cells: vec![("content_blocks", ProbeCell::jsonb(&r.content_blocks))],
+        })
+        .collect())
+}
+
+/// The `subagent_tool_executions` rows a fact purge's inventory probe searches (crate::facts::purge_probe).
+pub(crate) fn purge_probe_tool_rows(
+    read: &dyn KvRead,
+) -> Result<Vec<crate::facts::purge_probe::ProbeRow>> {
+    use crate::facts::purge_probe::{ProbeCell, ProbeRow, json_rows};
+    Ok(json_rows::<ToolRecord>(read, &prefix(TOOL))?
+        .into_iter()
+        .map(|r| ProbeRow {
+            source_id: None,
+            cells: vec![
+                ("input", ProbeCell::jsonb(&r.input)),
+                ("output", ProbeCell::opt_jsonb_text(r.output.as_deref())),
+            ],
+        })
+        .collect())
 }
 
 #[cfg(test)]

@@ -375,7 +375,7 @@ export const versionTimelineScan = (): VersionTimelineScan => ({ done: false, pr
  * row locked and only while the page is still at that revision; a page that moved deletes nothing and returns no rows.
  */
 export async function retractRemovedTimelineEntries(
-  engine: Pick<BrainEngine, 'executeRaw' | 'readManifest' | 'readSegmentTexts'>,
+  engine: Pick<BrainEngine, 'executeRaw' | 'readManifest' | 'readSegmentTexts' | 'readSegmentedVersionBodyBytes'>,
   slug: string,
   sourceId: string,
   current: string | TimelineTextKeys,

@@ -1,0 +1,2 @@
+# Silent read-catch ratchet baseline (fixture). Rows: path#function<TAB>metric<TAB>count[<TAB>note].
+src/core/sites.ts#legacyLookup	catch_empty	1	fixture: an existing site the baseline carries

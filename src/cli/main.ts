@@ -5,7 +5,7 @@
  * top-level help never pay for this module's import graph. Tests import the
  * helpers below from here.
  */
-import { affectsRecall } from '../core/types.ts';
+import { emptyRetrievalStages, KEYWORD_ONLY_BY_CHOICE_EMPTY } from '../core/degraded-stamp.ts';
 import { installSigchldHandler } from '../core/zombie-reap.ts';
 installSigchldHandler();
 
@@ -56,7 +56,7 @@ import { migrationsNotice, pendingUpgradeMigrationsNotice } from './migrations-n
 import { opError, opOwnsSource } from '../core/ops/contract.ts';
 import { PAGE_MAX_BYTES } from '../core/page-size-policy.ts';
 import { opBooleanValue, opFlagValue, opParamValue, opStructuredValue } from './op-param-values.ts';
-import { parseGlobalFlags, setCliOptions, getCliOptions } from '../core/cli-options.ts';
+import { parseGlobalFlags, setCliOptions, getCliOptions, THIN_CLIENT_BRAIN_FLAG_MESSAGE } from '../core/cli-options.ts';
 import { runCliPreflight } from '../core/cli-preflight.ts';
 import { isBooleanLiteral, isKnownOpFlag } from '../core/op-flag-tokens.ts';
 import { conceptNudge } from '../core/search/query-intent.ts';
@@ -66,7 +66,7 @@ import { formatSearchExact } from './search-exact-format.ts';
 import { routeCommand } from './command-route.ts';
 import type { CliOptions } from '../core/cli-options.ts';
 import { RemoteMcpError, extractResponseMeta } from '../core/remote-mcp-error.ts';
-import { assertSingleSourceScopeFlag, checkHostHonoredParams, hintAmbientNarrowing, type AmbientSourceBinding } from './source-scope.ts';
+import { assertSingleSourceScopeFlag, checkHostHonoredParams, hintAmbientNarrowing, provenanceSourceFlagError, type AmbientSourceBinding } from './source-scope.ts';
 import { formatFindPages, formatStatsBy } from './format-page-lookup.ts';
 import { maybePromptForUpgrade } from '../core/thin-client-upgrade-prompt.ts';
 import { CLI_FLAG_REGISTRY } from '../core/cli-flag-registry.generated.ts';
@@ -150,11 +150,13 @@ const SELF_HELP_WITHOUT_ENGINE: Record<string, true | (() => Promise<(engine: ne
     (await import('../commands/compile-context.ts')).runCompileContext as never,
   // runLoops / runWaiting answer --help before touching the engine.
   loops: async () => (await import('../commands/loops.ts')).runLoops as never,
+  household: async () => (await import('../commands/household.ts')).runHousehold as never,
   beliefs: async () => (await import('../commands/beliefs.ts')).runBeliefs as never,
   'edge-proposals': async () => (await import('../commands/edge-proposals.ts')).runEdgeProposals as never,
   'memory-proposals': async () => (await import('../commands/memory-proposals.ts')).runMemoryProposals as never,
+  policy: async () => (await import('../commands/policy.ts')).runPolicy as never, // usage prints before the engine
+  ledger: async () => (await import('../commands/ledger.ts')).runLedger as never, // usage prints before the engine
   questions: async () => (await import('../commands/questions.ts')).runQuestions as never, // --help before the engine
-  waiting: async () => (await import('../commands/loops.ts')).runWaiting as never,
   access: async () => (await import('../commands/access.ts')).runAccess as never, // GBRA-218: usage prints before the engine
   // runSources's `--help`/`-h`/undefined-subcommand branch calls printHelp()
   // without ever touching `engine` — safe to dispatch with no brain
@@ -169,10 +171,10 @@ const SELF_HELP_WITHOUT_ENGINE: Record<string, true | (() => Promise<(engine: ne
   agent: async () => (await import('../commands/agent.ts')).runAgent as never,
   // D3: post-connect records whose handler answers --help before the engine; run through the table.
   advisor: true, anomalies: true, feedback: true, backfill: true, 'book-mirror': true, 'edges-backfill': true, embed: true, features: true,
-  founder: true, 'graph-query': true, orphans: true, salience: true, think: true,
+  founder: true, profile: true, 'graph-query': true, orphans: true, salience: true, think: true,
   brainstorm: true, lsd: true, migrate: true, pages: true, pricing: true, 'retrieval-upgrade': true, whoknows: true, core: true, trust: true, wakeshift: true,
   secrets: true,
-  dedupe: true, identity: true, 'apple-contacts': true,
+  dedupe: true, identity: true, 'apple-contacts': true, onboarding: true, value: true, propose: true,
 };
 
 /** Returns true when the command's own help was printed. */
@@ -501,7 +503,7 @@ async function main() {
       const flagOp = cliOps.get(command) ?? cliAliases.get(command);
       const curated = findCliCommand(command)?.help;
       const known = curated ? (await curated()).help.flags.map(f => f.name) : CLI_FLAG_REGISTRY[command] ?? Object.keys(flagOp?.params ?? {}).map(k => `--${k.replace(/_/g, '-')}`);
-      exitCliError(unknownFlagError(command, unknown, message, known), command, { legacy: { status: 'error', reason: 'invalid_flag', message } });
+      exitCliError(provenanceSourceFlagError(flagOp, command, unknown, message, subArgs, isThinClient(loadConfig())) ?? unknownFlagError(command, unknown, message, known), command, { legacy: { status: 'error', reason: 'invalid_flag', message } });
     }
     const curated = await curatedFlagError(command, subArgs);
     if (curated) exitCliError(curated, command);
@@ -637,6 +639,7 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
     const { runDelegatedCliOperation } = await import('../commands/persistence-delegate.ts');
     if (await runDelegatedCliOperation(op.name, params, cfgPre, {
       brain: cliOpts.brain, timeoutMs: cliOpts.timeoutMs ?? undefined, ...(cliOpts.room !== undefined ? { room: cliOpts.room } : {}),
+      emitResponseMeta: captureRetrievalMeta,
     }, formatResult)) return;
   }
 
@@ -689,7 +692,7 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
     let ctx: Awaited<ReturnType<typeof makeContext>>;
     try {
       ctx = await withTimeout(
-        timeCliPhase('context', () => (configSnapshot ? configSnapshot.run(() => makeContext(engine, params, op)) : makeContext(engine, params, op)).then(c => asPreview.context(c))),
+        timeCliPhase('context', () => (configSnapshot ? configSnapshot.run(() => makeContext(engine, params, op)) : makeContext(engine, params, op)).then(c => asPreview.context(c, params))),
         wallclockMs,
         `gbrain ${command}: context`,
       );
@@ -703,7 +706,7 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
 
     let rawResult: unknown;
     const enforcedReadOf = enforced && enforcedClass === 'read'
-      ? (p: Record<string, unknown>) => enforced.enforcedRead(engine, command, op.name, p, { sourceId: ctx.sourceId, localFederatedSourceIds: ctx.localFederatedSourceIds, config: ctx.config })
+      ? (p: Record<string, unknown>) => enforced.enforcedRead(engine, command, op.name, p, { sourceId: ctx.sourceId, localFederatedSourceIds: ctx.localFederatedSourceIds, config: ctx.config, ...(op.name === 'entity' ? { retrieval: (m: unknown) => captureRetrievalMeta('retrieval', m) } : {}) }) // entity alone reads the lookup marker back
       : null;
     if (enforced && enforcedClass === 'write') await enforced.checkEnforcedWrite(engine, command, op.name, params, ctx.sourceId);
     if (enforcedReadOf) {
@@ -759,7 +762,7 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
     if (output) await writeStdoutFinal(output);
     if (noticeText) process.stderr.write(noticeText);
     reportInBandFailure(result, command);
-    markEntityMiss(op.name, result);
+    markEntityMiss(op.name, result, lastRetrievalMeta);
     maybePrintConceptNudge(op.name, params);
   } catch (e: unknown) {
     // v0.42.20.0 (codex D4): on error, set exitCode + return so the `finally`
@@ -863,7 +866,7 @@ async function runThinClientRouted(
     if (output) await writeStdoutFinal(output);
     if (stampText) process.stderr.write(stampText);
     reportInBandFailure(result, op.cliHints?.name ?? op.name);
-    markEntityMiss(op.name, result);
+    markEntityMiss(op.name, result, lastRetrievalMeta);
     maybePrintConceptNudge(op.name, params);
   } catch (e: unknown) {
     if (e instanceof RemoteMcpError) {
@@ -1377,7 +1380,7 @@ export async function makeContext(engine: BrainEngine, params: Record<string, un
   // CLI ops don't take --source). Falls through to env/dotfile/path-match.
   // An op that owns `source` (opOwnsSource) receives it as its own param.
   const explicit = op && opOwnsSource(op) ? null : (params.source as string | undefined) ?? null;
-  const { resolveSourceWithTier, localFederatedSourceIds, SourceTargetError } = await import('../core/source-resolver.ts');
+  const { resolveSourceWithTier, localFederatedSourceIds, SourceTargetError, refusedSourceTarget } = await import('../core/source-resolver.ts');
   try {
     // GBRA-156: the source resolution reads config through the table the connect-time merge already read.
     const { commandStartupConfig, withRequestConfigSnapshot } = await import('../core/config-snapshot.ts');
@@ -1395,7 +1398,7 @@ export async function makeContext(engine: BrainEngine, params: Record<string, un
     // Ambient user-selected targets (GBRAIN_SOURCE / .gbrain-source /
     // sources.default) are just as authoritative as --source. Only structural
     // pre-init failures retain the legacy default fallback.
-    if (explicit || err instanceof SourceTargetError) throw err;
+    if (explicit || err instanceof SourceTargetError || await refusedSourceTarget(engine, err)) throw err;
     // Ambient resolution failed (e.g. sources table doesn't exist on a fresh
     // pre-init brain). Leave sourceId unset; engine read methods fall through
     // to the cross-source view (D16 back-compat path).
@@ -1507,11 +1510,10 @@ function describeEmptyRetrieval(): string {
   }
   // Ranking-only stages (a skipped reranker) never cause a miss — keep the
   // "retrieval healthy" verdict honest.
-  const stages = Array.isArray(m.degraded)
-    ? [...new Set((m.degraded as Array<{ stage?: string }>).filter(affectsRecall).map(d => d?.stage).filter(Boolean))]
-    : [];
+  const { stages, byChoice } = emptyRetrievalStages(m.degraded);
   parts.push(stages.length > 0
     ? `degraded: ${stages.join(', ')}`
+    : byChoice ? KEYWORD_ONLY_BY_CHOICE_EMPTY
     : 'retrieval healthy; try the display name or --match hybrid before concluding the brain has nothing');
   return ` (${parts.join('; ')})`;
 }
@@ -1587,8 +1589,8 @@ export function formatResult(
       const { results, meta } = redactRetrievalOutput(room.rows as any[], lastRetrievalMeta);
       const answerId = typeof meta?.answer_id === 'string' ? meta.answer_id : undefined;
       if (answerId && results.length > 0) process.stderr.write(`answer: ${answerId} (rate with: gbrain rate ${answerId} 1-5)\n`);
-      const capLine = pageCapLine(meta, '--limit');
-      if (capLine) process.stderr.write(capLine + '\n');
+      const capLine = pageCapLine(meta, '--limit'), savedFacts: string = require('../mcp/saved-facts-notice.ts').cliSavedFacts(getCliOptions().room === undefined ? meta : null, params.json === true); // --room marks no saved fact, so none prints
+      for (const line of [capLine, require('../core/search/keyword-count-text.ts').cliKeywordCountLine(results, meta)]) if (line) process.stderr.write(line + '\n'); // #9412: the literal keyword count
       if (params.json === true) {
         const incompleteNotice = retrievalIncompleteLine(meta);
         if (incompleteNotice) process.stderr.write(incompleteNotice);
@@ -1602,7 +1604,7 @@ export function formatResult(
       const cliOpts = getCliOptions();
       process.stderr.write(searchTimingsLine(meta));
       const timingsLine = cliOpts.explain && meta?.timings ? require('../core/search/stage-timings.ts').formatTimingsSummary(meta.timings) + '\n' : '';
-      if (results.length === 0) return `No results.${describeEmptyRetrieval()}\n` + timingsLine;
+      if (results.length === 0) return savedFacts ? `No page results.\n${savedFacts}${timingsLine}` : `No results.${describeEmptyRetrieval()}\n` + timingsLine;
       // v0.40.4 — --explain switches to per-stage attribution formatter.
       if (cliOpts.explain) {
         // Lazy import keeps formatResult's startup hot path narrow for
@@ -1610,15 +1612,18 @@ export function formatResult(
         const { formatResultsExplain } = require('../core/search/explain-formatter.ts');
         // v0.48.2: thread the captured retrieval meta so the header lines
         // (autocut decision, `degraded: reranker_skipped (no_key)`) render.
-        return formatResultsExplain(results, meta ?? undefined);
+        return formatResultsExplain(results, meta ?? undefined) + savedFacts;
       }
-      return retrievalIncompleteLine(meta) + results.map(require('./search-row-format.ts').formatSearchRow).join('\n') + '\n';
+      return retrievalIncompleteLine(meta) + results.map(require('./search-row-format.ts').formatSearchRow).join('\n') + '\n' + savedFacts;
     }
     case 'get_tags': {
       const tags = result as string[];
       return tags.length > 0 ? tags.join(', ') + '\n' : 'No tags.\n';
     }
     case 'find_pages': return formatFindPages(result);
+    case 'learned_keep':
+    case 'learned_undo': return require('../core/learning/decide.ts').formatDecisions(result);
+    case 'learned': return (result as { stats?: unknown }).stats ? require('../core/learning/stats.ts').formatLearnedStats((result as { stats: unknown }).stats) : require('../core/learning/read.ts').formatLearned(result);
     case 'get_stats': {
       const s = result as any;
       if (Array.isArray(s?.groups)) return formatStatsBy(s);
@@ -1830,7 +1835,6 @@ function thinRefusalSubcommand(command: string): string[] {
   return argv.includes(command) && /^[a-z][a-z0-9-]*$/.test(next) ? [next, ...(command === 'trust' && /^(?:(?:f|t|h|e|a|tp)\d{1,18}|p:[a-z0-9_-]{1,64}\/[a-z0-9][a-z0-9/_.-]{0,200})$/.test(ref) ? [ref] : [])] : [];
 }
 
-const THIN_CLIENT_BRAIN_FLAG_MESSAGE = '--brain is not supported on a thin-client install: the remote server is a single brain.';
 
 const ENGINE_CONNECT_HOOKS: EngineConnectHooks = { SELECTED_CONFIG_BY_ENGINE, completeStartup: completeEngineStartup };
 /** Dispatcher-owned pieces the command modules under src/cli/commands/ receive (see CliDispatchContext). */
@@ -2376,10 +2380,8 @@ async function prepareConnectedDispatch(command: string, args: string[]): Promis
   if (command === 'sync' && !syncOperator && args[0] !== 'trigger') {
     const cfgSync = loadConfig();
     if (await (await import('../commands/sync-persistence-delegate.ts')).maybeDelegateSyncToPersistence(cfgSync, args)) return null;
-    if (cfgSync?.engine === 'pglite' && cfgSync.database_path && !cfgSync.database_url) {
-      const { maybeDelegateSyncToServe } = await import('../commands/sync-delegate.ts');
-      if (await maybeDelegateSyncToServe(cfgSync.database_path, args)) return null;
-    }
+    const syncEngine = (await import('../core/persistence/resident-owner.ts')).localBrainEngine(cfgSync);
+    if (syncEngine && await (await import('../commands/sync-delegate.ts')).maybeDelegateSyncToServe(cfgSync!.database_path!, args, syncEngine)) return null;
   }
 
   if (command === 'sources' && args[0] === 'refresh' && !hasHelpFlag(args) && await (await import('../commands/sources-refresh-delegate.ts')).maybeDelegateSourcesRefresh(loadConfig(), args.slice(1))) return null;
@@ -2399,10 +2401,8 @@ async function prepareConnectedDispatch(command: string, args: string[]): Promis
   // IPC socket instead (commands/sweep-delegate.ts).
   if (command === 'sweep') {
     const cfgSweep = loadConfig();
-    if (cfgSweep?.engine === 'pglite' && cfgSweep.database_path && !cfgSweep.database_url) {
-      const { maybeDelegateSweepToServe } = await import('../commands/sweep-delegate.ts');
-      if (await maybeDelegateSweepToServe(cfgSweep.database_path, args)) return null;
-    }
+    const sweepEngine = (await import('../core/persistence/resident-owner.ts')).localBrainEngine(cfgSweep);
+    if (sweepEngine && await (await import('../commands/sweep-delegate.ts')).maybeDelegateSweepToServe(cfgSweep!.database_path!, args, sweepEngine)) return null;
   }
 
   // Thin-client `jobs` dispatch: `list` and `get` route over MCP (v0.32
@@ -2472,7 +2472,7 @@ async function prepareConnectedDispatch(command: string, args: string[]): Promis
 
   // These handlers already call their MCP twin on a thin client and never touch
   // the engine there; run them engine-free instead of opening one (#5102).
-  if ((command === 'salience' || command === 'anomalies' || command === 'graph-query' || command === 'whoknows' || command === 'founder') &&
+  if ((command === 'salience' || command === 'anomalies' || command === 'graph-query' || command === 'whoknows' || command === 'founder' || command === 'profile') &&
     isThinClient(loadConfig())) {
     await dispatchConnectedCommand(command, null as never, args);
     return null;
@@ -2761,15 +2761,16 @@ async function completeEngineStartup(engine: BrainEngine, opts: EngineConnectOpt
       : { status: 'not_needed' as const };
     if (result.status === 'persistent') {
       writeCliNotice(migrationsNotice('Schema migrations are pending: another process attempted them but they did not complete within the retry window (usually transient). If it persists, check `gbrain doctor` for stale advisory locks and `gbrain jobs supervisor status` for crashed migration workers.'));
-    } else if (result.status === 'error') {
+    } else if (result.status === 'error' && !(await import('../core/rust-engine/errors.ts')).isCapabilityMissing(result.error)) {
       // Non-deadlock error during initSchema. Surface the message and continue;
       // subsequent operations will resurface the real schema error in context.
+      // A capability refusal (no migrations to run) is no notice: reads refuse typed.
       writeCliNotice(migrationsNotice(`Schema probe failed: ${result.error.message}`));
     }
     // 'ok', 'not_needed', 'race_resolved' → silent (the common-case outcomes).
   } catch (err) {
     // Last-resort defense in case the helper itself throws unexpectedly.
-    writeCliNotice(migrationsNotice(`Schema probe failed (unexpected): ${(err as Error).message}`));
+    if (!(await import('../core/rust-engine/errors.ts')).isCapabilityMissing(err)) writeCliNotice(migrationsNotice(`Schema probe failed (unexpected): ${(err as Error).message}`));
   }
 
   const pendingUpgrade = await pendingUpgradeMigrationsNotice(engine, dispatchedCommand, VERSION);

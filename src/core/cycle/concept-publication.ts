@@ -120,15 +120,16 @@ export async function replaceConceptProvenanceLinks(engine: BrainEngine, sourceI
   const members = [...new Set(links.filter(link => link.from_slug === conceptSlug).map(link => link.to_slug))];
   const expectedRevision = opts.expectedRevision ?? (await engine.readPageSnapshot(conceptSlug, { sourceId }))?.revision ?? null;
   const write = async (tx: BrainEngine) => {
-    const [current] = await tx.executeRaw<{ revision: string }>(
-      'SELECT knowledge_revision::text AS revision FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL FOR SHARE', [sourceId, conceptSlug]);
+    const [current] = await tx.executeRaw<{ id: number; revision: string }>(
+      'SELECT id, knowledge_revision::text AS revision FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL FOR SHARE', [sourceId, conceptSlug]);
     if (!current || current.revision !== expectedRevision) return 'moved' as const;
     const stale = await tx.executeRaw<{ from_slug: string; to_slug: string; link_type: string; from_source_id: string; to_source_id: string }>(
       `SELECT f.slug AS from_slug, t.slug AS to_slug, l.link_type, f.source_id AS from_source_id, t.source_id AS to_source_id
          FROM links l JOIN pages f ON f.id = l.from_page_id JOIN pages t ON t.id = l.to_page_id
         WHERE l.link_source = 'concept-provenance'
-          AND ((f.source_id = $1 AND f.slug = $2 AND NOT (t.source_id = $1 AND t.slug = ANY($3::text[])))
-            OR (t.source_id = $1 AND t.slug = $2 AND NOT (f.source_id = $1 AND f.slug = ANY($3::text[]))))`, [sourceId, conceptSlug, members]);
+          AND (l.from_page_id = $2 OR l.to_page_id = $2)
+          AND NOT (l.from_page_id = $2 AND t.source_id = $1 AND t.slug = ANY($3::text[]))
+          AND NOT (l.to_page_id = $2 AND f.source_id = $1 AND f.slug = ANY($3::text[]))`, [sourceId, current.id, members]);
     let retired = 0;
     for (const edge of stale) {
       retired += await tx.removeLink(edge.from_slug, edge.to_slug, edge.link_type, 'concept-provenance', { fromSourceId: edge.from_source_id, toSourceId: edge.to_source_id });

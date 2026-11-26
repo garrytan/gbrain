@@ -47,7 +47,7 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { serr } from '../core/console-prefix.ts';
-import { probeLivePgliteHolder } from '../core/bootstrap/uninstall.ts';
+import { engineLabel, hookServeOwner, hookServeStillHolds, localBrainEngine, type LocalBrainEngine } from '../core/persistence/resident-owner.ts';
 import {
   IPC_UNAVAILABLE,
   hookResolveSocketForConfig,
@@ -184,7 +184,7 @@ function remediation(pid: number, extra?: string): string {
  * (delegated to a live serve, or politely refused with the exit verdict set);
  * false falls through to the normal connectEngine path unchanged.
  */
-export async function maybeDelegateSyncToServe(dataDir: string, args: string[]): Promise<boolean> {
+export async function maybeDelegateSyncToServe(dataDir: string, args: string[], engine: LocalBrainEngine = 'pglite'): Promise<boolean> {
   // 0. Explicit opt-outs.
   if (args.includes('--no-delegate') || process.env.GBRAIN_SYNC_NO_DELEGATE === '1') return false;
   // 1. Mounts never delegate — the socket/secret/lock all belong to the HOST
@@ -194,15 +194,15 @@ export async function maybeDelegateSyncToServe(dataDir: string, args: string[]):
     const { getCliOptions } = await import('../core/cli-options.ts');
     if (resolveBrainId(getCliOptions().brain) !== 'host') return false;
   } catch { /* resolver trouble → normal path (fail open to old behavior) */ }
-  // 2. Holder probe (read-only; never reaps).
-  const holder = probeLivePgliteHolder(dataDir);
+  // 2. Holder probe (read-only; never reaps). A Rust serve counts once its hook socket exists (resident-owner.ts).
+  const holder = await hookServeOwner(engine, dataDir);
   if (!holder || !holder.serve) return false;
 
   // 3. Argv gate (default-deny).
   const parsed = parseDelegatedSyncArgs(args);
   if (!parsed.ok) {
     serr(
-      `[sync] a live \`gbrain serve\` (PID ${holder.pid}) holds this PGLite brain, and ` +
+      `[sync] a live \`gbrain serve\` (PID ${holder.pid}) holds this ${engineLabel(engine)} brain, and ` +
       `\`${parsed.refused}\` isn't supported through serve-delegated sync. ` +
       remediation(holder.pid),
     );
@@ -236,7 +236,7 @@ export async function maybeDelegateSyncToServe(dataDir: string, args: string[]):
   const secret = readIpcSecret(dataDir);
   if (!existsSync(sock) || !secret) {
     serr(
-      `[sync] a live \`gbrain serve\` (PID ${holder.pid}) holds this PGLite brain's ` +
+      `[sync] a live \`gbrain serve\` (PID ${holder.pid}) holds this ${engineLabel(engine)} brain's ` +
       `single-writer lock but exposes no sync IPC (older gbrain, \`serve --http\`, or ` +
       `GBRAIN_SERVE_SYNC_IPC=0). ` + remediation(holder.pid, 'If that serve runs an older gbrain, restart it on this version.'),
     );
@@ -256,8 +256,7 @@ export async function maybeDelegateSyncToServe(dataDir: string, args: string[]):
     // Race: the serve may have died between probe and connect — or it started
     // the job and the ack was lost. Re-probe; alive → ONE retry with the SAME
     // token (busy/attach semantics make it safe), dead → normal path.
-    const still = probeLivePgliteHolder(dataDir);
-    if (!still || !still.serve) return false;
+    if (!(await hookServeStillHolds(engine, dataDir))) return false;
     start = await requestSyncStart(sock, { secret, clientToken, options });
     if (start === IPC_UNAVAILABLE) {
       serr(
@@ -303,14 +302,14 @@ export async function maybeDelegateSyncToServe(dataDir: string, args: string[]):
     serr(`[sync] attached to an already-completed delegated sync (job ${jobId}).`);
   } else {
     serr(
-      `[sync] live \`gbrain serve\` (PID ${holder.pid}) holds the PGLite lock — delegating ` +
+      `[sync] live \`gbrain serve\` (PID ${holder.pid}) holds the ${engineLabel(engine)} lock — delegating ` +
       `the sync through it (job ${jobId}; Ctrl-C aborts, progress is checkpointed).`,
     );
   }
 
   const polled = await pollDelegatedJob({
     sock, secret, jobId, pid: holder.pid,
-    alive: () => { const still = probeLivePgliteHolder(dataDir); return !!still && still.serve; },
+    alive: () => hookServeStillHolds(engine, dataDir),
   });
   if (polled.kind === 'lost') { await setVerdict(1); return true; }
   if (polled.kind === 'failed') {
@@ -665,16 +664,17 @@ function pick<T extends object, K extends keyof T>(source: T, keys: readonly K[]
  * The owner-delegated sync paths in cli/main.ts skip `sync trigger`, which they would refuse as an unknown sync option.
  */
 export async function maybeTriggerThroughServe(config: { engine?: string; database_path?: string; database_url?: string } | null, args: string[]): Promise<boolean> {
-  if (config?.engine !== 'pglite' || !config.database_path || config.database_url || args.includes('--help') || args.includes('-h')) return false;
-  const dataDir = config.database_path;
+  const engine = localBrainEngine(config);
+  if (!engine || args.includes('--help') || args.includes('-h')) return false;
+  const dataDir = config!.database_path!;
   const sourceId = args.find((a, i) => args[i - 1] === '--source');
   if (!sourceId) return false;
-  const holder = probeLivePgliteHolder(dataDir);
+  const holder = await hookServeOwner(engine, dataDir);
   if (!holder || !holder.serve) return false;
   const json = args.includes('--json');
   const sock = resolveSocketPath(dataDir);
   const secret = readIpcSecret(dataDir);
-  const refuse = async (why: string) => { serr(`[sync trigger] a live gbrain serve (PID ${holder.pid}) holds this PGLite brain and ${why} ` + remediation(holder.pid, '')); await setVerdict(1); return true; };
+  const refuse = async (why: string) => { serr(`[sync trigger] a live gbrain serve (PID ${holder.pid}) holds this ${engineLabel(engine)} brain and ${why} ` + remediation(holder.pid, '')); await setVerdict(1); return true; };
   if (!existsSync(sock) || !secret) return refuse('exposes no sync IPC (older gbrain, serve --http, or GBRAIN_SERVE_SYNC_IPC=0).');
   const r = await requestSyncNudge(sock, { secret, version: SYNC_NUDGE_VERSION, sourceId, requestedBy: 'sync_trigger' });
   if (r === IPC_UNAVAILABLE) return refuse('is not answering its IPC socket.');

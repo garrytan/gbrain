@@ -18,6 +18,7 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import { normalizeAlias } from '../search/alias-normalize.ts';
 import { canonicalTypeOf, linkableTypesFor, loadSourcePack, readMentionPolicy, type MentionPolicy, type PackTypes } from './policy.ts';
 import { titleName } from './aliases.ts';
@@ -133,12 +134,31 @@ export async function siblingCanonical(engine: BrainEngine, sourceId: string, sl
 export async function factEntitySlugs(engine: BrainEngine, sourceId: string, slug: string, opts: { excludePrivate?: boolean } = {}): Promise<string[]> {
   const [page] = await engine.executeRaw<{ title: string | null }>(
     'SELECT title FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL', [sourceId, slug]).catch(() => []);
-  if (!page) return [slug];
+  const folded = await unheldFoldedSlug(engine, sourceId, slug);
+  if (!page) return folded ? [slug, folded] : [slug];
   const siblings = await readIdentitySiblings(engine, sourceId, { slug, title: page.title }, { excludePrivate: opts.excludePrivate ?? true });
   const { slugify } = await import('../entities/resolve.ts');
   const subject = slugify(titleName(page.title ?? ''));
   const basename = await unclaimedBasename(engine, sourceId, slug);
-  return [...new Set([slug, ...siblings.pages.map(p => p.slug), ...(subject && subject !== slug ? [subject] : []), ...(basename ? [basename] : [])])];
+  return [...new Set([slug, ...siblings.pages.map(p => p.slug), ...(subject && subject !== slug ? [subject] : []), ...(basename ? [basename] : []), ...(folded ? [folded] : [])])];
+}
+
+/**
+ * The accent-folded spelling of an accented path slug (`people/ünal-example` -> `people/unal-example`), what a fact saved by
+ * that reference got before the entity resolver kept accents (memory-07), so those facts stay readable. Null when the slug
+ * has no accent, or a live page holds the folded slug (a different entity's facts).
+ */
+async function unheldFoldedSlug(engine: BrainEngine, sourceId: string, slug: string): Promise<string | null> {
+  if (!slug.includes('/') || !/[^\x00-\x7f]/.test(slug)) return null;
+  const { fallbackSlugify } = await import('../entities/resolve.ts');
+  const folded = fallbackSlugify(slug);
+  if (!folded || folded === slug) return null;
+  try {
+    return (await engine.getPage(folded, { sourceId })) === null ? folded : null;
+  } catch (err) { // silent-read-ok: a folded slug whose holder cannot be read is not offered, so another entity's facts never show
+    rethrowCapabilityRefusal(err);
+    return null;
+  }
 }
 
 /** The page's bare basename, when no page sits at it or at the same basename under another entity directory. */

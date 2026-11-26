@@ -27,7 +27,7 @@
  *       ...
  *     ],
  *     red_flags: [
- *       { kind: 'regression',        metric, text },
+ *       { kind: 'regression',        metric, text },   // text: "<metric> fell N% (...)", or "rose N%" for a lower-is-better metric
  *       { kind: 'narrative_drift',                text },
  *       { kind: 'missed_prediction',              text },
  *     ],
@@ -39,6 +39,7 @@
  *   gbrain founder scorecard companies/acme-example --json
  */
 
+import { normalizeSlug } from '../core/utils.ts';
 import type { BrainEngine, Take, TrajectoryPoint } from '../core/engine.ts';
 import { loadConfig, isThinClient } from '../core/config.ts';
 import { callRemoteTool, unpackToolResult } from '../core/mcp-client.ts';
@@ -125,7 +126,9 @@ export function computeFounderScorecard(args: {
     const latest = series[series.length - 1].value!;
     const prior = series[series.length - 2].value!;
     if (prior === 0) continue;
-    const delta = (latest - prior) / prior;
+    // abs() denominator, as in detectRegressions: a loss shrinking from -100000
+    // to -50000 is +50% (up), not -50%.
+    const delta = (latest - prior) / Math.abs(prior);
     const dir: 'up' | 'down' | 'flat' =
       Math.abs(delta) < 0.01 ? 'flat' : (delta > 0 ? 'up' : 'down');
     growth.push({ metric, direction: dir, latest_delta_pct: delta });
@@ -141,7 +144,7 @@ export function computeFounderScorecard(args: {
     redFlags.push({
       kind: 'regression',
       metric: r.metric,
-      text: `${r.metric} fell ${pct}% (${r.from_date} → ${r.to_date})`,
+      text: `${r.metric} ${r.delta_pct > 0 ? 'rose' : 'fell'} ${pct}% (${r.from_date} → ${r.to_date})`,
     });
   }
   if (drift_score !== null && drift_score >= driftRedFlag) {
@@ -225,7 +228,7 @@ function parseArgs(args: string[]): RunOpts | { help: true } | { error: string }
   if (positional.length !== 1) {
     return { error: 'Exactly one entity-slug positional argument is required.' };
   }
-  return { ...(opts as RunOpts), entitySlug: positional[0] };
+  return { ...(opts as RunOpts), entitySlug: positional[0] === undefined ? positional[0] : normalizeSlug(positional[0]) };
 }
 
 export async function runFounder(engine: BrainEngine, args: string[]): Promise<void> {

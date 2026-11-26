@@ -171,10 +171,9 @@ Format: `Action verb — brief qualifier`
 I can import your Google Contacts to seed the people/ directory.
 This creates a brain page for each real contact (~200 pages).
 
-1. **Import via ClawVisor** — secure credential gateway
-2. **Import via direct OAuth** — simpler, agent holds tokens
-3. **Import from Google Takeout export** — offline, from file
-4. **Skip** — move to the next phase
+1. **Import with gbrain's Google connector** — live sync; tokens stay in gbrain's vault
+2. **Import from Google Takeout export** — offline, from file
+3. **Skip** — move to the next phase
 ```
 
 ### Filing decision

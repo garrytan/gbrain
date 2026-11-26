@@ -18,7 +18,7 @@ import { historyQuarantine } from './get-page-projection.ts';
  */
 
 import type { Operation, OperationContext } from './contract.ts';
-import { opError } from './contract.ts';
+import { OperationError, opError } from './contract.ts';
 import { enforceClientSlugFence, sourceScopeOpts } from './context.ts';
 import { VERSION } from '../../version.ts';
 import { resolveActiveEmbeddingColumnFromEngine } from '../search/embedding-column.ts';
@@ -262,8 +262,7 @@ const get_versions: Operation = {
     const versions = canReadWriteAttribution(ctx) ? await attributeVersions(ctx.engine, plain) : plain;
     // Wave B: a segmented version's body is never returned whole; body_ref names its size (no read serves an older segmented body yet, #7800).
     const out = [];
-    const snapshotTiers = ctx.remote === false || versions.length === 0 ? new Map<number, unknown>() : new Map((await ctx.engine.executeRaw<{ id: number | string; trust_tier: string | null }>(
-      'SELECT id, trust_tier FROM page_versions WHERE id = ANY($1::bigint[])', [versions.map(v => Number(v.id))])).map(r => [Number(r.id), r.trust_tier] as const));
+    const snapshotTiers = ctx.remote === false || versions.length === 0 ? new Map<number, unknown>() : new Map((await ctx.engine.listVersionTrustTiers(versions.map(v => Number(v.id)))).map(r => [r.id, r.trust_tier] as const));
     const reason = await remoteReasons(ctx, String(p.slug), versions);
     const lives = ctx.remote === false || versions.length === 0 ? [] : await ctx.engine.executeRaw<{ id: number | string; slug: string; source_id: string; frontmatter: Record<string, unknown> }>(
       'SELECT id, slug, source_id, frontmatter FROM pages WHERE id = ANY($1::bigint[])', [[...new Set(versions.map(v => Number(v.page_id)))]]);
@@ -278,7 +277,7 @@ const get_versions: Operation = {
       if (isSegmentedPage(v)) {
         const sized = await remoteVersionSize(ctx, v);
         const { compiled_truth: _b, timeline: _t, ...rest } = sized;
-        out.push({ ...rest, ...reason(v), body_ref: { version_id: v.id, total_bytes: 'total_bytes' in sized ? sized.total_bytes : pageBodyBytes(v) } });
+        out.push({ ...rest, ...reason(v), ...('body_unreadable' in sized ? {} : { body_ref: { version_id: v.id, total_bytes: 'total_bytes' in sized ? sized.total_bytes : pageBodyBytes(v) } }) });
         continue;
       }
       if (ctx.remote === false) { out.push(v); continue; }
@@ -309,11 +308,7 @@ async function remoteReasons(ctx: OperationContext, slug: string, versions: Read
   Promise<(v: { id: number; replaced_because?: string | null }) => { replaced_because?: string }> {
   const ids = versions.filter(v => typeof v.replaced_because === 'string').map(v => Number(v.id));
   if (ctx.remote === false || ids.length === 0) return () => ({});
-  const writers = new Map((await ctx.engine.executeRaw<{ id: number | string; type: string | null; tier: string | null }>(
-    `SELECT pv.id, COALESCE(nx.type, p.type) AS type, CASE WHEN nx.id IS NULL THEN p.trust_tier ELSE nx.trust_tier END AS tier
-       FROM page_versions pv JOIN pages p ON p.id = pv.page_id
-       LEFT JOIN LATERAL (SELECT n.id, n.type, n.trust_tier FROM page_versions n WHERE n.page_id = pv.page_id AND n.id > pv.id ORDER BY n.id LIMIT 1) nx ON true
-      WHERE pv.id = ANY($1::bigint[])`, [ids])).map(r => [Number(r.id), r] as const));
+  const writers = new Map((await ctx.engine.listVersionReasonWriters(ids)).map(r => [r.id, r] as const));
   return v => {
     if (typeof v.replaced_because !== 'string') return {};
     const clean = sanitizeRemoteBody(v.replaced_because);
@@ -325,13 +320,20 @@ async function remoteReasons(ctx: OperationContext, slug: string, versions: Read
 /**
  * A segmented version as a remote caller sees it: the size of its read projection (`total_bytes`, what get_page reports
  * for a segmented page), never the stored body_bytes, whose difference would say how much text the projection hides.
+ * #10002: a version whose generation's rows no longer tile (repair segmented-tiling keeps the damaged generation as a
+ * version) is listed with `body_unreadable: true` and no size, instead of refusing the whole list.
  */
 async function remoteVersionSize<V extends { page_id: number; body_storage?: string; body_generation?: number; body_bytes?: number }>(ctx: OperationContext, v: V):
-  Promise<V | Omit<V, 'body_bytes'> & { total_bytes: number }> {
+  Promise<V | Omit<V, 'body_bytes'> & ({ total_bytes: number } | { body_unreadable: true })> {
   if (ctx.remote === false || v.body_storage !== 'segmented') return v;
   const { body_bytes: _stored, ...rest } = v;
-  const body = await openSegmentedBody(ctx.engine, { pageId: v.page_id, generation: v.body_generation, hideHeld: worldOnlyFacts(ctx.remote) });
-  return { ...rest, total_bytes: (await segmentedReadDocument(ctx.engine, body)).total };
+  try {
+    const body = await openSegmentedBody(ctx.engine, { pageId: v.page_id, generation: v.body_generation, hideHeld: worldOnlyFacts(ctx.remote) });
+    return { ...rest, total_bytes: (await segmentedReadDocument(ctx.engine, body)).total };
+  } catch (error) {
+    if (error instanceof OperationError && error.code === 'page_body_rows_unreadable') return { ...rest, body_unreadable: true };
+    throw error;
+  }
 }
 
 const revert_version: Operation = {

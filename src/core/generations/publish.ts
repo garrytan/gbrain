@@ -11,6 +11,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { opError, OperationError } from '../ops/contract.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
+import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { digest, jsonBytes } from '../persistence/digest.ts';
 import { faultPoint } from '../persistence/fault-points.ts';
 import { LATEST_VERSION } from '../migrate.ts';
@@ -170,6 +171,15 @@ export async function heldForInput(engine: BrainEngine, key: GenerationKey, pin:
   return rows.some(row => row.hold_id === holdIdFor(key, pin, config, row.item_set_hash, row.held_reason as HeldReason));
 }
 
+/** The hold ids of `kind` that `heldForInput` still matches (same input pin and current policy), for backlogs that leave those items out (#10270). */
+export async function currentHoldIds(engine: BrainEngine, kind: string): Promise<string[]> {
+  const config = await readGenerationsConfig(engine);
+  const rows = await engine.executeRaw<{ source_id: string; owner_key: string; input_pin: string; hold_id: string; item_set_hash: string; held_reason: string }>(
+    `SELECT source_id, owner_key, input_pin, hold_id, item_set_hash, held_reason FROM derived_generations WHERE kind=$1 AND state='held' AND input_pin IS NOT NULL`, [kind]);
+  return rows.filter(row => row.hold_id === holdIdFor({ kind, sourceId: row.source_id, ownerKey: row.owner_key }, row.input_pin, config, row.item_set_hash, row.held_reason as HeldReason))
+    .map(row => row.hold_id);
+}
+
 /**
  * Counts one terminal failure of this hold identity (a fenced producer is not a failure of the result, so it is not
  * counted); the third holds the result `attempts_exhausted` with the last three error codes. Only codes are stored.
@@ -190,9 +200,10 @@ async function recordAttempt(engine: BrainEngine, key: GenerationKey, config: Ge
 const failureCode = (error: unknown): string => error instanceof OperationError ? error.code
   : typeof (error as { code?: unknown })?.code === 'string' ? String((error as { code: string }).code) : 'error';
 
-function logFailure(key: GenerationKey, operationId: string, mode: string, error: unknown): void {
+/** `mode`: the brain's persistence mode when the step failed (GST-3612: it was always printed as unmanaged). */
+function logFailure(key: GenerationKey, operationId: string, step: string, mode: string, error: unknown): void {
   const message = error instanceof Error ? error.message : String(error);
-  console.error(`[generations] ${mode} failed: kind=${key.kind} source=${key.sourceId} schema=v${LATEST_VERSION} mode=unmanaged operation=${operationId}: ${message.slice(0, 300)}`);
+  console.error(`[generations] ${step} failed: kind=${key.kind} source=${key.sourceId} schema=v${LATEST_VERSION} mode=${mode} operation=${operationId}: ${message.slice(0, 300)}`);
 }
 
 /** The set hash an operation binds: the proposal, or for an approved retirement the keys it retires. */
@@ -292,11 +303,12 @@ export async function publishGeneration<C>(engine: BrainEngine, adapter: Generat
     if (outcome.state === 'published') await faultPoint('generation:activated', { sourceId: key.sourceId, operation: key.kind });
     return outcome;
   } catch (error) {
-    logFailure(key, operationId, 'publish', error);
+    const mode = await managedPersistenceEnabled(engine).then(managed => managed ? 'managed' : 'unmanaged', () => 'unknown');
+    logFailure(key, operationId, 'publish', mode, error);
     const code = failureCode(error);
     if (code !== 'generation_fenced') {
       await recordAttempt(engine, key, config, request as PublishRequest<unknown>, setHash, code)
-        .catch(counted => logFailure(key, operationId, 'attempt count', counted));
+        .catch(counted => logFailure(key, operationId, 'attempt count', mode, counted));
     }
     throw error;
   }

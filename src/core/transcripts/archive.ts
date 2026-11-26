@@ -249,6 +249,8 @@ export interface ArchiveRunOpts {
   deadlineAtMs?: number;
   /** Repository path: import the committed files (default an in-process sync of the source). */
   syncSource?: (engine: BrainEngine, sourceId: string, root: string) => Promise<void>;
+  /** Reads the audience again before each day is published (a repository batch: before its files); a run on a personal brain that turned shared stops with archive_audience_changed. */
+  recheckAudienceEachDay?: boolean;
 }
 
 const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
@@ -267,7 +269,7 @@ export async function setArchiveEnabled(engine: BrainEngine, on: boolean): Promi
   await engine.setConfig(ARCHIVE_ENABLED_KEY, on ? 'true' : 'false');
 }
 
-async function configuredSource(engine: BrainEngine, sourceId?: string): Promise<string> {
+export async function configuredSource(engine: BrainEngine, sourceId?: string): Promise<string> {
   return sourceId ?? ((await engine.getConfig(ARCHIVE_SOURCE_KEY))?.trim() || DEFAULT_ARCHIVE_SOURCE);
 }
 
@@ -341,9 +343,9 @@ async function archiveTimeZone(engine: BrainEngine, sourceId: string): Promise<{
 }
 
 /** unproven: the brain reads as personal only because its client-usage check failed, so it may still be shared. */
-interface Privacy { shared: boolean; owner: string | null; unproven?: boolean }
+export interface Privacy { shared: boolean; owner: string | null; unproven?: boolean }
 
-async function resolvePrivacy(engine: BrainEngine): Promise<Privacy> {
+export async function resolvePrivacy(engine: BrainEngine): Promise<Privacy> {
   const { loadConfigFileOnly } = await import('../config.ts');
   const audience = await classifyBrainAudience(engine, loadConfigFileOnly());
   const enabled = (await listMembers(engine)).filter(m => m.status === 'enabled').length;
@@ -409,13 +411,29 @@ export interface ArchiveRescopeSkip { code: 'archive_rescope_owner_unset' | 'arc
  * Runs the owner-only re-scope for a brain archived while personal that is now shared, whether or not the archive is
  * still on (an unset switch resolves off once the brain is shared). Returns whether one was due.
  */
-export async function reconcileArchiveAudience(engine: BrainEngine, sourceId?: string): Promise<boolean> {
+export async function reconcileArchiveAudience(engine: BrainEngine, sourceId?: string, holdsRunLock = false): Promise<boolean> {
   const configured = await configuredSource(engine, sourceId);
   if (await engine.getConfig(`${AUDIENCE_PREFIX}${configured}`) !== 'personal') return false;
   const privacy = await resolvePrivacy(engine);
   if (!privacy.shared) return false;
-  await reconcileAudience(engine, configured, privacy);
+  await (holdsRunLock ? reconcileAudience(engine, configured, privacy) : reconcileWithoutRunLock(engine, configured, privacy));
   return true;
+}
+
+/**
+ * reconcileAudience for a caller that does not hold the source's run lock (an archive run on the <source>-owner twin,
+ * or one that found the archive off): the audience is recorded only under that lock. While another run holds it, that
+ * run may have started on the personal brain and still be writing pages with no readers, so the rules apply and the
+ * audience stays recorded personal, and the next run re-scopes what that run wrote (archive_rescope_pending).
+ */
+async function reconcileWithoutRunLock(engine: BrainEngine, sourceId: string, privacy: Privacy): Promise<void> {
+  const { withRefreshingLock, LockUnavailableError } = await import('../db-lock.ts');
+  try {
+    await withRefreshingLock(engine, ARCHIVE_LOCK_PREFIX + sourceId, () => reconcileAudience(engine, sourceId, privacy));
+  } catch (err) {
+    if (!(err instanceof LockUnavailableError)) throw err;
+    await reconcileAudience(engine, sourceId, privacy, false);
+  }
 }
 
 /**
@@ -437,7 +455,7 @@ export async function rescopeArchiveOnShared(engine: BrainEngine): Promise<Array
   for (const { key } of rows) {
     const sourceId = key.slice(AUDIENCE_PREFIX.length);
     try {
-      if (!await withRefreshingLock(engine, ARCHIVE_LOCK_PREFIX + sourceId, () => reconcileArchiveAudience(engine, sourceId))) continue;
+      if (!await withRefreshingLock(engine, ARCHIVE_LOCK_PREFIX + sourceId, () => reconcileArchiveAudience(engine, sourceId, true))) continue;
     } catch (err) {
       if (!(err instanceof LockUnavailableError)) throw err;
       await reconcileAudience(engine, sourceId, privacy, false);
@@ -651,30 +669,41 @@ async function readReaders(engine: BrainEngine, readers: ArchiveReader[], scanOp
 
 export async function runTranscriptArchive(engine: BrainEngine, opts: ArchiveRunOpts): Promise<ArchiveRunResult> {
   const dryRun = opts.dryRun === true;
-  const enabled = await archiveEnabled(engine);
-  if (!enabled && !dryRun) {
-    await reconcileArchiveAudience(engine, opts.sourceId);
+  const off = async (holdsRunLock = false) => {
+    await reconcileArchiveAudience(engine, opts.sourceId, holdsRunLock);
     return emptyResult(opts.mode, {
       source_id: await configuredSource(engine, opts.sourceId),
       message: 'The conversation archive is off on this brain, so nothing was read or written. It stays off until the owner turns it on (a shared brain is only offered it).',
       fix: offFix,
     });
-  }
+  };
+  const enabled = await archiveEnabled(engine);
+  if (!enabled && !dryRun) return off();
   const { sourceId, privacy } = await effectiveSource(engine, opts.sourceId);
   if (dryRun) return archiveSource(engine, opts, { enabled, sourceId, privacy });
-  if (privacy.unproven) {
-    const { opError } = await import('../ops/contract.ts');
-    throw opError('archive_audience_unproven', 'The brain\'s audience could not be checked (its client-usage read failed), so the conversation archive wrote nothing: a page written as personal could be open to other members.',
-      'Rerun gbrain transcripts archive run; if it repeats, declare the audience with gbrain config set brain.audience personal|shared.');
-  }
+  const { opError } = await import('../ops/contract.ts');
+  const unproven = () => opError('archive_audience_unproven', 'The brain\'s audience could not be checked (its client-usage read failed), so the conversation archive wrote nothing: a page written as personal could be open to other members.',
+    'Rerun gbrain transcripts archive run; if it repeats, declare the audience with gbrain config set brain.audience personal|shared.');
+  if (privacy.unproven) throw unproven();
   // One run per source at a time: a run decides from the ledger it read at its start, so an overlapping run could publish
   // older history over what the other run just wrote.
   const { withRefreshingLock, LockUnavailableError } = await import('../db-lock.ts');
   try {
-    return await withRefreshingLock(engine, ARCHIVE_LOCK_PREFIX + sourceId, signal => archiveSource(engine, opts, { enabled, sourceId, privacy, signal }));
+    return await withRefreshingLock(engine, ARCHIVE_LOCK_PREFIX + sourceId, async signal => {
+      // The audience and the archive switch are read again under the lock: a member add or audience change that finished
+      // after the reads above re-scoped under this lock and recorded the brain shared, so writing with the earlier reads
+      // would publish pages with no readers, or archive a shared brain whose unset switch now resolves off.
+      const locked = await effectiveSource(engine, opts.sourceId);
+      if (locked.sourceId !== sourceId) {
+        throw opError('archive_audience_changed', 'The brain\'s audience changed while the conversation archive was starting, so it now archives into source ' + locked.sourceId + ' instead of ' + sourceId + '; this run read and wrote nothing.',
+          'Rerun gbrain transcripts archive run.');
+      }
+      if (locked.privacy.unproven) throw unproven();
+      if (!await archiveEnabled(engine)) return off(sourceId === await configuredSource(engine, opts.sourceId));
+      return archiveSource(engine, opts, { enabled: true, sourceId, privacy: locked.privacy, signal });
+    });
   } catch (err) {
     if (!(err instanceof LockUnavailableError)) throw err;
-    const { opError } = await import('../ops/contract.ts');
     throw opError('archive_run_busy', 'Another conversation archive run holds source ' + sourceId + ', so this run read and wrote nothing.',
       'Wait for the other run to finish, then rerun; gbrain status --section locks --json shows the holder.');
   }
@@ -692,7 +721,10 @@ async function archiveSource(engine: BrainEngine, opts: ArchiveRunOpts, ctx: { e
   // A dry run builds no write context, but reports the write path the real run would take with the same options.
   const managed = (dryRun ? !!(opts.context ?? opts.makeContext) : !!context) && await managedPersistenceEnabled(engine);
   const writeMode: ArchiveRunResult['write_mode'] = managed ? 'coordinator' : (!privacy.shared && isGitRepo(source.local_path) ? 'repo' : 'database');
-  if (!dryRun) await reconcileAudience(engine, await configuredSource(engine, opts.sourceId), privacy);
+  if (!dryRun) {
+    const configured = await configuredSource(engine, opts.sourceId);
+    await (configured === sourceId ? reconcileAudience(engine, configured, privacy) : reconcileWithoutRunLock(engine, configured, privacy));
+  }
   const tz = await archiveTimeZone(engine, sourceId);
   if (!tz.pinned && !dryRun) await engine.setConfig(PIN_PREFIX + sourceId, tz.timezone);
   const today = localDay(now.toISOString(), tz.timezone);
@@ -788,7 +820,7 @@ async function archiveSource(engine: BrainEngine, opts: ArchiveRunOpts, ctx: { e
   const flushBatch = async () => {
     if (!batch.length) return;
     if (ctx.signal?.aborted) throw ctx.signal.reason;
-    await flushWrites(engine, opts, { sourceId, writeMode, root: source.local_path, context }, batch);
+    await flushWrites(engine, opts, { sourceId, writeMode, root: source.local_path, context, shared: privacy.shared }, batch);
     for (const w of batch) {
       if ((w.outcome.status !== 'written' && w.outcome.status !== 'accepted') || !w.ledger) continue;
       ledger.set(w.ledger.harness + '.' + w.ledger.conversation_key_hash + '.' + w.ledger.day, w.ledger);
@@ -879,6 +911,7 @@ async function archiveSource(engine: BrainEngine, opts: ArchiveRunOpts, ctx: { e
           const { pending, ...rest } = before;
           await writeLedger(engine, { ...rest, hash: pending.hash, complete: pending.complete });
           outcome.status = 'unchanged';
+          if (hold === 'release') await releaseOpenDayHold(engine, sourceId, rendered.parts.map(p => p.slug));
           continue;
         }
         if (states.length === before.pending.requests.length && states.every(s => s === 'committed' || !isTerminalWriteState(s as WriteRequestState))) { outcome.status = 'accepted'; continue; }
@@ -946,7 +979,7 @@ async function archiveSource(engine: BrainEngine, opts: ArchiveRunOpts, ctx: { e
     await flushBatch();
     if (touched.size) {
       indexWrites = indexFor(touched, ledger);
-      await flushWrites(engine, opts, { sourceId, writeMode, root: source.local_path, context }, indexWrites);
+      await flushWrites(engine, opts, { sourceId, writeMode, root: source.local_path, context, shared: privacy.shared }, indexWrites);
     }
   }
   if (!dryRun && touched.size) await engine.setConfig(pendingKey, JSON.stringify(indexWrites.filter(w => w.outcome.status !== 'written' && w.outcome.status !== 'accepted' && w.outcome.status !== 'unchanged').map(w => w.outcome.day).sort()));
@@ -1005,10 +1038,25 @@ async function releaseOpenDayHold(engine: BrainEngine, sourceId: string | null, 
   await engine.executeRaw("UPDATE page_embedding_budget SET state = 'open', reason = NULL, updated_at = now() WHERE page_id = ANY($1::int[]) AND state = 'held' AND reason = $2", [ids, ARCHIVE_OPEN_DAY_HOLD_REASON]);
 }
 
-async function flushWrites(engine: BrainEngine, opts: ArchiveRunOpts, target: { sourceId: string; writeMode: ArchiveRunResult['write_mode']; root: string | null; context?: OperationContext }, writes: DayWrite[]): Promise<void> {
+/**
+ * The publication-time audience check (recheckAudienceEachDay): a member add or audience change that finished after
+ * the run read the audience under its lock leaves this run's later days unwritten instead of publishing them with no
+ * readers. A brain whose audience can no longer be proven stops the same way.
+ */
+async function assertAudienceUnchanged(engine: BrainEngine, sourceId: string, wasShared: boolean): Promise<void> {
+  const now = await resolvePrivacy(engine);
+  if (now.shared === wasShared && !now.unproven) return;
+  const { opError } = await import('../ops/contract.ts');
+  throw opError('archive_audience_changed', 'The brain\'s audience changed while the conversation archive was writing source ' + sourceId + ', so it stopped before writing the next day; days already written stay as they are and the owner-only re-scope covers them.',
+    'Rerun gbrain transcripts archive run.');
+}
+
+async function flushWrites(engine: BrainEngine, opts: ArchiveRunOpts, target: { sourceId: string; writeMode: ArchiveRunResult['write_mode']; root: string | null; context?: OperationContext; shared?: boolean }, writes: DayWrite[]): Promise<void> {
   const { sourceId, writeMode } = target;
+  const recheck = opts.recheckAudienceEachDay && !opts.dryRun ? () => assertAudienceUnchanged(engine, sourceId, target.shared === true) : null;
   const provenance = (harness: string) => ({ source_kind: 'transcript:' + harness, source_uri: 'archive:' + harness, ingested_via: INGESTED_VIA });
   if (writeMode === 'repo') {
+    if (recheck) await recheck();
     const root = target.root!;
     const paths: string[] = [];
     for (const w of writes) {
@@ -1048,6 +1096,7 @@ async function flushWrites(engine: BrainEngine, opts: ArchiveRunOpts, target: { 
     let submitted = 0;
     for (const w of writes) {
       if (writeMode === 'coordinator' && deadline !== undefined && w.harness !== 'index' && submitted && Date.now() >= deadline) break;
+      if (recheck) await recheck();
       if (w.harness !== 'index') submitted++;
       try {
         const accepted: string[] = [];

@@ -1,0 +1,10 @@
+{
+  "sort int 5": "8000000000000005",
+  "sort int -1": "7fffffffffffffff",
+  "sort text,int default,42": "64656661756c740000800000000000002a",
+  "sort uuid": "0190a8b21c3d7e4f8a9b0c1d2e3f4a5b",
+  "row {slug,id,title:null,body:héllo}": "98fced634434a6ed2734cf443eb7d45b90195c6b1421217660f0d6badb6d0404",
+  "row {}": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "interval empty": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "interval [int1:d1, int5:{}]": "7e548c509c244d04315a47aa5e8979c2825f2bf268b40a17c7795edebc234efe"
+}

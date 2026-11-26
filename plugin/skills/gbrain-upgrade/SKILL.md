@@ -140,6 +140,8 @@ With the operator's go-ahead, upgrade in this order:
    supervisor onto the new build and verifies one build runs. A process it
    cannot restart (one started by hand, an autopilot a cron entry or wrapper
    starts unless `self_upgrade.autopilot_launcher external` declares it, a
+   serve a unit or supervisor of the user's runs unless
+   `self_upgrade.serve_launcher external` declares it, a
    running `gbrain sync`, an MCP server a harness started) refuses with `restart_refused` (exit 3) before anything
    installs: relay the step it names; `--stop-mcp` only after the user agrees.
 5. Verify: `gbrain --version` per install, and

@@ -33,7 +33,7 @@ impl Brain {
         })
     }
 
-    /// `getChunks(slug, { sourceId?, sourceIds?, includeEmbedding?, includeUnsealed? }?)`: `Chunk[]`.
+    /// `getChunks(slug, { sourceId?, sourceIds?, includeEmbedding?, includeUnsealed?, requireSafeChunks? }?)`: `Chunk[]`.
     #[napi]
     pub fn get_chunks<'env>(
         &self,

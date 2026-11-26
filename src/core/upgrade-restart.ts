@@ -55,9 +55,51 @@ export interface HostProcess {
   install_root?: string | null;
   /** A worker with no gbrain process above it: the process that started it, which was not recognised as gbrain. */
   unclassified_parent?: { pid: number; executable: string };
+  /** The systemd unit whose cgroup holds it (Linux); null or absent when none does. */
+  unit?: ServiceUnit | null;
+  /** True when the process table could not show its GBRAIN_HOME (else HOME), so it is not known to be this brain's. */
+  home_unread?: boolean;
 }
 
-export interface ProcessTableRow { pid: number; ppid: number; command: string; started_ms: number | null; gbrain_home: string | null | undefined; cwd?: string | null }
+/** A systemd unit: a user unit (`systemctl --user`) or a system one. */
+export interface ServiceUnit { name: string; scope: 'user' | 'system' }
+
+export interface ProcessTableRow { pid: number; ppid: number; command: string; started_ms: number | null; gbrain_home: string | null | undefined; cwd?: string | null; unit?: ServiceUnit | null }
+
+/**
+ * #9483: the systemd service unit a process runs in, from its `/proc/<pid>/cgroup` text: the last path segment when it
+ * is a `.service` (a user unit when it sits under `user@<uid>.service`). Null for a session scope, the user manager
+ * itself, a container's root cgroup and anything else.
+ */
+export function unitFromCgroup(text: string): ServiceUnit | null {
+  const line = text.split('\n').find(l => l.startsWith('0::')) ?? text.split('\n').find(l => /^\d+:name=systemd:/.test(l));
+  const segments = (line?.slice(line.indexOf(':', line.indexOf(':') + 1) + 1) ?? '').split('/').filter(Boolean);
+  const name = segments.at(-1);
+  if (!name || !/^[A-Za-z0-9:_.\\@][A-Za-z0-9:_.\\@-]*\.service$/.test(name) || /^user@\d+\.service$/.test(name)) return null;
+  return { name, scope: segments.some(s => /^user@\d+\.service$/.test(s)) ? 'user' : 'system' };
+}
+
+export const unitRestartArgv = (unit: ServiceUnit) => unit.scope === 'user' ? ['systemctl', '--user', 'restart', '--', unit.name] : ['systemctl', 'restart', '--', unit.name];
+
+/**
+ * #9725: the GBRAIN_HOME (else HOME) from a macOS `ps -E` command column, which is the command followed by the
+ * process's environment as space-separated NAME=value words (a word that is not NAME=value continues the value before
+ * it). Undefined when the column carries no environment (ps shows it only for processes this user may read), and when
+ * a name appears twice, since one of them could sit inside another variable's value.
+ */
+export function homeFromPsEnvironment(command: string, withEnvironment: string): string | null | undefined {
+  if (!withEnvironment.startsWith(command)) return undefined;
+  const vars: string[] = [];
+  for (const word of withEnvironment.slice(command.length).split(' ').filter(Boolean)) {
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(word)) vars.push(word);
+    else if (vars.length) vars[vars.length - 1] += ` ${word}`;
+  }
+  if (!vars.length) return undefined;
+  const found = (name: string) => vars.filter(v => v.startsWith(`${name}=`));
+  if (found('GBRAIN_HOME').length > 1 || found('HOME').length > 1) return undefined;
+  const get = (name: string) => found(name)[0]?.slice(name.length + 1).trim() || null;
+  return get('GBRAIN_HOME') ?? get('HOME');
+}
 
 export interface ProcessSources {
   /** Live consumer heartbeat rows on this host (Postgres only; PGLite keeps none). */
@@ -165,7 +207,8 @@ export async function collectHostProcesses(sources: ProcessSources): Promise<Hos
     const role = classifyGbrainCommand(row.command, lookup);
     if (!role) continue;
     byPid.set(row.pid, { pid: row.pid, ppid: null, role, version: null, started_ms: row.started_ms, ancestors: ancestry(row.ppid),
-      args: gbrainEntry(row.command, lookup)!.args, ...installFields(sources.install?.(row.command, row.cwd)) });
+      args: gbrainEntry(row.command, lookup)!.args, ...installFields(sources.install?.(row.command, row.cwd)),
+      ...(row.unit ? { unit: row.unit } : {}), ...(row.gbrain_home === undefined || row.gbrain_home === null ? { home_unread: true } : {}) });
   }
   const merge = (pid: number, role: ProcessRole | null, version: string | null) => {
     if (excluded.has(pid)) return;
@@ -205,6 +248,8 @@ export interface RestartContext {
   ownInstallRoot?: string | null;
   /** What starts autopilot again when it exits, for an autopilot no installed service runs; null when nothing is known to. */
   autopilotLauncher?: AutopilotLauncher | null;
+  /** #9483: `self_upgrade.serve_launcher external`: something outside gbrain's serve service starts serve again when it exits. */
+  serveLauncher?: AutopilotLauncher | null;
 }
 
 /**
@@ -217,8 +262,8 @@ export interface RestartContext {
  */
 export interface AutopilotLauncher { kind: 'cron' | 'declared'; wait_ms: number; pid: number | null }
 
-export const launcherName = (launcher: AutopilotLauncher) => launcher.kind === 'cron'
-  ? 'this brain\'s gbrain cron line' : 'the launcher self_upgrade.autopilot_launcher declares';
+export const launcherName = (launcher: AutopilotLauncher, role: 'autopilot' | 'serve' = 'autopilot') => launcher.kind === 'cron'
+  ? 'this brain\'s gbrain cron line' : `the launcher self_upgrade.${role}_launcher declares`;
 
 /** Before the swap the installed build is not known yet: every process is stale. */
 export const PENDING_BUILD = 'pending';
@@ -247,7 +292,7 @@ export type RestartStep =
   | { kind: 'service'; role: 'serve' | 'autopilot'; argv: string[]; pids: number[] }
   | { kind: 'supervisor'; pid: number; workers: number[]; stop: string[]; start: string[]; pid_file: string | null }
   | { kind: 'stop'; role: 'mcp'; pid: number; started_ms: number | null }
-  | { kind: 'handoff'; role: 'autopilot'; pid: number; started_ms: number | null; launcher: AutopilotLauncher }
+  | { kind: 'handoff'; role: 'autopilot' | 'serve'; pid: number; started_ms: number | null; launcher: AutopilotLauncher; command?: string }
   | { kind: 'replace_copy'; root: string; bun_install: string; from: string | null; to: string; pids: number[] };
 
 export interface ManualStep { role: ProcessRole; pid: number; version: string | null; argv: string[]; instruction: string }
@@ -263,6 +308,8 @@ export interface RestartPlan {
 }
 
 const label = (p: Pick<HostProcess, 'role' | 'pid' | 'version'>) => `${p.role} pid ${p.pid} (${p.version ? `v${p.version}` : 'build not recorded'})`;
+/** The command line a process was started with, from the process table; null when the table did not list it. */
+const launchedAs = (p: HostProcess) => p.args ? `gbrain ${p.args.join(' ')}` : null;
 
 /**
  * The supervisor's stop and start commands from the arguments it runs with, so the restart keeps its queue, concurrency and PID file.
@@ -292,7 +339,10 @@ export function planRestart(processes: readonly HostProcess[], ctx: RestartConte
   const addService = (role: 'serve' | 'autopilot', pid: number) => services.set(role, [...(services.get(role) ?? []), pid]);
   const handoffs = new Map<number, Extract<RestartStep, { kind: 'handoff' }>>();
   const launcherOf = (p: HostProcess) => (ctx.autopilotLauncher?.pid === p.pid && p.started_ms !== null && p.args ? ctx.autopilotLauncher : null);
-  const addHandoff = (p: HostProcess, launcher: AutopilotLauncher) => handoffs.set(p.pid, { kind: 'handoff', role: 'autopilot', pid: p.pid, started_ms: p.started_ms, launcher });
+  const addHandoff = (p: HostProcess, launcher: AutopilotLauncher) => handoffs.set(p.pid, p.role === 'serve'
+    ? { kind: 'handoff', role: 'serve', pid: p.pid, started_ms: p.started_ms, launcher, command: launchedAs(p)! }
+    : { kind: 'handoff', role: 'autopilot', pid: p.pid, started_ms: p.started_ms, launcher });
+  const units = new Map<string, Extract<RestartStep, { kind: 'service' }>>();
   const runsUnder = (p: HostProcess, service: ServiceHandle | null) => !!service && service.pid !== null && (p.pid === service.pid || !!p.ancestors?.includes(service.pid));
   const kill = (p: HostProcess, instruction: string) => manual.push({ role: p.role, pid: p.pid, version: p.version, argv: ['kill', String(p.pid)], instruction });
 
@@ -312,10 +362,26 @@ export function planRestart(processes: readonly HostProcess[], ctx: RestartConte
       else copies.set(p.install_root, { kind: 'replace_copy', root: p.install_root, bun_install: copy.bun_install, from: p.install_version ?? null, to: ctx.expected, pids: [p.pid] });
     }
     switch (p.role) {
-      case 'serve':
-        if (runsUnder(p, ctx.serveService)) addService('serve', p.pid);
-        else kill(p, `${label(p)} was not started by the installed serve service${ctx.serveService ? (ctx.serveService.pid === null ? ' (the service is not running)' : ` (the service runs pid ${ctx.serveService.pid})`) : ''}: stop it (\`kill ${p.pid}\`, SIGTERM drains it) and start it again the way it was launched.`);
+      case 'serve': {
+        if (runsUnder(p, ctx.serveService)) { addService('serve', p.pid); break; }
+        const service = ctx.serveService ? (ctx.serveService.pid === null ? ' (the service is not running)' : ` (the service runs pid ${ctx.serveService.pid})`) : '';
+        const unit = p.unit ? unitRestartArgv(p.unit) : null;
+        if (unit && ctx.serveLauncher && !p.home_unread) {
+          const known = units.get(unit.join(' '));
+          if (known) known.pids.push(p.pid);
+          else units.set(unit.join(' '), { kind: 'service', role: 'serve', argv: unit, pids: [p.pid] });
+        } else if (unit && !ctx.serveLauncher) {
+          manual.push({ role: p.role, pid: p.pid, version: p.version, argv: unit,
+            instruction: `${label(p)} runs under the systemd unit ${p.unit!.name}, not gbrain's serve service${service}, so the upgrade does not restart it unless told to: install with \`gbrain upgrade --no-restart\`, then restart it with \`${unit.join(' ')}\`; or \`gbrain config set self_upgrade.serve_launcher external\` lets every upgrade run \`${unit.join(' ')}\` itself.` });
+        } else if (ctx.serveLauncher && !p.home_unread && p.args && p.started_ms !== null) {
+          addHandoff(p, ctx.serveLauncher);
+        } else if (ctx.serveLauncher) {
+          kill(p, `${label(p)}: its environment could not be read, so the upgrade cannot confirm it is this brain's serve before stopping it for ${launcherName(ctx.serveLauncher, 'serve')}: if it is, stop it (\`kill ${p.pid}\`) and let that launcher start it again, then run the upgrade; if it serves another brain, upgrade from that brain.`);
+        } else {
+          kill(p, `${label(p)} was not started by the installed serve service${service}: stop it (\`kill ${p.pid}\`, SIGTERM drains it) and start it again the way it was launched${launchedAs(p) ? ` (\`${launchedAs(p)}\`)` : ''}; or, when a supervisor of your own (a container's process manager, a wrapper) starts serve again within 5 minutes of it exiting, \`gbrain config set self_upgrade.serve_launcher external\` lets every upgrade stop it and wait for that supervisor.`);
+        }
         break;
+      }
       case 'autopilot':
         if (runsUnder(p, ctx.autopilotService)) addService('autopilot', p.pid);
         else if (launcherOf(p)) addHandoff(p, launcherOf(p)!);
@@ -324,7 +390,7 @@ export function planRestart(processes: readonly HostProcess[], ctx: RestartConte
         else manual.push({ role: p.role, pid: p.pid, version: p.version, argv: ['gbrain', 'autopilot', '--install'],
           instruction: `${label(p)} was started outside gbrain's autopilot service (by a cron entry, a wrapper or by hand), so the upgrade cannot restart it. `
             + 'Either run `gbrain autopilot --install`, which runs autopilot under launchd, systemd or a gbrain cron line so every upgrade restarts it (retire the launcher that starts it now first, or both race for the autopilot lock), '
-            + `or, when that launcher starts autopilot again within 5 minutes of it exiting, \`gbrain config set self_upgrade.autopilot_launcher external\` lets the upgrade stop it and wait for the launcher. By hand: \`kill ${p.pid}\` and start it again the way it was launched.` });
+            + `or, when that launcher starts autopilot again within 5 minutes of it exiting, \`gbrain config set self_upgrade.autopilot_launcher external\` lets the upgrade stop it and wait for the launcher. By hand: \`kill ${p.pid}\` and start it again the way it was launched${launchedAs(p) ? ` (\`${launchedAs(p)}\`)` : ''}.` });
         break;
       case 'supervisor':
         if (p.args) supervisors.set(p.pid, supervisors.get(p.pid) ?? []);
@@ -350,6 +416,7 @@ export function planRestart(processes: readonly HostProcess[], ctx: RestartConte
   const steps: RestartStep[] = [...copies.values()];
   const serve = services.get('serve');
   if (serve && ctx.serveService) steps.push({ kind: 'service', role: 'serve', argv: ctx.serveService.argv, pids: [...new Set(serve)] });
+  steps.push(...units.values());
   const autopilot = services.get('autopilot');
   if (autopilot && ctx.autopilotService) steps.push({ kind: 'service', role: 'autopilot', argv: ctx.autopilotService.argv, pids: [...new Set(autopilot)] });
   for (const [pid, workers] of supervisors) steps.push({ kind: 'supervisor', pid, workers, ...supervisorRestartArgv(byPid.get(pid)!.args!) });
@@ -362,7 +429,7 @@ export interface RunResult { status: number | null; output: string }
 export interface RestartExecutor {
   run: (argv: string[], env?: Record<string, string>) => RunResult | Promise<RunResult>;
   /** SIGTERM the MCP server or autopilot at pid only if it is still the process the plan saw: 'changed' when the pid now names another process. */
-  terminate: (pid: number, startedMs: number | null, role: 'mcp' | 'autopilot') => 'stopped' | 'gone' | 'changed';
+  terminate: (pid: number, startedMs: number | null, role: 'mcp' | 'autopilot' | 'serve') => 'stopped' | 'gone' | 'changed';
   /** The live supervisor's pid now (read from its PID file, the default one when null), or null. */
   supervisorPid: (pidFile: string | null) => number | null;
   sleep: (ms: number) => Promise<void>;
@@ -402,10 +469,10 @@ export async function runRestartSteps(plan: RestartPlan, exec: RestartExecutor):
       const start = await exec.run(step.start);
       results.push({ step, ok: start.status === 0, detail: start.status === 0 ? `stopped supervisor pid ${step.pid} and started it again with \`${step.start.join(' ')}\`` : failed(step.start, start) });
     } else if (step.kind === 'handoff') {
-      const outcome = exec.terminate(step.pid, step.started_ms, 'autopilot');
+      const outcome = exec.terminate(step.pid, step.started_ms, step.role);
       results.push({ step, ok: outcome !== 'changed', detail: outcome === 'changed'
-        ? `pid ${step.pid} is no longer the autopilot the plan saw, so it was not signalled`
-        : `stopped autopilot pid ${step.pid}; ${launcherName(step.launcher)} starts it again` });
+        ? `pid ${step.pid} is no longer the ${step.role} the plan saw, so it was not signalled`
+        : `stopped ${step.role} pid ${step.pid}; ${launcherName(step.launcher, step.role)} starts it again` });
     } else {
       const outcome = exec.terminate(step.pid, step.started_ms, 'mcp');
       results.push({ step, ok: outcome !== 'changed', detail: outcome === 'changed'
@@ -452,6 +519,12 @@ export function restartProblems(plan: RestartPlan, processes: readonly HostProce
   }
   for (const step of plan.steps) {
     if (step.kind === 'stop' || step.kind === 'replace_copy') continue;
+    if (step.kind === 'handoff' && step.role === 'serve') {
+      if (!fresh.some(p => p.role === 'serve' && p.started_ms !== null && p.started_ms >= restartStartedMs)) {
+        problems.push(`serve did not come back after it was stopped for ${launcherName(step.launcher, 'serve')} to start again: start it with \`${step.command}\` the way it was launched.`);
+      }
+      continue;
+    }
     if (step.kind === 'handoff') {
       if (!fresh.some(p => p.role === 'autopilot' && p.pid === lockPid && p.started_ms !== null && p.started_ms >= restartStartedMs)) {
         problems.push(`autopilot did not come back after it was stopped for ${launcherName(step.launcher)} to start again (this brain's autopilot lock names ${lockPid === null ? 'no autopilot' : `pid ${lockPid}, which is not an autopilot started after the restart`}).`);

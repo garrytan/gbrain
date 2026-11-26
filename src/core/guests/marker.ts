@@ -12,6 +12,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { Operation } from '../ops/contract.ts';
 import { isMissingSchemaObject } from '../utils.ts';
 import { guestSourceSql } from './note.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 
 export const GUEST_ORIGIN = 'guest';
 /** get_brain_identity lists it: this brain stamps the guest warning on every read, so a guest broker may switch on. */
@@ -72,13 +73,16 @@ const attributed = (g: GuestStamp): g is GuestStamp & { sender: string; group: s
 /** `[outside guest · <sender> · <group> · <YYYY-MM-DD> · not the owner's words, not verified]`, or the unattributed form. */
 export function guestWarningLine(guest: GuestStamp): string {
   if (!attributed(guest)) return `[outside guest · unattributed · ${NOT_OWNER}]`;
-  return `[outside guest · ${escapeGuestLabel(guest.sender)} · ${escapeGuestLabel(guest.group)} · ${guest.saved_at ?? 'undated'} · ${NOT_OWNER}]`;
+  return `[outside guest · ${escapeGuestLabel(guest.sender)} · ${escapeGuestLabel(guest.group)} · ${escapeGuestLabel(guest.saved_at ?? 'undated')} · ${NOT_OWNER}]`;
 }
+
+/** A line guestWarningLine writes, with its newline, at the start of the text: `gbrain get` prints it above a guest page. */
+export const GUEST_WARNING_LINE_RE = /^\[outside guest · (?:unattributed|[^\p{Cc}\p{Cf}\p{Zl}\p{Zp}\[\]·<>";]{0,64} · [^\p{Cc}\p{Cf}\p{Zl}\p{Zp}\[\]·<>";]{0,64} · [^\p{Cc}\p{Cf}\p{Zl}\p{Zp}\[\]·<>";]{0,64}) · not the owner's words, not verified\]\r?\n/u;
 
 /** What the remote quote fence names instead of "conversation excerpt" for a guest page (search/transcript-quote.ts). */
 export function guestQuoteLabel(guest: GuestStamp): string {
   if (!attributed(guest)) return `outside guest note, unattributed, ${NOT_OWNER}`;
-  return `outside guest note from ${escapeGuestLabel(guest.sender)} in ${escapeGuestLabel(guest.group)}, saved ${guest.saved_at ?? 'undated'}, ${NOT_OWNER}`;
+  return `outside guest note from ${escapeGuestLabel(guest.sender)} in ${escapeGuestLabel(guest.group)}, saved ${escapeGuestLabel(guest.saved_at ?? 'undated')}, ${NOT_OWNER}`;
 }
 
 /** The fixed line gbrain appends to a think answer built from guest notes; the model never writes it. */
@@ -112,7 +116,8 @@ function day(v: Date | string): string | null {
 
 /**
  * The guest marks of `pageIds` in one batched read, with whether each was promoted. A page with no readable mark is
- * absent from the map, and a failed read returns an empty map: callers mark those rows unattributed.
+ * absent from the map, and a failed read returns an empty map: callers mark those rows unattributed. An engine that
+ * refuses the read (`engine_capability_missing`) refuses the caller.
  */
 export async function loadGuestMarks(engine: Pick<BrainEngine, 'executeRaw'>, pageIds: readonly number[]): Promise<Map<number, GuestStamp>> {
   const out = new Map<number, GuestStamp>();
@@ -126,7 +131,9 @@ export async function loadGuestMarks(engine: Pick<BrainEngine, 'executeRaw'>, pa
       out.set(Number(r.page_id), { sender: r.sender_label, group: r.group_slug, audience_member: r.audience_member, saved_at: day(r.saved_at),
         promoted: r.promoted === true, writer: `${r.writer_kind}:${r.writer_id}` });
     }
-  } catch { /* every guest row reads unattributed */ }
+  } catch (err) {
+    rethrowCapabilityRefusal(err); /* otherwise every guest row reads unattributed */
+  }
   return out;
 }
 

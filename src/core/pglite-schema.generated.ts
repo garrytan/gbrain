@@ -2773,14 +2773,34 @@ CREATE TABLE IF NOT EXISTS write_gate_holds (
   created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
   last_seen_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
   decided_at       TIMESTAMPTZ,
-  decided_by       TEXT
+  decided_by       TEXT,
+  page_id          BIGINT,
+  page_candidates  BIGINT[]
 );
-CREATE UNIQUE INDEX IF NOT EXISTS write_gate_holds_dedupe_idx ON write_gate_holds (source_id, slug, fingerprint, detector_version);
+CREATE UNIQUE INDEX IF NOT EXISTS write_gate_holds_bound_dedupe_idx ON write_gate_holds (source_id, page_id, fingerprint, detector_version) WHERE page_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS write_gate_holds_unbound_dedupe_idx ON write_gate_holds (source_id, slug, fingerprint, detector_version) WHERE page_id IS NULL AND page_candidates IS NULL;
+CREATE INDEX IF NOT EXISTS write_gate_holds_page_idx ON write_gate_holds (source_id, page_id) WHERE status = 'held' AND page_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS write_gate_holds_status_idx ON write_gate_holds (status, source_id, id);
 DO \$rls\$ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
     ALTER TABLE write_gate_receipts ENABLE ROW LEVEL SECURITY;
     ALTER TABLE write_gate_holds ENABLE ROW LEVEL SECURITY;
+  END IF;
+END \$rls\$;
+
+CREATE TABLE IF NOT EXISTS write_gate_hold_rechecks (
+  id               BIGSERIAL PRIMARY KEY,
+  source_id        TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+  hold_id          BIGINT NOT NULL,
+  observed_version TEXT NOT NULL,
+  survivor_ids     BIGINT[] NOT NULL DEFAULT '{}',
+  queued_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS write_gate_hold_rechecks_queue_idx ON write_gate_hold_rechecks (queued_at, id);
+CREATE INDEX IF NOT EXISTS write_gate_hold_rechecks_hold_idx ON write_gate_hold_rechecks (hold_id);
+DO \$rls\$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
+    ALTER TABLE write_gate_hold_rechecks ENABLE ROW LEVEL SECURITY;
   END IF;
 END \$rls\$;
 
@@ -2994,6 +3014,32 @@ CREATE TABLE IF NOT EXISTS sync_notifier_sources (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Learning ledger (migration v334, nightly learning): pointers to what each cycle learned, no copied text.
+CREATE TABLE IF NOT EXISTS learning_items (
+  id                BIGSERIAL PRIMARY KEY,
+  run_id            UUID NOT NULL,
+  source_id         TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  kind              TEXT NOT NULL CHECK (kind IN ('fact_added','you_wrote','promise_found','page_filled','conflict_found','duplicate_to_confirm')),
+  target_table      TEXT NOT NULL CHECK (target_table IN ('facts','decide_proposals','open_loops','page_versions','pages')),
+  target_id         BIGINT NOT NULL,
+  subject_slug      TEXT,
+  subject_source_id TEXT,
+  prior_revision    TEXT,
+  state             TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending','kept','undone','answered','expired')),
+  shown_at          TIMESTAMPTZ,
+  decided_at        TIMESTAMPTZ,
+  decided_by        TEXT,
+  member_id         TEXT,
+  CONSTRAINT learning_items_target_uniq UNIQUE (kind, target_table, target_id)
+);
+CREATE INDEX IF NOT EXISTS learning_items_source_state_created_idx ON learning_items (source_id, state, created_at);
+DO \$rls\$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
+    ALTER TABLE learning_items ENABLE ROW LEVEL SECURITY;
+  END IF;
+END \$rls\$;
+
 -- Last statement: pg_temp ends every gbrain function's pinned search_path (#7632), after any CREATE OR REPLACE above reset it.
 DO \$harden\$
 DECLARE f RECORD;
@@ -3001,7 +3047,7 @@ BEGIN
   FOR f IN SELECT p.oid::regprocedure AS sig, substr(c.setting, 13) AS path
     FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace CROSS JOIN LATERAL unnest(p.proconfig) AS c(setting)
     WHERE n.nspname = 'public' AND p.prokind = 'f' AND c.setting IN ('search_path=pg_catalog, public', 'search_path=pg_catalog')
-      AND p.proname IN ('auto_enable_rls', 'bump_page_generation_clock_fn', 'bump_page_generation_fn', 'enforce_minion_queue_protocol', 'gbrain_access_derive_page_readers', 'gbrain_access_folder_rules', 'gbrain_access_lineage_rules', 'gbrain_access_mark_restricted', 'gbrain_access_norm_readers', 'gbrain_access_origin_closed_for', 'gbrain_access_origin_hidden_for', 'gbrain_access_origin_labelled_for', 'gbrain_access_origin_restricted', 'gbrain_access_pending_covers', 'gbrain_access_readers', 'gbrain_access_refresh_serves', 'gbrain_access_refresh_serves_trigger', 'gbrain_access_stamp_folder_rules', 'gbrain_access_state_unreadable', 'gbrain_advance_page_revision', 'gbrain_advance_tag_revision', 'gbrain_bump_trust_generation', 'gbrain_clear_atom_page_state', 'gbrain_concept_inputs_private', 'gbrain_count_git_canonical_sources', 'gbrain_count_modifications', 'gbrain_forget_page_retrievals', 'gbrain_fts_input', 'gbrain_graduation_fence', 'gbrain_guard_deferred_request', 'gbrain_guard_effect_protocol', 'gbrain_guard_guest_records', 'gbrain_guard_inserted_facts', 'gbrain_guard_protocol_activation', 'gbrain_guard_request_protocol', 'gbrain_guard_skill_publication', 'gbrain_lease_shared_skill_delivery', 'gbrain_mark_derivation_scope_entry', 'gbrain_owner_only_held', 'gbrain_owner_only_hold', 'gbrain_owner_only_lineage', 'gbrain_owner_only_lineage_strict', 'gbrain_owner_only_mark_derived', 'gbrain_owner_only_marks_denied', 'gbrain_owner_only_read_mode', 'gbrain_owner_only_reads_complete', 'gbrain_owner_only_row_deleted', 'gbrain_owner_only_source_changed', 'gbrain_preserve_fact_withdrawal', 'gbrain_queue_page_projection', 'gbrain_refuse_purged_fact', 'gbrain_refuse_purged_page', 'gbrain_refuse_purged_take', 'gbrain_refuse_purging_derivation', 'gbrain_release_refresh_barrier', 'gbrain_require_managed_writer', 'gbrain_require_persistence_protocol', 'gbrain_snapshot_version_trust', 'gbrain_stamp_revision_attribution', 'gbrain_stamp_trust_tier', 'gbrain_stamp_version_attribution', 'gbrain_stamp_write_attribution', 'gbrain_try_jsonb', 'notify_minion_job_change', 'update_chunk_search_vector', 'update_page_search_vector')
+      AND p.proname IN ('auto_enable_rls', 'bump_page_generation_clock_fn', 'bump_page_generation_fn', 'enforce_minion_queue_protocol', 'gbrain_access_derive_page_readers', 'gbrain_access_folder_rules', 'gbrain_access_lineage_rules', 'gbrain_access_mark_restricted', 'gbrain_access_norm_readers', 'gbrain_access_origin_closed_for', 'gbrain_access_origin_hidden_for', 'gbrain_access_origin_labelled_for', 'gbrain_access_origin_restricted', 'gbrain_access_pending_covers', 'gbrain_access_readers', 'gbrain_access_refresh_serves', 'gbrain_access_refresh_serves_trigger', 'gbrain_access_stamp_folder_rules', 'gbrain_access_state_unreadable', 'gbrain_advance_page_revision', 'gbrain_advance_tag_revision', 'gbrain_bump_trust_generation', 'gbrain_clear_atom_page_state', 'gbrain_concept_inputs_private', 'gbrain_count_git_canonical_sources', 'gbrain_count_modifications', 'gbrain_forget_page_retrievals', 'gbrain_fts_input', 'gbrain_graduation_fence', 'gbrain_guard_deferred_request', 'gbrain_guard_effect_protocol', 'gbrain_guard_guest_records', 'gbrain_guard_inserted_facts', 'gbrain_guard_protocol_activation', 'gbrain_guard_request_protocol', 'gbrain_guard_skill_publication', 'gbrain_lease_shared_skill_delivery', 'gbrain_mark_derivation_scope_entry', 'gbrain_note_writer', 'gbrain_owner_only_held', 'gbrain_owner_only_hold', 'gbrain_owner_only_lineage', 'gbrain_owner_only_lineage_strict', 'gbrain_owner_only_mark_derived', 'gbrain_owner_only_marks_denied', 'gbrain_owner_only_read_mode', 'gbrain_owner_only_reads_complete', 'gbrain_owner_only_row_deleted', 'gbrain_owner_only_source_changed', 'gbrain_preserve_fact_withdrawal', 'gbrain_queue_page_projection', 'gbrain_refuse_purged_fact', 'gbrain_refuse_purged_page', 'gbrain_refuse_purged_take', 'gbrain_refuse_purging_derivation', 'gbrain_release_refresh_barrier', 'gbrain_require_managed_writer', 'gbrain_require_persistence_protocol', 'gbrain_snapshot_version_trust', 'gbrain_stamp_revision_attribution', 'gbrain_stamp_trust_tier', 'gbrain_stamp_version_attribution', 'gbrain_stamp_write_attribution', 'gbrain_try_jsonb', 'notify_minion_job_change', 'update_chunk_search_vector', 'update_page_search_vector')
       AND pg_has_role(current_user, p.proowner, 'USAGE')
     ORDER BY 1
   LOOP

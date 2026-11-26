@@ -353,7 +353,7 @@ interface TaskFile {
 
 interface LiveContext {
   /**
-   * ISO local time for `timezone`. NULL when timezone is unknown (e.g., active
+   * Local date and hour for `timezone` (#9998: the hour, so the block holds across turns). NULL when timezone is unknown (e.g., active
    * flight to an airport not in AIRPORT_TZ). Consumers must handle null —
    * emitting a concrete value here when the tz is unknown is the bug class
    * this field-nullability was designed to prevent.
@@ -388,12 +388,18 @@ interface LiveContext {
 
 // ── Context Generation (deterministic, <5ms) ────────────────────────────
 
+/**
+ * #9998: the local hour, never the minute or second. The Live Context block rides in the system prompt ahead of the
+ * whole conversation, so a clock that changed every turn rewrote most of the host's prompt cache on every new message
+ * (169k of a 220k-token prompt on OpenClaw). At hour precision the block stays byte-identical between turns within
+ * the same hour.
+ */
 function getTimeInTz(tz: string): { iso: string; dayOfWeek: string; hour: number } {
   const now = new Date();
   const fmt = new Intl.DateTimeFormat('en-US', {
     timeZone: tz,
     year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour: '2-digit',
     hour12: false,
   });
   const parts = fmt.formatToParts(now);
@@ -408,7 +414,7 @@ function getTimeInTz(tz: string): { iso: string; dayOfWeek: string; hour: number
   const abs = Math.abs(offset);
   const offsetStr = `${sign}${String(abs).padStart(2, '0')}:00`;
 
-  const iso = `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}:${get('second')}${offsetStr}`;
+  const iso = `${get('year')}-${get('month')}-${get('day')}, between ${get('hour')}:00 and ${get('hour')}:59 UTC${offsetStr}`;
   const dayOfWeek = now.toLocaleDateString('en-US', { timeZone: tz, weekday: 'long' });
 
   return { iso, dayOfWeek, hour: localH };
@@ -500,7 +506,7 @@ function formatShortTimeInTz(tz: string): string | null {
   try {
     return new Intl.DateTimeFormat('en-US', {
       timeZone: tz,
-      hour: 'numeric', minute: '2-digit', hour12: true, weekday: 'short',
+      hour: 'numeric', hour12: true, weekday: 'short',
       timeZoneName: 'short',
     }).format(new Date());
   } catch {

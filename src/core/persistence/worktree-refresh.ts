@@ -36,7 +36,7 @@ import { recordUpstreamObservation } from '../sync-upstream.ts';
 import { checkpointRetryCommand } from './checkpoint-validation.ts';
 import { persistenceHome, hostIdFor, existingHostIdFor } from './identity.ts';
 import { acquireNativeLock, tryAcquireNativeLock, type NativeLockHandle } from './native-lock.ts';
-import { getWorktreeBinding, managedPersistenceEnabled, type WorktreeBinding } from './ownership.ts';
+import { getWorktreeBinding, managedPersistenceEnabled, WORKTREE_BINDING_SQL, type WorktreeBinding } from './ownership.ts';
 import { isPhysicalRootMetadata } from './physical-root-record.ts';
 import { startPersistenceConsumer } from './service.ts';
 import { lockTopologyPrincipal, lockTopologyRows, topologyPrincipal, withTopologyLocks } from './topology-locks.ts';
@@ -563,7 +563,7 @@ async function precheck(engine: BrainEngine, git: Git, sourceId: string, fetchTi
       'Git durability is not on for this worktree, so nothing leaves it through Git on its own.',
       ` To let every refresh publish it on its own, the user can turn Git durability on (gbrain sources writer git-durability ${sourceId} --enable) or run gbrain config set ${REFRESH_PUBLISH_DIVERGED_KEY} true.`);
     const localCommits = Number((await read(['rev-list', '--count', `${targetHead}..${oldHead}`])).stdout.trim()) || 0;
-    const pushed = await publishInChild(root, sourceId, targetHead);
+    const pushed = await publishInChild(root, sourceId, targetHead).catch(error => { throw error instanceof OperationError && error.reason === 'publish_lock_busy' ? unpublishedRefusal(sourceId, upstreamRef, localCommits, error) : error; });
     const published = { sha: pushed.sha ?? targetHead, local_commits: localCommits, integrated: pushed.integrated,
       ...(pushed.quarantined ? { quarantined: pushed.quarantined } : {}), ...(pushed.superseded_remote_paths ? { superseded_remote_paths: pushed.superseded_remote_paths } : {}) };
     const plan = await precheck(engine, git, sourceId, fetchTimeoutMs, false, run).catch(async error => { notePublished(error, published); throw error instanceof OperationError && error.code === 'refresh_diverged' && await revParse(git, root, 'HEAD') !== oldHead ? retryInTick(error) : error; });
@@ -596,7 +596,7 @@ async function publishInChild(root: string, sourceId: string, checkedUpstream: s
   if (!child.error && doc?.outcome === 'pushed') return doc as { sha: string | null; integrated: number; quarantined?: QuarantineEntry; superseded_remote_paths?: string[] };
   if (doc && typeof doc.code === 'string' && typeof doc.message === 'string') {
     throw opError(doc.code as Parameters<typeof opError>[0], doc.message, typeof doc.suggestion === 'string' ? doc.suggestion : '',
-      { ...(typeof doc.detail === 'string' ? { detail: doc.detail } : {}), ...(doc.fix ? { fix: doc.fix as Action } : {}), retryable: doc.retryable === true });
+      { ...(typeof doc.detail === 'string' ? { detail: doc.detail } : {}), ...(doc.fix ? { fix: doc.fix as Action } : {}), ...(typeof doc.reason === 'string' ? { reason: doc.reason } : {}), retryable: doc.retryable === true });
   }
   throw opError('push_unconfirmed', `The publish of the diverged checkout ${root} did not report a push (${child.error ? `exit ${String(child.error.code ?? child.error.signal ?? 'unknown')}` : `outcome ${String(doc?.outcome ?? 'unreadable')}`}: ${child.stderr.trim().slice(0, 300) || 'no detail'}); the refresh stopped before fencing anything, and the remote may already hold the merge.`,
     `Check gbrain sources writer status --source ${sourceId} --json, then retry gbrain sources refresh ${sourceId}.`, { retryable: true });
@@ -617,6 +617,22 @@ async function divergedRefusal(git: Git, root: string, sourceId: string, upstrea
     why: `HEAD has ${local} that ${upstreamRef} lacks while ${upstreamRef} moved on; pushing HEAD merged with it makes HEAD an ancestor of the upstream, so the refresh can fast-forward.`,
     user_message: rewrite ? `The checkout of source ${sourceId} cannot be published on its own: ${rewrite} Push this checkout's history merged with the remote anyway, or replace the checkout with gbrain sources reclone ${sourceId}?`
       : `The checkout of source ${sourceId} has ${local} that were never pushed while its remote moved on. Push them, merged with the remote, so gbrain can bring the checkout up to date? Conflicting files stop the push and change nothing.`,
+    docs: 'docs/guides/write-refusals.md#refresh_diverged' };
+  return error;
+}
+/**
+ * GST-3497: the refresh's own publish of a diverged checkout found another publish holding the push lock, so it pushed
+ * nothing and the checkout is still diverged: refuse refresh_diverged, as doctor git_convergence says, naming the holder.
+ * It is retryable: the next refresh publishes again on its own.
+ */
+function unpublishedRefusal(sourceId: string, upstreamRef: string, localCommits: number, cause: OperationError): OperationError {
+  const error = refusal('refresh_diverged',
+    `The checkout has ${localCommits} local commit(s) that ${upstreamRef} lacks and cannot fast-forward, and this refresh's publish of them merged with the upstream did not run: ${cause.message} Nothing changed.`,
+    `Retry gbrain sources refresh ${sourceId} once that publish ends; the next scheduled refresh does it on its own. The retry checks the upstream for a rewrite and the publishing setting again before it publishes.`);
+  error.retryable = true;
+  error.reason = 'publish_lock_busy';
+  error.fix = { argv: ['gbrain', 'sources', 'refresh', sourceId], consent: [], actor: 'agent', requires_exclusive: false,
+    why: 'Another publish held the push lock; a fresh refresh rechecks the upstream and the publishing setting, then publishes or fast-forwards.',
     docs: 'docs/guides/write-refusals.md#refresh_diverged' };
   return error;
 }
@@ -887,16 +903,17 @@ const redact = (text: string) => {
 };
 const LOOKUP_MS = 3_000;
 /**
- * A best-effort diagnostic read on a refusal path, bounded at LOOKUP_MS: each raw statement runs under a transaction-local
- * statement_timeout and a signal that cancels it at the bound, so neither the refusal nor a pooled connection waits on it.
- * A read still pending at the bound resolves null.
+ * A best-effort diagnostic read on a refusal path, bounded at LOOKUP_MS: each raw statement (the writer binding's too, not its typed
+ * member, which would run past the bound on the engine's own connection) runs under a transaction-local statement_timeout and a
+ * signal that cancels it at the bound, so neither the refusal nor a pooled connection waits on it. A read pending at the bound resolves null.
  */
 async function boundedLookup<T>(engine: BrainEngine, read: (engine: BrainEngine) => Promise<T>): Promise<T | null> {
   const controller = new AbortController();
   const deadlineAt = Date.now() + LOOKUP_MS;
-  const bounded = new Proxy(engine, { get(target, key) {
+  const bounded: BrainEngine = new Proxy(engine, { get(target, key) {
     if (key === 'executeRaw') return (sql: string, params?: unknown[], opts?: object) =>
       target.executeRaw(sql, params, { ...opts, signal: controller.signal, timeoutMs: LOOKUP_MS, deadlineAt });
+    if (key === 'getWorktreeBinding') return (sourceId: string, hostId: string | null) => bounded.executeRaw<WorktreeBinding>(WORKTREE_BINDING_SQL, [sourceId, hostId]).then(([row]) => row ?? null);
     const value = Reflect.get(target, key, target);
     return typeof value === 'function' ? value.bind(target) : value;
   } });

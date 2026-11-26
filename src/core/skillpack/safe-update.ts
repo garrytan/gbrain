@@ -17,7 +17,9 @@
  *   no_history   no base, and the released-version history has no entry
  * A skill is updatable only when it is not pinned, the history verified,
  * and every changed file is absent, untouched, or historical with
- * --accept-historical. Anything else skips the whole skill with a reason.
+ * --accept-historical. Anything else skips the whole skill with a reason;
+ * a skill that moved to another catalog (skillpack/moved.ts) is never
+ * updated and says where it went.
  *
  * Commit protocol: stage the closure in the skills root and validate it,
  * write the journal (update-journal.ts), back up each file, rehash it right
@@ -41,6 +43,7 @@ import { loadSkillTriggerIndex } from '../skill-trigger-index.ts';
 import { checkResolvable, type ResolvableIssue } from '../check-resolvable.ts';
 import { OperationError } from '../ops/contract.ts';
 import { confinedSkillChildWrite } from './writer-guard.ts';
+import { movedSkillNotice } from './moved.ts';
 import { relativeEscapesRoot } from '../path-confine.ts';
 import {
   backupFile, backupsRoot, hashTarget, newJournalId, pendingJournals, planRestore, pruneJournals, readJournal, sha256, undoFile, writeJournal,
@@ -51,7 +54,7 @@ export const DIFF_LINE_CAP = 200;
 const STAGE_PREFIX = '.gbrain-skillpack-stage-';
 
 export type FileState = 'unchanged' | 'absent' | 'untouched' | 'historical' | 'local_edits' | 'no_history';
-export type SkipReason = 'pinned' | 'history_unverified' | 'unsafe_target' | 'local_edits' | 'no_history' | 'historical_only';
+export type SkipReason = 'moved' | 'pinned' | 'history_unverified' | 'unsafe_target' | 'local_edits' | 'no_history' | 'historical_only';
 
 export interface ClassifiedFile {
   rel: string;
@@ -185,8 +188,11 @@ export function classifySkill(ctx: ClassifyContext, slug: string): SkillOutcome 
   if (!Object.keys(record?.files ?? {}).length && skillMd?.pre === null) return { ...outcome, result: 'not_installed', historical: [] };
   const changed = files.filter(f => f.state !== 'unchanged');
   outcome.changes = changed.map(f => f.rel);
+  const moved = movedSkillNotice(slug);
+  if (moved) notes.push(moved);
   if (changed.length === 0 && !unsafe) return outcome;
-  const reason: SkipReason | undefined = outcome.pinned ? 'pinned'
+  const reason: SkipReason | undefined = moved ? 'moved'
+    : outcome.pinned ? 'pinned'
     : !ctx.history.ok ? 'history_unverified'
     : unsafe ? 'unsafe_target'
     : changed.some(f => f.state === 'local_edits') ? 'local_edits'
@@ -196,7 +202,7 @@ export function classifySkill(ctx: ClassifyContext, slug: string): SkillOutcome 
   if (!reason) return { ...outcome, result: 'would_update' };
   outcome.result = 'skipped';
   outcome.reason = reason;
-  if (!ctx.noDiff && reason !== 'pinned') {
+  if (!ctx.noDiff && reason !== 'pinned' && reason !== 'moved') {
     outcome.diffs = changed.filter(f => f.pre !== null).map(f => ({
       rel: f.rel, ...boundedRedactedDiff(readFileSync(confinedSkillChildWrite(ctx.skillsRoot, f.rel, { dryRun: true })), readFileSync(f.source), f.rel),
     }));
@@ -229,7 +235,7 @@ export function defaultValidator(skillsRoot: string): (root: string, slug: strin
     const content = readFileSync(confinedSkillChildWrite(root, `${slug}/SKILL.md`, { dryRun: true }), 'utf-8');
     const fm = content.startsWith('---') ? parseSkillFrontmatter(content) : null;
     if (!fm?.name) problems.push(`conformance: ${slug}/SKILL.md has no frontmatter with a name`);
-    if (fm?.triggers?.length && !loadSkillTriggerIndex(root).some(e => e.skillPath === `${slug}/SKILL.md` || e.skillPath.endsWith(`/${slug}/SKILL.md`))) {
+    if (fm?.triggers?.length && !fm.deprecated && !loadSkillTriggerIndex(root).some(e => e.skillPath === `${slug}/SKILL.md` || e.skillPath.endsWith(`/${slug}/SKILL.md`))) {
       problems.push(`trigger check: ${slug} declares triggers but the trigger index does not route to it`);
     }
     if (baseline !== null) {
