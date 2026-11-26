@@ -16,7 +16,7 @@ import { repairWedgedReservation, resolveCoordinationLock } from './coordination
 import type { RawSqlEngine, SqlEngine, WriteRequest } from './model.ts';
 import type { PublicationJournalStore, WorktreeOwnerRow } from '../engine-sql/publication-journal.ts';
 import { tryAcquireNativeLock, type NativeLockHandle } from './native-lock.ts';
-import { managedLock } from './managed-lock.ts';
+import { managedLeasesApply, managedLock } from './managed-lock.ts';
 import { acquireShared, deferToLease, exclusiveAcquired, foreignWaiterAhead, joinLease, noteWaiting, yieldLease } from './worktree-lease.ts';
 import { managedFilesystemDatastorePath, refreshManagedFilesystemRoots } from './filesystem-guard.ts';
 import { assertPhysicalRoot, claimPhysicalRoot, preparePhysicalRootTransfer, readPhysicalRootReservation, restampPhysicalRoot } from './physical-root.ts';
@@ -234,6 +234,9 @@ export async function acquireWorktreeWaiting(binding: WorktreeBinding, engine: B
 /** #5984 lanes: database-only lane publications share one native lock in this process (worktree-lease.ts). */
 export async function acquireWorktreeShared(binding: WorktreeBinding, engine: BrainEngine): Promise<NativeLockHandle | null> {
   if (!binding.local_path || !binding.coordination_path) return null;
+  // Parallel lanes are Postgres-only (sync-group.ts resolveBulkSettings), so this is unreachable on Rust; a multi-user Rust brain
+  // refuses it anyway (busy) instead of sharing one double guard between lanes, which no distributed queue orders (lane LM slice 3).
+  if (managedLeasesApply(engine)) return null;
   return acquireShared(binding.coordination_path, () => lockWorktree(binding, 0, undefined, engine));
 }
 /** #5984 Phase 4.5: joins this process's live lane lease (worktree-lease.ts `joinLease`), or null. */
