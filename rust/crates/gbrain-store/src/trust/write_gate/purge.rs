@@ -8,10 +8,10 @@ use super::{
     HOLD, HOLD_DEDUPE, HoldRecord, ReceiptRecord, all_holds, all_receipts, by_id, delete_receipt,
     read_id, receipts_of, tagged,
 };
-use crate::env::parse_iso;
 use crate::error::{Result, StoreError};
 use crate::kv::scan_prefix;
 use crate::links::no_nul;
+use crate::persistence::parse_timestamptz;
 use crate::{Store, get_json, keys};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -26,6 +26,17 @@ pub struct PurgedSlugPage {
     pub slug: String,
     #[serde(default)]
     pub deleted_at: Option<String>,
+}
+
+/// A page's `deletedAt` as microseconds: what `::timestamptz` makes of the text the callers send (Postgres `deleted_at::text`,
+/// `2026-11-18 02:37:05.215+00`, or ISO with `Z` or an offset), microseconds kept. Text that is not a time is refused with
+/// Postgres's own wording, before anything is deleted.
+fn deleted_at_micros(text: &str) -> Result<i64> {
+    parse_timestamptz(text, "deletedAt").map_err(|_| {
+        StoreError::invalid(format!(
+            "deletePurgedSlugHolds deletedAt: invalid input syntax for type timestamp with time zone: {text:?}"
+        ))
+    })
 }
 
 impl Store {
@@ -78,11 +89,7 @@ impl Store {
             no_nul(op, &[("slugs", page.slug.as_str())])?;
             let upto = match &page.deleted_at {
                 None => None,
-                Some(text) => Some(parse_iso(text).ok_or_else(|| {
-                    StoreError::invalid(format!(
-                        "{op} deletedAt: invalid input syntax for type timestamp with time zone: {text:?}"
-                    ))
-                })?),
+                Some(text) => Some(deleted_at_micros(text)?),
             };
             cutoffs
                 .entry(page.slug.as_str())
@@ -183,5 +190,39 @@ impl Store {
             }
             Ok(doomed.len() as u64)
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::deleted_at_micros;
+    use crate::env::parse_iso;
+
+    #[test]
+    fn deleted_at_reads_the_forms_postgres_text_and_callers_give() {
+        let us = parse_iso("2026-11-18T02:37:05.123456Z").unwrap();
+        for text in [
+            "2026-11-18T02:37:05.123456Z",
+            "2026-11-18T02:37:05.123456+00:00",
+            "2026-11-18 02:37:05.123456+00",
+            "2026-11-18 08:07:05.123456+05:30",
+            "2026-11-17 18:37:05.123456-08",
+            "2026-11-17 18:37:05.123456-0800",
+        ] {
+            assert_eq!(deleted_at_micros(text).unwrap(), us, "{text}");
+        }
+        // Microseconds are kept: one microsecond later is a different instant.
+        assert_eq!(
+            deleted_at_micros("2026-11-18 02:37:05.123457+00").unwrap(),
+            us + 1
+        );
+        for bad in ["", "not a time", "2026-11-18", "2026-02-30 00:00:00+00"] {
+            let err = deleted_at_micros(bad).unwrap_err();
+            assert_eq!(err.code, crate::error::INVALID_ARGUMENT, "{bad}");
+            assert!(
+                err.message
+                    .contains("invalid input syntax for type timestamp with time zone")
+            );
+        }
     }
 }
