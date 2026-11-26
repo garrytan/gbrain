@@ -1168,7 +1168,7 @@ fn crash_with_the_log_keeps_commit_times_rising_and_equal_to_last_commit_time() 
     assert!(checked > 0, "no commit was checked");
 }
 
-// ---- the optimistic store under the seeded scheduler (waits for the `step_pipeline()` seam) -------------------------------
+// ---- the optimistic store under the seeded scheduler (through the `step_pipeline()` seam) ------------------------------------
 
 /// The seeded driver of the optimistic store: client tasks and a pipeline task on the `gbrain-sim` scheduler, the pipeline
 /// advanced one batch at a time through `step_pipeline()`. Compiled only with `--features sim`.
@@ -1176,42 +1176,6 @@ fn crash_with_the_log_keeps_commit_times_rising_and_equal_to_last_commit_time() 
 mod optimistic_driver {
     use super::*;
     use std::thread::JoinHandle;
-
-    /// Test-only stand-in for the seam described in the file header, with its exact signatures. It answers `Err` (a typed
-    /// "pending" store error) until the optimistic-transaction lane adds the real methods, which shadow these.
-    mod seam {
-        use super::*;
-
-        pub struct PipelineStep {
-            pub sequence: Option<u64>,
-            pub taken: usize,
-            pub accepted: usize,
-            pub conflicts: usize,
-        }
-
-        pub trait StepPipeline: Sized {
-            fn new_stepped(base: RedbKv) -> Result<Self, StoreError>;
-            // `queued_commits` is not stubbed: `OccKv::queued_commits` is an inherent store method, so the driver calls it.
-            fn step_pipeline(&self, max_batch: usize) -> Result<Option<PipelineStep>, StoreError>;
-        }
-
-        fn pending() -> StoreError {
-            StoreError::new(
-                "sim_seam_pending",
-                "pending on L1 sim seam: OccKv::step_pipeline",
-            )
-        }
-
-        impl StepPipeline for OccKv {
-            fn new_stepped(_base: RedbKv) -> Result<Self, StoreError> {
-                Err(pending())
-            }
-            fn step_pipeline(&self, _max_batch: usize) -> Result<Option<PipelineStep>, StoreError> {
-                Err(pending())
-            }
-        }
-    }
-    use seam::StepPipeline;
 
     struct Sim {
         kv: Arc<OccKv>,
@@ -1346,7 +1310,6 @@ mod optimistic_driver {
     /// P-A on the optimistic store: any seeded interleaving, replayed batch by batch, reproduces every read, and the
     /// replay is the state the store holds.
     #[test]
-    #[ignore = "L1 sim seam"]
     fn p_a_optimistic_store_replays_serially_by_seed() {
         let (mut commits, mut reads, mut largest) = (0, 0, 0);
         for seed in seeds(200) {

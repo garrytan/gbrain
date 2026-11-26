@@ -16,10 +16,8 @@ use gbrain_store::redb_kv::RedbKv;
 use gbrain_store::{Env, Kv, MultiUserWrites, OpenOptions, Store, StoreError, keys};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
-use std::ops::Deref;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Instant;
 
 /// Lane owners, exactly as they appear in pending reasons.
 pub const L1_TXN: &str = "L1 optimistic transactions";
@@ -54,41 +52,13 @@ pub fn pending_owner(error: &StoreError) -> Option<&str> {
 
 // ---- I-1 ---------------------------------------------------------------------------------------
 
-/// `pub enum TxnMode { Serialized, Optimistic }`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TxnMode {
-    Serialized,
-    Optimistic,
-}
+/// I-1, landed with the optimistic-transactions lane: re-exported (`gbrain_store::transactions`). `TxnOptions` also carries
+/// `read_only`, `retry_keys` and `age` (I-1.v2), all defaulting to off, so a literal takes `..TxnOptions::default()`.
+#[allow(unused_imports)]
+pub use gbrain_store::transactions::{SingleFlightKey, TxnMode, TxnOptions};
 
 /// I-3, landed with the hosts lane: re-exported (`gbrain_store::write_origin::WriteOrigin`, with `check()`).
 pub use gbrain_store::write_origin::WriteOrigin;
-
-/// `pub struct TxnOptions { mode, deadline, origin }`; the default is Serialized with no deadline
-/// and no origin.
-#[derive(Clone, Debug)]
-pub struct TxnOptions {
-    pub mode: TxnMode,
-    pub deadline: Option<Instant>,
-    pub origin: Option<WriteOrigin>,
-}
-
-impl Default for TxnOptions {
-    fn default() -> Self {
-        TxnOptions {
-            mode: TxnMode::Serialized,
-            deadline: None,
-            origin: None,
-        }
-    }
-}
-
-/// `pub struct SingleFlightKey { source_id, slug }`.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct SingleFlightKey {
-    pub source_id: String,
-    pub slug: String,
-}
 
 // ---- I-2 and I-4 -------------------------------------------------------------------------------
 
@@ -130,38 +100,17 @@ pub const LOST_REASONS: [LostReason; 6] = [
 
 // ---- the transaction handle --------------------------------------------------------------------
 
-/// What `Store::begin_with` returns. Today's explicit transaction is a `Store` handle
-/// (`begin_transaction`), so this derefs to it and a pending body can write through it.
-pub struct MuTxn {
-    inner: Store,
-}
-
-impl MuTxn {
-    /// For the day `begin_with` lands: wraps the handle the real call returns.
-    pub fn from_store(inner: Store) -> Self {
-        MuTxn { inner }
-    }
-}
-
-impl Deref for MuTxn {
-    type Target = Store;
-    fn deref(&self) -> &Store {
-        &self.inner
-    }
-}
+/// What `Store::begin_with` returns (I-1, landed): the real transaction, which derefs to its bound store.
+#[allow(unused_imports)]
+pub use gbrain_store::transactions::Transaction as MuTxn;
 
 // ---- the store side ----------------------------------------------------------------------------
 
-/// The multi-user members of `Store` no lane has landed yet, as the frozen interfaces spell them. Landed with the commit-log
-/// lane and called on `Store` directly: `last_commit_time` (I-4.v2) and `read_commit_log` (I-4).
+/// The multi-user members of `Store` no lane has landed yet, as the frozen interfaces spell them. Landed and called on `Store`
+/// directly: `begin_with` and `single_flight` (I-1), `last_commit_time` (I-4.v2) and `read_commit_log` (I-4).
 pub trait MuStore {
-    /// I-1 `Store::begin_with(&self, opts: TxnOptions) -> Result<Transaction>`. Owner: L1.
-    fn begin_with(&self, opts: TxnOptions) -> MuResult<MuTxn>;
-    /// I-1 `Store::single_flight(&self, txn: &Transaction, keys: &[SingleFlightKey]) -> Result<()>`
-    /// (keys sorted, held to commit or abort). Owner: L1.
-    fn single_flight(&self, txn: &MuTxn, keys: &[SingleFlightKey]) -> MuResult<()>;
-    /// I-1 and I-2 `Transaction::commit(self) -> Result<CommitPosition>`: served by the commit-log lane through
-    /// `Store::commit_transaction_at`.
+    /// I-1 and I-2 `Transaction::commit(self) -> Result<CommitPosition>`: the real `Transaction::commit_at`
+    /// (`Store::commit_transaction_at`).
     fn commit_position(&self, txn: MuTxn) -> MuResult<CommitPosition>;
     /// A follower applies the given commit records, in order, to its own brain and returns the position of the last one
     /// (`None` for no records). Pending: the commit-log lane has `commit_log::apply_record(&mut dyn KvWrite, &CommitRecord)`, a
@@ -174,14 +123,8 @@ pub trait MuStore {
 }
 
 impl MuStore for Store {
-    fn begin_with(&self, _opts: TxnOptions) -> MuResult<MuTxn> {
-        pending(L1_TXN, "Store::begin_with")
-    }
-    fn single_flight(&self, _txn: &MuTxn, _keys: &[SingleFlightKey]) -> MuResult<()> {
-        pending(L1_TXN, "Store::single_flight")
-    }
     fn commit_position(&self, txn: MuTxn) -> MuResult<CommitPosition> {
-        txn.commit_transaction_at()
+        txn.commit_at()
     }
     fn apply_log(&self, _records: &[CommitRecord]) -> MuResult<Option<CommitPosition>> {
         pending(

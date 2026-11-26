@@ -224,6 +224,7 @@ fn host(i: usize) -> TxnOptions {
         mode: TxnMode::Optimistic,
         deadline: None,
         origin: Some(origin(i)),
+        ..TxnOptions::default()
     }
 }
 

@@ -83,6 +83,7 @@ export async function deleteOrphanConnectorCheckpoints(engine: Pick<BrainEngine,
   if (!rows.length) return removed;
   // Connector source rows stay share-locked while loadability is recomputed and rows are deleted, so a config change cannot make a deleted key current.
   await engine.transaction(async tx => {
+    removed.checkpoints = 0; removed.retries = 0; // a rerun after a lost optimistic commit counts once
     const loadable = [...connectorKeysOf(await tx.listConnectorSources({ lock: true })).keys()];
     const bounds = { before: opts.before, minAgeDays: opts.minAgeDays, stateOp: CONNECTOR_STATE_OP };
     for (const row of rows) {
