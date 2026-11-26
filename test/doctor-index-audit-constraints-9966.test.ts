@@ -15,7 +15,7 @@ import { indexAuditEntry } from '../src/commands/doctor/checks/queue-assets.ts';
 import type { DoctorContext } from '../src/commands/doctor/context.ts';
 import type { Check } from '../src/commands/doctor.ts';
 import { testBackends } from './helpers/test-backends.ts';
-import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
+import { encodedPostgres, isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 
 const progress = new Proxy({}, { get: () => () => undefined });
 
@@ -46,5 +46,25 @@ for (const kind of testBackends()) describe(`index_audit and constraint indexes 
     expect(check!.message).toContain('constraint_fixture_note_idx');
     expect(check!.message).not.toContain('constraint_fixture_pkey');
     expect(check!.message).not.toContain('constraint_fixture_label_key');
+  }, 60_000);
+
+  test.skipIf(kind !== 'postgres')('a failed concurrent unique index is still reported', async () => {
+    const fixture = await encodedPostgres(process.env.DATABASE_URL!, 'UTF8');
+    try {
+      // No other public indexes: the failed build alone must make the audit warn.
+      const db = fixture.engine;
+      await db.executeRaw('CREATE TABLE failed_unique_fixture (key integer NOT NULL)');
+      await db.executeRaw('INSERT INTO failed_unique_fixture VALUES (1), (1)');
+      await expect(db.executeRaw('CREATE UNIQUE INDEX CONCURRENTLY failed_unique_idx ON failed_unique_fixture (key)'))
+        .rejects.toMatchObject({ code: '23505' });
+      const [index] = await db.executeRaw(`SELECT indisunique, indisvalid, indisready
+        FROM pg_index WHERE indexrelid = 'failed_unique_idx'::regclass`);
+      expect(index).toEqual({ indisunique: true, indisvalid: false, indisready: false });
+      const [check] = await indexAuditEntry.run({ engine: db, args: ['--index-audit'], progress } as unknown as DoctorContext) as Check[];
+      expect(check).toMatchObject({ name: 'index_audit', status: 'warn' });
+      expect(check!.message).toContain('failed_unique_idx');
+    } finally {
+      await fixture.close();
+    }
   }, 60_000);
 });

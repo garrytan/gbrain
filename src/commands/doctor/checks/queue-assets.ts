@@ -113,8 +113,8 @@ async function runIndexAudit(ctx: DoctorContext): Promise<Check[]> {
       });
     } else {
       try {
-        // #9966: an index backing a PRIMARY KEY or UNIQUE constraint enforces it on every write, which
-        // pg_stat_user_indexes never counts as a scan, so it is not a zero-read candidate.
+        // #9966: valid uniqueness enforcement is useful without recorded reads. A failed concurrent
+        // unique build retains indisunique even if it never became ready to enforce the rule.
         const rows = await engine.executeRaw<{ index: string; size: string }>(`
           SELECT s.schemaname, s.relname AS table, s.indexrelname AS index,
                  s.idx_scan, pg_size_pretty(pg_relation_size(s.indexrelid)) AS size
@@ -122,7 +122,7 @@ async function runIndexAudit(ctx: DoctorContext): Promise<Check[]> {
             JOIN pg_index i ON i.indexrelid = s.indexrelid
            WHERE s.schemaname = 'public'
              AND s.idx_scan = 0
-             AND NOT (i.indisprimary OR i.indisunique)
+             AND NOT ((i.indisprimary OR i.indisunique) AND i.indisvalid AND i.indisready AND i.indislive)
            ORDER BY pg_relation_size(s.indexrelid) DESC
            LIMIT 21
         `);
