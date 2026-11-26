@@ -134,7 +134,8 @@ import {
 import { HARNESS_ADAPTERS } from '../core/harness/registry.ts';
 import { HISTORY_VALUE_FLAGS, historyFor, parseHistoryFlags, recordHistoryReceipt, withHistoryDecision, type HistoryFlags, type HistoryOutcome } from './setup-history.ts';
 import { parseSuggestionFlag, suggestionFor, type SuggestionMarker } from './setup-suggestion.ts';
-import { applyBrainLayout, askBrainShape, brainShapeDecision, describeLayout, layoutNotices, parseLayoutFlags, withBrainShape, type BrainShape, type LayoutOutcome } from './setup-brain-layout.ts';
+import { applyBrainLayout, askBrainShape, brainShapeDecision, describeLayout, layoutNotices, parseLayoutFlags, teamTemplateArgs, withBrainShape, type BrainShape, type LayoutOutcome } from './setup-brain-layout.ts';
+import type { TeamResult } from './team-template.ts';
 import { isInteractive } from '../core/interaction.ts';
 import { SETUP_HELP } from './setup-help.ts';
 
@@ -566,6 +567,8 @@ export async function runSetup(args: string[], deps: { openclaw?: { bin?: string
     const tie = ownerTie(flags, servesPlan, binding, !!pluginOwner);
     const unbound = householdTieRefusal(flags, servesPlan, binding, !!pluginOwner, tie, 'claude-code');
     if (unbound) return refuse(unbound, out);
+    const teamBlocked = teamPreflight(flags, launcher, 'claude-code', !!cfg, !!liveOwner?.ours);
+    if (teamBlocked) return refuse(teamBlocked, out);
     if (tie) { binding = { member: tie, previous: binding.previous }; plan = { ...plan, stdioMember: tie }; found = inspectClaudeSetup(plan); target.stdio_member = tie; say(out, `note: ${tieNote(tie)}`); }
 
     const brainCreate = !cfg;
@@ -689,18 +692,49 @@ async function layoutFor(harness: SetupHarnessId, flags: SetupFlags, launcher: s
  * the launcher, each naming this harness and source so a receipt written for another target refuses. Lane 5 O1:
  * `--template team` the same, through gbrain access template team.
  */
-async function runTemplateReceipt(flags: SetupFlags, launcher: string, out: Out): Promise<number> {
+function templateReceiptArgs(flags: SetupFlags): string[] {
   const h = (flags.teamRun ?? flags.householdRun)!;
   const command = flags.teamRun ? ['access', 'template', 'team'] : ['household', 'template'];
-  const target = ['--harness', flags.harness!, ...(flags.source ? ['--source', flags.source] : [])];
-  const args = h.status ? [...command, '--status', ...(h.receipt ? ['--receipt', h.receipt] : []), ...target]
+  const source = flags.source ?? (process.env.GBRAIN_SOURCE && isValidSourceId(process.env.GBRAIN_SOURCE) ? process.env.GBRAIN_SOURCE : null);
+  const target = ['--harness', flags.harness!, ...(source ? ['--source', source] : [])];
+  return h.status ? [...command, '--status', ...(h.receipt ? ['--receipt', h.receipt] : []), ...target]
     : [...command, '--resume', h.resume!, ...target, ...(flags.dryRun ? [] : ['--yes'])];
+}
+
+async function runTemplateReceipt(flags: SetupFlags, launcher: string, out: Out): Promise<number> {
+  const args = templateReceiptArgs(flags);
   const child = Bun.spawnSync([launcher, ...args, ...(out.json ? ['--json'] : [])], { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe', env: process.env });
   const stdout = child.stdout?.toString() ?? '';
   process.stderr.write(child.stderr?.toString() ?? '');
   if (out.json) await writeJsonDocument(stdout, (t) => process.stdout.write(t)); else process.stdout.write(stdout);
   return child.exitCode ?? 1;
 }
+
+/**
+ * Lane 5 O1: before setup writes anything (harness entry, pages, imports), the team template's own preview on an
+ * existing brain; a BLOCKED line refuses the whole run, so "nothing written" holds. A brain this run creates holds no
+ * group, rule or history to block on, but has no OAuth client a --guests writer could name either.
+ */
+function teamPreflight(flags: SetupFlags, launcher: string, harness: SetupHarnessId, hasBrain: boolean, liveOurs: boolean, run: (argv: string[]) => { stdout: string; stderr: string } = spawnChild): OperationError | null {
+  const t = flags.teamRun;
+  if (!t || t.status || t.resume || flags.dryRun || liveOurs) return null;
+  const refuse = (lines: string[]) => opError('setup_team_blocked', `The team template cannot run as asked; nothing was written.\n${lines.join('\n')}`,
+    `Fix each BLOCKED line, then run gbrain setup ${harness} --template team again.`);
+  if (!hasBrain) return t.guests?.split(',').some(w => w.trim().startsWith('oauth_client:')) ? refuse(['  BLOCKED guests: --guests names OAuth clients, and this brain does not exist yet, so it has none; set the brain up first, register each client, then add --guests']) : null;
+  const source = flags.source ?? (process.env.GBRAIN_SOURCE && isValidSourceId(process.env.GBRAIN_SOURCE) ? process.env.GBRAIN_SOURCE : null);
+  const args = teamTemplateArgs(harness, source, { dryRun: true, template: { members: t.members, guests: t.guests, group: t.group, history: t.history, owner: flags.owner ?? loginOwnerId() ?? undefined } });
+  const child = run([launcher, ...args, '--json']);
+  let result: TeamResult | null = null;
+  try { result = JSON.parse(child.stdout) as TeamResult; } catch { return null; } // silent-read-ok: a preview that prints no result is reported by the template step itself after setup runs it
+  if (result?.template !== 'team') return null;
+  const blocked = result.steps.flatMap(s => s.actions.filter(a => a.action === 'blocked').map(a => `  BLOCKED ${s.id} ${a.what}: ${a.command}${a.detail ? `  (${a.detail})` : ''}`));
+  return blocked.length ? refuse(blocked) : null;
+}
+
+const spawnChild = (argv: string[]) => {
+  const c = Bun.spawnSync(argv, { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe', env: process.env });
+  return { stdout: c.stdout?.toString() ?? '', stderr: c.stderr?.toString() ?? '' };
+};
 
 /** Run the `gbrain init --json` child that creates a new keyless brain; returns setup's form of its first-run bundle. */
 function runBrainInit(initArgv: string[], out: Out, harness: SetupHarnessId): Notice[] {
@@ -836,6 +870,8 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
     const tie = ownerTie(flags, servesPlan, binding, !!pluginOwner);
     const unbound = householdTieRefusal(flags, servesPlan, binding, !!pluginOwner, tie, 'codex');
     if (unbound) return refuse(unbound, out);
+    const teamBlocked = teamPreflight(flags, launcher, 'codex', !!cfg, !!liveOwner?.ours);
+    if (teamBlocked) return refuse(teamBlocked, out);
     if (tie) { binding = { member: tie, previous: binding.previous }; plan = { ...plan, stdioMember: tie }; found = inspectCodexSetup(plan); target.stdio_member = tie; say(out, `note: ${tieNote(tie)}`); }
 
     const brainCreate = !cfg;
@@ -1463,4 +1499,4 @@ async function finish(out: Out, doc: {
 /** An index the user asked for by flag that could not be written fails the run (the rest of the install still finished). */
 const skillsFailed = (o: SkillsBlockOutcome | null): boolean => skillsOutcomeFailed(o);
 
-export const __testing = { parseFlags, setupChoices, householdTieRefusal };
+export const __testing = { parseFlags, setupChoices, householdTieRefusal, teamPreflight, templateReceiptArgs };

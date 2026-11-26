@@ -8,6 +8,7 @@ src/cli/enforced-member.ts	execute_raw	6
 src/commands/access-read-by-nobody.ts	execute_raw	2
 src/commands/access-read-log.ts	execute_raw	4	GST-2476 gap 1: the access read log readers (access log, who-read) over the new access_read_log table (v331); the access area is still raw SQL (access.ts, access-rules.ts) and converts with it
 src/commands/access-rules.ts	execute_raw	4
+src/commands/team-template.ts	execute_raw	6	Lane 5 O1 team template: the source check and source list, the member-key hash lookups for delivery and the --status proof (as access-serves.ts and household-template.ts run), the group advisory lock, and the proof's bounded page list
 src/commands/household-template.ts	execute_raw	2	H2 household template: the member-key lookup and the revoke on a failed key-file write, the same two statements access-serves.ts runs for its member keys
 src/commands/access-serves.ts	execute_raw	8	came from master #9625 (shared company brains: owner setup, member keys), which landed after this ratchet was cut
 src/commands/access.ts	execute_raw	6

@@ -42,7 +42,9 @@ It sets the brain up as a company brain (`--shape company`), then adds, in order
 
 The template never changes a group or folder rule it did not make. If a group called `team-members` already exists, or a hand-written rule already covers `company/` or `rules/team/`, that line reads BLOCKED with the command that changes it, and nothing is written. Use `--team-group <id>` to give the team another group.
 
-If this brain already serves just you and holds notes that no rule or `readable_by` restricts, turning it shared would let every member's key read them, so the run reads BLOCKED until you choose: add `--labelled-only` to keep those notes private (members read the team folders and their own), or `--open-history` to let every member read them.
+If this brain already serves just you and holds notes that no rule or `readable_by` restricts, turning it shared would let every member's key read them, so the run reads BLOCKED until you choose: add `--labelled-only` to keep those notes private (members read the team folders and their own), or `--open-history` to let every member read them. The choice is kept in the receipt, so a later run that adds people keeps it.
+
+On a brain that already exists, setup runs this preview before it changes anything, the harness entry included, so a BLOCKED line means nothing was written.
 
 Every step is safe to run again. Setup keeps a receipt with no key values in it:
 

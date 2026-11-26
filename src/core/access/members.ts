@@ -310,7 +310,7 @@ export async function boundCredentials(engine: BrainEngine, id: string): Promise
 }
 
 /** Pages whose readers name `principal` (member:<id> or group:<g>), bounded. */
-async function pagesNaming(engine: BrainEngine, principal: string): Promise<{ pages: PageRef[]; truncated: boolean }> {
+export async function pagesNaming(engine: BrainEngine, principal: string): Promise<{ pages: PageRef[]; truncated: boolean }> {
   const rows = await engine.executeRaw<PageRef>(
     `SELECT slug, source_id FROM pages WHERE frontmatter ? 'readable_by' AND gbrain_access_readers(frontmatter) @> ARRAY[$1]::text[]
      ORDER BY source_id, slug LIMIT ${PREVIEW_PAGE_LIMIT + 1}`, [principal]);

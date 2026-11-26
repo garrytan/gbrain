@@ -141,7 +141,7 @@ export async function unboundCredentials(engine: BrainEngine, owner: string): Pr
   ];
 }
 
-async function plan(engine: BrainEngine, roster: string[], sourceId: string, labelledOnly: boolean, requestedOwner?: string): Promise<ServesReceipt> {
+async function plan(engine: BrainEngine, roster: string[], sourceId: string, labelledOnly: boolean, requestedOwner?: string, companyRuleWanted = true): Promise<ServesReceipt> {
   const keyDir = memberKeyDir();
   const gitRoot = gitRootAbove(keyDir);
   if (gitRoot) {
@@ -179,7 +179,7 @@ async function plan(engine: BrainEngine, roster: string[], sourceId: string, lab
       detail: `rule "${clash.id}" on ${clash.prefix} already exists, readable by ${readers}, not by ${id} alone; change it with gbrain access rule add --id ${clash.id} --prefix ${clash.prefix} --readers ${hinted[i]} --source ${sourceId}` };
   });
   const desired = await memberKeyReadSources(engine, sourceId);
-  const companyRule = labelledOnly && desired.includes(COMPANY_SOURCE_ID) ? await planCompanyRule(engine, members, owner) : undefined;
+  const companyRule = companyRuleWanted && labelledOnly && desired.includes(COMPANY_SOURCE_ID) ? await planCompanyRule(engine, members, owner) : undefined;
   const keys: ServesReceipt['keys'] = [];
   for (const id of roster) {
     const name = memberKeyName(id);
@@ -299,9 +299,9 @@ function abortAfter(step: string): void {
 }
 
 /** Plans, and with `apply` writes, the several-people labelling; a failure is reported in the receipt, never thrown. */
-export async function labelSeveral(engine: BrainEngine, roster: string[], sourceId: string, apply: boolean, json: boolean, opts: { labelledOnly?: boolean; owner?: string } = {}): Promise<ServesReceipt> {
+export async function labelSeveral(engine: BrainEngine, roster: string[], sourceId: string, apply: boolean, json: boolean, opts: { labelledOnly?: boolean; owner?: string; /** false: the caller writes the company/ rule itself (the team template). */ companyRule?: false } = {}): Promise<ServesReceipt> {
   const labelledOnly = opts.labelledOnly === true;
-  const receipt = await plan(engine, roster, sourceId, labelledOnly, opts.owner);
+  const receipt = await plan(engine, roster, sourceId, labelledOnly, opts.owner, opts.companyRule !== false);
   if (!apply || blocked(receipt)) return receipt;
   receipt.applied = true;
   try {

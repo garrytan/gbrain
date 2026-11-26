@@ -6339,13 +6339,23 @@ More: [docs/tutorials/household-brain.md#if-a-run-stops](../../docs/tutorials/ho
 |---|---|---|---|---|---|---|
 | gbrain setup could not read whether the existing brain serves several people, so it wrote nothing. | Setup writes an unbound connection only on a brain it knows serves one person; a brain it cannot read might serve several. | Run gbrain access serves --json to see why the brain cannot be read, fix that, then run setup again. Run: gbrain access serves --json | agent | `repeat the read that failed` | 1 | no |
 
+### setup_team_blocked
+
+<a id="setup_team_blocked"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain setup --template team was refused before it wrote anything because the team template's preview has a BLOCKED line: a group or folder rule it did not make, a history choice it needs, or guest writers this brain does not have. | The team template never changes a group or rule it did not make and never opens unrestricted notes without a choice, so setup checks that preview before it touches the harness, the brain or any page. | Fix each BLOCKED line the message lists (gbrain access template team --members <id,...> shows the same preview), then run gbrain setup <harness> --template team again. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/tutorials/company-brain.md#set-up-a-team-in-one-command](../../docs/tutorials/company-brain.md#set-up-a-team-in-one-command)
+
 ### setup_team_unbound
 
 <a id="setup_team_unbound"></a>
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| gbrain setup --template team was refused because the team template would set the brain to serve several people while this harness's connection stays bound to nobody (a shared stdio harness such as OpenClaw or Hermes is installed, or --no-stdio-member was given), so nothing was written. | On a brain that serves several people an unbound connection reads none of the team's company pages, so the owner's own agent could not answer from them, and every later setup run would refuse that connection. | Give the owner a key over HTTP (gbrain auth create <name> --member <owner>), or drop --no-stdio-member. | agent | `repeat the read that failed` | 1 | no |
+| gbrain setup --template team was refused because the team template would set the brain to serve several people while this harness's connection stays bound to nobody (a shared stdio harness such as OpenClaw or Hermes is installed, the gbrain plugin serves it unbound, or --no-stdio-member was given), so nothing was written. | On a brain that serves several people an unbound connection reads none of the team's company pages, so the owner's own agent could not answer from them, and every later setup run would refuse that connection. | Give the owner a key over HTTP with gbrain auth create <name> --member <owner>; for a plugin connection, bind it with gbrain config set mcp.stdio_member <owner>; then run gbrain setup <harness> --template team again without --no-stdio-member. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/tutorials/company-brain.md#set-up-a-team-in-one-command](../../docs/tutorials/company-brain.md#set-up-a-team-in-one-command)
 

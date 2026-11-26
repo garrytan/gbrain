@@ -18,13 +18,13 @@ import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { addGroup, addMember, listGroups, listMembers } from '../src/core/access/members.ts';
 import { ownerMemberId } from '../src/core/access/owner.ts';
 import { addFolderRules, currentFolderRules } from '../src/commands/access-rules.ts';
-import { policySeams } from '../src/core/access/policy.ts';
+import { policySeams, policyStatus } from '../src/core/access/policy.ts';
 import { applyBrainLayout } from '../src/commands/setup-brain-layout.ts';
 import { copyFileSync, mkdirSync as mkdirSyncFs, mkdtempSync, writeFileSync as writeFileSyncFs } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { mintToken } from '../src/commands/auth-mint.ts';
 import { loadReceipt } from '../src/commands/setup-template-receipt.ts';
-import { parseGuestWriters, parseTeamMembers, teamTemplate, teamTemplateStatus, templateLines } from '../src/commands/team-template.ts';
+import { parseGuestWriters, parseTeamMembers, runTeamTemplate, teamTemplate, teamTemplateStatus, templateLines } from '../src/commands/team-template.ts';
 import { renderLayoutBlock } from '../src/commands/setup-brain-layout.ts';
 import { __testing } from '../src/commands/setup.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
@@ -70,7 +70,7 @@ beforeEach(async () => {
   await importFromContent(engine, 'people/carol-example/notes', page('people/carol-example/notes'), { sourceId: 'default', noEmbed: true });
 });
 
-afterEach(() => { delete process.env.GBRAIN_SETUP_ABORT_AFTER; policySeams.afterInstall = undefined; });
+afterEach(() => { policySeams.afterInstall = undefined; });
 
 describe('team template', () => {
   test('the preview lists the exact access and auth steps and writes nothing', async () => {
@@ -321,5 +321,102 @@ describe('team template review fixes', () => {
     expect(o.company!.action).toBe('failed');
     expect(o.teamTemplate).toMatchObject({ result: null });
     expect(o.teamTemplate!.detail).toContain('company source could not be set up');
+  });
+});
+
+describe('team template final-review fixes', () => {
+  const keyOf = (r: { keys: Array<{ member: string; path: string }> }, m: string) => readFileSync(r.keys.find(k => k.member === m)!.path, 'utf8').trim();
+
+  test('a later run that adds a member keeps the private history choice the first run made', async () => {
+    await importFromContent(engine, 'notes/journal', page('notes/journal'), { sourceId: 'default', noEmbed: true });
+    const first = await run({ history: 'private' });
+    expect(first.error).toBeUndefined();
+    const more = await run({ members: 'bob-example,carol-example,dana-example' });
+    expect(more.error).toBeUndefined();
+    expect(more.applied).toBe(true);
+    expect(await reads(keyOf(more, 'dana-example'), 'notes/journal')).toBe(false);
+    expect(await reads(keyOf(more, 'dana-example'), 'company/decisions', 'company')).toBe(true);
+    expect((await listMembers(engine)).find(m => m.id === 'dana-example')?.labelled_only).toBe(true);
+  });
+
+  test('--labelled-only never replaces a hand-written company/ rule, even one naming only team people', async () => {
+    await importFromContent(engine, 'notes/journal', page('notes/journal'), { sourceId: 'default', noEmbed: true });
+    await addFolderRules(engine, 'company', [{ id: 'company', prefix: 'company/', readable_by: [`member:${OWNER}`, 'member:bob-example'] } as never], { apply: true, json: true });
+    const before = await currentFolderRules(engine, 'company');
+    const r = await run({ history: 'private' });
+    expect(r.applied).toBe(false);
+    expect(r.steps.find(x => x.id === 'rules')!.state).toBe('blocked');
+    expect(await currentFolderRules(engine, 'company')).toEqual(before);
+  });
+
+  test('repeating a successful private run changes nothing and leaves no held rule change', async () => {
+    await importFromContent(engine, 'notes/journal', page('notes/journal'), { sourceId: 'default', noEmbed: true });
+    expect((await run({ history: 'private' })).error).toBeUndefined();
+    const again = await run({ history: 'private' });
+    expect(again.error).toBeUndefined();
+    for (const src of ['company', 'default']) expect((await policyStatus(engine, src)).held).toEqual([]);
+  });
+
+  test('an unrelated widening waiting for approval stays waiting after the template runs', async () => {
+    await addMember(engine, 'dana-example', { remote: false } as never);
+    await addFolderRules(engine, 'company', [{ id: 'board', prefix: 'company/board/', readable_by: [`member:${OWNER}`] } as never], { apply: true, json: true });
+    await addFolderRules(engine, 'company', [{ id: 'board', prefix: 'company/board/', readable_by: [`member:${OWNER}`, 'member:dana-example'] } as never], { apply: true, json: true });
+    const held = (await policyStatus(engine, 'company')).held;
+    expect(held.length).toBeGreaterThan(0);
+    const r = await run();
+    expect(r.error).toBeUndefined();
+    expect((await policyStatus(engine, 'company')).held).toEqual(held);
+  });
+
+  test('a stop after the group is written but before its step is marked still resumes', async () => {
+    const first = await withEnv({ GBRAIN_HOME: home, GBRAIN_SETUP_ABORT_AFTER: 'team-group-written' },
+      () => teamTemplate(engine, { source: 'default', harness: 'codex', owner: OWNER, members: MEMBERS, apply: true, receiptDir }));
+    expect(first.error?.message).toContain('team-group-written');
+    const resumed = await run({ resume: first.receipt_id, members: undefined, owner: undefined, source: undefined });
+    expect(resumed.error).toBeUndefined();
+    expect(resumed.steps.find(x => x.id === 'group')!.state).not.toBe('blocked');
+    expect((await status()).ok).toBe(true);
+  });
+
+  test('making the team group is BLOCKED when pages already name it as a reader', async () => {
+    await importFromContent(engine, 'notes/old-team', page('notes/old-team', 'readable_by: [group:team-members]\n'), { sourceId: 'default', noEmbed: true });
+    const r = await run();
+    expect(r.applied).toBe(false);
+    expect(r.steps.find(x => x.id === 'group')!.actions[0]!.detail).toContain('already name group:team-members');
+    expect(await listGroups(engine)).toEqual([]);
+  });
+
+  test('status counts a failed read as inconclusive, never as a denial', async () => {
+    const r = await run();
+    expect(r.error).toBeUndefined();
+    const snapshot = engine.readPageSnapshot;
+    engine.readPageSnapshot = (async function (this: unknown, slug: string, ...rest: unknown[]) { if (slug === 'people/carol-example/notes') throw new Error('connection reset'); return (snapshot as any).call(engine, slug, ...rest); }) as never;
+    try {
+      const s = await status();
+      const bob = s.proof.find(x => x.member === 'bob-example')!;
+      expect(bob.inconclusive.length).toBe(1);
+      expect(bob.ok).toBe(false);
+    } finally { engine.readPageSnapshot = snapshot; }
+  });
+
+  test('--dry-run with --yes is refused, and receipt commands carry the pinned GBRAIN_SOURCE', async () => {
+    await expect(runTeamTemplate(engine, ['team', '--members', MEMBERS, '--dry-run', '--yes'], true, () => undefined)).rejects.toThrow(/not both/);
+    expect(await listMembers(engine)).toEqual([]);
+    const flags = __testing.parseFlags(['codex', '--template', 'team', '--resume', 'team-x', '--yes']) as any;
+    const args = await withEnv({ GBRAIN_SOURCE: 'acme-src' }, async () => __testing.templateReceiptArgs(flags));
+    expect(args.slice(args.indexOf('--source'), args.indexOf('--source') + 2)).toEqual(['--source', 'acme-src']);
+  });
+
+  test('setup runs the team preview before it writes anything, and a BLOCKED line refuses the run', () => {
+    const flags = __testing.parseFlags(['codex', '--template', 'team', '--members', MEMBERS, '--yes']) as any;
+    const seen: string[][] = [];
+    const blocked = { template: 'team', steps: [{ id: 'group', state: 'blocked', actions: [{ what: 'team-members', action: 'blocked', command: 'gbrain setup <harness> --template team --team-group <another id>', detail: 'a group named team-members already exists' }] }] };
+    const e = __testing.teamPreflight(flags, 'gbrain', 'codex', true, false, (argv) => { seen.push(argv); return { stdout: JSON.stringify(blocked), stderr: '' }; });
+    expect(e?.code).toBe('setup_team_blocked');
+    expect(e?.message).toContain('BLOCKED group team-members');
+    expect(seen[0]).not.toContain('--yes');
+    expect(__testing.teamPreflight(flags, 'gbrain', 'codex', true, false, () => ({ stdout: JSON.stringify({ template: 'team', steps: [] }), stderr: '' }))).toBeNull();
+    const guests = __testing.parseFlags(['codex', '--template', 'team', '--members', MEMBERS, '--guests', 'oauth_client:broker-a', '--yes']) as any;
+    expect(__testing.teamPreflight(guests, 'gbrain', 'codex', false, false)?.code).toBe('setup_team_blocked');
   });
 });

@@ -583,7 +583,7 @@ function runHouseholdTemplate(exec: Run, launcher: string, harness: string, sour
 }
 
 /** Lane 5 O1: the team template as a child of the launcher, after the company source exists; a preview on a dry run. */
-function teamTemplateArgs(harness: string, source: string | null, flags: LayoutFlags): string[] {
+export function teamTemplateArgs(harness: string, source: string | null, flags: Pick<LayoutFlags, 'template' | 'dryRun'>): string[] {
   const t = flags.template ?? {};
   return ['access', 'template', 'team', '--harness', harness, ...(source ? ['--source', source] : []), ...(t.members !== undefined ? ['--members', t.members] : []),
     ...(t.guests !== undefined ? ['--guests', t.guests] : []), ...(t.group !== undefined ? ['--team-group', t.group] : []), ...(t.owner ? ['--owner', t.owner] : []),

@@ -29,9 +29,9 @@ import { opError } from '../core/ops/contract.ts';
 import { hashToken } from '../core/utils.ts';
 import { usageError } from '../cli/cli-error.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
-import { assertAccessId, listGroups, addGroup, parseIdList } from '../core/access/members.ts';
+import { assertAccessId, listGroups, addGroup, pagesNaming, parseIdList } from '../core/access/members.ts';
 import { ownerView } from '../core/access/owner.ts';
-import { normalizeRule, sortRules, type FolderRule } from '../core/access/folder-rules.ts';
+import { normalizeRule, type FolderRule } from '../core/access/folder-rules.ts';
 import { COMPANY_SOURCE_ID, readOpenPages } from '../core/access/open-pages.ts';
 import { policyStatus, resumePolicy } from '../core/access/policy.ts';
 import { readBrainRef } from '../core/brain-ref.ts';
@@ -39,7 +39,7 @@ import { GUEST_WRITER_FORMAT, initGuestSource, isGuestWriter, planGuestSource, u
 import { grantOwnerCredentials, ownerCredentials } from '../core/guests/owner-credentials.ts';
 import { RULE_PREFIX } from '../core/rules/record.ts';
 import { assertReceiptTarget, latestReceipt, loadReceipt, markStep, newReceipt, receiptDir, receiptKey, saveReceipt, stepState, type TemplateReceipt } from './setup-template-receipt.ts';
-import { currentFolderRules, writeApprovedRules } from './access-rules.ts';
+import { addFolderRules, currentFolderRules } from './access-rules.ts';
 import { labelSeveral, memberKeyDir, type ServesReceipt } from './access-serves.ts';
 import { whoCanRead } from './access.ts';
 
@@ -114,10 +114,29 @@ export function teamRules(owner: string, group: string, source: string): Array<{
   });
 }
 
-/** The group this template made earlier on this brain: a receipt of it names the group and finished its group step. */
+/** The latest team receipt written on this brain (its brain_ref), or null. */
+function latestOnBrain(dir: string, brainRef: string | null): TemplateReceipt | null {
+  const r = latestReceipt(TEMPLATE, {}, dir);
+  return r && brainRef && r.params.brain_ref === brainRef ? r : null;
+}
+
+/**
+ * The group this template made earlier on this brain: a receipt of it names the group and finished its group step, or
+ * (the run being resumed) recorded that it was about to write the group, so a stop between the write and the step's
+ * marker still resumes.
+ */
 function madeByTemplate(group: string, dir: string, prior: TemplateReceipt | null, brainRef: string | null): boolean {
-  const r = prior ?? latestReceipt(TEMPLATE, {}, dir);
-  return !!r && !!brainRef && r.params.brain_ref === brainRef && r.params.group === group && stepState(r, 'group') === 'done';
+  if (prior?.params.group === group && prior.params.group_intent === true) return true;
+  const r = prior ?? latestOnBrain(dir, brainRef);
+  return !!r && r.params.brain_ref === brainRef && r.params.group === group && stepState(r, 'group') === 'done';
+}
+
+/** Folder rules in any source that already name group:<group> (pages are pagesNaming). */
+async function rulesNaming(engine: BrainEngine, group: string): Promise<string[]> {
+  const sources = await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id');
+  const hits: string[] = [];
+  for (const { id } of sources) for (const r of await currentFolderRules(engine, id)) if (r.readable_by.includes(`group:${group}`)) hits.push(`${id}:${r.prefix}`);
+  return hits;
 }
 
 /** A receipt names the brain it ran on (its brain_ref); one from another brain behind the same config directory is refused. */
@@ -145,7 +164,7 @@ async function plan(engine: BrainEngine, opts: TeamOpts & { source: string; dir:
   }
   const members = prior ? (prior.params.members as string[]) : parseTeamMembers(opts.members, owner);
   const guests = prior ? (prior.params.guests as string[]) : parseGuestWriters(opts.guests);
-  const history = (prior ? prior.params.history as 'private' | 'open' | null | undefined : opts.history) ?? null;
+  const history = (prior ? prior.params.history as 'private' | 'open' | null | undefined : opts.history ?? latestOnBrain(opts.dir, opts.brainRef)?.params.history as 'private' | 'open' | null | undefined) ?? null;
   const srcFlag = `--source ${source}`;
 
   const guestActions: TemplateAction[] = [];
@@ -161,8 +180,8 @@ async function plan(engine: BrainEngine, opts: TeamOpts & { source: string; dir:
   }
   step('guests', guestActions);
 
-  const serves = await labelSeveral(engine, members, source, false, true, { owner, labelledOnly: history === 'private' });
-  const servesCommand = `gbrain access serves several --members ${members.join(',')} --owner ${owner} ${srcFlag} --yes`;
+  const serves = await labelSeveral(engine, members, source, false, true, { owner, labelledOnly: history === 'private', companyRule: false });
+  const servesCommand = `gbrain access serves several --members ${members.join(',')} --owner ${owner} ${srcFlag}${history === 'private' ? ' --labelled-only' : ''} --yes`;
   const servesActions: TemplateAction[] = [
     ...(serves.owner ? [{ what: `owner ${serves.owner.id}`, action: serves.owner.action === 'blocked' ? 'blocked' as const : serves.owner.action === 'keep' ? 'keep' as const : 'set' as const, command: servesCommand, ...(serves.owner.detail ? { detail: serves.owner.detail } : {}) }] : []),
     ...serves.members.map((m): TemplateAction => ({ what: `member ${m.id}`, action: m.action, command: `gbrain access member add ${m.id}`, ...(m.detail ? { detail: m.detail } : {}) })),
@@ -186,7 +205,10 @@ async function plan(engine: BrainEngine, opts: TeamOpts & { source: string; dir:
   const held = (await listGroups(engine)).find(g => g.id === group)?.members;
   const groupCommand = `gbrain access group add ${group} --members ${want.join(',')}`;
   const extra = (held ?? []).filter(id => !want.includes(id));
-  step('group', [!held ? { what: group, action: 'add', command: groupCommand }
+  const naming = held ? null : { pages: await pagesNaming(engine, `group:${group}`), rules: await rulesNaming(engine, group) };
+  step('group', [naming && (naming.pages.pages.length || naming.rules.length) ? { what: group, action: 'blocked', command: `gbrain setup <harness> --template team --team-group <another id>`,
+      detail: `no group ${group} exists, but ${[naming.pages.pages.length ? `${naming.pages.pages.length}${naming.pages.truncated ? '+' : ''} page(s) (${naming.pages.pages.slice(0, 3).map(x => `${x.source_id}:${x.slug}`).join(', ')})` : '', naming.rules.length ? `folder rule(s) on ${naming.rules.join(', ')}` : ''].filter(Boolean).join(' and ')} already name group:${group} as a reader; making the group would let the whole team read them, so name another group with --team-group <id>, or remove those readers first` }
+    : !held ? { what: group, action: 'add', command: groupCommand }
     : !madeByTemplate(group, opts.dir, prior, opts.brainRef) ? { what: group, action: 'blocked', command: `gbrain setup <harness> --template team --team-group <another id>`,
       detail: `a group named ${group} already exists (${held.join(', ') || 'no members'}) and this template did not make it; the template never changes a group it did not make, so that group and every page it opens stay as they are: name another group for the team with --team-group <id>, then run this again` }
     : extra.length ? { what: group, action: 'blocked', command: `gbrain access group rm ${group} --members ${extra.join(',')}`,
@@ -205,10 +227,6 @@ async function plan(engine: BrainEngine, opts: TeamOpts & { source: string; dir:
     const current = await currentFolderRules(engine, src);
     const same = current.find(c => c.prefix === rule.prefix);
     if (same && sameSet(same.readable_by, rule.readable_by)) { ruleActions.push({ what: `${src}:${rule.prefix}`, action: 'keep', command }); continue; }
-    if (same && history === 'private' && src === COMPANY_SOURCE_ID && same.readable_by.every(r => [owner, ...members].map(m => `member:${m}`).includes(r))) {
-      ruleActions.push({ what: `${src}:${rule.prefix}`, action: 'set', command, detail: `replaces the owner-and-members rule --labelled-only writes with the team's readers` });
-      continue;
-    }
     if (same) {
       ruleActions.push({ what: `${src}:${rule.prefix}`, action: 'blocked', command: `gbrain access rule add --id ${same.id} --prefix ${rule.prefix} --readers ${readerArg(rule.readable_by)} --source ${src}`,
         detail: `rule "${same.id}" already covers ${rule.prefix}, readable by ${readerArg(same.readable_by)}; the template never overwrites a rule, so change it to the team's readers (preview first) or remove it, then run this again` });
@@ -267,7 +285,7 @@ export async function teamTemplate(engine: BrainEngine, opts: TeamOpts): Promise
     await run('serves', async () => {
       for (const k of result.keys.filter(x => x.action === 'mint')) { receiptKey(receipt, k.member, k.token_name, k.path); }
       saveReceipt(receipt, dir);
-      const done = await labelSeveral(engine, result.members, source, true, true, { owner, labelledOnly: history === 'private' });
+      const done = await labelSeveral(engine, result.members, source, true, true, { owner, labelledOnly: history === 'private', companyRule: false });
       for (const k of done.keys) {
         const [token] = await engine.executeRaw<{ token_hash: string; created_at: unknown }>('SELECT token_hash, created_at FROM access_tokens WHERE name = $1 AND revoked_at IS NULL', [k.token_name]);
         const entry = receiptKey(receipt, k.member, k.token_name, k.path);
@@ -281,6 +299,8 @@ export async function teamTemplate(engine: BrainEngine, opts: TeamOpts): Promise
       if (done.error) throw Object.assign(new Error(done.error.message), { code: done.error.code });
     });
     await run('group', async () => {
+      receipt.params.group_intent = true;
+      saveReceipt(receipt, dir);
       await engine.transaction(async tx => {
         await tx.executeRaw('SELECT pg_advisory_xact_lock(hashtext($1))', [`gbrain-team-group:${result.group}`]);
         const now = (await listGroups(tx)).find(g => g.id === result.group)?.members ?? null;
@@ -289,15 +309,12 @@ export async function teamTemplate(engine: BrainEngine, opts: TeamOpts): Promise
         }
         await addGroup(tx, result.group, [owner, ...result.members]);
       });
+      abortAfter('team-group-written');
     });
     await run('rules', async () => {
-      const writes = result.steps.find(s => s.id === 'rules')!.actions.filter(a => a.action === 'add' || a.action === 'set').map(a => a.what);
+      const adds = result.steps.find(s => s.id === 'rules')!.actions.filter(a => a.action === 'add').map(a => a.what);
       for (const { source: src, rule } of teamRules(owner, result.group, source)) {
-        if (writes.includes(`${src}:${rule.prefix}`)) {
-          if ((await policyStatus(engine, src)).held.length) throw new Error(`source ${src} has a folder-rule change waiting for approval that this template did not make; review it with gbrain access apply --source ${src}, then run this again`);
-          const base = (await currentFolderRules(engine, src)).filter(b => b.id !== rule.id && b.prefix !== rule.prefix);
-          await writeApprovedRules(engine, src, sortRules([...base, rule]), `access: team template rule ${rule.id} on ${rule.prefix} readable by ${readerArg(rule.readable_by)}`);
-        }
+        if (adds.includes(`${src}:${rule.prefix}`)) await addFolderRules(engine, src, [rule], { apply: true, json: true });
         if (!(await sourceExists(engine, src))) continue;
         let st = await policyStatus(engine, src);
         if (st.pending.length) { await resumePolicy(engine, src); st = await policyStatus(engine, src); }
@@ -319,7 +336,7 @@ export async function teamTemplate(engine: BrainEngine, opts: TeamOpts): Promise
   return result;
 }
 
-export interface RoleProof { member: string; role: 'member'; key: 'delivered' | 'missing' | 'unreadable' | 'mismatch' | 'none'; check: string; expected: number; read: number; missing: string[]; extra: string[]; truncated: boolean; ok: boolean }
+export interface RoleProof { member: string; role: 'member'; key: 'delivered' | 'missing' | 'unreadable' | 'mismatch' | 'none'; check: string; expected: number; read: number; missing: string[]; extra: string[]; inconclusive: string[]; truncated: boolean; ok: boolean }
 export interface TeamStatus { receipt: Omit<TemplateReceipt, 'params'> & { owner: string; members: string[]; guests: string[]; group: string }; complete: boolean; proof: RoleProof[]; ok: boolean }
 
 /** The pages the proof reads, at most this many per folder. */
@@ -371,7 +388,7 @@ export async function teamTemplateStatus(engine: BrainEngine, opts: { receipt?: 
     const entry = receipt.keys.find(k => k.member === m);
     const want = pages.filter(x => x.readers === 'every_source_reader' || x.readers.includes(m)).map(x => `${x.source}:${x.slug}`);
     const r: RoleProof = { member: m, role: 'member', key: !entry ? 'none' : entry.delivered && existsSync(entry.path) ? 'delivered' : 'missing',
-      check: `gbrain access check --token ${entry?.token_name ?? `member-${m}`} --as ${m}`, expected: want.length, read: 0, missing: [], extra: [], truncated, ok: false };
+      check: `gbrain access check --token ${entry?.token_name ?? `member-${m}`} --as ${m}`, expected: want.length, read: 0, missing: [], extra: [], inconclusive: [], truncated, ok: false };
     if (r.key === 'delivered') {
       let auth: AuthInfo | null = null;
       const secret = readFileSync(entry!.path, 'utf8').trim();
@@ -382,12 +399,15 @@ export async function teamTemplateStatus(engine: BrainEngine, opts: { receipt?: 
         const read: string[] = [];
         for (const x of pages) {
           const out = await dispatchToolCall(engine, 'get_page', { slug: x.slug, source_id: x.source }, { remote: true, transport: 'http', auth, sourceId: receipt.source_id, takesHoldersAllowList: ['world'], readLog: false } as never);
-          if (out.isError !== true) read.push(`${x.source}:${x.slug}`);
+          if (out.isError !== true) { read.push(`${x.source}:${x.slug}`); continue; }
+          let code: string | undefined;
+          try { code = (JSON.parse(String((out.content as Array<{ text?: string }> | undefined)?.[0]?.text ?? '{}')) as { code?: string }).code; } catch { code = undefined; } // silent-read-ok: an unreadable error body counts as inconclusive below
+          if (code !== 'page_not_found') r.inconclusive.push(`${x.source}:${x.slug} (${code ?? 'unknown error'})`);
         }
         r.read = read.length;
         r.missing = want.filter(s => !read.includes(s));
         r.extra = read.filter(s => !want.includes(s)).sort();
-        r.ok = !r.missing.length && !r.extra.length && !truncated;
+        r.ok = !r.missing.length && !r.extra.length && !r.inconclusive.length && !truncated;
       }
     }
     proof.push(r);
@@ -423,7 +443,7 @@ export function statusLines(s: TeamStatus): string[] {
     ...r.steps.map(x => `  ${x.id.padEnd(14)} ${x.state}${x.at ? ` ${x.at}` : ''}${x.detail ? `  (${x.detail})` : ''}`),
     `  owner ${r.owner} reads the whole brain${r.guests.length ? `, the guest source ${GUEST_SOURCE} included` : ''}`,
     ...r.keys.map(k => `  key ${k.member.padEnd(10)} issued ${k.issued?.at ?? 'no'}; delivered ${k.delivered ? `${k.delivered.at} to ${k.path}` : 'NO'}`),
-    ...s.proof.map(p => `  proof ${p.member} (member): ${p.key !== 'delivered' ? `key ${p.key}` : `reads ${p.read} of the ${p.expected} team and own-folder page(s) the rules expect${p.missing.length ? `; missing ${p.missing.join(', ')}` : ''}${p.extra.length ? `; EXTRA ${p.extra.join(', ')}` : ''}${p.truncated ? `; a folder holds more than ${PROOF_PAGES_PER_FOLDER} pages, so only the first ${PROOF_PAGES_PER_FOLDER} were compared` : ''}`} ${p.ok ? 'ok' : 'NOT ok'}; check it yourself: ${p.check}`),
+    ...s.proof.map(p => `  proof ${p.member} (member): ${p.key !== 'delivered' ? `key ${p.key}` : `reads ${p.read} of the ${p.expected} team and own-folder page(s) the rules expect${p.missing.length ? `; missing ${p.missing.join(', ')}` : ''}${p.extra.length ? `; EXTRA ${p.extra.join(', ')}` : ''}${p.inconclusive.length ? `; the read failed (not a denial) for ${p.inconclusive.join(', ')}` : ''}${p.truncated ? `; a folder holds more than ${PROOF_PAGES_PER_FOLDER} pages, so only the first ${PROOF_PAGES_PER_FOLDER} were compared` : ''}`} ${p.ok ? 'ok' : 'NOT ok'}; check it yourself: ${p.check}`),
     ...(r.error ? [`  stopped: ${r.error.message}; finish with gbrain setup ${r.harness ?? '<harness>'} --template team --resume ${r.id} --yes`] : []),
   ];
 }
@@ -436,6 +456,7 @@ export async function runTeamTemplate(engine: BrainEngine, args: string[], json:
     if (!s.ok) setCliExitVerdict(1);
     return;
   }
+  if (args.includes('--dry-run') && args.includes('--yes')) throw usageError('Pass --dry-run (preview) or --yes (apply), not both; nothing was written.', 'gbrain access template team --members a,b previews; add --yes to apply.');
   const owner = value('--owner');
   const r = await teamTemplate(engine, { source: value('--source'), harness, apply: args.includes('--yes'), ...(owner !== undefined ? { owner: assertAccessId(owner) } : {}),
     members: value('--members'), guests: value('--guests'), group: value('--team-group'),
