@@ -45,6 +45,7 @@ const load_page_upload = () => import('./ops/page-upload.ts') as Promise<Record<
 const load_pages = () => import('./ops/pages.ts') as Promise<Record<string, unknown>>;
 const load_persistence = () => import('./ops/persistence.ts') as Promise<Record<string, unknown>>;
 const load_policy = () => import('./ops/policy.ts') as Promise<Record<string, unknown>>;
+const load_propose = () => import('./ops/propose.ts') as Promise<Record<string, unknown>>;
 const load_purge = () => import('./ops/purge.ts') as Promise<Record<string, unknown>>;
 const load_qm_memory = () => import('./ops/qm-memory.ts') as Promise<Record<string, unknown>>;
 const load_questions = () => import('./ops/questions.ts') as Promise<Record<string, unknown>>;
@@ -293,4 +294,6 @@ export const OPERATION_LOADERS: Record<string, readonly [() => Promise<Record<st
   "learned_undo": [load_learned, "learnedOperations"],
   "onboarding_status": [load_onboarding, "onboardingOperations"],
   "onboarding_off": [load_onboarding, "onboardingOperations"],
+  "propose_jobs": [load_propose, "proposeOperations"],
+  "propose_decide": [load_propose, "proposeOperations"],
 };

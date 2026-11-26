@@ -5101,6 +5101,16 @@ Reasons: `actor`, `credential`.
 
 More: [docs/guides/qm.md#proposed-writes](../../docs/guides/qm.md#proposed-writes)
 
+### propose_owner_only
+
+<a id="propose_owner_only"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Only the owner of this install can read or answer job proposals, and this connection is not bound to the owner, so nothing was read or changed. | Job proposals read the owner's mail, calendar, open loops and agent history; a member-bound connection never sees them. | Ask the brain owner to run gbrain propose on the brain host. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/job-proposals.md#who-can-see-them](../../docs/guides/job-proposals.md#who-can-see-them)
+
 ### provenance_required
 
 <a id="provenance_required"></a>
@@ -5793,6 +5803,18 @@ More: [docs/guides/upgrades-auto-update.md#restart](../../docs/guides/upgrades-a
 
 More: [docs/guides/upgrades-auto-update.md#restart](../../docs/guides/upgrades-auto-update.md#restart)
 
+### restore_step_unsupported
+
+<a id="restore_step_unsupported"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| `gbrain backup restore` of a Rust brain stopped before it published anything: the archive holds work or state this runtime cannot make safe (unfinished write requests or recovery records, a purge that needs replay, a live OAuth client or local writer it cannot revoke yet, shared-skill publication it cannot switch off yet, a record kind it does not know), or the mode or addon cannot serve the restore. | A restored brain must not resume old work, bring purged content back or keep archived authority, and a Rust store cannot cancel requests with receipts or replay purges yet, so restore refuses by name instead of skipping the step. The restore target stays reserved with a private failed receipt and staging folder; the archive and the original brain are untouched, so running the same command again fails with restore_target_exists. | Read the reason: take a new backup of the original brain after pausing its writers, or restore with a newer release that supports the missing step, into a new absent --into. Never skip the quarantine. | user | `gbrain doctor --json` | 1 | no |
+
+Reasons: `purge_replay`, `purge_mirror_unreadable`, `pending_requests`, `recovery_required`, `archived_authority`, `shared_skill_state`, `unclassified_state`, `recovery_mode`, `restore_addon_too_old`.
+
+More: [docs/guides/troubleshooting.md#restore-step-unsupported](../../docs/guides/troubleshooting.md#restore-step-unsupported)
+
 ### result_too_large
 
 <a id="result_too_large"></a>
@@ -6259,6 +6281,16 @@ More: [docs/guides/conversation-archive.md#setup-history-import](../../docs/guid
 
 More: [docs/guides/repair.md#setup-hosted-connection](../../docs/guides/repair.md#setup-hosted-connection)
 
+### setup_household_unbound
+
+<a id="setup_household_unbound"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain setup --shape household was refused because the household template would set the brain to serve several people while this harness's connection stays bound to nobody (a shared stdio harness such as OpenClaw or Hermes is installed, or --no-stdio-member was given), so nothing was written. | On a brain that serves several people an unbound connection reads none of the household records, so the owner's own agent could not answer what needs doing at home, and every later setup run would refuse that connection. | Give the owner a key over HTTP (gbrain auth create <name> --member <owner>); or drop --no-stdio-member; or set up the owner alone with --household-members none. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/tutorials/household-brain.md#if-a-run-stops](../../docs/tutorials/household-brain.md#if-a-run-stops)
+
 ### setup_owner_conflict
 
 <a id="setup_owner_conflict"></a>
@@ -6270,6 +6302,26 @@ More: [docs/guides/repair.md#setup-hosted-connection](../../docs/guides/repair.m
 Reasons: `live_serve`, `unowned_entry`, `other_install`, `harness_lane`.
 
 More: [docs/guides/repair.md#setup-owner-conflict](../../docs/guides/repair.md#setup-owner-conflict)
+
+### setup_receipt_not_found
+
+<a id="setup_receipt_not_found"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A setup template status or resume named a receipt that is not on this machine (or none exists for this brain and source), so nothing was read or written. | A template run records each step and each key in a receipt under the brain's config directory; a status or resume reads only that record, so a missing one is never guessed. | Run the template again with --yes (every step is idempotent), or name a receipt this machine holds. Run: gbrain household template --json | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/tutorials/household-brain.md#if-a-run-stops](../../docs/tutorials/household-brain.md#if-a-run-stops)
+
+### setup_receipt_target_mismatch
+
+<a id="setup_receipt_target_mismatch"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A setup template status or resume named a receipt written for another brain, source or harness than the command names, so nothing was read or written. | A receipt names its target so a resume never changes a brain or source the person did not name, and a status never proves another target's keys. | Run the command with the receipt's own harness and source, or name a receipt of this target. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/tutorials/household-brain.md#if-a-run-stops](../../docs/tutorials/household-brain.md#if-a-run-stops)
 
 ### setup_serves_several
 

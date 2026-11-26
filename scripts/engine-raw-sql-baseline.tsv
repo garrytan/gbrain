@@ -8,6 +8,7 @@ src/cli/enforced-member.ts	execute_raw	6
 src/commands/access-read-by-nobody.ts	execute_raw	2
 src/commands/access-read-log.ts	execute_raw	4	GST-2476 gap 1: the access read log readers (access log, who-read) over the new access_read_log table (v331); the access area is still raw SQL (access.ts, access-rules.ts) and converts with it
 src/commands/access-rules.ts	execute_raw	4
+src/commands/household-template.ts	execute_raw	2	H2 household template: the member-key lookup and the revoke on a failed key-file write, the same two statements access-serves.ts runs for its member keys
 src/commands/access-serves.ts	execute_raw	8	came from master #9625 (shared company brains: owner setup, member keys), which landed after this ratchet was cut
 src/commands/access.ts	execute_raw	6
 src/commands/agent-logs.ts	execute_raw	1
@@ -666,6 +667,7 @@ src/core/oauth-grants.ts	sql_template	16
 src/core/oauth-provider.ts	sql_template	22
 src/core/onboard/checks.ts	execute_raw	5
 src/core/onboard/first-session.ts	execute_raw	3	first-session suggestion: the onboarding.first_session record compare-and-swap in config (insert and update) and the pointer read of recent world-visible pages under remoteReadFloorSql; converts with setup-history.ts
+src/core/onboard/propose.ts	execute_raw	7	lane 5 O2 job proposals: five bounded keyless detector reads over open_loops, meeting, email and conversation pages under the caller source scope, the prep-page probe, and the google-synced source check; converts when the detectors get engine-sql members
 src/core/onboard/checks.ts	sql_template	2
 src/core/onboard/impact-capture.ts	execute_raw	3
 src/core/onboard/mcp-onboarding.ts	execute_raw	1

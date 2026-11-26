@@ -63,7 +63,7 @@ import { claudeUserSettingsPath, type ClaudeHookEvent } from '../core/bootstrap/
 import { readHarnessReceiptState } from '../core/bootstrap/format.ts';
 import { smokeStdioRegistration } from './doctor/checks/harness-wiring.ts';
 import { finishFreshSetupMigrations } from './setup-migrations.ts';
-import { readServesStatus, sharedStdioHarness, servesAfterLayout, servesApply, servesLines, servesOk, servesPreflight, type EntryBinding, type ServesOutcome, type ServesPlan } from './setup-serves.ts';
+import { loginOwnerId, readServesStatus, sharedStdioHarness, servesAfterLayout, servesApply, servesLines, servesOk, servesPreflight, type EntryBinding, type ServesOutcome, type ServesPlan } from './setup-serves.ts';
 import type { McpSurface } from '../mcp/surface.ts';
 import {
   SETUP_CAPABILITIES,
@@ -193,13 +193,15 @@ interface SetupFlags {
   transcripts?: string | null;
   /** GST-2731: --team, the company part lives on a shared brain; setup prints the route and creates nothing for it. */
   team?: boolean;
+  /** H2, --shape household: --household-members, and --status [--receipt] or --resume <id> (household-template.ts). */
+  householdRun?: { members?: string; status: boolean; resume?: string; receipt?: string };
   /** Onboarding PR 1: --history, --history-dir, --history-decision and --no-extract (setup-history.ts). */
   historyImport: HistoryFlags;
   /** Onboarding PR 2: --no-suggestion turns the first-session suggestion off for this install (setup-suggestion.ts). */
   noSuggestion: boolean;
 }
 
-export const VALUE_FLAGS = new Set(['--shape', '--notes', '--docs', '--transcripts', '--surface', '--advertise', '--scope', '--name', '--source', '--gbrain-bin', '--workspace', '--skill-loading', '--agent', '--live-fraction', '--pins-route', '--owner-sender', '--suggest-in', '--serves', '--members', '--members-file', '--stdio-member', '--owner', ...HISTORY_VALUE_FLAGS]);
+export const VALUE_FLAGS = new Set(['--shape', '--notes', '--docs', '--transcripts', '--surface', '--advertise', '--scope', '--name', '--source', '--gbrain-bin', '--workspace', '--skill-loading', '--agent', '--live-fraction', '--pins-route', '--owner-sender', '--suggest-in', '--serves', '--members', '--members-file', '--stdio-member', '--owner', '--household-members', '--receipt', '--resume', ...HISTORY_VALUE_FLAGS]);
 
 function parseFlags(args: string[]): SetupFlags | string {
   const value = (flag: string): string | undefined => {
@@ -232,7 +234,12 @@ function parseFlags(args: string[]): SetupFlags | string {
   if (args.includes('--open-history') && serves !== 'several') return '--open-history applies to the people of --serves several';
   if (args.includes('--open-history') && args.includes('--labelled-only')) return 'pass --labelled-only (keep the history private) or --open-history (members read it), not both';
   const owner = value('--owner');
-  if (owner !== undefined && serves !== 'several') return '--owner names the brain owner of --serves several';
+  const household = value('--shape') === 'household';
+  if (owner !== undefined && serves !== 'several' && !household) return '--owner names the brain owner of --serves several or --shape household';
+  if (household && serves === 'several') return '--shape household sets up the people of the household itself; drop --serves several';
+  for (const f of ['--household-members', '--status', '--resume', '--receipt']) if (args.includes(f) && !household) return `${f} applies to --shape household`;
+  if (args.includes('--status') && args.includes('--resume')) return 'pass --status or --resume, not both';
+  if (args.includes('--receipt') && !args.includes('--status')) return '--receipt names the receipt --status reads; --resume takes the receipt id itself';
   if (owner !== undefined && !ACCESS_ID_RE.test(owner)) return `invalid --owner '${owner}'; a member id is lower-case letters, digits, '.', '_' and '-' (1-64 characters, starting with a letter or digit)`;
   let stdioMember: string | undefined;
   try { stdioMember = parseStdioMemberFlag(args); } catch (e) { return `${(e as Error).message}; nothing was written`; }
@@ -281,7 +288,7 @@ function parseFlags(args: string[]): SetupFlags | string {
   const skillLoading = skillResolver === 'on' || skillResolver === 'shadow' ? (cursor ? undefined : 'off') : flagLoading;
   return {
     harness: positionals[0],
-    dryRun: args.includes('--dry-run'),
+    dryRun: args.includes('--dry-run') || (household && !args.includes('--yes')),
     json: args.includes('--json'),
     remove: args.includes('--remove'),
     noHooks: args.includes('--no-hooks'),
@@ -311,6 +318,7 @@ function parseFlags(args: string[]): SetupFlags | string {
     ...(stdioMember !== undefined ? { stdioMember } : {}),
     noStdioMember,
     ...layout,
+    ...(household ? { householdRun: { members: value('--household-members'), status: args.includes('--status'), resume: value('--resume'), receipt: value('--receipt') } } : {}),
     historyImport,
     noSuggestion,
   };
@@ -450,6 +458,8 @@ export async function runSetup(args: string[], deps: { openclaw?: { bin?: string
     return 2;
   }
 
+  if (flags.householdRun?.status || flags.householdRun?.resume) return runHouseholdReceipt(flags, launcher, out);
+
   let cfg: GBrainConfig | null;
   try { cfg = loadConfig(); } catch (e) {
     process.stderr.write(`gbrain setup: this install's config cannot be read (${(e as Error).message}); run \`gbrain doctor\`.\n`);
@@ -537,6 +547,8 @@ export async function runSetup(args: string[], deps: { openclaw?: { bin?: string
     const servesPlan = servesPreflight(flags, launcher, 'claude-code', !!cfg, !!liveOwner?.ours, binding);
     if (servesPlan instanceof OperationError) return refuse(servesPlan, out);
     const tie = ownerTie(flags, servesPlan, binding, !!pluginOwner);
+    const unbound = householdTieRefusal(flags, servesPlan, binding, !!pluginOwner, tie, 'claude-code');
+    if (unbound) return refuse(unbound, out);
     if (tie) { binding = { member: tie, previous: binding.previous }; plan = { ...plan, stdioMember: tie }; found = inspectClaudeSetup(plan); target.stdio_member = tie; say(out, `note: ${tieNote(tie)}`); }
 
     const brainCreate = !cfg;
@@ -649,8 +661,25 @@ async function layoutFor(harness: SetupHarnessId, flags: SetupFlags, launcher: s
   const scope = flags.scope ?? 'user';
   const source = flags.source ?? (process.env.GBRAIN_SOURCE && isValidSourceId(process.env.GBRAIN_SOURCE) ? process.env.GBRAIN_SOURCE : null);
   const outcome = applyBrainLayout({ harness, scope, source, launcher, instructionsPath: instructions?.path ?? null, instructionsDeclined: instructions?.decision.value === 'declined',
-    flags: { brain: shape.brain, notes: shape.notes, docs: shape.docs, transcripts: shape.transcripts, team: shape.team, dryRun: flags.dryRun } });
+    flags: { brain: shape.brain, notes: shape.notes, docs: shape.docs, transcripts: shape.transcripts, team: shape.team, dryRun: flags.dryRun,
+      ...(shape.brain === 'household' ? { household: { members: flags.householdRun?.members, owner: flags.owner ?? loginOwnerId() ?? undefined } } : {}) } });
   return { outcome, notices: (base) => [...(ask && !shape.brain ? withBrainShape(base, brainShapeDecision(harness, undefined, scope, source)) : base), ...layoutNotices(outcome, harness, scope, source)] };
+}
+
+/**
+ * H2 (d8): `gbrain setup <harness> --shape household --status [--receipt <id>]` and `--resume <id> --yes`, as children of
+ * the launcher, each naming this harness and source so a receipt written for another target refuses.
+ */
+async function runHouseholdReceipt(flags: SetupFlags, launcher: string, out: Out): Promise<number> {
+  const h = flags.householdRun!;
+  const target = ['--harness', flags.harness!, ...(flags.source ? ['--source', flags.source] : [])];
+  const args = h.status ? ['household', 'template', '--status', ...(h.receipt ? ['--receipt', h.receipt] : []), ...target]
+    : ['household', 'template', '--resume', h.resume!, ...target, ...(flags.dryRun ? [] : ['--yes'])];
+  const child = Bun.spawnSync([launcher, ...args, ...(out.json ? ['--json'] : [])], { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe', env: process.env });
+  const stdout = child.stdout?.toString() ?? '';
+  process.stderr.write(child.stderr?.toString() ?? '');
+  if (out.json) await writeJsonDocument(stdout, (t) => process.stdout.write(t)); else process.stdout.write(stdout);
+  return child.exitCode ?? 1;
 }
 
 /** Run the `gbrain init --json` child that creates a new keyless brain; returns setup's form of its first-run bundle. */
@@ -785,6 +814,8 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
     const servesPlan = servesPreflight(flags, launcher, 'codex', !!cfg, !!liveOwner?.ours, binding);
     if (servesPlan instanceof OperationError) return refuse(servesPlan, out);
     const tie = ownerTie(flags, servesPlan, binding, !!pluginOwner);
+    const unbound = householdTieRefusal(flags, servesPlan, binding, !!pluginOwner, tie, 'codex');
+    if (unbound) return refuse(unbound, out);
     if (tie) { binding = { member: tie, previous: binding.previous }; plan = { ...plan, stdioMember: tie }; found = inspectCodexSetup(plan); target.stdio_member = tie; say(out, `note: ${tieNote(tie)}`); }
 
     const brainCreate = !cfg;
@@ -917,8 +948,23 @@ function entryBinding(flags: SetupFlags, previous: string | undefined): EntryBin
  * attendees. Never where a plugin serves the entry, a shared-stdio harness is installed, or --no-stdio-member is given.
  */
 function ownerTie(flags: SetupFlags, plan: ServesPlan, entry: EntryBinding, plugin: boolean): string | null {
+  if (flags.householdRun && !flags.noStdioMember && !entry.member && !plugin) return sharedStdioHarness() ? null : plan.status?.owner ?? flags.owner ?? loginOwnerId() ?? null;
   if (flags.serves !== 'several' || (flags.brain !== 'company' && flags.brain !== 'both') || flags.noStdioMember || entry.member || plugin || !plan.tie) return null;
   return sharedStdioHarness() ? null : plan.tie;
+}
+
+/**
+ * H2: --shape household with people besides the owner sets the brain to serve several people, so a harness entry it
+ * leaves bound to nobody would read none of the household records, and every later setup run would refuse it.
+ */
+function householdTieRefusal(flags: SetupFlags, plan: ServesPlan, entry: EntryBinding, plugin: boolean, tie: string | null, harness: string): OperationError | null {
+  if (!flags.householdRun || tie || entry.member || plugin || plan.status?.stdio_member || flags.householdRun.members?.trim() === 'none') return null;
+  const shared = sharedStdioHarness();
+  if (!shared && !flags.noStdioMember) return null;
+  const why = shared ? `${shared} is installed on this host, so setup ties no ${harness} connection to one person` : '--no-stdio-member leaves this connection bound to nobody';
+  return opError('setup_household_unbound', `The household template sets this brain to serve several people, and ${why}; the owner's own agent would then read none of the household records. Nothing was written.`,
+    shared ? `Give the owner a key over HTTP instead (gbrain auth create <name> --member <owner>); or run gbrain setup ${harness} --shape household --household-members none for the owner alone.`
+      : `Drop --no-stdio-member, or run gbrain setup ${harness} --shape household --household-members none for the owner alone.`);
 }
 
 const tieNote = (owner: string): string => `this connection reads as the brain owner ${owner} (serve --stdio-member ${owner}), so it reads every call; --no-stdio-member leaves it unbound`;
@@ -1342,7 +1388,9 @@ async function finish(out: Out, doc: {
     process.stderr.write(`gbrain setup: the ${k} import of ${i.dir} failed (${i.detail ?? 'unknown error'}). The rest of setup finished; fix that, then run: ${shellQuoteArgv(i.argv)}
 `);
   }
-  const code = skillsFailed(doc.skills ?? null) || doc.resolver?.error || !servesOk(doc.serves ?? null) || importsFailed.length ? 1 : doc.history?.exit ?? 0;
+  const hh = doc.dryRun ? undefined : doc.layout?.household;
+  const householdFailed = !!hh && (!hh.result || !!hh.result.error || hh.result.steps.some(s => s.state === 'blocked'));
+  const code = skillsFailed(doc.skills ?? null) || doc.resolver?.error || !servesOk(doc.serves ?? null) || importsFailed.length || householdFailed ? 1 : doc.history?.exit ?? 0;
   const plugins = harness === 'claude-code' && !doc.remove ? claudeCodeChannelPlugins() : [];
   const exposure = plugins.length ? sharedTokenNotice({ kind: 'stdio', harness }, { channelPlugins: plugins, serves: exposureServesVia(doc.launcher) }) : null;
   const notices = exposure ? [...doc.notices, exposure] : doc.notices;
