@@ -34,7 +34,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect } from 'bun:test';
-import { parityArms, restrictFolder } from './harness.ts';
+import { parityArms, restrictFolder, type EngineMethod } from './harness.ts';
 import { isCapabilityRefusal } from './arm-capabilities.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { withEnv } from '../helpers/with-env.ts';
@@ -151,6 +151,34 @@ describe('engine parity: remote mention links', () => {
       .sort((a, b) => a.slug.localeCompare(b.slug));
     expect(rows.map(r => `${r.slug}:${r.readable}`)).toEqual(['companies/acme-example:true', 'notes/links-origin:true', 'people/alice-example:false']);
     return rows;
+  });
+
+  // readPageHiddenFromWriter: whether some row of a slug, live or soft-deleted, fails the writer's read policy (member access, then the
+  // privacy part when `hide`); false when the slug has no row. A write over a slug with no live row is judged on it (page-visibility.ts
+  // hiddenUnder), so a soft-deleted page answers the same on every arm. The member is not typed yet on the base (it is cast), and its
+  // answers are the old statement's: a row that names nobody the writer is hides it, a private tombstone hides only under `hide`.
+  parityTest('readPageHiddenFromWriter judges a live, a soft-deleted and an absent page like the SQL engines', {
+    methods: ['putPage', 'softDeletePage', 'readPageHiddenFromWriter' as unknown as EngineMethod],
+  }, async (engine) => {
+    const put = (slug: string, frontmatter: Record<string, unknown>) => engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `${slug} fixture.`, timeline: '', frontmatter }, { sourceId: 'default' });
+    const rows = { 'notes/open': {}, 'notes/names-bob': { readable_by: ['bob-example'] }, 'notes/names-alice': { readable_by: ['alice-example'] }, 'notes/names-carol': { readable_by: ['carol-example'] },
+      'notes/private': { visibility: 'private' }, 'notes/private-names-bob': { visibility: 'private', readable_by: ['bob-example'] } } as const;
+    for (const [slug, frontmatter] of Object.entries(rows)) { await put(slug, frontmatter); await put(`gone/${slug}`, frontmatter); await engine.softDeletePage(`gone/${slug}`, { sourceId: 'default' }); }
+    const policies = {
+      bob: { identities: [['member:bob-example']], satisfiedRuleIds: [], folderCoverage: [], owner: false, labelledOnly: false },
+      carol: { identities: [['member:carol-example']], satisfiedRuleIds: [], folderCoverage: [], owner: false, labelledOnly: true },
+      nobody: { identities: [], satisfiedRuleIds: [], folderCoverage: [], owner: false, labelledOnly: false },
+    };
+    const ask = engine as unknown as { readPageHiddenFromWriter(sourceId: string, slug: string, policy: unknown, hidePrivate: boolean): Promise<boolean> };
+    const answers: Record<string, boolean> = {};
+    for (const [name, policy] of Object.entries(policies)) for (const hide of [true, false]) {
+      for (const slug of [...Object.keys(rows), ...Object.keys(rows).map(s => `gone/${s}`), 'notes/absent']) answers[`${name}/${hide ? 'hide' : 'show'}/${slug}`] = await ask.readPageHiddenFromWriter('default', slug, policy, hide);
+    }
+    // A soft-deleted row that names readers other than the writer hides the slug, an absent slug hides nothing, and a private tombstone hides only under `hide`.
+    expect({ goneNamesAlice: answers['bob/hide/gone/notes/names-alice'], goneNamesBob: answers['bob/hide/gone/notes/names-bob'], absent: answers['bob/hide/notes/absent'],
+      privateHidden: answers['bob/hide/gone/notes/private'], privateShown: answers['bob/show/gone/notes/private'], goneNamesCarol: answers['carol/hide/gone/notes/names-carol'], goneOpenForCarol: answers['carol/hide/gone/notes/open'] })
+      .toEqual({ goneNamesAlice: true, goneNamesBob: false, absent: false, privateHidden: true, privateShown: false, goneNamesCarol: false, goneOpenForCarol: true });
+    return answers;
   });
 
   parityTest('the facts backstop extraction reads see a page\'s waiting and finished facts-absorb jobs', {

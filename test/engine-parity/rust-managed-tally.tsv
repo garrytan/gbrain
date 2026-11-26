@@ -197,7 +197,7 @@ test/engine-parity/journal-purge-terminal.test.ts	2	0
 test/engine-parity/journal-typed-sites.test.ts	7	0
 test/engine-parity/keyword-visibility.test.ts	7	0
 test/engine-parity/label-guard-tiers.test.ts	2	0
-test/engine-parity/labelled-only-policy.test.ts	17	0
+test/engine-parity/labelled-only-policy.test.ts	26	0
 test/engine-parity/large-page.test.ts	3	0
 test/engine-parity/lifecycle.test.ts	10	1
 test/engine-parity/link-read-options.test.ts	17	0
@@ -232,7 +232,7 @@ test/engine-parity/owner-only-marks.test.ts	1	1
 test/engine-parity/owner-only-reads.test.ts	4	0
 test/engine-parity/owner-only-row-delete-marks.test.ts	2	0
 test/engine-parity/owner-recovery-scans.test.ts	5	0
-test/engine-parity/owner-write-privacy.test.ts	5	0
+test/engine-parity/owner-write-privacy.test.ts	7	0
 test/engine-parity/page-delete-slug-stores.test.ts	2	0
 test/engine-parity/page-embedding-budget.test.ts	9	0
 test/engine-parity/page-fence-writes.test.ts	6	0
@@ -297,7 +297,7 @@ test/engine-parity/remember-members.test.ts	9	0
 test/engine-parity/remember-meta.test.ts	3	0
 test/engine-parity/remember-supersede.test.ts	3	0
 test/engine-parity/remember-whole.test.ts	1	0
-test/engine-parity/remote-links.test.ts	9	0
+test/engine-parity/remote-links.test.ts	10	0
 test/engine-parity/remote-policy.test.ts	2	0
 test/engine-parity/repair-aliases.test.ts	1	0
 test/engine-parity/repair-bookkeeping.test.ts	7	1
