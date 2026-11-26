@@ -51,6 +51,7 @@ import {
   privateFactFilterForCaller,
   privateFactFilterForReader,
   privatePagesFilterFragment,
+  privacyPartSql,
   remoteProvenanceFloorSql,
   remoteReadFloorSql,
   readPolicyFragment,
@@ -138,6 +139,16 @@ const FACT_FRAGMENTS: Readonly<Record<StoreFactFragment, () => string>> = {
 function checkFragment(member: string, mode: string, rendered: () => string, labelled: (() => string) | undefined): void {
   if (!labelled) throw accessSelfCheckMismatch(member, mode, '$fragment (no label)');
   if (normalizeConceptInputs(rendered()) !== normalizeConceptInputs(labelled())) throw accessSelfCheckMismatch(member, mode, '$fragment');
+}
+
+/** The no-caller page policy's flags (`pagePolicyFlags(privatePagesFilterFragment('p'))`), derived by the store under the multi-user switch. */
+export function plainPageFlags(member: string): StorePrivacyPolicy {
+  return selfChecked(member, { mode: 'plain_page_flags' }, () => pagePolicyFlags(privatePagesFilterFragment('p')));
+}
+
+/** Whether the privacy part honours the aliases (`pagePolicyFlags(privacyPartSql('p')).honorAliases`), derived by the store under the multi-user switch. */
+export function privacyPartAliases(member: string): boolean {
+  return selfChecked(member, { mode: 'privacy_part_aliases' }, () => pagePolicyFlags(privacyPartSql('p')).honorAliases);
 }
 
 /** The page aliases the policies judge: the fact policy's two, and `p` of a page read. */
@@ -280,7 +291,7 @@ export function storeMemberReadPolicy(member: string, q: { owner: boolean; ident
 
 function storeMemberReadPolicyRendered(member: string, q: { owner: boolean; identity: readonly string[]; satisfied: readonly string[] }): StorePrivacyPolicy {
   if (q.satisfied.length > 0) refuseMember(member, 'a member page whose reader meets a folder rule');
-  if (q.owner) return storeOwnerReadPolicy(member, q.identity);
+  if (q.owner) return storeOwnerReadPolicyRendered(member, q.identity);
   const text = normalizeConceptInputs(readPolicyFragment('p', q.identity, true, q.satisfied));
   const open = currentCallerAccess().restricted === false;
   const reference = renderForStoreCaller(open ? { restricted: false } : {}, () => readPolicyFragment('p', q.identity, true, []));
@@ -298,7 +309,7 @@ function storeMemberReadPolicyRendered(member: string, q: { owner: boolean; iden
  * same fragment for a fresh record of the caller's remote policy. An identity with no valid member principal renders
  * `FALSE` (the owner reads no page but its own) and refuses, and so does an identity the fragment drops as invalid.
  */
-function storeOwnerReadPolicy(member: string, identity: readonly string[]): StorePrivacyPolicy {
+function storeOwnerReadPolicyRendered(member: string, identity: readonly string[]): StorePrivacyPolicy {
   const text = normalizeConceptInputs(ownerReadPolicyFragment('p', identity, []));
   const reference = normalizeConceptInputs(renderForStoreCaller({}, () => ownerReadPolicyFragment('p', identity, [])));
   const named = identity.every(id => text.includes(`'${id}'`));

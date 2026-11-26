@@ -160,6 +160,23 @@ describe('a multi-user session on a Rust store', () => {
     session.release();
   });
 
+  test('the routed policy builders use the store derivation in a session call', async () => {
+    let derived = 0;
+    const addon = { deriveAccessPolicy: (ctx: unknown) => { derived++; return (engine.addon as unknown as { deriveAccessPolicy(c: unknown): unknown }).deriveAccessPolicy(ctx); } };
+    const session = await openPrincipalSession(store(), 'secret-owner', addon);
+    const local = await engine.listOriginClaimants('default', [1]);
+    const before = derived;
+    const remote = await session.run('listOriginClaimants', { readOnly: false }, () => engine.listOriginClaimants('default', [1]));
+    expect(remote).toEqual(local);
+    expect(derived).toBeGreaterThan(before);
+    // A store that refuses the no-caller flags refuses the call: no TypeScript flags are used instead.
+    const refusing = await openPrincipalSession(store(), 'secret-owner', { deriveAccessPolicy: () => ({ $refuse: true, why: 'test refusal' }) });
+    const err = await refusing.run('listOriginClaimants', { readOnly: false }, () => engine.listOriginClaimants('default', [1])).catch(e => e);
+    expect((err as { code?: string }).code).toBe('engine_capability_missing');
+    session.release();
+    refusing.release();
+  });
+
   test('a session call on a read-only key cannot write, and a revoked session runs nothing', async () => {
     const session = await openPrincipalSession(store(), 'secret-owner-read');
     expect(await code(session.run('setConfig', { readOnly: false }, () => engine.setConfig('x', 'y')))).toBe('permission_denied');

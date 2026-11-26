@@ -14,11 +14,12 @@
 import type { LinksRearm, LinkTargetPage, OwnedLink, WriterReadPolicy } from '../../engine-sql/remote-links.ts';
 import { renderWriterReadPolicy } from '../../engine-sql/remote-links.ts';
 import type { RustEngine } from '../../rust-engine.ts';
-import { callerAccessAllowedSql, privacyPartSql } from '../../search/private-visibility.ts';
+import { callerAccessAllowedSql } from '../../search/private-visibility.ts';
 import type { StoreBrain } from '../store.ts';
 import { mapStoreError } from '../store-errors.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
-import { ownerOnlyFormIn, pagePolicyFlags, renderForStoreCaller, type StorePrivacyPolicy } from './private-provenance.ts';
+import { ownerOnlyFormIn, privacyPartAliases, renderForStoreCaller, type StorePrivacyPolicy } from './private-provenance.ts';
+import { selfChecked } from '../access-self-check.ts';
 
 /** The links transaction's settings: the store has no lock wait or statement limit. Refuses on an ended transaction. */
 export const setEffectTransactionLimits = async function setEffectTransactionLimits(this: RustEngine, _brain: StoreBrain): Promise<void> {
@@ -38,8 +39,16 @@ export const deleteOwnedLinks: StoreMember<[originPageId: number | string, linkS
       brain.deleteOwnedLinks(String(originPageId), linkSource, ids.map(String))));
   };
 
-/** The store policy for the writer's read policy, or a refusal. */
-function writerPolicy(policy: WriterReadPolicy): StorePrivacyPolicy {
+/** The store policy for the writer's read policy, or a refusal (derived by the store under the multi-user switch). */
+export function writerPolicy(policy: WriterReadPolicy): StorePrivacyPolicy {
+  const plain = {
+    identities: policy.identities.map(i => [...i]), satisfiedRuleIds: [...policy.satisfiedRuleIds],
+    folderCoverage: policy.folderCoverage.map(c => ({ source_id: c.source_id, prefix: c.prefix })), owner: policy.owner, labelledOnly: policy.labelledOnly,
+  };
+  return selfChecked('readLinkTargetPages', { mode: 'writer_policy', policy: plain }, () => writerPolicyRendered(policy));
+}
+
+function writerPolicyRendered(policy: WriterReadPolicy): StorePrivacyPolicy {
   const text = renderWriterReadPolicy(policy, 'p', false);
   const off = { honorAliases: false, entityPrivacy: false, ownerOnly: ownerOnlyFormIn(text, 'pages', 'p') };
   const fragment = (record: Parameters<typeof renderForStoreCaller>[0]) =>
@@ -64,7 +73,7 @@ export const readLinkTargetPages: StoreMember<[sourceId: string, slugs: readonly
   async (brain, sourceId, slugs, policy) => {
     const storePolicy = policy ? writerPolicy(policy) : null;
     if (!slugs.length) return [];
-    const { honorAliases } = pagePolicyFlags(privacyPartSql('p'));
+    const honorAliases = privacyPartAliases('readLinkTargetPages');
     return storeCall({ member: 'readLinkTargetPages', sourceId }, () =>
       brain.readLinkTargetPages(sourceId, [...slugs], storePolicy, honorAliases));
   };

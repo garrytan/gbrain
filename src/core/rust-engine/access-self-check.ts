@@ -31,7 +31,14 @@ export type AccessDeriveRequest =
   | { mode: 'member_access' }
   | { mode: 'remote_floor' }
   | { mode: 'visibility'; list?: string[] }
-  | { mode: 'privacy_part_aliases' };
+  | { mode: 'privacy_part_aliases' }
+  | { mode: 'plain_page_flags' }
+  | { mode: 'access_part_plain' }
+  | { mode: 'member_access_policy'; identity?: string[]; satisfied: string[] }
+  | { mode: 'row_owner_only' }
+  | { mode: 'open_page_floor' }
+  | { mode: 'writer_policy'; policy: { identities: string[][]; satisfiedRuleIds: string[]; folderCoverage: Array<{ source_id: string; prefix: string }>; owner: boolean; labelledOnly: boolean } }
+  | { mode: 'snapshot_policy'; identity: string[]; privateReadableSources: string[] };
 
 type Deriver = (ctx: unknown) => unknown;
 /** The store a served member runs on, as the self-check reads it: its multi-user answer and the addon's derivation. */

@@ -22,8 +22,7 @@ import type { EntityKeyRow, EntityKeyRowsOpts } from '../../engine-sql/entity-ke
 import type {
   ApplyIdentityDecisionsInput, ApplyIdentityDecisionsResult, IdentityDecisionsRead, IdentityMemberRef,
 } from '../../engine-sql/identity-decisions.ts';
-import { privatePagesFilterFragment } from '../../search/private-visibility.ts';
-import { pagePolicyFlags, storePagePolicy } from './private-provenance.ts';
+import { plainPageFlags, storePagePolicy } from './private-provenance.ts';
 
 /**
  * `confidence` is DOUBLE PRECISION on the SQL engines, which keep NaN and ±Infinity and read them back as numbers.
@@ -100,7 +99,7 @@ export const listIdentityDecisions: StoreMember<[], IdentityDecisionsRead> = asy
 export const listRestrictedIdentityMembers: StoreMember<[members: ReadonlyArray<IdentityMemberRef>], IdentityMemberRef[]> = async (brain, members) => {
   if (!members.length) return [];
   return storeCall({ member: 'listRestrictedIdentityMembers' }, () => brain.listRestrictedIdentityMembers(
-    members.map(m => ({ source_id: m.source_id, slug: m.slug })), pagePolicyFlags(privatePagesFilterFragment('p'))));
+    members.map(m => ({ source_id: m.source_id, slug: m.slug })), plainPageFlags('listRestrictedIdentityMembers')));
 };
 
 /** Writes and removes decisions and reconciles the 'dedupe:auto' and 'dedupe:confirm' identity rows in one store write. */

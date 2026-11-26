@@ -39,6 +39,7 @@ import type { StoreBrain } from '../store.ts';
 import { mapStoreError } from '../store-errors.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
 import { judgeWidenedCaller, renderForStoreCaller, storePagePolicy, storePageTextPolicy } from './private-provenance.ts';
+import { selfChecked } from '../access-self-check.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 
@@ -178,6 +179,23 @@ export const listValidTimeIdentities: Member<'listValidTimeIdentities'> = (brain
 /** The snapshot visibility the pick reports for a version row, in the current context. */
 const snapshotVisibleSql = () => `${callerReadersAllowedSql('pv', 'snapshot')} AND ${privacyForCaller('p', privateSnapshotFilterFragment('pv'))}`;
 
+/** snapshotServedRendered, derived by the store under the multi-user switch. */
+export function snapshotServed(member: string, readers: { identity: readonly string[]; privateReadableSources: readonly string[] }): true {
+  return selfChecked(member, { mode: 'snapshot_policy', identity: [...readers.identity], privateReadableSources: [...readers.privateReadableSources] },
+    () => snapshotServedRendered(member, readers));
+}
+
+/** The caller's snapshot text is the no-record one or the canonical one for the page policy's readers, or a refusal. */
+function snapshotServedRendered(member: string, readers: { identity: readonly string[]; privateReadableSources: readonly string[] }): true {
+  const snapshotServed = judgeWidenedCaller(() => {
+    const text = snapshotVisibleSql();
+    if (text === withoutCallerAccess(snapshotVisibleSql)) return true;
+    return text === renderForStoreCaller({ ...readers, hidePrivate: true } as never, snapshotVisibleSql) || undefined;
+  });
+  if (!snapshotServed) refuseMember(member, 'a caller whose snapshot policy is not the canonical one for its readers');
+  return true;
+}
+
 const asDate = (v: unknown): Date | null => (typeof v === 'string' ? new Date(v) : null);
 
 export const pickValidTimeEdition: Member<'pickValidTimeEdition'> = async (brain, spec) => {
@@ -189,12 +207,7 @@ export const pickValidTimeEdition: Member<'pickValidTimeEdition'> = async (brain
   const policy = storePageTextPolicy(member, () => privatePagesFilterForCaller('p'), { callerReaders: true, fragment: 'caller' });
   // The store judges a version by the page policy's readers: the caller's snapshot text must be the canonical one for them.
   const readers = { identity: policy.identity ?? [], privateReadableSources: policy.privateReadableSources ?? [] };
-  const snapshotServed = judgeWidenedCaller(() => {
-    const text = snapshotVisibleSql();
-    if (text === withoutCallerAccess(snapshotVisibleSql)) return true;
-    return text === renderForStoreCaller({ ...readers, hidePrivate: true }, snapshotVisibleSql) || undefined;
-  });
-  if (!snapshotServed) refuseMember(member, 'a caller whose snapshot policy is not the canonical one for its readers');
+  snapshotServed(member, readers);
   const got = await storeCall({ member }, () => brain.pickValidTimeEdition({
     pageId: spec.pageId, asOf: spec.asOf, excludePrivate: spec.excludePrivate, pinOrd: spec.pinOrd, inlineMaxBytes: spec.inlineMaxBytes,
     policy,
