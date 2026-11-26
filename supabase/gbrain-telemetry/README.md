@@ -25,6 +25,11 @@ The ceiling is one bucket shared by every caller, so one caller can fill it. The
 
 ## Applying it
 
+**Don't deploy until the forget withdrawal marker ships.** Two known gaps have to be fixed in a follow-up first, and until that lands nobody should deploy these functions or be asked to turn telemetry on:
+
+- `gbrain telemetry forget` can race an ingest that is still running. If the client gives up waiting but the server finishes the insert afterwards, a forgotten install's record can come back. The fix is a withdrawal marker that forget writes and the ingest checks.
+- Commands that end through `process.exit` record nothing, which covers most `gbrain init` failures and failed upgrade migrations, so setup success would read too high. The fix is recording the outcome from the exit path too.
+
 1. Apply `migrations/G001_gbrain_telemetry.sql` as the project owner (psql or the dashboard SQL editor). It runs in one transaction and is safe to run twice.
 2. Deploy both functions with JWT verification off (`supabase functions deploy gbrain-telemetry-ingest --no-verify-jwt` and the same for `gbrain-telemetry-pulse`, or paste each `index.ts` into the dashboard editor and turn off "Enforce JWT verification"; each file is self-contained). The client sends only the publishable key in an `apikey` header, which is not a JWT, so with verification on every request is refused with 401 before the function runs.
 3. Run `GBRAIN_TELEMETRY_URL=… GBRAIN_TELEMETRY_KEY=… bash supabase/gbrain-telemetry/verify.sh` and keep its `VERDICT:` line.
