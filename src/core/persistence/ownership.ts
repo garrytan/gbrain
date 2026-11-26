@@ -16,7 +16,7 @@ import { repairWedgedReservation, resolveCoordinationLock } from './coordination
 import type { RawSqlEngine, SqlEngine, WriteRequest } from './model.ts';
 import type { PublicationJournalStore, WorktreeOwnerRow } from '../engine-sql/publication-journal.ts';
 import { tryAcquireNativeLock, type NativeLockHandle } from './native-lock.ts';
-import { managedLeasesApply, managedLock } from './managed-lock.ts';
+import { leaseEngine, managedLeasesApply, managedLock } from './managed-lock.ts';
 import { acquireShared, deferToLease, exclusiveAcquired, foreignWaiterAhead, joinLease, noteWaiting, yieldLease } from './worktree-lease.ts';
 import { managedFilesystemDatastorePath, refreshManagedFilesystemRoots } from './filesystem-guard.ts';
 import { assertPhysicalRoot, claimPhysicalRoot, preparePhysicalRootTransfer, readPhysicalRootReservation, restampPhysicalRoot } from './physical-root.ts';
@@ -384,7 +384,7 @@ export async function prepareWriterTransfer(engine: BrainEngine, sourceId: strin
   if (!binding.coordination_path) throw opError('recovery_required', 'The recorded coordination path is missing.',
     `Source ${sourceId}'s host binding has no coordination lock path, so no transfer was prepared. Inspect writer status and show it to the user; repairing the binding is a deliberate topology change (docs/architecture/topologies.md).`,
     { fix: writerStatusFix(sourceId) });
-  const lock = opts.selfTransfer ? await managedLock(engine, 'worktree', binding.worktree_id, { path: binding.coordination_path, waitMs: 5000 }) : await acquireWorktree(binding, 5000, undefined, engine);
+  const lock = opts.selfTransfer ? await managedLock(engine, 'worktree', binding.worktree_id, { path: binding.coordination_path, waitMs: 5000 }) : await acquireWorktree(binding, 5000, undefined, leaseEngine(engine)); // an ordinary prepare never re-stamps a drifted device, as before slice 3
   if (!lock) throw opError('write_pending', 'The worktree is busy; retry transfer preparation.',
     `A write still holds source ${sourceId}'s worktree lock, so nothing was prepared. Wait until writer status shows no write in flight, then run transfer prepare again.`,
     { fix: writerStatusFix(sourceId) });

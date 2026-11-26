@@ -34,11 +34,13 @@ const strip = (text: string) => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^
 describe('managed modules take their locks through managedLock', () => {
   for (const file of MANAGED_MODULES) {
     test(`${file}: only the named raw native-lock calls remain`, () => {
+      // test-reads-source-ok[structural]: a source-text tripwire by design: a raw native-lock call in a managed module must go through managedLock.
       const calls = (strip(readFileSync(join(PERSISTENCE, file), 'utf8')).match(RAW) ?? []).length;
       expect({ file, calls }).toEqual({ file, calls: ALLOWED_RAW[file]?.calls ?? 0 });
     });
   }
   test('the seam names the three kinds of managed lock and the lease name form', () => {
+    // test-reads-source-ok[structural]: the seam's exported names and lease name form are the contract this guard pins, as the module guard above does.
     const seam = readFileSync(join(PERSISTENCE, 'managed-lock.ts'), 'utf8');
     expect(seam).toContain("export type ManagedKind = 'topology' | 'worktree' | 'refresh';");
     expect(seam).toContain('`managed:${kind}:${id}`');

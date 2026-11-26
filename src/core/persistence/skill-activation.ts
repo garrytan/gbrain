@@ -12,6 +12,7 @@ import { blockingEffectFrom, blockingEffectHint, blockingRequestHint, notQuiesce
 import { isRustBrain, rustActivate } from '../shared-skills/rust-publication.ts';
 import { capabilityMissing } from '../rust-engine/errors.ts';
 import { NOT_PAGE_EMBEDDING_LEASE } from '../page-embedding-lease.ts';
+import { leaseEngine } from './managed-lock.ts';
 
 const registrationRequired = () => opError('writer_registration_required', 'Shared publication requires a registered canonical source root.',
   'No active source has a registered canonical owner, so shared skill publication was not enabled. Check writer status; claiming a source root is a deliberate topology change the operator reviews.',
@@ -65,7 +66,7 @@ export async function activateSharedSkillPersistence(engine: BrainEngine,
   const locks: NativeLockHandle[] = [];
   try {
     for (const binding of [...new Map(initial.map(row => [row.worktree_id, row])).values()]) {
-      const lock = await acquireWorktree(binding, 0, undefined, engine, { yieldLanes: true });
+      const lock = await acquireWorktree(binding, 0, undefined, leaseEngine(engine), { yieldLanes: true });
       if (!lock) throw quiescence();
       locks.push(lock);
     }

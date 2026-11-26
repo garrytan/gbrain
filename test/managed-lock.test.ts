@@ -23,7 +23,7 @@ import { openRustEngine, type RustEngine } from '../src/core/rust-engine.ts';
 import { rustLeases, type WriteOrigin } from '../src/core/rust-engine/store-members/leases.ts';
 import { hostRegistrationOf } from '../src/core/persistence/host-fence.ts';
 import { ensureProcessRegistration } from '../src/core/persistence/managed-registration.ts';
-import { managedLock, managedLockLost, probeNativeLock } from '../src/core/persistence/managed-lock.ts';
+import { leaseEngine, managedLock, managedLockLost, probeNativeLock } from '../src/core/persistence/managed-lock.ts';
 import { heldManagedOperations } from '../src/core/persistence/managed-operations.ts';
 import { withEnv } from './helpers/with-env.ts';
 
@@ -87,6 +87,15 @@ describe('managedLock off a multi-user store', () => {
       expect(hostRegistrationOf(engine)).toBeNull();
       expect(heldManagedOperations(engine)).toEqual([]);
     });
+  });
+  // A caller that never handed the lock an engine must not start re-stamping a drifted device because it now hands one over for the lease.
+  test('leaseEngine withholds an engine that is not a multi-user Rust brain, so the lock never re-stamps for it', () => {
+    expect(leaseEngine(undefined)).toBeUndefined();
+    expect(leaseEngine({} as never)).toBeUndefined();
+  });
+  withAddon('leaseEngine hands back a plain Rust engine as nothing and a multi-user one as itself', async () => {
+    await withBrain(false, async (engine) => { expect(leaseEngine(engine as never)).toBeUndefined(); });
+    await withBrain(true, async (engine) => { expect(leaseEngine(engine as never)).toBe(engine as never); });
   });
 });
 

@@ -291,7 +291,7 @@ or a physical projection that leaves attribution untouched):
 - `src/core/persistence/prepared-maintenance.ts` (5): managed maintenance request preparer (consolidation closes an unfenced fact in the database and a fenced one from its published fence cell; a held move clears the row number of the struck held rows it removes from their holding page).
 - `src/core/persistence/semantic-pages.ts` (1): `add_timeline_entry` request preparer.
 - `src/core/persistence/sync-image.ts` (2): managed sync image request preparer; a Git rename retires the old page inside the same publication.
-- `src/core/persistence/sync-prepare.ts` (4): managed sync request preparer.
+- `src/core/persistence/sync-prepare.ts` (3): managed sync request preparer.
 - `src/core/persistence/sync-streamed.ts` (1): the streamed sync of a file over the single-string ceiling moves a renamed page (`updateSlug`) in its request's apply, inside the coordinated publication.
 - `src/core/persistence/takes-prepare.ts` (2): takes request preparer.
 - `src/core/repair/atoms-restore.ts` (2): the unmanaged `gbrain repair atoms-restore` apply archives the retired atom's version, restores it and drops its `retired_by`/`retired_at` stamp in one `maintenanceTransaction`; managed brains publish a `managed_maintenance_restore_reextract_atom` request instead.
