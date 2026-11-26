@@ -121,3 +121,19 @@ export async function insertCalibrationProfile(tx: Raw, row: CalibrationProfileI
     ],
   );
 }
+
+/** `undo-wave`: how many profiles a wave wrote (`dryRun`), or delete them and say how many went. */
+export async function purgeCalibrationProfilesByWave(tx: Raw, spec: { waveVersion: string; dryRun: boolean }): Promise<number> {
+  if (spec.dryRun) {
+    const counted = await tx.executeRaw<{ count: number | string }>(
+      `SELECT COUNT(*)::int AS count FROM calibration_profiles WHERE wave_version = $1`,
+      [spec.waveVersion],
+    );
+    return Number(counted[0]?.count ?? 0);
+  }
+  const deleted = await tx.executeRaw<{ id: number | string }>(
+    `DELETE FROM calibration_profiles WHERE wave_version = $1 RETURNING id`,
+    [spec.waveVersion],
+  );
+  return deleted.length;
+}

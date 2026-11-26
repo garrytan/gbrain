@@ -40,19 +40,31 @@ test('doctor warns at 80% of a cumulative cap and the refusal names the key and 
 
 test('the one-year capacity hint uses the sampled interval, not a one-day floor', async () => {
   const { oneYearCapacity } = await import('../src/core/persistence/limits.ts');
-  const engine = { executeRaw: async (sql: string) => sql.includes('persistence_requests') ? [{ admissions: 1000, age_seconds: 8640 }] : [] };
+  const { readAdmissionRate } = await import('../src/core/engine-sql/persistence-journal.ts');
+  const engine: Record<string, unknown> = { executeRaw: async (sql: string) => sql.includes('persistence_requests') ? [{ admissions: 1000, age_seconds: 8640 }] : [] };
+  // The sample reads through the typed member; its statement runs on the fake executeRaw.
+  engine.readAdmissionRate = (principal: { kind: string; id: string } | null, opts?: { sample?: boolean }) => readAdmissionRate(engine as never, principal, opts);
   expect(await oneYearCapacity(engine as never, 'principal:local_cli:example', 'LifetimeIds', 250_000, 250_000)).toBe(250_000 + 10_000 * 365);
 });
 
 test('doctor emits one command per brain-wide key with the largest value any principal needs', async () => {
   const { checkPersistenceCapacity } = await import('../src/commands/doctor/checks/persistence-capacity.ts');
   const counter = (key: string) => ({ key, outstanding_count: '0', intent_bytes: '0', lifetime_ids: '9', terminal_bytes: '0', recovery_bytes: '0' });
-  const engine = { executeRaw: async (sql: string, params: unknown[] = []) => {
+  const { readCapacityForecastInputs } = await import('../src/core/engine-sql/persistence-housekeeping.ts');
+  const engine: Record<string, unknown> = { executeRaw: async (sql: string, params: unknown[] = []) => {
     if (sql.includes('FROM persistence_counters')) return [counter('principal:local_cli:fast'), counter('principal:local_cli:slow')];
-    if (sql.includes("LIKE 'persistence.limits.%'")) return [{ key: 'persistence.limits.principal_lifetime_ids', value: '10' }];
     if (sql.includes('persistence_requests')) return [{ admissions: 1000, age_seconds: params[1] === 'fast' ? 8640 : 864_000 }];
     return [];
-  } };
+  }, readJournalLimitRows: async () => [{ key: 'persistence.limits.principal_lifetime_ids', value: '10' }, { key: null, value: null }],
+  getConfigValues: async () => [] };
+  // The forecast reads through the typed member; the real statements run on the fake executeRaw.
+  engine.readCapacityForecastInputs = (opts?: { light?: boolean }) => readCapacityForecastInputs(engine as never, opts);
+  const { readAdmissionRate } = await import('../src/core/engine-sql/persistence-journal.ts');
+  engine.readAdmissionRate = (principal: { kind: string; id: string } | null, opts?: { sample?: boolean }) => readAdmissionRate(engine as never, principal, opts);
+  const dp = await import('../src/core/engine-sql/doctor-persistence.ts');
+  const raw = (async (sql: string, params?: unknown[]) => (engine.executeRaw as (s: string, p?: unknown[]) => Promise<never[]>)(sql, params)) as never;
+  engine.listCapacityCounters = () => dp.listCapacityCounters(raw);
+  engine.listOutstandingHolders = (principal: [string, string] | null) => dp.listOutstandingHolders(raw, principal);
   const check = await checkPersistenceCapacity(engine as never);
   expect(check.status).toBe('warn');
   expect((check.details as { commands: string[] }).commands).toEqual(['gbrain config set persistence.limits.principal_lifetime_ids 3650009']);
