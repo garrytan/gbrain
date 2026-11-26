@@ -57,6 +57,25 @@ describe('computeExtractHealthCheck — empty + happy paths', () => {
 });
 
 describe('computeExtractHealthCheck — WARN paths', () => {
+  test('#10397: the reason breakdown reads the same UTC 7-day window as the halt totals', async () => {
+    await clearRollup();
+    // A session zone whose date differs from UTC's right now: UTC+14 from 10:00 UTC, else UTC-11.
+    const zone = new Date().getUTCHours() >= 10 ? 'Pacific/Kiritimati' : 'Pacific/Pago_Pago';
+    await engine.transaction(async tx => {
+      await tx.executeRaw(`SELECT set_config('TimeZone', $1, true)`, [zone]);
+      const [clock] = await tx.executeRaw<{ utc: string; session: string }>(
+        `SELECT (now() AT TIME ZONE 'UTC')::date::text AS utc, CURRENT_DATE::text AS session`, []);
+      expect(clock!.session).not.toBe(clock!.utc);
+      await tx.executeRaw(
+        `INSERT INTO extract_rollup_7d (kind, source_id, day, halt_count, round_completed_count, halt_reasons)
+         VALUES ('facts.conversation', 'default', $1::date - 8, 4, 0, '{"provider_auth":4}'),
+                ('facts.conversation', 'default', $1::date - 7, 1, 2, '{"item_error":1}')`, [clock!.utc]);
+      const check = await computeExtractHealthCheck(tx as never);
+      expect((check.details as any).kinds[0]).toMatchObject({ halt_count: 1, round_completed_count: 2, halt_reasons: { item_error: 1 } });
+      expect(check.message).toContain('top reason: item_error');
+    });
+  });
+
   test('halt rate > 10% on one kind returns WARN with top-3 in message', async () => {
     await clearRollup();
     // facts.conversation: 5 halts, 5 completed = 50% halt rate (WARN)
