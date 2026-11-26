@@ -1,28 +1,34 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { api, ApiError } from '../api';
-import { ownerLoginPrompt, pendingOAuthRequest } from '../lib/oauth-request';
+import { ownerLoginCommand, ownerLoginPrompt, pendingOAuthRequest } from '../lib/oauth-request';
 
 // The bootstrap credential is transient form state only. The server sets an
 // HttpOnly session cookie; browser storage never holds the owner credential.
 export function LoginPage({ onLogin }: { onLogin: () => void }) {
   const [token, setToken] = useState(''); const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false); const [copied, setCopied] = useState(false);
+  const [loading, setLoading] = useState(false); const [copied, setCopied] = useState('');
   const [copyError, setCopyError] = useState('');
   const [mcpUrl, setMcpUrl] = useState<string>();
   const [discoveryError, setDiscoveryError] = useState(''); const [discoveryAttempt, setDiscoveryAttempt] = useState(0);
   const requestId = pendingOAuthRequest();
   const prompt = mcpUrl ? ownerLoginPrompt(mcpUrl, requestId) : undefined;
+  const command = mcpUrl ? ownerLoginCommand(mcpUrl, requestId) : undefined;
+  const copy = (text: string, what: string) => {
+    setCopyError('');
+    void navigator.clipboard.writeText(text).then(() => setCopied(what)).catch(() => setCopyError('Clipboard unavailable. Select and copy the text above.'));
+  };
   useEffect(() => {
     let active = true; const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10_000);
-    setMcpUrl(undefined); setDiscoveryError(''); setCopied(false);
+    setMcpUrl(undefined); setDiscoveryError(''); setCopied('');
     void fetch('/.well-known/gbrain', { credentials: 'omit', redirect: 'error', cache: 'no-store', signal: controller.signal })
       .then(async response => {
         if (!response.ok) throw new Error('Server discovery is unavailable.');
         const info = await response.json();
         if (typeof info?.endpoint !== 'string') throw new Error('Server discovery has no MCP endpoint.');
         const endpoint = new URL(info.endpoint);
-        if (!['https:', 'http:'].includes(endpoint.protocol) || endpoint.username || endpoint.password || endpoint.search || endpoint.hash || endpoint.pathname !== '/mcp') {
+        if (!['https:', 'http:'].includes(endpoint.protocol) || endpoint.username || endpoint.password || endpoint.search || endpoint.hash || endpoint.pathname !== '/mcp'
+          || !/^(?:[a-z0-9.-]+|\[[0-9a-f:.]+\])$/i.test(endpoint.hostname)) {
           throw new Error('Server discovery returned an invalid MCP endpoint.');
         }
         if (active) setMcpUrl(endpoint.toString());
@@ -42,14 +48,18 @@ export function LoginPage({ onLogin }: { onLogin: () => void }) {
   };
   return <div className="login-page"><section className="login-box" aria-labelledby="owner-login-title" style={{ maxWidth: 560 }}>
     <h1 id="owner-login-title" className="login-logo">GBrain owner login</h1>
-    <p style={{ marginBottom: 16 }}>Ask the agent that administers the brain host for a login link. Ordinary MCP clients cannot create owner login links, even with an admin scope.</p>
-    {requestId && <p role="status" style={{ marginBottom: 16 }}>A client connection is waiting for owner approval. The prompt below preserves that request when you open the login link in another browser or tab.</p>}
-    {prompt && <><label htmlFor="owner-login-prompt">Prompt for the host administrator</label>
-    <textarea id="owner-login-prompt" rows={7} readOnly value={prompt} style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }} />
-    <button type="button" className="btn btn-secondary" style={{ marginTop: 8 }} onClick={() => {
-      setCopyError('');
-      void navigator.clipboard.writeText(prompt).then(() => setCopied(true)).catch(() => setCopyError('Clipboard unavailable. Select and copy the prompt above.'));
-    }}>{copied ? 'Prompt copied' : 'Copy owner login prompt'}</button></>}
+    <p style={{ marginBottom: 16 }}>If this is your brain, approve from this browser. On the computer that runs the brain, run this command in your own terminal, then open the link it prints here. The link signs this browser in as the owner, so never paste it into a chat with an assistant.</p>
+    {requestId && <p role="status" style={{ marginBottom: 16 }}>A client connection is waiting for your approval. The command keeps that request, so its link opens the approval page.</p>}
+    {command && <><label htmlFor="owner-login-command">Owner login command</label>
+    <textarea id="owner-login-command" rows={5} readOnly value={command} style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }} />
+    <button type="button" className="btn btn-secondary" style={{ marginTop: 8 }} onClick={() => copy(command, 'command')}>{copied === 'command' ? 'Command copied' : 'Copy owner login command'}</button>
+    <p className="grant-help" style={{ margin: '8px 0 16px' }}>~/.gbrain/serve/admin-token is where gbrain mcp expose keeps the owner credential; name your server's own credential file if you set it up another way.</p></>}
+    {prompt && <details style={{ marginBottom: 16 }}>
+      <summary style={{ cursor: 'pointer' }}>Someone else runs the brain host</summary>
+      <label htmlFor="owner-login-prompt">Prompt for the host administrator</label>
+      <textarea id="owner-login-prompt" rows={7} readOnly value={prompt} style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }} />
+      <button type="button" className="btn btn-secondary" style={{ marginTop: 8 }} onClick={() => copy(prompt, 'prompt')}>{copied === 'prompt' ? 'Prompt copied' : 'Copy owner login prompt'}</button>
+    </details>}
     {!prompt && !discoveryError && <p role="status">Discovering the server’s configured MCP endpoint…</p>}
     {discoveryError && <p role="alert">{discoveryError} <button type="button" className="btn btn-secondary" onClick={() => setDiscoveryAttempt(attempt => attempt + 1)}>Retry server discovery</button></p>}
     {copyError && <p role="alert">{copyError}</p>}

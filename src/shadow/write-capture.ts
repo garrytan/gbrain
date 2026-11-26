@@ -14,6 +14,7 @@ import { relationRead } from './seed.ts';
 import { MAX_PRE_LINKS, MAX_PRE_PAGES, movedOutsideFootprint, PILOT_WRITES, pageRefs, pageSet, readBack, writeFamily, type PageRef, type PreImage, type WriteEvent } from './write-compare.ts';
 import { sqlWrites } from './sql-writes.ts';
 import { memberKind } from './write-map.ts';
+import { COMPLETE_WRITE_PURGE_PROBE_SQL, COMPLETE_WRITE_SQL, ENSURE_COUNTERS_SQL, LOCK_COUNTERS_SQL } from '../core/engine-sql/persistence-journal.ts';
 
 /** How long the preimage read may hold a sampled write. */
 export const PREIMAGE_TIMEOUT_MS = 2_000;
@@ -151,6 +152,27 @@ function rawKind(args: unknown[]): 'bookkeeping' | 'seal' | undefined {
   if (PURE_LOCK.test(sql)) return 'bookkeeping'; // one table lock and nothing else changes no row; a batch that holds more goes through the table check below, whole
   try { const writes = sqlWrites(sql); return writes.length > 0 && writes.every((w) => w.kind === 'relation' && BOOKKEEPING.has(w.relation)) ? 'bookkeeping' : undefined; } catch { return undefined; }
 }
+/** True when every statement is read-only or writes only bookkeeping tables (the raw rule above) and at least one writes; a statement the parser cannot read, or one that writes any other table, makes it false. */
+function bookkeepingStatements(sqls: readonly string[]): boolean {
+  let wrote = false;
+  for (const sql of sqls) {
+    let writes; try { writes = sqlWrites(sql); } catch { return false; }
+    if (writes.some((w) => w.kind !== 'relation' || !BOOKKEEPING.has(w.relation))) return false;
+    if (writes.length) wrote = true;
+  }
+  return wrote;
+}
+/**
+ * Typed journal members and every statement each one sends (engine-sql/persistence-journal.ts): the counter rows' create-and-lock before a journaled page write, and the
+ * request's completion after it. They were raw statements the rule above judged bookkeeping; as members their text is hidden from rawKind, so each is judged here by the
+ * same rule on the statements it sends. A member whose statements stop passing that rule is an ordinary write again. (upsertWriteGateReceipt and insertPublicationEffects
+ * are not listed: they stay ordinary writes, which fails closed.)
+ */
+export const JOURNAL_MEMBER_STATEMENTS: ReadonlyMap<string, readonly string[]> = new Map([
+  ['lockPersistenceCounters', [ENSURE_COUNTERS_SQL, LOCK_COUNTERS_SQL]],
+  ['completeWriteRow', [COMPLETE_WRITE_SQL, COMPLETE_WRITE_PURGE_PROBE_SQL]],
+]);
+const BOOKKEEPING_MEMBERS: ReadonlySet<string> = new Set([...JOURNAL_MEMBER_STATEMENTS].filter(([, sqls]) => bookkeepingStatements(sqls)).map(([name]) => name));
 const pageKey = (name: string, args: unknown[]): string => { const r = pageRefs(name === STAMP ? 'putPage' : name, name === STAMP ? [args[0], undefined, { sourceId: args[1] }] : args)[0]; return r ? `${r.source}\0${r.slug}` : ''; };
 
 interface TxSample { at: number; key: string; op: string; bad?: string; read?: (then: unknown[][]) => void }
@@ -276,7 +298,7 @@ export function createWriteSampler(o: WriteSamplerOptions): WriteSampler {
     scope(root) {
       const sc: Scope = {
         root, log: [], samples: [], gate: null, inflight: 0, nested: 0,
-        note: (name, args, path = []) => { sc.log.push({ name, key: name === 'putPage' || name === 'createVersion' || name === STAMP ? pageKey(name, args) : '', path, ...(name === STAMP ? { args } : {}), ...(name === 'executeRaw' ? { kind: rawKind(args) } : {}) }); },
+        note: (name, args, path = []) => { sc.log.push({ name, key: name === 'putPage' || name === 'createVersion' || name === STAMP ? pageKey(name, args) : '', path, ...(name === STAMP ? { args } : {}), ...(BOOKKEEPING_MEMBERS.has(name) ? { kind: 'bookkeeping' as const } : {}), ...(name === 'executeRaw' ? { kind: rawKind(args) } : {}) }); },
         open: () => ++sc.nested,
         drop: (id) => { for (let i = sc.log.length - 1; i >= 0; i--) if (sc.log[i]!.path.includes(id)) { sc.log.splice(i, 1); for (const s of sc.samples) if (s.at > i) s.at--; } },
         commit: () => { for (const s of sc.samples) { const bad = s.bad ?? judge(sc, s); if (bad || !s.read) uncomparable(s.op, bad ?? 'in_transaction'); else s.read(sc.log.filter((w, i) => i > s.at && w.name === STAMP && w.key === s.key).map((w) => w.args!)); } },

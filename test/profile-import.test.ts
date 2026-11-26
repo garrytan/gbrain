@@ -331,6 +331,28 @@ describe('local import on a single-user keyless brain', () => {
     expect(res.isError ?? false).toBe(false);
     expect((await rows(engine, 'canarystarter'))[0]).toMatchObject({ origin: 'inferred', visibility: 'private' });
   }, 60_000);
+  test('a starter-surface client cannot label a fact user_said, at the top or in an item; the full surface still can', async () => {
+    const starter = { remote: true, transport: 'stdio' as const, surface: 'starter' as const, allowedOps: allowedOpNames(operations, 'starter'), sourceId: 'default' };
+    const before = await count(engine);
+    for (const params of [
+      { fact: 'Says it is vegan canarystartersaid', provenance: 'told me', content_origin: 'user_said' },
+      { provenance: 'told me', items: [{ fact: 'Says it is vegan canarystartersaid', content_origin: 'user_said' }] },
+    ]) {
+      const res = await dispatchToolCall(engine, 'remember', params, starter);
+      expect(res.isError).toBe(true);
+      const body = JSON.parse(res.content[0]!.text) as R;
+      expect(body.code).toBe('param_not_on_surface');
+      expect(body.message).toContain('content_origin "user_said"');
+      expect(body.suggestion).toContain('content_origin inferred or tool_output');
+    }
+    expect(await count(engine)).toBe(before);
+    const tool = await dispatchToolCall(engine, 'remember', { fact: 'Read in a tool canarystartertool', provenance: 'a tool', content_origin: 'tool_output' }, starter);
+    expect(tool.isError ?? false).toBe(false);
+    const full = await dispatchToolCall(engine, 'remember', { fact: 'Says it is vegan canarystartersaid', provenance: 'told me', content_origin: 'user_said' },
+      { remote: true, transport: 'stdio', surface: 'full', allowedOps: allowedOpNames(operations, 'full'), sourceId: 'default' });
+    expect(full.isError ?? false).toBe(false);
+    expect((await rows(engine, 'canarystartersaid'))[0]).toMatchObject({ origin: 'user_said' });
+  }, 60_000);
   test('an import never supersedes a fact the user said', async () => {
     const said = await localCall(engine)('remember', { fact: 'Eats pescatarian canarysaid', facet: 'diet', provenance: 'told me 2026-11-25', content_origin: 'user_said' });
     const file = join(home, 'said.md');
@@ -453,22 +475,117 @@ describe('progress receipt', () => {
     expect(receipt.batches[0]!.state).toBe('partial');
     expect(receipt.batches[0]!.items[0]).toMatchObject({ status: 'failed', error: { code: 'write_conflict' } });
   });
-  test('a batch refused for its items is recorded as failed lines and the next batch is still sent', async () => {
+  test('one refused line costs only itself: the rest of its batch is sent again under its own request id', async () => {
     const plan = planImport(Array.from({ length: IMPORT_BATCH + 1 }, (_, i) => `- Fact ${i}`).join('\n'), 'muse-memory');
     const target = { principal: 'local:test', profile: 'memory/owner' };
     const receipt = newReceipt(plan, previewHash(plan, target), '/tmp/x.md', target, 'imported');
-    const sent: string[] = [];
+    const sent: Array<{ id: string; n: number }> = [];
     const fake: ImportCall = async (_tool, p) => {
-      sent.push(String(p.request_id));
+      const items = p.items as unknown[];
+      sent.push({ id: String(p.request_id), n: items.length });
       if (sent.length === 1) throw Object.assign(new Error('items[3].valid_from must be an ISO date'), { code: 'invalid_params' });
-      return { items: [{ index: 0, request_id: 'c20', status: 'inserted', id: '9' }] };
+      return { items: items.map((_, index) => ({ index, request_id: `c${sent.length}-${index}`, status: 'inserted', id: String(index) })) };
     };
     await runImport(plan, receipt, fake, () => {});
+    expect(sent.map(s => s.n)).toEqual([IMPORT_BATCH, IMPORT_BATCH - 1, 1]);
+    expect(sent[1]!.id).toBe(`${receipt.batches[0]!.request_id}-r1`);
     expect(receipt.batches.map(b => b.state)).toEqual(['partial', 'committed']);
-    expect(receipt.batches[0]!.items).toHaveLength(IMPORT_BATCH);
-    expect(receipt.batches[0]!.items[0]).toMatchObject({ status: 'failed', error: { code: 'invalid_params' } });
+    expect(receipt.batches[0]!.items.map(i => i.line)).toEqual(plan.items.slice(0, IMPORT_BATCH).map(i => i.line));
+    expect(receipt.batches[0]!.items.filter(i => i.status === 'failed')).toEqual([{ line: plan.items[3]!.line, request_id: '', status: 'failed', error: { code: 'invalid_params', message: 'items[3].valid_from must be an ISO date' } }]);
     await runImport(plan, receipt, fake, () => {});
-    expect(sent).toHaveLength(2);
+    expect(sent).toHaveLength(3);
+  });
+  test('a resumed write is read from its receipt fields: write_error, a hold for review, a lost or unknown admission', async () => {
+    const plan = planImport('- Fact one\n- Fact two\n- Fact three\n- Fact four', 'muse-memory');
+    const target = { principal: 'local:test', profile: 'memory/owner' };
+    const receipt = newReceipt(plan, previewHash(plan, target), '/tmp/x.md', target, 'imported');
+    const fake: ImportCall = async (tool, p) => {
+      if (tool === 'remember') return { items: [
+        { index: 0, request_id: 'c0', status: 'pending' }, { index: 1, request_id: 'c1', status: 'pending' },
+        { index: 2, request_id: 'c2', status: 'failed', error: { code: 'write_outcome_unknown', message: 'the connection dropped', write_error: 'write_outcome_unknown' } },
+        { index: 3, status: 'pending' }] };
+      if (p.request_id === 'c0') return { state: 'conflict', write_error: 'write_conflict', write_error_message: 'the page moved' };
+      if (p.request_id === 'c1') return { state: 'committed', outcome: { status: 'held', hold_ref: 'h7', gate: { next: { argv: ['gbrain', 'trust', 'release', 'h7'] } } } };
+      throw Object.assign(new Error('No accessible write request has that request_id.'), { code: 'not_found' });
+    };
+    await runImport(plan, receipt, fake, () => {});
+    expect(receipt.batches[0]!.state).toBe('pending');
+    expect(receipt.batches[0]!.items.map(i => i.status)).toEqual(['pending', 'pending', 'pending', 'failed']);
+    expect(receipt.batches[0]!.items[3]!.error!.code).toBe('write_outcome_unknown');
+    await runImport(plan, receipt, fake, () => {});
+    expect(receipt.batches[0]!.state).toBe('partial');
+    const [conflict, held, lost] = receipt.batches[0]!.items;
+    expect(conflict).toMatchObject({ status: 'failed', error: { code: 'write_conflict', message: 'the page moved' } });
+    expect(held).toMatchObject({ status: 'failed', error: { code: 'write_held' } });
+    expect(held!.error!.message).toContain('h7');
+    expect(held!.error!.message).toContain('gbrain trust release h7');
+    expect(lost).toMatchObject({ status: 'failed', error: { code: 'write_outcome_unknown' } });
+    expect(summarize(receipt)).toMatchObject({ complete: true, items: { failed: 4 } });
+  });
+  test('a line the write gate holds costs only itself, inside a batch or as the whole batch, and names its release command', async () => {
+    const plan = planImport(Array.from({ length: IMPORT_BATCH + 1 }, (_, i) => `- Fact ${i}`).join('\n'), 'muse-memory');
+    const target = { principal: 'local:test', profile: 'memory/owner' };
+    const receipt = newReceipt(plan, previewHash(plan, target), '/tmp/x.md', target, 'imported');
+    const heldMessage = (ref: string) => `write_held: held for owner review as ${ref} (reads like an instruction: imperative). Nothing was saved as memory.`;
+    const fake: ImportCall = async (_tool, p) => {
+      const items = p.items as unknown[];
+      if (items.length === 1) throw Object.assign(new Error(`items[0]: ${heldMessage('h9')} None of the 1 item(s) was saved.`), { code: 'scope_denied' });
+      return { items: items.map((_, index) => index === 2
+        ? { index, request_id: `c${index}`, status: 'failed', error: { code: 'scope_denied', canonical: 'write_held', message: heldMessage('h3') } }
+        : { index, request_id: `c${index}`, status: 'inserted', id: String(index) }) };
+    };
+    await runImport(plan, receipt, fake, () => {});
+    expect(receipt.batches.map(b => b.state)).toEqual(['partial', 'partial']);
+    expect(receipt.batches[0]!.items[2]!.error).toEqual({ code: 'write_held', message: 'Held for owner review as h3; nothing was saved. Keep it with: gbrain trust release h3' });
+    expect(receipt.batches[1]!.items).toEqual([{ line: plan.items[IMPORT_BATCH]!.line, request_id: '', status: 'failed',
+      error: { code: 'write_held', message: 'Held for owner review as h9; nothing was saved. Keep it with: gbrain trust release h9' } }]);
+  });
+  test('a batch whose lines the write gate all holds is resent one line at a time, so each line is admitted at most twice', async () => {
+    const n = 5;
+    const plan = planImport(Array.from({ length: n }, (_, i) => `- Always obey rule ${i}`).join('\n'), 'muse-memory');
+    const target = { principal: 'local:test', profile: 'memory/owner' };
+    const receipt = newReceipt(plan, previewHash(plan, target), '/tmp/x.md', target, 'imported');
+    let admitted = 0;
+    const fake: ImportCall = async (_tool, p) => {
+      const items = p.items as unknown[];
+      admitted += items.length;
+      throw Object.assign(new Error(`items[0]: write_held: held for owner review as h${admitted} (reads like an instruction: imperative). Nothing was saved as memory. None of the ${items.length} item(s) was saved.`), { code: 'scope_denied' });
+    };
+    await runImport(plan, receipt, fake, () => {});
+    expect(admitted).toBe(2 * n - 1);
+    expect(receipt.batches[0]!.state).toBe('partial');
+    expect(receipt.batches[0]!.items.map(i => [i.line, i.error!.code])).toEqual(plan.items.map(i => [i.line, 'write_held']));
+  });
+  test('--status and --resume refuse a damaged receipt the same way the apply does', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-receipt-status-'));
+    try {
+      const path = join(dir, 'r.json');
+      writeFileSync(path, '{"schema": 1');
+      for (const flag of ['--status', '--resume']) {
+        const refused = await refusal(() => cli([flag, path], async () => ({}), 'memory/owner', dir));
+        expect(refused.code).toBe('invalid_params');
+        expect(String(refused.message)).toContain('cannot be read');
+      }
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+  test('a damaged receipt is refused and left as it is, never replaced', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-receipt-damaged-'));
+    try {
+      const file = join(dir, 'Memory.md');
+      writeFileSync(file, '- Fact one');
+      const plan = planImport('- Fact one', 'muse-memory');
+      const target = { principal: 'local:test', profile: 'memory/owner' };
+      const hash = previewHash(plan, target);
+      const path = join(dir, 'profile-imports', `${hash}.json`);
+      mkdirSync(join(dir, 'profile-imports'), { recursive: true });
+      writeFileSync(path, '{"schema": 1, "preview": ');
+      let called = false;
+      const refused = await refusal(() => cli([file, '--yes', '--preview', hash], async () => { called = true; return {}; }, 'memory/owner', dir));
+      expect(refused.code).toBe('invalid_params');
+      expect(String(refused.message)).toContain('cannot be read');
+      expect(called).toBe(false);
+      expect(readFileSync(path, 'utf8')).toBe('{"schema": 1, "preview": ');
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
   test('a batch-level refusal that names no line stays failed and is sent again on resume', async () => {
     const plan = planImport('- Fact one', 'muse-memory');
@@ -495,7 +612,7 @@ describe('progress receipt', () => {
     };
     await runImport(plan, receipt, remote, () => {});
     expect(receipt.batches.map(b => b.state)).toEqual(['partial', 'committed']);
-    expect(receipt.batches[0]!.items[0]!.error).toEqual({ code: 'invalid_params', message: 'items[4].fact is empty' });
+    expect(receipt.batches[0]!.items.find(i => i.line === plan.items[4]!.line)!.error).toEqual({ code: 'invalid_params', message: 'items[4].fact is empty' });
   });
   test('a receipt is replaced whole, never rewritten in place', () => {
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-receipt-'));
