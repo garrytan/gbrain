@@ -144,6 +144,8 @@ export interface ResolveOptions {
   explainTarget?: string;
   /** Let the turn call the model picker when skills.resolver.router is on. Only the command line and the Claude Code and Codex hook lanes pass it. */
   router?: boolean;
+  /** Word matching only, whatever the settings say: no skill vectors (so the message never goes to the embedding provider), no model picker and no rebuild stamp. gbrain propose passes it (d14). */
+  offline?: boolean;
   env?: NodeJS.ProcessEnv;
   now?: () => number;
 }
@@ -378,7 +380,7 @@ async function resolveInner(input: ReturnType<typeof normalizeTurnInput>, opts: 
     return wanted;
   };
   try {
-    for (const n of names) { const l: Loaded = { ...source.open(home, n), stale: null }; loaded.push(l); l.stale = turnStaleness(home, l, now, settings.autoRebuild, want); check(); }
+    for (const n of names) { const l: Loaded = { ...source.open(home, n), stale: null }; loaded.push(l); l.stale = turnStaleness(home, l, now, settings.autoRebuild && !opts.offline, want); check(); }
     const single = loaded.length === 1 ? loaded[0]! : null;
     const catalog = loaded.map(l => l.name).join('+');
     const catalogHash = single ? single.receipt.catalog.catalog_hash : sha(JSON.stringify(loaded.map(l => [l.name, l.receipt.catalog.catalog_hash])));
@@ -418,14 +420,14 @@ async function resolveInner(input: ReturnType<typeof normalizeTurnInput>, opts: 
       return finish({ ...base, no_skill: true, no_skill_reason: 'no_match', block_reason: 'no_match' }, { tokens: 0, suggested: [], resuggested: [] });
     }
 
-    const pickerOn = Boolean(opts.router && settings.router.on);
+    const pickerOn = Boolean(!opts.offline && opts.router && settings.router.on);
     const total = loaded.reduce((n, l) => n + l.ix.n, 0);
     const waitStart = performance.now();
     const leftNow = () => (opts.deadlineMs === undefined ? Infinity : opts.deadlineMs - (performance.now() - t0) - PICKER_RENDER_RESERVE_MS);
     let vecs: (CatalogVectors | null)[] = [];
     let query: Promise<QueryOutcome> | null = null;
     const cancelQuery = new AbortController();
-    if (loaded.some(l => l.receipt.vectors && 'model' in l.receipt.vectors)) {
+    if (!opts.offline && loaded.some(l => l.receipt.vectors && 'model' in l.receipt.vectors)) {
       const found = turnEmbedder(home, env);
       const t = 'skip' in found || vectorFloor(found.embedder.model) !== null ? found : { skip: 'unmeasured_model' as const };
       const report: VectorsReport = { used: false, model: 'skip' in t ? null : t.embedder.model, ms: 0, fallback: 'skip' in t ? { code: t.skip } : null };

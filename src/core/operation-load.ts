@@ -128,7 +128,7 @@ const OP_AREAS: Record<string, string> = {
   // action ledger (what agents did outside the brain, with evidence)
   log_action: 'action-ledger', ledger: 'action-ledger',
   // first-session suggestion (onboarding PR 2)
-  onboarding_status: 'onboarding', onboarding_off: 'onboarding',
+  onboarding_status: 'onboarding', onboarding_off: 'onboarding', propose_jobs: 'onboarding', propose_decide: 'onboarding',
 };
 
 const finalized = new WeakSet<Operation>();

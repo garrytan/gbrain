@@ -124,8 +124,7 @@ src/commands/doctor/checks/projection-readiness.ts	execute_raw	1
 src/commands/doctor/checks/provenance-stamp-drift.ts	execute_raw	1
 src/commands/doctor/checks/purge-mirror.ts	execute_raw	1
 src/commands/doctor/checks/purged-page-facts.ts	execute_raw	1
-src/commands/doctor/checks/queue-assets.ts	execute_raw	3
-src/commands/doctor/checks/queue-assets.ts	sql_template	1
+src/commands/doctor/checks/queue-assets.ts	execute_raw	4	+1 #9966: index_audit moved from the module connection sql template (that row removed) to engine.executeRaw, so it runs on the engine doctor was given
 src/commands/doctor/checks/queue-jobs.ts	execute_raw	2
 src/commands/doctor/checks/routing-federation.ts	execute_raw	7
 src/commands/doctor/checks/rows-behind.ts	execute_raw	1
@@ -419,6 +418,7 @@ src/core/cycle/synthesize-completion.ts	execute_raw	4
 src/core/cycle/synthesize-concepts.ts	execute_raw	1
 src/core/cycle/synthesize-generations.ts	execute_raw	1
 src/core/cycle/synthesize-postprocess.ts	execute_raw	3
+src/core/cycle/synthesize-source-routing.ts	execute_raw	1	+1 #8669: the global synthesize rotation lists live sources with a checkout (until sources get a typed engine member)
 src/core/cycle/synthesize-verify-epochs.ts	execute_raw	3
 src/core/cycle/synthesize.ts	execute_raw	6
 src/core/cycle/transcript-discovery.ts	execute_raw	2
@@ -536,7 +536,7 @@ src/core/generations/fence-restore.ts	execute_raw	3
 src/core/generations/fence.ts	execute_raw	5
 src/core/generations/ledger-scrub.ts	execute_raw	7
 src/core/generations/managed.ts	execute_raw	7
-src/core/generations/publish.ts	execute_raw	19
+src/core/generations/publish.ts	execute_raw	20	+1 #10270: currentHoldIds reads held atom rows so the extract-atoms backlog skips items the phase already holds (matches heldForInput; until generations get a typed engine member)
 src/core/generations/repair.ts	execute_raw	6
 src/core/ghost-pages.ts	execute_raw	4
 src/core/git/redact-finish.ts	execute_raw	8	GST-2988 PR 2 publish redaction finish: reads sources.local_path and persistence_host_bindings to find the checkout that owns a pushed root, reads and compare-and-sets sources.last_commit to the rebuilt sha, and lists persistence_effects worktree ids to remap parked effects; branched before the #9641 ratchet; no typed engine method for these source and effect reads exists yet
@@ -663,6 +663,7 @@ src/core/oauth-grants.ts	sql_template	16
 src/core/oauth-provider.ts	sql_template	22
 src/core/onboard/checks.ts	execute_raw	5
 src/core/onboard/first-session.ts	execute_raw	3	first-session suggestion: the onboarding.first_session record compare-and-swap in config (insert and update) and the pointer read of recent world-visible pages under remoteReadFloorSql; converts with setup-history.ts
+src/core/onboard/propose.ts	execute_raw	7	lane 5 O2 job proposals: five bounded keyless detector reads over open_loops, meeting, email and conversation pages under the caller source scope, the prep-page probe, and the google-synced source check; converts when the detectors get engine-sql members
 src/core/onboard/checks.ts	sql_template	2
 src/core/onboard/impact-capture.ts	execute_raw	3
 src/core/onboard/mcp-onboarding.ts	execute_raw	1
