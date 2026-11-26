@@ -5,8 +5,9 @@
 //! Each family runs a create / renew / start / result / release / reclaim / recovery matrix through the store, on a
 //! multi-user store with a hand-moved clock: a valid fence succeeds; a stale fence (its lease taken over) and a
 //! replacement-epoch fence (same host, new registration epoch) refuse `lease_lost` and change nothing; a call with no fence
-//! refuses `fence_missing` before anything is written; a call with no fence on a store that is not multi-user behaves as
-//! it always did and writes no `~L` key.
+//! is not refused for lacking one (multi-user: an unregistered caller takes an implicit lease for a new claim and
+//! refuses `held_by_another` only on a claim a live registered holder owns); a call with no fence on a store that is not
+//! multi-user behaves as it always did and writes no `~L` key.
 
 use super::WriteRequestInsert;
 use crate::env::Env;
@@ -453,13 +454,22 @@ mod group {
     }
 
     #[test]
-    fn a_call_with_no_fence_on_a_multiuser_store_refuses_before_anything_is_written() {
+    fn a_call_with_no_fence_on_a_multiuser_store_is_not_refused_for_lacking_one_but_cannot_touch_a_live_holders_claim()
+     {
         let (s, ids) = setup(true, 2);
         let a = register(&s, "a");
         let held = claimed(&s, Some(&a));
         let before = snapshot(&s, &ids);
+        // Nothing is queued, so a claim with no fence takes nothing (no host registered is not a refusal).
+        assert!(
+            s.group_write(&claim(None))
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(snapshot(&s, &ids), before);
         let calls = [
-            claim(None),
             complete(&held, None),
             write(
                 "renew_claims",
@@ -476,6 +486,14 @@ mod group {
                 json!({ "members": members(&held) }),
                 None,
             ),
+        ];
+        for call in &calls {
+            let e = s.group_write(call).unwrap_err();
+            assert_eq!(reason(&e), "held_by_another", "{call:?}");
+            assert_eq!(snapshot(&s, &ids), before);
+        }
+        // A call that names no claim has nothing to refuse.
+        for call in [
             write(
                 "record_recoveries",
                 json!({ "members": [], "total": 0, "counterKeys": [] }),
@@ -486,12 +504,10 @@ mod group {
                 json!({ "resolved": [], "counterKeys": [], "worktreeId": null }),
                 None,
             ),
-        ];
-        for call in &calls {
-            let e = s.group_write(call).unwrap_err();
-            assert_eq!(reason(&e), "fence_missing", "{call:?}");
-            assert_eq!(snapshot(&s, &ids), before);
+        ] {
+            s.group_write(&call).unwrap();
         }
+        assert_eq!(snapshot(&s, &ids), before);
     }
 
     #[test]
@@ -561,9 +577,15 @@ mod group {
             reason(&tx.group_write(&claim(Some(&stale))).unwrap_err()),
             "epoch_moved"
         );
+        // A claim with no fence is not refused for lacking one: it takes the queued members under an implicit lease,
+        // and the rollback leaves the store as it was.
         assert_eq!(
-            reason(&tx.group_write(&claim(None)).unwrap_err()),
-            "fence_missing"
+            tx.group_write(&claim(None))
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .len(),
+            2
         );
         tx.rollback_transaction().unwrap();
         assert_eq!(snapshot(&s, &ids), before);
@@ -862,18 +884,21 @@ mod effect {
     }
 
     #[test]
-    fn a_call_with_no_fence_on_a_multiuser_store_refuses_before_anything_is_written() {
+    fn a_call_with_no_fence_on_a_multiuser_store_is_not_refused_for_lacking_one_but_cannot_touch_a_live_holders_claim()
+     {
         let (s, _) = setup(true, 2);
         let a = register(&s, "a");
         let held = claim(&s, Some(&a));
         let before = snapshot(&s);
-        assert_eq!(
-            reason(&s.claim_coalesced_git_effects(&input(None)).unwrap_err()),
-            "fence_missing"
+        // Every effect is held, so a claim with no fence takes nothing (and is not refused).
+        assert!(
+            s.claim_coalesced_git_effects(&input(None))
+                .unwrap()
+                .is_empty()
         );
         for kind in ["yield_to_publications", "record_plain_outcome"] {
             let e = s.git_effect_write(&write(kind, &held, None)).unwrap_err();
-            assert_eq!(reason(&e), "fence_missing", "{kind}");
+            assert_eq!(reason(&e), "held_by_another", "{kind}");
         }
         assert_eq!(snapshot(&s), before);
     }
@@ -906,7 +931,7 @@ mod effect {
             .unwrap();
         tx.commit_transaction().unwrap();
         assert_eq!(epoch_records(&s), 0);
-        // A stale or missing fence refuses inside a transaction, which rolls back unchanged.
+        // A stale fence refuses inside a transaction, which rolls back unchanged; a missing one is not refused.
         let (s, _) = setup(true, 2);
         let a = register(&s, "a");
         let stale = a.clone();
@@ -920,9 +945,11 @@ mod effect {
             ),
             "epoch_moved"
         );
+        // A call with no fence is not refused for lacking one: it takes the queued effects under an implicit lease,
+        // and the rollback leaves the store as it was.
         assert_eq!(
-            reason(&tx.claim_coalesced_git_effects(&input(None)).unwrap_err()),
-            "fence_missing"
+            tx.claim_coalesced_git_effects(&input(None)).unwrap().len(),
+            2
         );
         tx.rollback_transaction().unwrap();
         assert_eq!(snapshot(&s), before);
@@ -1166,31 +1193,29 @@ mod refresh {
     }
 
     #[test]
-    fn a_call_with_no_fence_on_a_multiuser_store_refuses_before_anything_is_written() {
+    fn a_call_with_no_fence_on_a_multiuser_store_is_not_refused_for_lacking_one_but_cannot_touch_a_live_holders_claim()
+     {
         let s = setup(true);
         let a = register(&s, "a");
         let id = start(&s, Some(&a));
         s.refresh_write(&transition(&id, &["draining"], "fenced", Some(&a)))
             .unwrap();
         let before = snapshot(&s, &id);
-        let mut calls = mutations(&id, None);
-        calls.push(write(
-            "set_holder",
-            json!({ "id": id, "holder": { "pid": 2 } }),
-            None,
-        ));
-        calls.push(write("adopt_claim", json!({ "id": id }), None));
-        calls.push(insert(None));
-        calls.push(write(
+        // A write on a row a live registered holder claimed refuses, and nothing changes.
+        for call in &mutations(&id, None) {
+            let e = s.refresh_write(call).unwrap_err();
+            assert_eq!(reason(&e), "held_by_another", "{call:?}");
+            assert_eq!(snapshot(&s, &id), before);
+        }
+        // A call that names no claim a live holder owns is not refused for lacking a fence.
+        s.refresh_write(&write(
             "hold_for_import",
             json!({ "id": request_id(1), "token": "t", "importFrom": "x" }),
             None,
-        ));
-        for call in &calls {
-            let e = s.refresh_write(call).unwrap_err();
-            assert_eq!(reason(&e), "fence_missing", "{call:?}");
-            assert_eq!(snapshot(&s, &id), before);
-        }
+        ))
+        .unwrap();
+        assert_eq!(snapshot(&s, &id), before);
+        s.refresh_write(&insert(None)).unwrap();
     }
 
     /// A running request claimed under `fence`; returns its row id and token.
@@ -1291,7 +1316,7 @@ mod refresh {
         let e = tx
             .refresh_write(&transition(&id, &["draining"], "aborted", None))
             .unwrap_err();
-        assert_eq!(reason(&e), "fence_missing");
+        assert_eq!(reason(&e), "held_by_another");
         tx.rollback_transaction().unwrap();
         assert_eq!(snapshot(&s, &id), before);
     }
@@ -1511,14 +1536,26 @@ mod sync {
     }
 
     #[test]
-    fn a_call_with_no_fence_on_a_multiuser_store_refuses_before_anything_is_written() {
+    fn a_call_with_no_fence_on_a_multiuser_store_is_not_refused_for_lacking_one_but_cannot_touch_a_live_holders_claim()
+     {
         let s = open(true);
         let a = register(&s, "a");
         insert(&s, Some(&a)).unwrap();
         let before = snapshot(&s);
-        for result in every(&s, None) {
-            assert_eq!(reason(&result.unwrap_err()), "fence_missing");
-            assert_eq!(snapshot(&s), before);
+        // A swap of a cursor a live registered holder owns refuses, and nothing changes; a losing insert takes nothing.
+        assert_eq!(
+            reason(&swap(&s, 0, 1, None).unwrap_err()),
+            "held_by_another"
+        );
+        assert!(insert(&s, None).unwrap().as_array().unwrap().is_empty());
+        assert_eq!(snapshot(&s), before);
+        // The explicit adoption, the done mark and the delete name no claim to check: none is refused for lacking a fence.
+        for result in [
+            adopt(&s, None),
+            mark_done(&s, None),
+            finish_delete(&s, None),
+        ] {
+            result.unwrap();
         }
     }
 
@@ -1554,7 +1591,10 @@ mod sync {
             reason(&swap(&tx, 1, 2, Some(&stale)).unwrap_err()),
             "epoch_moved"
         );
-        assert_eq!(reason(&swap(&tx, 1, 2, None).unwrap_err()), "fence_missing");
+        assert_eq!(
+            reason(&swap(&tx, 1, 2, None).unwrap_err()),
+            "held_by_another"
+        );
         tx.rollback_transaction().unwrap();
         assert_eq!(snapshot(&s), before);
     }
