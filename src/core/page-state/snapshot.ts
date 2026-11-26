@@ -97,7 +97,10 @@ async function overlayWith(reads: OverlayReads, body: string, timeline: string, 
  * The normalized body and timeline fingerprints feed only the withdrawal overlay,
  * so the statement computes them only for a page with withdrawals (as the batch
  * reader in page-snapshot-batch.ts does): per-line regexp over the whole body
- * was most of the cost of every snapshot read.
+ * was most of the cost of every snapshot read. The withdrawals are read as
+ * `visibility IN (...) AND subject IN ('*', slug)`, seeks on fact_withdrawals'
+ * (source_id, visibility, subject, fact_hash) key; `subject='*' OR subject=slug`
+ * scanned the table on every read (#9350).
  *
  * An alias-resolving read first runs the exact-slug statement: an exact match
  * outranks every alias match, so a hit is the row the alias statement would
@@ -153,8 +156,8 @@ async function readSnapshotStatement(query: ReadQuery, slug: string, opts?: Page
     FROM chosen p
     CROSS JOIN LATERAL (SELECT COALESCE((SELECT jsonb_agg(jsonb_build_object('visibility',w.visibility,'fact_hash',w.fact_hash,'withdrawn_at',w.withdrawn_at)
       ORDER BY w.visibility COLLATE "C",w.fact_hash COLLATE "C") FROM (SELECT visibility,fact_hash,min(withdrawn_at) AS withdrawn_at
-        FROM fact_withdrawals WHERE source_id=p.source_id AND (subject='*' OR subject=p.slug)
-        ${opts?.excludePrivate ? "AND visibility='world'" : ''} GROUP BY visibility,fact_hash) w), '[]'::jsonb)
+        FROM fact_withdrawals WHERE source_id=p.source_id AND visibility IN (${opts?.excludePrivate ? "'world'" : "'private','world'"}) AND subject IN ('*',p.slug)
+        GROUP BY visibility,fact_hash) w), '[]'::jsonb)
       || COALESCE((SELECT jsonb_agg(jsonb_build_object('visibility',x.visibility,'fact_hash',x.fact_hash,'withdrawn_at',x.purged_at,'purged',true)
         ORDER BY x.visibility COLLATE "C",x.fact_hash COLLATE "C") FROM (SELECT visibility,fact_hash,min(purged_at) AS purged_at
           FROM fact_purges WHERE source_id=p.source_id AND subject=p.slug
