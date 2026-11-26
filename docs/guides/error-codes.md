@@ -7319,7 +7319,7 @@ More: [docs/guides/write-refusals.md#tail_exposure_approval](../../docs/guides/w
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| gbrain telemetry forget could not get the telemetry server to confirm it deleted this install's data, so the local install id was kept. | The local id is the only way to name this install's rows on the server; deleting it before the server confirms would leave the data there with no way to ask again. | Run gbrain telemetry forget again when the machine is online. | agent | `gbrain doctor --json` | 1 | yes |
+| gbrain telemetry forget could not get the telemetry server to confirm it deleted this install's record and unlinked its stored events, so the local install id was kept. | The local id is the only way to name this install's rows on the server; deleting it before the server confirms would leave the record there with no way to ask again. | Run gbrain telemetry forget again when the machine is online. | agent | `gbrain doctor --json` | 1 | yes |
 
 ### telemetry_pulse_unavailable
 

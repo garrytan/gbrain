@@ -8,7 +8,7 @@ gbrain's opt-in telemetry lands here: two Supabase edge functions and the SQL be
 | `migrations/G001_gbrain_telemetry.sql` | Tables, the live view, the pulse summary, forget, prune and the daily ceiling. G-numbered so these files never collide with gstack's `001`-`009`. |
 | `functions/gbrain-telemetry-ingest/` | The only write path. `validate.ts` checks every field (gbrain's tests import it); `index.ts` enforces the daily ceiling (15,000 accepted requests and 150,000 rows a UTC day; 429 above it) and handles `forget`. |
 | `functions/gbrain-telemetry-pulse/` | Public aggregates, cached an hour; a stale answer or 503 on error, never zeros. |
-| `verify.sh` | Smoke test: the public key and signed-in users are refused everything, the ingest stores one `source=test` event and the pulse answers. |
+| `verify.sh` | Smoke test: the public key and signed-in users are refused everything, the ingest stores one `source=test` event and the pulse answers. It does not yet tell a fresh pulse from a stale one (see step 3). |
 
 ## Who can do what
 
@@ -33,8 +33,8 @@ The ceiling is one bucket shared by every caller, so one caller can fill it. The
 Every other P1 item in the telemetry section of `TODOS.md` blocks deployment the same way.
 
 1. Apply `migrations/G001_gbrain_telemetry.sql` as the project owner (psql or the dashboard SQL editor). It runs in one transaction and is safe to run twice.
-2. Deploy both functions with JWT verification off (`supabase functions deploy gbrain-telemetry-ingest --no-verify-jwt` and the same for `gbrain-telemetry-pulse`, or paste each `index.ts` into the dashboard editor and turn off "Enforce JWT verification"; each file is self-contained). The client sends only the publishable key in an `apikey` header, which is not a JWT, so with verification on every request is refused with 401 before the function runs.
-3. Run `GBRAIN_TELEMETRY_URL=… GBRAIN_TELEMETRY_KEY=… GBRAIN_VERIFY_AUTH_JWT=… bash supabase/gbrain-telemetry/verify.sh` with a signed-in user's JWT and keep its `VERDICT:` line. Without the JWT the signed-in checks are skipped and it ends `INCOMPLETE` with exit 2. It reads both secrets from the environment and never puts them on a command line.
+2. Deploy both functions with JWT verification off (`supabase functions deploy gbrain-telemetry-ingest --no-verify-jwt` and the same for `gbrain-telemetry-pulse`). If using the dashboard editor, include both `index.ts` and `validate.ts` for ingest, use `index.ts` for pulse, and turn off "Enforce JWT verification". The client sends only the publishable key in an `apikey` header, which is not a JWT, so with verification on every request is refused with 401 before the function runs.
+3. Run `GBRAIN_TELEMETRY_URL=… GBRAIN_TELEMETRY_KEY=… GBRAIN_VERIFY_AUTH_JWT=… bash supabase/gbrain-telemetry/verify.sh` with a signed-in user's JWT and keep its `VERDICT:` line. Without the JWT the signed-in checks are skipped and it ends `INCOMPLETE` with exit 2. It reads both secrets from the environment and never puts them on a command line. Its pulse check shows only that the pulse answered. It passes a stale fallback, and a pulse refreshed while its release lookup failed reads as current. Both are P1 items in `TODOS.md` that block deployment, so until they land a `PASS` is not evidence of a fresh pulse.
 4. Retention: run `select public.gbrain_telemetry_prune();` daily. Where pg_cron is enabled: `select cron.schedule('gbrain-telemetry-prune', '17 4 * * *', 'select public.gbrain_telemetry_prune()');` Otherwise run it by hand at least monthly.
 
 ## Changing it

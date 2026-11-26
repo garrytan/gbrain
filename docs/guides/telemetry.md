@@ -1,12 +1,18 @@
 # Telemetry
 
 gbrain sends no usage data unless you say yes. After `gbrain telemetry off`, or
-with `GBRAIN_TELEMETRY=off`, it writes no telemetry file and opens no connection.
+with `GBRAIN_TELEMETRY=off`, it writes no telemetry file and sends nothing in the
+background. The only connections it makes then are the ones you ask for with
+`gbrain telemetry pulse` and `gbrain telemetry forget`, and only when a telemetry
+address is set.
 
 **This release sends nothing at all.** It ships no address to send to, because
 the server side is not deployed yet, so setup asks you nothing and any choice you
-make with `gbrain telemetry` stays on your machine. The release that deploys the
-server turns the question on; this page describes how it works from then on.
+make with `gbrain telemetry` stays on your machine. Only `GBRAIN_TELEMETRY_URL`
+and `GBRAIN_TELEMETRY_KEY` set in your own environment give it an address (a
+`.env` file in the current directory can't set them), and that is meant for
+testing a server. The release that deploys the server turns the question on;
+this page describes how it works from then on.
 
 ## The question
 
@@ -42,6 +48,7 @@ whether the event came from a test, CI or a live install (`GBRAIN_TELEMETRY_SOUR
 can label it `eval`, `capy` or `other` instead). Times are rounded down to the
 hour.
 
+- **consent:** your answer (`anonymous` or `community`), once, when you turn it on.
 - **setup:** which harness `gbrain setup` or `gbrain init` ran for, whether it
   worked, the error code if it failed, how long it took, and whether an embedding
   model is configured.
@@ -61,6 +68,7 @@ paths, source names, hostnames or error messages.
 
 ```bash
 gbrain telemetry            # what is on, what is queued or waiting, where it goes
+gbrain telemetry status     # same as gbrain telemetry with no subcommand
 gbrain telemetry show       # what waits for your answer, the exact JSON the next send would post, and the last sends
 gbrain telemetry anonymous  # or: community
 gbrain telemetry off        # stop and delete the local queue and anything waiting
@@ -71,11 +79,22 @@ gbrain telemetry sync       # send now instead of waiting (--force skips the 6-h
 
 Add `--json` for one JSON document. `pulse` exits non-zero with
 `telemetry_pulse_unavailable` when the aggregate is stale or unreachable, so a
-script never reads an outage as "no problems". `forget` keeps the local id until
+script never reads an outage as "no problems". `forget` asks the server to delete
+this install's record and unlink its stored events from the id; the events stay
+as anonymous rows until they expire. It keeps the local id until
 the server confirms the deletion (`telemetry_forget_failed` otherwise, also
 while a send is in progress), then deletes the local queue so nothing recorded
 under the old id goes out under a new one. It leaves your tier as it was:
-`gbrain telemetry off` stops sending.
+`gbrain telemetry off` stops sending. `pulse` and `forget` contact the server at
+any tier, `off` included, because you ran them.
+
+## Known limits
+
+The server side is not deployed yet, and the gaps listed in the telemetry section
+of `TODOS.md` must close before it is. Among them, a send still finishing on the
+server can bring back a record `forget` just deleted, an opt-out that lands while a
+send is starting can still let that one batch go, and `pulse` exits 0 on an
+answer that carries no data.
 
 ## How sending works
 
@@ -95,3 +114,5 @@ call that endpoint and the public aggregate, and cannot read or write any table.
 
 `gbrain search stats` reads a different, local-only search log that is never
 sent.
+
+For server-side setup and rollout checks, see the [telemetry backend runbook](../../supabase/gbrain-telemetry/README.md).
