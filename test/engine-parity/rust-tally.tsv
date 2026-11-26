@@ -108,7 +108,7 @@ test/engine-parity/entity-basename.test.ts	3	0
 test/engine-parity/entity-card-option-reads.test.ts	6	0
 test/engine-parity/entity-card-timeline.test.ts	2	0
 test/engine-parity/entity-fuzzy.test.ts	3	0
-test/engine-parity/entity-identities.test.ts	9	4
+test/engine-parity/entity-identities.test.ts	13	0
 test/engine-parity/entity-names-siblings.test.ts	1	0
 test/engine-parity/entity-reads.test.ts	14	0
 test/engine-parity/eval-harness-reads.test.ts	20	0
