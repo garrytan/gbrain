@@ -181,6 +181,8 @@ export const PURGE_PATH: readonly PurgePathEntry[] = [
     'listTopologyRecoveries', 'readOpCheckpointRecords', 'readOwnerHostBinding', 'readPageDatabaseOnlyReason', 'readWorktreeAdmission',
     'scrubGenerationPageRows',
   ),
+  // The Git effect runner a worktree-bound purge's effects reach: the typed stores that replaced its raw statements (lane LM).
+  ...served('lane LM', 'gitEffectStore', 'claimCoalescedGitEffects'),
   ...GUARDED_SITES,
 ];
 
