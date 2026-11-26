@@ -365,8 +365,8 @@ export async function runRecall(engine: BrainEngine, args: string[]): Promise<vo
     return;
   }
 
-  if (!thinClient) { const t = await import('../core/search/telemetry.ts'); t.recordLookupTelemetry(engine, t.RECALL_TELEMETRY_MODE); }
   if (flags.watchSeconds !== null) {
+    if (!thinClient && process.env.GBRAIN_ENFORCED_MEMBER === undefined) { const t = await import('../core/search/telemetry.ts'); t.recordLookupTelemetry(engine, t.RECALL_TELEMETRY_MODE); }
     await runWatchLoop(engine, flags, sourceId, thinClient, flags.watchSeconds);
     return;
   }
@@ -776,6 +776,7 @@ async function runRecallOnce(
       : await fetchRowsLocal(engine, flags, sourceId, resolvedSince);
     if (rows.length === 0 && !pageable) rows = await entitySplitLocal(engine, flags, sourceId, resolvedSince);
     if (rows.length === 0 && cursorVariant === 'briefing' && await keylessQuestionFallback(engine, flags, sourceId)) return wallClockCursor(tStart);
+    if (cursorVariant === 'briefing') { const t = await import('../core/search/telemetry.ts'); t.recordLookupTelemetry(engine, t.RECALL_TELEMETRY_MODE); }
     if (flags.pending) {
       pendingCount = await engine.countUnconsolidatedFacts(sourceId);
     }
