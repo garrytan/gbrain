@@ -108,123 +108,161 @@ const danaRecord = async (engine: BrainEngine, pending = true): Promise<Record<s
   return { ...record };
 };
 
-describe('engine parity: named stops of row 32e-b-5 (a labelled-only member: fact floors, an audience of several identities, as_of editions)', () => {
+/**
+ * One attempt of a pinned read. On a SQL arm the read must answer `expected`. On the Rust arm it may instead refuse with the typed
+ * refusal (recorded, and the case goes on to its other inputs and its other lineage mode); a value it does answer must equal `expected`,
+ * so a wrong earlier value cannot hide behind a later refusal. Any other error is rethrown.
+ */
+async function attempt(backend: ParityBackend, refusals: unknown[], expected: unknown, read: () => Promise<unknown>): Promise<unknown> {
+  let got: unknown;
+  try { got = await read(); } catch (error) {
+    if (backend === 'rust' && (error as { code?: string } | null)?.code === 'engine_capability_missing') { refusals.push(error); return 'refused'; }
+    throw error;
+  }
+  expect(got).toEqual(expected);
+  return got;
+}
+
+/** Ends a pinned case: the first recorded refusal is rethrown (the harness validates it against the pin), else the answers are returned. */
+function finish<T>(refusals: unknown[], answers: T): T {
+  if (refusals.length > 0) throw refusals[0];
+  return answers;
+}
+
+type Mode = 'off' | 'on';
+
+/** Runs `all` with lineage off, then on; each mode is attempted whatever the other did. */
+async function eachMode<T>(engine: BrainEngine, all: (mode: Mode) => Promise<T>): Promise<{ off: T; on: T }> {
+  const off = await all('off');
+  await setMembersReadLineage(engine, true, { remote: false });
+  return { off, on: await all('on') };
+}
+
+describe('engine parity: named stops of row 32e-b-5 (a labelled-only member or a caller with a pending prefix: fact floors, an audience of several identities, as_of editions, a widened fact list)', () => {
+  // Each case attempts every input in both lineage modes on its own (`attempt`): the SQL arms answer the expected value, and Rust either
+  // answers the same value or refuses with the typed refusal; the first refusal is rethrown at the end, so the pin and the tally stay 0 equal.
   parityTest('a labelled-only member\'s remote forget-tier read answers its own member page fact and nothing else on PGLite and Postgres, and the Rust store stops (row 32e-b-5)', {
     methods: ['putPage', 'insertFacts', 'readRemoteForgetTier'], timeout: 240_000,
   }, async (engine, backend) => {
     const ids = await seed(engine, backend);
-    const read = async (factId: number) => withCallerAccess(await carolRecord(engine) as never, () => engine.readRemoteForgetTier({ factId, sourceId: 'default', remoteFloor: true }));
+    const refusals: unknown[] = [];
     // Lineage off: the floor judges the provenance page by the plain policy (a member page names readers, so it is closed) and the
     // labelled-only conjunct (the member's own page only): nothing is read. Lineage on: the atom of a raw-only origin passes both.
-    const off = { own: await read(ids.own), open: await read(ids.open), atom: await read(ids.atom) };
-    await setMembersReadLineage(engine, true, { remote: false });
-    const on = { own: await read(ids.own), open: await read(ids.open), atom: await read(ids.atom) };
-    expect(off).toEqual({ own: null, open: null, atom: null });
-    expect({ own: on.own, open: on.open, atom: typeof on.atom }).toEqual({ own: null, open: null, atom: 'string' });
-    return { off, on };
+    const tier = (id: number) => async () => {
+      const got = await withCallerAccess(await carolRecord(engine) as never, () => engine.readRemoteForgetTier({ factId: id, sourceId: 'default', remoteFloor: true }));
+      return got === null ? null : typeof got;
+    };
+    const answers = await eachMode(engine, async (mode) => ({
+      own: await attempt(backend, refusals, null, tier(ids.own)),
+      open: await attempt(backend, refusals, null, tier(ids.open)),
+      atom: await attempt(backend, refusals, mode === 'on' ? 'string' : null, tier(ids.atom)),
+    }));
+    return finish(refusals, answers);
   });
 
   parityTest('a labelled-only member\'s single-fact lookup under the remote floor (storeFloorPolicy) finds the fact on its own member page only on PGLite and Postgres, and the Rust store stops (row 32e-b-5)', {
     methods: ['putPage', 'insertFacts', 'findActiveSingleFact'], timeout: 240_000,
   }, async (engine, backend) => {
     await seed(engine, backend);
-    const find = async (pageSlug: string, fact: string) => withCallerAccess(await carolRecord(engine) as never, async () => {
+    const refusals: unknown[] = [];
+    const find = (pageSlug: string, fact: string) => async () => withCallerAccess(await carolRecord(engine) as never, async () => {
       const row = await engine.findActiveSingleFact({ sourceId: 'default', entitySlug: ENTITY, visibility: 'world', fact, attributedTo: null, pageSlug, remoteFloor: true });
       return row ? 'found' : 'none';
     });
-    const all = async () => ({
-      own: await find(OWN_PAGE, 'zzfloor on the member page of carol'),
-      open: await find('open/plain', 'zzfloor on an open page'),
-      atom: await find('ctrl/atom-raw', 'zzfloor on an atom of a raw-only origin'),
-    });
-    const off = await all();
-    await setMembersReadLineage(engine, true, { remote: false });
-    const on = await all();
-    expect(off).toEqual({ own: 'none', open: 'none', atom: 'none' });
-    expect(on).toEqual({ own: 'none', open: 'none', atom: 'found' });
-    return { off, on };
+    const answers = await eachMode(engine, async (mode) => ({
+      own: await attempt(backend, refusals, 'none', find(OWN_PAGE, 'zzfloor on the member page of carol')),
+      open: await attempt(backend, refusals, 'none', find('open/plain', 'zzfloor on an open page')),
+      atom: await attempt(backend, refusals, mode === 'on' ? 'found' : 'none', find('ctrl/atom-raw', 'zzfloor on an atom of a raw-only origin')),
+    }));
+    return finish(refusals, answers);
   });
 
   parityTest('a labelled-only audience of two identities reads the facts both may read on PGLite and Postgres, and the Rust store stops (row 32e-b-5)', {
     methods: ['putPage', 'insertFacts', 'listFactsSince'], timeout: 240_000,
   }, async (engine, backend) => {
     await seed(engine, backend);
+    const refusals: unknown[] = [];
+    // The audience of a channel that holds two members: the policy is one test per identity (accessAllowedForAllSql).
     const audienceRead = async () => {
       const record = await carolRecord(engine);
-      // The audience of a channel that holds two members: the policy is one test per identity (accessAllowedForAllSql).
       const audience = { ...record, audience: [`member:${CAROL}`, `member:${DANA}`], audienceIdentities: [[`member:${CAROL}`], [`member:${DANA}`]] };
       const rows = await withCallerAccess(audience as never, () => engine.listFactsSince('default', new Date(0), { excludePrivate: true, visibility: ['world'], limit: 50 } as never));
       return rows.map(r => String(r.fact)).sort();
     };
-    const off = await audienceRead();
-    await setMembersReadLineage(engine, true, { remote: false });
-    const on = await audienceRead();
-    // The audience reads what every identity may read; a fact on a member page or an open page is read by neither of the two together.
-    expect(off).toEqual([]);
-    expect(on.every(f => f !== 'zzfloor on an open page' && f !== 'zzfloor on the member page of carol')).toBe(true);
-    return { off, on };
+    // The audience reads what every identity may read: neither of the two together reads a fact on a member page or an open page.
+    const answers = await eachMode(engine, async () => ({ facts: await attempt(backend, refusals, [], audienceRead) }));
+    return finish(refusals, answers);
   });
 
   parityTest('as_of reads an edition a labelled-only member may read on PGLite and Postgres, and the Rust store stops on pickValidTimeEdition (row 32e-b-5)', {
     methods: ['putPage', 'createVersion', 'getPage', 'pickValidTimeEdition'], timeout: 240_000,
   }, async (engine, backend) => {
     await seed(engine, backend);
+    const refusals: unknown[] = [];
     const note = (frontmatter: Record<string, unknown>) =>
       ({ type: 'note' as const, title: 'VT', compiled_truth: `body ${JSON.stringify(frontmatter)}`, timeline: '', frontmatter });
-    // Its January edition names carol, its June edition names nobody: the edition an as_of of February picks is the January one.
+    // Its January edition names carol, its June edition names nobody: an as_of of February picks the January one (read); one of July picks the
+    // June one, which names nobody, so a labelled-only member does not read it.
     await engine.putPage('vt/ed', note({ valid_from: '2026-01-01', readable_by: [CAROL] }), { sourceId: 'default' });
     await engine.createVersion('vt/ed', { sourceId: 'default' });
     await engine.putPage('vt/ed', note({ valid_from: '2026-06-01' }), { sourceId: 'default' });
-    const record = await carolRecord(engine);
     const pageId = (await engine.getPage('vt/ed', { sourceId: 'default' }))!.id;
-    const picked = await withCallerAccess(record as never, () => engine.pickValidTimeEdition({ pageId, asOf: '2026-02-01', excludePrivate: true, pinOrd: null, inlineMaxBytes: 1_000_000 }));
-    const answer = picked ? `${picked.valid_from}:${picked.visible ? 'visible' : 'hidden'}` : null;
-    expect(answer).toBe('2026-01-01:visible');
-    return answer;
+    const pick = (asOf: string) => async () => {
+      const picked = await withCallerAccess(await carolRecord(engine) as never, () => engine.pickValidTimeEdition({ pageId, asOf, excludePrivate: true, pinOrd: null, inlineMaxBytes: 1_000_000 }));
+      return picked ? `${picked.valid_from}:${picked.visible ? 'visible' : 'hidden'}` : null;
+    };
+    const answers = await eachMode(engine, async () => ({
+      february: await attempt(backend, refusals, '2026-01-01:visible', pick('2026-02-01')),
+      july: await attempt(backend, refusals, '2026-06-01:hidden', pick('2026-07-01')),
+    }));
+    return finish(refusals, answers);
   });
+
   parityTest('an ordinary member whose record holds a pending folder prefix reads a forget tier on an open page only, lineage off and on, on PGLite and Postgres, and the Rust store stops (row 32e-b-5)', {
     methods: ['putPage', 'insertFacts', 'readRemoteForgetTier'], timeout: 240_000,
   }, async (engine, backend) => {
     const ids = await seedPending(engine, backend);
-    const read = async (factId: number) => withCallerAccess(await danaRecord(engine) as never, () => engine.readRemoteForgetTier({ factId, sourceId: 'default', remoteFloor: true }));
-    const off = { open: typeof await read(ids.open), pending: await read(ids.pending) };
-    await setMembersReadLineage(engine, true, { remote: false });
-    const on = { open: typeof await read(ids.open), pending: await read(ids.pending) };
+    const refusals: unknown[] = [];
     // The fact on a page under the pending prefix is hidden whoever reads; the one on an open page is read.
-    expect(off).toEqual({ open: 'string', pending: null });
-    expect(on).toEqual({ open: 'string', pending: null });
-    return { off, on };
+    const tier = (id: number) => async () => {
+      const got = await withCallerAccess(await danaRecord(engine) as never, () => engine.readRemoteForgetTier({ factId: id, sourceId: 'default', remoteFloor: true }));
+      return got === null ? null : typeof got;
+    };
+    const answers = await eachMode(engine, async () => ({
+      open: await attempt(backend, refusals, 'string', tier(ids.open)),
+      pending: await attempt(backend, refusals, null, tier(ids.pending)),
+    }));
+    return finish(refusals, answers);
   });
 
   parityTest('an ordinary member whose record holds a pending folder prefix finds a fact on an open page only through the remote floor (storeFloorPolicy), lineage off and on, on PGLite and Postgres, and the Rust store stops (row 32e-b-5)', {
     methods: ['putPage', 'insertFacts', 'findActiveSingleFact'], timeout: 240_000,
   }, async (engine, backend) => {
     await seedPending(engine, backend);
-    const find = async (pageSlug: string) => withCallerAccess(await danaRecord(engine) as never, async () => {
+    const refusals: unknown[] = [];
+    const find = (pageSlug: string) => async () => withCallerAccess(await danaRecord(engine) as never, async () => {
       const row = await engine.findActiveSingleFact({ sourceId: 'default', entitySlug: ENTITY, visibility: 'world', fact: `zzpending on ${pageSlug}`, attributedTo: null, pageSlug, remoteFloor: true });
       return row ? 'found' : 'none';
     });
-    const all = async () => ({ open: await find('open/plain'), pending: await find('pend/plain') });
-    const off = await all();
-    await setMembersReadLineage(engine, true, { remote: false });
-    const on = await all();
-    expect(off).toEqual({ open: 'found', pending: 'none' });
-    expect(on).toEqual({ open: 'found', pending: 'none' });
-    return { off, on };
+    const answers = await eachMode(engine, async () => ({
+      open: await attempt(backend, refusals, 'found', find('open/plain')),
+      pending: await attempt(backend, refusals, 'none', find('pend/plain')),
+    }));
+    return finish(refusals, answers);
   });
+
   parityTest('an ordinary member whose own member page widens the world-only fact list reads a fact check on an open page only, lineage off and on, on PGLite and Postgres, and the Rust store stops on factReadableUnder (row 32e-b-5)', {
     methods: ['putPage', 'insertFacts', 'factReadableUnder'], timeout: 240_000,
   }, async (engine, backend) => {
     const ids = await seed(engine, backend);
-    const readable = async (id: number) => withCallerAccess(await danaRecord(engine, false) as never, () =>
+    const refusals: unknown[] = [];
+    const readable = (id: number) => async () => withCallerAccess(await danaRecord(engine, false) as never, () =>
       engine.factReadableUnder({ id, sourceId: 'default', anyVisibility: false, eligibility: undefined, excludePrivate: true }));
-    const all = async () => ({ open: await readable(ids.open), own: await readable(ids.own) });
-    const off = await all();
-    await setMembersReadLineage(engine, true, { remote: false });
-    const on = await all();
     // The fact on an open page is read; the fact on another member's page is not.
-    expect(off).toEqual({ open: true, own: false });
-    expect(on).toEqual({ open: true, own: false });
-    return { off, on };
+    const answers = await eachMode(engine, async () => ({
+      open: await attempt(backend, refusals, true, readable(ids.open)),
+      own: await attempt(backend, refusals, false, readable(ids.own)),
+    }));
+    return finish(refusals, answers);
   });
 });
