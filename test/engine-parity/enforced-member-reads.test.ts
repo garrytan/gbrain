@@ -126,16 +126,13 @@ describe('engine parity: the enforced member CLI reads', () => {
       validBoth: await probe(['member:tess-example'], ['default:team-a']),
       badSatisfied: await probe(['member:tess-example'], ['default:team-a', 'invalid']),
       badIdentity: await probe(['member:tess-example', 'not a principal'], []),
-      badIdentityValidSatisfied: await probe(['member:tess-example', 'not a principal'], ['default:team-a']),
     };
     const denied = { readable: { value: { 'notes/listed': true, 'team-a/plan': false, 'notes/open': true } }, hidden: { value: ['team-a/plan'] } };
     expect(out.validBoth).toEqual({ readable: { value: { 'notes/listed': true, 'team-a/plan': true, 'notes/open': true } }, hidden: { value: [] } });
     // One invalid rule id empties the satisfied set: the rule page is denied though the valid id is in the set.
     expect(out.badSatisfied).toEqual(denied);
-    // One invalid principal empties the identity: the page naming the member is denied too.
-    for (const bad of [out.badIdentity, out.badIdentityValidSatisfied]) {
-      expect(bad.readable).toMatchObject({ value: { 'notes/listed': false, 'notes/open': true } });
-    }
+    // One invalid principal empties the identity: the page naming the member is denied too. (An emptied identity beside valid
+    // satisfied rules is a policy the store cannot hold; it refuses, pinned in test/enforced-member-store-refusals.test.ts.)
     expect(out.badIdentity.readable).toEqual({ value: { 'notes/listed': false, 'team-a/plan': false, 'notes/open': true } });
     return out;
   });

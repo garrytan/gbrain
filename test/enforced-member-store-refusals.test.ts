@@ -35,6 +35,14 @@ describe('the enforced member reads of a Rust brain refuse a record the store do
     });
   }
 
+  test('an identity emptied by an invalid entry beside valid satisfied rules refuses; either set emptied alone answers', async () => {
+    const asked = (identity: string[], satisfiedRuleIds: string[]) => code(() => withCallerAccess({ ...MEMBER, identity, satisfiedRuleIds }, () => readMemberPageReadable(brain, 'default', 'notes/a', identity, satisfiedRuleIds, false)));
+    expect(await asked(['member:tess-example', 'not a principal'], ['default:team-a'])).toBe('engine_capability_missing');
+    // The stub store throws when called; reaching it is the answer here, so these two passed the policy.
+    expect(await asked(['member:tess-example', 'not a principal'], [])).toContain('the store was called');
+    expect(await asked(['member:tess-example'], ['default:team-a', 'invalid'])).toContain('the store was called');
+  });
+
   test('a labelled-only read of a page refuses before any read', async () => {
     expect(await code(() => withCallerAccess({ ...MEMBER, labelledOnly: true }, () => readMemberPageReadable(brain, 'default', 'notes/a', MEMBER.identity, [], true)))).toBe('engine_capability_missing');
   });
