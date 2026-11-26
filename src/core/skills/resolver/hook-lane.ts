@@ -39,9 +39,11 @@
  * exits 0, and a path that cannot deliver a block prints nothing.
  *
  * Deadline (LANE_DEADLINE_MS for the turn, from the moment the worker has
- * loaded, after at most LANE_WORKER_START_MS from lane entry for that load,
- * which on a cold machine alone can take most of the turn's 50 ms; the
- * load time is logged as worker_ms): the main thread does only async I/O (the
+ * loaded and the hook's stdin has been read, after at most
+ * LANE_WORKER_START_MS from lane entry for both; the load alone can take
+ * most of the turn's 50 ms on a cold machine, and Hermes may still be
+ * piping a long conversation_history when it ends; the load time is logged
+ * as worker_ms): the main thread does only async I/O (the
  * config, stdin, the carriers, the commit) and every synchronous step (index
  * and session reads, ranking, rendering) runs in a worker thread
  * (hook-worker.ts) that checks the deadline inside each stage. The worker is
@@ -329,9 +331,10 @@ export async function runSkillResolverLane(event: string, harness: LaneHarness, 
   const startMs = Number(env.GBRAIN_TEST_SKILL_LANE_START_MS) || LANE_WORKER_START_MS;
   const elapsed = () => performance.now() - t0;
   const ctl: LaneCtl = {
-    expired: false, worker: null, logged: false, commit: {},
+    expired: false, worker: null, logged: false, commit: {}, inputRead: () => {},
     extend: (extra) => { if (ctl.expired) return; deadlineMs += extra; if (ctl.turnStart !== undefined) arm(Math.max(0, turnLeft())); },
   };
+  const inputRead = new Promise<void>((resolve) => { ctl.inputRead = resolve; });
   ctl.worker = startLaneWorker(env);
   const turnLeft = () => deadlineMs - (ctl.turnStart === undefined ? 0 : elapsed() - ctl.turnStart);
   const tenths = (ms: number) => Math.round(ms * 10) / 10;
@@ -346,10 +349,10 @@ export async function runSkillResolverLane(event: string, harness: LaneHarness, 
     arm = (ms: number) => { clearTimeout(timer); timer = setTimeout(() => { fired = true; resolve('deadline'); }, ms); };
     if (!ctl.worker) { ctl.turnStart = 0; arm(deadlineMs); return; }
     arm(startMs);
-    void laneWorkerReady().then((loaded) => {
+    const loaded = laneWorkerReady().then((ok) => { if (ok && !fired && elapsed() < startMs) ctl.workerMs = elapsed(); });
+    void Promise.all([loaded, inputRead]).then(() => {
       if (fired || elapsed() >= startMs) return;
       ctl.turnStart = elapsed();
-      if (loaded) ctl.workerMs = ctl.turnStart;
       arm(deadlineMs);
     });
     if (env.GBRAIN_TEST_SKILL_LANE_STALL === 'start-race') { const end = performance.now() + startMs + 300; while (performance.now() < end) { /* forced main-thread stall past the start bound */ } }
@@ -377,8 +380,8 @@ export async function runSkillResolverLane(event: string, harness: LaneHarness, 
   return 0;
 }
 
-/** turnStart: ms after lane entry when the turn deadline started (the worker was ready, or failed); workerMs: when it was ready; extend: give the turn more time (the model picker's wait). */
-interface LaneCtl { expired: boolean; worker: Worker | null; logged: boolean; commit: CommitHold; turnStart?: number; workerMs?: number; extend: (extraMs: number) => void }
+/** turnStart: ms after lane entry when the turn deadline started (the worker was ready, or failed, and stdin was read); workerMs: when it was ready; inputRead: stdin has been read; extend: give the turn more time (the model picker's wait). */
+interface LaneCtl { expired: boolean; worker: Worker | null; logged: boolean; commit: CommitHold; turnStart?: number; workerMs?: number; inputRead: () => void; extend: (extraMs: number) => void }
 
 async function laneTurn(event: 'user-prompt' | 'session-start', harness: LaneHarness, home: string, env: NodeJS.ProcessEnv, io: LaneIo, ctl: LaneCtl, turnLeft: () => number): Promise<Turn> {
   const settings = await readLaneSettings(home, env);
@@ -391,6 +394,7 @@ async function laneTurn(event: 'user-prompt' | 'session-start', harness: LaneHar
   try { turnSettings = laneTurnSettings(settings.section, harness); } catch { return { outcome: 'error', code: 'skill_resolver_config_invalid' }; }
 
   const hookEvent = await LANE_IO[harness].read(io.stdin);
+  ctl.inputRead();
   if (!hookEvent) return { outcome: 'error', code: 'skill_resolve_no_input' };
   const cwd = io.cwd ?? env.GBRAIN_HOOK_CWD ?? (typeof hookEvent.cwd === 'string' ? hookEvent.cwd : process.cwd());
   const owner = await skillResolverOwner(harness, event, cwd, io.managedDir);

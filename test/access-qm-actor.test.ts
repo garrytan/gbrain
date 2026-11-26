@@ -525,6 +525,8 @@ for (const kind of testBackends()) {
         ['household_add', { kind: 'supply', title: 'x', cadence: '7d' }], ['household_mark', { slug: 'household/supplies/x', event: 'bought' }],
         // GST-3824 L2: action records feed the owner's ledger totals and budgets.
         ['log_action', { verb: 'buy', summary: 'x', currency: 'USD', spent: 1, estimated: true }], ['policy_reserve', { verb: 'buy', amount: 1, currency: 'USD', request_id: 'r1' }],
+        // GST-3827 C2: a correction writes a standing rule and changes a fact for the owner.
+        ['correct', { rule: 'Alice Example prefers short replies.' }],
       ];
       expect(new Set(deferredCalls.map(([op]) => op))).toEqual(new Set(ACTOR_DEFERRED_OPS));
       for (const [op, params] of deferredCalls) {

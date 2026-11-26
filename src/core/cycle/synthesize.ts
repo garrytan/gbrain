@@ -385,6 +385,8 @@ export interface SynthesizePhaseOpts {
    * correct (source_id, slug) row. Unset → legacy 'default'.
    */
   sourceId?: string;
+  /** #8669: a global cycle's turn for another source: synthesize only that source's captured sessions (keepSessionSourceTranscripts). */
+  sessionsOnly?: boolean;
   /** Internal: minion owner job id for private dream-inline queue recovery. */
   privateQueueOwnerJobId?: number | null;
   /**
@@ -527,7 +529,7 @@ async function runPhaseSynthesizeInner(
               ].map(prefix => join(opts.brainDir, prefix)),
           // #5413: corpus files captured from gbrain's own claude-cli calls.
           selfCaptureSessionIds: claudeCliSelfSessionIds(),
-        })), { corpusDir: config.corpusDir, sourceId: opts.sourceId ?? 'default', readOnly: opts.dryRun }, routing);
+        })), { corpusDir: config.corpusDir, sourceId: opts.sourceId ?? 'default', readOnly: opts.dryRun, sessionsOnly: opts.sessionsOnly }, routing);
 
     if (transcripts.length === 0) {
       return noCandidates('no transcripts to process', { transcripts_discovered: 0 });
