@@ -30,7 +30,7 @@ import { bookkeepingStatements, createWriteSampler, JOURNAL_MEMBER_STATEMENTS, P
 import { createWriteComparer } from '../../src/shadow/write-compare-child.ts';
 import { openRustEngine, type RustEngineAddonHandle } from '../../src/core/rust-engine.ts';
 import { readWriteTally, WriteTally, type WriteEvent } from '../../src/shadow/write-compare.ts';
-import { ensureEpoch } from '../../src/shadow/evidence-epoch.ts';
+import { ensureEpoch, readEpoch } from '../../src/shadow/evidence-epoch.ts';
 import { withEnv } from './with-env.ts';
 import { fillSeedFixture, seedInto } from './shadow-seed-fixture.ts';
 
@@ -164,6 +164,14 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       expect(out.tally).toMatchObject({ comparable: 5, unexplained_difference: 0, uncomparable: 0, capability_missing: 0 });
       expect(readdirSync(out.scratch)).toEqual([]); // every scratch store is deleted
     }, 120_000);
+
+    test('forty samples handed to the child together all wait their turn and are replayed: none is shed queue_full (master kept 16 and shed the rest)', async () => {
+      const out = await replay(async (e, sampled) => {
+        for (let n = 1; n <= 40; n++) { await e.putPage(`people/burst-${n}-example`, page(`Burst ${n} Example`)); await sampled(n); }
+      }, 40);
+      expect(out.tally).toMatchObject({ comparable: 40, unexplained_difference: 0, uncomparable: 0, capability_missing: 0 });
+      expect(out.tally.uncomparable_by_reason.queue_full).toBeUndefined();
+    }, 180_000);
 
     test('a write whose changed rows differ is counted unexplained_difference, never comparable', async () => {
       const out = await replay(async (e) => { await e.putPage('people/dora-example', page('Dora Example')); }, 1, (ev) => {
@@ -1246,5 +1254,41 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       await until(() => putEvents(inbox).length === 1);
       expect(await real(putEvents(inbox))).toMatchObject({ comparable: 1, unexplained_difference: 0, uncomparable: 0 });
     }, 120_000);
+  });
+
+  describe('a CLI that sends many samples and exits at once loses none uncounted (received + counted lost == sent)', () => {
+    /** Runs the "CLI" (test/helpers/shadow-pipe-exit-parent.ts): `n` samples of `lineBytes` to the real shadow child loop, which starts `readerSleep` seconds late, then exit; returns what the child's tally holds once it ends. */
+    async function exitAtOnce(n: number, readerSleep: number, drainMs: number | undefined, lineBytes = 2_000) {
+      const home = ctx.tempDir(); const done = join(home, 'child-done');
+      const url = ctx.kind === 'postgres' ? (primary() as unknown as { connectedDatabaseUrl?: string }).connectedDatabaseUrl : undefined;
+      const proc = Bun.spawn([process.execPath, join(import.meta.dir, 'shadow-pipe-exit-parent.ts')], {
+        env: { ...process.env, GBRAIN_HOME: ctx.tempDir(), KIND: ctx.kind, DIR: home, N: String(n), LINE_BYTES: String(lineBytes), READER_SLEEP: String(readerSleep), DONE: done, ...(url ? { DATABASE_URL: url } : {}), ...(drainMs ? { DRAIN_MS: String(drainMs) } : {}) },
+        stdout: 'pipe', stderr: 'pipe',
+      });
+      const [out, err] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
+      expect(await proc.exited, err).toBe(0);
+      const said = JSON.parse(out.trim().split('\n').at(-1)!) as { sent: number; refused: number };
+      await until(() => existsSync(done), (readerSleep + 30) * 1000); // the child outlives its parent: it reads what the pipe holds, then counts what it was never sent
+      const t = readWriteTally(home, readEpoch(home)!.epoch_id)!;
+      return { ...said, received: t.uncomparable_by_reason.no_sample ?? 0, lost: t.uncomparable_by_reason.pipe_unflushed ?? 0, total: t.comparable + t.unexplained_difference + t.uncomparable + t.capability_missing, files: readdirSync(home) };
+    }
+
+    test('a reader that catches up while the CLI waits: every sample is received and counted, none is lost', async () => {
+      const r = await exitAtOnce(300, 1, 10_000);
+      expect(r.refused).toBe(0);
+      expect({ received: r.received, lost: r.lost, total: r.total }).toEqual({ received: r.sent, lost: 0, total: r.sent }); // master: about a quarter arrive and nothing counts the rest
+      expect(r.files.filter((f) => f.startsWith('write-sent.'))).toEqual([]); // the child took the sent count and removed it
+    }, 120_000);
+
+    for (const lineBytes of [200, 2_000, 20_000]) {
+      test(`a reader slower than the drain bound (${lineBytes}-byte samples): what the pipe never delivered is counted lost (pipe_unflushed), exactly`, async () => {
+        const r = await exitAtOnce(Math.ceil(600_000 / lineBytes), 4, 400, lineBytes); // about 600 KB, more than the pipe holds
+        expect(r.refused).toBe(0);
+        expect(r.lost).toBeGreaterThan(0);
+        expect(r.received).toBeLessThan(r.sent);
+        expect(r.received + r.lost).toBe(r.sent);
+        expect(r.total).toBe(r.sent);
+      }, 120_000);
+    }
   });
 }
