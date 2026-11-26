@@ -129,33 +129,82 @@ fn a_fold_that_fails_keeps_the_store_as_it_was() {
     });
 }
 
+/// A brain at every format this build opens from 8 on (8 here; 8, 9 and 12 once the trunk's
+/// earlier formats are merged in) opens at this build's format with the same answers, and its next
+/// writes stage pending records that every read applies.
 #[test]
-fn a_format_8_brain_opens_as_format_13_with_the_same_answers() {
+fn a_brain_at_each_earlier_format_from_8_opens_at_this_format_with_the_same_answers() {
+    let earlier: Vec<u32> = crate::FORMAT_VERSIONS
+        .iter()
+        .copied()
+        .filter(|v| *v >= 8 && *v < FORMAT_VERSION)
+        .collect();
+    assert!(earlier.contains(&8));
+    for version in earlier {
+        let kv = mem_kv();
+        let store = open(&kv).unwrap();
+        with_fold_at(1, || corpus(&store));
+        assert!(pending_keys(&store).is_empty());
+        store
+            .write(|w| {
+                let mut stored: StoredFormat = get_json(&*w, &keys::meta("format"))?.unwrap();
+                stored.format_version = version;
+                put_json(w, &keys::meta("format"), &stored)
+            })
+            .unwrap();
+        drop(store);
+        let store = open(&kv).unwrap();
+        let stored: StoredFormat = get_json(&*store.read().unwrap(), &keys::meta("format"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored.format_version, FORMAT_VERSION, "from {version}");
+        assert!(pending_keys(&store).is_empty(), "from {version}");
+        assert!(members(&store) > 0);
+        with_fold_at(i64::MAX, || {
+            put(&store, "notes/one", "One", "green pear", "", json!({}));
+            assert!(!pending_keys(&store).is_empty());
+            assert!(members(&store) > 0);
+        });
+    }
+}
+
+/// A build that stops at format 8 (its list ends at 8) refuses a brain this build wrote, before it
+/// changes anything.
+#[test]
+fn a_build_that_stops_at_format_8_refuses_a_brain_this_build_wrote() {
     let kv = mem_kv();
     let store = open(&kv).unwrap();
-    with_fold_at(1, || corpus(&store));
-    assert!(pending_keys(&store).is_empty());
-    store
-        .write(|w| {
-            let mut stored: StoredFormat = get_json(&*w, &keys::meta("format"))?.unwrap();
-            stored.format_version = 8;
-            put_json(w, &keys::meta("format"), &stored)
+    with_fold_at(i64::MAX, || {
+        put(&store, "notes/a", "Alpha", "red apple", "", json!({}))
+    });
+    drop(store);
+    let before: Vec<(Vec<u8>, Vec<u8>)> = {
+        let snap = kv.snapshot().unwrap();
+        let mut out = Vec::new();
+        scan_prefix(&*snap, &[], false, &mut |k, v| {
+            out.push((k.to_vec(), v.to_vec()));
+            true
         })
         .unwrap();
-    drop(store);
-    let store = open(&kv).unwrap();
-    let stored: StoredFormat = get_json(&*store.read().unwrap(), &keys::meta("format"))
-        .unwrap()
-        .unwrap();
-    assert_eq!(stored.format_version, FORMAT_VERSION);
-    assert!(pending_keys(&store).is_empty());
-    assert!(members(&store) > 0);
-    // Writes after the upgrade stage pending records, and reads still answer as the scan.
-    with_fold_at(i64::MAX, || {
-        put(&store, "notes/one", "One", "green pear", "", json!({}));
-        assert!(!pending_keys(&store).is_empty());
-        assert!(members(&store) > 0);
-    });
+        out
+    };
+    let err = Store::open_kv_in(
+        kv.clone(),
+        Arc::new(SystemEnv),
+        OpenOptions::default(),
+        &[1, 2, 3, 4, 5, 6, 7, 8],
+    )
+    .err()
+    .unwrap();
+    assert_eq!(err.code, crate::error::FORMAT_UNKNOWN);
+    let snap = kv.snapshot().unwrap();
+    let mut after = Vec::new();
+    scan_prefix(&*snap, &[], false, &mut |k, v| {
+        after.push((k.to_vec(), v.to_vec()));
+        true
+    })
+    .unwrap();
+    assert_eq!(after, before);
 }
 
 #[test]
