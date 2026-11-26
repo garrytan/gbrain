@@ -277,8 +277,10 @@ skill in the agent's directories that OpenClaw hides from it (not eligible on
 this host, outside the agent's skill filter, model invocation off) or does not
 list at all (cut at load, see `skill_resolver_host_load_cut`) goes into that
 agent's `exclude_ids` and is never suggested, and setup names it. If the
-command fails, or lists none of the catalog's skills (usually a different
-workspace), nothing is filtered and setup says so. Run setup again after you
+command fails on a later run, the skills it hid at the last run it answered
+stay hidden, and setup says so; on a first setup, or when it lists none of the
+catalog's skills (usually a different workspace), nothing is filtered and
+setup says so. Run setup again after you
 change which skills an agent can use; `gbrain doctor --only skill_resolver`
 asks OpenClaw again (read-only) and warns when the plugin still suggests a
 skill OpenClaw now hides or no longer lists; its fix,
@@ -380,7 +382,8 @@ owner; `conversation` is a group, channel or another person's DM). OpenClaw
 sends a memory audience only with a native memory provider. Without one, the
 class comes from the session key's shape (`agent:<id>:main` is `main`,
 `...:direct:<peer>` is `direct` unless the sender is an `--owner-sender`, and
-with `--owner-sender` set, `main` from any other sender is `direct` too,
+with `--owner-sender` set, `main` from any other sender, or with no sender
+id, is `direct` too,
 `...:group:<id>` is `group`, `...:cron:...`, `...:relay-<sender>`,
 `...:subagent:...` and `hook:...` are silent) and the log line says
 `audience: unknown`. Owner pins and owner-only skills never reach a session
@@ -388,8 +391,9 @@ that is not the owner's, with or without an audience.
 
 A skill whose `SKILL.md` front matter says `audience: owner` is suggested
 and pinned only in the owner's sessions. `owner` is the only defined value;
-any other non-empty `audience` (a list, a typo) is treated as `owner`, so a
-mistake never makes a skill public. A catalog built before gbrain recorded
+any other non-empty `audience` (a list, a typo, `true`, a number, a mapping)
+is treated as `owner`, and so is front matter that does not parse but has an
+`audience:` line, so a mistake never makes a skill public. A catalog built before gbrain recorded
 audiences suggests nothing and pins nothing outside the owner's sessions
 until it is rebuilt, which happens on its own after an upgrade.
 
@@ -496,6 +500,8 @@ gbrain skills pin remove deploy-example --catalog openclaw-main
 On OpenClaw a pin shows in the owner's own sessions unless `--class` says
 otherwise: `--class conversation` for groups, channels and other people's DMs
 only, `--class owner,conversation` for both ([session classes](#session-classes)).
+Adding a pin again without `--class` (to change its `--line`) keeps its
+classes; `--class owner` sets it back to the owner's sessions.
 A pin OpenClaw hides from the agent, loads from another folder, or marks
 `audience: owner` (in a conversation) is left out of the block, and setup
 names it (`skill_resolver_pin_withheld`).

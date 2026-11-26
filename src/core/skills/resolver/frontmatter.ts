@@ -48,8 +48,10 @@ function yamlFields(raw: string): Record<string, unknown> | null {
 
 /** Any non-empty `audience` keeps a skill to the owner: only `owner` is defined, and an unknown value or a typo fails closed. */
 export function restricted(v: unknown): boolean {
+  if (v === undefined || v === null) return false;
   if (typeof v === 'string') return cleanText(v) !== '';
-  return Array.isArray(v) && v.some((x) => typeof x === 'string' && cleanText(x) !== '');
+  if (Array.isArray(v)) return v.some((x) => restricted(x));
+  return true;
 }
 
 function stringList(v: unknown): string[] {
@@ -78,7 +80,7 @@ export function parseSkillDoc(input: string): SkillDoc {
     eligible: !(fm && (fm.eligible === false || fm.eligible === 'false')),
     deprecated: Boolean(fm && (fm.deprecated === true || fm.deprecated === 'true')),
     ...(replacedBy ? { replacedBy } : {}),
-    ...(fm && restricted(fm.audience) ? { audience: 'owner' as const } : {}),
+    ...((fm ? restricted(fm.audience) : /^audience\s*:/m.test(raw)) ? { audience: 'owner' as const } : {}),
     body: boundBody(text),
   };
 }

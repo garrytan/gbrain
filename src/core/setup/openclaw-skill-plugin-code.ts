@@ -21,7 +21,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync, realpathSync, statSync } from 'node:fs';
 import { join, sep } from 'node:path';
 
-const { home, libDir, sha } = workerData;
+const { home, libDir, sha, rebuildMs } = workerData;
 const pending = new Map();
 const lastBuild = new Map();
 let building = null;
@@ -45,7 +45,7 @@ const ready = loadLibrary().then((lib) => ({ lib }), (e) => ({ code: e && e.code
 
 function rebuild(lib, catalog, dirs) {
   if (building || !Array.isArray(dirs) || dirs.length === 0) return;
-  if (Date.now() - (lastBuild.get(catalog) || 0) < 60_000) return;
+  if (Date.now() - (lastBuild.get(catalog) || 0) < rebuildMs) return;
   lastBuild.set(catalog, Date.now());
   building = Promise.resolve().then(() => lib.buildSkillIndex({ catalog, dirs, harness: 'openclaw' }, { home }))
     .then(() => parentPort.postMessage({ type: 'rebuilt', catalog }), (e) => parentPort.postMessage({ type: 'rebuilt', catalog, code: (e && e.code) || 'skill_resolver_internal' }))
@@ -119,7 +119,7 @@ const MEMO_MAX = 1000;
 const SESSIONS_MAX = 5000;
 const WORKER_URL = new URL('./worker.js', import.meta.url);
 const BRIEF_LEDGER = join(HOME, 'openclaw-session-briefs.jsonl');
-const REFRESH_AFTER_MS = 300_000;
+const REFRESH_AFTER_MS = Number(process.env.GBRAIN_TEST_OPENCLAW_SKILL_REFRESH_MS) || 300_000;
 const OWNER_CLASSES = new Set(['owner', 'main']);
 const SILENT_CLASSES = new Set(['relay', 'cron', 'heartbeat', 'webhook', 'internal']);
 
@@ -142,6 +142,7 @@ const rebrief = new Set();
 let briefed = null;
 let briefAppends = 0;
 let refreshedAt = 0;
+let refreshTimer = null;
 
 function readState() {
   let mtime;
@@ -200,7 +201,7 @@ function ensureWorker(s) {
   if (worker) dropWorker();
   let w;
   try {
-    w = new Worker(WORKER_URL, { execArgv: [], env: {}, workerData: { home: HOME, libDir: LIB_DIR, sha: s.library_sha256 } });
+    w = new Worker(WORKER_URL, { execArgv: [], env: {}, workerData: { home: HOME, libDir: LIB_DIR, sha: s.library_sha256, rebuildMs: Number(process.env.GBRAIN_TEST_OPENCLAW_SKILL_REBUILD_MS) || 60_000 } });
   } catch {
     log({ outcome: 'error', code: 'skill_resolver_worker_crash' });
     backoff();
@@ -287,8 +288,8 @@ function sessionClassOf(event, ctx, a, sessionKey) {
   }
   if ((keyed === 'direct' || keyed === 'main') && Array.isArray(a.owner_sender_ids) && a.owner_sender_ids.length) {
     const sender = senderOf(event, ctx);
-    if (sender !== null && !a.owner_sender_ids.includes(sender)) return of('direct');
-    if (sender !== null && keyed === 'direct') return of('owner');
+    if (sender === null || !a.owner_sender_ids.includes(sender)) return of('direct');
+    if (keyed === 'direct') return of('owner');
   }
   return of(keyed);
 }
@@ -306,6 +307,7 @@ function briefLedger() {
   try {
     for (const line of readFileSync(BRIEF_LEDGER, 'utf8').split('\n')) {
       if (!line) continue;
+      briefAppends += 1;
       try { const j = JSON.parse(line); if (j && typeof j.k === 'string') { if (j.drop) briefed.delete(j.k); else remember(briefed, j.k, 1, SESSIONS_MAX); } } catch { /* a torn line */ }
     }
   } catch { /* none yet */ }
@@ -384,9 +386,16 @@ function ask(w, msg, ms = DEADLINE_MS) {
 
 // After the worker rebuilds a catalog (a skill changed), have gbrain re-read what OpenClaw hides from each agent and
 // rewrite the state (setup --skills-index-only), so a new hidden or shadowed skill is not suggested from the new index.
+// A rebuild during the cooldown or a running refresh is not dropped: one trailing refresh runs when the cooldown ends.
 function refreshSoon() {
   const now = Date.now();
-  if (refreshing || now - refreshedAt < REFRESH_AFTER_MS) return;
+  if (refreshing || now - refreshedAt < REFRESH_AFTER_MS) {
+    if (!refreshTimer) {
+      refreshTimer = setTimeout(() => { refreshTimer = null; refreshSoon(); }, Math.max(1000, refreshedAt + REFRESH_AFTER_MS - now));
+      if (refreshTimer.unref) refreshTimer.unref();
+    }
+    return;
+  }
   refreshedAt = now;
   refreshing = true;
   const env = { ...process.env, ...(GBRAIN_HOME_ENV ? { GBRAIN_HOME: GBRAIN_HOME_ENV } : {}) };
@@ -453,7 +462,7 @@ async function resolveTurn(event, ctx, opts) {
       rebrief.delete(sessionKey);
       markBriefed(briefKey);
       const m = memo.get(memoKey);
-      if (m) m.brief = pinBlock; else remember(memo, memoKey, { block: '', text, brief: pinBlock }, MEMO_MAX);
+      if (m) m.brief = pinBlock; else remember(memo, memoKey, { block: '', text, brief: pinBlock, unresolved: true }, MEMO_MAX);
     }
     const brief = fresh ? pinBlock : prior && pinsOn && prior.brief && !carried(prior.brief) ? prior.brief : '';
     const ctxText = [brief, block || ''].filter(Boolean).join('\n\n');
@@ -474,7 +483,7 @@ async function resolveTurn(event, ctx, opts) {
     const sender = senderOf(event, ctx);
     if (sender === null || !a.owner_sender_ids.includes(sender)) return finish({ outcome: 'skipped_sender' });
   }
-  if (prior) return finish({ outcome: 'retry' }, arm === 'live' && !carried(prior.block) ? prior.block : '');
+  if (prior && !prior.unresolved) return finish({ outcome: 'retry' }, arm === 'live' && !carried(prior.block) ? prior.block : '');
   const w = ensureWorker(s);
   if (!w) return finish({ outcome: 'error', code: 'skill_resolver_worker_unavailable' });
   const reset = resetNext.delete(sessionKey);
@@ -497,7 +506,7 @@ async function resolveTurn(event, ctx, opts) {
   const deliver = arm === 'live' && reply.block ? reply.block : '';
   const active = isActive(ctx);
   if (active && !opts.selfTest) w.postMessage({ type: 'commit', id: reply.id }); else w.postMessage({ type: 'discard', id: reply.id });
-  if (deliver || active) remember(memo, memoKey, { block: deliver, text, brief: '' }, MEMO_MAX);
+  if (deliver || active) remember(memo, memoKey, { block: deliver, text, brief: prior && prior.brief ? prior.brief : '' }, MEMO_MAX);
   return finish({ outcome: arm === 'live' || !names.length ? outcome : 'would_suggest', suggested: names, sources, strengths: reply.strengths, code: reply.code || null }, deliver);
 }
 

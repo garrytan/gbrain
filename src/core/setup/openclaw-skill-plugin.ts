@@ -90,6 +90,8 @@ export interface OpenclawSkillAgentState {
   /** The pins for conversations (groups, channels, other people's DMs), every turn. */
   conversation_pinned_block?: string;
   conversation_pinned_ids?: string[];
+  /** The skills OpenClaw hid from this agent at the last refresh where it answered (hidden, cut and shadowed), kept when a later one gets no answer. */
+  host_hidden?: string[];
   /** The session classes that get suggestions (relay, cron, heartbeat, webhook and internal turns never do); absent means both. */
   suggest_classes?: PinClass[];
   owner_sender_ids: string[];
@@ -476,7 +478,9 @@ export async function syncOpenclawSkillPlugin(opts: OpenclawSkillSyncOptions): P
     const files = dryRun && !fresh ? new Map(readDirSources(dirs).skills.map((s) => [s.id, s.path ?? ''])) : (catalogSkillPaths(home, catalog) ?? new Map<string, string>());
     const catalogIds = [...files.keys()];
     let hidden: string[] = [];
-    if (bin && !host) out.notes.push(`agent ${id}: \`openclaw gateway call skills.status\` and \`openclaw skills list --json --agent ${id}\` failed, so skills OpenClaw hides from this agent were not filtered out of ${catalog}`);
+    const kept = !host && before ? (before.host_hidden ?? (before.exclude_ids ?? []).filter((x) => !lane.exclude_ids.includes(x))).filter((n) => files.has(n)) : [];
+    if (kept.length) out.notes.push(`agent ${id}: OpenClaw did not answer, so the ${kept.length} skill(s) it hid from this agent last time stay hidden: ${someNames(kept)}`);
+    else if (bin && !host) out.notes.push(`agent ${id}: \`openclaw gateway call skills.status\` and \`openclaw skills list --json --agent ${id}\` failed, so skills OpenClaw hides from this agent were not filtered out of ${catalog}`);
     else if (host && !catalogIds.some((n) => host.listed.has(n))) out.notes.push(`agent ${id}: OpenClaw lists none of ${catalog}'s skills for this agent, so the catalog was not filtered (check that the agent's workspace is ${dirs[0]})`);
     else if (host) hidden = catalogIds.filter((n) => !host.visible.has(n));
     const shadowed = host ? host.skills.filter((s) => s.filePath && files.get(s.name) && realOr(s.filePath) !== realOr(files.get(s.name)!) && !hidden.includes(s.name)).map((s) => s.name) : [];
@@ -487,7 +491,7 @@ export async function syncOpenclawSkillPlugin(opts: OpenclawSkillSyncOptions): P
     const shut = hidden.filter((n) => !cut.includes(n));
     if (shut.length) out.notes.push(`agent ${id}: ${shut.length} skill(s) OpenClaw hides from this agent's model (ineligible on this host, outside its skill filter, or model invocation off) are never suggested: ${someNames(shut)}`);
     if (cut.length) out.notes.push(`agent ${id}: OpenClaw does not list ${cut.length} of ${catalog}'s skills (dropped at load by skills.limits.maxCandidatesPerRoot or skills.limits.maxSkillsLoadedPerSource, or not in its skill roots), so they are never suggested: ${someNames(cut)} (skill_resolver_host_load_cut)`);
-    hidden.push(...shadowed);
+    hidden.push(...shadowed, ...kept);
     const policy = openclawAgentPolicy(id, roster, host?.workspaceDir);
     const none = { block: '', ids: [] as string[], unknown: [] as string[], withheld: [] as string[] };
     const root = readRootFor(policy.path_reads, policy.workspace);
@@ -500,7 +504,7 @@ export async function syncOpenclawSkillPlugin(opts: OpenclawSkillSyncOptions): P
       path_reads: policy.path_reads, ...(policy.workspace ? { workspace_dir: policy.workspace } : {}),
       top_k: lane.top_k, min_match: lane.min_match, ...(lane.top_gate !== undefined ? { top_gate: lane.top_gate } : {}), exclude_ids: [...new Set([...lane.exclude_ids, ...hidden])],
       live_fraction: tune.live_fraction ?? before?.live_fraction ?? 1, pins_route: tune.pins_route ?? before?.pins_route ?? 'system',
-      pinned_block: pins.block, pinned_ids: pins.ids, conversation_pinned_block: talk.block, conversation_pinned_ids: talk.ids,
+      pinned_block: pins.block, pinned_ids: pins.ids, conversation_pinned_block: talk.block, conversation_pinned_ids: talk.ids, host_hidden: [...new Set(hidden)],
       ...((tune.suggest_classes ?? before?.suggest_classes) ? { suggest_classes: tune.suggest_classes ?? before!.suggest_classes } : {}),
       owner_sender_ids: tune.owner_sender_ids ?? before?.owner_sender_ids ?? [],
     };
@@ -587,7 +591,7 @@ export function refreshOpenclawPins(home: string): string[] {
   let lane: string[] = [];
   try { lane = openclawLaneConfig(home).exclude_ids; } catch { /* a bad config: setup reports it; every exclude counts as hidden here */ }
   for (const [id, a] of Object.entries(agents)) {
-    const hidden = (a.exclude_ids ?? []).filter((x) => !lane.includes(x));
+    const hidden = a.host_hidden ?? (a.exclude_ids ?? []).filter((x) => !lane.includes(x));
     const root = readRootFor(a.path_reads, a.workspace_dir);
     const pins = pinnedBlockFor(home, a.catalog, 'openclaw', root, { cls: 'owner', hidden });
     const talk = pinnedBlockFor(home, a.catalog, 'openclaw', root, { cls: 'conversation', hidden });

@@ -370,6 +370,23 @@ describe.skipIf(!NODE)('the OpenClaw eligibility filter', () => {
     expect(r.resolver.notes.join('\n')).toContain('lists none of openclaw-main' + "'" + 's skills for this agent, so the catalog was not filtered');
   });
 
+  test('when OpenClaw does not answer, a refresh keeps the skills it hid last time out of suggestions and pins', async () => {
+    const b = box();
+    const env = listed(b, ['deploy-service', 'email-triage', 'calendar-sync'].map((name) => ({ name, eligible: true, modelVisible: name !== 'email-triage' })));
+    expectExit(await setup(b, ['--skill-loading', 'resolve'], env), 0);
+    expect(readState(b).agents.main.exclude_ids).toEqual(['email-triage']);
+    expect((await runCli(['skills', 'pin', 'add', 'email-triage', '--catalog', 'openclaw-main'], { env: b.env })).exitCode).toBe(0);
+    expect(readState(b).agents.main.pinned_ids).toEqual([]);
+    const r = await setup(b, ['--skill-loading', 'resolve']);
+    expectExit(r, 0);
+    expect(readState(b).agents.main).toMatchObject({ exclude_ids: ['email-triage'], host_hidden: ['email-triage'], pinned_ids: [] });
+    expect(r.resolver.notes.join('\n')).toContain('OpenClaw did not answer, so the 1 skill(s) it hid from this agent last time stay hidden: email-triage');
+    expect((await runCli(['skills', 'pin', 'add', 'deploy-service', '--catalog', 'openclaw-main'], { env: b.env })).exitCode).toBe(0);
+    expect(readState(b).agents.main.pinned_ids).toEqual(['deploy-service']);
+    const out = drive(b, [['turn', { text: 'triage the email inbox' }]]);
+    expect(JSON.stringify(out[0] ?? {})).not.toContain('email-triage');
+  });
+
   test('a failed list, or no openclaw on PATH, filters nothing', async () => {
     const b = box();
     const r = await setup(b, ['--skill-loading', 'resolve']);
@@ -697,6 +714,66 @@ describe.skipIf(!NODE)('session classes and the session-start brief', () => {
     expect(readFileSync(ledger, 'utf8')).not.toContain('calendar');
   });
 
+  test('with --owner-sender set, a turn on the shared main session that carries no sender id is a direct conversation: no owner pins, no owner-only skill', async () => {
+    const b = box();
+    ownerSkill(b);
+    expectExit(await setup(b, ['--skill-loading', 'resolve', '--owner-sender', 'owner-1']), 0);
+    await pin(b, 'deploy-service');
+    const out = drive(b, [['turn', { text: 'review the private household ledger', session: 'agent:main:main' }]], undefined, { DRIVE_LOG_LINES: '1' });
+    expect(JSON.stringify(out[0] ?? {})).not.toContain('deploy-service');
+    expect(JSON.stringify(out[0] ?? {})).not.toContain('private-ledger');
+    expect(logLines(b)[0]).toMatchObject({ session_class: 'direct', outcome: 'skipped_sender' });
+  });
+
+  test('a briefed first turn that times out is resolved on its retry, which carries the brief once', async () => {
+    const b = box();
+    expectExit(await setup(b, ['--skill-loading', 'resolve', '--pins-route', 'first_turn']), 0);
+    await pin(b, 'deploy-service');
+    const st = readState(b);
+    const real = join(gbrainHome(b), 'lib', st.library_sha256 + '.mjs');
+    const slow = 'import * as real from ' + JSON.stringify('file://' + real) + ';\nlet n = 0;\nexport const GBRAIN_VERSION = real.GBRAIN_VERSION;\nexport async function resolveSkills(input, opts) { if (n++ === 0) await new Promise((r) => setTimeout(r, 2600)); return real.resolveSkills(input, opts); }\nexport const commitSessionAsync = real.commitSessionAsync;\nexport const buildSkillIndex = real.buildSkillIndex;\n';
+    const sha = createHash('sha256').update(slow).digest('hex');
+    writeFileSync(join(gbrainHome(b), 'lib', sha + '.mjs'), slow, { mode: 0o644 });
+    st.library_sha256 = sha;
+    writeFileSync(statePath(b), JSON.stringify(st));
+    const ctx = { ...OWNER, sessionId: 'sess-t' };
+    const out = drive(b, [
+      ['turn', { text: 'triage the email inbox', run: 'r1', ctx }],
+      ['sleep', { ms: 1000 }],
+      ['turn', { text: 'triage the email inbox', run: 'r1', ctx }],
+    ], undefined, { DRIVE_LOG_LINES: '2' });
+    expect(out[0].appendContext).toContain('<pinned_skills>');
+    expect(out[0].appendContext).not.toContain('<relevant_skills>');
+    expect(out[2].appendContext).toContain('email-triage');
+    expect((out[2].appendContext.match(/<pinned_skills>/g) ?? []).length).toBe(1);
+    const lines = logLines(b);
+    expect(lines.map((l) => l.code ?? l.outcome)).toEqual(['skill_resolve_timeout', 'suggested']);
+  });
+
+  test('the brief ledger compacts across gateway restarts: lines from earlier runs count toward the rewrite', async () => {
+    const b = box();
+    expectExit(await setup(b, ['--skill-loading', 'resolve', '--pins-route', 'first_turn']), 0);
+    await pin(b, 'deploy-service');
+    const ledger = join(gbrainHome(b), 'openclaw-session-briefs.jsonl');
+    writeFileSync(ledger, (JSON.stringify({ k: 'main\0old' }) + '\n').repeat(4999), { mode: 0o600 });
+    const out = drive(b, [['turn', { text: 'sync the calendar', ctx: { ...OWNER, sessionId: 'sess-new' } }]], undefined, { DRIVE_LOG_LINES: '1' });
+    expect(out[0].appendContext).toContain('<pinned_skills>');
+    const keys = readFileSync(ledger, 'utf8').trim().split('\n').map((l) => JSON.parse(l).k);
+    expect(keys).toEqual(['main\0old', 'main\0sess-new']);
+  });
+
+  test('pin add --line keeps the classes a pin already has; --class owner sets them back', async () => {
+    const b = box();
+    expectExit(await setup(b, ['--skill-loading', 'resolve']), 0);
+    await pin(b, 'calendar-sync', '--class', 'conversation');
+    await pin(b, 'calendar-sync', '--line', 'When the calendar drifts');
+    expect(readState(b).agents.main).toMatchObject({ pinned_ids: [], conversation_pinned_ids: ['calendar-sync'] });
+    const list = await runCli(['skills', 'pin', 'list', '--catalog', 'openclaw-main', '--json'], { env: b.env });
+    expect(JSON.parse(list.stdout).pins).toEqual([{ name: 'calendar-sync', line: 'When the calendar drifts', classes: ['conversation'] }]);
+    await pin(b, 'calendar-sync', '--class', 'owner');
+    expect(readState(b).agents.main).toMatchObject({ pinned_ids: ['calendar-sync'], conversation_pinned_ids: [] });
+  });
+
   test('a pinned skill OpenClaw hides from the agent is left out of the block and setup names it', async () => {
     const b = box();
     expectExit(await setup(b, ['--skill-loading', 'resolve']), 0);
@@ -741,6 +818,14 @@ describe.skipIf(!NODE)('session classes and the session-start brief', () => {
     expect(lines.map((l) => l.outcome)).toEqual(['rebuilt', 'refreshed']);
     expect(lines[1].code).toBeNull();
     expect(readState(b).agents.main.exclude_ids).toEqual(['calendar-sync']);
+  });
+
+  test('a second rebuild inside the refresh cooldown is not dropped: one trailing refresh runs after it', async () => {
+    const b = box();
+    expectExit(await setup(b, ['--skill-loading', 'resolve']), 0);
+    const env = { OPENCLAW_STATE_DIR: b.state, OPENCLAW_CALLS: b.calls, GBRAIN_HOME: b.home, GBRAIN_TEST_OPENCLAW_SKILL_REFRESH_MS: '1500', GBRAIN_TEST_OPENCLAW_SKILL_REBUILD_MS: '1' };
+    drive(b, [['changed', {}], ['sleep', { ms: 800 }], ['changed', {}], ['sleep', { ms: 200 }]], undefined, { ...env, DRIVE_LOG_LINES: '4' });
+    expect(logLines(b).map((l) => l.outcome)).toEqual(['rebuilt', 'refreshed', 'rebuilt', 'refreshed']);
   });
 });
 

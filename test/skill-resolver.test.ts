@@ -1172,6 +1172,26 @@ describe('owner-only skills (audience: owner)', () => {
     expect(owner.output.suggestions.map(s => s.id)).toEqual(expect.arrayContaining(['ledger-typo', 'ledger-list']));
   });
 
+  test('a non-string audience fails closed too: true, a number, a mapping, or front matter that does not parse', async () => {
+    const home = tmp();
+    const root = tmp('skres-dir-');
+    const fm = (name: string, audience: string, extra = '') => {
+      mkdirSync(join(root, name), { recursive: true });
+      writeFileSync(join(root, name, 'SKILL.md'), '---\nname: ' + name + '\ndescription: Review the private household ledger ' + name + ' copy\naudience: ' + audience + '\n' + extra + '---\nSteps.\n');
+    };
+    fm('ledger-true', 'true');
+    fm('ledger-number', '1');
+    fm('ledger-map', '\n  who: owner');
+    fm('ledger-broken', 'owner', 'triggers: [unclosed\n');
+    skillDir(root, 'ledger-export', { name: 'ledger-export', description: 'Export the household ledger to a spreadsheet' });
+    await buildSkillIndex({ catalog: 'c', dirs: [root] }, { home });
+    const ids = ['ledger-true', 'ledger-number', 'ledger-map', 'ledger-broken'];
+    const others = await resolveSkills({ message: 'review the private household ledger copy', top_k: 8, top_gate: 0 }, { home, audience: 'others' });
+    for (const id of ids) expect(others.output.suggestions.map(s => s.id)).not.toContain(id);
+    const owner = await resolveSkills({ message: 'review the private household ledger copy', top_k: 8, top_gate: 0 }, { home, audience: 'owner' });
+    expect(owner.output.suggestions.map(s => s.id)).toEqual(expect.arrayContaining(ids));
+  });
+
   test('conversation pins from a catalog built before audiences were recorded are all withheld until it is rebuilt', async () => {
     const home = tmp();
     const root = tmp('skres-dir-');

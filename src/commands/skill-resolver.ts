@@ -382,7 +382,8 @@ async function runPin(args: string[]): Promise<void> {
       if (!known.has(name)) exitCliError(opError('skill_resolver_pin_unknown', `"${name}" is not a skill in ${catalog}; nothing was written.`, `Check the id with gbrain skills index status --catalog ${catalog}, then retry.`, { docs: 'docs/guides/skill-resolver.md#skill_resolver_pin_unknown' }), CMD, { json });
       const others = pins.filter((x) => x.name !== name);
       if (others.length >= PINS_MAX) usage(`${catalog} already has ${PINS_MAX} pins.`, 'Remove one first.');
-      pins = [...others, { name, ...(line !== undefined ? { line } : {}), ...(classes && (classes.length !== 1 || classes[0] !== 'owner') ? { classes: PIN_CLASSES.filter((c) => classes.includes(c)) } : {}) }];
+      const kept = classes ? (classes.length !== 1 || classes[0] !== 'owner' ? PIN_CLASSES.filter((c) => classes.includes(c)) : undefined) : pins.find((x) => x.name === name)?.classes;
+      pins = [...others, { name, ...(line !== undefined ? { line } : {}), ...(kept ? { classes: kept } : {}) }];
     } else {
       if (line !== undefined) usage('--line is for pin add.', 'Drop --line.');
       if (classes) usage('--class is for pin add.', 'Drop --class.');
