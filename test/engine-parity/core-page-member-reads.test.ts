@@ -17,6 +17,15 @@ import { createSource, parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 import { runCore } from '../../src/commands/core.ts';
+import { dispatchToolCall } from '../../src/mcp/dispatch.ts';
+import { registerLocalWriter, withVerifiedLocalRegistration } from '../../src/core/persistence/identity.ts';
+import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
+import { withEnv } from '../helpers/with-env.ts';
+import { isCapabilityRefusal } from './arm-capabilities.ts';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -104,5 +113,81 @@ describe('engine parity: gbrain core remove', () => {
     expect(out.refused).toBeNull();
     expect(out).toEqual({ refused: null, core: false, errors: [], printed: [expect.stringMatching(/^Now out of core: default:core\/about\. Core uses \d+\/\d+ chars\.$/)] });
     return out;
+  });
+});
+
+describe('engine parity: gbrain core add', () => {
+  // `core add` marks a live page always_load through the coordinated put_page write, as the brain owner. It prints the
+  // same line on every engine and leaves the page core with the priority given.
+  parityTest('core add marks the page as core with its priority and prints the same line on every engine', {
+    methods: ['putPage', 'readPageSnapshot'],
+  }, async (engine: BrainEngine) => {
+    await engine.setConfig('memory.core.enabled', 'true');
+    await engine.putPage('notes/prefs', { type: 'note' as const, title: 'Prefs', compiled_truth: 'Prefers short answers.', timeline: '', frontmatter: {} }, { sourceId: 'default' });
+    const errors: string[] = [];
+    const printed: string[] = [];
+    const error = console.error;
+    const log = console.log;
+    console.error = (...a: unknown[]) => { errors.push(a.join(' ')); };
+    console.log = (...a: unknown[]) => { printed.push(a.join(' ')); };
+    try {
+      await runCore(engine, ['add', 'notes/prefs', '--priority', '5']);
+    } finally {
+      console.error = error;
+      console.log = log;
+    }
+    const fm = (await engine.readPageSnapshot('notes/prefs', { sourceId: 'default' }))?.page.frontmatter as Record<string, unknown> | undefined;
+    const out = { core: fm?.always_load === true, priority: fm?.core_priority ?? null, errors, printed };
+    expect(out).toEqual({ core: true, priority: 5, errors: [], printed: [expect.stringMatching(/^Now in core: default:notes\/prefs\. Core uses \d+\/\d+ chars\.$/)] });
+    return out;
+  });
+});
+
+describe('engine parity: a remote edit of a core page under remote_edit notify', () => {
+  // The default policy lets a remote caller edit a core page and records a notice for the owner (core_edit_notices). A Rust
+  // brain keeps no such table, so the write's notice step (core-guard.ts record()) refuses `raw_sql` at publication: the page
+  // stays as it was and the write does not commit. PGLite and Postgres commit the edit and write the notice row.
+  parityTest('a remote edit of a core page under remote_edit notify commits and records a notice; a Rust brain refuses it and changes nothing', {
+    methods: ['putPage', 'readPageSnapshot'], requires: 'raw_sql',
+  }, async (engine: BrainEngine, backend) => {
+    await engine.putPage('core/about', core({}), { sourceId: 'default' });
+    const snapshot = async () => {
+      const snap = await engine.readPageSnapshot('core/about', { sourceId: 'default' });
+      return { body: snap?.page.compiled_truth ?? null, revision: snap?.revision ?? null };
+    };
+    const before = await snapshot();
+    const home = mkdtempSync(join(tmpdir(), 'gb-core-notify-'));
+    try {
+      return await withEnv({ GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
+        const registration = await registerLocalWriter(engine, 'stdio', { sourceIds: ['*'], operations: null, scopes: ['read', 'write'], slugPrefixes: null });
+        try {
+          const auth = { token: 'fixture', clientId: 'fixture-client', scopes: ['read', 'write'], sourceId: 'default' };
+          const response = await withVerifiedLocalRegistration(engine, registration, () => dispatchToolCall(engine, 'edit_page', {
+            slug: 'core/about', expected_revision: before.revision, edits: [{ old_text: `body ${JSON.stringify({})}`, new_text: 'body edited remotely' }], request_id: randomUUID(),
+          }, { remote: true, config: { engine: backend === 'rust' ? 'rust' : 'pglite' }, sourceId: 'default', auth, logger: { info() {}, warn() {}, error() {} } } as never));
+          const body = JSON.parse((response.content[0] as { text: string }).text) as Record<string, unknown>;
+          const after = await snapshot();
+          if (backend === 'rust') {
+            // Today's refusal: the notice step of the publication (core-guard.ts record()) runs a raw INSERT into core_edit_notices,
+            // which a Rust brain refuses by name. The write ends failed (three claims) and the page is as it was.
+            expect({
+              isError: response.isError === true, error: body.error, code: body.code, reason: body.reason, detail: body.detail,
+              message: String(body.message).startsWith("This brain's engine does not support executeRaw yet (it needs the raw_sql capability)"),
+              state: (body.write_request as { state?: string } | undefined)?.state, unchanged: after,
+            }).toEqual({
+              isError: true, error: 'engine_capability_missing', code: 'engine_capability_missing', reason: 'raw_sql',
+              detail: 'member=executeRaw capability=raw_sql outcome=none written=nothing', message: true, state: 'failed', unchanged: before,
+            });
+            throw body;
+          }
+          const notices = (await engine.executeRaw<{ actor: string }>(`SELECT actor FROM core_edit_notices WHERE source_id = 'default' AND slug = 'core/about' AND acked_at IS NULL`)).length;
+          const out = { isError: response.isError === true, changed: after.body !== before.body, notices };
+          expect(out).toEqual({ isError: false, changed: true, notices: 1 });
+          return out;
+        } finally { await disposePersistenceConsumer(engine); }
+      });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });
