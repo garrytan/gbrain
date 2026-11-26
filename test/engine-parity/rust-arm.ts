@@ -23,6 +23,7 @@ import { detectAddonTarget } from '../../src/core/rust-engine/addon-target.ts';
 import { RUST_ENGINE_MEMBERS } from '../../src/core/rust-engine/members.ts';
 import { STORE_MEMBERS } from '../../src/core/rust-engine/store-members/index.ts';
 import { openRustEngine, RustEngine } from '../../src/core/rust-engine.ts';
+import { liftManagedHoldWhenRequested } from './rust-managed.ts';
 
 export const RUST_ARM_FLAG = 'GBRAIN_TEST_RUST_ARM';
 
@@ -144,7 +145,8 @@ export interface RustBrainDir { engine: RustEngine; dir: string }
 /** A Rust engine on a new brain directory, not connected. `loadRustArmAddon` has run. */
 export function newRustBrain(): RustBrainDir {
   if (!addon) throw new Error('loadRustArmAddon has not run');
-  const engine = openRustEngine({ addon, databasePath: mkdtempSync(join(tmpdir(), 'gbrain-rust-arm-')) });
+  // GBRAIN_TEST_RUST_MANAGED=1 lifts the managed_persistence hold on this engine only (rust-managed.ts).
+  const engine = liftManagedHoldWhenRequested(openRustEngine({ addon, databasePath: mkdtempSync(join(tmpdir(), 'gbrain-rust-arm-')) }));
   return { engine, dir: engine.databasePath };
 }
 

@@ -521,12 +521,57 @@ describe('engine parity: decide receipts', () => {
       ]);
       const replay = await engine.listDecideReplayReceipts('conflict', 1);
       const triage = await engine.listDecideReplayReceipts('triage', 1);
+      await apart();
       const none = await engine.listDecideReplayReceipts('conflict', 0);
       expect(replay.map((r) => r.decision_id)).toEqual(['', 'B', 'a', 'a', 'a', 'b', 'b', 'b', '\u00e9']);
       expect(replay.filter((r) => r.decision_id === 'b').map((r) => r.rank)).toEqual([1, 2, null]);
       expect(triage).toHaveLength(1);
       expect(none).toEqual([]);
       return { replay, triage };
+    },
+  );
+
+  /**
+   * Rows that tie on decision id and rank, written and read in ONE transaction, where every arm stamps them with the
+   * same now(): the read answers them in insertion order (the row id) on every arm, not in the order the plan sorts them.
+   */
+  parityTest(
+    'listDecideReplayReceipts answers rows that tie on decision id and rank in insertion order, even when written in the reading transaction',
+    { methods: ['insertDecideReceipts', 'listDecideReplayReceipts'] },
+    async (engine) => {
+      const rows = Array.from({ length: 24 }, (_, i) => receipt(i % 2 ? 't' : 'u', { rank: i % 3 ? 1 : null, answer_value: i / 32, outcome: 'pass' }));
+      const replay = await engine.transaction(async (tx) => {
+        await tx.insertDecideReceipts(rows);
+        return tx.listDecideReplayReceipts('conflict', 1);
+      });
+      const inOrder = ['t', 'u'].flatMap(id => [1, null].flatMap(rank => rows.filter(r => r.decision_id === id && (r.rank ?? null) === rank).map(r => r.answer_value ?? null)));
+      expect(replay.map(r => r.answer_value)).toEqual(inOrder);
+      return replay;
+    },
+  );
+
+  /**
+   * Groups whose latest receipt ties on time (written and read in ONE transaction, one now() on every arm) come in byte
+   * order of slot, provider and resolved model on every arm.
+   */
+  parityTest(
+    'listDecideResolvedModels orders groups that tie on their latest time by slot, provider and model in byte order',
+    { methods: ['insertDecideReceipts', 'listDecideResolvedModels'] },
+    async (engine) => {
+      const groups: Array<[string, string, string]> = [
+        ['triage', 'typesafe:openai', 'gpt-a'], ['conflict', 'typesafe:openai', 'gpt-b'], ['Alpha', 'typesafe:openai', 'gpt-a'],
+        ['conflict', 'typesafe:anthropic', 'claude-x'], ['conflict', 'typesafe:openai', 'gpt-a'], ['conflict', 'typesafe:openai', 'Gpt-a'],
+        ['triage', 'typesafe:anthropic', 'claude-x'], ['conflict', 'typesafe:openai', 'gpt-c'],
+      ];
+      const models = await engine.transaction(async (tx) => {
+        await tx.insertDecideReceipts(groups.map(([slot, provider, model], i) => receipt(`r${i}`, { slot, provider, model_resolved: model })));
+        return tx.listDecideResolvedModels(1);
+      });
+      const key = (r: { slot: string; provider: string; model_resolved: string }) => [r.slot, r.provider, r.model_resolved];
+      const sorted = groups.map(g => [...g]).sort((a, b) => bytes(a[0], b[0]) || bytes(a[1], b[1]) || bytes(a[2], b[2]));
+      expect(models.map(key)).toEqual(sorted);
+      expect(new Set(models.map(r => r.last_at.getTime())).size).toBe(1);
+      return models.map(r => ({ ...r, last_at: r.last_at instanceof Date }));
     },
   );
 

@@ -7,7 +7,11 @@ import type { AtomOriginInputRow, AtomWriteReceiptRow, GenerationVersionProducer
 import type { CapacityForecastInputs, HousekeepingTurnClaim, PendingSegmentedProjection, ProjectionJobRef, ProjectionPageRef, ProjectionWindowRow, ReceiptBudget, SegmentedProjectionClaimOutcome, SegmentedProjectionFilter, TrueUpReservation } from '../engine-sql/persistence-housekeeping.ts';
 import type * as ChronicleEventsSql from '../engine-sql/chronicle-events.ts';
 import type { ClaimExpiry, ClaimHeadSpec, ClaimRelease, ClaimRenewal, ConsumerProbe, ConsumerRenewal, ConsumerRowKey, ConsumerRowRead, SourceMembership, TopologyChange, TopologyChangeInsert } from '../engine-sql/persistence-claims.ts';
-import type { EffectClaim, EffectClaimRef, EffectWorktreeOwner, MirrorGateRow } from '../engine-sql/persistence-effect-worker.ts';
+import type { GitDurabilityStore } from '../engine-sql/git-durability.ts';
+import type { GitEffectStore } from '../engine-sql/git-effects.ts';
+import type { TopologyStore } from '../engine-sql/topology-store.ts';
+import type { ManualLinkStore } from '../engine-sql/manual-links.ts';
+import type { CoalescedGitClaim, EffectClaim, EffectClaimRef, EffectWorktreeOwner, MirrorGateRow } from '../engine-sql/persistence-effect-worker.ts';
 import type { FenceHoldFileRow, FenceHoldKey, FenceHoldRow } from '../engine-sql/fence-holds.ts';
 import type { FenceVersionBodyRow } from '../engine-sql/generation-fence-evidence.ts';
 import type { GatedMirrorRequest, RequestEffectState } from '../engine-sql/persistence-effect-scans.ts';
@@ -284,6 +288,8 @@ export interface PersistenceMembers {
   replaceOpCheckpointAtVersion(op: string, fingerprint: string, completedKeys: readonly unknown[], expected: number): Promise<boolean>;
   /** Stores the sync run's fence trend row, or rewrites it keeping the `day` of its first write (the sync run's total counts once). */
   upsertFenceTrendRunRecord(op: string, fingerprint: string, record: unknown): Promise<void>;
+  /** Adds `n` to soak counter `kind` of day `day`'s `op` row, creating it (persistence/soak-counters.ts recordSoakEvent; engine-sql/soak-counters.ts). */
+  addSoakCounterEvent(op: string, day: string, kind: string, n: number): Promise<void>;
   /** The earliest `held_at` of the sources' Git sync holds with hold code `code`, or null (the fences and slug-conflicts verification). */
   readOldestSyncHoldAt(code: string, sourceIds: readonly string[]): Promise<string | null>;
   /** The daily budget ledger (budget/daily-ledger.ts): releases expired held reservations and settles expired dispatched ones at their estimate (engine-sql/budget-ledger-writes.ts). */
@@ -511,6 +517,33 @@ export interface PersistenceMembers {
   // `token` (a null token matches none), so a claim that moved changes nothing.
   /** Claims effect `id` under `token` (running, a 2-minute lease, one more attempt): the claimed row, or null when no effect has the id. */
   stampEffectClaim<R = Record<string, unknown>>(claim: EffectClaim): Promise<R | null>;
+  /**
+   * Claims up to `limit` more ready single-file Git effects of one worktree for its owner host, each under a fresh
+   * token, under `selectClaimableEffect`'s rules (#5530): the claimed rows. A non-uuid host or worktree id refuses.
+   */
+  claimCoalescedGitEffects<R = Record<string, unknown>>(input: CoalescedGitClaim): Promise<R[]>;
+
+  // Managed mode on every engine (lane LM): the stores whose SQL moved out of persistence/ unchanged.
+  /**
+   * The managed Git durability statements (engine-sql/git-durability.ts): the skipped-effect catch-up plan and re-queue,
+   * and the host binding's recorded setting. Called on a transaction engine, every store call runs in that transaction.
+   */
+  gitDurabilityStore(): Promise<GitDurabilityStore>;
+  /**
+   * The managed Git effect runner's worktree checks, its yield to queued publications and the plain outcome of a group
+   * with no durability (engine-sql/git-effects.ts). Called on a transaction engine, every store call runs in that transaction.
+   */
+  gitEffectStore(): Promise<GitEffectStore>;
+  /**
+   * The managed source topology statements (engine-sql/topology-store.ts): the topology locks, the lifecycle receipts and
+   * writes, and the moved-checkout reads. Called on a transaction engine, every store call runs in that transaction.
+   */
+  topologyStore(): Promise<TopologyStore>;
+  /**
+   * The managed link-edit and links-fence projection statements (engine-sql/manual-links.ts). Called on a transaction
+   * engine, every store call runs in that transaction.
+   */
+  manualLinkStore(): Promise<ManualLinkStore>;
   /**
    * Extends an effect claim's lease by 2 minutes; true while it is running under the token with no recovery. `direct`
    * runs it on the Postgres direct lane (`executeRawDirect`), outside any pooled transaction.

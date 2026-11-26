@@ -114,13 +114,20 @@ const CLASSIFIED: Record<string, Args | { skip: string }> = {
   find_contradictions: { slug: GUEST },
   find_experts: { topic: SENTINEL },
   find_trajectory: { entity_slug: GUEST },
+  policy_check: { skip: 'answers from the owner-approved agent policy in the default source only; no guest-source text reaches it' },
+  agent_policy: { skip: 'returns the owner-approved agent policy rules from the default source only; no guest-source text reaches it' },
+  ledger: { skip: 'derived totals over agent_action pages in the default source only; no guest-source text reaches it' },
+  log_action: { skip: 'returns derived fields of the action it wrote (id, status, claim basis, which refs resolved); no guest-source text' },
+  policy_reserve: { skip: 'returns the policy_check answer and its own hold; no guest-source text' },
   code_callers: { symbol: SENTINEL }, code_callees: { symbol: SENTINEL }, code_def: { symbol: SENTINEL }, code_refs: { symbol: SENTINEL },
   code_blast: { symbol: SENTINEL }, code_flow: { entry_point: SENTINEL },
   open_loops: {},
+  household_due: { include: 'all', window_days: 366 },
   questions_pin: skip(WRITE), questions_refresh: skip(WRITE), questions_unpin: skip(WRITE),
   questions_list: {},
   questions_status: { id: 'q-1' },
   storage_find: { query: SENTINEL }, storage_list: {}, storage_get: { id: SENTINEL },
+  check_claims: { text: 'The ' + SENTINEL + ' offsite has 3 people.' },
 };
 /** Reads whose owner answer must contain the guest page's text, so the contract is exercised, not vacuous. */
 const MUST_REACH = ['get_page', 'list_pages', 'find_pages', 'search', 'query', 'search_exact', 'get_chunks', 'fetch', 'get_versions', 'chronicle_day'];

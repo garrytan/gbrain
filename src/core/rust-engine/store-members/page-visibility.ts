@@ -14,9 +14,9 @@
  * The store keeps OAuth clients, but this read does not read a client's fence yet, so it refuses; a local writer's fence is its stored grant
  * ceiling's `slugPrefixes`. What each member answers and why: rust/docs/store/page-visibility.md.
  */
-import type { CallerPageAccessRow, PagePolicyPart, WriteVisibilityProbe } from '../../engine-sql/page-visibility.ts';
+import type { CallerPageAccessRow, PagePolicyPart, PrivateOnlySlugScope, WriteVisibilityProbe } from '../../engine-sql/page-visibility.ts';
 import { callerAccessAllowedSql, privacyPartSql, privatePagesFilterForCaller, readPolicyFragment, withCallerAccess } from '../../search/private-visibility.ts';
-import { refuseMember, storeCall, type StoreMember } from './common.ts';
+import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 import { selfChecked } from '../access-self-check.ts';
 import { readOauthClient } from './jobs-oauth-clients.ts';
 import { judgeWidenedCaller, ownerOnlyFormIn, pagePolicyFlags, renderForStoreCaller, storePageTextPolicy, type StorePrivacyPolicy } from './private-provenance.ts';
@@ -56,6 +56,23 @@ export const readCallerPageAccess: StoreMember<[pages: readonly { source_id: str
     if (pages.length === 0) return [];
     return storeCall({ member: 'readCallerPageAccess' }, () =>
       brain.readCallerPageAccess(pages.map(p => ({ sourceId: p.source_id, slug: p.slug })), policy));
+  };
+
+/**
+ * get_page's fuzzy candidates: the slugs whose every in-scope row the caller's page policy (the `read` part) hides. The
+ * scope keeps the SQL's precedence (a non-empty array, else a non-empty scalar, else every source); the store judges
+ * each row with `page_hidden`. A caller the store's policy cannot express refuses before the read (callerPolicy).
+ */
+export const readPrivateOnlySlugs: StoreMember<[slugs: readonly string[], scope?: PrivateOnlySlugScope, opts?: { includeDeleted?: boolean }], string[]> =
+  async (brain, slugs, scope, opts) => {
+    const taken = takeOptions('readPrivateOnlySlugs', scope, ['sourceId', 'sourceIds']);
+    const { includeDeleted } = takeOptions('readPrivateOnlySlugs', opts, ['includeDeleted']);
+    if (slugs.length === 0) return [];
+    const policy = callerPolicy('readPrivateOnlySlugs', 'read');
+    const sourceIds = Array.isArray(taken.sourceIds) && taken.sourceIds.length > 0 ? [...taken.sourceIds as string[]] : null;
+    const sourceId = sourceIds === null && typeof taken.sourceId === 'string' && taken.sourceId !== '' ? taken.sourceId : null;
+    return storeCall({ member: 'readPrivateOnlySlugs', sourceId: sourceId ?? undefined }, () =>
+      brain.readPrivateOnlySlugs([...slugs], sourceId, sourceIds, includeDeleted === true, policy)) as Promise<string[]>;
   };
 
 /**
