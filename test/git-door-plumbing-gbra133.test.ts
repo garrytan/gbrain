@@ -267,6 +267,55 @@ describe('G2 plumbing door commit', () => {
     expect(git(top, 'ls-files', '--', 'brain/notes/ignored.md')).toBe('');
   });
 
+  // #8321: an old Git recorded group-writable files as 100664, which `hash-object -t tree` refuses in a rebuilt tree.
+  /** HEAD with `paths` re-recorded at the legacy mode 100664 (mktree keeps it raw), committed on main. */
+  function legacyModes(root: string, paths: string[]): void {
+    const rebuild = (dir: string): string => lines(raw(root, 'ls-tree', `HEAD:${dir}`)).map(line => {
+      const [meta, name] = line.split('\t') as [string, string];
+      const [mode, type, oid] = meta.split(' ') as [string, string, string];
+      const path = dir ? `${dir}/${name}` : name;
+      if (type === 'tree') return `${mode} tree ${paths.some(p => p.startsWith(`${path}/`)) ? mktree(rebuild(path)) : oid}\t${name}`;
+      return `${paths.includes(path) ? '100664' : mode} ${type} ${oid}\t${name}`;
+    }).join('\n') + '\n';
+    const mktree = (listing: string) => execFileSync('git', ['-C', root, 'mktree'], { input: listing, encoding: 'utf8', env }).trim();
+    const commit = git(root, 'commit-tree', mktree(rebuild('')), '-p', 'HEAD', '-m', 'legacy modes');
+    git(root, 'update-ref', 'refs/heads/main', commit);
+  }
+  const rawMode = (root: string, rev: string, name: string) => {
+    const tree = execFileSync('git', ['-C', root, 'cat-file', 'tree', rev], { env }).toString('latin1');
+    return new RegExp(`(\\d+) ${name}\\0`).exec(tree)?.[1];
+  };
+
+  test('a 100664 sibling no longer blocks an edit, an add or a removal; it is recorded as 100644 with its blob kept', async () => {
+    const root = repo({ 'notes/a.md': 'a\n', 'notes/b.md': 'b\n', 'notes/legacy.md': 'legacy\n', 'top.md': 'top\n', 'other/old.md': 'old\n' });
+    legacyModes(root, ['notes/legacy.md', 'top.md', 'other/old.md']);
+    const legacyBlob = git(root, 'rev-parse', 'HEAD:notes/legacy.md');
+    const otherTree = git(root, 'rev-parse', 'HEAD:other');
+    expect(rawMode(root, 'HEAD:notes', 'legacy.md')).toBe('100664');
+
+    put(root, 'notes/a.md', 'a, second revision\n');
+    await door(root, 'notes/a.md');
+    expect(git(root, 'show', 'HEAD:notes/a.md')).toBe('a, second revision');
+    expect(rawMode(root, 'HEAD:notes', 'legacy.md')).toBe('100644');
+    expect(rawMode(root, 'HEAD', 'top.md')).toBe('100644');
+    expect(git(root, 'rev-parse', 'HEAD:notes/legacy.md')).toBe(legacyBlob);
+    expect(git(root, 'rev-parse', 'HEAD:other')).toBe(otherTree);
+    expect(rawMode(root, 'HEAD:other', 'old.md')).toBe('100664');
+
+    legacyModes(root, ['notes/legacy.md']);
+    put(root, 'notes/new.md', 'new\n');
+    await door(root, 'notes/new.md');
+    expect(git(root, 'show', 'HEAD:notes/new.md')).toBe('new');
+    expect(rawMode(root, 'HEAD:notes', 'legacy.md')).toBe('100644');
+
+    legacyModes(root, ['notes/legacy.md']);
+    unlinkSync(join(root, 'notes/b.md'));
+    await commitThroughDoor(root, [{ path: join(root, 'notes/b.md'), planned: null }]);
+    expect(lines(git(root, 'ls-tree', '--name-only', 'HEAD:notes'))).toEqual(['a.md', 'legacy.md', 'new.md']);
+    expect(rawMode(root, 'HEAD:notes', 'legacy.md')).toBe('100644');
+    expect(git(root, 'status', '--porcelain')).toBe('');
+  });
+
   test('a sibling whose name is not UTF-8 is carried over unchanged', async () => {
     const root = repo({ 'notes/a.md': 'a\n' });
     writeFileSync(Buffer.concat([Buffer.from(join(root, 'notes') + '/'), Buffer.from([0x6e, 0xe9, 0x2e, 0x6d, 0x64])]), 'latin-1 name\n');

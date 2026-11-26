@@ -16,7 +16,9 @@
  *   - prices the call from CANONICAL_PRICING (`estimateChatCostUsd`),
  *     including cache_read/cache_write tokens at the provider's cache rates
  *     when the table carries them (Anthropic), falling back to the input
- *     rate otherwise. Unknown models record cost_usd = NULL (never a fake 0).
+ *     rate otherwise; the engine sink applies the operator's
+ *     `pricing.overrides` on top, as the budget meter does. Unknown models
+ *     record cost_usd = NULL (never a fake 0).
  *   - forwards the record to the registered sink FIRE-AND-FORGET. Accounting
  *     is strictly fail-open: a sink error (missing table pre-migration,
  *     closed engine, disk pressure) must never break a chat call.
@@ -34,7 +36,7 @@
 
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { canonicalLookup, priceAtPromptSize } from '../model-pricing.ts';
-import { priceFor, type PricingOverrides } from '../budget/reservation-cost.ts';
+import { overrideFor, priceFor, type PricingOverrides } from '../budget/reservation-cost.ts';
 import { embeddedEngineInScope } from '../engine-scope.ts';
 import { engineKey } from '../engine-key.ts';
 
@@ -233,16 +235,47 @@ export function recordChatUsage(input: {
   }
 }
 
+/** How long a sink reuses the `pricing.overrides` it read before reading config again. */
+export const CHAT_USAGE_OVERRIDES_TTL_MS = 60_000;
+
 /**
  * Standard sink: INSERT into chat_usage_log via the engine's executeRaw.
  * Positional parameters only — no JSONB, no string-built SQL. Registered by
  * the engine factory (last engine created wins; multi-brain processes log
  * against the most recently created engine — documented best-effort).
+ *
+ * #10424: a model the operator priced with `pricing.overrides` is priced
+ * here the way the budget meter prices it (`priceFor`: the override wins,
+ * input and output tokens at its rates), so `get_usage` reports the spend
+ * the meter caps. The sink reads the overrides at most once per
+ * CHAT_USAGE_OVERRIDES_TTL_MS, never once per row; a failed read keeps the
+ * table price (or NULL) the record arrived with.
  */
 export function makeEngineChatUsageSink(engine: {
   executeRaw: (sql: string, params?: unknown[]) => Promise<unknown>;
+  getConfig?: (key: string) => Promise<string | null>;
 }): ChatUsageSink {
-  return async (r: ChatUsageRecord): Promise<void> => {
+  let cached: { overrides: Promise<PricingOverrides | undefined>; readAt: number } | null = null;
+  const pricingOverrides = (): Promise<PricingOverrides | undefined> => {
+    const getConfig = engine.getConfig;
+    if (!getConfig) return Promise.resolve(undefined);
+    const now = Date.now();
+    if (!cached || now - cached.readAt >= CHAT_USAGE_OVERRIDES_TTL_MS) {
+      cached = {
+        readAt: now,
+        overrides: import('../budget/budget-tracker.ts')
+          .then(({ loadPricingOverrides }) => loadPricingOverrides({ getConfig: (key) => getConfig.call(engine, key) }))
+          // silent-read-ok: without overrides a row keeps its table price or NULL (unpriced), never a made-up cost
+          .catch(() => undefined),
+      };
+    }
+    return cached.overrides;
+  };
+  return async (record: ChatUsageRecord): Promise<void> => {
+    const override = overrideFor(record.model, await pricingOverrides());
+    const r = override
+      ? { ...record, cost_usd: (record.input_tokens * override.input + record.output_tokens * override.output) / 1_000_000 }
+      : record;
     await engine.executeRaw(
       `INSERT INTO chat_usage_log
          (model, provider, phase, input_tokens, output_tokens,

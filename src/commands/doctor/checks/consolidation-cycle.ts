@@ -156,7 +156,11 @@ export async function checkPoolBudget(_engine: BrainEngine): Promise<Check> {
  * which is the canonical "this whole cycle completed" timestamp written
  * by runCycle's exit hook. Autopilot's per-source fan-out gate (the
  * v0.38 fan-out wave) reads the same field — so this check surfaces
- * exactly what autopilot sees when deciding to skip a source.
+ * exactly what autopilot sees when deciding to skip a source. A source
+ * walked in bounded windows (cycle/source-window.ts) stamps that field
+ * after every window, so a window cursor with live pages after it is
+ * reported as a walk in progress (#8577): a warning on a checked source,
+ * a note on a sync-off one, and `details.source_windows` either way.
  *
  * Default thresholds: warn at 6h, fail at 24h. Tighter than sync_freshness
  * because full-cycle staleness compounds (sync stale → extract stale →
@@ -187,17 +191,36 @@ export async function checkCycleFreshness(
     const issues: string[] = [];
     let hasWarnings = false;
     let hasFailures = false;
-    const young = await youngOrEmptySources(engine, sources.map((s) => s.id), now);
+    const cursors = new Map(sources.flatMap((s) => {
+      const at = s.config?.last_source_cycle_window_at, slug = s.config?.last_source_cycle_window_slug;
+      return typeof at === 'string' && at && typeof slug === 'string' && slug ? [[s.id, { at, slug }] as const] : [];
+    }));
+    const { young, afterCursor } = await sourcePageCensus(engine, sources.map((s) => s.id), cursors, now);
     const waiting: string[] = [];
     const syncOff: string[] = [];
+    const walking: string[] = [];
+    const sourceWindows: Array<{ source_id: string; cursor_at: string; cursor_slug: string; remaining_pages: number }> = [];
     let firstStale: string | null = null;
 
     for (const source of sources) {
       const display = source.name && source.name !== source.id
         ? `'${source.id}' (${source.name})`
         : `'${source.id}'`;
+      // #8577: a bounded window stamps the cycle timestamps even when it stopped at its page limit; the cursor it left
+      // (a nonempty slug) and the live pages after it say the walk of the source is not finished.
+      const cursor = cursors.get(source.id);
+      const remaining = afterCursor.get(source.id) ?? 0;
+      if (cursor && remaining > 0) {
+        sourceWindows.push({ source_id: source.id, cursor_at: cursor.at, cursor_slug: cursor.slug, remaining_pages: remaining });
+        walking.push(`Source ${display} is partway through a bounded page walk: ${remaining} live page(s) after its cursor, so its recent cycle covered only part of it`);
+      }
       // GST-3337: a source with sync off is never stale or failing here, so nothing that acts on freshness (a dream) picks it.
       if (isSyncDisabledConfig(source.config)) { syncOff.push(display); continue; }
+      if (cursor && remaining > 0) {
+        issues.push(walking.at(-1)!);
+        firstStale ??= source.id;
+        hasWarnings = true;
+      }
       const raw = source.config?.last_full_cycle_at;
       if (typeof raw !== 'string' && young.has(source.id)) {
         waiting.push(display);
@@ -244,13 +267,17 @@ export async function checkCycleFreshness(
     }
 
     const fix = firstStale ? cycleFix(firstStale, isAvailable('chat') || isAvailable('embedding')) : undefined;
-    const offNote = syncOff.length ? ` Sync off (not checked; only an explicit gbrain sync --source <id> syncs ${syncOff.length > 1 ? 'them' : 'it'}): ${syncOff.join(', ')}.` : '';
+    const offWalks = walking.filter((line) => !issues.includes(line));
+    const offNote = (syncOff.length ? ` Sync off (not checked; only an explicit gbrain sync --source <id> syncs ${syncOff.length > 1 ? 'them' : 'it'}): ${syncOff.join(', ')}.` : '')
+      + (offWalks.length ? ` ${offWalks.join('; ')}.` : '');
+    const details = sourceWindows.length ? { details: { source_windows: sourceWindows } } : {};
     if (hasFailures) {
       return {
         name: 'cycle_freshness',
         status: 'fail',
         message: `${issues.join('; ')}. Run \`gbrain dream --source <id>\` for each stale source, or start \`gbrain autopilot\`.${offNote}`,
         ...(fix ? { fix } : {}),
+        ...details,
       };
     }
     if (hasWarnings) {
@@ -259,19 +286,24 @@ export async function checkCycleFreshness(
         status: 'warn',
         message: `${issues.join('; ')}. Run \`gbrain dream --source <id>\` to cycle a source, or start \`gbrain autopilot\`.${offNote}`,
         ...(fix ? { fix } : {}),
+        ...details,
       };
     }
     const checked = sources.length - syncOff.length;
-    if (checked === 0) return { name: 'cycle_freshness', status: 'ok', message: offNote.trim() };
+    if (checked === 0) return { name: 'cycle_freshness', status: 'ok', message: offNote.trim(), ...details };
     if (waiting.length === checked) {
-      return infoCheck('cycle_freshness',
-        `No full cycle yet for ${waiting.join(', ')}: ${waiting.length > 1 ? 'they hold' : 'it holds'} no pages or only pages from the last 24h, so there is nothing to consolidate yet.`,
-        'not_applicable');
+      return {
+        ...infoCheck('cycle_freshness',
+          `No full cycle yet for ${waiting.join(', ')}: ${waiting.length > 1 ? 'they hold' : 'it holds'} no pages or only pages from the last 24h, so there is nothing to consolidate yet.${offNote}`,
+          'not_applicable'),
+        ...details,
+      };
     }
     return {
       name: 'cycle_freshness',
       status: 'ok',
       message: `All ${checked} federated source(s) cycled recently${offNote ? `.${offNote}` : ''}`,
+      ...details,
     };
   } catch (e) {
     return checkError('cycle_freshness', 'check cycle freshness', e);
@@ -279,20 +311,32 @@ export async function checkCycleFreshness(
 }
 
 /**
- * E2: sources that have never cycled but hold no live pages, or only pages
- * created in the last 24h. Nothing is stale there yet, so doctor reports
- * them as information instead of a warning.
+ * One read of the live pages per source. `young` (E2): sources that hold no
+ * live pages, or only pages created in the last 24h; nothing is stale there
+ * yet, so doctor reports them as information instead of a warning.
+ * `afterCursor` (#8577): the live pages after each source's window cursor, in
+ * the walk's (updated_at, slug) order. Cursors bind as text, so the database
+ * keeps their microseconds.
  */
-async function youngOrEmptySources(engine: BrainEngine, ids: string[], now: number): Promise<Set<string>> {
-  const out = new Set(ids);
-  const rows = await engine.executeRaw<{ source_id: string; oldest: string | Date | null }>(
-    `SELECT source_id, MIN(created_at) AS oldest FROM pages WHERE deleted_at IS NULL GROUP BY source_id`,
+async function sourcePageCensus(engine: BrainEngine, ids: string[], cursors: Map<string, { at: string; slug: string }>, now: number)
+  : Promise<{ young: Set<string>; afterCursor: Map<string, number> }> {
+  const young = new Set(ids);
+  const afterCursor = new Map<string, number>();
+  const walked = [...cursors];
+  const rows = await engine.executeRaw<{ source_id: string; oldest: string | Date | null; after_cursor: number | string }>(
+    `SELECT p.source_id, MIN(p.created_at) AS oldest,
+            count(*) FILTER (WHERE c.cursor_slug IS NOT NULL AND (p.updated_at, p.slug) > (c.cursor_at::timestamptz, c.cursor_slug)) AS after_cursor
+       FROM pages p
+       LEFT JOIN unnest($1::text[], $2::text[], $3::text[]) AS c(source_id, cursor_at, cursor_slug) ON c.source_id = p.source_id
+      WHERE p.deleted_at IS NULL GROUP BY p.source_id`,
+    [walked.map(([id]) => id), walked.map(([, c]) => c.at), walked.map(([, c]) => c.slug)],
   );
   for (const r of rows) {
     const oldest = r.oldest ? new Date(r.oldest).getTime() : NaN;
-    if (!Number.isFinite(oldest) || now - oldest >= 24 * 60 * 60 * 1000) out.delete(r.source_id);
+    if (!Number.isFinite(oldest) || now - oldest >= 24 * 60 * 60 * 1000) young.delete(r.source_id);
+    afterCursor.set(r.source_id, Number(r.after_cursor));
   }
-  return out;
+  return { young, afterCursor };
 }
 
 /** GBRA-438: a keyless brain has no paid phase to run, so the fix asks no paid consent there. */

@@ -616,6 +616,33 @@ describe('#4305 false target stamps + #4306 embed_skip-safe invalidation', () =>
     expect(await chunkState('skip-drift')).toEqual({ embedded: 1, nulls: 0 });
   });
 
+  test('#10231: a database config that names the model without its provider is not converged; apply rewrites only the label', async () => {
+    const sig = migrationSignature(TARGET, colDim);
+    await seedModeled('qualified', 'abcde', { model: TARGET, signature: sig });
+    await engine.setConfig('embedding_model', 'text-embedding-3-small');
+    await engine.setConfig('embedding_dimensions', String(colDim));
+
+    const verify = await verifyMigrationComplete(engine, { toModel: TARGET, toDims: colDim }, {
+      filePlane: { model: TARGET, dims: colDim },
+    });
+    expect(verify.complete).toBe(false);
+    expect(verify.details.db_plane_ok).toBe(false);
+    expect(verify.details.stale_wide).toBe(0);
+    expect(verify.blockers).toContain(`database config records text-embedding-3-small at ${colDim}d, target is ${TARGET} at ${colDim}d`);
+
+    const plan = await planEmbeddingMigration(engine, { to: TARGET, dim: colDim });
+    expect(plan.chunks_to_embed).toBe(0);
+    const res = await applyEmbeddingMigration(engine, plan);
+    expect(res).toMatchObject({ status: 'applied', invalidated: 0 });
+    expect(await engine.getConfig('embedding_model')).toBe(TARGET);
+    expect(await chunkState('qualified')).toEqual({ embedded: 1, nulls: 0 });
+    const after = await verifyMigrationComplete(engine, { toModel: TARGET, toDims: colDim }, {
+      filePlane: { model: TARGET, dims: colDim }, ignoreMarker: true,
+    });
+    expect(after.details.db_plane_ok).toBe(true);
+    expect(after.blockers.filter(b => b.startsWith('database config'))).toEqual([]);
+  });
+
   test('#4306: verify reports embed_skip NULL chunks without blocking completion', async () => {
     // The already-damaged shape: an embed_skip page whose chunks were NULLed
     // by a pre-fix run. Nothing re-embeds it by design — completion must not
@@ -625,6 +652,9 @@ describe('#4305 false target stamps + #4306 embed_skip-safe invalidation', () =>
       frontmatter: { embed_skip: { reason: 'oversized' } },
       embedded: false,
     });
+    // A converged brain's database config names the target too (#10231).
+    await engine.setConfig('embedding_model', TARGET);
+    await engine.setConfig('embedding_dimensions', String(colDim));
     const verify = await verifyMigrationComplete(engine, { toModel: TARGET, toDims: colDim }, {
       filePlane: { model: TARGET, dims: colDim },
     });

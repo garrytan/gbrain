@@ -186,6 +186,39 @@ test('unmanaged lint keeps the legacy filesystem write path', async () => {
   }
 }, 30_000);
 
+// #10442: a managed source's directory lint covers the files its sync imports, not scaffolding or skill bundles.
+test('managed directory lint skips files managed sync never imports; a single-file target is still linted', async () => {
+  const note = '---\ntitle: Example\ntype: note\ndate: 2026-01-01\n---\n\nBody.\n';
+  const files: Record<string, string> = {
+    'README.md': 'A plain folder guide.\n',
+    'notes/bare/README.md': 'A plain folder guide.\n',
+    'skills/example/SKILL.md': '---\nname: example\ndescription: An example skill.\n---\n\nSteps.\n',
+    'skillpack.md': 'Not reserved: only skillpack.json is.\n',
+    'drafts/scratch.md': 'Excluded by sync.exclude.\n',
+    'notes/typed/README.md': note,
+    'notes/empty.md': `${note}\n## Empty\n`,
+  };
+  await fixture(async (engine, sourceId, root) => {
+    for (const [rel, text] of Object.entries(files)) {
+      mkdirSync(join(root, rel, '..'), { recursive: true });
+      writeFileSync(join(root, rel), text);
+    }
+    await engine.setConfig('sync.exclude', 'drafts/');
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+    try {
+      const flagged: string[] = [];
+      const result = await runLintCore({ target: root, dryRun: true, engine, sourceId, onPageIssues: rel => flagged.push(rel) });
+      expect(result.pages_scanned).toBe(3);
+      expect(flagged.sort()).toEqual(['notes/empty.md', 'skillpack.md']);
+      const single = await runLintCore({ target: join(root, 'README.md'), dryRun: true, engine, sourceId });
+      expect(single).toMatchObject({ pages_scanned: 1 });
+      expect(single.total_issues).toBeGreaterThan(0);
+    } finally {
+      await engine.setConfig('sync.exclude', '');
+    }
+  });
+}, 30_000);
+
 // ── Diverged files (P1-1): the coordinator's source_changed refusal is a pending issue, never a failed run ──
 
 const JANE = 'people/jane-doe';
