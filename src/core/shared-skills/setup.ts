@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readdirSync, statSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { spawnSync } from '../spawn.ts';
 import { gbrainPath, isThinClient } from '../config.ts';
 import { opError, type OperationContext } from '../ops/contract.ts';
@@ -7,7 +7,7 @@ import { readFix } from '../ops/op-fix.ts';
 import { claimWorktree, getWorktreeBinding, readPersistenceBrain } from '../persistence/ownership.ts';
 import { unboundBindCommand } from '../persistence/unbound-source.ts';
 import { activateSharedSkillPersistence } from '../persistence/skill-activation.ts';
-import { checkedContentRoot } from './setup-files.ts';
+import { checkedContentRoot, resolvedPath } from './setup-files.ts';
 import { DEFAULT_SHARED_PACK_ID, packagedSharedSkillPolicy, packagedSharedSkills } from './setup-bundle.ts';
 import { publicationEnabled, setSharedSkillPolicy } from './policy.ts';
 import type { BrainEngine } from '../engine.ts';
@@ -128,7 +128,9 @@ export async function setupSharedBrainContent(ctx: OperationContext, options: Sh
     if (!options.dryRun) await saveContentReceipt(ctx, receipt);
     return receipt;
   }
-  const root = checkedContentRoot(existingRoot || options.root || prior?.root || gbrainPath('content', brain.brain_id, sourceId));
+  const contentTree = join(resolvedPath(gbrainPath()), 'content');
+  const chosen = resolve(existingRoot || options.root || prior?.root || join(contentTree, brain.brain_id, sourceId));
+  const root = checkedContentRoot(chosen, chosen.startsWith(contentTree + sep) ? contentTree : chosen);
   receipt.root = root;
   receipt.owned_root = prior?.owned_root ?? (!existingRoot && (!!options.fresh || !!options.root));
   receipt.fresh_root_activation = prior?.fresh_root_activation ?? (!existingRoot && !!options.fresh);
@@ -157,7 +159,7 @@ export async function setupSharedBrainContent(ctx: OperationContext, options: Sh
     throw opError('local_conflict', 'The registered content root is missing; restore it rather than creating a replacement.',
       `Source ${sourceId}'s registered root ${root} does not exist. Restore it (for example from its Git remote or backup), then run gbrain init again.`);
   }
-  if (!existingRoot && existed && !prior && readdirSync(root).length > 0) {
+  if (!existingRoot && existed && !prior?.root && readdirSync(root).length > 0) {
     throw opError('local_conflict', 'The requested root contains unowned files; register an existing source explicitly instead.',
       `${root} already has files. Pass --content-root a new or empty directory, or register that directory as a source with gbrain sources add.`);
   }
@@ -175,6 +177,16 @@ export async function setupSharedBrainContent(ctx: OperationContext, options: Sh
     return receipt;
   }
   if (prior?.stage === 'complete') return prior;
+  if (receipt.owned_root && receipt.repository_kind === 'content_directory' && options.git !== 'init') {
+    let probe = root;
+    while (!existsSync(probe)) probe = dirname(probe);
+    const enclosing = spawnSync('git', ['-C', probe, 'rev-parse', '--show-toplevel'], { env: gitChildEnv(), encoding: 'utf8', timeout: 15_000 });
+    if (enclosing.status === 0 && resolve(enclosing.stdout.trim()) !== root) {
+      if (!prior || prior.stage === 'root') await saveContentReceipt(ctx, { ...receipt, root: null, root_identity: undefined });
+      throw opError('local_conflict', 'The new content directory is inside another Git worktree. Choose a separate root or explicitly initialize Git here; setup will not claim its parent repository.',
+        `${root} is inside the Git worktree ${enclosing.stdout.trim()}. Pass --content-root a path outside any repository, or add --git so the content directory gets its own repository.`);
+    }
+  }
   await saveContentReceipt(ctx, receipt);
   if (!existed) {
     if (!receipt.owned_root) {
@@ -200,13 +212,6 @@ export async function setupSharedBrainContent(ctx: OperationContext, options: Sh
     else receipt.pending_actions.push('Git initialization was unavailable; install Git and explicitly initialize this content directory later.');
   }
   if (receipt.repository_kind === 'content_directory' && !receipt.pending_actions.length) receipt.pending_actions.push('Optional: initialize Git explicitly; configure an off-host backup separately.');
-  if (receipt.owned_root && receipt.repository_kind === 'content_directory') {
-    const enclosing = spawnSync('git', ['-C', root, 'rev-parse', '--show-toplevel'], { env: gitChildEnv(), encoding: 'utf8', timeout: 15_000 });
-    if (enclosing.status === 0 && resolve(enclosing.stdout.trim()) !== root) {
-      throw opError('local_conflict', 'The new content directory is inside another Git worktree. Choose a separate root or explicitly initialize Git here; setup will not claim its parent repository.',
-        `${root} is inside the Git worktree ${enclosing.stdout.trim()}. Pass --content-root a path outside any repository, or add --git so the content directory gets its own repository.`);
-    }
-  }
   if (!existingRoot) await ctx.engine.executeRaw('UPDATE sources SET local_path=$1 WHERE id=$2 AND incarnation=$3::uuid AND local_path IS NULL', [root, sourceId, source.incarnation]);
   receipt.stage = 'owner';
   await saveContentReceipt(ctx, receipt);
