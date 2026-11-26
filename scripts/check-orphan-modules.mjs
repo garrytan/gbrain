@@ -68,6 +68,7 @@ const ALLOWLIST = new Map([
 // reason 'script-reachable', which the guard verifies.
 const PERMITTED_TEST_ONLY = [
   { path: 'src/core/engine-sql/persistence-admission.ts', reason: 'held: lands ahead of its caller as a Rust engine landing part; the landing part that wires it in removes this entry' },
+  { path: 'src/core/backup/rust-restore-safety.ts', reason: 'held: restore-side safety for a Rust brain (PR 21b-rust); the `gbrain backup restore` Rust path that calls it is 21b-ts, which removes this row' },
   { path: 'src/core/bootstrap/template-repo.ts', reason: 'script-reachable' },
   { path: 'src/core/google/provenance.ts', reason: 'held: Google provenance lister (GST-3849 PR 1) lands ahead of its callers, the per-account purge and eval suppression in the approved Google Workspace plan; the PR that wires the first caller removes this entry' },
   { path: 'src/eval/longmemeval/diagnostics.ts', reason: 'script-reachable' },

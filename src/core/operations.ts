@@ -121,6 +121,7 @@ import { loopsOperations } from './ops/loops.ts';
 import { householdOperations } from './ops/household.ts';
 import { learnedOperations } from './ops/learned.ts';
 import { onboardingOperations } from './ops/onboarding.ts';
+import { proposeOperations } from './ops/propose.ts';
 import { questionsOperations } from './ops/questions.ts';
 import { chronicleOperations } from './ops/chronicle.ts';
 import { extractionOperations } from './ops/extraction.ts';
@@ -246,7 +247,7 @@ export const operations: Operation[] = [
   ...skilloptOperations,
   // v0.47: open-loop engine (who is waiting on you) — ops/loops.ts
   ...loopsOperations, ...householdOperations, ...questionsOperations, ...noticesOperations, ...learnedOperations, // + agent contract v1 A6 mute_notice — ops/notices.ts; nightly learning — ops/learned.ts
-  ...onboardingOperations, // onboarding PR 2: first-session suggestion status and stop — ops/onboarding.ts
+  ...onboardingOperations, ...proposeOperations, // onboarding PR 2: first-session suggestion status and stop — ops/onboarding.ts; lane 5 O2 job proposals — ops/propose.ts
 ];
 
 // Area taxonomy + output redaction: one finalize step shared with the CLI's
