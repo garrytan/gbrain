@@ -1,6 +1,7 @@
 import { searchAnswerFeedback } from '../feedback/record.ts';
 import { recordFunnelEvent, recordRecallOutcome } from '../funnel.ts';
 import { parseRelationalPlan } from '../search/relational-plan.ts';
+import { RECALL_TELEMETRY_MODE, recordLookupTelemetry } from '../search/telemetry.ts';
 import { loadSearchModeConfig, resolveSearchMode } from '../search/mode.ts';
 import { WRITE_REQUEST_PARAM } from '../persistence/params.ts';
 import { parseWriteRequestId } from '../persistence/preconditions.ts';
@@ -536,6 +537,7 @@ const recall: Operation = {
     if (queryText && question === null && !entityParam && !sessionParam && !since && p.supersessions !== true) ctx.emitNotice?.(recallHintNotice(p, queryText));
     let searchResults: SearchResult[] = [];
     let searchDegraded: string | undefined;
+    let pageSearchCounted = false;
     let delivery: DeliveryMeta | undefined;
     const evidencePlan = queryText ? await recallEvidencePlan(ctx, p) : null;
     const rankCutOpts: Pick<HybridSearchOpts, 'pageRankCut'> = evidencePlan?.rankCut ? { pageRankCut: evidencePlan.rankCut } : {};
@@ -548,7 +550,7 @@ const recall: Operation = {
       const searchScope = { ...scope, ...(eligibility.floor ? { minTrust: eligibility.floor } : {}) };
       // #4352 — recall's page-search arm enforces `visibility: private` for
       // untrusted callers with the excludePrivate resolved above.
-      ({ rows: searchResults, keywordOnly: searchDegraded } = await recallPageRows(ctx, queryText, limit, excludePrivate, searchScope, rankCutOpts));
+      ({ rows: searchResults, keywordOnly: searchDegraded, searched: pageSearchCounted } = await recallPageRows(ctx, queryText, limit, excludePrivate, searchScope, rankCutOpts));
       bumpLastRetrievedAt(ctx.engine, searchResults.map(r => r.page_id));
       const applied = recallDeliveryPlan(effectivePlan(evidencePlan, searchResults), p.budget_policy, queryText, budgetTokens, rows);
       if (applied) ({ results: searchResults, delivery } = await deliverEvidence(ctx.engine, searchResults, applied, { ...searchScope, excludePrivate, requireSafeChunks: ctx.remote !== false }));
@@ -664,6 +666,7 @@ const recall: Operation = {
       ...(delivery ? { delivery } : {}),
     };
     recordRecallOutcome(out);
+    if (!pageSearchCounted) recordLookupTelemetry(ctx.engine, RECALL_TELEMETRY_MODE);
     return maxChars === null ? out : boundRecallChars(out, maxChars);
   },
 };
@@ -1456,38 +1459,29 @@ async function recallKeywordOnlyReason(ctx: OperationContext): Promise<string | 
 async function recallPageRows(
   ctx: OperationContext, queryText: string, limit: number, excludePrivate: boolean,
   searchScope: { sourceId?: string; sourceIds?: string[]; minTrust?: TrustTier }, rankCutOpts: Pick<HybridSearchOpts, 'pageRankCut'>,
-): Promise<{ rows: SearchResult[]; keywordOnly?: string }> {
+): Promise<{ rows: SearchResult[]; keywordOnly?: string; searched: boolean }> {
   const keywordOnly = await recallKeywordOnlyReason(ctx);
   const stages: DegradedStageEntry[] = [];
-  const rows = keywordOnly
-    ? await keylessRecallRows(ctx, queryText, limit, excludePrivate, searchScope, rankCutOpts, stages)
-    : await hybridSearchCached(ctx.engine, queryText, {
+  const searched = !keywordOnly || await keylessChainQuestion(ctx, queryText);
+  const rows = searched
+    ? await hybridSearchCached(ctx.engine, queryText, {
       limit, expansion: false, excludePrivate, requireSafeChunks: ctx.remote !== false,
       takesHoldersAllowList: readHolders(ctx), ...searchScope, ...rankCutOpts,
       onMeta: m => { stages.push(...(m.degraded ?? [])); },
-    });
+    })
+    : await keylessKeywordRows(ctx, queryText, limit, excludePrivate, searchScope, stages);
   if (stages.length) ctx.emitResponseMeta?.('retrieval', { degraded: stages });
-  return { rows, ...(keywordOnly ? { keywordOnly } : {}) };
+  return { rows, searched, ...(keywordOnly ? { keywordOnly } : {}) };
 }
 
 /**
- * Keyless recall's page arm: direct keyword FTS, except that a planned
- * multi-relation question (planner on) goes through hybridSearch's keyless
- * path, which runs keyword + title + the relational chain (zero LLM).
+ * Keyless recall's page arm for a question that is not a planned multi-relation chain (a chain, planner on, goes
+ * through hybridSearch's keyless path above, which records its own search telemetry): direct keyword FTS.
  */
-async function keylessRecallRows(
+async function keylessKeywordRows(
   ctx: OperationContext, queryText: string, limit: number, excludePrivate: boolean,
-  searchScope: { sourceId?: string; sourceIds?: string[]; minTrust?: TrustTier },
-  rankCutOpts: Pick<HybridSearchOpts, 'pageRankCut'> = {},
-  stages: DegradedStageEntry[] = [],
+  searchScope: { sourceId?: string; sourceIds?: string[]; minTrust?: TrustTier }, stages: DegradedStageEntry[],
 ): Promise<SearchResult[]> {
-  if (await keylessChainQuestion(ctx, queryText)) {
-    return hybridSearchCached(ctx.engine, queryText, {
-      limit, expansion: false, excludePrivate, requireSafeChunks: ctx.remote !== false,
-      takesHoldersAllowList: readHolders(ctx), ...searchScope, ...rankCutOpts,
-      onMeta: m => { stages.push(...(m.degraded ?? [])); },
-    });
-  }
   const rows = dedupResults(await ctx.engine.searchKeyword(queryText, { limit, excludePrivate, requireSafeChunks: ctx.remote !== false, ...searchScope,
     onKeywordIncomplete: reason => { stages.push({ stage: 'keyword_candidates_incomplete', reason }); } }));
   // #3783 — direct FTS path: every row is a keyword hit by construction.

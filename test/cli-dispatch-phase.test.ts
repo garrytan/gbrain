@@ -89,7 +89,7 @@ describe('CLI dispatch shape (master AST)', () => {
     const shape = await expectNormalizerStable(extractCliDispatch, astNormalizer);
     expect(shape.sets.CLI_ONLY).toEqual([...CLI_ONLY].sort());
     expect(shape.sets.THIN_CLIENT_REFUSED_COMMANDS).toEqual([...THIN_CLIENT_REFUSED_COMMANDS].sort());
-    expect(shape.switchCases.length).toBe(85); // +1: gbrain ledger (L2 action ledger); +2: gbrain correct and gbrain rules (C2)
+    expect(shape.switchCases.length).toBe(86); // +1: gbrain ledger (L2 action ledger); +1: gbrain value (roadmap PR 3); +2: gbrain correct and gbrain rules (C2)
     expect(Object.keys(shape.commands).length).toBeGreaterThanOrEqual(shape.sets.CLI_ONLY.length);
   });
 

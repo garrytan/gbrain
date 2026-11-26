@@ -270,6 +270,9 @@
         "./core/trust/label-lowerings.ts",
         "./core/trust/backfill.ts"
       ],
+      "value": [
+        "./commands/value.ts"
+      ],
       "wakeshift": [
         "./commands/wakeshift.ts"
       ],
