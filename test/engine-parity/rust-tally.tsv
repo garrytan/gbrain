@@ -345,7 +345,7 @@ test/engine-parity/repair-slug-spelling.test.ts	1	1
 test/engine-parity/repair-source-reads.test.ts	2	0
 test/engine-parity/repair-takes-timeline.test.ts	11	0
 test/engine-parity/repair-twin-merge.test.ts	7	0
-test/engine-parity/repair-visibility-default.test.ts	2	1
+test/engine-parity/repair-visibility-default.test.ts	7	0
 test/engine-parity/request-index-states.test.ts	1	0
 test/engine-parity/request-tools-persist.test.ts	1	0
 test/engine-parity/resident-projection.test.ts	2	0

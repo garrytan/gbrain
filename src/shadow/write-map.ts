@@ -104,6 +104,9 @@ export const WRITE_MAP: Record<string, WriteSpec> = {
   deleteChunks: { tables: ['content_chunks', 'pages'], plan: (a) => [child('content_chunks', a[0], a[1]?.sourceId, true), pages(a[0], a[1]?.sourceId)] },
   deleteChunksExcept: { tables: ['content_chunks', 'pages'], plan: (a) => [child('content_chunks', a[0], a[2]?.sourceId, true), pages(a[0], a[2]?.sourceId)] },
   moveChunkIndexes: { tables: ['content_chunks'], plan: (a) => [childById('content_chunks', a[0], true)] },
+  // The contextual-mode proof (page-state/contextual-proof.ts): it clears or stamps the embedding record of chunks of one page.
+  clearChunkEmbeddingsByIds: { tables: ['content_chunks'], plan: (a) => [childById('content_chunks', a[0])] },
+  writeChunkInputHashes: { tables: ['content_chunks'], plan: (a) => [childById('content_chunks', a[0])] },
   invalidateStaleSignatureEmbeddings: { tables: ['content_chunks'] },
   invalidateContentDriftEmbeddings: { tables: ['content_chunks'] },
   flipBodyGeneration: { tables: ['pages', 'content_chunks'], plan: (a) => [pageById(a[0]?.pageId), childById('content_chunks', a[0]?.pageId, true)] },
@@ -144,6 +147,8 @@ export const WRITE_MAP: Record<string, WriteSpec> = {
   },
   deleteFactsForPage: { tables: ['facts', 'owner_only_marks'], plan: (a) => [{ relation: 'facts', sel: { source_id: a[1], source_markdown_slug: a[0] }, del: true }, ...OWNER_MARKS] },
   expireFact: { tables: ['facts'], plan: (a) => [{ relation: 'facts', sel: { id: id(a[0]) } }] },
+  // repair visibility: a fenced world fact made private in place (repair/visibility.ts applyFactItem).
+  tightenFencedFactVisibility: { tables: ['facts'], plan: (a) => [{ relation: 'facts', sel: { id: id(a[1]) } }] },
   consolidateFact: { tables: ['facts'], plan: (a) => [{ relation: 'facts', sel: { id: id(a[0]) } }] },
   // The remember consumer's supersede: one UPDATE of the old fact row (expired_at, superseded_by, valid_until).
   retireSupersededFact: { tables: ['facts'], plan: (a) => [{ relation: 'facts', sel: { id: id(a[0]?.oldId) } }] },

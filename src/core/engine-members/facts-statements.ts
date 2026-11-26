@@ -476,6 +476,12 @@ export interface FactsStatementMembers {
   readChunkKeepState(pageId: number, provenanceModel: string | null, column: ProjectionRebuildSql.KeepColumn): Promise<ProjectionRebuildSql.ChunkKeepState[]>;
   /** Clears and marks pending the vector in `column` of each chunk of the page that is of another model, embedded from other text, or not in `currentIds`. */
   clearUnkeptChunkVectors(pageId: number, provenanceModel: string | null, column: ProjectionRebuildSql.KeepColumn, currentIds: readonly number[]): Promise<void>;
+  /** Every stored chunk of the page with its recorded embedding input hash (the contextual-mode proof). */
+  readChunkInputHashes(pageId: number): Promise<ProjectionRebuildSql.ChunkInputHash[]>;
+  /** Clears the vector in `column` and its embedding record on the named chunks of the page and marks them pending now. */
+  clearChunkEmbeddingsByIds(pageId: number, column: ProjectionRebuildSql.KeepColumn, ids: readonly number[]): Promise<void>;
+  /** Records `hashes[i]` as the embedding input hash of the page's chunk `ids[i]`. */
+  writeChunkInputHashes(pageId: number, ids: readonly number[], hashes: readonly string[]): Promise<void>;
   /** Stamps the chunker version a sealed projection was built with on the page. */
   setProjectionChunkerVersion(sourceId: string, slug: string, version: number): Promise<void>;
   /** Whether a queue row of a live inline page (with `media`, or a sealable image) is queued and not marked failed. */
@@ -896,6 +902,10 @@ export interface FactsStatementMembers {
   expireApprovedFacts(sourceId: string, factIds: readonly number[]): Promise<number[]>;
   /** visibility: makes the named database-only world facts private; the ids it changed. Writes facts. */
   tightenDatabaseFactVisibility(sourceId: string, factIds: readonly number[]): Promise<number[]>;
+  /** visibility: a fact's visibility and whether it is unexpired, in any source. Reads facts. */
+  readFactLiveVisibility(factId: number): Promise<{ visibility: string; live: boolean } | undefined>;
+  /** visibility: makes the named world fact at fence row `rowNum` private when unexpired; the ids it changed. Writes facts. */
+  tightenFencedFactVisibility(sourceId: string, factId: number, rowNum: number): Promise<number[]>;
   /** moved-pages: each named page's access key (derived readers, folder rule ids, readable_by, world snapshot). Reads pages. */
   listPageAccessKeys(pageIds: readonly number[]): Promise<RepairAppliesSql.PageAccessKey[]>;
   /** The open-twins scan: the twins of the changed pages some outside identity can read, by (source, slug), at most 50. Reads pages. */
