@@ -69,6 +69,7 @@ on:
       - 'test/apply-migrations-rust-owner.serial.test.ts'
       - 'src/core/migration-orchestration-lock.ts'
       - 'test/apply-migrations-rust-swap.serial.test.ts'
+      - 'test/apply-migrations-rust-client-conflict.serial.test.ts'
       - 'src/core/shared-skills/migration.ts'
       - 'test/token-member-cli-parity.serial.test.ts'
       - 'test/rust-mcp-receipts.serial.test.ts'
@@ -99,6 +100,7 @@ on:
       - 'test/apply-migrations-rust-owner.serial.test.ts'
       - 'src/core/migration-orchestration-lock.ts'
       - 'test/apply-migrations-rust-swap.serial.test.ts'
+      - 'test/apply-migrations-rust-client-conflict.serial.test.ts'
       - 'src/core/shared-skills/migration.ts'
       - 'test/token-member-cli-parity.serial.test.ts'
       - 'test/rust-mcp-receipts.serial.test.ts'
@@ -333,7 +335,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$SHARD" = 1 ]; then
-            bun test --timeout=60000 test/rust-engine-store.test.ts test/rust-engine-shell.test.ts test/rust-engine-differential.test.ts test/rust-managed-hold.test.ts
+            bun test --timeout=60000 test/rust-engine-store.test.ts test/rust-engine-shell.test.ts test/rust-engine-differential.test.ts test/rust-engine-store-snapshot.test.ts test/rust-managed-hold.test.ts
           fi
           position=0
           ran=0
@@ -425,6 +427,15 @@ jobs:
           GBRAIN_TEST_REQUIRE_RUST_ADDON: '1'
           GBRAIN_TEST_RECEIPT_DIR: ${{ runner.temp }}/receipts
         run: bash scripts/run-with-receipt.sh rust-store apply-migrations-rust-swap -- bun test --timeout=900000 test/apply-migrations-rust-swap.serial.test.ts
+      # An upgrade run as a client of a Rust brain's serve, on a swapped brain with a content root. Same ownership rule
+      # as above: a missing addon is an error here, and the receipt check below fails the lane when no test ran.
+      - name: An upgrade as a Rust serve's client exits 0 and never wedges v0.53.0
+        if: matrix.shard == '1'
+        shell: bash
+        env:
+          GBRAIN_TEST_REQUIRE_RUST_ADDON: '1'
+          GBRAIN_TEST_RECEIPT_DIR: ${{ runner.temp }}/receipts
+        run: bash scripts/run-with-receipt.sh rust-store apply-migrations-rust-client-conflict -- bun test --timeout=900000 test/apply-migrations-rust-client-conflict.serial.test.ts
       # The shadow seed leaves the swap's writer-evidence tables behind (rust seed::NOT_COPIED). Same ownership rule as
       # above: a missing addon is an error here, and the next step fails the lane when no test ran.
       - name: The shadow seed skips the writer-evidence tables
@@ -433,6 +444,24 @@ jobs:
           GBRAIN_TEST_REQUIRE_RUST_ADDON: '1'
           GBRAIN_TEST_RECEIPT_DIR: ${{ runner.temp }}/receipts
         run: bash scripts/run-with-receipt.sh rust-store writer-seed -- bun test --timeout=60000 test/shadow-writer-seed.test.ts
+      # The shadow restore drill on a real owner and a real store. Same ownership rule as above: a missing addon is an
+      # error here, and the next step fails the lane when no test ran.
+      - name: The restore drill copies a live shadow store
+        if: matrix.shard == '1'
+        shell: bash
+        env:
+          GBRAIN_TEST_REQUIRE_RUST_ADDON: '1'
+          GBRAIN_TEST_RECEIPT_DIR: ${{ runner.temp }}/receipts
+        run: bash scripts/run-with-receipt.sh rust-store drill-addon -- bun test --timeout=60000 test/shadow-drill-addon.test.ts
+      # The write comparison pilot (src/shadow/write-compare*.ts, write-capture.ts) replays sampled page and link writes on a real scratch Rust
+      # store. Same ownership rule as above: a missing addon is an error here, and the next step fails the lane when no test ran.
+      - name: The write comparison pilot replays page and link writes on a real scratch store
+        if: matrix.shard == '1'
+        shell: bash
+        env:
+          GBRAIN_TEST_REQUIRE_RUST_ADDON: '1'
+          GBRAIN_TEST_RECEIPT_DIR: ${{ runner.temp }}/receipts
+        run: bash scripts/run-with-receipt.sh rust-store write-compare -- bun test --timeout=60000 test/shadow-write-compare.test.ts
       - name: Fail the withdrawn-lead lane when no test ran
         if: matrix.shard == '1'
         shell: bash

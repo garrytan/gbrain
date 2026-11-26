@@ -5,7 +5,7 @@
  * together with its `members.ts` class changing to served.
  *
  * Owners are `PURGE_OWNERS` (persistence/purge-path-members.ts), the same labels the page purge's pre-write check names. Due dates:
- * lane 3's ledger read and lane 4's fact-context read are due 5 PM PST Nov 24 (the step 4 ruling); lane 4's page receipt reads and
+ * lane 4's fact-context read is due 5 PM PST Nov 24 (the step 4 ruling; lane 3's ledger read is served); lane 4's page receipt reads and
  * the slot-end read are due 5 PM PST Nov 25, the date (and the rust-5a 12bee2c026 commit) test/engine-parity/slot-ends-callers.test.ts
  * already names for `listSlotRows`.
  *
@@ -20,8 +20,6 @@ const NOV_24 = PURGE_DUE.nov24;
 const NOV_25 = PURGE_DUE.nov25;
 
 export const RECEIPT_STOP_OWNERS: Readonly<Record<string, KnownStop>> = {
-  // The recorded values of the belief ledger (the fact purge receipt's ledger report).
-  listBeliefEventsForPurgeProbe: { owner: PURGE_OWNERS.beliefProbe, due: NOV_24 },
   // The live fact contexts that quote the purged claims (the same report).
   listFactContextsForPurgeProbe: { owner: PURGE_OWNERS.factContextProbe, due: NOV_24 },
   // The page purge receipt's four reads.

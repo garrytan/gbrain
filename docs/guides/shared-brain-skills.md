@@ -532,6 +532,16 @@ inventorying. An inventory that never completed (for example, the root was
 missing or wrong when it ran) is simply taken again at the corrected root; a
 completed inventory whose root moved still refuses (#5569).
 
+On a Rust brain, a run that is only a client of the brain's owner (another gbrain
+process such as `serve`, a sync or an import holds the brain) cannot read the
+owner-only skill store, so it cannot tell a `skillpack.json`-only change made by
+the sealed publication from a local edit. It reports that source as
+`action_required` with code `owner_unavailable` instead of a conflict, changes
+nothing, and does not record the run as partial, so it never counts toward the
+three partial runs in a row that stop v0.53.0. Run `gbrain apply-migrations --migration 0.53.0 --yes` again
+when no other gbrain process holds the brain. A change to the skill files
+themselves is still a conflict.
+
 An install whose 0.53.0 migration already shows as wedged (three partial runs
 before parking existed) resumes with
 `gbrain apply-migrations --force-retry 0.53.0`, then

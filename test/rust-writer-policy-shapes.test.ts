@@ -5,6 +5,8 @@
  * Root cause of the owner's refusal: the ambient owner record drops the owner-only clause from the text, so the owner's
  * one-identity policy equals neither form (it equals the identity form rendered with `owner: true`).
  * Fails when the owner's writer policy is refused while a plain member's, the same one-identity policy, is served.
+ * Row 32e-b-1: a labelled-only writer's policy and a writer with a satisfied folder rule are served too (the store judges
+ * the labelled-only conjunct and the folder rules); a writer with more than one identity is still refused.
  */
 import { expect, test } from 'bun:test';
 import type { WriterReadPolicy } from '../src/core/engine-sql/remote-links.ts';
@@ -19,7 +21,11 @@ const serve = (ambient: { owner?: boolean }, writer: WriterReadPolicy = policy) 
 
 test('a one-identity writer policy is served for a plain member', async () => expect(await serve({})).toBe('served'));
 test('a one-identity writer policy is served for the brain owner', async () => expect(await serve({ owner: true })).toBe('served'));
-test('every other writer policy shape is still refused, owner or not', async () => {
-  const two = { ...policy, identities: [['member:alice-example'], ['member:bob-example']] }, labelled = { ...policy, labelledOnly: true }, folder = { ...policy, satisfiedRuleIds: ['work:a'] };
-  for (const writer of [two, labelled, folder]) for (const owner of [false, true]) expect(await serve({ owner }, writer)).toBe('engine_capability_missing');
+test('a labelled-only writer policy and a satisfied folder rule are served, owner or not', async () => {
+  const labelled = { ...policy, labelledOnly: true }, folder = { ...policy, satisfiedRuleIds: ['work:a'] };
+  for (const writer of [labelled, folder]) for (const owner of [false, true]) expect(await serve({ owner }, writer)).toBe('served');
+});
+test('a writer policy with more than one identity is still refused, owner or not', async () => {
+  const two = { ...policy, identities: [['member:alice-example'], ['member:bob-example']] };
+  for (const owner of [false, true]) expect(await serve({ owner }, two)).toBe('engine_capability_missing');
 });

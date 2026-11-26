@@ -71,8 +71,8 @@ src/core/belief/page-at-time.ts	withBodies	sql	STREAM	known_as_of read: a segmen
 src/core/belief/page-at-time.ts	livePage	field	STREAM	known_as_of read: a segmented version or page returns body segmented with body_ref (window read via get_page version_id), never a body string; inline bodies only
 src/core/belief/page-at-time.ts	withBodies	field	STREAM	known_as_of read: a segmented version or page returns body segmented with body_ref (window read via get_page version_id), never a body string; inline bodies only
 src/core/belief/preimages.ts	preimageGaps	sql	META	size only (octet_length) to exempt large pages; segmented pages and versions are excluded by body_storage
-src/core/belief/purge.ts	pagePurgeClaims	sql	STREAM	segmented version: NULL body parses no fence claims; the live rows' and the lifetimes' event claims still cover it
-src/core/belief/purge.ts	registerVersionCarriers	sql	STREAM	segmented version: NULL body registers no carriers; the backfill skips the same version (segmented_version_body), so nothing it appends can copy one
+src/core/engine-sql/belief-purge-ledger.ts	listPageVersionFenceBodies	sql	STREAM	segmented version (pagePurgeClaims): NULL body parses no fence claims; the live rows' and the lifetimes' event claims still cover it
+src/core/engine-sql/belief-purge-ledger.ts	listPurgeCarrierVersions	sql	STREAM	segmented version (registerVersionCarriers): NULL body registers no carriers; the backfill skips the same version (segmented_version_body), so nothing it appends can copy one
 src/core/belief/purge.ts	pagePurgeClaims	field	STREAM	segmented version: NULL body parses no fence claims; the live rows' and the lifetimes' event claims still cover it
 src/core/belief/purge.ts	registerVersionCarriers	field	STREAM	segmented version: NULL body registers no carriers; the backfill skips the same version (segmented_version_body), so nothing it appends can copy one
 src/core/engine-sql/belief-state.ts	readBeliefStateRows	sql	META	size only (the over-1 MiB creation rule); a segmented page counts as large by body_storage
@@ -269,6 +269,7 @@ src/core/engine-sql/writer-release.ts	AUDIT_PAGES_SQL	sql	META	the drift-audit p
 src/core/enrichment-service.ts	planEntity	call:serializeMarkdown	INLINE	
 src/core/enrichment-service.ts	stubMarkdown	call:serializeMarkdown	INLINE	G6: a new stub's markdown built from its own short template, never read from a stored body
 src/core/enrichment-service.ts	planEntity	call:putPage	INLINE	
+src/core/entities/evidence/collapse.ts	editPageHead	call:serializePageToMarkdown	NONE	serializes the frontmatter head with an empty body (withoutBody) for an edit_page head edit, as extraction.ts reviewDecision does; the body is never read
 src/core/export-snapshot.ts	inlineExportMarkdown	field	STREAM	
 src/core/export-snapshot.ts	segmentedExportHead	call:serializeMarkdown	NONE	not the page body: the frontmatter head, rendered with an empty body
 src/core/export-snapshot.ts	readExportPages	field	STREAM	inline pages only: a segmented page skips the overlay here and streams through segmentedExportMarkdown (readBodyRange, trusted stored)
@@ -405,6 +406,7 @@ src/core/minions/handlers/subagent-oneshot.ts	planOneshotWrites	call:serializeMa
 src/core/ops/admin.ts	get_versions	field	SEGW	lane 1e: segmented versions return metadata only
 src/core/ops/attribution.ts	get_write_attribution	field	NONE	not the page body: timeline entry id param
 src/core/ops/attribution.ts	rowTarget	field	NONE	not the page body: timeline entry id param
+src/core/ops/claims.ts	check_claims	field	STREAM	skips a segmented page (allowed-claims facts pages are small and inline); a segmented one moves to the segment reader
 src/core/ops/extraction.ts	reviewDecision	call:serializePageToMarkdown	NONE	serializes the frontmatter head with an empty body (withoutBody) for an edit_page head edit; the body is never read
 src/core/ops/get-page-body.ts	bodyBytes	field	META	
 src/core/ops/get-page-body.ts	bodyStripsFor	field	INLINE	GST-3058 room mark: inline pages only (get_page refuses a segmented page whole; a segmented markdown view goes through segmentedBodyStrips)
@@ -412,6 +414,11 @@ src/core/ops/get-page-body.ts	editTarget	field	INLINE	inline branch only (a segm
 src/core/ops/get-page-body.ts	readPartialBody	call:serializePageToMarkdown	SEGW	
 src/core/ops/get-page-projection.ts	projectGetPage	field	STREAM	segmented page: getter throws page_body_segmented (windowed read in PR 2)
 src/core/ops/get-page-projection.ts	projectGetPage	call:serializePageToMarkdown	STREAM	full content render of an inline page
+src/core/ops/household.ts	classifySubjectPages	call:serializeMarkdown	SEGW	household record writer (GST-3825 H1): rewrites the whole small record or subject page under its revision; asserts the page is inline (assertInlineBody) and refuses a segmented one
+src/core/ops/household.ts	classifySubjectPages	field	SEGW	household record writer (GST-3825 H1): rewrites the whole small record or subject page under its revision; asserts the page is inline (assertInlineBody) and refuses a segmented one
+src/core/ops/household.ts	household_mark	field	SEGW	household record writer (GST-3825 H1): rewrites the whole small record or subject page under its revision; asserts the page is inline (assertInlineBody) and refuses a segmented one
+src/core/ops/household.ts	replaceHouseholdRecords	field	SEGW	household record writer (GST-3825 H1): rewrites the whole small record or subject page under its revision; asserts the page is inline (assertInlineBody) and refuses a segmented one
+src/core/ops/household.ts	serializeRecord	call:serializeMarkdown	SEGW	household record writer (GST-3825 H1): rewrites the whole small record or subject page under its revision; asserts the page is inline (assertInlineBody) and refuses a segmented one
 src/core/ops/known-as-of.ts	getVersionsKnownAsOf	field	STREAM	known_as_of read: a segmented version or page returns body segmented with body_ref (window read via get_page version_id), never a body string; inline bodies only
 src/core/ops/known-as-of.ts	intervalView	field	STREAM	known_as_of read: a segmented version or page returns body segmented with body_ref (window read via get_page version_id), never a body string; inline bodies only
 src/core/ops/pages.ts	stripPrivacyFencesForRemoteReader	field	STREAM	segmented page: getter throws page_body_segmented
@@ -574,6 +581,7 @@ src/core/persistence/valid-time-advisory.ts	bodyKey	field	INLINE	text compare fo
 src/core/persistence/writer-guard-schema.ts	MANAGED_WRITER_GUARD_FUNCTION_SQL	sql	STREAM	managed-writer guard tuple (lane 1a adds body_generation)
 src/core/pglite-engine.ts	PGLiteEngine.putPage	call:putPage	SEGW	delegation to engine-sql putPage
 src/core/pglite-engine.ts	PGLiteEngine.refreshPageBody	call:refreshPageBody	SEGW	delegation to engine-sql refreshPageBody
+src/core/policy/store.ts	readPolicyPage	field	INLINE	the policy page is a small fence written inline by gbrain policy; a segmented one reads as empty, so it is malformed and every verb asks
 src/core/post-upgrade-reembed.ts	computeReembedEstimate	sql	META	
 src/core/postgres-engine.ts	PostgresEngine.putPage	call:putPage	SEGW	delegation to engine-sql putPage
 src/core/postgres-engine.ts	PostgresEngine.refreshPageBody	call:refreshPageBody	SEGW	delegation to engine-sql refreshPageBody

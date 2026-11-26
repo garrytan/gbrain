@@ -10,7 +10,8 @@
 //! `readCallerPageAccess` names it with `readable` false.
 //!
 //! `readWriteVisibilityProbe` is the one read a remote page write opens its visibility check with:
-//! whether any access member is labelled-only (never: no store member is created labelled-only),
+//! whether any access member row holds the labelled-only grant (`access_members.rs` `any_labelled_only`: a
+//! disabled or removed member counts, as in the statement),
 //! whether a reader identity could open the page the empty-identity policy hides (none when no row
 //! is hidden; else whether the row names readers or a folder rule is stamped on it), and whether
 //! the page's source or any source is owner-only (`config ->> 'kind'` is `imessage`, or
@@ -27,6 +28,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
+use crate::access_members::any_labelled_only;
 use crate::facts::{PrivacyPolicy, page_hidden, privacy_allows, stamped_rules};
 use crate::owner_only::{any_owner_only, source_owner_only};
 use crate::owner_only_marks::any_marked;
@@ -80,7 +82,7 @@ impl Store {
         };
         let owner_only_source = source_owner_only(&*read, source_id)?;
         Ok(WriteVisibilityProbe {
-            any_labelled: false,
+            any_labelled: any_labelled_only(&*read)?,
             identity_may_open,
             owner_only_source,
             owner_only_any,

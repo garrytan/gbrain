@@ -49,8 +49,10 @@ test/access-unborn-head-gbra706.test.ts
 test/access-ungranted-member-writes.test.ts
 test/access-who-can-read-owner-only.test.ts
 test/access-writes.test.ts
+test/action-ledger.test.ts
 test/activation-unbound-rooted-6449.test.ts
 test/adopt-local-edit.test.ts
+test/agent-policy.test.ts
 test/alias-source-cascade-5094.test.ts
 test/atom-retirement-keeps-trust-9456.test.ts
 test/attribution-backfill-history.test.ts
@@ -97,6 +99,7 @@ test/collate-repair-propose.test.ts
 test/colon-slug-windows-5032.test.ts
 test/company-brain-policy.test.ts
 test/company-brain-runtime.test.ts
+test/company-two-member-first-use.test.ts
 test/concept-purge-rebuild-9653.test.ts
 test/concept-rebuild-holds-managed-9653.test.ts
 test/concept-rebuild-holds-unmanaged-9653.test.ts
@@ -120,6 +123,7 @@ test/db-wins-unimported-gst2579.test.ts
 test/decide-sql-move-parity.test.ts
 test/decide/conflict-proposals-managed.test.ts
 test/declared-lineage-visibility.test.ts
+test/dedupe-collapse.test.ts
 test/degraded-engine-recovered-surface-9224.test.ts
 test/delta-beliefs-link-context-2957.test.ts
 test/derived-link-reconciliation.test.ts
@@ -178,6 +182,7 @@ test/engine-parity/attest-rights.test.ts
 test/engine-parity/attested-actor-link.test.ts
 test/engine-parity/backup-readiness-callers.test.ts
 test/engine-parity/belief-ledger.test.ts
+test/engine-parity/belief-purge-ledger.test.ts
 test/engine-parity/belief-purge-probes.test.ts
 test/engine-parity/bench-save-repro.test.ts
 test/engine-parity/bound-write.test.ts
@@ -284,6 +289,7 @@ test/engine-parity/fact-purge-inventory-probes.test.ts
 test/engine-parity/fact-purge-ledger.test.ts
 test/engine-parity/fact-purge-members.test.ts
 test/engine-parity/fact-purge-probes.test.ts
+test/engine-parity/fact-purge-receipt-e2e.test.ts
 test/engine-parity/fact-purge-sites.test.ts
 test/engine-parity/fact-recall-pool-widening.test.ts
 test/engine-parity/fact-relink-attempts.test.ts
@@ -358,6 +364,7 @@ test/engine-parity/journal-typed-sites.test.ts
 test/engine-parity/keyword-visibility.test.ts
 test/engine-parity/label-guard-tiers.test.ts
 test/engine-parity/labelled-only-for.test.ts
+test/engine-parity/labelled-only-policy.test.ts
 test/engine-parity/large-page.test.ts
 test/engine-parity/legacy-slug-spellings-doctor.test.ts
 test/engine-parity/lifecycle.test.ts
@@ -450,6 +457,7 @@ test/engine-parity/read-shared-sources.test.ts
 test/engine-parity/reads-privacy.test.ts
 test/engine-parity/reason-tombstones.test.ts
 test/engine-parity/recall-members.test.ts
+test/engine-parity/rechunk-chunk-ids.test.ts
 test/engine-parity/referrer-reads.test.ts
 test/engine-parity/refusal-blocker-sites.test.ts
 test/engine-parity/refusal-swallow-extract.test.ts
@@ -669,6 +677,7 @@ test/fenced-embed-reuse-6961.test.ts
 test/file-drift-normalisation-gst2568.test.ts
 test/file-drift-soft-delete-hold-release-gbra133.test.ts
 test/file-upload-follows-rename.test.ts
+test/first-session-suggestion.test.ts
 test/folder-holding-coverage-gst2497.test.ts
 test/folder-holding-page-gst2492.test.ts
 test/forecast-journal.test.ts
@@ -934,6 +943,7 @@ test/notifier-retry-unwatched-gst2515.test.ts
 test/notifier-sync-disabled-gst2515.test.ts
 test/ns-read-move-parity.test.ts
 test/on-commit-embedding.serial.test.ts
+test/onboarding-ops.test.ts
 test/oneshot-consumer-direct-route.test.ts
 test/oneshot-housekeeping-cli.test.ts
 test/ontology-raw-files-parity.test.ts

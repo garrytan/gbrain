@@ -4,16 +4,19 @@
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: bumpSourcePurgeEpoch, hasBeliefEvents, registerPurgeRedaction, releasePurgeRedactionsForField,
- *    replayPagePurges and readPurgeReplaySchema return the same observable result on every engine arm (PGLite always;
+ *    replayPagePurges, readPurgeReplaySchema and listBeliefEventsForPurgeProbe return the same observable result on every engine arm (PGLite always;
  *    Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
  *  - Regression: an engine that answers one of these differently changes whether a purge raises the source's purge
  *    epoch (so caches drop the purged rows), whether it writes the ledger's suppressions, which suppressions an owner
- *    release lifts, and what a restore replay re-tombstones; the Rust engine has no SQL, so each statement has to exist
+ *    release lifts, what a restore replay re-tombstones, and whether a purge receipt sees recorded history that still
+ *    quotes the purged claim (an engine that refuses the probe fails the receipt; one that answers [] reports it clean); the Rust engine has no SQL, so each statement has to exist
  *    as a typed method it can implement or refuse.
  *  - Why existing coverage misses it: these statements ran through `executeRaw`, which the parity cases cannot call
  *    (D18), so no case compared them across engines.
  *  - Seam: none in the cases. Typed members only (no executeRaw: D18). Sources and the belief ledger's coverage come
- *    through the harness fixtures; suppressions are read back through the typed readBeliefRedactions, the epoch through
+ *    through the harness fixtures; the receipt case runs facts/purge-verify.ts ledgerReports through a view of the engine
+ *    whose listFactContextsForPurgeProbe answers no live facts on every arm (the fixture has none; Rust still refuses that
+ *    read, and the whole receipt case with a fact_context quote waits for it); suppressions are read back through the typed readBeliefRedactions, the epoch through
  *    readSourcePurgeEpoch and the tombstones through countPagePurgeTombstones. Generated values (suppression ids) are
  *    never compared.
  */
@@ -21,7 +24,9 @@ import { describe, expect } from 'bun:test';
 import { createSource, enableBeliefCoverage, parityArms, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
+import type { BeliefEventInsertRow } from '../../src/core/engine-sql/belief-ledger.ts';
 import { PURGE_SWEEP_STORES } from '../../src/core/persistence/page-purge.ts';
+import { __ledgerReportsForTests as ledgerReports } from '../../src/core/facts/purge-verify.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -30,6 +35,19 @@ const PURGE = 'a0000000-0000-4000-8000-0000000000a1';
 const PURGE2 = 'a0000000-0000-4000-8000-0000000000a2';
 const PUB = 'd0000000-0000-4000-8000-0000000000d1';
 const PUB2 = 'd0000000-0000-4000-8000-0000000000d2';
+const LIFE = 'e0000000-0000-4000-8000-0000000000e1';
+const CLAIM = 'Acme pays its suppliers in cash';
+
+/** A recorded fact event of `sourceId` at `ord`; `value` is its recorded value (null: a value-less event). */
+function event(sourceId: string, incarnation: string, ord: number, value: Record<string, unknown> | null, over: Partial<BeliefEventInsertRow> = {}): BeliefEventInsertRow {
+  return {
+    event_key: `ee${sourceId === SRC ? '00' : '01'}${ord.toString(16).padStart(2, '0')}`, source_id: sourceId, source_incarnation: incarnation, page_lifetime: LIFE,
+    slug: 'companies/acme-example', subject_kind: 'fact', subject_key: `fact:${ord}`, event_type: 'fact.asserted', origin: 'live', trust_tier: 'owner',
+    writer_tier: null, tier_basis: 'row', visibility: 'world', publication_id: PUB, ord, source_time: '2026-03-01T10:00:00.000Z', valid_from: null,
+    valid_until: null, value: value === null ? null : JSON.stringify(value), value_hash: value === null ? null : `vh${ord}`, prior_hash: null,
+    state_hash: `sh${ord}`, cause: JSON.stringify({ kind: 'test' }), claim_fp: `fp${ord}`, purged: false, redacted_fields: null, ...over,
+  };
+}
 
 /** The source's suppressions on the subjects, without their ids, in a fixed order. */
 async function suppressions(engine: BrainEngine, subjects: string[], sourceId = SRC) {
@@ -127,5 +145,70 @@ describe('engine parity: the belief side of a purge', () => {
     expect(schema).toEqual({ stores: [...PURGE_SWEEP_STORES], changeReason: true, persistenceBrain: true, derivationInputs: true, beliefEvents: true });
     expect(empty.stores).toEqual([]);
     return { schema, empty };
+  });
+
+  parityTest('listBeliefEventsForPurgeProbe hands a purge receipt every recorded value of the source that still quotes the claim, in id order after the cursor', {
+    methods: ['readLedgerSource', 'insertBeliefEvents', 'listBeliefEventsForPurgeProbe'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    const inc = (await engine.readLedgerSource(SRC))!.incarnation;
+    const otherInc = (await engine.readLedgerSource('other'))!.incarnation;
+    const marker = `[redacted: purge ${PURGE}]`;
+    // What a purge of CLAIM leaves: its own fact redacted, a context it missed (a carrying field: the receipt's
+    // `incomplete`), another subject's longer claim (`out_of_scope`), an unrelated fact, a value-less event, and the
+    // same quote in another source, which this source's receipt must never see.
+    await engine.insertBeliefEvents([
+      event(SRC, inc, 1, { fact: marker, context: 'board memo' }, { redacted_fields: ['fact'] }),
+      event(SRC, inc, 2, { fact: 'Acme sells widgets', context: `memo: ${CLAIM}` }),
+      event(SRC, inc, 3, { fact: `${CLAIM.toUpperCase()} and in kind` }),
+      event(SRC, inc, 4, { fact: 'Acme has two offices' }),
+      event(SRC, inc, 5, null, { event_type: 'fact.retracted' }),
+      event('other', otherInc, 6, { fact: CLAIM }),
+    ]);
+    const read = async (sourceId: string, after: number) => (await engine.listBeliefEventsForPurgeProbe(sourceId, after))
+      .map(r => ({ id: Number(r.id), subject_kind: r.subject_kind, subject_key: r.subject_key, value: typeof r.value === 'string' ? JSON.parse(r.value) : r.value }));
+    const all = await read(SRC, 0);
+    const quoting = all.filter(r => JSON.stringify(r.value).toLowerCase().includes(CLAIM.toLowerCase())).map(r => r.subject_key);
+    expect(all.map(r => r.subject_key)).toEqual(['fact:1', 'fact:2', 'fact:3', 'fact:4']);
+    expect(quoting).toEqual(['fact:2', 'fact:3']);
+    const base = all[0]!.id;
+    const rel = (rows: typeof all) => rows.map(({ id, ...rest }) => ({ id: id - base, ...rest }));
+    const answers = {
+      all: rel(all), quoting, afterSecond: rel(await read(SRC, all[1]!.id)), afterAll: await read(SRC, all[all.length - 1]!.id),
+      other: (await read('other', 0)).map(r => r.subject_key), nobody: await read('nobody', 0),
+    };
+    expect(answers.all.map(r => r.id)).toEqual([0, 1, 2, 3]);
+    expect(answers.afterSecond.map(r => r.subject_key)).toEqual(['fact:3', 'fact:4']);
+    expect({ afterAll: answers.afterAll, other: answers.other, nobody: answers.nobody }).toEqual({ afterAll: [], other: ['fact:6'], nobody: [] });
+    return answers;
+  });
+
+  parityTest('the receipt\'s belief_events report is byte-equal when a recorded JSON null sits next to the events that quote the claim', {
+    methods: ['readLedgerSource', 'insertBeliefEvents', 'listBeliefEventsForPurgeProbe'],
+  }, async (engine) => {
+    const inc = (await engine.readLedgerSource(SRC))!.incarnation;
+    const LONGER = 'Acme rents its warehouse';
+    // Postgres keeps a recorded JSON null as a value (null) and the Rust store keeps it as no value; the report must not tell.
+    const jsonNull = (ord: number) => event(SRC, inc, ord, null, { value: 'null', value_hash: `vh${ord}` });
+    await engine.insertBeliefEvents([
+      jsonNull(1),
+      event(SRC, inc, 2, { fact: 'Acme sells widgets', context: `memo: ${CLAIM}` }),
+      jsonNull(3),
+      event(SRC, inc, 4, { fact: `${LONGER} by the month` }),
+      jsonNull(5),
+    ]);
+    const view = new Proxy(engine, {
+      get(target, key) {
+        if (key === 'listFactContextsForPurgeProbe') return async () => [];
+        const value = Reflect.get(target, key, target);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+    const report = async (claim: string) => JSON.stringify(await ledgerReports(view, SRC, [claim], null, performance.now() + 20_000));
+    const answers = { missed: await report(CLAIM), other: await report(LONGER), absent: await report('Acme has no warehouse') };
+    expect(JSON.parse(answers.missed)).toEqual([{ store: 'belief_events', status: 'incomplete', remaining: 1, removed: 0, items: ['context@fact:2'] }]);
+    expect(JSON.parse(answers.other)).toMatchObject([{ store: 'belief_events', status: 'out_of_scope', remaining: 1, items: ['fact@fact:4'] }]);
+    expect(JSON.parse(answers.absent)).toEqual([{ store: 'belief_events', status: 'not_present', removed: 0 }]);
+    return answers;
   });
 });

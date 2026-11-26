@@ -421,7 +421,6 @@ src/commands/wakeshift.ts#watchCounts	catch_empty	1
 src/commands/whoknows.ts#findExperts	promise_catch_empty	1
 src/core/access/caller.ts#appliedAccessSummary	catch_empty	1
 src/core/access/caller.ts#resolveAudienceIdentities	catch_empty	1
-src/core/access/caller.ts#stdioMemberId	catch_empty	1
 src/core/access/lineage.ts#membersReadLineageOn	catch_empty	1
 src/core/access/members.ts#audienceMemberIds	catch_empty	1
 src/core/access/open-pages.ts#printOpenPagesUpgradeNotice	catch_empty	1
@@ -1129,7 +1128,6 @@ src/core/persistence/page-advisories.ts#similarPagesAdvisory	promise_catch_empty
 src/core/persistence/page-append.ts#prepareSegmentedSpliceMutation	promise_catch_empty	1
 src/core/persistence/page-prepare.ts#prepareInlineOrSegmentedMutation<anon@3>	promise_catch_empty	1
 src/core/persistence/page-prepare.ts#prepareSegmentedTagMutation	promise_catch_empty	1
-src/core/persistence/page-visibility.ts#assertLabelledOnlyCreate	capability_refusal_swallowed	1
 src/core/persistence/page-visibility.ts#assertLabelledOnlyCreate	promise_catch_empty	1
 src/core/persistence/page-visibility.ts#authorizePageVisibility	catch_empty	1
 src/core/persistence/physical-root-record.ts#excludeMarkersInLaterCheckout	catch_empty	1

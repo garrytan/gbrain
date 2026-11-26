@@ -70,14 +70,14 @@ export function catalogSkillPaths(home: string, catalog: string): Map<string, st
  * With paths, each line also names the skill's SKILL.md, for a harness
  * that loads a skill by reading its file.
  */
-export function renderPinnedBlock(pins: readonly Pin[], opts: { harness?: string; known: Set<string> | null; cap?: number; paths?: ReadonlyMap<string, string> }): PinnedBlock {
+export function renderPinnedBlock(pins: readonly Pin[], opts: { harness?: string; known: Set<string> | null; cap?: number; paths?: ReadonlyMap<string, string>; readRoot?: string }): PinnedBlock {
   const cap = opts.cap ?? PIN_BLOCK_TOKEN_CAP;
   if (!opts.known) return { block: '', tokens: 0, ids: [], unknown: pins.map((p) => p.name), cut: [] };
   const valid = pins.filter((p) => opts.known!.has(p.name));
   const unknown = pins.filter((p) => !opts.known!.has(p.name)).map((p) => p.name);
   const lines = valid.map((p) => `- id: ${quoted(p.name)}${p.line ? ` when: ${quoted(p.line)}` : ''}${opts.paths?.get(p.name) ? ` path: ${quoted(opts.paths.get(p.name)!)}` : ''}`);
   const pathed = opts.harness === 'claude-code' && valid.some((p) => opts.paths?.get(p.name));
-  const head = `Always-available skills, chosen by this agent's operator, whether or not a skill list shows them. ${loadLine(opts.harness)}${pathed ? ' A skill listed with a path is outside Claude Code\'s skills folder: read the SKILL.md at its path instead.' : ''}`;
+  const head = `Always-available skills, chosen by this agent's operator, whether or not a skill list shows them. ${loadLine(opts.harness, undefined, { readRoot: opts.readRoot, paths: valid.map((p) => opts.paths?.get(p.name)) })}${pathed ? ' A skill listed with a path is outside Claude Code\'s skills folder: read the SKILL.md at its path instead.' : ''}`;
   const wrap = (body: string[]) => ['<pinned_skills>', head, ...body, '</pinned_skills>'].join('\n');
   const kept: number[] = [];
   lines.forEach((line, i) => { if (estimateTokens(wrap([...kept.map((k) => lines[k]), line])) <= cap) kept.push(i); });

@@ -1,7 +1,7 @@
 import postgres from '#postgres'
 import { tryAcquirePoolLongHold, PoolCapacityError } from './pool-budget.ts';
 import { capabilitiesForEngineKind, type EngineCapabilities } from './engine-capabilities.ts';
-import { noteRequestConfigWrite, requestConfigRows, requestConfigValue } from './config-snapshot.ts';
+import { assertReservedConfigWrite, noteRequestConfigWrite, requestConfigRows, requestConfigValue } from './config-snapshot.ts';
 import { replaceDerivedLinks, replaceDerivedLinksBatch, type DerivedLinkBatchItem, type DerivedLinkOrigin, type DerivedLinkReplacementOptions } from './derived-links.ts';
 import { mutatePageTag } from './page-state/tags.ts';
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
@@ -121,6 +121,7 @@ import * as trustWithdrawalsImpl from './engine-sql/trust-withdrawals.ts';
 import * as beliefLedgerImpl from './engine-sql/belief-ledger.ts';
 import * as beliefStateImpl from './engine-sql/belief-state.ts';
 import * as beliefPurgeImpl from './engine-sql/belief-purge.ts';
+import * as beliefPurgeLedgerImpl from './engine-sql/belief-purge-ledger.ts';
 import * as openLoopsImpl from './engine-sql/open-loops.ts';
 import * as loopMutesImpl from './engine-sql/loop-mutes.ts';
 import * as sourceArchiveImpl from './engine-sql/source-archive.ts';
@@ -2451,6 +2452,20 @@ export class PostgresEngine implements BrainEngine {
   releasePurgeRedactionsForField(row: beliefPurgeImpl.PurgeRedactionRelease) { return beliefPurgeImpl.releasePurgeRedactionsForField(this.autocommitSql, row); }
   replayPagePurges(row: beliefPurgeImpl.ReplayPagePurges) { return beliefPurgeImpl.replayPagePurges(this.autocommitSql, row); }
   readPurgeReplaySchema(stores: readonly string[]) { return beliefPurgeImpl.readPurgeReplaySchema(unscopedExecutor(this.engineSql, 'belief: the purge replay ran these probes through executeRaw unscoped'), stores); }
+  listDerivedStreamSlugs(sourceId: string, factIds: readonly number[], takeIds: readonly number[], pageIds: readonly number[]) { return beliefPurgeLedgerImpl.listDerivedStreamSlugs(unscopedExecutor(this.engineSql, 'belief: the purge ran this read through executeRaw unscoped'), sourceId, factIds, takeIds, pageIds); }
+  listMissingPreimages(pageIds: readonly number[], revisions: readonly string[]) { return beliefPurgeLedgerImpl.listMissingPreimages(unscopedExecutor(this.engineSql, 'belief: the purge ran this read through executeRaw unscoped'), pageIds, revisions); }
+  redactPurgedBeliefKeys(input: beliefPurgeLedgerImpl.RedactPurgedKeysInput) { return beliefPurgeLedgerImpl.redactPurgedBeliefKeys(this.autocommitSql, input); }
+  listBeliefCarrierEvents(sourceId: string, after: number) { return beliefPurgeLedgerImpl.listBeliefCarrierEvents(unscopedExecutor(this.engineSql, 'belief: the purge ran this read through executeRaw unscoped'), sourceId, after); }
+  readBeliefEventValue(sourceId: string, id: number) { return beliefPurgeLedgerImpl.readBeliefEventValue(unscopedExecutor(this.engineSql, 'belief: the purge ran this read through executeRaw unscoped'), sourceId, id); }
+  rewriteBeliefEventFields(input: beliefPurgeLedgerImpl.BeliefEventRewrite) { return beliefPurgeLedgerImpl.rewriteBeliefEventFields(this.autocommitSql, input); }
+  rechainBeliefPriorHash(input: beliefPurgeLedgerImpl.BeliefPriorRechain) { return beliefPurgeLedgerImpl.rechainBeliefPriorHash(this.autocommitSql, input); }
+  listBeliefQuotingRows(kind: beliefPurgeLedgerImpl.BeliefQuotingKind, sourceId: string, after: number) { return beliefPurgeLedgerImpl.listBeliefQuotingRows(unscopedExecutor(this.engineSql, 'belief: the purge ran this read through executeRaw unscoped'), kind, sourceId, after); }
+  listPageBeliefLifetimes(sourceId: string, slug: string, pageId: number) { return beliefPurgeLedgerImpl.listPageBeliefLifetimes(unscopedExecutor(this.engineSql, 'belief: the purge ran this read through executeRaw unscoped'), sourceId, slug, pageId); }
+  listPagePurgeLiveClaims(sourceId: string, slug: string, pageId: number) { return beliefPurgeLedgerImpl.listPagePurgeLiveClaims(unscopedExecutor(this.engineSql, 'belief: the purge ran this read through executeRaw unscoped'), sourceId, slug, pageId); }
+  listPageVersionFenceBodies(pageId: number, after: number) { return beliefPurgeLedgerImpl.listPageVersionFenceBodies(unscopedExecutor(this.engineSql, 'belief: the purge ran this read through executeRaw unscoped'), pageId, after); }
+  listLifetimeClaimEvents(sourceId: string, lifetimes: readonly string[], after: number) { return beliefPurgeLedgerImpl.listLifetimeClaimEvents(unscopedExecutor(this.engineSql, 'belief: the purge ran this read through executeRaw unscoped'), sourceId, lifetimes, after); }
+  listPurgeCarrierVersions(sourceId: string, versionIds: readonly number[]) { return beliefPurgeLedgerImpl.listPurgeCarrierVersions(unscopedExecutor(this.engineSql, 'belief: the purge ran this read through executeRaw unscoped'), sourceId, versionIds); }
+  listKnownBeliefSubjectKeys(sourceId: string, keys: readonly string[]) { return beliefPurgeLedgerImpl.listKnownBeliefSubjectKeys(unscopedExecutor(this.engineSql, 'belief: the purge ran this read through executeRaw unscoped'), sourceId, keys); }
   async listCoveredSources(subjectKey: string) { return this.engineRead(exec => beliefImpl.listCoveredSources(exec, subjectKey)); }
   isFolderRestricted(sourceId: string, slug: string) { return this.preparationRead(exec => accessControlImpl.isFolderRestricted(unscopedExecutor(exec, 'access: folder rule read ran unscoped through executeRaw'), sourceId, slug)); }
   // The member lookup and the folder access read run through this engine's executeRaw, as access/caller.ts did; under a
@@ -5271,6 +5286,7 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async setConfig(key: string, value: string): Promise<void> {
+    assertReservedConfigWrite(key);
     return this.connRetry(async () => {
       await this.sql`
         INSERT INTO config (key, value) VALUES (${key}, ${value})
@@ -5281,6 +5297,7 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async unsetConfig(key: string): Promise<number> {
+    assertReservedConfigWrite(key);
     return this.connRetry(async () => {
       const result = await this.sql`DELETE FROM config WHERE key = ${key}` as unknown as { count: number };
       noteRequestConfigWrite(this, key, null);
