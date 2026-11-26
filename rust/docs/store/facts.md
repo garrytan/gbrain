@@ -542,7 +542,7 @@ call `brain.expireFactUntil` (`expire_fact_until` with `day_or_time` in `crates/
 member is named `facts` in `rust-engine/members.ts` and refuses by name with `engine_capability_missing` until the store
 (served by `facts/forget.rs`, below) the thirteen of `facts/remember_reads.rs`, `listFactProvenance` (`facts/provenance.rs`, above) and the six of `facts/recall.rs` (both below), none is implemented on Rust
 yet: each is named `facts` in `rust-engine/members.ts` and refuses by name with `engine_capability_missing` until the store
-serves it. Two `factWithdrawnRefusal` reads in `single-prepare.ts` are still raw (the withdrawal lane owns them).
+serves it. The one `factWithdrawnRefusal` read in `single-prepare.ts` that remains is still raw (the withdrawal lane owns it); a remote caller no longer reaches it, and the visibility-floor read beside it is gone.
 
 | Group | Members | What the store would need |
 | --- | --- | --- |

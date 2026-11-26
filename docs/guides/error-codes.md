@@ -1873,7 +1873,7 @@ More: [docs/guides/google-socket.md#error-codes](../../docs/guides/google-socket
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| gbrain dedupe classes or sample was asked to search the web (--exa) on a brain where Exa is off: EXA_API_KEY is not set or dedupe.exa is not on, so nothing was sent. | Web search sends a name plus one company or job title to Exa, a paid outside service, so it stays off until the user supplies their own key and turns it on. | Count the queries and their cost with gbrain dedupe classes --exa --dry-run, then set EXA_API_KEY and run gbrain config set dedupe.exa on. Run: gbrain dedupe classes --exa --dry-run --json | user | `gbrain doctor --json` | 1 | no |
+| gbrain dedupe classes or sample was asked to search the web (--exa) on a brain where Exa is off: EXA_API_KEY is not set or dedupe.exa is not on, so nothing was sent. | Web search sends a name and one work clue (a company, job title or company-site label) to Exa, a paid outside service, so it stays off until the user supplies their own key and turns it on. | Count the queries and their cost with gbrain dedupe classes --exa --dry-run, then set EXA_API_KEY and run gbrain config set dedupe.exa on. Run: gbrain dedupe classes --exa --dry-run --json | user | `gbrain doctor --json` | 1 | no |
 
 More: [docs/guides/duplicate-people.md#web-search-exa](../../docs/guides/duplicate-people.md#web-search-exa)
 
@@ -2431,7 +2431,7 @@ More: [docs/guides/repair.md#rename-identity](../../docs/guides/repair.md#rename
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| `remember`, or an owner `gbrain trust release` that writes a held fact into its entity page's `## Facts` table (a managed brain), refused a claim that was explicitly forgotten for this subject (wire `invalid_params`, message prefix `fact_withdrawn:`); nothing was saved, and a refused release leaves the fact held. | A forgotten claim stays withdrawn: remembering the same normalized text does not restore it, and a claim forgotten without an entity is withdrawn for every entity. The additive `withdrawn` object (`at`, `subject`: an entity slug or `all_entities`, `visibility`) says when and how widely the exact claim was forgotten; it covers that exact claim only, and its absence carries no meaning. | Do not retry the same text. Tell the user the claim was forgotten (withdrawn.at, withdrawn.subject); if it is still true, remember it in new words. To link a fact saved without an entity, remember it with entity and replaces set to its fact id instead of forgetting it. For a refused release, do not retry it: drop the hold (gbrain trust drop h<id>) unless the user wants the claim back in new words. | agent | `repeat the read that failed` | 1 | no |
+| `remember`, or an owner `gbrain trust release` that writes a held fact into its entity page's `## Facts` table (a managed brain), refused a claim that was explicitly forgotten for this subject (wire `invalid_params`, message prefix `fact_withdrawn:`); nothing was saved, and a refused release leaves the fact held. | A forgotten claim stays withdrawn: remembering the same normalized text does not restore it, and a claim forgotten without an entity is withdrawn for every entity. The additive `withdrawn` object (`at`, `subject`: an entity slug or `all_entities`, `visibility`) says when and how widely the exact claim was forgotten; it covers that exact claim only, is sent to a trusted local caller, and to a remote save onto the caller's own member page when the withdrawal is one that page's member reads; any other remote refusal, and every receipt or replay a remote reader gets, carries none, and its absence carries no meaning. | Do not retry the same text. Tell the user the claim was forgotten (with withdrawn.at and withdrawn.subject when the refusal carries them); if it is still true, remember it in new words. To link a fact saved without an entity, remember it with entity and replaces set to its fact id instead of forgetting it. For a refused release, do not retry it: drop the hold (gbrain trust drop h<id>) unless the user wants the claim back in new words. | agent | `repeat the read that failed` | 1 | no |
 
 ### facts_absorb_write_refused
 
@@ -7342,6 +7342,22 @@ More: [docs/guides/write-refusals.md#tail_exposure_approval](../../docs/guides/w
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | The skill target must remain within its selected root. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+### telemetry_forget_failed
+
+<a id="telemetry_forget_failed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain telemetry forget could not get the telemetry server to confirm it deleted this install's record and unlinked its stored events, so the local install id was kept. | The local id is the only way to name this install's rows on the server; deleting it before the server confirms would leave the record there with no way to ask again. | Run gbrain telemetry forget again when the machine is online. | agent | `gbrain doctor --json` | 1 | yes |
+
+### telemetry_pulse_unavailable
+
+<a id="telemetry_pulse_unavailable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The public telemetry pulse is stale or could not be read (a 503, an error or no connection), so it says nothing about the current release. | An outage must never read as zero failures: a monitor that took a missing pulse for a healthy one would miss a broken release. | Retry gbrain telemetry pulse later, and treat this run as unknown, not as no problems. | agent | `gbrain doctor --json` | 1 | yes |
 
 ### timeline_comment_markup
 

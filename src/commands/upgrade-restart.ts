@@ -10,7 +10,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, readlinkSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { delimiter, dirname, isAbsolute, join } from 'node:path';
+import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
 import { spawn, spawnSync } from '../core/spawn.ts';
 import { gbrainPath, isThinClient, loadConfig, toEngineConfig } from '../core/config.ts';
 import { opError } from '../core/ops/contract.ts';
@@ -196,6 +196,10 @@ export function serveLauncher(declared: string | undefined = loadConfig()?.self_
   return declared === 'external' ? { kind: 'declared', wait_ms: HANDOFF_WAIT_MS, pid: null } : null;
 }
 
+function workerLauncher(): AutopilotLauncher | null {
+  return loadConfig()?.self_upgrade?.worker_launcher === 'external' ? { kind: 'declared', wait_ms: HANDOFF_WAIT_MS, pid: null } : null;
+}
+
 /** The launcher matters only for a running autopilot, so a host without one never reads the crontab. */
 export function launcherFor(processes: HostProcess[], launcher: () => AutopilotLauncher | null = autopilotLauncher): AutopilotLauncher | null {
   return processes.some(p => p.role === 'autopilot') ? launcher() : null;
@@ -273,13 +277,14 @@ export function hostExecutor(pidFile: string, timeoutMs = 600_000): RestartExecu
   };
 }
 
-/** SIGTERM pid only while it is still the MCP server or autopilot the plan saw: same role, same start time (ps reports it to the second). */
-function terminateIfUnchanged(pid: number, startedMs: number | null, role: 'mcp' | 'autopilot' | 'serve'): 'stopped' | 'gone' | 'changed' {
+/** SIGTERM pid only while it is still the process the plan saw: same role, same start time (ps reports it to the second). */
+const terminateIfUnchanged: RestartExecutor['terminate'] = (pid, startedMs, role) => {
   const row = readProcessTable(undefined, [pid])?.find(r => r.pid === pid);
   if (!row) return 'gone';
   if (classifyGbrainCommand(row.command, { cwd: row.cwd, packageName: packageNameAt }) !== role || startedMs === null || row.started_ms === null || Math.abs(row.started_ms - startedMs) > 2_000) return 'changed';
+  if (role === 'worker' && (!row.gbrain_home || resolve(row.gbrain_home) !== resolve(brainHome()))) return 'changed';
   try { process.kill(pid, 'SIGTERM'); return 'stopped'; } catch { return 'gone'; }
-}
+};
 
 const describe = (p: Pick<HostProcess, 'role' | 'pid' | 'version'>) => `${p.role} pid ${p.pid} (${p.version ? `v${p.version}` : 'build not recorded'})`;
 
@@ -359,7 +364,7 @@ export async function preflightHostRestart(opts: HostRestartOptions): Promise<bo
   try {
     const services = hostServices();
     const processes = await collectHostProcesses(sources);
-    const plan = planRestart(processes, { expected: PENDING_BUILD, serveService: services.serve, autopilotService: services.autopilot, stopMcp: opts.stopMcp, ownInstallRoot: ownInstallRoot(), autopilotLauncher: launcherFor(processes), serveLauncher: serveLauncher() });
+    const plan = planRestart(processes, { expected: PENDING_BUILD, serveService: services.serve, autopilotService: services.autopilot, stopMcp: opts.stopMcp, ownInstallRoot: ownInstallRoot(), autopilotLauncher: launcherFor(processes), serveLauncher: serveLauncher(), workerLauncher: workerLauncher() });
     const refusal = restartRefusal(plan, opts.rerunArgv, false);
     if (!refusal) return true;
     setCliExitVerdict(writeCliError(refusal, 'upgrade', { json: opts.json }));
@@ -378,7 +383,7 @@ export async function upgradeRestartReadiness(): Promise<RestartPlan | null> {
   const processes = sources.processTable() === null ? null : await collectHostProcesses(sources);
   if (!processes) return null;
   const services = hostServices();
-  return planRestart(processes, { expected: PENDING_BUILD, serveService: services.serve, autopilotService: services.autopilot, stopMcp: false, ownInstallRoot: ownInstallRoot(), autopilotLauncher: launcherFor(processes), serveLauncher: serveLauncher() });
+  return planRestart(processes, { expected: PENDING_BUILD, serveService: services.serve, autopilotService: services.autopilot, stopMcp: false, ownInstallRoot: ownInstallRoot(), autopilotLauncher: launcherFor(processes), serveLauncher: serveLauncher(), workerLauncher: workerLauncher() });
 }
 
 /** `gbrain upgrade --restart-only [--stop-mcp] [--dry-run] [--json]`: restart every process onto the installed build and verify. */
@@ -387,7 +392,7 @@ export async function runHostRestart(opts: HostRestartOptions & { dryRun: boolea
   try {
     const services = hostServices();
     const before = await collectHostProcesses(sources);
-    const plan = planRestart(before, { expected: VERSION, serveService: services.serve, autopilotService: services.autopilot, stopMcp: opts.stopMcp, ownInstallRoot: ownInstallRoot(), autopilotLauncher: launcherFor(before), serveLauncher: serveLauncher() });
+    const plan = planRestart(before, { expected: VERSION, serveService: services.serve, autopilotService: services.autopilot, stopMcp: opts.stopMcp, ownInstallRoot: ownInstallRoot(), autopilotLauncher: launcherFor(before), serveLauncher: serveLauncher(), workerLauncher: workerLauncher() });
     const { probeCliSocket } = await import('../core/cli-socket/probe.ts');
     const warmBefore = await probeCliSocket();
     const planDoc = { expected: VERSION, processes: before, steps: plan.steps, manual: plan.manual, warm_socket: warmBefore, notes };

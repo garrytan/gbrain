@@ -44,6 +44,7 @@ import { getCliOptions, cliOptsToProgressOptions } from '../cli-options.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
 import { atomicWriteFileSync, mkdirPrivate } from '../atomic-write.ts';
 import { importRendered, isUsageLimit, markPartial, myAddressSet, type ActivePack, type GoogleSyncDeps, type GoogleSyncSummary } from './sweep-shared.ts';
+import { ownerAddressSet } from './loops-owner-addresses.ts';
 import { connectorSpeakerOwnerStamp } from '../identity/speaker-owner.ts';
 export { myAddressSet } from './sweep-shared.ts';
 import { sweepCalendar, sweepContacts } from './people-calendar-sweep.ts';
@@ -394,6 +395,8 @@ const WINDOW_LIST_PAGES = 20;
 const MIN_WINDOW_MS = 60_000;
 /** How long the one listing that proves an aborted walk's progress may take, under its own signal. */
 const ABORT_PROOF_MS = 15_000;
+/** How many proof listings a managed walk spends trying to bank before its first batch ends (#10473). */
+const EARLY_BANK_TRIES = 3;
 
 /**
  * Drain `[lowerMs, state[floorKey])` newest→oldest, committing the floor per
@@ -422,6 +425,9 @@ async function walkGmailWindow(g: GmailSweep, floorKey: 'gmail_backfill_floor_ms
   };
   let floorMs = state[floorKey] ?? Date.now() + 60_000;
   let spanMs = floorMs - lowerMs;
+  let bankedFirst = false;
+  let earlyBankTries = 0;
+  let limited = false;
   while (floorMs > lowerMs) {
     if (signal?.aborted) return 'aborted';
     const afterMs = Math.max(lowerMs, floorMs - spanMs);
@@ -436,33 +442,50 @@ async function walkGmailWindow(g: GmailSweep, floorKey: 'gmail_backfill_floor_ms
     for (const m of listing.ids) if (!versions.has(m.threadId)) versions.set(m.threadId, m.id);
     const threadIds = [...versions.keys()];
     let batchFailed = false;
+    // The listing's `before:` bound is whole seconds, so a bank proves and saves the start of the oldest thread's second:
+    // every thread in that second is settled, and the next listing does not name the banked thread again.
+    // A proof only spares the next sweep a re-walk, so a listing that fails or is cut short proves nothing and the walk
+    // goes on. After a usage limit it gets ABORT_PROOF_MS, and none on gbrain.io, whose allowance is spent for the account.
+    const bank = async (oldestMs: number): Promise<boolean> => {
+      const atMs = Math.floor(oldestMs / 1000) * 1000;
+      if (atMs >= floorMs || (limited && !gmail.supportsHistory)) return false;
+      const bounded = signal?.aborted || limited;
+      const proofSignal = bounded ? AbortSignal.any([AbortSignal.timeout(ABORT_PROOF_MS), ...(signal && !signal.aborted ? [signal] : [])]) : signal;
+      const below = await list(atMs, floorMs, WINDOW_LIST_PAGES, proofSignal).catch(() => null);
+      if (!below?.complete || !below.ids.every(m => settled.has(m.threadId))) return false;
+      state[floorKey] = floorMs = atMs;
+      await saveGoogleState(deps, state);
+      return true;
+    };
     for (let i = 0; i < threadIds.length; i += BACKFILL_BATCH_THREADS) {
       if (signal?.aborted) break;
       let batchOldest = floorMs;
+      let landedOldest = floorMs;
       for (const tid of threadIds.slice(i, i + BACKFILL_BATCH_THREADS)) {
         if (signal?.aborted) break;
         const outcome = await attemptThread(g, tid, versions.get(tid) ?? null);
         if (outcome.kind === 'landed') {
           settled.add(tid);
           if (outcome.newestMs > 0 && outcome.newestMs < batchOldest) batchOldest = outcome.newestMs;
+          // #10473: a managed sweep cannot write once its deadline aborts it, so it banks as soon as a proof holds after a
+          // thread lands (as the delta drain banks its first thread); a sweep cut off inside its first batch still moves the floor.
+          if (deps.managed && !batchFailed && !bankedFirst && earlyBankTries < EARLY_BANK_TRIES && batchOldest < floorMs) { earlyBankTries++; bankedFirst = await bank(batchOldest); }
         } else if (outcome.kind === 'failed' || outcome.kind === 'rate_limited') {
           // A failed thread NEWER than a committed floor would fall outside
           // the resume window (`before:floor`) forever, so the batch holds the
-          // floor. A rate limit is per-user: defer the rest of the batch.
+          // floor below the threads that landed ahead of it and no further.
+          // A rate limit is per-user: defer the rest of the batch.
+          if (!batchFailed) landedOldest = batchOldest;
           batchFailed = true;
-          if (outcome.kind === 'rate_limited') break;
+          if (outcome.kind === 'rate_limited') { limited = true; break; }
         } else settled.add(tid);
       }
-      if (batchFailed || deps.managed && signal?.aborted) break;
-      if (batchOldest < floorMs && (signal?.aborted || i + BACKFILL_BATCH_THREADS < threadIds.length)) {
-        const below = signal?.aborted
-          ? await list(batchOldest, floorMs, WINDOW_LIST_PAGES, AbortSignal.timeout(ABORT_PROOF_MS)).catch(() => null)
-          : await list(batchOldest, floorMs, WINDOW_LIST_PAGES);
-        if (below?.complete && below.ids.every(m => settled.has(m.threadId))) {
-          state[floorKey] = floorMs = batchOldest;
-          await saveGoogleState(deps, state);
-        }
-      }
+      if (deps.managed && signal?.aborted) break;
+      // #10473: a batch cut short by a failure or a rate limit still banks the threads that landed ahead of it, so the
+      // next sweep resumes at the failed thread instead of re-walking the whole batch.
+      const oldestMs = batchFailed ? landedOldest : batchOldest;
+      if (oldestMs < floorMs && (signal?.aborted || batchFailed || i + BACKFILL_BATCH_THREADS < threadIds.length)) await bank(oldestMs);
+      if (batchFailed) break;
     }
     if (signal?.aborted) return 'aborted';
     if (batchFailed) return 'failed';
@@ -1027,7 +1050,7 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
   const tick = (note: string): void => progress.tick(1, note);
   // A configured private-senders list that cannot be read stops the run here, before any page is written.
   const privateSenders = cfg.privateSendersFile ? loadPrivateSenders(cfg.privateSendersFile) : null;
-  const deps: GoogleSyncDeps = { engine, sourceId, cfg, opts, entry, log, tick, exclusion: NO_EXCLUSION, extractCandidates: [], managed, processedThreads: new Set(),
+  const deps: GoogleSyncDeps = { engine, sourceId, cfg, opts, entry, myAddresses: await ownerAddressSet(engine, entry, cfg.services.includes('gmail'), log), log, tick, exclusion: NO_EXCLUSION, extractCandidates: [], managed, processedThreads: new Set(),
     privateSenders, redactCredentials: await gmailRedactionOn(engine) };
 
   const summary: GoogleSyncSummary = {

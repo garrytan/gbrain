@@ -71,10 +71,16 @@ hide speakers and make a group chat look one-to-one, so a part is never used.
 ## Web search (Exa)
 
 Web search is off unless you set `EXA_API_KEY` and turn it on with `gbrain config set dedupe.exa on`. When it is
-on, for pairs that would otherwise wait, each page's name plus one company or job title is sent to Exa (a paid web
-search service) and nothing else: no email addresses, phone numbers, page text or anything about you, and never for a
-page that not every reader may read (a private visibility or privacy label such as `confidentiality: secret`, named
-readers, a folder rule, or an owner-only source), marked family or about a minor.
+on, for pairs that would otherwise wait, Exa (a paid web search service) receives each page's name and one work clue.
+The usual company or job title comes first. If both are missing, GBrain checks the frontmatter fields
+`current_company`, `org`, `affiliation`, `works_at` and `headline` in that order. Next it tries `domain` and `website`,
+using only the company label (for example, `acme-example` from `acme-example.com`). It accepts bare company sites
+under common suffixes, with optional `www`, and skips email providers and sites with a path, query or fragment.
+Finally it can use the title of a single unrestricted company from the person's `works_at` links.
+
+The query never includes email addresses, phone numbers, page text, notes or link context. Pages that not every
+reader may read (because of a privacy label such as `confidentiality: secret`, named readers, a folder rule or an
+owner-only source), family pages and pages about minors are never searched.
 
 ```bash
 gbrain dedupe classes --exa --dry-run   # how many searches, what they would cost; sends nothing
@@ -87,7 +93,8 @@ twice. A run stops at `dedupe.exa_run_cap` searches (default 2,000) or when the 
 `dedupe.exa_total_cap_usd` in total (default $25), priced at the dearest search seen so far in the run, so one search
 can go over by at most its own price; `dedupe.exa_spent_usd` holds what has been spent, and a search that failed after
 it was sent counts as spent. Only one live run goes at a time: a second one sends nothing and reports `busy`. Each page
-is read again just before its search goes out, so a page made private or renamed during a run is dropped, not sent.
+and any company supplying its clue are checked again just before the search goes out. If a page becomes private or
+the query changes during a run, the original search is dropped, not sent.
 
 ## Sampling a class
 

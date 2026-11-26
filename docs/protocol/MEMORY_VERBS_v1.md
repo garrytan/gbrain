@@ -348,11 +348,18 @@ A `fact_withdrawn` refusal may carry `withdrawn: { at, subject, visibility }`:
 `at` is when the claim was forgotten (ISO 8601), `subject` the entity slug it
 was forgotten for or `all_entities` (forgotten without an entity), and
 `visibility` the forgotten fact's. When several withdrawals match, the one for
-the named entity wins over `all_entities`, then the newest. The same object
-rides the immediate refusal, the `items[]` error, the failed write receipt and
-`get_write_request`. It covers the exact normalized claim only, never a
-paraphrase, and its absence carries no meaning: the message prefix, code and
-suggestion are unchanged.
+the named entity wins over `all_entities`, then the newest. Only a caller on
+the brain's own machine (the local CLI) gets it, and a remote save onto the
+caller's own member page when the withdrawal is one that member reads (above);
+it rides the immediate refusal and the `items[]` error, and for the local
+caller also the failed write receipt and `get_write_request`. Any other remote
+caller gets the plain refusal with no `withdrawn` object, whatever it could
+read of the forgotten rows, and a remote reader's write receipts
+(`get_write_request`, `list_write_requests`, cancel and watch results) and a
+remote requester's replay carry none either. To see when and how a claim was
+forgotten, run the same command on the brain host. The object covers the exact
+normalized claim only, never a paraphrase, and its absence carries no meaning:
+the message prefix, code and suggestion are unchanged.
 
 #### write-grant refusal detail (additive)
 

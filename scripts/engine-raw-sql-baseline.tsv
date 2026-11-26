@@ -111,7 +111,6 @@ src/commands/doctor/checks/ontology-facts.ts	execute_raw	1
 src/commands/doctor/checks/origin-twins.ts	execute_raw	1
 src/commands/doctor/checks/orphan-bindings.ts	execute_raw	3
 src/commands/doctor/checks/orphan-estimate.ts	execute_raw	2
-src/commands/doctor/checks/outside-content-fences.ts	execute_raw	1
 src/commands/doctor/checks/overwritten-edits.ts	execute_raw	1
 src/commands/doctor/checks/owner-host-stale.ts	execute_raw	2
 src/commands/doctor/checks/parked-effects.ts	execute_raw	2
@@ -506,7 +505,7 @@ src/core/facts/relink-publish.ts	execute_raw	8
 src/core/facts/relink.ts	execute_raw	5
 src/core/facts/retire.ts	execute_raw	1
 src/core/facts/similar-active.ts	execute_raw	2
-src/core/facts/single-prepare.ts	execute_raw	7
+src/core/facts/single-prepare.ts	execute_raw	6
 src/core/facts/slot-tagging.ts	execute_raw	1	GBRA-574 #9668: the live person-page read that picks slot-tagging candidates, written before this ratchet landed; moves behind a typed facts engine method with its area
 src/core/facts/subject-infer.ts	execute_raw	1
 src/core/facts/unfenced-facts.ts	execute_raw	9	GST-3490 #10005: the sweep's unfenced read counts unfenceable rows on the server before reading only fenceable ones; moves behind a typed facts engine method with its area
@@ -731,6 +730,7 @@ src/core/page-spend.ts	execute_raw	4
 src/core/page-state/contextual-proof.ts	execute_raw	3
 src/core/page-state/credential-reseal.ts	execute_raw	6
 src/core/page-state/guards.ts	execute_raw	11
+src/core/page-state/history-prune.ts	execute_raw	4	#9737 history prune preview: lists inline versions and their pages for the selection, the brain id the plan_hash binds and the sources a bare slug names; the page-state area is still raw SQL (versions.ts) and converts with it
 src/core/page-state/image-seal.ts	execute_raw	5
 src/core/page-state/materialize.ts	execute_raw	5
 src/core/page-state/projection-status.ts	execute_raw	1
@@ -739,7 +739,7 @@ src/core/page-state/rebuild-estimate.ts	execute_raw	1
 src/core/page-state/rename-alias.ts	execute_raw	11
 src/core/page-state/revision-backfill-schema.ts	execute_raw	12
 src/core/page-state/tags.ts	execute_raw	3
-src/core/page-state/versions.ts	execute_raw	9
+src/core/page-state/versions.ts	execute_raw	10	#9737 pruneInlineVersionsById: the bounded delete the history prune applies under each page lock, beside the existing version SQL here
 src/core/page-window/bounded-lead.ts	execute_raw	2
 src/core/page-window/segmented.ts	execute_raw	5
 src/core/pages-upsert-arbiter.ts	execute_raw	6
@@ -1197,6 +1197,7 @@ src/core/token-mint.ts	execute_raw	3
 src/core/token-mint.ts	sql_template	1
 src/core/transcripts/archive.ts	execute_raw	15
 src/core/transcripts/discover.ts	execute_raw	2
+src/core/transcripts/fence-acceptance.ts	execute_raw	5	#9427: the outside-fences scan moved here from doctor/checks/outside-content-fences.ts (its row moves with it) under a UTC session time zone so its fingerprint is stable, the brain id the plan_hash binds, and the apply row lock (insert-if-missing, SELECT FOR UPDATE) that keeps two applies from dropping each other; the transcripts area is still raw SQL and converts with it
 src/core/transcripts/hermes.ts	driver_call	1
 src/core/transcripts/ingest.ts	execute_raw	3
 src/core/transcripts/recover.ts	execute_raw	1

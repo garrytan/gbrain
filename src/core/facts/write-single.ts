@@ -139,7 +139,7 @@ export async function writeSingleFact(
   if (await isFactWithdrawn(engine, sourceId, visibility, factText, resolvedSlug)) {
     const { factWithdrawnRefusal } = await import('./single-prepare.ts');
     throw await factWithdrawnRefusal(engine, sourceId, { fact: factText, kind, visibility, entity_slug: resolvedSlug },
-      { excludePrivate: await resolveExcludePrivatePages(engine, input.remote) });
+      { excludePrivate: await resolveExcludePrivatePages(engine, input.remote), remote: input.remote !== false });
   }
 
   // Embedding (NOT an LLM call): powers dedup + downstream recall. Fail-soft —

@@ -303,7 +303,7 @@ function metaParams(meta: SegmentedPageMeta) {
     effectiveDate: meta.effective_date ?? null, effectiveDateSource: meta.effective_date_source ?? null, importFilename: meta.import_filename ?? null,
     chunkerVersion: meta.chunker_version === undefined || meta.chunker_version === null ? null : Math.min(meta.chunker_version, SAFE_FENCE_CHUNKER_VERSION - 1),
     sourcePath: meta.source_path ?? null, sourceKind: meta.source_kind ?? null, sourceUri: meta.source_uri ?? null, ingestedVia: meta.ingested_via ?? null,
-    ingestedAt: ingested ? new Date() : null,
+    ingestedAt: ingested ? sqlFragment`now()` : null,
   };
 }
 
