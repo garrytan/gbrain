@@ -204,7 +204,7 @@ describe('engine_swap_refused recovery table', () => {
 });
 
 describe('the swap report names each write type criterion 5 does not compare', () => {
-  const NAMED_LOSS = 'Named loss: only putPage, deletePage, addLink, addLinksBatch and removeLink are compared, so these other page and link writes are counted capability_missing and are not compared: pages:deletePages, pages:softDeletePage, pages:softDeletePages, pages:restorePage, pages:purgeDeletedPages, pages:updateSlug, pages:refreshPageBody, pages:refreshPageOrigin, pages:updatePageContextualRetrievalState, pages:stripStaleFrontmatterKeys, pages:markPagesExtractedBatch, pages:markPagesAttendanceBlocked, pages:setPageEmbeddingSignature, pages:setChunkerVersion, pages:writeTextProjectionSeal, pages:revertToVersion, pages:setEmotionalWeightBatch, pages:invalidateWithdrawnPages, pages:createSegmentedPageShell, pages:sealSegmentedPage, pages:flipBodyGeneration, links:removeLinksByPagesAndSource, links:replaceDerivedLinks, links:replaceDerivedLinksBatch. A write that touches several tables is counted under its first table only, so the side effects of deletePages, purgeDeletedPages and updateSlug (aliases, open loops, owner-only marks, fact withdrawals) land under pages:* keys, and a type\'s line above reads only the writes whose first table it is.';
+  const NAMED_LOSS = 'Named loss: only putPage, deletePage, addLink, addLinksBatch, removeLink, softDeletePage, softDeletePages, refreshPageBody, stripStaleFrontmatterKeys, setEmotionalWeightBatch, removeLinksByPagesAndSource, markPagesExtractedBatch, markPagesAttendanceBlocked and setPageEmbeddingSignature are compared, so these other page and link writes are counted capability_missing and are not compared (a follow-up comes after the opt-in): pages:deletePages, pages:restorePage, pages:purgeDeletedPages, pages:updateSlug, pages:refreshPageOrigin, pages:updatePageContextualRetrievalState, pages:setChunkerVersion, pages:writeTextProjectionSeal, pages:revertToVersion, pages:invalidateWithdrawnPages, pages:createSegmentedPageShell, pages:sealSegmentedPage, pages:flipBodyGeneration, links:replaceDerivedLinks, links:replaceDerivedLinksBatch. A write that touches several tables is counted under its first table only, so the side effects of deletePages, purgeDeletedPages and updateSlug (aliases, open loops, owner-only marks, fact withdrawals) land under pages:* keys, and a type\'s line above reads only the writes whose first table it is.';
   const sampled = (byFamily: Record<string, unknown>) => ({
     write_comparisons: { state: 'measured', sample_rate: 1, comparable: 5, unexplained_difference: 0, uncomparable: 0, capability_missing: 0, capability_missing_by_family: byFamily },
   }) as unknown as ShadowStatus;
@@ -258,7 +258,7 @@ describe('the swap report names each write type criterion 5 does not compare', (
   });
 
   test('the sentence, the guide and the named loss are pinned', () => {
-    expect(WRITE_COVERAGE_NAMED).toBe('Criterion 5 covers the pilot page and link writes (putPage, deletePage, addLink, addLinksBatch, removeLink) only (#10350, #10360, #10382, #10390). These write types are not compared and get named lines in the swap report: chunks, tags, aliases, timeline entries, takes, facts, fact withdrawals, open loops, sources, owner-only marks and the decide store.');
+    expect(WRITE_COVERAGE_NAMED).toBe('Criterion 5 covers the pilot page and link writes (putPage, deletePage, addLink, addLinksBatch, removeLink, softDeletePage, softDeletePages, refreshPageBody, stripStaleFrontmatterKeys, setEmotionalWeightBatch, removeLinksByPagesAndSource, markPagesExtractedBatch, markPagesAttendanceBlocked, setPageEmbeddingSignature) only (#10350, #10360, #10382, #10390). These write types are not compared and get named lines in the swap report: chunks, tags, aliases, timeline entries, takes, facts, fact withdrawals, open loops, sources, owner-only marks and the decide store.');
     const guide = readFileSync(join(import.meta.dir, '..', 'docs', 'guides', 'engine-swap.md'), 'utf8');
     expect(guide).toContain(WRITE_COVERAGE_NAMED);
     expect(guide).toContain(NAMED_LOSS);
@@ -267,7 +267,7 @@ describe('the swap report names each write type criterion 5 does not compare', (
   test('the named loss names every page and link write that is not a pilot write, and no other', () => {
     // The set the code counts as capability_missing under pages:<op> or links:<op>: the family writeFamily gives each non-pilot WRITE_MAP member.
     const fromCode = Object.keys(WRITE_MAP).filter(op => !PILOT_WRITES.has(op)).map(op => writeFamily(op)).filter(f => /^(pages|links):/.test(f));
-    expect(fromCode.length).toBe(24);
+    expect(fromCode.length).toBe(15); // the 24 non-pilot members before B1, less the nine now compared
     const guide = readFileSync(join(import.meta.dir, '..', 'docs', 'guides', 'engine-swap.md'), 'utf8');
     // WRITE_COVERAGE_LOSS is the evaluated string, so the guide holds the same text with no source escape.
     // The guide mentions pages:updateSlug elsewhere (the fact withdrawals line), so read only its named-loss paragraph.

@@ -11,7 +11,7 @@ import { DIGEST_SESSION_SETTINGS, digestQuery } from '../core/persistence/gradua
 import { CAPTURE_BUDGET_BYTES, encodeArgs, encodeValue } from './codec.ts';
 import { pageSearchVectorSql } from '../core/fts-language.ts';
 import { relationRead } from './seed.ts';
-import { MAX_DROPPED, MAX_PRE_LINKS, MAX_PRE_PAGES, movedOutsideFootprint, PILOT_WRITES, pageRefs, pageSet, readBack, readBackText, writeFamily, type PageRef, type PreImage, type WriteEvent } from './write-compare.ts';
+import { footprint, ID_TARGET_WRITES, MAX_DROPPED, MAX_PRE_LINKS, MAX_PRE_PAGES, movedOutsideFootprint, PILOT_WRITES, pageRefs, pageSet, readBack, readBackText, writeFamily, type PageRef, type PreImage, type StateColumnsRead, type WriteEvent } from './write-compare.ts';
 import { sqlWrites } from './sql-writes.ts';
 import { memberKind } from './write-map.ts';
 import { COMPLETE_WRITE_PURGE_PROBE_SQL, COMPLETE_WRITE_SQL, ENSURE_COUNTERS_SQL, LOCK_COUNTERS_SQL, PUBLICATION_EFFECTS_SQL } from '../core/engine-sql/persistence-journal.ts';
@@ -80,7 +80,7 @@ type Row = Record<string, string | null>;
 const strings = (rows: Row[], key: string): string[] => [...new Set(rows.map((r) => r[key]).filter((v): v is string => typeof v === 'string'))];
 
 /** The rows of the pages `targets` name, the links among them (all links touching them, for a delete) and the pages and sources those need. Throws `preimage_too_large`. */
-export async function readPreimage(engine: BrainEngine, op: string, targets: PageRef[], signal: { aborted: boolean } = { aborted: false }, within?: BrainEngine): Promise<PreImage> {
+export async function readPreimage(engine: BrainEngine, op: string, targets: PageRef[], signal: { aborted: boolean } = { aborted: false }, within?: BrainEngine, softDeleted: ReadonlySet<string> = new Set()): Promise<PreImage> {
   // The caller's deadline cannot stop a transaction that is queued or running, so each step looks at `signal` first: an abandoned read ends at its next
   // statement (and releases the connection a primary write waits behind) instead of finishing its work.
   const live = (): void => { if (signal.aborted) throw new Error('preimage_aborted'); };
@@ -100,13 +100,14 @@ export async function readPreimage(engine: BrainEngine, op: string, targets: Pag
     };
     const pages = await rowsOf('pages', '(t.source_id::text, t.slug::text) IN (SELECT * FROM unnest($1::text[], $2::text[]))', [targets.map((t) => t.source), targets.map((t) => t.slug)], MAX_PRE_PAGES);
     const ids = pages.map((p) => p.k0!);
-    const links = ids.length ? await rowsOf('links', `t.from_page_id::text = ANY($1::text[]) ${op === 'deletePage' ? 'OR' : 'AND'} t.to_page_id::text = ANY($1::text[])`, [ids], MAX_PRE_LINKS) : [];
+    const links = ids.length ? await rowsOf('links', `t.from_page_id::text = ANY($1::text[]) ${op === 'deletePage' || op === 'removeLinksByPagesAndSource' ? 'OR' : 'AND'} t.to_page_id::text = ANY($1::text[])`, [ids], MAX_PRE_LINKS) : [];
     const more = strings(links, 'from_page_id').concat(strings(links, 'to_page_id'), strings(links, 'origin_page_id')).filter((id) => !ids.includes(id));
     if (more.length) pages.push(...await rowsOf('pages', 't.id::text = ANY($1::text[])', [[...new Set(more)]], MAX_PRE_PAGES));
     if (pages.length > MAX_PRE_PAGES) throw new Error('preimage_too_large');
     // Not comparable, and said before anything is copied further: a soft-deleted page hides its links from the typed read on both engines, and a withdrawn
     // or purged fact changes the body the primary serves (page-state/snapshot.ts) by an overlay the scratch store does not have.
-    if (pages.some((p) => p.deleted_at)) throw new Error('soft_deleted_page');
+    // `softDeleted` names the pages the write itself soft-deletes: the data fence reads them again afterwards, and they are hidden by then because the write hid them.
+    if (pages.some((p) => p.deleted_at && !softDeleted.has(`${p.source_id}\0${p.slug}`))) throw new Error('soft_deleted_page');
     live();
     const [overlay] = await tx.executeRaw<{ n: string }>(`/* shadow write preimage */ SELECT (SELECT count(*) FROM fact_withdrawals WHERE source_id = ANY($1::text[]) AND (subject = '*' OR subject = ANY($2::text[])))
       + (SELECT count(*) FROM fact_purges WHERE source_id = ANY($1::text[]) AND (subject = '*' OR subject = ANY($2::text[]))) AS n`, [[...strings(pages, 'source_id'), ...targets.map((t) => t.source)], [...strings(pages, 'slug'), ...targets.map((t) => t.slug)]]); // a target not there yet counts too
@@ -141,8 +142,9 @@ async function fenced(engine: BrainEngine, op: string, args: unknown[], targets:
       const wrote = committedRevision ?? (result as { knowledge_revision?: unknown } | null)?.knowledge_revision;
       if (typeof wrote !== 'string' || (back.pages[0] as { knowledge_revision?: unknown } | null)?.knowledge_revision !== wrote) return 'moved';
     }
-    const again = await readPreimage(engine, op, [...targets, ...pre.pages.map((p) => ({ source: p.source_id ?? 'default', slug: p.slug ?? '' }))]);
-    return movedOutsideFootprint(op, args, pre, again) ? 'moved' : 'clear';
+    const own = new Set(footprint(op, args, targets).pages.map((r) => `${r.source}\0${r.slug}`));
+    const again = await readPreimage(engine, op, [...targets, ...pre.pages.map((p) => ({ source: p.source_id ?? 'default', slug: p.slug ?? '' }))], undefined, undefined, own);
+    return movedOutsideFootprint(op, args, pre, again, targets) ? 'moved' : 'clear';
   } catch { return 'failed'; }
 }
 
@@ -221,7 +223,6 @@ interface Pin { revision: string; text: string }
 interface TxSample { at: number; key: string; op: string; bad?: string; pin?: Pin; read?: (then: unknown[][]) => void }
 interface Scope extends TxScope { root: BrainEngine; followed: boolean; log: Array<{ name: string; key: string; args?: unknown[]; path: number[]; kind?: 'bookkeeping' | 'seal' }>; samples: TxSample[]; nested: number }
 
-const PREIMAGE_REASONS: ReadonlySet<string> = new Set(['preimage_too_large', 'preimage_timeout', 'soft_deleted_page', 'fact_overlay']);
 /**
  * Closes the gate of `scope`: until the returned function runs, the wrapper holds every new member call of the transaction. Opening it starts the held calls in order, each
  * at once, until one closes the gate again (a held sampled write); the rest stay queued for that one. Each call is woken once, however many writes are queued.
@@ -242,6 +243,28 @@ const settledWithin = async (calls: Promise<void>[], ms: number): Promise<boolea
   let timer: ReturnType<typeof setTimeout> | undefined;
   try { return await Promise.race([Promise.all(calls).then(() => true), new Promise<boolean>((resolve) => { timer = setTimeout(() => resolve(false), ms); })]); } finally { clearTimeout(timer); }
 };
+const PREIMAGE_REASONS: ReadonlySet<string> = new Set(['preimage_too_large', 'preimage_timeout', 'soft_deleted_page', 'fact_overlay', 'target_unresolved']);
+
+/**
+ * The pages a sampled write touches, exactly, or a throw (`target_unresolved`): the pages its arguments name, or for a write that names them by id (ID_TARGET_WRITES) the live pages of that source
+ * the ids belong to, every one of them. A write whose pages cannot be named is never replayed: it would read back nothing from both sides and match.
+ */
+async function targetsOf(engine: BrainEngine, op: string, args: unknown[]): Promise<PageRef[]> {
+  if (!ID_TARGET_WRITES.has(op)) { const named = pageRefs(op, args); if (!named.length) throw new Error('target_unresolved'); return named; }
+  const { sourceId, ids } = (args[0] ?? {}) as { sourceId?: unknown; ids?: unknown };
+  const wanted = Array.isArray(ids) ? [...new Set(ids)] : [];
+  if (typeof sourceId !== 'string' || !sourceId || !wanted.length || !wanted.every((id) => Number.isInteger(id))) throw new Error('target_unresolved');
+  if (wanted.length > MAX_PRE_PAGES) throw new Error('preimage_too_large');
+  const rows = await engine.executeRaw<{ source_id: string; slug: string }>('/* shadow write targets */ SELECT source_id::text AS source_id, slug::text AS slug FROM pages WHERE source_id = $1 AND id = ANY($2::int[]) AND deleted_at IS NULL', [sourceId, wanted]);
+  if (rows.length !== wanted.length) throw new Error('target_unresolved');
+  return rows.map((r) => ({ source: r.source_id, slug: r.slug }));
+}
+
+/** The primary's read of the three comparison columns, in the text form the scratch store is read in (`links_extracted_at` as microseconds since the epoch). */
+export const readStateColumns = (engine: BrainEngine): StateColumnsRead => async (refs) => engine.executeRaw<Record<string, string | null>>(
+  `/* shadow write state */ SELECT source_id::text AS source_id, slug::text AS slug, (extract(epoch FROM links_extracted_at) * 1000000)::bigint::text AS links_extracted_at,
+    links_attendance_blocked_revision::text AS links_attendance_blocked_revision, embedding_signature::text AS embedding_signature
+    FROM pages WHERE (source_id::text, slug::text) IN (SELECT * FROM unnest($1::text[], $2::text[]))`, [refs.map((r) => r.source), refs.map((r) => r.slug)]);
 
 const timeout = <T>(promise: Promise<T>, ms: number, onTimeout: () => void): Promise<T> => new Promise((resolve, reject) => {
   const timer = setTimeout(() => { onTimeout(); reject(new Error('preimage_timeout')); }, ms);
@@ -295,7 +318,7 @@ export function createWriteSampler(o: WriteSamplerOptions, unsaid: string[] = []
     const sample = { abandoned: false, done: Promise.resolve() };
     sample.done = (async () => {
       try {
-        const back = await readBack(engine, targets, pageSet(targets, pre));
+        const back = await readBack(engine, targets, pageSet(targets, pre), readStateColumns(engine));
         const after = o.generation?.();
         // A brain other processes can write (not PGLite, whose single-writer file lock rules them out) needs the data fence (write-compare.ts). The counter (this process's writes to pages or links, whichever rows) keeps deciding
         // too, because the fence exempts the write's own target rows, which a concurrent same-process write can change (a link's context, a page's contextual-retrieval mode). The one exemption: an in-transaction putPage
@@ -305,7 +328,7 @@ export function createWriteSampler(o: WriteSamplerOptions, unsaid: string[] = []
         const fence = hasCapability(engine, 'postgres_admin') ? await fenced(engine, name, args, targets, pre, result, back, pin?.revision) : undefined;
         const pinMoved = pin !== undefined && readBackText(encodeValue({ pages: [back.pages[0]], links: [] })) !== pin.text;
         const moved = fence === undefined ? counterMoved : fence !== 'clear' || pinMoved || (pin === undefined && counterMoved);
-        if (!sample.abandoned) send({ t: 'write', op: name, args: encoded, pre, post: encodeValue(back), moved, ...(then.length ? { then: then.map((a) => encodeArgs(a, { left: CAPTURE_BUDGET_BYTES })) } : {}) });
+        if (!sample.abandoned) send({ t: 'write', op: name, args: encoded, ...(ID_TARGET_WRITES.has(name) ? { targets } : {}), pre, post: encodeValue(back), moved, ...(then.length ? { then: then.map((a) => encodeArgs(a, { left: CAPTURE_BUDGET_BYTES })) } : {}) });
       } catch { if (!sample.abandoned) uncomparable(name, 'readback_failed'); }
     })();
     reading.add(sample); void sample.done.finally(() => reading.delete(sample));
@@ -330,6 +353,7 @@ export function createWriteSampler(o: WriteSamplerOptions, unsaid: string[] = []
         s.bad ??= (knownOptions(name, args) ? judge(scope, s) : 'unknown_option') ?? undefined;
         encoded = encodeArgs(args, { left: CAPTURE_BUDGET_BYTES });
         targets = pageRefs(name, args);
+        if (!targets.length) throw new Error('target_unresolved');
         if (targets.length > MAX_PRE_PAGES) throw new Error('preimage_too_large');
         if (!s.bad) pre = await readPreimage(scope.root, name, targets, undefined, tx);
       } catch (error) { const why = (error as Error)?.message; s.bad ??= why && PREIMAGE_REASONS.has(why) ? why : 'preimage_unreadable'; }
@@ -366,14 +390,16 @@ export function createWriteSampler(o: WriteSamplerOptions, unsaid: string[] = []
         if (scope) return inTransaction(scope, ctx.engine, name, args, run);
         if (!knownOptions(name, args)) { uncomparable(name, 'unknown_option'); return run(); }
         return (async () => {
-          let encoded: unknown[]; let pre: PreImage; let targets: PageRef[];
+          let encoded: unknown[]; let pre: PreImage; let targets: PageRef[] = [];
           const before = o.generation?.();
           const signal = { aborted: false };
           try {
             encoded = encodeArgs(args, { left: CAPTURE_BUDGET_BYTES });
-            targets = pageRefs(name, args);
-            if (targets.length > MAX_PRE_PAGES) throw new Error('preimage_too_large'); // refused before any read: the read-back looks at every named page
-            pre = await timeout(readPreimage(ctx.engine, name, targets, signal), o.preimageTimeoutMs ?? PREIMAGE_TIMEOUT_MS, () => { signal.aborted = true; });
+            pre = await timeout((async () => {
+              targets = await targetsOf(ctx.engine, name, args);
+              if (targets.length > MAX_PRE_PAGES) throw new Error('preimage_too_large'); // refused before any preimage read: the read-back looks at every named page
+              return readPreimage(ctx.engine, name, targets, signal);
+            })(), o.preimageTimeoutMs ?? PREIMAGE_TIMEOUT_MS, () => { signal.aborted = true; });
           } catch (error) {
             const why = (error as Error)?.message;
             uncomparable(name, why && PREIMAGE_REASONS.has(why) ? why : 'preimage_unreadable');

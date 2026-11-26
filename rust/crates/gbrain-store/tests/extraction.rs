@@ -350,3 +350,59 @@ fn the_lag_counts_keep_guests_live_but_not_stale_and_refuse_a_bad_version() {
     let err = lag(&store, json!({"versionTs": "not a time"})).unwrap_err();
     assert_eq!(err.code, INVALID_ARGUMENT);
 }
+
+#[test]
+fn the_comparison_read_returns_the_three_stored_columns_and_skips_pages_that_do_not_exist() {
+    let dir = TempDir::new("extraction-comparison-read");
+    let store = open(&dir);
+    let a = put(&store, "notes/a");
+    let revision = a["knowledge_revision"].as_str().unwrap().to_string();
+    put(&store, "notes/b");
+    let refs = |names: &[&str]| -> Vec<ComparisonRef> {
+        names
+            .iter()
+            .map(|n| ComparisonRef {
+                slug: n.to_string(),
+                source_id: "default".to_string(),
+            })
+            .collect()
+    };
+
+    // Nothing stamped: every column is null, and a page that does not exist has no row.
+    let rows = store
+        .read_page_comparison_columns(&refs(&["notes/a", "notes/none"]))
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["slug"], "notes/a");
+    assert!(rows[0]["links_extracted_at"].is_null());
+    assert!(rows[0]["links_attendance_blocked_revision"].is_null());
+    assert!(rows[0]["embedding_signature"].is_null());
+
+    // The stamps read back as written: microseconds as text, the revision, the signature.
+    stamp(
+        &store,
+        json!([{"slug": "notes/b", "source_id": "default"}]),
+        FRESH,
+    );
+    block(
+        &store,
+        json!([{"slug": "notes/a", "source_id": "default", "revision": revision}]),
+    )
+    .unwrap();
+    let options: gbrain_store::embeddings::SignatureOptions =
+        serde_json::from_value(json!({"signature": "model-a:1536"})).unwrap();
+    store
+        .set_page_embedding_signature("notes/a", &options)
+        .unwrap();
+    let rows = store
+        .read_page_comparison_columns(&refs(&["notes/a", "notes/b"]))
+        .unwrap();
+    assert_eq!(
+        rows[0]["links_attendance_blocked_revision"],
+        revision.as_str()
+    );
+    assert_eq!(rows[0]["embedding_signature"], "model-a:1536");
+    assert!(rows[0]["links_extracted_at"].is_null());
+    assert_eq!(rows[1]["links_extracted_at"], "4070908800000000"); // 2099-01-01T00:00:00Z
+    assert!(rows[1]["links_attendance_blocked_revision"].is_null());
+}
