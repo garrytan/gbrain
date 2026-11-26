@@ -22,6 +22,7 @@ import { inlineRegions } from '../page-body/tail-digest.ts';
 import { validateSlug } from '../utils.ts';
 import { isRemoteWantedPagesEnabled, replaceWantedLinks } from '../wanted-links.ts';
 import { isGuestWrite, skipsGuestNote } from '../guests/derived.ts';
+import { writerReadPolicy } from './page-visibility.ts';
 
 /** `mcp.remote_auto_links`: unset is on; false/0/no/off (any case) turns the remote `links` effect off. */
 export async function isRemoteAutoLinksEnabled(engine: Pick<BrainEngine, 'getConfig'>): Promise<boolean> {
@@ -79,19 +80,12 @@ function validSlug(slug: string): boolean {
 }
 
 /** The writer's slug confinement, stored and current, applied to link targets. */
-async function targetGrant(tx: SqlEngine, a: WriteAuthority): Promise<(slug: string) => boolean> {
+async function targetGrant(tx: Pick<BrainEngine, 'readWriterSlugFence'>, a: WriteAuthority): Promise<(slug: string) => boolean> {
   const checks: Array<(slug: string) => boolean> = [];
   if (a.slugPrefixes != null) checks.push(slug => slugUnderBoundPrefixes(a.slugPrefixes!, slug));
   if (a.delegated || a.restrictedNamespace) checks.push(slug => !!a.delegatedPrefixes?.length && matchesSlugAllowList(slug, a.delegatedPrefixes));
-  let live: unknown = null;
-  if (a.principal.kind === 'oauth_client') {
-    const [row] = await tx.executeRaw<{ prefixes: unknown }>(`SELECT ${a.delegated ? 'delegated_slug_prefixes' : 'bound_slug_prefixes'} AS prefixes
-      FROM oauth_clients WHERE client_id=$1`, [a.principal.id]);
-    live = row?.prefixes ?? null;
-  } else if (a.principal.kind === 'local_cli' || a.principal.kind === 'local_stdio') {
-    const [row] = await tx.executeRaw<{ prefixes: unknown }>("SELECT grant_ceiling->'slugPrefixes' AS prefixes FROM persistence_local_writers WHERE id=$1::uuid", [a.principal.id]);
-    live = row?.prefixes ?? null;
-  }
+  // An OAuth client's bound prefixes (its delegated ones for a delegated write), a local writer's grant ceiling.
+  const live = await tx.readWriterSlugFence(a.principal, { delegated: !!a.delegated });
   if (live != null) {
     const prefixes = Array.isArray(live) && live.every(value => typeof value === 'string') ? live as string[] : [];
     checks.push(slug => a.delegated ? matchesSlugAllowList(slug, prefixes) : slugUnderBoundPrefixes(prefixes, slug));
@@ -110,8 +104,8 @@ async function targetGrant(tx: SqlEngine, a: WriteAuthority): Promise<(slug: str
  * the page and its targets are what serialize this with publications.
  */
 export async function runLinksEffect(engine: BrainEngine, effect: PersistenceEffect, hostId: string): Promise<void> {
-  const skip = (tx: SqlEngine, reason: string) => completeEffect(tx, effect, { links: 'skipped', reason });
-  const [row] = await engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=$1::uuid', [effect.request_id]);
+  const skip = (tx: Pick<BrainEngine, 'completeEffectRow'>, reason: string) => completeEffect(tx, effect, { links: 'skipped', reason });
+  const row = await engine.readWriteRequestById(effect.request_id);
   if (!row || row.state !== 'committed' || !effect.data.slug) return skip(engine, 'invalid_write_request');
   if (skipsGuestNote('remote_links_effect', await isGuestWrite(engine, row.source_id, row.intent))) return skip(engine, 'guest_source');
   if (effect.data.range) return runAppendLinksEffect(engine, effect, row, effect.data.range, hostId);
@@ -130,7 +124,7 @@ export async function runLinksEffect(engine: BrainEngine, effect: PersistenceEff
     const kept = new Set(owned.map(link => link.slug));
     const additions = mentionEdges(live.page.slug, sourceId, wanted, kept);
     const added = await beliefs.run(tx, async () => {
-      if (obsolete.length) await tx.executeRaw('DELETE FROM links WHERE id=ANY($1::bigint[])', [obsolete]);
+      if (obsolete.length) await tx.deleteOwnedLinks(live.page.id, REMOTE_MENTION_LINK_SOURCE, obsolete);
       return additions.length ? await tx.addLinksBatch(additions, { auditSite: 'addLinksBatch' }) : 0;
     });
     // Wanted pages: a missing mention target is recorded so the edge appears once that page is written (core/wanted-links.ts).
@@ -155,7 +149,7 @@ export async function runLinksEffect(engine: BrainEngine, effect: PersistenceEff
  * decided the same way under the lock, once: the effect never retries because the page moved.
  */
 async function runAppendLinksEffect(engine: BrainEngine, effect: PersistenceEffect, row: WriteRequest, range: AppendedRange, hostId: string): Promise<void> {
-  const skip = (tx: SqlEngine, reason: string) => completeEffect(tx, effect, { links: 'skipped', reason });
+  const skip = (tx: Pick<BrainEngine, 'completeEffectRow'>, reason: string) => completeEffect(tx, effect, { links: 'skipped', reason });
   const sourceId = effect.source_id;
   const snapshot = await engine.readPageSnapshot(effect.data.slug!, { sourceId });
   if (!snapshot || snapshot.page.id !== effect.data.page_id) return skip(engine, 'superseded');
@@ -232,7 +226,7 @@ const sha256Hex = (bytes: Uint8Array) => createHash('sha256').update(bytes).dige
 async function lockedPage(tx: BrainEngine, effect: PersistenceEffect, row: WriteRequest, snapshot: PageSnapshot, targets: Map<string, string>, hostId: string): Promise<PageSnapshot | null> {
   const skip = (reason: string) => completeEffect(tx, effect, { links: 'skipped', reason });
   const sourceId = effect.source_id;
-  await tx.executeRaw("SELECT set_config('synchronous_commit','on',true),set_config('lock_timeout','1s',true),set_config('statement_timeout','5s',true)");
+  await tx.setEffectTransactionLimits();
   await guardEffectSource(tx, effect, hostId);
   try { await authorizeStoredRequest(tx, row, true); }
   catch (error) {
@@ -240,7 +234,7 @@ async function lockedPage(tx: BrainEngine, effect: PersistenceEffect, row: Write
     throw error;
   }
   await tx.lockPageKeys([{ sourceId, slug: snapshot.page.slug }, ...[...targets.keys()].map(slug => ({ sourceId, slug }))]);
-  const [current] = await tx.executeRaw<PersistenceEffect>('SELECT * FROM persistence_effects WHERE id=$1 FOR UPDATE', [effect.id]);
+  const current = await tx.lockEffectClaimRow(effect.id);
   if (!current || current.state !== 'running' || current.execution_token !== effect.execution_token) return null;
   const live = await tx.readPageSnapshot(snapshot.page.slug, { sourceId });
   if (!live || live.page.id !== snapshot.page.id) { await skip('superseded'); return null; }
@@ -257,10 +251,8 @@ async function lockedPage(tx: BrainEngine, effect: PersistenceEffect, row: Write
 async function writableTargets(tx: BrainEngine, row: WriteRequest, live: PageSnapshot, targets: Map<string, string>, skipped: SkippedLinkTarget[]) {
   const sourceId = live.page.source_id;
   const hidePrivate = row.authority.remote && ((row.authority.excludePrivate ?? true) || await excludesPrivateWrites(tx, true));
-  const readable = row.authority.remote && targets.size ? await writerReadPolicySql(tx, row.authority, 'p', false) : 'TRUE';
-  const existing = targets.size ? await tx.executeRaw<{ slug: string; readable: boolean; visible: boolean }>(`SELECT p.slug,(${readable}) AS readable,
-    (${privacyPartSql('p')}) AS visible
-    FROM pages p WHERE p.source_id=$1 AND p.slug=ANY($2::text[]) AND p.deleted_at IS NULL`, [sourceId, [...targets.keys()]]) : [];
+  const policy = row.authority.remote && targets.size ? await writerReadPolicy(tx, row.authority) : null;
+  const existing = targets.size ? await tx.readLinkTargetPages(sourceId, [...targets.keys()], policy) : [];
   const found = new Map(existing.filter(page => page.readable).map(page => [page.slug, page.visible]));
   const hidden = new Set(existing.filter(page => !page.readable).map(page => page.slug));
   const granted = await targetGrant(tx, row.authority);
@@ -270,8 +262,7 @@ async function writableTargets(tx: BrainEngine, row: WriteRequest, live: PageSna
     if (reason) skipped.push({ slug, reason });
     else wanted.set(slug, context);
   }
-  const owned = await tx.executeRaw<{ id: number; slug: string }>(`SELECT l.id,t.slug FROM links l JOIN pages t ON t.id=l.to_page_id
-    WHERE l.link_source=$1 AND l.origin_page_id=$2`, [REMOTE_MENTION_LINK_SOURCE, live.page.id]);
+  const owned = await tx.readOwnedLinks(REMOTE_MENTION_LINK_SOURCE, live.page.id);
   return { wanted, owned, hidden };
 }
 

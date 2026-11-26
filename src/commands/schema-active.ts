@@ -11,6 +11,7 @@ import { loadConfig } from '../core/config.ts';
 import { opError } from '../core/ops/contract.ts';
 import { engineSchemaInput } from '../core/schema-pack/engine-resolution.ts';
 import { loadActivePack, resolveActivePackNameOnly, type LoadActivePackInput } from '../core/schema-pack/load-active.ts';
+import { UnknownPackError } from '../core/schema-pack/registry.ts';
 import { fetchSource } from '../core/sources-load.ts';
 import { writeCliRefusal } from '../cli/cli-error.ts';
 
@@ -51,7 +52,16 @@ export async function runSchemaActive(opts: { json: boolean; sourceId?: string }
 
   const input: LoadActivePackInput = db.state === 'read' ? db.input : { cfg, remote: false, sourceId };
   const resolution = resolveActivePackNameOnly(input);
-  const pack = await loadActivePack(input);
+  const pack = await loadActivePack(input).catch((e: unknown) => {
+    if (!(e instanceof UnknownPackError)) throw e;
+    return process.exit(writeCliRefusal(opError('invalid_params',
+      `The configured schema pack "${e.name_}" (from ${resolution.source}) is not installed.`,
+      'Run `gbrain schema list` for the installed packs, then set schema_pack to one of them where it was configured, or clear that setting.', {
+        docs: DOCS,
+        fix: { argv: ['gbrain', 'schema', 'list'], consent: [], actor: 'agent', requires_exclusive: false,
+          why: 'Lists the installed schema packs, so the configured name can be corrected.' },
+      }), 'schema', { json }));
+  });
   const result = {
     schema_version: 1,
     pack: pack.manifest.name,

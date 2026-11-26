@@ -365,6 +365,7 @@ export async function runRecall(engine: BrainEngine, args: string[]): Promise<vo
     return;
   }
 
+  if (!thinClient) { const t = await import('../core/search/telemetry.ts'); t.recordLookupTelemetry(engine, t.RECALL_TELEMETRY_MODE); }
   if (flags.watchSeconds !== null) {
     await runWatchLoop(engine, flags, sourceId, thinClient, flags.watchSeconds);
     return;

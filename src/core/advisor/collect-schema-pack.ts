@@ -30,7 +30,7 @@ export const collectSchemaPack: AdvisorCollector = {
           severity: 'warn',
           title: `The configured schema pack "${name}" could not be resolved.`,
           detail: `${(err as Error).message}. Pick an installed pack or clear the override.`,
-          fix: { command_argv: ['gbrain', 'schema', 'packs'] },
+          fix: { command_argv: ['gbrain', 'schema', 'list'] },
           collector: 'schema-pack',
           ask_user: true,
         },
