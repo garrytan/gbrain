@@ -24,6 +24,8 @@ async function connect(c: WriterConfig): Promise<BrainEngine> {
   }
   // The preload of a bun process strips GBRAIN_* from the environment, so the multi-user switch is set here, before the open.
   if (c.muRoute === 'env') process.env.GBRAIN_RUST_MULTIUSER = '1';
+  // The commit log is on for the whole rust-mu view (both routes); a brain that keeps a log must be written with it on.
+  if (c.muRoute !== undefined) process.env.GBRAIN_RUST_COMMIT_LOG = '1';
   const { openRustBrainAt, resolvedMultiuser } = await import('../rust-arm.ts');
   // With a route the open asserts, and fails on, a store that did not resolve multi-user mode (assertRustMultiuserResolved).
   const engine = await openRustBrainAt(c.databasePath!, c.muRoute);

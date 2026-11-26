@@ -29,6 +29,7 @@
 import { describe, expect } from 'bun:test';
 import type { BrainEngine, FactRow } from '../../src/core/engine.ts';
 import type { JobInsertValues } from '../../src/core/engine-sql/jobs.ts';
+import type { CommitPosition } from '../../src/core/engine-members/commit-log.ts';
 import type { PageInput } from '../../src/core/types.ts';
 import type { LeaseToken, FenceOpts } from '../../src/core/engine-sql/lease-token.ts';
 import { rustLeases, type RustLeases, type WriteOrigin } from '../../src/core/rust-engine/store-members/leases.ts';
@@ -973,25 +974,60 @@ describe('engine parity: multi-writer conformance', () => {
     return { seenByB: 8 };
   });
 
-  // C22: commit positions strictly increase: no two commits share one and positions only grow. Pending on every engine
-  // (`L2 commit log`): no engine exposes a typed commit-position or commit-log member, and no case substitutes admission
-  // sequence, callback completion order or a local counter for one. The body reads the commit log through the member the
-  // commit-log work adds (`readCommitLog(after, max)`, I-4) and stops as pending while it does not exist.
-  parityTest('C22 commit position strictly increases', { methods: ['putPage'], mwCase: 'C22' }, async (engine) => {
-    type Position = { sequence: number; index: number };
-    type CommitLog = { readCommitLog(after: Position | null, max: number): Promise<{ records: Array<{ position: Position }> }> };
-    const log = engine as unknown as Partial<CommitLog>;
-    if (typeof log.readCommitLog !== 'function') throw new Error('C22 is pending: no typed commit-position member (commit-log work)');
-    await together(8, async (w) => { for (let n = 0; n < 4; n++) await engine.putPage(`notes/c22-${w}-${n}`, NOTE(`N${w}`, `commit ${n}`)); });
-    const read = () => log.readCommitLog!(null, 10_000).then(page => page.records.map(r => r.position));
-    const positions = await read();
-    const key = (p: Position) => p.sequence * 2 ** 32 + p.index;
-    expect(positions.length, 'fewer commits than writes').toBeGreaterThanOrEqual(32);
+  // C22: commit positions strictly increase: no two commits share one and positions only grow. Runs where the engine keeps a
+  // commit log: the Rust engine in multi-user mode with the log on (`rust-mu`, both routes, which turn the log on and prove it).
+  // A SQL engine and a Rust engine with the log off keep none and refuse `readCommitLog` and `lastCommitPosition` with
+  // `engine_capability_missing` (reason `commit_log`), so those cells are `n/a`.
+  // Eight concurrent writers write four pages each and a transaction writes one more; the log is read from the cursor taken
+  // BEFORE the writes. Positions are only ever compared with each other (never admission order, callback order or created_at).
+  parityTest('C22 commit position strictly increases', { methods: ['putPage', 'transaction', 'readCommitLog', 'lastCommitPosition'], mwCase: 'C22' }, async (engine) => {
+    const order = (a: CommitPosition, b: CommitPosition) => a.sequence - b.sequence || a.index - b.index;
+    const key = (p: CommitPosition) => `${p.sequence}.${p.index}`;
+    // One warm-up write first: the first write of a brain may run logged upkeep (an index backfill), which has records of its own.
+    // After it, every commit has exactly one record (rust/docs/store/commit-log.md: "every commit since `since` has a record").
+    await engine.putPage('notes/c22-warm', NOTE('warm', 'before the cursor'));
+    const cursor = await engine.lastCommitPosition();
+    expect(cursor, 'the warm-up write left no commit position').not.toBeNull();
+    // Every position a writer saw after its own write finished.
+    const seen: CommitPosition[] = [];
+    const observe = async () => { const at = await engine.lastCommitPosition(); expect(at, 'a finished write left no commit position').not.toBeNull(); seen.push(at!); };
+    await together(8, async (w) => {
+      for (let n = 0; n < 4; n++) { await engine.putPage(`notes/c22-${w}-${n}`, NOTE(`N${w}`, `commit ${n}`)); await observe(); }
+    });
+    // A transaction: its own engine answers the position it committed at, also after it ended.
+    let inTx: Pick<BrainEngine, 'lastCommitPosition'> | undefined;
+    await engine.transaction(async (tx) => {
+      inTx = tx;
+      await tx.putPage('notes/c22-tx', NOTE('tx', 'one transaction'));
+      expect(await tx.lastCommitPosition(), 'a transaction that is still open reports a position').toBeNull();
+    });
+    const txAt = await inTx!.lastCommitPosition();
+    expect(txAt, 'a committed transaction reports no position').not.toBeNull();
+    const read = async () => {
+      const page = await engine.readCommitLog(cursor, 10_000);
+      expect(page.snapshot_required, 'the cursor taken before the writes cannot be continued from the log').toBe(false);
+      return page.records;
+    };
+    const records = await read();
+    const positions = records.map(r => r.position);
+    expect(positions.length, 'the log has a different number of records than commits (a commit lost its record, or one has two)').toBe(33);
+    for (const p of positions) expect(order(p, cursor!), `a record at ${key(p)} is not after the cursor ${key(cursor!)}`).toBeGreaterThan(0);
     expect(new Set(positions.map(key)).size, 'two commits share a position').toBe(positions.length);
-    expect(positions.map(key), 'positions went back').toEqual([...positions.map(key)].sort((a, b) => a - b));
+    for (let i = 1; i < positions.length; i++) expect(order(positions[i]!, positions[i - 1]!), `positions went back or repeated at ${key(positions[i]!)}`).toBeGreaterThan(0);
+    for (let i = 1; i < records.length; i++) expect(records[i]!.commit_time_us, `commit time did not rise at ${key(positions[i]!)}`).toBeGreaterThan(records[i - 1]!.commit_time_us);
+    // Each position a write reported is exactly one record's position.
+    const logged = new Set(positions.map(key));
+    for (const p of [...seen, txAt!]) expect(logged.has(key(p)), `the position ${key(p)} a write reported is not in the log`).toBe(true);
+    // The transaction's commit is its own record, after every position its engine's earlier writers saw only if it committed later; at least it is a record.
+    expect(records.filter(r => key(r.position) === key(txAt!)), 'the transaction\'s position is not exactly one record').toHaveLength(1);
+    // A later write takes a greater position than everything before it.
+    const newest = positions[positions.length - 1]!;
     await engine.putPage('notes/c22-after', NOTE('after', 'one more'));
-    const later = await read();
-    expect(key(later[later.length - 1]!), 'a later commit did not take a greater position').toBeGreaterThan(key(positions[positions.length - 1]!));
-    return { commits: positions.length, distinct: true, increasing: true };
+    const later = (await engine.lastCommitPosition())!;
+    expect(order(later, newest), 'a later write did not take a greater position').toBeGreaterThan(0);
+    const after = await read();
+    expect(after.length, 'the later write did not add exactly one record').toBe(records.length + 1);
+    expect(after.filter(r => key(r.position) === key(later)), 'the later write\'s position is not exactly one record').toHaveLength(1);
+    return { writes: 33, recordsCoverWrites: true, distinct: true, increasing: true, timesRise: true, reportedPositionsAreRecords: true, laterIsGreater: true };
   });
 });
