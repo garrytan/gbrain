@@ -46,6 +46,8 @@ import { hostIdFor, readLocalWriter } from '../../src/core/persistence/identity.
 import { runPersistenceEffects } from '../../src/core/persistence/effects.ts';
 import { randomUUID } from 'node:crypto';
 
+import { fenceOpts } from '../../src/core/persistence/host-fence.ts';
+import { ensureProcessRegistration } from '../../src/core/persistence/managed-registration.ts';
 const { parityTest } = parityArms(testBackends());
 
 const GIT_ID = ['-c', 'user.name=Example', '-c', 'user.email=example@example.invalid'];
@@ -270,7 +272,7 @@ describe('the managed sync pass, its page faults and `gbrain sync status` on a R
   }, async (engine, backend) => withManagedSource(engine, backend, { 'notes/alice-example.md': note('Alice Example', 'Works at acme-example.') }, async ({ sync }) => {
     const first = await sync();
     const incarnation = await incarnationOf(engine);
-    const rows = <R = Record<string, unknown>>(name: Parameters<BrainEngine['runSyncStatement']>[0], params: unknown[]) => engine.runSyncStatement<R>(name, params);
+    const rows = async <R = Record<string, unknown>>(name: Parameters<BrainEngine['runSyncStatement']>[0], params: unknown[]) => { await ensureProcessRegistration(engine, 'parity'); return engine.runSyncStatement<R>(name, params, fenceOpts(engine)); };
     // The older cursor's frozen manifest (three entries) and its cursor, written as a sync writes them, then read as its checkpoint does.
     const entries = [0, 1, 2].map(i => ({ path: `notes/n${i}.md`, sourcePath: `notes/n${i}.md`, action: 'delete', working: false }));
     await rows('slice_put', ['managed-sync-manifest', 'run-example', JSON.stringify(entries)]);

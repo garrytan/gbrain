@@ -91,7 +91,11 @@ async function withManagedSource<T>(engine: BrainEngine, backend: ParityBackend,
 const slugsOf = async (engine: BrainEngine) => (await engine.listPages({ sourceId: 'work', limit: 100 })).map(page => page.slug).sort();
 const pageText = async (engine: BrainEngine, slug: string) => ((await engine.getPage(slug, { sourceId: 'work' }))?.compiled_truth ?? '').trim();
 const holdsOf = async (engine: BrainEngine) => ((await readGitSourceHolds(engine, { sourceIds: ['work'] }))[0]?.holds ?? []).map(hold => `${hold.path}:${hold.code}`).sort();
-const named = <R = Record<string, unknown>>(engine: BrainEngine, name: SyncStatementName, params: unknown[] = []) => engine.runSyncStatement<R>(name, params);
+/** A named sync statement; on a multi-user Rust brain a protected one carries the process's own host fence (a no-op elsewhere). */
+const named = async <R = Record<string, unknown>>(engine: BrainEngine, name: SyncStatementName, params: unknown[] = []) => {
+  await ensureProcessRegistration(engine, 'parity');
+  return engine.runSyncStatement<R>(name, params, fenceOpts(engine));
+};
 
 describe('the managed sync run on a Rust brain', () => {
   parityTest('managed mode is served on a single-host Rust brain', { methods: ['getConfig'] }, async engine => {

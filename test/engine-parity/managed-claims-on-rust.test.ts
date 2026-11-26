@@ -230,7 +230,7 @@ describe('managed claims on a Rust brain, hold kept for users', () => {
     await engine.transaction(async tx => {
       const journal = await tx.publicationJournalStore();
       await journal.recordRecovery({ id, executionToken: token, recovery: record, bytes: 40, keys: KEYS }, true);
-      await journal.markRecovering(id, token, 'publication_failed', { code: 'storage_error', message: 'parity' });
+      await journal.markRecovering(id, token, 'publication_failed', { code: 'storage_error', message: 'parity' }, fenceOpts(engine));
     });
     const heads = async (hostId: string, excluded: string[]) => (await readOwnerRecoveryHeads(engine, hostId, excluded)).map(row => ({ source: row.source_id, state: row.state, tree: row.worktree_id === wt }));
     const answer = { before, owner: await heads(host, []), otherHost: await heads(OTHER_HOST, []), excluded: await heads(host, [wt]) };

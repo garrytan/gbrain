@@ -430,7 +430,10 @@ export interface SyncStatementOptions { signal?: AbortSignal; timeoutMs?: number
 
 /** `runSyncStatement`: the statement's text on the engine's own `executeRaw`. */
 export function runSyncStatement<R>(raw: Pick<BrainEngine, 'executeRaw'>, name: SyncStatementName, params: readonly unknown[] = [], opts?: SyncStatementOptions): Promise<R[]> {
-  return raw.executeRaw<R>(SYNC_STATEMENTS[name].sql, [...params], opts);
+  // The host fence belongs to the Rust store's checkpoint claims; the SQL engines get only the bounds they always got.
+  if (opts?.fence === undefined) return raw.executeRaw<R>(SYNC_STATEMENTS[name].sql, [...params], opts);
+  const { fence: _fence, ...bounds } = opts;
+  return raw.executeRaw<R>(SYNC_STATEMENTS[name].sql, [...params], bounds);
 }
 
 /** An engine that serves `runSyncStatement`, or an `executeRaw`-only view of one. */
