@@ -579,7 +579,7 @@ describe.skipIf(!NODE)('session classes and the session-start brief', () => {
   };
   const pin = async (b: Box, name: string, ...extra: string[]) => expect((await runCli(['skills', 'pin', 'add', name, '--catalog', 'openclaw-main', ...extra], { env: b.env })).exitCode).toBe(0);
 
-  test('with no memory audience the session key decides: main and an owner sender\'s DM are the owner\'s, a group gets only conversation pins and no owner-only skill, relay, webhook and cron get nothing', async () => {
+  test('with no memory audience the session key decides: main and an owner sender\'s DM are the owner\'s, a stranger on the shared main session is not, a group gets only conversation pins and no owner-only skill, relay, webhook and cron get nothing', async () => {
     const b = box();
     ownerSkill(b);
     expectExit(await setup(b, ['--skill-loading', 'resolve', '--owner-sender', 'owner-1']), 0);
@@ -595,7 +595,8 @@ describe.skipIf(!NODE)('session classes and the session-start brief', () => {
       ['turn', { text, sender: 'owner-1', session: 'hook:inbox' }],
       ['turn', { text, sender: 'owner-1', session: 'agent:main:cron:nightly:run:1' }],
       ['turn', { text, sender: 'stranger', session: 'agent:main:telegram:direct:stranger' }],
-    ], undefined, { DRIVE_LOG_LINES: '7' });
+      ['turn', { text, sender: 'stranger', session: 'agent:main:main' }],
+    ], undefined, { DRIVE_LOG_LINES: '8' });
     for (const i of [0, 1]) {
       expect(out[i].appendSystemContext).toContain('"deploy-service"');
       expect(out[i].appendSystemContext).not.toContain('"calendar-sync"');
@@ -606,11 +607,27 @@ describe.skipIf(!NODE)('session classes and the session-start brief', () => {
     expect(out[2]?.appendContext ?? '').not.toContain('private-ledger');
     expect(out.slice(3, 6)).toEqual([null, null, null]);
     expect(out[6]).toEqual({ appendSystemContext: out[2].appendSystemContext });
+    expect(out[7]).toEqual({ appendSystemContext: out[2].appendSystemContext });
     const lines = logLines(b);
     expect(lines.map((l) => [l.session_class, l.outcome])).toEqual([
-      ['main', 'suggested'], ['owner', 'suggested'], ['group', expect.any(String)], ['relay', 'skipped_class'], ['webhook', 'skipped_class'], ['cron', 'skipped_class'], ['direct', 'skipped_sender'],
+      ['main', 'suggested'], ['owner', 'suggested'], ['group', expect.any(String)], ['relay', 'skipped_class'], ['webhook', 'skipped_class'], ['cron', 'skipped_class'], ['direct', 'skipped_sender'], ['direct', 'skipped_sender'],
     ]);
     expect(lines.every((l) => l.audience === 'unknown')).toBe(true);
+  });
+
+  test('pin --class refuses an unknown class, a catalog that is not OpenClaw\'s and pin remove, and writes nothing', async () => {
+    const b = box();
+    expectExit(await setup(b, ['--skill-loading', 'resolve']), 0);
+    await pin(b, 'deploy-service');
+    const before = readFileSync(join(gbrainHome(b), 'config.json'), 'utf8');
+    for (const args of [
+      ['skills', 'pin', 'add', 'calendar-sync', '--catalog', 'openclaw-main', '--class', 'bogus'],
+      ['skills', 'pin', 'add', 'calendar-sync', '--catalog', 'openclaw-main', '--class', ''],
+      ['skills', 'pin', 'add', 'calendar-sync', '--catalog', 'claude-code-user', '--class', 'owner'],
+      ['skills', 'pin', 'remove', 'deploy-service', '--catalog', 'openclaw-main', '--class', 'owner'],
+    ]) expect((await runCli(args, { env: b.env })).exitCode).toBe(2);
+    expect(readFileSync(join(gbrainHome(b), 'config.json'), 'utf8')).toBe(before);
+    expect((await setup(b, ['--skill-loading', 'resolve', '--suggest-in', ''])).exitCode).toBe(2);
   });
 
   test('with a memory audience a conversation never gets owner pins or owner-only skills, even on the main session key; --suggest-in owner leaves conversations their pins and no suggestions', async () => {

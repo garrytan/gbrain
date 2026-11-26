@@ -14,6 +14,7 @@
 import { existsSync, unlinkSync } from 'node:fs';
 import { atomicWriteTextFile } from '../bootstrap/atomic-write.ts';
 import { catalogSkills, parsePins, renderPinnedBlock, type Pin, type PinClass, type PinnedBlock } from '../skills/resolver/pinned-block.ts';
+import { readReceipt } from '../skills/resolver/catalog-files.ts';
 import { validCatalogName } from '../skills/resolver/paths.ts';
 import { readResolverConfig, type ResolverConfigRead } from './skill-resolver-config.ts';
 
@@ -55,13 +56,15 @@ export function writePins(read: Exclude<ResolverConfigRead, { state: 'unreadable
  * One catalog's pins rendered against its current index (what setup writes into a harness's surface); OpenClaw's lines
  * name each SKILL.md, as its load line reads the path first. With a session class (OpenClaw), only the pins for that
  * class render, and a pin the host hides from the agent (hidden: not visible to its model, or a shadowed copy), or an
- * `audience: owner` skill outside the owner's class, is left out and listed in `withheld`.
+ * `audience: owner` skill outside the owner's class, is left out and listed in `withheld`; a catalog built before audiences
+ * were recorded withholds every conversation pin until it is rebuilt.
  */
 export function pinnedBlockFor(home: string, catalog: string, harness?: string, readRoot?: string, opts: { cls?: PinClass; hidden?: readonly string[] } = {}): PinnedBlock & { withheld: string[] } {
   const cat = catalogSkills(home, catalog);
   const all = readPins(readResolverConfig(home), catalog);
   const pins = opts.cls ? all.filter((p) => (p.classes ?? ['owner']).includes(opts.cls!)) : all;
-  const drop = new Set([...(opts.hidden ?? []), ...(opts.cls === 'conversation' && cat ? cat.ownerOnly : [])]);
+  const unrecorded = opts.cls === 'conversation' && cat !== null && readReceipt(home, catalog)?.catalog.audiences !== 1;
+  const drop = new Set([...(opts.hidden ?? []), ...(opts.cls === 'conversation' && cat ? (unrecorded ? cat.paths.keys() : cat.ownerOnly) : [])]);
   const withheld = cat ? pins.filter((p) => cat.paths.has(p.name) && drop.has(p.name)).map((p) => p.name) : [];
   const known = cat ? new Set([...cat.paths.keys()].filter((id) => !drop.has(id))) : null;
   const r = renderPinnedBlock(pins.filter((p) => !withheld.includes(p.name)), { harness, known, ...(harness === 'openclaw' && cat ? { paths: cat.paths } : {}), ...(readRoot === undefined ? {} : { readRoot }) });

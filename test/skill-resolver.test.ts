@@ -34,6 +34,8 @@ import { RACY_MTIME_MS } from '../src/core/skills/resolver/build.ts';
 import { TOP_GATE_DEFAULT } from '../src/core/skills/resolver/limits.ts';
 import { DEFAULT_SESSION_TOKEN_BUDGET } from '../src/core/skills/resolver/config.ts';
 import { CODES } from '../src/core/error-registry.ts';
+import { pinnedBlockFor, writePins } from '../src/core/setup/skill-pins.ts';
+import { readResolverConfig } from '../src/core/setup/skill-resolver-config.ts';
 
 const scratch: string[] = [];
 afterAll(() => { for (const d of scratch) rmSync(d, { recursive: true, force: true }); });
@@ -1153,6 +1155,40 @@ describe('owner-only skills (audience: owner)', () => {
     expect(existsSync(catalogFile(home, 'c', 'stale.stamp'))).toBe(true);
     const owner = await resolveSkills({ message: 'export the ledger to a spreadsheet', top_k: 8, top_gate: 0 }, { home, audience: 'owner' });
     expect(owner.output.suggestions.map(s => s.id)).toEqual(['ledger-export']);
+  });
+
+  test('any other audience value fails closed: a list or a typo keeps the skill to the owner', async () => {
+    const home = tmp();
+    const root = tmp('skres-dir-');
+    skillDir(root, 'ledger-typo', { name: 'ledger-typo', description: 'Review the private household ledger typo copy', audience: 'owners' });
+    mkdirSync(join(root, 'ledger-list'), { recursive: true });
+    writeFileSync(join(root, 'ledger-list', 'SKILL.md'), '---\nname: ledger-list\ndescription: Review the private household ledger list copy\naudience:\n  - owner\n---\nSteps.\n');
+    skillDir(root, 'ledger-export', { name: 'ledger-export', description: 'Export the household ledger to a spreadsheet' });
+    await buildSkillIndex({ catalog: 'c', dirs: [root] }, { home });
+    const others = await resolveSkills({ message: 'review the private household ledger', top_k: 8, top_gate: 0 }, { home, audience: 'others' });
+    expect(others.output.suggestions.map(s => s.id)).not.toContain('ledger-typo');
+    expect(others.output.suggestions.map(s => s.id)).not.toContain('ledger-list');
+    const owner = await resolveSkills({ message: 'review the private household ledger', top_k: 8, top_gate: 0 }, { home, audience: 'owner' });
+    expect(owner.output.suggestions.map(s => s.id)).toEqual(expect.arrayContaining(['ledger-typo', 'ledger-list']));
+  });
+
+  test('conversation pins from a catalog built before audiences were recorded are all withheld until it is rebuilt', async () => {
+    const home = tmp();
+    const root = tmp('skres-dir-');
+    skillDir(root, 'ledger-export', { name: 'ledger-export', description: 'Export a ledger to a spreadsheet' });
+    await buildSkillIndex({ catalog: 'openclaw-main', dirs: [root] }, { home });
+    const read = readResolverConfig(home);
+    if (read.state === 'unreadable') throw new Error('config unreadable');
+    writePins(read, 'openclaw-main', [{ name: 'ledger-export', classes: ['owner', 'conversation'] }]);
+    expect(pinnedBlockFor(home, 'openclaw-main', 'openclaw', undefined, { cls: 'conversation' }).withheld).toEqual([]);
+    const receiptPath = catalogFile(home, 'openclaw-main', 'receipt.json');
+    const receipt = JSON.parse(readFileSync(receiptPath, 'utf8'));
+    delete receipt.catalog.audiences;
+    writeFileSync(receiptPath, JSON.stringify(receipt));
+    const conversation = pinnedBlockFor(home, 'openclaw-main', 'openclaw', undefined, { cls: 'conversation' });
+    expect(conversation.withheld).toEqual(['ledger-export']);
+    expect(conversation.block).toBe('');
+    expect(pinnedBlockFor(home, 'openclaw-main', 'openclaw', undefined, { cls: 'owner' }).withheld).toEqual([]);
   });
 
   test('hidden ids from the caller are never suggested, and more than EXCLUDE_MAX of them still all count', async () => {

@@ -46,6 +46,12 @@ function yamlFields(raw: string): Record<string, unknown> | null {
   }
 }
 
+/** Any non-empty `audience` keeps a skill to the owner: only `owner` is defined, and an unknown value or a typo fails closed. */
+export function restricted(v: unknown): boolean {
+  if (typeof v === 'string') return cleanText(v) !== '';
+  return Array.isArray(v) && v.some((x) => typeof x === 'string' && cleanText(x) !== '');
+}
+
 function stringList(v: unknown): string[] {
   if (typeof v === 'string') return [cleanText(v)].filter(Boolean);
   if (!Array.isArray(v)) return [];
@@ -72,7 +78,7 @@ export function parseSkillDoc(input: string): SkillDoc {
     eligible: !(fm && (fm.eligible === false || fm.eligible === 'false')),
     deprecated: Boolean(fm && (fm.deprecated === true || fm.deprecated === 'true')),
     ...(replacedBy ? { replacedBy } : {}),
-    ...(fm && typeof fm.audience === 'string' && cleanText(fm.audience).toLowerCase() === 'owner' ? { audience: 'owner' as const } : {}),
+    ...(fm && restricted(fm.audience) ? { audience: 'owner' as const } : {}),
     body: boundBody(text),
   };
 }

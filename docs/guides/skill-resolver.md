@@ -327,7 +327,10 @@ on its next turn, so no OpenClaw command runs and the gateway does not reload:
 - `--owner-sender <id>` (repeatable): only turns from these senders get
   suggestions; others get the pins only. When OpenClaw sends no memory
   audience, a direct session from one of these senders also counts as the
-  owner's.
+  owner's, and a turn from anyone else on the shared main session (OpenClaw's
+  default `session.dmScope: main` puts every DM there) counts as another
+  person's DM. Set it when people other than you can message the agent and
+  OpenClaw has no memory provider.
 - `--suggest-in owner|conversation|owner,conversation`: which session classes
   get suggestions (default both). Pins are unaffected.
 - `--skill-loading off`: uninstalls the plugin and removes its files and
@@ -376,16 +379,19 @@ inter-session relay), then its `memoryAudience` (`owner-private` is the
 owner; `conversation` is a group, channel or another person's DM). OpenClaw
 sends a memory audience only with a native memory provider. Without one, the
 class comes from the session key's shape (`agent:<id>:main` is `main`,
-`...:direct:<peer>` is `direct` unless the sender is an `--owner-sender`,
+`...:direct:<peer>` is `direct` unless the sender is an `--owner-sender`, and
+with `--owner-sender` set, `main` from any other sender is `direct` too,
 `...:group:<id>` is `group`, `...:cron:...`, `...:relay-<sender>`,
 `...:subagent:...` and `hook:...` are silent) and the log line says
 `audience: unknown`. Owner pins and owner-only skills never reach a session
 that is not the owner's, with or without an audience.
 
 A skill whose `SKILL.md` front matter says `audience: owner` is suggested
-and pinned only in the owner's sessions. A catalog built before gbrain
-recorded audiences suggests nothing outside them until it is rebuilt, which
-happens on its own after an upgrade.
+and pinned only in the owner's sessions. `owner` is the only defined value;
+any other non-empty `audience` (a list, a typo) is treated as `owner`, so a
+mistake never makes a skill public. A catalog built before gbrain recorded
+audiences suggests nothing and pins nothing outside the owner's sessions
+until it is rebuilt, which happens on its own after an upgrade.
 
 **The session-start brief.** With `--pins-route first_turn`, the owner's pins
 arrive once, on the first turn of each owner session, and again after a

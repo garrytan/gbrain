@@ -285,9 +285,10 @@ function sessionClassOf(event, ctx, a, sessionKey) {
     if (type === 'private' || type === 'direct' || type === 'dm') return of('direct');
     return of(keyed === 'group' || keyed === 'channel' || keyed === 'direct' ? keyed : 'conversation');
   }
-  if (keyed === 'direct' && Array.isArray(a.owner_sender_ids) && a.owner_sender_ids.length) {
+  if ((keyed === 'direct' || keyed === 'main') && Array.isArray(a.owner_sender_ids) && a.owner_sender_ids.length) {
     const sender = senderOf(event, ctx);
-    if (sender !== null && a.owner_sender_ids.includes(sender)) return of('owner');
+    if (sender !== null && !a.owner_sender_ids.includes(sender)) return of('direct');
+    if (sender !== null && keyed === 'direct') return of('owner');
   }
   return of(keyed);
 }

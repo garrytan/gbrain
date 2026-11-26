@@ -35,7 +35,7 @@ import { existsSync, lstatSync, readdirSync, realpathSync, statSync } from 'node
 import { basename, dirname, join, sep } from 'node:path';
 import { ResolverError } from './errors.ts';
 import { readBounded, readHead } from './fsutil.ts';
-import { boundBody, cleanText, parseSkillDoc, SKILL_FILE_CAP_BYTES } from './frontmatter.ts';
+import { boundBody, cleanText, parseSkillDoc, restricted, SKILL_FILE_CAP_BYTES } from './frontmatter.ts';
 import { parseRoutingTable } from './routing.ts';
 import { listingKey, skippedEntry } from './catalog-files.ts';
 export { fingerprintChanged } from './catalog-files.ts';
@@ -274,7 +274,7 @@ export function readJsonSource(text: string): SourceRead {
       triggers: boundTriggers(((o.triggers as string[] | undefined) ?? []).map(cleanText).filter(Boolean)),
       routing: ((o.routing as string[] | undefined) ?? []).map(cleanText).filter(Boolean).slice(0, MAX_ROUTING_ROWS),
       body: typeof o.body === 'string' ? bodyOf(o.body) : '', ...at, ...deprecation(o.deprecated === true, typeof o.replaced_by === 'string' ? cleanText(o.replaced_by) : undefined),
-      ...(typeof o.audience === 'string' && cleanText(o.audience).toLowerCase() === 'owner' ? { audience: 'owner' as const } : {}) });
+      ...(restricted(o.audience) ? { audience: 'owner' as const } : {}) });
   });
   if (bytes <= JSON_SOURCE_CAP_BYTES) return { kind: 'json', skills, skipped, snapshot: text };
   for (const e of list) { const o = e as Record<string, unknown>; if (typeof o.body === 'string') o.body = settledBody(o.body); }

@@ -1,8 +1,8 @@
 **OpenClaw's skill suggestions now know who is talking: the owner, a group or channel, or an automated run, and the owner gets a one-time skill brief at the start of each session.**
 
 ### Added
-- Session classes for the OpenClaw skill resolver. Each turn is the owner's (the main session, an owner-private memory audience, or a direct message from an `--owner-sender`), a conversation (a group, a channel, or a direct message from someone else), or silent (relay, cron, heartbeat, webhook and subagent runs). When OpenClaw reports no memory audience, the class comes from the session key and the turn log says `audience: unknown`.
-- `audience: owner` in a skill's frontmatter keeps that skill out of every suggestion and pin outside the owner's sessions.
+- Session classes for the OpenClaw skill resolver. Each turn is the owner's (the main session, an owner-private memory audience, or a direct message from an `--owner-sender`), a conversation (a group, a channel, or a direct message from someone else), or silent (relay, cron, heartbeat, webhook and subagent runs). When OpenClaw reports no memory audience, the class comes from the session key and the turn log says `audience: unknown`; with `--owner-sender` set, a message from anyone else on the shared main session counts as another person's DM.
+- `audience: owner` in a skill's frontmatter keeps that skill out of every suggestion and pin outside the owner's sessions. Any other non-empty `audience` value is treated the same way, so a typo never makes a skill public.
 - `gbrain skills pin add <id> --class owner,conversation` chooses where an OpenClaw pin appears; `gbrain setup openclaw --suggest-in owner|conversation|owner,conversation` chooses where suggestions appear.
 - With `--pins-route first_turn`, the owner's pinned skills are a session-start brief: the first turn of each owner session gets it once, and a gateway restart or a retried run does not repeat it. A new session after `/new` or a compaction gets a fresh one.
 - `gbrain doctor` shows each agent's conversation pins, where suggestions appear, and turns by memory audience.
