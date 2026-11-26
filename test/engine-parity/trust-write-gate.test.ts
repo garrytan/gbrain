@@ -214,6 +214,8 @@ describe('engine parity: write gate receipts and holds', () => {
     const receipt = await getTrustAllowRule(engine, third.rule.id);
     expect([receipt?.removed_at !== null, receipt?.removed_by]).toEqual([true, 'host:unregistered']);
     expect(await getTrustAllowRule(engine, third.rule.id + 1000)).toBeNull();
+    // The engine member directly: a whole id below 1 or an unknown id is null; the row read matches the receipt's id.
+    expect([await engine.readTrustAllowRule(0), Number((await engine.readTrustAllowRule(third.rule.id))?.id)]).toEqual([null, third.rule.id]);
     const archived = await addTrustAllowRule(engine, { sourceId: 'nope', uriPrefix: null, reasonFamily: null, reason: null }, null).then(() => 'added', (e: unknown) => (e as { code?: string }).code);
     expect(archived).toBe('invalid_params');
     const view = async (opts: Parameters<typeof listTrustAllowRules>[1]) => (await listTrustAllowRules(engine, opts)).map((r) => ({

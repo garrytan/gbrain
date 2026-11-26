@@ -688,7 +688,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'claimWakeWatch', 'settleWakeWatch', 'queueWakeForget', 'claimWakeForgets', 'settleWakeForget',
   // GST-3032 owner-only delete triggers (src/core/engine-sql/owner-only-marks.ts; covered by test/owner-only-removal-lineage.test.ts)
   'ownerOnlyMarkTriggers',
-  'readEntityOpenLoops', 'linkEntityIdentityRow', 'unlinkEntityIdentityRow', 'listEntityIdentityRows', 'readEntityIdentityIdsForPages', 'readCanonicalTwin', 'listPendingContradictions', 'listTrustAllowRuleRows', 'bumpPageRetrievals',
+  'readEntityOpenLoops', 'linkEntityIdentityRow', 'unlinkEntityIdentityRow', 'listEntityIdentityRows', 'readEntityIdentityIdsForPages', 'readCanonicalTwin', 'listPendingContradictions', 'listTrustAllowRuleRows', 'addTrustAllowRule', 'removeTrustAllowRule', 'readTrustAllowRule', 'bumpPageRetrievals',
   'purgeStaleCheckpoints', 'purgeStaleAppliedCaptures',
   'forgetWakeMember', 'forgetWakeCredential',
 ];
