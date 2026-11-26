@@ -35,7 +35,7 @@ import {
   type QualityProbeAuditEvent,
   type QualityProbeFailure,
 } from '../audit-quality-probe.ts';
-import { withChatCallMeter, type ChatCallMeter } from '../ai/chat-usage.ts';
+import { withChatCallMeter, withDefaultChatPhase, type ChatCallMeter } from '../ai/chat-usage.ts';
 import { withBudgetTracker } from '../ai/gateway.ts';
 import {
   BudgetExhausted,
@@ -410,8 +410,11 @@ export async function runNightlyQualityProbe(deps: NightlyProbeDeps): Promise<Ni
     const runTracker = tracker;
     meter = { calls: 0, cost_usd: 0, unpriced_calls: 0, ...(policy.pricingOverrides ? { pricing_overrides: policy.pricingOverrides } : {}) };
     const runMeter = meter;
-    await withBudgetTracker(runTracker, () => withChatCallMeter(runMeter, () =>
-      deps.runLongMemEval({ fixturePath, outputPath: lmeOutPath, searchConfigSnapshot, modelRoutes })));
+    const runMetered = <T>(run: () => Promise<T>): Promise<T> =>
+      withDefaultChatPhase('phase:nightly_quality_probe', () =>
+        withBudgetTracker(runTracker, () => withChatCallMeter(runMeter, run)));
+    await runMetered(() =>
+      deps.runLongMemEval({ fixturePath, outputPath: lmeOutPath, searchConfigSnapshot, modelRoutes }));
     if (runTracker.exhausted) {
       const fields = stopped();
       process.stderr.write(`[nightly-quality-probe] ${fields.detail}\n`);
@@ -432,13 +435,13 @@ export async function runNightlyQualityProbe(deps: NightlyProbeDeps): Promise<Ni
       });
       return { outcome: 'budget_exceeded', exit_code: 1, detail: fields.detail };
     }
-    const { exitCode, summary } = await withBudgetTracker(runTracker, () => withChatCallMeter(runMeter, () =>
+    const { exitCode, summary } = await runMetered(() =>
       deps.runCrossModalBatch({
         batchPath: lmeOutPath,
         summaryPath,
         maxUsd,
         modelRoutes,
-      })));
+      }));
 
     const verdict: NightlyProbeResult['outcome'] = (() => {
       if (runTracker.exhausted) return 'budget_exceeded';

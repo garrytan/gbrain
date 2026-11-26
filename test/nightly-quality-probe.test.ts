@@ -18,7 +18,7 @@ import {
 } from '../src/core/cycle/nightly-quality-probe.ts';
 import type { CrossModalBatchSummary } from '../src/core/cycle/nightly-probe-adapters.ts';
 import type { QualityProbeFailure } from '../src/core/audit-quality-probe.ts';
-import { estimateChatCostUsd, recordChatUsage } from '../src/core/ai/chat-usage.ts';
+import { estimateChatCostUsd, recordChatUsage, registerChatUsageSink } from '../src/core/ai/chat-usage.ts';
 import { DEFAULT_SLOTS } from '../src/core/cross-modal-eval/runner.ts';
 import { withEnv } from './helpers/with-env.ts';
 
@@ -727,6 +727,44 @@ describe('runNightlyQualityProbe: metered chat spend (#5506)', () => {
   const PRICED = 'anthropic:claude-haiku-4-5';
   const UNPRICED = 'acme:unpriced-model-9000';
   const pricedCost = () => estimateChatCostUsd(PRICED, usage)!;
+
+  test('a nightly probe attributes both stages in the usage ledger without tagging other calls', async () => {
+    const phases: Array<string | null> = [];
+    const unregister = registerChatUsageSink(record => { phases.push(record.phase); });
+    const readerStarted = Promise.withResolvers<void>();
+    const finishReader = Promise.withResolvers<void>();
+    try {
+      await withEnv({ GBRAIN_AUDIT_DIR: auditTmp }, async () => {
+        const probe = runNightlyQualityProbe(makeDeps({
+          runLongMemEval: async () => {
+            readerStarted.resolve();
+            await finishReader.promise;
+            recordChatUsage({ model: PRICED, usage });
+          },
+          runCrossModalBatch: async () => {
+            recordChatUsage({ model: UNPRICED, usage });
+            return {
+              exitCode: 0,
+              summary: { pass_count: 10, fail_count: 0, inconclusive_count: 0, error_count: 0, est_cost_usd: 0, verdict: 'pass' },
+            };
+          },
+        }));
+        try {
+          await Promise.race([readerStarted.promise, probe]);
+          recordChatUsage({ model: PRICED, usage });
+        } finally {
+          finishReader.resolve();
+        }
+        expect((await probe).outcome).toBe('pass');
+        recordChatUsage({ model: UNPRICED, usage });
+        expect(phases).toEqual([null, 'phase:nightly_quality_probe', 'phase:nightly_quality_probe', null]);
+        const [event] = await readEvents();
+        expect(event.chat_calls).toBe(2);
+      });
+    } finally {
+      unregister();
+    }
+  });
 
   test('calls in both stages are metered: priced cost summed, unpriced counted apart', async () => {
     await withEnv({ GBRAIN_AUDIT_DIR: auditTmp }, async () => {
