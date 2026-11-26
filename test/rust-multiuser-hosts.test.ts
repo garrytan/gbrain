@@ -18,10 +18,15 @@ import { loadRustAddon, type RustAddon } from '../src/core/rust-engine/addon-loa
 import { detectAddonTarget } from '../src/core/rust-engine/addon-target.ts';
 import { openRustEngine, type RustEngine } from '../src/core/rust-engine.ts';
 import { rustLeases, type LeaseToken, type RustLeases, type WriteOrigin } from '../src/core/rust-engine/store-members/leases.ts';
-import { fenceFor, fenceOpts, hostLeaseName, hostRegistrationOf } from '../src/core/persistence/host-fence.ts';
+import { clearHostRegistration, fenceFor, fenceOpts, hostLeaseName, hostRegistrationOf, setHostRegistration } from '../src/core/persistence/host-fence.ts';
+import { startPersistenceConsumer, stopPersistenceConsumer } from '../src/core/persistence/service.ts';
 import { rustMultiuserEngine, startHostRegistration } from '../src/core/persistence/host-registration.ts';
 import type { ConsumerRenewal } from '../src/core/engine-sql/persistence-claims.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { WaiterOnlyConsumer } from '../src/core/persistence/consumer-election.ts';
+import { LANE_BUSY, type PersistenceConsumer } from '../src/core/persistence/consumer.ts';
+import { MinionQueue } from '../src/core/minions/queue.ts';
+import type { BrainEngine } from '../src/core/engine.ts';
 
 const TARGET = detectAddonTarget();
 const BUILT = join(import.meta.dir, '..', 'rust', 'target', 'addon', `gbrain_engine.${TARGET ?? 'unsupported'}.node`);
@@ -147,6 +152,107 @@ describe('host registration', () => {
       await second.renew();
       expect(second.fence?.epoch).toBe(2);
       await second.stop();
+    });
+  });
+});
+
+/** A persistence consumer that claims nothing itself: the test drives the protected calls through a queue. */
+function idleInner(): PersistenceConsumer {
+  return { start() {}, async stop() {}, wake() {}, async tick() {}, holds: () => false, foregroundCompletions: () => 0,
+    async onLane() { return LANE_BUSY; }, restartRequired: () => false, oldestRootBarrierAgeMs: () => null,
+    status: () => ({ accepting: true, active_preparations: 0, active_worktrees: 0, restart_required: false }) } as unknown as PersistenceConsumer;
+}
+
+async function waitFor(check: () => boolean, ms = 5_000): Promise<void> {
+  const until = Date.now() + ms;
+  while (!check()) {
+    if (Date.now() > until) throw new Error('condition not met in time');
+    await new Promise(r => setTimeout(r, 20));
+  }
+}
+
+describe('two real consumers on one host (pause, takeover, resume)', () => {
+  withAddon('a consumer paused past its host lease is fenced out: its claimed job cannot finish, the new consumer works', async () => {
+    await withEnv({ GBRAIN_RUST_MULTIUSER: '1' }, async () => {
+      const engine = await open();
+      // Two consumer processes of one host, each with its own engine handle on the brain.
+      const engineA = Object.create(engine) as BrainEngine;
+      const engineB = Object.create(engine) as BrainEngine;
+      const start = (e: BrainEngine) => new WaiterOnlyConsumer(e, { engine: 'rust' } as never, idleInner,
+        { kind: 'serve', hostId: HOST, pollMs: 1_000_000, idleMaxMs: 1_000_000, phaseMs: 2_000, heartbeatEveryMs: 1_000_000, hostLeaseTtlMs: 2_000,
+          singleConsumer: async () => true, ceilingMs: async () => 600_000, log: () => undefined });
+      const a = start(engineA);
+      a.start();
+      await waitFor(() => fenceFor(engineA) !== null);
+      expect(fenceFor(engineA)).toMatchObject({ name: hostLeaseName(HOST), epoch: 1 });
+
+      // A claims a job under its registration.
+      const queueA = new MinionQueue(engineA);
+      const job = await queueA.add('work', {});
+      expect((await queueA.claim('w:a', 200, 'default', ['work']))?.id).toBe(job.id);
+      const claimed = await queueA.getJob(job.id);
+
+      // A pauses (no renewal); B starts on the same host and takes the host lease once A's expires.
+      const b = start(engineB);
+      b.start();
+      await b.probeTick();
+      // A's lease is still live: B keeps probing, never advertises full, and gets no error.
+      expect(b.mode).not.toBe('full');
+      expect(fenceFor(engineB)).toBeNull();
+      // A's lease (2 s) runs out; B takes it over under a new epoch.
+      await new Promise(r => setTimeout(r, 2_200));
+      await b.probeTick();
+      expect(b.mode).toBe('full');
+      expect(fenceFor(engineB)).toMatchObject({ name: hostLeaseName(HOST), epoch: 2 });
+
+      // A resumes with its old registration still in hand: its protected writes refuse, and the job row is unchanged.
+      expect(fenceFor(engineA)?.epoch).toBe(1);
+      const refused = await queueA.completeJob(job.id, 'w:a').then(() => null, (e: { code?: string; reason?: string }) => ({ code: e.code, reason: e.reason }));
+      expect(refused).toEqual({ code: 'lease_lost', reason: 'epoch_moved' });
+      expect(await queueA.getJob(job.id)).toEqual(claimed);
+
+      // B works under the new epoch: it reclaims the stalled job and finishes it.
+      const queueB = new MinionQueue(engineB);
+      const reclaimed = await engineB.reclaimStalledJobs(0, { fence: fenceFor(engineB)! });
+      expect(reclaimed.requeued.map(j => j.id).concat(reclaimed.dead.map(j => j.id))).toContain(job.id);
+      expect((await queueB.claim('w:b', 30_000, 'default', ['work']))?.id).toBe(job.id);
+      expect((await queueB.completeJob(job.id, 'w:b'))?.status).toBe('completed');
+
+      await a.stop();
+      await b.stop();
+      expect(fenceFor(engineB)).toBeNull();
+    });
+  });
+});
+
+describe('review fixes (second-model review G9, G11)', () => {
+  test('G11: two holders on one engine keep their own registrations; one stopping leaves the other', () => {
+    const engine = {};
+    const one = { hostId: HOST, origin: origin('1'), fence: { name: 'consumer:h', epoch: 1, token: 't1' } };
+    const two = { hostId: HOST, origin: origin('2'), fence: { name: 'jobs:h:1:n', epoch: 1, token: 't2' } };
+    setHostRegistration(engine, one);
+    setHostRegistration(engine, two);
+    expect(fenceFor(engine)).toEqual(one.fence);
+    clearHostRegistration(engine, one);
+    expect(fenceFor(engine)).toEqual(two.fence);
+    clearHostRegistration(engine, one);
+    expect(fenceFor(engine)).toEqual(two.fence);
+    clearHostRegistration(engine, two);
+    expect(fenceFor(engine)).toBeNull();
+  });
+
+  withAddon('G9: the production consumer on a multi-user Rust brain elects and holds its host lease before claiming', async () => {
+    await withEnv({ GBRAIN_RUST_MULTIUSER: '1' }, async () => {
+      const engine = await open();
+      const consumer = startPersistenceConsumer(engine as unknown as BrainEngine, { engine: 'rust' } as never);
+      try {
+        expect(consumer).toBeInstanceOf(WaiterOnlyConsumer);
+        await waitFor(() => fenceFor(engine) !== null);
+        expect(fenceFor(engine)?.name.startsWith('consumer:')).toBe(true);
+      } finally {
+        await stopPersistenceConsumer(engine as unknown as BrainEngine);
+      }
+      expect(fenceFor(engine)).toBeNull();
     });
   });
 });

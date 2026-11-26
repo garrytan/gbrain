@@ -41,7 +41,7 @@ import { currentRunDeadline, lastForwardProgressAt, noteCommittedProgress, noteF
 import { faultPoint } from './fault-points.ts';
 import { VERSION } from '../../version.ts';
 import { LEASE_BEACON_QUEUE } from '../minions/protected-names.ts';
-import { fenceOpts } from './host-fence.ts';
+import type { FenceOpts } from '../engine-sql/lease-token.ts';
 
 export const DRAIN_LEASE_TTL_MINUTES = 2;
 export const DRAIN_LEASE_REFRESH_MS = 20_000;
@@ -245,10 +245,17 @@ export interface DrainLeaseOptions {
  * while any holder drains. Application authority keeps it out of the unreviewed-job gate; `max_stalled` 0 and
  * `remove_on_fail` drop a dead holder's row instead of queueing it. It is renewed with the lease and deleted on release.
  */
-async function writeHolderRecord(engine: BrainEngine, sourceId: string, lease: DrainLease, holder: DrainHolderRef): Promise<void> {
-  // One statement: a former holder's row goes first.
-  await engine.writeDrainLeaseHolder({ sourceId, lockToken: lease.token, beacon: { kind: holder.kind, id: holder.id ?? null, version: VERSION },
-    ttlMinutes: DRAIN_LEASE_TTL_MINUTES, ...fenceOpts(engine) });
+async function writeHolderRecord(engine: BrainEngine, sourceId: string, lease: DrainLease, holder: DrainHolderRef, fence: FenceOpts): Promise<void> {
+  // One statement: a former holder's row goes first. On a multi-user Rust brain the store also checks, in that same
+  // statement, that this lease's cycle lock is still held under this token and epoch (review G5): a refusal means the
+  // lease moved on, which ends the pass the way a lost renewal does.
+  try {
+    await engine.writeDrainLeaseHolder({ sourceId, lockToken: lease.token, beacon: { kind: holder.kind, id: holder.id ?? null, version: VERSION },
+      ttlMinutes: DRAIN_LEASE_TTL_MINUTES, ...fence });
+  } catch (error) {
+    if ((error as { code?: unknown } | null)?.code === 'lease_lost') throw new LockStolenError(lease.lockId, `the drain lease of source ${sourceId} moved on before its holder record was written`);
+    throw error;
+  }
 }
 
 /**
@@ -268,9 +275,11 @@ export async function withDrainLease(engine: BrainEngine, sourceId: string, opts
     try {
       return await withRefreshingLock(engine, lockId, async (signal, handle) => {
         const lease: DrainLease = { lockId, sourceId, token: handle.acquisitionToken, signal };
-        await writeHolderRecord(engine, sourceId, lease, opts.holder);
+        // The holder record is written, renewed and deleted under the fence the lease's cycle lock was taken under.
+        const fence: FenceOpts = handle.fence ? { fence: handle.fence } : {};
+        await writeHolderRecord(engine, sourceId, lease, opts.holder, fence);
         const beacon = setInterval(() => {
-          void engine.refreshDrainLeaseHolder(lease.token, DRAIN_LEASE_TTL_MINUTES, fenceOpts(engine)).catch(() => undefined);
+          void engine.refreshDrainLeaseHolder(lease.token, DRAIN_LEASE_TTL_MINUTES, fence).catch(() => undefined);
         }, DRAIN_LEASE_REFRESH_MS);
         beacon.unref?.();
         try {
@@ -280,7 +289,7 @@ export async function withDrainLease(engine: BrainEngine, sourceId: string, opts
           return await leases.run(store, () => work(signal));
         } finally {
           clearInterval(beacon);
-          released = engine.releaseDrainLeaseHolder(lease.token, fenceOpts(engine)).catch(() => undefined);
+          released = engine.releaseDrainLeaseHolder(lease.token, fence).catch(() => undefined);
         }
       }, { ttlMinutes: DRAIN_LEASE_TTL_MINUTES, refreshIntervalMs: DRAIN_LEASE_REFRESH_MS }).finally(() => released);
     } catch (error) {

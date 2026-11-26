@@ -151,6 +151,41 @@ mod tests {
         }
     }
 
+    /// G15: a lease taken inside an explicit transaction carries the live clock (after the transaction began); the
+    /// high-water mark that transaction commits is at or above that time, so a reopen never goes below it.
+    #[test]
+    fn a_write_inside_an_explicit_transaction_raises_the_floor_to_the_time_it_stored() {
+        for (mode, kv) in [
+            ("single", mem_kv()),
+            ("concurrent", Arc::new(occ_kv()) as Arc<dyn crate::kv::Kv>),
+        ] {
+            let wall = Arc::new(Wall(AtomicI64::new(2_000_000_000_000_000)));
+            let store = open(kv.clone(), &wall, true);
+            let tx = store.begin_transaction(false).unwrap();
+            wall.0.fetch_add(10_000_000, Ordering::SeqCst);
+            tx.acquire_lease("in-tx", &origin(), 60_000)
+                .unwrap()
+                .unwrap();
+            tx.commit_transaction().unwrap();
+            let stored = store.read_lease("in-tx").unwrap().unwrap().acquired_at_us;
+            let floor = read_high_water(&*store.read().unwrap()).unwrap();
+            assert!(
+                floor >= stored,
+                "{mode}: floor {floor} below the stored time {stored}"
+            );
+        }
+    }
+
+    /// G15: a brain opened in multi-user mode records a high-water mark at once, so the records it was created
+    /// (or seeded) with stay below the floor of a later open behind the wall clock.
+    #[test]
+    fn a_multi_user_open_records_a_floor_before_any_write() {
+        let wall = Arc::new(Wall(AtomicI64::new(2_000_000_000_000_000)));
+        let kv = mem_kv();
+        let store = open(kv.clone(), &wall, true);
+        assert!(read_high_water(&*store.read().unwrap()).unwrap() >= 2_000_000_000_000_000);
+    }
+
     /// Off: the store keeps the wall clock as it is and writes no high-water mark.
     #[test]
     fn with_multi_user_mode_off_the_clock_and_the_records_are_untouched() {

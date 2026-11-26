@@ -101,6 +101,8 @@ export interface WaiterOnlyConsumerOpts {
   singleConsumer?: () => Promise<boolean>;
   ceilingMs?: () => Promise<number>;
   heartbeatEveryMs?: number;
+  /** The host registration lease's time to live (ms; default HOST_FENCE_TTL_MS): multi-user Rust only, a test seam. */
+  hostLeaseTtlMs?: number;
   pool?: () => ConsumerPool | null;
   log?: (line: string) => void;
 }
@@ -229,15 +231,27 @@ export class WaiterOnlyConsumer implements PersistenceConsumerLike {
     if (this.transition) return this.transition;
     this.transition = (async () => {
       if (this.stopping || this.inner) return;
+      // A multi-user Rust brain: this process is full only once it holds its host lease (the fence every claim carries);
+      // while another live process holds it, keep probing, never advertise full (host-registration.ts).
+      let registration: HostRegistrationHandle | undefined;
+      if (rustMultiuserEngine(this.engine)) {
+        registration = startHostRegistration(this.engine, { hostId: this.opts.hostId, everyMs: this.opts.heartbeatEveryMs, ttlMs: this.opts.hostLeaseTtlMs,
+          origin: { host_id: this.opts.hostId, incarnation: this.self.nonce, writer_id: `local_consumer:${this.opts.kind}` },
+          ...(reason.startsWith('forced:') ? { forcedNonce: this.self.nonce } : {}),
+          onLost: () => { void this.demote('host_lease_lost'); } });
+        if (!(await registration.first) || this.stopping) {
+          await registration.stop();
+          if (!this.stopping) { this.backoff(); this.schedule(this.delayMs); }
+          return;
+        }
+      }
       this._mode = mode;
       this.healthyOwnerTicks = 0;
       const inner = this.makeConsumer();
       this.inner = inner;
       this.heartbeat = startConsumerHeartbeat(this.engine, this.opts.hostId, { kind: this.opts.kind, mode: () => this._mode, everyMs: this.opts.heartbeatEveryMs, deadlineMs: this.opts.phaseMs, identity: this.self,
         report: () => ({ restart_required: inner.restartRequired(), root_barrier_age_ms: inner.oldestRootBarrierAgeMs(), pool: this.opts.pool?.() ?? null }) });
-      this.registration = startHostRegistration(this.engine, { hostId: this.opts.hostId, everyMs: this.opts.heartbeatEveryMs,
-        origin: { host_id: this.opts.hostId, incarnation: this.self.nonce, writer_id: `local_consumer:${this.opts.kind}` },
-        ...(reason.startsWith('forced:') ? { forcedNonce: this.self.nonce } : {}) });
+      this.registration = registration;
       inner.start();
       if (mode === 'full') { if (this.timer) clearTimeout(this.timer); this.timer = undefined; }
       if (reason !== 'no_live_owner' && reason !== 'single_consumer_off' && reason !== 'single_process_engine') this.log(`phase=consumer_probe reason=${mode} message="${reason}"`);
@@ -266,6 +280,20 @@ export class WaiterOnlyConsumer implements PersistenceConsumerLike {
       await this.registration?.stop();
       if (this.inner === inner) { this.inner = undefined; this.heartbeat = undefined; this.registration = undefined; this._mode = 'waiter_only'; this.owner = owner; this.healthyOwnerTicks = 0; }
     })().finally(() => { this.transition = undefined; });
+    return this.transition;
+  }
+  /** Multi-user Rust: the host lease was lost to another process; finish in-flight work, claim nothing new, probe again. */
+  private demote(reason: string): Promise<void> {
+    if (this.transition) return this.transition.then(() => this.demote(reason));
+    this.transition = (async () => {
+      const inner = this.inner;
+      if (!inner || this.stopping) return;
+      this.log(`phase=consumer_probe reason=${reason} message="another process holds this host's lease; finishing in-flight work, then probing"`);
+      await inner.stop();
+      await this.heartbeat?.stop();
+      await this.registration?.stop();
+      if (this.inner === inner) { this.inner = undefined; this.heartbeat = undefined; this.registration = undefined; this._mode = 'probing'; this.owner = null; this.healthyOwnerTicks = 0; }
+    })().finally(() => { this.transition = undefined; if (!this.stopping && this._mode === 'probing') this.schedule(0); });
     return this.transition;
   }
   /** B1d: a waiter-only (or probing) consumer becomes full now and never drains back. */

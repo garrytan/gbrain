@@ -194,9 +194,9 @@ export const refreshCycleLock: StoreMember<[lockId: string, opts: HolderOpts & {
 export const releaseCycleLock: StoreMember<[lockId: string, opts: HolderOpts], boolean> = (brain, lockId, opts) =>
   storeCall({ member: 'releaseCycleLock' }, () => brain.releaseCycleLock(lockId, opts));
 
-/** The same snapshot-matched DELETE as releaseCycleLock. */
+/** The snapshot-matched DELETE of an operator or a reaper: not the holder's release, so it needs no claim epoch. */
 export const deleteCycleLock: StoreMember<[lockId: string, opts: HolderOpts], boolean> = (brain, lockId, opts) =>
-  storeCall({ member: 'deleteCycleLock' }, () => brain.releaseCycleLock(lockId, opts));
+  storeCall({ member: 'deleteCycleLock' }, () => brain.deleteCycleLock(lockId, opts));
 
 export const deleteCycleLockIfStale: StoreMember<[lockId: string, opts: HolderOpts & { maxAgeSeconds: number }], { deleted: boolean; lastRefreshedAt: Date | null }> =
   async (brain, lockId, opts) => {

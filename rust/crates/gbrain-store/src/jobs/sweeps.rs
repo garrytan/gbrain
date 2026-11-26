@@ -168,9 +168,16 @@ impl Store {
     /// `handleTimeouts`: an `active`, leased row past its `timeout_at` goes `dead` (`timeout
     /// exceeded`); its live parent hears `child_done` and wakes. `remove_on_fail` does not apply.
     pub fn kill_timed_out_jobs(&self) -> Result<Vec<Value>> {
+        self.kill_timed_out_jobs_fenced(None)
+    }
+
+    /// `kill_timed_out_jobs` under the caller's host fence: the sweeping worker must hold its lease, and each job it
+    /// ends loses its claim epoch in the same write (`lease_lost` otherwise, nothing ended).
+    pub fn kill_timed_out_jobs_fenced(&self, fence: Option<&LeaseToken>) -> Result<Vec<Value>> {
         self.write(|tx| {
+            fence::begin(self, tx, fence, "kill_timed_out_jobs")?;
             let now = self.env.now_micros();
-            kill_where(tx, now, "timeout exceeded", |r| {
+            kill_where(self, tx, fence, now, "timeout exceeded", |r| {
                 r.timeout_at.is_some_and(|t| t < now) && r.lock_until.is_some_and(|l| l > now)
             })
         })
@@ -179,9 +186,19 @@ impl Store {
     /// `handleWallClockTimeouts`: an `active` row running longer than twice its `timeout_ms` (or
     /// twice its lease for `max_stalled` stalls) goes `dead` (`wall-clock timeout exceeded`).
     pub fn kill_wall_clock_jobs(&self, lock_duration_ms: f64) -> Result<Vec<Value>> {
+        self.kill_wall_clock_jobs_fenced(lock_duration_ms, None)
+    }
+
+    /// `kill_wall_clock_jobs` under the caller's host fence (see `kill_timed_out_jobs_fenced`).
+    pub fn kill_wall_clock_jobs_fenced(
+        &self,
+        lock_duration_ms: f64,
+        fence: Option<&LeaseToken>,
+    ) -> Result<Vec<Value>> {
         self.write(|tx| {
+            fence::begin(self, tx, fence, "kill_wall_clock_jobs")?;
             let now = self.env.now_micros();
-            kill_where(tx, now, "wall-clock timeout exceeded", |r| {
+            kill_where(self, tx, fence, now, "wall-clock timeout exceeded", |r| {
                 let Some(started) = r.started_at else {
                     return false;
                 };
@@ -245,7 +262,9 @@ impl Store {
 
 /// The shared `UPDATE ... SET status = 'dead'` of both timeout kills, then `killJobs`.
 fn kill_where(
+    store: &Store,
     tx: &mut dyn KvWrite,
+    fence: Option<&LeaseToken>,
     now: i64,
     error: &str,
     due: impl Fn(&JobRecord) -> bool,
@@ -264,6 +283,8 @@ fn kill_where(
         new.finished_at = Some(now);
         new.updated_at = now;
         save(tx, Some(&old), &new)?;
+        // The claim ends with the job: its epoch record goes in the same write.
+        fence::claim_ended(store, tx, CLAIM_JOB, &old.id.to_string(), fence)?;
         dead.push(new);
     }
     kill_tail(tx, &dead, "timeout", error, now)?;

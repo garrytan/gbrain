@@ -15,6 +15,7 @@ use super::{in_generation, manifest_rows, page_u64, read_body_state};
 use crate::chunks::{ChunkRecord, EmbedState, embedding_dimensions, read_chunks};
 use crate::kv::KvRead;
 use crate::pages::{PageRecord, read_page, read_page_by_id};
+use crate::persistence::InstallClaim;
 use crate::{Result, Store, StoreError, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -257,6 +258,19 @@ impl Store {
         model: Option<&str>,
         updates: &[SegmentedVectorInput],
     ) -> Result<i64> {
+        self.install_segmented_vectors_claimed(page_id, model, updates, None)
+    }
+
+    /// `install_segmented_vectors` for an effect's install. On a multi-user store, with a `claim`, the same write
+    /// first asserts the claim's host fence and effect epoch (`lease_lost`, nothing written, when either moved); a
+    /// plain store, and a call with no claim, install exactly as before.
+    pub fn install_segmented_vectors_claimed(
+        &self,
+        page_id: i64,
+        model: Option<&str>,
+        updates: &[SegmentedVectorInput],
+        claim: Option<&InstallClaim>,
+    ) -> Result<i64> {
         let Some(page) = page_u64(page_id) else {
             return Ok(0);
         };
@@ -265,6 +279,9 @@ impl Store {
         }
         let now_us = self.env.now_micros();
         self.write(|tx| {
+            if let Some(claim) = claim.filter(|_| self.multiuser()) {
+                self.assert_install_claim(tx, claim)?;
+            }
             if read_page_by_id(&*tx, page)?.is_none() {
                 return Ok(0);
             }
@@ -544,6 +561,197 @@ mod tests {
         let mut wide = update(1, "two", "h1", None);
         wide.vector = vec![1.0; 3];
         assert!(store.install_segmented_vectors(id, None, &[wide]).is_err());
+    }
+
+    // G2 (lane L5): an effect's vector install checks its host fence and effect claim in the install's own write.
+
+    use crate::SystemEnv;
+    use crate::error::LEASE_LOST;
+    use crate::leases::{LeaseToken, lost_reason};
+    use crate::persistence::{EffectClaim, EffectSettle, PublicationEffectsSpec, Settle};
+    use crate::write_origin::WriteOrigin;
+    use crate::{OpenOptions, StoreError};
+    use std::sync::Arc;
+
+    const KEYS: [&str; 2] = ["principal:local_cli:parity-writer", "brain"];
+    const REQUEST: &str = "b0000000-0000-4000-8000-0000000000b1";
+    const EFFECT_TOKEN: &str = "f0000000-0000-4000-8000-000000000001";
+
+    fn open(multiuser: bool) -> Store {
+        let options = OpenOptions {
+            multiuser,
+            ..OpenOptions::default()
+        };
+        Store::open_kv(crate::test_support::mem_kv(), Arc::new(SystemEnv), options).unwrap()
+    }
+
+    fn lease(store: &Store, name: &str, who: &str) -> LeaseToken {
+        let origin = WriteOrigin {
+            host_id: format!("{who}-host"),
+            incarnation: format!("{who}-incarnation"),
+            writer_id: "local_cli:test".into(),
+        };
+        store
+            .acquire_lease(name, &origin, 3_600_000)
+            .unwrap()
+            .expect("the lease is free")
+    }
+
+    /// One embedding effect, claimed under `fence` (or none on a plain store): its id as the claim carries it.
+    fn claimed_effect(store: &Store, fence: Option<&LeaseToken>) -> String {
+        let membership = store.read_source_membership("default").unwrap().unwrap();
+        let insert = serde_json::from_value(json!({
+            "principalKind": "local_cli", "principalId": "parity-writer", "requestId": REQUEST,
+            "operation": "put_page", "sourceId": "default", "sourceIncarnation": membership["incarnation"],
+            "pageId": null, "slug": "notes/a", "worktreeId": null, "topologyGeneration": null,
+            "digest": "digest", "intent": {}, "authority": {}, "intentBytes": 10,
+            "terminalReservation": 4096, "targetKind": "page", "protocolVersion": 1,
+            "admitterVersion": "v-test", "admitterHostId": null, "counterKeys": KEYS,
+            "clientRequestId": null, "state": "queued", "deferredRefreshId": null,
+        }))
+        .unwrap();
+        store
+            .lock_persistence_counters(&KEYS.map(String::from))
+            .unwrap();
+        let request = store.insert_write_request(&insert).unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let spec: PublicationEffectsSpec = serde_json::from_value(json!({
+            "requestId": request, "revision": "e0000000-0000-4000-8000-0000000000e1",
+            "sourceId": "default", "sourceIncarnation": membership["incarnation"],
+            "worktreeId": null,
+            "effects": [{ "kind": "embedding", "data": { "slug": "notes/a", "page_id": 1 } }],
+        }))
+        .unwrap();
+        store.insert_publication_effects(&spec).unwrap();
+        let id = store
+            .select_claimable_effect("d0000000-0000-4000-8000-0000000000d1", &[])
+            .unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let claim: EffectClaim = serde_json::from_value(json!({
+            "id": id, "token": EFFECT_TOKEN, "ownerJson": "{}", "fence": fence,
+        }))
+        .unwrap();
+        store.stamp_effect_claim(&claim).unwrap().unwrap();
+        id
+    }
+
+    fn install_claim(effect: &str, fence: Option<&LeaseToken>) -> InstallClaim {
+        serde_json::from_value(json!({ "effectId": effect, "token": EFFECT_TOKEN, "fence": fence }))
+            .unwrap()
+    }
+
+    fn refused(error: &StoreError, reason: &str) {
+        assert_eq!(error.code, LEASE_LOST, "{error}");
+        assert_eq!(lost_reason(error).as_deref(), Some(reason), "{error}");
+    }
+
+    fn install_claimed(store: &Store, id: i64, claim: &InstallClaim) -> Result<i64> {
+        store.install_segmented_vectors_claimed(
+            id,
+            Some("m2"),
+            &[update(0, "one", "h0", None)],
+            Some(claim),
+        )
+    }
+
+    #[test]
+    fn g2_an_install_under_the_claim_it_was_made_under_takes_its_vector() {
+        let store = open(true);
+        let id = sealed_page(&store);
+        let a = lease(&store, "consumer:h", "a");
+        let effect = claimed_effect(&store, Some(&a));
+        assert_eq!(
+            install_claimed(&store, id, &install_claim(&effect, Some(&a))).unwrap(),
+            1
+        );
+        assert_eq!(store.count_segmented_embed_rows(id).unwrap().stale, 1);
+    }
+
+    #[test]
+    fn g2_an_unfenced_claim_and_install_on_a_multi_user_store_take_an_implicit_lease_and_install() {
+        let store = open(true);
+        let id = sealed_page(&store);
+        let effect = claimed_effect(&store, None);
+        assert_eq!(
+            install_claimed(&store, id, &install_claim(&effect, None)).unwrap(),
+            1
+        );
+        assert_eq!(store.count_segmented_embed_rows(id).unwrap().stale, 1);
+    }
+
+    #[test]
+    fn g2_a_worker_whose_host_lease_was_taken_over_during_its_provider_call_installs_nothing() {
+        let store = open(true);
+        let id = sealed_page(&store);
+        let a = lease(&store, "consumer:h", "a");
+        let effect = claimed_effect(&store, Some(&a));
+        // The provider call is slow; host A's lease is released and taken again (epoch 2) by host B. The effect's
+        // execution token is untouched, so only the host fence and the claim epoch can tell the install apart.
+        store.release_lease(&a).unwrap();
+        let new = lease(&store, "consumer:h", "b");
+        refused(
+            &install_claimed(&store, id, &install_claim(&effect, Some(&a))).unwrap_err(),
+            "epoch_moved",
+        );
+        refused(
+            &install_claimed(&store, id, &install_claim(&effect, Some(&new))).unwrap_err(),
+            "claim_epoch_mismatch",
+        );
+        // No fence: the claim is owned by host A's lease, which was released and taken again by host B (live), so an
+        // unfenced install is held off; nothing is refused for lacking a fence as such.
+        refused(
+            &install_claimed(&store, id, &install_claim(&effect, None)).unwrap_err(),
+            "held_by_another",
+        );
+        assert_eq!(
+            store.count_segmented_embed_rows(id).unwrap().stale,
+            2,
+            "no vector was installed"
+        );
+    }
+
+    #[test]
+    fn g2_an_install_after_the_effect_claim_ended_installs_nothing() {
+        let store = open(true);
+        let id = sealed_page(&store);
+        let a = lease(&store, "consumer:h", "a");
+        let effect = claimed_effect(&store, Some(&a));
+        let settle: EffectSettle = serde_json::from_value(json!({
+            "id": effect, "token": EFFECT_TOKEN, "outcomeJson": "{}", "fence": a,
+        }))
+        .unwrap();
+        assert!(store.settle_effect(Settle::Complete, &settle).unwrap());
+        refused(
+            &install_claimed(&store, id, &install_claim(&effect, Some(&a))).unwrap_err(),
+            "claim_epoch_mismatch",
+        );
+        assert_eq!(store.count_segmented_embed_rows(id).unwrap().stale, 2);
+    }
+
+    #[test]
+    fn g2_with_the_mode_off_the_claim_is_ignored_and_the_install_is_what_it_was() {
+        let store = open(false);
+        let id = sealed_page(&store);
+        let effect = claimed_effect(&store, None);
+        let claim = install_claim(&effect, None);
+        assert_eq!(install_claimed(&store, id, &claim).unwrap(), 1);
+        // Even a claim of an effect that does not exist changes nothing on a plain store.
+        let missing = install_claim("999", None);
+        assert_eq!(
+            store
+                .install_segmented_vectors_claimed(
+                    id,
+                    Some("m2"),
+                    &[update(1, "two", "h1", None)],
+                    Some(&missing)
+                )
+                .unwrap(),
+            1
+        );
     }
 
     #[test]

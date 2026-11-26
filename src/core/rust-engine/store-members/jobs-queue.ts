@@ -55,11 +55,15 @@ export const detachChildJob: StoreMember<[childId: number], void> = async (brain
   await call('detachChildJob', () => brain.detachChildJob(childId));
 };
 
-export const updateJobProgress: StoreMember<[id: number, lockToken: string, progress: unknown], boolean> = (brain, id, lockToken, progress) =>
-  call('updateJobProgress', () => brain.updateJobProgress(id, lockToken, progress ?? null));
+export const updateJobProgress: StoreMember<[id: number, lockToken: string, progress: unknown, opts?: FenceOpts], boolean> = (brain, id, lockToken, progress, opts) =>
+  call('updateJobProgress', () => opts?.fence
+    ? brain.updateJobProgress(id, lockToken, progress ?? null, opts.fence)
+    : brain.updateJobProgress(id, lockToken, progress ?? null));
 
-export const addJobTokens: StoreMember<[id: number, lockToken: string, tokens: JobTokenCounts], boolean> = (brain, id, lockToken, tokens) =>
-  call('addJobTokens', () => brain.addJobTokens(id, lockToken, tokens));
+export const addJobTokens: StoreMember<[id: number, lockToken: string, tokens: JobTokenCounts, opts?: FenceOpts], boolean> = (brain, id, lockToken, tokens, opts) =>
+  call('addJobTokens', () => opts?.fence
+    ? brain.addJobTokens(id, lockToken, tokens, opts.fence)
+    : brain.addJobTokens(id, lockToken, tokens));
 
 /** The store's write is not interrupted, as a write already sent to the database is not; a signal is ignored. */
 export const delayActiveJob: StoreMember<[id: number, lockToken: string, spec: DelayActiveJobSpec, opts?: { signal?: AbortSignal } & FenceOpts], JobRow | null> =
@@ -96,10 +100,11 @@ export const promoteDelayedJobs: StoreMember<[], JobRow[]> = async (brain) => jo
 export const cancelJobs: StoreMember<[ids: readonly number[], spec?: CancelJobsSpec], JobRow[]> = async (brain, ids, spec) =>
   jobRows(await call('cancelJobs', () => brain.cancelJobs([...ids], spec ?? null)));
 
-export const killTimedOutJobs: StoreMember<[], JobRow[]> = async (brain) => jobRows(await call('killTimedOutJobs', () => brain.killTimedOutJobs()));
+export const killTimedOutJobs: StoreMember<[opts?: FenceOpts], JobRow[]> = async (brain, opts) =>
+  jobRows(await call('killTimedOutJobs', () => opts?.fence ? brain.killTimedOutJobs(opts.fence) : brain.killTimedOutJobs()));
 
-export const killWallClockJobs: StoreMember<[lockDurationMs: number], JobRow[]> = async (brain, lockDurationMs) =>
-  jobRows(await call('killWallClockJobs', () => brain.killWallClockJobs(lockDurationMs)));
+export const killWallClockJobs: StoreMember<[lockDurationMs: number, opts?: FenceOpts], JobRow[]> = async (brain, lockDurationMs, opts) =>
+  jobRows(await call('killWallClockJobs', () => opts?.fence ? brain.killWallClockJobs(lockDurationMs, opts.fence) : brain.killWallClockJobs(lockDurationMs)));
 
 /**
  * A pruned completed dream synthesis child's key goes into the store's `dream_synthesis_completions` archive in the
@@ -151,8 +156,8 @@ export const lockOAuthClient: StoreMember<[clientId: string], void> = async (bra
 export const postInboxMessage: StoreMember<[jobId: number, sender: string, payload: unknown], JobRow> = async (brain, jobId, sender, payload) =>
   withDates(await call('postInboxMessage', () => brain.postInboxMessage(jobId, sender, payload ?? null)) as JobRow, INBOX_DATES);
 
-export const readJobInbox: StoreMember<[jobId: number, lockToken: string], JobRow[]> = async (brain, jobId, lockToken) =>
-  (await call('readJobInbox', () => brain.readJobInbox(jobId, lockToken)) as JobRow[]).map(r => withDates(r, INBOX_DATES));
+export const readJobInbox: StoreMember<[jobId: number, lockToken: string, opts?: FenceOpts], JobRow[]> = async (brain, jobId, lockToken, opts) =>
+  (await call('readJobInbox', () => opts?.fence ? brain.readJobInbox(jobId, lockToken, opts.fence) : brain.readJobInbox(jobId, lockToken)) as JobRow[]).map(r => withDates(r, INBOX_DATES));
 
 export const readChildCompletions: StoreMember<[parentId: number, lockToken: string, since?: Date | null], unknown[]> = (brain, parentId, lockToken, since) =>
   call('readChildCompletions', () => brain.readChildCompletions(parentId, lockToken, since ? since.toISOString() : null));

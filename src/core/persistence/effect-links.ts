@@ -10,6 +10,7 @@ import { PROTECTED_PAIRS, sanitizeRemoteBody } from '../remote-body.ts';
 import { confirmBodyPin, openSegmentedBody, readBodyRange, type BodyAudience } from '../page-body/read-range.ts';
 import { authorizeStoredRequest } from './authority.ts';
 import { completeEffect } from './effect-journal.ts';
+import { effectInstallClaim } from './host-fence.ts';
 import { REMOTE_AUTO_LINKS_KEY, REMOTE_MENTION_LINK_SOURCE, type AppendedRange, type PersistenceEffect } from './effect-model.ts';
 import { guardEffectSource } from './effect-recovery.ts';
 import type { WriteAuthority, WriteRequest } from './model.ts';
@@ -232,7 +233,7 @@ async function lockedPage(tx: BrainEngine, effect: PersistenceEffect, row: Write
     throw error;
   }
   await tx.lockPageKeys([{ sourceId, slug: snapshot.page.slug }, ...[...targets.keys()].map(slug => ({ sourceId, slug }))]);
-  const current = await tx.lockEffectClaimRow(effect.id);
+  const current = await tx.lockEffectClaimRow(effect.id, effectInstallClaim(tx, effect));
   if (!current || current.state !== 'running' || current.execution_token !== effect.execution_token) return null;
   const live = await tx.readPageSnapshot(snapshot.page.slug, { sourceId });
   if (!live || live.page.id !== snapshot.page.id) { await skip('superseded'); return null; }

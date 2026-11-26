@@ -412,7 +412,8 @@ mod tests {
         // - `test_support.rs`'s `FaultyKv`, which wraps a record store in tests to make a write
         //   transaction fail like a disk and passes every call on (4 calls and definitions);
         // - `leases_tests.rs`, a whole file under `#[cfg(test)]` whose read-set test opens raw write transactions on the
-        //   concurrent store to show a lease read is checked again at commit (3 calls).
+        //   concurrent store to show a lease read is checked again at commit (3 calls);
+        // - `lib.rs`'s multi-user open, which records the clock floor once in its own write (no page record);
         // - `kv.rs`'s `Unserialized`, which wraps a record store to withhold
         //   `serialized_transactions` and passes every call on (6 calls and definitions beside the
         //   trait's 5).

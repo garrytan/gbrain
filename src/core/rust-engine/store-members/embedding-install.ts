@@ -11,7 +11,7 @@
  * What each member answers and why: rust/docs/store/embeddings.md ("Embedding install").
  */
 import type { ResolvedColumn } from '../../types.ts';
-import type { EmbeddingCompletionOpts, EmbeddingCompletionRow } from '../../engine-sql/embedding-install.ts';
+import type { EffectInstallClaim, EmbeddingCompletionOpts, EmbeddingCompletionRow } from '../../engine-sql/embedding-install.ts';
 import { assertStoreSerializedTransactions, refuseMember, storeCall, type StoreMember } from './common.ts';
 
 /** The page's visible chunks and which already carry a vector from their current text under the model. */
@@ -23,8 +23,9 @@ export const readEmbeddingCompletion: StoreMember<[pageId: number, opts: Embeddi
   };
 
 /** The effect's state and execution token, or null when no effect has the id. */
-export const lockEffectClaimRow: StoreMember<[effectId: number | string], { state: string; execution_token: string | null } | null> =
-  (brain, effectId) => storeCall({ member: 'lockEffectClaimRow' }, () => brain.lockEffectClaimRow(Number(effectId))) as
+export const lockEffectClaimRow: StoreMember<[effectId: number | string, claim?: EffectInstallClaim], { state: string; execution_token: string | null } | null> =
+  (brain, effectId, claim) => storeCall({ member: 'lockEffectClaimRow' }, () => brain.lockEffectClaimRow(Number(effectId),
+    claim ? { effectId: String(effectId), token: claim.token, ...(claim.fence ? { fence: claim.fence } : {}) } : undefined)) as
     Promise<{ state: string; execution_token: string | null } | null>;
 
 /** The FOR SHARE is skipped while explicit transactions hold the writer (`serialized_transactions`); it asserts that. */
