@@ -79,7 +79,7 @@ export function failure(requestId: string, code: SocketErrorCode, message: strin
   return { v: GOOGLE_SOCKET_VERSION, ok: false, code, message, request_id: requestId, recovery, actor, docs: DOCS_ANCHOR, ...extra };
 }
 
-export interface MintRequest { op: 'mint'; account: string; profile: string; caller: string }
+export interface MintRequest { op: 'mint'; account: string; profile: string; caller: string; fresh?: boolean }
 export interface OwnerVerdict { choice: 'ALLOW_ONCE'; for_request: string }
 export interface CallRequest {
   op: 'call'; account: string; server: GoogleServer; tool: string; args: Record<string, unknown>;
@@ -113,7 +113,7 @@ export function parseRequest(raw: unknown): SocketRequest {
     throw new SocketError('unsupported_version', `this socket speaks protocol v${GOOGLE_SOCKET_VERSION}; got v${JSON.stringify(raw.v ?? null)}`, { supported: [GOOGLE_SOCKET_VERSION] });
   }
   switch (raw.op) {
-    case 'mint': return { op: 'mint', account: str(raw, 'account').toLowerCase(), profile: str(raw, 'profile', 16), caller: str(raw, 'caller', 64) };
+    case 'mint': return { op: 'mint', account: str(raw, 'account').toLowerCase(), profile: str(raw, 'profile', 16), caller: str(raw, 'caller', 64), ...(raw.fresh === true ? { fresh: true } : {}) };
     case 'call': {
       if (!isObj(raw.args)) throw new SocketError('malformed_request', '"args" must be an object');
       let verdict: OwnerVerdict | undefined;
