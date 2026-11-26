@@ -79,8 +79,10 @@ What a record holds:
 
 - Optimistic store: the transaction's own buffered writes, exactly (`put`, `delete`, `add_i64`, `raise_counter`).
   A follower applies records in `(sequence, index)` order, which is the order the pipeline resolved them.
-- Single-writer store: the final value or delete of each key the commit wrote (its counter helpers already write
-  puts there).
+- Single-writer store: the final value or delete of each key the commit wrote; an id sequence the commit only raised
+  is logged as `raise_counter` (replayed as a max).
+- A rolled-back or dropped explicit transaction leaves no data in the log: its writes are dropped uncommitted, and
+  the commit that carries its id sequences forward holds `raise_counter` ops and nothing else.
 - Origin: the open's host id and incarnation (a UUID v7 per open), and the writer `<principal_kind>:<principal_id>`
   from the write trust context or the first journal request the write admitted; empty when unknown. Write ids: the
   persistence request ids the write admitted or ran for. Inside an explicit transaction they belong to the statement

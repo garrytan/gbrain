@@ -387,12 +387,14 @@ mod tests {
         //   brain store has that file open, so no store write handle exists to flag),
         //   `fjall_kv.rs`, and
         //   `occ_kv.rs` (its trait methods and the commit onto the base store);
-        // - `lib.rs`: the brain-create write, the two arms of `Store::write`'s unbound loop, and
+        // - `lib.rs`: the brain-create write, the two arms of `Store::write`'s unbound loop, the
+        //   commit log's activation (the format record and the log's meta record only), and
         //   the format upgrade (no page records; the format-5 carry-over in `seed/format_5.rs` writes
         //   purge tombstones, generations and oauth clients on it);
         // - `transactions.rs`: a transaction's exclusive base handle (its statements run through
         //   the bound arm of `Store::write`); a rollback writes its counters forward on that same
-        //   handle, so it opens no second one;
+        //   handle, except with the commit log on, where it drops that handle and raises its id
+        //   sequences on a second one (counter keys only, no page record);
         // - this module's open-time scan, the keyword index
         //   repair (`keyword/index_build.rs`, postings only) and the open-time repair of the
         //   derivation sweep records' source index (`page_body/purge_record.rs`, index keys only);
@@ -423,7 +425,7 @@ mod tests {
             ("redb_kv.rs", 7),
             ("seed/v0_60_766_tests.rs", 1),
             ("test_support.rs", 4),
-            ("transactions.rs", 1),
+            ("transactions.rs", 2),
         ];
         let opens = |c: &str| {
             [

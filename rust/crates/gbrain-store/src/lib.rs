@@ -435,15 +435,6 @@ impl Store {
                 }
             }
         }
-        // Multi-user mode from the brain's own config row picks the concurrent store at open; read without opening the
-        // file for writing. A file redb must repair first reads as off here; the open below still reads the row.
-        let config_on = multiuser_config_on(
-            redb_kv::peek(
-                &dir.join(format::RECORDS_FILE),
-                &config::config_key(MULTIUSER_CONFIG_KEY)?,
-            )
-            .as_deref(),
-        );
         let concurrent = options.concurrent_writes || options.multiuser || config_on;
         let kv = open_records(dir, concurrent)?;
         let mut store = Store::open_kv_in(
@@ -546,6 +537,14 @@ impl Store {
                     .as_deref()
                     .map(str::as_bytes),
             );
+        // Multi-user mode: the store's clock never runs below the newest durable commit time (`M\0ctime`, I-4.v2.1;
+        // `clock_floor.rs`), the commit clock and the write origin included: one floor, read here at open.
+        let env: Arc<dyn Env> = if multiuser_on {
+            let floor = kv.last_commit_time()?.unwrap_or(0);
+            Arc::new(clock_floor::ClockFloor::new(env, floor))
+        } else {
+            env
+        };
         let off = MultiUserWrites::default();
         let multiuser = if multiuser_on {
             &options.multiuser_writes
@@ -683,19 +682,11 @@ impl Store {
         let schema_version = config::read_config(&*kv.snapshot()?, "version")?
             .and_then(|v| v.parse().ok())
             .unwrap_or(0);
-        // Multi-user mode: the store's clock never runs below the newest durable commit time (`M\0ctime`,
-        // I-4.v2.1; `clock_floor.rs`). A brain with no commit time yet (just created or just turned on) commits one
-        // now, so the records it was seeded with stay below the floor of every later open; a read-only open writes
-        // nothing.
-        let env: Arc<dyn Env> = if multiuser_on {
-            if !read_only && kv.last_commit_time()?.is_none() {
-                kv.begin_write()?.commit()?;
-            }
-            let floor = kv.last_commit_time()?.unwrap_or(0);
-            Arc::new(clock_floor::ClockFloor::new(env, floor))
-        } else {
-            env
-        };
+        // A multi-user brain with no commit time yet (just created or just turned on) commits one now, so the records it
+        // was seeded with stay below the floor of every later open; a read-only open writes nothing.
+        if multiuser_on && !read_only && kv.last_commit_time()?.is_none() {
+            kv.begin_write()?.commit()?;
+        }
         let commit_log_on = kv.commit_log_enabled();
         Ok(Store {
             kv,

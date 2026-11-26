@@ -758,6 +758,14 @@ fn check_log_replay(kv: &dyn Kv, baseline: &(Model, CommitPosition)) -> Result<(
                 commit_log::LogOp::Delete => {
                     model.remove(key);
                 }
+                commit_log::LogOp::RaiseCounter(m) => {
+                    let base = model
+                        .get(key)
+                        .and_then(|b| <[u8; 8]>::try_from(b.as_slice()).ok())
+                        .map(u64::from_be_bytes)
+                        .unwrap_or(0);
+                    model.insert(key.clone(), base.max(*m).to_be_bytes().to_vec());
+                }
                 other => return Err(format!("the single-writer store logged {other:?}")),
             }
         }
