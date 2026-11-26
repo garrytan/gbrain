@@ -10,7 +10,7 @@ import type * as BriefReadsSql from '../engine-sql/brief-reads.ts';
 import type * as ConceptRebuildSql from '../engine-sql/concept-rebuild.ts';
 import type * as EmbeddingCatalogSql from '../engine-sql/embedding-catalog.ts';
 import type * as ChronicleReadsSql from '../engine-sql/chronicle-reads.ts';
-import type { EntityAnchoredPages, EntityCardMatch, EntityCardRow, ExtractionLagCounts, ExtractionLagQuery, FuzzyEntityCandidateRow, IgnoredLabelPageRow, InboundLinkerCountRow, LivePageTypeRow, MentionDueQuery, MentionIndexRecount, MentionIndexStatusRow, NameVariantCandidateQuery, NameVariantCandidateRow, PrefixCandidateQuery, PrefixCandidateRow, PrefixTitleRow, ResolverPrivacy, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow, SlugPatternPageRow, TextMentionPageRow, TrigramCandidateQuery, TrigramCandidateRow } from '../engine-sql/entity-reads.ts';
+import type { EntityAnchoredPages, EntityCardMatch, EntityCardRow, ExtractionLagCounts, ExtractionLagQuery, FuzzyEntityCandidateRow, IgnoredLabelPageRow, InboundLinkerCountRow, LivePageTypeRow, MentionDueQuery, MentionIndexRecount, MentionIndexStatusRow, NameVariantCandidateQuery, NameVariantCandidateRow, PrefixCandidateQuery, PrefixCandidateRow, PrefixTitleRow, ResolverPrivacy, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow, SlugPatternPageRow, TextMentionPageRow, TrigramCandidateQuery, TrigramCandidateRow, VariantPageRow, NameVariantCardCandidateRow } from '../engine-sql/entity-reads.ts';
 import type { ExactBatchRow, ExactScanOpts } from '../search/exact-scan.ts';
 import type { ExactIdentityRow, ExactIdentityStatementOpts } from '../engine-sql/exact-identity.ts';
 import type { ExactRescanChunkRow, ExactSnippetChunkRow, ExactSnippetKey, ExtractionPendingRow, FenceOverlayIncomingRow, FenceOverlayRow, FenceRowKey, FenceRowTrust, HeldFenceCellKey, HeldFenceCellRow, LongPageSizeRow, PageTypeProbe, RankCoverageRow, UnattributedFactRow, WantedPageRow } from '../engine-sql/cli-reads-ops.ts';
@@ -180,6 +180,11 @@ export interface ReadStatementMembers {
   /** Person-duplicate reads (engine-sql/entity-reads.ts): unretired pages by slug pattern, name-variant candidates, distinct inbound linkers (a page's retirement is readRetirementHop with 'none'). */
   listUnretiredPagesBySlugPattern(sourceId: string, patterns: readonly string[], limit: number): Promise<SlugPatternPageRow[]>;
   listNameVariantCandidates(sourceId: string, q: NameVariantCandidateQuery): Promise<NameVariantCandidateRow[]>;
+  /** Name-variant reads under the caller's page policy (`excludePrivate`): the candidates, and the live pages at a slug list in list order. */
+  listVisibleNameVariantCandidates(sourceId: string, q: NameVariantCandidateQuery, opts?: { excludePrivate?: boolean }): Promise<NameVariantCandidateRow[]>;
+  readVisibleVariantPages(sourceId: string, slugs: readonly string[], opts?: { excludePrivate?: boolean }): Promise<VariantPageRow[]>;
+  /** listVisibleNameVariantCandidates as entity-card rows with their probe hits (the entity card's name-variant arm). */
+  listNameVariantCardCandidates(sourceId: string, q: NameVariantCandidateQuery, opts?: { excludePrivate?: boolean }): Promise<NameVariantCardCandidateRow[]>;
   countDistinctInboundLinkers(sourceIds: readonly string[], slugs: readonly string[]): Promise<InboundLinkerCountRow[]>;
   /** The link-extraction lag row (`extractionLagStatement`) under a `timeoutMs` bound (default 10 s; PGLite ignores it). */
   readExtractionLagCounts(q: ExtractionLagQuery): Promise<ExtractionLagCounts | undefined>;

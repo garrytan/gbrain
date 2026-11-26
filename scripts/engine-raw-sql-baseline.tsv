@@ -615,7 +615,6 @@ src/core/vector-index.ts	execute_raw	9
 src/core/vector-prewarm.ts	execute_raw	4
 src/core/verbs/entity-references.ts	execute_raw	1
 src/core/verbs/entity-source.ts	execute_raw	1
-src/core/verbs/entity-variants.ts	execute_raw	4
 src/core/write-gate-recheck.ts	execute_raw	10	the maintenance sweep of held writes a purge kept for another page: the notes-table and row-security preflights, one bounded read of notes, and per held write the row_security=off setting, a locked read, the reached-slugs read, a page-and-rename lookup and the deletes of the hold, its receipts and its notes; raw SQL like the other hold sweeps (write-gate-binding.ts, purge-slug-stores.ts) until holds have a typed engine method (on the Rust engine it reports skipped, engine_capability_missing)
 src/core/write-gate-scan.ts	execute_raw	2
 src/core/write-through.ts	execute_raw	1

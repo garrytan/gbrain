@@ -1613,9 +1613,7 @@ src/core/verbs/entity-names.ts#lookupOne	promise_catch_empty	1
 src/core/verbs/entity-references.ts#readRowReferences	promise_catch_empty	1
 src/core/verbs/entity-text-mentions.ts#probe	promise_catch_empty	1
 src/core/verbs/entity-variants.ts#nameVariantsEnabled	promise_catch_empty	1
-src/core/verbs/entity-variants.ts#readPossibleDuplicates	capability_refusal_swallowed	1
 src/core/verbs/entity-variants.ts#readPossibleDuplicates	catch_empty	1
-src/core/verbs/entity-variants.ts#resolveNameVariant	capability_refusal_swallowed	2
 src/core/verbs/usage-log.ts#readVerbUsage	catch_empty	1
 src/core/wanted-links.ts#isRemoteWantedPagesEnabled	promise_catch_empty	1
 src/core/wanted-links.ts#isWantedPagesEnabled	promise_catch_empty	1
