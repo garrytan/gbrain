@@ -62,6 +62,7 @@ pub mod shared_skill_publication;
 pub mod slug_spellings;
 pub mod snapshot;
 pub mod sources;
+pub mod takeover;
 #[cfg(test)]
 mod test_support;
 pub mod timeline;

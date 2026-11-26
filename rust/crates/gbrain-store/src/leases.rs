@@ -211,6 +211,11 @@ pub fn uuid_v7(env: &dyn Env) -> String {
     )
 }
 
+/// The stored lease record named `name` (with its token), read from `read`; for a replica that must not open a store.
+pub fn read_lease_record(read: &dyn KvRead, name: &str) -> Result<Option<LeaseRecord>> {
+    load(read, name)
+}
+
 fn load(read: &dyn KvRead, name: &str) -> Result<Option<LeaseRecord>> {
     get_json(read, &lease_key(name))
 }
