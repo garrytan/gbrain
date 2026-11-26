@@ -12,7 +12,7 @@ local writer registration it already keeps; it adds no keys.
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
 | `brain.readPageHiddenFromCaller(sourceId, slug, policy)` | `true` when the page row of the source (live or soft-deleted) fails `policy`; `false` for a missing page | `readPageHiddenFromCaller` |
-| `brain.readWriteVisibilityProbe(sourceId, slug, policy)` | `{ any_labelled, identity_may_open, owner_only_source, owner_only_any }`. `any_labelled` is currently hardcoded `false`, although `setAccessMemberLabelledOnly` can mark a member labelled-only. `identity_may_open` is `null` when the page row (live or soft-deleted) is missing or passes `policy`, else whether it names readers (`readable_by`) or a folder rule of its source is stamped on it. `owner_only_source` is whether this source has `config ->> 'kind'` `imessage` or `config ->> 'owner_only'` `true`. `owner_only_any` is whether any source is owner-only or any owner-only mark was ever set (once one is, it stays on) | `readWriteVisibilityProbe` |
+| `brain.readWriteVisibilityProbe(sourceId, slug, policy)` | `{ any_labelled, identity_may_open, owner_only_source, owner_only_any }`. `any_labelled` is whether any `access_members` row holds the labelled-only grant (`EXISTS (SELECT 1 FROM access_members WHERE labelled_only)`): a disabled or removed member still counts, and the owner is not excluded here (the later writer check excludes it). `identity_may_open` is `null` when the page row (live or soft-deleted) is missing or passes `policy`, else whether it names readers (`readable_by`) or a folder rule of its source is stamped on it. `owner_only_source` is whether this source has `config ->> 'kind'` `imessage` or `config ->> 'owner_only'` `true`. `owner_only_any` is whether any source is owner-only or any owner-only mark was ever set (once one is, it stays on) | `readWriteVisibilityProbe` |
 | `brain.readPagePrivacyHidden(sourceId, slug, honorAliases)` | `true` when the live page fails the privacy part alone (`privacyPartSql`: its own fields, derived origin and declared lineage, judged by `privacy_allows`), `false` when it passes, `null` when it has no live row (missing or soft-deleted). `honorAliases` is whether the privacy aliases count, as the rendered fragment says | `readPagePrivacyHidden` |
 | `brain.readCallerPageAccess(pages, policy)` | `[{ source_id, slug, readable }]`, one row per distinct `{ sourceId, slug }` of `pages` that names a page row, `readable` when the row is live and passes `policy`. Rows come in pair order; PGLite sets no order | `readCallerPageAccess` |
 | `brain.readPrivateOnlySlugs(slugs, sourceId, sourceIds, includeDeleted, policy)` | the distinct slugs of `slugs`, in byte order, that have at least one page row in the scope (live rows only unless `includeDeleted`) and whose every such row fails `policy` (`page_hidden`). The scope is the SQL's: a non-empty `sourceIds`, else a non-empty `sourceId`, else every source. PGLite answers in no set order; the caller makes a set of it | `readPrivateOnlySlugs` (private-visibility.ts `findPrivateOnlySlugs`, get_page's fuzzy candidates) |
@@ -69,8 +69,11 @@ member-access part alone (the page's readers, and the origin of a derived page):
 
 - **Callers the store does not render.** A caller whose access record adds folder rules, an audience, a lineage
   or a labelled-only grant renders a policy the store cannot judge. Both page members then refuse with
-  `engine_capability_missing` before any read.
-- **OAuth clients.** The store keeps OAuth clients ([oauth-clients.md](oauth-clients.md)), but `readWriterSlugFence`
-  does not read a client's fence yet, so for an `oauth_client` principal it refuses with `engine_capability_missing`.
+  `engine_capability_missing` before any read. A remote write's writer is the exception: `readLinkTargetPages` serves
+  the writer's one identity with the folder rules it satisfies and the labelled-only grant
+  ([remote-links.md](remote-links.md)), so a labelled-only member's rewrite of a page it is not named on ends on
+  `page_not_found`, as on PGLite and Postgres.
+- **OAuth clients.** For an `oauth_client` principal, `readWriterSlugFence` reads the stored client's
+  `bound_slug_prefixes` (its `delegated_slug_prefixes` for a delegated write), or returns `null` when the client is gone.
 - **Writer ids.** PGLite casts the writer id to `uuid` and fails on an id that is not one. The store looks the
   id up as given (lowercased) and returns `null` when no writer has it.

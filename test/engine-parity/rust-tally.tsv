@@ -20,7 +20,8 @@ test/engine-parity/attest-rights.test.ts	1	0
 test/engine-parity/attested-actor-link.test.ts	1	0
 test/engine-parity/backup-readiness-callers.test.ts	3	0
 test/engine-parity/belief-ledger.test.ts	13	0
-test/engine-parity/belief-purge-probes.test.ts	6	0
+test/engine-parity/belief-purge-ledger.test.ts	7	0
+test/engine-parity/belief-purge-probes.test.ts	8	0
 test/engine-parity/bench-save-repro.test.ts	2	1
 test/engine-parity/bound-write.test.ts	1	2
 test/engine-parity/brief-reads.test.ts	6	0
@@ -76,7 +77,7 @@ test/engine-parity/cycle-reads.test.ts	3	0
 test/engine-parity/decide-proposals.test.ts	8	0
 test/engine-parity/decide-store.test.ts	44	0
 test/engine-parity/delegated-grant.test.ts	2	0
-test/engine-parity/delete-page.test.ts	4	1
+test/engine-parity/delete-page.test.ts	5	0
 test/engine-parity/derivation-inputs.test.ts	5	0
 test/engine-parity/derivation-purge-record.test.ts	5	0
 test/engine-parity/derivation-sweep.test.ts	4	0
@@ -122,11 +123,12 @@ test/engine-parity/fact-insert-guard.test.ts	2	0
 test/engine-parity/fact-page-delete.test.ts	2	0
 test/engine-parity/fact-pool-widening.test.ts	2	0
 test/engine-parity/fact-provenance.test.ts	2	0
-test/engine-parity/fact-purge-commit.test.ts	1	1
+test/engine-parity/fact-purge-commit.test.ts	2	0
 test/engine-parity/fact-purge-inventory-probes.test.ts	5	0
 test/engine-parity/fact-purge-ledger.test.ts	3	0
 test/engine-parity/fact-purge-members.test.ts	14	1
-test/engine-parity/fact-purge-probes.test.ts	3	1
+test/engine-parity/fact-purge-probes.test.ts	4	0
+test/engine-parity/fact-purge-receipt-e2e.test.ts	2	0
 test/engine-parity/fact-purge-sites.test.ts	14	6
 test/engine-parity/fact-recall-pool-widening.test.ts	2	0
 test/engine-parity/fact-relink-attempts.test.ts	3	0
@@ -138,7 +140,7 @@ test/engine-parity/facts-conversation-sites.test.ts	21	1
 test/engine-parity/facts-cycle-sites.test.ts	16	0
 test/engine-parity/facts-cycle.test.ts	15	0
 test/engine-parity/facts-doctor.test.ts	17	0
-test/engine-parity/facts-purge-sites.test.ts	27	3
+test/engine-parity/facts-purge-sites.test.ts	30	0
 test/engine-parity/facts-purge.test.ts	29	0
 test/engine-parity/facts-quoted.test.ts	5	0
 test/engine-parity/facts-repair-sites.test.ts	19	1
@@ -201,6 +203,7 @@ test/engine-parity/journal-typed-sites.test.ts	6	1
 test/engine-parity/keyword-visibility.test.ts	7	0
 test/engine-parity/label-guard-tiers.test.ts	2	0
 test/engine-parity/labelled-only-for.test.ts	1	0
+test/engine-parity/labelled-only-policy.test.ts	17	0
 test/engine-parity/large-page.test.ts	3	0
 test/engine-parity/legacy-slug-spellings-doctor.test.ts	2	0
 test/engine-parity/lifecycle.test.ts	10	1
@@ -251,7 +254,7 @@ test/engine-parity/page-purge-reads.test.ts	10	0
 test/engine-parity/page-purge-scrubs.test.ts	4	0
 test/engine-parity/page-purge-stores.test.ts	3	0
 test/engine-parity/page-purge-sweep.test.ts	8	0
-test/engine-parity/page-purge.test.ts	0	1
+test/engine-parity/page-purge.test.ts	1	0
 test/engine-parity/page-purges.test.ts	1	0
 test/engine-parity/page-read-options.test.ts	3	0
 test/engine-parity/page-repair-writes.test.ts	5	0
@@ -282,7 +285,7 @@ test/engine-parity/purge-gazetteer.test.ts	2	0
 test/engine-parity/purge-plan.test.ts	13	0
 test/engine-parity/purge-receipt-members.test.ts	3	0
 test/engine-parity/purge-slug-stores.test.ts	0	2
-test/engine-parity/purge-verify.test.ts	2	1
+test/engine-parity/purge-verify.test.ts	3	0
 test/engine-parity/purge-writes.test.ts	5	0
 test/engine-parity/put-page-missing-link.test.ts	2	0
 test/engine-parity/put-source-fork.test.ts	3	0
@@ -293,6 +296,7 @@ test/engine-parity/read-shared-sources.test.ts	5	0
 test/engine-parity/reads-privacy.test.ts	52	0
 test/engine-parity/reason-tombstones.test.ts	3	0
 test/engine-parity/recall-members.test.ts	4	0
+test/engine-parity/rechunk-chunk-ids.test.ts	1	0
 test/engine-parity/referrer-reads.test.ts	5	0
 test/engine-parity/refusal-blocker-sites.test.ts	6	0
 test/engine-parity/refusal-swallow-extract.test.ts	3	7
