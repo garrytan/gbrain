@@ -15,10 +15,11 @@
 //!   chunks by distance, then chunk id, keeps each page's best chunk among them, and widens the
 //!   window x4 (at most three times, to at most `max(initial, 20000)`) while it is full and holds
 //!   fewer than `offset + limit` pages, as `searchVectorPool` does.
-//! - `searchVector` reads pages in order of the best score each can reach and stops once the
-//!   result is settled (`bounded_scan`), and keeps that answer when the window cannot change it
-//!   (`window_covers`); otherwise it walks the chunks nearest first (`window_walk`). The full scan
-//!   (`full_scan`) reads every page and is the reference both answer as.
+//! - `searchVector` walks the chunks nearest first, reading each page once, until the window is
+//!   full (`window_walk`). When every vector fits the first window, the window holds every
+//!   admitted chunk, so it reads pages in order of the best score each can reach and stops once
+//!   the result is settled (`bounded_scan`). The full scan (`full_scan`) reads every page and is
+//!   the reference both answer as.
 //! - The score is the cosine of the stored float32 vectors, summed in float64 and kept in
 //!   [-1, 1] as pgvector keeps it. A zero vector on either side gives NaN, which ranks above every
 //!   number (Postgres orders NaN as the largest value).
@@ -571,8 +572,6 @@ struct Hit {
     page: PageRecord,
     chunk: ChunkRecord,
     score: f64,
-    /// The chunk's position in `VectorIndex::chunks`.
-    vector: usize,
 }
 
 /// One page as the scans read it: the record, its source factor and its visible chunks by chunk
@@ -652,18 +651,17 @@ impl ChunkScan<'_> {
     }
 
     /// The best admitted chunk of one page, whose vectors are `group` (one page's run of the
-    /// index, starting at position `start`), or `None` when the page or every chunk is filtered
-    /// out. `raw(i)` is `1 - (embedding <=> q)` for `group[i]`.
+    /// index), or `None` when the page or every chunk is filtered out. `raw(i)` is
+    /// `1 - (embedding <=> q)` for `group[i]`.
     fn best_chunk(
         &mut self,
         group: &[IndexedVector],
-        start: usize,
         raw: impl Fn(usize, &IndexedVector) -> f64,
     ) -> Result<Option<Hit>> {
         let Some(mut scanned) = self.load_page(group[0].id)? else {
             return Ok(None);
         };
-        let mut best: Option<(f64, ChunkRecord, usize)> = None;
+        let mut best: Option<(f64, ChunkRecord)> = None;
         for (i, stored) in group.iter().enumerate() {
             let Some(chunk) = scanned.chunks.get(&stored.chunk_index) else {
                 continue;
@@ -686,7 +684,7 @@ impl ChunkScan<'_> {
             };
             let replace = match &best {
                 None => true,
-                Some((current, kept, _)) => match score_desc(score, *current) {
+                Some((current, kept)) => match score_desc(score, *current) {
                     Ordering::Less => true,
                     Ordering::Equal => chunk.id < kept.id,
                     Ordering::Greater => false,
@@ -697,14 +695,13 @@ impl ChunkScan<'_> {
                     .chunks
                     .remove(&stored.chunk_index)
                     .expect("present above");
-                best = Some((score, chunk, start + i));
+                best = Some((score, chunk));
             }
         }
-        Ok(best.map(|(score, chunk, vector)| Hit {
+        Ok(best.map(|(score, chunk)| Hit {
             page: scanned.page,
             chunk,
             score,
-            vector,
         }))
     }
 }
@@ -736,10 +733,14 @@ impl Ord for Ranked {
     }
 }
 
-/// `GBRAIN_RUST_VECTOR_SCAN=full` makes every `searchVector` take the full scan (the bench and
-/// its verify mode compare the two paths on one store). Read on every call.
-fn full_scan_forced() -> bool {
-    std::env::var_os("GBRAIN_RUST_VECTOR_SCAN").is_some_and(|v| v == "full")
+/// `GBRAIN_RUST_VECTOR_SCAN=full` makes every `searchVector` take the full scan and `=walk` the
+/// window walk (the bench and its verify mode compare the paths on one store). Read on every call.
+fn forced_scan_path() -> ScanPath {
+    match std::env::var_os("GBRAIN_RUST_VECTOR_SCAN") {
+        Some(v) if v == "full" => ScanPath::Full,
+        Some(v) if v == "walk" => ScanPath::Walk,
+        _ => ScanPath::Default,
+    }
 }
 
 /// Below this many vectors the raw scores are computed on the calling thread.
@@ -864,7 +865,7 @@ fn page_bound(raws: &[f64], factors: &[f64]) -> f64 {
 /// The bounded scan: read pages in order of the largest score each can reach, and stop once the
 /// best `keep` hits are settled. Every page that could rank goes through `ChunkScan::best_chunk`,
 /// so the hits are the best `keep` pages over every admitted chunk, with no candidate window.
-/// The caller checks that the window could not change them (`window_covers`).
+/// The caller runs it only when every vector fits the first window.
 fn bounded_scan(
     scan: &mut ChunkScan<'_>,
     index: &VectorIndex,
@@ -894,7 +895,7 @@ fn bounded_scan(
         }
         let (start, end) = index.page_runs[run];
         let page_raws = &raws[start..end];
-        if let Some(hit) = scan.best_chunk(&index.chunks[start..end], start, |i, _| page_raws[i])? {
+        if let Some(hit) = scan.best_chunk(&index.chunks[start..end], |i, _| page_raws[i])? {
             best.push(Ranked(hit));
             if best.len() > keep {
                 best.pop();
@@ -913,31 +914,6 @@ fn distance_order(a: f64, b: f64) -> Ordering {
         (false, true) => Ordering::Less,
         (false, false) => a.partial_cmp(&b).expect("no NaN here"),
     }
-}
-
-/// Whether the candidate window cannot change the bounded scan's `hits`: every vector fits the
-/// window, or the scan kept `keep` hits and every vector at most as far as the farthest kept chunk
-/// fits the window. Then each kept chunk is in the window whatever the filters admit, and the
-/// window only removes chunks, so no other page can rank above a kept one.
-fn window_covers(dists: &[f64], hits: &[Hit], keep: usize, window: usize) -> bool {
-    if dists.len() <= window {
-        return true;
-    }
-    if hits.len() < keep {
-        return false;
-    }
-    let Some(farthest) = hits
-        .iter()
-        .map(|hit| dists[hit.vector])
-        .max_by(|a, b| distance_order(*a, *b))
-    else {
-        return true;
-    };
-    let reach = dists
-        .iter()
-        .filter(|d| distance_order(**d, farthest) != Ordering::Greater)
-        .count();
-    reach <= window
 }
 
 /// The first candidate window: PGLite's `offset + max(limit * 5, 100)`.
@@ -1009,7 +985,6 @@ impl WindowPages {
                     page: scanned.page.clone(),
                     chunk,
                     score,
-                    vector,
                 }
             })
             .collect()
@@ -1215,12 +1190,7 @@ fn search_chunks(
     query: &[f64],
     options: &VectorSearchOptions,
 ) -> Result<Vec<Value>> {
-    let path = if full_scan_forced() {
-        ScanPath::Full
-    } else {
-        ScanPath::Default
-    };
-    search_chunks_by(read, index, query, options, path)
+    search_chunks_by(read, index, query, options, forced_scan_path())
 }
 
 /// Which way `searchVector` reads; every path answers the same rows.
@@ -1228,8 +1198,7 @@ fn search_chunks(
 enum ScanPath {
     /// The bounded scan when the window cannot change its hits, else the window walk.
     Default,
-    /// The window walk whatever the bounded scan could do (the tests' check of the walk).
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// The window walk whatever the bounded scan could do.
     Walk,
     /// The full scan.
     Full,
@@ -1267,21 +1236,18 @@ fn search_chunks_by(
         Vec::new()
     } else {
         let dists = distances(&query, query_norm_sq, &index.chunks);
-        let keep = offset.saturating_add(limit);
-        let window = initial_window(offset, limit);
-        // A factor that is not a finite number has no bound.
-        let bounded =
-            path == ScanPath::Default && options.source_factors.iter().all(|(_, f)| f.is_finite());
-        let covered = if bounded {
+        // When every vector fits the first window, the window holds every admitted chunk, so the
+        // bounded scan's answer is the window's; it reads only the pages that can rank. A factor
+        // that is not a finite number has no bound. Otherwise the walk reads the pages of the
+        // nearest chunks, which costs less than bounding pages a filter or the window then drops.
+        if path == ScanPath::Default
+            && dists.len() <= initial_window(offset, limit)
+            && options.source_factors.iter().all(|(_, f)| f.is_finite())
+        {
             let raws: Vec<f64> = dists.iter().map(|d| 1.0 - d).collect();
-            let hits = bounded_scan(&mut scan, index, &raws, keep)?;
-            window_covers(&dists, &hits, keep, window).then_some(hits)
+            bounded_scan(&mut scan, index, &raws, offset.saturating_add(limit))?
         } else {
-            None
-        };
-        match covered {
-            Some(hits) => hits,
-            None => window_walk(&mut scan, index, &dists, offset, limit)?,
+            window_walk(&mut scan, index, &dists, offset, limit)?
         }
     };
     hits.sort_by(hit_order);

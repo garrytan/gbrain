@@ -48,32 +48,37 @@ chunks costs far more than scoring a vector, so the store scores first and reads
 1. Every chunk vector of the cached index is scored (`embedding <=> q`, the same arithmetic as above),
    split across the machine's cores when there are at least 4,096 vectors. Helper threads come from one
    process-wide budget (cores minus one), so concurrent searches share the cores.
-2. The bounded scan. Each page gets a bound: the largest of `raw * f` over its best and worst raw score
-   and every factor `f` the call can apply (1 and each source factor). A product is monotone in the raw for
-   a fixed factor, so no chunk of the page can score above it. A NaN raw gives a NaN bound, which ranks
-   first. Pages are read in bound order, each with every filter, the model guard and the source factor.
-   The best `offset + limit` hits are kept; the scan stops when the next page's bound ranks strictly below
-   the last kept hit (a tie is still read, since a lower page id wins it).
-3. The window check (`window_covers`). The bounded scan's hits are the answer when every vector fits the
-   first window, or when it kept `offset + limit` hits and the vectors at most as far as its farthest kept
-   chunk number no more than the window. Then each kept chunk is in the window whatever the filters admit,
-   and the window only removes chunks, so no other page can rank above a kept one.
-4. Otherwise the window walk (`window_walk`): the vectors are sorted nearest first a batch at a time
-   (`select_nth_unstable`, each run of equal distances kept whole and ordered by chunk id), each page is
-   read once when its first vector comes up, and admitted chunks fill the window; the window widens as
-   above, continuing from where it stopped.
+2. The window walk (`window_walk`): the vectors are sorted nearest first a batch at a time
+   (`select_nth_unstable`, each run of equal distances kept whole and ordered by chunk id). Each page is
+   read once, with every filter, the model guard and the source factor, when its first vector comes up,
+   and admitted chunks fill the window; the window widens as above, continuing from where it stopped.
+   Pages past the window are never read.
+3. The bounded scan, when every vector fits the first window (so the window holds every admitted chunk).
+   Each page gets a bound: the largest of `raw * f` over its best and worst raw score and every factor `f`
+   the call can apply (1 and each source factor). A product is monotone in the raw for a fixed factor, so
+   no chunk of the page can score above it. A NaN raw gives a NaN bound, which ranks first. Pages are read
+   in bound order; the best `offset + limit` hits are kept, and the scan stops when the next page's bound
+   ranks strictly below the last kept hit (a tie is still read, since a lower page id wins it). A source
+   factor that is not a finite number has no bound, so that call takes the walk.
 
 The full scan reads every page, admits every chunk and sorts them all; it answers a call when the stored
 vectors have more than one width (so the width refusal stays the one above) and when
-`GBRAIN_RUST_VECTOR_SCAN=full` is set (the bench's reference; read on every call). A source factor that is
-not a finite number has no bound, so that call takes the window walk. With no model and an embedding
+`GBRAIN_RUST_VECTOR_SCAN=full` is set (the bench's reference; `=walk` forces the walk; read on every call).
+With no model and an embedding
 migration running, the store returns no rows at once, as the full scan would. The unit tests run every case
 through all three paths and compare the bytes.
 
 Measured with `rust/bench/vector-scan.sh` (an invented corpus, 1536 dims, 2 chunks per page on average,
 limit 50, 8 vCPU Xeon 6975P-C): unfiltered p50 165 ms before and 8.6 ms after at 10,000 pages, 887 ms
 before and 28.5 ms after at 50,000 pages. A filter that keeps few pages reads more of them before the top
-settles (a 4% source at 50,000 pages: 239 ms before, 74 ms after). `cosinesByChunkIds` still reads every
+settles (a 4% source at 50,000 pages: 239 ms before, 74 ms after). With the candidate window (same bench and machine, 40 queries,
+limit 50, the main-branch binary and this one on the same store), p50/p99 in ms: unfiltered 8.7/14.1 before
+and 9.1/10.4 after at 10,000 pages, 28.5/35.5 and 22.4/26.7 at 50,000; the 4% source 59.9/66.8 and
+30.2/33.6 at 10,000, 104.4/122.6 and 57.1/68.1 at 50,000; the type filter 37.9/44.9 and 17.7/20.3 at
+10,000, 89.9/109.4 and 38.9/44.3 at 50,000. Three more interleaved runs at 10,000 pages agree; the one loss
+is about 0.3 ms at the unfiltered 10,000-page p50. An earlier run of the same binaries measured the
+filtered "before" cases faster (34 ms and 70 ms for the 4% source), unexplained. `verify` compared 404
+cases per size through the default path, the walk and the full scan with 0 mismatches. `cosinesByChunkIds` still reads every
 page (about 590 ms at 50,000 pages).
 
 ## searchTakesVector
