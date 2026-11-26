@@ -34,7 +34,7 @@ import { closeSync, mkdirSync, openSync, readdirSync, writeSync, fsyncSync, writ
 import { join } from 'node:path';
 import { opError } from '../../ops/contract.ts';
 
-/** The capability that will offer these frames (not offered yet). */
+/** The capability under which a session offers these frames (follower-serve.ts): only to an owner server token. */
 export const FOLLOWER_CAP = 'follower';
 export const REPL_FRAME_TYPES = ['repl_follow', 'repl_records', 'repl_ack', 'repl_snap_begin', 'repl_snap_chunk', 'repl_snap_window', 'repl_snap_end'] as const;
 /** The files of a store snapshot directory, in the order they cross (format.rs RECORDS_FILE, FORMAT, snapshot.rs MANIFEST_FILE). */
