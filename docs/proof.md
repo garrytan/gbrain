@@ -14,7 +14,7 @@ Every number below comes from [gbrain-evals](https://github.com/garrytan/gbrain-
 repository, pinned at commit [`898e0ebf`](https://github.com/garrytan/gbrain-evals/tree/898e0ebfa02f81dd16fb39e486813d252a064199)
 (2026-11-24). Each row names the gbrain build it measured, the date, how many questions or runs it covers, its 95%
 interval where one was published, and who graded the answers. Rows come from different builds and dates; none is
-re-measured here. A 95% interval is the range the true difference most likely falls in.
+re-measured here. The intervals show how much uncertainty there is in the measured differences.
 
 | # | What we measured | Without gbrain | With gbrain | Result |
 |---|---|---|---|---|

@@ -5,11 +5,11 @@ simpler setup is as good. This page names each part, what it does, and what the 
 can decide which parts you need. The measured comparisons behind the "as good" claims are on the
 [proof page](../proof.md).
 
-**The short version.** If your notes are a few hundred Markdown files and one agent reads them, an agent with `grep`
-over the files, or a whole history pasted into the prompt, will answer many questions as well as gbrain. gbrain earns
-its keep when several writers share the brain, when some pages must stay hidden from some readers, when the same
-person or company appears under several names, when old facts get replaced, and when you need to know that the brain
-is healthy.
+**The short version.** In our measurements a simpler setup sometimes matched or beat gbrain on right answers: a whole
+chat history pasted into the prompt, when it fits the reader's window, and an agent that greps the raw files, on very
+long chat histories. Try those on your own questions first. gbrain earns its keep when several writers share the
+brain, when some pages must stay hidden from some readers, when the same person or company appears under several
+names, when old facts get replaced, and when you need to know that the brain is healthy.
 
 ## Git-backed sync with a writer lock
 
@@ -70,12 +70,13 @@ two pages are the same person.
 ## The conversation archive and connectors
 
 **What it does.** The conversation archive writes one redacted page per conversation per day from your agent
-harnesses (Claude Code, Codex, OpenClaw, Hermes, Grok). Connectors import ChatGPT and Claude exports and keep syncing
-new conversations. Guides: [conversation archive](conversation-archive.md), [chat connectors](chat-connectors.md).
+harnesses (Claude Code, Codex, OpenClaw, Hermes, Grok). Import downloaded ChatGPT and Claude exports with
+`gbrain transcripts ingest`, or use connectors to sync new conversations from those accounts. Guides:
+[conversation archive](conversation-archive.md), [chat connectors](chat-connectors.md).
 
 **The simpler alternative.** Keep the raw session logs and paste the relevant ones into the prompt. When one history
-fits the reader's window and is asked only a few questions, pasting it scores as well as gbrain's retrieval on
-LongMemEval and better on LoCoMo, at several times the reader cost per question.
+fits the reader's window, pasting it showed no measurable score difference on LongMemEval and scored higher on
+LoCoMo. On LongMemEval, pasting cost about 7.4 times as much per question without prompt-cache reuse.
 
 ## Doctor and repair
 
