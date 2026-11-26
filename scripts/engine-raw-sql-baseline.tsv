@@ -594,6 +594,7 @@ src/core/learning/push.ts	execute_raw	1	nightly learning PR 2: the learning_item
 src/core/learning/duplicates.ts	execute_raw	3	nightly learning PR 3: the learning_items ledger (v334) has no typed engine methods yet; the duplicate step records the top person groups' anchor pages (and counts them on a dry run); PR 2 closes duplicate questions the preview no longer offers
 src/core/learning/read.ts	execute_raw	4	nightly learning PR 1: the learning_items ledger (v334) is a new table with no typed engine methods yet; the learned read joins each pointer to its live target under the caller filters and stamps shown_at; PR 3 adds one page read-policy probe over duplicate members
 src/core/learning/stats.ts	execute_raw	1	nightly learning PR 1: the learning_items ledger (v334) is a new table with no typed engine methods yet; learned --stats reads ledger rows by night
+src/core/ledger/store.ts	execute_raw	1	GST-3824 L2 follow-up: policy_reserve waits while an action ledger write is still publishing (unfinished persistence_requests under actions/), which no engine read answers
 src/core/line-grammar-config.ts	execute_raw	2
 src/core/link-extraction.ts	execute_raw	1
 src/core/link-reconciliation.ts	execute_raw	5

@@ -6,6 +6,7 @@ Repo: https://github.com/garrytan/gbrain
 
 ## Choose your agent setup
 
+- [Google token socket](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/google-socket.md): `gbrain google mint serve`: a private Unix socket that gives local agents short-lived read-only Google tokens and makes owner-approved Google Workspace writes through an allowlisted broker; peers, approvals, gwscli and error codes.
 - [Use your brain from anywhere over MCP](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/remote-mcp.md): `gbrain mcp expose`: publish serve --http on your Tailscale tailnet (Funnel explicit for cloud agents), user service, admin token file, grant/connect/verify hand-off, --status/--remove, troubleshooting, security posture, ngrok and cloud-host alternatives.
 - [Grok Bot](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/grok-bot.md): Recommended: keep the brain on your computer, publish it with `gbrain mcp expose --funnel`, grant the Bot a client and install the thin CLI; local in-Bot memory as the no-host alternative. Native skill activation, shared-computer trust and dated evidence.
 - [Muse personal agent](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/muse.md): Verify durable storage first; connect Muse to your published brain (`gbrain mcp expose --funnel` + thin CLI) or add local explicit memory with provenance alongside Muse's native memory; distinguish Muse Code and unverified native MCP.
