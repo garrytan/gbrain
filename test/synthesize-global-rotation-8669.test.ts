@@ -200,6 +200,14 @@ describe('the synthesize turn moves forward through every owning source (#8669)'
     });
   });
 
+  test('the storage shelf never takes a turn, so a global cycle never synthesizes into its checkout', async () => {
+    await withSources(async (alpha, beta) => {
+      await engine.executeRaw("UPDATE sources SET config = jsonb_build_object('role', 'storage_manifest') WHERE id = $1", [alpha]);
+      await engine.setConfig('dream.synthesize.rotation_turn', alpha);
+      expect(await step(result('ok', routing([alpha, beta])))).toEqual({ ran: 'default', next: beta });
+    });
+  });
+
   test('a cooldown or budget skip keeps the turn', async () => {
     await withSources(async (alpha, beta) => {
       await step(result('ok', routing([alpha, beta])));

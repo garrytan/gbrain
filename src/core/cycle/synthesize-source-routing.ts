@@ -34,6 +34,7 @@ import { corpusSpoolDir } from '../context/corpus-segments.ts';
 import { resolveCorpusFileSource, type CorpusFileLocation, type CorpusFileSource } from '../context/corpus-source.ts';
 import { CONVERSATION_PAGE_URI_PREFIX, type DiscoveredTranscript } from './transcript-discovery.ts';
 import { UnrecoverableError } from '../minions/types.ts';
+import { STORAGE_ROLE } from '../storage-manifest/door.ts';
 
 export interface SessionSourceRouting {
   /** Corpus files of other sources (`corpus_source_other`), counted by the source each belongs to. */
@@ -151,7 +152,7 @@ const SYNTHESIS_TURN_KEY = 'dream.synthesize.rotation_turn';
 const SYNTHESIS_OWNERS_KEY = 'dream.synthesize.rotation_owners';
 
 async function turnCheckouts(engine: BrainEngine): Promise<Map<string, string>> {
-  const rows = await engine.executeRaw<{ id: string; local_path: string | null }>('SELECT id, local_path FROM sources WHERE archived = false');
+  const rows = await engine.executeRaw<{ id: string; local_path: string | null }>("SELECT id, local_path FROM sources WHERE archived = false AND config->>'role' IS DISTINCT FROM $1", [STORAGE_ROLE]);
   return new Map(rows.flatMap(r => r.local_path && isAbsolute(r.local_path) && existsSync(r.local_path) ? [[r.id, resolve(r.local_path)] as const] : []));
 }
 
