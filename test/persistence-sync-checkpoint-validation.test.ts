@@ -312,7 +312,7 @@ test('#5762 the hint names one of three index states and keeps the saved process
 });
 
 test('#5762 a dropped index reads as missing and the hint then names the rebuild command', async () => each(async engine => {
-  // #6511, #6757, #7649 and #8707 added the purge slug, request-id, foreground-commit, replay-id and slug-sequence indexes, and v336 the byte-order slug index, to the online-built set; the default read lists them after the checkpoint pair.
+  // #6511, #6757, #7649 and #8707 added the purge slug, request-id, foreground-commit, replay-id and slug-sequence indexes, and v338 the byte-order slug index, to the online-built set; the default read lists them after the checkpoint pair.
   expect((await readRequestIndexStates(engine)).map(index => index.state)).toEqual(['valid', 'valid', 'valid', 'valid', 'valid', 'valid', 'valid', 'valid']);
   await engine.executeRaw('DROP INDEX persistence_requests_sync_run_committed');
   try {

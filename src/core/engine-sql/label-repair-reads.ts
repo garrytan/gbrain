@@ -31,7 +31,7 @@ export async function listLabelFactCandidates(raw: EngineRawRead, sourceIds: str
     SELECT f.id, f.source_id, f.source_markdown_slug AS slug, f.fact, f.context, f.entity_slug, f.visibility,
            f.superseded_by IS NOT NULL AS superseded,
            EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=f.source_id AND w.visibility=f.visibility
-             AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact), gbrain_fact_fingerprint_v1(f.fact))
+             AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact), gbrain_fact_fingerprint_v2(f.fact), gbrain_fact_fingerprint_v1(f.fact))
              AND (w.subject='*' OR w.subject=f.entity_slug)) AS withdrawn,
            EXISTS (SELECT 1 FROM facts g WHERE g.superseded_by=f.id) AS referenced,
            EXISTS (SELECT 1 FROM open_loops o WHERE o.fact_id=f.id) AS open_loop,

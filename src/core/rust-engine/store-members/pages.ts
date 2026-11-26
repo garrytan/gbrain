@@ -3,7 +3,7 @@ import type { PageSnapshot } from '../../page-state/types.ts';
 import type { PageWriteOptions, PageSnapshotOptions } from '../../page-state/types.ts';
 import type { GetPageOpts, Page, PageFilters, PageInput, PageReadScope } from '../../types.ts';
 import { toGetPage, toListPage, toPutPage, withIsoDates } from '../store-codec.ts';
-import { overlayStoreSnapshot, type StoreSnapshot } from '../snapshot-overlay.ts';
+import { overlayStoreSnapshot, storeNormalizer, type StoreSnapshot } from '../snapshot-overlay.ts';
 import { sourceOriginScope } from '../../persistence/origin-guard.ts';
 import { isRevisionRejection, mapStoreError } from '../store-errors.ts';
 import type { StoreBrain } from '../store.ts';
@@ -26,7 +26,7 @@ function pageScope(member: string, opts: object | undefined, allowed: readonly s
 export const readPageSnapshot: StoreMember<[slug: string, opts?: PageSnapshotOptions], PageSnapshot | null> = async (brain, slug, opts) => {
   const scope = pageScope('readPageSnapshot', opts, READ_SCOPE);
   const snapshot: StoreSnapshot | null = await storeCall({ member: 'readPageSnapshot', slug }, () => brain.readPageSnapshot(slug, scope));
-  return snapshot === null ? null : overlayStoreSnapshot({ ...snapshot, page: toGetPage(snapshot.page) });
+  return snapshot === null ? null : overlayStoreSnapshot(storeNormalizer(brain), { ...snapshot, page: toGetPage(snapshot.page) });
 };
 
 /**
@@ -39,7 +39,7 @@ const GET_PAGE_UNREAD = ['requireSafeChunks', 'takesHoldersAllowList'] as const;
 export const getPage: StoreMember<[slug: string, opts?: GetPageOpts], Page | null> = async (brain, slug, opts) => {
   const scope = pageScope('getPage', opts, READ_SCOPE, GET_PAGE_UNREAD);
   const snapshot: StoreSnapshot | null = await storeCall({ member: 'getPage', slug }, () => brain.readPageSnapshot(slug, scope));
-  return snapshot === null ? null : overlayStoreSnapshot({ ...snapshot, page: toGetPage(snapshot.page) }).page;
+  return snapshot === null ? null : (await overlayStoreSnapshot(storeNormalizer(brain), { ...snapshot, page: toGetPage(snapshot.page) })).page;
 };
 
 /** The revision the page has now, for the error a rejected revision check throws. `null` when there is no page. */
@@ -83,7 +83,7 @@ export const restorePage: StoreMember<[slug: string, opts?: { sourceId?: string 
   storeCall({ member: 'restorePage', slug }, () => brain.restorePage(slug, takeOptions('restorePage', opts, ['sourceId'])));
 
 const LIST_FILTERS = ['type', 'tag', 'limit', 'offset', 'updated_after', 'updatedAfterKeyset', 'slugAfter', 'slugPrefix',
-  'excludeSlugPrefixes', 'includeDeleted', 'sort', 'sourceId', 'sourceIds', 'excludePrivate', 'listColumnsOnly'] as const;
+  'excludeSlugPrefixes', 'includeDeleted', 'sort', 'sourceId', 'sourceIds', 'excludePrivate', 'listColumnsOnly', 'omitBodies'] as const;
 
 /**
  * A page as PGLite's `listPages({ listColumnsOnly: true })` row reads: only the list columns (id, source, slug, type,
@@ -91,11 +91,11 @@ const LIST_FILTERS = ['type', 'tag', 'limit', 'offset', 'updated_after', 'update
  * frontmatter. `content_hash` and `emotional_weight` are present and undefined, as rowToPage leaves them when the list
  * columns omit them. Every other page field is absent.
  */
-function listColumns(page: Page): Page {
+function listColumns(page: Page, keepFrontmatter = false): Page {
   const { id, source_id, slug, type, title, created_at, updated_at, updated_at_iso, deleted_at, effective_date,
     effective_date_source, body_storage, body_bytes } = page;
   return {
-    id, source_id, slug, type, title, compiled_truth: '', timeline: '', frontmatter: {}, content_hash: undefined,
+    id, source_id, slug, type, title, compiled_truth: '', timeline: '', frontmatter: keepFrontmatter ? page.frontmatter : {}, content_hash: undefined,
     emotional_weight: undefined, created_at, updated_at,
     ...(updated_at_iso !== undefined && { updated_at_iso }),
     ...(deleted_at !== undefined && { deleted_at }),
@@ -106,10 +106,12 @@ function listColumns(page: Page): Page {
 }
 
 export const listPages: StoreMember<[filters?: PageFilters], Page[]> = async (brain, filters) => {
-  // The store reads whole pages; `listColumnsOnly` keeps PGLite's list projection of each (listColumns).
-  const { listColumnsOnly, ...options } = pageScope('listPages', filters, LIST_FILTERS);
+  // The store reads whole pages; `listColumnsOnly` keeps PGLite's list projection of each (listColumns), and `omitBodies`
+  // (#10302, household scans) the same projection with the frontmatter kept.
+  const { listColumnsOnly, omitBodies, ...options } = pageScope('listPages', filters, LIST_FILTERS);
   const pages: Page[] = await storeCall({ member: 'listPages' }, () => brain.listPages(options));
-  return pages.map((page) => (listColumnsOnly === true ? listColumns(toListPage(page)) : toListPage(page)));
+  return pages.map((page) => (listColumnsOnly === true ? listColumns(toListPage(page))
+    : omitBodies === true ? listColumns(toListPage(page), true) : toListPage(page)));
 };
 
 /**

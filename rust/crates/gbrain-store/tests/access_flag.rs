@@ -178,6 +178,11 @@ impl Kv for NoWrites {
     fn snapshot(&self) -> gbrain_store::Result<Box<dyn gbrain_store::KvRead>> {
         self.0.snapshot()
     }
+    fn versioned_snapshot(
+        &self,
+    ) -> gbrain_store::Result<(Box<dyn gbrain_store::KvRead + Send>, u64)> {
+        self.0.versioned_snapshot()
+    }
     fn begin_write(&self) -> gbrain_store::Result<Box<dyn gbrain_store::KvWrite>> {
         Err(gbrain_store::StoreError::io(
             "record store: the file takes no writes",

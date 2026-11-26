@@ -228,6 +228,31 @@ export async function findTakeId(tx: Raw, pageId: number, rowNum: number): Promi
   return take ? Number(take.id) : null;
 }
 
+/**
+ * The takes publication's prepare step (persistence/takes-prepare.ts): its two writes, with the text the raw statements
+ * sent (pinned in test/engine-sql-caller-raw-sql-pins.test.ts). Carried from 098c048ad6 (rust-engine/takes-prepare-rust).
+ */
+/**
+ * The distinct holders of page `pageId`'s takes at `rowNums`, in no set order (persistence/authority.ts: a remote takes
+ * write's holder check on a queued request, before the prepare step records its holders).
+ */
+export async function listTakeHoldersAtRows(tx: Raw, pageId: number, rowNums: readonly number[]): Promise<string[]> {
+  const rows = await tx.executeRaw<{ holder: string }>('SELECT DISTINCT holder FROM takes WHERE page_id=$1 AND row_num=ANY($2::integer[])', [pageId, [...rowNums]]);
+  return rows.map(r => r.holder);
+}
+
+/** Sets the `resolved_at` of page `pageId`'s take at `rowNum` to `resolvedAt` (text Postgres reads as a time). */
+export async function stampTakeResolvedAt(tx: Raw, pageId: number, rowNum: number, resolvedAt: string): Promise<void> {
+  await tx.executeRaw('UPDATE takes SET resolved_at=$3::timestamptz WHERE page_id=$1 AND row_num=$2', [pageId, rowNum, resolvedAt]);
+}
+
+/** Stores `holders` as request `requestId`'s `authority.takeHoldersUsed`, in the order given. */
+export async function recordTakeHoldersUsed(tx: Raw, requestId: string, holders: readonly string[]): Promise<void> {
+  await tx.executeRaw(`UPDATE persistence_requests
+      SET authority=jsonb_set(authority,'{takeHoldersUsed}',$2::text::jsonb)
+      WHERE id=$1::uuid`, [requestId, JSON.stringify([...holders])]);
+}
+
 /** A take_grade_cache row's key: one verdict per take, prompt, judge and evidence. */
 export interface TakeGradeKey { takeId: number; promptVersion: string; judgeModelId: string; evidenceSignature: string }
 

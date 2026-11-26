@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { runEdgeProposals } from '../src/commands/edge-proposals.ts';
 import { _resetCliExitVerdictForTests, currentExitCode } from '../src/core/cli-force-exit.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { listEdgeProposalCliRows, type EdgeProposalCliFilter } from '../src/core/engine-sql/contradictions-cycle.ts';
 
 function row(id: bigint) {
   return {
@@ -18,7 +19,10 @@ function row(id: bigint) {
 }
 
 function fakeEngine(rows: Array<ReturnType<typeof row>>): BrainEngine {
-  return { kind: 'postgres', executeRaw: async () => rows } as unknown as BrainEngine;
+  // The list and show reads are the typed member now; it runs its SQL (engine-sql/contradictions-cycle.ts) on this read.
+  const executeRaw = async () => rows;
+  return { kind: 'postgres', executeRaw,
+    listEdgeProposalCliRows: (filter: EdgeProposalCliFilter, limit: number) => listEdgeProposalCliRows(executeRaw as never, filter, limit) } as unknown as BrainEngine;
 }
 
 async function capture(engine: BrainEngine, args: string[]): Promise<string> {

@@ -23,6 +23,15 @@ use crate::trust::withdrawals::under_subject;
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 
+/// A timestamptz as `jsonb_build_object` writes it, as the SQL snapshot statement's ledger rows
+/// carry it: `2026-03-05T10:00:00.25+00:00` (trailing zeros of the fraction dropped).
+fn jsonb_time(micros: i64) -> String {
+    format!(
+        "{}:00",
+        crate::timeline_queries::timestamptz_text(micros).replacen(' ', "T", 1)
+    )
+}
+
 /// The two values of the ledgers' `visibility` CHECK, in text order.
 const VISIBILITIES: [&str; 2] = ["private", "world"];
 
@@ -59,7 +68,7 @@ fn rows(map: BTreeMap<(String, String), i64>, purged: bool) -> Vec<Value> {
     map.into_iter()
         .map(|((visibility, fact_hash), us)| {
             let mut row =
-                json!({"visibility": visibility, "fact_hash": fact_hash, "withdrawn_at": iso(us)});
+                json!({"visibility": visibility, "fact_hash": fact_hash, "withdrawn_at": jsonb_time(us)});
             if purged {
                 row["purged"] = Value::Bool(true);
             }
@@ -151,7 +160,7 @@ mod tests {
             keys,
             vec![("private", false), ("world", false), ("world", true)]
         );
-        assert_eq!(rows[0]["withdrawn_at"], at);
+        assert_eq!(rows[0]["withdrawn_at"], "2026-01-02T03:04:05+00:00");
         assert!(all.get("globalPurges").is_none());
         let world = snapshot_withdrawals(&*read, "default", "notes/a", true).unwrap();
         assert_eq!(world["withdrawals"].as_array().unwrap().len(), 2);

@@ -23,7 +23,6 @@ import { planPageFence } from '../facts/unfenced-facts.ts';
 import { ensurePageForHeldRows } from '../facts/held-fact-move.ts';
 import { UNATTRIBUTED_MEMORY_SLUG } from '../facts-fence.ts';
 import { type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairScope } from './core.ts';
-import { requireRawSql } from '../rust-engine/errors.ts';
 
 interface ApprovedFact { id: number; value: string; home: string }
 interface HomeItem extends RepairItem { facts: ApprovedFact[]; hash: string }
@@ -105,9 +104,6 @@ export const factsHomeRepair: RepairHandler = {
       details: { docs: FACTS_HOME_DOCS, counts: scan.counts, verify: gitGapArgv(sourceId).join(' ') } };
   },
   async apply(ctx, entry): Promise<RepairItemOutcome> {
-    // The maintenance publication reads sources and publishes the holding page through the page write door (raw SQL), so a Rust brain
-    // stops here by name, before its first write.
-    requireRawSql(ctx.engine, 'repair facts-home page write');
     const { facts, hash, source_id: sourceId } = entry as HomeItem;
     try {
       return await homeFacts(ctx, sourceId, facts);

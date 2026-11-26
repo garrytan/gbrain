@@ -622,7 +622,14 @@ impl Store {
                 && (!options.eligible_only || eligible_page(&page))
             {
                 let keep = |row: &TimelineRecord| -> Result<bool> {
-                    if !trust.admits(&*read, "timeline_entries", row.id, row.trust.tier())? {
+                    if !trust.admits(&*read, "timeline_entries", row.id, row.trust.tier())?
+                        || (options.eligible_only
+                            && crate::generations::needs_rederive::is_marked(
+                                &*read,
+                                "timeline_entries",
+                                row.id,
+                            )?)
+                    {
                         return Ok(false);
                     }
                     match &options.exclude_private {
@@ -649,8 +656,8 @@ impl Store {
 /// The page part of `projectionEligibleSql('timeline_entries', 'te', ..)` (the row part, `floor`
 /// and `suppressFlagged`, is the `TrustPolicy` of `get_timeline`). Every row of `getTimeline` hangs on `page` (`te.page_id = p.id`), so a
 /// soft-deleted page, or a page whose frontmatter has a `quarantine` key (any value), hides all of its
-/// rows. The third clause hides rows listed in `needs_rederive`, which only a raw-SQL purge writes;
-/// this engine has no such rows.
+/// rows. The third clause, a row a purge marked in `needs_rederive` (`generations/needs_rederive.rs`),
+/// is checked per row by `get_timeline`.
 pub(crate) fn eligible_page(page: &PageRecord) -> bool {
     page.deleted_at_us.is_none() && !page.frontmatter.contains_key("quarantine")
 }

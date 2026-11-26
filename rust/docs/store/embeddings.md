@@ -140,6 +140,7 @@ text hash where PGLite keeps md5; both answer "the text has not changed since th
 | `brain.readChunkVectorColumn({ name })` | `{ exists, dims }` for `embedding`: the width of the first stored chunk vector, else the config `embedding_dimensions`; with neither, `{ exists: false, dims: null }`. `embedding_image` and `embedding_multimodal`: always `{ exists: true, dims: 1024 }`. Any other column: `{ exists: false, dims: null }` | `readChunkVectorColumn` |
 | `brain.readEmbeddingIdentity()` | `{ model, dimensions }` with the same width; the model is the first chunk vector's, else the config `embedding_model`; null with no width | `readEmbeddingIdentity` |
 | `brain.hasStoredVectors({ name })` | whether `content_chunks`, `facts` or `takes` holds a vector (a take's only at its current claim revision); `query_cache` is always false | `hasStoredVectors` |
+| (no call) `invalidateQueryCacheRows(sourceId?)` | 0: the store keeps no query cache, so a schema-pack mutation's cache invalidation deletes nothing | `invalidateQueryCacheRows` |
 
 `listEmbeddingStores` is answered in TS (every table of `PRIMARY_EMBEDDING_TABLES`).
 `readChunkColumnTypes` (doctor embedding_column_registry) is answered in TS from `readChunkVectorColumn`: each
@@ -162,7 +163,6 @@ is still refused on write.
   row. A chunk whose occurrence a deferred retire closed is not read. The served reads (`getEmbeddingsByChunkIds`,
   `cosinesByChunkIds`, sealed `getChunksWithEmbeddings`) keep `chunkVisibleFilter`, the generation alone (`visible_at`).
 - A segmented page counts as having no chunkless content.
-- Segment chunks get no pending stamp.
 - `ops` mode counts `embedded` exactly; `unstamped_created_at_min` is null.
 - `moveDisplacedChunksAndPrune` (PGLite's re-index of displaced chunks) is not done.
 - The install path's zero-norm chunk update (`page-state/projections.ts`) is still raw SQL, so a Rust brain

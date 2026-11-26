@@ -60,6 +60,11 @@ use LossKind::{Cache, Jobs, MachineLocal, SegmentedBody, Telemetry};
 /// Sorted by table.
 pub const NOT_COPIED: &[NotCopied] = &[
     t(
+        "access_read_log",
+        Telemetry,
+        "gbrain access log and gbrain access who-read start empty; every logged member read appends a row, so a copy would differ by design",
+    ),
+    t(
         "chat_usage_log",
         Telemetry,
         "get_usage cost totals start at zero",

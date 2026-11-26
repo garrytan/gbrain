@@ -426,14 +426,15 @@ describe('brain-first block: hardening', () => {
 });
 
 describe('doctor harness_wiring: a full registration is information only', () => {
-  test('a stdio registration pinned to --surface full gets a note; status and fix are unchanged; starter or a GBRAIN_SURFACE override gets none', () => {
+  test('a stdio registration pinned to --surface full gets a note; status and fix are unchanged; starter, a GBRAIN_SURFACE override or Codex (whose default is full) gets none', () => {
     const ok = { name: 'harness_wiring', status: 'ok' as const, message: 'wired.' };
-    const full = withSurfaceNote(ok, [{ harness: 'codex', source: '/x/config.toml', kind: 'stdio', command: '/bin/gbrain', args: ['serve', '--surface', 'full'] }]);
+    const full = withSurfaceNote(ok, [{ harness: 'claude-code', source: '/x/.claude.json', kind: 'stdio', command: '/bin/gbrain', args: ['serve', '--surface', 'full'] }]);
     expect(full.status).toBe('ok');
     expect(full.fix).toBeUndefined();
-    expect(String(full.details?.surface_note)).toContain('Codex registered with --surface full, which stays supported');
-    expect(withSurfaceNote(ok, [{ harness: 'codex', source: '/x', kind: 'stdio', args: ['serve', '--surface', 'starter'] }])).toEqual(ok);
-    expect(withSurfaceNote(ok, [{ harness: 'codex', source: '/x', kind: 'stdio', args: ['serve', '--surface', 'full'], env: { GBRAIN_SURFACE: 'starter' } }])).toEqual(ok);
+    expect(String(full.details?.surface_note)).toContain('Claude Code registered with --surface full, which stays supported');
+    expect(withSurfaceNote(ok, [{ harness: 'claude-code', source: '/x', kind: 'stdio', args: ['serve', '--surface', 'starter'] }])).toEqual(ok);
+    expect(withSurfaceNote(ok, [{ harness: 'claude-code', source: '/x', kind: 'stdio', args: ['serve', '--surface', 'full'], env: { GBRAIN_SURFACE: 'starter' } }])).toEqual(ok);
+    expect(withSurfaceNote(ok, [{ harness: 'codex', source: '/x/config.toml', kind: 'stdio', command: '/bin/gbrain', args: ['serve', '--surface', 'full'] }])).toEqual(ok);
   });
 });
 
@@ -473,13 +474,13 @@ describe('brain-first block: full setup and the installer lanes', () => {
     expect(existsSync(join(b.home, '.claude', 'CLAUDE.md'))).toBe(false);
   });
 
-  test('the block names the tools the registration lists: recall on the default verbs listing, search on an explicit --surface full', async () => {
+  test('the block names the tools the registration lists: search on the Codex default full surface, recall on the starter verbs listing', async () => {
     const b = box();
     expect((await runCli(['setup', 'codex', '--json', '--gbrain-bin', b.bin], { env: b.env })).exitCode).toBe(0);
-    expect(read(join(b.home, '.codex', 'AGENTS.md'))).toContain('`recall` for what was said or decided');
+    expect(read(join(b.home, '.codex', 'AGENTS.md'))).toContain('`search` for names and phrases');
     const c = box();
-    expect((await runCli(['setup', 'codex', '--surface', 'full', '--json', '--gbrain-bin', c.bin], { env: c.env })).exitCode).toBe(0);
-    expect(read(join(c.home, '.codex', 'AGENTS.md'))).toContain('`search` for names and phrases');
+    expect((await runCli(['setup', 'codex', '--surface', 'starter', '--advertise', 'verbs', '--json', '--gbrain-bin', c.bin], { env: c.env })).exitCode).toBe(0);
+    expect(read(join(c.home, '.codex', 'AGENTS.md'))).toContain('`recall` for what was said or decided');
   });
 
   test('gbrain setup codex --no-instructions wires MCP and hooks but no block', async () => {

@@ -6,7 +6,7 @@
  * + missing-context bugs; this module exists to prevent that recurring.
  */
 
-import { remoteAccessRefusal } from './engine-access-refusal.ts';
+import { ownerLineageRefusal, remoteAccessRefusal } from './engine-access-refusal.ts';
 import { savedFactsNoticeBlock, wholeItemsWithin, type SavedFactNotice } from './saved-facts-notice.ts';
 import { writeReceiptCapacityNotices } from '../core/persistence/capacity-snapshot.ts';
 import type { BrainEngine } from '../core/engine.ts';
@@ -336,12 +336,16 @@ export interface DispatchOpts {
   enforcedMember?: true;
   /** Threaded into OperationContext.revealTools (stdio session tool reveal). */
   revealTools?: (names: string[]) => void;
+  /** Threaded into OperationContext.notifyToolListChanged (HTTP: tools/list_changed on this request's stream). */
+  notifyToolListChanged?: () => Promise<void>;
   /**
    * D2: whether this connection's tools/list shows a callable tool (the
    * advertised surface can list fewer tools than the callable set). Unset =
    * every callable tool counts as listed.
    */
   isListed?: (op: OperationMeta) => Promise<boolean>;
+  /** stdio: whether the latest tools/list answer served this tool (the list the client last read). */
+  servedToClient?: (name: string) => boolean;
   /** #5232: commit wait for coordinated writes (OperationContext.writeWaitMs); unset = agent default. */
   writeWaitMs?: number;
   /** PR B: the owner socket answers a write deferred behind a refresh as the write_pending error, so its CLI exits 10 and polls. */
@@ -453,7 +457,7 @@ export function summarizeMcpParams(opName: string, params: unknown): ParamSummar
  * facts that match the query, search's keyword count line, the remote page cap line and the row-date label. Each rides as its own text block after the
  * results (content[0] stays the bare result array for thin clients).
  */
-export function retrievalNoticeBlocks(result: unknown, retrieval: unknown): string[] {
+export function retrievalNoticeBlocks(result: unknown, retrieval: unknown, tool = 'search'): string[] {
   if (retrieval === null || typeof retrieval !== 'object') return [];
   const empty = Array.isArray(result) && result.length === 0 ? buildEmptyRetrievalBlock(retrieval) : null;
   const r = retrieval as {
@@ -473,7 +477,7 @@ export function retrievalNoticeBlocks(result: unknown, retrieval: unknown): stri
   const factsBlock = savedFactsNoticeBlock(r.saved_facts);
   if (factsBlock) blocks.push(factsBlock);
   // F2: which set the rows are and which set the keyword count covers, on every search call.
-  const countLine = searchCountLine(result, retrieval);
+  const countLine = searchCountLine(result, retrieval, tool);
   if (countLine) blocks.push(countLine);
   const capLine = pageCapLine(retrieval);
   if (capLine) blocks.push(capLine);
@@ -973,6 +977,7 @@ export function buildOperationContext(
     ...(opts.stdioMember !== undefined && opts.transport === 'stdio' && !opts.auth ? { stdioMember: opts.stdioMember } : {}),
     ...(opts.guest && opts.remote !== false ? { guestChannels: opts.guest } : {}),
     ...(opts.revealTools ? { revealTools: opts.revealTools } : {}),
+    ...(opts.notifyToolListChanged ? { notifyToolListChanged: opts.notifyToolListChanged } : {}),
     ...(opts.writeWaitMs !== undefined ? { writeWaitMs: opts.writeWaitMs } : {}),
     ...(opts.admissionOrigin ? { admissionOrigin: opts.admissionOrigin } : {}),
     ...(opts.agentLabel ? { agentLabel: opts.agentLabel } : {}),
@@ -980,6 +985,7 @@ export function buildOperationContext(
     ...(opts.thinClient ? { thinClient: true } : {}),
     ...(opts.mcpCaller ? { mcpCaller: opts.mcpCaller } : {}),
     isCallable: (opName: string, args?: Record<string, unknown>) => (render ??= dispatchRenderContext(opts)).isCallable(opName, args),
+    toolAccess: { connection: () => toolConnection(opts), ...(opts.isListed ? { isListed: opts.isListed } : {}), ...(opts.servedToClient ? { servedToClient: opts.servedToClient } : {}) },
     auth: opts.auth,
   };
 }
@@ -1082,6 +1088,9 @@ export async function dispatchToolCall(
       return qmMemoryToolResult(name, actorNamed ? actorRefusal(e, opts, name, header, args) : errorResult(e, opts, { op: name }));
     }
     if (audience || attested?.actor) assertion('accepted');
+    // The owner's remote read on an engine that does not model the owner lineage read refuses by name (engine-access-refusal.ts).
+    const ownerRefusal = ownerLineageRefusal(engine, name, access);
+    if (ownerRefusal) return errorResult(ownerRefusal, opts, { op: name });
     const callParams = attested ? attested.params : args;
     return withCallerAccess({ ...access, privateFactSources: privateFactSources && !audience && !attested?.actor && readMode === null && !opts.enforcedMember ? privateFactSources : [], ...(access.owner && opts.auth && opts.transport !== 'stdio' && !roomDeclaration && !audience && !attested?.actor && readMode === null && !opts.enforcedMember ? { ownerReads: true } : {}) }, async () => {
       // GST-2476 gap 1: a member's or audience's read is logged after the response (access/read-log.ts); every other read only pays the test.
@@ -1432,7 +1441,7 @@ async function dispatchResolvedCall(
     if (emptyBlock) notices.push({ code: 'empty_retrieval', kind: emptyBlock.includes('degraded:') ? 'degraded' : 'info', why: emptyBlock });
     // Cat 40 (#5932) evidence blocks (type-filter notice, other names, saved facts) are retrieval
     // data, not advice: they stay plain extra text blocks right after content[0], as measured.
-    const evidence = (retrieval: unknown) => retrievalNoticeBlocks(result, retrieval).slice(emptyBlock ? 1 : 0);
+    const evidence = (retrieval: unknown) => retrievalNoticeBlocks(result, retrieval, name).slice(emptyBlock ? 1 : 0);
     // Lane F (F3): degraded recall and a source binding that narrowed an empty read.
     const rerankDegradedCalls = recordRerankDegradation(responseMeta, opts);
     notices.push(...recallInteropNotices(name, result, responseMeta, safeParams,

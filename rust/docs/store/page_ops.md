@@ -34,6 +34,7 @@ hybrid search hands them that whole bag as their policy; any other key still ref
 | `brain.countPagesBy({ sourceId?, sourceIds?, since?, typeGroups? }?)` | `{ bySourceType, byTypeGroup, total }` over visible pages (live, source present and not archived) whose effective date (else `updated_at`) is at or after `since`, an ISO date or instant. `typeGroups` maps a type to its group; with it, only mapped types count in `byTypeGroup` and `total` | `countPagesBy` |
 | `brain.getAllSlugs({ sourceId? }?)` | every slug, deleted pages included, sorted and distinct; `''` means every source | `getAllSlugs` |
 | `brain.listAllPageRefs()` | `[{ source_id, slug, updated_at }]` of live pages, by source then slug | `listAllPageRefs` |
+| `brain.listMarkdownPageSlugs(sourceId)` | the slugs of the source's markdown pages, deleted pages included, in byte order | `listMarkdownPageSlugs` |
 | `brain.listPrefixSampledPages({ prefixes, excludeSlugs?, staleBias?, staleThresholdDays?, sourceId?, sourceIds? })` | one domain-bank row per prefix: the live inline page under it (segmented pages are left out) with the most inbound links, then the lowest slug. With `staleBias`, a page never retrieved ranks first, then one last retrieved before `staleThresholdDays` (default 90) ago, then the rest; links and slug break ties | `listPrefixSampledPages` |
 | `brain.listCorpusSample({ n, excludeSlugs?, seed?, sourceId?, sourceIds? })` | up to `n` domain-bank rows of live inline pages (segmented pages are left out), in a shuffle fixed by `seed` | `listCorpusSample` |
 | `brain.bumpPageRetrievals(ids)` | the number of records written. Records now as the last retrieval of each listed page that exists, once per id; it skips an id that is not a page, and a page whose record is less than 5 minutes old | `bumpPageRetrievals` (the throttled `page_retrievals` upsert of `src/core/engine-sql/pages.ts`) |
@@ -49,6 +50,9 @@ hybrid search hands them that whole bag as their policy; any other key still ref
 | `brain.readLivePageFrontmatter(sourceId, slug)` | `{ type, frontmatter }` of the live page at the slug in the source, or `null` when none is live there (put_page's ignored-label notice reads the stored page back) | `readLivePageFrontmatter` |
 | `brain.readEntityAnchoredPages(sourceId, entitySlug)` | `{ entity, pages }`: the live entity page's `{ id, title }` (or `null`), then up to 10 other live pages of the source, no question, synthesis or `pinned_question` page, whose compiled truth names the entity as a word (its slug tail or title, 3 UTF-16 units or more, matched as `~* '\m(...)\M'` matches, case by PGLite's table) or that link to it by a ranking link, by `COALESCE(effective_date, updated_at)` then id, newest first | `readEntityAnchoredPages` |
 | `brain.readPageTitlesById(ids)` | `{ id, title }` of each page id, deleted or not, each once; an id outside `integer` is refused as the `::int[]` cast refuses it (the anchored rows' titles) | `readPageTitlesById` |
+| `brain.readImageSealProbe(sourceId, slug)` | `{ has_visual }` when the page record at the slug (live or soft-deleted) is sealed past the safe-chunk fence (`chunker_version >= 4`; no version reads as below it), else `null`. The store keeps no image vector, so `has_visual` is always `false`, as `sealImagePages` answers | `readImageSealProbe` (import-file.ts `importImageFile`) |
+| `brain.readPageChunkerVersion(pageId)` | `{ chunker_version }` of the page record with the id, live, soft-deleted or segmented (`null` for a record written before the store kept one), or `null` when no record has the id; an id outside `integer` is refused | `readPageChunkerVersion` (safe-chunks.ts `provenanceDistrusted`) |
+| `brain.readPrefixAnchoredPages(sourceId, prefix)` | `[{ id, slug }]`: up to 10 live pages of the source whose slug starts with `prefix` (literal: the SQL escapes `\\`, `%` and `_` for `LIKE`), no question, synthesis or pinned-question page, by `COALESCE(effective_date, updated_at)` newest first, then by id descending | `readPrefixAnchoredPages` (entity-anchor.ts `prefixAnchoredPages`) |
 | `brain.readTextMentionPages(sourceIds, slugs)` | `[{ slug, source_id, title, type, frontmatter, date }]` for each live page whose source and slug are among the given ones, `date` being `COALESCE(effective_date, updated_at)` as ISO text (the member returns a `Date`), in no set order (the entity card's text mentions) | `readTextMentionPages` |
 | `brain.readReflexLiveKeys(sourceIds, slugs, policy)` | `[{ slug, source_id }]` for each live page whose source and slug are among the given ones and that the page policy (when not `null`) does not hide, in no set order (the retrieval reflex's live-page check) | `readReflexLiveKeys` |
 | `brain.readReflexPages(sourceIds, match, policy)` | `[{ slug, source_id, title, type, frontmatter, compiled_truth }]` for the live pages of the sources that the match picks and the page policy (when not `null`) does not hide; `compiled_truth` is the bounded 64K body prefix. `match.kind` is `names` (lowered title in `titlesLc`, slug in `exactSlugs`, slug `LIKE` a `slugSuffixes` pattern, or a person page whose lowered title is `LIKE` a `surnamePatterns` pattern; by page id), `slugs`, `cjkExact` (lowered title or slug in `norms`) or `titles` (lowered title in `titlesLc`); no set order except `names` | `readReflexPages` |
@@ -99,9 +103,11 @@ outer catch of the retrieval reflex in `src/core/context/reflex.ts`.
 - `countPagesBy` refuses a `since` that is not an ISO date or instant (Postgres also takes other
   `timestamptz` text).
 - `revertToVersion` writes no new version, as PGLite. The interface spec says it snapshots first.
-- After a hard delete PGLite also scrubs ratings, weights, the volunteer log, the
-  gazetteer, take proposals, open loops, core-edit notices and write-gate holds. The store keeps none
-  of those yet, so only eval candidates, retrieval records, page aliases, slug aliases and rename history change.
+- A hard delete (`deletePages`, `purgeDeletedPages`) scrubs, in the delete's write, the eval candidates, retrieval
+  records, the take proposals (with their idempotency entries and nudges) and open loops (with their dedupe keys) filed
+  under the slug in its source, and the page aliases, slug aliases and rename history, as PGLite's
+  `deletePurgedSlugStoreRows` does. PGLite also scrubs ratings, weights, the volunteer log, the gazetteer, core-edit
+  notices and write-gate holds, which this scrub does not touch.
 
 ## The purgeDeletedPages holds
 

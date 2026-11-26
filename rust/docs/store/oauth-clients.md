@@ -14,6 +14,7 @@ serves the same members, and the spend ledger reads the same record ([spend-log.
 | `brain.readOauthClient(clientId)` | the row as `SELECT * FROM oauth_clients WHERE client_id = $1` returns it, or null |
 | `brain.readOauthClientNames(ids)` | `[{ id, name }]` (`client_id`, `client_name`) of the clients with those ids, by id; an unknown id is left out. The names `readWriteAttributionNames` shows ([write_attribution.md](write_attribution.md)) |
 | `brain.listOauthClients()` | every client's whole row, as `SELECT * FROM oauth_clients ORDER BY client_name COLLATE "C", client_id COLLATE "C"` returns them (byte order on every engine; the store sorts the bytes of the name, then of the id) |
+| `listAdminClientRows()` | served from `brain.listOauthClients()`: every client, deleted ones included, as its inspection columns, newest `created_at` first (the stored text, so microseconds break a tie inside one millisecond), then client id in byte order, as `ORDER BY created_at DESC, client_id COLLATE "C"` |
 | `brain.listSourceOAuthClients(sourceId)` | `{ client_id, client_name, deleted }[]`, the clients whose `source_id` is the source, revoked ones included (`deleted` when `deleted_at` is set), by client id in byte order on every engine (`client_id COLLATE "C"`) |
 | `brain.patchOauthClient(clientId, patch, guard)` | `{ row, before }` or null. `patch.set` names the columns to set (`client_secret_hash`, `token_ttl`, `min_trust`, `surface`, `surface_set_by`) and the field of that name is the value, absent meaning NULL; `row` is the whole row after (checked again), `before` the five columns before. Null when the client is missing or the guard excludes it: `live` skips a deleted client, `unless_surface_set_by` skips a client with that pin (a NULL pin is not equal to it), `client_secret_hash_is` skips a client whose secret hash is not that value (compare-and-set, so of two callers that read the same hash exactly one writes). The write is one store write, so on this store it is the lock |
 | `brain.updateOauthClientBudget(clientId, usd)` | whether the client exists; `usd` null clears the cap. The rewritten row is checked again |
@@ -60,7 +61,8 @@ and `grant_repair_reasons` `{}`, `bound_max_concurrent` 1, `delegated_namespace`
 `persistence/page-visibility.ts` (`defaultSourceMemberWriter`, the client's `member_id`) and the Rust store member
 `readOAuthClientWriteGrant` (the grant `authorizeWrite` re-checks, [journal.md](journal.md)).
 `listOauthClients` serves `listClientRows` (`commands/auth-client-rows.ts`, behind `gbrain auth clients`), which picks the
-columns it shows out of each row; a brain from before a column returns rows without it, so the old six-step projection
+columns it shows out of each row, and the duplicate-name check of `src/commands/agent-register.ts`, which filters the rows by
+`client_name` and `deleted_at`; a brain from before a column returns rows without it, so the old six-step projection
 ladder is gone and the surface and source columns read as null there, as before. The listing's order is now byte order
 (`COLLATE "C"`) where it followed the database's collation on PostgreSQL. `readOauthClient` also
 returns every column, so a caller that named columns checks the ones it needs with `requireOauthClientColumns`, which
@@ -71,8 +73,8 @@ name) and two concurrent reissues end with one winner and one `reissue_conflict`
 token target goes through the `access_tokens` members ([access-tokens.md](access-tokens.md)). A function that also runs a
 raw statement keeps refusing on a Rust brain at that statement. `gbrain auth register-client` registers through `planManualClient` (`oauth-provider.ts`) and
 `insertOauthClientGrant` when the engine has every grant column (`registerScopedClient` in `src/commands/auth.ts`), then
-`setOauthClientTokenTtl`; a grant that reads a named source still runs the raw scope-source check (`assertScopeSourceGrant`)
-and stops on Rust. `auth revoke-client` calls `deleteOAuthClient`, and the Wakeshift drain calls `oauthClientLive`.
+`setOauthClientTokenTtl`; a grant that reads a named source runs `assertScopeSourceGrant` through the engine's typed
+`readScopeSourceConfigs`, so that check is served on Rust. `auth revoke-client` calls `deleteOAuthClient`, and the Wakeshift drain calls `oauthClientLive`.
 
 ## Constraints
 

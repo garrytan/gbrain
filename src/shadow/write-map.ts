@@ -154,8 +154,22 @@ export const WRITE_MAP: Record<string, WriteSpec> = {
   updateTakeEmbeddings: { tables: ['takes'], plan: (a) => each<any>(a[0], (t) => [{ relation: 'takes', sel: { id: id(t.take_id) } }]) },
   updateTake: { tables: ['takes'], plan: (a) => [{ relation: 'takes', sel: { page_id: id(a[0]), row_num: id(a[1]) } }] },
   resolveTake: { tables: ['takes'], plan: (a) => [{ relation: 'takes', sel: { page_id: id(a[0]), row_num: id(a[1]) } }] },
+  stampTakeResolvedAt: { tables: ['takes'], plan: (a) => [{ relation: 'takes', sel: { page_id: id(a[0]), row_num: id(a[1]) } }] },
+  // The chronicle ledger row the decision names (the seed copies chronicle_page_state row for row).
+  upsertChronicleRow: { tables: ['chronicle_page_state'], plan: (a) => [{ relation: 'chronicle_page_state', sel: {
+    source_id: String(a[0].sourceId), page_id: id(a[0].pageId), content_hash: String(a[0].contentHash), extractor_version: id(a[0].extractorVersion) } }] },
   supersedeTake: { tables: ['takes'], plan: (a) => [childById('takes', a[0])] },
   deleteTakeRows: { tables: ['takes', 'owner_only_marks'], plan: (a) => [childById('takes', a[0], true), ...OWNER_MARKS] },
+  // A page publication's fence projection and fence guard (engine-sql/fence-projection.ts, trust-fence.ts): the page's
+  // fact rows by (source, markdown slug) or by id, the page's takes by page id; selector columns never change.
+  expireFenceFacts: { tables: ['facts'], plan: (a) => [{ relation: 'facts', sel: { source_id: id(a[0]), source_markdown_slug: id(a[1]) } }] },
+  refreshFenceFactFields: { tables: ['facts'], plan: (a) => [{ relation: 'facts', sel: { source_id: id(a[0]), source_markdown_slug: id(a[1]) } }] },
+  detachFenceFactRows: { tables: ['facts'], plan: (a) => each<unknown>(a[0], (factId) => [{ relation: 'facts', sel: { id: id(factId) } }]) },
+  moveGuardedFenceRows: { tables: ['facts'], plan: (a) => each<any>(a[0], (m) => [{ relation: 'facts', sel: { id: id(m.id) } }]) },
+  clearChangedTakeResolutions: { tables: ['takes'], plan: (a) => [childById('takes', a[0])] },
+  writeFenceTakeResolutions: { tables: ['takes'], plan: (a) => [childById('takes', a[0])] },
+  // A tier-only row change (engine-sql/row-tier.ts): one row of facts, takes or pages by id.
+  setRowTrustTier: { tables: ['facts', 'takes', 'pages'], plan: (a) => [{ relation: String(a[0]), sel: { id: id(a[1]) } }] },
   addSynthesisEvidence: { tables: ['synthesis_evidence'], plan: (a) => each<any>(a[0], (e) => [childById('synthesis_evidence', e.synthesis_page_id, false, 'synthesis_page_id')]) },
   // Everything else with a precise home
   putRawData: { tables: ['raw_data'], plan: (a) => [child('raw_data', a[0], a[3]?.sourceId, false, { source: a[1] })] },
@@ -198,6 +212,8 @@ export const IGNORED_MEMBERS: ReadonlySet<string> = new Set([
   'connect', 'connectForRestore', 'connectWithHeldLock', 'disconnect', 'reconnect', 'initSchema', 'registerBeforeDisconnect',
   'closeRetainingLock', 'holdsDatastoreLock', 'batchRetry', 'applyTransactionSettings', 'applyForwardReferenceBootstrap',
   'lockPageKeys', 'lockRegisteredSourceIds', 'keywordBoundedRead', 'rewriteLinks', 'matchTakeRows',
+  // Writes only persistence_requests (a request's takeHoldersUsed), which the shadow does not copy (seed/not_copied.rs: MachineLocal).
+  'recordTakeHoldersUsed',
   // Locks.
   'acquireCycleLock', 'refreshCycleLock', 'releaseCycleLock', 'deleteCycleLock', 'deleteCycleLockIfStale',
   // Logs, caches and machine-local state (not copied).
@@ -209,6 +225,8 @@ export const IGNORED_MEMBERS: ReadonlySet<string> = new Set([
   // Segmented-body staging and derivation tables (not copied).
   'allocateBodyOccurrenceIds', 'stageSegmentTexts', 'stageManifestRows', 'openBodyStaging', 'setBodyStagingState',
   'upsertSegmentDerivations', 'retireSegmentDerivations',
+  // The schema-pack query-cache invalidation: query_cache is a cache the seed leaves behind (rust/docs/store/seed.md).
+  'invalidateQueryCacheRows',
   // The memory proposal queue: the Rust store does not serve memory_proposals yet (rust/docs/store/seed.md lists it under "Gaps: not served by the Rust store"),
   // so the seed does not copy it, nothing follows it, and a row in it blocks a swap.
   'expireMemoryProposals', 'purgeMemoryProposals',
@@ -251,7 +269,7 @@ export const READ_ONLY_MEMBERS: ReadonlySet<string> = new Set([
   'factRelinkAttemptsTableExists', 'filterPagesAtRevision', 'filterUnarchivedSourceIds', 'heldEntityPageDeleted',
   'heldGenerationRowsForInput', 'heldMoveDue', 'heldTargetPageLive', 'holdsNotifierLease', 'inboundLinkCoverage',
   'linkRelationshipKeysForOrigin', 'linkRelationshipKeysForPages', 'liveGenerationForOperation', 'lockActiveAccessTokens',
-  'lockAllSourceRows', 'lockBodyStagingState', 'lockLegacyAccessTokens', 'lockLivePagesByKey', 'lockSharedSkillBrainId',
+  'lockAllSourceRows', 'lockBodyStagingState', 'lockLegacyAccessTokens', 'lockSegmentedGenerationPage', 'lockLivePagesByKey', 'lockSharedSkillBrainId',
   'loopFactDrift', 'matchHeadStems', 'matchSavedFacts', 'maxConversationRowNum', 'maxFenceRowNum', 'maxFenceRowNumOfPage',
   'nextLivePageAfter', 'oauthClientHoldsAuthorization', 'oauthClientLive', 'originIndexPresent', 'ownerReachesFact',
   'ownsSchemaTables', 'pageAwaitsRederive', 'pageHasFrontmatterKey', 'pageHasTimelineEntries', 'pagePrefixSamples',
@@ -261,10 +279,16 @@ export const READ_ONLY_MEMBERS: ReadonlySet<string> = new Set([
   'purgeSubjectPageLive', 'rankEntities', 'recentWriterVersions', 'scanExactBatch', 'scanUnfencedFactRows',
   'selectClaimableEffect', 'selectClaimableWrite', 'selectProjectionWindowJobs', 'sourceIdExists',
   'staleLinkRelationshipKeys', 'wordLexemes',
+  // The member handover preview reads (engine-sql/handover-reads.ts) whose names carry no read prefix.
+  'countMemberPage', 'countMemberPageFacts', 'countMemberBoundCredentials',
   // Lane 15 reads whose names carry no read prefix: the schema-pack retype probe and the explain-target probe.
   'probeRetypeRows', 'probeTargetRows',
   // Batch 12: row-lock and existence reads (SELECTs only) of the persistence, repair and secret-store lanes.
   'filterPageIdsByFrontmatter', 'lockEffectRow', 'secretEntryExists',
+  // Lane 15 reads whose names carry no read prefix: the schema-pack sync probe and the who-read tally.
+  'probeUntypedPathPrefix', 'tallyAccessReadsOfPages',
+  // Lane 17: the git-gap census marks its transaction read-only and writes nothing (engine-sql/git-gap-census.ts).
+  'markTransactionReadOnly',
 ]);
 
 /**
@@ -283,7 +307,7 @@ export const UNMAPPED_WRITE_MEMBERS: ReadonlySet<string> = new Set([
   'archiveSource', 'assertCycleLease', 'attachWantedMarkerJob', 'backfillSearchVectors', 'beginSnapshotRead',
   'bindPageOrigin', 'blankPurgeCoreEditNotices', 'bumpGenerationValve', 'bumpPageKnowledgeRevision', 'bumpPageRetrievals',
   'bumpSourcePurgeEpoch', 'bumpWithdrawnPageRevisions', 'cancelJobs', 'cancelWriteRow', 'capSessionStatePerClient',
-  'claimFilePage', 'claimHousekeepingTurn', 'claimNextJob', 'claimNotifierLease', 'claimSegmentedProjection',
+  'claimCoalescedGitEffects', 'claimFilePage', 'claimHousekeepingTurn', 'claimNextJob', 'claimNotifierLease', 'claimSegmentedProjection',
   'claimWakeForgets', 'claimWakeWatch', 'clearChunkVectors', 'clearConversationPageFacts', 'clearFenceCandidateParts',
   'clearFenceHoldRows', 'clearGenerationAttempts', 'clearImageSealVectors', 'clearMentionSourceIndex',
   'clearOntologySlots', 'clearPageChildOrphans', 'clearTieHeldGenerationRows', 'clearUnkeptChunkVectors',
@@ -293,7 +317,7 @@ export const UNMAPPED_WRITE_MEMBERS: ReadonlySet<string> = new Set([
   'declarePersistence', 'declareSyncImportPageCursor', 'deferClaimForQuietHours', 'deferProjectionJob', 'delayActiveJob', 'deleteAccessGroup',
   'deleteAccessMemberLink', 'deleteChunksForPages', 'deleteConsumerRow', 'deleteConversationOutcomeRows',
   'deleteDerivedAliasesForSlugs', 'deleteEventProjections', 'deleteExpiredOauthCredentials', 'deleteFactRelinkMemos',
-  'deleteGitHoldRow', 'deleteJobAttachment', 'deleteLinksById', 'deleteManagedSyncFailureRow', 'deleteManagedSyncManifest',
+  'deleteGitHoldRow', 'deleteJobAttachment', 'deleteLinksById', 'deleteManagedSyncFailureObservation', 'deleteManagedSyncFailureRow', 'deleteManagedSyncManifest',
   'deleteOAuthClient', 'deleteOauthClientCodes', 'deleteOauthClientRow', 'deleteOauthClientTokens', 'deleteOauthCode',
   'deleteOauthRefreshToken', 'deleteOauthTokenByHash', 'deleteOpCheckpoint', 'deleteOpCheckpointPaths',
   'deleteOrphanBinding', 'deleteOrphanConnectorCheckpoint', 'deleteOrphanedAliases', 'deleteOwnedLinks',
@@ -310,8 +334,8 @@ export const UNMAPPED_WRITE_MEMBERS: ReadonlySet<string> = new Set([
   'expireFactWithNote', 'expireFactsByIds', 'expireFactsByWithdrawal', 'expireFactsOfGonePages', 'expirePageFactsBySource',
   'expireSourceFactNow', 'expireSpendReservations', 'expireStaleWriteClaims', 'expireSupersededFact', 'failEffectRow',
   'failJob', 'failParentJob', 'failSubagentToolExecution', 'fetchSyncImportPageCursor', 'finishAccessRestamp',
-  'forgetWakeCredential', 'forgetWakeMember', 'holdPageEmbedding', 'insertAccessMember', 'insertAccessMemberLink',
-  'insertAccessMigration', 'insertAccessPolicyRevision', 'insertAccessToken', 'insertBeliefEvents',
+  'forgetWakeCredential', 'forgetWakeMember', 'gitDurabilityStore', 'gitEffectStore', 'holdPageEmbedding', 'insertAccessMember', 'insertAccessMemberLink',
+  'insertAccessMigration', 'insertAccessPolicyRevision', 'insertAccessReadLogRows', 'insertAccessToken', 'insertBeliefEvents',
   'insertBeliefRedaction', 'insertCalibrationProfile', 'insertCanonicalTimelineRows', 'insertDerivedAliasRows',
   'insertFactPurge', 'insertFactWithdrawal', 'insertHoldingPagePurges', 'insertJobAttachment', 'insertLeasePressure',
   'insertOauthClient', 'insertOauthClientGrant', 'insertOauthCode', 'insertOauthGrantAudit', 'insertOauthToken',
@@ -324,12 +348,12 @@ export const UNMAPPED_WRITE_MEMBERS: ReadonlySet<string> = new Set([
   'lockMentionEntries', 'lockMentionSources', 'lockNoopEmbeddingWindow', 'lockOAuthClient', 'lockOauthClientName',
   'lockOverdueHold', 'lockPageById', 'lockPersistenceCounters', 'lockPurgeSource', 'lockReconcileRevision',
   'lockSourceRow', 'lockSourceShared', 'lockWriteRequest', 'lockWriteRequestsById', 'logChatUsage', 'logMcpRequest',
-  'lowerTrustTier', 'markAccessRevisionsApplied', 'markBeliefCommits', 'markEdgeProposalStale', 'markEdgeProposalUndone',
+  'lowerTrustTier', 'manualLinkStore', 'markAccessRevisionsApplied', 'markBeliefCommits', 'markEdgeProposalStale', 'markEdgeProposalUndone',
   'markGenerationActivated', 'markJobWatchdogSuspect', 'markNeedsRederive', 'markProjectionRebuildFailed',
   'markRevertedEdgeProposals', 'markSourceSynced', 'markSpendUsageUnknown', 'mintBeliefLifetime',
   'moveConversationSourceWindows', 'moveFactToPage', 'moveFactWithdrawalSubject', 'moveKeptFactRows',
   'openPageEmbeddingHold', 'openWakeWatch', 'parkEffectRow', 'patchOauthClient', 'pauseJob', 'persistOauthClientGrant',
-  'placeRelinkedFact', 'postInboxMessage', 'promoteDelayedJobs', 'pruneHoldingPageVersions', 'pruneJobs',
+  'placeRelinkedFact', 'postInboxMessage', 'promoteDelayedJobs', 'pruneAccessReadLog', 'pruneHoldingPageVersions', 'pruneJobs',
   'pruneMcpRequestLogBatch', 'pruneSatisfiedWantedMarkers', 'publicationJournalStore', 'purgeCalibrationProfilesByWave',
   'purgeStaleCheckpoints', 'queuePageProjectionJob', 'queueWakeForget', 'queueWithdrawalReview', 'rearmLinksEffects',
   'reattributeSessionFacts', 'rebindSharedSkillMember', 'reclaimStalledJobs', 'recordAccessMigrationPhase',
@@ -364,7 +388,7 @@ export const UNMAPPED_WRITE_MEMBERS: ReadonlySet<string> = new Set([
   'softDeleteOauthClient', 'stampConversationSourceWindows', 'stampDeferredProjectionJob', 'stampDreamPageProvenance',
   'stampEffectClaim', 'stampPageFrontmatter', 'stampPageIngest', 'stampVersionChangeReason', 'stampWorktreeHeartbeats',
   'stampWriteClaim', 'startSubagentToolExecution', 'storeSegmentDerivationsIfLive', 'swapFactsFtsIndex',
-  'switchAccessMigration', 'takePageEmbeddingLease', 'tombstoneAccessMember', 'touchAccessTokenLastUsed',
+  'switchAccessMigration', 'takePageEmbeddingLease', 'tombstoneAccessMember', 'topologyStore', 'touchAccessTokenLastUsed',
   'touchUnclaimedProjectionJob', 'transitionTrustProposal', 'trueUpReservations', 'unlinkEntityIdentityRow',
   'updateFenceFactCells', 'updateJobProgress', 'updateOauthClientBudget', 'updatePageBodyForPurge',
   'updatePendingTrustProposalAfter', 'upsertCliFileRow', 'upsertFactRelinkAttempt', 'upsertFenceCandidatePart',
@@ -378,13 +402,30 @@ export const UNMAPPED_WRITE_MEMBERS: ReadonlySet<string> = new Set([
   'writeReasonPurgeTombstones', 'writeSharedSkillPolicy', 'writeSharedSkillRevision', 'writeSourceSyncHeartbeat',
   'writeSourceUpstreamObservation', 'writeSyncAdmissionStamp', 'writeSyncPassRow', 'writeTrustScanCursor',
   'writerAdminStore', 'writerReleaseStore',
+  // Lane 16 repair applies (engine-sql/repair-applies.ts, atom-generation.ts).
+  'detachFenceRowFacts', 'expireApprovedFacts', 'linkStruckDuplicateFacts', 'lockApprovedFacts', 'moveFactClaimDates',
+  'recordAtomGenerationBump',
+  'restoreConsolidationTie', 'restoreExtractorFact', 'supersedeDuplicateFacts', 'tightenDatabaseFactVisibility',
   // Batch 11 typed writes (page purge port, take grades, horizons and proposals, chronicle ledger, connector stamps, sync conversions,
   // source rename): not mapped to a write plan yet, so they publish invalid like the rest of the list.
-  'carryConceptIncomingLinks', 'chronicleStore', 'claimTakeProposal', 'clearQueryCache', 'continueDerivationSweep', 'deleteFactPurgesByRequests', 'deleteOriginHoldRows', 'deletePagePurgeTombstones', 'deletePageSegmentTexts', 'deletePageStagings', 'deletePurgedFeedbackRows', 'deletePurgedNameStoreRows', 'deletePurgedPageFacts', 'deletePurgedPageFiles', 'deletePurgedPageGateReceipts', 'deletePurgedPageHolds', 'deletePurgedPageTrustProposals', 'deletePurgedSlugHolds', 'deletePurgedSlugStoreRows', 'deleteTakeGrade', 'deleteTakeHorizon', 'deleteTakeProposalTombstones', 'deleteTakePurgesByRequests', 'insertConfigIfAbsent', 'insertPageFactPurges', 'insertTakeGrade', 'insertTakeNudge', 'insertTakeProposal', 'pruneChronicleReservations', 'purgeTakeNudgesByWave', 'recordConnectorSyncAttempt', 'recordDerivationPurgeRow', 'recordOwedPurgeRows', 'recordSyncConversion', 'redactWriteRequestRow', 'rejectTakeProposal', 'releaseTakeProposalClaim', 'releaseTerminalBytes', 'renameSource', 'reserveChronicleJudgeSlot', 'revertWaveTakeResolutions', 'setTakeProposalPromotedRow', 'sweepPageTextsForClaims', 'unapplyWaveTakeGrades', 'upsertChronicleRow', 'upsertDerivedOriginPark', 'upsertExtractRollupDay', 'upsertTakeHorizon', 'writeConnectorDbCursor', 'writeOpCheckpointDoc', 'writePageLabelGuard',
+  'carryConceptIncomingLinks', 'chronicleStore', 'claimTakeProposal', 'clearQueryCache', 'continueDerivationSweep', 'deleteFactPurgesByRequests', 'deleteOriginHoldRows', 'deletePagePurgeTombstones', 'deletePageSegmentTexts', 'deletePageStagings', 'deletePurgedFeedbackRows', 'deletePurgedNameStoreRows', 'deletePurgedPageFacts', 'deletePurgedPageFiles', 'deletePurgedPageGateReceipts', 'deletePurgedPageHolds', 'deletePurgedPageTrustProposals', 'deletePurgedSlugHolds', 'deletePurgedSlugStoreRows', 'deleteTakeGrade', 'deleteTakeHorizon', 'deleteTakeProposalTombstones', 'deleteTakePurgesByRequests', 'insertConfigIfAbsent', 'insertPageFactPurges', 'insertTakeGrade', 'insertTakeNudge', 'insertTakeProposal', 'pruneChronicleReservations', 'purgeTakeNudgesByWave', 'recordConnectorSyncAttempt', 'recordDerivationPurgeRow', 'recordOwedPurgeRows', 'recordSyncConversion', 'redactWriteRequestRow', 'rejectTakeProposal', 'releaseTakeProposalClaim', 'releaseTerminalBytes', 'renameSource', 'reserveChronicleJudgeSlot', 'revertWaveTakeResolutions', 'setTakeProposalPromotedRow', 'sweepPageTextsForClaims', 'unapplyWaveTakeGrades', 'upsertDerivedOriginPark', 'upsertExtractRollupDay', 'upsertTakeHorizon', 'writeConnectorDbCursor', 'writeOpCheckpointDoc', 'writePageLabelGuard',
   // embed --stale writes (engine-sql/embed-stale-work.ts): the content-drift sweep's cursor row and one drift batch.
   'invalidateContentDriftChunks', 'lockContentDriftState',
+  // The soak counters' write (engine-sql/soak-counters.ts): one op_checkpoints row per day, which no write plan maps yet.
+  'addSoakCounterEvent',
   // Batch 12 typed writes (repair-rust b9/b6b, lanes 6, 13 and the segmented and secret-store members): not mapped to a write plan yet, so they publish invalid like the rest of the list.
   'clearCodeEdgesLeavingChunks', 'deleteChunksByIds', 'deleteManagedSyncFailureObservation', 'deleteUnreferencedSecretEntry', 'dispatchBudgetReservation', 'insertBackupSecretEntry', 'insertBackupSecretOccurrence', 'insertOpCheckpointIfAbsent', 'insertRemirrorEffects', 'insertSecretEntry', 'insertSecretOccurrence', 'markSecretEntryAllowed', 'movePageVersions', 'moveTwinFacts', 'moveTwinPageChildren', 'moveTwinRelationships', 'reclaimBudgetReservations', 'recordRenameAlias', 'releaseBudgetReservation', 'replaceOpCheckpointAtVersion', 'reserveBudgetReservation', 'retireStaleSegmentChunks', 'setRawDataValue', 'setRedactedPageFields', 'setRedactedRowText', 'setRetainedVersionBody', 'settleBudgetReservation', 'upsertFenceTrendRunRecord',
+  // The segmented write path's typed writes (engine-members/segmented-writes.ts): a re-chunk, a fence rewrite and a segmented embed.
+  'installSegmentedVectors', 'publishRebuiltGeneration', 'restorePageDeletedAt', 'restorePageUpdatedAt',
+  'setMaterializingRevision', 'setSegmentedVersionHash', 'splitManifestGeneration',
+  // Lane 17 typed writes (pinned questions, the volunteer log, retrieval events and ratings): not mapped to a write plan yet.
+  'applyRetrievalRatings', 'insertPinnedQuestion', 'insertRetrievalEvents', 'insertVolunteerEvents',
+  // Lane 4 (sweep-facts-rust) typed edge-proposal writes: not mapped to a write plan yet.
+  'deleteEdgeProposalError', 'deleteHeldEdgeProposalErrors', 'markEdgeProposalDated',
+  // Lane 8 (rust-members-tail) typed writes (the extraction watermark and receipt, the volunteer retention delete): not mapped to a write plan yet.
+  'clearPageExtractionState', 'commitPageExtraction', 'deleteVolunteerEventsOlderThan', 'writePageExtractionReceipt',
+  // Lane 3 (purge-ledger-sites) typed writes (engine-sql/belief-purge-ledger.ts: the belief ledger's purge redaction and prior_hash re-chain): not mapped to a write plan yet.
+  'rechainBeliefPriorHash', 'redactPurgedBeliefKeys', 'rewriteBeliefEventFields',
 ]);
 export type MemberKind = 'read_name' | 'raw' | 'reserved' | 'ignored' | 'schema' | 'mapped' | 'unmapped';
 

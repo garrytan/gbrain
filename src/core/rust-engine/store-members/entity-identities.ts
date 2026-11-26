@@ -82,6 +82,7 @@ export const listEntityKeyRows: StoreMember<[opts: EntityKeyRowsOpts], EntityKey
     limit: opts.limit,
     members: opts.members ? opts.members.map(m => ({ source_id: m.source_id, slug: m.slug })) : null,
     tokens: opts.tokens ? { values: [...opts.tokens.values], fields: [...opts.tokens.fields] } : null,
+    collapsed: opts.collapsed === true,
   }));
 
 /** The owner's identity decisions by id, the members still pending, and the revision an apply can pin. No evidence is kept. */

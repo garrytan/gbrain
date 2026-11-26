@@ -39,7 +39,7 @@ const scratch: string[] = [];
 afterAll(() => { for (const d of scratch) rmSync(d, { recursive: true, force: true }); });
 function tmp(prefix = 'skres-'): string { const d = mkdtempSync(join(tmpdir(), prefix)); scratch.push(d); return d; }
 
-interface J { id: string; name: string; description?: string; triggers?: string[]; routing?: string[]; body?: string; path?: string; eligible?: boolean }
+interface J { id: string; name: string; description?: string; triggers?: string[]; routing?: string[]; body?: string; path?: string; eligible?: boolean; deprecated?: boolean; replaced_by?: string }
 async function jsonCatalog(home: string, catalog: string, skills: J[], extra: Record<string, unknown> = {}) {
   const f = join(tmp('skres-src-'), 'catalog.json');
   writeFileSync(f, JSON.stringify(skills));
@@ -597,6 +597,24 @@ describe('block', () => {
     expect(custom.output.suggestions[0]!.path).toBe(p);
   });
 
+  test('openclaw: the path comes first unless a suggested skill sits outside the root the agent may read', async () => {
+    const home = tmp();
+    const root = tmp('skres-dir-');
+    skillDir(root, 'deploy', { name: 'deploy', description: 'Ship a service to production' });
+    await buildSkillIndex({ catalog: 'c', dirs: [root] }, { home });
+    const block = async (readRoot?: string) => (await resolveSkills({ message: 'deploy', harness: 'openclaw', top_gate: 0 }, { home, ...(readRoot === undefined ? {} : { readRoot }) })).output.block;
+    const pathFirst = 'To use one, read the SKILL.md at its path with read before acting; if that read fails, load it with skills_read({name})';
+    const nameFirst = 'To use one, load it with skills_read({name}) using its name (through dispatch_action when skills_read is not listed) before acting';
+    for (const b of [await block(), await block(root)]) {
+      expect(b).toContain(pathFirst);
+      expect(b.indexOf('read the SKILL.md')).toBeLessThan(b.indexOf('skills_read'));
+    }
+    for (const b of [await block(tmp('skres-other-')), await block('')]) {
+      expect(b).toContain(nameFirst);
+      expect(b).not.toContain('read the SKILL.md');
+    }
+  });
+
   test('codex can load by path from the block alone', async () => {
     const home = tmp();
     const root = tmp('skres-dir-');
@@ -1065,5 +1083,33 @@ describe('daily logs', () => {
     writeFileSync(full, 'y'.repeat(DAILY_LOG_DAY_CAP_BYTES));
     await appendDailyLog(dir, LANE_LOG, 'z\n', now + day);
     expect(readFileSync(full, 'utf8').endsWith('z\n')).toBe(false);
+  });
+});
+
+describe('deprecated skills', () => {
+  test('a SKILL.md with deprecated: true drops out of matched suggestions but still loads when the turn names it, with its replacement in the reason', async () => {
+    const home = tmp();
+    const root = tmp('skres-dir-');
+    const old = skillDir(root, 'reports', { name: 'reports', description: 'Write weekly status reports for a team', deprecated: true, replaced_by: 'status-digest' });
+    skillDir(root, 'status-digest', { name: 'status-digest', description: 'Write a weekly status digest for a team' });
+    await buildSkillIndex({ catalog: 'c', dirs: [root] }, { home });
+    const matched = await resolveSkills({ message: 'write the weekly status reports for the team', top_k: 8, top_gate: 0 }, { home });
+    expect(matched.output.suggestions.map(s => s.id)).toEqual(['status-digest']);
+    const named = await resolveSkills({ message: 'use the reports skill', top_gate: 0 }, { home });
+    expect(named.output.suggestions[0]).toMatchObject({ id: 'reports', match_strength: 'named', path: old });
+    expect(named.output.suggestions[0]!.reason).toStartWith('named in the turn; deprecated, use status-digest instead; ');
+  });
+
+  test('a JSON entry takes deprecated and replaced_by the same way, and a deprecated that is not a boolean is refused', async () => {
+    const home = tmp();
+    await jsonCatalog(home, 'c', [...BASIC, { id: 'gbrain:old-deploy', name: 'old-deploy', description: 'Ship a service to production after the tests pass', deprecated: true }]);
+    const matched = await resolveSkills({ message: 'ship the service to production', top_k: 8, top_gate: 0 }, { home });
+    expect(matched.output.suggestions.map(s => s.id)).not.toContain('gbrain:old-deploy');
+    expect(matched.output.suggestions[0]!.id).toBe('gbrain:deploy');
+    const named = await resolveSkills({ message: 'run /old-deploy now', top_gate: 0 }, { home });
+    expect(named.output.suggestions[0]).toMatchObject({ id: 'gbrain:old-deploy', match_strength: 'named' });
+    expect(named.output.suggestions[0]!.reason).toStartWith('named in the turn; deprecated; ');
+    expect(await codeOf(jsonCatalog(tmp(), 'c', [{ id: 'a', name: 'a', deprecated: 'yes' } as unknown as J]))).toBe('skill_source_invalid');
+    expect(await codeOf(jsonCatalog(tmp(), 'c', [{ id: 'a', name: 'a', replaced_by: 3 } as unknown as J]))).toBe('skill_source_invalid');
   });
 });

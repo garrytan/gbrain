@@ -22,7 +22,11 @@ export const listSegmentedPageSlugs: StoreMember<[sourceId: string], string[]> =
   storeCall({ member: 'listSegmentedPageSlugs' }, () => brain.listSegmentedPageSlugs(sourceId));
 
 export const listUntiledSegmentedPages: StoreMember<[opts?: UntiledPageQuery], UntiledPage[]> = async (brain, opts = {}) => {
-  const limit = Math.max(0, Math.floor(opts.limit ?? 1000));
+  // Postgres refuses `LIMIT -1` ("LIMIT must not be negative"), so a negative limit is refused here too, before any read.
+  if (opts.limit !== undefined && opts.limit < 0) {
+    throw Object.assign(new Error('listUntiledSegmentedPages limit: LIMIT must not be negative'), { code: 'invalid_argument' });
+  }
+  const limit = Math.floor(opts.limit ?? 1000);
   const rows = await storeCall({ member: 'listUntiledSegmentedPages' }, () =>
     brain.listUntiledSegmentedPages(opts.sourceIds ? [...opts.sourceIds] : null, opts.slugs ? [...opts.slugs] : null, limit)) as UntiledPageRow[];
   return rows.map(untiledPageOf);

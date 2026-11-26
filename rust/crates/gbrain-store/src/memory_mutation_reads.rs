@@ -15,12 +15,12 @@ use crate::Store;
 use crate::cli_reads::pg_text::fm_text;
 use crate::env::iso;
 use crate::error::Result;
-use crate::facts::PrivacyPolicy;
 use crate::facts::purge::{outcome_marker, unbacked};
 use crate::facts::{
-    FactRecord, access_readers, fact_fingerprint, hidden_by_deleted_page, hidden_by_policy,
-    hidden_by_provenance_page, hidden_by_quarantine, read_fact, source_rows,
+    FactRecord, access_id, access_readers, fact_fingerprint, hidden_by_deleted_page,
+    hidden_by_policy, hidden_by_provenance_page, hidden_by_quarantine, read_fact, source_rows,
 };
+use crate::facts::{PrivacyPolicy, owner_reads_page};
 use crate::kv::KvRead;
 use crate::links::no_nul;
 use crate::owner_only::{OwnerOnlyForm, fact_owner_only};
@@ -116,12 +116,16 @@ pub struct HiddenCopyQuery {
     pub remote_floor: RemoteFloor,
 }
 
-/// `ownerReachesFact(spec)` for an owner with no member identity (the TypeScript member refuses the rest).
+/// `ownerReachesFact(spec)`. With no `policy` the owner is bound to no member, so its read rule reads no page. With one
+/// the owner is bound to the member the policy's `identity` names, and the policy's `identity` and `satisfied_rule_ids`
+/// are the spec's `identity` and `satisfied` (the TypeScript member refuses a rendering the policy cannot carry).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct OwnerReachQuery {
     pub id: i64,
     pub source_id: String,
+    #[serde(default)]
+    pub policy: Option<PrivacyPolicy>,
 }
 
 /// `readFactWithdrawalClaim`'s spec: the fact a withdrawal admits.
@@ -240,8 +244,8 @@ impl Store {
     }
 
     /// `factReadableUnder`: whether fact `id` of `source_id` passes the caller's visibility rule,
-    /// `projectionEligibleSql('facts')` (deleted and quarantined provenance pages, the trust floor and flag
-    /// suppression; the store keeps no `needs_rederive` queue, so that clause hides nothing) and, with
+    /// `projectionEligibleSql('facts')` (deleted and quarantined provenance pages, a row marked in
+    /// `needs_rederive`, the trust floor and flag suppression) and, with
     /// `excludePrivate`, the private-provenance policy.
     pub fn fact_readable_under(&self, q: &FactReadableQuery) -> Result<bool> {
         no_nul("factReadableUnder", &[("sourceId", &q.source_id)])?;
@@ -257,6 +261,7 @@ impl Store {
             && (q.any_visibility || row.visibility == "world")
             && !hidden_by_deleted_page(&*read, &row)?
             && !hidden_by_quarantine(&*read, &row)?
+            && !crate::facts::hidden_by_rederive(&*read, &row)?
             && trust.admits(&*read, "facts", row.id, row.tier())?
             && !hidden_by_policy(&*read, &row, &q.exclude_private)?)
     }
@@ -398,9 +403,11 @@ impl Store {
         Ok(false)
     }
 
-    /// `ownerReachesFact` for an owner with no member identity, whose read rule reads no page:
-    /// fact `id` of `source_id` sits on no owned memory page and no page record (a deleted one
-    /// too) exists at its `source_markdown_slug` or `entity_slug`.
+    /// `ownerReachesFact`: fact `id` of `source_id` sits on no owned memory page and every page record (a deleted one
+    /// too) at its `source_markdown_slug` and `entity_slug` passes the owner's read rule. An owner bound to no member
+    /// (no `policy`, or a policy whose identity names no valid first `member:` principal, as `lineageReadPage` reads
+    /// it) has a read rule of `FALSE`, so any page record at either slug fails it. An owner bound to a member
+    /// ([`owner_reads_page`]) reaches a page it reads under GST-2490's owner read rule and the member read rule.
     pub fn owner_reaches_fact(&self, q: &OwnerReachQuery) -> Result<bool> {
         no_nul("ownerReachesFact", &[("sourceId", &q.source_id)])?;
         let read = self.read()?;
@@ -410,6 +417,7 @@ impl Store {
         if row.on_owned_memory_page() {
             return Ok(false);
         }
+        let policy = q.policy.as_ref().filter(|p| owner_member(&p.identity));
         for slug in [
             row.source_markdown_slug.as_deref(),
             row.entity_slug.as_deref(),
@@ -417,8 +425,12 @@ impl Store {
         .into_iter()
         .flatten()
         {
-            if read_page(&*read, &q.source_id, slug)?.is_some() {
-                return Ok(false);
+            let Some(page) = read_page(&*read, &q.source_id, slug)? else {
+                continue;
+            };
+            match policy {
+                Some(policy) if owner_reads_page(&*read, &page, policy)? => {}
+                _ => return Ok(false),
             }
         }
         Ok(true)
@@ -467,4 +479,13 @@ impl Store {
             "expired": row.expired_at_us.is_some(),
         })))
     }
+}
+
+/// `lineageReadPage`: the first `member:` principal of the identity names the owner's member, and its id passes
+/// `ACCESS_ID_RE`; any other identity leaves the owner read rule `FALSE`.
+fn owner_member(identity: &[String]) -> bool {
+    identity
+        .iter()
+        .find_map(|p| p.strip_prefix("member:"))
+        .is_some_and(access_id)
 }

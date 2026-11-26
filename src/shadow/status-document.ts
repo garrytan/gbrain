@@ -6,6 +6,8 @@
 import { existsSync } from 'node:fs';
 import type { BrainEngine } from '../core/engine.ts';
 import type { EngineConfig } from '../core/types.ts';
+import { buildDrillStatus } from './drill-status.ts';
+import { buildBenchStatus } from './bench.ts';
 import { buildEligibilityStatus } from './eligibility.ts';
 import { buildEvidenceStatus, type EvidenceStatus } from './evidence.ts';
 import { readEpoch } from './evidence-epoch.ts';
@@ -32,15 +34,20 @@ export async function shadowStatusDocument(brain: { key: string; dir: string }, 
   }
   // The only awaited read comes first. The follower and evidence fields are then read back to back from one epoch: a
   // rotation between them (a new Rust candidate) retries, and an epoch that keeps moving leaves both out (NOT READY),
-  // so criteria 1 and 7 can never pass on the previous candidate's checks.
+  // so criteria 1 and 7 can never pass on the previous candidate's checks. The drill record is checked against that
+  // same epoch manifest (criterion 10), so a drill of the previous candidate never passes either.
   const eligibility = await buildEligibilityStatus({ dir: brain.dir, state, engine, now, stateRequired: true });
-  const epochBound = (): { follow: ReturnType<typeof buildFollowStatus>; evidence: ReturnType<typeof buildEvidenceStatus> } | null => {
+  const epochBound = (): {
+    follow: ReturnType<typeof buildFollowStatus>; evidence: ReturnType<typeof buildEvidenceStatus>; drills: ReturnType<typeof buildDrillStatus>;
+  } | null => {
     for (let attempt = 0; attempt < EPOCH_READ_ATTEMPTS; attempt++) {
-      const before = readEpoch(brain.dir)?.epoch_id ?? null;
+      const epoch = readEpoch(brain.dir);
+      const before = epoch?.epoch_id ?? null;
       const follow = buildFollowStatus(brain.dir, state, now);
       const evidence = buildEvidenceStatus({ dir: brain.dir, now });
+      const drills = buildDrillStatus(brain.dir, epoch);
       const after = readEpoch(brain.dir)?.epoch_id ?? null;
-      if (before === after && follow.epoch_id === after && (evidence.evidence?.epoch_id ?? null) === after) return { follow, evidence };
+      if (before === after && follow.epoch_id === after && (evidence.evidence?.epoch_id ?? null) === after) return { follow, evidence, drills };
     }
     return null;
   };
@@ -54,6 +61,10 @@ export async function shadowStatusDocument(brain: { key: string; dir: string }, 
     seed: seedStatus(readSeedRecord(brain.dir)), // the seed block carries the recorded storage mode
     ...eligibility,
     ...(bound ? bound.evidence : ({} as EvidenceStatus)),
+    // Unbound: the epoch kept moving, so the evidence fields above are left out and the swap cannot be READY; the drills
+    // block is then one read against whatever epoch is current, only so `status` can still print its reasons.
+    ...(bound ? bound.drills : buildDrillStatus(brain.dir)),
+    ...buildBenchStatus({ dir: brain.dir, primaryEngine: state?.primary_engine ?? null }),
   };
 }
 

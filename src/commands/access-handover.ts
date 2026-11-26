@@ -7,7 +7,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import type { OperationContext } from '../core/ops/contract.ts';
 import { usageError } from '../cli/cli-error.ts';
 import { loadConfig } from '../core/config.ts';
-import { applyHandover, getHandover, handoverStatus, parseChoices, previewHandover, previewUndo, type HandoverPreview, type HandoverRecord } from '../core/access/handover.ts';
+import { applyHandover, getHandover, handoverStatus, parseChoices, previewHandover, previewUndo, refuseHandoverWrites, type HandoverPreview, type HandoverRecord } from '../core/access/handover.ts';
 
 const VALUE_FLAGS = new Set(['--set', '--expect', '--undo', '--status']);
 
@@ -76,6 +76,7 @@ export async function handoverCmd(engine: BrainEngine, args: string[], json: boo
   const yes = args.includes('--yes');
   const expect = one(args, '--expect');
   let member = memberArg(args);
+  if (yes || undo) refuseHandoverWrites(engine, undo ? 'undo' : 'apply');
   if (undo && !member) member = (await getHandover(engine, undo)).member_id;
   if (!member) throw usageError('access member handover needs a member id.', 'gbrain access member handover <member> [--set <group>=<choice>]... [--yes --expect <hash>] [--undo <id>] [--status <id>]');
   if (undo && sets.length) throw usageError('--undo restores what the handover recorded; it takes no --set.', 'gbrain access member handover ' + member + ' --undo ' + undo);

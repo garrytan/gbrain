@@ -171,8 +171,8 @@ describe('engine parity: repair kind previews of batch 4.2', () => {
     return { path: await engine.readLivePageByPath('acme-docs', 'notes/acme-example.md').then(page => page?.slug), preview: shape(result, root) };
   })));
 
-  parityTest('url-clone-fences applies on the SQL arms, and the Rust engine refuses the page write by name', {
-    methods: ['insertSource', 'putPage', 'readSourceState', 'readLivePageByPath', 'writeOpCheckpointRecord'], requires: 'raw_sql', timeout: 90_000,
+  parityTest('url-clone-fences applies the same way on every arm', {
+    methods: ['insertSource', 'putPage', 'readSourceState', 'readLivePageByPath', 'writeOpCheckpointRecord'], timeout: 90_000,
   }, async (engine, backend) => withHome(() => ownedClone(engine, async (root) => {
     const out = await previewThenApply(engine, backend, 'url-clone-fences', 'repair url-clone-fences page write', { sourceFlag: 'acme-docs' }, root);
     const status = execFileSync('git', ['-C', root, 'status', '--porcelain', '--untracked-files=no'], { encoding: 'utf8' });
@@ -206,8 +206,8 @@ describe('engine parity: repair kind previews of batch 4.2', () => {
     });
   }));
 
-  parityTest('captured-facts applies on the SQL arms, and the Rust engine refuses the page write by name', {
-    methods: ['insertFacts', 'listCapturedFactsForClassification', 'getConfig', 'readPersistenceBrainId', 'writeOpCheckpointRecord'], requires: 'raw_sql', timeout: 90_000,
+  parityTest('captured-facts applies the same way on every arm', {
+    methods: ['insertFacts', 'listCapturedFactsForClassification', 'getConfig', 'readPersistenceBrainId', 'writeOpCheckpointRecord'], timeout: 90_000,
   }, async (engine, backend) => withHome(async (home) => {
     const claude = join(home, 'claude');
     const ids = await seedCaptured(engine, claude);
@@ -282,8 +282,8 @@ describe('engine parity: repair kind previews of batch 4.2', () => {
     return byOrder({ rows: rows.map(row => ({ ...row, id: Number(row.id) })), ...out }, ids);
   }));
 
-  parityTest('purged-page-facts applies a preview that lists an ambiguous fact on the SQL arms, and the Rust engine refuses the expiry by name', {
-    methods: ['putPage', 'insertFacts', 'insertFactWithdrawal', 'expireFact', 'listPurgedPageFactCandidates', 'listSourceIncarnations', 'writeOpCheckpointRecord'], requires: 'raw_sql', timeout: 90_000,
+  parityTest('purged-page-facts applies a preview that lists an ambiguous fact the same way on every arm', {
+    methods: ['putPage', 'insertFacts', 'insertFactWithdrawal', 'expireFact', 'listPurgedPageFactCandidates', 'listSourceIncarnations', 'writeOpCheckpointRecord'], timeout: 90_000,
   }, async (engine, backend) => withHome(async () => {
     const { ids } = await seedGone(engine);
     const out = await previewThenApply(engine, backend, 'purged-page-facts', 'repair purged-page-facts expire', { includeAmbiguous: true });

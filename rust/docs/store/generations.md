@@ -33,6 +33,8 @@ The key layout is in the module header of `rust/crates/gbrain-store/src/generati
 | `brain.listRestorableGenerationRows(sourceIds, kind, filter)` | `[{ id, source_id, owner_key, generation, prev_id, prev_generation }]`, each live row with each superseded row whose `superseded_by` names it (in any source or kind, as the SQL join does), in id order | `listRestorableGenerationRows` |
 | `brain.listHeldGenerationRows(sourceIds, kind, filter)` | `[{ id, source_id, owner_key, held_reason, hold_id, input_pin, attempts, proposal_bytes, items }]`; `items` is the proposal's length, null without one, and a non-array proposal is `invalid_argument` (as `jsonb_array_length` refuses it) | `listHeldGenerationRows` |
 | `brain.readHeldGenerationProposal(id)` | `{ proposal, hold_id }` of the row while it is held, or `null` | `readHeldGenerationProposal` |
+| `brain.listLiveGenerationRetirements(sourceIds, restoreDays)` | `[{ source_id, kind, keys, items, oldest }]` per source and kind in byte order: the live generations created in the last `restoreDays` days (a fraction is part of a day) that hold a `retired` item, `keys` the generations, `items` the retired items, `oldest` the earliest creation time as `timestamptz::text`. A source or kind with none is left out | `listLiveGenerationRetirements` (engine-sql/doctor-derived.ts, the `generation_retirements` doctor check) |
+| `brain.listHeldGenerations(sourceIds)` | `[{ source_id, kind, held_reason, count, oldest }]` per source, kind and held reason in byte order, for the held rows of those sources | `listHeldGenerations` (the `generation_held` doctor check) |
 | `brain.listRecordedFenceItemKeys(key, itemKeys)` | `[{ item_key }]`, each key of `itemKeys` that an item of a generation of `key` not held records with an action other than `retired`, once each, in key order (Postgres sends `SELECT DISTINCT` with no ORDER BY) | `listRecordedFenceItemKeys` |
 | `brain.hasBodylessPageVersion(sourceId, slug)` | whether a stored version of the page has a null `compiled_truth`; `false` for a missing page | `hasBodylessPageVersion` |
 | `brain.listFenceVersionBodies(sourceId, slug, before, limit)` | `[{ id, compiled_truth, timeline }]`, the page's stored versions with a body whose body or timeline holds `gbrain:facts:`, below id `before` when not null, newest first, at most `limit` (a negative limit is `invalid_argument`) | `listFenceVersionBodies` |
@@ -126,3 +128,13 @@ removes the source's rows of all five tables (`cascade.rs`).
 
 Every write goes through `Store::write`, so it runs on `access_flag::FlaggingWriter`; this family writes no page
 record, so it never sets the member-access flag itself.
+
+## The re-derive queue
+
+`markNeedsRederive` keeps the `needs_rederive` rows under `h 0x0C derived_table \0 derived_id`
+(`crates/gbrain-store/src/generations/needs_rederive.rs`), next to the derivation inputs (`h 0x0A`, `h 0x0B`). A
+purge's `hideDerivedRows` marks each derived row it hides. The reads whose SQL applies `rederiveHiddenSql` hide a
+marked row: the fact reads with a read eligibility, the fact pool, the saved-fact match, `countWorldFacts`,
+`findTrajectory`, `listContestedProposalPairs`, `factReadableUnder`, the take and timeline reads with a read
+eligibility, `listLiveTakesByIds`, and `getVersions` (a marked page shows no version). `pageAwaitsRederive` reads it.
+A source delete removes the source's rows.

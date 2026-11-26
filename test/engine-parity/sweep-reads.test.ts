@@ -3,8 +3,9 @@
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: after `gbrain import` of a markdown brain, repeated sweeps until nothing is left extract the same links
- *    and timeline entries on every engine arm, reconcile the facts fence the same way, and skip no pass with an
- *    error reason.
+ *    and timeline entries on every engine arm, reconcile the facts fence the same way (the same fact rows on the
+ *    fenced page, the same held row left on the holding page), and skip no pass with an error reason. No call the
+ *    sweep makes refuses for want of raw SQL or a typed capability, on any engine.
  *  - Regression: an engine that refuses one of the sweep's candidate reads makes the sweep skip the pass
  *    (`facts_fence_error`, `links_timeline_error`) and report success, so the brain never gains links or timeline
  *    entries and every graph read (backlinks, timeline, traverse) answers empty.
@@ -13,13 +14,8 @@
  *  - Seam: none. The synthetic fixture brain test/fixtures/rust-cli-parity-brain goes in through importFromContent
  *    (the `gbrain import` path). One more page holds a facts fence; it goes in through putPage, because importing a
  *    fence also reads the purge tombstones (facts/purge-overlay.ts), a different path from the sweep. The sweep is the
- *    real runMaintenanceSweep.
- *
- * Known stop on Rust: past the held-fact move reads (served) pass 1 still reaches a member the store does not serve:
- * `listDeletedPageSlugsWithActiveFacts`, the deleted-page expiry's read (cycle/extract-facts.ts). The sweep catches the refusal and
- * skips the pass, so on Rust the first case pins the exact skip list and then ends on the refusal it caught: the
- * harness counts it stopped, and the pin fails as soon as pass 1 runs, so the list must shrink with the fix. Pass 2
- * (links and timeline) runs on every arm; the second case holds it equal.
+ *    real runMaintenanceSweep. A held row (a fact about grace-example kept on the memory/unattributed holding page)
+ *    goes in through insertFacts; the brain is not managed, so the held-fact move plans it and leaves it where it is.
  */
 import { describe, expect } from 'bun:test';
 import { readdirSync, readFileSync } from 'node:fs';
@@ -45,10 +41,7 @@ const FENCED_BODY = [
 ].join('\n');
 const FENCED_TIMELINE = '- **2025-02-03** | joined [[companies/widget-co]] as an advisor';
 
-/** The passes the sweep still skips on Rust, each on a refusal it caught (see the known stop above). */
-const RUST_KNOWN_STOP = ['facts_fence_error'];
-
-/** `engine`, keeping every raw-SQL or facts-capability refusal a call on it (or on a transaction handle it opens) raised, caught or not. */
+/** `engine`, keeping every raw-SQL refusal a call on it (or on a transaction handle it opens) raised, caught or not. */
 function keepingRefusals(engine: BrainEngine, refusals: unknown[]): BrainEngine {
   return new Proxy(engine, {
     get(target, prop, receiver) {
@@ -90,13 +83,16 @@ async function importAll(engine: BrainEngine, pages: Array<{ slug: string; conte
 describe('engine parity: maintenance sweep reads', () => {
   parityTest(
     'sweep --once after import extracts every link and timeline entry and reconciles the facts fence, with no error skip',
-    { methods: ['putPage', 'getLinks', 'getTimeline', 'listDeletedPageSlugsWithActiveFacts'], timeout: 120_000 },
-    async (engine, backend) => {
+    { methods: ['putPage', 'insertFacts', 'getLinks', 'getTimeline', 'listFactsForPage', 'listHeldFactRows'], timeout: 120_000 },
+    async (engine) => {
       const pages = fixturePages();
       await importAll(engine, pages);
       await engine.putPage('people/grace-example', { type: 'person', title: 'Grace Example', compiled_truth: FENCED_BODY,
         timeline: FENCED_TIMELINE, frontmatter: {} });
       pages.push({ slug: 'people/grace-example', content: '' });
+      await engine.putPage('memory/unattributed', { type: 'note', title: 'Unattributed', compiled_truth: 'Held memory.', timeline: '', frontmatter: {} });
+      await engine.insertFacts([{ fact: 'Grace mentors founders', kind: 'fact', visibility: 'world', source: 'chat', embedding: null,
+        entity_slug: 'people/grace-example', row_num: 1, source_markdown_slug: 'memory/unattributed' }] as never, { source_id: 'default' });
 
       const refusals: unknown[] = [];
       const swept = keepingRefusals(engine, refusals);
@@ -111,12 +107,9 @@ describe('engine parity: maintenance sweep reads', () => {
       }
 
       const errorSkips = [...skipped.keys()].filter(reason => reason.endsWith('_error')).sort();
-      if (backend === 'rust') {
-        expect(errorSkips).toEqual(RUST_KNOWN_STOP);
-        expect(refusals.length).toBeGreaterThan(0);
-        throw refusals[0];
-      }
       expect(errorSkips).toEqual([]);
+      expect(refusals.map(e => (e as Error).message)).toEqual([]);
+      expect(facts).toBeGreaterThan(0);
 
       const stored: Record<string, { links: string[]; timeline: string[] }> = {};
       for (const { slug } of pages) {
@@ -129,7 +122,12 @@ describe('engine parity: maintenance sweep reads', () => {
       expect(linkTotal).toBeGreaterThan(0);
       expect(timelineTotal).toBeGreaterThan(0);
       expect(stored['people/grace-example']?.links.some(l => l.startsWith('companies/widget-co|'))).toBe(true);
-      return { links, timeline, facts, linkTotal, timelineTotal, stored };
+      const factRows = (await engine.listFactsForPage('default', 'people/grace-example'))
+        .map(f => `${f.row_num}|${f.fact}|${f.kind}|${f.visibility}|${f.source}|${f.expired_at ? 'expired' : 'active'}`).sort();
+      expect(factRows).toEqual(['1|Grace advises Widget Co|fact|world|chat|active']);
+      const held = (await engine.listHeldFactRows('default', '30')).map(r => `${r.entity_slug}|${r.fact}`);
+      expect(held).toEqual(['people/grace-example|Grace mentors founders']);
+      return { links, timeline, facts, linkTotal, timelineTotal, stored, factRows, held };
     },
   );
 

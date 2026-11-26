@@ -12,6 +12,7 @@ mod grants;
 mod health;
 mod insight;
 mod ops;
+mod pinned_questions;
 mod revocation;
 mod spend;
 mod spend_log;

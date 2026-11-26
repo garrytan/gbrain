@@ -107,6 +107,16 @@ impl Brain {
         })
     }
 
+    /// `listOwnerCredentialRows(memberId)`: `[{ kind, id, name, row }]`.
+    #[napi]
+    pub fn list_owner_credential_rows<'env>(
+        &self,
+        env: &'env Env,
+        member_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_owner_credential_rows(&member_id))
+    }
+
     /// `readOAuthClientWriteGrant(clientId)`: the client's write grant columns, or null.
     #[napi]
     pub fn read_oauth_client_write_grant<'env>(

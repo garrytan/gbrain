@@ -467,3 +467,78 @@ fn local_edit_adoptions_and_writer_versions_are_read_from_committed_writes() {
     assert_eq!(consumers[0]["requests"], 2);
     assert!(store.list_recent_writer_versions(0.0).unwrap().is_empty());
 }
+
+#[test]
+fn freshness_targets_are_the_worktrees_committed_managed_imports_in_the_window() {
+    use gbrain_store::persistence::WorktreeInsert;
+    let dir = TempDir::new("freshness-targets");
+    let store = open(&dir);
+    let wt = "11111111-1111-4111-8111-111111111111";
+    store
+        .insert_worktree(
+            &serde_json::from_value::<WorktreeInsert>(json!({"id": wt, "ownerHostId": null}))
+                .unwrap(),
+        )
+        .unwrap();
+    let inc = incarnation(&store);
+    let mut n = 0;
+    let mut add = |worktree: Option<&str>, intent: Value, state: &str| {
+        n += 1;
+        let request = format!("b0000000-0000-4000-8000-0000000001{n:02}");
+        let input: WriteRequestInsert = serde_json::from_value(json!({
+            "principalKind": "local_cli", "principalId": "parity-writer", "requestId": request,
+            "operation": "put_page", "sourceId": "default", "sourceIncarnation": inc, "pageId": null,
+            "slug": format!("notes/f{n}"), "worktreeId": worktree, "topologyGeneration": null, "digest": "digest",
+            "intent": intent, "authority": {}, "intentBytes": 10, "terminalReservation": 4096, "targetKind": "page",
+            "protocolVersion": 1, "admitterVersion": "v-test", "admitterHostId": null, "counterKeys": keys(),
+            "clientRequestId": null, "state": "queued", "deferredRefreshId": null,
+        }))
+        .unwrap();
+        let id = store.insert_write_request(&input).unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        if state != "queued" {
+            complete(&store, &id, state, None, Value::Null, json!({}));
+        }
+    };
+    let import =
+        |target: &str| json!({"kind": "managed_sync_import", "from": "f0", "target": target});
+    add(Some(wt), import("t-b"), "committed");
+    add(Some(wt), import("t-a"), "committed");
+    add(Some(wt), import("t-a"), "committed");
+    // Not samples: a working-tree import, another kind, an open request, another worktree, no recorded commit.
+    add(
+        Some(wt),
+        json!({"kind": "managed_sync_import", "from": "f0", "target": "t-w", "working": true}),
+        "committed",
+    );
+    add(
+        Some(wt),
+        json!({"kind": "managed_sync_delete", "from": "f0", "target": "t-d"}),
+        "committed",
+    );
+    add(Some(wt), import("t-q"), "queued");
+    add(None, import("t-n"), "committed");
+    add(
+        Some(wt),
+        json!({"kind": "managed_sync_import", "target": "t-f"}),
+        "committed",
+    );
+    let mut targets = store.list_freshness_targets(wt, &inc, 24, 10).unwrap();
+    targets.sort();
+    assert_eq!(
+        targets,
+        vec![Some("t-a".to_string()), Some("t-b".to_string())]
+    );
+    assert_eq!(
+        store.list_freshness_targets(wt, &inc, 24, 1).unwrap().len(),
+        1
+    );
+    assert!(
+        store
+            .list_freshness_targets(wt, "22222222-2222-4222-8222-222222222222", 24, 10)
+            .unwrap()
+            .is_empty()
+    );
+}

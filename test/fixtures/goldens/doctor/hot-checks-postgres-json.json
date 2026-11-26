@@ -532,7 +532,7 @@
                 "explicit_retention_days": null,
                 "over_target": false,
                 "target_bytes": 8589934592,
-                "used_bytes": 200716
+                "used_bytes": 202700
               },
               "inspected": 2,
               "outstanding": [],
@@ -542,7 +542,7 @@
               "verify": "gbrain doctor --only persistence_capacity --json"
             },
             "elapsed_ms": "<volatile>",
-            "message": "No cumulative write cap is set (the default), so receipt storage never refuses or pauses a write; it holds 200716 reserved bytes, and receipts not yet compacted are under the housekeeping target of 8589934592.",
+            "message": "No cumulative write cap is set (the default), so receipt storage never refuses or pauses a write; it holds 202700 reserved bytes, and receipts not yet compacted are under the housekeeping target of 8589934592.",
             "name": "persistence_capacity",
             "status": "ok"
           },
@@ -1445,7 +1445,7 @@
           {
             "category": "ops",
             "elapsed_ms": "<volatile>",
-            "message": "RLS enabled on 195/195 public tables",
+            "message": "RLS enabled on 196/196 public tables",
             "name": "rls",
             "status": "ok"
           },
@@ -1497,14 +1497,14 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "1416 column(s) verified against live schema",
+            "message": "1422 column(s) verified against live schema",
             "name": "schema_columns",
             "status": "ok"
           },
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "All 195 table(s) the applied migrations create exist.",
+            "message": "All 196 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
             "status": "ok"
           },
@@ -3517,8 +3517,37 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
+            "message": "The nightly cycle has not recorded anything it learned yet.",
+            "name": "learning_note",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "delivered_sessions": 0,
+              "last_session": null,
+              "max_sessions": 3,
+              "reason": "not_new_install",
+              "state": "off",
+              "window_ends_at": null
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "The first-session suggestion is off: this brain was not created by a gbrain setup run (an upgrade, a restored or imported brain, or an older install), so there is no first session to suggest for. Details: gbrain onboarding status.",
+            "name": "first_session_suggestion",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
             "message": "No memory proposals await the owner.",
             "name": "memory_proposals_pending",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
+            "message": "No agent policy is set; policy_check answers none (gbrain policy init sets one).",
+            "name": "policy_valid",
             "status": "ok"
           },
           {
@@ -4570,6 +4599,17 @@
           {
             "category": "brain",
             "details": {
+              "classes": [],
+              "links": 0
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No person pages linked or collapsed automatically in the last 24 hours.",
+            "name": "dedupe_auto_links",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
               "docs": "docs/guides/write-refusals.md#file_database_drift",
               "sources": []
             },
@@ -5331,14 +5371,14 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "Active pack gbrain-base-v2@1.7.0+e142684a is current (no successor declared)",
+            "message": "Active pack gbrain-base-v2@1.7.0+b64f249b is current (no successor declared)",
             "name": "pack_upgrade_available",
             "status": "ok"
           },
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "5 distinct typed values (pack gbrain-base-v2 declares 25)",
+            "message": "5 distinct typed values (pack gbrain-base-v2 declares 27)",
             "name": "type_proliferation",
             "status": "ok"
           },
@@ -6195,7 +6235,7 @@
                 "explicit_retention_days": null,
                 "over_target": false,
                 "target_bytes": 8589934592,
-                "used_bytes": 200716
+                "used_bytes": 202700
               },
               "inspected": 2,
               "outstanding": [],
@@ -6205,7 +6245,7 @@
               "verify": "gbrain doctor --only persistence_capacity --json"
             },
             "elapsed_ms": "<volatile>",
-            "message": "No cumulative write cap is set (the default), so receipt storage never refuses or pauses a write; it holds 200716 reserved bytes, and receipts not yet compacted are under the housekeeping target of 8589934592.",
+            "message": "No cumulative write cap is set (the default), so receipt storage never refuses or pauses a write; it holds 202700 reserved bytes, and receipts not yet compacted are under the housekeeping target of 8589934592.",
             "name": "persistence_capacity",
             "status": "ok"
           },
@@ -7108,7 +7148,7 @@
           {
             "category": "ops",
             "elapsed_ms": "<volatile>",
-            "message": "RLS enabled on 195/195 public tables",
+            "message": "RLS enabled on 196/196 public tables",
             "name": "rls",
             "status": "ok"
           },
@@ -7160,14 +7200,14 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "1416 column(s) verified against live schema",
+            "message": "1422 column(s) verified against live schema",
             "name": "schema_columns",
             "status": "ok"
           },
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "All 195 table(s) the applied migrations create exist.",
+            "message": "All 196 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
             "status": "ok"
           },
@@ -9192,8 +9232,37 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
+            "message": "The nightly cycle has not recorded anything it learned yet.",
+            "name": "learning_note",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "delivered_sessions": 0,
+              "last_session": null,
+              "max_sessions": 3,
+              "reason": "not_new_install",
+              "state": "off",
+              "window_ends_at": null
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "The first-session suggestion is off: this brain was not created by a gbrain setup run (an upgrade, a restored or imported brain, or an older install), so there is no first session to suggest for. Details: gbrain onboarding status.",
+            "name": "first_session_suggestion",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
             "message": "No memory proposals await the owner.",
             "name": "memory_proposals_pending",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
+            "message": "No agent policy is set; policy_check answers none (gbrain policy init sets one).",
+            "name": "policy_valid",
             "status": "ok"
           },
           {
@@ -10245,6 +10314,17 @@
           {
             "category": "brain",
             "details": {
+              "classes": [],
+              "links": 0
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No person pages linked or collapsed automatically in the last 24 hours.",
+            "name": "dedupe_auto_links",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
               "docs": "docs/guides/write-refusals.md#file_database_drift",
               "sources": []
             },
@@ -11006,14 +11086,14 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "Active pack gbrain-base-v2@1.7.0+e142684a is current (no successor declared)",
+            "message": "Active pack gbrain-base-v2@1.7.0+b64f249b is current (no successor declared)",
             "name": "pack_upgrade_available",
             "status": "ok"
           },
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "5 distinct typed values (pack gbrain-base-v2 declares 25)",
+            "message": "5 distinct typed values (pack gbrain-base-v2 declares 27)",
             "name": "type_proliferation",
             "status": "ok"
           },

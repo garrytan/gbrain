@@ -5,7 +5,8 @@
  * and deletes of src/core/engine-sql/chunk-reads.ts (findCodeDefinitions, listSymbolTypesForName, findCodeRefChunks,
  * countOversizedEmbedSkips, countOrphanChunks, countCodeChunkPages, codeChunksExist, hasUnsealedPages, currentCodeChunksExist,
  * listQualifiedSymbolNames, listWithdrawalChunks, deleteChunksForPages, listContextualModeCandidates,
- * resolveFrozenHits), and search dedup's segmented-region read (readSegmentRegions).
+ * resolveFrozenHits), search dedup's segmented-region read (readSegmentRegions), and get_page's chunk reads
+ * (readWindowChunk, countPageChunks; engine-sql/page-window-chunks.ts).
  *
  * Export only BrainEngine members from this file, each a `StoreMember` named after the member it serves (see tags.ts):
  * index.ts spreads the whole module into STORE_MEMBERS, so every export is served. Row decoders and other helpers stay
@@ -23,6 +24,7 @@
  */
 import { mapChunkWindowRows, type ChunkWindowOpts, type ChunkWindowPage, type ChunkWindowRequest } from '../../search/chunk-windows.ts';
 import type { Chunk, ChunklessPageRow, PageReadScope } from '../../types.ts';
+import type { PageChunkCounts, WindowChunkRow } from '../../engine-sql/page-window-chunks.ts';
 import { DEF_TYPES } from '../../chunkers/def-types.ts';
 import type {
   CodeChunkScope, CodeDefinitionRow, CodeRefChunkRow, CodeSymbolQuery, ContextualModeCandidate, FrozenHitKey, FrozenHitRow,
@@ -31,6 +33,7 @@ import type {
 import { requiresSafeChunks } from '../../search/safe-chunks.ts';
 import { storePagePolicy } from './private-provenance.ts';
 import { toChunk } from '../store-codec.ts';
+import { TrustFloorError } from '../../engine-errors.ts';
 import { namedSourceIds, refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 
 // The SQL engines never read these read-policy keys in these statements, so the store ignores them too. An MCP
@@ -121,6 +124,9 @@ function int32Ids(member: string, ids: readonly number[]): number[] {
  * (`requiresSafeChunks`) the chunker-version fence.
  */
 function wireScope(member: string, o: Record<string, unknown>, code: boolean) {
+  // A floor that is not text names no trust tier (the store's own refusal covers a text one): refuse it here the same way,
+  // before the napi call turns a number into a decoding error (#10276).
+  if (o.minTrust && typeof o.minTrust !== 'string') throw new TrustFloorError(o.minTrust);
   const dropSource = code && !!o.allSources && o.sourceIds === undefined;
   return {
     sourceId: dropSource ? undefined : o.sourceId,
@@ -295,3 +301,17 @@ export const readSegmentRegions: StoreMember<[hits: ReadonlyArray<{ pageId: numb
       () => brain.readSegmentRegions(hits.map(h => ({ pageId: h.pageId, chunkId: h.chunkId }))));
     return rows.map(r => ({ chunk_id: Number(r.chunk_id), byte_start: Number(r.byte_start) }));
   };
+
+/** The text chunk a get_page window centers on, at the page's live generation, or null (engine-sql/page-window-chunks.ts). */
+export const readWindowChunk: StoreMember<[chunkId: number, pageId: number], WindowChunkRow | null> = async (brain, chunkId, pageId) => {
+  if (!Number.isSafeInteger(chunkId) || !Number.isSafeInteger(pageId)) refuseMember('readWindowChunk', 'a chunk or page id that is not an integer');
+  const row: WindowChunkRow | null = await storeCall({ member: 'readWindowChunk' }, () => brain.readWindowChunk(chunkId, pageId));
+  return row ?? null;
+};
+
+/** The page's live-generation chunk count and how many have a vector (get_page body none). */
+export const countPageChunks: StoreMember<[pageId: number], PageChunkCounts> = async (brain, pageId) => {
+  if (!Number.isSafeInteger(pageId)) refuseMember('countPageChunks', 'a page id that is not an integer');
+  const counts: { total: number | string; embedded: number | string } = await storeCall({ member: 'countPageChunks' }, () => brain.countPageChunks(pageId));
+  return { total: Number(counts.total), embedded: Number(counts.embedded) };
+};

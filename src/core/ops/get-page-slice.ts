@@ -10,7 +10,8 @@
  *                          of the page's headings.
  *   grep: "<term>"         the paragraphs (blank-line-separated blocks) holding
  *   context: N             a line that contains the term (plain substring,
- *                          case-insensitive, never a regex), each with N
+ *                          case-insensitive, never a regex; an inner a|b also
+ *                          matches each side, see grepAlternatives), each with N
  *                          paragraphs either side (default 1, at most 5);
  *                          windows that overlap or touch merge into one block.
  *                          Capped at GREP_MAX_MATCHES matching paragraphs and
@@ -32,7 +33,7 @@ import { FENCE, HEADING, HEADING_MAX_CHARS, clip } from '../page-window/window.t
 
 export const GET_PAGE_SLICE_PARAMS: Record<string, ParamDef> = {
   section: { type: 'string', description: 'Only the section under this heading (case-insensitive, first match), with its heading_path.', fullSurfaceOnly: true },
-  grep: { type: 'string', description: 'Only the paragraphs containing this text (case-insensitive substring, not a regex), with line numbers and total_matches.', fullSurfaceOnly: true },
+  grep: { type: 'string', description: 'Only the paragraphs containing this text (case-insensitive substring, not a regex; an inner "a|b" also matches either side), with line numbers and total_matches.', fullSurfaceOnly: true },
   context: { type: 'number', appliesWith: 'grep', description: 'Applies only with grep (ignored without it): paragraphs of context either side (default 1, max 5).', fullSurfaceOnly: true },
 };
 
@@ -222,10 +223,24 @@ export async function readSection(page: SliceTarget, stream: AsyncIterable<Buffe
 interface Paragraph { line_start: number; line_end: number; text: string; match: boolean }
 interface Block { line_start: number; line_end: number; match_starts: number[]; parts: string[] }
 
+/**
+ * The alternatives an inner pipe in a grep term names, lowercased, or none. Agents write grep -E style alternation
+ * ("uptime|SLA"), and a literal-only search for that string finds nothing and reads as "not on this page", so a term
+ * with a pipe between non-space text also matches each side (regex escapes such as `\$` dropped). The literal term
+ * always matches too, so a page that really holds "a|b" still matches. A spaced pipe (`a | b`, a table row) or a
+ * leading or trailing pipe names no alternatives.
+ */
+export function grepAlternatives(term: string): string[] {
+  if (!/\S\|\S/.test(term) || /^\s*\||\|\s*$|\s\||\|\s/.test(term)) return [];
+  const parts = [...new Set(term.split('|').map(p => p.replace(/\\(.)/g, '$1').trim().toLowerCase()).filter(Boolean))];
+  return parts.length > 1 ? parts : [];
+}
+
 /** The response fields of a grep read: merged blocks of matching paragraphs and their context, capped, with total_matches. */
 export async function readGrep(stream: AsyncIterable<Buffer>, term: string, context: number, budget: number,
   wrap: (text: string) => string): Promise<Record<string, unknown>> {
-  const needle = term.toLowerCase();
+  const alternatives = grepAlternatives(term);
+  const needles = [term.toLowerCase(), ...alternatives];
   const blocks: Block[] = [];
   let current: Block | null = null;
   let afterLeft = 0;
@@ -304,14 +319,17 @@ export async function readGrep(stream: AsyncIterable<Buffer>, term: string, cont
     const sep = para.text && !l.continued ? '\n' : '';
     if (para.text.length <= budget) para.text += sep + head(l.text, budget + 1 - para.text.length);
     para.line_end = l.line;
-    if (!para.match && l.text.toLowerCase().includes(needle)) para.match = true;
+    if (!para.match) {
+      const low = l.text.toLowerCase();
+      if (needles.some(n => low.includes(n))) para.match = true;
+    }
   }
   if (para) close(para);
   const out = blocks.filter(b => b.match_starts.length)
     .map(b => ({ line_start: b.line_start, line_end: b.line_end, match_starts: b.match_starts, text: wrap(b.parts.join('')) }));
   return {
     body: 'grep',
-    grep: { term, context, total_matches: total, returned_matches: returned, omitted_matches: total - returned, blocks: out },
+    grep: { term, ...(alternatives.length ? { alternatives } : {}), context, total_matches: total, returned_matches: returned, omitted_matches: total - returned, blocks: out },
     chars: out.reduce((n, b) => n + b.text.length, 0),
     truncated: total > returned || clipped,
   };

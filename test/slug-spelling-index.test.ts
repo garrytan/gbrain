@@ -21,6 +21,7 @@ import { operationsByName, type OperationContext } from '../src/core/operations.
 import { normalizeSlug } from '../src/core/utils.ts';
 import { MAX_SPELLING_VARIANTS, spellingKey, spellingKeys } from '../src/core/slug-spelling-key.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
+import { storedSpellingsStatement } from '../src/core/engine-sql/slug-spellings.ts';
 import { testBackends } from './helpers/test-backends.ts';
 
 const backends = testBackends();
@@ -49,6 +50,16 @@ async function read(engine: BrainEngine, sourceId: string, slug: string): Promis
         return async (sql: string, args?: unknown[]) => {
           const rows = await target.executeRaw(sql, args);
           sent.push({ sql, args: args ?? [], rows: rows.length });
+          return rows;
+        };
+      }
+      // The stored-spelling scan is a typed member now (engine-sql/slug-spellings.ts): record the statement it sends, from the
+      // one builder it runs, with the number of slugs it answered.
+      if (prop === 'readStoredSlugSpellings') {
+        return async (key: string, scope: Parameters<BrainEngine['readStoredSlugSpellings']>[1], after: string, keys?: readonly string[] | null) => {
+          const rows = await target.readStoredSlugSpellings(key, scope, after, keys);
+          const { text, params } = storedSpellingsStatement(key, scope, after, keys);
+          sent.push({ sql: text, args: params, rows: rows.length });
           return rows;
         };
       }

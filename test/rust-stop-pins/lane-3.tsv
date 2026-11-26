@@ -3,4 +3,3 @@
 # Columns (tab separated): parity file, case name, member that refused, owner, due date (YYYY-MM-DD, UTC), what Rust declines.
 # A row lets the case stop on that member's typed refusal (GBRAIN_TEST_RUST_ARM=1). The run fails when the case stops on another member, when the
 # due date has passed (the row goes red at 00:00 UTC on the day after the due date), or when the case no longer stops (remove the row).
-test/engine-parity/retrieval-coverage.test.ts	search/retrieval-coverage: a count that reaches the cap reports the same could-affect, or refuses	countPendingProjectionPages	lane 3 a3e484d8-24ba-40ec-b0f8-58b818b6b739	2026-11-26	Declines a count that reaches the 1000-page cap, because its could-affect result depends on SQL scan order.

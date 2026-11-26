@@ -2,8 +2,8 @@
  * The typed members of the contradiction cycle (src/core/engine-sql/contradictions-cycle.ts), the ontology repair
  * paths (src/core/engine-sql/ontology-repair.ts) and the admin reads (src/core/engine-sql/admin-reads.ts) send Postgres
  * the statement text and binds the edge-contradictions phase, the scoped contradiction reader, the two eval reads,
- * the re-key duplicate drop, `repair ontology-facts` and the admin operations sent through `executeRaw` before the
- * statements had members. A drift here changes a query plan or a result on Postgres alone, which PGLite parity cannot see.
+ * the re-key duplicate drop, `repair ontology-facts`, the admin operations and `gbrain edge-proposals` sent through
+ * `executeRaw` before the statements had members. A drift here changes a query plan or a result on Postgres alone, which PGLite parity cannot see.
  *
  * Protects: each member's recorded text and params equal the old statement byte for byte: the candidate query's `$n`
  * numbering (the person-type predicate with and without per-source arms), the live chunk and take re-reads under each
@@ -32,6 +32,13 @@ function recordingEngine() {
   (engine as unknown as { _sql: unknown })._sql = fake.sql;
   return { engine, statements: () => fake.statements().map(s => ({ text: s.text, params: s.params })) };
 }
+
+const EDGE_CLI_ROWS = (where: string, limit: number) => `SELECT p.id, p.status, p.link_type, f.slug AS subject, ta.slug AS a_target, tb.slug AS b_target, te.slug AS ending,
+            p.close_date::text AS close_date, p.born_closed, p.model, p.confidence, p.generated_line, p.created_at
+       FROM link_edge_proposals p
+       JOIN pages f ON f.id = p.from_page_id JOIN pages ta ON ta.id = p.a_to_page_id JOIN pages tb ON tb.id = p.b_to_page_id
+       LEFT JOIN pages te ON te.id = p.ending_to_page_id
+      WHERE ${where} ORDER BY p.created_at DESC, p.id DESC LIMIT ${limit}`;
 
 interface Pin {
   /** The call site the statement came from, at 85aa70ba6d. */
@@ -317,7 +324,7 @@ const PINS: Pin[] = [
            ${EXPIRY} AS expired_at,
            EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=f.source_id AND w.visibility=f.visibility
              AND (w.subject='*' OR w.subject=f.entity_slug)
-             AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact), gbrain_fact_fingerprint_v1(f.fact))) AS withdrawn,
+             AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact), gbrain_fact_fingerprint_v2(f.fact), gbrain_fact_fingerprint_v1(f.fact))) AS withdrawn,
            f.consolidated_into IS NOT NULL AS consolidated,
            ${DUPLICATE} AS duplicate
       FROM facts f
@@ -359,6 +366,52 @@ const PINS: Pin[] = [
       params: [['a'], null],
     }],
   },
+  // ─── src/commands/edge-proposals.ts (gbrain edge-proposals), at 3dd0b062cc ───
+  {
+    from: 'src/commands/edge-proposals.ts:95 list --status=all',
+    run: e => e.listEdgeProposalCliRows({ kind: 'all' }, 7),
+    sent: [{ text: EDGE_CLI_ROWS('TRUE', 7), params: [] }],
+  },
+  {
+    from: 'src/commands/edge-proposals.ts:96 list (default statuses)',
+    run: e => e.listEdgeProposalCliRows({ kind: 'statuses', statuses: ['proposed', 'undated_unresolved'] }, 50),
+    sent: [{ text: EDGE_CLI_ROWS('p.status = ANY($1::text[])', 50), params: [['proposed', 'undated_unresolved']] }],
+  },
+  {
+    from: 'src/commands/edge-proposals.ts:107 show',
+    run: e => e.listEdgeProposalCliRows({ kind: 'id', id: 4 }, 50),
+    sent: [{ text: EDGE_CLI_ROWS('p.id = $1', 50), params: [4] }],
+  },
+  {
+    from: 'src/commands/edge-proposals.ts:134 date',
+    run: e => e.listEdgeProposalCliRows({ kind: 'undated', id: 4 }, 50),
+    sent: [{ text: EDGE_CLI_ROWS(`p.id = $1 AND p.status = 'undated_unresolved'`, 50), params: [4] }],
+  },
+  {
+    from: 'src/commands/edge-proposals.ts:101 retry --all-held',
+    run: e => e.deleteHeldEdgeProposalErrors(),
+    sent: [{ text: `DELETE FROM link_edge_proposals WHERE status = 'error' AND detail LIKE 'held after %' RETURNING id`, params: [] }],
+  },
+  {
+    from: 'src/commands/edge-proposals.ts:114 undo --all-applied',
+    run: e => e.listAppliedEdgeProposalIds(),
+    sent: [{ text: `SELECT id FROM link_edge_proposals WHERE status = 'applied' ORDER BY id`, params: [] }],
+  },
+  {
+    from: 'src/commands/edge-proposals.ts:126 retry <id>',
+    run: e => e.deleteEdgeProposalError(4),
+    sent: [{ text: `DELETE FROM link_edge_proposals WHERE id = $1 AND status = 'error' RETURNING id`, params: [4] }],
+  },
+  {
+    from: 'src/commands/edge-proposals.ts:139 date source',
+    run: e => e.readEdgeProposalSourceId(4),
+    sent: [{ text: `SELECT source_id FROM link_edge_proposals WHERE id = $1`, params: [4] }],
+  },
+  {
+    from: 'src/commands/edge-proposals.ts:144 date reject',
+    run: e => e.markEdgeProposalDated(4),
+    sent: [{ text: `UPDATE link_edge_proposals SET status = 'rejected', detail = 'dated by user', updated_at = now() WHERE id = $1`, params: [4] }],
+  },
   {
     from: 'src/core/ops/admin.ts:267 get_versions',
     run: e => e.readPagesForVersionHistory([4, 5]),
@@ -390,4 +443,12 @@ test('the live reads refuse a holder position that is not a positive integer', a
   const { engine, statements } = recordingEngine();
   await engine.listLiveTakesByIds([1], { takesHoldersAllowList: ['x'] }, undefined);
   expect(statements()[0]!.text).toContain('t.holder = ANY($2::text[])');
+});
+
+test('the edge-proposals list refuses a limit it would not splice, before any statement runs', async () => {
+  for (const limit of [0, 1001, 2.5, Number.NaN]) {
+    const { engine, statements } = recordingEngine();
+    await expect(engine.listEdgeProposalCliRows({ kind: 'all' }, limit)).rejects.toThrow(/whole number from 1 to 1000/);
+    expect(statements()).toEqual([]);
+  }
 });

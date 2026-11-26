@@ -90,6 +90,7 @@ afterEach(() => {
 interface HopCase {
   name: string;
   chain: string[];
+  onRefusal?: boolean;
   outcomes: Record<string, Outcome>;
   expectAttempts: string[];
   expectModel: string;
@@ -126,21 +127,37 @@ describe('chat() with chat_fallback_chain (#5490)', () => {
       expectModel: FALLBACK,
     },
     {
-      name: 'a structural refusal falls through to the next model',
+      name: 'by default a structural refusal is returned, not sent to the next model',
       chain: [FALLBACK],
+      outcomes: { 'claude-sonnet-4-6': 'refusal' },
+      expectAttempts: ['claude-sonnet-4-6'],
+      expectModel: PRIMARY,
+    },
+    {
+      name: 'by default a content filter is returned, not sent to the next model',
+      chain: [FALLBACK],
+      outcomes: { 'claude-sonnet-4-6': 'filtered' },
+      expectAttempts: ['claude-sonnet-4-6'],
+      expectModel: PRIMARY,
+    },
+    {
+      name: 'with chat_fallback_on_refusal true, a structural refusal falls through to the next model',
+      chain: [FALLBACK],
+      onRefusal: true,
       outcomes: { 'claude-sonnet-4-6': 'refusal' },
       expectAttempts: ['claude-sonnet-4-6', 'gpt-5.6-luna'],
       expectModel: FALLBACK,
     },
     {
-      name: 'a content filter falls through to the next model',
+      name: 'with chat_fallback_on_refusal true, a content filter falls through to the next model',
       chain: [FALLBACK],
+      onRefusal: true,
       outcomes: { 'claude-sonnet-4-6': 'filtered' },
       expectAttempts: ['claude-sonnet-4-6', 'gpt-5.6-luna'],
       expectModel: FALLBACK,
     },
-  ])('$name', async ({ chain, outcomes, expectAttempts, expectModel }) => {
-    configureGateway({ chat_model: PRIMARY, chat_fallback_chain: chain, env: ENV });
+  ])('$name', async ({ chain, onRefusal, outcomes, expectAttempts, expectModel }) => {
+    configureGateway({ chat_model: PRIMARY, chat_fallback_chain: chain, ...(onRefusal !== undefined ? { chat_fallback_on_refusal: onRefusal } : {}), env: ENV });
     installTransport(outcomes);
 
     const result = await ask();
@@ -178,7 +195,7 @@ describe('chat() with chat_fallback_chain (#5490)', () => {
   });
 
   test('a refusal earlier in the chain is returned instead of a later failure', async () => {
-    configureGateway({ chat_model: PRIMARY, chat_fallback_chain: [FALLBACK], env: ENV });
+    configureGateway({ chat_model: PRIMARY, chat_fallback_chain: [FALLBACK], chat_fallback_on_refusal: true, env: ENV });
     installTransport({ 'claude-sonnet-4-6': 'refusal', 'gpt-5.6-luna': 'outage' });
 
     const result = await ask();
@@ -419,7 +436,7 @@ describe('fallback safety audit (fix wave 9 lane B, #6012)', () => {
   });
 
   test("a cancel that lands while the primary refuses stops the walk and returns the refusal", async () => {
-    configureGateway({ chat_model: PRIMARY, chat_fallback_chain: [FALLBACK], env: ENV });
+    configureGateway({ chat_model: PRIMARY, chat_fallback_chain: [FALLBACK], chat_fallback_on_refusal: true, env: ENV });
     const controller = new AbortController();
     __setGenerateTextTransportForTests((async (args: any) => {
       attempts.push(args.model.modelId);

@@ -242,9 +242,11 @@ describe('engine parity: entity and mention reads', () => {
       return result;
     });
 
-  // The read floor is the no-caller page policy: it never reads the caller's readers, so a page that names the caller
-  // hides as a private page does. The Rust store serves it as the no-readers policy (retirementHopPolicy).
-  parityTest('readRetirementHop under the read floor for a remote caller hides a private page and a page that names the caller',
+  // The read floor never reads the caller's readers and drops the folder pending-coverage clause for a remote caller, so the
+  // store serves it as the page policy of a record with no readers, grants or coverage (retirementHopPolicy, storePageTextPolicy):
+  // every arm hides the private page and a page that names the caller, and keeps the live one; the caller's own policy
+  // still reads the named page. A labelled-only caller's floor still refuses typed.
+  parityTest('readRetirementHop under the read floor for a remote caller hides a private page and a page that names the caller, and keeps a live one on every engine',
     { methods: ['readRetirementHop'] }, async (engine, backend) => {
       await seed(engine, backend);
       await engine.putPage('people/hop-private', ({ type: 'person', title: 'Hop', compiled_truth: 'Hop body.',

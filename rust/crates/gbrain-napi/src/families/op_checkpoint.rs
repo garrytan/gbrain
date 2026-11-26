@@ -20,6 +20,31 @@ struct RecordRow {
 
 #[napi]
 impl Brain {
+    /// `readAtomGeneration(pageId, contentHash)`: the generation, a number.
+    #[napi]
+    pub fn read_atom_generation<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+        content_hash: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_atom_generation(page_id, &content_hash))
+    }
+
+    /// `recordAtomGenerationBump({ sourceId, incarnation, pageId, keepContentHash, keepGeneration })`: resolves null.
+    #[napi]
+    pub fn record_atom_generation_bump<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: gbrain_store::persistence::AtomGenerationBump =
+                required(args, "recordAtomGenerationBump args")?;
+            s.record_atom_generation_bump(&a)
+        })
+    }
+
     /// `readOpCheckpointKeys(op, fingerprint)`: `{ keys, corruptParent }`.
     #[napi]
     pub fn read_op_checkpoint_keys<'env>(
@@ -186,6 +211,19 @@ impl Brain {
         self.run(env, move |s| {
             s.upsert_fence_trend_run_record(&op, &fingerprint, &record)
         })
+    }
+
+    /// `addSoakCounterEvent(op, day, kind, n)`: adds `n` to one soak counter of the day's row; resolves null.
+    #[napi]
+    pub fn add_soak_counter_event<'env>(
+        &self,
+        env: &'env Env,
+        op: String,
+        day: String,
+        kind: String,
+        n: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.add_soak_counter_event(&op, &day, &kind, n))
     }
 
     /// `replaceOpCheckpointAtVersion(op, fingerprint, completedKeys, expected)`: true when this

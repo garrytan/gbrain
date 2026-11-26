@@ -8,6 +8,9 @@
  * reasons a newer page re-arms, so the store's tried memo reads the same list as `conversationTriedSql`. A number that PGLite
  * binds as `LIMIT` or `int` and the store cannot read the same way (a fraction, a negative limit, a width past int4)
  * refuses rather than guess at PGLite's cast error.
+ *
+ * The three doctor page reads (countSegmentedCensusPages, listFactsPageBodies, readFactTableCatalog) are served by
+ * facts/doctor_pages.rs.
  */
 import type { BrainEngine } from '../../engine.ts';
 import { REARMED_REASONS } from '../../facts/conversation-memo.ts';
@@ -57,3 +60,9 @@ export const countFactEmbeddingCoverage: Member<'countFactEmbeddingCoverage'> = 
   return storeCall({ member: 'countFactEmbeddingCoverage' }, () =>
     brain.countFactEmbeddingCoverage({ sourceId: opts.sourceId ?? null, model: opts.model, dims: opts.dims }));
 };
+
+export const countSegmentedCensusPages: Member<'countSegmentedCensusPages'> = (brain, sourceIds, checkedOutSourceIds) =>
+  storeCall({ member: 'countSegmentedCensusPages' }, () => brain.countSegmentedCensusPages({ sourceIds, checkedOutSourceIds }));
+
+export const readFactTableCatalog: Member<'readFactTableCatalog'> = (brain) =>
+  storeCall({ member: 'readFactTableCatalog' }, () => brain.readFactTableCatalog());

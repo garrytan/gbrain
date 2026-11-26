@@ -17,6 +17,9 @@
  *    says an identity could open a page that only a folder rule hides, and a world fact held by a page under a folder
  *    rule (applied or pending) counts as derived from a private page and stays out of the consolidate buckets. The fact cache watermark digests the rules and
  *    the pending prefixes, so it moves when either changes.
+ *    A rule removed before its restamp leaves the pages the rule covered stamped with the deleted id, which no caller
+ *    satisfies: getPage and listPages under excludePrivate read them as missing (for a former reader too) until the restamp,
+ *    on every arm. The Rust store read the folder rules live and served them in that window.
  *  - Seam: `policySeams.afterInstall` reads the pending coverage between the install and the restamp. Generated values
  *    (timestamps, the local actor) are compared by presence, never by value.
  */
@@ -181,6 +184,40 @@ describe('access policy members (engine-sql/access-policy.ts)', () => {
     expect(renamed).toEqual({ pages_scanned: 4, pages_restamped: 0 });
     expect(carol).toEqual(['notes/acme-later', 'notes/acme-out']);
     return { written, renamed, carol };
+  });
+
+  // installRulebook removes a rule with applyAccessRuleChanges and restamps afterwards. In between, SQL pages keep the
+  // deleted rule id in folder_rule_ids, which no caller satisfies, so the page stays hidden from every caller until the
+  // restamp. The Rust store read the folder rules live, so it served the page in that window (fail-open on Rust only).
+  parityTest('a page stamped with a folder rule that was removed reads as missing to a caller until the restamp', { methods: ['getPage', 'listPages', 'applyAccessRuleChanges', 'lockAccessPolicy', 'restampAccessWindow', 'finishAccessRestamp', 'readFolderAccess'] }, async (engine, backend) => {
+    await seed(engine, backend);
+    await proposeRevision(engine, SRC, [DIARY], { origin: 'cli', store: 'database' });
+    const read = async (member: string) => {
+      const identity = [`member:${member}`];
+      const access = await folderAccessFor(engine, identity);
+      return withCallerAccess({ identity, hidePrivate: true, ...access }, async () => ({
+        diary: (await engine.getPage('private/acme-diary', { sourceId: SRC, excludePrivate: true }))?.slug ?? null,
+        open: (await engine.getPage('notes/acme-open', { sourceId: SRC, excludePrivate: true }))?.slug ?? null,
+        listed: (await engine.listPages({ sort: 'slug', sourceId: SRC, excludePrivate: true })).map(p => p.slug),
+      }));
+    };
+    const both = async () => ({ carol: await read('carol-example'), alice: await read('alice-example') });
+    const ruled = await both();
+    // Remove the rule alone, as installRulebook does before its restamp: the pages keep the deleted id.
+    await engine.transaction(async tx => {
+      await tx.lockAccessPolicy(SRC);
+      await tx.applyAccessRuleChanges(SRC, { remove: ['diary'], insert: [], pending: [], revision: 2, actor: 'parity' });
+    });
+    const retired = await both();
+    const restamped = await restampSource(engine, SRC);
+    const after = await both();
+    const hidden = { diary: null, open: 'notes/acme-open', listed: ['notes/acme-open'] };
+    const shown = { diary: 'private/acme-diary', open: 'notes/acme-open', listed: ['notes/acme-open', 'private/acme-diary'] };
+    expect(ruled).toEqual({ carol: hidden, alice: shown });
+    expect(retired).toEqual({ carol: hidden, alice: hidden });
+    expect(restamped).toEqual({ pages_scanned: 2, pages_restamped: 1 });
+    expect(after).toEqual({ carol: shown, alice: shown });
+    return { ruled, retired, restamped, after };
   });
 
   parityTest('a reader the rule names is served the folder, except while its prefix is still pending', { methods: ['findPagesByTitles', 'readFolderAccess', 'applyAccessRuleChanges'] }, async (engine, backend) => {

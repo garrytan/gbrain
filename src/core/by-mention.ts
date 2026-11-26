@@ -93,6 +93,11 @@ export interface GazetteerEntry {
   /** Spelling being matched (the alias, not the display title, for aliases). */
   matchText?: string;
   /**
+   * Set only on the mention pass's scan entries for retired names, whose saved form lost the written
+   * spacing: a Hangul name matches however its words are spaced.
+   */
+  anySpacing?: true;
+  /**
    * Set on a name two or three identity siblings claim (mentions/siblings.ts):
    * a match links to every sibling with the same tokens instead of one.
    */
@@ -339,6 +344,24 @@ interface ScannedToken {
   length: number;     // original length (for span tracking)
 }
 
+/** CJK_SLUG_CHARS as code-point ranges (it is a list of `a-b` pairs, as CJK_BOUNDS relies on). */
+const CJK_RANGES = ((): Array<[number, number]> => {
+  const chars = [...CJK_SLUG_CHARS];
+  const ranges: Array<[number, number]> = [];
+  for (let k = 0; k < chars.length; k += 3) ranges.push([chars[k]!.codePointAt(0)!, chars[k + 2]!.codePointAt(0)!]);
+  return ranges;
+})();
+function isCJKCodePoint(cp: number): boolean {
+  if (cp < CJK_BOUNDS.min || cp > CJK_BOUNDS.max) return false;
+  for (const [lo, hi] of CJK_RANGES) if (cp >= lo && cp <= hi) return true;
+  return false;
+}
+/** TOKEN_RE anchored at lastIndex (sticky): one regex call per non-ASCII word. */
+const WORD_AT_RE = new RegExp(TOKEN_RE.source, 'uy');
+/** The rest of a word run after its ASCII prefix: TOKEN_RE's continuation, sticky. */
+const WORD_TAIL_RE = new RegExp(`(?:(?![${CJK_SLUG_CHARS}])[\\p{L}\\p{M}0-9])*`, 'uy');
+const isAsciiAlnum = (c: number) => (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122);
+
 /**
  * Body-text tokenizer. Returns `[token, offset]` pairs.
  *
@@ -360,47 +383,41 @@ interface ScannedToken {
  * resolved mention (see tokenizeTitle).
  */
 export function tokenizeForScan(text: string): ScannedToken[] {
+  // One forward pass that emits exactly what TOKEN_RE's word runs plus the
+  // per-character CJK walk would. ASCII words are read by char code; a word
+  // with any non-ASCII character is read by one sticky TOKEN_RE match (so
+  // Thai, Cyrillic or Arabic text costs one regex call per word); a CJK
+  // character is its own token; anything else advances one code unit.
   const out: ScannedToken[] = [];
-  TOKEN_RE.lastIndex = 0;
-  let m: RegExpExecArray | null;
-
-  // Collect word-run token spans first.
-  const wordSpans: Array<{ start: number; end: number }> = [];
-  while ((m = TOKEN_RE.exec(text)) !== null) {
-    wordSpans.push({ start: m.index, end: m.index + m[0].length });
-  }
-
-  // Walk character-by-character: emit word-run tokens at their start
-  // positions, then emit individual CJK characters for positions that fall
-  // outside every word-run span.
-  let spanIdx = 0;
-  for (let i = 0; i < text.length;) {
-    // Advance spanIdx past any spans that end before or at i.
-    while (spanIdx < wordSpans.length && wordSpans[spanIdx]!.end <= i) {
-      spanIdx++;
-    }
-
-    // If position i is inside a word-run span, emit the full token and jump
-    // past it.
-    if (spanIdx < wordSpans.length && i >= wordSpans[spanIdx]!.start && i < wordSpans[spanIdx]!.end) {
-      const span = wordSpans[spanIdx]!;
-      const token = text.slice(span.start, span.end);
-      out.push({ text: normalizeToken(token), offset: span.start, length: token.length });
-      i = span.end;
-      spanIdx++;
-      continue;
-    }
-
-    // CJK: emit as individual character token.
-    const cp = text.codePointAt(i) ?? 0;
-    const charLen = cp > 0xffff ? 2 : 1; // surrogate pair
-    const charStr = text.slice(i, i + charLen);
-    if (isCJKChar(charStr)) {
-      out.push({ text: normalizeToken(charStr), offset: i, length: charLen });
-      i += charLen;
+  const n = text.length;
+  let i = 0;
+  while (i < n) {
+    const c = text.charCodeAt(i);
+    let start = i;
+    if (c < 128) {
+      if (!isAsciiAlnum(c)) { i++; continue; }
+      while (i < n && isAsciiAlnum(text.charCodeAt(i))) i++;
+      if (i >= n || text.charCodeAt(i) < 128) {
+        out.push({ text: text.slice(start, i).toLowerCase(), offset: start, length: i - start });
+        continue;
+      }
+      WORD_TAIL_RE.lastIndex = i;
+      i += WORD_TAIL_RE.exec(text)![0].length;
     } else {
-      i++;
+      const cp = text.codePointAt(i)!;
+      if (isCJKCodePoint(cp)) {
+        out.push({ text: normalizeToken(text[i]!), offset: i, length: 1 });
+        i++;
+        continue;
+      }
+      WORD_AT_RE.lastIndex = i;
+      const m = WORD_AT_RE.exec(text);
+      if (!m) { i++; continue; }
+      start = i;
+      i += m[0].length;
     }
+    const token = text.slice(start, i);
+    out.push({ text: normalizeToken(token), offset: start, length: i - start });
   }
   return out;
 }
@@ -814,8 +831,9 @@ function hasHangulMatchBoundary(
   if (first.offset > 0 && /[가-힣]/u.test(text[first.offset - 1]!)) return false;
   const last = tokens[start + entry.tokens.length - 1]!;
   const end = last.offset + last.length;
-  const actual = text.slice(first.offset, end).replace(/\s+/gu, ' ');
-  const expected = (entry.matchText ?? entry.tokens.join('')).trim().replace(/\s+/gu, ' ');
+  const space = entry.anySpacing ? '' : ' ';
+  const actual = text.slice(first.offset, end).replace(/\s+/gu, space);
+  const expected = (entry.matchText ?? entry.tokens.join('')).trim().replace(/\s+/gu, space);
   return actual === expected && HANGUL_NAME_SUFFIX_RE.test(text.slice(end, end + 12));
 }
 

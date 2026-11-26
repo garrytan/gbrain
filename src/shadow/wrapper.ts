@@ -19,11 +19,13 @@
  */
 import type { BrainEngine } from '../core/engine.ts';
 import { registerEngineView } from '../core/persistence/switches.ts';
+import { callerAccessRecord } from '../core/search/private-visibility.ts';
 import { CAPTURE_BUDGET_BYTES, CaptureTooLargeError, encodeArgs, encodeValue } from './codec.ts';
 import { followRaw, followScope, followWrite, type FollowContext, type FollowOptions, type Frame } from './follow.ts';
 import type { CapturedRead, MirrorCounters, UsageField } from './mirror.ts';
 import { isShadowReadMember, SHADOW_TRANSACTION_MEMBERS } from './reads.ts';
 import { sqlWrites } from './sql-writes.ts';
+import type { WriteSampler } from './write-capture.ts';
 import { IGNORED_WRITE_MEMBERS, memberKind } from './write-map.ts';
 
 export interface ShadowSink {
@@ -32,6 +34,8 @@ export interface ShadowSink {
   offer(capture: () => CapturedRead, op?: string): void;
   /** Notes one call of an operation class on the per-operation meter (mirror.ts `UsageMeter`); a sink without one skips it. */
   use?(op: string, field: UsageField): void;
+  /** The generation and freshness token known BEFORE a read starts (mirror.ts `MirrorQueue.token`); a sink without one leaves the sample unproven. */
+  token?(): { gen?: number; lsn?: string };
   /** False once mirroring stopped in this process (state off, restart budget spent, privacy pause). */
   active(): boolean;
 }
@@ -53,6 +57,8 @@ export interface ShadowWrapperOptions {
    * outermost transaction that wrote resolves. Independent of `follow` and of the sink's health.
    */
   onCommittedWrite?: () => void;
+  /** Write comparisons (write-capture.ts): sampled writes are copied, counted and replayed on a scratch store. Left out when the brain was never seeded. */
+  writes?: WriteSampler;
 }
 
 /** Whether the outermost transaction saw a write; shared by the transaction engine proxies it hands out. */
@@ -135,13 +141,16 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
       use(op, tooLarge ? 'shed' : 'unmirrorable');
       return fn.apply(engine, args);
     }
+    const access = callerAccessRecord() ?? undefined; // frozen; none outside a caller's record, and then Rust runs under none (a record changes the page policy text Rust serves)
+    let token: { gen?: number; lsn?: string } = {};
+    try { token = sink.token?.() ?? {}; } catch { /* no token: the sample is never proven unchanged */ } // taken BEFORE the call: never newer than the snapshot the answer is read from
     const started = now();
     const out = fn.apply(engine, args);
     if (!isThenable(out)) return out;
     return out.then((result: unknown) => {
       const primaryMs = now() - started;
       try {
-        sink.offer(() => ({ op, args: encodedArgs, result: encodeValue(result, undefined, { left: CAPTURE_BUDGET_BYTES }), primary_ms: primaryMs, at: Date.now() }), op);
+        sink.offer(() => ({ op, args: encodedArgs, result: encodeValue(result, undefined, { left: CAPTURE_BUDGET_BYTES }), primary_ms: primaryMs, at: Date.now(), access, gen: token.gen, lsn: token.lsn }), op);
       } catch { /* the shadow never fails a call */ }
       return result;
     }, (error: unknown) => {
@@ -218,6 +227,7 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
       else if (TX_MEMBERS.has(prop)) wrapped = wrapTransaction(value);
       else if (follow && typeof prop === 'string') wrapped = wrapFollowed(prop, value, target);
       else wrapped = value.bind(target);
+      if (opts.writes && typeof prop === 'string' && !isShadowReadMember(prop) && !TX_MEMBERS.has(prop)) wrapped = opts.writes.wrap(prop, wrapped, { engine, inTransaction, mayWrite });
       if (opts.onCommittedWrite && typeof prop === 'string' && !isShadowReadMember(prop) && !TX_MEMBERS.has(prop)) wrapped = wrapObserved(prop, wrapped);
       cache.set(prop, { original: value, wrapped });
       return wrapped;

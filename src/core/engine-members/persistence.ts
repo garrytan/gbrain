@@ -7,7 +7,11 @@ import type { AtomOriginInputRow, AtomWriteReceiptRow, GenerationVersionProducer
 import type { CapacityForecastInputs, HousekeepingTurnClaim, PendingSegmentedProjection, ProjectionJobRef, ProjectionPageRef, ProjectionWindowRow, ReceiptBudget, SegmentedProjectionClaimOutcome, SegmentedProjectionFilter, TrueUpReservation } from '../engine-sql/persistence-housekeeping.ts';
 import type * as ChronicleEventsSql from '../engine-sql/chronicle-events.ts';
 import type { ClaimExpiry, ClaimHeadSpec, ClaimRelease, ClaimRenewal, ConsumerProbe, ConsumerRenewal, ConsumerRowKey, ConsumerRowRead, SourceMembership, TopologyChange, TopologyChangeInsert } from '../engine-sql/persistence-claims.ts';
-import type { EffectClaim, EffectClaimRef, EffectWorktreeOwner, MirrorGateRow } from '../engine-sql/persistence-effect-worker.ts';
+import type { GitDurabilityStore } from '../engine-sql/git-durability.ts';
+import type { GitEffectStore } from '../engine-sql/git-effects.ts';
+import type { TopologyStore } from '../engine-sql/topology-store.ts';
+import type { ManualLinkStore } from '../engine-sql/manual-links.ts';
+import type { CoalescedGitClaim, EffectClaim, EffectClaimRef, EffectWorktreeOwner, MirrorGateRow } from '../engine-sql/persistence-effect-worker.ts';
 import type { FenceHoldFileRow, FenceHoldKey, FenceHoldRow } from '../engine-sql/fence-holds.ts';
 import type { FenceVersionBodyRow } from '../engine-sql/generation-fence-evidence.ts';
 import type { GatedMirrorRequest, RequestEffectState } from '../engine-sql/persistence-effect-scans.ts';
@@ -33,7 +37,7 @@ import type { WriteRequest } from '../persistence/model.ts';
 import type { CounterColumn } from '../engine-sql/writer-release.ts';
 import type { EmbeddingCandidate } from '../engine-sql/persistence-effect-scans.ts';
 import type { GitHoldListingRow } from '../engine-sql/sync-hold-store.ts';
-import type { ManagedSyncFailureRow, SyncHeadRequestRow, SyncRecoveryProbeRow, SyncStatusCommittedRow, SyncStatusProbeOptions, SyncStatusSourceRow } from '../engine-sql/sync-status-reads.ts';
+import type { IdentityDowngradeCarry, IdentityDowngradeOldPage, IdentityRemedySideRow, ManagedSyncFailureRow, SyncHeadRequestRow, SyncRecoveryProbeRow, SyncStatusCommittedRow, SyncStatusProbeOptions, SyncStatusSourceRow } from '../engine-sql/sync-status-reads.ts';
 import type { ReceiptCompactionCandidate, ReceiptCompactionWindow } from '../engine-sql/persistence-housekeeping.ts';
 import type { RefreshTiming, WorktreeAdmission, WorktreeAdmissionKey } from '../engine-sql/persistence-admission.ts';
 import type { SegmentedGateEvidenceRow } from '../engine-sql/writer-versions.ts';
@@ -42,6 +46,10 @@ import type { HeadBlockerReadOpts, HeadBlockerRow, RecoveringHeadRow } from '../
 import type { IncompleteSyncReceiptRow, IncompleteSyncReceiptSpec, OpenPassWorkSpec } from '../engine-sql/checkpoint-validation.ts';
 
 export interface PersistenceMembers {
+  /** The atom generation a page's content keys on (engine-sql/atom-generation.ts): the kept content's, else the current one, 0 with none. Reads op_checkpoints. */
+  readAtomGeneration(pageId: number, contentHash: string): Promise<number>;
+  /** Bumps a page's atom generation and drops the extraction state and completed managed-atoms runs of its other content. Writes op_checkpoints and extract_atoms_page_state. */
+  recordAtomGenerationBump(sourceId: string, incarnation: string, pageId: number, keepContentHash: string | null, keepGeneration: number | null): Promise<void>;
   // Write-journal statements (engine-sql/persistence-journal.ts): the text journal.ts, limits.ts and held-reads.ts sent through executeRaw.
   /** The journal limit config rows, then one row with a null key: the largest page stored in segments, or 'unindexed'. */
   readJournalLimitRows(): Promise<Array<{ key: string | null; value: string | null }>>;
@@ -111,6 +119,8 @@ export interface PersistenceMembers {
   readRetiredManagedSyncCursor(sourceId: string, incarnation: string): Promise<{ first_seen: string } | null>;
   /** The unfinished managed-sync cursors of the listed sources (null: every source) with their receipts, failures and paths. */
   readManagedSyncFailureRows<V = Record<string, unknown>, R = Record<string, unknown>, F = Record<string, unknown>>(sourceIds: readonly string[] | null): Promise<Array<ManagedSyncFailureRow<V, R, F>>>;
+  /** The commit targets of a worktree's freshness samples (committed managed-sync imports in the window), newest first, at most `limit`. */
+  listFreshnessTargets(worktreeId: string, incarnation: string, windowHours: number, limit: number): Promise<string[]>;
   /** The recorded managed-sync failures of the listed sources (null: every source) whose cursor row is gone. */
   readOrphanedManagedSyncFailureRows<F = Record<string, unknown>>(sourceIds: readonly string[] | null): Promise<Array<{ failure: F }>>;
   /** The drain's head probe: the source binding's head unfinished request, or null. */
@@ -119,6 +129,12 @@ export interface PersistenceMembers {
   readSyncRecoveryProbeRow(sourceId: string, opts?: SyncStatusProbeOptions): Promise<SyncRecoveryProbeRow>;
   /** The open identity-downgrade records of the listed sources (null: every source), oldest first, with the live slugs at each new path. */
   readIdentityDowngradeRows<D = Record<string, unknown>>(sourceIds: readonly string[] | null): Promise<Array<{ record: D | string; new_slugs: string[] | null }>>;
+  /** The soft-deleted page an identity-downgrade record names (by recorded path, else slug), most recently deleted first, or null. */
+  readIdentityDowngradeOldPage(sourceId: string, path: string, slug: string): Promise<IdentityDowngradeOldPage | null>;
+  /** What an old page carries into a downgrade record: the source's facts about the slug, the page's links and the slug's aliases. */
+  countIdentityDowngradeCarry(sourceId: string, slug: string, pageId: number): Promise<IdentityDowngradeCarry>;
+  /** One page of the source by id or slug, deleted or not, as the identity remedy binds it, or null. */
+  readIdentityRemedySide(sourceId: string, by: { pageId: number } | { slug: string }): Promise<IdentityRemedySideRow | null>;
   /** A source's sync point and pending write requests, for the applied watermark (SQL in engine-sql/applied-watermark-reads.ts). */
   readWriteWatermarkRow(sourceId: string): Promise<WriteWatermarkRow>;
   /** One source binding's movement rows for readSourceMovement: the managed-sync watermark, the head request and the hold summary. */
@@ -271,6 +287,8 @@ export interface PersistenceMembers {
   replaceOpCheckpointAtVersion(op: string, fingerprint: string, completedKeys: readonly unknown[], expected: number): Promise<boolean>;
   /** Stores the sync run's fence trend row, or rewrites it keeping the `day` of its first write (the sync run's total counts once). */
   upsertFenceTrendRunRecord(op: string, fingerprint: string, record: unknown): Promise<void>;
+  /** Adds `n` to soak counter `kind` of day `day`'s `op` row, creating it (persistence/soak-counters.ts recordSoakEvent; engine-sql/soak-counters.ts). */
+  addSoakCounterEvent(op: string, day: string, kind: string, n: number): Promise<void>;
   /** The earliest `held_at` of the sources' Git sync holds with hold code `code`, or null (the fences and slug-conflicts verification). */
   readOldestSyncHoldAt(code: string, sourceIds: readonly string[]): Promise<string | null>;
   /** The daily budget ledger (budget/daily-ledger.ts): releases expired held reservations and settles expired dispatched ones at their estimate (engine-sql/budget-ledger-writes.ts). */
@@ -498,6 +516,33 @@ export interface PersistenceMembers {
   // `token` (a null token matches none), so a claim that moved changes nothing.
   /** Claims effect `id` under `token` (running, a 2-minute lease, one more attempt): the claimed row, or null when no effect has the id. */
   stampEffectClaim<R = Record<string, unknown>>(claim: EffectClaim): Promise<R | null>;
+  /**
+   * Claims up to `limit` more ready single-file Git effects of one worktree for its owner host, each under a fresh
+   * token, under `selectClaimableEffect`'s rules (#5530): the claimed rows. A non-uuid host or worktree id refuses.
+   */
+  claimCoalescedGitEffects<R = Record<string, unknown>>(input: CoalescedGitClaim): Promise<R[]>;
+
+  // Managed mode on every engine (lane LM): the stores whose SQL moved out of persistence/ unchanged.
+  /**
+   * The managed Git durability statements (engine-sql/git-durability.ts): the skipped-effect catch-up plan and re-queue,
+   * and the host binding's recorded setting. Called on a transaction engine, every store call runs in that transaction.
+   */
+  gitDurabilityStore(): Promise<GitDurabilityStore>;
+  /**
+   * The managed Git effect runner's worktree checks, its yield to queued publications and the plain outcome of a group
+   * with no durability (engine-sql/git-effects.ts). Called on a transaction engine, every store call runs in that transaction.
+   */
+  gitEffectStore(): Promise<GitEffectStore>;
+  /**
+   * The managed source topology statements (engine-sql/topology-store.ts): the topology locks, the lifecycle receipts and
+   * writes, and the moved-checkout reads. Called on a transaction engine, every store call runs in that transaction.
+   */
+  topologyStore(): Promise<TopologyStore>;
+  /**
+   * The managed link-edit and links-fence projection statements (engine-sql/manual-links.ts). Called on a transaction
+   * engine, every store call runs in that transaction.
+   */
+  manualLinkStore(): Promise<ManualLinkStore>;
   /**
    * Extends an effect claim's lease by 2 minutes; true while it is running under the token with no recovery. `direct`
    * runs it on the Postgres direct lane (`executeRawDirect`), outside any pooled transaction.

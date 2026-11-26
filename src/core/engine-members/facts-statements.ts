@@ -14,6 +14,11 @@ import type * as FactsPurgePlanSql from '../engine-sql/facts-purge-plan.ts';
 import type * as FactsPurgeSql from '../engine-sql/facts-purge.ts';
 import type * as FactsRecallSql from '../engine-sql/facts-recall.ts';
 import type * as FactsRepairSql from '../engine-sql/facts-repair.ts';
+import type * as RepairAppliesSql from '../engine-sql/repair-applies.ts';
+import type * as VisibilityScansSql from '../engine-sql/visibility-scans.ts';
+import type * as OpenTwinsSql from '../engine-sql/open-twins.ts';
+import type * as OpenFactsScansSql from '../engine-sql/open-facts-scans.ts';
+import type * as PrivateLabelScansSql from '../engine-sql/private-label-scans.ts';
 import type * as FactsTrustSql from '../engine-sql/facts-trust.ts';
 import type { LocalWriterInsert, LocalWriterRow } from '../engine-sql/persistence-state.ts';
 import type { PageReadScope } from '../types.ts';
@@ -593,6 +598,12 @@ export interface FactsStatementMembers {
   listConceptInputRows(conceptIds: number[], timeoutMs: number): Promise<FactsRepairSql.ConceptInputRow[]>;
   /** The live pages of these sources named by slug with their stored visibility, size and whether a label guard is raised, by id. Reads page_label_guards. Backs `gbrain repair visibility --slug`. */
   listNamedVisibilityRows(sourceIds: string[], slugs: string[], timeoutMs: number): Promise<Array<FactsRepairSql.VisibilityPageRow & { guarded: boolean }>>;
+  /** visibility: the live atoms of these sources (only `atomIds` when given) with their origin page, by id. Reads pages and slug_aliases. */
+  listAtomLineageRows(sourceIds: string[], atomIds: number[] | null, timeoutMs: number): Promise<VisibilityScansSql.VisibilityAtomRow[]>;
+  /** visibility: the Life Chronicle events of these sources not already private, with their origin page, by id. Reads pages. */
+  listChronicleEventVisibilityRows(sourceIds: string[], ids: number[] | null, timeoutMs: number): Promise<VisibilityScansSql.VisibilityEventRow[]>;
+  /** visibility: the pages of these sources a privacy alias alone makes private, by id. Reads pages. */
+  listAliasOnlyPrivatePages(sourceIds: string[], ids: number[] | null, timeoutMs: number): Promise<VisibilityScansSql.VisibilityDerivedRow[]>;
   /** The bounded count of facts of a purged page, by class, capped at `cap`. Reads page_purges, fact_withdrawals and open_loops. */
   countPurgedPageFacts(sourceIds: string[], cap: number): Promise<{ evidenced: number; ambiguous: number; capped: boolean }>;
   /** Facts a facts-fence generation (`fenceKind`) retired that no withdrawal covers, in (source, page, id) order; `slug` null is every page. Reads derived_generations, derived_generation_items and fact_withdrawals. */
@@ -637,6 +648,8 @@ export interface FactsStatementMembers {
   matchSavedFacts(q: FactsTrustSql.SavedFactsMatchQuery): Promise<FactsTrustSql.SavedFactMatchRow[]>;
   /** A named entity's newest active facts under the caller's read policy, with the collapse columns (search/entity-facts.ts). */
   readEntityNewestFacts(q: FactsTrustSql.EntityNewestFactsQuery): Promise<FactsTrustSql.EntityNewestFactRow[]>;
+  /** The withdrawal a save of a forgotten claim meets, or `hidden` when the caller sees none of its withdrawn rows (facts/single-prepare.ts factWithdrawnRefusal). */
+  readClaimWithdrawal(q: FactsTrustSql.ClaimWithdrawalQuery): Promise<FactsTrustSql.ClaimWithdrawal>;
   /** The query terms each name head matches after stemming with the brain's full-text language, one row per head. */
   matchHeadStems(heads: readonly string[], terms: readonly string[]): Promise<FactsTrustSql.HeadStemRow[]>;
   /** The fact an owner action targets, with its stored trust tier, or null when no fact has the id. */
@@ -806,6 +819,8 @@ export interface FactsStatementMembers {
   listNearestFacts(q: FactsRecallSql.NearestFactsQuery): Promise<FactsRecallSql.PoolFactRow[]>;
   /** The facts arm's source-page read (search/facts-arm.ts applyFactSourcePages): each fact's live holding page of its source, when that page is not its entity's. */
   listFactSourcePages(ids: readonly number[]): Promise<FactsRecallSql.FactSourcePageRow[]>;
+  /** The typed-claim facts held on one of `pageSlugs` about one of `entitySlugs` (the facts arm's superseded-claim read), in no set order. */
+  listTypedClaimFactsAtPages(pageSlugs: readonly string[], entitySlugs: readonly string[]): Promise<FactsRecallSql.TypedClaimFactRow[]>;
   /** Every active conversation slot row of the given slots under the pool read policy, by valid_from, id. */
   listSlotRows(scope: FactsTrustSql.FactPoolScope, slots: ReadonlyArray<{ source_id: string; entity_slug: string; dimension: string }>): Promise<FactsRecallSql.SlotFactRow[]>;
   /** The (source, entity) pairs among `keys` that hold an active pool fact and have no live page. */
@@ -856,6 +871,55 @@ export interface FactsStatementMembers {
   readOAuthClientMemberGrant(clientId: string, opts?: { lock?: boolean }): Promise<AccessGrantsSql.MemberClientGrant | undefined>;
   /** A live (not revoked) access token's grant columns read `FOR SHARE` (unless `lock` is false), or undefined. */
   readAccessTokenMemberGrant(tokenId: string, opts?: { lock?: boolean }): Promise<AccessGrantsSql.MemberTokenGrant | undefined>;
+  // Repair apply rechecks and writes (engine-sql/repair-applies.ts). Each runs the statement its caller ran through executeRaw.
+  /** consolidate-ties: reopens the previewed tie's fact when it is still exactly as previewed; true when it did. Writes facts. */
+  restoreConsolidationTie(tie: RepairAppliesSql.ConsolidationTieRestore): Promise<boolean>;
+  /** duplicate-facts: the named facts still active, unsuperseded and stating the group's claim. Reads facts. */
+  listLiveDuplicateRows(sourceId: string, factIds: readonly number[], visibility: string, fingerprint: string): Promise<RepairAppliesSql.LiveDuplicateRow[]>;
+  /** duplicate-facts: expires the named database-only copies as superseded by the kept fact; the ids it changed. Writes facts. */
+  supersedeDuplicateFacts(sourceId: string, factIds: readonly number[], keptId: number, visibility: string, fingerprint: string): Promise<number[]>;
+  /** duplicate-facts: links the struck fenced copies to the kept fact; the ids it changed. Writes facts. */
+  linkStruckDuplicateFacts(sourceId: string, factIds: readonly number[], keptId: number): Promise<number[]>;
+  /** extractor-facts: the pages of committed restore jobs of a preview hash or of the named requests. Reads persistence_requests. */
+  listCommittedRestorePages(sourceIds: readonly string[], slugs: readonly string[], hash: string, requestIds: readonly string[]): Promise<Array<{ source_id: string; slug: string }>>;
+  /** extractor-facts: the named facts that are active and positioned. Reads facts. */
+  listActivePositionedFactIds(factIds: readonly number[]): Promise<number[]>;
+  /** extractor-facts: the live page at the slug, its body and its largest fact row number, or null. Reads pages and facts. */
+  readFactRestorePage(sourceId: string, slug: string): Promise<RepairAppliesSql.FactRestorePage | null>;
+  /** extractor-facts: restores one expired fact at a row number when its expiry is still the previewed one; true when it did. Writes facts. */
+  restoreExtractorFact(sourceId: string, id: number, rowNum: number, expiredAt: string): Promise<boolean>;
+  /** fact-claim-dates: moves the named database-only facts to their claim's day; the ids it moved. Writes facts. */
+  moveFactClaimDates(sourceId: string, rows: readonly RepairAppliesSql.ClaimDateMove[]): Promise<number[]>;
+  /** purged-page-facts: locks the named facts of the source for the rest of the transaction. Reads facts FOR UPDATE. */
+  lockApprovedFacts(sourceId: string, factIds: readonly number[]): Promise<void>;
+  /** purged-page-facts: expires the named unexpired facts and clears their fence row number; the ids it expired. Writes facts. */
+  expireApprovedFacts(sourceId: string, factIds: readonly number[]): Promise<number[]>;
+  /** visibility: makes the named database-only world facts private; the ids it changed. Writes facts. */
+  tightenDatabaseFactVisibility(sourceId: string, factIds: readonly number[]): Promise<number[]>;
+  /** moved-pages: each named page's access key (derived readers, folder rule ids, readable_by, world snapshot). Reads pages. */
+  listPageAccessKeys(pageIds: readonly number[]): Promise<RepairAppliesSql.PageAccessKey[]>;
+  /** The open-twins scan: the twins of the changed pages some outside identity can read, by (source, slug), at most 50. Reads pages. */
+  listOpenTwinRows(pages: ReadonlyArray<{ source_id: string; slug: string }>, outside: readonly OpenTwinsSql.OpenTwinReader[]): Promise<OpenTwinsSql.OpenTwinRow[]>;
+  /** open-facts: one keyset window of eligible private facts of the selection, by id. Reads facts, pages, fact_withdrawals, fact_purges and trust_proposals. */
+  listOpenFactsWindow(sel: OpenFactsScansSql.OpenFactsSelection, after: number, upper: number | null, classes: readonly string[], limit: number, timeoutMs: number): Promise<OpenFactsScansSql.OpenFactsWindowRow[]>;
+  /** open-facts: the selection's private facts counted by class and by the reason they stay private. Reads the same tables. */
+  countOpenFactReasons(sel: OpenFactsScansSql.OpenFactsSelection, timeoutMs: number): Promise<Array<{ cls: string; reason: string; n: number }>>;
+  /** private-labels: the live pages of these sources a label makes private, by id after `after` (only `ids` when given), at most 5000. Reads pages and sources. */
+  listLabelledPages(sourceIds: string[], after: number, ids: number[] | null, timeoutMs: number): Promise<PrivateLabelScansSql.LabelledPageRow[]>;
+  /** private-labels: the live rows of the named pages, as a restore rereads them. Reads pages. */
+  listLiveLabelRows(ids: number[], timeoutMs: number): Promise<Array<Omit<PrivateLabelScansSql.LabelledPageRow, 'git'>>>;
+  /** private-labels: the pages a window of clears exposes besides themselves, by (id, cleared id). Reads pages, links and slug_aliases. */
+  listClearDependents(cleared: PrivateLabelScansSql.ClearedLabels, timeoutMs: number): Promise<PrivateLabelScansSql.ClearDependentRow[]>;
+  /** private-labels: the named pages stored under a contextual-retrieval mode, with that mode. Reads pages. */
+  listContextualRetrievalModes(ids: number[], timeoutMs: number): Promise<Array<{ id: number; mode: string }>>;
+  /** private-labels: the named pages with a live-body chunk that has no vector yet. Reads content_chunks and pages. */
+  listUnembeddedChunkPages(ids: number[], timeoutMs: number): Promise<number[]>;
+  /** url-clone-fences: makes the fact at a fence row of the page database-only; the ids it changed. Writes facts. */
+  detachFenceRowFacts(sourceId: string, slug: string, rowNum: number): Promise<number[]>;
+  /** url-clone-fences: whether the entity already holds a database-only fact with this claim text. Reads facts. */
+  hasDatabaseOnlyClaim(sourceId: string, entitySlug: string, fact: string): Promise<boolean>;
+  /** The url-clone check: a source's local path and config, or null. Reads sources. */
+  readSourceCloneRow(sourceId: string): Promise<{ local_path: string | null; config: unknown } | null>;
   /** A local writer's grant ceiling and revoked_at read `FOR SHARE`, revoked or not, or undefined. */
   readLocalWriterMemberGrant(id: string): Promise<AccessGrantsSql.MemberLocalWriterGrant | undefined>;
   /** The shared-skill serving epoch, or null when the brain has no shared-skill state row. */

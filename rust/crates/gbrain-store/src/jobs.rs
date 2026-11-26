@@ -72,6 +72,7 @@ mod client_grants;
 mod credential_binding;
 mod doctor_credentials;
 mod drain_lease;
+mod dream_reads;
 mod facts_extraction;
 mod health;
 mod inbox;
@@ -81,6 +82,7 @@ mod oauth_clients;
 mod oauth_codes;
 mod oauth_revocation;
 mod oauth_tokens;
+mod pinned_questions;
 mod private_queues;
 mod reads;
 mod spend;
@@ -108,10 +110,13 @@ pub use insight::InsightSpec;
 use mutations::add_token;
 pub use mutations::{DelayOpts, TokenDelta};
 pub(crate) use oauth_clients::remove_source_rows as remove_oauth_source_rows;
+pub(crate) use oauth_clients::source_client_in as source_oauth_client_in;
 pub use oauth_clients::{ClientInsert, ClientPatch, ClientPatchGuard};
 pub(crate) use oauth_clients::{carry_over_format_5_clients, remove_client, seed_client};
 pub use oauth_codes::OauthCodeInsert;
 pub use oauth_tokens::OauthTokenInsert;
+pub(crate) use pinned_questions::purge_probe_rows as purge_probe_pin_rows;
+pub use pinned_questions::{PinFilter, PinInsert};
 pub use private_queues::PrivateQueueState;
 pub use reads::{JobPageCursor, JobPageSpec, OverdueSpec};
 pub use spend::{ExpireScope, LeaseFilter, LeaseInsert, SpendInsert, SpendTreeSpec};
@@ -130,7 +135,7 @@ use crate::env::iso;
 use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, Result, StoreError};
 use crate::jsonb::ordered;
 use crate::keys;
-use crate::kv::{KvRead, KvWrite, scan_prefix};
+use crate::kv::{KvRead, KvWrite, for_each_prefix_paged, scan_prefix};
 use crate::timeline_queries::jsonb_field_text;
 use crate::{Store, get_json, put_json};
 use serde::{Deserialize, Serialize};
@@ -738,19 +743,23 @@ fn ids_under(read: &dyn KvRead, prefix: &[u8]) -> Result<Vec<i64>> {
     Ok(ids)
 }
 
-/// Calls `f` on each row with `status` as it loads, in id order. The row is dropped when `f` returns, so a caller that
-/// filters keeps only what it projects: one row's payload is held at a time, not the whole status.
+/// Index entries one scan of a status walk reads (the rows load between scans, so the ids never all sit in memory).
+const ROW_PAGE: usize = 256;
+
+/// Calls `f` on each row with `status` as it loads, in id order. The status index is read `ROW_PAGE` entries at a time and each
+/// row loads between scans, so neither the whole index nor a whole status of rows is held: one page of ids and one row's
+/// payload at a time. The row is dropped when `f` returns, so a caller that filters keeps only what it projects.
 fn for_each_row_with_status(
     read: &dyn KvRead,
     status: &str,
     f: &mut dyn FnMut(&JobRecord),
 ) -> Result<()> {
-    for id in ids_under(read, &status_prefix(status))? {
-        if let Some(row) = load(read, id)? {
+    for_each_prefix_paged(read, &status_prefix(status), ROW_PAGE, &mut |key, _| {
+        if let Some(row) = last_id(key).map(|id| load(read, id)).transpose()?.flatten() {
             f(&row);
         }
-    }
-    Ok(())
+        Ok(true)
+    })
 }
 
 /// The `minion_jobs` rows with `status='active'`.
@@ -2233,4 +2242,75 @@ fn admit_in(
         row: row.to_json(),
         audit: None,
     }))
+}
+
+#[cfg(test)]
+mod row_walk_tests {
+    use super::*;
+    use crate::kv::counting::Counting;
+    use std::cell::Cell;
+
+    /// A store that notes the most entries one scan handed out and whether a `get` ran while a scan was still open.
+    struct Probing {
+        inner: Counting,
+        most_in_one_scan: Cell<usize>,
+        scanning: Cell<bool>,
+        gets_inside_a_scan: Cell<usize>,
+    }
+
+    impl KvRead for Probing {
+        fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
+            if self.scanning.get() {
+                self.gets_inside_a_scan
+                    .set(self.gets_inside_a_scan.get() + 1);
+            }
+            self.inner.get(key)
+        }
+
+        fn scan(
+            &self,
+            start: &[u8],
+            end: &[u8],
+            reverse: bool,
+            f: &mut dyn FnMut(&[u8], &[u8]) -> bool,
+        ) -> Result<()> {
+            let mut delivered = 0;
+            self.scanning.set(true);
+            let out = self.inner.scan(start, end, reverse, &mut |k, v| {
+                delivered += 1;
+                f(k, v)
+            });
+            self.scanning.set(false);
+            self.most_in_one_scan
+                .set(self.most_in_one_scan.get().max(delivered));
+            out
+        }
+    }
+
+    #[test]
+    fn a_status_walk_reads_the_index_a_page_at_a_time_and_loads_rows_outside_the_scan() {
+        let n = ROW_PAGE * 5 + 7;
+        let mut inner = Counting::default();
+        for id in 1..=n as i64 {
+            inner.entries.insert(status_key("waiting", id), Vec::new());
+        }
+        inner.entries.insert(status_key("active", 1), Vec::new());
+        let store = Probing {
+            inner,
+            most_in_one_scan: Cell::new(0),
+            scanning: Cell::new(false),
+            gets_inside_a_scan: Cell::new(0),
+        };
+        // Every index entry points at a row that does not exist, so the walk loads each one and passes none on.
+        let mut visited = 0;
+        for_each_row_with_status(&store, "waiting", &mut |_| visited += 1).unwrap();
+        assert_eq!(visited, 0);
+        assert_eq!(store.inner.gets.get(), n, "every waiting id is loaded once");
+        assert!(
+            store.most_in_one_scan.get() <= ROW_PAGE,
+            "one scan handed out {} index entries; the walk must read at most {ROW_PAGE} at a time",
+            store.most_in_one_scan.get()
+        );
+        assert_eq!(store.gets_inside_a_scan.get(), 0, "rows load between scans");
+    }
 }

@@ -19,13 +19,11 @@
 import { canonicalJson } from './codec.ts';
 import type { ShadowReadKind } from './reads.ts';
 
-export type ShadowOutcome =
-  | 'match' | 'order_diff' | 'diff' | 'stale' | 'inconclusive' | 'collation_order' | 'privacy_diverged'
-  | 'capability_missing' | 'error' | 'timeout' | 'addon_unavailable';
-
-export const SHADOW_OUTCOMES: readonly ShadowOutcome[] = [
+/** Every outcome a ledger row can carry. The type is derived from this list, so a new outcome is added here and nowhere else (the evidence fold's settle allowlist and its table test then need a decision for it). */
+export const SHADOW_OUTCOMES = [
   'match', 'order_diff', 'diff', 'stale', 'inconclusive', 'collation_order', 'privacy_diverged', 'capability_missing', 'error', 'timeout', 'addon_unavailable',
-];
+] as const;
+export type ShadowOutcome = typeof SHADOW_OUTCOMES[number];
 
 export interface Classification {
   outcome: ShadowOutcome;
@@ -135,7 +133,7 @@ export function leakReason(encodedRust: unknown, scope: SourceScope | null, excl
   return null;
 }
 
-function stripScores(row: unknown): unknown {
+export function stripScores(row: unknown): unknown {
   if (!row || typeof row !== 'object' || Array.isArray(row)) return row;
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(row as Record<string, unknown>)) if (!SCORE_FIELDS.has(key)) out[key] = value;

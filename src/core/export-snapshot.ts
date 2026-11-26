@@ -1,5 +1,6 @@
 import type { BrainEngine } from './engine.ts';
-import { overlayWithdrawalBody } from './facts/withdrawal-overlay.ts';
+import { overlayWithdrawalBody, withLegacyLedgerRows } from './facts/withdrawal-overlay.ts';
+import { hasCapability } from './engine-capabilities.ts';
 import type { PageWithdrawal } from './page-state/types.ts';
 import { EXPORT_PAYLOAD_LIMIT } from './export-stage.ts';
 import { isSegmentedPage } from './page-body/page-shape.ts';
@@ -49,7 +50,10 @@ export async function readExportPages(tx: BrainEngine, keys: ReadonlyArray<{ id:
   if (!fenced.length) return snapshots;
   const normalized = await tx.normalizeFenceLines(fenced.map(({ page }) => page.compiled_truth), fenced.map(({ page }) => page.timeline));
   for (const row of normalized) {
-    const { page, applicable } = fenced[Number(row.i) - 1]!;
+    const { page, applicable: ledger } = fenced[Number(row.i) - 1]!;
+    // The Rust store never held a pre-v341 Postgres fingerprint (and reads no raw SQL), so only a SQL engine aliases them.
+    const applicable = hasCapability(tx, 'raw_sql')
+      ? await withLegacyLedgerRows((sql, params) => tx.executeRaw(sql, params), [page.compiled_truth, page.timeline], ledger) : ledger;
     page.compiled_truth = overlayWithdrawalBody(page.compiled_truth, row.body ?? '', applicable);
     page.timeline = overlayWithdrawalBody(page.timeline, row.timeline ?? '', applicable);
   }
