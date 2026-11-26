@@ -137,6 +137,7 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
       clearInterval(usageTimer);
       flushUsage();
       reconciler?.stop();
+      await supervisor.drain(); // the CLI is about to exit and Bun drops what its pipe still holds: wait (bounded) for it to flush; stop() writes down how many samples were sent, so the child counts any it never got
       supervisor.stop();
       await reads?.close().catch(() => undefined);
       if (askReads !== reads) await askReads.close().catch(() => undefined);
