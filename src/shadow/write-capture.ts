@@ -319,15 +319,15 @@ export function createWriteSampler(o: WriteSamplerOptions): WriteSampler {
                 const [source, slug] = s.key.split('\0');
                 try {
                   s.revision = await inSavepoint(tx, async (inner) => {
-                    await inner.executeRaw(`SET LOCAL statement_timeout = ${PREIMAGE_TIMEOUT_MS}`);
-                    const [row] = await inner.executeRaw<{ r: string | null }>('/* shadow write revision */ SELECT knowledge_revision::text AS r FROM pages WHERE source_id = $1 AND slug = $2', [source, slug]);
-                    if (typeof row?.r !== 'string') throw new Error('revision_missing');
-                    return row.r;
+                    await digestQuery(inner)(`SET LOCAL statement_timeout = ${PREIMAGE_TIMEOUT_MS}`); // bounds the read; the savepoint's rollback takes it away
+                    const snapshot = await inner.readPageSnapshot(slug!, { sourceId: source!, includeDeleted: true }); // the typed read of the page's revision, on the transaction's own connection
+                    if (!snapshot) throw new Error('revision_missing');
+                    return snapshot.revision;
                   });
-                } catch { s.bad ??= 'preimage_unreadable'; }
+                } catch { s.bad ??= 'preimage_unreadable'; } // silent-read-ok: an unreadable revision leaves the sample uncomparable (s.bad), never a pass // capability-refusal-ok: a refusal here is a read the sampler could not make, and the sample is then not compared
               }
             } finally { open(); }
-          } catch { /* the shadow never fails a write */ }
+          } catch { /* the shadow never fails a write */ } // silent-read-ok: nothing is read or sent here, and a sample without its revision keeps the write's returned one (a changed page then reads moved) // capability-refusal-ok: the sampler never fails or changes a primary write
         },
         open: () => ++sc.nested,
         drop: (id) => { for (let i = sc.log.length - 1; i >= 0; i--) if (sc.log[i]!.path.includes(id)) { sc.log.splice(i, 1); for (const s of sc.samples) if (s.at > i) s.at--; } },
