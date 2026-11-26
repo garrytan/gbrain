@@ -717,7 +717,11 @@ describe('engine parity: pages', () => {
         all: await list({ listColumnsOnly: true, sort: 'slug', includeDeleted: true }),
         hidden: await list({ listColumnsOnly: true, sort: 'slug', excludePrivate: true, limit: 3 }),
         typed: await list({ listColumnsOnly: true, type: 'person', sort: 'slug', sourceId: 'alt' }),
+        // omitBodies (master #10302): the list columns with the frontmatter kept.
+        bodiesOmitted: await list({ omitBodies: true, sort: 'slug', includeDeleted: true }),
       };
+      expect(out.bodiesOmitted.every((page) => page.compiled_truth === '' && page.timeline === '')).toBe(true);
+      expect(out.bodiesOmitted.some((page) => Object.keys(page.frontmatter as object).length > 0)).toBe(true);
       expect(out.all.every((page) => page.compiled_truth === '' && page.timeline === '')).toBe(true);
       expect(out.hidden.map((page) => page.at)).not.toContain('default:people/private-example');
       return out;

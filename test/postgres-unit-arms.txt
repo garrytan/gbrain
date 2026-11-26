@@ -49,8 +49,10 @@ test/access-unborn-head-gbra706.test.ts
 test/access-ungranted-member-writes.test.ts
 test/access-who-can-read-owner-only.test.ts
 test/access-writes.test.ts
+test/action-ledger.test.ts
 test/activation-unbound-rooted-6449.test.ts
 test/adopt-local-edit.test.ts
+test/agent-policy.test.ts
 test/alias-source-cascade-5094.test.ts
 test/atom-retirement-keeps-trust-9456.test.ts
 test/attribution-backfill-history.test.ts
@@ -97,6 +99,7 @@ test/collate-repair-propose.test.ts
 test/colon-slug-windows-5032.test.ts
 test/company-brain-policy.test.ts
 test/company-brain-runtime.test.ts
+test/company-two-member-first-use.test.ts
 test/concept-purge-rebuild-9653.test.ts
 test/concept-rebuild-holds-managed-9653.test.ts
 test/concept-rebuild-holds-unmanaged-9653.test.ts
@@ -120,6 +123,7 @@ test/db-wins-unimported-gst2579.test.ts
 test/decide-sql-move-parity.test.ts
 test/decide/conflict-proposals-managed.test.ts
 test/declared-lineage-visibility.test.ts
+test/dedupe-collapse.test.ts
 test/degraded-engine-recovered-surface-9224.test.ts
 test/delta-beliefs-link-context-2957.test.ts
 test/derived-link-reconciliation.test.ts
@@ -670,6 +674,7 @@ test/fenced-embed-reuse-6961.test.ts
 test/file-drift-normalisation-gst2568.test.ts
 test/file-drift-soft-delete-hold-release-gbra133.test.ts
 test/file-upload-follows-rename.test.ts
+test/first-session-suggestion.test.ts
 test/folder-holding-coverage-gst2497.test.ts
 test/folder-holding-page-gst2492.test.ts
 test/forecast-journal.test.ts
@@ -935,6 +940,7 @@ test/notifier-retry-unwatched-gst2515.test.ts
 test/notifier-sync-disabled-gst2515.test.ts
 test/ns-read-move-parity.test.ts
 test/on-commit-embedding.serial.test.ts
+test/onboarding-ops.test.ts
 test/oneshot-consumer-direct-route.test.ts
 test/oneshot-housekeeping-cli.test.ts
 test/ontology-raw-files-parity.test.ts

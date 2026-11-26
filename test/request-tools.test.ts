@@ -156,8 +156,9 @@ describe('request_tools catalog (no args)', () => {
     // #4098: the generic queue ops (get/list/progress/cancel) are
     // agentCallable with an owner-client fence, so the honest agent-lane
     // catalog includes them alongside the submit_agent/get_agent_job pair.
+    // GST-3824 L1: capabilities is agentCallable so any token can ask what it can call.
     expect(names).toEqual([
-      'cancel_job', 'get_agent_job', 'get_job', 'get_job_progress',
+      'cancel_job', 'capabilities', 'get_agent_job', 'get_job', 'get_job_progress',
       'list_jobs', 'request_tools', 'submit_agent', 'wait_job',
     ]);
   });
@@ -272,6 +273,31 @@ describe('D1: request_tools with an empty or unknown-only list returns the catal
 });
 
 describe('request_tools {surface} persist branch', () => {
+  test('GST-3791: the HTTP notifier runs after the persist; a failed send keeps the surface and drops the sent claim', async () => {
+    await seedClient('cl-notify-ok');
+    let calls = 0;
+    const ok = parsed(await dispatchToolCall(engine, 'request_tools', { surface: 'starter' }, {
+      ...HTTP, surfaceCeiling: 'full', auth: authFor('cl-notify-ok', ['read']), notifyToolListChanged: async () => { calls++; },
+    }));
+    expect(ok).toEqual({ persisted: true, surface: 'starter', note: 'tools/list_changed was sent; re-issue tools/list to see the new catalog' });
+    expect(calls).toBe(1);
+
+    await seedClient('cl-notify-fail');
+    const failed = parsed(await dispatchToolCall(engine, 'request_tools', { surface: 'starter' }, {
+      ...HTTP, surfaceCeiling: 'full', auth: authFor('cl-notify-fail', ['read']), notifyToolListChanged: () => Promise.reject(new Error('stream closed')),
+    }));
+    expect(failed).toEqual({ persisted: true, surface: 'starter', note: 're-issue tools/list to see the new catalog' });
+    const rows = await engine.executeRaw(`SELECT surface FROM oauth_clients WHERE client_id = $1`, ['cl-notify-fail']);
+    expect(rows[0].surface).toBe('starter');
+
+    let dry = 0;
+    const preview = parsed(await dispatchToolCall(engine, 'request_tools', { surface: 'full', dry_run: true }, {
+      ...HTTP, surfaceCeiling: 'full', auth: authFor('cl-notify-ok', ['read']), notifyToolListChanged: async () => { dry++; },
+    }));
+    expect(preview.persisted).toBe(false);
+    expect(dry).toBe(0);
+  });
+
   test('happy path: persists surface + surface_set_by=self and writes the audit row', async () => {
     await seedClient('cl-persist');
     const res = await dispatchToolCall(engine, 'request_tools', { surface: 'starter' }, {

@@ -14,7 +14,7 @@
 //! or not at all, and applies run one at a time (the advisory lock of the SQL).
 
 use crate::alias_fanout_reads::reject_nul;
-use crate::cli_reads::entities::is_retired;
+use crate::cli_reads::entities::{is_collapsed, is_retired};
 use crate::cli_reads::pg_text::timestamptz_text;
 use crate::entity_identities::{
     IdentityRecord, all_records, group_key, group_pages, record, row_key,
@@ -99,6 +99,10 @@ pub struct EntityKeyRowsOpts {
     /// Narrows the read to pages one of whose `fields` values reads as one of the token values.
     #[serde(default)]
     pub tokens: Option<KeyTokens>,
+    /// Instead of the live unretired pages: the retired pages a dedupe collapse made (a
+    /// `dedupe_collapse` record and a `merged_into` value that is not blank).
+    #[serde(default)]
+    pub collapsed: bool,
 }
 
 /// One decision of `applyIdentityDecisions({ upsert })`; `decided_at` null takes now.
@@ -254,7 +258,11 @@ impl Store {
                 || !types.contains(page.page_type.as_str())
                 || (page.source_id.as_str(), page.slug.as_str())
                     <= (after.0.as_str(), after.1.as_str())
-                || is_retired(&page)
+                || (if opts.collapsed {
+                    !is_collapsed(&page)
+                } else {
+                    is_retired(&page)
+                })
                 || named
                     .as_ref()
                     .is_some_and(|n| !n.contains(&(page.source_id.as_str(), page.slug.as_str())))
