@@ -9,8 +9,10 @@
 
 use super::effect_worker::pg_uuid;
 use super::effects::{EffectRecord, all_effects, write_effect};
+use super::worktrees::{
+    HOST_BINDING, HostBindingRecord, host_binding_key, read_host_record, scan_records,
+};
 use super::{json_text, request_by_id};
-use super::worktrees::{host_binding_key, read_host_record};
 use crate::env::Env;
 use crate::error::{CONSTRAINT_VIOLATION, Result, StoreError};
 use crate::kv::{KvRead, KvWrite};
@@ -54,6 +56,11 @@ pub enum GitDurabilityRead {
         worktree_id: String,
         codes: Vec<String>,
     },
+    /// `HOST_BINDING_PATHS_SQL`: the local path of every host binding, in key order.
+    HostBindingPaths {},
+    /// `FAILED_GIT_WORKTREES_SQL`: each worktree (lower-case uuid text) with a failed Git effect, once,
+    /// in byte order.
+    FailedGitWorktrees {},
 }
 
 /// One write of `gitDurabilityStore()`, named by `kind`.
@@ -281,7 +288,11 @@ fn held_codes(e: &EffectRecord, codes: &[String]) -> Result<Vec<String>> {
 
 /// The predicates both parked-push reads share: a failed, unsettled Git effect.
 fn failed_git(e: &EffectRecord) -> bool {
-    e.kind == "git" && e.state == "failed" && e.data.as_object().is_none_or(|m| !m.contains_key("settled"))
+    e.kind == "git"
+        && e.state == "failed"
+        && e.data
+            .as_object()
+            .is_none_or(|m| !m.contains_key("settled"))
 }
 
 fn parked_push_requests_in(read: &dyn KvRead, worktree: &str, codes: &[String]) -> Result<Value> {
@@ -309,7 +320,11 @@ fn parked_push_requests_in(read: &dyn KvRead, worktree: &str, codes: &[String]) 
         }
     }
     rows.sort_by(|a, b| {
-        (a.0.as_bytes(), a.1.as_bytes(), a.2.as_bytes()).cmp(&(b.0.as_bytes(), b.1.as_bytes(), b.2.as_bytes()))
+        (a.0.as_bytes(), a.1.as_bytes(), a.2.as_bytes()).cmp(&(
+            b.0.as_bytes(),
+            b.1.as_bytes(),
+            b.2.as_bytes(),
+        ))
     });
     Ok(Value::Array(
         rows.into_iter()
@@ -392,7 +407,11 @@ fn requeue_parked_effect_in(
     let Some(mut e) = all_effects(&*tx)?.into_iter().find(|e| e.id == wanted) else {
         return Ok(Value::Null);
     };
-    if e.state != "failed" || e.error_code.as_deref() != error_code || e.execution_token.is_some() || e.recovery.is_some() {
+    if e.state != "failed"
+        || e.error_code.as_deref() != error_code
+        || e.execution_token.is_some()
+        || e.recovery.is_some()
+    {
         return Ok(Value::Null);
     }
     e.state = "queued".into();
@@ -422,7 +441,39 @@ pub(crate) fn git_durability_rows_in(read: &dyn KvRead, what: &GitDurabilityRead
             worktree_id,
             codes,
         } => former_worktree_holds_in(read, source_id, worktree_id, codes),
+        GitDurabilityRead::HostBindingPaths {} => host_binding_paths_in(read),
+        GitDurabilityRead::FailedGitWorktrees {} => failed_git_worktrees_in(read),
     }
+}
+
+fn host_binding_paths_in(read: &dyn KvRead) -> Result<Value> {
+    let bindings: Vec<HostBindingRecord> = scan_records(read, HOST_BINDING, "host binding")?;
+    Ok(Value::Array(
+        bindings
+            .into_iter()
+            .map(|b| Value::String(b.local_path))
+            .collect(),
+    ))
+}
+
+fn failed_git_worktrees_in(read: &dyn KvRead) -> Result<Value> {
+    let mut worktrees: Vec<String> = Vec::new();
+    for e in all_effects(read)? {
+        if e.kind != "git" || e.state != "failed" {
+            continue;
+        }
+        let Some(worktree) = e.worktree_id.as_deref() else {
+            continue;
+        };
+        let worktree = worktree.to_lowercase();
+        if !worktrees.contains(&worktree) {
+            worktrees.push(worktree);
+        }
+    }
+    worktrees.sort();
+    Ok(Value::Array(
+        worktrees.into_iter().map(Value::String).collect(),
+    ))
 }
 
 pub(crate) fn git_durability_write_in(

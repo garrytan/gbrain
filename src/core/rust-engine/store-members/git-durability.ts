@@ -30,6 +30,8 @@ function rustGitDurabilityStore(brain: StoreBrain): GitDurabilityStore {
     parkedPushRequests: (worktreeId, codes) => rows('parked_push_requests', { worktreeId, codes: [...codes] }),
     formerWorktreeHolds: (sourceId, worktreeId, codes) => rows('former_worktree_holds', { sourceId, worktreeId, codes: [...codes] }),
     requeueParkedEffect: (id, data, errorCode) => write('requeue_parked_effect', { id, data, errorCode }),
+    hostBindingPaths: () => rows('host_binding_paths', {}),
+    failedGitWorktrees: () => rows('failed_git_worktrees', {}),
   };
 }
 

@@ -15,6 +15,8 @@
  *    differently from PGLite.
  *  - Why existing coverage misses it: the managed parity files declare `requires: 'managed_persistence'`, so on the
  *    ordinary Rust arm they count the hold's refusal as stopped and never run the managed members.
+ *  - Secret publish maintenance (git/redact-finish.ts) reads the host bindings and the failed Git effects of managed mode
+ *    through gitDurabilityStore, and only where managed mode is served: no managed-table read refuses and is swallowed.
  *  - Seam: the publication fault hook (persistence/fault-points.ts); real engines, real Git checkouts.
  */
 import { execFileSync } from 'node:child_process';
@@ -39,6 +41,8 @@ import { OperationError } from '../../src/core/ops/contract.ts';
 import { runManagedSourceLifecycle } from '../../src/core/persistence/source-lifecycle.ts';
 import { movedPhysicalRoot } from '../../src/core/persistence/physical-root.ts';
 import { runPersistenceEffects } from '../../src/core/persistence/effects.ts';
+import { secretPublishMaintenance } from '../../src/core/git/redact-finish.ts';
+import { isEngineCapabilityRefusal } from '../../src/core/engine-capability-refusal.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -342,5 +346,45 @@ describe('managed mode on a Rust brain', () => {
     expect(out).toEqual({ steps: ['ok', 'ok', 'ok', 'ok'], afterAdd: { file: true, links: ['notes/frank-example'] }, afterRemove: { file: false, links: [] } });
     return out;
   }));
+
+  /**
+   * Runs secret publish maintenance with `engine.executeRaw` watched: the managed-mode statements (host bindings,
+   * persistence effects) it sent that refused with a capability refusal, and the parked-push count it reported.
+   */
+  async function maintenanceRefusals(engine: BrainEngine): Promise<{ refused: string[]; retried: number }> {
+    const refused: string[] = [];
+    const own = Object.prototype.hasOwnProperty.call(engine, 'executeRaw');
+    const original = engine.executeRaw;
+    (engine as { executeRaw: unknown }).executeRaw = async function (this: BrainEngine, sql: string, params?: unknown[]) {
+      try { return await original.call(this, sql, params as never); }
+      catch (e) {
+        if (isEngineCapabilityRefusal(e) && /persistence_(host_bindings|effects)/.test(sql)) refused.push(sql.includes('persistence_effects') ? 'persistence_effects' : 'persistence_host_bindings');
+        throw e;
+      }
+    };
+    try {
+      const out = await withEnv({ GBRAIN_SECRETS_ON_PUSH: undefined }, () => secretPublishMaintenance(engine));
+      return { refused, retried: out.secret_parked_pushes_retried ?? 0 };
+    } finally {
+      if (own) (engine as { executeRaw: unknown }).executeRaw = original; else delete (engine as { executeRaw?: unknown }).executeRaw;
+    }
+  }
+
+  parityTest('secret publish maintenance on a managed checkout reads managed mode through its store: no refusal swallowed', {
+    methods: ['gitDurabilityStore', 'listAllSources'],
+    timeout: 120_000,
+  }, async (engine, backend) => withManagedCheckout(engine, backend, {}, async () => {
+    const out = await maintenanceRefusals(engine);
+    expect(out).toEqual({ refused: [], retried: 0 });
+    return out;
+  }));
+
+  parityTest('secret publish maintenance on a brain that does not serve managed mode sends no managed read to refuse', {
+    methods: ['listAllSources'],
+  }, async (engine) => {
+    const out = await maintenanceRefusals(engine);
+    expect(out).toEqual({ refused: [], retried: 0 });
+    return out;
+  });
 
 });
