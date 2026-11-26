@@ -414,7 +414,7 @@ describe('status --json', () => {
     });
     expect(json.reconcile.state).toBe('never_run');
     expect(json.write_comparisons).toEqual({ state: 'capability_missing', sample_rate: 0.1, comparable: 0, unexplained_difference: 0, uncomparable: 0, capability_missing: 0,
-      qualifying_writes: { by_day: {}, first_seen: null } });
+      qualifying_writes: { by_day: {}, first_seen: null, in_transaction_by_day: {} } });
     expect(json.fingerprints).toEqual({ checked_rows: 0, mismatches: 0, probe: {
       state: 'not_run', checked_at: null, server_version: null, collation: null, mismatches: 0, ctype: null, locale_provider: null, locale: null,
       differing_code_points: [], differing_code_points_total: 0, corpus_mismatches: 0, corpus_mismatch_rows: [], facts_with_differing_code_points: 0,

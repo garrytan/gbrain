@@ -219,6 +219,10 @@ never a pass. With no shadow running, every criterion is `missing`.
    managed storage) shadows with every write compared (rate 1.0), so the bar is reachable in 5 days; each save is
    about 2x slower while that shadow runs. A brain with fewer than 20 qualifying writes a day cannot reach the floor
    in a 5-day shadow.
+   When the compared writes fall short of the bar, the plan says why: `write_bar_not_reached` with the share of the
+   epoch's qualifying writes that were compared, the writes that cannot be (in a transaction, `uncomparable`,
+   `capability_missing`), and after how many days of shadow the bar is reached at that share; or
+   `write_bar_unreachable` when none was compared. The bar is never lowered and an uncompared write never counts.
 6. Zero `privacy_diverged` events (the field is absent, not zero, while any privacy check of the last 7 days is unsettled, so criterion 6 has no evidence until it settles).
 7. Zero fingerprint mismatches, a passed fingerprint probe and a passed allocator verification.
 8. Speed: paired bench samples. **Reported, not gating.** D23 (the maintainer's C1 ruling of 2026-11-19) makes the

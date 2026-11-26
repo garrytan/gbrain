@@ -9,7 +9,7 @@
  */
 import { DEFAULT_SHADOW_MIN_DAYS, effectiveShadowMin, READINESS_POLICY, type ReadinessPolicy } from './policy.ts';
 import type { SwapRefusalReason } from './refusals.ts';
-import { describeWriteBar, writeBar, type QualifyingWrites } from '../../shadow/write-bar.ts';
+import { describeShortfall, describeWriteBar, writeBar, type QualifyingWrites } from '../../shadow/write-bar.ts';
 
 /** The fields S5a reads; S3 owns the document. Counts are epoch-scoped totals unless the name says otherwise. */
 export interface ShadowStatus {
@@ -118,6 +118,15 @@ class Reader {
     }
     if (cur === undefined || cur === null || !ok(cur)) { if (!this.missing.includes(path)) this.missing.push(path); return undefined; }
     return cur as T;
+  }
+  /** The value at `path` for a report line, without recording it as missing evidence (no criterion depends on it). */
+  peek<T>(path: string): T | undefined {
+    let cur: unknown = this.doc;
+    for (const key of path.split('.')) {
+      cur = cur !== null && typeof cur === 'object' ? Object.getOwnPropertyDescriptor(cur, key)?.value : undefined;
+      if (cur === undefined) break;
+    }
+    return cur === null ? undefined : cur as T;
   }
   n(path: string): number | undefined { return this.get<number>(path, num); }
   b(path: string): boolean | undefined { return this.get<boolean>(path, v => typeof v === 'boolean'); }
@@ -228,7 +237,11 @@ function writeComparisons(r: Reader, now: Date, policy: ReadinessPolicy): Check 
     const bar = writeBar(history, min.required ? min.days : DEFAULT_SHADOW_MIN_DAYS, now);
     const how = describeWriteBar(bar);
     const fails: string[] = [];
-    if (comparable < bar.bar) fails.push(`${comparable} of ${bar.bar} compared writes`);
+    if (comparable < bar.bar) {
+      fails.push(`${comparable} of ${bar.bar} compared writes`);
+      fails.push(describeShortfall(history, bar, comparable, r.peek<string>('epoch_started_at'), {
+        uncomparable: r.peek<number>('write_comparisons.uncomparable') ?? 0, capability_missing: r.peek<number>('write_comparisons.capability_missing') ?? 0 }, now));
+    }
     if (unexplained > 0) fails.push(`${unexplained} unexplained differences`);
     return fails.length
       ? { state: 'fail', detail: `${fails.join('; ')} (${how})` }

@@ -78,7 +78,7 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
     offer: (capture: Parameters<MirrorQueue['offer']>[0], op?: string) => queue.offer(capture, op),
     token: () => queue.token(),
     use: (op: string, field: Parameters<MirrorQueue['meter']['note']>[1]) => queue.meter.note(op, field),
-    noteWrite: (op: string) => writeMeter.note(op, 'offered'),
+    noteWrite: (op: string, inTransaction?: boolean) => { writeMeter.note(op, 'offered'); if (inTransaction) writeMeter.note(op, 'skipped_in_transaction'); },
     active: () => supervisor.active(),
   };
   // Qualifying write calls (criterion 5's bar, write-bar.ts), kept apart from read usage so read coverage never lists a write.

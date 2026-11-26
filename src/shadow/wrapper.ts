@@ -39,7 +39,7 @@ export interface ShadowSink {
   /** False once mirroring stopped in this process (state off, restart budget spent, privacy pause). */
   active(): boolean;
   /** Notes one call of a qualifying write member (write-bar.ts): criterion 5's bar counts every call, compared or not. */
-  noteWrite?(op: string): void;
+  noteWrite?(op: string, inTransaction?: boolean): void;
 }
 
 export interface ShadowWrapperOptions {
@@ -218,7 +218,7 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
 
   /** Counts each call of a qualifying write (outside or inside a transaction) on the write meter; never fails the call. */
   const countWrite = (name: string, fn: Function): Function => function shadowCountedWrite(this: unknown, ...args: unknown[]) {
-    try { if (sink.active()) sink.noteWrite?.(name); } catch { /* the shadow never fails a call */ }
+    try { if (sink.active()) sink.noteWrite?.(name, inTransaction); } catch { /* the shadow never fails a call */ }
     return fn.apply(this, args);
   };
 

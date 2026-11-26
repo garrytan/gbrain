@@ -44,6 +44,9 @@ export interface QualifyingWrites {
   by_day: Record<string, number>;
   /** The first line of the call history, or null when no process has noted a write yet. */
   first_seen: string | null;
+  /** `YYYY-MM-DD` -> those calls made inside a transaction (counted in `by_day` too). A write in a transaction is never
+   * compared, so these never become compared writes. Absent in a history written before it was kept. */
+  in_transaction_by_day?: Record<string, number>;
 }
 
 /**
@@ -52,7 +55,7 @@ export interface QualifyingWrites {
  */
 export function readQualifyingWrites(shadowDir: string, now: Date = new Date()): QualifyingWrites | null {
   const dir = writeUsageDir(shadowDir);
-  const out: QualifyingWrites = { by_day: {}, first_seen: null };
+  const out: QualifyingWrites = { by_day: {}, first_seen: null, in_transaction_by_day: {} };
   if (!existsSync(dir)) return out;
   const oldest = new Date(now.getTime() - (WRITE_HISTORY_DAYS - 1) * DAY_MS).toISOString().slice(0, 10);
   for (const name of readdirSync(dir).sort()) {
@@ -67,6 +70,8 @@ export function readQualifyingWrites(shadowDir: string, now: Date = new Date()):
       for (const [op, u] of Object.entries(l.ops)) {
         if (!QUALIFYING_WRITE_OPS.has(op)) continue;
         out.by_day[day] = (out.by_day[day] ?? 0) + (Number(u?.offered) || 0);
+        const inTx = Number(u?.skipped_in_transaction) || 0;
+        if (inTx) out.in_transaction_by_day![day] = (out.in_transaction_by_day![day] ?? 0) + inTx;
       }
     }
   }
@@ -101,4 +106,33 @@ export function writeBar(history: QualifyingWrites, windowDays: number, now: Dat
 export function describeWriteBar(b: WriteBar): string {
   return `bar ${b.bar} = min(${WRITE_BAR_CAP}, max(${WRITE_BAR_FLOOR}, ${b.window_days}-day window x ${b.per_day.toFixed(1)} qualifying writes a day))`
     + `; W = ${b.writes_in_window} calls of ${[...QUALIFYING_WRITE_OPS].join(', ')} over ${b.covered_days} day(s) of the brain's own call counts, sampled-out calls included`;
+}
+
+/** The writes not compared, as the status counts them (epoch-scoped) and as the call history counts them. */
+export interface NotCompared { in_transaction: number; uncomparable: number; capability_missing: number }
+
+/**
+ * Why `compared` is short of the bar, for the plan: the qualifying writes of the epoch (from the call history, in the
+ * days it covers), the share of them that were compared, the counts of those that cannot be, and, at that share, after
+ * how many days of shadow the bar is reached. `write_bar_unreachable` when no write was compared; the bar is never lowered.
+ */
+export function describeShortfall(history: QualifyingWrites, bar: WriteBar, compared: number, epochStartedAt: string | undefined,
+  counts: Omit<NotCompared, 'in_transaction'>, now: Date): string {
+  const start = epochStartedAt && Number.isFinite(Date.parse(epochStartedAt)) ? Date.parse(epochStartedAt) : now.getTime() - bar.window_days * DAY_MS;
+  const days = Math.max(1, Math.ceil((now.getTime() - start) / DAY_MS));
+  let writes = 0; let inTx = 0;
+  for (let i = 0; i < Math.min(days, WRITE_HISTORY_DAYS); i++) {
+    const d = new Date(now.getTime() - i * DAY_MS).toISOString().slice(0, 10);
+    writes += history.by_day[d] ?? 0;
+    inTx += history.in_transaction_by_day?.[d] ?? 0;
+  }
+  const notCompared = `not compared: in a transaction ${inTx}, uncomparable ${counts.uncomparable}, capability_missing ${counts.capability_missing}`;
+  const share = writes > 0 ? Math.min(1, compared / writes) : 0;
+  const perDayCompared = share * bar.per_day;
+  if (compared <= 0 || perDayCompared <= 0) {
+    return `write_bar_unreachable: none of the ${writes} qualifying writes of the epoch was compared (${notCompared}); the bar is not reached at any length of shadow`;
+  }
+  const needed = bar.bar / perDayCompared;
+  return `write_bar_not_reached: ${compared} of the ${writes} qualifying writes of the epoch were compared (${(share * 100).toFixed(0)}%; ${notCompared}); `
+    + `at that share the bar is reached after about ${needed.toFixed(1)} days of shadow`;
 }
