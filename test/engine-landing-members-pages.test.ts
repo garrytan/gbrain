@@ -488,7 +488,16 @@ describe('belief ledger', () => {
     expect((await engine.readBeliefHistoryRows({ ...query, slug: 'belief/nowhere' }))).toEqual([]);
     expect((await engine.readBeliefHistoryRows({ ...query, recordedAfter: new Date(Date.now() + 3_600_000).toISOString() }))).toEqual([]);
     expect((await engine.readBeliefHistoryRows({ ...query, recordedUntil: new Date(Date.now() - 3_600_000).toISOString() }))).toEqual([]);
-    expect((await engine.readBeliefHistoryRows({ ...query, sourceId: 'other' })).map((r) => r.subject_key)).toEqual(['k-first', 'k-second', 'k-third']);
+    // Its own second source and events, so the test does not read what another test left behind.
+    await raw("INSERT INTO sources (id, name) VALUES ('history-other', 'history-other') ON CONFLICT DO NOTHING");
+    const historyOtherIncarnation = (await engine.readSourceMembership('history-other'))!.incarnation;
+    const otherBase = { source_id: 'history-other', source_incarnation: historyOtherIncarnation, slug: 'belief/history-other' };
+    await engine.insertBeliefEvents([
+      beliefRow({ ...otherBase, subject_key: 'k-second', ord: 1, event_type: 'updated' }),
+      beliefRow({ ...otherBase, subject_key: 'k-first', ord: 0 }),
+      beliefRow({ ...otherBase, subject_key: 'k-third', ord: 2 }),
+    ]);
+    expect((await engine.readBeliefHistoryRows({ ...query, sourceId: 'history-other' })).map((r) => r.subject_key)).toEqual(['k-first', 'k-second', 'k-third']);
     expect(await engine.readBeliefHistoryRows({ ...query, sourceId: 'no-such-source' })).toEqual([]);
 
     await engine.endBeliefLifetime(lifetime);
@@ -833,12 +842,17 @@ describe('fence cells and the fence overlay', () => {
   });
 
   test('listHeldFenceCells returns the cells a narrower stored fact holds from a world-only reader, one row per distinct held cell', async () => {
-    const key = (rowNum: number, claim: string, partial = false) => ({ sourceId: 'default', slug: 'fence/page', rowNum, claim, partial });
+    // Its own page and facts (a private fact and a world fact on one page), not the overlay test's.
+    const owner = await page('fence/held-page', 'Held fence page body.');
+    await raw("UPDATE pages SET trust_tier = 'external_untrusted' WHERE id = $1", [owner.id]);
+    await fact(claimA, { slug: 'fence/held-page', rowNum: 1, visibility: 'private', tier: 'external_untrusted' });
+    await fact(claimB, { slug: 'fence/held-page', rowNum: 2, visibility: 'world' });
+    const key = (rowNum: number, claim: string, partial = false) => ({ sourceId: 'default', slug: 'fence/held-page', rowNum, claim, partial });
     const held = await engine.listHeldFenceCells([key(1, claimA), key(2, claimB), key(3, claimPurged), key(1, claimA)]);
-    expect(held).toEqual([{ source_id: 'default', slug: 'fence/page', row_num: 1, claim: claimA }]);
+    expect(held).toEqual([{ source_id: 'default', slug: 'fence/held-page', row_num: 1, claim: claimA }]);
     const partial = await engine.listHeldFenceCells([key(-1, 'green tea in the', true), key(-1, 'hires new engineers', true), key(-1, 'green tea in the')]);
-    expect(partial).toEqual([{ source_id: 'default', slug: 'fence/page', row_num: -1, claim: 'green tea in the' }]);
-    expect(await engine.listHeldFenceCells([{ sourceId: 'other', slug: 'fence/page', rowNum: 1, claim: claimA, partial: false }])).toEqual([]);
+    expect(partial).toEqual([{ source_id: 'default', slug: 'fence/held-page', row_num: -1, claim: 'green tea in the' }]);
+    expect(await engine.listHeldFenceCells([{ sourceId: 'other', slug: 'fence/held-page', rowNum: 1, claim: claimA, partial: false }])).toEqual([]);
     expect(await engine.listHeldFenceCells([])).toEqual([]);
   });
 });

@@ -454,7 +454,10 @@ describe('purge flags, epochs, tombstone matches and calibration waves', () => {
     expect(await engine.insertTakePurge({ sourceId: 'flags-example', subject: '*', requestId: null, claimHash: await fingerprint(claimed) })).toBe(true);
     expect(await engine.insertTakePurge({ sourceId: 'flags-example', subject: 'people/alice-example', requestId: null, claimHash: await fingerprint(scoped) })).toBe(true);
     expect(await engine.readSourcePurgeFlags('flags-example')).toEqual({ facts: true, takes: true });
-    expect(await engine.readSourcePurgeFlags('default')).toEqual({ facts: true, takes: false }); // the holding page tombstone above, no take tombstone
+    // Another source with only a fact tombstone of its own reads {facts, no takes}; no other test's rows are relied on.
+    await raw("INSERT INTO sources (id, name) VALUES ('flags-facts-only', 'flags-facts-only') ON CONFLICT DO NOTHING");
+    expect(await engine.insertFactPurge({ sourceId: 'flags-facts-only', visibility: 'world', subject: '*', factHash: await fingerprint('Facts-only claim'), requestId: null, actor: 'owner', reason: null })).toBe(true);
+    expect(await engine.readSourcePurgeFlags('flags-facts-only')).toEqual({ facts: true, takes: false });
     expect(await engine.readSourcePurgeFlags('no-such-source')).toEqual({ facts: false, takes: false });
 
     const takes = [

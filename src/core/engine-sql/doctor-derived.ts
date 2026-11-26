@@ -658,6 +658,7 @@ export interface ExtractRollupRow {
   expected_limit_count: number; rollup_write_failures: number; last_updated_at: Date | string | null; last_halt_age_days: number | string | null;
 }
 
+// Days count on the UTC calendar, as the doctor's rollup query does (commands/doctor/checks/extraction-sync.ts, #10356).
 const EXTRACT_ROLLUP_SQL = `SELECT
          kind,
          SUM(cost_usd) AS cost_7d_usd,
@@ -668,9 +669,9 @@ const EXTRACT_ROLLUP_SQL = `SELECT
          SUM(expected_limit_count) AS expected_limit_count,
          SUM(rollup_write_failures) AS rollup_write_failures,
          MAX(updated_at) AS last_updated_at,
-         CURRENT_DATE - MAX(day) FILTER (WHERE halt_count > 0) AS last_halt_age_days
+         (now() AT TIME ZONE 'UTC')::date - MAX(day) FILTER (WHERE halt_count > 0) AS last_halt_age_days
        FROM extract_rollup_7d
-       WHERE day >= CURRENT_DATE - 7
+       WHERE day >= (now() AT TIME ZONE 'UTC')::date - 7
        GROUP BY kind
        ORDER BY kind COLLATE "C"`;
 const EXTRACT_ROLLUP_NO_EXPECTED_SQL = `SELECT
@@ -683,9 +684,9 @@ const EXTRACT_ROLLUP_NO_EXPECTED_SQL = `SELECT
          0 AS expected_limit_count,
          SUM(rollup_write_failures) AS rollup_write_failures,
          MAX(updated_at) AS last_updated_at,
-         CURRENT_DATE - MAX(day) FILTER (WHERE halt_count > 0) AS last_halt_age_days
+         (now() AT TIME ZONE 'UTC')::date - MAX(day) FILTER (WHERE halt_count > 0) AS last_halt_age_days
        FROM extract_rollup_7d
-       WHERE day >= CURRENT_DATE - 7
+       WHERE day >= (now() AT TIME ZONE 'UTC')::date - 7
        GROUP BY kind
        ORDER BY kind COLLATE "C"`;
 
