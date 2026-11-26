@@ -670,6 +670,8 @@ const INTERFACE_METHODS: readonly string[] = [
   'readBeliefStateRows', 'readBeliefFactsById',
   // The belief side of a purge (engine-sql/belief-purge.ts)
   'bumpSourcePurgeEpoch', 'hasBeliefEvents', 'registerPurgeRedaction', 'releasePurgeRedactionsForField', 'replayPagePurges', 'readPurgeReplaySchema',
+  // The belief-ledger half of a purge (engine-sql/belief-purge-ledger.ts)
+  'listDerivedStreamSlugs', 'listMissingPreimages', 'redactPurgedBeliefKeys', 'listBeliefCarrierEvents', 'readBeliefEventValue', 'rewriteBeliefEventFields', 'rechainBeliefPriorHash', 'listBeliefQuotingRows', 'listPageBeliefLifetimes', 'listPagePurgeLiveClaims', 'listPageVersionFenceBodies', 'listLifetimeClaimEvents', 'listPurgeCarrierVersions', 'listKnownBeliefSubjectKeys',
   // Trust: the fact withdrawal ledger (engine-sql/trust-withdrawals.ts)
   'hasCoveringFactWithdrawal', 'insertFactWithdrawal', 'isFactWithdrawn', 'isFactPurged', 'listFactWithdrawalDates', 'moveFactWithdrawalSubject',
   'hasFactWithdrawalForSubject', 'listFactWithdrawalKeys', 'readFactCacheWatermark', 'readTrustGeneration', 'readSourcePurgeFlags', 'listPurgedTakeRows',

@@ -312,6 +312,9 @@ async function ledgerReports(engine: BrainEngine, sourceId: string, claims: read
   return reports;
 }
 
+/** Test hook: the receipt's belief_events and fact_context reports alone (the engine-parity case runs them on every arm). */
+export const __ledgerReportsForTests = ledgerReports;
+
 /** The generic adapter for a `probed_reported` inventory entry. */
 async function probeInventoryStore(engine: BrainEngine, entry: InventoryEntry, sourceId: string, needles: readonly string[], deadline: number): Promise<StoreReport> {
   if (namedRowProbes && Object.hasOwn(NAMED_ROW_PROBES, entry.table)) return probeNamedRows(engine, entry, sourceId, needles, deadline);
