@@ -111,8 +111,9 @@ export function stampPageTrustMarker(row: Pick<WriteRequest, 'operation' | 'inte
  * tier and marker, but a page it creates has neither, so it starts with the writer's marker, as a content write stamps
  * it; without one doctor `provenance_stamp_drift` counts the page `marker_missing`.
  */
-export function newHoldingPageFrontmatter(row: Pick<WriteRequest, 'id' | 'operation' | 'authority' | 'intent'>): Record<string, unknown> {
-  const tier = pageWriteTrust(row, {})?.tier;
+export function newHoldingPageFrontmatter(row: Pick<WriteRequest, 'id' | 'operation' | 'authority' | 'intent'>, cap?: TrustTier): Record<string, unknown> {
+  const page = pageWriteTrust(row, {})?.tier;
+  const tier = page && cap ? minTrust(page, cap) : page ?? cap;
   return tier ? stampTrustMarker({}, tier) : {};
 }
 

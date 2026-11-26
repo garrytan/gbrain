@@ -187,7 +187,9 @@ export async function prepareManagedFactsMutation(engine: BrainEngine, row: Writ
   }
   // Wave B: a segmented entity page within 24 MiB is read back whole and its fence written as a normal put; a larger one refuses.
   const snapshot = await wholeBodySnapshot(engine, stored, 'facts fence write');
-  const page0 = snapshot?.page ?? (holding ? { slug: row.slug, source_id: row.source_id, type: 'note', title: 'Unattributed memory', compiled_truth: '', timeline: '', frontmatter: newHoldingPageFrontmatter(row) } as unknown as NonNullable<typeof snapshot>['page'] : null);
+  // #5575 B3: the extraction's declared tier, never above its origin page's; a new holding page's marker carries it too.
+  const taint = await managedFactsTrust(engine, p);
+  const page0 = snapshot?.page ?? (holding ? { slug: row.slug, source_id: row.source_id, type: 'note', title: 'Unattributed memory', compiled_truth: '', timeline: '', frontmatter: newHoldingPageFrontmatter(row, taint?.trust.tier) } as unknown as NonNullable<typeof snapshot>['page'] : null);
   // #6188 (D20): the entity's stored fence is normalized in this same write; a residual refuses typed `target_fence_malformed`.
   const target = snapshot ? await normalizeTargetFences(engine, { sourceId: row.source_id, slug: row.slug, kind: 'facts', page: snapshot.page }) : null;
   // #6686: the fence is edited in the section it lives in (a lone timeline fence stays below the sentinel); the other section is kept byte for byte.
@@ -201,7 +203,6 @@ export async function prepareManagedFactsMutation(engine: BrainEngine, row: Writ
   const seen = new Map<string, number[]>();
   // #5575 B3: a new row passes the write gate at the extraction's declared tier (ENG-18) before it reaches the fence;
   // held rows are recorded at publication, rejected rows are counted and skipped.
-  const taint = await managedFactsTrust(engine, p);
   const gateCfg = taint ? await derivedGateConfig(engine) : null;
   const blocked: GatedRowDecision[] = [];
   // #6506: automatic extraction skips a claim forgotten at any visibility and keeps the rest of the group; a purge

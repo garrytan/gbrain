@@ -461,6 +461,7 @@ test/managed-atom-release-resume-9079-9275.test.ts
 test/managed-cycle-pull-upstream.test.ts
 test/managed-facts-withdrawal-recovery-6506.test.ts
 test/managed-facts-withdrawn-skip-6506.test.ts
+test/managed-holding-trust-marker-10286.test.ts
 test/managed-lint.test.ts
 test/managed-maintenance-links.test.ts
 test/managed-root-aliases-7203.test.ts
