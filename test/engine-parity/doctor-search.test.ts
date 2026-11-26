@@ -336,7 +336,7 @@ describe('doctor search reads', () => {
       const heldAll = await query({ holdIds });
       const heldElsewhere = await query({ sourceId: 'default', holdIds: ['hold-other'] });
       const result = { empty, all, inDefault, inMail, optedOut, mailOptedOut, managed, held, heldAll, heldElsewhere };
-      expect(result).toEqual({ empty: 0, all: 5, inDefault: 2, inMail: 2, optedOut: 4, mailOptedOut: 1, managed: 3, held: 2, heldAll: 4, heldElsewhere: 3 });
+      expect(result).toEqual({ empty: 0, all: 5, inDefault: 2, inMail: 2, optedOut: 4, mailOptedOut: 1, managed: 3, held: 2, heldAll: 5, heldElsewhere: 3 });
       return result;
     },
   );

@@ -168,10 +168,14 @@ describe('engine parity: raw_sql (Postgres read routes)', () => {
     const ROUTE_HELPERS = new Set<string>([...READ_ROUTES, 'decideRead', 'engineRead', 'timelineBoundedRead', 'writeMiscRead', 'jitOffRead', 'configRead']);
     const writes = [...members].filter(name => !ROUTE_HELPERS.has(name) && isWrite(name)).sort();
     expect(writes.length).toBeGreaterThan(100);
+    // Write members whose first step is a typed READ on this trunk (master reads the same values through raw SQL, which this probe
+    // does not record): the embedding column's config rows, and the soft-deleted pages a restore would revive. Each read runs
+    // on the read route and returns before the write, which runs in its own transaction (or the caller's) and never on a read route.
+    const READS_FIRST = new Set(['invalidateContentDriftEmbeddings', 'invalidateStaleSignatureEmbeddings', 'restorePage']);
     const onReadRoute: string[] = [];
     for (const name of writes) {
       const route = await enteredBy(name);
-      if (route && !route.endsWith('(unbounded)')) onReadRoute.push(`${name} -> ${route}`);
+      if (route && !route.endsWith('(unbounded)') && !(READS_FIRST.has(name) && route === 'preparationRead')) onReadRoute.push(`${name} -> ${route}`);
     }
     // The recorder sees a read member enter its route (the scan is not blind).
     expect(await enteredBy('getSource')).toBe('preparationRead');
