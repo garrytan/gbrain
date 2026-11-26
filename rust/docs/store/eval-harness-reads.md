@@ -9,13 +9,13 @@ see every source, private rows included, and no operation reaches them.
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
-| `brain.getFactsByIds({ ids })` | `[{ id, source_id, fact, entity_slug, expired_at, superseded_by }]` of each stored fact in `ids`, in any source, by id. A repeated id answers once; a missing or negative id answers nothing | `getFactsByIds` |
+| `brain.getFactsByIds({ ids })` | `[{ id, source_id, fact, entity_slug, expired_at, superseded_by }]` of each stored fact in `ids`, in any source, by id. A repeated id answers once; a missing or negative id answers nothing. The Rust member refuses an id that is not a safe integer | `getFactsByIds` |
 | `brain.findLiveFactsByText({ sourceId, texts })` | `[{ id, fact }]` of the source's facts with no `expired_at` whose text equals one of `texts` byte for byte, by id | `findLiveFactsByText` |
 | `brain.listPageIdSlugs()` | `[{ id, slug, source_id, deleted_at }]` of every page of every source, a soft-deleted page included, by id | `listPageIdSlugs` |
 | `brain.hasTable({ table })` | whether `table` is one of the SQL tables whose records the store keeps (below) | `hasTable` |
 | `brain.hasColumn({ table, column })` | whether that mapped table has the column: the record's fields, with a timestamp's `_us` suffix dropped, plus `trust_tier` and `write_origin` of `takes` and `timeline_entries` (kept in their nested `trust` record) | `hasColumn` |
-| `brain.listTextBearingColumns()` | `[{ table, column, data_type, udt_name }]` for each text field the stored records carry (`text` for a string, `jsonb` for an object or array), by table then column | `listTextBearingColumns` |
-| `brain.scanTextColumns({ pattern, tables?, activeOnly, limit? })` | `[{ table, column, slug, page_id, entity_slug, value }]` for each stored text value that contains `pattern`, case-insensitive, by table, column and value in UTF-8 byte order, at most `limit` (a negative limit is refused) | `scanTextColumns` |
+| `brain.listTextBearingColumns()` | `[{ table, column, data_type, udt_name }]` for each text field the stored records carry (`text` for a string, `jsonb` for an object or array), by table then column (the SQL engines list a table's columns by position) | `listTextBearingColumns` |
+| `brain.scanTextColumns({ pattern, tables?, activeOnly, limit? })` | `[{ table, column, slug, page_id, entity_slug, value }]` for each stored text value that contains `pattern`, case-insensitive, by table, column and value in UTF-8 byte order, at most `limit`. An empty `pattern`, or a `limit` that is not a whole number of zero or more, is refused | `scanTextColumns` |
 | `brain.pauseManagedPersistence()` | the prior `{ enabled, mode_epoch, topology_changes }` (the epoch and the count of stored topology changes as text), after one write turns the brain mode's `enabled` off with no epoch bump | `pauseManagedPersistence` |
 | `brain.restoreManagedPersistence({ enabled, mode_epoch, topology_changes })` | `true` after it puts `enabled` back, which it does only while the brain mode is still paused at `mode_epoch` and the store holds `topology_changes` topology changes (compare-and-set); `false` with nothing written otherwise | `restoreManagedPersistence` |
 
