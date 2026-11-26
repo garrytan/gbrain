@@ -455,7 +455,11 @@ export async function checkEnforcedWrite(engine: BrainEngine, command: string, o
   const ea = await enforcedAccess(engine, command);
   const source = typeof params.source_id === 'string' && params.source_id ? params.source_id : sourceId ?? 'default';
   if (ea.hiddenSources.has(source)) return refuseEnforced(command, 'target_not_readable', { engine });
-  if (opName === 'remember') return checkEnforcedRemember(engine, command, ea, source, params);
+  if (opName === 'remember') {
+    await checkEnforcedRemember(engine, command, ea, source, params);
+    await hiddenSlugsNamed(engine, command, []); // as for every write below: a refusal of the output guard's read comes before the fact is saved
+    return;
+  }
   if (opName === 'get_write_request') {
     if (!await ownEnforcedReceipt(params.request_id)) params.request_id = (await import('node:crypto')).randomUUID();
     return;
