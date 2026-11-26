@@ -74,8 +74,9 @@ export async function runRules(engine: BrainEngine, args: string[]): Promise<voi
     }
     if (sub === 'check') {
       const r = await runRulesCheck(engine, { sourceId, ...(words[0] ? { id: words[0] } : {}) });
-      print(r, r.checked ? [`Checked ${r.checked}, failed ${r.failed}.`, ...r.results.filter(x => !x.pass).map(x => `  ${x.rule_id}: ${x.problems.join('; ')}`)].join('\n') : 'No confirmed active rules to check.');
-      if (r.failed) setCliExitVerdict(1);
+      print(r, r.not_checked ? `Not checked: ${r.not_checked.rule_id}: ${r.not_checked.why}.`
+        : r.checked ? [`Checked ${r.checked}, failed ${r.failed}.`, ...r.results.filter(x => !x.pass).map(x => `  ${x.rule_id}: ${x.problems.join('; ')}`)].join('\n') : 'No confirmed active rules to check.');
+      if (r.failed || r.not_checked) setCliExitVerdict(1);
       return;
     }
     throw usageError(`Unknown rules subcommand: ${sub}.`, 'Use one of: gbrain rules list, show, approve, retire or check.', { code: 'unknown_command' });
