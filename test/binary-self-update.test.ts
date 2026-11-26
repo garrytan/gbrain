@@ -469,7 +469,27 @@ describe('defaultFetchAttestation: GitHub token and failure detail', () => {
     }
     const both = await fetchWith({ GH_TOKEN: TOKEN }, [new Response('refused', { status: 403 }), new Response('API rate limit exceeded', { status: 403, headers: { 'x-ratelimit-remaining': '0' } })]);
     expect(both.parsed).toBeNull();
-    expect(both.details).toEqual(['HTTP 403 from the GitHub attestation API (no GitHub token), x-ratelimit-remaining 0']);
+    expect(both.details).toEqual(['HTTP 403 from the GitHub attestation API (with a GitHub token); HTTP 403 from the GitHub attestation API (no GitHub token), x-ratelimit-remaining 0']);
+  });
+
+  test('an exhausted token bucket (429) or a token that is not a valid header value still reads the keyless attestation', async () => {
+    const limited = await fetchWith({ GH_TOKEN: TOKEN }, [new Response('slow down', { status: 429, headers: { 'x-ratelimit-remaining': '0' } }), Response.json(VALID)]);
+    expect(limited.auth).toEqual([`Bearer ${TOKEN}`, null]);
+    expect(limited.parsed?.[0]?.builderId).toBe(VALID_BUILDER);
+    const REAL = globalThis.fetch;
+    let keyless = 0;
+    (globalThis as any).fetch = (input: any, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      keyless += headers.has('authorization') ? 0 : 1;
+      return Promise.resolve(Response.json(VALID));
+    };
+    try {
+      const parsed = await withEnv({ GH_TOKEN: 'two\nlines', GITHUB_TOKEN: undefined }, () => defaultFetchAttestation(FAKE_DIGEST));
+      expect(parsed?.[0]?.builderId).toBe(VALID_BUILDER);
+      expect(keyless).toBe(1);
+    } finally {
+      (globalThis as any).fetch = REAL;
+    }
   });
 
   test('a rate-limited response is null, with the status and rate-limit headers in the detail and never the token', async () => {
@@ -482,9 +502,9 @@ describe('defaultFetchAttestation: GitHub token and failure detail', () => {
     expect(r.details).toEqual([
       'HTTP 403 from the GitHub attestation API (no GitHub token), x-ratelimit-remaining 0, x-ratelimit-reset 2026-11-18T11:06:40.000Z',
     ]);
-    const authed = await fetchWith({ GH_TOKEN: TOKEN }, [new Response('slow down', { status: 429 })]);
+    const authed = await fetchWith({ GH_TOKEN: TOKEN }, [new Response('slow down', { status: 429 }), new Response('slow down', { status: 429 })]);
     expect(authed.parsed).toBeNull();
-    expect(authed.details).toEqual(['HTTP 429 from the GitHub attestation API (with a GitHub token)']);
+    expect(authed.details).toEqual(['HTTP 429 from the GitHub attestation API (with a GitHub token); HTTP 429 from the GitHub attestation API (no GitHub token)']);
     expect(authed.details.join('')).not.toContain(TOKEN);
   });
 
@@ -496,10 +516,10 @@ describe('defaultFetchAttestation: GitHub token and failure detail', () => {
     } finally {
       (globalThis as any).fetch = REAL_FETCH;
     }
-    expect(details).toEqual(['the GitHub attestation API could not be reached: ENETDOWN']);
+    expect(details).toEqual(['the GitHub attestation API could not be read (no GitHub token): ENETDOWN']);
     const empty = await fetchWith({ GH_TOKEN: undefined, GITHUB_TOKEN: undefined }, [Response.json({ attestations: [] })]);
     expect(empty.parsed).toBeNull();
-    expect(empty.details).toEqual(['the GitHub attestation API returned no usable build attestation']);
+    expect(empty.details).toEqual(['the GitHub attestation API returned no usable build attestation (no GitHub token)']);
   });
 });
 

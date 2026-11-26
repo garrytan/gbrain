@@ -278,61 +278,59 @@ export function parseAttestationBundle(bundle: any): ParsedAttestation | null {
 
 /**
  * Reads the build-provenance attestations GitHub holds for a SHA-256. When GH_TOKEN or GITHUB_TOKEN is set it is sent
- * as a bearer token, because unauthenticated calls share GitHub's 60-an-hour limit per IP address, which CI runners
- * exhaust; with neither set the call stays keyless. A token GitHub refuses for this repository (401, 403, or a 404 that
- * hides a repository the token cannot see) is retried once without it, so a token scoped elsewhere never blocks a read
- * the keyless call can make.
- * Returns null when no usable attestation can be read, after telling `onUnavailable` why: the HTTP status with the
- * rate-limit headers, or the network error. The token itself is never part of that detail.
+ * as a bearer token first, because unauthenticated calls share GitHub's 60-an-hour limit per IP address, which CI
+ * runners exhaust; with neither set the call stays keyless. Any authenticated attempt that yields no usable attestation
+ * (a refused or rate-limited token, a token that is not a valid header value, a network error) is followed by one
+ * keyless attempt, so an ambient token never blocks a read the keyless call can make.
+ * Returns null when no attempt yields a usable attestation, after telling `onUnavailable` why each attempt failed: the
+ * HTTP status with the rate-limit headers, or the error. The token itself is never part of that detail.
  */
 export async function defaultFetchAttestation(
   digest: string,
   onUnavailable?: (detail: string) => void,
 ): Promise<ParsedAttestation[] | null> {
   const token = (process.env.GH_TOKEN || process.env.GITHUB_TOKEN || '').trim();
-  const request = (auth: boolean) =>
-    fetch(`${ATTESTATION_API_BASE}${digest}`, {
-      headers: {
-        'User-Agent': 'gbrain-self-upgrade',
-        Accept: 'application/vnd.github+json',
-        ...(auth ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      signal: AbortSignal.timeout(10_000),
-    });
-  try {
-    let authenticated = token.length > 0;
-    let res = await request(authenticated);
-    if (authenticated && [401, 403, 404].includes(res.status)) {
-      authenticated = false;
-      res = await request(false);
+  const failures: string[] = [];
+  for (const auth of token ? [true, false] : [false]) {
+    const label = auth ? 'with a GitHub token' : 'no GitHub token';
+    try {
+      const res = await fetch(`${ATTESTATION_API_BASE}${digest}`, {
+        headers: {
+          'User-Agent': 'gbrain-self-upgrade',
+          Accept: 'application/vnd.github+json',
+          ...(auth ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        signal: AbortSignal.timeout(10_000),
+      });
+      // 404 (no attestation), 403/429 (rate limit), any non-2xx → "unavailable"
+      // (caller fails closed), never "verified".
+      if (!res.ok) {
+        const remaining = res.headers.get('x-ratelimit-remaining');
+        const reset = Number(res.headers.get('x-ratelimit-reset'));
+        failures.push(
+          [
+            `HTTP ${res.status} from the GitHub attestation API (${label})`,
+            remaining === null ? null : `x-ratelimit-remaining ${remaining}`,
+            Number.isFinite(reset) && reset > 0 ? `x-ratelimit-reset ${new Date(reset * 1000).toISOString()}` : null,
+          ].filter(Boolean).join(', '),
+        );
+        continue;
+      }
+      const data = (await res.json()) as any;
+      const raw = Array.isArray(data?.attestations) ? data.attestations : [];
+      const parsed = raw
+        .map((a: any) => parseAttestationBundle(a?.bundle))
+        .filter((p: ParsedAttestation | null): p is ParsedAttestation => p !== null);
+      if (parsed.length > 0) return parsed;
+      // Reachable but no usable attestation (none, or only malformed bundles) is
+      // also unavailable.
+      failures.push(`the GitHub attestation API returned no usable build attestation (${label})`);
+    } catch (err) {
+      failures.push(`the GitHub attestation API could not be read (${label}): ${err instanceof Error ? err.message : String(err)}`);
     }
-    // 404 (no attestation), 403/429 (rate limit), any non-2xx → "unavailable"
-    // (caller fails closed), never "verified".
-    if (!res.ok) {
-      const remaining = res.headers.get('x-ratelimit-remaining');
-      const reset = Number(res.headers.get('x-ratelimit-reset'));
-      onUnavailable?.(
-        [
-          `HTTP ${res.status} from the GitHub attestation API (${authenticated ? 'with a GitHub token' : 'no GitHub token'})`,
-          remaining === null ? null : `x-ratelimit-remaining ${remaining}`,
-          Number.isFinite(reset) && reset > 0 ? `x-ratelimit-reset ${new Date(reset * 1000).toISOString()}` : null,
-        ].filter(Boolean).join(', '),
-      );
-      return null;
-    }
-    const data = (await res.json()) as any;
-    const raw = Array.isArray(data?.attestations) ? data.attestations : [];
-    const parsed = raw
-      .map((a: any) => parseAttestationBundle(a?.bundle))
-      .filter((p: ParsedAttestation | null): p is ParsedAttestation => p !== null);
-    // Reachable but no usable attestation (none, or only malformed bundles) is
-    // also unavailable.
-    if (parsed.length === 0) onUnavailable?.('the GitHub attestation API returned no usable build attestation');
-    return parsed.length > 0 ? parsed : null;
-  } catch (err) {
-    onUnavailable?.(`the GitHub attestation API could not be reached: ${err instanceof Error ? err.message : String(err)}`);
-    return null;
   }
+  onUnavailable?.(failures.join('; '));
+  return null;
 }
 
 /**
