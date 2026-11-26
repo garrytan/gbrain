@@ -40,7 +40,7 @@ export interface WriteComparerDeps {
 export const scratchRootDefault = (): string => join(configDir(), 'scratch');
 type Verdict = [WriteOutcome, string?];
 
-export function createWriteComparer(d: WriteComparerDeps): { handle(event: WriteEvent): void; idle(): Promise<void> } {
+export function createWriteComparer(d: WriteComparerDeps): { handle(event: WriteEvent): void; idle(): Promise<void>; abandon(): void } {
   // Each replay gets a private (0700) directory named for this process, removed when the replay ends, whatever its outcome. Directories of processes
   // that no longer exist (a killed child) are swept here, at shadow start; another child never deletes a live one.
   const scratchRoot = d.scratchRoot ?? scratchRootDefault();
@@ -59,6 +59,7 @@ export function createWriteComparer(d: WriteComparerDeps): { handle(event: Write
   let queued = 0;
   let runs = 0;
   let wedged = false;
+  const waiting = new Set<WriteEvent>(); // queued replays that have not started
 
   async function replay(event: WriteEvent): Promise<Verdict> {
     if (!d.load.ok) return ['uncomparable', 'addon_unavailable'];
@@ -95,6 +96,7 @@ export function createWriteComparer(d: WriteComparerDeps): { handle(event: Write
   }
 
   async function run(event: WriteEvent): Promise<void> {
+    if (!waiting.delete(event)) return; // counted by abandon() at the exit deadline
     let verdict: Verdict;
     try {
       if (wedged) verdict = ['uncomparable', 'scratch_wedged'];
@@ -120,9 +122,15 @@ export function createWriteComparer(d: WriteComparerDeps): { handle(event: Write
       if (event.outcome === 'capability_missing' || event.outcome === 'uncomparable') { d.tally.note(event.outcome, event.family ?? event.reason); return; }
       if (!event.pre || !event.args) { d.tally.note('uncomparable', 'no_sample'); return; }
       if (queued >= WRITE_QUEUE_BOUND) { d.tally.note('uncomparable', 'queue_full'); return; }
-      queued++;
+      queued++; waiting.add(event);
       chain = chain.then(() => run(event)).finally(() => { queued--; });
     },
-    idle: () => chain,
+    idle: () => chain.then(() => { d.tally.save(); }), // the last save also folds the lost samples the serving process recorded
+    /** At the child's exit deadline: replays still queued will never run, so each is counted `uncomparable`, then one last save. The running replay keeps its in-flight mark. */
+    abandon() {
+      if (waiting.size) d.tally.note('uncomparable', 'child_exit_deadline', waiting.size);
+      waiting.clear();
+      d.tally.save();
+    },
   };
 }
