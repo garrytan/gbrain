@@ -947,6 +947,11 @@ page below the owner tiers whose file carries no marker, or a higher one, would
 re-read above its stored tier. Doctor `provenance_stamp_drift` counts both per
 source from page history and write receipts, split by who made the write
 (remote, local, unattributed), and names the first pages. It writes nothing.
+A page a later local edit also changed (`needs_review`) is named in an ok
+message and never offered the repair, since no automatic repair applies; the
+check stays at warn only while such a page has lost a lowering trust marker to
+a remote write, because it then still reads as more trusted than it should
+(#10190).
 
 Preview, show the user the list, then apply after they agree:
 

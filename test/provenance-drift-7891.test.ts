@@ -139,6 +139,42 @@ for (const kind of testBackends()) {
         expect(await proposals(slug)).toEqual([]);
       }, 120_000);
 
+      // Value: protects=#10190 a needs_review page (a later local edit changed the stamp again, no repair target) is named and never offered the repair that reports affected 0; it holds the check at warn only while a remote write's loss of its lowering marker stands; fails_when=a stamps-only needs_review page warns, a needs_review page is offered repair provenance or counted as repairable, or a marker-lost one reads ok; why_new=no row covered needs_review in doctor; seam=none; no_claim=how to decide those pages (manual)
+      test('needs_review pages are named, never offered the repair, and warn only while a lost marker stands (#10190)', async () => {
+        const stamps = 'inbox/later-local-stamp';
+        await seed(stamps, STORED);
+        await rewrite(stamps, { ...STORED, ingested_at: '2026-03-01T00:00:00.000Z' }, 'oauth_client');
+        await rewrite(stamps, { ...STORED, ingested_at: '2026-04-01T00:00:00.000Z' }, 'local_cli');
+        const named = await doctor();
+        expect(named.details.sources[0]).toMatchObject({ needs_review: 1 });
+        expect((await run(false)).affected).toBe(0);
+        expect(named.status).toBe('ok');
+        expect(named.fix).toBeUndefined();
+        expect(named.message).toContain(`1 page(s) need manual review`);
+        expect(named.message).toContain(`default:${stamps}`);
+
+        const marker = 'inbox/later-local-marker';
+        await seed(marker, STORED);
+        await rewrite(marker, {}, 'oauth_client');
+        await rewrite(marker, { ingested_via: 'manual' }, 'local_cli');
+        const exposed = await doctor();
+        expect(exposed.details.sources[0]).toMatchObject({ needs_review: 2 });
+        expect((await run(false)).affected).toBe(0);
+        expect(exposed.status).toBe('warn');
+        expect(exposed.fix).toBeUndefined();
+        expect(exposed.message).toContain('2 page(s) need manual review');
+        expect(exposed.message).toContain('1 of them lost a lowering trust marker');
+
+        const remote = 'inbox/remote-drop-beside';
+        await seed(remote, STORED);
+        await rewrite(remote, {}, 'oauth_client');
+        const mixed = await doctor();
+        expect(mixed.status).toBe('warn');
+        expect(mixed.message).toMatch(/^1 page\(s\)/);
+        expect(mixed.fix.argv).toEqual(['gbrain', 'repair', 'provenance', '--source', 'default', '--json']);
+        expect(mixed.fix.user_message).toContain(`1 page(s) (for example ${remote})`);
+      }, 120_000);
+
       test('apply restores the stamps and the marker, lowers the page, files a lower_page proposal; a rerun previews nothing', async () => {
         const slug = 'inbox/remote-restore';
         await seed(slug, STORED);
