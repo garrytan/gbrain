@@ -152,20 +152,7 @@ impl<'a> Row<'a> {
 
     /// A one-dimensional `text[]`: `{a,"b c"}`.
     pub fn text_array(&self, col: &str) -> Result<Option<Vec<String>>> {
-        self.parse(col, |t| {
-            text_array(t).and_then(|items| items.into_iter().collect())
-        })
-    }
-
-    /// A `text[]` that may hold NULL elements (`{read,NULL}`): the elements that are text, and how many NULL elements the
-    /// array held. The caller names the dropped elements as a loss. A SQL NULL column stays `None`, an empty array stays
-    /// empty.
-    pub fn text_array_without_nulls(&self, col: &str) -> Result<Option<(Vec<String>, u64)>> {
-        self.parse(col, |t| {
-            let items = text_array(t)?;
-            let nulls = items.iter().filter(|i| i.is_none()).count() as u64;
-            Some((items.into_iter().flatten().collect(), nulls))
-        })
+        self.parse(col, text_array)
     }
 }
 
@@ -200,8 +187,7 @@ fn vector(text: &str) -> Option<Vec<f32>> {
     inner.split(',').map(|v| v.trim().parse().ok()).collect()
 }
 
-/// The elements of a one-dimensional `text[]`; a NULL element is `None` (Postgres prints it as an unquoted `NULL`).
-fn text_array(text: &str) -> Option<Vec<Option<String>>> {
+fn text_array(text: &str) -> Option<Vec<String>> {
     let inner = text.strip_prefix('{')?.strip_suffix('}')?;
     let mut out = Vec::new();
     if inner.is_empty() {
@@ -210,8 +196,7 @@ fn text_array(text: &str) -> Option<Vec<Option<String>>> {
     let mut chars = inner.chars().peekable();
     loop {
         let mut item = String::new();
-        let quoted = chars.peek() == Some(&'"');
-        if quoted {
+        if chars.peek() == Some(&'"') {
             chars.next();
             loop {
                 match chars.next()? {
@@ -231,15 +216,11 @@ fn text_array(text: &str) -> Option<Vec<Option<String>>> {
                 item.push(c);
                 chars.next();
             }
-            if item.is_empty() {
+            if item == "NULL" || item.is_empty() {
                 return None;
             }
         }
-        out.push(if !quoted && item.eq_ignore_ascii_case("NULL") {
-            None
-        } else {
-            Some(item)
-        });
+        out.push(item);
         match chars.next() {
             None => return Some(out),
             Some(',') => {}

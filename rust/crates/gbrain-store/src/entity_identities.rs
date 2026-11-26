@@ -218,7 +218,7 @@ pub(crate) enum SeedIdentity {
     /// The page holds this membership already (a retried batch).
     Held,
     /// The page holds a membership of another source. The table keeps one per `(source_id, page_id)`; the store keeps one
-    /// per page, so the row cannot be stored without losing one of the two.
+    /// per page, so the row cannot be stored without losing one of the two. The seed refuses it.
     OtherSource,
 }
 

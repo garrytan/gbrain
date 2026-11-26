@@ -143,6 +143,11 @@ export class Reconciler {
           if (typeof row?.m === 'string' && /^\d+$/.test(row.m)) maxima[rp.relation] = row.m;
         }
       }
+      // The probe's answer depends on the stored facts and purge tombstones: a dirty pass for either runs it again, so a tombstone
+      // added after a passing probe cannot be covered by a cached pass.
+      if (kind === 'dirty' && only?.some((relation) => relation === 'facts' || relation === 'fact_purges')) {
+        try { await this.probe(); } catch (error) { rec.error ??= `probe:${(error as { code?: string }).code ?? 'failed'}`; }
+      }
       if (kind === 'full') {
         try { await this.o.rpc('allocatorCheck', { primaryMax: maxima }, 60_000); } catch (error) { rec.error = `allocator_check:${(error as { code?: string }).code ?? 'failed'}`; }
         try { await this.probe(); } catch (error) { rec.error ??= `probe:${(error as { code?: string }).code ?? 'failed'}`; }

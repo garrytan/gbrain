@@ -650,7 +650,7 @@ fn a_token_with_no_created_at_is_stored_at_time_zero_and_counted() {
 // ---- the cases a row can hold that the family keys differently ------------------------------
 
 #[test]
-fn a_membership_of_another_source_for_a_held_page_is_counted_and_the_held_one_stays() {
+fn a_membership_of_another_source_for_a_held_page_stops_the_seed_and_the_held_one_stays() {
     let s = seeded_pages();
     import(
         &s,
@@ -658,12 +658,14 @@ fn a_membership_of_another_source_for_a_held_page_is_counted_and_the_held_one_st
         vec![identity_row("4", "person/alice", "7", "t")],
     );
     // The table keeps one membership per (source, page); the store keeps one per page. The second source's row cannot be
-    // stored beside the first, so it is counted (a swap is refused while one exists), never taken for a retried batch.
+    // stored beside the first. A loss would not stop a swap, so the import is refused, never taken for a retried batch.
     let mut other = identity_row("5", "person/alice-2", "7", "f");
     other.insert("source_id".into(), Some("wiki".into()));
-    let r = import(&s, "entity_identities", vec![other]);
-    assert_eq!((r.imported, r.skipped, r.dropped), (0, 0, 1));
-    assert_eq!(r.losses.get("entity_identity_other_source"), Some(&1));
+    let e = s
+        .import_relation(SEED, "entity_identities", vec![other])
+        .unwrap_err();
+    assert_eq!(e.code, INVALID_ARGUMENT);
+    assert!(e.message.contains("another source"), "{e:?}");
     let listed = s
         .list_entity_identities(&IdentityFilter::default())
         .unwrap();
@@ -716,32 +718,38 @@ fn a_transition_of_another_source_than_its_from_page_is_read_and_removed_under_t
 }
 
 #[test]
-fn a_token_array_with_a_null_element_keeps_the_text_elements_and_counts_the_nulls() {
+fn a_token_array_with_a_null_element_is_refused_never_narrowed() {
+    // The primary reads some grant arrays as a whole (an array with a NULL element grants nothing there). Dropping the NULL
+    // element would turn that into a grant of the other elements, so the import is refused.
     let s = store();
-    let mut with_null = token_row(TOKEN_A, "agent-key", HASH);
-    with_null.insert("scopes".into(), Some("{read,NULL}".into()));
-    with_null.insert("attest_ops".into(), Some("{NULL,\"NULL\",put_page}".into()));
-    let r = import(&s, "access_tokens", vec![with_null]);
-    assert_eq!((r.imported, r.dropped), (1, 0));
-    assert_eq!(r.losses.get("token_array_null_element"), Some(&2));
-    let stored = s.read_active_access_token_by_hash(HASH).unwrap().unwrap();
-    assert_eq!(stored["scopes"], json!(["read"]));
-    // A quoted "NULL" is the text, not a NULL element.
-    assert_eq!(stored["attest_ops"], json!(["NULL", "put_page"]));
-    // A NULL column stays NULL and an empty array stays empty: they authorize differently.
-    let mut null_column = token_row(TOKEN_B, "old-key", OTHER_HASH);
-    null_column.insert("scopes".into(), None);
-    null_column.insert("takes_holders".into(), Some("{}".into()));
-    let r = import(&s, "access_tokens", vec![null_column]);
+    for column in ["scopes", "allowed_operations", "attest_ops"] {
+        let mut with_null = token_row(TOKEN_A, "agent-key", HASH);
+        with_null.insert(column.into(), Some("{get_page,NULL}".into()));
+        let e = s
+            .import_relation(SEED, "access_tokens", vec![with_null])
+            .unwrap_err();
+        assert_eq!(e.code, INVALID_ARGUMENT, "{column}");
+        assert!(e.message.contains(column), "{e:?}");
+        assert!(!format!("{e:?}").contains(HASH));
+    }
+    assert!(
+        s.list_access_tokens()
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    // A quoted "NULL" is the text, a NULL column stays NULL and an empty array stays empty: they authorize differently.
+    let mut quoted = token_row(TOKEN_A, "agent-key", HASH);
+    quoted.insert("attest_ops".into(), Some("{\"NULL\",put_page}".into()));
+    quoted.insert("scopes".into(), None);
+    quoted.insert("takes_holders".into(), Some("{}".into()));
+    let r = import(&s, "access_tokens", vec![quoted]);
     assert!(r.losses.is_empty(), "{:?}", r.losses);
-    let stored = s
-        .read_active_access_token_by_hash(OTHER_HASH)
-        .unwrap()
-        .unwrap();
+    let stored = s.read_active_access_token_by_hash(HASH).unwrap().unwrap();
+    assert_eq!(stored["attest_ops"], json!(["NULL", "put_page"]));
     assert_eq!(stored["scopes"], Value::Null);
     assert_eq!(stored["takes_holders"], json!([]));
-    // No loss or error names a value of the row.
-    assert!(!format!("{r:?}").contains(OTHER_HASH));
 }
 
 #[test]

@@ -610,7 +610,10 @@ impl<'a> Apply<'a> {
         let named: BTreeSet<&[u8]> = todo.iter().map(|t| t.sort).collect();
         let mut kept = Vec::new();
         for t in todo {
-            if self.moves_key(&t) && self.blocked(tx, &t, &named).map_err(|e| wrap(t.n, e))? {
+            // A row that takes a hash a stored token holds is checked the same way, whatever its old version held.
+            let takes =
+                self.moves_key(&t) || self.held_by(&*tx, &t).map_err(|e| wrap(t.n, e))?.is_some();
+            if takes && self.blocked(tx, &t, &named).map_err(|e| wrap(t.n, e))? {
                 self.result.skipped_older += 1;
             } else {
                 kept.push(t);

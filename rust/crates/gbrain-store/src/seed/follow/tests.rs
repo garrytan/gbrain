@@ -804,6 +804,42 @@ fn a_token_holder_of_a_later_generation_stays_and_the_row_is_skipped() {
     assert_eq!(token_ids(&s), [OLD_TOKEN]);
 }
 
+#[test]
+fn a_blocked_token_replacement_keeps_the_existing_version_and_its_entry() {
+    // The old version of the token holds hash X; another token of a later generation holds hash Y. A stale call that
+    // gives the first token hash Y is skipped before anything of the token is removed.
+    let s = stateful_pages();
+    for (sort, id, hash, generation) in [
+        (1, NEW_TOKEN, "original-hash", 1),
+        (2, OLD_TOKEN, MOVED_HASH, 5),
+    ] {
+        s.replace_relation_rows(
+            SEED,
+            "access_tokens",
+            generation,
+            &[token_key(sort, id)],
+            &[token_with(id, hash)],
+            &[digv(sort, sort)],
+        )
+        .unwrap();
+    }
+    let before = s.list_access_tokens().unwrap();
+    let digest_before = digest_of(&s, "access_tokens");
+    let r = s
+        .replace_relation_rows(
+            SEED,
+            "access_tokens",
+            2,
+            &[token_key(1, NEW_TOKEN)],
+            &[token_with(NEW_TOKEN, MOVED_HASH)],
+            &[digv(1, 9)],
+        )
+        .unwrap();
+    assert_eq!((r.upserted, r.skipped_older, r.displaced), (0, 1, 0));
+    assert_eq!(s.list_access_tokens().unwrap(), before);
+    assert_eq!(digest_of(&s, "access_tokens"), digest_before);
+}
+
 // ---- replaceInterval -------------------------------------------------------------------------
 
 #[test]

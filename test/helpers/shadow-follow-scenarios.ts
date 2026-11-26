@@ -113,8 +113,11 @@ export function defineFollowScenarios(ctx: FollowScenarioContext): void {
         await r.settle();
         expect(status(r).follower.coverage_watermark).toMatchObject({ valid: false, invalidated_reason: 'relation_dirty' });
         await tick();
+        const probedAt = status(r).fingerprints.probe.checked_at;
         expect((await r.reconciler.run('dirty', ['entity_identities', 'fact_purges', 'access_tokens'])).error).toBeUndefined();
         expect(status(r).follower.coverage_watermark.valid).toBe(true);
+        // A pass for the purge tombstones runs the fingerprint probe again: its answer depends on them.
+        expect(status(r).fingerprints.probe.checked_at).not.toBe(probedAt);
         const pass = await r.reconciler.run('full');
         expect(pass.repaired_rows).toBe(0);
         expect(pass.follower_misses).toBe(0);
