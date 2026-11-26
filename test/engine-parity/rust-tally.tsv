@@ -61,7 +61,7 @@ test/engine-parity/collate-persistence-b.test.ts	14	10
 test/engine-parity/collate-referrer-ties.test.ts	3	0
 test/engine-parity/collate-repair-scans.test.ts	4	0
 test/engine-parity/collate-schema-pack-samples.test.ts	4	0
-test/engine-parity/collate-slug-sources.test.ts	7	1
+test/engine-parity/collate-slug-sources.test.ts	8	0
 test/engine-parity/collate-store-listings.test.ts	21	2
 test/engine-parity/collate-ties.test.ts	2	0
 test/engine-parity/concept-rebuild.test.ts	4	0
