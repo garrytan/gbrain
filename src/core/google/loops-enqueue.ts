@@ -6,7 +6,7 @@
 import type { GmailThreadData } from './types.ts';
 import type { ThreadLoopVerdict } from './loop-detect.ts';
 import { pendingLoopsExtractDepth, type LoopsEnqueueReport } from './loop-catchup.ts';
-import { myAddressSet, type GoogleSyncDeps } from './sweep-shared.ts';
+import type { GoogleSyncDeps } from './sweep-shared.ts';
 import type { GmailClient } from './google-clients.ts';
 import { excludedLabelTokens, NO_EXCLUSION, resolveExcludedLabels, storeLoopsExclusion, type LoopsExclusionPolicy } from './loops-exclusion.ts';
 import { loopsSpendGate } from './loops-spend.ts';
@@ -160,7 +160,7 @@ export async function applyLoopDetection(
 ): Promise<ThreadLoopVerdict | null> {
   try {
     const { applyThreadLoopVerdict } = await import('./loop-detect.ts');
-    return await applyThreadLoopVerdict(deps.engine, deps.sourceId, thread, myAddressSet(deps.entry), pageSlug, new Date(), deps.exclusion);
+    return await applyThreadLoopVerdict(deps.engine, deps.sourceId, thread, deps.myAddresses, pageSlug, new Date(), deps.exclusion);
   } catch (e) {
     // Detection must never fail a sync; it re-runs on the next touch.
     deps.log(`[google] loop detection failed for ${thread.threadId}: ${e instanceof Error ? e.message : String(e)}`);
