@@ -156,18 +156,19 @@ describe('servePersistenceIpcProvider (the serve-path persistence socket)', () =
     });
   });
 
-  // The flip released persistence_journal; managed_persistence stays held (store-capabilities.ts HELD_FOR_CALLERS) until the
-  // managed-persistence program is done: a Rust brain refuses managed mode with the typed refusal.
+  // The flip released persistence_journal; slice 2 (lane LM) released managed_persistence for a single-host store.
   test('the Rust engine reports persistence_journal', () => {
     const rust = openRustEngine({ addon: { target: 'linux-x64-glibc', engine_abi: 1 }, databasePath: '/var/brains/test.rust' });
     expect(rust.capabilities.has('persistence_journal')).toBe(true);
   });
 
-  test('the Rust engine holds managed_persistence back, naming the managed sites slice 2 still owes', () => {
+  test('the Rust engine reports managed_persistence and holds nothing back', async () => {
     const rust = openRustEngine({ addon: { target: 'linux-x64-glibc', engine_abi: 1 }, databasePath: '/var/brains/test.rust' });
-    expect(rust.capabilities.has('managed_persistence')).toBe(false);
-    expect((HELD_FOR_CALLERS.managed_persistence ?? []).map(site => site.split(' (')[0])).toEqual(['managed sync', 'refresh barrier', 'import holds',
-      'managed clone and its recovery', 'owner recovery scans', 'git durability --pat-file']);
+    expect(rust.capabilities.has('managed_persistence')).toBe(true);
+    expect(HELD_FOR_CALLERS).toEqual({});
+    // The parity arm table says the same as the engine.
+    const { armCapabilities } = await import('./engine-parity/arm-capabilities.ts');
+    expect(armCapabilities('rust', {}).has('managed_persistence')).toBe(true);
   });
 
   test('an engine with the persistence journal goes on to the provider', async () => {

@@ -12,6 +12,7 @@ import type { BrainEngine } from '../engine.ts';
 import { readManagedMode } from '../persistence/managed-mode.ts';
 import { activeWorktreeRefreshes } from '../persistence/worktree-refresh.ts';
 import { evaluateReadiness, type ReadinessVerdict, type ShadowStatus } from './readiness.ts';
+import { servedCapabilities } from '../rust-engine/store-capabilities.ts';
 import { managedStorageError, refreshUnsettledError, type SwapRefusalReason, type UnsettledRefresh } from './refusals.ts';
 
 /** Environment variables that can select the current engine or its database (names only; values are never read out). */
@@ -84,11 +85,20 @@ export async function assertRefreshesSettled(engine: BrainEngine): Promise<void>
   if (rows.length) throw refreshUnsettledError(rows);
 }
 
-/** Throws `engine_swap_refused` / `managed_storage` when the brain uses managed storage, which Rust never holds. A
- * persistence state that is missing or malformed refuses `storage_error` (readManagedMode), never reads as unmanaged. */
+/**
+ * Whether the Rust destination can hold a managed brain: this build's Rust engine serves `managed_persistence`
+ * (rust-engine/store-capabilities.ts). Managed mode on a multi-user Rust store waits for the multi-user branch (slice 3).
+ */
+export function rustHoldsManagedStorage(): boolean {
+  return servedCapabilities().has('managed_persistence');
+}
+
+/** Throws `engine_swap_refused` / `managed_storage` when the brain uses managed storage and this build's Rust engine cannot
+ * hold it (rustHoldsManagedStorage). A persistence state that is missing or malformed refuses `storage_error`
+ * (readManagedMode), never reads as unmanaged. */
 export async function assertNotManaged(engine: BrainEngine): Promise<void> {
   const managed = await readManagedMode(engine, { refusal: { subject: 'The engine swap plan', consequence: 'the swap refuses rather than guess whether the brain uses managed storage' } });
-  if (managed) throw managedStorageError();
+  if (managed && !rustHoldsManagedStorage()) throw managedStorageError();
 }
 
 /** The plan hash binds what a run would act on, never volatile readings (time, free space). */
@@ -100,7 +110,7 @@ function planHash(p: Omit<SwapPlan, 'plan_hash'>): string {
   return createHash('sha256').update(JSON.stringify(bound)).digest('hex').slice(0, 16);
 }
 
-/** Builds the read-only plan. Throws `engine_swap_refused` (`managed_storage`, `refresh_unsettled`) before reading any criterion. */
+/** Builds the read-only plan. Throws `engine_swap_refused` (`managed_storage` when this build's Rust engine cannot hold a managed brain, `refresh_unsettled`) before reading any criterion. */
 export async function planEngineSwap(engine: BrainEngine, deps: SwapPlanInputs = {}): Promise<SwapPlan> {
   await assertNotManaged(engine);
   await assertRefreshesSettled(engine);

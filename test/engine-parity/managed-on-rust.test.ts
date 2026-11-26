@@ -1,9 +1,9 @@
 /**
- * Engine parity: managed mode on a Rust brain, with the user-facing hold kept (lane LM, slice 1).
+ * Engine parity: managed mode on a Rust brain (lane LM, slices 1 and 2).
  *
- * Every case lifts the `managed_persistence` hold on its own Rust test engine (rust-managed.ts `liftManagedHold`), so the
- * ordinary Rust arm runs the managed path for real; `servedCapabilities()` still withholds the capability, so a user's
- * Rust brain keeps refusing. Each case returns its answers and the arms must agree.
+ * A single-host Rust engine serves `managed_persistence` (slice 2 lifted the hold; managed mode on a multi-user store waits for the multi-user branch),
+ * so the ordinary Rust arm runs the managed path for real. `liftManagedHold` stays in the cases and changes nothing on such
+ * an engine. Each case returns its answers and the arms must agree.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: on a claimed checkout, a put_page to the bound source commits the page and writes its file; a refusal at
@@ -115,13 +115,13 @@ async function putSettled(engine: BrainEngine, sourceId: string, slug: string, t
 
 const codeOf = (run: () => Promise<unknown>) => run().then(() => null, (e: { code?: string }) => e?.code ?? String(e));
 
-describe('managed mode on a Rust brain, hold kept for users', () => {
-  parityTest('the hold is still reported off for every user Rust engine', {
+describe('managed mode on a Rust brain', () => {
+  parityTest('managed mode is served on a single-host Rust brain', {
     methods: ['getConfig'],
   }, async (engine) => {
     await engine.getConfig('managed_on_rust_probe');
-    const out = { held: !servedCapabilities().has('managed_persistence') };
-    expect(out).toEqual({ held: true });
+    const out = { served: servedCapabilities().has('managed_persistence') };
+    expect(out).toEqual({ served: true });
     return out;
   });
 

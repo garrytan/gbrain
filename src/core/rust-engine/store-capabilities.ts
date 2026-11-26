@@ -15,30 +15,17 @@ import { STORE_MEMBERS } from './store-members/index.ts';
  * member table. A held `persistence_journal` would start no persistence listener (rust-engine/owner-ipc/client.ts
  * `rustOwnerServesPersistence`). A capability leaves this table when its last blocking caller is typed.
  *
- * `managed_persistence` is held: until the managed-persistence program on the Rust engine is done, a Rust brain refuses managed
- * mode with the typed refusal (capability managed_persistence). A worktree-bound write (a source with a claimed checkout) is
- * refused by name at its admission (persistence/journal.ts `admitWrite`) and writes no request row, and the first page write to a
- * rooted source refuses `claimWorktree` the same way (persistence/unbound-source.ts). A write with no worktree and a grouped
- * admission of such writes are served.
+ * `managed_persistence` is served (lane LM slices 1 and 2): worktree admission, ownership, compareFileTarget, publication
+ * and its recovery, the managed Git effects and Git durability, the topology locks and the source lifecycle, the
+ * moved-checkout check, managed link edits, the refresh barrier and import holds, grouped admission, the owner recovery
+ * scans, the managed clone and managed sync all run on typed members, equal to PGLite and Postgres on all three parity
+ * arms (test/engine-parity/managed-*-on-rust.test.ts).
  *
- * Slice 1 (lane LM) typed what a bound write and a source lifecycle change run: worktree admission, ownership,
- * compareFileTarget, publication and its recovery, the managed Git effects and Git durability (engine-sql/git-effects.ts,
- * git-durability.ts), the topology locks with the lifecycle's add, archive, restore, set-path, remove and purge
- * (engine-sql/topology-store.ts), the moved-checkout check, and add_link and remove_link on a managed page
- * (engine-sql/manual-links.ts). test/engine-parity/managed-on-rust.test.ts runs them equal on all three arms with the hold lifted
- * on the test engine only. The hold stays until the slice 2 sites below are typed and proven equal on Rust too; each entry
- * is a site that still runs raw SQL or has no three-arm case yet.
+ * Managed mode coordinates a checkout with native file locks on one host (withTopologyLocks, GBRAIN_HOME/locks). That is
+ * the single-host store this branch ships. Managed mode on a multi-user store waits for the multi-user branch (slice 3),
+ * which moves those locks and the managed claims to I-5 leases; this table holds nothing back here.
  */
-export const HELD_FOR_CALLERS: Partial<Record<Capability, readonly string[]>> = {
-  managed_persistence: [
-    'managed sync (persistence/sync-run.ts performManagedSync; sync-discovery.ts readManagedSyncRows, sync-holds.ts sourceHoldFingerprints): a managed import still reads through executeRaw',
-    'refresh barrier (persistence/worktree-refresh.ts, journal.ts readRefreshBarrier; the claim stamp reports passed_sync false): gbrain sources refresh and the writes that wait behind it',
-    'import holds (journal.ts heldBehindImport): the writes held behind a managed import or refresh',
-    'managed clone and its recovery (persistence/topology-clone.ts, topology-recovery.ts): sources add --url, sources reclone and the owner topology recovery',
-    'owner recovery scans (consumer recovery of worktree claims, dead-owner detection of worktree requests, deferred-write expiry)',
-    'git durability --pat-file (git-durability-administration.ts retryParkedPushes): the parked-push retry',
-  ],
-};
+export const HELD_FOR_CALLERS: Partial<Record<Capability, readonly string[]>> = {};
 
 /** Capabilities withheld until every capability they need is reported. */
 export const CAPABILITY_REQUIRES: Partial<Record<Capability, readonly Capability[]>> = {

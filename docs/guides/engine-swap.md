@@ -22,8 +22,9 @@ resolves which brain was selected (`--brain`, `GBRAIN_BRAIN_ID` and a `.gbrain-m
 brain is refused with `engine_swap_refused` (reason `team_brain`); only your own brain can be previewed. It then needs
 a store that already exists: a PGLite store with no `PG_VERSION` file is refused with `no_brain` before any connection,
 because connecting would otherwise initialize a new, empty brain. With a store in place, it opens the brain without
-migrating it and reads whether the brain uses managed storage. A managed brain is refused with `engine_swap_refused`
-(reason `managed_storage`), because the Rust engine never holds managed storage. Otherwise it reads the worktree
+migrating it and reads whether the brain uses managed storage. The Rust engine holds managed storage on one host; a
+managed brain is refused with `engine_swap_refused` (reason `managed_storage`) only when the build's Rust engine does
+not serve managed mode. Managed mode on a multi-user Rust store waits for the multi-user branch. Otherwise it reads the worktree
 refresh journal and the shadow status, and lists. The shadow status is the same document `gbrain engine shadow
 status --json` prints for this brain; with no shadow for it, the verdict is `NOT READY` with reason `no_shadow`:
 
@@ -86,10 +87,10 @@ Every refusal leaves the current engine in charge and writes nothing. The `reaso
 <a id="managed_storage"></a>
 ### `managed_storage`
 
-The brain uses managed storage (`persistence_brain.enabled` is true). The Rust engine never holds managed storage, so
-the cutover could not carry it and would fail after writes are fenced. This is checked before the refresh journal and
-before any readiness criterion. Needs the user's decision: keep the brain on its current engine, or turn managed
-storage off for it first. There is no override. A persistence state that is missing or malformed refuses with
+The brain uses managed storage (`persistence_brain.enabled` is true) and the build's Rust engine does not serve managed
+mode (a single-host Rust engine does; managed mode on a multi-user Rust store waits for the multi-user branch). The
+cutover could not carry it and would fail after writes are fenced. This is checked before the refresh journal and before
+any readiness criterion. Needs the user's decision: keep the brain on its current engine, or turn managed storage off for it first. There is no override. A persistence state that is missing or malformed refuses with
 `storage_error` instead; it never reads as unmanaged.
 
 <a id="refresh_unsettled"></a>

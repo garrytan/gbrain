@@ -10,6 +10,11 @@
  * before any principal, path, filesystem, credential or git clone side effect, and the store, the checkout and the home
  * directory are unchanged.
  *
+ * Slice 2 lifted the hold: a single-host Rust engine reports `managed_persistence`. This file takes the capability off its
+ * own engine instance, as a build that does not serve managed mode reports it, so each refusal is the managed gate's own and
+ * every step must still refuse exactly as it did while the hold was on. Managed mode on a multi-user Rust store waits for
+ * the multi-user branch (slice 3).
+ *
  * Needs the Rust addon: runs with GBRAIN_TEST_RUST_ARM=1 (as the Rust CI job does), and is skipped otherwise.
  */
 import { execFileSync } from 'node:child_process';
@@ -44,12 +49,14 @@ const REMOTE = 'https://example.invalid/brain.git';
 const CHANGE = 'd0000000-0000-4000-8000-0000000000f1';
 const WRITER = 'd0000000-0000-4000-8000-0000000000f2';
 
-describe.skipIf(!rustArmRequested())('a user\'s Rust brain keeps refusing the recovery paths (hold on)', () => {
+describe.skipIf(!rustArmRequested())('a Rust brain without managed_persistence keeps refusing the recovery paths (hold on)', () => {
   let brain: RustBrainDir;
   let engine: BrainEngine;
   let home: string;
   beforeAll(async () => {
     brain = await openRustBrain();
+    // The capability a build that does not serve managed mode lacks, taken off this engine instance.
+    (brain.engine.capabilities as Set<string>).delete('managed_persistence');
     engine = brain.engine as unknown as BrainEngine;
     home = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-rust-recovery-hold-')));
   }, 60_000);

@@ -8,6 +8,11 @@
  * activated checkout on a Rust brain with the hold ON and checks each refusal and that the source, its pages, the
  * lifecycle receipts and the checkout files are unchanged.
  *
+ * Slice 2 lifted the hold: a single-host Rust engine reports `managed_persistence`. This file takes the capability off its
+ * own engine instance, as a build that does not serve managed mode reports it, so each refusal is the managed gate's own and
+ * every step must still refuse exactly as it did while the hold was on. Managed mode on a multi-user Rust store waits for
+ * the multi-user branch (slice 3).
+ *
  * Needs the Rust addon: runs with GBRAIN_TEST_RUST_ARM=1 (as the Rust CI job does), and is skipped otherwise.
  */
 import { execFileSync } from 'node:child_process';
@@ -44,12 +49,14 @@ const BASE_STATUS = { status: RAW, landing: 'not_applicable' };
 /** The base's refusal of a managed sync: performManagedSync names managed_persistence before discovery. */
 const SYNC_REFUSAL = { code: 'engine_capability_missing', member: 'performManagedSync', capability: 'managed_persistence' };
 
-describe.skipIf(!rustArmRequested())('a user\'s Rust brain keeps refusing managed mode (hold on)', () => {
+describe.skipIf(!rustArmRequested())('a Rust brain without managed_persistence keeps refusing managed mode (hold on)', () => {
   let brain: RustBrainDir;
   let engine: BrainEngine;
   let home: string;
   beforeAll(async () => {
     brain = await openRustBrain();
+    // The capability a build that does not serve managed mode lacks, taken off this engine instance.
+    (brain.engine.capabilities as Set<string>).delete('managed_persistence');
     engine = brain.engine as unknown as BrainEngine;
     home = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-rust-hold-')));
   }, 60_000);
@@ -187,4 +194,16 @@ describe.skipIf(!rustArmRequested())('a user\'s Rust brain keeps refusing manage
       expect(Object.keys(out).length).toBe(names.length + reads.length + 3);
       expect(await engine.getPage('notes/alice-example', { sourceId: 'work' })).toBeNull();
     }), 120_000);
+});
+
+describe.skipIf(!rustArmRequested())('a single-host Rust store serves managed mode', () => {
+  test('a freshly opened engine reports managed_persistence (the hold is lifted on a single host)', async () => {
+    const brain = await openRustBrain();
+    try {
+      expect((brain.engine as unknown as BrainEngine).capabilities.has('managed_persistence')).toBe(true);
+    } finally {
+      await (brain.engine as unknown as BrainEngine).disconnect();
+      removeBrainDir(brain.dir);
+    }
+  }, 60_000);
 });

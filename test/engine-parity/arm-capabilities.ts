@@ -15,17 +15,13 @@
  *    `holdSchemaMigrationLock` is an optional member only Postgres implements;
  *    PGLite (and Rust) serialize schema migrations in-process instead
  *    (src/core/schema-migration-lock.ts).
- *  - `managed_persistence` refuses on an arm without it, naming it (src/core/engine-capabilities.ts). The Rust engine does
- *    not report it until the managed-persistence program is done (rust-engine/store-capabilities.ts holds it), so a write
- *    to a managed worktree, and the first write to a rooted source that would claim one, refuse naming it there.
+ *  - `managed_persistence` refuses on an arm without it, naming it (src/core/engine-capabilities.ts). The Rust engine
+ *    reports it on a single-host store (lane LM slice 2; rust-engine/store-capabilities.ts), so all three arms report it.
+ *    test/rust-engine-construct.test.ts pins this table to what the engine reports. Managed mode on a multi-user Rust
+ *    store waits for the multi-user branch (slice 3).
  *
- *    With `GBRAIN_TEST_RUST_MANAGED=1` (test/engine-parity/rust-managed.ts) the Rust arm lifts that hold on every engine
- *    it opens and reports `managed_persistence` here too, so a `requires: 'managed_persistence'` case runs its body on
- *    Rust and is pinned in rust-managed-tally.tsv instead of rust-tally.tsv. Users never see the lift.
- *
- * When `BrainEngine.capabilities` and `src/core/engine-capabilities.ts` land
- * (plan PR 5), `armCapabilities` reads the engine's own set instead of this
- * table, and the parity cases keep their `requires` declarations.
+ *    `GBRAIN_TEST_RUST_MANAGED=1` (test/engine-parity/rust-managed.ts) was the lifted-hold mode of slices 1 and 2; with
+ *    the hold lifted it changes nothing, and rust-managed-tally.tsv equals rust-tally.tsv.
  */
 
 /** Every engine arm a parity case can run on, present or planned. */
@@ -62,8 +58,8 @@ export function armCapabilities(arm: ParityArmName, env: Record<string, string |
   switch (arm) {
     case 'pglite': return new Set<EngineCapability>(['raw_sql', 'managed_persistence']);
     case 'postgres': return new Set<EngineCapability>(['raw_sql', 'schema_migration_lock', 'managed_persistence']);
-    // No `managed_persistence` while store-capabilities.ts holds it: a Rust brain refuses managed mode with the typed refusal.
-    case 'rust': return new Set<EngineCapability>(rustManagedRequested(env) ? ['managed_persistence'] : []);
+    // `managed_persistence` on a single-host store (store-capabilities.ts serves it).
+    case 'rust': return new Set<EngineCapability>(['managed_persistence']);
     default: return assertNever(arm);
   }
 }

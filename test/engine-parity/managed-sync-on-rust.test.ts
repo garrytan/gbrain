@@ -75,11 +75,11 @@ async function pagesOf(engine: BrainEngine): Promise<Record<string, string | nul
 }
 const imported = (status: string) => ['first_sync', 'synced'].includes(status) ? 'imported' : status;
 
-describe('a whole managed sync on a Rust brain, hold kept for users', () => {
-  parityTest('the hold is still reported off for every user Rust engine', { methods: ['getConfig'] }, async (engine) => {
+describe('a whole managed sync on a Rust brain', () => {
+  parityTest('managed mode is served on a single-host Rust brain', { methods: ['getConfig'] }, async (engine) => {
     await engine.getConfig('managed_sync_on_rust_probe');
-    const out = { held: !servedCapabilities().has('managed_persistence') };
-    expect(out).toEqual({ held: true });
+    const out = { served: servedCapabilities().has('managed_persistence') };
+    expect(out).toEqual({ served: true });
     return out;
   });
 
