@@ -797,6 +797,9 @@ describe('engine parity: multi-writer conformance', () => {
     expect(mode, 'C16 upgrades a brain by opening it in multi-user mode: the arm must be multi-user').not.toBe('off');
     const route = rustMultiuserView();
     const SWITCHES = ['GBRAIN_RUST_MULTIUSER', 'GBRAIN_RUST_COMMIT_LOG'] as const;
+    // The commit log format (rust/crates/gbrain-store/src/format.rs LOG_FORMAT_VERSION, 16 since lane L2's renumber
+    // e435301421; the addon does not export it). gbrain-store tests/commit_log.rs pins the same number.
+    const LOG_FORMAT_VERSION = 16;
     const formatOf = (dir: string) => JSON.parse(readFileSync(join(dir, 'FORMAT'), 'utf8')) as { format_version: number; log?: unknown };
     const roleOf = (e: unknown) => (e as { ownerRole?: string }).ownerRole;
     const openers: BrainEngine[] = [];
@@ -811,7 +814,7 @@ describe('engine parity: multi-writer conformance', () => {
           } finally { await plain.disconnect(); }
         });
         expect(formatOf(dir).log, 'the brain was not made in the older format').toBeUndefined();
-        expect(formatOf(dir).format_version, 'the brain was not made in the older format').not.toBe(13);
+        expect(formatOf(dir).format_version, 'the brain was not made in the older format').not.toBe(LOG_FORMAT_VERSION);
       };
       // What an upgrade leaves in the brain: the log's start and newest position (commits it made), and the format's log block.
       const upgraded = async (e: BrainEngine, dir: string) => {
@@ -827,7 +830,7 @@ describe('engine parity: multi-writer conformance', () => {
       const solo = (control.config as unknown as { database_path: string }).database_path;
       await oldBrain(solo);
       await control.engine.connect(control.config);
-      expect(formatOf(solo).format_version, 'a single opener did not upgrade the brain').toBe(13);
+      expect(formatOf(solo).format_version, 'a single opener did not upgrade the brain').toBe(LOG_FORMAT_VERSION);
       const soloUpgrade = await upgraded(control.engine, solo);
       expect(soloUpgrade.newest, 'the upgrade committed nothing: the control proves nothing').not.toBeNull();
 
@@ -841,7 +844,7 @@ describe('engine parity: multi-writer conformance', () => {
       const all = [first, ...openers];
       expect(all.map(roleOf).filter(r => r === 'owner'), 'not exactly one opener owns the brain').toHaveLength(1);
       expect(all.map(roleOf).filter(r => r === 'client'), 'the other openers are not clients of the owner').toHaveLength(4);
-      expect(formatOf(dir).format_version, 'the brain was not upgraded').toBe(13);
+      expect(formatOf(dir).format_version, 'the brain was not upgraded').toBe(LOG_FORMAT_VERSION);
       for (const e of all) expect(await whole(e), 'an opener saw a partial brain').toEqual(expected);
       const versions = await Promise.all(all.map(e => e.getConfig('version')));
       expect(new Set(versions).size, 'openers report different formats').toBe(1);
@@ -850,7 +853,7 @@ describe('engine parity: multi-writer conformance', () => {
       // A write after the upgrade, through whichever opener the arm holds, is seen by every opener.
       await first.putPage('notes/c16-after', NOTE('after', 'written after the upgrade'));
       for (const e of all) expect((await e.getPage('notes/c16-after'))?.compiled_truth, 'a write after the upgrade is not seen by every opener').toBe('written after the upgrade');
-      return { openers: 5, owners: 1, clients: 4, upgradedTo: 13, wholeBrain: true, upgradeEqualsALoneOpener: true };
+      return { openers: 5, owners: 1, clients: 4, upgradedTo: LOG_FORMAT_VERSION, wholeBrain: true, upgradeEqualsALoneOpener: true };
     } finally {
       for (const e of openers) await e.disconnect().catch(() => undefined);
     }
