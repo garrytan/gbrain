@@ -6006,7 +6006,7 @@ runs on PGLite alone without the flag.
 
 A managed clone (`sources add --url`, `sources reclone`) and the recovery of an interrupted source lifecycle change run
 on the typed topology store (`engine-sql/topology-store.ts`) once the engine holds managed worktrees
-(`managed_persistence`). A user's Rust brain still withholds that capability, and has no raw SQL, so it refuses these
+(`managed_persistence`). An engine that does not report that capability has no raw SQL, so it refuses these
 steps by name (`member=managed_source_clone` or `member=source_topology_recovery`, `written=nothing`) before any
 principal, lock, row, directory or git clone is touched. Doctor `topology_recovery_stopped` and `sources writer status
 --json` (`topology_recoveries`) name the stop; finish the change from a pglite or postgres engine. A test Rust engine with

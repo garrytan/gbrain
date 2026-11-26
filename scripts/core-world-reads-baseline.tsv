@@ -1286,3 +1286,5 @@ src/core/owned-folder/paths.ts	fs_import	1	W7: filesystem boundary moves to the 
 src/core/owned-folder/remove.ts	fs_import	1	W7: filesystem boundary moves to the local app; GST-3022 owned folders: checks OWNER.json and prunes the directories a source removal leaves empty, never following a symlink
 src/core/owned-folder/writer.ts	fs_import	1	W7: filesystem boundary moves to the local app; GST-3022 owned folders: the one writer of the folder: OWNER.json, the README and the day files, with lstat symlink checks
 src/core/remote-caller.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context; marks an MCP handler's caller remote so the Rust owner client keeps its writes off the owner socket
+src/core/persistence/managed-operations.ts	module_collection	2	LM slice 3: per-engine state, a WeakMap of the live managed lock handles keyed by the engine object (never shared between engines) and a set of weak references to this process's Rust engines
+src/core/persistence/managed-registration.ts	module_collection	1	LM slice 3: per-engine state, a WeakMap of the in-flight host registration keyed by the engine object (never shared between engines)
