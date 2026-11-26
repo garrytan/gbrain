@@ -64,7 +64,7 @@ async function refreshSourceSlugIndex(engine: BrainEngine, sourceId: string, sta
  * changed, adds the new rows when only inserts happened, else rebuilds; so a
  * write from any process is seen exactly as the per-page slug read saw it.
  */
-async function sourceBasenameIndex(engine: BrainEngine, sourceId: string): Promise<Map<string, string[]>> {
+export async function sourceBasenameIndex(engine: BrainEngine, sourceId: string): Promise<Map<string, string[]>> {
   const bySource = sourceSlugIndexes.get(engine) ?? new Map<string, Promise<SourceSlugIndex | null>>();
   sourceSlugIndexes.set(engine, bySource);
   const next = (bySource.get(sourceId) ?? Promise.resolve(null)).then(state => refreshSourceSlugIndex(engine, sourceId, state));
