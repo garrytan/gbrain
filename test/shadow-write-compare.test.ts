@@ -27,7 +27,8 @@ import { encodeArgs } from '../src/shadow/codec.ts';
 import { configDir } from '../src/core/config.ts';
 import { shadowRoot } from '../src/shadow/state.ts';
 import { scratchRootDefault } from '../src/shadow/write-compare-child.ts';
-import { lostPath, movedOutsideFootprint, pageRefs, readWriteTally, recordLost, unfoldedLost, writeTallyPath, WriteTally, type WriteEvent } from '../src/shadow/write-compare.ts';
+import { readFaults } from '../src/shadow/ledger.ts';
+import { lostPath, movedOutsideFootprint, pageRefs, readWriteTally, recordLost, sentPath, unfoldedLost, writeTallyPath, WriteTally, type WriteEvent } from '../src/shadow/write-compare.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { defineWriteCompareScenarios, fakeComparer, page, row5, settle, tallyOn, watchPreimage } from './helpers/shadow-write-compare-scenarios.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -383,6 +384,36 @@ describe('a client child records no write comparison (lane owner ruling)', () =>
   }, 60_000);
 });
 
+describe('a client child\'s verdicts are counted, never dropped (no_epoch)', () => {
+  test('a client child hands its verdicts to the owner as lost samples, in a few appends, and the owner counts every one as uncomparable no_epoch; the tally file is not touched by the client', () => {
+    const dir = tmp();
+    const owner = tallyOn(dir);
+    owner.tally.note('capability_missing', 'tags'); // the owner has recorded one
+    const before = readFileSync(writeTallyPath(dir), 'utf8');
+    const client = new WriteTally(dir, () => null, () => true, 424242); // a child with no epoch of its own
+    const lostFile = lostPath(dir, process.pid);
+    const sizes = new Set<number>();
+    for (let n = 0; n < 600; n++) { client.note(n % 2 ? 'capability_missing' : 'uncomparable', n % 2 ? 'tags' : 'moved'); sizes.add(existsSync(lostFile) ? statSync(lostFile).size : 0); }
+    expect(sizes.size).toBeLessThanOrEqual(4); // one append per 256 verdicts, not one per verdict
+    client.save();
+    expect(readFileSync(writeTallyPath(dir), 'utf8')).toBe(before); // a client child records nothing in the tally
+    expect(unfoldedLost(dir, owner.epoch)).toBe(600);
+    owner.tally.save(); // the owner folds them in
+    expect(owner.counts()).toMatchObject({ comparable: 0, capability_missing: 1, uncomparable: 600, uncomparable_by_reason: { no_epoch: 600 } });
+  });
+
+  test('with no epoch on disk yet nothing can be recorded: the count waits for the next save, and the last one leaves a fault line, never a silent drop; a deleted shadow directory counts nothing', () => {
+    const dir = tmp();
+    const client = new WriteTally(dir, () => null, () => true, 424242);
+    client.note('uncomparable', 'moved', 3);
+    expect(client.save()).toBe(false);
+    expect(readFaults(dir).map((f) => f.kind)).toEqual(['write_samples_unrecorded']);
+    const gone = new WriteTally(join(dir, 'gone'), () => null, () => false, 424243);
+    gone.note('uncomparable', 'moved', 3); gone.save();
+    expect(existsSync(join(dir, 'gone'))).toBe(false);
+  });
+});
+
 describe('write comparison rules (review findings)', () => {
   const sample = (over: Partial<WriteEvent> = {}): WriteEvent => ({
     t: 'write', op: 'putPage', args: encodeArgs(['people/pat-example', { type: 'person', title: 'Pat', compiled_truth: 'Pat.', timeline: '' }]) as unknown[],
@@ -560,6 +591,81 @@ describe('every sample the child was sent ends in the tally (sample accounting)'
   const ADDON = async () => ({ ok: true as const, addon: { target: 'linux-x64-glibc', engineAbi: 1, engineBuild: 'b1', catalogVersion: 3 } as never });
   const BASE = { loadAddon: ADDON, capabilities: () => ['search', 'pages'], readinessPolicyHash: () => 'p1', heartbeatMs: 60_000, childId: 'c1' };
   const replayLine = (n: number) => JSON.stringify({ t: 'write', op: 'putPage', args: encodeArgs([`people/queued-${n}-example`, { type: 'person', title: `Queued ${n}`, compiled_truth: 'Q.', timeline: '' }]) as unknown[], pre: { sources: [], pages: [], links: [] }, post: { pages: [null], links: [] } }) + '\n';
+
+  test('the child counts what its serving process sent and it never read (the pipe dropped at that process\'s exit) as uncomparable pipe_unflushed, exactly once, and removes the sent count', async () => {
+    await withEnv({ GBRAIN_HOME: tmp() }, async () => {
+      const dir = tmp();
+      writeSeedRecord(dir, { version: 1, seed_id: 'seed-1', started_at: '2026-01-01T00:00:00.000Z', finished_at: '2026-01-01T00:01:00.000Z', unseeded_gap_rows_total: 0, unseeded_gap_rows: {}, relations: {}, digests: true } as never);
+      writeFileSync(sentPath(dir, 'sess-1'), JSON.stringify({ session: 'sess-1', sent: 10 }) + '\n');
+      const input = new PassThrough();
+      const done = runShadowChild(dir, { input, writeControl: () => {}, ...BASE, session: 'sess-1', addonSha256: () => 'a'.repeat(64), openEngine: () => ({ ownerRole: 'owner', async connect() {}, async disconnect() {} }) as never });
+      input.write('{"t":"write","op":"putPage"}\n{"t":"write","op":"putPage"}\n'); // two samples read
+      input.write('{"t":"write","op":"putPage","dropped":2}\n'); // a third, carrying two earlier refusals: three samples' worth
+      input.write('{"t":"write","op":"putPage","pad":"cut by the exit of the serving proc'); // a line the exit cut short: not read
+      input.end();
+      await done;
+      const t = readWriteTally(dir, readEpoch(dir)!.epoch_id)!;
+      expect(t.uncomparable_by_reason).toMatchObject({ no_sample: 3, send_shed: 2, pipe_unflushed: 10 - 5 });
+      expect(t.comparable + t.unexplained_difference + t.uncomparable + t.capability_missing).toBe(3 + 2 + 5);
+      expect(existsSync(sentPath(dir, 'sess-1'))).toBe(false);
+    });
+  }, 30_000);
+
+  test('no sent count, or one that is not more than what was read, adds nothing', async () => {
+    await withEnv({ GBRAIN_HOME: tmp() }, async () => {
+      for (const sent of [undefined, 2, 'bad'] as const) {
+        const dir = tmp();
+        writeSeedRecord(dir, { version: 1, seed_id: 'seed-1', started_at: '2026-01-01T00:00:00.000Z', finished_at: '2026-01-01T00:01:00.000Z', unseeded_gap_rows_total: 0, unseeded_gap_rows: {}, relations: {}, digests: true } as never);
+        if (sent !== undefined) writeFileSync(sentPath(dir, 'sess-2'), JSON.stringify({ session: 'sess-2', sent }) + '\n');
+        const input = new PassThrough();
+        const done = runShadowChild(dir, { input, writeControl: () => {}, ...BASE, session: 'sess-2', addonSha256: () => 'a'.repeat(64), openEngine: () => ({ ownerRole: 'owner', async connect() {}, async disconnect() {} }) as never });
+        input.write('{"t":"write","op":"putPage"}\n{"t":"write","op":"putPage"}\n'); input.end();
+        await done;
+        expect(readWriteTally(dir, readEpoch(dir)!.epoch_id)!.uncomparable_by_reason).toEqual({ no_sample: 2 });
+      }
+    });
+  }, 30_000);
+
+  test('a burst of 300 samples behind one stuck replay: 256 wait their turn, the other 44 are counted queue_full, and every one of the 300 ends in the tally (never comparable when shed)', async () => {
+    await withEnv({ GBRAIN_HOME: tmp() }, async () => {
+      const dir = tmp();
+      writeSeedRecord(dir, { version: 1, seed_id: 'seed-1', started_at: '2026-01-01T00:00:00.000Z', finished_at: '2026-01-01T00:01:00.000Z', unseeded_gap_rows_total: 0, unseeded_gap_rows: {}, relations: {}, digests: true } as never);
+      const input = new PassThrough();
+      let exitCode = null as number | null;
+      void runShadowChild(dir, {
+        input, writeControl: () => {}, ...BASE, addonSha256: () => 'a'.repeat(64),
+        openEngine: () => ({ ownerRole: 'owner', async connect() {}, async disconnect() {}, storeFor: () => new Promise(() => {}) }) as never,
+        exitDeadlineMs: 300, exit: (code) => { exitCode = code; },
+      });
+      for (let n = 0; n < 300; n++) input.write(replayLine(n));
+      input.end();
+      const until = Date.now() + 10_000;
+      while (exitCode === null && Date.now() < until) await new Promise((r) => setTimeout(r, 25));
+      expect(exitCode).toBe(0);
+      const t = readWriteTally(dir, readEpoch(dir)!.epoch_id)!;
+      expect(t.uncomparable_by_reason.queue_full).toBe(44); // master: 16 wait, 284 are shed
+      expect(t.uncomparable_by_reason.child_exit_deadline).toBe(255); // the 255 behind the stuck replay are counted at the exit deadline
+      expect(t.comparable + t.unexplained_difference + t.uncomparable + t.capability_missing + t.in_flight.length).toBe(300);
+      expect(t.comparable).toBe(0);
+    });
+  }, 30_000);
+
+  test('a queue that is full by bytes, not by count, sheds the next sample queue_full and gives the bytes back when the replays end', async () => {
+    const dir = tmp(); let release = (): void => {};
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const comparer = fakeComparer(dir, { connect: () => gate });
+    const sample = (n: number): WriteEvent => ({ t: 'write', op: 'putPage', args: encodeArgs([`people/bytes-${n}-example`, { type: 'person', title: 'B', compiled_truth: 'B.', timeline: '' }]) as unknown[], pre: { sources: [], pages: [], links: [] }, post: { pages: [null], links: [] } });
+    const MIB = 1024 * 1024;
+    for (let n = 0; n < 3; n++) comparer.handle(sample(n), 7 * MIB); // 7 + 7 fit in 16 MiB, the third would be 21
+    release();
+    await comparer.idle();
+    expect(comparer.counts().uncomparable_by_reason.queue_full).toBe(1);
+    for (let n = 3; n < 5; n++) comparer.handle(sample(n), 7 * MIB); // the bytes came back
+    await comparer.idle();
+    expect(comparer.counts().uncomparable_by_reason.queue_full).toBe(1);
+    const t = comparer.counts();
+    expect(t.comparable + t.unexplained_difference + t.uncomparable).toBe(5);
+  }, 30_000);
 
   test('a child that reaches its exit deadline with replays still queued counts them (uncomparable, named), never drops them uncounted', async () => {
     await withEnv({ GBRAIN_HOME: tmp() }, async () => {

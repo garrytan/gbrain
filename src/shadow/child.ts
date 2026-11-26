@@ -34,7 +34,7 @@ import { FollowChild, type FollowEvent, type FollowStore } from './follow-child.
 import { appendFault, appendLedgerRows, writeSummaryFile, type ShadowLedgerRow, type ShadowSummaryFile } from './ledger.ts';
 import { newMirrorCounters, type MirrorCounters } from './mirror.ts';
 import { createWriteComparer } from './write-compare-child.ts';
-import { WriteTally } from './write-compare.ts';
+import { readSent, sentPath, WriteTally } from './write-compare.ts';
 import { appendRecall, IntervalGate, recallEligible, RECALL_INTERVAL_MS, scoreRecall, type RankedKey } from './recall.ts';
 import { isShadowReadMember, SHADOW_READ_MEMBERS, type ShadowReadMember } from './reads.ts';
 import { readSeedRecord } from './seed.ts';
@@ -537,14 +537,15 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
     return draining;
   };
 
+  let received = 0; // write samples read from the pipe, whole lines only (a line the exit of the serving process cut short is not one)
   const rl = createInterface({ input: deps.input, crlfDelay: Infinity });
   for await (const line of rl) {
     if (!line) continue;
-    let event: { t?: string; counters?: MirrorCounters; pid?: number };
+    let event: { t?: string; counters?: MirrorCounters; pid?: number; dropped?: number };
     try { event = JSON.parse(line); } catch { continue; }
     if (event.t === 'apply' || event.t === 'watermark' || event.t === 'depth' || event.t === 'rpc') { follow.handle(event as FollowEvent); continue; }
     if (event.t === 'answer') { ask.answer(event as never); continue; }
-    if (event.t === 'write') { writes.handle(event as never); continue; }
+    if (event.t === 'write') { received += 1 + (Number.isInteger(event.dropped) && event.dropped! > 0 ? Math.min(event.dropped!, 10_000) : 0); writes.handle(event as never, line.length); continue; } // the weight the serving process counted when it sent the line (supervisor.ts sampleWeight)
     if (event.t === 'stats' && event.counters) { summary.primary = { ...newMirrorCounters(), ...event.counters }; summary.primary_pid = event.pid; continue; }
     if (event.t !== 'read' || paused) continue;
     if (pending.length >= SHADOW_CHILD_QUEUE_BOUND) { summary.child_shed++; continue; }
@@ -555,12 +556,16 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
     const timer = setTimeout(() => { summary.child_shed += pending.length; writes.abandon(); flush(true); deps.exit!(0); }, deps.exitDeadlineMs ?? SHADOW_CHILD_EXIT_DEADLINE_MS);
     (timer as { unref?: () => void }).unref?.();
   }
+  // The serving process wrote down how many write samples it sent us before it ended our stdin; what it sent and we never read was dropped in its pipe at its exit, and is counted once (supervisor.ts recordSent).
+  const sent = readSent(shadowDir, session);
+  if (sent !== null) writes.lostInPipe(sent - received);
   // The serving process ended our stdin: nothing it was asked can still be answered. A queued rerun ends as skipped.
   ask.closeAll(); waiter.close(); // a rerun waiting for a quiet window ends now, as skipped
   for (const task of reruns.drop()) record(task.event, task.c, task.rustMs, task.rows, 'skipped:child_closing');
   await drain();
   await reruns.idle();
   await recalling; await writes.idle();
+  if (sent !== null) { try { rmSync(sentPath(shadowDir, session), { force: true }); } catch { /* a leftover count is read again by no one: its session is gone */ } }
   await follow.close();
   clearInterval(heartbeat);
   clearInterval(flusher);
