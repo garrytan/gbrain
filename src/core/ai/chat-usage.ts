@@ -237,6 +237,8 @@ export function recordChatUsage(input: {
 
 /** How long a sink reuses the `pricing.overrides` it read before reading config again. */
 export const CHAT_USAGE_OVERRIDES_TTL_MS = 60_000;
+/** How long an engine's close waits for ledger rows still being written; a stalled write never holds the close past it. */
+export const CHAT_USAGE_DRAIN_TIMEOUT_MS = 5_000;
 
 /**
  * Standard sink: INSERT into chat_usage_log via the engine's executeRaw.
@@ -251,12 +253,13 @@ export const CHAT_USAGE_OVERRIDES_TTL_MS = 60_000;
  * CHAT_USAGE_OVERRIDES_TTL_MS, never once per row; a failed read keeps the
  * table price (or NULL) the record arrived with, and the next row reads again.
  * Because a row waits for that read before its INSERT, the engine's close
- * awaits `drain()` so a row recorded just before it still lands.
+ * awaits `drain()` so a row recorded just before it still lands, for at most
+ * CHAT_USAGE_DRAIN_TIMEOUT_MS: a stalled write never holds the close.
  */
 export function makeEngineChatUsageSink(engine: {
   executeRaw: (sql: string, params?: unknown[]) => Promise<unknown>;
   getConfig?: (key: string) => Promise<string | null>;
-}): ChatUsageSink & { drain(): Promise<void> } {
+}): ChatUsageSink & { drain(timeoutMs?: number): Promise<void> } {
   let cached: { overrides: Promise<PricingOverrides | undefined>; readAt: number } | null = null;
   const pricingOverrides = (): Promise<PricingOverrides | undefined> => {
     const getConfig = engine.getConfig;
@@ -304,5 +307,11 @@ export function makeEngineChatUsageSink(engine: {
     write$.then(settle, settle);
     return write$;
   };
-  return Object.assign(sink, { drain: async () => { await Promise.allSettled([...pending]); } });
+  const drain = async (timeoutMs = CHAT_USAGE_DRAIN_TIMEOUT_MS): Promise<void> => {
+    if (!pending.size) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<void>((done) => { timer = setTimeout(done, timeoutMs); timer.unref?.(); });
+    try { await Promise.race([Promise.allSettled([...pending]), deadline]); } finally { clearTimeout(timer); }
+  };
+  return Object.assign(sink, { drain });
 }

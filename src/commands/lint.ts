@@ -19,7 +19,7 @@ import { readSourceFileSync, writeSourceFileSync, hasSourceFilesystemLock, withS
  */
 
 import { readdirSync, statSync, lstatSync, existsSync, realpathSync } from 'fs';
-import { join, relative, dirname, sep } from 'path';
+import { join, relative, dirname, resolve, sep } from 'path';
 import { isAborted } from '../core/abort-check.ts';
 import { parseMarkdown, type ParseValidationCode } from '../core/markdown.ts';
 import { parseDateLoose } from '../core/effective-date.ts';
@@ -41,6 +41,7 @@ import { isSyncable, isSyncStrategy, matchesAnyGlob, pathToSlug, readMetafilePag
 import { diskMetafileHeads, metafilePagePredicate } from '../core/sync-metafile-pages.ts';
 import { isReservedSkillBundlePath } from '../core/skill-reserved-paths.ts';
 import { relativeEscapesRoot } from '../core/path-confine.ts';
+import { getWorktreeBinding } from '../core/persistence/ownership.ts';
 import { syncExcludePatterns } from '../core/persistence/sync-discovery.ts';
 import { isManagedBrain } from '../core/cycle/phase-table.ts';
 import { maintenancePreflight, publishMaintenancePage, type MaintenanceAuthority } from '../core/persistence/prepared-maintenance.ts';
@@ -761,19 +762,24 @@ async function publishLintFix(engine: BrainEngine, authority: MaintenanceAuthori
 }
 
 /**
- * #10442: the registered source whose root holds `target` (the named source first, else the deepest root), with the
- * target's path below that root and the source's sync strategy; null when no registered root holds it.
+ * #10442: the source whose root on this host holds `target` (the named source first, else the deepest root), with the
+ * target's path below that root and the source's sync strategy; null when no root holds it. A source's root is its
+ * active worktree binding on this host (the checkout managed sync reads, even when `sources.local_path` is unset or
+ * names another host's path), else its registered local path.
  */
 async function managedSourceRoot(engine: BrainEngine, target: string, sourceId: string | undefined)
   : Promise<{ root: string; prefix: string; strategy: unknown } | null> {
   const real = realpathSync.native(target);
-  const held = (await engine.listAllSources({ localPathOnly: true })).flatMap(source => {
+  const held = (await Promise.all((await engine.listAllSources()).map(async source => {
+    const binding = await getWorktreeBinding(engine, source.id);
+    const path = binding?.state === 'active' && binding.local_path ? resolve(binding.local_path, binding.relative_path ?? '') : source.local_path;
+    if (!path) return [];
     let root: string;
-    // silent-read-ok: a registered root missing on this disk holds no file this walk read
-    try { root = realpathSync.native(source.local_path!); } catch { return []; }
+    // silent-read-ok: a root missing on this disk holds no file this walk read
+    try { root = realpathSync.native(path); } catch { return []; }
     const prefix = relative(root, real);
     return relativeEscapesRoot(prefix) ? [] : [{ id: source.id, root, prefix: prefix.split(sep).join('/'), strategy: source.config?.strategy }];
-  });
+  }))).flat();
   return held.find(source => source.id === sourceId) ?? held.sort((a, b) => b.root.length - a.root.length)[0] ?? null;
 }
 

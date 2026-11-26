@@ -101,6 +101,18 @@ describe('chat usage ledger + pricing.overrides (#10424)', () => {
     expect(reads).toBe(2);
   });
 
+  test('a stalled ledger write holds drain no longer than its deadline', async () => {
+    const stalled = {
+      executeRaw: (sql: string, params?: unknown[]) => engine.executeRaw(sql, params),
+      getConfig: (_key: string): Promise<string | null> => new Promise(() => {}),
+    };
+    const sink = makeEngineChatUsageSink(stalled);
+    void sink(record({ model: 'litellm:gateway-model', provider: 'litellm' }));
+    const started = Date.now();
+    await sink.drain(200);
+    expect(Date.now() - started).toBeLessThan(2_000);
+  });
+
   test('closing the engine right after a recorded call keeps its ledger row', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-usage-close-'));
     try {

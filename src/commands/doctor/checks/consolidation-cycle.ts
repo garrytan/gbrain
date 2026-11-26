@@ -195,7 +195,8 @@ export async function checkCycleFreshness(
     // A cursor in any other shape than the UTC ISO instant the window listing writes is ignored, as the queued handler does.
     const cursors = new Map(sources.flatMap((s) => {
       const at = s.config?.last_source_cycle_window_at, slug = s.config?.last_source_cycle_window_slug;
-      return typeof at === 'string' && CURSOR_INSTANT.test(at) && Number.isFinite(Date.parse(at)) && typeof slug === 'string' && slug
+      return typeof at === 'string' && CURSOR_INSTANT.test(at) && Number.isFinite(Date.parse(at))
+        && new Date(Date.parse(at)).toISOString().slice(0, 19) === at.slice(0, 19) && typeof slug === 'string' && slug
         ? [[s.id, { at, slug }] as const] : [];
     }));
     const { young, afterCursor } = await sourcePageCensus(engine, sources.map((s) => s.id), cursors, now);

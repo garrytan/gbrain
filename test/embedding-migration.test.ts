@@ -43,6 +43,7 @@ import { invalidateStaleSignatureEmbeddingsGuarded } from '../src/core/embedding
 import { estimateCostFromChars } from '../src/core/embedding-pricing.ts';
 import { AUDIT_ROW_SOURCES } from '../src/core/facts/audit-sources.ts';
 import { operations } from '../src/core/operations.ts';
+import { assertRetainedEmbeddingRebuildability } from '../src/core/embedding-migration-retention.ts';
 
 let engine: PGLiteEngine;
 let colDim: number;
@@ -655,6 +656,14 @@ describe('#4305 false target stamps + #4306 embed_skip-safe invalidation', () =>
     });
     expect(after.details.db_plane_ok).toBe(true);
     expect(after.blockers.filter(b => b.startsWith('database config'))).toEqual([]);
+  });
+
+  test('#10231: only a label without any provider counts as the target model; another provider still clears companion vectors', async () => {
+    await engine.setConfig('embedding_model', 'openai:text-embedding-3-small');
+    const clears = (model: string, from: string) => engine.transaction(tx => assertRetainedEmbeddingRebuildability(tx, colDim, model, { from_model: from, from_dims: colDim }));
+    expect(await clears('litellm:openai:text-embedding-3-small', 'openai:text-embedding-3-small')).toBe(true);
+    await engine.setConfig('embedding_model', 'text-embedding-3-small');
+    expect(await clears('openai:text-embedding-3-small', 'text-embedding-3-small')).toBe(false);
   });
 
   test('#4306: verify reports embed_skip NULL chunks without blocking completion', async () => {

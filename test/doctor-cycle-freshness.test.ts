@@ -277,6 +277,12 @@ describe('doctor checkCycleFreshness', () => {
       expect(result.status).toBe('fail');
       expect(result.message).toContain("'stale-example' last cycled 72h ago");
       expect((result as { details?: unknown }).details).toBeUndefined();
+
+      // An instant of the listing's shape on a day the calendar lacks is ignored the same way.
+      await engine.executeRaw(`UPDATE sources SET config = config || '{"last_source_cycle_window_at":"2026-02-30T00:00:00.000000Z"}'::jsonb WHERE id = 'corrupt-example'`);
+      const impossible = await checkCycleFreshness(engine, { nowMs: NOW });
+      expect(impossible.status).toBe('fail');
+      expect(impossible.message).toContain("'stale-example' last cycled 72h ago");
     });
   });
 });

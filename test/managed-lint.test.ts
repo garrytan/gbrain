@@ -218,6 +218,14 @@ test('managed directory lint skips files managed sync never imports; a single-fi
       expect(await scanned('drafts')).toBe(0);
       expect(await scanned('skills')).toBe(0);
       expect(await scanned('notes')).toBe(2);
+      // The root is the source's active binding on this host, even when sources.local_path is unset (a managed default source).
+      const setLocalPath = (path: string | null) => engine.transaction(async tx => {
+        await tx.executeRaw('SET LOCAL session_replication_role = replica');
+        await tx.executeRaw('UPDATE sources SET local_path=$2 WHERE id=$1', [sourceId, path]);
+      });
+      await setLocalPath(null);
+      expect(await scanned('.')).toBe(3);
+      await setLocalPath(root);
       // The source's own strategy decides: a code source imports no Markdown.
       await engine.executeRaw(`UPDATE sources SET config = config || '{"strategy":"code"}'::jsonb WHERE id=$1`, [sourceId]);
       expect(await scanned('.')).toBe(0);
