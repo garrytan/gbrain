@@ -66,6 +66,7 @@ mod pages;
 mod publication_journal;
 mod reflex_reads;
 mod retrieval_feedback;
+mod restore;
 mod search;
 mod seed;
 mod session_state;

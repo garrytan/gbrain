@@ -36,6 +36,7 @@ import type { Action } from '../agent-output.ts';
 import { parseFactsFence } from '../facts-fence.ts';
 import { importFile } from '../import-file.ts';
 import { movePageIdReferences } from '../page-state/rename-alias.ts';
+import { withTrustKeep } from '../persistence/context.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { loadApprovedSet, previewChangedError, previewHash, retireAfterLastItem, saveApprovedSet } from '../persistence/preview-approval.ts';

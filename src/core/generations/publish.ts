@@ -142,6 +142,15 @@ export async function heldForInput(engine: BrainEngine, key: GenerationKey, pin:
   return rows.some(row => row.hold_id === holdIdFor(key, pin, config, row.item_set_hash, row.held_reason as HeldReason));
 }
 
+/** The hold ids of `kind` that `heldForInput` still matches (same input pin and current policy), for backlogs that leave those items out (#10270). */
+export async function currentHoldIds(engine: BrainEngine, kind: string): Promise<string[]> {
+  const config = await readGenerationsConfig(engine);
+  const rows = await engine.executeRaw<{ source_id: string; owner_key: string; input_pin: string; hold_id: string; item_set_hash: string; held_reason: string }>(
+    `SELECT source_id, owner_key, input_pin, hold_id, item_set_hash, held_reason FROM derived_generations WHERE kind=$1 AND state='held' AND input_pin IS NOT NULL`, [kind]);
+  return rows.filter(row => row.hold_id === holdIdFor({ kind, sourceId: row.source_id, ownerKey: row.owner_key }, row.input_pin, config, row.item_set_hash, row.held_reason as HeldReason))
+    .map(row => row.hold_id);
+}
+
 /**
  * Counts one terminal failure of this hold identity (a fenced producer is not a failure of the result, so it is not
  * counted); the third holds the result `attempts_exhausted` with the last three error codes. Only codes are stored.

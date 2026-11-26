@@ -14,6 +14,7 @@
  */
 import type { BrainEngine } from '../../core/engine.ts';
 import { moveSlugBindings } from '../../core/page-state/rename-alias.ts';
+import { withTrustKeep } from '../../core/persistence/context.ts';
 import { maintenanceTransaction } from '../../core/persistence/attribution.ts';
 import { randomUUID } from 'node:crypto';
 import { lockedBeliefBatch } from '../../core/belief/writers.ts';

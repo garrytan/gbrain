@@ -39,7 +39,7 @@ from its last line; never raise the cap.
 | [Core Ai (continued)](key-files/core-ai-continued.md) | `src/core/ai/providers/*`, `recipes/*`, `voyage-gateway.ts` |
 | [Core Decide](key-files/core-decide.md) | `src/core/ai/decide/*`, `src/core/search/decide-stage.ts`, `gbrain decide`, `decide_health` (System One) |
 | [Core Questions](key-files/core-questions.md) | Pinned questions: `src/core/questions/*`, `gbrain questions`, `standing_questions` |
-| [Core Cycle](key-files/core-cycle.md) | `src/core/cycle/anomaly.ts` through `phase-table.ts`: atoms, facts, drains, probes, phase scope |
+| [Core Cycle](key-files/core-cycle.md) | `cycle/anomaly.ts` through `unindexed-files.ts`: atoms, facts, drains, probes, phase scope |
 | [Core Cycle (continued)](key-files/core-cycle-continued.md) | synthesis postprocess |
 | [Core Cycle (patterns)](key-files/core-cycle-patterns.md) | patterns, drift, synthesis |
 | [Core Minions (1/2)](key-files/core-minions-1.md) | `src/core/minions/` through `src/core/minions/protected-names.ts` |

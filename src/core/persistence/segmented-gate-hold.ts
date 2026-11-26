@@ -13,6 +13,7 @@ import { VERSION } from '../../version.ts';
 import { SEGMENTED_WRITER_WINDOW_DAYS } from '../page-body/limits.ts';
 import type { BrainEngine } from '../engine.ts';
 import { compareWriterVersions, segmentedGateEvidence, writerVersionBelowFloor, type SegmentedGateWriter } from './writer-versions.ts';
+import type { BrainEngine } from '../engine.ts';
 
 /** `blockers` without those that are `self`'s superseded pre-upgrade writes; reads the gate evidence only when one could be. */
 export async function liveSegmentedBlockers(engine: Pick<BrainEngine, 'readSegmentedGateEvidence'>, blockers: SegmentedGateWriter[], self: string | null): Promise<SegmentedGateWriter[]> {

@@ -10,6 +10,8 @@ import { readFix } from '../ops/op-fix.ts';
 import type { RawSqlEngine } from './model.ts';
 import type { BrainEngine } from '../engine.ts';
 import { MANAGED_MODE_SQL, MANAGED_MODE_ROWS_JSON_SQL } from '../engine-sql/persistence-state.ts';
+import type { RawSqlEngine } from './model.ts';
+import type { BrainEngine } from '../engine.ts';
 
 // The statements live with the engine's typed persistence-state reads (`engine-sql/persistence-state.ts`); every plain reader sends them unchanged.
 export { MANAGED_MODE_SQL, MANAGED_MODE_ROWS_JSON_SQL };

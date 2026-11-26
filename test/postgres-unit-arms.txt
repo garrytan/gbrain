@@ -902,6 +902,7 @@ test/managed-atom-release-resume-9079-9275.test.ts
 test/managed-cycle-pull-upstream.test.ts
 test/managed-facts-withdrawal-recovery-6506.test.ts
 test/managed-facts-withdrawn-skip-6506.test.ts
+test/managed-holding-trust-marker-10286.test.ts
 test/managed-lint.test.ts
 test/managed-maintenance-links.test.ts
 test/managed-root-aliases-7203.test.ts
@@ -1176,6 +1177,7 @@ test/refresh-retry-hint-gst1582.test.ts
 test/refresh-write-barrier.test.ts
 test/remediation-manual-only.test.ts
 test/remember-batch-entity-7432.test.ts
+test/remember-holding-trust-marker-10286.test.ts
 test/remember-pageless-entity-gst2446.test.ts
 test/remember-restated-private-2875.test.ts
 test/remember-segmented-entity-9213.test.ts
@@ -1399,6 +1401,7 @@ test/upgrade-foreign-oauth-table.test.ts
 test/url-source-origin.test.ts
 test/v273-validate-timeouts.test.ts
 test/valid-time-gbra217.test.ts
+test/value-card.test.ts
 test/vector-embedding-parity.test.ts
 test/vector-manifest-probe-bound.test.ts
 test/visibility-fail-closed-derived-writes.test.ts
