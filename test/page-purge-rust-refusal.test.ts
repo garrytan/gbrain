@@ -1,12 +1,13 @@
 /**
- * A page purge on a Rust brain refuses before it writes anything.
+ * A page purge on a Rust brain: delete_page --purge runs whole, and the retention purge refuses before it writes anything.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Protects: delete_page --purge and the retention purge on a Rust brain stop at the pre-write check
- *    (persistence/purge-path-members.ts) with the typed `engine_capability_missing` refusal that names the first listed
- *    stop and its owner lane, while the page, its versions, aliases and links, the derived page's label, the purge
- *    tombstones, the origin parks and the journal read exactly as they did before. The refusal is raised with no member
- *    that writes having been called.
+ *  - Protects: delete_page --purge has no stop left on a Rust brain (every member of its purge path is served, so
+ *    purgePathStops lists nothing): the purge removes the page and leaves the other page as it was. The retention purge
+ *    still stops at the pre-write check (persistence/purge-path-members.ts) with the typed `engine_capability_missing`
+ *    refusal that names its first listed stop, releaseStaleHolds (persistence/derived-origin-hold.ts, owner lane 13),
+ *    while the tombstone, the origin parks and the journal read exactly as they did before. The refusal is raised with no
+ *    member that writes having been called.
  *  - Regression: the purge went on past the first raw-SQL site, so a refusal that came later (the generation-ledger
  *    scrub, the receipt reads) could land after the page was already deleted.
  *  - Why existing coverage misses it: test/engine-parity/delete-page.test.ts compares only the page and its digest, and
@@ -80,39 +81,28 @@ describe('a page purge on a Rust brain refuses before any write', () => {
     removeBrainDir(brain.dir);
   });
 
-  rustRun('delete_page --purge names the first stop and its owner and leaves every read as it was', async () => {
+  rustRun('delete_page --purge has no stop on a Rust brain: it removes the page and leaves the other page as it was', async () => {
     const engine = brain!.engine as unknown as BrainEngine;
     const ctx = localCtx(engine);
     const put = (slug: string, content: string) => operationsByName.put_page!.handler(ctx, { slug, content, request_id: randomUUID() });
     await put('notes/keeper', page('keeper', [], 'Keeper notes about the harbor.'));
     await put('notes/doomed', page('doomed', ['aliases: [Doomed Alias]', 'visibility: private'], 'First draft about the harbor.'));
-    await put('notes/doomed-digest', page('doomed digest', ['derived_from: notes/doomed.md'], 'A digest of the doomed page.'));
     await engine.createVersion('notes/doomed', { sourceId: SRC });
     await engine.addLink('notes/doomed', 'notes/keeper', 'the doomed page cites the keeper', 'mentions');
     await engine.addLink('notes/keeper', 'notes/doomed', 'the keeper cites the doomed page', 'mentions');
-    const slugs = ['notes/doomed', 'notes/doomed-digest', 'notes/keeper'];
-    const ids = [Number((await engine.getPage('notes/doomed', { sourceId: SRC }) as unknown as R).id), Number((await engine.getPage('notes/doomed-digest', { sourceId: SRC }) as unknown as R).id)];
-    // Stop the resident consumer the setup writes started, so no background compaction moves a counter during the case.
+    const ids = [Number((await engine.getPage('notes/doomed', { sourceId: SRC }) as unknown as R).id)];
     await disposePersistenceConsumer(engine);
-    const before = await readsOf(engine, slugs, ids);
-    expect((before['notes/doomed'] as R).page).toMatchObject({ deleted: false });
-    expect((before['notes/doomed'] as R).versions).toBe(1);
+    const keeperBefore = (await readsOf(engine, ['notes/keeper'], ids))['notes/keeper'] as R;
 
-    const [first] = await purgePathStops(engine);
-    expect(first).toBeDefined();
-    const calls: string[] = [];
+    expect(await purgePathStops(engine)).toEqual([]);
     const snapshot = await engine.readPageSnapshot('notes/doomed', { sourceId: SRC });
-    const refusal = await operationsByName.delete_page!.handler({ ...ctx, engine: recording(engine, calls) } as OperationContext,
-      { slug: 'notes/doomed', purge: true, request_id: randomUUID(), expected_revision: snapshot?.revision }).then(() => null, (error: unknown) => error as { code?: string; message?: string; detail?: string });
+    await operationsByName.delete_page!.handler(ctx, { slug: 'notes/doomed', purge: true, request_id: randomUUID(), expected_revision: snapshot?.revision });
+    await disposePersistenceConsumer(engine);
 
-    expect(refusal?.code).toBe('engine_capability_missing');
-    const text = `${refusal?.message ?? ''} ${refusal?.detail ?? ''}`;
-    expect(text).toContain(first!.name);
-    expect(text).toContain(first!.owner);
-    expect(text).toContain('nothing ran');
-    expect(text).toContain('written=nothing');
-    expect(calls.filter(call => WRITES.includes(call))).toEqual([]);
-    expect(await readsOf(engine, slugs, ids)).toEqual(before);
+    const after = await readsOf(engine, ['notes/doomed', 'notes/keeper'], ids);
+    expect(after['notes/doomed']).toMatchObject({ page: null, versions: 0, aliases: [], links: [], backlinks: [], tombstones: 1 });
+    // The keeper loses only its link to the purged page; its page, versions and aliases read as before.
+    expect(after['notes/keeper']).toEqual({ ...keeperBefore, links: [], backlinks: [] });
   }, 120_000);
 
   rustRun('the retention purge refuses at the same check and leaves the tombstone and the journal as they were', async () => {
@@ -137,11 +127,10 @@ describe('a page purge on a Rust brain refuses before any write', () => {
     expect(await readsOf(engine, ['notes/expired'], [id])).toEqual(before);
   }, 120_000);
 
-  test('the first stop of each entry point is on the list with an owner', async () => {
-    const stops = [(await purgePathStops({ kind: 'rust' }))[0], (await purgePathStops({ kind: 'rust' }, 'retention'))[0]];
-    for (const stop of stops) {
-      expect(stop?.owner).toMatch(/^lane \d+/);
-      expect(PURGE_PATH.map(purgeEntryName)).toContain(stop!.name);
-    }
+  test('delete_page has no stop on a Rust brain, and the retention purge stops first at releaseStaleHolds, owned by lane 13', async () => {
+    expect(await purgePathStops({ kind: 'rust' })).toEqual([]);
+    const [first] = await purgePathStops({ kind: 'rust' }, 'retention');
+    expect({ name: first?.name, owner: first?.owner }).toEqual({ name: 'releaseStaleHolds (persistence/derived-origin-hold.ts)', owner: 'lane 13' });
+    expect(PURGE_PATH.map(purgeEntryName)).toContain(first!.name);
   });
 });
