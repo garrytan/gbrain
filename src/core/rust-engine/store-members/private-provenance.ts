@@ -334,6 +334,10 @@ function storeMemberReadPolicyRendered(member: string, q: { owner: boolean; iden
  * text always renders the full form, so it decides this when the other is the short form.
  */
 export function storeOwnerReachPolicy(member: string, q: { identity: readonly string[]; satisfied: readonly string[] }): StorePrivacyPolicy {
+  return selfChecked(member, { mode: 'owner_reach', identity: [...q.identity], satisfied: [...q.satisfied] }, () => storeOwnerReachPolicyRendered(member, q));
+}
+
+function storeOwnerReachPolicyRendered(member: string, q: { identity: readonly string[]; satisfied: readonly string[] }): StorePrivacyPolicy {
   const access = currentCallerAccess();
   const open = access.restricted === false;
   const folderCoverage = access.folderCoverage.map(c => ({ source_id: c.source_id, prefix: c.prefix }));

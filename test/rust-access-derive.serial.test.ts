@@ -26,7 +26,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { rustArmAddonPath } from './engine-parity/rust-arm.ts';
 import { plainPageFlags } from '../src/core/rust-engine/store-members/private-provenance.ts';
 import { memberAccessPolicy, openPageFloorPolicy, rowOwnerOnly, snapshotServed, writerPolicy } from '../src/core/rust-engine/store-members/access-policies.ts';
-import { retirementHopPolicy } from '../src/core/rust-engine/store-members/private-provenance.ts';
+import { retirementHopPolicy, storeOwnerReachPolicy } from '../src/core/rust-engine/store-members/private-provenance.ts';
 
 const ADDON = rustArmAddonPath();
 let derive: (ctx: unknown) => unknown;
@@ -195,6 +195,9 @@ function cases(): Case[] {
   }
   out.push({ request: { mode: 'member_access_policy', satisfied: ['wiki:team'] }, run: () => memberAccessPolicy(null, ['wiki:team']) });
   for (const w of WRITERS) out.push({ request: { mode: 'writer_policy', policy: w }, run: () => writerPolicy(w) });
+  for (const q of MEMBER_READS) {
+    out.push({ request: { mode: 'owner_reach', identity: q.identity, satisfied: q.satisfied }, run: () => storeOwnerReachPolicy('m', q) });
+  }
   for (const r of SNAPSHOT_READERS) {
     out.push({ request: { mode: 'snapshot_policy', ...r }, run: () => snapshotServed('m', r) });
   }
@@ -317,10 +320,10 @@ describe('store access derivation equals the TypeScript policy helpers', () => {
       }
     }
     for (const mode of ['page_text', 'fact', 'floor_policy', 'member_read', 'member_access', 'remote_floor', 'visibility',
-      'plain_page_flags', 'open_page_floor', 'access_part_plain', 'row_owner_only', 'member_access_policy', 'writer_policy', 'snapshot_policy']) {
+      'plain_page_flags', 'open_page_floor', 'access_part_plain', 'row_owner_only', 'member_access_policy', 'writer_policy', 'snapshot_policy', 'owner_reach']) {
       expect({ mode, value: seen.get(mode)?.has('value') }).toEqual({ mode, value: true });
     }
-    for (const mode of ['open_page_floor', 'access_part_plain', 'writer_policy', 'snapshot_policy']) {
+    for (const mode of ['open_page_floor', 'access_part_plain', 'writer_policy', 'snapshot_policy', 'owner_reach']) {
       expect({ mode, refuse: seen.get(mode)?.has('refuse') }).toEqual({ mode, refuse: true });
     }
     for (const mode of ['page_text', 'fact', 'floor_policy', 'member_read', 'member_access', 'remote_floor', 'visibility']) {
