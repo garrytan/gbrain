@@ -221,8 +221,11 @@ describe('OAuth flows through the split modules', () => {
     const second = await refreshed.json() as { access_token: string; refresh_token: string };
     expect(second.access_token).not.toBe(first.access_token);
     expect((await mcpResult(app, second.access_token, 'tools/list')).tools.length).toBeGreaterThan(0);
+    // #9364: inside the grace window the same client resending the rotated token gets the pair already minted, not a new one.
     const reused = await token({ grant_type: 'refresh_token', refresh_token: first.refresh_token, client_id: clientId });
-    expect(reused.status).toBe(400);
+    expect(reused.status).toBe(200);
+    const resent = await reused.json() as { access_token: string; refresh_token: string };
+    expect({ access: resent.access_token, refresh: resent.refresh_token }).toEqual({ access: second.access_token, refresh: second.refresh_token });
   });
 
   test('/mcp rejects a token bound to a different resource before dispatch', async () => {

@@ -1,6 +1,6 @@
 {
   "golden": {
-    "count": 333,
+    "count": 334,
     "gaps": [
       17,
       18,
@@ -112,7 +112,7 @@
       "widenIdentityIndex": "86a6176bd7637d964dbc1d3cd3b1bdfa3ca0161e1ee248c37d7380a1471282e6",
       "withSchemaLockTimeout": "95605bd3004955e11e936c7a4aa6889319b401098abf9db18ef3e48da2c3fc59"
     },
-    "latest": 338,
+    "latest": 339,
     "records": [
       {
         "handler": {
@@ -5513,6 +5513,19 @@
       {
         "handler": "absent",
         "idempotent": true,
+        "name": "oauth_refresh_rotations",
+        "sql": {
+          "length": 1068,
+          "sha256": "9406039c9a23a8e1d2fe8d266c2b773e25e3b6c7d7c1a4f195d826359b02d1ae"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 338
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
         "name": "engine_writer_observations_write_protocol",
         "sql": {
           "length": 95,
@@ -5521,7 +5534,7 @@
         "sqlFor": "absent",
         "transaction": "absent",
         "verify": "absent",
-        "version": 338
+        "version": 339
       }
     ],
     "versions": [
@@ -5857,7 +5870,8 @@
       335,
       336,
       337,
-      338
+      338,
+      339
     ]
   },
   "normalizer": "migrations-record-v1"

@@ -10,6 +10,7 @@
  * shapes, and `withConnectorSync` / `beginConnectorSync` take the unmanaged
  * path (and write the attempt checkpoint) on an empty read.
  */
+import { JOURNAL_LIMITS_SQL } from '../src/core/persistence/limits.ts';
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
@@ -31,7 +32,8 @@ type FakeEngine = SqlEngine & Pick<BrainEngine, 'readManagedModeRows' | 'getSour
 function fake(rows: readonly unknown[] | Error, seen: string[] = []): FakeEngine {
   const read = async (sql: string) => { seen.push(sql); if (rows instanceof Error) throw rows; return rows as unknown[]; };
   // The typed reads the import guard uses answer the same rows (and the same error) the raw statement does.
-  return { executeRaw: read, readManagedModeRows: () => read('SELECT enabled FROM persistence_brain WHERE singleton=1'), getSourceStrictness: async () => false } as unknown as FakeEngine;
+  return { executeRaw: read, readManagedModeRows: () => read('SELECT enabled FROM persistence_brain WHERE singleton=1'),
+    readJournalLimitRows: () => read(JOURNAL_LIMITS_SQL), getSourceStrictness: async () => false } as unknown as FakeEngine;
 }
 
 describe('readManagedMode', () => {

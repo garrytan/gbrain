@@ -9,8 +9,8 @@ import type { Migration } from './types.ts';
 // unknown writer path. Additive and nullable, no default and no backfill: adding a nullable column without a default changes only the catalog
 // (no table rewrite, no long lock), and an older binary names its insert columns, so it keeps working and leaves the column NULL. The Rust
 // store does not copy this table (it is machine-local and starts empty there), so no Rust store format changes.
-export const v338: Migration = {
-  version: 338,
+export const v339: Migration = {
+  version: 339,
   name: 'engine_writer_observations_write_protocol',
   // Re-running must be safe: CREATE ... IF NOT EXISTS / ADD COLUMN IF NOT EXISTS.
   idempotent: true,

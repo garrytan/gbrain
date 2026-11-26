@@ -282,6 +282,7 @@ test/openclaw-plugin-manifest.test.ts	bundled-skill reference closure (nothing b
 test/openclaw-plugin-manifest.test.ts	plugin membership curation (skills = plugin ∪ exclusions, disjoint)	9	readFileSync
 test/openclaw-plugin-manifest.test.ts	root OpenClaw plugin manifest	2	readFileSync
 test/openclaw-route.test.ts	OpenClaw route	4	readFileSync
+test/openclaw-skill-plugin.test.ts	(file-level)	66	readFileSync
 test/owner-widening-census-gst3058.test.ts	(file-level)	1	exec-scan
 test/page-embedding-budget-statements.test.ts	the ledger grant statement writes out page-spend.ts\'s reservation text	1	readFileSync
 test/paid-lanes-switch-5903.test.ts	#5903 e2e-status accepts a skipped tier2 only under GBRAIN_PAID_LANES=0	9	readFileSync

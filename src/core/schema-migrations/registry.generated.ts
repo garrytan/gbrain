@@ -338,7 +338,8 @@ import { v334 } from './v334-learning-items.ts';
 import { v335 } from './v335-pages-spelling-key-index.ts';
 import { v336 } from './v336-files-follow-page-slug.ts';
 import { v337 } from './v337-write-gate-hold-rechecks.ts';
-import { v338 } from './v338-engine-writer-observations-write-protocol.ts';
+import { v338 } from './v338-oauth-refresh-rotations.ts';
+import { v339 } from './v339-engine-writer-observations-write-protocol.ts';
 
 // Array order is historical (see HISTORICAL_ARRAY_ORDER in the generator); the
 // runner sorts by version before applying.
@@ -676,4 +677,5 @@ export const MIGRATIONS: Migration[] = [
   v336,
   v337,
   v338,
+  v339,
 ];
