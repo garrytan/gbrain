@@ -133,7 +133,7 @@ pub const REASON_TOMBSTONE: u8 = b'1';
 /// Family `secret_store` (`secret_store.rs`): the `secret_store` entries and the `secret_store_occurrence` rows. The byte
 /// after the tag names the record (`ENTRY`, `BY_MAC`, `BY_ENTRY`, `OCCURRENCE`, `BY_SLUG`, `BY_PAGE` in that module).
 /// The digit `3`: every letter is taken or reserved across the lanes (`x` by `ACCESS_MEMBERS`, `y` by
-/// `SESSION_STATE`), and `0` and `1` are `GUEST_SOURCE` and `REASON_TOMBSTONE`; `2` is left free on purpose.
+/// `SESSION_STATE`), and `1` is `REASON_TOMBSTONE`; `0` (released by the guest-source claim) and `2` are free.
 pub const SECRET_STORE: u8 = b'3';
 
 // The one-byte tag space is nearly full (docs/designs/RUST_ENGINE_INTERFACES.md, "Tag registry"). A digit `4`-`9`

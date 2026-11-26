@@ -267,7 +267,7 @@ branch, and the reserved ones, with the owner who claimed it. The rules:
 | `~` | `FAMILY_ESCAPE` | core | main once this lands: the escape for two-byte family tags |
 | `~e` | `PAGE_EXTRACTION_STATE` | lane 8 (rust-members-tail) | branch rust-engine/rust-members-tail: the `page_extraction_state` family (the extraction watermark and partial-input receipt of a page); a hard page delete removes the page's rows; the tag `2` stays free |
 
-Free one-byte tags: the digits `4` to `9` (approved rows only) and punctuation other than `~`, which stays unclaimed
+Free one-byte tags: the digit `0` (released: the guest-source claim of rust-engine/collate-equal did not land, and guest sources stay refused on Rust), the digits `4` to `9` (approved rows only) and punctuation other than `~`, which stays unclaimed
 unless a reviewed change to this table names it.
 
 `rust/crates/gbrain-store/tests/keys_registry.rs` fails when two constants of `keys.rs` take one tag byte (or one
