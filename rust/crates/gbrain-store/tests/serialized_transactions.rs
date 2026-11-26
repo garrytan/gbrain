@@ -223,6 +223,34 @@ fn select_claimable_effect_refuses_on_a_store_that_does_not_serialize() {
 }
 
 #[test]
+fn claim_coalesced_git_effects_refuses_on_a_store_that_does_not_serialize() {
+    let (_dir, store) = unserialized_store();
+    refuses(&store, "claimCoalescedGitEffects", |s| {
+        s.claim_coalesced_git_effects(&args(json!({
+            "hostId": "00000000-0000-0000-0000-000000000000",
+            "worktreeId": "00000000-0000-0000-0000-000000000000",
+            "limit": 1, "deadOwners": [], "ownerJson": "{}",
+        })))
+    });
+}
+
+#[test]
+fn lock_held_concept_refuses_on_a_store_that_does_not_serialize() {
+    let (_dir, store) = unserialized_store();
+    refuses(&store, "lockHeldConcept", |s| {
+        s.lock_held_concept(1, "default", "concepts/a", "1", "owed-page-purge")
+    });
+}
+
+#[test]
+fn lock_live_concept_members_refuses_on_a_store_that_does_not_serialize() {
+    let (_dir, store) = unserialized_store();
+    refuses(&store, "lockLiveConceptMembers", |s| {
+        s.lock_live_concept_members("default", &[])
+    });
+}
+
+#[test]
 fn select_claimable_write_refuses_on_a_store_that_does_not_serialize() {
     let (_dir, store) = unserialized_store();
     refuses(&store, "selectClaimableWrite", |s| {
@@ -452,6 +480,19 @@ fn calls_on_a_normal_store(store: Store) {
     accepts(&store, "selectClaimableWrite", |s| {
         s.select_claimable_write(&gbrain_store::persistence::ClaimableSpec::default())
     });
+    accepts(&store, "claimCoalescedGitEffects", |s| {
+        s.claim_coalesced_git_effects(&args(json!({
+            "hostId": "00000000-0000-0000-0000-000000000000",
+            "worktreeId": "00000000-0000-0000-0000-000000000000",
+            "limit": 1, "deadOwners": [], "ownerJson": "{}",
+        })))
+    });
+    accepts(&store, "lockHeldConcept", |s| {
+        s.lock_held_concept(1, "default", "concepts/a", "1", "owed-page-purge")
+    });
+    accepts(&store, "lockLiveConceptMembers", |s| {
+        s.lock_live_concept_members("default", &[])
+    });
     accepts(&store, "lockEffectClaimRow", |s| s.lock_effect_claim_row(1));
     accepts(&store, "lockEffectRow", |s| s.lock_effect_row("1"));
     accepts(&store, "lockNoopEmbeddingWindow", |s| {
@@ -577,4 +618,4 @@ fn the_cases_above_are_exactly_the_sites_in_the_source() {
     assert_eq!(in_source.len(), SITE_COUNT);
 }
 
-const SITE_COUNT: usize = 32;
+const SITE_COUNT: usize = 35;

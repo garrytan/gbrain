@@ -1164,6 +1164,129 @@ fn select_claimable_effect_never_hands_one_effect_to_two_claimants() {
     assert_eq!((won, next, none), (ids[0].clone(), ids[1].clone(), None));
 }
 
+/// `claimCoalescedGitEffects` (`FOR UPDATE SKIP LOCKED` in SQL): two claimers of one worktree's ready
+/// Git effects never take one effect. Both read the same candidate, so the loser's commit refuses
+/// `write_conflict` (the effect it stamped was read through its handle); its rerun claims the next
+/// effect and a third claim finds none.
+#[test]
+fn claim_coalesced_git_effects_never_hands_one_effect_to_two_claimants() {
+    row_of(
+        "claimCoalescedGitEffects",
+        Guarantee::ReadSet,
+        "claim_coalesced_git_effects_never_hands_one_effect_to_two_claimants",
+    );
+    const WORKTREE: &str = "f0000000-0000-4000-8000-0000000000a1";
+    let b = brain("mu-claim-coalesced");
+    b.insert_worktree(&args(
+        json!({ "id": WORKTREE, "ownerHostId": HOST, "state": "active" }),
+    ))
+    .unwrap();
+    let mut ids = Vec::new();
+    for (request, slug) in [(REQ_1, "notes/a"), (REQ_2, "notes/b")] {
+        let id = admit(&b, request, slug, "put_page");
+        let spec: gbrain_store::persistence::PublicationEffectsSpec = args(json!({
+            "requestId": id, "revision": "e0000000-0000-4000-8000-0000000000e1", "sourceId": "default",
+            "sourceIncarnation": incarnation(&b, "default"), "worktreeId": WORKTREE,
+            "effects": [{ "kind": "git", "data": { "relative_path": format!("{slug}.md") } }],
+        }));
+        b.insert_publication_effects(&spec).unwrap();
+        ids.push(effect_ids(&b, &id).remove(0));
+    }
+    let claim = |s: &Store| -> Option<String> {
+        let rows = s
+            .claim_coalesced_git_effects(&args(json!({
+                "hostId": HOST, "worktreeId": WORKTREE, "limit": 1, "deadOwners": [],
+                "ownerJson": "{\"pid\":7}",
+            })))
+            .unwrap();
+        assert!(rows.len() <= 1, "limit 1 claims at most one effect");
+        rows.first()
+            .map(|row| row["id"].as_str().unwrap().to_string())
+    };
+    let (won, next, none) = two_claimants(&b, "claimCoalescedGitEffects", |s, _| claim(s));
+    assert_eq!((won, next, none), (ids[0].clone(), ids[1].clone(), None));
+    for id in &ids {
+        let row = b.lock_effect_row(id).unwrap().unwrap();
+        assert_eq!(row["state"], "running");
+        assert_eq!(row["attempts"], 1, "each effect was claimed once");
+    }
+}
+
+const OWED: &str = "owed-page-purge";
+
+/// A held concept: a synthesized concept tombstone whose re-derive mark is open at its own delete.
+fn hold_concept(b: &Brain, slug: &str, id: u64) -> String {
+    let input: PageInput = args(
+        json!({ "type": "concept", "title": slug, "compiled_truth": "narrative",
+        "frontmatter": { "synthesized_by": "synthesize_concepts:v1" } }),
+    );
+    b.put_page(slug, &input, &PutPageOptions::default())
+        .unwrap();
+    b.soft_delete_page(slug, Some("default")).unwrap();
+    b.mark_needs_rederive(&args(json!({ "table": "pages", "ids": [id.to_string()],
+        "sourceId": "default", "requestId": null, "reason": "input_purged",
+        "hiddenNow": [id.to_string()] })))
+        .unwrap();
+    b.read_held_concept(id as i64, OWED)
+        .unwrap()
+        .expect("the concept is held")
+        .deleted_us
+}
+
+/// `lockHeldConcept` (`FOR UPDATE` on the tombstone in SQL): whether the tombstone is still held at its
+/// delete instant. The held predicate is read through the handle (page, re-derive mark, owed-purge
+/// checkpoint), so an owner purge that becomes owed before the commit refuses it; the rerun answers false.
+#[test]
+fn lock_held_concept_refuses_when_the_hold_ended() {
+    row_of(
+        "lockHeldConcept",
+        Guarantee::ReadSet,
+        "lock_held_concept_refuses_when_the_hold_ended",
+    );
+    let b = brain("mu-held-concept");
+    let deleted = hold_concept(&b, "concepts/held", 1);
+    let (before, after) = proves_read_set(
+        &b,
+        "lockHeldConcept",
+        |s| s.lock_held_concept(1, "default", "concepts/held", &deleted, OWED),
+        |b| {
+            b.insert_op_checkpoint_if_absent(OWED, "1", &json!([]))
+                .unwrap();
+        },
+    );
+    assert_eq!((before, after), (true, false));
+}
+
+/// `lockLiveConceptMembers` (`FOR SHARE` on the member pages in SQL): how many members are live at the
+/// revision the rebuild read. Each member page is read through the handle, so a member rewritten before the
+/// commit refuses it; the rerun counts the member no longer at that revision.
+#[test]
+fn lock_live_concept_members_refuses_when_a_member_changed() {
+    row_of(
+        "lockLiveConceptMembers",
+        Guarantee::ReadSet,
+        "lock_live_concept_members_refuses_when_a_member_changed",
+    );
+    let b = brain("mu-concept-members");
+    let revision = put_page(&b, "notes/m1", "one")["knowledge_revision"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let members = [gbrain_store::concept_rebuild::MemberRevision {
+        slug: "notes/m1".into(),
+        revision,
+    }];
+    let (before, after) = proves_read_set(
+        &b,
+        "lockLiveConceptMembers",
+        |s| s.lock_live_concept_members("default", &members),
+        |b| {
+            put_page(b, "notes/m1", "two");
+        },
+    );
+    assert_eq!((before, after), (1, 0));
+}
+
 /// `lockNoopEmbeddingWindow` (`FOR UPDATE SKIP LOCKED` in SQL): two settlers of the window never settle
 /// one effect; the loser refuses and its rerun's window holds the next effect.
 #[test]

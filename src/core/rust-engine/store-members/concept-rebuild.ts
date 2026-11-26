@@ -21,11 +21,12 @@ export const readHeldConcept: StoreMember<[pageId: number], { deleted_us: string
 export const isConceptStillHeld: StoreMember<[pageId: number, deletedUs: string], boolean> = async (brain, pageId, deletedUs) =>
   await storeCall({ member: 'isConceptStillHeld' }, () => brain.isConceptStillHeld(pageId, deletedUs, OWED_PURGE_OP)) === true;
 
-/** The store has one writer at a time, so the SQL's `FOR UPDATE` takes no lock here. */
+/** The SQL's `FOR UPDATE` is skipped while explicit transactions hold the writer (`serialized_transactions`); the store fn (concept_rebuild.rs `lock_held_concept`) asserts that and is the read. */
 export const lockHeldConcept: StoreMember<[pageId: number, sourceId: string, slug: string, deletedUs: string], boolean> =
   async (brain, pageId, sourceId, slug, deletedUs) =>
     await storeCall({ member: 'lockHeldConcept', slug, sourceId }, () => brain.lockHeldConcept(pageId, sourceId, slug, deletedUs, OWED_PURGE_OP)) === true;
 
+/** The SQL's `FOR SHARE` is skipped the same way; the store fn (`lock_live_concept_members`) asserts and is the read. */
 export const lockLiveConceptMembers: StoreMember<[sourceId: string, members: ReadonlyArray<{ slug: string; revision: string }>], number> =
   async (brain, sourceId, members) => {
     if (!members.length) return 0;

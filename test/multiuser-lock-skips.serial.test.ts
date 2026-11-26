@@ -37,6 +37,7 @@ import * as persistence from '../src/core/rust-engine/store-members/persistence.
 import * as publicationJournal from '../src/core/rust-engine/store-members/publication-journal.ts';
 import * as repairApplies from '../src/core/rust-engine/store-members/repair-applies.ts';
 import * as sharedSkillMembers from '../src/core/rust-engine/store-members/shared-skill-members.ts';
+import * as topologyStore from '../src/core/rust-engine/store-members/topology-store.ts';
 import * as transactionsMembers from '../src/core/rust-engine/store-members/transactions.ts';
 import * as worktreeClaim from '../src/core/rust-engine/store-members/worktree-claim.ts';
 import * as writerAdmin from '../src/core/rust-engine/store-members/writer-admin.ts';
@@ -44,6 +45,7 @@ import * as writerRelease from '../src/core/rust-engine/store-members/writer-rel
 import { reserve, reserveGroup, readGroupSpend } from '../src/core/minions/budget-meter.ts';
 import { BudgetExceededError } from '../src/core/spend-log.ts';
 import { lockCycleUnderFence, registerHostLease } from './helpers/rust-host-fence.ts';
+import { liftManagedHold } from './engine-parity/rust-managed.ts';
 
 const TARGET = detectAddonTarget();
 // GBRAIN_TEST_RUST_ADDON overrides the built file (a build made with the Rust lock-skip rows of the same tree).
@@ -291,6 +293,67 @@ const CASES: Case[] = [
       async (tx) => (await tx.writerReleaseStore()).lockWorktreesAndSources(),
     ],
     change: (e) => e.updateSourceConfig('default', { changed: 'yes' }),
+  },
+  // ---------------------------------------------------------------- the managed topology store (the managed_persistence hold lifted on the test engine)
+  {
+    name: 'brain row: a mode change committed before the commit reruns topologyStore.lockBrain and topologyStore.shareBrain',
+    sites: ['topologyStore.lockBrain', 'topologyStore.shareBrain'],
+    setup: async (engine) => { liftManagedHold(engine); },
+    probe: [
+      async (tx) => (await tx.topologyStore()).lockBrain(),
+      async (tx) => (await tx.topologyStore()).shareBrain(),
+    ],
+    change: moveBrainMode,
+    without: async (tx) => { await tx.getConfig('lock_skips.unrelated'); },
+  },
+  {
+    name: 'worktree row: a worktree registered before the commit reruns topologyStore.lockWorktrees',
+    sites: ['topologyStore.lockWorktrees'],
+    setup: async (engine) => { liftManagedHold(engine); },
+    probe: async (tx) => (await tx.topologyStore()).lockWorktrees([WORKTREE]),
+    change: addWorktree,
+    observe: (first, second) => { expect(first).toEqual([]); expect(second).toHaveLength(1); },
+  },
+  {
+    name: 'source row: a source written before the commit reruns topologyStore.lockSources',
+    sites: ['topologyStore.lockSources'],
+    setup: async (engine) => { liftManagedHold(engine); },
+    probe: async (tx) => (await tx.topologyStore()).lockSources(['default']),
+    change: (e) => e.updateSourceConfig('default', { changed: 'yes' }),
+  },
+  {
+    name: 'principal rows: a revocation committed before the commit reruns the topology principal shares',
+    sites: ['topologyStore.sharePrincipal', 'topologyStore.shareLocalWriter'],
+    setup: async (e) => {
+      liftManagedHold(e);
+      await e.insertOauthClient({ client_id: 'client-t', client_name: 'client-t', scope: 'read' });
+      const token = (await e.insertAccessToken({ name: 'tok-t', token_hash: 'h-tok-t', scopes: ['read'], permissions: {}, source_grant: null, source_id: null,
+        federated_read: null, allowed_operations: null, takes_holders: null })).id;
+      const writer = '00000000-0000-4000-8000-0000000000a2';
+      await e.insertLocalWriterRow({ id: writer, lane: 'cli', credentialHash: 'd'.repeat(64), grant: { sourceIds: ['default'], operations: null, scopes: ['read'], slugPrefixes: null } });
+      return { client: 'client-t', token, writer };
+    },
+    probe: [
+      async (tx, c) => (await tx.topologyStore()).sharePrincipal('oauth_client', c.client),
+      async (tx, c) => (await tx.topologyStore()).sharePrincipal('legacy_token', c.token),
+      async (tx, c) => (await tx.topologyStore()).sharePrincipal('local_cli', c.writer),
+      async (tx, c) => (await tx.topologyStore()).shareLocalWriter(c.writer),
+    ],
+    change: async (e, c) => { await e.setOauthClientTokenTtl(c.client, 777); await e.revokeAccessTokenById(c.token); await e.revokeLocalWriterRow(c.writer); },
+  },
+  {
+    name: 'topology change row: a recovery cleared before the commit reruns topologyStore.lockChange and the rerun reads the cleared row',
+    sites: ['topologyStore.lockChange'],
+    setup: async (e) => {
+      liftManagedHold(e);
+      const row = await e.insertTopologyChange({ principalId: 'f0000000-0000-4000-8000-0000000000f6', requestId: 'f0000000-0000-4000-8000-0000000000f7', digest: 'e'.repeat(64),
+        operation: 'remove', sourceId: 'default', sourceIncarnation: String((await e.readSourceIncarnation('default'))!.incarnation), worktreeIds: [], state: 'recovering',
+        recovery: { step: 1 }, recoveryBytes: 12, intentBytes: 34, terminalBytes: 4096, outcome: null });
+      return row.id;
+    },
+    probe: async (tx, id) => (await (await tx.topologyStore()).lockChange(id))?.recovery,
+    change: async (e, id) => (await e.topologyStore()).clearChangeRecovery(id),
+    observe: (first, second) => { expect(first).toEqual({ step: 1 }); expect(second ?? null).toBeNull(); },
   },
   {
     name: 'worktree row: a worktree registered before the commit reruns lockWorktreesAndSources',
@@ -689,6 +752,9 @@ describe('multi-user lock skips: the guarantee that replaces the lock holds with
     }
     const thisEngine = { _seenSettings: new Set<string>() } as never;
     const store = async (factory: any, brain: StoreBrain) => (await factory.call(thisEngine, brain));
+    // topologyStore refuses every call while the managed_persistence hold is on, so its members run on an engine that serves it.
+    const managedEngine = { capabilities: new Set(['managed_persistence']) } as never;
+    const topology = async (brain: StoreBrain) => (await topologyStore.topologyStore.call(managedEngine, brain));
     const READ: Array<[member: string, calls: string[], run: (brain: StoreBrain) => Promise<unknown>]> = [
       ['lockAllSourceRows', ['listSourceRecords'], (b) => cliSources.lockAllSourceRows(b, 'update')],
       ['lockSourceForUpdate', ['readSourceWriteRow'], (b) => cliSources.lockSourceForUpdate(b, 's')],
@@ -712,6 +778,13 @@ describe('multi-user lock skips: the guarantee that replaces the lock holds with
       ['worktreeClaimStore', ['writerReleaseRows'], (b) => store(worktreeClaim.worktreeClaimStore, b)],
       ['publicationJournal.shareWorktree', ['readWorktreeOwner'], async (b) => (await store(publicationJournal.publicationJournalStore, b)).shareWorktree('w')],
       ['publicationJournal.lockSource', ['readSourceMembership'], async (b) => (await store(publicationJournal.publicationJournalStore, b)).lockSource('s')],
+      ['topologyStore.lockBrain', ['writerReleaseRows'], async (b) => (await topology(b)).lockBrain()],
+      ['topologyStore.shareBrain', ['writerReleaseRows'], async (b) => (await topology(b)).shareBrain()],
+      ['topologyStore.lockSources', ['topologyRows'], async (b) => (await topology(b)).lockSources(['s'])],
+      ['topologyStore.sharePrincipal (client)', ['readOauthClientWriteGrant'], async (b) => (await topology(b)).sharePrincipal('oauth_client', 'c')],
+      ['topologyStore.sharePrincipal (token)', ['readAccessTokenWriteGrant'], async (b) => (await topology(b)).sharePrincipal('legacy_token', '00000000-0000-4000-8000-0000000000a3')],
+      ['topologyStore.sharePrincipal (local writer)', ['readLocalWriter'], async (b) => (await topology(b)).sharePrincipal('local_cli', 'w')],
+      ['topologyStore.shareLocalWriter', ['readLocalWriter'], async (b) => (await topology(b)).shareLocalWriter('w')],
       ['declarePersistence', ['getBrainIdentity', 'writerReleaseRows'], (b) => transactionsMembers.declarePersistence.call(thisEngine, b)],
       ['lockSharedSkillBrainId', ['writerReleaseRows', 'getBrainIdentity'], (b) => sharedSkillMembers.lockSharedSkillBrainId(b)],
     ];

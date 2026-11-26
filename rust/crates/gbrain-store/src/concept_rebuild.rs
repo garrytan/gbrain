@@ -8,8 +8,9 @@
 //!
 //! Members: `readHeldConcept`, `isConceptStillHeld`, `lockHeldConcept`, `lockLiveConceptMembers`,
 //! `listLiveConceptMemberRevisions`, `listConceptIncomingLinks`, `carryConceptIncomingLinks`, `readTombstoneWindow`,
-//! `readConceptStatedKinds`, `readRebuildAccess`, `readHeldConceptRows`. The store runs one write transaction at a time,
-//! so the SQL's row locks (`FOR UPDATE`, `FOR SHARE`) are plain reads here. What each answers and where it differs:
+//! `readConceptStatedKinds`, `readRebuildAccess`, `readHeldConceptRows`. The SQL's row locks (`FOR UPDATE`, `FOR SHARE`:
+//! `lockHeldConcept`, `lockLiveConceptMembers`) are plain reads here, skipped while explicit transactions hold the
+//! writer (`serialized_transactions`); those two assert it. What each answers and where it differs:
 //! rust/docs/store/concept_rebuild.md.
 //!
 //! Keys: this family adds none. It reads page, fact, take, timeline, link, alias, file, raw-data, write-gate,
@@ -407,7 +408,9 @@ impl Store {
     }
 
     /// `lockHeldConcept(pageId, sourceId, slug, deletedUs)`: whether the tombstone at that source and slug is still
-    /// held at that delete instant. The store has one writer at a time, so `FOR UPDATE` takes no lock here.
+    /// held at that delete instant. The `FOR UPDATE` is skipped while explicit transactions hold the writer
+    /// (`serialized_transactions`), which this fn asserts; the fn is the read.
+    /// In multi-user mode it passes through its row in `lock_skips::MULTIUSER_PROVEN` (read set, `lock_held_concept_refuses_when_the_hold_ended`): a concurrent writer of what the lock protected refuses the commit `write_conflict`.
     pub fn lock_held_concept(
         &self,
         page_id: i64,
@@ -416,6 +419,7 @@ impl Store {
         deleted: &str,
         owed_op: &str,
     ) -> Result<bool> {
+        self.assert_serialized_transactions("lockHeldConcept")?;
         let id = page_u64(page_id, "lockHeldConcept")?;
         let read = self.read()?;
         Ok(held_at(&*read, id, deleted, owed_op)?
@@ -423,12 +427,15 @@ impl Store {
     }
 
     /// `lockLiveConceptMembers(sourceId, members)`: how many of `members` (each counted, repeats too) are live in the
-    /// source at the revision given (`knowledge_revision::text`).
+    /// source at the revision given (`knowledge_revision::text`). The `FOR SHARE` is skipped while explicit
+    /// transactions hold the writer (`serialized_transactions`), which this fn asserts; the fn is the read.
+    /// In multi-user mode it passes through its row in `lock_skips::MULTIUSER_PROVEN` (read set, `lock_live_concept_members_refuses_when_a_member_changed`): a concurrent writer of what the lock protected refuses the commit `write_conflict`.
     pub fn lock_live_concept_members(
         &self,
         source_id: &str,
         members: &[MemberRevision],
     ) -> Result<u64> {
+        self.assert_serialized_transactions("lockLiveConceptMembers")?;
         let read = self.read()?;
         let mut count = 0u64;
         for m in members {

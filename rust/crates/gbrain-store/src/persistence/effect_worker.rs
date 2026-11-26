@@ -206,9 +206,10 @@ pub struct CoalescedGitClaim {
 ///
 /// Guarantee (no row lock): the statement's `FOR UPDATE ... SKIP LOCKED` keeps two claimers from
 /// taking one effect. Here the read of every candidate and its stamp run in one store write
-/// transaction, so no other commit interleaves (an explicit transaction is Serialized today); under
-/// optimistic transactions the stamped rows are in the read set and a racing claim aborts with
-/// `write_conflict` instead of claiming twice.
+/// transaction. While explicit transactions hold the writer no other commit interleaves; under
+/// optimistic transactions (multi-user mode) every candidate and stamped row is in the read set and a
+/// racing claim aborts with `write_conflict` instead of claiming twice
+/// (`claim_coalesced_git_effects` asserts, and carries the proof).
 pub(crate) fn claim_coalesced_git_effects_in(
     tx: &mut dyn KvWrite,
     env: &dyn Env,
@@ -710,8 +711,12 @@ impl Store {
         })
     }
 
-    /// `claimCoalescedGitEffects(input)`: the claimed rows, in claim order.
+    /// `claimCoalescedGitEffects(input)`: the claimed rows, in claim order. The `FOR UPDATE ... SKIP LOCKED` PGLite
+    /// and Postgres hold until the claiming transaction ends is skipped while explicit transactions hold the writer
+    /// (`serialized_transactions`), which this fn asserts first.
+    /// In multi-user mode it passes through its row in `lock_skips::MULTIUSER_PROVEN` (read set, `claim_coalesced_git_effects_never_hands_one_effect_to_two_claimants`): the candidates and the stamped rows are read through the transaction's handle, so a racing claim refuses the commit `write_conflict`.
     pub fn claim_coalesced_git_effects(&self, input: &CoalescedGitClaim) -> Result<Vec<Value>> {
+        self.assert_serialized_transactions("claimCoalescedGitEffects")?;
         self.write(|tx| claim_coalesced_git_effects_in(tx, &*self.env, input))
     }
 

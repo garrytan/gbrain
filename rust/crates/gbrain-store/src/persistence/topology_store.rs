@@ -8,11 +8,11 @@
 //! (`topology.rs`).
 //!
 //! Locks. The statements' row locks (`FOR UPDATE`, `FOR SHARE`) are no reads here; the TypeScript
-//! member does not call them at all. Their guarantee holds another way: an explicit transaction is
-//! Serialized (it holds the store's writer, so no other commit interleaves with what it read), and
-//! under optimistic transactions every record read below is in the transaction's read set, so a
-//! racing change aborts the commit with `write_conflict` instead of being missed. No file lock, no
-//! process-wide mutex and no busy error is added.
+//! members (`store-members/topology-store.ts`, sites `topologyStore.<member>`) skip them while explicit
+//! transactions hold the writer (`serialized_transactions`) and assert that first. In multi-user mode
+//! (optimistic transactions) they pass only with a proof (`MULTIUSER_PROVEN`): every record read below
+//! is in the transaction's read set, so a racing change aborts the commit with `write_conflict`
+//! instead of being missed. No file lock, no process-wide mutex and no busy error is added.
 
 use super::effect_worker::pg_uuid;
 use super::effects::all_effects;

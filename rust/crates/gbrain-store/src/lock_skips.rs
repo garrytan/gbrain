@@ -160,6 +160,21 @@ pub const MULTIUSER_PROVEN: &[Proven] = &[
         test: "rust/crates/gbrain-store/tests/multiuser_lock_skips.rs::select_claimable_effect_never_hands_one_effect_to_two_claimants",
     },
     Proven {
+        site: "claimCoalescedGitEffects",
+        guarantee: Guarantee::ReadSet,
+        test: "rust/crates/gbrain-store/tests/multiuser_lock_skips.rs::claim_coalesced_git_effects_never_hands_one_effect_to_two_claimants",
+    },
+    Proven {
+        site: "lockHeldConcept",
+        guarantee: Guarantee::ReadSet,
+        test: "rust/crates/gbrain-store/tests/multiuser_lock_skips.rs::lock_held_concept_refuses_when_the_hold_ended",
+    },
+    Proven {
+        site: "lockLiveConceptMembers",
+        guarantee: Guarantee::ReadSet,
+        test: "rust/crates/gbrain-store/tests/multiuser_lock_skips.rs::lock_live_concept_members_refuses_when_a_member_changed",
+    },
+    Proven {
         site: "lockNoopEmbeddingWindow",
         guarantee: Guarantee::ReadSet,
         test: "rust/crates/gbrain-store/tests/multiuser_lock_skips.rs::lock_noop_embedding_window_never_hands_one_effect_to_two_settlers",

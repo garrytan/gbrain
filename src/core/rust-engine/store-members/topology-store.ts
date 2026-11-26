@@ -4,15 +4,16 @@
  * `persistence::topology_store`).
  *
  * Each read is one `topologyRows({ kind, ... })` call and each write one `topologyWrite({ kind, ... })` call, with the
- * answers of the SQL they replace. The row locks the SQL takes become stated guarantees (no lock is taken here):
- * - `lockBrain`, `shareBrain`, `lockSources`, `sharePrincipal` and `shareLocalWriter` change nothing. An explicit
- *   transaction is Serialized: it holds the store's writer, so no other commit interleaves with what it read. Under
- *   optimistic transactions the rows read are in the transaction's read set, so a racing change aborts the commit with
- *   `write_conflict` instead.
- * - `lockWorktrees` and `lockChange` are plain reads for the same reason; the callers' compare-and-set checks (owner
- *   epoch, topology generation, incarnation, state) stay as they are.
- * - `bound`, `synchronousCommit` and `markTopologyChange` change nothing: the store commits durably, has no lock wait
- *   to bound and no trigger that a topology change must pass.
+ * answers of the SQL they replace. The row locks the SQL takes (`lockBrain`, `shareBrain`, `lockSources`,
+ * `sharePrincipal`, `shareLocalWriter`, `lockWorktrees`, `lockChange`) are skipped while explicit transactions hold the
+ * writer (`serialized_transactions`), and each asserts that first (site `topologyStore.<member>`):
+ * - `lockBrain`, `shareBrain`, `lockSources`, `sharePrincipal` and `shareLocalWriter` take no lock here. In multi-user mode
+ *   each reads the rows the SQL locks, through the transaction's handle, so a row changed before the commit refuses it
+ *   (`write_conflict`) and the transaction runs again. Single-user mode reads nothing, as before.
+ * - `lockWorktrees` and `lockChange` are plain reads, which put the rows in that read set; the callers' compare-and-set
+ *   checks (owner epoch, topology generation, incarnation, state) stay as they are.
+ * - `bound`, `synchronousCommit` and `markTopologyChange` change nothing and skip no lock: the store commits durably, has
+ *   no lock wait to bound and no trigger that a topology change must pass.
  *
  * While the managed_persistence hold is on (every user's Rust brain), each call refuses exactly as the executeRaw it
  * replaced did (managed-hold.ts).
@@ -24,8 +25,10 @@ import type { TopologyChange } from '../../engine-sql/persistence-claims.ts';
 import type { RustEngine } from '../../rust-engine.ts';
 import type { StoreBrain } from '../store.ts';
 import { requestRow, topologyRow } from '../store-codec.ts';
-import { storeCall } from './common.ts';
+import { assertStoreSerializedTransactions, storeCall } from './common.ts';
 import { heldStore } from './managed-hold.ts';
+import { readAccessTokenWriteGrant, readLocalWriterRow, readOAuthClientWriteGrant } from './persistence.ts';
+import { readBrainMode } from './writer-release.ts';
 
 const MEMBER = 'topologyStore';
 
@@ -39,9 +42,39 @@ function rustTopologyStore(brain: StoreBrain): TopologyStore {
     contentReceiptRows: (worktreeIds, hostId, sourceIds) => call<ContentReceiptRow[]>(() => brain.contentReceiptRows(worktreeIds, hostId, sourceIds ?? null)),
     async swapConfigValue(key, value, expected) { await call(() => brain.swapConfigValue(key, value, expected)); },
     bound: none, synchronousCommit: none, markTopologyChange: none,
-    lockBrain: none, shareBrain: none, lockSources: none,
-    async sharePrincipal() {}, async shareLocalWriter() {},
-    lockWorktrees: ids => rows('worktrees', { ids: [...ids] }),
+    async lockBrain() {
+      assertStoreSerializedTransactions(brain, 'topologyStore.lockBrain');
+      // Multi-user mode: the brain row's lock becomes a read of the brain's stored mode, so a mode change committed before the
+      // commit refuses it and the transaction runs again. Single-user mode reads nothing.
+      if (brain.multiuser === true) await readBrainMode(brain, MEMBER);
+    },
+    async shareBrain() {
+      assertStoreSerializedTransactions(brain, 'topologyStore.shareBrain');
+      if (brain.multiuser === true) await readBrainMode(brain, MEMBER);
+    },
+    async lockSources(ids) {
+      assertStoreSerializedTransactions(brain, 'topologyStore.lockSources');
+      // Multi-user mode: each source row the SQL locks is read, so a source written before the commit refuses it.
+      if (brain.multiuser === true) for (const id of new Set(ids)) await rows('source', { id });
+    },
+    async sharePrincipal(kind, id) {
+      assertStoreSerializedTransactions(brain, 'topologyStore.sharePrincipal');
+      // Multi-user mode: the share lock becomes a read of the principal's grant row (as shareLockWriteCredential reads it), so a
+      // revocation committed before the commit refuses it. The SQL locks a local writer for any kind that is not a client or token.
+      if (brain.multiuser === true) {
+        if (kind === 'oauth_client') await readOAuthClientWriteGrant(brain, id);
+        else if (kind === 'legacy_token') await readAccessTokenWriteGrant(brain, id);
+        else await readLocalWriterRow(brain, id);
+      }
+    },
+    async shareLocalWriter(id) {
+      assertStoreSerializedTransactions(brain, 'topologyStore.shareLocalWriter');
+      if (brain.multiuser === true) await readLocalWriterRow(brain, id);
+    },
+    lockWorktrees: async ids => {
+      assertStoreSerializedTransactions(brain, 'topologyStore.lockWorktrees');
+      return rows('worktrees', { ids: [...ids] });
+    },
     activeRefresh: (ids, refreshId) => rows('active_refresh', { ids: [...ids], refreshId }),
     memberSources: ids => rows('member_sources', { ids: [...ids] }),
     worktreeHasMember: worktreeId => rows('worktree_has_member', { worktreeId }),
@@ -57,7 +90,10 @@ function rustTopologyStore(brain: StoreBrain): TopologyStore {
     async addTerminalBytes(key, delta) { await write('add_terminal_bytes', { key, delta }); },
     supersedableRetires: async (sourceId, incarnation, principal, requestId) =>
       (await rows<unknown[]>('supersedable_retires', { sourceId, incarnation, principal, requestId })).map(row => topologyRow<TopologyChange>(row)!),
-    lockChange: id => change(rows('change', { id })),
+    lockChange: async id => {
+      assertStoreSerializedTransactions(brain, 'topologyStore.lockChange');
+      return change(rows('change', { id }));
+    },
     async releaseIntent(key, intentBytes) { await write('release_intent', { key, intentBytes }); },
     async releaseRecoveryBytes(key, bytes) { await write('release_recovery_bytes', { key, bytes }); },
     async clearChangeRecovery(id) { await write('clear_change_recovery', { id }); },

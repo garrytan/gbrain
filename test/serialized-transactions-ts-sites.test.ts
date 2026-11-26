@@ -41,6 +41,7 @@ import * as publicationJournal from '../src/core/rust-engine/store-members/publi
 import * as repairApplies from '../src/core/rust-engine/store-members/repair-applies.ts';
 import * as repairBookkeeping from '../src/core/rust-engine/store-members/repair-bookkeeping.ts';
 import * as sharedSkillMembers from '../src/core/rust-engine/store-members/shared-skill-members.ts';
+import * as topologyStore from '../src/core/rust-engine/store-members/topology-store.ts';
 import * as trustFence from '../src/core/rust-engine/store-members/trust-fence.ts';
 import * as trustProposals from '../src/core/rust-engine/store-members/trust-proposals.ts';
 import * as worktreeClaim from '../src/core/rust-engine/store-members/worktree-claim.ts';
@@ -87,6 +88,9 @@ const ORIGIN = { sourceId: 's', slug: 'a', expectedRevision: null } as never;
 
 /** The engine the store-factory members run on (`this`); none of them reads it before the call. */
 const thisEngine = {} as RustEngine;
+
+/** An engine that serves managed mode: topologyStore refuses every call while the managed_persistence hold is on (managed-hold.ts). */
+const managedEngine = { capabilities: new Set(['managed_persistence']) } as unknown as RustEngine;
 
 const KEY = { worktreeId: '00000000-0000-4000-8000-000000000001', sourceId: 's', sourceIncarnation: '00000000-0000-4000-8000-000000000002', topologyGeneration: null };
 const TARGET = { cursorKey: 'k', sourceId: 's', incarnation: null, runId: null, requestId: null };
@@ -186,6 +190,13 @@ const CASES: Array<[site: string, run: (brain: StoreBrain) => Promise<unknown>]>
   ['writerRelease.lockWorktreesAndSources', async brain => (await writerRelease.writerReleaseStore.call(thisEngine, brain)).lockWorktreesAndSources()],
   ['writerRelease.lockCycleLocks', async brain => (await writerRelease.writerReleaseStore.call(thisEngine, brain)).lockCycleLocks()],
   ['writerRelease.shareWorktree', async brain => (await writerRelease.writerReleaseStore.call(thisEngine, brain)).shareWorktree(UUID)],
+  ['topologyStore.lockBrain', async brain => (await topologyStore.topologyStore.call(managedEngine, brain)).lockBrain()],
+  ['topologyStore.shareBrain', async brain => (await topologyStore.topologyStore.call(managedEngine, brain)).shareBrain()],
+  ['topologyStore.lockSources', async brain => (await topologyStore.topologyStore.call(managedEngine, brain)).lockSources(['s'])],
+  ['topologyStore.sharePrincipal', async brain => (await topologyStore.topologyStore.call(managedEngine, brain)).sharePrincipal('oauth_client', 'c')],
+  ['topologyStore.shareLocalWriter', async brain => (await topologyStore.topologyStore.call(managedEngine, brain)).shareLocalWriter(UUID)],
+  ['topologyStore.lockWorktrees', async brain => (await topologyStore.topologyStore.call(managedEngine, brain)).lockWorktrees([UUID])],
+  ['topologyStore.lockChange', async brain => (await topologyStore.topologyStore.call(managedEngine, brain)).lockChange(UUID)],
 ];
 
 /** The conditional sites called with the lock off: the member is unchanged, so it never refuses. */

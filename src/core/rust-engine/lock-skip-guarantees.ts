@@ -108,6 +108,13 @@ export const MULTIUSER_PROVEN: Readonly<Record<string, ProvenLockSkip>> = {
   readNoopEmbeddingCandidates: { guarantee: 'read-set', test: 'test/multiuser-lock-skips.serial.test.ts::effect rows: an effect queued before the commit reruns readNoopEmbeddingCandidates' },
   'replaceDerivedLinks.wanted': { guarantee: 'read-set', test: 'test/multiuser-lock-skips.serial.test.ts::source rows: a source registered before the commit reruns the wanted-link replacement that checked it' },
   'replaceDerivedLinksBatch.wanted': { guarantee: 'read-set', test: 'test/multiuser-lock-skips.serial.test.ts::source rows: a source registered before the commit reruns the wanted-link replacement that checked it' },
+  'topologyStore.lockBrain': { guarantee: 'read-set', test: 'test/multiuser-lock-skips.serial.test.ts::brain row: a mode change committed before the commit reruns topologyStore.lockBrain and topologyStore.shareBrain' },
+  'topologyStore.shareBrain': { guarantee: 'read-set', test: 'test/multiuser-lock-skips.serial.test.ts::brain row: a mode change committed before the commit reruns topologyStore.lockBrain and topologyStore.shareBrain' },
+  'topologyStore.lockWorktrees': { guarantee: 'read-set', test: 'test/multiuser-lock-skips.serial.test.ts::worktree row: a worktree registered before the commit reruns topologyStore.lockWorktrees' },
+  'topologyStore.lockSources': { guarantee: 'read-set', test: 'test/multiuser-lock-skips.serial.test.ts::source row: a source written before the commit reruns topologyStore.lockSources' },
+  'topologyStore.sharePrincipal': { guarantee: 'read-set', test: 'test/multiuser-lock-skips.serial.test.ts::principal rows: a revocation committed before the commit reruns the topology principal shares' },
+  'topologyStore.shareLocalWriter': { guarantee: 'read-set', test: 'test/multiuser-lock-skips.serial.test.ts::principal rows: a revocation committed before the commit reruns the topology principal shares' },
+  'topologyStore.lockChange': { guarantee: 'read-set', test: 'test/multiuser-lock-skips.serial.test.ts::topology change row: a recovery cleared before the commit reruns topologyStore.lockChange and the rerun reads the cleared row' },
 };
 
 /** Whether `site` may skip its lock while explicit transactions run optimistically. */
