@@ -328,6 +328,7 @@ import * as extractBookkeeping from './engine-sql/extract-bookkeeping.ts';
 import * as purgeSlugStores from './engine-sql/purge-slug-stores.ts';
 import * as conceptRebuildSql from './engine-sql/concept-rebuild.ts';
 import * as graduationCatalog from './engine-sql/graduation-catalog.ts';
+import * as evalHarnessReads from './engine-sql/eval-harness-reads.ts';
 import * as trustTierReads from './engine-sql/trust-tier-reads.ts';
 import * as versionReasons from './engine-sql/version-reasons.ts';
 import * as versionPrune from './engine-sql/version-prune.ts';
@@ -5524,6 +5525,13 @@ export class PGLiteEngine implements BrainEngine {
   listCatalogRelations() { return graduationCatalog.listCatalogRelations(this); }
   readCatalogSchemaVersion() { return graduationCatalog.readCatalogSchemaVersion(this); }
   listCatalogForeignKeys() { return graduationCatalog.listCatalogForeignKeys(this); }
+  getFactsByIds(ids: readonly number[]) { return evalHarnessReads.getFactsByIds(this, ids); }
+  findLiveFactsByText(sourceId: string, texts: readonly string[]) { return evalHarnessReads.findLiveFactsByText(this, sourceId, texts); }
+  listPageIdSlugs() { return evalHarnessReads.listPageIdSlugs(this); }
+  hasTable(name: string) { return evalHarnessReads.hasTable(this, name); }
+  hasColumn(table: string, column: string) { return evalHarnessReads.hasColumn(this, table, column); }
+  listTextBearingColumns() { return evalHarnessReads.listTextBearingColumns(this); }
+  scanTextColumns(spec: evalHarnessReads.TextScanSpec) { return evalHarnessReads.scanTextColumns(this, spec); }
   async countMcpResolvedTakes(spec: takesReads.McpResolvedSpec) { return takesReads.countMcpResolvedTakes(this, spec); }
   async listTopResolvedTakesForHolder(holder: string) { return takesReads.listTopResolvedTakesForHolder(this, holder); }
   async listAbandonedTakes() { return takesReads.listAbandonedTakes(this); }

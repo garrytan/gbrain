@@ -20,6 +20,7 @@ import type { RankCoverageStatementOpts, RankEntitiesStatementOpts, RankEntityRo
 import type { WithdrawalDiscoveryKind, WithdrawalDiscoveryRead, WithdrawalDiscoveryRows } from '../engine-sql/withdrawal-discovery.ts';
 import type { PageKeyRef } from '../engine-sql/trust-tier-reads.ts';
 import type * as GraduationCatalogSql from '../engine-sql/graduation-catalog.ts';
+import type * as EvalHarnessSql from '../engine-sql/eval-harness-reads.ts';
 import type { ExtractReceiptSlot, ExtractRollupDelta } from '../engine-sql/extract-bookkeeping.ts';
 import type { HorizonBasis, HorizonScanRow, TakeGrade, TakeGradeFilter, TakeGradeKey, TakeGradeRow, TakeHorizonRow, TakeNudgeFilter, TakeNudgeInput, TakeNudgeRow } from '../engine-sql/takes-reads.ts';
 import type { PageQuoteTier, PageQuoteTierSpec } from '../engine-sql/trust-tier-reads.ts';
@@ -335,6 +336,26 @@ export interface ReadStatementMembers {
   listCatalogRelations(): Promise<GraduationCatalogSql.CatalogRelations>;
   readCatalogSchemaVersion(): Promise<number | null>;
   listCatalogForeignKeys(): Promise<GraduationCatalogSql.CatalogForeignKey[]>;
+  /**
+   * The memory-trust evals' harness reads (SQL in engine-sql/eval-harness-reads.ts; trusted local, every source).
+   * getFactsByIds: each stored fact of `ids` with its expiry and successor, by id. findLiveFactsByText: the unexpired
+   * facts of one source whose text is exactly one of `texts`, by id. listPageIdSlugs: every page with its id, a
+   * soft-deleted one included, by id.
+   */
+  getFactsByIds(ids: readonly number[]): Promise<EvalHarnessSql.FactStateRow[]>;
+  findLiveFactsByText(sourceId: string, texts: readonly string[]): Promise<Array<{ id: number; fact: string }>>;
+  listPageIdSlugs(): Promise<EvalHarnessSql.PageIdSlugRow[]>;
+  /**
+   * The evals' catalog probes and text scan. hasTable / hasColumn: whether the schema has that table / column (the Rust
+   * store answers for the SQL tables whose records it keeps). listTextBearingColumns: every text-bearing column of every
+   * table (the Rust store: each text field its stored records carry, under the table its records map to or their
+   * keyspace). scanTextColumns: each such value that contains the pattern (case-insensitive), by table, column and
+   * value; table and column names differ on the Rust store for records no SQL table maps.
+   */
+  hasTable(name: string): Promise<boolean>;
+  hasColumn(table: string, column: string): Promise<boolean>;
+  listTextBearingColumns(): Promise<EvalHarnessSql.TextColumnRow[]>;
+  scanTextColumns(spec: EvalHarnessSql.TextScanSpec): Promise<EvalHarnessSql.TextScanHit[]>;
   /** The page's stored takes by row number while its take_fence generation is held `fence_absent`; none otherwise. */
   listHeldFenceTakeRows(spec: HeldFenceTakeSpec): Promise<HeldFenceTakeRow[]>;
   /** The take at a page's row number with its claim and stored trust tier; null when the page has none there. */
