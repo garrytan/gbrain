@@ -11,6 +11,8 @@
  */
 import { CLI_COMMANDS } from './command-table.ts';
 import { cliCommandOf } from './cli-error.ts';
+import { parseGlobalFlags } from '../core/cli-options.ts';
+import { jsonRequested } from '../core/cli-force-exit.ts';
 import { OPERATION_MANIFEST } from '../core/operation-manifest.generated.ts';
 import { codeEntry } from '../core/error-catalogue.ts';
 import { loadConfigFileOnly } from '../core/config.ts';
@@ -45,10 +47,10 @@ function lastRegisteredCode(): string | undefined {
 
 function recordSetupRun(command: string, argv: readonly string[], exitCode: number): void {
   if (['--dry-run', '--help', '-h', '--remove'].some(f => argv.includes(f))) return;
-  const positional = argv.filter(a => !a.startsWith('-'));
+  const named = argv.filter(a => !a.startsWith('-')).slice(1).map(harnessOf);
   recordEvent({
     event_type: 'setup',
-    harness: command === 'setup' ? harnessOf(positional[1]) : undefined,
+    harness: command === 'setup' ? named.find(h => h !== 'other') ?? named[0] : undefined,
     step: command === 'init' ? 'brain_create' : 'done',
     outcome: exitCode === 0 ? 'success' : 'error',
     error_code: exitCode === 0 ? undefined : lastRegisteredCode(),
@@ -79,8 +81,9 @@ function spawnSync(): void {
 }
 
 /** Once per one-shot command, after it finished (crash: the fatal error, when it threw). */
-export function telemetryAfterCli(exitCode: number, crash?: unknown, argv: readonly string[] = process.argv.slice(2)): void {
+export function telemetryAfterCli(exitCode: number, crash?: unknown, rawArgv: readonly string[] = process.argv.slice(2)): void {
   try {
+    const argv = parseGlobalFlags([...rawArgv]).rest;
     const waiting = currentTier() === 'off' && awaitingAnswer();
     if (currentTier() === 'off' && !waiting) return;
     const command = cliCommandOf(argv);
@@ -95,6 +98,6 @@ export function telemetryAfterCli(exitCode: number, crash?: unknown, argv: reado
     noteRunVersion(channelName());
     recordOutcomes(command, argv, exitCode);
     flushCounts();
-    if (!argv.includes('--json') && !NO_SEND_COMMANDS.has(command) && shouldSpawnSync()) spawnSync();
-  } catch { /* telemetry never breaks a command */ }
+    if (!jsonRequested(rawArgv) && !NO_SEND_COMMANDS.has(command) && shouldSpawnSync()) spawnSync();
+  } catch { /* silent-read-ok: telemetry never breaks a command, and a failed read sends nothing */ }
 }

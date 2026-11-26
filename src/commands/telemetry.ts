@@ -124,7 +124,9 @@ export async function runTelemetry(args: string[]): Promise<void> {
     return;
   }
   const json = args.includes('--json');
-  const sub = args.find(a => !a.startsWith('-')) ?? 'status';
+  const positionals = args.filter(a => !a.startsWith('-'));
+  if (positionals.length > 1) return fail(usageError(`gbrain telemetry takes one subcommand, got '${positionals.join(' ')}'`, 'Run gbrain telemetry --help for the subcommands.', { code: 'invalid_params' }));
+  const sub = positionals[0] ?? 'status';
   if (sub === 'status') return status(json);
   if (sub === 'show') return show(json);
   if (sub === 'off' || sub === 'anonymous' || sub === 'community') return choose(sub, json);

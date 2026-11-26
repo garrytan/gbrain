@@ -556,3 +556,76 @@ describe('gbrain telemetry client: before the person answers', () => {
     expect(readdirSync(telemetryDir())).toEqual(['pending.jsonl']);
   });
 });
+
+describe('gbrain telemetry client: a consent change is final for what came before it', () => {
+  const dir = (name: string) => join(telemetryDir(), name);
+  const today = () => new Date().toISOString().slice(0, 10);
+
+  it('telemetry off during an in-flight send leaves no queue and no record of the send behind', async () => {
+    setTier('anonymous');
+    recordEvent({ event_type: 'setup', outcome: 'success' });
+    let release!: () => void;
+    const held = new Promise<void>((r) => { release = r; });
+    let arrived!: () => void;
+    const posted = new Promise<void>((r) => { arrived = r; });
+    const server = Bun.serve({ port: 0, async fetch() { arrived(); await held; return Response.json({ accepted: 2, rejected: 0 }); } });
+    try {
+      await withEnv({ GBRAIN_TELEMETRY_URL: `http://127.0.0.1:${server.port}` }, async () => {
+        const sending = syncTelemetry({ force: true });
+        await posted;
+        setTier('off');
+        release();
+        await sending;
+        for (const f of ['events.jsonl', 'sent.jsonl', 'counts']) expect(existsSync(dir(f))).toBe(false);
+      });
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it('switching from anonymous to community sends nothing recorded under anonymous', () => {
+    setTier('anonymous');
+    recordEvent({ event_type: 'setup', outcome: 'success' });
+    mkdirSync(dir('counts'), { recursive: true });
+    writeFileSync(join(dir('counts'), `${yesterday()}.json`), JSON.stringify({ [`none|0.1.0.0|live`]: { command_counts: { doctor: 1 } } }));
+    setTier('community');
+    const events = buildBatch().events;
+    expect(events.map(e => [e.event_type, e.answer])).toEqual([['consent', 'community']]);
+  });
+
+  it('forget deletes the record of past sends and drops counts taken before it', async () => {
+    setTier('community');
+    recordEvent({ event_type: 'setup', outcome: 'success' });
+    const s = standIn([200], (path) => (path.endsWith('ingest') ? { accepted: 2, rejected: 0, forgotten: true, events_cleared: 2 } : {}));
+    try {
+      await withEnv({ GBRAIN_TELEMETRY_URL: s.url }, async () => {
+        expect((await syncTelemetry({ force: true })).status).toBe('sent');
+        expect(existsSync(dir('sent.jsonl'))).toBe(true);
+        countCommand('doctor');
+        expect((await forgetInstallation()).status).toBe('forgotten');
+        flushCounts();
+        expect(existsSync(dir('sent.jsonl'))).toBe(false);
+        expect(existsSync(dir('counts'))).toBe(false);
+      });
+    } finally {
+      s.stop();
+    }
+  });
+
+  it('a daily rollup carries the build and traffic source that counted it, not the sender', () => {
+    setTier('anonymous');
+    mkdirSync(dir('counts'), { recursive: true });
+    writeFileSync(join(dir('counts'), `${yesterday()}.json`), JSON.stringify({ [`none|0.1.0.0|test`]: { command_counts: { doctor: 2 } } }));
+    const rollup = buildBatch().events.find(e => e.event_type === 'daily_rollup');
+    expect(rollup).toMatchObject({ gbrain_version: '0.1.0.0', source: 'test', transport: 'none', command_counts: { doctor: 2 } });
+  });
+
+  it('the CLI seam reads the command after global flags and the setup harness after its value flags', () => {
+    setTier('anonymous');
+    telemetryAfterCli(0, undefined, ['--brain', 'sync', 'doctor']);
+    const counts = JSON.parse(readFileSync(join(dir('counts'), `${today()}.json`), 'utf8')) as Record<string, { command_counts?: Record<string, number> }>;
+    expect(Object.values(counts).map(b => b.command_counts)).toEqual([{ doctor: 1 }]);
+    telemetryAfterCli(0, undefined, ['setup', '--workspace', '/tmp/w', 'claude-code']);
+    expect(queue().filter(e => e.event_type === 'setup').map(e => e.harness)).toEqual(['claude_code']);
+  });
+});

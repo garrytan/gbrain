@@ -9,7 +9,8 @@
  *   - setup, upgrade, doctor and consent events append to events.jsonl
  *     (kept 30 days, at most 500);
  *   - command, operation, error-code and crash counts collect in memory and
- *     land in counts/<day>.json, one bucket per transport, folded into one
+ *     land in counts/<day>.json, one bucket per transport, build and traffic
+ *     source, each folded into one
  *     daily_rollup per finished day at send time;
  *   - a detached gbrain telemetry sync posts at most once per 6 hours, up to
  *     100 events and 45,000 bytes, with a 10 s timeout.
@@ -33,9 +34,11 @@ export type Transport = 'none' | 'stdio' | 'http';
 type Row = Record<string, unknown>;
 type CountMap = Record<string, number>;
 interface Bucket { command_counts?: CountMap; operation_counts?: CountMap; error_code_counts?: CountMap; crash_counts?: CountMap }
-type DayCounts = Partial<Record<Transport, Bucket>>;
+/** Keyed by transport|version|source, the build and traffic source that counted them. */
+type DayCounts = Record<string, Bucket>;
 
-export interface Settings { tier: Tier; installation_id?: string; answered_at?: string; last_run_version?: string }
+/** epoch moves on every consent change and forget; a write captured under an older epoch is dropped. */
+export interface Settings { tier: Tier; installation_id?: string; answered_at?: string; last_run_version?: string; epoch?: number }
 interface State { last_attempt_at?: string; last_sent_at?: string; last_status?: number | 'offline'; client_errors?: number }
 
 export const ENUMS: Record<string, readonly string[]> = enumsJson;
@@ -133,34 +136,51 @@ export function currentTier(): Tier {
   return forcedOff() ? 'off' : readSettings().tier;
 }
 
-let tierCache: { dir: string; tier: Tier; at: number } | null = null;
-function cachedTier(): Tier {
+const epochOf = (s: Settings) => s.epoch ?? 0;
+/** Whether data captured at `epoch` may still be written or sent: the tier is on and no consent change or forget came since. */
+const stillConsented = (epoch: number) => {
+  const s = readSettings();
+  return !forcedOff() && s.tier !== 'off' && epochOf(s) === epoch;
+};
+
+let tierCache: { dir: string; tier: Tier; epoch: number; at: number } | null = null;
+function cachedTier(): { tier: Tier; epoch: number } {
   const now = Date.now();
   const dir = telemetryDir();
-  if (!tierCache || tierCache.dir !== dir || now - tierCache.at > 60_000) tierCache = { dir, tier: currentTier(), at: now };
-  return tierCache.tier;
+  if (!tierCache || tierCache.dir !== dir || now - tierCache.at > 60_000) tierCache = { dir, tier: currentTier(), epoch: epochOf(readSettings()), at: now };
+  return tierCache;
 }
 
-/** The person's answer. Off deletes everything queued; a yes records one consent event. */
+const SENDABLE_FILES = ['events.jsonl', 'counts', 'sent.jsonl'];
+/** Called under queue.lock from a settings change, so no send or count flush lands between the change and the delete. */
+function clearFiles(names: readonly string[]): void {
+  pending = {};
+  for (const name of names) rmSync(file(name), { recursive: true, force: true });
+}
+
+/**
+ * The person's answer. Off deletes everything queued, held and sent; switching
+ * between anonymous and community deletes what was queued under the old tier,
+ * so nothing recorded under one answer goes out under another. A yes records
+ * one consent event.
+ */
 export function setTier(tier: Tier): Settings {
   const next = updateSettings((s) => {
     const n: Settings = { ...s, tier, answered_at: new Date().toISOString() };
     if (tier === 'community' && !n.installation_id) n.installation_id = randomUUID();
     if (tier !== 'off') n.last_run_version ??= VERSION;
+    if (tier === 'off' || (s.tier !== 'off' && s.tier !== tier)) {
+      n.epoch = epochOf(s) + 1;
+      clearFiles(tier === 'off' ? [...SENDABLE_FILES, 'pending.jsonl'] : SENDABLE_FILES);
+    }
     return n;
   }, true)!;
   tierCache = null;
-  if (tier === 'off') clearQueue();
-  else {
+  if (tier !== 'off') {
     releaseHeld();
     recordEvent({ event_type: 'consent', answer: tier });
   }
   return next;
-}
-
-export function clearQueue(): void {
-  pending = {};
-  for (const name of ['events.jsonl', 'counts', 'pending.jsonl']) rmSync(file(name), { recursive: true, force: true });
 }
 
 const oneOf = (key: string, v: unknown) => (typeof v === 'string' && ENUMS[key].includes(v) ? v : undefined);
@@ -271,7 +291,7 @@ const dayOf = (now: number) => new Date(now).toISOString().slice(0, 10);
 
 function readQueue(): Row[] {
   let text = '';
-  try { text = readFileSync(file('events.jsonl'), 'utf8'); } catch { return []; }
+  try { text = readFileSync(file('events.jsonl'), 'utf8'); } catch { return []; } // silent-read-ok: no queue file is an empty queue, and an unreadable one sends nothing
   return text.split('\n').filter(Boolean).flatMap((line) => {
     try { return [JSON.parse(line) as Row]; } catch { return []; }
   });
@@ -282,7 +302,8 @@ const writeQueue = (rows: Row[]) => writeAtomic(file('events.jsonl'), rows.map(r
 /** Queue one event. Never throws; does nothing at tier off. */
 export function recordEvent(fields: Row): void {
   try {
-    if (currentTier() === 'off') {
+    const settings = readSettings();
+    if (forcedOff() || settings.tier === 'off') {
       if (HELD_TYPES.has(String(fields.event_type)) && awaitingAnswer()) holdForAnswer(fields);
       return;
     }
@@ -290,10 +311,11 @@ export function recordEvent(fields: Row): void {
     if (!clean) return;
     const now = Date.now();
     withQueueLock(() => {
+      if (!stillConsented(epochOf(settings))) return;
       const kept = readQueue().filter(freshAt(now)).slice(-(MAX_QUEUED_EVENTS - 1));
       writeQueue([...kept, { qid: randomUUID(), ts: hourStamp(now), ...clean }]);
     });
-  } catch { /* telemetry never breaks a command */ }
+  } catch { /* silent-read-ok: telemetry never breaks a command, and a failed read sends nothing */ }
 }
 
 /**
@@ -312,7 +334,7 @@ export function awaitingAnswer(): boolean {
 
 function readHeld(now: number): Row[] {
   let text = '';
-  try { text = readFileSync(file('pending.jsonl'), 'utf8'); } catch { return []; }
+  try { text = readFileSync(file('pending.jsonl'), 'utf8'); } catch { return []; } // silent-read-ok: no held file holds nothing, and an unreadable one releases nothing
   return text.split('\n').filter(Boolean).flatMap((line) => {
     try { return [JSON.parse(line) as Row]; } catch { return []; }
   }).filter(e => typeof e.ts === 'string' && now - Date.parse(e.ts) < HELD_TTL_MS);
@@ -344,20 +366,26 @@ export function heldEvents(now = Date.now()): Row[] {
 }
 
 let pending: DayCounts = {};
+let pendingEpoch = 0;
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 
 function bump(transport: Transport, map: (typeof COUNT_KEYS)[number], key: string): void {
   try {
     if (!IDENT_RE.test(key) && map !== 'crash_counts') return;
-    if (cachedTier() === 'off') return;
-    const bucket = (pending[transport] ??= {});
+    const consent = cachedTier();
+    if (consent.tier === 'off') return;
+    if (consent.epoch !== pendingEpoch) {
+      pending = {};
+      pendingEpoch = consent.epoch;
+    }
+    const bucket = (pending[`${transport}|${VERSION}|${trafficSource()}`] ??= {});
     const counts = (bucket[map] ??= {});
     counts[key] = (counts[key] ?? 0) + 1;
     if (!flushTimer) {
       flushTimer = setTimeout(flushCounts, 60_000);
       flushTimer.unref?.();
     }
-  } catch { /* telemetry never breaks a command */ }
+  } catch { /* silent-read-ok: telemetry never breaks a command, and a failed read sends nothing */ }
 }
 /** Callers pass only names from gbrain's command table. */
 export const countCommand = (name: string) => bump('none', 'command_counts', name);
@@ -374,17 +402,16 @@ export function flushCounts(): void {
     flushTimer = null;
   }
   const batch = pending;
+  const epoch = pendingEpoch;
   pending = {};
   if (!Object.keys(batch).length) return;
   try {
-    if (currentTier() === 'off') return;
     const path = join(file('counts'), `${dayOf(Date.now())}.json`);
     withQueueLock(() => {
+      if (!stillConsented(epoch)) return;
       const stored = readJsonAt<DayCounts>(path, {});
-      for (const transport of TRANSPORTS) {
-        const add = batch[transport];
-        if (!add) continue;
-        const into = (stored[transport] ??= {});
+      for (const [bucketKey, add] of Object.entries(batch)) {
+        const into = (stored[bucketKey] ??= {});
         for (const key of COUNT_KEYS) {
           for (const [name, n] of Object.entries(add[key] ?? {})) {
             const counts = (into[key] ??= {});
@@ -394,18 +421,18 @@ export function flushCounts(): void {
       }
       writeAtomic(path, JSON.stringify(stored));
     });
-  } catch { /* telemetry never breaks a command */ }
+  } catch { /* silent-read-ok: telemetry never breaks a command, and a failed read sends nothing */ }
 }
 
 function countDays(): string[] {
   try {
     return readdirSync(file('counts')).map(f => f.replace(/\.json$/, '')).filter(d => DAY_RE.test(d)).sort();
-  } catch {
+  } catch { // silent-read-ok: no counts folder holds no finished days
     return [];
   }
 }
 
-export interface Batch { events: Row[]; qids: string[]; buckets: Array<[string, Transport]>; bytes: number }
+export interface Batch { events: Row[]; qids: string[]; buckets: Array<[string, string]>; bytes: number }
 
 /** The exact JSON array the next send would post: queued events first, then finished days' rollups. */
 export function buildBatch(settings: Settings = readSettings(), now = Date.now()): Batch {
@@ -413,17 +440,19 @@ export function buildBatch(settings: Settings = readSettings(), now = Date.now()
   const oldest = dayOf(now - EVENT_TTL_MS);
   const id = settings.tier === 'community' && settings.installation_id && UUID_RE.test(settings.installation_id) ? settings.installation_id : undefined;
   const stamp = (ts: unknown, row: Row): Row => ({ v: 1, ts, ...row, tier: settings.tier, ...(id ? { installation_id: id } : {}) });
-  const candidates: Array<{ row: Row; qid?: string; bucket?: [string, Transport] }> = [];
+  const candidates: Array<{ row: Row; qid?: string; bucket?: [string, string] }> = [];
   for (const e of readQueue().filter(freshAt(now))) {
     const clean = sanitize(e);
     if (clean) candidates.push({ row: stamp(e.ts, clean), qid: String(e.qid) });
   }
   for (const day of countDays().filter(d => d < today && d > oldest)) {
     const stored = readJsonAt<DayCounts>(join(file('counts'), `${day}.json`), {});
-    for (const transport of TRANSPORTS) {
-      const clean = sanitize({ ...environmentFields(transport), ...stored[transport], event_type: 'daily_rollup', rollup_day: day, transport });
-      if (!clean || !COUNT_KEYS.some(k => clean[k])) continue;
-      candidates.push({ row: stamp(`${day}T12:00:00.000Z`, clean), bucket: [day, transport] });
+    for (const [bucketKey, counts] of Object.entries(stored)) {
+      const [transport, version, source] = bucketKey.split('|') as [Transport, string, string];
+      if (!TRANSPORTS.includes(transport) || !version || !source) continue;
+      const clean = sanitize({ ...environmentFields(transport), gbrain_version: version, source, ...counts, event_type: 'daily_rollup', rollup_day: day, transport });
+      if (!clean || clean.gbrain_version !== version || clean.source !== source || !COUNT_KEYS.some(k => clean[k])) continue;
+      candidates.push({ row: stamp(`${day}T12:00:00.000Z`, clean), bucket: [day, bucketKey] });
     }
   }
   const batch: Batch = { events: [], qids: [], buckets: [], bytes: 2 };
@@ -438,8 +467,11 @@ export function buildBatch(settings: Settings = readSettings(), now = Date.now()
   return batch;
 }
 
-function removeSent(batch: Batch, now: number): void {
+/** Under queue.lock: what a send settled leaves the queue, unless a consent change or forget came during the send. */
+function removeSent(batch: Batch, now: number, epoch: number, sentWith?: number): void {
   withQueueLock(() => {
+    if (!stillConsented(epoch)) return;
+    if (sentWith) recordSent(batch.events, sentWith, now);
     const sent = new Set(batch.qids);
     writeQueue(readQueue().filter(e => !sent.has(String(e.qid)) && freshAt(now)(e)));
     const oldest = dayOf(now - EVENT_TTL_MS);
@@ -458,7 +490,7 @@ function removeSent(batch: Batch, now: number): void {
 
 function recordSent(events: Row[], http: number, now: number): void {
   let lines: string[] = [];
-  try { lines = readFileSync(file('sent.jsonl'), 'utf8').split('\n').filter(Boolean); } catch { /* first send */ }
+  try { lines = readFileSync(file('sent.jsonl'), 'utf8').split('\n').filter(Boolean); } catch { /* silent-read-ok: the first send has no record yet */ }
   lines.push(JSON.stringify({ sent_at: new Date(now).toISOString(), http, events }));
   writeAtomic(file('sent.jsonl'), `${lines.slice(-MAX_SENT_RECORDS).join('\n')}\n`);
 }
@@ -466,7 +498,7 @@ function recordSent(events: Row[], http: number, now: number): void {
 export function sentRecords(): Row[] {
   try {
     return readFileSync(file('sent.jsonl'), 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l) as Row);
-  } catch {
+  } catch { // silent-read-ok: no record file means nothing was sent
     return [];
   }
 }
@@ -482,7 +514,7 @@ export function shouldSpawnSync(now = Date.now()): boolean {
     if (currentTier() === 'off' || !telemetryEndpoint() || !syncDue(now)) return false;
     const today = dayOf(now);
     return (existsSync(file('events.jsonl')) && statSync(file('events.jsonl')).size > 0) || countDays().some(d => d < today);
-  } catch {
+  } catch { // silent-read-ok: a failed check starts no send
     return false;
   }
 }
@@ -510,9 +542,10 @@ export async function syncTelemetry(opts: { force?: boolean; now?: number } = {}
       settings = updateSettings(s => (s.tier === 'community' && !s.installation_id ? { ...s, installation_id: randomUUID() } : null), true) ?? readSettings();
       if (settings.tier === 'off') return { status: 'off' };
     }
+    const epoch = epochOf(settings);
     const batch = buildBatch(settings, now);
     if (!batch.events.length) {
-      removeSent(batch, now);
+      removeSent(batch, now, epoch);
       return { status: 'empty' };
     }
     const state = readJson<State>('state.json', {});
@@ -527,18 +560,17 @@ export async function syncTelemetry(opts: { force?: boolean; now?: number } = {}
       });
       http = res.status;
       await res.arrayBuffer().catch(() => undefined);
-    } catch { /* offline or timed out: keep the batch */ }
+    } catch { /* silent-read-ok: offline or timed out keeps the batch for the next window */ }
     const base = { ...readJson<State>('state.json', {}), last_attempt_at: new Date(now).toISOString(), last_status: http || ('offline' as const) };
     if (http >= 200 && http < 300) {
-      removeSent(batch, now);
-      recordSent(batch.events, http, now);
+      removeSent(batch, now, epoch, http);
       writeJson('state.json', { ...base, last_sent_at: new Date(now).toISOString(), client_errors: 0 });
       return { status: 'sent', http, events: batch.events.length };
     }
     if (http >= 400 && http < 500 && http !== 429) {
       const errors = (base.client_errors ?? 0) + 1;
       if (errors >= DROP_AFTER_CLIENT_ERRORS) {
-        removeSent(batch, now);
+        removeSent(batch, now, epoch);
         writeJson('state.json', { ...base, client_errors: 0 });
         return { status: 'dropped', http, events: batch.events.length };
       }
@@ -556,7 +588,8 @@ export type ForgetStatus = 'no_id' | 'blocked' | 'busy' | 'forgotten' | 'failed'
 
 /**
  * Asks the server to delete this install's row and blank its id on stored
- * events, then deletes the local id and the local queue, so nothing recorded
+ * events, then deletes the local id, the local queue and the record of past
+ * sends (it names the old id), so nothing recorded
  * under the old id goes out under a new one. Works at any tier and ignores the
  * send window; refuses while a send holds sync.lock, so no in-flight post can
  * land after the server forgot the id. The tier is unchanged.
@@ -582,8 +615,11 @@ export async function forgetInstallation(): Promise<{ status: ForgetStatus; http
     }
     const body = (await res.json().catch(() => ({}))) as Row;
     if (!res.ok || body.forgotten !== true) return { status: 'failed', http: res.status };
-    updateSettings(({ installation_id: _gone, ...rest }) => rest, true);
-    clearQueue();
+    updateSettings(({ installation_id: _gone, ...rest }) => {
+      clearFiles(SENDABLE_FILES);
+      return { ...rest, epoch: epochOf(rest as Settings) + 1 };
+    }, true);
+    tierCache = null;
     return { status: 'forgotten', http: res.status, events_cleared: typeof body.events_cleared === 'number' ? body.events_cleared : 0 };
   } finally {
     release(lock);
@@ -627,7 +663,7 @@ export function noteRunVersion(channel?: string): void {
     if (from && VERSION_RE.test(from)) {
       recordEvent({ event_type: 'upgrade', from_version: from, to_version: VERSION, outcome: 'success', channel: oneOf('channel', channel) ?? 'unknown' });
     }
-  } catch { /* telemetry never breaks a command */ }
+  } catch { /* silent-read-ok: telemetry never breaks a command, and a failed read sends nothing */ }
 }
 
 export function scoreBand(score: number): string {
@@ -654,7 +690,7 @@ export function recordDoctor(input: { score: number; failing: readonly string[];
     if (readJson<{ day?: string }>('doctor.json', {}).day === today) return;
     writeJson('doctor.json', { day: today });
     recordEvent({ event_type: 'doctor', score_band: scoreBand(input.score), failing_checks: [...input.failing], brain_size_band: sizeBand(input.pages), mode: input.mode ?? 'manual' });
-  } catch { /* telemetry never breaks a command */ }
+  } catch { /* silent-read-ok: telemetry never breaks a command, and a failed read sends nothing */ }
 }
 
 export function harnessOf(name: string | undefined): string | undefined {

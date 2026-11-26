@@ -288,7 +288,7 @@ stdout (`--json`):
       "code": "first_run_decisions",
       "kind": "ask",
       "why": "The brain is ready and these first-run settings are in effect as listed; none blocks memory. Relay them once, in the reply that reports the install, as the current settings and how to change them; do not hold the install open or end it waiting on an answer. When the user picks an option, run its command. Nothing paid turns on from these settings without a key the user supplied.",
-      "user_message": "gbrain is installed. In effect: search mode conservative; agents save only what you ask them to remember, until you turn on automatic saving (salient is recommended: durable facts you state, saved with provenance). Upkeep: free upkeep runs on its own while your agent's gbrain session is open. Nothing is deleted or paid for without you. Turn off: gbrain config set maintenance.auto false. Optional schedule: gbrain maintain --schedule. Conversation archive: on. gbrain keeps one redacted page per conversation per day from your agent sessions (Claude Code, Codex, OpenClaw, Hermes, Grok) in the conversations source, written by the maintenance pass. Without an embedding key nothing leaves this machine. Turn off: gbrain transcripts archive off. Estimated downstream input cost of the retrieved payload at 10K queries/month (Haiku 5.5 / Sonnet 5.5 / Opus 5.5): conservative $4 / $80 / $160, balanced $10 / $200 / $400, tokenmax $20 / $400 / $800 per month. Usage data: gbrain sends nothing unless you say yes. If you want to help find broken setups and upgrades, say anonymous (setup, upgrade and doctor results and daily command and error-code counts) or community (the same plus a random install id); it never sends your pages, queries, file paths or error messages, and gbrain telemetry show prints exactly what would be sent. Nothing needs an answer now; tell me any time if you want to change any of these, and I'll apply it.",
+      "user_message": "gbrain is installed. In effect: search mode conservative; agents save only what you ask them to remember, until you turn on automatic saving (salient is recommended: durable facts you state, saved with provenance). Upkeep: free upkeep runs on its own while your agent's gbrain session is open. Nothing is deleted or paid for without you. Turn off: gbrain config set maintenance.auto false. Optional schedule: gbrain maintain --schedule. Conversation archive: on. gbrain keeps one redacted page per conversation per day from your agent sessions (Claude Code, Codex, OpenClaw, Hermes, Grok) in the conversations source, written by the maintenance pass. Without an embedding key nothing leaves this machine. Turn off: gbrain transcripts archive off. Estimated downstream input cost of the retrieved payload at 10K queries/month (Haiku 5.5 / Sonnet 5.5 / Opus 5.5): conservative $4 / $80 / $160, balanced $10 / $200 / $400, tokenmax $20 / $400 / $800 per month. Nothing needs an answer now; tell me any time if you want to change any of these, and I'll apply it.",
       "decisions": [
         {
           "id": "search_mode",
@@ -373,45 +373,6 @@ stdout (`--json`):
           "default_reason": "In effect now: agents save only what the user asks them to remember. salient is recommended for a personal brain; it is opt-in, so it turns on only when the user picks it."
         },
         {
-          "id": "telemetry",
-          "question": "Usage data: gbrain sends nothing unless you say yes. If you want to help find broken setups and upgrades, say anonymous (setup, upgrade and doctor results and daily command and error-code counts) or community (the same plus a random install id); it never sends your pages, queries, file paths or error messages, and gbrain telemetry show prints exactly what would be sent. Only the person answers this: ask them, run the command for the option they pick, and leave it unanswered when no person can answer. Never pick one yourself, and --yes or an unattended run never answers it.",
-          "options": [
-            {
-              "id": "unanswered",
-              "label": "Leave it unanswered (in effect now: nothing is sent)"
-            },
-            {
-              "id": "anonymous",
-              "label": "Anonymous: usage results and counts, no install id",
-              "argv": [
-                "gbrain",
-                "telemetry",
-                "anonymous"
-              ]
-            },
-            {
-              "id": "community",
-              "label": "Community: the same plus a random install id",
-              "argv": [
-                "gbrain",
-                "telemetry",
-                "community"
-              ]
-            },
-            {
-              "id": "off",
-              "label": "Off: send nothing and stop asking",
-              "argv": [
-                "gbrain",
-                "telemetry",
-                "off"
-              ]
-            }
-          ],
-          "default": "unanswered",
-          "default_reason": "In effect now: nothing is sent. No option is recommended, because only the person can agree to share usage data."
-        },
-        {
           "id": "upkeep",
           "question": "Upkeep: free upkeep runs on its own while your agent's gbrain session is open. Nothing is deleted or paid for without you. Turn off: gbrain config set maintenance.auto false. Optional schedule: gbrain maintain --schedule.",
           "options": [
@@ -464,7 +425,7 @@ stdout (`--json`):
 }
 ```
 
-stdout is one document; the brain is ready and nothing blocks using it. The agent first does the `harness_wiring` step: connecting gbrain to itself is part of the install, not a setting. It then reports the install and relays the `first_run_decisions` `user_message` ("gbrain is installed. In effect: search mode conservative; agents save only what you ask them to remember, until you turn on automatic saving (salient is recommended: durable facts you state, saved with provenance). Upkeep: free upkeep runs on its own while your agent's gbrain session is open. Nothing is deleted or paid for without you. Turn off: gbrain config set maintenance.auto false. Optional schedule: gbrain maintain --schedule. Conversation archive: on. gbrain keeps one redacted page per conversation per day from your agent sessions (Claude Code, Codex, OpenClaw, Hermes, Grok) in the conversations source, written by the maintenance pass. Without an embedding key nothing leaves this machine. Turn off: gbrain transcripts archive off. Estimated downstream input cost of the retrieved payload at 10K queries/month (Haiku 5.5 / Sonnet 5.5 / Opus 5.5): conservative $4 / $80 / $160, balanced $10 / $200 / $400, tokenmax $20 / $400 / $800 per month. Usage data: gbrain sends nothing unless you say yes. If you want to help find broken setups and upgrades, say anonymous (setup, upgrade and doctor results and daily command and error-code counts) or community (the same plus a random install id); it never sends your pages, queries, file paths or error messages, and gbrain telemetry show prints exactly what would be sent. Nothing needs an answer now; tell me any time if you want to change any of these, and I'll apply it.") once in that reply, without waiting for an answer. The settings in effect are `search_mode` (default `conservative`), `writeback` (default `off`), `telemetry` (default `unanswered`), `upkeep` (default `on`), `conversation_archive` (default `on`); each option carries the exact argv to apply it when the user picks one.
+stdout is one document; the brain is ready and nothing blocks using it. The agent first does the `harness_wiring` step: connecting gbrain to itself is part of the install, not a setting. It then reports the install and relays the `first_run_decisions` `user_message` ("gbrain is installed. In effect: search mode conservative; agents save only what you ask them to remember, until you turn on automatic saving (salient is recommended: durable facts you state, saved with provenance). Upkeep: free upkeep runs on its own while your agent's gbrain session is open. Nothing is deleted or paid for without you. Turn off: gbrain config set maintenance.auto false. Optional schedule: gbrain maintain --schedule. Conversation archive: on. gbrain keeps one redacted page per conversation per day from your agent sessions (Claude Code, Codex, OpenClaw, Hermes, Grok) in the conversations source, written by the maintenance pass. Without an embedding key nothing leaves this machine. Turn off: gbrain transcripts archive off. Estimated downstream input cost of the retrieved payload at 10K queries/month (Haiku 5.5 / Sonnet 5.5 / Opus 5.5): conservative $4 / $80 / $160, balanced $10 / $200 / $400, tokenmax $20 / $400 / $800 per month. Nothing needs an answer now; tell me any time if you want to change any of these, and I'll apply it.") once in that reply, without waiting for an answer. The settings in effect are `search_mode` (default `conservative`), `writeback` (default `off`), `upkeep` (default `on`), `conversation_archive` (default `on`); each option carries the exact argv to apply it when the user picks one.
 
 ### 5. A caller mistake over stdio MCP, recorded: `run` (journey)
 

@@ -388,7 +388,7 @@ flowchart LR
 
 ## Privacy & telemetry
 
-gbrain sends nothing about how you use it unless you say yes. On first setup your agent asks you once, and nothing leaves your machine before you answer: a setup or upgrade result from before your answer waits in a local file (at most 50, for 7 days), is sent only if you say yes, and is deleted if you say no.
+gbrain sends nothing about how you use it unless you say yes, and this release sends nothing at all: it ships no address to send to yet, so setup doesn't ask. Once a release turns it on: on first setup your agent asks you once, and nothing leaves your machine before you answer: a setup or upgrade result from before your answer waits in a local file (at most 50, for 7 days), is sent only if you say yes, and is deleted if you say no.
 
 A yes sends which harness setup ran and whether it worked, upgrade results, the doctor score band, counts of commands and error codes, the gbrain version, OS and, unless you pick `anonymous`, a random install id. It never sends your pages, slugs, titles, queries, file paths, source names, hostnames or error messages. `gbrain telemetry show` prints exactly what is waiting and what was sent; `gbrain telemetry off` stops it and deletes the queue; `gbrain telemetry forget` also deletes your install's record on our server and unlinks its stored events from the id, so they remain only as anonymous counts. Stored events are kept for 400 days.
 

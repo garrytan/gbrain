@@ -96,9 +96,28 @@ describe('gbrain telemetry CLI', () => {
     }
   }, 600_000);
 
-  test('init asks about usage data without answering it, holds its setup event, and a yes releases it', async () => {
-    const home = join(ROOT, 'consent');
+  test('without a telemetry address, init asks nothing about usage data', async () => {
+    const home = join(ROOT, 'no-address');
     const init = await runCli(['init', '--pglite', '--no-embedding', '--json'], { home, timeoutMs: 120_000 });
+    expect(init.exitCode).toBe(0);
+    const doc = JSON.parse(init.stdout) as { notices?: Array<{ decisions?: Array<{ id: string }> }> };
+    expect((doc.notices ?? []).flatMap(n => n.decisions ?? []).map(d => d.id)).not.toContain('telemetry');
+  }, 240_000);
+
+  test('telemetry takes one subcommand, so a flag value or a second word never picks a tier', async () => {
+    const home = join(ROOT, 'two-words');
+    for (const args of [['telemetry', '--source', 'community', 'off'], ['telemetry', 'community', 'off']]) {
+      const r = await runCli([...args, '--json'], { home });
+      expect(r.exitCode).not.toBe(0);
+      expect(r.stdout + r.stderr).toContain('invalid_params');
+    }
+    expect(JSON.parse((await runCli(['telemetry', '--json'], { home })).stdout)).toMatchObject({ tier: 'off', answered: false });
+  }, 120_000);
+
+  test('with a telemetry address, init asks about usage data without answering it, holds its setup event, and a yes releases it', async () => {
+    const home = join(ROOT, 'consent');
+    const env = { GBRAIN_TELEMETRY_URL: 'http://127.0.0.1:9' };
+    const init = await runCli(['init', '--pglite', '--no-embedding', '--json'], { home, env, timeoutMs: 120_000 });
     expect(init.exitCode).toBe(0);
     const doc = JSON.parse(init.stdout) as { notices?: Array<{ decisions?: Array<{ id: string; default: string }> }> };
     const decision = (doc.notices ?? []).flatMap(n => n.decisions ?? []).find(d => d.id === 'telemetry');
@@ -112,5 +131,8 @@ describe('gbrain telemetry CLI', () => {
     const show = JSON.parse((await runCli(['telemetry', 'show', '--json'], { home })).stdout) as { held_for_answer: unknown[]; next_send: Array<Record<string, unknown>> };
     expect(show.held_for_answer).toEqual([]);
     expect(show.next_send.map(e => e.event_type)).toEqual(['setup', 'consent']);
+    await runCli(['doctor', '--only', 'connection', '--json'], { home, timeoutMs: 120_000 });
+    const after = JSON.parse((await runCli(['telemetry', 'show', '--json'], { home })).stdout) as { next_send: Array<Record<string, unknown>> };
+    expect(after.next_send.map(e => e.event_type)).toEqual(['setup', 'consent']);
   }, 240_000);
 });

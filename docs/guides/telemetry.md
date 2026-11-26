@@ -3,6 +3,11 @@
 gbrain sends no usage data unless you say yes. After `gbrain telemetry off`, or
 with `GBRAIN_TELEMETRY=off`, it writes no telemetry file and opens no connection.
 
+**This release sends nothing at all.** It ships no address to send to, because
+the server side is not deployed yet, so setup asks you nothing and any choice you
+make with `gbrain telemetry` stays on your machine. The release that deploys the
+server turns the question on; this page describes how it works from then on.
+
 ## The question
 
 When `gbrain init` creates a brain (on its own or through `gbrain setup <harness>`),
@@ -42,7 +47,8 @@ hour.
   model is configured.
 - **upgrade:** the old and new version and the release channel the first time a
   new version runs; the error code when an upgrade command fails.
-- **doctor:** at most once a day, the health score as a band (`70-89`), up to 10
+- **doctor:** only a full `gbrain doctor` run (not `--only`, `--fast`,
+  `--scope brain` or `--tier ops`), at most once a day, the health score as a band (`70-89`), up to 10
   failing check names, and the brain's page count as a band (`1k-9.9k`).
 - **daily counts:** how often each gbrain command and MCP operation ran, which
   error codes were shown, and crash counts by JavaScript error class. Only names

@@ -28,6 +28,7 @@ import type { SearchMode } from '../core/search/mode.ts';
 import { costMatrixSentence, OPENAI_COST_MATRIX_MODELS } from '../core/search/mode-advice.ts';
 import type { McpSurface } from '../mcp/surface.ts';
 import { awaitingAnswer } from '../core/telemetry/client.ts';
+import { telemetryEndpoint } from '../core/telemetry/endpoint.ts';
 
 export interface InitFirstRunInputs {
   /** The search mode the install-time picker applied and why; absent when `--search-mode` recorded the operator's choice. */
@@ -283,7 +284,7 @@ export async function firstRunBundle(engine: BrainEngine, searchMode: { mode: Se
   return buildInitFirstRunNotices({
     searchMode, config: loadConfig(), writeback: await writebackAskApplies(engine), skillsScaffold: initSkillsScaffold(), surface, upkeep: { embedding },
     ...(archiveState ? { archive: { state: archiveState, embedding } } : {}),
-    telemetry: awaitingAnswer(),
+    telemetry: awaitingAnswer() && telemetryEndpoint() !== null,
   });
 }
 
