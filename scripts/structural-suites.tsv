@@ -384,7 +384,7 @@ test/scripts/postgres-unit-arms.test.ts	postgres-unit-arms list	14	readFileSync
 test/scripts/pregate-remote-gate.test.ts	.gstack policy floor	1	readFileSync
 test/scripts/pregate-remote-gate.test.ts	pregate-remote-gate.sh	8	readFileSync
 test/scripts/pregate-remote-gate.test.ts	pregate-remote-gate.sh --list	4	readFileSync
-test/scripts/pregate-remote-gate.test.ts	reuse of GitHub full runs on the identical tree	9	readFileSync
+test/scripts/pregate-remote-gate.test.ts	reuse of GitHub full runs on the identical tree	10	readFileSync
 test/scripts/pregate-remote-gate.test.ts	ship_lanes_from (/ship lanes carried from CI, docs/ci-event-parity.md#ship-lanes)	3	readFileSync
 test/scripts/promote-stable.test.ts	promote-stable.yml	2	readFileSync
 test/scripts/regen-all.test.ts	regen:all	8	readFileSync
@@ -418,8 +418,8 @@ test/serve-http-metrics.test.ts	serve-http.ts wiring (structural — the two def
 test/serve-stdin-eof-drain.test.ts	serve-sync-runner stays off the boot path (#4409)	1	readFileSync
 test/setup-brain-layout.test.ts	setup --shape personal	9	readFileSync
 test/setup-household.test.ts	setup --shape household	3	readFileSync
+test/setup-migrations.test.ts	gbrain setup: setup migrations on the brain it creates (Cat 41 run 4)	3	readFileSync
 test/setup-pi-skill-extension.test.ts	(file-level)	7	readFileSync
-test/setup.test.ts	gbrain setup: setup migrations on the brain it creates (Cat 41 run 4)	3	readFileSync
 test/shadow-drill.test.ts	the probe of the opened copy	7	readFileSync
 test/shadow-drill.test.ts	the stop word list is the Rust engine list (review round 2)	2	readFileSync
 test/shadow-replay.test.ts	comparison	2	readFileSync
