@@ -305,14 +305,12 @@ fn table_of(key: &[u8]) -> String {
     format!("{}/{}", space.family, name.replace(' ', "_"))
 }
 
+/// One text column of a stored value: its name, its text and its kind (`text` or `jsonb`).
+type TextColumn = (String, String, &'static str);
+
 /// The text columns of one stored value: `(column, text)` for each string field and the compact JSON
 /// text of each object or array field of a JSON object; else the whole value as `value`.
-fn text_columns(
-    value: &[u8],
-) -> (
-    Vec<(String, String, &'static str)>,
-    Option<Map<String, Value>>,
-) {
+fn text_columns(value: &[u8]) -> (Vec<TextColumn>, Option<Map<String, Value>>) {
     match serde_json::from_slice::<Value>(value) {
         Ok(Value::Object(map)) => {
             let mut out = Vec::new();
