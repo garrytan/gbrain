@@ -788,6 +788,26 @@
       "stdout": []
     },
     {
+      "argv": "correct",
+      "exitCode": 1,
+      "stderr": [
+        "Error [requires_local_engine]: `gbrain correct` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: gbrain correct",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "rules",
+      "exitCode": 1,
+      "stderr": [
+        "Error [requires_local_engine]: `gbrain rules` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: gbrain rules",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+      ],
+      "stdout": []
+    },
+    {
       "argv": "household",
       "exitCode": 1,
       "stderr": [

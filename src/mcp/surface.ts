@@ -115,6 +115,8 @@ export const STARTER_OPS: ReadonlySet<string> = new Set([
   'memory_conversation_mode',
   // Agent platform H1: "what's at risk at home" is a daily-driver read (a direct literal, so subagents gain nothing).
   'household_due',
+  // Agent platform C2: the user's correction saves a standing rule and fixes the fact (a direct literal, so subagents gain nothing).
+  'correct',
 ]);
 
 /**

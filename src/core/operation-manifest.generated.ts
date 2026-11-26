@@ -4152,6 +4152,110 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "area": "search"
   },
   {
+    "name": "correct",
+    "mutating": true,
+    "idempotent": true,
+    "writeInference": "none",
+    "outputRedaction": "no_stored_text",
+    "description": "The user corrected you: saves their standing rule and replaces fact_id with corrected_fact (or withdraws it). Branch on state and next.",
+    "params": {
+      "rule": {
+        "type": "string",
+        "description": "The rule, in the user's words."
+      },
+      "fact_id": {
+        "type": "string",
+        "description": "The wrong fact."
+      },
+      "corrected_fact": {
+        "type": "string",
+        "description": "The right fact."
+      },
+      "entity": {
+        "type": "string",
+        "description": "Subject slug."
+      },
+      "receipt_id": {
+        "type": "string",
+        "description": "Alone: that receipt's status."
+      },
+      "scope": {
+        "type": "string",
+        "enum": [
+          "me",
+          "team"
+        ],
+        "description": "me (default) or team.",
+        "fullSurfaceOnly": true
+      },
+      "checks": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "question": {
+              "type": "string"
+            },
+            "expect": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "reject": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "description": "Regression checks for gbrain rules check: [{question, expect[], reject[]}].",
+        "fullSurfaceOnly": true
+      },
+      "provenance": {
+        "type": "string",
+        "description": "Where the user said it.",
+        "fullSurfaceOnly": true
+      },
+      "content_origin": {
+        "type": "string",
+        "enum": [
+          "user_said",
+          "tool_output",
+          "inferred"
+        ],
+        "description": "user_said only; tool_output and inferred are refused.",
+        "fullSurfaceOnly": true
+      },
+      "resume": {
+        "type": "boolean",
+        "description": "With receipt_id: run the steps not yet committed.",
+        "fullSurfaceOnly": true
+      },
+      "source_id": {
+        "type": "string",
+        "description": "Write source.",
+        "fullSurfaceOnly": true
+      },
+      "request_id": {
+        "type": "string",
+        "description": "Reuse only to retry.",
+        "fullSurfaceOnly": true
+      }
+    },
+    "callShape": "{\"rule\":\"Never call alice-example the CTO.\",\"fact_id\":\"42\",\"corrected_fact\":\"Alice-example is VP Engineering.\",\"entity\":\"people/alice-example\"}",
+    "scope": "write",
+    "cliHints": {
+      "hidden": true
+    },
+    "annotations": {
+      "title": "correct",
+      "idempotentHint": true
+    },
+    "area": "correct"
+  },
+  {
     "name": "policy_check",
     "description": "Before you send, spend, delete, sign up, call or publish on the user's behalf outside this brain, ask whether the user's agent policy allows it. Advisory: allow, ask, deny or none (no policy), with requires_approval and any day, week or month budget left. To hold budget for a spend, call policy_reserve instead.",
     "params": {
@@ -7009,6 +7113,12 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
         "type": "boolean",
         "description": "true: add your own profile (facets, constraints, relationships, preferences).",
         "fullSurfaceOnly": true
+      },
+      "include_rules": {
+        "type": "boolean",
+        "description": "true: add your confirmed standing rules (rules field).",
+        "fullSurfaceOnly": true,
+        "actsWhenTrue": true
       }
     },
     "scope": "read",

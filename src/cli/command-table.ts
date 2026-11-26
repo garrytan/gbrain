@@ -410,6 +410,9 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   { name: 'loops', phase: 'post-connect', thinClient: 'none', selfHelp: true, routes_source: true, load: () => import('./commands/loops.ts') },
   // CLI_ONLY: C3 claims check; trusted-local op dispatch of check_claims (a thin client calls the check_claims MCP tool).
   { name: 'claims', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, routes_source: true, load: () => import('./commands/claims.ts') },
+  // CLI_ONLY: C2 standing rules; trusted-local op dispatch of correct (a thin client calls the correct MCP tool) and the rules commands.
+  { name: 'correct', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, routes_source: true, load: () => import('./commands/correct.ts') },
+  { name: 'rules', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, routes_source: true, load: () => import('./commands/rules.ts') },
   // CLI_ONLY: household records (agent platform H1); trusted-local op dispatch of the household_* ops.
   { name: 'household', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, routes_source: true, load: () => import('./commands/household.ts') },
   // CLI_ONLY: pinned questions (C4); trusted-local op dispatch of the questions_* ops.

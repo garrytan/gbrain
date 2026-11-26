@@ -11,6 +11,8 @@
  * mirror never resurrected one. A file that differs from the database refuses the forget (the uncoordinated-edit
  * refusal every coordinated page write gives) instead of leaving it unstruck.
  */
+import { ruleOwnerOnly } from '../rules/admission.ts';
+import { isRuleSlug } from '../rules/record.ts';
 import { existsSync } from 'node:fs';
 import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
@@ -121,6 +123,7 @@ export async function prepareForgetMutation(engine: BrainEngine, row: WriteReque
   const rawId = String(p.id ?? '').trim();
   const sourceId = row.source_id;
   const remote = row.authority.remote !== false;
+  if (remote && isRuleSlug(row.slug)) throw ruleOwnerOnly(row.slug);
   const reason = typeof p.reason === 'string' && p.reason.trim() ? p.reason.trim() : null;
   // GST-359 D: a member's withdrawal of a fact on its own member page (submitForgetMutation records the page).
   const ownPage = remote && typeof p.member_page === 'string' && p.member_page === row.slug && row.slug.startsWith(MEMBER_PAGE_PREFIX) ? row.slug : null;
