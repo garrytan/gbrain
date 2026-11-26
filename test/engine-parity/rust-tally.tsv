@@ -142,7 +142,7 @@ test/engine-parity/facts-purge.test.ts	29	0
 test/engine-parity/facts-quoted.test.ts	5	0
 test/engine-parity/facts-repair-sites.test.ts	19	1
 test/engine-parity/facts-repair.test.ts	21	0
-test/engine-parity/facts-rest-sites.test.ts	24	4
+test/engine-parity/facts-rest-sites.test.ts	25	4
 test/engine-parity/facts-superseded-claims.test.ts	1	0
 test/engine-parity/facts-trust-owner.test.ts	6	0
 test/engine-parity/facts-trust.test.ts	13	0
@@ -305,7 +305,7 @@ test/engine-parity/remember-members.test.ts	9	0
 test/engine-parity/remember-meta.test.ts	3	0
 test/engine-parity/remember-supersede.test.ts	3	0
 test/engine-parity/remember-whole.test.ts	1	0
-test/engine-parity/remote-access-matrix.test.ts	3	2
+test/engine-parity/remote-access-matrix.test.ts	5	0
 test/engine-parity/remote-links.test.ts	9	0
 test/engine-parity/remote-policy.test.ts	2	0
 test/engine-parity/repair-aliases.test.ts	1	0

@@ -136,7 +136,7 @@ getPage	pages	yes	288	yes	yes	yes	serves
 readPageSnapshot	pages	yes	102	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	7	no	yes	yes	serves
 lockPageKeys	pages	yes	17	no	yes	yes	serves
-putPage	pages	yes	1360	yes	yes	yes	serves
+putPage	pages	yes	1361	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	45	yes	yes	yes	serves
@@ -648,9 +648,9 @@ readFactTrustTier	facts	yes	2	no	yes	yes	serves
 listFenceFactRowNums	facts	yes	2	no	yes	yes	serves
 readLiveFactRowTier	facts	yes	1	no	yes	yes	serves
 insertFact	facts	yes	199	yes	yes	yes	serves
-insertFacts	facts	yes	272	no	yes	yes	serves
+insertFacts	facts	yes	273	no	yes	yes	serves
 deleteFactsForPage	facts	yes	8	no	yes	yes	serves
-expireFact	facts	yes	94	no	yes	yes	serves
+expireFact	facts	yes	95	no	yes	yes	serves
 listFactsByEntity	facts	yes	66	yes	yes	yes	serves
 listFactsSince	facts	yes	43	yes	yes	yes	serves
 listFactsKeyset	facts	yes	11	no	yes	yes	serves
@@ -1751,7 +1751,7 @@ expireDerivedFacts	facts_trust	yes	3	no	yes	yes	serves
 deactivateDerivedTakes	facts_trust	yes	3	no	yes	yes	serves
 softDeleteDerivedPages	facts_trust	yes	3	no	yes	yes	serves
 markNeedsRederive	facts_trust	yes	4	no	yes	yes	serves
-readMemberPageWithdrawal	facts_trust	yes	3	no	yes	yes	serves
+readMemberPageWithdrawal	facts_trust	yes	4	no	yes	yes	serves
 readFactVisibility	facts_trust	yes	4	no	yes	yes	serves
 readReplacementTarget	facts_trust	yes	6	no	yes	yes	serves
 readPairFactRow	facts_trust	yes	9	no	yes	yes	serves
@@ -1907,7 +1907,7 @@ findAnomalies	salience_enrich	yes	9	yes	yes	yes	serves
 countZeroWeightWithTakes	salience_enrich	yes	1	no	yes	yes	serves
 listGlobalPurgeWithdrawals	trust	yes	1	no	yes	yes	serves
 hasCoveringFactWithdrawal	trust	yes	6	no	yes	yes	serves
-insertFactWithdrawal	trust	yes	68	no	yes	yes	serves
+insertFactWithdrawal	trust	yes	69	no	yes	yes	serves
 isFactWithdrawn	trust	yes	5	no	yes	yes	serves
 isFactPurged	trust	yes	8	no	yes	yes	serves
 listFactWithdrawalDates	trust	yes	3	no	yes	yes	serves
