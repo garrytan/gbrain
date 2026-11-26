@@ -51,8 +51,8 @@ member-access part alone (the page's readers, and the origin of a derived page):
 ## Differences from PGLite
 
 - **A page with no live row.** When the earlier checks in `authorizePageVisibility` have not already decided a remote
-  write, the check judges a page that has only a soft-deleted row (or no row) with a raw statement, and a Rust brain
-  refuses that statement with `engine_capability_missing`. A page with a live row is judged through the typed reads.
+  write, `hiddenUnder` uses `readPageHiddenFromWriter` to judge any soft-deleted row under the writer's policy, including
+  privacy when required; no row is not hidden. Rust serves this read too ([remote-links.md](remote-links.md)).
 - **Owner-only sources.** A page policy for a caller that is not the owner ends with the owner-only test
   (`ownerOnlyAllowedSql`). The member reads which form the policy text carries and sends it as `ownerOnly`
   (`ownerOnlyFormIn`): `fn` when the text holds `ownerOnlyPageSql(alias, 'fn')`, `closed` when it holds

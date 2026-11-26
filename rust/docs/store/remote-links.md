@@ -49,7 +49,7 @@ the writer's policy through this member.
 A labelled-only writer's create or capture of a new page is served. The slug has no live row, so `hiddenUnder` judges its soft-deleted
 row, if any, through `readPageHiddenFromWriter` (below); the create check then reads the folder rules that cover the slug through
 `readSlugFolderRules` (`page-mutation-reads.md`) and judges the overlap with the writer's satisfied rules in TypeScript. A page that
-names the writer (or a group it is in) is written; one that names nobody and has no rule over it that lists the writer is refused with
+names the writer (or a group it is in), or has a covering rule listing it, passes this labelled-only check. The other source, access and revision checks still apply. If neither condition holds when the check runs, it refuses with
 `access_labelled_only_unnamed`, the same error body as on PGLite and Postgres (`test/engine-parity/labelled-only-policy.test.ts`). A
 plain member's write over a slug that has only a soft-deleted row it may not read is refused as an unseen page
 (`test/engine-parity/owner-write-privacy.test.ts`).
