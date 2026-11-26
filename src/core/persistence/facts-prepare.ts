@@ -33,7 +33,7 @@ import { fenceAppendPendingTier, withPendingFenceRows } from '../eligibility/fen
 import { withPageTierKept } from '../trust/fence-append.ts';
 import { pageFencesNormalized } from '../fence-repair/report.ts';
 import { declaredWriteTrust, derivedWriteTrust, readDerivationDeclaration, readTaintInputs, recordTaintEdges } from '../trust/taint.ts';
-import { derivationWriteTrust } from '../trust/page-write.ts';
+import { derivationWriteTrust, newHoldingPageFrontmatter } from '../trust/page-write.ts';
 import { minTrust, type TaintInput, type WriteTrust } from '../trust/tier.ts';
 import { applyGateDecision, derivedGateConfig, derivedGateInput, emptyGateTally } from '../trust/derived-gate.ts';
 import { decideFactWrite, recordFlaggedRow, type GatedRowDecision } from '../write-gate-store.ts';
@@ -187,7 +187,7 @@ export async function prepareManagedFactsMutation(engine: BrainEngine, row: Writ
   }
   // Wave B: a segmented entity page within 24 MiB is read back whole and its fence written as a normal put; a larger one refuses.
   const snapshot = await wholeBodySnapshot(engine, stored, 'facts fence write');
-  const page0 = snapshot?.page ?? (holding ? { slug: row.slug, source_id: row.source_id, type: 'note', title: 'Unattributed memory', compiled_truth: '', timeline: '', frontmatter: {} } as unknown as NonNullable<typeof snapshot>['page'] : null);
+  const page0 = snapshot?.page ?? (holding ? { slug: row.slug, source_id: row.source_id, type: 'note', title: 'Unattributed memory', compiled_truth: '', timeline: '', frontmatter: newHoldingPageFrontmatter(row) } as unknown as NonNullable<typeof snapshot>['page'] : null);
   // #6188 (D20): the entity's stored fence is normalized in this same write; a residual refuses typed `target_fence_malformed`.
   const target = snapshot ? await normalizeTargetFences(engine, { sourceId: row.source_id, slug: row.slug, kind: 'facts', page: snapshot.page }) : null;
   // #6686: the fence is edited in the section it lives in (a lone timeline fence stays below the sentinel); the other section is kept byte for byte.

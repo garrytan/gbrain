@@ -124,6 +124,9 @@ async function readColumns(engine: BrainEngine): Promise<Columns> {
   return { has: (table, column) => set.has(`${table}.${column}`), table: name => tables.has(name) };
 }
 
+/** A row the claim lifted that no owner decision (`trust confirm`, `trust lower`) has settled since: only these are relowered (#10178). */
+const relowerableSql = (row: string) => `${row}.write_origin->>'channel' = 'trust_claim' AND ${row}.write_origin->'owner_decision' IS NULL`;
+
 /** Builds the rank expressions for one schema shape. Every term yields a rank or NULL (no signal). */
 function classifier(cols: Columns, assumeClaimed: readonly string[] = [], ceilings: LegacyCeilings = null, relower = false) {
   const signals = new Set<string>();
@@ -219,7 +222,7 @@ function classifier(cols: Columns, assumeClaimed: readonly string[] = [], ceilin
   const pageTaint = (p: string, s: string, r: string) => {
     const rule = pageRule(p, s, r);
     const stored = trustRankSql(`${p}.trust_tier`);
-    const classified = relower ? `CASE WHEN ${p}.write_origin->>'channel' = 'trust_claim' THEN LEAST(${stored}, COALESCE(${rule}, ${stored})) ELSE ${stored} END` : stored;
+    const classified = relower ? `CASE WHEN ${relowerableSql(p)} THEN LEAST(${stored}, COALESCE(${rule}, ${stored})) ELSE ${stored} END` : stored;
     return hasTrust ? `CASE WHEN ${p}.id IS NULL THEN NULL WHEN ${p}.trust_tier <> 'unknown' THEN ${classified} ELSE ${rule} END` : rule;
   };
   const pageJoins = (p: string, s: string, r: string, on: string) =>
@@ -256,7 +259,12 @@ function classifier(cols: Columns, assumeClaimed: readonly string[] = [], ceilin
       terms.push(`CASE WHEN x.source LIKE 'take\\_proposals#%' THEN ${rank('agent_written')} END`);
     }
     if (cols.has(table, 'write_request_id')) { const q = request('r'); if (q) terms.push(q); }
-    return { from: `${table} x ${pageJoins('pg', 'ps', 'pr', 'pg.id = x.page_id')} ${requestJoin(table, 'write_request_id', 'r', 'x')}`,
+    // #10176: a Life Chronicle event's summary projected onto its depth page's timeline (`event_page_id`) is model-written
+    // like the event itself, so on a claimed source it ranks no higher than agent_written and its event page (#9284).
+    const c = table === 'timeline_entries' && cols.has(table, 'event_page_id') ? claimed('ps') : null;
+    if (c) terms.push(`CASE WHEN ev.id IS NOT NULL AND ${c} THEN LEAST(${rank('agent_written')}, ${pageTaint('ev', 'evs', 'evr')}) END`);
+    return { from: `${table} x ${pageJoins('pg', 'ps', 'pr', 'pg.id = x.page_id')} ${requestJoin(table, 'write_request_id', 'r', 'x')}
+      ${c ? pageJoins('ev', 'evs', 'evr', 'ev.id = x.event_page_id') : ''}`,
       rule: least(terms), src: 'pg.source_id' };
   };
   return { forTable, signals, hasTrust };
@@ -439,7 +447,7 @@ export async function relowerClaimedRows(engine: BrainEngine, opts: { dryRun?: b
     const candidates = `SELECT x.id, ${src} AS source_id, ${table === 'pages' ? 'x.slug' : 'NULL::text'} AS slug, x.trust_tier AS from_tier,
         ${trustTierFromRankSql(rule)} AS to_tier
       FROM ${from}
-     WHERE x.write_origin->>'channel' = 'trust_claim' AND ${src} = ANY($1::text[])
+     WHERE ${relowerableSql('x')} AND ${src} = ANY($1::text[])
        AND (${rule}) IS NOT NULL AND (${rule}) < ${trustRankSql('x.trust_tier')}`;
     const rows = await engine.executeRaw<{ id: number | string; source_id: string; slug: string | null; from_tier: string; to_tier: string }>(
       `${candidates} ORDER BY x.id`, [claimed]);

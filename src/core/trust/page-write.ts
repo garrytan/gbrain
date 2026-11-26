@@ -106,6 +106,16 @@ export function stampPageTrustMarker(row: Pick<WriteRequest, 'operation' | 'inte
   if (stamped !== frontmatter) frontmatter.trust_tier = stamped.trust_tier;
 }
 
+/**
+ * #10286: the frontmatter of the holding page a fence write creates (`memory/unattributed`). A fence edit keeps a page's
+ * tier and marker, but a page it creates has neither, so it starts with the writer's marker, as a content write stamps
+ * it; without one doctor `provenance_stamp_drift` counts the page `marker_missing`.
+ */
+export function newHoldingPageFrontmatter(row: Pick<WriteRequest, 'id' | 'operation' | 'authority' | 'intent'>): Record<string, unknown> {
+  const tier = pageWriteTrust(row, {})?.tier;
+  return tier ? stampTrustMarker({}, tier) : {};
+}
+
 /** GST-2518: the privacy flag keys (visibility and its aliases) and the readers key a lower-tier write cannot widen alone. */
 const PRIVACY_FLAG_KEYS = ['visibility', ...Object.keys(PRIVACY_ALIASES)];
 const READERS_KEY = 'readable_by';
