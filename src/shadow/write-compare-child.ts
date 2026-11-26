@@ -85,7 +85,7 @@ export function createWriteComparer(d: WriteComparerDeps): { handle(event: Write
         // The scratch store must hold exactly the rows the primary held: a skipped, dropped or lossy import, or a column it does not keep, is not that copy.
         if (done.imported !== rows.length || done.skipped || done.dropped || Object.keys(done.losses).length || done.unmapped_columns?.some((c: string) => !EXPECTED_UNMAPPED.has(c))) return ['uncomparable', 'preimage_not_loaded'];
       }
-      try { await engine[event.op](...args); } catch (error) { d.onError?.('write', error); return ['uncomparable', `rust_write_failed`]; }
+      try { await engine[event.op](...args); for (const call of event.then ?? []) await engine.updatePageContextualRetrievalState(...decodeValue(call) as unknown[]); } catch (error) { d.onError?.('write', error); return ['uncomparable', `rust_write_failed`]; }
       const theirs = readBackText(encodeValue(await readBack(engine, targets, pageSet(targets, pre))));
       if (theirs === readBackText(event.post)) return ['comparable'];
       return ['unexplained_difference'];
