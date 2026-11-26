@@ -579,8 +579,13 @@ pub(crate) fn refresh_rows_in(
 }
 
 /// The row's claim is held under `fence` (a row no write would change has no claim to check).
-fn refresh_held(tx: &mut dyn KvWrite, r: &RefreshRecord, fence: Option<&LeaseToken>) -> Result<()> {
-    fence::claim_held(tx, CLAIM_REFRESH, &r.id.to_lowercase(), fence)
+fn refresh_held(
+    store: &Store,
+    tx: &mut dyn KvWrite,
+    r: &RefreshRecord,
+    fence: Option<&LeaseToken>,
+) -> Result<()> {
+    fence::claim_held(store, tx, CLAIM_REFRESH, &r.id.to_lowercase(), fence)
 }
 
 pub(crate) fn refresh_write_in(
@@ -608,7 +613,7 @@ pub(crate) fn refresh_write_in(
             if !from.iter().any(|state| state == &r.state) {
                 return Ok(json!(false));
             }
-            refresh_held(tx, &r, fence.as_ref())?;
+            refresh_held(store, tx, &r, fence.as_ref())?;
             // `gbrain_release_refresh_barrier`: the first move into a terminal state releases the barrier.
             if is_terminal(to) && !is_terminal(&r.state) && r.released_at_us.is_none() {
                 r.released_at_us = Some(now);
@@ -647,7 +652,7 @@ pub(crate) fn refresh_write_in(
             if r.state != "fenced" || started.as_deref() == Some("true") {
                 return Ok(Value::Null);
             }
-            refresh_held(tx, &r, fence.as_ref())?;
+            refresh_held(store, tx, &r, fence.as_ref())?;
             r.extra.insert("old_head".into(), json!(old_head));
             r.target_head = target_head.clone();
             r.updated_at_us = now;
@@ -709,7 +714,15 @@ pub(crate) fn refresh_write_in(
                 extra,
             };
             put_refresh(tx, &record)?;
-            fence::claim_taken(tx, CLAIM_REFRESH, &record.id.to_lowercase(), fence.as_ref())?;
+            fence::claim_taken(
+                store,
+                tx,
+                CLAIM_REFRESH,
+                &record.id.to_lowercase(),
+                fence.as_ref(),
+                "refresh_insert_draining",
+                None,
+            )?;
             Ok(refresh_row(&record))
         }
         RefreshWrite::MarkMergeStarted { id, at_ms, fence } => {
@@ -719,7 +732,7 @@ pub(crate) fn refresh_write_in(
             if r.state != "fenced" {
                 return Ok(json!(false));
             }
-            refresh_held(tx, &r, fence.as_ref())?;
+            refresh_held(store, tx, &r, fence.as_ref())?;
             r.outcome.insert("merge_started".into(), json!(true));
             r.outcome
                 .insert("merge_started_at".into(), json!(*at_ms as i64));
@@ -734,7 +747,15 @@ pub(crate) fn refresh_write_in(
             if !active(&r) {
                 return Ok(json!(false));
             }
-            fence::claim_taken(tx, CLAIM_REFRESH, &r.id.to_lowercase(), fence.as_ref())?;
+            fence::claim_taken(
+                store,
+                tx,
+                CLAIM_REFRESH,
+                &r.id.to_lowercase(),
+                fence.as_ref(),
+                "refresh_adopt_claim",
+                None,
+            )?;
             Ok(json!(true))
         }
         RefreshWrite::SetHolder { id, holder, fence } => {
@@ -745,7 +766,15 @@ pub(crate) fn refresh_write_in(
                 return Ok(Value::Null);
             }
             // The caller becomes the holder: a new claim of the row, never the old holder's.
-            fence::claim_taken(tx, CLAIM_REFRESH, &r.id.to_lowercase(), fence.as_ref())?;
+            fence::claim_taken(
+                store,
+                tx,
+                CLAIM_REFRESH,
+                &r.id.to_lowercase(),
+                fence.as_ref(),
+                "refresh_set_holder",
+                None,
+            )?;
             let previous = r
                 .outcome
                 .get("previous_holder")
@@ -795,7 +824,7 @@ pub(crate) fn refresh_write_in(
             if !token_matches || r.state != "running" || !extra_is_null(&r, "recovery") || started {
                 return Ok(Value::Null);
             }
-            fence::claim_held(tx, CLAIM_WRITE, &r.id.to_lowercase(), fence.as_ref())?;
+            fence::claim_held(store, tx, CLAIM_WRITE, &r.id.to_lowercase(), fence.as_ref())?;
             r.state = "deferred".into();
             r.blocked_reason = None;
             r.updated_at_us = now;

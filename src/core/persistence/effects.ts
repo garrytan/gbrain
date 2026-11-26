@@ -7,7 +7,6 @@ import { existsSync, statSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { isPersistenceDeclaration } from './protocol.ts';
-import { fenceOpts } from './host-fence.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { OperationError, opError } from '../ops/contract.ts';

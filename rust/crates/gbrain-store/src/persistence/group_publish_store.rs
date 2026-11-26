@@ -345,18 +345,19 @@ fn claim_fence(what: &GroupWrite) -> Option<(&'static str, Option<&LeaseToken>)>
 /// and epoch. One member that was not refuses the whole entry, so a group never half-applies. A call with no fence
 /// checks nothing (`fence::begin` has already refused a multi-user store).
 fn claims_held(
+    store: &Store,
     tx: &mut dyn KvWrite,
     fence: Option<&LeaseToken>,
     members: &[(&str, &str)],
 ) -> Result<()> {
-    if fence.is_none() {
+    if fence.is_none() && !store.multiuser() {
         return Ok(());
     }
     for (id, token) in members {
         if let Some(r) = request_by_id(&*tx, id)?
             && holds_claim(&r, token)
         {
-            fence::claim_held(tx, CLAIM_WRITE, &r.id.to_lowercase(), fence)?;
+            fence::claim_held(store, tx, CLAIM_WRITE, &r.id.to_lowercase(), fence)?;
         }
     }
     Ok(())
@@ -446,10 +447,19 @@ pub(crate) fn group_write_in(
                 );
                 claimed.push((record, previous));
             }
+            let lease_ttl = (lease_ms.is_finite() && *lease_ms >= 1.0).then_some(*lease_ms as u64);
             let mut rows = Vec::new();
             for (record, previous) in &claimed {
                 write_request(tx, record)?;
-                fence::claim_taken(tx, CLAIM_WRITE, &record.id.to_lowercase(), fence.as_ref())?;
+                fence::claim_taken(
+                    store,
+                    tx,
+                    CLAIM_WRITE,
+                    &record.id.to_lowercase(),
+                    fence.as_ref(),
+                    "claim_group_followers",
+                    lease_ttl,
+                )?;
                 let mut row = record.to_row();
                 row["previous_claim_phase"] = previous.clone();
                 rows.push(row);
@@ -461,7 +471,7 @@ pub(crate) fn group_write_in(
             lease_ms,
             fence,
         } => {
-            claims_held(tx, fence.as_ref(), &pairs(members))?;
+            claims_held(store, tx, fence.as_ref(), &pairs(members))?;
             let mut held = Vec::new();
             for m in members {
                 let Some(mut r) = request_by_id(&*tx, &m.id)? else {
@@ -485,7 +495,7 @@ pub(crate) fn group_write_in(
             Ok(Value::Array(held))
         }
         GroupWrite::MarkDispatched { members, fence } => {
-            claims_held(tx, fence.as_ref(), &pairs(members))?;
+            claims_held(store, tx, fence.as_ref(), &pairs(members))?;
             let mut marked = Vec::new();
             for m in members {
                 let Some(mut r) = request_by_id(&*tx, &m.id)? else {
@@ -503,7 +513,7 @@ pub(crate) fn group_write_in(
             Ok(Value::Array(marked))
         }
         GroupWrite::StartPublication { members, fence } => {
-            claims_held(tx, fence.as_ref(), &pairs(members))?;
+            claims_held(store, tx, fence.as_ref(), &pairs(members))?;
             let mut started = Vec::new();
             for m in members {
                 let Some(mut r) = request_by_id(&*tx, &m.id)? else {
@@ -531,7 +541,13 @@ pub(crate) fn group_write_in(
                     continue;
                 };
                 if holds_claim(&r, &m.token) && extra_is_null(&r, "recovery") {
-                    fence::claim_held(tx, CLAIM_WRITE, &r.id.to_lowercase(), fence.as_ref())?;
+                    fence::claim_held(
+                        store,
+                        tx,
+                        CLAIM_WRITE,
+                        &r.id.to_lowercase(),
+                        fence.as_ref(),
+                    )?;
                     ready.push((r, m));
                 }
             }
@@ -641,7 +657,7 @@ pub(crate) fn group_write_in(
         } => {
             // The whole group is checked before the first member is written: one member that refuses `lease_lost`
             // refuses the group, so no row and no counter changes.
-            claims_held(tx, fence.as_ref(), &pairs(members))?;
+            claims_held(store, tx, fence.as_ref(), &pairs(members))?;
             let mut done = Vec::new();
             for m in members {
                 let Some(r) = request_by_id(&*tx, &m.id)? else {
@@ -667,6 +683,7 @@ pub(crate) fn group_write_in(
                     retained_bytes: m.retained,
                     terminal_reservation: extra_i64(&r, "terminal_reservation"),
                     probe_purges: false,
+                    recovered: None,
                     // The group's own entry ran `fence::begin` and `claims_held`; the inner completion checks nothing more.
                     fence: None,
                 };

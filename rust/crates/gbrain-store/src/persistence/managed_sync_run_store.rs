@@ -414,7 +414,7 @@ pub(super) fn fenced_write(
             let done = run(tx)?;
             if changed(&done) {
                 let id = checkpoint_claim_id(&text(p, 0)?, &text(p, 1)?);
-                fence::claim_taken(tx, CLAIM_SYNC_CHECKPOINT, &id, fence)?;
+                fence::claim_taken(store, tx, CLAIM_SYNC_CHECKPOINT, &id, fence, name, None)?;
             }
             done
         }
@@ -424,6 +424,7 @@ pub(super) fn fenced_write(
             // A swap that would lose (no row, or another value) writes nothing and has no claim to check.
             if op_row(&*tx, &op, &fingerprint)?.is_some_and(|row| row.completed_keys == before) {
                 fence::claim_held(
+                    store,
                     tx,
                     CLAIM_SYNC_CHECKPOINT,
                     &checkpoint_claim_id(&op, &fingerprint),
@@ -436,10 +437,13 @@ pub(super) fn fenced_write(
             let (op, fingerprint) = (text(p, 0)?, text(p, 1)?);
             if op_row(&*tx, &op, &fingerprint)?.is_some() {
                 fence::claim_taken(
+                    store,
                     tx,
                     CLAIM_SYNC_CHECKPOINT,
                     &checkpoint_claim_id(&op, &fingerprint),
                     fence,
+                    name,
+                    None,
                 )?;
             }
             run(tx)?

@@ -37,7 +37,6 @@ import { withdrawnFromDetail } from '../facts/withdrawal.ts';
 import { heldFileDiagnostic, storedCheckoutRefusal } from './verb-errors.ts';
 import { isMissingPageMessage } from './page-identity.ts';
 import { registerPersistenceConsumerConfig } from '../embedding-disabled.ts';
-import { rustMultiuserEngine } from './host-registration.ts';
 import { ensureProcessRegistration } from './managed-registration.ts';
 
 interface Service { consumer: PersistenceConsumerLike; heartbeat?: ConsumerHeartbeat; stopping: boolean; unregisterStop?: () => void; unregisterReopen?: () => void; starting?: Promise<void>; }

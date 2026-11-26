@@ -14,7 +14,7 @@ use super::{
     ClaimStamp, ClaimableSpec, all_requests, extra_is_null, extra_time, foreground_priority,
     json_text, jsonb_param, lease_end, request_by_id, uuid_param,
 };
-use super::{extra_i64, held_claim_of};
+use super::{extra_i64, held_claim_of, write_claimable_now};
 use crate::env::{Env, iso};
 use crate::error::Result;
 use crate::journal::{max_sequence, write_request};
@@ -176,6 +176,11 @@ fn charge_transient_in(
     Ok(Some(before + 1))
 }
 
+/// The claim's own lease in ms, when it has one.
+fn lease_ttl(lease_ms: f64) -> Option<u64> {
+    (lease_ms.is_finite() && lease_ms >= 1.0).then_some(lease_ms as u64)
+}
+
 impl Store {
     /// `chargeTransientInterruption(charge)`: `{ transient_interruptions }`, or `None` when the claim is gone.
     pub fn charge_transient_interruption(&self, charge: &TransientCharge) -> Result<Option<Value>> {
@@ -186,8 +191,8 @@ impl Store {
                 charge.fence.as_ref(),
                 "charge_transient_interruption",
             )?;
-            if charge.fence.is_some() {
-                held_claim_of(tx, &charge.id, charge.fence.as_ref())?;
+            if charge.fence.is_some() || self.multiuser() {
+                held_claim_of(self, tx, &charge.id, charge.fence.as_ref())?;
             }
             Ok(charge_transient_in(tx, &*self.env, charge)?
                 .map(|n| json!({ "transient_interruptions": n })))
@@ -211,14 +216,21 @@ impl Store {
     pub fn stamp_lane_head_claim(&self, stamp: &ClaimStamp) -> Result<Option<Value>> {
         self.write(|tx| {
             fence::begin(self, tx, stamp.fence.as_ref(), "stamp_lane_head_claim")?;
-            let Some(record) = claim_request(tx, &*self.env, stamp, false)? else {
+            // Multi-user: a stamp takes only a request that is claimable now, read in this same write.
+            if self.multiuser() && !write_claimable_now(&*tx, &*self.claim_env(), &stamp.id)? {
+                return Ok(None);
+            }
+            let Some(record) = claim_request(tx, &*self.claim_env(), stamp, false)? else {
                 return Ok(None);
             };
             fence::claim_taken(
+                self,
                 tx,
                 CLAIM_WRITE,
                 &record.id.to_lowercase(),
                 stamp.fence.as_ref(),
+                "stamp_lane_head_claim",
+                lease_ttl(stamp.lease_ms),
             )?;
             let mut row = record.to_row();
             row["seen_sequence"] = json!(max_sequence(&*tx)?.to_string());
@@ -231,14 +243,17 @@ impl Store {
     pub fn reclaim_released_write(&self, stamp: &ClaimStamp) -> Result<Option<Value>> {
         self.write(|tx| {
             fence::begin(self, tx, stamp.fence.as_ref(), "reclaim_released_write")?;
-            let Some(record) = claim_request(tx, &*self.env, stamp, true)? else {
+            let Some(record) = claim_request(tx, &*self.claim_env(), stamp, true)? else {
                 return Ok(None);
             };
             fence::claim_taken(
+                self,
                 tx,
                 CLAIM_WRITE,
                 &record.id.to_lowercase(),
                 stamp.fence.as_ref(),
+                "reclaim_released_write",
+                lease_ttl(stamp.lease_ms),
             )?;
             Ok(Some(record.to_row()))
         })

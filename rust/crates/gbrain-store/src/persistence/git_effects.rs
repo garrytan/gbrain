@@ -140,14 +140,15 @@ fn claim_key(claim: &GitClaimRef) -> Result<(i64, Option<String>)> {
 }
 
 /// Before anything is written: every effect the claims name whose claim holds (`matches`) was claimed under `fence`'s
-/// lease name and epoch (`CLAIM_EFFECT`). One that was not refuses the whole write. No fence, no check.
+/// lease name and epoch (`CLAIM_EFFECT`). One that was not refuses the whole write. No fence on a plain store, no check; a multi-user store with none refuses a claim a live holder owns.
 fn claims_held(
+    store: &crate::Store,
     tx: &mut dyn KvWrite,
     fence: Option<&LeaseToken>,
     claims: &[GitClaimRef],
     plain: bool,
 ) -> Result<()> {
-    if fence.is_none() {
+    if fence.is_none() && !store.multiuser() {
         return Ok(());
     }
     for claim in claims {
@@ -159,7 +160,7 @@ fn claims_held(
         if e.execution_token.as_deref() != Some(token.as_str()) || (plain && e.recovery.is_some()) {
             continue;
         }
-        fence::claim_held(tx, CLAIM_EFFECT, &id.to_string(), fence)?;
+        fence::claim_held(store, tx, CLAIM_EFFECT, &id.to_string(), fence)?;
     }
     Ok(())
 }
@@ -177,7 +178,7 @@ fn git_effect_write_in(
             fence,
         } => {
             fence::begin(store, tx, fence.as_ref(), "git_yield_to_publications")?;
-            claims_held(tx, fence.as_ref(), claims, false)?;
+            claims_held(store, tx, fence.as_ref(), claims, false)?;
             let delay_us = (delay_ms * 1000.0).round() as i64;
             for claim in claims {
                 let (id, token) = claim_key(claim)?;
@@ -207,7 +208,7 @@ fn git_effect_write_in(
             fence,
         } => {
             fence::begin(store, tx, fence.as_ref(), "git_record_plain_outcome")?;
-            claims_held(tx, fence.as_ref(), claims, true)?;
+            claims_held(store, tx, fence.as_ref(), claims, true)?;
             let outcome: Value = serde_json::from_str(outcome_json).map_err(|e| {
                 StoreError::invalid(format!("invalid input syntax for type json: {e}"))
             })?;

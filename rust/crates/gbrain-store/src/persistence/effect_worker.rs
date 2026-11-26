@@ -740,7 +740,15 @@ impl Store {
             let row = claim_effect_recovery_in(tx, &*self.env, claim)?;
             if row.is_some() {
                 let id = effect_id(&claim.id)?.to_string();
-                fence::claim_taken(tx, CLAIM_EFFECT, &id, claim.fence.as_ref())?;
+                fence::claim_taken(
+                    self,
+                    tx,
+                    CLAIM_EFFECT,
+                    &id,
+                    claim.fence.as_ref(),
+                    "claim_effect_recovery",
+                    None,
+                )?;
             }
             Ok(row)
         })
@@ -757,7 +765,15 @@ impl Store {
             )?;
             let rows = claim_coalesced_git_effects_in(tx, &*self.env, input)?;
             for id in rows.iter().filter_map(|row| row["id"].as_str()) {
-                fence::claim_taken(tx, CLAIM_EFFECT, id, input.fence.as_ref())?;
+                fence::claim_taken(
+                    self,
+                    tx,
+                    CLAIM_EFFECT,
+                    id,
+                    input.fence.as_ref(),
+                    "claim_coalesced_git_effects",
+                    None,
+                )?;
             }
             Ok(rows)
         })

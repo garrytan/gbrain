@@ -345,8 +345,7 @@ src/core/persistence/bounded-reads.ts	execute_raw	10
 src/core/persistence/capacity-view.ts	execute_raw	1
 src/core/persistence/change-reason.ts	execute_raw	2
 src/core/persistence/compaction-pass.ts	execute_raw	1
-src/core/persistence/concept-rebuild.ts	execute_raw	3	#9653: the held-concept rebuild's hold, member and stated-row checks run in its purge transaction, next to the engine purge it calls
-src/core/persistence/config-snapshot.ts	execute_raw	2
+src/core/persistence/config-snapshot.ts	execute_raw	1
 src/core/persistence/connector-account-mismatch.ts	execute_raw	1
 src/core/persistence/connector-checkpoint-migration.ts	execute_raw	8
 src/core/persistence/connector-google-receipts.ts	execute_raw	1
@@ -410,9 +409,7 @@ src/core/persistence/page-append.ts	execute_raw	2
 src/core/persistence/page-mutations.ts	execute_raw	2
 src/core/persistence/page-prepare.ts	execute_raw	6
 src/core/persistence/page-upload.ts	execute_raw	15
-src/core/persistence/page-visibility.ts	execute_raw	5
-src/core/persistence/pending-import.ts	execute_raw	1
-src/core/persistence/physical-root.ts	execute_raw	8
+src/core/persistence/page-visibility.ts	execute_raw	4
 src/core/persistence/plain-directory-drift.ts	execute_raw	2	#8079: reads and records whether a page revision was written with its file in step (journal receipt join plus agreement checkpoint); persistence protocol state, no typed checkpoint methods yet.
 src/core/persistence/preadmit-cache.ts	execute_raw	3
 src/core/persistence/preparation-budget.ts	execute_raw	1
@@ -436,26 +433,7 @@ src/core/persistence/rows-behind.ts	execute_raw	4
 src/core/persistence/searchable.ts	execute_raw	1
 src/core/persistence/segmented-apply.ts	execute_raw	6
 src/core/persistence/skill-activation.ts	execute_raw	11
-src/core/persistence/sync-drain.ts	execute_raw	2
-src/core/persistence/soak-counters.ts	execute_raw	2
-src/core/persistence/sync-cursor-key.ts	execute_raw	7
-src/core/persistence/sync-delete-tombstones.ts	execute_raw	1
-src/core/persistence/sync-discovery.ts	execute_raw	6
-src/core/persistence/sync-dry-run-writer.ts	execute_raw	1
-src/core/persistence/sync-failures.ts	execute_raw	4
-src/core/persistence/sync-freshness.ts	execute_raw	1
-src/core/persistence/sync-ghosts.ts	execute_raw	3
-src/core/persistence/sync-group.ts	execute_raw	1
-src/core/persistence/sync-held-deletions.ts	execute_raw	1
-src/core/persistence/sync-holds.ts	execute_raw	6
-src/core/persistence/sync-idle-skips.ts	execute_raw	1
-src/core/persistence/sync-lanes.ts	execute_raw	1
-src/core/persistence/sync-markers.ts	execute_raw	9
-src/core/persistence/sync-origin.ts	execute_raw	1
-src/core/persistence/sync-page-fault.ts	execute_raw	9
-src/core/persistence/sync-pass-apply.ts	execute_raw	3
-src/core/persistence/sync-pass-batch.ts	execute_raw	3
-src/core/persistence/sync-pass-carried.ts	execute_raw	2
+src/core/persistence/sync-drain.ts	execute_raw	1
 src/core/persistence/sync-pass-confirm.ts	execute_raw	8
 src/core/persistence/sync-run.ts	execute_raw	7
 src/core/persistence/unbound-source.ts	execute_raw	4
