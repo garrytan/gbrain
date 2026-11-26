@@ -1,6 +1,9 @@
 /**
- * The quote and slot-history reads of a fact recall (src/core/engine-sql/facts-recall.ts), served from the facts store
- * (rust/crates/gbrain-store/src/facts/quoted.rs): `listReadablePageSlugs`, which models `pageReadFilter(.., live = true)`: the page privacy policy
+ * The readable-slug read of a fact recall (src/core/engine-sql/facts-recall.ts), served from the facts store
+ * (rust/crates/gbrain-store/src/facts/quoted.rs): `listReadablePageSlugs`. The quote reads (`listFactsFromQuotedPages`,
+ * `listOwnerTierFacts`, `listPageRefsByIds`) are in facts-trust.ts and trust-tier-reads.ts.
+ *
+ * `listReadablePageSlugs` models `pageReadFilter(.., live = true)`: the page privacy policy
  * (storePagePolicy, caller readers included), the trust floor and flag suppression; the scope's sources are not read.
  */
 import type { BrainEngine } from '../../engine.ts';

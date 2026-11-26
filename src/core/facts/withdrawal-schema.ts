@@ -17,16 +17,63 @@ export function normalizeLoweredClaim(claim: string): string {
   return out.replace(/ +/g, ' ').replace(/\.(?=[. ]|$)/g, ' ').replace(/ +/g, ' ').replace(/^ | $/g, '');
 }
 
+/**
+ * Whitespace the fact fingerprint and the fence overlay fold, as an explicit regex class: the code points Rust
+ * `is_pg_space` (rust/crates/gbrain-store/src/cli_reads/pg_text.rs) and PGLite's `[[:space:]]` take. Postgres
+ * `[[:space:]]` follows the database locale (en_US.utf8 leaves out U+0085 and adds U+1680), so a locale class would
+ * give one claim two fingerprints across engines (v341).
+ */
+export const FACT_SPACE_CLASS = '[\\x09-\\x0d \\u0085\\u2000-\\u2006\\u2008-\\u200a\\u2028\\u2029\\u205f\\u3000]';
+
 // Built-ins are schema-qualified instead of pinning search_path on these SQL
 // functions, which must stay inlinable (an index expression uses them); the
 // results are byte-identical (test/fact-fingerprint-search-path.test.ts).
-const NORMALIZE_CLAIM_SQL = `pg_catalog.btrim(pg_catalog.regexp_replace(pg_catalog.regexp_replace(pg_catalog.regexp_replace(pg_catalog.translate(pg_catalog.lower(claim), '${FINGERPRINT_PUNCTUATION.replace(/'/g, "''")}', '${' '.repeat([...FINGERPRINT_PUNCTUATION].length)}'), '[[:space:]]+', ' ', 'g'), '\\.(?=[. ]|$)', ' ', 'g'), ' +', ' ', 'g'), ' ')`;
+const normalizeClaimSql = (space: string) => `pg_catalog.btrim(pg_catalog.regexp_replace(pg_catalog.regexp_replace(pg_catalog.regexp_replace(pg_catalog.translate(pg_catalog.lower(claim), '${FINGERPRINT_PUNCTUATION.replace(/'/g, "''")}', '${' '.repeat([...FINGERPRINT_PUNCTUATION].length)}'), '${space}+', ' ', 'g'), '\\.(?=[. ]|$)', ' ', 'g'), ' +', ' ', 'g'), ' ')`;
+const NORMALIZE_CLAIM_SQL = normalizeClaimSql(FACT_SPACE_CLASS);
+const fingerprintBody = (space: string) => `pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(${normalizeClaimSql(space)}, 'UTF8')), 'hex')`;
+
+/** SQL: `claim` holds a FACT_SPACE_CLASS character the locale's `[[:space:]]` leaves out (U+0085 on en_US.utf8). */
+const keepsListSpaceSql = (claim: string) =>
+  `pg_catalog.regexp_replace(${claim}, '[[:space:]]', '', 'g') OPERATOR(pg_catalog.~) '${FACT_SPACE_CLASS}'`;
+/** SQL: `claim` holds a character the locale's `[[:space:]]` takes and FACT_SPACE_CLASS leaves out (U+1680 on en_US.utf8). */
+const localeOnlySpaceSql = (claim: string) =>
+  `pg_catalog.regexp_replace(${claim}, '${FACT_SPACE_CLASS}', '', 'g') OPERATOR(pg_catalog.~) '[[:space:]]'`;
+
+/**
+ * The v2 fingerprint (`gbrain_fact_fingerprint` before v341: whitespace by the locale's `[[:space:]]`) of SQL
+ * expression `claim`, spelled with built-ins only so a guard function can match a legacy ledger hash at any migration
+ * point, before v341 creates gbrain_fact_fingerprint_v2.
+ */
+export function factFingerprintV2Sql(claim: string): string {
+  return fingerprintBody('[[:space:]]').replace(/\bclaim\b/g, () => claim);
+}
+
+/**
+ * `factFingerprintV2Sql(claim)` where no current fingerprint can equal it, else NULL: the old fold left a character of
+ * FACT_SPACE_CLASS in place (U+0085 on en_US.utf8), which the current fold never leaves. Where the old fold folded a
+ * character the current one keeps (U+1680), the v2 hash is the current hash of another spelling, so a ledger row under it
+ * may be that spelling's and matching it would differ from PGLite and the Rust store; such a row matches that spelling only.
+ */
+export function legacyFingerprintV2Sql(claim: string): string {
+  return `CASE WHEN ${keepsListSpaceSql(claim)} THEN ${factFingerprintV2Sql(claim)} END`;
+}
+
+/** Every character either fold (the current class, any locale's `[[:space:]]`) may treat as space outside ASCII; a claim with none has one fingerprint. */
+const FOLDS_MAY_DIFFER = /[\u0085\u00a0\u1680\u180e\u2000-\u200b\u2028\u2029\u202f\u205f\u3000\ufeff]/;
+
+/** Whether `claim`'s v2 fingerprint may differ from its current one (no query is needed for any other claim). */
+export const mayHaveLegacyFingerprint = (claim: string): boolean => FOLDS_MAY_DIFFER.test(claim);
 
 /** The fingerprint SQL functions, also re-created on their own by the search_path migration. */
 export const FACT_FINGERPRINT_FUNCTION_STATEMENTS = [
+  // _v1 and _v2 fold whitespace by the locale's [[:space:]]. Where that folds a character the current fold keeps
+  // (U+1680 on en_US.utf8), the old hash is the current hash of another spelling ("X Y" for "X\u1680Y"), so matching it
+  // would let a withdrawal or purge of that spelling reach this claim on Postgres only; there each answers NULL, as
+  // legacyFingerprintV2Sql. PGLite's [[:space:]] is the explicit list, so there _v1 is unchanged and _v2 is NULL (it
+  // equals the current fingerprint).
   `CREATE OR REPLACE FUNCTION gbrain_fact_fingerprint_v1(claim TEXT) RETURNS TEXT
     LANGUAGE SQL IMMUTABLE STRICT AS $fn$
-      SELECT pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(pg_catalog.regexp_replace(pg_catalog.lower(pg_catalog.btrim(claim)), '[[:space:]]+', ' ', 'g'), 'UTF8')), 'hex')
+      SELECT CASE WHEN ${keepsListSpaceSql('claim')} OR NOT ${localeOnlySpaceSql('claim')} THEN pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(pg_catalog.regexp_replace(pg_catalog.lower(pg_catalog.btrim(claim)), '[[:space:]]+', ' ', 'g'), 'UTF8')), 'hex') END
     $fn$`,
   `CREATE OR REPLACE FUNCTION gbrain_fact_normalize(claim TEXT) RETURNS TEXT
     LANGUAGE SQL IMMUTABLE STRICT AS $fn$ SELECT ${NORMALIZE_CLAIM_SQL} $fn$`,
@@ -34,7 +81,14 @@ export const FACT_FINGERPRINT_FUNCTION_STATEMENTS = [
   // functions with a restricted search_path, so the index expression must
   // reference only built-ins.
   `CREATE OR REPLACE FUNCTION gbrain_fact_fingerprint(claim TEXT) RETURNS TEXT
-    LANGUAGE SQL IMMUTABLE STRICT AS $fn$ SELECT pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(${NORMALIZE_CLAIM_SQL}, 'UTF8')), 'hex') $fn$`,
+    LANGUAGE SQL IMMUTABLE STRICT AS $fn$ SELECT ${fingerprintBody(FACT_SPACE_CLASS)} $fn$`,
+  // v341: the current fingerprint under its version name, and the locale-folded one every ledger hash Postgres
+  // stored before v341 carries (where no current fingerprint can equal it). A ledger hash matches a claim by any of
+  // fingerprint, _v2 and _v1.
+  `CREATE OR REPLACE FUNCTION gbrain_fact_fingerprint_v3(claim TEXT) RETURNS TEXT
+    LANGUAGE SQL IMMUTABLE STRICT AS $fn$ SELECT ${fingerprintBody(FACT_SPACE_CLASS)} $fn$`,
+  `CREATE OR REPLACE FUNCTION gbrain_fact_fingerprint_v2(claim TEXT) RETURNS TEXT
+    LANGUAGE SQL IMMUTABLE STRICT AS $fn$ SELECT ${legacyFingerprintV2Sql('claim')} $fn$`,
 ] as const;
 
 /**
@@ -47,7 +101,8 @@ export const FACT_FINGERPRINT_FUNCTION_STATEMENTS = [
  * claim. A withdrawal matches a fact when `subject = '*' OR subject =
  * entity_slug`. Fingerprints fold case, whitespace and punctuation (v174);
  * ledger rows written earlier carry the exact v1 fingerprint and keep
- * matching through gbrain_fact_fingerprint_v1.
+ * matching through gbrain_fact_fingerprint_v1, and rows Postgres wrote before
+ * v341 folded whitespace by locale and keep matching through _v2.
  */
 /**
  * GBRA-574 A1: whether row `r`'s entity is unbacked, as SQL: a bare name key (no directory, the form conversation
@@ -90,7 +145,7 @@ export const FACT_WITHDRAWAL_PRESERVE_FUNCTION_SQL = `CREATE OR REPLACE FUNCTION
           WHERE source_id = NEW.source_id AND visibility = NEW.visibility
             AND (CASE WHEN starts_with(COALESCE(NEW.source_markdown_slug, ''), 'memory/members/') THEN subject = NEW.source_markdown_slug
               ELSE subject = '*' OR subject = NEW.entity_slug OR (${unbackedEntitySql('NEW')} AND NOT ${ownedMemorySubjectSql('subject')}) END)
-            AND fact_hash IN (gbrain_fact_fingerprint(NEW.fact), gbrain_fact_fingerprint_v1(NEW.fact));
+            AND fact_hash IN (gbrain_fact_fingerprint(NEW.fact), ${legacyFingerprintV2Sql('NEW.fact')}, gbrain_fact_fingerprint_v1(NEW.fact));
         IF withdrawn IS NOT NULL THEN
           NEW.expired_at := withdrawn;
           NEW.valid_until := LEAST(COALESCE(NEW.valid_until, withdrawn), withdrawn);

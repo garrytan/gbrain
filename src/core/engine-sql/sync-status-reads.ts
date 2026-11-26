@@ -111,6 +111,23 @@ export function readOrphanedManagedSyncFailureRows<F = Record<string, unknown>>(
       AND NOT EXISTS(SELECT 1 FROM op_checkpoints c WHERE c.op='managed-sync' AND c.fingerprint=f.fingerprint)`, [sourceIds ? [...sourceIds] : null]);
 }
 
+/**
+ * The commit targets of the freshness samples (persistence/sync-freshness.ts `SAMPLE_WHERE`, the same predicate text): a
+ * committed `managed_sync_import` receipt of worktree `$1`'s source incarnation `$2` that landed in the last `$3` hours,
+ * imported from a recorded commit and not a working-tree import; newest receipt first then byte target, at most `$4`.
+ */
+const FRESHNESS_TARGETS_SQL = `SELECT r.intent->>'target' AS target FROM persistence_requests r
+    WHERE r.worktree_id=$1::uuid AND r.source_incarnation=$2::uuid AND r.state='committed' AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%'
+    AND r.completed_at > now() - ($3::int * interval '1 hour') AND r.intent->>'kind'='managed_sync_import' AND r.intent->>'from' IS NOT NULL
+    AND COALESCE(r.intent->>'working','false') <> 'true'
+    GROUP BY 1 ORDER BY max(r.completed_at) DESC, (r.intent->>'target') COLLATE "C" LIMIT $4`;
+
+/** The commit targets of a worktree's freshness samples, newest receipt first then byte target, at most `limit`. */
+export async function listFreshnessTargets(exec: SyncStatusExec, worktreeId: string, incarnation: string, windowHours: number, limit: number): Promise<string[]> {
+  const rows = await exec.executeRaw<{ target: string }>(FRESHNESS_TARGETS_SQL, [worktreeId, incarnation, windowHours, Math.max(1, Math.floor(limit))]);
+  return rows.map(row => row.target);
+}
+
 /** The head of a source binding's unfinished write requests (running first, then by sequence). */
 export interface SyncHeadRequestRow {
   head_state: string; head_claim_phase: unknown; head_token: string | null; head_lapsed: boolean | null; head_kind: string | null; head_request_id: string | null;
@@ -145,6 +162,44 @@ export async function readSyncRecoveryProbeRow(exec: SyncStatusExec, sourceId: s
  * The open identity-downgrade records (no disposition, old page still soft-deleted by that sync) of the listed sources
  * (null: every source), oldest first, each with the live slugs at its new path (null when none).
  */
+/** The soft-deleted page an identity-downgrade record names: id, slug and `deleted_at::text`. */
+export interface IdentityDowngradeOldPage { id: number | string; slug: string; deleted_at: string }
+/** What an old page carries: its facts, links and aliases. */
+export interface IdentityDowngradeCarry { facts: number | string; links: number | string; aliases: number | string }
+/** One page of a pair as the remedy binds it. */
+export interface IdentityRemedySideRow { id: number | string; slug: string; revision: string | null; deleted: boolean }
+
+/**
+ * The soft-deleted page of the source that recorded `path` (or, recording no path, sits at `slug`), the most recently
+ * deleted first, then the lowest id (sync-identity-downgrades.ts recordIdentityDowngrades).
+ */
+export async function readIdentityDowngradeOldPage(exec: SyncStatusExec, sourceId: string, path: string, slug: string): Promise<IdentityDowngradeOldPage | null> {
+  const [row] = await exec.executeRaw<IdentityDowngradeOldPage>(
+    `SELECT id, slug, deleted_at::text AS deleted_at FROM pages WHERE source_id = $1 AND deleted_at IS NOT NULL
+      AND (source_path = $2 OR (source_path IS NULL AND slug = $3)) ORDER BY deleted_at DESC, id LIMIT 1`,
+    [sourceId, path, slug]);
+  return row ?? null;
+}
+
+/** The source's facts about `slug`, the links from or to `pageId`, and the source's alias rows of `slug`. */
+export async function countIdentityDowngradeCarry(exec: SyncStatusExec, sourceId: string, slug: string, pageId: number): Promise<IdentityDowngradeCarry> {
+  const [row] = await exec.executeRaw<IdentityDowngradeCarry>(`SELECT
+      (SELECT count(*) FROM facts WHERE source_id = $1 AND entity_slug = $2) AS facts,
+      (SELECT count(*) FROM links WHERE from_page_id = $3 OR to_page_id = $3) AS links,
+      (SELECT count(*) FROM page_aliases WHERE source_id = $1 AND slug = $2) AS aliases`, [sourceId, slug, pageId]);
+  return row ?? { facts: 0, links: 0, aliases: 0 };
+}
+
+/** One page of the source by id or by slug, deleted or not, as the identity remedy binds it, or null. */
+export async function readIdentityRemedySide(exec: SyncStatusExec, sourceId: string, by: { pageId: number } | { slug: string }): Promise<IdentityRemedySideRow | null> {
+  const [row] = 'pageId' in by
+    ? await exec.executeRaw<IdentityRemedySideRow>(
+      'SELECT id, slug, knowledge_revision::text AS revision, deleted_at IS NOT NULL AS deleted FROM pages WHERE source_id = $1 AND id = $2 LIMIT 1', [sourceId, by.pageId])
+    : await exec.executeRaw<IdentityRemedySideRow>(
+      'SELECT id, slug, knowledge_revision::text AS revision, deleted_at IS NOT NULL AS deleted FROM pages WHERE source_id = $1 AND slug = $2 LIMIT 1', [sourceId, by.slug]);
+  return row ?? null;
+}
+
 export function readIdentityDowngradeRows<D = Record<string, unknown>>(exec: SyncStatusExec, sourceIds: readonly string[] | null): Promise<Array<{ record: D | string; new_slugs: string[] | null }>> {
   return exec.executeRaw<{ record: D | string; new_slugs: string[] | null }>(
     `SELECT dg.completed_keys->0 AS record, np.slugs AS new_slugs FROM op_checkpoints dg JOIN pages p ON p.id::text = dg.fingerprint

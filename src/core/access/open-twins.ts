@@ -10,11 +10,10 @@ import type { BrainEngine } from '../engine.ts';
 import { folderAccessFor } from './caller.ts';
 import { listMembers } from './members.ts';
 import { identityFor, normalizePrincipal } from './principals.ts';
-import { folderRulesAllowedSql, privateSnapshotFilterFragment, readersAllowedSql } from '../search/private-visibility.ts';
 
 /** The pages of one preview checked for twins, and the twins listed. */
 export const OPEN_TWINS_PAGES = 1000;
-export const OPEN_TWINS_LISTED = 50;
+export { OPEN_TWINS_LISTED } from '../engine-sql/open-twins.ts';
 export interface OpenTwins { count: number; twins: Array<{ source_id: string; slug: string; twin_of: string }>; commands: string[] }
 
 /** `readers`: who the change leaves reading (bare member ids or principals); `cover(source, slugs)`: the command giving one source's listed twins the same change. */
@@ -25,14 +24,9 @@ export async function openTwins(engine: BrainEngine, pages: ReadonlyArray<{ sour
   const inside = new Set<string | null>(readers.map(normalizePrincipal));
   const outside = [[], ...(await listMembers(engine)).filter(member => member.status === 'enabled')
     .map(member => identityFor(member.id, member.groups)).filter(identity => !identity.some(principal => inside.has(principal)))];
-  const readable = await Promise.all(outside.map(async identity =>
-    `(${readersAllowedSql('t', identity)} AND ${folderRulesAllowedSql('t', identity.length ? (await folderAccessFor(engine, identity)).satisfiedRuleIds : [])})`));
-  const rows = await engine.executeRaw<{ source_id: string; slug: string; twin_of: string; n: number }>(`SELECT t.source_id, t.slug, min(c.source_id) AS twin_of,
-      count(*) OVER ()::int AS n FROM unnest($1::text[], $2::text[]) AS c(source_id, slug)
-    JOIN pages t ON t.slug = c.slug AND t.source_id <> c.source_id AND t.deleted_at IS NULL
-    WHERE NOT EXISTS (SELECT 1 FROM unnest($1::text[], $2::text[]) AS w(source_id, slug) WHERE w.source_id = t.source_id AND w.slug = t.slug)
-      AND ${privateSnapshotFilterFragment('t')} AND (${readable.join(' OR ')})
-    GROUP BY t.source_id, t.slug ORDER BY t.source_id, t.slug LIMIT ${OPEN_TWINS_LISTED}`, [window.map(page => page.source_id), window.map(page => page.slug)]);
+  const outsideReaders = await Promise.all(outside.map(async identity =>
+    ({ identity, satisfied: identity.length ? (await folderAccessFor(engine, identity)).satisfiedRuleIds : [] })));
+  const rows = await engine.listOpenTwinRows(window, outsideReaders);
   const twins = rows.map(({ source_id, slug, twin_of }) => ({ source_id, slug, twin_of: `${twin_of}:${slug}` }));
   const sources = [...new Set(twins.map(twin => twin.source_id))];
   return { count: Number(rows[0]?.n ?? 0), twins, commands: sources.map(source => cover(source, twins.filter(twin => twin.source_id === source).map(twin => twin.slug))) };

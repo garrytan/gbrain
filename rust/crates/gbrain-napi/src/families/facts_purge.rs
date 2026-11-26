@@ -359,6 +359,19 @@ impl Brain {
         })
     }
 
+    /// `deletePurgeTakeProposals(sourceId, factHash)`: resolves how many take proposals were deleted.
+    #[napi]
+    pub fn delete_purge_take_proposals<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        fact_hash: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.delete_purge_take_proposals(&source_id, &fact_hash)
+        })
+    }
+
     /// `deletePurgeOpenLoops(sourceId, factIds)`: resolves how many open loops were deleted.
     #[napi]
     pub fn delete_purge_open_loops<'env>(

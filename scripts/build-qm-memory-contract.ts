@@ -39,21 +39,24 @@ const V4_SCOPE_READ_OPS: ReadonlySet<string> = new Set(['entity', 'find_experts'
 /** The arguments v1 publishes per tool, frozen: later arguments appear from v2 on. */
 const V1_PARAMS: Record<string, readonly string[]> = { memory_recall: ['query', 'max_chars', 'acting_user'], memory_write: ['facts', 'idempotency_key', 'acting_user'] };
 /** The arguments v2 publishes per tool, frozen: #8694's query_keep appears from v3 on. */
+/** Params an op gained after v5 was published; v1 to v5 render without them (lane 3 P1: context_pack's profile). */
+export const PARAMS_AFTER_V5: Record<string, readonly string[]> = { context_pack: ['profile'] };
 const V2_PARAMS: Record<string, readonly string[]> = { memory_recall: [...V1_PARAMS.memory_recall!, 'source_id', 'source_ids'], memory_write: [...V1_PARAMS.memory_write!, 'source_id'] };
 /** The deferred operations v1 published, frozen: GST-1158 F9 deferred more from v2 on. */
 const V1_DEFERRED_OPS: readonly string[] = ['capture', 'extract_facts', 'list_write_conflicts', 'takes_add', 'takes_resolve', 'takes_supersede', 'takes_update'];
 /**
- * Operations deferred after v5 was published (GBRA-504 promote_guest_note, nightly learning keep and undo). A published version never changes, so v1 to
+ * Operations deferred after v5 was published (GBRA-504 promote_guest_note, nightly learning keep and undo, GST-3825 household_add and household_mark, GST-3824 log_action and policy_reserve). A published version never changes, so v1 to
  * v5 leave them out and every later version lists them; an attested call is refused them either way.
  */
-const DEFERRED_AFTER_V5: ReadonlySet<string> = new Set(['promote_guest_note', 'learned_keep', 'learned_undo']);
-/** Tool text v3 to v5 published before it changed, frozen: GST-3256 added phone numbers to whois; GST-3338 said query's autocut is off by default. */
+const DEFERRED_AFTER_V5: ReadonlySet<string> = new Set(['promote_guest_note', 'learned_keep', 'learned_undo', 'household_add', 'household_mark', 'log_action', 'policy_reserve']);
+/** Tool text v3 to v5 published before it changed, frozen: GST-3256 added phone numbers to whois; GST-3338 said query's autocut is off by default; GST-3786 said get_page grep's a|b matches either side. */
 export const V5_TOOL_TEXT: Record<string, { description?: string; params: Record<string, string> }> = {
   whois: {
     description: 'Exact identity lookup: entity pages whose email, title or declared alias equals an email address or name, ignoring case, accents and quotes. Never fuzzy: empty matches means no exact match; ambiguous means several.',
     params: { query: "Email address or name, e.g. 'alice@acme-example.com'." },
   },
   query: { params: { autocut: 'Default on (never empty); false: full top-K for breadth.' } },
+  get_page: { params: { grep: 'Only the paragraphs containing this text (case-insensitive substring, not a regex), with line numbers and total_matches.' } },
 };
 /** Catalogue summaries v1 published before they changed, frozen. */
 const V1_SUMMARIES: Record<string, string> = {
@@ -178,7 +181,8 @@ function toolEntry(name: string, version: QmContractVersion) {
   const op = operations.find(o => o.name === name);
   if (!op) throw new Error(name + ' is not in the operation registry');
   const frozen = version === 1 ? V1_PARAMS[name] : version === 2 ? V2_PARAMS[name] : undefined;
-  const params = Object.entries(op.params).filter(([k]) => !frozen || frozen.includes(k));
+  const later = version <= 5 ? PARAMS_AFTER_V5[name] ?? [] : [];
+  const params = Object.entries(op.params).filter(([k]) => (!frozen || frozen.includes(k)) && !later.includes(k));
   const text = version <= 5 ? V5_TOOL_TEXT[name] : undefined;
   return {
     name, description: text?.description ?? op.description, scope: op.scope ?? 'read', mutating: op.mutating === true,

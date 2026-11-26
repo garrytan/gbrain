@@ -72,7 +72,7 @@ pub use repair_reads::{
 pub use site_reads::{
     DeleteTimelineRowsInput, SegmentedTimelineInput, TimelineOrphanInput, TimelineRowDeletion,
 };
-pub(crate) use twin_move::move_twin_timeline;
+pub(crate) use twin_move::{move_twin_timeline, twin_timeline_reference};
 
 const MICROS_PER_DAY: i64 = 86_400_000_000;
 /// Second byte of an event index key.

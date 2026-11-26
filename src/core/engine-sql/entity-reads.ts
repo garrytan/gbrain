@@ -502,6 +502,45 @@ export async function readPageTitlesById(exec: TimedRawRead, ids: readonly numbe
   return rows.map(r => ({ id: Number(r.id), title: r.title }));
 }
 
+/**
+ * The stored `chunker_version` of the page row with id `pageId`, live, soft-deleted or segmented, as
+ * `{ chunker_version }`; null when no row has the id (search/safe-chunks.ts provenanceDistrusted: a negative version
+ * is a body write that removed a protected fence).
+ */
+export async function readPageChunkerVersion(exec: TimedRawRead, pageId: number): Promise<{ chunker_version: number | null } | null> {
+  const [row] = await exec.executeRaw<{ chunker_version: number | null }>('SELECT chunker_version FROM pages WHERE id = $1', [pageId]);
+  return row ? { chunker_version: row.chunker_version === null ? null : Number(row.chunker_version) } : null;
+}
+
+/**
+ * Whether the image page at `slug` of the source (any row, live or soft-deleted) carries chunks sealed past the
+ * safe-chunk fence, as `{ has_visual }` (whether any chunk holds an image vector); null when no row passes the fence
+ * (import-file.ts importImageFile: an unchanged image whose index is complete is skipped). The fence test is written
+ * out (`safeChunksFilter('p')`, SAFE_FENCE_CHUNKER_VERSION 4); the caller raw-SQL pins rebuild it from the builder.
+ */
+export async function readImageSealProbe(exec: TimedRawRead, sourceId: string, slug: string): Promise<{ has_visual: boolean } | null> {
+  const [row] = await exec.executeRaw<{ has_visual: boolean }>(
+    `SELECT EXISTS (SELECT 1 FROM content_chunks c WHERE c.page_id = p.id AND c.embedding_image IS NOT NULL) AS has_visual
+         FROM pages p WHERE p.source_id = $1 AND p.slug = $2 AND p.chunker_version >= 4`,
+    [sourceId, slug]);
+  return row ? { has_visual: row.has_visual === true } : null;
+}
+
+/**
+ * Up to ENTITY_ANCHORED_LIMIT live pages of the source whose slug starts with `prefix` (taken literally: `\`, `%` and
+ * `_` are escaped for LIKE), no question, synthesis or pinned-question page, newest first by
+ * `COALESCE(effective_date, updated_at)`, then by id (search/entity-anchor.ts prefixAnchoredPages). The pinned-question
+ * marker and the limit are written out, as in readEntityAnchoredPages; the caller raw-SQL pins rebuild both.
+ */
+export async function readPrefixAnchoredPages(exec: TimedRawRead, sourceId: string, prefix: string): Promise<Array<{ id: number; slug: string }>> {
+  const rows = await exec.executeRaw<{ id: number; slug: string }>(
+    `SELECT id, slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND slug LIKE $2
+       AND type NOT IN ('question', 'synthesis') AND NOT (frontmatter ? 'pinned_question')
+     ORDER BY COALESCE(effective_date, updated_at) DESC, id DESC LIMIT 10`,
+    [sourceId, `${prefix.replace(/[\\%_]/g, '\\$&')}%`]);
+  return rows.map(r => ({ id: Number(r.id), slug: r.slug }));
+}
+
 /** One page a text-mention probe lists; `date` is `COALESCE(effective_date, updated_at)`. */
 export interface TextMentionPageRow { slug: string; source_id: string; title: string | null; type: string | null; frontmatter: Record<string, unknown> | null; date: Date | string | null }
 

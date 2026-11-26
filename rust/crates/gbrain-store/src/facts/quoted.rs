@@ -1,7 +1,7 @@
-//! The slot-history read of a fact recall (`engine-sql/facts-recall.ts`): `listReadablePageSlugs`.
-//!
-//! - `listReadablePageSlugs`: of `slugs` in source `sourceId`, the pages `pageReadFilter(.., live = true)` admits
-//!   under `scope` (chunk_queries `PageReadPolicy`), at most `limit`, in ask order.
+//! The slot-history read of a fact recall (`engine-sql/facts-recall.ts`): `listReadablePageSlugs`, of `slugs` in
+//! source `sourceId`, the pages `pageReadFilter(.., live = true)` admits under `scope` (chunk_queries
+//! `PageReadPolicy`), at most `limit`, in ask order. The quote reads (`listFactsFromQuotedPages`,
+//! `listOwnerTierFacts`) are `quote.rs`.
 //!
 //! The quote reads (`listFactsFromQuotedPages`, `listOwnerTierFacts`) are `facts/quote.rs`.
 //!

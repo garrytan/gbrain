@@ -444,6 +444,9 @@ mod tests {
                 self.gets.clone(),
             )))
         }
+        fn versioned_snapshot(&self) -> Result<(Box<dyn KvRead + Send>, u64)> {
+            self.inner.versioned_snapshot()
+        }
         fn begin_write(&self) -> Result<Box<dyn KvWrite>> {
             self.begins.fetch_add(1, Ordering::SeqCst);
             if let Some(code) = self.refuse {

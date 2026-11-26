@@ -62,7 +62,7 @@ export interface ConfigReader {
 
 /** Read all three planes. `db` null (no engine, `--fast`) reads env and file only. Never throws. */
 export async function readChatFallbackPlanes(db: ConfigReader | null): Promise<ChatFallbackPlanes> {
-  const out: ChatFallbackPlanes = { shadowed: [], malformed: [], onRefusal: { value: true, plane: 'default' }, filePath: configPath() };
+  const out: ChatFallbackPlanes = { shadowed: [], malformed: [], onRefusal: { value: false, plane: 'default' }, filePath: configPath() };
   const set: Array<{ plane: ChatFallbackPlane; chain: string[] }> = [];
   // The first plane that speaks wins, even when its value yields no chain:
   // loadConfig keeps it, so the DB merge never fills in under it.

@@ -12,7 +12,7 @@
 //! - `excludePrivate`: the private-provenance policy (`facts/privacy.rs`);
 //! - `projectionEligibleSql('facts', { floor: minTrust })`: a soft-deleted page or a live
 //!   quarantined provenance page hides the row, and the trust floor reads the stamped tier. Its
-//!   `needs_rederive` clause hides nothing: the store keeps no re-derive queue (as `facts/trust.rs`).
+//!   `needs_rederive` clause hides a row a purge marked (`generations/needs_rederive.rs`).
 //!
 //! Each term is `plainto_tsquery('english', term)`, matched against
 //! `to_tsvector('english', fact || ' ' || replace(entity_slug, '-', ' '))`; a term with a CJK
@@ -199,6 +199,7 @@ impl Store {
                     || hidden_by_policy(&*read, &row, &q.exclude_private)?
                     || hidden_by_deleted_page(&*read, &row)?
                     || hidden_by_quarantine(&*read, &row)?
+                    || super::hidden_by_rederive(&*read, &row)?
                     || !trust.admits(&*read, "facts", row.id, row.tier())?
                 {
                     continue;

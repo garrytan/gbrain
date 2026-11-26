@@ -1,4 +1,4 @@
-//! The slot-history read: `listReadablePageSlugs`.
+//! The slot-history read `listReadablePageSlugs` (the quote reads are `facts_trust.rs`).
 //!
 //! One `#[napi] impl Brain` block; each method runs one `gbrain_store::facts::quoted` call on the pool through
 //! `Brain::run` and resolves plain JSON. The TypeScript members (src/core/rust-engine/store-members/facts-quoted.ts)

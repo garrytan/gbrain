@@ -263,12 +263,15 @@ describe('engine parity: telemetry', () => {
   test('the Rust capability list gains telemetry only when every telemetry member is served', () => {
     const members = Object.entries(RUST_ENGINE_MEMBERS).filter(([, cls]) => cls === 'telemetry').map(([m]) => m).sort();
     expect(members).toEqual([
-      'chronicleStore', 'countMcpRequestLogRows', 'countMcpRequestsLastDay', 'countMcpRequestsLastDayByToken',
-      'countRecentChronicleReservations', 'hasMcpLogRowsPastWindow', 'hasPendingAutoChronicleRow', 'logChatUsage',
-      'logMcpRequest', 'pruneChronicleReservations', 'pruneMcpRequestLogBatch', 'readChatUsage', 'readChronicleRow',
+      'applyRetrievalRatings', 'chronicleStore', 'countMcpRequestLogRows', 'countMcpRequestsLastDay',
+      'countMcpRequestsLastDayByToken', 'countRecentChronicleReservations', 'deleteVolunteerEventsOlderThan', 'hasMcpLogRowsPastWindow',
+      'hasPendingAutoChronicleRow', 'insertAccessReadLogRows', 'insertRetrievalEvents', 'insertVolunteerEvents',
+      'listAccessReadPageRefs', 'logChatUsage', 'logMcpRequest', 'pruneAccessReadLog', 'pruneChronicleReservations',
+      'pruneMcpRequestLogBatch', 'readAccessReadLog', 'readAccessReadsOfPages', 'readChatUsage', 'readChronicleRow',
       'readClientOpUsage', 'readMcpLifetimeUsage', 'readMcpLogPruneCutoff', 'readMcpRequestLogBytes',
-      'readMcpRequestLogPage', 'readMcpRollupPrunedBefore', 'readPendingWriteHealth', 'readSearchStats',
-      'recordSearchTelemetry', 'reserveChronicleJudgeSlot', 'upsertChronicleRow',
+      'readMcpRequestLogPage', 'readMcpRollupPrunedBefore', 'readPendingWriteHealth', 'readRetrievalEvent',
+      'readSearchStats', 'readVolunteerUsage', 'recordSearchTelemetry', 'reserveChronicleJudgeSlot',
+      'tallyAccessReadsOfPages', 'upsertChronicleRow',
     ]);
     const served = members.filter((m) => m in STORE_MEMBERS);
     const reported = servedCapabilities();

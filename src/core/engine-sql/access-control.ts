@@ -326,3 +326,16 @@ export async function listPagesNamingReader(exec: MemberLookupRead, principal: s
   return rows.map(r => ({ slug: r.slug, source_id: r.source_id }));
 }
 
+/** One live credential bound to the brain owner: its kind, id, display name and grant row (guests/owner-credentials.ts). */
+export interface OwnerCredentialRow { kind: 'client' | 'token'; id: string; name: string; row: unknown }
+
+/** The statement guests/owner-credentials.ts ownerCredentials ran through executeRaw (its token row is tokenGrantJsonSql('t')). */
+export const OWNER_CREDENTIAL_ROWS_SQL = "SELECT * FROM (SELECT 'token' AS kind, t.id::text AS id, t.name, jsonb_build_object('id', t.id, 'scopes', t.scopes, 'permissions', t.permissions, 'private_pages', t.private_pages, 'private_facts', t.private_facts, 'grant_revision', t.grant_revision, 'read_shared_revision', to_jsonb(t)->'read_shared_revision', 'source_grant', t.source_grant, 'source_id', t.source_id, 'federated_read', t.federated_read, 'allowed_operations', t.allowed_operations, 'takes_holders', t.takes_holders, 'min_trust', t.min_trust) AS row FROM access_tokens t WHERE t.member_id = $1 AND t.revoked_at IS NULL UNION ALL SELECT 'client' AS kind, c.client_id AS id, COALESCE(c.client_name, c.client_id) AS name, to_jsonb(c) - 'client_secret_hash' AS row FROM oauth_clients c WHERE c.member_id = $1 AND (to_jsonb(c)->>'deleted_at') IS NULL) q ORDER BY kind COLLATE \"C\", name COLLATE \"C\", id COLLATE \"C\"";
+
+/**
+ * The live credentials bound to member `memberId`: tokens that are not revoked and clients that are not deleted, each
+ * with the row its grant is read from, by byte order of kind, name and id. A failure is thrown unchanged.
+ */
+export function listOwnerCredentialRows(exec: MemberLookupRead, memberId: string): Promise<OwnerCredentialRow[]> {
+  return exec.executeRaw<OwnerCredentialRow>(OWNER_CREDENTIAL_ROWS_SQL, [memberId]);
+}

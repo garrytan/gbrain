@@ -69,9 +69,8 @@ export async function unbindMemberSource(engine: BrainEngine, rawMember: unknown
 
 export async function listMemberSources(engine: BrainEngine, opts: { member?: string } = {}): Promise<MemberSource[]> {
   const member = opts.member === undefined ? undefined : (await existingMember(engine, opts.member, 'listed')).id;
-  const rows = await engine.executeRaw<Record<string, unknown>>(
-    `SELECT member_id, source_id, created_at FROM access_member_sources${member ? ' WHERE member_id = $1' : ''} ORDER BY member_id, source_id`, member ? [member] : []);
-  return rows.map(toBinding);
+  const rows = await engine.listMemberSourceRows(member ?? null);
+  return rows.map(r => toBinding(r as unknown as Record<string, unknown>));
 }
 
 async function sourceOwners(engine: BrainEngine, source: string): Promise<string[]> {

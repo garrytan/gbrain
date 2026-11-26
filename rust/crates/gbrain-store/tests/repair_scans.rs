@@ -294,6 +294,73 @@ fn file_tombstones_read_what_the_sql_reads() {
     assert_eq!(marked, vec![(b, false), (a, true)]);
 }
 
+/// listUnreviewedSyncTombstones: the tombstones a sync-delete record marks at their deleted_at,
+/// less those a live page of the same source backs by content, by deleted_at then source then slug.
+#[test]
+fn unreviewed_sync_tombstones_are_the_marked_tombstones_no_live_page_backs() {
+    let dir = TempDir::new("unreviewed-tombstones");
+    let store = open(&dir);
+    let page = |slug: &str, body: &str, path: &str| {
+        let input = serde_json::from_value(json!({
+            "type": "note", "title": "Same title", "compiled_truth": body, "timeline": "",
+            "frontmatter": {}, "page_kind": "markdown", "source_path": path,
+        }))
+        .unwrap();
+        let options = serde_json::from_value(json!({})).unwrap();
+        store.put_page(slug, &input, &options).unwrap()["id"]
+            .as_u64()
+            .unwrap()
+    };
+    let a = page("notes/a", "only a", "a.md");
+    let b = page("notes/b", "shared body", "b.md");
+    let c = page("notes/c", "only c", "c.md");
+    for slug in ["notes/a", "notes/b", "notes/c"] {
+        store.soft_delete_page(slug, None).unwrap();
+    }
+    // A live page with notes/b's content: b is backed, so it is not listed.
+    page("notes/b-copy", "shared body", "b-copy.md");
+    let tombstones = store
+        .list_file_tombstones(
+            "default",
+            &serde_json::from_value(json!({ "limit": 10 })).unwrap(),
+        )
+        .unwrap();
+    let deleted_at = |id: u64| {
+        tombstones
+            .iter()
+            .find(|t| t.id == id)
+            .unwrap()
+            .deleted_at
+            .clone()
+    };
+    for id in [a, b] {
+        store
+            .write_op_checkpoint_record(
+                "sync-delete-tombstone",
+                &id.to_string(),
+                Some(&json!([{ "deleted_at": deleted_at(id) }])),
+            )
+            .unwrap();
+    }
+    // c's record names another deletion time, so it does not mark c.
+    store
+        .write_op_checkpoint_record(
+            "sync-delete-tombstone",
+            &c.to_string(),
+            Some(&json!([{ "deleted_at": "2001-01-01T00:00:00+00:00" }])),
+        )
+        .unwrap();
+    let listed = store.list_unreviewed_sync_tombstones(24).unwrap();
+    assert_eq!(
+        listed
+            .iter()
+            .map(|t| (t.id, t.slug.as_str(), t.expired))
+            .collect::<Vec<_>>(),
+        vec![(a, "notes/a", false)]
+    );
+    assert!(store.list_unreviewed_sync_tombstones(0).unwrap()[0].expired);
+}
+
 #[test]
 fn origin_claimants_read_the_verdict_inputs() {
     let dir = TempDir::new("origin-claimants");

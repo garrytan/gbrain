@@ -42,6 +42,7 @@ test('claim_keys and provenance_pages send the old keying and provenance stateme
     text: `WITH w AS (
       SELECT w.visibility,w.fact_hash,COALESCE(w.subject,'*') AS subject,gbrain_fact_normalize(COALESCE(w.claim,
         (SELECT f.fact FROM facts f WHERE f.source_id=$1 AND f.visibility=w.visibility AND gbrain_fact_fingerprint(f.fact)=w.fact_hash LIMIT 1),
+        (SELECT f.fact FROM facts f WHERE f.source_id=$1 AND f.visibility=w.visibility AND gbrain_fact_fingerprint_v2(f.fact)=w.fact_hash LIMIT 1),
         (SELECT f.fact FROM facts f WHERE f.source_id=$1 AND f.visibility=w.visibility AND gbrain_fact_fingerprint_v1(f.fact)=w.fact_hash LIMIT 1))) AS norm
       FROM jsonb_to_recordset($2::text::jsonb) w(visibility text,fact_hash text,subject text,claim text)
     ) SELECT * FROM w`,
@@ -68,7 +69,7 @@ test('claim_matches sends the old fingerprint match statement', async () => {
       FROM jsonb_to_recordset($1::text::jsonb) i(id integer,slug text,claim text,visibility text,ambiguous boolean)
       JOIN jsonb_to_recordset($2::text::jsonb) w(visibility text,fact_hash text,subject text)
         ON (i.visibility IS NULL OR i.visibility=w.visibility) AND (w.subject='*' OR w.subject=i.slug)
-          AND w.fact_hash IN (gbrain_fact_fingerprint(i.claim),gbrain_fact_fingerprint_v1(i.claim))`,
+          AND w.fact_hash IN (gbrain_fact_fingerprint(i.claim),gbrain_fact_fingerprint_v2(i.claim),gbrain_fact_fingerprint_v1(i.claim))`,
     params: [JSON.stringify(incoming), JSON.stringify(keys)],
   });
 });

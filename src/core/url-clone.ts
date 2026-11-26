@@ -24,6 +24,7 @@ import type { Action } from './agent-output.ts';
 import { agentBlock } from './agent-markers.ts';
 import { managedPersistenceEnabled } from './persistence/ownership.ts';
 import type { SqlEngine } from './persistence/model.ts';
+import type { BrainEngine } from './engine.ts';
 
 /** Default clone dir for a remote-URL source: $GBRAIN_HOME/clones/<id>/ */
 export function defaultCloneDir(id: string): string {
@@ -68,8 +69,11 @@ export function isOwnedClone(src: {
 export interface CloneSourceRow { local_path: string | null; config: unknown }
 
 /** An unmanaged brain's owned clone: gbrain writes nothing into its checkout. */
+/** The typed source-row read of the url-clone checks; callers hand in narrower SqlEngine views, as for readSourceState. */
+const cloneRow = (engine: SqlEngine, sourceId: string) => (engine as unknown as Pick<BrainEngine, 'readSourceCloneRow'>).readSourceCloneRow(sourceId);
+
 export async function urlCloneReadOnly(engine: SqlEngine, sourceId: string, row?: CloneSourceRow): Promise<boolean> {
-  const source = row ?? (await engine.executeRaw<CloneSourceRow>('SELECT local_path, config FROM sources WHERE id = $1', [sourceId]))[0];
+  const source = row ?? await cloneRow(engine, sourceId);
   if (!source || !isOwnedClone({ id: sourceId, ...source })) return false;
   return !await managedPersistenceEnabled(engine);
 }
@@ -100,7 +104,7 @@ export function trackedChanges(root: string): string[] {
  * unmanaged brain's owned clone, or a checkout git cannot read.
  */
 export async function urlClonePullBlock(engine: SqlEngine, sourceId: string): Promise<UrlClonePullBlock | null> {
-  const [row] = await engine.executeRaw<CloneSourceRow>('SELECT local_path, config FROM sources WHERE id = $1', [sourceId]);
+  const row = await cloneRow(engine, sourceId);
   if (!row?.local_path || !await urlCloneReadOnly(engine, sourceId, row)) return null;
   let paths: string[];
   try { paths = trackedChanges(row.local_path); } catch { return null; }

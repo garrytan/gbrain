@@ -38,7 +38,6 @@ import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { maintenancePreflight, submitDatabaseMaintenanceIntent } from '../persistence/prepared-maintenance.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairListing, type RepairPlan } from './core.ts';
-import { requireRawSql } from '../rust-engine/errors.ts';
 
 export const PURGED_PAGE_FACTS_INTENT = 'managed_maintenance_expire_purged_page_facts';
 /** The request slug of every batch: a dot-led segment, which no page slug may have. */
@@ -148,8 +147,6 @@ export const purgedPageFactsRepair: RepairHandler = {
       residuals: { evidenced: count('evidenced'), ambiguous: count('ambiguous'), excluded: count('excluded') } };
   },
   async apply(ctx, entry): Promise<RepairItemOutcome> {
-    // The expiry still locks and updates facts through raw SQL, so a Rust brain stops here by name, before its first write.
-    requireRawSql(ctx.engine, 'repair purged-page-facts expire');
     const item = entry as BatchItem;
     const result = await managedPersistenceEnabled(ctx.engine)
       ? await expireManaged(ctx.engine, ctx.config, item, ctx.writeWaitMs)
@@ -172,12 +169,10 @@ interface BatchResult { expired: number[]; changed: number[] }
  */
 async function expireBatch(tx: BrainEngine, batch: Approved): Promise<BatchResult> {
   const ids = batch.facts.map(f => f.id);
-  await tx.executeRaw('SELECT id FROM facts WHERE source_id = $1 AND id = ANY($2::bigint[]) FOR UPDATE', [batch.source_id, ids]);
+  await tx.lockApprovedFacts(batch.source_id, ids);
   const live = new Map((await classifyPurgedPageFacts(tx, [batch.source_id], { ids })).map(f => [f.id, f]));
   const same = batch.facts.filter(f => { const now = live.get(f.id); return !!now && now.class === f.class && now.fact_hash === f.fact_hash && now.slug === f.slug; });
-  const expired = same.length ? (await tx.executeRaw<{ id: number | string }>(
-    'UPDATE facts SET expired_at = now(), row_num = NULL WHERE source_id = $1 AND id = ANY($2::bigint[]) AND expired_at IS NULL RETURNING id',
-    [batch.source_id, same.map(f => f.id)])).map(r => Number(r.id)) : [];
+  const expired = same.length ? await tx.expireApprovedFacts(batch.source_id, same.map(f => f.id)) : [];
   const done = new Set(expired);
   return { expired: expired.sort((a, b) => a - b), changed: ids.filter(id => !done.has(id)) };
 }

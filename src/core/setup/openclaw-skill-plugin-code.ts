@@ -8,7 +8,7 @@
  * changes the plugin code itself.
  */
 
-export const OPENCLAW_SKILL_PLUGIN_CODE_VERSION = 3;
+export const OPENCLAW_SKILL_PLUGIN_CODE_VERSION = 4;
 
 export interface LoaderConstants { home: string; libDir: string; statePath: string; logDir: string; gbrainBin: string; gbrainHomeEnv: string | null }
 
@@ -70,12 +70,12 @@ parentPort.on('message', async (m) => {
   for (const [id, p] of pending) if (now - p.at > 30_000) pending.delete(id);
   const input = m.floor ? { ...m.input, min_match_strength: m.floor } : m.input;
   try {
-    const opts = { home, catalogs: [m.catalog], failOpen: true, deadlineMs: m.deadlineMs, env: {} };
+    const opts = { home, catalogs: [m.catalog], failOpen: true, deadlineMs: m.deadlineMs, env: {}, ...(typeof m.readRoot === 'string' ? { readRoot: m.readRoot } : {}) };
     const r = await lib.resolveSkills(input, opts);
     const out = input.shadow ? (r.shadowOutput || r.output) : r.output;
     if (r.pending) pending.set(m.id, { key: r.pending.key, delta: r.pending.delta, at: now });
     const code = out.error ? out.error.code : null;
-    parentPort.postMessage({ id: m.id, block: out.block, names: out.suggestions.map((s) => s.name), strengths: out.suggestions.map((s) => s.match_strength),
+    parentPort.postMessage({ id: m.id, block: out.block, names: out.suggestions.map((s) => s.name), paths: out.suggestions.map((s) => s.path || null), strengths: out.suggestions.map((s) => s.match_strength),
       no_skill_reason: out.no_skill_reason, budget_exhausted: out.budget_exhausted, deduped: out.deduped.length, code, version: out.gbrain_version });
     if (out.meta && out.meta.index_stale || code === 'skill_index_missing' || code === 'skill_index_incompatible') rebuild(lib, m.catalog, m.dirs);
   } catch (e) {
@@ -88,7 +88,9 @@ const LOADER_JS = String.raw`// Managed by gbrain setup openclaw; a re-run rewri
 // gbrain-skill-resolver: after each user message, up to a few installed skills that fit it (appendContext),
 // plus the operator's pinned skills (appendSystemContext). Mode, pins and agents come from a data-only
 // state file gbrain writes, re-read when it changes, so a mode or pin change never reloads this plugin.
-// Every failure path lets the turn proceed unchanged; no handler waits more than DEADLINE_MS.
+// Every failure path lets the turn proceed unchanged; no handler waits more than DEADLINE_MS. Each log line
+// names the turn's session class (from OpenClaw's memoryAudience and trigger) and each skill's OpenClaw
+// source; never the turn's text.
 import { Worker } from 'node:worker_threads';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
@@ -227,6 +229,52 @@ function sessionOf(event, ctx, agentId) {
   return typeof k === 'string' && k ? k.slice(0, 256) : 'agent:' + agentId;
 }
 
+// The turn's session class, from what the host resolved for it, never from the session key's shape:
+// owner (owner-private memory on a user turn), group, channel or direct (another person's DM) for a
+// conversation, relay (another session's message), cron, heartbeat, webhook, internal, and unknown
+// when the host sent no memory audience.
+function sessionClassOf(event, ctx) {
+  const pick = (k) => (ctx && ctx[k] !== undefined ? ctx[k] : event && event[k]);
+  const trigger = pick('trigger');
+  const prov = pick('inputProvenance');
+  const kind = prov && typeof prov === 'object' ? prov.kind : undefined;
+  if (trigger === 'cron' || trigger === 'heartbeat') return trigger;
+  if (trigger === 'event') return 'webhook';
+  if (kind === 'inter_session') return 'relay';
+  if ((kind && kind !== 'external_user') || (trigger && trigger !== 'user')) return 'internal';
+  const audience = pick('memoryAudience');
+  if (!audience || typeof audience !== 'object') return 'unknown';
+  if (audience.kind === 'owner-private') return 'owner';
+  if (audience.kind !== 'conversation') return 'unknown';
+  const chat = ctx && ctx.channelContext && ctx.channelContext.chat;
+  const type = chat && typeof chat.type === 'string' ? chat.type : '';
+  if (type === 'group' || type === 'supergroup') return 'group';
+  if (type === 'channel') return 'channel';
+  return type === 'private' || type === 'direct' || type === 'dm' ? 'direct' : 'conversation';
+}
+
+const PATH_INDEX = new WeakMap();
+
+// The agent's SKILL.md paths, path -> id (built once per state the plugin reads).
+function pathIndex(a) {
+  let m = PATH_INDEX.get(a);
+  if (!m) { m = new Map(Object.entries(a.skill_files || {}).map(([id, p]) => [p, id])); PATH_INDEX.set(a, m); }
+  return m;
+}
+
+function sourceOf(a, path) {
+  if (typeof path !== 'string' || !path) return null;
+  for (const r of Array.isArray(a.skill_roots) ? a.skill_roots : []) {
+    if (r && typeof r.dir === 'string' && (path === r.dir || path.startsWith(r.dir.endsWith('/') ? r.dir : r.dir + '/'))) return r.source;
+  }
+  return null;
+}
+
+function readRootOf(a) {
+  if (a.path_reads === 'none') return '';
+  return a.path_reads === 'workspace' && typeof a.workspace_dir === 'string' ? a.workspace_dir : undefined;
+}
+
 function senderOf(event, ctx) {
   const v = (ctx && (ctx.senderId || (ctx.sender && ctx.sender.id))) || (event && (event.senderId || (event.sender && event.sender.id)));
   return v === undefined || v === null ? null : String(v);
@@ -285,6 +333,7 @@ async function resolveTurn(event, ctx, opts) {
   const t0 = Date.now();
   const sessionKey = sessionOf(event, ctx, agentId);
   const arm = armFor(a, sessionKey);
+  const cls = sessionClassOf(event, ctx);
   const result = {};
   const pinsOn = a.mode === 'live' && typeof a.pinned_block === 'string' && a.pinned_block !== '';
   if (pinsOn && a.pins_route !== 'first_turn') result.appendSystemContext = a.pinned_block;
@@ -294,7 +343,7 @@ async function resolveTurn(event, ctx, opts) {
   const finish = (line, block) => {
     const ctxText = [pinsFirst, block || ''].filter(Boolean).join('\n\n');
     if (ctxText) result.appendContext = ctxText;
-    log({ agent: agentId, arm, ms: Date.now() - t0, pins: pinsOn ? (a.pinned_ids || []).length : 0, ...line });
+    log({ agent: agentId, arm, session_class: cls, ms: Date.now() - t0, pins: pinsOn ? (a.pinned_ids || []).length : 0, ...line });
     return Object.keys(result).length ? result : undefined;
   };
   const text = turnText(event);
@@ -319,7 +368,7 @@ async function resolveTurn(event, ctx, opts) {
   if (!w) return finish({ outcome: 'error', code: 'skill_resolver_worker_unavailable' });
   const reset = resetNext.delete(sessionKey);
   const input = { message: text, session_id: sessionKey, harness: 'openclaw', top_k: Number.isInteger(a.top_k) ? a.top_k : 3, exclude: [...(Array.isArray(a.pinned_ids) ? a.pinned_ids : []), ...(Array.isArray(a.exclude_ids) ? a.exclude_ids : [])].slice(0, 1024), shadow: arm !== 'live', ...(typeof a.top_gate === 'number' ? { top_gate: a.top_gate } : {}), ...(reset ? { reset_session: true } : {}) };
-  const reply = await ask(w, { type: 'resolve', input, catalog: a.catalog, deadlineMs: DEADLINE_MS - 5, floor: a.min_match || null, dirs: a.skill_dirs || [] });
+  const reply = await ask(w, { type: 'resolve', input, catalog: a.catalog, deadlineMs: DEADLINE_MS - 5, floor: a.min_match || null, dirs: a.skill_dirs || [], readRoot: readRootOf(a) });
   if (reply.late) {
     if (reset) resetNext.add(sessionKey);
     timeouts += 1;
@@ -330,7 +379,8 @@ async function resolveTurn(event, ctx, opts) {
   backoffMs = 1000;
   if (reply.code && !reply.block) return finish({ outcome: 'error', code: reply.code });
   const names = Array.isArray(reply.names) ? reply.names : [];
-  remember(recent, agentId + '\0' + sessionKey, { names: new Set(names), arm }, SESSIONS_MAX);
+  const sources = names.map((n, i) => sourceOf(a, (Array.isArray(reply.paths) && reply.paths[i]) || (a.skill_files && a.skill_files[n])));
+  remember(recent, agentId + '\0' + sessionKey, { names: new Set(names), arm, cls }, SESSIONS_MAX);
   const outcome = names.length ? 'suggested' : reply.no_skill_reason || (reply.budget_exhausted ? 'budget' : reply.deduped ? 'deduped' : 'no_match');
   const deliver = arm === 'live' && reply.block ? reply.block : '';
   let active = true;
@@ -338,23 +388,52 @@ async function resolveTurn(event, ctx, opts) {
   try { if (invocation && typeof invocation.assertActive === 'function') invocation.assertActive(); } catch { active = false; }
   if (active && !opts.selfTest) w.postMessage({ type: 'commit', id: reply.id }); else w.postMessage({ type: 'discard', id: reply.id });
   if (deliver || active) remember(memo, memoKey, { block: deliver, text }, MEMO_MAX);
-  return finish({ outcome: arm === 'live' || !names.length ? outcome : 'would_suggest', suggested: names, strengths: reply.strengths, code: reply.code || null }, deliver);
+  return finish({ outcome: arm === 'live' || !names.length ? outcome : 'would_suggest', suggested: names, sources, strengths: reply.strengths, code: reply.code || null }, deliver);
 }
 
+const DISPATCHERS = new Set(['dispatch_action', 'tool_call']);
+const counted = new Map();
+
+// A skill read: skills_read / skill_view by name, or read of a catalog SKILL.md path, called directly or
+// through OpenClaw's dispatcher (dispatch_action {id, args}). OpenClaw reports a dispatched call twice (the
+// inner tool, then the dispatcher), so one call is counted once, by run and outer tool call id.
 function onToolCall(event, ctx) {
   try {
-    const name = String((event && (event.toolName || event.name || (event.tool && event.tool.name))) || '');
-    if (name !== 'skills_read' && name !== 'skill_view') return;
-    const params = (event && (event.params || event.input || event.args || event.arguments)) || {};
-    const skill = typeof params.name === 'string' ? params.name.slice(0, 256) : null;
-    if (!skill) return;
+    let name = String((event && (event.toolName || event.name || (event.tool && event.tool.name))) || '');
+    let params = (event && (event.params || event.input || event.args || event.arguments)) || {};
+    const callId = String((event && event.toolCallId) || (ctx && ctx.toolCallId) || '');
+    let via = /^tool_call:/.test(callId) ? 'dispatch' : 'direct';
+    if (DISPATCHERS.has(name)) {
+      name = typeof params.id === 'string' ? params.id.split(':').pop() : typeof params.name === 'string' ? params.name : '';
+      params = (params.args && typeof params.args === 'object' ? params.args : params.arguments && typeof params.arguments === 'object' ? params.arguments : {});
+      via = 'dispatch';
+    }
+    if (name !== 'skills_read' && name !== 'skill_view' && name !== 'read') return;
     const s = state;
     const agentId = String((ctx && ctx.agentId) || (event && event.agentId) || 'main');
     const a = s && s.agents[agentId];
     if (!a || a.mode === 'off') return;
+    let skill = null;
+    let path = null;
+    if (name === 'read') {
+      path = [params.path, params.file_path, params.filePath, params.file].find((v) => typeof v === 'string' && v) || null;
+      skill = path ? pathIndex(a).get(path) || null : null;
+    } else if (typeof params.name === 'string') {
+      skill = params.name.slice(0, 256);
+      path = a.skill_files && a.skill_files[skill] || null;
+    }
+    if (!skill) return;
+    const runId = String((event && event.runId) || (ctx && ctx.runId) || '');
+    const outer = (/^tool_call:(.+):[^:]+:\d+$/.exec(callId) || [])[1] || callId;
+    if (runId && outer) {
+      const key = runId + '\0' + outer + '\0' + skill;
+      if (counted.has(key)) return;
+      remember(counted, key, 1, MEMO_MAX);
+    }
     const sessionKey = sessionOf(event, ctx, agentId);
     const r = recent.get(agentId + '\0' + sessionKey);
-    log({ agent: agentId, outcome: 'read', skill, suggested: !!(r && r.names.has(skill)), pinned: Array.isArray(a.pinned_ids) && a.pinned_ids.includes(skill), arm: r ? r.arm : armFor(a, sessionKey) });
+    log({ agent: agentId, outcome: 'read', skill, tool: name === 'read' ? 'read' : 'skills_read', via, source: sourceOf(a, path), session_class: r ? r.cls : 'unknown',
+      suggested: !!(r && r.names.has(skill)), pinned: Array.isArray(a.pinned_ids) && a.pinned_ids.includes(skill), arm: r ? r.arm : armFor(a, sessionKey) });
   } catch { /* observing never fails a turn */ }
 }
 

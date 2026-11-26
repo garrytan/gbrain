@@ -49,7 +49,7 @@ export async function readSourceLocalPathForVerify(raw: EngineRawRead, sourceId:
   return rows[0]?.local_path ? String(rows[0].local_path) : null;
 }
 
-/** The files write of `gbrain files upload` (standard and smart): inserts the row or, on the same storage path, takes the new hash, size and type and merges the metadata. */
+/** The files write of `gbrain files upload` (standard and smart): inserts the row, bound to the live page at its slug in the default source, or, on the same storage path, takes the new hash, size and type, the page's id and slug (when the page exists) and merges the metadata. */
 export async function upsertCliFileRow(raw: EngineRawRead, row: FileRowScalars, metadata: FileMetadata): Promise<void> {
   await executeRawJsonb(jsonbOn(raw), CLI_FILE_UPSERT_SQL,
     [row.page_slug, row.filename, row.storage_path, row.mime_type, row.size_bytes, row.content_hash], [metadata]);
@@ -61,7 +61,7 @@ export async function upsertRawFileRow(raw: EngineRawRead, row: FileRowScalars &
     [row.source_id, row.page_slug, row.filename, row.storage_path, row.mime_type, row.size_bytes, row.content_hash], [metadata]);
 }
 
-/** The files write of `gbrain files sync`: the same upsert as `upsertCliFileRow`. */
+/** The files write of `gbrain files sync`: the same upsert as `upsertCliFileRow`, without the page binding (it names no page id). */
 export async function upsertSyncFileRow(raw: EngineRawRead, row: FileRowScalars, metadata: FileMetadata): Promise<void> {
   await executeRawJsonb(jsonbOn(raw), SYNC_FILE_UPSERT_SQL,
     [row.page_slug, row.filename, row.storage_path, row.mime_type, row.size_bytes, row.content_hash], [metadata]);
@@ -207,21 +207,25 @@ export async function listReadableFilePaths(raw: EngineRawRead, slug: string | u
 // ---------------------------------------------------------------------------------------------------------------------
 
 /** Upsert of `gbrain files upload` and the smart upload (uploadFile, uploadRaw smart path): the merge text of FILES_METADATA_MERGE_SQL inlined. */
-const CLI_FILE_UPSERT_SQL = `INSERT INTO files (page_slug, filename, storage_path, mime_type, size_bytes, content_hash, metadata)
-     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+const CLI_FILE_UPSERT_SQL = `INSERT INTO files (page_slug, page_id, filename, storage_path, mime_type, size_bytes, content_hash, metadata)
+     VALUES ($1, (SELECT id FROM pages WHERE source_id = 'default' AND slug = $1 AND deleted_at IS NULL), $2, $3, $4, $5, $6, $7::jsonb)
      ON CONFLICT (storage_path) DO UPDATE SET
        content_hash = EXCLUDED.content_hash,
        size_bytes = EXCLUDED.size_bytes,
        mime_type = EXCLUDED.mime_type,
+       page_id = COALESCE(EXCLUDED.page_id, files.page_id),
+       page_slug = CASE WHEN EXCLUDED.page_id IS NULL THEN files.page_slug ELSE EXCLUDED.page_slug END,
        metadata = (CASE WHEN jsonb_typeof(files.metadata) = 'object' THEN files.metadata ELSE '{}'::jsonb END) || EXCLUDED.metadata`;
 
 /** Upsert of the git lane of `gbrain files upload` (uploadRaw): names the source first. */
-const RAW_FILE_UPSERT_SQL = `INSERT INTO files (source_id, page_slug, filename, storage_path, mime_type, size_bytes, content_hash, metadata)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
+const RAW_FILE_UPSERT_SQL = `INSERT INTO files (source_id, page_slug, page_id, filename, storage_path, mime_type, size_bytes, content_hash, metadata)
+       VALUES ($1, $2, (SELECT id FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL), $3, $4, $5, $6, $7, $8::jsonb)
        ON CONFLICT (storage_path) DO UPDATE SET
          content_hash = EXCLUDED.content_hash,
          size_bytes = EXCLUDED.size_bytes,
          mime_type = EXCLUDED.mime_type,
+         page_id = COALESCE(EXCLUDED.page_id, files.page_id),
+         page_slug = CASE WHEN EXCLUDED.page_id IS NULL THEN files.page_slug ELSE EXCLUDED.page_slug END,
          metadata = (CASE WHEN jsonb_typeof(files.metadata) = 'object' THEN files.metadata ELSE '{}'::jsonb END) || EXCLUDED.metadata`;
 
 /** Upsert of `gbrain files sync` (syncFiles); indented one level deeper than the two above, so its text stays its own. */
@@ -235,13 +239,14 @@ const SYNC_FILE_UPSERT_SQL = `INSERT INTO files (page_slug, filename, storage_pa
 
 /** Upsert of the file_upload operation: a conflict takes the caller's source and page only when the new row names a page. */
 const OP_FILE_UPSERT_SQL = `INSERT INTO files (page_slug, filename, storage_path, mime_type, size_bytes, content_hash, source_id, page_id, metadata)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
+         VALUES (COALESCE((SELECT p.slug FROM pages p WHERE p.id = $8 FOR SHARE), $1), $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
          ON CONFLICT (storage_path) DO UPDATE SET
            content_hash = EXCLUDED.content_hash,
            size_bytes = EXCLUDED.size_bytes,
            mime_type = EXCLUDED.mime_type,
            source_id = CASE WHEN EXCLUDED.page_id IS NULL THEN files.source_id ELSE EXCLUDED.source_id END,
            page_id = COALESCE(EXCLUDED.page_id, files.page_id),
+           page_slug = CASE WHEN EXCLUDED.page_id IS NULL THEN files.page_slug ELSE EXCLUDED.page_slug END,
            metadata = (CASE WHEN jsonb_typeof(files.metadata) = 'object' THEN files.metadata ELSE '{}'::jsonb END) || EXCLUDED.metadata`;
 
 /** Insert of the file_register operation: a conflict refreshes the row only when the page, name, source and page id are the same; RETURNING 1 says it wrote. */

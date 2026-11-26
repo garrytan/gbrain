@@ -11,17 +11,19 @@
 //! - `a 0x10 -> last id` (JSON integer): the reservation id sequence.
 //!
 //! The campaign, claim, retry and outcome writers of the ledger (`campaign.ts`, `execute.ts`) are the executor
-//! statements of `executor.rs`.
+//! statements of `executor.rs`. The shadow seed copies `chronicle_page_state` rows as they are (`seeded.rs`).
 
 use crate::error::{Result, StoreError};
 
 mod executor;
+mod seeded;
 use crate::kv::scan_prefix;
 use crate::{Store, get_json, keys, put_json};
 pub use executor::{
     ChronicleCampaignQueue, ChronicleCandidates, ChronicleDiscovery, ChronicleFinish,
     ChronicleKeyTuple,
 };
+pub(crate) use seeded::{SeededLedgerRow, remove_ledger_row, seed_ledger_row};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -397,6 +399,24 @@ impl Store {
             }
             Ok(old.len() as i64)
         })
+    }
+
+    /// `hasChronicleSkipDecision(sourceId, pageId, contentHash, extractorVersion, reason)`: the ledger row of that page
+    /// revision is `skipped` with that reason (`engine-sql/chronicle-events.ts` hasChronicleSkipDecision).
+    pub fn has_chronicle_skip_decision(
+        &self,
+        source_id: &str,
+        page_id: i64,
+        content_hash: &str,
+        extractor_version: i32,
+        reason: &str,
+    ) -> Result<bool> {
+        let read = self.read()?;
+        let row: Option<LedgerRecord> = get_json(
+            &*read,
+            &row_key(source_id, page_id, content_hash, extractor_version),
+        )?;
+        Ok(row.is_some_and(|r| r.state == "skipped" && r.reason.as_deref() == Some(reason)))
     }
 
     /// `readChronicleLedger()`: `{ counts, reasons, calls, principals }` over the automatic rows, as

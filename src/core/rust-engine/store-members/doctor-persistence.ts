@@ -2,15 +2,16 @@
  * Doctor persistence reads (src/core/engine-sql/doctor-persistence.ts).
  *
  * Served from the store (rust/crates/gbrain-store/src/cli_reads/doctor_persistence.rs): the reads over the request
- * journal and the counters, which the store keeps, and the stale embedding effects (persistence/embedding_candidates.rs). Answered in TypeScript with no store call: the reads over a
- * relation the store has no writer for (worktrees, host bindings, consumers, effects, derivation
- * sweeps), which hold no row on this engine, so each answers the empty state the same read gives on a PGLite brain with
- * none. rust/docs/store/cli-reads-doctor-per.md names each member and the reason.
+ * journal and the counters, which the store keeps, the stale embedding effects (persistence/embedding_candidates.rs),
+ * the effect and movement reads (persistence/writer_status_queue.rs) and the worktree binding reads
+ * (persistence/binding_reads.rs). Answered in TypeScript with no store call: the reads over a relation the store has no
+ * writer for (consumers, derivation sweeps), which hold no row on this engine, so each answers the empty state the same
+ * read gives on a PGLite brain with none. rust/docs/store/cli-reads-doctor-per.md names each member and the reason.
  */
 import type { BrainEngine } from '../../engine.ts';
 import { storeCall, type StoreMember } from './common.ts';
 import { readPersistenceBrainId } from './persistence-identity.ts';
-import type { GitPushHoldRow, StalledCatchupRow } from '../../engine-sql/doctor-persistence.ts';
+import type { GitPushHoldRow, OrphanBindingRow, OwnerBindingRow, StalledCatchupRow } from '../../engine-sql/doctor-persistence.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 
@@ -82,6 +83,33 @@ export const listManagedRoots: Member<'listManagedRoots'> = async brain => {
   return rows.filter(row => row.local_path != null).map(row => ({ root: row.local_path as string, source_id: row.id }));
 };
 
+// ---- worktree bindings: the rows the writer claim keeps (persistence/worktrees.rs; persistence/binding_reads.rs) ----
+
+/** Source bindings whose source is gone or was re-created, by source id, at most `limit` when given. */
+export const listOrphanBindingRows: Member<'listOrphanBindingRows'> = async (brain, limit) => {
+  if (limit) {
+    const rows = Math.floor(limit);
+    if (!Number.isFinite(rows)) throw new Error('listOrphanBindingRows: limit must be a finite number');
+    limit = rows;
+  }
+  const rows = await storeCall({ member: 'listOrphanBindingRows' }, () => brain.listOrphanBindingRows(limit || undefined)) as Array<OrphanBindingRow & { pending_requests: number | string }>;
+  return rows.map(row => ({ ...row, pending_requests: Number(row.pending_requests) }));
+};
+/** Every stored worktree id. */
+export const listWorktreeIds: Member<'listWorktreeIds'> = async (brain) =>
+  storeCall({ member: 'listWorktreeIds' }, () => brain.listWorktreeIds()) as Promise<string[]>;
+/** Worktrees a host other than `hostId` owns (not recovering), with the owner's path and source ids, oldest first. */
+export const listOwnerBindings: Member<'listOwnerBindings'> = async (brain, hostId) =>
+  storeCall({ member: 'listOwnerBindings' }, () => brain.listOwnerBindings(hostId)) as Promise<OwnerBindingRow[]>;
+
+/**
+ * The online-built request indexes: the Rust store keeps no SQL indexes; its request lookups are key scans of the request
+ * records, so no index can be missing, invalid or still being built. Every name reads valid: doctor
+ * `persistence_request_indexes` prints what a healthy SQL brain prints and `gbrain repair request-indexes` applies nothing.
+ */
+export const readRequestIndexStates: Member<'readRequestIndexStates'> = async (_brain, names) =>
+  names.map(name => ({ name, valid: true, phase: null, blocks_done: null, blocks_total: null }));
+
 // ---- empty: the store has no writer for the relation ---------------------------------------------------------------
 
 /** No consumer heartbeat is recorded (persistence_consumers has no writer). */
@@ -112,13 +140,9 @@ export const readStaleEmbeddingCounts: Member<'readStaleEmbeddingCounts'> = asyn
 };
 export const listStaleEmbeddingEffects: Member<'listStaleEmbeddingEffects'> = (brain, sourceIds) =>
   storeCall({ member: 'listStaleEmbeddingEffects' }, () => brain.listStaleEmbeddingEffects(sourceIds ? [...sourceIds] : null));
-/** No worktree or source binding row exists, so none is orphaned. */
-export const listOrphanBindingRows: Member<'listOrphanBindingRows'> = async () => [];
-export const listWorktreeIds: Member<'listWorktreeIds'> = async () => [];
 /** Served from the store's source binding, worktree and source records (persistence/writer_status_queue.rs). */
 export const listSourceBindingsForMovement: Member<'listSourceBindingsForMovement'> = async (brain, sourceIds) =>
   await storeCall({ member: 'listSourceBindingsForMovement' }, () => brain.movementBindingRows(sourceIds)) as Awaited<ReturnType<BrainEngine['listSourceBindingsForMovement']>>;
-export const listOwnerBindings: Member<'listOwnerBindings'> = async () => [];
 export const listConsumerOwners: Member<'listConsumerOwners'> = async () => [];
 export const listStuckWorktreeRefreshes: Member<'listStuckWorktreeRefreshes'> = async () => [];
 /**

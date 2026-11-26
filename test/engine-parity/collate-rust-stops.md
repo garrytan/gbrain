@@ -62,7 +62,7 @@ line of work moves the site; "by design" means the case tests a raw SQL path and
 | collate-schema-pack-samples | runRetypeCore samples slugs by byte | `src/core/schema-pack/retype.ts:148` `probeRule` | C09 (`listRetypeSampleSlugs`) |
 | collate-schema-pack-samples | findTypeOrphans lists sources, then slugs, by byte | test seed `executeRaw`, test:60 | C07 (`listTypeOrphanPages`) |
 | collate-schema-pack-samples | runPageToAliasCore samples slugs by byte | `src/core/schema-pack/page-to-alias.ts:164` | C09 (`listSourceTypePageBodies`) |
-| collate-schema-pack-samples | runPageToLinkCore samples slugs by byte | `src/core/schema-pack/page-to-link.ts:141` | C09 (`listTypePageBodies`) |
+| collate-schema-pack-samples | runPageToLinkCore samples slugs by byte | `src/core/schema-pack/page-to-link.ts:141` | C09 (`listLinkCandidatePages`) |
 | collate-facts-home | scanFactsHome lists unfenced facts by entity slug byte order | `src/core/facts/facts-home.ts:77` `scanFactsHome` | C20 (`scanUnfencedFactRows`) |
 
 ## How this was traced

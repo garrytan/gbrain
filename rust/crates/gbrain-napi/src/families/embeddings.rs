@@ -45,6 +45,25 @@ impl Brain {
         })
     }
 
+    /// `listBudgetLimitedRows(sourceId, signature)`: the held and capped large pages' waiting chunks by source, state and reason.
+    #[napi]
+    pub fn list_budget_limited_rows<'env>(
+        &self,
+        env: &'env Env,
+        source_id: Option<String>,
+        signature: Option<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_budget_limited_rows(source_id.as_deref(), signature.as_deref())
+        })
+    }
+
+    /// `readBudgetHoldAge()`: `{ stale, oldest }` of the applying budget holds.
+    #[napi]
+    pub fn read_budget_hold_age<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_budget_hold_age())
+    }
+
     /// `countStaleChunks({ sourceId?, signature?, includeNullSignature? }?)`.
     #[napi]
     pub fn count_stale_chunks<'env>(

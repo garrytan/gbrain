@@ -59,6 +59,32 @@ export async function pagePrefixSamples(raw: EngineRawRead, sourceId: string, mi
   return rows.map(r => ({ prefix: r.prefix, cnt: Number(r.cnt), sample_types: Array.isArray(r.sample_types) ? r.sample_types : [] }));
 }
 
+/**
+ * The schema-pack probes over `source_path` (lint-rules.ts extractable_empty_corpus, sync.ts probePrefix): a path
+ * prefix matches `LIKE '<prefix>%'`, with `\\` escaping, `%` and `_` wildcards in the prefix as the callers always sent it.
+ */
+export const PATH_PREFIX_PAGE_COUNT_SQL = `SELECT COUNT(*)::text AS cnt FROM pages WHERE deleted_at IS NULL AND source_path LIKE $1`;
+const UNTYPED_PREFIX_COUNT_SQL = `SELECT COUNT(*)::text AS cnt FROM pages WHERE deleted_at IS NULL AND (type IS NULL OR type = '') AND source_path LIKE $1`;
+const UNTYPED_PREFIX_COUNT_IN_SOURCE_SQL = `SELECT COUNT(*)::text AS cnt FROM pages WHERE deleted_at IS NULL AND (type IS NULL OR type = '') AND source_path LIKE $1 AND source_id = $2`;
+const UNTYPED_PREFIX_SAMPLE_SQL = `SELECT slug FROM pages WHERE deleted_at IS NULL AND (type IS NULL OR type = '') AND source_path LIKE $1 ORDER BY slug COLLATE "C" LIMIT 10`;
+const UNTYPED_PREFIX_SAMPLE_IN_SOURCE_SQL = `SELECT slug FROM pages WHERE deleted_at IS NULL AND (type IS NULL OR type = '') AND source_path LIKE $1 AND source_id = $2 ORDER BY slug COLLATE "C" LIMIT 10`;
+
+/** Live pages of any source whose source path starts with `prefix` (LIKE semantics). */
+export async function countLivePagesAtPathPrefix(raw: EngineRawRead, prefix: string): Promise<number> {
+  const rows = await raw<{ cnt?: string }>(PATH_PREFIX_PAGE_COUNT_SQL, [`${prefix}%`]);
+  return rows[0]?.cnt ? parseInt(rows[0].cnt, 10) : 0;
+}
+
+/** The untyped live pages under a path prefix (in `sourceId` when given): their count and the first ten slugs by byte. */
+export async function probeUntypedPathPrefix(raw: EngineRawRead, prefix: string, sourceId?: string): Promise<{ count: number; sample: string[] }> {
+  const params: unknown[] = sourceId ? [`${prefix}%`, sourceId] : [`${prefix}%`];
+  const cntRows = await raw<{ cnt: string }>(sourceId ? UNTYPED_PREFIX_COUNT_IN_SOURCE_SQL : UNTYPED_PREFIX_COUNT_SQL, params);
+  const count = parseInt(cntRows[0]?.cnt ?? '0', 10) || 0;
+  if (count === 0) return { count: 0, sample: [] };
+  const sampleRows = await raw<{ slug: string }>(sourceId ? UNTYPED_PREFIX_SAMPLE_IN_SOURCE_SQL : UNTYPED_PREFIX_SAMPLE_SQL, params);
+  return { count, sample: sampleRows.map((r) => r.slug) };
+}
+
 /** The page types of `sourceId`'s live typed pages, at most `limit`. */
 export async function countPagesByTypeForSource(raw: EngineRawRead, sourceId: string, limit: number): Promise<PageTypeCount[]> {
   const rows = await raw<{ type: string; cnt: string | number }>(PAGE_TYPE_COUNTS_SQL, [sourceId, limit]);

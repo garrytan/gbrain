@@ -178,7 +178,6 @@ src/commands/doctor/checks/search-eval.ts#checkSubagentCapability	promise_catch_
 src/commands/doctor/checks/search-eval.ts#computeConversationFactsBacklogCheck	capability_refusal_swallowed	1
 src/commands/doctor/checks/secret-store.ts#inspectSecretStore	promise_catch_empty	1
 src/commands/doctor/checks/self-capture.ts#harnessSessionIds	catch_empty	1
-src/commands/doctor/checks/shared-agent-access.ts#sharedAgentVerdict	capability_refusal_swallowed	1
 src/commands/doctor/checks/slug-collisions.ts#slugCollisionsCheck	capability_refusal_swallowed	1
 src/commands/doctor/checks/stale-embedding-effects.ts#staleEmbeddingEffectsCheck	promise_catch_empty	1
 src/commands/doctor/checks/supersession-calibration.ts#runSupersessionCalibration	catch_empty	2
@@ -215,7 +214,7 @@ src/commands/embed.ts#preflightDimMismatch	catch_empty	2
 src/commands/embed.ts#runEmbedCore	catch_empty	1
 src/commands/engine-shadow.ts#seedFrom	promise_catch_empty	1	added on the shadow seed branch (rust-engine/shadow-s3) before it merged this guard; known debt, fix by a typed degraded marker
 src/commands/engine-status.ts#mountFor	catch_empty	1
-src/commands/enrich.ts#retrieveEvidence	catch_empty	3
+src/commands/enrich.ts#retrieveEvidence	catch_empty	1
 src/commands/eval-cross-modal.ts#runBatchMode	catch_empty	1
 src/commands/eval-cross-modal.ts#substituteUnavailableDefaultSlots	catch_empty	1
 src/commands/eval-longmemeval.ts#resolvePins	catch_empty	1
@@ -336,7 +335,6 @@ src/commands/self-upgrade.ts#runSelfUpgrade	catch_empty	1
 src/commands/serve-health.ts#readSelfExits	catch_empty	1
 src/commands/serve-health.ts#readServeTransport	promise_catch_empty	1
 src/commands/serve-health.ts#recordServeTransport	catch_empty	1
-src/commands/serve-http-clients.ts#mountAdminClients<anon@1>	capability_refusal_swallowed	1
 src/commands/serve-http-mcp.ts#callMcpTool	catch_empty	1
 src/commands/serve-http-mcp.ts#listMcpTools	catch_empty	1
 src/commands/serve-http-mcp.ts#mountMcp>handleMcpPost	promise_catch_empty	1
@@ -423,15 +421,11 @@ src/commands/wakeshift.ts#watchCounts	catch_empty	1
 src/commands/whoknows.ts#findExperts	promise_catch_empty	1
 src/core/access/caller.ts#appliedAccessSummary	catch_empty	1
 src/core/access/caller.ts#resolveAudienceIdentities	catch_empty	1
-src/core/access/caller.ts#stdioMemberId	catch_empty	1
-src/core/access/handover.ts#previewHandover	capability_refusal_swallowed	2
-src/core/access/labelled-only.ts#labelledOnlyFor	capability_refusal_swallowed	1
 src/core/access/lineage.ts#membersReadLineageOn	catch_empty	1
 src/core/access/members.ts#audienceMemberIds	catch_empty	1
 src/core/access/open-pages.ts#printOpenPagesUpgradeNotice	catch_empty	1
 src/core/access/owner.ts#ownerMemberId	catch_empty	1
 src/core/access/owner.ts#ownerReadsRestrictedOn	catch_empty	1
-src/core/access/read-log.ts#ReadLogWriter.flush<anon@1>	capability_refusal_swallowed	1	landed on master (#10011) after this guard was written; known debt, fix by a typed degraded marker
 src/core/access/requester-scope.ts#credentialScopeFor	catch_empty	1
 src/core/advisor/collect-chronicle.ts#collectChronicle.collect	catch_empty	2
 src/core/advisor/collect-mcp-client-fit.ts#collectMcpClientFit.collect	catch_empty	3
@@ -675,10 +669,7 @@ src/core/context/title-matches.ts#preferEntityTitleMatches	promise_catch_empty	1
 src/core/context/turn-context.ts#assembleDelta	promise_catch_empty	1
 src/core/context/turn-context.ts#assembleTurnContext<anon@4>	catch_empty	1
 src/core/context/turn-context.ts#assembleTurnContext<anon@5>	catch_empty	1
-src/core/context/volunteer-events.ts#purgeStaleVolunteerEvents	capability_refusal_swallowed	1
 src/core/context/volunteer-events.ts#purgeStaleVolunteerEvents	catch_empty	1
-src/core/context/volunteer.ts#volunteerUsageStats	capability_refusal_swallowed	1
-src/core/context/volunteer.ts#volunteerUsageStats	catch_empty	1
 src/core/contextual-retrieval-service.ts#resolveSynopsisMaxTokens	catch_empty	1
 src/core/conversation-parser/body.ts#resolveTranscriptPath	catch_empty	1
 src/core/conversation-parser/body.ts#resolveWithinRoot	catch_empty	1
@@ -804,13 +795,8 @@ src/core/extract-takes-from-pages.ts#databaseOnlyPage	catch_empty	1
 src/core/extract-takes-from-pages.ts#extractTakesFromPages	catch_empty	1
 src/core/extract-takes-from-pages.ts#resolveBudgetUsd	promise_catch_empty	1
 src/core/extract/rollup-writer.ts#upsertExtractRollup	catch_empty	1
-src/core/extraction-watermark.ts#commitExtractionPlan	capability_refusal_swallowed	1
-src/core/extraction-watermark.ts#readExtractionReceipt	capability_refusal_swallowed	1
-src/core/extraction-watermark.ts#readPageWatermark	capability_refusal_swallowed	1
-src/core/extraction-watermark.ts#setExtractionReceipt	capability_refusal_swallowed	1
 src/core/facts/absorb-log.ts#pendingReceipt	catch_empty	1
 src/core/facts/capture-dedup.ts#entityNames	catch_empty	1
-src/core/facts/claim-conflicts.ts#claimConflictsMode	promise_catch_empty	1
 src/core/facts/dead-absorb-retry.ts#loadMaxResubmits	promise_catch_empty	1
 src/core/facts/dead-absorb-retry.ts#readState	catch_empty	1
 src/core/facts/drain.ts#estimateBacklogUsd	promise_catch_empty	1	sync 13b: the read is a typed engine member on the Rust trunk; master's tree reads it through the sql tag or executeRaw, which this guard counts under another metric or not at all; the handler is unchanged from master
@@ -837,7 +823,6 @@ src/core/facts/writeback-audience.ts#classifyBrainAudience	promise_catch_empty	1
 src/core/feedback/record.ts#recordAnswer	catch_empty	1
 src/core/feedback/settings.ts#loadFeedbackSettings>read	catch_empty	1
 src/core/fence-repair/config.ts#readFenceRepairCaps>read	catch_empty	1
-src/core/fence-repair/hold-fix.ts#readFenceAutoRepair	promise_catch_empty	1
 src/core/fence-repair/model.ts#fileConfig	catch_empty	1
 src/core/fence-repair/model.ts#resolveFenceRepairModelWithSource	promise_catch_empty	1
 src/core/fence-repair/uncommitted.ts#uncommittedFenceRepairsBySource	promise_catch_empty	1
@@ -971,11 +956,8 @@ src/core/minions/handlers/embed-backfill.ts#makeEmbedBackfillHandler>embedBackfi
 src/core/minions/handlers/embed-backfill.ts#makeEmbedBackfillHandler>embedBackfillHandler	promise_catch_empty	1	fixed on rust-engine/doctor-checks-2 e6a66e9306, not on master
 src/core/minions/handlers/subagent.ts#makeSubagentHandler>subagentHandlerInner	promise_catch_empty	3
 src/core/minions/handlers/supervisor-audit.ts#readSupervisorEvents	catch_empty	1
-src/core/minions/handlers/sync-job-drain.ts#planJobDrain	capability_refusal_swallowed	1
-src/core/minions/handlers/sync-job-drain.ts#planJobDrain	promise_catch_empty	2
-src/core/minions/handlers/sync.ts#makeSyncHandler<anon@1>	capability_refusal_swallowed	3
-src/core/minions/handlers/sync.ts#makeSyncHandler<anon@1>	catch_empty	2
-src/core/minions/handlers/sync.ts#makeSyncHandler<anon@1>	promise_catch_empty	3
+src/core/minions/handlers/sync-job-drain.ts#planJobDrain	promise_catch_empty	1
+src/core/minions/handlers/sync.ts#makeSyncHandler<anon@1>	promise_catch_empty	2
 src/core/minions/job-isolation.ts#observeTiniChildProcessGroups	catch_empty	1
 src/core/minions/job-isolation.ts#readProcessSnapshot	catch_empty	1
 src/core/minions/job-isolation.ts#resolveChildCliInvocation	catch_empty	1
@@ -994,7 +976,6 @@ src/core/minions/spend-authorization.ts#pressureRenewals	catch_empty	1
 src/core/minions/supervisor-pid.ts#readSupervisorBuild	catch_empty	1
 src/core/minions/supervisor.ts#MinionSupervisor.start<anon@1>	catch_empty	1
 src/core/minions/supervisor.ts#MinionSupervisor.tryAtomicCreate	catch_empty	1
-src/core/minions/sync-queue-wake.ts#startSyncQueueWake	capability_refusal_swallowed	1
 src/core/minions/worker-registry.ts#registerWorker<anon@1>	catch_empty	1
 src/core/minions/worker.ts#MinionWorker.checkMemoryLimit	catch_empty	1
 src/core/minions/worker.ts#MinionWorker.start>runHealthCheck	catch_empty	1
@@ -1100,9 +1081,6 @@ src/core/persistence/effect-git.ts#restoreIndex	catch_empty	1
 src/core/persistence/effect-retry.ts#retryIndexLockParks	capability_refusal_swallowed	1
 src/core/persistence/effect-retry.ts#retryIndexLockParks	catch_empty	1
 src/core/persistence/effects.ts#claimAndRecoverEffect	capability_refusal_swallowed	1
-src/core/persistence/effects.ts#runEffectPass>commitGroup	capability_refusal_swallowed	2	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
-src/core/persistence/effects.ts#runEffectPass>recordGroup	capability_refusal_swallowed	3	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
-src/core/persistence/effects.ts#runEffectPass>run	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/persistence/effects.ts#runPersistenceEffects	promise_catch_empty	1
 src/core/persistence/engine-graduation.ts#existingRunError<anon@1>	catch_empty	1
 src/core/persistence/engine-graduation.ts#graduationStatus	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
@@ -1150,7 +1128,6 @@ src/core/persistence/page-advisories.ts#similarPagesAdvisory	promise_catch_empty
 src/core/persistence/page-append.ts#prepareSegmentedSpliceMutation	promise_catch_empty	1
 src/core/persistence/page-prepare.ts#prepareInlineOrSegmentedMutation<anon@3>	promise_catch_empty	1
 src/core/persistence/page-prepare.ts#prepareSegmentedTagMutation	promise_catch_empty	1
-src/core/persistence/page-visibility.ts#assertLabelledOnlyCreate	capability_refusal_swallowed	1
 src/core/persistence/page-visibility.ts#assertLabelledOnlyCreate	promise_catch_empty	1
 src/core/persistence/page-visibility.ts#authorizePageVisibility	catch_empty	1
 src/core/persistence/physical-root-record.ts#excludeMarkersInLaterCheckout	catch_empty	1
@@ -1170,11 +1147,6 @@ src/core/persistence/root-registry.ts#isGitDirectory	catch_empty	1
 src/core/persistence/schema-admission.ts#readSchemaBehind	catch_empty	1
 src/core/persistence/segmented-mirror-gate.ts#resumeGatedMirrors	catch_empty	1
 src/core/persistence/service.ts#awaitWrite	promise_catch_empty	3
-src/core/persistence/soak-counters.ts#recordSoakEvent	capability_refusal_swallowed	1
-src/core/persistence/soak-counters.ts#recordSoakEvent	promise_catch_empty	1
-src/core/persistence/source-lifecycle.ts#runManagedSourceLifecycle	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
-src/core/persistence/source-lifecycle.ts#runManagedSourceLifecycle<anon@3>	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
-src/core/persistence/source-lifecycle.ts#runManagedSourceLifecycle<anon@3>>retireBatch	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/persistence/sync-blobs.ts#pinnedWindow	catch_empty	1
 src/core/persistence/sync-blobs.ts#readPinnedBytes	catch_empty	1
 src/core/persistence/sync-discovery.ts#incomingId	catch_empty	1
@@ -1247,7 +1219,6 @@ src/core/persistence/sync-waivers.ts#waiverBatchEnabled	promise_catch_empty	1
 src/core/persistence/sync-write-diagnostic.ts#managedSyncWriteDiagnostic	catch_empty	1
 src/core/persistence/topology-clone.ts#runManagedSourceClone<anon@1>	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/persistence/topology-recovery.ts#finishTopologyClone<anon@1>	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
-src/core/persistence/topology-transaction.ts#topologyTransaction	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/persistence/unbound-pages.ts#entries	catch_empty	1
 src/core/persistence/unbound-source.ts#readDatabaseOnlyActivatedSources	catch_empty	1
 src/core/persistence/unsourced-put-fork.ts#noteSuppressedSourceFlip	catch_empty	1	landed on master (#9915, #9939) after this guard was written; known debt, fix by a typed degraded marker
@@ -1322,7 +1293,6 @@ src/core/repair/file-drift.ts#fileDriftConsentText	catch_empty	1
 src/core/repair/label-write.ts#labelFileRefusal>read	catch_empty	1
 src/core/repair/missing-tables.ts#apply<anon@1>	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/repair/open-facts.ts#applyFence	capability_refusal_swallowed	1
-src/core/repair/open-facts.ts#countReasons	capability_refusal_swallowed	1
 src/core/repair/origin-twins-heal.ts#healOriginTwinsAfterManagedSync	capability_refusal_swallowed	1
 src/core/repair/origin-twins.ts#originFileId	catch_empty	1
 src/core/repair/redacted-facts.ts#hashParts	promise_catch_empty	1
@@ -1357,15 +1327,11 @@ src/core/schema-migrations/v045-facts-hot-memory-v0-31.ts#v045.handler	catch_emp
 src/core/schema-migrations/v055-query-cache-search-lite.ts#v055.handler	catch_empty	2
 src/core/schema-pack/best-effort.ts#loadActivePackForLocalEngine	catch_empty	1
 src/core/schema-pack/candidate-audit.ts#readRecentCandidates	catch_empty	1
-src/core/schema-pack/lint-rules.ts#extractableEmptyCorpus	capability_refusal_swallowed	1
-src/core/schema-pack/lint-rules.ts#extractableEmptyCorpus	catch_empty	1
 src/core/schema-pack/lint-rules.ts#mutationCountAnomaly	catch_empty	1
 src/core/schema-pack/pack-lock.ts#readLockFile	catch_empty	1
-src/core/schema-pack/query-cache-invalidator.ts#invalidateQueryCache	capability_refusal_swallowed	1
 src/core/schema-pack/review.ts#runReviewCandidates	catch_empty	1
 src/core/schema-pack/stats.ts#detectDeadPrefixes	capability_refusal_swallowed	1
 src/core/schema-pack/stats.ts#fetchCountRows	capability_refusal_swallowed	1
-src/core/schema-pack/sync.ts#probePrefix	capability_refusal_swallowed	1
 src/core/schema-pack/write-vocabulary.ts#loadActivePackForWriteVocabulary	catch_empty	1
 src/core/search/alias-fanout.ts#aliasFanoutMax	promise_catch_empty	1
 src/core/search/alias-fanout.ts#namesOf	promise_catch_empty	1
@@ -1467,7 +1433,6 @@ src/core/serve-service.ts#readExposeReceipt	catch_empty	1
 src/core/serve-service.ts#resolveServeGbrainCommand	catch_empty	1
 src/core/serve-service.ts#resolveServeGbrainCommand<anon@2>	catch_empty	1
 src/core/serve-service.ts#serveServiceRunsWrapper	catch_empty	1
-src/core/serve-sync-runner.ts#maybeDrainDeferredEmbeds	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/session-lane.ts#readSessionLane	capability_refusal_swallowed	1
 src/core/session-lane.ts#readSessionLane	promise_catch_empty	1
 src/core/setup/brain-first.ts#codexInstructionFile	catch_empty	1
@@ -1501,7 +1466,6 @@ src/core/setup/turn-hook-check.ts#readJson	catch_empty	1
 src/core/setup/turn-hook.ts#readJson	catch_empty	1
 src/core/shared-skills/adopted-packs.ts#adoptedSkillPackSourceIds	capability_refusal_swallowed	1
 src/core/shared-skills/migration-export.ts#exportDatabaseContent	capability_refusal_swallowed	1
-src/core/shared-skills/migration.ts#runSharedSkillsMigration	capability_refusal_swallowed	2
 src/core/shared-skills/migration.ts#runSharedSkillsMigration	catch_empty	1
 src/core/shared-skills/optimizer.ts#authorize	catch_empty	1
 src/core/skill-catalog.ts#readMcpPublishSkills	catch_empty	1
@@ -1548,7 +1512,6 @@ src/core/skillpack/rubric.ts#walkGlob>walk	catch_empty	1
 src/core/skillpack/scrub-legacy.ts#skillHasFrontmatterTriggers	catch_empty	1
 src/core/skillpack/shared-brain-bridge.ts#sharedBrainBridgePlan	capability_refusal_swallowed	1
 src/core/skillpack/update-journal.ts#listJournals	catch_empty	1
-src/core/skills/resolver/build.ts#buildSkillIndex	catch_empty	1
 src/core/skills/resolver/build.ts#catalogStatus	catch_empty	2
 src/core/skills/resolver/build.ts#gbrainCommit	catch_empty	1
 src/core/skills/resolver/catalog-files.ts#listCatalogs	catch_empty	1
@@ -1581,7 +1544,6 @@ src/core/source-resolver.ts#refusedSourceTarget	promise_catch_empty	1	fail-close
 src/core/source-resolver.ts#requestSourceRows<anon@1>	promise_catch_empty	1
 src/core/source-resolver.ts#resolveSourceIdChain	promise_catch_empty	1
 src/core/source-resolver.ts#resolveSourceWithTierChain	promise_catch_empty	1
-src/core/sources-not-readable.ts#assertUnscopedReadReachesPages	catch_empty	1
 src/core/spend-log.ts#getTodaySpendCents	catch_empty	1	sync 13b: the read is a typed engine member on the Rust trunk; master's tree reads it through the sql tag or executeRaw, which this guard counts under another metric or not at all; the handler is unchanged from master (fail-open to 0 on a database hiccup, as the comment says)
 src/core/storage-manifest/adopt.ts#applyFinalize	capability_refusal_swallowed	1
 src/core/storage-manifest/adopt.ts#indexShelfCommits	promise_catch_empty	1
@@ -1595,20 +1557,16 @@ src/core/sync-cost-gate.ts#estimateDeltaTokens	catch_empty	1
 src/core/sync-cost-gate.ts#estimateLanguageTokens	catch_empty	2
 src/core/sync-cost-gate.ts#estimateSourceTreeTokens	catch_empty	2
 src/core/sync-cost-gate.ts#resolveEstimateTarget	catch_empty	1
-src/core/sync-cost-gate.ts#runInlineCostGate	capability_refusal_swallowed	1
-src/core/sync-cost-gate.ts#runInlineCostGate	catch_empty	3
+src/core/sync-cost-gate.ts#runInlineCostGate	catch_empty	2
 src/core/sync-cost-gate.ts#runInlineCostGate	promise_catch_empty	1
 src/core/sync-git.ts#resolveSlugByPathOrSourcePath	catch_empty	1
 src/core/sync-git.ts#resolveSlugsForRemovedPaths	catch_empty	4
-src/core/sync-identity-downgrades.ts#identityRemedyParts	capability_refusal_swallowed	1
-src/core/sync-identity-downgrades.ts#identityRemedyParts	promise_catch_empty	1
 src/core/sync-metafile-pages.ts#diskMetafileHeads<anon@1>	catch_empty	1
 src/core/sync-metafile-pages.ts#gitMetafileHeads>load	catch_empty	1
 src/core/sync-metafile-pages.ts#gitMetafileHeads>prime	catch_empty	1
 src/core/sync-metafile-pages.ts#metafileBackfillDue	catch_empty	1
 src/core/sync-pending.ts#readPendingCommits<anon@2>	promise_catch_empty	1
 src/core/sync-pending.ts#readTail	catch_empty	1
-src/core/sync-policy.ts#loadActivationPendingSourceIds	capability_refusal_swallowed	1
 src/core/sync-policy.ts#loadActivationPendingSourceIds	catch_empty	1
 src/core/sync-rename-identity.ts#workingTreeHead	catch_empty	1
 src/core/sync-status-report.ts#buildSyncStatusReport	catch_empty	1

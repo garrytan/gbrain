@@ -1,7 +1,7 @@
 import express, { type Express, type RequestHandler, type Response } from 'express';
 import type { BrainEngine } from '../core/engine.ts';
 import { grantFromRow, GrantError } from '../core/grants/model.ts';
-import { CLIENT_INSPECTION_COLUMNS, inspectOAuthClient, clientSetup, recoverClientSetup } from '../core/harness/client-setup.ts';
+import { inspectOAuthClient, clientSetup, recoverClientSetup } from '../core/harness/client-setup.ts';
 import { clientMetadata } from '../core/harness/oauth-setup.ts';
 import { mutateClientLifecycle, type ClientLifecycleAction } from '../core/grants/lifecycle.ts';
 
@@ -18,7 +18,8 @@ function failure(res: Response, error: unknown, stage: string, mutation = false)
 export function mountAdminClients(app: Express, requireAdmin: RequestHandler, engine: BrainEngine, endpoint: string): void {
   app.get('/admin/api/clients', requireAdmin, async (_req, res) => {
     try {
-      const rows = await engine.executeRaw(`SELECT ${CLIENT_INSPECTION_COLUMNS} FROM oauth_clients ORDER BY created_at DESC, client_id COLLATE "C"`);
+      // The statement selects CLIENT_INSPECTION_COLUMNS (engine-sql/oauth-clients.ts ADMIN_CLIENT_ROWS_SQL).
+      const rows = await engine.listAdminClientRows();
       res.json({ clients: rows.map(row => ({ ...clientMetadata(row), grant: grantFromRow(row),
         created_at: row.created_at, status: row.deleted_at ? 'revoked' : 'active' })) });
     } catch (e) { failure(res, e, 'inspect'); }

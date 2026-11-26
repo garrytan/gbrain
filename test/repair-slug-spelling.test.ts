@@ -469,6 +469,10 @@ describe('a recorded file the checkout does not have', () => {
     expect(classes(preview)).toEqual({ [`${id}:NOTES/Alice`]: 'move', [`${id}:NOTES/Bob`]: 'rename_file_first' });
     const bob = (preview.details as { items: Array<{ slug: string; fix?: { argv?: string[] } }> }).items.find(item => item.slug === 'NOTES/Bob');
     expect(bob?.fix?.argv).toEqual(['git', '-C', root, 'mv', 'Bob.md', 'bob.md']);
+    // The text a person reads names the same rename, inside the source's folder.
+    const bobText = (preview.details as { items: Array<{ slug: string; message?: string }> }).items.find(item => item.slug === 'NOTES/Bob')?.message ?? '';
+    expect(bobText).toContain('git mv the file to bob.md,');
+    expect(bobText).not.toContain('notes/bob.md');
     expect(await repairJson(applyArgs(id, preview.preview_hash))).toMatchObject({ applied: 1 });
     expect(await row(id, 'notes/alice')).toMatchObject({ id: placed.id });
   }), 60_000);
@@ -594,13 +598,15 @@ describe('doctor check legacy_slug_spellings', () => {
     const { SLUG_SPELLING_SCAN_LIMIT } = await import('../src/core/repair/slug-spelling.ts');
     // Every candidate is a page already in normal form (a non-ASCII name), and there are more than the scan reads.
     let served = 0;
-    const scanning = { executeRaw: async (sql: string, params?: unknown[]) => {
-      if (!/FROM pages/.test(sql)) return engine.executeRaw(sql, params as never);
-      const after = Number((params ?? [0])[0]);
-      const rows = [] as Array<{ id: number; source_id: string; slug: string }>;
-      for (let i = 1; i <= 5_000 && served < SLUG_SPELLING_SCAN_LIMIT + 10_000; i++, served++) rows.push({ id: after + i, source_id: 'default', slug: `notes/caf\u00e9-${after + i}` });
-      return rows;
-    } };
+    // The seam is the typed members the check calls (readRowSecurityTables, listSlugSpellingCandidates), never statement text.
+    const scanning = {
+      readRowSecurityTables: (tables: readonly string[]) => engine.readRowSecurityTables(tables),
+      listSlugSpellingCandidates: async (after: number) => {
+        const rows = [] as Array<{ id: number; source_id: string; slug: string }>;
+        for (let i = 1; i <= 5_000 && served < SLUG_SPELLING_SCAN_LIMIT + 10_000; i++, served++) rows.push({ id: after + i, source_id: 'default', slug: `notes/caf\u00e9-${after + i}` });
+        return rows;
+      },
+    };
     const [finding] = (await legacySlugSpellingsEntry.run({ engine: scanning } as unknown as DoctorContext)) as unknown as Array<{ status: string; message: string; details?: Record<string, any> }>;
     expect(finding!.details!.truncated).toBe(true);
     expect(finding!.status).not.toBe('ok');

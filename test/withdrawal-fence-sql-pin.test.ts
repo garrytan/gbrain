@@ -20,12 +20,13 @@ function recordingEngine() {
   return { engine, statements: () => fake.statements().map(s => ({ text: s.text, params: s.params })) };
 }
 
-const OLD_TEXT = `WITH incoming AS MATERIALIZED (SELECT i.visibility, gbrain_fact_fingerprint(i.claim) AS fp, gbrain_fact_fingerprint_v1(i.claim) AS fp_v1
+const OLD_TEXT = `WITH incoming AS MATERIALIZED (SELECT i.visibility, gbrain_fact_fingerprint(i.claim) AS fp, gbrain_fact_fingerprint_v2(i.claim) AS fp_v2,
+      gbrain_fact_fingerprint_v1(i.claim) AS fp_v1
       FROM jsonb_to_recordset($2::text::jsonb) i(claim text,visibility text))
     SELECT 1 FROM incoming
     JOIN (SELECT source_id,visibility,subject,fact_hash FROM fact_withdrawals WHERE source_id=$1
       UNION ALL SELECT source_id,visibility,subject,fact_hash FROM fact_purges WHERE source_id=$1) w
-      ON w.source_id=$1 AND w.fact_hash IN (incoming.fp,incoming.fp_v1)
+      ON w.source_id=$1 AND w.fact_hash IN (incoming.fp,incoming.fp_v2,incoming.fp_v1)
       AND (incoming.visibility IS NULL OR w.visibility=incoming.visibility)
       AND ($3::text IS NULL OR w.subject = '*' OR w.subject = $3::text) LIMIT 1`;
 

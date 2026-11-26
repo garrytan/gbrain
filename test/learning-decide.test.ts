@@ -91,6 +91,8 @@ describe('learned keep/undo units', () => {
       { id: '5', kind: 'duplicate_to_confirm', status: 'owner_command', reason: 'dedupe answers run on the brain host', command: ['gbrain', 'dedupe', 'reject', 'g1'] },
     ] });
     expect(text).toBe('item 4 (fact_added): undone\nitem 5 (duplicate_to_confirm): run on the brain host - dedupe answers run on the brain host\n  gbrain dedupe reject g1\n');
+    expect(formatDecisions({ action: 'undo', results: [{ id: '6', kind: 'fact_added', status: 'pending', reason: 'accepted', command: ['gbrain', 'write-request', 'r1'] }] }))
+      .toBe('item 6 (fact_added): accepted, still being written - accepted\n  gbrain write-request r1\n');
   });
 });
 
@@ -324,6 +326,39 @@ for (const backend of testBackends()) {
       await engine.executeRaw("UPDATE decide_proposals SET status = 'rejected' WHERE id = $1", [proposalOf(second)]);
       expect((await derive()).details).toMatchObject({ answered: 1 });
       expect(await state(second!.id)).toBe('answered');
+    });
+
+    test('undo refuses a Facts fence row and leaves it pending', async () => {
+      await importFromContent(engine, 'people/jo-example', page('person', 'Jo Example', `Jo paints.\n\n${fence(['| 1 | Jo paints murals | fact | 1.0 | private | medium | 2026-01-01 |  |  |  |'])}`), { sourceId: SRC });
+      await runCycle(engine, { brainDir: null, sourceId: SRC, phases: ['extract_facts'] });
+      await derive();
+      const wrote = await itemOf('you_wrote');
+      const before = await counts();
+      expect(await undo(wrote.id)).toEqual([{ id: wrote.id, kind: 'you_wrote', status: 'refused', reason: 'your own Facts fence row: edit it on the page' }]);
+      expect(await counts()).toEqual(before);
+      expect(await state(wrote.id)).toBe('pending');
+    });
+
+    test('every unseen kind expires after seven days (conflicts found by the default mode); undoing an expired conflict answers it', async () => {
+      await importFromContent(engine, 'people/kim-example', page('person', 'Kim Example', `Kim sings.\n\n${fence(['| 1 | Kim sings opera | fact | 1.0 | private | medium | 2026-01-01 |  |  |  |'])}`), { sourceId: SRC });
+      await runCycle(engine, { brainDir: null, sourceId: SRC, phases: ['extract_facts'] });
+      await engine.executeRaw(`INSERT INTO open_loops (source_id, dedup_key, loop_type, counterparty_slug, summary, detector)
+        VALUES ($1, 'promise-expire', 'commitment_owed_to_me', $2, 'Bob will share the plan', 'llm_extract')`, [SRC, ENTITY]);
+      await importFromContent(engine, 'people/lee-example', page('person', 'Lee Example', 'Lee is a stub.'), { sourceId: SRC });
+      await enrich('people/lee-example', 'Lee Example', 'Lee builds boats.');
+      await insertFact('Acme churn is 4', { entity: 'companies/acme-example', visibility: 'world', source: 'fixture', ageDays: 1, claim: ['churn', 4] });
+      await insertFact('Acme churn is 6', { entity: 'companies/acme-example', visibility: 'world', source: 'fixture', claim: ['churn', 6] });
+      expect(await engine.getConfig('dream.claim_conflicts.mode')).toBeNull();
+      await runCycle(engine, { brainDir: null, phases: ['claim_conflicts', 'learning_derive'] });
+      const kinds = ['you_wrote', 'promise_found', 'page_filled', 'conflict_found'];
+      const rows = await engine.executeRaw<{ id: number | string; kind: string }>('SELECT id, kind FROM learning_items WHERE shown_at IS NULL');
+      const byKind = Object.fromEntries(rows.map(r => [r.kind, String(r.id)]));
+      expect(Object.keys(byKind).sort()).toEqual([...kinds].sort());
+      await engine.executeRaw("UPDATE learning_items SET created_at = now() - interval '8 days'");
+      await derive();
+      for (const k of kinds) expect([k, await state(byKind[k])]).toEqual([k, 'expired']);
+      expect((await undo(byKind.conflict_found))[0]).toMatchObject({ kind: 'conflict_found', status: 'answered' });
+      expect(await state(byKind.conflict_found)).toBe('answered');
     });
 
     test('a caller decides only items it can read, and both verbs need write scope', async () => {

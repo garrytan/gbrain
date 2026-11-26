@@ -47,6 +47,7 @@ const CALLS: Record<string, (engine: BrainEngine) => Promise<unknown>> = {
   readWedgeSignals: (e) => e.readWedgeSignals('default', ['sync']),
   readOldestWaitingAge: (e) => e.readOldestWaitingAge('default'),
   listStuckActiveJobsByName: (e) => e.listStuckActiveJobsByName(),
+  readUntakenWaitingJobs: (e) => e.readUntakenWaitingJobs('facts-absorb', 24),
 };
 /** The members a doctor check reaches. */
 const DOCTOR = ['listCoveredSources', 'listExportWithdrawals', 'readExportWithdrawalLedgerBytes', 'readQueueHealthSignals', 'listWaitingByQueue', 'readQueueDivergence', 'listQueueWedgeCounts', 'listPrivateQueueHealth', 'readWedgeSignals', 'readOldestWaitingAge', 'listStuckActiveJobsByName'];

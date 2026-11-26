@@ -144,10 +144,33 @@ const AFTER_EDIT: Array<[string, (b: Brain) => string[]]> = [
 
 type StepResult = { step: string; exitCode: number; stdout: string; failure: string[] };
 
+/**
+ * `stats --json` lists pages_by_type by count, and types with equal counts come back in no set order on PGLite and
+ * Postgres (`ORDER BY count DESC`, no tie-break; lane 10's rust-engine/repair-rust-b9 adds the byte-order tie-break).
+ * Rewrite that object with tied types in byte order so the arms compare on what is defined; every other byte stays as
+ * printed.
+ */
+function settleTiedTypes(stdout: string): string {
+  let parsed: unknown;
+  try { parsed = JSON.parse(stdout); } catch { return stdout; }
+  const visit = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(visit);
+    if (value === null || typeof value !== 'object') return value;
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => {
+      if (key !== 'pages_by_type' || item === null || typeof item !== 'object' || Array.isArray(item)) return [key, visit(item)];
+      const entries = Object.entries(item as Record<string, number>);
+      entries.sort(([ka, a], [kb, b]) => (b - a) || (ka < kb ? -1 : ka > kb ? 1 : 0));
+      return [key, Object.fromEntries(entries)];
+    }));
+  };
+  return JSON.stringify(visit(parsed), null, 2);
+}
+
 /** A step's result: its exit code, normalized stdout and, when it failed, the error lines it printed. */
 function stepResult(brain: Brain, step: string, r: Run): StepResult {
   const failure = r.exitCode === 0 ? [] : r.stderr.split('\n').filter(l => /^(extract:|Error)/.test(l)).map(l => normalize(brain, l));
-  return { step, exitCode: r.exitCode, stdout: normalize(brain, r.stdout), failure };
+  const stdout = normalize(brain, r.stdout);
+  return { step, exitCode: r.exitCode, stdout: step.startsWith('stats') ? settleTiedTypes(stdout) : stdout, failure };
 }
 
 async function runArm(arm: Arm): Promise<StepResult[]> {

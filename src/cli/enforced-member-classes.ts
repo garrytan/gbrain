@@ -35,12 +35,12 @@ const WRITE_OPS = [
 /** Operations the mode refuses: admin and local-only surfaces, label and batch writes, and reads without a leak test. */
 const REFUSED_OPS = [
   // reads not yet covered by a no-trace test (each can move to READ_OPS with one)
-  'assemble_evidence', 'chronicle_day', 'chronicle_last_seen', 'chronicle_on_this_day', 'chronicle_since', 'context_pack',
+  'assemble_evidence', 'check_claims', 'chronicle_day', 'chronicle_last_seen', 'chronicle_on_this_day', 'chronicle_since', 'context_pack',
   'delta', 'entity_identity_list', 'extraction_pending', 'fetch', 'find_contradictions', 'find_trajectory',
   'get_active_schema_pack', 'get_brain_health', 'get_brain_identity', 'get_calibration_profile', 'get_chunks',
   'get_ingest_log', 'get_memory_settings', 'get_raw_data', 'get_skill', 'get_skill_asset', 'join_brain', 'learned', 'leave_brain',
   'list_brain_skillpack', 'list_link_sources', 'list_schema_packs', 'list_skills', 'list_write_conflicts',
-  'memory_recall', 'ontology_conflicts', 'ontology_dimensions', 'ontology_get', 'open_loops', 'questions_list',
+  'household_due', 'memory_recall', 'ontology_conflicts', 'ontology_dimensions', 'ontology_get', 'open_loops', 'questions_list',
   'questions_status', 'rank_entities', 'recall', 'request_tools', 'resolve_slugs', 'schema_explain_type', 'schema_graph',
   'schema_lint', 'schema_review_orphans', 'schema_stats', 'search_by_image', 'search_modes', 'sync_brain_skills',
   'synthesize', 'takes_calibration', 'takes_list', 'takes_scorecard', 'takes_search', 'volunteer_chronicle',
@@ -53,11 +53,13 @@ const REFUSED_OPS = [
   'capture', 'list_page_purges', 'list_watches', 'purge_fact', 'unpurge_page', 'unwatch', 'watch_job', 'watch_write_request', 'watch_cron', 'accept_wakeshift_terms', 'connectors_status',
   'get_recent_transcripts', 'sources_inspect', 'sources_add', 'sources_remove', 'connector_sync',
   'code_traversal_cache_clear', 'migrate_embeddings', 'purge_deleted_pages', 'sync_brain',
+  'policy_check', 'agent_policy', 'capabilities', 'log_action', 'ledger', 'policy_reserve',
+  'onboarding_status', 'onboarding_off',
   // writes outside the checked set: batch, upload, label, history, fact and queue writes
   'abort_page_upload', 'begin_page_upload', 'commit_page_upload', 'get_page_upload', 'upload_page_part', 'put_pages',
   'put_raw_data', 'put_skill', 'delete_skill', 'delete_page', 'restore_page', 'revert_version', 'cancel_write_request',
   'list_write_requests', 'confirm_memory', 'promote_guest_note', 'extract_entities', 'extract_facts', 'forget',
-  'forget_fact', 'learned_keep', 'learned_undo', 'log_ingest', 'loops_close', 'loops_mute', 'loops_unmute', 'memory_conversation_mode', 'memory_propose',
+  'forget_fact', 'household_add', 'household_mark', 'household_replace', 'learned_keep', 'learned_undo', 'log_ingest', 'loops_close', 'loops_mute', 'loops_unmute', 'memory_conversation_mode', 'memory_propose',
   'memory_write', 'mute_notice', 'ontology_propose', 'questions_pin', 'questions_refresh', 'questions_unpin', 'rate_answer',
   'takes_add', 'takes_resolve', 'takes_supersede', 'takes_update', 'entity_identity_link', 'entity_identity_unlink',
   'extraction_review', 'takes_rebuild', 'takes_remove',
@@ -115,10 +117,10 @@ export const CLI_COMMAND_CLASSES: Readonly<Record<string, EnforcedClass | Enforc
     'book-mirror', 'extract', 'extract-conversation-facts', 'enrich', 'features', 'autopilot', 'graph-query',
     'reconcile-links', 'repair', 'diag', 'orphans', 'maintain', 'reindex', 'salience', 'anomalies', 'feedback', 'status',
     'advisor', 'conversation-parser', 'edges-backfill', 'whoknows', 'identity', 'brainstorm', 'lsd', 'skillopt', 'calibration',
-    'transcripts', 'models', 'takes', 'onboard', 'founder', 'think', 'notability-eval', 'waiting', 'loops',
+    'transcripts', 'models', 'takes', 'onboard', 'founder', 'profile', 'think', 'notability-eval', 'waiting', 'loops', 'household',
     'questions', 'edge-proposals', 'memory-proposals', 'core', 'connectors', 'wakeshift', 'pages', 'quarantine', 'beliefs',
     'trust', 'guests', 'dedupe', 'watch', 'storage', 'code-def', 'code-refs', 'reindex-code', 'reindex-search-vector', 'reindex-frontmatter',
-    'backfill', 'code-callers', 'code-callees', 'repos', 'secrets', 'apple-contacts',
+    'backfill', 'code-callers', 'code-callees', 'repos', 'secrets', 'apple-contacts', 'policy', 'claims', 'ledger', 'onboarding',
   ].map(n => [n, 'refused' as const])),
 };
 

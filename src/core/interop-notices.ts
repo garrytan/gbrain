@@ -359,6 +359,31 @@ export function privateFactNotice(factId?: string | number): Notice {
 }
 
 /**
+ * Lane 3 P1: on a brain with no person members an unbound remote credential speaks for the owner, so its profile
+ * writes land on the owner's profile, but it reads world facts only. A private profile fact (allergies by default) is
+ * then saved and never read back: remember says so once per session (no count), and context_pack {profile: true}
+ * names how many of the owner's private profile rows it left out. Private facts stay private; the fix binds the
+ * credential to the owner.
+ */
+export function profilePrivateHiddenNotice(hidden?: number): Notice {
+  const what = hidden === undefined
+    ? 'This private profile fact is saved on the owner\'s profile, but this credential cannot read it back'
+    : `${hidden} private profile fact${hidden === 1 ? ' is' : 's are'} on the owner's profile and left out of this read`;
+  return {
+    code: 'profile_private_hidden',
+    kind: 'info',
+    ...(hidden === undefined ? { dedupe_key: 'remember' } : {}),
+    why: `${what}: the credential is not bound to the brain owner, so it reads world-visible facts only (allergy facts are private by default). A missing allergy or constraint in its profile does not mean there is none. Tell the user; the owner lets this credential read them by naming an owner member and binding the credential to it.`,
+    fix: {
+      argv: ['gbrain', 'access', 'owner', 'set', '<member>'],
+      inputs: [{ name: 'member', how: 'The brain owner\'s enabled member id; on a brain with no members, add one first with gbrain access member add <id>. Then bind this credential: gbrain auth rescope --token <name> --member <member>.' }],
+      consent: [], actor: 'host_admin', requires_exclusive: false, docs: 'docs/guides/profile.md#who-a-profile-belongs-to',
+      why: 'Names the brain owner; a credential bound to that member then reads the owner\'s private profile facts.',
+    },
+  };
+}
+
+/**
  * GST-2446: remember saved a fact for an entity that has no page, on a source whose pages are in Git. Once per entity
  * per session. GST-2492: a fact held in Git (on memory/unattributed) needs nothing, so the notice only says where it is
  * and when it moves; a fact in the database alone needs the user's word, so the step asks before creating the page.

@@ -270,12 +270,11 @@ or a physical projection that leaves attribution untouched):
 - `src/core/import-file.ts` (12): direct markdown, code and image imports, the moved-file rename (`updateSlug`) and the #3694 legacy-hash re-stamp run in `maintenanceTransaction`; managed imports go through the page request preparer.
 - `src/core/minions/handlers/ingest-capture.ts` (1): the capture ingest tombstone soft delete runs in `maintenanceTransaction`.
 - `src/core/output/writer.ts` (4): `BrainWriter.transaction` is a `maintenanceTransaction`, so its pages and timeline rows carry the maintenance principal.
-- `src/core/page-body/segment-rewrite.ts` (2): a segmented page's fence rewrite (the soft-delete `deleted_at` restore after its generation flip, and the purged version's `page_versions` hash redaction) runs in its caller's transaction: `forget`'s `maintenanceTransaction`, the withdrawal inside the `forget` request's coordinated write, and `purge_fact`'s `withCoordinatedWrite`.
 - `src/core/page-body/streamed-import.ts` (1): the streamed segmented import's pre-replace version snapshot runs in its `maintenanceTransaction`.
 - `src/core/page-state/materialize.ts` (1): coordinated maintenance.
 - `src/core/page-state/rename-alias.ts` (5): the fact slug rewrite runs inside its caller's `updateSlug` transaction, and `movePageIdReferences` (#5431: page_versions, timeline_entries and links moved to the row that materialized under a fallback rename) runs inside `carryRenameIdentity`'s `maintenanceTransaction`; every caller is attributed.
 - `src/core/page-state/versions.ts` (2): `createVersion` itself and its segmented-page twin; the caller's scope supplies the actor. The pruned-history marks (`successor_pruned`, `version_history_gap_at`) are written in `src/core/engine-sql/version-prune.ts`.
-- `src/core/persistence/canonical-projections.ts` (6): fence projection inside the request's publication.
+- `src/core/persistence/canonical-projections.ts` (2): fence projection inside the request's publication (its fact expiry, field refresh and take resolution writes are the typed members of `engine-sql/fence-projection.ts`, run on the publication's transaction engine).
 - `src/core/persistence/change-reason.ts` (1): stamps a page write's `reason` on the snapshot its publication archived, inside that request's publication apply.
 - `src/core/persistence/connector-fact-retirement.ts` (1): the `retire_connector_facts` preparer expires a connector's own facts rows inside the page's coordinated publication.
 - `src/core/persistence/connector-google-receipts.ts` (2): request preparer.
@@ -294,7 +293,7 @@ or a physical projection that leaves attribution untouched):
 - `src/core/persistence/sync-image.ts` (2): managed sync image request preparer; a Git rename retires the old page inside the same publication.
 - `src/core/persistence/sync-prepare.ts` (4): managed sync request preparer.
 - `src/core/persistence/sync-streamed.ts` (1): the streamed sync of a file over the single-string ceiling moves a renamed page (`updateSlug`) in its request's apply, inside the coordinated publication.
-- `src/core/persistence/takes-prepare.ts` (3): takes request preparer.
+- `src/core/persistence/takes-prepare.ts` (2): takes request preparer.
 - `src/core/repair/atoms-restore.ts` (2): the unmanaged `gbrain repair atoms-restore` apply archives the retired atom's version, restores it and drops its `retired_by`/`retired_at` stamp in one `maintenanceTransaction`; managed brains publish a `managed_maintenance_restore_reextract_atom` request instead.
 - `src/core/repair/consolidate-ties.ts` (1): `gbrain repair consolidate-ties` reopens facts inside `coordinatedDatabaseWrite` on managed brains (the `relink_facts` operation) and in one `maintenanceTransaction` per fact on unmanaged brains.
 - `src/core/repair/duplicate-facts.ts` (2): `gbrain repair duplicate-facts` supersedes duplicate fact copies onto the kept row (the fenced copy, else the oldest) inside `coordinatedDatabaseWrite` on managed brains (the `relink_facts` operation) and in one `maintenanceTransaction` per group on unmanaged brains; a fenced copy is struck through a revision-bound `put_page` first.
@@ -320,7 +319,6 @@ or a physical projection that leaves attribution untouched):
 - `src/core/takes-write.ts` (7): the takes file helpers' DB mirror (add, append, update, supersede, resolve and its self-heal) runs in `maintenanceTransaction`; managed brains publish through the takes request preparer.
 - `src/core/timeline-dedup-repair.ts` (1): runs only from schema migration v139, before migration v193 adds the attribution columns, so it has no actor to record.
 - `src/core/timeline-write-through.ts` (2): the timeline write-through's page row splice and entry insert run in one `maintenanceTransaction`.
-- `src/core/trust/fence-guard.ts` (2): the guarded fence re-projection detaches or moves higher-tier fact rows inside the page's coordinated publication.
 - `src/core/trust/held-removals.ts` (1): an owner accept of a held take or timeline removal re-projects the row as the page says in a coordinated (managed) or attributed (unmanaged) transaction under the page key.
 - `src/core/trust/owner-actions.ts` (1): an owner release inserts the held fact database-only at user_confirmed in an attributed transaction (unmanaged) or, on a managed brain, in a coordinated one only for a hold with no entity slug or whose page is missing; every other managed fact release is a journaled `trust_release` publication (`src/core/trust/release-publish.ts`) that writes the fence row to the file first; an index-existing release binds the cell's previewed fields and refuses `preview_changed` when the cell moved, and the database-only release re-checks the approval on the locked hold.
 - `src/core/trust/supersede-handlers.ts` (4): owner accept/undo of a trust proposal re-tiers the new fact (or take) inside the checked supersede's (or takes publication's) transaction; the accept of a held share (GST-2897 B) widens the held fact's visibility in its own attributed transaction.

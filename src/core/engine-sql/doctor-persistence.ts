@@ -29,7 +29,7 @@ export const DOCTOR_PERSISTENCE_MEMBERS: readonly string[] = [
   'listRunningRequestStalls', 'readLiveConsumerSummary', 'readCounterDrift', 'readMaxRequestSequence', 'listRefusalBreakerRows',
   'listRecentDriftReceiptSlugs', 'listOlderDriftReceiptSlugs', 'readPublicationRefusals', 'countParkedEffects', 'listParkedEffects',
   'listGitPushHoldRows', 'listStalledCatchupRows', 'listParkedGroupRows', 'readStaleEmbeddingCounts', 'listStaleEmbeddingEffects',
-  'listOrphanBindingRows', 'readPersistenceBrainIdText', 'listWorktreeIds', 'listManagedRoots', 'listUnboundSourcePages',
+  'listOrphanBindingRows', 'readPersistenceBrainIdText', 'listWorktreeIds', 'readRequestIndexStates', 'listManagedRoots', 'listUnboundSourcePages',
   'listRecentWriterVersions', 'listRecentPurgeRequests', 'listStuckWorktreeRefreshes',
   'listSourceBindingsForMovement', 'listRunningClaimOwners', 'listOwnerBindings', 'listConsumerOwners', 'listOverwriteCandidates',
   'listCallerRefusalRows', 'countCompactedCallerRefusals', 'listLocalEditAdoptions', 'listDerivationPurgeSweeps',
@@ -302,6 +302,21 @@ export async function listOrphanBindingRows(raw: EngineRawRead, limit: number | 
     return raw<OrphanBindingRow>(`${ORPHAN_BINDINGS_SQL} LIMIT ${rows}`);
   }
   return raw<OrphanBindingRow>(ORPHAN_BINDINGS_SQL);
+}
+
+export interface RequestIndexRow { name: string; valid: boolean | null; phase: string | null; blocks_done: string | null; blocks_total: string | null }
+// One statement on both engines (moved from persistence/checkpoint-validation.ts, the Postgres arm, unchanged): PGLite has
+// pg_index and an always-empty pg_stat_progress_create_index, so it reads a present index as valid and a dropped one as
+// missing, as its former to_regclass probe did.
+const REQUEST_INDEX_SQL = `SELECT n.name, i.indisvalid AS valid, p.phase, p.blocks_done::text, p.blocks_total::text
+       FROM unnest($1::text[]) WITH ORDINALITY AS n(name, position)
+       LEFT JOIN pg_index i ON i.indexrelid = to_regclass(n.name)
+       LEFT JOIN LATERAL (SELECT phase, blocks_done, blocks_total FROM pg_stat_progress_create_index p
+         WHERE p.relid = i.indrelid AND p.index_relid IN (i.indexrelid, 0) LIMIT 1) p ON true
+      ORDER BY n.position`;
+/** The online-built request indexes, one row per name in the given order: `valid` null when missing; `phase` set while built. */
+export async function readRequestIndexStates(raw: EngineRawRead, names: readonly string[]): Promise<RequestIndexRow[]> {
+  return raw<RequestIndexRow>(REQUEST_INDEX_SQL, [[...names]]);
 }
 
 const BRAIN_ID_TEXT_SQL = `SELECT brain_id::text AS brain_id FROM persistence_brain WHERE singleton=1`;

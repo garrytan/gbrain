@@ -27,6 +27,7 @@ const ALLOWED: Record<string, [number, string]> = {
   'src/core/search/hybrid/arms.ts': [1, "the vector arm's embedOneQuery passes opts._queryPrefix in embedOpts"],
   'src/core/facts/question-recall.ts': [1, 'recall --question passes loadEmbeddingQueryPrefix in the bounded embed'],
   'src/core/embedding-migration.ts': [1, "the migration's verify smoke embeds a stored chunk under the target model, whose prefix the operator has not set yet; the brain's current prefix belongs to the model being replaced"],
+  'src/core/skills/resolver/resolve.ts': [1, "skill vectors' own embedQuery (vectors.ts), not the brain search one: it sends the provider's query input type (Voyage input_type, Google taskType) and its floors were measured without a text prefix; a model that needs one has no floor and gets no vectors"],
   'src/eval/longmemeval/diagnostics.ts': [2, 'LongMemEval runs against an isolated in-memory brain per question, which has no embedding_query_prefix'],
 };
 

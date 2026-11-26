@@ -65,7 +65,8 @@ import {
 } from '../core/bootstrap/hooks.ts';
 import { removeCodexHooks, writeCodexHooks } from '../core/bootstrap/codex-hooks.ts';
 import { ensureHookLauncher, hookLauncherPath } from '../core/setup/hook-launcher.ts';
-import { isRegistrationSurface, registeredAdvertise, registeredSurface, REGISTRATION_ADVERTISE, REGISTRATION_SURFACE, registrationAdvertise, stdioServeArgv } from '../core/mcp-registration.ts';
+import { isRegistrationSurface, registeredAdvertise, registeredSurface, registrationAdvertise, stdioServeArgv } from '../core/mcp-registration.ts';
+import { harnessDefaultProfile } from './setup-codex-default.ts';
 import type { McpSurface } from '../mcp/surface.ts';
 import {
   guardReceiptOverwrite,
@@ -208,7 +209,7 @@ const SUBCOMMAND_HELP: Record<string, string> = {
   hooks:
     'gbrain bootstrap hooks [--harness claude-code|codex|opencode] [--repair] [--no-hooks] [--gbrain-bin <path>]\n' +
     '                       [--seat <label> | --no-seat] [--surface verbs|starter|full] [--adopt [--name <server>]]\n' +
-    `  Register MCP (--surface ${REGISTRATION_SURFACE} --advertise ${REGISTRATION_ADVERTISE} unless given; a replaced entry keeps its surface, full when unreadable) (+ per-turn hooks on Claude Code, ON by default; --no-hooks opts out).\n` +
+    `  Register MCP (unless given: Codex --surface full, Claude Code and opencode --surface starter --advertise verbs; config mcp.default_surface_<harness> turns a harness's default; a replaced entry keeps its surface, full when unreadable) (+ per-turn hooks on Claude Code, ON by default; --no-hooks opts out).\n` +
     '  --seat credits captured sessions to this agent seat (kept on re-install; --no-seat clears it; --seat off records none).\n' +
     '  --adopt (Codex): record the project .codex/config.toml server you manage yourself as the wire evidence after a passing verify; writes no config.',
   verify:
@@ -1110,7 +1111,7 @@ async function runHooks(
   const mcpEvenIfPlugin = rest.includes('--mcp-even-if-plugin');
   const surfaceArg = rest.includes('--surface') ? flagValue(rest, '--surface') ?? '' : undefined;
   if (surfaceArg !== undefined && !isRegistrationSurface(surfaceArg)) { console.error(`unknown --surface '${surfaceArg}' — pass --surface verbs, starter, or full`); return 2; }
-  const surfaceFlag = surfaceArg ?? null;
+  const surfaceFlag = surfaceArg ?? null, { profile } = await harnessDefaultProfile(harness, loadConfigFileOnly(), { note: (n) => console.error(`note: ${n}`), probe: surfaceArg === undefined });
 
   const state = readManifest(ws);
   if (state.state !== 'initialized') {
@@ -1294,7 +1295,7 @@ async function runHooks(
       // analog exists — the sharing warning below is the mitigation).
       const configPath = mcpScope === 'project' ? opencodeProjectConfigPath(ws) : opencodeGlobalConfigPath();
       const ocLauncher = mcpScope === 'project' ? [] : [hookLauncherPath(home)];
-      const command = [...ocLauncher, ...stdioServeArgv(mcpScope === 'project' ? 'gbrain' : gbrainBin, surfaceFlag ?? undefined, registrationAdvertise({ userChoseSurface: surfaceFlag !== null }))];
+      const command = [...ocLauncher, ...stdioServeArgv(mcpScope === 'project' ? 'gbrain' : gbrainBin, surfaceFlag ?? profile.surface, registrationAdvertise({ userChoseSurface: surfaceFlag !== null, profile }))];
       const entry = {
         kind: 'local' as const,
         name: 'gbrain',
@@ -1451,7 +1452,7 @@ async function runHooks(
     const buildArgvs = (surface?: McpSurface | null, advertise?: McpSurface | null) => harness === 'claude-code'
       ? registerClaudeMcp({ gbrainBin, scope: mcpScope, sourceId, surface, advertise, ...(gbrainHome ? { gbrainHome } : {}), ...(hookLauncher ? { hookLauncher } : {}) })
       : registerCodexMcp({ gbrainBin, sourceId, surface, advertise, ...(gbrainHome ? { gbrainHome } : {}), ...(hookLauncher ? { hookLauncher } : {}) });
-    const argvs = mcpPluginOwned ? [] : buildArgvs(surfaceFlag ?? undefined, registrationAdvertise({ userChoseSurface: surfaceFlag !== null }));
+    const argvs = mcpPluginOwned ? [] : buildArgvs(surfaceFlag ?? profile.surface, registrationAdvertise({ userChoseSurface: surfaceFlag !== null, profile }));
     if (argvs.length && hookLauncher) try { ensureHookLauncher(hookLauncher); } catch (e) { console.error(`MCP registration skipped: ${(e as Error).message}`); return 1; }
     for (const argv of argvs) {
       const mcpName = argv[3] ?? 'gbrain'; // ['<host>','mcp','add',<name>,…]

@@ -1,9 +1,9 @@
 /**
- * One surface for every stdio registration gbrain writes
+ * One profile function for every stdio registration gbrain writes
  * (src/core/mcp-registration.ts): readiness (Claude Code, Codex, opencode),
- * init's quickstart line, `registerClaudeMcp` / `registerCodexMcp`, and the
- * plugin generator all build from REGISTRATION_SURFACE through
- * `stdioServeArgv`; `registeredSurface` reads an existing entry's form for
+ * init's quickstart line, `registerClaudeMcp` / `registerCodexMcp`, setup, the
+ * Hermes writer and the plugin generator all build from `registrationProfile`
+ * (Codex full since I1, every other harness starter) through `stdioServeArgv`; `registeredSurface` reads an existing entry's form for
  * never-narrow. The opencode user/project writer and the exec-lane
  * replacement are driven end to end in bootstrap-opencode-door.serial and
  * bootstrap-dispatcher.serial.
@@ -13,7 +13,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { PLUGIN_SURFACE, REGISTRATION_ADVERTISE, REGISTRATION_SURFACE, registeredAdvertise, registeredSurface, registrationAdvertise, stdioServeArgv } from '../src/core/mcp-registration.ts';
+import { defaultSurfaceKey, FULL_PROFILE, PLUGIN_SURFACE, profileFlags, registeredAdvertise, registeredSurface, registrationAdvertise, registrationProfile, sameProfile, STARTER_PROFILE, stdioServeArgv } from '../src/core/mcp-registration.ts';
 import { harnessWiringEntry } from '../src/core/readiness.ts';
 import { hookLauncherPath } from '../src/core/setup/hook-launcher.ts';
 import { registerClaudeMcp, registerCodexMcp } from '../src/core/bootstrap/hooks.ts';
@@ -21,33 +21,56 @@ import { resolveSurfaceWithSource } from '../src/mcp/surface.ts';
 
 const BIN = '/opt/example/bin/gbrain';
 const ROOT = resolve(import.meta.dir, '..');
-const wiring = (h: 'claude-code' | 'codex' | 'opencode', surface?: 'verbs' | 'starter' | 'full') =>
-  harnessWiringEntry({ transport: 'cli', harnesses: [h], lockOwner: null, gbrainBin: BIN, ...(surface ? { surface } : {}) }).fix;
+const wiring = (h: 'claude-code' | 'codex' | 'opencode', surface?: 'verbs' | 'starter' | 'full', config?: any) =>
+  harnessWiringEntry({ transport: 'cli', harnesses: [h], lockOwner: null, gbrainBin: BIN, ...(surface ? { surface } : {}), ...(config ? { config } : {}) }).fix;
 
-describe('REGISTRATION_SURFACE and stdioServeArgv', () => {
-  test('new registrations pin starter (Garry, 2026-10-24); plugins stay full; null renders a bare serve', () => {
-    expect(REGISTRATION_SURFACE).toBe('starter');
+describe('registrationProfile and stdioServeArgv', () => {
+  test('I1: Codex registers full; Claude Code, Hermes, opencode, OpenClaw and other hosts keep starter listing the verbs; plugins stay full', () => {
+    expect(registrationProfile('codex')).toEqual({ surface: 'full', advertise: null });
+    for (const h of ['claude-code', 'hermes', 'opencode', 'openclaw', 'other'] as const) expect(registrationProfile(h)).toEqual({ surface: 'starter', advertise: 'verbs' });
+    expect(STARTER_PROFILE).toEqual({ surface: 'starter', advertise: 'verbs' });
+    expect(FULL_PROFILE).toEqual({ surface: 'full', advertise: null });
     expect(PLUGIN_SURFACE).toBe('full');
-    expect(stdioServeArgv(BIN)).toEqual([BIN, 'serve', '--surface', 'starter']);
     expect(stdioServeArgv(BIN, 'starter')).toEqual([BIN, 'serve', '--surface', 'starter']);
     expect(stdioServeArgv(BIN, 'full')).toEqual([BIN, 'serve', '--surface', 'full']);
     expect(stdioServeArgv(BIN, null)).toEqual([BIN, 'serve']);
   });
 
-  test('new registrations list the memory verbs; --advertise is written only when narrower than the surface', () => {
-    expect(REGISTRATION_ADVERTISE).toBe('verbs');
-    expect(stdioServeArgv(BIN, REGISTRATION_SURFACE, REGISTRATION_ADVERTISE)).toEqual([BIN, 'serve', '--surface', 'starter', '--advertise', 'verbs']);
-    expect(stdioServeArgv(BIN, 'starter', 'verbs')).toEqual([BIN, 'serve', '--surface', 'starter', '--advertise', 'verbs']);
+  test('config mcp.default_surface_<harness> turns one harness\'s default and nothing else; unknown values and unknown harnesses are ignored', () => {
+    expect(defaultSurfaceKey('codex')).toBe('mcp.default_surface_codex');
+    expect(defaultSurfaceKey('claude-code')).toBe('mcp.default_surface_claude_code');
+    expect(registrationProfile('codex', { mcp: { default_surface_codex: 'starter' } })).toEqual(STARTER_PROFILE);
+    expect(registrationProfile('claude-code', { mcp: { default_surface_codex: 'starter' } })).toEqual(STARTER_PROFILE);
+    expect(registrationProfile('claude-code', { mcp: { default_surface_claude_code: 'full' } })).toEqual(FULL_PROFILE);
+    expect(registrationProfile('hermes', { mcp: { default_surface_hermes: 'full' } })).toEqual(FULL_PROFILE);
+    for (const widen of [false, 'false']) expect(registrationProfile('codex', { mcp: { allow_session_widen: widen } })).toEqual(STARTER_PROFILE);
+    expect(registrationProfile('codex', { mcp: { allow_session_widen: false, default_surface_codex: 'full' } })).toEqual(FULL_PROFILE);
+    expect(registrationProfile('codex', { mcp: { allow_session_widen: true } })).toEqual(FULL_PROFILE);
+    expect(registrationProfile('codex', { mcp: { default_surface_codex: 'verbs' } })).toEqual(FULL_PROFILE);
+    expect(registrationProfile('opencode', { mcp: { default_surface_opencode: 'full' } })).toEqual(STARTER_PROFILE);
+    expect(registrationProfile('codex', null)).toEqual(FULL_PROFILE);
+  });
+
+  test('sameProfile and profileFlags compare and render what a registration writes', () => {
+    expect(profileFlags(STARTER_PROFILE)).toEqual(['--surface', 'starter', '--advertise', 'verbs']);
+    expect(profileFlags(FULL_PROFILE)).toEqual(['--surface', 'full']);
+    expect(sameProfile({ surface: 'full', advertise: 'full' }, FULL_PROFILE)).toBe(true);
+    expect(sameProfile(STARTER_PROFILE, { surface: 'starter', advertise: null })).toBe(false);
+  });
+
+  test('--advertise is written only when narrower than the surface', () => {
+    expect(stdioServeArgv(BIN, STARTER_PROFILE.surface, STARTER_PROFILE.advertise)).toEqual([BIN, 'serve', '--surface', 'starter', '--advertise', 'verbs']);
     expect(stdioServeArgv(BIN, 'verbs', 'verbs')).toEqual([BIN, 'serve', '--surface', 'verbs']);
     expect(stdioServeArgv(BIN, null, 'verbs')).toEqual([BIN, 'serve']);
   });
 
-  test('registrationAdvertise: a chosen surface lists in full, an existing registration keeps its listing, a new one lists the verbs', () => {
-    expect(registrationAdvertise({ userChoseSurface: false })).toBe('verbs');
-    expect(registrationAdvertise({ userChoseSurface: true })).toBeNull();
-    expect(registrationAdvertise({ userChoseSurface: false, prior: {} })).toBeNull();
-    expect(registrationAdvertise({ userChoseSurface: false, prior: { advertise: 'starter' } })).toBe('starter');
-    expect(registrationAdvertise({ userChoseSurface: true, prior: { advertise: 'verbs' } })).toBeNull();
+  test('registrationAdvertise: a chosen surface lists in full, an existing registration keeps its listing, a new one lists its profile\'s listing', () => {
+    expect(registrationAdvertise({ userChoseSurface: false, profile: STARTER_PROFILE })).toBe('verbs');
+    expect(registrationAdvertise({ userChoseSurface: false, profile: FULL_PROFILE })).toBeNull();
+    expect(registrationAdvertise({ userChoseSurface: true, profile: STARTER_PROFILE })).toBeNull();
+    expect(registrationAdvertise({ userChoseSurface: false, prior: {}, profile: STARTER_PROFILE })).toBeNull();
+    expect(registrationAdvertise({ userChoseSurface: false, prior: { advertise: 'starter' }, profile: FULL_PROFILE })).toBe('starter');
+    expect(registrationAdvertise({ userChoseSurface: true, prior: { advertise: 'verbs' }, profile: STARTER_PROFILE })).toBeNull();
   });
 
   test('registeredAdvertise reads an existing registration\'s listing', () => {
@@ -64,13 +87,15 @@ describe('REGISTRATION_SURFACE and stdioServeArgv', () => {
   });
 });
 
-describe('every stdio registration path builds from REGISTRATION_SURFACE', () => {
-  test('readiness harness_wiring: Claude Code and Codex pin the surface; opencode runs bootstrap hooks', () => {
+describe('every stdio registration path builds from registrationProfile', () => {
+  test('readiness harness_wiring: Claude Code pins starter listing the verbs, Codex pins full; opencode runs bootstrap hooks', () => {
     // #8426: Claude Code and Codex register through gbrain setup, which puts serve behind the hook launcher.
     expect(wiring('claude-code')?.argv).toEqual(['gbrain', 'setup', 'claude-code', '--no-hooks', '--gbrain-bin', BIN]);
     expect(wiring('codex')?.argv).toEqual(['gbrain', 'setup', 'codex', '--no-hooks', '--gbrain-bin', BIN]);
     expect(wiring('opencode')?.argv).toEqual(['gbrain', 'bootstrap', 'hooks', '--harness', 'opencode', '--no-hooks']);
-    expect(wiring('claude-code')?.why).toContain(`${hookLauncherPath()} ${stdioServeArgv(BIN, REGISTRATION_SURFACE, REGISTRATION_ADVERTISE).join(' ')}`);
+    expect(wiring('claude-code')?.why).toContain(`${hookLauncherPath()} ${stdioServeArgv(BIN, 'starter', 'verbs').join(' ')}`);
+    expect(wiring('codex')?.why).toContain(`${hookLauncherPath()} ${stdioServeArgv(BIN, 'full').join(' ')}, every operation`);
+    expect(wiring('codex', undefined, { engine: 'pglite', mcp: { default_surface_codex: 'starter' } })?.why).toContain(`${stdioServeArgv(BIN, 'starter', 'verbs').join(' ')}`);
   });
 
   test('init --surface reaches the readiness fix (the quickstart line and the first-run harness decision read it)', () => {
@@ -83,16 +108,16 @@ describe('every stdio registration path builds from REGISTRATION_SURFACE', () =>
 
   test('bootstrap hooks: registerClaudeMcp and registerCodexMcp write --advertise when given', () => {
     const claude = registerClaudeMcp({ gbrainBin: BIN, scope: 'user', sourceId: 'workspace', advertise: 'verbs' })[0];
-    const codex = registerCodexMcp({ gbrainBin: BIN, sourceId: 'workspace', advertise: 'verbs' })[0];
+    const codex = registerCodexMcp({ gbrainBin: BIN, sourceId: 'workspace', surface: 'starter', advertise: 'verbs' })[0];
     expect(claude.slice(claude.indexOf('--') + 1)).toEqual([BIN, 'serve', '--surface', 'starter', '--advertise', 'verbs']);
     expect(codex.slice(codex.indexOf('--') + 1)).toEqual([BIN, 'serve', '--surface', 'starter', '--advertise', 'verbs']);
   });
 
-  test('bootstrap hooks: registerClaudeMcp and registerCodexMcp default to the surface and carry an existing form', () => {
+  test('bootstrap hooks: registerClaudeMcp and registerCodexMcp default to their harness\'s surface and carry an existing form', () => {
     const claude = registerClaudeMcp({ gbrainBin: BIN, scope: 'user', sourceId: 'workspace' })[0];
     const codex = registerCodexMcp({ gbrainBin: BIN, sourceId: 'workspace' })[0];
-    expect(claude.slice(claude.indexOf('--') + 1)).toEqual(stdioServeArgv(BIN));
-    expect(codex.slice(codex.indexOf('--') + 1)).toEqual(stdioServeArgv(BIN));
+    expect(claude.slice(claude.indexOf('--') + 1)).toEqual(stdioServeArgv(BIN, registrationProfile('claude-code').surface));
+    expect(codex.slice(codex.indexOf('--') + 1)).toEqual(stdioServeArgv(BIN, registrationProfile('codex').surface));
     expect(registerClaudeMcp({ gbrainBin: BIN, scope: 'user', sourceId: 'w', surface: 'starter' })[0].slice(-3)).toEqual(['serve', '--surface', 'starter']);
     expect(registerCodexMcp({ gbrainBin: BIN, sourceId: 'w', surface: null })[0].slice(-2)).toEqual([BIN, 'serve']);
   });
@@ -129,11 +154,12 @@ describe('every stdio registration path builds from REGISTRATION_SURFACE', () =>
   }, 120_000);
 });
 
-// S0 (wave 0): one surface constant across every install path. Every
-// registration command these files show pins REGISTRATION_SURFACE; a bare
-// `serve` resolves to the same value. Narrower surfaces stay documented as
-// opt-ins in prose, never as a registration command. The dated *-CLI-PIN.md
-// files are verification records of what was observed, not install paths.
+// S0 (wave 0), per harness since I1: every registration command these files
+// show pins its harness's registrationProfile: starter on every harness but
+// Codex and OpenClaw, whose lines (and prose about what setup registers there)
+// pin full, listed whole. Narrower surfaces stay documented as opt-ins in prose,
+// never as a registration command. The dated *-CLI-PIN.md files are
+// verification records of what was observed, not install paths.
 describe('S0: README, docs/mcp, INSTALL, BOOTSTRAP, push-context and the manifests name one surface', () => {
   const DOCS = [
     'README.md', 'INSTALL_FOR_AGENTS.md', 'BOOTSTRAP_FOR_AGENTS.md', 'docs/guides/push-context.md',
@@ -141,27 +167,39 @@ describe('S0: README, docs/mcp, INSTALL, BOOTSTRAP, push-context and the manifes
     ...readdirSync(join(ROOT, 'docs/mcp')).filter(f => f.endsWith('.md') && !f.endsWith('-CLI-PIN.md')).map(f => `docs/mcp/${f}`),
   ];
 
-  test('every `serve --surface <x>` in the install docs is the registration surface', () => {
+  test('every `serve --surface <x>` in the install docs is its harness\'s registration surface (Codex and OpenClaw full, the rest starter)', () => {
     const offenders: string[] = [];
     for (const file of DOCS) {
       readFileSync(join(ROOT, file), 'utf8').split('\n').forEach((line, i) => {
+        const fullLine = /\bcodex\b|\bopenclaw\b/i.test(line);
         for (const m of line.matchAll(/\bserve\b[^`\n|]*?--surface[\s=]+["']?(verbs|starter|full)\b/g)) {
-          if (m[1] !== REGISTRATION_SURFACE) offenders.push(`${file}:${i + 1}: ${line.trim()}`);
+          if (m[1] !== STARTER_PROFILE.surface && !(fullLine && m[1] === registrationProfile('codex').surface)) offenders.push(`${file}:${i + 1}: ${line.trim()}`);
         }
       });
     }
     expect(offenders).toEqual([]);
   });
 
-  test('every harness registration command in the install docs lists the memory verbs (--advertise verbs)', () => {
+  test('every documented openclaw mcp add of serve registers --surface full with no --advertise (I1)', () => {
+    const lines: string[] = [];
+    for (const file of DOCS) {
+      readFileSync(join(ROOT, file), 'utf8').split('\n').forEach((line, i) => {
+        if (/\bopenclaw mcp add\b.*--arg serve/.test(line)) lines.push(`${file}:${i + 1}: ${line.trim()}`);
+      });
+    }
+    expect(lines.length).toBeGreaterThanOrEqual(3);
+    expect(lines.filter((l) => !l.includes('--arg serve --arg --surface --arg full') || l.includes('--advertise'))).toEqual([]);
+  });
+
+  test('every harness registration command in the install docs lists the memory verbs (--advertise verbs), OpenClaw\'s excepted (I1)', () => {
     const offenders: string[] = [];
     let commands = 0;
     for (const file of DOCS) {
       readFileSync(join(ROOT, file), 'utf8').split('\n').forEach((line, i) => {
-        for (const m of line.matchAll(/\bmcp add\b[^`\n|]*?\bserve\b([^`\n|]*)/g)) {
+        for (const m of line.matchAll(/\b(\w+) mcp add\b[^`\n|]*?\bserve\b([^`\n|]*)/g)) {
           commands++;
-          if (/--access[\s=]+read-only/.test(m[1])) continue;
-          if (!new RegExp(`--advertise(?:[\\s=]+|\\s+--arg\\s+)${REGISTRATION_ADVERTISE}\\b`).test(m[1])) offenders.push(`${file}:${i + 1}: ${line.trim()}`);
+          if (/--access[\s=]+read-only/.test(m[2]) || m[1] === 'openclaw') continue;
+          if (!new RegExp(`--advertise(?:[\\s=]+|\\s+--arg\\s+)${STARTER_PROFILE.advertise}\\b`).test(m[2])) offenders.push(`${file}:${i + 1}: ${line.trim()}`);
         }
       });
     }

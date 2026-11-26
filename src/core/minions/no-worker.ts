@@ -52,23 +52,9 @@ export function runWaitingJobsFix(engineKind: string, queue: string): Action {
  */
 export async function untakenWaitingJobs(engine: BrainEngine, name: string) {
   const threshold_hours = resolveEnvNumber('GBRAIN_QUEUE_NO_WORKER_WARN_HOURS', 1);
-  const [row] = await engine.executeRaw<{ queue: string; waiting: number; oldest_age_seconds: number }>(
-    `WITH stuck AS (
-       SELECT queue, count(*)::int AS waiting, EXTRACT(EPOCH FROM (now() - min(updated_at)))::int AS oldest_age_seconds
-         FROM minion_jobs
-        WHERE name = $1 AND status = 'waiting' AND submission_authority IS NOT NULL
-        GROUP BY queue
-       HAVING min(updated_at) < now() - $2::text::interval
-     )
-     SELECT queue, waiting, oldest_age_seconds FROM stuck s
-      WHERE NOT EXISTS (SELECT 1 FROM minion_jobs j WHERE j.queue = s.queue
-        AND ((j.status = 'active' AND j.lock_until > now()) OR j.started_at > now() - $2::text::interval))
-      ORDER BY oldest_age_seconds DESC
-      LIMIT 1`,
-    [name, `${threshold_hours} hours`],
-  );
+  const row = await engine.readUntakenWaitingJobs(name, threshold_hours);
   if (!row) return null;
-  return { queue: row.queue, waiting: Number(row.waiting), oldest_age_seconds: Number(row.oldest_age_seconds), threshold_hours, fix: runWaitingJobsFix(engine.kind, row.queue) };
+  return { queue: row.queue, waiting: row.waiting, oldest_age_seconds: row.oldest_age_seconds, threshold_hours, fix: runWaitingJobsFix(engine.kind, row.queue) };
 }
 
 /** The `no_worker` notice: jobs are waiting (or were just queued) and nothing will run them until a worker does. */

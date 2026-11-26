@@ -562,6 +562,13 @@ jobs:
       # default regardless of per-test third-arg timeouts. Runs directly
       # (not via verify's CHECKS array) to avoid a package.json edit.
       - run: bash scripts/check-bun-test-timeout.sh
+      # The release binary is compiled with --bytecode --format=esm (release.yml). This builds that
+      # compile line with and without the two flags and requires the same stdout, stderr and exit
+      # codes from a fixed command set on a temp PGLite brain; only clock, ids and timings are
+      # masked (about 40 s).
+      - name: Bytecode release build prints the same output as a plain build
+        timeout-minutes: 5
+        run: bun scripts/check-bytecode-parity.ts
       # #5810: every tracked *.sh must parse under bash 3.2 (macOS /bin/bash).
       # The real parser runs in the digest-pinned bash:3.2 image; REQUIRE
       # turns a missing Docker into a failure instead of a skip, and makes the
@@ -1068,11 +1075,12 @@ jobs:
     # 568 for 18 solo jobs) mined ~12,640s of file time, ~1.4x the solo
     # weights.
     #
-    # 40 shards (UNIT_SHARDS in scripts/sharding.ts): the median of five
-    # complete master Test runs (44245233913 to 44277593744, 2026-11-18) mined
-    # ~22,060s of file time, ~551s per shard; at 36 that was ~613s, over the
-    # budget. From 40 shards up the largest shard is test/setup.test.ts alone
-    # (~572s), which no shard count lowers. The runs of 2026-11-16 (42579477361
+    # 42 shards (UNIT_SHARDS in scripts/sharding.ts): at 40, the one
+    # `gbrain setup` suite file alone filled a shard (~590s of the 600s
+    # budget), which no shard count lowers, so it is split into the
+    # test/setup-*.test.ts files and the count rises to 42 for headroom. The median of five complete master Test runs (44245233913 to
+    # 44277593744, 2026-11-18) mined ~22,060s of file time, ~551s per shard at
+    # 40; at 36 that was ~613s, over the budget. The runs of 2026-11-16 (42579477361
     # to 43825374906) mined ~20,220s, ~562s per shard at 36. A
     # shard's mined weight must fit this job's 22 minutes twice over, after a
     # minute of setup, with a minute to spare
@@ -1097,7 +1105,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shards: [[1, 2], [3, 4], [5, 6], [7, 8], [9, 10], [11, 12], [13, 14], [15, 16], [17, 18], [19, 20], [21, 22], [23, 24], [25, 26], [27, 28], [29, 30], [31, 32], [33, 34], [35, 36], [37, 38], [39, 40]]
+        shards: [[1, 2], [3, 4], [5, 6], [7, 8], [9, 10], [11, 12], [13, 14], [15, 16], [17, 18], [19, 20], [21, 22], [23, 24], [25, 26], [27, 28], [29, 30], [31, 32], [33, 34], [35, 36], [37, 38], [39, 40], [41, 42]]
     steps:
       - id: checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
@@ -1140,9 +1148,9 @@ jobs:
           awk '/^cpu /{print "steal_jiffies", $9}' /proc/stat
           lscpu | grep -m1 'Model name'
           (while true; do free -m | awk '/^Mem:/{print $3, $7}' >> "$RUNNER_TEMP/mem.log"; sleep 5; done) > /dev/null 2>&1 &
-      - name: Run test shards ${{ join(matrix.shards, ' and ') }} of 40
+      - name: Run test shards ${{ join(matrix.shards, ' and ') }} of 42
         shell: bash
-        run: bash scripts/test-shard-pack.sh 40 ${{ join(matrix.shards, ' ') }}
+        run: bash scripts/test-shard-pack.sh 42 ${{ join(matrix.shards, ' ') }}
         env:
           GBRAIN_SHARD_PACK_DIR: ${{ runner.temp }}/shards
       - name: Runner diagnostics (after shard)
@@ -1209,7 +1217,7 @@ jobs:
 
 
   # ──────────────────────────────────────────────────────────────────────
-  # coverage-report: merges the PR corpus (40 unit + 4 serial + 2 slow
+  # coverage-report: merges the PR corpus (42 unit + 4 serial + 2 slow
   # lanes) into one honest number, renders it to the step summary, and runs
   # the diff + baseline gates in report-only mode (COVERAGE_GATE_ENFORCE=0).
   # ADVISORY during the report-only window: deliberately NOT in test-status's
@@ -1262,7 +1270,7 @@ jobs:
           bun scripts/merge-lcov.ts \
             --out-lcov "$RUNNER_TEMP/coverage-merged/lcov.info" \
             --out-json "$RUNNER_TEMP/coverage-merged/summary.json" \
-            --manifest-expect shard-1,shard-2,shard-3,shard-4,shard-5,shard-6,shard-7,shard-8,shard-9,shard-10,shard-11,shard-12,shard-13,shard-14,shard-15,shard-16,shard-17,shard-18,shard-19,shard-20,shard-21,shard-22,shard-23,shard-24,shard-25,shard-26,shard-27,shard-28,shard-29,shard-30,shard-31,shard-32,shard-33,shard-34,shard-35,shard-36,shard-37,shard-38,shard-39,shard-40,serial-1,serial-2,serial-3,serial-4,slowperf,slowbrainbench \
+            --manifest-expect shard-1,shard-2,shard-3,shard-4,shard-5,shard-6,shard-7,shard-8,shard-9,shard-10,shard-11,shard-12,shard-13,shard-14,shard-15,shard-16,shard-17,shard-18,shard-19,shard-20,shard-21,shard-22,shard-23,shard-24,shard-25,shard-26,shard-27,shard-28,shard-29,shard-30,shard-31,shard-32,shard-33,shard-34,shard-35,shard-36,shard-37,shard-38,shard-39,shard-40,shard-41,shard-42,serial-1,serial-2,serial-3,serial-4,slowperf,slowbrainbench \
             "$RUNNER_TEMP/coverage-artifacts"
       - name: Coverage summary → step summary
         run: bun scripts/render-coverage-summary.ts --summary "$RUNNER_TEMP/coverage-merged/summary.json" --structural scripts/structural-suites.tsv >> "$GITHUB_STEP_SUMMARY"
@@ -1626,6 +1634,7 @@ jobs:
         env:
           ARTIFACT_DIR: ${{ runner.temp }}/full-suite
           MANIFEST: ${{ runner.temp }}/ci-manifest/ci-manifest.json
+          EXECUTED_RECEIPTS: ${{ needs.executed-receipts.result }}
           RUN_ID: ${{ github.run_id }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
           WORKFLOW: ${{ github.workflow }}

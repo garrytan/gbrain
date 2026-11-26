@@ -13,7 +13,6 @@ import { completeWrite, lockCounters } from './journal.ts';
 import { principalKey, requestPrincipal, type WriteRequest } from './model.ts';
 import { catalogueError } from '../error-catalogue.ts';
 import { discoverGitRoot } from '../sync-git.ts';
-import { ACTIVE_REFRESH_STATES_SQL } from './worktree-refresh-schema.ts';
 
 export type TopologyBinding=WorktreeBinding & { unbound?:boolean };
 
@@ -42,7 +41,8 @@ export async function lockTopologyPrincipal(engine: BrainEngine, id: string): Pr
  */
 export async function withTopologyLocks<T>(engine: BrainEngine, sourceId: string,
   run: (bindings: TopologyBinding[]) => Promise<T>, additionalRoot?: string, waitMs=5000, opts: { relocation?: boolean } = {}): Promise<T> {
-  const [brain] = await engine.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1');
+  const brainId = await engine.readPersistenceBrainId();
+  if (brainId === null) throw new Error('The persistence brain row is missing, so no topology lock was taken and nothing changed.');
   const handles: NativeLockHandle[] = [];
   const take = async (path: string) => {
     const handle = waitMs===0?await tryAcquireNativeLock(path):await acquireNativeLock(path, { timeoutMs: waitMs });
@@ -54,15 +54,14 @@ export async function withTopologyLocks<T>(engine: BrainEngine, sourceId: string
   try {
     // Serializes discovery of new/unbound paths on this host. Worktree locks
     // remain the actual publication authority and never live in the checkout.
-    await take(join(persistenceHome(), 'locks', `topology-${brain.brain_id}.lock`));
+    await take(join(persistenceHome(), 'locks', `topology-${brainId}.lock`));
     const binding = await getWorktreeBinding(engine, sourceId);
     const bindings:TopologyBinding[] = binding ? [binding] : [];
     if (additionalRoot) {
-      const local = await engine.executeRaw<TopologyBinding>(`SELECT w.id AS worktree_id,w.owner_host_id,w.owner_epoch,w.state,w.topology_generation,
-        h.local_path,h.coordination_path FROM persistence_host_bindings h JOIN persistence_worktrees w ON w.id=h.worktree_id WHERE h.host_id=$1::uuid`,[hostIdFor(engine)]);
+      const local = await engine.listHostTopologyRows(hostIdFor(engine));
       for (const row of local) if (row.local_path&&(containsPath(row.local_path,additionalRoot) || containsPath(additionalRoot,row.local_path))) {
-        const [member]=await engine.executeRaw<{source_id:string}>('SELECT source_id FROM persistence_source_bindings WHERE worktree_id=$1::uuid ORDER BY source_id COLLATE "C" LIMIT 1',[row.worktree_id]);
-        const other = member?await getWorktreeBinding(engine,member.source_id):{...row,source_id:'',source_incarnation:'00000000-0000-0000-0000-000000000000',relative_path:'',unbound:true};
+        const [member]=await engine.listWorktreeMembers(row.worktree_id);
+        const other = member?await getWorktreeBinding(engine,member.source_id):{...row,source_id:'',source_incarnation:'00000000-0000-0000-0000-000000000000',relative_path:'',unbound:true} as TopologyBinding;
         if (other && !bindings.some(item=>item.worktree_id===other.worktree_id)) bindings.push(other);
       }
     }
@@ -110,7 +109,7 @@ export function claimedWorktreeRoot(path: string): string | null {
  */
 export async function inspectClaimedPhysicalRoot(engine: BrainEngine, sourceId: string, root: string, operation: 'add' | 'claim', hostId: string | null): Promise<void> {
   if (!existsSync(join(root, PHYSICAL_ROOT_MARKER)) || readPhysicalRootReservation(root)) return;
-  const local = hostId ? await engine.executeRaw<{ local_path: string | null }>('SELECT local_path FROM persistence_host_bindings WHERE host_id=$1::uuid', [hostId]) : [];
+  const local = hostId ? await (await engine.topologyStore()).hostBindingPaths(hostId) : [];
   if (local.some(row => row.local_path && containsPath(row.local_path, root))) return;
   throw await movedPhysicalRootRefusal(engine, root, { sourceId, operation }, hostId) ?? physicalRootError();
 }
@@ -121,30 +120,27 @@ export async function inspectClaimedPhysicalRoot(engine: BrainEngine, sourceId: 
  * `refresh_in_progress`, except for the refresh named by `refreshId` itself.
  */
 export async function lockTopologyRows(tx: BrainEngine, sourceId: string, bindings: TopologyBinding[], refreshId?: string): Promise<string[]> {
-  await tx.executeRaw('SELECT singleton FROM persistence_brain WHERE singleton=1 FOR UPDATE');
+  const store = await tx.topologyStore();
+  await store.lockBrain();
   const ids = bindings.map(b => b.worktree_id).sort();
-  const owners = await tx.executeRaw<{ id: string; owner_host_id: string; state: string; owner_epoch:string;topology_generation:string }>(
-    'SELECT id,owner_host_id,state,owner_epoch,topology_generation FROM persistence_worktrees WHERE id=ANY($1::uuid[]) ORDER BY id FOR UPDATE', [ids]);
+  const owners = await store.lockWorktrees(ids);
   if (owners.length !== ids.length || owners.some(row => row.owner_host_id !== hostIdFor(tx) || row.state !== 'active')) {
     throw opError('recovery_required', 'The affected worktree is draining, recovering, or changed ownership.',
       `A worktree holding source ${sourceId} is draining, recovering, or now owned by another host, so the lifecycle change rolled back and nothing changed. Check its state with the command in fix; once it is active on this host, run the same lifecycle command again with the same request_id.`,
       {fix:ownerStatusFix(sourceId)});
   }
-  const [refresh] = await tx.executeRaw<{ id: string; state: string; source_ids: string[] }>(`SELECT id,state,source_ids FROM persistence_worktree_refreshes
-    WHERE worktree_id=ANY($1::uuid[]) AND state IN ${ACTIVE_REFRESH_STATES_SQL} AND ($2::uuid IS NULL OR id<>$2::uuid) LIMIT 1`, [ids, refreshId ?? null]);
+  const refresh = await store.activeRefresh(ids, refreshId ?? null);
   if (refresh) throw catalogueError('refresh_in_progress',
     `Refresh ${refresh.id} of the worktree holding source ${refresh.source_ids[0]} is ${refresh.state}; source topology cannot change until it finishes.`,
     `gbrain sources refresh ${refresh.source_ids[0]} --resume, then retry this source command with the same request_id.`);
   // The member order never reaches output: the members are re-sorted in JS on the next line and only name the source rows to lock.
-  const members = await tx.executeRaw<{ source_id: string }>('SELECT source_id FROM persistence_source_bindings WHERE worktree_id=ANY($1::uuid[]) ORDER BY source_id', [ids]);
-  const sources = [...new Set([sourceId,...members.map(row => row.source_id)])].sort();
-  // Plain ORDER BY id on purpose, not COLLATE "C": this only sets the lock order, the same as lockAllSourceRows (engine-sql/sources.ts), so no deadlock.
-  await tx.executeRaw('SELECT id FROM sources WHERE id=ANY($1::text[]) ORDER BY id FOR UPDATE', [sources]);
+  const members = await store.memberSources(ids);
+  const sources = [...new Set([sourceId,...members])].sort();
+  await store.lockSources(sources);
   for (const before of bindings) {
     if(before.unbound){
-      const [member]=await tx.executeRaw('SELECT source_id FROM persistence_source_bindings WHERE worktree_id=$1::uuid LIMIT 1',[before.worktree_id]);
-      const [host]=await tx.executeRaw<{local_path:string;coordination_path:string}>(
-        'SELECT local_path,coordination_path FROM persistence_host_bindings WHERE worktree_id=$1::uuid AND host_id=$2::uuid',[before.worktree_id,hostIdFor(tx)]);
+      const member=await store.worktreeHasMember(before.worktree_id);
+      const host=await store.hostBinding(before.worktree_id,hostIdFor(tx));
       const owner=owners.find(owner=>owner.id===before.worktree_id)!;
       if(member||host?.local_path!==before.local_path||host.coordination_path!==before.coordination_path
         ||String(owner.owner_epoch)!==String(before.owner_epoch)||String(owner.topology_generation)!==String(before.topology_generation))
@@ -166,25 +162,20 @@ export async function lockTopologyRows(tx: BrainEngine, sourceId: string, bindin
 }
 
 export async function topologyCanonicalStamp(tx:BrainEngine,worktreeId:string):Promise<string>{
-  const [row]=await tx.executeRaw<{stamp:string}>(`SELECT md5(COALESCE(string_agg(p.id::text||':'||p.knowledge_revision::text||':'||b.source_incarnation::text,',' ORDER BY p.id),'')) AS stamp
-    FROM persistence_source_bindings b LEFT JOIN pages p ON p.source_id=b.source_id WHERE b.worktree_id=$1::uuid`,[worktreeId]);
-  return row.stamp;
+  return (await tx.topologyStore()).canonicalStamp(worktreeId);
 }
 
 /** Read-only half of settleTopologyRequests: refuses while a publication, recovery or blocking effect is unfinished. */
 export async function assertTopologyRequestsSettled(tx: BrainEngine, sources: string[], worktrees: string[]): Promise<WriteRequest[]> {
-  const requests = await tx.executeRaw<WriteRequest>(`SELECT * FROM persistence_requests
-    WHERE (source_id=ANY($1::text[]) OR worktree_id=ANY($2::uuid[]))
-      AND (state IN ('queued','deferred','running','recovering') OR recovery IS NOT NULL) ORDER BY sequence`, [sources,worktrees]);
+  const store = await tx.topologyStore();
+  const requests = await store.unsettledRequests(sources, worktrees);
   const busy = requests.find(row => row.state === 'running' || row.state === 'recovering' || row.recovery != null);
   if (busy) {
     throw opError('write_pending', 'Publication must finish or recover before source lifecycle can proceed.',
       `Write request ${busy.request_id} in source ${busy.source_id} is still publishing or recovering, so the lifecycle change rolled back and nothing changed. The owner finishes or recovers that write on its own; once the command in fix shows no running or recovering request, run the same lifecycle command again with the same request_id.`,
       {fix:ownerStatusFix(busy.source_id)});
   }
-  const [blocked] = await tx.executeRaw<{ id: string; source_id: string | null }>(`SELECT id,source_id FROM persistence_effects WHERE
-    (source_id=ANY($1::text[]) OR worktree_id=ANY($2::uuid[])) AND
-    (recovery IS NOT NULL OR state='running' OR (kind='withdrawal-mirror' AND state='queued')) LIMIT 1`, [sources,worktrees]);
+  const blocked = await store.blockingEffect(sources, worktrees);
   if (blocked) {
     const source = blocked.source_id ?? sources[0];
     throw opError('recovery_required', 'Finish the pending withdrawal mirror and publication effects before changing source topology.',
@@ -202,11 +193,8 @@ export async function settleTopologyRequests(tx: BrainEngine, sources: string[],
   // invalidation may terminate revoked work but still respects guard ordering.
   const principals = new Map(pending.map(row => [`${row.principal_kind}:${row.principal_id}`,requestPrincipal(row)]));
   principals.set(`local_cli:${principal}`, { kind:'local_cli', id:principal });
-  for (const [_, identity] of [...principals].sort(([a],[b]) => a.localeCompare(b))) {
-    if (identity.kind === 'oauth_client') await tx.executeRaw('SELECT client_id FROM oauth_clients WHERE client_id=$1 FOR SHARE',[identity.id]);
-    else if (identity.kind === 'legacy_token') await tx.executeRaw('SELECT id FROM access_tokens WHERE id=$1 FOR SHARE',[identity.id]);
-    else await tx.executeRaw('SELECT id FROM persistence_local_writers WHERE id=$1::uuid FOR SHARE',[identity.id]);
-  }
+  const store = await tx.topologyStore();
+  for (const [_, identity] of [...principals].sort(([a],[b]) => a.localeCompare(b))) await store.sharePrincipal(identity.kind, identity.id);
   await lockTopologyPrincipal(tx,principal);
   await lockCounters(tx,['brain',...pending.map(row=>principalKey(requestPrincipal(row))),...worktrees.map(id=>`worktree:${id}`),principalKey({kind:'local_cli',id:principal})]);
   for (const row of pending) await completeWrite(tx,row,'conflict',{}, { code:'source_changed', message:'The accepted source topology was changed by its administrator.' });
@@ -214,7 +202,5 @@ export async function settleTopologyRequests(tx: BrainEngine, sources: string[],
 }
 
 export async function advanceTopology(tx: BrainEngine, worktrees: string[]): Promise<void> {
-  await tx.executeRaw('UPDATE persistence_worktrees SET topology_generation=topology_generation+1 WHERE id=ANY($1::uuid[])',[worktrees]);
-  await tx.executeRaw(`UPDATE persistence_source_bindings b SET topology_generation=w.topology_generation
-    FROM persistence_worktrees w WHERE b.worktree_id=w.id AND w.id=ANY($1::uuid[])`,[worktrees]);
+  await (await tx.topologyStore()).advanceGeneration(worktrees);
 }

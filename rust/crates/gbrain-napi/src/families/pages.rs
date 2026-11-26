@@ -249,6 +249,19 @@ impl Brain {
         })
     }
 
+    /// `listUnreviewedSyncTombstones(olderThanHours)`: resolves `UnreviewedSyncTombstone[]`, the
+    /// tombstones a managed sync made that no live page backs by content.
+    #[napi]
+    pub fn list_unreviewed_sync_tombstones<'env>(
+        &self,
+        env: &'env Env,
+        older_than_hours: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_unreviewed_sync_tombstones(older_than_hours.max(0.0).floor() as i64)
+        })
+    }
+
     /// `listTwinMergeLosers(survivorId, twinId)`: resolves `TwinMergeLosers`, what moving the twin
     /// into the survivor would land on.
     #[napi]

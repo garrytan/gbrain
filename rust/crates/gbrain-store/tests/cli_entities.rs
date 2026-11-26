@@ -478,6 +478,126 @@ fn entity_anchored_pages_name_or_link_the_entity_newest_first() {
 }
 
 #[test]
+fn prefix_anchored_pages_read_the_newest_live_pages_under_a_literal_prefix() {
+    let dir = TempDir::new("cli-prefix-anchored");
+    let store = open(&dir);
+    store
+        .upsert_source(&SourceInput {
+            id: "other".into(),
+            ..Default::default()
+        })
+        .unwrap();
+    let page = |t: &str, day: u32, fm: Value| {
+        json!({"type": t, "title": "T", "compiled_truth": "body", "frontmatter": fm,
+            "effective_date": format!("2026-03-{day:02}T00:00:00.000Z"), "effective_date_source": "date"})
+    };
+    for day in 1..=12 {
+        put(
+            &store,
+            "default",
+            &format!("projects/widget/n{day:02}"),
+            page("note", day, json!({})),
+        );
+    }
+    put(
+        &store,
+        "default",
+        "projects/widget/q",
+        page("question", 20, json!({})),
+    );
+    put(
+        &store,
+        "default",
+        "projects/widget/s",
+        page("synthesis", 20, json!({})),
+    );
+    put(
+        &store,
+        "default",
+        "projects/widget/pinned",
+        page("note", 21, json!({"pinned_question": "q"})),
+    );
+    put(
+        &store,
+        "default",
+        "projects/widget/gone",
+        page("note", 22, json!({})),
+    );
+    store
+        .soft_delete_page("projects/widget/gone", Some("default"))
+        .unwrap();
+    put(
+        &store,
+        "default",
+        "projects/widget_x/lit",
+        page("note", 23, json!({})),
+    );
+    put(
+        &store,
+        "default",
+        "projects/widgetzx/like",
+        page("note", 24, json!({})),
+    );
+    put(
+        &store,
+        "other",
+        "projects/widget/elsewhere",
+        page("note", 25, json!({})),
+    );
+    let slugs = |prefix: &str| -> Vec<String> {
+        store
+            .read_prefix_anchored_pages("default", prefix)
+            .unwrap()
+            .into_iter()
+            .map(|p| p.slug)
+            .collect()
+    };
+    let widget: Vec<String> = (3..=12)
+        .rev()
+        .map(|d| format!("projects/widget/n{d:02}"))
+        .collect();
+    assert_eq!(slugs("projects/widget/"), widget);
+    // `_` is literal, as the escaped LIKE pattern reads it.
+    assert_eq!(slugs("projects/widget_"), ["projects/widget_x/lit"]);
+    assert!(slugs("projects/none/").is_empty());
+}
+
+#[test]
+fn page_chunker_version_and_image_seal_probe_read_one_page_record() {
+    let dir = TempDir::new("cli-chunker-version");
+    let store = open(&dir);
+    put(
+        &store,
+        "default",
+        "images/a.png",
+        json!({"type": "image", "title": "A", "compiled_truth": "caption", "frontmatter": {}}),
+    );
+    let id = store.read_page_titles_by_id(&[1]).unwrap()[0].id as i64;
+    let version = store.read_page_chunker_version(id).unwrap().unwrap();
+    // A put page is not sealed past the fence, so the seal probe answers no row.
+    assert!(version.chunker_version.unwrap_or(0) < 4);
+    assert!(
+        store
+            .read_image_seal_probe("default", "images/a.png")
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        store
+            .read_image_seal_probe("default", "images/none.png")
+            .unwrap()
+            .is_none()
+    );
+    assert!(store.read_page_chunker_version(999_999).unwrap().is_none());
+    assert!(store.read_page_chunker_version(0).unwrap().is_none());
+    assert!(
+        store
+            .read_page_chunker_version(i64::from(i32::MAX) + 1)
+            .is_err()
+    );
+}
+
+#[test]
 fn text_mention_pages_read_live_pages_at_the_slugs_in_the_sources() {
     let dir = TempDir::new("cli-text-mentions");
     let store = open(&dir);

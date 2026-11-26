@@ -3,5 +3,3 @@
 # Columns (tab separated): parity file, case name, member that refused, owner, due date (YYYY-MM-DD, UTC), what Rust declines.
 # A row lets the case stop on that member's typed refusal (GBRAIN_TEST_RUST_ARM=1). The run fails when the case stops on another member, when the
 # due date has passed (the row goes red at 00:00 UTC on the day after the due date), or when the case no longer stops (remove the row).
-test/engine-parity/transaction-settings.test.ts	a setting name the Rust engine does not keep refuses on Rust	readTransactionSettings	lane 5 2ef7ed73-b016-4625-8955-6cf07b4a8053	2026-11-26	Declines a transaction setting name the store does not keep.
-test/engine-parity/traversal-cache.test.ts	a generation or xmin beyond 2^53 is stored on the SQL arms; the Rust store refuses it rather than round it	putCodeTraversalCache	lane 5 2ef7ed73-b016-4625-8955-6cf07b4a8053	2026-11-26	Declines a cluster generation or xmin beyond 2^53 instead of rounding it.

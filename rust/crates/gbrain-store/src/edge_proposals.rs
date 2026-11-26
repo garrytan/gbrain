@@ -6,6 +6,8 @@
 //! readEdgeProposal, edgeClosureLanded, readEdgeProposalEvidence, readEdgeProposalHash,
 //! markEdgeProposalStale, setEdgeProposalStatus, rejectOpenEdgeProposal, markEdgeProposalUndone
 //! and markRevertedEdgeProposals.
+//! The six members of `gbrain edge-proposals` (listEdgeProposalCliRows and the rest) live in
+//! edge_proposals/cli.rs.
 //!
 //! Keys (every one starts with `keys::CONTRADICTIONS`, `Q`; contradictions.rs owns the sub-tags
 //! 0x01 to 0x03 of the same prefix):
@@ -24,8 +26,10 @@
 //!
 //! Order: the candidate rows are ordered in byte order. PGLite compares text the same way; a
 //! Postgres database with an `en_US` collation can order mixed-case or punctuated slugs another
-//! way. Groups that tie on their newest `refreshed_at` are cut by `maxSubjects` in
-//! `(source_id, from_page_id, link_type)` order; Postgres names no order for such ties.
+//! way. Groups that tie on their newest `refreshed_at` are cut by `maxSubjects` at the lowest
+//! `from_page_id`, then `link_type` in byte order, as the SQL's `ORDER BY max(refreshed_at) DESC,
+//! from_page_id, link_type COLLATE "C"` cuts them (a page id belongs to one source, so the source
+//! never orders two groups).
 
 use crate::dream::int4;
 use crate::env::{iso, parse_iso};
@@ -41,6 +45,9 @@ use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
+
+mod cli;
+pub use cli::EdgeProposalCliFilter;
 
 const PROPOSAL: u8 = 0x04;
 const PROPOSAL_BY_EVIDENCE: u8 = 0x05;
@@ -332,6 +339,21 @@ fn non_employer(q: &EdgeCandidateQuery, target: &PageRecord) -> bool {
 /// The proposal counts of `edgeValidityCounts`: `proposed`, `undated_unresolved` and `applied`
 /// proposals whose source passes `in_scope` (`source_id = ANY(scope)`, every source when the scope
 /// is null).
+/// Whether a link edge proposal that names page `page_id` (as its from, either to, or its ending to) was decided by a person:
+/// rejected, undone or reverted (the concept rebuild's stated check).
+pub(crate) fn person_decided_proposal_names(read: &dyn KvRead, page_id: u64) -> Result<bool> {
+    Ok(all_proposals(read)?.iter().any(|p| {
+        (p.from_page_id == page_id
+            || p.a_to_page_id == page_id
+            || p.b_to_page_id == page_id
+            || p.ending_to_page_id == Some(page_id))
+            && matches!(
+                p.status.as_str(),
+                "rejected" | "undone" | "reverted_by_user"
+            )
+    }))
+}
+
 pub(crate) fn proposal_counts(
     read: &dyn KvRead,
     in_scope: impl Fn(&str) -> bool,
@@ -455,7 +477,10 @@ impl Store {
             .filter(|(_, (targets, _))| targets.len() >= 2)
             .map(|(g, (_, newest))| (g, newest))
             .collect();
-        multi.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        multi.sort_by(|a, b| {
+            b.1.cmp(&a.1)
+                .then_with(|| (a.0.1, &a.0.2).cmp(&(b.0.1, &b.0.2)))
+        });
         let limit = usize::try_from(q.max_subjects as u64).unwrap_or(usize::MAX);
         let chosen: BTreeSet<Group> = multi.into_iter().take(limit).map(|(g, _)| g).collect();
         let mut rows = Vec::new();

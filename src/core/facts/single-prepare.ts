@@ -8,14 +8,13 @@ import { assertFactNotPurged } from './withdrawal.ts';
 import { cosineVerdict } from './capture-dedup.ts';
 import { interleaveFusion } from '../search/fusion-lists.ts';
 import { readSupersessionThreshold } from './supersession-threshold.ts';
-import { remoteProvenanceFloorSql } from '../search/private-visibility.ts';
 import { folderAccessForAll } from '../access/caller.ts';
 import { memberIdentity } from '../access/members.ts';
 import { ownerMemberId } from '../access/owner.ts';
 import { MEMBER_PAGE_PREFIX } from '../access/principals.ts';
 import { pageNotVisibleError } from '../persistence/page-visibility.ts';
 import { slugUnderBoundPrefixes } from '../ops/context.ts';
-import { ownedPageWithdrawalSubject, withdrawalReachedFactSql } from '../access/member-facts.ts';
+import { ownedPageWithdrawalSubject } from '../access/member-facts.ts';
 import { isHoldingSlug } from '../facts-fence.ts';
 import { sameClaimSlot } from './typed-claim.ts';
 
@@ -100,13 +99,11 @@ async function memberPageWithdrawal(engine: BrainEngine, sourceId: string, input
  * (or that no row backs). It covers the exact normalized claim only.
  */
 export async function factWithdrawnRefusal(engine: BrainEngine, sourceId: string, input: SingleFactIntent, opts: { excludePrivate?: boolean } = {}): Promise<OperationError> {
-  const spec = { sourceId, visibility: input.visibility, fact: input.fact, entitySlug: input.entity_slug, ownedPage: ownedPageWithdrawalSubject(input.page_slug), excludePrivate: opts.excludePrivate === true };
-  if (opts.excludePrivate) {
-    const backing = await engine.readFactWithdrawnBacking(spec);
-    if (backing.hidden && !backing.visible) return pageNotVisibleError();
-  }
-  const row = await engine.readFactWithdrawnRow(spec);
-  return withdrawnRefusal(row ?? undefined);
+  const met = await engine.readClaimWithdrawal({
+    sourceId, visibility: input.visibility, fact: input.fact, entitySlug: input.entity_slug,
+    ownPage: ownedPageWithdrawalSubject(input.page_slug), excludePrivate: opts.excludePrivate === true,
+  });
+  return met.hidden ? pageNotVisibleError() : withdrawnRefusal(met.row ?? undefined);
 }
 export const CANDIDATE_FUSION_KEY = 'facts.candidate_fusion';
 export type CandidateFusion = 'rrf_free' | 'interleave';

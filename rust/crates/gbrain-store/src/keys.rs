@@ -105,6 +105,7 @@ pub const TELEMETRY_VOLUNTEER_SEQUENCE: u8 = 0x0D; // the context_volunteer_even
 pub const TELEMETRY_CHRONICLE_ROW: u8 = 0x0E; // chronicle_page_state
 pub const TELEMETRY_CHRONICLE_RESERVATION: u8 = 0x0F; // chronicle_judge_reservations
 pub const TELEMETRY_CHRONICLE_SEQUENCE: u8 = 0x10; // the chronicle_judge_reservations id sequence
+pub const TELEMETRY_ACCESS_READ_LOG: u8 = 0x11; // access_read_log
 /// Family `jobs`, the `dream_synthesis_completions` archive (`jobs/synthesis_completions.rs`).
 pub const DREAM_SYNTHESIS_COMPLETION: u8 = b'f';
 /// Family `entity_identities` (`entity_identities.rs`).
@@ -158,6 +159,12 @@ pub fn family_text(tag: [u8; 2], parts: &[&str]) -> Vec<u8> {
     }
     key
 }
+
+/// Family `page_extraction_state` (`page_extraction_state.rs`): the extraction watermark and the partial-input receipt of a
+/// page, one record per page and pipeline, `~e <page id> <pipeline>`. A two-byte family tag: the one-byte tags are taken, and
+/// the first version of this family on a branch used tag `2`, which `rust-engine/main` keeps free; no store holds a record
+/// of the family under `2`.
+pub const PAGE_EXTRACTION_STATE: [u8; 2] = family_tag(b'e');
 
 pub fn text(tag: u8, parts: &[&str]) -> Vec<u8> {
     let mut key = vec![tag];
