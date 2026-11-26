@@ -108,7 +108,8 @@ the shape `searchTakes` returns, with the cosine as `score`.
   exact fallback, the HNSW knobs (`vectorLegacyGuard`, `hnswIterativeScan`) change nothing and
   `onVectorPoolMeta` is never called. Postgres's exact fallback after the last widening checks the content
   hash inside its window; the store checks it after the window, as PGLite does, so the two can differ only
-  when stale chunks fill the last window.
+  when stale chunks fill the last window (RUST_ENGINE.md row 56; pinned by the unit test
+  `a_stale_chunk_takes_a_window_slot_and_does_not_rank`).
 - **`excludePrivate`.** A truthy one hides the pages the page policy hides, as `facts/privacy.rs`
   `page_hidden` reads it (`privatePagesFilterForCaller('p')`: private visibility or access, derived pages
   whose origin is private, the member-access rules). The policy is checked per page before ranking, so a
