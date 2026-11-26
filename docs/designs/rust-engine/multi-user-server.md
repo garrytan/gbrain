@@ -29,6 +29,20 @@ prior-art map, [multi-user-prior-art.md](../../research/rust-engine/multi-user-p
   and property tests can be written now and run today on PGLite, Postgres and the single-writer
   Rust arm, with their multi-writer cases pending.
 
+## Default on (ruled 2026-11-25)
+
+The maintainer, Slack, 2026-11-25 at 3:20 PM PST, "Do it" (decision D26 in [RUST_ENGINE.md](../RUST_ENGINE.md)):
+multi-user Rust lands on master about Dec 9 with its switch off (`GBRAIN_RUST_MULTIUSER`, default off), and Rust
+turns on by default when parity holds and no data is lost. Speed losses are measured and named but do not block.
+This replaces "default only after Rust beats Postgres on every speed axis".
+
+The bars that still gate the default:
+
+- Switch off is byte-identical: goldens, the Rust tally pins and the full parity suite on PGLite, Postgres and Rust.
+- The 22 multi-writer conformance cases pass (section "Tests to write now").
+- At least 10,000 seeded crash-replay runs, with the commit log on, lose no data.
+- CLI, JSON and MCP output is byte-identical embedded, served and with the switch on.
+
 ## What "multi-user" means here
 
 Three steps, each building on the last. They are the plan's phases M1 to M3; M4 (replication and high
@@ -403,6 +417,12 @@ impl Store {
   the lease work is on the multi-user branch; no stub lease is used before then. File locks do not fence writers on
   two hosts, so managed mode on Rust is single-host until that swap.
 
+- **I-5, cycle lock fence (2026-11-25).** On a multi-user store the cycle lock carries the host fence (the I-5 epoch
+  and token), so a host that lost its lease cannot run a cycle. Under optimistic transactions an old-epoch commit is
+  refused at commit; under the single writer the takeover waits for the open transaction, then the old token is
+  refused with `epoch_moved`. Multi-user mode uses optimistic transactions, so the commit-time refusal must hold
+  there. With the multi-user switch off, the cycle lock is unchanged.
+
 ### I-6. Scope (per-user access)
 
 ```rust
@@ -510,6 +530,17 @@ These answer questions raised while building the leases (I-5) and the switch (I-
    takes the lease again with `acquire_lease`, which gives a new epoch. So a machine that comes back after a
    partition is refused for any work it started under the old epoch, even if no other machine took the lease
    meanwhile.
+7. **Calls with no fence (I-5).** A protected call (a job, write-claim, effect, drain-lease or cycle-lock write) with no
+   fence is not refused for lacking one: a single host that never registered a lease (a one-shot command, a cycle lock
+   taken outside a consumer, a served caller) works as it does with the switch off. With a fence the lease must be held
+   now, as above. With none, on a multi-user store: the entry check passes and writes nothing; a claim it takes gets an
+   implicit lease in the same write (`implicit:<family byte as 2 hex digits>:<claim id>`, epoch one past the name's last, a
+   UUID v7 token, holder origin `unregistered`, a time to live equal to the claim's own lease or 60 s) and the claim's
+   epoch record names it; a finish of a claim whose epoch record names a registered (not implicit) lease that is live now
+   refuses `lease_lost` with reason `held_by_another` and writes nothing; any other unfenced finish goes on to the
+   member's own token check. A fenced finish of a claim taken implicitly or under another epoch still refuses
+   `claim_epoch_mismatch`. The reason `fence_missing` is retired: nothing emits it, and the error registry keeps it as a
+   tombstone because a receipt may hold it.
 
 ### Rule for multi-user code paths: rerun-safe callbacks
 

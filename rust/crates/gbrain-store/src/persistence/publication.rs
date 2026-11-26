@@ -468,12 +468,43 @@ pub(crate) fn publication_journal_write_in(
 }
 
 /// The request a claimant's own publication step names (see `publication_journal_write_fenced`).
-fn claimant_step(what: &PublicationWrite) -> Option<&str> {
+fn claimant_step(what: &PublicationWrite) -> Option<(&str, StepToken<'_>)> {
     match what {
-        PublicationWrite::RecordRecovery { id, .. }
-        | PublicationWrite::MarkRecovering { id, .. }
-        | PublicationWrite::PublicationStarted { id } => Some(id.as_str()),
+        PublicationWrite::RecordRecovery {
+            id,
+            execution_token,
+            ..
+        }
+        | PublicationWrite::MarkRecovering {
+            id,
+            execution_token,
+            ..
+        } => Some((id.as_str(), StepToken::Named(execution_token.as_deref()))),
+        PublicationWrite::PublicationStarted { id } => Some((id.as_str(), StepToken::Any)),
         _ => None,
+    }
+}
+
+/// The claim a claimant step names: the execution token it holds, or (`PublicationStarted`, which names none) any.
+#[derive(Clone, Copy)]
+enum StepToken<'a> {
+    Named(Option<&'a str>),
+    Any,
+}
+
+/// Whether the row still holds the claim a claimant step acts on: running or recovering (a recovering request is
+/// still the claimant's until recovery settles it) under the named token, or under any token. A finished or released
+/// row holds none, so a late step gets the answer a plain store gives and no claim epoch is asked of it.
+fn holds_claim_for(record: &RequestRecord, token: StepToken<'_>) -> bool {
+    if !matches!(record.state.as_str(), "running" | "recovering") {
+        return false;
+    }
+    let held = super::json_text(record.extra.get("execution_token"));
+    match token {
+        StepToken::Any => held.is_some(),
+        StepToken::Named(named) => {
+            held.is_some_and(|held| named.is_some_and(|named| held.eq_ignore_ascii_case(named)))
+        }
     }
 }
 
@@ -498,11 +529,11 @@ impl Store {
         fence: Option<&LeaseToken>,
     ) -> Result<Value> {
         self.write(|tx| {
-            if let Some(id) = claimant_step(what) {
+            if let Some((id, token)) = claimant_step(what) {
                 fence::begin(self, tx, fence, "publication_journal_write")?;
-                if fence.is_some() {
-                    super::held_claim_of(tx, id, fence)?;
-                }
+                super::held_claim_when(self, tx, id, fence, |record| {
+                    holds_claim_for(record, token)
+                })?;
             }
             publication_journal_write_in(tx, &*self.env, what)
         })

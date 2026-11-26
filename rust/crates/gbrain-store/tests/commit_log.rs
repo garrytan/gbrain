@@ -290,12 +290,15 @@ fn every_record_carries_the_open_origin_and_the_requests_it_wrote() {
         // A write with no principal names none.
         assert_eq!(last.origin.writer_id, "");
         assert!(last.write_ids.is_empty());
+        // The write alone: the clock floor is the commit time (`M\0ctime`), which every commit carries in its record
+        // (I-4.v2), so no separate floor key rides in the ops (I-4.v2.1).
+        assert_eq!(last.ops.len(), 1, "{:?}", last.ops);
         assert_eq!(
-            last.ops,
-            vec![(
+            last.ops[0],
+            (
                 keys::text(keys::CONFIG, &["test.x"]),
                 LogOp::Put(b"1".to_vec())
-            )]
+            )
         );
     }
 }

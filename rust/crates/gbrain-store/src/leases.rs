@@ -19,10 +19,12 @@
 //! clock. A caller's clock is never read.
 //!
 //! Protected entry points (job, write-claim, effect, drain-lease and cycle-lock writes) take an optional fence, the
-//! caller's [`LeaseToken`] ([`check_fence`]). On a store opened in multi-user mode a missing fence refuses
-//! `lease_lost` with reason `fence_missing`; off, a missing fence keeps today's behavior exactly. A claim taken under
-//! a fence records the fence's lease name and epoch beside the claim ([`record_claim_epoch`]); a later protected
-//! write on that claim must carry a fence with the same name and epoch ([`check_claim_epoch`]).
+//! caller's [`LeaseToken`] ([`check_fence`]). A call with no fence is never refused for lacking one: off, it behaves
+//! exactly as it always has; on a multi-user store, a claim it takes gets an implicit lease at a new epoch
+//! ([`take_implicit_lease`]), and a finish it makes on a claim a registered holder's live lease owns refuses
+//! `lease_lost` / `held_by_another` ([`check_claim_unheld`]). A claim taken under a fence records the fence's lease
+//! name and epoch beside the claim ([`record_claim_epoch`]); a later protected write on that claim must carry a fence
+//! with the same name and epoch ([`check_claim_epoch`]).
 //!
 //! Keys: the two-byte family `~L` (`keys::LEASES`). The byte after the tag names the record:
 //! - `0x01 <name>`: a lease record (JSON [`LeaseRecord`]); it stays after a release so the epoch never goes back;
@@ -111,10 +113,10 @@ pub enum LostReason {
     Released,
     /// It expired and was not renewed.
     Expired,
-    /// A protected entry point on a multi-user store was called without a fence.
-    FenceMissing,
     /// The claim was taken under another lease name or epoch than the fence shows.
     ClaimEpochMismatch,
+    /// A call with no fence tried to finish a claim that a registered holder's live lease owns.
+    HeldByAnother,
 }
 
 impl LostReason {
@@ -124,8 +126,8 @@ impl LostReason {
             LostReason::EpochMoved => "epoch_moved",
             LostReason::Released => "released",
             LostReason::Expired => "expired",
-            LostReason::FenceMissing => "fence_missing",
             LostReason::ClaimEpochMismatch => "claim_epoch_mismatch",
+            LostReason::HeldByAnother => "held_by_another",
         }
     }
 }
@@ -260,17 +262,17 @@ pub fn assert_held(read: &dyn KvRead, token: &LeaseToken, now: i64) -> Result<()
 }
 
 /// The fence of a protected entry point, checked inside its writing transaction. `Some` asserts it
-/// ([`assert_held`]); `None` refuses `lease_lost` / `fence_missing` on a multi-user store and passes otherwise
-/// (today's behavior).
+/// ([`assert_held`]); `None` passes and writes nothing, on every store: a caller that never registered a host (a
+/// one-shot command, a cycle lock taken outside a consumer, a served caller) is not refused for lacking a fence. On a
+/// multi-user store the claim steps take it from there ([`take_implicit_lease`], [`check_claim_unheld`]).
 pub fn check_fence(
     store: &Store,
     read: &dyn KvRead,
     fence: Option<&LeaseToken>,
-    what: &str,
+    _what: &str,
 ) -> Result<()> {
     match fence {
         Some(token) => assert_held(read, token, store.env.clock_micros()),
-        None if store.multiuser() => Err(lease_lost(LostReason::FenceMissing, what, 0, None)),
         None => Ok(()),
     }
 }
@@ -296,6 +298,85 @@ pub fn record_claim_epoch(
             epoch: fence.epoch,
         },
     )
+}
+
+/// The prefix of an implicit lease's name: `implicit:<family byte as 2 hex digits>:<claim id>`.
+pub const IMPLICIT_PREFIX: &str = "implicit:";
+/// The time to live of an implicit lease whose claim has no lease of its own.
+pub const IMPLICIT_TTL_MS: u64 = 60_000;
+
+/// The name of the implicit lease of claim `id` of `family`.
+pub fn implicit_lease_name(family: u8, id: &str) -> String {
+    format!("{IMPLICIT_PREFIX}{family:02x}:{id}")
+}
+
+/// Takes an implicit lease for claim `id` of `family`, for a caller that gave no fence on a multi-user store, and
+/// records the claim's epoch under it, in the claim's own write. It is a lease record written as `acquire_lease`
+/// writes one (epoch one past the name's last, a fresh UUID v7 token, expiry `ttl_ms` out), held by the origin
+/// `unregistered` with `what` as its writer, but it never answers "live lease, nobody takes it": the claim itself was
+/// just won under the member's own token rules, so the new epoch always lands. `ttl_ms` is the claim's own lease, or
+/// [`IMPLICIT_TTL_MS`] when it has none.
+pub fn take_implicit_lease(
+    store: &Store,
+    tx: &mut dyn KvWrite,
+    family: u8,
+    id: &str,
+    what: &str,
+    ttl_ms: Option<u64>,
+) -> Result<LeaseToken> {
+    let name = implicit_lease_name(family, id);
+    let now = store.env.clock_micros();
+    let ttl_us = (ttl_ms.unwrap_or(IMPLICIT_TTL_MS).clamp(1, MAX_TTL_MS) as i64) * 1000;
+    let epoch = load(tx, &name)?
+        .map_or(0, |r| r.epoch)
+        .checked_add(1)
+        .ok_or_else(|| {
+            StoreError::new(
+                crate::error::INVALID_STATE,
+                "the lease epoch cannot grow further",
+            )
+        })?;
+    let rec = LeaseRecord {
+        name,
+        epoch,
+        token: uuid_v7(&*store.env),
+        holder: WriteOrigin {
+            host_id: "unregistered".into(),
+            incarnation: "unregistered".into(),
+            writer_id: what.to_owned(),
+        },
+        acquired_at_us: now,
+        renewed_at_us: now,
+        expires_at_us: now.saturating_add(ttl_us),
+        released: false,
+    };
+    put_json(tx, &lease_key(&rec.name), &rec)?;
+    let token = LeaseToken {
+        name: rec.name,
+        epoch: rec.epoch,
+        token: rec.token,
+    };
+    record_claim_epoch(tx, family, id, &token)?;
+    Ok(token)
+}
+
+/// For a caller with no fence on a multi-user store: fails `lease_lost` / `held_by_another` when claim `id` of
+/// `family` was taken under a registered holder's lease (a name that is not implicit) that is live now. Nothing else
+/// refuses: a claim with no record, or an implicit one, is the member's own token rules' to judge.
+pub fn check_claim_unheld(read: &dyn KvRead, family: u8, id: &str, now: i64) -> Result<()> {
+    let recorded: Option<ClaimEpoch> = get_json(read, &claim_epoch_key(family, id))?;
+    let Some(claim) = recorded.filter(|c| !c.lease.starts_with(IMPLICIT_PREFIX)) else {
+        return Ok(());
+    };
+    match load(read, &claim.lease)? {
+        Some(rec) if !rec.released && rec.expires_at_us > now => Err(lease_lost(
+            LostReason::HeldByAnother,
+            &claim.lease,
+            claim.epoch,
+            Some(rec.epoch),
+        )),
+        _ => Ok(()),
+    }
 }
 
 /// Fails `lease_lost` / `claim_epoch_mismatch` unless claim `id` of `family` was taken under `fence`'s lease name and

@@ -1388,7 +1388,7 @@ fn readers_patch(r: &Readers) -> Patch {
     }
 }
 
-fn put_readers(m: &mut Map<String, Value>, r: &Readers) {
+fn with_readers(m: &mut Map<String, Value>, r: &Readers) {
     m.insert("identity".into(), json!(r.identity));
     m.insert(
         "privateReadableSources".into(),
@@ -1476,7 +1476,7 @@ fn derive_page_text(
         };
         if text == canonical {
             let mut m = page_flags(&canonical, s);
-            put_readers(&mut m, caller_readers_rec);
+            with_readers(&mut m, caller_readers_rec);
             stored(&mut m);
             return Some(m);
         }
@@ -1490,7 +1490,7 @@ fn derive_page_text(
             let owner = page_caller(&reference(cur2, owner_patch, false, s), cx);
             if text == owner {
                 let mut m = page_flags(&owner, s);
-                put_readers(&mut m, caller_readers_rec);
+                with_readers(&mut m, caller_readers_rec);
                 stored(&mut m);
                 return Some(m);
             }
@@ -1579,7 +1579,7 @@ fn derive_fact(
                     && matches!(&canonical, FactKey::UnderPolicy { member: Some((m, _)), .. } if own.as_deref() == Some(m.as_str()));
                 let provenance_privacy_off = is_owner_record && !fact_pp_privacy(&canonical);
                 let mut m = fact_flags(&canonical, s);
-                put_readers(&mut m, readers);
+                with_readers(&mut m, readers);
                 if judged {
                     m.insert("memberPage".into(), json!(member_page));
                 }
@@ -1712,7 +1712,7 @@ fn derive_member_access(cur: &Cur, s: &AccessSettings) -> Derived {
         patch.hide_private = Some(true);
         let canonical = caller_access(&reference(cur2, patch, false, s), s);
         if (text, lab) == canonical {
-            put_readers(&mut off, readers);
+            with_readers(&mut off, readers);
             return Some(off);
         }
         None
@@ -1855,7 +1855,7 @@ fn derive_visibility(cur: &Cur, s: &AccessSettings, list: Option<&[String]>) -> 
             };
             let page = page_caller(&reference(cur2, pp, false, s), Cx { s, norm: false });
             let mut policy = page_flags(&page, s);
-            put_readers(&mut policy, readers);
+            with_readers(&mut policy, readers);
             m.insert("member".into(), json!(member));
             m.insert("memberPagePolicy".into(), with_open(policy, open_flag));
         }

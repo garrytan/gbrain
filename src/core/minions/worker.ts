@@ -101,7 +101,6 @@ import { parseRssFromProcStatus } from './proc-rss.ts';
 import { withEngineScope } from '../engine-scope.ts';
 import { startWakeDrain } from '../wakeshift/drain.ts';
 import { startWorkerFence, type WorkerFence } from './worker-fence.ts';
-import { fenceOpts } from '../persistence/host-fence.ts';
 
 export { parseRssFromProcStatus };
 
@@ -294,6 +293,8 @@ export class MinionWorker extends EventEmitter {
     this.queue = new MinionQueue(engine, {
       maxSpawnDepth: opts?.maxSpawnDepth,
       maxAttachmentBytes: opts?.maxAttachmentBytes,
+      // On a multi-user Rust brain the worker's claims and sweeps run under its own lease (worker-fence.ts).
+      fence: () => this.workerFence?.fence() ?? null,
     });
     let cores = 0;
     try { cores = cpus().length; } catch { /* telemetry best-effort */ }
@@ -1009,7 +1010,7 @@ export class MinionWorker extends EventEmitter {
    */
   private async releaseClaimForPause(job: MinionJob, lockToken: string): Promise<void> {
     try {
-      await this.engine.releaseClaimForPause(job.id, lockToken, fenceOpts(this.engine));
+      await this.engine.releaseClaimForPause(job.id, lockToken, this.queue.fenceOptsFor(job.id, lockToken));
     } catch (e) {
       // A capability refusal is not a failed UPDATE: the engine cannot release a claim at all, so the claim would expire
       // on every pause. Let it out (the worker loop stops loudly) instead of logging one line per job.
@@ -1049,7 +1050,7 @@ export class MinionWorker extends EventEmitter {
       } else {
         // Defer: release back to delayed, push delay ~15 minutes to avoid
         // immediate re-claim loops when the claim query re-runs.
-        await this.engine.deferClaimForQuietHours(job.id, lockToken, fenceOpts(this.engine));
+        await this.engine.deferClaimForQuietHours(job.id, lockToken, this.queue.fenceOptsFor(job.id, lockToken));
         console.log(`Quiet-hours defer: ${job.name} (id=${job.id}) → retry after 15m`);
       }
     } catch (e) {

@@ -179,7 +179,7 @@ describe('two real consumers on one host (pause, takeover, resume)', () => {
       const engineA = Object.create(engine) as BrainEngine;
       const engineB = Object.create(engine) as BrainEngine;
       const start = (e: BrainEngine) => new WaiterOnlyConsumer(e, { engine: 'rust' } as never, idleInner,
-        { kind: 'serve', hostId: HOST, pollMs: 1_000_000, idleMaxMs: 1_000_000, phaseMs: 2_000, heartbeatEveryMs: 1_000_000, hostLeaseTtlMs: 400,
+        { kind: 'serve', hostId: HOST, pollMs: 1_000_000, idleMaxMs: 1_000_000, phaseMs: 2_000, heartbeatEveryMs: 1_000_000, hostLeaseTtlMs: 2_000,
           singleConsumer: async () => true, ceilingMs: async () => 600_000, log: () => undefined });
       const a = start(engineA);
       a.start();
@@ -199,7 +199,8 @@ describe('two real consumers on one host (pause, takeover, resume)', () => {
       // A's lease is still live: B keeps probing, never advertises full, and gets no error.
       expect(b.mode).not.toBe('full');
       expect(fenceFor(engineB)).toBeNull();
-      await new Promise(r => setTimeout(r, 500));
+      // A's lease (2 s) runs out; B takes it over under a new epoch.
+      await new Promise(r => setTimeout(r, 2_200));
       await b.probeTick();
       expect(b.mode).toBe('full');
       expect(fenceFor(engineB)).toMatchObject({ name: hostLeaseName(HOST), epoch: 2 });

@@ -10,8 +10,10 @@
  *
  * Every protected entry point (job claims and their results, write claims and publication, effect claims and results,
  * the drain lease holder, the cycle lock) takes the fence explicitly, as `fence` in its options, read here at call
- * time. On a multi-user store a protected call with no fence refuses `lease_lost` / `fence_missing`; on every other
- * engine and with the mode off, `fenceFor` answers null and the call is exactly what it was.
+ * time. On a multi-user store a protected call with no fence (no host registered: a one-shot command, a served caller)
+ * is not refused for it: the store takes an implicit lease for each claim it takes, and refuses `lease_lost` /
+ * `held_by_another` only a finish of a claim a registered holder's live lease owns. On every other engine and with the
+ * mode off, `fenceFor` answers null and the call is exactly what it was.
  *
  * Registrations are per engine object: each holder (a consumer, a job worker) adds its own and removes only its own
  * when it stops, so two holders in one process never clear each other's.
@@ -79,4 +81,41 @@ export function fenceOpts(engine: object): { fence?: LeaseToken } {
 export function withFence<T extends object | undefined>(engine: object, opts: T): T | (NonNullable<T> & { fence: LeaseToken }) {
   const fence = fenceFor(engine);
   return fence ? { ...opts, fence } as NonNullable<T> & { fence: LeaseToken } : opts;
+}
+
+/**
+ * The claim an effect's install reads its claim row under: the execution token it was claimed with and the registered
+ * fence (none on a plain brain). On a multi-user Rust brain the read, inside the install's own transaction, checks the
+ * host fence and the claim epoch; every other engine ignores it. Null token (no claim): nothing to check.
+ */
+export function effectInstallClaim(engine: object, effect: { execution_token: string | null }): { token: string; fence?: LeaseToken } | undefined {
+  return effect.execution_token ? { token: effect.execution_token, ...claimFenceOpts(engine, effect.execution_token) } : undefined;
+}
+
+/**
+ * The fence each write or effect claim was stamped under, by its execution token (a fresh UUID per claim). Every later
+ * write on that claim carries the same fence, or none when the claim was stamped with none (an implicit lease), never
+ * whichever registration is current when it runs: a registration that appears, or is taken again under a new epoch,
+ * after the stamp cannot finish the claim under the wrong epoch.
+ */
+const claimFences = new Map<string, LeaseToken | null>();
+const MAX_BOUND_CLAIMS = 16_384;
+
+/** Records the fence (or none) claim `token` was stamped under. */
+export function bindClaimFence(token: string, fence: LeaseToken | null): void {
+  claimFences.delete(token);
+  claimFences.set(token, fence);
+  for (const oldest of claimFences.keys()) {
+    if (claimFences.size <= MAX_BOUND_CLAIMS) break;
+    claimFences.delete(oldest);
+  }
+}
+
+/** `{ fence }` for a write on claim `token`: the fence it was stamped under; a claim stamped elsewhere uses the engine's. */
+export function claimFenceOpts(engine: object, token: string | null | undefined): { fence?: LeaseToken } {
+  if (token && claimFences.has(token)) {
+    const fence = claimFences.get(token);
+    return fence ? { fence } : {};
+  }
+  return fenceOpts(engine);
 }
