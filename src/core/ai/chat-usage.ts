@@ -254,7 +254,7 @@ export function makeEngineChatUsageSink(engine: {
         if (price) {
           r = { ...r, cost_usd: (r.input_tokens * price.pricing.input + r.output_tokens * price.pricing.output) / 1_000_000 };
         }
-      } catch {
+      } catch { // silent-read-ok: override lookup is best-effort; row stays NULL as before
         /* fail-open: keep NULL */
       }
     }
