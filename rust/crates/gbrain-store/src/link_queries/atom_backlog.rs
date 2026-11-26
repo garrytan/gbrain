@@ -128,9 +128,10 @@ impl Store {
             }
             let owner = format!("source_slug:{}", page.slug);
             let current = format!("{hash}:{}:{}", page.id, page.knowledge_revision);
-            if [hash, current.as_str()].into_iter().any(|pin| {
-                held.contains(&(page.source_id.clone(), owner.clone(), pin.to_string()))
-            }) {
+            if [hash, current.as_str()]
+                .into_iter()
+                .any(|pin| held.contains(&(page.source_id.clone(), owner.clone(), pin.to_string())))
+            {
                 continue;
             }
             count += 1;

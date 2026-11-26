@@ -70,13 +70,18 @@ pub(crate) fn held_atom_inputs(
                 .is_some_and(|partial| {
                     partial.as_str() == Some("true") || partial == &Value::Bool(true)
                 });
-            if let (Some(hold_id), Some(pin)) = (record.hold_id.as_deref(), record.input_pin.as_ref())
+            if let (Some(hold_id), Some(pin)) =
+                (record.hold_id.as_deref(), record.input_pin.as_ref())
                 && record.kind == "atom"
                 && record.state == "held"
                 && !partial
                 && hold_ids.contains(hold_id)
             {
-                held.insert((record.source_id.clone(), record.owner_key.clone(), pin.clone()));
+                held.insert((
+                    record.source_id.clone(),
+                    record.owner_key.clone(),
+                    pin.clone(),
+                ));
             }
             true
         },
