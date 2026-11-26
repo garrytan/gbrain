@@ -16,7 +16,8 @@ import {
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { PostgresEngine } from '../src/core/postgres-engine.ts';
 
-const shared = ENGINE_CAPABILITIES.filter(c => c !== 'single_owner' && c !== 'postgres_admin');
+// commit_log is reported only by a Rust engine whose store keeps a commit log (engine-members/commit-log.ts).
+const shared = ENGINE_CAPABILITIES.filter(c => c !== 'single_owner' && c !== 'postgres_admin' && c !== 'commit_log');
 
 describe('engine capabilities', () => {
   // Never connected: capabilities are known without opening a database.
@@ -37,6 +38,7 @@ describe('engine capabilities', () => {
     expect(hasCapability(engine, 'raw_sql')).toBe(true);
     expect(hasCapability(engine, 'single_owner')).toBe(true);
     expect(hasCapability(engine, 'postgres_admin')).toBe(false);
+    expect(hasCapability(engine, 'commit_log')).toBe(false);
     expect(engine.capabilities.size).toBe(shared.length + 1);
   });
 
@@ -52,6 +54,7 @@ describe('engine capabilities', () => {
     expect(hasCapability(engine, 'raw_sql')).toBe(true);
     expect(hasCapability(engine, 'postgres_admin')).toBe(true);
     expect(hasCapability(engine, 'single_owner')).toBe(false);
+    expect(hasCapability(engine, 'commit_log')).toBe(false);
     expect(engine.capabilities.size).toBe(shared.length + 1);
   });
 

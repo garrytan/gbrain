@@ -80,11 +80,24 @@ impl Store {
 
     /// `readInbox`: the unread rows, marked read now, when the job is `active` under the token.
     pub fn read_job_inbox(&self, job_id: i64, lock_token: &str) -> Result<Vec<Value>> {
+        self.read_job_inbox_fenced(job_id, lock_token, None)
+    }
+
+    /// `read_job_inbox` under the caller's host fence: it marks rows read, so on a job this token locks the claim must
+    /// have been taken under this fence's epoch (`lease_lost` otherwise, nothing marked).
+    pub fn read_job_inbox_fenced(
+        &self,
+        job_id: i64,
+        lock_token: &str,
+        fence: Option<&LeaseToken>,
+    ) -> Result<Vec<Value>> {
         self.write(|tx| {
+            fence::begin(self, tx, fence, "read_job_inbox")?;
             let now = self.env.now_micros();
             if !holds(tx, job_id, lock_token)? {
                 return Ok(Vec::new());
             }
+            fence::claim_held(self, tx, CLAIM_JOB, &job_id.to_string(), fence)?;
             let mut out = Vec::new();
             for (key, mut row) in inbox_rows(tx, job_id)? {
                 if row.read_at.is_none() {

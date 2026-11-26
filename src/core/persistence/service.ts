@@ -1,3 +1,4 @@
+import { rustMultiuserEngine } from './host-registration.ts';
 import { PENDING_IMPORT, pendingImportRefusal } from './pending-import.ts';
 import { deferredWaiting } from './refresh-barrier.ts';
 import { withSupersedes } from './import-deferral.ts';
@@ -149,7 +150,9 @@ export function startPersistenceConsumer(engine: BrainEngine, config: GBrainConf
   const oneShot = isOneShotCommand() && kind !== 'serve' && !RESIDENT_CONSUMER_KINDS.includes(kind) ? { waiting: () => (settledWaiters.get(engine)?.size ?? 0) > 0 } : undefined;
   const full = () => new PersistenceConsumer(engine, config, preparePersistedMutation,
     { drainNotice: kind === 'serve', oneShot, onSettled: row => { recordSettlement(engine); rememberSettled(engine, row.id); for (const listener of settledWaiters.get(engine)?.get(row.id) ?? []) listener(row); } });
-  const service: Service = kind !== 'serve' && RESIDENT_CONSUMER_KINDS.includes(kind) && engine.kind === 'postgres'
+  // A multi-user Rust brain (I-0) has writers on several hosts: every consumer kind elects and holds its host lease
+  // before it claims anything (consumer-election.ts, host-registration.ts), so none claims without a fence.
+  const service: Service = rustMultiuserEngine(engine) || (kind !== 'serve' && RESIDENT_CONSUMER_KINDS.includes(kind) && engine.kind === 'postgres')
     ? { consumer: new WaiterOnlyConsumer(engine, config, full, { kind, hostId: hostIdFor(engine), pool: () => enginePoolStats(engine) }), stopping: false }
     : (() => { const consumer = full(); return { consumer, stopping: false, heartbeat: startConsumerHeartbeat(engine, consumer.hostId,
         // #6317 (C1): the row's pool numbers come from the vendored driver's own queues (postgres-engine/pool-stats.ts).

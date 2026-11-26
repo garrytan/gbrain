@@ -67,14 +67,13 @@ export const ENGINE_CAPABILITIES = [
   'ontology',
   /** The session cursor and checkpoint manifest of context_pack and delta (`session_context_state`, key tag `y`). */
   'session_state',
+  /**
+   * The commit log and commit positions (`readCommitLog`, `lastCommitPosition`): a Rust store in multi-user mode with the
+   * commit log on (rust/docs/store/commit-log.md). No SQL engine reports it; the Rust engine reports it only while its
+   * store keeps a log, and refuses both members naming it otherwise.
+   */
+  'commit_log',
 ] as const;
-
-/**
- * Capabilities an engine reports about how it runs, never a reason a call is refused, so they are not
- * `engine_capability_missing` reasons and no SQL engine reports them (I-8 in docs/designs/rust-engine/multi-user-server.md).
- * `commit_log`: the Rust store keeps a commit log (multi-user mode, rust/docs/store/commit-log.md).
- */
-export const MODE_CAPABILITIES = ['commit_log'] as const;
 
 /**
  * Capabilities reported only while multi-user Rust is on (interface I-8.v2): a separate list, so with the switch off
@@ -84,7 +83,7 @@ export const MODE_CAPABILITIES = ['commit_log'] as const;
  */
 export const MULTIUSER_CAPABILITIES = ['served'] as const;
 
-export type Capability = (typeof ENGINE_CAPABILITIES)[number] | (typeof MODE_CAPABILITIES)[number] | (typeof MULTIUSER_CAPABILITIES)[number];
+export type Capability = (typeof ENGINE_CAPABILITIES)[number] | (typeof MULTIUSER_CAPABILITIES)[number];
 
 /** The read-only capability set an engine reports. */
 export type EngineCapabilities = ReadonlySet<Capability>;
@@ -97,7 +96,10 @@ const ENGINE_ONLY: Readonly<Record<SqlEngineKind, readonly Capability[]>> = {
   postgres: ['postgres_admin'],
 };
 
-const ENGINE_SPECIFIC = new Set<Capability>(Object.values(ENGINE_ONLY).flat());
+/** Capabilities only a Rust engine can report: no SQL engine kind gets them. */
+const RUST_ONLY: readonly Capability[] = ['commit_log'];
+
+const ENGINE_SPECIFIC = new Set<Capability>([...Object.values(ENGINE_ONLY).flat(), ...RUST_ONLY]);
 
 /**
  * The full capability set PGLite or Postgres reports: every shared capability

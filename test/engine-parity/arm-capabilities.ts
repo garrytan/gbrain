@@ -15,6 +15,11 @@
  *    `holdSchemaMigrationLock` is an optional member only Postgres implements;
  *    PGLite (and Rust) serialize schema migrations in-process instead
  *    (src/core/schema-migration-lock.ts).
+ *  - `multi_writer` (I-8 name) is the engine's own report that many writers can use one brain at once. Postgres has it;
+ *    PGLite is one connection and the Rust engine reports it only with the multi-user switch on and optimistic explicit
+ *    transactions active, so neither has it here. A missing `multi_writer` is `n/a` (the case does not run on that arm). The
+ *    multi-writer conformance cases (multi-writer-cases.ts) are decided per arm by their support matrix instead of by
+ *    `requires`; the Rust labels check the capability on the engine itself at run time.
  *  - `managed_persistence` refuses on an arm without it, naming it (src/core/engine-capabilities.ts). The Rust engine does
  *    not report it until the managed-persistence program is done (rust-engine/store-capabilities.ts holds it), so a write
  *    to a managed worktree, and the first write to a rooted source that would claim one, refuse naming it there.
@@ -29,7 +34,7 @@ export const PARITY_ARMS = ['pglite', 'postgres', 'rust'] as const;
 export type ParityArmName = typeof PARITY_ARMS[number];
 
 /** Capabilities a parity case can require (a subset of the planned engine capability set). */
-export type EngineCapability = 'raw_sql' | 'schema_migration_lock' | 'managed_persistence';
+export type EngineCapability = 'raw_sql' | 'schema_migration_lock' | 'managed_persistence' | 'multi_writer';
 
 export interface MissingCapability {
   /** `refuses`: the arm throws `engine_capability_missing`; `n/a`: the case does not run on the arm. */
@@ -43,6 +48,7 @@ export function missingCapability(capability: EngineCapability): MissingCapabili
     case 'raw_sql': return { kind: 'refuses', label: 'refuses:raw_sql' };
     case 'schema_migration_lock': return { kind: 'n/a', label: 'n/a:postgres-only' };
     case 'managed_persistence': return { kind: 'refuses', label: 'refuses:managed_persistence' };
+    case 'multi_writer': return { kind: 'n/a', label: 'n/a:multi_writer' };
     default: return assertNever(capability);
   }
 }
@@ -50,7 +56,7 @@ export function missingCapability(capability: EngineCapability): MissingCapabili
 export function armCapabilities(arm: ParityArmName): ReadonlySet<EngineCapability> {
   switch (arm) {
     case 'pglite': return new Set<EngineCapability>(['raw_sql', 'managed_persistence']);
-    case 'postgres': return new Set<EngineCapability>(['raw_sql', 'schema_migration_lock', 'managed_persistence']);
+    case 'postgres': return new Set<EngineCapability>(['raw_sql', 'schema_migration_lock', 'managed_persistence', 'multi_writer']);
     // No `managed_persistence` while store-capabilities.ts holds it: a Rust brain refuses managed mode with the typed refusal.
     case 'rust': return new Set<EngineCapability>();
     default: return assertNever(arm);

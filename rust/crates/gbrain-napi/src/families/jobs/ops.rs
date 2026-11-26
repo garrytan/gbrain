@@ -96,7 +96,7 @@ impl Brain {
         })
     }
 
-    /// `updateJobProgress(id, lockToken, progress)`: whether the fenced update applied.
+    /// `updateJobProgress(id, lockToken, progress, fence?)`: whether the fenced update applied.
     #[napi]
     pub fn update_job_progress<'env>(
         &self,
@@ -104,13 +104,20 @@ impl Brain {
         id: f64,
         lock_token: String,
         progress: Value,
+        fence: Option<Value>,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
-            s.update_job_progress(job_id(id, "updateJobProgress")?, &lock_token, &progress)
+            let fence: Option<LeaseToken> = arg(fence, "updateJobProgress fence")?;
+            s.update_job_progress_fenced(
+                job_id(id, "updateJobProgress")?,
+                &lock_token,
+                &progress,
+                fence.as_ref(),
+            )
         })
     }
 
-    /// `addJobTokens(id, lockToken, { input, output, cache_read })`: whether it applied.
+    /// `addJobTokens(id, lockToken, { input, output, cache_read }, fence?)`: whether it applied.
     #[napi]
     pub fn add_job_tokens<'env>(
         &self,
@@ -118,10 +125,17 @@ impl Brain {
         id: f64,
         lock_token: String,
         tokens: Value,
+        fence: Option<Value>,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
             let tokens: TokenDelta = required(tokens, "addJobTokens tokens")?;
-            s.add_job_tokens(job_id(id, "addJobTokens")?, &lock_token, &tokens)
+            let fence: Option<LeaseToken> = arg(fence, "addJobTokens fence")?;
+            s.add_job_tokens_fenced(
+                job_id(id, "addJobTokens")?,
+                &lock_token,
+                &tokens,
+                fence.as_ref(),
+            )
         })
     }
 
@@ -230,20 +244,31 @@ impl Brain {
         })
     }
 
-    /// `killTimedOutJobs()`: the rows killed for `timeout_at`.
+    /// `killTimedOutJobs(fence?)`: the rows killed for `timeout_at`.
     #[napi]
-    pub fn kill_timed_out_jobs<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.kill_timed_out_jobs())
+    pub fn kill_timed_out_jobs<'env>(
+        &self,
+        env: &'env Env,
+        fence: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let fence: Option<LeaseToken> = arg(fence, "killTimedOutJobs fence")?;
+            s.kill_timed_out_jobs_fenced(fence.as_ref())
+        })
     }
 
-    /// `killWallClockJobs(lockDurationMs)`: the rows killed for the wall-clock bound.
+    /// `killWallClockJobs(lockDurationMs, fence?)`: the rows killed for the wall-clock bound.
     #[napi]
     pub fn kill_wall_clock_jobs<'env>(
         &self,
         env: &'env Env,
         lock_duration_ms: f64,
+        fence: Option<Value>,
     ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.kill_wall_clock_jobs(lock_duration_ms))
+        self.run(env, move |s| {
+            let fence: Option<LeaseToken> = arg(fence, "killWallClockJobs fence")?;
+            s.kill_wall_clock_jobs_fenced(lock_duration_ms, fence.as_ref())
+        })
     }
 
     /// `pruneJobs({ statuses, olderThan, dryRun })`: `{ count }`. A pruned completed dream
@@ -300,16 +325,22 @@ impl Brain {
         })
     }
 
-    /// `readJobInbox(jobId, lockToken)`: the rows marked read.
+    /// `readJobInbox(jobId, lockToken, fence?)`: the rows marked read.
     #[napi]
     pub fn read_job_inbox<'env>(
         &self,
         env: &'env Env,
         job_id_arg: f64,
         lock_token: String,
+        fence: Option<Value>,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
-            s.read_job_inbox(job_id(job_id_arg, "readJobInbox")?, &lock_token)
+            let fence: Option<LeaseToken> = arg(fence, "readJobInbox fence")?;
+            s.read_job_inbox_fenced(
+                job_id(job_id_arg, "readJobInbox")?,
+                &lock_token,
+                fence.as_ref(),
+            )
         })
     }
 

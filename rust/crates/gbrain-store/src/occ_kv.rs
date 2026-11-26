@@ -350,6 +350,8 @@ struct Shared {
     published: AtomicU64,
     poisoned: AtomicBool,
     stats: Arc<OccStats>,
+    /// Commits sent to the pipeline that it has not taken off its queue yet (`OccKv::queued_commits`).
+    queued: AtomicUsize,
     /// The commit log, once enabled: only the pipeline writes it (one record per accepted
     /// transaction, in the batch's own record-file commit).
     log: Mutex<Option<LogState>>,
@@ -400,7 +402,10 @@ impl Pipeline {
                 },
             };
             let first = match first {
-                Msg::Commit(req) => req,
+                Msg::Commit(req) => {
+                    self.shared.queued.fetch_sub(1, Ordering::AcqRel);
+                    req
+                }
                 Msg::Exclusive { granted, end } => {
                     self.exclusive(granted, end);
                     continue;
@@ -411,6 +416,7 @@ impl Pipeline {
             while batch.len() < MAX_BATCH_TXNS && bytes < MAX_BATCH_BYTES {
                 match rx.try_recv() {
                     Ok(Msg::Commit(next)) => {
+                        self.shared.queued.fetch_sub(1, Ordering::AcqRel);
                         bytes += approx_bytes(&next);
                         batch.push(next);
                     }
@@ -671,6 +677,13 @@ pub struct OccKv {
 }
 
 impl OccKv {
+    /// Commits waiting on the pipeline's queue right now (sent, not yet taken into a batch). While an
+    /// exclusive write holds the pipeline, this counts the commits that will form the next group
+    /// commit, so a test can queue an exact batch, in an exact order, before it lets the pipeline go.
+    pub fn queued_commits(&self) -> usize {
+        self.shared.queued.load(Ordering::Acquire)
+    }
+
     pub fn new(base: RedbKv) -> Result<OccKv> {
         Self::over(Arc::new(base))
     }
@@ -687,6 +700,7 @@ impl OccKv {
             published: AtomicU64::new(version),
             poisoned: AtomicBool::new(false),
             stats: Arc::new(OccStats::default()),
+            queued: AtomicUsize::new(0),
             log: Mutex::new(None),
             log_on: AtomicBool::new(false),
             clock: Mutex::new(None),
@@ -1167,9 +1181,11 @@ impl KvWrite for OccTxn {
             let Some(sender) = sender.as_ref() else {
                 return Err(StoreError::new(STORE_CLOSED, "the brain is closing"));
             };
-            sender
-                .send(Msg::Commit(request))
-                .map_err(|_| StoreError::new(STORE_CLOSED, "the brain is closing"))?;
+            this.shared.queued.fetch_add(1, Ordering::AcqRel);
+            if sender.send(Msg::Commit(request)).is_err() {
+                this.shared.queued.fetch_sub(1, Ordering::AcqRel);
+                return Err(StoreError::new(STORE_CLOSED, "the brain is closing"));
+            }
         }
         let result = answer
             .recv()

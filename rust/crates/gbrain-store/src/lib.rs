@@ -63,6 +63,7 @@ pub mod shared_skill_publication;
 pub mod slug_spellings;
 pub mod snapshot;
 pub mod sources;
+pub mod takeover;
 #[cfg(test)]
 mod test_support;
 pub mod timeline;
@@ -310,6 +311,9 @@ pub struct Store {
     pub(crate) stamp_rows: bool,
     /// Where the commit log starts, on a commit log brain.
     pub(crate) log_since: Option<CommitPosition>,
+    /// The position of the newest commit a write or transaction of this handle (or of a store bound
+    /// to it, or a sibling) finished with: `Store::last_commit_position`.
+    pub(crate) last_position: Arc<Mutex<Option<CommitPosition>>>,
     /// `OpenOptions::multiuser` as the brain was opened; bound and sibling stores copy it.
     multiuser: bool,
 }
@@ -539,10 +543,10 @@ impl Store {
                     .as_deref()
                     .map(str::as_bytes),
             );
-        // Multi-user mode: the store's clock never runs below the last committed time (`clock_floor.rs`), the commit
-        // clock and the write origin included.
+        // Multi-user mode: the store's clock never runs below the newest durable commit time (`M\0ctime`, I-4.v2.1;
+        // `clock_floor.rs`), the commit clock and the write origin included: one floor, read here at open.
         let env: Arc<dyn Env> = if multiuser_on {
-            let floor = clock_floor::read_high_water(&*kv.snapshot()?)?;
+            let floor = kv.last_commit_time()?.unwrap_or(0);
             Arc::new(clock_floor::ClockFloor::new(env, floor))
         } else {
             env
@@ -684,6 +688,11 @@ impl Store {
         let schema_version = config::read_config(&*kv.snapshot()?, "version")?
             .and_then(|v| v.parse().ok())
             .unwrap_or(0);
+        // A multi-user brain with no commit time yet (just created or just turned on) commits one now, so the records it
+        // was seeded with stay below the floor of every later open; a read-only open writes nothing.
+        if multiuser_on && !read_only && kv.last_commit_time()?.is_none() {
+            kv.begin_write()?.commit()?;
+        }
         let commit_log_on = kv.commit_log_enabled();
         Ok(Store {
             kv,
@@ -699,6 +708,7 @@ impl Store {
                 multiuser: multiuser_on,
             },
             log_since: stored.log.map(|l| l.since),
+            last_position: Arc::new(Mutex::new(None)),
             bound: None,
             builder: Mutex::new(None),
             runs_builder: options.keyword_index_builder,
@@ -731,6 +741,7 @@ impl Store {
             origin: self.origin.clone(),
             stamp_rows: self.stamp_rows,
             log_since: self.log_since,
+            last_position: self.last_position.clone(),
             multiuser: self.multiuser,
         }
     }
@@ -803,6 +814,7 @@ impl Store {
             origin: self.origin.clone(),
             stamp_rows: self.stamp_rows,
             log_since: self.log_since,
+            last_position: self.last_position.clone(),
             multiuser: self.multiuser,
         }
     }
@@ -900,9 +912,6 @@ impl Store {
             let _trust = crate::write_trust::stamp_context::open(trust);
             return tx.statement(|w| {
                 let value = write_chain(w, &mut f)?;
-                if self.multiuser {
-                    clock_floor::raise_high_water(w, self.env.now_micros())?;
-                }
                 if let Some(meta) = meta.meta() {
                     w.set_commit_meta(meta);
                 }
@@ -924,20 +933,13 @@ impl Store {
                 let _trust = crate::write_trust::stamp_context::open(trust);
                 match write_chain(&mut *tx, &mut f) {
                     Ok(value) => {
-                        let raised = if self.multiuser {
-                            clock_floor::raise_high_water(&mut *tx, self.env.now_micros())
-                        } else {
-                            Ok(())
-                        };
-                        match raised {
-                            Ok(()) => {
-                                if let Some(meta) = meta.meta() {
-                                    tx.set_commit_meta(meta);
-                                }
-                                tx.commit().map(|_| value)
-                            }
-                            Err(e) => Err(e),
+                        if let Some(meta) = meta.meta() {
+                            tx.set_commit_meta(meta);
                         }
+                        tx.commit_position().map(|at| {
+                            self.note_commit(at);
+                            value
+                        })
                     }
                     Err(e) => Err(e),
                 }
@@ -1030,6 +1032,20 @@ impl Store {
     /// no log.
     pub fn read_commit_log(&self, after: Option<CommitPosition>, max: usize) -> Result<LogPage> {
         commit_log::read_commit_log(&*self.kv.snapshot()?, after, max)
+    }
+
+    /// The position the newest finished write or transaction of this handle committed at
+    /// (`None` before the first). Writes that commit nothing report the end of the batch they saw.
+    pub fn last_commit_position(&self) -> Option<CommitPosition> {
+        *self.last_position.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// Notes a finished commit's position; the newest one wins when several finish at once.
+    pub(crate) fn note_commit(&self, at: CommitPosition) {
+        let mut last = self.last_position.lock().unwrap_or_else(|p| p.into_inner());
+        if last.is_none_or(|l| at > l) {
+            *last = Some(at);
+        }
     }
 
     /// `read_commit_log` with every record as the bytes the store holds, unchanged (I-4.v2), for a

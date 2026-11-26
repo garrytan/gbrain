@@ -35,6 +35,7 @@ mod cli_reads_ops;
 mod cli_reads_search_pages;
 mod cli_reads_sweep;
 mod cli_sources;
+mod commit_log;
 mod config;
 mod connector_orphans;
 mod embed_stale_work;

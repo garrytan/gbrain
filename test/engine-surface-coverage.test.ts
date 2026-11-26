@@ -600,6 +600,8 @@ const INTERFACE_METHODS: readonly string[] = [
   'readSourceSyncShape', 'readNotifierFirstDue',
   'readSourceLastCommit', 'readDrainHolderProgress', 'readLiveJobIds', 'readDrainLeaseBeacon', 'writeDrainLeaseHolder',
   'refreshDrainLeaseHolder', 'releaseDrainLeaseHolder',
+  // The commit log and commit positions (engine-members/commit-log.ts); the SQL engines refuse both.
+  'readCommitLog', 'lastCommitPosition',
   // The effect worker's recovery scans (engine-sql/persistence-effect-scans.ts).
   'listGatedMirrorRequests', 'listEffectRecoveries', 'selectClaimableEffect', 'readRequestEffects', 'listEmbeddingCandidates',
   // The batch 9 segmented-mirror statements (engine-sql/segmented-mirror-effects.ts; test/engine-parity/segmented-mirror-effects.test.ts)
