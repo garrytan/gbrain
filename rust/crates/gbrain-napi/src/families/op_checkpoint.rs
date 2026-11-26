@@ -213,6 +213,19 @@ impl Brain {
         })
     }
 
+    /// `addSoakCounterEvent(op, day, kind, n)`: adds `n` to one soak counter of the day's row; resolves null.
+    #[napi]
+    pub fn add_soak_counter_event<'env>(
+        &self,
+        env: &'env Env,
+        op: String,
+        day: String,
+        kind: String,
+        n: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.add_soak_counter_event(&op, &day, &kind, n))
+    }
+
     /// `replaceOpCheckpointAtVersion(op, fingerprint, completedKeys, expected)`: true when this
     /// call replaced the records at version `expected`.
     #[napi]

@@ -49,6 +49,24 @@ function writePack(root: string) {
   }
 }
 
+/**
+ * Makes the fixture a Rust brain: raw SQL on shared-skill tables refuses by name, the brain singleton comes from the
+ * writer admin state (managed-mode.ts) and the sealed pack from the store (rust-publication.ts) through `readPack`.
+ */
+function asRustBrain(f: ReturnType<typeof fixture>, readPack: (key: { sourceId: string; incarnation: string }) => Promise<unknown>) {
+  Object.assign(f.ctx.engine, {
+    kind: 'rust',
+    readWriterAdminState: async () => JSON.stringify({ brain: { id: f.brainId, enabled: false, mode_epoch: 0, skill_bundles_enabled: false, writer_protocol_floor: 1 } }),
+    _admit: async () => {},
+    storeFor: async () => ({ brain: { readSharedSkillPack: readPack } }),
+  });
+  const sqlRead = f.ctx.engine.executeRaw.bind(f.ctx.engine);
+  f.ctx.engine.executeRaw = (async (sql: string, params?: unknown[]) => {
+    if (sql.includes('shared_skill_')) throw Object.assign(new Error('raw SQL is refused on the Rust engine'), { code: 'engine_capability_missing' });
+    return sqlRead(sql, params);
+  }) as BrainEngine['executeRaw'];
+}
+
 describe('combined content root setup', () => {
   test('dry-run uses the persistent brain ID and makes no directory or checkpoint', async () => {
     const home = temp(), f = fixture();
@@ -148,6 +166,52 @@ describe('staged skill migration', () => {
     expect(edited.status).toBe('conflict');
     expect(readFileSync(join(root, 'skills/memory-care/SKILL.md'), 'utf8')).toBe('private: true\nLocal instructions');
     expect((await runSharedSkillsMigration(f.ctx)).status).toBe('conflict');
+  });
+  test('a sealed read that fails keeps the inventory taken before the edit, so a retry still sees the edit', async () => {
+    // A Rust brain owned by another process: this process's store is closed, so the sealed pack read refuses.
+    const root = temp(), f = fixture(root); writePack(root);
+    let closed = false;
+    asRustBrain(f, async () => {
+      if (closed) throw Object.assign(new Error("The Rust engine's store is closed"), { code: 'engine_closed' });
+      return null;
+    });
+    expect((await runSharedSkillsMigration(f.ctx)).status).toBe('action_required');
+    writeFileSync(join(root, 'skills/memory-care/SKILL.md'), 'private: true\nLocal instructions');
+    closed = true;
+    expect((await runSharedSkillsMigration(f.ctx)).status).not.toBe('complete');
+    closed = false;
+    const reopened = await runSharedSkillsMigration(f.ctx);
+    expect(reopened.status).toBe('conflict');
+    expect(reopened.sources[0].stages.at(-1)?.reason).toContain('skills/memory-care/SKILL.md');
+    expect(readFileSync(join(root, 'skills/memory-care/SKILL.md'), 'utf8')).toBe('private: true\nLocal instructions');
+  });
+  test('the source list never parses a source config, so a malformed one stays a per-source matter', async () => {
+    const root = temp(), f = fixture(root); writePack(root);
+    // Listings that return config refuse, as a malformed legacy config makes them throw.
+    Object.assign(f.ctx.engine, stubSourceMembers(() => [f.source, { id: 'zz-archived', archived: true }], {
+      fail: member => ['listAllSources', 'listSourceRecords', 'listSourceRoutingRows'].includes(member) ? new SyntaxError('malformed source config') : undefined,
+    }));
+    const report = await runSharedSkillsMigration(f.ctx, { dryRun: true });
+    expect(report.sources.map(row => [row.source_id, row.root])).toEqual([['default', root]]);
+  });
+  test('on a Rust brain the sealed manifest is read from the store, never raw SQL', async () => {
+    const root = temp(), f = fixture(root); writePack(root);
+    let sealedHash: string | undefined;
+    const packReads: Array<{ sourceId: string; incarnation: string }> = [];
+    asRustBrain(f, async key => { packReads.push(key); return sealedHash ? { pack_id: 'pack', revision: '1', manifest: {}, manifest_hash: sealedHash } : null; });
+    expect((await runSharedSkillsMigration(f.ctx)).status).toBe('action_required');
+    // Only skillpack.json's bytes change. The store has no sealed pack, so the edit is a conflict.
+    const manifest = readFileSync(join(root, 'skillpack.json'), 'utf8');
+    writeFileSync(join(root, 'skillpack.json'), JSON.stringify(JSON.parse(manifest), null, 4) + '\n');
+    expect((await runSharedSkillsMigration(f.ctx)).status).toBe('conflict');
+    expect(packReads).toEqual([{ sourceId: 'default', incarnation: f.incarnation }]);
+    // The store's sealed pack carries the new manifest, so the edit is the sealed publication's own and is accepted.
+    sealedHash = inventorySkillpack(root)!.hashes['skillpack.json'];
+    const accepted = await runSharedSkillsMigration(f.ctx);
+    expect(accepted.status).toBe('action_required');
+    expect(accepted.sources[0].stages.at(-1)?.reason).toContain('writer_not_quiesced');
+    expect(packReads.length).toBe(2);
+    expect(f.calls.some(sql => sql.includes('shared_skill_'))).toBe(false);
   });
   test('preserves exclusions and private content without adopting new publication authority', async () => {
     const root = temp(), f = fixture(root); writePack(root);
