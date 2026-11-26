@@ -94,6 +94,7 @@ export function agentContractCheck(events: readonly Event[], now = Date.now()): 
 }
 
 async function runAgentContract(): Promise<Check[]> {
+  const checks: Check[] = [];
   let unreadable = false;
   let malformedLines = 0;
   // #7145: the whole log (size-bounded on write), so the window is judged on every event in it, not the newest 500.
@@ -102,17 +103,22 @@ async function runAgentContract(): Promise<Check[]> {
     else malformedLines++;
   });
   const check = agentContractCheck(events);
-  if (!unreadable && malformedLines === 0) return [check];
+  if (!unreadable && malformedLines === 0) {
+    checks.push({ ...check, name: 'agent_contract' });
+    return checks;
+  }
   const evidence = unreadable
     ? 'Could not read the agent-contract log. Check that it is accessible.'
     : `The agent-contract log has ${malformedLines} malformed line(s). Inspect the log to verify the full window.`;
-  return [{
+  checks.push({
     ...check,
+    name: 'agent_contract',
     status: 'warn',
     message: check.status === 'ok' ? evidence : `${check.message} ${evidence}`,
     details: { ...check.details, log_unreadable: unreadable, malformed_log_lines: malformedLines },
     ...(check.fix ? {} : { fix_unavailable_reason: 'check_errored' as const }),
-  }];
+  });
+  return checks;
 }
 
 export const agentContractEntry: DoctorEntry = {
