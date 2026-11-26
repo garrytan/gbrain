@@ -435,25 +435,25 @@ describe.skipIf(!(pooled && pooledAdmin))('GBRA-156: a search read transaction s
 /**
  * The shadow wrapper over the warm single-write lane (src/shadow/wrapper.ts `laneConnection`): a sampled page write in the reserved
  * connection's transaction reads its preimage in a savepoint, and the caller's options, `pipelineFirst` included, reach the driver.
- * `?prepare=false` makes the driver treat the server as a transaction-mode pooler (no pipelining across a transaction boundary), which is
- * the setting this file is about, so the scenario runs behind the CI PgBouncer fixture and, without one, against DATABASE_URL.
+ * It runs in a database of its own, created and dropped here, in both modes: through the CI PgBouncer fixture (administered on
+ * `pooledAdmin`, tested on the pooled URL with `?prepare=false`, which the driver treats as a transaction-mode pooler) and, without one,
+ * directly on DATABASE_URL with the same `?prepare=false`. It never shares the earlier cases' database, whose `persistence_brain`
+ * table has no column defaults and would make `initSchema` fail.
  */
 const direct = process.env.DATABASE_URL;
 describe.skipIf(!(pooled && pooledAdmin) && !direct)('the shadow-wrapped warm lane keeps a first statement ahead of BEGIN\'s answer', () => {
   const own = `gbrain_test_warm_lane_${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
+  const administered = (): string => (pooled && pooledAdmin ? pooledAdmin : direct!);
   const urlFor = (): string => {
-    if (pooled && pooledAdmin) return pooledUrl('?prepare=false');
-    const url = new URL(direct!); url.pathname = `/${own}`; url.search = '?prepare=false'; return url.toString();
+    const url = new URL(pooled && pooledAdmin ? pooled : direct!); url.pathname = `/${own}`; url.search = '?prepare=false'; return url.toString();
   };
   beforeAll(async () => {
-    if (pooled && pooledAdmin) return;
-    assertSafeE2eDatabaseUrl(direct!);
-    const admin = postgres(direct!, { max: 1, prepare: false, onnotice: () => {} });
+    assertSafeE2eDatabaseUrl(administered());
+    const admin = postgres(administered(), { max: 1, prepare: false, onnotice: () => {} });
     try { await admin.unsafe(`CREATE DATABASE ${own}`); } finally { await admin.end(); }
   }, 60_000);
   afterAll(async () => {
-    if (pooled && pooledAdmin) return;
-    const admin = postgres(direct!, { max: 1, prepare: false, onnotice: () => {} });
+    const admin = postgres(administered(), { max: 1, prepare: false, onnotice: () => {} });
     try { await admin.unsafe(`DROP DATABASE IF EXISTS ${own} WITH (FORCE)`); } finally { await admin.end(); }
   });
 
