@@ -14,7 +14,7 @@
  */
 import type { ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { closeSync, openSync } from 'node:fs';
+import { closeSync, openSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { withoutReadDeadline } from '../core/read-deadline.ts';
 import { withRequestSignal } from '../core/request-signal.ts';
@@ -23,6 +23,7 @@ import { readEpoch } from './evidence-epoch.ts';
 import { appendFault, type ShadowFault } from './ledger.ts';
 import type { MirrorTransport } from './mirror.ts';
 import { readShadowState } from './state.ts';
+import { sentPath } from './write-compare.ts';
 
 export interface ShadowSupervisorOptions {
   dir: string;
@@ -36,8 +37,10 @@ export interface ShadowSupervisorOptions {
   restartWindowMs?: number;
   hangMs?: number;
   stateCheckMs?: number;
-  /** Bytes the child's stdin may buffer before sends are refused. */
+  /** Bytes of write samples that may be in the pipe, handed to it and not yet flushed, before a new sample is refused (the caller counts it `send_shed`). */
   maxBufferedBytes?: number;
+  /** How long `drain` waits at disconnect for the pipe to flush what it holds (default 2 s). */
+  drainMs?: number;
   /** Seam for tests; default appends to faults.jsonl. */
   recordFault?: (fault: ShadowFault) => void;
   /** Seam for tests; default re-reads state.json. */
@@ -61,6 +64,28 @@ export const askCode = (error: unknown): string => {
   return typeof code === 'string' && ASK_CODES.has(code) ? code : 'failed';
 };
 
+/**
+ * How many samples a line stands for: 0 when it is not a write sample. Read only from text the sampler wrote itself, never from page content: a sample starts with its own first key
+ * (`{"t":"write"`), and the count of earlier losses that could not be recorded is its LAST top-level field (`,"dropped":<n>}` and a newline, the sampler appends it after the event), so a
+ * key named `dropped` inside a page ends `}}` and cannot match. Capped at 10,000 (the child's own cap). The child counts the same weight for each sample line it reads (child.ts).
+ */
+export function sampleWeight(line: string): number {
+  if (!line.startsWith('{"t":"write"')) return 0;
+  const dropped = /,"dropped":(\d{1,5})\}\n$/.exec(line.length > 40 ? line.slice(-40) : line);
+  return 1 + (dropped ? Math.min(Number(dropped[1]), 10_000) : 0);
+}
+
+/** Supervisors with a running child: a process that exits with one still unflushed loses lines (Bun drops what its pipe holds), so the exit hook writes each one's sent count for the child to compare. */
+const liveSupervisors = new Set<ShadowSupervisor>();
+let exitWatched = false;
+function watchProcessExit(): void {
+  if (exitWatched) return;
+  exitWatched = true;
+  process.on('exit', recordAllSentAtExit);
+}
+/** The process-exit hook (and a seam for tests): every live supervisor writes how many write samples it sent its child, synchronously. */
+export function recordAllSentAtExit(): void { for (const supervisor of [...liveSupervisors]) supervisor.recordSent(); }
+
 export class ShadowSupervisor implements MirrorTransport {
   private child: ChildProcess | null = null;
   private disabledReason: string | null = null;
@@ -75,12 +100,19 @@ export class ShadowSupervisor implements MirrorTransport {
   private session = '';
   private nextRequestId = 0;
   private readonly pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
+  /** Lines handed to the pipe whose write callback has not fired (flow control and the drain wait only: Bun fires a callback before and after the bytes are really in the kernel pipe, so it never says what the child received). */
+  private readonly flight = new Set<{ bytes: number; weight: number }>();
+  private sampleBytes = 0;
+  /** Write samples (with the losses they carry) accepted for the current child: written down at stop, so the child can count what its pipe never delivered (`recordSent`). */
+  private sentWeight = 0;
+  private stdinRef: (NodeJS.WritableStream & { writableFinished?: boolean }) | null = null;
+  private readonly drainWaiters = new Set<() => void>();
   private readonly o: Required<Omit<ShadowSupervisorOptions, 'spawn' | 'recordFault' | 'stillEnabled' | 'onDirty' | 'onAsk'>> & Pick<ShadowSupervisorOptions, 'spawn' | 'recordFault' | 'stillEnabled' | 'onDirty' | 'onAsk'>;
 
   constructor(opts: ShadowSupervisorOptions) {
     this.o = {
       now: Date.now, minBackoffMs: 1_000, maxBackoffMs: 60_000, maxRestarts: 5, restartWindowMs: 10 * 60_000,
-      hangMs: 60_000, stateCheckMs: 30_000, maxBufferedBytes: 8 * 1024 * 1024,
+      hangMs: 60_000, stateCheckMs: 30_000, maxBufferedBytes: 8 * 1024 * 1024, drainMs: 2_000,
       ...opts,
     };
     this.backoffMs = this.o.minBackoffMs;
@@ -109,8 +141,57 @@ export class ShadowSupervisor implements MirrorTransport {
     const stdin = this.child.stdin;
     if (!stdin || stdin.destroyed || !stdin.writable) return false;
     if (stdin.writableLength > this.o.maxBufferedBytes) return false;
-    try { stdin.write(line); } catch { return false; }
+    // Under Bun `writableLength` reads 0 and `drain` never fires while megabytes are queued, so the pipe is watched through the write callbacks. A write sample over the budget of samples still in
+    // the pipe is refused (the caller counts it `send_shed`); `write()` returning false is "queued", not "refused". Other lines (reads, follower lines, answers) are never refused for size.
+    const weight = sampleWeight(line);
+    if (weight > 0 && this.sampleBytes > this.o.maxBufferedBytes) return false;
+    const entry = { bytes: line.length, weight };
+    this.flight.add(entry); if (weight > 0) this.sampleBytes += entry.bytes;
+    try { stdin.write(line, () => this.forget(entry)); } catch { this.forget(entry); return false; }
+    this.sentWeight += weight;
     return true;
+  }
+
+  private forget(entry: { bytes: number; weight: number }): void {
+    if (!this.flight.delete(entry)) return;
+    if (entry.weight > 0) this.sampleBytes -= entry.bytes;
+    if (this.flight.size === 0) for (const wake of [...this.drainWaiters]) wake();
+  }
+
+  /**
+   * Writes down how many write samples this process sent the current child (`write-sent.<session>.json`, one small atomic file, no lock). The child counts the samples it read; at the end of its
+   * input it counts the difference as lost (`pipe_unflushed`), so a sample the pipe never delivered (Bun drops what it still holds when the process exits) is counted once by the child (except a disk-write failure, see S2b), whether the
+   * pipe was slow, the process exited at once or the exit came from anywhere else. A failed write of the sent count is a fault line (except a disk-write failure that also stops the fault line, see S2b).
+   */
+  recordSent(): void {
+    if (!this.session || this.sentWeight === 0) return;
+    const path = sentPath(this.o.dir, this.session);
+    try {
+      writeFileSync(`${path}.tmp`, JSON.stringify({ session: this.session, sent: this.sentWeight }) + '\n', { mode: 0o600 });
+      renameSync(`${path}.tmp`, path);
+    } catch { this.fault('write_samples_unrecorded', `sent_count n=${this.sentWeight}`); }
+  }
+
+  /**
+   * At disconnect, before `stop()`: the CLI process is about to exit, and Bun drops what its pipe still holds then. Waits up to `ms` (default `drainMs`) for the write callbacks, then ends the
+   * child's stdin and waits within the same bound for it to say it finished writing, so a child that is only slightly behind gets everything. Returns at once when nothing is in flight. What
+   * is still in the pipe after that is not delivered, and the child counts it from the sent count `stop()` writes down.
+   */
+  async drain(ms: number = this.o.drainMs): Promise<void> {
+    const stdin = this.stdinRef;
+    if (!stdin || !this.child || this.flight.size === 0) return;
+    const until = Date.now() + ms;
+    const wait = (register: (wake: () => void) => () => void): Promise<void> => new Promise<void>((resolve) => {
+      let off = (): void => {};
+      const wake = (): void => { clearTimeout(timer); off(); this.drainWaiters.delete(wake); resolve(); };
+      const timer = setTimeout(wake, Math.max(0, until - Date.now()));
+      this.drainWaiters.add(wake); off = register(wake);
+    });
+    await wait(() => () => {});
+    if (this.flight.size > 0 || (stdin as { writableFinished?: boolean }).writableFinished === true) return;
+    this.recordSent(); // before the input ends: the child reads it when it sees the end
+    try { stdin.end(); } catch { /* already gone */ }
+    await wait((wake) => { stdin.once('finish', wake); stdin.once('close', wake); return () => { stdin.off('finish', wake); stdin.off('close', wake); }; });
   }
 
   /**
@@ -145,7 +226,8 @@ export class ShadowSupervisor implements MirrorTransport {
     this.rejectRequests('child_unavailable');
     this.clearWatchdog();
     const child = this.child;
-    this.child = null;
+    if (child) this.recordSent(); // before the input ends: the child counts what it was never sent
+    this.child = null; liveSupervisors.delete(this);
     if (child) {
       child.removeAllListeners('exit');
       try { child.stdin?.end(); } catch { /* already gone */ }
@@ -182,7 +264,9 @@ export class ShadowSupervisor implements MirrorTransport {
         env: { ...process.env, GBRAIN_SHADOW_CHILD: '1', GBRAIN_SHADOW_SESSION: session },
       });
       this.child = child;
-      this.session = session;
+      this.stdinRef = child.stdin as never;
+      this.session = session; this.sentWeight = 0;
+      liveSupervisors.add(this); watchProcessExit();
       this.controlBuffer = '';
       this.lastHeartbeat = this.o.now();
       child.unref();
@@ -243,7 +327,7 @@ export class ShadowSupervisor implements MirrorTransport {
 
   private onExit(child: ChildProcess | null, code: number | null, signal: string | null): void {
     if (child && this.child !== child) return;
-    this.child = null;
+    this.child = null; liveSupervisors.delete(this);
     this.clearWatchdog();
     this.rejectRequests('child_unavailable');
     if (this.disabledReason) return;

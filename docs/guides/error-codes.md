@@ -1729,6 +1729,16 @@ More: [docs/guides/standing-rules.md#correct_instruction_refused](../../docs/gui
 
 More: [docs/guides/standing-rules.md#correct_origin_refused](../../docs/guides/standing-rules.md#correct_origin_refused)
 
+### correct_proposals_capped
+
+<a id="correct_proposals_capped"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| correct was refused because this connection already has 20 corrections waiting for the owner or unfinished, so nothing was written. | A rule another member proposes waits for the owner; a cap per connection keeps one agent from filling the brain with proposals nobody reviews. | Ask the owner to approve or retire the waiting rules, or finish a stopped correction with correct {receipt_id, resume: true}. Run: gbrain rules list | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/standing-rules.md#correct_proposals_capped](../../docs/guides/standing-rules.md#correct_proposals_capped)
+
 ### correct_receipt_not_found
 
 <a id="correct_receipt_not_found"></a>
@@ -5886,6 +5896,16 @@ More: [docs/guides/windowed-reads.md#revision_changed](../../docs/guides/windowe
 | The Google grant behind a socket mint or broker call was revoked or expired; reconnect the account. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/google-socket.md#error-codes](../../docs/guides/google-socket.md#error-codes)
+
+### rule_busy
+
+<a id="rule_busy"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Another correction, approval or retirement of the same standing rule was running, so nothing was written. | One call at a time changes a rule and its fact, so a retirement never lands between an approval's check and its fact change. | Retry in a few seconds; the other call finishes on its own. | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/standing-rules.md#rule_busy](../../docs/guides/standing-rules.md#rule_busy)
 
 ### rule_exists
 
