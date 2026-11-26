@@ -281,6 +281,8 @@ describe('who may save a rule, and whose receipt it is', () => {
     expect((await factRow(gone))!.expired_at).not.toBeNull();
     const r = await remote(MEMBER, 'correct', { rule: 'Alice Example rides the day bus.', fact_id: gone, corrected_fact: 'Alice Example rides the day bus.', scope: 'team' });
     expect({ out: !!out, isError: r.isError, code: r.json.code }).toEqual({ out: true, isError: true, code: 'fact_not_found' });
+    const mine = await remote(OWNER, 'correct', { rule: 'Alice Example rides the day bus.', fact_id: gone, corrected_fact: 'Alice Example rides the day bus.', scope: 'team' });
+    expect({ isError: mine.isError, code: mine.json.code }).toEqual({ isError: true, code: 'fact_not_found' });
   });
 
   test('a retry of an approved correction returns its receipt after the fact is withdrawn', async () => {

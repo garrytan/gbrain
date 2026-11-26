@@ -12,5 +12,5 @@
 
 ### Changed
 - A call made on behalf of a guest is refused (`correct_guest_refused`), and a `scope: me` rule from a connection that acts for no member is refused (`invalid_params`) instead of being saved as the owner's.
-- A shared credential acting for different audiences keeps each audience's corrections apart: one audience cannot read or resume another's receipt. The cap of waiting corrections still counts the credential as a whole.
+- A shared credential acting for different audiences keeps each audience's corrections apart, so one audience cannot read or resume another's receipt. The cap of waiting corrections still counts the credential as a whole.
 - Only the owner's credential speaking for itself (no audience, no attested person, no subagent or slug fence) makes corrections that apply at once; any other owner-tier call proposes them for approval. A `me` rule it proposes is still the owner's own, kept private.

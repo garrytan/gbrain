@@ -464,7 +464,7 @@ async function factEntity(ctx: OperationContext, factId: string, sourceId: strin
     const access = currentCallerAccess();
     const reach = !reader || await ownerReachesFact(ctx.engine, id, sourceId, { identity: access.identity, satisfied: access.satisfiedRuleIds });
     const target = reach ? await readForgetTarget(ctx.engine, id, sourceId, !!reader && !reader.withdraw, false) : null;
-    if (target) seen = { entity_slug: target.entity_slug ?? null, own: false };
+    if (target && !target.expired_at) seen = { entity_slug: target.entity_slug ?? null, own: false };
   }
   if (!seen) throw factNotFound(factId);
   const on = seen.entity_slug;
