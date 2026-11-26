@@ -18,6 +18,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, wr
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runCli } from './helpers/cli-spawn.ts';
+import { withEnv } from './helpers/with-env.ts';
 import { detectAddonTarget } from '../src/core/rust-engine/addon-target.ts';
 
 const ROOT = join(import.meta.dir, '..');
@@ -234,18 +235,17 @@ describe.skipIf(!HAVE_ADDON)('an embedded open still creates a new Rust store', 
     const { createEngine } = await import('../src/core/engine-factory.ts');
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-embedded-rust-'));
     const path = join(dir, 'brain.rust');
-    const prior = process.env.GBRAIN_RUST_ENGINE_ADDON;
-    process.env.GBRAIN_RUST_ENGINE_ADDON = ADDON;
     try {
-      const engine = await createEngine({ engine: 'rust', database_path: path });
-      await engine.connect({ engine: 'rust', database_path: path } as never);
-      try {
-        expect(existsSync(join(path, 'FORMAT'))).toBe(true);
-      } finally {
-        await engine.disconnect();
-      }
+      await withEnv({ GBRAIN_RUST_ENGINE_ADDON: ADDON }, async () => {
+        const engine = await createEngine({ engine: 'rust', database_path: path });
+        await engine.connect({ engine: 'rust', database_path: path } as never);
+        try {
+          expect(existsSync(join(path, 'FORMAT'))).toBe(true);
+        } finally {
+          await engine.disconnect();
+        }
+      });
     } finally {
-      if (prior === undefined) delete process.env.GBRAIN_RUST_ENGINE_ADDON; else process.env.GBRAIN_RUST_ENGINE_ADDON = prior;
       rmSync(dir, { recursive: true, force: true });
     }
   }, 120_000);
@@ -256,22 +256,21 @@ describe.skipIf(!HAVE_ADDON)('an open that must find its store creates nothing (
     const { createEngine } = await import('../src/core/engine-factory.ts');
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-must-exist-rust-'));
     const path = join(dir, 'brain.rust');
-    const prior = process.env.GBRAIN_RUST_ENGINE_ADDON;
-    process.env.GBRAIN_RUST_ENGINE_ADDON = ADDON;
     try {
-      const engine = await createEngine({ engine: 'rust', database_path: path, create_store: false });
-      let code: unknown;
-      try {
-        await engine.connect({ engine: 'rust', database_path: path } as never);
-      } catch (error) {
-        code = (error as { code?: unknown }).code;
-      } finally {
-        await engine.disconnect().catch(() => undefined);
-      }
-      expect(code).toBe('brain_missing');
-      expect(existsSync(path)).toBe(false);
+      await withEnv({ GBRAIN_RUST_ENGINE_ADDON: ADDON }, async () => {
+        const engine = await createEngine({ engine: 'rust', database_path: path, create_store: false });
+        let code: unknown;
+        try {
+          await engine.connect({ engine: 'rust', database_path: path } as never);
+        } catch (error) {
+          code = (error as { code?: unknown }).code;
+        } finally {
+          await engine.disconnect().catch(() => undefined);
+        }
+        expect(code).toBe('brain_missing');
+        expect(existsSync(path)).toBe(false);
+      });
     } finally {
-      if (prior === undefined) delete process.env.GBRAIN_RUST_ENGINE_ADDON; else process.env.GBRAIN_RUST_ENGINE_ADDON = prior;
       rmSync(dir, { recursive: true, force: true });
     }
   }, 120_000);
