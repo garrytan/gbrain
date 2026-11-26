@@ -160,8 +160,8 @@ export class ShadowSupervisor implements MirrorTransport {
 
   /**
    * Writes down how many write samples this process sent the current child (`write-sent.<session>.json`, one small atomic file, no lock). The child counts the samples it read; at the end of its
-   * input it counts the difference as lost (`pipe_unflushed`), so a sample the pipe never delivered (Bun drops what it still holds when the process exits) is counted exactly once, whether the
-   * pipe was slow, the process exited at once or the exit came from anywhere else. A failed write is a fault line, never silent.
+   * input it counts the difference as lost (`pipe_unflushed`), so a sample the pipe never delivered (Bun drops what it still holds when the process exits) is counted once by the child (except a disk-write failure, see S2b), whether the
+   * pipe was slow, the process exited at once or the exit came from anywhere else. A failed write of the sent count is a fault line (except a disk-write failure that also stops the fault line, see S2b).
    */
   recordSent(): void {
     if (!this.session || this.sentWeight === 0) return;

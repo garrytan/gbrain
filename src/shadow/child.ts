@@ -558,14 +558,14 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
   }
   // The serving process wrote down how many write samples it sent us before it ended our stdin; what it sent and we never read was dropped in its pipe at its exit, and is counted once (supervisor.ts recordSent).
   // The difference is written as lost samples (durable appends, split so none is cut; the owner child folds them into the tally exactly once), and the count is removed only after every one is down: a
-  // failed append leaves a fault line naming the rest, never a silent drop.
+  // failed append leaves a fault line naming the rest (except a disk-write failure that also stops the fault line, see S2b).
   const sent = readSent(shadowDir, session);
   if (sent !== null) {
     const missing = Math.max(0, sent - received);
     const epoch = readEpoch(shadowDir)?.epoch_id;
     const done = missing === 0 ? 0 : epoch === undefined ? 0 : recordLostCount(shadowDir, epoch, 'pipe_unflushed', missing);
     if (done < missing) { try { appendFault(shadowDir, { ts: new Date(now()).toISOString(), kind: 'write_samples_unrecorded', detail: `pipe_unflushed n=${missing - done}`, ...(epoch ? { epoch_id: epoch } : {}) }); } catch { /* disk: the count is only in memory */ } }
-    try { rmSync(sentPath(shadowDir, session), { force: true }); } catch { /* a leftover count is read again by no one: its session is gone */ } // every sample is now received, recorded or named in a fault
+    try { rmSync(sentPath(shadowDir, session), { force: true }); } catch { /* a leftover count is read again by no one: its session is gone */ } // every sample is now received, recorded or named in a fault (except when both writes failed, see S2b)
   }
   // The serving process ended our stdin: nothing it was asked can still be answered. A queued rerun ends as skipped.
   ask.closeAll(); waiter.close(); // a rerun waiting for a quiet window ends now, as skipped

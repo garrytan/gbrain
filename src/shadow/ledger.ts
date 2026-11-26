@@ -69,7 +69,7 @@ export interface ShadowFault {
   kind: 'child_exit' | 'child_hung' | 'spawn_failed' | 'mirroring_disabled' | 'privacy_pause' | 'writer_observation_failed'
     // The child's own record of a Rust panic or internal error (evidence-epoch.ts); one union member of its own.
     | 'rust_internal_error'
-    // The serving process could not write down how many write samples it sent its child (supervisor.ts `recordSent`), or a client child could not record its verdicts: said, never dropped silently.
+    // The serving process could not write down how many write samples it sent its child (supervisor.ts `recordSent`), or a client child could not record its verdicts: said (except a disk-write failure that also stops this fault line, see S2b).
     | 'write_samples_unrecorded';
   detail: string;
   /** The evidence epoch current when it was recorded; `rust_internal_error` always has it (evidence-epoch.ts). */

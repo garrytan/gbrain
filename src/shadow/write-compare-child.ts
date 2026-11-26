@@ -19,7 +19,7 @@ const EXPECTED_UNMAPPED: ReadonlySet<string> = new Set(['generation']);
 /**
  * Replays waiting behind the one that runs: a sync sends a page sample every 15-25 ms and a replay takes about 42 ms, so a burst of 28 edits found room for 16 and shed 12 (`queue_full`).
  * 256 samples is about 11 s of replay (inside the 30 s exit deadline), a few MB for the usual few-KB sample; the byte bound holds the worst case (a sample line is at most 512 KB), counted at
- * the line's size (the parsed event is a few times larger in memory). A sample past either bound is still counted `uncomparable` / `queue_full`, never dropped and never comparable.
+ * the line's size (the parsed event is a few times larger in memory). A sample past either bound is still counted `uncomparable` / `queue_full` (except a disk-write failure, see S2b), never dropped by the queue and never comparable.
  */
 export const WRITE_QUEUE_BOUND = 256;
 export const WRITE_QUEUE_BYTES = 16 * 1024 * 1024;

@@ -152,7 +152,7 @@ export function readWriteTally(dir: string, epochId: string | null): WriteTallyF
 
 /** How many write samples a serving process sent the child of `session` (supervisor.ts `recordSent`); the child reads it at the end of its input and counts what it never received as lost (`pipe_unflushed`). */
 export const sentPath = (dir: string, session: string): string => join(dir, `write-sent.${session.replace(/[^A-Za-z0-9_-]/g, '_')}.json`);
-/** The sent count for `session`, or null when there is none (or it is not a count). */
+/** The sent count for `session`, or null when there is none (or it is not a count; an unreadable or truncated file also reads as none, with no fault: S2b). */
 export function readSent(dir: string, session: string): number | null {
   try { const f = JSON.parse(readFileSync(sentPath(dir, session), 'utf8')) as { session?: unknown; sent?: unknown }; return f.session === session && Number.isInteger(f.sent) && (f.sent as number) >= 0 ? f.sent as number : null; } catch { return null; } // silent-read-ok: no readable count is no count; the child then counts only what it received
 }
@@ -260,7 +260,7 @@ export class WriteTally {
   /**
    * The verdicts a client child (no epoch of its own) could not count: written as `no_epoch` lost samples of the epoch current on disk, for the owner child to add up, in one append per batch
    * (every `UNOWNED_BATCH` verdicts and at each save), never one durable write per verdict. The tally file itself is not touched (a client child records nothing in it). With no epoch on
-   * disk yet the count waits for the next save; at the last one (`final`) it becomes a fault line, never a silent drop.
+   * disk yet the count waits for the next save; at the last one (`final`) it becomes a fault line (except a disk-write failure, see S2b).
    */
   private flushUnowned(final: boolean): boolean {
     if (this.unowned === 0 || !this.alive()) { this.unowned = 0; return true; }
@@ -278,7 +278,7 @@ export class WriteTally {
   /** Counts one outcome; `ends` is a replay's own verdict, which removes its mark. */
   note(outcome: WriteOutcome, key?: string, n = 1, ends = false): void {
     const epoch = this.epoch();
-    if (epoch === null) { // a client child (another process owns the store): it records nothing in the tally, but its verdict is counted, never dropped (see flushUnowned)
+    if (epoch === null) { // a client child (another process owns the store): it records nothing in the tally, but its verdict is counted (except a disk-write failure, see S2b; see flushUnowned)
       if (this.alive()) { this.unowned += n; if (this.unowned >= UNOWNED_BATCH) this.flushUnowned(false); }
       return;
     }
