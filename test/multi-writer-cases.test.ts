@@ -144,7 +144,7 @@ describe('multi-writer support matrix', () => {
     }
   });
 
-  test('the design rules hold: C11 and the C21 token are pending everywhere, C13, C17 and C21 are n/a on PGLite, C22 needs the commit log, which only rust-mu keeps', () => {
+  test('the design rules hold: C11 is pending everywhere, C13, C17 and C21 are n/a on PGLite, C21 and C22 need the commit log, which only rust-mu keeps', () => {
     for (const arm of MW_ENGINE_ARMS) expect(mwCell('C11', arm).status, `C11 ${arm}`).toBe('pending');
     // C22: a SQL engine and a Rust engine with the log off keep no commit log (they refuse commit_log), so n/a; rust-mu keeps one and runs it.
     // (Plain checks, not asymmetric matchers: bun's toMatchObject replaces the checked field of the shared matrix with the matcher.)
@@ -156,7 +156,6 @@ describe('multi-writer support matrix', () => {
     expect(mwCell('C22', 'rust-mu').status).toBe('runs');
     expect(mwCase('C22').needs).toBe('commit_log');
     expect(mwCase('C22').members).toEqual(['putPage', 'transaction', 'readCommitLog', 'lastCommitPosition']);
-    for (const arm of MW_ENGINE_ARMS.filter(a => a !== 'pglite')) expect(mwCell('C21', arm).status, `C21 ${arm}`).toBe('pending');
     for (const id of ['C13', 'C17', 'C21'] as const) expect(mwCell(id, 'pglite').status, `${id} pglite`).toBe('n/a');
     // C16 drives the Rust commit-log format upgrade: n/a on plain Rust, runs on rust-mu; PostgreSQL has no scenario yet (pending).
     expect(mwCell('C16', 'postgres').status).toBe('pending');
@@ -165,12 +164,15 @@ describe('multi-writer support matrix', () => {
     expect(mwCase('C16').needs).toBe('commit_log');
     // The cases that need an optimistic second writer need the capability the engine itself reports. C17 does not: a second
     // opener that becomes a client of the owner is the owner socket, which Rust has without optimistic transactions.
-    for (const id of ['C13', 'C21'] as const) expect(mwCase(id).needs, id).toBe('multi_writer');
+    expect(mwCase('C13').needs).toBe('multi_writer');
+    // C21's token is a commit position: it needs the commit log (without it the server refuses a token), not the optimistic second writer.
+    expect(mwCase('C21').needs).toBe('commit_log');
+    expect(mwVariant('C21.log-off').needs).toBe('commit_log');
     expect(mwCase('C17').needs).toBeUndefined();
   });
 
   // Rows whose scenario exists only in multi-user mode: plain Rust is n/a, rust-mu runs (the log, its upgrade, the owner handover).
-  const MULTIUSER_ONLY = ['C16', 'C17', 'C22'];
+  const MULTIUSER_ONLY = ['C16', 'C17', 'C21', 'C22'];
 
   test('rust-mu runs what rust runs and waits on the same owner where rust waits; the multi-user-only rows are n/a on plain Rust and run on rust-mu', () => {
     for (const id of MULTIUSER_ONLY) {
@@ -190,7 +192,7 @@ describe('multi-writer support matrix', () => {
 
   test('the single-writer Rust arm runs every case whose invariant holds there; the rest wait for a second connection, a new rule, or the multi-writer work', () => {
     expect(MW_CASES.filter(c => c.cells.rust.status !== 'runs').map(c => [c.id, c.cells.rust.status])).toEqual([
-      ['C11', 'pending'], ['C13', 'pending'], ['C16', 'n/a'], ['C17', 'n/a'], ['C18', 'pending'], ['C21', 'pending'], ['C22', 'n/a'],
+      ['C11', 'pending'], ['C13', 'pending'], ['C16', 'n/a'], ['C17', 'n/a'], ['C18', 'pending'], ['C21', 'n/a'], ['C22', 'n/a'],
     ]);
   });
 
@@ -297,13 +299,28 @@ describe('multi-writer support matrix', () => {
     expect(header).toMatch(/NOT a database-server crash test/);
   });
 
-  test('C21 stays pending on every engine that could run it, naming the missing typed member', () => {
-    for (const arm of ['postgres', 'rust', 'rust-mu'] as const) {
+  test('C21 runs on rust-mu only (the commit log and a served listener), is n/a on every other engine with its reason, and C21.log-off pins the refusal while the log is off', () => {
+    expect(mwCell('C21', 'rust-mu').status).toBe('runs');
+    for (const [arm, why] of [['pglite', /one connection/], ['postgres', /no commit log.*reason commit_log/], ['rust', /serves no v3 listener.*reason served/]] as const) {
       const cell = mwCell('C21', arm);
-      expect(cell.status, `C21 ${arm}`).toBe('pending');
-      expect(cell.status === 'pending' ? cell.owner : '', `C21 ${arm} owner`).toBe('L3 server');
-      expect(cell.status === 'pending' ? cell.why : '', `C21 ${arm} reason`).toMatch(/no typed read-with-position member.*min_position/);
+      expect(cell.status, `C21 ${arm}`).toBe('n/a');
+      expect(cell.status === 'n/a' ? cell.why : '', `C21 ${arm} reason`).toMatch(why);
     }
+    expect(mwCase('C21').members).toEqual(['putPage', 'getPage']);
+    expect(mwCase('C21').scope).toMatch(/owner socket sends no token/);
+    // The variant is for engine arms only and runs once, on rust-mu; its own brain is multi-user with the log off.
+    const v = mwVariant('C21.log-off');
+    expect(v.of).toBe('C21');
+    expect(v.reference).toBe('standalone');
+    expect(v.invariant).toMatch(/owner_ipc_protocol.*frame_malformed.*min_position=unsupported/);
+    expect(mwVariantCell('C21.log-off', 'rust-mu').status).toBe('runs');
+    for (const arm of ['pglite', 'postgres', 'rust'] as const) expect(mwVariantCell('C21.log-off', arm).status, `C21.log-off ${arm}`).toBe('n/a');
+    // The scenarios assert what the matrix says: the exact refusal code, reason and detail, the log off on the case's own brain, and the arm's mode and log on.
+    const conformance = read('test', 'engine-parity', 'multi-writer-conformance.test.ts');
+    expect(conformance).toMatch(/owner_ipc_protocol.*frame_malformed.*member=getPage via=served min_position=unsupported/s);
+    expect(conformance).toMatch(/GBRAIN_RUST_COMMIT_LOG: undefined/);
+    expect(conformance).toMatch(/assertRustMultiuserResolved\(engine, route/);
+    expect(conformance).toMatch(/assertRustCommitLogResolved\(engine\)/);
   });
 
   test('a compared case has an SQL arm that runs it (or none runs it yet), and the standalone ones are the cases the arms cannot all run alike', () => {

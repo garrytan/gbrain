@@ -35,7 +35,7 @@ export type MwCaseId = typeof MW_CASE_IDS[number];
  * new id: `<id>.<name>`. A variant is an engine-level scenario with its own members and engine cells (no store cells).
  * Its parityTest name is the row's `<id> <title>` followed by `: <variant title>`, and its `mwCase` is the dotted id.
  */
-export const MW_VARIANT_IDS = ['C06.partition'] as const;
+export const MW_VARIANT_IDS = ['C06.partition', 'C21.log-off'] as const;
 export type MwVariantId = typeof MW_VARIANT_IDS[number];
 
 /**
@@ -404,7 +404,7 @@ export const MW_CASES: readonly MwCase[] = [
     invariant: 'exactly one upgrade; callers see old or new, never partial',
     reference: 'standalone',
     needs: 'commit_log',
-    scope: 'Rust in multi-user mode with the commit log on (rust-mu, both routes): the upgrade driven is an older brain\'s first open with the log on (format 13). Five engines open it at once; one owns it and upgrades it, four are clients, and the log start and newest commit equal those of a brain a lone opener upgraded. PostgreSQL\'s equivalent (concurrent initSchema on a database behind the code) is not written.',
+    scope: 'Rust in multi-user mode with the commit log on (rust-mu, both routes): the upgrade driven is an older brain\'s first open with the log on (format 16). Five engines open it at once; one owns it and upgrades it, four are clients, and the log start and newest commit equal those of a brain a lone opener upgraded. PostgreSQL\'s equivalent (concurrent initSchema on a database behind the code) is not written.',
     members: ['putPage', 'getPage', 'getConfig', 'readCommitLog'],
     storeTests: {
       runnable: ['c16_format_upgrade_runs_once_under_concurrent_openers'],
@@ -498,18 +498,37 @@ export const MW_CASES: readonly MwCase[] = [
     operation: 'commit position as a token',
     invariant: 'a write acknowledged on connection A is seen by B given the token',
     reference: 'standalone',
-    needs: 'multi_writer',
+    needs: 'commit_log',
+    scope: 'Rust in multi-user mode with the commit log on (rust-mu, both routes): the brain\'s owner serves a loopback v3 listener, two served clients write and read, and the token is the cp1: position of the write (a served client\'s acknowledgement, or the owner\'s own lastCommitPosition). An owner-socket client of the same brain (ctx.sameBrainEngine) reads the same writes, but the owner socket sends no token, so only the served connections prove the token is carried and waited for. The read with the log off is the variant C21.log-off.',
     members: ['putPage', 'getPage'],
     storeTests: {
       runnable: ['c21_read_your_writes_token_on_a_second_connection'],
       pending: ['c21_read_your_writes_token_on_a_second_connection_multi_writer'],
     },
     cells: {
-      pglite: na('PGLite has one connection'), postgres: pending('L3 server', 'no typed read-with-position member: BrainEngine has no read that takes a commit position or token, and the v3 client sends no min_position (only raw frames name it, test/rust-served-wire.test.ts); lastCommitPosition() gives the token but nothing consumes it. Needs a typed member or client option that sends min_position (cp1:<sequence>.<index>) and waits, else position_not_reached'),
-      rust: pending('L3 server', 'no typed read-with-position member: BrainEngine has no read that takes a commit position or token, and the v3 client sends no min_position (only raw frames name it, test/rust-served-wire.test.ts); lastCommitPosition() gives the token but nothing consumes it. Needs a typed member or client option that sends min_position (cp1:<sequence>.<index>) and waits, else position_not_reached'),
-      'rust-mu': pending('L3 server', 'no typed read-with-position member: BrainEngine has no read that takes a commit position or token, and the v3 client sends no min_position (only raw frames name it, test/rust-served-wire.test.ts); lastCommitPosition() gives the token but nothing consumes it. Needs a typed member or client option that sends min_position (cp1:<sequence>.<index>) and waits, else position_not_reached'),
+      pglite: na('PGLite has one connection'),
+      postgres: na('a SQL engine keeps no commit log, so no commit position and no read token exists: lastCommitPosition refuses engine_capability_missing, reason commit_log'),
+      rust: na('the plain Rust arm is single-user with the commit log off: it serves no v3 listener (listenServed refuses engine_capability_missing, reason served), so there is no second connection that carries a token'),
+      'rust-mu': RUNS,
       'store-single': RUNS, 'store-optimistic': RUNS,
     },
+    variants: [
+      {
+        id: 'C21.log-off',
+        of: 'C21',
+        title: 'a read carrying a token is refused while the commit log is off',
+        invariant: 'on a multi-user brain with no commit log the server cannot order positions: a read that carries a token ends owner_ipc_protocol (reason frame_malformed, min_position=unsupported), ran nothing and returned nothing, while the same read without a token returns the write',
+        reference: 'standalone',
+        needs: 'commit_log',
+        members: ['putPage', 'getPage'],
+        cells: {
+          pglite: na('PGLite has one connection'),
+          postgres: na('a SQL engine keeps no commit log and serves no v3 listener: no token read exists to refuse'),
+          rust: na('the case opens its own multi-user brain with the commit log off (a plain Rust arm\'s own brain is single-user); it runs once, on the rust-mu arm'),
+          'rust-mu': RUNS,
+        },
+      },
+    ],
   },
   {
     id: 'C22',
