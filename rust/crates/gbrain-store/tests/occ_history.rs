@@ -757,9 +757,23 @@ fn all_data(kv: &dyn Kv) -> BTreeMap<Vec<u8>, Vec<u8>> {
     out
 }
 
-/// One forced group commit: the pipeline is held while three transactions queue (two in write
-/// skew, so one is refused, and one with a counter, an id sequence and a 200 KB value), then they
-/// go as one batch. Returns how many were acknowledged.
+/// Waits (bounded) until `n` commits sit on the pipeline's queue: the schedule the batch tests force.
+fn wait_queued(kv: &OccKv, n: usize) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while kv.queued_commits() < n {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the commits never queued ({} of {n})",
+            kv.queued_commits()
+        );
+        std::thread::yield_now();
+    }
+}
+
+/// One forced group commit: the pipeline is held while three transactions queue, in this order and
+/// whatever the machine's load (each is on the queue before the next is sent): two in write skew,
+/// so the second is refused, and one with a counter, an id sequence and a 200 KB value. Then they go
+/// as one batch. Returns how many were acknowledged.
 fn forced_batch(kv: &std::sync::Arc<OccKv>) -> usize {
     let exclusive = kv.begin_write_exclusive().unwrap();
     let queue = |reads: &'static [u8], write: &'static [u8]| {
@@ -769,9 +783,9 @@ fn forced_batch(kv: &std::sync::Arc<OccKv>) -> usize {
         std::thread::spawn(move || tx.commit_position())
     };
     let t1 = queue(b"r/01", b"r/00");
-    std::thread::sleep(std::time::Duration::from_millis(30));
+    wait_queued(kv, 1);
     let t2 = queue(b"r/00", b"r/01");
-    std::thread::sleep(std::time::Duration::from_millis(30));
+    wait_queued(kv, 2);
     let t3 = {
         let mut tx = kv.begin_write().unwrap();
         tx.add_i64(COUNTER, 3).unwrap();
@@ -779,7 +793,7 @@ fn forced_batch(kv: &std::sync::Arc<OccKv>) -> usize {
         tx.put(b"r/big", &vec![9u8; 200_000]).unwrap();
         std::thread::spawn(move || tx.commit_position())
     };
-    std::thread::sleep(std::time::Duration::from_millis(60));
+    wait_queued(kv, 3);
     drop(exclusive);
     [t1, t2, t3]
         .into_iter()
@@ -788,22 +802,115 @@ fn forced_batch(kv: &std::sync::Arc<OccKv>) -> usize {
         .count()
 }
 
-/// A crash at every I/O call of one forced group commit (two accepted transactions and one
-/// refused): after the reboot the batch is there whole, with its two records, or not at all, and
-/// the log replays to exactly the records the store holds.
-#[test]
-fn logged_a_crash_at_every_io_of_one_group_commit_keeps_it_whole() {
-    let seed = 0xB47C;
-    let start = |disk: &SimDisk| {
-        let kv = std::sync::Arc::new(open_as(disk, true).unwrap());
+/// What the crash sweep accepts after a reboot.
+#[derive(Clone, Copy, PartialEq)]
+enum Oracle {
+    /// The batch is there whole or not at all (the one batch `forced_batch` forms).
+    WholeOrNone,
+    /// Any committed prefix of the schedule's commits (a schedule that commits more than once).
+    CommittedPrefix,
+}
+
+/// A schedule the sweep runs: it commits the three transactions of `forced_batch`.
+type Schedule = fn(&std::sync::Arc<OccKv>) -> usize;
+
+/// The schedule the earlier, sleep-based `forced_batch` fell into on a loaded machine: the third
+/// transaction reaches the pipeline only after the first two were taken into a batch, so the three
+/// commit as two record-file commits instead of one.
+fn forced_split(kv: &std::sync::Arc<OccKv>) -> usize {
+    let exclusive = kv.begin_write_exclusive().unwrap();
+    let queue = |reads: &'static [u8], write: &'static [u8]| {
         let mut tx = kv.begin_write().unwrap();
-        tx.put(b"r/00", b"0").unwrap();
-        tx.put(b"r/01", b"0").unwrap();
-        tx.commit().unwrap();
-        kv
+        tx.get(reads).unwrap();
+        tx.put(write, write).unwrap();
+        std::thread::spawn(move || tx.commit_position())
     };
+    let t1 = queue(b"r/01", b"r/00");
+    wait_queued(kv, 1);
+    let t2 = queue(b"r/00", b"r/01");
+    wait_queued(kv, 2);
+    drop(exclusive);
+    let first: Vec<_> = [t1, t2]
+        .into_iter()
+        .map(|t| t.join().expect("a writer thread panicked"))
+        .collect();
+    let mut tx = kv.begin_write().unwrap();
+    tx.add_i64(COUNTER, 3).unwrap();
+    tx.raise_counter(SEQUENCE, 77).unwrap();
+    tx.put(b"r/big", &vec![9u8; 200_000]).unwrap();
+    first.iter().filter(|r| r.is_ok()).count() + usize::from(tx.commit_position().is_ok())
+}
+
+/// The record states a committed prefix of `schedule` can leave, from an honest run: after each of
+/// its record-file commits.
+fn prefix_states(seed: u64, schedule: Schedule) -> Vec<BTreeMap<Vec<u8>, Vec<u8>>> {
     let disk = SimDisk::new(seed, FaultPlan::none());
-    let kv = start(&disk);
+    let kv = sweep_start(&disk);
+    let base = kv.version().unwrap();
+    schedule(&kv);
+    let page = commit_log::read_commit_log(
+        &*kv.snapshot().unwrap(),
+        Some(CommitPosition::new(base, 0)),
+        100,
+    )
+    .unwrap();
+    // Replay the honest log one record-file commit at a time onto the starting records.
+    let mut states = Vec::new();
+    let mut model = all_data(&*sweep_start(&SimDisk::new(seed, FaultPlan::none())));
+    let mut at = base;
+    for record in &page.records {
+        if record.position.sequence != at {
+            states.push(model.clone());
+            at = record.position.sequence;
+        }
+        for (key, op) in &record.ops {
+            match op {
+                LogOp::Put(v) => {
+                    model.insert(key.clone(), v.clone());
+                }
+                LogOp::Delete => {
+                    model.remove(key);
+                }
+                LogOp::AddI64(d) => {
+                    let b = model
+                        .get(key)
+                        .map(|b| i64::from_le_bytes(b.as_slice().try_into().unwrap()))
+                        .unwrap_or(0);
+                    model.insert(key.clone(), b.wrapping_add(*d).to_le_bytes().to_vec());
+                }
+                LogOp::RaiseCounter(m) => {
+                    let b = model
+                        .get(key)
+                        .map(|b| u64::from_be_bytes(b.as_slice().try_into().unwrap()))
+                        .unwrap_or(0);
+                    model.insert(key.clone(), b.max(*m).to_be_bytes().to_vec());
+                }
+            }
+        }
+    }
+    states.push(model);
+    states
+}
+
+fn sweep_start(disk: &SimDisk) -> std::sync::Arc<OccKv> {
+    let kv = std::sync::Arc::new(open_as(disk, true).unwrap());
+    let mut tx = kv.begin_write().unwrap();
+    tx.put(b"r/00", b"0").unwrap();
+    tx.put(b"r/01", b"0").unwrap();
+    tx.commit().unwrap();
+    kv
+}
+
+/// A crash at every I/O call of the crashed runs' schedule, calibrated on `forced_batch`'s one
+/// group commit. Returns (runs that kept everything, runs that kept nothing).
+fn group_commit_sweep(
+    crashed: Schedule,
+    oracle: Oracle,
+    commits_more_than_once: bool,
+) -> (u32, u32) {
+    let seed = 0xB47C;
+    let disk = SimDisk::new(seed, FaultPlan::none());
+    let kv = sweep_start(&disk);
     let before_data = all_data(&*kv);
     let before_version = kv.version().unwrap();
     let before_ops = disk.stats().io_ops;
@@ -826,16 +933,23 @@ fn logged_a_crash_at_every_io_of_one_group_commit_keeps_it_whole() {
     );
     check_log(&*kv).unwrap();
     drop(kv);
+    let prefixes = prefix_states(seed, crashed);
     let modes = [
         CrashMode::DropUnsynced,
         CrashMode::TearLast,
         CrashMode::Subset,
     ];
     let (mut whole, mut none) = (0, 0);
-    // One more point than the batch has I/O calls: the crash then comes after its last fsync.
-    for k in 0..=(after_ops - before_ops) {
+    // A few more points than the calibrated batch has I/O calls, so a schedule that commits more
+    // than once is crashed after its first commit too, and the last point is past the last fsync.
+    let extra = if commits_more_than_once {
+        after_ops - before_ops
+    } else {
+        0
+    };
+    for k in 0..=(after_ops - before_ops + extra) {
         let disk = SimDisk::new(seed, FaultPlan::none());
-        let kv = start(&disk);
+        let kv = sweep_start(&disk);
         assert_eq!(
             disk.stats().io_ops,
             before_ops,
@@ -847,7 +961,7 @@ fn logged_a_crash_at_every_io_of_one_group_commit_keeps_it_whole() {
             crash_at_op: Some(before_ops + 1 + k),
             crash_mode: modes[k as usize % modes.len()],
         });
-        forced_batch(&kv);
+        crashed(&kv);
         disk.crash_now();
         drop(kv);
         disk.reboot();
@@ -855,20 +969,47 @@ fn logged_a_crash_at_every_io_of_one_group_commit_keeps_it_whole() {
         let kv = open_as(&disk, true).unwrap();
         check_log(&kv).unwrap_or_else(|e| panic!("crash at I/O {k}: {e}"));
         let data = all_data(&kv);
-        if data == after_data {
-            assert_eq!(
-                kv.version().unwrap(),
-                before_version + 1,
-                "crash at I/O {k}"
-            );
-            whole += 1;
-        } else {
-            assert_eq!(data, before_data, "crash at I/O {k}: the batch is torn");
-            assert_eq!(kv.version().unwrap(), before_version, "crash at I/O {k}");
-            none += 1;
+        match oracle {
+            Oracle::WholeOrNone => {
+                if data == after_data {
+                    assert_eq!(
+                        kv.version().unwrap(),
+                        before_version + 1,
+                        "crash at I/O {k}"
+                    );
+                    whole += 1;
+                } else {
+                    assert_eq!(data, before_data, "crash at I/O {k}: the batch is torn");
+                    assert_eq!(kv.version().unwrap(), before_version, "crash at I/O {k}");
+                    none += 1;
+                }
+            }
+            Oracle::CommittedPrefix => {
+                let at = prefixes
+                    .iter()
+                    .position(|state| *state == data)
+                    .unwrap_or_else(|| {
+                        panic!("crash at I/O {k}: the records match no committed prefix")
+                    });
+                if at == 0 {
+                    none += 1;
+                } else if at == prefixes.len() - 1 {
+                    whole += 1;
+                }
+            }
         }
     }
     eprintln!("group commit crash sweep: {whole} whole, {none} absent");
+    (whole, none)
+}
+
+/// A crash at every I/O call of one forced group commit (two accepted transactions and one
+/// refused): after the reboot the batch is there whole, with its two records, or not at all, and
+/// the log replays to exactly the records the store holds. `forced_batch` queues the batch in a
+/// fixed order before it lets the pipeline go, so every run crashes the same I/O sequence.
+#[test]
+fn logged_a_crash_at_every_io_of_one_group_commit_keeps_it_whole() {
+    let (whole, none) = group_commit_sweep(forced_batch, Oracle::WholeOrNone, false);
     assert!(
         none > 0,
         "no crash point dropped the batch: the sweep did not reach its commit"
@@ -876,6 +1017,28 @@ fn logged_a_crash_at_every_io_of_one_group_commit_keeps_it_whole() {
     assert!(
         whole > 0,
         "no crash point kept the batch: the sweep never got past its fsync"
+    );
+}
+
+/// The "torn batch" seen once on a loaded machine (rust-engine/multiuser dc25d27bce, seed 0xB47C,
+/// crash at I/O 10: r/00 written, the counter, id sequence and r/big not): the sleep-based schedule
+/// let the third transaction miss the batch, so the run committed twice, and a crash between the
+/// two commits left the first commit alone, which the whole-or-nothing oracle reports as torn.
+/// Forcing that schedule reproduces it on every run.
+#[test]
+#[should_panic(expected = "the batch is torn")]
+fn logged_a_split_schedule_is_what_the_whole_or_nothing_oracle_called_torn() {
+    group_commit_sweep(forced_split, Oracle::WholeOrNone, true);
+}
+
+/// The same split schedule, crashed at every I/O call: every reboot holds a committed prefix (none,
+/// the first commit, or both), and the log agrees: each record-file commit is whole.
+#[test]
+fn logged_a_split_schedule_crashed_anywhere_keeps_each_commit_whole() {
+    let (whole, none) = group_commit_sweep(forced_split, Oracle::CommittedPrefix, true);
+    assert!(
+        none > 0 && whole > 0,
+        "the sweep did not cover both commits"
     );
 }
 

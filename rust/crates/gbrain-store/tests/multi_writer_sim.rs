@@ -1191,7 +1191,7 @@ mod optimistic_driver {
 
         pub trait StepPipeline: Sized {
             fn new_stepped(base: RedbKv) -> Result<Self, StoreError>;
-            fn queued_commits(&self) -> usize;
+            // `queued_commits` is not stubbed: `OccKv::queued_commits` is an inherent store method, so the driver calls it.
             fn step_pipeline(&self, max_batch: usize) -> Result<Option<PipelineStep>, StoreError>;
         }
 
@@ -1205,9 +1205,6 @@ mod optimistic_driver {
         impl StepPipeline for OccKv {
             fn new_stepped(_base: RedbKv) -> Result<Self, StoreError> {
                 Err(pending())
-            }
-            fn queued_commits(&self) -> usize {
-                0
             }
             fn step_pipeline(&self, _max_batch: usize) -> Result<Option<PipelineStep>, StoreError> {
                 Err(pending())
