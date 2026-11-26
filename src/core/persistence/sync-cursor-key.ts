@@ -35,6 +35,7 @@ import { faultPoint } from './fault-points.ts';
 import { SYNC_SLICE_OP } from './sync-slices.ts';
 import { passFingerprint } from './sync-pass-row.ts';
 import { syncRows } from '../engine-sql/managed-sync-store.ts';
+import { fenceOpts } from './host-fence.ts';
 
 type CompanySync = ReturnType<typeof currentCompanyBrainSync>;
 
@@ -152,7 +153,7 @@ export async function retireOrphanSliceRecords(engine: BrainEngine, sourceId: st
 
 /** A finished cursor row and its frozen manifest, unless another cursor still names that run. */
 async function deleteFinishedCursor(tx: BrainEngine, key: string): Promise<void> {
-  const [row] = await syncRows<{ run_id: string | null }>(tx, 'finished_cursor_delete', [key]);
+  const [row] = await syncRows<{ run_id: string | null }>(tx, 'finished_cursor_delete', [key], fenceOpts(tx));
   if (row?.run_id) await syncRows(tx, 'manifest_delete_unshared', [row.run_id]);
 }
 

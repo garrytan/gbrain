@@ -502,7 +502,7 @@ export async function claimGroupFollowers(engine: BrainEngine, head: WriteReques
     // #6278: a follower carries no phase until its wave dispatches it (`markDispatched`), so an undispatched follower is never
     // charged. #6650: it does carry its token, owner and claim time, so a consumer that proves the owner dead reclaims it with
     // the head, and writer status and doctor age the claim from when it was taken.
-    return (await tx.groupPublishStore()).claimFollowers({ worktree_id: head.worktree_id!, sequence: head.sequence }, group, max, leaseMs, claimOwner());
+    return (await tx.groupPublishStore()).claimFollowers({ worktree_id: head.worktree_id!, sequence: head.sequence }, group, max, leaseMs, claimOwner(), fenceOpts(tx));
   });
 }
 
@@ -515,7 +515,7 @@ export async function claimGroupFollowers(engine: BrainEngine, head: WriteReques
 export async function renewGroupClaims(engine: Pick<BrainEngine, 'groupPublishStore'>, rows: WriteRequest[], leaseMs = 30_000, signal?: AbortSignal,
   stamps: string | null | Array<string | null> = null): Promise<Set<string>> {
   const perMember = Array.isArray(stamps) ? stamps.map(stamp => stamp ?? null) : rows.map(() => stamps);
-  const held = await (await engine.groupPublishStore()).renewClaims(rows.map((row, i) => ({ id: row.id, token: row.execution_token!, stamp: perMember[i] ?? null })), leaseMs, { signal });
+  const held = await (await engine.groupPublishStore()).renewClaims(rows.map((row, i) => ({ id: row.id, token: row.execution_token!, stamp: perMember[i] ?? null })), leaseMs, { signal, ...fenceOpts(engine) });
   return new Set(held);
 }
 /**
@@ -527,7 +527,7 @@ export async function renewGroupClaims(engine: Pick<BrainEngine, 'groupPublishSt
  */
 export async function markDispatched(engine: Pick<BrainEngine, 'groupPublishStore'>, members: Array<{ row: WriteRequest; stamp: string }>, signal?: AbortSignal): Promise<Set<string>> {
   if (!members.length) return new Set();
-  const marked = await (await engine.groupPublishStore()).markDispatched(members.map(m => ({ id: m.row.id, token: m.row.execution_token!, stamp: m.stamp })), { signal });
+  const marked = await (await engine.groupPublishStore()).markDispatched(members.map(m => ({ id: m.row.id, token: m.row.execution_token!, stamp: m.stamp })), { signal, ...fenceOpts(engine) });
   return new Set(marked);
 }
 /**
@@ -874,7 +874,7 @@ export async function prepareRecoveries(engine: BrainEngine, members: { row: Wri
     const [, counters] = await pipelined(tx, [() => declareDurablePersistence(tx), () => lockCounters(tx, ['brain', `worktree:${worktree}`])]) as [unknown, Counter[]];
     for (const c of counters) if (Number(c.recovery_bytes) + total > (c.key === 'brain' ? limits.brainRecoveryBytes : limits.worktreeRecoveryBytes)) throw capacityError('recovery bytes currently reserved by other requests');
     const recorded = await (await tx.groupPublishStore()).recordRecoveries(members.map(member => ({ id: member.row.id, token: member.row.execution_token!, record: member.record, bytes: member.bytes })),
-      total, counters.map(c => c.key));
+      total, counters.map(c => c.key), fenceOpts(tx));
     if (recorded.length !== members.length) throw opError('write_claim_lost', 'A grouped write claim changed before its recovery was recorded.',
       'Another owner pass holds one of the grouped requests; the group publishes nothing and its members publish one at a time.');
   });
@@ -891,7 +891,7 @@ export async function clearResolvedRecoveries(engine: BrainEngine, rows: WriteRe
     await declareDurablePersistence(tx);
     const keys = ['brain', ...(worktree ? [`worktree:${worktree}`] : [])];
     await lockCounters(tx, keys);
-    return (await tx.groupPublishStore()).clearRecoveries(resolved.map(row => ({ id: row.id, record: row.recovery })), keys, worktree);
+    return (await tx.groupPublishStore()).clearRecoveries(resolved.map(row => ({ id: row.id, record: row.recovery })), keys, worktree, fenceOpts(tx));
   })));
   for (const row of resolved) if (!cleared.has(row.id)) await clearResolvedRecovery(engine, row.id);
 }

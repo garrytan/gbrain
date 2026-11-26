@@ -938,7 +938,7 @@ async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: Ef
     if (effects.every(effect => effect.attempts <= GIT_YIELD_ATTEMPTS)) {
       const store = await engine.gitEffectStore();
       if (await store.publicationsPending(effects[0]!.worktree_id!)) {
-        await store.yieldToPublications(effects.map(effect => ({ id: String(effect.id), token: effect.execution_token })), GIT_YIELD_MS);
+        await store.yieldToPublications(effects.map(effect => ({ id: String(effect.id), token: effect.execution_token })), GIT_YIELD_MS, fenceOpts(engine));
         return;
       }
     }
@@ -1044,7 +1044,7 @@ async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: Ef
     if (!recorded.length) return;
     try {
       for (const { effect } of recorded) await faultPoint(EFFECT_FAULT_POINTS.git, { effectId: effect.id, requestId: effect.request_id, sourceId: effect.source_id });
-      await (await engine.gitEffectStore()).recordPlainOutcome(recorded.map(({ effect }) => ({ id: String(effect.id), token: effect.execution_token })), JSON.stringify(DURABILITY_NOT_ENABLED));
+      await (await engine.gitEffectStore()).recordPlainOutcome(recorded.map(({ effect }) => ({ id: String(effect.id), token: effect.execution_token })), JSON.stringify(DURABILITY_NOT_ENABLED), fenceOpts(engine));
     } catch (error) { for (const { effect, target } of recorded) await recordFailure(engine, effect, error, opts.signal, target); }
   };
   // A deferred effect that requeues itself (a page walk advancing its cursor,

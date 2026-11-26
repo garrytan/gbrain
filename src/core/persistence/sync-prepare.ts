@@ -80,6 +80,7 @@ import { segmentedOutcome } from './searchable.ts';
 import { isQuarantined } from '../quarantine.ts';
 import { HELD_DELETION_HEAD_MOVED } from './sync-page-fault.ts';
 import { syncRows } from '../engine-sql/managed-sync-store.ts';
+import { fenceOpts } from './host-fence.ts';
 
 /** The options that select a managed sync cursor (its key), recorded so a refusal can print the exact retry. */
 export interface SyncCursorOptions { full: boolean; workingTree: boolean; srcSubpath: string | null; exclude: string[]; includeHidden: string[]; strategy: string | null }
@@ -689,7 +690,7 @@ async function applyManagedSyncCheckpoint(tx: BrainEngine, row: WriteRequest, p:
   // #5566: a full walk re-chunked every stale page, so acknowledge the chunker version as the legacy gate does. (A pass's
   // full episode stamps through its own checkpoint, above; the pages it admits without a reparse are already current.)
   if (settled && (p.from === null || p.syncOptions?.full === true)) await syncRows(tx, 'source_chunker_stamp', [row.source_id, chunkerStamp()]);
-  await syncRows(tx, 'cursor_mark_done', [p.cursorKey]);
+  await syncRows(tx, 'cursor_mark_done', [p.cursorKey], fenceOpts(tx));
   // #6712 PR 2 (L5): the tail (statistics, links) runs after the lease is released; it is owed from this commit on.
   await recordSyncTail(tx, row.source_id, p.cursorKey!, p.runId!);
   for (const path of p.releasedHolds ?? []) await releaseHold(tx, path);

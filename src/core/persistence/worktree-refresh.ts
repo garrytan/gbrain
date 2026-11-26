@@ -56,6 +56,7 @@ import { upstreamBeforeFetch, upstreamRewriteReason } from '../git/upstream-hist
 import { gitDurabilityPolicy } from './git-durability-policy.ts';
 import { sqlRefreshStore, type RefreshRow } from '../engine-sql/refresh-store.ts';
 import { managesWorktrees, requireRawSql } from '../rust-engine/errors.ts';
+import { fenceOpts } from './host-fence.ts';
 
 export type WorktreeRefreshRow = RefreshRow;
 export type RefreshBoundary = 'drained' | 'fenced' | 'merged' | 'syncing' | 'synced';
@@ -86,6 +87,11 @@ export interface WorktreeRefreshResult extends RefreshRunReport {
 export interface RefreshHolder { host_id: string | null; hostname: string; pid: number; started_at: string }
 /** `live`: a process holds the refresh lock; `orphaned`: none does; `unknown`: the lock is on another host, or unreadable. */
 export type RefreshLiveness = 'live' | 'orphaned' | 'unknown';
+/** A new holder of an existing refresh row (resume, recovery, abandon) adopts its claim: a multi-user Rust brain takes a new claim under the caller's fence; every other engine has nothing to adopt. */
+async function adoptRefreshClaim(engine: BrainEngine, refreshId: string): Promise<void> {
+  const opts = fenceOpts(engine);
+  if (opts.fence) await (await engine.refreshStore()).adoptClaim?.(refreshId, opts);
+}
 const refreshHolder = (engine: object): RefreshHolder => ({ host_id: existingHostIdFor(engine), hostname: hostname(), pid: process.pid,
   started_at: new Date(Date.now() - process.uptime() * 1000).toISOString() });
 const holderOf = (row: Pick<WorktreeRefreshRow, 'outcome'>): RefreshHolder | null => (row.outcome?.holder as RefreshHolder | undefined) ?? null;
@@ -217,7 +223,7 @@ async function replanOnOwnCommits(engine: BrainEngine, git: Git, root: string, r
   return engine.transaction(async tx => {
     const store = await tx.refreshStore();
     await store.settings('synchronous_commit');
-    return store.replan(row.id, head, target);
+    return store.replan(row.id, head, target, fenceOpts(tx));
   });
 }
 /**
@@ -438,7 +444,7 @@ async function readRefresh(engine: BrainEngine, id: string): Promise<WorktreeRef
 /** Conditional transition: returns false when another process already moved the row. */
 async function transition(tx: BrainEngine, row: WorktreeRefreshRow, from: WorktreeRefreshState[], to: WorktreeRefreshState, outcome: Record<string, unknown> = {}): Promise<boolean> {
   const terminal = to === 'completed' || to === 'aborted';
-  return (await tx.refreshStore()).transition(row.id, from, to, outcome, terminal);
+  return (await tx.refreshStore()).transition(row.id, from, to, outcome, terminal, fenceOpts(tx));
 }
 function refusalOutcome(error: OperationError): Record<string, unknown> {
   return { refusal: { code: error.code, cause: error.message, fix: error.suggestion, docs: error.docs } };
@@ -1024,7 +1030,7 @@ async function fenceDraining(engine: BrainEngine, sourceId: string, plan: Plan, 
     }
     return store.insertDraining({ worktreeId: plan.binding.worktree_id, sourceIds: plan.members, principalId: principal, ownerEpoch: String(current.owner_epoch),
       topologyGeneration: String(current.topology_generation), oldHead: plan.oldHead, targetHead: plan.targetHead, upstreamRef: plan.upstreamRef, preserved: plan.preserved,
-      outcome: { holder: refreshHolder(engine) } });
+      outcome: { holder: refreshHolder(engine) }, ...fenceOpts(engine) });
   })).catch(async error => {
     if ((error as { code?: string }).code === '23505' && !classifyOriginUniqueViolation(error)) throw inProgress('Another refresh of this worktree started first.', sourceId);
     if ((error as { code?: string }).code === LOCK_NOT_AVAILABLE) throw await lockTimeoutRefusal(engine, sourceId);
@@ -1099,7 +1105,7 @@ async function fenceAndMerge(engine: BrainEngine, git: Git, sourceId: string, pl
         const marked = await engine.transaction(async tx => {
           const store = await tx.refreshStore();
           await store.settings('synchronous_commit');
-          return store.markMergeStarted(row.id, Date.now());
+          return store.markMergeStarted(row.id, Date.now(), fenceOpts(tx));
         });
         if (!marked) throw refusal('refresh_source_changed', 'The refresh record was moved by recovery before the merge; nothing was merged.', `gbrain sources refresh ${sourceId} --resume`, row.id);
         let merge = await git(['-C', plan.root, 'merge', '--ff-only', '--no-edit', '--quiet', row.target_head], 120_000);
@@ -1229,6 +1235,7 @@ export async function resumeWorktreeRefreshes(engine: BrainEngine, opts: { hostI
         const lock = await tryAcquireNativeLock(refreshLockPath(row.worktree_id));
         if (!lock) return;
         try {
+          await adoptRefreshClaim(engine, row.id);
           const after = await withTopologyLocks(engine, row.source_ids[0], async () => {
             const current = await readRefresh(engine, row.id);
             return current.state === 'syncing' ? completeSyncedOrphan(engine, git, current, root, row.stale ? budgetMs : null) : recoverOne(engine, git, current, root, true);
@@ -1332,6 +1339,7 @@ async function resumeOrAbandon(engine: BrainEngine, sourceId: string, opts: Refr
   const lock = timedLock(run, await acquireNativeLock(refreshLockPath(binding.worktree_id), { timeoutMs: 1000 }).catch(() => null as NativeLockHandle | null));
   if (!lock) throw inProgress(`Refresh ${active.id} is still running in another process (${describeHolder(holderOf(active))}).`, sourceId, active.id);
   try {
+    await adoptRefreshClaim(engine, active.id);
     return await withGit(async git => {
       const head = await headOf(git, root);
       if (opts.abandon) {
@@ -1366,7 +1374,7 @@ async function resumeOrAbandon(engine: BrainEngine, sourceId: string, opts: Refr
  * #7679: the caller becomes the row's holder; `previous_holder` keeps the first holder replaced (the refresher that died), so a refused --resume never hides it.
  */
 async function resumeHeld(engine: BrainEngine, git: Git, sourceId: string, refreshId: string, root: string, head: string | null, empty: WorktreeRefreshResult, syncBudgetMs: number, unattended = false, run?: RefreshRun): Promise<WorktreeRefreshResult> {
-  await (await engine.refreshStore()).setHolder(refreshId, refreshHolder(engine));
+  await (await engine.refreshStore()).setHolder(refreshId, refreshHolder(engine), fenceOpts(engine));
   let row = await withTopologyLocks(engine, sourceId, async () => recoverOne(engine, git, await readRefresh(engine, refreshId), root, unattended), undefined, 30_000);
   if (row.state === 'recovery_required' && head !== null) {
     const moved = await membersPastStart(engine, row, root);

@@ -23,7 +23,7 @@ export type EffectId = string | number;
 /** `stampEffectClaim`: claims effect `id` under `token`; `ownerJson` is the `claim_owner` stamp (`effectClaimStamp`). */
 export interface EffectClaim { id: EffectId; token: string; ownerJson: string; fence?: LeaseToken }
 /** `claimCoalescedGitEffects`: the host, its worktree, how many, the owners proved dead, and the `claim_owner` owner (`claimOwner()` as JSON). */
-export interface CoalescedGitClaim { hostId: string; worktreeId: string; limit: number; deadOwners: readonly string[]; ownerJson: string }
+export interface CoalescedGitClaim { hostId: string; worktreeId: string; limit: number; deadOwners: readonly string[]; ownerJson: string; fence?: LeaseToken }
 /** A held claim: the effect's id and the claim's execution token (null matches no claim). */
 export interface EffectClaimRef { id: EffectId; token: string | null; fence?: LeaseToken }
 

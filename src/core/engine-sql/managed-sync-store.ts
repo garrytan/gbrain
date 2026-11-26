@@ -15,6 +15,7 @@
  * view of one (a test double, a bounded read view) runs the same text.
  */
 import type { BrainEngine } from '../engine.ts';
+import type { LeaseToken } from './lease-token.ts';
 import { KERNEL_PAGE_BY_ID_SQL, KERNEL_PAGE_BY_ID_UNMANIFESTED_SQL, KERNEL_PAGES_BY_SLUG_SQL, KERNEL_PAGES_BY_SLUG_UNMANIFESTED_SQL, REFUSED_CHECKPOINT_SQL, UNFINISHED_PAGE_REQUEST_SQL } from '../persistence/sync-run-sql.ts';
 
 /** A statement: `read` leaves the rows alone, `write` may change them (its `RETURNING` rows come back as rows). */
@@ -423,7 +424,9 @@ export const SYNC_STATEMENTS = {
 export type SyncStatementName = keyof typeof SYNC_STATEMENTS;
 
 /** The bounds `executeRaw` takes beside its parameters. */
-export interface SyncStatementOptions { signal?: AbortSignal; timeoutMs?: number; deadlineAt?: number; jitOff?: boolean; prepare?: boolean }
+export interface SyncStatementOptions { signal?: AbortSignal; timeoutMs?: number; deadlineAt?: number; jitOff?: boolean; prepare?: boolean;
+  /** The caller's host fence (a multi-user Rust brain): the cursor statements that take, check or end a sync checkpoint claim run under it. PGLite and Postgres ignore it (`runSyncStatement` passes only the bounds to `executeRaw`). */
+  fence?: LeaseToken }
 
 /** `runSyncStatement`: the statement's text on the engine's own `executeRaw`. */
 export function runSyncStatement<R>(raw: Pick<BrainEngine, 'executeRaw'>, name: SyncStatementName, params: readonly unknown[] = [], opts?: SyncStatementOptions): Promise<R[]> {

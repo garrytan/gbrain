@@ -11,6 +11,7 @@
  *   active refresh ends with the `23505` violation the SQL engines raise.
  */
 import type { RefreshRow, RefreshStore } from '../../engine-sql/refresh-store.ts';
+import type { FenceOpts } from '../../engine-sql/lease-token.ts';
 import type { WriteRequest } from '../../persistence/model.ts';
 import type { RustEngine } from '../../rust-engine.ts';
 import type { StoreBrain } from '../store.ts';
@@ -19,6 +20,8 @@ import { storeCall } from './common.ts';
 import { heldStore } from './managed-hold.ts';
 
 const MEMBER = 'refreshStore';
+/** `{ fence }` when the call carries one (the Rust store runs its claim lifecycle under it), else nothing: an unfenced call sends what it always sent. */
+const fenceOf = (opts?: FenceOpts): FenceOpts => opts?.fence ? { fence: opts.fence } : {};
 
 function rustRefreshStore(brain: StoreBrain): RefreshStore {
   const call = <T>(run: () => Promise<T>): Promise<T> => storeCall({ member: MEMBER }, run);
@@ -28,19 +31,20 @@ function rustRefreshStore(brain: StoreBrain): RefreshStore {
     async settings() {},
     readActive: worktreeId => rows<RefreshRow | null>('active', { worktreeId }),
     read: id => rows<RefreshRow | null>('row', { id }),
-    transition: (id, from, to, outcome, terminal) => write<boolean>('transition', { id, from: [...from], to, outcome, terminal }),
-    replan: (id, oldHead, targetHead) => write<RefreshRow | null>('replan', { id, oldHead, targetHead }),
+    transition: (id, from, to, outcome, terminal, opts) => write<boolean>('transition', { id, from: [...from], to, outcome, terminal, ...fenceOf(opts) }),
+    replan: (id, oldHead, targetHead, opts) => write<RefreshRow | null>('replan', { id, oldHead, targetHead, ...fenceOf(opts) }),
     async insertDraining(insert) {
       const row = await write<RefreshRow | { conflict: true }>('insert_draining', { worktreeId: insert.worktreeId, sourceIds: [...insert.sourceIds],
         principalId: insert.principalId, ownerEpoch: insert.ownerEpoch, topologyGeneration: insert.topologyGeneration, oldHead: insert.oldHead,
-        targetHead: insert.targetHead, upstreamRef: insert.upstreamRef, preserved: [...insert.preserved], outcome: insert.outcome });
+        targetHead: insert.targetHead, upstreamRef: insert.upstreamRef, preserved: [...insert.preserved], outcome: insert.outcome, ...fenceOf(insert) });
       if ('conflict' in row) {
         throw Object.assign(new Error('duplicate key value violates unique constraint "persistence_worktree_refreshes_active"'), { code: '23505' });
       }
       return row;
     },
-    markMergeStarted: (id, atMs) => write<boolean>('mark_merge_started', { id, atMs }),
-    async setHolder(id, holder) { await write('set_holder', { id, holder }); },
+    markMergeStarted: (id, atMs, opts) => write<boolean>('mark_merge_started', { id, atMs, ...fenceOf(opts) }),
+    async setHolder(id, holder, opts) { await write('set_holder', { id, holder, ...fenceOf(opts) }); },
+    adoptClaim: (id, opts) => write<boolean>('adopt_claim', { id, ...fenceOf(opts) }),
     async recordMergedUpstream(sourceIds, targetHead) { await write('record_merged_upstream', { sourceIds: [...sourceIds], targetHead }); },
     completedTargets: (worktreeId, upstreamRef) => rows<string[]>('completed_targets', { worktreeId, upstreamRef }),
     newest: worktreeId => rows('newest', { worktreeId }),
@@ -55,7 +59,7 @@ function rustRefreshStore(brain: StoreBrain): RefreshStore {
     async hostLocalPath(worktreeId, hostId) { return (await call(() => brain.topologyRows({ kind: 'host_binding', worktreeId, hostId })) as { local_path: string } | null)?.local_path ?? null; },
     async sourceLastCommit(sourceId) { return (await call(() => brain.getSource(sourceId)) as { last_commit?: string | null } | null)?.last_commit ?? null; },
     async sourceIncarnation(sourceId) { return (await call(() => brain.readSourceMembership(sourceId)) as { incarnation: string } | null)?.incarnation ?? null; },
-    async holdForImport(id, token, importFrom) { return requestRow<WriteRequest>(await write('hold_for_import', { id, token, importFrom })); },
+    async holdForImport(id, token, importFrom, opts) { return requestRow<WriteRequest>(await write('hold_for_import', { id, token, importFrom, ...fenceOf(opts) })); },
     readReleased: id => rows('released', { id }),
     laterWrite: (sourceId, slug, sequence) => rows<string | null>('later_write', { sourceId, slug, sequence }),
     async deferredBacklog() {
