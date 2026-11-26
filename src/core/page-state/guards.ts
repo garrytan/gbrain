@@ -117,6 +117,10 @@ export async function lockUnheldPageKeys(engine: Pick<BrainEngine, 'executeRaw'>
   await lockPageKeys(engine, pending);
   for (const key of pending) held.keys.add(pageGuardKey(key)!);
 }
+/** Records keys a transaction now holds because its lockPageKeys took them elsewhere (a served Rust client's server). */
+export function recordHeldPageKeys(held: HeldPageKeys, keys: readonly PageKey[]): void {
+  for (const key of keys) { const id = pageGuardKey(key); if (id !== null) held.keys.add(id); }
+}
 /** Runs a transaction or savepoint; a released savepoint's guards stay held by its parent, a rolled-back one's do not. */
 export async function withHeldPageKeys<T>(parent: HeldPageKeys | null, run: (held: HeldPageKeys) => Promise<T>): Promise<T> {
   const held: HeldPageKeys = { keys: new Set(), parent };

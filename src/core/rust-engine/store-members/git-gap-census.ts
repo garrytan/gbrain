@@ -3,8 +3,7 @@
  * served from the store's records (rust/crates/gbrain-store/src/git_gap_census.rs, rust/docs/store/git-gap-census.md).
  */
 import type { GitGapBatch, GitGapPageRow, GitGapSourceRow, GitGapSourceRows } from '../../engine-sql/git-gap-census.ts';
-import { privacyPartSql } from '../../search/private-visibility.ts';
-import { pagePolicyFlags } from './private-provenance.ts';
+import { privacyPartAliases } from './private-provenance.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
 export const readGitGapSourceRow: StoreMember<[sourceId: string], GitGapSourceRow | null> = async (brain, sourceId) =>
@@ -24,7 +23,7 @@ export const countGitGapUnreadFacts: StoreMember<[sourceId: string, pageIds: rea
 
 /** The privacy part's honor-aliases setting is read from the text privacyPartSql renders now, as the SQL engines send it. */
 export const readGitGapPageBatch: StoreMember<[sourceId: string, batch: GitGapBatch], GitGapPageRow[]> = async (brain, sourceId, batch) => {
-  const { honorAliases } = pagePolicyFlags(privacyPartSql('p'));
+  const honorAliases = privacyPartAliases('readGitGapPageBatch');
   return await storeCall({ member: 'readGitGapPageBatch', sourceId }, () => brain.readGitGapPageBatch(sourceId,
     'ids' in batch ? null : batch.after, 'ids' in batch ? [...batch.ids] : null, honorAliases)) as GitGapPageRow[];
 };

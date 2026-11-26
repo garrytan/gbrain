@@ -163,6 +163,8 @@ export interface WriterConfig {
   databasePath?: string;
   /** Rust only: the multi-user route the arm runs under (the child sets the switch itself: the preload strips it from its environment). */
   muRoute?: 'env' | 'config';
+  /** Rust only: the process started with GBRAIN_RUST_MULTIUSER=1 (an ambient multi-user run); the child's store must resolve it on. */
+  ambient?: boolean;
   /** crash: stop after this many acknowledged writes, or at the deadline. stress: this process's number. */
   max?: number;
   index?: number;

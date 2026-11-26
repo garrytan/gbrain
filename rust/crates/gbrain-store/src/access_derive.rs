@@ -1300,6 +1300,36 @@ pub enum DeriveRequest {
         #[serde(default)]
         list: Option<Vec<String>>,
     },
+    /// `pagePolicyFlags(privatePagesFilterFragment('p'))`: the no-caller page policy's flags.
+    PlainPageFlags {},
+    /// The member-access part alone for the caller, unwidened (`retirementHopPolicy`'s `access` branch,
+    /// store-members/cli-entities.ts).
+    AccessPartPlain {},
+    /// A member-access policy for an explicit identity and satisfied set (`memberAccessPolicy`,
+    /// store-members/list-reads.ts); no identity for the folder-rules read.
+    MemberAccessPolicy {
+        #[serde(default)]
+        identity: Option<Vec<String>>,
+        satisfied: Vec<String>,
+    },
+    /// The owner-only form a take or timeline row is read under (`rowOwnerOnly`, store-members/write-attribution.ts).
+    RowOwnerOnly {},
+    /// An owner read of a fact's pages (`storeOwnerReachPolicy`, store-members/private-provenance.ts).
+    OwnerReach {
+        identity: Vec<String>,
+        satisfied: Vec<String>,
+    },
+    /// The open-page count's member-access floor (`countOpenPages`, store-members/access-setup.ts).
+    OpenPageFloor {},
+    /// A writer's read policy (`writerPolicy`, store-members/remote-links.ts readLinkTargetPages).
+    WriterPolicy { policy: WriterReadPolicyIn },
+    /// The snapshot visibility a version pick reports (`pickValidTimeEdition`, store-members/trust-tier-reads.ts)
+    /// is the canonical one for the page policy's readers.
+    SnapshotPolicy {
+        identity: Vec<String>,
+        #[serde(rename = "privateReadableSources")]
+        private_readable_sources: Vec<String>,
+    },
     /// `pagePolicyFlags(privacyPartSql('p')).honorAliases` (readPagePrivacyHidden).
     PrivacyPartAliases {},
 }
@@ -1310,6 +1340,17 @@ pub enum DeriveRequest {
 pub struct RenderedIn {
     #[serde(default)]
     pub record: Option<CallerRecord>,
+}
+
+/// A writer's read policy (`WriterReadPolicy`, engine-sql/remote-links.ts).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WriterReadPolicyIn {
+    pub identities: Vec<Vec<String>>,
+    pub satisfied_rule_ids: Vec<String>,
+    pub folder_coverage: Vec<Coverage>,
+    pub owner: bool,
+    pub labelled_only: bool,
 }
 
 /// The per-call derivation context: immutable, everything the renderer read.
@@ -1434,6 +1475,21 @@ fn derive_page_text(
         if text == baseline {
             return Some(page_flags(&baseline, s));
         }
+        // The remote read floor: the no-caller page policy of a fresh record (privacy on), served as a caller record
+        // with no readers, grants or coverage.
+        let floor_patch = Patch {
+            hide_private: Some(true),
+            restricted: open.then_some(false),
+            ..Patch::default()
+        };
+        let floor = page_plain(&reference(cur2, floor_patch, false, s), false, cx);
+        if text == floor {
+            let mut m = page_flags(&floor, s);
+            m.insert("identity".into(), json!([]));
+            m.insert("privateReadableSources".into(), json!([]));
+            m.insert("callerRecord".into(), json!(true));
+            return Some(m);
+        }
         if !caller_readers && !no_readers {
             return None;
         }
@@ -1487,12 +1543,25 @@ fn derive_page_text(
             if access.owner_reads == Some(true) {
                 owner_patch.owner_reads = Some(true);
             }
-            let owner = page_caller(&reference(cur2, owner_patch, false, s), cx);
+            let owner = page_caller(&reference(cur2, owner_patch.clone(), false, s), cx);
             if text == owner {
                 let mut m = page_flags(&owner, s);
                 with_readers(&mut m, caller_readers_rec);
                 stored(&mut m);
                 return Some(m);
+            }
+            // The remote owner's lineage read (the opt-in off, no audience members): the owner read rule.
+            if owner_lineage_served(&access) {
+                let mut lineage_patch = owner_patch;
+                lineage_patch.lineage = Some(true);
+                let lineage = page_caller(&reference(cur2, lineage_patch, false, s), cx);
+                if text == lineage {
+                    let mut m = page_flags(&lineage, s);
+                    with_readers(&mut m, caller_readers_rec);
+                    stored(&mut m);
+                    m.insert("ownerRead".into(), json!(true));
+                    return Some(m);
+                }
             }
         }
         None
@@ -1503,6 +1572,20 @@ fn derive_page_text(
             "excludePrivate for a caller whose member pages, grants or lineage widen the policy",
         ),
     }
+}
+
+/// Which fact record a policy matched (`storePrivacyPolicy`'s record list).
+#[derive(Clone, Copy, Default)]
+struct FactRecord {
+    owner: bool,
+    folders: bool,
+    lineage: bool,
+}
+
+/// The remote owner's lineage read is served as the owner read rule: a lineage read with the owner opt-in off and
+/// no audience-kind members (`access.lineage && !access.ownerReadsRestricted && !access.audienceKindMembers.length`).
+fn owner_lineage_served(access: &CallerRecord) -> bool {
+    access.lineage && !access.owner_reads_restricted && access.audience_kind_members.is_empty()
 }
 
 /// `storePrivacyPolicy`.
@@ -1549,11 +1632,29 @@ fn derive_fact(
             .find_map(|p| p.strip_prefix("member:"))
             .map(str::to_string);
         let access = eff(cur2, s);
-        let mut records: Vec<Patch> = Vec::new();
+        // The caller's own folder rules and pending prefixes (`callerFolders`); a satisfied rule is sent only when every
+        // id is a valid qualified id, as sharedHeldRuledSql renders it.
+        let satisfied = access.satisfied_rule_ids.clone();
+        let cov = access.folder_coverage.clone();
+        let valid_rules = satisfied.iter().all(|r| valid_rule_id(r));
+        let with_folders = |p: &mut Patch| {
+            p.satisfied_rule_ids = Some(satisfied.clone());
+            p.folder_coverage = Some(cov.clone());
+        };
+        let mut records: Vec<(Patch, FactRecord)> = Vec::new();
         let mut reader = readers_patch(readers);
         reader.hide_private = Some(true);
         reader.restricted = Some(!open);
-        records.push(reader.clone());
+        records.push((reader.clone(), FactRecord::default()));
+        if !satisfied.is_empty() || !cov.is_empty() {
+            let mut folder = reader.clone();
+            with_folders(&mut folder);
+            let kind = FactRecord {
+                folders: true,
+                ..FactRecord::default()
+            };
+            records.push((folder, kind));
+        }
         if access.owner {
             let mut owner = reader;
             owner.hide_private = Some(access.hide_private);
@@ -1561,10 +1662,26 @@ fn derive_fact(
             if access.owner_reads == Some(true) {
                 owner.owner_reads = Some(true);
             }
-            records.push(owner);
+            let kind = FactRecord {
+                owner: true,
+                ..FactRecord::default()
+            };
+            records.push((owner.clone(), kind));
+            // The remote owner's lineage read (the opt-in off, no audience members), with its folders.
+            if owner_lineage_served(&access) {
+                let mut lineage = owner;
+                with_folders(&mut lineage);
+                lineage.lineage = Some(true);
+                let kind = FactRecord {
+                    owner: true,
+                    folders: true,
+                    lineage: true,
+                };
+                records.push((lineage, kind));
+            }
         }
-        for (i, record) in records.into_iter().enumerate() {
-            let is_owner_record = i == 1;
+        for (record, kind) in records {
+            let is_owner_record = kind.owner;
             let rec_cur = reference(cur2, record, false, s);
             for (form, member_case) in forms {
                 let canonical = fact_fragment(form, &rec_cur, cx);
@@ -1583,8 +1700,22 @@ fn derive_fact(
                 if judged {
                     m.insert("memberPage".into(), json!(member_page));
                 }
+                if kind.folders {
+                    if !satisfied.is_empty() && valid_rules {
+                        m.insert("satisfiedRuleIds".into(), json!(satisfied));
+                    }
+                    if !cov.is_empty() {
+                        m.insert(
+                            "folderCoverage".into(),
+                            serde_json::to_value(&cov).unwrap_or(Value::Null),
+                        );
+                    }
+                }
                 if provenance_privacy_off {
                     m.insert("provenancePrivacyOff".into(), json!(true));
+                }
+                if kind.lineage {
+                    m.insert("ownerRead".into(), json!(true));
                 }
                 return Some(m);
             }
@@ -1835,37 +1966,425 @@ fn derive_visibility(cur: &Cur, s: &AccessSettings, list: Option<&[String]>) -> 
     let widen = judge_widened(cur, s, |cur2, readers| {
         let text = visibility_key(list, cur2, cx);
         let pfs = private_fact_sources(cur2, s);
-        let mut patch = readers_patch(readers);
-        patch.private_fact_sources = Some(pfs.clone());
-        patch.hide_private = Some(true);
-        let fresh_cur = reference(cur2, patch, false, s);
-        let canonical = visibility_key(list, &fresh_cur, cx);
-        if text != canonical {
-            return None;
+        // `callerFolders()`: the caller's own folder rules and pending prefixes.
+        let access = eff(cur2, s);
+        let satisfied = access.satisfied_rule_ids.clone();
+        let cov = access.folder_coverage.clone();
+        let with_folders = !satisfied.is_empty() || !cov.is_empty();
+        let records: &[bool] = if with_folders {
+            &[false, true]
+        } else {
+            &[false]
+        };
+        for &folders in records {
+            let mut patch = readers_patch(readers);
+            if folders {
+                patch.satisfied_rule_ids = Some(satisfied.clone());
+                patch.folder_coverage = Some(cov.clone());
+            }
+            patch.private_fact_sources = Some(pfs.clone());
+            patch.hide_private = Some(true);
+            let fresh_cur = reference(cur2, patch, false, s);
+            if text != visibility_key(list, &fresh_cur, cx) {
+                continue;
+            }
+            let fresh_pfs = eff(&fresh_cur, s).private_fact_sources;
+            let mut m = Map::new();
+            if let Some(member) = caller_member(&fresh_cur, s) {
+                // `callerReadersPagePolicy(readers)`, or `callerFoldersPagePolicy(readers, folders)`, with the outer `open` flag.
+                let mut pp = Patch {
+                    identity: Some(readers.identity.clone()),
+                    private_readable_sources: Some(readers.private_readable_sources.clone()),
+                    hide_private: Some(true),
+                    ..Patch::default()
+                };
+                if folders {
+                    pp.satisfied_rule_ids = Some(satisfied.clone());
+                    pp.folder_coverage = Some(cov.clone());
+                }
+                let page = page_caller(&reference(cur2, pp, false, s), Cx { s, norm: false });
+                let mut policy = page_flags(&page, s);
+                with_readers(&mut policy, readers);
+                if folders {
+                    policy.insert("callerRecord".into(), json!(true));
+                    if !satisfied.is_empty() {
+                        policy.insert("satisfiedRuleIds".into(), json!(satisfied));
+                    }
+                    if !cov.is_empty() {
+                        policy.insert(
+                            "folderCoverage".into(),
+                            serde_json::to_value(&cov).unwrap_or(Value::Null),
+                        );
+                    }
+                }
+                m.insert("member".into(), json!(member));
+                m.insert("memberPagePolicy".into(), with_open(policy, open_flag));
+            }
+            m.insert("privateFactSources".into(), json!(fresh_pfs));
+            return Some(Value::Object(m));
         }
-        let fresh_pfs = eff(&fresh_cur, s).private_fact_sources;
-        let mut m = Map::new();
-        if let Some(member) = caller_member(&fresh_cur, s) {
-            // `callerReadersPagePolicy(readers)` with the outer `open` flag.
-            let pp = Patch {
-                identity: Some(readers.identity.clone()),
-                private_readable_sources: Some(readers.private_readable_sources.clone()),
-                hide_private: Some(true),
-                ..Patch::default()
-            };
-            let page = page_caller(&reference(cur2, pp, false, s), Cx { s, norm: false });
-            let mut policy = page_flags(&page, s);
-            with_readers(&mut policy, readers);
-            m.insert("member".into(), json!(member));
-            m.insert("memberPagePolicy".into(), with_open(policy, open_flag));
-        }
-        m.insert("privateFactSources".into(), json!(fresh_pfs));
-        Some(Value::Object(m))
+        None
     });
     match widen {
         Some(w) => Derived::Value(json!({ "visibility": list, "widen": w })),
         None => Derived::Refuse(
             "a visibility list widened by member pages or grants for a caller the store does not model",
+        ),
+    }
+}
+
+/// `{ honorAliases: false, entityPrivacy: false, ownerOnly }` for a member-access text (no privacy part).
+fn access_off(access: &AccessKey) -> Map<String, Value> {
+    let oo = page_owner_only(&PageKey::Base {
+        access: access.clone(),
+        labelled: None,
+        privacy: PrivacyKey::True,
+    });
+    let mut m = Map::new();
+    m.insert("honorAliases".into(), json!(false));
+    m.insert("entityPrivacy".into(), json!(false));
+    m.insert("ownerOnly".into(), json!(owner_only_flag(oo)));
+    m
+}
+
+/// `retirementHopPolicy`'s `access` branch: member access alone when the caller's text is the no-record one, or the
+/// one a fresh record (no remote policy) of the caller's readers renders.
+fn derive_access_part_plain(cur: &Cur, s: &AccessSettings) -> Derived {
+    let text = caller_access(cur, s);
+    let mut off = access_off(&text.0);
+    if text == caller_access(&None, s) {
+        return Derived::Value(Value::Object(off));
+    }
+    let a = eff(cur, s);
+    let patch = Patch {
+        identity: Some(a.identity.clone()),
+        private_readable_sources: Some(a.private_readable_sources.clone()),
+        hide_private: Some(true),
+        ..Patch::default()
+    };
+    if text == caller_access(&fresh_record(&patch, s), s) {
+        off.insert("identity".into(), json!(a.identity));
+        off.insert(
+            "privateReadableSources".into(),
+            json!(a.private_readable_sources),
+        );
+        return Derived::Value(Value::Object(off));
+    }
+    Derived::Refuse("a caller whose member pages, grants or lineage widen the member-access policy")
+}
+
+/// `memberAccessPolicy` (store-members/list-reads.ts).
+fn derive_member_access_policy(
+    cur: &Cur,
+    s: &AccessSettings,
+    identity: Option<&[String]>,
+    satisfied: &[String],
+) -> Derived {
+    let a = eff(cur, s);
+    let owner_only = match identity {
+        Some(id) => owner_only_flag(page_owner_only(&PageKey::Base {
+            access: access_allowed(id, None, false, cur, s),
+            labelled: None,
+            privacy: PrivacyKey::True,
+        })),
+        None => "off",
+    };
+    Derived::Value(json!({
+        "honorAliases": false,
+        "entityPrivacy": false,
+        "identity": identity.unwrap_or_default(),
+        "satisfiedRuleIds": satisfied,
+        "folderCoverage": serde_json::to_value(&a.folder_coverage).unwrap_or(Value::Null),
+        "callerRecord": true,
+        "ownerOnly": owner_only,
+        "open": !a.restricted,
+    }))
+}
+
+/// `storeOwnerReachPolicy`: the owner read of a fact's pages (`ownerReadPolicyFragment('pp')`) and its readable
+/// rendering (`readPolicyFragment('pp', identity, true, satisfied)`) must both equal those of a reference record (no
+/// record, the caller's folder coverage, or that and the owner flag); the owner text holds no owner-only test.
+fn derive_owner_reach(
+    cur: &Cur,
+    s: &AccessSettings,
+    identity: &[String],
+    satisfied: &[String],
+) -> Derived {
+    let cx = Cx { s, norm: true };
+    let owner = |c: &Cur| owner_read_policy(identity, satisfied, c, cx);
+    let readable = |c: &Cur| read_policy(identity, true, Some(satisfied), false, c, cx);
+    let owner_text = owner(cur);
+    let readable_text = readable(cur);
+    // `[...identity, ...satisfied].every(id => ownerText.includes(`'${id}'`))`: the owner text names an identity only
+    // when it is valid, and a satisfied rule only when every one is a valid qualified id.
+    let named = (identity.is_empty() || valid_identity(identity))
+        && satisfied.iter().all(|r| valid_rule_id(r))
+        && (owner_text != PageKey::False || (identity.is_empty() && satisfied.is_empty()));
+    let a = eff(cur, s);
+    let open = !a.restricted;
+    if named {
+        let in_record = || Patch {
+            folder_coverage: Some(a.folder_coverage.clone()),
+            restricted: Some(!open),
+            ..Patch::default()
+        };
+        let base = if open {
+            Patch {
+                restricted: Some(false),
+                ..Patch::default()
+            }
+        } else {
+            Patch::default()
+        };
+        let refs: [(Patch, bool, bool); 3] = [
+            (base, !open, open),
+            (in_record(), false, true),
+            (
+                Patch {
+                    owner: Some(true),
+                    ..in_record()
+                },
+                false,
+                true,
+            ),
+        ];
+        for (patch, empty, caller_record) in refs {
+            let rc = reference(cur, patch, empty, s);
+            let owner_ref = owner(&rc);
+            let readable_ref = readable(&rc);
+            if owner_text != owner_ref || readable_text != readable_ref {
+                continue;
+            }
+            let honor = s.honor_aliases && page_has_privacy(&readable_ref);
+            if page_owner_only(&owner_ref) != OwnerOnlyText::None
+                || (s.honor_aliases && page_has_privacy(&owner_ref)) != honor
+            {
+                continue;
+            }
+            let mut m = Map::new();
+            m.insert("honorAliases".into(), json!(honor));
+            m.insert("entityPrivacy".into(), json!(true));
+            m.insert(
+                "ownerOnly".into(),
+                json!(owner_only_flag(page_owner_only(&readable_ref))),
+            );
+            m.insert("identity".into(), json!(identity));
+            if !satisfied.is_empty() {
+                m.insert("satisfiedRuleIds".into(), json!(satisfied));
+            }
+            if open {
+                m.insert("open".into(), json!(true));
+            }
+            if caller_record {
+                m.insert("callerRecord".into(), json!(true));
+                if !a.folder_coverage.is_empty() {
+                    m.insert(
+                        "folderCoverage".into(),
+                        serde_json::to_value(&a.folder_coverage).unwrap_or(Value::Null),
+                    );
+                }
+            }
+            return Derived::Value(Value::Object(m));
+        }
+    }
+    Derived::Refuse("an owner read of a fact's pages whose policy is not one the store models")
+}
+
+/// `countOpenPages`'s floor: `accessAllowedSql('p', [], [])` must equal the no-caller member-access rendering, or the
+/// rendering of a fresh record with no identity and the caller's folder coverage.
+fn derive_open_page_floor(cur: &Cur, s: &AccessSettings) -> Derived {
+    let floor = (access_allowed(&[], Some(&[]), false, cur, s), None);
+    let mut access = access_off(&floor.0);
+    if floor == caller_access(&reference(cur, Patch::default(), true, s), s) {
+        return Derived::Value(Value::Object(access));
+    }
+    let a = eff(cur, s);
+    let patch = Patch {
+        identity: Some(vec![]),
+        satisfied_rule_ids: Some(vec![]),
+        folder_coverage: Some(a.folder_coverage.clone()),
+        restricted: Some(a.restricted),
+        ..Patch::default()
+    };
+    if floor != caller_access(&reference(cur, patch, false, s), s) {
+        return Derived::Refuse("an open-page floor rendered in a caller record");
+    }
+    if !a.folder_coverage.is_empty() {
+        access.insert(
+            "folderCoverage".into(),
+            serde_json::to_value(&a.folder_coverage).unwrap_or(Value::Null),
+        );
+    }
+    Derived::Value(with_open(access, !a.restricted))
+}
+
+/// A page text that is a member-access part and `TRUE`, with the labelled-only conjunct either inside the access
+/// part (`callerAccessSql`) or around the whole (`renderWriterReadPolicy`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AccessAndTrue {
+    inner: (AccessKey, Option<LabelledKey>),
+    outer: Option<LabelledKey>,
+}
+
+/// `writerPolicy` (store-members/remote-links.ts).
+fn derive_writer_policy(cur: &Cur, s: &AccessSettings, w: &WriterReadPolicyIn) -> Derived {
+    let wcur = with(
+        cur,
+        &Patch {
+            folder_coverage: Some(w.folder_coverage.clone()),
+            owner: w.owner.then_some(true),
+            ..Patch::default()
+        },
+        s,
+    );
+    let text_access = access_all(&w.identities, &w.satisfied_rule_ids, false, &wcur, s);
+    let outer = w.labelled_only.then(|| {
+        labelled(&CallerRecord {
+            identity: vec![],
+            audience_identities: w.identities.clone(),
+            satisfied_rule_ids: w.satisfied_rule_ids.clone(),
+            lineage: false,
+            owner: false,
+            ..eff(&None, s)
+        })
+    });
+    let text = AccessAndTrue {
+        inner: (text_access.clone(), None),
+        outer,
+    };
+    let fragment = |patch: Patch, empty: bool| AccessAndTrue {
+        inner: caller_access(&reference(cur, patch, empty, s), s),
+        outer: None,
+    };
+    let off = access_off(&text_access);
+    if text == fragment(Patch::default(), true) {
+        return Derived::Value(Value::Object(off));
+    }
+    if w.identities.is_empty() {
+        let patch = Patch {
+            identity: Some(vec![]),
+            satisfied_rule_ids: Some(vec![]),
+            folder_coverage: Some(w.folder_coverage.clone()),
+            ..Patch::default()
+        };
+        if text == fragment(patch, false) {
+            let mut m = off;
+            m.insert("identity".into(), json!([]));
+            if !w.folder_coverage.is_empty() {
+                m.insert(
+                    "folderCoverage".into(),
+                    serde_json::to_value(&w.folder_coverage).unwrap_or(Value::Null),
+                );
+            }
+            m.insert("callerRecord".into(), json!(true));
+            return Derived::Value(Value::Object(m));
+        }
+    }
+    if let [identity] = w.identities.as_slice() {
+        for owner in [false, true] {
+            let patch = Patch {
+                identity: Some(identity.clone()),
+                private_readable_sources: Some(vec![]),
+                hide_private: Some(true),
+                owner: owner.then_some(true),
+                ..Patch::default()
+            };
+            if text == fragment(patch, false) {
+                let mut m = off;
+                m.insert("identity".into(), json!(identity));
+                m.insert("privateReadableSources".into(), json!([]));
+                return Derived::Value(Value::Object(m));
+            }
+        }
+    }
+    Derived::Refuse(
+        "a writer whose folder rules, owner record, labelled-only grant or identities widen the member-access policy",
+    )
+}
+
+/// `callerReadersAllowedSql(alias, 'snapshot')` as a key: the readers part and the labelled-only conjunct.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SnapReaders {
+    OwnPage {
+        readers: Vec<String>,
+        own: String,
+        audience: Vec<String>,
+    },
+    Audience {
+        readers: Vec<String>,
+        audience: Vec<String>,
+    },
+    Each(Vec<Vec<String>>),
+}
+
+/// `snapshotVisibleSql()` (trust-tier-reads.ts) as a key: the caller's snapshot readers, its labelled-only conjunct,
+/// and its privacy over the snapshot (the private-readable sources it widens to, or none when privacy is off).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SnapKey {
+    readers: SnapReaders,
+    labelled: Option<LabelledKey>,
+    privacy: Option<Vec<String>>,
+}
+
+fn snapshot_key(cur: &Cur, s: &AccessSettings) -> SnapKey {
+    let a = eff(cur, s);
+    let own = if a.owner_reads_restricted {
+        lineage_read_page(&a)
+    } else {
+        None
+    };
+    let audience = audience_pages(&a);
+    let readers = match own {
+        Some(own) => SnapReaders::OwnPage {
+            readers: readers(&a.identity),
+            own,
+            audience,
+        },
+        None if !audience.is_empty() => SnapReaders::Audience {
+            readers: readers(&a.identity),
+            audience,
+        },
+        None => {
+            let ids = if a.audience_identities.is_empty() {
+                vec![a.identity.clone()]
+            } else {
+                a.audience_identities.clone()
+            };
+            SnapReaders::Each(ids.iter().map(|i| readers(i)).collect())
+        }
+    };
+    SnapKey {
+        readers,
+        labelled: a.labelled_only.then(|| labelled(&a)),
+        privacy: a.hide_private.then(|| a.private_readable_sources.clone()),
+    }
+}
+
+/// `pickValidTimeEdition`'s snapshot check: the caller's snapshot text equals the no-record one, or the canonical one
+/// for the page policy's readers (each also with the caller widened to its restricted rendering).
+fn derive_snapshot_policy(
+    cur: &Cur,
+    s: &AccessSettings,
+    identity: &[String],
+    sources: &[String],
+) -> Derived {
+    let served = judge_widened(cur, s, |cur2, _| {
+        let text = snapshot_key(cur2, s);
+        if text == snapshot_key(&None, s) {
+            return Some(true);
+        }
+        let patch = Patch {
+            identity: Some(identity.to_vec()),
+            private_readable_sources: Some(sources.to_vec()),
+            hide_private: Some(true),
+            ..Patch::default()
+        };
+        (text == snapshot_key(&reference(cur2, patch, false, s), s)).then_some(true)
+    });
+    match served {
+        Some(_) => Derived::Value(json!(true)),
+        None => Derived::Refuse(
+            "a caller whose snapshot policy is not the canonical one for its readers",
         ),
     }
 }
@@ -1903,6 +2422,28 @@ pub fn derive(ctx: &AccessContext) -> Derived {
         DeriveRequest::RemoteFloor {} => derive_remote_floor(cur, s),
         DeriveRequest::Visibility { list } => derive_visibility(cur, s, list.as_deref()),
         DeriveRequest::PrivacyPartAliases {} => Derived::Value(json!(s.honor_aliases)),
+        DeriveRequest::PlainPageFlags {} => Derived::Value(Value::Object(page_flags(
+            &page_plain(cur, false, Cx { s, norm: false }),
+            s,
+        ))),
+        DeriveRequest::OpenPageFloor {} => derive_open_page_floor(cur, s),
+        DeriveRequest::AccessPartPlain {} => derive_access_part_plain(cur, s),
+        DeriveRequest::MemberAccessPolicy {
+            identity,
+            satisfied,
+        } => derive_member_access_policy(cur, s, identity.as_deref(), satisfied),
+        DeriveRequest::RowOwnerOnly {} => {
+            Derived::Value(json!(owner_only_flag(owner_only_text(cur, s))))
+        }
+        DeriveRequest::OwnerReach {
+            identity,
+            satisfied,
+        } => derive_owner_reach(cur, s, identity, satisfied),
+        DeriveRequest::WriterPolicy { policy } => derive_writer_policy(cur, s, policy),
+        DeriveRequest::SnapshotPolicy {
+            identity,
+            private_readable_sources,
+        } => derive_snapshot_policy(cur, s, identity, private_readable_sources),
     }
 }
 
@@ -2043,6 +2584,23 @@ mod tests {
         );
         assert!(!labelled(&rec(false, false)).lineage);
         assert!(!labelled(&rec(true, false)).lineage);
+    }
+
+    #[test]
+    fn the_owner_read_rule_serves_only_a_plain_lineage_read() {
+        let rec = |v: Value| -> CallerRecord { serde_json::from_value(v).unwrap() };
+        assert!(owner_lineage_served(&rec(
+            json!({ "identity": ["member:a"], "owner": true, "lineage": true })
+        )));
+        assert!(!owner_lineage_served(&rec(
+            json!({ "identity": ["member:a"], "owner": true, "lineage": true, "ownerReadsRestricted": true })
+        )));
+        assert!(!owner_lineage_served(&rec(
+            json!({ "identity": ["member:a"], "owner": true, "lineage": true, "audienceKindMembers": ["room"] })
+        )));
+        assert!(!owner_lineage_served(&rec(
+            json!({ "identity": ["member:a"], "owner": true })
+        )));
     }
 
     #[test]

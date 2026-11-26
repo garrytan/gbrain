@@ -52,7 +52,7 @@ const engineCapabilitiesModule = engineCapabilitiesNamespace as unknown as Recor
 import { itemSetHash } from '../../src/core/generations/publish.ts';
 import { IDENTITY_DOWNGRADE_OP } from '../../src/core/persistence/sync-status-sql.ts';
 import {
-  archiveRustSource, createRustSource, newRustBrain, putRustOpCheckpointRow, rustPageDeletedAt, rustAccessBrain, openRustBrain, DIVERGENCE_NORMALIZERS, readDivergences, removeBrainDir, rustArmRequested, rustMemberCapability, rustRefusal, type DivergenceRow, createRustMember, type MemberSeed, rustMuRoute, openRustBrainAt, installMuConnect, type MuConnectable, type RustMuRoute,
+  archiveRustSource, closeRustBrain, createRustSource, newRustBrain, putRustOpCheckpointRow, rustPageDeletedAt, rustAccessBrain, openRustBrain, DIVERGENCE_NORMALIZERS, readDivergences, removeBrainDir, rustArmRequested, rustMemberCapability, rustRefusal, type DivergenceRow, createRustMember, type MemberSeed, rustMuRoute, openRustBrainAt, installMuConnect, type MuConnectable, type RustMuRoute,
 } from './rust-arm.ts';
 import { isEngineMember, readStopPins, refusalFacts, rustServes, rustServesCapability, setupRefusalStep, setupStep, today, type StopPin } from './rust-refusals.ts';
 
@@ -147,6 +147,34 @@ export function rustMultiuserView(env: Record<string, string | undefined> = proc
   return rustMuRoute(env) ?? 'off';
 }
 
+/**
+ * Whether this process was started with the multi-user switch already on (`GBRAIN_RUST_MULTIUSER=1` visible to it when the
+ * harness loaded, before any arm set it): a lane that runs the whole suite in multi-user mode (for example with
+ * GBRAIN_TEST_KEEP_AMBIENT_ENV=1). Read once at load, so the rust-mu view setting the variable later never counts.
+ */
+const AMBIENT_MULTIUSER = process.env.GBRAIN_RUST_MULTIUSER === '1';
+
+/**
+ * The multi-user mode a Rust brain on this arm must resolve: the rust-mu view's route, else `ambient` when the process
+ * started with the switch on, else `off`. A scenario that checks or depends on the store's mode reads this.
+ */
+export function rustArmMultiuser(env: Record<string, string | undefined> = process.env, ambient = AMBIENT_MULTIUSER): 'off' | 'env' | 'config' | 'ambient' {
+  const view = rustMultiuserView(env);
+  return view !== 'off' ? view : ambient ? 'ambient' : 'off';
+}
+
+/**
+ * The mode check for one Rust brain: null when the store resolved what the arm runs (`mode`), else the failure. On a plain
+ * run (`off`) a multi-user store is a leak and fails; on the view or an ambient multi-user run a plain store fails.
+ */
+export function rustArmModeProblem(resolved: boolean | undefined, mode: 'off' | 'env' | 'config' | 'ambient'): string | null {
+  if (mode === 'off') return resolved === true ? 'the plain Rust arm ran a multi-user store' : null;
+  if (resolved === true) return null;
+  return mode === 'ambient'
+    ? 'the Rust arm runs with GBRAIN_RUST_MULTIUSER=1 set when the process started, but its store did not resolve multi-user mode'
+    : 'the rust-mu arm ran a store that did not resolve multi-user mode';
+}
+
 /** The Rust arm: a new brain directory per case (reset), removed when the arm closes. */
 async function openRustArm(route?: RustMuRoute): Promise<ParityArm> {
   const opened = await openRustBrain(route);
@@ -156,7 +184,7 @@ async function openRustArm(route?: RustMuRoute): Promise<ParityArm> {
     ...(route !== undefined && { muRoute: route }),
     engine: opened.engine as unknown as BrainEngine,
     close: async () => {
-      await arm.engine.disconnect();
+      await closeRustBrain(arm.engine);
       for (const dir of [...dirs, (arm.engine as unknown as { databasePath: string }).databasePath]) removeBrainDir(dir);
     },
     unconnected: () => {
@@ -174,7 +202,7 @@ async function openRustArm(route?: RustMuRoute): Promise<ParityArm> {
 
 async function resetRustArm(arm: ParityArm): Promise<void> {
   const previous = arm.engine as unknown as { databasePath: string };
-  await arm.engine.disconnect();
+  await closeRustBrain(arm.engine);
   removeBrainDir(previous.databasePath);
   arm.engine = (await openRustBrain(arm.muRoute)).engine as unknown as BrainEngine;
   // The brain directories of every reset are removed here; the arm's own list only holds what `unconnected` made.
@@ -749,6 +777,8 @@ export function parityArms(backends: readonly TestBackend[]): ParitySuite {
   const testFile = callerTestFile(new Error().stack);
   const tally: RustTally = { compared: 0, refused: 0, diverged: 0, standalone: 0, stops: [] };
   const multiuserBefore = { set: false, value: undefined as string | undefined };
+  // rust-mu view only: the commit log sub-switch (read only while the store is multi-user, from the environment alone).
+  const commitLogBefore = { set: false, value: undefined as string | undefined };
   // Cases this file declared, and the ones the Rust arm skipped on an `n/a` capability (rust-tally.ts).
   let registered = 0;
   let skipped = 0;
@@ -759,6 +789,10 @@ export function parityArms(backends: readonly TestBackend[]): ParitySuite {
     multiuserBefore.set = false;
     if (multiuserBefore.value === undefined) delete process.env.GBRAIN_RUST_MULTIUSER;
     else process.env.GBRAIN_RUST_MULTIUSER = multiuserBefore.value;
+    if (!commitLogBefore.set) return;
+    commitLogBefore.set = false;
+    if (commitLogBefore.value === undefined) delete process.env.GBRAIN_RUST_COMMIT_LOG;
+    else process.env.GBRAIN_RUST_COMMIT_LOG = commitLogBefore.value;
   };
   beforeAll(async () => {
     const opened: ParityArm[] = [];
@@ -770,6 +804,11 @@ export function parityArms(backends: readonly TestBackend[]): ParitySuite {
         multiuserBefore.value = process.env.GBRAIN_RUST_MULTIUSER;
         if (muRoute === 'env') process.env.GBRAIN_RUST_MULTIUSER = '1';
         else delete process.env.GBRAIN_RUST_MULTIUSER;
+        // The commit log is a multi-user sub-switch with no config-row route: on both routes it is the environment variable,
+        // set here for the arm's lifetime and restored after. Each rust-mu brain proves the log is on (assertRustCommitLogResolved).
+        commitLogBefore.set = true;
+        commitLogBefore.value = process.env.GBRAIN_RUST_COMMIT_LOG;
+        process.env.GBRAIN_RUST_COMMIT_LOG = '1';
       }
       for (const backend of selected) opened.push(await openArm(backend, backend === 'rust' && muRoute !== null ? muRoute : undefined));
     } catch (error) {
@@ -1316,6 +1355,11 @@ function describeMwStop<T>(c: MwArmCase<T>, error: unknown): string {
 export function assertMultiuserCapabilityName(name: string, mod: Record<string, unknown> = engineCapabilitiesModule): void {
   const base = (mod.ENGINE_CAPABILITIES ?? []) as readonly string[];
   const multiuser = mod.MULTIUSER_CAPABILITIES as readonly string[] | undefined;
+  // `commit_log` is an ordinary engine capability (the Rust engine reports it only while its store keeps a log); the guard below is for multi_writer.
+  if (name === 'commit_log') {
+    if (!base.includes(name)) throw new Error(`engine-parity: ${name} is not in ENGINE_CAPABILITIES`);
+    return;
+  }
   if (base.includes(name)) throw new Error(`engine-parity: ${name} is in ENGINE_CAPABILITIES; it belongs in MULTIUSER_CAPABILITIES only`);
   if (multiuser !== undefined && !multiuser.includes(name)) throw new Error(`engine-parity: ${name} is not in MULTIUSER_CAPABILITIES`);
 }
@@ -1331,7 +1375,8 @@ export async function checkMwArm<T>(c: MwArmCase<T>): Promise<{ value: T; standa
     const needs = c.row.needs;
     if (needs !== undefined) {
       assertMultiuserCapabilityName(needs);
-      const has = isRust ? c.capabilities?.has(needs) === true : armHas(c.backend as ParityArmName, needs);
+      // A SQL engine keeps no commit log: `commit_log` is the Rust engine's own report, so no SQL arm has it.
+      const has = isRust ? c.capabilities?.has(needs) === true : needs === 'multi_writer' && armHas(c.backend as ParityArmName, needs);
       if (!has) {
         throw new Error(`${prefix}: the matrix marks this arm \`runs\` and the case needs ${needs}, but ${isRust ? 'the engine does not report it' : 'the arm has no such capability'}`
           + (isRust ? ` (engine.capabilities has ${[...(c.capabilities ?? [])].sort().join(', ') || 'nothing'})` : ''));

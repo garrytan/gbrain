@@ -36,8 +36,11 @@ import { RECEIPT_STOP_OWNERS } from './rust-engine/receipt-stops.ts';
 import { electOwner, type OwnerRole } from './rust-engine/owner-ipc/election.ts';
 import { callEndCheck, installOwnerClient, untilCallEnds } from './rust-engine/owner-ipc/client.ts';
 import { ownerWholeOperations } from './rust-engine/owner-ipc/owner-ops.ts';
-import type { OwnerServerStats } from './rust-engine/owner-ipc/server.ts';
+import type { OwnerEngineServer, OwnerServerStats } from './rust-engine/owner-ipc/server.ts';
 import { withAccessStore } from './rust-engine/access-self-check.ts';
+import { servedServerOptionsFor } from './rust-engine/served/serve-listen.ts';
+import type { ServedServerOptions } from './rust-engine/served/session.ts';
+import { connectServedEngine, type ServedTarget } from './rust-engine/served/engine.ts';
 import type { CommitLogPage, CommitPosition } from './engine-members/commit-log.ts';
 import * as commitLog from './rust-engine/store-members/commit-log.ts';
 
@@ -92,6 +95,10 @@ export interface OpenRustEngineOptions {
   databasePath: string;
   /** How long `connect` waits to become the owner or reach it (owner-ipc/election.ts); tests shorten it. */
   ownerWaitMs?: number;
+  /** Multi-user Rust: the brain server this engine is a client of; it then never opens a store (rust-engine/served/). */
+  served?: ServedTarget;
+  /** Multi-user Rust, as an owner: protocol v3 options merged over the defaults (tests inject the bearer check). */
+  servedOptions?: Partial<ServedServerOptions>;
 }
 
 /**
@@ -169,6 +176,8 @@ export class RustEngine implements BrainEngine {
   /** True from the first synchronous step of `disconnect()`, which also captures the stop hooks: no work that needs a hook may start after it. */
   get disconnecting(): boolean { return this._disconnecting > 0; }
   private readonly _ownerWaitMs: number | undefined;
+  private readonly _served: ServedTarget | undefined;
+  private readonly _servedOptions: Partial<ServedServerOptions> | undefined;
   private _owner: OwnerRole | null = null;
   private _leaveOwner: (() => void) | null = null;
   /** Set on a transaction-bound clone (store-members/transactions.ts); null on the engine itself. */
@@ -184,6 +193,8 @@ export class RustEngine implements BrainEngine {
     this.addon = opts.addon;
     this.databasePath = opts.databasePath;
     this._ownerWaitMs = opts.ownerWaitMs;
+    this._served = opts.served;
+    this._servedOptions = opts.servedOptions;
   }
 
   /**
@@ -210,6 +221,9 @@ export class RustEngine implements BrainEngine {
   /** The owner's call pool, when this process owns the brain. */
   ownerStats(): OwnerServerStats | null { return this._owner?.role === 'owner' ? this._owner.server.stats() : null; }
 
+  /** The owner socket server, when this process owns the brain (the brain server listener attaches to it). */
+  ownerServer(): OwnerEngineServer | null { return this._owner?.role === 'owner' ? this._owner.server : null; }
+
   /**
    * Becomes the brain's owner (opens the store, serves the owner socket) or a client of the process that owns it. A
    * second `connect` while connected changes nothing, and connects that overlap share one election. A `disconnect`
@@ -219,7 +233,20 @@ export class RustEngine implements BrainEngine {
   async connect(config: EngineConfig): Promise<void> {
     this._savedConfig = config;
     if (this._connected) return;
+    if (this._served) { await this._connectServed(this._served); return; }
     await this._electOnce();
+  }
+
+  /**
+   * A client of a brain server (rust-engine/served/engine.ts): no election, no store, no fallback to one. A disconnect
+   * that wins against the connect closes what it made.
+   */
+  private async _connectServed(target: ServedTarget): Promise<void> {
+    const generation = this._generation;
+    const leave = await connectServedEngine(this, target);
+    if (generation !== this._generation || this._disconnecting) { leave(); throw mapStoreError({ code: 'store_closed' }, { member: 'connect' }); }
+    this._leaveOwner = leave;
+    this._connected = true;
   }
 
   /** The one open in progress, started if there is none: connects that overlap, and takeovers, share it. */
@@ -245,7 +272,9 @@ export class RustEngine implements BrainEngine {
     // connection (a bound method) finds the engine already elected, and does nothing: a second election would make the
     // owner a client of its own socket and drop the owner lock it holds.
     const current = this._owner?.role === 'client' && this._owner.connection === from;
-    return current && this._connected && !this._disconnecting ? this._electOnce() : Promise.resolve();
+    if (current && this._connected && !this._disconnecting) return this._electOnce();
+    // A takeover another call of this engine already started: wait for it, so this call runs on what it elects.
+    return this._opening ?? Promise.resolve();
   }
 
   private async _open(generation: number): Promise<void> {
@@ -256,7 +285,11 @@ export class RustEngine implements BrainEngine {
     let storeFailure: { error: unknown } | null = null;
     let role: OwnerRole;
     try {
+      // Once the store is open and its multi-user mode resolved, a brain in multi-user mode also speaks protocol v3
+      // (rust-engine/served/): the election reads `served` after onLock. Off, it stays undefined.
+      let servedOpts: ServedServerOptions | undefined;
       role = await electOwner(this as unknown as BrainEngine, this.databasePath, {
+        get served() { return servedOpts; },
         wholeOperations: ownerWholeOperations({ config: (this._savedConfig ?? undefined) as GBrainConfig | undefined }),
         ...(this._ownerWaitMs !== undefined ? { waitMs: this._ownerWaitMs } : {}),
         // Holding the owner lock: open the store before the socket serves, so no client call reaches this engine
@@ -281,6 +314,8 @@ export class RustEngine implements BrainEngine {
             this._store = store;
             if (store.multiuser) (this.capabilities as Set<Capability>).add('multi_writer');
             if (store.commitLog) (this.capabilities as Set<Capability>).add('commit_log');
+            const served = servedServerOptionsFor(this, store);
+            if (served) servedOpts = { ...served, ...this._servedOptions };
           } catch (error) {
             storeFailure = { error };
             throw error;
@@ -388,6 +423,10 @@ export class RustEngine implements BrainEngine {
     this._generation++;
     const opening = this._opening;
     this._opening = null;
+    // Multi-user mode (the owner speaks protocol v3): a handoff, first. The owner answers what it has not started as
+    // handed over and finishes what it started while everything it runs on is still up: the store, and this process's
+    // persistence consumer, which a stop hook below ends (a forwarded write admitted here is applied before it does).
+    if (this._owner?.role === 'owner' && this._owner.server.attachServed) await this._owner.server.close();
     const stops = [...this._beforeDisconnect];
     this._beforeDisconnect.clear();
     for (const stop of stops) {

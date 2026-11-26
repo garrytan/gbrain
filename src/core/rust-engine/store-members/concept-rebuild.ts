@@ -11,9 +11,9 @@
  */
 import { OWED_PURGE_OP } from '../../persistence/derived-origin-hold.ts';
 import { ACCESS_OPEN_SQL, type ConceptStatedRow, type HeldConceptRow, type RebuildAccess, type StatedKindLists } from '../../engine-sql/concept-rebuild.ts';
-import { privacyAliasSql, privacyPartSql, privatePagesFilterFragment } from '../../search/private-visibility.ts';
 import { storeCall, type StoreMember } from './common.ts';
-import { pagePolicyFlags } from './private-provenance.ts';
+import { pagePolicyFlags, plainPageFlags, privacyPartAliases } from './private-provenance.ts';
+import { selfChecked } from '../access-self-check.ts';
 
 export const readHeldConcept: StoreMember<[pageId: number], { deleted_us: string } | null> = async (brain, pageId) =>
   (await storeCall({ member: 'readHeldConcept' }, () => brain.readHeldConcept(pageId, OWED_PURGE_OP)) as { deleted_us: string } | null) ?? null;
@@ -59,11 +59,11 @@ export const readConceptStatedKinds: StoreMember<[pageId: number, sourceId: stri
     })) as Promise<ConceptStatedRow>;
 
 export const readRebuildAccess: StoreMember<[pageId: number], RebuildAccess | null> = async (brain, pageId) =>
-  (await storeCall({ member: 'readRebuildAccess' }, () => brain.readRebuildAccess(pageId, pagePolicyFlags(ACCESS_OPEN_SQL))) as RebuildAccess | null) ?? null;
+  (await storeCall({ member: 'readRebuildAccess' }, () => brain.readRebuildAccess(pageId, selfChecked('readRebuildAccess', { mode: 'plain_page_flags' }, () => pagePolicyFlags(ACCESS_OPEN_SQL)))) as RebuildAccess | null) ?? null;
 
 export const readHeldConceptRows: StoreMember<[], HeldConceptRow[]> = async (brain) => {
-  const privateAliases = privacyPartSql('p').includes(privacyAliasSql('p'));
+  const privateAliases = privacyPartAliases('readHeldConceptRows');
   const rows = await storeCall({ member: 'readHeldConceptRows' }, () =>
-    brain.readHeldConceptRows(OWED_PURGE_OP, privateAliases, pagePolicyFlags(privatePagesFilterFragment('p')))) as HeldConceptRow[];
+    brain.readHeldConceptRows(OWED_PURGE_OP, privateAliases, plainPageFlags('readHeldConceptRows'))) as HeldConceptRow[];
   return rows.map(r => ({ ...r, id: Number(r.id) }));
 };

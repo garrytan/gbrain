@@ -15,6 +15,7 @@ pub mod access_member_links;
 pub mod access_members;
 pub mod access_migrations;
 pub mod access_policy;
+pub mod access_record;
 pub mod access_rules;
 pub mod call_context;
 mod cascade;

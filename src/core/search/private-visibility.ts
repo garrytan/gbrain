@@ -1355,8 +1355,13 @@ export async function requestRemotePolicy(engine: BrainEngine): Promise<RemotePo
   return rows ? remotePolicyFrom(rows) : readRemotePolicyNow(engine);
 }
 
+/** The incident escape hatch GBRAIN_REMOTE_PRIVATE_PAGES=1, an operator setting of this process (the multi-user store reads no environment, so a principal session hands it over). */
+export function remotePrivacyHatch(): boolean {
+  return process.env.GBRAIN_REMOTE_PRIVATE_PAGES === '1';
+}
+
 function remotePolicyFrom(config: Record<string, string>): RemotePolicy {
-  const hatch = process.env.GBRAIN_REMOTE_PRIVATE_PAGES === '1';
+  const hatch = remotePrivacyHatch();
   const owner = config[OWNER_MEMBER_KEY]?.trim();
   const schemaVersion = Number.parseInt(config[SCHEMA_VERSION_KEY] ?? '', 10);
   return { privacyRelaxed: hatch || ['visible', 'true', '1'].includes(config[REMOTE_PRIVATE_PAGES_KEY] ?? ''), restricted: config[ACCESS_RESTRICTIONS_KEY] === '1',

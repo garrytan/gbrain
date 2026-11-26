@@ -12,8 +12,8 @@
 //!   seeded steps over `RedbKv`; the history passes `check_serializable` and the batch checker, and rebuilds the store.
 //! - P-H on both stores over `GBRAIN_SIM_SEEDS` seeds (default 200; the gate is 10,000 with
 //!   `GBRAIN_SIM_SEEDS=10000 cargo test -p gbrain-store --release --test multi_writer_sim -- --include-ignored p_h`; the
-//!   pending P-H twin is named `pending_crash_keeps_…` so that filter never selects it; run it on purpose with
-//!   `-- --ignored pending_crash_keeps`): a
+//!   P-H twin with the commit log is named `crash_with_the_log_keeps_…` so that filter never selects it; it runs in the default
+//!   build): a
 //!   simulated disk crashes (or fails an fsync) at a seeded point, the store reopens, and `check_recovery` plus the batch
 //!   checker judge it. Each test prints and asserts a non-zero count of executed histories, checked commits and checked
 //!   reads. The optimistic store runs on OS threads here (as `occ_history.rs` does), so its interleaving is not replayed
@@ -33,7 +33,7 @@
 //!     /// Like `OccKv::new`, but starts no pipeline thread: commits queue until `step_pipeline` runs.
 //!     pub fn new_stepped(base: RedbKv) -> Result<OccKv>;
 //!     /// Commit requests queued and not yet taken by a step.
-//!     pub fn queued_commits(&self) -> usize;
+//!     pub fn queued_commits(&self) -> usize; // landed on the trunk with this exact signature (L2); the stub no longer declares it
 //!     /// One iteration of `Pipeline::run`'s loop on the calling thread: takes up to `max_batch` queued commits in
 //!     /// arrival order (an exclusive-write message ends the batch), validates and writes them as one batch, answers
 //!     /// each, and reports what happened. `Ok(None)` when nothing was queued.
@@ -67,7 +67,7 @@ use gbrain_sim::{CrashMode, Cx, FaultPlan, Scheduler, SimDisk, SimFile, SimRng, 
 use gbrain_store::error::WRITE_CONFLICT;
 use gbrain_store::occ_kv::OccKv;
 use gbrain_store::redb_kv::RedbKv;
-use gbrain_store::{Env, FileBackend, Kv, KvWrite, OpenOptions, Store, StoreError};
+use gbrain_store::{Env, FileBackend, Kv, KvWrite, Store, StoreError};
 use std::collections::{BTreeMap, BTreeSet};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::{Arc, Mutex};
@@ -1104,54 +1104,52 @@ fn open_store(disk: &SimDisk) -> Result<Store, StoreError> {
         now: std::sync::atomic::AtomicI64::new(1_800_000_000_000_000),
         ids: std::sync::atomic::AtomicU64::new(1),
     };
-    Store::open_kv(
+    // Multi-user mode and the commit log on, in the run, never from the environment; the resolved state is asserted.
+    let store = Store::open_kv(
         Arc::new(open_optimistic(disk)?),
         Arc::new(env),
-        OpenOptions {
-            concurrent_writes: true,
-            ..OpenOptions::default()
-        },
-    )
+        common::mu::logged_options(true, common::mu::TEST_HOST),
+    )?;
+    common::mu::assert_logged(&store);
+    Ok(store)
 }
 
-/// P-H with commit times: after a crash at a seeded point and a reopen, the commit times in the log strictly rise in position
-/// order and the newest equals `last_commit_time()`. Pending on the commit log (I-4.v2).
+/// P-H with commit times, against the commit-log lane's real code: after a crash at a seeded point and a reopen (both opens with
+/// multi-user mode and the log on, asserted), the commit times in the log strictly rise in position order, the newest equals
+/// `last_commit_time()`, and every acknowledged request id is in the write ids of exactly one record. Named without `p_h` so the
+/// 10,000-seed gate (`... -- --include-ignored p_h`) does not select it; it runs in the default `cargo test`.
 #[test]
-#[ignore = "multi_writer"]
-fn pending_crash_keeps_commit_times_rising_and_equal_to_last_commit_time_multi_writer() {
-    {
-        let disk = SimDisk::new(0, FaultPlan::none());
-        let fresh = open_store(&disk).unwrap();
-        fresh
-            .read_commit_log(None, 1)
-            .unwrap_or_else(|e| panic!("{e}"));
-    }
+fn crash_with_the_log_keeps_commit_times_rising_and_equal_to_last_commit_time() {
     let mut checked = 0;
     for seed in seeds(50) {
         let disk = SimDisk::new(seed, FaultPlan::none());
         let store = Arc::new(open_store(&disk).unwrap());
         let setup = disk.stats().io_ops;
         disk.set_plan(crash_plan(seed, setup));
+        let acked: Mutex<Vec<String>> = Mutex::new(Vec::new());
         std::thread::scope(|s| {
             for thread in 0..4usize {
-                let store = &store;
+                let (store, acked) = (&store, &acked);
                 s.spawn(move || {
-                    for n in 0..12 {
-                        let page = serde_json::from_value(serde_json::json!({
-                            "type": "note", "title": "t", "compiled_truth": format!("{thread} {n}"),
-                        }))
-                        .unwrap();
-                        let options = gbrain_store::pages::PutPageOptions::default();
-                        if store
-                            .put_page(&format!("p/{thread}-{n}"), &page, &options)
-                            .is_err()
-                        {
-                            return;
+                    for n in 0..12usize {
+                        let request = format!("00000000-0000-4000-8000-{:012}", thread * 100 + n);
+                        let mutation: gbrain_store::journal::PageMutation =
+                            serde_json::from_value(serde_json::json!({
+                                "principal": {"kind": "local_cli", "id": format!("w{thread}")},
+                                "requestId": request, "slug": format!("p/{thread}-{n}"),
+                                "page": {"type": "note", "title": "t", "compiled_truth": format!("{thread} {n}")},
+                                "options": {},
+                            }))
+                            .unwrap();
+                        match store.submit_page_mutation(&mutation, None) {
+                            Ok(r) if r["state"] == "committed" => acked.lock().unwrap().push(request),
+                            _ => return,
                         }
                     }
                 });
             }
         });
+        let acked = acked.into_inner().unwrap();
         disk.crash_now();
         drop(store);
         disk.reboot();
@@ -1162,6 +1160,8 @@ fn pending_crash_keeps_commit_times_rising_and_equal_to_last_commit_time_multi_w
             .unwrap_or_else(|e| panic!("{e}"));
         let last = store.last_commit_time().unwrap_or_else(|e| panic!("{e}"));
         clock::replay_clock_checks(&log.records, last, None, &[])
+            .unwrap_or_else(|e| panic!("seed {seed}: {e}"));
+        clock::request_ids_match_records(&acked, &log.records)
             .unwrap_or_else(|e| panic!("seed {seed}: {e}"));
         checked += log.records.len();
     }

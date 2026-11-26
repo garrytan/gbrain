@@ -78,15 +78,16 @@ export const ENGINE_CAPABILITIES = [
 ] as const;
 
 /**
- * Capabilities of the multi-user program (docs/designs/rust-engine/multi-user-server.md, interface I-8). They are
+ * Capabilities of the multi-user program (docs/designs/rust-engine/multi-user-server.md, interface I-8.v2). They are
  * reported only while the multi-user switch is on (rust-engine/multiuser-switch.ts), so with it off every engine's capability
  * set, and the error catalogue that lists ENGINE_CAPABILITIES, stay exactly what they were.
  *
  * - `multi_writer`: explicit transactions on many connections run at once, each one validated at commit (Postgres:
  *   yes; PGLite: no, one connection; Rust: yes when its optimistic transactions are on).
+ * - `served`: the engine is a client of a brain server over protocol v3 (rust-engine/served/); only a served Rust
+ *   engine reports it.
  */
-export const MULTIUSER_CAPABILITIES = ['multi_writer'] as const;
-
+export const MULTIUSER_CAPABILITIES = ['multi_writer', 'served'] as const;
 
 export type Capability = (typeof ENGINE_CAPABILITIES)[number] | (typeof MULTIUSER_CAPABILITIES)[number];
 

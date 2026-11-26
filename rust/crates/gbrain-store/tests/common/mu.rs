@@ -10,7 +10,11 @@
 //!
 //! Nothing here touches product code, and nothing in the product reads these types.
 
-use gbrain_store::{Env, Kv, Store, StoreError};
+use gbrain_store::commit_log;
+use gbrain_store::occ_kv::OccKv;
+use gbrain_store::redb_kv::RedbKv;
+use gbrain_store::{Env, Kv, MultiUserWrites, OpenOptions, Store, StoreError, keys};
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -105,10 +109,12 @@ pub use gbrain_store::transactions::Transaction as MuTxn;
 /// The multi-user members of `Store` no lane has landed yet, as the frozen interfaces spell them. Landed and called on `Store`
 /// directly: `begin_with` and `single_flight` (I-1), `last_commit_time` (I-4.v2) and `read_commit_log` (I-4).
 pub trait MuStore {
-    /// I-1 and I-2 `Transaction::commit(self) -> Result<CommitPosition>`. Owner: L2 (the position).
+    /// I-1 and I-2 `Transaction::commit(self) -> Result<CommitPosition>`: the real `Transaction::commit_at`
+    /// (`Store::commit_transaction_at`).
     fn commit_position(&self, txn: MuTxn) -> MuResult<CommitPosition>;
     /// A follower applies the given commit records, in order, to its own brain and returns the position of the last one
-    /// (`None` for no records). Stand-in for the log-apply step; owner: L2.
+    /// (`None` for no records). Pending: the commit-log lane has `commit_log::apply_record(&mut dyn KvWrite, &CommitRecord)`, a
+    /// function over a raw write handle, and no `Store` member (and no public follower open) that applies records.
     fn apply_log(&self, records: &[CommitRecord]) -> MuResult<Option<CommitPosition>>;
     /// A follower that applied the log up to `applied` and takes over as primary: opens its clock at the floor
     /// `clock_floor(its M\0ctime, the last applied record)` and returns that floor. Stand-in for the promotion step; owners:
@@ -121,12 +127,15 @@ impl MuStore for Store {
         txn.commit_at()
     }
     fn apply_log(&self, _records: &[CommitRecord]) -> MuResult<Option<CommitPosition>> {
-        pending(L2_LOG, "apply commit records to a follower")
+        pending(
+            L2_LOG,
+            "no Store member applies commit records (commit_log::apply_record takes a raw KvWrite); a public follower-apply path",
+        )
     }
     fn promote_from_log(&self, _applied: Option<CommitPosition>) -> MuResult<Option<i64>> {
         pending(
             L2_LOG,
-            "promote a follower from the log (clock floor = max(M\\0ctime, last applied commit_time)); election: L5 hosts",
+            "no Store member promotes a follower from the log (clock floor = max(M\\0ctime, last applied commit_time)); election: L5 hosts",
         )
     }
 }
@@ -166,15 +175,83 @@ pub struct LoggedBrain {
     pub store: Store,
 }
 
+/// The host id every logged open in the multi-writer tests uses unless it names another.
+pub const TEST_HOST: &str = "d0000000-0000-4000-8000-0000000000d1";
+
+/// The options of a store opened with multi-user mode AND the commit log on, in the run, as host `host_id`: never read from the
+/// environment, so a run cannot drift into a plain store.
+pub fn logged_options(optimistic: bool, host_id: &str) -> OpenOptions {
+    OpenOptions {
+        concurrent_writes: optimistic,
+        keyword_index_builder: false,
+        multiuser: true,
+        multiuser_writes: MultiUserWrites {
+            commit_log: true,
+            write_origin: false,
+            host_id: Some(host_id.into()),
+            log_retention_bytes: None,
+        },
+        ..OpenOptions::default()
+    }
+}
+
+/// The resolved state a logged test asserts about the store it opened: multi-user mode on and the log on, as the open info
+/// reports them. A store opened with the mode off fails this, so a run that lost the switch cannot pass.
+pub fn assert_logged(store: &Store) {
+    assert!(
+        store.multiuser(),
+        "the store did not resolve multi-user mode on"
+    );
+    let info = store.info();
+    assert!(
+        info.multiuser,
+        "the open info does not report multi-user mode: {info:?}"
+    );
+    assert!(
+        info.commit_log,
+        "the open info does not report the commit log: {info:?}"
+    );
+}
+
+/// Opens (or reopens) the brain directory `dir` (`<dir>/records.redb` and `FORMAT`) logged, as `logged_options` says, and asserts the
+/// resolved state.
+pub fn open_dir_logged(dir: &Path, optimistic: bool, host_id: &str) -> MuResult<Store> {
+    let store = Store::open_dir(dir, logged_options(optimistic, host_id))?;
+    assert_logged(&store);
+    Ok(store)
+}
+
 /// Opens (or reopens) the record file at `path` with the multi-user switch and the commit log on, on `env`, as host `host_id`, on
-/// the single-writer or the optimistic store. Pending until the commit-log lane's open options exist in this tree.
+/// the single-writer or the optimistic store, and asserts the resolved state. Served by the commit-log lane.
 pub fn open_logged(
-    _path: &Path,
-    _optimistic: bool,
-    _env: Arc<dyn Env>,
-    _host_id: &str,
+    path: &Path,
+    optimistic: bool,
+    env: Arc<dyn Env>,
+    host_id: &str,
 ) -> MuResult<LoggedBrain> {
-    pending(L2_LOG, "OpenOptions::multiuser_writes (the commit log on)")
+    let base = RedbKv::open_path(path)?;
+    let kv: Arc<dyn Kv> = if optimistic {
+        Arc::new(OccKv::new(base)?)
+    } else {
+        Arc::new(base)
+    };
+    let store = Store::open_kv(kv.clone(), env, logged_options(optimistic, host_id))?;
+    assert_logged(&store);
+    Ok(LoggedBrain { kv, store })
+}
+
+/// `open_logged` on the optimistic store, keeping the concrete `OccKv` so a test can hold its pipeline and watch its queue
+/// (`OccKv::queued_commits`).
+pub fn open_logged_occ(
+    path: &Path,
+    env: Arc<dyn Env>,
+    host_id: &str,
+) -> MuResult<(Arc<OccKv>, Store)> {
+    let occ = Arc::new(OccKv::new(RedbKv::open_path(path)?)?);
+    let kv: Arc<dyn Kv> = occ.clone();
+    let store = Store::open_kv(kv, env, logged_options(true, host_id))?;
+    assert_logged(&store);
+    Ok((occ, store))
 }
 
 /// A closed logged brain that the next open must write to without any caller: `OlderBase` is one whose records are at an older
@@ -187,16 +264,70 @@ pub struct ClosedBrain {
     pub cursor: Option<CommitPosition>,
 }
 
-/// Pending with the open options.
+/// Builds the closed brain at `path`, as the commit-log lane's own test builds its base-7 brain: a logged brain with a page and a
+/// config row, then hand edits that undo the open-time markers (and, for `OlderBase`, the token-secret move and the base format),
+/// then the log re-pinned after the edits (they are the starting copy, not logged changes).
 pub fn logged_brain_needing_upkeep(
-    _path: &Path,
-    _optimistic: bool,
-    _kind: UpkeepKind,
+    path: &Path,
+    optimistic: bool,
+    kind: UpkeepKind,
 ) -> MuResult<ClosedBrain> {
-    pending(
-        L2_LOG,
-        "a logged brain whose open writes (upgrade, open-time upkeep)",
-    )
+    {
+        let brain = open_logged(
+            path,
+            optimistic,
+            Arc::new(gbrain_store::SystemEnv),
+            TEST_HOST,
+        )?;
+        brain.store.set_config("test.a", "1")?;
+        let page: gbrain_store::pages::PageInput = serde_json::from_value(
+            json!({"type": "note", "title": "one", "compiled_truth": "one"}),
+        )
+        .unwrap();
+        brain.store.put_page(
+            "notes/one",
+            &page,
+            &gbrain_store::pages::PutPageOptions::default(),
+        )?;
+    }
+    let kv = RedbKv::open_path(path)?;
+    let mut tx = kv.begin_write()?;
+    if kind == UpkeepKind::OlderBase {
+        let secret_new = vec![keys::ACCESS_MEMBERS, 0x0d];
+        let secret_old = vec![keys::ACCESS_MEMBERS, 0x04];
+        let secret = tx.get(&secret_new)?.expect("a seeded token secret");
+        tx.delete(&secret_new)?;
+        tx.put(&secret_old, &secret)?;
+    }
+    tx.delete(&keys::meta("access_flag_scan"))?;
+    tx.delete(&keys::meta("derivation_purge_source_index"))?;
+    tx.delete(&keys::keyword_index_state())?;
+    if kind == UpkeepKind::OlderBase {
+        let mut format: Value =
+            serde_json::from_slice(&tx.get(&keys::meta("format"))?.unwrap()).unwrap();
+        format["log"]["base_format"] = json!(7);
+        tx.put(&keys::meta("format"), &serde_json::to_vec(&format).unwrap())?;
+    }
+    let since = CommitPosition::new(kv.version()? + 1, 0);
+    let mut stale = Vec::new();
+    tx.scan(
+        &commit_log::record_key(CommitPosition::default()),
+        b"3",
+        false,
+        &mut |k, _| {
+            stale.push(k.to_vec());
+            true
+        },
+    )?;
+    for k in stale {
+        tx.delete(&k)?;
+    }
+    commit_log::write_activation(&mut *tx, since)?;
+    tx.commit()?;
+    Ok(ClosedBrain {
+        image: image_of(&kv),
+        cursor: Some(since),
+    })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

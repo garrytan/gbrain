@@ -7,10 +7,11 @@
  * gbrain-store `access_migrations`. What each member answers: rust/docs/store/access_rules.md.
  */
 import type { AccessMigrationRow, LiveAccessTokenRow, MemberKeyReadingRow, OpenPageCount, OpenPageExclusion, PeopleFolderCount } from '../../engine-sql/access-setup.ts';
-import { accessAllowedSql, callerAccessAllowedSql, callerAccessRecord, currentCallerAccess, privacyPartSql, withCallerAccess } from '../../search/private-visibility.ts';
+import { accessAllowedSql, callerAccessRecord, privacyPartSql, withCallerAccess } from '../../search/private-visibility.ts';
 import type { StoreBrain } from '../store.ts';
-import { refuseMember, storeCall, type StoreMember } from './common.ts';
-import { ownerOnlyFormIn, renderForStoreCaller, storePageTextPolicy, type StorePrivacyPolicy } from './private-provenance.ts';
+import { storeCall, type StoreMember } from './common.ts';
+import { openPageFloorPolicy } from './access-policies.ts';
+import { storePageTextPolicy, type StorePrivacyPolicy } from './private-provenance.ts';
 
 export const listUnboundTokenNames: StoreMember<[], string[]> = (brain) =>
   storeCall({ member: 'listUnboundTokenNames' }, () => brain.listUnboundTokenNames()) as Promise<string[]>;
@@ -107,21 +108,8 @@ export const countPeopleFolderPages: StoreMember<[], PeopleFolderCount[]> = asyn
  * A page is open when the member-access policy admits it, and visible when the page policy does too.
  */
 export const countOpenPages: StoreMember<[sources: readonly string[], exclude: readonly OpenPageExclusion[]], OpenPageCount[]> = async (brain, sources, exclude) => {
-  const floor = accessAllowedSql('p', [], []);
   const pageText = `(${accessAllowedSql('p', [], [])} AND ${privacyPartSql('p')})`;
-  const base: StorePrivacyPolicy = { honorAliases: false, entityPrivacy: false, ownerOnly: ownerOnlyFormIn(floor, 'pages', 'p') };
-  let access: StorePrivacyPolicy;
-  if (floor === renderForStoreCaller({}, () => callerAccessAllowedSql('p'))) {
-    access = base;
-  } else {
-    const caller = currentCallerAccess();
-    const folderCoverage = caller.folderCoverage.map(c => ({ source_id: c.source_id, prefix: c.prefix }));
-    const record = { identity: [], satisfiedRuleIds: [], folderCoverage, restricted: caller.restricted };
-    if (floor !== renderForStoreCaller(record, () => callerAccessAllowedSql('p'))) {
-      refuseMember('countOpenPages', 'an open-page floor rendered in a caller record');
-    }
-    access = { ...base, ...(folderCoverage.length ? { folderCoverage } : {}), ...(caller.restricted ? {} : { open: true }) };
-  }
+  const access = openPageFloorPolicy();
   // The page policy for the empty identity, judged against the text the caller's record renders.
   // pageText was rendered in the caller's own record, before the empty-identity record below (renderedIn).
   const renderedIn = { record: callerAccessRecord() };
