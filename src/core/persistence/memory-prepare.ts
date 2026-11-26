@@ -77,8 +77,9 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
       { fix: requestReceiptFix(row) });
   }
   const p = row.intent;
-  // C2: a standing rule page changes only through correct or gbrain rules; a remote fact on it would move its revision.
-  if (row.authority?.remote !== false && (isRuleSlug(row.slug) || isRuleSlug(p.entity_slug))) throw ruleOwnerOnly(isRuleSlug(row.slug) ? row.slug : String(p.entity_slug));
+  // C2: a standing rule page changes only through correct or gbrain rules; a fact on it, local or remote, and whatever
+  // redirect led there, would move its revision.
+  if (isRuleSlug(row.slug) || isRuleSlug(p.entity_slug)) throw ruleOwnerOnly(isRuleSlug(row.slug) ? row.slug : String(p.entity_slug));
   // GST-2249 W1: a stored save made for an attested person never publishes shared, whenever it was admitted. An audience
   // (on_behalf_of) is not an attested person, so a shared agent's share: true still publishes.
   if (p.share === true && parseStoredActor(row.authority?.actingFor)) throw attestedShareRefused(opError);

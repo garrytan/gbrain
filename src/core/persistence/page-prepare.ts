@@ -40,6 +40,7 @@ import { assertPurgeParams } from './purge-params.ts';
 import { authorizeWrite, slugDisclosable } from './authority.ts';
 import { admitPolicyFrontmatter } from '../policy/admission.ts';
 import { admitRuleFrontmatter } from '../rules/admission.ts';
+import { isTeamRuleSlug } from '../rules/record.ts';
 import { admitActionFrontmatter } from '../ledger/admission.ts';
 import { remoteLabelsChecked, defaultSourceMemberWriter, defaultSourceWriterIsOwner, defaultSourceWriterReaders, ownerRewriteOf, storedWriterReadsHeld } from './page-visibility.ts';
 import { loadFenceChunkOverlay } from '../eligibility/fence-overlay.ts';
@@ -1229,7 +1230,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
       suppliedTrustMarker = page.frontmatter.trust_tier;
       if (labelGuard) heldLabels = holdPrivacyLabels(page.frontmatter, snapshot?.page.frontmatter, labelGuard);
       stampPageTrustMarker(row, page.frontmatter, trust, storedTier, snapshot?.page.frontmatter);
-      defaultSourceWriterReaders(defaultSourceWriter, page.frontmatter, snapshot?.page, defaultSourceOwner, ownerRewrite);
+      defaultSourceWriterReaders(isTeamRuleSlug(row.slug) ? null : defaultSourceWriter, page.frontmatter, snapshot?.page, defaultSourceOwner, ownerRewrite);
       admitPolicyFrontmatter(row.authority.remote, row.slug, page, snapshot?.page.type); admitRuleFrontmatter(row.authority.remote, row.slug, page, snapshot?.page.type);
       admitActionFrontmatter(row.authority.remote, row.slug, page, snapshot?.page.type);
       if (privateRequest) assertPrivateRequestKept(row, page.frontmatter);

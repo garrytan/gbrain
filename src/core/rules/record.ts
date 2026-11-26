@@ -39,6 +39,9 @@ export function isRuleSlug(value: unknown): boolean {
   return typeof value === 'string' && value.toLowerCase().startsWith(RULE_PREFIX);
 }
 
+/** A team rule is for every agent in the brain, so its page never takes its writer's readers. */
+export const isTeamRuleSlug = (slug: string) => slug.toLowerCase().startsWith(`${RULE_PREFIX}team/`);
+
 /** rules/me/no-cto → me/no-cto */
 export function ruleIdOf(slug: string): string {
   return slug.slice(RULE_PREFIX.length);
