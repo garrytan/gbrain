@@ -151,7 +151,9 @@ describe('submit_job recovers through the job list, never a resubmit', () => {
   test('over HTTP the list_jobs tool is the fix for an admin client', async () => {
     const r = await withOpHandler('submit_job', async ctx => {
       const { MinionQueue } = await import('../src/core/minions/queue.ts');
-      await new MinionQueue(ctx.engine).add('embed', {}, {}, { allowProtectedSubmit: true });
+      const job = await new MinionQueue(ctx.engine).add('embed', {}, {}, { allowProtectedSubmit: true });
+      // A remote caller's job list shows only its own jobs: stamp the queued row as this client's.
+      await ctx.engine.executeRaw(`UPDATE minion_jobs SET data = data || jsonb_build_object('__owner_client_id', $2::text) WHERE id = $1`, [job.id, writer.clientId]);
       throw new Error('connection reset after enqueue');
     }, () => callTool(serve.base, writer.token, 'submit_job', { name: 'embed' }));
     const env = envelopeOf(r);

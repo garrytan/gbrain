@@ -12,7 +12,7 @@ import { parseGlobalFlags } from '../cli-options.ts';
 import type { Action } from '../agent-output.ts';
 import { currentSubmissionAuthority } from './submission-authority.ts';
 import { currentChatPhase } from '../ai/chat-usage.ts';
-import type { MinionJob } from './types.ts';
+import { jobOwnerSql, type MinionJob } from './types.ts';
 
 const HOLDER_ROW_QUEUE = 'gbrain-drain-lease';
 const LIST_CAP = 10;
@@ -147,7 +147,7 @@ export async function describeJobs(engine: BrainEngine, jobs: MinionJob[], opts:
 
   const meta = new Map((await engine.executeRaw<{ id: number; submitter: string | null; parent_owner: string | null }>(
     `SELECT j.id, CASE WHEN j.submission_authority->>'kind' = 'application' THEN j.data->>'__submitter' END AS submitter,
-            p.data->>'__owner_client_id' AS parent_owner
+            ${jobOwnerSql('p')} AS parent_owner
        FROM minion_jobs j LEFT JOIN minion_jobs p ON p.id = j.parent_job_id
       WHERE j.id = ANY($1::int[])`, [ids])).map(r => [Number(r.id), r]));
 
@@ -162,7 +162,7 @@ export async function describeJobs(engine: BrainEngine, jobs: MinionJob[], opts:
          FROM minion_jobs j WHERE j.id = ANY($1::int[])`, [waiting.map(j => j.id)]);
     for (const r of ahead) positions.set(Number(r.id), num(r.ahead));
     const active = await engine.executeRaw<{ id: number; name: string; queue: string; owner: string | null }>(
-      `SELECT id, name, queue, data->>'__owner_client_id' AS owner FROM minion_jobs
+      `SELECT id, name, queue, ${jobOwnerSql()} AS owner FROM minion_jobs
         WHERE status = 'active' AND queue = ANY($1::text[]) AND queue <> $2 ORDER BY started_at ASC NULLS LAST, id ASC LIMIT 500`,
       [[...new Set(waiting.map(j => j.queue))], HOLDER_ROW_QUEUE]);
     for (const r of active) {
@@ -176,7 +176,7 @@ export async function describeJobs(engine: BrainEngine, jobs: MinionJob[], opts:
   const parents = jobs.filter(j => j.status === 'waiting-children');
   if (parents.length > 0) {
     const rows = await engine.executeRaw<{ id: number; parent_job_id: number; owner: string | null }>(
-      `SELECT id, parent_job_id, data->>'__owner_client_id' AS owner FROM minion_jobs
+      `SELECT id, parent_job_id, ${jobOwnerSql()} AS owner FROM minion_jobs
         WHERE parent_job_id = ANY($1::int[]) AND status NOT IN ('completed','failed','dead','cancelled') ORDER BY id ASC`,
       [parents.map(j => j.id)]);
     for (const r of rows) {
@@ -191,7 +191,7 @@ export async function describeJobs(engine: BrainEngine, jobs: MinionJob[], opts:
   if (lockIds.length > 0) {
     const rows = await engine.executeRaw<LockRow & { id: string; beacon: unknown }>(
       `SELECT l.id, l.holder_pid, l.holder_host, l.acquired_at, l.ttl_expires_at, b.data->'drain_lease_beacon' AS beacon,
-              h.data->>'__owner_client_id' AS holder_owner
+              ${jobOwnerSql('h')} AS holder_owner
          FROM gbrain_cycle_locks l
          LEFT JOIN minion_jobs b ON b.queue = $2 AND b.lock_token = l.acquisition_token::text
          LEFT JOIN minion_jobs h ON (b.data->'drain_lease_beacon'->>'kind') = 'job'
@@ -202,9 +202,9 @@ export async function describeJobs(engine: BrainEngine, jobs: MinionJob[], opts:
 
   const spendRows = await engine.executeRaw<SpendRow>(
     `WITH RECURSIVE tree(root, id, owner, depth) AS (
-       SELECT id, id, data->>'__owner_client_id', 0 FROM minion_jobs WHERE id = ANY($1::int[])
+       SELECT id, id, ${jobOwnerSql()}, 0 FROM minion_jobs WHERE id = ANY($1::int[])
        UNION ALL
-       SELECT t.root, c.id, c.data->>'__owner_client_id', t.depth + 1 FROM minion_jobs c JOIN tree t ON c.parent_job_id = t.id WHERE t.depth < 20
+       SELECT t.root, c.id, ${jobOwnerSql('c')}, t.depth + 1 FROM minion_jobs c JOIN tree t ON c.parent_job_id = t.id WHERE t.depth < 20
      )
      SELECT t.root, (t.id = t.root) AS self,
             sum(r.actual_cents) FILTER (WHERE r.status = 'settled' AND r.actual_cents IS NOT NULL) AS settled_cents,
@@ -217,7 +217,7 @@ export async function describeJobs(engine: BrainEngine, jobs: MinionJob[], opts:
   if (owner !== null) {
     const rows = await engine.executeRaw<{ parent_job_id: number; i: number | string; o: number | string; c: number | string }>(
       `SELECT parent_job_id, sum(tokens_input) AS i, sum(tokens_output) AS o, sum(tokens_cache_read) AS c FROM minion_jobs
-        WHERE parent_job_id = ANY($1::int[]) AND status = 'completed' AND data->>'__owner_client_id' IS DISTINCT FROM $2::text
+        WHERE parent_job_id = ANY($1::int[]) AND status = 'completed' AND ${jobOwnerSql()} IS DISTINCT FROM $2::text
         GROUP BY 1`, [ids, owner]);
     for (const r of rows) foreignTokens.set(Number(r.parent_job_id), { i: num(r.i), o: num(r.o), c: num(r.c) });
   }

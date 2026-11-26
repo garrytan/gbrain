@@ -174,7 +174,7 @@ describe('access', () => {
 
   test('two watchers of one job each get their own emit with distinct ids', async () => {
     await engine.executeRaw(`INSERT INTO oauth_clients (client_id, client_name) VALUES ('client-c', 'client-c') ON CONFLICT DO NOTHING`);
-    const id = await seedJob('active');
+    const id = await seedJob('active', 'client-c');
     await dispatchToolCall(engine, 'watch_job', { id }, stdio);
     const admin = { remote: true, transport: 'http' as const, sourceId: 'default', auth: { token: 't', clientId: 'client-c', principal: { kind: 'oauth_client' as const, id: 'client-c' }, member: null, scopes: ['admin'] } };
     await dispatchToolCall(engine, 'watch_job', { id }, admin);
