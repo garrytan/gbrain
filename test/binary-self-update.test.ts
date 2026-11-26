@@ -492,6 +492,23 @@ describe('defaultFetchAttestation: GitHub token and failure detail', () => {
     }
   });
 
+  test('a failure with the token never puts the error text, which can quote the header, into the detail', async () => {
+    const REAL = globalThis.fetch;
+    (globalThis as any).fetch = (_input: any, init?: RequestInit) => {
+      const auth = new Headers(init?.headers).get('authorization');
+      return Promise.reject(new TypeError(auth ? `"${auth}" is an invalid header value` : 'ENETDOWN'));
+    };
+    const details: string[] = [];
+    try {
+      const parsed = await withEnv({ GH_TOKEN: TOKEN, GITHUB_TOKEN: undefined }, () => defaultFetchAttestation(FAKE_DIGEST, (d) => details.push(d)));
+      expect(parsed).toBeNull();
+      expect(details).toEqual(['the GitHub attestation API could not be read (with a GitHub token); the GitHub attestation API could not be read (no GitHub token): ENETDOWN']);
+      expect(details.join('')).not.toContain(TOKEN);
+    } finally {
+      (globalThis as any).fetch = REAL;
+    }
+  });
+
   test('a rate-limited response is null, with the status and rate-limit headers in the detail and never the token', async () => {
     const limited = new Response('API rate limit exceeded', {
       status: 403,

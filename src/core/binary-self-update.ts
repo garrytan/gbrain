@@ -283,7 +283,8 @@ export function parseAttestationBundle(bundle: any): ParsedAttestation | null {
  * (a refused or rate-limited token, a token that is not a valid header value, a network error) is followed by one
  * keyless attempt, so an ambient token never blocks a read the keyless call can make.
  * Returns null when no attempt yields a usable attestation, after telling `onUnavailable` why each attempt failed: the
- * HTTP status with the rate-limit headers, or the error. The token itself is never part of that detail.
+ * HTTP status with the rate-limit headers, or the error. An attempt with the token reports only that it failed, because a
+ * header error can quote the token, so the token is never part of that detail.
  */
 export async function defaultFetchAttestation(
   digest: string,
@@ -326,7 +327,11 @@ export async function defaultFetchAttestation(
       // also unavailable.
       failures.push(`the GitHub attestation API returned no usable build attestation (${label})`);
     } catch (err) {
-      failures.push(`the GitHub attestation API could not be read (${label}): ${err instanceof Error ? err.message : String(err)}`);
+      failures.push(
+        auth
+          ? `the GitHub attestation API could not be read (${label})`
+          : `the GitHub attestation API could not be read (${label}): ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
   onUnavailable?.(failures.join('; '));

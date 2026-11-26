@@ -61,18 +61,23 @@ describe('#9725: another brain\'s serve on the same macOS host', () => {
   });
 });
 
-test.skipIf(process.platform !== 'linux')('doctor ignores a sync that exited after ps listed it, but not a live sync whose brain home is unknown', async () => {
+test.skipIf(process.platform !== 'linux')('doctor ignores a sync that exited or is an unreaped zombie after ps listed it, but not a live sync whose brain home is unknown', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'gbrain-restart-ps-'));
   const running = Bun.spawn(['/bin/sleep', '30'], { env: {} });
+  const holder = Bun.spawn(['/bin/sh', '-c', '/bin/true & echo $!; exec /bin/sleep 30'], { env: {}, stdout: 'pipe' });
   try {
-    writeFileSync(join(dir, 'ps'), `#!/bin/sh\nprintf '%s\\n' '2147483647 1 00:01 gbrain sync' '${running.pid} 1 00:01 gbrain sync'\n`, { mode: 0o700 });
+    const zombie = Number(new TextDecoder().decode((await holder.stdout.getReader().read()).value).trim());
+    for (let i = 0; i < 100 && !readFileSync(`/proc/${zombie}/stat`, 'utf8').includes(') Z '); i++) await Bun.sleep(20);
+    expect(readFileSync(`/proc/${zombie}/stat`, 'utf8')).toContain(') Z ');
+    writeFileSync(join(dir, 'ps'), `#!/bin/sh\nprintf '%s\\n' '2147483647 1 00:01 gbrain sync' '${zombie} 1 00:01 gbrain sync' '${running.pid} 1 00:01 gbrain sync'\n`, { mode: 0o700 });
     await withEnv({ GBRAIN_HOME: dir, PATH: `${dir}:${process.env.PATH}` }, async () => {
       const plan = await upgradeRestartReadiness();
       expect(plan?.manual.map(step => step.pid)).toEqual([running.pid]);
     });
   } finally {
     running.kill();
-    await running.exited;
+    holder.kill();
+    await Promise.all([running.exited, holder.exited]);
     rmSync(dir, { recursive: true, force: true });
   }
 });
