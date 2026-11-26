@@ -469,6 +469,47 @@ describe('final review: approvals run only what the owner approved', () => {
   });
 });
 
+describe('second final review: labels, approved progress and entity names', () => {
+  test('a receipt whose readers were swapped for the private mark is refused at approval', async () => {
+    const r = await remote(MEMBER, 'correct', { rule: 'Bob Example reviews the heron notes on Mondays.', scope: 'me' });
+    const key = `correct.receipt.${r.json.receipt_id}`;
+    const stored = JSON.parse((await engine.getConfig(key))!);
+    expect(stored.rule.readable_by?.length).toBe(1);
+    delete stored.rule.readable_by;
+    stored.rule.visibility = 'private';
+    await engine.setConfig(key, JSON.stringify(stored));
+    const out = await approveRule(engine, `${r.json.rule_id}@${r.json.revision}`, { probe: ownerTty() }).catch(e => e);
+    expect(out.code).toBe('rule_transition');
+  });
+
+  test('an approved fact change the receipt claims is done still runs', async () => {
+    const wrong = await seedFact('Alice Example locks up on Wednesdays.');
+    const right = 'Alice Example locks up on Thursdays.';
+    const r = await remote(MEMBER, 'correct', { rule: right, fact_id: wrong, corrected_fact: right, entity: 'people/alice-example', scope: 'team' });
+    let fired = false;
+    __correctFaults.before = s => { if (s === 'fact' && !fired) { fired = true; throw new OperationError('write_pending', 'The write is accepted and is still pending.', 'Read the receipt again.'); } };
+    try { await approveRule(engine, `${r.json.rule_id}@${r.json.revision}`, { probe: ownerTty() }); } finally { __correctFaults.before = undefined; }
+    const key = `correct.receipt.${r.json.receipt_id}`;
+    const stored = JSON.parse((await engine.getConfig(key))!);
+    stored.steps.fact = { state: 'committed', request_id: `${r.json.receipt_id}.fact` };
+    await engine.setConfig(key, JSON.stringify(stored));
+    const polled = (await remote(MEMBER, 'correct', { receipt_id: r.json.receipt_id })).json;
+    expect(polled).toMatchObject({ state: 'committed', confirmed: true });
+    expect((await factRow(wrong))!.expired_at).not.toBeNull();
+    expect((await liveFacts()).filter(f => f === right)).toHaveLength(1);
+  });
+
+  test('a remote entity check never names a hidden page behind a shared fact with no page of its own', async () => {
+    await local('put_page', { slug: 'notes/carol-hidden', content: '---\ntitle: Carol notes\nreadable_by: [carol-example]\n---\n\nNotes.' });
+    const f = await seedFact('Carol Example keeps the spare key.', 'notes/carol-hidden');
+    await engine.executeRaw("UPDATE facts SET source_markdown_slug=NULL, visibility='world' WHERE id=$1", [Number(f)]);
+    const r = await remote(MEMBER, 'correct', { rule: 'Carol Example keeps no key.', fact_id: f, entity: 'people/alice-example', scope: 'team' });
+    expect(r.isError).toBe(true);
+    expect(r.text).not.toContain('notes/carol-hidden');
+    expect(r.text).toContain('fact_not_found');
+  });
+});
+
 describe('open proposals are capped per caller', () => {
   test('a member with the maximum open proposals is refused until one is settled', async () => {
     const ids: string[] = [];

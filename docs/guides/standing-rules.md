@@ -67,10 +67,12 @@ a remote connection cannot clear the problem itself).
   Your approval, with the rule and fact change exactly as the prompt showed them, is kept in a reserved config key only
   your approval writes (not on the receipt, which agents can edit), so if a write is still being saved when you
   approve, the next read of the receipt (by you or by the member's agent) finishes what you approved; you don't approve
-  twice. A receipt that changes while you read the prompt, or no longer matches the rule page, is refused
-  (`rule_transition`). A correction whose `entity` is a rule page in any spelling (`/rules/...`
-  too), or is not the page the fact is on, is refused (`invalid_params`); a remote caller that cannot read the fact
-  gets `fact_not_found` instead. One connection can have at most 20 corrections waiting at a time, counted under a
+  twice. That key also records which steps your approval has finished, so the next read skips only those, and a fact
+  change the receipt says was already made counts only when the write journal shows that exact change. A receipt that
+  changes while you read the prompt, or no longer matches the rule page (its words, its source, or for a `me` rule
+  whose agents it applies to), is refused (`rule_transition`). A correction whose `entity` is a rule page in any
+  spelling (`/rules/...` too), or is not the page the fact is on, is refused (`invalid_params`); a remote caller that
+  cannot read the fact, or the page the fact is about, gets `fact_not_found` instead. One connection can have at most 20 corrections waiting at a time, counted under a
   lock so calls sent together cannot pass it (`correct_proposals_capped`). A member's `me` rule loads only for that member's
   agents, never for yours.
 - **Guests** cannot correct anything (`correct_guest_refused`).

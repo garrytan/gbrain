@@ -1064,7 +1064,7 @@ src/core/repair/url-clone-fences.ts	execute_raw	5
 src/core/repair/visibility.ts	execute_raw	11
 src/core/restore-target.ts	execute_raw	4
 src/core/review-lists.ts	execute_raw	1
-src/core/rules/correct.ts	execute_raw	2	GST-3827 C2: the atomic claim of a config key (a new correction receipt, and the per-rule lease) and its compare-and-delete release (INSERT INTO config ... ON CONFLICT DO NOTHING RETURNING; DELETE ... WHERE key AND value); no typed engine method claims or releases a config key
+src/core/rules/correct.ts	execute_raw	3	GST-3827 C2: the atomic claim of a config key (a new correction receipt, and the per-rule lease) and its compare-and-delete release (INSERT INTO config ... ON CONFLICT DO NOTHING RETURNING; DELETE ... WHERE key AND value); no typed engine method claims or releases a config key. +1 (#10456 final review): the remote fact read an entity check needs before it names the fact's page, the same predicate forget's readsUnder runs in memory-mutations.ts; no typed engine method reads a fact under the caller's policy
 src/core/schema-migrations/helpers.ts	execute_raw	12
 src/core/schema-migrations/v039-multimodal-dual-column-v0-27-1.ts	execute_raw	1
 src/core/schema-migrations/v045-facts-hot-memory-v0-31.ts	execute_raw	2

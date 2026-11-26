@@ -21,8 +21,10 @@ import { opError, OperationError, type OperationContext } from '../ops/contract.
 import { loadConfig } from '../config.ts';
 import { initializeLocalPersistence, pageMutationSource, requestPrincipalForContext, submitPageMutation } from '../persistence/page-mutations.ts';
 import { refuseGuestSourceWrite } from '../guests/admission.ts';
-import { callerIsOwner, currentCallerAccess, resolveExcludePrivatePages, withoutCallerAccess } from '../search/private-visibility.ts';
-import { callerMember, memberPageSlug, ownerSpeaksForItself } from '../access/member-facts.ts';
+import { callerIsOwner, currentCallerAccess, privateProvenanceFilterUnderPolicy, resolveExcludePrivatePages, withoutCallerAccess } from '../search/private-visibility.ts';
+import { callerMember, factVisibilitySql, memberPageSlug, ownerSpeaksForItself } from '../access/member-facts.ts';
+import { projectionEligibleSql } from '../eligibility/sql.ts';
+import { resolveReadEligibility } from '../eligibility/policy.ts';
 import { ownerReachesFact, readForgetTarget } from '../persistence/forget-prepare.ts';
 import { getWriteRequest } from '../persistence/journal.ts';
 import { writeResponse } from '../persistence/service.ts';
@@ -263,16 +265,35 @@ async function pageRevision(engine: BrainEngine, slug: string, sourceId: string)
   return snap && !snap.page.deleted_at ? String(snap.revision) : null;
 }
 
+/**
+ * Who a rule page is for, in a form two copies compare by: its private mark, and for a `me` rule its readers too, which
+ * name the member it belongs to. A team rule's readers are left to the write path (GST-4000 tracks its narrowing).
+ */
+const labelsOf = (scope: RuleScope, visibility: unknown, readers: readonly string[] | null | undefined) =>
+  JSON.stringify(scope === 'me' ? [visibility === 'private', [...(readers ?? [])].sort()] : [visibility === 'private']);
+
+/** A committed write is this correction's own fact change: the same operation on the same fact, with the same words. */
+function writesFact(own: { operation: string; intent: Record<string, unknown> | null }, fact: CorrectReceipt['fact']): boolean {
+  const intent = own.intent ?? {};
+  return fact.action === 'replace'
+    ? own.operation === 'remember' && intent.fact === fact.text && String(intent.replaces) === fact.id && (!fact.entity || intent.entity === fact.entity)
+    : own.operation === 'forget' && String(intent.id) === fact.id;
+}
+
 /** Runs the steps not yet committed. `owner`: whether this run carries the owner's authority (the fact and activation need it). */
-async function advance(ctx: OperationContext, r: CorrectReceipt, owner: boolean, proof: OwnerProof | null): Promise<CorrectReceipt> {
+async function advance(ctx: OperationContext, r: CorrectReceipt, owner: boolean, proof: OwnerProof | null, approval: PendingApproval | null = null): Promise<CorrectReceipt> {
   const engine = ctx.engine;
+  const persist = async () => {
+    await saveReceipt(engine, r);
+    if (approval) await saveApproval(engine, r.receipt_id, { ...approval, steps: r.steps });
+  };
   const pageFor = (status: RuleStatus) => renderRulePage({ ...r.rule, status, receipt: r.receipt_id });
   for (const step of CORRECT_STEPS) {
     if (r.steps[step]?.state === 'committed') continue;
     if (step === 'fact' && r.fact.action === 'none') { r.steps.fact = { state: 'committed', request_id: '' }; continue; }
     if (step !== 'rule' && !owner) {
       if (r.steps[step]?.state === 'pending' || r.steps[step]?.state === 'started') { r.state = r.steps[step]!.state === 'pending' ? 'pending' : 'partial'; r.step = step; return r; }
-      r.state = 'proposed'; r.step = step; await saveReceipt(engine, r); return r;
+      r.state = 'proposed'; r.step = step; await persist(); return r;
     }
     const requestId = `${r.receipt_id}.${step}`;
     const tried = r.steps[step] !== undefined;
@@ -280,7 +301,7 @@ async function advance(ctx: OperationContext, r: CorrectReceipt, owner: boolean,
     const submittedBy = r.steps[step]?.principal ?? by;
     r.steps[step] = { ...(r.steps[step] ?? {}), state: 'started', request_id: requestId };
     r.state = 'partial'; r.step = step; delete r.error;
-    await saveReceipt(engine, r);
+    await persist();
     try {
       if (step === 'rule') {
         const snap = tried ? await engine.readPageSnapshot(r.rule.slug, { sourceId: r.source_id }) : null;
@@ -302,6 +323,9 @@ async function advance(ctx: OperationContext, r: CorrectReceipt, owner: boolean,
         }
         await __correctFaults.before?.(step, r);
         const own = tried ? await getWriteRequest(engine as never, submittedBy, parseWriteRequestId(requestId)!) : null;
+        if (own?.state === 'committed' && !writesFact(own, r.fact)) {
+          throw new OperationError('rule_transition', 'Another write already used this correction\'s fact request, so the fact was left as it is.', `Run gbrain rules show ${ruleIdOf(r.rule.slug)}.`);
+        }
         if (own && !['committed', 'conflict', 'failed', 'cancelled'].includes(own.state)) {
           throw new OperationError('write_pending', 'The write is accepted and is still pending.', 'Read the receipt again with correct {receipt_id}; it finishes the step once the write commits.');
         }
@@ -314,7 +338,7 @@ async function advance(ctx: OperationContext, r: CorrectReceipt, owner: boolean,
         }
         if (own?.state !== 'committed' && !gone) {
         r.steps.fact!.principal = { kind: by.kind, id: by.id };
-        await saveReceipt(engine, r);
+        await persist();
         const { verbOperations } = await import('../verbs.ts');
         const verb = verbOperations.find(o => o.name === (r.fact.action === 'replace' ? 'remember' : 'forget'))!;
         const out = await verb.handler(ctx, r.fact.action === 'replace'
@@ -338,23 +362,24 @@ async function advance(ctx: OperationContext, r: CorrectReceipt, owner: boolean,
       else if ((step === 'activate' && code === 'revision_conflict') || code === 'rule_transition' || code === 'rule_exists') r.state = 'conflicted';
       else r.state = 'partial';
       r.error = { code, message: (e instanceof Error ? e.message : String(e)).slice(0, 300) };
-      await saveReceipt(engine, r);
+      await persist();
       return r;
     }
     r.steps[step]!.state = 'committed';
     if (step !== 'fact') r.steps[step]!.revision = (await pageRevision(engine, r.rule.slug, r.source_id)) ?? undefined;
-    await saveReceipt(engine, r);
+    await persist();
   }
   r.state = 'committed'; r.step = null; delete r.error;
   if (proof && !r.confirmed) {
-    const stored = readRule({ ...(await engine.getPage(r.rule.slug, { sourceId: r.source_id }))!, source_id: r.source_id });
+    const page = await engine.getPage(r.rule.slug, { sourceId: r.source_id });
+    const stored = page ? readRule({ ...page, source_id: r.source_id }) : null;
     const fact = approvedFact(r.fact);
-    if (stored && stored.status === 'active' && approvalDigest(ruleDigest(stored), fact) === proof.digest) {
+    if (stored && stored.status === 'active' && approvalDigest(ruleDigest(stored), fact) === proof.digest && labelsOf(r.rule.scope, page!.frontmatter?.visibility, stored.readable_by) === labelsOf(r.rule.scope, r.rule.visibility, r.rule.readable_by)) {
       await saveConfirmation(engine, { source_id: r.source_id, slug: r.rule.slug, revision: r.steps.activate!.revision!, digest: ruleDigest(stored), ...(fact ? { fact } : {}), proof });
       r.confirmed = true;
     }
   }
-  await saveReceipt(engine, r);
+  await persist();
   return r;
 }
 
@@ -385,6 +410,20 @@ async function callerReadsFact(engine: BrainEngine, id: number, sourceId: string
   return withdraw && !!member && !!(await readForgetTarget(engine, id, sourceId, true, excludePrivate, false, memberPageSlug(member)));
 }
 
+/**
+ * The fact, and the page it is about, are both ones this remote caller reads, under the rules recall and forget apply
+ * (visibility, read eligibility, the fact's page and its entity's privacy); or, to withdraw it, it is on the caller's own
+ * member page. Only then does an entity check name the fact's page.
+ */
+async function callerSeesFact(ctx: OperationContext, id: number, sourceId: string, member: string | null, withdraw: boolean): Promise<boolean> {
+  const excludePrivate = await resolveExcludePrivatePages(ctx.engine, true);
+  if (withdraw && member && await readForgetTarget(ctx.engine, id, sourceId, true, excludePrivate, false, memberPageSlug(member))) return true;
+  const readable = callerIsOwner() ? 'TRUE' : factVisibilitySql('facts', ['world']);
+  const eligible = projectionEligibleSql('facts', 'facts', await resolveReadEligibility(ctx));
+  const provenance = excludePrivate ? ` AND ${privateProvenanceFilterUnderPolicy('facts')}` : '';
+  return (await ctx.engine.executeRaw(`SELECT 1 FROM facts WHERE id=$1 AND source_id=$2 AND ${readable} AND ${eligible}${provenance}`, [id, sourceId])).length > 0;
+}
+
 /** An entity that names a standing rule page in any spelling remember would turn into that slug. */
 const namesRule = (entity: string) => isRuleSlug(entity) || isRuleSlug(fallbackSlugify(entity.trim()) ?? '');
 
@@ -392,8 +431,8 @@ const namesRule = (entity: string) => isRuleSlug(entity) || isRuleSlug(fallbackS
  * A correction names the fact's own page as its entity, or none. A remote caller learns the fact's page only when it
  * reads the fact; otherwise the fact is not found, so the check never names a page the caller cannot read.
  */
-async function assertFactEntity(engine: BrainEngine, factId: string, sourceId: string, entity: string, reader?: { member: string | null; withdraw: boolean; owner: boolean }): Promise<void> {
-  if (reader && !(await callerReadsFact(engine, Number(factId), sourceId, reader.member, reader.withdraw))) {
+async function assertFactEntity(engine: BrainEngine, factId: string, sourceId: string, entity: string, reader?: { ctx: OperationContext; member: string | null; withdraw: boolean; owner: boolean }): Promise<void> {
+  if (reader && !(await callerSeesFact(reader.ctx, Number(factId), sourceId, reader.member, reader.withdraw))) {
     const access = currentCallerAccess();
     if (!reader.owner || !(await ownerReachesFact(engine, Number(factId), sourceId, { identity: access.identity, satisfied: access.satisfiedRuleIds }))) throw factNotFound(factId);
   }
@@ -410,8 +449,19 @@ const payloadOf = (r: CorrectReceipt): ApprovedPayload => ({ source_id: r.source
 /** The owner approved this exact proposal: its revision, its words and its fact change. */
 function approvalHolds(r: CorrectReceipt, a: PendingApproval | null): a is PendingApproval {
   const p = a?.payload as ApprovedPayload | undefined;
-  return !!a && !!p?.rule && !!p.fact && a.revision === r.steps.rule?.revision && p.rule.slug === r.rule.slug && a.rule_digest === ruleDigest(p.rule)
+  return !!a && !!p?.rule && !!p.fact && a.revision === r.steps.rule?.revision && p.source_id === r.source_id && p.rule.slug === r.rule.slug && a.rule_digest === ruleDigest(p.rule)
     && a.proof.digest === approvalDigest(a.rule_digest, approvedFact(p.fact)) && (a.proof.method === 'terminal' || a.proof.method === 'owner_session');
+}
+
+/**
+ * The receipt an approval runs: the approved payload, at the approved revision, with only the progress the approval
+ * itself recorded. A fact write the receipt says was submitted before the approval is checked against the write journal.
+ */
+function approvedRun(r: CorrectReceipt, a: PendingApproval): CorrectReceipt {
+  const recorded = (a.steps ?? {}) as CorrectReceipt['steps'];
+  const submitted = !recorded.fact && r.steps.fact?.principal ? { fact: { state: 'started' as const, request_id: `${r.receipt_id}.fact`, principal: r.steps.fact.principal } } : {};
+  return { ...r, ...(a.payload as ApprovedPayload), confirmed: false,
+    steps: { ...submitted, ...recorded, rule: { state: 'committed', request_id: `${r.receipt_id}.rule`, revision: a.revision } } };
 }
 
 /** Runs fn as the brain host's own CLI writer, outside the remote caller's access, remote mark and writer scope. */
@@ -431,9 +481,9 @@ async function continueReceipt(ctx: OperationContext, r: CorrectReceipt): Promis
     const fresh = (await readReceipt(ctx.engine, r.receipt_id)) ?? r;
     if (fresh.state === 'conflicted') return fresh;
     const approval = await readApproval(ctx.engine, fresh.receipt_id);
-    if (approvalHolds(fresh, approval)) {
-      const approved = { ...fresh, ...(approval.payload as ApprovedPayload) };
-      const done = await asOwner(ctx.engine, () => advance(localRulesCtx(ctx.engine, approved.source_id), approved, true, approval.proof));
+    if (fresh.source_id === r.source_id && fresh.rule.slug === r.rule.slug && approvalHolds(fresh, approval)) {
+      const approved = approvedRun(fresh, approval);
+      const done = await asOwner(ctx.engine, () => advance(localRulesCtx(ctx.engine, approved.source_id), approved, true, approval.proof, approval));
       if (done.state === 'committed' || done.state === 'conflicted') await clearApproval(ctx.engine, fresh.receipt_id, approval.proof);
       return done;
     }
@@ -460,7 +510,7 @@ export async function runCorrect(ctx: OperationContext, p: Record<string, unknow
   let receiptId = `cr-${digestOf([key, input.request_id ?? intentOf(input)]).slice(0, 16)}`;
   const author = authorOf(ctx);
   if (input.fact_id && !author.owner && !(await callerReadsFact(ctx.engine, Number(input.fact_id), input.source_id, author.member, !input.corrected_fact))) throw factNotFound(input.fact_id);
-  if (input.fact_id && input.entity) await assertFactEntity(ctx.engine, input.fact_id, input.source_id, input.entity, remote ? { member: author.member, withdraw: !input.corrected_fact, owner: author.owner && ownerSpeaksForItself(ctx) } : undefined);
+  if (input.fact_id && input.entity) await assertFactEntity(ctx.engine, input.fact_id, input.source_id, input.entity, remote ? { ctx, member: author.member, withdraw: !input.corrected_fact, owner: author.owner && ownerSpeaksForItself(ctx) } : undefined);
   const intent = intentOf(input);
   let prior = await readReceipt(ctx.engine, receiptId);
   if (prior && !input.request_id && (prior.state === 'committed' || prior.state === 'conflicted')) { receiptId = `cr-${randomBytes(8).toString('hex')}`; prior = null; }
@@ -574,7 +624,8 @@ export async function approveRule(engine: BrainEngine, ref: string, opts: { sour
   }
   if (receipt) {
     const audience = receipt.rule.scope === 'me' ? (receipt.rule.visibility === 'private') !== !!receipt.rule.readable_by?.length : !receipt.rule.visibility && !receipt.rule.readable_by?.length;
-    if (receipt.source_id !== sourceId || ruleDigest(receipt.rule) !== digest || receipt.rule.attribution !== rule.attribution || !audience) throw changedReceipt(rule.id);
+    const labels = labelsOf(receipt.rule.scope, receipt.rule.visibility, receipt.rule.readable_by) === labelsOf(rule.scope, snap!.page.frontmatter?.visibility, rule.readable_by);
+    if (receipt.source_id !== sourceId || ruleDigest(receipt.rule) !== digest || receipt.rule.attribution !== rule.attribution || !audience || !labels) throw changedReceipt(rule.id);
   }
   const shown = receipt?.rule ?? rule;
   if (receipt?.fact.entity && fact) await assertFactEntity(engine, fact.id, sourceId, receipt.fact.entity);
@@ -600,8 +651,9 @@ export async function approveRule(engine: BrainEngine, ref: string, opts: { sour
       if (held) {
         if (held.state === 'conflicted') return { approved: false, rule_id: rule.id, receipt: receiptView(held, false) };
         if (JSON.stringify(payloadOf(held)) !== JSON.stringify(payloadOf(receipt!))) throw changedReceipt(rule.id);
-        await saveApproval(engine, held.receipt_id, { revision, rule_digest: digest, proof, payload: payloadOf(receipt!) });
-        const done = await advance(ctx, { ...held, ...payloadOf(receipt!) }, true, proof);
+        const approval: PendingApproval = { revision, rule_digest: digest, proof, payload: payloadOf(receipt!) };
+        await saveApproval(engine, held.receipt_id, approval);
+        const done = await advance(ctx, approvedRun(held, approval), true, proof, approval);
         if (done.state === 'committed' || done.state === 'conflicted') await clearApproval(engine, held.receipt_id, proof);
         if (done.state !== 'committed') return { approved: false, rule_id: rule.id, receipt: receiptView(done, false) };
         return { approved: true, rule_id: rule.id, revision: done.steps.activate?.revision ?? null, confirmed: done.confirmed, receipt: receiptView(done, false) };
