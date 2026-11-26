@@ -145,10 +145,16 @@ export async function heldForInput(engine: BrainEngine, key: GenerationKey, pin:
 /** The hold ids of `kind` that `heldForInput` still matches (same input pin and current policy), for backlogs that leave those items out (#10270). */
 export async function currentHoldIds(engine: BrainEngine, kind: string): Promise<string[]> {
   const config = await readGenerationsConfig(engine);
-  const rows = await engine.executeRaw<{ source_id: string; owner_key: string; input_pin: string; hold_id: string; item_set_hash: string; held_reason: string }>(
-    `SELECT source_id, owner_key, input_pin, hold_id, item_set_hash, held_reason FROM derived_generations WHERE kind=$1 AND state='held' AND input_pin IS NOT NULL`, [kind]);
-  return rows.filter(row => row.hold_id === holdIdFor({ kind, sourceId: row.source_id, ownerKey: row.owner_key }, row.input_pin, config, row.item_set_hash, row.held_reason as HeldReason))
-    .map(row => row.hold_id);
+  // Typed reads (the held rows of every source, then each input's held rows), so a Rust brain answers too.
+  const rows = await engine.listHeldGenerationRows(await engine.listSourceIds(), kind, {});
+  const ids: string[] = [];
+  for (const row of rows) {
+    if (row.input_pin === null) continue;
+    const key = { kind, sourceId: row.source_id, ownerKey: row.owner_key };
+    const forInput = await engine.heldGenerationRowsForInput(key, row.input_pin);
+    if (forInput.some(held => held.hold_id === row.hold_id && held.hold_id === holdIdFor(key, row.input_pin!, config, held.item_set_hash, held.held_reason as HeldReason))) ids.push(row.hold_id);
+  }
+  return ids;
 }
 
 /**
