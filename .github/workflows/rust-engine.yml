@@ -70,6 +70,7 @@ on:
       - 'src/core/migration-orchestration-lock.ts'
       - 'test/apply-migrations-rust-swap.serial.test.ts'
       - 'test/apply-migrations-rust-client-conflict.serial.test.ts'
+      - 'test/apply-migrations-rust-skill-adoption.serial.test.ts'
       - 'src/core/shared-skills/migration.ts'
       - 'test/token-member-cli-parity.serial.test.ts'
       - 'test/rust-mcp-receipts.serial.test.ts'
@@ -101,6 +102,7 @@ on:
       - 'src/core/migration-orchestration-lock.ts'
       - 'test/apply-migrations-rust-swap.serial.test.ts'
       - 'test/apply-migrations-rust-client-conflict.serial.test.ts'
+      - 'test/apply-migrations-rust-skill-adoption.serial.test.ts'
       - 'src/core/shared-skills/migration.ts'
       - 'test/token-member-cli-parity.serial.test.ts'
       - 'test/rust-mcp-receipts.serial.test.ts'
@@ -436,6 +438,15 @@ jobs:
           GBRAIN_TEST_REQUIRE_RUST_ADDON: '1'
           GBRAIN_TEST_RECEIPT_DIR: ${{ runner.temp }}/receipts
         run: bash scripts/run-with-receipt.sh rust-store apply-migrations-rust-client-conflict -- bun test --timeout=900000 test/apply-migrations-rust-client-conflict.serial.test.ts
+      # Shared skills on a swapped Rust brain: the reviewed activation, then v0.53.0 adopting the content root's pack.
+      # Same ownership rule as above: a missing addon is an error, and the receipt check fails the lane when no test ran.
+      - name: A swapped Rust brain activates shared skills and v0.53.0 adopts its pack
+        if: matrix.shard == '1'
+        shell: bash
+        env:
+          GBRAIN_TEST_REQUIRE_RUST_ADDON: '1'
+          GBRAIN_TEST_RECEIPT_DIR: ${{ runner.temp }}/receipts
+        run: bash scripts/run-with-receipt.sh rust-store apply-migrations-rust-skill-adoption -- bun test --timeout=900000 test/apply-migrations-rust-skill-adoption.serial.test.ts
       # The shadow seed leaves the swap's writer-evidence tables behind (rust seed::NOT_COPIED). Same ownership rule as
       # above: a missing addon is an error here, and the next step fails the lane when no test ran.
       - name: The shadow seed skips the writer-evidence tables

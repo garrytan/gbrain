@@ -529,6 +529,7 @@ test/engine-parity/segmented-purge-writes.test.ts
 test/engine-parity/segmented-rewrite.test.ts
 test/engine-parity/session-state-cap.test.ts
 test/engine-parity/session-state.test.ts
+test/engine-parity/shared-skill-adoption.test.ts
 test/engine-parity/shared-skill-members.test.ts
 test/engine-parity/slot-ends-callers.test.ts
 test/engine-parity/slot-ends-refusal.test.ts
