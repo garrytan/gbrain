@@ -45,14 +45,14 @@ function lockHolder(path: string): string | null {
  * THE destructive delete (`capture delete`, `engine shadow stop --delete`): the replay lock first (shadow_replay_busy
  * while a replay runs), then the data (`whole`: the brain's whole shadow folder). Returns what it deleted.
  */
-export function deleteReplayState(shadowDir: string, opts: { whole: boolean }): string[] {
+export function deleteReplayState(shadowDir: string, opts: { whole: boolean; keep?: string[] }): string[] {
   const replayDir = join(shadowDir, 'replay');
   const cap = captureDir(shadowDir);
   const unlock = acquireReplayLock(replayDir, 0);
   const gone: string[] = [];
   try {
     const rm = (p: string) => { rmSync(p, { recursive: true, force: true }); gone.push(p); };
-    if (opts.whole) { for (const f of readdirSync(shadowDir)) if (f !== 'replay') rm(join(shadowDir, f)); }
+    if (opts.whole) { for (const f of readdirSync(shadowDir)) if (f !== 'replay' && !opts.keep?.includes(f)) rm(join(shadowDir, f)); }
     else if (existsSync(cap)) { for (const f of readdirSync(cap)) if (f !== 'state.json' && f !== 'off') rm(join(cap, f)); }
     for (const f of readdirSync(replayDir)) if (f !== 'lock') rm(join(replayDir, f));
     return gone;

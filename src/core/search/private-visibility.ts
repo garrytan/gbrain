@@ -1206,25 +1206,7 @@ export async function findPrivateOnlySlugs(
   opts: { includeDeleted?: boolean } = {},
 ): Promise<Set<string>> {
   if (slugs.length === 0) return new Set();
-  const params: unknown[] = [slugs];
-  let scopeClause = '';
-  if (scope.sourceIds && scope.sourceIds.length > 0) {
-    params.push(scope.sourceIds);
-    scopeClause = `AND p.source_id = ANY($${params.length}::text[])`;
-  } else if (scope.sourceId) {
-    params.push(scope.sourceId);
-    scopeClause = `AND p.source_id = $${params.length}`;
-  }
-  const rows = await engine.executeRaw<{ slug: string }>(
-    `SELECT p.slug FROM pages p
-      WHERE p.slug = ANY($1::text[])
-        ${opts.includeDeleted ? '' : 'AND p.deleted_at IS NULL'}
-        ${scopeClause}
-      GROUP BY p.slug
-      HAVING bool_and(NOT (${privatePagesFilterForCaller('p')}))`,
-    params,
-  );
-  return new Set(rows.map(r => r.slug));
+  return new Set(await engine.readPrivateOnlySlugs(slugs, scope, opts));
 }
 
 const CACHE_TTL_MS = 30_000;

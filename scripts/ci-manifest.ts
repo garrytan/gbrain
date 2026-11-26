@@ -21,7 +21,7 @@
  * Docs: docs/ci-red-runbook.md#ci-failure-manifest
  */
 import { appendFileSync, existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { buildSide, compare, DEFAULT_DELTAS, loadReceiptDir, parseDeltas, parseJUnit, type DeltaRow, type Receipt } from './ci-executed-counts.ts';
 
 export const MANIFEST_SCHEMA = 'gbrain-ci-manifest/v1';
@@ -75,7 +75,7 @@ export function buildManifest(receipts: Receipt[], bind: ManifestBinding, deltas
     else entry.skipped++;
     if (id.status === 'fail') {
       entry.failed++;
-      const message = messages.get(`${id.file}\u001f${id.test}`);
+      const message = messages.get(`${id.artifact}\u001f${id.file}\u001f${id.test}`);
       const safe = message !== undefined && redactMessage(message) === message;
       failures.push({ lane: id.lane, file: id.file, test: id.test, arm: id.arm, ...(message === undefined ? {} : { ...(safe ? { signature: failureSignature(message) } : {}), message: redactMessage(message).slice(0, 500) }) });
     }
@@ -111,7 +111,7 @@ const redactMessage = (text: string) => text
 const ENTITY: Record<string, string> = { lt: '<', gt: '>', amp: '&', quot: '"', apos: "'" };
 const decode = (t: string) => t.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (w, r: string) => (r[0] === '#' ? String.fromCodePoint(r[1] === 'x' ? parseInt(r.slice(2), 16) : Number(r.slice(1))) : ENTITY[r] ?? w));
 
-/** First JUnit failure message per failing test (`file\u001ftest`), paired in report order as the stress gate pairs them. */
+/** First JUnit failure message per failing test (`artifact\u001ffile\u001ftest`, the artifact being the receipt's directory as loadReceiptDir names it, so matrix cells keep their own messages), paired in report order as the stress gate pairs them. */
 export function junitMessages(dir: string): Map<string, string> {
   const out = new Map<string, string>();
   const walk = (d: string) => {
@@ -129,7 +129,7 @@ export function junitMessages(dir: string): Map<string, string> {
       }
       failed.forEach((c, i) => {
         const file = c.file.includes('test/') ? c.file.slice(c.file.indexOf('test/')) : c.file;
-        const key = `${file}\u001f${c.test}`;
+        const key = `${basename(d)}\u001f${file}\u001f${c.test}`;
         if (!out.has(key) && messages[i] !== undefined) out.set(key, messages[i]!);
       });
     }

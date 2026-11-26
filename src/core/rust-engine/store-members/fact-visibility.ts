@@ -16,7 +16,7 @@ import { callerMember, factVisibilitySql } from '../../access/member-facts.ts';
 import { currentCallerAccess, privateFactSources } from '../../search/private-visibility.ts';
 import { refuseMember } from './common.ts';
 import { selfChecked } from '../access-self-check.ts';
-import { callerReadersPagePolicy, judgeWidenedCaller, renderForStoreCaller, type StorePrivacyPolicy } from './private-provenance.ts';
+import { callerFolders, callerFoldersPagePolicy, callerReadersPagePolicy, judgeWidenedCaller, renderForStoreCaller, type StorePrivacyPolicy } from './private-provenance.ts';
 
 /** What the store reads to widen a visibility list without 'private' (`VisibilityWidening` in widen.rs). */
 export interface StoreVisibilityWidening {
@@ -51,13 +51,21 @@ function storeVisibilityRendered(member: string, visibility: readonly string[] |
   const openFlag = currentCallerAccess().restricted === false ? { open: true } : {};
   const widen = judgeWidenedCaller<StoreVisibilityWidening>((readers) => {
     const text = factVisibilitySql('facts', visibility);
-    const fresh = { ...readers, privateFactSources: [...privateFactSources()], hidePrivate: true };
-    const canonical = renderForStoreCaller(fresh, () => ({ sql: factVisibilitySql('facts', visibility), member: callerMember() }));
-    if (text !== canonical.sql) return undefined;
-    return {
-      ...(canonical.member ? { member: canonical.member, memberPagePolicy: { ...callerReadersPagePolicy(readers), ...openFlag } } : {}),
-      privateFactSources: fresh.privateFactSources,
-    };
+    // The fresh record of the caller's readers and grant, then the same record with the caller's own folder rules and
+    // pending prefixes (a member whose member page sits under a rule it satisfies).
+    const folders = callerFolders();
+    const withFolders = folders.satisfiedRuleIds.length > 0 || folders.folderCoverage.length > 0;
+    for (const record of withFolders ? [{}, folders] : [{}]) {
+      const fresh = { ...readers, ...record, privateFactSources: [...privateFactSources()], hidePrivate: true };
+      const canonical = renderForStoreCaller(fresh, () => ({ sql: factVisibilitySql('facts', visibility), member: callerMember() }));
+      if (text !== canonical.sql) continue;
+      const pagePolicy = 'satisfiedRuleIds' in record ? callerFoldersPagePolicy(readers, folders) : callerReadersPagePolicy(readers);
+      return {
+        ...(canonical.member ? { member: canonical.member, memberPagePolicy: { ...pagePolicy, ...openFlag } } : {}),
+        privateFactSources: fresh.privateFactSources,
+      };
+    }
+    return undefined;
   });
   if (!widen) refuseMember(member, 'a visibility list widened by member pages or grants for a caller the store does not model');
   return { visibility: [...visibility], widen };
