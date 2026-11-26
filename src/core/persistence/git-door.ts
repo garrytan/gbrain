@@ -165,8 +165,9 @@ function lookupTree(raw: Buffer, oidBytes: number, names: string[]): Map<string,
 }
 
 /**
- * A raw tree with `edits` applied (an entry set, or removed by null) and every other entry's bytes kept, in Git's
- * entry order: a new name is inserted where it sorts (a directory sorts as if its name ended in '/').
+ * A raw tree with `edits` applied (an entry set, or removed by null), in Git's entry order: a new name is inserted
+ * where it sorts (a directory sorts as if its name ended in '/'). Other entries keep their bytes except historical
+ * 100664 regular-file modes, canonicalized to the equivalent non-executable 100644 so Git's strict tree writer accepts them.
  */
 function rewriteTree(dir: Dir, oidBytes: number): Buffer {
   const ops: { start: number; end: number; bytes: Buffer }[] = [];
@@ -178,6 +179,12 @@ function rewriteTree(dir: Dir, oidBytes: number): Buffer {
     if (before) ops.push({ start: before.start, end: before.end, bytes: Buffer.alloc(0) });
     if (entry) inserts.push({ key: Buffer.from(entry.mode === TREE_MODE ? `${name}/` : name, 'latin1'), bytes });
   }
+  // #8321: preserve sibling blobs/names, not a legacy mode that makes hash-object reject the whole rebuilt tree.
+  // Edited entries already have a canonical mode (or are removed); do not overlap their replacement byte ranges.
+  eachEntry(dir.raw, oidBytes, (start, space, nul) => {
+    if (dir.raw.toString('latin1', start, space) === '100664' && !dir.edits.has(dir.raw.toString('latin1', space + 1, nul)))
+      ops.push({ start, end: space, bytes: Buffer.from('100644') });
+  });
   inserts.sort((a, b) => Buffer.compare(a.key, b.key));
   let next = 0;
   if (inserts.length) eachEntry(dir.raw, oidBytes, (start, space, nul) => {

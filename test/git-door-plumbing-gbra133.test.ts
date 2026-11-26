@@ -35,10 +35,10 @@ const OLD = new Date('2001-01-01T00:00:00Z');
 const roots: string[] = [];
 
 /** A repository on branch main whose files carry an old mtime, so no index entry is racily clean. */
-function repo(files: Record<string, string>, sub = ''): string {
+function repo(files: Record<string, string>, sub = '', format: 'sha1' | 'sha256' = 'sha1'): string {
   const top = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-door-plumbing-')));
   roots.push(top);
-  git(top, 'init', '-q', '-b', 'main');
+  git(top, 'init', '-q', '-b', 'main', `--object-format=${format}`);
   git(top, 'config', 'user.name', 'Example Writer'); git(top, 'config', 'user.email', 'writer@example.invalid');
   for (const [path, body] of Object.entries(files)) put(top, path, body);
   git(top, 'add', '-A'); git(top, 'commit', '-qm', 'seed');
@@ -60,6 +60,27 @@ function indexEntries(root: string): Map<string, string> {
   }
   return entries;
 }
+/** Seed a historical mode Git can read but its strict tree writer refuses; never use --literally in the door. */
+function legacyMode(root: string, path: string, mode = '100664'): string {
+  const parts = path.split('/');
+  const oidBytes = git(root, 'rev-parse', '--show-object-format') === 'sha256' ? 32 : 20;
+  const rewrite = (tree: string, depth: number): string => {
+    const bytes = execFileSync('git', ['-C', root, 'cat-file', 'tree', tree], { env });
+    const leaf = depth === parts.length - 1;
+    const header = Buffer.from(`${leaf ? '100644' : '40000'} ${parts[depth]}\0`);
+    const at = bytes.indexOf(header);
+    expect(at).toBeGreaterThanOrEqual(0);
+    const oidAt = at + header.length;
+    if (leaf) bytes.write(mode, at, 'ascii');
+    else Buffer.from(rewrite(bytes.subarray(oidAt, oidAt + oidBytes).toString('hex'), depth + 1), 'hex').copy(bytes, oidAt);
+    return execFileSync('git', ['-C', root, 'hash-object', '-w', '-t', 'tree', '--literally', '--stdin'], { env, input: bytes }).toString().trim();
+  };
+  const tree = rewrite(git(root, 'rev-parse', 'HEAD^{tree}'), 0);
+  const commit = git(root, 'commit-tree', tree, '-p', 'HEAD', '-m', 'historical tree mode');
+  git(root, 'update-ref', 'HEAD', commit);
+  return commit;
+}
+
 const door = (root: string, ...paths: string[]) => commitThroughDoor(root, paths.map(path => ({ path: join(root, path), planned: hashFile(join(root, path)) })));
 /** A sandbox's git wrapper may append a co-author trailer to every `git commit` (never to commit-tree): both sides are read without it. */
 const unshimmed = (message: string) => message.replace(/^Co-authored-by: .*\n/gm, '').replace(/\n+$/, '\n');
@@ -122,6 +143,68 @@ describe('G2 plumbing door commit', () => {
     expect(tree.get('notes/link.md')![0]).toBe('120000');
     expect(tree.get('tools/script.sh')!.join(' ')).toBe(old.get('tools/script.sh')!);
     expect(git(root, 'status', '--porcelain')).toBe('');
+  });
+
+  for (const format of ['sha1', 'sha256'] as const) for (const action of ['edit', 'add', 'remove'] as const) test(`#8321: ${format} ${action} canonicalizes legacy sibling modes without staging their content`, async () => {
+    const root = repo({ 'notes/page.md': 'page\n', 'notes/a.md': 'a\n', 'notes/z.md': 'z\n', 'root.md': 'root\n', 'untouched/old.md': 'old\n' }, '', format);
+    legacyMode(root, 'notes/page.md');
+    legacyMode(root, 'notes/a.md');
+    legacyMode(root, 'notes/z.md');
+    legacyMode(root, 'root.md');
+    const parent = legacyMode(root, 'untouched/old.md');
+    const untouched = git(root, 'rev-parse', 'HEAD:untouched');
+    const blobs = ['notes/a.md', 'notes/z.md', 'root.md'].map(path => git(root, 'rev-parse', `HEAD:${path}`));
+    put(root, 'notes/z.md', 'user-staged sibling\n');
+    git(root, 'add', '--', 'notes/z.md');
+    const before = indexEntries(root);
+    const path = action === 'add' ? 'notes/new.md' : 'notes/page.md';
+    if (action === 'remove') unlinkSync(join(root, path)); else put(root, path, 'published revision\n');
+    const commit = await door(root, path);
+    expect(git(root, 'rev-parse', 'HEAD^')).toBe(parent);
+    expect(['notes/a.md', 'notes/z.md', 'root.md'].map(path => git(root, 'rev-parse', `HEAD:${path}`))).toEqual(blobs);
+    expect(git(root, 'rev-parse', 'HEAD:untouched')).toBe(untouched);
+    for (const tree of ['HEAD^{tree}', 'HEAD:notes']) {
+      const oid = git(root, 'rev-parse', tree);
+      const bytes = execFileSync('git', ['-C', root, 'cat-file', 'tree', oid], { env });
+      expect(bytes.includes(Buffer.from('100664 '))).toBe(false);
+      // Validate the new tree itself, not fsck of the intentionally noncanonical historical parent.
+      expect(execFileSync('git', ['-C', root, 'hash-object', '-t', 'tree', '--stdin'], { env, input: bytes }).toString().trim()).toBe(oid);
+    }
+    const after = indexEntries(root);
+    before.delete(path); after.delete(path);
+    expect(after).toEqual(before);
+    expect(git(root, 'show', ':notes/z.md')).toBe('user-staged sibling');
+    expect(git(root, 'diff', '--cached', '--name-only')).toBe('notes/z.md');
+    expect(git(root, 'status', '--porcelain', '--', path)).toBe('');
+    if (action === 'remove') expect(git(root, 'ls-tree', 'HEAD', '--', path)).toBe('');
+    else expect(git(root, 'show', `${commit}:${path}`)).toBe('published revision');
+  });
+
+  test('#8321: a branch retry canonicalizes the legacy entries of the new HEAD', async () => {
+    const root = repo({ 'notes/page.md': 'page\n', 'notes/a.md': 'a\n', 'notes/z.md': 'z\n' });
+    legacyMode(root, 'notes/a.md');
+    let moved = '';
+    doorSeams.beforeUpdateRef = (_root, attempt) => {
+      if (!attempt) moved = legacyMode(root, 'notes/z.md');
+    };
+    put(root, 'notes/page.md', 'published revision\n');
+    await door(root, 'notes/page.md');
+    expect(git(root, 'rev-parse', 'HEAD^')).toBe(moved);
+    expect(git(root, 'show', 'HEAD:notes/page.md')).toBe('published revision');
+    const bytes = execFileSync('git', ['-C', root, 'cat-file', 'tree', 'HEAD:notes'], { env });
+    expect(bytes.includes(Buffer.from('100664 '))).toBe(false);
+    for (const path of ['notes/a.md', 'notes/z.md']) expect(git(root, 'rev-parse', `HEAD:${path}`)).toBe(git(root, 'rev-parse', `${moved}:${path}`));
+    expect(git(root, 'status', '--porcelain')).toBe('');
+  });
+
+  test('#8321: unknown sibling modes still refuse without moving HEAD or changing the index', async () => {
+    const root = repo({ 'notes/page.md': 'page\n', 'notes/bad.md': 'bad\n' });
+    const head = legacyMode(root, 'notes/bad.md', '100600');
+    const before = indexEntries(root);
+    put(root, 'notes/page.md', 'published revision\n');
+    expect(await refusal(door(root, 'notes/page.md'))).toMatchObject({ code: 'git_unavailable' });
+    expect(git(root, 'rev-parse', 'HEAD')).toBe(head);
+    expect(indexEntries(root)).toEqual(before);
   });
 
   test('a removal drops its entry, and a directory it empties leaves the tree', async () => {
@@ -299,6 +382,23 @@ const setup = ({ root }: { root: string }) => { writeFileSync(join(root, '.gitig
 
 for (const backend of testBackends()) describe(`[${backend}] G2 plumbing: a raced branch rolls the write back`, () => {
   const databaseUrl = backend === 'postgres' ? requirePostgresTestDatabase() : undefined;
+
+  test('#8321: a strict page write commits its row and receipt despite a historical sibling mode', () => managedBrain(async ({ engine, ctx, root }) => {
+    await strict(engine);
+    const first = await write(ctx, 'notes/kept', page('Kept', 'First revision.'));
+    expect(first).toMatchObject({ state: 'committed' });
+    put(root, 'notes/legacy.md', 'Unchanged sibling bytes.\n');
+    git(root, 'add', '--', 'notes/legacy.md'); git(root, 'commit', '-qm', 'imported sibling');
+    const parent = legacyMode(root, 'notes/legacy.md');
+    const blob = git(root, 'rev-parse', 'HEAD:notes/legacy.md');
+    const result = await write(ctx, 'notes/kept', page('Kept', 'Second revision.'), randomUUID(), first.revision);
+    expect(result).toMatchObject({ state: 'committed', persistence: { git_commit: git(root, 'rev-parse', 'HEAD') } });
+    expect(git(root, 'rev-parse', 'HEAD^')).toBe(parent);
+    expect(git(root, 'rev-parse', 'HEAD:notes/legacy.md')).toBe(blob);
+    expect(git(root, 'show', 'HEAD:notes/kept.md')).toContain('Second revision.');
+    expect((await engine.getPage('notes/kept', { sourceId: 'default' }))!.compiled_truth).toContain('Second revision.');
+    expect(git(root, 'status', '--porcelain')).toBe('');
+  }, { databaseUrl, setup }), 120_000);
 
   test('a branch that keeps moving refuses the commit; the file and the row keep the prior revision', () => managedBrain(async ({ engine, ctx, root }) => {
     await strict(engine);
