@@ -13,6 +13,7 @@ import { readHolders } from './context.ts';
  */
 
 import { hybridSearchCached, stampContentFlags, stampUnverifiedExtractions } from '../search/hybrid.ts';
+import { KEYWORD_SEARCH_TELEMETRY_MODE, recordLookupTelemetry } from '../search/telemetry.ts';
 import { anchorOpResults } from '../search/entity-anchor.ts';
 import { applyQueryArms } from '../search/query-arms.ts';
 import { factRowOutput } from '../search/facts-arm.ts';
@@ -235,6 +236,7 @@ async function stampKeywordRows(ctx: OperationContext, results: SearchResult[], 
   await timings.stage('post_fusion', () => stampUnverifiedExtractions(ctx.engine, results, scope));
   bumpLastRetrievedAt(ctx.engine, results.map((r) => r.page_id));
   maybeCaptureSearch(ctx, queryText, results, Date.now() - startedAt, false);
+  recordLookupTelemetry(ctx.engine, KEYWORD_SEARCH_TELEMETRY_MODE);
 }
 
 /**
@@ -244,36 +246,16 @@ async function stampKeywordRows(ctx: OperationContext, results: SearchResult[], 
  * re-sealed (`gbrain repair safe-chunks`, or an unchanged re-import), so a
  * remote result on such a brain may be incomplete, not a clean or complete
  * answer. Same scope precedence as sourceScopeOpts (federated array > scalar
- * > brain-wide); LIMIT 1 probe, portable SQL on both engines, fail-open.
- *
- * The predicate is the plain range `chunker_version < N` (the column is
- * SMALLINT NOT NULL, so it is the same set as `NOT safeChunksFilter`), NOT
- * the COALESCE form the read legs use: only the range matches the partial
- * `pages_safe_chunk_pending_idx`, which holds unsealed pages only, and this
- * runs on every remote result.
+ * > brain-wide); one LIMIT 1 probe through the typed `hasUnsealedPages`
+ * read (engine-sql/chunk-reads.ts), fail-open as master's raw probe was: any
+ * failure, a refused capability included (an owner client refuses this read
+ * for a remote caller), reads as no pending pages.
  */
 async function hasUnsealedPagesInScope(ctx: OperationContext, scope: SourceScope, excludePrivate: boolean,
   filters: { types?: string[]; excludeSlugPrefixes: string[] }): Promise<boolean> {
-  if (scope.sourceIds?.length === 0) return false;
-  const params: unknown[] = [];
   // The same page filters the search itself applied: a withheld page it could never return is not a gap.
-  const clauses = [pageReadFilter('p', { ...scope, excludePrivate }, params, true)];
-  if (filters.types) {
-    params.push(filters.types);
-    clauses.push(`p.type = ANY($${params.length}::text[])`);
-  }
-  for (const prefix of filters.excludeSlugPrefixes) {
-    params.push(prefix);
-    clauses.push(`LEFT(p.slug, LENGTH($${params.length}::text)) <> $${params.length}`);
-  }
   try {
-    const rows = await ctx.engine.executeRaw(
-      `SELECT 1 FROM pages p
-       WHERE ${clauses.join(' AND ')}
-         AND p.chunker_version < ${SAFE_FENCE_CHUNKER_VERSION} LIMIT 1`,
-      params,
-    );
-    return rows.length > 0;
+    return await ctx.engine.hasUnsealedPages({ ...scope, excludePrivate, types: filters.types, excludeSlugPrefixes: filters.excludeSlugPrefixes });
   } catch {
     return false;
   }

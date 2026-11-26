@@ -4152,6 +4152,110 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "area": "search"
   },
   {
+    "name": "correct",
+    "mutating": true,
+    "idempotent": true,
+    "writeInference": "none",
+    "outputRedaction": "no_stored_text",
+    "description": "The user corrected you: saves their standing rule and replaces fact_id with corrected_fact (or withdraws it). Branch on state and next.",
+    "params": {
+      "rule": {
+        "type": "string",
+        "description": "The rule, in the user's words."
+      },
+      "fact_id": {
+        "type": "string",
+        "description": "The wrong fact."
+      },
+      "corrected_fact": {
+        "type": "string",
+        "description": "The right fact."
+      },
+      "entity": {
+        "type": "string",
+        "description": "Subject slug."
+      },
+      "receipt_id": {
+        "type": "string",
+        "description": "Alone: that receipt's status."
+      },
+      "scope": {
+        "type": "string",
+        "enum": [
+          "me",
+          "team"
+        ],
+        "description": "me (default) or team.",
+        "fullSurfaceOnly": true
+      },
+      "checks": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "question": {
+              "type": "string"
+            },
+            "expect": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "reject": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "description": "Regression checks for gbrain rules check: [{question, expect[], reject[]}].",
+        "fullSurfaceOnly": true
+      },
+      "provenance": {
+        "type": "string",
+        "description": "Where the user said it.",
+        "fullSurfaceOnly": true
+      },
+      "content_origin": {
+        "type": "string",
+        "enum": [
+          "user_said",
+          "tool_output",
+          "inferred"
+        ],
+        "description": "user_said only; tool_output and inferred are refused.",
+        "fullSurfaceOnly": true
+      },
+      "resume": {
+        "type": "boolean",
+        "description": "With receipt_id: run the steps not yet committed.",
+        "fullSurfaceOnly": true
+      },
+      "source_id": {
+        "type": "string",
+        "description": "Write source.",
+        "fullSurfaceOnly": true
+      },
+      "request_id": {
+        "type": "string",
+        "description": "Reuse only to retry.",
+        "fullSurfaceOnly": true
+      }
+    },
+    "callShape": "{\"rule\":\"Never call alice-example the CTO.\",\"fact_id\":\"42\",\"corrected_fact\":\"Alice-example is VP Engineering.\",\"entity\":\"people/alice-example\"}",
+    "scope": "write",
+    "cliHints": {
+      "hidden": true
+    },
+    "annotations": {
+      "title": "correct",
+      "idempotentHint": true
+    },
+    "area": "correct"
+  },
+  {
     "name": "policy_check",
     "description": "Before you send, spend, delete, sign up, call or publish on the user's behalf outside this brain, ask whether the user's agent policy allows it. Advisory: allow, ask, deny or none (no policy), with requires_approval and any day, week or month budget left. To hold budget for a spend, call policy_reserve instead.",
     "params": {
@@ -4607,7 +4711,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "outputRedaction": {
       "exempt": "admin-scoped job introspection: job params and results are operator data, not retrieved brain text"
     },
-    "description": "Get job status and details by ID. Agent-scoped tokens (no admin) see only jobs they own.",
+    "description": "Get job status and details by ID. Remote callers see only the jobs they submitted, unless bound to the brain owner.",
     "params": {
       "id": {
         "type": "number",
@@ -4626,7 +4730,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "outputRedaction": {
       "exempt": "admin-scoped job introspection: job params and results are operator data, not retrieved brain text"
     },
-    "description": "Wait until a job is completed, failed, dead or cancelled (at most 55 s per call), then return it like get_job plus terminal. terminal: false means it is still running: call again. Agent-scoped tokens (no admin) wait only on jobs they own.",
+    "description": "Wait until a job is completed, failed, dead or cancelled (at most 55 s per call), then return it like get_job plus terminal. terminal: false means it is still running: call again. Remote callers wait only on the jobs they submitted, unless bound to the brain owner.",
     "params": {
       "id": {
         "type": "number",
@@ -4649,7 +4753,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "outputRedaction": {
       "exempt": "admin-scoped job introspection: job params and results are operator data, not retrieved brain text"
     },
-    "description": "List background jobs with optional status/queue/name filters; pass fields to project each job to the columns you need. Use when checking queued or failed work. Needs admin scope (agent-scoped tokens see only jobs they own).",
+    "description": "List background jobs with optional status/queue/name filters; pass fields to project each job to the columns you need. Use when checking queued or failed work. Needs admin scope; remote callers (agent-scoped tokens too) see only the jobs they submitted, unless bound to the brain owner.",
     "params": {
       "status": {
         "type": "string",
@@ -4731,7 +4835,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "outputRedaction": {
       "exempt": "admin-scoped job introspection: job params and results are operator data, not retrieved brain text"
     },
-    "description": "Get structured progress for a running job. Agent-scoped tokens (no admin) see only jobs they own.",
+    "description": "Get structured progress for a running job. Remote callers see only the jobs they submitted, unless bound to the brain owner.",
     "params": {
       "id": {
         "type": "number",
@@ -4923,7 +5027,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "outputRedaction": {
       "exempt": "watch bookkeeping: job, request and cron ids, states and times, never retrieved brain text"
     },
-    "description": "This tool notifies you: it has gbrain wake this conversation through Wakeshift when job id finishes (completed, failed, dead or cancelled), so you can stop polling. Call it right after submitting a long job, then end your turn or keep working. The wake names the job and says to call get_job for the result; it carries no page text. Agent-scoped tokens watch only jobs they own. If no wake arrives, call wait_job.",
+    "description": "This tool notifies you: it has gbrain wake this conversation through Wakeshift when job id finishes (completed, failed, dead or cancelled), so you can stop polling. Call it right after submitting a long job, then end your turn or keep working. The wake names the job and says to call get_job for the result; it carries no page text. Remote callers watch only the jobs they submitted, unless bound to the brain owner. If no wake arrives, call wait_job.",
     "params": {
       "id": {
         "type": "number",
@@ -7009,6 +7113,12 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
         "type": "boolean",
         "description": "true: add your own profile (facets, constraints, relationships, preferences).",
         "fullSurfaceOnly": true
+      },
+      "include_rules": {
+        "type": "boolean",
+        "description": "true: add your confirmed standing rules (rules field).",
+        "fullSurfaceOnly": true,
+        "actsWhenTrue": true
       }
     },
     "scope": "read",
@@ -8922,6 +9032,67 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     },
     "cliHints": {
       "name": "onboarding-off",
+      "hidden": true
+    },
+    "area": "onboarding"
+  },
+  {
+    "name": "propose_jobs",
+    "mutating": false,
+    "idempotent": true,
+    "outputRedaction": "no_stored_text",
+    "description": "Jobs your agent could take on, found in data already in the brain with no model call: people waiting on the user, threads they owe a reply, recurring meetings with no prep page, bulk senders they never wrote to, and the same question asked in two agents. Each job has a count, the pages it rests on, a sentence, and the installed skill or gbrain command that does it. The owner only. Offer one job at a time; propose_decide records the user's yes or no.",
+    "params": {
+      "days": {
+        "type": "number",
+        "description": "How many days back to look (1-90, default 7)."
+      }
+    },
+    "scope": "read",
+    "annotations": {
+      "readOnlyHint": true
+    },
+    "cliHints": {
+      "name": "propose-jobs",
+      "hidden": true
+    },
+    "area": "onboarding"
+  },
+  {
+    "name": "propose_decide",
+    "mutating": true,
+    "idempotent": true,
+    "outputRedaction": "no_stored_text",
+    "description": "Record the user's answer to one proposed job (the owner only): accepted or declined, by signal. A declined job is not offered again at session start. Writes only the first-session record, then reads it back: say it was recorded only when verified is true.",
+    "params": {
+      "signal": {
+        "type": "string",
+        "required": true,
+        "enum": [
+          "waiting_on_you",
+          "owe_reply",
+          "meeting_prep",
+          "repeat_question",
+          "bulk_senders"
+        ],
+        "description": "The job's signal, as propose_jobs returns it."
+      },
+      "decision": {
+        "type": "string",
+        "required": true,
+        "enum": [
+          "accepted",
+          "declined"
+        ],
+        "description": "The user's answer."
+      }
+    },
+    "scope": "write",
+    "annotations": {
+      "idempotentHint": true
+    },
+    "cliHints": {
+      "name": "propose-decide",
       "hidden": true
     },
     "area": "onboarding"

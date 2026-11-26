@@ -677,7 +677,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
   // Token Verification
   // -------------------------------------------------------------------------
 
-  async verifyAccessToken(token: string): Promise<SdkAuthInfo> {
+  async verifyAccessToken(token: string, opts?: { touch?: boolean }): Promise<SdkAuthInfo> {
     const tokenHash = hashToken(token);
     const now = Math.floor(Date.now() / 1000);
 
@@ -947,7 +947,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
       // For legacy tokens, name = clientId = clientName (single identifier).
       // #2833: debounced fire-and-forget last_used_at update that never blocks
       // or fails verification; shared with src/mcp/http-transport.ts.
-      void touchTokenLastUsed(this.sql, legacyRows[0]);
+      if (opts?.touch !== false) void touchTokenLastUsed(this.sql, legacyRows[0]);
       const name = legacyRows[0].name as string;
       // One grant shape (grants/model.ts), shared with the legacy HTTP
       // transport so the two cannot drift. Unified rows read the columns,
@@ -1046,7 +1046,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     const deletedCodes = await this.sql`
       DELETE FROM oauth_codes WHERE expires_at < ${now} RETURNING 1
     `;
-    return result.length + deletedCodes.length;
+    return result.length + deletedCodes.length + await this.grants.sweepExpiredRotations();
   }
 
   // -------------------------------------------------------------------------

@@ -35,7 +35,7 @@ Append an entry to the canonical Markdown timeline and structured timeline store
 
 ## `cancel_job`
 
-Cancel a waiting, active, or delayed job. Agent-scoped tokens (no admin) can cancel only jobs they own.
+Cancel a waiting, active, or delayed job. Remote callers, admin scope included, can cancel only the jobs they submitted, unless their credential is bound to the brain owner.
 
 | Parameter | Type | Guidance |
 | --- | --- | --- |
@@ -383,7 +383,7 @@ MEMORY VERB (v1): save one fact to durable agent memory — the protocol write v
 | `expected_revision` | string | Revision returned by the page read. Required when replacing an existing page unless force is true. Omit both for create-only writes. |
 | `force` | boolean | Explicitly overwrite the current revision. Mutually exclusive with expected_revision; does not bypass authorization or the empty-content guard. |
 | `request_id` | string | Optional caller-generated UUID for this write. Reuse the same UUID and original arguments to recover its outcome after a timeout; a different intent requires a new UUID. |
-| `content_origin` | string (`user_said`, `tool_output`, `inferred`) | Where the content came from. `tool_output` (web page, email, file or other tool text) stores the write as external, untrusted; `user_said` and `inferred` store it as written by an agent. Advertised on the verbs and full surfaces only; a starter client that passes it is still honored. |
+| `content_origin` | string (`user_said`, `tool_output`, `inferred`) | Where the content came from. `tool_output` (web page, email, file or other tool text) stores the write as external, untrusted; `user_said` and `inferred` store it as written by an agent. Advertised on the verbs and full surfaces only; a starter client may pass only `inferred` or `tool_output`, and `user_said` is refused as off the surface. |
 | `fact` (required) | string | The fact to remember, one claim per call. |
 | `provenance` (required) | string | Where this fact came from (REQUIRED, free text, max 500 chars). Examples: "conversation 2026-06-12", "user said in chat", "import: meeting-notes.md". |
 | `ttl` | string | Optional expiry: duration shorthand ("30d", "12h", "45m") or absolute ISO 8601 timestamp ("2026-07-12T00:00:00Z"). NOT ISO-8601 durations ("P30D" is rejected). Omit = never expires. |

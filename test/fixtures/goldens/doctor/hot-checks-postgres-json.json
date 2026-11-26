@@ -532,7 +532,7 @@
                 "explicit_retention_days": null,
                 "over_target": false,
                 "target_bytes": 8589934592,
-                "used_bytes": 202700
+                "used_bytes": 203660
               },
               "inspected": 2,
               "outstanding": [],
@@ -542,7 +542,7 @@
               "verify": "gbrain doctor --only persistence_capacity --json"
             },
             "elapsed_ms": "<volatile>",
-            "message": "No cumulative write cap is set (the default), so receipt storage never refuses or pauses a write; it holds 202700 reserved bytes, and receipts not yet compacted are under the housekeeping target of 8589934592.",
+            "message": "No cumulative write cap is set (the default), so receipt storage never refuses or pauses a write; it holds 203660 reserved bytes, and receipts not yet compacted are under the housekeeping target of 8589934592.",
             "name": "persistence_capacity",
             "status": "ok"
           },
@@ -1429,7 +1429,7 @@
           {
             "category": "ops",
             "elapsed_ms": "<volatile>",
-            "message": "RLS enabled on 196/196 public tables",
+            "message": "RLS enabled on 197/197 public tables",
             "name": "rls",
             "status": "ok"
           },
@@ -1488,7 +1488,7 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "All 196 table(s) the applied migrations create exist.",
+            "message": "All 197 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
             "status": "ok"
           },
@@ -3528,6 +3528,13 @@
           },
           {
             "category": "brain",
+            "elapsed_ms": "<volatile>",
+            "message": "No confirmed standing rules to check (gbrain correct saves one).",
+            "name": "rules_regression",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
             "details": {
               "conversation": null,
               "fix": "preview links: gbrain facts relink --dry-run",
@@ -5345,14 +5352,14 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "Active pack gbrain-base-v2@1.7.0+b64f249b is current (no successor declared)",
+            "message": "Active pack gbrain-base-v2@1.7.0+f1691ae3 is current (no successor declared)",
             "name": "pack_upgrade_available",
             "status": "ok"
           },
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "5 distinct typed values (pack gbrain-base-v2 declares 27)",
+            "message": "5 distinct typed values (pack gbrain-base-v2 declares 28)",
             "name": "type_proliferation",
             "status": "ok"
           },
@@ -6209,7 +6216,7 @@
                 "explicit_retention_days": null,
                 "over_target": false,
                 "target_bytes": 8589934592,
-                "used_bytes": 202700
+                "used_bytes": 203660
               },
               "inspected": 2,
               "outstanding": [],
@@ -6219,7 +6226,7 @@
               "verify": "gbrain doctor --only persistence_capacity --json"
             },
             "elapsed_ms": "<volatile>",
-            "message": "No cumulative write cap is set (the default), so receipt storage never refuses or pauses a write; it holds 202700 reserved bytes, and receipts not yet compacted are under the housekeeping target of 8589934592.",
+            "message": "No cumulative write cap is set (the default), so receipt storage never refuses or pauses a write; it holds 203660 reserved bytes, and receipts not yet compacted are under the housekeeping target of 8589934592.",
             "name": "persistence_capacity",
             "status": "ok"
           },
@@ -7106,7 +7113,7 @@
           {
             "category": "ops",
             "elapsed_ms": "<volatile>",
-            "message": "RLS enabled on 196/196 public tables",
+            "message": "RLS enabled on 197/197 public tables",
             "name": "rls",
             "status": "ok"
           },
@@ -7165,7 +7172,7 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "All 196 table(s) the applied migrations create exist.",
+            "message": "All 197 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
             "status": "ok"
           },
@@ -9217,6 +9224,13 @@
           },
           {
             "category": "brain",
+            "elapsed_ms": "<volatile>",
+            "message": "No confirmed standing rules to check (gbrain correct saves one).",
+            "name": "rules_regression",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
             "details": {
               "conversation": null,
               "fix": "preview links: gbrain facts relink --dry-run",
@@ -11034,14 +11048,14 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "Active pack gbrain-base-v2@1.7.0+b64f249b is current (no successor declared)",
+            "message": "Active pack gbrain-base-v2@1.7.0+f1691ae3 is current (no successor declared)",
             "name": "pack_upgrade_available",
             "status": "ok"
           },
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "5 distinct typed values (pack gbrain-base-v2 declares 27)",
+            "message": "5 distinct typed values (pack gbrain-base-v2 declares 28)",
             "name": "type_proliferation",
             "status": "ok"
           },

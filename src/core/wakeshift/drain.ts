@@ -58,6 +58,8 @@ export interface WakeRow {
   job_id: number | null;
   job_name: string | null;
   job_status: string | null;
+  /** GST-4010: the watcher may still read the job (the job owner fence at delivery time). */
+  job_visible: boolean | null;
   started_at: Date | string | null;
   finished_at: Date | string | null;
   finished_us: string | null;
@@ -85,6 +87,12 @@ const CANDIDATES_SQL = (byId: boolean) => `
 SELECT w.id, w.event, w.target, w.target_ref, w.principal_kind, w.principal_id, w.member_id, w.wake_user, w.ws_subscription_id, w.attempts,
        ${US('w.created_at')} AS created_us,
        j.id AS job_id, j.name AS job_name, j.status AS job_status, j.started_at, j.finished_at, ${US('j.finished_at')} AS finished_us,
+       (w.principal_kind = 'local_stdio'
+         OR w.member_id = (SELECT value FROM config WHERE key = 'access.owner_member')
+         OR (((j.submission_authority->'principal'->>'kind' = w.principal_kind AND j.submission_authority->'principal'->>'id' = w.principal_id)
+              OR (j.submission_authority->'principal' IS NULL AND w.principal_kind = 'oauth_client' AND j.data->>'__owner_client_id' = w.principal_id))
+             AND COALESCE(j.submission_authority->'grant'->'actor'->>'system', '') = '' AND COALESCE(j.submission_authority->'grant'->'actor'->>'external_id', '') = ''
+             AND COALESCE(j.submission_authority->'grant'->'actor'->>'member', '') = '' AND j.submission_authority->'grant'->'actingFor' IS NULL)) IS TRUE AS job_visible,
        r.id::text AS req_id, r.state AS req_state, r.operation AS req_operation, r.source_id AS req_source_id, r.created_at AS req_created_at,
        COALESCE(r.completed_at, r.updated_at) AS req_settled_at, ${US('COALESCE(r.completed_at, r.updated_at)')} AS req_settled_us,
        c.id AS run_id, c.status AS run_status, c.finished_at AS run_finished_at
@@ -213,6 +221,11 @@ async function deliver(engine: BrainEngine, api: WakeshiftApi, row: WakeRow, rep
     if (terms.shared && !(await termsAccepted(engine, row, terms.current))) {
       await endAtWakeshift(api, row);
       if (await settle(engine, row.id, lease, 'ended', { error: 'terms_not_accepted' })) report.ended++;
+      return;
+    }
+    if (row.event === JOB_FINISHED && row.job_id != null && row.job_visible !== true) {
+      await endAtWakeshift(api, row);
+      if (await settle(engine, row.id, lease, 'ended', { error: 'job_not_visible' })) report.ended++;
       return;
     }
     const { marker, args, payload, text } = wakeFor(row);

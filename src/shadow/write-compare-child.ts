@@ -16,7 +16,13 @@ import { pageRefs, pageSet, readBack, readBackText, type WriteEvent, type WriteO
 
 /** Columns the seed always reports as unmapped and the typed read-back never shows (rust/docs/store/seed.md, "Some unmapped columns are expected": `pages.generation`, the primary's cache clock). */
 const EXPECTED_UNMAPPED: ReadonlySet<string> = new Set(['generation']);
-export const WRITE_QUEUE_BOUND = 16;
+/**
+ * Replays waiting behind the one that runs: a sync sends a page sample every 15-25 ms and a replay takes about 42 ms, so a burst of 28 edits found room for 16 and shed 12 (`queue_full`).
+ * 256 samples is about 11 s of replay (inside the 30 s exit deadline), a few MB for the usual few-KB sample; the byte bound holds the worst case (a sample line is at most 512 KB), counted at
+ * the line's size (the parsed event is a few times larger in memory). A sample past either bound is still counted `uncomparable` / `queue_full` (except a disk-write failure, a known limit in the changelog), never dropped by the queue and never comparable.
+ */
+export const WRITE_QUEUE_BOUND = 256;
+export const WRITE_QUEUE_BYTES = 16 * 1024 * 1024;
 export const WRITE_COMPARE_TIMEOUT_MS = 30_000;
 
 export interface WriteComparerDeps {
@@ -40,7 +46,7 @@ export interface WriteComparerDeps {
 export const scratchRootDefault = (): string => join(configDir(), 'scratch');
 type Verdict = [WriteOutcome, string?];
 
-export function createWriteComparer(d: WriteComparerDeps): { handle(event: WriteEvent): void; idle(): Promise<void> } {
+export function createWriteComparer(d: WriteComparerDeps): { handle(event: WriteEvent, bytes?: number): void; idle(): Promise<boolean>; abandon(): void } {
   // Each replay gets a private (0700) directory named for this process, removed when the replay ends, whatever its outcome. Directories of processes
   // that no longer exist (a killed child) are swept here, at shadow start; another child never deletes a live one.
   const scratchRoot = d.scratchRoot ?? scratchRootDefault();
@@ -57,8 +63,10 @@ export function createWriteComparer(d: WriteComparerDeps): { handle(event: Write
   d.tally.recover(); // a replay a killed process left unresolved
   let chain: Promise<void> = Promise.resolve();
   let queued = 0;
+  let queuedBytes = 0;
   let runs = 0;
   let wedged = false;
+  const waiting = new Set<WriteEvent>(); // queued replays that have not started
 
   async function replay(event: WriteEvent): Promise<Verdict> {
     if (!d.load.ok) return ['uncomparable', 'addon_unavailable'];
@@ -84,7 +92,7 @@ export function createWriteComparer(d: WriteComparerDeps): { handle(event: Write
         // The scratch store must hold exactly the rows the primary held: a skipped, dropped or lossy import, or a column it does not keep, is not that copy.
         if (done.imported !== rows.length || done.skipped || done.dropped || Object.keys(done.losses).length || done.unmapped_columns?.some((c: string) => !EXPECTED_UNMAPPED.has(c))) return ['uncomparable', 'preimage_not_loaded'];
       }
-      try { await engine[event.op](...args); } catch (error) { d.onError?.('write', error); return ['uncomparable', `rust_write_failed`]; }
+      try { await engine[event.op](...args); for (const call of event.then ?? []) await engine.updatePageContextualRetrievalState(...decodeValue(call) as unknown[]); } catch (error) { d.onError?.('write', error); return ['uncomparable', `rust_write_failed`]; }
       const theirs = readBackText(encodeValue(await readBack(engine, targets, pageSet(targets, pre))));
       if (theirs === readBackText(event.post)) return ['comparable'];
       return ['unexplained_difference'];
@@ -95,6 +103,7 @@ export function createWriteComparer(d: WriteComparerDeps): { handle(event: Write
   }
 
   async function run(event: WriteEvent): Promise<void> {
+    if (!waiting.delete(event)) return; // counted by abandon() at the exit deadline
     let verdict: Verdict;
     try {
       if (wedged) verdict = ['uncomparable', 'scratch_wedged'];
@@ -114,15 +123,22 @@ export function createWriteComparer(d: WriteComparerDeps): { handle(event: Write
   }
 
   return {
-    handle(event) {
+    /** `bytes`: the size of the line the sample arrived in (0 when not known). */
+    handle(event, bytes = 0) {
       if (Number.isInteger(event.dropped) && event.dropped! > 0) d.tally.note('uncomparable', 'send_shed', Math.min(event.dropped!, 10_000));
       // The serving process can only report what it saw itself; a verdict (`comparable`, `unexplained_difference`) is made here, from a replay.
       if (event.outcome === 'capability_missing' || event.outcome === 'uncomparable') { d.tally.note(event.outcome, event.family ?? event.reason); return; }
       if (!event.pre || !event.args) { d.tally.note('uncomparable', 'no_sample'); return; }
-      if (queued >= WRITE_QUEUE_BOUND) { d.tally.note('uncomparable', 'queue_full'); return; }
-      queued++;
-      chain = chain.then(() => run(event)).finally(() => { queued--; });
+      if (queued >= WRITE_QUEUE_BOUND || queuedBytes + bytes > WRITE_QUEUE_BYTES) { d.tally.note('uncomparable', 'queue_full'); return; }
+      queued++; queuedBytes += bytes; waiting.add(event);
+      chain = chain.then(() => run(event)).finally(() => { queued--; queuedBytes -= bytes; }); // every path (a replay, an abandoned one, an early return) ends here
     },
-    idle: () => chain,
+    idle: () => chain.then(() => d.tally.save()), // the last save also folds the lost samples the serving process recorded; true only when everything this child counted is saved (the caller keeps the sent count when it is not)
+    /** At the child's exit deadline: replays still queued will never run, so each is counted `uncomparable`, then one last save. The running replay keeps its in-flight mark. */
+    abandon() {
+      if (waiting.size) d.tally.note('uncomparable', 'child_exit_deadline', waiting.size);
+      waiting.clear();
+      d.tally.save();
+    },
   };
 }

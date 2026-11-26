@@ -350,6 +350,18 @@ function unknownDriftDetail(sourceId: string, { slug, reason }: UnknownDrift): s
  * (`file_drift_state_required`): its two actions are opposite. Holds an older gbrain wrote with `sides: database` have
  * no side and are listed with their single-page route.
  */
+/**
+ * #9711: the file_drift hold of a page named by --slug. On a read-only mirror the page publishes database-only, so it is
+ * compared through its hold's file (heldLiveDrift), as --held compares it; without the hold it reads as no_drift.
+ */
+async function slugFileDriftHold(engine: BrainEngine, sourceId: string, slug: string): Promise<GitHoldRecord | undefined> {
+  const [row] = await engine.executeRaw<{ record: GitHoldRecord }>(`SELECT h.completed_keys->0 AS record FROM op_checkpoints h
+    JOIN sources s ON s.id=h.completed_keys->0->>'source_id' AND s.incarnation::text=h.completed_keys->0->>'incarnation'
+    WHERE h.op=$1 AND s.id=$2 AND h.completed_keys->0->>'code'='file_drift' AND h.completed_keys->0->>'slug'=$3
+    ORDER BY (h.completed_keys->0->>'path') COLLATE "C" LIMIT 1`, [GIT_HOLD_OP, sourceId, slug]);
+  return row?.record;
+}
+
 async function selectHeld(engine: BrainEngine, sourceId: string, opts: RepairPlanOptions):
   Promise<{ targets: HeldTarget[]; before: number; notSelected: number; legacy: GitHoldRecord[]; otherProvenance: number; provenance?: Record<string, number> }> {
   const after = opts.cursor ? heldCursorPath(sourceId, opts.cursor) : null;
@@ -836,9 +848,9 @@ function item(page: ApprovedPage, index: number, hash: string, last: boolean, pr
 async function compareSelection(engine: BrainEngine, sourceId: string, opts: RepairPlanOptions): Promise<RepairPlan> {
   const held = opts.held ? await selectHeld(engine, sourceId, opts) : null;
   const selected = held ? null : await selectSlugs(engine, sourceId, opts);
-  const mirror = held ? await sourceMirrorReadOnly(engine, sourceId) : false;
+  const mirror = await sourceMirrorReadOnly(engine, sourceId);
   const targets: { slug: string | null; hold?: GitHoldRecord; mirror?: boolean }[] = held ? [...held.legacy.map(hold => ({ slug: hold.slug, hold, mirror })), ...held.targets.slice(0, HELD_WINDOW_PAGES).map(target => ({ slug: target.hold.slug, hold: target.hold, mirror }))]
-    : selected!.slugs.map(slug => ({ slug }));
+    : mirror ? await Promise.all(selected!.slugs.map(async slug => ({ slug, hold: await slugFileDriftHold(engine, sourceId, slug), mirror }))) : selected!.slugs.map(slug => ({ slug }));
   const residuals: Record<string, number> = { ...(held?.notSelected || selected?.notSelected ? { not_selected: held?.notSelected ?? selected!.notSelected } : {}), ...(held?.before ? { before_cursor: held.before } : {}) };
   const count = (key: string) => { residuals[key] = (residuals[key] ?? 0) + 1; };
   const listing: NonNullable<RepairPlan['listing']> = [];
@@ -947,7 +959,7 @@ export const fileDriftRepair: RepairHandler = {
       return { items: items.filter(entry => afterCursor(entry.cursor, after)), preview_hash: opts.expect, residuals: {} };
     }
     const held = opts.held ? await selectHeld(engine, sourceId, opts) : null;
-    const mirror = held ? await sourceMirrorReadOnly(engine, sourceId) : false;
+    const mirror = await sourceMirrorReadOnly(engine, sourceId);
     const mirrorFile = mirror && opts.prefer === 'file';
     const { slugs, classes, notSelected, unknown } = held
       ? { slugs: [], classes: new Map<string, DriftClass>(), notSelected: held.notSelected, unknown: [] as UnknownDrift[] } : await selectSlugs(engine, sourceId, opts);
@@ -990,14 +1002,16 @@ export const fileDriftRepair: RepairHandler = {
           if (targetSlug === null) { count('no_page'); listing.push({ item: `${sourceId}:${label}`, class: 'no_page', detail: 'the hold names no page; the next sync re-classifies it' }); continue; }
           const slug = targetSlug;
           await authorizeReconcile(engine, sourceId, slug);
-          const found = await heldLiveDrift(engine, sourceId, slug, { hold: target?.hold, mirror: mirrorFile });
+          const found = await heldLiveDrift(engine, sourceId, slug, { hold: target?.hold ?? (mirrorFile ? await slugFileDriftHold(engine, sourceId, slug) : undefined), mirror: mirrorFile });
           const live = opts.slugs?.length && found.reason === 'database_only' ? await unboundCollisionDrift(engine, sourceId, slug) ?? found : found;
-          if (target && (target.state === 'file_gone') !== (live.reason === 'canonical_file_missing')) {
+          // #9576: a page stored database-only (a stale mirror import) reads its missing file as database_only with nothing to compare.
+          const fileGone = live.reason === 'canonical_file_missing' || target?.state === 'file_gone' && live.reason === 'database_only' && live.still_present === false;
+          if (target && (target.state === 'file_gone') !== fileGone) {
             count('side_changed');
-            listing.push({ item: `${sourceId}:${slug}`, class: 'side_changed', detail: `its file is ${live.reason === 'canonical_file_missing' ? 'gone' : 'present'} now; gbrain sources status ${sourceId} --json shows its current Decision after the next sync` });
+            listing.push({ item: `${sourceId}:${slug}`, class: 'side_changed', detail: `its file is ${fileGone ? 'gone' : 'present'} now; gbrain sources status ${sourceId} --json shows its current Decision after the next sync` });
             continue;
           }
-          if (live.reason === 'canonical_file_missing') {
+          if (fileGone) {
             const gone = await fileGonePage(engine, sourceId, slug, opts, assessmentAt, target);
             if ('skip' in gone) {
               count(gone.skip);
@@ -1175,8 +1189,9 @@ export const fileDriftRepair: RepairHandler = {
     for (const action of (details.next_actions ?? []) as string[]) lines.push(`  ${action}`);
     if (typeof details.artifact === 'string') lines.push(`  private artifact (each page's resolved result and exceptions): ${details.artifact}`);
     if (typeof details.protections === 'string') lines.push(`  ${details.protections}`);
-    for (const page of (details.pages ?? []) as Array<{ slug: string; exceptions: DriftException[] }>) {
-      for (const exception of page.exceptions) lines.push(`  kept ${page.slug} ${exception.path}: ${exception.reason}`);
+    // #9711: a comparison's pages (no --prefer) carry no exceptions.
+    for (const page of (details.pages ?? []) as Array<{ slug: string; exceptions?: DriftException[] }>) {
+      for (const exception of page.exceptions ?? []) lines.push(`  kept ${page.slug} ${exception.path}: ${exception.reason}`);
     }
     return lines;
   },

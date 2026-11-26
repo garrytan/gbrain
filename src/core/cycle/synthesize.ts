@@ -385,6 +385,8 @@ export interface SynthesizePhaseOpts {
    * correct (source_id, slug) row. Unset → legacy 'default'.
    */
   sourceId?: string;
+  /** #8669: a global cycle's turn for another source: synthesize only that source's captured sessions (keepSessionSourceTranscripts). */
+  sessionsOnly?: boolean;
   /** Internal: minion owner job id for private dream-inline queue recovery. */
   privateQueueOwnerJobId?: number | null;
   /**
@@ -527,16 +529,15 @@ async function runPhaseSynthesizeInner(
               ].map(prefix => join(opts.brainDir, prefix)),
           // #5413: corpus files captured from gbrain's own claude-cli calls.
           selfCaptureSessionIds: claudeCliSelfSessionIds(),
-        })), { corpusDir: config.corpusDir, sourceId: opts.sourceId ?? 'default', readOnly: opts.dryRun }, routing);
+        })), { corpusDir: config.corpusDir, sourceId: opts.sourceId ?? 'default', readOnly: opts.dryRun, sessionsOnly: opts.sessionsOnly }, routing);
 
     if (transcripts.length === 0) {
       return noCandidates('no transcripts to process', { transcripts_discovered: 0 });
     }
 
-    // Best-effort housekeeping (#4069): expiry is enforced on reads
-    // regardless, so a sweep failure must not block synthesis when the
-    // database is otherwise usable.
-    try {
+    // Best-effort housekeeping (#4069): expiry is enforced on reads regardless, so a sweep failure must not
+    // block synthesis when the database is otherwise usable. A --dry-run preview deletes nothing (#10448).
+    if (!opts.dryRun) try {
       const swept = await engine.sweepDreamVerdicts();
       if (swept > 0) process.stderr.write(`[dream] swept ${swept} expired verdict cache row(s)\n`);
     } catch (e) {

@@ -95,11 +95,11 @@ suite('OAuth grant transactions on Postgres', () => {
     const tokens = await provider.exchangeAuthorizationCode(client, code, TEST_PKCE_VERIFIER, client.redirect_uris![0]);
     await expect(failing.exchangeRefreshToken(client, tokens.refresh_token!)).rejects.toThrow('synthetic failure');
     expect(await sql`SELECT * FROM oauth_tokens WHERE token_hash = ${hashToken(tokens.refresh_token!)}`).toHaveLength(1);
-    const outcomes = await Promise.allSettled([provider.exchangeRefreshToken(client, tokens.refresh_token!), provider.exchangeRefreshToken(client, tokens.refresh_token!)]);
-    expect(outcomes.filter(result => result.status === 'fulfilled')).toHaveLength(1);
-    const succeeded = outcomes.find(result => result.status === 'fulfilled');
-    if (succeeded?.status !== 'fulfilled') throw new Error('Expected successful rotation');
-    expect((await provider.verifyAccessToken(succeeded.value.access_token)).resource?.toString()).toBe('https://brain.example/mcp');
+    // #9364: two concurrent refreshes of one token by the same client both receive the one replacement pair.
+    const outcomes = await Promise.all([provider.exchangeRefreshToken(client, tokens.refresh_token!), provider.exchangeRefreshToken(client, tokens.refresh_token!)]);
+    expect(new Set(outcomes.map(result => `${result.access_token} ${result.refresh_token}`)).size).toBe(1);
+    expect(await sql`SELECT * FROM oauth_tokens WHERE client_id = ${client.client_id} AND token_type = 'refresh'`).toHaveLength(1);
+    expect((await provider.verifyAccessToken(outcomes[0]!.access_token)).resource?.toString()).toBe('https://brain.example/mcp');
   });
   for (const action of ['invalidate-tokens', 'revoke', 'delete'] as const) {
     test(`${action} waits for issuance and retains spending settlement and atomic audit`, async () => {

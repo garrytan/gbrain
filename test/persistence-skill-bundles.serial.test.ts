@@ -247,20 +247,19 @@ describe('typed skill bundle persistence', () => {
         await declarePersistenceProtocol(tx);
         await tx.executeRaw("UPDATE persistence_effects SET claim_expires_at=now()-interval '1 second' WHERE id=$1", [effect.id]);
       });
-      const direct = { executeRaw: f.engine.executeRawDirect.bind(f.engine) };
-      expect(await renewPersistenceEffectClaim(direct, { ...effect, execution_token: randomUUID() })).toBe(false);
-      expect(await renewPersistenceEffectClaim(direct, effect)).toBe(true);
+      expect(await renewPersistenceEffectClaim(f.engine, { ...effect, execution_token: randomUUID() }, { direct: true })).toBe(false);
+      expect(await renewPersistenceEffectClaim(f.engine, effect, { direct: true })).toBe(true);
       expect(await f.engine.executeRaw("SELECT claim_expires_at>now()+interval '1 minute' AS renewed FROM persistence_effects WHERE id=$1", [effect.id]))
         .toEqual([{ renewed: true }]);
       await expect(f.engine.executeRaw('SELECT gbrain_require_persistence_protocol(2)')).rejects.toThrow('writer_upgrade_required');
       await advanceEffectCursor(f.engine, effect, 'notes/next');
       expect(await f.engine.executeRaw('SELECT state,execution_token,data FROM persistence_effects WHERE id=$1', [effect.id]))
         .toEqual([{ state: 'queued', execution_token: null, data: { source_scan: true, after_slug: 'notes/next', embedding_attempt_base: effect.attempts } }]);
-      expect(await renewPersistenceEffectClaim(direct, effect)).toBe(false);
+      expect(await renewPersistenceEffectClaim(f.engine, effect, { direct: true })).toBe(false);
       const next = (await claimPersistenceEffect(f.engine, hostId))!;
       expect(next.execution_token).not.toBe(effect.execution_token);
-      expect(await renewPersistenceEffectClaim(direct, effect)).toBe(false);
-      expect(await renewPersistenceEffectClaim(direct, next)).toBe(true);
+      expect(await renewPersistenceEffectClaim(f.engine, effect, { direct: true })).toBe(false);
+      expect(await renewPersistenceEffectClaim(f.engine, next, { direct: true })).toBe(true);
       await completeEffect(f.engine, next);
       await expect(f.engine.executeRaw('SELECT gbrain_require_persistence_protocol(2)')).rejects.toThrow('writer_upgrade_required');
     }

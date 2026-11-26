@@ -171,7 +171,7 @@ export function screenLegacyFile(filePath: string, relPath: string, activePack?:
   if (!read) return { refusal: { code: 'file_too_large', message: `File too large (${lstatSync(filePath).size} bytes, max ${importSizeLimit(filePath)}).` }, upstreamVersion: null };
   if (hasMalformedPathSegment(relPath) || isCodeFilePath(relPath)) return { refusal: null, upstreamVersion: read.upstreamVersion };
   const parsed = parseMarkdown(read.content, relPath, { validate: true, ...(activePack ? { activePack } : {}) });
-  const refusal = classifyImportHold(parsed, { expectedSlug: slugifyPath(relPath) || null, slugConflictMessage: (_found, expected) => slugConflictHoldMessage(relPath, expected) })
+  const refusal = classifyImportHold(parsed, { expectedSlug: slugifyPath(relPath) || null, createsPage: true, slugConflictMessage: (_found, expected) => slugConflictHoldMessage(relPath, expected) })
     ?? noncanonicalPrivateHold(read.content, parsed.frontmatter) ?? noncanonicalReadersHold(read.content, parsed.frontmatter);
   return { refusal, upstreamVersion: read.upstreamVersion };
 }

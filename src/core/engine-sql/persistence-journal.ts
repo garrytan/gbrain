@@ -149,6 +149,13 @@ export function readWriteRequestsByRequestIds(exec: LegacyUnscopedRead, principa
     [principalKind, principalId, requestIds]);
 }
 
+/** The owner host's checkout path of worktree `worktreeId` (its host binding's `local_path`), or null when it has no owner or no binding. */
+export async function readOwnerHostBinding(exec: LegacyUnscopedRead, worktreeId: string): Promise<string | null> {
+  const [binding] = await exec.executeRaw<{ local_path: string | null }>(`SELECT h.local_path FROM persistence_host_bindings h
+      JOIN persistence_worktrees w ON w.id=h.worktree_id AND w.owner_host_id=h.host_id WHERE w.id=$1::uuid`, [worktreeId]);
+  return binding?.local_path ?? null;
+}
+
 /** The request with journal id `id`, or null. */
 export async function readWriteRequestById(exec: LegacyUnscopedRead, id: string, opts?: QueryOpts): Promise<WriteRequest | null> {
   const [row] = await exec.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=$1::uuid', [id], opts);
@@ -331,6 +338,11 @@ export async function lockWriteRequest(exec: SqlExecutor, id: string): Promise<W
   return row ?? null;
 }
 
+/** The requests with these ids, locked FOR UPDATE until the transaction ends, in id order (an unknown id reads nothing). */
+export async function lockWriteRequestsById(exec: SqlExecutor, ids: readonly string[]): Promise<WriteRequest[]> {
+  return exec.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=ANY($1::uuid[]) ORDER BY id FOR UPDATE', [ids]);
+}
+
 /**
  * A terminal request's compaction once its stored intent carried purged content (journal.ts finishTerminal). `left` is
  * what the receipt keeps without its intent, `reservation` the terminal reservation the completion left, `counterKeys`
@@ -381,4 +393,44 @@ export async function cancelWriteRow(exec: SqlExecutor, c: WriteCancellation): P
   await exec.executeRaw("SELECT set_config('synchronous_commit','on',true)");
   const done = await completeWriteRow(exec, c);
   return done ? { status: 'cancelled', row: done } : { status: 'too_large', row: current };
+}
+
+/** The config key that turns a remote write's mention links off (effect-model.ts `REMOTE_AUTO_LINKS_KEY`; the statement test pins the two). */
+export const REMOTE_AUTO_LINKS_CONFIG_KEY = 'mcp.remote_auto_links';
+
+/**
+ * #6007: a publication's effects, inserted together in queue order by one statement. A `gated` effect (the mention
+ * `links` effect) inserts nothing while config `auto_link` or `mcp.remote_auto_links` is off; unset is on. An effect
+ * already queued for the request keeps its row. The config value test is edge-whitespace.ts `asciiLowerSql(edgeTrimSql('value'))`
+ * written out; test/persistence-journal-statements.test.ts checks it against that fragment.
+ */
+export const PUBLICATION_EFFECTS_SQL = `INSERT INTO persistence_effects (request_id,kind,revision,data,source_id,source_incarnation,worktree_id)
+    SELECT $1::uuid,t.e->>'kind',$2::uuid,t.e->'data',$3,$4::uuid,$5::uuid FROM jsonb_array_elements($6::text::jsonb) WITH ORDINALITY AS t(e,n)
+    WHERE NOT (COALESCE((t.e->>'gated')::boolean,false) AND EXISTS (SELECT 1 FROM config
+      WHERE key IN ('auto_link',$7) AND translate(btrim(value, (E'\\u0020\\u0009\\u000a\\u000b\\u000c\\u000d' || CASE WHEN current_setting('server_encoding') = 'UTF8' THEN convert_from(decode('c2a0e19a80e28080e28081e28082e28083e28084e28085e28086e28087e28088e28089e2808ae280a8e280a9e280afe2819fe38080efbbbf', 'hex'), 'UTF8') ELSE '' END)), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz') IN ('false','0','no','off')))
+    ORDER BY t.n ON CONFLICT(request_id,kind) DO NOTHING RETURNING kind`;
+
+/** One effect a publication queues: its kind, its data, and whether the auto-link switches gate it. */
+export interface QueuedPublicationEffect { kind: string; data: Record<string, unknown>; gated?: boolean }
+
+/** What `insertPublicationEffects` inserts: the request's identity columns and its effects in queue order (at least one). */
+export interface PublicationEffectsSpec {
+  requestId: string;
+  /** The revision the publication wrote, or null when it wrote none. */
+  revision: string | null;
+  sourceId: string;
+  sourceIncarnation: string;
+  worktreeId: string | null;
+  effects: readonly QueuedPublicationEffect[];
+}
+
+/** The effects insert's parameters for one spec. */
+export function publicationEffectsParams(spec: PublicationEffectsSpec): unknown[] {
+  return [spec.requestId, spec.revision, spec.sourceId, spec.sourceIncarnation, spec.worktreeId, JSON.stringify(spec.effects), REMOTE_AUTO_LINKS_CONFIG_KEY];
+}
+
+/** Inserts a publication's effects; returns the kinds it inserted, in queue order (a gated or already queued kind is missing). */
+export async function insertPublicationEffects(exec: SqlExecutor, spec: PublicationEffectsSpec): Promise<string[]> {
+  const rows = await exec.executeRaw<{ kind: string }>(PUBLICATION_EFFECTS_SQL, publicationEffectsParams(spec));
+  return rows.map(row => row.kind);
 }
