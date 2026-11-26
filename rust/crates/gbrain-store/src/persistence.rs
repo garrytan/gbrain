@@ -121,6 +121,11 @@ mod worktree_admission;
 mod worktree_claim_tests;
 mod worktree_rows;
 mod worktrees;
+
+/// Whether the source holds a worktree binding at its current incarnation (the doctor's `bound`).
+pub(crate) fn is_source_claimed(read: &dyn KvRead, source_id: &str) -> Result<bool> {
+    worktrees::is_source_claimed_in(read, source_id)
+}
 mod write_claim_terms;
 mod writer_status;
 mod writer_status_queue;

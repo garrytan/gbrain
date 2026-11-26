@@ -51,7 +51,7 @@ test/engine-parity/collate-belief-cycle-walks.test.ts	6	0
 test/engine-parity/collate-command-listings.test.ts	7	2
 test/engine-parity/collate-core-page-lists.test.ts	16	1
 test/engine-parity/collate-doctor-access.test.ts	11	0
-test/engine-parity/collate-doctor-persistence.test.ts	9	7
+test/engine-parity/collate-doctor-persistence.test.ts	14	3
 test/engine-parity/collate-doctor.test.ts	9	1
 test/engine-parity/collate-engine-sql.test.ts	32	3
 test/engine-parity/collate-facts-home.test.ts	1	0
@@ -131,7 +131,7 @@ test/engine-parity/fact-purge-ledger.test.ts	3	0
 test/engine-parity/fact-purge-members.test.ts	14	1
 test/engine-parity/fact-purge-probes.test.ts	4	0
 test/engine-parity/fact-purge-receipt-e2e.test.ts	2	0
-test/engine-parity/fact-purge-sites.test.ts	14	6
+test/engine-parity/fact-purge-sites.test.ts	13	2
 test/engine-parity/fact-recall-pool-widening.test.ts	2	0
 test/engine-parity/fact-relink-attempts.test.ts	3	0
 test/engine-parity/fact-relink-writes.test.ts	4	0

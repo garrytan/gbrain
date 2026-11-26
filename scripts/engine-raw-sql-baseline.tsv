@@ -32,7 +32,6 @@ src/commands/doctor/checks/default-source-path.ts	execute_raw	1
 src/commands/doctor/checks/embed-backfill-stalled.ts	execute_raw	1
 src/commands/doctor/checks/embedding-health.ts	execute_raw	1
 src/commands/doctor/checks/extraction-sync.ts	execute_raw	3
-src/commands/doctor/checks/foreign-writers.ts	execute_raw	2
 src/commands/doctor/checks/function-search-path.ts	execute_raw	1
 src/commands/doctor/checks/git-convergence.ts	execute_raw	1
 src/commands/doctor/checks/graph-embedding.ts	execute_raw	1

@@ -5,8 +5,10 @@ Part of the store contract in [rust/README.md](../../README.md) ("The brain stor
 The extract steps (extract_atoms, extract_facts, synthesize_concepts) write an audit receipt page per run and add
 each run's events to a 7-day rollup that doctor's `extract_health` reads (`src/core/extract/receipt-writer.ts`,
 `rollup-writer.ts`; the SQL is in `src/core/engine-sql/extract-bookkeeping.ts`). The store serves the receipt write's two
-page reads and the rollup upsert, in `extract_bookkeeping.rs`. No member reads the rollup yet; the store's own row list,
-`brain.listExtractRollupDays`, is there for the typed read that will.
+page reads and the rollup upsert, in `extract_bookkeeping.rs`. The 7-day readers `readExtractRollup7d`, `listRecordedHaltReasons7d` and
+`readExtractKindRollup7d` (`src/core/rust-engine/store-members/doctor-derived.ts`) read the store's row list,
+`brain.listExtractRollupDays`, from `CURRENT_DATE - 7` (UTC) and aggregate it in TypeScript as the SQL does: kinds in
+byte order, `SUM(cost_usd)` in single precision, and the last halt age in days.
 
 | Key | Value | Mirrors |
 | --- | --- | --- |
@@ -21,6 +23,6 @@ of range"), and the row is unchanged.
 | `brain.readExtractReceiptSlot(sourceId, slug)` | `{ type, source_path, source_uri, withheld_source_path }` of the page the slug holds in the source, live or a tombstone, or null. The store keeps no withheld origin, so `withheld_source_path` is null | `readExtractReceiptSlot` |
 | `brain.readExtractReceiptSeal(sourceId, slug, safeVersion)` | `chunker_version >= safeVersion AND text_projection_revision = knowledge_revision` with SQL's three-valued AND: true, false, or null when either side is unknown; null for no page | `readExtractReceiptSeal` |
 | `brain.upsertExtractRollupDay({ kind, sourceId, day, costUsd, haltCount, evalFailCount, evalPassCount, roundCompletedCount, expectedLimitCount, rollupWriteFailures, haltReason })` | nothing. Stores the row, or adds each delta to the stored one; a `haltReason` adds `haltCount` to that bucket of `halt_reasons` (none: the buckets stay). A NUL byte in a kind, source or reason, or a day not `YYYY-MM-DD`, refuses | `upsertExtractRollupDay` |
-| `brain.listExtractRollupDays(since)` | the rows of days on or after `since`, in `(kind, source_id, day)` order | none (store only) |
+| `brain.listExtractRollupDays(since)` | the rows of days on or after `since`, in `(kind, source_id, day)` order | the rows `readExtractRollup7d`, `listRecordedHaltReasons7d` and `readExtractKindRollup7d` aggregate |
 
 The TypeScript member refuses the pre-v141 statement (`preV141`): the store schema always has `expected_limit_count`.
