@@ -170,12 +170,12 @@ describe('engine parity: raw_sql (Postgres read routes)', () => {
     const ROUTE_HELPERS = new Set<string>([...READ_ROUTES, 'decideRead', 'engineRead', 'timelineBoundedRead', 'writeMiscRead', 'jitOffRead', 'configRead']);
     const writes = [...members].filter(name => !ROUTE_HELPERS.has(name) && isWrite(name)).sort();
     expect(writes.length).toBeGreaterThan(100);
-    const entered: Array<[string, string]> = [];
+    const writesOnRoutes: Array<[string, string]> = [];
     for (const name of writes) {
       const route = await enteredBy(name);
-      if (route) entered.push([name, route]);
+      if (route) writesOnRoutes.push([name, route]);
     }
-    const onReadRoute = unexplainedReadRoutes(entered);
+    const onReadRoute = unexplainedReadRoutes(writesOnRoutes);
     // The recorder sees a read member enter its route (the scan is not blind).
     expect(await enteredBy('getSource')).toBe('preparationRead');
     expect(onReadRoute).toEqual([]);
