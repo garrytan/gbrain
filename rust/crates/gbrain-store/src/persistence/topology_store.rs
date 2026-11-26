@@ -152,6 +152,7 @@ pub enum TopologyRead {
     OwnerActivity {
         ids: Vec<String>,
     },
+    OpenWrites {},
 }
 
 /// One write of `topologyStore()`, named by `kind`.
@@ -647,6 +648,7 @@ fn topology_rows_in(
                 json!({ "owner_host_id": w.owner_host_id, "manifest": w.manifest.map(crate::jsonb::order) })
             })),
         TopologyRead::OwnerActivity { ids } => owner_activity_in(read, env, ids),
+        TopologyRead::OpenWrites {} => open_writes_in(read),
         TopologyRead::RecoveringChangesOf { worktree_id } => {
             let w = pg_uuid(worktree_id)?;
             // The change order never reaches output: the caller rewrites each row it lists.
@@ -664,6 +666,46 @@ fn topology_rows_in(
             ))
         }
     }
+}
+
+/// `OPEN_WRITES_SQL`: per worktree holding a queued, deferred, running or recovering request, how many, the oldest
+/// creation time and the sources bound to it (byte order of the id, `null` when none is bound).
+fn open_writes_in(read: &dyn KvRead) -> Result<Value> {
+    let mut open: std::collections::BTreeMap<String, (i64, i64)> =
+        std::collections::BTreeMap::new();
+    for r in all_requests(read)? {
+        let Some(w) = worktree_of(&r) else {
+            continue;
+        };
+        if !matches!(
+            r.state.as_str(),
+            "queued" | "deferred" | "running" | "recovering"
+        ) {
+            continue;
+        }
+        let entry = open.entry(w).or_insert((0, r.created_at_us));
+        entry.0 += 1;
+        entry.1 = entry.1.min(r.created_at_us);
+    }
+    let all = bindings(read)?;
+    Ok(Value::Array(
+        open.into_iter()
+            .map(|(worktree, (count, oldest))| {
+                let mut sources: Vec<&str> = all
+                    .iter()
+                    .filter(|b| b.worktree_id.eq_ignore_ascii_case(&worktree))
+                    .map(|b| b.source_id.as_str())
+                    .collect();
+                sources.sort_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
+                json!({
+                    "worktree_id": worktree,
+                    "open_writes": count,
+                    "oldest_open": crate::env::iso(oldest),
+                    "source_ids": if sources.is_empty() { Value::Null } else { json!(sources) },
+                })
+            })
+            .collect(),
+    ))
 }
 
 /// `OWNER_ACTIVITY_SQL`: per listed worktree that has an owner, when its owner was last active. This engine keeps

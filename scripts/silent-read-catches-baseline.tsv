@@ -1085,7 +1085,6 @@ src/core/persistence/drift-conflicts.ts#twinReading	capability_refusal_swallowed
 src/core/persistence/effect-git.ts#restoreIndex	catch_empty	1
 src/core/persistence/effect-retry.ts#retryIndexLockParks	capability_refusal_swallowed	1
 src/core/persistence/effect-retry.ts#retryIndexLockParks	catch_empty	1
-src/core/persistence/effects.ts#claimAndRecoverEffect	capability_refusal_swallowed	1
 src/core/persistence/effects.ts#runPersistenceEffects	promise_catch_empty	1
 src/core/persistence/engine-graduation.ts#existingRunError<anon@1>	catch_empty	1
 src/core/persistence/engine-graduation.ts#graduationStatus	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)

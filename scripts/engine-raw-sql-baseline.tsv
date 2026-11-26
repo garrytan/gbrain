@@ -47,7 +47,7 @@ src/commands/doctor/checks/managed-sync-convergence.ts	execute_raw	1
 src/commands/doctor/checks/managed-sync-movement.ts	execute_raw	1
 src/commands/doctor/checks/member-access.ts	execute_raw	3
 src/commands/doctor/checks/orphan-estimate.ts	execute_raw	2
-src/commands/doctor/checks/owner-host-stale.ts	execute_raw	2
+src/commands/doctor/checks/owner-host-stale.ts	execute_raw	1
 src/commands/doctor/checks/persistence-requests.ts	execute_raw	1
 src/commands/doctor/checks/pglite-worker.ts	sql_template	1
 src/commands/doctor/checks/postgres-tls.ts	execute_raw	1
@@ -374,7 +374,7 @@ src/core/persistence/effect-recovery.ts	execute_raw	16
 src/core/persistence/effect-retry.ts	execute_raw	9
 src/core/persistence/effect-settle.ts	execute_raw	7
 src/core/persistence/effect-targets.ts	execute_raw	7
-src/core/persistence/effects.ts	execute_raw	9
+src/core/persistence/effects.ts	execute_raw	8
 src/core/persistence/embedding-settlement.ts	execute_raw	6
 src/core/persistence/engine-graduation.ts	execute_raw	18
 src/core/persistence/facts-maintenance.ts	execute_raw	4
@@ -398,7 +398,7 @@ src/core/persistence/group-publish.ts	execute_raw	4
 src/core/persistence/hosted-repo.ts	execute_raw	4
 src/core/persistence/identity.ts	execute_raw	3
 src/core/persistence/import-reads.ts	execute_raw	7
-src/core/persistence/journal.ts	execute_raw	18
+src/core/persistence/journal.ts	execute_raw	15
 src/core/persistence/legacy-sync-failures.ts	execute_raw	1
 src/core/persistence/limits.ts	execute_raw	1
 src/core/persistence/links-extraction-holds.ts	execute_raw	2
@@ -443,7 +443,6 @@ src/core/persistence/skill-activation.ts	execute_raw	11
 src/core/persistence/sync-drain.ts	execute_raw	1
 src/core/persistence/sync-pass-confirm.ts	execute_raw	8
 src/core/persistence/sync-run.ts	execute_raw	7
-src/core/persistence/transient-retry.ts	execute_raw	1
 src/core/persistence/unbound-source.ts	execute_raw	4
 src/core/persistence/unimported-file.ts	execute_raw	1
 src/core/persistence/unindexed-files.ts	execute_raw	8

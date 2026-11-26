@@ -213,7 +213,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'listWriteRequestsByRequestIds', 'listEmbeddingCandidates', 'claimNotifierLease', 'readNotifierLease', 'holdsNotifierLease', 'releaseNotifierLease',
     'readNotifierSources', 'writeNotifierState', 'writeNotifierCoverage', 'recordNotifierSyncerHost', 'readNotifierStatusRows', 'hasNotifierCoverage',
     'upsertWantedMarker', 'attachWantedMarkerJob', 'readWantedMarkers', 'readDueWantedMarkers', 'pruneSatisfiedWantedMarkers', 'clearWantedMarker',
-    'settleFreshnessMarker', 'listSourceWantedMarkers', 'readFirstDue', 'readWriteRequestsByRequestIds', 'insertWriteRequestGroup', 'readOwnerHostBinding',
+    'settleFreshnessMarker', 'listSourceWantedMarkers', 'readFirstDue', 'readWriteRequestsByRequestIds', 'insertWriteRequestGroup', 'readOwnerHostBinding', 'selectClaimableLaneHead', 'stampLaneHeadClaim', 'reclaimReleasedWrite', 'chargeTransientInterruption', 'claimEffectRecovery',
     'listTopologyRecoveries', 'readSegmentedGateEvidence',
     'findTopologyChanges', 'readTopologyChangeDigest', 'renewWriteClaim', 'releaseUnpublishedClaim', 'expireStaleWriteClaims', 'hasClaimableWrite', 'selectClaimableWrite', 'listHostConsumerRows', 'probeLiveConsumerRows',
     'renewConsumerRow', 'deleteConsumerRow', 'stampWorktreeHeartbeats', 'readTopologyChange', 'insertTopologyChange',

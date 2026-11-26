@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2405/2433
+# covered: 2409/2438
 # lifecycle: 12/12
 # pages: 141/142
 # search: 8/8
@@ -32,7 +32,7 @@
 # sync_aliases: 10/10
 # config: 7/7
 # import_guards: 13/13
-# persistence_journal: 281/284
+# persistence_journal: 285/289
 # label_door: 6/6
 # page_purge: 46/46
 # mention_pass: 40/40
@@ -912,7 +912,7 @@ listChronicleCoverageGapRows	persistence_journal	yes	1	no	yes	yes	serves
 readAtomOriginInput	persistence_journal	yes	2	no	yes	yes	serves
 listProducerVersionRows	persistence_journal	yes	1	no	yes	yes	serves
 listAtomWriteReceipts	persistence_journal	yes	1	no	yes	yes	serves
-readWriteRequest	persistence_journal	yes	19	no	yes	yes	serves
+readWriteRequest	persistence_journal	yes	20	no	yes	yes	serves
 readWriteRequestsByRequestIds	persistence_journal	yes	3	no	yes	yes	serves
 readWriteRequestsByRequestId	persistence_journal	yes	1	no	yes	yes	serves
 readWriteRequestById	persistence_journal	yes	17	no	yes	yes	serves
@@ -935,13 +935,17 @@ lockPersistenceCounters	persistence_journal	yes	99	no	yes	yes	serves
 insertWriteRequest	persistence_journal	yes	132	no	yes	yes	serves
 insertWriteRequestGroup	persistence_journal	yes	2	no	yes	yes	serves
 readOwnerHostBinding	persistence_journal	yes	1	no	yes	yes	serves
-stampWriteClaim	persistence_journal	yes	48	no	yes	yes	serves
+stampWriteClaim	persistence_journal	yes	51	no	yes	yes	serves
+selectClaimableLaneHead	persistence_journal	yes	2	no	yes	yes	serves
+stampLaneHeadClaim	persistence_journal	yes	2	no	yes	yes	serves
+reclaimReleasedWrite	persistence_journal	yes	1	no	yes	yes	serves
+chargeTransientInterruption	persistence_journal	no	0	no	-	-	-
 lockWriteRequest	persistence_journal	yes	8	no	yes	yes	serves
 completeWriteRow	persistence_journal	yes	58	no	yes	yes	serves
 lockWriteRequestsById	persistence_journal	yes	2	no	yes	yes	serves
 compactTerminalIntent	persistence_journal	no	0	no	-	-	-
 cancelWriteRow	persistence_journal	yes	3	no	yes	yes	serves
-insertPublicationEffects	persistence_journal	yes	26	no	yes	yes	serves
+insertPublicationEffects	persistence_journal	yes	27	no	yes	yes	serves
 insertWithdrawalEffects	persistence_journal	yes	8	no	yes	yes	serves
 insertRemirrorEffects	persistence_journal	yes	1	no	yes	yes	serves
 readRemirrorEffects	persistence_journal	yes	1	no	yes	yes	serves
@@ -991,14 +995,14 @@ moveTwinPageChildren	persistence_journal	yes	4	no	yes	yes	serves
 moveTwinFacts	persistence_journal	yes	3	no	yes	yes	serves
 recordRenameAlias	persistence_journal	yes	3	no	yes	yes	serves
 movePageVersions	persistence_journal	yes	1	no	yes	yes	serves
-readSourceMembership	persistence_journal	yes	140	no	yes	yes	serves
+readSourceMembership	persistence_journal	yes	141	no	yes	yes	serves
 findTopologyChanges	persistence_journal	yes	3	no	yes	yes	serves
 readTopologyChangeDigest	persistence_journal	yes	2	no	yes	yes	serves
 listTopologyRecoveries	persistence_journal	yes	7	no	yes	yes	serves
 readTopologyChange	persistence_journal	yes	4	no	yes	yes	serves
 insertTopologyChange	persistence_journal	yes	10	no	yes	yes	serves
 renewWriteClaim	persistence_journal	yes	1	no	yes	yes	serves
-releaseUnpublishedClaim	persistence_journal	yes	4	no	yes	yes	serves
+releaseUnpublishedClaim	persistence_journal	yes	5	no	yes	yes	serves
 expireStaleWriteClaims	persistence_journal	yes	1	no	yes	yes	serves
 hasClaimableWrite	persistence_journal	yes	3	no	yes	yes	serves
 readHeadBlockerRows	persistence_journal	yes	1	no	yes	yes	serves
@@ -1032,7 +1036,7 @@ deleteProjectionJob	persistence_journal	yes	11	no	yes	yes	serves
 markProjectionRebuildFailed	persistence_journal	yes	5	no	yes	yes	serves
 listGatedMirrorRequests	persistence_journal	yes	2	no	yes	yes	serves
 listEffectRecoveries	persistence_journal	yes	1	no	yes	yes	serves
-selectClaimableEffect	persistence_journal	yes	8	no	yes	yes	serves
+selectClaimableEffect	persistence_journal	yes	9	no	yes	yes	serves
 readRequestEffects	persistence_journal	yes	13	no	yes	yes	serves
 readSourceRequestById	persistence_journal	yes	1	no	yes	yes	serves
 listSourceRequestsByRequestId	persistence_journal	yes	2	no	yes	yes	serves
@@ -1041,10 +1045,11 @@ lockEffectRow	persistence_journal	yes	2	no	yes	yes	serves
 listEmbeddingCandidates	persistence_journal	yes	1	no	yes	yes	serves
 listOverdueHeldWrites	persistence_journal	yes	1	no	yes	yes	serves
 lockOverdueHold	persistence_journal	yes	1	no	yes	yes	serves
-listOwnerRecoveryHeads	persistence_journal	yes	1	no	yes	yes	serves
+listOwnerRecoveryHeads	persistence_journal	yes	2	no	yes	yes	serves
 listResumableRefreshes	persistence_journal	yes	1	no	yes	yes	serves
 listSourceLastCommits	persistence_journal	yes	1	no	yes	yes	serves
 stampEffectClaim	persistence_journal	yes	6	no	yes	yes	serves
+claimEffectRecovery	persistence_journal	yes	1	no	yes	yes	serves
 claimCoalescedGitEffects	persistence_journal	yes	2	no	yes	yes	serves
 renewEffectClaim	persistence_journal	yes	1	no	yes	yes	serves
 advanceEffectRow	persistence_journal	yes	1	no	yes	yes	serves
@@ -1971,7 +1976,7 @@ readWriterAdminState	write_misc	yes	10	no	yes	yes	serves
 readWorktreeManifest	write_misc	yes	1	no	yes	yes	serves
 writerAdminStore	write_misc	yes	3	no	yes	yes	serves
 writerReleaseStore	write_misc	yes	13	no	yes	yes	serves
-publicationJournalStore	write_misc	yes	2	no	yes	yes	serves
+publicationJournalStore	write_misc	yes	3	no	yes	yes	serves
 chronicleStore	write_misc	yes	2	no	yes	yes	serves
 hasExtractedEvents	write_misc	yes	1	no	yes	yes	serves
 upsertChronicleRow	write_misc	yes	8	no	yes	yes	serves
@@ -2023,7 +2028,7 @@ recordAtomGenerationBump	write_misc	yes	2	no	yes	yes	serves
 addPersistenceCounters	write_misc	yes	4	no	yes	yes	serves
 gitDurabilityStore	write_misc	yes	2	no	yes	yes	serves
 gitEffectStore	write_misc	no	0	no	-	-	-
-topologyStore	write_misc	yes	6	no	yes	yes	serves
+topologyStore	write_misc	yes	8	no	yes	yes	serves
 refreshStore	write_misc	no	0	no	-	-	-
 groupPublishStore	write_misc	no	0	no	-	-	-
 manualLinkStore	write_misc	no	0	no	-	-	-

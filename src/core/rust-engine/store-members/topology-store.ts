@@ -114,6 +114,7 @@ function rustTopologyStore(brain: StoreBrain): TopologyStore {
     async insertCloneHostBinding(worktreeId, hostId, localPath, coordinationPath) { await write('insert_host_binding', { worktreeId, hostId, localPath, coordinationPath }); },
     // This engine keeps no consumer row, so `live` is false and the heartbeat of a consumer adds no evidence, as on PGLite.
     ownerActivity: (ids) => rows('owner_activity', { ids: [...ids] }),
+    openWrites: () => rows('open_writes', {}),
   };
 }
 

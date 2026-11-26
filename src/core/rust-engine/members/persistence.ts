@@ -172,6 +172,10 @@ export const PERSISTENCE_MEMBERS = {
   insertWriteRequestGroup: 'managed_persistence',
   readOwnerHostBinding: 'managed_persistence',
   stampWriteClaim: 'persistence_journal',
+  selectClaimableLaneHead: 'managed_persistence',
+  stampLaneHeadClaim: 'managed_persistence',
+  reclaimReleasedWrite: 'managed_persistence',
+  chargeTransientInterruption: 'managed_persistence',
   lockWriteRequest: 'persistence_journal',
   completeWriteRow: 'persistence_journal',
   lockWriteRequestsById: 'persistence_journal',
@@ -293,6 +297,7 @@ export const PERSISTENCE_MEMBERS = {
   stampEffectClaim: 'persistence_journal',
   // Refuses as the executeRaw it replaced did while the managed_persistence hold is on (store-members/managed-hold.ts).
   claimCoalescedGitEffects: 'raw_sql',
+  claimEffectRecovery: 'managed_persistence',
   renewEffectClaim: 'persistence_journal',
   advanceEffectRow: 'persistence_journal',
   completeEffectRow: 'persistence_journal',
