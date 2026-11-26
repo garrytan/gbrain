@@ -80,7 +80,7 @@ record of only its reader identity and private-readable grant is served, and the
 both. The provenance gate reads neither, with one exception in the first form: its member-page CASE
 judges the caller's own member page (`memory/members/<member>`, the actor's member or the first
 `member:` principal) with the identity. The member then sends that slug as `memberPage`, and
-`hidden_by_private_provenance` reads the identity on that page only (`provenance_identity`). The
+`hidden_by_private_provenance` reads the identity on that page only when the policy carries no `provenanceLineage` (`provenance_judge` in `facts/privacy.rs`; the lineage forms are below). The
 second form has no CASE and sends no `memberPage`. A labelled-only caller is served too: the member sends `labelledOnly: { identity, satisfiedRuleIds, member }`, and the
 store hides a fact unless it sits on `memory/members/<member>` and that page names `member:<member>` (`own_page_fact`,
 `labelledOnlyFactSql`); the entity and holding pages are judged without the labelled-only conjunct, as
@@ -1463,7 +1463,7 @@ Served on Rust: `listClaimConflictPairs`, `countClaimConflictPairs`, `listUnarch
 - `readLiveFactEntityPage` is none for a soft-deleted page or one the remote page-read floor hides. Its TypeScript
   member uses `storePageTextPolicy(remoteReadFloorSql)`, which serves supported labelled-only callers, including
   lineage reads, and ordinary callers carrying pending folder prefixes when their policy text matches. This is
-  distinct from the fact-provenance floor (`storeFloorPolicy`) and the non-owner lineage fact-policy refusal.
+  distinct from the fact-provenance floor (`storeFloorPolicy`), which still refuses a labelled-only caller and a caller whose record holds a pending folder prefix (row 32e-b-5).
 - `expireFactsOfGonePages` expires, in one write, the facts filed on a gone page (an ontology observation is not
   filed there), the conversation slots filed on it (the row gives up its dimension, value and slot), the facts extracted
   from it and filed on none, and the facts about it that no other page row holds. The first rule that matches a row

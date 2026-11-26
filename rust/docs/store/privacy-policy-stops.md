@@ -31,8 +31,7 @@ The census comes from reading the code. It was not built or run against `cd8eac4
 ## Widened-caller stops (MCP only)
 
 On MCP each of these serves a caller with identity, grants, the folder rules it satisfies, a labelled-only grant and a
-member's lineage read, where the member opts in with `callerReaders`; the fact reads in the next section are served under lineage too
-(row 32e-b-4). A member that does not opt in still stops for a caller with folder-rule readers, lineage or a labelled-only
+member's lineage read, where the member opts in with `callerReaders`; the fact reads in the table below are served under lineage too (row 32e-b-4); the floor-policy stops in the next section still stop for a labelled-only caller or a caller with a pending prefix (row 32e-b-5). A member that does not opt in still stops for a caller with folder-rule readers, lineage or a labelled-only
 grant. On the plain CLI none of them is asked for a policy.
 
 | Store member | File:line (cd8eac4d0c) | Reached from | Stops at |
