@@ -4,7 +4,7 @@
 use super::decode::Row;
 use super::{
     Column::{Kept, Unmapped},
-    Losses, Outcome, Relation, raise_counter, require_source,
+    Losses, Outcome, Relation, raise_counter, require_page, require_source,
 };
 use crate::error::Result;
 use crate::kv::KvWrite;
@@ -17,6 +17,7 @@ pub(super) const RELATIONS: &[(&str, &Relation)] = &[
     ("page_purges", &PAGE_PURGES),
     ("oauth_clients", &OAUTH_CLIENTS),
     ("guest_sources", &GUEST_SOURCES),
+    ("guest_marks", &GUEST_MARKS),
 ];
 
 /// Maps the family's "newly stored" answer to the row's outcome.
@@ -226,4 +227,43 @@ fn import_guest_source(tx: &mut dyn KvWrite, row: &Row, _: &mut Losses) -> Resul
     Ok(stored(crate::guest_sources::seed_row(
         tx, &source, writers, ceiling,
     )?))
+}
+
+// ---- guest_marks ---------------------------------------------------------------------------
+
+static GUEST_MARKS: Relation = Relation {
+    key: &["page_id"],
+    columns: &[
+        ("page_id", Kept),
+        ("source_id", Kept),
+        ("slug_at_write", Kept),
+        ("audience_member", Kept),
+        ("group_slug", Kept),
+        ("sender_label", Kept),
+        ("saved_at", Kept),
+        ("writer_kind", Kept),
+        ("writer_id", Kept),
+        ("request_id", Kept),
+        ("created_at", Kept),
+    ],
+    import: import_guest_mark,
+};
+
+/// A guest note's mark (guest_marks.rs), keyed by its page, which the seed imported before it.
+fn import_guest_mark(tx: &mut dyn KvWrite, row: &Row, _: &mut Losses) -> Result<Outcome> {
+    let page_id = row.req_id("page_id")?;
+    require_page(&*tx, page_id)?;
+    let mark = crate::guest_marks::MarkRecord {
+        source_id: row.req("source_id")?,
+        slug_at_write: row.req("slug_at_write")?,
+        audience_member: row.req("audience_member")?,
+        group_slug: row.req("group_slug")?,
+        sender_label: row.req("sender_label")?,
+        saved_at_us: row.req_ts("saved_at")?,
+        writer_kind: row.req("writer_kind")?,
+        writer_id: row.req("writer_id")?,
+        request_id: row.value("request_id").map(str::to_owned),
+        created_at_us: row.req_ts("created_at")?,
+    };
+    Ok(stored(crate::guest_marks::seed_mark(tx, page_id, mark)?))
 }

@@ -92,6 +92,7 @@ pub mod facts;
 pub mod federation_exposure;
 pub mod field_usage;
 pub mod generations;
+pub mod guest_marks;
 pub mod guest_sources;
 pub mod handover_reads;
 pub mod identity_auto;
