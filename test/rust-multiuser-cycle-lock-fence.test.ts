@@ -19,6 +19,7 @@ import { startConsumerHeartbeat } from '../src/core/persistence/consumer-heartbe
 import type { BrainEngine } from '../src/core/engine.ts';
 import { lockCycleUnderFence, registerHostLease } from './helpers/rust-host-fence.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { RUST_MULTIUSER_CONFIG_KEY } from '../src/core/rust-engine/multiuser-switch.ts';
 
 const TARGET = detectAddonTarget();
 const BUILT = process.env.GBRAIN_RUST_ENGINE_ADDON
@@ -40,6 +41,13 @@ async function open(): Promise<RustEngine> {
   const engine = openRustEngine({ addon, databasePath: path });
   engines.push(engine);
   await engine.connect({ engine: 'pglite', database_path: path } );
+  return engine;
+}
+
+async function reopen(path: string): Promise<RustEngine> {
+  const engine = openRustEngine({ addon: addon!, databasePath: path });
+  engines.push(engine);
+  await engine.connect({ engine: 'pglite', database_path: path });
   return engine;
 }
 
@@ -99,9 +107,20 @@ describe('the consumer heartbeat row carries the host fence (I-5, host fence tab
   const paths = { host_json_path: '/h/host.json', persistence_home: '/h', minted_under: null };
   const identity = { pid: 4242, nonce: 'n-1', pid_ns: null };
 
-  withAddon('after a takeover of the host lease, the old holder heartbeat is refused lease_lost and its row is not renewed', async () => {
-    await withEnv({ GBRAIN_RUST_MULTIUSER: '1' }, async () => {
-      const engine = await open();
+  // Both routes of the switch: the environment, and the brain's own config row (I-0.v2).
+  const routes: Array<[string, Record<string, string | undefined>, () => Promise<RustEngine>]> = [
+    ['the environment switch', { GBRAIN_RUST_MULTIUSER: '1' }, () => open()],
+    ['the brain config row', { GBRAIN_RUST_MULTIUSER: undefined }, async () => {
+      const first = await open();
+      await first.setConfig(RUST_MULTIUSER_CONFIG_KEY, 'true');
+      const path = dirs[dirs.length - 1];
+      await first.disconnect();
+      return reopen(path);
+    }],
+  ];
+  for (const [route, env, openOn] of routes) withAddon(`(${route}) after a takeover of the host lease, the old holder heartbeat is refused lease_lost and its row is not renewed`, async () => {
+    await withEnv(env, async () => {
+      const engine = await openOn();
       expect(engine.openStore('test').multiuser).toBe(true);
       const host = await registerHostLease(engine, 'consumer:h1');
       const errors: unknown[] = [];
