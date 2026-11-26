@@ -40,6 +40,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { detectAddonTarget } from '../src/core/rust-engine/addon-target.ts';
 
 const ROOT = resolve(import.meta.dir, '..');
@@ -59,6 +60,8 @@ interface Run { exitCode: number; stdout: string; stderr: string }
 
 let root = '';
 const brains = {} as Record<BrainName, Brain>;
+/** The one instant every read command computes clock-decayed scores at (GBRAIN_TEST_NOW_MS, a test-only input both engines read in salience); empty during setup. */
+let pinnedNowMs = '';
 /** Set when a Rust setup write was refused: reads are then compared with the mirror, not the full PGLite brain. */
 let useMirror = false;
 
@@ -77,6 +80,7 @@ function childEnv(brain: Brain): Record<string, string> {
     GBRAIN_SKIP_STARTUP_HOOKS: '1',
     GBRAIN_SWEEP: '0',
     TZ: 'UTC',
+    ...(pinnedNowMs ? { GBRAIN_TEST_NOW_MS: pinnedNowMs } : {}),
     ...(brain.backend === 'rust' ? { GBRAIN_RUST_ENGINE_ADDON: ADDON } : {}),
   };
 }
@@ -234,6 +238,20 @@ function printTable(): void {
   console.log(lines.join('\n'));
 }
 
+/** Sets each page's `updated_at` in the reference PGLite brain to the Rust brain's value for the same (source, slug). */
+async function alignClockInputs(ref: Brain): Promise<void> {
+  const seen = await cli(brains.rust, ['salience', '--limit', '100', '--json']);
+  const rows = seen.exitCode === 0 ? parseJson(seen.stdout) as Array<{ slug: string; source_id: string; updated_at: string }> | undefined : undefined;
+  if (!rows?.length) return;
+  const engine = new PGLiteEngine();
+  await engine.connect({ database_path: ref.db } as never);
+  try {
+    for (const row of rows) await engine.executeRaw('UPDATE pages SET updated_at = $3::timestamptz WHERE source_id = $1 AND slug = $2', [row.source_id, row.slug, row.updated_at]);
+  } finally {
+    await engine.disconnect();
+  }
+}
+
 describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a PGLite brain', () => {
   beforeAll(async () => {
     root = mkdtempSync(join(tmpdir(), 'gb-rust-cli-parity-'));
@@ -253,6 +271,11 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       const member = refusedMember(rust);
       setupRows.push({ command: label(args), state: rust.exitCode === 0 ? 'equal' : member ? 'refused' : 'diverged', note: rust.exitCode === 0 ? 'ran' : member ?? rust.stdout.slice(0, 300) + rust.stderr.slice(0, 300) });
     }
+    // Clock-decayed scores (salience) read each page's `updated_at`, and the brains were written seconds apart (PGLite starts
+    // slower than the Rust addon; the mirror is replayed after the others). Give the reference brain the Rust brain's own
+    // `updated_at` for every page, and pin one "now" for all reads, so the exact compare below sees the same inputs.
+    if (rustArm !== 'no-engine') await alignClockInputs(useMirror ? brains.mirror : brains.pglite);
+    pinnedNowMs = String(Date.now());
   }, 600_000);
 
   afterAll(() => {

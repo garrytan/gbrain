@@ -90,6 +90,24 @@ fn recent(store: &Store, clock: &Clock, extra: Value) -> Vec<Value> {
     store.get_recent_salience(&opts).unwrap()
 }
 
+#[test]
+fn a_pinned_now_computes_the_recency_term_at_that_instant() {
+    let dir = TempDir::new("salience-pinned");
+    let (store, clock) = open(&dir);
+    page(&store, "default", "notes/a", json!({}));
+    let now_ms = clock.0.load(Ordering::SeqCst) as f64 / 1000.0;
+    let score = |rows: Vec<Value>| rows[0]["score"].as_f64().unwrap();
+    let at_clock = score(recent(&store, &clock, json!({})));
+    let pinned_same = score(recent(&store, &clock, json!({"now_ms": now_ms})));
+    let a_day_later = score(recent(
+        &store,
+        &clock,
+        json!({"now_ms": now_ms + 86_400_000.0}),
+    ));
+    assert_eq!(at_clock, pinned_same);
+    assert!(a_day_later < at_clock, "{a_day_later} < {at_clock}");
+}
+
 fn ids(rows: &[Value]) -> Vec<String> {
     rows.iter()
         .map(|r| {

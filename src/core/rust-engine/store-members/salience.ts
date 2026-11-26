@@ -62,17 +62,19 @@ type RecentRow = Omit<SalienceResult, 'updated_at'> & { updated_at: string };
 
 export const getRecentSalience: StoreMember<[opts: SalienceOpts], SalienceResult[]> = async (brain, opts) => {
   const o = takeOptions('getRecentSalience', opts,
-    ['sourceId', 'sourceIds', 'days', 'limit', 'slugPrefix', 'recency_bias', 'takesHoldersAllowList', 'excludePrivate'],
+    ['sourceId', 'sourceIds', 'days', 'limit', 'slugPrefix', 'recency_bias', 'takesHoldersAllowList', 'excludePrivate', 'nowMs'],
     ['minTrust', 'suppressFlagged', 'requireSafeChunks']);
   const excludePrivate = storePagePolicy('getRecentSalience', o.excludePrivate);
   const days = Math.max(0, (o.days as number | undefined) ?? 14);
   const limit = clampSearchLimit(o.limit as number | undefined, 20, 100);
   const slugPrefix = o.slugPrefix as string | undefined;
   // The SQL binds this ms-precision ISO string as its window boundary.
-  const boundaryMs = Date.parse(new Date(Date.now() - days * 86400000).toISOString());
+  const nowMs = o.nowMs as number | undefined;
+  const boundaryMs = Date.parse(new Date((nowMs ?? Date.now()) - days * 86400000).toISOString());
   const bias = (o.recency_bias as SalienceOpts['recency_bias']) ?? 'flat';
   const rows = (await storeCall({ member: 'getRecentSalience' }, () => brain.getRecentSalience({
     boundary_ms: boundaryMs,
+    now_ms: nowMs ?? null,
     limit,
     slug_prefix: slugPrefix || null,
     exclude_briefings: !(slugPrefix && slugPrefix.startsWith('briefings')),

@@ -107,7 +107,8 @@ export async function getRecentSalience(exec: LegacyUnscopedRead, opts: Salience
     const limit = clampSearchLimit(opts.limit, 20, 100);
     const slugPrefix = opts.slugPrefix;
     // Compute the boundary in JS so the SQL is identical across engines (eng review D5).
-    const boundaryIso = new Date(Date.now() - days * 86400000).toISOString();
+    const boundaryIso = new Date((opts.nowMs ?? Date.now()) - days * 86400000).toISOString();
+    const nowExpr = opts.nowMs === undefined ? undefined : { kind: 'fixed' as const, isoUtc: new Date(opts.nowMs).toISOString() };
     // Escape LIKE meta for the optional prefix match.
     const prefixCondition = slugPrefix && opts.slugPrefixAlso?.length
       ? sqlFragment`AND p.slug LIKE ANY(${[slugPrefix, ...opts.slugPrefixAlso].map(prefix => prefix.replace(/[\\%_]/g, (c) => '\\' + c) + '%')}::text[])`
@@ -138,12 +139,14 @@ export async function getRecentSalience(exec: LegacyUnscopedRead, opts: Salience
         dateExpr: 'COALESCE(p.effective_date, p.updated_at)',
         decayMap: resolveRecencyDecayMap(),
         fallback: DEFAULT_FALLBACK,
+        ...(nowExpr ? { now: nowExpr } : {}),
       })
       : buildRecencyComponentSql({
         slugColumn: 'p.slug',
         dateExpr: 'p.updated_at',
         decayMap: {},
         fallback: { halflifeDays: 1, coefficient: 1.0 },
+        ...(nowExpr ? { now: nowExpr } : {}),
       });
     const restricted = opts.takesHoldersAllowList !== undefined;
     const emotionalSql = restricted ? '0' : 'p.emotional_weight';

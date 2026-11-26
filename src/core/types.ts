@@ -531,6 +531,8 @@ export interface SalienceOpts extends PageReadPolicy {
   sourceIds?: string[];
   /** Window in days. Default 14. */
   days?: number;
+  /** Test-only clock: epoch ms the window and the recency term are computed at. Unset, the wall clock. */
+  nowMs?: number;
   /** Max rows to return (clamped at 100). Default 20. */
   limit?: number;
   /** Optional slug-prefix filter (e.g., `personal`, `wiki/people`). */
