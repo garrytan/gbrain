@@ -482,6 +482,26 @@ describe('Rust engine on the store', () => {
   });
 });
 
+describe('Rust store take bindings', () => {
+  withAddon('a take or proposal id or row number that is not a whole number refuses invalid_argument instead of wrapping', async () => {
+    const { engine } = await open();
+    const brain = engine.openStore('test').brain;
+    const refused = async (fn: () => Promise<unknown>) => {
+      try { await fn(); return 'answered'; } catch (error) { return (error as { code?: string }).code ?? 'thrown'; }
+    };
+    const got = {
+      fraction: await refused(() => brain.readTakeProposal(1.5, null)),
+      nan: await refused(() => brain.claimTakeProposal(Number.NaN, 'cli')),
+      huge: await refused(() => brain.readTakeTrustRef(1e300)),
+      row: await refused(() => brain.readTakeRowTrust(1, 2.5)),
+      rows: await refused(() => brain.listTakeHoldersAtRows(1, [1, Number.POSITIVE_INFINITY])),
+      whole: await refused(() => brain.readTakeProposal(1, null)),
+    };
+    expect(got).toEqual({ fraction: 'invalid_argument', nan: 'invalid_argument', huge: 'invalid_argument', row: 'invalid_argument',
+      rows: 'invalid_argument', whole: 'answered' });
+  });
+});
+
 describe('Rust store members', () => {
   test('every served member is a row of the member table, and a served capability needs all of its members', () => {
     for (const member of Object.keys(STORE_MEMBERS)) {

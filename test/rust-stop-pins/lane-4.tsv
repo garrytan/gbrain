@@ -4,6 +4,3 @@
 # A row lets the case stop on that member's typed refusal (GBRAIN_TEST_RUST_ARM=1). The run fails when the case stops on another member, when the
 # due date has passed (the row goes red at 00:00 UTC on the day after the due date), or when the case no longer stops (remove the row).
 # rust-5a guards (by design since rust-5a, pinned when the stop-pin harness arrived with batch 12); lane 4 lifts them with the R3 cast work.
-test/engine-parity/facts-rest-sites.test.ts	readReplacementTarget refuses an id that is not a whole number	readReplacementTarget	lane 4 bb953c8e-f7e9-416b-900a-742c0038e047	2026-11-27	Declines an id that is not a whole number with its typed refusal instead of the bigint cast error text.
-test/engine-parity/facts-rest-sites.test.ts	expireSupersededFact takes an until that is not an ISO instant only where Postgres reads it	expireSupersededFact	lane 4 bb953c8e-f7e9-416b-900a-742c0038e047	2026-11-27	Declines an until that is not an ISO instant (Postgres timestamptz text) instead of parsing it.
-test/engine-parity/facts-rest-sites.test.ts	restoreSupersededFact takes an expiredAt that is not an ISO instant only where Postgres reads it	restoreSupersededFact	lane 4 bb953c8e-f7e9-416b-900a-742c0038e047	2026-11-27	Declines an expiredAt that is not an ISO instant (Postgres timestamptz text) instead of parsing it.
