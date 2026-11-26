@@ -23,7 +23,7 @@ import { requestAttribution } from '../persistence/attribution.ts';
 import { normalizeSkillFiles, skillMetadata, skillName, skillPath } from './manifest.ts';
 import { forgetSharedPacks } from './knowledge-guard.ts';
 import { assertSkillCapability, assertStoredSkillCapability, publicationEnabled, readSharedSkillPolicy, setSharedSkillPolicy } from './policy.ts';
-import { SHARED_SKILL_LIMITS, type SharedSkillFile, type SharedSkillFileInput, type SharedSkillPolicy, type SharedSkillPutInput, type SkillMetadata, type StoredSkillFile, type StoredSkillRevision } from './model.ts';
+import { SHARED_SKILL_LIMITS, type SharedSkillFile, type SharedSkillPolicy, type SharedSkillPutInput, type SkillMetadata, type StoredSkillFile, type StoredSkillRevision } from './model.ts';
 import { assertSharedSkillRetentionCapacity, pruneSharedSkillRevisionsInTransaction, sharedSkillRetentionCapacity, sharedSkillRetentionStatus } from './retention.ts';
 
 interface PackRow { pack_id: string; revision: string; manifest: Record<string, unknown>; manifest_hash: string; }
@@ -550,92 +550,58 @@ export async function importSharedSkillProposal(ctx: OperationContext, params: R
   return submitSharedSkillMutation(ctx, 'put_skill', input, { mode: 'proposal', skills: [input as unknown as SharedSkillPutInput], expected_hashes: hashes as Record<string, string | null> });
 }
 /**
- * A pack adoption republishes each declared skill from its SKILL.md. A skill that is already sealed keeps what that
- * SKILL.md does not carry: its private flag, the SKILL.md file's declared dependencies and any non-default audience or
- * media type, and each other file of the sealed revision that is still in the checkout (read from the checkout, so a
- * reviewed edit to it is adopted). A file the checkout no longer holds is left out, as the operator removed it, and so
- * is every dependency edge to it and any file no longer reachable from SKILL.md. Only values a fresh adoption would not
- * already produce are added, so an adoption retried after it committed derives the same request and replays its receipt.
+ * A pack adoption republishes each declared skill from its SKILL.md alone. That is only faithful when the sealed
+ * revision holds nothing else: other files, a private flag, requirements or routing (description, triggers) put_skill
+ * supplied beyond the sealed SKILL.md's frontmatter, or a SKILL.md audience, media type or dependency other than the
+ * defaults. Republishing such a skill would delete its other files from the checkout or widen who sees it or what it
+ * may call, so adoption refuses it by name, before anything is admitted; the reviewed change goes through
+ * import_skill_proposal, which publishes one skill with its full file set.
  */
-async function carrySealedSkillState(engine: BrainEngine, root: string, sourceId: string, incarnation: string, packId: string,
-  inputs: SharedSkillPutInput[]): Promise<void> {
+async function refuseLossyReadoption(engine: BrainEngine, sourceId: string, incarnation: string, packId: string, inputs: SharedSkillPutInput[]): Promise<void> {
   const sealed = (await heads(engine, sourceId, incarnation, packId, inputs.map(input => input.name))).filter(revision => !revision.deleted);
-  const sameList = (a: readonly string[] | undefined, b: readonly string[]) => !!a && a.length === b.length && a.every((v, i) => v === b[i]);
+  const sameList = (a: readonly string[] | undefined, b: readonly string[] | undefined) =>
+    JSON.stringify([...(a ?? [])].sort()) === JSON.stringify([...(b ?? [])].sort());
   for (const input of inputs) {
     const revision = sealed.find(row => row.name === input.name);
     if (!revision) continue;
-    const skillPath = `skills/${input.name}/SKILL.md`;
-    const skill = input.files.find(file => file.path === skillPath);
-    if (!skill) continue;
-    // Carry the sealed private flag only when this SKILL.md (its frontmatter markers) would not already seal it private,
-    // so the request a fresh adoption derived stays the same. A SKILL.md that cannot be read as metadata keeps it private.
-    if (revision.metadata?.private === true && input.private !== true) {
-      let already = false;
-      try { already = skillMetadata(input.name, [{ path: skillPath, content: Buffer.from(skill.content, 'utf8').toString('base64') } as StoredSkillFile], {}).private; }
-      catch { already = false; }
-      if (!already) input.private = true;
+    const entry = `skills/${input.name}/SKILL.md`;
+    const sealedSkill = revision.files.find(file => file.path === entry);
+    const reasons: string[] = [];
+    const others = revision.files.filter(file => file.path !== entry).map(file => file.path);
+    if (others.length) reasons.push(`it also holds ${others.join(', ')}`);
+    if (sealedSkill && (!sameList(sealedSkill.audience, ['readers']) || sealedSkill.media_type !== 'text/markdown' || (sealedSkill.depends_on?.length ?? 0) > 0)) {
+      reasons.push('its SKILL.md has its own audience, media type or dependencies');
     }
-    const carried: SharedSkillFileInput[] = [];
-    for (const file of revision.files) {
-      if (file.path === skillPath) continue;
-      const bytes = canonicalRead(root, file.path);
-      if (!bytes) continue;
-      carried.push({ path: file.path, content: bytes.toString('base64'), encoding: 'base64', file_class: file.file_class,
-        ...(file.audience?.length && !sameList(file.audience, ['readers']) ? { audience: [...file.audience] } : {}),
-        ...(file.media_type && file.media_type !== 'application/octet-stream' ? { media_type: file.media_type } : {}),
-        ...(file.depends_on?.length ? { depends_on: [...file.depends_on] } : {}) });
+    // What the sealed SKILL.md's own frontmatter produces; anything beyond it came from put_skill.
+    let fromFrontmatter: SkillMetadata | null = null;
+    try { fromFrontmatter = sealedSkill ? skillMetadata(input.name, [sealedSkill], {}) : null; } catch { fromFrontmatter = null; }
+    const metadata = revision.metadata;
+    if (!fromFrontmatter) reasons.push('its sealed SKILL.md cannot be read as metadata');
+    else {
+      if (metadata.private === true && !fromFrontmatter.private && input.private !== true) reasons.push('it was published private');
+      if (!sameList(metadata.requirements, fromFrontmatter.requirements) || metadata.tools_declared !== fromFrontmatter.tools_declared) reasons.push('it has requirements of its own');
+      if (metadata.description !== fromFrontmatter.description || !sameList(metadata.triggers, fromFrontmatter.triggers)) reasons.push('it has its own description or triggers');
     }
-    // Requirements put_skill declared (not this SKILL.md's frontmatter) are kept, so a prose edit never widens the tools.
-    const sealedRequirements = revision.metadata?.requirements ?? [];
-    if (sealedRequirements.length && !input.requirements?.length) {
-      let fromFrontmatter: string[] = [];
-      try { fromFrontmatter = skillMetadata(input.name, [{ path: skillPath, content: Buffer.from(skill.content, 'utf8').toString('base64') } as StoredSkillFile], {}).requirements; }
-      catch { fromFrontmatter = []; }
-      const extra = sealedRequirements.filter(requirement => !fromFrontmatter.includes(requirement));
-      if (extra.length) input.requirements = extra;
+    if (reasons.length) {
+      throw opError('local_conflict', 'Re-adopting this skill from its SKILL.md alone would lose what it was published with.',
+        `skills/${input.name} in source ${sourceId} is already published, and ${reasons.join('; ')}. Adopting the pack would republish it from SKILL.md alone, so nothing was written and no file was deleted. `
+        + `Publish the reviewed change to this skill with import_skill_proposal (gbrain call import_skill_proposal with its full file set and expected_hashes) on the brain host instead.`);
     }
-    const sealedSkill = revision.files.find(file => file.path === skillPath);
-    if (sealedSkill?.depends_on?.length) skill.depends_on = [...sealedSkill.depends_on];
-    if (sealedSkill?.audience?.length && !sameList(sealedSkill.audience, ['readers'])) skill.audience = [...sealedSkill.audience];
-    if (sealedSkill?.media_type && sealedSkill.media_type !== 'text/markdown') skill.media_type = sealedSkill.media_type;
-    // Keep only edges to files still present, then only the files SKILL.md still reaches.
-    const present = new Set([skillPath, ...carried.map(file => file.path)]);
-    for (const file of [skill, ...carried]) {
-      if (!file.depends_on) continue;
-      const kept = file.depends_on.filter(path => present.has(path));
-      if (kept.length) file.depends_on = kept; else delete file.depends_on;
-    }
-    const byPath = new Map(carried.map(file => [file.path, file]));
-    const reached = new Set<string>();
-    const queue = [...(skill.depends_on ?? [])];
-    while (queue.length) {
-      const path = queue.shift()!;
-      if (reached.has(path)) continue;
-      reached.add(path);
-      queue.push(...(byPath.get(path)?.depends_on ?? []));
-    }
-    // A file still in the checkout that nothing reaches any more would be deleted by the publication: refuse instead.
-    const orphaned = carried.filter(file => !reached.has(file.path)).map(file => file.path);
-    if (orphaned.length) {
-      throw opError('local_conflict', 'A kept skill file is no longer reached from SKILL.md.',
-        `${orphaned.join(', ')} ${orphaned.length === 1 ? 'is' : 'are'} still in source ${sourceId}'s checkout, but after the removal nothing in skills/${input.name} depends on ${orphaned.length === 1 ? 'it' : 'them'}, so adopting would delete ${orphaned.length === 1 ? 'it' : 'them'}. `
-        + `Remove ${orphaned.length === 1 ? 'that file' : 'those files'} too, or add ${orphaned.length === 1 ? 'it' : 'them'} to SKILL.md's depends_on, then review the inventory and adopt again; nothing was written.`);
-    }
-    input.files.push(...carried);
   }
 }
+
 /**
- * Each proposed file whose path the operator reviewed must carry exactly the reviewed bytes. The proposal is read from
- * the checkout before admission reads it again, so a file changed in between is refused here instead of being published
- * with bytes nobody reviewed.
+ * The SKILL.md files and the manifest that adoption read must be the exact bytes the operator reviewed: admission reads
+ * the checkout again later, so a file changed in between would otherwise be published unreviewed.
  */
-function assertProposalMatchesReview(inputs: SharedSkillPutInput[], reviewed: Record<string, string | null>, sourceId: string): void {
-  for (const file of inputs.flatMap(input => input.files)) {
-    if (!Object.hasOwn(reviewed, file.path)) continue;
-    const bytes = Buffer.from(file.content, file.encoding === 'base64' ? 'base64' : 'utf8');
-    if (sha256(bytes) !== reviewed[file.path]) {
+function assertReviewedBytes(sourceId: string, inputs: SharedSkillPutInput[], manifestBytes: Buffer | null, reviewed: Record<string, string | null>): void {
+  const read: Array<[string, Buffer | null]> = [['skillpack.json', manifestBytes],
+    ...inputs.flatMap(input => input.files.map(file => [file.path, Buffer.from(file.content, file.encoding === 'base64' ? 'base64' : 'utf8')] as [string, Buffer]))];
+  for (const [path, bytes] of read) {
+    if (!Object.hasOwn(reviewed, path)) continue;
+    if ((bytes === null ? null : sha256(bytes)) !== reviewed[path]) {
       throw opError('local_conflict', 'The reviewed inventory changed before publication.',
-        `${file.path} in source ${sourceId}'s checkout changed after its hash was reviewed. Review the current file, recompute its SHA-256 in expected_hashes, and submit again; nothing was written.`);
+        `${path} in source ${sourceId}'s checkout changed after its hash was reviewed. Review the current file, recompute its SHA-256 in expected_hashes, and submit again; nothing was written.`);
     }
   }
 }
@@ -688,8 +654,10 @@ export async function adoptSharedSkillpack(ctx: OperationContext, sourceId: stri
       ...((exclusions as string[] | undefined)?.some(value => value === name || value === relative) ? { private: true } : {}),
       files: [{ path: `${relative}/SKILL.md`, content: content.toString('utf8'), file_class: 'prose' as const }] };
   });
-  if (!options.skills) await carrySealedSkillState(ctx.engine, root, sourceId, source.incarnation, packId, inputs);
-  if (options.expected_hashes) assertProposalMatchesReview(inputs, options.expected_hashes, sourceId);
+  if (!options.skills) {
+    if (options.expected_hashes) assertReviewedBytes(sourceId, inputs, manifestBytes, options.expected_hashes);
+    await refuseLossyReadoption(ctx.engine, sourceId, source.incarnation, packId, inputs);
+  }
   if (!inputs.length) {
     throw opError('invalid_params', 'No declared skill bundle is available to adopt.',
       `Source ${sourceId}'s skillpack.json declares no skills. Add its skills/ entries to the manifest (or pass the skills explicitly), then adopt again.`);
