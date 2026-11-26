@@ -1179,7 +1179,6 @@ mod optimistic_driver {
 
     /// Test-only stand-in for the seam described in the file header, with its exact signatures. It answers `Err` (a typed
     /// "pending" store error) until the optimistic-transaction lane adds the real methods, which shadow these.
-    /// `OccKv::queued_commits` is real already (the group-commit crash test forces its batch with it), so it is not here.
     mod seam {
         use super::*;
 
@@ -1192,6 +1191,7 @@ mod optimistic_driver {
 
         pub trait StepPipeline: Sized {
             fn new_stepped(base: RedbKv) -> Result<Self, StoreError>;
+            // `queued_commits` is not stubbed: `OccKv::queued_commits` is an inherent store method, so the driver calls it.
             fn step_pipeline(&self, max_batch: usize) -> Result<Option<PipelineStep>, StoreError>;
         }
 
