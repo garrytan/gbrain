@@ -926,7 +926,7 @@ listChronicleCoverageGapRows	persistence_journal	yes	1	no	yes	yes	serves
 readAtomOriginInput	persistence_journal	yes	2	no	yes	yes	serves
 listProducerVersionRows	persistence_journal	yes	1	no	yes	yes	serves
 listAtomWriteReceipts	persistence_journal	yes	1	no	yes	yes	serves
-readWriteRequest	persistence_journal	yes	20	no	yes	yes	serves
+readWriteRequest	persistence_journal	yes	22	no	yes	yes	serves
 readWriteRequestsByRequestIds	persistence_journal	yes	3	no	yes	yes	serves
 readWriteRequestsByRequestId	persistence_journal	yes	1	no	yes	yes	serves
 readWriteRequestById	persistence_journal	yes	19	no	yes	yes	serves
