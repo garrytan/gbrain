@@ -79,6 +79,9 @@ served one person carry no reader list. `household_due` leaves them out for remo
 (`household_placement_stale`), but a direct page read still returns them, and making a subject a child counts them as
 shared with helpers, so it is refused until the replace runs.
 
+To set up the people, groups, folder rules and keys in one step, run `gbrain setup <harness> --shape household`
+([tutorial](../tutorials/household-brain.md)).
+
 ## Check it across harnesses
 
 The household tools are meant to give every agent the same answer. `test/e2e/household-cross-harness-real.serial.test.ts`

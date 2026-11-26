@@ -6281,6 +6281,16 @@ More: [docs/guides/conversation-archive.md#setup-history-import](../../docs/guid
 
 More: [docs/guides/repair.md#setup-hosted-connection](../../docs/guides/repair.md#setup-hosted-connection)
 
+### setup_household_unbound
+
+<a id="setup_household_unbound"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain setup --shape household was refused because the household template would set the brain to serve several people while this harness's connection stays bound to nobody (a shared stdio harness such as OpenClaw or Hermes is installed, or --no-stdio-member was given), so nothing was written. | On a brain that serves several people an unbound connection reads none of the household records, so the owner's own agent could not answer what needs doing at home, and every later setup run would refuse that connection. | Give the owner a key over HTTP (gbrain auth create <name> --member <owner>); or drop --no-stdio-member; or set up the owner alone with --household-members none. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/tutorials/household-brain.md#if-a-run-stops](../../docs/tutorials/household-brain.md#if-a-run-stops)
+
 ### setup_owner_conflict
 
 <a id="setup_owner_conflict"></a>
@@ -6292,6 +6302,26 @@ More: [docs/guides/repair.md#setup-hosted-connection](../../docs/guides/repair.m
 Reasons: `live_serve`, `unowned_entry`, `other_install`, `harness_lane`.
 
 More: [docs/guides/repair.md#setup-owner-conflict](../../docs/guides/repair.md#setup-owner-conflict)
+
+### setup_receipt_not_found
+
+<a id="setup_receipt_not_found"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A setup template status or resume named a receipt that is not on this machine (or none exists for this brain and source), so nothing was read or written. | A template run records each step and each key in a receipt under the brain's config directory; a status or resume reads only that record, so a missing one is never guessed. | Run the template again with --yes (every step is idempotent), or name a receipt this machine holds. Run: gbrain household template --json | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/tutorials/household-brain.md#if-a-run-stops](../../docs/tutorials/household-brain.md#if-a-run-stops)
+
+### setup_receipt_target_mismatch
+
+<a id="setup_receipt_target_mismatch"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A setup template status or resume named a receipt written for another brain, source or harness than the command names, so nothing was read or written. | A receipt names its target so a resume never changes a brain or source the person did not name, and a status never proves another target's keys. | Run the command with the receipt's own harness and source, or name a receipt of this target. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/tutorials/household-brain.md#if-a-run-stops](../../docs/tutorials/household-brain.md#if-a-run-stops)
 
 ### setup_serves_several
 
