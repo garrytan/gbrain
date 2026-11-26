@@ -687,6 +687,7 @@
     "skill_resolver_owner_unverified",
     "skill_resolver_pin_unknown",
     "skill_resolver_plugin_not_installed",
+    "skill_resolver_plugin_outdated",
     "skill_resolver_selftest_failed",
     "skill_resolver_setup_incomplete",
     "skill_resolver_state_missing",

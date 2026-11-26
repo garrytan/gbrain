@@ -3305,6 +3305,7 @@
     "skill_resolver_owner_unverified": 1,
     "skill_resolver_pin_unknown": 1,
     "skill_resolver_plugin_not_installed": 3,
+    "skill_resolver_plugin_outdated": 1,
     "skill_resolver_selftest_failed": 1,
     "skill_resolver_setup_incomplete": 1,
     "skill_resolver_state_missing": 1,

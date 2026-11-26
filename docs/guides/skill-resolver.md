@@ -336,7 +336,10 @@ on its next turn, so no OpenClaw command runs and the gateway does not reload:
   (for example `--operator-rule "Ask before you send, spend, delete or publish."`).
   `--conversation-operator-rule "<line>"` does the same for conversations.
   A line is at most 200 characters, with no line breaks and no `<` or `>`,
-  so it cannot open or close a block; `--operator-rule ''` clears it. It
+  so it cannot open or close a block; `--operator-rule ''` clears it. These
+  settings, like `--owner-sender`, need the resolver set up: pass them with
+  `--skill-loading resolve` (or `shadow`) the first time, and never with
+  `--skill-loading off` or `--remove`, which refuse them. It
   follows the session class like the pins do, and `--pins-route` never moves it.
 - `--owner-sender <id>` (repeatable): only turns from these senders get
   suggestions; others get the pins only. When OpenClaw sends no memory
@@ -1255,6 +1258,17 @@ not warned: the block names each path. Setup leaves those skills out of the agen
 doctor warns when the plugin still suggests one (the limits changed since
 setup ran). To get them back, raise those limits in `openclaw.json` or split
 the root, then run setup again. gbrain never edits these limits itself.
+
+### skill_resolver_plugin_outdated
+
+The plugin code installed in OpenClaw is older than this gbrain's, so it
+ignores settings added since: the operator rule line, `--brief` pins and
+`--require-owner-sender`. This happens when only the state was refreshed
+(`--skills-index-only`, which the plugin runs on its own after a gbrain
+upgrade). Run `gbrain setup openclaw --instructions-only` to rewrite and
+reinstall the plugin, then restart the gateway once. Until then doctor does
+not count `--require-owner-sender` as in force, and `gbrain skills pin` says
+the brief is not delivered.
 
 ### skill_resolver_owner_unverified
 

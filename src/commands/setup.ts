@@ -276,6 +276,10 @@ function parseFlags(args: string[]): SetupFlags | string {
   const suggestIn = value('--suggest-in');
   const rule = value('--operator-rule');
   const talkRule = value('--conversation-operator-rule');
+  for (const f of ['--operator-rule', '--conversation-operator-rule']) {
+    const next = args[args.indexOf(f) + 1];
+    if (args.includes(f) && (next === undefined || next.startsWith('--'))) return `${f} needs a value: one line in quotes, or '' to clear it`;
+  }
   const requireOwner = args.includes('--require-owner-sender') ? true : args.includes('--no-require-owner-sender') ? false : undefined;
   if (args.includes('--require-owner-sender') && args.includes('--no-require-owner-sender')) return 'pass --require-owner-sender or --no-require-owner-sender, not both';
   if ((liveFraction !== undefined || pinsRoute !== undefined || owners.length || suggestIn !== undefined || rule !== undefined || talkRule !== undefined || requireOwner !== undefined) && !openclaw) return '--live-fraction, --pins-route, --owner-sender, --suggest-in, --operator-rule, --conversation-operator-rule and --require-owner-sender are for openclaw only';
@@ -288,6 +292,8 @@ function parseFlags(args: string[]): SetupFlags | string {
   if (liveFraction !== undefined && !(/^(0(\.\d+)?|1(\.0+)?)$/.test(liveFraction))) return '--live-fraction must be a number from 0 to 1 (the share of sessions that see suggestions; the rest are logged as control)';
   if (pinsRoute !== undefined && pinsRoute !== 'system' && pinsRoute !== 'first_turn') return '--pins-route must be system (appendSystemContext, every turn) or first_turn (appendContext on a session\'s first turn and after compaction)';
   if (owners.some((o) => !/^[\x21-\x7e]{1,128}$/.test(o))) return '--owner-sender needs a sender id';
+  const tuningGiven = liveFraction !== undefined || pinsRoute !== undefined || owners.length > 0 || suggestIn !== undefined || rule !== undefined || talkRule !== undefined || requireOwner !== undefined;
+  if (tuningGiven && (flagLoading === 'off' || flagLoading === 'spring' || args.includes('--remove'))) return 'the OpenClaw skill-resolver settings (--live-fraction, --pins-route, --owner-sender, --suggest-in, --operator-rule, --conversation-operator-rule, --require-owner-sender) cannot be set while turning the resolver off; nothing was written';
   const openclawTuning = { ...(liveFraction !== undefined ? { live_fraction: Number(liveFraction) } : {}), ...(pinsRoute ? { pins_route: pinsRoute as 'system' | 'first_turn' } : {}), ...(owners.length ? { owner_sender_ids: owners } : {}), ...(suggestClasses ? { suggest_classes: suggestClasses as Array<'owner' | 'conversation'> } : {}),
     ...(rule !== undefined ? { operator_rule: rule } : {}), ...(talkRule !== undefined ? { conversation_operator_rule: talkRule } : {}), ...(requireOwner !== undefined ? { require_owner_sender: requireOwner } : {}) };
   const chosenLoading = flagLoading ?? (envLoading || undefined);
@@ -1054,7 +1060,10 @@ async function openclawSkillFor(flags: SetupFlags, refreshOnly = false): Promise
   if (flags.skillResolver === 'off' || (flags.remove && flags.skillResolver === undefined)) {
     return removeOpenclawSkillPlugin({ home, agents: Array.isArray(agents) ? agents : null, dryRun: flags.dryRun });
   }
-  if (flags.skillResolver === undefined && !readOpenclawSkillState(home)) return null;
+  if (flags.skillResolver === undefined && !readOpenclawSkillState(home)) {
+    if (!flags.openclawTuning) return null;
+    return { mode: 'off', steps: [], agents: [], notes: [], error: { code: 'skill_resolver_setup_incomplete', message: 'The OpenClaw skill resolver is not set up on this host, so the skill-resolver settings you passed were not saved. Pass --skill-loading resolve (or shadow) with them. Nothing was written.' } };
+  }
   return syncOpenclawSkillPlugin({ mode: flags.skillResolver === 'on' ? 'live' : flags.skillResolver === 'shadow' ? 'shadow' : null, agents, home,
     gbrainBin: flags.gbrainBin ?? resolveGbrainBin() ?? '', gbrainHomeEnv: process.env.GBRAIN_HOME?.trim() || null, dryRun: flags.dryRun, refreshOnly, tuning: flags.openclawTuning });
 }

@@ -50,7 +50,7 @@ import { ResolverError } from '../skills/resolver/errors.ts';
 import { logsDir, skillIndexRoot } from '../skills/resolver/paths.ts';
 import { readDirSources } from '../skills/resolver/sources.ts';
 import { openclawConfigPath, openclawPath, openclawStateDir, parseJson5ish, resolveOpenclawWorkspace } from './brain-first.ts';
-import { openclawSkillLoaderJs, openclawSkillWorkerJs } from './openclaw-skill-plugin-code.ts';
+import { OPENCLAW_SKILL_PLUGIN_CODE_VERSION, openclawSkillLoaderJs, openclawSkillWorkerJs } from './openclaw-skill-plugin-code.ts';
 import { openclawPluginRegistered, runOpenclawCli } from './openclaw-turn-plugin.ts';
 import { catalogSkillPaths, pinnedBlockFor, type PinClass } from './skill-pins.ts';
 import { readResolverConfig } from './skill-resolver-config.ts';
@@ -448,6 +448,11 @@ export function openclawOwnerUnverified(agentId: string, a: Pick<OpenclawSkillAg
   return a.mode === 'live' && !(a.owner_sender_ids ?? []).length && a.require_owner_sender !== true && openclawDmScopeMain(agentId);
 }
 
+/** The plugin code version installed in OpenClaw (its index.js), or null when none is readable. An older one ignores state fields added since. */
+export function openclawLoaderVersion(): number | null {
+  try { const m = /const PLUGIN_VERSION = "(\d+)";/.exec(readFileSync(join(openclawSkillPluginDir(), 'index.js'), 'utf8')); return m ? Number(m[1]) : null; } catch { return null; }
+}
+
 /** The setup command that sets an owner sender for an agent (the fix doctor and setup print). */
 export const ownerSenderFix = (agentId: string): string => `gbrain setup openclaw --skill-loading resolve --agent ${agentId} --owner-sender <your sender id>`;
 
@@ -548,7 +553,7 @@ export async function syncOpenclawSkillPlugin(opts: OpenclawSkillSyncOptions): P
     const brief = dryRun ? none : pinnedBlockFor(home, catalog, 'openclaw', root, { cls: 'owner', hidden, brief: true });
     const rule = (key: 'operator_rule' | 'conversation_operator_rule') => {
       const v = tune[key] ?? before?.[key];
-      return v && !operatorRuleProblem(v) ? { [key]: v } : {};
+      return typeof v === 'string' && v && !operatorRuleProblem(v) ? { [key]: v } : {};
     };
     const requireOwner = tune.require_owner_sender ?? before?.require_owner_sender ?? false;
     const sources: Record<string, number> = {};
@@ -597,7 +602,11 @@ export async function syncOpenclawSkillPlugin(opts: OpenclawSkillSyncOptions): P
   const stateChanged = (() => { try { return readFileSync(openclawSkillStatePath(home), 'utf8') !== stateText; } catch { return true; } })();
   if (stateChanged) { mkdirSync(home, { recursive: true }); atomicWriteTextFile(openclawSkillStatePath(home), stateText, { freshMode: 0o600 }); chmodSync(openclawSkillStatePath(home), 0o600); }
   out.steps.push({ step: 'state', action: stateChanged ? 'write' : 'keep', detail: `${openclawSkillStatePath(home)} (${Object.entries(agents).map(([id, a]) => `${id} ${a.mode}`).join(', ')})` });
-  if (opts.refreshOnly) return out;
+  if (opts.refreshOnly) {
+    const loader = openclawLoaderVersion();
+    if (loader !== null && loader < OPENCLAW_SKILL_PLUGIN_CODE_VERSION) out.notes.push(`the installed plugin code (version ${loader}) is older than this gbrain's (${OPENCLAW_SKILL_PLUGIN_CODE_VERSION}), so it ignores the operator rule, the --brief pins and --require-owner-sender; gbrain setup openclaw --instructions-only updates it (skill_resolver_plugin_outdated)`);
+    return out;
+  }
 
   try {
     if (changed) {

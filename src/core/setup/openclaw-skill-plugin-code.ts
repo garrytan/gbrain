@@ -487,7 +487,7 @@ async function resolveTurn(event, ctx, opts) {
   const text = turnText(event);
   const runId = ctx && typeof ctx.runId === 'string' && ctx.runId ? ctx.runId : null;
   const turnId = (event && (event.currentUserMessageId || event.messageId)) || (runId ? 'run:' + runId : createHash('sha256').update(text).digest('hex').slice(0, 16));
-  const memoKey = agentId + '\0' + sessionKey + '\0' + turnId;
+  const memoKey = agentId + '\0' + sessionKey + '\0' + tier + '\0' + turnId;
   const prior = memo.get(memoKey);
   const carried = (block) => !!block && (prior.text !== text || (Array.isArray(event && event.messages) && event.messages.some((m) => m && textOf(m.content).includes(block))));
   const briefKey = briefKeyOf(event, ctx, agentId, sessionKey);
@@ -500,7 +500,7 @@ async function resolveTurn(event, ctx, opts) {
       const m = memo.get(memoKey);
       if (m) m.brief = briefBlock; else remember(memo, memoKey, { block: '', text, brief: briefBlock, unresolved: true }, MEMO_MAX);
     }
-    const brief = fresh ? briefBlock : prior && live && prior.brief && !carried(prior.brief) ? prior.brief : '';
+    const brief = fresh ? briefBlock : prior && briefBlock && prior.brief && !carried(prior.brief) ? prior.brief : '';
     const ctxText = [brief, block || ''].filter(Boolean).join('\n\n');
     if (ctxText) result.appendContext = ctxText;
     log({ agent: agentId, arm, session_class: cls, audience, ms: Date.now() - t0, pins: pinsOn ? pinIds.length : 0, ...(rule ? { rule: true } : {}), ...(fresh ? { brief: true } : {}), ...(stalePins ? { pins_stale: true } : {}), ...line });
