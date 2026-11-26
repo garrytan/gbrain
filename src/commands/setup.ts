@@ -963,7 +963,7 @@ function householdTieRefusal(flags: SetupFlags, plan: ServesPlan, entry: EntryBi
   if (!shared && !flags.noStdioMember) return null;
   const why = shared ? `${shared} is installed on this host, so setup ties no ${harness} connection to one person` : '--no-stdio-member leaves this connection bound to nobody';
   return opError('setup_household_unbound', `The household template sets this brain to serve several people, and ${why}; the owner's own agent would then read none of the household records. Nothing was written.`,
-    shared ? `Give the owner a key over HTTP instead (gbrain auth create <name> --member <owner>), or run gbrain setup ${harness} --shape household --household-members none for the owner alone.`
+    shared ? `Give the owner a key over HTTP instead (gbrain auth create <name> --member <owner>); or run gbrain setup ${harness} --shape household --household-members none for the owner alone.`
       : `Drop --no-stdio-member, or run gbrain setup ${harness} --shape household --household-members none for the owner alone.`);
 }
 
