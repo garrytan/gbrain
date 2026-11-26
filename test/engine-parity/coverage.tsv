@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2406/2431
+# covered: 2407/2431
 # lifecycle: 12/12
 # pages: 141/142
 # search: 8/8
@@ -15,7 +15,7 @@
 # link_temporal: 22/22
 # search_vector: 4/4
 # retrieval_coverage: 5/5
-# chunks: 52/54
+# chunks: 53/54
 # extraction: 12/14
 # links: 23/23
 # tags: 5/5
@@ -387,7 +387,7 @@ readSegmentRegions	chunks	no	0	no	-	-	-
 listSymbolLanguages	chunks	yes	1	no	yes	yes	serves
 listSupportedChunkIds	chunks	yes	1	no	yes	yes	serves
 listSymbolChunkIds	chunks	yes	4	no	yes	yes	serves
-listWalkChunkRows	chunks	no	0	no	-	-	-
+listWalkChunkRows	chunks	yes	1	no	yes	yes	serves
 readReindexSpendInputs	chunks	yes	1	no	yes	yes	serves
 readPageProvenanceComplete	chunks	yes	3	no	yes	yes	serves
 countStalePagesForExtraction	extraction	yes	4	yes	yes	yes	serves
