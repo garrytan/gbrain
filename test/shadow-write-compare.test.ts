@@ -662,7 +662,7 @@ describe('every sample the child was sent ends in the tally (sample accounting)'
     });
     expect(readWriteTally(dir, epoch)).toBeNull(); // nothing was saved to the tally
     expect(unfoldedLost(dir, epoch)).toBe(9); // before: 0 and the receipt gone, so status read "measured" with the nine missing
-    expect(existsSync(sentPath(dir, 'sess-3'))).toBe(false);
+    expect(existsSync(sentPath(dir, 'sess-3'))).toBe(true); // was false: the tally save failed, so this child's own outcome was never saved; the sent count stays (the next owner worker books it)
   }, 60_000);
 
   test('a deficit that cannot be recorded at all (the lost file is not writable) is a fault line naming it, never a silent drop', async () => {
@@ -788,6 +788,36 @@ describe('every sample the child was sent ends in the tally (sample accounting)'
       expect(readWriteTally(dir, epoch)!.uncomparable_by_reason).toEqual({ receipt_orphaned: 9 }); // once: the second owner finds nothing to add
     });
   }, 60_000);
+
+  test('a sent count stays when this child\'s final tally save failed (an outcome only in memory), and status reads no evidence, never measured', async () => {
+    await withEnv({ GBRAIN_HOME: tmp() }, async () => {
+      const dir = tmp(); writeSeedRecord(dir, SEED);
+      const epoch = await runChild(dir, 'warmup'); saved(dir, epoch); // a passing tally of 1,000 comparable writes
+      writeFileSync(receiptFile(dir, 'pending'), JSON.stringify({ session: 'pending', sent: 1 }));
+      mkdirSync(`${writeTallyPath(dir)}.${process.pid}.tmp`); // this child cannot save its tally
+      await runChild(dir, 'pending', [JSON.stringify({ t: 'write', op: 'putPage', outcome: 'uncomparable', reason: 'preimage_timeout' }) + '\n']); // sent 1, received 1: no deficit, one outcome that stays in memory
+      expect(existsSync(receiptFile(dir, 'pending'))).toBe(true); // before: removed (sent == received), and the outcome was lost with status still measured
+      expect(readWriteTally(dir, epoch)!.uncomparable).toBe(0);
+      expect(stat(dir)).toMatchObject({ state: 'capability_missing', unresolved_replays: 1, outstanding_receipts: [basename(receiptFile(dir, 'pending'))] });
+    });
+  }, 60_000);
+
+  test('a client worker whose lost-sample write failed keeps its count and status reads no evidence, even though its fault line was written; the count is written down at the next save', () => {
+    const dir = tmp(); const { tally, epoch } = tallyOn(dir); saved(dir, epoch); // an epoch and a passing tally of 1,000 comparable writes
+    const client = new WriteTally(dir, () => null, () => true, process.pid); // another process owns the store
+    for (let i = 0; i < 3; i++) client.note('uncomparable', 'preimage_timeout');
+    mkdirSync(lostPath(dir, process.pid)); // the lost-sample file cannot be written
+    expect(client.save()).toBe(false);
+    expect(readFaults(dir).map((f) => [f.kind, f.detail])).toContainEqual(['write_samples_unrecorded', 'no_epoch n=3']);
+    expect(stat(dir)).toMatchObject({ state: 'capability_missing', unrecorded_sample_faults: 1 }); // before: measured, the fault line was ignored
+    expect(client.save()).toBe(false); expect(readFaults(dir).filter((f) => f.kind === 'write_samples_unrecorded')).toHaveLength(1); // one fault line for the same count
+    rmSync(lostPath(dir, process.pid), { recursive: true }); // the disk recovers
+    expect(client.save()).toBe(true);
+    expect(unfoldedLost(dir, epoch)).toBe(3); // before: 0, the count was cleared by the fault line and never written down
+    tally.save(); // the owner folds the three lost samples into the tally
+    expect(readWriteTally(dir, epoch)!.uncomparable_by_reason).toMatchObject({ no_epoch: 3 });
+    expect(stat(dir)).toMatchObject({ state: 'capability_missing', unrecorded_sample_faults: 1 }); // nothing else is open, but the fault of this epoch still blocks measured (a new epoch clears it)
+  });
 
   test('an orphaned receipt keeps status at no evidence until an owner worker settles it as receipt_orphaned (uncomparable); then the receipt is gone and the unresolved mark clears', async () => {
     await withEnv({ GBRAIN_HOME: tmp() }, async () => {

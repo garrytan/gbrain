@@ -242,6 +242,7 @@ export class WriteTally {
   private sealed = 0; // the first `sealed` pending batches were in a save that may have landed: never added to, until a durable save takes them
   private seq = 0;
   private unowned = 0; // verdicts of a client child not yet written as lost samples (flushUnowned)
+  private unownedFaulted = 0; // the count the last fault line named: a fault line is a signal, never a settlement, so the count itself stays until it is written as lost samples
   private readonly id: string;
   constructor(private readonly dir: string, private readonly epoch: () => string | null, private readonly alive: () => boolean = () => existsSync(dir), private readonly pid: number = process.pid) { this.id = `${pid}.${randomBytes(4).toString('hex')}`; }
   /** One locked read-modify-write: dead pids recovered, then this child's unsaved batches, then `change`. False when nothing was saved (the batches are kept). `fresh`: a mark under this pid is from an earlier process that had it. */
@@ -291,8 +292,8 @@ export class WriteTally {
   private flushUnowned(final: boolean): boolean {
     if (this.unowned === 0 || !this.alive()) { this.unowned = 0; return true; }
     const epoch = readEpoch(this.dir)?.epoch_id;
-    if (epoch !== undefined) { this.unowned -= recordLostCount(this.dir, epoch, 'no_epoch', this.unowned); if (this.unowned === 0) return true; } // only what was written is released: the rest waits for the next flush
-    if (final) { try { appendFault(this.dir, { ts: new Date().toISOString(), kind: 'write_samples_unrecorded', detail: `no_epoch n=${this.unowned}` }); this.unowned = 0; } catch { /* disk: the count stays in memory */ } }
+    if (epoch !== undefined) { this.unowned -= recordLostCount(this.dir, epoch, 'no_epoch', this.unowned); if (this.unowned === 0) { this.unownedFaulted = 0; return true; } } // only what was written is released: the rest waits for the next flush
+    if (final && this.unowned !== this.unownedFaulted) { try { appendFault(this.dir, { ts: new Date().toISOString(), kind: 'write_samples_unrecorded', detail: `no_epoch n=${this.unowned}`, ...(epoch ? { epoch_id: epoch } : {}) }); this.unownedFaulted = this.unowned; } catch { /* disk: the count stays in memory */ } } // status reads this fault as no evidence for the epoch; the count is kept either way
     return false;
   }
   /**

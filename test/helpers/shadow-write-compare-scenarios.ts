@@ -69,7 +69,7 @@ export function fakeComparer(dir: string, over: { imported?: (rows: number) => R
   });
   return Object.assign(comparer, { counts: on.counts });
 }
-export const settle = async (c: { handle(e: WriteEvent): void; idle(): Promise<void> }, events: WriteEvent[]) => { for (const e of events) c.handle(e); await c.idle(); };
+export const settle = async (c: { handle(e: WriteEvent): void; idle(): Promise<unknown> }, events: WriteEvent[]) => { for (const e of events) c.handle(e); await c.idle(); };
 
 /** Counts the preimage reads an engine is asked for: they run inside a transaction, so this watches the SQL its transactions run. */
 export function watchPreimage(engine: BrainEngine): { count: () => number; restore: () => void } {

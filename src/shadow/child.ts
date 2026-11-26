@@ -557,8 +557,9 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
     (timer as { unref?: () => void }).unref?.();
   }
   // The serving process wrote down how many write samples it sent us before it ended our stdin (a receipt); what it sent and we never read was dropped in its pipe at its exit, and is counted once (supervisor.ts recordSent).
-  // The difference is written as lost samples (durable appends, split so none is cut; the owner child folds them into the tally exactly once), and the receipt is removed ONLY when every one is down: a fault line
-  // is a signal, never a settlement (no readiness input reads it), so a failed append keeps the receipt and status reads no evidence. A receipt that is there and cannot be read is a fault line and stays too.
+  // The difference is written as lost samples (durable appends, split so none is cut; the owner child folds them into the tally exactly once), and the receipt is removed ONLY when every one is down and the final tally save has landed (below): a fault line
+  // is a signal, never a settlement, so a failed append keeps the receipt and status reads no evidence. A receipt that is there and cannot be read is a fault line and stays too.
+  let receiptSettled = false; // the deficit (if any) is on disk: the receipt goes only once the final tally save has landed too
   const receipt = readReceipt(shadowDir, session);
   const epoch = readEpoch(shadowDir)?.epoch_id;
   const faultLine = (detail: string): void => { try { appendFault(shadowDir, { ts: new Date(now()).toISOString(), kind: 'write_samples_unrecorded', detail, ...(epoch ? { epoch_id: epoch } : {}) }); } catch { /* disk: the receipt stays, which is what status reads */ } };
@@ -566,7 +567,7 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
   else if (receipt !== null) {
     const missing = Math.max(0, receipt.sent - received);
     const done = missing === 0 ? 0 : epoch === undefined ? 0 : recordLostCount(shadowDir, epoch, 'pipe_unflushed', missing); // this worker's own receipt is its own samples whatever stamp it carries: booked under the epoch on disk, never dropped
-    if (done >= missing) { try { rmSync(sentPath(shadowDir, session), { force: true }); } catch { /* the receipt stays: the next owner worker settles it, or status reads no evidence */ } }
+    if (done >= missing) receiptSettled = true;
     else faultLine(`pipe_unflushed n=${missing - done}`);
   }
   // The serving process ended our stdin: nothing it was asked can still be answered. A queued rerun ends as skipped.
@@ -574,7 +575,10 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
   for (const task of reruns.drop()) record(task.event, task.c, task.rustMs, task.rows, 'skipped:child_closing');
   await drain();
   await reruns.idle();
-  await recalling; await writes.idle();
+  await recalling;
+  // The sent count is removed only now, with the deficit recorded AND this child's own outcomes saved: a failed final save (or a death or the exit deadline before it) leaves it, and the next owner worker books the whole count as
+  // receipt_orphaned (more than was lost, never less); with it gone, status would read measured with an outcome that was only ever in memory.
+  if ((await writes.idle()) && receiptSettled) { try { rmSync(sentPath(shadowDir, session), { force: true }); } catch { /* the receipt stays: the next owner worker settles it, or status reads no evidence */ } }
   await follow.close();
   clearInterval(heartbeat);
   clearInterval(flusher);
