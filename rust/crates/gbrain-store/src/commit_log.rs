@@ -201,6 +201,9 @@ pub struct LogMeta {
     pub lineage: Vec<Timeline>,
 }
 
+/// Commit records as the store holds them: each position with its record's bytes, unchanged.
+pub type RawRecords = Vec<(CommitPosition, Vec<u8>)>;
+
 /// One page of the log, read from one snapshot (I-4).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LogPage {

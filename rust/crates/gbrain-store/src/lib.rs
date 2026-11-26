@@ -389,9 +389,6 @@ fn json_depth(bytes: &[u8]) -> usize {
     max
 }
 
-/// The raw commit records of one log page: each position with the record's bytes as the store holds them.
-pub type RawLogRecords = Vec<(CommitPosition, Vec<u8>)>;
-
 impl Store {
     /// Opens the brain in directory `dir`, creating it when it holds no brain yet.
     ///
@@ -1034,7 +1031,7 @@ impl Store {
         &self,
         after: Option<CommitPosition>,
         max: usize,
-    ) -> Result<(LogPage, RawLogRecords)> {
+    ) -> Result<(LogPage, commit_log::RawRecords)> {
         let read = self.kv.snapshot()?;
         let mut page = commit_log::read_commit_log(&*read, after, max)?;
         let mut raw = Vec::with_capacity(page.records.len());
