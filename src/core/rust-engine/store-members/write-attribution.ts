@@ -10,11 +10,11 @@ import type {
   ActorAttributionRow, PageRevisionAttributionRow, RowAttributionRow, RowAttributionTarget, VersionAttributionRow, VersionRef,
   WriteAttributionNameIds, WriteAttributionNames, WriteRequestAttributionRow,
 } from '../../engine-sql/write-attribution.ts';
-import { ownerOnlyTakeAllowedSql, ownerOnlyTimelineAllowedSql, privateFactFilterForReader } from '../../search/private-visibility.ts';
+import { privateFactFilterForReader } from '../../search/private-visibility.ts';
 import { withDates } from '../store-codec.ts';
-import { selfChecked } from '../access-self-check.ts';
 import { storeCall, type StoreMember } from './common.ts';
-import { ownerOnlyFormIn, storePrivacyPolicy, type StoreOwnerOnlyForm } from './private-provenance.ts';
+import { rowOwnerOnly } from './access-policies.ts';
+import { storePrivacyPolicy } from './private-provenance.ts';
 
 /** Names requests, OAuth clients, legacy tokens (revoked ones included) and local writers; an unknown id has no name. */
 export const readWriteAttributionNames: StoreMember<[ids: WriteAttributionNameIds], WriteAttributionNames> = async (brain, ids) => {
@@ -45,19 +45,6 @@ export const readVersionAttributions: StoreMember<[versions: VersionRef[]], Vers
 
 export const readOldestVersionAttribution: StoreMember<[pageId: number], ActorAttributionRow | null> = (brain, pageId) =>
   storeCall({ member: 'readOldestVersionAttribution' }, () => brain.readOldestVersionAttribution(pageId));
-
-/**
- * The owner-only form a take or timeline row is read under (`ownerOnlyTakeAllowedSql` / `ownerOnlyTimelineAllowedSql`):
- * 'off' for the owner or a read without excludePrivate.
- */
-export function rowOwnerOnly(excludePrivate: boolean | undefined, table: 'takes' | 'timeline_entries'): StoreOwnerOnlyForm {
-  if (!excludePrivate) return 'off';
-  return selfChecked('readRowAttribution', { mode: 'row_owner_only' }, () => rowOwnerOnlyRendered(table));
-}
-
-function rowOwnerOnlyRendered(table: 'takes' | 'timeline_entries'): StoreOwnerOnlyForm {
-  return ownerOnlyFormIn(table === 'takes' ? ownerOnlyTakeAllowedSql(table) : ownerOnlyTimelineAllowedSql(table), table, table);
-}
 
 /** The row the target names; a fact read under excludePrivate takes the reader's policy, or refuses one the store cannot judge. */
 export const readRowAttribution: StoreMember<[target: RowAttributionTarget], RowAttributionRow | null> = async (brain, target) => {

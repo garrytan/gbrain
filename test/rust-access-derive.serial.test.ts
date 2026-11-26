@@ -25,12 +25,8 @@ import {
 import type { BrainEngine } from '../src/core/engine.ts';
 import { rustArmAddonPath } from './engine-parity/rust-arm.ts';
 import { plainPageFlags } from '../src/core/rust-engine/store-members/private-provenance.ts';
-import { openPageFloorPolicy } from '../src/core/rust-engine/store-members/access-setup.ts';
-import { writerPolicy } from '../src/core/rust-engine/store-members/remote-links.ts';
-import { snapshotServed } from '../src/core/rust-engine/store-members/trust-tier-reads.ts';
-import { retirementHopPolicy } from '../src/core/rust-engine/store-members/cli-entities.ts';
-import { memberAccessPolicy } from '../src/core/rust-engine/store-members/list-reads.ts';
-import { rowOwnerOnly } from '../src/core/rust-engine/store-members/write-attribution.ts';
+import { memberAccessPolicy, openPageFloorPolicy, rowOwnerOnly, snapshotServed, writerPolicy } from '../src/core/rust-engine/store-members/access-policies.ts';
+import { retirementHopPolicy } from '../src/core/rust-engine/store-members/private-provenance.ts';
 
 const ADDON = rustArmAddonPath();
 let derive: (ctx: unknown) => unknown;

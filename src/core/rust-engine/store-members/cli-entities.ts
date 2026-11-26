@@ -8,10 +8,8 @@
  */
 import type { EntityAnchoredPages, TextMentionPageRow, EntityCardMatch, EntityCardRow, IgnoredLabelPageRow, InboundLinkerCountRow, LivePageTypeRow, MentionDueQuery, MentionIndexRecount, MentionIndexStatusRow, NameVariantCandidateQuery, NameVariantCandidateRow, PrefixCandidateQuery, PrefixCandidateRow, PrefixTitleRow, ResolverPrivacy, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow, SlugPatternPageRow, TrigramCandidateQuery, TrigramCandidateRow, FuzzyEntityCandidateRow } from '../../engine-sql/entity-reads.ts';
 import { ignoredPrivacyLabels, SCAN_CAP } from '../../search/ignored-privacy-labels.ts';
-import { callerAccessAllowedSql, currentCallerAccess, privatePagesFilterForCaller, remoteReadFloorSql, withCallerAccess, withoutCallerAccess } from '../../search/private-visibility.ts';
-import { selfChecked } from '../access-self-check.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
-import { ownerOnlyFormIn, storePagePolicy, storePageTextPolicy, type StorePrivacyPolicy } from './private-provenance.ts';
+import { retirementHopPolicy, storePagePolicy } from './private-provenance.ts';
 
 export const readMentionLastPass: StoreMember<[sourceId?: string | null], string | null> = (brain, sourceId) =>
   storeCall({ member: 'readMentionLastPass', sourceId: sourceId ?? undefined }, () => brain.readMentionLastPass(sourceId ?? null));
@@ -65,31 +63,6 @@ export const readLiveSlugs: StoreMember<[sourceId: string, slugs: readonly strin
 
 export const findExactSlug: StoreMember<[sourceId: string, slugs: readonly string[], opts?: { retired?: boolean }], string | null> = (brain, sourceId, slugs, opts) =>
   storeCall({ member: 'findExactSlug', sourceId }, () => brain.findExactSlug(sourceId, [...slugs], opts?.retired ?? null));
-
-/**
- * The store page policy a retirement hop applies: the caller's page policy and the remote read floor through
- * storePageTextPolicy; member access alone (privacy off) when the caller's `callerAccessAllowedSql` is the no-caller
- * text or the canonical one for its reader identities, as the page visibility guards serve it (page-visibility.ts).
- * Any other caller refuses before the read.
- */
-export function retirementHopPolicy(privacy: RetirementPrivacy, member = 'readRetirementHop'): StorePrivacyPolicy | undefined {
-  if (privacy === 'none') return undefined;
-  if (privacy === 'caller') return storePageTextPolicy(member, () => privatePagesFilterForCaller('p'), { callerReaders: true, fragment: 'caller' });
-  if (privacy === 'floor') return storePageTextPolicy(member, () => remoteReadFloorSql('p'), { callerReaders: true, fragment: 'floor' });
-  return selfChecked(member, { mode: 'access_part_plain' }, () => accessPartPlainRendered(member));
-}
-
-/** retirementHopPolicy's `access` branch: member access alone, as the TypeScript renderers decide it. */
-function accessPartPlainRendered(member: string): StorePrivacyPolicy {
-  const text = callerAccessAllowedSql('p');
-  const off = { honorAliases: false, entityPrivacy: false, ownerOnly: ownerOnlyFormIn(text, 'pages', 'p') };
-  if (text === withoutCallerAccess(() => callerAccessAllowedSql('p'))) return off;
-  const access = currentCallerAccess();
-  const readers = { identity: [...access.identity], privateReadableSources: [...access.privateReadableSources] };
-  const canonical = withoutCallerAccess(() => withCallerAccess({ ...readers, hidePrivate: true }, () => callerAccessAllowedSql('p')));
-  if (text === canonical) return { ...off, ...readers };
-  refuseMember(member, 'a caller whose member pages, grants or lineage widen the member-access policy');
-}
 
 export const readRetirementHop: StoreMember<[sourceId: string, slug: string, privacy: RetirementPrivacy], RetirementHopRow | null> =
   (brain, sourceId, slug, privacy) => {

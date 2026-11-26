@@ -7,11 +7,11 @@
  * gbrain-store `access_migrations`. What each member answers: rust/docs/store/access_rules.md.
  */
 import type { AccessMigrationRow, LiveAccessTokenRow, MemberKeyReadingRow, OpenPageCount, OpenPageExclusion, PeopleFolderCount } from '../../engine-sql/access-setup.ts';
-import { accessAllowedSql, callerAccessAllowedSql, callerAccessRecord, currentCallerAccess, privacyPartSql, withCallerAccess } from '../../search/private-visibility.ts';
+import { accessAllowedSql, callerAccessRecord, privacyPartSql, withCallerAccess } from '../../search/private-visibility.ts';
 import type { StoreBrain } from '../store.ts';
-import { refuseMember, storeCall, type StoreMember } from './common.ts';
-import { ownerOnlyFormIn, renderForStoreCaller, storePageTextPolicy, type StorePrivacyPolicy } from './private-provenance.ts';
-import { selfChecked } from '../access-self-check.ts';
+import { storeCall, type StoreMember } from './common.ts';
+import { openPageFloorPolicy } from './access-policies.ts';
+import { storePageTextPolicy, type StorePrivacyPolicy } from './private-provenance.ts';
 
 export const listUnboundTokenNames: StoreMember<[], string[]> = (brain) =>
   storeCall({ member: 'listUnboundTokenNames' }, () => brain.listUnboundTokenNames()) as Promise<string[]>;
@@ -94,27 +94,6 @@ export const countPeopleFolderPages: StoreMember<[], PeopleFolderCount[]> = asyn
   }
   return out.sort((a, b) => byCodeUnit(a.source_id, b.source_id) || byCodeUnit(a.folder, b.folder));
 };
-
-/**
- * countOpenPages's member-access floor: the no-caller member-access policy when the floor is the no-caller rendering,
- * else the same for a fresh record of no identity and the caller's folder coverage; any other rendering refuses.
- */
-export function openPageFloorPolicy(): StorePrivacyPolicy {
-  const floor = accessAllowedSql('p', [], []);
-  return selfChecked('countOpenPages', { mode: 'open_page_floor' }, () => openPageFloorRendered(floor));
-}
-
-function openPageFloorRendered(floor: string): StorePrivacyPolicy {
-  const base: StorePrivacyPolicy = { honorAliases: false, entityPrivacy: false, ownerOnly: ownerOnlyFormIn(floor, 'pages', 'p') };
-  if (floor === renderForStoreCaller({}, () => callerAccessAllowedSql('p'))) return base;
-  const caller = currentCallerAccess();
-  const folderCoverage = caller.folderCoverage.map(c => ({ source_id: c.source_id, prefix: c.prefix }));
-  const record = { identity: [], satisfiedRuleIds: [], folderCoverage, restricted: caller.restricted };
-  if (floor !== renderForStoreCaller(record, () => callerAccessAllowedSql('p'))) {
-    refuseMember('countOpenPages', 'an open-page floor rendered in a caller record');
-  }
-  return { ...base, ...(folderCoverage.length ? { folderCoverage } : {}), ...(caller.restricted ? {} : { open: true }) };
-}
 
 /**
  * The open-page count (engine-sql/access-setup.ts countOpenPages). The SQL engines render the empty-identity floor
