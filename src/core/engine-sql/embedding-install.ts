@@ -6,9 +6,54 @@
  * "Embedding install").
  */
 import type { SqlExecutor } from './executor.ts';
+import type { LegacyUnscopedRead } from './brands.ts';
 import type { ResolvedColumn } from '../types.ts';
 import { quoteIdentifier, vectorCastSuffix } from '../search/embedding-column.ts';
+import { chunkGenerationFilter } from '../search/safe-chunks.ts';
 import { sqlFragment, trustedSql } from './fragment.ts';
+
+/** One visible chunk of the page and whether it already carries a current vector. */
+export interface EmbeddingCompletionRow {
+  id: number;
+  chunk_text: string;
+  chunk_source: string | null;
+  embedding_input_hash: string | null;
+  embedded: boolean;
+  /** Null when the page has no signature yet. */
+  stamped: boolean | null;
+}
+
+export interface EmbeddingCompletionOpts {
+  signature: string;
+  /** The chunk model a complete vector carries; null matches a chunk with no model. */
+  model: string | null | undefined;
+  column: Pick<ResolvedColumn, 'name'>;
+  /** chunkManifestReads: whether the segmented-body manifest is readable here. */
+  manifest: boolean;
+}
+
+/** The page's visible chunks with `embedded` (vector from the current text under `model`) and `stamped` (page signature = `signature`). */
+export async function readEmbeddingCompletion(exec: LegacyUnscopedRead, pageId: number, opts: EmbeddingCompletionOpts): Promise<EmbeddingCompletionRow[]> {
+  const col = trustedSql(quoteIdentifier(opts.column.name));
+  const generation = trustedSql(chunkGenerationFilter('p', 'cc', opts.manifest));
+  return (await exec.run<EmbeddingCompletionRow>(sqlFragment`SELECT cc.id,
+      cc.chunk_text, cc.chunk_source, cc.embedding_input_hash,
+      cc.${col} IS NOT NULL AND cc.embedded_at IS NOT NULL AND cc.embedded_text_hash=md5(cc.chunk_text)
+        AND cc.model IS NOT DISTINCT FROM ${opts.model ?? null} AS embedded,
+      p.embedding_signature=${opts.signature} AS stamped
+      FROM content_chunks cc JOIN pages p ON p.id=cc.page_id WHERE p.id=${pageId} AND ${generation}`)).rows;
+}
+
+/** The effect's state and execution token under its row lock, or null when no effect has the id. */
+export async function lockEffectClaimRow(exec: SqlExecutor, effectId: number | string): Promise<{ state: string; execution_token: string | null } | null> {
+  const [claim] = await exec.executeRaw<{ state: string; execution_token: string | null }>('SELECT state,execution_token FROM persistence_effects WHERE id=$1 FOR UPDATE', [effectId]);
+  return claim ?? null;
+}
+
+/** A share lock on the embedding switch, so `embedding_disabled` cannot flip while vectors install. */
+export async function lockEmbeddingSwitch(exec: SqlExecutor): Promise<void> {
+  await exec.executeRaw("SELECT key FROM config WHERE key='embedding_disabled' FOR SHARE");
+}
 
 /**
  * One batch of the vector install (jsonRowBatches of `{ id, chunk_text, embedding, image, model, input_hash }`):

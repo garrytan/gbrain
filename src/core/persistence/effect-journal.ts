@@ -344,10 +344,9 @@ export function effectClaimKeeper(engine: BrainEngine, effect: PersistenceEffect
   };
 }
 
-export async function renewPersistenceEffectClaim(engine: SqlEngine, effect: PersistenceEffect): Promise<boolean> {
-  const rows = await engine.executeRaw(`UPDATE persistence_effects SET claim_expires_at=now()+interval '2 minutes',updated_at=now()
-    WHERE id=$1 AND execution_token=$2::uuid AND state='running' AND recovery IS NULL AND ${PERSISTENCE_PROTOCOL_PREDICATE} RETURNING id`, [effect.id, effect.execution_token]);
-  return rows.length === 1;
+/** Extends the claim's lease; `direct` runs it on the Postgres direct lane, outside the pooled transactions. */
+export async function renewPersistenceEffectClaim(engine: Pick<BrainEngine, 'renewEffectClaim'>, effect: PersistenceEffect, opts?: { direct?: boolean }): Promise<boolean> {
+  return engine.renewEffectClaim({ id: effect.id, token: effect.execution_token }, opts);
 }
 
 export async function advanceEffectCursor(engine: SqlEngine, effect: PersistenceEffect, slug: string): Promise<void> {
@@ -368,14 +367,9 @@ export async function advanceEffectCursor(engine: SqlEngine, effect: Persistence
 }
 
 /** An effect with parked targets finishes as failed (`targets_parked`), never as committed. */
-export async function completeEffect(engine: SqlEngine, effect: PersistenceEffect, outcome: Record<string, unknown> = {}): Promise<void> {
+export async function completeEffect(engine: Pick<BrainEngine, 'completeEffectRow'>, effect: PersistenceEffect, outcome: Record<string, unknown> = {}): Promise<void> {
   await faultPoint(EFFECT_FAULT_POINTS[effect.kind], { effectId: effect.id, requestId: effect.request_id, sourceId: effect.source_id });
-  await engine.executeRaw(`UPDATE persistence_effects SET
-    state=CASE WHEN jsonb_array_length(COALESCE(data->'parked','[]'::jsonb))>0 THEN 'failed' ELSE 'committed' END,
-    error_code=CASE WHEN jsonb_array_length(COALESCE(data->'parked','[]'::jsonb))>0 THEN 'targets_parked' END,
-    data=data-'retry_slugs'-'target_failures'-'failing_target'-'busy_retries'-'busy_since'-'busy_at',execution_token=NULL,claim_expires_at=NULL,claim_owner=NULL,
-    outcome=$3::text::jsonb,updated_at=now() WHERE id=$1 AND execution_token=$2::uuid AND recovery IS NULL AND ${PERSISTENCE_PROTOCOL_PREDICATE}`,
-  [effect.id, effect.execution_token, JSON.stringify(outcome)]);
+  await engine.completeEffectRow({ id: effect.id, token: effect.execution_token, outcomeJson: JSON.stringify(outcome) });
 }
 export async function retryEffect(engine: SqlEngine, effect: PersistenceEffect, reason: string, delayMs = 1000): Promise<void> {
   await engine.executeRaw(`UPDATE persistence_effects SET state='queued',execution_token=NULL,claim_expires_at=NULL,claim_owner=NULL,error_code=$3,
@@ -410,9 +404,8 @@ export async function parkEffect(engine: SqlEngine, effect: PersistenceEffect, d
     error_code='targets_parked',updated_at=now() WHERE id=$1 AND execution_token=$2::uuid AND recovery IS NULL AND ${PERSISTENCE_PROTOCOL_PREDICATE}`,
   [effect.id, effect.execution_token, JSON.stringify(data)]);
 }
-export async function failEffect(engine: SqlEngine, effect: PersistenceEffect, reason: string): Promise<void> {
-  await engine.executeRaw(`UPDATE persistence_effects SET state='failed',execution_token=NULL,claim_expires_at=NULL,claim_owner=NULL,error_code=$3,updated_at=now()
-    WHERE id=$1 AND execution_token=$2::uuid AND recovery IS NULL AND ${PERSISTENCE_PROTOCOL_PREDICATE}`, [effect.id, effect.execution_token, reason]);
+export async function failEffect(engine: Pick<BrainEngine, 'failEffectRow'>, effect: PersistenceEffect, reason: string): Promise<void> {
+  await engine.failEffectRow({ id: effect.id, token: effect.execution_token, reason });
 }
 
 /**

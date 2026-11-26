@@ -934,6 +934,7 @@ test/upgrade-foreign-oauth-table.test.ts
 test/url-source-origin.test.ts
 test/v273-validate-timeouts.test.ts
 test/valid-time-gbra217.test.ts
+test/value-card.test.ts
 test/vector-embedding-parity.test.ts
 test/vector-manifest-probe-bound.test.ts
 test/visibility-fail-closed-derived-writes.test.ts

@@ -114,14 +114,14 @@ export async function runSearchDiagnose(engine: BrainEngine, args: string[]): Pr
       ? `target is rank ${hybrid.rank} in hybrid — NOT rank 1. Strongest layer: ${surfacing.join(', ') || 'none'}`
       : `target ABSENT from hybrid top-${limit}. keyword rank=${keyword.rank ?? 'absent'}, vector rank=${vector.rank ?? 'absent'}, alias=${aliasMatch}`;
 
-  const report = { query, target, source_id: sourceId ?? 'default', keyword, vector, alias_match: aliasMatch, hybrid, verdict };
+  const report = { query, target, source_id: sourceId ?? null, keyword, vector, alias_match: aliasMatch, hybrid, verdict };
 
   if (json) {
     console.log(JSON.stringify(report, null, 2));
     return;
   }
 
-  console.log(`Diagnose: "${query}"  →  target ${target}\n`);
+  console.log(`Diagnose: "${query}"  →  target ${target}  (source filter: ${sourceId ?? 'none, every source'})\n`);
   console.log(`  keyword:  rank=${keyword.rank ?? 'absent'}  score=${fmt(keyword.score)}  (top: ${keyword.top_slug ?? '—'})`);
   console.log(`  vector:   rank=${vector.rank ?? 'absent'}  score=${fmt(vector.score)}  (top: ${vector.top_slug ?? '—'})${vector.note ? `  [${vector.note}]` : ''}`);
   console.log(`  alias:    ${aliasMatch ? 'query IS a registered alias of the target' : 'no alias match'}`);

@@ -23,6 +23,8 @@ import { activationSuppressedSql, type EligibilityTable } from './sql.ts';
 import type { ReadEligibility } from './policy.ts';
 
 type Exec = Pick<BrainEngine, 'executeRaw'>;
+/** pageActivationVerdicts reads page trust through the typed member; guest marks are still read raw. */
+type PageExec = Pick<BrainEngine, 'executeRaw' | 'readPageTrustRows'>;
 
 export interface ActivationRef { table: EligibilityTable; id: number }
 
@@ -126,15 +128,13 @@ export interface PageKey { source_id: string; slug: string }
  * (retrieval reflex pointers, volunteered pages): verdicts per live page
  * key, with the label fields. Missing pages are absent (callers drop them).
  */
-export async function pageActivationVerdicts(engine: Exec, keys: readonly PageKey[], policy: ReadEligibility):
+export async function pageActivationVerdicts(engine: PageExec, keys: readonly PageKey[], policy: ReadEligibility):
   Promise<Map<string, ActivationVerdict & { origin: unknown; guest?: GuestStamp }>> {
   const out = new Map<string, ActivationVerdict & { origin: unknown; guest?: GuestStamp }>();
   if (keys.length === 0) return out;
-  const rows = await withGuestSourceSql(guestSql => engine.executeRaw<{ id: number; source_id: string; slug: string; trust_tier: string; write_origin: unknown; flagged: boolean; guest: boolean }>(
-    `SELECT a.id, a.source_id, a.slug, a.trust_tier, a.write_origin, ${activationSuppressedSql('pages', 'a')} AS flagged,
-        ${guestSql('s.config', 'a.source_id')} AS guest FROM pages a LEFT JOIN sources s ON s.id = a.source_id
-      WHERE a.deleted_at IS NULL AND (a.source_id, a.slug) IN (SELECT * FROM unnest($1::text[], $2::text[]))`,
-    [keys.map(k => k.source_id), keys.map(k => k.slug)]));
+  // The typed member every engine serves (engine-sql/cli-reads-import.ts on PGLite and Postgres, the Rust store), with
+  // the same guest_sources fallback withGuestSourceSql gave the inline statement this replaced.
+  const rows = await engine.readPageTrustRows({ keys: keys.map(k => ({ source_id: k.source_id, slug: k.slug })) });
   // GBRA-504: a page in a guest source carries its guest mark (one batched read), or reads unattributed.
   const marks = rows.some(r => r.guest === true) ? await loadGuestMarks(engine, rows.filter(r => r.guest === true).map(r => Number(r.id))) : null;
   for (const row of rows) {
