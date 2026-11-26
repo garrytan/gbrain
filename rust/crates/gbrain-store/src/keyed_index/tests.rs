@@ -803,3 +803,27 @@ fn list_pages_by_update_time_keeps_its_tie_breaks() {
         }
     }
 }
+
+/// The next format's upgrade (a build one format past this one) does not rebuild the keyed entries
+/// again: a record under the keyed tag in a brain at this build's format survives it.
+#[test]
+fn a_later_format_s_upgrade_does_not_rebuild_the_keyed_entries_again() {
+    assert_eq!(REBUILT_AT_FORMAT, crate::FORMAT_VERSION);
+    let kv = crate::test_support::mem_kv();
+    let store = Store::open_kv(
+        kv.clone(),
+        std::sync::Arc::new(crate::SystemEnv),
+        crate::OpenOptions::default(),
+    )
+    .unwrap();
+    let mut marker = keys::KEYED_INDEX.to_vec();
+    marker.extend_from_slice(b"\xffmarker");
+    store.write(|w| w.put(&marker, b"")).unwrap();
+    drop(store);
+    let stored = crate::upgrade_format_to(&*kv, crate::FORMAT_VERSION + 1).unwrap();
+    assert_eq!(stored.format_version, crate::FORMAT_VERSION + 1);
+    assert!(
+        kv.snapshot().unwrap().get(&marker).unwrap().is_some(),
+        "the next format's upgrade rebuilt the keyed entries again"
+    );
+}
