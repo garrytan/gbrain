@@ -5,6 +5,7 @@
 //! Frontmatter values are read as PostgreSQL's `->>` reads them (see [`arrow_text`]).
 
 use crate::Store;
+use crate::chunks::SAFE_FENCE_CHUNKER_VERSION;
 use crate::cli_reads::pg_text::{pg_lower, regex_char_matches};
 use crate::env::{iso, parse_iso};
 use crate::error::{Result, StoreError};
@@ -203,6 +204,18 @@ pub struct AnchoredPageRow {
 pub struct EntityAnchoredPages {
     pub entity: Option<AnchorEntity>,
     pub pages: Vec<AnchoredPageRow>,
+}
+
+/// `readImageSealProbe(sourceId, slug)`: whether a sealed image page holds an image vector.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ImageSealProbeRow {
+    pub has_visual: bool,
+}
+
+/// `readPageChunkerVersion(pageId)`: the stored chunker version of one page record.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ChunkerVersionRow {
+    pub chunker_version: Option<i16>,
 }
 
 /// One `readPageTitlesById` row.
@@ -841,6 +854,78 @@ impl Store {
             }
         }
         Ok(rows)
+    }
+
+    /// `readImageSealProbe(sourceId, slug)`: `{ has_visual }` when the page record at the slug
+    /// (live or soft-deleted) is sealed past the safe-chunk fence (`chunker_version >= 4`; a record
+    /// with no version reads as below it), else `None`. The store keeps no image vector, so
+    /// `has_visual` is always false, as `sealImagePages` answers.
+    pub fn read_image_seal_probe(
+        &self,
+        source_id: &str,
+        slug: &str,
+    ) -> Result<Option<ImageSealProbeRow>> {
+        let read = self.read()?;
+        Ok(crate::pages::read_page(&*read, source_id, slug)?
+            .filter(|p| p.chunker_version.unwrap_or(0) >= SAFE_FENCE_CHUNKER_VERSION)
+            .map(|_| ImageSealProbeRow { has_visual: false }))
+    }
+
+    /// `readPageChunkerVersion(pageId)`: `{ chunker_version }` of the page record with the id, live,
+    /// soft-deleted or segmented, or `None` when no record has it. An id outside `integer` is
+    /// refused, as the `id = $1` comparison refuses it. A record written before the store kept a
+    /// chunker version answers `null`, as SQL reads a NULL column.
+    pub fn read_page_chunker_version(&self, page_id: i64) -> Result<Option<ChunkerVersionRow>> {
+        if i32::try_from(page_id).is_err() {
+            return Err(StoreError::invalid(format!(
+                "readPageChunkerVersion id {page_id} is out of range for type integer"
+            )));
+        }
+        // Page ids start at 1, so a zero or negative id names no page.
+        if page_id <= 0 {
+            return Ok(None);
+        }
+        let read = self.read()?;
+        Ok(
+            read_page_by_id(&*read, page_id as u64)?.map(|p| ChunkerVersionRow {
+                chunker_version: p.chunker_version,
+            }),
+        )
+    }
+
+    /// `readPrefixAnchoredPages(sourceId, prefix)`: up to ten live pages of the source whose slug
+    /// starts with `prefix` (the SQL escapes `\\`, `%` and `_` for `LIKE`, so the prefix is
+    /// literal), no question, synthesis or pinned-question page, by
+    /// `COALESCE(effective_date, updated_at)` newest first, then by id descending.
+    pub fn read_prefix_anchored_pages(
+        &self,
+        source_id: &str,
+        prefix: &str,
+    ) -> Result<Vec<AnchoredPageRow>> {
+        let read = self.read()?;
+        let mut hits: Vec<PageRecord> = all_pages(&*read)?
+            .into_iter()
+            .filter(|p| {
+                p.source_id == source_id
+                    && p.deleted_at_us.is_none()
+                    && p.slug.starts_with(prefix)
+                    && p.page_type != "question"
+                    && p.page_type != "synthesis"
+                    && !p.frontmatter.contains_key(PINNED_QUESTION_KEY)
+            })
+            .collect();
+        hits.sort_by(|a, b| {
+            let date = |p: &PageRecord| p.effective_date_us.unwrap_or(p.updated_at_us);
+            date(b).cmp(&date(a)).then(b.id.cmp(&a.id))
+        });
+        Ok(hits
+            .into_iter()
+            .take(ENTITY_ANCHORED_LIMIT)
+            .map(|p| AnchoredPageRow {
+                id: p.id,
+                slug: p.slug,
+            })
+            .collect())
     }
 
     /// `readTextMentionPages(sourceIds, slugs)`: each live page whose source is among `source_ids`

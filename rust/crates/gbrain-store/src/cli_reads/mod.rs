@@ -2,6 +2,7 @@
 //! Each file mirrors one CLI path or TypeScript domain of `src/core/engine-sql/` and answers the
 //! same rows the PGLite and Postgres engines answer, so each lane edits only its own file.
 
+pub mod admin_reads;
 pub mod brief_reads;
 pub mod doctor;
 pub mod doctor_acc;
