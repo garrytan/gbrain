@@ -10,16 +10,16 @@
  *   heartbeat budget; the agent_contract check.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { buildChecks, computeDoctorReport, type Check } from '../src/commands/doctor.ts';
 import { checkError, finalizeCheckFixes, infoCheck } from '../src/commands/doctor/check-fix.ts';
 import { doctorCheckNames, onlyNeedsEngine, parseOnlyChecks } from '../src/commands/doctor/registry.ts';
 import { throttleDoctorHeartbeat } from '../src/commands/doctor/heartbeat.ts';
 import { agentContractCheck, agentContractEntry } from '../src/commands/doctor/checks/agent-contract.ts';
-import { readAgentContractEvents, recordAgentContractEvent } from '../src/core/agent-contract-log.ts';
+import { agentContractLogPath, readAgentContractEvents, recordAgentContractEvent } from '../src/core/agent-contract-log.ts';
 import { VERSION } from '../src/version.ts';
 import { backupCoachingDue } from '../src/core/backup/status-file.ts';
 import type { ProgressReporter } from '../src/core/progress.ts';
@@ -274,6 +274,43 @@ test('#7145: agent_contract judges the whole 7-day window, not only the newest 5
       for (let i = 0; i < 600; i++) recordAgentContractEvent({ transport: 'cli', command: 'example-op', code: 'not_found', has_suggestion: true });
       const [check] = await agentContractEntry.run({} as never) as Check[];
       expect(check).toMatchObject({ name: 'agent_contract', status: 'warn', details: { internal_errors: 1, events: 601 } });
+    });
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+test('agent_contract reports valid faults on both sides of malformed records', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'gbrain-agent-contract-malformed-'));
+  try {
+    await withEnv({ GBRAIN_HOME: home }, async () => {
+      const path = agentContractLogPath();
+      mkdirSync(dirname(path), { recursive: true });
+      const event = { ts: new Date().toISOString(), transport: 'cli', code: 'internal_error' };
+      const original = [
+        JSON.stringify({ ...event, command: 'before' }),
+        '{"ts":',
+        JSON.stringify({ ...event, version: 17 }),
+        JSON.stringify({ ...event, command: 'after' }),
+        '',
+      ].join('\n');
+      writeFileSync(path, original);
+      const [check] = await agentContractEntry.run({} as never) as Check[];
+      expect(check).toMatchObject({ status: 'warn', details: { events: 2, internal_errors: 2, malformed_log_lines: 2 } });
+      expect(check.message).toContain('malformed');
+      expect(readAgentContractEvents().map(row => row.command)).toEqual(['before', 'after']);
+      expect(readFileSync(path, 'utf8')).toBe(original);
+    });
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+test('agent_contract distinguishes an unreadable log from a new brain with no log', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'gbrain-agent-contract-read-error-'));
+  try {
+    await withEnv({ GBRAIN_HOME: home }, async () => {
+      const [absent] = await agentContractEntry.run({} as never) as Check[];
+      expect(absent).toMatchObject({ status: 'ok' });
+      mkdirSync(agentContractLogPath(), { recursive: true });
+      const [unreadable] = await agentContractEntry.run({} as never) as Check[];
+      expect(unreadable).toMatchObject({ status: 'warn', details: { log_unreadable: true } });
     });
   } finally { rmSync(home, { recursive: true, force: true }); }
 });

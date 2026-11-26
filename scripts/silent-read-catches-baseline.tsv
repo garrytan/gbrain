@@ -641,7 +641,6 @@ src/core/advisor/collect-stalled-jobs.ts#collectStalledJobs.collect	capability_r
 src/core/advisor/collect-uninstalled-brain-pack.ts#collectUninstalledBrainPack.collect	catch_empty	1
 src/core/advisor/collect-writeback-consent.ts#collectWritebackConsent.collect	catch_empty	1
 src/core/agent-contract-log.ts#appendBoundedJsonl	catch_empty	1
-src/core/agent-contract-log.ts#readAgentContractEvents	catch_empty	1
 src/core/agent-install/setup.ts#artifactUsable	catch_empty	1
 src/core/agent-install/setup.ts#setupInAgent	capability_refusal_swallowed	1
 src/core/agent-install/setup.ts#setupInAgent	catch_empty	1

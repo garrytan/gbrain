@@ -56,12 +56,37 @@ export function recordAgentContractEvent(event: AgentContractEvent): void {
   appendBoundedJsonl(agentContractLogPath(), { ts: new Date().toISOString(), ...event, version: event.version ?? VERSION });
 }
 
-/** Read back recent events (newest last). Never throws. */
-export function readAgentContractEvents(limit = 500): Array<AgentContractEvent & { ts: string }> {
+type LoggedEvent = AgentContractEvent & { ts: string };
+type LogReadIssue = 'unreadable' | 'malformed';
+
+function isLoggedEvent(value: unknown): value is LoggedEvent {
+  const event = value as Partial<LoggedEvent> | null;
+  return typeof event?.ts === 'string'
+    && Number.isFinite(Date.parse(event.ts))
+    && typeof event.code === 'string'
+    && [event.command, event.op, event.version].every(label => label == null || typeof label === 'string')
+    && (event.effects == null || Array.isArray(event.effects));
+}
+
+/** Read back recent events (newest last). Report unreadable evidence without changing the log. */
+export function readAgentContractEvents(limit = 500, onIssue?: (issue: LogReadIssue) => void): LoggedEvent[] {
+  let lines: string[];
   try {
-    const lines = readFileSync(agentContractLogPath(), 'utf8').split('\n').filter(Boolean);
-    return lines.slice(-limit).map(l => JSON.parse(l));
-  } catch {
+    lines = readFileSync(agentContractLogPath(), 'utf8').split('\n').filter(Boolean);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') onIssue?.('unreadable');
     return [];
   }
+  const events: LoggedEvent[] = [];
+  for (const line of lines.slice(-limit)) {
+    try {
+      const event: unknown = JSON.parse(line);
+      if (isLoggedEvent(event)) {
+        events.push(event);
+        continue;
+      }
+    } catch { /* Earlier and later records remain readable. */ }
+    onIssue?.('malformed');
+  }
+  return events;
 }
