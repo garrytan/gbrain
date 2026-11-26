@@ -56,7 +56,7 @@ import { migrationsNotice, pendingUpgradeMigrationsNotice } from './migrations-n
 import { opError, opOwnsSource } from '../core/ops/contract.ts';
 import { PAGE_MAX_BYTES } from '../core/page-size-policy.ts';
 import { opBooleanValue, opFlagValue, opParamValue, opStructuredValue } from './op-param-values.ts';
-import { parseGlobalFlags, setCliOptions, getCliOptions } from '../core/cli-options.ts';
+import { parseGlobalFlags, setCliOptions, getCliOptions, THIN_CLIENT_BRAIN_FLAG_MESSAGE } from '../core/cli-options.ts';
 import { runCliPreflight } from '../core/cli-preflight.ts';
 import { isBooleanLiteral, isKnownOpFlag } from '../core/op-flag-tokens.ts';
 import { conceptNudge } from '../core/search/query-intent.ts';
@@ -66,7 +66,7 @@ import { formatSearchExact } from './search-exact-format.ts';
 import { routeCommand } from './command-route.ts';
 import type { CliOptions } from '../core/cli-options.ts';
 import { RemoteMcpError, extractResponseMeta } from '../core/remote-mcp-error.ts';
-import { assertSingleSourceScopeFlag, checkHostHonoredParams, hintAmbientNarrowing, type AmbientSourceBinding } from './source-scope.ts';
+import { assertSingleSourceScopeFlag, checkHostHonoredParams, hintAmbientNarrowing, provenanceSourceFlagError, type AmbientSourceBinding } from './source-scope.ts';
 import { formatFindPages, formatStatsBy } from './format-page-lookup.ts';
 import { maybePromptForUpgrade } from '../core/thin-client-upgrade-prompt.ts';
 import { CLI_FLAG_REGISTRY } from '../core/cli-flag-registry.generated.ts';
@@ -150,10 +150,12 @@ const SELF_HELP_WITHOUT_ENGINE: Record<string, true | (() => Promise<(engine: ne
     (await import('../commands/compile-context.ts')).runCompileContext as never,
   // runLoops / runWaiting answer --help before touching the engine.
   loops: async () => (await import('../commands/loops.ts')).runLoops as never,
+  household: async () => (await import('../commands/household.ts')).runHousehold as never,
   beliefs: async () => (await import('../commands/beliefs.ts')).runBeliefs as never,
   'edge-proposals': async () => (await import('../commands/edge-proposals.ts')).runEdgeProposals as never,
   'memory-proposals': async () => (await import('../commands/memory-proposals.ts')).runMemoryProposals as never,
   policy: async () => (await import('../commands/policy.ts')).runPolicy as never, // usage prints before the engine
+  ledger: async () => (await import('../commands/ledger.ts')).runLedger as never, // usage prints before the engine
   questions: async () => (await import('../commands/questions.ts')).runQuestions as never, // --help before the engine
   access: async () => (await import('../commands/access.ts')).runAccess as never, // GBRA-218: usage prints before the engine
   // runSources's `--help`/`-h`/undefined-subcommand branch calls printHelp()
@@ -172,7 +174,7 @@ const SELF_HELP_WITHOUT_ENGINE: Record<string, true | (() => Promise<(engine: ne
   founder: true, profile: true, 'graph-query': true, orphans: true, salience: true, think: true,
   brainstorm: true, lsd: true, migrate: true, pages: true, pricing: true, 'retrieval-upgrade': true, whoknows: true, core: true, trust: true, wakeshift: true,
   secrets: true,
-  dedupe: true, identity: true, 'apple-contacts': true,
+  dedupe: true, identity: true, 'apple-contacts': true, onboarding: true, value: true, propose: true,
 };
 
 /** Returns true when the command's own help was printed. */
@@ -501,7 +503,7 @@ async function main() {
       const flagOp = cliOps.get(command) ?? cliAliases.get(command);
       const curated = findCliCommand(command)?.help;
       const known = curated ? (await curated()).help.flags.map(f => f.name) : CLI_FLAG_REGISTRY[command] ?? Object.keys(flagOp?.params ?? {}).map(k => `--${k.replace(/_/g, '-')}`);
-      exitCliError(unknownFlagError(command, unknown, message, known), command, { legacy: { status: 'error', reason: 'invalid_flag', message } });
+      exitCliError(provenanceSourceFlagError(flagOp, command, unknown, message, subArgs, isThinClient(loadConfig())) ?? unknownFlagError(command, unknown, message, known), command, { legacy: { status: 'error', reason: 'invalid_flag', message } });
     }
     const curated = await curatedFlagError(command, subArgs);
     if (curated) exitCliError(curated, command);
@@ -1833,7 +1835,6 @@ function thinRefusalSubcommand(command: string): string[] {
   return argv.includes(command) && /^[a-z][a-z0-9-]*$/.test(next) ? [next, ...(command === 'trust' && /^(?:(?:f|t|h|e|a|tp)\d{1,18}|p:[a-z0-9_-]{1,64}\/[a-z0-9][a-z0-9/_.-]{0,200})$/.test(ref) ? [ref] : [])] : [];
 }
 
-const THIN_CLIENT_BRAIN_FLAG_MESSAGE = '--brain is not supported on a thin-client install: the remote server is a single brain.';
 
 const ENGINE_CONNECT_HOOKS: EngineConnectHooks = { SELECTED_CONFIG_BY_ENGINE, completeStartup: completeEngineStartup };
 /** Dispatcher-owned pieces the command modules under src/cli/commands/ receive (see CliDispatchContext). */

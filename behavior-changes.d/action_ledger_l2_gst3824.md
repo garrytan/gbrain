@@ -1,0 +1,4 @@
+---
+kind: add
+---
+New: the action ledger records what your agents did for you outside the brain. Agents call log_action after they send, spend, cancel or sign up, and gbrain ledger shows totals for a window, split into with evidence, confirmed by you and estimated. An amount needs a page gbrain can read as evidence, or is marked estimated. gbrain ledger confirm, run in your own terminal, marks an amount as confirmed. Agent policy rules can now carry a day, week or month budget (gbrain policy allow spend --amount 150 --currency USD --window week): policy_check shows what is left as advice, and policy_reserve checks and holds an amount in one step so two agents cannot both use the last of it. Budgets are advice; your harness still enforces. policy_check now also returns requires_approval, true for spend, cancel, sign_up and dispute.

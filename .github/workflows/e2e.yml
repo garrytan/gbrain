@@ -918,7 +918,9 @@ jobs:
     # for capability consent (exit 3) and `openclaw agent` has no
     # --session-key, so this test cannot run there. Bump a cell by editing it.
     # GBRAIN_TEST_REQUIRE_OPENCLAW=1 makes a missing CLI fail, and the receipt
-    # check fails an all-skip run.
+    # check fails an all-skip run. Each cell's receipts carry the arm
+    # openclaw-<version>, so the manifest keeps one entry per cell and a later
+    # passing cell never hides an earlier failing one.
     # Event parity (docs/TESTING.md#event-parity): a named exception like the
     # full-corpus coverage lanes; pull requests skip it, and e2e-status
     # requires it only on the full-corpus profile.
@@ -959,6 +961,7 @@ jobs:
           GBRAIN_TEST_REQUIRE_OPENCLAW: '1'
           GBRAIN_TEST_OPENCLAW_EXPECT_VERSION: ${{ matrix.openclaw }}
           GBRAIN_TEST_RECEIPT_DIR: ${{ runner.temp }}/receipts
+          GBRAIN_TEST_RECEIPT_ARM: openclaw-${{ matrix.openclaw }}
       - name: Require every test to run
         run: bun scripts/require-executed-tests.ts "$RUNNER_TEMP/receipts" openclaw-skill-resolver
       - name: Upload receipts
@@ -991,7 +994,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42]
     steps:
       - id: checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
@@ -1007,8 +1010,8 @@ jobs:
       - name: Install dependencies (bounded, retried once)
         timeout-minutes: 8
         run: bun scripts/ci-bun-install.ts --frozen-lockfile
-      - name: Coverage shard ${{ matrix.shard }}/40
-        run: scripts/test-shard.sh ${{ matrix.shard }} 40
+      - name: Coverage shard ${{ matrix.shard }}/42
+        run: scripts/test-shard.sh ${{ matrix.shard }} 42
         env:
           COVERAGE_DIR: ${{ runner.temp }}/coverage
           GBRAIN_TEST_RECEIPT_DIR: ${{ runner.temp }}/receipts
@@ -1367,7 +1370,7 @@ jobs:
           bun scripts/merge-lcov.ts \
             --out-lcov "$RUNNER_TEMP/coverage-full-merged/lcov.info" \
             --out-json "$RUNNER_TEMP/coverage-full-merged/summary.json" \
-            --manifest-expect shard-1,shard-2,shard-3,shard-4,shard-5,shard-6,shard-7,shard-8,shard-9,shard-10,shard-11,shard-12,shard-13,shard-14,shard-15,shard-16,shard-17,shard-18,shard-19,shard-20,shard-21,shard-22,shard-23,shard-24,shard-25,shard-26,shard-27,shard-28,shard-29,shard-30,shard-31,shard-32,shard-33,shard-34,shard-35,shard-36,shard-37,shard-38,shard-39,shard-40,serial,slow,e2e-1,e2e-2,e2e-3,e2e-4 \
+            --manifest-expect shard-1,shard-2,shard-3,shard-4,shard-5,shard-6,shard-7,shard-8,shard-9,shard-10,shard-11,shard-12,shard-13,shard-14,shard-15,shard-16,shard-17,shard-18,shard-19,shard-20,shard-21,shard-22,shard-23,shard-24,shard-25,shard-26,shard-27,shard-28,shard-29,shard-30,shard-31,shard-32,shard-33,shard-34,shard-35,shard-36,shard-37,shard-38,shard-39,shard-40,shard-41,shard-42,serial,slow,e2e-1,e2e-2,e2e-3,e2e-4 \
             "$RUNNER_TEMP/coverage-artifacts"
       - name: Coverage summary → step summary
         if: steps.shards.outputs.state == 'complete'

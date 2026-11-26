@@ -56,6 +56,8 @@ export const SLUG_PARAMS: Readonly<Record<string, readonly string[]>> = {
   extract_entities: ['source_slug'], extract_facts: ['source_slug', 'entity_hints[]'],
   log_ingest: ['pages_updated[]'], memory_propose: ['target'],
   questions_pin: ['scope.entity', 'scope.slug_prefix'],
+  // household records (GST-3825 H1)
+  household_mark: ['slug'],
 };
 
 /** Params whose name or description says "slug" but whose value is not a page slug, so they are left as sent. */
@@ -68,6 +70,7 @@ export const SLUG_PARAM_EXEMPT: Readonly<Record<string, Readonly<Record<string, 
   list_pages: { updated_after_slug: 'continuation cursor: the last row\'s stored slug, compared byte for byte in the keyset order' },
   delta: { since_slug: 'continuation cursor: a stored slug, compared byte for byte in the keyset order' },
   open_loops: { counterparty: 'slug or email address' },
+  household_add: { slug: 'a name for the new record, slugified under its placement folder; not a page slug' },
   submit_agent: { allowed_slug_prefixes: 'write prefixes, compared with normalizeSlugPrefix' },
   capture: { who: 'names or slugs (entity resolution)' },
   think: { anchor: 'name or slug (entity resolution)' },

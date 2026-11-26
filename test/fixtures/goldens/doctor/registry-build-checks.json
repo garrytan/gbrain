@@ -1055,11 +1055,19 @@
       },
       {
         "category": "brain",
+        "name": "first_session_suggestion"
+      },
+      {
+        "category": "brain",
         "name": "memory_proposals_pending"
       },
       {
         "category": "brain",
         "name": "policy_valid"
+      },
+      {
+        "category": "brain",
+        "name": "rules_regression"
       },
       {
         "category": "brain",

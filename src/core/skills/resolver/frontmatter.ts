@@ -1,7 +1,7 @@
 /**
  * Bounded SKILL.md reader for the resolver: name, description,
- * when_to_use, triggers, `disable-model-invocation`, `eligible`, `deprecated`
- * and `replaced_by`, plus
+ * when_to_use, triggers, `disable-model-invocation`, `eligible`, `deprecated`,
+ * `replaced_by` and `audience: owner` (a skill only the agent's owner sees), plus
  * the first 4 KB of the body. Reads at most 64 KB of a file. Leaf module
  * (alias-bounded js-yaml via data-frontmatter.ts and the one-line description rule only).
  *
@@ -24,6 +24,7 @@ export interface SkillDoc {
   eligible: boolean;
   deprecated: boolean;
   replacedBy?: string;
+  audience?: 'owner';
   body: string;
 }
 
@@ -45,6 +46,23 @@ function yamlFields(raw: string): Record<string, unknown> | null {
   }
 }
 
+/** Any non-empty `audience` keeps a skill to the owner: only `owner` is defined, and an unknown value or a typo fails closed. */
+export function restricted(v: unknown): boolean {
+  if (v === undefined || v === null) return false;
+  if (typeof v === 'string') return cleanText(v) !== '';
+  if (Array.isArray(v)) return v.some((x) => restricted(x));
+  return true;
+}
+
+const AUDIENCE_LINE = /^\s*["']?audience["']?\s*:/im;
+
+/** Fails closed: an `audience` key in any letter case, or, when the front matter does not parse or is never closed, any line that looks like one. */
+function ownerOnly(text: string, raw: string | null, fm: Record<string, unknown> | null): boolean {
+  if (fm) return Object.entries(fm).some(([k, v]) => k.toLowerCase() === 'audience' && restricted(v));
+  if (raw !== null) return AUDIENCE_LINE.test(raw);
+  return /^\s*---[ \t]*\n/.test(text) && AUDIENCE_LINE.test(text);
+}
+
 function stringList(v: unknown): string[] {
   if (typeof v === 'string') return [cleanText(v)].filter(Boolean);
   if (!Array.isArray(v)) return [];
@@ -53,7 +71,7 @@ function stringList(v: unknown): string[] {
 
 /** Parse one SKILL.md text (already bounded to SKILL_FILE_CAP_BYTES). */
 export function parseSkillDoc(input: string): SkillDoc {
-  const text = input.replace(/\r\n/g, '\n');
+  const text = input.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n');
   const m = /^---\n([\s\S]*?)\n---/.exec(text);
   const raw = m ? m[1] : '';
   const fm = m ? yamlFields(raw) : null;
@@ -71,6 +89,7 @@ export function parseSkillDoc(input: string): SkillDoc {
     eligible: !(fm && (fm.eligible === false || fm.eligible === 'false')),
     deprecated: Boolean(fm && (fm.deprecated === true || fm.deprecated === 'true')),
     ...(replacedBy ? { replacedBy } : {}),
+    ...(ownerOnly(text, m ? raw : null, fm) ? { audience: 'owner' as const } : {}),
     body: boundBody(text),
   };
 }

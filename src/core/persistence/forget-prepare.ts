@@ -11,6 +11,8 @@
  * mirror never resurrected one. A file that differs from the database refuses the forget (the uncoordinated-edit
  * refusal every coordinated page write gives) instead of leaving it unstruck.
  */
+import { ruleOwnerOnly } from '../rules/admission.ts';
+import { isRuleSlug } from '../rules/record.ts';
 import { existsSync } from 'node:fs';
 import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
@@ -27,6 +29,7 @@ import { remoteForgetRaced, supersessionGuarded } from '../trust/supersede-handl
 import { materializedPage } from './segmented-apply.ts';
 import { prepareFileTarget, snapshotLedger, unreadPageFile } from './page-prepare.ts';
 import { pageIdentityError } from './page-identity.ts';
+import { withTrustKeep } from './context.ts';
 import { MEMBER_PAGE_PREFIX, onOwnedMemoryPageSql } from '../access/member-facts.ts';
 import { unbackedEntitySql } from '../facts/withdrawal-schema.ts';
 import { storedOwnerSpeaksForItself } from './page-visibility.ts';
@@ -120,6 +123,7 @@ export async function prepareForgetMutation(engine: BrainEngine, row: WriteReque
   const rawId = String(p.id ?? '').trim();
   const sourceId = row.source_id;
   const remote = row.authority.remote !== false;
+  if (remote && isRuleSlug(row.slug)) throw ruleOwnerOnly(row.slug);
   const reason = typeof p.reason === 'string' && p.reason.trim() ? p.reason.trim() : null;
   // GST-359 D: a member's withdrawal of a fact on its own member page (submitForgetMutation records the page).
   const ownPage = remote && typeof p.member_page === 'string' && p.member_page === row.slug && row.slug.startsWith(MEMBER_PAGE_PREFIX) ? row.slug : null;
@@ -202,8 +206,9 @@ export async function prepareForgetMutation(engine: BrainEngine, row: WriteReque
       pages = (await recordFactWithdrawal(tx, id, sourceId, worldOnly, ownPage
         ? { requestId: row.id, semanticReview: false, memberPage: ownPage, publication }
         : { requestId: row.id, semanticReview: p.semantic_review !== false, excludePrivate, publication })).pages.map(page => page.slug);
-      if (reason) await tx.executeRaw(`UPDATE facts SET context=concat_ws(' | ',NULLIF(context,''),$3::text)
-        WHERE id=$1 AND source_id=$2`, [id, sourceId, `forgotten: ${reason}`]);
+      // #9739: the reason annotates the withdrawal and authors no claim, so the fact keeps its stored trust tier.
+      if (reason) await withTrustKeep(tx, ['facts'], () => tx.executeRaw(`UPDATE facts SET context=concat_ws(' | ',NULLIF(context,''),$3::text)
+        WHERE id=$1 AND source_id=$2`, [id, sourceId, `forgotten: ${reason}`]));
       return row.operation === 'forget'
         ? { id: rawId, expired: fact.expired_at === null, reason, protocol_version: 1 }
         : { id, expired: true, path: 'legacy_db', reason: reason ?? 'forgotten' };

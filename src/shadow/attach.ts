@@ -14,14 +14,17 @@ import { ShadowFollower } from './follower.ts';
 import { openReadSource, type ReadSource } from './read-pool.ts';
 import { Reconciler } from './reconcile.ts';
 import { createLsnWatch, makeAskHandler, type LsnWatch } from './checks.ts';
-import { epochWatch } from './evidence-epoch.ts';
+import { epochWatch, readEpoch } from './evidence-epoch.ts';
+import { hasCapability } from '../core/engine-capabilities.ts';
 import { readSeedRecord } from './seed.ts';
 import { MirrorQueue, zeroUsage } from './mirror.ts';
 import { SampleRegistry } from './samples.ts';
-import { readShadowState, type ShadowState } from './state.ts';
+import { readShadowState, writeSampleRate, type ShadowState } from './state.ts';
 import { ShadowSupervisor, type ShadowSupervisorOptions } from './supervisor.ts';
 import { appendUsage } from './usage.ts';
 import { wrapShadowEngine } from './wrapper.ts';
+import { createWriteSampler } from './write-capture.ts';
+import { recordLost } from './write-compare.ts';
 import { WriterObserver, type WriterIdentity } from './writer-observations.ts';
 import { ensureWriterHooks, primaryTakesWriterHooks } from './writer-hooks.ts';
 import { claimOwner } from '../core/persistence/claim-phase.ts';
@@ -42,6 +45,11 @@ export interface AttachShadowDeps {
    * missed. A brain with no seed follows nothing.
    */
   follow?: FollowOptions;
+  /**
+   * True when the shadow child records write comparisons (the locked write tally; `attachShadow` sets it). Left out, no write is sampled and no pre-read is taken,
+   * so primary writes pay nothing for evidence that would be dropped.
+   */
+  recordsWriteComparisons?: boolean;
 }
 
 export interface AttachedShadow<E extends BrainEngine> {
@@ -124,6 +132,7 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
       if (supervisor.active() && supervisor.childPid !== null) queue.flushStats();
       // Let the follower finish reading what was just committed; a slow read is shed rather than waited on.
       if (follower) await Promise.race([follower.settle(), new Promise((resolve) => { setTimeout(resolve, 2_000).unref?.(); })]);
+      await writes?.settle(2_000); // a read-back still running then is recorded as lost (`readback_abandoned`), not dropped
     } finally {
       clearInterval(usageTimer);
       flushUsage();
@@ -135,7 +144,13 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
   });
   const follow = follower ? { sink: follower } : deps.follow;
   const onCommittedWrite = () => observer.note();
-  return { engine: wrapShadowEngine(engine, sink, { sampleRate: state.sample_rate, random: deps.random, follow, onCommittedWrite }), queue, supervisor, follower, reconciler, observer, lsnWatch: watch };
+  // Write comparisons need the seeded store's epoch to count under (a brain that was never seeded samples no writes), a recorder for their outcomes (the child's locked tally) and a read the
+  // serving process can bound: Postgres stops it with a server-side statement timeout; PGLite has one connection and a running statement cannot be cancelled, so a PGLite brain samples no writes.
+  // A sample the pipe refuses, or a read-back left running at disconnect, is recorded for the owner child to count `uncomparable`: one line appended without a lock to this process's own file (this process never
+  // writes the tally, whose lock could stall a write; see recordLost). With no epoch yet there is nothing to count under: the count then rides on the next line the child accepts, as it always did.
+  const sampling = reads && deps.recordsWriteComparisons && hasCapability(engine, 'postgres_admin');
+  const writes = sampling ? createWriteSampler({ rate: writeSampleRate(state), random: deps.random, send: (line) => supervisor.send(line), generation: () => follower?.published, active: () => supervisor.active(), lost: (reason) => { const epoch = readEpoch(dir)?.epoch_id; return epoch !== undefined && recordLost(dir, epoch, reason); } }) : undefined;
+  return { engine: wrapShadowEngine(engine, sink, { sampleRate: state.sample_rate, random: deps.random, follow, onCommittedWrite, writes }), queue, supervisor, follower, reconciler, observer, lsnWatch: watch };
 }
 
 /** This process's writer identity: the engine's host id, the name its pools give their connections, its kind, version. */
@@ -148,5 +163,5 @@ export function writerIdentity(engine: BrainEngine): WriterIdentity {
 
 /** The engine factory's entry point: the wrapped engine. */
 export function attachShadow<E extends BrainEngine>(engine: E, dir: string, state: ShadowState): E {
-  return attachShadowParts(engine, dir, state).engine;
+  return attachShadowParts(engine, dir, state, { recordsWriteComparisons: true }).engine;
 }

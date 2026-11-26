@@ -97,8 +97,8 @@ import { isOpPageSlug } from '../ops/context.ts';
 import type { WriteReceipt } from '../persistence/types.ts';
 import { acceptedPendingReceipt } from '../persistence/accepted-pending.ts';
 import { AtomPageStateError, MAX_DETERMINISTIC_FAILURES, readAtomDiscoverySnapshots, readAtomPageIdentity, writeAtomPageState, type AtomDiscoveryRow, type AtomPageInput } from './extract-atoms-page-state.ts';
-import { atomGenerationOrigin, atomInputPin, heldLine, publishUnmanagedAtoms, resolveTranscriptAtomSlug, resolveTranscriptKeys, transcriptRoot } from './extract-atoms-generation.ts';
-import { heldForInput } from '../generations/publish.ts';
+import { atomGenerationOrigin, atomInputPin, heldAtomInputExclusionSql, heldLine, publishUnmanagedAtoms, resolveTranscriptAtomSlug, resolveTranscriptKeys, transcriptRoot } from './extract-atoms-generation.ts';
+import { currentHoldIds, heldForInput } from '../generations/publish.ts';
 import { ATOM_TYPES, ATOMS_RESPONSE_SCHEMA } from './extract-atoms-schema.ts';
 import { parseAtomsOutcome } from './extract-atoms-parse.ts';
 import { FACTS_FENCE_BEGIN } from '../facts-fence.ts';
@@ -436,7 +436,8 @@ export async function discoverExtractablePages(
       ${MANAGED_ATOM_DISCOVERY_SQL}
       ${PAGE_SCAN_STATE_EXCLUSION_SQL}
       ${connectorExclusion}
-      ${hasFilter ? "AND p.slug = ANY($5::text[])" : ''}
+      ${heldAtomInputExclusionSql('$5')}
+      ${hasFilter ? "AND p.slug = ANY($6::text[])" : ''}
       AND NOT EXISTS (
         SELECT 1
         FROM pages atom
@@ -449,15 +450,15 @@ export async function discoverExtractablePages(
     ORDER BY p.updated_at DESC
     LIMIT $4
   `;
-  const params: unknown[] = [
-    sourceId,
-    await resolveExtractableTypes(),
-    MIN_PAGE_CHARS_FOR_EXTRACTION,
-    limit,
-  ];
-  if (hasFilter) params.push(affectedSlugs);
-
   try {
+    const params: unknown[] = [
+      sourceId,
+      await resolveExtractableTypes(),
+      MIN_PAGE_CHARS_FOR_EXTRACTION,
+      limit,
+      await currentHoldIds(engine, 'atom'),
+    ];
+    if (hasFilter) params.push(affectedSlugs);
     const rows = await engine.executeRaw<AtomDiscoveryRow>(sql, params);
     const withFences = new Map(rows.filter(row => row.compiled_truth.includes(FACTS_FENCE_BEGIN)).map(row => [row.slug, row]));
     const snapshots = await readAtomDiscoverySnapshots(engine, sourceId, withFences, signal);
@@ -506,6 +507,7 @@ export async function countExtractAtomsBacklog(
     // brain-wide form keys the NOT EXISTS on `atom.source_id = p.source_id`.
     const scoped = sourceId !== undefined;
     const connectorExclusion = await connectorAtomExclusionSql(engine);
+    const holdIds = await currentHoldIds(engine, 'atom');
     const sql = scoped
       ? `SELECT COUNT(*) AS cnt FROM pages p
          WHERE p.source_id = $1
@@ -519,6 +521,7 @@ export async function countExtractAtomsBacklog(
            ${managedAtomDiscoverySql('$4::integer')}
            ${pageScanStateExclusionSql('$4::integer')}
            ${connectorExclusion}
+           ${heldAtomInputExclusionSql('$5')}
            AND NOT EXISTS (
              SELECT 1 FROM pages atom
              WHERE atom.type = 'atom' AND atom.source_id = $1
@@ -537,6 +540,7 @@ export async function countExtractAtomsBacklog(
            ${managedAtomDiscoverySql('$3::integer')}
            ${pageScanStateExclusionSql('$3::integer')}
            ${connectorExclusion}
+           ${heldAtomInputExclusionSql('$4')}
            AND NOT EXISTS (
              SELECT 1 FROM pages atom
              WHERE atom.type = 'atom' AND atom.source_id = p.source_id
@@ -547,8 +551,8 @@ export async function countExtractAtomsBacklog(
     const extractableTypes = await resolveExtractableTypes();
     const maxInputChars = await resolveExtractAtomsInputCap(engine);
     const params = scoped
-      ? [sourceId, extractableTypes, MIN_PAGE_CHARS_FOR_EXTRACTION, maxInputChars]
-      : [extractableTypes, MIN_PAGE_CHARS_FOR_EXTRACTION, maxInputChars];
+      ? [sourceId, extractableTypes, MIN_PAGE_CHARS_FOR_EXTRACTION, maxInputChars, holdIds]
+      : [extractableTypes, MIN_PAGE_CHARS_FOR_EXTRACTION, maxInputChars, holdIds];
     const rows = await engine.executeRaw<{ cnt: string | number }>(sql, params, { signal: opts.signal });
     return Number(rows[0]?.cnt ?? 0);
   } catch (err) {

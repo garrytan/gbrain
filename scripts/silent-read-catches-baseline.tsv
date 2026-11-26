@@ -612,18 +612,10 @@ src/commands/wakeshift.ts#watchCounts	capability_refusal_swallowed	1
 src/commands/wakeshift.ts#watchCounts	catch_empty	1
 src/commands/whoknows.ts#findExperts	promise_catch_empty	1
 src/core/access/actor.ts#attestRightOf	capability_refusal_swallowed	1
-src/core/access/actor.ts#linkedMember	capability_refusal_swallowed	1
 src/core/access/caller.ts#appliedAccessSummary	capability_refusal_swallowed	1
 src/core/access/caller.ts#appliedAccessSummary	catch_empty	1
-src/core/access/caller.ts#folderAccessForAll	capability_refusal_swallowed	1
-src/core/access/caller.ts#liveIdentity	capability_refusal_swallowed	1
-src/core/access/caller.ts#mayActForOf	capability_refusal_swallowed	1
-src/core/access/caller.ts#mayActForOf	catch_empty	1
-src/core/access/caller.ts#resolveAudienceIdentities	capability_refusal_swallowed	1
 src/core/access/caller.ts#resolveAudienceIdentities	catch_empty	1
-src/core/access/caller.ts#stdioMemberId	catch_empty	1
 src/core/access/handover.ts#previewHandover	capability_refusal_swallowed	2
-src/core/access/labelled-only.ts#anyLabelledOnlyMember	capability_refusal_swallowed	1
 src/core/access/labelled-only.ts#labelledOnlyFor	capability_refusal_swallowed	1
 src/core/access/lineage.ts#membersReadLineageOn	catch_empty	1
 src/core/access/member-sources.ts#hiddenPersonalSources	capability_refusal_swallowed	1
@@ -632,8 +624,6 @@ src/core/access/members.ts#audienceMemberIds	capability_refusal_swallowed	1
 src/core/access/members.ts#audienceMemberIds	catch_empty	1
 src/core/access/members.ts#setMemberEmail	capability_refusal_swallowed	1
 src/core/access/open-pages.ts#printOpenPagesUpgradeNotice	catch_empty	1
-src/core/access/owner-only.ts#ownerOnlySourcesPresent	capability_refusal_swallowed	1
-src/core/access/owner-only.ts#sourceIsOwnerOnly	capability_refusal_swallowed	1
 src/core/access/owner.ts#ownerMemberId	catch_empty	1
 src/core/access/owner.ts#ownerReadsRestrictedOn	catch_empty	1
 src/core/access/read-log.ts#ReadLogWriter.flush<anon@1>	capability_refusal_swallowed	1	landed on master (#10011) after this guard was written; known debt, fix by a typed degraded marker
@@ -734,7 +724,6 @@ src/core/behavior-change-notice.ts#upgradedAcrossRelease	catch_empty	1
 src/core/belief/changes.ts#readBodySubjects	promise_catch_empty	1
 src/core/belief/changes.ts#readCreationSubjects	promise_catch_empty	1
 src/core/belief/purge-mirror.ts#readPurgeMirror	catch_empty	1
-src/core/binary-self-update.ts#defaultFetchAttestation	catch_empty	1
 src/core/binary-self-update.ts#fetchAlphaRelease	catch_empty	1
 src/core/binary-self-update.ts#fetchReleaseJson	catch_empty	1
 src/core/bootstrap/format.ts#readReceipt	catch_empty	1
@@ -902,9 +891,7 @@ src/core/context/resolve-ipc.ts#readIpcSecret	catch_empty	1
 src/core/context/resolve-ipc.ts#readIpcSecretForConfig	catch_empty	1
 src/core/context/resolve-ipc.ts#startResolveIpcServer<anon@2><anon@1><anon@1>	catch_empty	1
 src/core/context/resolve-ipc.ts#startResolveIpcServer<anon@2><anon@1><anon@2>	catch_empty	1
-src/core/context/retrieval-reflex.ts#resolveEntitiesToPointers	capability_refusal_swallowed	4
 src/core/context/retrieval-reflex.ts#resolveEntitiesToPointers	catch_empty	4
-src/core/context/retrieval-reflex.ts#weakTitleHits	capability_refusal_swallowed	1
 src/core/context/retrieval-reflex.ts#weakTitleHits	catch_empty	1
 src/core/context/seat.ts#readSeatSidecar	catch_empty	1
 src/core/context/session-speaker.ts#readSpeakerSidecar	catch_empty	1
@@ -1205,7 +1192,6 @@ src/core/guests/admission.ts#lookupGuestSource	capability_refusal_swallowed	1
 src/core/guests/admission.ts#refuseRemoteGuestDelete	capability_refusal_swallowed	1
 src/core/guests/derived.ts#withoutGuestSources	catch_empty	1
 src/core/guests/marker.ts#brainHasGuestSource	capability_refusal_swallowed	1
-src/core/guests/marker.ts#loadGuestMarks	capability_refusal_swallowed	1
 src/core/guests/marker.ts#loadGuestMarks	catch_empty	1
 src/core/harness/shared-skills.ts#installSharedSkillsConnection	promise_catch_empty	1
 src/core/health-memo.ts#readGeneration	catch_empty	1
@@ -1433,7 +1419,6 @@ src/core/page-body/segment-derive.ts#continueDerivationPurges>finishParked	capab
 src/core/page-body/streamed-import.ts#importScanned	promise_catch_empty	1
 src/core/page-body/streamed-import.ts#importScanned>apply	promise_catch_empty	1
 src/core/page-embedding-budget.ts#resolvePageEmbedCapUsd	promise_catch_empty	1
-src/core/page-embedding-lease.ts#acquirePageEmbeddingLease>[Symbol.asyncDispose]	capability_refusal_swallowed	1
 src/core/page-embedding-lease.ts#acquirePageEmbeddingLease>[Symbol.asyncDispose]	promise_catch_empty	1
 src/core/page-lock.ts#tryAcquireOnce>refresh	catch_empty	1
 src/core/page-lock.ts#tryAcquireOnce>release	catch_empty	1
@@ -1541,7 +1526,6 @@ src/core/persistence/page-prepare.ts#prepareInlineOrSegmentedMutation<anon@3>	pr
 src/core/persistence/page-prepare.ts#prepareSegmentedTagMutation	promise_catch_empty	1
 src/core/persistence/page-visibility.ts#assertLabelledOnlyCreate	capability_refusal_swallowed	1
 src/core/persistence/page-visibility.ts#assertLabelledOnlyCreate	promise_catch_empty	1
-src/core/persistence/page-visibility.ts#authorizePageVisibility	capability_refusal_swallowed	1
 src/core/persistence/page-visibility.ts#authorizePageVisibility	catch_empty	1
 src/core/persistence/physical-root-record.ts#excludeMarkersInLaterCheckout	catch_empty	1
 src/core/persistence/physical-root-record.ts#excludeOwnershipMarkers	catch_empty	1
@@ -1848,7 +1832,6 @@ src/core/search/keyword-paging.ts#keywordOnlyBounds<anon@2>	promise_catch_empty	
 src/core/search/mode.ts#loadSearchModeConfig>safeGet	catch_empty	1
 src/core/search/modes-report.ts#buildModesReport	catch_empty	1
 src/core/search/page-rank-cut.ts#readConfig	catch_empty	1
-src/core/search/private-visibility.ts#readRemotePolicyNow	capability_refusal_swallowed	1
 src/core/search/private-visibility.ts#remotePrivacyRelaxed	catch_empty	1
 src/core/search/projection-readiness.ts#probeUncached	capability_refusal_swallowed	1
 src/core/search/projection-readiness.ts#readinessGeneration	capability_refusal_swallowed	1

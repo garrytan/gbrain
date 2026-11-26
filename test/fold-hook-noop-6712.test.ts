@@ -24,7 +24,10 @@
  * (`gbrain.write_open_facts`, trust/fence-guard.ts) to the fence guard's two fact reads; same statements, same order.
  * The typed engine methods of the import path rewrite three statement texts one-for-one: the config read
  * (getConfigValues, `key = ANY($1::text[])`), the write-settings set_config (applyTransactionSettings, one unnest)
- * and the managed-rows coverage read (parameters renumbered); same statements, same order.
+ * and the managed-rows coverage read (parameters renumbered); same statements, same order. The publication authorization's
+ * locking local writer read (persistence/authority.ts) is the typed readLocalWriterRow, whose statement is the one the
+ * identity check already sent (credential_hash added, columns reordered); same row, same FOR SHARE, same order. Both entries
+ * were re-captured with CAPTURE_FOLD_NOOP=1 and differ only in that statement.
  * CAPTURE_FOLD_NOOP=1 rewrites the fixture for the engine under test (only ever from the pre-hook commit).
  */
 import { describe, expect, test } from 'bun:test';

@@ -28,6 +28,8 @@ import { attestedShareRefused, MEMBER_PAGE_PREFIX, memberPageFrontmatter, member
 import { claimColumns, storedClaim } from '../facts/typed-claim.ts';
 import { parseStoredActor } from '../access/actor-model.ts';
 import { withoutBody } from '../page-body/page-shape.ts';
+import { ruleOwnerOnly } from '../rules/admission.ts';
+import { isRuleSlug } from '../rules/record.ts';
 
 function conflict(row: WriteRequest): never {
   throw opError('revision_conflict', 'The memory changed during semantic preparation.',
@@ -75,6 +77,8 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
       { fix: requestReceiptFix(row) });
   }
   const p = row.intent;
+  // C2: a standing rule page changes only through correct or gbrain rules; a remote fact on it would move its revision.
+  if (row.authority?.remote !== false && (isRuleSlug(row.slug) || isRuleSlug(p.entity_slug))) throw ruleOwnerOnly(isRuleSlug(row.slug) ? row.slug : String(p.entity_slug));
   // GST-2249 W1: a stored save made for an attested person never publishes shared, whenever it was admitted. An audience
   // (on_behalf_of) is not an attested person, so a shared agent's share: true still publishes.
   if (p.share === true && parseStoredActor(row.authority?.actingFor)) throw attestedShareRefused(opError);
@@ -121,14 +125,16 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
     return decideSingleFact(e, row.source_id, input, dedupEmbedding, embedding_model, undefined, { excludePrivate });
   };
   // A typed claim on a saved copy of the same claim that has none supersedes that copy, so the claim is kept (never dropped as a duplicate).
+  const keepsUserSaid = (d: { candidate: { write_origin?: unknown } | null }) => p.content_origin === 'inferred'
+    && (d.candidate?.write_origin as { content_origin?: unknown } | null | undefined)?.content_origin === 'user_said';
   const decide = async (e: BrainEngine, lock = false) => {
     const d = await decideClaim(e, lock);
-    return claim && d.status === 'duplicate' && !storedClaim(d.candidate) ? { ...d, status: 'superseded' as const } : d;
+    return claim && d.status === 'duplicate' && !storedClaim(d.candidate) && !keepsUserSaid(d) ? { ...d, status: 'superseded' as const } : d;
   };
   const decision = await decide(engine);
   // #5575 I3: a lower-tier write never supersedes; it is inserted contested and the owner decides (re-checked under lock by validate).
   const writerTier = requestChannelTrust(row)?.tier ?? 'unknown';
-  const contested = decision.status === 'superseded' && supersessionGuarded(writerTier, decision.candidate!.trust_tier);
+  const contested = decision.status === 'superseded' && (supersessionGuarded(writerTier, decision.candidate!.trust_tier) || keepsUserSaid(decision));
   // GST-2897 B: a member's share about another member (submitRememberMutation records the member) is stored private and
   // supersedes nothing until the brain owner confirms it.
   const heldFor = p.share === true && typeof p.share_held === 'string' && input.visibility === 'world' ? p.share_held : null;
@@ -176,10 +182,10 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
       supersede: status === 'superseded' && old?.source_markdown_slug === row.slug && old.row_num != null ? { rowNum: Number(old.row_num), validUntil: retiredUntil } : undefined }, signal);
   } else if (p.fence === true && p.member_page === true) {
     fence = await prepareFenceFactCreate(engine, row, config, { fact, pendingTier: fenceAppendPendingTier(writerTier), ...(widening ? { storedVisibility: widening.from } : {}),
-      frontmatter: memberPageFrontmatter(row.slug.slice(MEMBER_PAGE_PREFIX.length)), heading: `# Memory of ${row.slug.slice(MEMBER_PAGE_PREFIX.length)}` }, signal);
+      frontmatter: memberPageFrontmatter(row.slug.slice(MEMBER_PAGE_PREFIX.length), new Date(row.created_at)), heading: `# Memory of ${row.slug.slice(MEMBER_PAGE_PREFIX.length)}` }, signal);
   } else if (p.fence === true && p.scope_page === true) {
     fence = await prepareFenceFactCreate(engine, row, config, { fact, pendingTier: fenceAppendPendingTier(writerTier), ...(widening ? { storedVisibility: widening.from } : {}),
-      frontmatter: scopePageFrontmatter(), heading: '# Scope memory' }, signal);
+      frontmatter: scopePageFrontmatter(new Date(row.created_at)), heading: '# Scope memory' }, signal);
   }
   // GBRA-190 G4: linking a fact saved without an entity retires its holding row in the same publication.
   const old = status === 'superseded' ? decision.candidate! : null;

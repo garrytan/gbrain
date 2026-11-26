@@ -28,8 +28,9 @@ export const OP_READ_TRUST: Readonly<Record<string, ReadTrustHandling>> = {
   recall: 'filtered', context_pack: 'filtered', delta: 'filtered', memory_recall: 'labeled',
   search: 'filtered', search_exact: 'filtered', query: 'filtered', get_page: 'filtered', fetch: 'filtered',
   get_chunks: 'filtered', get_timeline: 'filtered', takes_list: 'filtered', takes_search: 'filtered',
-  assemble_evidence: 'filtered',
+  assemble_evidence: 'filtered', check_claims: 'labeled',
   entity: 'labeled', synthesize: 'labeled', think: 'labeled',
+  household_due: 'labeled',
   search_by_image: 'labeled', list_pages: 'labeled', find_pages: 'labeled', volunteer_context: 'filtered',
   get_versions: 'labeled', get_raw_data: 'labeled', resolve_slugs: 'labeled', whois: 'labeled',
   get_recent_salience: 'labeled', find_anomalies: 'labeled', get_recent_transcripts: 'labeled',
@@ -54,6 +55,11 @@ export const OP_READ_TRUST: Readonly<Record<string, ReadTrustHandling>> = {
   list_write_conflicts: 'text_free', get_brain_health: 'text_free',
   // L1: the owner-approved agent policy (rules and decisions, no page text) and per-op callable flags.
   policy_check: 'text_free', agent_policy: 'text_free', capabilities: 'text_free',
+  // L2: ledger totals carry counterparty names agents wrote, so a floored connection is refused rather than served them.
+  ledger: 'labeled',
+  onboarding_status: 'text_free',
+  // Job proposals cite page slugs (an email slug carries its subject) and count rows the floor would hide: refused under a floor.
+  propose_jobs: 'labeled',
   // Held at the unlisted default (refused under a token floor) pending a trust-posture call: it returns config-derived
   // settings and rule text, no stored memory text, so text_free would describe it but would admit floored connections.
   get_memory_settings: 'labeled',

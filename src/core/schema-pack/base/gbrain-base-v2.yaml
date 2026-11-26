@@ -384,10 +384,31 @@ page_types:
     extractable: false
     expert_routing: false
 
+  # Standing rule page (C2): one rule per page at rules/me/<name> or rules/team/<name>,
+  # written by the correct verb and gbrain rules; remote writers outside correct are
+  # refused. Not extractable: the rule is rendered as data, never mined. Set via
+  # frontmatter only.
+  - name: rule
+    primitive: annotation
+    path_prefixes: []
+    aliases: []
+    extractable: false
+    expert_routing: false
+
   # Agent policy page (L1): the owner's or company's gbrain:policy fence at policy/agent and
   # company/policy/agent. Written only by an owner-confirmed gbrain policy command; remote
   # writers are refused. Set via frontmatter only.
   - name: agent_policy
+    primitive: annotation
+    path_prefixes: []
+    aliases: []
+    extractable: false
+    expert_routing: false
+
+  # Action ledger entry (L2): one outside action an agent took or proposes, at
+  # actions/YYYY/MM/<id>. Written by log_action, policy_reserve or gbrain ledger add;
+  # remote page writers are refused. Set via frontmatter only.
+  - name: agent_action
     primitive: annotation
     path_prefixes: []
     aliases: []

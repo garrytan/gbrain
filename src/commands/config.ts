@@ -79,6 +79,8 @@ const FILE_PLANE_DOTTED_KEYS: ReadonlySet<string> = new Set([
   'brain_first.policy_line', // L1: setup and upgrade read it engine-free; writes go through config/reserved-keys.ts (owner-confirmed)
   'minions.terminal_hook', // #7242: a command the worker runs; local file plane only, never the shared DB plane (minions/terminal-hook.ts)
   'mcp.default_surface_claude_code', 'mcp.default_surface_codex', 'mcp.default_surface_hermes', // I1: gbrain setup reads them engine-free (registrationProfile)
+  // GST-3849: the Google token socket reads them engine-free; the broker's own uid owns this file (core/google-socket/config.ts)
+  'google.mint_socket', 'google.broker_act', 'google.broker_allow_root_gateway', 'google.socket_peers', 'google.broker_joint_probe',
 ]);
 
 /** #5489: every self_upgrade.* reader (cli.ts startup check, autopilot,
@@ -122,7 +124,7 @@ async function unsetFilePlaneKey(key: string): Promise<boolean> {
   const { loadConfigFileOnly, saveConfig } = await import('../core/config.ts');
   const cfg = loadConfigFileOnly();
   const dot = key.indexOf('.');
-  const top = key.slice(0, dot) as 'push' | 'hooks' | 'backup' | 'mcp' | 'self_upgrade' | 'persistence' | 'migrate' | 'doctor' | 'minions';
+  const top = key.slice(0, dot) as 'push' | 'hooks' | 'backup' | 'mcp' | 'self_upgrade' | 'persistence' | 'migrate' | 'doctor' | 'minions' | 'google';
   const leaf = key.slice(dot + 1);
   const branch = cfg?.[top] as Record<string, unknown> | undefined;
   if (!cfg || !branch || !(leaf in branch)) return false;
@@ -594,6 +596,9 @@ async function setFilePlaneKey(key: string, value: string, tail: string[]): Prom
     console.log(`Set ${key} = ${on} (file plane: ~/.gbrain/config.json)`);
   } else if (key === 'persistence.write_wait_ms') { await setFileWriteWait(cfg, value, saveConfig);
   } else if (key === 'minions.terminal_hook') { (await import('../core/minions/terminal-hook.ts')).setTerminalHookConfig(cfg, value, saveConfig);
+  } else if (key.startsWith('google.')) {
+    try { console.log((await import('../core/google-socket/config.ts')).setGoogleSocketConfigKey(cfg, key, value, saveConfig)); }
+    catch (e) { console.error(`[config] ${(e as Error).message}. Nothing was written.`); process.exit(1); }
   } else if (key === 'doctor.default_budget_ms') { (await import('./doctor/default-budget.ts')).setDoctorDefaultBudget(cfg, value, saveConfig);
   } else if (key === 'migrate.graduation') {
     const on = isConfigTruthy(value);

@@ -26,23 +26,31 @@ import { randomBytes } from 'node:crypto';
 import { CredentialError, isCredentialError } from '../core/creds/errors.ts';
 import {
   credentialId,
+  grantGeneration,
+  isGrantVault,
   openVault,
   type CredentialEntry,
   type CredentialVault,
+  type ProviderClientRecord,
 } from '../core/creds/vault.ts';
 import {
   GOOGLE_PROVIDER,
   GOOGLE_SERVICE_SCOPES,
   GoogleTokenProvider,
   apiEnableLink,
+  assertIngestOnly,
   buildAuthUrl,
+  effectiveScopes,
   exchangeCode,
   fetchSendAsAliases,
-  fetchUserinfoEmail,
   generatePkce,
   parseClientJson,
+  personalModeSetupUrl,
+  proveGrantIdentity,
+  refreshAccessToken,
   scopesForServices,
   validateClientPair,
+  type TokenResponse,
 } from '../core/creds/providers/google.ts';
 import {
   PASTE_REDIRECT_URI,
@@ -117,34 +125,66 @@ export function appendGoogleHeartbeat(
 
 // ── The GCP checklist ([SHOW USER] block the harness relays verbatim) ───────
 
+/** Fences the lines a harness relays to the user verbatim. */
+function showUserFence(lines: readonly string[]): string[] {
+  return ['[SHOW USER]', ...lines, '[/SHOW USER]'];
+}
+
+/**
+ * The Personal-mode setup block: one link that creates the account's own
+ * private Google app (its own project, no review, no weekly sign-out), the
+ * three clicks, and what to paste back.
+ */
+export function personalSetupBlock(account: string): string {
+  return [
+    ...showUserFence([
+      `Connect Google to gbrain for ${account} — one-time setup (about 2 minutes).`,
+      '',
+      `1. Open this link while signed in as ${account}:`,
+      `   ${personalModeSetupUrl(account)}`,
+      '2. Click Create. Google makes your own private app for this one account: no review,',
+      '   no "unverified app" screen, and no sign-out every 7 days.',
+      '3. Click "Download JSON" on the client it shows, and hand that file back here.',
+      '',
+      'Each Google account needs its own link: the app only works for the account that created it.',
+    ]),
+    '',
+    `Then run:  gbrain google connect --personal --account ${account} --client-json <path-to-downloaded-json>`,
+    `(or paste the JSON contents via stdin:  gbrain google connect --personal --account ${account} --client-json -)`,
+  ].join('\n');
+}
+
 export function gcpChecklistBlock(): string {
   return [
-    '[SHOW USER]',
-    'Connect Google to gbrain — one-time setup (about 7 minutes, all in your browser).',
-    '',
-    'First, which kind of account is this?',
-    '  - Google Workspace (your own domain) → in step 3 choose user type "Internal".',
-    '  - Personal gmail.com → in step 3 choose "External" and do BOTH sub-steps.',
-    '',
-    '1. Create (or pick) a Google Cloud project: https://console.cloud.google.com/projectcreate',
-    '2. Enable the three APIs (one click each):',
-    '   - Gmail:    https://console.cloud.google.com/apis/library/gmail.googleapis.com',
-    '   - Calendar: https://console.cloud.google.com/apis/library/calendar-json.googleapis.com',
-    '   - Contacts: https://console.cloud.google.com/apis/library/people.googleapis.com',
-    '3. Configure the consent screen: https://console.cloud.google.com/auth/overview',
-    '   - App name "gbrain", your email for both contact fields.',
-    '   - Workspace → user type "Internal" (no verification, tokens never expire weekly).',
-    '   - Personal gmail.com → user type "External", then:',
-    '     a. add your own email as a Test user: https://console.cloud.google.com/auth/audience',
-    '     b. on that same Audience page, click "Publish app" — skipping this makes',
-    '        Google silently kill your access every 7 days.',
-    '4. Create the OAuth client: https://console.cloud.google.com/auth/clients',
-    '   - Application type: "Desktop app" (NOT "Web application" — this matters).',
-    '5. Click "Download JSON" on the new client and hand the file back here.',
-    '',
-    'Heads up for the next step: Google will show "Google hasn\'t verified this app."',
-    'That is YOUR app — click Advanced → Continue.',
-    '[/SHOW USER]',
+    ...showUserFence([
+      'Fastest: Google Personal mode makes your own private Google app in one click (about 2 minutes).',
+      'Run:  gbrain google setup --personal --account <your-email>',
+      '',
+      'Or set up a client by hand — one-time setup (about 7 minutes, all in your browser).',
+      '',
+      'First, which kind of account is this?',
+      '  - Google Workspace (your own domain) → in step 3 choose user type "Internal".',
+      '  - Personal gmail.com → in step 3 choose "External" and do BOTH sub-steps.',
+      '',
+      '1. Create (or pick) a Google Cloud project: https://console.cloud.google.com/projectcreate',
+      '2. Enable the three APIs (one click each):',
+      '   - Gmail:    https://console.cloud.google.com/apis/library/gmail.googleapis.com',
+      '   - Calendar: https://console.cloud.google.com/apis/library/calendar-json.googleapis.com',
+      '   - Contacts: https://console.cloud.google.com/apis/library/people.googleapis.com',
+      '3. Configure the consent screen: https://console.cloud.google.com/auth/overview',
+      '   - App name "gbrain", your email for both contact fields.',
+      '   - Workspace → user type "Internal" (no verification, tokens never expire weekly).',
+      '   - Personal gmail.com → user type "External", then:',
+      '     a. add your own email as a Test user: https://console.cloud.google.com/auth/audience',
+      '     b. on that same Audience page, click "Publish app" — skipping this makes',
+      '        Google silently kill your access every 7 days.',
+      '4. Create the OAuth client: https://console.cloud.google.com/auth/clients',
+      '   - Application type: "Desktop app" (NOT "Web application" — this matters).',
+      '5. Click "Download JSON" on the new client and hand the file back here.',
+      '',
+      'Heads up for the next step: Google will show "Google hasn\'t verified this app."',
+      'That is YOUR app — click Advanced → Continue.',
+    ]),
     '',
     'Then run:  gbrain google connect --client-json <path-to-downloaded-json>',
     '(or paste the JSON contents via stdin:  gbrain google connect --client-json -)',
@@ -157,14 +197,14 @@ function consentBlock(url: string, mode: 'loopback' | 'paste', accountHint?: str
       ? 'After approving, the browser shows "Connected" and this command finishes on its own.'
       : 'After approving, the browser will FAIL to load a http://127.0.0.1 page — that is expected.\nCopy that page\'s FULL address-bar URL and paste it back here.';
   return [
-    '[SHOW USER]',
-    `Open this link${accountHint ? ` with ${accountHint}` : ''} and approve access:`,
-    '',
-    `  ${url}`,
-    '',
-    'You may see "Google hasn\'t verified this app" — it\'s your own app: Advanced → Continue.',
-    after,
-    '[/SHOW USER]',
+    ...showUserFence([
+      `Open this link${accountHint ? ` with ${accountHint}` : ''} and approve access:`,
+      '',
+      `  ${url}`,
+      '',
+      'You may see "Google hasn\'t verified this app" — it\'s your own app: Advanced → Continue.',
+      after,
+    ]),
   ].join('\n');
 }
 
@@ -176,7 +216,16 @@ interface PendingConnect {
   redirect_uri: string;
   scopes: string[];
   client_id: string;
+  /**
+   * The client the consent is bound to. Its secret waits here (0600, 10-minute
+   * life) rather than in the vault, so a client is only ever stored together
+   * with a verified grant.
+   */
+  client_secret?: string;
+  client_mode?: 'personal' | 'byo';
   account_hint?: string;
+  /** The account's grant generation when consent started (null: none on file). */
+  prior_generation?: number | null;
   created_at: string;
 }
 
@@ -229,6 +278,8 @@ interface ConnectFlags {
   via?: string;
   timeoutMs: number;
   consentState?: 'production' | 'testing';
+  personal: boolean;
+  importStdin: boolean;
 }
 
 function parseConnectFlags(args: string[]): ConnectFlags {
@@ -238,6 +289,8 @@ function parseConnectFlags(args: string[]): ConnectFlags {
     services: [...GOOGLE_SERVICES],
     json: false,
     timeoutMs: 600_000,
+    personal: false,
+    importStdin: false,
   };
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -256,6 +309,11 @@ function parseConnectFlags(args: string[]): ConnectFlags {
     if (a === '--port') { f.port = Number(args[++i]); continue; }
     if (a === '--scopes' || a === '--services') { f.services = parseServicesCsv(args[++i] ?? ''); continue; }
     if (a === '--json') { f.json = true; continue; }
+    if (a === '--personal') { f.personal = true; continue; }
+    if (a === '--import') {
+      if (args[i + 1] !== '-') { console.error('--import reads the credential JSON from stdin only: --import -'); process.exit(2); }
+      f.importStdin = true; i++; continue;
+    }
     if (a === '--via') { f.via = args[++i]; continue; }
     if (a === '--timeout-ms') { f.timeoutMs = Number(args[++i]) || 600_000; continue; }
     if (a === '--consent-state') {
@@ -291,11 +349,18 @@ async function resolveClientCreds(
   }
   // 2. Explicit pair (agent-driven non-TTY flows).
   if (f.clientId && f.clientSecret) return validateClientPair(f.clientId, f.clientSecret);
-  // 3. Environment (same names integrations' secretEnv() folds).
-  if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
+  // 3. Environment (same names integrations' secretEnv() folds). Never for
+  // Personal mode: a shared env client is exactly what Personal mode replaces.
+  if (!f.personal && process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
     return validateClientPair(process.env.GOOGLE_CLIENT_ID, process.env.GOOGLE_CLIENT_SECRET);
   }
-  // 4. Already on file.
+  // 4. Already on file: Personal mode reuses only this account's own client.
+  if (f.personal) {
+    const own = isGrantVault(vault) && f.account
+      ? (await vault.listClients(GOOGLE_PROVIDER)).find((c) => c.account === f.account && c.mode === 'personal')
+      : undefined;
+    return own ? { client_id: own.client_id, client_secret: own.client_secret } : null;
+  }
   const existing = await vault.getClient(GOOGLE_PROVIDER);
   if (existing) return { client_id: existing.client_id, client_secret: existing.client_secret };
   // 5. TTY prompt (readLineSafe returns '' immediately on non-TTY).
@@ -307,24 +372,44 @@ async function resolveClientCreds(
   return null;
 }
 
+interface ConsentClient {
+  client_id: string;
+  client_secret: string;
+  mode: 'personal' | 'byo';
+}
+
+/**
+ * Commits a finished consent. Order matters: prove the account (ID token or
+ * userinfo), check it is the one asked for, check every granted scope is
+ * read-only, and only then write the client record and the grant together in
+ * one compare-and-swap on the generation read when consent started. Any
+ * failure before the write leaves the vault exactly as it was, so a client
+ * swap whose consent fails keeps the prior working grant.
+ */
 async function finishConnect(
   vault: CredentialVault,
   f: ConnectFlags,
-  tokens: { access_token: string; refresh_token?: string; expires_in: number; scope?: string },
-  clientId: string | undefined,
+  tokens: TokenResponse,
+  client: ConsentClient | undefined,
   clientRef: 'byo' | 'hosted-relay',
   fetchImpl: typeof fetch,
   knownEmail?: string,
   scopesOverride?: string[],
+  priorGeneration?: number | null,
 ): Promise<CredentialEntry> {
-  const email = knownEmail ?? (await fetchUserinfoEmail(tokens.access_token, fetchImpl));
+  const clientId = client?.client_id;
+  const email = knownEmail ?? (await proveGrantIdentity(tokens, clientId, fetchImpl));
   if (f.account && email !== f.account) {
     // handleCredError is the single connect_error funnel emission point.
     throw new CredentialError('wrong_account_consented', undefined, `consented: ${email}`);
   }
+  const requested = scopesOverride ?? scopesForServices(f.services);
+  const granted = await effectiveScopes(tokens, fetchImpl, requested, client?.mode === 'personal');
+  assertIngestOnly(granted, 'consented grant');
   const sendasAliases = await fetchSendAsAliases(tokens.access_token, fetchImpl);
   const nowIso = new Date().toISOString();
   const prior = await vault.get(credentialId(GOOGLE_PROVIDER, email));
+  const expectedGeneration = priorGeneration !== undefined ? priorGeneration : grantGeneration(prior);
   const entry: CredentialEntry = {
     id: credentialId(GOOGLE_PROVIDER, email),
     provider: GOOGLE_PROVIDER,
@@ -345,22 +430,108 @@ async function finishConnect(
       // consent screen lets users uncheck scopes, so the requested set is a
       // fallback, never the truth. Persisting the grant is what lets the
       // sync preflight say `scope_missing` instead of opaque per-sweep 403s.
-      scopes: (() => {
-        const granted = tokens.scope?.split(/\s+/).filter(Boolean);
-        return granted && granted.length > 0
-          ? granted
-          : (scopesOverride ?? scopesForServices(f.services));
-      })(),
+      scopes: granted,
       ...(clientId ? { client_id: clientId } : {}),
+      ...(client ? { client_mode: client.mode } : {}),
       connected_at: prior?.meta.connected_at ?? nowIso,
       last_refresh_ok_at: nowIso,
       ...(sendasAliases.length > 0 ? { sendas_aliases: sendasAliases } : {}),
       consent_publish_state: f.consentState ?? prior?.meta.consent_publish_state ?? 'unknown',
     },
   };
-  await vault.put(entry);
-  appendGoogleHeartbeat('consent_ok', 'ok', { account_hash: hashish(email), client_ref: clientRef });
-  return entry;
+  const record: ProviderClientRecord | undefined = client
+    ? {
+        provider: GOOGLE_PROVIDER,
+        client_id: client.client_id,
+        client_secret: client.client_secret,
+        created_at: nowIso,
+        ...(client.mode === 'personal' ? { account: email, mode: 'personal' as const } : {}),
+      }
+    : undefined;
+  let saved = entry;
+  if (isGrantVault(vault)) {
+    saved = await vault.commitGrant({ entry, ...(record ? { client: record } : {}), expectedGeneration });
+  } else {
+    if (record) await vault.putClient(record);
+    await vault.put(entry);
+  }
+  appendGoogleHeartbeat('consent_ok', 'ok', { account_hash: hashish(email), client_ref: clientRef, client_mode: client?.mode ?? 'relay' });
+  return saved;
+}
+
+/**
+ * `gbrain google connect --import -`: one JSON object on stdin with the client
+ * (its downloaded JSON, or client_id and client_secret), a refresh_token and
+ * the account, for moving an already-consented grant onto this machine. The
+ * refresh token is tried once, the account is proven from Google's answer and
+ * the scopes are checked read-only before anything is written; then the
+ * account's own client record and the grant are written together.
+ */
+async function runGoogleImport(vault: CredentialVault, f: ConnectFlags, fetchImpl: typeof fetch, raw: string): Promise<void> {
+  if (!isGrantVault(vault)) throw new CredentialError('import_invalid', ' (this vault cannot write grants atomically)');
+  let obj: Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('not an object');
+    obj = parsed as Record<string, unknown>;
+  } catch {
+    throw new CredentialError('import_invalid', ' (stdin is not one JSON object)');
+  }
+  const account = typeof obj.account === 'string' ? obj.account.trim().toLowerCase() : f.account;
+  if (!account) throw new CredentialError('import_invalid', ' (account is missing)');
+  if (f.account && account !== f.account) throw new CredentialError('import_invalid', ` (account ${account} does not match --account ${f.account})`);
+  const refreshToken = typeof obj.refresh_token === 'string' ? obj.refresh_token.trim() : '';
+  if (!refreshToken) throw new CredentialError('import_invalid', ' (refresh_token is missing)');
+  const rawClient = obj.client as Record<string, unknown> | undefined;
+  if (!rawClient || typeof rawClient !== 'object') throw new CredentialError('import_invalid', ' (client is missing)');
+  let pair: { client_id: string; client_secret: string };
+  try {
+    pair = rawClient.installed !== undefined || rawClient.web !== undefined
+      ? parseClientJson(JSON.stringify(rawClient))
+      : validateClientPair(String(rawClient.client_id ?? ''), String(rawClient.client_secret ?? ''));
+  } catch (e) {
+    throw new CredentialError('import_invalid', ` (client: ${isCredentialError(e) ? e.code : 'unreadable'})`, e);
+  }
+  const mode: 'personal' | 'byo' = f.personal ? 'personal' : 'byo';
+  const nowIso = new Date().toISOString();
+  const probe: CredentialEntry = {
+    id: credentialId(GOOGLE_PROVIDER, account), provider: GOOGLE_PROVIDER, kind: 'oauth2', client_ref: 'byo',
+    secret: { refresh_token: refreshToken }, meta: { account, client_id: pair.client_id, client_mode: mode, connected_at: nowIso },
+  };
+  const prior = await vault.get(probe.id);
+  // A BYO client already on file (shared, or this account's) is reused as is;
+  // otherwise the import adds an account-scoped record, so it never replaces
+  // or shadows the client other accounts refresh with.
+  const onFile = await vault.getClientById(GOOGLE_PROVIDER, pair.client_id, account);
+  const reuseClient = mode === 'byo' && !!onFile && onFile.client_secret === pair.client_secret && (!onFile.account || onFile.account === account);
+  const token = await refreshAccessToken(probe, { provider: GOOGLE_PROVIDER, ...pair, created_at: nowIso }, fetchImpl, new Date(), undefined);
+  const email = await proveGrantIdentity(token, pair.client_id, fetchImpl);
+  if (email !== account) throw new CredentialError('identity_unproven', ` (the refresh token belongs to ${email}, not ${account})`);
+  const scopes = await effectiveScopes(token, fetchImpl, [], true);
+  assertIngestOnly(scopes, 'imported grant');
+  const sendasAliases = await fetchSendAsAliases(token.access_token, fetchImpl);
+  const entry = await vault.commitGrant({
+    entry: {
+      ...probe,
+      secret: {
+        access_token: token.access_token,
+        expiry: new Date(Date.now() + token.expires_in * 1000).toISOString(),
+        refresh_token: token.refresh_token ?? refreshToken,
+      },
+      meta: {
+        ...probe.meta,
+        scopes,
+        connected_at: prior?.meta.connected_at ?? nowIso,
+        last_refresh_ok_at: nowIso,
+        ...(sendasAliases.length > 0 ? { sendas_aliases: sendasAliases } : {}),
+        consent_publish_state: f.consentState ?? prior?.meta.consent_publish_state ?? 'unknown',
+      },
+    },
+    ...(reuseClient ? {} : { client: { provider: GOOGLE_PROVIDER, ...pair, created_at: nowIso, account, mode } }),
+    expectedGeneration: grantGeneration(prior),
+  });
+  appendGoogleHeartbeat('import_ok', 'ok', { account_hash: hashish(account), client_mode: mode });
+  printConnected(f.json, entry);
 }
 
 /** Non-reversible short tag so heartbeats never carry the raw address. */
@@ -377,6 +548,10 @@ export async function runGoogleConnect(args: string[]): Promise<void> {
   appendGoogleHeartbeat('connect_started', 'ok');
 
   try {
+    // An import names its account in the JSON it carries.
+    if (f.importStdin) return await runGoogleImport(vault, f, fetchImpl, readFileSync(0, 'utf-8'));
+    if (f.personal && !f.account) throw new CredentialError('personal_account_required');
+    if (f.personal && f.via) throw new CredentialError('personal_account_required', ' (Personal mode uses your own client, never the gbrain.io relay; drop --via)');
     // Relay fast path (hosted verified client; tokens still stored locally).
     if (f.via) {
       // Token custody rides this URL: whatever host it names brokers the
@@ -424,7 +599,13 @@ export async function runGoogleConnect(args: string[]): Promise<void> {
     if (f.code) {
       const pending = readPending();
       if (!pending) throw new CredentialError('consent_timeout');
-      const client = await vault.getClient(GOOGLE_PROVIDER);
+      // The consent is bound to the client it started with: its secret rides
+      // in the pending record (older pending records fall back to the stored
+      // provider-wide client, which then must be that same client).
+      const stored = pending.client_secret ? null : await vault.getClient(GOOGLE_PROVIDER);
+      const client = pending.client_secret
+        ? { client_id: pending.client_id, client_secret: pending.client_secret }
+        : stored && stored.client_id === pending.client_id ? stored : null;
       if (!client) throw new CredentialError('not_connected', ' (no OAuth client on file)');
       const parsed = parsePastedRedirect(f.code, pending.state);
       const tokens = await exchangeCode(
@@ -442,13 +623,16 @@ export async function runGoogleConnect(args: string[]): Promise<void> {
       // wrong-account consent in the two-step flow would otherwise pass
       // finishConnect's identity check unexamined.
       const fBound = !f.account && pending.account_hint ? { ...f, account: pending.account_hint } : f;
+      const mode = pending.client_mode ?? 'byo';
+      const fMode = mode === 'personal' ? { ...fBound, personal: true } : fBound;
       const entry = await finishConnect(
-        vault, fBound, tokens, client.client_id, 'byo', fetchImpl,
+        vault, fMode, tokens, { client_id: client.client_id, client_secret: client.client_secret, mode }, 'byo', fetchImpl,
         undefined,
         // Step 1's (possibly narrowed) scope request is the fallback when the
         // token response carries no `scope`; never this invocation's default
         // f.services.
         pending.scopes,
+        pending.prior_generation,
       );
       // Only the flow that CONSUMED the pending record clears it — a
       // parallel loopback/relay connect completing must not delete an
@@ -461,15 +645,18 @@ export async function runGoogleConnect(args: string[]): Promise<void> {
     // Client credentials — resolve or hand back the checklist.
     const creds = await resolveClientCreds(vault, f);
     if (!creds) {
-      const checklist = gcpChecklistBlock();
+      const checklist = f.personal ? personalSetupBlock(f.account!) : gcpChecklistBlock();
       emit(
         f.json,
         {
           ok: false,
           status: 'needs_client_credentials',
           next_action: {
-            command: 'gbrain google connect --client-json <path>',
+            command: f.personal
+              ? `gbrain google connect --personal --account ${f.account} --client-json <path>`
+              : 'gbrain google connect --client-json <path>',
             user_message: checklist,
+            ...(f.personal ? { url: personalModeSetupUrl(f.account) } : {}),
           },
         },
         [checklist],
@@ -477,11 +664,12 @@ export async function runGoogleConnect(args: string[]): Promise<void> {
       setCliExitVerdict(2);
       return;
     }
+    const client: ConsentClient = { ...creds, mode: f.personal ? 'personal' : 'byo' };
     // Refresh tokens are bound to the client that minted them: silently
     // replacing the stored client (stale env vars suffice) breaks every
     // sibling account's refresh with a misleading "revoked" diagnosis.
     // Warn loudly; proceeding is still legal (BYO users rotate clients).
-    const priorClient = await vault.getClient(GOOGLE_PROVIDER);
+    const priorClient = f.personal ? null : await vault.getClient(GOOGLE_PROVIDER);
     if (priorClient && priorClient.client_id !== creds.client_id) {
       const accounts = await vault.list({ provider: GOOGLE_PROVIDER });
       if (accounts.length > 0) {
@@ -492,16 +680,14 @@ export async function runGoogleConnect(args: string[]): Promise<void> {
         );
       }
     }
-    await vault.putClient({
-      provider: GOOGLE_PROVIDER,
-      client_id: creds.client_id,
-      client_secret: creds.client_secret,
-      created_at: new Date().toISOString(),
-    });
+    // The client is NOT written yet: it is stored only together with a
+    // verified grant (finishConnect), so a consent that never finishes leaves
+    // the vault, and every sibling account's client, untouched.
     appendGoogleHeartbeat('client_creds_ok', 'ok');
 
     const accountHint =
       typeof f.reauth === 'string' ? f.reauth : (f.account ?? undefined);
+    const priorGeneration = accountHint ? grantGeneration(await vault.get(credentialId(GOOGLE_PROVIDER, accountHint))) : undefined;
     const pkce = generatePkce();
     const state = randomBytes(16).toString('hex');
     const usePaste = f.paste || sniffHeadless();
@@ -521,7 +707,10 @@ export async function runGoogleConnect(args: string[]): Promise<void> {
         redirect_uri: PASTE_REDIRECT_URI,
         scopes: scopesForServices(f.services),
         client_id: creds.client_id,
+        client_secret: creds.client_secret,
+        client_mode: client.mode,
         ...(accountHint ? { account_hint: accountHint } : {}),
+        ...(priorGeneration !== undefined ? { prior_generation: priorGeneration } : {}),
         created_at: new Date().toISOString(),
       });
       const block = consentBlock(url, 'paste', accountHint);
@@ -540,7 +729,7 @@ export async function runGoogleConnect(args: string[]): Promise<void> {
           },
           fetchImpl,
         );
-        const entry = await finishConnect(vault, f, tokens, creds.client_id, 'byo', fetchImpl);
+        const entry = await finishConnect(vault, f, tokens, client, 'byo', fetchImpl, undefined, undefined, priorGeneration);
         // The TTY paste consumed the pending record it wrote above; a FAILED
         // paste deliberately leaves it (recoverable via --code, same state).
         clearPending();
@@ -589,11 +778,21 @@ export async function runGoogleConnect(args: string[]): Promise<void> {
         },
         fetchImpl,
       );
-      const entry = await finishConnect(vault, f, tokens, creds.client_id, 'byo', fetchImpl);
+      const entry = await finishConnect(vault, f, tokens, client, 'byo', fetchImpl, undefined, undefined, priorGeneration);
       printConnected(f.json, entry);
     } finally {
       loop.close();
     }
+  } catch (e) {
+    handleCredError(e, f.json);
+  }
+}
+
+/** `connect --import -` with the stdin text given directly (tests; the CLI reads fd 0). */
+export async function runGoogleConnectImport(raw: string, args: string[]): Promise<void> {
+  const f = parseConnectFlags(args);
+  try {
+    await runGoogleImport(openVault(), f, fetch, raw);
   } catch (e) {
     handleCredError(e, f.json);
   }
@@ -611,6 +810,7 @@ function printConnected(json: boolean, entry: CredentialEntry): void {
       account: email,
       scopes: entry.meta.scopes ?? [],
       client_ref: entry.client_ref,
+      ...(entry.meta.client_mode ? { client_mode: entry.meta.client_mode } : {}),
       next_action: {
         command: nextCmd,
         user_message: `Connected ${email}.`,
@@ -646,9 +846,12 @@ function handleCredError(e: unknown, json: boolean): never {
 export async function runGoogleStatus(args: string[]): Promise<void> {
   const json = args.includes('--json');
   const probe = !args.includes('--no-probe');
+  const accountIdx = args.indexOf('--account');
+  const onlyAccount = accountIdx !== -1 ? (args[accountIdx + 1] ?? '').trim().toLowerCase() : '';
   const vault = openVault();
-  const metas = await vault.list({ provider: GOOGLE_PROVIDER });
+  const metas = (await vault.list({ provider: GOOGLE_PROVIDER })).filter((m) => !onlyAccount || (m.account ?? '').toLowerCase() === onlyAccount);
   const client = await vault.getClient(GOOGLE_PROVIDER);
+  const accountClients = isGrantVault(vault) ? (await vault.listClients(GOOGLE_PROVIDER)).filter((c) => !!c.account).length : 0;
 
   const accounts: Array<Record<string, unknown>> = [];
   for (const m of metas) {
@@ -661,6 +864,10 @@ export async function runGoogleStatus(args: string[]): Promise<void> {
       access_token_expiry: m.expiry ?? null,
       sendas_aliases: m.sendas_aliases ?? [],
       consent_publish_state: m.consent_publish_state ?? 'unknown',
+      client_mode: m.client_mode ?? (m.client_ref === 'hosted-relay' ? 'relay' : 'byo'),
+      grant_generation: m.grant_generation ?? 0,
+      // Without a probe nothing was checked: 'unprobed' is never 'healthy'.
+      refresh_probe: 'unprobed',
     };
     if (probe) {
       try {
@@ -704,6 +911,7 @@ export async function runGoogleStatus(args: string[]): Promise<void> {
               ? (JSON.parse(r.config) as Record<string, unknown>)
               : ((r.config ?? {}) as Record<string, unknown>);
           if (c.kind !== 'google') continue;
+          if (onlyAccount && (typeof c.g_account === 'string' ? c.g_account.toLowerCase() : '') !== onlyAccount) continue;
           const { parseGoogleSourceConfig } = await import('../core/google/source-config.ts');
           const sourceCfg = parseGoogleSourceConfig(c, '');
           for (const service of sourceCfg.services) linkedServices.set(sourceCfg.account, (linkedServices.get(sourceCfg.account) ?? new Set()).add(service));
@@ -736,14 +944,16 @@ export async function runGoogleStatus(args: string[]): Promise<void> {
   }
   const apiBlocked = accounts.filter((a) => ((a.api_access as { problems?: unknown[] } | undefined)?.problems?.length ?? 0) > 0);
   const unreadableCalendars = linkedSources.filter((s) => s.calendar?.code === 'calendar_unreadable');
-  if (unreadableCalendars.length > 0 || apiBlocked.length > 0) setCliExitVerdict(1);
+  const refreshFailed = accounts.filter((a) => a.refresh_probe !== 'ok' && a.refresh_probe !== 'unprobed');
+  if (unreadableCalendars.length > 0 || apiBlocked.length > 0 || refreshFailed.length > 0) setCliExitVerdict(1);
   if (json) {
     process.stdout.write(
       JSON.stringify(
         {
-          ok: unreadableCalendars.length === 0 && apiBlocked.length === 0,
+          ok: unreadableCalendars.length === 0 && apiBlocked.length === 0 && refreshFailed.length === 0,
           status: accounts.length > 0 ? 'connected' : 'not_connected',
-          client_on_file: client !== null,
+          client_on_file: client !== null || accountClients > 0,
+          ...(onlyAccount ? { account_filter: onlyAccount } : {}),
           accounts,
           linked_sources: linkedSources,
         },
@@ -764,7 +974,7 @@ export async function runGoogleStatus(args: string[]): Promise<void> {
     return;
   }
   for (const a of accounts) {
-    const probeStr = 'refresh_probe' in a ? ` refresh=${String(a.refresh_probe)}` : '';
+    const probeStr = ` refresh=${String(a.refresh_probe)}` + (a.client_mode === 'personal' ? ' mode=personal' : '');
     process.stdout.write(
       `${String(a.account)}  [${String(a.client_ref)}]${probeStr}  scopes=${(a.scopes as string[]).length}  consent=${String(a.consent_publish_state)}\n`,
     );
@@ -807,7 +1017,13 @@ export async function runGoogleDisconnect(args: string[]): Promise<void> {
   }
   const vault = openVault();
   const deleted = await vault.delete(credentialId(GOOGLE_PROVIDER, email));
-  if (purgeClient) await vault.deleteClient(GOOGLE_PROVIDER);
+  if (purgeClient) {
+    // A Personal-mode account's own client goes with it; --purge-client also
+    // removes the provider-wide client, as before.
+    const fileVault = vault as { deleteAccountClient?: (provider: string, account: string) => Promise<boolean> };
+    if (fileVault.deleteAccountClient) await fileVault.deleteAccountClient(GOOGLE_PROVIDER, email);
+    await vault.deleteClient(GOOGLE_PROVIDER);
+  }
   emit(
     json,
     {
@@ -834,6 +1050,10 @@ const HELP = `gbrain google — connect Google (Gmail, Calendar, Contacts) to yo
 
 Subcommands:
   connect      Connect a Google account (guided; BYO OAuth client)
+               --personal --account <email>   Google Personal mode: this account's own
+                                        one-click client (recommended; one per account)
+               --import -               read {client, refresh_token, account} JSON on stdin
+                                        (moves a consented grant here; validated first)
                --client-json <path|->   downloaded client_secret*.json (or '-' for stdin)
                --client-id / --client-secret   explicit pair (agents; prefer --client-json)
                --account <email>        expected account (verified after consent)
@@ -853,7 +1073,7 @@ Subcommands:
                --sync-budget-ms <ms>    first-sync wall-clock budget
                (+ all connect flags above)
   status       accounts, scopes, refresh probe, linked sources and whether each
-               source's calendar is readable  [--json] [--no-probe]
+               source's calendar is readable  [--json] [--no-probe] [--account <email>]
                (--no-probe: no network; reports the last sync's calendar result)
   attachments backfill --source <id> [--yes] [--limit 1-25] [--retry-failed] [--json]
                bounded metadata-only repair of imported Gmail; managed persistence required
@@ -861,8 +1081,15 @@ Subcommands:
   calendars    list every calendar the account can read (ids for --calendar-id)
                [--account <email>] [--json]
   disconnect   remove an account's tokens  <email> [--purge-client]
+               (--purge-client also removes that account's own Personal-mode client)
+  mint serve   run the local Google token socket in the foreground (for a supervisor)
+  mint status  the socket path, allowed peers and whether the write broker is on  [--json]
+  approvals    list prompts held for the owner; answer one at a terminal:
+               approvals answer <request_id> <choice>  [--json]
+  exec         run gwscli with a read-only token, redacted from its output
+               --account <email> -- gwscli <args...>
 
-Docs: docs/guides/google-connect.md`;
+Docs: docs/guides/google-connect.md, docs/guides/google-socket.md`;
 
 /**
  * `gbrain google calendars [--account <email>] [--json]`
@@ -936,6 +1163,9 @@ export async function runGoogle(args: string[]): Promise<void> {
     const { runGoogleSetup } = await import('./google-setup.ts');
     return runGoogleSetup(rest);
   }
+  if (sub === 'mint') return (await import('./google-socket.ts')).runGoogleMint(rest);
+  if (sub === 'approvals') return (await import('./google-socket.ts')).runGoogleApprovals(rest);
+  if (sub === 'exec') return (await import('./google-socket.ts')).runGoogleExec(rest);
   console.error(`Unknown subcommand: ${sub}\n`);
   process.stdout.write(HELP + '\n');
   process.exit(2);

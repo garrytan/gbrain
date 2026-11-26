@@ -249,6 +249,8 @@ export interface ArchiveRunOpts {
   deadlineAtMs?: number;
   /** Repository path: import the committed files (default an in-process sync of the source). */
   syncSource?: (engine: BrainEngine, sourceId: string, root: string) => Promise<void>;
+  /** Reads the audience again before each day is published (a repository batch: before its files); a run on a personal brain that turned shared stops with archive_audience_changed. */
+  recheckAudienceEachDay?: boolean;
 }
 
 const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
@@ -267,7 +269,7 @@ export async function setArchiveEnabled(engine: BrainEngine, on: boolean): Promi
   await engine.setConfig(ARCHIVE_ENABLED_KEY, on ? 'true' : 'false');
 }
 
-async function configuredSource(engine: BrainEngine, sourceId?: string): Promise<string> {
+export async function configuredSource(engine: BrainEngine, sourceId?: string): Promise<string> {
   return sourceId ?? ((await engine.getConfig(ARCHIVE_SOURCE_KEY))?.trim() || DEFAULT_ARCHIVE_SOURCE);
 }
 
@@ -341,9 +343,9 @@ async function archiveTimeZone(engine: BrainEngine, sourceId: string): Promise<{
 }
 
 /** unproven: the brain reads as personal only because its client-usage check failed, so it may still be shared. */
-interface Privacy { shared: boolean; owner: string | null; unproven?: boolean }
+export interface Privacy { shared: boolean; owner: string | null; unproven?: boolean }
 
-async function resolvePrivacy(engine: BrainEngine): Promise<Privacy> {
+export async function resolvePrivacy(engine: BrainEngine): Promise<Privacy> {
   const { loadConfigFileOnly } = await import('../config.ts');
   const audience = await classifyBrainAudience(engine, loadConfigFileOnly());
   const enabled = (await listMembers(engine)).filter(m => m.status === 'enabled').length;
@@ -818,7 +820,7 @@ async function archiveSource(engine: BrainEngine, opts: ArchiveRunOpts, ctx: { e
   const flushBatch = async () => {
     if (!batch.length) return;
     if (ctx.signal?.aborted) throw ctx.signal.reason;
-    await flushWrites(engine, opts, { sourceId, writeMode, root: source.local_path, context }, batch);
+    await flushWrites(engine, opts, { sourceId, writeMode, root: source.local_path, context, shared: privacy.shared }, batch);
     for (const w of batch) {
       if ((w.outcome.status !== 'written' && w.outcome.status !== 'accepted') || !w.ledger) continue;
       ledger.set(w.ledger.harness + '.' + w.ledger.conversation_key_hash + '.' + w.ledger.day, w.ledger);
@@ -977,7 +979,7 @@ async function archiveSource(engine: BrainEngine, opts: ArchiveRunOpts, ctx: { e
     await flushBatch();
     if (touched.size) {
       indexWrites = indexFor(touched, ledger);
-      await flushWrites(engine, opts, { sourceId, writeMode, root: source.local_path, context }, indexWrites);
+      await flushWrites(engine, opts, { sourceId, writeMode, root: source.local_path, context, shared: privacy.shared }, indexWrites);
     }
   }
   if (!dryRun && touched.size) await engine.setConfig(pendingKey, JSON.stringify(indexWrites.filter(w => w.outcome.status !== 'written' && w.outcome.status !== 'accepted' && w.outcome.status !== 'unchanged').map(w => w.outcome.day).sort()));
@@ -1036,10 +1038,25 @@ async function releaseOpenDayHold(engine: BrainEngine, sourceId: string | null, 
   await engine.executeRaw("UPDATE page_embedding_budget SET state = 'open', reason = NULL, updated_at = now() WHERE page_id = ANY($1::int[]) AND state = 'held' AND reason = $2", [ids, ARCHIVE_OPEN_DAY_HOLD_REASON]);
 }
 
-async function flushWrites(engine: BrainEngine, opts: ArchiveRunOpts, target: { sourceId: string; writeMode: ArchiveRunResult['write_mode']; root: string | null; context?: OperationContext }, writes: DayWrite[]): Promise<void> {
+/**
+ * The publication-time audience check (recheckAudienceEachDay): a member add or audience change that finished after
+ * the run read the audience under its lock leaves this run's later days unwritten instead of publishing them with no
+ * readers. A brain whose audience can no longer be proven stops the same way.
+ */
+async function assertAudienceUnchanged(engine: BrainEngine, sourceId: string, wasShared: boolean): Promise<void> {
+  const now = await resolvePrivacy(engine);
+  if (now.shared === wasShared && !now.unproven) return;
+  const { opError } = await import('../ops/contract.ts');
+  throw opError('archive_audience_changed', 'The brain\'s audience changed while the conversation archive was writing source ' + sourceId + ', so it stopped before writing the next day; days already written stay as they are and the owner-only re-scope covers them.',
+    'Rerun gbrain transcripts archive run.');
+}
+
+async function flushWrites(engine: BrainEngine, opts: ArchiveRunOpts, target: { sourceId: string; writeMode: ArchiveRunResult['write_mode']; root: string | null; context?: OperationContext; shared?: boolean }, writes: DayWrite[]): Promise<void> {
   const { sourceId, writeMode } = target;
+  const recheck = opts.recheckAudienceEachDay && !opts.dryRun ? () => assertAudienceUnchanged(engine, sourceId, target.shared === true) : null;
   const provenance = (harness: string) => ({ source_kind: 'transcript:' + harness, source_uri: 'archive:' + harness, ingested_via: INGESTED_VIA });
   if (writeMode === 'repo') {
+    if (recheck) await recheck();
     const root = target.root!;
     const paths: string[] = [];
     for (const w of writes) {
@@ -1079,6 +1096,7 @@ async function flushWrites(engine: BrainEngine, opts: ArchiveRunOpts, target: { 
     let submitted = 0;
     for (const w of writes) {
       if (writeMode === 'coordinator' && deadline !== undefined && w.harness !== 'index' && submitted && Date.now() >= deadline) break;
+      if (recheck) await recheck();
       if (w.harness !== 'index') submitted++;
       try {
         const accepted: string[] = [];

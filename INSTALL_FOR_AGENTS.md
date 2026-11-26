@@ -398,6 +398,10 @@ spend. Confirm before continuing.
 
 ## Step 4: Import and Index
 
+A brain `gbrain setup claude-code` or `codex` created offers the coding sessions already on the machine as the
+`setup_history` decision: relay it, and run its `import` argv only on the user's yes; the newest session comes first
+and the last 30 days need a second yes ([setup history import](docs/guides/conversation-archive.md#setup-history-import)).
+
 Optional, when the user has chosen files to import. Keyword retrieval stays
 local; embedding and expanded query calls require separate provider consent.
 

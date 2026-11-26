@@ -36,6 +36,11 @@ it. The exact wording is
 Nothing ever becomes "confirmed by you" without you typing a confirmation
 token at a terminal on the brain host. `--yes` never confirms.
 
+A correction you give an agent can be saved as a standing rule with `correct`
+(see [standing rules](standing-rules.md)). The rule reads "you told your
+agent this" and reaches every session only after you approve its exact
+revision at your own terminal; it never raises any page's or fact's trust tier.
+
 ## What you get by default
 
 - **Labels on everything.** Every item an agent reads back (search, recall,
@@ -213,6 +218,38 @@ one as skipped. All of this reads and writes database rows, so it works the
 same on a brain with no git repository. On a brain with one, page changes go
 through the usual page-write path.
 
+## Where a page's authority comes from
+
+Every page, search row and recall fact also carries `precedence`: `record`,
+`approved`, `curated`, `doc`, `chat` or `external`. It says what kind of
+source the text came from, so an agent can tell a decision you approved from
+something said in a chat. Lean search rows show it only when it is not
+`curated`.
+
+- A page of `type: rule`, or a `type: facts` page with `claims: allowed` in its
+  front matter, is `approved`, unless an outside sender wrote it or an agent wrote it
+  over MCP: a page cannot approve itself from outside. A page you write on
+  this machine (`gbrain put`, an edit in the brain repo) stays approved.
+- The conversation archive, meeting and Google sources are `chat`; a guest
+  source is `external`; everything else is `curated`.
+- `gbrain sources set-precedence <id> <class>` sets a source's class, and
+  `--clear` removes it.
+
+`precedence` is a label. It never raises a trust tier and never changes
+ranking.
+
+Before an agent states a number, `gbrain claims check "<draft>"` (MCP tool
+`check_claims`) checks each number in the draft against the dated lines
+(`2026-03-01: ARR is $2.1M`) on your allowed-claims facts pages. Each claim
+comes back `supported` with the line it matched, `conflicts` when a line says
+another number, or `not_found`. A sentence with several numbers is supported
+only when every number is. A page that cannot count (quarantined, from an
+outside source, or written by an agent over MCP) is listed under `skipped`
+with the reason. New brains mark `me/facts` and
+`company/facts` as allowed-claims pages; on an older brain, add
+`claims: allowed` to a facts page's front matter. Both work the same on a
+brain with no git repository.
+
 ## Older memory
 
 Content saved before this release is flagged only after you claim your
@@ -267,7 +304,9 @@ could be lifted to "your notes" by an earlier claim (#6533).
 whose own signals now say lower, and `gbrain trust claim-sources --relower`
 lowers them. It only lowers: it never raises a row, it touches only rows with
 `write_origin.channel = "trust_claim"`, rows on a lowered page follow it, and
-each lowered row records `write_origin.channel = "trust_relower"`.
+each lowered row records `write_origin.channel = "trust_relower"`. It leaves
+alone a row you confirmed or lowered with `gbrain trust confirm` or `lower`,
+and the facts on a page you confirmed.
 
 Legacy Life Chronicle event pages (`captured_via: life-chronicle:auto`) are
 model summaries of another page (#9284). A claim caps them at "written by an

@@ -43,6 +43,8 @@ export interface GBrainConfig {
   secrets?: { on_push?: 'redact' | 'refuse' };
   /** #7242 terminal hook (minions/terminal-hook.ts): file plane only, read by `gbrain jobs work`. */
   minions?: { terminal_hook?: string[] | { argv: string[]; timeout_ms?: number } };
+  /** GST-3849 Google token socket (core/google-socket/config.ts): file plane only, read engine-free by both start paths. */
+  google?: { mint_socket?: boolean; broker_act?: boolean; broker_allow_root_gateway?: boolean; socket_peers?: number[]; broker_joint_probe?: number };
   /** Ambient-writeback MIRROR of the DB-plane `memory.*` keys — `gbrain
    * config set memory.*` dual-writes both planes so the engine-free Stop-hook
    * child and the stdio boot resolve see the same truth the serve does. The
@@ -1641,6 +1643,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // A11: IANA timezone for offset-less frontmatter datetimes in effective_date.
   // Unset → UTC (date-only values are always UTC calendar dates). Validated at set time.
   'brain.timezone',
+  'rules.session_start', // C2 (opt-in, off until the cross-harness eval passes): the session-start standing-rules section
   // A12 (opt-in, default off): undated new pages in git-backed sources take the
   // file's git first-commit date as their effective-date fallback on full import.
   'sync.git_first_commit_dates',

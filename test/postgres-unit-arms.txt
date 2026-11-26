@@ -48,6 +48,7 @@ test/access-unborn-head-gbra706.test.ts
 test/access-ungranted-member-writes.test.ts
 test/access-who-can-read-owner-only.test.ts
 test/access-writes.test.ts
+test/action-ledger.test.ts
 test/activation-unbound-rooted-6449.test.ts
 test/adopt-local-edit.test.ts
 test/agent-policy.test.ts
@@ -86,6 +87,7 @@ test/code-edges-parity.test.ts
 test/colon-slug-windows-5032.test.ts
 test/company-brain-policy.test.ts
 test/company-brain-runtime.test.ts
+test/company-two-member-first-use.test.ts
 test/concept-purge-rebuild-9653.test.ts
 test/concept-rebuild-holds-managed-9653.test.ts
 test/concept-rebuild-holds-unmanaged-9653.test.ts
@@ -237,11 +239,13 @@ test/federation-exposure-private-9068.test.ts
 test/fence-absent-append-keeps-rows.test.ts
 test/fence-fact-append.test.ts
 test/fence-first-generation-8819.test.ts
+test/fence-hold-clears-in-sync-10067.test.ts
 test/fence-repair-receipts.test.ts
 test/fenced-embed-reuse-6961.test.ts
 test/file-drift-normalisation-gst2568.test.ts
 test/file-drift-soft-delete-hold-release-gbra133.test.ts
 test/file-upload-follows-rename.test.ts
+test/first-session-suggestion.test.ts
 test/folder-holding-coverage-gst2497.test.ts
 test/folder-holding-page-gst2492.test.ts
 test/forecast-journal.test.ts
@@ -457,6 +461,7 @@ test/managed-atom-release-resume-9079-9275.test.ts
 test/managed-cycle-pull-upstream.test.ts
 test/managed-facts-withdrawal-recovery-6506.test.ts
 test/managed-facts-withdrawn-skip-6506.test.ts
+test/managed-holding-trust-marker-10286.test.ts
 test/managed-lint.test.ts
 test/managed-maintenance-links.test.ts
 test/managed-root-aliases-7203.test.ts
@@ -501,6 +506,7 @@ test/notifier-retry-unwatched-gst2515.test.ts
 test/notifier-sync-disabled-gst2515.test.ts
 test/ns-read-move-parity.test.ts
 test/on-commit-embedding.serial.test.ts
+test/onboarding-ops.test.ts
 test/oneshot-consumer-direct-route.test.ts
 test/oneshot-housekeeping-cli.test.ts
 test/ontology-raw-files-parity.test.ts
@@ -724,12 +730,14 @@ test/refresh-retry-hint-gst1582.test.ts
 test/refresh-write-barrier.test.ts
 test/remediation-manual-only.test.ts
 test/remember-batch-entity-7432.test.ts
+test/remember-holding-trust-marker-10286.test.ts
 test/remember-pageless-entity-gst2446.test.ts
 test/remember-restated-private-2875.test.ts
 test/remember-segmented-entity-9213.test.ts
 test/remember-share-gst2243.test.ts
 test/remember-strict-held-gst2492.test.ts
 test/rename-atom-lineage-7462.test.ts
+test/rename-rekey-keeps-trust-10003.test.ts
 test/rename-rekeys-attachments.test.ts
 test/repair-agent-session-facts-segmented-9027.test.ts
 test/repair-apply-pending-6543.test.ts
@@ -763,6 +771,7 @@ test/repair-visibility-propose-gst2670.test.ts
 test/request-tools-combined-gbra449.test.ts
 test/requester-scope.test.ts
 test/restated-private-cross-entity-2891.test.ts
+test/retired-fact-history-10055.test.ts
 test/retrieval-coverage-notices.test.ts
 test/salience-enrich-parity.test.ts
 test/schema-missing-tables.test.ts
@@ -783,6 +792,7 @@ test/search-transcript-quote-tiers.test.ts
 test/search-transcript-quote.test.ts
 test/search-vector-scope-parity.test.ts
 test/search/page-rank-cut.test.ts
+test/search/rebuild-progress-queue-first-10367.test.ts
 test/search/rebuild-progress-steady-state.test.ts
 test/search/rerank-gate-hybrid.test.ts
 test/search/rerank-gate-telemetry.test.ts
@@ -918,11 +928,13 @@ test/timeline-placement-drift.test.ts
 test/transcript-redaction-key-names.test.ts
 test/trust-channel-writes.test.ts
 test/trust-claim-chronicle-9284.test.ts
+test/trust-claim-chronicle-timeline-10176.test.ts
 test/trust-guarded-supersession.test.ts
 test/trust-held-removals.test.ts
 test/trust-keep-maintenance-reimport-8352.test.ts
 test/trust-owner-actions.test.ts
 test/trust-release-strict-home-gst2676.test.ts
+test/trust-relower-owner-decision-10178.test.ts
 test/unbound-source-6536.test.ts
 test/unindexed-files-convergence-7149.test.ts
 test/unindexed-files.test.ts
@@ -930,10 +942,12 @@ test/upgrade-foreign-oauth-table.test.ts
 test/url-source-origin.test.ts
 test/v273-validate-timeouts.test.ts
 test/valid-time-gbra217.test.ts
+test/value-card.test.ts
 test/vector-embedding-parity.test.ts
 test/vector-manifest-probe-bound.test.ts
 test/visibility-fail-closed-derived-writes.test.ts
 test/visibility-repair-scale.test.ts
+test/withdrawal-keeps-trust-9739.test.ts
 test/withdrawal-overlay-concurrency.test.ts
 test/withdrawal-publication-file.test.ts
 test/worktree-refresh-recovery-row-gbra130.test.ts
