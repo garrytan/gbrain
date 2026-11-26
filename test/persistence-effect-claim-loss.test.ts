@@ -79,7 +79,8 @@ for (const backend of testBackends()) describe(`[${backend}] an effect pass that
       const flaky = new Proxy(engine, {
         get(target, prop) {
           const value = Reflect.get(target, prop, target);
-          if (prop === 'transactionDirect' || prop === 'executeRaw' || prop === 'transaction') return drop(value.bind(target));
+          // The binding lookup is the typed getWorktreeBinding (master sent it through executeRaw); a dropped connection fails it too.
+          if (prop === 'transactionDirect' || prop === 'executeRaw' || prop === 'transaction' || prop === 'getWorktreeBinding') return drop(value.bind(target));
           return typeof value === 'function' ? value.bind(target) : value;
         },
       });

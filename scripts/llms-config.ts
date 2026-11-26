@@ -40,6 +40,7 @@ export const SECTIONS: DocSection[] = [
     entries: [
       // Linked, not inlined: AGENTS.md (inlined) already routes agents to this guide, and
       // inlining it left llms-full.txt within a few bytes of FULL_SIZE_BUDGET.
+      { title: "Google token socket", path: "docs/guides/google-socket.md", description: "`gbrain google mint serve`: a private Unix socket that gives local agents short-lived read-only Google tokens and makes owner-approved Google Workspace writes through an allowlisted broker; peers, approvals, gwscli and error codes.", includeInFull: false },
       { title: "Use your brain from anywhere over MCP", path: "docs/guides/remote-mcp.md", description: "`gbrain mcp expose`: publish serve --http on your Tailscale tailnet (Funnel explicit for cloud agents), user service, admin token file, grant/connect/verify hand-off, --status/--remove, troubleshooting, security posture, ngrok and cloud-host alternatives.", includeInFull: false },
       // Linked, not inlined: these three guides only apply inside Grok Bot, Muse or another
       // hosted agent, and AGENTS.md (inlined) routes those agents to them. Dropping them from the

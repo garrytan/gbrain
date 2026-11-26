@@ -27,30 +27,14 @@ import { hardenedGitSync } from '../hardened-git.ts';
 import { assertWriterAdminUnlocked } from './admin-lock.ts';
 import { inspectPhysicalRootRecovery, repairPhysicalRoot, type PhysicalRootRecovery } from './physical-root-recovery.ts';
 import type { ContentReceiptRebind } from '../shared-skills/receipt-root.ts';
+import { getWorktreeBindingRaw, type WorktreeBinding } from '../engine-sql/write-misc.ts';
 
 const writerStatusFix = (sourceId: string): Action => readFix(
   `Shows source ${sourceId}'s owner host, epoch, worktree state, admin_state and any publication still recovering, read-only.`,
   { argv: ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--json'] });
 
-export interface WorktreeBinding {
-  worktree_id: string;
-  source_id: string;
-  source_incarnation: string;
-  relative_path: string;
-  topology_generation: string | number;
-  owner_host_id: string | null;
-  owner_epoch: string | number;
-  state: 'active' | 'draining' | 'recovering';
-  local_path: string | null;
-  coordination_path: string | null;
-  /** #5182 per-host Git-durability opt-in: null until an operator records one. */
-  git_durability: GitDurabilitySetting;
-  /** C-5: when the prepared transfer was recorded (manifest `prepared_at`); null when none is, or an older release prepared it. */
-  prepared_at?: string | null;
-  /** G2 (git-door.ts): the source is strict (`config.canonical = "git"`), read with the binding so a write pays no extra statement. */
-  canonical_git?: boolean | null;
-}
-export type GitDurabilitySetting = 'enabled' | 'disabled' | null;
+/** The binding contract and its statement live in engine-sql/write-misc.ts; these re-exports keep the import sites. */
+export { WORKTREE_BINDING_SQL, type GitDurabilitySetting, type WorktreeBinding } from '../engine-sql/write-misc.ts';
 /**
  * #10260: whether the repository Git finds from a source folder (as sync does, so a top level above the root counts)
  * still holds the commit sync last imported. Only Git's clean answers are `missing`: no repository, or exit 1 with
@@ -98,17 +82,13 @@ export async function graduationVerifyInheritsPersistence(engine: BrainEngine): 
 export async function persistenceEnabledForHealth(engine: BrainEngine): Promise<boolean> {
   return await managedPersistenceEnabled(engine) || await graduationVerifyInheritsPersistence(engine);
 }
-/** The source's binding as this host sees it; group-publish.ts's preparation memo answers this exact statement once. */
-export const WORKTREE_BINDING_SQL = `SELECT s.source_id,s.source_incarnation,s.worktree_id,s.relative_path,
-    s.topology_generation::text AS topology_generation,w.owner_host_id,w.owner_epoch::text AS owner_epoch,w.state,
-    h.local_path,h.coordination_path,h.git_durability,w.manifest->>'prepared_at' AS prepared_at,
-    (SELECT COALESCE(src.config->>'canonical','')='git' FROM sources src WHERE src.id=s.source_id) AS canonical_git FROM persistence_source_bindings s
-    JOIN persistence_worktrees w ON w.id=s.worktree_id
-    LEFT JOIN persistence_host_bindings h ON h.worktree_id=w.id AND h.host_id=$2::uuid
-    WHERE s.source_id=$1`;
-export async function getWorktreeBinding(engine: SqlEngine, sourceId: string, hostId: string | null = hostIdFor(engine)): Promise<WorktreeBinding | null> {
-  const [row] = await engine.executeRaw<WorktreeBinding>(WORKTREE_BINDING_SQL, [sourceId, hostId]);
-  return row ?? null;
+/**
+ * The source's binding as this host sees it (`BrainEngine.getWorktreeBinding`); null when the source has none. An engine
+ * that carries the typed member answers it (a Rust brain does); an `executeRaw`-only handle runs the same statement.
+ */
+export async function getWorktreeBinding(engine: SqlEngine | (SqlEngine & Pick<BrainEngine, 'getWorktreeBinding'>), sourceId: string, hostId: string | null = hostIdFor(engine)): Promise<WorktreeBinding | null> {
+  if ('getWorktreeBinding' in engine && typeof engine.getWorktreeBinding === 'function') return engine.getWorktreeBinding(sourceId, hostId);
+  return getWorktreeBindingRaw(engine, sourceId, hostId);
 }
 /** `automatic` is only the ordinary first-write claim; the writer admin lock never blocks it. */
 export async function claimWorktree(engine: BrainEngine, sourceId: string, path: string, hostId = hostIdFor(engine), expectedAdminState?: string,

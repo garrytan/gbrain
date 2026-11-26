@@ -11,6 +11,20 @@
  */
 import type { SqlEngine } from './model.ts';
 import { DEFAULT_PREPARATION_POLICY, PREPARATION_BUDGET_CONFIG_KEYS, resolvePreparationPolicy, type PreparationPolicy } from './preparation-budget.ts';
+/**
+ * Kill switches for write-path behaviors, read from one per-process snapshot.
+ *
+ * Every switch is on by default unless its entry says `defaultOn: false`. An
+ * environment variable overrides the brain config key; `0` or `false` (either
+ * source) turns a switch off, `1` or `true` turns it on. The snapshot
+ * reads every switch key in one statement and is reused for SWITCH_TTL_MS, so
+ * `gbrain config set <key> false` reaches a running `serve` within that time
+ * without a round trip per write. Config writes are trusted-local only (no
+ * remote operation writes config), so a remote caller cannot flip a switch.
+ */
+import type { RawSqlEngine } from './model.ts';
+import { readConfigMap } from '../config-values.ts';
+import { withoutReadDeadline } from '../read-deadline.ts';
 
 export const WRITE_SWITCHES = {
   /** Phase 4.1/4.3/4.4: single page writes publish as a group of one, the own admission claims directly, publication reuses a warm connection. */
@@ -71,17 +85,17 @@ export function viewedEngine<T extends object>(engine: T): T { return (views.get
  * The switch snapshot of `engine`'s brain, at most SWITCH_TTL_MS old. A failed read is not kept.
  * `signal` cancels a read this call starts (the consumer's tick reads under its phase deadline).
  */
-export function readWriteSwitches(viewed: SqlEngine, opts: { now?: () => number; signal?: AbortSignal } = {}): Promise<WriteSwitches> {
+export function readWriteSwitches(viewed: RawSqlEngine, opts: { now?: () => number; signal?: AbortSignal } = {}): Promise<WriteSwitches> {
   return readWriteSwitchSnapshot(viewed, opts).then(snapshot => snapshot.switches);
 }
 /** The switches and the preparation budgets of `engine`'s brain, from the same snapshot. */
-export function readWriteSwitchSnapshot(viewed: SqlEngine, opts: { now?: () => number; signal?: AbortSignal } = {}): Promise<WriteSwitchSnapshot> {
+export function readWriteSwitchSnapshot(viewed: RawSqlEngine, opts: { now?: () => number; signal?: AbortSignal } = {}): Promise<WriteSwitchSnapshot> {
   const now = opts.now ?? Date.now;
   const engine = viewedEngine(viewed);
   const held = snapshots.get(engine);
   if (held && held.generation === generation && now() - held.at < SWITCH_TTL_MS) return held.read;
-  const read = engine.executeRaw<{ key: string; value: string }>('SELECT key,value FROM config WHERE key = ANY($1::text[])', [SNAPSHOT_KEYS], { signal: opts.signal })
-    .then(rows => resolve(new Map(rows.map(row => [row.key, row.value]))));
+  // Shared by every caller for SWITCH_TTL_MS, so it takes no caller's read deadline (as the statement it replaced did not).
+  const read = withoutReadDeadline(() => readConfigMap(engine, SNAPSHOT_KEYS, { signal: opts.signal })).then(resolve);
   snapshots.set(engine, { at: now(), generation, read });
   read.catch(() => { if (snapshots.get(engine)?.read === read) snapshots.delete(engine); });
   return read;
@@ -97,7 +111,7 @@ export function seedWriteSwitchSnapshot(viewed: object, rows: Record<string, str
   snapshots.set(engine, { at: now, generation, read: Promise.resolve(resolve(new Map(Object.entries(rows)))) });
 }
 /** The preparation budgets in effect (defaults when the read fails). */
-export async function readPreparationPolicy(engine: SqlEngine): Promise<PreparationPolicy> {
+export async function readPreparationPolicy(engine: RawSqlEngine): Promise<PreparationPolicy> {
   return readWriteSwitchSnapshot(engine).then(snapshot => snapshot.preparation, () => ({ ...DEFAULT_PREPARATION_POLICY }));
 }
 
