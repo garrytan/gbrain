@@ -165,8 +165,10 @@ export function manageGitignore(
   const linesToAdd: string[] = [];
 
   for (const dir of storageConfig.db_only) {
-    if (!existingLines.has(dir) && !existingLines.has(`/${dir}`)) {
-      linesToAdd.push(dir);
+    // #10102: a pattern without an inner slash matches at every depth (`decisions/` also ignores docs/decisions/), so a single-segment dir is anchored to the root.
+    const entry = dir.replace(/\/+$/, '').includes('/') ? dir : `/${dir}`;
+    if (!existingLines.has(dir) && !existingLines.has(`/${dir}`) && !existingLines.has(entry)) {
+      linesToAdd.push(entry);
     }
   }
 

@@ -74,6 +74,21 @@ function git(root: string, args: string[]): string {
   }).trim();
 }
 
+/** The pack-root files the shared skill publisher may write next to skillpack.json (publication.ts initial_files, setup-bundle.ts). */
+const PACK_ROOT_FILES = new Set(['skillpack.json', 'LICENSE', 'NOTICE', 'PROVENANCE.md', 'provenance.json']);
+
+/**
+ * #10357: a shared-skill pack the publisher adopted into a git-backed root is published from the database and queues no
+ * Git effect, so its files stay untracked. While the root skillpack.json itself is untracked, the untracked pack files
+ * (it, the pack-root files and skills/) are not uncommitted brain content. Anything else, a tracked pack file included, still counts.
+ */
+function untrackedPackFilter(root: string): (line: string) => boolean {
+  let manifest = '';
+  try { manifest = git(root, ['status', '--porcelain', '--untracked-files=normal', '--', 'skillpack.json']); } catch { /* probe it as dirty */ }
+  if (manifest !== '?? skillpack.json') return () => false;
+  return line => line.startsWith('?? ') && (PACK_ROOT_FILES.has(line.slice(3)) || line.slice(3).startsWith('skills/'));
+}
+
 /**
  * #6907: does the tree hold changes besides physical-root metadata? Reads
  * `git status --porcelain` as it streams and stops git at the first other
@@ -82,6 +97,8 @@ function git(root: string, args: string[]): string {
  * Fails on a timeout or a git error, like the other local probes.
  */
 function worktreeDirty(root: string): Promise<boolean> {
+  const unpublishedPack = untrackedPackFilter(root);
+  const changes = (lines: string[]) => withoutPhysicalRootMetadata(lines.filter(line => !unpublishedPack(line)).join('\n')).length > 0;
   return new Promise((resolve, reject) => {
     const child = spawn('git', ['-C', root, 'status', '--porcelain'], { stdio: ['ignore', 'pipe', 'ignore'], env: backupGitEnv() });
     let pending = '';
@@ -98,10 +115,10 @@ function worktreeDirty(root: string): Promise<boolean> {
     child.stdout!.on('data', (chunk: string) => {
       const lines = (pending + chunk).split('\n');
       pending = lines.pop()!;
-      if (withoutPhysicalRootMetadata(lines.join('\n')).length > 0 || pending.length > 1024 * 1024) settle(true);
+      if (changes(lines) || pending.length > 1024 * 1024) settle(true);
     });
     child.on('error', settle);
-    child.on('close', (code: number | null) => settle(code === 0 ? withoutPhysicalRootMetadata(pending).length > 0 : new Error(`git status exited ${code}`)));
+    child.on('close', (code: number | null) => settle(code === 0 ? changes([pending]) : new Error(`git status exited ${code}`)));
   });
 }
 
