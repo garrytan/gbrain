@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2445/2472
+# covered: 2448/2475
 # lifecycle: 12/12
 # pages: 141/142
 # search: 8/8
@@ -75,7 +75,7 @@
 # loop_mutes: 8/8
 # source_archive: 6/6
 # entity_identities: 5/5
-# cli_reads_import: 19/19
+# cli_reads_import: 22/22
 # wanted_links: 2/2
 # write_misc: 123/138
 # repair_bookkeeping: 59/59
@@ -132,11 +132,11 @@ withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
 listCatalogRelations	lifecycle	yes	1	no	yes	yes	serves
 readCatalogSchemaVersion	lifecycle	yes	1	no	yes	yes	serves
 listCatalogForeignKeys	lifecycle	yes	1	no	yes	yes	serves
-getPage	pages	yes	289	yes	yes	yes	serves
+getPage	pages	yes	291	yes	yes	yes	serves
 readPageSnapshot	pages	yes	102	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	7	no	yes	yes	serves
 lockPageKeys	pages	yes	17	no	yes	yes	serves
-putPage	pages	yes	1362	yes	yes	yes	serves
+putPage	pages	yes	1363	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	45	yes	yes	yes	serves
@@ -1969,9 +1969,12 @@ readGuestSourceRow	cli_reads_import	yes	1	no	yes	yes	serves
 hasGuestSourceRow	cli_reads_import	yes	5	no	yes	yes	serves
 upsertGuestSource	cli_reads_import	yes	7	no	yes	yes	serves
 listGuestNotes	cli_reads_import	yes	1	no	yes	yes	serves
+claimGuestNotePublication	cli_reads_import	yes	1	no	yes	yes	serves
+insertGuestMark	cli_reads_import	yes	1	no	yes	yes	serves
+readGuestMarks	cli_reads_import	yes	1	no	yes	yes	serves
 listGuestSourceIds	cli_reads_import	yes	3	no	yes	yes	serves
 hasGuestSource	cli_reads_import	yes	1	no	yes	yes	serves
-readPageTrustRows	cli_reads_import	yes	21	no	yes	yes	serves
+readPageTrustRows	cli_reads_import	yes	22	no	yes	yes	serves
 readRowTrustRows	cli_reads_import	yes	15	no	yes	yes	serves
 readDatabaseClock	cli_reads_import	yes	1	no	yes	yes	serves
 listLinkPageMetadata	cli_reads_import	yes	2	no	yes	yes	serves
