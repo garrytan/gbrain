@@ -75,7 +75,15 @@ export const ENGINE_CAPABILITIES = [
   'commit_log',
 ] as const;
 
-export type Capability = (typeof ENGINE_CAPABILITIES)[number];
+/**
+ * Capabilities reported only while multi-user Rust is on (interface I-8.v2): a separate list, so with the switch off
+ * every engine's capability set and the error catalogue that lists ENGINE_CAPABILITIES stay as they are.
+ * `served`: the engine is a client of a brain server over protocol v3 (rust-engine/served/); only a served Rust
+ * engine reports it.
+ */
+export const MULTIUSER_CAPABILITIES = ['served'] as const;
+
+export type Capability = (typeof ENGINE_CAPABILITIES)[number] | (typeof MULTIUSER_CAPABILITIES)[number];
 
 /** The read-only capability set an engine reports. */
 export type EngineCapabilities = ReadonlySet<Capability>;

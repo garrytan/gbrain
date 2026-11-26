@@ -1300,6 +1300,31 @@ pub enum DeriveRequest {
         #[serde(default)]
         list: Option<Vec<String>>,
     },
+    /// `pagePolicyFlags(privatePagesFilterFragment('p'))`: the no-caller page policy's flags.
+    PlainPageFlags {},
+    /// The member-access part alone for the caller, unwidened (`retirementHopPolicy`'s `access` branch,
+    /// store-members/cli-entities.ts).
+    AccessPartPlain {},
+    /// A member-access policy for an explicit identity and satisfied set (`memberAccessPolicy`,
+    /// store-members/list-reads.ts); no identity for the folder-rules read.
+    MemberAccessPolicy {
+        #[serde(default)]
+        identity: Option<Vec<String>>,
+        satisfied: Vec<String>,
+    },
+    /// The owner-only form a take or timeline row is read under (`rowOwnerOnly`, store-members/write-attribution.ts).
+    RowOwnerOnly {},
+    /// The open-page count's member-access floor (`countOpenPages`, store-members/access-setup.ts).
+    OpenPageFloor {},
+    /// A writer's read policy (`writerPolicy`, store-members/remote-links.ts readLinkTargetPages).
+    WriterPolicy { policy: WriterReadPolicyIn },
+    /// The snapshot visibility a version pick reports (`pickValidTimeEdition`, store-members/trust-tier-reads.ts)
+    /// is the canonical one for the page policy's readers.
+    SnapshotPolicy {
+        identity: Vec<String>,
+        #[serde(rename = "privateReadableSources")]
+        private_readable_sources: Vec<String>,
+    },
     /// `pagePolicyFlags(privacyPartSql('p')).honorAliases` (readPagePrivacyHidden).
     PrivacyPartAliases {},
 }
@@ -1310,6 +1335,17 @@ pub enum DeriveRequest {
 pub struct RenderedIn {
     #[serde(default)]
     pub record: Option<CallerRecord>,
+}
+
+/// A writer's read policy (`WriterReadPolicy`, engine-sql/remote-links.ts).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WriterReadPolicyIn {
+    pub identities: Vec<Vec<String>>,
+    pub satisfied_rule_ids: Vec<String>,
+    pub folder_coverage: Vec<Coverage>,
+    pub owner: bool,
+    pub labelled_only: bool,
 }
 
 /// The per-call derivation context: immutable, everything the renderer read.
@@ -1870,6 +1906,273 @@ fn derive_visibility(cur: &Cur, s: &AccessSettings, list: Option<&[String]>) -> 
     }
 }
 
+/// `{ honorAliases: false, entityPrivacy: false, ownerOnly }` for a member-access text (no privacy part).
+fn access_off(access: &AccessKey) -> Map<String, Value> {
+    let oo = page_owner_only(&PageKey::Base {
+        access: access.clone(),
+        labelled: None,
+        privacy: PrivacyKey::True,
+    });
+    let mut m = Map::new();
+    m.insert("honorAliases".into(), json!(false));
+    m.insert("entityPrivacy".into(), json!(false));
+    m.insert("ownerOnly".into(), json!(owner_only_flag(oo)));
+    m
+}
+
+/// `retirementHopPolicy`'s `access` branch: member access alone when the caller's text is the no-record one, or the
+/// one a fresh record (no remote policy) of the caller's readers renders.
+fn derive_access_part_plain(cur: &Cur, s: &AccessSettings) -> Derived {
+    let text = caller_access(cur, s);
+    let mut off = access_off(&text.0);
+    if text == caller_access(&None, s) {
+        return Derived::Value(Value::Object(off));
+    }
+    let a = eff(cur, s);
+    let patch = Patch {
+        identity: Some(a.identity.clone()),
+        private_readable_sources: Some(a.private_readable_sources.clone()),
+        hide_private: Some(true),
+        ..Patch::default()
+    };
+    if text == caller_access(&fresh_record(&patch, s), s) {
+        off.insert("identity".into(), json!(a.identity));
+        off.insert(
+            "privateReadableSources".into(),
+            json!(a.private_readable_sources),
+        );
+        return Derived::Value(Value::Object(off));
+    }
+    Derived::Refuse("a caller whose member pages, grants or lineage widen the member-access policy")
+}
+
+/// `memberAccessPolicy` (store-members/list-reads.ts).
+fn derive_member_access_policy(
+    cur: &Cur,
+    s: &AccessSettings,
+    identity: Option<&[String]>,
+    satisfied: &[String],
+) -> Derived {
+    let a = eff(cur, s);
+    let owner_only = match identity {
+        Some(id) => owner_only_flag(page_owner_only(&PageKey::Base {
+            access: access_allowed(id, None, false, cur, s),
+            labelled: None,
+            privacy: PrivacyKey::True,
+        })),
+        None => "off",
+    };
+    Derived::Value(json!({
+        "honorAliases": false,
+        "entityPrivacy": false,
+        "identity": identity.unwrap_or_default(),
+        "satisfiedRuleIds": satisfied,
+        "folderCoverage": serde_json::to_value(&a.folder_coverage).unwrap_or(Value::Null),
+        "callerRecord": true,
+        "ownerOnly": owner_only,
+        "open": !a.restricted,
+    }))
+}
+
+/// `countOpenPages`'s floor: `accessAllowedSql('p', [], [])` must equal the no-caller member-access rendering, or the
+/// rendering of a fresh record with no identity and the caller's folder coverage.
+fn derive_open_page_floor(cur: &Cur, s: &AccessSettings) -> Derived {
+    let floor = (access_allowed(&[], Some(&[]), false, cur, s), None);
+    let mut access = access_off(&floor.0);
+    if floor == caller_access(&reference(cur, Patch::default(), true, s), s) {
+        return Derived::Value(Value::Object(access));
+    }
+    let a = eff(cur, s);
+    let patch = Patch {
+        identity: Some(vec![]),
+        satisfied_rule_ids: Some(vec![]),
+        folder_coverage: Some(a.folder_coverage.clone()),
+        restricted: Some(a.restricted),
+        ..Patch::default()
+    };
+    if floor != caller_access(&reference(cur, patch, false, s), s) {
+        return Derived::Refuse("an open-page floor rendered in a caller record");
+    }
+    if !a.folder_coverage.is_empty() {
+        access.insert(
+            "folderCoverage".into(),
+            serde_json::to_value(&a.folder_coverage).unwrap_or(Value::Null),
+        );
+    }
+    Derived::Value(with_open(access, !a.restricted))
+}
+
+/// A page text that is a member-access part and `TRUE`, with the labelled-only conjunct either inside the access
+/// part (`callerAccessSql`) or around the whole (`renderWriterReadPolicy`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AccessAndTrue {
+    inner: (AccessKey, Option<LabelledKey>),
+    outer: Option<LabelledKey>,
+}
+
+/// `writerPolicy` (store-members/remote-links.ts).
+fn derive_writer_policy(cur: &Cur, s: &AccessSettings, w: &WriterReadPolicyIn) -> Derived {
+    let wcur = with(
+        cur,
+        &Patch {
+            folder_coverage: Some(w.folder_coverage.clone()),
+            owner: w.owner.then_some(true),
+            ..Patch::default()
+        },
+        s,
+    );
+    let text_access = access_all(&w.identities, &w.satisfied_rule_ids, false, &wcur, s);
+    let outer = w.labelled_only.then(|| {
+        labelled(&CallerRecord {
+            identity: vec![],
+            audience_identities: w.identities.clone(),
+            satisfied_rule_ids: w.satisfied_rule_ids.clone(),
+            lineage: false,
+            owner: false,
+            ..eff(&None, s)
+        })
+    });
+    let text = AccessAndTrue {
+        inner: (text_access.clone(), None),
+        outer,
+    };
+    let fragment = |patch: Patch, empty: bool| AccessAndTrue {
+        inner: caller_access(&reference(cur, patch, empty, s), s),
+        outer: None,
+    };
+    let off = access_off(&text_access);
+    if text == fragment(Patch::default(), true) {
+        return Derived::Value(Value::Object(off));
+    }
+    if w.identities.is_empty() {
+        let patch = Patch {
+            identity: Some(vec![]),
+            satisfied_rule_ids: Some(vec![]),
+            folder_coverage: Some(w.folder_coverage.clone()),
+            ..Patch::default()
+        };
+        if text == fragment(patch, false) {
+            let mut m = off;
+            m.insert("identity".into(), json!([]));
+            if !w.folder_coverage.is_empty() {
+                m.insert(
+                    "folderCoverage".into(),
+                    serde_json::to_value(&w.folder_coverage).unwrap_or(Value::Null),
+                );
+            }
+            m.insert("callerRecord".into(), json!(true));
+            return Derived::Value(Value::Object(m));
+        }
+    }
+    if let [identity] = w.identities.as_slice() {
+        for owner in [false, true] {
+            let patch = Patch {
+                identity: Some(identity.clone()),
+                private_readable_sources: Some(vec![]),
+                hide_private: Some(true),
+                owner: owner.then_some(true),
+                ..Patch::default()
+            };
+            if text == fragment(patch, false) {
+                let mut m = off;
+                m.insert("identity".into(), json!(identity));
+                m.insert("privateReadableSources".into(), json!([]));
+                return Derived::Value(Value::Object(m));
+            }
+        }
+    }
+    Derived::Refuse(
+        "a writer whose folder rules, owner record, labelled-only grant or identities widen the member-access policy",
+    )
+}
+
+/// `callerReadersAllowedSql(alias, 'snapshot')` as a key: the readers part and the labelled-only conjunct.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SnapReaders {
+    OwnPage {
+        readers: Vec<String>,
+        own: String,
+        audience: Vec<String>,
+    },
+    Audience {
+        readers: Vec<String>,
+        audience: Vec<String>,
+    },
+    Each(Vec<Vec<String>>),
+}
+
+/// `snapshotVisibleSql()` (trust-tier-reads.ts) as a key: the caller's snapshot readers, its labelled-only conjunct,
+/// and its privacy over the snapshot (the private-readable sources it widens to, or none when privacy is off).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SnapKey {
+    readers: SnapReaders,
+    labelled: Option<LabelledKey>,
+    privacy: Option<Vec<String>>,
+}
+
+fn snapshot_key(cur: &Cur, s: &AccessSettings) -> SnapKey {
+    let a = eff(cur, s);
+    let own = if a.owner_reads_restricted {
+        lineage_read_page(&a)
+    } else {
+        None
+    };
+    let audience = audience_pages(&a);
+    let readers = match own {
+        Some(own) => SnapReaders::OwnPage {
+            readers: readers(&a.identity),
+            own,
+            audience,
+        },
+        None if !audience.is_empty() => SnapReaders::Audience {
+            readers: readers(&a.identity),
+            audience,
+        },
+        None => {
+            let ids = if a.audience_identities.is_empty() {
+                vec![a.identity.clone()]
+            } else {
+                a.audience_identities.clone()
+            };
+            SnapReaders::Each(ids.iter().map(|i| readers(i)).collect())
+        }
+    };
+    SnapKey {
+        readers,
+        labelled: a.labelled_only.then(|| labelled(&a)),
+        privacy: a.hide_private.then(|| a.private_readable_sources.clone()),
+    }
+}
+
+/// `pickValidTimeEdition`'s snapshot check: the caller's snapshot text equals the no-record one, or the canonical one
+/// for the page policy's readers (each also with the caller widened to its restricted rendering).
+fn derive_snapshot_policy(
+    cur: &Cur,
+    s: &AccessSettings,
+    identity: &[String],
+    sources: &[String],
+) -> Derived {
+    let served = judge_widened(cur, s, |cur2, _| {
+        let text = snapshot_key(cur2, s);
+        if text == snapshot_key(&None, s) {
+            return Some(true);
+        }
+        let patch = Patch {
+            identity: Some(identity.to_vec()),
+            private_readable_sources: Some(sources.to_vec()),
+            hide_private: Some(true),
+            ..Patch::default()
+        };
+        (text == snapshot_key(&reference(cur2, patch, false, s), s)).then_some(true)
+    });
+    match served {
+        Some(_) => Derived::Value(json!(true)),
+        None => Derived::Refuse(
+            "a caller whose snapshot policy is not the canonical one for its readers",
+        ),
+    }
+}
+
 /// The derivation: what the TypeScript helper named by the request returns in this context.
 pub fn derive(ctx: &AccessContext) -> Derived {
     let cur = &ctx.record;
@@ -1903,6 +2206,24 @@ pub fn derive(ctx: &AccessContext) -> Derived {
         DeriveRequest::RemoteFloor {} => derive_remote_floor(cur, s),
         DeriveRequest::Visibility { list } => derive_visibility(cur, s, list.as_deref()),
         DeriveRequest::PrivacyPartAliases {} => Derived::Value(json!(s.honor_aliases)),
+        DeriveRequest::PlainPageFlags {} => Derived::Value(Value::Object(page_flags(
+            &page_plain(cur, false, Cx { s, norm: false }),
+            s,
+        ))),
+        DeriveRequest::OpenPageFloor {} => derive_open_page_floor(cur, s),
+        DeriveRequest::AccessPartPlain {} => derive_access_part_plain(cur, s),
+        DeriveRequest::MemberAccessPolicy {
+            identity,
+            satisfied,
+        } => derive_member_access_policy(cur, s, identity.as_deref(), satisfied),
+        DeriveRequest::RowOwnerOnly {} => {
+            Derived::Value(json!(owner_only_flag(owner_only_text(cur, s))))
+        }
+        DeriveRequest::WriterPolicy { policy } => derive_writer_policy(cur, s, policy),
+        DeriveRequest::SnapshotPolicy {
+            identity,
+            private_readable_sources,
+        } => derive_snapshot_policy(cur, s, identity, private_readable_sources),
     }
 }
 

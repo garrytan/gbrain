@@ -17,9 +17,15 @@ import { privacyAliasSql, privatePagesFilterFragment, privateSnapshotFilterFragm
 import { requestRow } from '../store-codec.ts';
 import { storeCall, type StoreMember } from './common.ts';
 import { ownerOnlyFormIn } from './private-provenance.ts';
+import { selfChecked } from '../access-self-check.ts';
 
 /** The no-caller page policy of `privatePagesFilterFragment`, which decides whether an atom page is private. */
+/** atomPolicyRendered, derived by the store under the multi-user switch. */
 function atomPolicy() {
+  return selfChecked('listDreamAtomPages', { mode: 'plain_page_flags' }, atomPolicyRendered);
+}
+
+function atomPolicyRendered() {
   const fragment = privatePagesFilterFragment('p');
   return {
     honorAliases: fragment.includes(privacyAliasSql('p')),

@@ -12,13 +12,12 @@
  * `engine_capability_missing`, before any read. What each member answers and why: rust/docs/store/remote-links.md.
  */
 import type { LinksRearm, LinkTargetPage, OwnedLink, WriterReadPolicy } from '../../engine-sql/remote-links.ts';
-import { renderWriterReadPolicy } from '../../engine-sql/remote-links.ts';
 import type { RustEngine } from '../../rust-engine.ts';
-import { callerAccessAllowedSql, privacyPartSql } from '../../search/private-visibility.ts';
 import type { StoreBrain } from '../store.ts';
 import { mapStoreError } from '../store-errors.ts';
-import { refuseMember, storeCall, type StoreMember } from './common.ts';
-import { ownerOnlyFormIn, pagePolicyFlags, renderForStoreCaller, type StorePrivacyPolicy } from './private-provenance.ts';
+import { storeCall, type StoreMember } from './common.ts';
+import { writerPolicy } from './access-policies.ts';
+import { privacyPartAliases } from './private-provenance.ts';
 
 /** The links transaction's settings: the store has no lock wait or statement limit. Refuses on an ended transaction. */
 export const setEffectTransactionLimits = async function setEffectTransactionLimits(this: RustEngine, _brain: StoreBrain): Promise<void> {
@@ -38,33 +37,11 @@ export const deleteOwnedLinks: StoreMember<[originPageId: number | string, linkS
       brain.deleteOwnedLinks(String(originPageId), linkSource, ids.map(String))));
   };
 
-/** The store policy for the writer's read policy, or a refusal. */
-function writerPolicy(policy: WriterReadPolicy): StorePrivacyPolicy {
-  const text = renderWriterReadPolicy(policy, 'p', false);
-  const off = { honorAliases: false, entityPrivacy: false, ownerOnly: ownerOnlyFormIn(text, 'pages', 'p') };
-  const fragment = (record: Parameters<typeof renderForStoreCaller>[0]) =>
-    `(${renderForStoreCaller(record, () => callerAccessAllowedSql('p'))} AND TRUE)`;
-  if (text === fragment({})) return off;
-  // A writer with no identity (an unbound or anonymous writer): its policy renders in a record of its own folder
-  // coverage, so the store reads that coverage instead of the live pending prefixes (callerRecord).
-  const folderCoverage = policy.folderCoverage.map(c => ({ source_id: c.source_id, prefix: c.prefix }));
-  if (!policy.identities.length && text === fragment({ identity: [], satisfiedRuleIds: [], folderCoverage })) {
-    return { ...off, identity: [], ...(folderCoverage.length ? { folderCoverage } : {}), callerRecord: true };
-  }
-  const [identity] = policy.identities;
-  // The owner speaking for itself renders the same text without the owner-only clause (CallerAccess.owner), which `off` reads as no test.
-  const oneIdentity = (owner: boolean) => policy.identities.length === 1 && identity && text === fragment({ identity: [...identity], privateReadableSources: [], hidePrivate: true, ...(owner ? { owner } : {}) });
-  if (oneIdentity(false) || oneIdentity(true)) {
-    return { ...off, identity: [...identity], privateReadableSources: [] };
-  }
-  refuseMember('readLinkTargetPages', 'a writer whose folder rules, owner record, labelled-only grant or identities widen the member-access policy');
-}
-
 export const readLinkTargetPages: StoreMember<[sourceId: string, slugs: readonly string[], policy: WriterReadPolicy | null], LinkTargetPage[]> =
   async (brain, sourceId, slugs, policy) => {
     const storePolicy = policy ? writerPolicy(policy) : null;
     if (!slugs.length) return [];
-    const { honorAliases } = pagePolicyFlags(privacyPartSql('p'));
+    const honorAliases = privacyPartAliases('readLinkTargetPages');
     return storeCall({ member: 'readLinkTargetPages', sourceId }, () =>
       brain.readLinkTargetPages(sourceId, [...slugs], storePolicy, honorAliases));
   };
