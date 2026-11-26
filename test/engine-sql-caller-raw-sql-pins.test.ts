@@ -3591,6 +3591,12 @@ const PINS: Pin[] = [
     texts: [`SELECT id, to_char(COALESCE(valid_from, created_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS d FROM facts WHERE id = ANY($1::bigint[])`],
   },
   {
+    from: 'src/core/access/member-facts.ts:170 ownMemberFactIds (a member caller), at 83c207dc3c',
+    case: { method: 'readOwnMemberFactIds', variant: 'member', run: e => withCallerAccess({ identity: ['member:alice-example'], hidePrivate: true }, () => e.readOwnMemberFactIds('default', [1, 2])) },
+    texts: () => withCallerAccess({ identity: ['member:alice-example'], hidePrivate: true }, () =>
+      [`SELECT id FROM facts WHERE id = ANY($1::bigint[]) AND source_id = $2 AND ${memberFactAdmitSql('facts')}`]),
+  },
+  {
     from: 'src/core/link-reconciliation.ts:229 fileLinkOwnership attendance origins (at 90ede8f55a)',
     case: { method: 'listAttendedOriginSlugs', variant: 'default', run: e => e.listAttendedOriginSlugs('default') },
     texts: [`SELECT DISTINCT o.slug FROM links l

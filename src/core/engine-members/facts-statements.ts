@@ -833,6 +833,8 @@ export interface FactsStatementMembers {
   listFactRowsByIds(sourceIds: readonly string[], ids: readonly number[]): Promise<FactsRecallSql.FactRowSqlShape[]>;
   /** The written day (`YYYY-MM-DD`, UTC, as the database writes it) of each of the facts `ids`: memory_recall's date column. A missing id has no row. */
   readFactWrittenDates(ids: readonly number[]): Promise<FactsRecallSql.FactWrittenDateRow[]>;
+  /** The facts among `ids` in `sourceId` that are private facts on the current caller's own member page (`memberFactAdmitSql`): memory_recall's `own_page`. */
+  readOwnMemberFactIds(sourceId: string, ids: readonly number[]): Promise<FactsRecallSql.OwnMemberFactIdRow[]>;
   /** The provenance slug of each open non-conversation stint of an entity's (normalised) dimension, each once, sorted. */
   listOntologyStreamSlugs(sourceId: string, entitySlug: string, dimension: string): Promise<string[]>;
   /** The newest open, active, non-conversation stint of the dimension other than `excludeId`, with its stored tier; null: none. */

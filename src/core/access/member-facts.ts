@@ -165,10 +165,9 @@ export function memberFactAdmitSql(alias: string): string {
  * forget_fact withdraws a remote member's fact only when it is in this set, and memory_recall reports the same set as
  * own_page, so the two never disagree. Empty outside a member caller record.
  */
-export async function ownMemberFactIds(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, ids: readonly number[]): Promise<Set<number>> {
+export async function ownMemberFactIds(engine: Pick<BrainEngine, 'readOwnMemberFactIds'>, sourceId: string, ids: readonly number[]): Promise<Set<number>> {
   if (!ids.length || !callerMember()) return new Set();
-  const rows = await engine.executeRaw<{ id: number | string }>(`SELECT id FROM facts WHERE id = ANY($1::bigint[]) AND source_id = $2 AND ${memberFactAdmitSql('facts')}`, [[...ids], sourceId]);
-  return new Set(rows.map(r => Number(r.id)));
+  return new Set((await engine.readOwnMemberFactIds(sourceId, ids)).map(r => Number(r.id)));
 }
 
 /**

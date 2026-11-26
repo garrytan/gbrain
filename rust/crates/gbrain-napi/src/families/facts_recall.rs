@@ -1,5 +1,5 @@
 //! The six candidate-pool reads of a fact recall: `readFactsEmbeddingColumn`, `listNearestFacts`, `listSlotRows`,
-//! `listPoolUnbackedKeys`, `listCallOffCueFacts` and `listPoolEntityPairs`, and `readFactWrittenDates` (memory_recall's dates).
+//! `listPoolUnbackedKeys`, `listCallOffCueFacts` and `listPoolEntityPairs`, `readFactWrittenDates` and `readOwnMemberFactIds` (memory_recall's dates and own-page flag).
 //!
 //! One `#[napi] impl Brain` block; each method runs one `gbrain_store::facts::recall` call on the pool through
 //! `Brain::run` and resolves plain JSON. The TypeScript members (src/core/rust-engine/store-members/facts-recall.ts)
@@ -11,7 +11,9 @@ use napi_derive::napi;
 use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
-use gbrain_store::facts::recall::{CueArgs, NearestArgs, PairsArgs, SlotArgs, UnbackedArgs};
+use gbrain_store::facts::recall::{
+    CueArgs, NearestArgs, OwnMemberArgs, PairsArgs, SlotArgs, UnbackedArgs,
+};
 
 #[napi]
 impl Brain {
@@ -39,6 +41,19 @@ impl Brain {
         ids: Vec<f64>,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.read_fact_written_dates(&ids))
+    }
+
+    /// `readOwnMemberFactIds(args)`: resolves `[{ id }]`, the named private facts that sit on the caller's own member page.
+    #[napi]
+    pub fn read_own_member_fact_ids<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: OwnMemberArgs = required(args, "readOwnMemberFactIds args")?;
+            s.read_own_member_fact_ids(&a)
+        })
     }
 
     /// `listTypedClaimFactsAtPages(pageSlugs, entitySlugs)`: resolves the typed-claim facts held on those pages about

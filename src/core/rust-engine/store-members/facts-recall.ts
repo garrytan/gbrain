@@ -3,7 +3,7 @@
  * (rust/crates/gbrain-store/src/facts/recall.rs). A member not exported here refuses with `engine_capability_missing`.
  *
  * Served: `readFactsEmbeddingColumn`, `listNearestFacts`, `listTypedClaimFactsAtPages`, `listSlotRows`, `listPoolUnbackedKeys`, `listCallOffCueFacts` and
- * `listPoolEntityPairs`, and `readFactWrittenDates` (memory_recall's date column, a plain read by fact id). Each of the pool reads reads under the pool's read policy, which `poolArgs` (fact-pool.ts) resolves as it does for
+ * `listPoolEntityPairs`, `readFactWrittenDates` (memory_recall's date column, a plain read by fact id) and `readOwnMemberFactIds` (its `own_page` flag, judged under the caller's member-page policy). Each of the pool reads reads under the pool's read policy, which `poolArgs` (fact-pool.ts) resolves as it does for
  * `listFactsForRelevance`: the store answers it exactly when the visibility and privacy policies are ones it serves;
  * anything else refuses. `listNearestFacts` also refuses a vector-typed
  * column (the store keeps `halfvec`); its `hnswIterativeScan` only changes the plan, so the store ignores it.
@@ -13,6 +13,9 @@ import type { BrainEngine } from '../../engine.ts';
 import { withDates } from '../store-codec.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
 import { poolArgs } from './fact-pool.ts';
+import { callerMember, memberFactAdmitSql } from '../../access/member-facts.ts';
+import { currentCallerAccess } from '../../search/private-visibility.ts';
+import { callerFolders, callerFoldersPagePolicy, callerReadersPagePolicy, judgeWidenedCaller, renderForStoreCaller, type StorePrivacyPolicy } from './private-provenance.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 type Row = Record<string, unknown>;
@@ -39,6 +42,33 @@ export const readFactWrittenDates: Member<'readFactWrittenDates'> = async (brain
   if (!ids.length) return [];
   if (!ids.every(Number.isSafeInteger)) refuseMember('readFactWrittenDates', 'a fact id that is not an integer');
   return await storeCall({ member: 'readFactWrittenDates' }, () => brain.readFactWrittenDates([...ids])) as Awaited<ReturnType<BrainEngine['readFactWrittenDates']>>;
+};
+
+/**
+ * memory_recall's `own_page` flag (BrainEngine readOwnMemberFactIds): the facts among `ids` that are private facts on the caller's own
+ * member page. The SQL admission (memberFactAdmitSql) names the caller's member and the page policy its member page must pass; the
+ * store is sent exactly those when the rendered text equals the one for a fresh record of just the caller's reader identity (and
+ * folder rules), the same judgement the widened fact lists make (fact-visibility.ts storeVisibility). Any other caller refuses.
+ */
+export const readOwnMemberFactIds: Member<'readOwnMemberFactIds'> = async (brain, sourceId, ids) => {
+  const member = 'readOwnMemberFactIds';
+  if (!ids.length || !callerMember()) return [];
+  if (!ids.every(Number.isSafeInteger)) refuseMember(member, 'a fact id that is not an integer');
+  const openFlag = currentCallerAccess().restricted === false ? { open: true } : {};
+  const admit = judgeWidenedCaller<{ member: string; memberPagePolicy: StorePrivacyPolicy }>((readers) => {
+    const text = memberFactAdmitSql('facts');
+    const folders = callerFolders();
+    const withFolders = folders.satisfiedRuleIds.length > 0 || folders.folderCoverage.length > 0;
+    for (const record of withFolders ? [{}, folders] : [{}]) {
+      const canonical = renderForStoreCaller({ ...readers, ...record, hidePrivate: true }, () => ({ sql: memberFactAdmitSql('facts'), member: callerMember() }));
+      if (text !== canonical.sql || !canonical.member) continue;
+      const pagePolicy = 'satisfiedRuleIds' in record ? callerFoldersPagePolicy(readers, folders) : callerReadersPagePolicy(readers);
+      return { member: canonical.member, memberPagePolicy: { ...pagePolicy, ...openFlag } };
+    }
+    return undefined;
+  });
+  if (!admit) refuseMember(member, 'a caller whose member-page admission the store does not model (an audience, or a record that renders other text)');
+  return await storeCall({ member, sourceId }, () => brain.readOwnMemberFactIds({ sourceId, ids: [...ids], ...admit })) as Awaited<ReturnType<BrainEngine['readOwnMemberFactIds']>>;
 };
 
 export const listNearestFacts: Member<'listNearestFacts'> = async (brain, q) => {

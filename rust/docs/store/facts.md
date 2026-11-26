@@ -716,7 +716,7 @@ Parity: `test/engine-parity/remember-members.test.ts` (the members one by one) a
 
 ## Recall candidate-pool reads (`facts/recall.rs`)
 
-Six of the `facts-recall.ts` members are served as pool reads, and a seventh read, `readFactWrittenDates`, is served beside them: the pool reads a recall, a search that adds facts and a question recall make
+Six of the `facts-recall.ts` members are served as pool reads, and two more reads, `readFactWrittenDates` and `readOwnMemberFactIds`, are served beside them: the pool reads a recall, a search that adds facts and a question recall make
 (`search/fact-relevance.ts`). The TypeScript members are `rust-engine/store-members/facts-recall.ts`; the napi family is
 `families/facts_recall.rs`. Every read admits a row as `listFactsForRelevance` does (`Pool::admits` in `facts/trust.rs`: the
 source, the expiry clauses, the audit sources, a quarantined provenance page, the visibility and private-provenance policies,
@@ -731,6 +731,7 @@ a soft-deleted page, the trust floor and the filters), so a row the caller canno
 | `listCallOffCueFacts(scope, pairs)` | For each pair, the newest 50 pool rows (by `valid_from`, then id) whose text holds one of 28 retraction or call-off phrases as whole words, case-insensitive (`\m...\M`, so `cancelledX` and `retractor` do not match; `called off-site` does). |
 | `listPoolEntityPairs(scope, filters)` | The distinct `(source, entity)` pairs of pool rows that have an entity. |
 | `readFactWrittenDates(ids)` | Not a pool read: no policy applies, because memory_recall has already chosen the facts and only asks the day each was written. For each distinct id that names a fact (any source, any state), `{ id, d }` with `d` the UTC day the fact is valid from, written as Postgres `to_char(valid_from AT TIME ZONE 'UTC', 'YYYY-MM-DD')` writes it (`valid_from` is NOT NULL, so the `created_at` fallback of the SQL never applies): at least four year digits (`0050-03-04`), and a year before 1 CE as the BC year. A missing id gives no row; the rows come in id order. An id that is not a whole number is refused. |
+| `readOwnMemberFactIds({ sourceId, ids, member, memberPagePolicy })` | memory_recall's `own_page` flag (and the question forget_fact and the owner's default save ask): of the distinct `ids`, the facts of `sourceId` that are private and sit on `memory/members/<member>`, whose live page names `member:<member>` among its readers and passes `memberPagePolicy` (`memberFactAdmitSql`; the same admission as the member arm of a widened fact list, `VisibilityWidening::member_admits`). `{ id }` rows in id order; a missing, negative or repeated id adds nothing; an id that is not a whole number is refused. The TypeScript member sends the member and policy only when the rendered text equals the one for a fresh record of just the caller's readers and folders (as `storeVisibility` does), else it refuses. |
 
 The TypeScript members refuse (`engine_capability_missing`) a vector-typed column (the store keeps `halfvec`) and a read policy
 other than the no-caller or reader-identity one; `hnswIterativeScan` only changes the Postgres plan, so the store ignores it.

@@ -17,10 +17,13 @@
 //!   call-off phrase (`\m(...)\M`, case-insensitive).
 //! - `listPoolEntityPairs`: the distinct `(source, entity)` pairs of the pool rows that have an entity.
 //! - `readFactWrittenDates`: memory_recall's date column, the UTC day (`YYYY-MM-DD`) each named fact is valid from.
+//! - `readOwnMemberFactIds`: memory_recall's `own_page` flag, the named facts that sit on the caller's own member page.
 
 use super::embedding::{cosine_distance, parse_vector, to_halfvec};
+use super::privacy::PrivacyPolicy;
 use super::saved_match::word_char;
 use super::trust::{Pool, PoolArgs, VectorArg, pool_row, similarity};
+use super::widen::VisibilityWidening;
 use super::{FactRecord, count_arg, invalid, source_rows};
 use crate::Store;
 use crate::chunks::embedding_dimensions;
@@ -39,6 +42,17 @@ fn written_day(us: i64) -> String {
     let (year, month, day) = civil_from_days(us.div_euclid(super::DAY_US));
     let year = if year > 0 { year } else { 1 - year };
     format!("{year:04}-{month:02}-{day:02}")
+}
+
+/// The arguments of `readOwnMemberFactIds`: the source and ids asked, the caller's member, and the page policy its member page is
+/// judged by (`privatePagesFilterForCaller`), as the TypeScript member renders it for the caller.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct OwnMemberArgs {
+    pub source_id: String,
+    pub ids: Vec<f64>,
+    pub member: String,
+    pub member_page_policy: PrivacyPolicy,
 }
 
 /// Cue facts read per entity at most (`CALL_OFF_DEPTH`).
@@ -397,6 +411,38 @@ impl Store {
         for id in wanted {
             if let Some(fact) = super::read_fact(&*read, id)? {
                 out.push(json!({ "id": fact.id, "d": written_day(fact.valid_from_us) }));
+            }
+        }
+        Ok(out)
+    }
+
+    /// `readOwnMemberFactIds(sourceId, ids)` (access/member-facts.ts `ownMemberFactIds`, memory_recall's `own_page`): of the
+    /// distinct `ids`, the facts of `source_id` that are private and sit on the caller's own member page, whose live page names
+    /// `member:<member>` as a reader and passes the page policy the caller sent (`memberFactAdmitSql`, the same admission the widened
+    /// fact lists apply: `VisibilityWidening::member_admits`). `{ id }` rows in id order; a missing or negative id gives none.
+    pub fn read_own_member_fact_ids(&self, a: &OwnMemberArgs) -> Result<Vec<Value>> {
+        let mut wanted = BTreeSet::new();
+        for id in &a.ids {
+            if let Ok(id) = u64::try_from(super::bigint("readOwnMemberFactIds", "ids", *id)?) {
+                wanted.insert(id);
+            }
+        }
+        let widening = VisibilityWidening {
+            member: Some(a.member.clone()),
+            member_page_policy: Some(a.member_page_policy.clone()),
+            private_fact_sources: Vec::new(),
+        };
+        let read = self.read()?;
+        let mut out = Vec::new();
+        for id in wanted {
+            let Some(fact) = super::read_fact(&*read, id)? else {
+                continue;
+            };
+            if fact.source_id == a.source_id
+                && fact.visibility == "private"
+                && widening.member_admits(&*read, &fact)?
+            {
+                out.push(json!({ "id": fact.id }));
             }
         }
         Ok(out)

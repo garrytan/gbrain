@@ -6796,6 +6796,17 @@
         ],
         "flagOnScopes": []
       },
+      "readOwnMemberFactIds#member": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readOwnerHostBinding#default": {
         "flagOffLanes": [
           "pool"
@@ -11147,6 +11158,7 @@
         "readOpenPassWork": "none",
         "readOriginIndexState": "none",
         "readOrphanedManagedSyncFailureRows": "none",
+        "readOwnMemberFactIds": "none",
         "readOwnedLinks": "none",
         "readOwnerHostBinding": "none",
         "readOwnerOnlySourceConfig": "none",

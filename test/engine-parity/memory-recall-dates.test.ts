@@ -51,10 +51,12 @@ const PAGES: readonly PageSeed[] = [
 ];
 
 /** A fact: the page its text sits on and the day it is valid from. The dates cover the cases the written-date read decides. */
-interface FactSeed { id: string; page: string; validFrom: string }
+interface FactSeed { id: string; page: string; validFrom: string; visibility?: 'private' }
 const FACTS: readonly FactSeed[] = [
   { id: 'own-owner', page: OWNER_PAGE, validFrom: '2026-03-05T10:00:00Z' },
   { id: 'own-member', page: MEMBER_PAGE, validFrom: '2026-03-04T10:00:00Z' },
+  { id: 'own-private-member', page: MEMBER_PAGE, validFrom: '2026-03-06T10:00:00Z', visibility: 'private' },
+  { id: 'own-private-owner', page: OWNER_PAGE, validFrom: '2026-03-07T10:00:00Z', visibility: 'private' },
   { id: 'plain', page: 'open/plain', validFrom: '2026-05-06T12:00:00Z' },
   { id: 'year-fifty', page: 'open/plain', validFrom: '0050-03-04T00:00:00Z' },
   { id: 'late-utc', page: 'open/plain', validFrom: '2026-12-31T23:30:00Z' },
@@ -81,7 +83,7 @@ async function seed(engine: BrainEngine, backend: ParityBackend, lineage: boolea
   await drainProjections(engine);
   for (const [i, f] of FACTS.entries()) {
     await engine.insertFacts([{
-      fact: text(f), kind: 'fact', visibility: 'world', source: 'test', entity_slug: 'people/open-example', source_markdown_slug: f.page, row_num: i + 1,
+      fact: text(f), kind: 'fact', visibility: f.visibility ?? 'world', source: 'test', entity_slug: 'people/open-example', source_markdown_slug: f.page, row_num: i + 1,
       valid_from: new Date(f.validFrom),
     }] as never, { source_id: 'default' });
   }
@@ -96,14 +98,28 @@ async function memoryRecall(engine: BrainEngine, member: string): Promise<unknow
   const body = out.content.map(part => (part as { text?: string }).text ?? '').join('');
   let parsed: unknown = body;
   try { parsed = JSON.parse(body.includes('[gbrain') ? body.slice(0, body.indexOf('[gbrain')) : body); } catch { /* plain text */ }
-  if (!out.isError) return parsed;
+  if (!out.isError) {
+    // The structured answer names each fact's own_page flag (ids differ between arms, so the flags are keyed by the fact's text).
+    const facts = ((out as { structuredContent?: { facts?: Array<{ text: string; own_page: boolean }> } }).structuredContent?.facts ?? []);
+    const ownPage = Object.fromEntries(facts.map(f => [FACTS.find(x => f.text.includes(text(x)))?.id ?? f.text, f.own_page]).sort(([a], [b]) => String(a).localeCompare(String(b))));
+    return { text: String(parsed), ownPage };
+  }
   const code = (parsed as { code?: string } | null)?.code;
-  if (code === 'engine_capability_missing') return { refused: code };
+  // The typed refusal rides along unseen by toEqual, so a case pinned as a Rust stop can rethrow it (rebuilt from its envelope).
+  if (code === 'engine_capability_missing') return Object.defineProperty({ refused: code }, 'error', { value: Object.assign(new Error(String((parsed as { message?: unknown }).message)), parsed), enumerable: false });
   return { error: code ?? body.slice(0, 200) };
 }
 
+/** A Rust case pinned as a named stop (test/rust-stop-pins/memory-recall-dates.tsv): the refusal must name `member`, then the case stops on it. */
+function stopOnRefusal(backend: ParityBackend, answer: unknown, member: string): void {
+  if (backend !== 'rust' || !(answer && typeof answer === 'object' && 'refused' in answer)) return;
+  const refusal = (answer as { error: Error & { detail?: unknown } }).error;
+  expect({ refused: (answer as { refused: string }).refused, names: String(refusal.detail ?? '').includes(`member=${member}`) }).toEqual({ refused: 'engine_capability_missing', names: true });
+  throw refusal;
+}
+
 /** The lines of a memory_recall answer, newest-first order as the verb wrote them. */
-const linesOf = (answer: unknown): string[] => (typeof answer === 'string' ? answer : String((answer as { text?: string } | null)?.text ?? '')).split('\n').filter(Boolean);
+const linesOf = (answer: unknown): string[] => String((answer as { text?: string } | null)?.text ?? '').split('\n').filter(Boolean);
 
 /** The written date of each seeded fact the answer names. */
 function datesIn(answer: unknown): Record<string, string> {
@@ -122,32 +138,51 @@ function datesIn(answer: unknown): Record<string, string> {
  */
 const OPEN = ['plain', 'year-fifty', 'late-utc', 'early-utc'];
 const reads = (member: string, lineage: boolean): string[] => member === OWNER
-  ? ['own-owner', 'readers-owner', ...OPEN]
-  : ['own-member', ...(lineage ? ['readers-member'] : []), ...OPEN];
+  ? ['own-owner', 'own-private-owner', 'readers-owner', ...OPEN]
+  : ['own-member', 'own-private-member', ...(lineage ? ['readers-member'] : []), ...OPEN];
 const DATES: Record<string, string> = {
-  'own-owner': '2026-03-05', 'own-member': '2026-03-04', plain: '2026-05-06', 'year-fifty': '0050-03-04', 'late-utc': '2026-12-31',
+  'own-owner': '2026-03-05', 'own-member': '2026-03-04', 'own-private-member': '2026-03-06', 'own-private-owner': '2026-03-07', plain: '2026-05-06', 'year-fifty': '0050-03-04', 'late-utc': '2026-12-31',
   'early-utc': '2026-01-01', 'readers-owner': '2026-04-07', 'readers-member': '2026-04-08',
 };
 
-describe('engine parity: memory_recall answers the same lines, with the written date of each fact, on every engine', () => {
-  for (const [member, who] of [[MEMBER, 'an ordinary member'], [OWNER, 'the owner']] as const) {
-    for (const lineage of [false, true]) {
-      parityTest(`${who} reads its facts and their written dates, access.members_read_lineage ${lineage ? 'on' : 'off'}`, {
-        methods: ['putPage', 'insertFacts', 'listFactsSince', 'readFactWrittenDates'], timeout: 360_000,
-      }, (engine, backend) => inFreshHome(async () => {
-        await seed(engine, backend, lineage);
-        const answer = await memoryRecall(engine, member);
-        if (backend !== 'rust' || !(answer && typeof answer === 'object' && 'refused' in answer)) {
-          const seen = datesIn(answer);
-          const want = reads(member, lineage);
-          expect(Object.keys(seen).sort()).toEqual([...want].sort());
-          for (const id of want) expect({ id, date: seen[id] }).toEqual({ id, date: DATES[id] });
-          expect(linesOf(answer)[0]).toContain(member === OWNER ? 'own-owner' : 'own-member');
-        }
-        return answer;
-      }));
-    }
-  }
+/**
+ * One memory_recall case: the caller's lines carry the facts it reads and each fact's written date, and own_page is true on exactly
+ * the private facts of its own member page. `stop` names the Rust refusal a pinned case ends on (test/rust-stop-pins/memory-recall-dates.tsv).
+ */
+async function recallCase(engine: BrainEngine, backend: ParityBackend, member: string, lineage: boolean, stop?: string): Promise<unknown> {
+  await seed(engine, backend, lineage);
+  const answer = await memoryRecall(engine, member);
+  if (stop !== undefined) stopOnRefusal(backend, answer, stop);
+  const seen = datesIn(answer);
+  const want = reads(member, lineage);
+  expect(Object.keys(seen).sort()).toEqual([...want].sort());
+  for (const id of want) expect({ id, date: seen[id] }).toEqual({ id, date: DATES[id] });
+  const own = member === OWNER ? 'own-private-owner' : 'own-private-member';
+  expect(linesOf(answer).slice(0, 3).some(l => l.includes(own))).toBe(true);
+  expect((answer as { ownPage: Record<string, boolean> }).ownPage).toEqual(Object.fromEntries(want.map(id => [id, id === own]).sort(([x], [y]) => String(x).localeCompare(String(y)))));
+  return answer;
+}
+
+describe('engine parity: memory_recall answers the same lines, with the written date and own-page flag of each fact, on every engine', () => {
+  parityTest('an ordinary member reads its facts and their written dates, access.members_read_lineage off', {
+    methods: ['putPage', 'insertFacts', 'listFactsSince', 'readFactWrittenDates', 'readOwnMemberFactIds'], timeout: 360_000,
+  }, (engine, backend) => inFreshHome(() => recallCase(engine, backend, MEMBER, false)));
+
+  // Named stop on Rust, owner row 32e-b-4 (the lineage fact reads): listFactsSince refuses with lineage on. Flip this case to a plain one
+  // (declare readFactWrittenDates and readOwnMemberFactIds, drop the stop and its row) when that row lands.
+  parityTest('an ordinary member reads its facts and their written dates, access.members_read_lineage on', {
+    methods: ['putPage', 'insertFacts', 'listFactsSince'], timeout: 360_000,
+  }, (engine, backend) => inFreshHome(() => recallCase(engine, backend, MEMBER, true, 'listFactsSince')));
+
+  // Named stop on Rust, owner row RA-1 (the owner's remote read, ownerLineageRefusal): refused before the store, lineage off or on. Flip
+  // both owner cases to plain ones (declare the members they then call, drop the stop and its row) when that row lands.
+  parityTest('the owner reads its facts and their written dates, access.members_read_lineage off', {
+    methods: ['putPage', 'insertFacts', 'readFolderAccess'], timeout: 360_000,
+  }, (engine, backend) => inFreshHome(() => recallCase(engine, backend, OWNER, false, 'memory_recall')));
+
+  parityTest('the owner reads its facts and their written dates, access.members_read_lineage on', {
+    methods: ['putPage', 'insertFacts', 'readFolderAccess'], timeout: 360_000,
+  }, (engine, backend) => inFreshHome(() => recallCase(engine, backend, OWNER, true, 'memory_recall')));
 });
 
 describe('engine parity: readFactWrittenDates, the date column of memory_recall', () => {
@@ -167,7 +202,7 @@ describe('engine parity: readFactWrittenDates, the date column of memory_recall'
     const out = {
       all: named(await engine.readFactWrittenDates(every)),
       repeated: named(await engine.readFactWrittenDates([every[0]!, every[0]!, every[2]!])),
-      missing: named(await engine.readFactWrittenDates([999_999, every[3]!])),
+      missing: named(await engine.readFactWrittenDates([999_999, ids.get('year-fifty')!])),
       none: named(await engine.readFactWrittenDates([])),
     };
     expect(out.all.map(r => r.fact)).toEqual([...FACTS.map(f => f.id)].sort((a, b) => a.localeCompare(b)));

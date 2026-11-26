@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2457/2484
+# covered: 2458/2485
 # lifecycle: 12/12
 # pages: 141/142
 # search: 8/8
@@ -55,7 +55,7 @@
 # projection_rebuild: 32/33
 # facts_repair: 75/75
 # facts_trust: 56/57
-# facts_recall: 11/11
+# facts_recall: 12/12
 # facts_conversation: 30/30
 # belief_ledger: 21/21
 # cycle_reads: 3/3
@@ -137,7 +137,7 @@ getPage	pages	yes	289	yes	yes	yes	serves
 readPageSnapshot	pages	yes	104	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	7	no	yes	yes	serves
 lockPageKeys	pages	yes	17	no	yes	yes	serves
-putPage	pages	yes	1368	yes	yes	yes	serves
+putPage	pages	yes	1372	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	45	yes	yes	yes	serves
@@ -649,11 +649,11 @@ readFactTrustTier	facts	yes	2	no	yes	yes	serves
 listFenceFactRowNums	facts	yes	2	no	yes	yes	serves
 readLiveFactRowTier	facts	yes	1	no	yes	yes	serves
 insertFact	facts	yes	199	yes	yes	yes	serves
-insertFacts	facts	yes	280	no	yes	yes	serves
+insertFacts	facts	yes	284	no	yes	yes	serves
 deleteFactsForPage	facts	yes	8	no	yes	yes	serves
 expireFact	facts	yes	94	no	yes	yes	serves
 listFactsByEntity	facts	yes	66	yes	yes	yes	serves
-listFactsSince	facts	yes	47	yes	yes	yes	serves
+listFactsSince	facts	yes	48	yes	yes	yes	serves
 listFactsKeyset	facts	yes	11	no	yes	yes	serves
 listFactsBySession	facts	yes	13	yes	yes	yes	serves
 listSupersessions	facts	yes	7	yes	yes	yes	serves
@@ -1780,6 +1780,7 @@ listCallOffCueFacts	facts_recall	yes	5	no	yes	yes	serves
 listPoolEntityPairs	facts_recall	yes	6	no	yes	yes	serves
 listFactRowsByIds	facts_recall	yes	2	no	yes	yes	serves
 readFactWrittenDates	facts_recall	yes	2	no	yes	yes	serves
+readOwnMemberFactIds	facts_recall	yes	1	no	yes	yes	serves
 listReadablePageSlugs	facts_recall	yes	1	no	yes	yes	serves
 readNewestConversationFactId	facts_conversation	yes	1	no	yes	yes	serves
 findSpentConversationRequest	facts_conversation	yes	2	no	yes	yes	serves
@@ -2064,7 +2065,7 @@ topologyStore	write_misc	yes	1	no	yes	yes	serves
 manualLinkStore	write_misc	no	0	no	-	-	-
 listAppliedPolicyRevisions	write_misc	yes	6	no	yes	yes	serves
 readLiveMember	write_misc	yes	13	no	yes	yes	serves
-readFolderAccess	write_misc	yes	13	no	yes	yes	serves
+readFolderAccess	write_misc	yes	15	no	yes	yes	serves
 readMayActFor	write_misc	yes	4	no	yes	yes	serves
 readJobPrincipal	write_misc	yes	6	no	yes	yes	serves
 readAudiencePrincipals	write_misc	yes	5	no	yes	yes	serves

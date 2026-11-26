@@ -25,6 +25,7 @@ import {
 } from './facts-trust.ts';
 import type { FactRowSqlShape } from './facts.ts';
 import { pageReadFilter } from '../search/read-policy-sql.ts';
+import { memberFactAdmitSql } from '../access/member-facts.ts';
 import type { PageReadScope } from '../types.ts';
 
 // The vetted builder below is named in scripts/check-engine-sql-dynamic.ts: it wraps one constant fragment.
@@ -184,6 +185,19 @@ export const FACT_WRITTEN_DATES_SQL = `SELECT id, to_char(COALESCE(valid_from, c
 /** The written day of each of the facts `ids` (memory_recall's date column); a missing id has no row, and the rows come in no set order. */
 export async function readFactWrittenDates(raw: EngineRawRead, ids: readonly number[]): Promise<FactWrittenDateRow[]> {
   return raw<FactWrittenDateRow>(FACT_WRITTEN_DATES_SQL, [[...ids]]);
+}
+
+/** One fact id of the caller's own member page (`readOwnMemberFactIds`). */
+export interface OwnMemberFactIdRow { id: number | string }
+
+/**
+ * The facts among `ids` in `sourceId` that sit on the current caller's own member page, by `memberFactAdmitSql` (private facts on the
+ * caller's live member page that names it, while the caller may read that page). The statement is the one `ownMemberFactIds`
+ * (access/member-facts.ts) ran through `executeRaw`, byte for byte: the caller renders the admission text, so it names the caller's member.
+ */
+export async function readOwnMemberFactIds(raw: EngineRawRead, sourceId: string, ids: readonly number[]): Promise<OwnMemberFactIdRow[]> {
+  const { text, params } = renderFragment(sqlFragment`SELECT id FROM facts WHERE id = ANY(${[...ids]}::bigint[]) AND source_id = ${sourceId} AND ${trustedSql(memberFactAdmitSql('facts'))}`);
+  return raw<OwnMemberFactIdRow>(text, params);
 }
 
 const READABLE_PAGE_SLUGS_HEAD = 'SELECT p.slug FROM pages p WHERE p.source_id = $1 AND p.slug = ANY($2::text[]) AND ';

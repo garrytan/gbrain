@@ -1,0 +1,9 @@
+# Parity cases that stop on a typed refusal on the Rust arm although the Rust engine serves the member (or the case's setup step was refused). Edited by hand.
+# One file per owner (test/rust-stop-pins/<owner>.tsv); every file is read, so an owner adds or removes only its own rows.
+# Columns (tab separated): parity file, case name, member that refused, owner, due date (YYYY-MM-DD, UTC), what Rust declines.
+# A row lets the case stop on that member's typed refusal (GBRAIN_TEST_RUST_ARM=1). The run fails when the case stops on another member, when the
+# due date has passed (the row goes red at 00:00 UTC on the day after the due date), or when the case no longer stops (remove the row).
+# Row 32e-b-7 (memory_recall on Rust): each case below flips to a plain 3-arm case when its owner row lands; its row is then removed.
+test/engine-parity/memory-recall-dates.test.ts	an ordinary member reads its facts and their written dates, access.members_read_lineage on	listFactsSince	row 32e-b-4 (lineage fact reads on Rust)	2026-12-01	With access.members_read_lineage on, listFactsSince for a member (the own-facts arm of memory_recall) refuses: the store does not yet judge a fact's provenance page by lineage (row 32e-b-4)
+test/engine-parity/memory-recall-dates.test.ts	the owner reads its facts and their written dates, access.members_read_lineage off	memory_recall	RA-1 (lane 11 owner lineage, c6c1ea95e7)	2026-11-28	ownerLineageRefusal: the owner's remote read is a lineage read the store does not model; refused before any read, lineage off or on
+test/engine-parity/memory-recall-dates.test.ts	the owner reads its facts and their written dates, access.members_read_lineage on	memory_recall	RA-1 (lane 11 owner lineage, c6c1ea95e7)	2026-11-28	ownerLineageRefusal: the owner's remote read is a lineage read the store does not model; refused before any read, lineage off or on

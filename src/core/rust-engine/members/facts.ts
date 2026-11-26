@@ -445,6 +445,7 @@ export const FACTS_MEMBERS = {
   listPoolEntityPairs: 'facts',
   listFactRowsByIds: 'facts',
   readFactWrittenDates: 'facts',
+  readOwnMemberFactIds: 'facts',
   listReadablePageSlugs: 'facts',
 
   // ontology

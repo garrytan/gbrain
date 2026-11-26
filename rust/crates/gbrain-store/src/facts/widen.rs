@@ -44,7 +44,7 @@ impl VisibilityWidening {
 
     /// `memberFactAdmitSql`: the row sits on `memory/members/<member>`, whose live page names
     /// `member:<member>` among its readers and passes the member-page policy.
-    fn member_admits(&self, read: &dyn KvRead, row: &FactRecord) -> Result<bool> {
+    pub(crate) fn member_admits(&self, read: &dyn KvRead, row: &FactRecord) -> Result<bool> {
         let (Some(member), Some(policy)) = (&self.member, &self.member_page_policy) else {
             return Ok(false);
         };
