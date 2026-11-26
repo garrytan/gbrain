@@ -36,6 +36,7 @@ import { CARRYING_FIELDS } from '../belief/keys.ts';
 import { relationExists } from '../persistence/rebuildable-cache.ts';
 import { canonicalChangeReason } from '../persistence/change-reason.ts';
 import { outcomeMarkerSql } from './audit-sources.ts';
+import { purgeProbeSelect, type PurgeProbe } from './purge-plan-statements.ts';
 import { holdResidueOfDeletedPageSql } from '../write-gate-binding.ts';
 
 export type StoreCount = Record<string, number>;
@@ -207,12 +208,31 @@ type ProbeResult = { count: number } | { unverified: string };
 const missingCache = (store: string): StoreReport => ({ store, status: 'not_present', removed: 0, reason: 'table_missing',
   detail: `The ${store} table does not exist on this brain; it is a rebuildable cache, so there was nothing to clear. gbrain doctor reports it under schema_missing_tables.` });
 
+/**
+ * One bounded inventory probe through the engine's typed probe (`countPurgeProbe`), under the same deadline, row bound
+ * and statement time as boundedCount. A probe with nothing to search counts 0 without a statement.
+ */
+async function boundedProbe(engine: BrainEngine, probe: PurgeProbe, deadline: number): Promise<ProbeResult> {
+  if (!purgeProbeSelect(probe)) return { count: 0 };
+  if (performance.now() > deadline) return { unverified: 'verification_deadline' };
+  try {
+    return await engine.transaction(async tx => {
+      await tx.setPurgeProbeTimeout(probeLimits.statementMs);
+      const count = await tx.countPurgeProbe(probe, probeLimits.rows);
+      return count > probeLimits.rows ? { unverified: 'row_bound' } : { count };
+    });
+  } catch (error) {
+    if (getCode(error) === '57014') return { unverified: 'statement_deadline' };
+    throw error;
+  }
+}
+
 /** One bounded probe: `sql` selects matching rows (no LIMIT); the adapter caps rows and the statement time. */
 async function boundedCount(engine: BrainEngine, sql: string, params: unknown[], deadline: number): Promise<ProbeResult> {
   if (performance.now() > deadline) return { unverified: 'verification_deadline' };
   try {
     return await engine.transaction(async tx => {
-      await tx.executeRaw("SELECT set_config('statement_timeout',$1,true)", [`${probeLimits.statementMs}ms`]);
+      await tx.setPurgeProbeTimeout(probeLimits.statementMs);
       const [row] = await tx.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM (${sql} LIMIT ${probeLimits.rows + 1}) bounded`, params);
       const count = Number(row?.n ?? 0);
       return count > probeLimits.rows ? { unverified: 'row_bound' } : { count };

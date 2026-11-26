@@ -42,6 +42,7 @@ import { stdioBindRoute } from './stdio-bind-route.ts';
 import { labelledOnlyFor } from './labelled-only.ts';
 import { isMissingSchemaObject } from '../utils.ts';
 import { transientDatabaseFailure, transientInterruption } from '../persistence/transient-retry.ts';
+import { readAudiencePrincipals as readAudiencePrincipalsOver, readLiveMember as readLiveMemberOver, readMayActFor as readMayActForOver, type LiveMemberRow, type MemberBindingVia, type MayActForVia } from '../engine-sql/access-control.ts';
 
 /** Config key binding a local stdio MCP server to one member. */
 export const STDIO_MEMBER_KEY = 'mcp.stdio_member';
@@ -88,10 +89,13 @@ export function identityLookupUnavailable(error: unknown): OperationError | null
   return null;
 }
 
-async function liveIdentity(engine: Pick<BrainEngine, 'executeRaw'>, memberSql: string, param: string): Promise<string[]> {
-  let row: { id: string; groups: string[] } | undefined;
+/** An engine that reads a live member: a typed engine, or a narrow executeRaw caller (the same SQL over it). */
+export type LiveMemberEngine = Pick<BrainEngine, 'readLiveMember'> | Pick<BrainEngine, 'executeRaw'>;
+
+async function liveIdentity(engine: LiveMemberEngine, via: MemberBindingVia, key: string): Promise<string[]> {
+  let row: LiveMemberRow | null;
   try {
-    [row] = await engine.executeRaw<{ id: string; groups: string[] }>(MEMBER_SQL(memberSql), [param]);
+    row = 'readLiveMember' in engine ? await engine.readLiveMember(via, key) : await readLiveMemberOver(engine, via, key);
   } catch (error) {
     if (isMissingSchemaObject(error, 'table', MEMBER_TABLES) || isMissingSchemaObject(error, 'column', MEMBER_COLUMN)) return [];
     if (error && typeof error === 'object' && (transientDatabaseFailure(error) || transientInterruption(error))) {
@@ -114,15 +118,13 @@ async function liveIdentity(engine: Pick<BrainEngine, 'executeRaw'>, memberSql: 
  * that fails throws (liveIdentity: a transient database failure unchanged, else access_identity_unavailable). A write's publication passes only its stored
  * principal, so a member disabled or a binding removed after submission takes effect.
  */
-export async function memberIdentityFor(engine: Pick<BrainEngine, 'executeRaw'>, auth: Pick<AuthInfo, 'member'> & { principal?: { kind: string; id: string }; stdioMember?: string } | undefined): Promise<string[]> {
+export async function memberIdentityFor(engine: LiveMemberEngine, auth: Pick<AuthInfo, 'member'> & { principal?: { kind: string; id: string }; stdioMember?: string } | undefined): Promise<string[]> {
   if (auth?.member !== undefined) return auth.member ? identityFor(auth.member.id, auth.member.groups) : [];
   const principal = auth?.principal;
-  if (principal?.kind === 'local_stdio') return auth?.stdioMember !== undefined ? liveIdentity(engine, '$1', auth.stdioMember)
-    : liveIdentity(engine, `SELECT ${edgeTrimSql('value')} FROM config WHERE key = $1`, STDIO_MEMBER_KEY);
+  if (principal?.kind === 'local_stdio') return auth?.stdioMember !== undefined ? liveIdentity(engine, 'member', auth.stdioMember)
+    : liveIdentity(engine, 'stdio_config', STDIO_MEMBER_KEY);
   if (!principal || (principal.kind !== 'legacy_token' && principal.kind !== 'oauth_client')) return [];
-  return liveIdentity(engine, principal.kind === 'legacy_token'
-    ? 'SELECT member_id FROM access_tokens WHERE id::text = $1 AND revoked_at IS NULL'
-    : 'SELECT member_id FROM oauth_clients WHERE client_id = $1 AND deleted_at IS NULL', principal.id);
+  return liveIdentity(engine, principal.kind === 'legacy_token' ? 'legacy_token' : 'oauth_client', principal.id);
 }
 
 /**
@@ -147,8 +149,14 @@ export async function stdioMemberId(engine: BrainEngine, opts: { strict?: boolea
  */
 export async function stdioMemberIdentity(engine: BrainEngine, registered?: string): Promise<string[]> {
   const member = registered ?? await stdioMemberId(engine);
-  return member ? liveIdentity(engine, '$1', member) : [];
+  return member ? liveIdentity(engine, 'member', member) : [];
 }
+
+/**
+ * An engine the folder access read goes through: its typed readFolderAccess, which every engine serves (a Rust brain
+ * without raw SQL) and every persistence SqlEngine view carries.
+ */
+export type FolderAccessEngine = Pick<BrainEngine, 'readFolderAccess'>;
 
 /**
  * GBRA-218 (A2): the folder-rule part of a caller's record, read live from the applied rulebook: the
@@ -156,7 +164,7 @@ export async function stdioMemberIdentity(engine: BrainEngine, registered?: stri
  * stamped, an invalid policy file). An unreadable rulebook satisfies nothing and covers everything (fail closed), and so
  * does one row-level security hides from this database role.
  */
-export async function folderAccessFor(engine: Pick<BrainEngine, 'executeRaw'>, identity: readonly string[]): Promise<{ satisfiedRuleIds: string[]; folderCoverage: FolderCoverage[] }> {
+export async function folderAccessFor(engine: FolderAccessEngine, identity: readonly string[]): Promise<{ satisfiedRuleIds: string[]; folderCoverage: FolderCoverage[] }> {
   return folderAccessForAll(engine, [identity]);
 }
 
@@ -164,20 +172,23 @@ export async function folderAccessFor(engine: Pick<BrainEngine, 'executeRaw'>, i
  * GBRA-231: folderAccessFor for an audience. A rule is satisfied only when every identity meets its readers, so the
  * satisfied set is the intersection of each entry's set (empty when any entry, a guest included, meets none).
  */
-export async function folderAccessForAll(engine: Pick<BrainEngine, 'executeRaw'>, identities: readonly (readonly string[])[]): Promise<{ satisfiedRuleIds: string[]; folderCoverage: FolderCoverage[] }> {
+export async function folderAccessForAll(engine: FolderAccessEngine, identities: readonly (readonly string[])[]): Promise<{ satisfiedRuleIds: string[]; folderCoverage: FolderCoverage[] }> {
   try {
     const union = [...new Set(identities.flat())];
-    const rules = union.length && identities.length && identities.every(id => id.length > 0)
-      ? await engine.executeRaw<{ source_id: string; rule_id: string; readable_by: string[] }>('SELECT source_id, rule_id, readable_by FROM access_rules WHERE readable_by && $1::text[]', [union])
-      : [];
+    const readers = union.length && identities.length && identities.every(id => id.length > 0) ? union : [];
+    const { rules, coverage } = await engine.readFolderAccess(readers);
     const satisfied = rules.filter(r => identities.every(id => (r.readable_by ?? []).some(reader => id.includes(reader))));
-    const coverage = await engine.executeRaw<{ source_id: string; prefix: string }>(`SELECT * FROM (SELECT DISTINCT source_id, prefix FROM access_pending_coverage
-      UNION ALL SELECT '!unreadable', '' WHERE gbrain_access_state_unreadable()) c ORDER BY source_id, prefix`);
     return { satisfiedRuleIds: satisfied.map(r => `${r.source_id}:${r.rule_id}`).sort(), folderCoverage: coverage.map(c => ({ source_id: c.source_id, prefix: c.prefix })) };
   } catch {
     return { satisfiedRuleIds: [], folderCoverage: [{ source_id: '!unreadable', prefix: '' }] };
   }
 }
+
+/**
+ * An engine the audience checks read through: an engine (its typed readMayActFor and readAudiencePrincipals, which a
+ * Rust brain serves), or an executeRaw-only handle (a persistence SqlEngine, a test double), which runs the same statements.
+ */
+export type AudienceEngine = Pick<BrainEngine, 'readMayActFor' | 'readAudiencePrincipals'> | Pick<BrainEngine, 'executeRaw'>;
 
 /** Who asserts an audience: a verified credential (live call), a stored principal (a queued write or job), or a stdio server. */
 export interface AudienceCaller {
@@ -191,23 +202,20 @@ export interface AudienceCaller {
  * lookup from the stored principal (a revoked token or deleted client permits nothing), else for a stdio server
  * config mcp.stdio_may_act_for. Unreadable or ill-formed values permit nothing.
  */
-async function mayActForOf(engine: Pick<BrainEngine, 'executeRaw'>, caller: AudienceCaller): Promise<string[] | null> {
+async function mayActForOf(engine: AudienceEngine, caller: AudienceCaller): Promise<string[] | null> {
   const auth = caller.auth;
   if (auth?.member !== undefined) return auth.mayActFor ?? null;
   const principal = auth?.principal ?? caller.principal;
+  const read = (via: MayActForVia, key: string) => 'readMayActFor' in engine ? engine.readMayActFor(via, key) : readMayActForOver(engine, via, key);
   try {
-    if (principal?.kind === 'legacy_token') {
-      const [row] = await engine.executeRaw<{ may_act_for: unknown }>('SELECT may_act_for FROM access_tokens WHERE id::text = $1 AND revoked_at IS NULL', [principal.id]);
-      return Array.isArray(row?.may_act_for) ? row!.may_act_for as string[] : null;
-    }
-    if (principal?.kind === 'oauth_client') {
-      const [row] = await engine.executeRaw<{ may_act_for: unknown }>('SELECT may_act_for FROM oauth_clients WHERE client_id = $1 AND deleted_at IS NULL', [principal.id]);
-      return Array.isArray(row?.may_act_for) ? row!.may_act_for as string[] : null;
+    if (principal?.kind === 'legacy_token' || principal?.kind === 'oauth_client') {
+      const list = await read(principal.kind, principal.id);
+      return Array.isArray(list) ? list : null;
     }
     if (principal?.kind === 'local_stdio' || (!auth && !principal && caller.transport === 'stdio')) {
-      const [row] = await engine.executeRaw<{ value: string | null }>('SELECT value FROM config WHERE key = $1', [STDIO_MAY_ACT_FOR_KEY]);
-      const raw = row?.value?.trim();
-      return raw ? parseMayActFor(raw) : null;
+      const raw = await read('stdio_config', STDIO_MAY_ACT_FOR_KEY);
+      const text = typeof raw === 'string' ? raw.trim() : '';
+      return text ? parseMayActFor(text) : null;
     }
   } catch { /* unreadable: permits nothing */ }
   return null;
@@ -239,7 +247,7 @@ function audienceUnknown(principal: string) {
  * or an existing group (on_behalf_of_unknown_member). Read on every call, so a revoked permission or a disabled
  * member takes effect at once.
  */
-export async function resolveAudienceIdentities(engine: Pick<BrainEngine, 'executeRaw'>, caller: AudienceCaller, audience: readonly AudiencePrincipal[],
+export async function resolveAudienceIdentities(engine: AudienceEngine, caller: AudienceCaller, audience: readonly AudiencePrincipal[],
   opts: { mayActFor?: 'enforce' | 'owner_room_assessment' } = {}): Promise<string[][]> {
   // GBRA-498: only room.ts passes owner_room_assessment, after it checked that the caller reads as the brain owner or is
   // the trusted local CLI; it marks results for a room and never reads as the room, so neither needs may_act_for for it.
@@ -253,12 +261,9 @@ export async function resolveAudienceIdentities(engine: Pick<BrainEngine, 'execu
   const members = new Map<string, string[]>();
   const groups = new Set<string>();
   try {
-    if (memberIds.length) {
-      for (const row of await engine.executeRaw<{ id: string; groups: string[] }>(MEMBERS_WHERE_SQL('m.id = ANY($1::text[])'), [memberIds])) {
-        members.set(row.id, (row.groups ?? []).filter(g => normalizePrincipal(`group:${g}`) === `group:${g}`));
-      }
-    }
-    if (groupIds.length) for (const row of await engine.executeRaw<{ id: string }>('SELECT id FROM access_groups WHERE id = ANY($1::text[])', [groupIds])) groups.add(row.id);
+    const rows = 'readAudiencePrincipals' in engine ? await engine.readAudiencePrincipals(memberIds, groupIds) : await readAudiencePrincipalsOver(engine, memberIds, groupIds);
+    for (const row of rows.members) members.set(row.id, row.groups.filter(g => normalizePrincipal(`group:${g}`) === `group:${g}`));
+    for (const id of rows.groups) groups.add(id);
   } catch { /* unreadable: every entry reads as unknown below */ }
   return audience.map(p => {
     if (p === GUEST) return [];

@@ -73,12 +73,12 @@ export function guestSkippedPhases(): CyclePhase[] {
 // guest or guest_sources lists it. A lookup that fails counts as guest (the producer skips) or refuses (it throws).
 
 /** True when `producer` skips `sourceId` because it is a guest source, or because the lookup failed. */
-export async function skipsGuestSource(engine: Pick<BrainEngine, 'executeRaw'>, producer: GuestSkipProducer, sourceId: string): Promise<boolean> {
+export async function skipsGuestSource(engine: Pick<BrainEngine, 'listGuestSourceIds'>, producer: GuestSkipProducer, sourceId: string): Promise<boolean> {
   return (await guestSourceSkip(engine, producer, sourceId)) !== null;
 }
 
 /** Why `producer` skips `sourceId` (guestSkipDetails: a guest source, or a lookup that failed), or null when it runs. */
-export async function guestSourceSkip(engine: Pick<BrainEngine, 'executeRaw'>, producer: GuestSkipProducer, sourceId: string): Promise<ReturnType<typeof guestSkipDetails> | null> {
+export async function guestSourceSkip(engine: Pick<BrainEngine, 'listGuestSourceIds'>, producer: GuestSkipProducer, sourceId: string): Promise<ReturnType<typeof guestSkipDetails> | null> {
   if (!skips(producer)) return null;
   const verdict = await guestSourceVerdict(engine, sourceId);
   return verdict.guest ? guestSkipDetails(sourceId, verdict.lookupError) : null;
@@ -88,7 +88,7 @@ export async function guestSourceSkip(engine: Pick<BrainEngine, 'executeRaw'>, p
  * Whether a write is a guest write for the publication-time producers: its stored intent carries a guest note, or it
  * lands in a guest source. Throws when the lookup fails, so the write refuses instead of publishing derived rows.
  */
-export async function isGuestWrite(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, intent: Record<string, unknown> | null | undefined): Promise<boolean> {
+export async function isGuestWrite(engine: Pick<BrainEngine, 'listGuestSourceIds'>, sourceId: string, intent: Record<string, unknown> | null | undefined): Promise<boolean> {
   return storedGuestNote(intent) !== null || (await readGuestSourceIds(engine, [sourceId])).has(sourceId);
 }
 
@@ -98,7 +98,7 @@ export function skipsGuestNote(producer: GuestSkipProducer, guestWrite: boolean)
 }
 
 /** `items` without those in a guest source, for a producer that walks several sources; none when the lookup fails. */
-export async function withoutGuestSources<T>(engine: Pick<BrainEngine, 'executeRaw'>, producer: GuestSkipProducer, items: readonly T[], sourceOf: (item: T) => string): Promise<T[]> {
+export async function withoutGuestSources<T>(engine: Pick<BrainEngine, 'listGuestSourceIds'>, producer: GuestSkipProducer, items: readonly T[], sourceOf: (item: T) => string): Promise<T[]> {
   if (!skips(producer) || items.length === 0) return [...items];
   let guests: Set<string>;
   try { guests = await readGuestSourceIds(engine, items.map(sourceOf)); } catch { return []; }
