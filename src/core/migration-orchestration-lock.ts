@@ -20,7 +20,7 @@
  * orchestrators still open the datastore. The kernel releases it when the
  * holder dies, so a dead holder is taken over by the next runner.
  */
-import { readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import type { GBrainConfig } from './config.ts';
 import { toEngineConfig } from './config.ts';
@@ -104,6 +104,29 @@ function readPgliteHolder(lockPath: string): MigrationLockHolder | null {
   }
 }
 
+/**
+ * How a brain takes the orchestration lock. A brain kept in one store directory (PGLite, Rust) takes a file lock beside
+ * that directory, held without opening the brain; a Postgres brain takes the database lease. Opening a Rust brain makes
+ * this process its owner, so a lease held through an open engine would keep the brain from the `gbrain` children a
+ * migration starts (the v0.11.0 smoke): they would wait on an owner that is blocked in the synchronous spawn.
+ * A Rust brain's engine is still constructed first (not opened), so a missing addon or a bad store path refuses the run
+ * before any ledger write, as the open used to. Any other engine value takes the lease path, whose engine
+ * construction refuses it as before.
+ */
+type LockMode = 'file' | 'checked-file' | 'lease';
+function lockMode(config: GBrainConfig): LockMode {
+  switch (config.engine) {
+    case 'pglite': return 'file';
+    case 'rust': return 'checked-file';
+    case 'postgres': return 'lease';
+    default: {
+      const unreachable: never = config.engine;
+      void unreachable;
+      return 'lease';
+    }
+  }
+}
+
 /** A schema too old for the lease: no table, or one without the acquisition-token columns. */
 function isMissingLockSchema(error: unknown): boolean {
   const e = error as { code?: string; message?: string };
@@ -114,7 +137,13 @@ async function acquirePglite(dataDir: string): Promise<MigrationOrchestrationLoc
   const lockPath = getPgliteMigrationLockPath(dataDir);
   const native = await tryAcquireNativeLock(lockPath);
   if (!native) throw new MigrationsRunningError(readPgliteHolder(lockPath) ?? { host: null, pid: null });
-  writeFileSync(metadataPath(lockPath), JSON.stringify({ pid: process.pid, host: hostname(), acquired_at: new Date().toISOString() }), { mode: 0o600 });
+  // Published by rename, never written through the final name: a symlink or file someone else left there is replaced,
+  // not followed and truncated.
+  const metadata = metadataPath(lockPath);
+  const staged = `${metadata}.${process.pid}.tmp`;
+  rmSync(staged, { force: true });
+  writeFileSync(staged, JSON.stringify({ pid: process.pid, host: hostname(), acquired_at: new Date().toISOString() }), { mode: 0o600, flag: 'wx' });
+  renameSync(staged, metadata);
   return {
     assertHeld: async () => {},
     release: async () => {
@@ -196,7 +225,9 @@ export function migrationOrchestrationHeldHere(): boolean {
  * starts orchestrators.
  */
 export async function acquireMigrationOrchestrationLock(config: GBrainConfig): Promise<MigrationOrchestrationLock | null> {
-  const lock = config.engine === 'pglite'
+  const mode = lockMode(config);
+  if (mode === 'checked-file') await createEngine(toEngineConfig(config));
+  const lock = mode !== 'lease'
     ? config.database_path ? await acquirePglite(config.database_path) : { assertHeld: async () => {}, release: async () => {} }
     : await acquirePostgres(config);
   if (!lock) return null;
@@ -208,7 +239,7 @@ export async function acquireMigrationOrchestrationLock(config: GBrainConfig): P
 /** Best-effort holder lookup for callers that only saw the runner's exit status. */
 export async function readMigrationLockHolder(config: GBrainConfig): Promise<MigrationLockHolder | null> {
   try {
-    if (config.engine === 'pglite') {
+    if (lockMode(config) !== 'lease') {
       return config.database_path ? readPgliteHolder(getPgliteMigrationLockPath(config.database_path)) : null;
     }
     const engine = await createEngine(toEngineConfig(config));

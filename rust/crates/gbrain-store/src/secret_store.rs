@@ -488,6 +488,75 @@ fn page_holds(read: &dyn KvRead, page: &PageRecord, id: &str) -> Result<bool> {
         }))
 }
 
+/// Whether a purge of the page `page_id` at (`source_id`, `slug`) would delete a sealed original: an occurrence of the
+/// source on no commit, on the page (or on no page at the slug), whose entry has no other occurrence that is on a commit
+/// or on a live page (the concept rebuild's stated check, `secret_store_occurrence`).
+pub(crate) fn page_holds_last_original(
+    read: &dyn KvRead,
+    page_id: u64,
+    source_id: &str,
+    slug: &str,
+) -> Result<bool> {
+    let ours = |o: &OccurrenceRecord| {
+        o.source_id == source_id
+            && o.commit_sha.is_none()
+            && (o.page_id == Some(page_id)
+                || (o.page_id.is_none() && o.slug.as_deref() == Some(slug)))
+    };
+    let mut candidates: BTreeSet<u64> = BTreeSet::new();
+    let page_prefix = by_page_prefix(page_id);
+    scan_prefix(read, &page_prefix, false, &mut |k, _| {
+        if let Some(id) = keys::be8(&k[page_prefix.len()..]) {
+            candidates.insert(id);
+        }
+        true
+    })?;
+    if !source_id.contains('\0') && !slug.contains('\0') {
+        let slug_prefix = by_slug_prefix(source_id, slug);
+        scan_prefix(read, &slug_prefix, false, &mut |k, _| {
+            if let Some(id) = keys::be8(&k[slug_prefix.len()..]) {
+                candidates.insert(id);
+            }
+            true
+        })?;
+    }
+    for id in candidates {
+        let Some(o) = read_occurrence(read, id)? else {
+            continue;
+        };
+        if !ours(&o) {
+            continue;
+        }
+        let mut kept_elsewhere = false;
+        for other in entry_occurrence_ids(read, &o.entry_id)? {
+            let Some(k) = read_occurrence(read, other)? else {
+                continue;
+            };
+            if ours(&k) {
+                continue;
+            }
+            let live = match k.page_id {
+                Some(page) => {
+                    read_page_by_id(read, page)?.is_some_and(|p| p.deleted_at_us.is_none())
+                }
+                None => match k.slug.as_deref() {
+                    Some(s) => crate::pages::read_page(read, &k.source_id, s)?
+                        .is_some_and(|p| p.deleted_at_us.is_none()),
+                    None => false,
+                },
+            };
+            if k.commit_sha.is_some() || live {
+                kept_elsewhere = true;
+                break;
+            }
+        }
+        if !kept_elsewhere {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// The page-level occurrence ids of page `page_id` (those recorded on the page, not on a commit): what a purge reads
 /// before it deletes the page, since the delete clears their `page_id`.
 pub(crate) fn page_occurrence_ids(read: &dyn KvRead, page_id: u64) -> Result<Vec<u64>> {

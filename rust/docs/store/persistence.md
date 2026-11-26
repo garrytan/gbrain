@@ -236,6 +236,7 @@ their parent's op and fingerprint, so deleting a parent deletes its paths in the
 | `brain.readOpCheckpointRecord(op, fingerprint, freshWithinDays)` | `{ completed_keys, updated_at, fresh }` or null: the parent's JSON as stored, its stamp in ISO 8601 with milliseconds (truncated, as `to_char(.., 'MS')` truncates), and whether the stamp is within `freshWithinDays` of the store clock (null when not given) | `readOpCheckpointRecord` (the repair cursor, `loadApprovedSet`) |
 | `brain.writeOpCheckpointRecord(op, fingerprint, completedKeys)` | the parent's JSON replaced and stamped now; null deletes the parent and its paths. A payload that is not an array, or that holds NUL in any string or key, refuses with `invalid_argument` | `writeOpCheckpointRecord` (the repair cursor, `saveApprovedSet`, `clearApprovedSet`) |
 | `brain.listOrphanConnectorCheckpoints(loadable, before, minAgeDays, stateOp, limit)`, `brain.countConnectorCheckpointsKeyed(keys)`, `brain.deleteOrphanConnectorCheckpoint(op, fingerprint, updatedAt, loadable, before, minAgeDays, stateOp)` | the connector checkpoint parents (`managed-connector`, `managed-connector-retry`) no source can load and no pending connector request names, their count by key, and the delete of one still-orphaned row at an unchanged stamp; `rust/docs/store/repair-bookkeeping.md` | `listOrphanConnectorCheckpoints`, `countConnectorCheckpointsKeyed`, `deleteOrphanConnectorCheckpoint` (`gbrain repair connector-checkpoints`) |
+| `brain.addSoakCounterEvent(op, day, kind, n)` | null: the day's parent (fingerprint `day`) created as `[{ day, kind: n }]`, or its first record's `kind` set to its integer value (0 when absent) plus `n`, stamped now; a value that is not an int4, or a sum past one, refuses and leaves the row | `addSoakCounterEvent` (`recordSoakEvent`, engine-sql/soak-counters.ts) |
 | `brain.purgeStaleCheckpoints(ttlDays)` | how many parents it deleted: each `d 0x02` parent (housekeeping turns included) stamped more than `ttlDays` days ago that no exemption keeps, with its paths. The exemptions read the rows as they were before the purge. A `ttlDays` that is not a finite number refuses with `invalid_input` | `purgeStaleCheckpoints` (the cycle's purge phase, `bookkeeping-gc.ts`) |
 
 The trust scan's cursor (`trust_scan`, `v1`) is one of these parents, written and read by its own members
@@ -401,9 +402,9 @@ request is bound to a worktree here, so an unstamped consumer has no owner host 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
 | `brain.readWriterVersionCutoff()` | the brain's creation time as ISO text, `null` without a format record | `readWriterVersionCutoff` |
-| `brain.listWriterVersions(limit)` | per role, the latest request of each host and principal (a consumer only for a committed request), newest first (null times first, ties by role, host, principal), at most `limit` | `listWriterVersions` |
-| `brain.recentWriterVersions(days)` | the committed requests published in the last `days`, grouped per role, host, principal and version with a `requests` count; admitters count from the cutoff by admission, consumers by publication; newest first. A `days` out of range refuses as `readSegmentedGateEvidence` does | `recentWriterVersions` |
-| `brain.readSegmentedGateEvidence(days)` | every writer seen in the last `days`, grouped per role, host, principal, version and segment-reader mark, with `requests`, `first_seen` and `last_seen`, newest first: admitters in any state, consumers of committed requests published in the window (the worktree owner for an unstamped host) and importers per ingest log row (`ingest:<source_type>`, from the `logIngest` writer stamp). No consumer row is stored here, so no `resident` row is answered. A `days` that is not finite or past the interval's 32-bit day field refuses with `interval out of range`, and a window start before 4714 BC (or past this clock's range) with `timestamp out of range`, as the SQL refuses them | `readSegmentedGateEvidence` (writer-versions.ts `segmentedGateEvidence`) |
+| `brain.listWriterVersions(limit)` | per role, the latest request of each host and principal (a consumer only for a committed request), newest first (null times first, ties by role, host with no host first, principal, in byte order; of requests with one latest time, the lowest request id names the version), at most `limit` | `listWriterVersions` |
+| `brain.recentWriterVersions(days)` | the committed requests published in the last `days`, grouped per role, host, principal and version with a `requests` count; admitters count from the cutoff by admission, consumers by publication; newest first, ties by role, host with no host first, principal and version in byte order. A `days` out of range refuses as `readSegmentedGateEvidence` does | `recentWriterVersions` |
+| `brain.readSegmentedGateEvidence(days)` | every writer seen in the last `days`, grouped per role, host, principal, version and segment-reader mark, with `requests`, `first_seen` and `last_seen`, newest first (ties by role, host with no host first, principal, version and mark, in byte order): admitters in any state, consumers of committed requests published in the window (the worktree owner for an unstamped host) and importers per ingest log row (`ingest:<source_type>`, from the `logIngest` writer stamp). No consumer row is stored here, so no `resident` row is answered. A `days` that is not finite or past the interval's 32-bit day field refuses with `interval out of range`, and a window start before 4714 BC (or past this clock's range) with `timestamp out of range`, as the SQL refuses them | `readSegmentedGateEvidence` (writer-versions.ts `segmentedGateEvidence`) |
 
 ## Purge effect statements
 
@@ -875,9 +876,9 @@ nothing (one write transaction at a time, durable commit); `shareWorktreeOwner` 
 
 A counter release below zero is `constraint_violation`, as the CHECK (>= 0) refuses it; a missing
 counter row changes nothing. recoverPublication and upgradeRecoveryStaging move the counters through
-`addPersistenceCounters` ("Writer release"). A bound write is still admitted only through
-`requireManagedPersistence` (`journal.ts` admission), which this engine refuses until that
-admission is typed. The owner pending-wait read in `owner-activity.ts` stays raw SQL.
+`addPersistenceCounters` ("Writer release"). A bound write is admitted through `requireManagedPersistence` (`journal.ts`
+admission), which a user's Rust brain refuses while `managed_persistence` is held; the managed-mode
+families beside this one are in `managed-mode.md`. The owner pending-wait read in `owner-activity.ts` stays raw SQL.
 
 ## TypeScript members with no stored state
 

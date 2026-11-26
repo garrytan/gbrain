@@ -183,14 +183,11 @@ function warnStorageOnce(action: string, error: unknown): void {
 export async function readPageWatermark(engine: BrainEngine, sourceId: string, slug: string,
   pipeline: ExtractionPipeline): Promise<{ pageId: number | null; stored: StoredWatermark | null }> {
   try {
-    const [row] = await engine.executeRaw<{ id: number; pipeline_version: number | null; watermark_bytes: string | number | null; watermark_sha256: string | null }>(
-      `SELECT p.id, s.pipeline_version, s.watermark_bytes, s.watermark_sha256
-         FROM pages p LEFT JOIN page_extraction_state s ON s.page_id = p.id AND s.pipeline = $3
-        WHERE p.source_id = $1 AND p.slug = $2 AND p.deleted_at IS NULL`, [sourceId, slug, pipeline]);
+    const row = await engine.readPageExtractionWatermark(sourceId, slug, pipeline);
     if (!row) return { pageId: null, stored: null };
     const stored = row.pipeline_version !== null && row.watermark_bytes !== null && row.watermark_sha256
-      ? { pipelineVersion: Number(row.pipeline_version), bytes: Number(row.watermark_bytes), sha256: row.watermark_sha256 } : null;
-    return { pageId: Number(row.id), stored };
+      ? { pipelineVersion: row.pipeline_version, bytes: row.watermark_bytes, sha256: row.watermark_sha256 } : null;
+    return { pageId: row.page_id, stored };
   } catch (error) {
     warnStorageOnce('read the extraction watermark', error);
     return { pageId: null, stored: null };
@@ -203,17 +200,10 @@ export async function readPageWatermark(engine: BrainEngine, sourceId: string, s
  * replaces it, and a complete tail read keeps whatever gap an earlier read left.
  */
 export async function commitExtractionPlan(engine: BrainEngine, pageId: number, plan: ExtractionPlan): Promise<void> {
-  const receipt = plan.truncated ? JSON.stringify(plan.truncated) : null;
   try {
-    await engine.executeRaw(
-      `INSERT INTO page_extraction_state (page_id, pipeline, pipeline_version, watermark_bytes, watermark_sha256, input_truncated, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, now())
-       ON CONFLICT (page_id, pipeline) DO UPDATE SET pipeline_version = EXCLUDED.pipeline_version,
-         watermark_bytes = EXCLUDED.watermark_bytes, watermark_sha256 = EXCLUDED.watermark_sha256,
-         input_truncated = CASE WHEN $7 THEN page_extraction_state.input_truncated ELSE EXCLUDED.input_truncated END,
-         updated_at = now()`,
-      [pageId, plan.pipeline, EXTRACTION_PIPELINE_VERSION[plan.pipeline], plan.next.bytes, plan.next.sha256, receipt,
-        plan.mode === 'tail' && !plan.truncated]);
+    await engine.commitPageExtraction({ pageId, pipeline: plan.pipeline, pipelineVersion: EXTRACTION_PIPELINE_VERSION[plan.pipeline],
+      watermarkBytes: plan.next.bytes, watermarkSha256: plan.next.sha256, receipt: plan.truncated as Record<string, unknown> | null,
+      keepReceipt: plan.mode === 'tail' && !plan.truncated });
   } catch (error) {
     warnStorageOnce('store the extraction watermark', error);
   }
@@ -223,10 +213,7 @@ export async function commitExtractionPlan(engine: BrainEngine, pageId: number, 
 /** PR 4 (Wave B incremental derivation, transcripts): the page's receipt for `pipeline`, or null (none, or unreadable). */
 export async function readExtractionReceipt(engine: BrainEngine, pageId: number, pipeline: ExtractionPipeline): Promise<InputTruncated | null> {
   try {
-    const [row] = await engine.executeRaw<{ receipt: InputTruncated | string | null }>(
-      'SELECT input_truncated AS receipt FROM page_extraction_state WHERE page_id = $1 AND pipeline = $2', [pageId, pipeline]);
-    const receipt = row?.receipt ?? null;
-    return typeof receipt === 'string' ? JSON.parse(receipt) as InputTruncated : receipt;
+    return await engine.readPageExtractionReceipt(pageId, pipeline) as InputTruncated | null;
   } catch (error) {
     warnStorageOnce('read the extraction receipt', error);
     return null;
@@ -237,14 +224,10 @@ export async function setExtractionReceipt(engine: BrainEngine, pageId: number, 
   receipt: InputTruncated | null): Promise<void> {
   try {
     if (!receipt) {
-      await engine.executeRaw('DELETE FROM page_extraction_state WHERE page_id = $1 AND pipeline = $2', [pageId, pipeline]);
+      await engine.clearPageExtractionState(pageId, pipeline);
       return;
     }
-    await engine.executeRaw(
-      `INSERT INTO page_extraction_state (page_id, pipeline, pipeline_version, input_truncated, updated_at)
-       VALUES ($1, $2, $3, $4::text::jsonb, now())
-       ON CONFLICT (page_id, pipeline) DO UPDATE SET input_truncated = EXCLUDED.input_truncated, updated_at = now()`,
-      [pageId, pipeline, EXTRACTION_PIPELINE_VERSION[pipeline], JSON.stringify(receipt)]);
+    await engine.writePageExtractionReceipt(pageId, pipeline, EXTRACTION_PIPELINE_VERSION[pipeline], receipt as unknown as Record<string, unknown>);
   } catch (error) {
     warnStorageOnce('store the extraction receipt', error);
   }
