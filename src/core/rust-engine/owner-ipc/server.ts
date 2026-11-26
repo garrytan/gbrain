@@ -357,6 +357,11 @@ async function drainForHandoff(lanes: Map<unknown, PendingCall[]>, running: Set<
   while (running.size) await Promise.allSettled([...running]);
 }
 
+/** A multi-user owner's last frame on each protocol v2 connection as it hands the brain over (protocol.ts `bye`). */
+function sayBye(list: Iterable<Socket>): void {
+  for (const socket of list) if (!socket.destroyed) socket.write(frameLine({ t: 'bye' })!);
+}
+
 /** Ends each connection so the answers just written reach their clients, then cuts what lingers past one second. */
 async function endConnections(list: Socket[]): Promise<void> {
   await Promise.all(list.map(socket => new Promise<void>(resolve => {
@@ -372,6 +377,7 @@ async function endConnections(list: Socket[]): Promise<void> {
 async function closeOwnerServer(o: {
   server: Server; lanes: Map<unknown, PendingCall[]>; running: Set<Promise<unknown>>;
   handOff: ((call: PendingCall) => void) | null; leaveQueue: (call: PendingCall) => void; live: () => Socket[];
+  farewell: (() => void) | null;
 }): Promise<void> {
   const serverClosed = new Promise<void>(resolve => o.server.close(() => resolve()));
   if (o.handOff) await drainForHandoff(o.lanes, o.running, o.handOff, o.leaveQueue);
@@ -381,6 +387,8 @@ async function closeOwnerServer(o: {
       if (!call.done) { call.done = true; call.controller.abort(new DOMException('The brain owner is closing.', 'AbortError')); }
     }
   }
+  // After every answer: `bye` tells each protocol v2 client that the owner read nothing more (multi-user mode).
+  o.farewell?.();
   if (o.handOff) await endConnections(o.live());
   for (const socket of o.live()) socket.destroy();
   while (o.running.size) await Promise.allSettled([...o.running]);
@@ -466,6 +474,10 @@ export async function serveOwnerEngine(
   let active = 0;
   let inflightBytes = 0;
   let closing = false;
+  // Multi-user mode only: once the owner starts to close it reads no more frames of a protocol v2 connection, and its last
+  // frame there is `bye` (closeOwnerServer), so the client knows every call still unanswered was never read.
+  const v2Sockets = new Set<Socket>();
+  let sealed = false;
   // Multi-user mode only (served options): a closing owner hands over what it has not started; off, null (server.ts close).
   const handOff = opts.served ? (call: PendingCall) => answerHandedOver(call, () => releaseBytes(call)) : null;
   let closed: Promise<void> | undefined;
@@ -561,12 +573,14 @@ export async function serveOwnerEngine(
     let session: ServedSession | null = null;
     socket.once('close', () => {
       sockets.delete(socket);
+      v2Sockets.delete(socket);
       session?.close();
       closeConnectionCalls(calls);
     });
     readFrames(socket, (frame, bytes) => {
       if (conn.refused) return;
       if (session) { session.onFrame(frame, null, bytes); return; }
+      if (sealed) return; // never read: the client sends it again after the owner's `bye`
       switch (frame.t) {
         case 'hello':
           if (opts.served && !conn.helloed && frame.version === OWNER_IPC_VERSION_V3) {
@@ -583,6 +597,7 @@ export async function serveOwnerEngine(
             return;
           }
           conn.helloed = true;
+          v2Sockets.add(socket);
           send(hello);
           return;
         case 'cancel': cancelCall(calls, Number(frame.id)); return;
@@ -727,7 +742,8 @@ export async function serveOwnerEngine(
     // A second close() gets the same promise, so no caller can release the lock before the drain ends.
     close: () => (closed ??= (async () => {
       closing = true;
-      await closeOwnerServer({ server, lanes, running, handOff, leaveQueue, live: () => [...sockets, ...refused] });
+      sealed = handOff !== null;
+      await closeOwnerServer({ server, lanes, running, handOff, leaveQueue, live: () => [...sockets, ...refused], farewell: handOff ? () => sayBye(v2Sockets) : null });
     })()),
   };
 }

@@ -49,7 +49,7 @@ import {
 } from './protocol.ts';
 import {
   OWNER_IPC_CALLBACK_KEYS, OWNER_IPC_REMOTE_READS, OWNER_IPC_ROUTES, ownerCallCancelled, ownerCallTimeout, ownerGone, ownerIpcProtocol, ownerIpcRefusal,
-  ownerPeerRefused, isOwnerHandoff, ownerMemberOnlyReads,
+  ownerPeerRefused, isOwnerHandoff, ownerHandoff, ownerMemberOnlyReads,
 } from './routes.ts';
 import { rustMultiuserFromEnv } from '../multiuser-switch.ts';
 import { remoteFrameMark } from './remote-check.ts';
@@ -271,6 +271,9 @@ export function connectOwner(legacySocketPath: string, opts: ConnectOwnerOptions
     });
     const pending = new Map<number, Pending>();
     let closed = false;
+    // A multi-user owner's last frame when it hands the brain over: it read nothing after it, so a call still unanswered
+    // (or sent after it) never ran, and ends `owner_handoff` for the next owner instead of `outcome_unknown`.
+    let bye = false;
     let nextId = 1;
     const refresh = () => { if (pending.size) socket.ref(); else socket.unref(); };
     const send = (frame: object) => { if (!socket.destroyed) socket.write(frameLine(frame, Number.MAX_SAFE_INTEGER)!); };
@@ -302,6 +305,7 @@ export function connectOwner(legacySocketPath: string, opts: ConnectOwnerOptions
         refresh();
         return;
       }
+      if (frame.t === 'bye') { bye = true; return; }
       // Ids and keys are read as scalars only: an object field would run its own conversion and throw out of this callback.
       const call = typeof frame.id === 'number' ? pending.get(frame.id) : undefined;
       if (!call) return;
@@ -328,7 +332,7 @@ export function connectOwner(legacySocketPath: string, opts: ConnectOwnerOptions
       clearTimeout(timer);
       closed = true;
       if (!hello) { reject(early ?? Object.assign(new Error('The brain owner closed the connection before its hello.'), { code: 'ECONNRESET' })); return; }
-      for (const call of pending.values()) { call.cleanup(); call.reject(ownerGone(call.member, hello.pid, true)); }
+      for (const call of pending.values()) { call.cleanup(); call.reject(bye ? ownerHandoff(call.member, hello.pid) : ownerGone(call.member, hello.pid, true)); }
       pending.clear();
     });
 
@@ -338,6 +342,7 @@ export function connectOwner(legacySocketPath: string, opts: ConnectOwnerOptions
         return Promise.reject(ownerIpcRefusal(member, 'a remote caller\'s write is not sent to the brain owner'));
       }
       if (closed || !hello) return Promise.reject(ownerGone(member, hello?.pid ?? null, false));
+      if (bye) return Promise.reject(ownerHandoff(member, hello.pid));
       const id = nextId++;
       const startedAt = Date.now();
       const callbacks = new Map<string, (...args: unknown[]) => void>();
