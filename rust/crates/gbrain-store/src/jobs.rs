@@ -82,6 +82,7 @@ mod oauth_revocation;
 mod oauth_tokens;
 mod private_queues;
 mod reads;
+mod restore;
 mod spend;
 mod spend_log;
 mod status;
@@ -108,11 +109,14 @@ use mutations::add_token;
 pub use mutations::{DelayOpts, TokenDelta};
 pub(crate) use oauth_clients::remove_source_rows as remove_oauth_source_rows;
 pub use oauth_clients::{ClientInsert, ClientPatch, ClientPatchGuard};
-pub(crate) use oauth_clients::{carry_over_format_5_clients, remove_client, seed_client};
+pub(crate) use oauth_clients::{
+    carry_over_format_5_clients, live_client_ids, remove_client, seed_client,
+};
 pub use oauth_codes::OauthCodeInsert;
 pub use oauth_tokens::OauthTokenInsert;
 pub use private_queues::PrivateQueueState;
 pub use reads::{JobPageCursor, JobPageSpec, OverdueSpec};
+pub(crate) use restore::{live_job_count, quarantine_jobs};
 pub use spend::{ExpireScope, LeaseFilter, LeaseInsert, SpendInsert, SpendTreeSpec};
 pub(crate) use spend::{SeedReservation, remove_reservation, seed_reservation};
 pub use spend_log::{ClientReserve, GroupReserve, LogInsert};

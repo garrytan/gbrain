@@ -150,13 +150,14 @@ interface BoundEngine extends RustEngine {
 
 /** A clone of `parent` whose served members run on the transaction's store handle. */
 function boundEngine(parent: RustEngine, scope: RustTransactionScope, held: HeldPageKeys): BoundEngine {
-  // The shadow seed copies into the engine's own store, never through a transaction's handle.
+  // The shadow seed and the restore members (master's restore family) work on the engine's own store, never through a transaction's handle.
   const refuseSeed = (member: string) => async (): Promise<never> => { throw capabilityMissing('transactions', member); };
   const store: RustStore = {
     brain: scope.brain, close: async () => undefined,
     importRelation: refuseSeed('importRelation'), replaceRelationRows: refuseSeed('replaceRelationRows'), replaceInterval: refuseSeed('replaceInterval'),
     relationDigest: refuseSeed('relationDigest'), relationEntries: refuseSeed('relationEntries'), allocatorCheck: refuseSeed('allocatorCheck'),
     factFingerprints: refuseSeed('factFingerprints'), seedPlan: refuseSeed('seedPlan'),
+    restoreCensus: refuseSeed('restoreCensus'), restoreQuarantine: refuseSeed('restoreQuarantine'),
     snapshotTo: refuseSeed('snapshotTo'), snapshotCancel: () => { throw capabilityMissing('transactions', 'snapshotCancel'); },
   };
   return Object.create(parent, {

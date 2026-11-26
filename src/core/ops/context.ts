@@ -242,10 +242,11 @@ export { isOpPageSlug };
  * existing row, and only if it still passes the storage guard (validateSlug:
  * no traversal, leading `/`, backslash, control or bidi characters, or encoded
  * separators). Such a row is published database-only (page-prepare.ts): its
- * recorded file path may belong to another page.
+ * recorded file path may belong to another page. #10080: a slug over 255
+ * characters an older sync stored is one too; sync no longer stores new ones.
  */
 export function isLegacyStoredPageSlug(slug: string): boolean {
-  if (isOpPageSlug(slug) || typeof slug !== 'string' || slug.length > 255) return false;
+  if (isOpPageSlug(slug) || typeof slug !== 'string') return false;
   try { validateSlug(slug); return true; } catch { return false; } // refused by the storage guard too: not a legacy slug
 }
 
