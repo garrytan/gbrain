@@ -339,7 +339,7 @@ export async function runSharedSkillsMigration(ctx: OperationContext, options: {
           sealed.some(skill => skill.name === name && skill.files.some(file => file.path === `skills/${name}/SKILL.md` && file.sha256 === row.inventory!.hashes[file.path])));
         if (!complete) {
           const { adoptSharedSkillpack } = await import('./catalog.ts');
-          const result = await adoptSharedSkillpack(ctx, source.id, { expected_hashes: row.inventory.hashes });
+          const result = await adoptSharedSkillpack(ctx, source.id, { expected_hashes: row.inventory.hashes, expected_incarnation: source.incarnation });
           const open = result.receipts.map(receipt => receipt.write_request as { state?: string; request_id?: string } | undefined).find(request => request?.state !== 'committed');
           if (open) {
             throw opError('publication_pending', 'The catalog adoption is accepted but not fully committed. Retry the durable requests before marking this stage complete.',

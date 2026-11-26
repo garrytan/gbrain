@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
+import { adoptSharedSkillpack } from '../src/core/shared-skills/publication.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 import { setupSharedBrainContent, contentSetupKey } from '../src/core/shared-skills/setup.ts';
@@ -259,6 +260,15 @@ describe('staged skill migration', () => {
     expect(report.sources[0].stages.at(-1)).toMatchObject({ stage: 'projection', status: 'action_required' });
     expect(report.sources[0].stages.at(-1)?.reason).toContain('packaged_pack_unsupported');
     expect(report.status).not.toBe('conflict');
+  });
+  test('adoption bound to a checked incarnation refuses source_changed for a recreated source, before anything is read or admitted', async () => {
+    const reads: string[] = [];
+    const engine = { kind: 'pglite',
+      readSourceIncarnationArchived: async (id: string) => { reads.push(`source:${id}`); return { incarnation: randomUUID(), archived: false }; },
+      executeRaw: async (sql: string) => { reads.push(sql); return []; } } as unknown as BrainEngine;
+    const ctx = { engine, config: { engine: 'pglite' }, remote: false, dryRun: false, logger: { info() {}, warn() {}, error() {} } } as unknown as OperationContext;
+    await expect(adoptSharedSkillpack(ctx, 'default', { expected_incarnation: randomUUID() })).rejects.toMatchObject({ code: 'source_changed' });
+    expect(reads).toEqual(['source:default']);
   });
   test('a deferred client check keeps the evidence that refuses a moved root', async () => {
     const root = temp(), moved = temp(), f = fixture(root); writePack(root); writePack(moved);

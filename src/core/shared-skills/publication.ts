@@ -579,6 +579,12 @@ export interface AdoptSharedSkillpackOptions {
   skills?: SharedSkillPutInput[];
   initial_files?: Record<string, string>;
   expected_hashes?: Record<string, string | null>;
+  /**
+   * The source incarnation the caller checked (the migration's inventory and owner check). A source removed and
+   * recreated since then refuses source_changed before anything is admitted; the request carries this incarnation,
+   * so the publication transaction refuses a replacement that lands later.
+   */
+  expected_incarnation?: string;
 }
 export async function importSharedSkillProposal(ctx: OperationContext, params: Record<string, unknown>) {
   if (ctx.remote !== false) {
@@ -602,6 +608,11 @@ export async function adoptSharedSkillpack(ctx: OperationContext, sourceId: stri
   }
   const found = await ctx.engine.readSourceIncarnationArchived(sourceId);
   const source = found && !found.archived ? found : undefined;
+  if (source && options.expected_incarnation !== undefined && source.incarnation !== options.expected_incarnation) {
+    throw opError('source_changed', 'The adoption source was recreated since it was checked.',
+      `Source ${sourceId} now has another incarnation than the one its inventory and owner were checked at, so nothing was adopted. Run the migration again; it inventories the new source first.`,
+      { fix: readFix('Lists the registered sources and whether each is archived.', { argv: ['gbrain', 'sources', 'list', '--json'] }) });
+  }
   if (!source) {
     throw opError('source_changed', 'The adoption source is not active.',
       `Source ${sourceId} is archived or not registered; adopt the pack into an active source.`,
