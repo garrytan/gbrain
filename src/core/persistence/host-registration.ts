@@ -36,6 +36,11 @@ export interface HostRegistrationOpts {
   origin: WriteOrigin;
   /** Set for a forced consumer (it registers under its own name beside the elected one). */
   forcedNonce?: string;
+  /**
+   * The lease name itself, for a process that registers on its own (managed-registration.ts): unique to the process, so a
+   * crashed predecessor's live lease never delays it and two processes never contend for one name.
+   */
+  leaseName?: string;
   everyMs?: number;
   ttlMs?: number;
   /** Receives each failure (default: one stderr line per failure streak). */
@@ -50,7 +55,7 @@ const INERT: HostRegistrationHandle = { renew: async () => {}, get fence() { ret
 export function startHostRegistration(engine: BrainEngine | object, opts: HostRegistrationOpts): HostRegistrationHandle {
   if (!opts.leases && !rustMultiuserEngine(engine)) return INERT;
   const leases = opts.leases ?? rustLeases(engine as { openStore(member: string): { brain: never } });
-  const name = hostLeaseName(opts.hostId, opts.forcedNonce);
+  const name = opts.leaseName ?? hostLeaseName(opts.hostId, opts.forcedNonce);
   const ttlMs = opts.ttlMs ?? HOST_FENCE_TTL_MS;
   let current: HostRegistration | null = null;
   let stopped = false;

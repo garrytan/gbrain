@@ -7,7 +7,8 @@ import { opError } from '../ops/contract.ts';
 import { readFix, trustedCliRequired } from '../ops/op-fix.ts';
 import type { Action } from '../agent-output.ts';
 import { persistenceHome, currentVerifiedLocalWriter, readLocalWriter, verifyLocalWriter, hostIdFor } from './identity.ts';
-import { acquireNativeLock, tryAcquireNativeLock, type NativeLockHandle } from './native-lock.ts';
+import type { NativeLockHandle } from './native-lock.ts';
+import { managedLock, type ManagedKind } from './managed-lock.ts';
 import { containsPath, getWorktreeBinding, type WorktreeBinding } from './ownership.ts';
 import { completeWrite, lockCounters } from './journal.ts';
 import { principalKey, requestPrincipal, type WriteRequest } from './model.ts';
@@ -44,8 +45,10 @@ export async function withTopologyLocks<T>(engine: BrainEngine, sourceId: string
   const brainId = await engine.readPersistenceBrainId();
   if (brainId === null) throw new Error('The persistence brain row is missing, so no topology lock was taken and nothing changed.');
   const handles: NativeLockHandle[] = [];
-  const take = async (path: string) => {
-    const handle = waitMs===0?await tryAcquireNativeLock(path):await acquireNativeLock(path, { timeoutMs: waitMs });
+  // Lane LM slice 3: on a multi-user Rust store each lock is an I-5 lease with the owner host's native lock beneath it, taken in the
+  // fixed order topology, then worktrees by id (managed-lock.ts); elsewhere it is the native lock alone, as before.
+  const take = async (path: string, kind: ManagedKind, id: string) => {
+    const handle = await managedLock(engine, kind, id, { path, waitMs });
     if (!handle) throw opError('write_pending', 'A source worktree is busy; retry this lifecycle request with the same request_id.',
       `Another lifecycle change, refresh or publication holds a worktree lock of source ${sourceId}, so this change did not start and nothing changed. Check the source with the command in fix, then run the same lifecycle command again with the same request_id once it is idle.`,
       {fix:ownerStatusFix(sourceId)});
@@ -54,7 +57,7 @@ export async function withTopologyLocks<T>(engine: BrainEngine, sourceId: string
   try {
     // Serializes discovery of new/unbound paths on this host. Worktree locks
     // remain the actual publication authority and never live in the checkout.
-    await take(join(persistenceHome(), 'locks', `topology-${brainId}.lock`));
+    await take(join(persistenceHome(), 'locks', `topology-${brainId}.lock`), 'topology', brainId);
     const binding = await getWorktreeBinding(engine, sourceId);
     const bindings:TopologyBinding[] = binding ? [binding] : [];
     if (additionalRoot) {
@@ -69,7 +72,7 @@ export async function withTopologyLocks<T>(engine: BrainEngine, sourceId: string
       if (item.owner_host_id !== hostIdFor(engine) || !item.coordination_path) throw opError('owner_unavailable', 'Run source lifecycle on the current registered owner.',
         `The worktree holding source ${item.source_id || sourceId} is owned by host ${item.owner_host_id}, not this host (${hostIdFor(engine)}), or has no coordination path here, so nothing changed. Run the lifecycle command on the owning host; moving ownership is a separate, deliberate writer transfer.`,
         {fix:ownerStatusFix(sourceId)});
-      await take(item.coordination_path);
+      await take(item.coordination_path, 'worktree', item.worktree_id);
       assertBindingPhysicalRoot(item,sourceId,additionalRoot,opts);
     }
     return await run(bindings);

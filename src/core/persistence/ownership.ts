@@ -15,7 +15,8 @@ import { hostIdFor } from './identity.ts';
 import { repairWedgedReservation, resolveCoordinationLock } from './coordination-lock.ts';
 import type { RawSqlEngine, SqlEngine, WriteRequest } from './model.ts';
 import type { PublicationJournalStore, WorktreeOwnerRow } from '../engine-sql/publication-journal.ts';
-import { acquireNativeLock, tryAcquireNativeLock, type NativeLockHandle } from './native-lock.ts';
+import { tryAcquireNativeLock, type NativeLockHandle } from './native-lock.ts';
+import { managedLock } from './managed-lock.ts';
 import { acquireShared, deferToLease, exclusiveAcquired, foreignWaiterAhead, joinLease, noteWaiting, yieldLease } from './worktree-lease.ts';
 import { managedFilesystemDatastorePath, refreshManagedFilesystemRoots } from './filesystem-guard.ts';
 import { assertPhysicalRoot, claimPhysicalRoot, preparePhysicalRootTransfer, readPhysicalRootReservation, restampPhysicalRoot } from './physical-root.ts';
@@ -247,8 +248,8 @@ export function joinWorktreeLease(binding: WorktreeBinding): NativeLockHandle | 
 async function lockWorktree(binding: WorktreeBinding, waitMs: number, signal: AbortSignal | undefined, engine: BrainEngine | undefined,
   identityCheck: 'strict' | 'reservation' = 'strict'): Promise<NativeLockHandle | null> {
   if (!binding.coordination_path || !binding.local_path) return null;
-  const lock = await (waitMs > 0 ? acquireNativeLock(binding.coordination_path, { timeoutMs: waitMs, signal })
-    : tryAcquireNativeLock(binding.coordination_path));
+  // Lane LM slice 3: on a multi-user Rust store the owner host's native lock sits beneath the worktree's I-5 lease (managed-lock.ts).
+  const lock = await managedLock(engine, 'worktree', binding.worktree_id, { path: binding.coordination_path, waitMs, ...(signal ? { signal } : {}) });
   if (!lock) return null;
   const identity = { worktreeId: binding.worktree_id, coordinationPath: binding.coordination_path };
   if (identityCheck === 'reservation') {
@@ -380,7 +381,7 @@ export async function prepareWriterTransfer(engine: BrainEngine, sourceId: strin
   if (!binding.coordination_path) throw opError('recovery_required', 'The recorded coordination path is missing.',
     `Source ${sourceId}'s host binding has no coordination lock path, so no transfer was prepared. Inspect writer status and show it to the user; repairing the binding is a deliberate topology change (docs/architecture/topologies.md).`,
     { fix: writerStatusFix(sourceId) });
-  const lock = opts.selfTransfer ? await acquireNativeLock(binding.coordination_path, { timeoutMs: 5000 }) : await acquireWorktree(binding, 5000);
+  const lock = opts.selfTransfer ? await managedLock(engine, 'worktree', binding.worktree_id, { path: binding.coordination_path, waitMs: 5000 }) : await acquireWorktree(binding, 5000, undefined, engine);
   if (!lock) throw opError('write_pending', 'The worktree is busy; retry transfer preparation.',
     `A write still holds source ${sourceId}'s worktree lock, so nothing was prepared. Wait until writer status shows no write in flight, then run transfer prepare again.`,
     { fix: writerStatusFix(sourceId) });
@@ -446,7 +447,7 @@ export async function cancelWriterTransfer(engine: BrainEngine, sourceId: string
   if (!binding.coordination_path) throw opError('recovery_required', 'The recorded coordination path is missing.',
     `Source ${sourceId}'s host binding has no coordination lock path, so the transfer was not cancelled. Inspect writer status and show it to the user; repairing the binding is a deliberate topology change (docs/architecture/topologies.md).`,
     { fix: writerStatusFix(sourceId) });
-  const lock = await acquireNativeLock(binding.coordination_path, { timeoutMs: 5000 });
+  const lock = await managedLock(engine, 'worktree', binding.worktree_id, { path: binding.coordination_path, waitMs: 5000 });
   if (!lock) throw opError('write_pending', 'The worktree is busy; retry the cancel.',
     `Another gbrain process holds source ${sourceId}'s coordination lock, so the transfer was not cancelled. Run the cancel again once that process has finished.`,
     { fix: writerStatusFix(sourceId) });
@@ -480,7 +481,7 @@ export async function acceptWriterTransfer(engine: BrainEngine, sourceId: string
   if (!coordination) throw opError('recovery_required', 'The recorded coordination path is missing.',
     `Source ${sourceId}'s host binding has no coordination lock path, so no transfer was accepted. Inspect writer status and show it to the user; repairing the binding is a deliberate topology change (docs/architecture/topologies.md).`,
     { fix: writerStatusFix(sourceId) });
-  const lock = await acquireNativeLock(coordination, { timeoutMs: 5000 });
+  const lock = await managedLock(engine, 'worktree', binding.worktree_id, { path: coordination, waitMs: 5000 });
   if (!lock) throw opError('write_pending', 'Successor worktree is busy.',
     `Another gbrain process holds the successor checkout's coordination lock, so source ${sourceId}'s transfer was not accepted. Run transfer accept again once that process has finished.`,
     { fix: writerStatusFix(sourceId) });

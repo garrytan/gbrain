@@ -36,8 +36,10 @@ import { withdrawnFromDetail } from '../facts/withdrawal.ts';
 import { heldFileDiagnostic, storedCheckoutRefusal } from './verb-errors.ts';
 import { isMissingPageMessage } from './page-identity.ts';
 import { registerPersistenceConsumerConfig } from '../embedding-disabled.ts';
+import { rustMultiuserEngine } from './host-registration.ts';
+import { ensureProcessRegistration } from './managed-registration.ts';
 
-interface Service { consumer: PersistenceConsumerLike; heartbeat?: ConsumerHeartbeat; stopping: boolean; unregisterStop?: () => void; unregisterReopen?: () => void; }
+interface Service { consumer: PersistenceConsumerLike; heartbeat?: ConsumerHeartbeat; stopping: boolean; unregisterStop?: () => void; unregisterReopen?: () => void; starting?: Promise<void>; }
 const services = new WeakMap<BrainEngine, Service>();
 type ProgressRead = { row: WriteRequestProgress | null } | { error: unknown } | { cancelled: true };
 const receiptReads = new WeakMap<BrainEngine, Map<string, { read: Promise<ProgressRead>; abort: AbortController }>>();
@@ -166,13 +168,21 @@ export function startPersistenceConsumer(engine: BrainEngine, config: GBrainConf
     if (sameDatastore) startPersistenceConsumer(engine, config);
   });
   // The consumer's publications (embeddings included) run in its engine's scope (engine-scope.ts).
-  withEngineScope(engine, () => consumer.start());
+  const start = () => withEngineScope(engine, () => consumer.start());
+  if (rustMultiuserEngine(engine)) {
+    // Lane LM slice 3 (gate C1): on a multi-user Rust brain every protected write carries this process's host fence, so the
+    // consumer starts claiming only once the process has its own registration (managed-registration.ts). A process that
+    // could not register still starts: its protected calls then refuse `lease_lost` / `fence_missing`, as without a consumer.
+    service.starting = ensureProcessRegistration(engine, `consumer_${kind}`).then(() => undefined, () => undefined)
+      .then(() => { if (!service.stopping) start(); });
+  } else start();
   return consumer;
 }
 export async function stopPersistenceConsumer(engine: BrainEngine): Promise<void> {
   const service = services.get(engine);
   if (!service) return;
   service.stopping = true;
+  await service.starting;
   const pending = [...(receiptReads.get(engine)?.values() ?? [])];
   for (const entry of pending) entry.abort.abort();
   // GBRA-156: a one-shot command's housekeeping runs here, after its reply and before its consumer stops.

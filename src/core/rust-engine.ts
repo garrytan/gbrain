@@ -31,6 +31,7 @@ import { STORE_MEMBERS } from './rust-engine/store-members/index.ts';
 import { MULTIUSER_WITHHELD, servedCapabilities, storeCapabilities } from './rust-engine/store-capabilities.ts';
 import { rustMultiuserFromEnv, rustMultiuserSubSwitch } from './rust-engine/multiuser-switch.ts';
 import { existingHostIdFor, hostIdFor } from './persistence/identity.ts';
+import { noteRustEngine } from './persistence/managed-operations.ts';
 import { RECEIPT_STOP_OWNERS } from './rust-engine/receipt-stops.ts';
 import { electOwner, type OwnerRole } from './rust-engine/owner-ipc/election.ts';
 import { callEndCheck, installOwnerClient, untilCallEnds } from './rust-engine/owner-ipc/client.ts';
@@ -260,6 +261,7 @@ export class RustEngine implements BrainEngine {
             }
             opened = store;
             this._store = store;
+            noteRustEngine(this);
             if (store.commitLog) (this.capabilities as Set<Capability>).add('commit_log');
           } catch (error) {
             storeFailure = { error };

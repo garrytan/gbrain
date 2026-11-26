@@ -35,7 +35,7 @@ import { readFix } from '../ops/op-fix.ts';
 import { recordUpstreamObservation } from '../sync-upstream.ts';
 import { checkpointRetryCommand } from './checkpoint-validation.ts';
 import { persistenceHome, hostIdFor, existingHostIdFor } from './identity.ts';
-import { acquireNativeLock, tryAcquireNativeLock, type NativeLockHandle } from './native-lock.ts';
+import { managedLock, nativeLockFailureAsBusy, probeNativeLock } from './managed-lock.ts';
 import { getWorktreeBinding, managedPersistenceEnabled, type WorktreeBinding } from './ownership.ts';
 import { withReadDeadline } from '../read-deadline.ts';
 import { isPhysicalRootMetadata } from './physical-root-record.ts';
@@ -646,7 +646,7 @@ async function worktreeRecoveryPending(engine: BrainEngine, binding: WorktreeBin
   const first = await probe();
   if (first?.topology === true) return true;
   if (first?.publication !== true || !binding.coordination_path) return first?.publication === true;
-  const lock = await tryAcquireNativeLock(binding.coordination_path);
+  const lock = await probeNativeLock(binding.coordination_path);
   if (!lock) return false;
   // Holding the lock, no publisher is mid-flight: a record that is still here has no live owner.
   try { const held = await probe(); return held?.publication === true || held?.topology === true; }
@@ -981,7 +981,7 @@ async function refreshOnce(engine: BrainEngine, sourceId: string, opts: RefreshO
       return { ...base, status: blocked.length ? 'sync_blocked' : deferred ? 'sync_deferred' : 'already_current', synced, ...(blocked.length ? { sync_blocked: blocked, next: blocked.map(b => b.resume).join(' ; ') }
         : deferred ? { next: `gbrain sources refresh ${sourceId}` } : {}) };
     }
-    const refreshLock = timedLock(run, await acquireNativeLock(refreshLockPath(plan.binding.worktree_id), { timeoutMs: 1000 }));
+    const refreshLock = timedLock(run, await managedLock(engine, 'refresh', plan.binding.worktree_id, { path: refreshLockPath(plan.binding.worktree_id), waitMs: 1000 }));
     if (!refreshLock) throw inProgress('Another process is refreshing this worktree right now.', sourceId);
     try {
       const principal = await topologyPrincipal(engine);
@@ -1226,7 +1226,7 @@ export async function resumeWorktreeRefreshes(engine: BrainEngine, opts: { hostI
     try {
       await withGit(async git => {
         if (commits !== null && !row.stale && !await membersAtTarget(engine, git, row, root)) { laggingSyncing.set(row.id, { commits, at: Date.now() }); return; }
-        const lock = await tryAcquireNativeLock(refreshLockPath(row.worktree_id));
+        const lock = await managedLock(engine, 'refresh', row.worktree_id, { path: refreshLockPath(row.worktree_id), waitMs: 0 });
         if (!lock) return;
         try {
           const after = await withTopologyLocks(engine, row.source_ids[0], async () => {
@@ -1329,7 +1329,7 @@ async function resumeOrAbandon(engine: BrainEngine, sourceId: string, opts: Refr
   const empty: WorktreeRefreshResult = { status: 'nothing_to_resume', refresh_id: null, worktree_id: binding.worktree_id, source_ids: [sourceId],
     old_head: null, target_head: null, upstream_ref: null, preserved_uncommitted: [], synced: [], next: `gbrain sources refresh ${sourceId}` };
   if (!active) return empty;
-  const lock = timedLock(run, await acquireNativeLock(refreshLockPath(binding.worktree_id), { timeoutMs: 1000 }).catch(() => null as NativeLockHandle | null));
+  const lock = timedLock(run, await managedLock(engine, 'refresh', binding.worktree_id, { path: refreshLockPath(binding.worktree_id), waitMs: 1000 }).catch(nativeLockFailureAsBusy));
   if (!lock) throw inProgress(`Refresh ${active.id} is still running in another process (${describeHolder(holderOf(active))}).`, sourceId, active.id);
   try {
     return await withGit(async git => {
@@ -1411,7 +1411,7 @@ async function adoptOrphanedRefresh(engine: BrainEngine, sourceId: string, syncB
   // A holder recorded on another host is never adopted: this host's lock cannot say whether it is alive.
   if ((holderOf(active)?.host_id ?? hostId) !== hostId) return null;
   // #7728: a lock this process cannot read says nothing about the holder, so it is not adopted; the precheck refuses refresh_in_progress.
-  const lock = timedLock(run, await acquireNativeLock(refreshLockPath(binding.worktree_id), { timeoutMs: 1000 }).catch(() => null as NativeLockHandle | null));
+  const lock = timedLock(run, await managedLock(engine, 'refresh', binding.worktree_id, { path: refreshLockPath(binding.worktree_id), waitMs: 1000 }).catch(nativeLockFailureAsBusy));
   if (!lock) return null;
   try {
     const orphan = await readActiveRefresh(engine, binding.worktree_id);
@@ -1452,7 +1452,7 @@ export async function assertManagedSyncAllowed(engine: BrainEngine, worktreeId: 
 export async function refreshLiveness(worktreeId: string, holderHostId: string | null, engine?: object): Promise<RefreshLiveness> {
   const local = existingHostIdFor(engine);
   if (!local || holderHostId !== local) return 'unknown';
-  const lock = await tryAcquireNativeLock(refreshLockPath(worktreeId)).catch(() => undefined);
+  const lock = await probeNativeLock(refreshLockPath(worktreeId)).catch(() => undefined);
   if (lock === undefined) return 'unknown';
   if (!lock) return 'live';
   await lock.release();

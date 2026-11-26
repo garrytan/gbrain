@@ -26,6 +26,7 @@ import { transactionAborted } from '../../postgres-engine/transaction-abort.ts';
 import { validateSlug } from '../../utils.ts';
 import type { RustEngine, RustTransactionScope } from '../../rust-engine.ts';
 import { opError } from '../../ops/contract.ts';
+import { assertManagedHeld } from '../../persistence/managed-operations.ts';
 import { capabilityMissing } from '../errors.ts';
 import { mapStoreError, storeErrorCode } from '../store-errors.ts';
 import type { RustStore, StoreBrain } from '../store.ts';
@@ -236,7 +237,13 @@ export const transaction = async function transaction<T>(this: RustEngine, brain
     if (opts?.signal?.aborted) throw transactionAborted(opts.signal);
     return savepoint(this as BoundEngine, brain, fn);
   }
-  return this._openTransaction(opts, (scope) => withHeldPageKeys(null, (held) => fn(asEngine(boundEngine(this, scope, held)))));
+  return this._openTransaction(opts, (scope) => withHeldPageKeys(null, (held) => {
+    const bound = boundEngine(this, scope, held);
+    // Lane LM slice 3: a managed operation on a multi-user store asserts the host fence and every managed lease it holds
+    // inside this writing transaction, on every run of the callback (managed-operations.ts). No managed operation: no extra step.
+    const guards = assertManagedHeld(this, asEngine(bound));
+    return guards ? guards.then(() => fn(asEngine(bound))) : fn(asEngine(bound));
+  }));
 };
 
 /** The same transaction: the store has one route. */
