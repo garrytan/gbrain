@@ -853,9 +853,7 @@ src/core/git/push-credential.ts#readCredentialRefusalFile	catch_empty	1
 src/core/git/push-credential.ts#recordCredentialRefusalFile	catch_empty	1
 src/core/git/range-secret-scan.ts#pageWriteCommits	catch_empty	1
 src/core/git/range-secret-scan.ts#stagedScanPublishRefusal	catch_empty	1
-src/core/git/redact-finish.ts#secretPublishMaintenance	capability_refusal_swallowed	2
 src/core/git/redact-finish.ts#secretPublishMaintenance	catch_empty	2
-src/core/git/redact-finish.ts#secretPublishMaintenance	promise_catch_empty	1
 src/core/git/redact-finish.ts#sourceRoots	capability_refusal_swallowed	1
 src/core/git/redact-finish.ts#sourceRoots	catch_empty	1
 src/core/git/skipped-paths.ts#validGitDir	catch_empty	1
