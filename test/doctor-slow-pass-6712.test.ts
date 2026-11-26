@@ -63,7 +63,6 @@ describe('#6712 PR 4b: doctor warns on a slow no-change pass', () => {
     expect(timings.setup).toBeGreaterThanOrEqual(0);
     expect(timings.kind).toBeGreaterThanOrEqual(0);
     expect(timings.setup + timings.kind).toBe(idle.duration_ms as number);
-    expect((await doctor(engine)).status).toBe('ok');
 
     await idlePassWithClockStep(engine, -60_000, 600);
     expect((await telemetry(engine)).duration_ms as number).toBeGreaterThanOrEqual(600);

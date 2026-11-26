@@ -59,9 +59,11 @@ describe('computeExtractHealthCheck — empty + happy paths', () => {
 describe('computeExtractHealthCheck — WARN paths', () => {
   test('#10397: the reason breakdown reads the same UTC 7-day window as the halt totals', async () => {
     await clearRollup();
-    // A session zone whose date differs from UTC's right now: UTC+14 from 10:00 UTC, else UTC-11.
-    const zone = new Date().getUTCHours() >= 10 ? 'Pacific/Kiritimati' : 'Pacific/Pago_Pago';
     await engine.transaction(async tx => {
+      // A session zone whose date differs from UTC's at the transaction's (stable) now(): UTC+14, else UTC-11.
+      const [{ zone }] = await tx.executeRaw<{ zone: string }>(
+        `SELECT CASE WHEN (now() AT TIME ZONE 'Pacific/Kiritimati')::date <> (now() AT TIME ZONE 'UTC')::date
+                     THEN 'Pacific/Kiritimati' ELSE 'Pacific/Pago_Pago' END AS zone`, []);
       await tx.executeRaw(`SELECT set_config('TimeZone', $1, true)`, [zone]);
       const [clock] = await tx.executeRaw<{ utc: string; session: string }>(
         `SELECT (now() AT TIME ZONE 'UTC')::date::text AS utc, CURRENT_DATE::text AS session`, []);

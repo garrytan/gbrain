@@ -8,7 +8,7 @@
  * 3. Real seams: getStorageStatus over a PGLite brain with a gbrain.yml that declares the derive folders db_only. No git.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -42,5 +42,21 @@ describe('storage status and never-filed derived pages (#10400)', () => {
     const status = await getStorageStatus(engine, repo);
     expect(status.pagesByTier.db_only).toBe(3);
     expect(status.missingFiles.map(m => m.slug).sort()).toEqual(['atoms/filed-then-lost', 'concepts/filed-then-lost']);
+  });
+
+  test('a never-filed concept still reports the restore refusal export would hit on its path', async () => {
+    const elsewhere = mkdtempSync(join(tmpdir(), 'gbrain-storage-never-filed-target-'));
+    try {
+      await engine.executeRaw(`DELETE FROM pages WHERE slug LIKE 'concepts/%' AND slug <> 'concepts/never-filed-example'`);
+      mkdirSync(join(repo, 'concepts'), { recursive: true });
+      rmSync(join(repo, 'concepts'), { recursive: true, force: true });
+      symlinkSync(elsewhere, join(repo, 'concepts'));
+      const status = await getStorageStatus(engine, repo);
+      expect(status.missingFiles.map(m => m.slug)).toEqual(['atoms/filed-then-lost']);
+      expect(status.warnings.some(w => w.startsWith('concepts/never-filed-example'))).toBe(true);
+    } finally {
+      rmSync(join(repo, 'concepts'), { force: true });
+      rmSync(elsewhere, { recursive: true, force: true });
+    }
   });
 });

@@ -308,9 +308,7 @@ export async function getStorageStatus(
     // Missing means what `export --restore-only` restores: any page under a
     // db_only dir (a db_tracked parent dir does not exempt it) whose recorded
     // source_path, else <slug>.md, is absent, checked the way export checks.
-    // #10400: a derive-phase page that never recorded a file is database-only
-    // by design (persistence and doctor read it the same way), not lost.
-    if (!config || !isDbOnly(page.slug, config) || isNeverFiledDerivedPage(page.slug, page)) continue;
+    if (!config || !isDbOnly(page.slug, config)) continue;
     const sourcePath = page.source_path ?? null;
     // Fast path, no per-page syscall: the walk saw the exact file export
     // checks as a regular file under real (non-symlink) directories, so
@@ -338,7 +336,10 @@ export async function getStorageStatus(
       }
       continue;
     }
-    if (!present) missingFiles.push({ slug: page.slug, expectedPath });
+    // #10400: a derive-phase page that never recorded a file is database-only by
+    // design (persistence and doctor read it so), not lost; its path still went
+    // through export's checks above, so a refusal it would cause is reported.
+    if (!present && !isNeverFiledDerivedPage(page.slug, page)) missingFiles.push({ slug: page.slug, expectedPath });
   }
 
   // Ordered by each group's lowest slug, so warnings and the printed refusal
