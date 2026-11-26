@@ -72,6 +72,11 @@ describe('query op: the same strict keyword count as search', () => {
     expect((await callQuery({ query: 'brindlewort', where: { status: 'archived' } })).retrieval.keyword_total).toBe(1);
   });
 
+  test('a date or language filter the search listing cannot take is named in the meta', async () => {
+    expect((await callQuery({ query: 'brindlewort', since: '2026-01-01' })).retrieval.keyword_unlisted_filters).toEqual(['since']);
+    expect((await callQuery({ query: 'brindlewort', where: { status: 'archived' } })).retrieval.keyword_unlisted_filters).toBeUndefined();
+  });
+
   test('a query that names an entity marks the count, so zero literal matches never reads as meaning-only', async () => {
     const named = await callQuery({ query: 'Bob Example zzabsentword' });
     expect(named.retrieval.keyword_total).toBe(0);
@@ -106,6 +111,11 @@ describe('CLI stderr: the literal keyword count', () => {
   test('a counted hybrid search names the count and how to list every match', () => {
     const { err } = render('search', [ROW], { keyword_total: 3, keyword_truncated: true });
     expect(err).toContain('Keyword matches: 3 pages (pages containing these words, not a count of these rows). List them all with: gbrain search <words> --match keyword');
+  });
+
+  test('a query count under filters search cannot take says the listing holds more pages', () => {
+    const { err } = render('query', [ROW], { keyword_total: 3, keyword_truncated: true, keyword_unlisted_filters: ['since', 'symbol_kind'] });
+    expect(err).toContain('--match keyword (search ignores --since, --symbol-kind, so it also lists pages this count left out)');
   });
 
   test('zero matches and no resolved entity: the rows matched only by meaning', () => {

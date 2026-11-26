@@ -87,7 +87,9 @@ describe('serve --http enforces the /mcp limits the operator sets', () => {
         for (let i = 0; i < 40; i++) statuses.add((await post(app.base, listTools)).status);
         expect([...statuses].sort()).toEqual([200, 401]);
         const mid = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'search', arguments: { query: 'x'.repeat(1536 * 1024) } } });
-        expect((await post(app.base, mid, token)).status).not.toBe(413);
+        const answered = await post(app.base, mid, token);
+        expect(answered.status).not.toBe(413);
+        await answered.text(); // the search is still dispatching when the status arrives: read it to the end, or afterAll closes the engine under it
       } finally { await app.close(); }
     });
   }, 180_000);

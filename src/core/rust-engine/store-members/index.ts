@@ -95,6 +95,7 @@ import * as factsPurgeTx from './facts-purge-tx.ts';
 import * as purgePlan from './purge-plan.ts';
 import * as purgeEffects from './purge-effects.ts';
 import * as beliefPurge from './belief-purge.ts';
+import * as beliefPurgeLedger from './belief-purge-ledger.ts';
 import * as projectionRebuild from './projection-rebuild.ts';
 import * as factsRepair from './facts-repair.ts';
 import * as repairApplies from './repair-applies.ts';
@@ -255,7 +256,7 @@ export const STORE_MEMBERS = {
   ...cliReadsExport,
   ...cliEntities, ...adminReads, ...reflexReads, ...briefReads,
   // Group 5 facts statements (docs/research/rust-cli-contract-map.md).
-  ...factsDoctor, ...embeddingCatalog, ...fenceHolds, ...derivedGenerations, ...factsCycle, ...factsPurge, ...purgePlan, ...purgeEffects, ...beliefPurge, ...projectionRebuild, ...factsRepair, ...labelRepairReads, ...factTextRepair, ...lostFenceReads, ...factsTrust, ...derivationTrust, ...factsTrustReads, ...factsTrustOwner, ...factRelinkAttempts,
+  ...factsDoctor, ...embeddingCatalog, ...fenceHolds, ...derivedGenerations, ...factsCycle, ...factsPurge, ...purgePlan, ...purgeEffects, ...beliefPurge, ...beliefPurgeLedger, ...projectionRebuild, ...factsRepair, ...labelRepairReads, ...factTextRepair, ...lostFenceReads, ...factsTrust, ...derivationTrust, ...factsTrustReads, ...factsTrustOwner, ...factRelinkAttempts,
   ...ontologyRepair, ...factsRecall, ...factsForget, ...factsRemember, ...factsWritePath, ...factsProvenance, ...factsQuoted,
   ...factRelinkWrites,
   ...factsCycleFence, ...factsPhantom, ...factsPurgeReceipt, ...factsPurgeTx, ...factsPurgeJournal, ...factsPurgeProbe, ...factsConversation,

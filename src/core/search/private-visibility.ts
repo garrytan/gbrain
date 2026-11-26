@@ -575,9 +575,18 @@ export function callerReadersAllowedSql(alias: string, row: 'page' | 'snapshot' 
 type LabelledRecord = Pick<CallerAccess, 'identity' | 'audienceIdentities' | 'satisfiedRuleIds' | 'lineage' | 'owner'>;
 
 /** GBRA-108 design 1: every principal a labelled-only read may be named by (the identity, or each audience entry's). */
-function labelledIdentity(access: LabelledRecord): string[] {
+function labelledIdentity(access: Pick<LabelledRecord, 'identity' | 'audienceIdentities'>): string[] {
   const identity = [...new Set([...access.identity, ...access.audienceIdentities.flat()])].sort();
   return identity.length && validIdentity(identity) ? identity : [];
+}
+
+/**
+ * GBRA-108 design 1: the two sets a labelled-only conjunct tests a page against, as labelledOnlySql embeds them: the principals
+ * the page's readers may name (empty when any is not a valid identity) and the folder rules a page may hold (empty when any
+ * is not a valid qualified id). The Rust store takes them as data (`LabelledOnly`), so both engines judge the same sets.
+ */
+export function labelledOnlyTerms(access: Pick<LabelledRecord, 'identity' | 'audienceIdentities' | 'satisfiedRuleIds'>): { identity: string[]; satisfiedRuleIds: string[] } {
+  return { identity: labelledIdentity(access), satisfiedRuleIds: access.satisfiedRuleIds.every(validQualifiedRuleId) ? [...access.satisfiedRuleIds] : [] };
 }
 
 /**
@@ -589,8 +598,9 @@ function labelledIdentity(access: LabelledRecord): string[] {
  * `readers` false tests only the rules (a version snapshot carries its own readers). Ids embed as validated literals.
  */
 function labelledOnlySql(alias: string, access: LabelledRecord, readers = true): string {
-  const identity = textArraySql(labelledIdentity(access));
-  const satisfied = textArraySql(access.satisfiedRuleIds.every(validQualifiedRuleId) ? access.satisfiedRuleIds : []);
+  const terms = labelledOnlyTerms(access);
+  const identity = textArraySql(terms.identity);
+  const satisfied = textArraySql(terms.satisfiedRuleIds);
   const named = `(${readers ? `COALESCE(${alias}.page_readers && ${identity}, false) OR ` : ''}COALESCE(${alias}.folder_rule_ids && ${satisfied}, false))`;
   if (!access.lineage || access.owner) return named;
   return `(${named} OR ((${alias}.type IN ('atom', 'question', 'concept', 'event') OR ${alias}.frontmatter ? 'derived_from')
