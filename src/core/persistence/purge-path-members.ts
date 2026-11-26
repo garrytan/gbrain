@@ -83,7 +83,6 @@ const RETENTION_STOPS: PurgePathSite[] = [
   ['selectPurgeCandidates (persistence/purge-deleted.ts)', 'the candidate selection'],
   ['prunePurgeParks (persistence/purge-parks.ts)', 'the purge park prune'],
   ['notePurgeSourceWriter (persistence/purge-parks.ts)', 'the source writer note'],
-  ['readHeldConceptRows (persistence/concept-rebuild.ts)', 'the held concept read'],
 ].map(([site, what]) => ({ site: site!, owner: ours, entry: 'retention' as const, stop: `${what} runs through raw SQL` }));
 
 /**
@@ -176,6 +175,10 @@ export const PURGE_PATH: readonly PurgePathEntry[] = [
     'readPageEmbeddingBudget', 'readPageIndexingState', 'readSegmentedEmbedPage', 'releasePageEmbeddingLease', 'takePageEmbeddingLease',
     'hasSegmentStorage', 'getSource', 'getSourceStrictness', 'listOnboardingSources', 'listSharedSkillPackRoots', 'sharedSkillPackTablePresent',
     'registerBeforeDisconnect', 'applyTransactionSettings', 'readTransactionSettings', 'setWriteContext', 'transaction', 'transactionDirect',
+    // the managed Git effect runner the purge's publication effects reach (effects.ts): typed members the Rust store serves (rust-members-tail)
+    'claimCoalescedGitEffects', 'gitEffectStore',
+    // the held concept read of the retention purge (persistence/concept-rebuild.ts): a typed member the Rust store serves since concept-rebuild-rust, no longer a raw-SQL stop
+    'readHeldConceptRows',
     // config and the background ticks that share the consumer
     'getConfig', 'getConfigValues', 'getAllConfig', 'setConfig', 'expireMemoryProposals', 'listAwaitingMemoryProposals', 'purgeMemoryProposals',
     'ensureDreamMapConfigRow', 'lockDreamMapConfigRow', 'writeDreamMapConfigRow',
