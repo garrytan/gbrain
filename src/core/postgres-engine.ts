@@ -1202,8 +1202,8 @@ export class PostgresEngine implements BrainEngine {
   readReflexLiveKeys(scope: reflexReadsImpl.ReflexScope, slugs: readonly string[]) { return reflexReadsImpl.readReflexLiveKeys(this.executeRaw.bind(this), scope, slugs); }
   readReflexPages(scope: reflexReadsImpl.ReflexScope, match: reflexReadsImpl.ReflexPageMatch) { return reflexReadsImpl.readReflexPages(this.executeRaw.bind(this), scope, match); }
   listHeldFenceCells(keys: readonly cliReadsOpsImpl.HeldFenceCellKey[]) { return cliReadsOpsImpl.listHeldFenceCells(this.executeRaw.bind(this), keys); }
-  readFenceOverlayRows(page: { sourceId: string; slug: string }, incoming: readonly cliReadsOpsImpl.FenceOverlayIncomingRow[], opts: { hideHeld: boolean }) { return cliReadsOpsImpl.readFenceOverlayRows(this.executeRaw.bind(this), page, incoming, opts); }
-  readLiveStoredBody(sourceId: string, slug: string, lock = false) { return factsCycleImpl.readLiveStoredBody(this.executeRaw.bind(this), sourceId, slug, lock); }
+  readFenceOverlayRows(page: { sourceId: string; slug: string }, incoming: readonly cliReadsOpsImpl.FenceOverlayIncomingRow[], opts: { hideHeld: boolean }) { return this.ownRawRead(raw => cliReadsOpsImpl.readFenceOverlayRows(raw.executeRaw.bind(raw), page, incoming, opts)); } // a preparation's read: ends at its deadline (TYPED_PREPARATION_READS)
+  readLiveStoredBody(sourceId: string, slug: string, lock = false) { return lock ? factsCycleImpl.readLiveStoredBody(this.executeRaw.bind(this), sourceId, slug, lock) : this.ownRawRead(raw => factsCycleImpl.readLiveStoredBody(raw.executeRaw.bind(raw), sourceId, slug, lock)); } // a locking read keeps the caller's transaction; the plain read ends at a preparation's deadline
 
   // Facts statements, purge, withdrawal, relink and fence repair (engine-sql/facts-purge.ts), through executeRaw as before.
 
@@ -3791,8 +3791,8 @@ export class PostgresEngine implements BrainEngine {
   }
   isFactPurged(sourceId: string, visibility: string, claim: string, entitySlug: string | null) { return trustWithdrawalsImpl.isFactPurged(unscopedExecutor(refuseAborted(this.engineSql), 'trust: the purged-claim check ran through executeRaw unscoped'), sourceId, visibility, claim, entitySlug); }
   insertFactWithdrawal(sourceId: string, visibility: string, claim: string, subject: string, withdrawnAt: string | null) { return trustWithdrawalsImpl.insertFactWithdrawal(refuseAborted(this.autocommitSql), sourceId, visibility, claim, subject, withdrawnAt); }
-  readSourcePurgeFlags(sourceId: string) { return trustWithdrawalsImpl.readSourcePurgeFlags(unscopedExecutor(refuseAborted(this.engineSql), 'trust: the withdrawal and purge ledger read ran through executeRaw unscoped'), sourceId); }
-  listPurgedTakeRows(sourceId: string, takes: readonly trustWithdrawalsImpl.TakeClaimRow[], subject: string | null) { return trustWithdrawalsImpl.listPurgedTakeRows(unscopedExecutor(refuseAborted(this.engineSql), 'trust: the withdrawal and purge ledger read ran through executeRaw unscoped'), sourceId, takes, subject); }
+  readSourcePurgeFlags(sourceId: string) { return this.engineSqlRead(exec => trustWithdrawalsImpl.readSourcePurgeFlags(unscopedExecutor(exec, 'trust: the withdrawal and purge ledger read ran through executeRaw unscoped'), sourceId)); }
+  listPurgedTakeRows(sourceId: string, takes: readonly trustWithdrawalsImpl.TakeClaimRow[], subject: string | null) { return this.engineSqlRead(exec => trustWithdrawalsImpl.listPurgedTakeRows(unscopedExecutor(exec, 'trust: the withdrawal and purge ledger read ran through executeRaw unscoped'), sourceId, takes, subject)); }
   // Open loops (engine-sql/open-loops.ts). Writes keep executeRaw's read-only retry (#7183); reads run unscoped as before.
   upsertOpenLoop(loop: OpenLoopUpsertInput) { return whenNotAborted(() => openLoopsImpl.upsertOpenLoop(refuseAborted(this.autocommitSql), loop)); }
   closeOpenLoop(sourceId: string | null, id: number, status: Exclude<OpenLoopStatus, 'open'>, closedBy: string) { return whenNotAborted(() => openLoopsImpl.closeOpenLoop(refuseAborted(this.autocommitSql), sourceId, id, status, closedBy)); }
