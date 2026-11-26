@@ -53,3 +53,27 @@ export async function readConfirmations(engine: BrainEngine, pages: ReadonlyArra
 export async function saveConfirmation(engine: BrainEngine, c: RuleConfirmation): Promise<void> {
   await withOwnerProof(c.proof, () => engine.setConfig(confirmationKey(c.source_id, c.slug), JSON.stringify(c)));
 }
+
+/**
+ * The owner's approval of one proposal (a correct receipt) that has not finished yet: its revision, the rule's digest,
+ * the proof and the approved payload (source, rule and fact change as the owner saw them). It lives under the reserved prefix too, so only the owner's approval writes it and a later read or
+ * resume can trust it to finish the proposal under the owner's authority; nothing stored in the receipt is trusted. `steps`: the
+ * progress the approved run itself recorded, so a resume skips only the steps this approval finished.
+ */
+export interface PendingApproval { revision: string; rule_digest: string; proof: OwnerProof; payload: Record<string, unknown>; steps?: Record<string, unknown> }
+
+export const APPROVAL_PREFIX = `${RULE_CONFIRM_PREFIX}approval.`;
+
+export async function saveApproval(engine: BrainEngine, receiptId: string, a: PendingApproval): Promise<void> {
+  await withOwnerProof(a.proof, () => engine.setConfig(`${APPROVAL_PREFIX}${receiptId}`, JSON.stringify(a)));
+}
+
+export async function readApproval(engine: BrainEngine, receiptId: string): Promise<PendingApproval | null> {
+  const raw = await engine.getConfig(`${APPROVAL_PREFIX}${receiptId}`);
+  if (!raw) return null;
+  try { return JSON.parse(raw) as PendingApproval; } catch { return null; }
+}
+
+export async function clearApproval(engine: BrainEngine, receiptId: string, proof: OwnerProof): Promise<void> {
+  await withOwnerProof(proof, () => engine.unsetConfig(`${APPROVAL_PREFIX}${receiptId}`));
+}
