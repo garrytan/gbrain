@@ -23,7 +23,7 @@ import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { activateSharedSkillPersistence } from '../src/core/persistence/skill-activation.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { adoptSharedSkillpack, submitSharedSkillMutation } from '../src/core/shared-skills/publication.ts';
-import { listSharedSkills } from '../src/core/shared-skills/catalog.ts';
+import { getSharedSkill, listSharedSkills } from '../src/core/shared-skills/catalog.ts';
 import { setSharedSkillPolicy } from '../src/core/shared-skills/policy.ts';
 import { inventorySkillpack } from '../src/core/shared-skills/setup-files.ts';
 import type { SharedSkillPolicy } from '../src/core/shared-skills/model.ts';
@@ -31,7 +31,7 @@ import { withEnv } from './helpers/with-env.ts';
 import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
 
 const OPERATIONS = ['list_skills', 'get_skill', 'get_skill_asset', 'put_skill', 'delete_skill', 'set_skill_policy', 'list_brain_skillpack'];
-const POLICY: SharedSkillPolicy = { version: 1, enabled: true, classes: ['prose', 'reference', 'asset', 'script'], audiences: ['readers'], requirements: [], allow_follow: true };
+const POLICY: SharedSkillPolicy = { version: 1, enabled: true, classes: ['prose', 'reference', 'asset', 'script'], audiences: ['readers', 'oauth_client:editor'], requirements: [], allow_follow: true };
 const REFERENCE = 'skills/alpha/references/guide.md';
 const skillMd = (body: string) => `---\nname: alpha\ndescription: A synthetic fixture\ntriggers: [example task]\n---\n\n${body}\n`;
 
@@ -135,6 +135,27 @@ for (const [name, url] of backends) {
       const again = await adoptSharedSkillpack(f.local, 'default');
       expect({ same: revision(again) === revision(first), visible: (await listSharedSkills(f.reader)).skills.map(skill => skill.name) })
         .toEqual({ same: true, visible: [] });
+    }, url), 120_000);
+
+    // Value: protects=re-adoption keeps a file's restricted audience and media type, so a reader sees no more than before; fails_when=the carried file falls back to the readers audience or the default media type; why_new=no test re-adopted a restricted file; seam=none; no_claim=none
+    test('a reference file with a restricted audience and its own media type keeps both, and readers see no more', () => fixture(async f => {
+      await submitSharedSkillMutation(f.editor, 'put_skill', { request_id: randomUUID(), expected_revision: null,
+        source_id: 'default', source_incarnation: f.incarnation, pack_id: 'example-pack', name: 'alpha',
+        files: [{ path: 'skills/alpha/SKILL.md', content: skillMd('Use the guide.'), file_class: 'prose', depends_on: [REFERENCE] },
+          { path: REFERENCE, content: 'Guide body', file_class: 'reference', audience: ['oauth_client:editor'], media_type: 'text/plain' }] });
+      const manifest = JSON.parse(readFileSync(join(f.root, 'skillpack.json'), 'utf8')) as Record<string, unknown>;
+      writeFileSync(join(f.root, 'skillpack.json'), `${JSON.stringify({ ...manifest, brain_resident: true }, null, 2)}\n`);
+      const readerFiles = async () => (await getSharedSkill(f.reader, { name: 'alpha' })).files.map((file: { path: string }) => file.path).sort();
+      const before = await readerFiles();
+      writeFileSync(join(f.root, 'skills/alpha/SKILL.md'), skillMd('Use the guide, carefully.'));
+      await adoptSharedSkillpack(f.local, 'default', { expected_hashes: inventorySkillpack(f.root)!.hashes });
+      const head = (await f.engine.executeRaw<{ files: Array<{ path: string; audience: string[]; media_type: string }> }>(`SELECT r.files FROM shared_skill_heads h JOIN shared_skill_revisions r
+        ON r.source_id=h.source_id AND r.source_incarnation=h.source_incarnation AND r.pack_id=h.pack_id AND r.name=h.name AND r.revision=h.revision
+        WHERE h.source_id=$1 AND h.name=$2`, ['default', 'alpha']))[0];
+      const reference = head.files.find(file => file.path === REFERENCE);
+      expect({ audience: reference?.audience, media_type: reference?.media_type, readerBefore: before, readerAfter: await readerFiles() })
+        .toEqual({ audience: ['oauth_client:editor'], media_type: 'text/plain', readerBefore: before, readerAfter: before });
+      expect(before).not.toContain(REFERENCE);
     }, url), 120_000);
 
     // Value: protects=a reviewed removal of a reference file adopts, dropping the file and every edge to it, direct and transitive; fails_when=the carried depends_on still names the removed file and adoption refuses; why_new=no test removed a dependency through adoption; seam=none; no_claim=none
