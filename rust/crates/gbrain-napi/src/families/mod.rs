@@ -45,6 +45,7 @@ mod fact_relink;
 mod fact_relink_writes;
 mod facts_holding_purges;
 mod field_usage;
+mod follower;
 mod generations;
 mod graph;
 mod import_members;
