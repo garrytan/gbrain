@@ -542,6 +542,16 @@ three partial runs in a row that stop v0.53.0. Run `gbrain apply-migrations --mi
 when no other gbrain process holds the brain. A change to the skill files
 themselves is still a conflict.
 
+The same client run is refused `owner_unavailable` at the ownership stage, and
+`gbrain sources writer activate --shared-skills --expected-state ...` refuses it
+too, since only the owner re-checks the reviewed state and writes the activation
+flag (in one transaction). On the owner, the migration reads that stored flag
+and adopts the pack of a source whose registered absolute root it owns. An empty
+content root stops that source with `action_required` and a reason that starts
+`packaged_pack_unsupported`, because the packaged memory pack cannot be installed
+on a Rust brain yet: add the pack files (or adopt a reviewed pack), then run the
+migration again.
+
 An install whose 0.53.0 migration already shows as wedged (three partial runs
 before parking existed) resumes with
 `gbrain apply-migrations --force-retry 0.53.0`, then
