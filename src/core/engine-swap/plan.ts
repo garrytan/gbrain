@@ -8,6 +8,7 @@
  * but not run.
  */
 import { createHash } from 'node:crypto';
+import { collationReport, type CollationReport } from './collation-report.ts';
 import { FAILBACK_ACCEPTED_LOSSES, FAILBACK_KNOWN_LIMITS, FINGERPRINT_RULE_TEXT, RUST_REMOTE_LIMITS, WAY_BACK_TEXT } from './failback.ts';
 import { failbackLosses, type FailbackLosses } from './failback-read.ts';
 import type { BrainEngine } from '../engine.ts';
@@ -58,6 +59,8 @@ export interface SwapPlan {
   blockers: SwapBlocker[];
   /** The way back (not bound by the plan hash): failback's closed loss list, accepted losses, known limits and rules. */
   way_back: WayBack;
+  /** Report only, not bound by the plan hash: the lists whose order changes on a non-byte-order Postgres source (D25 A1). */
+  collation: CollationReport;
   plan_hash: string;
 }
 
@@ -153,6 +156,7 @@ export async function planEngineSwap(engine: BrainEngine, deps: SwapPlanInputs =
     write_pause: await estimateWritePause(engine),
     blockers: await swapBlockers(engine, { remoteMcpConfigured: !!deps.remoteMcpConfigured, rustServes: deps.rustServes }),
     way_back: await wayBack(engine),
+    collation: collationReport(String(engine.kind), status?.fingerprints?.probe ?? null),
   };
   return { ...base, plan_hash: planHash(base) };
 }
