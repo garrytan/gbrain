@@ -27,7 +27,7 @@ export interface WriteSamplerOptions {
   random?: () => number;
   /** The supervisor's `send`: false when the line was not accepted (the sample is then unobserved). */
   send: (line: string) => boolean;
-  /** The serving process's write count (follower.published): a move beyond the sampled write's own marks the sample `moved`. */
+  /** The serving process's count of writes that can change a compared row (follower.pageLinkWrites): a move beyond the sampled write's own marks the sample `moved`, unless the data fence ran and completed for it (then the fence decides). */
   generation?: () => number | undefined;
   active: () => boolean;
   /** Records a sample that will never reach the child (`send_shed`, `readback_abandoned`) for the child to count uncomparable; false when it could not be recorded, and the count then rides on the next accepted line. */
@@ -47,6 +47,8 @@ export interface TxScope {
   open(): number;
   /** The nested transaction `id` rolled back: the writes it noted are not in the final state, so they are forgotten. */
   drop(id: number): void;
+  /** The transaction's callback is done and the commit is next, still inside the transaction: a sample whose page was written to again after the page write (chunks, aliases, tags) reads the revision the page will commit with, on `tx`, the transaction's own connection. Never throws. */
+  beforeCommit(tx: BrainEngine): Promise<void>;
   /** The transaction committed: the samples are judged against the writes it made, read back and sent. A rolled-back transaction never calls this. */
   commit(): void;
 }
@@ -113,16 +115,19 @@ async function inSavepoint<T>(within: BrainEngine, read: (tx: BrainEngine) => Pr
   return out!.value;
 }
 
-/** True when the data fence finds the rows moved, or cannot be read (never a quiet pass): the copied pages and links are read again and compared, and putPage's returned revision must be the one read back. */
-async function fenced(engine: BrainEngine, op: string, args: unknown[], targets: PageRef[], pre: PreImage, result: unknown, back: { pages: unknown[] }): Promise<boolean> {
+/**
+ * The data fence's verdict: `moved` when it finds the rows moved, `failed` when it cannot be read (never a quiet pass), else `clear`. The copied pages and links are read again and compared, and putPage's
+ * revision must be the one read back: the revision the write returned, or (a sample whose transaction wrote the page again, so the tags trigger rewrote it) the one the page was about to commit with.
+ */
+async function fenced(engine: BrainEngine, op: string, args: unknown[], targets: PageRef[], pre: PreImage, result: unknown, back: { pages: unknown[] }, committedRevision?: string): Promise<'clear' | 'moved' | 'failed'> {
   try {
     if (op === 'putPage') {
-      const wrote = (result as { knowledge_revision?: unknown } | null)?.knowledge_revision;
-      if (typeof wrote !== 'string' || (back.pages[0] as { knowledge_revision?: unknown } | null)?.knowledge_revision !== wrote) return true;
+      const wrote = committedRevision ?? (result as { knowledge_revision?: unknown } | null)?.knowledge_revision;
+      if (typeof wrote !== 'string' || (back.pages[0] as { knowledge_revision?: unknown } | null)?.knowledge_revision !== wrote) return 'moved';
     }
     const again = await readPreimage(engine, op, [...targets, ...pre.pages.map((p) => ({ source: p.source_id ?? 'default', slug: p.slug ?? '' }))]);
-    return movedOutsideFootprint(op, args, pre, again);
-  } catch { return true; }
+    return movedOutsideFootprint(op, args, pre, again) ? 'moved' : 'clear';
+  } catch { return 'failed'; }
 }
 
 /** The options the Rust putPage takes (store-members/pages.ts `takeOptions`; `inline` it ignores). The whole options object is sent with the write, and any other key (`contextualRetrieval`, which the store refuses) is one the replay does not carry: the sample is uncomparable. */
@@ -175,7 +180,7 @@ export const JOURNAL_MEMBER_STATEMENTS: ReadonlyMap<string, readonly string[]> =
 const BOOKKEEPING_MEMBERS: ReadonlySet<string> = new Set([...JOURNAL_MEMBER_STATEMENTS].filter(([, sqls]) => bookkeepingStatements(sqls)).map(([name]) => name));
 const pageKey = (name: string, args: unknown[]): string => { const r = pageRefs(name === STAMP ? 'putPage' : name, name === STAMP ? [args[0], undefined, { sourceId: args[1] }] : args)[0]; return r ? `${r.source}\0${r.slug}` : ''; };
 
-interface TxSample { at: number; key: string; op: string; bad?: string; read?: (then: unknown[][]) => void }
+interface TxSample { at: number; key: string; op: string; bad?: string; /** The page's revision just before the commit (beforeCommit), when the transaction wrote the page again after its putPage. */ revision?: string; read?: (then: unknown[][]) => void }
 interface Scope extends TxScope { root: BrainEngine; log: Array<{ name: string; key: string; args?: unknown[]; path: number[]; kind?: 'bookkeeping' | 'seal' }>; samples: TxSample[]; nested: number }
 
 const PREIMAGE_REASONS: ReadonlySet<string> = new Set(['preimage_too_large', 'preimage_timeout', 'soft_deleted_page', 'fact_overlay']);
@@ -210,15 +215,16 @@ export function createWriteSampler(o: WriteSamplerOptions): WriteSampler {
   /** Read-backs still running; `abandoned` is set when settle() has counted one, so it sends nothing later (a sample is counted once). */
   const reading = new Set<{ abandoned: boolean; done: Promise<void> }>();
   /** Off the request path, and nothing in it may escape: an encode that throws (a segmented page's body getters) is one more uncomparable sample. */
-  const readBackAndSend = (engine: BrainEngine, name: string, args: unknown[], encoded: unknown[], targets: PageRef[], pre: PreImage, result: unknown, before: number | undefined, then: unknown[][] = []): void => {
+  const readBackAndSend = (engine: BrainEngine, name: string, args: unknown[], encoded: unknown[], targets: PageRef[], pre: PreImage, result: unknown, before: number | undefined, then: unknown[][] = [], committedRevision?: string): void => {
     const sample = { abandoned: false, done: Promise.resolve() };
     sample.done = (async () => {
       try {
         const back = await readBack(engine, targets, pageSet(targets, pre));
         const after = o.generation?.();
-        let moved = before !== undefined && after !== undefined && after - before > 1;
-        // A brain other processes can write (not PGLite, whose single-writer file lock rules them out) needs the data fence (write-compare.ts).
-        if (!moved && hasCapability(engine, 'postgres_admin')) moved = await fenced(engine, name, args, targets, pre, result, back);
+        // A brain other processes can write (not PGLite, whose single-writer file lock rules them out) needs the data fence (write-compare.ts). Where it ran and completed for this sample it decides, and sees every process's writes to the copied rows,
+        // so the counter (this process's writes to pages or links, whichever rows) does not also decide; a fence that failed marks the sample moved. Without a completed fence the counter decides, as it always did.
+        const fence = hasCapability(engine, 'postgres_admin') ? await fenced(engine, name, args, targets, pre, result, back, committedRevision) : undefined;
+        const moved = fence === undefined ? before !== undefined && after !== undefined && after - before > 1 : fence !== 'clear';
         if (!sample.abandoned) send({ t: 'write', op: name, args: encoded, pre, post: encodeValue(back), moved, ...(then.length ? { then: then.map((a) => encodeArgs(a, { left: CAPTURE_BUDGET_BYTES })) } : {}) });
       } catch { if (!sample.abandoned) uncomparable(name, 'readback_failed'); }
     })();
@@ -247,7 +253,7 @@ export function createWriteSampler(o: WriteSamplerOptions): WriteSampler {
       try { sent = run(); } finally { open(); } // sent before other members are let go: they keep their order behind it
       let result: unknown;
       try { result = await sent; } catch (error) { s.bad ??= 'primary_write_failed'; throw error; }
-      if (pre) s.read = (then) => readBackAndSend(scope.root, name, args, encoded, targets, pre!, result, before, then);
+      if (pre) s.read = (then) => readBackAndSend(scope.root, name, args, encoded, targets, pre!, result, before, then, s.revision);
       return result;
     })();
   };
@@ -299,6 +305,30 @@ export function createWriteSampler(o: WriteSamplerOptions): WriteSampler {
       const sc: Scope = {
         root, log: [], samples: [], gate: null, inflight: 0, nested: 0,
         note: (name, args, path = []) => { sc.log.push({ name, key: name === 'putPage' || name === 'createVersion' || name === STAMP ? pageKey(name, args) : '', path, ...(name === STAMP ? { args } : {}), ...(BOOKKEEPING_MEMBERS.has(name) ? { kind: 'bookkeeping' as const } : {}), ...(name === 'executeRaw' ? { kind: rawKind(args) } : {}) }); },
+        beforeCommit: async (tx) => {
+          try {
+            if (!hasCapability(sc.root, 'postgres_admin')) return; // the fence (and so the revision check) runs only where others can write
+            // Only a sample whose page was written again after its putPage can have a revision other than the one putPage returned.
+            const rewritten = sc.samples.filter((s) => s.read && !s.bad && sc.log.some((w, i) => i > s.at && LATER_WRITES.has(w.name) && w.name !== STAMP));
+            if (!rewritten.length) return;
+            // A call still running (pipelined, not awaited) may send statements inside the savepoint below, which is rolled back: nothing is read, and the sample is not comparable.
+            if (sc.inflight > 0) { for (const s of rewritten) s.bad ??= 'in_transaction_busy'; return; }
+            let open!: () => void; sc.gate = new Promise<void>((resolve) => { open = () => { sc.gate = null; resolve(); }; });
+            try {
+              for (const s of rewritten) {
+                const [source, slug] = s.key.split('\0');
+                try {
+                  s.revision = await inSavepoint(tx, async (inner) => {
+                    await inner.executeRaw(`SET LOCAL statement_timeout = ${PREIMAGE_TIMEOUT_MS}`);
+                    const [row] = await inner.executeRaw<{ r: string | null }>('/* shadow write revision */ SELECT knowledge_revision::text AS r FROM pages WHERE source_id = $1 AND slug = $2', [source, slug]);
+                    if (typeof row?.r !== 'string') throw new Error('revision_missing');
+                    return row.r;
+                  });
+                } catch { s.bad ??= 'preimage_unreadable'; }
+              }
+            } finally { open(); }
+          } catch { /* the shadow never fails a write */ }
+        },
         open: () => ++sc.nested,
         drop: (id) => { for (let i = sc.log.length - 1; i >= 0; i--) if (sc.log[i]!.path.includes(id)) { sc.log.splice(i, 1); for (const s of sc.samples) if (s.at > i) s.at--; } },
         commit: () => { for (const s of sc.samples) { const bad = s.bad ?? judge(sc, s); if (bad || !s.read) uncomparable(s.op, bad ?? 'in_transaction'); else s.read(sc.log.filter((w, i) => i > s.at && w.name === STAMP && w.key === s.key).map((w) => w.args!)); } },
