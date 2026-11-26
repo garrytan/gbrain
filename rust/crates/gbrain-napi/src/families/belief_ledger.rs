@@ -291,6 +291,33 @@ impl Brain {
         })
     }
 
+    /// `listBeliefDriftCandidates(sourceId, incarnation)`: resolves the slugs the drift scan may check.
+    #[napi]
+    pub fn list_belief_drift_candidates<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        incarnation: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_belief_drift_candidates(&source_id, &incarnation)
+        })
+    }
+
+    /// `readNewestBeliefEvent(sourceId, incarnation, slug)`: resolves the slug's newest event, or null.
+    #[napi]
+    pub fn read_newest_belief_event<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        incarnation: String,
+        slug: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_newest_belief_event(&source_id, &incarnation, &slug)
+        })
+    }
+
     /// `listBeliefBaselinePending({ sourceId, runId, after, skip, limit })`: resolves the slugs.
     #[napi]
     pub fn list_belief_baseline_pending<'env>(

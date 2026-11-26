@@ -377,6 +377,31 @@ impl Brain {
         })
     }
 
+    /// `listLiveGenerationRetirements(sourceIds, restoreDays)`: resolves `{ source_id, kind, keys, items, oldest }` per
+    /// source and kind (the doctor's retirement count).
+    #[napi]
+    pub fn list_live_generation_retirements<'env>(
+        &self,
+        env: &'env Env,
+        source_ids: Vec<String>,
+        restore_days: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_live_generation_retirements(&source_ids, restore_days)
+        })
+    }
+
+    /// `listHeldGenerations(sourceIds)`: resolves `{ source_id, kind, held_reason, count, oldest }` per source, kind and
+    /// reason (the doctor's held count).
+    #[napi]
+    pub fn list_held_generations<'env>(
+        &self,
+        env: &'env Env,
+        source_ids: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_held_generations(&source_ids))
+    }
+
     /// `readHeldGenerationProposal(id)`: resolves `{ proposal, hold_id }` or null.
     #[napi]
     pub fn read_held_generation_proposal<'env>(

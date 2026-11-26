@@ -27,6 +27,9 @@ export const DOCTOR_MEMBERS = {
   listHeldGenerations: 'health',
   listOrphanGenerationCandidates: 'health',
   readAtomProvenanceCounts: 'health',
+  listBodyRecheckGroups: 'health',
+  readBodyRecheckPage: 'health',
+  listBodyRecheckVersions: 'health',
   readExtractRollup7d: 'health',
   readExtractKindRollup7d: 'health',
   listRecordedHaltReasons7d: 'health',
@@ -84,6 +87,9 @@ export const DOCTOR_MEMBERS = {
   listOauthClientAuthShapes: 'access_control',
   listDanglingFederatedReads: 'access_control',
   listPrivilegedDcrClients: 'access_control',
+  listMalformedReaderPages: 'access_control',
+  listUnknownReaders: 'access_control',
+  listRecentReaderNarrowings: 'access_control',
   readMcpRequestLogBytes: 'telemetry',
   countMcpRequestLogRows: 'telemetry',
   hasMcpLogRowsPastWindow: 'telemetry',
@@ -131,6 +137,18 @@ export const DOCTOR_MEMBERS = {
   listReaderCandidatePages: 'health',
   listContentBlockedReceipts: 'persistence_journal',
   listPassAdmittedReceipts: 'persistence_journal',
+  // The legacy_slug_spellings check: row security (the store has none) and the candidate page scan
+  readRowSecurityTables: 'health',
+  listSlugSpellingCandidates: 'health',
+  // gbrain repair slug-spelling's preview: the server encoding (always UTF8), row security (none), the source row, the source
+  // candidate scan, the same-printed-name read and the page slug re-check
+  readServerEncoding: 'health',
+  readRowSecurityBrainTables: 'health',
+  readSlugRepairSource: 'health',
+  listSourceSlugSpellingCandidates: 'health',
+  readSpellingKeyPages: 'health',
+  readPageSlugInSource: 'health',
+  readSlugRepairPage: 'health',
   // Doctor sync reads: the managed-sync cursor, failure and orphan statements doctor ran through executeRaw
   listManagedSyncCursorFailureRows: 'persistence_journal',
   listManagedSyncOrphanRowsets: 'persistence_journal',

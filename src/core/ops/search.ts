@@ -60,7 +60,7 @@ import { entitySavedFacts, stripCollapseColumns } from '../search/entity-facts.t
 import { FACT_MATCH_STOPWORDS, matchingSavedFacts } from '../search/saved-facts-match.ts';
 import { collapseFactReads } from '../facts/capture-dedup.ts';
 import { mentionCoverageNotice, readMentionCoverage } from '../mentions/coverage.ts';
-import { keepEnumeratedRows, keywordCountMeta, keywordOnlyBounds, parseSearchPaging, queryKeywordCountFilters, readKeywordPage, startKeywordCount, withCountMeta } from '../search/keyword-paging.ts';
+import { keepEnumeratedRows, keywordCountMeta, keywordOnlyBounds, parseSearchPaging, queryKeywordCountFilters, queryUnlistedCountFilters, readKeywordPage, startKeywordCount, withCountMeta } from '../search/keyword-paging.ts';
 import { searchLimitCap } from '../search/eval-pool-depth.ts';
 import { heldFilesNotice, stampHeldHits } from '../persistence/held-reads.ts';
 import { opError } from './contract.ts';
@@ -1264,7 +1264,7 @@ const query: Operation = {
     // #3800: cap AFTER capture/meta/CRAG so every internal consumer graded
     // and recorded the real payload; only the returned envelope is snipped.
     return evidenceOutput(ctx, p, results, plan, queryScope, capturedMeta, snippetCap, timings,
-      async rows => withCountMeta(withExplainTarget({ ...(await buildRetrievalResponseMeta(ctx, querySourceScope, queryText, rows, capturedMeta, { types, typeFilterNotice: typeFilter.notice, declarations, feedbackOp: 'query', entity: fanned.entity, filterHintFor: { op: 'query', p }, timings })), crag, ...(fanned.fanout ? { fanout: fanned.fanout } : {}), ...(pageCapMeta ? { page_cap: pageCapMeta } : {}) }, finishExplainTarget(ctx, p, explainPrep, results, 'query', capturedMeta?.degraded)), keywordCountMeta(await timings.part('response', 'keyword_count', () => keywordCount), ((p.offset as number) || 0) + results.length, !!(fanned.entity || fanned.fanout))), false, 'delivered' in page ? page.delivered : undefined);
+      async rows => withCountMeta(withExplainTarget({ ...(await buildRetrievalResponseMeta(ctx, querySourceScope, queryText, rows, capturedMeta, { types, typeFilterNotice: typeFilter.notice, declarations, feedbackOp: 'query', entity: fanned.entity, filterHintFor: { op: 'query', p }, timings })), crag, ...(fanned.fanout ? { fanout: fanned.fanout } : {}), ...(pageCapMeta ? { page_cap: pageCapMeta } : {}) }, finishExplainTarget(ctx, p, explainPrep, results, 'query', capturedMeta?.degraded)), keywordCountMeta(await timings.part('response', 'keyword_count', () => keywordCount), ((p.offset as number) || 0) + results.length, !!(fanned.entity || fanned.fanout), queryUnlistedCountFilters(p))), false, 'delivered' in page ? page.delivered : undefined);
   },
   scope: 'read', mutating: false,
   cliHints: { name: 'query', positional: ['query'] },

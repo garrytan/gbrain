@@ -273,7 +273,10 @@ inventory:
 - `tree.json` carries `files` (every test file the run executed, repo-relative)
   and `tests` (its executed tests). `scripts/ci-full-suite-tree.sh` takes them from
   the run's `ci-manifest.json`, and only when that manifest is complete and names
-  the same run, attempt and commit. Otherwise both are left out with a warning:
+  the same run and commit, from this attempt or an earlier one (a re-run of only
+  `full-suite` keeps the earlier attempt's manifest, which counts only when the
+  `executed-receipts` job that writes it succeeded; a manifest newer than the
+  attempt is refused). Otherwise both are left out with a warning:
   the run still counts for merge, but gstack refuses it (`inventory_uncovered`).
   A push that reused a run has no `full-suite` job, so it is never evidence.
 - `tree.json` carries `os`, the runner's OS from `RUNNER_OS` (`Linux` for both

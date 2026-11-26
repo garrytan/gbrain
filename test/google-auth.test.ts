@@ -258,7 +258,8 @@ describe('buildAuthUrl', () => {
     expect(url).toContain('access_type=offline');
     expect(url).toContain('prompt=consent');
     expect(url).toContain('code_challenge_method=S256');
-    expect(url).toContain('include_granted_scopes=true');
+    // GST-3849 custody: a consent never merges earlier grants of the client.
+    expect(url).toContain('include_granted_scopes=false');
 
     const params = new URL(url).searchParams;
     expect(params.get('client_id')).toBe(CLIENT_ID);

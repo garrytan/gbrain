@@ -7,7 +7,7 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { withEnv } from './helpers/with-env.ts';
-import { openclawAgentSkillDirs } from '../src/core/setup/openclaw-skill-plugin.ts';
+import { openclawSkillRoots } from '../src/core/setup/openclaw-skill-plugin.ts';
 
 const root = mkdtempSync(join(tmpdir(), 'gbrain-oc-agent-skills-'));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
@@ -19,6 +19,6 @@ test("a roster agent's ~/ workspace resolves under OPENCLAW_HOME", async () => {
   mkdirSync(join(home, 'ws', 'skills'), { recursive: true });
   await withEnv({ HOME: home, OPENCLAW_HOME: openclawHome, OPENCLAW_STATE_DIR: undefined, OPENCLAW_CONFIG_PATH: undefined, OPENCLAW_PROFILE: undefined }, async () => {
     const roster = [{ id: 'writer', workspace: '~/ws' }, { id: 'other', workspace: '~/elsewhere' }];
-    expect(openclawAgentSkillDirs('writer', roster)).toEqual([join(openclawHome, 'ws', 'skills')]);
+    expect(openclawSkillRoots('writer', null, { roster }).roots).toEqual([{ dir: join(openclawHome, 'ws', 'skills'), source: 'openclaw-workspace' }]);
   });
 });

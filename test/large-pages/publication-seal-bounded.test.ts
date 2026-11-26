@@ -50,7 +50,6 @@ import { segmentedWriteThrough } from '../helpers/segmented-writes-proxy.ts';
 const home = mkdtempSync(join(tmpdir(), 'gbrain-publication-seal-'));
 const env = { GBRAIN_HOME: home, OPENAI_API_KEY: undefined, VOYAGE_API_KEY: undefined, ANTHROPIC_API_KEY: undefined, GBRAIN_PLANNER_AUTO_ANALYZE: '0' };
 afterAll(() => { rmSync(home, { recursive: true, force: true }); });
-const PROJECTION_PAGE_READ = "FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL AND body_storage='segmented'";
 
 interface PlanNode { 'Node Type'?: string; 'Index Name'?: string; 'Parent Relationship'?: string; 'Actual Rows'?: number; 'Actual Loops'?: number;
   'Rows Removed by Filter'?: number; 'Rows Removed by Index Recheck'?: number; Plans?: PlanNode[] }
@@ -140,8 +139,7 @@ function measuredTx(tx: BrainEngine, log: Statement[]): BrainEngine {
  */
 function measuredWrite(engine: BrainEngine, publication: Statement[]): BrainEngine {
   return new Proxy(engine, { get(target, prop, receiver) {
-    if (prop === 'executeRaw') return (sql: string, params?: unknown[], opts?: unknown) => sql.includes(PROJECTION_PAGE_READ)
-      ? Promise.reject(new Error('projection lost (probe)')) : target.executeRaw(sql, params, opts as never);
+    if (prop === 'readSegmentedProjectionPage') return () => Promise.reject(new Error('projection lost (probe)'));
     if (prop === 'transaction') return (fn: (tx: BrainEngine) => Promise<unknown>, opts?: unknown) => target.transaction(async tx => {
       const log: Statement[] = [];
       let flipped = false;
