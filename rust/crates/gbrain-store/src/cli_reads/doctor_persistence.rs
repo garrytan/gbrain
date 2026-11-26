@@ -16,8 +16,8 @@ use crate::kv::KvRead;
 use crate::pages::read_page;
 use crate::persistence::topology::topology_terminal_bytes;
 use crate::persistence::{
-    worktree_owner_host, all_counters, all_requests, and3, extra_bool, extra_i64, extra_is_null, extra_time, json_text,
-    sql_like,
+    all_counters, all_requests, and3, extra_bool, extra_i64, extra_is_null, extra_time, json_text,
+    sql_like, worktree_owner_host,
 };
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -451,7 +451,9 @@ impl Store {
             let this_hosts = match worktree_of(r) {
                 None => true,
                 Some(worktree) => match &host {
-                    Some(host) => worktree_owner_host(&*read, worktree)?.as_deref() == Some(host.as_str()),
+                    Some(host) => {
+                        worktree_owner_host(&*read, worktree)?.as_deref() == Some(host.as_str())
+                    }
                     None => false,
                 },
             };

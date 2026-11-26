@@ -148,10 +148,9 @@ fn only_a_row_of_this_run_that_heads_its_own_group_on_this_hosts_active_worktree
     );
     edit(
         &s,
-        &s.read_write_request_by_id(&head).unwrap().unwrap()["id"]
+        s.read_write_request_by_id(&head).unwrap().unwrap()["id"]
             .as_str()
-            .unwrap()
-            .to_owned(),
+            .unwrap(),
         |_| {},
     );
     let other_run = spec(json!({ "run": "run-2" }));

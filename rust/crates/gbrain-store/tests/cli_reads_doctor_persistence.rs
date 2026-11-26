@@ -135,7 +135,12 @@ fn an_empty_journal_answers_the_empty_state_of_every_read() {
         store.read_publication_refusals().unwrap(),
         json!({ "guard": 0, "trigger": 0, "opaque": 0 })
     );
-    assert!(store.list_running_claim_owners(Some(HOST)).unwrap().is_empty());
+    assert!(
+        store
+            .list_running_claim_owners(Some(HOST))
+            .unwrap()
+            .is_empty()
+    );
     assert!(store.list_local_edit_adoptions().unwrap().is_empty());
     let ids = vec!["default".to_string()];
     let ops = vec!["put_page".to_string()];

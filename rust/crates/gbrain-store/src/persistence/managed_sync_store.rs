@@ -20,7 +20,9 @@ use super::effects::all_effects;
 use super::housekeeping::HousekeepingRow;
 use super::op_checkpoint::{delete_op_checkpoint_in, parent_key};
 use super::projection_queue::parse_timestamptz;
-use super::worktrees::{SOURCE_BINDING, SourceBindingRecord, read_host_record, read_worktree_record, scan_records};
+use super::worktrees::{
+    SOURCE_BINDING, SourceBindingRecord, read_host_record, read_worktree_record, scan_records,
+};
 use super::write_claim_terms::worktree_of;
 use super::{HOUSEKEEPING, all_requests, json_text, uuid_param};
 use crate::env::{Env, iso};
@@ -46,13 +48,15 @@ fn edge_space(c: char) -> bool {
 }
 
 fn blank(value: &Option<String>) -> bool {
-    value.as_deref().is_none_or(|v| v.trim_matches(edge_space).is_empty())
+    value
+        .as_deref()
+        .is_none_or(|v| v.trim_matches(edge_space).is_empty())
 }
 
 // ---------------------------------------------------------------------------------------------
 // Parameters, as the statement's `$n` reads them.
 
-pub(super) fn param<'a>(p: &'a [Value], i: usize) -> Result<&'a Value> {
+pub(super) fn param(p: &[Value], i: usize) -> Result<&Value> {
     p.get(i)
         .ok_or_else(|| StoreError::invalid(format!("a sync statement needs parameter ${}", i + 1)))
 }
@@ -82,7 +86,10 @@ pub(super) fn texts(p: &[Value], i: usize) -> Result<Vec<String>> {
                 other => other.to_string(),
             })
             .collect()),
-        _ => Err(StoreError::invalid(format!("parameter ${} is not an array", i + 1))),
+        _ => Err(StoreError::invalid(format!(
+            "parameter ${} is not an array",
+            i + 1
+        ))),
     }
 }
 
@@ -100,10 +107,9 @@ pub(super) fn big(value: &Value) -> Result<i64> {
             .as_i64()
             .or_else(|| n.as_f64().map(|f| f as i64))
             .ok_or_else(|| StoreError::invalid("a bigint parameter is not an integer")),
-        Value::String(s) => s
-            .trim()
-            .parse::<i64>()
-            .map_err(|_| StoreError::invalid(format!("invalid input syntax for type bigint: \"{s}\""))),
+        Value::String(s) => s.trim().parse::<i64>().map_err(|_| {
+            StoreError::invalid(format!("invalid input syntax for type bigint: \"{s}\""))
+        }),
         _ => Err(StoreError::invalid("a bigint parameter is not a number")),
     }
 }
@@ -118,7 +124,8 @@ pub(super) fn opt_big(p: &[Value], i: usize) -> Result<Option<i64>> {
 /// `completed_keys` text parameter (`$n::text::jsonb`).
 pub(super) fn jsonb_param(p: &[Value], i: usize) -> Result<Value> {
     let raw = text(p, i)?;
-    serde_json::from_str(&raw).map_err(|_| StoreError::invalid("a jsonb parameter is not valid JSON"))
+    serde_json::from_str(&raw)
+        .map_err(|_| StoreError::invalid("a jsonb parameter is not valid JSON"))
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -132,7 +139,10 @@ pub(super) fn op_rows(read: &dyn KvRead, op: &str) -> Result<Vec<(String, Housek
     let mut out = Vec::new();
     let mut bad = false;
     scan_prefix(read, &prefix, false, &mut |k, v| {
-        match (std::str::from_utf8(&k[prefix.len()..]), serde_json::from_slice::<HousekeepingRow>(v)) {
+        match (
+            std::str::from_utf8(&k[prefix.len()..]),
+            serde_json::from_slice::<HousekeepingRow>(v),
+        ) {
             (Ok(fingerprint), Ok(row)) => out.push((fingerprint.to_owned(), row)),
             _ => bad = true,
         }
@@ -147,7 +157,11 @@ pub(super) fn op_rows(read: &dyn KvRead, op: &str) -> Result<Vec<(String, Housek
     Ok(out)
 }
 
-pub(super) fn op_row(read: &dyn KvRead, op: &str, fingerprint: &str) -> Result<Option<HousekeepingRow>> {
+pub(super) fn op_row(
+    read: &dyn KvRead,
+    op: &str,
+    fingerprint: &str,
+) -> Result<Option<HousekeepingRow>> {
     get_json::<HousekeepingRow>(read, &parent_key(op, fingerprint)?)
 }
 
@@ -161,11 +175,20 @@ pub(super) fn first_text(row: &HousekeepingRow, key: &str) -> Option<String> {
     first(row).and_then(|v| json_text(v.get(key)))
 }
 
-pub(super) fn put_row(tx: &mut dyn KvWrite, env: &dyn Env, op: &str, fingerprint: &str, completed_keys: Value) -> Result<()> {
+pub(super) fn put_row(
+    tx: &mut dyn KvWrite,
+    env: &dyn Env,
+    op: &str,
+    fingerprint: &str,
+    completed_keys: Value,
+) -> Result<()> {
     put_json(
         tx,
         &parent_key(op, fingerprint)?,
-        &HousekeepingRow { completed_keys, updated_at_us: env.now_micros() },
+        &HousekeepingRow {
+            completed_keys,
+            updated_at_us: env.now_micros(),
+        },
     )
 }
 
@@ -178,7 +201,11 @@ pub(super) fn jsonb_now(env: &dyn Env) -> String {
 fn jsonb_timestamp(micros: i64) -> String {
     let iso = iso(micros);
     let trimmed = iso.trim_end_matches('Z');
-    let trimmed = if trimmed.contains('.') { trimmed.trim_end_matches('0').trim_end_matches('.') } else { trimmed };
+    let trimmed = if trimmed.contains('.') {
+        trimmed.trim_end_matches('0').trim_end_matches('.')
+    } else {
+        trimmed
+    };
     format!("{trimmed}+00:00")
 }
 
@@ -260,13 +287,17 @@ fn run_read(read: &dyn KvRead, env: &dyn Env, name: &str, p: &[Value]) -> Result
             Some(s) => rows(vec![json!({ "config": Value::Object(s.config.clone()) })]),
             None => rows(vec![]),
         },
-        "source_local_path" | "source_local_path_shared" => match read_source(read, &text(p, 0)?)? {
-            Some(s) => rows(vec![json!({ "local_path": s.local_path })]),
-            None => rows(vec![]),
-        },
+        "source_local_path" | "source_local_path_shared" => {
+            match read_source(read, &text(p, 0)?)? {
+                Some(s) => rows(vec![json!({ "local_path": s.local_path })]),
+                None => rows(vec![]),
+            }
+        }
         "source_last_commit" => {
             let incarnation = uuid_param(&text(p, 1)?, "incarnation")?;
-            match read_source(read, &text(p, 0)?)?.filter(|s| s.incarnation.eq_ignore_ascii_case(&incarnation)) {
+            match read_source(read, &text(p, 0)?)?
+                .filter(|s| s.incarnation.eq_ignore_ascii_case(&incarnation))
+            {
                 Some(s) => rows(vec![json!({ "last_commit": s.last_commit })]),
                 None => rows(vec![]),
             }
@@ -287,11 +318,15 @@ fn run_read(read: &dyn KvRead, env: &dyn Env, name: &str, p: &[Value]) -> Result
         // ---- op_checkpoints reads
         "hold_fingerprints" => {
             let (op, source) = (text(p, 0)?, text(p, 1)?);
-            rows(op_rows(read, &op)?
-                .into_iter()
-                .filter(|(_, row)| first_text(row, "source_id").as_deref() == Some(source.as_str()))
-                .map(|(fingerprint, _)| json!({ "fingerprint": fingerprint }))
-                .collect())
+            rows(
+                op_rows(read, &op)?
+                    .into_iter()
+                    .filter(|(_, row)| {
+                        first_text(row, "source_id").as_deref() == Some(source.as_str())
+                    })
+                    .map(|(fingerprint, _)| json!({ "fingerprint": fingerprint }))
+                    .collect(),
+            )
         }
         "held_fingerprints" => {
             let op = text(p, 0)?;
@@ -309,7 +344,9 @@ fn run_read(read: &dyn KvRead, env: &dyn Env, name: &str, p: &[Value]) -> Result
             None => rows(vec![]),
         },
         "checkpoint_first" => match op_row(read, &text(p, 0)?, &text(p, 1)?)? {
-            Some(row) => rows(vec![json!({ "value": first(&row).cloned().unwrap_or(Value::Null) })]),
+            Some(row) => rows(vec![
+                json!({ "value": first(&row).cloned().unwrap_or(Value::Null) }),
+            ]),
             None => rows(vec![]),
         },
         "checkpoint_prefix" => {
@@ -322,8 +359,14 @@ fn run_read(read: &dyn KvRead, env: &dyn Env, name: &str, p: &[Value]) -> Result
         }
         "failure_key_present" => {
             let wanted: HashSet<String> = texts(p, 0)?.into_iter().collect();
-            let any = op_rows(read, "managed-sync-failure")?.iter().any(|(fingerprint, _)| wanted.contains(fingerprint));
-            rows(if any { vec![json!({ "?column?": 1 })] } else { vec![] })
+            let any = op_rows(read, "managed-sync-failure")?
+                .iter()
+                .any(|(fingerprint, _)| wanted.contains(fingerprint));
+            rows(if any {
+                vec![json!({ "?column?": 1 })]
+            } else {
+                vec![]
+            })
         }
         "idle_facts" => {
             let source = text(p, 0)?;
@@ -334,7 +377,9 @@ fn run_read(read: &dyn KvRead, env: &dyn Env, name: &str, p: &[Value]) -> Result
                 .and_then(|row| first_text(&row, "count"))
                 .and_then(|n| n.trim().parse::<i64>().ok())
                 .unwrap_or(0);
-            rows(vec![json!({ "failures": failures, "hold_summary": hold_summary })])
+            rows(vec![
+                json!({ "failures": failures, "hold_summary": hold_summary }),
+            ])
         }
         "cursor_rows" => {
             let (source, incarnation) = (text(p, 0)?, text(p, 1)?);
@@ -355,7 +400,10 @@ fn run_read(read: &dyn KvRead, env: &dyn Env, name: &str, p: &[Value]) -> Result
                 })
                 .collect();
             // ORDER BY updated_at DESC, fingerprint COLLATE "C".
-            found.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.as_bytes().cmp(b.1.as_bytes())));
+            found.sort_by(|a, b| {
+                b.0.cmp(&a.0)
+                    .then_with(|| a.1.as_bytes().cmp(b.1.as_bytes()))
+            });
             rows(found.into_iter().map(|(_, _, v)| v).collect())
         }
         "reserved_usd" => {
@@ -366,14 +414,20 @@ fn run_read(read: &dyn KvRead, env: &dyn Env, name: &str, p: &[Value]) -> Result
                 .collect();
             let usd: f64 = matched
                 .iter()
-                .filter_map(|(_, row)| first_text(row, "usd").and_then(|n| n.trim().parse::<f64>().ok()))
+                .filter_map(|(_, row)| {
+                    first_text(row, "usd").and_then(|n| n.trim().parse::<f64>().ok())
+                })
                 .sum();
             rows(vec![json!({ "usd": usd, "rows": matched.len() })])
         }
 
         // ---- pages and requests
         "open_requests" => {
-            let (worktree, source, incarnation) = (text(p, 0)?, text(p, 1)?, uuid_param(&text(p, 2)?, "incarnation")?);
+            let (worktree, source, incarnation) = (
+                text(p, 0)?,
+                text(p, 1)?,
+                uuid_param(&text(p, 2)?, "incarnation")?,
+            );
             rows(all_requests(read)?
                 .into_iter()
                 .filter(|r| request_is(r, &OPEN) && r.source_id == source && in_scope(r, &worktree, &source, &incarnation))
@@ -386,12 +440,18 @@ fn run_read(read: &dyn KvRead, env: &dyn Env, name: &str, p: &[Value]) -> Result
             let (worktree, source) = (text(p, 0)?, text(p, 1)?);
             let requests: Vec<_> = all_requests(read)?
                 .into_iter()
-                .filter(|r| r.source_id == source && worktree_of(r).is_some_and(|w| w.eq_ignore_ascii_case(&worktree)))
+                .filter(|r| {
+                    r.source_id == source
+                        && worktree_of(r).is_some_and(|w| w.eq_ignore_ascii_case(&worktree))
+                })
                 .collect();
             let mut out = Vec::new();
             for e in all_effects(read)? {
-                if e.kind == "git" && (e.state == "queued" || e.state == "running")
-                    && let Some(r) = requests.iter().find(|r| r.id.eq_ignore_ascii_case(&e.request_id))
+                if e.kind == "git"
+                    && (e.state == "queued" || e.state == "running")
+                    && let Some(r) = requests
+                        .iter()
+                        .find(|r| r.id.eq_ignore_ascii_case(&e.request_id))
                 {
                     out.push(json!({ "page_id": r.page_id, "path": json_text(e.data.get("relative_path")) }));
                 }
@@ -409,8 +469,11 @@ fn run_read(read: &dyn KvRead, env: &dyn Env, name: &str, p: &[Value]) -> Result
         }
         "stored_timeline_page" => {
             // One keyset page of a page's own timeline rows (no event projection), by id (`date_text` is `date::text`, the date as it is stored).
-            let (page_id, after, limit) = (big(param(p, 0)?)?, big(param(p, 1)?)?, big(param(p, 2)?)?);
-            let Ok(page_id) = u64::try_from(page_id) else { return Ok(rows(vec![])) };
+            let (page_id, after, limit) =
+                (big(param(p, 0)?)?, big(param(p, 1)?)?, big(param(p, 2)?)?);
+            let Ok(page_id) = u64::try_from(page_id) else {
+                return Ok(rows(vec![]));
+            };
             let mut out: Vec<TimelineRecord> = Vec::new();
             let mut failure = None;
             scan_prefix(read, &keys::timeline_prefix(page_id), false, &mut |_, v| {
@@ -433,10 +496,16 @@ fn run_read(read: &dyn KvRead, env: &dyn Env, name: &str, p: &[Value]) -> Result
         }
         "slug_prefix_probe" => {
             let (source, pattern) = (text(p, 0)?, text(p, 1)?);
-            let found = all_pages(read)?
-                .into_iter()
-                .any(|pg| pg.source_id == source && pg.deleted_at_us.is_none() && crate::keyword::sql_like(&pg.slug, &pattern));
-            rows(if found { vec![json!({ "one": 1 })] } else { vec![] })
+            let found = all_pages(read)?.into_iter().any(|pg| {
+                pg.source_id == source
+                    && pg.deleted_at_us.is_none()
+                    && crate::keyword::sql_like(&pg.slug, &pattern)
+            });
+            rows(if found {
+                vec![json!({ "one": 1 })]
+            } else {
+                vec![]
+            })
         }
         "pages_for_adoption" => {
             let (source, slugs) = (text(p, 0)?, texts(p, 1)?);
@@ -478,7 +547,10 @@ fn run_read(read: &dyn KvRead, env: &dyn Env, name: &str, p: &[Value]) -> Result
                 .collect())
         }
         "page_writers" => {
-            let (source, ids) = (text(p, 0)?, param(p, 1)?.as_array().cloned().unwrap_or_default());
+            let (source, ids) = (
+                text(p, 0)?,
+                param(p, 1)?.as_array().cloned().unwrap_or_default(),
+            );
             let wanted: Vec<i64> = ids.iter().filter_map(|v| big(v).ok()).collect();
             let requests = all_requests(read)?;
             let mut out = Vec::new();
@@ -507,25 +579,40 @@ fn run_read(read: &dyn KvRead, env: &dyn Env, name: &str, p: &[Value]) -> Result
                 .into_iter()
                 .filter(|r| {
                     worktree_of(r).is_some_and(|w| w == worktree)
-                        && (r.sequence as i64) > lo && (r.sequence as i64) <= hi
+                        && (r.sequence as i64) > lo
+                        && (r.sequence as i64) <= hi
                         && request_is(r, &["queued", "deferred", "running", "recovering"])
-                        && r.source_id == source && kind_of(r).as_deref() == Some("managed_sync_import")
+                        && r.source_id == source
+                        && kind_of(r).as_deref() == Some("managed_sync_import")
                 })
                 .map(|r| r.sequence)
                 .collect();
             found.sort_unstable();
-            rows(found.into_iter().map(|n| json!({ "sequence": n.to_string() })).collect())
+            rows(
+                found
+                    .into_iter()
+                    .map(|n| json!({ "sequence": n.to_string() }))
+                    .collect(),
+            )
         }
         "fence_trend_range" | "fence_trend_open" | "fence_trend_after" => {
             let worktree = uuid_param(&text(p, 0)?, "worktreeId")?;
             let (source, after) = (text(p, 1)?, big(param(p, 2)?)?);
-            let upper = if name == "fence_trend_range" { Some(big(param(p, 3)?)?) } else { None };
+            let upper = if name == "fence_trend_range" {
+                Some(big(param(p, 3)?)?)
+            } else {
+                None
+            };
             let open: Vec<i64> = if name == "fence_trend_open" {
                 text(p, 3)?
                     .trim_matches(|c| c == '{' || c == '}')
                     .split(',')
                     .filter(|s| !s.trim().is_empty())
-                    .map(|s| s.trim().parse::<i64>().map_err(|_| StoreError::invalid("an open sequence is not a bigint")))
+                    .map(|s| {
+                        s.trim()
+                            .parse::<i64>()
+                            .map_err(|_| StoreError::invalid("an open sequence is not a bigint"))
+                    })
                     .collect::<Result<_>>()?
             } else {
                 Vec::new()
@@ -540,10 +627,15 @@ fn run_read(read: &dyn KvRead, env: &dyn Env, name: &str, p: &[Value]) -> Result
                         _ => seq > after,
                     };
                     worktree_of(r).is_some_and(|w| w == worktree)
-                        && r.source_id == source && in_range && r.state == "committed"
+                        && r.source_id == source
+                        && in_range
+                        && r.state == "committed"
                         && kind_of(r).as_deref() == Some("managed_sync_import")
                         && json_text(r.intent.get("passId")).is_some()
-                        && r.outcome.as_ref().and_then(|o| o.get("fences_normalized")).is_some_and(Value::is_array)
+                        && r.outcome
+                            .as_ref()
+                            .and_then(|o| o.get("fences_normalized"))
+                            .is_some_and(Value::is_array)
                 })
                 .collect();
             found.sort_by_key(|r| r.sequence);
@@ -566,7 +658,11 @@ fn run_read(read: &dyn KvRead, env: &dyn Env, name: &str, p: &[Value]) -> Result
         "lease_fence" => {
             let token = uuid_param(&text(p, 1)?, "token")?;
             let live = crate::jobs::live_lock_token(read, &text(p, 0)?, env.now_micros())?;
-            rows(if live.is_some_and(|t| t.eq_ignore_ascii_case(&token)) { vec![json!({ "?column?": 1 })] } else { vec![] })
+            rows(if live.is_some_and(|t| t.eq_ignore_ascii_case(&token)) {
+                vec![json!({ "?column?": 1 })]
+            } else {
+                vec![]
+            })
         }
         "database_now" => rows(vec![json!({ "at": iso(env.now_micros()) })]),
 
@@ -575,77 +671,131 @@ fn run_read(read: &dyn KvRead, env: &dyn Env, name: &str, p: &[Value]) -> Result
             let (pid, host) = (big(param(p, 1)?)?, opt_text(p, 2)?);
             let holder = crate::jobs::live_lock_holder(read, &text(p, 0)?, env.now_micros())?
                 .filter(|(holder_pid, holder_host)| !(*holder_pid == pid && *holder_host == host));
-            rows(holder.map(|(pid, host)| json!({ "holder_pid": pid, "holder_host": host })).into_iter().collect())
+            rows(
+                holder
+                    .map(|(pid, host)| json!({ "holder_pid": pid, "holder_host": host }))
+                    .into_iter()
+                    .collect(),
+            )
         }
-        "source_incarnation_text" | "source_incarnation_plain" => match read_source(read, &text(p, 0)?)? {
-            Some(s) => rows(vec![json!({ "incarnation": s.incarnation })]),
-            None => rows(vec![]),
-        },
+        "source_incarnation_text" | "source_incarnation_plain" => {
+            match read_source(read, &text(p, 0)?)? {
+                Some(s) => rows(vec![json!({ "incarnation": s.incarnation })]),
+                None => rows(vec![]),
+            }
+        }
 
         // ---- the round snapshot and the pass reads
         "round_snapshot" => rows(vec![]),
         "cursor_header_slices" => {
-            let header = op_row(read, "managed-sync", &text(p, 0)?)?.and_then(|row| first(&row).cloned());
+            let header =
+                op_row(read, "managed-sync", &text(p, 0)?)?.and_then(|row| first(&row).cloned());
             let prefix = text(p, 2)?;
-            let slices = op_rows(read, &text(p, 1)?)?.iter().any(|(fingerprint, _)| fingerprint.starts_with(&prefix));
-            rows(vec![json!({ "header": header.unwrap_or(Value::Null), "slices": slices })])
+            let slices = op_rows(read, &text(p, 1)?)?
+                .iter()
+                .any(|(fingerprint, _)| fingerprint.starts_with(&prefix));
+            rows(vec![
+                json!({ "header": header.unwrap_or(Value::Null), "slices": slices }),
+            ])
         }
         "pass_idle_probe" => pass_idle_probe(read, p)?,
         "revision_attestations" => revision_attestations(read, p)?,
         "file_removing_deletes" => file_removing_deletes(read, p)?,
         "legacy_deletions" => {
-            let (source, incarnation, slugs) = (text(p, 0)?, uuid_param(&text(p, 1)?, "incarnation")?, texts(p, 2)?);
+            let (source, incarnation, slugs) = (
+                text(p, 0)?,
+                uuid_param(&text(p, 1)?, "incarnation")?,
+                texts(p, 2)?,
+            );
             let mut newest: std::collections::BTreeMap<String, (u64, String)> = Default::default();
             for r in all_requests(read)? {
-                if r.source_id == source && r.source_incarnation.eq_ignore_ascii_case(&incarnation) && r.state == "committed"
+                if r.source_id == source
+                    && r.source_incarnation.eq_ignore_ascii_case(&incarnation)
+                    && r.state == "committed"
                     && slugs.contains(&r.slug)
-                    && (r.operation == "delete_page" || kind_of(&r).as_deref() == Some("managed_sync_delete"))
+                    && (r.operation == "delete_page"
+                        || kind_of(&r).as_deref() == Some("managed_sync_delete"))
                     && newest.get(&r.slug).is_none_or(|(seq, _)| r.sequence > *seq)
                 {
                     newest.insert(r.slug.clone(), (r.sequence, r.id.clone()));
                 }
             }
-            rows(newest.into_iter().map(|(slug, (_, id))| json!({ "slug": slug, "id": id })).collect())
+            rows(
+                newest
+                    .into_iter()
+                    .map(|(slug, (_, id))| json!({ "slug": slug, "id": id }))
+                    .collect(),
+            )
         }
         "tail_slugs" => tail_slugs(read, p)?,
 
         // ---- markers and the origin checks
         "source_commit_config" => match read_source(read, &text(p, 0)?)? {
-            Some(s) => rows(vec![json!({ "last_commit": s.last_commit, "config": Value::Object(s.config.clone()) })]),
+            Some(s) => rows(vec![
+                json!({ "last_commit": s.last_commit, "config": Value::Object(s.config.clone()) }),
+            ]),
             None => rows(vec![]),
         },
         "source_state" => match read_source(read, &text(p, 0)?)? {
-            Some(s) => rows(vec![json!({ "incarnation": s.incarnation, "last_commit": s.last_commit, "config": Value::Object(s.config.clone()) })]),
+            Some(s) => rows(vec![
+                json!({ "incarnation": s.incarnation, "last_commit": s.last_commit, "config": Value::Object(s.config.clone()) }),
+            ]),
             None => rows(vec![]),
         },
         "page_owning_origin" => {
             let (source, id, paths) = (text(p, 0)?, big(param(p, 1)?)?, texts(p, 2)?);
             let owned = all_pages(read)?.into_iter().any(|pg| {
-                pg.source_id == source && pg.id as i64 != id && pg.deleted_at_us.is_none()
+                pg.source_id == source
+                    && pg.id as i64 != id
+                    && pg.deleted_at_us.is_none()
                     && pg.source_path.as_ref().is_some_and(|sp| paths.contains(sp))
             });
-            rows(if owned { vec![json!({ "?column?": 1 })] } else { vec![] })
+            rows(if owned {
+                vec![json!({ "?column?": 1 })]
+            } else {
+                vec![]
+            })
         }
 
         // ---- carried requests, checkout heads and the converged watermark
         "open_pass_requests" => {
             let (source, pass_id) = (text(p, 0)?, text(p, 1)?);
-            let carried: Vec<String> = texts(p, 2)?.into_iter().map(|id| id.to_lowercase()).collect();
+            let carried: Vec<String> = texts(p, 2)?
+                .into_iter()
+                .map(|id| id.to_lowercase())
+                .collect();
             let limit = big(param(p, 3)?)?.max(0) as usize;
             let mut found: Vec<_> = all_requests(read)?
                 .into_iter()
                 .filter(|r| {
-                    request_is(r, &OPEN) && r.source_id == source
-                        && matches!(kind_of(r).as_deref(), Some("managed_sync_import" | "managed_sync_delete"))
-                        && (json_text(r.intent.get("passId")).as_deref() == Some(pass_id.as_str()) || carried.contains(&r.id.to_lowercase()))
+                    request_is(r, &OPEN)
+                        && r.source_id == source
+                        && matches!(
+                            kind_of(r).as_deref(),
+                            Some("managed_sync_import" | "managed_sync_delete")
+                        )
+                        && (json_text(r.intent.get("passId")).as_deref() == Some(pass_id.as_str())
+                            || carried.contains(&r.id.to_lowercase()))
                 })
                 .collect();
             found.sort_by_key(|r| r.sequence);
-            rows(found.into_iter().take(limit).map(|r| json!({ "id": r.id })).collect())
+            rows(
+                found
+                    .into_iter()
+                    .take(limit)
+                    .map(|r| json!({ "id": r.id }))
+                    .collect(),
+            )
         }
         "settle_carried" => {
-            let ids: Vec<String> = texts(p, 0)?.into_iter().map(|id| id.to_lowercase()).collect();
-            let mut found: Vec<_> = all_requests(read)?.into_iter().filter(|r| ids.contains(&r.id.to_lowercase())).collect();
+            let ids: Vec<String> = texts(p, 0)?
+                .into_iter()
+                .map(|id| id.to_lowercase())
+                .collect();
+            let mut found: Vec<_> = all_requests(read)?
+                .into_iter()
+                .filter(|r| ids.contains(&r.id.to_lowercase()))
+                .collect();
             found.sort_by_key(|r| r.sequence);
             rows(found
                 .into_iter()
@@ -676,10 +826,18 @@ fn run_read(read: &dyn KvRead, env: &dyn Env, name: &str, p: &[Value]) -> Result
             let worktree = uuid_param(&text(p, 0)?, "worktreeId")?;
             let (source, incarnation) = (text(p, 1)?, uuid_param(&text(p, 2)?, "incarnation")?);
             let requests = all_requests(read)?;
-            let a = requests.iter().filter(|r| worktree_of(r).is_some_and(|w| w == worktree)).map(|r| r.sequence).max();
+            let a = requests
+                .iter()
+                .filter(|r| worktree_of(r).is_some_and(|w| w == worktree))
+                .map(|r| r.sequence)
+                .max();
             let b = requests
                 .iter()
-                .filter(|r| worktree_of(r).is_none() && r.source_id == source && r.source_incarnation.eq_ignore_ascii_case(&incarnation))
+                .filter(|r| {
+                    worktree_of(r).is_none()
+                        && r.source_id == source
+                        && r.source_incarnation.eq_ignore_ascii_case(&incarnation)
+                })
                 .map(|r| r.sequence)
                 .max();
             rows(vec![json!({ "hwm": a.max(b).map(|n| n.to_string()) })])
@@ -693,28 +851,52 @@ fn run_read(read: &dyn KvRead, env: &dyn Env, name: &str, p: &[Value]) -> Result
             let mut open: Vec<_> = requests
                 .iter()
                 .filter(|r| {
-                    request_is(r, &OPEN) && in_scope(r, &worktree, &source, &incarnation)
-                        && own.as_ref().is_none_or(|o| *o != r.request_id.to_lowercase())
+                    request_is(r, &OPEN)
+                        && in_scope(r, &worktree, &source, &incarnation)
+                        && own
+                            .as_ref()
+                            .is_none_or(|o| *o != r.request_id.to_lowercase())
                 })
                 .collect();
             open.sort_by_key(|r| r.sequence);
-            let mut out: Vec<Value> = open.into_iter().take(cap).map(|r| json!({ "id": format!("r:{}", r.request_id.to_lowercase()) })).collect();
+            let mut out: Vec<Value> = open
+                .into_iter()
+                .take(cap)
+                .map(|r| json!({ "id": format!("r:{}", r.request_id.to_lowercase()) }))
+                .collect();
             let mut effects: Vec<_> = all_effects(read)?
                 .into_iter()
                 .filter(|e| {
-                    e.kind == "git" && (e.state == "queued" || e.state == "running")
-                        && requests.iter().any(|r| r.id.eq_ignore_ascii_case(&e.request_id) && worktree_of(r).is_some_and(|w| w == worktree))
+                    e.kind == "git"
+                        && (e.state == "queued" || e.state == "running")
+                        && requests.iter().any(|r| {
+                            r.id.eq_ignore_ascii_case(&e.request_id)
+                                && worktree_of(r).is_some_and(|w| w == worktree)
+                        })
                 })
                 .collect();
             effects.sort_by_key(|e| e.id);
-            out.extend(effects.into_iter().take(cap).map(|e| json!({ "id": format!("e:{}", e.id) })));
+            out.extend(
+                effects
+                    .into_iter()
+                    .take(cap)
+                    .map(|e| json!({ "id": format!("e:{}", e.id) })),
+            );
             rows(out)
         }
         "converged_writeback" => {
-            let ids: Vec<String> = texts(p, 0)?.into_iter().map(|id| id.to_lowercase()).collect();
+            let ids: Vec<String> = texts(p, 0)?
+                .into_iter()
+                .map(|id| id.to_lowercase())
+                .collect();
             let found: std::collections::BTreeSet<String> = all_effects(read)?
                 .into_iter()
-                .filter(|e| e.kind == "git" && e.state != "committed" && e.data.get("settled").is_none() && ids.contains(&e.request_id.to_lowercase()))
+                .filter(|e| {
+                    e.kind == "git"
+                        && e.state != "committed"
+                        && e.data.get("settled").is_none()
+                        && ids.contains(&e.request_id.to_lowercase())
+                })
                 .map(|e| e.request_id.to_lowercase())
                 .collect();
             rows(found.into_iter().map(|id| json!({ "id": id })).collect())
@@ -732,35 +914,56 @@ fn run_read(read: &dyn KvRead, env: &dyn Env, name: &str, p: &[Value]) -> Result
                 if let Some(s) = read_source(read, &id)?.filter(|s| !s.archived)
                     && let Some(row) = op_row(read, &op, &format!("{}:{}", s.id, s.incarnation))?
                 {
-                    let outcome = first(&row).and_then(|v| json_text(v.pointer("/telemetry/outcome")));
+                    let outcome =
+                        first(&row).and_then(|v| json_text(v.pointer("/telemetry/outcome")));
                     out.push(json!({ "source_id": s.id, "updated_at": iso(row.updated_at_us), "outcome": outcome }));
                 }
             }
             rows(out)
         }
         "pass_banked" => {
-            let (source, pass_id, hold_op, prefix) = (text(p, 0)?, text(p, 1)?, text(p, 2)?, text(p, 3)?);
+            let (source, pass_id, hold_op, prefix) =
+                (text(p, 0)?, text(p, 1)?, text(p, 2)?, text(p, 3)?);
             let started = parse_timestamptz(&text(p, 4)?, "startedAt")?;
             let incarnation = text(p, 5)?;
-            let binding = scan_records::<SourceBindingRecord>(read, SOURCE_BINDING, "source binding")?
-                .into_iter()
-                .find(|b| b.source_id == source && b.source_incarnation == incarnation);
+            let binding =
+                scan_records::<SourceBindingRecord>(read, SOURCE_BINDING, "source binding")?
+                    .into_iter()
+                    .find(|b| b.source_id == source && b.source_incarnation == incarnation);
             let by_request = binding.as_ref().is_some_and(|b| {
-                all_requests(read).map(|requests| requests.into_iter().any(|r| {
-                    worktree_of(&r).is_some_and(|w| w.eq_ignore_ascii_case(&b.worktree_id))
-                        && r.source_incarnation.eq_ignore_ascii_case(&b.source_incarnation) && r.state == "committed"
-                        && super::sql_like(&kind_of(&r).unwrap_or_default(), "managed_sync_%")
-                        && r.completed_at_us.is_some_and(|at| at >= started)
-                        && json_text(r.intent.get("passId")).as_deref() == Some(pass_id.as_str())
-                })).unwrap_or(false)
+                all_requests(read)
+                    .map(|requests| {
+                        requests.into_iter().any(|r| {
+                            worktree_of(&r).is_some_and(|w| w.eq_ignore_ascii_case(&b.worktree_id))
+                                && r.source_incarnation
+                                    .eq_ignore_ascii_case(&b.source_incarnation)
+                                && r.state == "committed"
+                                && super::sql_like(
+                                    &kind_of(&r).unwrap_or_default(),
+                                    "managed_sync_%",
+                                )
+                                && r.completed_at_us.is_some_and(|at| at >= started)
+                                && json_text(r.intent.get("passId")).as_deref()
+                                    == Some(pass_id.as_str())
+                        })
+                    })
+                    .unwrap_or(false)
             });
             let mut by_hold = false;
             for (fingerprint, row) in op_rows(read, &hold_op)? {
-                if !fingerprint.starts_with(&prefix) || first_text(&row, "run_id").as_deref() != Some(pass_id.as_str()) {
+                if !fingerprint.starts_with(&prefix)
+                    || first_text(&row, "run_id").as_deref() != Some(pass_id.as_str())
+                {
                     continue;
                 }
-                let held = first_text(&row, "held_at").map(|t| parse_timestamptz(&t, "held_at")).transpose()?;
-                if held.is_some_and(|h| h >= started) && first(&row).and_then(|v| v.pointer("/meta/basis_moved")).is_none() {
+                let held = first_text(&row, "held_at")
+                    .map(|t| parse_timestamptz(&t, "held_at"))
+                    .transpose()?;
+                if held.is_some_and(|h| h >= started)
+                    && first(&row)
+                        .and_then(|v| v.pointer("/meta/basis_moved"))
+                        .is_none()
+                {
                     by_hold = true;
                     break;
                 }
@@ -768,7 +971,8 @@ fn run_read(read: &dyn KvRead, env: &dyn Env, name: &str, p: &[Value]) -> Result
             rows(vec![json!({ "banked": by_request || by_hold })])
         }
         "pass_rewritten_holds" => {
-            let (source, hold_op, prefix, pass_id) = (text(p, 0)?, text(p, 1)?, text(p, 2)?, text(p, 3)?);
+            let (source, hold_op, prefix, pass_id) =
+                (text(p, 0)?, text(p, 1)?, text(p, 2)?, text(p, 3)?);
             let started = parse_timestamptz(&text(p, 4)?, "startedAt")?;
             let codes = texts(p, 5)?;
             let (after, limit) = (text(p, 6)?, big(param(p, 7)?)?.max(0) as usize);
@@ -779,12 +983,16 @@ fn run_read(read: &dyn KvRead, env: &dyn Env, name: &str, p: &[Value]) -> Result
                 }
                 let Some(record) = first(&row) else { continue };
                 let meta = |key: &str| record.pointer(&format!("/meta/{key}")).is_some();
-                let updated = json_text(record.get("updated_at")).map(|t| parse_timestamptz(&t, "updated_at")).transpose()?;
+                let updated = json_text(record.get("updated_at"))
+                    .map(|t| parse_timestamptz(&t, "updated_at"))
+                    .transpose()?;
                 let code = json_text(record.get("code"));
                 if json_text(record.get("run_id")).as_deref() != Some(pass_id.as_str())
                     || !updated.is_some_and(|u| u >= started)
                     || code.as_ref().is_none_or(|c| codes.contains(c))
-                    || meta("basis_moved") || meta("retry_only") || meta("keep_deleted")
+                    || meta("basis_moved")
+                    || meta("retry_only")
+                    || meta("keep_deleted")
                 {
                     continue;
                 }
@@ -793,7 +1001,9 @@ fn run_read(read: &dyn KvRead, env: &dyn Env, name: &str, p: &[Value]) -> Result
                     .and_then(|id| read_page_by_id(read, id).ok().flatten())
                     .filter(|pg| pg.source_id == source)
                     .map(|pg| pg.knowledge_revision);
-                out.push(json!({ "fingerprint": fingerprint, "record": record, "revision": revision }));
+                out.push(
+                    json!({ "fingerprint": fingerprint, "record": record, "revision": revision }),
+                );
                 if out.len() >= limit {
                     break;
                 }
@@ -804,11 +1014,17 @@ fn run_read(read: &dyn KvRead, env: &dyn Env, name: &str, p: &[Value]) -> Result
         // ---- the apply round and the folded stamp
         "live_slugs" | "landing_live_slugs" => {
             let (source, slugs) = (text(p, 0)?, texts(p, 1)?);
-            rows(all_pages(read)?
-                .into_iter()
-                .filter(|pg| pg.source_id == source && pg.deleted_at_us.is_none() && slugs.contains(&pg.slug))
-                .map(|pg| json!({ "slug": pg.slug }))
-                .collect())
+            rows(
+                all_pages(read)?
+                    .into_iter()
+                    .filter(|pg| {
+                        pg.source_id == source
+                            && pg.deleted_at_us.is_none()
+                            && slugs.contains(&pg.slug)
+                    })
+                    .map(|pg| json!({ "slug": pg.slug }))
+                    .collect(),
+            )
         }
         "unreadable_hold_paths" => {
             let op = text(p, 0)?;
@@ -825,16 +1041,28 @@ fn run_read(read: &dyn KvRead, env: &dyn Env, name: &str, p: &[Value]) -> Result
             rows(out)
         }
         "pages_revisions_shared" => {
-            let (source, ids) = (text(p, 0)?, param(p, 1)?.as_array().cloned().unwrap_or_default());
+            let (source, ids) = (
+                text(p, 0)?,
+                param(p, 1)?.as_array().cloned().unwrap_or_default(),
+            );
             let wanted: Vec<i64> = ids.iter().filter_map(|v| big(v).ok()).collect();
-            rows(all_pages(read)?
-                .into_iter()
-                .filter(|pg| pg.source_id == source && pg.deleted_at_us.is_none() && wanted.contains(&(pg.id as i64)))
-                .map(|pg| json!({ "id": pg.id, "revision": pg.knowledge_revision }))
-                .collect())
+            rows(
+                all_pages(read)?
+                    .into_iter()
+                    .filter(|pg| {
+                        pg.source_id == source
+                            && pg.deleted_at_us.is_none()
+                            && wanted.contains(&(pg.id as i64))
+                    })
+                    .map(|pg| json!({ "id": pg.id, "revision": pg.knowledge_revision }))
+                    .collect(),
+            )
         }
         "writeback_effects" => {
-            let ids: Vec<String> = texts(p, 0)?.into_iter().map(|id| id.to_lowercase()).collect();
+            let ids: Vec<String> = texts(p, 0)?
+                .into_iter()
+                .map(|id| id.to_lowercase())
+                .collect();
             rows(all_effects(read)?
                 .into_iter()
                 .filter(|e| e.kind == "git" && ids.contains(&e.request_id.to_lowercase()))
@@ -845,8 +1073,12 @@ fn run_read(read: &dyn KvRead, env: &dyn Env, name: &str, p: &[Value]) -> Result
         }
         "source_mode" => {
             let incarnation = uuid_param(&text(p, 1)?, "incarnation")?;
-            match read_source(read, &text(p, 0)?)?.filter(|s| s.incarnation.eq_ignore_ascii_case(&incarnation)) {
-                Some(s) => rows(vec![json!({ "last_commit": s.last_commit, "mode": json_text(s.config.get("slug_root_mode")) })]),
+            match read_source(read, &text(p, 0)?)?
+                .filter(|s| s.incarnation.eq_ignore_ascii_case(&incarnation))
+            {
+                Some(s) => rows(vec![
+                    json!({ "last_commit": s.last_commit, "mode": json_text(s.config.get("slug_root_mode")) }),
+                ]),
                 None => rows(vec![]),
             }
         }
@@ -854,7 +1086,9 @@ fn run_read(read: &dyn KvRead, env: &dyn Env, name: &str, p: &[Value]) -> Result
         // ---- the source's slug mode and the page reads behind the holds
         "source_slug_mode" | "source_mode_commit" => {
             let incarnation = uuid_param(&text(p, 1)?, "incarnation")?;
-            match read_source(read, &text(p, 0)?)?.filter(|s| s.incarnation.eq_ignore_ascii_case(&incarnation)) {
+            match read_source(read, &text(p, 0)?)?
+                .filter(|s| s.incarnation.eq_ignore_ascii_case(&incarnation))
+            {
                 Some(s) => {
                     let mut row = json!({ "mode": json_text(s.config.get("slug_root_mode")) });
                     if name == "source_mode_commit" {
@@ -866,31 +1100,50 @@ fn run_read(read: &dyn KvRead, env: &dyn Env, name: &str, p: &[Value]) -> Result
             }
         }
         "settled_live_pages" => {
-            let (source, ids, slugs) = (text(p, 0)?, param(p, 1)?.as_array().cloned().unwrap_or_default(), texts(p, 2)?);
+            let (source, ids, slugs) = (
+                text(p, 0)?,
+                param(p, 1)?.as_array().cloned().unwrap_or_default(),
+                texts(p, 2)?,
+            );
             let wanted: Vec<i64> = ids.iter().filter_map(|v| big(v).ok()).collect();
-            rows(all_pages(read)?
-                .into_iter()
-                .filter(|pg| pg.source_id == source && pg.deleted_at_us.is_none() && (wanted.contains(&(pg.id as i64)) || slugs.contains(&pg.slug)))
-                .map(|pg| json!({ "id": pg.id.to_string(), "slug": pg.slug }))
-                .collect())
+            rows(
+                all_pages(read)?
+                    .into_iter()
+                    .filter(|pg| {
+                        pg.source_id == source
+                            && pg.deleted_at_us.is_none()
+                            && (wanted.contains(&(pg.id as i64)) || slugs.contains(&pg.slug))
+                    })
+                    .map(|pg| json!({ "id": pg.id.to_string(), "slug": pg.slug }))
+                    .collect(),
+            )
         }
         "pages_basis" | "page_revisions" => {
-            let (source, ids) = (text(p, 0)?, param(p, 1)?.as_array().cloned().unwrap_or_default());
+            let (source, ids) = (
+                text(p, 0)?,
+                param(p, 1)?.as_array().cloned().unwrap_or_default(),
+            );
             let wanted: Vec<i64> = ids.iter().filter_map(|v| big(v).ok()).collect();
-            rows(all_pages(read)?
-                .into_iter()
-                .filter(|pg| pg.source_id == source && wanted.contains(&(pg.id as i64)))
-                .map(|pg| {
-                    let mut row = json!({ "id": pg.id, "revision": pg.knowledge_revision });
-                    if name == "pages_basis" {
-                        row["deleted"] = json!(pg.deleted_at_us.is_some());
-                    }
-                    row
-                })
-                .collect())
+            rows(
+                all_pages(read)?
+                    .into_iter()
+                    .filter(|pg| pg.source_id == source && wanted.contains(&(pg.id as i64)))
+                    .map(|pg| {
+                        let mut row = json!({ "id": pg.id, "revision": pg.knowledge_revision });
+                        if name == "pages_basis" {
+                            row["deleted"] = json!(pg.deleted_at_us.is_some());
+                        }
+                        row
+                    })
+                    .collect(),
+            )
         }
         "file_backed_pages" => {
-            let (source, ids, incarnation) = (text(p, 0)?, param(p, 1)?.as_array().cloned().unwrap_or_default(), text(p, 2)?);
+            let (source, ids, incarnation) = (
+                text(p, 0)?,
+                param(p, 1)?.as_array().cloned().unwrap_or_default(),
+                text(p, 2)?,
+            );
             let wanted: Vec<i64> = ids.iter().filter_map(|v| big(v).ok()).collect();
             let requests = all_requests(read)?;
             let effects = all_effects(read)?;
@@ -908,16 +1161,25 @@ fn run_read(read: &dyn KvRead, env: &dyn Env, name: &str, p: &[Value]) -> Result
                 else {
                     continue;
                 };
-                let by_import = matches!(kind_of(r).as_deref(), Some("managed_sync_import" | "managed_sync_delete"))
-                    && r.source_incarnation.eq_ignore_ascii_case(&incarnation)
+                let by_import = matches!(
+                    kind_of(r).as_deref(),
+                    Some("managed_sync_import" | "managed_sync_delete")
+                ) && r.source_incarnation.eq_ignore_ascii_case(&incarnation)
                     && (r.page_id.is_none() || r.page_id == Some(pg.id));
                 let by_effect = || {
                     effects.iter().any(|e| {
-                        e.request_id.eq_ignore_ascii_case(&r.id) && e.kind == "git"
-                            && e.revision.as_deref().map(str::to_lowercase) == Some(pg.knowledge_revision.to_lowercase())
+                        e.request_id.eq_ignore_ascii_case(&r.id)
+                            && e.kind == "git"
+                            && e.revision.as_deref().map(str::to_lowercase)
+                                == Some(pg.knowledge_revision.to_lowercase())
                             && json_text(e.data.get("expected_hash")).is_some()
-                            && match (json_text(e.data.get("relative_path")), pg.source_path.as_deref()) {
-                                (Some(path), Some(sp)) => path == sp || path.ends_with(&format!("/{sp}")),
+                            && match (
+                                json_text(e.data.get("relative_path")),
+                                pg.source_path.as_deref(),
+                            ) {
+                                (Some(path), Some(sp)) => {
+                                    path == sp || path.ends_with(&format!("/{sp}"))
+                                }
                                 _ => false,
                             }
                     })
@@ -930,47 +1192,80 @@ fn run_read(read: &dyn KvRead, env: &dyn Env, name: &str, p: &[Value]) -> Result
         }
         "page_revision_by_slug" => {
             let (source, slug) = (text(p, 0)?, text(p, 1)?);
-            rows(all_pages(read)?
-                .into_iter()
-                .filter(|pg| pg.source_id == source && pg.slug == slug)
-                .map(|pg| json!({ "revision": pg.knowledge_revision }))
-                .collect())
+            rows(
+                all_pages(read)?
+                    .into_iter()
+                    .filter(|pg| pg.source_id == source && pg.slug == slug)
+                    .map(|pg| json!({ "revision": pg.knowledge_revision }))
+                    .collect(),
+            )
         }
         "page_revision_by_id" => {
             let (id, source) = (big(param(p, 0)?)?, text(p, 1)?);
-            rows(u64::try_from(id)
-                .ok()
-                .and_then(|id| read_page_by_id(read, id).ok().flatten())
-                .filter(|pg| pg.source_id == source)
-                .map(|pg| json!({ "revision": pg.knowledge_revision }))
-                .into_iter()
-                .collect())
+            rows(
+                u64::try_from(id)
+                    .ok()
+                    .and_then(|id| read_page_by_id(read, id).ok().flatten())
+                    .filter(|pg| pg.source_id == source)
+                    .map(|pg| json!({ "revision": pg.knowledge_revision }))
+                    .into_iter()
+                    .collect(),
+            )
         }
         "shared_origin_survivor" => {
             let (source, path) = (text(p, 0)?, text(p, 1)?);
             let requests = all_requests(read)?;
             let any = all_pages(read)?.into_iter().any(|d| {
-                d.source_id == source && d.deleted_at_us.is_some() && d.source_path.as_deref() == Some(path.as_str())
+                d.source_id == source
+                    && d.deleted_at_us.is_some()
+                    && d.source_path.as_deref() == Some(path.as_str())
                     && requests.iter().any(|r| {
-                        r.source_id == d.source_id && r.slug == d.slug && r.operation == "delete_page" && r.state == "committed"
-                            && json_text(r.outcome.as_ref().and_then(|o| o.pointer("/write_through/skipped"))).as_deref() == Some("shared_origin")
+                        r.source_id == d.source_id
+                            && r.slug == d.slug
+                            && r.operation == "delete_page"
+                            && r.state == "committed"
+                            && json_text(
+                                r.outcome
+                                    .as_ref()
+                                    .and_then(|o| o.pointer("/write_through/skipped")),
+                            )
+                            .as_deref()
+                                == Some("shared_origin")
                     })
             });
-            rows(if any { vec![json!({ "?column?": 1 })] } else { vec![] })
+            rows(if any {
+                vec![json!({ "?column?": 1 })]
+            } else {
+                vec![]
+            })
         }
         "repeated_write_failures" => {
-            let (source, incarnation, slug) = (text(p, 0)?, uuid_param(&text(p, 1)?, "incarnation")?, text(p, 2)?);
+            let (source, incarnation, slug) = (
+                text(p, 0)?,
+                uuid_param(&text(p, 1)?, "incarnation")?,
+                text(p, 2)?,
+            );
             let (code, origin, class, errno) = (text(p, 3)?, text(p, 4)?, text(p, 5)?, text(p, 6)?);
             let n = all_requests(read)?
                 .into_iter()
                 .filter(|r| {
                     let detail = r.extra.get("error_detail");
                     let field = |k: &str| json_text(detail.and_then(|d| d.get(k)));
-                    r.source_id == source && r.source_incarnation.eq_ignore_ascii_case(&incarnation) && r.slug == slug && r.state == "failed"
-                        && matches!(kind_of(r).as_deref(), Some("managed_sync_import" | "managed_sync_delete"))
+                    r.source_id == source
+                        && r.source_incarnation.eq_ignore_ascii_case(&incarnation)
+                        && r.slug == slug
+                        && r.state == "failed"
+                        && matches!(
+                            kind_of(r).as_deref(),
+                            Some("managed_sync_import" | "managed_sync_delete")
+                        )
                         && r.error_code.as_deref() == Some(code.as_str())
-                        && field("origin").unwrap_or_default() == origin && field("error_class").unwrap_or_default() == class
-                        && field("errno").or_else(|| field("sqlstate")).unwrap_or_default() == errno
+                        && field("origin").unwrap_or_default() == origin
+                        && field("error_class").unwrap_or_default() == class
+                        && field("errno")
+                            .or_else(|| field("sqlstate"))
+                            .unwrap_or_default()
+                            == errno
                 })
                 .count();
             rows(vec![json!({ "n": n })])
@@ -980,32 +1275,48 @@ fn run_read(read: &dyn KvRead, env: &dyn Env, name: &str, p: &[Value]) -> Result
         "sync_commit_on" | "admission_settings" => rows(vec![]),
         "worktree_lock" => {
             let id = uuid_param(&text(p, 0)?, "worktreeId")?;
-            rows(read_worktree_record(read, &id)?.map(|_| json!({ "id": id })).into_iter().collect())
+            rows(
+                read_worktree_record(read, &id)?
+                    .map(|_| json!({ "id": id }))
+                    .into_iter()
+                    .collect(),
+            )
         }
         "source_unfinished_request" => {
             let source = text(p, 0)?;
             let found = all_requests(read)?.into_iter().find(|r| {
-                r.source_id == source && (request_is(r, &OPEN) || !r.extra.get("recovery").is_none_or(Value::is_null))
+                r.source_id == source
+                    && (request_is(r, &OPEN) || !r.extra.get("recovery").is_none_or(Value::is_null))
             });
             rows(found.map(|r| json!({ "id": r.id })).into_iter().collect())
         }
-        "config_all" => rows(crate::config::scan_config(read, "")?
-            .into_iter()
-            .map(|(key, value)| json!({ "key": key, "value": value }))
-            .collect()),
+        "config_all" => rows(
+            crate::config::scan_config(read, "")?
+                .into_iter()
+                .map(|(key, value)| json!({ "key": key, "value": value }))
+                .collect(),
+        ),
 
         // ---- the discovery's page reads
         "live_origin_pages" | "live_origin_slugs" => {
             let source = text(p, 0)?;
-            rows(all_pages(read)?
-                .into_iter()
-                .filter(|pg| pg.source_id == source && pg.deleted_at_us.is_none() && pg.source_path.is_some())
-                .map(|pg| if name == "live_origin_pages" {
-                    json!({ "slug": pg.slug, "source_path": pg.source_path, "id": pg.id })
-                } else {
-                    json!({ "source_path": pg.source_path, "slug": pg.slug })
-                })
-                .collect())
+            rows(
+                all_pages(read)?
+                    .into_iter()
+                    .filter(|pg| {
+                        pg.source_id == source
+                            && pg.deleted_at_us.is_none()
+                            && pg.source_path.is_some()
+                    })
+                    .map(|pg| {
+                        if name == "live_origin_pages" {
+                            json!({ "slug": pg.slug, "source_path": pg.source_path, "id": pg.id })
+                        } else {
+                            json!({ "source_path": pg.source_path, "slug": pg.slug })
+                        }
+                    })
+                    .collect(),
+            )
         }
         "source_identities" => {
             let source = text(p, 0)?;
@@ -1020,47 +1331,65 @@ fn run_read(read: &dyn KvRead, env: &dyn Env, name: &str, p: &[Value]) -> Result
         }
         "deleted_page_ids" => {
             let source = text(p, 0)?;
-            rows(all_pages(read)?
-                .into_iter()
-                .filter(|pg| pg.source_id == source && pg.deleted_at_us.is_some())
-                .map(|pg| json!({ "id": pg.id }))
-                .collect())
+            rows(
+                all_pages(read)?
+                    .into_iter()
+                    .filter(|pg| pg.source_id == source && pg.deleted_at_us.is_some())
+                    .map(|pg| json!({ "id": pg.id }))
+                    .collect(),
+            )
         }
         "database_only_pages" => {
             let ids = param(p, 0)?.as_array().cloned().unwrap_or_default();
             let wanted: Vec<i64> = ids.iter().filter_map(|v| big(v).ok()).collect();
-            rows(all_pages(read)?
-                .into_iter()
-                .filter(|pg| {
-                    wanted.contains(&(pg.id as i64))
-                        && (pg.database_only_reason.as_deref() == Some("origin_twin")
-                            || pg.database_only_reason.as_deref() == Some("unbound_source") && blank(&pg.source_path) && blank(&pg.source_uri))
-                })
-                .map(|pg| json!({ "id": pg.id }))
-                .collect())
+            rows(
+                all_pages(read)?
+                    .into_iter()
+                    .filter(|pg| {
+                        wanted.contains(&(pg.id as i64))
+                            && (pg.database_only_reason.as_deref() == Some("origin_twin")
+                                || pg.database_only_reason.as_deref() == Some("unbound_source")
+                                    && blank(&pg.source_path)
+                                    && blank(&pg.source_uri))
+                    })
+                    .map(|pg| json!({ "id": pg.id }))
+                    .collect(),
+            )
         }
 
         // ---- the wait for in-flight requests, the held rename and the blocked request
         "inflight_open_ids" | "inflight_open_work" | "open_inflight_request" => {
             let source = text(p, 0)?;
-            let ids: Vec<i64> = param(p, 1)?.as_array().cloned().unwrap_or_default().iter().filter_map(|v| big(v).ok()).collect();
+            let ids: Vec<i64> = param(p, 1)?
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+                .iter()
+                .filter_map(|v| big(v).ok())
+                .collect();
             let origins = texts(p, 2)?;
             let named = |r: &super::RequestRecord, with_path: bool| {
                 r.page_id.is_some_and(|id| ids.contains(&(id as i64)))
                     || json_text(r.intent.get("sourcePath")).is_some_and(|sp| origins.contains(&sp))
-                    || with_path && json_text(r.intent.get("path")).is_some_and(|path| origins.contains(&path))
+                    || with_path
+                        && json_text(r.intent.get("path"))
+                            .is_some_and(|path| origins.contains(&path))
             };
             let requests = all_requests(read)?;
             match name {
-                "inflight_open_ids" => rows(requests
-                    .iter()
-                    .filter(|r| r.source_id == source && request_is(r, &OPEN) && named(r, true))
-                    .map(|r| json!({ "id": r.id }))
-                    .collect()),
+                "inflight_open_ids" => rows(
+                    requests
+                        .iter()
+                        .filter(|r| r.source_id == source && request_is(r, &OPEN) && named(r, true))
+                        .map(|r| json!({ "id": r.id }))
+                        .collect(),
+                ),
                 "open_inflight_request" => {
                     let found = requests
                         .iter()
-                        .filter(|r| r.source_id == source && request_is(r, &OPEN) && named(r, false))
+                        .filter(|r| {
+                            r.source_id == source && request_is(r, &OPEN) && named(r, false)
+                        })
                         .min_by_key(|r| r.sequence);
                     rows(found.map(|r| json!({ "id": r.id })).into_iter().collect())
                 }
@@ -1070,18 +1399,27 @@ fn run_read(read: &dyn KvRead, env: &dyn Env, name: &str, p: &[Value]) -> Result
                         r.source_id == source
                             && ((request_is(r, &OPEN) && named(r, true))
                                 || effects.iter().any(|e| {
-                                    e.request_id.eq_ignore_ascii_case(&r.id) && e.kind == "git"
+                                    e.request_id.eq_ignore_ascii_case(&r.id)
+                                        && e.kind == "git"
                                         && (e.state == "queued" || e.state == "running")
                                         && (named(r, true)
-                                            || json_text(e.data.get("relative_path")).is_some_and(|path| origins.contains(&path)))
+                                            || json_text(e.data.get("relative_path"))
+                                                .is_some_and(|path| origins.contains(&path)))
                                 }))
                     });
-                    rows(if any { vec![json!({ "?column?": 1 })] } else { vec![] })
+                    rows(if any {
+                        vec![json!({ "?column?": 1 })]
+                    } else {
+                        vec![]
+                    })
                 }
             }
         }
         "inflight_committed" => {
-            let ids: Vec<String> = texts(p, 0)?.into_iter().map(|id| id.to_lowercase()).collect();
+            let ids: Vec<String> = texts(p, 0)?
+                .into_iter()
+                .map(|id| id.to_lowercase())
+                .collect();
             rows(all_requests(read)?
                 .into_iter()
                 .filter(|r| r.state == "committed" && ids.contains(&r.id.to_lowercase()))
@@ -1106,11 +1444,15 @@ fn run_read(read: &dyn KvRead, env: &dyn Env, name: &str, p: &[Value]) -> Result
         }
         "request_by_request_id" => {
             let (source, request_id) = (text(p, 0)?, uuid_param(&text(p, 1)?, "request_id")?);
-            rows(all_requests(read)?
-                .into_iter()
-                .filter(|r| r.source_id == source && r.request_id.eq_ignore_ascii_case(&request_id))
-                .map(|r| json!({ "id": r.id }))
-                .collect())
+            rows(
+                all_requests(read)?
+                    .into_iter()
+                    .filter(|r| {
+                        r.source_id == source && r.request_id.eq_ignore_ascii_case(&request_id)
+                    })
+                    .map(|r| json!({ "id": r.id }))
+                    .collect(),
+            )
         }
 
         "sync_cursor_fence" => match op_row(read, "managed-sync", &text(p, 0)?)? {
@@ -1118,10 +1460,22 @@ fn run_read(read: &dyn KvRead, env: &dyn Env, name: &str, p: &[Value]) -> Result
             Some(row) => {
                 let head = first(&row).cloned().unwrap_or(Value::Null);
                 let ids = |items: Option<&Value>| -> Vec<Value> {
-                    items.and_then(Value::as_array).map(|a| a.iter().map(|m| json!(json_text(m.get("requestId")))).collect()).unwrap_or_default()
+                    items
+                        .and_then(Value::as_array)
+                        .map(|a| {
+                            a.iter()
+                                .map(|m| json!(json_text(m.get("requestId"))))
+                                .collect()
+                        })
+                        .unwrap_or_default()
                 };
                 let mut members = ids(head.get("group"));
-                for g in head.get("window").and_then(Value::as_array).cloned().unwrap_or_default() {
+                for g in head
+                    .get("window")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default()
+                {
                     members.extend(ids(Some(&g)));
                 }
                 rows(vec![json!({
@@ -1135,16 +1489,28 @@ fn run_read(read: &dyn KvRead, env: &dyn Env, name: &str, p: &[Value]) -> Result
             let worktree = uuid_param(&text(p, 0)?, "worktreeId")?;
             let mut found: Vec<_> = super::worktree_admission::all_refreshes(read)?
                 .into_iter()
-                .filter(|r| r.worktree_id.eq_ignore_ascii_case(&worktree)
-                    && matches!(r.state.as_str(), "draining" | "fenced" | "merged" | "recovery_required"))
+                .filter(|r| {
+                    r.worktree_id.eq_ignore_ascii_case(&worktree)
+                        && matches!(
+                            r.state.as_str(),
+                            "draining" | "fenced" | "merged" | "recovery_required"
+                        )
+                })
                 .collect();
             found.sort_by_key(|r| r.created_at_us);
-            rows(found.into_iter().map(|r| json!({ "id": r.id, "state": r.state })).collect())
+            rows(
+                found
+                    .into_iter()
+                    .map(|r| json!({ "id": r.id, "state": r.state }))
+                    .collect(),
+            )
         }
 
         // ---- ghost report
         "ghost_report_read" => match op_row(read, &text(p, 0)?, &text(p, 1)?)? {
-            Some(row) => rows(vec![json!({ "report": row.completed_keys, "claimed": false })]),
+            Some(row) => rows(vec![
+                json!({ "report": row.completed_keys, "claimed": false }),
+            ]),
             None => rows(vec![]),
         },
         "ghost_held_paths" => {
@@ -1174,7 +1540,9 @@ fn pass_idle_probe(read: &dyn KvRead, p: &[Value]) -> Result<Value> {
     let stamp_param = opt_texts(p, 4)?;
     let (source, incarnation) = (text(p, 5)?, uuid_param(&text(p, 6)?, "incarnation")?);
     let pass = op_row(read, &pass_op, &pass_fp)?.and_then(|row| first(&row).cloned());
-    let converged = pass.as_ref().and_then(|v| v.pointer("/obligations/converged"));
+    let converged = pass
+        .as_ref()
+        .and_then(|v| v.pointer("/obligations/converged"));
     let stamp: HashSet<String> = match stamp_param {
         Some(ids) => ids.into_iter().collect(),
         None => converged
@@ -1191,27 +1559,44 @@ fn pass_idle_probe(read: &dyn KvRead, p: &[Value]) -> Result<Value> {
             .unwrap_or(0),
     };
     let requests = all_requests(read)?;
-    let scoped: Vec<_> = requests.iter().filter(|r| in_scope(r, &worktree, &source, &incarnation)).collect();
+    let scoped: Vec<_> = requests
+        .iter()
+        .filter(|r| in_scope(r, &worktree, &source, &incarnation))
+        .collect();
     let newer = scoped.iter().any(|r| (r.sequence as i64) > floor);
     let open: Vec<_> = scoped.iter().filter(|r| request_is(r, &OPEN)).collect();
     let pending = !open.is_empty();
-    let open_stamped = open.iter().filter(|r| count_stamp_ids(&stamp, "r:", &r.request_id.to_lowercase())).count();
+    let open_stamped = open
+        .iter()
+        .filter(|r| count_stamp_ids(&stamp, "r:", &r.request_id.to_lowercase()))
+        .count();
     let effects = all_effects(read)?;
     let git_open = effects
         .iter()
         .filter(|e| {
-            e.kind == "git" && (e.state == "queued" || e.state == "running")
-                && requests.iter().any(|r| r.id.eq_ignore_ascii_case(&e.request_id) && worktree_of(r).is_some_and(|w| w == worktree))
+            e.kind == "git"
+                && (e.state == "queued" || e.state == "running")
+                && requests.iter().any(|r| {
+                    r.id.eq_ignore_ascii_case(&e.request_id)
+                        && worktree_of(r).is_some_and(|w| w == worktree)
+                })
                 && count_stamp_ids(&stamp, "e:", &e.id.to_string())
         })
         .count();
     let writeback: Vec<String> = converged
         .and_then(|c| c.get("writeback"))
         .and_then(Value::as_array)
-        .map(|a| a.iter().filter_map(|v| json_text(Some(v)).map(|s| s.to_lowercase())).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| json_text(Some(v)).map(|s| s.to_lowercase()))
+                .collect()
+        })
         .unwrap_or_default();
     let writeback_open = effects.iter().any(|e| {
-        e.kind == "git" && e.state != "committed" && e.data.get("settled").is_none() && writeback.contains(&e.request_id.to_lowercase())
+        e.kind == "git"
+            && e.state != "committed"
+            && e.data.get("settled").is_none()
+            && writeback.contains(&e.request_id.to_lowercase())
     });
     Ok(rows(vec![json!({
         "pass_row": pass.unwrap_or(Value::Null), "newer": newer, "pending": pending,
@@ -1230,20 +1615,33 @@ fn revision_attestations(read: &dyn KvRead, p: &[Value]) -> Result<Value> {
     let effects = all_effects(read)?;
     let mut out = Vec::new();
     for i in 0..page_ids.len() {
-        let (Some(request_id), Some(page_id)) = (request_ids.get(i).and_then(Value::as_str), page_ids.get(i)) else {
+        let (Some(request_id), Some(page_id)) =
+            (request_ids.get(i).and_then(Value::as_str), page_ids.get(i))
+        else {
             continue;
         };
-        let Some(r) = requests.iter().find(|r| r.id.eq_ignore_ascii_case(request_id) && r.state == "committed" && r.source_id == source) else {
+        let Some(r) = requests.iter().find(|r| {
+            r.id.eq_ignore_ascii_case(request_id) && r.state == "committed" && r.source_id == source
+        }) else {
             continue;
         };
         let page_id_n = big(page_id).ok();
-        let revision = revisions.get(i).and_then(Value::as_str).map(str::to_lowercase);
+        let revision = revisions
+            .get(i)
+            .and_then(Value::as_str)
+            .map(str::to_lowercase);
         let source_path = source_paths.get(i).and_then(Value::as_str);
         let kind = kind_of(r);
-        let arm1 = kind.map(|k| kinds.contains(&k) && r.source_incarnation.eq_ignore_ascii_case(&incarnation)
-            && (r.page_id.is_none() || r.page_id.map(|v| v as i64) == page_id_n));
+        let arm1 = kind.map(|k| {
+            kinds.contains(&k)
+                && r.source_incarnation.eq_ignore_ascii_case(&incarnation)
+                && (r.page_id.is_none() || r.page_id.map(|v| v as i64) == page_id_n)
+        });
         let from_effect = effects.iter().find_map(|e| {
-            if !e.request_id.eq_ignore_ascii_case(&r.id) || e.kind != "git" || e.revision.as_deref().map(str::to_lowercase) != revision {
+            if !e.request_id.eq_ignore_ascii_case(&r.id)
+                || e.kind != "git"
+                || e.revision.as_deref().map(str::to_lowercase) != revision
+            {
                 return None;
             }
             let hash = json_text(e.data.get("expected_hash"))?;
@@ -1271,28 +1669,54 @@ fn file_removing_deletes(read: &dyn KvRead, p: &[Value]) -> Result<Value> {
     let slugs = texts(p, 2)?;
     let page_ids = param(p, 3)?.as_array().cloned().unwrap_or_default();
     let requests = all_requests(read)?;
-    let not_true = |v: Option<&Value>, key: &str, wanted: &str| json_text(v.and_then(|o| o.get(key))).as_deref() != Some(wanted);
+    let not_true = |v: Option<&Value>, key: &str, wanted: &str| {
+        json_text(v.and_then(|o| o.get(key))).as_deref() != Some(wanted)
+    };
     let mut out = Vec::new();
     for (i, path) in paths.iter().enumerate() {
-        let (Some(slug), Some(page_id)) = (slugs.get(i), page_ids.get(i).and_then(|v| big(v).ok())) else { continue };
-        let same_page = |r: &super::RequestRecord| r.page_id.is_none() || r.page_id.map(|v| v as i64) == Some(page_id);
+        let (Some(slug), Some(page_id)) = (slugs.get(i), page_ids.get(i).and_then(|v| big(v).ok()))
+        else {
+            continue;
+        };
+        let same_page = |r: &super::RequestRecord| {
+            r.page_id.is_none() || r.page_id.map(|v| v as i64) == Some(page_id)
+        };
         let newest = requests
             .iter()
             .filter(|r| {
-                r.source_id == source && &r.slug == slug && r.state == "committed" && r.operation == "delete_page" && same_page(r)
-                    && not_true(r.outcome.as_ref(), "noop", "true") && not_true(r.outcome.as_ref(), "retention", "true")
+                r.source_id == source
+                    && &r.slug == slug
+                    && r.state == "committed"
+                    && r.operation == "delete_page"
+                    && same_page(r)
+                    && not_true(r.outcome.as_ref(), "noop", "true")
+                    && not_true(r.outcome.as_ref(), "retention", "true")
                     && not_true(Some(&r.intent), "retention", "true")
             })
             .max_by_key(|r| r.sequence);
         let Some(d) = newest else { continue };
-        let written = json_text(d.outcome.as_ref().and_then(|o| o.pointer("/write_through/written"))).as_deref() == Some("true");
-        if !written || json_text(d.outcome.as_ref().and_then(|o| o.get("status"))).as_deref() == Some("purged") {
+        let written = json_text(
+            d.outcome
+                .as_ref()
+                .and_then(|o| o.pointer("/write_through/written")),
+        )
+        .as_deref()
+            == Some("true");
+        if !written
+            || json_text(d.outcome.as_ref().and_then(|o| o.get("status"))).as_deref()
+                == Some("purged")
+        {
             continue;
         }
         let brought_back = requests.iter().any(|l| {
-            l.source_id == source && &l.slug == slug && l.sequence > d.sequence && l.state == "committed"
-                && (l.operation == "restore_page" || l.operation == "put_page") && same_page(l)
-                && not_true(l.outcome.as_ref(), "noop", "true") && not_true(l.outcome.as_ref(), "status", "duplicate")
+            l.source_id == source
+                && &l.slug == slug
+                && l.sequence > d.sequence
+                && l.state == "committed"
+                && (l.operation == "restore_page" || l.operation == "put_page")
+                && same_page(l)
+                && not_true(l.outcome.as_ref(), "noop", "true")
+                && not_true(l.outcome.as_ref(), "status", "duplicate")
         });
         if !brought_back {
             out.push(json!({ "path": path }));
@@ -1321,33 +1745,61 @@ fn tail_slugs(read: &dyn KvRead, p: &[Value]) -> Result<Value> {
     }
     let mut windows = Vec::new();
     for pass in passes.as_array().cloned().unwrap_or_default() {
-        let (Some(run_id), Some(since), Some(at)) = (json_text(pass.get("run_id")), json_text(pass.get("since")), json_text(pass.get("at"))) else {
+        let (Some(run_id), Some(since), Some(at)) = (
+            json_text(pass.get("run_id")),
+            json_text(pass.get("since")),
+            json_text(pass.get("at")),
+        ) else {
             continue;
         };
-        windows.push((run_id, parse_timestamptz(&since, "since")?, parse_timestamptz(&at, "at")?));
+        windows.push((
+            run_id,
+            parse_timestamptz(&since, "since")?,
+            parse_timestamptz(&at, "at")?,
+        ));
     }
     for r in all_requests(read)? {
-        let compacted = r.extra.get("compacted").and_then(Value::as_bool).unwrap_or(false);
+        let compacted = r
+            .extra
+            .get("compacted")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         let recovery_null = r.extra.get("recovery").is_none_or(Value::is_null);
-        if !recovery_null || compacted || r.state != "committed" || r.source_id != source
+        if !recovery_null
+            || compacted
+            || r.state != "committed"
+            || r.source_id != source
             || kind_of(&r).as_deref() != Some("managed_sync_import")
         {
             continue;
         }
-        let (Some(done), Some(pass_id)) = (r.completed_at_us, json_text(r.intent.get("passId"))) else { continue };
-        if windows.iter().any(|(run_id, since, at)| *run_id == pass_id && done >= *since && done <= *at) {
+        let (Some(done), Some(pass_id)) = (r.completed_at_us, json_text(r.intent.get("passId")))
+        else {
+            continue;
+        };
+        if windows
+            .iter()
+            .any(|(run_id, since, at)| *run_id == pass_id && done >= *since && done <= *at)
+        {
             slugs.insert(r.slug.clone());
         }
     }
-    Ok(rows(slugs.into_iter().take(1001).map(|slug| json!({ "slug": slug })).collect()))
+    Ok(rows(
+        slugs
+            .into_iter()
+            .take(1001)
+            .map(|slug| json!({ "slug": slug }))
+            .collect(),
+    ))
 }
 
 fn run_write(tx: &mut dyn KvWrite, env: &dyn Env, name: &str, p: &[Value]) -> Result<Value> {
     Ok(match name {
         "failure_clear" => {
             let key = text(p, 0)?;
-            let unfinished = op_row(&*tx, "managed-sync", &key)?
-                .is_some_and(|row| first_text(&row, "done").unwrap_or_else(|| "false".into()) != "true");
+            let unfinished = op_row(&*tx, "managed-sync", &key)?.is_some_and(|row| {
+                first_text(&row, "done").unwrap_or_else(|| "false".into()) != "true"
+            });
             if unfinished || op_row(&*tx, "managed-sync-failure", &key)?.is_none() {
                 rows(vec![])
             } else {
@@ -1356,7 +1808,8 @@ fn run_write(tx: &mut dyn KvWrite, env: &dyn Env, name: &str, p: &[Value]) -> Re
             }
         }
         "tail_record_run" => {
-            let (op, fingerprint, run_id, cursor_key) = (text(p, 0)?, text(p, 1)?, text(p, 2)?, text(p, 3)?);
+            let (op, fingerprint, run_id, cursor_key) =
+                (text(p, 0)?, text(p, 1)?, text(p, 2)?, text(p, 3)?);
             if let Some(cursor) = op_row(&*tx, "managed-sync", &cursor_key)? {
                 let count = |key: &str| {
                     first(&cursor)
@@ -1364,7 +1817,10 @@ fn run_write(tx: &mut dyn KvWrite, env: &dyn Env, name: &str, p: &[Value]) -> Re
                         .and_then(|n| n.trim().parse::<i64>().ok())
                         .unwrap_or(0)
                 };
-                let extract = first(&cursor).and_then(|v| json_text(v.pointer("/processingOptions/noExtract"))).as_deref() != Some("true");
+                let extract = first(&cursor)
+                    .and_then(|v| json_text(v.pointer("/processingOptions/noExtract")))
+                    .as_deref()
+                    != Some("true");
                 let extract = extract && first_text(&cursor, "companyReceiptId").is_none();
                 let item = json!({
                     "run_id": run_id, "at": jsonb_now(env),
@@ -1377,7 +1833,9 @@ fn run_write(tx: &mut dyn KvWrite, env: &dyn Env, name: &str, p: &[Value]) -> Re
         "tail_record_pass" => {
             let (op, fingerprint, pass_id) = (text(p, 0)?, text(p, 1)?, text(p, 2)?);
             let changed = big(param(p, 3)?)?;
-            let extract = param(p, 4)?.as_bool().ok_or_else(|| StoreError::invalid("extract is not a boolean"))?;
+            let extract = param(p, 4)?
+                .as_bool()
+                .ok_or_else(|| StoreError::invalid("extract is not a boolean"))?;
             let mut item = Map::new();
             item.insert("run_id".into(), json!(pass_id));
             item.insert("at".into(), json!(jsonb_now(env)));
@@ -1405,7 +1863,13 @@ fn run_write(tx: &mut dyn KvWrite, env: &dyn Env, name: &str, p: &[Value]) -> Re
             rows(vec![])
         }
         "checkpoint_put_first" => {
-            put_row(tx, env, &text(p, 0)?, &text(p, 1)?, json!([jsonb_param(p, 2)?]))?;
+            put_row(
+                tx,
+                env,
+                &text(p, 0)?,
+                &text(p, 1)?,
+                json!([jsonb_param(p, 2)?]),
+            )?;
             rows(vec![])
         }
         "checkpoint_delete_if_first" => {
@@ -1438,9 +1902,17 @@ fn run_write(tx: &mut dyn KvWrite, env: &dyn Env, name: &str, p: &[Value]) -> Re
         "legacy_markers_insert" => {
             let op = text(p, 0)?;
             for item in jsonb_param(p, 1)?.as_array().cloned().unwrap_or_default() {
-                let Some(fingerprint) = json_text(item.get("fingerprint")) else { continue };
+                let Some(fingerprint) = json_text(item.get("fingerprint")) else {
+                    continue;
+                };
                 if op_row(&*tx, &op, &fingerprint)?.is_none() {
-                    put_row(tx, env, &op, &fingerprint, json!([item.get("value").cloned().unwrap_or(Value::Null)]))?;
+                    put_row(
+                        tx,
+                        env,
+                        &op,
+                        &fingerprint,
+                        json!([item.get("value").cloned().unwrap_or(Value::Null)]),
+                    )?;
                 }
             }
             rows(vec![])
@@ -1469,7 +1941,13 @@ fn run_write(tx: &mut dyn KvWrite, env: &dyn Env, name: &str, p: &[Value]) -> Re
             rows(vec![])
         }
         "delete_tombstone_record" => {
-            let (op, incarnation, pass_id, run_id, request_id) = (text(p, 0)?, text(p, 1)?, opt_text(p, 2)?, opt_text(p, 3)?, text(p, 4)?);
+            let (op, incarnation, pass_id, run_id, request_id) = (
+                text(p, 0)?,
+                text(p, 1)?,
+                opt_text(p, 2)?,
+                opt_text(p, 3)?,
+                text(p, 4)?,
+            );
             let (source, slug) = (text(p, 5)?, text(p, 6)?);
             if let Some(page) = crate::pages::read_page(&*tx, &source, &slug)?
                 && page.deleted_at_us == Some(env.now_micros())
@@ -1490,7 +1968,9 @@ fn run_write(tx: &mut dyn KvWrite, env: &dyn Env, name: &str, p: &[Value]) -> Re
         "slice_clear" => {
             let (op, fingerprint, target) = (text(p, 0)?, text(p, 1)?, opt_text(p, 2)?);
             if let Some(row) = op_row(&*tx, &op, &fingerprint)?
-                && target.as_ref().is_none_or(|t| first_text(&row, "target").as_deref() == Some(t.as_str()))
+                && target
+                    .as_ref()
+                    .is_none_or(|t| first_text(&row, "target").as_deref() == Some(t.as_str()))
             {
                 delete_op_checkpoint_in(tx, &op, &fingerprint)?;
             }
@@ -1500,11 +1980,20 @@ fn run_write(tx: &mut dyn KvWrite, env: &dyn Env, name: &str, p: &[Value]) -> Re
             let (op, fingerprint, taken) = (text(p, 0)?, text(p, 1)?, texts(p, 2)?);
             if let Some(row) = op_row(&*tx, &op, &fingerprint)? {
                 let mut keys_now = row.completed_keys.clone();
-                if let Some(Value::Object(head)) = keys_now.as_array_mut().and_then(|a| a.first_mut()) {
+                if let Some(Value::Object(head)) =
+                    keys_now.as_array_mut().and_then(|a| a.first_mut())
+                {
                     let kept: Vec<Value> = head
                         .get("paths")
                         .and_then(Value::as_array)
-                        .map(|a| a.iter().filter(|v| v.as_str().is_none_or(|s| !taken.iter().any(|t| t == s))).cloned().collect())
+                        .map(|a| {
+                            a.iter()
+                                .filter(|v| {
+                                    v.as_str().is_none_or(|s| !taken.iter().any(|t| t == s))
+                                })
+                                .cloned()
+                                .collect()
+                        })
                         .unwrap_or_default();
                     head.insert("paths".into(), Value::Array(kept));
                 }
@@ -1515,7 +2004,12 @@ fn run_write(tx: &mut dyn KvWrite, env: &dyn Env, name: &str, p: &[Value]) -> Re
         "retry_paths_prune" => {
             let (op, fingerprint) = (text(p, 0)?, text(p, 1)?);
             let empty = op_row(&*tx, &op, &fingerprint)?
-                .and_then(|row| first(&row).and_then(|v| v.get("paths")).and_then(Value::as_array).map(Vec::is_empty))
+                .and_then(|row| {
+                    first(&row)
+                        .and_then(|v| v.get("paths"))
+                        .and_then(Value::as_array)
+                        .map(Vec::is_empty)
+                })
                 .unwrap_or(false);
             if empty {
                 delete_op_checkpoint_in(tx, &op, &fingerprint)?;
@@ -1533,13 +2027,18 @@ fn run_write(tx: &mut dyn KvWrite, env: &dyn Env, name: &str, p: &[Value]) -> Re
                     put_row(tx, env, &op, &fingerprint, json!([]))?;
                     true
                 }
-                (Some(row), Some(at)) if row.updated_at_us <= now.saturating_sub(interval_us) && at > row.updated_at_us => {
+                (Some(row), Some(at))
+                    if row.updated_at_us <= now.saturating_sub(interval_us)
+                        && at > row.updated_at_us =>
+                {
                     put_row(tx, env, &op, &fingerprint, row.completed_keys.clone())?;
                     true
                 }
                 _ => false,
             };
-            rows(vec![json!({ "report": prior.map_or(Value::Null, |row| row.completed_keys), "claimed": claimed })])
+            rows(vec![
+                json!({ "report": prior.map_or(Value::Null, |row| row.completed_keys), "claimed": claimed }),
+            ])
         }
         "ghost_report_write" => {
             let (op, fingerprint) = (text(p, 0)?, text(p, 1)?);
@@ -1562,8 +2061,13 @@ fn failure_record(tx: &mut dyn KvWrite, env: &dyn Env, p: &[Value]) -> Result<Va
         Some(row) => {
             let was = first(&row).cloned().unwrap_or(Value::Null);
             let t = |v: &Value, k: &str| json_text(v.get(k));
-            let same = ["path", "code", "message"].iter().all(|k| matches!((t(&was, k), t(&incoming, k)), (Some(a), Some(b)) if a == b));
-            let repeats = t(&was, "repeats").and_then(|n| n.trim().parse::<i64>().ok()).unwrap_or(1) + 1;
+            let same = ["path", "code", "message"]
+                .iter()
+                .all(|k| matches!((t(&was, k), t(&incoming, k)), (Some(a), Some(b)) if a == b));
+            let repeats = t(&was, "repeats")
+                .and_then(|n| n.trim().parse::<i64>().ok())
+                .unwrap_or(1)
+                + 1;
             let merge = |base: &Value, extra: Value| -> Value {
                 let mut object = base.as_object().cloned().unwrap_or_default();
                 if let Value::Object(more) = extra {
@@ -1575,17 +2079,26 @@ fn failure_record(tx: &mut dyn KvWrite, env: &dyn Env, p: &[Value]) -> Result<Va
             if same_observation {
                 let invocation = t(&incoming, "invocation");
                 if same && invocation.is_some() && t(&was, "invocation") != invocation {
-                    json!([merge(&was, json!({ "repeats": repeats, "invocation": invocation }))])
+                    json!([merge(
+                        &was,
+                        json!({ "repeats": repeats, "invocation": invocation })
+                    )])
                 } else {
                     row.completed_keys.clone()
                 }
             } else if t(&was, "target") != t(&incoming, "target") {
                 incoming_all.clone()
             } else {
-                let attempts = t(&was, "attempts").and_then(|n| n.trim().parse::<i64>().ok()).unwrap_or(0) + 1;
-                json!([merge(&incoming, json!({
-                    "first_seen": t(&was, "first_seen"), "attempts": attempts, "repeats": if same { repeats } else { 1 },
-                }))])
+                let attempts = t(&was, "attempts")
+                    .and_then(|n| n.trim().parse::<i64>().ok())
+                    .unwrap_or(0)
+                    + 1;
+                json!([merge(
+                    &incoming,
+                    json!({
+                        "first_seen": t(&was, "first_seen"), "attempts": attempts, "repeats": if same { repeats } else { 1 },
+                    })
+                )])
             }
         }
     };
@@ -1595,7 +2108,13 @@ fn failure_record(tx: &mut dyn KvWrite, env: &dyn Env, p: &[Value]) -> Result<Va
 
 /// `ON CONFLICT (op,fingerprint) DO UPDATE ... completed_keys = CASE WHEN jsonb_array_length(..) >= 16 THEN (keys - 0) || new
 /// ELSE keys || new END`: the obligations of one source, the oldest dropped at 16.
-fn append_tail(tx: &mut dyn KvWrite, env: &dyn Env, op: &str, fingerprint: &str, item: Value) -> Result<()> {
+fn append_tail(
+    tx: &mut dyn KvWrite,
+    env: &dyn Env,
+    op: &str,
+    fingerprint: &str,
+    item: Value,
+) -> Result<()> {
     let mut keys_now: Vec<Value> = op_row(&*tx, op, fingerprint)?
         .and_then(|row| row.completed_keys.as_array().cloned())
         .unwrap_or_default();

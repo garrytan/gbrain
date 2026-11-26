@@ -169,7 +169,9 @@ pub(crate) fn complete_synced_refresh_in(
     }
     // `NOT EXISTS (SELECT 1 FROM sources s WHERE s.id=ANY(f.source_ids) AND s.last_commit IS DISTINCT FROM f.target_head)`.
     for source_id in &refresh.source_ids {
-        if read_source(&*tx, source_id)?.is_some_and(|s| s.last_commit.as_deref() != Some(refresh.target_head.as_str())) {
+        if read_source(&*tx, source_id)?
+            .is_some_and(|s| s.last_commit.as_deref() != Some(refresh.target_head.as_str()))
+        {
             return Ok(false);
         }
     }

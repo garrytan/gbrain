@@ -293,7 +293,11 @@ pub(crate) fn live_lock_token(read: &dyn KvRead, id: &str, now: i64) -> Result<O
 }
 
 /// The holder of cycle lock `id` while its lease is live: `(holder_pid, holder_host)`.
-pub(crate) fn live_lock_holder(read: &dyn KvRead, id: &str, now: i64) -> Result<Option<(i64, Option<String>)>> {
+pub(crate) fn live_lock_holder(
+    read: &dyn KvRead,
+    id: &str,
+    now: i64,
+) -> Result<Option<(i64, Option<String>)>> {
     Ok(get_json::<LockRecord>(read, &lock_key(id))?
         .filter(|l| l.ttl_expires_at > now)
         .map(|l| (l.holder_pid, l.holder_host)))

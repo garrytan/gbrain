@@ -141,7 +141,9 @@ impl Brain {
         env: &'env Env,
         host_id: Option<String>,
     ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.list_running_claim_owners(host_id.as_deref()))
+        self.run(env, move |s| {
+            s.list_running_claim_owners(host_id.as_deref())
+        })
     }
 
     /// `listLocalEditAdoptions()`.

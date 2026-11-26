@@ -1133,7 +1133,9 @@ impl Brain {
         host_id: String,
         budget_ms: f64,
     ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.list_resumable_refreshes(&host_id, budget_ms))
+        self.run(env, move |s| {
+            s.list_resumable_refreshes(&host_id, budget_ms)
+        })
     }
 
     #[napi]
