@@ -424,6 +424,8 @@ export const UNMAPPED_WRITE_MEMBERS: ReadonlySet<string> = new Set([
   'deleteEdgeProposalError', 'deleteHeldEdgeProposalErrors', 'markEdgeProposalDated',
   // Lane 8 (rust-members-tail) typed writes (the extraction watermark and receipt, the volunteer retention delete): not mapped to a write plan yet.
   'clearPageExtractionState', 'commitPageExtraction', 'deleteVolunteerEventsOlderThan', 'writePageExtractionReceipt',
+  // Lane 3 (purge-ledger-sites) typed writes (engine-sql/belief-purge-ledger.ts: the belief ledger's purge redaction and prior_hash re-chain): not mapped to a write plan yet.
+  'rechainBeliefPriorHash', 'redactPurgedBeliefKeys', 'rewriteBeliefEventFields',
   // The remediation impact log row (engine-sql/remediation-records.ts): not mapped to a write plan yet.
   'insertImpactLogRow',
 ]);
