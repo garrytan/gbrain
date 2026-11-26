@@ -243,8 +243,8 @@ export async function countSynopsisTierPages(raw: EngineRawRead): Promise<number
 
 /** Chunks with no vector on pages that carry `embed_skip` (intentionally skipped, deleted pages included). */
 export async function countEmbedSkipNullChunks(raw: EngineRawRead): Promise<number> {
-  // chunk-visibility-ok: the --status census counts every stored chunk row of an embed_skip page, as before
   const rows = await raw<{ n: number }>(
+      // chunk-visibility-ok: the --status census counts every stored chunk row of an embed_skip page, as before
       `SELECT count(*)::int AS n FROM content_chunks cc
          JOIN pages p ON p.id = cc.page_id
         WHERE cc.embedding IS NULL
@@ -253,8 +253,9 @@ export async function countEmbedSkipNullChunks(raw: EngineRawRead): Promise<numb
   return Number(rows[0]?.n ?? 0);
 }
 
-// chunk-visibility-ok: the #4305 count reads every stored chunk row of a falsely stamped page, as before; falseStampPageWhere
-// (embedding-invalidation.ts) is inlined as constant text with the "__COL__" marker (pinned by the caller-raw-sql pins).
+// falseStampPageWhere (embedding-invalidation.ts) is inlined as constant text with the "__COL__" marker (pinned by the
+// caller-raw-sql pins).
+// chunk-visibility-ok: the #4305 count reads every stored chunk row of a falsely stamped page, as before
 const FALSE_STAMPED_SQL = `WITH fs AS (
        SELECT p.id FROM pages p
         WHERE 

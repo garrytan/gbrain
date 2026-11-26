@@ -27,6 +27,7 @@ src/commands/enrich.ts	readableEvidence	field	INLINE	segmented holding page: bod
 src/commands/extract-mentions-explain.ts	explainMention	field	STREAM	
 src/core/engine-sql/embed-stale-work.ts	countArchivedEmbeddingWork	sql	META	moved from embedding-readiness.ts: body <> '' predicate on archived pages
 src/core/engine-sql/embed-stale-work.ts	sumEmbedBackfillChars	sql	META	moved from embed-consent.ts estimateEmbedBackfillUsd: character length of chunkless inline bodies for the cost estimate; a segmented page's NULL columns add nothing
+src/core/engine-sql/embedding-catalog.ts	FALSE_STAMPED_SQL	sql	META	moved from embedding-invalidation.ts countFalseStampedChunks: literal copy of the page-embedding-budget.ts applying-hold predicate inside falseStampPageWhere, octet_length metadata for inline pages, body_bytes for segmented
 src/core/engine-sql/mention-reads.ts	readExplainScanPage	sql	STREAM	moved from src/commands/extract-mentions-explain.ts explainMention, same statement
 src/core/engine-sql/mention-reads.ts	readPageNameText	sql	STREAM	moved from src/commands/extract-mentions-explain.ts pageNames, same statement
 src/core/engine-sql/mention-reads.ts	listRejectedDeclarationPages	sql	STREAM	moved from src/commands/extract-mentions-explain.ts rejectedDeclaration, same statement
