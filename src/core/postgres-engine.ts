@@ -196,6 +196,7 @@ import * as chronicleExecutorImpl from './engine-sql/chronicle-executor.ts';
 import type { StoredWorktreeManifest } from './persistence/worktree-manifest.ts';
 import * as writeAttributionImpl from './engine-sql/write-attribution.ts';
 import * as opCheckpointImpl from './engine-sql/op-checkpoint.ts';
+import * as graduationDrainImpl from './engine-sql/graduation-drain.ts';
 import * as atomGenerationImpl from './engine-sql/atom-generation.ts';
 import * as syncPassPagesImpl from './engine-sql/sync-pass-pages.ts';
 import type { SyncImportPageQuery, SyncImportPageWindow } from './engine-sql/sync-pass-pages.ts';
@@ -2935,6 +2936,13 @@ export class PostgresEngine implements BrainEngine {
   deleteOpCheckpoint(op: string, fingerprint: string) { return opCheckpointImpl.deleteOpCheckpoint(this, op, fingerprint); }
   deleteOpCheckpointPaths(op: string, fingerprint: string) { return opCheckpointImpl.deleteOpCheckpointPaths(this, op, fingerprint); }
   readOpCheckpointRecords(op: string, fingerprints: readonly string[]) { return opCheckpointImpl.readOpCheckpointRecords(this, op, fingerprints); }
+  listPreviewHashCheckpoints(op: string, previewHash: string) { return opCheckpointImpl.listPreviewHashCheckpoints(this, op, previewHash); }
+  listGraduationPendingRequests() { return graduationDrainImpl.listGraduationPendingRequests(this.executeRaw.bind(this)); }
+  listGraduationTopologyRecoveries() { return graduationDrainImpl.listGraduationTopologyRecoveries(this.executeRaw.bind(this)); }
+  listGraduationEffectRecoveries() { return graduationDrainImpl.listGraduationEffectRecoveries(this.executeRaw.bind(this)); }
+  listForeignHostBindings(hostId: string) { return graduationDrainImpl.listForeignHostBindings(this.executeRaw.bind(this), hostId); }
+  hasOAuthBoundSourceColumn() { return graduationDrainImpl.hasOAuthBoundSourceColumn(this.executeRaw.bind(this)); }
+  listDanglingOAuthClients() { return graduationDrainImpl.listDanglingOAuthClients(this.executeRaw.bind(this)); }
   writeOpCheckpointRecords(op: string, rows: ReadonlyArray<{ fingerprint: string; record: unknown }>) { return opCheckpointImpl.writeOpCheckpointRecords(this, op, rows); }
   readAtomGeneration(pageId: number, contentHash: string) { return atomGenerationImpl.readAtomGeneration(this, pageId, contentHash); }
   recordAtomGenerationBump(sourceId: string, incarnation: string, pageId: number, keepContentHash: string | null, keepGeneration: number | null) { return atomGenerationImpl.recordAtomGenerationBump(this, sourceId, incarnation, pageId, keepContentHash, keepGeneration); }

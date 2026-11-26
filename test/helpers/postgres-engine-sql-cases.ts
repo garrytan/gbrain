@@ -201,6 +201,13 @@ const OOS = {
 } as const;
 
 export const DOMAIN_OF: Record<string, string> = {
+  'listGraduationPendingRequests': OOS.callerRawSql,
+  'listGraduationTopologyRecoveries': OOS.callerRawSql,
+  'listGraduationEffectRecoveries': OOS.callerRawSql,
+  'listForeignHostBindings': OOS.callerRawSql,
+  'hasOAuthBoundSourceColumn': OOS.callerRawSql,
+  'listDanglingOAuthClients': OOS.callerRawSql,
+  'listPreviewHashCheckpoints': OOS.callerRawSql,
   'readSourcePurgeEpoch': OOS.callerRawSql,
   'listCorePageRows': OOS.trustTierReads,
   'listPendingCoreEditNotices': OOS.trustTierReads,

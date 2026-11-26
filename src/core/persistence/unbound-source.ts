@@ -178,9 +178,8 @@ export async function classifyUnboundPage(tx: SqlEngine, row: Pick<WriteRequest,
 }
 
 export async function isUnboundSourcePage(engine: SqlEngine, sourceId: string, slug: string): Promise<boolean> {
-  const [row] = await engine.executeRaw<{ database_only_reason: string | null }>(
-    'SELECT database_only_reason FROM pages WHERE source_id=$1 AND slug=$2', [sourceId, slug]);
-  return row?.database_only_reason === 'unbound_source';
+  // The typed write-guard read (engine-sql/write-guards.ts readPageDatabaseOnlyReason, the same statement), served on every engine.
+  return await (engine as unknown as Pick<BrainEngine, 'readPageDatabaseOnlyReason'>).readPageDatabaseOnlyReason(sourceId, slug) === 'unbound_source';
 }
 
 export function unboundWriteWarning(operation: string, sourceId: string, admittedUnbound: boolean): string {

@@ -8,8 +8,9 @@
  *    stalled-effect readers, the held-read stale stamp, the landing-gap and drift-conflict audits (pages, producers and the
  *    keyset cursor), the legacy-lock, derived-origin, managed-sync orphan and connector orphan listings, and the atom
  *    retirement ledger's newest-per-origin pick return the same rows in the same order on every engine arm (PGLite always;
- *    Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1, where each raw-SQL case stops on the typed
- *    raw_sql refusal, and the atom retirement case, seeded and read through typed members, runs to the end): byte order,
+ *    Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1, where each case seeded and read
+ *    through typed members runs to the end, and each case that still seeds or reads through raw SQL stops on the typed
+ *    raw_sql refusal): byte order,
  *    as PGLite sorts and as Postgres sorts with `COLLATE "C"`.
  *  - Regression: on an en_US Postgres these reads sorted by the locale, which skips punctuation (`ab` before `a-z`), so a
  *    status list, a blocker list, a refusal naming "the first" source, a stale stamp taken from "the first" hold, and the
@@ -17,8 +18,9 @@
  *  - Why existing coverage misses it: the cases used ids that sort the same in every locale, and CI's Postgres runs in
  *    C.UTF-8. Every case here mixes `a-z`, `ab`, `a.b` and `a_b` (or the slug-safe `a-z`, `a/z`, `ab`); run it against an
  *    en_US Postgres to see it fail.
- *  - Seam: none. Rows are seeded through raw SQL for persistence tables that only the managed lifecycle writes; the readers
- *    run unchanged.
+ *  - Seam: none. Rows are seeded through the typed journal and claim-store members where the case runs on Rust, and
+ *    through raw SQL where it still stops there (persistence tables only the managed lifecycle writes); the readers run
+ *    unchanged.
  */
 import { describe, expect } from 'bun:test';
 import { randomUUID } from 'node:crypto';
@@ -85,11 +87,6 @@ async function bind(engine: BrainEngine, sourceId: string, incarnation: string, 
     [sourceId, incarnation, worktreeId, relativePath]);
 }
 
-async function hostBind(engine: BrainEngine, worktreeId: string, hostId: string, localPath: string): Promise<void> {
-  await engine.executeRaw('INSERT INTO persistence_host_bindings(worktree_id,host_id,local_path,coordination_path) VALUES($1::uuid,$2::uuid,$3,$4)',
-    [worktreeId, hostId, localPath, `${localPath}.lock`]);
-}
-
 interface SeedRequest {
   source: string; incarnation: string; slug?: string; state?: string; operation?: string; errorCode?: string | null; intent?: Record<string, unknown> | null;
   completed?: boolean; worktree?: string | null; completedAt?: string;
@@ -124,12 +121,6 @@ async function seedEffect(engine: BrainEngine, e: SeedEffect): Promise<void> {
   });
 }
 
-async function lockRows(engine: BrainEngine, ids: readonly string[]): Promise<void> {
-  for (const id of ids) {
-    await engine.executeRaw(`INSERT INTO gbrain_cycle_locks(id,holder_pid,holder_host,ttl_expires_at) VALUES ($1,$2,'collate-host',now()+interval '1 hour')`, [id, 2_000_000_000]);
-  }
-}
-
 /**
  * One committed request of `source` on `worktree` with one Git effect that the effect worker failed with `code`, written
  * through the journal members the managed writer uses (`insertWriteRequest`, `completeWriteRow`, `insertPublicationEffects`,
@@ -162,7 +153,7 @@ async function seedFailedWorktreeEffect(engine: BrainEngine, e: { source: string
   });
 }
 
-/** The same leases as `lockRows`, taken through the typed `acquireCycleLock` (a held lease an hour long). */
+/** Held cycle-lock leases an hour long, taken through the typed `acquireCycleLock`. */
 async function typedLockRows(engine: BrainEngine, ids: readonly string[]): Promise<void> {
   for (const id of ids) {
     const taken = await engine.acquireCycleLock(id, { holderPid: 2_000_000_000, holderHost: 'collate-host', acquisitionToken: randomUUID(), ttlMinutes: 60, stealGraceSeconds: 0 });
@@ -557,23 +548,35 @@ describe('topology status and blocker lists sort source ids by byte', () => {
     return listed;
   }));
 
-  parityTest('graduationBlockers names the byte-first source of a foreign worktree and lists dangling OAuth clients by byte client id', {
+  parityTest('graduationBlockers names the byte-first source of a foreign worktree', {
+    methods: ['worktreeClaimStore', 'listGraduationPendingRequests', 'listGraduationTopologyRecoveries', 'listGraduationEffectRecoveries',
+      'listForeignHostBindings', 'hasOAuthBoundSourceColumn', 'listDanglingOAuthClients'],
+  }, async (engine, backend) => {
+    const worktree = await seedWorktree(engine, randomUUID());
+    for (const id of MIXED_SRC) await seedSourceBinding(engine, id, await seedSource(engine, backend, id), worktree, id);
+    await seedHostBinding(engine, worktree, randomUUID(), '/collate/foreign');
+    const blockers = await graduationBlockers(engine, randomUUID());
+    const foreign = blockers.find(blocker => blocker.kind === 'foreign_host_binding' && blocker.id.includes(':'))!;
+    expect(foreign.argv![5]).toBe(BYTE_SRC[0]);
+    expect(blockers.filter(blocker => blocker.kind === 'dangling_reference')).toEqual([]);
+    return { source: foreign.argv![5], kinds: blockers.map(blocker => blocker.kind) };
+  });
+
+  // The Rust arm's stop, by design (RUST_ENGINE.md row 58): an OAuth client bound to a source that does not exist is a
+  // state only an unchecked SQL write makes (the rows go in with session_replication_role = replica). The Rust store
+  // checks the reference and clears it when its source is removed, so it never holds one; the fixture is raw SQL.
+  parityTest('graduationBlockers lists dangling OAuth clients by byte client id', {
     methods: ['executeRaw', 'transaction'], requires: 'raw_sql',
   }, async (engine) => {
-    const worktree = await addWorktree(engine, randomUUID());
-    for (const id of MIXED_SRC) await bind(engine, id, await addSource(engine, id), worktree, id);
-    await hostBind(engine, worktree, randomUUID(), '/collate/foreign');
     // An OAuth client bound to a source that does not exist (an FK only Postgres enforces, so the rows are written with it off).
     await engine.transaction(async tx => {
       await tx.executeRaw('SET LOCAL session_replication_role = replica');
       for (const id of MIXED_IDS) await tx.executeRaw(`INSERT INTO oauth_clients(client_id,client_name,bound_source_id) VALUES($1,$1,'gone-source')`, [id]);
     });
     const blockers = await graduationBlockers(engine, randomUUID());
-    const foreign = blockers.find(blocker => blocker.kind === 'foreign_host_binding' && blocker.id.includes(':'))!;
     const clients = blockers.filter(blocker => blocker.kind === 'dangling_reference').map(blocker => blocker.id);
-    expect(foreign.argv![5]).toBe(BYTE_SRC[0]);
     expect(clients).toEqual(BYTE_IDS.map(id => `oauth_clients.${id}`));
-    return { source: foreign.argv![5], clients };
+    return clients;
   });
 });
 

@@ -88,6 +88,13 @@ export const LEDGER_MEMBERS = {
   listCatalogRelations: 'schema',
   readCatalogSchemaVersion: 'schema',
   listCatalogForeignKeys: 'raw_sql',
+  // the engine graduation drain's blocker reads (engine-sql/graduation-drain.ts; graduation_blockers.rs)
+  listGraduationPendingRequests: 'persistence_journal',
+  listGraduationTopologyRecoveries: 'persistence_journal',
+  listGraduationEffectRecoveries: 'persistence_journal',
+  listForeignHostBindings: 'persistence_journal',
+  hasOAuthBoundSourceColumn: 'access_control',
+  listDanglingOAuthClients: 'access_control',
   countMcpResolvedTakes: 'takes',
   listTopResolvedTakesForHolder: 'takes',
   listAbandonedTakes: 'takes',

@@ -109,6 +109,7 @@ pub(crate) use inbox::purge_probe_inbox_rows;
 pub use insight::InsightSpec;
 use mutations::add_token;
 pub use mutations::{DelayOpts, TokenDelta};
+pub(crate) use oauth_clients::dangling_clients_in as dangling_oauth_clients_in;
 pub(crate) use oauth_clients::remove_source_rows as remove_oauth_source_rows;
 pub(crate) use oauth_clients::source_client_in as source_oauth_client_in;
 pub use oauth_clients::{ClientInsert, ClientPatch, ClientPatchGuard};

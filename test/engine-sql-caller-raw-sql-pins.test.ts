@@ -4147,6 +4147,60 @@ const PINS: Pin[] = [
     texts: [`SELECT f.id, f.source_markdown_slug, f.source_id, f.entity_slug, f.claim_metric, f.claim_period, f.valid_from FROM facts f
      WHERE f.source_markdown_slug = ANY($1::text[]) AND f.entity_slug = ANY($2::text[]) AND f.claim_metric IS NOT NULL`],
   },
+  {
+    from: 'src/core/persistence/graduation-drain.ts:47 graduationBlockers (PENDING_REQUESTS_SQL; at 85ad984039)',
+    case: { method: 'listGraduationPendingRequests', variant: 'default', run: e => e.listGraduationPendingRequests() },
+    texts: [`SELECT r.request_id::text AS request_id, r.source_id, r.operation, r.state,
+    r.recovery IS NOT NULL AS recovering, r.blocked_reason, w.owner_host_id::text AS owner_host_id
+  FROM persistence_requests r LEFT JOIN persistence_worktrees w ON w.id = r.worktree_id
+  WHERE r.state IN ('queued', 'deferred', 'running', 'recovering') OR r.recovery IS NOT NULL
+  ORDER BY r.sequence`],
+  },
+  {
+    from: 'src/core/persistence/graduation-drain.ts:61 graduationBlockers (the recovering topology changes; at 85ad984039)',
+    case: { method: 'listGraduationTopologyRecoveries', variant: 'default', run: e => e.listGraduationTopologyRecoveries() },
+    texts: ["SELECT id::text AS id, operation, source_id, request_id::text AS request_id, (state = 'recovering' AND recovery IS NULL) AS admission, COALESCE(outcome->>'expired_only', 'false') = 'true' AS automatic FROM persistence_topology_changes WHERE state = 'recovering' OR recovery IS NOT NULL ORDER BY created_at"],
+  },
+  {
+    from: 'src/core/persistence/graduation-drain.ts:71 graduationBlockers (the recovering effects; at 85ad984039)',
+    case: { method: 'listGraduationEffectRecoveries', variant: 'default', run: e => e.listGraduationEffectRecoveries() },
+    texts: [`SELECT e.id::text AS id, e.kind, e.state, e.error_code, COALESCE(e.source_id, r.source_id) AS source_id, r.request_id::text AS request_id
+     FROM persistence_effects e JOIN persistence_requests r ON r.id = e.request_id WHERE e.recovery IS NOT NULL ORDER BY e.id`],
+  },
+  {
+    from: 'src/core/persistence/graduation-drain.ts:81 graduationBlockers (the host bindings of other hosts; at 85ad984039)',
+    case: { method: 'listForeignHostBindings', variant: 'default', run: e => e.listForeignHostBindings('00000000-0000-4000-8000-000000000001') },
+    texts: [`SELECT b.worktree_id::text AS worktree_id, b.host_id::text AS host_id,
+       (SELECT s.source_id FROM persistence_source_bindings s WHERE s.worktree_id = b.worktree_id ORDER BY s.source_id COLLATE "C" LIMIT 1) AS source_id
+     FROM persistence_host_bindings b WHERE b.host_id <> $1::uuid ORDER BY b.worktree_id, b.host_id`],
+  },
+  {
+    from: 'src/core/persistence/graduation-drain.ts:89 graduationBlockers (the bound_source_id column check; at 85ad984039)',
+    case: { method: 'hasOAuthBoundSourceColumn', variant: 'default', run: e => e.hasOAuthBoundSourceColumn() },
+    texts: [`SELECT EXISTS (SELECT 1 FROM information_schema.columns
+    WHERE table_schema = current_schema() AND table_name = 'oauth_clients' AND column_name = 'bound_source_id') AS present`],
+  },
+  {
+    from: 'src/core/persistence/graduation-drain.ts:92 graduationBlockers (the dangling OAuth clients; at 85ad984039)',
+    case: { method: 'listDanglingOAuthClients', variant: 'default', run: e => e.listDanglingOAuthClients() },
+    texts: [`SELECT c.client_id, c.client_name, c.bound_source_id
+      FROM oauth_clients c WHERE c.bound_source_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sources s WHERE s.id = c.bound_source_id) ORDER BY c.client_id COLLATE "C"`],
+  },
+  {
+    from: 'src/core/persistence/mirror-read-only.ts:50 isMirrorOnlyPage (the page\'s database-only reason; at 85ad984039)',
+    case: { method: 'readPageDatabaseOnlyReason', variant: 'default', run: e => e.readPageDatabaseOnlyReason('default', 'notes/a') },
+    texts: ['SELECT database_only_reason FROM pages WHERE source_id=$1 AND slug=$2'],
+  },
+  {
+    from: 'src/core/persistence/unbound-source.ts:181 isUnboundSourcePage (the same statement; at 85ad984039)',
+    case: { method: 'readPageDatabaseOnlyReason', variant: 'unbound', run: e => e.readPageDatabaseOnlyReason('default', 'notes/b') },
+    texts: ['SELECT database_only_reason FROM pages WHERE source_id=$1 AND slug=$2'],
+  },
+  {
+    from: 'src/core/persistence/recovery-resolve.ts:583 readResolutions (the finished resolutions of one preview hash; at 85ad984039)',
+    case: { method: 'listPreviewHashCheckpoints', variant: 'default', run: e => e.listPreviewHashCheckpoints('recovery-resolution', 'H') },
+    texts: ["SELECT completed_keys FROM op_checkpoints WHERE op=$1 AND completed_keys->0->>'preview_hash'=$2 ORDER BY fingerprint COLLATE \"C\""],
+  },
 ];
 
 type PinPrivacy = 'none' | 'caller' | 'floor';

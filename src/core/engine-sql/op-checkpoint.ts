@@ -101,6 +101,15 @@ export async function readOpCheckpointRecords(raw: Raw, op: string, fingerprints
 }
 
 /**
+ * The rows of `op` whose first record names `previewHash` (`completed_keys->0->>'preview_hash'`), by fingerprint in byte
+ * order: the finished resolutions recovery-resolve.ts `readResolutions` replays. Moved from that caller unchanged.
+ */
+export async function listPreviewHashCheckpoints(raw: Raw, op: string, previewHash: string): Promise<Array<{ completed_keys: unknown[] }>> {
+  return raw.executeRaw<{ completed_keys: unknown[] }>("SELECT completed_keys FROM op_checkpoints WHERE op=$1 AND completed_keys->0->>'preview_hash'=$2 ORDER BY fingerprint COLLATE \"C\"",
+    [op, previewHash]);
+}
+
+/**
  * Each row's parent replaced with the one-element array `[record]`, stamped now; the child paths stay. The caller
  * passes each fingerprint once (sync-holds.ts recordSyncImportProvenances keeps the last value for a page). One
  * statement; `$2` binds through `::text::jsonb`, never `::jsonb` (CLAUDE.md, the positional double-encode trap).

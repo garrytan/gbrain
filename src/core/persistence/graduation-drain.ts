@@ -13,15 +13,7 @@ import { disposePersistenceConsumer, preparePersistedMutation } from './service.
 import { readWriterAdminLockTyped } from './admin-lock.ts';
 import type { GraduationBlocker } from './engine-graduation.types.ts';
 
-const PENDING_REQUESTS_SQL = `SELECT r.request_id::text AS request_id, r.source_id, r.operation, r.state,
-    r.recovery IS NOT NULL AS recovering, r.blocked_reason, w.owner_host_id::text AS owner_host_id
-  FROM persistence_requests r LEFT JOIN persistence_worktrees w ON w.id = r.worktree_id
-  WHERE r.state IN ('queued', 'deferred', 'running', 'recovering') OR r.recovery IS NOT NULL
-  ORDER BY r.sequence`;
-
 const TERMINAL = new Set(['committed', 'conflict', 'failed', 'cancelled']);
-
-type PendingRequest = { request_id: string; source_id: string; operation: string; state: string; recovering: boolean; blocked_reason: string | null; owner_host_id: string | null };
 
 /** The read-only stuck-recovery preview of one record: the exit of a recovery that refuses a hand-edited file (C-1, C-4). */
 const stuckRecoveryPreview = (sourceId: string, requestId: string) => ['gbrain', 'repair', 'stuck-recovery', '--source', sourceId, '--request-id', requestId];
@@ -44,7 +36,9 @@ export async function graduationBlockers(source: BrainEngine, hostId: string): P
     blockers.push({ kind: 'writer_admin_lock', id: 'persistence.writer_admin_lock', detail: `writer administration locked at ${lock.set_at ?? 'unknown time'}`,
       argv: ['gbrain', 'sources', 'writer', 'unlock'], needsUser: true });
   }
-  for (const r of await source.executeRaw<PendingRequest>(PENDING_REQUESTS_SQL)) {
+  // The blocker reads are typed members (engine-sql/graduation-drain.ts), so a Rust primary answers them too: failback
+  // (`gbrain engine swap --to postgres`) drains it through this check.
+  for (const r of await source.listGraduationPendingRequests()) {
     const detail = `${r.operation} ${r.state}${r.recovering ? ', recovering' : ''} (source ${r.source_id})`;
     if (r.owner_host_id && r.owner_host_id !== hostId) {
       blockers.push({ kind: 'foreign_host_binding', id: r.request_id, detail: `${detail} is bound to a worktree owned by host ${r.owner_host_id}`,
@@ -58,8 +52,7 @@ export async function graduationBlockers(source: BrainEngine, hostId: string): P
       blockers.push({ kind: 'request', id: r.request_id, detail, needsUser: false });
     }
   }
-  const topology = await source.executeRaw<{ id: string; operation: string; source_id: string; request_id: string; admission: boolean; automatic: boolean }>(
-    "SELECT id::text AS id, operation, source_id, request_id::text AS request_id, (state = 'recovering' AND recovery IS NULL) AS admission, COALESCE(outcome->>'expired_only', 'false') = 'true' AS automatic FROM persistence_topology_changes WHERE state = 'recovering' OR recovery IS NOT NULL ORDER BY created_at");
+  const topology = await source.listGraduationTopologyRecoveries();
   for (const t of topology) {
     blockers.push({ kind: 'topology_recovery', id: t.id, detail: t.admission && t.automatic
       ? `automatic expired-archive purge of ${t.source_id} (request ${t.request_id}) stopped before it finished; the next automatic expired-archive purge finishes it, or gbrain sources purge with no source id finishes it now`
@@ -68,9 +61,7 @@ export async function graduationBlockers(source: BrainEngine, hostId: string): P
       : `${t.operation} for ${t.source_id} is recovering`,
       argv: ['gbrain', 'sources', 'writer', 'status', t.source_id, '--json'], needsUser: t.admission && !t.automatic });
   }
-  const effects = await source.executeRaw<{ id: string; kind: string; state: string; error_code: string | null; source_id: string | null; request_id: string }>(
-    `SELECT e.id::text AS id, e.kind, e.state, e.error_code, COALESCE(e.source_id, r.source_id) AS source_id, r.request_id::text AS request_id
-     FROM persistence_effects e JOIN persistence_requests r ON r.id = e.request_id WHERE e.recovery IS NOT NULL ORDER BY e.id`);
+  const effects = await source.listGraduationEffectRecoveries();
   for (const e of effects) {
     const sourceId = e.source_id ?? 'default';
     const stuck = e.kind === 'withdrawal-mirror' && e.error_code === 'unexpected_file_bytes';
@@ -78,19 +69,13 @@ export async function graduationBlockers(source: BrainEngine, hostId: string): P
       argv: e.kind === 'embedding' ? ['gbrain', 'repair', 'embedding-effects', '--source', sourceId]
         : stuck ? stuckRecoveryPreview(sourceId, e.request_id) : ['gbrain', 'sources', 'writer', 'status', sourceId, '--json'], needsUser: stuck });
   }
-  const bindings = await source.executeRaw<{ worktree_id: string; host_id: string; source_id: string | null }>(
-    `SELECT b.worktree_id::text AS worktree_id, b.host_id::text AS host_id,
-       (SELECT s.source_id FROM persistence_source_bindings s WHERE s.worktree_id = b.worktree_id ORDER BY s.source_id COLLATE "C" LIMIT 1) AS source_id
-     FROM persistence_host_bindings b WHERE b.host_id <> $1::uuid ORDER BY b.worktree_id, b.host_id`, [hostId]);
+  const bindings = await source.listForeignHostBindings(hostId);
   for (const b of bindings) {
     blockers.push({ kind: 'foreign_host_binding', id: `${b.worktree_id}:${b.host_id}`, detail: `worktree ${b.worktree_id} has a binding on host ${b.host_id}`,
       argv: ['gbrain', 'sources', 'writer', 'transfer', 'prepare', b.source_id ?? b.worktree_id], needsUser: true });
   }
-  const [boundColumn] = await source.executeRaw<{ present: boolean }>(`SELECT EXISTS (SELECT 1 FROM information_schema.columns
-    WHERE table_schema = current_schema() AND table_name = 'oauth_clients' AND column_name = 'bound_source_id') AS present`);
-  if (boundColumn?.present) {
-    const dangling = await source.executeRaw<{ client_id: string; client_name: string; bound_source_id: string }>(`SELECT c.client_id, c.client_name, c.bound_source_id
-      FROM oauth_clients c WHERE c.bound_source_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sources s WHERE s.id = c.bound_source_id) ORDER BY c.client_id COLLATE "C"`);
+  if (await source.hasOAuthBoundSourceColumn()) {
+    const dangling = await source.listDanglingOAuthClients();
     for (const c of dangling) {
       blockers.push({ kind: 'dangling_reference', id: `oauth_clients.${c.client_id}`,
         detail: `OAuth client ${c.client_name} is bound to source ${c.bound_source_id}, which no longer exists; Postgres enforces this binding, and clearing it would widen the client's access. Restore the source, or revoke the client and register a replacement`,

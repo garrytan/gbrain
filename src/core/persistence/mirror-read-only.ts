@@ -46,10 +46,13 @@ export async function classifyMirrorPage(tx: SqlEngine, row: { source_id: string
     WHERE source_id=$1 AND slug=$2 AND database_only_reason IS NULL AND NULLIF(source_path,'') IS NULL`, [row.source_id, row.slug]);
 }
 
+/** Why the page is stored database-only, or null: the typed write-guard read (engine-sql/write-guards.ts), served on every engine. */
+export async function readPageDatabaseOnlyReason(engine: SqlEngine, sourceId: string, slug: string): Promise<string | null> {
+  return (engine as unknown as Pick<BrainEngine, 'readPageDatabaseOnlyReason'>).readPageDatabaseOnlyReason(sourceId, slug);
+}
+
 export async function isMirrorOnlyPage(engine: SqlEngine, sourceId: string, slug: string): Promise<boolean> {
-  const [row] = await engine.executeRaw<{ database_only_reason: string | null }>(
-    'SELECT database_only_reason FROM pages WHERE source_id=$1 AND slug=$2', [sourceId, slug]);
-  return row?.database_only_reason === 'mirror_read_only';
+  return await readPageDatabaseOnlyReason(engine, sourceId, slug) === 'mirror_read_only';
 }
 
 /** GBRA-133 (#7931): a `mirror_read_only` page with no recorded file whose source is no longer a read-only mirror. */

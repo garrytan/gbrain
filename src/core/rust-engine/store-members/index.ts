@@ -81,6 +81,7 @@ import * as reflexReads from './reflex-reads.ts';
 import * as briefReads from './brief-reads.ts';
 import * as factsDoctor from './facts-doctor.ts';
 import * as embeddingCatalog from './embedding-catalog.ts';
+import * as graduationDrain from './graduation-drain.ts';
 import * as fenceHolds from './fence-holds.ts';
 import * as derivedGenerations from './derived-generations.ts';
 import * as factsCycle from './facts-cycle.ts';
@@ -252,7 +253,7 @@ export const STORE_MEMBERS = {
   ...cliReadsExport,
   ...cliEntities, ...adminReads, ...reflexReads, ...briefReads,
   // Group 5 facts statements (docs/research/rust-cli-contract-map.md).
-  ...factsDoctor, ...embeddingCatalog, ...fenceHolds, ...derivedGenerations, ...factsCycle, ...factsPurge, ...purgePlan, ...purgeEffects, ...beliefPurge, ...beliefPurgeLedger, ...projectionRebuild, ...factsRepair, ...labelRepairReads, ...factTextRepair, ...lostFenceReads, ...factsTrust, ...derivationTrust, ...factsTrustReads, ...factsTrustOwner, ...factRelinkAttempts,
+  ...factsDoctor, ...embeddingCatalog, ...graduationDrain, ...fenceHolds, ...derivedGenerations, ...factsCycle, ...factsPurge, ...purgePlan, ...purgeEffects, ...beliefPurge, ...beliefPurgeLedger, ...projectionRebuild, ...factsRepair, ...labelRepairReads, ...factTextRepair, ...lostFenceReads, ...factsTrust, ...derivationTrust, ...factsTrustReads, ...factsTrustOwner, ...factRelinkAttempts,
   ...ontologyRepair, ...factsRecall, ...factsForget, ...factsRemember, ...factsWritePath, ...factsProvenance, ...factsQuoted,
   ...factRelinkWrites,
   ...factsCycleFence, ...factsPhantom, ...factsPurgeReceipt, ...factsPurgeTx, ...factsPurgeJournal, ...factsPurgeProbe, ...factsConversation,

@@ -86,11 +86,6 @@ async function bind(engine: BrainEngine, sourceId: string, incarnation: string, 
     [sourceId, incarnation, worktreeId, relativePath]);
 }
 
-async function hostBind(engine: BrainEngine, worktreeId: string, hostId: string, localPath: string): Promise<void> {
-  await engine.executeRaw('INSERT INTO persistence_host_bindings(worktree_id,host_id,local_path,coordination_path) VALUES($1::uuid,$2::uuid,$3,$4)',
-    [worktreeId, hostId, localPath, `${localPath}.lock`]);
-}
-
 /** bindEach through the typed seeders (persistence-fixtures.ts), so the rows land on the Rust store too. */
 async function bindEachTyped(engine: BrainEngine, backend: Backend, ids: readonly string[], real: boolean): Promise<Map<string, { worktree: string; incarnation: string }>> {
   const made = new Map<string, { worktree: string; incarnation: string }>();
@@ -299,9 +294,10 @@ describe('purge reads sort tombstones and park records by byte', () => {
     return { candidates, keyOrder: keys.map(key => (JSON.parse(key) as string[]).slice(0, 2).join('/')) };
   }));
 
-  // Parity coverage loss (swap report): the tie this case checks needs tombstones of two sources deleted at one instant,
-  // which a Rust brain cannot stamp (each soft delete takes its own store time), so the case stays on the SQL arms. The Rust
-  // store serves listUnreviewedSyncTombstones; rust/crates/gbrain-store/tests/repair_scans.rs writes the records it reads.
+  // The Rust arm's stop, by design (RUST_ENGINE.md row 56): the tie this case checks needs tombstones of two sources deleted
+  // at one instant, which a Rust brain cannot stamp (each soft delete takes its own store time), so the fixture is raw SQL and
+  // the case stays on the SQL arms. The Rust store serves listUnreviewedSyncTombstones; rust/crates/gbrain-store/tests/repair_scans.rs
+  // writes the records it reads.
   parityTest('readUnreviewedSyncTombstones lists sync-deleted tombstones by byte source id, then byte slug', {
     methods: ['executeRaw', 'putPage', 'listUnreviewedSyncTombstones'], requires: 'raw_sql',
   }, async (engine, backend) => {
@@ -317,15 +313,15 @@ describe('purge reads sort tombstones and park records by byte', () => {
 
 describe('the reconcile audit pages by byte slug', () => {
   parityTest('auditCanonicalSource walks the pages of a source in byte slug order, and its next_after cursor neither repeats nor skips a page', {
-    methods: ['executeRaw', 'putPage'], requires: 'raw_sql',
+    methods: ['putPage', 'worktreeClaimStore', 'writerReleaseStore', 'readPageDatabaseOnlyReason'],
   }, async (engine, backend) => inHome(async home => {
     const slugs = [...MIXED_SLUGS, 'b-x', 'b/x', 'bx'];
-    const incarnation = await addSource(engine, 'ab');
-    const worktree = await addWorktree(engine, localHostId());
-    await bind(engine, 'ab', incarnation, worktree);
+    const incarnation = await seedSource(engine, backend, 'ab');
+    const worktree = await seedWorktree(engine, localHostId());
+    await seedSourceBinding(engine, 'ab', incarnation, worktree);
     const root = join(home, 'canonical');
     mkdirSync(root, { recursive: true });
-    await hostBind(engine, worktree, localHostId(), root);
+    await seedHostBinding(engine, worktree, localHostId(), root);
     for (const slug of slugs) await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `body of ${slug}`, timeline: '' }, { sourceId: 'ab' });
     const cursors: Array<string | null> = [];
     let inspected = 0;
@@ -347,6 +343,9 @@ describe('the reconcile audit pages by byte slug', () => {
 describe('origin reads sort source ids by byte', () => {
   const page = (slug: string) => ({ type: 'note' as const, title: slug, compiled_truth: `body of ${slug}`, timeline: '' });
 
+  // The Rust arm's stop, by design (RUST_ENGINE.md row 57): twin pages (two live pages of one source with one source_path)
+  // exist only on a SQL brain made before pages_live_origin_key, so the fixture drops that index through raw SQL. The Rust
+  // store holds one live origin per source and refuses a second (origin_claimed), so it never has a twin to count.
   parityTest('originTwinCounts lists the sources holding twin pages by byte id, and its limit keeps the byte-first ones', {
     methods: ['executeRaw', 'putPage'], requires: 'raw_sql',
   }, async (engine, backend) => {
@@ -550,7 +549,7 @@ describe('checkpoint and receipt listings sort their text keys by byte', () => {
     engine.writeOpCheckpointRecord(op, fingerprint, [record]);
 
   parityTest('readResolutions returns the finished resolutions of one preview hash in byte fingerprint order', {
-    methods: ['writeOpCheckpointRecord'],
+    methods: ['writeOpCheckpointRecord', 'listPreviewHashCheckpoints'],
   }, async (engine) => {
     for (const fingerprint of MIXED_SLUGS) await typedCheckpoint(engine, RESOLUTION_OP, fingerprint, { preview_hash: 'H', fingerprint });
     await typedCheckpoint(engine, RESOLUTION_OP, 'other', { preview_hash: 'not-H', fingerprint: 'other' });

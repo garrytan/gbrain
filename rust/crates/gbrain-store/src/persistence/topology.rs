@@ -440,6 +440,15 @@ fn all_changes(read: &dyn KvRead) -> Result<Vec<TopologyChangeRecord>> {
 /// record, oldest first. `admission` is a recovering change with no recovery record; `automatic`
 /// is one whose outcome says `expired_only` (as text, `true`).
 pub(crate) fn recovering_topology_rows_in(read: &dyn KvRead) -> Result<Vec<Value>> {
+    let mut rows = recovering_topology_changes_in(read)?;
+    rows.truncate(20);
+    Ok(rows)
+}
+
+/// The graduation drain's topology blocker read (`engine-sql/graduation-drain.ts`
+/// `listGraduationTopologyRecoveries`): every change that is recovering or holds a recovery
+/// record, oldest first, in the row shape `recovering_topology_rows_in` returns.
+pub(crate) fn recovering_topology_changes_in(read: &dyn KvRead) -> Result<Vec<Value>> {
     let has_recovery = |r: &TopologyChangeRecord| r.recovery.as_ref().is_some_and(|v| !v.is_null());
     let mut rows: Vec<TopologyChangeRecord> = all_changes(read)?
         .into_iter()
@@ -448,7 +457,6 @@ pub(crate) fn recovering_topology_rows_in(read: &dyn KvRead) -> Result<Vec<Value
     rows.sort_by_key(|r| r.created_at_us);
     Ok(rows
         .iter()
-        .take(20)
         .map(|r| {
             let expired_only = r.outcome.as_ref().and_then(|o| o.get("expired_only"));
             let automatic = match expired_only {

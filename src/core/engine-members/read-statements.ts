@@ -9,6 +9,7 @@ import type { BriefEntityPageOpts, BriefEntityPageRow, ReflexPageMatch, ReflexPa
 import type * as BriefReadsSql from '../engine-sql/brief-reads.ts';
 import type * as ConceptRebuildSql from '../engine-sql/concept-rebuild.ts';
 import type * as EmbeddingCatalogSql from '../engine-sql/embedding-catalog.ts';
+import type * as GraduationDrainSql from '../engine-sql/graduation-drain.ts';
 import type * as ChronicleReadsSql from '../engine-sql/chronicle-reads.ts';
 import type { EntityAnchoredPages, EntityCardMatch, EntityCardRow, ExtractionLagCounts, ExtractionLagQuery, FuzzyEntityCandidateRow, IgnoredLabelPageRow, InboundLinkerCountRow, LivePageTypeRow, MentionDueQuery, MentionIndexRecount, MentionIndexStatusRow, NameVariantCandidateQuery, NameVariantCandidateRow, PrefixCandidateQuery, PrefixCandidateRow, PrefixTitleRow, ResolverPrivacy, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow, SlugPatternPageRow, TextMentionPageRow, TrigramCandidateQuery, TrigramCandidateRow } from '../engine-sql/entity-reads.ts';
 import type { ExactBatchRow, ExactScanOpts } from '../search/exact-scan.ts';
@@ -96,6 +97,24 @@ export interface ReadStatementMembers {
   listUnattributedFacts(opts: { sourceIds: string[]; worldOnly: boolean; excludePrivateProvenance: boolean; limit: number; offset: number }): Promise<UnattributedFactRow[]>;
   /** Missing link targets in scope, most-referenced first, with their total; `excludePrivate` drops private origins and private bare-name matches. */
   listWantedPages(opts: { sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean; limit: number; offset: number }): Promise<{ total: number; rows: WantedPageRow[] }>;
+
+  // The engine graduation drain's blocker reads (engine-sql/graduation-drain.ts) and the recovery-resolution replay read
+  // (engine-sql/op-checkpoint.ts). Each ran through executeRaw in its caller; the Rust engine answers from its journal,
+  // topology, worktree, client and checkpoint records.
+  /** The requests queued, deferred, running or recovering, or holding a recovery record, with their worktree's owner, by sequence. */
+  listGraduationPendingRequests(): Promise<GraduationDrainSql.GraduationPendingRequest[]>;
+  /** The topology changes that are recovering or hold a recovery record, oldest first. */
+  listGraduationTopologyRecoveries(): Promise<GraduationDrainSql.GraduationTopologyRecovery[]>;
+  /** The effects that hold a recovery record, by effect id. */
+  listGraduationEffectRecoveries(): Promise<GraduationDrainSql.GraduationEffectRecovery[]>;
+  /** The host bindings of every host but `hostId`, by worktree then host, each with its worktree's byte-first source. */
+  listForeignHostBindings(hostId: string): Promise<GraduationDrainSql.ForeignHostBinding[]>;
+  /** Whether `oauth_clients` has the `bound_source_id` column. */
+  hasOAuthBoundSourceColumn(): Promise<boolean>;
+  /** The OAuth clients bound to a source that does not exist, by client id in byte order. */
+  listDanglingOAuthClients(): Promise<GraduationDrainSql.DanglingOAuthClient[]>;
+  /** The checkpoint rows of `op` whose first record names `previewHash`, by fingerprint in byte order. */
+  listPreviewHashCheckpoints(op: string, previewHash: string): Promise<Array<{ completed_keys: unknown[] }>>;
 
   // Embedding catalog (engine-sql/embedding-catalog.ts): what the embedding commands read about the vector columns. Postgres
   // and PGLite read their catalog; the Rust engine reads its per-vector records (an empty store has no column yet).

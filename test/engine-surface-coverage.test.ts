@@ -223,6 +223,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'countUnlinkedFactsByOrigin', 'countUnlinkedFactStats', 'countFactRelinkOutcomes', 'listUnlinkedConversationSlugs', 'countFactEmbeddingCoverage',
   'countStaleFactEmbeddings',
   // Embedding catalog (engine-sql/embedding-catalog.ts; covered by test/engine-parity/embedding-catalog.test.ts)
+  'listGraduationPendingRequests', 'listGraduationTopologyRecoveries', 'listGraduationEffectRecoveries', 'listForeignHostBindings', 'hasOAuthBoundSourceColumn', 'listDanglingOAuthClients', 'listPreviewHashCheckpoints',
   'readChunkVectorColumn', 'readEmbeddingIdentity', 'listEmbeddingStores', 'hasStoredVectors', 'countChunkVectorCoverage',
   'readChunkColumnTypes', 'countChunkColumnCoverage', 'hasChunkImageVectors',
   // Semantic query-cache clear (engine-sql/query-cache.ts; covered by test/engine-parity/search-refusal-swallows.test.ts)

@@ -270,6 +270,7 @@ export const PAGES_MEMBERS = {
   deleteOpCheckpoint: 'persistence_journal',
   deleteOpCheckpointPaths: 'persistence_journal',
   readOpCheckpointRecords: 'persistence_journal',
+  listPreviewHashCheckpoints: 'persistence_journal',
   writeOpCheckpointRecords: 'persistence_journal',
   readAtomGeneration: 'persistence_journal',
   recordAtomGenerationBump: 'persistence_journal',

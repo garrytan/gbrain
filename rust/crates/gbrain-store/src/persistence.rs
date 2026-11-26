@@ -81,6 +81,7 @@ mod freshness;
 mod git_durability;
 mod git_effects;
 mod git_holds;
+mod graduation_blockers;
 mod head_blocker;
 mod housekeeping;
 mod identity_downgrade;

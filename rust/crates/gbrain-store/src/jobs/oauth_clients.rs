@@ -367,6 +367,29 @@ pub(crate) fn source_client_in(read: &dyn KvRead, source_id: &str) -> Result<Opt
     Ok(ids.into_iter().next())
 }
 
+/// The graduation drain's dangling-client read (`engine-sql/graduation-drain.ts`
+/// `listDanglingOAuthClients`): the clients bound to a source id no source record holds, by
+/// client id in byte order (`COLLATE "C"`), as `{ client_id, client_name, bound_source_id }`.
+pub(crate) fn dangling_clients_in(read: &dyn KvRead) -> Result<Vec<Value>> {
+    let sources: std::collections::HashSet<String> = crate::sources::all_sources(read)?
+        .into_iter()
+        .map(|s| s.id)
+        .collect();
+    let mut rows: Vec<ClientRecord> = all_clients(read)?
+        .into_iter()
+        .filter(|c| {
+            c.bound_source_id
+                .as_ref()
+                .is_some_and(|id| !sources.contains(id))
+        })
+        .collect();
+    rows.sort_by(|a, b| a.client_id.as_bytes().cmp(b.client_id.as_bytes()));
+    Ok(rows
+        .into_iter()
+        .map(|c| json!({ "client_id": c.client_id, "client_name": c.client_name, "bound_source_id": c.bound_source_id }))
+        .collect())
+}
+
 pub(super) fn all_clients(read: &dyn KvRead) -> Result<Vec<ClientRecord>> {
     let mut rows = Vec::new();
     let mut bad = None;

@@ -382,7 +382,7 @@ src/core/persistence/git-durability-administration.ts	execute_raw	2
 src/core/persistence/git-gap.ts	execute_raw	5
 src/core/persistence/graduation-copy.ts	execute_raw	36
 src/core/persistence/graduation-digest.ts	execute_raw	5	sync 13b: master (R2) splits the digest read into readKeysetRows, which the shadow seed shares; the trunk side counted 4
-src/core/persistence/graduation-drain.ts	execute_raw	11
+src/core/persistence/graduation-drain.ts	execute_raw	5
 src/core/persistence/graduation-losses.ts	execute_raw	5
 src/core/persistence/graduation-schema.ts	execute_raw	8
 src/core/persistence/graduation-target.ts	driver_call	2
@@ -406,7 +406,7 @@ src/core/persistence/managed-mode.ts	execute_raw	4	the shared-skills columns wri
 src/core/persistence/managed-sources.ts	execute_raw	1
 src/core/persistence/memory-prepare.ts	execute_raw	1
 src/core/persistence/memory-proposals.ts	execute_raw	9
-src/core/persistence/mirror-read-only.ts	execute_raw	2
+src/core/persistence/mirror-read-only.ts	execute_raw	1
 src/core/persistence/noop-kernel.ts	execute_raw	2
 src/core/persistence/origin-index.ts	execute_raw	2
 src/core/persistence/owner-activity.ts	execute_raw	1
@@ -434,7 +434,7 @@ src/core/persistence/reconcile-backup.ts	execute_raw	4
 src/core/persistence/reconcile-prepare.ts	execute_raw	1
 src/core/persistence/reconcile-state.ts	execute_raw	5
 src/core/persistence/reconcile.ts	execute_raw	3
-src/core/persistence/recovery-resolve.ts	execute_raw	10
+src/core/persistence/recovery-resolve.ts	execute_raw	9
 src/core/persistence/refresh-barrier.ts	execute_raw	4
 src/core/persistence/refusal-breaker.ts	execute_raw	1
 src/core/persistence/resolve-paths.ts	execute_raw	5
@@ -485,7 +485,7 @@ src/core/persistence/sync-window.ts	execute_raw	2
 src/core/persistence/topology-clone.ts	execute_raw	19
 src/core/persistence/topology-recovery.ts	execute_raw	16
 src/core/persistence/transient-retry.ts	execute_raw	1
-src/core/persistence/unbound-source.ts	execute_raw	4
+src/core/persistence/unbound-source.ts	execute_raw	3
 src/core/persistence/unimported-file.ts	execute_raw	1
 src/core/persistence/unindexed-files.ts	execute_raw	8
 src/core/persistence/upload-streamed.ts	execute_raw	1

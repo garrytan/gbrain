@@ -280,6 +280,10 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'readLiveSlugAliases', 'readSourceSlugProbe',
   // A scalar slug read's stored-spelling scan (engine-sql/slug-spellings.ts, slug_spellings.rs): a SELECT and a store read only.
   'readStoredSlugSpellings',
+  // The graduation drain's blocker reads (engine-sql/graduation-drain.ts, graduation_blockers.rs) and the
+  // recovery-resolution replay read: SELECTs and store reads only.
+  'listGraduationPendingRequests', 'listGraduationTopologyRecoveries', 'listGraduationEffectRecoveries', 'listForeignHostBindings',
+  'hasOAuthBoundSourceColumn', 'listDanglingOAuthClients', 'listPreviewHashCheckpoints',
   // The legacy_slug_spellings check (engine-sql/slug-spelling-repair.ts, slug_spelling_repair.rs): a catalog SELECT and a page scan only.
   'readRowSecurityTables', 'listSlugSpellingCandidates',
   // gbrain repair slug-spelling's preview reads (same files): catalog SELECTs, SHOW and page or source reads only.

@@ -601,6 +601,25 @@ decides only worktree ownership, so the store does not take it. An id that is no
 the uuid cast message. `readRecoveringHeadRow` needs a worktree too, so the TypeScript member answers
 `null` without a store call.
 
+## Graduation blockers
+
+The engine graduation drain's blocker reads (`engine-sql/graduation-drain.ts`, called by
+`graduationBlockers` in `src/core/persistence/graduation-drain.ts`), in
+`gbrain-store/src/persistence/graduation_blockers.rs`. Failback (`gbrain engine swap --to postgres`)
+drains a Rust primary through this check. Each read takes one snapshot and writes nothing.
+
+| JS | Resolves | Mirrors |
+| --- | --- | --- |
+| `brain.listGraduationPendingRequests()` | `{ request_id, source_id, operation, state, recovering, blocked_reason, owner_host_id }` for each request that is `queued`, `deferred`, `running` or `recovering`, or holds a recovery record, by `sequence`. `owner_host_id` is the owner of the request's worktree, null when it names none or the worktree is gone | `listGraduationPendingRequests` |
+| `brain.listGraduationTopologyRecoveries()` | every topology change that is recovering or holds a recovery record, oldest first, as `{ id, operation, source_id, request_id, admission, automatic }` (the shape of the writer-release read, with no 20-row cap) | `listGraduationTopologyRecoveries` |
+| `brain.listGraduationEffectRecoveries()` | `{ id, kind, state, error_code, source_id, request_id }` for each effect that holds a recovery record, by id; `source_id` is the request's when the effect names none, and an effect whose request is gone is left out (the inner join) | `listGraduationEffectRecoveries` |
+| `brain.listForeignHostBindings(hostId)` | `{ worktree_id, host_id, source_id }` for each host binding of another host, by worktree then host (lower-case uuid text order); `source_id` is the byte-first source bound to the worktree, null when none is. An id that is not a uuid refuses | `listForeignHostBindings` |
+| `brain.listDanglingOauthClients()` | the clients bound to a source id no source record holds, by client id in byte order, as `{ client_id, client_name, bound_source_id }`. Removing a source clears its clients' binding (`remove_source_rows`), so the list is empty unless the store is damaged | `listDanglingOAuthClients` |
+
+`hasOAuthBoundSourceColumn` answers true with no store call (every client record keeps the field).
+`listPreviewHashCheckpoints(op, previewHash)` reads `brain.listOpCheckpointRecords(op)` and keeps the rows
+whose first record's `preview_hash`, as text, is `previewHash`, by fingerprint in byte order.
+
 ## Checkpoint validation
 
 The managed sync checkpoint's three reads (`engine-sql/checkpoint-validation.ts`), over the request

@@ -47,6 +47,7 @@ mod fact_relink_writes;
 mod facts_holding_purges;
 mod field_usage;
 mod generations;
+mod graduation_blockers;
 mod graph;
 mod import_members;
 mod journal;

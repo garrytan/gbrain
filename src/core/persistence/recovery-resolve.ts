@@ -580,9 +580,9 @@ async function writeJournal(engine: BrainEngine, key: string, journal: Journal):
 }
 /** The finished resolutions recorded under one preview hash (the audit entries an identical apply replays). */
 export async function readResolutions(engine: BrainEngine, previewHash: string): Promise<Journal[]> {
-  const rows = await engine.executeRaw<{ completed_keys: Journal[] }>("SELECT completed_keys FROM op_checkpoints WHERE op=$1 AND completed_keys->0->>'preview_hash'=$2 ORDER BY fingerprint COLLATE \"C\"",
-    [RESOLUTION_OP, previewHash]);
-  return rows.map(row => row.completed_keys[0]);
+  // A typed read (engine-sql/op-checkpoint.ts listPreviewHashCheckpoints), so a Rust brain answers it from its checkpoint records.
+  const rows = await engine.listPreviewHashCheckpoints(RESOLUTION_OP, previewHash);
+  return rows.map(row => row.completed_keys[0] as Journal);
 }
 
 /**
