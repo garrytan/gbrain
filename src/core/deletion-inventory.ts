@@ -281,6 +281,7 @@ export interface RustStoreEntry {
 type RustRow = [tag: string, kind: number | null, name: string, tables: string, index?: 'index', none?: [OutOfScopeReason, string]];
 const RUST_ROWS: readonly RustRow[] = [
   ['1', null, 'reason_tombstones', 'reason_purge_tombstones'],
+  ['2', null, 'core_edit_notices', 'core_edit_notices'],
   ['3', null, 'secret_store', 'secret_store secret_store_occurrence'],
   ['A', 0x01, 'take', 'takes'],
   ['A', 0x02, 'take_by_row', 'takes', 'index'],

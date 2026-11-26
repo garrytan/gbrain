@@ -52,7 +52,6 @@ src/commands/claw-test.ts#mergeChildFriction	catch_empty	1
 src/commands/config.ts#hostBrainSelected	catch_empty	1
 src/commands/config.ts#restampVisibilityPosture	catch_empty	1
 src/commands/config.ts#runConfig	catch_empty	1
-src/commands/core.ts#runCore	capability_refusal_swallowed	1
 src/commands/db-repair.ts#acquireRepairLock	catch_empty	1
 src/commands/db-repair.ts#applyLadder	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/commands/db-repair.ts#probeAccess	capability_refusal_swallowed	1

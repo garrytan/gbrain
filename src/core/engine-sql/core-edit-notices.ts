@@ -14,6 +14,7 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
+import { renderFragment, sqlFragment } from './fragment.ts';
 
 type Raw = Pick<BrainEngine, 'executeRaw'>;
 
@@ -54,8 +55,8 @@ export async function findCoreEditNoticeIdByRevision(tx: Raw, sourceId: string, 
 
 /** Acknowledges the page's pending notices (those with id <= `maxId` when it is not null); how many. Writes core_edit_notices. */
 export async function ackCoreEditNotices(tx: Raw, sourceId: string, slug: string, maxId: number | null): Promise<number> {
-  const rows = await tx.executeRaw<{ n: number }>(
-    `WITH a AS (UPDATE core_edit_notices SET acked_at = now() WHERE source_id = $1 AND slug = $2 AND acked_at IS NULL${maxId === null ? '' : ' AND id <= $3'} RETURNING 1) SELECT count(*)::int AS n FROM a`,
-    maxId === null ? [sourceId, slug] : [sourceId, slug, maxId]);
+  const upTo = maxId === null ? sqlFragment`` : sqlFragment` AND id <= ${maxId}`;
+  const { text, params } = renderFragment(sqlFragment`WITH a AS (UPDATE core_edit_notices SET acked_at = now() WHERE source_id = ${sourceId} AND slug = ${slug} AND acked_at IS NULL${upTo} RETURNING 1) SELECT count(*)::int AS n FROM a`);
+  const rows = await tx.executeRaw<{ n: number }>(text, params);
   return rows[0]?.n ?? 0;
 }

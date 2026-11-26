@@ -19,7 +19,7 @@ src/commands/autopilot-dispatch.ts	execute_raw	4
 src/commands/autopilot-health.ts	execute_raw	1
 src/commands/autopilot-retry-global.ts	execute_raw	1
 src/commands/autopilot/install-repo.ts	execute_raw	1
-src/commands/core.ts	execute_raw	6
+src/commands/core.ts	execute_raw	1
 src/commands/db-repair.ts	execute_raw	5
 src/commands/decide/claims-sweep.ts	execute_raw	1
 src/commands/decide/proposals.ts	execute_raw	2
@@ -356,7 +356,7 @@ src/core/persistence/connector-sync.ts	execute_raw	25	#9990: callReads forwards 
 src/core/persistence/consumer-lane.ts	execute_raw	2
 src/core/persistence/consumer.ts	execute_raw	3
 src/core/persistence/context.ts	execute_raw	1
-src/core/persistence/core-guard.ts	execute_raw	2
+src/core/persistence/core-guard.ts	execute_raw	1
 src/core/persistence/database-write.ts	execute_raw	2
 src/core/persistence/derived-origin-hold.ts	execute_raw	4
 src/core/persistence/detached-pages.ts	execute_raw	3

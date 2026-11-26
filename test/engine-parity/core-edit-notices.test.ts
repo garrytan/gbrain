@@ -371,7 +371,7 @@ describe('engine parity: core edit notices', () => {
       const before = await engine.readPageSnapshot('core/about', { sourceId: SRC });
       // Every transaction the write opens hands out a tx whose insertCoreEditNotice refuses, as an engine that cannot keep
       // notices would; the page write itself runs on the real tx.
-      const refusal = () => capabilityMissing('core_edit_notices', 'insertCoreEditNotice');
+      const refusal = () => capabilityMissing('raw_sql', 'insertCoreEditNotice (core_edit_notices)');
       const refusing = new Proxy(engine, {
         get(target, property) {
           if (property === 'transaction') {

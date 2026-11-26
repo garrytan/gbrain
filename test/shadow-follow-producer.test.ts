@@ -356,7 +356,7 @@ describe('selectors match the real schema', () => {
     const items = h.batches.flatMap((b) => b.items);
     // Only the relation-level items for what triggers and cleanup write (owner marks, slug stores); every row item has keys or none to read.
     expect([...new Set(items.filter((i) => i.kind !== 'rows').map((i) => (i as { relation: string }).relation))].sort())
-      .toEqual(['open_loops', 'owner_only_marks', 'page_aliases', 'slug_aliases', 'slug_rename_history']);
+      .toEqual(['core_edit_notices', 'open_loops', 'owner_only_marks', 'page_aliases', 'slug_aliases', 'slug_rename_history']);
     const withKeys = (relation: string) => rows(items, relation).flatMap((i) => i.before_keys ?? []);
     expect(withKeys('content_chunks').length).toBe(1);
     expect(withKeys('links').length).toBe(1);
