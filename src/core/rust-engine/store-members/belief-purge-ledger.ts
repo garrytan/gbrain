@@ -3,7 +3,7 @@
  * rust/crates/gbrain-store/src/trust/belief_purge_ledger.rs: the derived rows' streams, the preimage check, the
  * purged-key and carrying-field redactions, the live and version carriers, the page purge's lifetimes and claim
  * inventory, and the derived-hidden keys. The statements read an event by id and events by lifetime alone; the store
- * reads within the source the caller names. A purged claim's pre-v341 Postgres fingerprint (`legacyClaims`) matches
+ * reads within the source the caller names. A purged claim's pre-v353 Postgres fingerprint (`legacyClaims`) matches
  * nothing here: the store has always folded the one explicit list. The version carriers' page policy is the
  * no-caller policy `privatePagesFilterFragment('p')`, sent as its flags.
  */

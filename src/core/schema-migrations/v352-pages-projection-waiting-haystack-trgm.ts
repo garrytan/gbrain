@@ -19,7 +19,7 @@ import { ACTIVATION_SERVED_REVISION } from '../search/safe-chunks.ts';
 // the trigram entries of one title and slug per write.
 //
 // Postgres builds it CONCURRENTLY outside a transaction, after dropping an INVALID leftover; PGLite builds it inline.
-// No schema.sql mirror, like v317 and v339. DDL only; nothing is rewritten.
+// No schema.sql mirror, like v317 and v351. DDL only; nothing is rewritten.
 export const PAGES_PROJECTION_WAITING_WORDS_INDEX = {
   name: 'idx_pages_projection_waiting_words',
   table: 'pages',
@@ -29,13 +29,13 @@ export const PAGES_PROJECTION_WAITING_WORDS_INDEX = {
           AND text_projection_revision IS DISTINCT FROM '${ACTIVATION_SERVED_REVISION}'::uuid`,
 } as const;
 
-export const v340: Migration = {
-  version: 340,
+export const v352: Migration = {
+  version: 352,
   name: 'pages_projection_waiting_haystack_trgm',
   idempotent: true,
   transaction: false,
   sql: '',
   handler: async engine => {
-    await buildIndexOnline(engine, 340, PAGES_PROJECTION_WAITING_WORDS_INDEX, { notice: migrationNotice });
+    await buildIndexOnline(engine, 352, PAGES_PROJECTION_WAITING_WORDS_INDEX, { notice: migrationNotice });
   },
 };

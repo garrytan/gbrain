@@ -90,8 +90,8 @@ BEGIN
 END
 $fp_v3$`;
 
-export const v341: Migration = {
-  version: 341,
+export const v353: Migration = {
+  version: 353,
   name: 'fact_fingerprint_v3',
   idempotent: true,
   sql: FACT_FINGERPRINT_V3_SQL,

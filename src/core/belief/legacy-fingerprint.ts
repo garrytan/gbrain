@@ -1,7 +1,7 @@
 /**
- * The ledger fingerprint of a claim recorded before fact_fingerprint_v3 (v341).
+ * The ledger fingerprint of a claim recorded before fact_fingerprint_v3 (v353).
  *
- * Before v341, Postgres's gbrain_fact_fingerprint folded whitespace by the locale's `[[:space:]]`, so a claim holding a
+ * Before v353, Postgres's gbrain_fact_fingerprint folded whitespace by the locale's `[[:space:]]`, so a claim holding a
  * character the two folds disagree on (U+0085, U+1680, ...) changed fingerprint at the upgrade while the belief events
  * recorded before it keep the old one (gbrain_fact_fingerprint_v2) in subject_key and claim_fp. Such a claim keeps the
  * old fingerprint as its ledger fingerprint, so its subject, its later-private matches and its purge redaction stay
@@ -13,7 +13,7 @@ import { factFingerprintV2Sql, mayHaveLegacyFingerprint } from '../facts/withdra
 export { mayHaveLegacyFingerprint };
 
 /**
- * Claim text to its pre-v341 fingerprint, for each claim whose v2 fingerprint differs from the current one and names an
+ * Claim text to its pre-v353 fingerprint, for each claim whose v2 fingerprint differs from the current one and names an
  * event of `sourceId` that recorded this claim (its value's fact or claim has the claim's current fingerprint, so a new
  * claim never joins an older, different claim that shares the v2 fold). Claims absent keep the current fingerprint.
  */
@@ -25,7 +25,7 @@ export async function legacyClaimFingerprints(tx: Pick<BrainEngine, 'readLegacyC
 }
 
 /**
- * SQL: the subject keys of `sourceId`'s ($1) fact and take events recorded under the pre-v341 fingerprint of a claim in
+ * SQL: the subject keys of `sourceId`'s ($1) fact and take events recorded under the pre-v353 fingerprint of a claim in
  * text array `claims` (the event's value names the claim), so a purge redacts the history a claim has under its old fingerprint.
  */
 export const legacySubjectKeysSql = (claims: string): string => `SELECT DISTINCT e.subject_key FROM unnest(${claims}) AS c
@@ -36,7 +36,7 @@ export const legacySubjectKeysSql = (claims: string): string => `SELECT DISTINCT
 
 /**
  * SQL: the purge's redaction of purged keys (engine-sql/belief-purge-ledger.ts redactPurgedBeliefKeys) when a purged
- * claim may have a pre-v341 fingerprint: the fact and take events recorded under that fingerprint ($4, the claims) lose
+ * claim may have a pre-v353 fingerprint: the fact and take events recorded under that fingerprint ($4, the claims) lose
  * their values too. Built here, beside legacySubjectKeysSql, because its placeholders are numbered by hand.
  */
 export const REDACT_PURGED_KEYS_LEGACY_SQL = `WITH legacy AS (${legacySubjectKeysSql('$4::text[]')})\nUPDATE belief_events SET value = NULL, value_hash = NULL, prior_hash = NULL, purged = true

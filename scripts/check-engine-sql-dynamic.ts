@@ -78,8 +78,8 @@ const VETTED_BUILDERS: Record<string, string> = {
   contestedReadableSql: 'src/core/engine-sql/facts-trust.ts: constant active and readable predicate over a caller-given constant facts alias; the policy picks among constant fragments (privateFactFilterForCaller, projectionEligibleSql) and binds no value',
   memberReadsSql: 'src/core/engine-sql/facts-trust.ts: ownerReadPolicyFragment or readPolicyFragment over a constant page alias; identities and rule ids are checked by validIdentity and validQualifiedRuleId before they are quoted in (see those entries)',
   withdrawalReachedFactSql: 'src/core/access/member-facts.ts: constant withdrawal-reached-fact predicate over caller withdrawal and fact aliases; no values',
-  // belief-ledger.ts builders (pre-v341 fingerprint probes)
-  factFingerprintV2Sql: 'src/core/facts/withdrawal-schema.ts: the pre-v341 fingerprint expression with the caller\'s constant column or alias name substituted for `claim`, over the FACT_SPACE_CLASS and FINGERPRINT_PUNCTUATION constants; no values',
+  // belief-ledger.ts builders (pre-v353 fingerprint probes)
+  factFingerprintV2Sql: 'src/core/facts/withdrawal-schema.ts: the pre-v353 fingerprint expression with the caller\'s constant column or alias name substituted for `claim`, over the FACT_SPACE_CLASS and FINGERPRINT_PUNCTUATION constants; no values',
   legacyFingerprintV2Sql: 'src/core/facts/withdrawal-schema.ts: CASE over the same constants around factFingerprintV2Sql of the caller\'s constant column or alias name; no values',
   // facts-doctor.ts builders
   entityLinkableSql: 'src/core/engine-sql/facts-doctor.ts: returns the constant ENTITY_LINKABLE_SQL predicate (attribution.ts) over the facts alias f; no values',

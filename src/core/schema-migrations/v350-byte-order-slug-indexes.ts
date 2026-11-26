@@ -20,14 +20,14 @@ export const PAGES_SOURCE_SLUG_BYTE_ORDER_INDEX = {
   sql: 'CREATE INDEX IF NOT EXISTS idx_pages_source_slug_c ON pages (source_id, slug COLLATE "C")',
 } as const;
 
-export const v338: Migration = {
-  version: 338,
+export const v350: Migration = {
+  version: 350,
   name: 'byte_order_slug_indexes',
   idempotent: true,
   transaction: false,
   sql: '',
   handler: async engine => {
-    await buildIndexOnline(engine, 338, PAGES_SOURCE_SLUG_BYTE_ORDER_INDEX, { notice: migrationNotice });
-    await buildIndexOnline(engine, 338, PERSISTENCE_REQUEST_SLUG_BYTE_ORDER_INDEX, { notice: migrationNotice });
+    await buildIndexOnline(engine, 350, PAGES_SOURCE_SLUG_BYTE_ORDER_INDEX, { notice: migrationNotice });
+    await buildIndexOnline(engine, 350, PERSISTENCE_REQUEST_SLUG_BYTE_ORDER_INDEX, { notice: migrationNotice });
   },
 };

@@ -35,7 +35,7 @@ export async function resolveGlobalPurges(query: ReadQuery, sourceId: string, ma
  * Normalize filesystem bytes with the exact ledger fingerprint rules before comparing them. `global` names the
  * snapshot's source and '*' purge marker, resolved against this text's fence rows (not the stored page's). On a SQL
  * query the lines fold the explicit whitespace list (FACT_SPACE_CLASS, as every fingerprint does) and a withdrawal or
- * purge stored under a fence claim's pre-v341 Postgres fingerprint is aliased in (withLegacyLedgerRows).
+ * purge stored under a fence claim's pre-v353 Postgres fingerprint is aliased in (withLegacyLedgerRows).
  */
 export async function overlayCanonicalBodies(query: ReadQuery, body: string, timeline: string, withdrawals: PageWithdrawal[],
   global?: { sourceId: string; marker?: GlobalPurgeMarker }): Promise<{ compiled_truth: string; timeline: string }> {
@@ -53,7 +53,7 @@ export async function overlayCanonicalBodies(query: ReadQuery, body: string, tim
 /**
  * `overlayCanonicalBodies` through typed engine members: the line normalization is `normalizeFenceLines` and the `*`
  * purge lookup is `listGlobalPurgeWithdrawals`, so an engine without raw SQL (the Rust engine) overlays the same way. An
- * engine with raw SQL also aliases the pre-v341 Postgres fingerprints in, as the SQL form does; the Rust store never held
+ * engine with raw SQL also aliases the pre-v353 Postgres fingerprints in, as the SQL form does; the Rust store never held
  * one.
  */
 export async function overlayCanonicalBodiesTyped(engine: Pick<BrainEngine, 'normalizeFenceLines' | 'listGlobalPurgeWithdrawals'>
@@ -75,7 +75,7 @@ export async function overlayCanonicalBodiesTyped(engine: Pick<BrainEngine, 'nor
 interface OverlayReads {
   normalize(): Promise<{ body: string | null; timeline: string | null } | undefined>;
   purges(sourceId: string, marker: GlobalPurgeMarker, normalizedTexts: readonly string[]): Promise<PageWithdrawal[]>;
-  /** The ledger with the rows stored under a fence claim's pre-v341 fingerprint added (SQL engines only). */
+  /** The ledger with the rows stored under a fence claim's pre-v353 fingerprint added (SQL engines only). */
   legacy?(ledger: PageWithdrawal[], pending?: { sourceId: string; marker?: GlobalPurgeMarker }): Promise<PageWithdrawal[]>;
 }
 

@@ -229,7 +229,7 @@ src/core/enrichment-service.ts	execute_raw	2
 src/core/entities/near-name.ts	execute_raw	1
 src/core/entities/resolve-on-save.ts	execute_raw	1	GBRA-574 F #9674 (opened before this ratchet): the live-page check before keeping an unbacked name tag
 src/core/export-publish.ts	driver_call	3
-src/core/export-snapshot.ts	execute_raw	1	aliases a withdrawal or purge stored under a fence claim's pre-v341 Postgres fingerprint (ember ruling 3); runs only on an engine with raw_sql, since the Rust store never held such a fingerprint
+src/core/export-snapshot.ts	execute_raw	1	aliases a withdrawal or purge stored under a fence claim's pre-v353 Postgres fingerprint (ember ruling 3); runs only on an engine with raw_sql, since the Rust store never held such a fingerprint
 src/core/export-stage.ts	driver_call	3
 src/core/extract-ner.ts	execute_raw	1
 src/core/extract-ner.ts	sql_template	1

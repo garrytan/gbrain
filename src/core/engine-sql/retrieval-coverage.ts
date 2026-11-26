@@ -57,7 +57,7 @@ async function rows<R>(exec: Exec, fragment: SqlFragment, jitOff = false): Promi
 
 /**
  * The could-affect test over `pages p` (search/retrieval-coverage.ts `CoverageRelevance`), composed from the parts the
- * query has: one bound `~` per word pattern over the text idx_pages_projection_waiting_words indexes (v340), the result
+ * query has: one bound `~` per word pattern over the text idx_pages_projection_waiting_words indexes (v352), the result
  * types (idx_pages_type) and the returned pages (the primary key). Each part alone can use its index, so the planner can
  * read only the pages a part matches instead of testing every page in scope.
  */
@@ -118,7 +118,7 @@ async function countInScope(raw: CountRead, scope: ProjectionReadinessScope, rel
 
 /** The pending pages the readiness probe found (unsealed, needing work) in the same scope. */
 export function countPendingProjectionPages(raw: CountRead, scope: ProjectionReadinessScope, relevance: CoverageRelevance): Promise<ScopedCount | null> {
-  // The waiting filter is the text of the v317 and v340 partial indexes' predicate, so the counts can read them.
+  // The waiting filter is the text of the v317 and v352 partial indexes' predicate, so the counts can read them.
   return countInScope(raw, scope, relevance, sqlFragment``,
     sqlFragment`${trustedSql(waitingTextProjectionFilter('p'))} AND ${trustedSql(projectionClassSql('p', 's'))} NOT IN ('protected','archived')`, true);
 }
