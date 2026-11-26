@@ -1116,7 +1116,10 @@ Invariants:
   platform means updating BOTH plus the version job's completeness check;
   `test/release-workflow.test.ts` pins all of it.
 - **Idempotent + self-repairing.** The version job skips when a release for
-  `v<VERSION>` already exists with all expected assets; a partial release
+  `v<VERSION>` already exists with all expected assets (a subset check: an
+  extra asset, such as `gbrain-eval-gates.pin.json`, which
+  `.github/workflows/eval-gates-pin.yml` attaches after the release, does not
+  make it incomplete); a partial release
   (tag but no release, or missing assets) is completed on re-run. Racing
   master pushes queue via the `release` concurrency group — a skipped
   intermediate version is fine, latest is what matters.

@@ -12,9 +12,8 @@
  *    included, into a quiet degraded marker, so a Rust brain's fact rows lost their observed dates.
  *  - Why existing coverage misses it: the facts-arm and evidence-date tests run on PGLite only.
  *  - Seam: none. Real engines, the query op handler under the CLI's local caller, and the typed members.
- *  - Pin: on Rust the query still catches the raw-SQL refusals of two other open reads (facts-arm.ts
- *    stampSupersededClaims and readableEntityPages), whose fixes ride batch 15. The case is pinned on exactly those
- *    frames (rustCaughtRefusalPin) and fails, saying to remove the pin, once main has both.
+ *  - No pin: the facts arm's other two reads (stampSupersededClaims, readableEntityPages) are typed on main, so the
+ *    query case is compared value for value on Rust.
  */
 import { describe, expect } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -59,15 +58,8 @@ type Row = { slug?: string; result_type?: string; fact_id?: string; page_slug?: 
 
 describe('engine parity: the facts arm of gbrain query, end to end', () => {
   parityTest('a query that matches two claims of one slot: stamped page rows and fact rows that name their entity page',
-    {
-      methods: ['insertFacts'], timeout: 120_000,
-      rustCaughtRefusalPin: {
-        frames: ['stampSupersededClaims', 'readableEntityPages'],
-        site: 'src/core/search/facts-arm.ts stampSupersededClaims (:156) and readableEntityPages (:176)',
-        owner: 'rust-engine/facts-superseded-claims and remote-access-parity 8336c907ae, both in batch 15', due: '2026-12-01',
-      },
-    },
-    async (engine, backend) => withHome(async () => {
+    { methods: ['insertFacts'], timeout: 120_000 },
+    async (engine) => withHome(async () => {
       const ids = await fixture(engine);
       const name = (id: unknown) => Number(id) === ids.older ? 'older' : Number(id) === ids.newer ? 'newer' : 'other';
       const ctx = { engine, config: { engine: engine.kind }, logger: quiet, dryRun: false, remote: false, sourceId: 'default' } as unknown as OperationContext;
@@ -76,15 +68,12 @@ describe('engine parity: the facts arm of gbrain query, end to end', () => {
       const pages = sorted(rows.filter(r => r.result_type !== 'fact' && (r.slug === OLD_PAGE || r.slug === NEW_PAGE)).map(r => ({
         slug: r.slug, stamp: r.superseded_claim ? { fact: name(r.superseded_claim.fact_id), valid_from: r.superseded_claim.valid_from } : null })), r => r.slug!);
       const facts = sorted(rows.filter(r => r.result_type === 'fact').map(r => ({ fact: name(r.fact_id), page_slug: r.page_slug ?? null, text: r.chunk_text })), r => r.fact);
-      // The reference engines must give the full answer. The Rust arm is held to that same answer by the harness, value
-      // for value against PGLite, from the day its pin goes; while pinned, its value is not compared.
-      if (backend !== 'rust') {
-        expect(pages).toEqual([
-          { slug: OLD_PAGE, stamp: { fact: 'newer', valid_from: '2025-09-01T00:00:00.000Z' } },
-          { slug: NEW_PAGE, stamp: null },
-        ].sort((a, b) => (a.slug < b.slug ? -1 : 1)));
-        expect(facts.map(f => [f.fact, f.page_slug])).toEqual([['newer', ENTITY], ['older', ENTITY]]);
-      }
+      // Every engine, Rust included, gives the full answer; the harness also compares Rust value for value with PGLite.
+      expect(pages).toEqual([
+        { slug: OLD_PAGE, stamp: { fact: 'newer', valid_from: '2025-09-01T00:00:00.000Z' } },
+        { slug: NEW_PAGE, stamp: null },
+      ].sort((a, b) => (a.slug < b.slug ? -1 : 1)));
+      expect(facts.map(f => [f.fact, f.page_slug])).toEqual([['newer', ENTITY], ['older', ENTITY]]);
       return { pages, facts };
     }));
 

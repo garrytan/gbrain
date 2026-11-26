@@ -819,6 +819,8 @@ export interface FactsStatementMembers {
   listNearestFacts(q: FactsRecallSql.NearestFactsQuery): Promise<FactsRecallSql.PoolFactRow[]>;
   /** The facts arm's source-page read (search/facts-arm.ts applyFactSourcePages): each fact's live holding page of its source, when that page is not its entity's. */
   listFactSourcePages(ids: readonly number[]): Promise<FactsRecallSql.FactSourcePageRow[]>;
+  /** The typed-claim facts held on one of `pageSlugs` about one of `entitySlugs` (the facts arm's superseded-claim read), in no set order. */
+  listTypedClaimFactsAtPages(pageSlugs: readonly string[], entitySlugs: readonly string[]): Promise<FactsRecallSql.TypedClaimFactRow[]>;
   /** Each fact's source, holding page slug and entity (search/evidence-date.ts), any source and state, in no set order. */
   listFactHoldingRefs(ids: readonly number[]): Promise<FactsRecallSql.FactHoldingRefRow[]>;
   /** Every active conversation slot row of the given slots under the pool read policy, by valid_from, id. */

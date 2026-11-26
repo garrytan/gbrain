@@ -355,6 +355,18 @@ pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Resul
 }
 
 /// Every client, by client id.
+/// `SELECT client_id FROM oauth_clients WHERE source_id=$1 LIMIT 1`: one client (revoked ones
+/// included) that names the source, the byte-first, or `None`.
+pub(crate) fn source_client_in(read: &dyn KvRead, source_id: &str) -> Result<Option<String>> {
+    let mut ids: Vec<String> = all_clients(read)?
+        .into_iter()
+        .filter(|c| c.source_id.as_deref() == Some(source_id))
+        .map(|c| c.client_id)
+        .collect();
+    ids.sort();
+    Ok(ids.into_iter().next())
+}
+
 pub(super) fn all_clients(read: &dyn KvRead) -> Result<Vec<ClientRecord>> {
     let mut rows = Vec::new();
     let mut bad = None;

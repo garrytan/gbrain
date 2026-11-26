@@ -952,6 +952,7 @@ const context_pack: Operation = {
       // C4: optional pinned answers (fresh sentences) and the withheld count (src/core/questions/service.ts).
       ...(await (await import('../questions/service.ts')).pinnedAnswersForPack(ctx, (res.cards ?? []).map((c) => ({ source_id: c.entity.source_id, slug: c.entity.slug })))
         .catch(() => null)),
+      ...(await (await import('../policy/check.ts')).policyStateForPack(ctx.engine, ctx.remote !== false).catch(() => null)),
     };
   },
 };

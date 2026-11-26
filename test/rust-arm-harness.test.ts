@@ -229,6 +229,45 @@ describe('the Rust arm check', () => {
       .rejects.toThrow('no longer one the pin covers');
   });
 
+  // A caught refusal: a refused member read that code on the way swallows (a best-effort writer, a fallback lookup).
+  // Its pin names the member and the src/ file that called it (`member@site`); the stack is what the harness reads.
+  const caughtAt = (site: string) => Object.assign(rawSqlRefusal(), {
+    stack: `Error: refused\n    at refuse (/repo/src/core/rust-engine/errors.ts:22:3)\n    at opError (/repo/src/core/ops/contract.ts:204:13)\n    at caller (/repo/${site}:10:5)`,
+  });
+  const SPELLINGS = 'src/core/ops/slug-params.ts';
+  const READ_LOG = 'src/core/access/read-log.ts';
+  const caughtPin = (site: string, over: Partial<StopPin> = {}) => pin({ member: `executeRaw@${site}`, ...over });
+  const equalCase = (refusals: unknown[], caughtPins: StopPin[]) => rustCase({
+    opts: { methods: [SERVED] as never }, calls: new Set([SERVED, REFUSED]), refusals, caughtPins,
+    run: async () => 1, reference: { backend: 'pglite', value: 1 },
+  });
+
+  test('a caught refusal pinned by member and site lets an equal answer pass, and the ledger names the pin', async () => {
+    const t: RustTally = { ...tally(), stops: [] };
+    await checkRustArm(equalCase([caughtAt(SPELLINGS), caughtAt(SPELLINGS), caughtAt(READ_LOG)], [caughtPin(SPELLINGS), caughtPin(READ_LOG, { owner: 'lane-y' })]), t);
+    expect(t.compared).toBe(1);
+    expect(t.stops).toMatchObject([
+      { name: 'case', member: `executeRaw@${SPELLINGS}`, pinned: { owner: 'lane-x' } },
+      { name: 'case', member: `executeRaw@${READ_LOG}`, pinned: { owner: 'lane-y' } },
+    ]);
+  });
+
+  test('a caught refusal no pin covers, a caught pin past its due date and a caught pin nothing hits all fail', async () => {
+    await expect(checkRustArm(equalCase([caughtAt(SPELLINGS), caughtAt(READ_LOG)], [caughtPin(SPELLINGS)]), tally()))
+      .rejects.toThrow(`executeRaw@${READ_LOG}`);
+    await expect(checkRustArm(equalCase([caughtAt(SPELLINGS)], [caughtPin(SPELLINGS, { due: '2000-01-01' })]), tally()))
+      .rejects.toThrow('was due 2000-01-01 and has passed');
+    await expect(checkRustArm(equalCase([caughtAt(SPELLINGS)], [caughtPin(SPELLINGS), caughtPin(READ_LOG)]), tally()))
+      .rejects.toThrow(`no longer catches executeRaw@${READ_LOG}; remove the row`);
+  });
+
+  test('a caught pin never excuses a different answer or a thrown error', async () => {
+    await expect(checkRustArm(rustCase({ calls: new Set([SERVED, REFUSED]), refusals: [caughtAt(SPELLINGS)], caughtPins: [caughtPin(SPELLINGS)],
+      run: async () => 2, reference: { backend: 'pglite', value: 1 } }), tally())).rejects.toThrow();
+    await expect(checkRustArm(rustCase({ calls: new Set([SERVED, REFUSED]), refusals: [caughtAt(SPELLINGS)], caughtPins: [caughtPin(SPELLINGS)],
+      run: async () => { throw new Error('boom'); } }), tally())).rejects.toThrow('boom');
+  });
+
   test('every row of test/rust-stop-pins/ has an owner and is not past its due date', () => {
     for (const row of readStopPins()) {
       expect(row.owner.trim()).not.toBe('');
@@ -306,36 +345,5 @@ describe('the Rust arm check: a rustStop pin', () => {
     await expect(checkRustArm(pinned({ opts: { methods: [REFUSED] as never, rustStop: STOP }, calls: new Set([REFUSED]),
       run: async () => { throw refusal(capability); } }), t)).rejects.toThrow('ended on a typed capability refusal');
     expect(t).toEqual({ compared: 0, refused: 0, diverged: 0 });
-  });
-});
-
-describe('rustCaughtRefusalPin: a case that returns after catching a known open refusal', () => {
-  /** A raw-SQL refusal whose stack names `frame`, as a refusal caught inside that function's body reads. */
-  const refusedAt = (frame: string): Error => Object.assign(capabilityMissing('raw_sql', 'executeRaw'), { stack: `Error: refused\n    at ${frame} (/src/x.ts:1:1)` });
-  const openSwallowSite = () => refusedAt('openSwallowSite');
-  const otherSite = () => refusedAt('otherSite');
-  const caughtPin = (frames = ['openSwallowSite']) => ({ frames, site: 'src/x.ts:1', owner: 'lane-x', due: '2999-01-01' });
-  const caughtCase = (refusals: unknown[], frames?: string[]) => rustCase({
-    opts: { methods: [SERVED] as never, rustCaughtRefusalPin: caughtPin(frames) }, calls: new Set([SERVED, REFUSED]), refusals,
-    reference: { backend: 'pglite', value: 'pglite answer' }, run: async () => 'rust answer without what the refusal hid',
-  });
-
-  test('counts as stopped, without comparing the value, while every caught refusal came through a pinned frame', async () => {
-    const t: RustTally = { ...tally(), stops: [] };
-    await checkRustArm(caughtCase([openSwallowSite(), openSwallowSite()]), t);
-    expect(t).toMatchObject({ compared: 0, refused: 1, diverged: 0 });
-    expect(t.stops).toEqual([{ name: 'case', member: 'openSwallowSite', capability: 'caught' }]);
-  });
-
-  test('fails once the case catches no refusal: the pin must go', async () => {
-    await expect(checkRustArm(caughtCase([]), tally())).rejects.toThrow('no longer catches a typed refusal; remove its rustCaughtRefusalPin');
-  });
-
-  test('fails on a refusal caught at a frame the pin does not name', async () => {
-    await expect(checkRustArm(caughtCase([openSwallowSite(), otherSite()]), tally())).rejects.toThrow('refusals at other frames: 1');
-  });
-
-  test('fails when a pinned frame caught nothing: a fixed site leaves the pin', async () => {
-    await expect(checkRustArm(caughtCase([openSwallowSite()], ['openSwallowSite', 'fixedSite']), tally())).rejects.toThrow('frames not seen: ["fixedSite"]');
   });
 });

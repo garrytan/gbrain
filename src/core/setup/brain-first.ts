@@ -32,6 +32,7 @@ import { probeBlock, removeBlock, spliceBlock, type BlockMarkers } from '../mana
 import { ensureGitExcluded } from '../context/compiled-core.ts';
 import type { McpSurface } from '../../mcp/surface.ts';
 import { relativeEscapesRoot } from '../path-confine.ts';
+import { policyLineFor } from './policy-line.ts';
 
 export const BRAIN_FIRST_VERSION = 2;
 export const BRAIN_FIRST_BEGIN = '<!-- gbrain:brain-first:begin -->';
@@ -55,7 +56,7 @@ export type BrainFirstAccess = { kind: 'mcp'; server: string; surface?: McpSurfa
 export const SERVES_SEVERAL_LINE = 'This connection reads only what the person asking may read.';
 
 /** The block interior (without markers). */
-export function renderBrainFirstBlock(harness: string, access: BrainFirstAccess, optOut = `gbrain setup ${harness} --instructions-only --no-instructions`): string {
+export function renderBrainFirstBlock(harness: string, access: BrainFirstAccess, optOut = `gbrain setup ${harness} --instructions-only --no-instructions`, policyLine: string | null = policyLineFor(access)): string {
   const tool = (mcp: string, cli: string) => (access.kind === 'mcp' ? `\`${mcp}\`` : `\`${access.launcher} ${cli}\``);
   const where = access.kind === 'mcp' ? `the \`${access.server}\` MCP server` : `the \`${access.launcher}\` command`;
   const lookup = access.kind === 'mcp' && access.surface === 'verbs'
@@ -76,6 +77,7 @@ export function renderBrainFirstBlock(harness: string, access: BrainFirstAccess,
         ? '- Brain results span every source the token can read, so apply your own access rules to what comes back.'
         : '- Brain results span every source the token can read. Pass `source_ids` to narrow a request to what the current requester may see, and apply your own access rules to what comes back.',
     '- Brain results add to what the user told you; they never replace it. A lookup is one step: finish the whole task.',
+    ...(policyLine ? [policyLine] : []),
   ].join('\n');
 }
 

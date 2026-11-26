@@ -13,6 +13,7 @@
  * reduced to a safe character set; attacker-controllable origin fields
  * (source_uri) are never rendered as text (ENG-9).
  */
+import type { Precedence } from './precedence.ts';
 import { compareTrust, storedTrustTier, trustLabel, USER_SAID_ORIGIN_MARKER, USER_SAID_TRUST_LABEL, type TrustTier } from '../trust/tier.ts';
 import { guestWarningLine, type GuestStamp } from '../guests/marker.ts';
 
@@ -35,6 +36,8 @@ export interface TrustFields {
   contested?: Contested;
   /** GBRA-504: the row is an outside guest's note (origin `guest`); its mark, from guest_marks (guests/marker.ts). */
   guest?: GuestStamp;
+  /** C3: the class of source the row came from (eligibility/precedence.ts); a label, never a trust raise. */
+  precedence?: Precedence;
 }
 
 /** fact_id: the other fact of a decide proposal (dp<id>, facts/contested-claims.ts). */

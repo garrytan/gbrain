@@ -101,14 +101,6 @@ export interface ParityCaseOpts {
    * `due` name the code and the lane whose fix removes it. PGLite and Postgres ignore it.
    */
   rustPendingStop?: { capability: string; member: string; site: string; frame?: string; owner: string; due: string };
-  /**
-   * Rust only: the case returns a value, but only after the code it drives caught a typed refusal it should not have
-   * (a known open swallow site on main). It counts as stopped, and its value is not compared, only while every refusal
-   * it caught has one of `frames` in its stack and each frame caught at least one. A case that catches no refusal, or
-   * one at another frame, fails and says to update or remove the pin; `site`, `owner` and `due` name the code and the
-   * lane whose fix removes it. PGLite and Postgres ignore it.
-   */
-  rustCaughtRefusalPin?: { frames: string[]; site: string; owner: string; due: string };
   timeout?: number;
 }
 
@@ -712,7 +704,7 @@ export function parityArms(backends: readonly TestBackend[]): ParitySuite {
     if (closing.some((arm) => arm.backend === 'rust')) {
       console.log(`[rust arm] ${testFile}: ${tally.compared} equal to PGLite, ${tally.refused} stopped on a typed refusal, ${tally.diverged} expected divergences`);
       // The ledger: each case that stopped, with the member that refused it (the tally above only counts them).
-      for (const stop of tally.stops ?? []) console.log(`[rust arm] ${testFile} stopped: "${stop.name}" on ${stop.member} (${stop.capability})${stop.pinned ? ` pinned until ${stop.pinned.due} (${stop.pinned.owner})` : ''}`);
+      for (const stop of tally.stops ?? []) console.log(`[rust arm] ${testFile} ${stop.caught ? 'caught (answer equal)' : 'stopped'}: "${stop.name}" on ${stop.member} (${stop.capability})${stop.pinned ? ` pinned until ${stop.pinned.due} (${stop.pinned.owner})` : ''}`);
       const better = checkRustTally(testFile, { ...tally, skipped }, registered);
       if (better !== null) console.log(better);
     }
@@ -747,10 +739,12 @@ export function parityArms(backends: readonly TestBackend[]): ParitySuite {
         try {
           if (arm.backend === 'rust') {
             const divergence = readDivergences().find((row) => row.file === testFile && row.name === name);
-            const pin = readStopPins().find((row) => row.file === testFile && row.name === name);
+            const rows = readStopPins().filter((row) => row.file === testFile && row.name === name);
+            const pin = rows.find((row) => !row.member.includes('@'));
+            const caughtPins = rows.filter((row) => row.member.includes('@'));
             try {
               await checkRustArm({ name, opts, run: () => scenario(given, arm.backend, ctx), calls, refusals,
-                reference: results[0], divergence, pin }, tally);
+                reference: results[0], divergence, pin, caughtPins }, tally);
             } finally {
               for (const engine of extra) await engine.disconnect().catch(() => undefined);
             }
@@ -804,7 +798,7 @@ function callerTestFile(stack: string | undefined): string {
 export interface RustTally {
   compared: number; refused: number; diverged: number;
   /** The per-case ledger of stopped cases (optional: a caller that only wants the counts leaves it out). */
-  stops?: Array<{ name: string; member: string; capability: string; pinned?: StopPin }>;
+  stops?: Array<{ name: string; member: string; capability: string; pinned?: StopPin; caught?: true }>;
 }
 
 export interface RustCase<T> {
@@ -819,6 +813,22 @@ export interface RustCase<T> {
   divergence: DivergenceRow | undefined;
   /** The row of test/rust-stop-pins/ for this case, when it has one. */
   pin?: StopPin | undefined;
+  /** Rows of test/rust-stop-pins/ for refusals the case catches on its way (member `name@src/...` file). */
+  caughtPins?: StopPin[];
+}
+
+/** `member@site` of a caught refusal: the member it names and the first src/ file outside the engine that called it. */
+export function caughtSite(error: unknown): string {
+  const member = refusalFacts(error).member ?? 'unknown';
+  const frames = String((error as { stack?: unknown } | null)?.stack ?? '').split('\n');
+  for (const frame of frames) {
+    const at = /\/(src\/[^\s:()]+\.ts):\d+/.exec(frame);
+    if (!at) continue;
+    const file = at[1]!;
+    if (file.startsWith('src/core/rust-engine') || file === 'src/core/ops/contract.ts' || file === 'src/core/engine-capability-refusal.ts') continue;
+    return `${member}@${file}`;
+  }
+  return `${member}@unknown`;
 }
 
 interface RefusalVerdict {
@@ -961,16 +971,20 @@ export async function checkRustArm<T>(c: RustCase<T>, tally: RustTally): Promise
   }
 
   if (pendingPin) throw new Error(`[rust] "${c.name}" no longer stops; remove its rustPendingStop pin (${pinText})`);
-  const caughtPin = c.opts.rustCaughtRefusalPin;
-  if (caughtPin) {
-    checkCaughtRefusalPin(c.name, caughtPin, c.refusals.filter(refusedBy));
-    tally.refused++;
-    tally.stops?.push({ name: c.name, member: caughtPin.frames.join(', '), capability: 'caught' });
-    return;
+  // It returned. A case that reaches a refusing member, or caught a refusal, must not finish as if nothing happened,
+  // unless every refusal it caught is pinned by member and calling file (test/rust-stop-pins/, owner and due date).
+  const caughtPins = c.caughtPins ?? [];
+  const sites = c.refusals.filter(refusedBy).map(caughtSite);
+  const unpinned = sites.filter((site) => !caughtPins.some((p) => p.member === site));
+  for (const p of caughtPins) {
+    if (p.due < today()) throw new Error(`[rust] "${c.name}": the stop pin for ${p.member} (${p.owner}) was due ${p.due} and has passed (${p.reason}); fix the member or move the date`);
+    if (!sites.includes(p.member)) throw new Error(`[rust] "${c.name}" has a row in test/rust-stop-pins/ for ${p.member} (${p.owner}, due ${p.due}) but no longer catches ${p.member}; remove the row`);
   }
-  // It returned. A case that reaches a refusing member, or caught a refusal, must not finish as if nothing happened.
-  expect({ backend: 'rust', case: c.name, reachesRefusingMember: refusing.length > 0 && capabilities.size > 0, caughtRefusals: caught })
-    .toEqual({ backend: 'rust', case: c.name, reachesRefusingMember: false, caughtRefusals: 0 });
+  const pinnedMembers = new Set(caughtPins.map((p) => p.member.split('@')[0]!));
+  const stillRefusing = refusing.filter((m) => !pinnedMembers.has(m));
+  expect({ backend: 'rust', case: c.name, reachesRefusingMember: stillRefusing.length > 0 && capabilities.size > 0, caughtRefusals: unpinned.length, unpinned: [...new Set(unpinned)] })
+    .toEqual({ backend: 'rust', case: c.name, reachesRefusingMember: false, caughtRefusals: 0, unpinned: [] });
+  for (const p of caughtPins) tally.stops?.push({ name: c.name, member: p.member, capability: refusalFacts(c.refusals.find((e) => caughtSite(e) === p.member)).capability ?? 'unknown', pinned: p, caught: true });
   const missing = c.opts.methods.filter((m) => !c.calls.has(m));
   expect({ backend: 'rust', declaredButNotCalled: missing }).toEqual({ backend: 'rust', declaredButNotCalled: [] });
   const reference = c.reference!;
@@ -1006,19 +1020,6 @@ function checkPendingStop(name: string, pin: NonNullable<ParityCaseOpts['rustPen
   if (message.includes('write_pending') && named) return;
   throw new Error(`[rust] "${name}" does not stop as its rustPendingStop pin says (${pinText}); update or remove the pin. `
     + `write_pending: ${message.includes('write_pending')}; typed refusals: ${JSON.stringify([...new Set(refusals.map(detail))])}; error: ${message}`);
-}
-
-/** A case pinned on caught refusals passes only while each caught refusal came through one of the pinned frames, and each frame caught one. */
-function checkCaughtRefusalPin(name: string, pin: NonNullable<ParityCaseOpts['rustCaughtRefusalPin']>, caught: unknown[]): void {
-  const text = `${pin.site}; owner ${pin.owner}, due ${pin.due}`;
-  if (!caught.length) throw new Error(`[rust] "${name}" no longer catches a typed refusal; remove its rustCaughtRefusalPin (${text})`);
-  const stack = (e: unknown) => String((e as Error | null)?.stack ?? '');
-  const stray = caught.filter((e) => !pin.frames.some((f) => stack(e).includes(f)));
-  const unseen = pin.frames.filter((f) => !caught.some((e) => stack(e).includes(f)));
-  if (stray.length || unseen.length) {
-    throw new Error(`[rust] "${name}" does not catch refusals as its rustCaughtRefusalPin says (${text}); update or remove the pin. `
-      + `frames not seen: ${JSON.stringify(unseen)}; refusals at other frames: ${stray.length}`);
-  }
 }
 
 /** Sorted copy, for order-free comparisons. */

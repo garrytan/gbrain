@@ -107,6 +107,30 @@ export async function listBeliefBaselinePending(exec: LegacyUnscopedRead, source
   return rows.map(r => r.slug);
 }
 
+/** A slug's newest event as the drift check reads it: the id, the slug's state hash after it and its ISO `recorded_at`. */
+export interface BeliefNewestEventRow { id: number; state_hash: string; recorded_at: string }
+
+/**
+ * The slugs the drift scan may check in the source's incarnation: its pages (live and soft-deleted), its page-less fact
+ * subjects and its open page lifetimes, the most recently touched first (a page by `updated_at`, a fact subject by its
+ * newest fact, a lifetime by `started_at`) and byte order within a tie (COLLATE "C", as PGLite and the Rust store sort).
+ */
+export async function listBeliefDriftCandidates(exec: LegacyUnscopedRead, sourceId: string, incarnation: string): Promise<string[]> {
+  const rows = await exec.executeRaw<{ slug: string }>(`SELECT slug FROM (
+      SELECT p.slug, p.updated_at AS at FROM pages p WHERE p.source_id = $1
+      UNION ALL SELECT f.entity_slug, max(f.created_at) FROM facts f WHERE f.source_id = $1 AND f.source_markdown_slug IS NULL AND f.entity_slug IS NOT NULL GROUP BY f.entity_slug
+      UNION ALL SELECT l.slug, l.started_at FROM belief_page_lifetimes l WHERE l.source_id = $1 AND l.source_incarnation = $2::uuid AND l.ended_at IS NULL
+    ) c GROUP BY slug ORDER BY max(at) DESC NULLS LAST, slug COLLATE "C"`, [sourceId, incarnation]);
+  return rows.map(r => r.slug);
+}
+
+/** The newest event of `slug` in the source's incarnation other than a coverage event or a backfill, or null. */
+export async function readNewestBeliefEvent(exec: LegacyUnscopedRead, sourceId: string, incarnation: string, slug: string): Promise<BeliefNewestEventRow | null> {
+  const [row] = await exec.executeRaw<{ id: number | string; state_hash: string; recorded_at: string | Date }>(`SELECT id, state_hash, recorded_at FROM belief_events
+    WHERE source_id = $1 AND source_incarnation = $2::uuid AND slug = $3 AND subject_kind <> 'coverage' AND origin <> 'backfill' ORDER BY id DESC LIMIT 1`, [sourceId, incarnation, slug]);
+  return row ? { id: Number(row.id), state_hash: row.state_hash, recorded_at: new Date(row.recorded_at).toISOString() } : null;
+}
+
 /** How many distinct slugs of the source have a baseline event of run `runId`. */
 export async function countBeliefBaselineSlugs(exec: LegacyUnscopedRead, sourceId: string, runId: string): Promise<number> {
   const [row] = await exec.executeRaw<{ n: number }>(`SELECT count(DISTINCT slug)::int AS n FROM belief_events WHERE source_id = $1 AND event_type = 'baseline' AND cause->>'run' = $2`,

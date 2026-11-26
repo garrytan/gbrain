@@ -370,6 +370,50 @@ impl Store {
         Ok(out)
     }
 
+    /// `listTypedClaimFactsAtPages(pageSlugs, entitySlugs)`: the facts whose `source_markdown_slug` is one of
+    /// `page_slugs`, whose entity is one of `entity_slugs` and whose `claim_metric` is set, of any source and any state
+    /// (the SQL has no other predicate), as `{ id, source_markdown_slug, source_id, entity_slug, claim_metric,
+    /// claim_period, valid_from }` with `valid_from` as ISO text. The rows come in source, entity and id order (the SQL
+    /// sets none).
+    pub fn list_typed_claim_facts_at_pages(
+        &self,
+        page_slugs: &[String],
+        entity_slugs: &[String],
+    ) -> Result<Vec<Value>> {
+        let pages: BTreeSet<&str> = page_slugs.iter().map(String::as_str).collect();
+        let entities: BTreeSet<&str> = entity_slugs.iter().map(String::as_str).collect();
+        let mut out = Vec::new();
+        if pages.is_empty() || entities.is_empty() {
+            return Ok(out);
+        }
+        let read = self.read()?;
+        for source in crate::sources::all_sources(&*read)? {
+            for entity in &entities {
+                for fact in super::entity_rows(&*read, &source.id, entity)? {
+                    let (Some(page), Some(metric)) = (
+                        fact.source_markdown_slug.as_deref(),
+                        fact.claim_metric.as_deref(),
+                    ) else {
+                        continue;
+                    };
+                    if !pages.contains(page) {
+                        continue;
+                    }
+                    out.push(json!({
+                        "id": fact.id,
+                        "source_markdown_slug": page,
+                        "source_id": fact.source_id,
+                        "entity_slug": entity,
+                        "claim_metric": metric,
+                        "claim_period": fact.claim_period,
+                        "valid_from": crate::env::iso(fact.valid_from_us),
+                    }));
+                }
+            }
+        }
+        Ok(out)
+    }
+
     /// `listFactHoldingRefs(ids)`: `{ id, source_id, slug, entity_slug }` for each of `ids` that names a fact, with
     /// `slug` its `source_markdown_slug`; facts of any source and any state, in id order (the SQL sets no order). A
     /// missing fact gives no row.

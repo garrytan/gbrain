@@ -140,6 +140,7 @@ export const JOBS_MEMBERS = {
   listPinnedQuestions: 'minion_queue',
   insertVolunteerEvents: 'telemetry',
   readVolunteerUsage: 'telemetry',
+  deleteVolunteerEventsOlderThan: 'telemetry',
   insertRetrievalEvents: 'telemetry',
   readRetrievalEvent: 'telemetry',
   readPageFeedbackWeights: 'telemetry',

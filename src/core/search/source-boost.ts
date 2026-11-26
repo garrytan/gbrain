@@ -53,6 +53,9 @@ export const DEFAULT_SOURCE_BOOSTS: Record<string, number> = {
   // `dream_generated: true` in their frontmatter; demote here keeps them
   // findable but ranked below all curated user content.
   'extracts/': 0.3,
+  // L2 action ledger entries and weekly digests: private bookkeeping of what agents did,
+  // findable but ranked below the user's own pages.
+  'actions/': 0.3,
 };
 
 /**
