@@ -115,14 +115,13 @@ impl Store {
             )) {
                 continue;
             }
-            if let Some(connectors) = &query.connector_exclusion {
-                if connectors.page_types.contains(&page.page_type)
-                    && kind
-                        .as_ref()
-                        .is_some_and(|k| connectors.source_kinds.contains(k))
-                {
-                    continue;
-                }
+            if let Some(connectors) = &query.connector_exclusion
+                && connectors.page_types.contains(&page.page_type)
+                && kind
+                    .as_ref()
+                    .is_some_and(|k| connectors.source_kinds.contains(k))
+            {
+                continue;
             }
             if slugs
                 .as_ref()
@@ -135,7 +134,7 @@ impl Store {
             }
             found.push(page);
         }
-        found.sort_by(|a, b| b.updated_at_us.cmp(&a.updated_at_us));
+        found.sort_by_key(|p| std::cmp::Reverse(p.updated_at_us));
         Ok(found
             .into_iter()
             .take(query.limit)

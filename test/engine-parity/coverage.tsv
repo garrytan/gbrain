@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2442/2469
+# covered: 2448/2475
 # lifecycle: 12/12
 # pages: 141/142
 # search: 8/8
@@ -108,7 +108,7 @@
 # doctor_derived: 28/28
 # doctor_persistence: 37/37
 # doctor_pages: 18/18
-# doctor_search: 11/11
+# doctor_search: 17/17
 # doctor_reads_acc: 29/29
 # doctor_checkpoints: 18/18
 # doctor_sync: 3/3
@@ -132,17 +132,17 @@ withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
 listCatalogRelations	lifecycle	yes	1	no	yes	yes	serves
 readCatalogSchemaVersion	lifecycle	yes	1	no	yes	yes	serves
 listCatalogForeignKeys	lifecycle	yes	1	no	yes	yes	serves
-getPage	pages	yes	288	yes	yes	yes	serves
+getPage	pages	yes	289	yes	yes	yes	serves
 readPageSnapshot	pages	yes	102	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	7	no	yes	yes	serves
 lockPageKeys	pages	yes	17	no	yes	yes	serves
-putPage	pages	yes	1362	yes	yes	yes	serves
+putPage	pages	yes	1364	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	45	yes	yes	yes	serves
 deletePages	pages	yes	10	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	2	yes	yes	yes	serves
-softDeletePage	pages	yes	344	yes	yes	yes	serves
+softDeletePage	pages	yes	345	yes	yes	yes	serves
 softDeletePages	pages	yes	4	yes	yes	yes	serves
 restorePage	pages	yes	18	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	12	no	yes	yes	serves
@@ -1881,7 +1881,7 @@ listSegmentedPages	withdrawal_pages	yes	2	no	yes	yes	serves
 invalidateWithdrawnPages	withdrawal_pages	yes	2	no	yes	yes	serves
 hasWithdrawnFenceClaim	withdrawal_fence	yes	2	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	59	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	54	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 addCodeEdges	code_edges	yes	7	yes	yes	yes	serves
@@ -2023,8 +2023,8 @@ readPageRevisionWriter	write_misc	yes	1	no	yes	yes	serves
 readRevisionWriterRequest	write_misc	yes	2	no	yes	yes	serves
 writeSyncAdmissionStamp	write_misc	yes	5	no	yes	yes	serves
 readSyncAdmissionEffects	write_misc	yes	6	no	yes	yes	serves
-readOpCheckpointRecord	write_misc	yes	26	no	yes	yes	serves
-writeOpCheckpointRecord	write_misc	yes	53	no	yes	yes	serves
+readOpCheckpointRecord	write_misc	yes	27	no	yes	yes	serves
+writeOpCheckpointRecord	write_misc	yes	54	no	yes	yes	serves
 purgeStaleCheckpoints	write_misc	yes	1	no	yes	yes	serves
 readHealthMemoClock	write_misc	yes	1	no	yes	yes	serves
 listSynopsisSourceIds	write_misc	yes	4	no	yes	yes	serves
@@ -2480,6 +2480,12 @@ readImagePageCoverage	doctor_pages	yes	1	no	yes	yes	serves
 listBracketPathPages	doctor_pages	yes	1	no	yes	yes	serves
 listSlugPathCandidates	doctor_pages	yes	1	no	yes	yes	serves
 countAtomExtractionBacklog	doctor_search	yes	2	no	yes	yes	serves
+listExtractablePages	doctor_search	yes	2	no	yes	yes	serves
+listAtomSourceHashes	doctor_search	yes	1	no	yes	yes	serves
+listTombstonedTranscripts	doctor_search	yes	1	no	yes	yes	serves
+listSourcePageAtomTitles	doctor_search	yes	1	no	yes	yes	serves
+releasePartialAtomDispositions	doctor_search	yes	2	no	yes	yes	serves
+assertAtomStateStore	doctor_search	yes	1	no	yes	yes	serves
 listAtomBacklogSourceIds	doctor_search	yes	2	no	yes	yes	serves
 listGitImageHoldCounts	doctor_search	yes	1	no	yes	yes	serves
 listTruncatedMarkdownBodies	doctor_search	yes	1	no	yes	yes	serves

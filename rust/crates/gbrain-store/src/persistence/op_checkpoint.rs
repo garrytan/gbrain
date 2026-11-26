@@ -732,15 +732,16 @@ pub(crate) fn managed_atom_discovery_skips_in(
             Ok(row) => {
                 let settled = first_key_text(&row, "failure").is_none()
                     || first_key_text(&row, "held").as_deref() == Some("true");
-                if settled && first_key_text(&row, "kind").as_deref() == Some("page") {
-                    if let (Some(source), Some(incarnation), Some(page), Some(hash)) = (
+                if settled
+                    && first_key_text(&row, "kind").as_deref() == Some("page")
+                    && let (Some(source), Some(incarnation), Some(page), Some(hash)) = (
                         first_key_text(&row, "sourceId"),
                         first_key_text(&row, "incarnation"),
                         first_key_text(&row, "pageId"),
                         first_key_text(&row, "contentHash"),
-                    ) {
-                        out.insert((source, incarnation, page, hash));
-                    }
+                    )
+                {
+                    out.insert((source, incarnation, page, hash));
                 }
             }
             Err(_) => bad = true,
