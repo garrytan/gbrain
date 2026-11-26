@@ -170,6 +170,7 @@ test/engine-parity/generation-write-parity.test.ts	4	0
 test/engine-parity/git-durability-credential.test.ts	0	1
 test/engine-parity/git-holds.test.ts	7	0
 test/engine-parity/graduation-catalog.test.ts	1	2
+test/engine-parity/guest-note-save.test.ts	2	0
 test/engine-parity/guest-sources.test.ts	6	0
 test/engine-parity/guests-grant-owner-clients.test.ts	2	0
 test/engine-parity/handover-reads.test.ts	2	1
