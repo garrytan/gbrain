@@ -403,6 +403,10 @@ export class RustEngine implements BrainEngine {
     this._generation++;
     const opening = this._opening;
     this._opening = null;
+    // Multi-user mode (the owner speaks protocol v3): a handoff, first. The owner answers what it has not started as
+    // handed over and finishes what it started while everything it runs on is still up: the store, and this process's
+    // persistence consumer, which a stop hook below ends (a forwarded write admitted here is applied before it does).
+    if (this._owner?.role === 'owner' && this._owner.server.attachServed) await this._owner.server.close();
     const stops = [...this._beforeDisconnect];
     this._beforeDisconnect.clear();
     for (const stop of stops) {
@@ -413,9 +417,6 @@ export class RustEngine implements BrainEngine {
     // opening, and another process could then open the same brain.
     await opening?.catch(() => undefined);
     await this._endOpenTransaction();
-    // Multi-user mode (the owner speaks protocol v3): a handoff. The owner answers what it has not started as handed
-    // over and finishes what it started on the store, which stays open until that drain ends (owner-ipc/server.ts).
-    if (this._owner?.role === 'owner' && this._owner.server.attachServed) await this._owner.server.close();
     const owner = this._owner;
     this._owner = null;
     this._connected = false;
