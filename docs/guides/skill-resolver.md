@@ -392,10 +392,10 @@ that is not the owner's, with or without an audience.
 A skill whose `SKILL.md` front matter says `audience: owner` is suggested
 and pinned only in the owner's sessions. `owner` is the only defined value;
 any other non-empty `audience` (a list, a typo, `true`, a number, a mapping)
-is treated as `owner`, and so is an `Audience:` key in another letter case, a
-file that starts with a byte order mark, or
-front matter that does not parse or is never closed (no second `---`) but has an
-`audience:` line, so a mistake never makes a skill public. A catalog built before gbrain recorded
+is treated as `owner`, and so is an `Audience:` key in another letter case (a
+leading byte order mark is ignored), and an `audience:` line in front matter
+that does not parse or is never closed (no second `---`), so a mistake never
+makes a skill public. A catalog built before gbrain recorded
 audiences suggests nothing and pins nothing outside the owner's sessions
 until it is rebuilt, which happens on its own after an upgrade.
 
