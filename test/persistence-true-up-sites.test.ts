@@ -20,7 +20,7 @@ const SRC = join(ROOT, 'src');
 const SITES: Record<string, string> = {
   // The completeEffect / parkEffect / failEffect statements; the helpers run only under the effect runner, which trues up every request it claimed.
   'src/core/engine-sql/persistence-effect-worker.ts': 'src/core/persistence/effects.ts',
-  // The Git effect's plain outcome (gitEffectStore().recordPlainOutcome, moved from effects.ts); only the effect runner in effects.ts calls it.
+  // Lane LM (managed-on-rust, batch 15) moved the Git effect settle statements out of persistence/effects.ts into the engine member file; the runner in effects.ts still trues up every request it claimed.
   'src/core/engine-sql/git-effects.ts': 'src/core/persistence/effects.ts',
   'src/core/persistence/embedding-settlement.ts': 'src/core/persistence/embedding-settlement.ts',
   'src/core/engine-sql/persistence-embedding-noop-settle.ts': 'src/core/persistence/embedding-noop-settle.ts',

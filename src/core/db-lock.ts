@@ -29,6 +29,7 @@ import { isRustEngineKind } from './sql-engine-kind.ts';
 import { syncRows } from './engine-sql/managed-sync-store.ts';
 import { ASSERT_LEASE_SQL } from './engine-sql/cycle-locks.ts';
 import { fenceOpts } from './persistence/host-fence.ts';
+import type { LeaseToken } from './engine-sql/lease-token.ts';
 
 export interface DbLockHandle {
   id: string;
@@ -43,6 +44,12 @@ export interface DbLockHandle {
    * holder its own lease (#6028).
    */
   acquisitionToken: string;
+  /**
+   * The host fence the lock was acquired under (multi-user Rust only; absent otherwise). Every refresh and release of
+   * this handle carries it, never the registration that is current when they run, and a host that registered again
+   * under a new epoch can no longer refresh or release a lock it took under the old one (review G3).
+   */
+  fence?: LeaseToken;
   release: () => Promise<void>;
   /**
    * Bump ttl_expires_at + last_refreshed_at. Returns true when this handle
@@ -256,26 +263,32 @@ export async function tryAcquireDbLock(
     // initially; every refresh() tick bumps both ttl_expires_at AND last_refreshed_at). `gbrain sync --break-lock
     // --max-age <s>` uses last_refreshed_at (not acquired_at) to identify wedged-but-alive holders without stealing
     // healthy long-running holders that are actively refreshing.
-    const held = await engine.acquireCycleLock(lockId, { holderPid: pid, holderHost: host, acquisitionToken, ttlMinutes, stealGraceSeconds, ...fenceOpts(engine) });
+    // The registration at acquire time is the handle's fence for its whole life.
+    const bound = fenceOpts(engine);
+    const held = await engine.acquireCycleLock(lockId, { holderPid: pid, holderHost: host, acquisitionToken, ttlMinutes, stealGraceSeconds, ...bound });
     if (!held) return null;
     // The UUID is the fence; the epoch text rides on the handle for diagnostics (migration-orchestration-lock.ts
     // reports it when a lease is lost) and is never compared (#6028).
     const fence = held.fence;
     const owner = { holderPid: pid, acquisitionToken };
-    const deregister = registerCleanup(`db-lock:${lockId}`, async () => {
-      await engine.releaseCycleLock(lockId, { ...owner, ...fenceOpts(engine) });
-    });
+    // A holder whose host lease moved on no longer owns the lock to give up: the row expires on its own TTL.
+    const release = async () => {
+      try { await engine.releaseCycleLock(lockId, { ...owner, ...bound }); }
+      catch (error) { if ((error as { code?: unknown } | null)?.code !== 'lease_lost') throw error; }
+    };
+    const deregister = registerCleanup(`db-lock:${lockId}`, release);
     return {
       id: lockId,
       acquiredAt: fence,
       acquisitionToken,
+      ...(bound.fence ? { fence: bound.fence } : {}),
       // v0.41.13.0: bumps BOTH ttl_expires_at AND last_refreshed_at. v0.42.x (#1794): Postgres routes it through the
       // DIRECT session pool, not the transaction pool, so a Supavisor pooler exhaustion (EMAXCONNSESSION) can't kill
       // the heartbeat and let the live lock get stolen.
-      refresh: async (refreshOpts?: { signal?: AbortSignal }) => engine.refreshCycleLock(lockId, { ...owner, ttlMinutes, ...fenceOpts(engine) }, refreshOpts),
+      refresh: async (refreshOpts?: { signal?: AbortSignal }) => engine.refreshCycleLock(lockId, { ...owner, ttlMinutes, ...bound }, refreshOpts),
       release: async () => {
         deregister();
-        await engine.releaseCycleLock(lockId, { ...owner, ...fenceOpts(engine) });
+        await release();
       },
     };
   };

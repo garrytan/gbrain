@@ -79,6 +79,22 @@ describe('engine parity: the identity work that reads entity key rows', () => {
   );
 
   parityTest(
+    'listEntityKeyRows with collapsed reads the retired pages a dedupe collapse made, and without it only the live unretired ones (master #10313)',
+    { methods: ['putPage', 'listEntityKeyRows'] },
+    async (engine) => {
+      await engine.putPage('people/dana-example', person('Dana Example', { email: 'dana@example.com' }));
+      await engine.putPage('people/dana-example-2', person('Dana Example', { email: 'dana@example.com', merged_into: 'people/dana-example', dedupe_collapse: { at: '2026-11-25' } }));
+      await engine.putPage('people/dana-example-3', person('Dana Example', { email: 'dana@example.com', merged_into: '  ', dedupe_collapse: null }));
+      await engine.putPage('people/dana-example-4', person('Dana Example', { email: 'dana@example.com', merged_into: 'people/dana-example' }));
+      const read = async (collapsed?: boolean) => (await engine.listEntityKeyRows({ types: ['person'], keys: ['email'], limit: 50, ...(collapsed ? { collapsed } : {}) })).map(r => r.slug);
+      const out = { live: await read(), collapsed: await read(true) };
+      expect(out.collapsed).toEqual(['people/dana-example-2']);
+      expect(out.live).toEqual(['people/dana-example', 'people/dana-example-3']);
+      return out;
+    },
+  );
+
+  parityTest(
     'fillDecisionEvidence fills a bare "different" decision with its pages\' fingerprints once, in the database only',
     { methods: ['putPage', 'listEntityKeyRows', 'listIdentityDecisions', 'applyIdentityDecisions'] },
     async (engine) => {

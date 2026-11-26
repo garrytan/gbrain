@@ -21,7 +21,7 @@ export interface EffectExec { executeRaw<T = Record<string, unknown>>(sql: strin
 export type EffectId = string | number;
 
 /** `stampEffectClaim`: claims effect `id` under `token`; `ownerJson` is the `claim_owner` stamp (`effectClaimStamp`). */
-export interface EffectClaim { id: EffectId; token: string; ownerJson: string; fence?: LeaseToken }
+export interface EffectClaim { id: EffectId; token: string; ownerJson: string; fence?: LeaseToken; /** The owner keys the caller proved dead; a multi-user Rust stamp may take their running effects early. The SQL engines ignore it. */ deadOwners?: readonly string[] }
 /** `claimCoalescedGitEffects`: the host, its worktree, how many, the owners proved dead, and the `claim_owner` owner (`claimOwner()` as JSON). */
 export interface CoalescedGitClaim { hostId: string; worktreeId: string; limit: number; deadOwners: readonly string[]; ownerJson: string; fence?: LeaseToken }
 /** A held claim: the effect's id and the claim's execution token (null matches no claim). */

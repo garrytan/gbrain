@@ -103,6 +103,14 @@ mod managed_sync_store;
 mod noop_settle;
 mod notifier;
 mod op_checkpoint;
+
+/// Whether an `op_checkpoints` parent row (`op`, `fingerprint`) exists. A part holding NUL names no row.
+pub(crate) fn op_checkpoint_exists(read: &dyn KvRead, op: &str, fingerprint: &str) -> Result<bool> {
+    match op_checkpoint::parent_key(op, fingerprint) {
+        Ok(key) => Ok(read.get(&key)?.is_some()),
+        Err(_) => Ok(false),
+    }
+}
 mod origin_holds;
 mod owner_scans;
 pub(crate) mod projection_queue;
@@ -133,7 +141,9 @@ mod writer_versions;
 pub use checkpoint_validation::{IncompleteSyncReceiptSpec, OpenPassWorkSpec};
 pub use connector_orphans::OrphanBounds;
 pub use diagnostic_checkpoints::HeldHitQuery;
-pub use effect_worker::{CoalescedGitClaim, EffectClaim, EffectSettle, LinksRearm, Settle};
+pub use effect_worker::{
+    CoalescedGitClaim, EffectClaim, EffectSettle, InstallClaim, LinksRearm, Settle,
+};
 pub use effects::{PublicationEffectsSpec, QueuedEffect, WithdrawalEffectsSpec};
 pub(crate) use effects::{all_effects, request_effects};
 pub use git_durability::{GitDurabilityRead, GitDurabilityWrite};
@@ -1063,14 +1073,136 @@ pub(crate) fn stamp_write_claim_in(
     Ok(Some(row))
 }
 
+/// Whether a stamp may take request `id` now (multi-user): queued or deferred (a deferred row's own release check
+/// stays in the stamp), or running with a claim whose lease has lapsed, no recovery record and no publication begun
+/// (the rows `expire_stale_write_claims` returns to the queue). Terminal rows, recovering rows and a claim under a
+/// live token are not claimable. A request that does not exist is left to the stamp, which answers `None`.
+fn write_claimable_now(read: &dyn KvRead, env: &dyn Env, id: &str) -> Result<bool> {
+    let Some(record) = request_by_id(read, id)? else {
+        return Ok(true);
+    };
+    Ok(match record.state.as_str() {
+        "queued" | "deferred" => true,
+        "running" => {
+            extra_is_null(&record, "recovery")
+                && !extra_bool(&record, "publication_started")
+                && extra_time(&record, "claim_expires_at").is_some_and(|t| t < env.now_micros())
+        }
+        _ => false,
+    })
+}
+
 /// Requires that request `id`, while a claim holds it (an execution token is stamped), was claimed under `fence`'s
-/// lease name and epoch. A request nobody holds (queued, or finished) has no claim to check.
-fn held_claim_of(read: &dyn KvRead, id: &str, fence: Option<&LeaseToken>) -> Result<()> {
-    let (Some(fence), Some(record)) = (fence, request_by_id(read, id)?) else {
+/// lease name and epoch. A request nobody holds (queued, or finished) has no claim to check. With no fence a plain
+/// store checks nothing, and a multi-user store refuses `held_by_another` while a registered holder's live lease owns
+/// the claim.
+fn held_claim_of(
+    store: &Store,
+    read: &dyn KvRead,
+    id: &str,
+    fence: Option<&LeaseToken>,
+) -> Result<()> {
+    if fence.is_none() && !store.multiuser() {
+        return Ok(());
+    }
+    let Some(record) = request_by_id(read, id)? else {
         return Ok(());
     };
     if json_text(record.extra.get("execution_token")).is_some() {
-        crate::leases::check_claim_epoch(read, CLAIM_WRITE, &record.id.to_lowercase(), fence)?;
+        check_claim(store, read, &record.id.to_lowercase(), fence)?;
+    }
+    Ok(())
+}
+
+/// The claim step of a write-claim request `id` (the lowercase id): the fence's epoch check, or, with none on a
+/// multi-user store, the live-holder check.
+fn check_claim(
+    store: &Store,
+    read: &dyn KvRead,
+    id: &str,
+    fence: Option<&LeaseToken>,
+) -> Result<()> {
+    match fence {
+        Some(fence) => crate::leases::check_claim_epoch(read, CLAIM_WRITE, id, fence),
+        None => crate::leases::check_claim_unheld(read, CLAIM_WRITE, id, store.env.clock_micros()),
+    }
+}
+
+/// Like [`held_claim_of`], for a caller that holds a claim only while `active` says the row is running one it holds:
+/// the epoch is required only then. A row that finished (completion keeps its token), was released or went to another
+/// claim has nothing of this caller's to check, so the call gets the inactive-row answer a plain store gives instead
+/// of a claim-epoch refusal.
+pub(crate) fn held_claim_when(
+    store: &Store,
+    read: &dyn KvRead,
+    id: &str,
+    fence: Option<&LeaseToken>,
+    active: impl Fn(&RequestRecord) -> bool,
+) -> Result<()> {
+    if fence.is_none() && !store.multiuser() {
+        return Ok(());
+    }
+    let Some(record) = request_by_id(read, id)? else {
+        return Ok(());
+    };
+    if active(&record) {
+        check_claim(store, read, &record.id.to_lowercase(), fence)?;
+    }
+    Ok(())
+}
+
+/// Upkeep (a renewal or a release) names the token it holds: active is a `running` row under that token.
+fn held_active_claim_of(
+    store: &Store,
+    read: &dyn KvRead,
+    id: &str,
+    token: Option<&str>,
+    fence: Option<&LeaseToken>,
+) -> Result<()> {
+    held_claim_when(store, read, id, fence, |record| {
+        token.is_some_and(|token| {
+            record.state == "running"
+                && json_text(record.extra.get("execution_token"))
+                    .is_some_and(|held| held.eq_ignore_ascii_case(token))
+        })
+    })
+}
+
+/// What recovery found on a request it settles (`WriteCompletion::recovered`): the state and execution token the
+/// row had when the successor read it.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecoveredFrom {
+    pub state: String,
+    #[serde(default)]
+    pub execution_token: Option<String>,
+}
+
+/// The recovery owner's settle of a recovered request: it needs no claim epoch (the predecessor's claim is the thing
+/// being retired), but the row must be in the recovery state the caller read: `running` or `recovering`, holding a
+/// recovery record, under the execution token it named. The caller's fence has already been asserted.
+fn recovery_state_matches(read: &dyn KvRead, id: &str, expect: &RecoveredFrom) -> Result<()> {
+    let moved = |why: &str| {
+        StoreError::new(
+            crate::error::INVALID_STATE,
+            format!("recovery_moved: request {id} {why}; its recovery was not settled"),
+        )
+    };
+    let Some(record) = request_by_id(read, id)? else {
+        return Ok(());
+    };
+    if !matches!(record.state.as_str(), "running" | "recovering")
+        || extra_is_null(&record, "recovery")
+    {
+        return Err(moved("is not in recovery"));
+    }
+    let token = json_text(record.extra.get("execution_token"));
+    let same_token = match (&token, &expect.execution_token) {
+        (Some(held), Some(read)) => held.eq_ignore_ascii_case(read),
+        _ => false,
+    };
+    if record.state != expect.state || !same_token {
+        return Err(moved("is no longer in the recovery state that was read"));
     }
     Ok(())
 }
@@ -1102,6 +1234,10 @@ pub struct WriteCompletion {
     /// The caller's host registration (lane L5): a claimed request finishes only under the epoch it was claimed under.
     #[serde(default)]
     pub fence: Option<LeaseToken>,
+    /// Set by the successor that settles a recovered publication (lane L5): the completion checks the CURRENT
+    /// fence and this recovery state instead of the former claim's epoch, then retires that epoch.
+    #[serde(default)]
+    pub recovered: Option<RecoveredFrom>,
 }
 
 /// `TerminalIntentCompaction` of `src/core/engine-sql/persistence-journal.ts`: the compaction of a
@@ -1812,9 +1948,24 @@ impl Store {
     pub fn stamp_write_claim(&self, stamp: &ClaimStamp) -> Result<Option<Value>> {
         self.write(|tx| {
             fence::begin(self, tx, stamp.fence.as_ref(), "stamp_write_claim")?;
-            let row = stamp_write_claim_in(tx, &*self.env, stamp)?;
+            // Multi-user: a stamp takes only a request that is claimable now, read in this same write, so a delayed
+            // direct stamp cannot take a live claim or revive finished work. A plain store stamps as it always has.
+            if self.multiuser() && !write_claimable_now(&*tx, &*self.claim_env(), &stamp.id)? {
+                return Ok(None);
+            }
+            let row = stamp_write_claim_in(tx, &*self.claim_env(), stamp)?;
             if let Some(id) = row.as_ref().and_then(|r| r["id"].as_str()) {
-                fence::claim_taken(tx, CLAIM_WRITE, &id.to_lowercase(), stamp.fence.as_ref())?;
+                let ttl = (stamp.lease_ms.is_finite() && stamp.lease_ms >= 1.0)
+                    .then_some(stamp.lease_ms as u64);
+                fence::claim_taken(
+                    self,
+                    tx,
+                    CLAIM_WRITE,
+                    &id.to_lowercase(),
+                    stamp.fence.as_ref(),
+                    "stamp_write_claim",
+                    ttl,
+                )?;
             }
             Ok(row)
         })
@@ -1826,8 +1977,11 @@ impl Store {
         let fence = completion.fence.as_ref();
         self.write(|tx| {
             fence::begin(self, tx, fence, "complete_write_row")?;
-            if fence.is_some() {
-                held_claim_of(tx, &completion.id, fence)?;
+            if fence.is_some() || self.multiuser() {
+                match &completion.recovered {
+                    Some(recovered) => recovery_state_matches(tx, &completion.id, recovered)?,
+                    None => held_claim_of(self, tx, &completion.id, fence)?,
+                }
             }
             let row = complete_write_row_in(tx, &*self.env, completion)?;
             if row.is_some() {
@@ -1862,10 +2016,14 @@ impl Store {
     pub fn renew_write_claim(&self, stamp: &ClaimStamp) -> Result<bool> {
         self.write(|tx| {
             fence::begin(self, tx, stamp.fence.as_ref(), "renew_write_claim")?;
-            if stamp.fence.is_some() {
-                held_claim_of(tx, &stamp.id, stamp.fence.as_ref())?;
-            }
-            renew_write_claim_in(tx, &*self.env, stamp)
+            held_active_claim_of(
+                self,
+                tx,
+                &stamp.id,
+                Some(&stamp.token),
+                stamp.fence.as_ref(),
+            )?;
+            renew_write_claim_in(tx, &*self.claim_env(), stamp)
         })
     }
 
@@ -1874,9 +2032,7 @@ impl Store {
         let fence = release.fence.as_ref();
         self.write(|tx| {
             fence::begin(self, tx, fence, "release_unpublished_claim")?;
-            if fence.is_some() {
-                held_claim_of(tx, &release.id, fence)?;
-            }
+            held_active_claim_of(self, tx, &release.id, release.token.as_deref(), fence)?;
             let released = release_unpublished_claim_in(tx, &*self.env, release)?;
             if released {
                 fence::claim_ended(self, tx, CLAIM_WRITE, &release.id.to_lowercase(), fence)?;
@@ -1891,7 +2047,8 @@ impl Store {
         self.write(|tx| {
             fence::begin(self, tx, spec.fence.as_ref(), "expire_stale_write_claims")?;
             let mut expired = Vec::new();
-            let released = expire_stale_write_claims_in(tx, &*self.env, spec, &mut expired)?;
+            let released =
+                expire_stale_write_claims_in(tx, &*self.claim_env(), spec, &mut expired)?;
             for id in &expired {
                 fence::claim_ended(
                     self,
@@ -1907,7 +2064,7 @@ impl Store {
 
     /// `hasClaimableWrite(spec)`.
     pub fn has_claimable_write(&self, spec: &ClaimableSpec) -> Result<bool> {
-        has_claimable_write_in(&*self.read()?, &*self.env, spec)
+        has_claimable_write_in(&*self.read()?, &*self.claim_env(), spec)
     }
 
     /// `selectClaimableWrite(spec)`: the row `claimNextWrite` claims next, or `None`; the claim's
@@ -1915,7 +2072,7 @@ impl Store {
     pub fn select_claimable_write(&self, spec: &ClaimableSpec) -> Result<Option<Value>> {
         let read = self.read()?;
         crate::leases::check_fence(self, &*read, spec.fence.as_ref(), "select_claimable_write")?;
-        select_claimable_write_in(&*read, &*self.env, spec)
+        select_claimable_write_in(&*read, &*self.claim_env(), spec)
     }
 
     /// `countOutstandingBySource(principalKind, principalId)`: `[{ source_id, n }]`, one row per source

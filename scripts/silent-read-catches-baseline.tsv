@@ -178,7 +178,6 @@ src/commands/doctor/checks/search-eval.ts#checkSubagentCapability	promise_catch_
 src/commands/doctor/checks/search-eval.ts#computeConversationFactsBacklogCheck	capability_refusal_swallowed	1
 src/commands/doctor/checks/secret-store.ts#inspectSecretStore	promise_catch_empty	1
 src/commands/doctor/checks/self-capture.ts#harnessSessionIds	catch_empty	1
-src/commands/doctor/checks/shared-agent-access.ts#sharedAgentVerdict	capability_refusal_swallowed	1
 src/commands/doctor/checks/slug-collisions.ts#slugCollisionsCheck	capability_refusal_swallowed	1
 src/commands/doctor/checks/stale-embedding-effects.ts#staleEmbeddingEffectsCheck	promise_catch_empty	1
 src/commands/doctor/checks/supersession-calibration.ts#runSupersessionCalibration	catch_empty	2
@@ -422,7 +421,6 @@ src/commands/wakeshift.ts#watchCounts	catch_empty	1
 src/commands/whoknows.ts#findExperts	promise_catch_empty	1
 src/core/access/caller.ts#appliedAccessSummary	catch_empty	1
 src/core/access/caller.ts#resolveAudienceIdentities	catch_empty	1
-src/core/access/caller.ts#stdioMemberId	catch_empty	1
 src/core/access/lineage.ts#membersReadLineageOn	catch_empty	1
 src/core/access/members.ts#audienceMemberIds	catch_empty	1
 src/core/access/open-pages.ts#printOpenPagesUpgradeNotice	catch_empty	1
@@ -671,7 +669,6 @@ src/core/context/title-matches.ts#preferEntityTitleMatches	promise_catch_empty	1
 src/core/context/turn-context.ts#assembleDelta	promise_catch_empty	1
 src/core/context/turn-context.ts#assembleTurnContext<anon@4>	catch_empty	1
 src/core/context/turn-context.ts#assembleTurnContext<anon@5>	catch_empty	1
-src/core/context/volunteer-events.ts#purgeStaleVolunteerEvents	capability_refusal_swallowed	1
 src/core/context/volunteer-events.ts#purgeStaleVolunteerEvents	catch_empty	1
 src/core/contextual-retrieval-service.ts#resolveSynopsisMaxTokens	catch_empty	1
 src/core/conversation-parser/body.ts#resolveTranscriptPath	catch_empty	1
@@ -798,10 +795,6 @@ src/core/extract-takes-from-pages.ts#databaseOnlyPage	catch_empty	1
 src/core/extract-takes-from-pages.ts#extractTakesFromPages	catch_empty	1
 src/core/extract-takes-from-pages.ts#resolveBudgetUsd	promise_catch_empty	1
 src/core/extract/rollup-writer.ts#upsertExtractRollup	catch_empty	1
-src/core/extraction-watermark.ts#commitExtractionPlan	capability_refusal_swallowed	1
-src/core/extraction-watermark.ts#readExtractionReceipt	capability_refusal_swallowed	1
-src/core/extraction-watermark.ts#readPageWatermark	capability_refusal_swallowed	1
-src/core/extraction-watermark.ts#setExtractionReceipt	capability_refusal_swallowed	1
 src/core/facts/absorb-log.ts#pendingReceipt	catch_empty	1
 src/core/facts/capture-dedup.ts#entityNames	catch_empty	1
 src/core/facts/dead-absorb-retry.ts#loadMaxResubmits	promise_catch_empty	1
@@ -1453,7 +1446,6 @@ src/core/setup/turn-hook-check.ts#readJson	catch_empty	1
 src/core/setup/turn-hook.ts#readJson	catch_empty	1
 src/core/shared-skills/adopted-packs.ts#adoptedSkillPackSourceIds	capability_refusal_swallowed	1
 src/core/shared-skills/migration-export.ts#exportDatabaseContent	capability_refusal_swallowed	1
-src/core/shared-skills/migration.ts#runSharedSkillsMigration	capability_refusal_swallowed	2
 src/core/shared-skills/migration.ts#runSharedSkillsMigration	catch_empty	1
 src/core/shared-skills/optimizer.ts#authorize	catch_empty	1
 src/core/skill-catalog.ts#readMcpPublishSkills	catch_empty	1

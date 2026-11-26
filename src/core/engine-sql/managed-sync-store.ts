@@ -215,10 +215,7 @@ export const SYNC_STATEMENTS = {
       SELECT count(*) AS samples, percentile_cont(0.5) WITHIN GROUP (ORDER BY searchable) AS s50, percentile_cont(0.95) WITHIN GROUP (ORDER BY searchable) AS s95,
         count(embedded) AS embedded, percentile_cont(0.5) WITHIN GROUP (ORDER BY embedded) AS e50, percentile_cont(0.95) WITHIN GROUP (ORDER BY embedded) AS e95,
         count(*) FILTER (WHERE pending) AS pending FROM l` },
-  // The soak counters and the needs-human stamp of the hold sweep (soak-counters.ts) and the landing gaps of `sync status` (landing-gaps.ts; its receipt limit, LANDING_RECEIPT_LIMIT, written out).
-  soak_counter_add: { kind: 'write', sql: `INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,jsonb_build_array(jsonb_build_object('day',$2::text,$3::text,$4::int)))
-    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=jsonb_build_array(op_checkpoints.completed_keys->0
-      || jsonb_build_object($3::text, COALESCE((op_checkpoints.completed_keys->0->>$3)::int,0)+$4::int)), updated_at=now()` },
+  // The needs-human stamp of the hold sweep (soak-counters.ts) and the landing gaps of `sync status` (landing-gaps.ts; its receipt limit, LANDING_RECEIPT_LIMIT, written out).
   hold_needs_human_stamp: { kind: 'write', sql: `UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,meta,needs_human_at}',to_jsonb($3::text))
       WHERE op=$1 AND fingerprint=$2 AND completed_keys->0->>'code'=$4 AND NOT (completed_keys->0->'meta' ? 'needs_human_at') RETURNING 1` },
   landing_binding: { kind: 'read', sql: `SELECT b.worktree_id::text AS worktree_id, b.source_incarnation::text AS incarnation

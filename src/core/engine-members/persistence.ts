@@ -302,6 +302,8 @@ export interface PersistenceMembers {
   replaceOpCheckpointAtVersion(op: string, fingerprint: string, completedKeys: readonly unknown[], expected: number): Promise<boolean>;
   /** Stores the sync run's fence trend row, or rewrites it keeping the `day` of its first write (the sync run's total counts once). */
   upsertFenceTrendRunRecord(op: string, fingerprint: string, record: unknown): Promise<void>;
+  /** Adds `n` to soak counter `kind` of day `day`'s `op` row, creating it (persistence/soak-counters.ts recordSoakEvent; engine-sql/soak-counters.ts). */
+  addSoakCounterEvent(op: string, day: string, kind: string, n: number): Promise<void>;
   /** The earliest `held_at` of the sources' Git sync holds with hold code `code`, or null (the fences and slug-conflicts verification). */
   readOldestSyncHoldAt(code: string, sourceIds: readonly string[]): Promise<string | null>;
   /** The daily budget ledger (budget/daily-ledger.ts): releases expired held reservations and settles expired dispatched ones at their estimate (engine-sql/budget-ledger-writes.ts). */

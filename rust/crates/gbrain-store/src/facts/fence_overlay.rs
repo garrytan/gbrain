@@ -47,6 +47,12 @@ pub struct FenceOverlayInput {
     pub incoming: Vec<FenceOverlayIncomingRow>,
     #[serde(default)]
     pub hide_held: bool,
+    /// With `hide_held`: the member caller (`callerMember()`), as `listHeldFenceCells` takes it.
+    #[serde(default)]
+    pub member: Option<held_cells::HeldFenceMember>,
+    /// With `hide_held`: the sources of the caller's private-facts grant (`privateFactSources()`).
+    #[serde(default)]
+    pub grant_sources: Vec<String>,
 }
 
 impl Store {
@@ -85,15 +91,15 @@ impl Store {
             .filter(|p| p.deleted_at_us.is_none())
             .map(|p| TrustTier::stored(p.trust_tier.as_deref()).as_str());
         let rows = page_rows(&*read, &input.source_id, &input.slug)?;
-        // `heldRowSql` with both caller admissions `FALSE`: no live row is admitted.
+        // `heldRowSql` with the caller's admissions (its own member page and its private-facts grant), as
+        // `listHeldFenceCells` reads them: a caller with neither admits no live row.
         let live: Vec<held_cells::LiveRow> = if input.hide_held {
-            rows.iter()
-                .filter(|r| r.expired_at_us.is_none())
-                .map(|r| held_cells::LiveRow {
-                    row: r.clone(),
-                    admitted: false,
-                })
-                .collect()
+            let caller = held_cells::HeldFenceCellsInput {
+                keys: Vec::new(),
+                member: input.member.clone(),
+                grant_sources: input.grant_sources.clone(),
+            };
+            held_cells::live_rows(&*read, &caller, &input.source_id, &input.slug)?
         } else {
             Vec::new()
         };

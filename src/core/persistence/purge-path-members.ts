@@ -38,8 +38,8 @@ export const PURGE_OWNERS = {
   beliefProbe: 'lane 3 (rust-belief-purge e211982aba)',
   /** The fact-context probe of the receipt's ledger report. */
   factContextProbe: 'lane 4 (rust-5a 90e7bea933)',
-  /** The online-built request index read: rust-engine/doctor-checks-3 (b78e56edb9, contains 8d4d809039) makes it a typed member whose Rust store answers every index as valid. */
-  requestIndexes: 'lane 14 (doctor-checks-3 b78e56edb9, contains 8d4d809039)',
+  /** The online-built request index read: a typed member (engine-sql/doctor-persistence.ts) whose Rust store answers every index as valid. */
+  requestIndexes: 'lane 14',
   /** The fact purge's transaction statements and receipt counts: rust-engine/rust-5a bc4cc890fe serves them (not merged here); see fact-purge-path-members.ts. */
   factPurgeTx: 'lane 4 (rust-5a bc4cc890fe)',
   /** The segmented rewrite statements and their chunk probes, typed and served on Rust by segmented-staging-2 (34fa27c472): Ember's ruling, Nov 21. */
@@ -127,8 +127,9 @@ const GUARDED_SITES: PurgePathSite[] = [
  */
 export const PURGE_PATH: readonly PurgePathEntry[] = [
   ...RETENTION_STOPS,
-  // preparePagePurge: the request-index state read, then the origin-twin read.
-  { site: 'readRequestIndexStates (persistence/checkpoint-validation.ts)', owner: requestIndexes, due: nov25, stop: 'the online-built request index read runs through raw SQL' },
+  // preparePagePurge: the request-index state read (a typed member; the Rust store reads every index valid), then the
+  // origin-twin read.
+  { member: 'readRequestIndexStates', owner: requestIndexes },
   // sweepPurgedPage: the generation-ledger scrub.
   // verifyPagePurge: the receipt. Its store probes (`countPurgeProbe`) are served, the fact purge's `fingerprint` and
   // `claim_text` probes included.

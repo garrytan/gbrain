@@ -13,6 +13,28 @@
 import type { BrainEngine } from '../engine.ts';
 import { rustLeases, type LeaseToken, type RustLeases, type WriteOrigin } from '../rust-engine/store-members/leases.ts';
 import { clearHostRegistration, HOST_FENCE_TTL_MS, hostLeaseName, setHostRegistration, type HostRegistration } from './host-fence.ts';
+import { consumerIdentity, consumerProvablyDead, type ConsumerProcessIdentity } from './consumer-heartbeat.ts';
+
+/**
+ * The holder origin of this process: `incarnation` is its nonce, and `writer_id` carries the process markers
+ * (`<kind>@<pid>/<pid namespace>/<boot id>/<start>`) so another process of this machine can prove it dead from the lease
+ * record alone, as #6650 does for heartbeat rows.
+ */
+export function processOrigin(hostId: string, kind: string, self: ConsumerProcessIdentity = consumerIdentity()): WriteOrigin {
+  const mark = (v: string | null | undefined) => (v ?? '').replace(/[/@\0]/g, '_');
+  return { host_id: hostId, incarnation: self.nonce, writer_id: `${kind}@${self.pid}/${mark(self.pid_ns)}/${mark(self.boot_id)}/${mark(self.start)}` };
+}
+
+/** The process markers a holder origin carries (`processOrigin`), or null for an origin without them. */
+export function originProcess(origin: WriteOrigin): { pid: number; nonce: string; pid_ns: string | null; boot_id: string | null; start: string | null } | null {
+  const at = origin.writer_id.lastIndexOf('@');
+  if (at < 0) return null;
+  const [pid, pidNs, bootId, start] = origin.writer_id.slice(at + 1).split('/');
+  const n = Number(pid);
+  if (!Number.isInteger(n) || n <= 0) return null;
+  const or = (v: string | undefined) => (v ? v : null);
+  return { pid: n, nonce: origin.incarnation, pid_ns: or(pidNs), boot_id: or(bootId), start: or(start) };
+}
 
 /** True for a Rust engine whose open store runs in multi-user mode (I-0). */
 export function rustMultiuserEngine(engine: object): boolean {
@@ -26,6 +48,8 @@ export interface HostRegistrationHandle {
   renew(): Promise<void>;
   /** The current fence, or null while unregistered. */
   readonly fence: LeaseToken | null;
+  /** The first registration attempt's fence: null when another live holder has the lease (or the call failed). */
+  readonly first: Promise<LeaseToken | null>;
   /** Stops renewing, releases the lease and clears the registration. */
   stop(): Promise<void>;
 }
@@ -45,11 +69,15 @@ export interface HostRegistrationOpts {
   ttlMs?: number;
   /** Receives each failure (default: one stderr line per failure streak). */
   onError?: (error: unknown) => void;
+  /** Called once when a registration this handle held is lost and could not be taken again (another holder has it). */
+  onLost?: () => void;
+  /** This process's markers, to tell a dead holder from a live one (default `consumerIdentity()`; a test seam). */
+  self?: ConsumerProcessIdentity;
   /** Test seam: the lease members (default: the engine's). */
   leases?: RustLeases;
 }
 
-const INERT: HostRegistrationHandle = { renew: async () => {}, get fence() { return null; }, stop: async () => {} };
+const INERT: HostRegistrationHandle = { renew: async () => {}, get fence() { return null; }, first: Promise.resolve(null), stop: async () => {} };
 
 /** Starts the registration of `engine`'s full consumer for its host; inert unless the engine is multi-user Rust. */
 export function startHostRegistration(engine: BrainEngine | object, opts: HostRegistrationOpts): HostRegistrationHandle {
@@ -68,7 +96,16 @@ export function startHostRegistration(engine: BrainEngine | object, opts: HostRe
     process.stderr.write(`[persistence] phase=host_registration reason=renewal_failed message="${message}"; protected writes from this process refuse lease_lost until it registers again; fix: gbrain engine status --json\n`);
   };
   const register = async (): Promise<void> => {
-    const fence = await leases.acquire(name, opts.origin, ttlMs);
+    let fence = await leases.acquire(name, opts.origin, ttlMs);
+    if (!fence) {
+      // Another holder's lease reads live. A process of this machine that is provably gone (it exited without
+      // releasing) is taken over at once, at the epoch read; anything else waits for the lease to lapse.
+      const held = await leases.read(name);
+      const proc = held && held.holder.host_id === opts.hostId ? originProcess(held.holder) : null;
+      if (held && proc && consumerProvablyDead(proc, opts.self ?? consumerIdentity())) {
+        fence = await leases.takeOver(name, held.epoch, opts.origin, ttlMs);
+      }
+    }
     if (stopped) { if (fence) await leases.release(fence).catch(() => undefined); return; }
     if (!fence) return; // another live process holds the name: retry next tick
     const next: HostRegistration = { hostId: opts.hostId, origin: opts.origin, fence };
@@ -87,6 +124,7 @@ export function startHostRegistration(engine: BrainEngine | object, opts: HostRe
         clearHostRegistration(engine, current);
         current = null;
         await register();
+        if (!current && !stopped) opts.onLost?.();
       }
       streak = 0;
     } catch (error) {
@@ -102,10 +140,11 @@ export function startHostRegistration(engine: BrainEngine | object, opts: HostRe
   };
   const cadence = setInterval(() => { void renew(); }, opts.everyMs ?? 10_000);
   cadence.unref?.();
-  void renew();
+  const first = renew().then(() => current?.fence ?? null);
   return {
     renew,
     get fence() { return current?.fence ?? null; },
+    first,
     async stop() {
       if (stopped) return;
       stopped = true;

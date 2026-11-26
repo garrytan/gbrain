@@ -89,9 +89,9 @@ export interface JobsMembers {
   /** Remove a child's dependency on its parent. */
   detachChildJob(childId: number): Promise<void>;
   /** Replace the progress of an active job this token holds; false when the claim moved on. */
-  updateJobProgress(id: number, lockToken: string, progress: unknown): Promise<boolean>;
+  updateJobProgress(id: number, lockToken: string, progress: unknown, opts?: FenceOpts): Promise<boolean>;
   /** Add to the token counts of an active job this token holds; false when the claim moved on. */
-  addJobTokens(id: number, lockToken: string, tokens: JobTokenCounts): Promise<boolean>;
+  addJobTokens(id: number, lockToken: string, tokens: JobTokenCounts, opts?: FenceOpts): Promise<boolean>;
   /**
    * Return an active job this token holds to `delayed` without counting an attempt (a lease-full bounce, a deferral,
    * a configuration release). Null when the claim moved on. Postgres cancels the statement when `signal` aborts.
@@ -113,9 +113,9 @@ export interface JobsMembers {
   /** Cancel the live roots in `ids` and their descendants in one transaction, notifying and waking their parents. */
   cancelJobs(ids: readonly number[], spec?: CancelJobsSpec): Promise<JobRow[]>;
   /** Dead-letter active jobs past `timeout_at` that still hold a lease, notifying and waking their parents. */
-  killTimedOutJobs(): Promise<JobRow[]>;
+  killTimedOutJobs(opts?: FenceOpts): Promise<JobRow[]>;
   /** Dead-letter active jobs past their wall-clock threshold, notifying and waking their parents. */
-  killWallClockJobs(lockDurationMs: number): Promise<JobRow[]>;
+  killWallClockJobs(lockDurationMs: number, opts?: FenceOpts): Promise<JobRow[]>;
   /** Delete (or count, on `dryRun`) jobs in `statuses` last updated before `olderThan`; the count. */
   pruneJobs(spec: PruneJobsSpec): Promise<number>;
   /** Completed dream synthesis keys of a source starting with `keyPrefix`, live jobs and the prune archive, each once. */
@@ -127,7 +127,7 @@ export interface JobsMembers {
   /** Insert one inbox message for a job. */
   postInboxMessage(jobId: number, sender: string, payload: unknown): Promise<JobRow>;
   /** Mark and return the unread messages of an active job this token holds; [] when the claim moved on. */
-  readJobInbox(jobId: number, lockToken: string): Promise<JobRow[]>;
+  readJobInbox(jobId: number, lockToken: string, opts?: FenceOpts): Promise<JobRow[]>;
   /** The `child_done` payloads in an active parent's inbox (after `since`), oldest first; [] unless this token holds it. */
   readChildCompletions(parentId: number, lockToken: string, since?: Date | null): Promise<unknown[]>;
   /** Ids of the live jobs in one queue, ascending. */

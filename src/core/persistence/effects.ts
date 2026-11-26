@@ -29,6 +29,7 @@ import { isEmbedRetriableError, MAX_RATE_LIMIT_RETRIES, rateLimitDelayMs, restam
 import { AIConfigError, normalizeAIError } from '../ai/errors.ts';
 import { EMBEDDING_ZERO_NORM, isEmbeddingZeroNormError, type EmbeddingZeroNormError } from '../ai/embedding-guard.ts';
 import { isAIInvocationPolicyError, withAIInvocationPreflight } from '../ai/invocation-guard.ts';
+import { effectInstallClaim, fenceOpts } from './host-fence.ts';
 import { quoteIdentifier } from '../search/embedding-column.ts';
 import type { ResolvedColumn } from '../types.ts';
 import { acquireWorktree, acquireWorktreeWaiting, getWorktreeBinding, type WorktreeBinding } from './ownership.ts';
@@ -543,7 +544,7 @@ async function embedPage(engine: BrainEngine, config: GBrainConfig, effect: Pers
     }
     const installed = await engine.transaction(async tx => {
       await guardEffectSource(tx, effect, opts.hostId);
-      const claim = await tx.lockEffectClaimRow(effect.id);
+      const claim = await tx.lockEffectClaimRow(effect.id, effectInstallClaim(tx, effect));
       if (claim?.state !== 'running' || claim.execution_token !== effect.execution_token) throw opError('write_claim_lost', 'The embedding claim changed.',
         `Another worker took over the embedding of ${snapshot.page.slug} in source ${effect.source_id}; this attempt installed nothing and the owning claim finishes it.`,
         { fix: effectStatusFix(effect) });
@@ -615,6 +616,8 @@ async function embedSegmentedEffect(engine: BrainEngine, config: GBrainConfig, e
       if (!await renewPersistenceEffectClaim(engine, effect, { direct: true })) throw claimLost();
       await assertEmbeddingEffectEnabled(engine, config);
     }, async () => (await embed(texts, { abortSignal: o.abortSignal, maxRetries: 0 })) as Float32Array[]),
+    // L5 (G2): the install's own write checks this claim and the host fence on a multi-user Rust brain.
+    ...(effect.execution_token ? { effectClaim: { effectId: effect.id, token: effect.execution_token, ...fenceOpts(engine) } } : {}),
     beforeInstall: async tx => {
       await guardEffectSource(tx, effect, opts.hostId);
       const claim = await tx.lockEffectClaimRow(effect.id);

@@ -134,9 +134,10 @@ pub(crate) use page_purges::has_page_purges;
 pub use privacy::PrivacyPolicy;
 use privacy::hidden_by_private_provenance;
 pub(crate) use privacy::{
-    OwnerOnlyCache, access_readers, caller_version_hidden, chronicle_depth, concept_inputs,
-    declared_slugs, hidden_by_provenance_page, names_no_readers_or_rules, page_hidden,
-    page_hidden_with, privacy_allows, stamped_rules, successor_withholds_reason, version_hidden,
+    OwnerOnlyCache, access_id, access_readers, caller_version_hidden, chronicle_depth,
+    concept_inputs, declared_slugs, hidden_by_provenance_page, names_no_readers_or_rules,
+    owner_reads_page, page_hidden, page_hidden_with, privacy_allows, stamped_rules,
+    successor_withholds_reason, version_hidden,
 };
 pub use widen::VisibilityWidening;
 use widen::{visibility_admits, world_admits};

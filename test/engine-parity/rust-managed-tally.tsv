@@ -222,7 +222,7 @@ test/engine-parity/migrate-engine-source.test.ts	2	0
 test/engine-parity/notifier-freshness.test.ts	3	0
 test/engine-parity/notifier-resident.test.ts	4	0
 test/engine-parity/notifier.test.ts	4	0
-test/engine-parity/oauth-clients.test.ts	17	0
+test/engine-parity/oauth-clients.test.ts	19	1
 test/engine-parity/oauth-dcr.test.ts	3	0
 test/engine-parity/oauth-http.test.ts	2	0
 test/engine-parity/oauth-lifecycle.test.ts	4	0

@@ -496,25 +496,6 @@ pub(super) fn write(
 ) -> Result<Option<Value>> {
     Ok(Some(match name {
         // `jsonb_set(completed_keys, '{0,done}', 'true')`: the cursor header's `done`; a row with no object first element is unchanged.
-        // `INSERT .. ON CONFLICT DO UPDATE` of one soak counter: the day's row is `[{day, <kind>: n}]`, and a later event adds to its kind.
-        "soak_counter_add" => {
-            let (op, day, kind, n) = (text(p, 0)?, text(p, 1)?, text(p, 2)?, big(param(p, 3)?)?);
-            let item = match op_row(&*tx, &op, &day)? {
-                None => json!({ "day": day, kind.clone(): n }),
-                Some(row) => {
-                    let mut item = first(&row).cloned().unwrap_or_else(|| json!({}));
-                    let was = json_text(item.get(&kind))
-                        .and_then(|t| t.trim().parse::<i64>().ok())
-                        .unwrap_or(0);
-                    if let Some(map) = item.as_object_mut() {
-                        map.insert(kind.clone(), json!(was + n));
-                    }
-                    item
-                }
-            };
-            put_row(tx, env, &op, &day, json!([item]))?;
-            rows(vec![])
-        }
         // `jsonb_set(completed_keys, '{0,meta,needs_human_at}', stamp)` on a hold of this code whose meta has no stamp yet.
         "hold_needs_human_stamp" => {
             let (op, fingerprint, stamp, code) =

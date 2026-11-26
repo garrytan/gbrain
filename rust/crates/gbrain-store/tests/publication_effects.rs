@@ -140,6 +140,7 @@ fn claim(store: &Store, dead: &[String], token: &str) -> Option<Value> {
             id: candidate["id"].as_str().unwrap().into(),
             token: token.into(),
             owner_json: owner.to_string(),
+            dead_owners: vec![],
         })
         .unwrap()
 }
