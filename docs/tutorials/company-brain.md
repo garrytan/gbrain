@@ -21,6 +21,40 @@ I'm Garry Tan. I built GBrain to run my own AI agents at Y Combinator. It runs a
 
 ---
 
+## Set up a team in one command
+
+For a small team on one brain, one setup command does the access work this tutorial walks through by hand:
+
+```bash
+# Preview: lists every gbrain access and gbrain auth step; writes nothing.
+gbrain setup claude-code --template team --members bob-example,carol-example
+# Apply it.
+gbrain setup claude-code --template team --members bob-example,carol-example --yes
+```
+
+It sets the brain up as a company brain (`--shape company`), then adds, in order:
+
+1. **The people.** You are the owner. Each name in `--members` becomes a member with a folder only they read (`people/<member>/`), so member notes stay private by default.
+2. **One key per member.** Each key goes to a file only you can read (mode 0600) under `~/.gbrain/member-keys/`. Setup never prints a key and never sends one; handing a key to its person is your own step.
+3. **The team group.** A group called `team-members` holds you and the members.
+4. **Two folder rules.** `company/` (in the `company` source) and `rules/team/` are readable by you and the team group. A decision saved to `company/` reaches the whole team; `gbrain correct --scope team` saves a rule every member's agent reads.
+5. **Guest notes (optional).** `--guests oauth_client:<client id>` sets up the guest source for notes saved by outside guests, writable only by those writers, and lets each of your own credentials read it.
+
+The template never changes a group or folder rule it did not make. If a group called `team-members` already exists, or a hand-written rule already covers `company/` or `rules/team/`, that line reads BLOCKED with the command that changes it, and nothing is written. Use `--team-group <id>` to give the team another group.
+
+Every step is safe to run again. Setup keeps a receipt with no key values in it:
+
+```bash
+# What ran, and per member what their key actually reads against what the rules expect.
+gbrain setup claude-code --template team --status
+# Finish a run that stopped partway.
+gbrain setup claude-code --template team --resume <receipt id> --yes
+```
+
+`gbrain access check --token member-<member> --as <member>` shows one member's grant in detail. The rest of this tutorial covers the larger, hosted shape: Postgres, OAuth clients per teammate and per-person crons.
+
+---
+
 ## Part 1: The mental model
 
 ### What changes when you go from personal to company

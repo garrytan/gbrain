@@ -38,6 +38,7 @@ import { writeUnlessChanged } from '../core/setup/brain-first.ts';
 import { bunSpawnSync } from '../core/spawn.ts';
 import { readLine } from '../core/interaction.ts';
 import { templateLines, type TemplateResult } from './household-template.ts';
+import { templateLines as teamTemplateLines, type TeamResult } from './team-template.ts';
 
 export type BrainShape = 'personal' | 'company' | 'both' | 'household' | 'none';
 
@@ -53,6 +54,8 @@ export interface LayoutFlags {
   team?: boolean;
   /** H2, --shape household: --household-members and the owner the template names when none is set. */
   household?: { members?: string; owner?: string };
+  /** Lane 5 O1, --template team: the team's members, guest writers and group, and the owner the template names when none is set. */
+  template?: { members?: string; guests?: string; group?: string; owner?: string };
   dryRun: boolean;
 }
 
@@ -157,7 +160,7 @@ export function renderStarterPage(p: StarterPage): string {
 const blockShape = (shape: BrainShape, team: boolean): BrainShape =>
   !team || !hasCompany(shape) ? shape : shape === 'both' ? 'personal' : 'none';
 
-export function renderLayoutBlock(harness: string, scope: LayoutScope = 'user', source: string | null = null, shape: BrainShape = 'personal'): string {
+export function renderLayoutBlock(harness: string, scope: LayoutScope = 'user', source: string | null = null, shape: BrainShape = 'personal', team = false): string {
   const lines = [
     `<!-- gbrain brain-layout v${LAYOUT_VERSION}: managed by gbrain setup and replaced on upgrade; edit outside these markers. Remove: ${[...setupArgv(harness, scope, source), '--shape', 'none'].join(' ')} -->`,
     '## My brain layout (gbrain)',
@@ -172,6 +175,7 @@ export function renderLayoutBlock(harness: string, scope: LayoutScope = 'user', 
       '- Add a new decision to company/decisions as a dated entry with why, who and what would make us revisit it.',
       `- Save company facts and decisions with --source ${COMPANY_SOURCE}; personal ones go to the default source.`,
       '- Save a decision the whole team should know into company/ with its readers named (readable_by: [<member>, ...] in its frontmatter); a company/ page without readable_by is readable by everyone who can read the company source.');
+    if (team) lines.push('- When the user corrects how the whole team should work, record it with correct --scope team (a rule under rules/team/ that every team member\'s agent reads); a correction about the user alone stays --scope me.');
   }
   if (shape === 'household') {
     lines.push('- Before answering what needs doing at home (bills, supplies, birthdays, school deadlines, appointments, returns, credits), call household_due and answer from its ranked items.',
@@ -289,6 +293,8 @@ export interface LayoutOutcome {
   archive: { state: 'on' | 'off' | 'offered' | 'unknown'; detail: string } | null;
   /** H2, --shape household: the household template's result (gbrain household template), or why it did not run. */
   household?: { result: TemplateResult | null; argv: string[]; detail?: string };
+  /** Lane 5 O1, --template team: the team template's result (gbrain access template team), or why it did not run. */
+  teamTemplate?: { result: TeamResult | null; argv: string[]; detail?: string };
 }
 
 /** A gbrain child; `source` pins it to one source through GBRAIN_SOURCE (null: the caller's environment as it is). */
@@ -299,7 +305,7 @@ const run: Run = (argv, stdin, source) => {
   return { code: child.exitCode ?? 1, stdout: child.stdout?.toString() ?? '', stderr: child.stderr?.toString() ?? '' };
 };
 
-function syncLayoutBlock(path: string | null, harness: string, scope: LayoutScope, source: string | null, shape: BrainShape, dryRun: boolean): LayoutOutcome['block'] {
+function syncLayoutBlock(path: string | null, harness: string, scope: LayoutScope, source: string | null, shape: BrainShape, dryRun: boolean, team = false): LayoutOutcome['block'] {
   if (!path) return null;
   const m = markers(harness, scope, source, shape);
   const exists = existsSync(path);
@@ -311,7 +317,7 @@ function syncLayoutBlock(path: string | null, harness: string, scope: LayoutScop
     if (!dryRun) writeUnlessChanged(path, text, false, removeBlock(m, text).text);
     return { path, action: 'remove', detail: `brain-layout block removed from ${path}; the pages stay` };
   }
-  const body = renderLayoutBlock(harness, scope, source, shape);
+  const body = renderLayoutBlock(harness, scope, source, shape, team);
   if (probe.state === 'present' && probe.interior?.trim() === body.trim()) return { path, action: 'keep', detail: `brain-layout block in ${path} is current` };
   if (!dryRun) writeUnlessChanged(path, text, !exists, spliceBlock(m, text, body));
   return { path, action: 'write', detail: `brain-layout block ${probe.state === 'present' ? 'upgraded in' : 'appended to'} ${path}` };
@@ -474,7 +480,7 @@ export function applyBrainLayout(opts: { harness: string; scope?: LayoutScope; s
   const written = flags.brain ? blockShape(flags.brain, team) : undefined;
   const removed = opts.instructionsDeclined ? syncLayoutBlock(opts.instructionsPath, harness, scope, source, 'none', flags.dryRun) : null;
   const block = opts.instructionsDeclined ? (removed?.action === 'skip' ? null : removed)
-    : written && written !== 'none' ? syncLayoutBlock(opts.instructionsPath, harness, scope, source, written, flags.dryRun)
+    : written && written !== 'none' ? syncLayoutBlock(opts.instructionsPath, harness, scope, source, written, flags.dryRun, !!flags.template)
     : flags.brain === 'none' ? syncLayoutBlock(opts.instructionsPath, harness, scope, source, 'none', flags.dryRun) : null;
   if (!flags.brain) return block && opts.instructionsDeclined ? empty('none', block) : null;
   const exec = opts.run ?? run;
@@ -528,6 +534,10 @@ export function applyBrainLayout(opts: { harness: string; scope?: LayoutScope; s
           }
         }
         if (flags.transcripts) outcome.transcripts = importCalls(exec, launcher, flags.transcripts, flags.dryRun);
+        if (flags.template) {
+          outcome.teamTemplate = runTeamTemplate(exec, launcher, harness, source, flags);
+          if (!flags.dryRun && outcome.teamTemplate.result?.applied && !outcome.teamTemplate.result.error) outcome.next_question = 'In a new session as a team member, ask: "what did we decide, and why?"; then run gbrain setup ' + harness + ' --template team --status to see what each member\'s key reads.';
+        }
         if (!outcome.next_question && !flags.dryRun && !hasPersonal(flags.brain)) {
           outcome.next_question = 'Run gbrain sources demo company-brain to see how a company brain answers, then add one dated line to company/decisions and ask about it in a new session.';
         }
@@ -571,12 +581,27 @@ function runHouseholdTemplate(exec: Run, launcher: string, harness: string, sour
   return { result: null, argv, detail: flags.dryRun ? `no preview: ${lastLine(child.stderr || child.stdout)} (with --yes setup creates the brain first)` : lastLine(child.stderr || child.stdout) };
 }
 
+/** Lane 5 O1: the team template as a child of the launcher, after the company source exists; a preview on a dry run. */
+function runTeamTemplate(exec: Run, launcher: string, harness: string, source: string | null, flags: LayoutFlags): NonNullable<LayoutOutcome['teamTemplate']> {
+  const t = flags.template ?? {};
+  const args = ['access', 'template', 'team', '--harness', harness, ...(source ? ['--source', source] : []), ...(t.members !== undefined ? ['--members', t.members] : []),
+    ...(t.guests !== undefined ? ['--guests', t.guests] : []), ...(t.group !== undefined ? ['--team-group', t.group] : []), ...(t.owner ? ['--owner', t.owner] : []), ...(flags.dryRun ? [] : ['--yes'])];
+  const argv = ['gbrain', ...args];
+  const child = exec([launcher, ...args, '--json']);
+  try {
+    const result = JSON.parse(child.stdout) as TeamResult;
+    if (result.template === 'team') return { result, argv };
+  } catch { /* not a result document */ }
+  return { result: null, argv, detail: flags.dryRun ? `no preview: ${lastLine(child.stderr || child.stdout)} (with --yes setup creates the brain first)` : lastLine(child.stderr || child.stdout) };
+}
+
 /** Lines for the human report. */
 export function describeLayout(o: LayoutOutcome, dryRun: boolean): string[] {
   const would = dryRun ? 'would ' : '';
   const lines = [`Brain layout: ${o.shape}`];
   if (o.block) lines.push(`  instructions  ${o.block.detail}`);
   if (o.household) lines.push(...(o.household.result ? templateLines(o.household.result).map(l => `  ${l}`) : [`  household  not run: ${o.household.detail ?? 'unknown error'} (${o.household.argv.join(' ')})`]));
+  if (o.teamTemplate) lines.push(...(o.teamTemplate.result ? teamTemplateLines(o.teamTemplate.result).map(l => `  ${l}`) : [`  team  not run: ${o.teamTemplate.detail ?? 'unknown error'} (${o.teamTemplate.argv.join(' ')})`]));
   if (o.company) {
     const c = o.company;
     lines.push(c.action === 'team' ? `  company  team: ${c.detail}`
@@ -632,6 +657,18 @@ export function layoutNotices(o: LayoutOutcome | null, harness: string, scope: L
       fix: { argv: resume, consent: ['credentials'], actor: 'agent', requires_exclusive: true,
         why: 'Finishes the household template: members, groups, folder rules and one key file per member.',
         ...(hh.result?.error ? {} : { ask_user: true as const, user_message: 'The household setup needs a change before it can run; the BLOCKED lines say which. Once fixed, run it again with --yes.' }) },
+    });
+  }
+  const tt = o.teamTemplate;
+  if (tt && (!tt.result || tt.result.error || tt.result.steps.some(s => s.state === 'blocked'))) {
+    const resume = tt.result?.error && tt.result.receipt_id ? [...setupArgv(harness, scope, source), '--template', 'team', '--resume', tt.result.receipt_id, '--yes'] : [...tt.argv.filter(a => a !== '--yes'), '--yes'];
+    out.push({
+      code: 'team_template_pending', kind: 'coaching',
+      why: tt.result?.error ? `The team template stopped: ${tt.result.error.message}. Every step is idempotent.`
+        : tt.result ? 'The team template has BLOCKED steps, so it wrote nothing; each BLOCKED line names its fix.' : `The team template did not run (${tt.detail ?? 'unknown error'}).`,
+      fix: { argv: resume, consent: ['credentials'], actor: 'agent', requires_exclusive: true,
+        why: 'Finishes the team template: members, the team group, the company/ and rules/team/ rules and one key file per member.',
+        ...(tt.result?.error ? {} : { ask_user: true as const, user_message: 'The team setup needs a change before it can run; the BLOCKED lines say which (a group or rule it did not make is never changed). Once fixed, run it again with --yes.' }) },
     });
   }
   const failed = o.pages.filter(p => p.action === 'failed');

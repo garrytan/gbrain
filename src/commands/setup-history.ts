@@ -76,8 +76,8 @@ function child(launcher: string, sub: string, args: string[], deadline: number):
 }
 
 /** Writes the install receipt right after setup's own gbrain init; a pinned, team or member-bound setup is recorded as not eligible. */
-export function recordHistoryReceipt(launcher: string, harness: string, flags: { source?: string; team?: boolean; stdioMember?: string; serves?: string }): Child {
-  const blocker = flags.source || process.env.GBRAIN_SOURCE ? 'pinned_source' : flags.team ? 'team_brain' : flags.stdioMember || flags.serves === 'several' ? 'member_bound' : null;
+export function recordHistoryReceipt(launcher: string, harness: string, flags: { source?: string; team?: boolean; teamRun?: unknown; stdioMember?: string; serves?: string }): Child {
+  const blocker = flags.source || process.env.GBRAIN_SOURCE ? 'pinned_source' : flags.team || flags.teamRun ? 'team_brain' : flags.stdioMember || flags.serves === 'several' ? 'member_bound' : null;
   return child(launcher, 'receipt', ['--harness', harness, '--created-by-setup', ...(blocker ? ['--blocker', blocker] : [])], Date.now() + HISTORY_BUDGET_MS);
 }
 

@@ -6339,6 +6339,16 @@ More: [docs/tutorials/household-brain.md#if-a-run-stops](../../docs/tutorials/ho
 |---|---|---|---|---|---|---|
 | gbrain setup could not read whether the existing brain serves several people, so it wrote nothing. | Setup writes an unbound connection only on a brain it knows serves one person; a brain it cannot read might serve several. | Run gbrain access serves --json to see why the brain cannot be read, fix that, then run setup again. Run: gbrain access serves --json | agent | `repeat the read that failed` | 1 | no |
 
+### setup_team_unbound
+
+<a id="setup_team_unbound"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain setup --template team was refused because the team template would set the brain to serve several people while this harness's connection stays bound to nobody (a shared stdio harness such as OpenClaw or Hermes is installed, or --no-stdio-member was given), so nothing was written. | On a brain that serves several people an unbound connection reads none of the team's company pages, so the owner's own agent could not answer from them, and every later setup run would refuse that connection. | Give the owner a key over HTTP (gbrain auth create <name> --member <owner>), or drop --no-stdio-member. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/tutorials/company-brain.md#set-up-a-team-in-one-command](../../docs/tutorials/company-brain.md#set-up-a-team-in-one-command)
+
 ### shadow_drill_failed
 
 <a id="shadow_drill_failed"></a>

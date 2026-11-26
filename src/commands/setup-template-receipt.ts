@@ -47,6 +47,9 @@ export interface TemplateReceipt {
 
 export const receiptDir = (): string => join(configDir(), RECEIPT_DIR);
 
+/** The command that runs a template outside setup: household's lives under gbrain household, team's under gbrain access. */
+export const templateCommand = (template: string): string => template === 'team' ? 'gbrain access template team' : `gbrain ${template} template`;
+
 export function newReceipt(template: string, target: { harness: string | null; source_id: string }, params: Record<string, unknown>, steps: string[]): TemplateReceipt {
   const now = new Date().toISOString();
   const id = `${template}-${now.replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z')}-${randomBytes(3).toString('hex')}`;
@@ -80,7 +83,7 @@ export function loadReceipt(id: string, template: string, dir: string = receiptD
   const r = RECEIPT_ID_RE.test(id) ? parse(join(dir, `${id}.json`)) : null;
   if (r && r.template === template) return r;
   throw opError('setup_receipt_not_found', `No ${template} setup receipt "${id}" is on this machine (${dir}).`,
-    `Read the newest receipt with gbrain ${template} template --status, or run the template again with --yes (every step is idempotent).`);
+    `Read the newest receipt with ${templateCommand(template)} --status, or run the template again with --yes (every step is idempotent).`);
 }
 
 /** The newest receipt of `template` for this brain, narrowed to a source and harness when given; null when there is none. */
@@ -105,7 +108,7 @@ export function assertReceiptTarget(r: TemplateReceipt, target: { source_id?: st
   ];
   if (!wrong.length) return;
   throw opError('setup_receipt_target_mismatch', `Setup receipt ${r.id} names another ${wrong.join(' and ')}; nothing was read or written.`,
-    `Run it for the receipt's own target: gbrain ${r.template} template --status --receipt ${r.id} --source ${r.source_id}${r.harness ? ` --harness ${r.harness}` : ''}.`);
+    `Run it for the receipt's own target: ${templateCommand(r.template)} --status --receipt ${r.id} --source ${r.source_id}${r.harness ? ` --harness ${r.harness}` : ''}.`);
 }
 
 export const stepState = (r: TemplateReceipt, id: string): ReceiptStepState | undefined => r.steps.find(s => s.id === id)?.state;

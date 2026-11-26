@@ -3273,6 +3273,7 @@
     "setup_receipt_target_mismatch": 1,
     "setup_serves_several": 1,
     "setup_serves_unreadable": 1,
+    "setup_team_unbound": 1,
     "shadow_drill_failed": 1,
     "shared_skills_unavailable": 1,
     "shared_skills_unmanifested": 1,

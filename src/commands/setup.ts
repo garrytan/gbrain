@@ -195,13 +195,15 @@ interface SetupFlags {
   team?: boolean;
   /** H2, --shape household: --household-members, and --status [--receipt] or --resume <id> (household-template.ts). */
   householdRun?: { members?: string; status: boolean; resume?: string; receipt?: string };
+  /** Lane 5 O1, --template team: --members, --guests, --team-group, and --status [--receipt] or --resume <id> (team-template.ts). */
+  teamRun?: { members?: string; guests?: string; group?: string; status: boolean; resume?: string; receipt?: string };
   /** Onboarding PR 1: --history, --history-dir, --history-decision and --no-extract (setup-history.ts). */
   historyImport: HistoryFlags;
   /** Onboarding PR 2: --no-suggestion turns the first-session suggestion off for this install (setup-suggestion.ts). */
   noSuggestion: boolean;
 }
 
-export const VALUE_FLAGS = new Set(['--shape', '--notes', '--docs', '--transcripts', '--surface', '--advertise', '--scope', '--name', '--source', '--gbrain-bin', '--workspace', '--skill-loading', '--agent', '--live-fraction', '--pins-route', '--owner-sender', '--suggest-in', '--serves', '--members', '--members-file', '--stdio-member', '--owner', '--household-members', '--receipt', '--resume', ...HISTORY_VALUE_FLAGS]);
+export const VALUE_FLAGS = new Set(['--shape', '--notes', '--docs', '--transcripts', '--surface', '--advertise', '--scope', '--name', '--source', '--gbrain-bin', '--workspace', '--skill-loading', '--agent', '--live-fraction', '--pins-route', '--owner-sender', '--suggest-in', '--serves', '--members', '--members-file', '--stdio-member', '--owner', '--household-members', '--receipt', '--resume', '--template', '--guests', '--team-group', ...HISTORY_VALUE_FLAGS]);
 
 function parseFlags(args: string[]): SetupFlags | string {
   const value = (flag: string): string | undefined => {
@@ -229,15 +231,24 @@ function parseFlags(args: string[]): SetupFlags | string {
   if (args.includes('--instructions') && args.includes('--no-instructions')) return 'pass --instructions or --no-instructions, not both';
   const serves = value('--serves');
   if (serves !== undefined && serves !== 'one' && serves !== 'several') return `unknown --serves '${serves}'; pass one or several`;
-  if ((args.includes('--members') || args.includes('--members-file')) && serves !== 'several') return '--members and --members-file name the people of --serves several';
+  const template = value('--template');
+  if (template !== undefined && template !== 'team') return `unknown --template '${template}'; pass team`;
+  const team = template === 'team';
+  if (team && serves !== undefined) return '--template team sets up the people of the team itself; drop --serves';
+  if (team && args.includes('--members-file')) return '--template team takes the team as --members <id,...>';
+  if ((args.includes('--members') || args.includes('--members-file')) && serves !== 'several' && !team) return '--members and --members-file name the people of --serves several or --template team';
+  for (const f of ['--guests', '--team-group']) if (args.includes(f) && !team) return `${f} applies to --template team`;
   if (args.includes('--labelled-only') && serves !== 'several') return '--labelled-only applies to the people of --serves several';
   if (args.includes('--open-history') && serves !== 'several') return '--open-history applies to the people of --serves several';
   if (args.includes('--open-history') && args.includes('--labelled-only')) return 'pass --labelled-only (keep the history private) or --open-history (members read it), not both';
   const owner = value('--owner');
   const household = value('--shape') === 'household';
-  if (owner !== undefined && serves !== 'several' && !household) return '--owner names the brain owner of --serves several or --shape household';
+  if (owner !== undefined && serves !== 'several' && !household && !team) return '--owner names the brain owner of --serves several, --shape household or --template team';
+  if (team && household) return '--template team sets up a company brain for a team; --shape household is the household template';
   if (household && serves === 'several') return '--shape household sets up the people of the household itself; drop --serves several';
-  for (const f of ['--household-members', '--status', '--resume', '--receipt']) if (args.includes(f) && !household) return `${f} applies to --shape household`;
+  if (args.includes('--household-members') && !household) return '--household-members applies to --shape household';
+  for (const f of ['--status', '--resume', '--receipt']) if (args.includes(f) && !household && !team) return `${f} applies to --shape household or --template team`;
+  if (team && !args.includes('--members') && !args.includes('--status') && !args.includes('--resume')) return '--template team needs the people of the team: --members <id,...> (the owner is in it already)';
   if (args.includes('--status') && args.includes('--resume')) return 'pass --status or --resume, not both';
   if (args.includes('--receipt') && !args.includes('--status')) return '--receipt names the receipt --status reads; --resume takes the receipt id itself';
   if (owner !== undefined && !ACCESS_ID_RE.test(owner)) return `invalid --owner '${owner}'; a member id is lower-case letters, digits, '.', '_' and '-' (1-64 characters, starting with a letter or digit)`;
@@ -251,6 +262,11 @@ function parseFlags(args: string[]): SetupFlags | string {
   if (shared) return `--stdio-member refused: ${shared} is installed on this host, and its sessions serve several people, so a stdio entry bound to one member is not something setup writes here; give each person their own key over HTTP instead (gbrain serve --http with gbrain auth create <name> --member <id> per person); nothing was written`;
   const layout = parseLayoutFlags(value, (f) => args.includes(f), positionals[0]);
   if (typeof layout === 'string') return layout;
+  if (team) {
+    if (layout.brain !== undefined && layout.brain !== 'company' && layout.brain !== 'both') return '--template team builds a company brain; pass --shape company or both, or leave --shape out';
+    if (layout.team) return '--template team sets this brain up for the team itself; drop --team';
+    layout.brain ??= 'company';
+  }
   const historyImport = parseHistoryFlags(args, value, positionals[0], stdioMember);
   if (typeof historyImport === 'string') return historyImport;
   const noSuggestion = parseSuggestionFlag(args, positionals[0]);
@@ -288,7 +304,7 @@ function parseFlags(args: string[]): SetupFlags | string {
   const skillLoading = skillResolver === 'on' || skillResolver === 'shadow' ? (cursor ? undefined : 'off') : flagLoading;
   return {
     harness: positionals[0],
-    dryRun: args.includes('--dry-run') || (household && !args.includes('--yes')),
+    dryRun: args.includes('--dry-run') || ((household || team) && !args.includes('--yes')),
     json: args.includes('--json'),
     remove: args.includes('--remove'),
     noHooks: args.includes('--no-hooks'),
@@ -319,6 +335,7 @@ function parseFlags(args: string[]): SetupFlags | string {
     noStdioMember,
     ...layout,
     ...(household ? { householdRun: { members: value('--household-members'), status: args.includes('--status'), resume: value('--resume'), receipt: value('--receipt') } } : {}),
+    ...(team ? { teamRun: { members: value('--members'), guests: value('--guests'), group: value('--team-group'), status: args.includes('--status'), resume: value('--resume'), receipt: value('--receipt') } } : {}),
     historyImport,
     noSuggestion,
   };
@@ -458,7 +475,7 @@ export async function runSetup(args: string[], deps: { openclaw?: { bin?: string
     return 2;
   }
 
-  if (flags.householdRun?.status || flags.householdRun?.resume) return runHouseholdReceipt(flags, launcher, out);
+  if (flags.householdRun?.status || flags.householdRun?.resume || flags.teamRun?.status || flags.teamRun?.resume) return runTemplateReceipt(flags, launcher, out);
 
   let cfg: GBrainConfig | null;
   try { cfg = loadConfig(); } catch (e) {
@@ -662,19 +679,22 @@ async function layoutFor(harness: SetupHarnessId, flags: SetupFlags, launcher: s
   const source = flags.source ?? (process.env.GBRAIN_SOURCE && isValidSourceId(process.env.GBRAIN_SOURCE) ? process.env.GBRAIN_SOURCE : null);
   const outcome = applyBrainLayout({ harness, scope, source, launcher, instructionsPath: instructions?.path ?? null, instructionsDeclined: instructions?.decision.value === 'declined',
     flags: { brain: shape.brain, notes: shape.notes, docs: shape.docs, transcripts: shape.transcripts, team: shape.team, dryRun: flags.dryRun,
-      ...(shape.brain === 'household' ? { household: { members: flags.householdRun?.members, owner: flags.owner ?? loginOwnerId() ?? undefined } } : {}) } });
+      ...(shape.brain === 'household' ? { household: { members: flags.householdRun?.members, owner: flags.owner ?? loginOwnerId() ?? undefined } } : {}),
+      ...(flags.teamRun ? { template: { members: flags.teamRun.members, guests: flags.teamRun.guests, group: flags.teamRun.group, owner: flags.owner ?? loginOwnerId() ?? undefined } } : {}) } });
   return { outcome, notices: (base) => [...(ask && !shape.brain ? withBrainShape(base, brainShapeDecision(harness, undefined, scope, source)) : base), ...layoutNotices(outcome, harness, scope, source)] };
 }
 
 /**
  * H2 (d8): `gbrain setup <harness> --shape household --status [--receipt <id>]` and `--resume <id> --yes`, as children of
- * the launcher, each naming this harness and source so a receipt written for another target refuses.
+ * the launcher, each naming this harness and source so a receipt written for another target refuses. Lane 5 O1:
+ * `--template team` the same, through gbrain access template team.
  */
-async function runHouseholdReceipt(flags: SetupFlags, launcher: string, out: Out): Promise<number> {
-  const h = flags.householdRun!;
+async function runTemplateReceipt(flags: SetupFlags, launcher: string, out: Out): Promise<number> {
+  const h = (flags.teamRun ?? flags.householdRun)!;
+  const command = flags.teamRun ? ['access', 'template', 'team'] : ['household', 'template'];
   const target = ['--harness', flags.harness!, ...(flags.source ? ['--source', flags.source] : [])];
-  const args = h.status ? ['household', 'template', '--status', ...(h.receipt ? ['--receipt', h.receipt] : []), ...target]
-    : ['household', 'template', '--resume', h.resume!, ...target, ...(flags.dryRun ? [] : ['--yes'])];
+  const args = h.status ? [...command, '--status', ...(h.receipt ? ['--receipt', h.receipt] : []), ...target]
+    : [...command, '--resume', h.resume!, ...target, ...(flags.dryRun ? [] : ['--yes'])];
   const child = Bun.spawnSync([launcher, ...args, ...(out.json ? ['--json'] : [])], { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe', env: process.env });
   const stdout = child.stdout?.toString() ?? '';
   process.stderr.write(child.stderr?.toString() ?? '');
@@ -948,7 +968,7 @@ function entryBinding(flags: SetupFlags, previous: string | undefined): EntryBin
  * attendees. Never where a plugin serves the entry, a shared-stdio harness is installed, or --no-stdio-member is given.
  */
 function ownerTie(flags: SetupFlags, plan: ServesPlan, entry: EntryBinding, plugin: boolean): string | null {
-  if (flags.householdRun && !flags.noStdioMember && !entry.member && !plugin) return sharedStdioHarness() ? null : plan.status?.owner ?? flags.owner ?? loginOwnerId() ?? null;
+  if ((flags.householdRun || flags.teamRun) && !flags.noStdioMember && !entry.member && !plugin) return sharedStdioHarness() ? null : plan.status?.owner ?? flags.owner ?? loginOwnerId() ?? null;
   if (flags.serves !== 'several' || (flags.brain !== 'company' && flags.brain !== 'both') || flags.noStdioMember || entry.member || plugin || !plan.tie) return null;
   return sharedStdioHarness() ? null : plan.tie;
 }
@@ -958,10 +978,14 @@ function ownerTie(flags: SetupFlags, plan: ServesPlan, entry: EntryBinding, plug
  * leaves bound to nobody would read none of the household records, and every later setup run would refuse it.
  */
 function householdTieRefusal(flags: SetupFlags, plan: ServesPlan, entry: EntryBinding, plugin: boolean, tie: string | null, harness: string): OperationError | null {
-  if (!flags.householdRun || tie || entry.member || plugin || plan.status?.stdio_member || flags.householdRun.members?.trim() === 'none') return null;
+  if ((!flags.householdRun && !flags.teamRun) || tie || entry.member || plugin || plan.status?.stdio_member || flags.householdRun?.members?.trim() === 'none') return null;
   const shared = sharedStdioHarness();
   if (!shared && !flags.noStdioMember) return null;
   const why = shared ? `${shared} is installed on this host, so setup ties no ${harness} connection to one person` : '--no-stdio-member leaves this connection bound to nobody';
+  if (flags.teamRun) {
+    return opError('setup_team_unbound', `The team template sets this brain to serve several people, and ${why}; the owner's own agent would then read none of the team's company pages. Nothing was written.`,
+      shared ? 'Give the owner a key over HTTP instead (gbrain auth create <name> --member <owner>), then run setup again.' : 'Drop --no-stdio-member, then run setup again.');
+  }
   return opError('setup_household_unbound', `The household template sets this brain to serve several people, and ${why}; the owner's own agent would then read none of the household records. Nothing was written.`,
     shared ? `Give the owner a key over HTTP instead (gbrain auth create <name> --member <owner>); or run gbrain setup ${harness} --shape household --household-members none for the owner alone.`
       : `Drop --no-stdio-member, or run gbrain setup ${harness} --shape household --household-members none for the owner alone.`);
@@ -1390,7 +1414,9 @@ async function finish(out: Out, doc: {
   }
   const hh = doc.dryRun ? undefined : doc.layout?.household;
   const householdFailed = !!hh && (!hh.result || !!hh.result.error || hh.result.steps.some(s => s.state === 'blocked'));
-  const code = skillsFailed(doc.skills ?? null) || doc.resolver?.error || !servesOk(doc.serves ?? null) || importsFailed.length || householdFailed ? 1 : doc.history?.exit ?? 0;
+  const tt = doc.dryRun ? undefined : doc.layout?.teamTemplate;
+  const teamFailed = !!tt && (!tt.result || !!tt.result.error || tt.result.steps.some(s => s.state === 'blocked'));
+  const code = skillsFailed(doc.skills ?? null) || doc.resolver?.error || !servesOk(doc.serves ?? null) || importsFailed.length || householdFailed || teamFailed ? 1 : doc.history?.exit ?? 0;
   const plugins = harness === 'claude-code' && !doc.remove ? claudeCodeChannelPlugins() : [];
   const exposure = plugins.length ? sharedTokenNotice({ kind: 'stdio', harness }, { channelPlugins: plugins, serves: exposureServesVia(doc.launcher) }) : null;
   const notices = exposure ? [...doc.notices, exposure] : doc.notices;

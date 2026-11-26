@@ -54,7 +54,7 @@ Flags:
                        pages: let the members read them. Without it or --labelled-only, setup
                        refuses (setup_history_choice_required) and writes nothing.
   --members-file PATH  The same, one id per line.
-  --owner ID           With --serves several or --shape household: the brain owner, added as a member and named with
+  --owner ID           With --serves several, --shape household or --template team: the brain owner, added as a member and named with
                        gbrain access owner set when the brain has none (default: your login name
                        as a member id). An existing owner is kept. No key is rebound: setup lists
                        the keys bound to no member with the auth rescope command for each.
@@ -130,6 +130,16 @@ Flags:
                        --status [--receipt ID] prints the run's receipt and what each key
                        reads; --resume ID --yes finishes a stopped run.
                        Guide: docs/tutorials/household-brain.md.
+  --template team      claude-code, codex: set the brain up for a team (--shape company, or
+                       both). Needs --members ID,ID (the owner is in the team already).
+                       Preview first; --yes applies: each member with a folder only they
+                       read and one key in a 0600 file under <config>/member-keys/ (never
+                       printed), the team-members group (--team-group ID names another),
+                       and company/ and rules/team/ readable by the owner and that group.
+                       --guests KIND:ID,... adds the guest source with those writers. A
+                       group or rule it did not make is never changed (BLOCKED instead).
+                       --status [--receipt ID] and --resume ID --yes as for household.
+                       Guide: docs/tutorials/company-brain.md.
   --shape none         Remove that block; the pages stay.
   --notes DIR          With --shape personal or both: import a notes folder (absolute or
                        ~/), read only, then check keyless search finds a note in it. Over

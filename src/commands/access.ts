@@ -114,6 +114,17 @@ Serves several people (GST-363):
                                              when none is set (an existing owner is kept) and lists the keys bound to
                                              no member with the command that binds each; it rebinds none
 
+Team template (agent platform O1; the brain side of gbrain setup <harness> --template team):
+  gbrain access template team --members a,b [--guests <kind>:<id>,...] [--owner <id>] [--team-group <id>] [--source <id>] [--yes]
+                                             Preview first; --yes runs serves several for the members, adds the
+                                             team group (team-members) with the owner and the members, and rules
+                                             company/ (source company) and rules/team/ readable by the owner and the
+                                             group; --guests sets up the guest source with those writers and lets
+                                             every owner credential read it. A group or rule it did not make is
+                                             never changed (BLOCKED instead)
+  gbrain access template team --status [--receipt <id>] | --resume <receipt id> --yes
+                                             The run's receipt with a read proof per member key; finish a run
+
 Folder rules (one rulebook per source; the database store on a repo-less source, .gbrain/access.yml on a git one):
   gbrain access rule add --prefix <folder/> | --slug <page> --readers a,group:b [--raw-only] [--allow-without-owner] [--id <rule>] [--source <id>] [--yes]
                                              Preview first; narrowing applies at once. --raw-only: the rule keeps
@@ -158,7 +169,7 @@ function flagValue(args: string[], name: string): string | undefined {
   return v;
 }
 
-const VALUE_FLAGS = new Set(['--name', '--groups', '--bind-token', '--members', '--members-file', '--source', '--token', '--client', '--as', '--qm', '--member', '--email', '--kind', '--owner', '--since', '--limit']);
+const VALUE_FLAGS = new Set(['--name', '--groups', '--bind-token', '--members', '--members-file', '--source', '--token', '--client', '--as', '--qm', '--member', '--email', '--kind', '--owner', '--since', '--limit', '--guests', '--team-group', '--harness', '--receipt', '--resume']);
 
 function positionals(args: string[]): string[] {
   const out: string[] = [];
@@ -575,6 +586,11 @@ export async function runAccess(engine: BrainEngine, args: string[]): Promise<vo
           : 'Members read lineage: off. Derived pages and facts of a page that names readers or sits under a rule are hidden from every member but the owner. Turn on: gbrain access members-read-lineage on']);
       }
       case 'serves': return await runAccessServes(engine, positionals(rest)[0], rest, json, flagValue);
+      case 'template': {
+        if (positionals(rest)[0] !== 'team') throw usageError('gbrain access template takes team.', 'gbrain access template team --members a,b [--guests <kind>:<id>] [--yes]');
+        const { runTeamTemplate } = await import('./team-template.ts');
+        return await runTeamTemplate(engine, rest, json, f => flagValue(rest, f));
+      }
       case 'group': return await groupCmd(engine, rest[0], rest.slice(1), json);
       case 'who-can-read': {
         const slug = positionals(rest)[0];
