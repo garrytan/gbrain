@@ -15,6 +15,7 @@ origin index of `links.rs` and pages through `pages.rs`. Which targets get an ed
 | `brain.readOwnedLinks(linkSource, originPageId)` | `[{ id, slug }]`: the edges whose `link_source` is `linkSource` and whose origin is the page, each with its target's slug, by link id (PGLite sets no order) | `readOwnedLinks` |
 | `brain.deleteOwnedLinks(originPageId, linkSource, ids)` | how many of the edges among `ids` it removed; an edge another producer or another origin owns stays | `deleteOwnedLinks` |
 | `brain.readLinkTargetPages(sourceId, slugs, policy, honorAliases)` | `[{ slug, readable, visible }]` for each live page of the source among `slugs`. `readable` is the writer's read policy (null: every page; a writer with no identities, folder rules or coverage is the record form with no readers, `callerRecord`); `visible` is the privacy part alone (`privacyPartSql`, `privacy_allows`) | `readLinkTargetPages` |
+| `brain.readPageHiddenFromWriter(sourceId, slug, policy, hidePrivate, honorAliases)` | `true` when the row at the slug, live or soft-deleted, fails the writer's read policy (the privacy part too when `hidePrivate`); `false` when the source has no row there. The same policy form as `readLinkTargetPages` (`readable`, `visible`) judged on `read_page`, which returns a soft-deleted row too, where `readLinkTargetPages` skips it | `readPageHiddenFromWriter` |
 | `brain.rearmLinksEffects({ sourceId, requestIds, slugs })` | how many `links` effects of the requests (of the slugs when given) it queued again: unclaimed, due now, error and outcome cleared, and marked `batch_reconciled`. An effect already marked or recovering is left. The store keeps no persistence protocol setting, so the protocol predicate always holds | `rearmLinksEffects` |
 
 An id that is not a bigint refuses with `invalid input syntax for type bigint: "<id>"`.
@@ -45,10 +46,13 @@ Any other writer (an owner record other than the owner speaking for itself, seve
 `engine_capability_missing` before any read. The remote page write check (`authorizePageVisibility`) reads the live page against
 the writer's policy through this member.
 
-A labelled-only writer's create or capture of a new page still stops on `engine_capability_missing` on Rust, whether or not the page
-names the writer: the slug has no live row, so `hiddenUnder` runs its raw fallback, and the create check reads the folder rules that
-cover the slug through `gbrain_access_folder_rules`, which has no typed member. Nothing is written. This is the named loss
-32e-b-3 (docs/designs/RUST_ENGINE.md), pinned in the same parity file.
+A labelled-only writer's create or capture of a new page is served. The slug has no live row, so `hiddenUnder` judges its soft-deleted
+row, if any, through `readPageHiddenFromWriter` (below); the create check then reads the folder rules that cover the slug through
+`readSlugFolderRules` (`page-mutation-reads.md`) and judges the overlap with the writer's satisfied rules in TypeScript. A page that
+names the writer (or a group it is in) is written; one that names nobody and has no rule over it that lists the writer is refused with
+`access_labelled_only_unnamed`, the same error body as on PGLite and Postgres (`test/engine-parity/labelled-only-policy.test.ts`). A
+plain member's write over a slug that has only a soft-deleted row it may not read is refused as an unseen page
+(`test/engine-parity/owner-write-privacy.test.ts`).
 
 An OAuth client writer (the HTTP transport) can use these reads: `readWriterSlugFence` reads its stored
 client's bound or delegated slug prefixes, and `readOAuthClientWriteGrant` serves its stored write grant

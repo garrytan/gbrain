@@ -62,6 +62,24 @@ impl Brain {
         })
     }
 
+    /// `readPageHiddenFromWriter(sourceId, slug, policy, hidePrivate, honorAliases)`: whether the row at the slug (live or
+    /// soft-deleted) fails the writer's `policy`, or, when `hidePrivate`, the privacy part; false when there is no row.
+    #[napi]
+    pub fn read_page_hidden_from_writer<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slug: String,
+        policy: Value,
+        hide_private: bool,
+        honor_aliases: bool,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let policy: PrivacyPolicy = required(policy, "readPageHiddenFromWriter policy")?;
+            s.read_page_hidden_from_writer(&source_id, &slug, &policy, hide_private, honor_aliases)
+        })
+    }
+
     /// `rearmLinksEffects(spec)`: re-arms, once each, the `links` effects of requests published together.
     #[napi]
     pub fn rearm_links_effects<'env>(

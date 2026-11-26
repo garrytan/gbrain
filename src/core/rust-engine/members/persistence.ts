@@ -14,6 +14,7 @@ export const PERSISTENCE_MEMBERS = {
   readOwnedLinks: 'persistence_journal',
   deleteOwnedLinks: 'persistence_journal',
   readLinkTargetPages: 'persistence_journal',
+  readPageHiddenFromWriter: 'persistence_journal',
   rearmLinksEffects: 'persistence_journal',
   // The facts backstop effect's two extraction reads (engine-sql/facts-backstop.ts).
   hasPendingFactsExtraction: 'persistence_journal',

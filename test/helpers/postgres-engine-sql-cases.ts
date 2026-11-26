@@ -1082,6 +1082,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readOwnedLinks': OOS.remoteLinks,
   'deleteOwnedLinks': OOS.remoteLinks,
   'readLinkTargetPages': OOS.remoteLinks,
+  'readPageHiddenFromWriter': OOS.remoteLinks,
   'rearmLinksEffects': OOS.remoteLinks,
   'hasPendingFactsExtraction': OOS.factsBackstop,
   'hasCompletedFactsExtraction': OOS.factsBackstop,

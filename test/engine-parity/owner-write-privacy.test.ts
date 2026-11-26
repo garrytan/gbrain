@@ -134,11 +134,11 @@ describe('engine parity: the brain owner\'s own remote put_page', () => {
   // A plain member's put_page over a slug with only a soft-deleted row. The opening probe sees that row (it names readers), so the check is
   // not decided early and readLinkTargetPages returns no live row; the row is then judged by readPageHiddenFromWriter, on every arm, and the
   // write is refused as an unseen page. Nothing is written: no live row, no version, the deleted row as it was.
-  for (const shape of [{ name: 'names readers', frontmatter: { readable_by: [OWNER] }, rules: [] }, { name: 'sits under a folder rule that lists only the owner', frontmatter: {}, rules: [{ id: 'owner-only', prefix: 'notes/', readable_by: [`member:${OWNER}`] }] }] as const) {
+  for (const shape of [{ name: 'names readers', frontmatter: { readable_by: [OWNER] } as Record<string, unknown>, rules: [] as Array<{ id: string; prefix: string; readable_by: string[] }> }, { name: 'sits under a folder rule that lists only the owner', frontmatter: {}, rules: [{ id: 'owner-only', prefix: 'notes/', readable_by: [`member:${OWNER}`] }] }]) {
     parityTest(`a plain member's put_page over a soft-deleted page that ${shape.name} is refused as an unseen page and writes nothing on every arm`, { methods: ['readLinkTargetPages'], timeout: 120_000 }, async (engine, backend) => {
       await seed(engine, backend);
       await addMember(engine, 'bob-example');
-      if (shape.rules.length) await proposeRevision(engine, SRC, [...shape.rules], { origin: 'cli', store: 'database' });
+      if (shape.rules.length) await proposeRevision(engine, SRC, shape.rules, { origin: 'cli', store: 'database' });
       await engine.putPage('notes/gone', { type: 'note', title: 'Gone', compiled_truth: 'First.', timeline: '', frontmatter: shape.frontmatter }, { sourceId: SRC });
       await engine.softDeletePage('notes/gone', { sourceId: SRC });
       const snapshot = async () => { const row = await engine.getPage('notes/gone', { sourceId: SRC, includeDeleted: true }); return { live: await engine.getPage('notes/gone', { sourceId: SRC }), row: row && [row.deleted_at !== null, row.compiled_truth, row.frontmatter, row.knowledge_revision], pages: await engine.countSourcePages(SRC, { includeDeleted: true }), versions: (await engine.getVersions('notes/gone', { sourceId: SRC })).length }; };
@@ -147,7 +147,7 @@ describe('engine parity: the brain owner\'s own remote put_page', () => {
       const result = { out, after: await snapshot() };
       expect(result).toEqual({ out: 'page_not_found', after: before });
       expect(before).toMatchObject({ live: null, pages: 1, versions: 0 });
-      return result;
+      return JSON.parse(JSON.stringify(result).replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, '<id>')) as typeof result;
     });
   }
 });

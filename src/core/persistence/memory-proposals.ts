@@ -274,7 +274,7 @@ async function prepareApproval(ctx: OperationContext, row: MemoryProposal): Prom
 }
 
 /** OV3: a proposed link's target exists in the source and the person it was proposed for may still read it. */
-export async function linkTargetReadable(engine: SqlEngine & Pick<BrainEngine, 'readLiveMember' | 'hasLabelledOnlyMember' | 'hasLabelledOnlyMemberAmong' | 'getConfig' | 'readLinkedMember' | 'readPageSnapshot' | 'readWriterSlugFence' | 'readWriteVisibilityProbe' | 'readPagePrivacyHidden' | 'readLinkTargetPages' | 'readAccessTokenAttest' | 'readOauthClientAttest'>, authority: WriteAuthority, sourceId: string, slug: string): Promise<boolean> {
+export async function linkTargetReadable(engine: SqlEngine & Pick<BrainEngine, 'readLiveMember' | 'hasLabelledOnlyMember' | 'hasLabelledOnlyMemberAmong' | 'getConfig' | 'readLinkedMember' | 'readPageSnapshot' | 'readWriterSlugFence' | 'readWriteVisibilityProbe' | 'readPagePrivacyHidden' | 'readLinkTargetPages' | 'readPageHiddenFromWriter' | 'readAccessTokenAttest' | 'readOauthClientAttest'>, authority: WriteAuthority, sourceId: string, slug: string): Promise<boolean> {
   const target = await engine.readPageSnapshot(slug, { sourceId });
   if (!target || target.page.deleted_at) return false;
   const { authorizePageVisibility } = await import('./page-visibility.ts');

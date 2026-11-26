@@ -45,6 +45,11 @@ const OWNER = 'alice-example';
 const LABELLED = 'carol-example';
 const PLAIN = 'bob-example';
 
+/** `value` with the ids and times that differ on every run (uuids, ISO timestamps) replaced, so arms compare by content. */
+function stable<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value).replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, '<id>').replace(/\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z/g, '<time>')) as T;
+}
+
 async function seed(engine: BrainEngine, backend: ParityBackend): Promise<void> {
   await createSource(engine, backend, SRC);
   await addMember(engine, OWNER);
@@ -103,7 +108,7 @@ describe('engine parity: a labelled-only member\'s remote writes', () => {
     expect({ rewrite: (rewrite as { code?: unknown }).code, create: (create as { code?: unknown }).code, capture: (capture as { code?: unknown }).code, after })
       .toEqual({ rewrite: 'page_not_found', create: 'access_labelled_only_unnamed', capture: 'access_labelled_only_unnamed', after: before });
     expect(before).toEqual({ open: { body: 'First.', versions: 0 }, fresh: { body: null, versions: 0 }, captured: { body: null, versions: 0 }, pages: 1 });
-    return { rewrite, create, capture, after };
+    return stable({ rewrite, create, capture, after });
   });
 });
 
@@ -261,7 +266,7 @@ describe('engine parity: a labelled-only member\'s create of a page that names i
     }
     expect(Object.values(outcomes).map(o => (o as { out: unknown; body: unknown }).out)).toEqual(['written', 'written', 'written', 'written']);
     expect(Object.values(outcomes).map(o => (o as { body: unknown }).body)).toEqual(['New page.', 'New page.', 'New page.', 'New page.']);
-    return outcomes;
+    return stable(outcomes);
   });
 });
 
@@ -288,7 +293,22 @@ describe('engine parity: a labelled-only member\'s create of a page that names n
       const capture = await memberWriteOutcome(engine, LABELLED, 'capture', { slug: captureSlug, content });
       const code = (out: WriteOutcome) => out === 'written' ? 'written' : String((out as { code?: unknown }).code);
       expect({ put: code(put), capture: code(capture) }).toEqual({ put: shape.answer, capture: shape.answer });
-      return { put, capture, stored: { put: (await pageState(engine, shape.slug)).body, capture: (await pageState(engine, captureSlug)).body } };
+      return stable({ put, capture, stored: { put: (await pageState(engine, shape.slug)).body, capture: (await pageState(engine, captureSlug)).body } });
+    });
+  }
+});
+
+describe('engine parity: a labelled-only member\'s create under a prefix whose folder rule is still pending', () => {
+  // A slug with no row is not hidden by anything, so the create is judged by what the page names alone; a page under a pending prefix
+  // that names the member is written, and one that names nobody is refused, the same on every arm.
+  for (const [name, readers, answer] of [['names the member', `readable_by: ["member:${LABELLED}"]\n`, 'written'], ['names nobody', '', 'access_labelled_only_unnamed']] as const) {
+    parityTest(`the create of a page that ${name}, under a pending prefix, answers ${answer} on every arm`, { methods: ['readWriteVisibilityProbe', 'readLinkTargetPages'], timeout: 120_000 }, async (engine, backend) => {
+      await seed(engine, backend);
+      await restrictFolder(engine, backend, SRC, 'notes/', 'pending');
+      const out = await memberWriteOutcome(engine, LABELLED, 'put_page', { slug: 'notes/fresh', content: `---\ntitle: Fresh\n${readers}---\nNew page.` });
+      const result = stable({ out, body: (await pageState(engine, 'notes/fresh')).body });
+      expect(out === 'written' ? 'written' : (out as { code?: unknown }).code).toBe(answer);
+      return result;
     });
   }
 });
@@ -297,9 +317,14 @@ describe('engine parity: a labelled-only member\'s create over a soft-deleted pa
   // The write over a slug whose only row is soft-deleted is judged on that row (readPageHiddenFromWriter): a row that names the member
   // is open to it (the write goes on to ask for the deleted row's revision), a row that names nobody is not, and the refusal reads as
   // an unseen page. A refused write republishes nothing and leaves the deleted row as it was.
-  for (const shape of [{ name: 'names the member', frontmatter: { readable_by: [`member:${LABELLED}`] }, answer: 'revision_required' }, { name: 'names nobody', frontmatter: {}, answer: 'page_not_found' }] as const) {
+  // A row under a prefix whose folder rule is still pending is hidden by the member-access part before the labelled-only part is judged,
+  // so it stays hidden even when it names the member (the writer's folder coverage reaches the store as part of the policy).
+  for (const shape of [{ name: 'names the member', frontmatter: { readable_by: [`member:${LABELLED}`] }, answer: 'revision_required', pending: false },
+    { name: 'names nobody', frontmatter: {}, answer: 'page_not_found', pending: false },
+    { name: 'names the member, under a prefix whose folder rule is still pending', frontmatter: { readable_by: [`member:${LABELLED}`] }, answer: 'page_not_found', pending: true }] as const) {
     parityTest(`the put_page over a soft-deleted row that ${shape.name} answers ${shape.answer} on every arm`, { methods: ['readWriteVisibilityProbe', 'readLinkTargetPages'], timeout: 120_000 }, async (engine, backend) => {
       await seed(engine, backend);
+      if (shape.pending) await restrictFolder(engine, backend, SRC, 'notes/', 'pending');
       await engine.putPage('notes/gone', { type: 'note', title: 'Gone', compiled_truth: 'First.', timeline: '', frontmatter: shape.frontmatter }, { sourceId: SRC });
       await engine.softDeletePage('notes/gone', { sourceId: SRC });
       const snapshot = async () => { const row = await engine.getPage('notes/gone', { sourceId: SRC, includeDeleted: true }); return { live: await engine.getPage('notes/gone', { sourceId: SRC }), row: row && [row.deleted_at !== null, row.compiled_truth, row.frontmatter], versions: (await engine.getVersions('notes/gone', { sourceId: SRC })).length }; };
@@ -307,7 +332,7 @@ describe('engine parity: a labelled-only member\'s create over a soft-deleted pa
       const out = await memberWriteOutcome(engine, LABELLED, 'put_page', { slug: 'notes/gone', content: `---\ntitle: Gone\nreadable_by: ["member:${LABELLED}"]\n---\nSecond.` });
       const after = await snapshot();
       expect({ answer: (out as { code?: unknown }).code, after }).toEqual({ answer: shape.answer, after: before });
-      return { out, before, after };
+      return stable({ out, before, after });
     });
   }
 });

@@ -272,7 +272,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'readAccessStoreConfig', 'readAdmittedPageRefs', 'readAdmittedWriteRequests', 'readBrainMaturity',
   'readDueWantedMarkers', 'readFirstDue', 'readGitHoldCodeCountRows', 'readGitHoldListingRows',
   'readGitHoldRecords', 'readGitHoldReportInputs', 'readGitHoldRetryRequest', 'readGitHoldRow',
-  'readGitImageHoldCountRows', 'readIdentityDowngradeRows', 'readLinkTargetPages', 'readLiveAccessToken',
+  'readGitImageHoldCountRows', 'readIdentityDowngradeRows', 'readLinkTargetPages', 'readLiveAccessToken', 'readPageHiddenFromWriter',
   'readLiveIdentityHolders', 'readLivePageTypes', 'readLiveSlugs', 'readLiveSyncJobId', 'readLiveSyncPassRows', 'readIdentityDowngradeOldPage', 'readIdentityRemedySide',
   'readManagedSyncCursorHeader', 'readManagedSyncFailureRows', 'readNamedEntitySlugs', 'readNotifierLease',
   'readNotifierSources', 'readNotifierStatusRows', 'readOpCheckpointRecords', 'readOrphanedManagedSyncFailureRows',

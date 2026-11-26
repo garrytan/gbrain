@@ -4078,6 +4078,8 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   deleteOwnedLinks(originPageId: number | string, linkSource: string, ids: readonly (number | string)[]): Promise<number>;
   /** The live pages of the source among `slugs`: readable under the writer's policy (null: every page) and shown by the privacy part. */
   readLinkTargetPages(sourceId: string, slugs: readonly string[], policy: WriterReadPolicy | null): Promise<LinkTargetPage[]>;
+  /** Whether some row of the slug, live or soft-deleted, fails the writer's read policy (the privacy part too when `hidePrivate`); false when no row exists. */
+  readPageHiddenFromWriter(sourceId: string, slug: string, policy: WriterReadPolicy, hidePrivate: boolean): Promise<boolean>;
   /** Re-arms, once each, the `links` effects of requests published together; returns how many. */
   rearmLinksEffects(opts: LinksRearm): Promise<number>;
   /** Whether page `pageId` has a queued or running facts backstop effect, or a facts-absorb job in `jobStates` (engine-sql/facts-backstop.ts). */

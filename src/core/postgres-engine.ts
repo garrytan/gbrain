@@ -2915,7 +2915,7 @@ export class PostgresEngine implements BrainEngine {
   async readStoredPageHead(sourceId: string, slug: string) { return pageMutationReads.readStoredPageHead(this, sourceId, slug); }
   async readStoredPageLabels(sourceId: string, slug: string) { return pageMutationReads.readStoredPageLabels(this, sourceId, slug); }
   async readMemberPageReadable(sourceId: string, slug: string, identity: readonly string[], satisfied: readonly string[], labelled: boolean) { return pageMutationReads.readMemberPageReadable(this, sourceId, slug, identity, satisfied, labelled); }
-  async readSlugFolderRules(sourceId: string, slug: string) { return pageMutationReads.readSlugFolderRules(this, sourceId, slug); }
+  async readSlugFolderRules(sourceId: string, slug: string) { return this.ownRawRead(exec => pageMutationReads.readSlugFolderRules(exec, sourceId, slug)); }
   async readHiddenPageSlugs(slugs: readonly string[], hiddenSources: readonly string[]) { return pageMutationReads.readHiddenPageSlugs(this, slugs, hiddenSources); }
   async readVersionSourcePath(versionId: number, pageId: number) { return pageMutationReads.readVersionSourcePath(this, versionId, pageId); }
   // Resumable-op checkpoint writes (engine-sql/op-checkpoint.ts) run on executeRawDirect and the purge on executeRaw, as op-checkpoint.ts ran them.
@@ -5176,6 +5176,7 @@ export class PostgresEngine implements BrainEngine {
   readOwnedLinks(linkSource: string, originPageId: number | string) { return remoteLinksImpl.readOwnedLinks(unscopedExecutor(this.engineSql, 'links effect: owned edge read ran unscoped through executeRaw'), linkSource, originPageId); }
   deleteOwnedLinks(originPageId: number | string, linkSource: string, ids: readonly (number | string)[]) { return remoteLinksImpl.deleteOwnedLinks(this, originPageId, linkSource, ids); }
   readLinkTargetPages(sourceId: string, slugs: readonly string[], policy: remoteLinksImpl.WriterReadPolicy | null) { return this.engineSqlRead(exec => remoteLinksImpl.readLinkTargetPages(unscopedExecutor(exec, 'links effect: target read ran unscoped through executeRaw'), sourceId, slugs, policy)); }
+  readPageHiddenFromWriter(sourceId: string, slug: string, policy: remoteLinksImpl.WriterReadPolicy, hidePrivate: boolean) { return this.ownRawRead(exec => remoteLinksImpl.readPageHiddenFromWriter(exec, sourceId, slug, policy, hidePrivate)); }
   rearmLinksEffects(opts: remoteLinksImpl.LinksRearm) { return remoteLinksImpl.rearmLinksEffects(this, opts); }
   hasPendingFactsExtraction(pageId: number | string, jobStates: readonly string[]) { return factsBackstopImpl.hasPendingFactsExtraction(unscopedExecutor(this.engineSql, 'facts backstop: pending extraction read ran unscoped through executeRaw'), pageId, jobStates); }
   hasCompletedFactsExtraction(pageId: number | string) { return factsBackstopImpl.hasCompletedFactsExtraction(unscopedExecutor(this.engineSql, 'facts backstop: completed extraction read ran unscoped through executeRaw'), pageId); }
