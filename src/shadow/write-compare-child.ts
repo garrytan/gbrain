@@ -46,7 +46,7 @@ export interface WriteComparerDeps {
 export const scratchRootDefault = (): string => join(configDir(), 'scratch');
 type Verdict = [WriteOutcome, string?];
 
-export function createWriteComparer(d: WriteComparerDeps): { handle(event: WriteEvent, bytes?: number): void; idle(): Promise<void>; abandon(): void; lostInPipe(n: number): void } {
+export function createWriteComparer(d: WriteComparerDeps): { handle(event: WriteEvent, bytes?: number): void; idle(): Promise<void>; abandon(): void } {
   // Each replay gets a private (0700) directory named for this process, removed when the replay ends, whatever its outcome. Directories of processes
   // that no longer exist (a killed child) are swept here, at shadow start; another child never deletes a live one.
   const scratchRoot = d.scratchRoot ?? scratchRootDefault();
@@ -134,8 +134,6 @@ export function createWriteComparer(d: WriteComparerDeps): { handle(event: Write
       chain = chain.then(() => run(event)).finally(() => { queued--; queuedBytes -= bytes; }); // every path (a replay, an abandoned one, an early return) ends here
     },
     idle: () => chain.then(() => { d.tally.save(); }), // the last save also folds the lost samples the serving process recorded
-    /** At the end of the child's input: `n` samples its serving process sent that never reached it (the pipe was dropped at that process's exit): counted `uncomparable`, `pipe_unflushed`, once. */
-    lostInPipe(n) { if (n > 0) d.tally.note('uncomparable', 'pipe_unflushed', Math.min(n, 10_000)); },
     /** At the child's exit deadline: replays still queued will never run, so each is counted `uncomparable`, then one last save. The running replay keeps its in-flight mark. */
     abandon() {
       if (waiting.size) d.tally.note('uncomparable', 'child_exit_deadline', waiting.size);

@@ -161,9 +161,16 @@ const MAX_LOST_PER_RECORD = 10_000;
 /** Samples the serving process lost (a refused send, a read-back abandoned at disconnect) are never written into the tally by that process (a locked write could stall it): each is one `{epoch_id, reason}` line appended, with no lock, to its own file; the owner child folds them in. True only when the line and its directory entry are flushed to disk; false otherwise. */
 export const lostPath = (dir: string, pid: number): string => join(dir, `write-lost.${pid}.jsonl`);
 export function recordLost(dir: string, epoch: string, reason: string, n = 1): boolean {
+  if (!Number.isInteger(n) || n < 1 || n > MAX_LOST_PER_RECORD) return false; // one append stands for exactly n samples: a larger count is `recordLostCount`'s (it splits it), never cut here
   const path = lostPath(dir, process.pid);
   const line = JSON.stringify({ epoch_id: epoch, reason }) + '\n';
-  try { appendFileSync(path, line.repeat(Math.min(Math.max(1, Math.floor(n)), MAX_LOST_PER_RECORD)), { flag: 'a', mode: 0o600 }); flushFile(path); flushDirectory(dir); return true; } catch { return false; } // silent-read-ok: false is the answer, never a pass: the sampler then carries the count on its next line
+  try { appendFileSync(path, line.repeat(n), { flag: 'a', mode: 0o600 }); flushFile(path); flushDirectory(dir); return true; } catch { return false; } // silent-read-ok: false is the answer, never a pass: the sampler then carries the count on its next line
+}
+/** Records `n` lost samples in appends of at most `MAX_LOST_PER_RECORD`; returns how many were recorded (all of them, or the ones before the first append that failed), so a caller keeps exactly the remainder. */
+export function recordLostCount(dir: string, epoch: string, reason: string, n: number): number {
+  let done = 0;
+  while (done < n) { const k = Math.min(n - done, MAX_LOST_PER_RECORD); if (!recordLost(dir, epoch, reason, k)) break; done += k; }
+  return done;
 }
 /** The lost lines past what `applied` took, per file: the complete lines' end offset and the reasons of this epoch's (another epoch's are retired and skipped; a line that is not readable, or an unfinished one whose writer is dead, counts as `lost_unreadable`). */
 function readLost(dir: string, epoch: string, applied: Record<string, number> = {}): Array<{ name: string; end: number; reasons: string[]; unreadable?: true }> {
@@ -258,7 +265,7 @@ export class WriteTally {
   private flushUnowned(final: boolean): boolean {
     if (this.unowned === 0 || !this.alive()) { this.unowned = 0; return true; }
     const epoch = readEpoch(this.dir)?.epoch_id;
-    if (epoch !== undefined && recordLost(this.dir, epoch, 'no_epoch', this.unowned)) { this.unowned = 0; return true; }
+    if (epoch !== undefined) { this.unowned -= recordLostCount(this.dir, epoch, 'no_epoch', this.unowned); if (this.unowned === 0) return true; } // only what was written is released: the rest waits for the next flush
     if (final) { try { appendFault(this.dir, { ts: new Date().toISOString(), kind: 'write_samples_unrecorded', detail: `no_epoch n=${this.unowned}` }); this.unowned = 0; } catch { /* disk: the count stays in memory */ } }
     return false;
   }
@@ -267,7 +274,7 @@ export class WriteTally {
   /** At child start: counts the marks of dead processes (and of an earlier process with this pid), and saves any verdict still unsaved. */
   recover(): void { this.update(undefined, true); }
   /** One more try to save batches an earlier save could not take (true when nothing is left unsaved). */
-  save(): boolean { const noted = this.flushUnowned(true); return this.update() && noted; }
+  save(): boolean { const noted = this.flushUnowned(true); return this.epoch() === null ? noted : this.update() && noted; }
   /** Counts one outcome; `ends` is a replay's own verdict, which removes its mark. */
   note(outcome: WriteOutcome, key?: string, n = 1, ends = false): void {
     const epoch = this.epoch();
