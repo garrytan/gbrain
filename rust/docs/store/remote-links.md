@@ -48,7 +48,7 @@ Also served:
   rule id alone empties the rule set. One identity emptied that way beside valid satisfied rules, or with the owner flag, is a policy
   the store cannot hold (it judges rules only for a named identity), so it refuses `engine_capability_missing`. No stored writer can
   hold such an entry (ids are checked on write), so this is a guard on the member's own argument. Pinned in
-  `test/rust-remote-links-writer-policy.test.ts` and, end to end on every engine, `test/engine-parity/mixed-set-forwarding.test.ts`.
+  `test/rust-remote-links-writer-policy.test.ts` and, on every engine through its member with the mixed argument (an invalid id cannot be stored, so no end-to-end path builds one), `test/engine-parity/mixed-set-forwarding.test.ts`.
 
 Any other writer (an owner record other than the owner speaking for itself, several identities, an empty policy object) refuses
 `engine_capability_missing` before any read. The remote page write check (`authorizePageVisibility`) reads the live page against
