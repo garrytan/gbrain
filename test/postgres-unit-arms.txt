@@ -637,6 +637,7 @@ test/engine-swap-managed-storage.test.ts
 test/engine-swap-pg-fence.test.ts
 test/engine-swap-pg-source.test.ts
 test/engine-swap-refresh-drain.test.ts
+test/engine-swap-run-postgres.serial.test.ts
 test/enrich-owner-contact.test.ts
 test/entity-company-auto-link.test.ts
 test/entity-dedupe-decisions.test.ts
