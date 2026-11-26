@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2401/2425
+# covered: 2406/2430
 # lifecycle: 12/12
 # pages: 141/142
 # search: 8/8
@@ -15,14 +15,14 @@
 # link_temporal: 22/22
 # search_vector: 4/4
 # retrieval_coverage: 5/5
-# chunks: 48/49
+# chunks: 52/53
 # extraction: 12/14
 # links: 23/23
 # tags: 5/5
 # timeline: 33/33
 # ontology: 9/9
 # raw_files: 25/25
-# takes: 76/76
+# takes: 77/77
 # dream: 37/37
 # contradictions: 28/28
 # facts: 42/42
@@ -135,7 +135,7 @@ getPage	pages	yes	280	yes	yes	yes	serves
 readPageSnapshot	pages	yes	100	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	7	no	yes	yes	serves
 lockPageKeys	pages	yes	17	no	yes	yes	serves
-putPage	pages	yes	1324	yes	yes	yes	serves
+putPage	pages	yes	1325	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	43	yes	yes	yes	serves
@@ -352,9 +352,9 @@ listWithdrawalChunks	chunks	yes	1	no	yes	yes	serves
 deleteChunksForPages	chunks	yes	3	no	yes	yes	serves
 listContextualModeCandidates	chunks	yes	1	no	yes	yes	serves
 resolveFrozenHits	chunks	yes	6	no	yes	yes	serves
-upsertChunks	chunks	yes	73	yes	yes	yes	serves
-sealChunks	chunks	yes	94	no	yes	yes	serves
-getChunks	chunks	yes	75	yes	yes	yes	serves
+upsertChunks	chunks	yes	74	yes	yes	yes	serves
+sealChunks	chunks	yes	96	no	yes	yes	serves
+getChunks	chunks	yes	76	yes	yes	yes	serves
 getChunkPage	chunks	yes	14	no	yes	yes	serves
 getChunkWindows	chunks	yes	14	no	yes	yes	serves
 countStaleChunks	chunks	yes	9	no	yes	yes	serves
@@ -384,6 +384,10 @@ lockEmbeddingSwitch	chunks	yes	1	no	yes	yes	serves
 installChunkEmbeddings	chunks	yes	1	no	yes	yes	serves
 getChunksWithEmbeddings	chunks	yes	4	no	yes	yes	serves
 readSegmentRegions	chunks	no	0	no	-	-	-
+listSymbolLanguages	chunks	yes	1	no	yes	yes	serves
+listSupportedChunkIds	chunks	yes	1	no	yes	yes	serves
+listSymbolChunkIds	chunks	yes	1	no	yes	yes	serves
+readReindexSpendInputs	chunks	yes	1	no	yes	yes	serves
 readPageProvenanceComplete	chunks	yes	3	no	yes	yes	serves
 countStalePagesForExtraction	extraction	yes	4	yes	yes	yes	serves
 listStalePagesForExtraction	extraction	yes	3	yes	yes	yes	serves
@@ -570,6 +574,7 @@ listTakeSupersedeReceipts	takes	yes	2	no	yes	yes	serves
 setTakeSupersededBy	takes	yes	2	no	yes	yes	serves
 listAcceptedTakeRemovals	takes	yes	1	no	yes	yes	serves
 readTakeRowTier	takes	yes	1	no	yes	yes	serves
+insertImpactLogRow	takes	yes	1	no	yes	yes	serves
 getDreamVerdict	dream	yes	1	yes	yes	yes	serves
 putDreamVerdict	dream	yes	2	yes	yes	yes	serves
 sweepDreamVerdicts	dream	yes	1	no	yes	yes	serves
@@ -761,7 +766,7 @@ resolveAliases	sync_aliases	yes	22	no	yes	yes	serves
 setPageAliases	sync_aliases	yes	53	no	yes	yes	serves
 replaceDerivedAliases	sync_aliases	yes	18	no	yes	yes	serves
 refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
-updatePageContextualRetrievalState	sync_aliases	yes	3	no	yes	yes	serves
+updatePageContextualRetrievalState	sync_aliases	yes	4	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	2	no	yes	yes	serves
 getConfig	config	yes	57	no	yes	yes	serves
 setConfig	config	yes	97	no	yes	yes	serves
@@ -1859,13 +1864,13 @@ listSegmentedPages	withdrawal_pages	yes	2	no	yes	yes	serves
 invalidateWithdrawnPages	withdrawal_pages	yes	2	no	yes	yes	serves
 hasWithdrawnFenceClaim	withdrawal_fence	yes	2	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	91	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	89	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-addCodeEdges	code_edges	yes	7	yes	yes	yes	serves
+addCodeEdges	code_edges	yes	8	yes	yes	yes	serves
 deleteCodeEdgesForChunks	code_edges	yes	1	no	yes	yes	serves
 clearCodeEdgesLeavingChunks	code_edges	yes	2	no	yes	yes	serves
-getCallersOf	code_edges	yes	4	no	yes	yes	serves
+getCallersOf	code_edges	yes	5	no	yes	yes	serves
 getCalleesOf	code_edges	yes	2	yes	yes	yes	serves
 getEdgesByChunk	code_edges	yes	5	no	yes	yes	serves
 getCodeTraversalCache	code_edges	yes	7	no	yes	yes	serves

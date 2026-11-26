@@ -284,7 +284,7 @@ test/engine-parity/recall-members.test.ts	4	0
 test/engine-parity/referrer-reads.test.ts	5	0
 test/engine-parity/refusal-blocker-sites.test.ts	6	0
 test/engine-parity/refusal-swallow-extract.test.ts	3	7
-test/engine-parity/refusal-swallow-health.test.ts	3	3
+test/engine-parity/refusal-swallow-health.test.ts	5	1
 test/engine-parity/refusal-swallow-paths.test.ts	6	0
 test/engine-parity/refusal-swallow-sites.test.ts	5	1
 test/engine-parity/refusal-swallow-sources.test.ts	4	0
@@ -333,7 +333,7 @@ test/engine-parity/search-privacy-retention.test.ts	5	0
 test/engine-parity/search-privacy.test.ts	25	0
 test/engine-parity/search-private-fence.test.ts	5	0
 test/engine-parity/search-reads.test.ts	20	1
-test/engine-parity/search-refusal-swallows.test.ts	2	1
+test/engine-parity/search-refusal-swallows.test.ts	3	0
 test/engine-parity/search-space-separators.test.ts	1	0
 test/engine-parity/search.test.ts	23	0
 test/engine-parity/segment-pending-stamp.test.ts	1	1
