@@ -16,7 +16,10 @@ import { loadRustAddon } from '../src/core/rust-engine/addon-loader.ts';
 import { openRustEngine, type RustEngine } from '../src/core/rust-engine.ts';
 import { openPrincipalSession } from '../src/core/rust-engine/principal-session.ts';
 import { hashToken } from '../src/core/utils.ts';
-import { withCallerAccess } from '../src/core/search/private-visibility.ts';
+import { withCallerAccess, withoutCallerAccess } from '../src/core/search/private-visibility.ts';
+import { selfChecked } from '../src/core/rust-engine/access-self-check.ts';
+import { engineScopeStore } from '../src/core/engine-scope-store.ts';
+import { noteSchemaVersion, schemaVersionSeen } from '../src/core/migrate-pending.ts';
 import { rustArmAddonPath } from './engine-parity/rust-arm.ts';
 
 const SWITCHES = ['GBRAIN_RUST_MULTIUSER'] as const;
@@ -178,6 +181,35 @@ describe('a multi-user session on a Rust store', () => {
     expect((err as { code?: string }).code).toBe('engine_capability_missing');
     session.release();
     refusing.release();
+  });
+
+  test('in a session the owner-only form follows the store\'s own schema version, not the one TypeScript recorded (A12)', async () => {
+    // The owner-only test's form (closed before v320, the lineage function since) is decided by the schema version. A
+    // policy with no caller record (row_owner_only here) reads the version from the derivation settings; in a session
+    // that is the store's own, whatever version the TypeScript engine scope recorded.
+    const seen: unknown[] = [];
+    const pure = (engine.addon as unknown as { deriveAccessPolicy(c: unknown): unknown }).deriveAccessPolicy;
+    const spy = { deriveAccessPolicy: (ctx: unknown) => { seen.push(ctx); return pure(ctx); } };
+    const truth = await engine.getConfig('version');
+    const recorded = schemaVersionSeen(engine);
+    const form = async (storeVersion: string, tsVersion: number) => {
+      await engine.setConfig('version', storeVersion);
+      const session = await openPrincipalSession(store(), 'secret-owner', spy);
+      noteSchemaVersion(engine, tsVersion);
+      try {
+        return await session.run('readPageHiddenFromCaller', { readOnly: true }, async () => withoutCallerAccess(() =>
+          engineScopeStore.run(engine, () => selfChecked('readPageHiddenFromCaller', { mode: 'row_owner_only' }, () => 'typescript'))));
+      } finally { session.release(); }
+    };
+    try {
+      expect(await form('300', 341)).toBe('closed');
+      expect((seen.at(-1) as { settings: { scopeSchemaVersion?: number } }).settings.scopeSchemaVersion).toBe(300);
+      expect(await form('341', 300)).toBe('fn');
+      expect((seen.at(-1) as { settings: { scopeSchemaVersion?: number } }).settings.scopeSchemaVersion).toBe(341);
+    } finally {
+      await engine.setConfig('version', truth!);
+      if (recorded !== undefined) noteSchemaVersion(engine, recorded);
+    }
   });
 
   test('a session call on a read-only key cannot write, and a revoked session runs nothing', async () => {
