@@ -56,7 +56,7 @@ export function makeExtractAtomsDrainHandler(engine: BrainEngine): MinionHandler
         throw new Error(`extract-atoms-drain: lost the cycle lock lease (${counts})`);
       }
       // issue #3218: every item the drain attempted failed (0 succeeded, >=1
-      // provider error) — completing this job normally would mark the
+      // item failure) — completing this job normally would mark the
       // durable job done while the backlog sits untouched, and no retry
       // policy would ever fire on it again. Throw so the worker's ordinary
       // failJob path (attempt+backoff, or dead-letter once exhausted) takes

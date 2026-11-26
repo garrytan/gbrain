@@ -89,8 +89,8 @@ export interface ExtractAtomsDrainDeps {
   /**
    * Process one bounded batch (rediscovers eligibility). Returns counts, plus
    * `providerFailure` (issue #3218) when EVERY item the batch attempted threw
-   * (zero items succeeded, at least one failure) — i.e. the batch's warning
-   * result was actually a total provider outage, not a partial/no-op batch.
+   * (zero items succeeded, at least one failure). This legacy name also
+   * covers item failures before a provider call or after it returns.
    * Omit/false for the ordinary partial-success or nothing-to-do cases.
    *
    * #4539: `failureCount` (per-item failures in this batch) and `firstError`
@@ -240,14 +240,15 @@ export interface ExtractAtomsDrainResult {
  * #3813: the Minion handler's provider_failure throw IS the job's error_text
  * once it dead-letters, so it carries the representative `last_error` (already
  * secret-redacted + bounded above) — a missing provider key is a one-line
- * diagnosis instead of an opaque batches/remaining.
+ * diagnosis instead of an opaque batches/remaining. The batch result does
+ * not establish where the items failed, so leave attribution to last_error.
  */
 export function formatDrainProviderFailure(
   result: Pick<ExtractAtomsDrainResult, 'batches' | 'remaining' | 'last_error'>,
   opts: { final?: boolean } = {},
 ): string {
   return (
-    `extract-atoms-drain: all provider calls failed this batch ` +
+    `extract-atoms-drain: all attempted items failed this batch ` +
     `(batches=${result.batches}, remaining=${result.remaining ?? '?'})` +
     `${result.last_error ? `; last error: ${result.last_error}` : ''}${opts.final ? '' : ' — retrying'}`
   );
@@ -395,7 +396,7 @@ export async function runExtractAtomsDrain(
           deps.onBatch?.({ batch: batches, extracted: r.extracted, remaining: before });
 
           // issue #3218: every item this batch attempted failed (0 succeeded, >=1
-          // error) — a total provider outage, not ordinary no-op/partial progress.
+          // error) — a total item failure, not ordinary no-op/partial progress.
           // Stop immediately (same hot-loop guard as no_progress below) and flag
           // it so the caller can retry via its own policy instead of treating the
           // drain as a clean completion.
@@ -549,16 +550,16 @@ export async function runExtractAtomsDrainForSource(
         const d = (r.details ?? {}) as Record<string, unknown>;
         // issue #3218: `r.status` collapses to 'warn' whether ONE item failed
         // (partial success — leave the drain's existing ok/no_progress path
-        // alone) or EVERY item failed (a total provider outage the drain
+        // alone) or EVERY item failed (a total failure the drain
         // adapter was silently swallowing). Re-derive the total-failure case
         // from the per-item counts `runPhaseExtractAtoms` already returns:
         // >=1 failure AND zero items successfully processed (transcripts_processed
-        // + pages_processed both 0 means every attempted `chat()` call threw —
+        // + pages_processed both 0 means no item completed —
         // items that succeed with 0 atoms still count as processed, so this
         // does not fire on "provider fine, nothing extractable").
         const reported: unknown[] = Array.isArray(d.failures) ? d.failures : [];
-        // #7514: a write that did not commit (its record names the request id) never reached a provider, so
-        // `failures` is the provider side only: a write failure neither makes nor classes a provider failure.
+        // #7514: a write that did not commit and names its request id has its own
+        // retry/hold path, so leave that record out of the total-failure decision.
         const written = (f: unknown): f is { request_id: string; code?: unknown; strikes?: unknown } =>
           f != null && typeof f === 'object' && typeof (f as { request_id?: unknown }).request_id === 'string';
         const failures = reported.filter(f => !written(f));

@@ -75,8 +75,16 @@ describe('extract-atoms-drain handler', () => {
     expect(msg).toContain('batches=1');
     expect(msg).toContain('remaining=151');
     expect(msg).toContain('ANTHROPIC_API_KEY');
-    // A clean-run shape (no representative error) keeps the original message.
+    // A result without a representative error just omits the detail.
     expect(formatDrainProviderFailure({ ...result, last_error: null })).not.toContain('last error');
+  });
+
+  test('an input change during the provider call does not report a provider outage', () => {
+    const lastError = 'notes/fixture: The atom generation was not activated because its input changed.';
+    const msg = formatDrainProviderFailure({ batches: 1, remaining: 1, last_error: lastError }, { final: true });
+    expect(msg).toContain('all attempted items failed this batch');
+    expect(msg).not.toContain('provider calls failed');
+    expect(msg).toContain(lastError);
   });
 
   // The handler's own contract text: a deadline failure is final, so the
