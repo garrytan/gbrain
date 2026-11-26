@@ -26,7 +26,8 @@ export const PIN_BLOCK_TOKEN_CAP = 600;
 /** The OpenClaw session classes a pin shows in: the owner's own sessions (the default) and conversations (groups, channels, other people's DMs). */
 export type PinClass = 'owner' | 'conversation';
 export const PIN_CLASSES: readonly PinClass[] = ['owner', 'conversation'];
-export interface Pin { name: string; line?: string; classes?: PinClass[] }
+/** brief: OpenClaw shows the pin once per owner session (the session-start brief) instead of on every turn. */
+export interface Pin { name: string; line?: string; classes?: PinClass[]; brief?: true }
 export interface PinnedBlock { block: string; tokens: number; ids: string[]; unknown: string[]; cut: string[] }
 
 /** Why a pin is not valid as written, or null. */
@@ -41,10 +42,10 @@ export function parsePins(raw: unknown): Pin[] {
   if (!Array.isArray(raw)) return [];
   return raw.flatMap((p): Pin[] => {
     if (!p || typeof p !== 'object') return [];
-    const { name, line, classes } = p as { name?: unknown; line?: unknown; classes?: unknown };
+    const { name, line, classes, brief } = p as { name?: unknown; line?: unknown; classes?: unknown; brief?: unknown };
     if (typeof name !== 'string') return [];
     const cls = Array.isArray(classes) ? PIN_CLASSES.filter((c) => classes.includes(c)) : [];
-    const pin: Pin = { name, ...(typeof line === 'string' ? { line } : {}), ...(cls.length && (cls.length !== 1 || cls[0] !== 'owner') ? { classes: cls } : {}) };
+    const pin: Pin = { name, ...(typeof line === 'string' ? { line } : {}), ...(cls.length && (cls.length !== 1 || cls[0] !== 'owner') ? { classes: cls } : {}), ...(brief === true ? { brief: true as const } : {}) };
     return pinProblem(pin) ? [] : [pin];
   });
 }
@@ -78,17 +79,19 @@ export function catalogSkills(home: string, catalog: string): { paths: Map<strin
  * not hold is left out and listed in `unknown`; with null (no index yet)
  * nothing renders, because an unchecked name must never reach the model.
  * With paths, each line also names the skill's SKILL.md, for a harness
- * that loads a skill by reading its file.
+ * that loads a skill by reading its file. With brief, it renders OpenClaw's
+ * once-per-session list (<session_brief>) instead of the every-turn block.
  */
-export function renderPinnedBlock(pins: readonly Pin[], opts: { harness?: string; known: Set<string> | null; cap?: number; paths?: ReadonlyMap<string, string>; readRoot?: string }): PinnedBlock {
+export function renderPinnedBlock(pins: readonly Pin[], opts: { harness?: string; known: Set<string> | null; cap?: number; paths?: ReadonlyMap<string, string>; readRoot?: string; brief?: boolean }): PinnedBlock {
   const cap = opts.cap ?? PIN_BLOCK_TOKEN_CAP;
   if (!opts.known) return { block: '', tokens: 0, ids: [], unknown: pins.map((p) => p.name), cut: [] };
   const valid = pins.filter((p) => opts.known!.has(p.name));
   const unknown = pins.filter((p) => !opts.known!.has(p.name)).map((p) => p.name);
   const lines = valid.map((p) => `- id: ${quoted(p.name)}${p.line ? ` when: ${quoted(p.line)}` : ''}${opts.paths?.get(p.name) ? ` path: ${quoted(opts.paths.get(p.name)!)}` : ''}`);
   const pathed = opts.harness === 'claude-code' && valid.some((p) => opts.paths?.get(p.name));
-  const head = `Always-available skills, chosen by this agent's operator, whether or not a skill list shows them. ${loadLine(opts.harness, undefined, { readRoot: opts.readRoot, paths: valid.map((p) => opts.paths?.get(p.name)) })}${pathed ? ' A skill listed with a path is outside Claude Code\'s skills folder: read the SKILL.md at its path instead.' : ''}`;
-  const wrap = (body: string[]) => ['<pinned_skills>', head, ...body, '</pinned_skills>'].join('\n');
+  const head = `${opts.brief ? 'Skills for this session, chosen by this agent\'s operator, whether or not a skill list shows them.' : 'Always-available skills, chosen by this agent\'s operator, whether or not a skill list shows them.'} ${loadLine(opts.harness, undefined, { readRoot: opts.readRoot, paths: valid.map((p) => opts.paths?.get(p.name)) })}${pathed ? ' A skill listed with a path is outside Claude Code\'s skills folder: read the SKILL.md at its path instead.' : ''}`;
+  const tag = opts.brief ? 'session_brief' : 'pinned_skills';
+  const wrap = (body: string[]) => [`<${tag}>`, head, ...body, `</${tag}>`].join('\n');
   const kept: number[] = [];
   lines.forEach((line, i) => { if (estimateTokens(wrap([...kept.map((k) => lines[k]), line])) <= cap) kept.push(i); });
   if (!kept.length) return { block: '', tokens: 0, ids: [], unknown, cut: valid.map((p) => p.name) };
