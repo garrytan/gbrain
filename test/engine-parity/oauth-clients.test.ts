@@ -66,6 +66,19 @@ async function setup(engine: BrainEngine, backend: ParityBackend): Promise<void>
   await createSource(engine, backend, 'src-b');
 }
 
+/** Runs `gbrain agent register` through its CLI function, keeping the first JSON line it prints (a refusal exits through `process.exit`, which its own handler then reports a second time). */
+async function registerAgent(engine: BrainEngine, name: string, ...extra: string[]): Promise<{ ok?: boolean; reason?: string; client_id?: string }> {
+  const out: string[] = [];
+  const realExit = process.exit, realLog = console.log, realError = console.error;
+  process.exit = ((code?: number) => { throw Object.assign(new Error(`exit ${code} ${out.join(' ')}`), { code: 'test_exit' }); }) as typeof process.exit;
+  console.log = (...a: unknown[]) => { out.push(a.join(' ')); };
+  console.error = () => undefined;
+  try {
+    await runAgentRegister(engine, [name, '--harness', 'claude-code', '--url', 'http://127.0.0.1:9/mcp', '--allow-old-serve', '--json', ...extra]);
+  } catch { /* a refusal printed its JSON line before the exit */ } finally { process.exit = realExit; console.log = realLog; console.error = realError; }
+  return JSON.parse(out.find(line => line.startsWith('{"ok"')) ?? '{}');
+}
+
 const stored = async (engine: BrainEngine, id: string) => (await engine.readOauthClient(id)) !== null;
 
 describe('engine parity: oauth_clients rows and constraints', () => {
@@ -427,6 +440,67 @@ describe('engine parity: oauth_clients rows and constraints', () => {
         movedSource: { sourceId: movedSource.sourceId, federatedRead: movedSource.federatedRead }, unknownSource: unknownSource && unknownSource.message,
         audit: await audit(engine, id),
       };
+    });
+
+  // `gbrain agent register` end to end, through the function the CLI calls: its client and grant rows and its register audit row.
+  parityTest('agent register: the CLI function stores the client, its grant at revision 1 and the register audit row, with a named or a derived workspace source',
+    { methods: ['insertOauthClientGrant', 'readOauthClient', 'listOauthGrantAudit'] }, async (engine, backend) => {
+      await setup(engine, backend);
+      // Once on a named write source, once on the coding-agent preset, whose derived `<name>-workspace` write source the register creates.
+      const register = async (name: string, ...extra: string[]) => {
+        const result = await registerAgent(engine, name, ...extra);
+        expect(result.ok).toBe(true);
+        const row = await engine.readOauthClient(result.client_id!);
+        return {
+          row: row && { client_name: row.client_name, scope: row.scope, source_id: row.source_id, federated_read: row.federated_read, grant_revision: row.grant_revision, token_ttl: row.token_ttl, secretKept: row.client_secret_hash != null },
+          audit: await audit(engine, result.client_id!),
+        };
+      };
+      return { named: await register('named-agent', '--source', 'src-a', '--federated-read', 'src-a,src-b'), workspace: await register('ws-agent', '--preset', 'coding-agent', '--federated-read', 'src-b') };
+    });
+
+  // Two registers of one name started together: the per-name advisory lock holds the second on PGLite and Postgres; on Rust the
+  // store's single writer does (rust/crates/gbrain-store/src/occ_kv.rs begin_exclusive, taken by transactions.rs begin_transaction).
+  parityTest('agent register: two registers of the same name started together store one client, and the other is refused as a duplicate',
+    { methods: ['insertOauthClientGrant', 'listOauthClients'] }, async (engine, backend) => {
+      await setup(engine, backend);
+      const rounds = [];
+      for (let round = 0; round < 5; round++) {
+        const out: string[] = [];
+        const realExit = process.exit, realLog = console.log, realError = console.error;
+        process.exit = ((code?: number) => { throw Object.assign(new Error(`exit ${code}`), { code: 'test_exit' }); }) as typeof process.exit;
+        console.log = (...a: unknown[]) => { out.push(a.join(' ')); };
+        console.error = () => undefined;
+        try {
+          const argv = [`race-${round}`, '--harness', 'claude-code', '--url', 'http://127.0.0.1:9/mcp', '--allow-old-serve', '--json', '--source', 'src-a'];
+          await Promise.allSettled([runAgentRegister(engine, argv), runAgentRegister(engine, argv)]);
+        } finally { process.exit = realExit; console.log = realLog; console.error = realError; }
+        const results = out.map(line => JSON.parse(line) as { ok: boolean; reason?: string });
+        rounds.push({
+          ok: results.filter(r => r.ok).length, refused: results.filter(r => !r.ok).map(r => r.reason),
+          stored: (await engine.listOauthClients()).filter(c => c.client_name === `race-${round}` && c.deleted_at == null).length,
+        });
+      }
+      expect(rounds.every(r => r.ok === 1 && r.stored === 1 && r.refused.join() === 'duplicate_name')).toBe(true);
+      return rounds;
+    });
+
+  // A brain older than v109 has no `sources.newest_content_at` (v109) but does have `archived` (v34; bootstrap adds it to any older table, so
+  // none can lack it: no source is archived there). The register's source lookups must read neither a missing column nor retry inside the tx.
+  parityTest('agent register on a schema without sources.newest_content_at: a fresh workspace registers, an archived --source is refused, an empty workspace is reused and a dirty one refused',
+    { methods: ['executeRaw', 'insertOauthClientGrant'], requires: 'raw_sql' }, async (engine, backend) => {
+      await createSource(engine, backend, 'arch');
+      await archiveSource(engine, backend, 'arch');
+      await createSource(engine, backend, 'empty-workspace');
+      await createSource(engine, backend, 'dirty-workspace', {}, '/x');
+      await engine.executeRaw('ALTER TABLE sources DROP COLUMN newest_content_at');
+      try {
+        const coding = ['--preset', 'coding-agent', '--federated-read', 'default'];
+        const out = { fresh: (await registerAgent(engine, 'fresh', ...coding)).ok, archived: (await registerAgent(engine, 'arch', '--source', 'arch')).reason,
+          empty: (await registerAgent(engine, 'empty', ...coding)).ok, dirty: (await registerAgent(engine, 'dirty', ...coding)).reason };
+        expect(out).toEqual({ fresh: true, archived: 'archived_source', empty: true, dirty: 'dirty_source' });
+        return out;
+      } finally { await engine.executeRaw('ALTER TABLE sources ADD COLUMN IF NOT EXISTS newest_content_at TIMESTAMPTZ'); }
     });
 
   parityTest('revoke a client: the delete returns the client once, it is no longer live, and its ttl write finds no row',

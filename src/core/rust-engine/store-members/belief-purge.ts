@@ -1,9 +1,10 @@
 /**
  * The belief side of a purge (src/core/engine-sql/belief-purge.ts), served from
  * rust/crates/gbrain-store/src/trust/belief_purge.rs and facts/page_purges.rs: the source purge epoch
- * (`bumpSourcePurgeEpoch`), the ledger presence probe (`hasBeliefEvents`), the purge's suppression writes
- * (`registerPurgeRedaction`, `releasePurgeRedactionsForField`) and the restore replay's tombstones
- * (`replayPagePurges`) with the purge receipt's count of them (`countPagePurgeTombstones`).
+ * (`bumpSourcePurgeEpoch`), the ledger presence probe (`hasBeliefEvents`), the purge receipt's ledger read
+ * (`listBeliefEventsForPurgeProbe`: a keyset page of belief_events, as purge-verify's ledgerReports pages it), the
+ * purge's suppression writes (`registerPurgeRedaction`, `releasePurgeRedactionsForField`) and the restore replay's
+ * tombstones (`replayPagePurges`) with the purge receipt's count of them (`countPagePurgeTombstones`).
  * `readPurgeReplaySchema` makes no store call: the store always has the live schema, so every listed
  * store and every probed table and column is present (as connect-gate.ts answers `hasPersistenceTable`).
  */
@@ -17,6 +18,9 @@ export const bumpSourcePurgeEpoch: Member<'bumpSourcePurgeEpoch'> = async (brain
 
 export const hasBeliefEvents: Member<'hasBeliefEvents'> = (brain, sourceId) =>
   storeCall({ member: 'hasBeliefEvents', sourceId }, () => brain.hasBeliefEvents(sourceId));
+
+export const listBeliefEventsForPurgeProbe: Member<'listBeliefEventsForPurgeProbe'> = (brain, sourceId, after) =>
+  storeCall({ member: 'listBeliefEventsForPurgeProbe', sourceId }, () => brain.listBeliefEventsForPurgeProbe(sourceId, after));
 
 export const registerPurgeRedaction: Member<'registerPurgeRedaction'> = async (brain, row) => {
   await storeCall({ member: 'registerPurgeRedaction', sourceId: row.sourceId }, () => brain.registerPurgeRedaction(row));
