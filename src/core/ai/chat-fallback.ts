@@ -12,14 +12,15 @@
  *   - throws a provider error: a Claude subscription limit on a claude-cli
  *     model (apiErrorStatus 429), a rate limit, an outage, a timeout, a
  *     rejected key; or
- *   - completes with a structural refusal (`stopReason` 'refusal' or
- *     'content_filter'), the signal `mapStopReason` derives for this purpose.
+ *   - with `chat_fallback_on_refusal: true` only, completes with a structural
+ *     refusal (`stopReason` 'refusal' or 'content_filter'), the signal
+ *     `mapStopReason` derives for this purpose, or throws a provider content block.
  * A result a chain entry produced carries `fallbackFrom` (the call's own model),
  * so callers that cache or key on model identity can tell it apart, and
  * `fallbackReason` (why that model did not answer: "failed (<first error line>)"
  * or "refused (...)", at most 200 characters of the error).
- * With `chat_fallback_on_refusal: false` (`onRefusal: false` here) a refusal
- * ends the walk instead: a structural refusal is returned and a provider
+ * Unless `chat_fallback_on_refusal` is true (`onRefusal: true` here; the
+ * default is false) a refusal ends the walk: a structural refusal is returned and a provider
  * content block (`providerContentBlockReason`) is thrown, so content one
  * provider refused is never sent to the next one; outages still fall back.
  * The first hop a process takes queues one `chat_fallback_hop` safety notice
@@ -72,7 +73,7 @@ export function chatFallbackHopNotice(failed: string, next: string, cause: strin
     why: `chat_fallback_chain sent a request to another model: ${failed} ${refusal ? `refused it (${cause})` : `failed (${cause})`}, so the request went to ${next}. ` +
       'Every later hop in this process logs to stderr only. ' +
       (refusal
-        ? 'Fallback on refusals sends content one provider refused to the next one; `gbrain config set chat_fallback_on_refusal false` keeps outage fallback and stops that.'
+        ? 'Fallback on refusals sends content one provider refused to the next one because chat_fallback_on_refusal is set to true; removing that value, or setting it to false, where it is set keeps outage fallback and stops that (`gbrain doctor --only chat_fallback_chain` names where).'
         : 'Outage fallback is the configured behavior; `gbrain doctor --only chat_fallback_chain` shows the chain, the providers it reaches and how to remove it.'),
     fix: {
       argv: ['gbrain', 'doctor', '--only', 'chat_fallback_chain', '--json'], consent: [], actor: 'agent', requires_exclusive: false,
@@ -87,7 +88,7 @@ function queueFirstHop(failed: string, next: string, cause: string, refusal: boo
 }
 
 export interface ChatFallbackOptions {
-  /** `chat_fallback_on_refusal` (default true): false ends the walk on a refusal instead of sending the content onward. */
+  /** `chat_fallback_on_refusal` (default false): only true sends content one model refused on to the next; otherwise a refusal ends the walk. */
   onRefusal?: boolean;
 }
 
@@ -108,7 +109,7 @@ export async function chatWithFallback(
   attempt: (opts: ChatOpts) => Promise<ChatResult>,
   options: ChatFallbackOptions = {},
 ): Promise<ChatResult> {
-  const onRefusal = options.onRefusal !== false;
+  const onRefusal = options.onRefusal === true;
   const models = chatFallbackAttempts(primary, chain);
   let primaryCause: string | undefined;
   const answered = (result: ChatResult, model: string): ChatResult =>

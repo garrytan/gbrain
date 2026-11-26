@@ -24,7 +24,7 @@ use serde_json::{Map, Value, json};
 
 use crate::env::{iso, transaction_clock};
 use crate::error::{Result, StoreError};
-use crate::write_trust::{WRITE_REQUEST, WriteAttribution, stamp_context};
+use crate::write_trust::{WriteAttribution, stamp_context};
 
 /// The open write's actor, its request id checked as the trigger's `::uuid` cast checks it.
 pub(crate) fn actor() -> Result<WriteAttribution> {
@@ -33,13 +33,7 @@ pub(crate) fn actor() -> Result<WriteAttribution> {
 
 /// `actor`, refused when its request id is not a UUID.
 fn checked(actor: &WriteAttribution) -> Result<&WriteAttribution> {
-    if let Some(request) = actor.request_id.as_deref()
-        && !crate::env::is_uuid(request)
-    {
-        return Err(StoreError::invalid(format!(
-            "{WRITE_REQUEST} is not a UUID: {request}"
-        )));
-    }
+    actor.refuse_request_not_uuid()?;
     Ok(actor)
 }
 
@@ -195,8 +189,9 @@ pub(crate) fn stamp_revision(
         None if actor.principal_kind.is_some() => ActorColumns::of(&actor),
         None => supplied.clone(),
         Some((_, revision)) if revision != new_revision => ActorColumns::of(&actor),
-        Some((stored, _)) if !stored.is_empty() => stored.clone(),
-        Some(_) => supplied.clone(),
+        // No page write sets the `revision_*` columns itself, so an unchanged revision keeps the
+        // stored writer, NULLs included; the record's copy can be stale (a second write in one call).
+        Some((stored, _)) => stored.clone(),
     })
 }
 

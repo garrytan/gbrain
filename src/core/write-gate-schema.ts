@@ -13,8 +13,20 @@
  * write_gate_holds: quarantined facts and takes (B4), kept out of the facts
  * and takes tables so no reader needs a new filter. `payload` is the row as
  * the writer would have inserted it; it is never searched or embedded.
- * Deduped on (source_id, slug, fingerprint, detector_version); the same
- * content arriving again re-opens a released or dropped hold.
+ * A hold remembers its page two ways. `page_id` is the page's permanent id (no
+ * foreign key: a purged page's audit row is removed by the purge sweeps, by id);
+ * a hold with a `page_id` is the page's whatever the page is called. A hold
+ * with neither column set was written before any page took its slug and
+ * matches by slug until a page is created there. `page_candidates` marks a
+ * hold the upgrade could not tie to one page (the slug names a page created
+ * after the hold, or its rename history names another, or two pages qualify): it
+ * stays unbound, is held for every candidate page and for the page now at its
+ * slug, and `gbrain doctor` lists it. Never set by a writer.
+ *
+ * Deduped per kind of hold, so the keys are disjoint: a bound hold on
+ * (source_id, page_id, fingerprint, detector_version), an unbound one on
+ * (source_id, slug, fingerprint, detector_version); a candidate-marked hold has no
+ * key. The same content arriving again re-opens a released or dropped hold.
  */
 
 /**
@@ -26,6 +38,32 @@ export const WRITE_GATE_DETECTOR_VERSION = 2;
 
 /** Config key v227 seeds: the detector version and per-table max ids when the gate went live (eligibility/scan.ts). */
 export const WRITE_GATE_SCAN_BASELINE_KEY = 'write_gate.scan_baseline';
+
+/**
+ * write_gate_hold_rechecks: held writes a purge kept only because the rename record still led to another page,
+ * each with the version the purge saw (`holdVersionSql`, write-gate-binding.ts) and the ids of the pages it kept the
+ * held write for (a purge of a middle name scrubs the rename record that led to them). Two pages purged side by side can
+ * each keep a held write for the other; the maintenance sweep (write-gate-recheck.ts, run by bookkeeping_gc) checks
+ * these again and deletes a held write no page row is left for. Append-only: no unique key, so a purge never waits on
+ * another purge's note, and a purge never locks the held write it notes. Shared by the v337 migration.
+ */
+export const WRITE_GATE_HOLD_RECHECKS_SQL = `
+CREATE TABLE IF NOT EXISTS write_gate_hold_rechecks (
+  id               BIGSERIAL PRIMARY KEY,
+  source_id        TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+  hold_id          BIGINT NOT NULL,
+  observed_version TEXT NOT NULL,
+  survivor_ids     BIGINT[] NOT NULL DEFAULT '{}',
+  queued_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS write_gate_hold_rechecks_queue_idx ON write_gate_hold_rechecks (queued_at, id);
+CREATE INDEX IF NOT EXISTS write_gate_hold_rechecks_hold_idx ON write_gate_hold_rechecks (hold_id);
+DO $rls$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
+    ALTER TABLE write_gate_hold_rechecks ENABLE ROW LEVEL SECURITY;
+  END IF;
+END $rls$;
+`;
 
 export const WRITE_GATE_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS write_gate_receipts (
@@ -65,9 +103,13 @@ CREATE TABLE IF NOT EXISTS write_gate_holds (
   created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
   last_seen_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
   decided_at       TIMESTAMPTZ,
-  decided_by       TEXT
+  decided_by       TEXT,
+  page_id          BIGINT,
+  page_candidates  BIGINT[]
 );
-CREATE UNIQUE INDEX IF NOT EXISTS write_gate_holds_dedupe_idx ON write_gate_holds (source_id, slug, fingerprint, detector_version);
+CREATE UNIQUE INDEX IF NOT EXISTS write_gate_holds_bound_dedupe_idx ON write_gate_holds (source_id, page_id, fingerprint, detector_version) WHERE page_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS write_gate_holds_unbound_dedupe_idx ON write_gate_holds (source_id, slug, fingerprint, detector_version) WHERE page_id IS NULL AND page_candidates IS NULL;
+CREATE INDEX IF NOT EXISTS write_gate_holds_page_idx ON write_gate_holds (source_id, page_id) WHERE status = 'held' AND page_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS write_gate_holds_status_idx ON write_gate_holds (status, source_id, id);
 DO $rls$ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
@@ -75,4 +117,4 @@ DO $rls$ BEGIN
     ALTER TABLE write_gate_holds ENABLE ROW LEVEL SECURITY;
   END IF;
 END $rls$;
-`;
+${WRITE_GATE_HOLD_RECHECKS_SQL}`;

@@ -62,6 +62,11 @@ fn read_record(read: &dyn KvRead, page_id: u64) -> Result<ExtractionRecord> {
     Ok(get_json(read, &record_key(page_id))?.unwrap_or_default())
 }
 
+/// The page's `links_extracted_at` in microseconds; `None` is NULL.
+pub(crate) fn links_extracted_at_us(read: &dyn KvRead, page_id: u64) -> Result<Option<i64>> {
+    Ok(read_record(read, page_id)?.links_extracted_at_us)
+}
+
 fn write_record(tx: &mut dyn KvWrite, page_id: u64, record: &ExtractionRecord) -> Result<()> {
     if *record == ExtractionRecord::default() {
         tx.delete(&record_key(page_id))

@@ -4,7 +4,10 @@
  *
  *   match              equal canonical JSON
  *   order_diff         a ranked read with the same rows in another order (scores ignored)
- *   diff               anything else that differs
+ *   diff               anything else that differs (on an exactness comparison, exactness.ts turns it into stale or inconclusive)
+ *   stale              an exactness mismatch while the follower held older committed work it had not applied
+ *   inconclusive       an exactness mismatch with no such evidence; counted as unexplained until a rerun exists
+ *   collation_order    a text-ordered read whose rows are the primary's, in C byte order (exactness.ts); explained, not unexplained
  *   privacy_diverged   a Rust row outside the call's source scope (any source column it carries), or a private page the call excluded
  *   capability_missing Rust refused with engine_capability_missing; `reason` is the capability
  *   error              Rust threw anything else; `reason` is its code when it has one
@@ -16,17 +19,17 @@
 import { canonicalJson } from './codec.ts';
 import type { ShadowReadKind } from './reads.ts';
 
-export type ShadowOutcome =
-  | 'match' | 'order_diff' | 'diff' | 'privacy_diverged'
-  | 'capability_missing' | 'error' | 'timeout' | 'addon_unavailable';
-
-export const SHADOW_OUTCOMES: readonly ShadowOutcome[] = [
-  'match', 'order_diff', 'diff', 'privacy_diverged', 'capability_missing', 'error', 'timeout', 'addon_unavailable',
-];
+/** Every outcome a ledger row can carry. The type is derived from this list, so a new outcome is added here and nowhere else (the evidence fold's settle allowlist and its table test then need a decision for it). */
+export const SHADOW_OUTCOMES = [
+  'match', 'order_diff', 'diff', 'stale', 'inconclusive', 'collation_order', 'privacy_diverged', 'capability_missing', 'error', 'timeout', 'addon_unavailable',
+] as const;
+export type ShadowOutcome = typeof SHADOW_OUTCOMES[number];
 
 export interface Classification {
   outcome: ShadowOutcome;
   reason?: string;
+  /** For stale, inconclusive and collation_order: the mismatch the comparison found. */
+  mismatch?: 'diff' | 'order_diff';
 }
 
 /** Score-like fields two rankers may legitimately compute differently; ignored by the order-insensitive pass. */
@@ -130,7 +133,7 @@ export function leakReason(encodedRust: unknown, scope: SourceScope | null, excl
   return null;
 }
 
-function stripScores(row: unknown): unknown {
+export function stripScores(row: unknown): unknown {
   if (!row || typeof row !== 'object' || Array.isArray(row)) return row;
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(row as Record<string, unknown>)) if (!SCORE_FIELDS.has(key)) out[key] = value;

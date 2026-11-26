@@ -10,6 +10,7 @@ import { ACCESS_ID_RE, hasReaders, normalizePrincipal, normalizeReaders, readers
 import { catalogueError } from '../error-catalogue.ts';
 import { authorizedSlug, type SqlEngine, type WriteAuthority } from './model.ts';
 import type { BrainEngine } from '../engine.ts';
+import { readConfigMap, type ConfigReader } from '../config-values.ts';
 import { noGrantFloorReads } from '../source-resolver.ts';
 import { hasScope } from '../scope.ts';
 import { viewedEngine } from './switches.ts';
@@ -307,9 +308,10 @@ export async function defaultSourceMemberWriter(engine: BrainEngine, authority: 
  * GST-2059: whether a default-source member writer is the brain owner (config access.owner_member, an enabled member),
  * whose new pages stay shared. A disabled or removed owner member is not the owner here, so its pages keep the stamp.
  */
-export async function defaultSourceWriterIsOwner(engine: Pick<BrainEngine, 'getConfig' | 'readLiveMember'>, writer: string | null): Promise<boolean> {
+export async function defaultSourceWriterIsOwner(engine: ConfigReader & Pick<BrainEngine, 'readLiveMember'>, writer: string | null): Promise<boolean> {
   if (!writer) return false;
-  const owner = (await engine.getConfig(OWNER_MEMBER_KEY))?.trim();
+  // The config table itself, never `getConfig`: a batch's config snapshot would keep a former owner exempt from the member-only reader labels.
+  const owner = (await readConfigMap(engine, [OWNER_MEMBER_KEY])).get(OWNER_MEMBER_KEY)?.trim();
   if (!owner || !ACCESS_ID_RE.test(owner) || writer !== `member:${owner}`) return false;
   return (await engine.readLiveMember('member', owner)) !== null;
 }

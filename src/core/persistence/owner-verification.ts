@@ -24,18 +24,19 @@ import { backgroundOwnerCheck, backgroundOwnerUnverified } from './admission-ori
  * error, if any). `restampable`: the paths are recorded and the only change is the filesystem device id (#5604), which
  * the owner's locked worktree acquisition re-stamps before it publishes.
  */
-export function verifyOwnerRoot(binding: Pick<WorktreeBinding, 'worktree_id' | 'local_path' | 'coordination_path'>): { physical_error?: string; restampable?: true } | null {
+export function verifyOwnerRoot(binding: Pick<WorktreeBinding, 'worktree_id' | 'local_path' | 'coordination_path'>): { physical_error?: string; physical_detail?: string; restampable?: true } | null {
   let failed = !binding.local_path || !binding.coordination_path;
-  let physicalError: string | undefined, restampable = false;
+  let physicalError: string | undefined, physicalDetail: string | undefined, restampable = false;
   if (binding.local_path) {
     try { assertPhysicalRoot(binding.local_path, { worktreeId: binding.worktree_id, coordinationPath: binding.coordination_path }); }
     catch (error) {
       restampable = !failed && error instanceof OperationError && error.detail === 'physical_root_device_changed';
       failed = true; physicalError = error instanceof Error ? error.message : String(error);
+      if (error instanceof OperationError && error.detail) physicalDetail = error.detail;
     }
   }
   if (!failed) return null;
-  return { ...(physicalError ? { physical_error: physicalError } : {}), ...(restampable ? { restampable: true as const } : {}) };
+  return { ...(physicalError ? { physical_error: physicalError } : {}), ...(physicalDetail ? { physical_detail: physicalDetail } : {}), ...(restampable ? { restampable: true as const } : {}) };
 }
 
 /** Refuses a background admission for a source whose owner on this host fails the verification (cached per background run). */

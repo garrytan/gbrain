@@ -217,7 +217,7 @@ const ENGINE_INTERNAL_HELPERS: readonly string[] = [
   'holdsDatastoreLock',
   // The unscoped engine-sql executors the timeline reads and the write-side reads run through.
   'timelineRead', 'writeMiscReads',
-  'chunkRead', 'linkRead', 'linkTemporal',
+  'chunkRead', 'linkRead',
 ];
 
 /**

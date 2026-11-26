@@ -216,7 +216,7 @@ fn remove_attempt(tx: &mut dyn KvWrite, id: &Identity, _: Mode) -> Result<bool> 
 }
 
 fn remove_generation(tx: &mut dyn KvWrite, id: &Identity, _: Mode) -> Result<bool> {
-    crate::facts::generations::remove_generation(tx, need!(id, "id", u64))
+    crate::generations::remove_generation(tx, need!(id, "id", u64))
 }
 
 /// A changed generation keeps its items, which are rows of their own: it is replaced in place.
@@ -232,14 +232,10 @@ fn store_generation(
     _: Option<&serde_json::Value>,
 ) -> Result<super::super::Outcome> {
     let (id, record) = super::super::history::generation_record(&*tx, row)?;
-    crate::facts::generations::replace_generation(tx, id, record)?;
+    crate::generations::replace_generation(tx, id, &record)?;
     Ok(super::super::Outcome::Imported)
 }
 
 fn remove_item(tx: &mut dyn KvWrite, id: &Identity, _: Mode) -> Result<bool> {
-    crate::facts::generations::remove_item(
-        tx,
-        need!(id, "generation_id", u64),
-        need!(id, "item_key"),
-    )
+    crate::generations::remove_item(tx, need!(id, "generation_id", u64), need!(id, "item_key"))
 }

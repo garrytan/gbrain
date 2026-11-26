@@ -76,6 +76,16 @@ impl Brain {
         self.run(env, move |s| s.read_oldest_waiting_age(&queue))
     }
 
+    /// `countWaitingJobs(excludeFactsAbsorb)`: the waiting jobs.
+    #[napi]
+    pub fn count_waiting_jobs<'env>(
+        &self,
+        env: &'env Env,
+        exclude_facts_absorb: bool,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.count_waiting_jobs(exclude_facts_absorb))
+    }
+
     /// `listStuckActiveJobsByName()`: `{ name, n }` per name.
     #[napi]
     pub fn list_stuck_active_jobs_by_name<'env>(

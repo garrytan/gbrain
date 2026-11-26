@@ -7,7 +7,8 @@
 //! linkRelationshipKeysForPages, staleLinkRelationshipKeys, linkRelationshipKeysForOrigin,
 //! linkRelationshipKeysTouching, applyLinkTemporalRows, writeManualLinkTransitions,
 //! removeManualLinkTransitions, listRelationshipNoteRows, readEntityInboundEdges, edgeValidityCounts,
-//! listPageStatusByRef, listRecordMetadataRows, countSearchVectorRows.
+//! listPageStatusByRef, listRecordMetadataRows, readReferrerGroupRows, readReferrerPageDetails, readReferrerTargetCounts,
+//! countSearchVectorRows.
 //!
 //! The state itself (stints, status, evidence hash) is built by the pure TypeScript builder in
 //! `src/core/link-relationships.ts` on every engine; the store only keeps rows.
@@ -35,11 +36,13 @@ use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::{LinkRecord, in_links, out_links, put_link};
 use crate::pages::{PageRecord, all_pages, next_id, read_page, read_page_by_id};
 use crate::trust::valid_time::AmendmentsQuery;
+use crate::trust::{TrustPolicy, TrustTier};
 use crate::{Store, keys, put_json};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
+use std::rc::Rc;
 
 /// The sub-tag after `q <source> \0` that marks a relationship state row.
 const RELATIONSHIP: u8 = b'R';
@@ -458,7 +461,7 @@ pub struct StaleAssertion {
     pub ended: Option<String>,
 }
 
-/// Contradiction proposal counts. The store keeps no proposals, so they are zero.
+/// Contradiction proposal counts by status, from edge_proposals.rs.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ProposalCounts {
     pub proposed: u64,
@@ -527,6 +530,325 @@ pub struct RecordMetadataRows {
     pub links: Vec<RecordLinkRow>,
 }
 
+/// `readReferrerGroupRows`: the entity card's referrer groups.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ReferrerGroupInput {
+    /// The target pages, `(targetSources[i], targetSlugs[i])`.
+    pub target_sources: Vec<String>,
+    pub target_slugs: Vec<String>,
+    pub referrer_sources: Vec<String>,
+    /// Pack type aliases and the canonical type each maps to, index for index.
+    pub stored_types: Vec<String>,
+    pub canonical_types: Vec<String>,
+    pub exclude_private: Option<PrivacyPolicy>,
+    /// `pageEligibleSql`'s floor over the referrer's stamped tier.
+    pub min_trust: Option<String>,
+    /// Drop a referrer `activationSuppressedSql` flags.
+    pub suppress_flagged: bool,
+    pub include_quarantined: bool,
+    pub per_group: u64,
+}
+
+/// One referring page of `readReferrerGroupRows`.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ReferrerGroupRow {
+    pub id: u64,
+    pub slug: String,
+    pub source_id: String,
+    #[serde(rename = "type")]
+    pub page_type: String,
+    pub canonical_type: String,
+    /// `COALESCE(effective_date, updated_at)` as `to_char` UTC microsecond text.
+    pub d: String,
+    pub gtotal: u64,
+}
+
+/// `readReferrerTargetCounts`: the batched card counts per target index.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ReferrerTargetCountInput {
+    /// The target pages, `(targetSources[k], targetSlugs[k])`, each of index `targetIndexes[k]`.
+    pub target_sources: Vec<String>,
+    pub target_slugs: Vec<String>,
+    pub target_indexes: Vec<i64>,
+    pub referrer_sources: Vec<String>,
+    /// Pack type aliases and the canonical type each maps to, index for index.
+    pub stored_types: Vec<String>,
+    pub canonical_types: Vec<String>,
+    /// The canonical types counted on their own.
+    pub record_types: Vec<String>,
+    pub exclude_private: Option<PrivacyPolicy>,
+    pub min_trust: Option<String>,
+    pub suppress_flagged: bool,
+    pub include_quarantined: bool,
+}
+
+/// One count of `readReferrerTargetCounts`: an index's total (`canonical_type` null) or its total for a record type.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ReferrerTargetCountRow {
+    pub i: i64,
+    pub canonical_type: Option<String>,
+    pub n: u64,
+}
+
+/// `listReferrerTargetSources`: the sources among `sources` holding a live page with this slug.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ReferrerTargetSourcesInput {
+    pub slug: String,
+    pub sources: Vec<String>,
+}
+
+/// `countReferrerRows` and `readReferrerRows`: the referrer page (`get_backlinks` group `page`).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ReferrerRowInput {
+    /// The target pages, `(targetSources[i], targetSlugs[i])`.
+    pub target_sources: Vec<String>,
+    pub target_slugs: Vec<String>,
+    pub referrer_sources: Vec<String>,
+    /// Pack type aliases and the canonical type each maps to, index for index.
+    pub stored_types: Vec<String>,
+    pub canonical_types: Vec<String>,
+    pub exclude_private: Option<PrivacyPolicy>,
+    /// A canonical or stored type the referrer has; none for every type.
+    #[serde(rename = "type")]
+    pub page_type: Option<String>,
+    pub min_trust: Option<String>,
+    pub suppress_flagged: bool,
+    pub include_quarantined: bool,
+    /// `readReferrerRows` only: the row the page continues after, `[d or null, source_id, slug]`.
+    pub cursor: Option<(Option<String>, String, String)>,
+    /// `readReferrerRows` only: the rows kept.
+    pub limit: u64,
+}
+
+/// One referring page of `readReferrerRows`.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ReferrerRow {
+    pub id: u64,
+    pub slug: String,
+    pub source_id: String,
+    #[serde(rename = "type")]
+    pub page_type: String,
+    pub canonical_type: String,
+    /// `COALESCE(effective_date, updated_at)` as `to_char` UTC microsecond text.
+    pub d: String,
+}
+
+/// One distinct `(canonical_type, type)` pair of `readReferrerTypes`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ReferrerTypeRow {
+    pub canonical_type: String,
+    #[serde(rename = "type")]
+    pub page_type: String,
+}
+
+/// `readReferrerRecordCandidates`: the newest referrers of the record types per target index.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ReferrerRecordCandidateInput {
+    /// The target pages, `(targetSources[k], targetSlugs[k])`, each of index `targetIndexes[k]`.
+    pub target_sources: Vec<String>,
+    pub target_slugs: Vec<String>,
+    pub target_indexes: Vec<i64>,
+    pub referrer_sources: Vec<String>,
+    pub stored_types: Vec<String>,
+    pub canonical_types: Vec<String>,
+    /// The canonical types a candidate has.
+    pub record_types: Vec<String>,
+    pub exclude_private: Option<PrivacyPolicy>,
+    pub min_trust: Option<String>,
+    pub suppress_flagged: bool,
+    pub include_quarantined: bool,
+    /// The rows kept per index.
+    pub per_target: u64,
+}
+
+/// One record candidate of `readReferrerRecordCandidates`.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ReferrerRecordCandidateRow {
+    pub i: i64,
+    pub id: u64,
+    pub slug: String,
+    pub source_id: String,
+    pub canonical_type: String,
+    pub d: String,
+}
+
+/// One record page of `readReferrerRecordPages`: its title and date source.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ReferrerRecordPageRow {
+    pub id: u64,
+    pub title: String,
+    pub date_source: String,
+}
+
+/// A referring page with its date (`COALESCE(effective_date, updated_at)`) and canonical type.
+type DatedReferrer = (i64, Rc<PageRecord>, String);
+
+/// Newest first by `(d DESC, source_id, slug)` bytewise.
+fn newest_first(rows: &mut [DatedReferrer]) {
+    rows.sort_by(|a, b| {
+        b.0.cmp(&a.0)
+            .then_with(|| a.1.source_id.cmp(&b.1.source_id))
+            .then_with(|| a.1.slug.cmp(&b.1.slug))
+    });
+}
+
+/// `updated_at` with no effective date, else the effective date's source (`effective_date` when
+/// none is recorded).
+fn date_source(page: &PageRecord) -> String {
+    if page.effective_date_us.is_none() {
+        "updated_at".to_owned()
+    } else {
+        page.effective_date_source
+            .clone()
+            .unwrap_or_else(|| "effective_date".to_owned())
+    }
+}
+
+/// The `typed` CTE's read scope, shared by the referrer reads.
+struct ReferrerScope<'a> {
+    referrer_sources: &'a [String],
+    stored_types: &'a [String],
+    canonical_types: &'a [String],
+    exclude_private: Option<&'a PrivacyPolicy>,
+    trust: TrustPolicy,
+    include_quarantined: bool,
+}
+
+impl ReferrerScope<'_> {
+    /// The referrers of the live, shown targets `(sources[i], slugs[i])`, dated, newest first.
+    fn dated_referrers(
+        &self,
+        read: &dyn KvRead,
+        target_sources: &[String],
+        target_slugs: &[String],
+    ) -> Result<Vec<DatedReferrer>> {
+        let mut pages = Pages::new(read);
+        let mut targets = BTreeSet::new();
+        for (source_id, slug) in target_sources.iter().zip(target_slugs) {
+            targets.extend(self.target(read, source_id, slug)?);
+        }
+        let mut rows: Vec<DatedReferrer> = self
+            .referrers(read, &mut pages, &targets)?
+            .into_iter()
+            .map(|(page, canonical)| {
+                (
+                    page.effective_date_us.unwrap_or(page.updated_at_us),
+                    page,
+                    canonical,
+                )
+            })
+            .collect();
+        newest_first(&mut rows);
+        Ok(rows)
+    }
+
+    /// `tgt`: the live target page's id, unless the policy hides it.
+    fn target(&self, read: &dyn KvRead, source_id: &str, slug: &str) -> Result<Option<u64>> {
+        let Some(target) = live_page(read, source_id, slug)? else {
+            return Ok(None);
+        };
+        if let Some(policy) = self.exclude_private
+            && page_hidden(read, &target, policy)?
+        {
+            return Ok(None);
+        }
+        Ok(Some(target.id))
+    }
+
+    /// `refs` and `typed`: each live page in `referrer_sources` that links to one of `targets` and is
+    /// not one of them, with its canonical type, in id order. A policy leaves out a link whose origin
+    /// page it hides and a hidden referrer; the trust floor, the flagged filter and quarantine apply.
+    fn referrers(
+        &self,
+        read: &dyn KvRead,
+        pages: &mut Pages<'_>,
+        targets: &BTreeSet<u64>,
+    ) -> Result<Vec<(Rc<PageRecord>, String)>> {
+        let mut refs = BTreeSet::new();
+        for target in targets {
+            for link in in_links(read, *target)? {
+                if let Some(policy) = self.exclude_private
+                    && !link_origin_shown(pages, &link, policy)?
+                {
+                    continue;
+                }
+                refs.insert(link.from_page_id);
+            }
+        }
+        let mut out = Vec::new();
+        for id in refs {
+            if targets.contains(&id) {
+                continue;
+            }
+            let Some(page) = pages.get(id)?.filter(|p| live(p)) else {
+                continue;
+            };
+            if !self.referrer_sources.contains(&page.source_id) {
+                continue;
+            }
+            if let Some(policy) = self.exclude_private
+                && page_hidden(read, &page, policy)?
+            {
+                continue;
+            }
+            let tier = TrustTier::stored(page.trust_tier.as_deref());
+            if !self.trust.admits(read, "pages", page.id, tier)? {
+                continue;
+            }
+            if !self.include_quarantined && page.frontmatter.contains_key(QUARANTINE_KEY) {
+                continue;
+            }
+            let canonical = self
+                .stored_types
+                .iter()
+                .position(|t| *t == page.page_type)
+                .and_then(|i| self.canonical_types.get(i).cloned())
+                .unwrap_or_else(|| {
+                    if page.page_type.is_empty() {
+                        "untyped".to_string()
+                    } else {
+                        page.page_type.clone()
+                    }
+                });
+            out.push((page, canonical));
+        }
+        Ok(out)
+    }
+}
+
+/// `readReferrerPageDetails` input: the page ids to read.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ReferrerPageDetailsInput {
+    pub ids: Vec<u64>,
+}
+
+/// One referring page's card details (`readReferrerPageDetails`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ReferrerPageDetailRow {
+    pub id: u64,
+    pub title: String,
+    /// `left(left(coalesce(compiled_truth, truth_lead), BOUNDED_PREFIX_BYTES), 4000)`: the first
+    /// 4000 code points of the body.
+    pub body: Option<String>,
+    /// `updated_at` with no effective date, else the effective date's source (`effective_date`
+    /// when none is recorded).
+    pub date_source: String,
+    pub trust_tier: String,
+    pub write_origin: Option<Value>,
+    /// `activationSuppressedSql('pages', 'pages')`.
+    pub flagged: bool,
+    pub frontmatter: Value,
+}
+
+/// `left(text, n)`: the first `n` code points.
+const REFERRER_BODY_CHARS: usize = 4000;
+
 /// What `countSearchVectorRows` returns.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct SearchVectorCounts {
@@ -588,6 +910,21 @@ fn scan_tag<T: DeserializeOwned>(read: &dyn KvRead, tag: u8) -> Result<Vec<(Vec<
     decode_all(raw)
 }
 
+/// Every transition whose origin is one of `pages`, or whose from page is one when it has no
+/// origin, in id order (`OWNED_ROWS` of belief/state.ts over `link_transitions`).
+pub(crate) fn transitions_owned_by(
+    read: &dyn KvRead,
+    pages: &BTreeSet<u64>,
+) -> Result<Vec<TransitionRecord>> {
+    let mut out: Vec<TransitionRecord> = scan_tag::<TransitionRecord>(read, TRANSITION)?
+        .into_iter()
+        .map(|(_, t)| t)
+        .filter(|t| pages.contains(&t.origin_page_id.unwrap_or(t.from_page_id)))
+        .collect();
+    out.sort_by_key(|t| t.id);
+    Ok(out)
+}
+
 /// The source the relationship's rows are keyed by: its from page's source.
 fn key_source(read: &dyn KvRead, from_page_id: u64) -> Result<Option<String>> {
     Ok(read_page_by_id(read, from_page_id)?.map(|p| p.source_id))
@@ -628,6 +965,14 @@ fn links_of(read: &dyn KvRead, key: &RelationshipKey) -> Result<Vec<LinkRecord>>
     Ok(out_links(read, key.from_page_id)?
         .into_iter()
         .filter(|l| l.to_page_id == key.to_page_id && l.link_type == key.link_type)
+        .collect())
+}
+
+/// Every `link_transitions` row, in every source.
+pub(crate) fn all_transitions(read: &dyn KvRead) -> Result<Vec<TransitionRecord>> {
+    Ok(scan_tag::<TransitionRecord>(read, TRANSITION)?
+        .into_iter()
+        .map(|(_, t)| t)
         .collect())
 }
 
@@ -703,10 +1048,12 @@ pub(crate) fn today(now_us: i64) -> String {
 // Multiranges
 // ---------------------------------------------------------------------------------------------
 
-type DateRange = (Option<String>, Option<String>);
+pub(crate) type DateRange = (Option<String>, Option<String>);
+/// One referrer of a group, before ordering: effective date (us), source id, slug, page id, page type.
+type ReferrerGroupEntry = (i64, String, String, u64, String);
 
 /// Parses a `datemultirange` literal of half-open ranges (`[a,b)`, `(,b)`, `[a,)`, `(,)`).
-fn parse_multirange(text: &str) -> Result<Vec<DateRange>> {
+pub(crate) fn parse_multirange(text: &str) -> Result<Vec<DateRange>> {
     let bad = || invalid(format!("malformed multirange literal: \"{text}\""));
     let inner = text
         .trim()
@@ -1636,8 +1983,8 @@ impl Store {
         Ok(out)
     }
 
-    /// `edgeValidityCounts`: relationship counts by status and the pages that still state an
-    /// ended relationship, newest end first.
+    /// `edgeValidityCounts`: relationship counts by status, the pages that still state an ended
+    /// relationship, newest end first, and the contradiction proposals by status.
     pub fn edge_validity_counts(&self, input: &EdgeValidityInput) -> Result<EdgeValidityCounts> {
         let read = self.read()?;
         let read = &*read;
@@ -1701,6 +2048,7 @@ impl Store {
             ));
         }
         stale.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+        let proposals = crate::edge_proposals::proposal_counts(read, in_scope)?;
         Ok(EdgeValidityCounts {
             by_status: counts
                 .into_iter()
@@ -1711,11 +2059,7 @@ impl Store {
                 .take(input.stale_limit as usize)
                 .map(|(_, _, s)| s)
                 .collect(),
-            proposals: ProposalCounts {
-                proposed: 0,
-                undated: 0,
-                applied: 0,
-            },
+            proposals,
         })
     }
 
@@ -1807,6 +2151,359 @@ impl Store {
         })
     }
 
+    /// `readPageReferenceDate(sourceId, slug)`: the live page's `COALESCE(effective_date,
+    /// updated_at)` as `to_char(.. AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')` prints it, or
+    /// `None` for a missing or soft-deleted page.
+    pub fn read_page_reference_date(&self, source_id: &str, slug: &str) -> Result<Option<String>> {
+        crate::links::no_nul(
+            "readPageReferenceDate",
+            &[("sourceId", source_id), ("slug", slug)],
+        )?;
+        let read = self.read()?;
+        Ok(read_page(&*read, source_id, slug)?
+            .filter(|page| page.deleted_at_us.is_none())
+            .map(|page| iso(page.effective_date_us.unwrap_or(page.updated_at_us))))
+    }
+
+    /// `readReferrerPageDetails`: the title, bounded body, date source, trust fields, flag and
+    /// frontmatter of each page id that exists (soft-deleted pages too, as `id = ANY($1)` reads
+    /// them), once per id, in id order.
+    pub fn read_referrer_page_details(
+        &self,
+        input: &ReferrerPageDetailsInput,
+    ) -> Result<Vec<ReferrerPageDetailRow>> {
+        let read = self.read()?;
+        let read = &*read;
+        let ids: BTreeSet<u64> = input.ids.iter().copied().collect();
+        let mut out = Vec::with_capacity(ids.len());
+        for id in ids {
+            let Some(page) = read_page_by_id(read, id)? else {
+                continue;
+            };
+            let body = match page.compiled_truth.as_deref() {
+                Some(text) => Some(text.to_string()),
+                None => crate::page_body::truth_lead(read, page.id)?,
+            };
+            let tier = TrustTier::stored(page.trust_tier.as_deref());
+            out.push(ReferrerPageDetailRow {
+                id: page.id,
+                body: body.map(|b| {
+                    b.char_indices()
+                        .nth(REFERRER_BODY_CHARS)
+                        .map_or(b.clone(), |(at, _)| b[..at].to_string())
+                }),
+                date_source: date_source(&page),
+                trust_tier: tier.as_str().to_owned(),
+                write_origin: page.write_origin.clone(),
+                flagged: crate::trust::activation_suppressed(read, "pages", page.id, tier)?,
+                frontmatter: Value::Object(page.frontmatter.clone()),
+                title: page.title,
+            });
+        }
+        Ok(out)
+    }
+
+    /// `readReferrerGroupRows`: the live pages in `referrerSources` that link to a live target (other
+    /// than the targets), by canonical type, the newest `perGroup` of each by `(d DESC, source_id,
+    /// slug)` bytewise, each with its group's total; groups by canonical type bytewise. A policy
+    /// leaves out a hidden target, a link whose origin page it hides and a hidden referrer; the trust
+    /// floor, the flagged filter and quarantine apply before the cap.
+    pub fn read_referrer_group_rows(
+        &self,
+        input: &ReferrerGroupInput,
+    ) -> Result<Vec<ReferrerGroupRow>> {
+        let read = self.read()?;
+        let read = &*read;
+        let scope = ReferrerScope {
+            referrer_sources: &input.referrer_sources,
+            stored_types: &input.stored_types,
+            canonical_types: &input.canonical_types,
+            exclude_private: input.exclude_private.as_ref(),
+            trust: TrustPolicy::parse(input.min_trust.as_deref(), input.suppress_flagged)?,
+            include_quarantined: input.include_quarantined,
+        };
+        let mut pages = Pages::new(read);
+        let mut targets = BTreeSet::new();
+        for (source_id, slug) in input.target_sources.iter().zip(&input.target_slugs) {
+            targets.extend(scope.target(read, source_id, slug)?);
+        }
+        let mut groups: BTreeMap<String, Vec<ReferrerGroupEntry>> = BTreeMap::new();
+        for (page, canonical) in scope.referrers(read, &mut pages, &targets)? {
+            let d = page.effective_date_us.unwrap_or(page.updated_at_us);
+            groups.entry(canonical).or_default().push((
+                d,
+                page.source_id.clone(),
+                page.slug.clone(),
+                page.id,
+                page.page_type.clone(),
+            ));
+        }
+        let mut out = Vec::new();
+        for (canonical, mut rows) in groups {
+            rows.sort_by(|a, b| {
+                b.0.cmp(&a.0)
+                    .then_with(|| a.1.cmp(&b.1))
+                    .then_with(|| a.2.cmp(&b.2))
+            });
+            let gtotal = rows.len() as u64;
+            for (d, source_id, slug, id, page_type) in
+                rows.into_iter().take(input.per_group as usize)
+            {
+                out.push(ReferrerGroupRow {
+                    id,
+                    slug,
+                    source_id,
+                    page_type,
+                    canonical_type: canonical.clone(),
+                    d: iso(d),
+                    gtotal,
+                });
+            }
+        }
+        Ok(out)
+    }
+
+    /// `readReferrerTargetCounts`: per target index (in ascending order), the referrers of its live
+    /// pages other than its own pages, as `readReferrerGroupRows` reads them: the total (no canonical
+    /// type), then the total of each canonical type in `recordTypes` that has any, bytewise. An index
+    /// with no referrer has no row.
+    pub fn read_referrer_target_counts(
+        &self,
+        input: &ReferrerTargetCountInput,
+    ) -> Result<Vec<ReferrerTargetCountRow>> {
+        let read = self.read()?;
+        let read = &*read;
+        let scope = ReferrerScope {
+            referrer_sources: &input.referrer_sources,
+            stored_types: &input.stored_types,
+            canonical_types: &input.canonical_types,
+            exclude_private: input.exclude_private.as_ref(),
+            trust: TrustPolicy::parse(input.min_trust.as_deref(), input.suppress_flagged)?,
+            include_quarantined: input.include_quarantined,
+        };
+        let mut pages = Pages::new(read);
+        let mut targets: BTreeMap<i64, BTreeSet<u64>> = BTreeMap::new();
+        for ((source_id, slug), i) in input
+            .target_sources
+            .iter()
+            .zip(&input.target_slugs)
+            .zip(&input.target_indexes)
+        {
+            if let Some(id) = scope.target(read, source_id, slug)? {
+                targets.entry(*i).or_default().insert(id);
+            }
+        }
+        let mut out = Vec::new();
+        for (i, ids) in &targets {
+            let referrers = scope.referrers(read, &mut pages, ids)?;
+            if referrers.is_empty() {
+                continue;
+            }
+            let mut by_type: BTreeMap<&str, u64> = BTreeMap::new();
+            for (_, canonical) in &referrers {
+                if input.record_types.contains(canonical) {
+                    *by_type.entry(canonical.as_str()).or_default() += 1;
+                }
+            }
+            out.push(ReferrerTargetCountRow {
+                i: *i,
+                canonical_type: None,
+                n: referrers.len() as u64,
+            });
+            out.extend(by_type.into_iter().map(|(t, n)| ReferrerTargetCountRow {
+                i: *i,
+                canonical_type: Some(t.to_string()),
+                n,
+            }));
+        }
+        Ok(out)
+    }
+
+    /// `listReferrerTargetSources`: each source in `sources` holding a live page with this slug,
+    /// once, in input order.
+    pub fn list_referrer_target_sources(
+        &self,
+        input: &ReferrerTargetSourcesInput,
+    ) -> Result<Vec<String>> {
+        let read = self.read()?;
+        let read = &*read;
+        let mut out: Vec<String> = Vec::new();
+        for source_id in &input.sources {
+            if !out.contains(source_id) && live_page(read, source_id, &input.slug)?.is_some() {
+                out.push(source_id.clone());
+            }
+        }
+        Ok(out)
+    }
+
+    /// The referrer page's scope and its type-filtered referrers, newest first.
+    fn referrer_page_rows(&self, input: &ReferrerRowInput) -> Result<Vec<DatedReferrer>> {
+        let mut rows = self.referrer_scope_rows(input)?;
+        if let Some(t) = &input.page_type {
+            rows.retain(|(_, page, canonical)| canonical == t || page.page_type == *t);
+        }
+        Ok(rows)
+    }
+
+    /// Every referrer in the referrer page's scope, with no type filter, newest first.
+    fn referrer_scope_rows(&self, input: &ReferrerRowInput) -> Result<Vec<DatedReferrer>> {
+        let read = self.read()?;
+        let read = &*read;
+        let scope = ReferrerScope {
+            referrer_sources: &input.referrer_sources,
+            stored_types: &input.stored_types,
+            canonical_types: &input.canonical_types,
+            exclude_private: input.exclude_private.as_ref(),
+            trust: TrustPolicy::parse(input.min_trust.as_deref(), input.suppress_flagged)?,
+            include_quarantined: input.include_quarantined,
+        };
+        scope.dated_referrers(read, &input.target_sources, &input.target_slugs)
+    }
+
+    /// `readReferrerTypes`: the distinct `(canonical_type, type)` pairs among the referrers of
+    /// `countReferrerRows` with no type filter (`type`, `cursor` and `limit` are ignored), by
+    /// canonical type then stored type bytewise. An untyped referrer's stored type is `""`.
+    pub fn read_referrer_types(&self, input: &ReferrerRowInput) -> Result<Vec<ReferrerTypeRow>> {
+        let pairs: BTreeSet<(String, String)> = self
+            .referrer_scope_rows(input)?
+            .into_iter()
+            .map(|(_, page, canonical)| (canonical, page.page_type.clone()))
+            .collect();
+        Ok(pairs
+            .into_iter()
+            .map(|(canonical_type, page_type)| ReferrerTypeRow {
+                canonical_type,
+                page_type,
+            })
+            .collect())
+    }
+
+    /// `countReferrerRows`: how many referrers `readReferrerRows` pages through, of `type` when set.
+    pub fn count_referrer_rows(&self, input: &ReferrerRowInput) -> Result<u64> {
+        Ok(self.referrer_page_rows(input)?.len() as u64)
+    }
+
+    /// `readReferrerRows`: the referrers of `readReferrerGroupRows` (of `type`, its canonical or stored
+    /// type, when set), newest first by `(d DESC, source_id, slug)` bytewise, after the cursor when
+    /// one is given (a row of the cursor's date and a greater `(source_id, slug)`, or an older row; a
+    /// cursor with no date continues with nothing), at most `limit`. A cursor date that is not
+    /// `to_char` UTC text is refused, as `::timestamptz` refuses it.
+    pub fn read_referrer_rows(&self, input: &ReferrerRowInput) -> Result<Vec<ReferrerRow>> {
+        let after = match &input.cursor {
+            None => None,
+            Some((None, _, _)) => return Ok(Vec::new()),
+            Some((Some(d), source_id, slug)) => {
+                let us = parse_iso(d).ok_or_else(|| {
+                    StoreError::invalid(format!(
+                        "readReferrerRows: the cursor date is not a timestamp: {d:?}"
+                    ))
+                })?;
+                Some((us, source_id.as_str(), slug.as_str()))
+            }
+        };
+        let rows = self.referrer_page_rows(input)?;
+        Ok(rows
+            .into_iter()
+            .filter(|(d, page, _)| match after {
+                None => true,
+                Some((at, source_id, slug)) => {
+                    *d < at
+                        || (*d == at
+                            && (page.source_id.as_str(), page.slug.as_str()) > (source_id, slug))
+                }
+            })
+            .take(input.limit as usize)
+            .map(|(d, page, canonical)| ReferrerRow {
+                id: page.id,
+                slug: page.slug.clone(),
+                source_id: page.source_id.clone(),
+                page_type: page.page_type.clone(),
+                canonical_type: canonical,
+                d: iso(d),
+            })
+            .collect())
+    }
+
+    /// `readReferrerRecordCandidates`: per target index with a live, shown target (ascending), the
+    /// newest `perTarget` of its referrers (as `readReferrerTargetCounts` reads them) whose canonical
+    /// type is in `recordTypes`, by `(d DESC, source_id, slug)` bytewise.
+    pub fn read_referrer_record_candidates(
+        &self,
+        input: &ReferrerRecordCandidateInput,
+    ) -> Result<Vec<ReferrerRecordCandidateRow>> {
+        let read = self.read()?;
+        let read = &*read;
+        let scope = ReferrerScope {
+            referrer_sources: &input.referrer_sources,
+            stored_types: &input.stored_types,
+            canonical_types: &input.canonical_types,
+            exclude_private: input.exclude_private.as_ref(),
+            trust: TrustPolicy::parse(input.min_trust.as_deref(), input.suppress_flagged)?,
+            include_quarantined: input.include_quarantined,
+        };
+        let mut pages = Pages::new(read);
+        let mut targets: BTreeMap<i64, BTreeSet<u64>> = BTreeMap::new();
+        for ((source_id, slug), i) in input
+            .target_sources
+            .iter()
+            .zip(&input.target_slugs)
+            .zip(&input.target_indexes)
+        {
+            if let Some(id) = scope.target(read, source_id, slug)? {
+                targets.entry(*i).or_default().insert(id);
+            }
+        }
+        let mut out = Vec::new();
+        for (i, ids) in &targets {
+            let mut rows: Vec<DatedReferrer> = scope
+                .referrers(read, &mut pages, ids)?
+                .into_iter()
+                .filter(|(_, canonical)| input.record_types.contains(canonical))
+                .map(|(page, canonical)| {
+                    (
+                        page.effective_date_us.unwrap_or(page.updated_at_us),
+                        page,
+                        canonical,
+                    )
+                })
+                .collect();
+            newest_first(&mut rows);
+            out.extend(rows.into_iter().take(input.per_target as usize).map(
+                |(d, page, canonical)| ReferrerRecordCandidateRow {
+                    i: *i,
+                    id: page.id,
+                    slug: page.slug.clone(),
+                    source_id: page.source_id.clone(),
+                    canonical_type: canonical,
+                    d: iso(d),
+                },
+            ));
+        }
+        Ok(out)
+    }
+
+    /// `readReferrerRecordPages`: the title and date source of each page id that exists (soft-deleted
+    /// pages too, as `id = ANY($1)` reads them), once per id, in id order.
+    pub fn read_referrer_record_pages(
+        &self,
+        input: &ReferrerPageDetailsInput,
+    ) -> Result<Vec<ReferrerRecordPageRow>> {
+        let read = self.read()?;
+        let read = &*read;
+        let ids: BTreeSet<u64> = input.ids.iter().copied().collect();
+        let mut out = Vec::with_capacity(ids.len());
+        for id in ids {
+            if let Some(page) = read_page_by_id(read, id)? {
+                out.push(ReferrerRecordPageRow {
+                    id: page.id,
+                    date_source: date_source(&page),
+                    title: page.title,
+                });
+            }
+        }
+        Ok(out)
+    }
+
     /// `listAmendmentsNotApplied`: the live pages with an `amends` link to the page whose relationship
     /// (scope `world` under a policy, else `all`) starts after the edition took effect and on or before the date,
     /// or has no start; each once, with the earliest start, by slug then source bytewise, at most `limit`.
@@ -1873,6 +2570,39 @@ impl Store {
             pages: all_pages(read)?.len() as u64,
             chunks: crate::chunks::read_stats(read)?.chunks,
         })
+    }
+
+    /// `listManualLinkTransitions`: the manual dated statements of the relationships the page
+    /// (in any deletion state) starts, with each target's slug and source, by target source, target
+    /// slug, link type, kind and day (bytewise). The engine copier carries them with the page.
+    pub fn list_manual_link_transitions(&self, source_id: &str, slug: &str) -> Result<Value> {
+        let read = self.read()?;
+        let Some(from) = read_page(&*read, source_id, slug)? else {
+            return Ok(Value::Array(Vec::new()));
+        };
+        let mut prefix = family_prefix(&from.source_id, TRANSITION);
+        prefix.extend_from_slice(&from.id.to_be_bytes());
+        let mut rows = Vec::new();
+        for (_, t) in scan_under::<TransitionRecord>(&*read, &prefix)? {
+            if t.producer != "manual" {
+                continue;
+            }
+            let Some(to) = read_page_by_id(&*read, t.to_page_id)? else {
+                continue;
+            };
+            rows.push((to.source_id, to.slug, t.link_type, t.kind, t.occurred_on));
+        }
+        rows.sort();
+        Ok(Value::Array(
+            rows.into_iter()
+                .map(|(to_source_id, to_slug, link_type, kind, occurred_on)| {
+                    serde_json::json!({
+                        "to_slug": to_slug, "to_source_id": to_source_id, "link_type": link_type,
+                        "kind": kind, "occurred_on": occurred_on,
+                    })
+                })
+                .collect(),
+        ))
     }
 }
 

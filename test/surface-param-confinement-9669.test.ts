@@ -265,7 +265,8 @@ describe('census: every parameter a narrower surface leaves out of an operation 
         if (name in listed.params) continue;
         const companion = def.appliesWith ? { [def.appliesWith]: example(op.params[def.appliesWith]!) } : {};
         reached.clear();
-        const env = envelope(await dispatchToolCall(engine, op.name, { ...companion, [name]: example(def) }, stdio(surface)));
+        const value = surfaces.STARTER_PARAM_VALUES[op.name]?.[name]?.[0] ?? example(def);
+        const env = envelope(await dispatchToolCall(engine, op.name, { ...companion, [name]: value }, stdio(surface)));
         const id = `${op.name}.${name}`;
         if (CALLABLE[op.name]?.[name] !== undefined) {
           if (env.code === CODE && String(env.message).includes(' ' + name)) leaked.push(id + ' (listed callable, refused)');
@@ -393,3 +394,15 @@ for (const kind of testBackends()) {
     });
   });
 }
+
+describe('a starter caller\'s off-surface content_origin', () => {
+  const remember = operations.find(o => o.name === 'remember')!;
+  test('only a value the full surface accepts is refused as off the surface, and the refusal never echoes anything else', () => {
+    expect(surfaces.paramValueOffSurface(remember, { content_origin: 'user_said' }, 'starter')).toMatchObject({ param: 'content_origin', value: 'user_said' });
+    expect(surfaces.paramValueOffSurface(remember, { items: [{ fact: 'x', content_origin: 'user_said' }] }, 'starter')).toMatchObject({ inItem: true });
+    for (const value of ['sk-live-not-a-real-key', 'user', 123, null]) {
+      expect(surfaces.paramValueOffSurface(remember, { content_origin: value }, 'starter')).toBeUndefined();
+      expect(surfaces.paramValueOffSurface(remember, { items: [{ fact: 'x', content_origin: value }] }, 'starter')).toBeUndefined();
+    }
+  });
+});

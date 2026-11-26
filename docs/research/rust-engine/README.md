@@ -15,6 +15,7 @@ re-check a citation after gbrain moves.
 | Repo | Commit | Notes |
 |---|---|---|
 | `garrytan/gbrain` (reference) | `master` `8bbfd0b5e8` | VERSION `0.60.733.0`, read on 2026-11-16 |
+| `garrytan/gbrain` (refresh) | `master` `116d737413` | VERSION `0.60.769.0`, read on 2026-11-24. agent-contract.md, brain-engine.md, cli.md, background-jobs.md, brain-format.md and data/ were refreshed to this commit. Line numbers on facts that did not change stay at `8bbfd0b5e8`. The other maps still describe `8bbfd0b5e8`. |
 | `garrytan/gbrain-evals` (parity oracle) | `main` `cd447b3ae` ("Release v0.10.237") | pins gbrain at `6ce7195b44a0` |
 
 ## Maps

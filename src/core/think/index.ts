@@ -42,9 +42,11 @@ import { deliverEvidence, effectivePlan, resolveEvidencePlan, EVIDENCE_BLOCK_CHA
 import { evidenceTitlesEnabled } from '../search/evidence-date.ts';
 import { startThinkDecide, thinkAbstainResult, type ThinkAbstention } from './decide.ts';
 import { classifyIntent } from './intent.ts';
-import { deriveTrust, type TaintRef } from '../trust/taint.ts';
+import { declareDerivation, deriveTrust, type TaintRef } from '../trust/taint.ts';
 import { withGuestAnswer, type GuestStamp } from '../guests/marker.ts';
 import { publishSinglePage, THINK_SYNTHESIS_KIND } from '../generations/adapters/single-page.ts';
+import { maintenancePreflight, publishMaintenancePage } from '../persistence/prepared-maintenance.ts';
+import { serializeMarkdown } from '../markdown.ts';
 
 /** Anthropic Messages client interface — same shape used by subagent.ts so test stubs can be shared. */
 export interface ThinkLLMClient {
@@ -1143,6 +1145,9 @@ function synthesisSlug(question: string, today: string): string {
  * Synthesis pages are written under `synthesis/<slugified-question>-<date>.md` as a single-item `think_synthesis`
  * generation (GBRA-161 PR 5): bound to the revision the run found before gathering (`persist_base`, else read now), so a
  * page that changed meanwhile is fenced (`generation_fenced`), and the page it replaces is versioned first.
+ * GST-3612: a managed brain publishes the page through the maintenance coordinator (a receipted, revision-bound
+ * `managed_maintenance_page` request at the synthesis's derived tier, database-only like the unmanaged page); a page that
+ * changed meanwhile refuses `revision_conflict`, and a request still publishing throws `write_pending` with its receipt.
  */
 export async function persistSynthesis(
   engine: BrainEngine,
@@ -1175,20 +1180,26 @@ export async function persistSynthesis(
   const base = result.persist_base;
   const expectedRevision = base && base.slug === slug && base.sourceId === sourceId ? base.revision
     : (await engine.readPageSnapshot(slug, { sourceId, includeDeleted: true }))?.revision ?? null;
-  const { pageId } = await publishSinglePage(engine, { kind: THINK_SYNTHESIS_KIND, sourceId, slug, expectedRevision, derivation, page: {
-    title: result.question.slice(0, 200),
+  const title = result.question.slice(0, 200);
+  const frontmatter = {
     type: 'synthesis',
-    compiled_truth: body,
-    frontmatter: {
-      type: 'synthesis',
-      question: result.question,
-      model: result.modelUsed,
-      date: today,
-      pages_gathered: result.pagesGathered,
-      takes_gathered: result.takesGathered,
-      ...(result.persist?.unverified_claims.length ? { unverified_claims: result.persist.unverified_claims.map(c => ({ ...c, sources: ['think evidence'], detected_at: today })) } : {}),
-    },
-  } });
+    question: result.question,
+    model: result.modelUsed,
+    date: today,
+    pages_gathered: result.pagesGathered,
+    takes_gathered: result.takesGathered,
+    ...(result.persist?.unverified_claims.length ? { unverified_claims: result.persist.unverified_claims.map(c => ({ ...c, sources: ['think evidence'], detected_at: today })) } : {}),
+  };
+  const maintenance = await maintenancePreflight(engine, sourceId);
+  let pageId: number | null;
+  if (maintenance) {
+    await publishMaintenancePage(engine, maintenance, slug, serializeMarkdown(frontmatter, body, '', { type: 'synthesis', title, tags: [] }),
+      { expectedRevision, file: false, derivation: declareDerivation(derivation.trust, derivation.inputs) });
+    pageId = (await engine.readPageSnapshot(slug, { sourceId }))?.page.id ?? null;
+  } else {
+    pageId = (await publishSinglePage(engine, { kind: THINK_SYNTHESIS_KIND, sourceId, slug, expectedRevision, derivation,
+      page: { title, type: 'synthesis', compiled_truth: body, frontmatter } })).pageId;
+  }
 
   const persisted = await persistCitations(engine, pageId!, result.citations, scope);
   return { slug, evidenceInserted: persisted.inserted, warnings: persisted.warnings };

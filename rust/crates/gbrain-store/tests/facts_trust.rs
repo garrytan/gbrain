@@ -2,7 +2,7 @@
 
 mod memory_env;
 
-use gbrain_store::facts::saved_match::SavedFactsMatchQuery;
+use gbrain_store::facts::saved_match::{EntityNewestFactsQuery, SavedFactsMatchQuery};
 use gbrain_store::facts::trust::{RelevanceQuery, UncomparableQuery};
 use gbrain_store::facts::{InsertFactArgs, InsertFactsArgs};
 use memory_env::{T0, brain};
@@ -395,4 +395,233 @@ fn saved_facts_match_counts_kept_words_and_lowers_the_bar_for_a_correction() {
     );
     // No kept word matches nothing.
     assert!(saved(&b, &["the", "a"], json!([null, null]), true).is_empty());
+}
+
+#[test]
+fn head_stems_name_the_terms_each_head_matches_by_stem() {
+    let b = brain("facts-trust-head-stems");
+    let heads = ["widget", "running", "acme", "widgets"].map(String::from);
+    let terms = ["widgets", "runs", "zebra", "the"].map(String::from);
+    let rows = b.match_head_stems(&heads, &terms).unwrap();
+    let got: Vec<(String, Vec<u64>)> = rows.into_iter().map(|r| (r.h, r.i)).collect();
+    assert_eq!(
+        got,
+        vec![
+            ("widget".into(), vec![1]),
+            ("running".into(), vec![2]),
+            ("acme".into(), vec![]),
+            ("widgets".into(), vec![1]),
+        ]
+    );
+    assert!(b.match_head_stems(&[], &terms).unwrap().is_empty());
+    assert_eq!(
+        b.match_head_stems(&["a\0b".to_string()], &terms)
+            .unwrap_err()
+            .code,
+        "invalid_argument"
+    );
+}
+
+fn newest(b: &memory_env::Brain, q: Value) -> Vec<Value> {
+    b.read_entity_newest_facts(&args::<EntityNewestFactsQuery>(q))
+        .unwrap()
+}
+
+#[test]
+fn entity_newest_facts_rank_a_future_dated_fact_as_of_when_it_was_written() {
+    let b = brain("facts-trust-entity-newest-future");
+    let put = |rows: Value| {
+        b.insert_facts(&args::<InsertFactsArgs>(
+            json!({ "rows": rows, "sourceId": "default" }),
+        ))
+        .unwrap();
+    };
+    put(json!([
+        { "fact": "future", "source": "s", "entity_slug": "people/a", "valid_from": "2999-01-01T00:00:00.000Z", "visibility": "world" },
+        { "fact": "past", "source": "s", "entity_slug": "people/a", "valid_from": "2027-01-10T00:00:00.000Z", "visibility": "world" },
+    ]));
+    // Written ten days later, dated between the future fact's write time and now.
+    b.clock.advance(10 * DAY);
+    put(json!([
+        { "fact": "recent", "source": "s", "entity_slug": "people/a", "valid_from": "2027-01-20T00:00:00.000Z", "visibility": "world" },
+    ]));
+    let rows = newest(&b, json!({ "sourceId": "default", "slugs": ["people/a"] }));
+    // `future` ranks by its write time (2027-01-15), so it sits between `recent` and `past`, not first.
+    assert_eq!(texts(&rows), ["recent", "future", "past"]);
+}
+
+#[test]
+fn entity_newest_facts_read_the_named_slugs_newest_first_under_the_read_policy() {
+    let b = brain("facts-trust-entity-newest");
+    page(&b, "notes/private", json!({ "visibility": "private" }));
+    let rows = vec![
+        json!({ "fact": "a-old", "source": "s", "entity_slug": "people/a", "valid_from": "2026-01-01T00:00:00.000Z", "visibility": "world" }),
+        json!({ "fact": "a-new", "source": "s", "entity_slug": "people/a", "valid_from": "2026-03-01T00:00:00.000Z", "visibility": "world" }),
+        json!({ "fact": "a-alias", "source": "s", "entity_slug": "a", "valid_from": "2026-02-01T00:00:00.000Z", "visibility": "world" }),
+        json!({ "fact": "b-other", "source": "s", "entity_slug": "people/b", "valid_from": "2026-04-01T00:00:00.000Z", "visibility": "world" }),
+        json!({ "fact": "a-private-fact", "source": "s", "entity_slug": "people/a", "valid_from": "2026-01-15T00:00:00.000Z" }),
+        json!({ "fact": "a-private-page", "source": "s", "entity_slug": "people/a", "source_markdown_slug": "notes/private", "row_num": 1, "valid_from": "2026-01-20T00:00:00.000Z", "visibility": "world" }),
+        json!({ "fact": "a-audit", "source": "cli:extract-conversation-facts:terminal:v2", "entity_slug": "people/a", "visibility": "world" }),
+    ];
+    b.insert_facts(&args::<InsertFactsArgs>(
+        json!({ "rows": rows, "sourceId": "default" }),
+    ))
+    .unwrap();
+    let slugs = json!(["people/a", "a"]);
+    let local = newest(&b, json!({ "sourceId": "default", "slugs": slugs }));
+    assert_eq!(
+        texts(&local),
+        [
+            "a-new",
+            "a-alias",
+            "a-private-page",
+            "a-private-fact",
+            "a-old"
+        ]
+    );
+    assert_eq!(local[0]["valid_from"], json!("2026-03-01 00:00:00+00"));
+    assert_eq!(local[0]["source_id"], json!("default"));
+    assert!(local[0]["fact_fingerprint"].is_string());
+    assert!(local[0].get("matched").is_none());
+    let policy = json!({ "honorAliases": true, "entityPrivacy": true });
+    let remote = newest(
+        &b,
+        json!({ "sourceId": "default", "slugs": slugs, "worldOnly": true, "excludePrivate": policy }),
+    );
+    assert_eq!(texts(&remote), ["a-new", "a-alias", "a-old"]);
+    assert!(newest(&b, json!({ "sourceId": "other", "slugs": slugs })).is_empty());
+    assert!(newest(&b, json!({ "sourceId": "default", "slugs": [] })).is_empty());
+}
+
+#[test]
+fn slot_rows_read_the_active_conversation_rows_of_the_named_slots_oldest_first() {
+    use gbrain_store::facts::recall::SlotArgs;
+    let b = brain("facts-trust-slot-rows");
+    let conv = "cli:extract-conversation-facts";
+    let row = |fact: &str,
+               entity: &str,
+               dimension: Option<&str>,
+               hash: Option<&str>,
+               source: &str,
+               from: &str,
+               extra: Value| {
+        let mut r = json!({ "fact": fact, "source": source, "entity_slug": entity, "dimension": dimension, "value": "v",
+            "value_hash": hash, "valid_from": from, "visibility": "world" });
+        for (k, v) in extra.as_object().unwrap() {
+            r[k] = v.clone();
+        }
+        r
+    };
+    let rows = vec![
+        row(
+            "role-new",
+            "people/a",
+            Some("role"),
+            Some("h2"),
+            conv,
+            "2026-03-01T00:00:00.000Z",
+            json!({}),
+        ),
+        row(
+            "role-old",
+            "people/a",
+            Some("role"),
+            Some("h1"),
+            conv,
+            "2026-01-01T00:00:00.000Z",
+            json!({}),
+        ),
+        row(
+            "expired-by-time",
+            "people/a",
+            Some("role"),
+            Some("h3"),
+            conv,
+            "2026-02-01T00:00:00.000Z",
+            json!({ "valid_until": "2026-02-02T00:00:00.000Z" }),
+        ),
+        row(
+            "no-hash",
+            "people/a",
+            Some("role"),
+            None,
+            conv,
+            "2026-02-02T00:00:00.000Z",
+            json!({}),
+        ),
+        row(
+            "not-conversation",
+            "people/a",
+            Some("role"),
+            Some("h4"),
+            "mcp:remember",
+            "2026-02-03T00:00:00.000Z",
+            json!({}),
+        ),
+        row(
+            "other-dimension",
+            "people/a",
+            Some("employer"),
+            Some("h5"),
+            conv,
+            "2026-02-04T00:00:00.000Z",
+            json!({}),
+        ),
+        row(
+            "other-entity",
+            "people/b",
+            Some("role"),
+            Some("h6"),
+            conv,
+            "2026-02-05T00:00:00.000Z",
+            json!({}),
+        ),
+        row(
+            "withdrawn",
+            "people/a",
+            Some("role"),
+            Some("h7"),
+            conv,
+            "2026-02-06T00:00:00.000Z",
+            json!({ "expired_at": "2026-02-07T00:00:00.000Z" }),
+        ),
+    ];
+    b.insert_facts(&args::<InsertFactsArgs>(
+        json!({ "rows": rows, "sourceId": "default" }),
+    ))
+    .unwrap();
+    let read = |slots: Value, pool: Value| {
+        b.list_slot_rows(&args::<SlotArgs>(json!({ "pool": pool, "slots": slots })))
+            .unwrap()
+    };
+    let slot = |entity: &str, dimension: &str| json!({ "sourceId": "default", "entitySlug": entity, "dimension": dimension });
+    let pool = json!({ "sourceIds": ["default"], "includeExpired": true });
+    // An ended value (valid_until passed) still shapes the window; a withdrawn row, a row without a value hash and a
+    // row of another source kind never do. The rows carry the pool columns and no `similarity`.
+    let got = read(json!([slot("people/a", "role")]), pool.clone());
+    assert_eq!(texts(&got), ["role-old", "expired-by-time", "role-new"]);
+    assert_eq!(got[0]["dimension"], json!("role"));
+    assert_eq!(got[0]["value_hash"], json!("h1"));
+    assert!(got[0].get("similarity").is_none());
+    let two = read(
+        json!([slot("people/a", "employer"), slot("people/b", "role")]),
+        pool.clone(),
+    );
+    assert_eq!(texts(&two), ["other-dimension", "other-entity"]);
+    assert!(read(json!([]), pool.clone()).is_empty());
+    assert!(
+        read(
+            json!([slot("people/a", "role")]),
+            json!({ "sourceIds": ["elsewhere"], "includeExpired": true })
+        )
+        .is_empty()
+    );
+    assert_eq!(
+        b.list_slot_rows(&args::<SlotArgs>(
+            json!({ "pool": pool, "slots": [slot("people/a", "ro\u{0}le")] })
+        ))
+        .unwrap_err()
+        .code,
+        "invalid_argument"
+    );
 }

@@ -226,6 +226,8 @@
       "raw": 1
     },
     "listEnrichCandidates#default": {},
+    "listEnrichCandidates#owner-contact": {},
+    "listEnrichCandidates#owner-contact-no-owner": {},
     "listEnrichCandidates#sourceId": {},
     "listEnrichCandidates#sourceIds+reenrich": {},
     "listEntityKeyRows#after": {},
@@ -443,7 +445,7 @@
     "traversePathsDetailed#out+sourceId+linkType": {},
     "updatePageContextualRetrievalState#default": {},
     "updateSlug#moved": {
-      "raw": 18,
+      "raw": 19,
       "tx": 1
     },
     "updateSlug#noop": {

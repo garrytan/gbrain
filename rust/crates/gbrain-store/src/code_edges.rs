@@ -30,8 +30,9 @@
 //! check of addCodeEdges, the live-endpoint filter of the caller and callee reads, the bare-name
 //! fallback) reads every chunk record once.
 
-use crate::dream::{jsonb, jsonb_check};
+use crate::dream::jsonb_check;
 use crate::error::{CONSTRAINT_VIOLATION, Result, StoreError};
+use crate::jsonb::ordered;
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::no_nul;
 use crate::pages::{PageRecord, next_id, read_page_by_id};
@@ -109,6 +110,7 @@ pub(crate) struct EdgeRecord {
     pub from_symbol_qualified: String,
     pub to_symbol_qualified: String,
     pub edge_type: String,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     pub edge_metadata: Value,
     pub source_id: Option<String>,
     pub created_at_us: i64,
@@ -124,7 +126,7 @@ impl EdgeRecord {
             "from_symbol_qualified": self.from_symbol_qualified,
             "to_symbol_qualified": self.to_symbol_qualified,
             "edge_type": self.edge_type,
-            "edge_metadata": self.edge_metadata,
+            "edge_metadata": crate::jsonb::ordered(&self.edge_metadata),
             "source_id": self.source_id,
             "resolved": self.table == Table::Chunk,
         })
@@ -628,7 +630,7 @@ impl Store {
                         // the shell sends `{}` for a missing value.
                         Value::Null
                     } else {
-                        jsonb(&e.edge_metadata)
+                        ordered(&e.edge_metadata)
                     };
                     let unique = unique_key(table, from, to_chunk, &to_symbol, &edge_type);
                     if tx.get(&unique)?.is_some() {

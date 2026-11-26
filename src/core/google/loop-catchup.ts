@@ -39,6 +39,7 @@ import { NO_EXCLUSION, type LoopsExclusionPolicy } from './loops-exclusion.ts';
 import { muteRecheckThreads } from '../loops/loops-store.ts';
 import { loopsSpendGate } from './loops-spend.ts';
 import type { GmailThreadData, GoogleSourceState, LoopGraceHold } from './types.ts';
+import { isUsageLimit } from './sweep-shared.ts';
 
 export const GRACE_HOLDS_CAP = 2_000;
 export const GRACE_BACKFILL_DAYS = 14;
@@ -352,8 +353,12 @@ export async function runLoopsCatchup(ctx: {
     try {
       thread = await ctx.fetchThread(c.thread_id);
     } catch (e) {
-      ctx.log(`[google] loops catch-up: could not read thread for ${c.slug} (${e instanceof Error ? e.message : String(e)}); retried next sweep`);
       unsettled++;
+      if (isUsageLimit(e)) {
+        ctx.log(`[google] loops catch-up stopped at a usage limit (${e instanceof Error ? e.message : String(e)}); the rest is read on a later sweep`);
+        break;
+      }
+      ctx.log(`[google] loops catch-up: could not read thread for ${c.slug} (${e instanceof Error ? e.message : String(e)}); retried next sweep`);
       continue;
     }
     if (!thread) { await settle(c.slug, c.rev, 'skipped:thread_not_found'); continue; }

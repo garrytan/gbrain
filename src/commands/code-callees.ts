@@ -16,7 +16,7 @@
 
 import type { BrainEngine } from '../core/engine.ts';
 import { errorFor, serializeError } from '../core/errors.ts';
-import { resolveCliCodeScope, positionalArgs, parseFlag, UNRESOLVED_CALL_LABEL } from './code-scope.ts';
+import { resolveCliCodeScope, positionalArgs, parseFlag, parseCodeLimit, UNRESOLVED_CALL_LABEL } from './code-scope.ts';
 import { resolveCodeReadiness, readinessHint } from '../core/code-graph-readiness.ts';
 import { legacyNestedErrorDocument } from '../core/agent-output.ts';
 
@@ -43,7 +43,7 @@ export async function runCodeCallees(engine: BrainEngine, args: string[]): Promi
     }
     process.exit(2);
   }
-  const limit = parseInt(parseFlag(args, '--limit') || '100', 10);
+  const limit = parseCodeLimit(args, 'code-callees', 100, shouldEmitJson(args));
   const { allSources, sourceId, scope, envelopeSourceId } = await resolveCliCodeScope(engine, {
     sourceId: parseFlag(args, '--source'),
     allSources: args.includes('--all-sources'),

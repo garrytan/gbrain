@@ -19,13 +19,14 @@
 //! `createSegmentedPageShell` leaves. Its `body_bytes` lives in the page_body family's private
 //! body state, which this family reads through `page_body::segmented_body_bytes`; a NULL
 //! `body_bytes` fails `body_bytes > 0` as it does in SQL. A page's chunks are served when its
+
 //! `text_projection_revision` equals its `knowledge_revision`, the same test the SQL engines'
 //! served-projection filter makes. See rust/docs/store/chunk_queries.md.
 
 use crate::Store;
 use crate::chunks::{
-    ChunkRecord, SAFE_FENCE_CHUNKER_VERSION, in_live_body, read_chunks, read_segment_view,
-    segmented, visible_chunks,
+    ChunkRecord, DocumentKey, SAFE_FENCE_CHUNKER_VERSION, in_live_body, keyed_chunks, read_chunks,
+    read_segment_view, segmented,
 };
 use crate::error::Result;
 use crate::facts::{OwnerOnlySources, PrivacyPolicy, page_hidden, page_hidden_with};
@@ -37,7 +38,10 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
 
+mod segment_regions;
 mod site_reads;
+pub use segment_regions::SegmentHit;
+pub(crate) use site_reads::Policy as PageReadPolicy;
 pub use site_reads::{
     ChunkReadScope, CodeChunksExistInput, CodeSymbolInput, DeleteChunksExceptInput, FrozenHit,
     FrozenHitsInput, QualifiedNamesInput, UnsealedPagesInput, WithdrawalChunksInput, WithdrawalKey,
@@ -63,8 +67,9 @@ fn has_body(page: &PageRecord, body_bytes: Option<i64>) -> bool {
         || (segmented(page) && body_bytes.is_some_and(|b| b > 0))
 }
 
-/// `getChunkPage(slug, { sourceId, fromIndex, limit, excludePrivate, requireSafeChunks })`. The
-/// TypeScript member resolves the scope to one named source before it calls the store,
+/// `getChunkPage(slug, { sourceId | sourceIds, fromIndex, limit, excludePrivate, requireSafeChunks })`.
+/// The TypeScript member resolves the scope to named sources before it calls the store (`sourceIds`
+/// when it names more than one, else `sourceId`),
 /// `excludePrivate` to the store page policy (`storePagePolicy`), `null` when the read does not
 /// ask for it, and `requireSafeChunks` to `requiresSafeChunks(opts)` (an `excludePrivate` read
 /// asks for safe chunks unless it says otherwise).
@@ -72,6 +77,8 @@ fn has_body(page: &PageRecord, body_bytes: Option<i64>) -> bool {
 #[serde(default, rename_all = "camelCase")]
 pub struct ChunkPageOptions {
     pub source_id: String,
+    /// The sources of a read over several sources; when not empty they replace `source_id`.
+    pub source_ids: Vec<String>,
     pub from_index: f64,
     pub limit: f64,
     pub exclude_private: Option<PrivacyPolicy>,
@@ -194,51 +201,75 @@ impl Store {
     /// soft-deleted page like a live one, and no chunks unless they are served (sealed, or the v153 activation marker). Under
     /// `excludePrivate` a page the page policy hides, and under `requireSafeChunks` a page short of
     /// the chunker-version fence, reads as a page with no chunks, as `chunkReadWhere`'s
-    /// `privatePagesFilterForCaller('p')` and `safeChunksFilter('p')` make it.
+    /// `privatePagesFilterForCaller('p')` and `safeChunksFilter('p')` make it. A scope of several
+    /// sources reads the page of this slug in each: the count is their sum, the range applies to
+    /// each page, and the chunks merge in document order with the source id breaking a tie.
     pub fn get_chunk_page(&self, slug: &str, options: &ChunkPageOptions) -> Result<Value> {
         let read = self.read()?;
-        let empty = json!({ "chunks": [], "total_chunks": 0, "max_chunk_index": Value::Null });
-        let Some(page) =
-            find_in_scope(&*read, slug, &Some(options.source_id.clone()), &None, true)?
-        else {
-            return Ok(empty);
-        };
-        if !served(&page) {
-            return Ok(empty);
-        }
-        if options.require_safe_chunks && !safe_chunks(&page) {
-            return Ok(empty);
-        }
-        if let Some(policy) = &options.exclude_private
-            && page_hidden(&*read, &page, policy)?
-        {
-            return Ok(empty);
-        }
-        // `chunkVisibleFilter` and `chunkDocumentOrder`: the chunks of the live generation in document order. A segmented
-        // page's `chunk_index` is an insertion sequence (retired chunks leave gaps, an insertion lands last), so its range
-        // is over positions in that order and its max index is the visible count less one; an inline page's is the index.
-        let chunks = visible_chunks(&*read, page.id)?;
-        let total = chunks.len();
-        let by_position = chunks.iter().any(|c| c.segment.is_some());
-        let max = if by_position {
-            total.checked_sub(1).map(|last| last as u32)
+        let mut sources = if options.source_ids.is_empty() {
+            vec![options.source_id.clone()]
         } else {
-            chunks.iter().map(|c| c.chunk_index).max()
+            options.source_ids.clone()
+        };
+        let mut seen = std::collections::HashSet::new();
+        sources.retain(|id| seen.insert(id.clone()));
+        // `chunkVisibleFilter` and `chunkDocumentOrder`: the chunks of the live generation in document order.
+        let mut pages: Vec<(String, Vec<(DocumentKey, ChunkRecord)>)> = Vec::new();
+        for source in sources {
+            let Some(page) = find_in_scope(&*read, slug, &Some(source), &None, true)? else {
+                continue;
+            };
+            if !served(&page) || (options.require_safe_chunks && !safe_chunks(&page)) {
+                continue;
+            }
+            if let Some(policy) = &options.exclude_private
+                && page_hidden(&*read, &page, policy)?
+            {
+                continue;
+            }
+            let chunks = keyed_chunks(&*read, page.id, None)?;
+            if !chunks.is_empty() {
+                pages.push((page.source_id.clone(), chunks));
+            }
+        }
+        // A segmented page's `chunk_index` is an insertion sequence (retired chunks leave gaps, an insertion lands
+        // last), so when any page read is segmented the range is over positions in each page's order and the max
+        // index is the largest page's count less one, as the SQL engines' `bool_or(segmented)` makes it; otherwise
+        // it is over the index.
+        let total: usize = pages.iter().map(|(_, chunks)| chunks.len()).sum();
+        let by_position = pages
+            .iter()
+            .any(|(_, chunks)| chunks.iter().any(|(_, c)| c.segment.is_some()));
+        let max = if by_position {
+            pages
+                .iter()
+                .map(|(_, chunks)| chunks.len())
+                .max()
+                .and_then(|most| most.checked_sub(1))
+                .map(|last| last as u32)
+        } else {
+            pages
+                .iter()
+                .flat_map(|(_, chunks)| chunks.iter().map(|(_, c)| c.chunk_index))
+                .max()
         };
         let to = options.from_index + options.limit;
-        let page_chunks: Vec<Value> = chunks
-            .iter()
-            .enumerate()
-            .filter(|(position, c)| {
+        let mut picked: Vec<(DocumentKey, &str, &ChunkRecord)> = Vec::new();
+        for (source, chunks) in &pages {
+            for (position, (key, c)) in chunks.iter().enumerate() {
                 let at = if by_position {
-                    *position as f64
+                    position as f64
                 } else {
                     f64::from(c.chunk_index)
                 };
-                at >= options.from_index && at < to
-            })
-            .map(|(_, c)| c.to_chunk(None))
-            .collect();
+                if at >= options.from_index && at < to {
+                    picked.push((*key, source.as_str(), c));
+                }
+            }
+        }
+        // `ORDER BY chunkDocumentOrder, p.source_id COLLATE "C"`.
+        picked.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(b.1)));
+        let page_chunks: Vec<Value> = picked.iter().map(|(_, _, c)| c.to_chunk(None)).collect();
         Ok(json!({ "chunks": page_chunks, "total_chunks": total, "max_chunk_index": max }))
     }
 
@@ -431,6 +462,7 @@ mod tests {
         // This shell has no body state (`make_shell` only nulls the columns), so its body_bytes is NULL and it is not
         // chunkless-with-content. A published body reads through `page_body::segmented_body_bytes`
         // (test/engine-parity/chunk-page-segmented.test.ts).
+
         let options = ChunklessOptions::default();
         assert_eq!(
             store.count_chunkless_pages_with_content(&options).unwrap(),
@@ -480,6 +512,7 @@ mod tests {
                 "notes/kept",
                 &ChunkPageOptions {
                     source_id: "default".into(),
+                    source_ids: Vec::new(),
                     from_index: 0.0,
                     limit: 10.0,
                     exclude_private: None,

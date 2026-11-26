@@ -53,6 +53,8 @@ export interface WriteGateHoldRowInput {
   payload: Record<string, unknown>;
   write_origin: Record<string, unknown> | null;
   request_id: string | null;
+  /** The page's permanent id when the producer read it before gating; else the page at (source, slug) is looked up in the INSERT. */
+  page_id?: number | null;
 }
 
 /** A hold row. */
@@ -61,6 +63,10 @@ export interface WriteGateHoldRow {
   kind: 'fact' | 'take';
   source_id: string;
   slug: string;
+  /** The page's permanent id; null for a hold no page was tied to (it matches by slug, or by `page_candidates`). */
+  page_id: number | null;
+  /** Pages an upgrade could not choose between; null for every hold a writer recorded. */
+  page_candidates: number[] | null;
   tier: string;
   detector_version: number;
   detector_error: boolean;
@@ -133,27 +139,43 @@ export async function listWriteGateReceiptsFor(exec: LegacyUnscopedRead, targetT
   }));
 }
 
-export async function upsertWriteGateHold(exec: SqlExecutor, input: WriteGateHoldRowInput): Promise<number> {
-  const rows = await exec.executeRaw<{ id: string }>(
-    `INSERT INTO write_gate_holds (kind, source_id, slug, fingerprint, detector_version, tier, reason_families, reasons, detector_error, payload, write_origin, request_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7::text[], $8::text[], $9, $10::text::jsonb, $11::text::jsonb, $12)
-     ON CONFLICT (source_id, slug, fingerprint, detector_version) DO UPDATE
+// The three statements of write-gate-store.ts `recordWriteGateHold`, as the same text master's #10200 sends (each is one literal: $1..$12 are the hold's own
+// values, the last column is the page id or NULL; a reopened hold takes the slug with the payload; the two dedupe keys are disjoint, write-gate-schema.ts).
+const HOLD_BOUND_BY_ID = `INSERT INTO write_gate_holds (kind, source_id, slug, fingerprint, detector_version, tier, reason_families, reasons, detector_error, payload, write_origin, request_id, page_id) SELECT $1::text, $2::text, $3::text, $4::text, $5::integer, $6::text, $7::text[], $8::text[], $9::boolean, $10::text::jsonb, $11::text::jsonb, $12::text, p.id FROM pages p WHERE p.id = $13::bigint AND p.source_id = $2 ON CONFLICT (source_id, page_id, fingerprint, detector_version) WHERE page_id IS NOT NULL DO UPDATE
        SET status = 'held', decided_at = NULL, decided_by = NULL, last_seen_at = now(), seen_count = write_gate_holds.seen_count + 1,
-           tier = EXCLUDED.tier, reason_families = EXCLUDED.reason_families, reasons = EXCLUDED.reasons, payload = EXCLUDED.payload,
+           slug = EXCLUDED.slug, tier = EXCLUDED.tier, reason_families = EXCLUDED.reason_families, reasons = EXCLUDED.reasons, payload = EXCLUDED.payload,
            write_origin = EXCLUDED.write_origin, request_id = COALESCE(EXCLUDED.request_id, write_gate_holds.request_id)
-     RETURNING id::text AS id`,
-    [input.kind, input.source_id, input.slug, input.fingerprint, input.detector_version, input.tier, [...input.reason_families], [...input.reasons],
-      input.detector_error, JSON.stringify(input.payload), input.write_origin ? JSON.stringify(input.write_origin) : null, input.request_id]);
+     RETURNING id::text AS id`;
+const HOLD_BOUND_BY_SLUG = `INSERT INTO write_gate_holds (kind, source_id, slug, fingerprint, detector_version, tier, reason_families, reasons, detector_error, payload, write_origin, request_id, page_id) SELECT $1::text, $2::text, $3::text, $4::text, $5::integer, $6::text, $7::text[], $8::text[], $9::boolean, $10::text::jsonb, $11::text::jsonb, $12::text, p.id FROM pages p WHERE p.source_id = $2 AND p.slug = $3 ON CONFLICT (source_id, page_id, fingerprint, detector_version) WHERE page_id IS NOT NULL DO UPDATE
+       SET status = 'held', decided_at = NULL, decided_by = NULL, last_seen_at = now(), seen_count = write_gate_holds.seen_count + 1,
+           slug = EXCLUDED.slug, tier = EXCLUDED.tier, reason_families = EXCLUDED.reason_families, reasons = EXCLUDED.reasons, payload = EXCLUDED.payload,
+           write_origin = EXCLUDED.write_origin, request_id = COALESCE(EXCLUDED.request_id, write_gate_holds.request_id)
+     RETURNING id::text AS id`;
+const HOLD_UNBOUND = `INSERT INTO write_gate_holds (kind, source_id, slug, fingerprint, detector_version, tier, reason_families, reasons, detector_error, payload, write_origin, request_id, page_id) VALUES ($1::text, $2::text, $3::text, $4::text, $5::integer, $6::text, $7::text[], $8::text[], $9::boolean, $10::text::jsonb, $11::text::jsonb, $12::text, NULL) ON CONFLICT (source_id, slug, fingerprint, detector_version) WHERE page_id IS NULL AND page_candidates IS NULL DO UPDATE
+       SET status = 'held', decided_at = NULL, decided_by = NULL, last_seen_at = now(), seen_count = write_gate_holds.seen_count + 1,
+           slug = EXCLUDED.slug, tier = EXCLUDED.tier, reason_families = EXCLUDED.reason_families, reasons = EXCLUDED.reasons, payload = EXCLUDED.payload,
+           write_origin = EXCLUDED.write_origin, request_id = COALESCE(EXCLUDED.request_id, write_gate_holds.request_id)
+     RETURNING id::text AS id`;
+
+/** The statements of write-gate-store.ts `recordWriteGateHold`, in the same order: bound by the given page id, bound by the page at (source, slug), else unbound. */
+export async function upsertWriteGateHold(exec: SqlExecutor, input: WriteGateHoldRowInput): Promise<number> {
+  const values = [input.kind, input.source_id, input.slug, input.fingerprint, input.detector_version, input.tier, [...input.reason_families], [...input.reasons],
+    input.detector_error, JSON.stringify(input.payload), input.write_origin ? JSON.stringify(input.write_origin) : null, input.request_id];
+  let rows: Array<{ id: string }> = [];
+  if (input.page_id != null) rows = await exec.executeRaw<{ id: string }>(HOLD_BOUND_BY_ID, [...values, input.page_id]);
+  if (!rows.length && input.slug !== '') rows = await exec.executeRaw<{ id: string }>(HOLD_BOUND_BY_SLUG, values);
+  if (!rows.length) rows = await exec.executeRaw<{ id: string }>(HOLD_UNBOUND, values);
   return Number(rows[0]!.id);
 }
 
-const HOLD_SELECT = sqlFragment`SELECT id::text AS id, kind, source_id, slug, tier, detector_version, detector_error, reason_families, reasons, payload, write_origin,
+const HOLD_SELECT = sqlFragment`SELECT id::text AS id, kind, source_id, slug, page_id::text AS page_id, page_candidates::text[] AS page_candidates, tier, detector_version, detector_error, reason_families, reasons, payload, write_origin,
   request_id, status, seen_count, created_at, last_seen_at, decided_at, decided_by
   FROM write_gate_holds`;
 
 function toHoldRow(r: Record<string, unknown>): WriteGateHoldRow {
   return {
-    id: Number(r.id), kind: r.kind as WriteGateHoldRow['kind'], source_id: String(r.source_id), slug: String(r.slug), tier: String(r.tier),
+    id: Number(r.id), kind: r.kind as WriteGateHoldRow['kind'], source_id: String(r.source_id), slug: String(r.slug),
+    page_id: r.page_id == null ? null : Number(r.page_id), page_candidates: (r.page_candidates as string[] | null)?.map(Number) ?? null, tier: String(r.tier),
     detector_version: Number(r.detector_version), detector_error: Boolean(r.detector_error),
     reason_families: (r.reason_families as string[] | null) ?? [], reasons: (r.reasons as string[] | null) ?? [],
     payload: jsonObject(r.payload) ?? {}, write_origin: jsonObject(r.write_origin), request_id: (r.request_id as string | null) ?? null,

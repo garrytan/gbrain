@@ -10,7 +10,7 @@ use crate::error::{
     INVALID_ARGUMENT, INVALID_STATE, PAGE_NOT_FOUND, REVISION_CONFLICT, Result, StoreError,
 };
 use crate::kv::{KvRead, KvWrite, scan_prefix};
-use crate::pages::{PageRecord, ReadScope, find_in_scope, read_page, write_page};
+use crate::pages::{PageRecord, ReadScope, read_page, write_page};
 use crate::sources::DEFAULT_SOURCE;
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
@@ -1002,6 +1002,9 @@ pub(crate) fn visible_chunks(read: &dyn KvRead, page_id: u64) -> Result<Vec<Chun
     ordered_chunks(read, page_id, None)
 }
 
+/// A chunk's place in `chunkDocumentOrder`: `(m.byte_start, cc.local_ordinal, cc.chunk_index)`, NULLs last.
+pub(crate) type DocumentKey = (bool, u64, bool, u32, u32);
+
 /// The page's chunks in document order, filtered by `chunkVisibleFilter` (`live_body` None) or by
 /// `chunkGenerationFilter` (`live_body` Some(page is segmented)).
 fn ordered_chunks(
@@ -1009,28 +1012,41 @@ fn ordered_chunks(
     page_id: u64,
     live_body: Option<bool>,
 ) -> Result<Vec<ChunkRecord>> {
+    Ok(keyed_chunks(read, page_id, live_body)?
+        .into_iter()
+        .map(|(_, chunk)| chunk)
+        .collect())
+}
+
+/// `ordered_chunks` with each chunk's `DocumentKey`, so a read over several pages can merge them in one document order.
+pub(crate) fn keyed_chunks(
+    read: &dyn KvRead,
+    page_id: u64,
+    live_body: Option<bool>,
+) -> Result<Vec<(DocumentKey, ChunkRecord)>> {
     let view = read_segment_view(read, page_id)?;
-    let mut chunks: Vec<ChunkRecord> = read_chunks(read, page_id)?
+    let mut chunks: Vec<(DocumentKey, ChunkRecord)> = read_chunks(read, page_id)?
         .into_iter()
         .filter(|c| match live_body {
             None => c.visible_at(view.generation),
             Some(segmented_page) => in_live_body(c, segmented_page, &view),
         })
+        .map(|c| {
+            let offset = c
+                .segment
+                .and_then(|place| view.offsets.get(&place.occurrence_id).copied());
+            let ordinal = c.segment.map(|place| place.local_ordinal);
+            let key = (
+                offset.is_none(),
+                offset.unwrap_or(0),
+                ordinal.is_none(),
+                ordinal.unwrap_or(0),
+                c.chunk_index,
+            );
+            (key, c)
+        })
         .collect();
-    // ORDER BY m.byte_start, cc.local_ordinal, cc.chunk_index, NULLs last.
-    chunks.sort_by_key(|c| {
-        let offset = c
-            .segment
-            .and_then(|place| view.offsets.get(&place.occurrence_id).copied());
-        let ordinal = c.segment.map(|place| place.local_ordinal);
-        (
-            offset.is_none(),
-            offset.unwrap_or(0),
-            ordinal.is_none(),
-            ordinal.unwrap_or(0),
-            c.chunk_index,
-        )
-    });
+    chunks.sort_by_key(|(key, _)| *key);
     Ok(chunks)
 }
 
@@ -1247,14 +1263,30 @@ pub(crate) fn chunk_rows(
     with_vectors: bool,
     unsealed: bool,
 ) -> Result<Vec<Value>> {
+    Ok(keyed_chunk_rows(read, page, with_vectors, unsealed)?
+        .into_iter()
+        .map(|(_, row)| row)
+        .collect())
+}
+
+/// `chunk_rows` with each row's `DocumentKey`.
+fn keyed_chunk_rows(
+    read: &dyn KvRead,
+    page: &PageRecord,
+    with_vectors: bool,
+    unsealed: bool,
+) -> Result<Vec<(DocumentKey, Value)>> {
     let mut out = Vec::new();
-    for chunk in ordered_chunks(read, page.id, unsealed.then(|| segmented(page)))? {
+    for (key, chunk) in keyed_chunks(read, page.id, unsealed.then(|| segmented(page)))? {
         let stored = if with_vectors && chunk.embed.has_vector() {
             crate::embeddings::read_chunk_vector(read, page.id, chunk.chunk_index)?
         } else {
             None
         };
-        out.push(chunk.to_chunk(stored.as_ref().map(|s| s.vector.as_slice())));
+        out.push((
+            key,
+            chunk.to_chunk(stored.as_ref().map(|s| s.vector.as_slice())),
+        ));
     }
     Ok(out)
 }
@@ -1491,6 +1523,8 @@ impl Store {
     /// delete), reads as no chunks unless `include_unsealed` is set. `include_embedding` returns
     /// each stored vector. `require_safe_chunks` reads no chunks of a page before the
     /// chunker-version fence (`chunker_version >= SAFE_FENCE_CHUNKER_VERSION`; none recorded fails).
+    /// A scope of several sources reads the page of this slug in each, merged in document order
+    /// with the source id (in byte order) breaking a tie, as the SQL engines order them.
     pub fn get_chunks_with(&self, slug: &str, options: &GetChunksOptions) -> Result<Vec<Value>> {
         let read = self.read()?;
         let scope_default = if options.source_id.is_none()
@@ -1500,26 +1534,40 @@ impl Store {
         } else {
             options.source_id.clone()
         };
-        // The slug is matched as written, and a soft-deleted page is read like a live one: PGLite's
-        // chunk read has neither a case fold nor a `deleted_at` filter.
-        let Some(page) = find_in_scope(&*read, slug, &scope_default, &options.source_ids, true)?
-        else {
-            return Ok(Vec::new());
-        };
-        if !options.include_unsealed
-            && page.text_projection_revision.as_deref() != Some(page.knowledge_revision.as_str())
-        {
-            return Ok(Vec::new());
+        let mut sources = crate::pages::scope_sources(&*read, &scope_default, &options.source_ids)?;
+        let mut seen = HashSet::new();
+        sources.retain(|id| seen.insert(id.clone()));
+        let mut rows: Vec<(DocumentKey, String, Value)> = Vec::new();
+        for source in sources {
+            // The slug is matched as written, and a soft-deleted page is read like a live one: PGLite's
+            // chunk read has neither a case fold nor a `deleted_at` filter.
+            let Some(page) = read_page(&*read, &source, slug)? else {
+                continue;
+            };
+            if !options.include_unsealed
+                && page.text_projection_revision.as_deref()
+                    != Some(page.knowledge_revision.as_str())
+            {
+                continue;
+            }
+            if options.require_safe_chunks && !crate::chunk_queries::safe_chunks(&page) {
+                continue;
+            }
+            let rows_of_page = keyed_chunk_rows(
+                &*read,
+                &page,
+                options.include_embedding,
+                options.include_unsealed,
+            )?;
+            rows.extend(
+                rows_of_page
+                    .into_iter()
+                    .map(|(key, row)| (key, page.source_id.clone(), row)),
+            );
         }
-        if options.require_safe_chunks && !crate::chunk_queries::safe_chunks(&page) {
-            return Ok(Vec::new());
-        }
-        chunk_rows(
-            &*read,
-            &page,
-            options.include_embedding,
-            options.include_unsealed,
-        )
+        // `ORDER BY chunkDocumentOrder, p.source_id COLLATE "C"`; the sort is stable and a page's rows are in its order.
+        rows.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+        Ok(rows.into_iter().map(|(_, _, row)| row).collect())
     }
 
     /// `deleteChunks(slug, {sourceId})`: removes the page's chunks. The page stays. When it removed

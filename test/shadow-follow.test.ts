@@ -22,6 +22,7 @@ import { readSeedRecord, writeSeedRecord, type SeedRecord } from '../src/shadow/
 import { shadowBrainKey, shadowDirFor, type ShadowState } from '../src/shadow/state.ts';
 import { fillSeedFixture, seedInto } from './helpers/shadow-seed-fixture.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { defineEvidenceScenarios } from './helpers/shadow-evidence-scenarios.ts';
 import { defineFollowScenarios } from './helpers/shadow-follow-scenarios.ts';
 
 const TARGET = detectAddonTarget();
@@ -117,6 +118,8 @@ describe('a seed written before shadow follow existed', () => {
     primary: () => primary, addon: () => addon, kind: 'pglite',
     tempDir: () => { const dir = mkdtempSync(join(tmpdir(), 'gbrain-shadow-follow-')); dirs.push(dir); return dir; },
   });
+
+  defineEvidenceScenarios({ primary: () => primary, addon: () => addon, addonPath: BUILT, kind: 'pglite' });
 
   test('gbrain engine shadow reconcile runs a full pass through a real child and repairs a changed row', async () => {
     const home = mkdtempSync(join(tmpdir(), 'gbrain-shadow-reconcile-'));

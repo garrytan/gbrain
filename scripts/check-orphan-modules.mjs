@@ -44,7 +44,6 @@ const SELF = 'scripts/check-orphan-modules.mjs';
 const ALLOWLIST = new Map([
   ['src/core/engine-sql/retrieval-coverage.ts', 'held: lands ahead of its caller as a Rust engine landing part; the landing part that wires it in removes this entry'],
   ['src/core/engine-sql/writer-status.ts', 'held: lands ahead of its caller as a Rust engine landing part; the landing part that wires it in removes this entry'],
-  ['src/core/peer-cred.ts', 'held: lands ahead of its caller as a Rust engine landing part; the landing part that wires it in removes this entry'],
   ['src/core/shared-skills/rust-publication.ts', 'held: lands ahead of its caller as a Rust engine landing part; the landing part that wires it in removes this entry'],
   ['src/core/engine-sql/entity-reads.ts', 'held: lands ahead of its caller as a Rust engine landing part; the landing part that wires it in removes this entry'],
   ['src/core/engine-sql/memory-mutation-reads.ts', 'held: lands ahead of its caller as a Rust engine landing part; the landing part that wires it in removes this entry'],
@@ -62,6 +61,7 @@ const ALLOWLIST = new Map([
 const PERMITTED_TEST_ONLY = [
   { path: 'src/core/engine-sql/persistence-admission.ts', reason: 'held: lands ahead of its caller as a Rust engine landing part; the landing part that wires it in removes this entry' },
   { path: 'src/core/bootstrap/template-repo.ts', reason: 'script-reachable' },
+  { path: 'src/core/google/provenance.ts', reason: 'held: Google provenance lister (GST-3849 PR 1) lands ahead of its callers, the per-account purge and eval suppression in the approved Google Workspace plan; the PR that wires the first caller removes this entry' },
   { path: 'src/eval/longmemeval/diagnostics.ts', reason: 'script-reachable' },
   { path: 'src/eval/longmemeval/evidence-brief.ts', reason: 'held: eval-only wave 1 brief builder (10x memory advantage plan A3), loaded by path from gbrain-evals eval/runner/pilot; product wiring is plan item A8, conditional on the A5 pilot' },
   { path: 'src/eval/longmemeval/evidence-packet.ts', reason: 'script-reachable' },

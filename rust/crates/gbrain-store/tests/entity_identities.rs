@@ -236,6 +236,95 @@ fn a_nul_byte_is_refused_before_any_write() {
 }
 
 #[test]
+fn identity_decisions_link_confirmed_members_and_refuse_a_stale_revision() {
+    use gbrain_store::identity_reviews::ApplyDecisions;
+    let b = Brain::new("identity-decisions");
+    b.page("default", "people/alice-example");
+    b.page("other", "people/alice-example");
+    let decision = json!({
+        "decision_id": "00000000000000aa", "verdict": "same",
+        "members": [{"source_id": "default", "slug": "people/alice-example"}, {"source_id": "other", "slug": "people/alice-example"}],
+        "group_id": null, "entity_id": "dedupe/aa", "canonical": {"source_id": "other", "slug": "people/alice-example"},
+        "decided_by": "owner", "decided_at": "2026-11-18T00:00:00Z", "origin": "git", "home_source_id": "default", "git_blob": "b1",
+    });
+    let applied = b
+        .store
+        .apply_identity_decisions(&de::<ApplyDecisions>(json!({ "upsert": [decision] })))
+        .unwrap();
+    assert_eq!(
+        applied,
+        json!({ "upserted": 1, "removed": 0, "linked": 2, "unlinked": 0 })
+    );
+    let read = b.store.list_identity_decisions().unwrap();
+    assert_eq!(
+        read["revision"],
+        json!("00000000000000aa:same:dedupe/aa:git:b1")
+    );
+    assert_eq!(read["pending"], json!([]));
+    assert_eq!(
+        read["decisions"][0]["decided_at"],
+        json!("2026-11-18 00:00:00+00")
+    );
+    let rows = b
+        .store
+        .list_entity_identities(&de::<IdentityFilter>(json!({ "entity_id": "dedupe/aa" })))
+        .unwrap();
+    let canonical: Vec<(Value, Value)> = rows
+        .iter()
+        .map(|r| (r["source_id"].clone(), r["canonical"].clone()))
+        .collect();
+    assert_eq!(
+        canonical,
+        [
+            (json!("other"), json!(true)),
+            (json!("default"), json!(false))
+        ]
+    );
+    // An apply pinned to an older revision writes nothing.
+    let stale = b
+        .store
+        .apply_identity_decisions(&de::<ApplyDecisions>(
+            json!({ "remove": ["00000000000000aa"], "expect_revision": "" }),
+        ))
+        .unwrap();
+    assert_eq!(
+        stale,
+        json!({ "upserted": 0, "removed": 0, "linked": 0, "unlinked": 0, "stale": true })
+    );
+    assert_eq!(
+        b.store.list_identity_decisions().unwrap()["decisions"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    // A hand link is never touched; removing the decision unlinks only its confirmed rows.
+    b.page("default", "people/bob-example");
+    let hand = json!({ "entity_id": "dedupe/aa", "slug": "people/bob-example", "source_id": "default",
+        "confidence": 0.5, "established_by": "manual", "canonical": false });
+    assert!(
+        b.store
+            .link_entity_identity(&de::<IdentityLink>(hand))
+            .unwrap()
+    );
+    let removed = b.store.apply_identity_decisions(&de::<ApplyDecisions>(json!({
+        "remove": ["00000000000000aa"], "expect_revision": "00000000000000aa:same:dedupe/aa:git:b1",
+    }))).unwrap();
+    assert_eq!(
+        removed,
+        json!({ "upserted": 0, "removed": 1, "linked": 0, "unlinked": 2 })
+    );
+    let left = b
+        .store
+        .list_entity_identities(&de::<IdentityFilter>(json!({ "entity_id": "dedupe/aa" })))
+        .unwrap();
+    assert_eq!(
+        left.iter().map(|r| r["slug"].clone()).collect::<Vec<_>>(),
+        [json!("people/bob-example")]
+    );
+}
+
+#[test]
 fn a_non_finite_confidence_is_kept_exactly_and_never_breaks_a_listing() {
     let b = Brain::new("ei-non-finite");
     let values = [
@@ -287,6 +376,64 @@ fn a_non_finite_confidence_is_kept_exactly_and_never_breaks_a_listing() {
         rows[3]["confidence"].as_f64().unwrap().to_bits(),
         (0.1f64 + 0.2).to_bits()
     );
+}
+
+#[test]
+fn identity_decisions_keep_non_empty_evidence_and_sweep_a_broken_sync_link() {
+    use gbrain_store::identity_reviews::ApplyDecisions;
+    let b = Brain::new("identity-decisions-evidence");
+    b.page("default", "companies/acme-example");
+    let decision = |id: &str, evidence: Value| {
+        json!({
+            "decision_id": id, "verdict": "different",
+            "members": [{"source_id": "default", "slug": "companies/acme-example"}],
+            "group_id": null, "entity_id": null, "canonical": null, "decided_by": "owner",
+            "decided_at": null, "origin": "database", "home_source_id": null, "git_blob": null,
+            "evidence": evidence,
+        })
+    };
+    b.store
+        .apply_identity_decisions(&de::<ApplyDecisions>(json!({ "upsert": [
+            decision("01", json!(["linkedin:acme-example"])), decision("02", json!([])), decision("03", Value::Null),
+        ] })))
+        .unwrap();
+    let read = b.store.list_identity_decisions().unwrap();
+    let evidence: Vec<Value> = read["decisions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| d["evidence"].clone())
+        .collect();
+    assert_eq!(
+        evidence,
+        [json!(["linkedin:acme-example"]), Value::Null, Value::Null]
+    );
+    // A company link the sync made ('dedupe:auto') is swept by the apply, as the SQL apply does: a
+    // group left with one member is broken, so the apply removes it along with the decision.
+    let auto = json!({ "entity_id": "company/acme", "slug": "companies/acme-example", "source_id": "default",
+        "confidence": 1.0, "established_by": "dedupe:auto", "canonical": true });
+    assert!(
+        b.store
+            .link_entity_identity(&de::<IdentityLink>(auto))
+            .unwrap()
+    );
+    assert_eq!(
+        b.members(),
+        ["company/acme:default:companies/acme-example:true"]
+    );
+    let applied = b
+        .store
+        .apply_identity_decisions(&de::<ApplyDecisions>(json!({ "remove": ["01"] })))
+        .unwrap();
+    assert_eq!(applied["removed"], json!(1));
+    assert_eq!(
+        b.store.list_identity_decisions().unwrap()["decisions"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert!(b.members().is_empty());
 }
 
 #[test]

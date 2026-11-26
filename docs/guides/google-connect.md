@@ -5,8 +5,10 @@ contacts into your brain and runs the [open-loop engine](open-loops.md) on
 top: *who is waiting on you, what you promised, and the context needed to
 respond.*
 
-Everything is **bring-your-own OAuth**: you create your own (free) Google
-Cloud OAuth client, so you own the app, the quota, and the tokens. Tokens
+Everything is **bring-your-own OAuth**: you use your own (free) Google
+OAuth client, so you own the app, the quota, and the tokens. The quickest way
+to get one is Google's one-click Personal mode
+([below](#personal-mode-one-click-one-client-per-account)). Tokens
 live only in your local credential vault (`~/.gbrain/credentials.json`,
 mode 0600). The connector is read-only — it never writes to your Google
 account (`gmail.readonly`, `calendar.readonly`, `contacts.readonly`).
@@ -31,6 +33,79 @@ gbrain sources add gmail-you --kind google --account you@example.com
 gbrain sync --source gmail-you
 gbrain waiting
 ```
+
+## Personal mode (one click, one client per account)
+
+Google's Personal mode creates a private Google app for one account in one
+click: its own Cloud project, no app review, no "unverified app" screen, no
+sign-out every 7 days, no credit card, and its own daily request allowance.
+
+```bash
+gbrain google setup --personal --account you@example.com
+```
+
+The command prints one link (it opens Google's console signed in as that
+account). Click **Create**, then **Download JSON** on the client it shows, and
+hand the file back:
+
+```bash
+gbrain google connect --personal --account you@example.com --client-json ~/Downloads/client_secret.json
+```
+
+Approve once in the browser (`--paste` works on a headless machine), and
+`setup` carries on with the source and the first sync. Things to know:
+
+- **One client per account.** A Personal-mode client only works for the
+  account that created it; another account signing in with it gets
+  `client_user_mismatch`. Run the command once per mailbox. Each account's
+  client is stored with that account, so connecting one never touches another.
+- **Read-only, always.** gbrain asks for read-only scopes and never merges an
+  earlier grant of the same client. A consent or token refresh that comes back
+  with a scope that can change data (for example `gmail.modify`) is refused
+  with `write_scope_refused` and nothing is stored.
+- **The client is saved only with a finished consent.** Until the consent
+  completes, the client waits in a private 10-minute pending file. A consent
+  that fails, or is approved by the wrong account, leaves the vault exactly as
+  it was, including the account's previous working connection.
+- **Existing connections keep working.** Nothing changes for an account until
+  you reconnect it with `--personal`; its source, pages and sync cursor stay.
+- **Older gbrain refuses the vault.** Once one account has its own client,
+  `credentials.json` is written as version 2. An older gbrain binary then
+  refuses to read it instead of overwriting the per-account clients; upgrade
+  every gbrain that shares this `GBRAIN_HOME`.
+
+### Move an already-consented grant (`--import`)
+
+To move a grant consented on another machine, pipe one JSON object on stdin:
+
+```bash
+gbrain google connect --import - --personal < grant.json
+# grant.json: {"account": "you@example.com", "refresh_token": "...",
+#              "client": { ...the downloaded client JSON... }}
+```
+
+gbrain refreshes the token once, proves the account from Google's answer (the
+ID token, or the OpenID userinfo reply), checks every scope is read-only, and
+only then writes the client and the grant together. Any failure
+(`import_invalid`, `identity_unproven`, `write_scope_refused`, or Google's own
+refusal) writes nothing. Delete `grant.json` afterwards.
+
+### Move a mailbox off the shared gbrain.io relay
+
+A Google source set up through gbrain.io reads mail through the shared relay.
+To read it through your own Google OAuth client instead, connect the account
+first with `gbrain google setup --personal --account you@example.com`, then
+run `gbrain sources set-access <source-id> vault`. The source keeps its id,
+its private-senders list and its ingest tiers, and it keeps syncing Gmail
+only. The command refuses, and changes nothing, until your own connection with
+a refresh token is in place (`not_connected`, `no_refresh_token`) and its
+grant can read every service the source syncs (`scope_missing`); each refusal
+names the setup command to run. On a managed brain it asks first; add `--yes`
+once you agree. Pages already imported stay where they are. The next
+`gbrain sync --source <source-id>` picks up mail from about a day before the
+newest imported message and then follows new mail through Gmail's change
+feed. Add `--json` to see the requested and effective access. Running it
+again on a source already on vault does nothing.
 
 ## One-time Google Cloud setup (~7 minutes)
 
@@ -95,7 +170,9 @@ supported path.
 
 ## Multiple accounts
 
-Repeat `gbrain google connect --account work@yourco.com` per account; each
+With Personal mode, run `gbrain google setup --personal --account <email>`
+once per account (each gets its own client). Otherwise repeat
+`gbrain google connect --account work@yourco.com` per account; each
 account becomes its own source (`gbrain sources add gmail-work --kind google
 --account work@yourco.com`) with independent sync cursors and locks.
 
@@ -122,6 +199,83 @@ Two remedies, independent of each other:
   The next mention pass (`gbrain extract --stale`, or autopilot) re-binds
   pages it reaches; `gbrain doctor --only junk_entity_hubs` names the
   canonical twin of each stub and the next step.
+
+### Link each contact to its person page
+
+`gbrain dedupe link-contacts --source <id>` counts how the source's contact
+pages would link to your person pages and changes nothing. Add `--apply` to
+link them. A contact page joins the identity group of the one person page
+whose email or phone is exactly the same as one of the contact's, the rule
+the Apple Contacts source uses:
+
+- A name alone never links.
+- The same person page copied into other sources (the same slug, the same
+  matching email or phone, and a name that agrees, as with a read-only
+  mirror) counts as one person: the contact links to every copy, with the
+  default source's page as the main one. A copy that carries a different
+  email or phone is another candidate.
+- A contact whose email or phone matches two or more people, or one person
+  whose page has another name (a shared or reused address), stays unlinked
+  and waits for you: `gbrain sync status --source <id>` lists it, and
+  `gbrain dedupe confirm` or `reject` on those people, or
+  `gbrain dedupe decide` ([below](#decide-the-contacts-that-wait)), settles it.
+- `gbrain dedupe reject` on a contact and person pair removes that link,
+  and the pair is never linked again.
+- A contact already in an identity group you made is left as it is.
+- Only identity links are written. No page is edited, so what every caller
+  can read stays the same.
+
+`--apply` also sets `google_contacts.identity_links` on, so each sync links
+the contacts it changed and settles the waiting ones. `--unlink` removes
+every link the source made and sets it off.
+
+#### Decide the contacts that wait
+
+`gbrain dedupe link-contacts --source <id> --json` (without `--apply`) also
+lists every contact that waits, under `reviews`: its `contact_slug`, the
+`reason` (`several_people` or `name_disagrees`) and each candidate as
+`source:slug` with what matched it (`email`, `phone` or both, never the
+address or number); copies of one page in other sources are listed once,
+under `mirrors`, and `link` or `reject` on it covers every copy. Write your choice for each one into a JSON file:
+
+```json
+[
+  { "contact_slug": "people/c-alice", "action": "link", "candidate": "default:people/alice-example" },
+  { "contact_slug": "people/c-bob", "action": "reject" },
+  { "contact_slug": "people/c-carol", "action": "reject", "candidate": "default:people/carol-other" },
+  { "contact_slug": "people/c-dana", "action": "new" },
+  { "contact_slug": "people/c-noreply", "action": "ignore" },
+  { "contact_slug": "people/c-erin", "action": "skip" }
+]
+```
+
+- `link`: the contact and that one candidate are the same person.
+- `new`: none of them; a person page named after the contact is made in the
+  default source and the contact is linked to it.
+- `reject`: a different person from each candidate listed (`candidate`, or a
+  `candidates` list), or from every candidate when none is listed. Each pair
+  is recorded on its own, so a contact that still matches someone you did not
+  reject keeps waiting on that one.
+- `ignore`: not a person (a shared inbox, a service): never linked and never
+  listed again.
+- `skip`: nothing, for now.
+
+```bash
+gbrain dedupe decide --source <id> --file choices.json --dry-run   # what each line would do; writes nothing
+gbrain dedupe decide --source <id> --file choices.json
+```
+
+Every line prints its decision ids and the command that undoes it,
+`gbrain dedupe undo <id>...` (plus `gbrain delete <slug> --source default`
+for a page `new` made). A line that can't apply (an unknown contact, a
+missing candidate, a `link` for a pair you recorded as different, or a
+`reject` that names the contact itself) is set aside with its reason and the
+rest are still recorded. A refused `link` names the `gbrain dedupe undo`
+command that clears the earlier choice; to mark a contact as not a person,
+use `ignore`. The decisions are kept with your other
+duplicate decisions: in `.gbrain/identity/` in the brain's repository, in one
+commit with any page `new` made, so a database rebuilt from git keeps them,
+or in the database on a brain with no repository.
 
 ### What a contact page carries
 
@@ -296,7 +450,11 @@ daily gets no pre-warning before Google kills Testing-mode tokens at day 7;
 publishing to Production is the real fix). Once you publish the app to
 Production, record it by re-running consent —
 `gbrain google connect --reauth <email> --consent-state production` — so the
-weekly-expiry warning stops firing. Less-common flags
+weekly-expiry warning stops firing. `gbrain google status --account <email>`
+shows only that account and the sources that read it. Each account reports its
+`client_mode` (`personal`, `byo` or `relay`) and `grant_generation`; a failed
+refresh probe makes `ok` false and exits 1, and under `--no-probe` each
+account reports `refresh_probe: unprobed`. Less-common flags
 (`--via`, `--no-browser`, `--no-probe`, `--purge-client`, and setup's
 `--history-days` / `--sync-budget-ms`): `gbrain google --help`. The `--via`
 hosted fast path (a verified OAuth client brokering consent, tokens still
@@ -435,6 +593,10 @@ The overrides are `gbrain sources retry-held <id>` and
 
 ## Other ways to reach Google (no gbrain OAuth)
 
+To give a local agent read-only Google tokens, or Google Workspace writes you
+approve, without handing it your refresh token, use the token socket:
+[Google token socket](google-socket.md).
+
 If your stack already holds Google access another way — a Google CLI with its
 own auth store, `gcloud`, or a credential gateway that can mint short-lived
 access tokens — the source can use it directly and skip gbrain's OAuth flow
@@ -548,6 +710,16 @@ attached. The catalog (also emitted as structured JSON with `--json`):
 | `scope_missing` | Connected with narrower `--scopes` than needed, or Google answered a request with "insufficient authentication scopes" | `gbrain google connect --reauth <email>` |
 | `relay_unreachable` / `relay_session_expired` / `claim_already_used` / `relay_disabled` | Hosted fast-path (gbrain.io relay) issues | BYO connect always works: `gbrain google connect` |
 | `not_connected` | No vault entry for the account | `gbrain google connect` |
+| `personal_account_required` | `--personal` without `--account` | Add `--account <email>`: each Personal-mode client is bound to one account |
+| `client_user_mismatch` | A Personal-mode client was used by an account other than the one that created it | Open the Personal-mode link signed in as that account and use its own client |
+| `client_record_mismatch` | The client that minted the account's tokens is no longer on file | `gbrain google connect --reauth <email>` (or `--personal --account <email>`) |
+| `client_swap_refused` | A new client was not saved because its consent did not finish | Finish the consent; the previous client and grant are untouched |
+| `identity_unproven` | Google's answer did not prove the account (bad ID token, userinfo failed, or another account) | Check `--account` and that `openid email` were granted; nothing was written |
+| `write_scope_refused` | Google returned a token that can change data; gbrain only stores read-only tokens | `gbrain google connect --reauth <email>` (asks for read-only scopes only) |
+| `import_invalid` | `connect --import -` input is missing or malformed | Fix the named field; nothing was written |
+| `vault_lock_busy` | Another gbrain process holds the vault lock; gbrain never writes without it | Retry in a few seconds; look for a stuck gbrain process |
+| `vault_generation_changed` | The account was reconnected or disconnected while a token write was in flight; the stale write was dropped | Nothing to do; retry |
+| `refresh_lease_busy` | Another process is refreshing the same grant | Retry in a few seconds |
 | `calendar_unreadable` | Google answered the source's calendar read with HTTP 403 or 404: the account cannot read that calendar | `gbrain google calendars --account <email>`, then `gbrain sources set-calendar <source> <calendar-id>`; see [Unreadable calendar](#unreadable-calendar) |
 | `upstream` | Google returned an unexpected error | Retry; if it persists, run `gbrain google status --json` and file the output |
 | `access_command_failed` | The `--access command` token command exited non-zero, timed out, or printed nothing token-shaped | Run it by hand; it must print a bare token or JSON with `token`/`access_token` |
@@ -581,6 +753,14 @@ upstream failure rather than triggering a re-list.
 
 - Tokens: local vault only, 0600, atomic writes. `sources.config` stores an
   account *pointer*, never a secret. `gbrain creds list` is always redacted.
+- Every stored access token is read-only, checked against Google's own answer
+  (the token response's scopes, or tokeninfo) before it is written.
+- Vault writes take a short lock and fail closed (`vault_lock_busy`) rather
+  than write unlocked; only a lock whose process is gone is taken over. Each
+  account's grant carries a generation that every consent, reconnect and
+  import bumps, and a token write lands only on the generation it read, so a
+  refresh that races a disconnect or reconnect can never write the old grant
+  back. Refreshes of one grant are serialized across processes.
 - Mail, calendar and contact pages and the sync state: 0600 files in 0700
   directories gbrain creates. See [File permissions](#file-permissions).
 - Disconnect: `gbrain google disconnect <email>` removes local tokens; revoke

@@ -11,7 +11,8 @@ What it does on day one:
   job title and Contacts groups (as tags). A contact with no email and no phone gets no page.
 - **Exact links to your people pages.** When a contact's email or phone equals the email or phone on exactly one
   person page in your brain, the contact page is linked to that person (an identity link, the same kind
-  `gbrain dedupe confirm` makes). Names never match: two people called Alice stay two people.
+  `gbrain dedupe confirm` makes). Names never match: two people called Alice stay two people. `gbrain dedupe reject`
+  on a contact and person pair removes the link, and that pair is never linked again.
 - **Facts on that person page.** The matched `people/` page gets rows in its `## Facts` section, one each for the
   company, the job title and every group name (`Company: …`, `Job title: …`, `Contacts group: …`), with the
   source `apple-contacts:<id>`. Phones, emails, the nickname and the contact id stay on the owner-only contact page and

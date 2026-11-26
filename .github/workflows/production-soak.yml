@@ -8,11 +8,17 @@ name: Production soak
 # a transaction-mode PgBouncer, toxiproxy latency, and the production topology
 # (one resident serve owning sync, a jobs worker, CLI and MCP readers, an
 # external writer, put/remember, extract/embed --stale) for N hours.
-# Writes a JSON scoreboard per cell. Every gate is record-only: this workflow
-# never fails on a gate; it fails only when the harness itself breaks.
-# Weekly (Monday 06:17 UTC, ahead of stable promotion) and on dispatch; never in
-# the PR tier. A gate flips to blocking only after #7355 closes and two
-# consecutive soaks are clean on it, as its own reviewed PR.
+# Writes a JSON scoreboard per cell. One gate blocks: after the soak, the
+# search speed gate (scripts/bench/production-soak/search-gate.ts) measures warm
+# search with Postgres JIT on and off on the same brain, with the upgrade rows an
+# old brain keeps parked, and fails the 2 ms cell when p50 reaches 2 s, p95 3 s,
+# or either regresses against the last release that passed it; the daily stable check then
+# never promotes that release (docs/RELEASING.md#search-speed-gate). The 65 ms
+# cell records it only. Every other gate is record-only. A gate flips to
+# blocking (#7355 is closed) after two consecutive soaks are clean on it, as its
+# own reviewed PR.
+# Every release (release.yml dispatches it on the new tag), weekly (Monday
+# 06:17 UTC) and on dispatch; never in the PR tier.
 
 on:
   schedule:
@@ -31,9 +37,14 @@ on:
         description: Injected round-trip latencies in ms, comma-separated
         type: string
         default: '65,2'
+      search_gate_override:
+        description: Why a failing search speed gate on this run is known noise (an issue link); left empty, the gate blocks
+        type: string
+        default: ''
 
 permissions:
   contents: read
+  actions: read  # the search speed gate reads the last release's soak artifact
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -94,6 +105,19 @@ jobs:
           set -o pipefail
           bash scripts/bench/production-soak/run.sh --pages "$PAGES" --rtt-ms "$RTT" --hours "$HOURS" --out "$RUNNER_TEMP/soak-out" --label "rtt$RTT"
           cat "$RUNNER_TEMP/soak-out/scoreboard.md" >> "$GITHUB_STEP_SUMMARY"
+      - name: Search speed gate
+        timeout-minutes: 45
+        # The 65 ms cell records only: a harness error or timeout there must not turn the soak red.
+        continue-on-error: ${{ matrix.rtt != 2 }}
+        env:
+          RTT: ${{ matrix.rtt }}
+          MODE: ${{ matrix.rtt == 2 && 'block' || 'record' }}
+          OVERRIDE: ${{ inputs.search_gate_override }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          export PATH="$HOME/.bun/bin:$PATH"
+          bun scripts/bench/production-soak/search-gate.ts --fixture "$HOME/soak/fixture" --work "$HOME/soak/work" --out "$RUNNER_TEMP/soak-out" \
+            --rtt-ms "$RTT" --mode "$MODE" --baseline-repo "$GITHUB_REPOSITORY" --override "$OVERRIDE"
       - name: Stop the topology
         if: always()
         run: docker rm -f soak-pg soak-bouncer-session soak-bouncer-txn soak-toxiproxy >/dev/null 2>&1 || true

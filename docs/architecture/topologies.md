@@ -558,6 +558,19 @@ neither relaxes anything else:
   between prepare and accept refuses with detail `stale_record`, so prepare
   again from a fresh status. The flag without `--self-transfer` is a usage
   error.
+- <a id="lost-reservation"></a>*Same path and directory, reservation gone (#10260):* when
+  the reservation beside the root was deleted (a file-sync client or a cleanup
+  of the parent folder) and the stamp still names this owner, the recorded root
+  and the directory's exact device, inode and birth time, every verb refuses
+  `recovery_required` with detail `ownership_reservation_missing` and a `fix`.
+  Run the self-transfer **without** `--confirm-relocated-root`: prepare checks
+  the stamp against this brain and the worktree this host owns under the
+  worktree lock, accept re-creates the reservation with the stamp's token
+  (exclusive create, so a racing claimant wins and accept refuses). An active
+  source sync imported from Git whose repository (found from its folder, as sync
+  finds it) no longer holds its last imported commit refuses
+  `checkout_git_missing`, at prepare and again at accept, until the repository
+  is restored.
 - *Recorded path now a symlink to the moved checkout:* run
   `gbrain sources set-path <source> <recorded-or-real-path>` on the owner host.
   When the recorded path resolves to the target and the reservation under the
@@ -611,6 +624,10 @@ home (see [where the coordination lock lives](#coordination-lock)): set
 `GBRAIN_COORDINATION_HOME` to a mounted directory outside the checkout so the lock
 survives recreation, because the default `~/.gbrain/persistence` usually sits on the
 container's ephemeral filesystem.
+A prebuilt brain copied into each container (its checkout and the reservation beside
+it) is a new directory at its recorded path, usually on a new filesystem device: its
+first write refuses with `physical_root_directory_changed`, and the relocated-root
+self-transfer that refusal names re-stamps it once per container.
 
 <a id="coordination-lock"></a>**Where the coordination lock lives.** Every
 canonical checkout has one native lock file that all of its writers share, and

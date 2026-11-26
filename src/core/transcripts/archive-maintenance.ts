@@ -47,7 +47,7 @@ const LOCK_TTL_MIN = 30;
 /** Wall-clock budget of one pass's archive work (forward run plus backfill); conversations not reached wait for the next pass. */
 export const ARCHIVE_MAINTENANCE_BUDGET_MS = 120_000;
 /** Run refusals that end this pass's archive step as a recorded skip the next pass retries (the floor ignores a skip). */
-export const ARCHIVE_RETRYABLE_CODES: readonly string[] = ['archive_run_busy', 'archive_audience_unproven'];
+export const ARCHIVE_RETRYABLE_CODES: readonly string[] = ['archive_run_busy', 'archive_audience_unproven', 'archive_audience_changed'];
 
 export interface ArchiveMaintenanceError { code: string; message: string }
 

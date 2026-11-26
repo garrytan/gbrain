@@ -286,8 +286,12 @@ fn page_purges_keep_the_tombstone_the_purge_count_reads() {
         .unwrap();
     assert_eq!(count, vec![true, false]);
     let read = s.read().unwrap();
-    let mut key = crate::keys::text(crate::keys::FACT, &["default", "h1"]);
-    key.insert(1, 0x0C);
+    // The trunk's fact-family rows end each text part with a NUL (`facts::text_key`).
+    let mut key = vec![crate::keys::FACT, 0x0C];
+    for part in ["default", "h1"] {
+        key.extend_from_slice(part.as_bytes());
+        key.push(0);
+    }
     let stored: Value = crate::get_json(&*read, &key).unwrap().unwrap();
     assert_eq!(
         stored,

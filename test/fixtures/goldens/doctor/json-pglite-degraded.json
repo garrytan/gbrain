@@ -1263,14 +1263,14 @@
         {
           "category": "meta",
           "elapsed_ms": "<volatile>",
-          "message": "1393 column(s) verified against live schema",
+          "message": "1416 column(s) verified against live schema",
           "name": "schema_columns",
           "status": "ok"
         },
         {
           "category": "meta",
           "elapsed_ms": "<volatile>",
-          "message": "All 192 table(s) the applied migrations create exist.",
+          "message": "All 197 table(s) the applied migrations create exist.",
           "name": "schema_missing_tables",
           "status": "ok"
         },
@@ -2879,8 +2879,37 @@
         {
           "category": "brain",
           "elapsed_ms": "<volatile>",
+          "message": "The nightly cycle has not recorded anything it learned yet.",
+          "name": "learning_note",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "delivered_sessions": 0,
+            "last_session": null,
+            "max_sessions": 3,
+            "reason": "not_new_install",
+            "state": "off",
+            "window_ends_at": null
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "The first-session suggestion is off: this brain was not created by a gbrain setup run (an upgrade, a restored or imported brain, or an older install), so there is no first session to suggest for. Details: gbrain onboarding status.",
+          "name": "first_session_suggestion",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "elapsed_ms": "<volatile>",
           "message": "No memory proposals await the owner.",
           "name": "memory_proposals_pending",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "elapsed_ms": "<volatile>",
+          "message": "No agent policy is set; policy_check answers none (gbrain policy init sets one).",
+          "name": "policy_valid",
           "status": "ok"
         },
         {
@@ -3425,6 +3454,17 @@
         {
           "category": "brain",
           "details": {
+            "items": [],
+            "total": 0
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "Every held write is tied to one page, or waits for its page to be created.",
+          "name": "write_gate_hold_ambiguous",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
             "by_source": {},
             "complete": true,
             "items": [],
@@ -3433,12 +3473,11 @@
             "scanned": 0,
             "stranded": {
               "no_page": 0,
-              "page_deleted": 0,
-              "renamed": 0
+              "page_deleted": 0
             }
           },
           "elapsed_ms": "<volatile>",
-          "message": "No held write names a page that is missing (0 held write(s) read).",
+          "message": "No held write is without a live page (0 held write(s) read).",
           "name": "write_gate_holds_stranded",
           "status": "ok"
         },
@@ -3647,6 +3686,19 @@
           "elapsed_ms": "<volatile>",
           "message": "No rename that lost its page identity is waiting for a disposition.",
           "name": "rename_identity_downgrades",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "by_source": [],
+            "count": 0,
+            "docs": "docs/guides/repair.md#slug-spelling",
+            "truncated": false
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "No page is stored under an older spelling of its name.",
+          "name": "legacy_slug_spellings",
           "status": "ok"
         },
         {
@@ -3877,6 +3929,17 @@
           "elapsed_ms": "<volatile>",
           "message": "No likely duplicate person or company pages.",
           "name": "entity_duplicates",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "classes": [],
+            "links": 0
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "No person pages linked or collapsed automatically in the last 24 hours.",
+          "name": "dedupe_auto_links",
           "status": "ok"
         },
         {
@@ -4275,7 +4338,7 @@
           "category": "meta",
           "details": {
             "counts": {
-              "global": 18,
+              "global": 19,
               "mixed": 2,
               "source": 12
             },
@@ -4298,6 +4361,7 @@
               "facts_drain": "global",
               "fence_repair": "global",
               "grade_takes": "global",
+              "learning_derive": "global",
               "lint": "source",
               "orphans": "global",
               "patterns": "mixed",
@@ -4315,7 +4379,7 @@
             }
           },
           "elapsed_ms": "<volatile>",
-          "message": "Phase taxonomy: 12 source-scoped, 18 brain-global, 2 mixed. Source-safe: [lint, backlinks, sync, extract, extract_facts, extract_atoms, recompute_emotional_weight, consolidate, propose_takes, conversation_facts_backfill, enrich_thin, schema-suggest]. Brain-global: [fence_repair, content_repair, unindexed_files, resolve_symbol_edges, synthesize_concepts, grade_takes, calibration_profile, edge_contradictions, claim_conflicts, drift, standing_questions, chronicle, facts_drain, skillopt, embed, orphans, purge, bookkeeping_gc]. Mixed: [synthesize, patterns].",
+          "message": "Phase taxonomy: 12 source-scoped, 19 brain-global, 2 mixed. Source-safe: [lint, backlinks, sync, extract, extract_facts, extract_atoms, recompute_emotional_weight, consolidate, propose_takes, conversation_facts_backfill, enrich_thin, schema-suggest]. Brain-global: [fence_repair, content_repair, unindexed_files, resolve_symbol_edges, synthesize_concepts, grade_takes, calibration_profile, edge_contradictions, claim_conflicts, drift, standing_questions, chronicle, facts_drain, skillopt, embed, orphans, learning_derive, purge, bookkeeping_gc]. Mixed: [synthesize, patterns].",
           "name": "cycle_phase_scope",
           "status": "ok"
         },
@@ -4383,7 +4447,7 @@
         {
           "category": "meta",
           "elapsed_ms": "<volatile>",
-          "message": "Active pack gbrain-base-v2@1.7.0+e142684a is current (no successor declared)",
+          "message": "Active pack gbrain-base-v2@1.7.0+b64f249b is current (no successor declared)",
           "name": "pack_upgrade_available",
           "status": "ok"
         },

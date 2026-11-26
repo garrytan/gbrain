@@ -175,6 +175,7 @@ struct EditionRow {
     reason: Option<String>,
     /// `page_versions.successor_pruned`; false on the current page.
     successor_pruned: bool,
+
     tier: &'static str,
     segmented: bool,
     large: bool,
@@ -345,6 +346,7 @@ impl Store {
             return Ok(json!({ "row": null }));
         };
         let versions = page_versions(&*read, page.id)?;
+
         let mut rows: Vec<EditionRow> = versions
             .iter()
             .enumerate()
@@ -363,6 +365,7 @@ impl Store {
                     .change_reason
                     .clone()
                     .filter(|_| !q.exclude_private || (successor_visible && !v.successor_pruned));
+
                 EditionRow {
                     version_id: Some(v.id),
                     ord: i64::try_from(v.id).unwrap_or(i64::MAX),
@@ -378,6 +381,7 @@ impl Store {
                     visible: !version_hidden(&page, &v.page_type, &v.frontmatter, &q.policy),
                     reason,
                     successor_pruned: v.successor_pruned,
+
                     tier: TrustTier::stored(v.trust_tier.as_deref()).as_str(),
                     segmented,
                     large: !segmented && inline_bytes(v) > q.inline_max_bytes,
@@ -401,6 +405,7 @@ impl Store {
             visible: !page_hidden(&*read, &page, &q.policy)?,
             reason: None,
             successor_pruned: false,
+
             tier: TrustTier::stored(page.trust_tier.as_deref()).as_str(),
             segmented,
             large: false,
@@ -470,6 +475,7 @@ impl Store {
             row.insert("visible".into(), json!(k.visible));
             row.insert("reason".into(), json!(k.reason));
             row.insert("successor_pruned".into(), json!(k.successor_pruned));
+
             row.insert("segmented".into(), json!(k.segmented));
             row.insert(
                 "recorded_since".into(),

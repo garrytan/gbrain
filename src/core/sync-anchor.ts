@@ -397,15 +397,13 @@ function asSlugRootMode(raw: unknown): SlugRootMode | null {
   return raw === 'git-root' || raw === 'source-root' ? raw : null;
 }
 
+export const SLUG_ROOT_MODE_SQL = `SELECT config->>'slug_root_mode' AS mode FROM sources WHERE id = $1`;
 export async function readSlugRootMode(
   engine: BrainEngine,
   sourceId: string | undefined,
 ): Promise<SlugRootMode | null> {
   if (sourceId) {
-    const rows = await engine.executeRaw<{ mode: string | null }>(
-      `SELECT config->>'slug_root_mode' AS mode FROM sources WHERE id = $1`,
-      [sourceId],
-    );
+    const rows = await engine.executeRaw<{ mode: string | null }>(SLUG_ROOT_MODE_SQL, [sourceId]);
     return asSlugRootMode(rows[0]?.mode);
   }
   return asSlugRootMode(await engine.getConfig('sync.slug_root_mode'));

@@ -476,11 +476,11 @@ export const REMEMBER_RETRY = 'gbrain remember "<one fact>" --entity <exact slug
 
 /**
  * Where a remember may save under the mode, decided here and nowhere else: one fact on --entity, the exact slug of a
- * page the member reads, nothing inferred (params.infer_entity is set to false) and no visibility or share label.
+ * page the member reads, nothing inferred (params.infer_entity is set to false), no visibility or share label and no profile facet.
  * Anything else refuses with the retry shape. A later no-entity form would be one branch here.
  */
 async function checkEnforcedRemember(engine: BrainEngine, command: string, ea: EnforcedAccess, source: string, params: Record<string, unknown>): Promise<void> {
-  if (params.items !== undefined || params.visibility !== undefined || params.share !== undefined || params.replaces !== undefined) return refuseEnforced(command, 'arguments_not_allowed', { engine });
+  if (params.items !== undefined || params.visibility !== undefined || params.share !== undefined || params.replaces !== undefined || params.facet !== undefined) return refuseEnforced(command, 'arguments_not_allowed', { engine });
   const entity = typeof params.entity === 'string' ? params.entity.trim() : '';
   if (!entity || entity !== entity.toLowerCase() || /\s/.test(entity) || await memberPageView(engine, ea, source, entity) !== 'readable') {
     return refuseEnforced(command, 'remember_needs_entity', { engine, retry: REMEMBER_RETRY });

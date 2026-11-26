@@ -83,7 +83,7 @@ Data sources ranked by **information density × ease of import**:
 | 2 | Google Contacts | Seeds the people/ directory — names, emails, companies | 10 min | 50-500 |
 | 3 | Google Calendar (90 days) | Meeting history with attendee context | 15 min | 30-90 |
 | 4 | Gmail (recent threads) | Relationship context, active threads, org chart signals | 20 min | 50-200 |
-| 5 | Conversations (ChatGPT/Claude exports) | Your thinking, questions, mental models | 15 min | 10-100 |
+| 5 | Conversations (ChatGPT/Claude exports; coding sessions on this machine come from setup's `setup_history` decision) | Your thinking, questions, mental models | 15 min | 10-100 |
 | 6 | X/Twitter archive | Your public positions, takes, engagement patterns | 20 min | 30-365 |
 | 7 | File archives (Dropbox/Drive/local) | Historical documents, old writing, photos | 30+ min | varies |
 | 8 | Meeting transcripts (Circleback/etc.) | Deep relationship context from recorded calls | 20 min | 10-50 |
@@ -97,7 +97,11 @@ None of them puts a Google token in the agent's hands:
    user's own Google OAuth client for live sync of mail threads, calendar
    events and contacts. Setup imports right away and keeps syncing, so before
    running it ask which account and which services (`--services`) to connect,
-   and say that it starts syncing at once. Tokens live in gbrain's local credential vault (a 0600
+   and say that it starts syncing at once. In the same breath, say that synced
+   mail and calendar text is sent to the configured model provider for
+   open-loop and atom extraction (both on by default), and how to turn that off:
+   `gbrain config set loops.extraction_enabled false` and
+   `gbrain config set cycle.extract_atoms.connector_pages false`. Tokens live in gbrain's local credential vault (a 0600
    file, redacted in listings); the agent only runs CLI commands. See
    `docs/guides/google-connect.md` and `skills/google-loops/SKILL.md`.
 2. **Google Takeout (offline).** A [Google Takeout](https://takeout.google.com)

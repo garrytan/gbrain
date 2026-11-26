@@ -2,7 +2,9 @@
 //!
 //! Members: getTimelineForDate, getSince, getOnThisDay, getLastSeen, upsertEventProjection,
 //! removeTimelineRows, updateTimelineDetails, insertCanonicalTimelineRows. All eight are served.
-//! The writes touch timeline entries only through the core helpers `timeline::{next_entry_id,
+//! The Life Chronicle projection row members (listEventProjectionRows, readEventProjectionId,
+//! deleteEventProjections, restoreEventProjection) are `timeline_queries/event_rows.rs`. The
+//! writes touch timeline entries only through the core helpers `timeline::{next_entry_id,
 //! read_entry, put_entry, insert_entry, remove_entry, recompute_latest}`.
 //!
 //! What the reads mirror (src/core/engine-sql/timeline.ts): every timeline entry joined to its
@@ -50,7 +52,17 @@ use crate::timeline::{
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
+mod event_rows;
+mod repair_reads;
 mod site_reads;
+pub use event_rows::{
+    EventProjectionIdSpec, EventProjectionRestoreSpec, EventProjectionRowsSpec,
+    EventProjectionSlugsSpec,
+};
+pub use repair_reads::{
+    ConnectorFenceInput, TimelineHistoryInput, TimelineMarkupInput, TimelinePageScanInput,
+    TimelineRowRewrite,
+};
 pub use site_reads::{
     DeleteTimelineRowsInput, SegmentedTimelineInput, TimelineOrphanInput, TimelineRowDeletion,
 };
@@ -252,7 +264,7 @@ impl Joined {
             "summary": self.entry.summary,
             "detail": self.entry.detail,
             "source": self.entry.source,
-            "trust_tier": "unknown",
+            "trust_tier": self.entry.trust.tier().as_str(),
             "page_id": self.entry.page_id,
             "page_slug": self.page_slug,
             "event_page_id": self.entry.event_page_id,
@@ -620,34 +632,17 @@ impl Store {
                 return Ok(json!({ "projected": false }));
             };
             let id = next_entry_id(tx)?;
-            let index = event_index_key(event.id, &date);
-            let old = match tx.get(&index)? {
-                Some(value) => indexed_entry(&*tx, &value, event.id, &date)?,
-                None => None,
-            };
-            let new = match &old {
-                Some(old) => TimelineRecord {
-                    page_id: depth.id,
-                    source: source.clone(),
-                    summary: input.summary.clone(),
-                    detail: detail.to_string(),
-                    ..old.clone()
-                },
-                None => TimelineRecord {
-                    id,
-                    page_id: depth.id,
-                    date: date.clone(),
-                    source: source.clone(),
-                    summary: input.summary.clone(),
-                    detail: detail.to_string(),
-                    event_page_id: Some(event.id),
-                    created_at_us: now,
-                    receipt: TimelineReceipt::default(),
-                    trust: TimelineTrust::default(),
-                },
-            };
-            put_entry(tx, old.as_ref(), &new)?;
-            tx.put(&index, &event_index_value(&new))?;
+            event_rows::put_event_projection(
+                tx,
+                depth.id,
+                event.id,
+                &date,
+                &source,
+                &input.summary,
+                detail,
+                id,
+                now,
+            )?;
             Ok(json!({ "projected": true }))
         })
     }

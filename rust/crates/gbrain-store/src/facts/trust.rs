@@ -112,16 +112,16 @@ pub struct UncomparableQuery {
 }
 
 /// `poolWhere` over one row, with the clock read once.
-struct Pool<'a> {
+pub(super) struct Pool<'a> {
     args: &'a PoolArgs,
     trust: TrustPolicy,
-    sources: BTreeSet<&'a str>,
+    pub(super) sources: BTreeSet<&'a str>,
     since: Option<i64>,
     now: i64,
 }
 
 impl<'a> Pool<'a> {
-    fn new(op: &str, args: &'a PoolArgs, now: i64) -> Result<Self> {
+    pub(super) fn new(op: &str, args: &'a PoolArgs, now: i64) -> Result<Self> {
         let mut texts: Vec<(&str, &str)> = args
             .source_ids
             .iter()
@@ -147,7 +147,7 @@ impl<'a> Pool<'a> {
     }
 
     /// The `WHERE` clauses of `poolWhere`, in the order the SQL states them.
-    fn admits(&self, read: &dyn KvRead, row: &FactRecord) -> Result<bool> {
+    pub(super) fn admits(&self, read: &dyn KvRead, row: &FactRecord) -> Result<bool> {
         let a = self.args;
         if !self.sources.contains(row.source_id.as_str()) {
             return Ok(false);
@@ -209,7 +209,7 @@ fn quarantined_provenance(read: &dyn KvRead, row: &FactRecord) -> Result<bool> {
 }
 
 /// `1 - (embedding <=> query)` of a comparable row, else NULL.
-fn similarity(row: &FactRecord, vector: &Option<(Vec<f32>, &VectorArg)>) -> Value {
+pub(super) fn similarity(row: &FactRecord, vector: &Option<(Vec<f32>, &VectorArg)>) -> Value {
     match vector {
         Some((target, arg)) if row.comparable(&arg.model, arg.dims) => {
             let distance = cosine_distance(row.embedding.as_deref().unwrap_or(&[]), target);
@@ -220,7 +220,7 @@ fn similarity(row: &FactRecord, vector: &Option<(Vec<f32>, &VectorArg)>) -> Valu
 }
 
 /// One pool row as the SQL returns it: the sixteen `FACT_POOL_COLUMNS`, then `similarity`.
-fn pool_row(row: &FactRecord, similarity: Value) -> Value {
+pub(super) fn pool_row(row: &FactRecord, similarity: Value) -> Value {
     json!({
         "id": row.id,
         "fact": row.fact,

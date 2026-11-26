@@ -11,8 +11,8 @@ use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
 use gbrain_store::facts::cycle::{
-    BucketQuery, BulkDayQuery, EntityFactsQuery, ExtractionOutcomeQuery, PageCoordinate,
-    WorldFactCount,
+    BucketQuery, BulkDayQuery, EntityFactsQuery, ExtractionOutcomeQuery, FenceRowOccupantQuery,
+    PageCoordinate, PageFileOriginQuery, WorldFactCount,
 };
 
 #[napi]
@@ -55,6 +55,19 @@ impl Brain {
         self.run(env, move |s| {
             let id: f64 = required(id, "readFactSubject id")?;
             s.read_fact_subject(id)
+        })
+    }
+
+    /// `readFactForForget(id)`: resolves forget's target columns, or null for no such row.
+    #[napi]
+    pub fn read_fact_for_forget<'env>(
+        &self,
+        env: &'env Env,
+        id: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let id: f64 = required(id, "readFactForForget id")?;
+            s.read_fact_for_forget(id)
         })
     }
 
@@ -120,6 +133,45 @@ impl Brain {
         self.run(env, move |s| {
             let a: PageCoordinate = required(args, "maxFenceRowNum args")?;
             s.max_fence_row_num(&a)
+        })
+    }
+
+    /// `readPageFileOrigin({ sourceId, slug, includeDeleted })`: resolves `{ source_path, source_uri }`, or null.
+    #[napi]
+    pub fn read_page_file_origin<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: PageFileOriginQuery = required(args, "readPageFileOrigin args")?;
+            s.read_page_file_origin(&a)
+        })
+    }
+
+    /// `readLiveStoredBody({ sourceId, slug })`: resolves `{ compiled_truth, timeline }` of the live page, or null.
+    #[napi]
+    pub fn read_live_stored_body<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: PageCoordinate = required(args, "readLiveStoredBody args")?;
+            s.read_live_stored_body(&a)
+        })
+    }
+
+    /// `readFenceRowOccupant({ sourceId, slug, rowNum })`: resolves the occupying row's id, or null.
+    #[napi]
+    pub fn read_fence_row_occupant<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: FenceRowOccupantQuery = required(args, "readFenceRowOccupant args")?;
+            s.read_fence_row_occupant(&a)
         })
     }
 

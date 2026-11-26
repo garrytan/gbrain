@@ -96,6 +96,15 @@ describe('#6090 schema active --source', () => {
     expect(doc.fix.argv.slice(0, 4)).toEqual(['gbrain', 'sources', 'list', '--json']);
   }, 60_000);
 
+  test('#10201 a configured pack that is not installed is refused with invalid_params and a schema list fix', async () => {
+    const r = await runCli(['schema', 'active', '--json'], { home, cwd: home, env: { GBRAIN_SCHEMA_PACK: 'missing-pack-example' }, timeoutMs: 60_000 });
+    expect(r.exitCode).not.toBe(0);
+    const doc = JSON.parse(r.stdout);
+    expect(doc.code).toBe('invalid_params');
+    expect(doc.message).toContain('missing-pack-example');
+    expect(doc.fix.argv.slice(0, 3)).toEqual(['gbrain', 'schema', 'list']);
+  }, 60_000);
+
   test('an unreadable database is a degraded read: --json exits nonzero, text mode marks it', async () => {
     const json = await runCli(['schema', 'active', '--json'], { home: brokenHome, cwd: brokenHome, env: { GBRAIN_SCHEMA_PACK: undefined }, timeoutMs: 60_000 });
     expect(json.exitCode).not.toBe(0);

@@ -17,6 +17,7 @@ import { buildFollowStatus } from '../../src/shadow/follow-status.ts';
 import type { ShadowState } from '../../src/shadow/state.ts';
 import { hasDatabase } from './helpers.ts';
 import { persistencePostgresTemplate } from '../helpers/persistence-postgres.ts';
+import { defineEvidenceScenarios } from '../helpers/shadow-evidence-scenarios.ts';
 import { defineFollowScenarios } from '../helpers/shadow-follow-scenarios.ts';
 
 const TARGET = detectAddonTarget();
@@ -48,6 +49,8 @@ const dirs: string[] = [];
     primary: () => engine, addon: () => addon, kind: 'postgres',
     tempDir: () => { const dir = mkdtempSync(join(tmpdir(), 'gbrain-shadow-follow-pg-')); dirs.push(dir); return dir; },
   });
+
+  defineEvidenceScenarios({ primary: () => engine, addon: () => addon, addonPath: BUILT, kind: 'postgres' });
 });
 
 // Needs a database but no addon, so the stress gate (which has no addon) still runs it.

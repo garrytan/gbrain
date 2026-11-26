@@ -313,7 +313,7 @@ pub(crate) fn out_links(read: &dyn KvRead, page_id: u64) -> Result<Vec<LinkRecor
 
 /// Reads the links named by an index whose keys end in `link_id` and whose values are the
 /// `from_page_id`, in id order.
-fn indexed_links(read: &dyn KvRead, prefix: &[u8]) -> Result<Vec<LinkRecord>> {
+pub(crate) fn indexed_links(read: &dyn KvRead, prefix: &[u8]) -> Result<Vec<LinkRecord>> {
     let mut refs = Vec::new();
     let mut bad = false;
     scan_prefix(read, prefix, false, &mut |k, v| {
@@ -336,6 +336,11 @@ fn indexed_links(read: &dyn KvRead, prefix: &[u8]) -> Result<Vec<LinkRecord>> {
 /// The links that arrive at `page_id`, in id order.
 pub(crate) fn in_links(read: &dyn KvRead, page_id: u64) -> Result<Vec<LinkRecord>> {
     indexed_links(read, &keys::link_to_prefix(page_id))
+}
+
+/// The links whose `origin_page_id` is `page_id`, in id order.
+pub(crate) fn origin_page_links(read: &dyn KvRead, page_id: u64) -> Result<Vec<LinkRecord>> {
+    indexed_links(read, &keys::link_origin_prefix(page_id))
 }
 
 /// `ON DELETE CASCADE` for `from_page_id` / `to_page_id` and `ON DELETE SET NULL` for

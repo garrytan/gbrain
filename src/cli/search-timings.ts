@@ -4,7 +4,7 @@
  * `_meta.retrieval.timings` MCP callers read) plus the CLI's own phases, and
  * the request's `cost` (search/search-cost.ts).
  *
- * `--json --timings` prints `{ results, timings_ms, cost }`; plain
+ * `--json --timings` prints `{ results, timings_ms, cost, keyword_matches }`; plain
  * `--json` keeps the bare result array (scripts written against it parse it
  * unchanged). Human output gets one stderr line. All times are integer
  * milliseconds on the process clock (`performance.now()` counts from process
@@ -14,6 +14,7 @@
 import type { SearchTimingsMeta } from '../core/search/stage-timings.ts';
 import type { SearchCostMeta } from '../core/search/search-cost.ts';
 import { getCliOptions } from '../core/cli-options.ts';
+import { countUnavailableReason, KEYWORD_COUNT_CAP } from '../core/search/keyword-count-text.ts';
 
 type CliPhase = 'connect' | 'context' | 'remote';
 const phases = new Map<CliPhase, number>();
@@ -67,10 +68,24 @@ export function cliSearchTimings(op: SearchTimingsMeta | undefined): CliSearchTi
   return out as CliSearchTimings;
 }
 
-/** The search/query `--json` document: the bare rows, or `{ results, timings_ms, cost }` under `--timings`. */
+/** #9412: the literal keyword count as data: counted, capped (with the cap) or unavailable; undefined when the call carries no count. */
+export type KeywordMatches = { status: 'counted'; total: number } | { status: 'capped'; total: number; cap: number }
+  | { status: 'unavailable'; stage: 'keyword_count_unavailable'; reason: 'timeout' | 'error' };
+
+export function keywordMatches(meta: Record<string, unknown> | null): KeywordMatches | undefined {
+  if (!meta) return undefined;
+  const keywordMode = meta.match === 'keyword';
+  if (!keywordMode && !('keyword_total' in meta)) return undefined;
+  const total = keywordMode ? meta.total : meta.keyword_total;
+  if (typeof total !== 'number') return { status: 'unavailable', stage: 'keyword_count_unavailable', reason: countUnavailableReason(meta) };
+  return (keywordMode ? meta.total_capped : meta.keyword_total_capped) === true ? { status: 'capped', total, cap: KEYWORD_COUNT_CAP } : { status: 'counted', total };
+}
+
+/** The search/query `--json` document: the bare rows, or `{ results, timings_ms, cost, keyword_matches }` under `--timings`. */
 export function searchTimingsDocument(results: unknown[], meta: Record<string, unknown> | null): unknown {
   if (!getCliOptions().timings) return results;
-  return { results, timings_ms: cliSearchTimings(meta?.timings as SearchTimingsMeta | undefined), cost: (meta?.cost as SearchCostMeta | undefined) ?? { calls: 0 } };
+  const matches = keywordMatches(meta);
+  return { results, timings_ms: cliSearchTimings(meta?.timings as SearchTimingsMeta | undefined), cost: (meta?.cost as SearchCostMeta | undefined) ?? { calls: 0 }, ...(matches ? { keyword_matches: matches } : {}) };
 }
 
 /** The human `--timings` stderr line; empty without `--timings`. */

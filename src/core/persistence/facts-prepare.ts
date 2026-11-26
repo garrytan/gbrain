@@ -224,7 +224,7 @@ export async function prepareManagedFactsMutation(engine: BrainEngine, row: Writ
     if (shadow) { wouldDedupSamePage++; warnSamePageShadow(fact.source_session ?? null, shadow.id, shadow.score); }
     const supersedes = p.supersede === true && decision.status === 'superseded' ? decision.candidate! : undefined;
     if (decision.candidate && !supersedes) { entries.push({ fact, duplicateId: decision.candidate.id }); continue; }
-    const gate = taint ? decideFactWrite(fact, { sourceId: row.source_id, slug: row.slug, payload: { ...fact, embedding: null },
+    const gate = taint ? decideFactWrite(fact, { sourceId: row.source_id, slug: row.slug, pageId: row.page_id, payload: { ...fact, embedding: null },
       input: derivedGateInput(taint.trust, row.id), cfg: gateCfg! }) : undefined;
     if (gate && gate.action !== 'insert') { blocked.push(gate); continue; }
     const rowNum = fact.entity_slug !== null && !fallback(fact) || await holdable(fact) ? nextRow++ : undefined;

@@ -1990,6 +1990,28 @@
         ],
         "flagOnScopes": []
       },
+      "listEnrichCandidates#owner-contact": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listEnrichCandidates#owner-contact-no-owner": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listEnrichCandidates#sourceId": {
         "flagOffLanes": [
           "pool"
@@ -4161,7 +4183,6 @@
         "keywordBoundedRead": "direct",
         "keywordStatementTimeoutSetting": "none",
         "linkRead": "none",
-        "linkTemporal": "none",
         "listAccessPolicySourceIds": "none",
         "listAccessTokens": "none",
         "listActiveAccessMembers": "none",

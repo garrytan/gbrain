@@ -489,6 +489,8 @@ Run `gbrain doctor --alert --json`. Exit 0: report nothing. Exit 17: report each
 `alert.items` entry with its fix. Exit 18: report only when
 `alert.consecutive_unknown` is 2 or more. Never alert on `health_score`.
 
+When the session-start context carries the nightly-learning line, offer the user the `learned` note; keep or undo items only on their answer (`learned_keep`, `learned_undo`).
+
 ### Weekly maintenance
 
 Refresh embeddings for chunks that have none yet, with the same consent steps

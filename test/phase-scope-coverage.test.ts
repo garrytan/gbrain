@@ -54,8 +54,9 @@ describe('PHASE_SCOPE coverage', () => {
     // questions adds 'standing_questions' for 27.
     // #6188 adds 'fence_repair' for 28; #6377 adds 'content_repair' for 29; #6865 adds 'unindexed_files' for 30.
     // GBRA-216 adds 'claim_conflicts' for 31; GBRA-438 splits 'bookkeeping_gc' out of purge for 32.
-    expect(ALL_PHASES.length).toBe(32);
-    expect(Object.keys(PHASE_SCOPE).length).toBe(32);
+    // Nightly learning PR 1 adds 'learning_derive' for 33.
+    expect(ALL_PHASES.length).toBe(33);
+    expect(Object.keys(PHASE_SCOPE).length).toBe(33);
   });
 
   test('embed remains global (the headline brain-wide phase)', () => {

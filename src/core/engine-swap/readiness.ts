@@ -7,6 +7,7 @@
  * D23 (the maintainer's C1 ruling of 2026-11-19) makes the speed bar gate only turning Rust on by default, not the
  * opt-in swap.
  */
+import { DEFAULT_SHADOW_MIN_DAYS } from './policy.ts';
 import type { SwapRefusalReason } from './refusals.ts';
 
 /** The fields S5a reads; S3 owns the document. Counts are epoch-scoped totals unless the name says otherwise. */
@@ -31,6 +32,8 @@ export interface ShadowStatus {
     unexplained_difference?: number;
     uncomparable?: number;
     capability_missing?: number;
+    /** Sampled writes outside the page and link pilot, by family (shadow/write-compare.ts). */
+    capability_missing_by_family?: Record<string, number>;
   };
   fingerprints?: {
     checked_rows?: number;
@@ -55,7 +58,13 @@ export interface ShadowStatus {
   privacy_diverged?: number;
   bench?: { pairs?: number; rust_no_worse?: boolean; filtered_vector_margin_met?: boolean; losses?: string[] };
   child?: { panics?: number; faults?: number };
-  drills?: { backup_restore_passed?: boolean; eval_gates_e1_e3?: boolean };
+  drills?: {
+    backup_restore_passed?: boolean;
+    eval_gates_e1_e3?: boolean;
+    /** Why a half is not a pass (codes from src/shadow/drill-status.ts); printed in the criterion's detail. */
+    backup_reason?: string;
+    eval_gates_reason?: string;
+  };
   eligibility?: {
     /** Writer hosts seen by durable writer observations in the last 7 days; null when no observation table exists. */
     writer_hosts_7d?: number | null;
@@ -86,13 +95,21 @@ export interface ReadinessVerdict {
   missing_fields: string[];
 }
 
-export const MIN_SHADOW_DAYS = 14;
+/** Criterion 1's minimum shadow duration: the readiness policy's default (policy.ts, frozen for the Dec 1 swap). */
+export const MIN_SHADOW_DAYS = DEFAULT_SHADOW_MIN_DAYS;
 export const MAX_LAG_P99_MS = 60_000;
 export const MIN_CLEAN_RECONCILES = 3;
 export const MIN_TOTAL_READS = 10_000;
 export const MIN_WRITE_COMPARISONS = 1_000;
 export const MIN_VECTOR_RECALL = 0.98;
 export const MIN_BENCH_PAIRS = 100;
+
+/** What a criterion 5 pass covers, said wherever write comparisons are shown (the shadow status line, this report). */
+export const WRITE_COVERAGE_LIMIT = 'a criterion 5 pass covers page and link writes only';
+/** And on which brains: a PGLite brain's single connection cannot bound the read a sampled write waits for, so it samples no writes and criterion 5 stays missing. */
+export const WRITE_PGLITE_LIMIT = 'PGLite brains record no write comparisons';
+/** And by whom: only the shadow child that owns the Rust store records; a client child adds no evidence and can never make criterion 5 pass. */
+export const WRITE_CLIENT_LIMIT = 'client shadow children record no write comparisons';
 
 const DAY_MS = 86_400_000;
 
@@ -106,18 +123,29 @@ class Reader {
   constructor(private readonly doc: ShadowStatus | null) {}
   /** The value at `path`, or undefined (recorded as missing) when it is absent or not of the expected kind. */
   get<T>(path: string, ok: (v: unknown) => boolean): T | undefined {
+    const cur = this.peek<unknown>(path);
+    if (cur === undefined || cur === null || !ok(cur)) { if (!this.missing.includes(path)) this.missing.push(path); return undefined; }
+    return cur as T;
+  }
+  /** The value at `path` or undefined, never recorded as missing (a field that only adds detail). */
+  peek<T>(path: string): T | undefined {
     let cur: unknown = this.doc;
     for (const key of path.split('.')) {
       // Own data properties only: an inherited or accessor key (e.g. __proto__) is never evidence.
       cur = cur !== null && typeof cur === 'object' ? Object.getOwnPropertyDescriptor(cur, key)?.value : undefined;
       if (cur === undefined) break;
     }
-    if (cur === undefined || cur === null || !ok(cur)) { if (!this.missing.includes(path)) this.missing.push(path); return undefined; }
-    return cur as T;
+    return cur as T | undefined;
   }
   n(path: string): number | undefined { return this.get<number>(path, num); }
   b(path: string): boolean | undefined { return this.get<boolean>(path, v => typeof v === 'boolean'); }
   s(path: string): string | undefined { return this.get<string>(path, v => typeof v === 'string' && v.length > 0); }
+  /** An optional text field: its value, or undefined without recording it as missing. */
+  optional(path: string): string | undefined {
+    let cur: unknown = this.doc;
+    for (const key of path.split('.')) cur = cur !== null && typeof cur === 'object' ? Object.getOwnPropertyDescriptor(cur, key)?.value : undefined;
+    return typeof cur === 'string' ? cur : undefined;
+  }
 }
 
 function missingCheck(fields: string[]): Check { return { state: 'missing', detail: `no evidence: ${fields.join(', ')}` }; }
@@ -205,7 +233,7 @@ function searchArms(r: Reader): Check {
 }
 
 function writeComparisons(r: Reader): Check {
-  return guarded(r, () => {
+  const out = guarded(r, () => {
     const state = r.s('write_comparisons.state');
     const comparable = r.n('write_comparisons.comparable');
     const unexplained = r.n('write_comparisons.unexplained_difference');
@@ -217,6 +245,10 @@ function writeComparisons(r: Reader): Check {
     if (unexplained > 0) fails.push(`${unexplained} unexplained differences`);
     return fails.length ? { state: 'fail', detail: fails.join('; ') } : { state: 'pass', detail: `${comparable} comparable, zero unexplained` };
   });
+  // The coverage limit rides on every outcome. Only page and link writes are compared; every other write family is capability_missing.
+  const named = Object.entries(r.peek<Record<string, number>>('write_comparisons.capability_missing_by_family') ?? {}).filter(([, n]) => num(n) && n > 0).map(([f, n]) => `${f} ${n}`);
+  const limit = `${WRITE_COVERAGE_LIMIT}; ${WRITE_PGLITE_LIMIT}; ${WRITE_CLIENT_LIMIT}; every other write family is capability_missing${named.length ? ` (sampled so far: ${named.join(', ')})` : ''}`;
+  return { ...out, detail: out.detail ? `${out.detail}; ${limit}` : limit };
 }
 
 function fingerprintsAndAllocators(r: Reader): Check {
@@ -245,12 +277,17 @@ function speed(r: Reader): Check {
     const i = r.missing.indexOf(p); if (i >= 0) r.missing.splice(i, 1);
   }
   if (pairs === undefined || noWorse === undefined) return { state: 'reported', detail: 'not measured yet (reported, not gating: D23)' };
-  const parts = [`${pairs} paired samples`, noWorse ? 'Rust no worse on every class' : 'Rust slower on at least one class'];
+  // A loss line that says "not measured" is a gap in the evidence, not a slowdown: say "slower" only when a measured loss exists.
+  const onlyUnmeasured = !noWorse && !!losses?.length && losses.every(l => / not measured\b/.test(l));
+  const parts = [`${pairs} paired samples`, noWorse ? 'Rust no worse on every class' : onlyUnmeasured ? 'Rust not shown to be no worse (rows not measured)' : 'Rust slower on at least one class'];
   if (margin !== undefined) parts.push(margin ? 'filtered vector margin met' : 'filtered vector margin not met');
   if (losses?.length) parts.push(`losses: ${losses.join(', ')}`);
   if (pairs < MIN_BENCH_PAIRS) parts.push(`under ${MIN_BENCH_PAIRS} pairs, inconclusive`);
   return { state: 'reported', detail: `${parts.join('; ')} (reported, not gating: D23)` };
 }
+
+/** Where the eval half can first pass: the FINAL file for the Nov 26 tag lands about two days after the tag. */
+const EVAL_GATES_TIMING = 'it can first pass about Sat Nov 28 (the final eval file lands about 2 days after the Nov 26 tag), 3 days before Dec 1';
 
 function drills(r: Reader): Check {
   return guarded(r, () => {
@@ -258,8 +295,11 @@ function drills(r: Reader): Check {
     const evals = r.b('drills.eval_gates_e1_e3');
     if (backup === undefined || evals === undefined) return { state: 'missing', detail: '' };
     const fails: string[] = [];
-    if (!backup) fails.push('no passed backup and restore drill on the shadow store');
-    if (!evals) fails.push('the release does not carry eval gates E1 to E3');
+    const why = (reason: string | undefined): string => (reason && /^[a-z0-9_:., -]{1,200}$/i.test(reason) ? ` (${reason})` : '');
+    const backupReason = r.optional('drills.backup_reason');
+    const evalsReason = r.optional('drills.eval_gates_reason');
+    if (!backup) fails.push(`no passed backup and restore drill on the shadow store${why(backupReason)}`);
+    if (!evals) fails.push(`the release does not carry eval gates E1 to E3${why(evalsReason)}${evalsReason === 'eval_gates_missing' ? `; ${EVAL_GATES_TIMING}` : ''}`);
     return fails.length ? { state: 'fail', detail: fails.join('; ') } : { state: 'pass', detail: 'restore drill passed; E1 to E3 carried' };
   });
 }
@@ -307,7 +347,7 @@ export const CRITERIA: ReadonlyArray<{ n: number; name: string }> = [
 
 /**
  * Evaluates every criterion against the shadow status. `doc` null means no shadow runs for this brain: every gating
- * criterion is `missing` and the verdict is NOT READY (`not_ready`).
+ * criterion is `missing` and the verdict is NOT READY (`no_shadow`).
  */
 export function evaluateReadiness(doc: ShadowStatus | null, now: Date = new Date()): ReadinessVerdict {
   const r = new Reader(doc);
@@ -340,7 +380,8 @@ export function evaluateReadiness(doc: ShadowStatus | null, now: Date = new Date
   const ready = criteria.every(c => !c.gating || c.state === 'pass');
   let reason: SwapRefusalReason | null = null;
   if (!ready) {
-    if (elig.reason) reason = elig.reason;
+    if (doc === null) reason = 'no_shadow';
+    else if (elig.reason) reason = elig.reason;
     else if (doc?.fingerprints?.probe?.state === 'fail') reason = 'fingerprint_semantics_differ';
     else if (followerBehind(doc)) reason = 'follower_behind';
     else reason = 'not_ready';

@@ -5,7 +5,7 @@ Part of the store contract in [rust/README.md](../../README.md) ("The brain stor
 Extraction state is what the link extractor and the frontmatter sweep keep about a page: when its
 links were last extracted, and the revision at which attendance extraction was blocked. In PGLite
 these are three columns of `pages`; here they are one record under the page id, written only by the
-methods below. The key tag is the reserved `e`; `FORMAT_VERSION` stays 1.
+methods below. The key tag is the reserved `e`. It took no format number; the store is at format 7 now ([format.md](format.md)).
 
 | Key | Value | Mirrors |
 | --- | --- | --- |
@@ -25,6 +25,7 @@ nothing.
 | --- | --- | --- |
 | `brain.countStalePagesForExtraction({ sourceId?, versionTs?, attendance?, held?, wantedProducers? }?)` | the number of stale pages. `attendance: 'exclude'` drops pages blocked at their current revision, `'blocked'` keeps only those | `countStalePagesForExtraction` |
 | `brain.listStalePagesForExtraction({ batchSize, afterPageId?, ...the options above })` | `StalePageRow`s by id after `afterPageId`, at most `batchSize`; `updated_at` and `updated_at_iso` are ISO strings and the TypeScript member makes `updated_at` a `Date` (`rowToStalePage`) | `listStalePagesForExtraction` |
+| `brain.readExtractionLagCounts({ sourceId?, versionTs, attendance, held?, guests?, wantedProducers? })` | `{ total, stale, attendance_blocked, held }` from one snapshot: `total` counts the live, unquarantined pages of the source, guest sources included; `stale` counts the stale pages outside guest sources (inside them too with `guests: false`), without the attendance-blocked ones when `attendance`; `attendance_blocked` counts those (0 without `attendance`); `held` is 0. The TypeScript member ignores `timeoutMs`, which bounds a database statement | `readExtractionLagCounts` |
 | `brain.markPagesExtractedBatch(refs, defaultExtractedAt)` | the number of pages stamped. A ref matches its exact slug in its source, deleted pages included; a page named twice counts once and keeps the first stamp. A stamp clears the attendance marker and leaves `updated_at` alone | `markPagesExtractedBatch` |
 | `brain.markPagesAttendanceBlocked(refs)` | the number of live pages whose revision equals the ref's revision (any case); each gets the marker at that revision and now | `markPagesAttendanceBlocked` |
 | `brain.countStaleFrontmatterKeyPages({ sourceIds })` | `{ source_id, n }[]` by source id: live pages whose frontmatter has a parser-reserved key (`slug`, `tags`, `title`, `type`) | `countStaleFrontmatterKeyPages` |
@@ -45,4 +46,4 @@ Where this engine differs from PGLite:
 
 `crates/gbrain-store/tests/extraction.rs` covers what the parity cases in
 `test/engine-parity/extraction.test.ts` cannot show: state across a reopen, the hard-delete
-cascade, guest sources and the refused inputs.
+cascade, guest sources (in the stale predicate and the lag counts) and the refused inputs.

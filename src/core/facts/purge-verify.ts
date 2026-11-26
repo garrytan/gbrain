@@ -38,6 +38,7 @@ import { canonicalChangeReason } from '../persistence/change-reason.ts';
 import { outcomeMarkerSql } from './audit-sources.ts';
 import { carriesClaimSql } from './claim-match-sql.ts';
 import { NAMED_ROW_PROBES, purgeProbeSelect, type PurgeProbe } from './purge-plan-statements.ts';
+import { holdResidueOfDeletedPageSql } from '../write-gate-binding.ts';
 
 export type StoreCount = Record<string, number>;
 export type StoreStatus = 'deleted' | 'would_remove' | 'retained_inactive' | 'unverified' | 'out_of_reach' | 'out_of_scope' | 'not_present' | 'incomplete';
@@ -586,7 +587,8 @@ export async function verifyPagePurge(engine: BrainEngine, input: { sourceId: st
   await keyed('context_volunteer_events', 'SELECT 1 FROM context_volunteer_events WHERE source_id=$1 AND slug=$2', [src, slug]);
   await keyed('mention_gazetteer_entries', 'SELECT 1 FROM mention_gazetteer_entries WHERE source_id=$1 AND target_slug=$2', [src, slug]);
   await keyed('files', 'SELECT 1 FROM files WHERE page_id IS NULL AND page_slug=$2 AND (source_id=$1 OR source_id IS NULL)', [src, slug]);
-  await keyed('write_gate_holds', 'SELECT 1 FROM write_gate_holds WHERE source_id=$1 AND slug=$2', [src, slug]);
+  // The purged page's holds: those bound to its id (whatever it was called), the unbound ones at its slug and any candidate-marked hold still naming it; a hold bound to another page that reused the name is not a residue.
+  await keyed('write_gate_holds', `SELECT 1 FROM write_gate_holds h WHERE h.source_id=$1 AND ${holdResidueOfDeletedPageSql('h', '$3', '$2')}`, [src, slug, context?.pageId ?? null]);
   if (!await relationExists(engine, 'query_cache')) stores.push(missingCache('query_cache'));
   else await keyed('query_cache', 'SELECT 1 FROM query_cache WHERE $1::text IS NOT NULL', [src]);
   // The page's own segment texts, and unreferenced texts holding one of its claims (plain or as a fence cell stores it),

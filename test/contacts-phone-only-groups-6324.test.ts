@@ -172,6 +172,7 @@ function harness(state: Partial<GoogleSourceState> = {}, opts: { idLookup?: bool
     async delete(slug: string) { return pages.delete(slug); },
   };
   const engine = {
+    async getConfig() { return null; },
     async executeRaw(sql: string, params: unknown[]) {
       if (sql.includes("frontmatter->>'google_contact_id'")) {
         if (opts.idLookup === false) return [];

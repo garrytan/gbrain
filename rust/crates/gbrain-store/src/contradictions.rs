@@ -1,8 +1,9 @@
 //! Contradiction-probe runs and the judge cache: the `eval_contradictions_runs` and
 //! `eval_contradictions_cache` tables of the PGLite engine.
 //!
-//! Members: writeContradictionsRun, loadContradictionsTrend, getContradictionCacheEntry,
-//! putContradictionCacheEntry, sweepContradictionCache.
+//! Members: writeContradictionsRun, loadContradictionsTrend, readLastContradictionsPromptVersion,
+//! getContradictionCacheEntry, putContradictionCacheEntry, sweepContradictionCache, and listLinkContexts (the link contexts
+//! the edge-contradictions phase quotes to its judge, read from the link records of links.rs).
 //!
 //! Keys (every one starts with `keys::CONTRADICTIONS`, `Q`):
 //! - `Q 0x01 run_id -> RunRecord`: one probe run, the `run_id` primary key.
@@ -18,9 +19,10 @@
 //! Time: `ran_at` and the cache's `created_at` are the store's clock. As in PGLite, the cache's
 //! `expires_at` and the trend's cutoff are millisecond times (they come from `Date.now()` there).
 
-use crate::dream::{int4, jsonb, jsonb_check};
+use crate::dream::{int4, jsonb_check};
 use crate::env::iso;
 use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, Result, StoreError};
+use crate::jsonb::ordered;
 use crate::kv::{KvRead, scan_prefix};
 use crate::links::no_nul;
 use crate::{Store, get_json, keys, put_json};
@@ -50,7 +52,9 @@ struct RunRecord {
     judge_errors_total: i32,
     cost_usd_total: f32,
     duration_ms: i32,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     source_tier_breakdown: Value,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     report_json: Value,
 }
 
@@ -70,14 +74,15 @@ impl RunRecord {
             "judge_errors_total": self.judge_errors_total,
             "cost_usd_total": real(self.cost_usd_total),
             "duration_ms": self.duration_ms,
-            "source_tier_breakdown": jsonb(&self.source_tier_breakdown),
-            "report_json": jsonb(&self.report_json),
+            "source_tier_breakdown": ordered(&self.source_tier_breakdown),
+            "report_json": ordered(&self.report_json),
         })
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CacheRecord {
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     verdict: Value,
     created_at_us: i64,
     expires_at_us: i64,
@@ -329,6 +334,33 @@ impl Store {
         Ok(rows)
     }
 
+    /// `readLastContradictionsPromptVersion()`: the `prompt_version` of the newest run
+    /// (`ORDER BY ran_at DESC LIMIT 1`), `None` before any run. Runs that tie on `ran_at` go to
+    /// the largest `run_id` in byte order; Postgres names no order for such ties.
+    pub fn read_last_contradictions_prompt_version(&self) -> Result<Option<String>> {
+        let read = self.read()?;
+        let mut newest = None;
+        scan_prefix(
+            &*read,
+            &[keys::CONTRADICTIONS, RUN_BY_TIME],
+            true,
+            &mut |k, _| {
+                newest = Some(String::from_utf8_lossy(&k[10..]).into_owned());
+                false
+            },
+        )?;
+        let Some(id) = newest else {
+            return Ok(None);
+        };
+        let record: RunRecord = get_json(&*read, &run_key(&id))?.ok_or_else(|| {
+            StoreError::new(
+                crate::error::STORE_CORRUPT,
+                format!("contradiction run index names a missing run {id:?}"),
+            )
+        })?;
+        Ok(Some(record.prompt_version))
+    }
+
     /// `getContradictionCacheEntry(key)`: the verdict of a live entry (`expires_at > now`), else
     /// `None`.
     pub fn get_contradiction_cache_entry(
@@ -342,7 +374,7 @@ impl Store {
         let record: Option<CacheRecord> = get_json(&*self.read()?, &key)?;
         Ok(record
             .filter(|r| r.expires_at_us > now)
-            .map(|r| jsonb(&r.verdict)))
+            .map(|r| ordered(&r.verdict)))
     }
 
     /// `putContradictionCacheEntry(entry)`: inserts or replaces the verdict, with
@@ -393,4 +425,61 @@ impl Store {
             Ok(doomed.len() as u64)
         })
     }
+
+    /// `listLinkContexts(fromPageId, toPageId, linkType)`: up to three distinct non-empty
+    /// contexts of the links from one page to another with one link type (`SELECT DISTINCT
+    /// context FROM links WHERE ... AND context <> '' LIMIT 3`). The SQL names no order; the
+    /// store answers the three first in byte order. An id that is not a whole number at or above
+    /// zero names no page and answers none.
+    pub fn list_link_contexts(
+        &self,
+        from_page_id: f64,
+        to_page_id: f64,
+        link_type: &str,
+    ) -> Result<Vec<String>> {
+        let id =
+            |n: f64| (n.fract() == 0.0 && (0.0..=u64::MAX as f64).contains(&n)).then_some(n as u64);
+        let (Some(from), Some(to)) = (id(from_page_id), id(to_page_id)) else {
+            return Ok(Vec::new());
+        };
+        let read = self.read()?;
+        let contexts: std::collections::BTreeSet<String> = crate::links::out_links(&*read, from)?
+            .into_iter()
+            .filter(|l| l.to_page_id == to && l.link_type == link_type && !l.context.is_empty())
+            .map(|l| l.context)
+            .collect();
+        Ok(contexts.into_iter().take(3).collect())
+    }
+}
+
+/// The `eval_contradictions_cache` rows a fact purge's inventory probe searches (crate::facts::purge_probe).
+pub(crate) fn purge_probe_cache_rows(
+    read: &dyn KvRead,
+) -> Result<Vec<crate::facts::purge_probe::ProbeRow>> {
+    use crate::facts::purge_probe::{ProbeCell, ProbeRow};
+    Ok(
+        read_records::<CacheRecord>(read, &[keys::CONTRADICTIONS, CACHE])?
+            .into_iter()
+            .map(|(_, r)| ProbeRow {
+                source_id: None,
+                cells: vec![("verdict", ProbeCell::jsonb(&r.verdict))],
+            })
+            .collect(),
+    )
+}
+
+/// The `eval_contradictions_runs` rows a fact purge's inventory probe searches (crate::facts::purge_probe).
+pub(crate) fn purge_probe_run_rows(
+    read: &dyn KvRead,
+) -> Result<Vec<crate::facts::purge_probe::ProbeRow>> {
+    use crate::facts::purge_probe::{ProbeCell, ProbeRow};
+    Ok(
+        read_records::<RunRecord>(read, &[keys::CONTRADICTIONS, RUN])?
+            .into_iter()
+            .map(|(_, r)| ProbeRow {
+                source_id: None,
+                cells: vec![("report_json", ProbeCell::jsonb(&r.report_json))],
+            })
+            .collect(),
+    )
 }

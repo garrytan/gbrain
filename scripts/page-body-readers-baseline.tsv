@@ -29,6 +29,7 @@ src/commands/doctor/checks/graph-health.ts	runGraphCoverage	field	NONE	not the p
 src/commands/doctor/checks/graph-health.ts	runGraphCoverage	sql	NONE	not the page body: timeline coverage count alias
 src/commands/enrich.ts	enrichOneLocked	call:serializeMarkdown	SEGW	
 src/commands/enrich.ts	enrichOneLocked	field	SEGW	
+src/commands/enrich.ts	readableEvidence	field	INLINE	segmented holding page: body never read, so its facts stay out of a labelled page's evidence (fail closed)
 src/commands/extract-mentions-explain.ts	explainMention	field	STREAM	
 src/commands/extract-mentions-explain.ts	explainMention	sql	STREAM	
 src/commands/extract-mentions-explain.ts	pageNames	sql	STREAM	
@@ -216,6 +217,7 @@ src/core/engine-sql/timeline.ts	getTimeline	sql	NONE	not the page body: SELECT *
 src/core/enrichment-service.ts	planEntity	call:putPage	INLINE	
 src/core/enrichment-service.ts	planEntity	call:serializeMarkdown	INLINE	
 src/core/enrichment-service.ts	stubMarkdown	call:serializeMarkdown	INLINE	G6: a new stub's markdown built from its own short template, never read from a stored body
+src/core/entities/evidence/collapse.ts	editPageHead	call:serializePageToMarkdown	NONE	serializes the frontmatter head with an empty body (withoutBody) for an edit_page head edit, as extraction.ts reviewDecision does; the body is never read
 src/core/export-snapshot.ts	inlineExportMarkdown	call:serializeMarkdown	SEGW	
 src/core/export-snapshot.ts	inlineExportMarkdown	field	STREAM	
 src/core/export-snapshot.ts	segmentedExportHead	call:serializeMarkdown	NONE	not the page body: the frontmatter head, rendered with an empty body
@@ -357,6 +359,7 @@ src/core/minions/handlers/subagent-oneshot.ts	planOneshotWrites	call:serializeMa
 src/core/ops/admin.ts	get_versions	field	SEGW	lane 1e: segmented versions return metadata only
 src/core/ops/attribution.ts	get_write_attribution	field	NONE	not the page body: timeline entry id param
 src/core/ops/attribution.ts	rowTarget	field	NONE	not the page body: timeline entry id param
+src/core/ops/claims.ts	check_claims	field	STREAM	skips a segmented page (allowed-claims facts pages are small and inline); a segmented one moves to the segment reader
 src/core/ops/extraction.ts	reviewDecision	call:serializePageToMarkdown	NONE	serializes the frontmatter head with an empty body (withoutBody) for an edit_page head edit; the body is never read
 src/core/ops/get-page-body.ts	bodyBytes	field	META	
 src/core/ops/get-page-body.ts	bodyStripsFor	field	INLINE	GST-3058 room mark: inline pages only (get_page refuses a segmented page whole; a segmented markdown view goes through segmentedBodyStrips)
@@ -478,6 +481,7 @@ src/core/persistence/loop-fact-retirement.ts	prepareLoopFactRetirement	field	SEG
 src/core/persistence/manual-links.ts	prepareManualLinkMutation	call:serializePageToMarkdown	SEGW	wholeBodySnapshot first: a segmented page within 24 MiB is read back whole, a larger one refuses
 src/core/persistence/memory-mutations.ts	planRememberTarget	call:serializePageToMarkdown	SEGW	
 src/core/persistence/memory-mutations.ts	planRememberTarget	field	STREAM	
+src/core/persistence/moved-pages.ts	bodyLines	field	INLINE	holdsEveryLine returns false for a page whose body is unread (segmented, bodyUnread) before bodyLines reads it, so a segmented page never pairs as a contained move
 src/core/persistence/origin-twins.ts	readOriginClaimants	sql	STREAM	#6948 twin verdict: md5 of an inline body; a segmented page (compiled_truth NULL) reads NULL and holds content_differs, so missing evidence never matches
 src/core/persistence/overwritten-edits.ts	CONTENT_COLUMNS	sql	STREAM	selects body_storage beside the inline body columns; a segmented version or page has NULL bodies and its overwrite is reported unknown (reason segmented), never compared or restored
 src/core/persistence/overwritten-edits.ts	overwriteContent	field	STREAM	returns null for a segmented row (body_storage segmented or NULL compiled_truth); the scan reports that overwrite unknown (reason segmented)
@@ -505,6 +509,7 @@ src/core/persistence/page-prepare.ts	prepareInlineOrSegmentedMutation	call:seria
 src/core/persistence/page-prepare.ts	prepareInlineOrSegmentedMutation	field	SEGW	lane 1d file: preserveProtectedTakes reads the snapshot body; segmented page: getter throws page_body_segmented
 src/core/persistence/page-prepare.ts	remoteCoreMarkingKept	call:serializePageToMarkdown	SEGW	lane 1d file: the remote core-marking carry moved out of prepareInlineOrSegmentedMutation (GST-2518, function size); same read as before
 src/core/persistence/page-prepare.ts	segmentedFileMatches	field	NONE	the body fields hold region digests (body-digests.ts) for the canonical comparison; no page body is read
+src/core/persistence/page-prepare.ts	storedReadings	field	SEGW	the timeline-split reading of the snapshot body, for fileSnapshotDifference and frontmatterDriftWrite only (both read an inline or materialized body); segmented page: getter throws page_body_segmented
 src/core/persistence/page-prepare.ts	unreadPageFile	call:serializePageToMarkdown	NONE	serializes the frontmatter head with an empty body; the body streams from the segments through segmentedExportMarkdown
 src/core/persistence/page-purge.ts	purgePageInTransaction	field	STREAM	
 src/core/persistence/page-purge.ts	purgePageInTransaction	sql	STREAM	
@@ -676,6 +681,7 @@ src/core/sweep.ts	runMaintenanceSweep	sql	STREAM	LIKE over NULL never matches a 
 src/core/think/gather.ts	renderPagesBlockDetailed	field	LEAD	segmented page: getter throws page_body_segmented
 src/core/think/gather.ts	runGather	field	LEAD	visibleLeads reads Page.compiled_truth from listPages/search: segmented page: getter throws page_body_segmented (lead source in PR 2)
 src/core/think/index.ts	composeExtractiveFallback	field	LEAD	
+src/core/think/index.ts	persistSynthesis	call:serializeMarkdown	NONE	GST-3612: renders the synthesis page think just composed (its frontmatter and the answer body) for the managed maintenance request; no stored page body is read here
 src/core/think/persist-take.ts	assertTakeFileCanonical	field	SEGW	compares the inline page body outside the takes section with the file; a segmented page reads NULL, never matches, and the take is refused before any write
 src/core/timeline-dedup-repair.ts	repairLegacyTimelineSourceRows	field	STREAM	
 src/core/timeline-dedup-repair.ts	repairLegacyTimelineSourceRows	sql	STREAM	
@@ -769,3 +775,9 @@ src/core/engine-sql/facts-purge.ts	setPurgeVersionBody	sql	SEGW	moved from facts
 src/core/engine-sql/fence-census.ts	LIST_FENCE_CENSUS_PAGES_BY_ID_SQL	sql	INLINE	moved from fence-repair/census.ts unchanged: strpos over compiled_truth and timeline of inline pages only; a segmented page's NULL body holds no fence text here, so it is not counted fenced
 src/core/engine-sql/trust-tier-reads.ts	listCorePageRows	sql	INLINE	moved from core-memory.ts listCorePages: a segmented row's body column is NULL and its segmented flag sends it to the segment reader
 src/core/engine-sql/trust-tier-reads.ts	readPageVersionEdition	sql	INLINE	moved from valid-time-read.ts loadEdition: a segmented version's body columns are NULL; it is read by generation through the segment reader in editionView
+src/core/ops/household.ts	serializeRecord	call:serializeMarkdown	SEGW	household record writer (GST-3825 H1): rewrites the whole small record or subject page under its revision; asserts the page is inline (assertInlineBody) and refuses a segmented one
+src/core/ops/household.ts	classifySubjectPages	call:serializeMarkdown	SEGW	household record writer (GST-3825 H1): rewrites the whole small record or subject page under its revision; asserts the page is inline (assertInlineBody) and refuses a segmented one
+src/core/ops/household.ts	classifySubjectPages	field	SEGW	household record writer (GST-3825 H1): rewrites the whole small record or subject page under its revision; asserts the page is inline (assertInlineBody) and refuses a segmented one
+src/core/ops/household.ts	replaceHouseholdRecords	field	SEGW	household record writer (GST-3825 H1): rewrites the whole small record or subject page under its revision; asserts the page is inline (assertInlineBody) and refuses a segmented one
+src/core/ops/household.ts	household_mark	field	SEGW	household record writer (GST-3825 H1): rewrites the whole small record or subject page under its revision; asserts the page is inline (assertInlineBody) and refuses a segmented one
+src/core/policy/store.ts	readPolicyPage	field	INLINE	the policy page is a small fence written inline by gbrain policy; a segmented one reads as empty, so it is malformed and every verb asks

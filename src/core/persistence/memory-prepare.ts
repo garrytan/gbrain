@@ -121,14 +121,16 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
     return decideSingleFact(e, row.source_id, input, dedupEmbedding, embedding_model, undefined, { excludePrivate });
   };
   // A typed claim on a saved copy of the same claim that has none supersedes that copy, so the claim is kept (never dropped as a duplicate).
+  const keepsUserSaid = (d: { candidate: { write_origin?: unknown } | null }) => p.content_origin === 'inferred'
+    && (d.candidate?.write_origin as { content_origin?: unknown } | null | undefined)?.content_origin === 'user_said';
   const decide = async (e: BrainEngine, lock = false) => {
     const d = await decideClaim(e, lock);
-    return claim && d.status === 'duplicate' && !storedClaim(d.candidate) ? { ...d, status: 'superseded' as const } : d;
+    return claim && d.status === 'duplicate' && !storedClaim(d.candidate) && !keepsUserSaid(d) ? { ...d, status: 'superseded' as const } : d;
   };
   const decision = await decide(engine);
   // #5575 I3: a lower-tier write never supersedes; it is inserted contested and the owner decides (re-checked under lock by validate).
   const writerTier = requestChannelTrust(row)?.tier ?? 'unknown';
-  const contested = decision.status === 'superseded' && supersessionGuarded(writerTier, decision.candidate!.trust_tier);
+  const contested = decision.status === 'superseded' && (supersessionGuarded(writerTier, decision.candidate!.trust_tier) || keepsUserSaid(decision));
   // GST-2897 B: a member's share about another member (submitRememberMutation records the member) is stored private and
   // supersedes nothing until the brain owner confirms it.
   const heldFor = p.share === true && typeof p.share_held === 'string' && input.visibility === 'world' ? p.share_held : null;
@@ -161,7 +163,7 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
     confidence: 1, embedding, embedding_model, source_session: typeof p.session_id === 'string' ? p.session_id : null,
     ...(context ? { context } : {}), ...claimColumns(p) };
   // #5575 B3: the row-level write gate at the request's declared tier (ENG-18); a held fact inserts nothing.
-  const gate = decideFactWrite({ fact: input.fact, context: context ?? null, source: fact.source }, { sourceId: row.source_id, slug: row.slug,
+  const gate = decideFactWrite({ fact: input.fact, context: context ?? null, source: fact.source }, { sourceId: row.source_id, slug: row.slug, pageId: snapshot?.page.id ?? row.page_id,
     payload: { fact: input.fact, kind: input.kind, visibility: input.visibility, entity_slug: input.entity_slug, source: fact.source, context: context ?? null,
       valid_from: validFrom.toISOString(), valid_until: validUntil?.toISOString() ?? null, source_session: fact.source_session, ...claimColumns(p) },
     input: gateInput(requestChannelTrust(row) ?? { tier: 'unknown', origin: null }, row.id), cfg: await loadWriteGateConfig(engine) });

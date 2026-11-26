@@ -82,35 +82,27 @@ for (const backend of testBackends()) {
        SELECT 'fact', $1, $2, 'bulk-' || $1 || '-' || g::text, 1, 'quarantine', '{}'::jsonb FROM generate_series(1, $3::int) AS g`, [source, slug, n]);
     const details = (c: Check) => c.details as Record<string, any>;
 
-    test('a hold whose page was renamed through an alias warns, names the new page and its read-only review', async () => {
-      await page('default', 'people/alice-new');
-      await alias('default', 'people/alice-old', 'people/alice-new');
-      const ref = await hold('default', 'people/alice-old');
-      const check = await run({ engine });
-      expect(check.status).toBe('warn');
-      expect(details(check)).toMatchObject({ complete: true, scanned: 1, stranded: { renamed: 1, page_deleted: 0, no_page: 0 },
-        by_source: { default: { renamed: 1, page_deleted: 0, no_page: 0 } },
-        items: [{ hold_ref: ref, kind: 'fact', source_id: 'default', slug: 'people/alice-old', class: 'renamed', current_slug: 'people/alice-new' }] });
-      expect(check.fix).toMatchObject({ argv: ['gbrain', 'trust', 'review'], consent: [], actor: 'agent' });
-      expect(check.message).toContain(ref);
-      expect(check.message).toContain('people/alice-new');
-      expect(check.message).toContain('suspected');
-    });
-
-    test('the message says it does not fix the leak, and that release and drop do not restore the quarantine or take back delivered text', async () => {
+    test('an unbound hold whose page was renamed through an alias is protected through the rename record, so it is not stranded', async () => {
       await page('default', 'people/alice-new');
       await alias('default', 'people/alice-old', 'people/alice-new');
       await hold('default', 'people/alice-old');
-      const message = (await run({ engine })).message;
-      expect(message).toContain('does not fix');
-      expect(message).toContain('neither release nor drop');
-      expect(message).toContain('restores the quarantine');
-      expect(message).toContain('already delivered');
-      expect(message).toContain('gbrain trust review');
-      expect(message).toContain('holds following a page id');
+      const check = await run({ engine });
+      expect(check.status).toBe('ok');
+      expect(check.severity).toBeUndefined();
+      expect(details(check)).toMatchObject({ complete: true, scanned: 1, stranded: { page_deleted: 0, no_page: 0 }, by_source: {}, items: [] });
     });
 
-    test('a displaced alias with the old slug soft-deleted still warns once, through the rename history', async () => {
+    test('the message of an unknown count says the check only detects and changes nothing, and no longer claims a rename leak', async () => {
+      await hold('default', 'people/never');
+      const check = await run({ engine, entryDeadlineAt: Date.now() - 1 });
+      expect(check.status).toBe('warn');
+      expect(check.message).toContain('only detects and changes nothing');
+      expect(check.message).toContain('gbrain trust review');
+      expect(check.message).not.toMatch(/does not fix|restores the quarantine|holds following a page id|renamed page/);
+      expect(check.fix).toMatchObject({ argv: ['gbrain', 'trust', 'review'], consent: [], actor: 'agent' });
+    });
+
+    test('a displaced alias with the old slug soft-deleted is still protected: the rename history leads to the live page', async () => {
       await page('default', 'people/b');
       await page('default', 'people/a', true);
       await history('default', 'people/a', 'people/b');
@@ -118,13 +110,12 @@ for (const backend of testBackends()) {
       await alias('default', 'people/x', 'people/a');
       await hold('default', 'people/a');
       const check = await run({ engine });
-      expect(check.status).toBe('warn');
-      expect(details(check).stranded).toEqual({ renamed: 1, page_deleted: 0, no_page: 0 });
-      expect(details(check).items).toHaveLength(1);
-      expect(details(check).items[0]).toMatchObject({ class: 'renamed', current_slug: 'people/b' });
+      expect(check.status).toBe('ok');
+      expect(details(check).stranded).toEqual({ page_deleted: 0, no_page: 0 });
+      expect(details(check).items).toEqual([]);
     });
 
-    test('two rename destinations count the hold once and are labelled suspected', async () => {
+    test('two rename destinations are both read by the readers, so the hold is protected', async () => {
       await page('default', 'people/b');
       await page('default', 'people/c');
       await alias('default', 'people/a', 'people/b');
@@ -132,11 +123,9 @@ for (const backend of testBackends()) {
       await history('default', 'people/a', 'people/c');
       await hold('default', 'people/a');
       const check = await run({ engine });
-      expect(check.status).toBe('warn');
-      expect(details(check).stranded.renamed).toBe(1);
-      expect(details(check).items).toHaveLength(1);
-      expect(details(check).items[0]).toMatchObject({ class: 'renamed', destination_count: 2, current_slug: 'people/b' });
-      expect(check.message).toContain('suspected');
+      expect(check.status).toBe('ok');
+      expect(details(check).stranded).toEqual({ page_deleted: 0, no_page: 0 });
+      expect(details(check).items).toEqual([]);
     });
 
     test('a soft-deleted page, or a soft-deleted rename destination, is its own class and does not warn on its own', async () => {
@@ -148,7 +137,7 @@ for (const backend of testBackends()) {
       const check = await run({ engine });
       expect(check.status).toBe('ok');
       expect(check.severity).toBe('info');
-      expect(details(check)).toMatchObject({ complete: true, scanned: 2, stranded: { renamed: 0, page_deleted: 2, no_page: 0 } });
+      expect(details(check)).toMatchObject({ complete: true, scanned: 2, stranded: { page_deleted: 2, no_page: 0 } });
       expect(check.message).toContain('soft-deleted');
     });
 
@@ -157,19 +146,21 @@ for (const backend of testBackends()) {
       const check = await run({ engine });
       expect(check.status).toBe('ok');
       expect(check.severity).toBe('info');
-      expect(details(check)).toMatchObject({ complete: true, stranded: { renamed: 0, page_deleted: 0, no_page: 1 } });
+      expect(details(check)).toMatchObject({ complete: true, stranded: { page_deleted: 0, no_page: 1 } });
       expect(details(check).items[0]).toMatchObject({ class: 'no_page' });
       expect(check.fix).toMatchObject({ argv: ['gbrain', 'trust', 'review'] });
     });
 
-    test('an informational hold beside a renamed one does not hide the warning; both are counted', async () => {
+    test('a protected renamed hold beside an informational one is not counted; the informational one is', async () => {
       await page('default', 'people/b');
       await alias('default', 'people/a', 'people/b');
       await hold('default', 'people/a');
       await hold('default', 'people/never');
       const check = await run({ engine });
-      expect(check.status).toBe('warn');
-      expect(details(check).stranded).toEqual({ renamed: 1, page_deleted: 0, no_page: 1 });
+      expect(check.status).toBe('ok');
+      expect(check.severity).toBe('info');
+      expect(details(check).stranded).toEqual({ page_deleted: 0, no_page: 1 });
+      expect(details(check).items).toHaveLength(1);
     });
 
     test('holds on live pages, released holds, dropped holds and empty slugs are not stranded', async () => {
@@ -179,7 +170,7 @@ for (const backend of testBackends()) {
       await hold('default', 'people/old-dropped', { status: 'dropped', kind: 'take' });
       await hold('default', '');
       const check = await run({ engine });
-      expect(check).toMatchObject({ status: 'ok', details: { complete: true, scanned: 2, stranded: { renamed: 0, page_deleted: 0, no_page: 0 }, items: [] } });
+      expect(check).toMatchObject({ status: 'ok', details: { complete: true, scanned: 2, stranded: { page_deleted: 0, no_page: 0 }, items: [] } });
       expect(check.severity).toBeUndefined();
     });
 
@@ -192,22 +183,18 @@ for (const backend of testBackends()) {
       await hold('s1', 'people/c');
       const check = await run({ engine });
       expect(check.status).toBe('ok');
-      expect(details(check).stranded).toEqual({ renamed: 0, page_deleted: 0, no_page: 2 });
-      expect(details(check).by_source).toEqual({ s1: { renamed: 0, page_deleted: 0, no_page: 2 } });
+      expect(details(check).stranded).toEqual({ page_deleted: 0, no_page: 2 });
+      expect(details(check).by_source).toEqual({ s1: { page_deleted: 0, no_page: 2 } });
     });
 
     test('the source scope limits the scan: an explicit source, a remote source list, and an empty scope', async () => {
-      await page('s1', 'people/b');
-      await page('s2', 'people/b');
-      await alias('s1', 'people/a', 'people/b');
-      await alias('s2', 'people/a', 'people/b');
       await hold('s1', 'people/a');
       await hold('s2', 'people/a');
-      expect(details(await run({ engine }))).toMatchObject({ scanned: 2, stranded: { renamed: 2 }, by_source: { s1: { renamed: 1 }, s2: { renamed: 1 } } });
-      expect(details(await run({ engine, orphanRatioSourceId: 's2' }))).toMatchObject({ scanned: 1, stranded: { renamed: 1 }, by_source: { s2: { renamed: 1 } } });
-      expect(details(await run({ engine, sourceIds: ['s1'] }))).toMatchObject({ scanned: 1, stranded: { renamed: 1 }, by_source: { s1: { renamed: 1 } } });
+      expect(details(await run({ engine }))).toMatchObject({ scanned: 2, stranded: { no_page: 2 }, by_source: { s1: { no_page: 1 }, s2: { no_page: 1 } } });
+      expect(details(await run({ engine, orphanRatioSourceId: 's2' }))).toMatchObject({ scanned: 1, stranded: { no_page: 1 }, by_source: { s2: { no_page: 1 } } });
+      expect(details(await run({ engine, sourceIds: ['s1'] }))).toMatchObject({ scanned: 1, stranded: { no_page: 1 }, by_source: { s1: { no_page: 1 } } });
       const none = await run({ engine, sourceIds: [] });
-      expect(none).toMatchObject({ status: 'ok', details: { scanned: 0, stranded: { renamed: 0, page_deleted: 0, no_page: 0 } } });
+      expect(none).toMatchObject({ status: 'ok', details: { scanned: 0, stranded: { page_deleted: 0, no_page: 0 } } });
     });
 
     test('the check changes nothing: holds, pages, aliases and history read back identical', async () => {
@@ -221,6 +208,58 @@ for (const backend of testBackends()) {
       const before = await snapshot();
       await run({ engine });
       expect(await snapshot()).toBe(before);
+    });
+
+    /** A hold bound to page `pageId` (holds remember their page by id), named `slug` as it was when held. */
+    const boundHold = async (source: string, slug: string, pageId: string): Promise<string> => {
+      const rows = await engine.executeRaw<{ id: string }>(
+        `INSERT INTO write_gate_holds (kind, source_id, slug, fingerprint, detector_version, tier, payload, status, page_id)
+         VALUES ('fact', $1, $2, $3, 1, 'quarantine', '{}'::jsonb, 'held', $4::bigint) RETURNING id::text AS id`, [source, slug, `fp-${seq++}`, pageId]);
+      return `h${rows[0]!.id}`;
+    };
+    const pageId = async (source: string, slug: string): Promise<string> =>
+      (await engine.executeRaw<{ id: string }>('SELECT id::text AS id FROM pages WHERE source_id = $1 AND slug = $2', [source, slug]))[0]!.id;
+
+    describe('holds that follow their page', () => {
+      test('a bound hold at the old name of a renamed page is protected by its page, so the check reports ok', async () => {
+        await page('default', 'people/b');
+        await alias('default', 'people/a', 'people/b');
+        await history('default', 'people/a', 'people/b');
+        await boundHold('default', 'people/a', await pageId('default', 'people/b'));
+        const check = await run({ engine });
+        expect(check.status).toBe('ok');
+        expect(check.severity).toBeUndefined();
+        expect(details(check)).toMatchObject({ complete: true, scanned: 1, stranded: { page_deleted: 0, no_page: 0 }, items: [] });
+      });
+
+      test('a bound hold whose page exists is protected even when no rename record names the old slug', async () => {
+        await page('default', 'people/b');
+        await boundHold('default', 'people/a', await pageId('default', 'people/b'));
+        const check = await run({ engine });
+        expect(check.status).toBe('ok');
+        expect(details(check)).toMatchObject({ stranded: { page_deleted: 0, no_page: 0 }, items: [] });
+      });
+
+      test('an unbound hold that the rename record leads to a live page is protected too: readers match it there', async () => {
+        await page('default', 'people/b');
+        await history('default', 'people/a', 'people/c');
+        await history('default', 'people/c', 'people/b');
+        await hold('default', 'people/a');
+        const check = await run({ engine });
+        expect(check.status).toBe('ok');
+        expect(details(check)).toMatchObject({ stranded: { page_deleted: 0, no_page: 0 }, items: [] });
+      });
+
+      test('a bound hold whose page is soft-deleted is informational, even when the old slug leads to another live page', async () => {
+        await page('default', 'people/dead', true);
+        await page('default', 'people/other');
+        await alias('default', 'people/a', 'people/other');
+        await boundHold('default', 'people/a', await pageId('default', 'people/dead'));
+        const check = await run({ engine });
+        expect(check.status).toBe('ok');
+        expect(check.severity).toBe('info');
+        expect(details(check).stranded).toEqual({ page_deleted: 1, no_page: 0 });
+      });
     });
 
     describe('bounded scan', () => {
@@ -239,7 +278,7 @@ for (const backend of testBackends()) {
         await bulkHolds('default', 'people/live', ROW_BUDGET + 1);
         const check = await run({ engine });
         expect(check.status).toBe('warn');
-        expect(details(check)).toMatchObject({ health: 'unknown', reason: 'bound', bound: 'row_limit', exact: false, complete: false, scanned: ROW_BUDGET, found_so_far: { renamed: 0, page_deleted: 0, no_page: 0 }, row_budget: ROW_BUDGET });
+        expect(details(check)).toMatchObject({ health: 'unknown', reason: 'bound', bound: 'row_limit', exact: false, complete: false, scanned: ROW_BUDGET, found_so_far: { page_deleted: 0, no_page: 0 }, row_budget: ROW_BUDGET });
         expect(check.message).toContain('could not count');
       });
 
@@ -299,28 +338,24 @@ for (const backend of testBackends()) {
 
     test('a source named constructor keeps its own per-source counts', async () => {
       await engine.executeRaw("INSERT INTO sources (id, name) VALUES ('constructor', 'constructor')");
-      await page('constructor', 'people/new');
-      await alias('constructor', 'people/old', 'people/new');
-      await hold('constructor', 'people/old');
+      await page('constructor', 'people/gone', true);
+      await hold('constructor', 'people/gone');
       await hold('constructor', 'people/never');
       const check = await run({ engine });
-      expect(details(check).stranded).toEqual({ renamed: 1, page_deleted: 0, no_page: 1 });
+      expect(details(check).stranded).toEqual({ page_deleted: 1, no_page: 1 });
       expect(Object.hasOwn(details(check).by_source, 'constructor')).toBe(true);
-      expect(details(check).by_source.constructor).toEqual({ renamed: 1, page_deleted: 0, no_page: 1 });
-      expect(JSON.parse(JSON.stringify(details(check).by_source))).toEqual({ constructor: { renamed: 1, page_deleted: 0, no_page: 1 } });
+      expect(details(check).by_source.constructor).toEqual({ page_deleted: 1, no_page: 1 });
+      expect(JSON.parse(JSON.stringify(details(check).by_source))).toEqual({ constructor: { page_deleted: 1, no_page: 1 } });
     });
 
-    test('a dangling alias target is never named as the current page: the live rename destination is', async () => {
+    test('a dangling alias target does not matter: the live rename destination protects the hold', async () => {
       await page('default', 'people/c');
       await alias('default', 'people/a', 'people/b');
       await history('default', 'people/a', 'people/c');
       await hold('default', 'people/a');
       const check = await run({ engine });
-      expect(check.status).toBe('warn');
-      expect(details(check).stranded).toEqual({ renamed: 1, page_deleted: 0, no_page: 0 });
-      expect(details(check).items[0]).toMatchObject({ class: 'renamed', current_slug: 'people/c', destination_count: 1 });
-      expect(check.message).toContain('people/c');
-      expect(check.message).not.toContain('people/b');
+      expect(check.status).toBe('ok');
+      expect(details(check).stranded).toEqual({ page_deleted: 0, no_page: 0 });
     });
 
     test('the page lookup is probed by its (source_id, slug) index, and answers the same on a large source', async () => {
@@ -337,12 +372,13 @@ for (const backend of testBackends()) {
       await engine.executeRaw('ANALYZE pages');
       let statement: { sql: string; params: unknown[] } | null = null;
       const recording = { executeRaw: (sql: string, params?: unknown[]) => {
-        if (/unnest\(/i.test(sql) && /\bpages\b/.test(sql) && !/row_security_active/.test(sql)) statement ??= { sql, params: params ?? [] };
+        if (/slug_rename_history/.test(sql) && /\bpages\b/.test(sql) && !/row_security_active/.test(sql)) statement ??= { sql, params: params ?? [] };
         return engine.executeRaw(sql, params);
       } };
       const check = await run({ engine: recording });
-      expect(details(check).stranded).toEqual({ renamed: 2, page_deleted: 1, no_page: 12 });
-      expect(details(check).items.filter((i: { class: string }) => i.class === 'renamed').map((i: { slug: string }) => i.slug).sort()).toEqual(['people/hist-only', 'people/moved']);
+      expect(details(check).stranded).toEqual({ page_deleted: 1, no_page: 12 });
+      expect(details(check).items.map((i: { slug: string }) => i.slug)).not.toContain('people/moved');
+      expect(details(check).items.map((i: { slug: string }) => i.slug)).not.toContain('people/hist-only');
       expect(statement).not.toBeNull();
       const [row] = await engine.executeRaw<Record<string, unknown>>(`EXPLAIN (FORMAT JSON) ${statement!.sql}`, statement!.params);
       const raw = Object.values(row!)[0];
@@ -402,7 +438,7 @@ for (const backend of testBackends()) {
       const seedRename = async () => {
         await page('default', 'people/b');
         await history('default', 'people/a', 'people/b');
-        await hold('default', 'people/a');
+        await hold('default', 'people/never');
       };
 
       test('hidden holds are unknown, never an empty ok', async () => {
@@ -467,8 +503,8 @@ for (const backend of testBackends()) {
         await seedRename();
         await readableBy([]);
         const check = await asRole(BYPASS_ROLE);
-        expect(check.status).toBe('warn');
-        expect(details(check)).toMatchObject({ complete: true, stranded: { renamed: 1 } });
+        expect(check.status).toBe('ok');
+        expect(details(check)).toMatchObject({ complete: true, stranded: { no_page: 1 } });
       });
 
       test('a non-owner role on tables without row security reads the evidence and gets the real verdict', async () => {
@@ -477,8 +513,8 @@ for (const backend of testBackends()) {
         for (const t of TABLES) await engine.executeRaw(`ALTER TABLE ${t} DISABLE ROW LEVEL SECURITY`);
         try {
           const check = await asRole();
-          expect(check.status).toBe('warn');
-          expect(details(check)).toMatchObject({ complete: true, stranded: { renamed: 1 } });
+          expect(check.status).toBe('ok');
+          expect(details(check)).toMatchObject({ complete: true, stranded: { no_page: 1 } });
         } finally {
           for (const t of TABLES) await engine.executeRaw(`ALTER TABLE ${t} ENABLE ROW LEVEL SECURITY`);
         }

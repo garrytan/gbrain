@@ -171,10 +171,11 @@
             "params": [
               "string",
               "string",
+              "string",
               "number"
             ],
-            "sql": "SELECT id, valid_from, valid_until, claim_metric, claim_value, claim_unit, claim_period, event_type, fact, source_session, source_markdown_slug, CASE WHEN embedding_model=(SELECT value FROM config WHERE key='embedding_model') AND embedded_text_hash=md5(fact) THEN embedding::text END AS embedding FROM facts WHERE source_id = $1 AND entity_slug = $2 AND expired_at IS NULL AND facts.visibility IN ('world') AND NOT EXISTS (SELECT 1 FROM pages elig_dp WHERE elig_dp.source_id = facts.source_id AND elig_dp.slug = ANY(ARRAY[facts.source_markdown_slug, facts.entity_slug]) AND elig_dp.deleted_at IS NOT NULL) AND NOT EXISTS (SELECT 1 FROM pages elig_qp WHERE elig_qp.source_id = facts.source_id AND elig_qp.slug = facts.source_markdown_slug AND elig_qp.deleted_at IS NULL AND (COALESCE(elig_qp.frontmatter, '{}'::jsonb) ? 'quarantine')) AND NOT EXISTS (SELECT 1 FROM needs_rederive elig_nr WHERE elig_nr.derived_table = 'facts' AND elig_nr.derived_id = facts.id::text) ORDER BY valid_from DESC, id DESC LIMIT $3",
-            "textSha256": "791649be50ef827e0faaf914d356654fa4d42f9d971b79f578f1bb2e48e3b00b"
+            "sql": "SELECT id, valid_from, valid_until, claim_metric, claim_value, claim_unit, claim_period, event_type, fact, source_session, source_markdown_slug, CASE WHEN embedding_model=(SELECT value FROM config WHERE key='embedding_model') AND embedded_text_hash=md5(fact) THEN embedding::text END AS embedding FROM facts WHERE source_id = $1 AND entity_slug = $2 AND expired_at IS NULL AND facts.visibility IN ('world') AND NOT EXISTS (SELECT 1 FROM pages elig_dp WHERE elig_dp.source_id = facts.source_id AND elig_dp.slug = ANY(ARRAY[facts.source_markdown_slug, facts.entity_slug]) AND elig_dp.deleted_at IS NOT NULL) AND NOT EXISTS (SELECT 1 FROM pages elig_qp WHERE elig_qp.source_id = facts.source_id AND elig_qp.slug = facts.source_markdown_slug AND elig_qp.deleted_at IS NULL AND (COALESCE(elig_qp.frontmatter, '{}'::jsonb) ? 'quarantine')) AND NOT EXISTS (SELECT 1 FROM needs_rederive elig_nr WHERE elig_nr.derived_table = 'facts' AND elig_nr.derived_id = facts.id::text) AND (claim_metric IS NULL OR claim_metric !~* $3) ORDER BY valid_from DESC, id DESC LIMIT $4",
+            "textSha256": "2da791e22efa85c78ac2c48468b4dc678bec190d8b23178a4e1757a3c91f9b5c"
           }
         ],
         "event": [
@@ -183,10 +184,11 @@
             "params": [
               "string",
               "string",
+              "string",
               "number"
             ],
-            "sql": "SELECT id, valid_from, valid_until, claim_metric, claim_value, claim_unit, claim_period, event_type, fact, source_session, source_markdown_slug, CASE WHEN embedding_model=(SELECT value FROM config WHERE key='embedding_model') AND embedded_text_hash=md5(fact) THEN embedding::text END AS embedding FROM facts WHERE source_id = $1 AND entity_slug = $2 AND expired_at IS NULL AND facts.visibility IN ('world') AND NOT EXISTS (SELECT 1 FROM pages elig_dp WHERE elig_dp.source_id = facts.source_id AND elig_dp.slug = ANY(ARRAY[facts.source_markdown_slug, facts.entity_slug]) AND elig_dp.deleted_at IS NOT NULL) AND NOT EXISTS (SELECT 1 FROM pages elig_qp WHERE elig_qp.source_id = facts.source_id AND elig_qp.slug = facts.source_markdown_slug AND elig_qp.deleted_at IS NULL AND (COALESCE(elig_qp.frontmatter, '{}'::jsonb) ? 'quarantine')) AND NOT EXISTS (SELECT 1 FROM needs_rederive elig_nr WHERE elig_nr.derived_table = 'facts' AND elig_nr.derived_id = facts.id::text) AND event_type IS NOT NULL ORDER BY valid_from DESC, id DESC LIMIT $3",
-            "textSha256": "f32adf826e14479184e68ab6e62034971f7cfd6d891b4381dd2421b61d5d1f02"
+            "sql": "SELECT id, valid_from, valid_until, claim_metric, claim_value, claim_unit, claim_period, event_type, fact, source_session, source_markdown_slug, CASE WHEN embedding_model=(SELECT value FROM config WHERE key='embedding_model') AND embedded_text_hash=md5(fact) THEN embedding::text END AS embedding FROM facts WHERE source_id = $1 AND entity_slug = $2 AND expired_at IS NULL AND facts.visibility IN ('world') AND NOT EXISTS (SELECT 1 FROM pages elig_dp WHERE elig_dp.source_id = facts.source_id AND elig_dp.slug = ANY(ARRAY[facts.source_markdown_slug, facts.entity_slug]) AND elig_dp.deleted_at IS NOT NULL) AND NOT EXISTS (SELECT 1 FROM pages elig_qp WHERE elig_qp.source_id = facts.source_id AND elig_qp.slug = facts.source_markdown_slug AND elig_qp.deleted_at IS NULL AND (COALESCE(elig_qp.frontmatter, '{}'::jsonb) ? 'quarantine')) AND NOT EXISTS (SELECT 1 FROM needs_rederive elig_nr WHERE elig_nr.derived_table = 'facts' AND elig_nr.derived_id = facts.id::text) AND (claim_metric IS NULL OR claim_metric !~* $3) AND event_type IS NOT NULL ORDER BY valid_from DESC, id DESC LIMIT $4",
+            "textSha256": "da29e2b78869e5d30f0c0bb8b7620003b66c54ca088a83992e6415105137b0f8"
           }
         ],
         "sourceIds+metric+since+until": [
@@ -196,12 +198,13 @@
               "array<string>",
               "string",
               "string",
+              "string",
               "Date",
               "Date",
               "number"
             ],
-            "sql": "SELECT id, valid_from, valid_until, claim_metric, claim_value, claim_unit, claim_period, event_type, fact, source_session, source_markdown_slug, CASE WHEN embedding_model=(SELECT value FROM config WHERE key='embedding_model') AND embedded_text_hash=md5(fact) THEN embedding::text END AS embedding FROM facts WHERE source_id = ANY($1::text[]) AND entity_slug = $2 AND expired_at IS NULL AND NOT EXISTS (SELECT 1 FROM pages elig_dp WHERE elig_dp.source_id = facts.source_id AND elig_dp.slug = ANY(ARRAY[facts.source_markdown_slug, facts.entity_slug]) AND elig_dp.deleted_at IS NOT NULL) AND NOT EXISTS (SELECT 1 FROM pages elig_qp WHERE elig_qp.source_id = facts.source_id AND elig_qp.slug = facts.source_markdown_slug AND elig_qp.deleted_at IS NULL AND (COALESCE(elig_qp.frontmatter, '{}'::jsonb) ? 'quarantine')) AND NOT EXISTS (SELECT 1 FROM needs_rederive elig_nr WHERE elig_nr.derived_table = 'facts' AND elig_nr.derived_id = facts.id::text) AND claim_metric = $3 AND claim_metric IS NOT NULL AND valid_from >= $4 AND valid_from <= $5 ORDER BY valid_from DESC, id DESC LIMIT $6",
-            "textSha256": "0d334769c5861820bac7ddd0c4334037cff4bfb7b5832c4e4fb973c7fcb83969"
+            "sql": "SELECT id, valid_from, valid_until, claim_metric, claim_value, claim_unit, claim_period, event_type, fact, source_session, source_markdown_slug, CASE WHEN embedding_model=(SELECT value FROM config WHERE key='embedding_model') AND embedded_text_hash=md5(fact) THEN embedding::text END AS embedding FROM facts WHERE source_id = ANY($1::text[]) AND entity_slug = $2 AND expired_at IS NULL AND NOT EXISTS (SELECT 1 FROM pages elig_dp WHERE elig_dp.source_id = facts.source_id AND elig_dp.slug = ANY(ARRAY[facts.source_markdown_slug, facts.entity_slug]) AND elig_dp.deleted_at IS NOT NULL) AND NOT EXISTS (SELECT 1 FROM pages elig_qp WHERE elig_qp.source_id = facts.source_id AND elig_qp.slug = facts.source_markdown_slug AND elig_qp.deleted_at IS NULL AND (COALESCE(elig_qp.frontmatter, '{}'::jsonb) ? 'quarantine')) AND NOT EXISTS (SELECT 1 FROM needs_rederive elig_nr WHERE elig_nr.derived_table = 'facts' AND elig_nr.derived_id = facts.id::text) AND (claim_metric IS NULL OR claim_metric !~* $3) AND claim_metric = $4 AND claim_metric IS NOT NULL AND valid_from >= $5 AND valid_from <= $6 ORDER BY valid_from DESC, id DESC LIMIT $7",
+            "textSha256": "6be9eb9fe424ad38e6f0d5894362cf9b700e2dc95cb67e6be973f0f89383e1dc"
           }
         ]
       },

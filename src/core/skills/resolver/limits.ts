@@ -14,8 +14,8 @@ export const TOP_GATE_MAX = 100;
  */
 export const TOP_GATE_DEFAULT = 0.6;
 
-/** The strongest way a suggestion matched the turn: named in it, picked by the model picker (router.ts), then by field. A body-only match is the weakest. */
-export type MatchStrength = 'named' | 'picked' | 'name' | 'triggers' | 'routing' | 'description' | 'body';
+/** The strongest way a suggestion matched the turn: named in it, picked by the model picker (router.ts), then by field, then by meaning alone (its vector, vectors.ts). A body-only match is the weakest. */
+export type MatchStrength = 'named' | 'picked' | 'name' | 'triggers' | 'routing' | 'description' | 'vector' | 'body';
 export const STRENGTH_FIELDS = ['name', 'triggers', 'routing', 'description', 'body'] as const;
 /** Strongest first. */
-export const MATCH_STRENGTHS: readonly MatchStrength[] = ['named', 'picked', ...STRENGTH_FIELDS];
+export const MATCH_STRENGTHS: readonly MatchStrength[] = ['named', 'picked', 'name', 'triggers', 'routing', 'description', 'vector', 'body'];

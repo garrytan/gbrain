@@ -13,6 +13,7 @@ export const SWAP_GUIDE = 'docs/guides/engine-swap.md';
 export const SWAP_REFUSAL_REASONS = [
   'refresh_unsettled',
   'managed_storage',
+  'no_shadow',
   'not_ready',
   'multiple_writer_hosts',
   'writer_coverage_unknown',
@@ -48,6 +49,7 @@ const NONE = 'None: the plan and every refusal before a run are read only.';
 export const SWAP_RECOVERY: Readonly<Record<SwapRefusalReason, SwapRecoveryRow>> = {
   refresh_unsettled: { class: 'retryable', exit: 1, blocker: 'A worktree refresh row is draining, fenced, merged, syncing or recovery_required. The Rust engine resumes no refresh, so a carried row would fence its sources for good (row L7-1).', authority: KEPT, side_effects: NONE, next: 'run', retry: 'Once per refresh, after `gbrain sources refresh <id> --resume` (or `--abandon`, with the user) settles it.', anchor: `${SWAP_GUIDE}#refresh_unsettled` },
   managed_storage: { class: 'consent', exit: 3, blocker: 'The brain uses managed storage (`persistence_brain.enabled` is true). The Rust engine never holds managed storage, and the cutover would fail after the write fence is up.', authority: KEPT, side_effects: NONE, next: 'ask_user', retry: 'Only after the user turns managed storage off for this brain; there is no override.', anchor: `${SWAP_GUIDE}#managed_storage` },
+  no_shadow: { class: 'consent', exit: 3, blocker: 'No shadow runs for this brain, so there is no readiness evidence: `gbrain engine shadow status` has no shadow directory for it.', authority: KEPT, side_effects: NONE, next: 'ask_user', retry: 'Only after the user seeds and starts a shadow (`gbrain engine shadow seed`, then `gbrain engine shadow start`) and it has run for the readiness window.', anchor: `${SWAP_GUIDE}#no_shadow` },
   not_ready: { class: 'caller', exit: 1, blocker: 'A readiness criterion is failing or has no evidence; the plan lists each one.', authority: KEPT, side_effects: NONE, next: 'report', retry: 'Never on a timer: keep shadowing and read the plan again when the shadow report changes. There is no override.', anchor: `${SWAP_GUIDE}#not_ready` },
   multiple_writer_hosts: { class: 'consent', exit: 3, blocker: 'Durable writer observations show writers on more than one machine in the last 7 days.', authority: KEPT, side_effects: NONE, next: 'ask_user', retry: 'Only after the user changes the topology. A brain with writers on more than one machine stays on Postgres until the Rust server phase passes the D17 bar (D19).', anchor: `${SWAP_GUIDE}#multiple_writer_hosts` },
   writer_coverage_unknown: { class: 'consent', exit: 3, blocker: 'A write path has no writer observation, or no observation window exists yet.', authority: KEPT, side_effects: NONE, next: 'ask_user', retry: 'Only after every writer runs a build that records observations and 7 days have passed.', anchor: `${SWAP_GUIDE}#writer_coverage_unknown` },

@@ -38,6 +38,29 @@ describe('redactPgUrl', () => {
     ).toBe('postgresql://***@aws-0-us-east-1.pooler.supabase.com:6543/postgres');
   });
 
+  test('a raw @ inside the password is redacted whole, not leaked after ***@', () => {
+    const url = ['postgresql://alice:p', 'ssw', 'rd', 'db.example.com:5432/x'].join('@');
+    const out = redactPgUrl(url);
+    expect(out).toBe('postgresql://***@db.example.com:5432/x');
+    expect(out).not.toContain('ssw');
+  });
+
+  test('redaction keeps the host the driver connects to when the password holds a raw @', () => {
+    const url = ['postgres://alice:a', 'b', 'c', 'db.example.com:6543/postgres?prepare=false'].join('@');
+    const out = redactPgUrl(url);
+    expect(new URL(out).hostname).toBe(new URL(url).hostname);
+    expect(out).toBe('postgres://***@db.example.com:6543/postgres?prepare=false');
+  });
+
+  test('an @ inside the query string is not mistaken for userinfo', () => {
+    expect(redactPgUrl('postgresql://host:5432/db?application_name=a@b')).toBe(
+      'postgresql://host:5432/db?application_name=a@b'
+    );
+    expect(redactPgUrl(['postgresql://u:p', 'host:5432/db?application_name=a', 'b'].join('@'))).toBe(
+      'postgresql://***@host:5432/db?application_name=a@b'
+    );
+  });
+
   test('returns sentinel for non-string input', () => {
     expect(redactPgUrl(undefined)).toBe('<redacted-url>');
     expect(redactPgUrl(null)).toBe('<redacted-url>');

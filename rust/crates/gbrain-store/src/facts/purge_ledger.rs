@@ -5,7 +5,7 @@
 //! fact_hash \0` with the JSON value [`PurgeRecord`]; the key is the table's primary key. `subject`
 //! `*` covers every subject. `fact_hash` is the claim's fingerprint (`gbrain_fact_fingerprint`).
 //!
-//! Four things read it:
+//! Five things read it:
 //!
 //! - the fact guard ([`refuse_purged`]), which [`super::write_fact`] runs on every insert and on
 //!   every update that changes `fact`, `source_id`, `visibility` or `entity_slug`, as the
@@ -14,7 +14,8 @@
 //!   and the purge half of `isFactWithdrawn`, `Store::is_fact_withdrawn` in `trust::withdrawals`),
 //!   through [`purged_claim`];
 //! - the fence overlay's `purged` ([`purged_claim`] with the page as the entity);
-//! - the persistence journal and the belief ledger's purge probe ([`has_fact_purges`]).
+//! - the persistence journal and the belief ledger's purge probe ([`has_fact_purges`]);
+//! - the belief ledger's `readBeliefTombstones`, by fingerprint ([`tombstoned_fact_hashes`]).
 //!
 //! Deleting a source removes its tombstones (`ON DELETE CASCADE`, [`remove_source_rows`]).
 
@@ -28,6 +29,7 @@ use crate::links::no_nul;
 use crate::sources::require_source;
 use crate::{get_json, put_json};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 
 /// The byte after `keys::FACT` that marks a purge tombstone.
 const PURGE: u8 = 0x0F;
@@ -75,12 +77,71 @@ fn exists(read: &dyn KvRead, parts: &[&str]) -> Result<bool> {
     Ok(read.get(&key(parts))?.is_some())
 }
 
+/// The tombstones of `[source, visibility, subject]`: each fact_hash with its purge time (micros),
+/// in fact_hash order (the snapshot ledger, `page_withdrawals.rs`).
+pub(crate) fn purges_under_subject(
+    read: &dyn KvRead,
+    source_id: &str,
+    visibility: &str,
+    subject: &str,
+) -> Result<Vec<(String, i64)>> {
+    let prefix = key(&[source_id, visibility, subject]);
+    let len = prefix.len();
+    let mut rows = Vec::new();
+    let mut failed = None;
+    scan_prefix(read, &prefix, false, &mut |k, v| {
+        // The rest of the key is `fact_hash \0`.
+        let rest = &k[len..];
+        let hash = String::from_utf8_lossy(rest.strip_suffix(&[0]).unwrap_or(rest)).into_owned();
+        match serde_json::from_slice::<PurgeRecord>(v) {
+            Ok(r) => rows.push((hash, r.purged_at_us)),
+            Err(e) => {
+                failed = Some(e);
+                return false;
+            }
+        }
+        true
+    })?;
+    if let Some(e) = failed {
+        return Err(StoreError::invalid(format!(
+            "fact_purges: corrupt record: {e}"
+        )));
+    }
+    Ok(rows)
+}
+
 /// Whether the source has any tombstone (`EXISTS (SELECT 1 FROM fact_purges WHERE source_id = $1)`).
 pub(crate) fn has_fact_purges(read: &dyn KvRead, source_id: &str) -> Result<bool> {
     let mut found = false;
     scan_prefix(read, &key(&[source_id]), false, &mut |_, _| {
         found = true;
         false
+    })?;
+    Ok(found)
+}
+
+/// `SELECT fact_hash FROM fact_purges WHERE source_id = $source AND fact_hash = ANY($hashes)`: the
+/// hashes among `hashes` that a tombstone of the source names, at any visibility and under any
+/// subject (`*` included), each once (the belief ledger's `readBeliefTombstones`).
+pub(crate) fn tombstoned_fact_hashes(
+    read: &dyn KvRead,
+    source_id: &str,
+    hashes: &[String],
+) -> Result<BTreeSet<String>> {
+    let wanted: BTreeSet<&[u8]> = hashes.iter().map(|h| h.as_bytes()).collect();
+    let mut found = BTreeSet::new();
+    if wanted.is_empty() {
+        return Ok(found);
+    }
+    let prefix = key(&[source_id]);
+    scan_prefix(read, &prefix, false, &mut |k, _| {
+        // The rest of the key is `visibility \0 subject \0 fact_hash \0`.
+        if let Some(hash) = k[prefix.len()..].split(|b| *b == 0).nth(2)
+            && wanted.contains(hash)
+        {
+            found.insert(String::from_utf8_lossy(hash).into_owned());
+        }
+        true
     })?;
     Ok(found)
 }
@@ -231,6 +292,28 @@ pub(crate) fn source_purges(read: &dyn KvRead, source_id: &str) -> Result<Vec<So
         ))),
         None => Ok(rows),
     }
+}
+
+/// Adds to `out` the request id of every tombstone purged after `since_us`, the `fact_purges` arm of
+/// `listRecentPurgeRequests` (`request_id IS NOT NULL AND purged_at > now() - make_interval(...)`).
+pub(crate) fn recent_request_ids(
+    read: &dyn KvRead,
+    since_us: i64,
+    out: &mut std::collections::BTreeSet<String>,
+) -> Result<()> {
+    let mut failure = None;
+    scan_prefix(read, &[keys::FACT, PURGE], false, &mut |_, v| {
+        match serde_json::from_slice::<PurgeRecord>(v) {
+            Ok(r) => {
+                if let (Some(request), true) = (r.request_id, r.purged_at_us > since_us) {
+                    out.insert(request);
+                }
+            }
+            Err(e) => failure = Some(StoreError::from(e)),
+        }
+        failure.is_none()
+    })?;
+    failure.map_or(Ok(()), Err)
 }
 
 /// Removes every tombstone of a source, for the source delete.

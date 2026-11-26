@@ -6,7 +6,7 @@
 # Generated from the tree at its own commit (`bun scripts/check-silent-read-catches.ts --print`); the note column names the audit
 # finding (docs/research/gbrain-behavior-audit.md "The silent-failure class") that the fix for the row deletes.
 # Counts only fall; a raise edits the row in the same PR with a note saying why. --prune lowers stale rows.
-src/cli/commands/doctor.ts#run	catch_empty	1
+src/cli/commands/doctor.ts#runLocalDoctor	catch_empty	1
 src/cli/commands/notability-eval.ts#run	catch_empty	1
 src/cli/db-plane-config.ts#mergeDbPlaneConfig	catch_empty	1
 src/cli/enforced-member.ts#enforcedAccess	capability_refusal_swallowed	1
@@ -361,7 +361,7 @@ src/commands/embed.ts#runEmbedCore	catch_empty	1
 src/commands/engine-shadow.ts#seedFrom	promise_catch_empty	1	added on the shadow seed branch (rust-engine/shadow-s3) before it merged this guard; known debt, fix by a typed degraded marker
 src/commands/engine-status.ts#mountFor	catch_empty	1
 src/commands/enrich.ts#retrieveEvidence	capability_refusal_swallowed	1
-src/commands/enrich.ts#retrieveEvidence	catch_empty	3
+src/commands/enrich.ts#retrieveEvidence	catch_empty	1
 src/commands/eval-cross-modal.ts#runBatchMode	catch_empty	1
 src/commands/eval-cross-modal.ts#substituteUnavailableDefaultSlots	catch_empty	1
 src/commands/eval-longmemeval.ts#resolvePins	catch_empty	1
@@ -615,7 +615,6 @@ src/core/access/actor.ts#attestRightOf	capability_refusal_swallowed	1
 src/core/access/caller.ts#appliedAccessSummary	capability_refusal_swallowed	1
 src/core/access/caller.ts#appliedAccessSummary	catch_empty	1
 src/core/access/caller.ts#resolveAudienceIdentities	catch_empty	1
-src/core/access/caller.ts#stdioMemberId	catch_empty	1
 src/core/access/handover.ts#previewHandover	capability_refusal_swallowed	2
 src/core/access/labelled-only.ts#labelledOnlyFor	capability_refusal_swallowed	1
 src/core/access/lineage.ts#membersReadLineageOn	catch_empty	1
@@ -1085,7 +1084,6 @@ src/core/facts/absorb-log.ts#pendingReceipt	catch_empty	1
 src/core/facts/capture-dedup.ts#collapseFactReads	capability_refusal_swallowed	1
 src/core/facts/capture-dedup.ts#entityNames	capability_refusal_swallowed	1
 src/core/facts/capture-dedup.ts#entityNames	catch_empty	1
-src/core/facts/claim-conflicts.ts#claimConflictsMode	promise_catch_empty	1
 src/core/facts/contested-claims.ts#withDecideContested	capability_refusal_swallowed	1
 src/core/facts/dead-absorb-retry.ts#loadMaxResubmits	promise_catch_empty	1
 src/core/facts/dead-absorb-retry.ts#readState	catch_empty	1
@@ -1973,7 +1971,6 @@ src/core/skillpack/rubric.ts#walkGlob>walk	catch_empty	1
 src/core/skillpack/scrub-legacy.ts#skillHasFrontmatterTriggers	catch_empty	1
 src/core/skillpack/shared-brain-bridge.ts#sharedBrainBridgePlan	capability_refusal_swallowed	1
 src/core/skillpack/update-journal.ts#listJournals	catch_empty	1
-src/core/skills/resolver/build.ts#buildSkillIndex	catch_empty	1
 src/core/skills/resolver/build.ts#catalogStatus	catch_empty	2
 src/core/skills/resolver/build.ts#gbrainCommit	catch_empty	1
 src/core/skills/resolver/catalog-files.ts#listCatalogs	catch_empty	1

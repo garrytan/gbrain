@@ -42,6 +42,7 @@ import { urlCloneReadOnly } from '../url-clone.ts';
  */
 import type { BrainEngine } from '../engine.ts';
 
+export const MIRROR_READ_ONLY_SQL = `SELECT COALESCE(config->>'mirror_read_only','false')='true' AS read_only, local_path, config FROM sources WHERE id=$1`;
 /** `lock`: inside a publication, hold the source row so a concurrent mode change waits for this write. */
 export async function sourceMirrorReadOnly(engine: SqlEngine, sourceId: string, lock = false): Promise<boolean> {
   const row = await (engine as unknown as Pick<BrainEngine, 'readSourceState'>).readSourceState(sourceId, lock ? { lock: 'share' } : undefined);

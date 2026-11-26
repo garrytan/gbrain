@@ -115,7 +115,7 @@ describe('write gate holds and receipts', () => {
     expect(hold).toMatchObject({
       id, kind: 'fact', source_id: 'default', slug: 'people/gate', tier: 'agent_written', detector_version: 3, detector_error: false,
       reason_families: ['injection'], reasons: ['updated reason'], payload: { fact: 'held text' }, write_origin: { tool: 'remember' },
-      request_id: 'req-1', status: 'held', seen_count: 2, decided_at: null, decided_by: null,
+      request_id: 'req-1', status: 'held', seen_count: 2, decided_at: null, decided_by: null, page_id: null, page_candidates: null,
     });
     expect(await engine.getWriteGateHoldRow(id + 1000)).toBeNull();
 
@@ -131,6 +131,39 @@ describe('write gate holds and receipts', () => {
     expect((await engine.listWriteGateHoldRows({ status: 'all', beforeId: takeId, limit: 10 })).map((h) => h.id)).toEqual([id]);
     expect(await engine.listWriteGateHoldRows({ status: 'all', limit: 1 })).toHaveLength(1);
   });
+
+  test('a hold on an existing page is bound to its permanent id, so a rename does not make a second hold', async () => {
+    const created = await page('gate/bound-hold');
+    const input = {
+      kind: 'fact' as const, source_id: 'default', slug: 'gate/bound-hold', fingerprint: 'fp-bound', detector_version: 3, tier: 'agent_written',
+      reason_families: ['injection'], reasons: ['r'], detector_error: false, payload: { fact: 'held' }, write_origin: null, request_id: null,
+    };
+    const id = await engine.upsertWriteGateHold(input);
+    expect(await engine.getWriteGateHoldRow(id)).toMatchObject({ page_id: created.id, page_candidates: null, slug: 'gate/bound-hold' });
+    await raw("UPDATE pages SET slug = 'gate/bound-hold-renamed' WHERE id = $1", [created.id]);
+    expect(await engine.upsertWriteGateHold({ ...input, slug: 'gate/bound-hold-renamed', page_id: created.id })).toBe(id);
+    expect(await engine.getWriteGateHoldRow(id)).toMatchObject({ page_id: created.id, slug: 'gate/bound-hold-renamed', seen_count: 2 });
+  });
+
+  for (const kind of ['fact', 'take'] as const) {
+    for (const status of ['released', 'dropped'] as const) {
+      test(`a ${kind} hold that was ${status} opens again on the same row when the same content is held once more`, async () => {
+        const input = {
+          kind, source_id: 'default', slug: `people/reopen-${kind}-${status}`, fingerprint: `fp-reopen-${kind}-${status}`, detector_version: 3,
+          tier: 'agent_written', reason_families: ['injection'], reasons: ['first reason'], detector_error: false,
+          payload: { text: 'first' }, write_origin: { tool: 'remember' }, request_id: 'req-reopen-1',
+        };
+        const id = await engine.upsertWriteGateHold(input);
+        await raw('UPDATE write_gate_holds SET status = $2, decided_at = now(), decided_by = $3 WHERE id = $1', [id, status, 'owner']);
+        expect(await engine.getWriteGateHoldRow(id)).toMatchObject({ status, decided_by: 'owner' });
+
+        expect(await engine.upsertWriteGateHold({ ...input, reasons: ['second reason'], payload: { text: 'second' }, request_id: 'req-reopen-2' })).toBe(id);
+        expect(await engine.getWriteGateHoldRow(id)).toMatchObject({
+          id, kind, status: 'held', decided_at: null, decided_by: null, seen_count: 2, reasons: ['second reason'], payload: { text: 'second' },
+        });
+      });
+    }
+  }
 
   test('listing receipts of a target returns its receipts newest first, within the limit', async () => {
     await raw(

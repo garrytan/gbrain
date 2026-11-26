@@ -68,6 +68,8 @@ export interface WriterAdminStore extends ContentReceiptStore {
   publicationPending(worktreeId: string): Promise<boolean>;
   /** The persistence brain id; null when the brain row is missing. */
   brainId(): Promise<string | null>;
+  /** The worktree's bound, unarchived sources that have a last imported commit, by source id (#10260: the Git history a self-transfer checks before it re-creates a lost ownership reservation). */
+  syncedSources(worktreeId: string): Promise<Array<{ source: string; path: string; commit: string }>>;
   /** Records a prepared transfer: state `draining`, the manifest with `prepared_at` set to now. */
   markWorktreeDraining(id: string, manifest: object): Promise<void>;
   /** Cancels a prepared transfer: state `active`, no manifest. */
@@ -168,6 +170,11 @@ export function sqlWriterAdminStore(tx: BrainEngine): WriterAdminStore {
     async brainId() {
       const [brain] = await tx.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1');
       return brain?.brain_id ?? null;
+    },
+    async syncedSources(worktreeId) {
+      const [row] = await tx.executeRaw<{ synced: Array<{ source: string; path: string; commit: string }> | null }>(`SELECT (SELECT json_agg(json_build_object('source',s.id,'path',b.relative_path,'commit',s.last_commit) ORDER BY s.id)
+        FROM persistence_source_bindings b JOIN sources s ON s.id=b.source_id AND s.incarnation=b.source_incarnation WHERE b.worktree_id=$1::uuid AND s.last_commit IS NOT NULL AND NOT s.archived) AS synced`, [worktreeId]);
+      return row?.synced ?? [];
     },
     async markWorktreeDraining(id, manifest) {
       await tx.executeRaw(`UPDATE persistence_worktrees SET state='draining',manifest=$2::text::jsonb||jsonb_build_object('prepared_at',now()) WHERE id=$1::uuid`,

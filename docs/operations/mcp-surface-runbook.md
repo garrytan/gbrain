@@ -32,10 +32,14 @@ one `surface_env_invalid` info notice naming the surface actually served.
 `serve --http` ignores `GBRAIN_SURFACE` (its ceiling widens only through an
 explicit `--surface` restart; `GBRAIN_MCP_FORCE_SURFACE` narrows it).
 
-**Registrations.** Every stdio registration gbrain writes pins `starter`
-(`REGISTRATION_SURFACE` in `src/core/mcp-registration.ts`): readiness's
-`harness_wiring` fix, `gbrain init`'s quickstart line, `gbrain bootstrap
-hooks` for Claude Code, Codex and opencode, and the plugins.
+**Registrations.** Every stdio registration gbrain writes takes its surface
+from `registrationProfile(harness)` in `src/core/mcp-registration.ts`: Codex
+pins `full`; Claude Code, opencode and other hosts pin `starter` listing the
+memory verbs (`--advertise verbs`). That covers readiness's `harness_wiring`
+fix, `gbrain init`'s quickstart line and `gbrain bootstrap hooks` for Claude
+Code, Codex and opencode; the Claude Code and Codex plugins pin `full`.
+`gbrain config set mcp.default_surface_<claude_code|codex|hermes> full|starter`
+turns one harness's default (`config unset` restores the shipped one).
 `gbrain init --surface` and `gbrain bootstrap hooks --surface` pick another.
 `bootstrap hooks` never narrows an existing install: a matching registration
 is kept untouched, and a replaced one keeps its form (a pinned `--surface x`
@@ -74,7 +78,9 @@ plain-text suggestions may still name one.
 **Session widening.** On the owner's stdio pipe, `request_tools {surface}`
 widens this session's tool set (never past `--access read-only` or
 `GBRAIN_MCP_FORCE_SURFACE`), sends `tools/list_changed`, and returns the new
-tools' schemas so a client that ignores `list_changed` can call them by name.
+tools' schemas. Codex and OpenClaw never take a new tool in the turn that asked
+for it ([client behaviour](../protocol/AGENT_OPERATOR_v1.md#tool-catalog-changes-toolslist_changed)),
+so for those clients the note says so and names the lasting route instead.
 Nothing is written; a new session starts at the registered surface. Each widen
 writes a `surface_widened from=<x> to=<y> op=request_tools` line on stderr.
 `gbrain config set mcp.allow_session_widen false` turns widening off; the

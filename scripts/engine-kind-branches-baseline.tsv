@@ -6,7 +6,7 @@
 src/cli/cli-socket-client.ts	kind_compare	1
 src/cli/commands/append.ts	kind_compare	1
 src/cli/commands/projections.ts	kind_compare	1
-src/cli/main.ts	kind_compare	3
+src/cli/main.ts	kind_compare	1
 src/commands/apply-migrations-schema.ts	kind_compare	2
 src/commands/apply-migrations.ts	kind_compare	3
 src/commands/autopilot-dispatch.ts	kind_compare	1
@@ -51,12 +51,10 @@ src/commands/doctor/missing-brain.ts	kind_compare	1	the doctor missing-brain pre
 src/commands/doctor/registry.ts	kind_compare	2
 src/commands/doctor/remediate.ts	kind_compare	1
 src/commands/doctor/report-remote.ts	kind_compare	2
-src/commands/embed-facts-delegate.ts	kind_compare	1
 src/commands/embeddings.ts	kind_compare	2
 src/commands/engine-status.ts	kind_compare	6
 src/commands/enrich.ts	kind_compare	1
 src/commands/extract-attendance-repair.ts	kind_compare	3
-src/commands/extract-stale-delegate.ts	kind_compare	1
 src/commands/git.ts	kind_compare	1	came from master #9627 (held private facts, database-only untrack), which landed after this ratchet was cut
 src/commands/import.ts	kind_compare	2
 src/commands/init.ts	kind_compare	1
@@ -75,7 +73,6 @@ src/commands/migrations/v0_11_0.ts	kind_compare	1
 src/commands/migrations/v0_18_0.ts	kind_compare	1
 src/commands/mounts.ts	kind_compare	2
 src/commands/pglite-repair.ts	kind_compare	1
-src/commands/reindex-code-delegate.ts	kind_compare	1
 src/commands/reindex-vectors.ts	kind_compare	1
 src/commands/reinit-pglite.ts	kind_compare	1
 src/commands/repair-jsonb.ts	kind_compare	2
@@ -84,10 +81,8 @@ src/commands/serve.ts	kind_compare	5
 src/commands/setup.ts	kind_compare	3
 src/commands/skillopt.ts	kind_compare	1
 src/commands/sources-lifecycle.ts	kind_compare	1
-src/commands/sources-refresh-delegate.ts	kind_compare	1
 src/commands/storage.ts	kind_compare	1
-src/commands/sync-delegate.ts	kind_compare	2
-src/commands/sync-persistence-delegate.ts	kind_compare	1
+src/commands/sync-delegate.ts	kind_compare	1
 src/commands/sync.ts	kind_compare	1
 src/commands/sync/gitignore.ts	kind_compare	1
 src/commands/sync/imports.ts	kind_compare	2
@@ -167,7 +162,7 @@ src/core/persistence/group-publish.ts	kind_compare	1
 src/core/persistence/journal.ts	kind_compare	2
 src/core/persistence/limits.ts	kind_compare	1
 src/core/persistence/links-maintenance.ts	kind_compare	1
-src/core/persistence/local-client.ts	kind_compare	2
+src/core/persistence/local-client.ts	kind_compare	1
 src/core/persistence/origin-index.ts	kind_compare	2
 src/core/persistence/owner-activity.ts	kind_compare	2
 src/core/persistence/page-advisories.ts	kind_compare	1
