@@ -8,12 +8,15 @@
  *
  * Protects: a notice read behind a locked `config` table returns within the bound, counts as "has a repo" (an unreadable
  * answer does), leaves no backend waiting on the lock, and leaves no checkout held in the pool's own gauge.
+ * The same holds inside a request config snapshot that was never seeded: the snapshot's own bulk read has no bound, so a
+ * bounded read does not start it.
  * Fails when the config read is only abandoned by the client (a backend still waits) or has no bound at all.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import postgres from '#postgres';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { sourceHasRepo } from '../../src/core/search/ignored-privacy-labels.ts';
+import { withRequestConfigSnapshot } from '../../src/core/config-snapshot.ts';
 import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
 
 const LOCK_MS = 4_000;
@@ -51,6 +54,29 @@ const LOCK_MS = 4_000;
       // The pool's own counter: no checkout (raw, direct, reserved or transaction) is still held once the notice has returned.
       const held = (engine as unknown as { checkoutGauge: { snapshot(): Record<string, number> } }).checkoutGauge.snapshot();
       expect({ answer, quick: took < 2_500, waiting: n, held }).toEqual({ answer: true, quick: true, waiting: 0, held: { raw: 0, direct: 0, reserved: 0, tx: 0 } });
+    } finally {
+      await held.catch(() => undefined);
+      await locker.end();
+    }
+  }, 30_000);
+
+  test('the same bound holds inside an unseeded request config snapshot', async () => {
+    const locker = postgres(databaseUrl, { max: 1, prepare: false });
+    let locked!: () => void;
+    const isLocked = new Promise<void>((resolve) => { locked = resolve; });
+    const held = locker.begin(async (sql) => {
+      await sql.unsafe('LOCK TABLE config IN ACCESS EXCLUSIVE MODE');
+      locked();
+      await new Promise((r) => setTimeout(r, LOCK_MS));
+    });
+    await isLocked;
+    try {
+      const started = Date.now();
+      const answer = await withRequestConfigSnapshot(engine as never, () => sourceHasRepo(engine, 'default'));
+      const took = Date.now() - started;
+      const [{ n }] = await engine.executeRaw<{ n: number }>(
+        "SELECT count(*)::int AS n FROM pg_stat_activity WHERE pid <> pg_backend_pid() AND datname = current_database() AND wait_event_type = 'Lock' AND query ILIKE '%FROM config%'");
+      expect({ answer, quick: took < 2_500, waiting: n }).toEqual({ answer: true, quick: true, waiting: 0 });
     } finally {
       await held.catch(() => undefined);
       await locker.end();
