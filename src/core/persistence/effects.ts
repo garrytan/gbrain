@@ -6,7 +6,8 @@ import { targetedWithdrawalEffect, upgradeWithdrawalEffect } from './effect-targ
 import { existsSync, statSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
-import { isPersistenceDeclaration, PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
+import { isPersistenceDeclaration } from './protocol.ts';
+import { fenceOpts } from './host-fence.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { OperationError, opError } from '../ops/contract.ts';
@@ -793,8 +794,7 @@ export async function claimAndRecoverEffect(engine: BrainEngine, id: string | nu
   let claimed: PersistenceEffect | undefined;
   try {
     const token = randomUUID();
-    [claimed] = await engine.executeRaw<PersistenceEffect>(`UPDATE persistence_effects SET state='running',execution_token=$2::uuid,claim_owner=$3::text::jsonb,
-      claim_expires_at=now()+interval '2 minutes',attempts=attempts+1,updated_at=now() WHERE id=$1 AND recovery IS NOT NULL AND ${PERSISTENCE_PROTOCOL_PREDICATE} RETURNING *`, [id, token, effectClaimStamp(token)]);
+    claimed = await engine.claimEffectRecovery<PersistenceEffect>({ id, token, ownerJson: effectClaimStamp(token), ...fenceOpts(engine) }) ?? undefined;
     if (claimed) await recoverEffectPublication(engine, claimed, hostId, { ...hooks, between: hooks.between ?? effectClaimKeeper(engine, claimed, effectRenewalIntervalMs) });
   } catch (error) { if (claimed) await recordFailure(engine, claimed, error); }
   return claimed;

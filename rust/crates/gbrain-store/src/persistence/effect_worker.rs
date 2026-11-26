@@ -304,6 +304,25 @@ pub(crate) fn stamp_effect_claim_in(
     env: &dyn Env,
     claim: &EffectClaim,
 ) -> Result<Option<Value>> {
+    claim_effect_in(tx, env, claim, false)
+}
+
+/// `claimEffectRecovery`'s statement: the same stamp, only while the effect holds a recovery record
+/// (`WHERE id=$1 AND recovery IS NOT NULL`).
+pub(crate) fn claim_effect_recovery_in(
+    tx: &mut dyn KvWrite,
+    env: &dyn Env,
+    claim: &EffectClaim,
+) -> Result<Option<Value>> {
+    claim_effect_in(tx, env, claim, true)
+}
+
+fn claim_effect_in(
+    tx: &mut dyn KvWrite,
+    env: &dyn Env,
+    claim: &EffectClaim,
+    recovering_only: bool,
+) -> Result<Option<Value>> {
     let id = effect_id(&claim.id)?;
     let token = pg_uuid(&claim.token)?;
     let owner: Value = serde_json::from_str(&claim.owner_json)
@@ -311,6 +330,9 @@ pub(crate) fn stamp_effect_claim_in(
     let Some(mut e) = effect_by_id(&*tx, id)? else {
         return Ok(None);
     };
+    if recovering_only && e.recovery.is_none() {
+        return Ok(None);
+    }
     let now = env.now_micros();
     e.state = "running".into();
     e.execution_token = Some(token);
@@ -577,6 +599,19 @@ impl Store {
     /// `stampEffectClaim(claim)`: the claimed row, or null when no effect has the id.
     pub fn stamp_effect_claim(&self, claim: &EffectClaim) -> Result<Option<Value>> {
         self.write(|tx| stamp_effect_claim_in(tx, &*self.env, claim))
+    }
+
+    /// `claimEffectRecovery(claim)`: the claimed row, or null when the effect holds no recovery record.
+    pub fn claim_effect_recovery(&self, claim: &EffectClaim) -> Result<Option<Value>> {
+        self.write(|tx| {
+            fence::begin(self, tx, claim.fence.as_ref(), "claim_effect_recovery")?;
+            let row = claim_effect_recovery_in(tx, &*self.env, claim)?;
+            if row.is_some() {
+                let id = effect_id(&claim.id)?.to_string();
+                fence::claim_taken(tx, CLAIM_EFFECT, &id, claim.fence.as_ref())?;
+            }
+            Ok(row)
+        })
     }
 
     /// `claimCoalescedGitEffects(input)`: the claimed rows, in claim order.
