@@ -125,6 +125,18 @@ for (const [name, url] of backends) {
       expect(revision(first)).toBeString();
     }, url), 120_000);
 
+    // Value: protects=a fresh adoption of a skill private through its frontmatter replays its receipt; fails_when=the carried private flag changes the request and a second revision is published; why_new=no test retried a frontmatter-private adoption; seam=none; no_claim=none
+    test('a fresh adoption of a frontmatter-private skill retried after it committed replays the same revision', () => fixture(async f => {
+      mkdirSync(join(f.root, 'skills/alpha'), { recursive: true });
+      writeFileSync(join(f.root, 'skills/alpha/SKILL.md'), `---\nname: alpha\ndescription: A synthetic fixture\nprivate: true\n---\n\nPrivate instructions.\n`);
+      writeFileSync(join(f.root, 'skillpack.json'), `${JSON.stringify({ name: 'example-pack', brain_resident: true, skills: ['skills/alpha'] }, null, 2)}\n`);
+      const revision = (result: Awaited<ReturnType<typeof adoptSharedSkillpack>>) => (result.receipts[0] as { revision?: string }).revision;
+      const first = await adoptSharedSkillpack(f.local, 'default');
+      const again = await adoptSharedSkillpack(f.local, 'default');
+      expect({ same: revision(again) === revision(first), visible: (await listSharedSkills(f.reader)).skills.map(skill => skill.name) })
+        .toEqual({ same: true, visible: [] });
+    }, url), 120_000);
+
     // Value: protects=a reviewed removal of a reference file adopts, dropping the file and every edge to it, direct and transitive; fails_when=the carried depends_on still names the removed file and adoption refuses; why_new=no test removed a dependency through adoption; seam=none; no_claim=none
     test('a reviewed removal of a reference file adopts, and a file only it reached goes too', () => fixture(async f => {
       const NESTED = 'skills/alpha/references/nested.md';

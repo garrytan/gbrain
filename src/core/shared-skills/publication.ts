@@ -564,10 +564,17 @@ async function carrySealedSkillState(engine: BrainEngine, root: string, sourceId
   for (const input of inputs) {
     const revision = sealed.find(row => row.name === input.name);
     if (!revision) continue;
-    if (revision.metadata?.private === true) input.private = true;
     const skillPath = `skills/${input.name}/SKILL.md`;
     const skill = input.files.find(file => file.path === skillPath);
     if (!skill) continue;
+    // Carry the sealed private flag only when this SKILL.md (its frontmatter markers) would not already seal it private,
+    // so the request a fresh adoption derived stays the same. A SKILL.md that cannot be read as metadata keeps it private.
+    if (revision.metadata?.private === true && input.private !== true) {
+      let already = false;
+      try { already = skillMetadata(input.name, [{ path: skillPath, content: Buffer.from(skill.content, 'utf8').toString('base64') } as StoredSkillFile], {}).private; }
+      catch { already = false; }
+      if (!already) input.private = true;
+    }
     const carried: SharedSkillFileInput[] = [];
     for (const file of revision.files) {
       if (file.path === skillPath) continue;
