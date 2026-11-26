@@ -1,0 +1,4 @@
+---
+kind: default
+---
+search and query now return a long page's matching section by default. When a search hit lands on a long non-conversation page (a rendered body of at least search.long_page_min_chars characters, 20,000 by default), the result carries the whole section around the ranked passage instead of only that passage, inside the existing search.return_budget_conversation budget and the long-page limits; such rows report delivered {unit: "section", reason: "long_page"}. Short pages, conversations, an explicit return_unit, a non-auto search.return_unit, an explicit token_budget, recall, think and assemble_evidence are unchanged. A brain that already set search.long_page_unit keeps its value. To keep the old behavior (every hit its ranked chunk), run: gbrain config set search.long_page_unit off

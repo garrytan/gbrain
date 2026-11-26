@@ -348,6 +348,8 @@ export function effectivePlan(plan: EvidencePlan | null, hits: SearchResult[]): 
 export const LONG_PAGE_UNIT_CONFIG_KEY = 'search.long_page_unit';
 export const LONG_PAGE_UNITS = ['off', 'window', 'section', 'page'] as const;
 export type LongPageUnit = Exclude<typeof LONG_PAGE_UNITS[number], 'off'>;
+/** The unit when `search.long_page_unit` is unset; `off` turns the policy off. */
+const DEFAULT_LONG_PAGE_UNIT: LongPageUnit = 'section';
 /** A page is long when its rendered body (compiled truth, plus timeline unless `detail: "low"`) holds at least this many characters. */
 export const LONG_PAGE_MIN_CHARS_CONFIG_KEY = 'search.long_page_min_chars';
 export const DEFAULT_LONG_PAGE_MIN_CHARS = 20_000;
@@ -382,11 +384,12 @@ export function longPageMinCharsValueProblem(value: string): string | null {
  * The F2 policy for a search/query call: only under an implied `auto` (no
  * `return_unit`, `search.return_unit` unset or `auto`, no explicit budget).
  * `snippet_chars` leaves it on; capDeliveredSnippets exempts widened rows.
- * Read errors and unknown values are `off`; an unusable threshold is the default.
+ * Unset is DEFAULT_LONG_PAGE_UNIT; read errors and unknown values are `off`;
+ * an unusable threshold is the default.
  */
 export async function withLongPagePolicy(engine: BrainEngine, plan: EvidencePlan | null): Promise<EvidencePlan | null> {
   if (!plan || plan.unit !== 'auto' || plan.explicitUnit || plan.budgetExplicit) return plan;
-  const raw = (await engine.getConfig(LONG_PAGE_UNIT_CONFIG_KEY).catch(() => null))?.trim();
+  const raw = (await engine.getConfig(LONG_PAGE_UNIT_CONFIG_KEY).catch(() => 'off'))?.trim() || DEFAULT_LONG_PAGE_UNIT;
   if (raw !== 'window' && raw !== 'section' && raw !== 'page') return plan;
   const min = (await engine.getConfig(LONG_PAGE_MIN_CHARS_CONFIG_KEY).catch(() => null)) ?? '';
   return { ...plan, longPage: { unit: raw, minChars: longPageMinCharsValueProblem(min) ? DEFAULT_LONG_PAGE_MIN_CHARS : Number(min.trim()) } };
