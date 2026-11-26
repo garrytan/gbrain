@@ -23,6 +23,8 @@ import { sqlQueryForEngine } from '../src/core/sql-query.ts';
 import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
 import { OperationError, type AuthInfo } from '../src/core/ops/contract.ts';
 import { __correctFaults, approveRule, localRulesCtx, OPEN_RECEIPTS_PER_PRINCIPAL, retireRule, runCorrect } from '../src/core/rules/correct.ts';
+import { approvalDigest } from '../src/core/rules/confirm.ts';
+import { readRule, renderRulePage, ruleDigest } from '../src/core/rules/record.ts';
 import { runRulesCheck } from '../src/core/rules/check.ts';
 import { runRulesRegressionDoctor } from '../src/commands/doctor/checks/rules-regression.ts';
 import { CONFIRM_CODE_LENGTH, type TerminalProbe } from '../src/core/policy/authority.ts';
@@ -30,6 +32,7 @@ import { installTripwire, type Tripwire } from './helpers/ai-tripwire.ts';
 
 const OWNER = 'alice-example';
 const MEMBER = 'bob-example';
+const THIRD = 'carol-example';
 let engine: BrainEngine;
 let close: (() => Promise<void>) | undefined;
 let tripwire: Tripwire;
@@ -81,10 +84,10 @@ beforeAll(async () => {
   tripwire = installTripwire();
   if (kind === 'postgres') ({ engine, close } = await isolatedPersistencePostgres(process.env.DATABASE_URL!));
   else { const lite = new PGLiteEngine(); await lite.connect({}); await lite.initSchema(); engine = lite; close = () => lite.disconnect(); }
-  for (const m of [OWNER, MEMBER]) await addMember(engine, m, { remote: false });
+  for (const m of [OWNER, MEMBER, THIRD]) await addMember(engine, m, { remote: false });
   await setOwner(engine, OWNER);
   await engine.executeRaw("INSERT INTO sources (id, name, config) VALUES ('source-a', 'source-a', '{}'::jsonb) ON CONFLICT (id) DO NOTHING");
-  for (const who of [OWNER, MEMBER]) {
+  for (const who of [OWNER, MEMBER, THIRD]) {
     const minted = await mintLegacyToken(engine, { name: 'c2f-' + who, scopes: ['read', 'write'], takesHolders: ['world'] });
     await bindCredential(engine, { kind: 'token', id: minted.id }, { member: who });
     tokens[who] = minted.token;
@@ -263,6 +266,126 @@ describe('rules check and doctor', () => {
     const pages = (note.details as any).owner_only_pages as Array<{ source_id: string; slug: string }>;
     expect(pages.map(p => p.slug)).toEqual(expect.arrayContaining(['rules/legacy-checklist', 'policies/expense-example']));
     expect(note.message).toContain('remote writers');
+  });
+});
+
+describe('second review round: races, forged approvals and entity spellings', () => {
+  test('a page that appears between the absence check and the first write is refused at publication', async () => {
+    const text = 'Retro notes for alice-example go in the shared folder.';
+    const other = '---\ntype: rule\ntitle: other\nscope: team\nstatus: proposed\nrule: Retro notes for alice-example go in the shared folder.\nattribution: saved by a host writer\nreceipt: cr-00000000000000bb\n---\n\nAnother proposal.';
+    let slug = '';
+    const proto = Object.getPrototypeOf(engine);
+    __correctFaults.before = async (s, receipt) => {
+      if (s !== 'rule' || slug) return;
+      slug = receipt.rule.slug;
+      await local('put_page', { slug, content: other });
+      let hidden = false;
+      (engine as any).readPageSnapshot = async function (this: unknown, sl: string, o: unknown) { if (sl === slug && !hidden) { hidden = true; return null; } return proto.readPageSnapshot.call(this, sl, o); };
+    };
+    let out: any;
+    try { out = await runCorrect(localRulesCtx(engine), { rule: text, scope: 'team' }, { probe: noTty }).catch(e => e); } finally { __correctFaults.before = undefined; delete (engine as any).readPageSnapshot; }
+    expect(out.code).toBe('rule_exists');
+    expect((await engine.getPage(slug))!.frontmatter).toMatchObject({ receipt: 'cr-00000000000000bb', attribution: 'saved by a host writer' });
+  });
+
+  test('an owner correction approved after a stop, then polled while its fact write was pending, ends confirmed', async () => {
+    const wrong = await seedFact('Alice Example sits by the window.');
+    const right = 'Alice Example sits by the door.';
+    __correctFaults.before = s => { if (s === 'fact') throw new Error('killed'); };
+    let first: any;
+    try { first = await runCorrect(localRulesCtx(engine), { rule: right, fact_id: wrong, corrected_fact: right, scope: 'team', request_id: 'owner-approve-poll' }, { probe: noTty }); } finally { __correctFaults.before = undefined; }
+    expect(first).toMatchObject({ state: 'partial', step: 'fact' });
+    let fired = false;
+    __correctFaults.after = s => { if (s === 'fact' && !fired) { fired = true; throw new OperationError('write_pending', 'The write is accepted and is still pending.', 'Read the receipt again.'); } };
+    let ok: any;
+    try { ok = await approveRule(engine, `${first.rule_id}@${first.revision}`, { probe: ownerTty() }); } finally { __correctFaults.after = undefined; }
+    expect(ok).toMatchObject({ approved: false, receipt: { state: 'pending' } });
+    const polled = await runCorrect(localRulesCtx(engine), { receipt_id: first.receipt_id }) as any;
+    expect(polled).toMatchObject({ state: 'committed', confirmed: true });
+  });
+
+  test('a retry that finishes the correction before its creator holds the lease leaves the receipt intact', async () => {
+    const params = { rule: 'Heron standups start at nine for alice-example.', scope: 'team', request_id: 'lease-race-1' };
+    let retried: any = null;
+    __correctFaults.claimed = async () => {
+      if (retried) return;
+      retried = await runCorrect(localRulesCtx(engine), params, { probe: noTty });
+    };
+    let out: any;
+    try { out = await runCorrect(localRulesCtx(engine), params, { probe: noTty }).catch(e => e); } finally { __correctFaults.claimed = undefined; }
+    expect(retried.state).toBe('committed');
+    expect(out).toMatchObject({ state: 'committed', receipt_id: retried.receipt_id });
+    expect(await engine.getConfig(`correct.receipt.${retried.receipt_id}`)).not.toBeNull();
+  });
+
+  test('a rule retired before its receipt was settled is settled by the next retire', async () => {
+    const r = await remote(MEMBER, 'correct', { rule: 'Egret demos run on Fridays for alice-example.', scope: 'team' });
+    expect(r.json.state).toBe('proposed');
+    const slug = `rules/${r.json.rule_id}`;
+    const rule = readRule({ ...(await engine.getPage(slug))!, source_id: 'default' } as never)!;
+    await local('put_page', { slug, content: renderRulePage({ scope: rule.scope, status: 'retired', text: rule.text, corrects: rule.corrects, attribution: rule.attribution, receipt: rule.receipt ?? '', checks: rule.checks }), expected_revision: r.json.revision });
+    expect((await engine.getPage(slug))!.frontmatter.status).toBe('retired');
+    expect(await retireRule(engine, r.json.rule_id)).toMatchObject({ retired: true, unchanged: true });
+    expect((await remote(MEMBER, 'correct', { receipt_id: r.json.receipt_id })).json.state).toBe('conflicted');
+  });
+
+  test('an approval written into a receipt by anything but the owner\'s approval confirms nothing', async () => {
+    const wrong = await seedFact('Alice Example keeps a cactus.');
+    const r = await remote(MEMBER, 'correct', { rule: 'Alice Example keeps a fern.', fact_id: wrong, corrected_fact: 'Alice Example keeps a fern.', scope: 'team' });
+    const key = `correct.receipt.${r.json.receipt_id}`;
+    const stored = JSON.parse((await engine.getConfig(key))!);
+    const digest = ruleDigest(stored.rule);
+    const bound = approvalDigest(digest, { action: 'replace', id: stored.fact.id, text: stored.fact.text });
+    stored.approval = { revision: stored.steps.rule.revision, rule_digest: digest, proof: { method: 'terminal', digest: bound, at: new Date().toISOString() } };
+    stored.state = 'pending'; stored.step = 'fact'; stored.steps.fact = { state: 'pending', request_id: `${stored.receipt_id}.fact` };
+    await engine.setConfig(key, JSON.stringify(stored));
+    const read = await runCorrect(localRulesCtx(engine), { receipt_id: r.json.receipt_id, resume: true }) as any;
+    expect(read.confirmed).not.toBe(true);
+    expect((await factRow(wrong))!.expired_at).toBeNull();
+    expect(await engine.getConfig(`rules.confirmed.default:rules/${r.json.rule_id}`)).toBeNull();
+  });
+
+  test('an entity spelled with a leading slash that names a rules/ page is refused', async () => {
+    const wrong = String((await local('remember', { fact: 'the spare cello lives in room four.', provenance: 'test seed', request_id: 'seed-unattributed-1' })).id);
+    const r = await remote(MEMBER, 'correct', { rule: 'the spare cello lives in room five.', fact_id: wrong, corrected_fact: 'the spare cello lives in room five.', entity: '/rules/team/some-rule', scope: 'team' });
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain('invalid_params');
+  });
+
+  test('a remote entity check never names the page of a fact the caller cannot read', async () => {
+    await local('put_page', { slug: 'notes/bob-seating', content: '---\ntitle: Bob seating\nreadable_by: [bob-example]\n---\n\nSeating notes.' });
+    const hidden = await seedFact('Bob Example prefers aisle seats.', 'notes/bob-seating');
+    const r = await remote(OWNER, 'correct', { rule: 'Bob Example prefers window seats.', fact_id: hidden, corrected_fact: 'Bob Example prefers window seats.', entity: 'people/alice-example', scope: 'team' });
+    expect(r.isError).toBe(true);
+    expect(r.text).not.toContain('notes/bob-seating');
+  });
+
+  test('a fact replaced under one connection and finished under the owner\'s approval is replaced once', async () => {
+    const wrong = await seedFact('Alice Example drives a blue van.');
+    const right = 'Alice Example drives a red van.';
+    __correctFaults.after = s => { if (s === 'fact') throw new Error('killed'); };
+    let first: any;
+    try { const o = await remote(OWNER, 'correct', { rule: right, fact_id: wrong, corrected_fact: right, scope: 'team', request_id: 'cross-principal-1' }); first = JSON.parse(o.text.slice(0, o.text.lastIndexOf('}') + 1)); } finally { __correctFaults.after = undefined; }
+    expect(first).toMatchObject({ state: 'partial', step: 'fact' });
+    const ok = await approveRule(engine, `${first.rule_id}@${first.revision}`, { probe: ownerTty() });
+    expect(ok).toMatchObject({ approved: true });
+    expect((await liveFacts()).filter(f => f === right)).toHaveLength(1);
+  });
+
+  test('approving an owner rule that is already active marks its receipt confirmed', async () => {
+    const p = await runCorrect(localRulesCtx(engine), { rule: 'Kestrel reviews happen on Tuesdays.', scope: 'team' }, { probe: noTty }) as any;
+    expect(p).toMatchObject({ state: 'committed', confirmed: false });
+    expect(await approveRule(engine, `${p.rule_id}@${p.revision}`, { probe: ownerTty() })).toMatchObject({ approved: true });
+    expect(JSON.parse((await engine.getConfig(`correct.receipt.${p.receipt_id}`))!).confirmed).toBe(true);
+  });
+
+  test('concurrent proposals never pass the per-caller cap', async () => {
+    for (let i = 0; i < OPEN_RECEIPTS_PER_PRINCIPAL - 1; i++) {
+      expect((await remote(THIRD, 'correct', { rule: `Concurrent cap rule ${i} for carol-example.`, scope: 'team' })).json.state).toBe('proposed');
+    }
+    const outs = await Promise.all([0, 1, 2].map(i => remote(THIRD, 'correct', { rule: `Concurrent last rule ${i} for carol-example.`, scope: 'team' })));
+    expect(outs.filter(o => o.json.state === 'proposed')).toHaveLength(1);
+    expect(outs.filter(o => o.text.includes('correct_proposals_capped'))).toHaveLength(2);
   });
 });
 

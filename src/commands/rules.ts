@@ -64,6 +64,7 @@ export async function runRules(engine: BrainEngine, args: string[]): Promise<voi
       if (!words[0]) throw usageError('gbrain rules approve needs <id>@<revision>.', 'gbrain rules list shows each rule\'s id and revision.');
       const r = await approveRule(engine, words[0], { sourceId });
       print(r, r.approved ? `Approved ${r.rule_id} at revision ${r.revision}; your agents load it in their standing rules.` : `Not approved: ${JSON.stringify(r.receipt)}`);
+      if (!r.approved) setCliExitVerdict((r.receipt as { state?: string } | undefined)?.state === 'pending' ? 10 : 1);
       return;
     }
     if (sub === 'retire') {

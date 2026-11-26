@@ -64,10 +64,12 @@ a remote connection cannot clear the problem itself).
 - **Another member's agent**: the rule stays proposed and the fact unchanged until you approve it. Approving finishes
   the correction: the fact is fixed, then the rule is made active. The approve prompt shows the fact change, the page
   it is on, the entity the rule corrects and whose agents the rule applies to, and the code you type covers all of it.
-  Your approval is kept on the receipt, so if a write is still being saved when you approve, the next read of the
-  receipt (by you or by the member's agent) finishes it; you don't approve twice. A correction whose `entity` is a
-  rule page, or is not the page the fact is on, is refused (`invalid_params`). One connection can have at most 20
-  corrections waiting at a time (`correct_proposals_capped`). A member's `me` rule loads only for that member's
+  Your approval is kept in a reserved config key only your approval writes (not on the receipt, which agents can
+  edit), so if a write is still being saved when you approve, the next read of the receipt (by you or by the member's
+  agent) finishes it; you don't approve twice. A correction whose `entity` is a rule page in any spelling (`/rules/...`
+  too), or is not the page the fact is on, is refused (`invalid_params`); a remote caller that cannot read the fact
+  gets `fact_not_found` instead. One connection can have at most 20 corrections waiting at a time, counted under a
+  lock so calls sent together cannot pass it (`correct_proposals_capped`). A member's `me` rule loads only for that member's
   agents, never for yours.
 - **Guests** cannot correct anything (`correct_guest_refused`).
 - Text a tool returned, or something an agent inferred, is refused (`correct_origin_refused`). So is a rule that reads
@@ -100,7 +102,8 @@ approved in the last 7 days are named at the end.
 ```bash
 gbrain rules list                       # every rule: status, revision, confirmed
 gbrain rules show me/<name>             # one rule, and the approve command when it needs one
-gbrain rules approve me/<name>@<rev>    # confirm that exact revision (asks for a short code)
+gbrain rules approve me/<name>@<rev>    # confirm that exact revision (asks for a short code; exits 10 while a write
+                                        # is still being saved, 1 when nothing was approved)
 gbrain rules retire me/<name>           # stop loading it; a retired rule is never revived
 gbrain rules check                      # keyless regression check of confirmed rules
 ```
@@ -146,7 +149,8 @@ The revision you approved is not the rule's current one. Run `gbrain rules show 
 shows.
 
 ### rule_busy
-Another correction, approval or retirement of the same rule was running. Retry in a few seconds.
+Another correction, approval or retirement of the same rule, or another correction from the same connection, was
+running. Retry in a few seconds.
 
 ### correct_proposals_capped
 This connection already has 20 corrections waiting. Ask the owner to approve or retire them (`gbrain rules list`),

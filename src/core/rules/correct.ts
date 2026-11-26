@@ -25,11 +25,13 @@ import { callerIsOwner, resolveExcludePrivatePages } from '../search/private-vis
 import { callerMember, memberPageSlug } from '../access/member-facts.ts';
 import { readForgetTarget } from '../persistence/forget-prepare.ts';
 import { getWriteRequest } from '../persistence/journal.ts';
+import type { Principal } from '../persistence/model.ts';
+import { fallbackSlugify } from '../entities/resolve.ts';
 import { parseWriteRequestId } from '../persistence/preconditions.ts';
 import { detectInstructionLike } from '../write-gate.ts';
 import { confirmOnTerminal, confirmRequiredError, terminalAuthorityProblem, type OwnerProof, type TerminalProbe } from '../policy/authority.ts';
 import { withRuleWriter } from './admission.ts';
-import { approvalDigest, readConfirmations, saveConfirmation, type ApprovedFact } from './confirm.ts';
+import { approvalDigest, clearApproval, readApproval, readConfirmations, saveApproval, saveConfirmation, type ApprovedFact, type PendingApproval } from './confirm.ts';
 import { isRuleSlug, parseChecks, readRule, renderRulePage, ruleDigest, ruleIdOf, ruleName, ruleSlugOf, RULE_PREFIX, RULE_SCOPES, RULE_TEXT_MAX, type RuleCheck, type RuleScope, type RuleStatus } from './record.ts';
 
 export const RECEIPT_PREFIX = 'correct.receipt.';
@@ -43,7 +45,7 @@ const RETRYABLE = new Set(['write_pending', 'commit_lock_busy', 'owner_unavailab
 const REFUSED_AT_START = new Set(['permission_denied', 'scope_denied', 'insufficient_scope', 'writer_registration_required', 'source_changed', 'rule_owner_only', 'rule_exists']);
 
 /** `already`: the fact was withdrawn or superseded by another write before this correction's own withdrawal. */
-interface StepRecord { state: 'started' | 'committed' | 'pending'; request_id: string; revision?: string; fact_id?: string; contested?: boolean; already?: true }
+interface StepRecord { state: 'started' | 'committed' | 'pending'; request_id: string; revision?: string; fact_id?: string; contested?: boolean; already?: true; principal?: Principal }
 
 export interface CorrectReceipt {
   receipt_id: string;
@@ -59,14 +61,12 @@ export interface CorrectReceipt {
   step: CorrectStep | null;
   error?: { code: string; message: string };
   confirmed: boolean;
-  /** The owner's approval of this exact proposal: a later read or resume finishes it under the owner's authority. */
-  approval?: { revision: string; rule_digest: string; proof: OwnerProof };
 }
 
 export interface CorrectNext { who: 'caller' | 'owner' | 'host_operator'; why: string; argv?: string[]; mcp?: { tool: string; arguments: Record<string, unknown> }; user_message?: string; code?: string }
 
 /** Test seam: runs after a step's write returned and before the receipt records it, where a crash would land. */
-export const __correctFaults: { before?: (step: CorrectStep, r: CorrectReceipt) => void | Promise<void>; after?: (step: CorrectStep) => void } = {};
+export const __correctFaults: { before?: (step: CorrectStep, r: CorrectReceipt) => void | Promise<void>; after?: (step: CorrectStep) => void; claimed?: (r: CorrectReceipt) => void | Promise<void> } = {};
 
 const receiptKey = (id: string) => `${RECEIPT_PREFIX}${id}`;
 const digestOf = (v: unknown) => createHash('sha256').update(JSON.stringify(v)).digest('hex');
@@ -126,7 +126,12 @@ const RULE_LEASE_STALE_MS = 5 * 60_000;
  * separate processes on one brain share it.
  */
 async function withRuleLease<T>(engine: BrainEngine, sourceId: string, slug: string, fn: () => Promise<T>): Promise<T> {
-  const key = `${LEASE_PREFIX}${sourceId}:${slug}`;
+  return withLease(engine, `${sourceId}:${slug}`, () => opError('rule_busy', `Another correction, approval or retirement of rule ${ruleIdOf(slug)} is running, so nothing was written.`,
+    'Retry in a few seconds; the other call finishes on its own.'), fn);
+}
+
+async function withLease<T>(engine: BrainEngine, name: string, busy: () => OperationError, fn: () => Promise<T>): Promise<T> {
+  const key = `${LEASE_PREFIX}${name}`;
   const value = JSON.stringify({ token: randomUUID(), at: new Date().toISOString() });
   const deadline = Date.now() + RULE_LEASE_WAIT_MS;
   while (!(await claimConfig(engine, key, value))) {
@@ -134,10 +139,7 @@ async function withRuleLease<T>(engine: BrainEngine, sourceId: string, slug: str
     let at = Number.NaN;
     try { at = Date.parse((JSON.parse(held ?? '{}') as { at?: string }).at ?? ''); } catch { at = Number.NaN; }
     if (held && !(Date.now() - at < RULE_LEASE_STALE_MS)) { await releaseConfig(engine, key, held); continue; }
-    if (Date.now() > deadline) {
-      throw opError('rule_busy', `Another correction, approval or retirement of rule ${ruleIdOf(slug)} is running, so nothing was written.`,
-        'Retry in a few seconds; the other call finishes on its own.');
-    }
+    if (Date.now() > deadline) throw busy();
     await new Promise(resolve => setTimeout(resolve, 100));
   }
   try { return await fn(); } finally { await releaseConfig(engine, key, value); }
@@ -204,7 +206,7 @@ export function parseCorrectInput(ctx: OperationContext, p: Record<string, unkno
   const corrected = typeof p.corrected_fact === 'string' ? oneLine(p.corrected_fact).slice(0, 2000) : null;
   if (corrected && !factId) throw opError('invalid_params', 'corrected_fact needs fact_id: the wrong fact it replaces.', 'Pass fact_id from recall, or save a new fact with remember.');
   const entity = typeof p.entity === 'string' && p.entity.trim() ? p.entity.trim().slice(0, 200) : null;
-  if (entity && isRuleSlug(entity)) throw opError('invalid_params', `entity ${entity.slice(0, 80)} is a standing rule page; a fact is never written onto a rule.`, 'Pass the page the fact is about (a person, company or topic), or omit entity.');
+  if (entity && namesRule(entity)) throw opError('invalid_params', `entity ${entity.slice(0, 80)} is a standing rule page; a fact is never written onto a rule.`, 'Pass the page the fact is about (a person, company or topic), or omit entity.');
   const provenance = (typeof p.provenance === 'string' && p.provenance.trim() ? p.provenance.trim() : 'the user\'s correction').slice(0, 500);
   refuseInstructions([['rule', rule], ['corrected_fact', corrected]]);
   return { rule, scope, fact_id: factId, corrected_fact: corrected, entity, corrects: entity, checks: parseChecks(p.checks), provenance,
@@ -269,6 +271,8 @@ async function advance(ctx: OperationContext, r: CorrectReceipt, owner: boolean,
     }
     const requestId = `${r.receipt_id}.${step}`;
     const tried = r.steps[step] !== undefined;
+    const by = await requestPrincipalForContext(ctx);
+    const submittedBy = r.steps[step]?.principal ?? by;
     r.steps[step] = { ...(r.steps[step] ?? {}), state: 'started', request_id: requestId };
     r.state = 'partial'; r.step = step; delete r.error;
     await saveReceipt(engine, r);
@@ -279,11 +283,11 @@ async function advance(ctx: OperationContext, r: CorrectReceipt, owner: boolean,
         if (landed?.receipt !== r.receipt_id) {
           await __correctFaults.before?.(step, r);
           const now = await engine.readPageSnapshot(r.rule.slug, { sourceId: r.source_id });
-          if (now && !now.page.deleted_at) {
-            throw opError('rule_exists', `${ruleIdOf(r.rule.slug)} was written by another call before this correction's first write, so nothing was written.`,
-              `Run gbrain rules show ${ruleIdOf(r.rule.slug)}; approve that rule, or save this one with different words.`);
-          }
-          await withRuleWriter(() => submitPageMutation(ctx, { operation: 'put_page', params: { slug: r.rule.slug, source_id: r.source_id, content: pageFor('proposed'), request_id: requestId } }));
+          const exists = () => opError('rule_exists', `${ruleIdOf(r.rule.slug)} was written by another call before this correction's first write, so nothing was written.`,
+            `Run gbrain rules show ${ruleIdOf(r.rule.slug)}; approve that rule, or save this one with different words.`);
+          if (now && !now.page.deleted_at) throw exists();
+          await withRuleWriter(() => submitPageMutation(ctx, { operation: 'put_page', params: { slug: r.rule.slug, source_id: r.source_id, content: pageFor('proposed'), request_id: requestId } }))
+            .catch(e => { throw codeOf(e) === 'revision_required' ? exists() : e; });
         }
       } else if (step === 'fact') {
         const snap = await engine.readPageSnapshot(r.rule.slug, { sourceId: r.source_id });
@@ -292,10 +296,15 @@ async function advance(ctx: OperationContext, r: CorrectReceipt, owner: boolean,
           throw new OperationError('rule_transition', 'The rule page changed or was retired before its fact was fixed, so the fact was left unchanged.', `Run gbrain rules show ${ruleIdOf(r.rule.slug)}.`);
         }
         await __correctFaults.before?.(step, r);
-        const own = tried && r.fact.action === 'withdraw' ? await getWriteRequest(engine as never, await requestPrincipalForContext(ctx), parseWriteRequestId(requestId)!) : null;
-        const gone = tried && r.fact.action === 'withdraw' && !own && !!(await readForgetTarget(engine, Number(r.fact.id), r.source_id, false, false))?.expired_at;
+        const own = tried ? await getWriteRequest(engine as never, submittedBy, parseWriteRequestId(requestId)!) : null;
+        if (own && !['committed', 'conflict', 'failed', 'cancelled'].includes(own.state)) {
+          throw new OperationError('write_pending', 'The write is accepted and is still pending.', 'Read the receipt again with correct {receipt_id}; it finishes the step once the write commits.');
+        }
+        const gone = tried && r.fact.action === 'withdraw' && own?.state !== 'committed' && !!(await readForgetTarget(engine, Number(r.fact.id), r.source_id, false, false))?.expired_at;
         if (gone) r.steps.fact!.already = true;
         if (own?.state !== 'committed' && !gone) {
+        r.steps.fact!.principal = { kind: by.kind, id: by.id };
+        await saveReceipt(engine, r);
         const { verbOperations } = await import('../verbs.ts');
         const verb = verbOperations.find(o => o.name === (r.fact.action === 'replace' ? 'remember' : 'forget'))!;
         const out = await verb.handler(ctx, r.fact.action === 'replace'
@@ -354,6 +363,8 @@ async function chooseSlug(engine: BrainEngine, sourceId: string, scope: RuleScop
 
 export interface CorrectOptions { probe?: TerminalProbe }
 
+const factNotFound = (id: string) => opError('fact_not_found', `No fact with id "${id}" that this connection can read, so nothing was written.`, 'Pass a fact_id that recall returned to this same connection.');
+
 /**
  * A non-owner names only a fact it reads: a world fact, or, to withdraw it, one on its own member page (the owner's
  * local remember cannot write a replacement onto a member page). The owner's approval runs the fact step.
@@ -364,8 +375,15 @@ async function callerReadsFact(engine: BrainEngine, id: number, sourceId: string
   return withdraw && !!member && !!(await readForgetTarget(engine, id, sourceId, true, excludePrivate, false, memberPageSlug(member)));
 }
 
-/** A correction names the fact's own page as its entity, or none. */
-async function assertFactEntity(engine: BrainEngine, factId: string, sourceId: string, entity: string): Promise<void> {
+/** An entity that names a standing rule page in any spelling remember would turn into that slug. */
+const namesRule = (entity: string) => isRuleSlug(entity) || isRuleSlug(fallbackSlugify(entity.trim()) ?? '');
+
+/**
+ * A correction names the fact's own page as its entity, or none. A remote caller learns the fact's page only when it
+ * reads the fact; otherwise the fact is not found, so the check never names a page the caller cannot read.
+ */
+async function assertFactEntity(engine: BrainEngine, factId: string, sourceId: string, entity: string, reader?: { member: string | null; withdraw: boolean }): Promise<void> {
+  if (reader && !(await callerReadsFact(engine, Number(factId), sourceId, reader.member, reader.withdraw))) throw factNotFound(factId);
   const on = (await readForgetTarget(engine, Number(factId), sourceId, false, false))?.entity_slug;
   if (on && on.toLowerCase() !== entity.toLowerCase()) {
     throw opError('invalid_params', `Fact ${factId} is about ${on}, not ${entity.slice(0, 80)}, so nothing was written.`, `Pass entity ${on}, or omit entity.`);
@@ -373,8 +391,7 @@ async function assertFactEntity(engine: BrainEngine, factId: string, sourceId: s
 }
 
 /** The owner approved this exact proposal: its revision, its words and its fact change. */
-function approvalHolds(r: CorrectReceipt): boolean {
-  const a = r.approval;
+function approvalHolds(r: CorrectReceipt, a: PendingApproval | null): a is PendingApproval {
   return !!a && a.revision === r.steps.rule?.revision && a.rule_digest === ruleDigest(r.rule)
     && a.proof.digest === approvalDigest(a.rule_digest, approvedFact(r.fact)) && (a.proof.method === 'terminal' || a.proof.method === 'owner_session');
 }
@@ -388,8 +405,15 @@ async function continueReceipt(ctx: OperationContext, r: CorrectReceipt): Promis
   return withRuleLease(ctx.engine, r.source_id, r.rule.slug, async () => {
     const fresh = (await readReceipt(ctx.engine, r.receipt_id)) ?? r;
     if (fresh.state === 'conflicted') return fresh;
+    const approval = await readApproval(ctx.engine, fresh.receipt_id);
+    if (approvalHolds(fresh, approval)) {
+      const owner = localRulesCtx(ctx.engine, fresh.source_id);
+      await initializeLocalPersistence(owner);
+      const done = await advance(owner, fresh, true, approval.proof);
+      if (done.state === 'committed') await clearApproval(ctx.engine, fresh.receipt_id, approval.proof);
+      return done;
+    }
     if (fresh.author.owner) return advance(ctx, fresh, authorOf(ctx).owner, null);
-    if (approvalHolds(fresh)) return advance(localRulesCtx(ctx.engine, fresh.source_id), fresh, true, fresh.approval!.proof);
     return advance(ctx, fresh, false, null);
   });
 }
@@ -411,10 +435,8 @@ export async function runCorrect(ctx: OperationContext, p: Record<string, unknow
   const key = principalKey(principal);
   let receiptId = `cr-${digestOf([key, input.request_id ?? intentOf(input)]).slice(0, 16)}`;
   const author = authorOf(ctx);
-  if (input.fact_id && !author.owner && !(await callerReadsFact(ctx.engine, Number(input.fact_id), input.source_id, author.member, !input.corrected_fact))) {
-    throw opError('fact_not_found', `No fact with id "${input.fact_id}" that this connection can read, so nothing was written.`, 'Pass a fact_id that recall returned to this same connection.');
-  }
-  if (input.fact_id && input.entity) await assertFactEntity(ctx.engine, input.fact_id, input.source_id, input.entity);
+  if (input.fact_id && !author.owner && !(await callerReadsFact(ctx.engine, Number(input.fact_id), input.source_id, author.member, !input.corrected_fact))) throw factNotFound(input.fact_id);
+  if (input.fact_id && input.entity) await assertFactEntity(ctx.engine, input.fact_id, input.source_id, input.entity, remote ? { member: author.member, withdraw: !input.corrected_fact } : undefined);
   const intent = intentOf(input);
   let prior = await readReceipt(ctx.engine, receiptId);
   if (prior && !input.request_id && (prior.state === 'committed' || prior.state === 'conflicted')) { receiptId = `cr-${randomBytes(8).toString('hex')}`; prior = null; }
@@ -422,11 +444,14 @@ export async function runCorrect(ctx: OperationContext, p: Record<string, unknow
     if (prior.intent !== intent) throw opError('idempotency_conflict', 'The request_id already belongs to a different correction, so nothing was written.', 'Use a new request_id for a new correction.');
     return receiptView(prior.state === 'conflicted' ? prior : await continueReceipt(ctx, prior), remote);
   }
+  const underCap = async (stored: Awaited<ReturnType<typeof readAllReceipts>>) => {
+    if (remote && stored.filter(({ receipt: r }) => r?.principal === key && OPEN_STATES.has(r.state)).length >= OPEN_RECEIPTS_PER_PRINCIPAL) {
+      throw opError('correct_proposals_capped', `This connection already has ${OPEN_RECEIPTS_PER_PRINCIPAL} corrections waiting (proposed or unfinished), so nothing was written.`,
+        'Ask the owner to approve or retire the waiting rules (gbrain rules list shows them), or finish a stopped correction with correct {receipt_id, resume: true}.');
+    }
+  };
   const stored = await readAllReceipts(ctx.engine);
-  if (remote && stored.filter(({ receipt: r }) => r?.principal === key && OPEN_STATES.has(r.state)).length >= OPEN_RECEIPTS_PER_PRINCIPAL) {
-    throw opError('correct_proposals_capped', `This connection already has ${OPEN_RECEIPTS_PER_PRINCIPAL} corrections waiting (proposed or unfinished), so nothing was written.`,
-      'Ask the owner to approve or retire the waiting rules (gbrain rules list shows them), or finish a stopped correction with correct {receipt_id, resume: true}.');
-  }
+  await underCap(stored);
   await pruneReceipts(ctx.engine, stored);
   const slug = await chooseSlug(ctx.engine, input.source_id, input.scope, input.rule, receiptId, input.scope === 'me' && !author.owner ? (author.member ?? key) : '');
   const fact: ApprovedFact | null = input.fact_id ? { action: input.corrected_fact ? 'replace' : 'withdraw', id: input.fact_id, text: input.corrected_fact } : null;
@@ -443,15 +468,23 @@ export async function runCorrect(ctx: OperationContext, p: Record<string, unknow
     fact: { action: input.fact_id ? (input.corrected_fact ? 'replace' : 'withdraw') : 'none', id: input.fact_id, text: input.corrected_fact, entity: input.entity, provenance: input.provenance },
     steps: {}, state: 'partial', step: 'rule', confirmed: false,
   };
-  if (!(await claimReceipt(ctx.engine, receipt))) {
+  const claimed = remote
+    ? await withLease(ctx.engine, `@${key}`, () => opError('rule_busy', 'Another correction from this connection is being saved, so nothing was written.',
+      'Retry in a few seconds; the other call finishes on its own.'), async () => { await underCap(await readAllReceipts(ctx.engine)); return claimReceipt(ctx.engine, receipt); })
+    : await claimReceipt(ctx.engine, receipt);
+  if (!claimed) {
     const held = await readReceipt(ctx.engine, receiptId);
     if (!held || held.intent !== intent) throw opError('idempotency_conflict', 'The request_id already belongs to a different correction, so nothing was written.', 'Use a new request_id for a new correction.');
     return receiptView(held, remote);
   }
+  await __correctFaults.claimed?.(receipt);
   try {
-    return receiptView(await withRuleLease(ctx.engine, receipt.source_id, slug, () => advance(ctx, receipt, author.owner, proof)), remote);
+    return receiptView(await withRuleLease(ctx.engine, receipt.source_id, slug, async () => {
+      const fresh = (await readReceipt(ctx.engine, receiptId)) ?? receipt;
+      return fresh.state === 'conflicted' ? fresh : advance(ctx, fresh, author.owner, proof);
+    }), remote);
   } catch (e) {
-    if (e instanceof OperationError && e.code === 'rule_busy') await ctx.engine.unsetConfig(receiptKey(receiptId));
+    if (e instanceof OperationError && e.code === 'rule_busy' && !(await readReceipt(ctx.engine, receiptId))?.steps.rule) await ctx.engine.unsetConfig(receiptKey(receiptId));
     throw e;
   }
 }
@@ -511,7 +544,7 @@ export async function approveRule(engine: BrainEngine, ref: string, opts: { sour
   const stored = rule.status === 'proposed' && rule.receipt ? await readReceipt(engine, rule.receipt) : null;
   const receipt = stored && stored.rule.slug === slug ? stored : null;
   const fact = receipt ? approvedFact(receipt.fact) : null;
-  if (receipt?.fact.entity && isRuleSlug(receipt.fact.entity)) {
+  if (receipt?.fact.entity && namesRule(receipt.fact.entity)) {
     throw opError('invalid_params', `Rule ${rule.id}'s fact change would write onto the standing rule page ${receipt.fact.entity.slice(0, 80)}, so nothing was approved.`,
       'Retire it with gbrain rules retire and save the correction again with the fact\'s own page as entity.');
   }
@@ -530,14 +563,15 @@ export async function approveRule(engine: BrainEngine, ref: string, opts: { sour
     const at = now && !now.page.deleted_at ? String(now.revision) : null;
     if (at !== revision) throw staleRevision(rule.id, revision, at);
     const ctx = localRulesCtx(engine, sourceId);
+    await initializeLocalPersistence(ctx);
     let finalRevision = revision;
     if (rule.status === 'proposed') {
       const held = receipt ? (await readReceipt(engine, receipt.receipt_id)) ?? receipt : null;
       if (held) {
         if (held.state === 'conflicted') return { approved: false, rule_id: rule.id, receipt: receiptView(held, false) };
-        held.approval = { revision, rule_digest: digest, proof };
-        await saveReceipt(engine, held);
+        await saveApproval(engine, held.receipt_id, { revision, rule_digest: digest, proof });
         const done = await advance(ctx, held, true, proof);
+        if (done.state === 'committed') await clearApproval(engine, held.receipt_id, proof);
         if (done.state !== 'committed') return { approved: false, rule_id: rule.id, receipt: receiptView(done, false) };
         return { approved: true, rule_id: rule.id, revision: done.steps.activate?.revision ?? null, confirmed: done.confirmed, receipt: receiptView(done, false) };
       }
@@ -547,6 +581,11 @@ export async function approveRule(engine: BrainEngine, ref: string, opts: { sour
       finalRevision = (await pageRevision(engine, slug, sourceId)) ?? revision;
     }
     await saveConfirmation(engine, { source_id: sourceId, slug, revision: finalRevision, digest, proof });
+    const settled = rule.receipt ? await readReceipt(engine, rule.receipt) : null;
+    if (settled && settled.rule.slug === slug && settled.state === 'committed' && !settled.confirmed && settled.steps.activate?.revision === finalRevision) {
+      settled.confirmed = true;
+      await saveReceipt(engine, settled);
+    }
     return { approved: true, rule_id: rule.id, revision: finalRevision, confirmed: true };
   });
 }
@@ -563,13 +602,22 @@ async function retireHeld(engine: BrainEngine, slug: string, sourceId: string): 
   const snap = await engine.readPageSnapshot(slug, { sourceId });
   const rule = snap && !snap.page.deleted_at ? readRule({ ...snap.page, source_id: sourceId }) : null;
   if (!rule) throw opError('page_not_found', `No standing rule ${ruleIdOf(slug)}.`, 'gbrain rules list shows each rule\'s id.');
-  if (rule.status === 'retired') return { retired: true, rule_id: rule.id, unchanged: true };
+  if (rule.status === 'retired') {
+    await settleRetired(engine, rule.receipt, slug);
+    return { retired: true, rule_id: rule.id, unchanged: true };
+  }
   const fm = snap!.page.frontmatter ?? {};
   const page = renderRulePage({ scope: rule.scope, status: 'retired', text: rule.text, corrects: rule.corrects, attribution: rule.attribution, receipt: rule.receipt ?? '', checks: rule.checks,
     ...(fm.visibility === 'private' ? { visibility: 'private' as const } : {}), ...(rule.readable_by ? { readable_by: rule.readable_by } : {}) });
   await withRuleWriter(() => submitPageMutation(localRulesCtx(engine, sourceId), { operation: 'put_page', params: { slug, source_id: sourceId, content: page, expected_revision: String(snap!.revision) } }));
-  const receipt = rule.receipt ? await readReceipt(engine, rule.receipt) : null;
-  if (receipt && receipt.rule.slug === slug && receipt.state !== 'committed') {
+  await settleRetired(engine, rule.receipt, slug);
+  return { retired: true, rule_id: rule.id };
+}
+
+/** A retired rule's unfinished receipt ends conflicted, so it writes nothing more and no longer counts as waiting. */
+async function settleRetired(engine: BrainEngine, receiptId: string | null | undefined, slug: string): Promise<void> {
+  const receipt = receiptId ? await readReceipt(engine, receiptId) : null;
+  if (receipt && receipt.rule.slug === slug && receipt.state !== 'committed' && receipt.state !== 'conflicted') {
     receipt.state = 'conflicted';
     const submitted = receipt.steps.fact?.state === 'pending' || receipt.steps.fact?.state === 'committed';
     receipt.error = { code: 'rule_transition', message: submitted
@@ -577,5 +625,4 @@ async function retireHeld(engine: BrainEngine, slug: string, sourceId: string): 
       : 'The owner retired this rule before it was finished, so its fact was left unchanged and nothing more is written.' };
     await saveReceipt(engine, receipt);
   }
-  return { retired: true, rule_id: rule.id };
 }
