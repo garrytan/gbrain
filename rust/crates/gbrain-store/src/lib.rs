@@ -253,11 +253,7 @@ pub struct Store {
 /// The record file of a brain directory, with one writer or many. Only for the storage bake-off:
 /// a build with the `fjall` feature (never the addon's) keeps the records in a fjall database
 /// instead when `GBRAIN_RUST_BAKEOFF_STORE=fjall`.
-fn open_records(dir: &Path, concurrent: bool) -> Result<Arc<dyn Kv>> {
-    open_records_as(dir, concurrent, true)
-}
-
-/// `open_records`, which with `create` false opens only a record file that is already there.
+/// The record file of `dir`; with `create` false only one that is already there (never created).
 fn open_records_as(dir: &Path, concurrent: bool, create: bool) -> Result<Arc<dyn Kv>> {
     #[cfg(feature = "fjall")]
     if std::env::var("GBRAIN_RUST_BAKEOFF_STORE").is_ok_and(|v| v == "fjall") {
