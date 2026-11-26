@@ -12,6 +12,21 @@
 
 import type { BrainEngine } from '../engine.ts';
 import { runDetect, type DetectResult } from './detect.ts';
+import { loadActivePackForLocalEngine } from './best-effort.ts';
+import type { ResolvedPack } from './registry.ts';
+
+/**
+ * #10433: the detected prefixes that are real gaps in the active pack. A prefix the pack declares as a path prefix, or
+ * whose typed pages all carry a type the pack declares (or one of its aliases), already has a type, so suggesting one
+ * named after the folder would only duplicate it. No resolvable pack filters nothing.
+ */
+export function undeclaredPrefixes(detected: DetectResult, pack: Pick<ResolvedPack, 'manifest'> | null): DetectResult['prefixes'] {
+  if (!pack) return detected.prefixes;
+  const prefixes = new Set(pack.manifest.page_types.flatMap(t => t.path_prefixes.map(p => p.toLowerCase())));
+  const types = new Set(pack.manifest.page_types.flatMap(t => [t.name, ...t.aliases]));
+  return detected.prefixes.filter(p => !prefixes.has(p.prefix.toLowerCase())
+    && !(p.sample_types.length > 0 && p.sample_types.every(type => types.has(type))));
+}
 
 export interface SuggestOpts {
   sourceId?: string;
@@ -74,8 +89,11 @@ export async function runSuggest(
   const sourceId = opts.sourceId ?? 'default';
   const maxSampleSize = opts.maxSampleSize ?? 200;
 
-  const detected = await runDetect(engine, { sourceId, maxTypes: 50 });
+  const found = await runDetect(engine, { sourceId, maxTypes: 50 });
   const notes: string[] = [];
+  const gaps = undeclaredPrefixes(found, await loadActivePackForLocalEngine(engine, { sourceId }));
+  if (gaps.length < found.prefixes.length) notes.push(`${found.prefixes.length - gaps.length} prefix(es) skipped: the active schema pack already declares their type.`);
+  const detected: DetectResult = { ...found, prefixes: gaps };
 
   const promptInput: SuggestPromptInput = {
     detected,
