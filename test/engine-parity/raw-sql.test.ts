@@ -26,6 +26,7 @@ import { entityLookupFault, FAULT_MESSAGE } from '../helpers/entity-lookup-fault
 import { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import { IGNORED_WRITE_MEMBERS, memberKind } from '../../src/shadow/write-map.ts';
 import { withReadDeadline } from '../../src/core/read-deadline.ts';
+import { unexplainedReadRoutes } from '../helpers/read-route-allowance.ts';
 
 const { parityTest, arms } = parityArms(testBackends());
 
@@ -134,6 +135,7 @@ describe('engine parity: raw_sql', () => {
  */
 const READ_ROUTES = ['preparationRead', 'engineSqlRead', 'ownRawRead'] as const;
 const postgresTest = testBackends().includes('postgres') ? test : test.skip;
+
 describe('engine parity: raw_sql (Postgres read routes)', () => {
   postgresTest('no write member runs on a read route, and every read route refuses a write statement', async () => {
     // (1) Each write member is entered with every read route replaced by a recorder; a route entry stops the call before SQL.
@@ -168,15 +170,12 @@ describe('engine parity: raw_sql (Postgres read routes)', () => {
     const ROUTE_HELPERS = new Set<string>([...READ_ROUTES, 'decideRead', 'engineRead', 'timelineBoundedRead', 'writeMiscRead', 'jitOffRead', 'configRead']);
     const writes = [...members].filter(name => !ROUTE_HELPERS.has(name) && isWrite(name)).sort();
     expect(writes.length).toBeGreaterThan(100);
-    // Write members whose first step is a typed READ on this trunk (master reads the same values through raw SQL, which this probe
-    // does not record): the embedding column's config rows, and the soft-deleted pages a restore would revive. Each read runs
-    // on the read route and returns before the write, which runs in its own transaction (or the caller's) and never on a read route.
-    const READS_FIRST = new Set(['invalidateContentDriftEmbeddings', 'invalidateStaleSignatureEmbeddings', 'restorePage']);
-    const onReadRoute: string[] = [];
+    const entered: Array<[string, string]> = [];
     for (const name of writes) {
       const route = await enteredBy(name);
-      if (route && !route.endsWith('(unbounded)') && !(READS_FIRST.has(name) && route === 'preparationRead')) onReadRoute.push(`${name} -> ${route}`);
+      if (route) entered.push([name, route]);
     }
+    const onReadRoute = unexplainedReadRoutes(entered);
     // The recorder sees a read member enter its route (the scan is not blind).
     expect(await enteredBy('getSource')).toBe('preparationRead');
     expect(onReadRoute).toEqual([]);
@@ -221,4 +220,3 @@ describe('engine parity: raw_sql (Postgres read routes)', () => {
     expect(observed).toEqual(expected);
   }, 60_000);
 });
-
