@@ -11016,6 +11016,7 @@
           "flagged: boolean",
           "guest: boolean",
           "id: number",
+          "precedence: string",
           "slug: string",
           "source_id: string",
           "trust_tier: string",
@@ -11073,6 +11074,7 @@
           "contested: string | null",
           "flagged: boolean",
           "id: number",
+          "precedence: string | null",
           "trust_tier: string",
           "write_origin: unknown"
         ],
