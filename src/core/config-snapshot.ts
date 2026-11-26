@@ -150,8 +150,12 @@ export async function withoutRequestConfigSnapshot<T>(fn: () => Promise<T>): Pro
 }
 
 function snapshotRows(engine: BulkConfigReader, held: RequestSnapshot): Promise<Map<string, string> | null> {
-  held.rows ??= requestSnapshot.run({ held, live: true }, () => loadConfigSnapshot(engine))
-    .then(rows => { held.loaded = rows !== null; return rows ? new Map(Object.entries(rows)) : null; });
+  if (!held.rows) {
+    // `loaded` describes the rows promise that set it: a read an invalidation (withoutRequestConfigSnapshot) replaced must not mark its successor loaded.
+    const pending: Promise<Map<string, string> | null> = requestSnapshot.run({ held, live: true }, () => loadConfigSnapshot(engine))
+      .then(rows => { if (held.rows === pending) held.loaded = rows !== null; return rows ? new Map(Object.entries(rows)) : null; });
+    held.rows = pending;
+  }
   return held.rows;
 }
 
