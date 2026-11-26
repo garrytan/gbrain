@@ -100,9 +100,7 @@ src/core/content-repair/judgment.ts	judgmentParticipant	field	STREAM
 src/core/content-sanity.ts	assessContentSanity	field	STREAM	
 src/core/context/proactive-brief.ts	editItem	field	INLINE	reads the body only at or under 64 KiB, below the segmented threshold; a segmented page's NULL body skips the edit arm
 src/core/context/proactive-brief.ts	editItem	sql	INLINE	reads the body only at or under 64 KiB, below the segmented threshold; a segmented page's NULL body skips the edit arm
-src/core/context/retrieval-reflex.ts	resolveEntitiesToPointers	sql	LEAD	boundedBodyPrefixSql AS compiled_truth
 src/core/context/retrieval-reflex.ts	safeSynopsis	field	LEAD	bounded prefix rows
-src/core/context/retrieval-reflex.ts	weakTitleHits	sql	LEAD	boundedBodyPrefixSql AS compiled_truth
 src/core/conversation-parser/body.ts	readSummaryBody	field	STREAM	
 src/core/core-memory.ts	applyCoreSensitivity	field	INLINE	
 src/core/core-memory.ts	listCorePages	field	INLINE	
@@ -742,6 +740,7 @@ src/core/guests/promote.ts	promoteGuestNote	field	INLINE	assertInlineBody before
 src/core/rust-engine/store-codec.ts	guardNullBody	field	META	reads only whether the Rust store sent compiled_truth/timeline as null (a segmented shell, PGLite pages_body_storage_chk), never the body text; a null body becomes the guarded segmented page of rowToPage
 src/core/persistence/concept-rebuild.ts	STATED_SQL	sql	INLINE	reads only an inline page timeline for emptiness; a segmented page counts as unread and stays hidden
 
+src/core/engine-sql/belief-state.ts	readBeliefStateRows	sql	META	size only (the over-1 MiB creation rule); a segmented page counts as large by body_storage
 src/core/engine-sql/facts-cycle.ts	LIVE_STORED_BODY_SQL	sql	SEGW	lane 4 facts-cycle sites (item 4.2): moved from readStoredBody (the plain and FOR UPDATE texts). reads the inline columns only; a segmented page reads NULL and every caller holds it
 src/core/engine-sql/facts-cycle.ts	LIVE_STORED_BODY_LOCKED_SQL	sql	SEGW	lane 4 facts-cycle sites (item 4.2): moved from readStoredBody (the plain and FOR UPDATE texts). reads the inline columns only; a segmented page reads NULL and every caller holds it
 src/core/engine-sql/facts-purge.ts	listFactsReconcileBacklog	sql	STREAM	group 5 facts sites: moved from facts/reconcile-watermark.ts readFactsReconcileBacklog unchanged

@@ -18,6 +18,9 @@ import { openVault } from '../core/creds/vault.ts';
 /** One request, one reply, over the socket; `mint_socket_down` when nothing answers. */
 export function socketRequest(path: string, request: Record<string, unknown>, timeoutMs = 120_000): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
+    const closed = () => (request.op === 'call'
+      ? Object.assign(new Error('outcome_unknown: the Google socket closed the connection before answering this call, which may have been sent; read op status with the same idempotency_key before acting again'), { code: 'outcome_unknown' })
+      : Object.assign(new Error('peer_refused: the Google socket closed the connection without answering; this uid may not be in google.socket_peers (gbrain google mint status)'), { code: 'peer_refused' }));
     const socket = net.createConnection(path);
     let buf = '';
     const timer = setTimeout(() => { socket.destroy(); reject(new Error('the Google socket did not answer in time')); }, timeoutMs);
@@ -35,8 +38,11 @@ export function socketRequest(path: string, request: Record<string, unknown>, ti
       clearTimeout(timer);
       reject(error.code === 'ENOENT' || error.code === 'ECONNREFUSED'
         ? Object.assign(new Error(`mint_socket_down: nothing serves ${path}; start it with gbrain google mint serve (or gbrain serve --http with google.mint_socket true)`), { code: 'mint_socket_down' })
-        : error);
+        : error.code === 'EACCES'
+          ? Object.assign(new Error(`peer_refused: this uid cannot open ${path}; the socket is 0600 and this release serves only its owner and root`), { code: 'peer_refused' })
+          : error.code === 'EPIPE' || error.code === 'ECONNRESET' ? closed() : error);
     });
+    socket.once('close', () => { clearTimeout(timer); reject(closed()); });
   });
 }
 
@@ -53,12 +59,15 @@ function mintStatus(json: boolean): void {
   const cfg = readGoogleSocketConfig();
   const uid = process.getuid?.() ?? -1;
   const gate = brokerGate(cfg, uid, configDir());
-  const out = { path: googleSocketPath(), protocol: GOOGLE_SOCKET_VERSION, mint_socket_in_serve: cfg.mint_socket === true, peers: cfg.socket_peers ?? [],
+  const peers = cfg.socket_peers ?? [];
+  const unreachable = peers.filter(p => p !== uid && p !== 0);
+  const out = { path: googleSocketPath(), protocol: GOOGLE_SOCKET_VERSION, mint_socket_in_serve: cfg.mint_socket === true, peers, unreachable_peers: unreachable,
     broker: { call: gate.ok ? 'on' : 'off', root_gateway_opt_in: gate.rootGateway, unmet: gate.unmet } };
   if (json) { console.log(JSON.stringify(out, null, 2)); return; }
   console.log(`Google socket: ${out.path} (protocol v${out.protocol})`);
   console.log(`  started by gbrain serve --http: ${out.mint_socket_in_serve ? 'yes' : 'no (gbrain google mint serve, or google.mint_socket true)'}`);
   console.log(`  peers: owner uid ${uid}${out.peers.length ? ` + ${out.peers.join(', ')}` : ''}`);
+  if (unreachable.length) console.log(`    note: uid ${unreachable.join(', ')} cannot open this 0600 socket; this release serves the owner and root only (a group socket for non-root agent uids comes later)`);
   console.log(`  write broker (call): ${out.broker.call}${gate.rootGateway ? ' (root-gateway opt-in)' : ''}`);
   for (const line of gate.unmet) console.log(`    unmet: ${line}`);
 }
@@ -93,13 +102,23 @@ export async function runGoogleApprovals(args: string[]): Promise<void> {
   if (!reply.ok) { console.error(`${reply.code}: ${reply.message}`); process.exit(1); }
   const pending = reply.pending as Array<Record<string, unknown>>;
   if (pending.length === 0) { console.log('Nothing is waiting for an answer.'); return; }
-  for (const p of pending) {
-    console.log(`${p.request_id}  ${p.account}  ${p.server}.${p.tool}  turn ${p.turn_id}  expires ${p.expires_at}`);
-    console.log(p.kind === 'owner_confirm' ? '  safety pause: confirm with ALLOW_ONCE' : `  Google asks: ${p.message_md}`);
-    console.log(`  arguments: ${JSON.stringify(p.args ?? {}).slice(0, 600)}`);
-    console.log(`  choices: ${(p.choices as string[]).join(', ')}`);
-  }
+  for (const p of pending) console.log(formatPending(p).join('\n'));
   console.log('Answer one: gbrain google approvals answer <request_id> <choice>');
+}
+
+const ARGS_SHOWN = 600;
+
+/** One held call as the owner reads it: the outside invitees first, then the arguments, with any cut marked. */
+export function formatPending(p: Record<string, unknown>): string[] {
+  const outside = (p.outside as string[] | undefined) ?? [];
+  const args = JSON.stringify(p.args ?? {});
+  return [
+    `${p.request_id}  ${p.account}  ${p.server}.${p.tool}  turn ${p.turn_id}  expires ${p.expires_at}`,
+    p.kind === 'owner_confirm' ? '  safety pause: confirm with ALLOW_ONCE' : `  Google asks: ${String(p.message_md).replace(/\n/g, '\n    ')}`,
+    ...(outside.length ? [`  outside invitees: ${outside.map(a => JSON.stringify(a)).join(', ')}`] : []),
+    `  arguments: ${args.length > ARGS_SHOWN ? `${args.slice(0, ARGS_SHOWN)}… (${args.length - ARGS_SHOWN} more characters; --json shows all)` : args}`,
+    `  choices: ${(p.choices as string[]).join(', ')}`,
+  ];
 }
 
 const REDACTED = '[redacted:google_token]';

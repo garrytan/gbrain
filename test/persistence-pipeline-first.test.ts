@@ -10,6 +10,8 @@ import { join, relative } from 'node:path';
 import { declareDurablePersistence, declarePersistenceProtocol, isPersistenceDeclaration } from '../src/core/persistence/protocol.ts';
 import { declarePublication } from '../src/core/persistence/publication-deadline.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { PostgresEngine } from '../src/core/postgres-engine.ts';
 import type postgres from '#postgres';
 import { reservedTransactions } from '../src/core/postgres-engine/reserved-transactions.ts';
 import { READ_WRITE_BEGIN } from '../src/core/postgres-engine/read-write-transactions.ts';
@@ -17,7 +19,10 @@ import { composablePostgresTransaction } from '../src/core/page-state/transactio
 
 function recorder(kind = 'postgres'): { engine: BrainEngine; sent: string[] } {
   const sent: string[] = [];
-  const engine = { kind, executeRaw: async (sql: string) => { sent.push(sql); return [{ brain: null }]; } } as unknown as BrainEngine;
+  const raw = { kind, executeRaw: async (sql: string) => { sent.push(sql); return [{ brain: null }]; } };
+  // The engines' own declarePersistence, run on the recorder: the text checked here is the text they send.
+  const engine = { ...raw, declarePersistence: (opts?: Parameters<BrainEngine['declarePersistence']>[0]) =>
+    (kind === 'pglite' ? PGLiteEngine : PostgresEngine).prototype.declarePersistence.call(raw as never, opts) } as unknown as BrainEngine;
   return { engine, sent };
 }
 
@@ -30,6 +35,19 @@ describe('isPersistenceDeclaration', () => {
     await declarePublication(engine);
     expect(sent.length).toBe(4);
     expect(sent.map(isPersistenceDeclaration)).toEqual([true, true, true, true]);
+  });
+
+  test('both engines send the same declaration text through executeRaw', async () => {
+    const texts = await Promise.all(['postgres', 'pglite'].map(async (kind) => {
+      const { engine, sent } = recorder(kind);
+      await engine.declarePersistence();
+      await engine.declarePersistence({ durable: { lockTimeout: '1s', statementTimeout: '5s' } });
+      await engine.declarePersistence({ durable: { lockTimeout: '1s', statementTimeout: '5s', idleInTransaction: '30s' } });
+      return sent;
+    }));
+    expect(texts[1]).toEqual(texts[0]!);
+    expect(texts[0]!.map(isPersistenceDeclaration)).toEqual([true, true, true]);
+    expect(texts[0]![0]).toBe("SELECT set_config('gbrain.persistence_protocol','2',true),(SELECT brain_id::text FROM persistence_brain WHERE singleton=1 FOR SHARE) AS brain");
   });
 
   test('refuses writes, session settings, other locks and anything after the declaration', () => {
