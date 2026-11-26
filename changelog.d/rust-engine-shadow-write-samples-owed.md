@@ -2,7 +2,7 @@
 
 ### Fixed
 - After a host crash, a killed shadow worker, a worker whose results could not be saved, or a disk that stopped taking writes, `gbrain engine shadow status` could read "measured" while some sampled writes were in no count. The proof that nothing was missing (a sent count, a warning line) was not tied to the results it vouched for. Each session now has a durable record of how many samples were handed to its worker, written before any of them is sent, and the worker settles each sample in the same atomic write as the count it adds. Status reads "measured" only when, for every session, nothing owed is unsettled; a session with nothing in flight blocks nothing, so a long-running brain still reads "measured" between samples.
-- A worker whose evidence epoch was replaced by a newer worker's no longer leaves its session blocked for as long as it runs: its results are handed to the new owner as lost lines that name the session.
+- A worker whose evidence epoch was replaced by a newer worker's no longer leaves its session blocked for as long as it runs, because its results are handed to the new owner as lost lines that name the session.
 - A shadow save that had landed in the file but not on disk (its directory flush failed) could be reported as saved at the next try without ever being flushed. It is now flushed first.
 - A client or replaced worker's lost lines are numbered, so a write that fails part-way and is retried whole credits each line once. A shadow save that could not read the evidence epoch manifest for a moment no longer ends the worker's saves for good; only a manifest naming a different epoch does.
 - A refused-sample count too large for one line (over 10,000) no longer settles more samples than the line was owed: the sampler carries at most 10,000 per line and sends the rest at once as loss-only lines in the same flush (none waits in memory for a later write; each such line counts as one more uncomparable sample). If the pipe refuses one of those lines, what is left is made owed in the durable record at once (`supervisor.owe`), so status reads the session as unsettled until the worker books it as lost, and the supervisor and the worker count a line's weight by one rule (`droppedWeight`). A swap eligibility read that cannot read the evidence epoch manifest (a torn or unreadable file, as opposed to no epoch yet) now counts as an unknown write path and refuses, instead of falling back to the 7-day window; the status document reads the manifest once and shares it.
@@ -17,6 +17,6 @@
 - Nothing about what counts as `comparable` changes, and a lost or uncompared sample is never counted as compared. The comparison bar and the sampling defaults are unchanged.
 
 ### Known limits
-- A serving process that is killed outright loses the samples it had accepted but not yet handed to the pipe: the count is too low, and no mismatch is hidden.
+- A serving process that is killed outright loses the samples it had accepted but not yet handed to the pipe. The count is too low, and no mismatch is hidden.
 - A reused process number can hold a session open for up to 10 minutes.
 - A worker that dies in the middle of a replay counts that one sample twice, never fewer.
