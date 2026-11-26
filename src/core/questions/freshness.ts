@@ -9,6 +9,7 @@
 import type { BrainEngine } from '../engine.ts';
 import type { AnswerSentence, PinRow } from './store.ts';
 import { quarantinedProvenanceFilterFragment } from '../quarantine.ts';
+import { privateFactFilterForReader, privatePagesFilterForCaller, privateTimelineEventFilterForCaller } from '../search/private-visibility.ts';
 
 export type StaleReason =
   | 'page_missing' | 'page_deleted' | 'page_changed' | 'source_archived'
@@ -37,7 +38,7 @@ export const TAKE_HASH_SQL = (a: string) => `md5(${a}.claim || '|' || ${a}.holde
 
 export interface EvaluatedSentence extends AnswerSentence {
   stale: boolean;
-  /** Not readable by this caller (evidence outside its source grant): never returned as text. */
+  /** Not readable by this caller (evidence outside its source grant, or for an owner read a row its page reads hide): never returned as text. */
   hidden: boolean;
   reasons: StaleReason[];
 }
@@ -77,6 +78,7 @@ interface EvidenceJoinRow {
   k_active: boolean | null;
   k_superseded: number | null;
   k_hash: string | null;
+  readable?: boolean | null;
 }
 
 function pageReasons(r: EvidenceJoinRow, changed: StaleReason): StaleReason[] {
@@ -122,14 +124,29 @@ export function evidenceReasons(r: EvidenceJoinRow): StaleReason[] {
 }
 
 /**
+ * Whether the current caller reads one evidence row as its page reads would: the fact under the fact read gate, else
+ * the cited page under its readers and privacy, its timeline row's event page, and its take's holder ($3, null for
+ * every holder).
+ */
+function evidenceReadableSql(): string {
+  return `CASE WHEN e.kind = 'fact' THEN f.id IS NOT NULL AND ${privateFactFilterForReader('f')}
+    ELSE p.id IS NOT NULL AND ${privatePagesFilterForCaller('p')}
+      AND (e.kind <> 'timeline' OR (t.id IS NOT NULL AND ${privateTimelineEventFilterForCaller('t')}))
+      AND (e.kind <> 'take' OR (k.id IS NOT NULL AND ($3::text[] IS NULL OR k.holder = ANY($3::text[]))))
+  END`;
+}
+
+/**
  * Evaluate the current answer for one reader. `readableSources` null means the
  * trusted local view (every source); otherwise a sentence citing evidence in a
- * source outside the list is hidden, never returned.
+ * source outside the list is hidden, never returned. `ownerRead` (the brain
+ * owner's remote read) also hides a sentence citing a row the owner's page
+ * reads would not show it.
  */
 export async function evaluateAnswer(
   engine: BrainEngine,
   pin: Pick<PinRow, 'id' | 'answer' | 'answer_revision'>,
-  opts: { readableSources: string[] | null },
+  opts: { readableSources: string[] | null; ownerRead?: { takesHolders: string[] | undefined } },
 ): Promise<AnswerEvaluation> {
   const rows = pin.answer.length === 0 ? [] : await engine.executeRaw<EvidenceJoinRow>(
     `SELECT e.sentence_id, e.kind, e.source_id, e.page_id, e.page_generation, e.page_revision, e.content_hash,
@@ -140,6 +157,7 @@ export async function evaluateAnswer(
        (f.id IS NOT NULL AND NOT ${quarantinedProvenanceFilterFragment('f')}) AS f_source_quarantined,
        t.id AS t_id, ${TIMELINE_HASH_SQL('t')} AS t_hash,
        k.id AS k_id, k.active AS k_active, k.superseded_by AS k_superseded, ${TAKE_HASH_SQL('k')} AS k_hash
+       ${opts.ownerRead ? `, ${evidenceReadableSql()} AS readable` : ''}
      FROM question_evidence e
      LEFT JOIN pages p ON p.id = e.page_id
      LEFT JOIN sources s ON s.id = p.source_id
@@ -147,13 +165,14 @@ export async function evaluateAnswer(
      LEFT JOIN timeline_entries t ON e.kind = 'timeline' AND t.id = e.item_id
      LEFT JOIN takes k ON e.kind = 'take' AND k.id = e.item_id
      WHERE e.question_id = $1 AND e.answer_revision = $2`,
-    [pin.id, pin.answer_revision]);
+    opts.ownerRead ? [pin.id, pin.answer_revision, opts.ownerRead.takesHolders ?? null] : [pin.id, pin.answer_revision]);
   const bySentence = new Map<string, EvidenceJoinRow[]>();
   for (const r of rows) bySentence.set(r.sentence_id, [...(bySentence.get(r.sentence_id) ?? []), r]);
   const sentences = pin.answer.map((s): EvaluatedSentence => {
     const evidence = bySentence.get(s.id) ?? [];
     const reasons = evidence.length === 0 ? ['unverifiable' as const] : [...new Set(evidence.flatMap(evidenceReasons))];
-    const hidden = opts.readableSources !== null && evidence.some(e => !opts.readableSources!.includes(e.source_id));
+    const hidden = (opts.readableSources !== null && evidence.some(e => !opts.readableSources!.includes(e.source_id)))
+      || (opts.ownerRead !== undefined && evidence.some(e => e.readable !== true));
     return { ...s, stale: reasons.length > 0, hidden, reasons };
   });
   return {

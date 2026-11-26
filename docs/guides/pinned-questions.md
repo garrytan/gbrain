@@ -145,6 +145,18 @@ Pinned questions are owner-private:
   `search.remote_private_pages=visible`) and are not slug-fenced. Any other
   connection gets `question_owner_only` with the command the owner runs
   instead, and `context_pack` shows it nothing.
+- Where private pages stay hidden from MCP, one more connection can read
+  pins: a credential bound to the brain owner
+  (`gbrain access owner set <member>`, then `gbrain auth rescope --token
+  <name> --member <member>`) can call `questions_list` and
+  `questions_status` over MCP. It must not be slug-fenced or a delegated
+  agent run, and it must speak for itself (no audience of other people). It
+  sees only pins whose question page it can read under its source grant and
+  [reader rules](access-designations.md), and the answer leaves out every
+  sentence whose evidence has gone stale or that it cannot read
+  (`sentences.stale` and `sentences.withheld` count them). Pinning, refreshing and
+  unpinning stay on the brain host for this credential, and its
+  `context_pack` shows no pinned answers.
 
 ## Paid refresh and consent
 

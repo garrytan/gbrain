@@ -32,9 +32,10 @@ import { readPageBodyPolicy } from '../page-body/limits.ts';
 import { contentRefusalError, loadImportSanityConfig } from '../import-screen.ts';
 import { DEFAULT_WRITE_GATE_CONFIG, writeGateApplies } from '../write-gate.ts';
 import { admitPageAppend } from '../persistence/page-append.ts';
+import { screenUploadedSecrets } from '../persistence/write-secrets.ts';
 import {
   abortUpload, appendPart, expireIfLapsed, partBytes, partMaxFrameBytes, partSha256, readUpload, readUploadByRequest, reserveUpload,
-  isStagingBodyRef, sealUpload, stagedSha256, transitionUploads, uploadExpired, uploadNotFound, uploadPartFrameBytes, uploadPartLimit, type StagingBodyRef, type UploadMode, type UploadRow,
+  isStagingBodyRef, sealUpload, stagedSha256, stagedUploadParts, transitionUploads, uploadExpired, uploadNotFound, uploadPartFrameBytes, uploadPartLimit, type StagingBodyRef, type UploadMode, type UploadRow,
 } from '../persistence/page-upload.ts';
 
 const MODES: readonly UploadMode[] = ['create', 'replace', 'append'];
@@ -356,6 +357,12 @@ const commit_page_upload: Operation = {
           await abortUpload(ctx.engine, row.id);
           throw opError('invalid_params', 'The uploaded bytes do not match the sha256 declared at begin, so the upload was discarded and nothing was written.',
             'Begin again with the SHA-256 of exactly the content you send.');
+        }
+        // secrets.on_write: the assembled body is screened, so a secret split across parts is found; a refused upload is discarded.
+        const secret = await screenUploadedSecrets(ctx, stagedUploadParts(ctx.engine, { kind: 'staging', staging_id: row.id, sha256: row.declared_sha256, bytes: row.declared_bytes }));
+        if (secret) {
+          await abortUpload(ctx.engine, row.id);
+          throw secret;
         }
         row = { ...row, state: 'sealed' };
       }

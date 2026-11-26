@@ -6103,6 +6103,16 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 |---|---|---|---|---|---|---|
 | A search offset was over the 10,000 limit. | The request itself was wrong or no longer matches the brain; nothing was changed. | Page with match: "keyword" and the next object each response returns; a cursor has no depth limit. | agent | `repeat the read that failed` | 1 | no |
 
+### secret_in_write
+
+<a id="secret_in_write"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A remote page write looks like it holds a secret and the brain host set secrets.on_write to block (a chunked upload is refused under redact too), so nothing was written; the message names pattern names and a count, never the value. | A page is read by everyone the brain serves and sent to its model providers, so a credential stored in one is exposed to all of them. | Remove the secret (name the environment variable or secret store entry that holds it instead) and send the write again with a new request_id. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#secret_in_write](../../docs/guides/write-refusals.md#secret_in_write)
+
 ### secret_reveal_forbidden
 
 <a id="secret_reveal_forbidden"></a>
