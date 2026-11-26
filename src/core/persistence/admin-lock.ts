@@ -39,7 +39,7 @@ function parseLock(value: string | null | undefined): WriterAdminLock {
 
 export async function readWriterAdminLock(engine: SqlEngine): Promise<WriterAdminLock> {
   const [row] = await engine.executeRaw<{ value: string }>('SELECT value FROM config WHERE key=$1', [WRITER_ADMIN_LOCK_KEY]);
-  return parseLock(row?.value);
+  return parseWriterAdminLock(row?.value);
 }
 
 /**
@@ -48,11 +48,7 @@ export async function readWriterAdminLock(engine: SqlEngine): Promise<WriterAdmi
  */
 export async function assertWriterAdminUnlocked(tx: SqlEngine): Promise<void> {
   await tx.executeRaw('SELECT singleton FROM persistence_brain WHERE singleton=1 FOR SHARE');
-  const lock = await readWriterAdminLock(tx);
-  if (!lock.locked) return;
-  throw new OperationError('writer_admin_locked',
-    `Writer administration is locked on this brain (${WRITER_ADMIN_LOCK_KEY}${lock.set_at ? `, set ${lock.set_at}` : ''}${lock.host_id ? ` by host ${lock.host_id}` : ''}); `
-    + 'writer claim, activate and transfer are refused.', WRITER_ADMIN_LOCKED_SUGGESTION, WRITER_ADMIN_LOCKED_DOCS);
+  refuseWriterAdminLocked(await readWriterAdminLock(tx));
 }
 
 function refuseWriterAdminLocked(lock: WriterAdminLock): void {

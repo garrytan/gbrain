@@ -288,8 +288,15 @@ test('an unchanged re-import screens its files with one read of each batch-share
         if (flat.includes(key)) counted.set(key, (counted.get(key) ?? 0) + 1);
       return original.call(this, sql, params, opts);
     } as BrainEngine['executeRaw'];
+    // Authorization's local writer read moved off executeRaw onto the typed readLocalWriterRow (the identity reads already used it),
+    // so every writer read that reaches the engine is counted under the same key.
+    const writer = brain.engine.readLocalWriterRow;
+    brain.engine.readLocalWriterRow = function(this: BrainEngine, ...args: Parameters<BrainEngine['readLocalWriterRow']>) {
+      counted.set('FROM persistence_local_writers', (counted.get('FROM persistence_local_writers') ?? 0) + 1);
+      return writer.apply(this, args);
+    };
     let again: PromiseSettledResult<unknown>[];
-    try { again = await importManagedFiles(brain.engine, files, { sourceId, noEmbed: true }); } finally { brain.engine.executeRaw = original; }
+    try { again = await importManagedFiles(brain.engine, files, { sourceId, noEmbed: true }); } finally { brain.engine.executeRaw = original; brain.engine.readLocalWriterRow = writer; }
     expect(again.map(r => r.status === 'fulfilled' && (r.value as { status: string }).status)).toEqual(files.map(() => 'skipped'));
     // A per-file screen would read each of these at least once per file (12 here).
     for (const key of counted.keys()) expect({ key, perBatch: counted.get(key)! <= 4 }).toEqual({ key, perBatch: true });

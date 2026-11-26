@@ -7,6 +7,14 @@
  */
 import type { Capability } from '../engine-capabilities.ts';
 import type { BrainEngine } from '../engine.ts';
+import { FOUNDATION_MEMBERS } from './members/foundation.ts';
+import { PAGES_MEMBERS } from './members/pages.ts';
+import { CONTENT_MEMBERS } from './members/content.ts';
+import { FACTS_MEMBERS } from './members/facts.ts';
+import { PERSISTENCE_MEMBERS } from './members/persistence.ts';
+import { ACCESS_MEMBERS } from './members/access.ts';
+import { JOBS_MEMBERS } from './members/jobs.ts';
+import { LEDGER_MEMBERS } from './members/ledgers.ts';
 
 export type MemberClass = 'implemented' | Capability;
 
@@ -376,13 +384,11 @@ export const RUST_ENGINE_MEMBERS = {
   getDecideProposal: 'eval_capture',
   getDecideReviewProposal: 'eval_capture',
   getWorktreeBinding: 'raw_sql',
-  readWriterAdminState: 'persistence_journal',
   readIgnoredPrivacyLabelPages: 'pages',
   readLivePageFrontmatter: 'pages',
   readImageSealProbe: 'pages',
   readPageChunkerVersion: 'pages',
   hasExtractedEvents: 'raw_sql',
-  hasLabelledOnlyMember: 'raw_sql',
   insertDecideCalibration: 'eval_capture',
   insertDecideProposal: 'eval_capture',
   insertDecideReceipts: 'eval_capture',
@@ -437,6 +443,14 @@ export const RUST_ENGINE_MEMBERS = {
   transitionDecideReviewProposal: 'eval_capture',
   upsertDecideState: 'eval_capture',
   upsertOpenLoop: 'facts',
+  ...FOUNDATION_MEMBERS,
+  ...PAGES_MEMBERS,
+  ...CONTENT_MEMBERS,
+  ...FACTS_MEMBERS,
+  ...PERSISTENCE_MEMBERS,
+  ...ACCESS_MEMBERS,
+  ...JOBS_MEMBERS,
+  ...LEDGER_MEMBERS,
 } as const satisfies Record<keyof BrainEngine, MemberClass>;
 
 export type RustEngineMember = keyof typeof RUST_ENGINE_MEMBERS;

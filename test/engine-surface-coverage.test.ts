@@ -49,11 +49,11 @@ const DIM = 1536;
 const INTERFACE_METHODS: readonly string[] = [
   // The import path's typed reads (part A), each the statement a raw executeRaw call ran on master:
   // sources (engine-sql/sources.ts): the resolver's local-path, routing, default-split and one-row reads, the active-source configs that scope a legacy remote caller, and the folder-import stamp.
-  'listLocalPathSources', 'listSourceRoutingRows', 'countDefaultSourceSplit', 'readSourceRow', 'listActiveSourceConfigs', 'markSourceSynced',
+  'listLocalPathSources', 'listSourceRoutingRows', 'countDefaultSourceSplit', 'listActiveSourceConfigs', 'markSourceSynced',
   // cli reads (engine-sql/cli-reads-import.ts): the source list, a source's incarnation and company-brain receipt, and the guest lookup.
   'listSourceRecords', 'readSourceIncarnation', 'hasCompanyBrainReceipt', 'readGuestSourceRow',
   // entity reads and writer state: the ignored-privacy-label notice reads, the committed page's frontmatter, the writer-admin state, and whether this role owns the schema tables.
-  'readIgnoredPrivacyLabelPages', 'readLivePageFrontmatter', 'readWriterAdminState', 'ownsSchemaTables',
+  'readIgnoredPrivacyLabelPages', 'readLivePageFrontmatter', 'ownsSchemaTables',
   // Part C: the image page's seal probe and any page's chunker version (engine-sql/entity-reads.ts), the reads an unchanged-image re-import makes.
   'readImageSealProbe', 'readPageChunkerVersion',
   // Cycle-lock leases
@@ -189,6 +189,8 @@ const INTERFACE_METHODS: readonly string[] = [
   'readPendingProposalSummary', 'readSourceState', 'sharedSkillPackTablePresent',
   // Held members the member layer adds before any caller moves (engine-sql/trust-tier-reads.ts, engine-sql/op-checkpoint.ts)
   'listPendingCoreEditNotices', 'purgeStaleAppliedCaptures',
+  // Members that land ahead of their callers (Rust engine landing parts), as on the main branch.
+  'beginSnapshotRead', 'compactTerminalIntent', 'completeEffectRow', 'completeWriteRow', 'countPagePurgeTombstones', 'countPurgeProbe', 'declarePersistence', 'deleteOpCheckpoint', 'deleteOwnedLinks', 'deletePurgeDecideProposals', 'deletePurgeReviewProposals', 'deletePurgeReviewQueue', 'failEffectRow', 'findTakeId', 'getLatestCalibrationProfile', 'getTrustProposal', 'getWriteGateHoldRow', 'insertCalibrationProfile', 'insertFactPurge', 'insertPublicationEffects', 'insertTakePurge', 'insertTrustProposal', 'insertWriteRequest', 'installChunkEmbeddings', 'isFactPurged', 'listFactProvenance', 'listGuestSourceIds', 'listPurgeEffects', 'listPurgeProbeItems', 'listSlotRows', 'listSlugAliases', 'listTrustProposals', 'listWriteGateHoldRows', 'listWriteGateReceiptsFor', 'loadPurgeTarget', 'lockEffectClaimRow', 'lockEffectGuard', 'lockEmbeddingSwitch', 'lockPersistenceCounters', 'lockSourceRow', 'lockWriteRequest', 'lockWriteRequestsById', 'markBeliefCommits', 'openPageEmbeddingHold', 'probePurgeDerivations', 'readAccessTokenWriteGrant', 'readAudiencePrincipals', 'readBeliefStateRows', 'readCounterRows', 'readEmbeddingCompletion', 'readFolderAccess', 'readLinkTargetPages', 'readLinkedMember', 'readLiveMember', 'readLivePageIdBySlug', 'readMayActFor', 'readOAuthClientWriteGrant', 'readOauthClient', 'readOwnedLinks', 'readOwnerOnlySourceConfig', 'readOwnerOnlySourcesPresent', 'readPageEmbeddingBudget', 'readPageIndexingState', 'readPageTrustRows', 'readReflexLiveKeys', 'readReflexPages', 'readRequestEffects', 'readScopeSourceConfigs', 'readSegmentedEmbedPage', 'readSegmentedGateEvidence', 'readSourceMembership', 'readSourceRow', 'readWriteRequest', 'readWriteRequestById', 'readWriteVisibilityProbe', 'readWriterAdminState', 'readWriterSlugFence', 'recordPageEmbeddingHold', 'releasePageEmbeddingLease', 'renewEffectClaim', 'renewPageEmbeddingLease', 'renewWriteClaim', 'requireSynchronousCommit', 'reservePageEmbedding', 'setEffectTransactionLimits', 'setPurgeProbeTimeout', 'settlePageEmbeddingReservation', 'shareLockWriteCredential', 'stampWriteClaim', 'takePageEmbeddingLease', 'upsertPagePurges', 'upsertWriteGateHold', 'upsertWriteGateReceipt', 'worktreeClaimStore', 'writerAdminStore',
 ];
 
 /**

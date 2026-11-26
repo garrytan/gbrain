@@ -140,3 +140,50 @@ export async function deleteCycleLockIfStale(exec: SqlExecutor, lockId: string, 
 function assertNever(value: never): never {
   throw new Error(`engine-sql cycle-locks: unhandled filter ${JSON.stringify(value)}`);
 }
+
+// ---------------------------------------------------------------- page embedding leases
+
+/**
+ * Page embedding leases (`embed-page:<page id>` rows, page-embedding-lease.ts owns the policy): the statements the
+ * lease always sent through `executeRaw`, now one copy for both engines. Each runs on the engine's own pool, or on the
+ * transaction a holder renews inside, as before. Unlike the cycle locks above, the lease fences on its token alone
+ * and takes over an expired row with no steal grace.
+ */
+const PAGE_EMBEDDING_LEASE_TAKE_SQL = `INSERT INTO gbrain_cycle_locks (id, holder_pid, holder_host, acquired_at, ttl_expires_at, last_refreshed_at, acquisition_token)
+     VALUES ($1, $2, $3, now(), now() + make_interval(mins => $4::int), now(), $5::uuid)
+     ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id, holder_pid = EXCLUDED.holder_pid, holder_host = EXCLUDED.holder_host, acquired_at = now(),
+       ttl_expires_at = EXCLUDED.ttl_expires_at, last_refreshed_at = now(), acquisition_token = EXCLUDED.acquisition_token
+     WHERE gbrain_cycle_locks.ttl_expires_at < now()
+     RETURNING id`;
+
+const PAGE_EMBEDDING_LEASE_RENEW_SQL = `UPDATE gbrain_cycle_locks SET ttl_expires_at = now() + make_interval(mins => $3::int), last_refreshed_at = now()
+      WHERE id = $1 AND acquisition_token = $2::uuid RETURNING id`;
+
+/** Deletes this holder's row and every expired `embed-page:` row (a crashed holder's). */
+const PAGE_EMBEDDING_LEASE_RELEASE_SQL = `DELETE FROM gbrain_cycle_locks
+        WHERE (id = $1 AND acquisition_token = $2::uuid) OR (id LIKE 'embed-page:%' AND ttl_expires_at < now())`;
+
+/** Takes the lease when it is free or expired; false while another holder's unexpired row stands. */
+export async function takePageEmbeddingLease(exec: SqlExecutor, leaseId: string, opts: {
+  holderPid: number;
+  holderHost: string;
+  acquisitionToken: string;
+  ttlMinutes: number;
+}): Promise<boolean> {
+  const { rows } = await exec.query<{ id: string }>(PAGE_EMBEDDING_LEASE_TAKE_SQL, [leaseId, opts.holderPid, opts.holderHost, opts.ttlMinutes, opts.acquisitionToken]);
+  return rows.length > 0;
+}
+
+/** Pushes the lease's expiry out by `ttlMinutes` when the row still carries this token; false when the lease was lost. */
+export async function renewPageEmbeddingLease(exec: SqlExecutor, leaseId: string, opts: {
+  acquisitionToken: string;
+  ttlMinutes: number;
+}): Promise<boolean> {
+  const { rows } = await exec.query<{ id: string }>(PAGE_EMBEDDING_LEASE_RENEW_SQL, [leaseId, opts.acquisitionToken, opts.ttlMinutes]);
+  return rows.length > 0;
+}
+
+/** Releases this holder's lease and deletes every expired page embedding lease. */
+export async function releasePageEmbeddingLease(exec: SqlExecutor, leaseId: string, opts: { acquisitionToken: string }): Promise<void> {
+  await exec.query(PAGE_EMBEDDING_LEASE_RELEASE_SQL, [leaseId, opts.acquisitionToken]);
+}
