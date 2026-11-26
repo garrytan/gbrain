@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 335868,
-    "stdoutSha256": "8a5b9610e18cbf99d07d411becac748e00cd2c2e525126606745c18b61c71286",
+    "stdoutBytes": 336050,
+    "stdoutSha256": "7b262907aa8014dc82469457a6622cb89cf3c321bb711d2b85aeded1989ca822",
     "toolNames": [
       "remember",
       "entity",
@@ -5431,7 +5431,7 @@
         "scope": "admin"
       },
       {
-        "description": "Get job status and details by ID. Agent-scoped tokens (no admin) see only jobs they own.",
+        "description": "Get job status and details by ID. Remote callers see only the jobs they submitted, unless bound to the brain owner.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -5455,7 +5455,7 @@
         "scope": "admin"
       },
       {
-        "description": "Wait until a job is completed, failed, dead or cancelled (at most 55 s per call), then return it like get_job plus terminal. terminal: false means it is still running: call again. Agent-scoped tokens (no admin) wait only on jobs they own.",
+        "description": "Wait until a job is completed, failed, dead or cancelled (at most 55 s per call), then return it like get_job plus terminal. terminal: false means it is still running: call again. Remote callers wait only on the jobs they submitted, unless bound to the brain owner.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -5484,7 +5484,7 @@
         "scope": "admin"
       },
       {
-        "description": "List background jobs with optional status/queue/name filters; pass fields to project each job to the columns you need. Use when checking queued or failed work. Needs admin scope (agent-scoped tokens see only jobs they own).",
+        "description": "List background jobs with optional status/queue/name filters; pass fields to project each job to the columns you need. Use when checking queued or failed work. Needs admin scope; remote callers (agent-scoped tokens too) see only the jobs they submitted, unless bound to the brain owner.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -5587,7 +5587,7 @@
         "scope": "admin"
       },
       {
-        "description": "Get structured progress for a running job. Agent-scoped tokens (no admin) see only jobs they own.",
+        "description": "Get structured progress for a running job. Remote callers see only the jobs they submitted, unless bound to the brain owner.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -5829,7 +5829,7 @@
         "scope": "admin"
       },
       {
-        "description": "This tool notifies you: it has gbrain wake this conversation through Wakeshift when job id finishes (completed, failed, dead or cancelled), so you can stop polling. Call it right after submitting a long job, then end your turn or keep working. The wake names the job and says to call get_job for the result; it carries no page text. Agent-scoped tokens watch only jobs they own. If no wake arrives, call wait_job.",
+        "description": "This tool notifies you: it has gbrain wake this conversation through Wakeshift when job id finishes (completed, failed, dead or cancelled), so you can stop polling. Call it right after submitting a long job, then end your turn or keep working. The wake names the job and says to call get_job for the result; it carries no page text. Remote callers watch only the jobs they submitted, unless bound to the brain owner. If no wake arrives, call wait_job.",
         "idempotent": true,
         "local_only": false,
         "mutating": true,

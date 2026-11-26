@@ -70,6 +70,48 @@ export const CREDENTIAL_SQL = {
   scope_sources: 'SELECT id, config FROM sources WHERE id IN (SELECT jsonb_array_elements_text($1::text::jsonb))',
 } as const;
 
+/**
+ * One listed access token, without its hash. `private_pages` and `private_facts` are the stored text (undefined on a
+ * brain that predates the column); `member_id` is null for a token bound to no member.
+ */
+export type AccessTokenListRow = {
+  id: string;
+  name: string;
+  scopes: unknown;
+  created_at: Date;
+  last_used_at: Date | null;
+  revoked_at: Date | null;
+  private_pages?: unknown;
+  private_facts?: unknown;
+  member_id: string | null;
+  /** GST-2898: the write source grant and read-shared switch, present when the column exists (`gbrain auth list` shows a switched key). */
+  source_grant?: unknown;
+  source_id?: unknown;
+  federated_read?: unknown;
+  grant_revision?: unknown;
+  read_shared_revision?: unknown;
+};
+
+const dateOrNull = (v: unknown): Date | null => (v == null ? null : v instanceof Date ? v : new Date(String(v)));
+
+/** Normalize one access_tokens row (Postgres, PGLite or the store) to the listed shape. The hash never crosses. */
+export function normalizeAccessTokenListRow(r: Record<string, unknown>): AccessTokenListRow {
+  return {
+    id: String(r.id), name: String(r.name), scopes: r.scopes, created_at: dateOrNull(r.created_at) as Date,
+    last_used_at: dateOrNull(r.last_used_at), revoked_at: dateOrNull(r.revoked_at),
+    ...('private_pages' in r ? { private_pages: r.private_pages } : {}),
+    ...('private_facts' in r ? { private_facts: r.private_facts } : {}),
+    ...Object.fromEntries(['source_grant', 'source_id', 'federated_read', 'grant_revision', 'read_shared_revision'].filter(key => key in r).map(key => [key, r[key]])),
+    member_id: r.member_id == null ? null : String(r.member_id),
+  };
+}
+
+/** Every access token, newest first (`SELECT *` reads every schema generation). */
+export async function listAccessTokens(tx: Raw): Promise<AccessTokenListRow[]> {
+  const rows = await tx.executeRaw<Record<string, unknown>>(CREDENTIAL_SQL.token_list);
+  return rows.map(normalizeAccessTokenListRow);
+}
+
 /** How `readScopeSourceConfigs` locks the rows it reads: FOR SHARE, FOR UPDATE, or no lock. */
 export type ScopeSourceLock = 'share' | 'update';
 

@@ -79,7 +79,16 @@ export function readBundleFile(path: string, root: string): { bytes: Buffer; mod
 
 export function prepareBundleRecovery(files: MutationFile[], binding: WorktreeBinding, row: WriteRequest): { record: BundleRecoveryRecord; bytes: number } {
   if (!files.length || files.length > BUNDLE_FILE_LIMITS.files || !binding.local_path) throw unsafe();
-  const root = realpathSync(join(binding.local_path, binding.relative_path));
+  return prepareBundleFiles(files, realpathSync(join(binding.local_path, binding.relative_path)), String(binding.owner_epoch), row.execution_token!, row);
+}
+
+/**
+ * The before bytes, hashes, modes and staging names of one skill bundle under `root`, each file checked against the
+ * hash it was prepared with (`source_changed` when it moved). A Rust brain, which has no worktree owner, stages and
+ * publishes through these records too (shared-skills/rust-publication.ts).
+ */
+export function prepareBundleFiles(files: MutationFile[], root: string, ownerEpoch: string, attempt: string, row: WriteRequest): { record: BundleRecoveryRecord; bytes: number } {
+  if (!files.length || files.length > BUNDLE_FILE_LIMITS.files) throw unsafe();
   const seen = new Set<string>();
   let beforeBytes = 0;
   let afterBytes = 0;
@@ -108,15 +117,14 @@ export function prepareBundleRecovery(files: MutationFile[], binding: WorktreeBi
       before: before?.bytes.toString('base64') ?? null, beforeHash,
       afterHash: file.content === null ? null : sha256(file.content), mode: before?.mode ?? null,
       afterMode: before?.mode ?? (0o644 & ~process.umask()),
-      ownerEpoch: String(binding.owner_epoch), attempt: row.execution_token!,
+      ownerEpoch, attempt,
       staging: {
         ...(file.content === null ? {} : { publication: recoveryStagingFile(file.path, file.content) }),
         ...(before === null ? {} : { restoration: recoveryStagingFile(file.path, before.bytes) }),
       },
     });
   }
-  const record: BundleRecoveryRecord = { version: 2, target: 'skill_bundle', root,
-    ownerEpoch: String(binding.owner_epoch), attempt: row.execution_token!, files: records };
+  const record: BundleRecoveryRecord = { version: 2, target: 'skill_bundle', root, ownerEpoch, attempt, files: records };
   return { record, bytes: Math.max(beforeBytes * 3 + afterBytes * 2,
     Buffer.byteLength(JSON.stringify(record)) + beforeBytes + afterBytes) + files.length * 4096 };
 }
