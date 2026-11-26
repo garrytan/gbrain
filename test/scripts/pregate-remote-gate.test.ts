@@ -211,6 +211,27 @@ describe('pregate-remote-gate.sh', () => {
       expect(ran('reuse-args')).toBe(false);
     });
 
+    it('a branch behind origin/master is judged on its own changes since the merge base, not on master\'s later edits', () => {
+      rmSync(join(repo, '.git', 'reuse-args'), { force: true });
+      rmSync(join(repo, '.git', 'gate-ran'), { force: true });
+      const fork = git('rev-parse', 'HEAD');
+      mkdirSync(join(repo, '.github', 'workflows'), { recursive: true });
+      writeFileSync(join(repo, '.github', 'workflows', 'test.yml'), 'master moved test.yml after the fork\n');
+      git('add', '.');
+      git('commit', '-q', '-m', 'master changes test.yml');
+      const master = git('rev-parse', 'HEAD');
+      git('reset', '-q', '--hard', fork);
+      writeFileSync(join(repo, 'branch-change.md'), 'a change on the branch\n');
+      git('add', '.');
+      git('commit', '-q', '-m', 'branch change');
+      git('update-ref', 'refs/remotes/origin/master', master);
+      const r = run(gateMarking, { GBRAIN_PREGATE_REPO: 'owner-example/repo-example', GBRAIN_PREGATE_REUSE_CMD: reuser("echo 'GBRAIN_REUSE_RESULT tests=9 failed=0'") });
+      expect(r.err).not.toContain('the tree changes .github/workflows/test.yml');
+      expect(ran('reuse-args')).toBe(true);
+      expect(ran('gate-ran')).toBe(false);
+      expect(r.out.trim().split('\n').at(-1)).toBe(`PREGATE_REMOTE: tree=${git('rev-parse', 'HEAD^{tree}')} tests=9 failed=0`);
+    });
+
     it('takes the receipt from the full runs, with the gate\'s exact line, and starts no gate', () => {
       const r = run(gateMarking, { GBRAIN_PREGATE_REPO: 'owner-example/repo-example', GBRAIN_PREGATE_REUSE_CMD: reuser("echo '[ci-reuse] gate: Test run passed'; echo 'GBRAIN_REUSE_RESULT tests=58853 failed=0'") });
       const tree = git('rev-parse', 'HEAD^{tree}');

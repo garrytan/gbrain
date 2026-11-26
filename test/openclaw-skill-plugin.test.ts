@@ -127,6 +127,8 @@ m.register({ on: (e, f) => { h[e] = f; } });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 await sleep(500);
 const out = [];
+const logLineCount = () => { try { return readdirSync(process.env.DRIVE_LOG_DIR).filter((f) => f.startsWith('openclaw-')).reduce((n, f) => n + readFileSync(join(process.env.DRIVE_LOG_DIR, f), 'utf8').split('\n').filter(Boolean).length, 0); } catch { return 0; } };
+const waitForLogLines = async (n) => { const deadline = Date.now() + 30_000; while (logLineCount() < n && Date.now() < deadline) await sleep(20); };
 for (const [kind, a] of JSON.parse(stepsJson)) {
   const sessionKey = a.session || 'agent:main:s1';
   const ctx = { ...real.first_turn.ctx, runId: a.run || 'drive-' + out.length, sessionKey, inputProvenance: { kind: a.provenance || 'external_user' }, ...(a.sender ? { senderId: a.sender } : {}), ...(a.ctx || {}),
@@ -146,10 +148,9 @@ for (const [kind, a] of JSON.parse(stepsJson)) {
   else if (kind === 'changed') { h.skill_changed({}, ctx); out.push('changed'); }
   else if (kind === 'state') { const s = JSON.parse(readFileSync(statePath, 'utf8')); Object.assign(s.agents.main, a); writeFileSync(statePath, JSON.stringify(s)); await sleep(20); out.push('state'); }
   else if (kind === 'sleep') { await sleep(a.ms); out.push('slept'); }
+  else if (kind === 'logs') { await waitForLogLines(a.lines); out.push('logs'); }
 }
-const logLineCount = () => { try { return readdirSync(process.env.DRIVE_LOG_DIR).filter((f) => f.startsWith('openclaw-')).reduce((n, f) => n + readFileSync(join(process.env.DRIVE_LOG_DIR, f), 'utf8').split('\n').filter(Boolean).length, 0); } catch { return 0; } };
-const logDeadline = Date.now() + 30_000;
-while (logLineCount() < Number(process.env.DRIVE_LOG_LINES || 0) && Date.now() < logDeadline) await sleep(20);
+await waitForLogLines(Number(process.env.DRIVE_LOG_LINES || 0));
 await sleep(300);
 console.log(JSON.stringify(out));
 process.exit(0);
@@ -855,9 +856,16 @@ describe.skipIf(!NODE)('session classes and the session-start brief', () => {
   test('a second rebuild inside the refresh cooldown is not dropped: one trailing refresh runs after it', async () => {
     const b = box();
     expectExit(await setup(b, ['--skill-loading', 'resolve']), 0);
-    const env = { OPENCLAW_STATE_DIR: b.state, OPENCLAW_CALLS: b.calls, GBRAIN_HOME: b.home, GBRAIN_TEST_OPENCLAW_SKILL_REFRESH_MS: '1500', GBRAIN_TEST_OPENCLAW_SKILL_REBUILD_MS: '1' };
-    drive(b, [['changed', {}], ['sleep', { ms: 800 }], ['changed', {}], ['sleep', { ms: 200 }]], undefined, { ...env, DRIVE_LOG_LINES: '4' });
-    expect(logLines(b).map((l) => l.outcome)).toEqual(['rebuilt', 'refreshed', 'rebuilt', 'refreshed']);
+    const cooldownMs = 4000;
+    const env = { OPENCLAW_STATE_DIR: b.state, OPENCLAW_CALLS: b.calls, GBRAIN_HOME: b.home, GBRAIN_TEST_OPENCLAW_SKILL_REFRESH_MS: String(cooldownMs), GBRAIN_TEST_OPENCLAW_SKILL_REBUILD_MS: '1' };
+    // The second rebuild waits for the first refresh to finish (its log line), not for a fixed sleep a slow refresh outlasts.
+    drive(b, [['changed', {}], ['logs', { lines: 2 }], ['changed', {}]], undefined, { ...env, DRIVE_LOG_LINES: '4' });
+    const lines = logLines(b);
+    expect(lines.map((l) => l.outcome)).toEqual(['rebuilt', 'refreshed', 'rebuilt', 'refreshed']);
+    const at = lines.map((l) => Date.parse(l.at));
+    // The second rebuild landed inside the cooldown the first refresh started, and its refresh waited for the cooldown to end.
+    expect(at[2]! - at[0]!).toBeLessThan(cooldownMs);
+    expect(at[3]! - at[0]!).toBeGreaterThanOrEqual(cooldownMs);
   });
 });
 

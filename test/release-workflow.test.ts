@@ -188,6 +188,9 @@ describe('release.yml ↔ gbrain engine install rust', () => {
     expect(smoke).toContain('engine install rust --json');
     expect(smoke).toContain('.rust_addon.installed == true and .rust_addon.override == false and .probe.ok == true');
     expect(smoke).toContain('"$gbrain" stats --json');
+    // The attestation read sends the job's read-only token: keyless calls share 60 an hour per runner IP.
+    expect(smoke).toContain('GH_TOKEN: ${{ github.token }}');
+    expect(smoke).toMatch(/permissions:\n\s+contents: read\n\s+attestations: read\n/);
   });
 });
 

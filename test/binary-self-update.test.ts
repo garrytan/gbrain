@@ -12,6 +12,7 @@ import {
   type ParsedAttestation,
   type ReleaseAsset,
 } from '../src/core/binary-self-update.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 const ASSETS: ReleaseAsset[] = [
   { name: 'gbrain-darwin-arm64', url: 'https://example.com/darwin-arm64' },
@@ -405,6 +406,95 @@ describe('defaultFetchAttestation (global fetch stubbed)', () => {
     } finally {
       restoreFetch();
     }
+  });
+});
+
+describe('defaultFetchAttestation: GitHub token and failure detail', () => {
+  const REAL_FETCH = globalThis.fetch;
+  const TOKEN = 'ghs_test-token-not-real';
+  const VALID = {
+    attestations: [{
+      bundle: {
+        dsseEnvelope: {
+          payload: Buffer.from(JSON.stringify({
+            subject: [{ name: 'gbrain-darwin-arm64', digest: { sha256: FAKE_DIGEST } }],
+            predicate: { runDetails: { builder: { id: VALID_BUILDER } } },
+          })).toString('base64'),
+        },
+      },
+    }],
+  };
+  /** Stubs fetch with one response per call, in order, and records each call's Authorization header. */
+  function stubFetch(responses: Response[]): (string | null)[] {
+    const auth: (string | null)[] = [];
+    (globalThis as any).fetch = (_input: any, init?: RequestInit) => {
+      auth.push(new Headers(init?.headers).get('authorization'));
+      return Promise.resolve(responses.shift() ?? new Response('unexpected call', { status: 500 }));
+    };
+    return auth;
+  }
+  async function fetchWith(env: Record<string, string | undefined>, responses: Response[]) {
+    const auth = stubFetch(responses);
+    const details: string[] = [];
+    try {
+      const parsed = await withEnv(env, () => defaultFetchAttestation(FAKE_DIGEST, (d) => details.push(d)));
+      return { parsed, auth, details };
+    } finally {
+      (globalThis as any).fetch = REAL_FETCH;
+    }
+  }
+
+  test('GH_TOKEN, else GITHUB_TOKEN, is sent as a bearer token', async () => {
+    const gh = await fetchWith({ GH_TOKEN: TOKEN, GITHUB_TOKEN: 'other' }, [Response.json(VALID)]);
+    expect(gh.auth).toEqual([`Bearer ${TOKEN}`]);
+    expect(gh.parsed?.[0]?.builderId).toBe(VALID_BUILDER);
+    const actions = await fetchWith({ GH_TOKEN: undefined, GITHUB_TOKEN: TOKEN }, [Response.json(VALID)]);
+    expect(actions.auth).toEqual([`Bearer ${TOKEN}`]);
+  });
+
+  test('with no token set the call stays keyless and still verifies', async () => {
+    const r = await fetchWith({ GH_TOKEN: undefined, GITHUB_TOKEN: undefined }, [Response.json(VALID)]);
+    expect(r.auth).toEqual([null]);
+    expect(r.parsed?.[0]?.builderId).toBe(VALID_BUILDER);
+    expect(r.details).toEqual([]);
+    const blank = await fetchWith({ GH_TOKEN: '  ', GITHUB_TOKEN: '' }, [Response.json(VALID)]);
+    expect(blank.auth).toEqual([null]);
+  });
+
+  test('a token GitHub rejects (401) is retried once without it', async () => {
+    const r = await fetchWith({ GH_TOKEN: TOKEN }, [new Response('bad credentials', { status: 401 }), Response.json(VALID)]);
+    expect(r.auth).toEqual([`Bearer ${TOKEN}`, null]);
+    expect(r.parsed?.[0]?.builderId).toBe(VALID_BUILDER);
+  });
+
+  test('a rate-limited response is null, with the status and rate-limit headers in the detail and never the token', async () => {
+    const limited = new Response('API rate limit exceeded', {
+      status: 403,
+      headers: { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': '1795000000' },
+    });
+    const r = await fetchWith({ GH_TOKEN: undefined, GITHUB_TOKEN: undefined }, [limited]);
+    expect(r.parsed).toBeNull();
+    expect(r.details).toEqual([
+      'HTTP 403 from the GitHub attestation API (no GitHub token), x-ratelimit-remaining 0, x-ratelimit-reset 2026-11-18T11:06:40.000Z',
+    ]);
+    const authed = await fetchWith({ GH_TOKEN: TOKEN }, [new Response('slow down', { status: 429 })]);
+    expect(authed.parsed).toBeNull();
+    expect(authed.details).toEqual(['HTTP 429 from the GitHub attestation API (with a GitHub token)']);
+    expect(authed.details.join('')).not.toContain(TOKEN);
+  });
+
+  test('a network error and an empty answer are null with a detail', async () => {
+    (globalThis as any).fetch = () => Promise.reject(new Error('ENETDOWN'));
+    const details: string[] = [];
+    try {
+      expect(await withEnv({ GH_TOKEN: undefined, GITHUB_TOKEN: undefined }, () => defaultFetchAttestation(FAKE_DIGEST, (d) => details.push(d)))).toBeNull();
+    } finally {
+      (globalThis as any).fetch = REAL_FETCH;
+    }
+    expect(details).toEqual(['the GitHub attestation API could not be reached: ENETDOWN']);
+    const empty = await fetchWith({ GH_TOKEN: undefined, GITHUB_TOKEN: undefined }, [Response.json({ attestations: [] })]);
+    expect(empty.parsed).toBeNull();
+    expect(empty.details).toEqual(['the GitHub attestation API returned no usable build attestation']);
   });
 });
 

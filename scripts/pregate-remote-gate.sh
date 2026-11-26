@@ -61,15 +61,17 @@ set -uo pipefail
 fail() { echo "pregate-remote-gate: $1" >&2; exit "${2:-1}"; }
 
 # Whether the checked-out commit's own full-ci runs may vouch for it: never when
-# it changes the full-ci workflows or the scripts that attest their runs relative
-# to origin/master (or there is no origin/master to compare against). Extra
-# arguments name more paths that may not change. Prints the reason on stderr and
-# returns 1 when they may not.
+# it changes the full-ci workflows or the scripts that attest their runs since
+# its merge base with origin/master (or there is no origin/master to compare
+# against). The merge base keeps a branch behind master from counting master's
+# own later edits as its changes. Extra arguments name more paths that may not
+# change. Prints the reason on stderr and returns 1 when they may not.
 runs_may_attest() {
   git rev-parse -q --verify 'origin/master^{commit}' >/dev/null || { echo "pregate-remote-gate: no origin/master to compare the full-ci workflows against" >&2; return 1; }
-  local path
+  local base path
+  base=$(git merge-base origin/master HEAD) || { echo "pregate-remote-gate: HEAD shares no history with origin/master" >&2; return 1; }
   for path in .github/workflows/test.yml .github/workflows/e2e.yml scripts/ci-reuse.ts scripts/ci-full-suite-tree.sh scripts/ci-executed-counts.ts scripts/ci-manifest.ts scripts/lib/gh-issue.ts "$@"; do
-    git diff --quiet origin/master HEAD -- "$path" && continue
+    git diff --quiet "$base" HEAD -- "$path" && continue
     echo "pregate-remote-gate: the tree changes $path relative to origin/master, so its own runs cannot attest to it" >&2
     return 1
   done
