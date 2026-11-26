@@ -65,5 +65,28 @@ for (const kind of testBackends()) {
       expect(await state('facts', b.fact)).toEqual({ tier: 'user_confirmed', decided: 'user_confirmed' });
       expect((await relowerClaimedRows(engine, { dryRun: true })).rows).toBe(0);
     }, 120_000);
+
+    // Postgres only: PGLite runs one connection, so the two transactions cannot overlap there.
+    test.skipIf(kind !== 'postgres')('an owner decision that commits while the relower waits on the row survives it', async () => {
+      const c = await atom('atoms/2026-09-07/c');
+      await engine.transaction(tx => withTrustBackfill(tx, () => tx.executeRaw(
+        `UPDATE facts SET trust_tier = 'operator_curated', write_origin = '{"channel":"trust_claim"}'::jsonb WHERE id = $1`, [c.fact])));
+      let release!: () => void;
+      const released = new Promise<void>(resolve => { release = resolve; });
+      let locked!: () => void;
+      const holdsRow = new Promise<void>(resolve => { locked = resolve; });
+      const confirm = engine.transaction(async tx => {
+        expect(await setRowTier(tx, { table: 'facts', id: c.fact, sourceId: 'own', tier: 'user_confirmed', ceiling: 'user_confirmed' })).toBe(true);
+        locked();
+        await released;
+      });
+      await holdsRow;
+      const relower = relowerClaimedRows(engine);
+      await new Promise(resolve => setTimeout(resolve, 1_000));
+      release();
+      await confirm;
+      await relower;
+      expect(await state('facts', c.fact)).toEqual({ tier: 'user_confirmed', decided: 'user_confirmed' });
+    }, 120_000);
   });
 }

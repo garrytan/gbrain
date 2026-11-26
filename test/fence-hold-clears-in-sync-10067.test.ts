@@ -74,5 +74,25 @@ for (const kind of testBackends()) {
       expect(await active(slug)).toEqual(['Alice Example founded acme-example.']);
       expect(await tiers()).toEqual(before);
     }, 120_000);
+
+    test('a reconcile that read the page before its fence was removed leaves the newer hold in place', async () => {
+      const slug = 'people/alice-example-3';
+      await put(FENCED, slug);
+      await runExtractFacts(engine, { slugs: [slug] });
+      const stale = await engine.getPage(slug, { sourceId: 'default' });
+      await put('# Alice Example\n\nThe facts section was lost in an edit.\n', slug);
+      await runExtractFacts(engine, { slugs: [slug] });
+      expect(await holds(slug)).toEqual(['fact_fence:fence_absent']);
+
+      const staleRead = new Proxy(engine, {
+        get(target, key) {
+          if (key === 'getPage') return async () => stale;
+          const value = Reflect.get(target, key, target);
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      });
+      await runExtractFacts(staleRead, { slugs: [slug] });
+      expect(await holds(slug)).toEqual(['fact_fence:fence_absent']);
+    }, 120_000);
   });
 }

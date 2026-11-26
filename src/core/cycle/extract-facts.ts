@@ -142,6 +142,12 @@ function timeOf(value: Date | string | null | undefined): number | null {
   return value == null ? null : new Date(value).getTime();
 }
 
+/** A stored instant as its fence cell renders it, to the second (#10055: `remember` stores a sub-second valid_from). */
+function wholeSecond(value: Date | string | null | undefined): number | null {
+  const time = timeOf(value);
+  return time == null ? null : Math.floor(time / 1000) * 1000;
+}
+
 function numbersDiffer(stored: number | string | null, desired: number | null | undefined): boolean {
   if (stored == null || desired == null) return (stored == null) !== (desired == null);
   const a = Number(stored);
@@ -179,7 +185,7 @@ function factCellsDiffer(stored: ExistingPageFact, desired: FenceExtractedFact):
     || numbersDiffer(stored.claim_value, desired.claim_value)
     || (stored.claim_unit ?? null) !== (desired.claim_unit ?? null)
     || (stored.claim_period ?? null) !== (desired.claim_period ?? null)
-    || (desired.valid_from != null && timeOf(stored.valid_from) !== desired.valid_from.getTime())
+    || (desired.valid_from != null && wholeSecond(stored.valid_from) !== desired.valid_from.getTime())
     || (stored.expired_at == null) !== desiredActive
     || (desiredActive && timeOf(stored.valid_until) !== timeOf(desired.valid_until));
 }
@@ -565,7 +571,7 @@ async function writeFenceReconcile(tx: BrainEngine, sourceId: string, slug: stri
   for (const f of plan.updates) {
     await tx.executeRaw(
       `UPDATE facts SET kind = $3, visibility = $4, notability = $5, context = $6,
-          valid_from = COALESCE($7::timestamptz, valid_from),
+          valid_from = CASE WHEN $7::timestamptz IS NULL OR date_trunc('second', valid_from) = $7::timestamptz THEN valid_from ELSE $7::timestamptz END,
           valid_until = CASE WHEN $8::boolean THEN $9::timestamptz ELSE valid_until END,
           expired_at = CASE WHEN $10::timestamptz IS NULL THEN NULL ELSE COALESCE(expired_at, $10::timestamptz) END,
           source = $11, confidence = $12,
@@ -1065,7 +1071,11 @@ export async function runExtractFacts(
     if (plan.fenceRows > 0) result.pagesWithFacts += 1;
     if (opts.dryRun) return 'skipped';
     if (plan.inSync) {
-      await answerFenceHold(engine, sourceId, slug, plan);
+      await engine.transaction(async tx => {
+        await tx.lockPageKeys([{ sourceId, slug }]);
+        const current = await tx.getPage(slug, { sourceId });
+        if (current && sameBody(current, page)) await answerFenceHold(tx, sourceId, slug, plan);
+      });
       return 'unchanged';
     }
     const { toInsert } = plan;

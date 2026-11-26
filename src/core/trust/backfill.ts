@@ -469,7 +469,8 @@ export async function relowerClaimedRows(engine: BrainEngine, opts: { dryRun?: b
     const apply = async (tx: BrainEngine) => {
       const changed = await withTrustBackfill(tx, () => tx.executeRaw<{ id: number; from_tier: string; to_tier: string }>(
         `WITH b AS (${candidates} AND x.id = ANY($2::bigint[]))
-         UPDATE ${table} t SET trust_tier = b.to_tier, write_origin = $3::text::jsonb FROM b WHERE t.id = b.id RETURNING t.id, b.from_tier, b.to_tier`, [claimed, ids, origin]));
+         UPDATE ${table} t SET trust_tier = b.to_tier, write_origin = $3::text::jsonb FROM b
+          WHERE t.id = b.id AND ${relowerableSql('t')} AND t.trust_tier = b.from_tier RETURNING t.id, b.from_tier, b.to_tier`, [claimed, ids, origin]));
       const publication = await appendBulkRetier(tx, changed.map(r => ({ table, id: Number(r.id), from: r.from_tier, to: r.to_tier })), 'trust_relower');
       if (publication) publications.push(publication);
       return changed.map(row => ({ table, id: Number(row.id) }));

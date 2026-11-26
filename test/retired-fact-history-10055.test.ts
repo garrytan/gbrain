@@ -83,5 +83,32 @@ for (const kind of testBackends()) {
       expect(after.context).toMatch(/^superseded by #\d+, she moved on$/);
       expect(after).toMatchObject({ expired_at: before.expired_at, valid_until: before.valid_until, superseded_by: before.superseded_by });
     }, 120_000);
+
+    test('a remembered fact keeps its sub-second valid_from, retired or active, across an unrelated edit and the reconcile', async () => {
+      const row = async (id: number) => (await engine.executeRaw<Record<string, unknown>>(
+        `SELECT valid_from::text AS valid_from, expired_at::text AS expired_at, context, last_write_request_id FROM facts WHERE id = $1`, [id]))[0]!;
+      setSystemTime(new Date('2026-11-20T10:00:00.123Z'));
+      const first = await call('remember', { fact: 'Alice Example plays chess.', provenance: 'test', entity: SLUG });
+      setSystemTime(new Date('2026-11-21T10:00:00.456Z'));
+      const second = await call('remember', { fact: 'Alice Example plays go.', provenance: 'test', entity: SLUG, replaces: String(first.body.id) });
+      expect(second.body.status).toBe('superseded');
+      const retiredBefore = await row(Number(first.body.id));
+      const activeBefore = await row(Number(second.body.id));
+      expect(String(retiredBefore.valid_from)).toContain('.123');
+      expect(String(activeBefore.valid_from)).toContain('.456');
+
+      setSystemTime(new Date('2026-11-24T10:00:00.000Z'));
+      const body = await content();
+      const edited = body.replace('| Alice Example likes tea. | preference | 1.0 | world | medium | 2026-10-02T00:00:00Z |',
+        '| Alice Example likes tea. | preference | 1.0 | world | medium | 2026-10-03T00:00:00Z |');
+      expect(edited).not.toBe(body);
+      await put(edited);
+      expect(await row(Number(first.body.id))).toEqual(retiredBefore);
+      expect(await row(Number(second.body.id))).toEqual(activeBefore);
+
+      await runExtractFacts(engine, { slugs: [SLUG] });
+      expect(await row(Number(first.body.id))).toEqual(retiredBefore);
+      expect(await row(Number(second.body.id))).toEqual(activeBefore);
+    }, 120_000);
   });
 }
