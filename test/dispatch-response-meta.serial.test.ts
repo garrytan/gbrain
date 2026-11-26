@@ -40,6 +40,9 @@ const engineStub = {
   // Cat 40 Hard F2: the strict keyword count every search reports (no matches here).
   countKeywordPages: async () => 0,
   resolveCaseSensitiveAliases: async () => [],
+  // The freshness notice reads coverage through a typed member (it was a raw read these stubs answered with no rows): none recorded.
+  hasNotifierCoverage: async () => false,
+  readPageTrustRows: async () => [], // the result labels' trust read is a typed member too (no rows: unrecorded)
   executeRaw: async (sql: string) => sql.includes('AS pending') ? [{ pending: false }] : [],
 } as unknown as BrainEngine;
 

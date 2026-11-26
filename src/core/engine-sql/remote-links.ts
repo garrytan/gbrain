@@ -80,3 +80,20 @@ export async function readLinkTargetPages(exec: LegacyUnscopedRead, sourceId: st
     FROM pages p WHERE p.source_id=${sourceId} AND p.slug=ANY(${[...slugs]}::text[]) AND p.deleted_at IS NULL`);
   return rows;
 }
+
+/** rearmLinksEffects's arguments: the source, the requests whose `links` effects re-arm, and optionally their slugs. */
+export interface LinksRearm { sourceId: string; requestIds: readonly string[]; slugs?: readonly string[] }
+
+/**
+ * rearmLinksEffects: queues again, unclaimed and due now, each `links` effect of `requestIds` in `sourceId` (of
+ * `slugs` when given) that has not been re-armed (`data.batch_reconciled`) and is not recovering; marks it re-armed.
+ * Returns how many re-armed.
+ */
+export async function rearmLinksEffects(exec: EffectExec, opts: LinksRearm): Promise<number> {
+  if (!opts.requestIds.length) return 0;
+  const rows = await exec.executeRaw(`UPDATE persistence_effects SET state='queued',execution_token=NULL,claim_expires_at=NULL,claim_owner=NULL,
+    next_attempt_at=now(),error_code=NULL,outcome=NULL,updated_at=now(),data=data||'{"batch_reconciled":true}'::jsonb
+    WHERE kind='links' AND source_id=$1 AND request_id=ANY($2::uuid[]) AND ($3::text[] IS NULL OR data->>'slug'=ANY($3::text[]))
+    AND NOT (data ? 'batch_reconciled') AND recovery IS NULL AND set_config('gbrain.persistence_protocol','2',true)='2' RETURNING id`, [opts.sourceId, [...opts.requestIds], opts.slugs ? [...opts.slugs] : null]);
+  return rows.length;
+}

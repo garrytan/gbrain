@@ -91,7 +91,7 @@ function ownerStatusFix(sourceId: string): Action {
 const lifecycleIdConflict = (requestId: string) => opError('idempotency_conflict', 'This request_id belongs to a source lifecycle operation.',
   `Request ID ${requestId} is already recorded for a source lifecycle change of this CLI writer, so this page write was not admitted and nothing changed. Submit the page write with a new request_id.`);
 /** #6696 (A5): a background admission of `ids` requests and `bytes` reservation refuses past the pause line of any locked counter. */
-async function assertBackgroundRoom(tx: SqlEngine, counters: Counter[], limits: JournalLimits, ids: number, bytes: number): Promise<void> {
+async function assertBackgroundRoom(tx: SqlEngine & Pick<BrainEngine, 'readAdmissionRate'>, counters: Counter[], limits: JournalLimits, ids: number, bytes: number): Promise<void> {
   const share = await readBackgroundPauseShare(tx);
   for (const row of counters) {
     const scope = row.key === 'brain' ? 'brain' : 'principal';
@@ -161,7 +161,7 @@ const managedSyncJob = (input: Pick<WriteAdmission, 'operation' | 'intent'>) => 
  * year at the current admission rate; `detail` keeps the limit key, `reason`
  * the resource.
  */
-async function cumulativeCapacityError(tx: SqlEngine, resource: string, scope: string, setting: keyof JournalLimits, used: number, limit: number): Promise<OperationError> {
+async function cumulativeCapacityError(tx: SqlEngine & Pick<BrainEngine, 'readAdmissionRate'>, resource: string, scope: string, setting: keyof JournalLimits, used: number, limit: number): Promise<OperationError> {
   const key = journalLimitKey(setting);
   const ids = setting.endsWith('LifetimeIds');
   const value = await oneYearCapacity(tx, scope, ids ? 'LifetimeIds' : 'TerminalBytes', used, limit);
@@ -185,7 +185,7 @@ export function quotaExhausted(resource: string, key: string, value: number, use
  * refuses with the same filled capacity command an admission would, before
  * the caller mutates anything.
  */
-export async function assertLifetimeIdHeadroom(engine: SqlEngine, principal: Principal, needed: number): Promise<void> {
+export async function assertLifetimeIdHeadroom(engine: SqlEngine & Pick<BrainEngine, 'readJournalLimitRows' | 'readCounterRows' | 'readAdmissionRate'>, principal: Principal, needed: number): Promise<void> {
   await assertWriteHeadroom(engine, principal, { ids: needed });
 }
 /**
@@ -196,12 +196,11 @@ export async function assertLifetimeIdHeadroom(engine: SqlEngine, principal: Pri
  * writes but cannot cover the run refuses `write_quota_insufficient`, both
  * with the config value that covers the run and one more year.
  */
-export async function assertWriteHeadroom(engine: SqlEngine, principal: Principal, needed: { ids: number; bytes?: number }, share = 1): Promise<void> {
+export async function assertWriteHeadroom(engine: SqlEngine & Pick<BrainEngine, 'readJournalLimitRows' | 'readCounterRows' | 'readAdmissionRate'>, principal: Principal, needed: { ids: number; bytes?: number }, share = 1): Promise<void> {
   if (needed.ids <= 0 && !needed.bytes) return;
   const limits = await readJournalLimits(engine);
   const keys = ['brain', principalKey(principal)];
-  const rows = await engine.executeRaw<{ key: string; lifetime_ids: number | string; terminal_bytes: number | string }>(
-    'SELECT key,lifetime_ids,terminal_bytes FROM persistence_counters WHERE key=ANY($1::text[])', [keys]);
+  const rows = await engine.readCounterRows(keys);
   for (const key of keys) {
     const scope = key === 'brain' ? 'brain' : 'principal';
     for (const [resource, setting, need, label] of [['lifetime_ids', `${scope}LifetimeIds`, needed.ids, 'permanent request IDs'],
@@ -227,10 +226,9 @@ export async function assertWriteHeadroom(engine: SqlEngine, principal: Principa
  * #6884: how many more requests `principal` can have outstanding before the tighter of its own and the brain's
  * outstanding caps, each taken at `share` (a background run stops at the pause line), with that cap's counts.
  */
-export async function readOutstandingRoom(engine: SqlEngine, principal: Principal, share = 1): Promise<{ room: number; scope: 'brain' | 'principal'; used: number; limit: number }> {
+export async function readOutstandingRoom(engine: SqlEngine & Pick<BrainEngine, 'readJournalLimitRows' | 'readCounterRows'>, principal: Principal, share = 1): Promise<{ room: number; scope: 'brain' | 'principal'; used: number; limit: number }> {
   const limits = await readJournalLimits(engine);
-  const rows = await engine.executeRaw<{ key: string; outstanding_count: number | string }>('SELECT key,outstanding_count FROM persistence_counters WHERE key=ANY($1::text[])',
-    [['brain', principalKey(principal)]]);
+  const rows = await engine.readCounterRows(['brain', principalKey(principal)]);
   const room = (scope: 'brain' | 'principal', key: string, cap: number) => {
     const used = Number(rows.find(row => row.key === key)?.outstanding_count ?? 0), limit = Math.floor(cap * share);
     return { room: limit - used, scope, used, limit };
@@ -259,9 +257,8 @@ export async function assertPageRequestIdentity(engine: SqlEngine, principal: Pr
     [principal.id, requireUuid(requestId)]);
   if (topology) throw lifecycleIdConflict(requestId);
 }
-export async function getWriteRequestById(engine: SqlEngine, id: string, signal?: AbortSignal): Promise<WriteRequest | null> {
-  const [row] = await engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=$1::uuid', [id], { signal });
-  return row ?? null;
+export async function getWriteRequestById(engine: Pick<BrainEngine, 'readWriteRequestById'>, id: string, signal?: AbortSignal): Promise<WriteRequest | null> {
+  return engine.readWriteRequestById(id, { signal });
 }
 /** #5984: the columns a waiter needs while a request is unfinished; the full row is read once it is terminal. */
 export type WriteRequestProgress = Pick<WriteRequest, 'state' | 'error_code' | 'error_message' | 'completed_at' | 'updated_at' | 'blocked_reason' | 'outcome' | 'deferred_refresh_id' | 'deferred_import_from'>;
@@ -774,6 +771,13 @@ export function foregroundPrioritySql(): string {
   if (env === '1' || env === 'true') return 'true';
   return `NOT EXISTS (SELECT 1 FROM config WHERE key='${WRITE_SWITCHES.foreground_priority.key}' AND lower(trim(value)) IN ('0','false'))`;
 }
+/** The `foreground_priority` environment override (a process constant), or null when the brain config row decides. */
+export function foregroundPriorityOverride(): boolean | null {
+  const env = process.env[WRITE_SWITCHES.foreground_priority.env]?.trim().toLowerCase();
+  if (env === '0' || env === 'false') return false;
+  if (env === '1' || env === 'true') return true;
+  return null;
+}
 /** Whether `foreground_priority` is on for this brain; on when the switch cannot be read. */
 export function foregroundPriority(engine: SqlEngine): Promise<boolean> {
   return writeSwitchOn(engine, 'foreground_priority').catch(() => true);
@@ -920,13 +924,9 @@ export async function renewWriteClaim(engine: Pick<SqlEngine, 'executeRaw'>, id:
   return rows.length === 1;
 }
 /** `charge` (#6278): a `preparation_deadline` release counts one preparation attempt; `claim_lost`, `consumer_stopping` and the rest never do. */
-export async function releaseUnpublishedClaim(engine: SqlEngine, row: WriteRequest, reason: string, opts: { charge?: boolean } = {}): Promise<void> {
+export async function releaseUnpublishedClaim(engine: Pick<BrainEngine, 'releaseUnpublishedClaim'>, row: WriteRequest, reason: string, opts: { charge?: boolean } = {}): Promise<void> {
   // An uncharged release ends a finished preparation: its claim phase would read as a preparation still waiting.
-  await engine.executeRaw(`UPDATE persistence_requests SET state='queued',execution_token=NULL,claim_expires_at=NULL,
-    blocked_reason=$3,updated_at=now(),preparation_attempts=preparation_attempts+CASE WHEN $4::boolean THEN 1 ELSE 0 END,
-    claim_phase=CASE WHEN $4::boolean THEN claim_phase END
-    WHERE id=$1::uuid AND execution_token=$2::uuid
-    AND state='running' AND recovery IS NULL AND publication_started=false AND ${PERSISTENCE_PROTOCOL_PREDICATE}`, [row.id, row.execution_token, reason, opts.charge === true]);
+  await engine.releaseUnpublishedClaim({ id: row.id, token: row.execution_token, reason, charge: opts.charge === true });
 }
 
 /** A recovery larger than a budget: names both budgets and the bytes needed, since a configured budget is the user's. */
@@ -1135,12 +1135,9 @@ export async function clearResolvedRecovery(engine: BrainEngine, id: string, kno
       UPDATE persistence_requests SET recovery=NULL,recovery_bytes=0,blocked_reason=NULL WHERE id=$1::uuid`, [id, keys, Number(locked.recovery_bytes)]);
   });
 }
-export async function markRecovering(engine: SqlEngine, row: WriteRequest, reason: string, failure?: {code:string;message:string;detail?:unknown}): Promise<void> {
-  await engine.executeRaw(`UPDATE persistence_requests SET state='recovering',blocked_reason=$3,updated_at=now(),
-    error_code=COALESCE(error_code,$4),error_message=COALESCE(error_message,$5),
-    error_detail=CASE WHEN error_code IS NULL THEN $6::text::jsonb ELSE error_detail END
-    WHERE id=$1::uuid AND execution_token=$2::uuid AND state IN ('running','recovering') AND ${PERSISTENCE_PROTOCOL_PREDICATE}`,
-  [row.id, row.execution_token, reason, failure?.code ?? null, failure?.message ?? null, failure?.detail ? JSON.stringify(failure.detail) : null]);
+export async function markRecovering(engine: Pick<BrainEngine, 'publicationJournalStore'>, row: WriteRequest, reason: string,
+  failure?: {code:string;message:string;detail?:unknown}): Promise<void> {
+  await (await engine.publicationJournalStore()).markRecovering(row.id, row.execution_token, reason, failure);
 }
 const PERSISTENCE_QUEUE_TABLES = ['persistence_requests', 'persistence_effects', 'persistence_counters', 'page_projection_jobs', 'page_write_guards'];
 /**

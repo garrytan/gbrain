@@ -32,12 +32,37 @@ export const DEFAULT_CAPACITY_WARN_DAYS = 30;
 export const DEFAULT_CAPACITY_FAIL_DAYS = 7;
 export const CAPACITY_WARN_PCT = 80;
 export const CAPACITY_FAIL_PCT = 95;
-const WINDOW_DAYS = 7;
+const WINDOW_DAYS = CAPACITY_WINDOW_DAYS;
 const HORIZON_DAYS = 3650;
 const SPIKE_FACTOR = 3;
 
 export type { CapacityResource } from './limits.ts';
 import type { CapacityResource } from './limits.ts';
+/**
+ * #6696 (A3): days until a cumulative managed-write cap refuses admission,
+ * from a full 7-day aggregate of `persistence_requests` (and lifecycle
+ * receipts) on the principal index, per scope (`brain`, each principal) and
+ * resource (`lifetime_ids`, `terminal_bytes`).
+ *
+ * Receipt bytes are reported gross (what the window's receipts reserve now)
+ * and net (what they keep once compacted). The counter grows by the gross
+ * rate until the oldest uncompacted receipt passes the retention window, and
+ * by the net rate after that, so `days_to_exhaustion` for terminal bytes uses
+ * net and `basis` says so. Rates are the larger of the window mean and the
+ * last 24 hours.
+ *
+ * The window is read without a `created_at` index (PR A adds no migration):
+ * per principal, one statement walks the existing principal index newest
+ * first until `created_at` leaves the window and buckets the walked range by
+ * day; the brain row sums the principals. Receipts admitted
+ * before reservations counted their intent can hold more than they reserve;
+ * `basis` notes them (`:legacy_under_reserved`) until compaction drops the
+ * intent. `light` (the 60 s receipt snapshot) skips the whole-table reclaim
+ * read and the table size.
+ */
+import type { BrainEngine } from '../engine.ts';
+import { CAPACITY_WINDOW_DAYS } from '../engine-sql/persistence-housekeeping.ts';
+import { readConfigMap } from '../config-values.ts';
 export interface CapacityForecastRow {
   scope: string; resource: CapacityResource; used: number; limit: number; pct: number; config_key: string;
   /** Window days actually observed (under 7 when the history is younger). */
@@ -87,10 +112,8 @@ export interface CapacityConfig { warnDays: number; failDays: number; retentionD
  * the receipt's capacity read past the connections a one-shot CLI has open, so each opened a connection of its own. An
  * unreadable retention setting keeps the default, as the forecast always treated it.
  */
-export async function readCapacityConfig(engine: SqlEngine): Promise<CapacityConfig> {
-  const rows = await engine.executeRaw<{ key: string; value: string }>('SELECT key,value FROM config WHERE key = ANY($1::text[])',
-    [[CAPACITY_WARN_DAYS_KEY, CAPACITY_FAIL_DAYS_KEY, RECEIPT_RETENTION_KEY, BACKGROUND_PAUSE_KEY]]);
-  const value = new Map(rows.map(row => [row.key, row.value]));
+export async function readCapacityConfig(engine: Pick<BrainEngine, 'getConfigValues'>): Promise<CapacityConfig> {
+  const value = await readConfigMap(engine, [CAPACITY_WARN_DAYS_KEY, CAPACITY_FAIL_DAYS_KEY, RECEIPT_RETENTION_KEY, BACKGROUND_PAUSE_KEY]);
   const retention = value.get(RECEIPT_RETENTION_KEY);
   let retentionDays = DEFAULT_RECEIPT_RETENTION_DAYS;
   try {
@@ -142,37 +165,17 @@ export async function readCapacityThresholds(engine: SqlEngine): Promise<{ warnD
   return { warnDays, failDays };
 }
 
-export async function readCapacityForecast(engine: SqlEngine & { kind?: string }, opts: { limits?: JournalLimits; light?: boolean; config?: Promise<CapacityConfig> } = {}): Promise<CapacityForecast> {
-  // Every read below is independent of the others (the principal walks need only the counters), so they are issued together:
-  // one round trip for the lot instead of one each (GBRA-133).
-  const counterRead = engine.executeRaw<{ key: string; lifetime_ids: string; terminal_bytes: string }>(
-    "SELECT key,lifetime_ids::text,terminal_bytes::text FROM persistence_counters WHERE key='brain' OR key LIKE 'principal:%' ORDER BY key");
-  const principals = counterRead.then(rows => Promise.all(rows.filter(counter => counter.key !== 'brain').map(counter => principalDays(engine, counter.key, NET_SQL('w', 'e')))));
-  const topology = engine.executeRaw<Record<string, string>>(`SELECT 'principal:local_cli:'||principal_id::text AS scope,to_char(created_at AT TIME ZONE 'UTC','YYYY-MM-DD') AS day,
-      count(*)::text AS ids,COALESCE(SUM(terminal_bytes),0)::text AS gross,COALESCE(SUM(terminal_bytes),0)::text AS net,
-      count(*) FILTER (WHERE created_at>now()-interval '1 day')::text AS recent_ids,
-      COALESCE(SUM(terminal_bytes) FILTER (WHERE created_at>now()-interval '1 day'),0)::text AS recent_gross,
-      COALESCE(SUM(terminal_bytes) FILTER (WHERE created_at>now()-interval '1 day'),0)::text AS recent_net
-    FROM persistence_topology_changes WHERE created_at>now()-($1::double precision*interval '1 day') GROUP BY 1,2`, [WINDOW_DAYS]);
-  const history = engine.executeRaw<{ age_days: number | null; compaction_age_days: number | null; first_id: string | null }>(`SELECT
-      (SELECT EXTRACT(EPOCH FROM now()-created_at)/86400 FROM persistence_requests ORDER BY sequence LIMIT 1)::float8 AS age_days,
-      (SELECT id::text FROM persistence_requests ORDER BY sequence LIMIT 1) AS first_id,
-      (SELECT EXTRACT(EPOCH FROM now()-min(completed_at))/86400 FROM persistence_requests
-        WHERE recovery IS NULL AND NOT compacted AND state IN ('committed','conflict','failed','cancelled'))::float8 AS compaction_age_days`);
-  // The uncompacted terminal receipts (the compactable partial index): what compaction would free, and the legacy under-reserved ones.
-  const reclaimRead = opts.light ? Promise.resolve([]) : engine.executeRaw<{ scope: string; bytes: string; under: string }>(`WITH r AS (SELECT * FROM persistence_requests
-      WHERE recovery IS NULL AND NOT compacted AND state IN ('committed','conflict','failed','cancelled')),
-    e AS (SELECT request_id,SUM(octet_length(data::text)+octet_length(kind)+1024) AS bytes,
-      bool_or(state IN ('queued','running')) AS unfinished FROM persistence_effects WHERE request_id IN (SELECT id FROM r) GROUP BY request_id)
-    SELECT 'principal:'||r.principal_kind||':'||r.principal_id AS scope,
-      COALESCE(SUM(r.terminal_reservation-${NET_SQL('r', 'e')}) FILTER (WHERE NOT COALESCE(e.unfinished,false)),0)::text AS bytes,
-      count(*) FILTER (WHERE COALESCE(octet_length(r.intent::text),0)+octet_length(r.authority::text)>r.terminal_reservation)::text AS under
-    FROM r LEFT JOIN e ON e.request_id=r.id GROUP BY 1`);
-  const tableBytesRead = opts.light ? Promise.resolve(null) : engine.executeRaw<{ bytes: string }>("SELECT pg_total_relation_size('persistence_requests')::text AS bytes").then(r => Number(r[0]?.bytes), () => null);
-  const [limits, { warnDays, failDays, retentionDays: retention }, counters, principalRows, topologyRows, [historyRow], reclaim, tableBytes] = await Promise.all([
-    opts.limits ?? readJournalLimits(engine), opts.config ?? readCapacityConfig(engine),
-    counterRead, principals, topology, history, reclaimRead, tableBytesRead]);
-  const days: Day[] = [...principalRows.flat(), ...topologyRows.map(toDay)];
+export async function readCapacityForecast(engine: Pick<BrainEngine, 'readJournalLimitRows' | 'readCapacityForecastInputs' | 'getConfigValues'> & { kind?: string },
+  opts: { limits?: JournalLimits; light?: boolean; config?: Promise<CapacityConfig> } = {}): Promise<CapacityForecast> {
+  // Every read is independent of the others (the principal walks need only the counters), so they are issued together:
+  // one round trip for the lot instead of one each (GBRA-133). engine-sql/persistence-housekeeping.ts holds the statements.
+  // The typed read is called inside an async function: a member that throws on the call (the deadline wrapper refusing a
+  // read past its deadline, an engine without the member) must reject with the others, not orphan the limits read's rejection.
+  const [limits, { warnDays, failDays, retentionDays: retention }, inputs] = await Promise.all([
+    opts.limits ?? readJournalLimits(engine), opts.config ?? readCapacityConfig(engine), (async () => engine.readCapacityForecastInputs({ light: opts.light }))()]);
+  const { counters, reclaim, tableBytes } = inputs;
+  const historyRow = inputs.history;
+  const days: Day[] = inputs.days.map(day => toDay({ ...day }));
   const windowDays = Math.min(WINDOW_DAYS, Math.max(1, Number(historyRow?.age_days ?? WINDOW_DAYS)));
   // Days until the oldest uncompacted receipt is compactable: until then every receipt keeps its gross reservation.
   const untilCompaction = Math.max(0, retention - Number(historyRow?.compaction_age_days ?? 0));
