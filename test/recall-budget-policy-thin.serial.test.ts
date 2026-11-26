@@ -41,3 +41,13 @@ test('opt-in thin recall forwards fractional budgets and all fact filters withou
     supersessions: true, include_expired: true, include_pending: true, source_id: 'example', limit: 50 });
   expect(JSON.parse(output)).toEqual(response);
 });
+
+test('--today with a budget policy asks for the facts saved today that have no event date', async () => {
+  const write = process.stdout.write;
+  process.stdout.write = (() => true) as typeof write;
+  try {
+    await runRecall({} as never, ['--today', '--budget-policy', 'facts_first', '--budget-tokens', '500', '--json']);
+  } finally { process.stdout.write = write; }
+  expect(calls).toHaveLength(1);
+  expect(calls[0]).toMatchObject({ include_undated: true, budget_policy: 'facts_first' });
+});

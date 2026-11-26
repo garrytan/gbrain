@@ -437,7 +437,7 @@ const recall: Operation = {
     };
 
     if (question !== null && !readsNoSource) {
-      ranking = await rankFactsByQuestion(ctx, { question, params: p, factSources, limit, entity: entityParam, sessionId: sessionParam, since, grep, includeExpired, scope: factScope, fromQuery: explicitQuestion === null });
+      ranking = await rankFactsByQuestion(ctx, { question, params: p, factSources, limit, entity: entityParam, sessionId: sessionParam, since, grep, includeExpired, scope: factScope, fromQuery: explicitQuestion === null, includeUndated: p.include_undated === true });
       ({ rows, ambiguousEntity } = ranking); mergedSources = ranking.mergedSources ?? null;
       for (const notice of questionRecallNotices(ranking, ctx.brainId)) ctx.emitNotice?.(notice);
     } else if (p.supersessions === true) {

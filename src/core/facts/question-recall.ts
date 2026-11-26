@@ -193,6 +193,8 @@ export interface QuestionRecallInput {
   includeExpired?: boolean;
   /** #10225: the question is recall's `query` (keywords): a fact holding every query term is admitted however long it is. */
   fromQuery?: boolean;
+  /** #10288: `since` also admits facts with no event date saved in the window (recall's `include_undated`). */
+  includeUndated?: boolean;
 }
 
 export interface QuestionRecall {
@@ -221,7 +223,7 @@ export async function rankFactsByQuestion(ctx: OperationContext, input: Question
   const { question, scope } = input;
   const filters: FactPoolFilters = {
     ...(input.sessionId ? { sessionId: input.sessionId } : {}),
-    ...(input.since ? { since: input.since } : {}),
+    ...(input.since ? { since: input.since, ...(input.includeUndated ? { includeUndated: true } : {}) } : {}),
     ...(input.grep ? { grep: input.grep } : {}),
     ...(input.includeExpired ? { includeExpired: true } : {}),
   };

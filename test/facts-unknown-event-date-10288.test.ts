@@ -16,6 +16,7 @@ import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { parseFactsFence, renderFactsTable } from '../src/core/facts-fence.ts';
 import { extractFactsFromFenceText } from '../src/core/facts/extract-from-fence.ts';
 import { fenceRowOf } from '../src/core/facts/unfenced-facts.ts';
+import { planAcceptFence } from '../src/core/facts/proposal-supersede.ts';
 import { v339 } from '../src/core/schema-migrations/v339-facts-valid-from-nullable.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
@@ -25,6 +26,8 @@ const UNDATED = 'A fictional test device was calibrated. Its event date was not 
 const OLD = 'A fictional test device passed a bench test.';
 const ENTITY = 'things/fictional-test-device';
 const ENTITY_UNDATED = 'The fictional test device got a new label.';
+const DATED_PAGE = 'meetings/fictional-sync';
+const DATED_UNDATED = 'The fictional sync agreed on a launch checklist.';
 const cases: { backend: string; engine: BrainEngine; close: () => Promise<void> }[] = [];
 const backends = testBackends();
 
@@ -102,6 +105,18 @@ for (const backend of backends) {
       expect(await storedFrom(engine(), 'The fictional test device shipped.')).toBeNull();
     });
 
+    test('a ranked recall in an event window admits an undated fact saved in it only with include_undated', async () => {
+      const ranked = async (extra: Record<string, unknown>) => (await recall(engine(), { question: 'When was the fictional test device calibrated?', since: '24 hours ago', ...extra })).map(f => f.fact);
+      expect(await ranked({ include_undated: true })).toContain(UNDATED);
+      expect(await ranked({})).not.toContain(UNDATED);
+    });
+
+    test('remember with no valid_from on a page that states a date takes that date, as rebuilding its fence would', async () => {
+      await call(engine(), 'put_page', { slug: DATED_PAGE, content: '---\ntype: note\ntitle: Fictional sync\ndate: 2024-03-05\n---\n# Fictional sync\n' });
+      await call(engine(), 'remember', { fact: DATED_UNDATED, provenance: 'synthetic-repro', entity: DATED_PAGE });
+      expect(new Date((await storedFrom(engine(), DATED_UNDATED))!).toISOString()).toBe('2024-03-05T00:00:00.000Z');
+    });
+
     test('v339 makes valid_from nullable, keeps its default and rewrites no row', async () => {
       const column = async () => (await engine().executeRaw<{ is_nullable: string; column_default: string | null }>(
         `SELECT is_nullable, column_default FROM information_schema.columns WHERE table_name = 'facts' AND column_name = 'valid_from'`))[0]!;
@@ -144,4 +159,16 @@ describe('## Facts fence: an empty date cell is an unknown event date', () => {
     expect(renderFactsTable(reread)).toBe(rendered);
     expect(extractFactsFromFenceText(reread, ENTITY, 'default')[0]!.valid_from).toBeNull();
   });
+});
+
+test('proposal accept ends an undated fact where its dated replacement begins', () => {
+  const body = ['## Facts', '', '<!--- gbrain:facts:begin -->',
+    '| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |',
+    '|---|---|---|---|---|---|---|---|---|---|',
+    '| 1 | The fictional test device runs firmware one. | fact | 1.0 | world | medium |  |  | synthetic-repro |  |',
+    '<!--- gbrain:facts:end -->', ''].join('\n');
+  const pair = (id: number, valid_from: string | null, row_num: number | null, slug: string) => ({ id, source_id: 'default', entity_slug: ENTITY,
+    visibility: 'world', fact: 'The fictional test device runs firmware.', expired_at: null, valid_from, valid_until: null, superseded_by: null, row_num, source_markdown_slug: slug });
+  const plan = planAcceptFence(body, pair(1, null, 1, ENTITY), pair(2, '2024-01-02T00:00:00.000Z', null, 'things/other-device'), '2026-11-26');
+  expect(plan?.after.validUntil).toBe('2024-01-02');
 });

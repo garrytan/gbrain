@@ -493,6 +493,7 @@ async function recallVerbResult(engine: BrainEngine, flags: ParsedFlags, sourceI
     ...(flags.query ? { query: flags.query } : {}),
     ...(flags.budgetTokens ? { budget_tokens: flags.budgetTokens } : {}),
     ...(flags.since ? { since: flags.since.toISOString() } : {}),
+    ...(flags.since && (flags.today || flags.sinceLastRun) ? { include_undated: true } : {}),
     ...(flags.grep ? { grep: flags.grep } : {}),
     include_expired: flags.includeExpired,
     limit: flags.limit,
@@ -515,10 +516,22 @@ async function recallVerbResult(engine: BrainEngine, flags: ParsedFlags, sourceI
     return stamped(result, degradedStampFor('recall', result, { retrieval }, notices));
   }
   const { callRemoteTool, extractResponseMeta, unpackToolResult } = await import('../core/mcp-client.ts');
-  const raw = await callRemoteTool(ctx.config, 'recall', params, { timeoutMs: 30_000 });
+  const raw = await askWithoutUndatedOnRefusal(params, p => callRemoteTool(ctx.config, 'recall', p, { timeoutMs: 30_000 }));
   const result = unpackToolResult(raw) as RecallVerbResult;
   const meta = extractResponseMeta(raw);
   return stamped(result, (meta?.degraded as RecallVerbResult['degraded'] | undefined) ?? degradedStampFor('recall', result, meta, []));
+}
+
+/** #10288: a host from before include_undated stores no undated fact, so one that refuses the parameter (mcp.strict_params=reject) is asked again without it. */
+async function askWithoutUndatedOnRefusal<T>(params: Record<string, unknown>, ask: (p: Record<string, unknown>) => Promise<T>): Promise<T> {
+  try {
+    return await ask(params);
+  } catch (error) {
+    if (params.include_undated === undefined || !(error instanceof RemoteMcpError) || error.detail?.code !== 'invalid_params'
+      || !String(error.detail?.suggestion ?? '').includes('"include_undated"')) throw error;
+    const { include_undated: _undated, ...older } = params;
+    return ask(older);
+  }
 }
 
 export async function renderRecallVerbResult(flags: ParsedFlags, result: RecallVerbResult): Promise<void> {
@@ -724,9 +737,9 @@ async function runRecallOnce(
     const cfg = loadConfig();
     const { callRemoteTool, unpackToolResult } = await import('../core/mcp-client.ts');
     const { enforcedRead } = await import('../cli/enforced-member.ts');
-    const fetchRecall = async <T>(p: Record<string, unknown>): Promise<T> => (enforced
+    const fetchRecall = <T>(params: Record<string, unknown>): Promise<T> => askWithoutUndatedOnRefusal(params, async p => (enforced
       ? await enforcedRead(engine, 'recall', 'recall', p, { sourceId }) as T
-      : unpackToolResult<T>(await callRemoteTool(cfg!, 'recall', p, { timeoutMs: 30_000 })));
+      : unpackToolResult<T>(await callRemoteTool(cfg!, 'recall', p, { timeoutMs: 30_000 }))));
     const params: Record<string, unknown> = {
       limit: flags.limit,
       include_expired: flags.includeExpired,
@@ -1198,7 +1211,7 @@ function remoteFactToRow(o: Record<string, unknown>): FactRow {
     visibility: (o.visibility === 'private' || o.visibility === 'world') ? o.visibility : 'private',
     notability: (o.notability === 'high' || o.notability === 'medium' || o.notability === 'low') ? o.notability : 'medium',
     context: null,
-    valid_from: parseMaybeDate(o.valid_from) ?? new Date(0),
+    valid_from: parseMaybeDate(o.valid_from),
     valid_until: parseMaybeDate(o.valid_until),
     expired_at: parseMaybeDate(o.expired_at),
     superseded_by: typeof o.superseded_by === 'number' ? o.superseded_by : null,

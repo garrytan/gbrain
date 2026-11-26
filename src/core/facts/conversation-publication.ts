@@ -356,7 +356,7 @@ function freezeRow(row: ConversationFactRow, entryVisibility: 'private' | 'world
   return {
     ...(row.visibility === 'private' && entryVisibility === 'world' && !OUTCOME_SOURCES.has(row.source) ? { visibility: 'private' as const } : {}),
     fact: row.fact, kind: row.kind ?? 'fact', entity_slug: row.entity_slug ?? null, context: row.context ?? null,
-    valid_from: (row.valid_from ?? new Date()).toISOString(), valid_until: row.valid_until ? row.valid_until.toISOString() : null,
+    valid_from: row.valid_from ? row.valid_from.toISOString() : null, valid_until: row.valid_until ? row.valid_until.toISOString() : null,
     source: row.source, source_session: row.source_session ?? null, confidence: row.confidence ?? 1.0,
     notability: row.notability ?? 'medium', embedding: row.embedding ? Array.from(row.embedding) : null,
     embedding_model: row.embedding ? row.embedding_model ?? null : null,

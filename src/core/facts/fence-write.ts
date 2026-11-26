@@ -52,7 +52,7 @@ import { upsertFactRow, parseFactsFence, formatFenceDate } from '../facts-fence.
 import { withHeldFactsFence } from './unfenced-facts.ts';
 import { unparsedFenceRefusal } from '../fence-repair/refusal.ts';
 import type { OperationError } from '../ops/contract.ts';
-import { extractFactsFromFenceText } from './extract-from-fence.ts';
+import { extractFactsFromFenceText, pageFactDate } from './extract-from-fence.ts';
 import { logStubGuardEvent } from './stub-guard-audit.ts';
 import { isFactWithdrawn } from './withdrawal.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
@@ -525,7 +525,12 @@ export async function writeFactsToFence(
       let nextRowNum = Math.max(fileMaxRowNum, dbMaxRowNum) + 1;
 
       const assignedRowNums: number[] = [];
+      // #10288: a fact with no event date takes the page's fact date, as the projection of its empty cell would.
+      const pageDate = facts.some(f => !f.validFrom)
+        ? pageFactDate({ slug: target.slug, frontmatter: parseMarkdown(body, `${target.slug}.md`).frontmatter, timeZone: await engine.getConfig('brain.timezone') })
+        : null;
       for (const f of facts) {
+        const validFrom = f.validFrom ?? pageDate;
         const { body: updated, rowNum } = upsertFactRow(body, {
           rowNum:      nextRowNum++,
           claim:       f.fact,
@@ -533,7 +538,7 @@ export async function writeFactsToFence(
           confidence:  f.confidence ?? 1.0,
           visibility:  f.visibility,
           notability:  f.notability ?? 'medium',
-          validFrom:   f.validFrom ? formatFenceDate(f.validFrom) : undefined,
+          validFrom:   validFrom ? formatFenceDate(validFrom) : undefined,
           // MEMORY_VERBS v1 (c5): remember's ttl threads through to the fence
           // cell — was hard-coded undefined, which silently dropped expiry on
           // this path. extractFactsFromFenceText derives the DB column from it.

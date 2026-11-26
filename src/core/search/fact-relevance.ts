@@ -114,6 +114,8 @@ export interface FactPoolFilters {
   sessionId?: string;
   /** Event time, COALESCE(valid_from, created_at). */
   since?: Date;
+  /** With `since`: also facts with no event date saved in the window (recall's `include_undated`). */
+  includeUndated?: boolean;
   grep?: string;
   /** Also pool expired, superseded and lapsed facts (recall's `include_expired`). */
   includeExpired?: boolean;
@@ -219,7 +221,7 @@ function poolPredicate(scope: FactPoolScope, filters: FactPoolFilters | undefine
     clauses.push(`(f.source_id, f.entity_slug) IN (SELECT * FROM unnest(${bind(filters.entities.map(e => e.sourceId))}::text[], ${bind(filters.entities.map(e => e.slug))}::text[]))`);
   }
   if (filters?.sessionId) clauses.push(`f.source_session = ${bind(filters.sessionId)}`);
-  if (filters?.since) clauses.push('f.valid_from IS NOT NULL', `COALESCE(f.valid_from, f.created_at) >= ${bind(filters.since.toISOString())}::text::timestamptz`);
+  if (filters?.since) clauses.push(...(filters.includeUndated ? [] : ['f.valid_from IS NOT NULL']), `COALESCE(f.valid_from, f.created_at) >= ${bind(filters.since.toISOString())}::text::timestamptz`);
   if (filters?.grep?.trim()) clauses.push(`f.fact ILIKE ${bind(`%${escapeLikePattern(filters.grep.trim())}%`)} ESCAPE '\\'`);
   return { where: clauses.join(' AND '), params };
 }

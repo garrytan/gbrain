@@ -30,6 +30,7 @@ import { parseStoredActor } from '../access/actor-model.ts';
 import { withoutBody } from '../page-body/page-shape.ts';
 import { ruleOwnerOnly } from '../rules/admission.ts';
 import { isRuleSlug } from '../rules/record.ts';
+import { pageFactDate } from '../facts/extract-from-fence.ts';
 
 function conflict(row: WriteRequest): never {
   throw opError('revision_conflict', 'The memory changed during semantic preparation.',
@@ -88,6 +89,10 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
     ...(p.member_page === true || p.scope_page === true ? { page_slug: row.slug } : {}),
     ...(claim ? { slot: { ...claim, valid_from: p.valid_from == null ? null : String(p.valid_from) } } : {}) };
   const snapshot = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id, includeDeleted: true });
+  // #10288: a fact with no event date takes the page's fact date, as the projection of its empty fence cell would.
+  const pageDate = p.valid_from == null && snapshot ? pageFactDate({ slug: row.slug, frontmatter: snapshot.page.frontmatter, timeZone: await engine.getConfig('brain.timezone') }) : null;
+  const statedFrom = p.valid_from == null ? pageDate?.toISOString() ?? null : String(p.valid_from);
+  if (input.slot) input.slot = { ...input.slot, valid_from: statedFrom };
   if ((snapshot?.page.id ?? null) !== row.page_id && !rememberAcceptsPageCreatedSince(row, snapshot)) throw pageIdentityError(snapshot != null || row.page_id === null, 'The accepted entity was deleted or recreated.');
   if (p.member_page === true && snapshot && !memberPageIsOwn(row.slug, snapshot.page.frontmatter)) throw memberPageNotOwned(row.slug);
   if (p.scope_page === true && snapshot && !await scopePageIsShared(engine, { ...withoutBody(snapshot.page), source_id: row.source_id, slug: row.slug })) throw scopePageNotShared(row.source_id);
@@ -161,7 +166,7 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
       ...(claim && JSON.stringify(storedClaim(duplicate)) !== JSON.stringify(claim) ? { claim_ignored: 'existing_claim' } : {}) }) };
   }
   const validUntil = p.valid_until ? new Date(String(p.valid_until)) : null;
-  const validFrom = p.valid_from == null ? null : new Date(String(p.valid_from));
+  const validFrom = statedFrom == null ? null : new Date(statedFrom);
   const context = p.entity_inferred ? appendContextNote(null, inferenceNote(p.entity_inferred as InferredVia)) : undefined;
   const fact: NewFact & { valid_from: Date | null } = { ...input, source: String(p.provenance).trim(), valid_from: validFrom, valid_until: validUntil,
     confidence: 1, embedding, embedding_model, source_session: typeof p.session_id === 'string' ? p.session_id : null,
