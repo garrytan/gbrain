@@ -249,11 +249,22 @@ export async function runSharedSkillsMigration(ctx: OperationContext, options: {
         const sealed = await ctx.engine.executeRaw<{ name: string; files: Array<{ path: string; sha256: string }> }>(`SELECT r.name,r.files FROM shared_skill_heads h JOIN shared_skill_revisions r
           ON r.source_id=h.source_id AND r.source_incarnation=h.source_incarnation AND r.pack_id=h.pack_id AND r.name=h.name AND r.revision=h.revision
           WHERE h.source_id=$1 AND h.source_incarnation=$2::uuid AND NOT r.deleted`, [source.id, source.incarnation]);
-        const complete = pack?.manifest_hash === row.inventory.hashes['skillpack.json'] && row.inventory.names.every(name =>
-          sealed.some(skill => skill.name === name && skill.files.some(file => file.path === `skills/${name}/SKILL.md` && file.sha256 === row.inventory!.hashes[file.path])));
+        // Complete only when each declared skill's sealed files are exactly the inventoried files under its directory,
+        // byte for byte: an accepted edit to a reference file alone, or its removal, still needs adoption.
+        const inventory = row.inventory;
+        const under = (name: string) => Object.keys(inventory.hashes).filter(path => path.startsWith(`skills/${name}/`)).sort();
+        const complete = pack?.manifest_hash === inventory.hashes['skillpack.json'] && inventory.names.every(name => {
+          const skill = sealed.find(entry => entry.name === name);
+          return !!skill && skill.files.every(file => file.sha256 === inventory.hashes[file.path])
+            && JSON.stringify(skill.files.map(file => file.path).sort()) === JSON.stringify(under(name));
+        });
         if (!complete) {
           const { adoptSharedSkillpack } = await import('./catalog.ts');
-          const result = await adoptSharedSkillpack(ctx, source.id, { expected_hashes: row.inventory.hashes });
+          // An inventory the operator accepted by its digest also approves the removal of each sealed file it no longer holds.
+          const accepted = options.acceptReviewedInventory?.[source.id] === inventoryDigest(inventory.hashes);
+          const removed = accepted ? sealed.filter(skill => inventory.names.includes(skill.name)).flatMap(skill => skill.files.map(file => file.path))
+            .filter(path => !Object.hasOwn(inventory.hashes, path)) : [];
+          const result = await adoptSharedSkillpack(ctx, source.id, { expected_hashes: { ...inventory.hashes, ...Object.fromEntries(removed.map(path => [path, null])) } });
           const open = result.receipts.map(receipt => receipt.write_request as { state?: string; request_id?: string } | undefined).find(request => request?.state !== 'committed');
           if (open) {
             throw opError('publication_pending', 'The catalog adoption is accepted but not fully committed. Retry the durable requests before marking this stage complete.',

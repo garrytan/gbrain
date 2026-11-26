@@ -585,6 +585,15 @@ async function carrySealedSkillState(engine: BrainEngine, root: string, sourceId
         ...(file.media_type && file.media_type !== 'application/octet-stream' ? { media_type: file.media_type } : {}),
         ...(file.depends_on?.length ? { depends_on: [...file.depends_on] } : {}) });
     }
+    // Requirements put_skill declared (not this SKILL.md's frontmatter) are kept, so a prose edit never widens the tools.
+    const sealedRequirements = revision.metadata?.requirements ?? [];
+    if (sealedRequirements.length && !input.requirements?.length) {
+      let fromFrontmatter: string[] = [];
+      try { fromFrontmatter = skillMetadata(input.name, [{ path: skillPath, content: Buffer.from(skill.content, 'utf8').toString('base64') } as StoredSkillFile], {}).requirements; }
+      catch { fromFrontmatter = []; }
+      const extra = sealedRequirements.filter(requirement => !fromFrontmatter.includes(requirement));
+      if (extra.length) input.requirements = extra;
+    }
     const sealedSkill = revision.files.find(file => file.path === skillPath);
     if (sealedSkill?.depends_on?.length) skill.depends_on = [...sealedSkill.depends_on];
     if (sealedSkill?.audience?.length && !sameList(sealedSkill.audience, ['readers'])) skill.audience = [...sealedSkill.audience];
@@ -605,7 +614,29 @@ async function carrySealedSkillState(engine: BrainEngine, root: string, sourceId
       reached.add(path);
       queue.push(...(byPath.get(path)?.depends_on ?? []));
     }
-    input.files.push(...carried.filter(file => reached.has(file.path)));
+    // A file still in the checkout that nothing reaches any more would be deleted by the publication: refuse instead.
+    const orphaned = carried.filter(file => !reached.has(file.path)).map(file => file.path);
+    if (orphaned.length) {
+      throw opError('local_conflict', 'A kept skill file is no longer reached from SKILL.md.',
+        `${orphaned.join(', ')} ${orphaned.length === 1 ? 'is' : 'are'} still in source ${sourceId}'s checkout, but after the removal nothing in skills/${input.name} depends on ${orphaned.length === 1 ? 'it' : 'them'}, so adopting would delete ${orphaned.length === 1 ? 'it' : 'them'}. `
+        + `Remove ${orphaned.length === 1 ? 'that file' : 'those files'} too, or add ${orphaned.length === 1 ? 'it' : 'them'} to SKILL.md's depends_on, then review the inventory and adopt again; nothing was written.`);
+    }
+    input.files.push(...carried);
+  }
+}
+/**
+ * Each proposed file whose path the operator reviewed must carry exactly the reviewed bytes. The proposal is read from
+ * the checkout before admission reads it again, so a file changed in between is refused here instead of being published
+ * with bytes nobody reviewed.
+ */
+function assertProposalMatchesReview(inputs: SharedSkillPutInput[], reviewed: Record<string, string | null>, sourceId: string): void {
+  for (const file of inputs.flatMap(input => input.files)) {
+    if (!Object.hasOwn(reviewed, file.path)) continue;
+    const bytes = Buffer.from(file.content, file.encoding === 'base64' ? 'base64' : 'utf8');
+    if (sha256(bytes) !== reviewed[file.path]) {
+      throw opError('local_conflict', 'The reviewed inventory changed before publication.',
+        `${file.path} in source ${sourceId}'s checkout changed after its hash was reviewed. Review the current file, recompute its SHA-256 in expected_hashes, and submit again; nothing was written.`);
+    }
   }
 }
 export async function adoptSharedSkillpack(ctx: OperationContext, sourceId: string, options: AdoptSharedSkillpackOptions = {}) {
@@ -658,6 +689,7 @@ export async function adoptSharedSkillpack(ctx: OperationContext, sourceId: stri
       files: [{ path: `${relative}/SKILL.md`, content: content.toString('utf8'), file_class: 'prose' as const }] };
   });
   if (!options.skills) await carrySealedSkillState(ctx.engine, root, sourceId, source.incarnation, packId, inputs);
+  if (options.expected_hashes) assertProposalMatchesReview(inputs, options.expected_hashes, sourceId);
   if (!inputs.length) {
     throw opError('invalid_params', 'No declared skill bundle is available to adopt.',
       `Source ${sourceId}'s skillpack.json declares no skills. Add its skills/ entries to the manifest (or pass the skills explicitly), then adopt again.`);
