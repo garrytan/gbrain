@@ -13,6 +13,7 @@ import { execFileSync } from 'child_process';
 import { join } from 'path';
 import { runSources } from '../src/commands/sources.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { readScopeSourceConfigs } from '../src/core/engine-sql/access-credentials.ts';
 
 // ── Stub engine that records queries ───────────────────────
 
@@ -49,6 +50,9 @@ function makeStub(rowsByPattern: Record<string, unknown[]> = {}): {
     executeRaw,
     // The strict mode reader is a typed method; it answers from the same fake rows as executeRaw.
     readManagedModeRows: () => executeRaw('SELECT enabled FROM persistence_brain WHERE singleton=1'),
+    // The scope-source check (access/attest-sources.ts) reads through the typed readScopeSourceConfigs member; it runs
+    // the real engine-sql member over the recording executeRaw, so it sends and answers the statement the raw path did.
+    readScopeSourceConfigs: (ids: readonly string[], lock?: 'share' | 'update') => readScopeSourceConfigs({ executeRaw } as never, ids, lock),
     setConfig,
     transaction: async (fn: (tx: BrainEngine) => Promise<unknown>) => fn(engine),
     // Unused methods throw if called accidentally during these tests.

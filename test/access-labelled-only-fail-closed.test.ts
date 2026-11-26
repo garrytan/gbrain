@@ -100,7 +100,22 @@ function failStatements(engine: BrainEngine, marker: string, times: number, fail
     }
     return original.call(this, sql, params, opts);
   } as BrainEngine['executeRaw'];
-  return { state, restore: () => { delete (engine as { executeRaw?: unknown }).executeRaw; } };
+  // Where the combined probe runs through the typed member readWriteVisibilityProbe, fail that call the same way: a
+  // failing call sends the rewrite through the engine with the probe's source id and slug (aborting an open transaction).
+  const probe = (engine as unknown as { readWriteVisibilityProbe?: (s: string, slug: string) => Promise<unknown> }).readWriteVisibilityProbe;
+  if (marker === COMBINED_PROBE && typeof probe === 'function') {
+    (engine as unknown as Record<string, unknown>).readWriteVisibilityProbe = async function (this: BrainEngine, sourceId: string, slug: string) {
+      if (state.skip > 0) { state.skip--; return probe.call(this, sourceId, slug); }
+      if (state.left > 0) {
+        state.left--;
+        state.failed++;
+        if (typeof fail === 'string') throw Object.assign(new Error('injected failure ' + fail), { code: fail });
+        return original.call(this, fail(''), [sourceId, slug]);
+      }
+      return probe.call(this, sourceId, slug);
+    };
+  }
+  return { state, restore: () => { delete (engine as { executeRaw?: unknown }).executeRaw; delete (engine as { readWriteVisibilityProbe?: unknown }).readWriteVisibilityProbe; } };
 }
 
 async function withFailures<T>(engine: BrainEngine, marker: string, times: number, fail: Fail, fn: () => Promise<T>, skip = 0): Promise<{ value: T; failed: number }> {

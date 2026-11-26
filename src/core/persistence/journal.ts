@@ -44,6 +44,7 @@ import {
   type JournalLimits, type Principal, type RecoveryRecord, type RequestState,
   type SqlEngine, type WriteAuthority, type WriteRequest,
 } from './model.ts';
+import type { CompletedWriteRow, WriteCompletion } from '../engine-sql/persistence-journal.ts';
 
 export interface WriteAdmission {
   principal: Principal;
@@ -242,14 +243,8 @@ export async function readOutstandingRoom(engine: SqlEngine, principal: Principa
 export const ENSURE_COUNTERS_SQL = 'INSERT INTO persistence_counters(key) SELECT k FROM unnest($1::text[]) WITH ORDINALITY AS u(k,n) ORDER BY n ON CONFLICT DO NOTHING';
 /** Locks counter rows in one global order (deadlock avoidance). */
 export const LOCK_COUNTERS_SQL = 'SELECT * FROM persistence_counters WHERE key=ANY($1::text[]) ORDER BY key COLLATE "C" FOR UPDATE';
-export async function lockCounters(tx: SqlEngine, keys: string[]): Promise<Counter[]> {
-  const sorted = [...new Set(keys)].sort();
-  // Sent together; the server creates the rows before it locks them.
-  const [, locked] = await pipelined(tx, [
-    () => tx.executeRaw(ENSURE_COUNTERS_SQL, [sorted]),
-    () => tx.executeRaw<Counter>(LOCK_COUNTERS_SQL, [sorted]),
-  ]) as [unknown, Counter[]];
-  return locked;
+export async function lockCounters(tx: Pick<BrainEngine, 'lockPersistenceCounters'>, keys: string[]): Promise<Counter[]> {
+  return tx.lockPersistenceCounters(keys);
 }
 export async function getWriteRequest(engine: SqlEngine, principal: Principal, requestId: string): Promise<WriteRequest | null> {
   const [row] = await engine.executeRaw<WriteRequest>(
@@ -918,7 +913,7 @@ export async function claimNextLaneHead(engine: BrainEngine, hostId: string, wor
   });
 }
 /** `phase` (claim-phase.ts `claimPhaseStamp`, #6176) records the claim's current phase with the renewal. */
-export async function renewWriteClaim(engine: SqlEngine, id: string, token: string, leaseMs = 30_000, signal?: AbortSignal, phase: string | null = null): Promise<boolean> {
+export async function renewWriteClaim(engine: Pick<SqlEngine, 'executeRaw'>, id: string, token: string, leaseMs = 30_000, signal?: AbortSignal, phase: string | null = null): Promise<boolean> {
   const rows = await engine.executeRaw(`UPDATE persistence_requests SET
     claim_expires_at=now()+($3::double precision*interval '1 millisecond'),updated_at=now(),claim_phase=COALESCE($4::text::jsonb,claim_phase)
     WHERE id=$1::uuid AND execution_token=$2::uuid AND state='running' AND ${PERSISTENCE_PROTOCOL_PREDICATE} RETURNING id`, [id, token, leaseMs, phase], { signal });
@@ -1040,7 +1035,7 @@ export async function reclaimReleasedWrite(engine: BrainEngine, id: string, leas
 }
 
 /** In the SAME transaction as page publication. Counters are always before request locks. */
-export async function completeWrite(tx: SqlEngine, row: WriteRequest, state: 'committed' | 'conflict' | 'failed' | 'cancelled',
+export async function completeWrite(tx: SqlEngine & Pick<BrainEngine, 'lockPersistenceCounters' | 'lockWriteRequest' | 'completeWriteRow' | 'declarePersistence' | 'requireSynchronousCommit' | 'compactTerminalIntent'>, row: WriteRequest, state: 'committed' | 'conflict' | 'failed' | 'cancelled',
   outcome: Record<string, unknown>, error?: { code: string; message: string; detail?: unknown },
   /** #5984: the caller's transaction already declared the protocol, set synchronous_commit, locked these counters and this row FOR UPDATE. */
   locked?: WriteRequest): Promise<WriteRequest> {
@@ -1048,15 +1043,24 @@ export async function completeWrite(tx: SqlEngine, row: WriteRequest, state: 'co
   // and pre-publication failures that do not enter the file coordinator.
   let current = locked;
   if (!current) {
-    await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
+    await tx.requireSynchronousCommit();
     await declarePersistenceProtocol(tx);
     await lockCounters(tx, ['brain', principalKey(requestPrincipal(row)), ...(row.worktree_id ? [`worktree:${row.worktree_id}`] : [])]);
-    [current] = await tx.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=$1::uuid FOR UPDATE', [row.id]);
+    current = await tx.lockWriteRequest(row.id) ?? undefined;
   }
   if (!current) throw opError('not_found', 'Write request not found.',
     `The journal row of request ${row.request_id} in source ${row.source_id} disappeared before its completion was recorded, so no outcome was saved. Inspect the source's requests with the command in fix before submitting anything again.`,
     { fix: ownerStatusFix(row.source_id) });
   if (isTerminal(current)) return current;
+  const completion = terminalCompletion(tx, row, current, state, outcome, error);
+  const terminal = await tx.completeWriteRow(completion);
+  if (!terminal) throw capacityError('terminal result and effects exceed their reserved bounded encoding');
+  return finishTerminal(tx, row, current, terminal, error);
+}
+
+/** The completion statement's numbers for `current` ending in `state`; throws write_claim_lost when another pass holds the claim. */
+function terminalCompletion(tx: SqlEngine, row: WriteRequest, current: WriteRequest, state: WriteCompletion['state'],
+  outcome: Record<string, unknown>, error?: { code: string; message: string; detail?: unknown }): WriteCompletion {
   // G7b: a strict write whose door commit landed before its row keeps naming that commit when it ends without committing.
   const landed = (current.outcome as { persistence?: { landed_before_row?: boolean } } | null)?.persistence;
   if (state !== 'committed' && landed?.landed_before_row === true && !('persistence' in outcome)) outcome = { ...outcome, persistence: landed };
@@ -1072,26 +1076,15 @@ export async function completeWrite(tx: SqlEngine, row: WriteRequest, state: 'co
   // #6696 (A1): the true-up sizes the reservation down to what the receipt keeps, once no effect is unfinished.
   const retained = retainedReceiptBytes({ intent: current.intent, authority: current.authority, outcome, error_message: error?.message ?? null,
     error_detail: error?.detail ?? current.error_detail, client_request_id: current.client_request_id }, { stage: 'terminal' });
-  const [terminal] = await tx.executeRaw<WriteRequest & { purge_has_facts?: boolean; purge_has_pages?: boolean }>(`WITH effects AS (SELECT COALESCE(SUM(${EFFECT_BYTES_SQL}),0) AS bytes,
-      COALESCE(bool_or(state<>'committed'),false) AS unfinished FROM persistence_effects WHERE request_id=$1::uuid),
-    done AS (UPDATE persistence_requests SET state=$2,outcome=$3::text::jsonb,
-      error_code=$4,error_message=$5,error_detail=COALESCE($8::text::jsonb,error_detail),completed_at=now(),updated_at=now(),claim_expires_at=NULL,blocked_reason=NULL,
-      consumer_version=CASE WHEN $2='committed' THEN $6 ELSE consumer_version END,
-      consumer_host_id=CASE WHEN $2='committed' THEN $7::uuid ELSE consumer_host_id END,
-      consumer_segment_reader=CASE WHEN $2='committed' THEN true ELSE consumer_segment_reader END,
-      published_at=CASE WHEN $2='committed' THEN now() ELSE published_at END,
-      preparation_attempts=CASE WHEN $2='committed' THEN 0 ELSE preparation_attempts END,
-      terminal_reservation=CASE WHEN (SELECT unfinished FROM effects) THEN terminal_reservation
-        ELSE LEAST(terminal_reservation,$12::bigint+(SELECT bytes FROM effects)) END
-      WHERE id=$1::uuid AND $9::bigint+(SELECT bytes FROM effects)<=terminal_reservation RETURNING *),
-    released AS (UPDATE persistence_counters c SET outstanding_count=c.outstanding_count-1,intent_bytes=c.intent_bytes-$11,
-      terminal_bytes=c.terminal_bytes-LEAST($13::bigint-done.terminal_reservation,c.terminal_bytes)
-      FROM done WHERE c.key=ANY($10::text[])),
-    ${TRUE_UP_CLAMP_SQL('SELECT count(*) FROM persistence_counters c, done WHERE c.key=ANY($10::text[]) AND $13::bigint-done.terminal_reservation>c.terminal_bytes')}
-    SELECT done.*${probePurges ? `, ${PURGE_PRESENCE_COLUMNS}` : ''} FROM done`, [row.id, state, JSON.stringify(outcome), error?.code ?? null, error?.message ?? null, stamp.version, stamp.hostId,
-      error?.detail ? JSON.stringify(error.detail) : null, resultBytes, ['brain', principalKey(requestPrincipal(row))], Number(current.intent_bytes),
-      retained, Number(current.terminal_reservation)]);
-  if (!terminal) throw capacityError('terminal result and effects exceed their reserved bounded encoding');
+  return { id: row.id, state, outcome, errorCode: error?.code ?? null, errorMessage: error?.message ?? null,
+    consumerVersion: stamp.version, consumerHostId: stamp.hostId, errorDetail: error?.detail, resultBytes, counterKeys: ['brain', principalKey(requestPrincipal(row))],
+    intentBytes: Number(current.intent_bytes), retainedBytes: retained, terminalReservation: Number(current.terminal_reservation), probePurges };
+}
+
+/** After the completion statement: a terminal write whose intent carries purged content keeps no copy of it. */
+async function finishTerminal(tx: SqlEngine & Pick<BrainEngine, 'compactTerminalIntent'>, row: WriteRequest, current: WriteRequest, terminal: CompletedWriteRow,
+  error?: { code: string; message: string; detail?: unknown }): Promise<WriteRequest> {
+  const probePurges = intentCarriesContent(current.intent);
   const { purge_has_facts: purgeFacts, purge_has_pages: purgePages, ...doneRow } = terminal;
   const done = doneRow as WriteRequest;
   // #5575: a terminal write whose stored intent carries purged content (refused by the purge guards, refused for another
@@ -1100,13 +1093,9 @@ export async function completeWrite(tx: SqlEngine, row: WriteRequest, state: 'co
   if (error && PURGED_REFUSAL.test(`${error.code}: ${error.message}`) || probePurges && await intentCarriesPurgedContent(tx as BrainEngine, current, { facts: purgeFacts === true, pages: purgePages === true })) {
     // #6696: the redaction compacts the receipt, so its reservation shrinks to what is left (no intent) once no effect is unfinished.
     const left = retainedReceiptBytes({ ...done, intent: null }, { stage: 'terminal' });
-    const [redacted] = await tx.executeRaw<WriteRequest>(`WITH effects AS (SELECT COALESCE(SUM(${EFFECT_BYTES_SQL}),0) AS bytes,
-        COALESCE(bool_or(state<>'committed'),false) AS unfinished FROM persistence_effects WHERE request_id=$1::uuid),
-      r AS (UPDATE persistence_requests SET intent=NULL,compacted=true,terminal_reservation=CASE WHEN (SELECT unfinished FROM effects) THEN terminal_reservation
-        ELSE LEAST(terminal_reservation,$2::bigint+(SELECT bytes FROM effects)) END WHERE id=$1::uuid RETURNING *),
-      released AS (UPDATE persistence_counters c SET terminal_bytes=c.terminal_bytes-LEAST($3::bigint-r.terminal_reservation,c.terminal_bytes)
-        FROM r WHERE c.key=ANY($4::text[]))
-      SELECT * FROM r`, [row.id, left, Number(done.terminal_reservation), ['brain', principalKey(requestPrincipal(row))]]);
+    // The compaction is the typed compactTerminalIntent member (engine-sql/persistence-journal.ts).
+    const redacted = await tx.compactTerminalIntent({ id: row.id, left, reservation: Number(done.terminal_reservation),
+      counterKeys: ['brain', principalKey(requestPrincipal(row))] });
     return redacted ?? done;
   }
   // Recovery bytes remain reserved until physical cleanup has been verified.

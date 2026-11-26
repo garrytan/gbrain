@@ -4,7 +4,7 @@
  * promise that the pilot never changes what a primary write does. Everything here talks to a real primary.
  */
 import { describe, expect, spyOn, test } from 'bun:test';
-import { existsSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { evaluateReadiness, WRITE_CLIENT_LIMIT, WRITE_COVERAGE_LIMIT, WRITE_PGLITE_LIMIT, type ShadowStatus } from '../../src/core/engine-swap/readiness.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
@@ -83,11 +83,11 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
   const primary = ctx.primary;
   const addonOf = (): RustAddon => ctx.addon!();
   /** The primary behind the write sampler at rate 1; `inbox` holds what a serving process would send the child. */
-  function rig(opts: { send?: (line: string) => boolean; preimageTimeoutMs?: number } = {}) {
+  function rig(opts: { send?: (line: string) => boolean; preimageTimeoutMs?: number; lost?: (reason: string) => boolean } = {}) {
     const inbox: WriteEvent[] = [];
-    const sampler = createWriteSampler({ rate: 1, send: opts.send ?? ((line) => { inbox.push(JSON.parse(line)); return true; }), active: () => true, preimageTimeoutMs: opts.preimageTimeoutMs });
+    const sampler = createWriteSampler({ rate: 1, send: opts.send ?? ((line) => { inbox.push(JSON.parse(line)); return true; }), active: () => true, preimageTimeoutMs: opts.preimageTimeoutMs, lost: opts.lost });
     const sink = { counters: newMirrorCounters(), offer: () => {}, active: () => true };
-    return { inbox, wrapped: wrapShadowEngine(primary(), sink, { sampleRate: 0, writes: sampler }) };
+    return { inbox, sampler, wrapped: wrapShadowEngine(primary(), sink, { sampleRate: 0, writes: sampler }) };
   }
   const tallyOf = async (events: WriteEvent[], over?: Parameters<typeof fakeComparer>[1]) => {
     const comparer = fakeComparer(ctx.tempDir(), over);
@@ -202,6 +202,39 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       expect(row.detail).toContain(WRITE_PGLITE_LIMIT);
       expect(renderFollowStatus(status).join('\n')).toContain(`comparable 1, unexplained 0`);
     }, 180_000);
+
+    test('every write the sampler selects ends in the tally, also the one in flight when mirroring stops (it is never lost uncounted)', async () => {
+      if (ctx.kind !== 'postgres') return; // PGLite samples no write
+      const home = ctx.tempDir();
+      await ctx.reset();
+      await fillSeedFixture(primary());
+      const { record } = await seedInto(primary(), addonOf(), home, ctx.kind);
+      writeSeedRecord(home, record);
+      const state = { version: 1, enabled: true, started_at: 'x', sample_rate: 1, write_sample_rate: 1, queue_bound: 64, plan_hash: 'h', brain: 'b', primary_engine: ctx.kind };
+      let enabled = true; let selected = 0; let pid = 0;
+      // Counts the sampler's own decisions (rate 1: every pilot write it is asked about), independently of what reaches the tally.
+      const random = (): number => { if (new Error().stack?.includes('sampledWrite')) selected++; return 0; };
+      await withEnv({ GBRAIN_HOME: ctx.tempDir(), GBRAIN_RUST_ENGINE_ADDON: ctx.addonPath! }, async () => {
+        // The state file is re-read on every send here (stateCheckMs 0); `enabled` stands for state.json, as `gbrain engine shadow stop` flips it.
+        const attached = attachShadowParts(primary(), home, state as never, { gbrainArgv: [process.execPath, join(import.meta.dir, '..', '..', 'src', 'cli.ts')], recordsWriteComparisons: true, random, supervisor: { stateCheckMs: 0, stillEnabled: () => enabled } });
+        try {
+          await attached.engine.addLink('people/alice-example', 'companies/acme-example', 'first', 'invests_in');
+          await until(() => { const w = buildFollowStatus(home, state as never, NOW).write_comparisons; return w.comparable + w.uncomparable + w.unexplained_difference > 0; }, 90_000);
+          pid = attached.supervisor.childPid ?? 0;
+          enabled = false; // shadow mode is turned off while the next sampled write is being read back
+          await attached.engine.removeLink('people/alice-example', 'companies/acme-example', 'invests_in');
+          await until(() => attached.supervisor.disabled !== null, 30_000);
+          await new Promise((r) => setTimeout(r, 1_000)); // its read-back and send attempt are done
+        } finally { attached.supervisor.stop(); attached.reconciler?.stop(); }
+      });
+      if (pid) await until(() => { try { process.kill(pid, 0); return false; } catch { return true; } }, 60_000); // the child drained what it was sent and exited
+      const w = buildFollowStatus(home, state as never, NOW).write_comparisons;
+      expect(selected).toBe(2);
+      expect(w.comparable).toBe(1);
+      // The second sample was selected while mirroring was on: it must be counted (uncomparable with a named reason), never vanish.
+      expect({ total: w.comparable + w.unexplained_difference + w.uncomparable + w.capability_missing, uncomparable: w.uncomparable }).toEqual({ total: selected, uncomparable: 1 });
+      expect(Object.keys(w.uncomparable_by_reason ?? {})).toHaveLength(1);
+    }, 180_000);
   });
 
   describe('write comparison counts', () => {
@@ -268,6 +301,116 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       const events = lines.map((l) => JSON.parse(l) as WriteEvent);
       expect(events[0]!.dropped).toBe(2);
       expect(await tallyOf(events.map((e) => ({ ...e, outcome: 'uncomparable', reason: 'x' })))).toMatchObject({ comparable: 0, uncomparable: 3, uncomparable_by_reason: { send_shed: 2, x: 1 } });
+    }, 60_000);
+  });
+
+  describe('a sample that cannot reach the child is recorded by the serving process for the child to count (never lost)', () => {
+    test('a refused send is reported as send_shed once, and the next line carries no dropped count (it would count twice)', async () => {
+      let refuse = 1;
+      const lost: string[] = []; const lines: string[] = [];
+      const { wrapped } = rig({ send: (line) => { if (refuse-- > 0) return false; lines.push(line); return true; }, lost: (reason) => { lost.push(reason); return true; } });
+      await ctx.reset();
+      await wrapped.putPage('people/one-example', page('One Example'));
+      await wrapped.putPage('people/two-example', page('Two Example'));
+      await until(() => lines.length >= 1);
+      expect(lost).toEqual(['send_shed']);
+      expect(JSON.parse(lines[0]!).dropped).toBeUndefined();
+    }, 60_000);
+
+    test('a loss that cannot be recorded (no epoch yet, no writable directory) rides on the next accepted line, never vanishes', async () => {
+      let refuse = 1;
+      const lines: string[] = [];
+      const { wrapped } = rig({ send: (line) => { if (refuse-- > 0) return false; lines.push(line); return true; }, lost: () => false });
+      await ctx.reset();
+      await wrapped.putPage('people/one-example', page('One Example'));
+      await wrapped.putPage('people/two-example', page('Two Example'));
+      await until(() => lines.length >= 1);
+      expect(JSON.parse(lines[0]!).dropped).toBe(1);
+    }, 60_000);
+
+    test('a loss the journal could not take is retried at disconnect, with or without another sample, and keeps its own reason', async () => {
+      const calls: Array<[string, boolean]> = [];
+      let failFirst = 1; // the refused send's journal append fails
+      const lost = (reason: string): boolean => { const ok = failFirst-- <= 0; calls.push([reason, ok]); return ok; };
+      const { wrapped, sampler } = rig({ send: () => false, lost });
+      await ctx.reset();
+      await wrapped.putPage('people/one-example', page('One Example')); // refused; its journal append fails: the count is held in memory
+      await until(() => calls.length >= 1);
+      await sampler.settle(500); // no further sample comes: settle itself must hand the held count to the journal
+      expect(calls).toEqual([['send_shed', false], ['send_shed', true]]);
+    }, 60_000);
+
+    test('a read-back abandoned at disconnect whose journal append fails is retried once more by settle, never left only in memory', async () => {
+      if (ctx.kind !== 'postgres') return; // PGLite samples no write
+      const calls: Array<[string, boolean]> = []; let tries = 0;
+      const lost = (reason: string): boolean => { const ok = ++tries > 1; calls.push([reason, ok]); return ok; };
+      const { wrapped, sampler } = rig({ send: () => true, lost });
+      await ctx.reset();
+      const real = primary().transaction.bind(primary()) as (fn: unknown, opts?: unknown) => Promise<unknown>;
+      let armed = false; let release = (): void => {};
+      const stuck = new Promise<void>((resolve) => { release = resolve; });
+      const spy = spyOn(primary(), 'transaction').mockImplementation(((fn: unknown, opts?: unknown) => (armed ? stuck.then(() => real(fn, opts)) : real(fn, opts))) as never);
+      try {
+        await wrapped.putPage('people/abandon-retry-example', page('Abandon Retry Example'));
+        armed = true;
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        await sampler.settle(100);
+        expect(calls).toEqual([['readback_abandoned', false], ['readback_abandoned', true]]);
+      } finally { release(); spy.mockRestore(); }
+    }, 60_000);
+
+    (ctx.addon ? test : test.skip)('a refused sample never stalls a primary write: with an empty (crash-left) tally lock the write still returns at once, and the loss is recorded without the lock', async () => {
+      if (ctx.kind !== 'postgres') return; // PGLite samples no write
+      const home = ctx.tempDir();
+      await ctx.reset();
+      await fillSeedFixture(primary());
+      const { record } = await seedInto(primary(), addonOf(), home, ctx.kind);
+      writeSeedRecord(home, record);
+      const state = { version: 1, enabled: true, started_at: 'x', sample_rate: 1, write_sample_rate: 1, queue_bound: 64, plan_hash: 'h', brain: 'b', primary_engine: ctx.kind };
+      let enabled = true; let pid = 0;
+      await withEnv({ GBRAIN_HOME: ctx.tempDir(), GBRAIN_RUST_ENGINE_ADDON: ctx.addonPath! }, async () => {
+        const attached = attachShadowParts(primary(), home, state as never, { gbrainArgv: [process.execPath, join(import.meta.dir, '..', '..', 'src', 'cli.ts')], recordsWriteComparisons: true, random: () => 0, supervisor: { stateCheckMs: 0, stillEnabled: () => enabled } });
+        const lock = join(home, 'write-comparisons.lock');
+        try {
+          await attached.engine.addLink('people/alice-example', 'companies/acme-example', 'first', 'invests_in');
+          await until(() => { const w = buildFollowStatus(home, state as never, NOW).write_comparisons; return w.comparable + w.uncomparable + w.unexplained_difference > 0; }, 90_000);
+          pid = attached.supervisor.childPid ?? 0;
+          writeFileSync(lock, ''); // a lock a crashed process left: taking it would wait 10 seconds
+          enabled = false; // the next sampled write's send is refused (it turns mirroring off)
+          const started = Date.now();
+          await attached.engine.addTag('people/alice-example', 'stall-probe'); // a write outside the pilot: its sample is sent before the write runs
+          expect(Date.now() - started).toBeLessThan(2_000);
+          const lostFiles = readdirSync(home).filter((n) => /^write-lost\.\d+\.jsonl$/.test(n));
+          expect(lostFiles).toHaveLength(1);
+          expect(readFileSync(join(home, lostFiles[0]!), 'utf8')).toContain('"reason":"send_shed"');
+        } finally { rmSync(lock, { force: true }); attached.supervisor.stop(); attached.reconciler?.stop(); }
+      });
+      if (pid) await until(() => { try { process.kill(pid, 0); return false; } catch { return true; } }, 60_000);
+      const w = buildFollowStatus(home, state as never, NOW).write_comparisons;
+      expect(w.uncomparable_by_reason?.send_shed).toBe(1); // the child that exited folded it into its epoch's tally
+    }, 180_000);
+
+    test('a read-back still running at disconnect is counted readback_abandoned once, and sends nothing when it ends late', async () => {
+      if (ctx.kind !== 'postgres') return; // PGLite samples no write
+      const lost: string[] = []; const lines: string[] = [];
+      const { wrapped, sampler } = rig({ send: (line) => { lines.push(line); return true; }, lost: (reason) => { lost.push(reason); return true; } });
+      await ctx.reset();
+      const real = primary().transaction.bind(primary()) as (fn: unknown, opts?: unknown) => Promise<unknown>;
+      let calls = 0; let armed = false; let release = (): void => {};
+      const stuck = new Promise<void>((resolve) => { release = resolve; });
+      // Once the write itself is done, the data fence after the read-back (a transaction) waits until released.
+      const spy = spyOn(primary(), 'transaction').mockImplementation(((fn: unknown, opts?: unknown) => (armed ? (calls++, stuck.then(() => real(fn, opts))) : real(fn, opts))) as never);
+      try {
+        await wrapped.putPage('people/abandon-example', page('Abandon Example'));
+        armed = true;
+        await until(() => calls >= 1);
+        await sampler.settle(100);
+        expect(lost).toEqual(['readback_abandoned']);
+        release();
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        expect(lines).toHaveLength(0); // counted once, here: never also sent
+        expect(lost).toEqual(['readback_abandoned']);
+      } finally { release(); spy.mockRestore(); }
     }, 60_000);
   });
 

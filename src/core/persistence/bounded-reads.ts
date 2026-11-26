@@ -99,13 +99,30 @@ export function isSharedReadFailure(error: unknown): boolean {
  */
 export const TYPED_PREPARATION_READS: ReadonlySet<string> = new Set(['getSource', 'getConfigValues', 'readManagedModeRows', 'getSourceStrictness',
   'readPersistenceBrainId', 'readLocalWriterRow', 'readLedgerSource', 'isFolderRestricted', 'listSourceLocalPaths', 'getChunkReuseRows', 'getPageSealState',
-  'listForcedCutSeqs', 'readSegmentedVersionBodyBytes']);
+  'readJournalLimitRows', 'readWriteRequest', 'readWriteRequestById', 'readHeldPageRows', 'readHeldCoverageRows',
+  'readSourceState', 'readAdmissionSource', 'listLinkEndpointPages', 'sharedSkillPackTablePresent', 'listSharedSkillPackRoots',
+  'readSourceMembership', 'getWorktreeBinding', 'readLiveMember', 'readCredentialMemberId', 'readLinkedMember', 'readFolderAccess',
+  'listGuestSourceIds', 'readDatabaseClock', 'listStoredTimelineRowsOrdered', 'matchTakeRows',
+  'listFactWithdrawalDates', 'listCorePageRows', 'lockRegisteredSourceIds',
+  'getConfig', 'getAllConfig', 'listConfigKeys', 'readStoredConfigValue', 'readPageSnapshot', 'getPage',
+  'findDuplicatePage', 'findByTitleFuzzy', 'searchKeyword',
+  'readSegmentTexts', 'readManifest', 'readSegmentedGateEvidence', 'readJobSourceState', 'readJobPrincipal', 'readOauthClient', 'hasLabelledOnlyMember', 'readSegmentedPageHead', 'readSourceIncarnation', 'readStoredPageTier', 'readFactSnapshots',
+  'listForcedCutSeqs', 'readSegmentedVersionBodyBytes',
+  // The access, page-visibility, grant and source reads a preparation makes (caller identity, folder rules, writer fences, credential
+  // grants, source rows): each ran as a raw statement through this view's `executeRaw` before it became a typed member.
+  'readWriteVisibilityProbe', 'readWriterSlugFence', 'readOAuthClientWriteGrant', 'readAccessTokenWriteGrant', 'shareLockWriteCredential', 'readSourceRow',
+  'readMayActFor', 'readAudiencePrincipals', 'readScopeSourceConfigs', 'readOwnerOnlySourcesPresent', 'readOwnerOnlySourceConfig']);
+
+/** Test seam (test/e2e/typed-preparation-reads-guard-postgres.test.ts): told of every engine method a bounded view hands out. */
+type PreparationMemberObserver = (member: string, typed: boolean, engineReads: boolean) => void;
+let memberObserver: PreparationMemberObserver | undefined;
+export function observePreparationMembers(observer: PreparationMemberObserver | undefined): void { memberObserver = observer; }
 
 /** The engine a preparer reads through: raw statements bounded by the clock's remaining budget, everything else untouched. */
 export function boundedReads(engine: BrainEngine, clock: ClaimPhaseClock | undefined, opts: { engineReads?: boolean } = {}): BrainEngine {
   const deadlineAt = clock?.deadlineAt;
   if (deadlineAt === undefined || engine.kind !== 'postgres') return engine;
-  return registerEngineView(new Proxy(engine, { get(target, key) {
+  return registerEngineView(new Proxy(engine, { get(target, key, view) {
     if (key === 'executeRaw') return async (sql: string, params?: unknown[], opts?: { signal?: AbortSignal; timeoutMs?: number }) => {
       recordClaimSql(clock, sql);
       if (opts?.signal) return target.executeRaw(sql, params, opts);
@@ -128,6 +145,7 @@ export function boundedReads(engine: BrainEngine, clock: ClaimPhaseClock | undef
     const value = Reflect.get(target, key, target);
     if (typeof value !== 'function') return value;
     const typedRead = typeof key === 'string' && TYPED_PREPARATION_READS.has(key);
+    if (memberObserver && typeof key === 'string') memberObserver(key, typedRead, opts.engineReads === true);
     if (!opts.engineReads && !typedRead) return value.bind(target);
     return (...args: unknown[]) => {
       if (typedRead) recordClaimSql(clock, `SELECT FROM ${String(key)}`);
