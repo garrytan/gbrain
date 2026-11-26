@@ -10,6 +10,64 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.777.0] - 2026-11-26
+
+**Skill and convention files now say which layer handles a refused request, and no longer carry private names, unreproducible figures or guesses about who someone is.**
+
+### Changed
+- `skills/conventions/model-routing.md` and the agent operator protocol now say that a configured `chat_fallback_chain` sends a refused request to the next model only when `chat_fallback_on_refusal` is true, and that the agent's own stop-on-refusal rule covers only the models it picks itself. `gbrain doctor --only chat_fallback_chain` shows both settings.
+- `skills/meeting-ingestion` keeps an unverified attendee name only on an exact `gbrain whois` match; otherwise it asks the user or removes the name. `skills/cold-start` says nothing is enriched until the user asks.
+- Generic placeholders replace named vendors, companies and folders in `skills/conventions/brain-first.md`; an unreproducible eval figure, a follower-count example and leftover notes about where skill text came from are gone.
+
+**OpenClaw agents can carry an operator rule line on every turn, a once-per-session skill brief beside the every-turn pins, and a fail-closed owner check, and gbrain warns when anyone who DMs the agent would be treated as its owner.**
+
+<!-- behavior-change: openclaw_owner_sender_warning_gst3997 -->
+
+### Added
+- `gbrain setup openclaw --operator-rule "<line>"` sends one line from the operator on every live owner turn, ahead of the pins, in its own `<operator_rule>` block; `--conversation-operator-rule` does the same for groups, channels and other people's DMs. A line is at most 200 characters with no line breaks and no `<` or `>`, setup refuses anything else, the plugin drops a hand-edited line that breaks the rule, and an empty value clears it. `--pins-route` never moves it.
+- `gbrain skills pin add <id> --catalog openclaw-<agent> --brief` puts a pin in the owner's session-start brief (`<session_brief>`, once per session and again after a compaction, a reset or a change to the brief) while the other pins stay on every turn; `--every-turn` moves it back. Brief pins are owner-only, are never also suggested, and `--pins-route first_turn` keeps working as before.
+- `gbrain setup openclaw --require-owner-sender` fails closed: without a memory audience from OpenClaw, the main session counts as the owner's only for a turn from an `--owner-sender` id, so with none set it gets conversation pins and no owner-only skill. It is off by default, so existing installs behave as before.
+- `gbrain setup openclaw` prints, and `gbrain doctor` warns with `skill_resolver_owner_unverified`, when a live agent on `session.dmScope: main` (globally or on a route binding) has no owner sender and its recent turns did not all carry OpenClaw's memory audience. The fix names the exact `--owner-sender` command, which takes the bare id the channel reports or the `telegram:<id>` form `commands.ownerAllowFrom` uses.
+- `gbrain doctor` warns with `skill_resolver_plugin_outdated` when the installed plugin, or the one the gateway still runs, is older than this gbrain and so ignores these settings.
+
+### Changed
+- The OpenClaw guide says plainly that the rule line, pins and brief reach the model only while the agent's mode is `live`, and no longer claims owner pins never reach someone else's DM without a memory audience.
+
+**Eleven small fixes from outside reports: doctor, sync timing, dream previews, the nightly probe and four test helpers.**
+
+### Fixed
+- The nightly quality probe's chat calls now carry `phase:nightly_quality_probe` in the usage ledger, so they can be told apart from other calls to the same model. An enclosing job's phase still wins. (#10425; reported and first fixed by @Kkkkkuro)
+- `gbrain doctor`'s extraction health names halt reasons from the same UTC 7-day window as its halt totals, so near midnight it no longer names a reason from an expired day. (#10397, @Kkkkkuro)
+- `gbrain doctor --index-audit` keeps listing a unique index whose concurrent build failed before it was ready for writes; built unique and primary-key indexes stay off the list. (#10413, @Kkkkkuro)
+- An interrupted PostgreSQL data-file read now points agents at the database host instead of `gbrain db-repair`, whose connection probe reports healthy during that fault. (#10408, @Kkkkkuro)
+- One torn or non-event line in the agent-contract log no longer hides every other event from `gbrain doctor`. (#10447, @Kkkkkuro)
+- Managed sync measures pass durations with a monotonic clock, so a system clock change no longer creates or hides a slow-pass warning. (#10441, @Kkkkkuro)
+- `gbrain dream --phase synthesize --dry-run` no longer deletes expired verdict-cache rows. (#10448, @Kkkkkuro)
+
+### Tests
+- The legacy-slug test checks exact filenames, so it passes on case-insensitive macOS volumes. (#10406, @Kkkkkuro)
+- The pooled graduation E2E case creates its target database on the server behind the pooler. (#10430, @Kkkkkuro)
+- The doctor golden normalizes a disconnect caller frame cut off at 200 characters. (#10431, @Kkkkkuro)
+- The previous-release golden keeps a fixture URL's query string in its redacted form. (#10437, @Kkkkkuro)
+
+**The swap report no longer says criterion 5 covers "page and link writes"; it says which five writes it compares and names the rest.**
+
+### Changed
+- Criterion 5 compares only five writes: `putPage`, `deletePage`, `addLink`, `addLinksBatch` and `removeLink`. The swap report, the shadow status line and the swap guide now say "the pilot page and link writes" and name those five, instead of "page and link writes".
+- The report's last line (the named loss) now lists the 24 other page and link writes by name (for example `pages:softDeletePage`, `pages:updateSlug`, `links:replaceDerivedLinks`). Each of them is counted `capability_missing`, as before.
+- A test builds that list from the code, so a new page or link write fails it until the text names it.
+- Wording only. Nothing about pass or fail changes, and no new write is compared.
+
+**The swap report now prints one line for each kind of write that criterion 5 does not compare.**
+
+### Changed
+- Under criterion 5, `gbrain engine swap --to rust --plan` lists chunks, tags, aliases, timeline entries, takes, facts, fact withdrawals, open loops, sources, owner-only marks and the decide store, each with how many writes of that kind the shadow run sampled, or "not sampled". One more line lists every other kind of write that was sampled, so no count is hidden. In `--json` the same lines are a new `lines` list on the criterion 5 row; the other fields are unchanged.
+- Fact withdrawals has no count of its own, so its line says so and shows the `pages:updateSlug` count, which is where those writes are counted.
+- Nothing about pass or fail changes, and nothing new is compared.
+
+### Known limits
+- The last line names a gap. Page and link writes other than `put_page`, `delete_page` and the link writes (for example a soft delete) are also not compared, and a write that touches several tables is counted under its first table only. A criterion 5 pass still covers page and link writes only.
+
 ## [0.60.776.0] - 2026-11-26
 
 **`gbrain setup claude-code --shape household` (or `codex`) sets up a brain for a home in one command: a member and a key for each person, the household groups and folder rules, and the owner's agent wired to answer "what needs doing at home?". It previews every step first and applies only with `--yes`.**
