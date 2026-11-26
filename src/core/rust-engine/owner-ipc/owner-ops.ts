@@ -9,14 +9,17 @@
 import type { BrainEngine } from '../../engine.ts';
 import type { GBrainConfig } from '../../config.ts';
 import type { Notice } from '../../agent-output.ts';
-import type { OperationContext } from '../../ops/contract.ts';
+import { OperationError, type OperationContext } from '../../ops/contract.ts';
 import { importFromContent, importFromFile, importImageFile } from '../../import-file.ts';
 import { importManagedFiles } from '../../persistence/import-mutations.ts';
-import { ownerIpcRefusal } from './routes.ts';
+import { ownerHandoff, ownerIpcRefusal } from './routes.ts';
+import { PERSISTENCE_CLOSING_MESSAGE } from '../../persistence/service.ts';
 import { snapshotStatus, snapshotStore, type SnapshotStoreOptions } from '../store-snapshot.ts';
 import type { OwnerWholeOperation } from './server.ts';
+import { IMPORT_CLIENT_FILE, importClientFile } from '../served/client-files.ts';
+import { SERVED_BRAIN_CALL, SERVED_STORE_CALL, STORE_RETURNING_MEMBERS, servedBrainMethod } from '../served/store-returning.ts';
 import {
-  OWNER_FORWARDED_OPERATIONS, OWNER_RUN_OPERATION, type ForwardedOperationContext, type ForwardedOperationResult,
+  forwardsWhole, OWNER_RUN_OPERATION, type ForwardedOperationContext, type ForwardedOperationResult,
   type WholeOperationName,
 } from './whole-op.ts';
 
@@ -27,7 +30,8 @@ const CONTEXT_KEYS: ReadonlySet<string> = new Set(['sourceId', 'admissionOrigin'
 
 async function runOperation(engine: BrainEngine, config: GBrainConfig | undefined, name: unknown, params: unknown,
   context: unknown): Promise<ForwardedOperationResult> {
-  if (typeof name !== 'string' || !OWNER_FORWARDED_OPERATIONS.has(name)) {
+  const multiuser = (engine as { openStoreIfOpen?: (m: string) => { multiuser?: boolean } | null }).openStoreIfOpen?.('runOperation')?.multiuser === true;
+  if (typeof name !== 'string' || !forwardsWhole(name, multiuser)) {
     throw ownerIpcRefusal(String(name), 'the brain owner runs only page writes and imports whole');
   }
   if (!params || typeof params !== 'object' || Array.isArray(params)) throw ownerIpcRefusal(name, 'its parameters are not an object');
@@ -52,14 +56,46 @@ async function runOperation(engine: BrainEngine, config: GBrainConfig | undefine
 }
 
 /** `config` is the owner's own (the engine's connect config); a registry operation runs with it. */
-export function ownerWholeOperations(opts: { config?: GBrainConfig } = {}): Readonly<Record<WholeOperationName | typeof OWNER_RUN_OPERATION, OwnerWholeOperation>> {
+/**
+ * Multi-user mode: an owner whose persistence service is closing refuses a forwarded write as "nothing accepted"
+ * (persistence/service.ts). Over the owner socket that is a handoff: the client sends it, with its request id, to the
+ * next owner (client side: whole-op.ts forwardOwnerOperation). Off, every error passes unchanged.
+ */
+export function handedOverIfClosing(engine: BrainEngine, name: unknown, error: unknown): unknown {
+  const store = (engine as { openStoreIfOpen?: (m: string) => { multiuser?: boolean } | null }).openStoreIfOpen?.('runOperation');
+  const closing = error instanceof OperationError && error.code === 'unavailable' && error.message.startsWith(PERSISTENCE_CLOSING_MESSAGE);
+  return closing && store?.multiuser === true ? ownerHandoff(String(name), process.pid) : error;
+}
+
+export function ownerWholeOperations(opts: { config?: GBrainConfig } = {}): Readonly<Record<string, OwnerWholeOperation>> {
   return {
     importFromContent: (engine, ...args) => importFromContent(engine, ...(args as Args<typeof importFromContent>)),
     importFromFile: (engine, ...args) => importFromFile(engine, ...(args as Args<typeof importFromFile>)),
     importImageFile: (engine, ...args) => importImageFile(engine, ...(args as Args<typeof importImageFile>)),
     importManagedFiles: (engine, ...args) => importManagedFiles(engine, ...(args as Args<typeof importManagedFiles>)),
-    [OWNER_RUN_OPERATION]: (engine, name, params, context) => runOperation(engine, opts.config, name, params, context),
+    [OWNER_RUN_OPERATION]: (engine, name, params, context) => runOperation(engine, opts.config, name, params, context)
+      .catch((error: unknown) => { throw handedOverIfClosing(engine, name, error); }),
     snapshotStore: (engine, target, options) => snapshotStore(engine, String(target), options as SnapshotStoreOptions),
     snapshotStatus: (_engine, opId) => Promise.resolve(snapshotStatus(String(opId))),
+    // Protocol v3 only: a network client's file import, sent as bytes (served/client-files.ts). The owner dispatcher
+    // refuses it on v2 as any operation it does not run (owner-ipc/server.ts V3_ONLY_OPERATIONS).
+    [IMPORT_CLIENT_FILE]: (engine: BrainEngine, ...args: unknown[]) => importClientFile(engine, args[0], args[1], args[2], args[3], args[4]),
+    // Protocol v3 only: one store method of the shared-skill publication path (served/store-returning.ts).
+    [SERVED_BRAIN_CALL]: async (engine: BrainEngine, method: unknown, args: unknown) => {
+      if (!servedBrainMethod(method)) throw ownerIpcRefusal(String(method), 'it is not a store method a client may call');
+      const rust = engine as unknown as { _admit?(m: string): Promise<void>; storeFor?(m: string): Promise<{ brain: Record<string, unknown> }> };
+      if (typeof rust.storeFor !== 'function') throw ownerIpcRefusal(method, 'the brain server has no store');
+      await rust._admit?.(method);
+      const brain = (await rust.storeFor(method)).brain;
+      return (brain[method] as (...a: unknown[]) => Promise<unknown>).apply(brain, Array.isArray(args) ? args : []);
+    },
+    // Protocol v3 only: one method of a store a member returns (served/engine.ts STORE_RETURNING_MEMBERS).
+    [SERVED_STORE_CALL]: async (engine: BrainEngine, member: unknown, method: unknown, args: unknown) => {
+      if (typeof member !== 'string' || !STORE_RETURNING_MEMBERS.has(member)) throw ownerIpcRefusal(String(member), 'it does not return a store');
+      const store = await (engine as unknown as Record<string, () => Promise<Record<string, unknown>>>)[member]();
+      const fn = typeof method === 'string' && Object.hasOwn(store, method) ? store[method] : undefined;
+      if (typeof fn !== 'function') throw ownerIpcRefusal(`${member}.${String(method)}`, 'its store has no such method');
+      return (fn as (...a: unknown[]) => Promise<unknown>).apply(store, Array.isArray(args) ? args : []);
+    },
   };
 }

@@ -115,6 +115,9 @@ const NOT_READ_BEHAVIOR = new Set([
   'GBRAIN_RUST_WRITE_ORIGIN',
   // Rust multi-user owner-side remote check: the owner socket refuses a remote caller's write; reads run as before.
   'GBRAIN_RUST_OWNER_REMOTE_CHECK',
+  // Rust brain server listener: the address `gbrain serve` opens its protocol v3 listener on, and that listener's TLS
+  // certificate and key; they open and secure a second door to the same store, so no read answers differently.
+  'GBRAIN_RUST_SERVER_LISTEN', 'GBRAIN_RUST_SERVER_TLS_CERT', 'GBRAIN_RUST_SERVER_TLS_KEY',
   // Set by the shadow supervisor for its own child process so the child never shadows (and, as the session nonce, binds the child's asks to it); no caller exports either and no read reads them.
   'GBRAIN_SHADOW_CHILD', 'GBRAIN_SHADOW_SESSION',
   // Shadow capture's kill switch only stops recording; an answer never changes.

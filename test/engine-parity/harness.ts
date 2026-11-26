@@ -52,7 +52,7 @@ const engineCapabilitiesModule = engineCapabilitiesNamespace as unknown as Recor
 import { itemSetHash } from '../../src/core/generations/publish.ts';
 import { IDENTITY_DOWNGRADE_OP } from '../../src/core/persistence/sync-status-sql.ts';
 import {
-  archiveRustSource, createRustSource, newRustBrain, putRustOpCheckpointRow, rustPageDeletedAt, rustAccessBrain, openRustBrain, DIVERGENCE_NORMALIZERS, readDivergences, removeBrainDir, rustArmRequested, rustMemberCapability, rustRefusal, type DivergenceRow, createRustMember, type MemberSeed, rustMuRoute, openRustBrainAt, installMuConnect, type MuConnectable, type RustMuRoute,
+  archiveRustSource, closeRustBrain, createRustSource, newRustBrain, putRustOpCheckpointRow, rustPageDeletedAt, rustAccessBrain, openRustBrain, DIVERGENCE_NORMALIZERS, readDivergences, removeBrainDir, rustArmRequested, rustMemberCapability, rustRefusal, type DivergenceRow, createRustMember, type MemberSeed, rustMuRoute, openRustBrainAt, installMuConnect, type MuConnectable, type RustMuRoute,
 } from './rust-arm.ts';
 import { isEngineMember, readStopPins, refusalFacts, rustServes, rustServesCapability, setupRefusalStep, setupStep, today, type StopPin } from './rust-refusals.ts';
 
@@ -184,7 +184,7 @@ async function openRustArm(route?: RustMuRoute): Promise<ParityArm> {
     ...(route !== undefined && { muRoute: route }),
     engine: opened.engine as unknown as BrainEngine,
     close: async () => {
-      await arm.engine.disconnect();
+      await closeRustBrain(arm.engine);
       for (const dir of [...dirs, (arm.engine as unknown as { databasePath: string }).databasePath]) removeBrainDir(dir);
     },
     unconnected: () => {
@@ -202,7 +202,7 @@ async function openRustArm(route?: RustMuRoute): Promise<ParityArm> {
 
 async function resetRustArm(arm: ParityArm): Promise<void> {
   const previous = arm.engine as unknown as { databasePath: string };
-  await arm.engine.disconnect();
+  await closeRustBrain(arm.engine);
   removeBrainDir(previous.databasePath);
   arm.engine = (await openRustBrain(arm.muRoute)).engine as unknown as BrainEngine;
   // The brain directories of every reset are removed here; the arm's own list only holds what `unconnected` made.

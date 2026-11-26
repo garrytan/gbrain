@@ -15,6 +15,7 @@
  *    every member in `methods`; it counts as stopped. Returning, or ending on a capability refusal, fails (harness.ts).
  */
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { listenServed } from '../../src/core/rust-engine/served/listener.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
@@ -188,14 +189,93 @@ export function installMuConnect(engine: MuConnectable, route: RustMuRoute, remo
 /**
  * A Rust engine on a new brain directory, connected. With a `route` (the `rust-mu` view) it runs in multi-user mode by that
  * route and the resolution is required (installMuConnect): a brain that did not resolve it is disconnected and removed before
- * the error is thrown.
+ * the error is thrown. With GBRAIN_TEST_RUST_SERVED=1, the engine is a served client of that brain.
  */
 export async function openRustBrain(route?: RustMuRoute): Promise<RustBrainDir> {
   await loadRustArmAddon();
-  const brain = newRustBrain();
+  // The operator-env preload drops GBRAIN_ switches; the served arm sets the ones it needs from its GBRAIN_TEST_ flags,
+  // before the owner opens (its election reads them).
+  if (rustServedRequested()) {
+    process.env.GBRAIN_RUST_MULTIUSER = '1';
+    if (process.env.GBRAIN_TEST_RUST_SERVED_SERIAL_TXN === '1') process.env.GBRAIN_RUST_SERVED_SERIAL_TXN = '1';
+  }
+  const brain = rustServedRequested() ? newServedOwnerBrain() : newRustBrain();
   if (route !== undefined) installMuConnect(brain.engine as unknown as MuConnectable, route, () => removeBrainDir(brain.dir));
   await brain.engine.connect({ engine: 'pglite', database_path: brain.dir } as never);
+  if (rustServedRequested()) return serveRustBrain(brain);
   return brain;
+}
+
+/**
+ * The served variant of the Rust arm (`GBRAIN_TEST_RUST_SERVED=1`, which turns multi-user Rust on for the run; add
+ * `GBRAIN_TEST_RUST_SERVED_SERIAL_TXN=1` for transactions over the wire before lane L1): the brain's owner
+ * runs in this process with a loopback TLS listener (rust-engine/served/listener.ts) and an owner server token, and
+ * the engine each case receives is a served client of it (rust-engine/served/engine.ts) that reaches it over protocol
+ * v3. The same tally pins and divergence rows apply, so a case that answers differently served fails. Fixtures that
+ * write the store directly (`openStore`) use the owner; every case member call goes over the wire.
+ */
+export const RUST_SERVED_FLAG = 'GBRAIN_TEST_RUST_SERVED';
+
+export function rustServedRequested(env: Record<string, string | undefined> = process.env): boolean {
+  return env[RUST_SERVED_FLAG] === '1';
+}
+
+let servedTls: { cert: Buffer; key: Buffer } | undefined;
+
+/**
+ * The arm's owner server token. The served arm must not write a token row or a config row into the brain each case
+ * reads (token and config listings would then differ from PGLite), so the owner checks this one token through the
+ * served/auth.ts `verify` and `ownerIds` seams, shaped as the real bearer check answers for an owner server token
+ * (test/rust-served-cli.test.ts and test/rust-served-wire.test.ts cover the real token path).
+ */
+const SERVED_ARM_TOKEN = `gbrain_served_arm_${process.pid}`;
+const SERVED_ARM_OWNER = { principal: { kind: 'legacy_token', id: 'served-arm' }, scopes: ['read', 'write', 'admin'], sourceId: 'default', hasSourceGrant: false, member: null, mayActFor: null, attest: null };
+
+function newServedOwnerBrain(): RustBrainDir {
+  if (!addon) throw new Error('loadRustArmAddon has not run');
+  const engine = openRustEngine({ addon, databasePath: mkdtempSync(join(tmpdir(), 'gbrain-rust-arm-')), servedOptions: {
+    verify: {
+      verify: async (_engine, token) => { if (token !== SERVED_ARM_TOKEN) throw new Error('Invalid token'); return { ...SERVED_ARM_OWNER }; },
+      ownerIds: async () => new Set(['served-arm']),
+    },
+  } });
+  return { engine, dir: engine.databasePath };
+}
+
+/** A self-signed certificate for `localhost`, made once per process with openssl (test-only, never kept). */
+function servedArmTls(): { cert: Buffer; key: Buffer } {
+  if (servedTls) return servedTls;
+  const dir = mkdtempSync(join(tmpdir(), 'gbrain-served-tls-'));
+  try {
+    const run = Bun.spawnSync(['openssl', 'req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-nodes', '-days', '1',
+      '-subj', '/CN=localhost', '-addext', 'subjectAltName=DNS:localhost', '-keyout', join(dir, 'key.pem'), '-out', join(dir, 'cert.pem')], { stderr: 'pipe' });
+    if (run.exitCode !== 0) throw new Error(`openssl could not make the served arm's test certificate: ${run.stderr.toString()}`);
+    servedTls = { cert: readFileSync(join(dir, 'cert.pem')), key: readFileSync(join(dir, 'key.pem')) };
+    return servedTls;
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+}
+
+async function serveRustBrain(owned: RustBrainDir): Promise<RustBrainDir> {
+  const owner = owned.engine;
+  const server = owner.ownerServer();
+  if (!server?.attachServed) throw new Error('served arm: the Rust owner did not start with protocol v3');
+  const tls = servedArmTls();
+  const token = SERVED_ARM_TOKEN;
+  const listener = await listenServed(server, { host: '127.0.0.1', port: 0, tls });
+  const client = openRustEngine({ addon: addon!, databasePath: owned.dir, served: { url: `gbrain+tls://localhost:${listener.port}`, token, ca: tls.cert } });
+  await client.connect({ engine: 'rust', database_path: owned.dir } as never);
+  Object.defineProperty(client, 'openStore', { value: (member: string) => owner.openStore(member), configurable: true, writable: true });
+  // The arm closes the server with the client (closeRustBrain); the client's own disconnect and reconnect stay its own.
+  servedBehind.set(client, async () => { await listener.close(); await owner.disconnect(); });
+  return { engine: client, dir: owned.dir };
+}
+
+/** The server behind a served arm engine, closed after the engine (closeRustBrain). */
+const servedBehind = new WeakMap<object, () => Promise<void>>();
+
+/** Disconnects an arm engine and, for the served variant, the listener and owner behind it. */
+export async function closeRustBrain(engine: { disconnect(): Promise<void> }): Promise<void> {
+  try { await engine.disconnect(); } finally { await servedBehind.get(engine)?.(); }
 }
 
 /**

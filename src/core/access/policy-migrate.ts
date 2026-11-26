@@ -74,7 +74,9 @@ export async function previewMigrate(engine: BrainEngine, sourceId: string, requ
 export async function migrateAccessStore(engine: BrainEngine, sourceId: string, requested?: AccessStore): Promise<{ id: string; from: AccessStore | null; to: AccessStore; phase: string; receipts: Record<string, unknown> }> {
   const p = await previewMigrate(engine, sourceId, requested);
   // The store switch below runs in a transaction, which does not cross the owner socket: refuse before any write.
-  if (ownerConnectionFor(engine)) throw ownerIpcRefusal('transaction', 'gbrain access rule migrate switches the store inside one');
+  // A client of a brain server whose transactions cross the wire (multi-user Rust, protocol v3 `txn`) runs it there.
+  const owner = ownerConnectionFor(engine) as { caps?: ReadonlySet<string> } | undefined;
+  if (owner && owner.caps?.has('txn') !== true) throw ownerIpcRefusal('transaction', 'gbrain access rule migrate switches the store inside one');
   await ensurePolicyState(engine, sourceId);
   let job = await unfinished(engine, sourceId);
   if (!job) {

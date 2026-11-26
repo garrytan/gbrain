@@ -29,16 +29,14 @@
  *  - a limit, cursor or id that is not an integer, rather than guess at PGLite's bind error.
  */
 import type { BrainEngine } from '../../engine.ts';
-import {
-  callerReadersAllowedSql, privacyForCaller, privatePagesFilterForCaller, privatePagesFilterFragment, privateSnapshotFilterFragment,
-  remoteReadFloorSql, withoutCallerAccess,
-} from '../../search/private-visibility.ts';
+import { privatePagesFilterForCaller, privatePagesFilterFragment, remoteReadFloorSql } from '../../search/private-visibility.ts';
 import { validDate } from '../../valid-time.ts';
 import type { RustEngine } from '../../rust-engine.ts';
 import type { StoreBrain } from '../store.ts';
 import { mapStoreError } from '../store-errors.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
-import { judgeWidenedCaller, renderForStoreCaller, storePagePolicy, storePageTextPolicy } from './private-provenance.ts';
+import { snapshotServed } from './access-policies.ts';
+import { storePagePolicy, storePageTextPolicy } from './private-provenance.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 
@@ -175,9 +173,6 @@ export const listValidTimeIdentities: Member<'listValidTimeIdentities'> = (brain
   }));
 };
 
-/** The snapshot visibility the pick reports for a version row, in the current context. */
-const snapshotVisibleSql = () => `${callerReadersAllowedSql('pv', 'snapshot')} AND ${privacyForCaller('p', privateSnapshotFilterFragment('pv'))}`;
-
 const asDate = (v: unknown): Date | null => (typeof v === 'string' ? new Date(v) : null);
 
 export const pickValidTimeEdition: Member<'pickValidTimeEdition'> = async (brain, spec) => {
@@ -189,12 +184,7 @@ export const pickValidTimeEdition: Member<'pickValidTimeEdition'> = async (brain
   const policy = storePageTextPolicy(member, () => privatePagesFilterForCaller('p'), { callerReaders: true, fragment: 'caller' });
   // The store judges a version by the page policy's readers: the caller's snapshot text must be the canonical one for them.
   const readers = { identity: policy.identity ?? [], privateReadableSources: policy.privateReadableSources ?? [] };
-  const snapshotServed = judgeWidenedCaller(() => {
-    const text = snapshotVisibleSql();
-    if (text === withoutCallerAccess(snapshotVisibleSql)) return true;
-    return text === renderForStoreCaller({ ...readers, hidePrivate: true }, snapshotVisibleSql) || undefined;
-  });
-  if (!snapshotServed) refuseMember(member, 'a caller whose snapshot policy is not the canonical one for its readers');
+  snapshotServed(member, readers);
   const got = await storeCall({ member }, () => brain.pickValidTimeEdition({
     pageId: spec.pageId, asOf: spec.asOf, excludePrivate: spec.excludePrivate, pinOrd: spec.pinOrd, inlineMaxBytes: spec.inlineMaxBytes,
     policy,

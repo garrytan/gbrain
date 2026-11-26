@@ -35,6 +35,8 @@ function getConfigPath() { return configPath(); }
 
 export interface GBrainConfig {
   engine: 'postgres' | 'pglite' | 'rust';
+  /** Rust with multi-user on: the brain server to reach (types.ts EngineConfig.rust_server); ignored while it is off. */
+  rust_server?: { url?: string; token_env?: string; ca_file?: string };
   /** File-plane hook-lane keys (read by engine-free hook/push children).
    * `gbrain config set` routes these two dotted keys here, not to the DB. */
   push?: { allow_unverified_remote?: boolean };
@@ -1985,6 +1987,8 @@ export function toEngineConfig(config: GBrainConfig): EngineConfig {
     database_url: config.database_url,
     database_path: config.database_path,
     keyword_statement_timeout_ms: config.search?.keyword_statement_timeout_ms,
+    // Only a config that names a brain server carries the key, so every other config converts exactly as before.
+    ...(config.rust_server ? { rust_server: config.rust_server } : {}),
   };
 }
 

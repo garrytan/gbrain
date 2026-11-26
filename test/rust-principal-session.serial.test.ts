@@ -16,6 +16,7 @@ import { loadRustAddon } from '../src/core/rust-engine/addon-loader.ts';
 import { openRustEngine, type RustEngine } from '../src/core/rust-engine.ts';
 import { openPrincipalSession } from '../src/core/rust-engine/principal-session.ts';
 import { hashToken } from '../src/core/utils.ts';
+import { withCallerAccess } from '../src/core/search/private-visibility.ts';
 import { rustArmAddonPath } from './engine-parity/rust-arm.ts';
 
 const SWITCHES = ['GBRAIN_RUST_MULTIUSER'] as const;
@@ -92,6 +93,8 @@ describe('a multi-user session on a Rust store', () => {
     expect(session.grant.scopes).toContain('write');
     expect(await code(session.admit('getConfig'))).toBe('ok');
     expect(await code(session.admit('setConfig'))).toBe('ok');
+    // Tools by their own scope: the read-write key runs read and write tools; a sources-admin tool needs that scope.
+    for (const [tool, got] of [['get_page', 'ok'], ['put_page', 'ok'], ['sources_add', 'permission_denied']] as const) expect({ tool, got: await code(session.admit(tool)) }).toEqual({ tool, got });
     session.release();
     expect(await code(session.admit('getConfig'))).toBe('permission_denied');
   });
@@ -107,6 +110,10 @@ describe('a multi-user session on a Rust store', () => {
     expect(await code(session.admit('getConfig'))).toBe('ok');
     expect(await code(session.admit('setConfig'))).toBe('permission_denied');
     expect(await code(session.admit('noSuchMember'))).toBe('permission_denied');
+    // A tool call (serve --http passes the operation name) is classified by the operation's own scope: a read tool runs,
+    // a write, sources-admin or unknown tool refuses.
+    for (const tool of ['get_page', 'list_pages', 'search', 'get_tags', 'get_backlinks', 'find_pages']) expect({ tool, got: await code(session.admit(tool)) }).toEqual({ tool, got: 'ok' });
+    for (const tool of ['put_page', 'add_tag', 'sources_add', 'no_such_tool']) expect({ tool, got: await code(session.admit(tool)) }).toEqual({ tool, got: 'permission_denied' });
     session.release();
   });
 
@@ -125,6 +132,59 @@ describe('a multi-user session on a Rust store', () => {
     expect(await code(session.admit('getConfig'))).toBe('permission_denied');
     await engine.setConfig('access.owner_member', 'owner-example');
     expect(await code(session.admit('getConfig'))).toBe('permission_denied');
+  });
+
+  test('a session call reads under the record the store builds, not one the client set', async () => {
+    await engine.putPage('notes/private-example', { type: 'note', title: 'P', compiled_truth: 'x', frontmatter: { visibility: 'private' } } as never);
+    const read = () => engine.readPageHiddenFromCaller('default', 'notes/private-example', { policy: 'read' });
+    // A remote client's own record (a stranger who may not read private pages) hides the page.
+    expect(await withCallerAccess({ identity: ['member:mallory-example'], hidePrivate: true }, read)).toBe(true);
+    let derived = 0;
+    const addon = { deriveAccessPolicy: (ctx: unknown) => { derived++; return (engine.addon as unknown as { deriveAccessPolicy(c: unknown): unknown }).deriveAccessPolicy(ctx); } };
+    const session = await openPrincipalSession(store(), 'secret-owner', addon);
+    // The owner's session reads it, even inside the stranger's record, and every policy came from the store.
+    for (const readOnly of [false, true]) {
+      // A read-only call carries the owner's member lineage, served as the owner read rule.
+      const seen = await withCallerAccess({ identity: ['member:mallory-example'], hidePrivate: true },
+        () => session.run('readPageHiddenFromCaller', { readOnly }, read));
+      expect({ readOnly, seen }).toEqual({ readOnly, seen: false });
+    }
+    expect(derived).toBeGreaterThan(1);
+    session.release();
+  });
+
+  test('in a session the store refusal stands: no TypeScript policy is used instead', async () => {
+    const refusing = { deriveAccessPolicy: () => ({ $refuse: true, why: 'test refusal' }) };
+    const session = await openPrincipalSession(store(), 'secret-owner', refusing);
+    const err = await session.run('readPageHiddenFromCaller', { readOnly: true },
+      () => engine.readPageHiddenFromCaller('default', 'notes/private-example', { policy: 'read' })).catch(e => e);
+    expect((err as { code?: string }).code).toBe('engine_capability_missing');
+    expect(String((err as Error).message)).toContain('test refusal');
+    session.release();
+  });
+
+  test('the routed policy builders use the store derivation in a session call', async () => {
+    let derived = 0;
+    const addon = { deriveAccessPolicy: (ctx: unknown) => { derived++; return (engine.addon as unknown as { deriveAccessPolicy(c: unknown): unknown }).deriveAccessPolicy(ctx); } };
+    const session = await openPrincipalSession(store(), 'secret-owner', addon);
+    const local = await engine.listOriginClaimants('default', [1]);
+    const before = derived;
+    const remote = await session.run('listOriginClaimants', { readOnly: false }, () => engine.listOriginClaimants('default', [1]));
+    expect(remote).toEqual(local);
+    expect(derived).toBeGreaterThan(before);
+    // A store that refuses the no-caller flags refuses the call: no TypeScript flags are used instead.
+    const refusing = await openPrincipalSession(store(), 'secret-owner', { deriveAccessPolicy: () => ({ $refuse: true, why: 'test refusal' }) });
+    const err = await refusing.run('listOriginClaimants', { readOnly: false }, () => engine.listOriginClaimants('default', [1])).catch(e => e);
+    expect((err as { code?: string }).code).toBe('engine_capability_missing');
+    session.release();
+    refusing.release();
+  });
+
+  test('a session call on a read-only key cannot write, and a revoked session runs nothing', async () => {
+    const session = await openPrincipalSession(store(), 'secret-owner-read');
+    expect(await code(session.run('setConfig', { readOnly: false }, () => engine.setConfig('x', 'y')))).toBe('permission_denied');
+    session.release();
+    expect(await code(session.run('getConfig', { readOnly: true }, () => engine.getConfig('x')))).toBe('permission_denied');
   });
 
   test('a handle does not outlive the store that minted it', async () => {

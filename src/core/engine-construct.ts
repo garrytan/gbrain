@@ -23,6 +23,11 @@ export async function constructEngine(config: EngineConfig): Promise<BrainEngine
       const { loadRustEngineAddon } = await import('./rust-engine/addon-loader.ts');
       const { openRustEngine } = await import('./rust-engine.ts');
       const { opError } = await import('./ops/contract.ts');
+      // Multi-user Rust with a brain server configured: a client of that server, with no store, addon or brain
+      // directory of its own (rust-engine/served/engine.ts). Off, or with no server named, nothing here changes.
+      const { servedTargetFor } = await import('./rust-engine/served/engine.ts');
+      const served = servedTargetFor(config);
+      if (served) return openRustEngine({ addon: {}, databasePath: '', served });
       const databasePath = config.database_path;
       if (!databasePath || !isAbsolute(databasePath)) {
         throw opError('config_error', 'A rust brain needs an absolute database_path in its config.', 'Set database_path in ~/.gbrain/config.json to the brain\'s store directory.');
