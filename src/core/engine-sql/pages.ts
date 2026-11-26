@@ -163,7 +163,7 @@ export async function putPage(
     const sourceKind = page.source_kind ?? null;
     const sourceUri = page.source_uri ?? null;
     const ingestedVia = page.ingested_via ?? null;
-    const ingestedAt = (sourceKind || sourceUri || ingestedVia) ? new Date() : null;
+    const ingestedAt = (sourceKind || sourceUri || ingestedVia) ? sqlFragment`now()` : null;
     // #5984: the contextual retrieval stamp, when the caller passes it, rides in this statement.
     const cr = opts?.contextualRetrieval && opts.contextualRetrieval.mode !== 'none' ? opts.contextualRetrieval : null;
     const crColumns = cr ? sqlFragment`, contextual_retrieval_mode, corpus_generation` : sqlFragment``;

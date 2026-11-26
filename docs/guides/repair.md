@@ -795,6 +795,10 @@ The check lists each page with its counts (world-visible facts counted apart), n
 
 **Say to your agent:** *"Which imported pages hold facts a sender could have planted? Show me before you remove anything."*
 
+**Imported transcripts in one pass (#9427).** A chat transcript that `gbrain transcripts ingest` imported is someone else's text by construction, and gbrain's own conversation-facts extraction indexes rows on it, so on a brain with many imported conversations the check lists hundreds of pages that need the same answer. `gbrain transcripts accept-fences --json` previews every listed conversation page the importer wrote and stamped (counts only, never a value) with a `plan_hash`; `gbrain transcripts accept-fences --yes --expect <plan_hash>` records those pages as reviewed, and the check leaves them out while their rows stay exactly as reviewed. A new, removed or changed row, or a later write by anything other than the importer (a remote `put_page` included), puts the page back on the list. Nothing in a page or its rows changes. Email, calendar and GitHub pages are never accepted this way; they stay listed one page at a time. `--source-id <id>` limits both steps to one source. The record is the config row `transcripts.fence_acceptance`, so repo-less and repo-backed brains behave the same, and doctor's details report the accepted count as `accepted_transcripts`.
+
+**Say to your agent:** *"The fence warning is all imported chat transcripts. Show me the list, then mark them reviewed."*
+
 <a id="connector-held-items"></a>
 ### Connector held items
 
