@@ -21,9 +21,9 @@
  *    multi-writer conformance cases (multi-writer-cases.ts) are decided per arm by their support matrix instead of by
  *    `requires`; the Rust labels check the capability on the engine itself at run time.
  *  - `managed_persistence` refuses on an arm without it, naming it (src/core/engine-capabilities.ts). The Rust engine
- *    reports it on a single-host store (lane LM slice 2) and withholds it on a multi-user store
- *    (rust-engine/store-capabilities.ts MULTIUSER_WITHHELD), so with `GBRAIN_RUST_MULTIUSER=1` a write to a managed
- *    worktree refuses naming it there. test/rust-engine-construct.test.ts pins this table to what the engine reports.
+ *    reports it on a single-host store (lane LM slice 2) and on a multi-user store (slice 3: its locks are I-5 leases and
+ *    its claims carry epochs; rust-engine/store-capabilities.ts MULTIUSER_WITHHELD is empty).
+ *    test/rust-engine-construct.test.ts pins this table to what the engine reports.
  *
  *    `GBRAIN_TEST_RUST_MANAGED=1` (test/engine-parity/rust-managed.ts) was the lifted-hold mode of slices 1 and 2; with
  *    the hold lifted it changes nothing, and rust-managed-tally.tsv equals rust-tally.tsv.
@@ -64,8 +64,8 @@ export function armCapabilities(arm: ParityArmName, env: Record<string, string |
   switch (arm) {
     case 'pglite': return new Set<EngineCapability>(['raw_sql', 'managed_persistence']);
     case 'postgres': return new Set<EngineCapability>(['raw_sql', 'schema_migration_lock', 'managed_persistence', 'multi_writer']);
-    // `managed_persistence` on a single-host store; a multi-user store withholds it (store-capabilities.ts MULTIUSER_WITHHELD).
-    case 'rust': return new Set<EngineCapability>(rustManagedRequested(env) || env.GBRAIN_RUST_MULTIUSER !== '1' ? ['managed_persistence'] : []);
+    // `managed_persistence` on a single-host store and, since lane LM slice 3, on a multi-user store too (I-5 leases).
+    case 'rust': return new Set<EngineCapability>(['managed_persistence']);
     default: return assertNever(arm);
   }
 }

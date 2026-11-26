@@ -332,7 +332,7 @@ export class RustEngine implements BrainEngine {
 
   /**
    * Reports what this engine's own store serves: every served capability, less what a multi-user store withholds
-   * (store-capabilities.ts MULTIUSER_WITHHELD: managed mode is single-host until its locks are I-5 leases).
+   * (store-capabilities.ts MULTIUSER_WITHHELD, empty since slice 3).
    */
   private _reportStoreCapabilities(): void {
     const caps = this.capabilities as Set<Capability>;

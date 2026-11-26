@@ -12,7 +12,7 @@ import type { BrainEngine } from '../engine.ts';
 import { readManagedMode } from '../persistence/managed-mode.ts';
 import { activeWorktreeRefreshes } from '../persistence/worktree-refresh.ts';
 import { usableDestination, type DestinationOptions } from './destination.ts';
-import { servedCapabilities } from '../rust-engine/store-capabilities.ts';
+import { servedCapabilities, storeCapabilities } from '../rust-engine/store-capabilities.ts';
 import { rustMultiuserFromEnv } from '../rust-engine/multiuser-switch.ts';
 import { evaluateReadiness, type ReadinessVerdict, type ShadowStatus } from './readiness.ts';
 import { managedStorageError, refreshUnsettledError, type SwapRefusalReason, type UnsettledRefresh } from './refusals.ts';
@@ -90,13 +90,13 @@ export async function assertRefreshesSettled(engine: BrainEngine): Promise<void>
 }
 
 /**
- * Whether the Rust destination can hold a managed brain: this build's Rust engine serves `managed_persistence`, and the
- * multi-user switch is off (a multi-user store withholds managed mode until its locks are I-5 leases;
- * rust-engine/store-capabilities.ts MULTIUSER_WITHHELD).
+ * Whether the Rust destination can hold a managed brain: this build's Rust engine serves `managed_persistence` on a store
+ * in the destination's mode. A multi-user store serves it on I-5 leases (slice 3); a capability the store withholds in that
+ * mode (rust-engine/store-capabilities.ts MULTIUSER_WITHHELD, empty today) refuses the swap again.
  */
 export function rustHoldsManagedStorage(destination: DestinationOptions | undefined): boolean {
   if (!servedCapabilities().has('managed_persistence')) return false;
-  return !(destination?.multiuser ?? rustMultiuserFromEnv());
+  return storeCapabilities({ multiuser: destination?.multiuser ?? rustMultiuserFromEnv() }).has('managed_persistence');
 }
 
 /** Throws `engine_swap_refused` / `managed_storage` when the brain uses managed storage and the Rust destination cannot

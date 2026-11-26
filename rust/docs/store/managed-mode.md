@@ -5,14 +5,50 @@ that checkout. A single-host Rust store reports the `managed_persistence` capabi
 (`src/core/rust-engine/store-capabilities.ts`), and the members below serve managed mode; the
 `test/engine-parity/managed-*-on-rust.test.ts` files compare them with PGLite and Postgres on all three arms.
 
-A multi-user store withholds the capability (`MULTIUSER_WITHHELD`, applied when the store opens), so a
-multi-user Rust brain refuses managed mode by name: managed mode coordinates a checkout with native file locks
-on one host (`withTopologyLocks`, `GBRAIN_HOME/locks`), and file locks do not fence writers on two hosts. Slice 3
-moves those locks and the managed claims (coalesced Git, group completion, refresh, sync) to I-5 leases. Until
-then group completion builds its write completion with no fence, which is safe only because a multi-user store
-never reaches it. On such an engine each managed store member refuses exactly as the `executeRaw` it replaced
-did (`store-members/managed-hold.ts`). On an owner-IPC client the store members that answer an object of
-functions refuse by name (`owner-ipc/routes.ts`): managed mode runs in the owner process.
+A multi-user store serves it too (lane LM slice 3; `MULTIUSER_WITHHELD` is empty). Managed mode there is a
+double guard, not a file lock alone: every worktree, topology and refresh lock is an I-5 lease
+(`managed:topology:<brain_id>`, `managed:worktree:<worktree_id>`, `managed:refresh:<worktree_id>`; 60 s, renewed every
+10 s while held) with the owner host's native file lock beneath it, taken lease first and released native first
+(`src/core/persistence/managed-lock.ts`). PGLite, Postgres and a single-host Rust store take the native lock alone, exactly
+as before. The store itself holds no file lock, no process mutex and no busy error.
+
+- The lease fences store writes across hosts and processes. The native lock stays, because a lease cannot stop a paused
+  process from touching files it already holds a path to: a paused writer blocks a same-host successor's file work until it
+  exits. A checkout lives on its owner host and is not replicated.
+- The holder of a lease is the process's own host registration (`process:<host>:<pid>:<nonce>`,
+  `managed-registration.ts`), taken before the first managed lock or the consumer's first claim and released when the
+  engine disconnects. Without one a lock or a protected write refuses `lease_lost` / `fence_missing`. A second process that
+  reaches the brain over the owner socket holds no store, takes no lease and refuses when the switch is on.
+- An operation's handle holds its host fence and its managed tokens, immutable. Every protected write transaction of the
+  process asserts those exact tokens inside the writing transaction (`managed-operations.ts`, called from
+  `store-members/transactions.ts`), on every run of the callback. A renewal that finds a lease lost marks the handle
+  lost for good; the process's protected writes then refuse `lease_lost` until the holder releases. A host registration that
+  was replaced while old work was suspended cannot be borrowed: the old operation's captured fence is the old epoch.
+- Claims carry epochs in `~L 0x05` side records: write claims (group followers and group completion included), effect
+  claims (coalesced Git effects included), job, drain-lease and cycle-lock claims, refresh rows (`CLAIM_REFRESH = 0x06`,
+  the refresh row id) and managed sync checkpoints (`CLAIM_SYNC_CHECKPOINT = 0x07`, `<op>\0<fingerprint>`). Each runs
+  `fence::begin` in its own write transaction, checks `claim_held` on every mutation and clears the record when the claim
+  ends; a new holder adopts abandoned work only by taking a new claim. A refused call writes no row and no counter
+  (`persistence/claim_fence_tests.rs`, `test/rust-managed-claim-fences.test.ts`).
+- Lock order is the order the code already took its native locks in: refresh, then topology, then worktrees by id. A wait
+  polls `acquire` within the caller's own deadline and ends with the caller's own busy answer (`write_pending`,
+  `writer_lock_unavailable`). The same-host waiter marker protocol (`worktree-lease.ts`) orders background writers and
+  keeps working beneath the lease; parallel lane leases stay unreachable on Rust (bulk lanes are Postgres-only,
+  `sync-group.ts`). There is no waiter order across hosts.
+- Raw native-lock calls that remain take no managed lock: liveness probes (`probeNativeLock`), the activation and admin
+  probes, the link-backlog drain's host-local dedupe lock and host identity files (`test/managed-lock-callers.test.ts`).
+
+Expiry window, as written in `docs/designs/rust-engine/multi-user-server.md`: the store checks a lease's expiry when
+`assert` runs inside the writing transaction, not at commit. A writer that asserted a live lease can still commit after the
+lease's expiry time while nobody has taken the lease over. A takeover that commits between the assert and the commit puts
+the lease row in the transaction's read set and refuses the commit (`write_conflict`; the retry refuses `lease_lost`), and
+the single-writer store and an explicit transaction hold the writer from assert to commit, so no takeover lands in
+between. That late commit is safe: no other holder exists, and the owner host's native lock still excludes a same-host
+successor from the checkout files. Takeover fencing is provided; expiry at commit is not.
+
+On an owner-IPC client the store members that answer an object of functions refuse by name (`owner-ipc/routes.ts`):
+managed mode runs in the owner process. A member gate (`store-members/managed-hold.ts`) still refuses each managed store
+member by name on an engine whose store does not report `managed_persistence`.
 
 Each family is one BrainEngine store member whose SQL lives unchanged in `src/core/engine-sql/`, and
 on this engine one tagged read call and one tagged write call (`{ kind, ...args }`).

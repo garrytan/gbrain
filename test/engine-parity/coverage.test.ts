@@ -59,9 +59,8 @@ describe('engine parity coverage list', () => {
     expect(PARITY_ARMS.map((arm) => [arm, [...armCapabilities(arm, {})].sort()])).toEqual([
       ['pglite', ['managed_persistence', 'raw_sql']], ['postgres', ['managed_persistence', 'multi_writer', 'raw_sql', 'schema_migration_lock']], ['rust', ['managed_persistence']],
     ]);
-    // A multi-user Rust store withholds managed persistence (store-capabilities.ts MULTIUSER_WITHHELD); the old lifted-hold
-    // mode (rust-managed.ts) still reports it.
-    expect([...armCapabilities('rust', { GBRAIN_RUST_MULTIUSER: '1' })]).toEqual([]);
+    // A multi-user Rust store serves managed persistence too since slice 3 (store-capabilities.ts MULTIUSER_WITHHELD is empty).
+    expect([...armCapabilities('rust', { GBRAIN_RUST_MULTIUSER: '1' })]).toEqual(['managed_persistence']);
     expect([...armCapabilities('rust', { GBRAIN_TEST_RUST_MANAGED: '1' })]).toEqual(['managed_persistence']);
     expect([...armCapabilities('pglite', { GBRAIN_TEST_RUST_MANAGED: '1' })].sort()).toEqual(['managed_persistence', 'raw_sql']);
     expect([missingCapability('raw_sql'), missingCapability('schema_migration_lock'), missingCapability('managed_persistence'), missingCapability('multi_writer')]).toEqual([

@@ -11,11 +11,11 @@
  * comes before any change: the store (including a refresh row written straight to the store), the checkout and the home
  * directory are unchanged.
  *
- * Slice 2 lifted the hold for a single-host store; a multi-user store (GBRAIN_RUST_MULTIUSER=1) still withholds
- * `managed_persistence` (store-capabilities.ts MULTIUSER_WITHHELD) until slice 3 moves managed mode's locks to I-5 leases.
- * This file takes the capability off its engine exactly as a multi-user store does (RustEngine._reportStoreCapabilities),
- * on a single-host store, so each refusal is the managed gate's own and not a missing host fence; on such an engine every
- * step must still refuse exactly as before. test/rust-managed-hold.test.ts also opens a real multi-user store.
+ * Slices 2 and 3 lifted the hold: single-host and multi-user stores both serve `managed_persistence` (MULTIUSER_WITHHELD is
+ * empty). The members' gate stays, for any engine whose store does not report the capability: this file takes it off its
+ * engine by hand, so each refusal is the managed gate's own and not a missing host fence; on such an engine every
+ * step must still refuse exactly as before. Multi-user fencing is tested in test/managed-lock.test.ts,
+ * test/managed-multiuser-callers.test.ts and test/rust-managed-claim-fences.test.ts.
  *
  * Needs the Rust addon: runs with GBRAIN_TEST_RUST_ARM=1 (as the Rust CI job does), and is skipped otherwise.
  */
@@ -25,7 +25,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { MULTIUSER_WITHHELD } from '../src/core/rust-engine/store-capabilities.ts';
 import { openRustBrain, removeBrainDir, rustArmRequested, createRustSource, type RustBrainDir } from './engine-parity/rust-arm.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { RustEngine } from '../src/core/rust-engine.ts';
@@ -49,14 +48,14 @@ const member = (name: string, capability = 'managed_persistence') => ({ code: 'e
 const page = (title: string) => `---\ntype: note\ntitle: ${title}\n---\nWorks at widget-co.\n`;
 const git = (root: string, ...args: string[]) => execFileSync('git', ['-C', root, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', ...args], { encoding: 'utf8' }).trim();
 
-describe.skipIf(!rustArmRequested())('a Rust brain that withholds managed mode (a multi-user store, until slice 3) keeps refusing the refresh, barrier, import-hold and group paths (withheld until slice 3)', () => {
+describe.skipIf(!rustArmRequested())('an engine without the managed_persistence capability keeps refusing the refresh, barrier, import-hold and group paths', () => {
   let brain: RustBrainDir;
   let engine: BrainEngine;
   let home: string;
   beforeAll(async () => {
     brain = await openRustBrain();
-    // What a multi-user store withholds (store-capabilities.ts MULTIUSER_WITHHELD), taken off this single-host engine.
-    for (const capability of MULTIUSER_WITHHELD) (brain.engine.capabilities as Set<string>).delete(capability);
+    // An engine whose store does not report managed_persistence: the capability taken off by hand.
+    (brain.engine.capabilities as Set<string>).delete('managed_persistence');
     engine = brain.engine as unknown as BrainEngine;
     home = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-rust-refresh-hold-')));
   }, 60_000);

@@ -21,15 +21,15 @@ import { STORE_MEMBERS } from './store-members/index.ts';
  * admission, the owner recovery scans, the managed clone and managed sync all run on typed members, equal to PGLite and
  * Postgres on all three parity arms (test/engine-parity/managed-*-on-rust.test.ts).
  *
- * A multi-user store withholds it (MULTIUSER_WITHHELD): managed mode coordinates a checkout with native file locks on
- * one host (withTopologyLocks, GBRAIN_HOME/locks), and those do not fence writers on two hosts. Its claims take I-5
- * leases in slice 3; until then a multi-user Rust brain refuses managed mode with the typed refusal, exactly as every
- * Rust brain did before slice 2.
+ * A multi-user store serves it too (lane LM slice 3): its checkout locks are I-5 leases with the owner host's native lock
+ * beneath them (persistence/managed-lock.ts), and its claims carry the host fence and epochs, so MULTIUSER_WITHHELD is empty.
+ * The array and its gate (`storeCapabilities`, RustEngine._reportStoreCapabilities, the engine-swap plan) stay: a capability
+ * a multi-user store cannot yet fence is listed there and every multi-user Rust brain then refuses it by name.
  */
 export const HELD_FOR_CALLERS: Partial<Record<Capability, readonly string[]>> = {};
 
-/** Capabilities a multi-user store withholds (see above): managed mode stays single-host until its locks are I-5 leases. */
-export const MULTIUSER_WITHHELD: readonly Capability[] = ['managed_persistence'];
+/** Capabilities a multi-user store withholds (see above). Empty since slice 3: managed mode runs on I-5 leases and claim epochs. */
+export const MULTIUSER_WITHHELD: readonly Capability[] = [];
 
 /** Capabilities withheld until every capability they need is reported. */
 export const CAPABILITY_REQUIRES: Partial<Record<Capability, readonly Capability[]>> = {

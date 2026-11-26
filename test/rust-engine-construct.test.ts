@@ -162,17 +162,17 @@ describe('servePersistenceIpcProvider (the serve-path persistence socket)', () =
     expect(rust.capabilities.has('persistence_journal')).toBe(true);
   });
 
-  test('the Rust engine reports managed_persistence and holds nothing back; a multi-user store withholds managed mode', async () => {
+  test('the Rust engine reports managed_persistence and holds nothing back, on a single-host and on a multi-user store (slice 3)', async () => {
     const rust = openRustEngine({ addon: { target: 'linux-x64-glibc', engine_abi: 1 }, databasePath: '/var/brains/test.rust' });
     expect(rust.capabilities.has('managed_persistence')).toBe(true);
     expect(HELD_FOR_CALLERS).toEqual({});
-    expect(MULTIUSER_WITHHELD).toEqual(['managed_persistence']);
+    expect(MULTIUSER_WITHHELD).toEqual([]);
     expect(storeCapabilities({ multiuser: false }).has('managed_persistence')).toBe(true);
-    expect(storeCapabilities({ multiuser: true }).has('managed_persistence')).toBe(false);
+    expect(storeCapabilities({ multiuser: true }).has('managed_persistence')).toBe(true);
     // The parity arm table says the same as the engine, on and off the switch.
     const { armCapabilities } = await import('./engine-parity/arm-capabilities.ts');
     expect(armCapabilities('rust', {}).has('managed_persistence')).toBe(true);
-    expect(armCapabilities('rust', { GBRAIN_RUST_MULTIUSER: '1' }).has('managed_persistence')).toBe(false);
+    expect(armCapabilities('rust', { GBRAIN_RUST_MULTIUSER: '1' }).has('managed_persistence')).toBe(true);
   });
 
   test('an engine with the persistence journal goes on to the provider', async () => {

@@ -1,7 +1,7 @@
 /**
  * Engine parity: managed mode on a Rust brain (lane LM, slices 1 and 2).
  *
- * A single-host Rust engine serves `managed_persistence` (slice 2 lifted the hold; a multi-user store still withholds it),
+ * A single-host Rust engine serves `managed_persistence` (slice 2 lifted the hold; slice 3 serves a multi-user store too),
  * so the ordinary Rust arm runs the managed path for real. `liftManagedHold` stays in the cases and changes nothing on such
  * an engine. Each case returns its answers and the arms must agree.
  *
@@ -122,12 +122,12 @@ async function putSettled(engine: BrainEngine, sourceId: string, slug: string, t
 const codeOf = (run: () => Promise<unknown>) => run().then(() => null, (e: { code?: string }) => e?.code ?? String(e));
 
 describe('managed mode on a Rust brain', () => {
-  parityTest('managed mode is served on a single-host Rust brain and withheld on a multi-user store', {
+  parityTest('managed mode is served on a single-host Rust brain and on a multi-user store', {
     methods: ['getConfig'],
   }, async (engine) => {
     await engine.getConfig('managed_on_rust_probe');
     const out = { served: servedCapabilities().has('managed_persistence'), multiuser: storeCapabilities({ multiuser: true }).has('managed_persistence') };
-    expect(out).toEqual({ served: true, multiuser: false });
+    expect(out).toEqual({ served: true, multiuser: true });
     return out;
   });
 
@@ -166,7 +166,7 @@ describe('managed mode on a Rust brain', () => {
     }
     // A direct claim on the worktree now finds nothing left to coalesce.
     const worktree = (await engine.getWorktreeBinding('work', hostIdFor(engine)))!.worktree_id;
-    const left = await engine.claimCoalescedGitEffects({ hostId: hostIdFor(engine), worktreeId: worktree, limit: 5, deadOwners: [], ownerJson: '{}' });
+    const left = await engine.claimCoalescedGitEffects({ hostId: hostIdFor(engine), worktreeId: worktree, limit: 5, deadOwners: [], ownerJson: '{}', ...fenceOpts(engine) });
     const tracked = execFileSync('git', ['-C', root, 'ls-files', 'notes'], { encoding: 'utf8' }).trim().split('\n').sort();
     const pushed = execFileSync('git', ['-C', join(home, 'remote.git'), 'ls-tree', '-r', '--name-only', 'main', 'notes'], { encoding: 'utf8' }).trim().split('\n').sort();
     const out = { git: await gitStates(), tracked, pushed, left: left.length };
@@ -205,11 +205,12 @@ describe('managed mode on a Rust brain', () => {
       attempts: Number(row.attempts), token: typeof row.execution_token === 'string', owner: (row.claim_owner as { owner?: unknown } | null)?.owner ?? null,
       stamped: (row.claim_owner as { token?: unknown } | null)?.token === row.execution_token, lease: row.claim_expires_at != null }))
       .sort((a, b) => a.path < b.path ? -1 : 1);
-    const first = await engine.claimCoalescedGitEffects<Record<string, unknown>>({ hostId: host, worktreeId: binding.worktree_id, limit: 2, deadOwners: [], ownerJson: owner });
-    const second = await engine.claimCoalescedGitEffects<Record<string, unknown>>({ hostId: host, worktreeId: binding.worktree_id, limit: 5, deadOwners: [], ownerJson: owner });
-    const third = await engine.claimCoalescedGitEffects<Record<string, unknown>>({ hostId: host, worktreeId: binding.worktree_id, limit: 5, deadOwners: [], ownerJson: owner });
+    await ensureProcessRegistration(engine, 'parity');
+    const first = await engine.claimCoalescedGitEffects<Record<string, unknown>>({ hostId: host, worktreeId: binding.worktree_id, limit: 2, deadOwners: [], ownerJson: owner, ...fenceOpts(engine) });
+    const second = await engine.claimCoalescedGitEffects<Record<string, unknown>>({ hostId: host, worktreeId: binding.worktree_id, limit: 5, deadOwners: [], ownerJson: owner, ...fenceOpts(engine) });
+    const third = await engine.claimCoalescedGitEffects<Record<string, unknown>>({ hostId: host, worktreeId: binding.worktree_id, limit: 5, deadOwners: [], ownerJson: owner, ...fenceOpts(engine) });
     const otherHost = await engine.claimCoalescedGitEffects<Record<string, unknown>>({ hostId: 'e0000000-0000-4000-8000-0000000000e9', worktreeId: binding.worktree_id,
-      limit: 5, deadOwners: [], ownerJson: owner });
+      limit: 5, deadOwners: [], ownerJson: owner, ...fenceOpts(engine) });
     const tokens = [...first, ...second].map(row => row.execution_token);
     const out = { seeded: seeded.length, first: shape(first), second: shape(second), third: third.length, otherHost: otherHost.length,
       distinctTokens: new Set(tokens).size === tokens.length };

@@ -2,10 +2,10 @@
  * The engine swap refuses a managed brain only where the Rust destination cannot hold it
  * (docs/guides/engine-swap.md#managed_storage).
  *
- * Authoring gate (docs/TESTING.md): (1) protects a managed brain from a swap the Rust engine cannot finish: a
- * multi-user Rust store withholds managed mode (single-host file locks until slice 3's I-5 leases), so with
- * GBRAIN_RUST_MULTIUSER=1 the swap would fail after the write fence is up. With the switch off the Rust engine holds
- * managed storage (lane LM slice 2), so a managed brain gets its plan like any other. (2) Fails when, with the switch
+ * Authoring gate (docs/TESTING.md): (1) protects a managed brain from a swap the Rust engine cannot finish. Slice 3 gave a
+ * multi-user Rust store managed mode (I-5 leases, MULTIUSER_WITHHELD is empty), so a managed brain gets its plan with the
+ * switch on or off. If a multi-user store withholds `managed_persistence` again (the test adds it to MULTIUSER_WITHHELD for
+ * its own run), the swap would fail after the write fence is up, so it refuses with managed_storage before any criterion. (2) Fails when, with the switch
  * on, `gbrain engine swap --to rust --plan` shows a plan, reads a readiness criterion or writes anything for a brain
  * whose `persistence_brain.enabled` is true, when the refusal loses its reason, exit code, next step or guide anchor,
  * or when a managed brain with the switch off is refused. (3) No existing test sets managed storage on a swap. (4) No
@@ -13,6 +13,8 @@
  * reader is injected, to prove it is never called.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import type { Capability } from '../src/core/engine-capabilities.ts';
+import { MULTIUSER_WITHHELD } from '../src/core/rust-engine/store-capabilities.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { renderCliError } from '../src/core/agent-output.ts';
@@ -61,10 +63,26 @@ describe(`engine swap refuses a managed brain only where Rust cannot hold it (${
     await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
   });
 
-  test('with multi-user mode on, a managed brain is refused with managed_storage, before any criterion is read, and nothing is written', async () => {
+  /** Runs `run` while a multi-user store withholds managed mode (the gate the slice 3 lift emptied). */
+  const withheld = async <T>(run: () => Promise<T>): Promise<T> => {
+    (MULTIUSER_WITHHELD as Capability[]).push('managed_persistence');
+    try { return await run(); } finally { (MULTIUSER_WITHHELD as Capability[]).splice(0); }
+  };
+
+  test('with multi-user mode on, a managed brain gets its plan: a multi-user Rust store holds managed storage on I-5 leases', async () => {
     await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
     const before = await persistenceSnapshot(engine);
     const run = await swapPlan(engine);
+    expect(run.error).toBe('');
+    expect(run.code).toBe(0);
+    expect(run.statusReads).toBe(1);
+    expect(await persistenceSnapshot(engine)).toBe(before);
+  });
+
+  test('a multi-user store that withholds managed mode again refuses with managed_storage, before any criterion is read, and nothing is written', async () => {
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+    const before = await persistenceSnapshot(engine);
+    const run = await withheld(() => swapPlan(engine));
     expect(run.code).toBe(3);
     expect(run.stdout).toBe('');
     expect(run.statusReads).toBe(0);
@@ -83,7 +101,7 @@ describe(`engine swap refuses a managed brain only where Rust cannot hold it (${
 
   test('the human-readable refusal names managed storage and the guide', async () => {
     await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
-    const run = await swapPlan(engine, false);
+    const run = await withheld(() => swapPlan(engine, false));
     expect(run.code).toBe(3);
     expect(run.stdout).toBe('');
     expect(run.error).toContain('Error [engine_swap_refused]: The swap is refused: this brain uses managed storage, which the Rust engine does not support in multi-user mode');
