@@ -338,6 +338,7 @@ dependencies = [
  "fjall",
  "gbrain-sim",
  "getrandom 0.3.4",
+ "libc",
  "proptest",
  "redb",
  "serde",

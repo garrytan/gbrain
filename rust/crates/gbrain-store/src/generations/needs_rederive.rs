@@ -63,6 +63,11 @@ pub(crate) fn is_marked(read: &dyn KvRead, table: &str, id: u64) -> Result<bool>
     Ok(read.get(&row_key(table, &id.to_string()))?.is_some())
 }
 
+/// `marked_at` of the `needs_rederive` row (`table`, `id`), in microseconds; `None` when the row is not there.
+pub(crate) fn marked_at(read: &dyn KvRead, table: &str, id: u64) -> Result<Option<i64>> {
+    Ok(get_json::<RederiveRecord>(read, &row_key(table, &id.to_string()))?.map(|r| r.marked_at_us))
+}
+
 /// Removes the rows of a deleted source (`needs_rederive.source_id -> sources ON DELETE CASCADE`).
 pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Result<()> {
     let rows = collect_prefix(

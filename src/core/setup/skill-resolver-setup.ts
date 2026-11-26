@@ -27,7 +27,7 @@
 import { existsSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { claudeUserSkillsDir, codexConfigPath } from '../bootstrap/host-specs.ts';
-import { buildSkillIndex, catalogStatus, listCatalogs, removeSkillIndex, routingFromArgv } from '../skills/resolver/build.ts';
+import { buildSkillIndex, catalogStatus, listCatalogs, readReceipt, removeSkillIndex, routingFromArgv } from '../skills/resolver/build.ts';
 import { configuredSkillDirs, routerSettings } from '../skills/resolver/config.ts';
 import { routerModel } from '../skills/resolver/router.ts';
 import { ResolverError } from '../skills/resolver/errors.ts';
@@ -48,6 +48,8 @@ export interface ResolverSetupResult {
   sample?: string;
   /** Claude Code and Codex, picker off, a model key configured: how to turn the model picker on and what it sends. */
   router_offer?: string;
+  /** Claude Code and Codex, a catalog built with skill vectors: what each message now sends to the brain's embedding provider. */
+  vectors_note?: string;
   error?: ResolverSetupError;
 }
 
@@ -163,7 +165,9 @@ export async function syncSkillResolverSetup(opts: { harness: ResolverHarness; g
   const router = routerSettings(read.state === 'ok' ? resolverSection(read.doc) : {});
   const offer = harness !== 'hermes' && !router.on ? routerModel(router, home, process.env) : null;
   const router_offer = offer?.key ? `model picker: off. A small model can read your skill list and pick the skill each message needs, which finds the right skill far more often than word matching. Turn it on with: gbrain config set skills.resolver.router true (each message and your skills' names and descriptions then go to ${offer.model}; about $0.0001 to $0.001 a message, capped at ${router.maxUsdPerDay.toFixed(2)} USD a day).` : undefined;
-  return { ...out, sample, ...(router_offer ? { router_offer } : {}), status: { catalog: built[0]!, skills: n, fresh: allFresh, line: `skill resolver: on; ${n} skills; ${allFresh ? 'fresh' : 'stale'}` } };
+  const vectorModel = after.map((s) => readReceipt(home, s.catalog)?.vectors).find((v) => v && 'model' in v);
+  const vectors_note = vectorModel && 'model' in vectorModel ? `skill vectors: on (${vectorModel.model}). Each message is also sent to ${vectorModel.model.split(':')[0]} to be embedded, the provider this brain already embeds its pages with, and your skills' text was sent once to build the index. A brain with no embedding model keeps word matching only.` : undefined;
+  return { ...out, sample, ...(router_offer ? { router_offer } : {}), ...(vectors_note ? { vectors_note } : {}), status: { catalog: built[0]!, skills: n, fresh: allFresh, line: `skill resolver: on; ${n} skills; ${allFresh ? 'fresh' : 'stale'}` } };
 }
 
 /** Whether anything of the resolver's exists for this harness (keys, hook or catalogs). */
@@ -209,6 +213,7 @@ export function describeResolverSetup(r: ResolverSetupResult, dryRun: boolean): 
   const lines = r.steps.map((s) => `  ${(dryRun && s.action !== 'keep' && s.action !== 'skip' ? `would ${s.action}` : s.action).padEnd(8)} ${'resolver'.padEnd(7)} ${s.step}: ${s.detail}`);
   if (r.sample) lines.push('Sample skill-resolver block:', ...r.sample.split('\n').map((l) => `    ${l}`));
   if (r.status) lines.push(r.status.line);
+  if (r.vectors_note) lines.push(r.vectors_note);
   if (r.router_offer) lines.push(r.router_offer);
   return lines;
 }

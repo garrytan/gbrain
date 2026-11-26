@@ -1,6 +1,6 @@
 {
   "golden": {
-    "count": 334,
+    "count": 336,
     "gaps": [
       17,
       18,
@@ -106,7 +106,7 @@
       "runMigrationStatement": "84ba969e61fe8e898dd50cf96e1643d237e521e04cd92b5ef43c5d6be75940c1",
       "schemaLockBlockedError": "fcb368711708ca5535507b34fb296d8cdeda8b9977138d2c1cdb1f117e3abd26",
       "seedConnectorDispatchAttempts": "c8d0e89e65d344d1b28378dcdf8e540dcf1125b49075f151910cfefdec201626",
-      "serverEncoding": "c62a0c43b24be561fbdfd43466bf42132b86c5ea3c5fb1eb37fb73f3eb3a8cfc",
+      "serverEncoding": "2d66a346f7ea8d68aaaa3f77beb345cd687ad81d11499b387b9bcbf391f24f46",
       "slugifyPath": "401dbca23580865d8b168dd8d84db4a6c708c6610d7cb61abafc7d0ee9809063",
       "sqlQueryForEngine": "f314e2f9124b5bca2adb693c784dcf3b496f000c989df3c1735785c4bd5dcb3d",
       "swapIdentityIndex": "84ac62b697a16d244b2e0eecc962fb0558a24c2a26123bc7e77f1c7bec7c1066",
@@ -116,7 +116,7 @@
       "widenIdentityIndex": "86a6176bd7637d964dbc1d3cd3b1bdfa3ca0161e1ee248c37d7380a1471282e6",
       "withSchemaLockTimeout": "95605bd3004955e11e936c7a4aa6889319b401098abf9db18ef3e48da2c3fc59"
     },
-    "latest": 339,
+    "latest": 341,
     "records": [
       {
         "handler": {
@@ -3495,8 +3495,8 @@
         "idempotent": true,
         "name": "write_gate",
         "sql": {
-          "length": 3219,
-          "sha256": "684da647e5b6a855dcb21dde674d9f57baf52441031a45cd0c1f3ce44de0b02a"
+          "length": 4007,
+          "sha256": "03a18d3c54ff533a8cbd2c7e021f98736714bcebeb491499edc1bf46cafc095e"
         },
         "sqlFor": "absent",
         "transaction": "absent",
@@ -5489,6 +5489,32 @@
         "version": 335
       },
       {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "files_follow_page_slug",
+        "sql": {
+          "length": 188,
+          "sha256": "b9e49542a84f5e85a80793885b1c09597f62752a7596552e66e6b23efa848565"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 336
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "write_gate_hold_rechecks",
+        "sql": {
+          "length": 788,
+          "sha256": "773cdc50685a4fb6523f38ebf7a03b8da33596421f48bb4c7caa95dddb76b17f"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 337
+      },
+      {
         "handler": {
           "form": "arrow",
           "helpers": [
@@ -5505,7 +5531,7 @@
             "quietMigrationNotices",
             "tableRows"
           ],
-          "sha256": "b3e28bd19003786e18352f36fc69f202ac3a4a4a3357dbcc3d8fa480028c21ac"
+          "sha256": "d83ef7d43f6bf87edb681cb55d12d83d1d403b86d486856d3fb6e7b3b9f86383"
         },
         "idempotent": true,
         "name": "byte_order_slug_indexes",
@@ -5516,7 +5542,7 @@
         "sqlFor": "absent",
         "transaction": false,
         "verify": "absent",
-        "version": 336
+        "version": 338
       },
       {
         "handler": {
@@ -5534,7 +5560,7 @@
             "quietMigrationNotices",
             "tableRows"
           ],
-          "sha256": "367fa984867657f686051860323e319da26c0ec063ca77b58688c39dc69fc93f"
+          "sha256": "be1149a92e633d270100107023f349cd00bbab53c196f97596d3432ba1ec5a66"
         },
         "idempotent": true,
         "name": "projection_jobs_byte_order_index",
@@ -5545,7 +5571,7 @@
         "sqlFor": "absent",
         "transaction": false,
         "verify": "absent",
-        "version": 337
+        "version": 339
       },
       {
         "handler": {
@@ -5564,7 +5590,7 @@
             "quietMigrationNotices",
             "tableRows"
           ],
-          "sha256": "004c049a34032b1ddb2e6463019a208b2a0aeeac1836c20b5f6520d7c1507cac"
+          "sha256": "5aa4421f3be9da51a14ccccb3d39114b9068deef0ae1241e1b62af6c6439ab25"
         },
         "idempotent": true,
         "name": "pages_projection_waiting_haystack_trgm",
@@ -5575,7 +5601,7 @@
         "sqlFor": "absent",
         "transaction": false,
         "verify": "absent",
-        "version": 338
+        "version": 340
       },
       {
         "handler": "absent",
@@ -5588,7 +5614,7 @@
         "sqlFor": "absent",
         "transaction": "absent",
         "verify": "absent",
-        "version": 339
+        "version": 341
       }
     ],
     "versions": [
@@ -5925,7 +5951,9 @@
       336,
       337,
       338,
-      339
+      339,
+      340,
+      341
     ]
   },
   "normalizer": "migrations-record-v1"

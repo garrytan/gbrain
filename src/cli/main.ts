@@ -168,7 +168,7 @@ const SELF_HELP_WITHOUT_ENGINE: Record<string, true | (() => Promise<(engine: ne
   agent: async () => (await import('../commands/agent.ts')).runAgent as never,
   // D3: post-connect records whose handler answers --help before the engine; run through the table.
   advisor: true, anomalies: true, feedback: true, backfill: true, 'book-mirror': true, 'edges-backfill': true, embed: true, features: true,
-  founder: true, 'graph-query': true, orphans: true, salience: true, think: true,
+  founder: true, profile: true, 'graph-query': true, orphans: true, salience: true, think: true,
   brainstorm: true, lsd: true, migrate: true, pages: true, pricing: true, 'retrieval-upgrade': true, whoknows: true, core: true, trust: true, wakeshift: true,
   secrets: true,
   dedupe: true, identity: true, 'apple-contacts': true,
@@ -1587,7 +1587,7 @@ export function formatResult(
       const answerId = typeof meta?.answer_id === 'string' ? meta.answer_id : undefined;
       if (answerId && results.length > 0) process.stderr.write(`answer: ${answerId} (rate with: gbrain rate ${answerId} 1-5)\n`);
       const capLine = pageCapLine(meta, '--limit'), savedFacts: string = require('../mcp/saved-facts-notice.ts').cliSavedFacts(getCliOptions().room === undefined ? meta : null, params.json === true); // --room marks no saved fact, so none prints
-      if (capLine) process.stderr.write(capLine + '\n');
+      for (const line of [capLine, require('../core/search/keyword-count-text.ts').cliKeywordCountLine(results, meta)]) if (line) process.stderr.write(line + '\n'); // #9412: the literal keyword count
       if (params.json === true) {
         const incompleteNotice = retrievalIncompleteLine(meta);
         if (incompleteNotice) process.stderr.write(incompleteNotice);
@@ -2470,7 +2470,7 @@ async function prepareConnectedDispatch(command: string, args: string[]): Promis
 
   // These handlers already call their MCP twin on a thin client and never touch
   // the engine there; run them engine-free instead of opening one (#5102).
-  if ((command === 'salience' || command === 'anomalies' || command === 'graph-query' || command === 'whoknows' || command === 'founder') &&
+  if ((command === 'salience' || command === 'anomalies' || command === 'graph-query' || command === 'whoknows' || command === 'founder' || command === 'profile') &&
     isThinClient(loadConfig())) {
     await dispatchConnectedCommand(command, null as never, args);
     return null;

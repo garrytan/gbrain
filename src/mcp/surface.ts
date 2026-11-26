@@ -20,7 +20,7 @@
  * Resolution: stdio GBRAIN_SURFACE > --surface flag > config `mcp_surface` >
  * 'full' (resolveStdioSurface); `serve --http` ignores GBRAIN_SURFACE. Why
  * default full: a bare `serve` keeps existing advanced tooling, and the
- * registrations gbrain writes pin `REGISTRATION_SURFACE`
+ * registrations gbrain writes pin their harness's `registrationProfile`
  * (src/core/mcp-registration.ts) unless the user passes `--surface`.
  *
  * WP4 (D2 CEILING): on the OAuth HTTP transport the server-resolved surface is
@@ -41,6 +41,7 @@ import { opError } from '../core/ops/contract.ts';
 import { BRAIN_TOOL_ALLOWLIST } from '../core/minions/tools/brain-tool-allowlist.ts';
 import { flagValues } from '../core/direct-pool-profile.ts';
 import { SUBMIT_AGENT_DEFAULT_MAX_TURNS } from '../core/ops/jobs.ts';
+import { sessionWidenOff } from '../core/mcp-registration.ts';
 
 export type McpSurface = 'verbs' | 'starter' | 'full';
 
@@ -158,7 +159,7 @@ export function parseSurfaceFlag(args: string[]): McpSurface | null {
 
 /**
  * `--advertise`: the surface tools/list shows, narrower than what is callable.
- * Registrations gbrain writes pass `--advertise verbs` (REGISTRATION_ADVERTISE);
+ * Registrations gbrain writes on the starter profile pass `--advertise verbs` (STARTER_PROFILE);
  * absent, `mcp.advertised_surface` decides.
  */
 export function parseAdvertiseFlag(args: string[]): McpSurface | null {
@@ -284,6 +285,7 @@ export const STARTER_CALLABLE_PARAMS: Readonly<Record<string, Readonly<Record<st
     visibility: 'Already accepted per item in items, which starter lists; the segmented-entity refusal and the connection check pass it.',
     infer_entity: 'false only turns entity inference off; the segmented-entity refusal\'s retry names it.',
     valid_from: 'Already accepted per item in items; it only dates the fact being written, to the same source under the same grant, and reads nothing.',
+    facet: 'The brain-ops skill and docs/guides/profile.md name it; it only labels a fact for the caller\'s own profile, and the profile checks refuse any other page.',
   },
   recall: {
     grep: 'A substring filter that only narrows the facts returned; gbrain\'s connection check passes it.',
@@ -303,7 +305,10 @@ export const STARTER_CALLABLE_PARAMS: Readonly<Record<string, Readonly<Record<st
     allowed_slug_prefixes: 'Only narrows the grant\'s delegated write fence: a prefix outside delegated_slug_prefixes, or any override of a job namespace, is refused.',
   },
   entity: { source_id: THIN_SOURCE, prefer_source_id: THIN_SOURCE },
-  context_pack: { source_id: THIN_SOURCE, prefer_source_id: THIN_SOURCE },
+  context_pack: {
+    source_id: THIN_SOURCE, prefer_source_id: THIN_SOURCE,
+    profile: 'The brain-ops skill names it and gbrain profile on a thin client sends it; it adds only the caller\'s own profile, read at the caller\'s scope.',
+  },
   list_skills: { schema_version: SKILL, cursor: SKILL, source_id: SKILL },
   get_skill: { schema_version: SKILL, qualified_id: SKILL, expected_brain_id: SKILL, source_incarnation: SKILL, pack_id: SKILL, revision: SKILL },
   get_skill_asset: { source_incarnation: SKILL, pack_id: SKILL, qualified_id: SKILL, expected_brain_id: SKILL },
@@ -602,12 +607,11 @@ export function createStdioSurfaceState(
 
 /** `mcp.allow_session_widen` (default true): DB plane, then the file plane (file only when `engine` is null). */
 export async function sessionWidenAllowed(engine: BrainEngine | null, config: GBrainConfig | null | undefined): Promise<boolean> {
-  const off = (v: unknown) => v === false || (typeof v === 'string' && /^(false|0|off|no)$/i.test(v.trim()));
   try {
     const dbVal = engine ? await engine.getConfig('mcp.allow_session_widen') : null;
-    if (dbVal != null) return !off(dbVal);
+    if (dbVal != null) return !sessionWidenOff(dbVal);
   } catch { /* the file plane decides */ }
-  return !off(config?.mcp?.allow_session_widen);
+  return !sessionWidenOff(config?.mcp?.allow_session_widen);
 }
 
 /** The once-per-process `surface_env_invalid` info notice for an ignored GBRAIN_SURFACE value. */

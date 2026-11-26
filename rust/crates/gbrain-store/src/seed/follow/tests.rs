@@ -12,6 +12,7 @@ use sha2::{Digest as _, Sha256};
 
 mod displace;
 mod fences;
+mod stream;
 mod swaps;
 
 const SEED: &str = "seed-1";
@@ -592,6 +593,47 @@ fn a_deleted_page_takes_its_chunks_links_tags_and_their_entries() {
             .unwrap()
             .is_empty()
     );
+}
+
+#[test]
+fn a_deleted_page_takes_its_chronicle_ledger_rows_and_their_entries() {
+    let s = linked_pages();
+    let ledger = |page: &str, hash: &str| {
+        row(&[
+            ("source_id", "default"),
+            ("page_id", page),
+            ("content_hash", hash),
+            ("extractor_version", "2"),
+            ("slug", "people/alice-example"),
+            ("state", "pending"),
+            ("trigger", "backfill"),
+            ("decided_at", "2026-03-01 00:00:00+00"),
+            ("updated_at", "2026-03-01 00:00:00+00"),
+        ])
+    };
+    s.import_relation_with_digests(
+        SEED,
+        "chronicle_page_state",
+        vec![ledger("7", "abc123"), ledger("9", "def456")],
+        &[dig(1), dig(2)],
+    )
+    .unwrap();
+    assert_eq!(entries(&s, "chronicle_page_state"), 2);
+    s.replace_relation_rows(SEED, "pages", 1, &[key(1, &[("id", "7")])], &[], &[])
+        .unwrap();
+    // Page 7's ledger row goes with it, as ON DELETE CASCADE removes it; page 9's stays.
+    assert_eq!(entries(&s, "chronicle_page_state"), 1);
+    let read = |page: i64, hash: &str| {
+        s.read_chronicle_row(&crate::chronicle_state::ChronicleRowKey {
+            source_id: "default".into(),
+            page_id: page,
+            content_hash: hash.into(),
+            extractor_version: 2,
+        })
+        .unwrap()
+    };
+    assert!(read(7, "abc123").is_none());
+    assert!(read(9, "def456").is_some());
 }
 
 #[test]
@@ -1314,6 +1356,24 @@ fn fixtures() -> Vec<(&'static str, Vec<SeedRow>)> {
                     .insert("last_used_at".into(), Some("2026-03-01 00:00:00+00".into()));
                 timestamp_nullable
             }],
+        ),
+        (
+            "chronicle_page_state",
+            vec![row(&[
+                ("source_id", "default"),
+                ("page_id", "7"),
+                ("content_hash", "abc123"),
+                ("extractor_version", "2"),
+                ("slug", "people/alice-example"),
+                ("state", "extracted"),
+                ("trigger", "auto"),
+                ("attempts", "1"),
+                ("event_slugs", "{events/a-example}"),
+                ("event_hashes", "{h1}"),
+                ("cost_attempts", "{1}"),
+                ("decided_at", "2026-03-01 00:00:00+00"),
+                ("updated_at", "2026-03-01 00:00:01+00"),
+            ])],
         ),
     ]
 }

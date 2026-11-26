@@ -38,8 +38,8 @@ export const PURGE_OWNERS = {
   beliefProbe: 'lane 3 (rust-belief-purge e211982aba)',
   /** The fact-context probe of the receipt's ledger report. */
   factContextProbe: 'lane 4 (rust-5a 90e7bea933)',
-  /** The online-built request index read: rust-engine/doctor-checks-3 (b78e56edb9, contains 8d4d809039) makes it a typed member whose Rust store answers every index as valid. */
-  requestIndexes: 'lane 14 (doctor-checks-3 b78e56edb9, contains 8d4d809039)',
+  /** The online-built request index read: a typed member (engine-sql/doctor-persistence.ts) whose Rust store answers every index as valid. */
+  requestIndexes: 'lane 14',
   /** The fact purge's transaction statements and receipt counts: rust-engine/rust-5a bc4cc890fe serves them (not merged here); see fact-purge-path-members.ts. */
   factPurgeTx: 'lane 4 (rust-5a bc4cc890fe)',
   /** The segmented rewrite statements and their chunk probes, typed and served on Rust by segmented-staging-2 (34fa27c472): Ember's ruling, Nov 21. */
@@ -67,7 +67,7 @@ export interface PurgePathMember<E extends string = 'retention'> extends Base<E>
 export interface PurgePathSite<E extends string = 'retention'> extends Base<E> { site: string; guarded?: string; stop?: string }
 export type PurgePathEntry<E extends string = 'retention'> = PurgePathMember<E> | PurgePathSite<E>;
 
-const { ours, receiptReads, beliefProbe, factContextProbe, requestIndexes } = PURGE_OWNERS;
+const { ours, beliefProbe, requestIndexes } = PURGE_OWNERS;
 const { nov24, nov25 } = PURGE_DUE;
 const served = (owner: string, ...members: Array<keyof BrainEngine & string>): PurgePathMember[] => members.map(member => ({ member, owner }));
 
@@ -81,7 +81,6 @@ const RETENTION_STOPS: PurgePathSite[] = [
   ['selectPurgeCandidates (persistence/purge-deleted.ts)', 'the candidate selection'],
   ['prunePurgeParks (persistence/purge-parks.ts)', 'the purge park prune'],
   ['notePurgeSourceWriter (persistence/purge-parks.ts)', 'the source writer note'],
-  ['readUnreviewedSyncTombstones (persistence/sync-delete-tombstones.ts)', 'the unreviewed sync tombstone read'],
   ['readHeldConceptRows (persistence/concept-rebuild.ts)', 'the held concept read'],
 ].map(([site, what]) => ({ site: site!, owner: ours, entry: 'retention' as const, stop: `${what} runs through raw SQL` }));
 
@@ -128,18 +127,14 @@ const GUARDED_SITES: PurgePathSite[] = [
  */
 export const PURGE_PATH: readonly PurgePathEntry[] = [
   ...RETENTION_STOPS,
-  // preparePagePurge: the request-index state read, then the origin-twin read.
-  { site: 'readRequestIndexStates (persistence/checkpoint-validation.ts)', owner: requestIndexes, due: nov25, stop: 'the online-built request index read runs through raw SQL' },
+  // preparePagePurge: the request-index state read (a typed member; the Rust store reads every index valid), then the
+  // origin-twin read.
+  { member: 'readRequestIndexStates', owner: requestIndexes },
   // sweepPurgedPage: the generation-ledger scrub.
   // verifyPagePurge: the receipt. Its store probes (`countPurgeProbe`) are served, the fact purge's `fingerprint` and
   // `claim_text` probes included.
   // ledgerReports: runs for every purge whose page has fact claims, belief ledger or not.
   { member: 'listBeliefEventsForPurgeProbe', owner: beliefProbe, due: nov24, stop: 'the receipt pages the recorded values for the purged claims; not served until e211982aba is merged' },
-  { member: 'listFactContextsForPurgeProbe', owner: factContextProbe, due: nov24, stop: 'the receipt pages the live fact contexts that quote the purged claims; not served' },
-  { member: 'listPageProseHits', owner: receiptReads, due: nov25, stop: 'the source-prose scan of the receipt is not served' },
-  { member: 'readPurgeReceiptSourcePath', owner: receiptReads, due: nov25, stop: 'the receipt source path read is not served' },
-  { member: 'readDeletePageRequest', owner: receiptReads, due: nov25, stop: 'the purge request read of the receipt is not served' },
-  { member: 'listPurgeEffects', owner: receiptReads, due: nov25, stop: 'the purge effect read of the completion is not served' },
   // The members the purge calls and the Rust engine serves.
   ...served(ours,
     // the purge itself
@@ -154,6 +149,11 @@ export const PURGE_PATH: readonly PurgePathEntry[] = [
     'listPurgeClaimFacts', 'listPurgeClaimTakes', 'listPurgeOrigins', 'listPurgeSegmentClaims', 'listRequestsForSlugs', 'readPurgePageBody',
     'readPrivacyOrigin', 'listOriginDependents', 'listQueuedPagePurges', 'getChunks', 'getPage', 'readPageSnapshot', 'readPageLabelRow',
     'readSourcePurgeFlags', 'sweepPageTextsForClaims', 'listSegmentedPageBodies', 'listSegmentedVersionBodies', 'listPageLinkStreams',
+    // the receipt's reads, served on Rust since lane 4 sweep-facts-rust (rust-5a f16c087809, 90e7bea933): the live fact contexts that quote
+    // the purged claims, the source-prose scan, the source path, the purge request and the purge effects
+    'listFactContextsForPurgeProbe', 'listPageProseHits', 'readPurgeReceiptSourcePath', 'readDeletePageRequest', 'listPurgeEffects',
+    // the retention purge's unreviewed sync tombstone read, a typed member served on Rust since lane 11 sync-identity-share (5218d954c1)
+    'listUnreviewedSyncTombstones',
     // the derived-origin carry: labels, parks, the owed-purge record
     'putPage', 'createVersion', 'addPageTagsById', 'pruneFrontmatterTags', 'replaceDerivedAliases', 'setPageAliases', 'upsertChunks',
     'deleteChunksExcept', 'getChunkReuseRows', 'moveChunkIndexes', 'findDuplicatePage', 'writePageLabelGuard', 'writeTextProjectionSeal',

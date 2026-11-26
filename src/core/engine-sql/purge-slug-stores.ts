@@ -6,7 +6,7 @@
  * Every function takes the engine (or transaction) it runs on. Counts come back as numbers.
  */
 import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
-import { dropPurgedCandidates, holdOwnedByDeletedPageSql } from '../write-gate-binding.ts';
+import { dropPurgedCandidates, holdOwnedByDeletedPageSql, noteKeptHoldsCte } from '../write-gate-binding.ts';
 import type { BrainEngine } from '../engine.ts';
 
 type Raw = Pick<BrainEngine, 'executeRaw'>;
@@ -70,8 +70,14 @@ export async function deletePurgedSlugHolds(
   tx: Raw, sourceId: string, pages: ReadonlyArray<{ slug: string; id?: number | null; deletedAt?: string | null }>,
 ): Promise<{ write_gate_holds: number; write_gate_receipts: number }> {
   if (!pages.length) return { write_gate_holds: 0, write_gate_receipts: 0 };
-  const { text, params } = renderFragment(sqlFragment`DELETE FROM write_gate_holds h USING unnest(${pages.map(p => p.slug)}::text[], ${pages.map(p => p.id ?? null)}::bigint[], ${pages.map(p => p.deletedAt ?? null)}::timestamptz[]) AS d(slug, id, upto)
-    WHERE h.source_id = ${sourceId} AND ${trustedSql(holdOwnedByDeletedPageSql('h', 'd.id', 'd.slug'))} AND (d.upto IS NULL OR GREATEST(h.created_at, h.last_seen_at) <= d.upto) RETURNING h.id::text AS id`);
+  // One statement: the holds kept for another page are noted in the delete decision's own snapshot (write-gate-binding.ts),
+  // once the notes table exists (a brain whose v337 migration has not run yet still purges).
+  const upto = '(d.upto IS NULL OR GREATEST(h.created_at, h.last_seen_at) <= d.upto)';
+  const [notes] = await tx.executeRaw<{ ok: boolean }>("SELECT pg_catalog.to_regclass('write_gate_hold_rechecks') IS NOT NULL AS ok");
+  const noted = notes?.ok ? `, ${noteKeptHoldsCte('(SELECT id FROM s)', 'd.id', 'd.slug', q => `EXISTS (SELECT 1 FROM d WHERE d.id = ${q}.id)`, 'FROM d', upto)}` : '';
+  const { text, params } = renderFragment(sqlFragment`WITH s(id) AS (SELECT ${sourceId}::text), d AS (SELECT * FROM unnest(${pages.map(p => p.slug)}::text[], ${pages.map(p => p.id ?? null)}::bigint[], ${pages.map(p => p.deletedAt ?? null)}::timestamptz[]) AS d(slug, id, upto))${trustedSql(noted)}
+    DELETE FROM write_gate_holds h USING d
+    WHERE h.source_id = (SELECT id FROM s) AND ${trustedSql(holdOwnedByDeletedPageSql('h', 'd.id', 'd.slug'))} AND ${trustedSql(upto)} RETURNING h.id::text AS id`);
   const holds: string[] = (await tx.executeRaw<{ id: string }>(text, params)).map(h => h.id);
   holds.push(...await dropPurgedCandidates(tx, sourceId, pages));
   const receipts = holds.length

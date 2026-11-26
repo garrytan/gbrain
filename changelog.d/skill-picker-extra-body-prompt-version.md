@@ -1,5 +1,0 @@
-**Your own skill-picker model can get extra request fields, such as reasoning turned off, and a pinned prompt version, so the picker switches itself off when gbrain's picker prompt changes.**
-
-### Added
-- `skills.resolver.router_extra_body`: an optional JSON object of at most 4,096 bytes added to each request sent to a `compat:` picker model, for example `gbrain config set skills.resolver.router_extra_body '{"reasoning_effort": "none"}'`. It may set only sampling and reasoning controls (`temperature`, `top_p`, `top_k`, `min_p`, `seed`, the penalties, `reasoning_effort`, `thinking`, `chat_template_kwargs`), so it can't add tools or lift the picker's output cap; set for a model that is not `compat:`, the picker stays off for the turn with `config_invalid`, and `gbrain config set` warns when it writes a picker setting the picker can't use.
-- `skills.resolver.router_prompt_version`: for a model trained on the picker's request, the prompt version it learned. Each catalog's `picker.json` now records the version gbrain sends as `prompt_version`, and when the two differ the picker makes no call and reports `config_invalid`, so the word matcher answers instead.

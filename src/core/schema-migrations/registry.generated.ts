@@ -336,10 +336,12 @@ import { v332 } from './v332-engine-writer-observations.ts';
 import { v333 } from './v333-hold-page-id.ts';
 import { v334 } from './v334-learning-items.ts';
 import { v335 } from './v335-pages-spelling-key-index.ts';
-import { v336 } from './v336-byte-order-slug-indexes.ts';
-import { v337 } from './v337-projection-jobs-byte-order-index.ts';
-import { v338 } from './v338-pages-projection-waiting-haystack-trgm.ts';
-import { v339 } from './v339-fact-fingerprint-v3.ts';
+import { v336 } from './v336-files-follow-page-slug.ts';
+import { v337 } from './v337-write-gate-hold-rechecks.ts';
+import { v338 } from './v338-byte-order-slug-indexes.ts';
+import { v339 } from './v339-projection-jobs-byte-order-index.ts';
+import { v340 } from './v340-pages-projection-waiting-haystack-trgm.ts';
+import { v341 } from './v341-fact-fingerprint-v3.ts';
 
 // Array order is historical (see HISTORICAL_ARRAY_ORDER in the generator); the
 // runner sorts by version before applying.
@@ -678,4 +680,6 @@ export const MIGRATIONS: Migration[] = [
   v337,
   v338,
   v339,
+  v340,
+  v341,
 ];

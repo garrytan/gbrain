@@ -138,16 +138,11 @@ fn apply(op: &Op, base: Option<&[u8]>) -> Result<Option<Vec<u8>>> {
 }
 
 /// The base the optimistic layer runs on: a `Kv` whose snapshots can be sent to another thread
-/// and report the commit sequence they see. Only the pipeline thread writes to it.
-pub(crate) trait OccBase: Kv + 'static {
-    fn versioned_snapshot(&self) -> Result<(Box<dyn KvRead + Send>, u64)>;
-}
+/// and report the commit sequence they see (`Kv::versioned_snapshot`). Only the pipeline thread
+/// writes to it.
+pub(crate) trait OccBase: Kv + 'static {}
 
-impl OccBase for RedbKv {
-    fn versioned_snapshot(&self) -> Result<(Box<dyn KvRead + Send>, u64)> {
-        self.snapshot_with_version()
-    }
-}
+impl OccBase for RedbKv {}
 
 /// Counts of what the layer did since open (for benchmarks and tests).
 #[derive(Debug, Default)]
@@ -725,6 +720,10 @@ impl Drop for OccKv {
 impl Kv for OccKv {
     fn snapshot(&self) -> Result<Box<dyn KvRead>> {
         Ok(self.shared.base.versioned_snapshot()?.0)
+    }
+
+    fn versioned_snapshot(&self) -> Result<(Box<dyn KvRead + Send>, u64)> {
+        self.shared.base.versioned_snapshot()
     }
 
     fn begin_write(&self) -> Result<Box<dyn KvWrite>> {

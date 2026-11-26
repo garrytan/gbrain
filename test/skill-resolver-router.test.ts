@@ -510,3 +510,18 @@ describe('the daily spend cap', () => {
     expect((await readRouterSpend(h)).charged_usd).toBeGreaterThan(first);
   });
 });
+
+describe('the picker and deprecated skills', () => {
+  test('the picker is never offered a deprecated skill, and a pick of one is not shown', async () => {
+    const h = tmp();
+    const f = join(tmp('skrouter-src-'), 'catalog.json');
+    writeFileSync(f, JSON.stringify([...SKILLS, { id: 'gbrain:old-people', name: 'old-people', description: 'Look up what the brain knows about a person', deprecated: true }]));
+    await buildSkillIndex({ catalog: 'c', fromJson: f }, { home: h });
+    writeFileSync(join(h, 'config.json'), JSON.stringify({ skills: { resolver: { router: true } } }));
+    reply('{"needed": true, "skills": ["gbrain:old-people"]}');
+    const out = (await turn(h, 'who is alice')).output;
+    expect(calls.length).toBe(1);
+    expect(JSON.stringify(calls[0])).not.toContain('old-people');
+    expect(out.suggestions.map(s => s.id)).not.toContain('gbrain:old-people');
+  });
+});

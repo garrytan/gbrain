@@ -32,7 +32,7 @@ import { ruleCoversSql, validPrefix, validQualifiedRuleId } from '../access/fold
 import { holdingSlugSql } from '../facts-fence.ts';
 import { NAME_KEY_PAGE_DIRS } from '../entities/basename-dirs.ts';
 import { atomMovedOriginPrivateSql, atomOriginSlugsSql } from '../persistence/atom-origin.ts';
-import { ownerOnlyFactSql, ownerOnlyForm, ownerOnlyPageSql, ownerOnlySourcesPresent, ownerOnlyTakeSql, ownerOnlyTimelineSql } from '../access/owner-only.ts';
+import { ownerOnlyFactSql, ownerOnlyForm, ownerOnlyPageSql, ownerOnlySourcesPresent, ownerOnlyTakeSql, ownerOnlyTimelineSql, type OwnerOnlyForm } from '../access/owner-only.ts';
 import { readConfigRows, type ConfigReader } from '../config-values.ts';
 
 export const REMOTE_PRIVATE_PAGES_KEY = 'search.remote_private_pages';
@@ -927,6 +927,50 @@ export function folderRestrictedSql(alias: string): string {
 }
 
 /**
+ * GST-3815: page row `p` reads to everyone who reads page row `t`, as SQL, for a derivation that copies text from `p`
+ * onto `t` (enrich filling a page from other pages' facts, links and chunks). `p` is `t` itself, or: no privacy rule
+ * hides it (privacyPartSql: visibility, aliases, pinned questions, lineage), no origin of it names readers, every reader
+ * `t` names is one of its readers, every folder rule over it also covers `t`, no pending folder prefix covers it, and
+ * it is owner-only only when `t` is. A `t` that names readers or sits under a folder rule admits labelled-only members,
+ * who read only pages labelled for them (labelledOnlySql), so `p` must then name readers too, or sit under a rule of
+ * `t`'s. Anything it cannot tell (readers not yet derived, unreadable access tables, owner-only lineage on a read with
+ * no schema version) fails closed.
+ */
+export function pageReadsToReadersOfSql(p: string, t: string): string {
+  const unlabelled = (a: string) => `(${a}.page_readers IS NULL AND NOT ${namesReadersSql(a)} AND ${a}.folder_rule_ids IS NULL)`;
+  const readersWithin = `(${p}.page_readers IS NOT NULL AND ${t}.page_readers IS NOT NULL AND ${t}.page_readers <@ ${p}.page_readers)`;
+  const rulesWithin = `(${p}.folder_rule_ids IS NOT NULL AND ${t}.folder_rule_ids IS NOT NULL AND ${p}.folder_rule_ids <@ ${t}.folder_rule_ids)`;
+  return `(${p}.id = ${t}.id OR (${privacyPartSql(p)} AND ${originAllowedSql(p)}
+    AND ((${p}.page_readers IS NULL AND NOT ${namesReadersSql(p)}) OR ${readersWithin})
+    AND (${p}.folder_rule_ids IS NULL OR ${rulesWithin})
+    AND (${unlabelled(t)} OR (${t}.page_readers IS NOT NULL AND ${readersWithin}) OR (${t}.page_readers IS NULL AND NOT ${namesReadersSql(t)} AND ${rulesWithin}))
+    AND NOT gbrain_access_pending_covers(${p}.source_id, ${p}.slug) AND NOT (SELECT gbrain_access_state_unreadable())
+    AND ${ownerOnlyWithinSql(ownerOnlyPageSql, p, t)}))`;
+}
+
+/** GST-3815: row `alias` is owner-only only when page row `t` is; with no schema version the lineage is unknown, so any owner-only data refuses it. */
+function ownerOnlyWithinSql(rowSql: (alias: string, form: OwnerOnlyForm) => string, alias: string, t: string): string {
+  const form = ownerOnlyForm(readSchemaVersion());
+  return form === 'closed' ? `NOT ${rowSql(alias, form)}` : `(NOT ${rowSql(alias, form)} OR ${ownerOnlyPageSql(t, form)})`;
+}
+
+/** GST-3815: page row `t` names readers or sits under a folder rule, so labelled-only members may read it, as SQL. */
+export function pageAdmitsLabelledOnlySql(t: string): string {
+  return `(${t}.page_readers IS NOT NULL OR ${namesReadersSql(t)} OR ${t}.folder_rule_ids IS NOT NULL)`;
+}
+
+/**
+ * GST-3815: fact row `f` is owner-only only when page row `t` is, and when `t` admits labelled-only members (it names
+ * readers or sits under a folder rule) the fact is held on a page they can be judged on, as SQL. A labelled-only member
+ * reads a fact only through a page labelled for it (labelledOnlyFactSql), so a fact with no holding page never fills such a
+ * `t`. The holding page itself is judged by pageReadsToReadersOfSql.
+ */
+export function factWithinPageReadersSql(f: string, t: string): string {
+  return `(${ownerOnlyWithinSql(ownerOnlyFactSql, f, t)} AND (NOT ${pageAdmitsLabelledOnlySql(t)} OR EXISTS (SELECT 1 FROM pages held_page
+    WHERE held_page.source_id = ${f}.source_id AND held_page.slug = ${f}.source_markdown_slug AND held_page.deleted_at IS NULL)))`;
+}
+
+/**
  * folderRestrictedSql for a page known by its slug (a parsed page, a row read without the column, a page about to be
  * written): judged against the applied folder rules, not the stamp. A failed read counts as restricted.
  */
@@ -1150,25 +1194,7 @@ export async function findPrivateOnlySlugs(
   opts: { includeDeleted?: boolean } = {},
 ): Promise<Set<string>> {
   if (slugs.length === 0) return new Set();
-  const params: unknown[] = [slugs];
-  let scopeClause = '';
-  if (scope.sourceIds && scope.sourceIds.length > 0) {
-    params.push(scope.sourceIds);
-    scopeClause = `AND p.source_id = ANY($${params.length}::text[])`;
-  } else if (scope.sourceId) {
-    params.push(scope.sourceId);
-    scopeClause = `AND p.source_id = $${params.length}`;
-  }
-  const rows = await engine.executeRaw<{ slug: string }>(
-    `SELECT p.slug FROM pages p
-      WHERE p.slug = ANY($1::text[])
-        ${opts.includeDeleted ? '' : 'AND p.deleted_at IS NULL'}
-        ${scopeClause}
-      GROUP BY p.slug
-      HAVING bool_and(NOT (${privatePagesFilterForCaller('p')}))`,
-    params,
-  );
-  return new Set(rows.map(r => r.slug));
+  return new Set(await engine.readPrivateOnlySlugs(slugs, scope, opts));
 }
 
 const CACHE_TTL_MS = 30_000;

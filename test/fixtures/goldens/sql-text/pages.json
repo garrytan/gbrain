@@ -2016,6 +2016,27 @@
             "lane": "tx>sp"
           },
           {
+            "event": "savepoint",
+            "lane": "tx>sp"
+          },
+          {
+            "lane": "tx>sp",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string"
+            ],
+            "sql": "UPDATE files SET page_slug = $1 WHERE source_id = $2 AND page_slug = $3 AND page_id IN (SELECT id FROM pages WHERE source_id = $4 AND slug IN ($5, $6))",
+            "textSha256": "6ae06ba7730d34d70afcce83ad906f3755e3c78cdd4bb7de8a0730620070f988"
+          },
+          {
+            "event": "savepoint-release",
+            "lane": "tx>sp"
+          },
+          {
             "lane": "tx",
             "params": [
               "array<string>",
