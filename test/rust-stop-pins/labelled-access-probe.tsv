@@ -1,0 +1,2 @@
+# Parity cases that stop on a typed refusal on the Rust arm although the Rust engine serves the member. One file per owner; see lane-1.tsv for the columns.
+test/engine-parity/labelled-access-allowed.test.ts	a labelled-only member reads over the remote path only the pages that name it, the same on every engine	readPageSnapshot	labelled-access-probe	2026-11-29	A remote read for a labelled-only caller: the store declines excludePrivate for a caller the privacy policy widens, so the read refuses (fail closed) instead of answering

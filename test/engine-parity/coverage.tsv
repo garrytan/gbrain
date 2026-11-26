@@ -133,10 +133,10 @@ listCatalogRelations	lifecycle	yes	1	no	yes	yes	serves
 readCatalogSchemaVersion	lifecycle	yes	1	no	yes	yes	serves
 listCatalogForeignKeys	lifecycle	yes	1	no	yes	yes	serves
 getPage	pages	yes	288	yes	yes	yes	serves
-readPageSnapshot	pages	yes	102	no	yes	yes	serves
+readPageSnapshot	pages	yes	103	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	7	no	yes	yes	serves
 lockPageKeys	pages	yes	17	no	yes	yes	serves
-putPage	pages	yes	1360	yes	yes	yes	serves
+putPage	pages	yes	1362	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	45	yes	yes	yes	serves
@@ -247,9 +247,9 @@ readUploadSessionByRequest	pages	yes	1	no	yes	yes	serves
 readSourceIncarnationArchived	pages	yes	1	no	yes	yes	serves
 listEnabledLabelledOnlyMemberIds	pages	yes	1	no	yes	yes	serves
 readChatCensusRows	pages	yes	3	no	yes	yes	serves
-readWhoCanReadRows	pages	yes	4	no	yes	yes	serves
-readPageAccessAllowed	pages	yes	2	no	yes	yes	serves
-readPageFolderRulesAllowed	pages	yes	1	no	yes	yes	serves
+readWhoCanReadRows	pages	yes	5	no	yes	yes	serves
+readPageAccessAllowed	pages	yes	3	no	yes	yes	serves
+readPageFolderRulesAllowed	pages	yes	2	no	yes	yes	serves
 countLineageClosingRules	pages	yes	1	no	yes	yes	serves
 readOpCheckpointCompletedKeys	pages	yes	1	no	yes	yes	serves
 readForecastPredictions	pages	yes	2	no	yes	yes	serves
@@ -356,7 +356,7 @@ deleteChunksForPages	chunks	yes	3	no	yes	yes	serves
 listContextualModeCandidates	chunks	yes	1	no	yes	yes	serves
 resolveFrozenHits	chunks	yes	6	no	yes	yes	serves
 upsertChunks	chunks	yes	73	yes	yes	yes	serves
-sealChunks	chunks	yes	96	no	yes	yes	serves
+sealChunks	chunks	yes	98	no	yes	yes	serves
 getChunks	chunks	yes	77	yes	yes	yes	serves
 getChunkPage	chunks	yes	14	no	yes	yes	serves
 getChunkWindows	chunks	yes	14	no	yes	yes	serves
