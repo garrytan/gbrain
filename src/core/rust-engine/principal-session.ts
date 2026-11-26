@@ -98,8 +98,11 @@ export async function openPrincipalSession(store: RustStore, bearer: string, add
           privateFactSources: [...opts.privateFactSources ?? []], processPrivacyRelaxed: remotePrivacyHatch(),
         }) as Record<string, unknown>;
       } catch (error) { released = true; asDenied(error, `reason=record member=${member}`); }
+      // The owner-only form's schema version is the store's own: the one in the record it built (A12).
+      const version = (record.remotePolicy as { schemaVersion?: unknown } | undefined)?.schemaVersion;
+      const storeSchemaVersion = typeof version === 'number' && Number.isInteger(version) ? version : null;
       return withoutCallerAccess(() => withCallerAccess(record as Partial<CallerAccess>,
-        () => withAccessStore(store, addon, fn, { server: true })));
+        () => withAccessStore(store, addon, fn, { server: true, storeSchemaVersion })));
     },
     release() {
       if (released) return;
