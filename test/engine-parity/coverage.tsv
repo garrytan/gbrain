@@ -137,7 +137,7 @@ getPage	pages	yes	290	yes	yes	yes	serves
 readPageSnapshot	pages	yes	110	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	7	no	yes	yes	serves
 lockPageKeys	pages	yes	17	no	yes	yes	serves
-putPage	pages	yes	1397	yes	yes	yes	serves
+putPage	pages	yes	1399	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	45	yes	yes	yes	serves
@@ -649,7 +649,7 @@ readFactTrustTier	facts	yes	2	no	yes	yes	serves
 listFenceFactRowNums	facts	yes	2	no	yes	yes	serves
 readLiveFactRowTier	facts	yes	1	no	yes	yes	serves
 insertFact	facts	yes	199	yes	yes	yes	serves
-insertFacts	facts	yes	297	no	yes	yes	serves
+insertFacts	facts	yes	299	no	yes	yes	serves
 deleteFactsForPage	facts	yes	8	no	yes	yes	serves
 expireFact	facts	yes	94	no	yes	yes	serves
 listFactsByEntity	facts	yes	70	yes	yes	yes	serves
@@ -1523,7 +1523,7 @@ selectFactsReconcileDrain	facts_purge	yes	1	no	yes	yes	serves
 listRelinkCandidateRows	facts_purge	yes	1	no	yes	yes	serves
 countRelinkCandidates	facts_purge	yes	1	no	yes	yes	serves
 listSimilarActiveFacts	facts_purge	yes	4	no	yes	yes	serves
-findActiveSingleFact	facts_purge	yes	8	no	yes	yes	serves
+findActiveSingleFact	facts_purge	yes	9	no	yes	yes	serves
 listSingleFactMetadata	facts_purge	yes	2	no	yes	yes	serves
 countUnfencedFactGroups	facts_purge	yes	1	no	yes	yes	serves
 listUnfencedFactRows	facts_purge	yes	2	no	yes	yes	serves
@@ -1884,7 +1884,7 @@ readSourceLocalPath	memory_mutation_reads	yes	3	no	yes	yes	serves
 readFactEntitySlug	memory_mutation_reads	yes	1	no	yes	yes	serves
 hasLiveFileBackedPage	memory_mutation_reads	yes	1	no	yes	yes	serves
 factReadableUnder	memory_mutation_reads	yes	2	no	yes	yes	serves
-readRemoteForgetTier	memory_mutation_reads	yes	3	no	yes	yes	serves
+readRemoteForgetTier	memory_mutation_reads	yes	4	no	yes	yes	serves
 readForgetTarget	memory_mutation_reads	yes	2	no	yes	yes	serves
 isFactEntityUnbacked	memory_mutation_reads	yes	1	no	yes	yes	serves
 readLinkedFactCopies	memory_mutation_reads	yes	3	no	yes	yes	serves
