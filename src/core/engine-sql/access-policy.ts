@@ -142,6 +142,13 @@ export async function listAccessCoverage(exec: AccessPolicyExec, sourceId: strin
   return exec.executeRaw<AccessCoverageRow>(COVERAGE_ROWS_SQL, [sourceId]);
 }
 
+/** The pages of a source whose kept folder rule ids differ from the rules that cover them now. */
+export async function countAccessFolderDrift(exec: AccessPolicyExec, sourceId: string): Promise<number> {
+  const [row] = await exec.executeRaw<{ n: number }>(
+    'SELECT count(*)::int AS n FROM pages WHERE source_id = $1 AND folder_rule_ids IS DISTINCT FROM gbrain_access_folder_rules(source_id, slug)', [sourceId]);
+  return Number(row?.n ?? 0);
+}
+
 /** Whether row-level security keeps this database role from reading the folder access tables. */
 export async function readAccessStateUnreadable(exec: AccessPolicyExec): Promise<boolean> {
   const [row] = await exec.executeRaw<{ unreadable: boolean }>(STATE_UNREADABLE_SQL);

@@ -597,6 +597,24 @@ describe('block', () => {
     expect(custom.output.suggestions[0]!.path).toBe(p);
   });
 
+  test('openclaw: the path comes first unless a suggested skill sits outside the root the agent may read', async () => {
+    const home = tmp();
+    const root = tmp('skres-dir-');
+    skillDir(root, 'deploy', { name: 'deploy', description: 'Ship a service to production' });
+    await buildSkillIndex({ catalog: 'c', dirs: [root] }, { home });
+    const block = async (readRoot?: string) => (await resolveSkills({ message: 'deploy', harness: 'openclaw', top_gate: 0 }, { home, ...(readRoot === undefined ? {} : { readRoot }) })).output.block;
+    const pathFirst = 'To use one, read the SKILL.md at its path with read before acting; if that read fails, load it with skills_read({name})';
+    const nameFirst = 'To use one, load it with skills_read({name}) using its name (through dispatch_action when skills_read is not listed) before acting';
+    for (const b of [await block(), await block(root)]) {
+      expect(b).toContain(pathFirst);
+      expect(b.indexOf('read the SKILL.md')).toBeLessThan(b.indexOf('skills_read'));
+    }
+    for (const b of [await block(tmp('skres-other-')), await block('')]) {
+      expect(b).toContain(nameFirst);
+      expect(b).not.toContain('read the SKILL.md');
+    }
+  });
+
   test('codex can load by path from the block alone', async () => {
     const home = tmp();
     const root = tmp('skres-dir-');

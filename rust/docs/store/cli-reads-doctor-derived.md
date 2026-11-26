@@ -34,13 +34,18 @@ No member is refused any more: the nine that were (wave 1) are served now, and t
 | `brain.readPageCompiledTruths(ids)` | `{ id, body }` of the named pages (deleted ones too), by id | `readPageCompiledTruths` |
 | `brain.listAtomFenceCandidates({ sourceIds, atomId, after, limit })` | live world atoms whose live origin page is unread or names a facts or takes fence | `listAtomFenceCandidates` |
 | `brain.readEmbeddingBacklogAge(column)` | `{ age_s, unaged, backfilled }` over chunks of live pages (not `embed_skip`) with no vector | `readEmbeddingBacklogAge` |
+| `brain.readEmbedBacklogRows(column, sourceIds)` | `{ source_id, pending, unaged, oldest }[]`: per asked source, the live-body chunks (`chunkGenerationFilter`) of live pages (not `embed_skip`) with no vector, those with no pending-since stamp, and the oldest stamp as ISO text; byte order of the source id | `readEmbedBacklogRows` |
 | `brain.readAtomProvenanceCounts()` | `{ total, slug_unbound, drifted, source_changed, source_gone, oldest_ext }` over live atoms with a `source_hash` | `readAtomProvenanceCounts` |
+| `brain.listBodyRecheckGroups()` | `{ page_id, sh, n }[]`: per (page, 16-character hash), the live atoms with a `source_hash` (a `pending:` marker only on a managed atom, which sheds it) and a `source_slug` naming a live inline page of their source whose hash is no live page's `content_hash` prefix there; by page id then hash in byte order, at most 200 | `listBodyRecheckGroups` |
+| `brain.readBodyRecheckPage(pageId)` | `{ body_storage, compiled_truth, timeline }` of the page with this id (soft-deleted too), or null; `body_storage` is `segmented` for a segmented shell, else `inline` | `readBodyRecheckPage` |
+| `brain.listBodyRecheckVersions(pageId)` | the newest 20 inline versions of the page that hold a body, newest first: `{ compiled_truth, timeline, title, type, frontmatter, tags }` | `listBodyRecheckVersions` |
 | `brain.countCredentialProjectionPending(sourceIds?)` | `{ rebuildable, kept }` of live pages with a private key block and a projection behind the knowledge revision | `countCredentialProjectionPending` |
 | `brain.readIgnoredPrivacyLabelCounts(sourceIds?)` | up to 50 `{ key, raw, is_string, pages, scanned, groups }` groups of access labels the privacy filter ignores | `readIgnoredPrivacyLabelCounts` |
 | `brain.countDerivedVisibility(sourceIds)` | the six derived-visibility counts of the named sources | `countDerivedVisibility` |
 | `brain.listUntiledSegmentedPageRows(sourceIds?, slugs?, limit)` | live segmented pages whose published rows do not tile the body, by source and slug | `listUntiledSegmentedPageRows` |
 | `brain.listOntologyFactCandidates(sourceIds)` | facts an ontology stint wrote, in id order, with `withdrawn`, `consolidated` and `duplicate` verdicts | `listOntologyFactCandidates` |
-| `brain.listExtractionInputReceipts()` | `{ pipeline, kind, pages, samples }` per derivation receipt that says an extraction read only part of its input | `listExtractionInputReceipts` |
+| `brain.listAmbiguousExtractionInputs()` | `{ page, grammars, total }` per live conversation page held for an undetected format, newest first, at most 20 | `listAmbiguousExtractionInputs` |
+| `brain.listExtractionInputReceipts()` | `{ pipeline, kind, pages, samples }` per extraction-state or derivation receipt that says an extraction read only part of its input | `listExtractionInputReceipts` |
 | `brain.listUnpricedDerivationModels()` | `{ model, pipelines, pages, samples }` per model a derivation receipt says had no price | `listUnpricedDerivationModels` |
 
 ## How each read follows the SQL
@@ -63,6 +68,9 @@ No member is refused any more: the nine that were (wave 1) are served now, and t
   joins the atom's title, compiled truth and `source_quote` with newlines, skipping the NULL ones (`concat_ws`). The statement
   deadline (`timeoutMs`) has no effect: the store answers from one snapshot.
 - `readPageCompiledTruths`: `body` is null for a segmented page.
+- `readEmbedBacklogRows`: the `gbrain sync` pending backlog and the doctor's managed-sync latency. Unlike the backlog age, it counts only
+  the page's live body: an inline chunk of a page that is not segmented, or a segment chunk of a published occurrence at or below the
+  page's generation. A staged rewrite's chunks do not count. A source with no such chunk has no row.
 - `readEmbeddingBacklogAge`: the store keeps one vector per chunk, so `column` names the only column there is. `age_s` is now minus the
   oldest `pending_since` of a chunk with no vector; `unaged` counts those with none. `backfilled` compares that oldest stamp with the config
   key `embedding_pending_since_backfilled_at`, which the Rust store never writes, so it is `null` (as on a PGLite brain that never ran the
@@ -81,9 +89,15 @@ No member is refused any more: the nine that were (wave 1) are served now, and t
   torn write.
 - `listOntologyFactCandidates`: `duplicate` is another fact with a different id sharing source, entity, dimension, value hash and valid-from
   whose source page is this fact's `source`. `withdrawn` is the withdrawal ledger's own claim match. `expired_at` is ISO text.
-- `listExtractionInputReceipts` and `listUnpricedDerivationModels`: the receipts of `page_segment_derivations` on live pages. The store keeps no
-  writer for `page_extraction_state`, so that half of the statement contributes nothing and the `detection_ambiguous` exclusion never fires.
-  Groups come by pipeline then kind; unpriced models by page count then model.
+- `listAmbiguousExtractionInputs`: the `conversation_facts` receipts of kind `detection_ambiguous` in `page_extraction_state`
+  ([page_extraction_state.md](page_extraction_state.md)) on live pages, newest `updated_at` first then page id, at most 20, each with
+  the receipt's `grammars` and `total`, the count of every held page.
+- `listExtractionInputReceipts`: the receipts of `page_extraction_state` (any kind but `detection_ambiguous` and `grammar_chosen`; a
+  receipt without a kind reads `unknown`) and of `page_segment_derivations` (any kind but `unpriced_model`, or the
+  `purge_sweep_pending` reason) on live pages. A page held for an undetected format hides its derivation receipts for that pipeline.
+  A page with both kinds of receipt under one pipeline and kind counts once and lists twice, as the SQL's `UNION ALL` does.
+  Groups come by pipeline then kind.
+- `listUnpricedDerivationModels`: the receipts of `page_segment_derivations` on live pages, unpriced models by page count then model.
 
 `crates/gbrain-store/tests/cli_reads_doctor_derived.rs` and `cli_reads_doctor_derived_health.rs` cover each read; `test/engine-parity/doctor-derived.test.ts` compares the
 engines.

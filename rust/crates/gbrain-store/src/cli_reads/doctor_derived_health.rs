@@ -15,10 +15,15 @@ use serde_json::{Map, Value, json};
 use super::doctor_derived::{LiveSources, in_scope, rebuildable};
 use super::pg_text::{fm_text, jsonb_text};
 use crate::Store;
+
+/// `BODY_RECHECK_GROUPS` (`src/core/engine-sql/doctor-derived.ts`).
+const BODY_RECHECK_GROUPS: usize = 200;
+/// `BODY_RECHECK_VERSIONS` (`src/core/engine-sql/doctor-derived.ts`).
+const BODY_RECHECK_VERSIONS: usize = 20;
 use crate::aliases::{read_slug_alias, renamed_to};
-use crate::chunks::read_chunks;
+use crate::chunks::{keyed_chunks, read_chunks, segmented};
 use crate::config::read_config;
-use crate::env::parse_iso;
+use crate::env::{iso, parse_iso};
 use crate::error::Result;
 use crate::facts::privacy::{EDGE_SPACE, alias_private, snapshot_fields_allow};
 use crate::kv::KvRead;
@@ -62,22 +67,65 @@ fn live(page: Option<PageRecord>) -> Option<PageRecord> {
     page.filter(|p| p.deleted_at_us.is_none())
 }
 
-/// A pending-since stamp and whether it has a vector: what the backlog statement reads of a chunk.
-fn backlog_chunks(read: &dyn KvRead) -> Result<(Option<i64>, i64)> {
-    let (mut oldest, mut unaged) = (None::<i64>, 0i64);
+/// One source's chunks with no vector: how many, how many carry no pending-since stamp, and the
+/// oldest stamp.
+#[derive(Default)]
+struct Backlog {
+    pending: i64,
+    unaged: i64,
+    oldest: Option<i64>,
+}
+
+/// The chunks of live pages (not `embed_skip`) with no vector, per source. `sources` keeps only
+/// those source ids (`p.source_id = ANY($1)`). `live_body` keeps only the chunks of the page's
+/// live body (`chunkGenerationFilter('p', 'cc')`: an inline chunk of a page that is not segmented,
+/// a segment chunk of a published occurrence at or below the page's generation); without it every
+/// stored chunk counts, as the doctor's backlog age statement reads them.
+fn backlog_scan(
+    read: &dyn KvRead,
+    sources: Option<&HashSet<&str>>,
+    live_body: bool,
+) -> Result<BTreeMap<String, Backlog>> {
+    let mut out: BTreeMap<String, Backlog> = BTreeMap::new();
     for page in all_pages(read)? {
-        if page.deleted_at_us.is_some() || page.frontmatter.contains_key("embed_skip") {
+        if page.deleted_at_us.is_some()
+            || page.frontmatter.contains_key("embed_skip")
+            || sources.is_some_and(|s| !s.contains(page.source_id.as_str()))
+        {
             continue;
         }
-        for chunk in read_chunks(read, page.id)? {
+        let chunks = if live_body {
+            keyed_chunks(read, page.id, Some(segmented(&page)))?
+                .into_iter()
+                .map(|(_, c)| c)
+                .collect()
+        } else {
+            read_chunks(read, page.id)?
+        };
+        for chunk in chunks {
             if chunk.embed.has_vector() {
                 continue;
             }
+            let row = out.entry(page.source_id.clone()).or_default();
+            row.pending += 1;
             match chunk.embed.pending_since_us {
-                Some(since) => oldest = Some(oldest.map_or(since, |o| o.min(since))),
-                None => unaged += 1,
+                Some(since) => row.oldest = Some(row.oldest.map_or(since, |o| o.min(since))),
+                None => row.unaged += 1,
             }
         }
+    }
+    Ok(out)
+}
+
+/// The oldest pending-since stamp and the unstamped count over every live chunk with no vector.
+fn backlog_chunks(read: &dyn KvRead) -> Result<(Option<i64>, i64)> {
+    let (mut oldest, mut unaged) = (None::<i64>, 0i64);
+    for row in backlog_scan(read, None, false)?.into_values() {
+        unaged += row.unaged;
+        oldest = match (oldest, row.oldest) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
     }
     Ok((oldest, unaged))
 }
@@ -228,6 +276,27 @@ impl Store {
     /// per chunk, so `column` names the only column there is. The backfill time is a config key
     /// the Rust store never writes; with none (or text that is not an ISO instant) `backfilled`
     /// is NULL, as in a PGLite brain that never ran the backfill.
+    /// `readEmbedBacklogRows(column, sourceIds)`: per source among `sourceIds`, the live-body chunks
+    /// of live pages (not `embed_skip`) with no vector (`pending`), the ones with no pending-since
+    /// stamp (`unaged`) and the oldest stamp as ISO text (`oldest`). A source with none has no row;
+    /// rows come in byte order of the source id. `column` names the only vector column there is.
+    pub fn read_embed_backlog_rows(&self, _column: &str, source_ids: &[String]) -> Result<Value> {
+        let read = self.read()?;
+        let wanted: HashSet<&str> = source_ids.iter().map(String::as_str).collect();
+        let rows: Vec<Value> = backlog_scan(&*read, Some(&wanted), true)?
+            .into_iter()
+            .map(|(source_id, row)| {
+                json!({
+                    "source_id": source_id,
+                    "pending": row.pending,
+                    "unaged": row.unaged,
+                    "oldest": row.oldest.map(iso),
+                })
+            })
+            .collect();
+        Ok(Value::Array(rows))
+    }
+
     pub fn read_embedding_backlog_age(&self, _column: &str) -> Result<Value> {
         let read = self.read()?;
         let now = self.env.now_micros();
@@ -238,6 +307,110 @@ impl Store {
             "unaged": unaged,
             "backfilled": oldest.zip(backfilled_at).map(|(o, b)| o <= b),
         }))
+    }
+
+    /// `listBodyRecheckGroups()`: the unchanged-body recheck's groups. For each live atom with a
+    /// `source_hash` (a `pending:` marker only on a managed atom, which sheds it) and a
+    /// `source_slug` naming a live inline page of its source, whose 16-character hash is no live
+    /// page's `content_hash` prefix in that source: `{ page_id, sh, n }` per (page, hash), by page
+    /// id then hash in byte order, at most [`BODY_RECHECK_GROUPS`].
+    pub fn list_body_recheck_groups(&self) -> Result<Vec<Value>> {
+        let read = self.read()?;
+        let pages = all_pages(&*read)?;
+        let live_pages = || pages.iter().filter(|p| p.deleted_at_us.is_none());
+        let hashes: HashSet<(&str, String)> = live_pages()
+            .filter_map(|p| {
+                let hash = p.content_hash.as_deref()?;
+                Some((p.source_id.as_str(), hash.chars().take(16).collect()))
+            })
+            .collect();
+        let inline: BTreeMap<(&str, &str), u64> = live_pages()
+            .filter(|p| !crate::chunks::segmented(p))
+            .map(|p| ((p.source_id.as_str(), p.slug.as_str()), p.id))
+            .collect();
+        let mut groups: BTreeMap<(u64, String), u64> = BTreeMap::new();
+        for atom in live_pages().filter(|p| p.page_type == "atom") {
+            let fm = &atom.frontmatter;
+            let Some(hash) = fm_text(fm, "source_hash") else {
+                continue;
+            };
+            let managed = fm_text(fm, "managed_extraction").as_deref() == Some("true");
+            if hash.starts_with("pending:") && !managed {
+                continue;
+            }
+            let hash = if managed {
+                hash.strip_prefix("pending:").unwrap_or(&hash).to_string()
+            } else {
+                hash
+            };
+            let Some(slug) = fm_text(fm, "source_slug").filter(|s| !s.is_empty()) else {
+                continue;
+            };
+            let source = atom.source_id.as_str();
+            let Some(&page_id) = inline.get(&(source, slug.as_str())) else {
+                continue;
+            };
+            if hash.chars().count() != 16 || hashes.contains(&(source, hash.clone())) {
+                continue;
+            }
+            *groups.entry((page_id, hash)).or_default() += 1;
+        }
+        Ok(groups
+            .into_iter()
+            .take(BODY_RECHECK_GROUPS)
+            .map(|((page_id, sh), n)| json!({ "page_id": page_id, "sh": sh, "n": n }))
+            .collect())
+    }
+
+    /// `readBodyRecheckPage(pageId)`: `{ body_storage, compiled_truth, timeline }` of the page with
+    /// this id (soft-deleted too, as the SQL has no `deleted_at` test), or `None`.
+    pub fn read_body_recheck_page(&self, page_id: i64) -> Result<Option<Value>> {
+        let Ok(id) = u64::try_from(page_id) else {
+            return Ok(None);
+        };
+        let read = self.read()?;
+        Ok(read_page_by_id(&*read, id)?.map(|p| {
+            let storage = if crate::chunks::segmented(&p) {
+                "segmented"
+            } else {
+                "inline"
+            };
+            json!({
+                "body_storage": storage,
+                "compiled_truth": p.compiled_truth.as_deref(),
+                "timeline": p.timeline.as_deref(),
+            })
+        }))
+    }
+
+    /// `listBodyRecheckVersions(pageId)`: the newest [`BODY_RECHECK_VERSIONS`] inline versions of
+    /// the page that hold a body (`compiled_truth` not NULL), newest first, as `{ compiled_truth,
+    /// timeline, title, type, frontmatter, tags }`.
+    pub fn list_body_recheck_versions(&self, page_id: i64) -> Result<Vec<Value>> {
+        let Ok(id) = u64::try_from(page_id) else {
+            return Ok(Vec::new());
+        };
+        let read = self.read()?;
+        let mut versions: Vec<_> = crate::pages::versions_of(&*read, id)?
+            .into_iter()
+            .filter(|v| v.body_storage.as_deref().is_none_or(|s| s == "inline"))
+            .filter(|v| !v.compiled_truth.is_null())
+            .collect();
+        versions.sort_by_key(|v| std::cmp::Reverse(v.id));
+        Ok(versions
+            .into_iter()
+            .take(BODY_RECHECK_VERSIONS)
+            .map(|v| {
+                json!({
+                    "compiled_truth": v.compiled_truth.as_deref(),
+                    "timeline": v.timeline.as_deref(),
+                    "title": v.title,
+                    "type": v.page_type,
+                    "frontmatter": crate::jsonb::order_map(v.frontmatter),
+                    "tags": v.tags,
+                })
+            })
+            .collect())
     }
 
     /// `readAtomProvenanceCounts()`: one row over the live atoms that carry a `source_hash`

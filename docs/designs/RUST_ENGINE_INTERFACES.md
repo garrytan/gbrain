@@ -137,6 +137,35 @@ Rules:
   Format 2 keeps each chunk-stats and unfinished-request counter in its own record; a format-1 brain is upgraded in
   one write transaction when it opens, and a format-1-only build refuses a format-2 brain.
 
+- **Store format-number ledger.** Landing order decides each number: the second lander merges the first lander's head
+  with `--no-ff` and takes the next free number, so the chain stays contiguous. Check it at every intake that changes
+  `FORMAT_VERSION`.
+
+  | Format | Change | Head | State |
+  | --- | --- | --- | --- |
+  | 8 | The format on `rust-engine/main` | `rust-engine/main` | landed |
+  | 9 | Keyed lookups (PR 10277) | `7896376b` | planned, lands after the Nov 26 shadow release |
+  | 10 | `vector-rank-key` | `4930072d` | planned, lands after the Nov 26 shadow release |
+  | 11 | Refresh evidence reads (head 2) | `66e6c7ae` | planned |
+  | 12 | Keyed lookups 2 (PR 10328, stacked on PR 10277) | `7896376b` | planned, lands after the Nov 26 shadow release |
+  | 13 | Packed keyword index | `7896376b` | planned |
+
+  The next free number is 14. A head that takes a number that is not its own in this table renumbers before it lands.
+
+- **`SHADOW_ADAPTER_VERSION` ledger** (`src/shadow/evidence-epoch.ts`). One version per distinct adapter source (the
+  digest of `store-members/**`, `store-codec.ts` and `members.ts` that `test/shadow-evidence.test.ts` pins). A lander
+  that changes the source takes the next number at its final merge and recomputes the digest in the same commit; a head
+  never keeps its own number. Check it at every intake that touches `store-members/**` or `src/shadow`.
+
+  | Version | Tree |
+  | --- | --- |
+  | 6 | `rust-engine/main` f9592f7a7e (sync 17) |
+  | 7 | Batch 14, 7c85d5696f (persistence binding reads, store listings, sync identity share, stored spellings, phone, repair kinds) |
+  | 8 | `rust-engine/main` a597e7a6c6 (batch 14 plus sync 18: master's profile-facet trajectory filter, the snapshot refusals) |
+  | 9 | Batch 15 (soak counter, request index states, page window chunk reads, concept rebuild, slug-spelling repair, loud search refusals and the members tail) |
+  | 10 | Sync 19, dac09d5610 (batch 15 merged with master c341d40de3) |
+  | 11 | Batch 15b (labelled-only policy on Rust, the purge-receipt and purge-ledger members of the fact purge path) |
+
 Reserved tags:
 
 | Family | Tag | Constant | Cascade on page delete |
@@ -235,6 +264,7 @@ branch, and the reserved ones, with the owner who claimed it. The rules:
 | `0` | `GUEST_SOURCE` | not named on the branch; the trunk names it at intake | branch rust-engine/collate-equal |
 | `3` | `SECRET_STORE` | lane 10 | reserved (the trunk holds it for the secret store) |
 | `~` | `FAMILY_ESCAPE` | core | main once this lands: the escape for two-byte family tags |
+| `~e` | `PAGE_EXTRACTION_STATE` | lane 8 (rust-members-tail) | branch rust-engine/rust-members-tail: the `page_extraction_state` family (the extraction watermark and partial-input receipt of a page); a hard page delete removes the page's rows; the tag `2` stays free |
 
 Free one-byte tags: the digits `4` to `9` (approved rows only) and punctuation other than `~`, which stays unclaimed
 unless a reviewed change to this table names it.
@@ -965,7 +995,7 @@ Facts and their supersession chains.
     The store serves them from the source, `F 0x01` and page records (`memory_mutation_reads.rs`, no new key prefix;
     rust/docs/store/memory_mutation_reads.md). The member refuses a non-integer fact id and a caller whose world rule
     a member page or a private-facts grant widens, a remote provenance floor that is not the no-caller one, and
-    `ownerReachesFact` for an owner bound to a member. Pinned by `test/engine-parity/memory-mutation-reads.test.ts`
+    `ownerReachesFact` for an owner bound to a member whose policy texts match no reference rendering. Pinned by `test/engine-parity/memory-mutation-reads.test.ts`
     and `test/engine-parity/forget-reach-reads.test.ts`.
   - The forget commit is typed too (`engine-sql/trust-withdrawals.ts`): `lockFactForWithdrawal`, `queueWithdrawalReview`,
     `listSegmentedPagesBySlug`, `bumpWithdrawnPageRevisions`, `readPageRevisions` and `appendFactForgetReason`, and

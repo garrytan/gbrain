@@ -48,6 +48,10 @@ export const applyAccessRuleChanges: StoreMember<[sourceId: string, changes: Acc
 export const restampAccessWindow: StoreMember<[sourceId: string, after: number, batch: number], AccessRestampWindow> = (brain, sourceId, after, batch) =>
   storeCall({ member: 'restampAccessWindow', sourceId }, () => brain.restampAccessWindow(sourceId, after, batch));
 
+/** The pages whose kept folder rule ids differ from the rules that cover them now (a read; the store counts it from its records). */
+export const countAccessFolderDrift: StoreMember<[sourceId: string], number> = async (brain, sourceId) =>
+  Number(await storeCall({ member: 'countAccessFolderDrift', sourceId }, () => brain.countAccessFolderDrift(sourceId)));
+
 export const finishAccessRestamp: StoreMember<[sourceId: string], number> = (brain, sourceId) =>
   storeCall({ member: 'finishAccessRestamp', sourceId }, () => brain.finishAccessRestamp(sourceId));
 

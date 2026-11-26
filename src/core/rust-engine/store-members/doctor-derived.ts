@@ -5,7 +5,7 @@
  *    rollup from extract_bookkeeping.rs, whose day rows the extract rollup writer adds to;
  *    rust/docs/store/cli-reads-doctor-derived.md);
  *  - answered empty with no store call, because the store keeps no writer for the relation the statement reads
- *    (`page_extraction_state`, `derived_generations`, `derived_generation_items`,
+ *    (`derived_generations`, `derived_generation_items`,
  *    `derived_generation_activations`, `belief_events`): no Rust brain ever holds a row there, so
  *    the empty answer is the one PGLite gives a brain that never wrote one.
  * Every member of `DOCTOR_DERIVED_MEMBERS` is one of the two; none is left to refuse with `engine_capability_missing`.
@@ -36,6 +36,15 @@ export const readPageCompiledTruths: Member<'readPageCompiledTruths'> = async (b
 /** The one aggregate row; the store holds one vector column, so `column` names it. */
 export const readEmbeddingBacklogAge: Member<'readEmbeddingBacklogAge'> = async (brain, column) =>
   storeCall({ member: 'readEmbeddingBacklogAge' }, () => brain.readEmbeddingBacklogAge(column));
+export const readEmbedBacklogRows: Member<'readEmbedBacklogRows'> = async (brain, column, sourceIds) =>
+  storeCall({ member: 'readEmbedBacklogRows' }, () => brain.readEmbedBacklogRows(column, sourceIds));
+/** The unchanged-body recheck (engine-sql/doctor-derived.ts listBodyRecheckGroups, readBodyRecheckPage, listBodyRecheckVersions). */
+export const listBodyRecheckGroups: Member<'listBodyRecheckGroups'> = async (brain) =>
+  storeCall({ member: 'listBodyRecheckGroups' }, () => brain.listBodyRecheckGroups());
+export const readBodyRecheckPage: Member<'readBodyRecheckPage'> = async (brain, pageId) =>
+  storeCall({ member: 'readBodyRecheckPage' }, () => brain.readBodyRecheckPage(Number(pageId)));
+export const listBodyRecheckVersions: Member<'listBodyRecheckVersions'> = async (brain, pageId) =>
+  storeCall({ member: 'listBodyRecheckVersions' }, () => brain.listBodyRecheckVersions(Number(pageId)));
 export const readAtomProvenanceCounts: Member<'readAtomProvenanceCounts'> = async (brain) =>
   storeCall({ member: 'readAtomProvenanceCounts' }, () => brain.readAtomProvenanceCounts());
 export const countCredentialProjectionPending: Member<'countCredentialProjectionPending'> = async (brain, sourceIds) =>
@@ -48,6 +57,8 @@ export const countDerivedVisibility: Member<'countDerivedVisibility'> = async (b
 export const listUntiledSegmentedPageRows: Member<'listUntiledSegmentedPageRows'> = async (brain, sourceIds, slugs, limit) =>
   storeCall({ member: 'listUntiledSegmentedPageRows' }, () =>
     brain.listUntiledSegmentedPageRows(sourceIds ? [...sourceIds] : null, slugs ? [...slugs] : null, limit));
+export const listAmbiguousExtractionInputs: Member<'listAmbiguousExtractionInputs'> = async (brain) =>
+  storeCall({ member: 'listAmbiguousExtractionInputs' }, () => brain.listAmbiguousExtractionInputs());
 export const listExtractionInputReceipts: Member<'listExtractionInputReceipts'> = async (brain) =>
   storeCall({ member: 'listExtractionInputReceipts' }, () => brain.listExtractionInputReceipts());
 export const listUnpricedDerivationModels: Member<'listUnpricedDerivationModels'> = async (brain) =>
@@ -67,12 +78,13 @@ export const listBudgetLimitedRows: Member<'listBudgetLimitedRows'> = async (bra
 /** Of the same holds (chunks or not), how many were last updated over a day ago, and the oldest update time (ISO text). */
 export const readBudgetHoldAge: Member<'readBudgetHoldAge'> = async (brain) =>
   storeCall({ member: 'readBudgetHoldAge' }, () => brain.readBudgetHoldAge());
-/** Page extraction state: the store keeps no `page_extraction_state`, so no page is held for an undetected format. */
-export const listAmbiguousExtractionInputs: Member<'listAmbiguousExtractionInputs'> = async () => [];
 /** Derived generations and their ledger: the store keeps none, so no retirement is ledger-covered. */
 export const countLedgerCoveredAtomRetirements: Member<'countLedgerCoveredAtomRetirements'> = async () => 0;
-export const listLiveGenerationRetirements: Member<'listLiveGenerationRetirements'> = async () => [];
-export const listHeldGenerations: Member<'listHeldGenerations'> = async () => [];
+/** The live generations that retired items inside the restore window, and the held generations: served from the ledger (generations/doctor_reads.rs). */
+export const listLiveGenerationRetirements: Member<'listLiveGenerationRetirements'> = async (brain, sourceIds, restoreDays) =>
+  storeCall({ member: 'listLiveGenerationRetirements' }, () => brain.listLiveGenerationRetirements([...sourceIds], restoreDays));
+export const listHeldGenerations: Member<'listHeldGenerations'> = async (brain, sourceIds) =>
+  storeCall({ member: 'listHeldGenerations' }, () => brain.listHeldGenerations([...sourceIds]));
 export const listOrphanGenerationCandidates: Member<'listOrphanGenerationCandidates'> = async () => [];
 // ---- the 7-day extract rollup, from the store's day rows (extract_bookkeeping.rs list_extract_rollup_days) -----------
 
