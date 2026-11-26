@@ -6159,6 +6159,16 @@ More: [docs/guides/conversation-archive.md#setup-history-import](../../docs/guid
 
 More: [docs/guides/repair.md#setup-hosted-connection](../../docs/guides/repair.md#setup-hosted-connection)
 
+### setup_household_unbound
+
+<a id="setup_household_unbound"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain setup --shape household was refused because the household template would set the brain to serve several people while this harness's connection stays bound to nobody (a shared stdio harness such as OpenClaw or Hermes is installed, or --no-stdio-member was given), so nothing was written. | On a brain that serves several people an unbound connection reads none of the household records, so the owner's own agent could not answer what needs doing at home, and every later setup run would refuse that connection. | Give the owner a key over HTTP (gbrain auth create <name> --member <owner>), drop --no-stdio-member, or set up the owner alone with --household-members none. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/tutorials/household-brain.md#if-a-run-stops](../../docs/tutorials/household-brain.md#if-a-run-stops)
+
 ### setup_owner_conflict
 
 <a id="setup_owner_conflict"></a>

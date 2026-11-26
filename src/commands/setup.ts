@@ -544,6 +544,8 @@ export async function runSetup(args: string[], deps: { openclaw?: { bin?: string
     const servesPlan = servesPreflight(flags, launcher, 'claude-code', !!cfg, !!liveOwner?.ours, binding);
     if (servesPlan instanceof OperationError) return refuse(servesPlan, out);
     const tie = ownerTie(flags, servesPlan, binding, !!pluginOwner);
+    const unbound = householdTieRefusal(flags, servesPlan, binding, !!pluginOwner, tie, 'claude-code');
+    if (unbound) return refuse(unbound, out);
     if (tie) { binding = { member: tie, previous: binding.previous }; plan = { ...plan, stdioMember: tie }; found = inspectClaudeSetup(plan); target.stdio_member = tie; say(out, `note: ${tieNote(tie)}`); }
 
     const brainCreate = !cfg;
@@ -809,6 +811,8 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
     const servesPlan = servesPreflight(flags, launcher, 'codex', !!cfg, !!liveOwner?.ours, binding);
     if (servesPlan instanceof OperationError) return refuse(servesPlan, out);
     const tie = ownerTie(flags, servesPlan, binding, !!pluginOwner);
+    const unbound = householdTieRefusal(flags, servesPlan, binding, !!pluginOwner, tie, 'codex');
+    if (unbound) return refuse(unbound, out);
     if (tie) { binding = { member: tie, previous: binding.previous }; plan = { ...plan, stdioMember: tie }; found = inspectCodexSetup(plan); target.stdio_member = tie; say(out, `note: ${tieNote(tie)}`); }
 
     const brainCreate = !cfg;
@@ -941,9 +945,23 @@ function entryBinding(flags: SetupFlags, previous: string | undefined): EntryBin
  * attendees. Never where a plugin serves the entry, a shared-stdio harness is installed, or --no-stdio-member is given.
  */
 function ownerTie(flags: SetupFlags, plan: ServesPlan, entry: EntryBinding, plugin: boolean): string | null {
-  if (flags.householdRun && !flags.noStdioMember && !entry.member && !plugin) return sharedStdioHarness() ? null : flags.owner ?? loginOwnerId() ?? null;
+  if (flags.householdRun && !flags.noStdioMember && !entry.member && !plugin) return sharedStdioHarness() ? null : plan.status?.owner ?? flags.owner ?? loginOwnerId() ?? null;
   if (flags.serves !== 'several' || (flags.brain !== 'company' && flags.brain !== 'both') || flags.noStdioMember || entry.member || plugin || !plan.tie) return null;
   return sharedStdioHarness() ? null : plan.tie;
+}
+
+/**
+ * H2: --shape household with people besides the owner sets the brain to serve several people, so a harness entry it
+ * leaves bound to nobody would read none of the household records, and every later setup run would refuse it.
+ */
+function householdTieRefusal(flags: SetupFlags, plan: ServesPlan, entry: EntryBinding, plugin: boolean, tie: string | null, harness: string): OperationError | null {
+  if (!flags.householdRun || tie || entry.member || plugin || plan.status?.stdio_member || flags.householdRun.members?.trim() === 'none') return null;
+  const shared = sharedStdioHarness();
+  if (!shared && !flags.noStdioMember) return null;
+  const why = shared ? `${shared} is installed on this host, so setup ties no ${harness} connection to one person` : '--no-stdio-member leaves this connection bound to nobody';
+  return opError('setup_household_unbound', `The household template sets this brain to serve several people, and ${why}; the owner's own agent would then read none of the household records. Nothing was written.`,
+    shared ? `Give the owner a key over HTTP instead (gbrain auth create <name> --member <owner>), or run gbrain setup ${harness} --shape household --household-members none for the owner alone.`
+      : `Drop --no-stdio-member, or run gbrain setup ${harness} --shape household --household-members none for the owner alone.`);
 }
 
 const tieNote = (owner: string): string => `this connection reads as the brain owner ${owner} (serve --stdio-member ${owner}), so it reads every call; --no-stdio-member leaves it unbound`;

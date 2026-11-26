@@ -30,8 +30,8 @@ function box(): Box {
 
 const CLEAN = { DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined, GBRAIN_REMOTE_CLIENT_SECRET: undefined, GBRAIN_SKIP_STARTUP_HOOKS: '1', CLAUDE_CONFIG_DIR: undefined, CODEX_HOME: undefined, GBRAIN_SOURCE: undefined, GBRAIN_SURFACE: undefined, GBRAIN_HOOKS: undefined, GBRAIN_SETUP_ABORT_AFTER: undefined };
 const envOf = (b: Box) => ({ ...CLEAN, HOME: b.home, GBRAIN_HOME: b.home });
-async function setup(b: Box, args: string[]): Promise<CliResult & { doc: any }> {
-  const r = await runCli(['setup', ...args, '--json', '--gbrain-bin', b.bin], { env: envOf(b) });
+async function setup(b: Box, args: string[], env: Record<string, string> = {}): Promise<CliResult & { doc: any }> {
+  const r = await runCli(['setup', ...args, '--json', '--gbrain-bin', b.bin], { env: { ...envOf(b), ...env } });
   let doc: any = null;
   try { doc = JSON.parse(r.stdout); } catch { doc = null; }
   return { ...r, doc };
@@ -77,6 +77,30 @@ describe('setup --shape household', () => {
     expect(elsewhere.exitCode).not.toBe(0);
     expect(elsewhere.stdout + elsewhere.stderr).toContain('setup_receipt_target_mismatch');
   }, 300_000);
+
+  test('on a brain that already has an owner, the household entry is tied to that owner, not to --owner', async () => {
+    const b = box();
+    for (const args of [['init', '--pglite', '--no-embedding', '--json'], ['access', 'member', 'add', 'alice-example'], ['access', 'owner', 'set', 'alice-example']]) {
+      expect((await runCli(args, { env: envOf(b) })).exitCode).toBe(0);
+    }
+    const r = await setup(b, ['claude-code', '--shape', 'household', '--owner', 'bob-example']);
+    expect(r.exitCode).toBe(0);
+    const mcp = r.doc.steps.find((s: any) => s.step === 'mcp');
+    expect(mcp.detail).toContain('serve --stdio-member alice-example');
+    expect(mcp.detail).not.toContain('bob-example');
+  }, 120_000);
+
+  test('on a host with a shared stdio harness, household setup with other people is refused before anything is written', async () => {
+    const b = box();
+    const hermes = join(b.root, 'hermes');
+    mkdirSync(hermes, { recursive: true });
+    const r = await setup(b, ['claude-code', '--shape', 'household', '--owner', 'alice-example', '--yes'], { HERMES_HOME: hermes });
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stdout + r.stderr).toContain('setup_household_unbound');
+    expect(r.stdout + r.stderr).toContain('Hermes is installed on this host');
+    expect(existsSync(join(b.home, '.claude.json'))).toBe(false);
+    expect(existsSync(join(b.home, '.gbrain', 'member-keys'))).toBe(false);
+  }, 120_000);
 });
 
 describe('household setup units', () => {
