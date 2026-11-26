@@ -5,7 +5,7 @@
  * trigger, a webhook) still run, and turning sync back on restores the HEAD watch. Synthetic content, injected clock.
  */
 import { describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -13,6 +13,7 @@ import { LIST_EVERY_MS, RETRY_BACKOFF_MS, startCommitNotifier, type CommitNotifi
 import { listHostSources } from '../src/core/notifier/resident.ts';
 import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
 import { memoryNotifierStore } from './helpers/notifier-memory-store.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 const SOURCE = 'source-a';
 const HOST = '00000000-0000-4000-8000-0000000025a6';
@@ -135,6 +136,18 @@ describe.each(arms)('GST-2515: listHostSources marks a source with sync off (%s)
       expect(byId.get('source-off')?.syncDisabled).toBe(true);
       expect(byId.get('source-on')?.syncDisabled).toBeUndefined();
       expect(byId.get('source-unset')?.syncDisabled).toBeUndefined();
+
+      if (process.platform !== 'win32') {
+        const emptyPath = join(root, 'empty-path');
+        mkdirSync(emptyPath);
+        await withEnv({ PATH: emptyPath }, async () => {
+          const unavailable = await listHostSources(engine, HOST, { GBRAIN_NOTIFIER_CLASSIC_SOURCES: ids.join(',') });
+          expect(unavailable.sources.filter(source => ids.includes(source.sourceId))).toEqual([]);
+          expect(unavailable.skipped.filter(source => ids.includes(source.sourceId))).toEqual(
+            ids.map(sourceId => ({ sourceId, reason: `${root}: Git executable unavailable on this host` })),
+          );
+        });
+      }
     } finally {
       for (const id of ids) await engine.executeRaw('DELETE FROM sources WHERE id = $1', [id]).catch(() => undefined);
       await close();

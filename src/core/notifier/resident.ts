@@ -101,9 +101,12 @@ export async function listHostSources(engine: BrainEngine, hostId: string, env: 
       }
     }
     if (!root) { skipped.push({ sourceId: row.id, reason: 'no local checkout path' }); continue; }
-    if (!dirs.has(root)) dirs.set(root, await resolveGitDirs(root));
-    const d = dirs.get(root) ?? null;
-    if (!d) { skipped.push({ sourceId: row.id, reason: `${root} is not a git checkout on this host` }); continue; }
+    let d = dirs.get(root);
+    if (!d) {
+      d = await resolveGitDirs(root);
+      dirs.set(root, d);
+    }
+    if ('reason' in d) { skipped.push({ sourceId: row.id, reason: `${root}: ${d.reason}` }); continue; }
     sources.push({ sourceId: row.id, root, gitDir: d.gitDir, commonDir: d.commonDir, lastCommit: row.last_commit, kind, ...(isSyncDisabledConfig(row.config) ? { syncDisabled: true } : {}) });
   }
   return { sources, skipped };

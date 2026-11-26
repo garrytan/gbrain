@@ -17,8 +17,8 @@ import { gitChildEnv } from '../git-env.ts';
 import { GIT_OPERATION_MARKERS } from '../git/commit-push.ts';
 
 export async function git(root: string, args: string[]): Promise<string> {
-  const r = await execFileBounded('git', ['-C', root, ...args], { timeout: 5_000, env: gitChildEnv({ GIT_OPTIONAL_LOCKS: '0' }) });
-  if (r.error) throw new Error((r.stderr || r.error.message).trim().split('\n')[0] || 'git failed');
+  const r = await execFileBounded('git', ['-C', root, ...args], { timeout: 5_000, env: gitChildEnv({ GIT_OPTIONAL_LOCKS: '0', LC_ALL: 'C' }) });
+  if (r.error) throw new Error((r.stderr || r.error.message).trim().split('\n')[0] || 'git failed', { cause: r.error });
   return r.stdout.trim();
 }
 
@@ -26,11 +26,23 @@ export async function revParseHead(root: string): Promise<string> {
   return git(root, ['rev-parse', '--verify', '-q', 'HEAD']);
 }
 
-export async function resolveGitDirs(root: string): Promise<{ gitDir: string; commonDir: string } | null> {
-  const out = await git(root, ['rev-parse', '--absolute-git-dir', '--git-common-dir']).catch(() => null);
-  if (!out) return null;
+export async function resolveGitDirs(root: string): Promise<{ gitDir: string; commonDir: string } | { reason: string }> {
+  let out: string;
+  try {
+    out = await git(root, ['rev-parse', '--absolute-git-dir', '--git-common-dir']);
+  } catch (error) {
+    if (!(error instanceof Error) || !(error.cause instanceof Error)) throw error;
+    const code = (error.cause as NodeJS.ErrnoException).code;
+    if (error.message.startsWith('fatal: not a git repository')) return { reason: 'Git found no checkout on this host' };
+    if (code === 'ETIMEDOUT') return { reason: 'Git checkout detection timed out' };
+    if (code === 'ENOENT') return { reason: 'Git executable unavailable on this host' };
+    if (code === 'EACCES' || code === 'EPERM' || /permission denied|operation not permitted/i.test(error.message)) {
+      return { reason: 'permission denied while checking the Git checkout' };
+    }
+    return { reason: 'Git failed to inspect the checkout' };
+  }
   const [gitDir, common] = out.split('\n').map(line => line.trim());
-  if (!gitDir) return null;
+  if (!gitDir) return { reason: 'Git returned no checkout path' };
   const commonDir = !common ? gitDir : isAbsolute(common) ? common : resolve(root, common);
   return { gitDir, commonDir };
 }
