@@ -425,8 +425,11 @@ export function personSlugFromContact(c: ContactData, disambiguate = false, dir:
     .slice(0, 64);
   // A non-empty name can normalize to nothing (e.g. Chinese). Keep eligible
   // contacts using the same stable ID path as unnamed phone-only contacts.
-  if (!slug) return c.emails.length > 0 || c.phones.length > 0
-    ? contactIdSlug(c.resourceName, dir) : null;
+  if (!slug) {
+    if (c.emails.length === 0 && c.phones.length === 0) return null;
+    const fallback = contactIdSlug(c.resourceName, dir);
+    return disambiguate ? `${fallback}-${sha8(c.resourceName)}` : fallback;
+  }
   // Two different contacts named "John Smith" must not fight over one page —
   // the caller requests disambiguation when the base slug is already owned
   // by a DIFFERENT google_contact_id.

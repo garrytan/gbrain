@@ -45,9 +45,15 @@ export async function applyContactPage(contactId: string, deleted: boolean, io: 
   const collides = baseOwner !== null && baseOwner !== 'hand-authored' && baseOwner !== contactId;
   const rendered = io.render(collides);
   if (!rendered) return;
-  if (await io.owner(rendered.relPath) === 'hand-authored') {
+  const renderedOwner = await io.owner(rendered.relPath);
+  if (renderedOwner === 'hand-authored') {
     io.skippedHandAuthored(rendered.relPath);
     return;
+  }
+  // Disambiguation is not proof of ownership: the second candidate may also
+  // be occupied. Fail before writing or retiring the contact's previous page.
+  if (renderedOwner !== null && renderedOwner !== contactId) {
+    throw new Error('Contact page path is owned by another contact');
   }
   await io.write(rendered.relPath, rendered.markdown);
   if (existingPath && existingPath !== rendered.relPath && await io.owner(existingPath) === contactId) {

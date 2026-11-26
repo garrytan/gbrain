@@ -3,4 +3,6 @@
 ### Fixed
 - Fall back to the existing stable contact-ID path when an eligible contact name normalizes to an empty ASCII slug (#10450). Preserve existing ASCII paths and the no-email/no-phone filter.
 
+- Preserve pages owned by other contacts when fallback paths collide, including a collision at the disambiguated path. The shared Google/Apple apply path refuses an unresolved collision before writing or retiring the old page.
+
 <!-- behavior-change: contacts_non_ascii_slug_10450 -->

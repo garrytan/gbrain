@@ -10,6 +10,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   calendarRelPath,
   contactIdSlug,
+  sha8,
   htmlToText,
   isCalendarSystemMail,
   isNoiseSender,
@@ -483,7 +484,7 @@ describe('non-ASCII contact names (#10450)', () => {
           phones: phoneOnly ? ['+12025550123'] : [] });
         const expected = contactIdSlug(c.resourceName, 'google/contacts');
         expect(personSlugFromContact(c, false, 'google/contacts')).toBe(expected);
-        expect(personSlugFromContact(c, true, 'google/contacts')).toBe(expected);
+        expect(personSlugFromContact(c, true, 'google/contacts')).toBe(`${expected}-${sha8(c.resourceName)}`);
         const page = renderPersonPage(c, false, 'google/contacts');
         expect(page).not.toBeNull();
         expect(page!.relPath).toBe(`${expected}.md`);
