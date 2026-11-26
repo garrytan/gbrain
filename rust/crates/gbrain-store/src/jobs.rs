@@ -699,6 +699,9 @@ pub struct PageLeaseTake {
     pub holder_host: String,
     pub acquisition_token: String,
     pub ttl_minutes: f64,
+    /// The host fence (I-5, lane L5): a take under an epoch that moved is refused `lease_lost`. None: unchanged.
+    #[serde(default)]
+    pub fence: Option<LeaseToken>,
 }
 
 /// `renewPageEmbeddingLease` and `releasePageEmbeddingLease` opts: the lease fences on its token alone.
@@ -708,6 +711,9 @@ pub struct PageLeaseHolder {
     pub acquisition_token: String,
     #[serde(default)]
     pub ttl_minutes: Option<f64>,
+    /// The host fence (I-5, lane L5): a renewal or release under an epoch that moved is refused `lease_lost`.
+    #[serde(default)]
+    pub fence: Option<LeaseToken>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1879,6 +1885,7 @@ impl Store {
             )));
         }
         self.write(|tx| {
+            fence::begin(self, tx, opts.fence.as_ref(), "take_page_embedding_lease")?;
             let now = self.lease_clock();
             let key = lock_key(lease_id);
             if let Some(held) = get_json::<LockRecord>(tx, &key)?
@@ -1910,6 +1917,7 @@ impl Store {
             StoreError::invalid("renewPageEmbeddingLease: ttlMinutes is required")
         })?;
         self.write(|tx| {
+            fence::begin(self, tx, opts.fence.as_ref(), "renew_page_embedding_lease")?;
             if self.multiuser() && !lease_id.starts_with(PAGE_EMBEDDING_LEASE_PREFIX) {
                 return Ok(false);
             }
@@ -1935,6 +1943,12 @@ impl Store {
     ) -> Result<()> {
         uuid_arg("releasePageEmbeddingLease", &opts.acquisition_token)?;
         self.write(|tx| {
+            fence::begin(
+                self,
+                tx,
+                opts.fence.as_ref(),
+                "release_page_embedding_lease",
+            )?;
             let now = self.lease_clock();
             let token = opts.acquisition_token.to_lowercase();
             let mut doomed = Vec::new();
