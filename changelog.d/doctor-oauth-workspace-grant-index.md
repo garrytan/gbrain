@@ -1,0 +1,1 @@
+- Doctor's orphaned-workspace check uses the existing federated-grant index when checking which workspaces live OAuth clients can still read.

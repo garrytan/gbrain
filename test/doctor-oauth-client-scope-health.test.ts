@@ -15,7 +15,7 @@
  * as the sibling routing-federation check tests.
  */
 
-import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll, beforeEach, spyOn } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { checkOauthClientScopeHealth } from '../src/commands/doctor.ts';
 import { DCR_PRIVILEGED_SCOPES } from '../src/commands/doctor/checks/routing-federation.ts';
@@ -110,6 +110,38 @@ describe('checkOauthClientScopeHealth', () => {
     );
     const r = await checkOauthClientScopeHealth(engine);
     expect(r.status).toBe('ok');
+  });
+
+  test('orphaned workspace inspection uses the federated grant index for selective matches', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name)
+       SELECT 'indexed-' || n || '-workspace', 'Workspace ' || n FROM generate_series(1, 120) AS n`,
+    );
+    await engine.executeRaw(
+      `INSERT INTO oauth_clients (client_id, client_name, scope, federated_read, deleted_at)
+       SELECT 'index-client-' || n, 'Client ' || n, 'read',
+              CASE WHEN n BETWEEN 1 AND 120 THEN ARRAY['indexed-' || n || '-workspace']
+                   ELSE ARRAY['default'] END,
+              CASE WHEN n = 1 THEN now() END
+         FROM generate_series(1, 6000) AS n`,
+    );
+    await engine.executeRaw('ANALYZE oauth_clients');
+    await engine.executeRaw('ANALYZE sources');
+
+    const raw = spyOn(engine, 'executeRaw');
+    try {
+      const health = await checkOauthClientScopeHealth(engine);
+      expect(health.status).toBe('warn');
+      expect(health.message).toContain('indexed-1-workspace');
+      expect(health.message).not.toContain('indexed-2-workspace');
+      const orphanQuery = raw.mock.calls.find(([statement]) => statement.includes("s.id LIKE '%' || $1"));
+      expect(orphanQuery).toBeDefined();
+      const [statement, params] = orphanQuery!;
+      const plan = await engine.executeRaw(`EXPLAIN (FORMAT JSON) ${statement}`, params);
+      expect(JSON.stringify(plan)).toContain('idx_oauth_clients_federated_read');
+    } finally {
+      raw.mockRestore();
+    }
   });
 
   test('deleted client with a dangling grant → NOT flagged', async () => {
