@@ -112,6 +112,8 @@ describe('host registration', () => {
     const released: LeaseToken[] = [];
     const leases: RustLeases = {
       acquire: async (name) => ({ name, epoch: ++epoch, token: `t${epoch}` }),
+      // As the store: the next epoch only when the record is still at the epoch the caller proved.
+      takeOver: async (name, expectedEpoch) => (expectedEpoch === epoch ? { name, epoch: ++epoch, token: `t${epoch}` } : null),
       renew: async () => { if (lost) { lost = false; throw Object.assign(new Error('lost'), { code: 'lease_lost' }); } },
       release: async (l) => { released.push(l); },
       read: async () => null,
