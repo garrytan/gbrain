@@ -30,6 +30,8 @@ import { refusePurgeEntryStop } from '../rust-engine/errors.ts';
 export const PURGE_OWNERS = {
   /** The page purge port itself: members and sites it serves or has still to serve. */
   ours: 'lane 13',
+  /** The retention purge's raw-SQL stops (RETENTION_STOPS): moved to lane 4 to land before 2026-11-30. */
+  retention: 'lane 4',
   /** The receipt reads and probes of the purge verification (facts/purge-verify.ts). */
   receipts: 'lane 13 step 3',
   /** The receipt's four reads (source-prose scan, source path, purge request, purge effects): rust-engine/rust-5a 90e7bea933 (not merged here). */
@@ -69,7 +71,7 @@ export interface PurgePathMember<E extends string = 'retention'> extends Base<E>
 export interface PurgePathSite<E extends string = 'retention'> extends Base<E> { site: string; guarded?: string; stop?: string }
 export type PurgePathEntry<E extends string = 'retention'> = PurgePathMember<E> | PurgePathSite<E>;
 
-const { ours, beliefProbe, requestIndexes } = PURGE_OWNERS;
+const { ours, retention, beliefProbe, requestIndexes } = PURGE_OWNERS;
 const { nov25 } = PURGE_DUE;
 const served = (owner: string, ...members: Array<keyof BrainEngine & string>): PurgePathMember[] => members.map(member => ({ member, owner }));
 
@@ -83,7 +85,7 @@ const RETENTION_STOPS: PurgePathSite[] = [
   ['selectPurgeCandidates (persistence/purge-deleted.ts)', 'the candidate selection'],
   ['prunePurgeParks (persistence/purge-parks.ts)', 'the purge park prune'],
   ['notePurgeSourceWriter (persistence/purge-parks.ts)', 'the source writer note'],
-].map(([site, what]) => ({ site: site!, owner: ours, entry: 'retention' as const, stop: `${what} runs through raw SQL` }));
+].map(([site, what]) => ({ site: site!, owner: retention, entry: 'retention' as const, stop: `${what} runs through raw SQL` }));
 
 /**
  * Raw sites a purge reaches on PGLite and Postgres whose branch a Rust brain does not take. The Rust purge, with raw

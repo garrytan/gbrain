@@ -5,7 +5,7 @@
  *  - Protects: delete_page --purge has no stop left on a Rust brain (every member of its purge path is served, so
  *    purgePathStops lists nothing): the purge removes the page and leaves the other page as it was. The retention purge
  *    still stops at the pre-write check (persistence/purge-path-members.ts) with the typed `engine_capability_missing`
- *    refusal that names its first listed stop, releaseStaleHolds (persistence/derived-origin-hold.ts, owner lane 13),
+ *    refusal that names its first listed stop, releaseStaleHolds (persistence/derived-origin-hold.ts, owner lane 4),
  *    while the tombstone, the origin parks and the journal read exactly as they did before. The refusal is raised with no
  *    member that writes having been called.
  *  - Regression: the purge went on past the first raw-SQL site, so a refusal that came later (the generation-ledger
@@ -127,10 +127,10 @@ describe('a page purge on a Rust brain refuses before any write', () => {
     expect(await readsOf(engine, ['notes/expired'], [id])).toEqual(before);
   }, 120_000);
 
-  test('delete_page has no stop on a Rust brain, and the retention purge stops first at releaseStaleHolds, owned by lane 13', async () => {
+  test('delete_page has no stop on a Rust brain, and the retention purge stops first at releaseStaleHolds, owned by lane 4', async () => {
     expect(await purgePathStops({ kind: 'rust' })).toEqual([]);
     const [first] = await purgePathStops({ kind: 'rust' }, 'retention');
-    expect({ name: first?.name, owner: first?.owner }).toEqual({ name: 'releaseStaleHolds (persistence/derived-origin-hold.ts)', owner: 'lane 13' });
+    expect({ name: first?.name, owner: first?.owner }).toEqual({ name: 'releaseStaleHolds (persistence/derived-origin-hold.ts)', owner: 'lane 4' });
     expect(PURGE_PATH.map(purgeEntryName)).toContain(first!.name);
   });
 });
