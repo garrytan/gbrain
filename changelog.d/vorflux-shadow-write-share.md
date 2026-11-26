@@ -8,5 +8,5 @@
 - For an in-transaction page write, same-process writes to copied rows are caught by the fence and the pre-commit pin, not by the counter; every other write keeps the counter. A same-process write to a row the comparator does not copy cannot change the compared result. A concurrent write to the very link or page rows that a link write or a delete changes is outside the fence (an open gap noted in the code) and can show as a difference instead of "moved"; it never shows as a match.
 - A PGLite brain still samples no writes, so its compared count is unchanged.
 - A real sync's compared share is still capped by samples lost when the command exits and by the 16-sample queue limit; those are separate fixes.
-- A sampled in-transaction page write that still has another call running when its transaction ends cannot be pinned: it is counted not comparable (`in_transaction_busy`), never a match.
+- A sampled in-transaction page write that still has another call running when its transaction ends cannot be pinned, so it is counted not comparable (`in_transaction_busy`), never a match.
 - Each sampled in-transaction page write now makes one extra savepoint and one read just before its commit (sampled writes only; the cost per save is measured in the pull request).
