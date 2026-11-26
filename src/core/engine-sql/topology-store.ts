@@ -174,7 +174,16 @@ export interface TopologyStore extends ContentReceiptStore {
    * row per listed worktree that has an owner.
    */
   ownerActivity(ids: readonly string[], lapsedMs: number, opts?: { signal?: AbortSignal }): Promise<OwnerActivityRow[]>;
+  /**
+   * The managed writes waiting on each worktree (`owner_host_stale`, commands/doctor/checks/owner-host-stale.ts): per worktree with a
+   * queued, deferred, running or recovering request, how many, when the oldest was created and the sources bound to it (byte
+   * order); the order of the rows is not defined.
+   */
+  openWrites(): Promise<OpenWritesRow[]>;
 }
+
+/** One worktree's waiting writes (`openWrites`). */
+export interface OpenWritesRow { worktree_id: string; open_writes: number; oldest_open: string | Date; source_ids: string[] | null }
 
 /** One worktree's owner facts (`ownerActivity`). */
 export interface OwnerActivityRow { worktree_id: string; owner_host_id: string; live: boolean; last_active: string | Date | null; oldest_open: string | Date | null; db_now: string | Date }
@@ -280,6 +289,13 @@ const RESTAMP_CHANGE_RECOVERY_SQL = 'UPDATE persistence_topology_changes SET rec
 const CLOSE_CHANGE_SQL = `UPDATE persistence_topology_changes SET state=$2,recovery=NULL,recovery_bytes=0,updated_at=now(),
     outcome=COALESCE(outcome,'{}'::jsonb)||$3::text::jsonb WHERE id=$1::uuid`;
 const COMMIT_CHANGE_SQL = "UPDATE persistence_topology_changes SET state='committed',outcome=outcome||$2::text::jsonb,updated_at=now() WHERE id=$1::uuid";
+/** `owner_host_stale`'s read of the writes waiting on each worktree: the statement the doctor check sent through executeRaw, unchanged. */
+const OPEN_WRITES_SQL = `
+      SELECT r.worktree_id::text AS worktree_id, count(*)::int AS open_writes, min(r.created_at) AS oldest_open,
+        (SELECT array_agg(b.source_id ORDER BY b.source_id COLLATE "C") FROM persistence_source_bindings b WHERE b.worktree_id=r.worktree_id) AS source_ids
+      FROM persistence_requests r WHERE r.worktree_id IS NOT NULL AND r.state IN ('queued','deferred','running','recovering')
+      GROUP BY r.worktree_id`;
+
 const OWNER_ACTIVITY_SQL = `
     SELECT now() AS db_now, w.id::text AS worktree_id, w.owner_host_id::text AS owner_host_id,
       EXISTS (SELECT 1 FROM persistence_consumers c WHERE c.host_id=w.owner_host_id
@@ -404,12 +420,13 @@ export function sqlTopologyStore(exec: RawSql): TopologyStore {
     boundSourceIds: async worktreeId => (await exec.executeRaw<{ source_id: string }>(BOUND_SOURCE_IDS_SQL, [worktreeId])).map(row => row.source_id),
     insertCloneHostBinding: (worktreeId, hostId, localPath, coordinationPath) => run(INSERT_CLONE_HOST_BINDING_SQL, [worktreeId, hostId, localPath, coordinationPath]),
     ownerActivity: (ids, lapsedMs, opts) => exec.executeRaw<OwnerActivityRow>(OWNER_ACTIVITY_SQL, [[...ids], lapsedMs], opts),
+    openWrites: () => exec.executeRaw<OpenWritesRow>(OPEN_WRITES_SQL),
   };
 }
 
 /** The statements `sqlTopologyStore` sends whose text is pinned by a test against the callers' fragments. */
 export const TOPOLOGY_STORE_STATEMENTS = {
   ACTIVE_REFRESH_SQL, RETIRE_STATE_EXPIRED_SQL, EXPIRED_ARCHIVE_ROW_SQL,
-  LOCK_WORKTREE_MANIFEST_SQL, LOCK_RECOVERING_CHANGES_SQL, CLOSE_CHANGE_SQL, COMMIT_CHANGE_SQL, OWNER_ACTIVITY_SQL,
+  LOCK_WORKTREE_MANIFEST_SQL, LOCK_RECOVERING_CHANGES_SQL, CLOSE_CHANGE_SQL, COMMIT_CHANGE_SQL, OWNER_ACTIVITY_SQL, OPEN_WRITES_SQL,
   READ_CLONE_SOURCE_SQL, READ_SOURCE_HEAD_SQL, CLONE_HOST_BINDING_PATH_SQL, LOCK_CLONE_WORKTREE_SQL, BOUND_SOURCE_IDS_SQL, INSERT_CLONE_HOST_BINDING_SQL,
 } as const;
