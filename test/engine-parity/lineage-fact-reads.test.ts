@@ -72,6 +72,7 @@ const PAGES: readonly PageSeed[] = [
   { slug: 'walk/atom-carol', type: 'atom', frontmatter: { ...WORLD, source_slug: 'open/origin-carol' } },
   { slug: 'walk/atom-dana', type: 'atom', frontmatter: { ...WORLD, source_slug: 'open/origin-dana' } },
   { slug: 'walk/atom-bob', type: 'atom', frontmatter: { ...WORLD, source_slug: 'open/origin-bob' } },
+  { slug: 'walk/note-carol', frontmatter: { ...WORLD, derived_from: ['open/origin-carol.md'] } },
   { slug: 'walk/null-mix', frontmatter: { ...WORLD, derived_from: ['open/origin-carol.md', null] } },
   { slug: 'walk/null-only', frontmatter: { ...WORLD, derived_from: [null] } },
   { slug: 'memory/members/bob-example', frontmatter: { readable_by: ['member:bob-example'] } },
@@ -101,6 +102,7 @@ const FACTS: readonly FactSeed[] = [
   { id: 'atom-carol', provenance: 'walk/atom-carol' },
   { id: 'atom-dana', provenance: 'walk/atom-dana' },
   { id: 'atom-bob', provenance: 'walk/atom-bob' },
+  { id: 'note-carol', provenance: 'walk/note-carol' },
   { id: 'null-mix', provenance: 'walk/null-mix' },
   { id: 'null-only', provenance: 'walk/null-only' },
   { id: 'member-bob', provenance: 'memory/members/bob-example' },
@@ -240,7 +242,7 @@ interface Family {
  * carol, whose own pages all name readers, reads only the atom derived from an origin under a raw-only rule (labelled lineage).
  */
 const FORM1: Record<string, string[]> = {
-  [CAROL]: ['readers-carol', 'readers-group', 'atom-carol', 'own-carol', 'ruled-carol', 'control-page', 'atom-raw'],
+  [CAROL]: ['readers-carol', 'readers-group', 'atom-carol', 'note-carol', 'own-carol', 'ruled-carol', 'control-page', 'atom-raw'],
   [DANA]: ['plain', 'readers-group', 'atom-dana', 'null-only', 'own-dana', 'ruled-carol', 'control-page', 'atom-raw'],
 };
 const FORM2: Record<string, string[]> = { [CAROL]: ['atom-raw'], [DANA]: ['plain', 'null-only', 'atom-raw'] };
@@ -388,6 +390,17 @@ describe('engine parity: recall and the pages behind each fact with access.membe
         return FACTS.filter(f => facts.some(t => t.includes(text(f)))).map(f => f.id);
       };
       const recent = idsOf(await remote(engine, member, 'recall', {}));
+      // memory_recall answers plain-text lines: the member's own page facts, then the facts it ranks (a narrower read than recall's list),
+      // so it is held to the rules as a ceiling (a fact the member may not read is never in it) and to its own page fact. It runs on the SQL
+      // arms only: the Rust engine refuses it at a raw SQL read of the written dates (src/core/ops/qm-memory.ts, executeRaw), with lineage
+      // off too, which is not a fact-policy read and not part of this row.
+      let memory: string[] | null = null;
+      if (backend !== 'rust') {
+        const lines = String(await remote(engine, member, 'memory_recall', { query: WORD }));
+        memory = FACTS.filter(f => lines.includes(text(f))).map(f => f.id);
+        for (const id of memory) expect({ id, readable: WANT(1, member).includes(id) }).toEqual({ id, readable: true });
+        expect(memory).toContain(member === CAROL ? 'own-carol' : 'own-dana');
+      }
       const since = idsOf(await remote(engine, member, 'recall', { since: '2000-01-01T00:00:00Z' }));
       const byEntity: Record<string, unknown> = {};
       for (const entity of ENTITIES) byEntity[entity] = idsOf(await remote(engine, member, 'recall', { entity }));
