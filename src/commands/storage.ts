@@ -1,7 +1,6 @@
 import { existsSync } from 'fs';
 import { dirname, join, relative, resolve, sep } from 'path';
 import type { BrainEngine } from '../core/engine.ts';
-import { isNeverFiledDerivedPage } from '../core/persistence/git-declared.ts';
 import { hasUnresolvedDbOnlyDeclaration, loadStorageConfig, validateStorageConfig, getStorageTier, isDbOnly } from '../core/storage-config.ts';
 import type { StorageConfig, StorageTier } from '../core/storage-config.ts';
 import { walkBrainRepo, type DiskFileEntry } from '../core/disk-walk.ts';
@@ -336,10 +335,7 @@ export async function getStorageStatus(
       }
       continue;
     }
-    // #10400: a derive-phase page that never recorded a file is database-only by
-    // design (persistence and doctor read it so), not lost; its path still went
-    // through export's checks above, so a refusal it would cause is reported.
-    if (!present && !isNeverFiledDerivedPage(page.slug, page)) missingFiles.push({ slug: page.slug, expectedPath });
+    if (!present) missingFiles.push({ slug: page.slug, expectedPath });
   }
 
   // Ordered by each group's lowest slug, so warnings and the printed refusal
