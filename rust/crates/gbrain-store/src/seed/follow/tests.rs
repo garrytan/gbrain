@@ -664,7 +664,7 @@ fn a_changed_membership_and_a_changed_token_replace_their_old_version() {
     let s = stateful_pages();
     let all = fixtures();
     let token = all.iter().find(|(n, _)| *n == "access_tokens").unwrap().1[0].clone();
-    import_with_digests(&s, "access_tokens", &[token.clone()]);
+    import_with_digests(&s, "access_tokens", std::slice::from_ref(&token));
     let mut moved = all
         .iter()
         .find(|(n, _)| *n == "entity_identities")
