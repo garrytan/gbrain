@@ -167,6 +167,7 @@ const PARAM_FACTORY: Record<string, Record<string, unknown>> = {
   query: { query: 'WORLDSWEEP' },
   assemble_evidence: { hits: [{ source_id: 'default', slug: WORLD_FENCE_SLUG, chunk_id: 0 }], return_unit: 'page' },
   recall: { entity: WORLD_PAGE_SLUG },
+  check_claims: { text: 'We have 3 widgets.' },
   memory_recall: { query: WORLD.fact },
   memory_write: { facts: [{ fact: 'fresh sweep fact', provenance: 'sweep' }], idempotency_key: 'sweep-key' },
   memory_propose: { kind: 'timeline', target: WORLD_PAGE_SLUG, date: '2026-01-01', summary: 'sweep proposal', idempotency_key: 'sweep-propose-key' },
@@ -187,6 +188,9 @@ const PARAM_FACTORY: Record<string, Record<string, unknown>> = {
   get_chunks: { slug: WORLD_FENCE_SLUG },
   resolve_slugs: { partial: 'world-page' },
   whois: { query: WORLD.pageTitle },
+  policy_check: { verb: 'send' },
+  log_action: { verb: 'send', summary: 'Sent the sweep note', request_id: '6007a5e0-0000-4000-8000-0000000000a1' },
+  policy_reserve: { verb: 'spend', amount: 1, currency: 'USD', summary: 'Sweep hold', request_id: '6007a5e0-0000-4000-8000-0000000000a2' },
   volunteer_context: { window: 'Recent discussion about WORLDSWEEP topics and pages.' },
   chronicle_day: { date: '2026-01-02' },
   chronicle_since: { date: '2020-01-01' },
@@ -231,6 +235,8 @@ const PARAM_FACTORY: Record<string, Record<string, unknown>> = {
   // A valid mode, so the call reaches the publish gate (pinned off in beforeAll) instead of failing validation.
   set_memory_writeback: { mode: 'off' },
   memory_conversation_mode: { mode: 'all' },
+  household_add: { kind: 'supply', title: 'Sweep supply', cadence: '7d' },
+  household_mark: { slug: 'household/supplies/sweep-missing', event: 'bought' },
 };
 
 // Per-(op × shape) overrides for ops whose behavior legitimately differs
@@ -241,7 +247,7 @@ const PARAM_FACTORY: Record<string, Record<string, unknown>> = {
 const COORDINATED_WRITES = new Set(['put_page', 'put_pages', 'capture', 'delete_page', 'restore_page', 'revert_version', 'edit_page', 'append_page',
   'remember', 'forget', 'add_tag', 'remove_tag', 'add_timeline_entry',
   'takes_add', 'takes_update', 'takes_supersede', 'takes_resolve',
-  'get_write_request', 'list_write_requests', 'cancel_write_request']);
+  'get_write_request', 'list_write_requests', 'cancel_write_request', 'household_add', 'household_mark']);
 
 const EXPECTED_BY_SHAPE: Record<string, Partial<Record<Shape, Outcome>>> = {
   whoami: { scalar: 'error', federated: 'ok' },
@@ -279,6 +285,8 @@ const EXPECTED_OUTCOME: Record<string, Outcome> = {
   query: 'data',
   assemble_evidence: 'data',
   recall: 'data',
+  // C3: the sweep corpus holds no allowed-claims page, so the check answers not_found.
+  check_claims: 'ok',
   memory_recall: 'data',
   entity: 'data',
   delta: 'data',
@@ -300,6 +308,14 @@ const EXPECTED_OUTCOME: Record<string, Outcome> = {
   search_modes: 'ok',
   get_brain_identity: 'ok',
   whoami: 'ok', // base unused — per-shape override in EXPECTED_BY_SHAPE (above)
+  policy_check: 'ok',
+  onboarding_status: 'ok',
+  onboarding_off: 'error', // onboarding_owner_only: the sweep's remote caller is not the install's owner
+  agent_policy: 'ok',
+  capabilities: 'ok',
+  ledger: 'ok',
+  log_action: 'ok',
+  policy_reserve: 'ok',
   sources_list: 'ok',
   sources_status: 'ok',
   sources_resolve_path: 'error',
@@ -440,6 +456,10 @@ const EXPECTED_OUTCOME: Record<string, Outcome> = {
   // semantics are pinned in test/ops-loops.test.ts (single-source grant
   // required for loops_close; loops_mute denied outside caller scope).
   loops_close: 'error',
+  // GST-3825 H1: the fixture holds no household record, so household_due answers empty and household_mark finds none.
+  household_due: 'ok',
+  household_add: 'ok',
+  household_mark: 'error',
   loops_mute: 'error',
   loops_unmute: 'error',
   // Nightly learning PR 2: the generic invocation omits the required `ids` → validation error. Remote semantics

@@ -163,6 +163,7 @@ Rules:
   | 7 | Batch 14, 7c85d5696f (persistence binding reads, store listings, sync identity share, stored spellings, phone, repair kinds) |
   | 8 | `rust-engine/main` a597e7a6c6 (batch 14 plus sync 18: master's profile-facet trajectory filter, the snapshot refusals) |
   | 9 | Batch 15 (soak counter, request index states, page window chunk reads, concept rebuild, slug-spelling repair, loud search refusals and the members tail) |
+  | 11 | `rust-engine/labelled-only-reads-rust` (row 32e-b-2: labelled-only and lineage reads, `callerReference` in `private-provenance.ts`). Provisional, main's 10 plus one; the trunk renumbers at intake. `rust-engine/enforced-member-writes-rust` also claims 11 | this branch, merged with `rust-engine/main` f3fc6664a4 |
 
 Reserved tags:
 

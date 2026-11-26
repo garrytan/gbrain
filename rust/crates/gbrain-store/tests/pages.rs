@@ -823,6 +823,38 @@ fn the_holding_prune_keeps_the_newest_five_versions_and_marks_the_gap() {
     assert_eq!(store.prune_holding_page_versions(-1).unwrap(), 0);
 }
 
+#[test]
+fn no_version_prune_touches_an_agent_policy_page() {
+    let dir = TempDir::new("pages-policy-prune");
+    let store = open(&dir);
+    let policy = |slug: &str| PageInput {
+        page_type: "agent_policy".into(),
+        ..input(slug, "rules")
+    };
+    let page_id = store
+        .put_page(
+            "policy/agent",
+            &policy("policy/agent"),
+            &PutPageOptions::default(),
+        )
+        .unwrap()["id"]
+        .as_i64()
+        .unwrap();
+    for _ in 0..8 {
+        store.create_version("policy/agent", None).unwrap();
+    }
+    let count = || {
+        store
+            .get_versions("policy/agent", &VersionsOptions::default())
+            .unwrap()
+            .len()
+    };
+    let before = count();
+    assert!(before > 5);
+    assert_eq!(store.prune_holding_page_versions(page_id).unwrap(), 0);
+    assert_eq!(count(), before);
+}
+
 fn trust_of(store: &Store, slug: &str) -> (String, Option<Value>) {
     let rows = store
         .read_page_trust_rows(&PageTrustLookup {

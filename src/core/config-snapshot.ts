@@ -221,3 +221,25 @@ export function requestSnapshotRead<T>(engine: object, key: string, load: () => 
   if (!read) held.reads.set(key, read = requestSnapshot.run({ held, live: true }, load));
   return read;
 }
+
+/**
+ * L1 agent policy: config keys only an owner-confirmed path writes (the policy approvals and the
+ * brain-first settings). Both engines' setConfig and unsetConfig refuse them outside
+ * withReservedConfigWrite, which src/core/policy/authority.ts enters carrying the owner's proof, and
+ * copyMigrationConfig enters to copy the rows a brain already holds, unchanged, to its new engine.
+ */
+export const RESERVED_CONFIG_PREFIXES = ['policy.approved.', 'brain_first.'] as const;
+const reservedWriteScope = new AsyncLocalStorage<true>();
+
+export function withReservedConfigWrite<T>(fn: () => Promise<T>): Promise<T> {
+  return reservedWriteScope.run(true, fn);
+}
+
+export function reservedConfigWriteRefused(key: string): boolean {
+  return RESERVED_CONFIG_PREFIXES.some(prefix => key.startsWith(prefix)) && reservedWriteScope.getStore() !== true;
+}
+
+export function assertReservedConfigWrite(key: string): void {
+  if (!reservedConfigWriteRefused(key)) return;
+  throw Object.assign(new Error(`${key} is reserved: only an owner-confirmed gbrain policy command writes it, so nothing was changed.`), { name: 'ReservedConfigKeyError', code: 'policy_approval_reserved' });
+}

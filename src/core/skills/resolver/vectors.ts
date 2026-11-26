@@ -37,6 +37,8 @@ const BUILD_CONCURRENCY = 4;
 export const BUILD_EMBED_TIMEOUT_MS = 60_000;
 /** The longest a turn waits for its message's vector when the picker is off; with the picker on, the wait counts inside the picker's. */
 export const VECTOR_WAIT_MS = 1000;
+/** What a turn keeps after a vector wait its deadline cut short: the cosine scores, the word fallback, the render, and a timer that fires late on a busy machine (CI runners have stalled 30 to 60 ms). */
+export const VECTOR_DEADLINE_RESERVE_MS = 100;
 /** A build whose embedding failed for a passing reason is retried by the turn's auto-rebuild once its receipt is this old. */
 export const VECTOR_RETRY_MS = 10 * 60_000;
 export const VECTOR_RETRY_CODES: readonly EmbedSkipCode[] = ['provider_error', 'timeout', 'bad_reply'];

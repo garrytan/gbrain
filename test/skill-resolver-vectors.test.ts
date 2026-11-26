@@ -174,6 +174,22 @@ describe('vectors in a turn', () => {
     expect(strip(moved)).toBe(strip(words));
   });
 
+  test('a deadline ends the vector wait early enough for the word matcher to answer, even when the machine stalls as the wait ends', async () => {
+    embedder();
+    const h = await home(CONFIG);
+    __setEmbedTransportForTests(null);
+    const words = (await turn(h, 'summarize meeting notes', {}, { env: { PATH: process.env.PATH } })).output;
+    const STALL_MS = 60;
+    embedder(req => new Promise((_, reject) => req.signal.addEventListener('abort', () => {
+      const until = performance.now() + STALL_MS;
+      while (performance.now() < until);
+      reject(new Error('aborted'));
+    })));
+    const stalled = (await turn(h, 'summarize meeting notes', {}, { deadlineMs: 300 })).output;
+    expect(stalled.vectors).toMatchObject({ used: false, fallback: { code: 'timeout' } });
+    expect(strip(stalled)).toBe(strip(words));
+  });
+
   test('with no embedder the turn is byte-identical to a catalog built before vectors, and sends nothing', async () => {
     embedder();
     const h = await home(null);
