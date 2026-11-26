@@ -199,7 +199,7 @@ const watch_job: Operation = {
   description: 'This tool notifies you: it has gbrain wake this conversation through Wakeshift when job id finishes '
     + '(completed, failed, dead or cancelled), so you can stop polling. Call it right after submitting a long job, then end your turn '
     + 'or keep working. The wake names the job and says to call get_job for the result; it carries no page text. '
-    + 'Agent-scoped tokens watch only jobs they own. If no wake arrives, call wait_job.',
+    + 'Remote callers watch only the jobs they submitted, unless bound to the brain owner. If no wake arrives, call wait_job.',
   params: {
     id: { type: 'number', required: true, description: 'Job ID (from submit_job, submit_agent or list_jobs).' },
     ...CALLER_PARAMS,

@@ -1,6 +1,6 @@
 import { prepareRemoteJob, prepareRemoteAgent, assertRemoteJobControl } from '../minions/submission-authority.ts';
 import type { MinionJob } from '../minions/types.ts';
-import { jobActorSql, jobAudienceKey, type JobActor } from '../minions/types.ts';
+import { jobAudienceKey, jobOwnedSql, jobOwnerParams, type JobActor, type JobOwner } from '../minions/types.ts';
 import { currentCallerAccess } from '../search/private-visibility.ts';
 
 function publicJob(job: MinionJob) {
@@ -9,7 +9,7 @@ function publicJob(job: MinionJob) {
 }
 
 /** #7241: public jobs with submitted_by, blocked_by, liveness and spend (job-insight.ts), fenced like the row read. */
-async function insightJobs(ctx: OperationContext, jobs: MinionJob[], owner: string | null) {
+async function insightJobs(ctx: OperationContext, jobs: MinionJob[], owner: JobOwner | null) {
   const { describeJobs, withInsight } = await import('../minions/job-insight.ts');
   const insight = await describeJobs(ctx.engine, jobs, { owner, remote: ctx.remote !== false });
   return jobs.map(job => withInsight(publicJob(job), insight.get(job.id)));
@@ -66,37 +66,42 @@ import {
 // --- Jobs (Minions) ---
 
 /**
- * #4098 — agent-lane ownership fence for the generic jobs ops.
+ * #4098, GST-4010 — the ownership fence for every job read and control op (get_job, wait_job, list_jobs,
+ * get_job_progress, cancel_job, pause_job, resume_job, retry_job, replay_job, send_job_message, watch_job). Returns
+ * the JobOwner to fence on, or null when the caller is unfenced (the whole queue):
  *
- * get_job / list_jobs / get_job_progress / cancel_job are `scope: 'admin'`
- * ops that gained `agentCallable: true` so an agent-scoped OAuth client can
- * monitor + cancel the jobs it submitted via submit_agent — WITHOUT admin.
- * Returns the owner client id to fence on, or null when the caller is
- * unfenced (full visibility):
- *
- *   - trusted local CLI (ctx.remote === false): unfenced (today's behavior)
- *   - token with admin scope: unfenced (satisfied the op's declared scope)
- *   - stdio MCP (remote, transport 'stdio', no per-token auth): unfenced —
- *     the local-pipe surface ceiling governs there, same posture as today
- *   - anything else (the agentCallable carve-out, i.e. agent scope without
- *     admin): MUST carry ctx.auth.clientId; fenced on
- *     `data->>'__owner_client_id'`. Missing identity → permission_denied
- *     (fail closed, mirroring get_agent_job).
+ *   - trusted local CLI (ctx.remote === false): unfenced
+ *   - stdio MCP with no per-token auth: unfenced (the local pipe is the host operator)
+ *   - an admin credential bound to the brain owner (config access.owner_member, CallerAccess.owner) speaking for
+ *     itself: unfenced, the operator's whole-queue view
+ *   - every other remote caller, admin scope included: fenced on its verified principal (with the `__owner_client_id`
+ *     stamp of older agent rows) and the actor or audience its call declares (jobOwnedSql), so it reads and steers
+ *     only the jobs it submitted, never another credential's, another person's or the local operator's. A brain with
+ *     no owner set has no owner-bound credential, so every remote credential is fenced there.
+ *     No credential identity → permission_denied (fail closed).
  */
-export function agentOwnerFence(ctx: OperationContext, opName: string): string | null {
+export function agentOwnerFence(ctx: OperationContext, opName: string): JobOwner | null {
   if (ctx.remote === false) return null;
-  const scopes = ctx.auth?.scopes;
-  if (scopes && hasScope(scopes, 'admin')) return null;
   if (!ctx.auth && ctx.transport === 'stdio') return null;
-  const clientId = ctx.auth?.clientId;
-  if (!clientId || typeof clientId !== 'string') {
+  const access = currentCallerAccess();
+  if (hasScope(ctx.auth?.scopes ?? [], 'admin') && access.owner && !access.actor) return null;
+  const owner = callerJobOwner(ctx);
+  if (!owner) {
     throw scopeDeniedError({
       op: opName, required: ['admin'], auth: ctx.auth, transport: ctx.transport === 'http' ? 'http' : 'stdio',
-      message: `${opName} without admin scope requires an authenticated OAuth client identity.`,
+      message: `${opName} over a remote connection requires an authenticated client identity.`,
       legacy_error: 'permission_denied',
     });
   }
-  return clientId;
+  return owner;
+}
+
+/** The JobOwner of a remote caller's credential (jobOwnedSql); null when it carries no credential identity. */
+function callerJobOwner(ctx: OperationContext): JobOwner | null {
+  const principal = ctx.auth?.principal;
+  const clientId = typeof ctx.auth?.clientId === 'string' && ctx.auth.clientId ? ctx.auth.clientId : null;
+  if (!principal && !clientId) return null;
+  return { principal: principal ? { kind: principal.kind, id: principal.id } : null, clientId, actor: callerJobActor() };
 }
 
 function listJobsFix(why: string): Action {
@@ -127,10 +132,10 @@ function jobStateError(id: unknown, message: string, need: string): OperationErr
  * design (anti-enumeration): both throw the SAME error the unfenced path
  * throws for a missing id.
  */
-export async function assertJobOwned(ctx: OperationContext, id: number, owner: string): Promise<void> {
+export async function assertJobOwned(ctx: OperationContext, id: number, owner: JobOwner): Promise<void> {
   const rows = await ctx.engine.executeRaw<{ id: number }>(
-    `SELECT id FROM minion_jobs WHERE id = $1 AND data->>'__owner_client_id' = $2 AND ${jobActorSql(3)}`,
-    [id, owner, ...callerJobActor()],
+    `SELECT id FROM minion_jobs WHERE id = $1 AND ${jobOwnedSql(2)}`,
+    [id, ...jobOwnerParams(owner)],
   );
   if (rows.length === 0) {
     throw jobNotFound(`Job not found: ${id}`);
@@ -591,9 +596,8 @@ const get_agent_job: Operation = {
          FROM minion_jobs j
         WHERE j.id = $1
           AND j.name = 'subagent'
-          AND j.data->>'__owner_client_id' = $2
-          AND ${jobActorSql(3, 'j')}`,
-      [id, clientId, ...callerJobActor()],
+          AND ${jobOwnedSql(2, 'j')}`,
+      [id, ...jobOwnerParams(callerJobOwner(ctx)!)],
     );
     if (rows.length === 0) {
       // Uniform envelope: foreign-owned and nonexistent ids are
@@ -632,7 +636,7 @@ const get_job: Operation = {
   mutating: false,
   idempotent: true,
   outputRedaction: { exempt: 'admin-scoped job introspection: job params and results are operator data, not retrieved brain text' },
-  description: 'Get job status and details by ID. Agent-scoped tokens (no admin) see only jobs they own.',
+  description: 'Get job status and details by ID. Remote callers see only the jobs they submitted, unless bound to the brain owner.',
   params: {
     id: { type: 'number', required: true, description: 'Job ID' },
   },
@@ -659,7 +663,7 @@ const wait_job: Operation = {
   mutating: false,
   idempotent: true,
   outputRedaction: { exempt: 'admin-scoped job introspection: job params and results are operator data, not retrieved brain text' },
-  description: `Wait until a job is completed, failed, dead or cancelled (at most ${WAIT_JOB_MAX_S} s per call), then return it like get_job plus terminal. terminal: false means it is still running: call again. Agent-scoped tokens (no admin) wait only on jobs they own.`,
+  description: `Wait until a job is completed, failed, dead or cancelled (at most ${WAIT_JOB_MAX_S} s per call), then return it like get_job plus terminal. terminal: false means it is still running: call again. Remote callers wait only on the jobs they submitted, unless bound to the brain owner.`,
   params: {
     id: { type: 'number', required: true, description: 'Job ID' },
     timeout_s: { type: 'number', description: `Seconds to wait (default 30, at most ${WAIT_JOB_MAX_S}).` },
@@ -694,7 +698,7 @@ const list_jobs: Operation = {
   mutating: false,
   idempotent: true,
   outputRedaction: { exempt: 'admin-scoped job introspection: job params and results are operator data, not retrieved brain text' },
-  description: 'List background jobs with optional status/queue/name filters; pass fields to project each job to the columns you need. Use when checking queued or failed work. Needs admin scope (agent-scoped tokens see only jobs they own).',
+  description: 'List background jobs with optional status/queue/name filters; pass fields to project each job to the columns you need. Use when checking queued or failed work. Needs admin scope; remote callers (agent-scoped tokens too) see only the jobs they submitted, unless bound to the brain owner.',
   params: {
     status: { type: 'string', description: 'Filter by status (waiting, active, completed, failed, delayed, dead, cancelled)' },
     queue: { type: 'string', description: 'Filter by queue name' },
@@ -718,7 +722,7 @@ const list_jobs: Operation = {
       try {
         const page = await listFinishedSince(ctx.engine, String(p.finished_since), {
           queue: p.queue as string | undefined, name: p.name as string | undefined, limit: (p.limit as number) || 50,
-          ...(owner !== null ? { ownerClientId: owner, ownerActor: callerJobActor() } : {}),
+          ...(owner !== null ? { owner } : {}),
         });
         return { jobs: await project(page.jobs), next_cursor: page.next_cursor };
       } catch (e) {
@@ -733,8 +737,8 @@ const list_jobs: Operation = {
       page = await listJobPage(ctx.engine, {
         status: p.status as string | undefined, queue: p.queue as string | undefined, name: p.name as string | undefined, limit,
         ...(p.cursor !== undefined && p.cursor !== null ? { cursor: String(p.cursor) } : {}),
-        // #4098: SQL-side ownership fence for agent-scoped callers.
-        ...(owner !== null ? { ownerClientId: owner, ownerActor: callerJobActor() } : {}),
+        // #4098, GST-4010: SQL-side ownership fence for every fenced remote caller.
+        ...(owner !== null ? { owner } : {}),
       });
     } catch (e) {
       if (e instanceof JobListCursorError) throw invalidParam(ctx, 'list_jobs', 'cursor', `list_jobs: ${e.message}`, { example: '1792000000000000:42' });
@@ -768,7 +772,7 @@ const cancel_job: Operation = {
     // #4098: the owner predicate rides the recursive cancel's CTE seed — a
     // fenced caller can cancel only roots it owns (descendants of an owned
     // root cascade as usual). Foreign and missing ids share one envelope.
-    const cancelled = await queue.cancelJob(p.id as number, owner !== null ? { ownerClientId: owner, ownerActor: callerJobActor() } : undefined);
+    const cancelled = await queue.cancelJob(p.id as number, owner !== null ? { owner } : undefined);
     if (!cancelled) throw jobStateError(p.id, `Cannot cancel job ${p.id} (may already be in terminal status)`, 'Only waiting, active, delayed or paused jobs can be cancelled.');
     // private_queue_owner_token is a capability credential (lease renewal /
     // attach), not job data — never expose it over MCP envelopes.
@@ -788,6 +792,8 @@ const retry_job: Operation = {
   scope: 'admin',
   handler: async (ctx, p) => {
     if (ctx.dryRun) return { dry_run: true, action: 'retry_job', id: p.id };
+    const owner = agentOwnerFence(ctx, 'retry_job');
+    if (owner !== null) await assertJobOwned(ctx, p.id as number, owner);
     const { MinionQueue } = await import('../minions/queue.ts');
     const queue = new MinionQueue(ctx.engine);
     const prior = await queue.getJob(p.id as number);
@@ -806,7 +812,7 @@ const get_job_progress: Operation = {
   mutating: false,
   idempotent: true,
   outputRedaction: { exempt: 'admin-scoped job introspection: job params and results are operator data, not retrieved brain text' },
-  description: 'Get structured progress for a running job. Agent-scoped tokens (no admin) see only jobs they own.',
+  description: 'Get structured progress for a running job. Remote callers see only the jobs they submitted, unless bound to the brain owner.',
   params: {
     id: { type: 'number', required: true, description: 'Job ID' },
   },
@@ -835,6 +841,8 @@ const pause_job: Operation = {
   scope: 'admin',
   handler: async (ctx, p) => {
     if (ctx.dryRun) return { dry_run: true, action: 'pause_job', id: p.id };
+    const owner = agentOwnerFence(ctx, 'pause_job');
+    if (owner !== null) await assertJobOwned(ctx, p.id as number, owner);
     const { MinionQueue } = await import('../minions/queue.ts');
     const queue = new MinionQueue(ctx.engine);
     const job = await queue.pauseJob(p.id as number);
@@ -855,6 +863,8 @@ const resume_job: Operation = {
   scope: 'admin',
   handler: async (ctx, p) => {
     if (ctx.dryRun) return { dry_run: true, action: 'resume_job', id: p.id };
+    const owner = agentOwnerFence(ctx, 'resume_job');
+    if (owner !== null) await assertJobOwned(ctx, p.id as number, owner);
     const { MinionQueue } = await import('../minions/queue.ts');
     const queue = new MinionQueue(ctx.engine);
     const prior = await queue.getJob(p.id as number);
@@ -879,6 +889,8 @@ const replay_job: Operation = {
   mutating: true,
   handler: async (ctx, p) => {
     if (ctx.dryRun) return { dry_run: true, action: 'replay_job', id: p.id };
+    const owner = agentOwnerFence(ctx, 'replay_job');
+    if (owner !== null) await assertJobOwned(ctx, p.id as number, owner);
     const { MinionQueue } = await import('../minions/queue.ts');
     const queue = new MinionQueue(ctx.engine);
     const prior = await queue.getJob(p.id as number);
@@ -923,6 +935,8 @@ const send_job_message: Operation = {
             inputs: [{ name: 'arguments', how: 'The JSON arguments you passed: the job id and the payload to send.' }] } },
         );
       }
+      const owner = agentOwnerFence(ctx, 'send_job_message');
+      if (owner !== null) await assertJobOwned(ctx, p.id as number, owner);
       const sender = `mcp:${clientId.slice(0, 8)}`;
       // The queue-level sender auth only admits in-band identities ('admin' /
       // the parent job id) — see MinionQueue.sendMessage. The op layer has
