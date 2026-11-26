@@ -12,6 +12,8 @@
  */
 import { opError } from '../../ops/contract.ts';
 import type { CallerAccess } from '../../search/private-visibility.ts';
+import { decodeValue, encodeValue, type Wire } from './codec.ts';
+import { ownerIpcRefusal } from './routes.ts';
 
 /** The part of an authenticated principal this decision reads (served/auth.ts `AuthenticatedPrincipal`). */
 export interface FramePrincipal {
@@ -58,4 +60,24 @@ export function frameAccessFor(principal: FramePrincipal, claimed: CallerAccess 
   if (own === undefined) throw refused('access_record_missing', member);
   if (claimed !== null && canonical(claimed) !== canonical(own)) throw refused('access_mismatch', member);
   return own;
+}
+
+/**
+ * frameAccessFor on the wire: the frame's encoded `access` record (undefined when it carries none) in, the encoded
+ * record the call runs under out (undefined: the principal's own trusted view). The owner's narrowing claim comes
+ * back byte-identical. Throws the owner socket's refusal for a record that is not an object with an identity list,
+ * and frameAccessFor's refusals; nothing has run.
+ */
+export function frameAccessWire(principal: FramePrincipal, wire: Wire | undefined, member: string): Wire | undefined {
+  let claimed: CallerAccess | null = null;
+  if (wire !== undefined) {
+    const value = decodeValue(wire);
+    if (!value || typeof value !== 'object' || Array.isArray(value) || !Array.isArray((value as { identity?: unknown }).identity)) {
+      throw ownerIpcRefusal(member, 'its caller access record is not an object with an identity list');
+    }
+    claimed = value as CallerAccess;
+  }
+  const resolved = frameAccessFor(principal, claimed, member);
+  if (resolved === claimed) return wire;
+  return resolved === null ? undefined : encodeValue(resolved);
 }

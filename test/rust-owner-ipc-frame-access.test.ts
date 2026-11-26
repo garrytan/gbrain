@@ -11,7 +11,8 @@
  * 3. Seams: none; the function is pure. The served session's two call sites wire it in (lane L3, part 3 of B3).
  */
 import { describe, expect, test } from 'bun:test';
-import { frameAccessFor, type FramePrincipal } from '../src/core/rust-engine/owner-ipc/frame-access.ts';
+import { frameAccessFor, frameAccessWire, type FramePrincipal } from '../src/core/rust-engine/owner-ipc/frame-access.ts';
+import { decodeValue, encodeValue } from '../src/core/rust-engine/owner-ipc/codec.ts';
 import type { CallerAccess } from '../src/core/search/private-visibility.ts';
 
 const OWNER: FramePrincipal = { kind: 'owner_token', floorRemote: false };
@@ -57,5 +58,15 @@ describe('the access record a served call runs under (B3)', () => {
     const owned: FramePrincipal = { kind: 'owner_token', floorRemote: false, record: ALICE_RECORD };
     expect(frameAccessFor(owned, null, 'getPage')).toBe(ALICE_RECORD);
     expect(refusal(() => frameAccessFor(owned, NARROW, 'getPage'))?.reason).toBe('access_mismatch');
+  });
+
+  test('on the wire: the owner\'s claim comes back byte-identical, another principal\'s record replaces it, a malformed record refuses', () => {
+    const wire = encodeValue(NARROW);
+    expect(frameAccessWire(OWNER, wire, 'getPage')).toBe(wire);
+    expect(frameAccessWire(OWNER, undefined, 'getPage')).toBeUndefined();
+    expect(decodeValue(frameAccessWire(ALICE, undefined, 'getPage')!)).toEqual(ALICE_RECORD);
+    expect(decodeValue(frameAccessWire(ALICE, encodeValue(ALICE_RECORD), 'getPage')!)).toEqual(ALICE_RECORD);
+    expect(refusal(() => frameAccessWire(ALICE, wire, 'getPage'))?.reason).toBe('access_mismatch');
+    expect(refusal(() => frameAccessWire(OWNER, encodeValue({ identity: 'member:alice-example' }), 'getPage'))?.code).toBe('engine_capability_missing'); // the owner socket's own refusal for it (server.ts callerAccessOf)
   });
 });
