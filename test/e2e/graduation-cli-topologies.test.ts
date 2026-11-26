@@ -7,17 +7,20 @@
  */
 import { describe, expect, test } from 'bun:test';
 import postgres from '#postgres';
-import { DATABASE_URL, gbrain, graduationTest, graduationTestIf, hostedRoleTarget, passwordOf, pooledUrl } from '../helpers/graduation-e2e.ts';
+import { DATABASE_URL, emptyTarget, gbrain, graduationTest, graduationTestIf, hostedRoleTarget, passwordOf, pooledUrl } from '../helpers/graduation-e2e.ts';
 import { useGraduationCases } from '../helpers/graduation-cli-cases.ts';
-import { expectGraduated, planAndRun } from '../helpers/graduation-scenarios.ts';
+import { expectGraduated, legacyCase, planAndRun } from '../helpers/graduation-scenarios.ts';
 
 const { cleanups, fresh } = useGraduationCases();
 
 describe.skipIf(!DATABASE_URL)('graduation: connection topologies', () => {
   graduationTestIf(!process.env.GBRAIN_PGBOUNCER_URL)('through transaction-mode PgBouncer with DDL on the direct route', async () => {
-    const c = await fresh('pgbouncer');
-    const pooled = pooledUrl(c.target)!;
-    const { argv, env } = await planAndRun(c, { url: pooled, env: { GBRAIN_DIRECT_DATABASE_URL: c.target.url } });
+    // In sharded CI, the pooler and the shard's general test URL can point at different PostgreSQL servers.
+    const target = await emptyTarget(process.env.GBRAIN_PGBOUNCER_DIRECT_URL || DATABASE_URL);
+    cleanups.push(() => target.close());
+    const c = await legacyCase('pgbouncer', target);
+    const pooled = pooledUrl(target)!;
+    const { argv, env } = await planAndRun(c, { url: pooled, env: { GBRAIN_DIRECT_DATABASE_URL: target.url } });
     const run = await gbrain(argv, { home: c.fx.home, env, timeoutMs: 900_000 });
     expect({ code: run.code, stderr: run.code === 0 ? '' : run.stderr.slice(-3000) }).toEqual({ code: 0, stderr: '' });
     await expectGraduated(c, 'pgbouncer');
