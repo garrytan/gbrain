@@ -55,7 +55,7 @@ export interface EngineConnectOptions {
    */
   oneShotRead?: boolean;
   /**
-   * The command only reads: a Rust brain whose store is missing or moved is refused with `brain_missing` and nothing is
+   * The command only reads (a one-shot read, `oneShotRead`, counts too): a Rust brain whose store is missing or moved is refused with `brain_missing` and nothing is
    * created. Unset, a command may still create a brand-new Rust brain's store, but never replaces one that was there
    * (`rustStoreGuard`, src/commands/doctor/missing-brain.ts).
    */
@@ -97,7 +97,7 @@ export async function connectEngineForServe(hooks: EngineConnectHooks, opts: Eng
   let createStore: boolean | undefined;
   if (config.engine === 'rust' && config.database_path && isAbsolute(config.database_path)) {
     const { rustStoreGuard } = await import('../commands/doctor/missing-brain.ts');
-    const verdict = rustStoreGuard(config.database_path, configPath(), opts.command ?? 'serve', opts.readOnly !== true);
+    const verdict = rustStoreGuard(config.database_path, configPath(), opts.command ?? 'serve', opts.readOnly !== true && opts.oneShotRead !== true);
     if (typeof verdict !== 'string') throw verdict;
     createStore = verdict === 'create';
   }

@@ -196,10 +196,10 @@ describe.skipIf(!HAVE_ADDON)('more ways a missing store must not be created', ()
   });
   afterAll(() => { try { rmSync(h, { recursive: true, force: true }); } catch { /* best effort */ } });
 
-  test('a brain that never had a store: reads (diag included) refuse and create nothing', async () => {
+  test('a brain that never had a store: reads (diag and gbrain call included) refuse and create nothing', async () => {
     const fresh = join(h, '.gbrain', 'fresh.rust');
     cfg(fresh);
-    for (const args of [['get', 'alpha', '--json'], ['diag', '--json'], ['search', 'stats']]) {
+    for (const args of [['get', 'alpha', '--json'], ['diag', '--json'], ['search', 'stats'], ['call', 'get_page', '{"slug":"alpha"}'], ['call', 'list_pages', '{}']]) {
       const r = await runCli(args, { home: h, env: env(), timeoutMs: 120_000 });
       expect(r.exitCode, `${args.join(' ')}: ${r.stdout}${r.stderr}`).toBe(1);
       expect(`${r.stdout}${r.stderr}`, args.join(' ')).toContain('brain_missing');
