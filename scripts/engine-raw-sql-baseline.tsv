@@ -663,7 +663,7 @@ src/core/notifier/nudge.ts	execute_raw	1
 src/core/notifier/resident.ts	execute_raw	3
 src/core/notifier/status.ts	execute_raw	2
 src/core/notifier/store.ts	execute_raw	15
-src/core/oauth-grants.ts	sql_template	27	#9364 refresh families: the v338 table probe, the family column on issue, the rotation record and its grace wipe, the replay lookup, the family revocation (tokens, sealed pairs, the owning client lock), the client-revoke and expiry sweeps; all run inside the OAuth client-row lock transaction, which has no engine method yet; converts with the rest of the OAuth grant lifecycle
+src/core/oauth-grants.ts	sql_template	29	#9364 refresh families: the v338 table probe, the family column on issue, the rotation record and its grace wipe, the replay lookup (owner read, then the owning client lock before the rotation row), the family revocation (tokens, sealed pairs, the owning client lock), the client-revoke and expiry sweeps (the grace-window wipe and the expired-record delete, each skipping locked rows); all run inside the OAuth client-row lock transaction, which has no engine method yet; converts with the rest of the OAuth grant lifecycle
 src/core/oauth-provider.ts	sql_template	22
 src/core/onboard/checks.ts	execute_raw	5
 src/core/onboard/first-session.ts	execute_raw	3	first-session suggestion: the onboarding.first_session record compare-and-swap in config (insert and update) and the pointer read of recent world-visible pages under remoteReadFloorSql; converts with setup-history.ts

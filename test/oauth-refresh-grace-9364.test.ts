@@ -148,6 +148,33 @@ for (const kind of testBackends()) {
       expect((await grants().refresh(clientId, tokens.refresh_token!, ['write', 'read'])).refresh_token).toBe(first.refresh_token);
     });
 
+    test('a refresh that asked for a repeated scope returns the same pair when retried unchanged', async () => {
+      clock = Date.now();
+      const { clientId, tokens } = await signIn('grace-repeated-scope');
+      const first = await grants().refresh(clientId, tokens.refresh_token!, ['read', 'read']);
+      const retry = await grants().refresh(clientId, tokens.refresh_token!, ['read', 'read']);
+      expect(retry.refresh_token).toBe(first.refresh_token);
+      expect((await grants().refresh(clientId, tokens.refresh_token!, ['read'])).refresh_token).toBe(first.refresh_token);
+    });
+
+    test('the sweep skips rotation rows another transaction holds instead of waiting on them', async () => {
+      if (kind !== 'postgres') return;
+      clock = Date.now();
+      const { clientId, tokens } = await signIn('grace-sweep-locked');
+      await grants().refresh(clientId, tokens.refresh_token!);
+      clock += REFRESH_REUSE_GRACE_MS + 1_000;
+      const outcome = await transaction(async sql => {
+        await sql`SELECT token_hash FROM oauth_refresh_rotations WHERE token_hash = ${hashToken(tokens.refresh_token!)} FOR UPDATE`;
+        return await Promise.race([grants().sweepExpiredRotations().then(() => 'swept'), new Promise(resolve => setTimeout(() => resolve('waited'), 3_000))]);
+      });
+      expect(outcome).toBe('swept');
+      const [held] = await engine.executeRaw<{ sealed_pair: string | null }>('SELECT sealed_pair FROM oauth_refresh_rotations WHERE token_hash = $1', [hashToken(tokens.refresh_token!)]);
+      expect(held!.sealed_pair).toBeTruthy();
+      await grants().sweepExpiredRotations();
+      const [after] = await engine.executeRaw<{ sealed_pair: string | null }>('SELECT sealed_pair FROM oauth_refresh_rotations WHERE token_hash = $1', [hashToken(tokens.refresh_token!)]);
+      expect(after!.sealed_pair).toBeNull();
+    }, 30_000);
+
     test('a cross-client replay racing the owner client\'s refresh and revocation never deadlocks', async () => {
       for (let round = 0; round < 8; round++) {
         clock = Date.now();

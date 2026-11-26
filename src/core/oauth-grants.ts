@@ -398,8 +398,9 @@ export class OAuthGrants {
       await sql`UPDATE oauth_refresh_rotations SET sealed_pair = NULL WHERE family_id = ${family}`;
       return FAMILY_REVOKED;
     }
-    const granted = parseScopeString(pair.tokens.scope);
-    if (requested && (new Set(requested).size !== granted.length || requested.some(scope => !granted.includes(scope)))) {
+    const granted = new Set(parseScopeString(pair.tokens.scope));
+    const asked = new Set(requested);
+    if (requested && (asked.size !== granted.size || [...asked].some(scope => !granted.has(scope)))) {
       throw new InvalidGrantError('Requested scope differs from the refresh this token already completed; use the refresh token it returned');
     }
     if (requestedResource && requestedResource.toString() !== pair.resource) throw new InvalidGrantError('Requested resource exceeds the approved grant');
@@ -462,11 +463,17 @@ export class OAuthGrants {
     });
   }
 
-  /** Sealed pairs are wiped once their grace window passes; rotation records outlive it until the rotated token would have expired. */
+  /**
+   * Sealed pairs are wiped once their grace window passes; rotation records outlive it until the rotated token would
+   * have expired. Rows a refresh or a family revocation holds are skipped for a later sweep, so the sweep never waits
+   * on a lock and can never deadlock one of them.
+   */
   async sweepExpiredRotations(): Promise<number> {
     if (!await this.hasRefreshFamilies(this.options.sql)) return 0;
-    await this.options.sql`UPDATE oauth_refresh_rotations SET sealed_pair = NULL WHERE sealed_pair IS NOT NULL AND rotated_at_ms <= ${this.now() - REFRESH_REUSE_GRACE_MS}`;
-    return (await this.options.sql`DELETE FROM oauth_refresh_rotations WHERE expires_at < ${Math.floor(this.now() / 1000)} RETURNING 1`).length;
+    await this.options.sql`UPDATE oauth_refresh_rotations SET sealed_pair = NULL WHERE token_hash IN (SELECT token_hash FROM oauth_refresh_rotations
+      WHERE sealed_pair IS NOT NULL AND rotated_at_ms <= ${this.now() - REFRESH_REUSE_GRACE_MS} FOR UPDATE SKIP LOCKED)`;
+    return (await this.options.sql`DELETE FROM oauth_refresh_rotations WHERE token_hash IN (SELECT token_hash FROM oauth_refresh_rotations
+      WHERE expires_at < ${Math.floor(this.now() / 1000)} FOR UPDATE SKIP LOCKED) RETURNING 1`).length;
   }
 
   /**
