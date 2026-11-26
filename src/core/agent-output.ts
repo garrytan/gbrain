@@ -18,6 +18,7 @@ import { StructuredAgentError } from './errors.ts';
 import { canonicalCodeFor, codeEntry, codeClass, codeRetryable, exitCodeForCode } from './error-catalogue.ts';
 import { VERB_NAMES } from './verbs.ts';
 import { classifyPgAccessError, formatDbAccessMarker } from './pg-access-classify.ts';
+import { isWatchdogConnectionLoss } from './retry-matcher.ts';
 import { isReadOnlyTransactionError } from './postgres-engine/read-write-transactions.ts';
 import { redactConnectionInfo } from './audit/redact-connection-info.ts';
 import { redactUrlsInText } from './url-redact.ts';
@@ -771,6 +772,18 @@ function argvFromPricing(command: string): string[] | undefined {
 }
 
 function dbParts(e: unknown, ctx: AgentErrorContext): EnvelopeParts | undefined {
+  if (isWatchdogConnectionLoss(e)) {
+    const verb = isVerbOp(ctx);
+    const code = verb ? 'unavailable' : 'pg_connection_stuck';
+    return {
+      error: code, code, reason: 'pg_connection_stuck',
+      retryable: ctx.mutating === false || ctx.idempotent === true,
+      message: 'The Postgres watchdog retired a connection after its statement exceeded the in-flight budget.',
+      suggestion: 'Inspect the operation status before retrying a write. Check the host pool and its pg_connection_stuck log for the affected statement.',
+      fix: statusReadFix(ctx) ?? diagnosticFix(ctx, 'Check the Postgres pool after it retired the connection.'),
+      ...(verb ? { detail: 'pg_connection_stuck', protocol_version: 1 as const } : {}),
+    };
+  }
   const d = classifyPgAccessError(e, { url: ctx.db?.url ?? null, brainId: ctx.db?.brainId });
   if (d.reason === 'unknown') return undefined;
   const verb = isVerbOp(ctx);

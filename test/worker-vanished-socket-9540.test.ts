@@ -36,8 +36,11 @@ test('a connect to a vanished Unix socket is recognised; a missing file is not, 
   expect(isVanishedSocketError(Object.assign(new Error("ENOENT: no such file or directory, open 'notes/a.md'"), { code: 'ENOENT', syscall: 'open' }))).toBe(false);
 });
 
-test('the worker reconnects and keeps polling when a claim finds the socket gone', async () => {
-  const error = await vanishedSocketError();
+test.each([
+  ['a vanished socket', vanishedSocketError, ['claim', 'reconnect', 'read-claim', 'claim']],
+  ['a watchdog-retired connection', async () => Object.assign(new Error('write CONNECTION_STUCK /example/socket'), { code: 'CONNECTION_STUCK' }), ['claim', 'read-claim', 'claim']],
+] as const)('the worker keeps polling after %s during a claim', async (_, failure, expected) => {
+  const error = await failure();
   const events: string[] = [];
   const engine = {
     kind: 'postgres',
@@ -46,6 +49,7 @@ test('the worker reconnects and keeps polling when a claim finds the socket gone
       if (sql.includes('SELECT id, submission_authority FROM minion_jobs') && sql.includes('submission_authority IS DISTINCT FROM')) return [];
       throw new Error('Unexpected SQL in worker socket fixture');
     },
+    findLiveMinionClaim: async () => { events.push('read-claim'); return null; },
     reconnect: async () => { events.push('reconnect'); },
   } as unknown as BrainEngine;
   const worker = new MinionWorker(engine, { pollInterval: 1, stalledInterval: 60_000, healthCheckInterval: 0 });
@@ -73,5 +77,5 @@ test('the worker reconnects and keeps polling when a claim finds the socket gone
   } finally {
     console.error = origError;
   }
-  expect(events).toEqual(['claim', 'reconnect', 'claim']);
+  expect(events).toEqual([...expected]);
 });

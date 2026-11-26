@@ -111,6 +111,20 @@ describe('db.disconnect()', () => {
 });
 
 describe('instance-pool reconnect()', () => {
+  test('a socket retired by the watchdog leaves the other pool members alone', async () => {
+    const engine = new PostgresEngine();
+    let rebuilds = 0;
+    let closes = 0;
+    const livePool = { end: async () => { closes++; } };
+    Object.assign(engine, {
+      _savedConfig: { database_url: url, poolSize: 2 }, _connectionStyle: 'instance', _sql: livePool,
+      connect: async () => { rebuilds++; },
+    });
+    await engine.reconnect({ error: Object.assign(new Error('timed out'), { code: 'CONNECTION_STUCK' }) });
+    expect(rebuilds).toBe(0);
+    expect(closes).toBe(0);
+  });
+
   test('a reconnect during a running rebuild returns at once, and the next one after it settles rebuilds again', async () => {
     const engine = new PostgresEngine();
     const livePool = { end: async () => {} };

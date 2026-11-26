@@ -585,6 +585,17 @@
           "src-a"
         ]
       },
+      "findLiveMinionClaim#direct": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "findOntologyConflicts#default": {
         "flagOffLanes": [
           "pool"
@@ -4054,6 +4065,7 @@
         "findCandidateDuplicates": "none",
         "findDuplicatePage": "direct",
         "findDuplicatePages": "direct",
+        "findLiveMinionClaim": "none",
         "findOntologyConflicts": "none",
         "findOrphanPages": "none",
         "findPages": "direct",

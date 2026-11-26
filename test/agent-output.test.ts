@@ -159,6 +159,26 @@ describe('notice ordering and CLI channel', () => {
 });
 
 describe('renderCliError', () => {
+  test('a retired Postgres connection names the watchdog and a read-only next step', () => {
+    const failure = Object.assign(new Error('write CONNECTION_STUCK /example/private/socket'), { code: 'CONNECTION_STUCK' });
+    const result = renderCliError(failure, { json: true, command: 'jobs', tty: false });
+    const error = JSON.parse(result.stdout!);
+    expect(error.code).toBe('pg_connection_stuck');
+    expect(error.retryable).toBe(false);
+    expect(toAgentError(failure, { transport: 'stdio', op: 'get_page', mutating: false, render: ctx() }).retryable).toBe(true);
+    expect(error.fix.argv.slice(0, 3)).toEqual(['gbrain', 'doctor', '--json']);
+    expect(result.stdout).not.toContain('/example/private/socket');
+    expect(result.exitCode).not.toBe(0);
+
+    const unknownWrite = toAgentError(failure, { transport: 'http', op: 'submit_job', mutating: true, outcome: 'unknown', render: ctx({ transport: 'http' }) });
+    expect(unknownWrite.retryable).toBe(false);
+    expect(unknownWrite.fix?.mcp?.tool).toBe('list_jobs');
+    expect(unknownWrite.suggestion).not.toMatch(/retry the failed call/i);
+
+    const untyped = renderCliError(new Error('CONNECTION_STUCK'), { json: true, command: 'jobs', tty: false });
+    expect(JSON.parse(untyped.stdout!).code).toBe('internal_error');
+  });
+
   test('TTY order Error / Fix / Why / Docs; exit from the registry', () => {
     const e = opError('invalid_params', 'Unknown sort.', 'Use updated.', { why: 'w', fix: action({ argv: ['gbrain', 'list', '--sort', 'updated'] }) });
     const r = renderCliError(e, { json: false, command: 'list', tty: true });

@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 327/456
+# covered: 328/457
 # calibration_profiles: 0/2
 # trust: 0/6
 # minion_queue: 0/2
@@ -48,6 +48,7 @@
 # import_guards: 9/10
 # cycle_locks: 6/9
 # raw_sql: 4/4
+# minion_claims: 1/1
 # code_edges: 8/8
 # eval_capture: 5/5
 # large_page: 2/2
@@ -396,6 +397,7 @@ runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 executeRaw	raw_sql	yes	7	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
+findLiveMinionClaim	minion_claims	yes	1	no	yes	yes	refuses:raw_sql
 addCodeEdges	code_edges	yes	3	yes	yes	yes	serves
 deleteCodeEdgesForChunks	code_edges	yes	1	no	yes	yes	serves
 getCallersOf	code_edges	yes	3	no	yes	yes	serves

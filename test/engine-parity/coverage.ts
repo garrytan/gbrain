@@ -114,6 +114,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'readTransactionSettings', 'applyTransactionSettings', 'readLedgerSource', 'isFolderRestricted'],
   cycle_locks: ['releasePageEmbeddingLease', 'renewPageEmbeddingLease', 'takePageEmbeddingLease', 'acquireCycleLock', 'refreshCycleLock', 'releaseCycleLock', 'readCycleLocks', 'deleteCycleLock', 'deleteCycleLockIfStale'],
   raw_sql: ['runMigration', 'executeRaw', 'executeRawDirect', 'keywordBoundedRead'],
+  minion_claims: ['findLiveMinionClaim'],
   code_edges: ['addCodeEdges', 'deleteCodeEdgesForChunks', 'getCallersOf', 'getCalleesOf', 'getEdgesByChunk',
     // group D (code traversal cache)
     'getCodeTraversalCache', 'putCodeTraversalCache', 'clearCodeTraversalCache'],

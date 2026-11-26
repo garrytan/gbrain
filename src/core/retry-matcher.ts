@@ -84,6 +84,11 @@ export function isConnectionCode(code: string | undefined): boolean {
   return code !== undefined && CONNECTION_CODES.has(code);
 }
 
+/** The watchdog closed an in-flight socket. A write may already have committed. */
+export function isWatchdogConnectionLoss(err: unknown): boolean {
+  return getCode(err) === 'CONNECTION_STUCK';
+}
+
 /**
  * GBRA-133 S-70: does this message name a path? Connection text is only read from a message that names none, so an
  * unexpected error quoting a file such as `notes/connection closed.md` is never taken for a dropped connection.
@@ -221,6 +226,7 @@ export function isServerRefusingConnections(err: unknown): boolean {
  * caller that sent a write must re-read its retained request id instead of inferring rollback.
  */
 export function isConnectionLoss(err: unknown): boolean {
+  if (isWatchdogConnectionLoss(err)) return true;
   const code = getCode(err);
   if (code && (/^08/.test(code) || isConnectionCode(code) || ['57P01', '57P02', '57P03'].includes(code))) return true;
   const msg = getMessage(err);

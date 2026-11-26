@@ -48,6 +48,7 @@ const OOS = {
   largePage: 'out-of-scope:large-page (born in engine-sql/large-page.ts; pinned by test/engine-parity/large-page.test.ts and test/large-page-sql-pin.test.ts)',
   pageBody: 'out-of-scope:page-body (Wave B segmented storage, born in engine-sql/page-body.ts; pinned by test/engine-sql-page-body.test.ts)',
   cycleLocks: 'out-of-scope:cycle-locks (gbrain_cycle_locks leases, born in engine-sql/cycle-locks.ts; pinned by test/engine-parity/cycle-locks.test.ts)',
+  minionClaims: 'out-of-scope:minion-claims (born in engine-sql/minion-claims.ts; pinned by test/engine-parity/raw-sql.test.ts)',
   withdrawalFence: 'out-of-scope:withdrawal-fence (born in engine-sql/withdrawal-fence.ts; pinned by test/withdrawal-fence-sql-pin.test.ts)',
   withdrawalPages: 'out-of-scope:withdrawal-pages (born in engine-sql/withdrawal-pages.ts; pinned by test/withdrawal-pages-sql-pin.test.ts)',
   fieldUsage: 'out-of-scope:field-usage (born in engine-sql/field-usage.ts; pinned by test/engine-parity/field-usage.test.ts and test/schema-field-usage-typed-members.test.ts)',
@@ -226,6 +227,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listVersionReasonWriters': OOS.trustTierReads,
   'listPageTypesByIds': OOS.trustTierReads,
   'readWithdrawalDiscovery': OOS.withdrawalDiscovery,
+  'findLiveMinionClaim': OOS.minionClaims,
   'applyDecideReviewQueue': OOS.decideProposals,
   'applyDecideSweepDeferred': OOS.decideProposals,
   'getDecideProposal': OOS.decideProposals,
@@ -1135,6 +1137,7 @@ export const SQL_CASES: SqlCase[] = [
  * scoping is pinned, including the search paths that open transactions.
  */
 export const EXTRA_READ_CASES: SqlCase[] = [
+  ...variants('findLiveMinionClaim', [['direct', (e) => e.findLiveMinionClaim('readback', 'worker:receipt')]]),
   ...variants('searchKeyword', [
     ['fts', (e) => e.searchKeyword('alice example')],
     ['fts+sourceIds', (e) => e.searchKeyword('alice example', { sourceIds: SRCS })],

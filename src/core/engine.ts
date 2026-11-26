@@ -19,6 +19,7 @@ import type { FindPagesQuery, FoundPages } from './page-find.ts';
 import type { PageCountQuery, PageCounts, TypeGrouper } from './page-counts.ts';
 import type { GeneratedPageRow, PageCollapseFactRow } from './engine-sql/search-reads.ts';
 import type { OnboardSignal } from './engine-sql/health.ts';
+import type { MinionJob } from './minions/types.ts';
 import type { EntityTypeFilter } from './schema-pack/entity-types.ts';
 import type { ChunkMove } from './page-state/chunk-moves.ts';
 import type { DerivedAliasRow } from './engine-sql/pages.ts';
@@ -3189,6 +3190,9 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
     params?: unknown[],
     opts?: { signal?: AbortSignal },
   ): Promise<T[]>;
+
+  /** Look up the still-live job for a specific worker claim on the direct pool. */
+  findLiveMinionClaim(queue: string, lockToken: string): Promise<MinionJob | null>;
 
   /**
    * Runs `read` in one unscoped read transaction under the keyword statement bound

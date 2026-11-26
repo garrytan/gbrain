@@ -54,7 +54,7 @@ import {
   isRetryableConnError,
   type BatchAuditSite,
 } from './retry.ts';
-import { isConnectionEndedError } from './retry-matcher.ts';
+import { isConnectionEndedError, isWatchdogConnectionLoss } from './retry-matcher.ts';
 import { CheckoutGauge, PoisonedDiscardCounter, PoolIncidentCounter, type PoolGaugeSnapshot } from './pool-gauge.ts';
 import { driverPoolStats, enginePoolStats, type DriverPoolStats } from './postgres-engine/pool-stats.ts';
 import {
@@ -173,6 +173,7 @@ import * as accessControlImpl from './engine-sql/access-control.ts';
 import * as cycleLocksImpl from './engine-sql/cycle-locks.ts';
 import * as jobsHealth from './engine-sql/jobs-health.ts';
 import type { QueueDivergenceSpec, QueueHealthSpec } from './engine-sql/jobs-health.ts';
+import { findLiveMinionClaim } from './engine-sql/minion-claims.ts';
 import * as decideProposals from './engine-sql/decide-proposals.ts';
 import * as trustTierReads from './engine-sql/trust-tier-reads.ts';
 import * as withdrawalDiscoveryReads from './engine-sql/withdrawal-discovery.ts';
@@ -3261,17 +3262,15 @@ export class PostgresEngine implements BrainEngine {
    *   rebuild a genuinely WEDGED-but-live pool (db.connect() no-ops there) — a
    *   different failure mode postgres.js owns.
    *
-   * - INSTANCE pools (worker engines, `poolSize` set) own their `_sql` — tearing
-   *   it down and rebuilding is correct and isolated; nobody else shares it. This
-   *   path also records a pool-recovery audit event (#1685 GAP B) so the
-   *   `pool_reap_health` doctor check can answer "reaped N times AND not
-   *   auto-recovering." `ctx.error` (threaded by retry.ts) is classified: a
-   *   CONNECTION_ENDED match is a true pooler reap; anything else (or no error,
-   *   e.g. the supervisor's health-check reconnect) is `reconnect_other`. All
-   *   audit calls are best-effort and never block the reconnect (CODEX #8).
+   * - INSTANCE pools own their `_sql`. A watchdog retirement affects a single
+   *   socket; the remaining sessions can still hold active transactions.
+   *   Whole-pool recovery records CONNECTION_ENDED as a pooler reap and
+   *   other rebuilds as reconnect_other for pool_reap_health (#1685).
    */
   async reconnect(ctx?: { error?: unknown }): Promise<void> {
     if (!this._savedConfig || this._reconnecting) return;
+    // The driver already retired the socket and reconnects on demand. Other sessions may hold live transactions.
+    if (this._sql && isWatchdogConnectionLoss(ctx?.error)) return;
     if (this._connectionStyle !== 'instance') {
       // Module-singleton: never tear down the shared pool. db.connect() is
       // idempotent (no-op when the singleton is alive — the common #1745 path).
@@ -3490,6 +3489,7 @@ export class PostgresEngine implements BrainEngine {
   async refreshCycleLock(lockId: string, opts: Parameters<BrainEngine['refreshCycleLock']>[1], queryOpts?: { signal?: AbortSignal }) { return cycleLocksImpl.refreshCycleLock(this.directEngineSql, lockId, opts, queryOpts); }
   async releaseCycleLock(lockId: string, opts: Parameters<BrainEngine['releaseCycleLock']>[1]) { return retryReadOnlyAutocommit(this.sql, c => cycleLocksImpl.releaseCycleLock(this.engineSqlOn(c), lockId, opts)); }
   async readCycleLocks(filter: CycleLockFilter) { return cycleLocksImpl.readCycleLocks(unscopedExecutor(this.engineSql, 'cycle locks: unscoped on master (db-lock selectLockRows)'), filter); }
+  async findLiveMinionClaim(queue: string, lockToken: string) { return findLiveMinionClaim(this, queue, lockToken); }
   async deleteCycleLock(lockId: string, opts: Parameters<BrainEngine['deleteCycleLock']>[1]) { return retryReadOnlyAutocommit(this.sql, c => cycleLocksImpl.deleteCycleLock(this.engineSqlOn(c), lockId, opts)); }
   async deleteCycleLockIfStale(lockId: string, opts: Parameters<BrainEngine['deleteCycleLockIfStale']>[1]) { return retryReadOnlyAutocommit(this.sql, c => cycleLocksImpl.deleteCycleLockIfStale(this.engineSqlOn(c), lockId, opts)); }
   /** The page embedding lease: on the engine's own executor, as its `executeRaw` statements ran (page-embedding-lease.ts). */
