@@ -84,7 +84,7 @@ describe(`engine swap refuses a managed brain only where this build's Rust canno
     expect(env.fix.next).toBe('ask_user');
     expect(env.fix.verify.argv).toEqual(['gbrain', 'engine', 'swap', '--to', 'rust', '--plan', '--json']);
     expect(String(env.fix.user_message)).toContain('managed storage');
-    expect(String(env.fix.user_message)).toContain("this build's Rust engine cannot hold a managed brain");
+    expect(String(env.fix.user_message)).toContain("the Rust engine of this build cannot hold a managed brain");
     expect(String(env.detail)).toContain('The current engine keeps authority; nothing was written.');
     expect(await persistenceSnapshot(engine)).toBe(before);
   });
