@@ -110,6 +110,7 @@ pub use insight::InsightSpec;
 use mutations::add_token;
 pub use mutations::{DelayOpts, TokenDelta};
 pub(crate) use oauth_clients::remove_source_rows as remove_oauth_source_rows;
+pub(crate) use oauth_clients::source_client_in as source_oauth_client_in;
 pub use oauth_clients::{ClientInsert, ClientPatch, ClientPatchGuard};
 pub(crate) use oauth_clients::{carry_over_format_5_clients, remove_client, seed_client};
 pub use oauth_codes::OauthCodeInsert;
@@ -1270,7 +1271,7 @@ impl Store {
             .collect();
         self.write(|tx| {
             fence::begin(self, tx, spec.fence.as_ref(), "claim_next_job")?;
-            let now = self.env.now_micros();
+            let now = self.lease_clock();
             // `overdue`: marked, and last touched at least `suspectWaitMs` ago.
             let overdue_cutoff = spec.suspect_wait_ms.map(|w| now - ms_to_us(w));
             let overdue = |row: &JobRecord| {
@@ -1384,7 +1385,7 @@ impl Store {
     ) -> Result<bool> {
         self.write(|tx| {
             fence::begin(self, tx, fence, "renew_job_lease")?;
-            let now = self.env.now_micros();
+            let now = self.lease_clock();
             let Some(old) = load(tx, id)? else {
                 return Ok(false);
             };
@@ -1592,7 +1593,7 @@ impl Store {
     ) -> Result<Value> {
         self.write(|tx| {
             fence::begin(self, tx, fence, "reclaim_stalled_jobs")?;
-            let now = self.env.now_micros();
+            let now = self.lease_clock();
             let cutoff = now - ms_to_us(grace_ms);
             let active = rows_with_status(tx, "active")?;
             let live_tokens: HashSet<String> = all_locks(tx)?
@@ -1729,7 +1730,7 @@ impl Store {
         }
         self.write(|tx| {
             fence::begin(self, tx, opts.fence.as_ref(), "acquire_cycle_lock")?;
-            let now = self.env.now_micros();
+            let now = self.lease_clock();
             let key = lock_key(lock_id);
             if let Some(held) = get_json::<LockRecord>(tx, &key)? {
                 let grace = (opts.steal_grace_seconds * 1_000_000.0).round() as i64;
@@ -1778,7 +1779,7 @@ impl Store {
             if self.not_a_cycle_lock(lock_id) {
                 return Ok(false);
             }
-            let now = self.env.now_micros();
+            let now = self.lease_clock();
             let key = lock_key(lock_id);
             let Some(mut held) = held_by(tx, &key, opts)? else {
                 return Ok(false);
@@ -1847,7 +1848,7 @@ impl Store {
             if opts.fence.is_some() {
                 fence::begin(self, tx, opts.fence.as_ref(), "delete_cycle_lock_if_stale")?;
             }
-            let now = self.env.now_micros();
+            let now = self.lease_clock();
             let key = lock_key(lock_id);
             let none = json!({ "deleted": false, "lastRefreshedAt": null });
             if self.not_a_cycle_lock(lock_id) {
@@ -1878,7 +1879,7 @@ impl Store {
             )));
         }
         self.write(|tx| {
-            let now = self.env.now_micros();
+            let now = self.lease_clock();
             let key = lock_key(lease_id);
             if let Some(held) = get_json::<LockRecord>(tx, &key)?
                 && held.ttl_expires_at >= now
@@ -1912,7 +1913,7 @@ impl Store {
             if self.multiuser() && !lease_id.starts_with(PAGE_EMBEDDING_LEASE_PREFIX) {
                 return Ok(false);
             }
-            let now = self.env.now_micros();
+            let now = self.lease_clock();
             let key = lock_key(lease_id);
             let Some(mut held) = get_json::<LockRecord>(tx, &key)?
                 .filter(|l| l.acquisition_token == opts.acquisition_token.to_lowercase())
@@ -1934,7 +1935,7 @@ impl Store {
     ) -> Result<()> {
         uuid_arg("releasePageEmbeddingLease", &opts.acquisition_token)?;
         self.write(|tx| {
-            let now = self.env.now_micros();
+            let now = self.lease_clock();
             let token = opts.acquisition_token.to_lowercase();
             let mut doomed = Vec::new();
             for (id, lock) in all_locks(tx)? {
@@ -1958,7 +1959,7 @@ impl Store {
     /// and `all` come oldest acquire first.
     pub fn read_cycle_locks(&self, filter: &LockFilter) -> Result<Vec<Value>> {
         let read = self.read()?;
-        let now = self.env.now_micros();
+        let now = self.lease_clock();
         let mut rows: Vec<(String, LockRecord)> = match filter {
             LockFilter::Id { lock_id } => get_json::<LockRecord>(&*read, &lock_key(lock_id))?
                 .map(|l| vec![(lock_id.clone(), l)])
@@ -2015,7 +2016,7 @@ impl Store {
     ) -> Result<bool> {
         self.assert_serialized_transactions("assertCycleLease")?;
         uuid_arg("assertCycleLease", acquisition_token)?;
-        let now = self.env.now_micros();
+        let now = self.lease_clock();
         let read = self.read()?;
         crate::leases::check_fence(self, &*read, fence, "assert_cycle_lease")?;
         if self.not_a_cycle_lock(lock_id) {

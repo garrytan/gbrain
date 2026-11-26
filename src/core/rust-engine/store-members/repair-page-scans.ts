@@ -5,9 +5,8 @@
  */
 import type { FileTombstone, FileTombstoneQuery, LegacyOriginPair, LiveOriginPage, OriginClaimantRow, OriginTwinGroupRow, RepairScanPage, RepairScanQuery, SafeChunksPendingRow, TwinMergeLosers, UnreviewedSyncTombstone } from '../../engine-sql/repair-page-scans.ts';
 import { CREDENTIAL_RESEAL_PRODUCER } from '../../page-state/credential-reseal-hold.ts';
-import { privatePagesFilterFragment } from '../../search/private-visibility.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
-import { pagePolicyFlags } from './private-provenance.ts';
+import { plainPageFlags } from './private-provenance.ts';
 
 const cap = (limit: number) => Math.max(1, Math.floor(limit));
 
@@ -27,7 +26,7 @@ export const listLiveOriginPages: StoreMember<[sourceId: string, paths: readonly
 export const listOriginClaimants: StoreMember<[sourceId: string, ids: readonly number[]], OriginClaimantRow[]> = async (brain, sourceId, ids) => {
   if (!ids.every(id => Number.isSafeInteger(id) && id > 0)) refuseMember('listOriginClaimants', 'a page id that is not a positive integer');
   const rows = await storeCall({ member: 'listOriginClaimants', sourceId }, () =>
-    brain.listOriginClaimants({ sourceId, ids: ids.map(Number), policy: pagePolicyFlags(privatePagesFilterFragment('p')) })) as OriginClaimantRow[];
+    brain.listOriginClaimants({ sourceId, ids: ids.map(Number), policy: plainPageFlags('listOriginClaimants') })) as OriginClaimantRow[];
   return rows.map(row => ({ ...row, id: Number(row.id) }));
 };
 

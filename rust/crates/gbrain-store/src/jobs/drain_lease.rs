@@ -75,7 +75,7 @@ impl Store {
     ) -> Result<i64> {
         self.write(|tx| {
             fence::begin(self, tx, fence, "write_drain_lease_holder")?;
-            let now = self.env.now_micros();
+            let now = self.lease_clock();
             // The beacon belongs to the holder of the source's cycle lock: a write from a holder whose lock lapsed
             // (another took the source since) must not replace the successor's beacon. The lock is read in this same
             // write, so it is still held, by this token under this fence's epoch, when the beacon lands.
@@ -197,7 +197,7 @@ impl Store {
     ) -> Result<u32> {
         self.write(|tx| {
             fence::begin(self, tx, fence, "refresh_drain_lease_holder")?;
-            let now = self.env.now_micros();
+            let now = self.lease_clock();
             let rows = holder_rows(tx, lock_token)?;
             if !rows.is_empty() {
                 fence::claim_held(self, tx, CLAIM_DRAIN_LEASE, lock_token, fence)?;

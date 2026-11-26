@@ -41,28 +41,32 @@
  */
 import {
   type CallerAccess,
+  callerAccessAllowedSql,
   currentCallerAccess,
   privacyAliasSql,
   privatePagesFilterForCaller,
+  privatePagesFilterFragment,
   privateSnapshotFilterFragment,
   withCallerAccess,
   withoutCallerAccess,
   privateProvenanceFilterUnderPolicy,
   privateFactFilterForCaller,
   privateFactFilterForReader,
-  privatePagesFilterFragment,
+  privacyPartSql,
   remoteProvenanceFloorSql,
   remoteReadFloorSql,
   readPolicyFragment,
   ownerReadPolicyFragment,
 } from '../../search/private-visibility.ts';
 import type { ReflexPrivacy } from '../../engine-sql/reflex-reads.ts';
+import type { RetirementPrivacy } from '../../engine-sql/entity-reads.ts';
 import { MEMBER_PAGE_PREFIX } from '../../access/principals.ts';
 import { ownerOnlyFactSql, ownerOnlyPageSql, ownerOnlyTakeSql, ownerOnlyTimelineSql } from '../../access/owner-only.ts';
 import type { HybridSearchOpts, PostFusionOpts } from '../../search/hybrid.ts';
 import type { PageReadScope } from '../../types.ts';
 import { refuseMember } from './common.ts';
-import { accessSelfCheckMismatch, accessSelfCheckOn, selfChecked } from '../access-self-check.ts';
+import { accessDerivationOn, accessSelfCheckMismatch, selfChecked } from '../access-self-check.ts';
+import { validQualifiedRuleId } from '../../access/folder-rules.ts';
 
 /** The policy flags the store reads (`PrivacyPolicy` in rust/crates/gbrain-store/src/facts/privacy.rs). */
 export interface StorePrivacyPolicy {
@@ -140,6 +144,16 @@ function checkFragment(member: string, mode: string, rendered: () => string, lab
   if (normalizeConceptInputs(rendered()) !== normalizeConceptInputs(labelled())) throw accessSelfCheckMismatch(member, mode, '$fragment');
 }
 
+/** The no-caller page policy's flags (`pagePolicyFlags(privatePagesFilterFragment('p'))`), derived by the store under the multi-user switch. */
+export function plainPageFlags(member: string): StorePrivacyPolicy {
+  return selfChecked(member, { mode: 'plain_page_flags' }, () => pagePolicyFlags(privatePagesFilterFragment('p')));
+}
+
+/** Whether the privacy part honours the aliases (`pagePolicyFlags(privacyPartSql('p')).honorAliases`), derived by the store under the multi-user switch. */
+export function privacyPartAliases(member: string): boolean {
+  return selfChecked(member, { mode: 'privacy_part_aliases' }, () => pagePolicyFlags(privacyPartSql('p')).honorAliases);
+}
+
 /** The page aliases the policies judge: the fact policy's two, and `p` of a page read. */
 const PAGE_ALIASES = ['pp', 'entity_pp', 'p'] as const;
 
@@ -194,7 +208,7 @@ export function storePrivacyPolicy(
   rendered: () => string,
   opts: { callerReaders?: boolean; fragment?: StoreFactFragment } = {},
 ): StorePrivacyPolicy | undefined {
-  if (!accessSelfCheckOn()) return storePrivacyPolicyRendered(member, excludePrivate, rendered, opts);
+  if (!accessDerivationOn()) return storePrivacyPolicyRendered(member, excludePrivate, rendered, opts);
   checkFragment(member, 'fact', rendered, opts.fragment ? FACT_FRAGMENTS[opts.fragment] : undefined);
   return selfChecked(member, { mode: 'fact', excludePrivate: excludePrivate === true, fragment: opts.fragment!, callerReaders: opts.callerReaders === true },
     () => storePrivacyPolicyRendered(member, excludePrivate, rendered, opts));
@@ -219,9 +233,25 @@ function storePrivacyPolicyRendered(
     const own = readers.identity.find(p => p.startsWith('member:'))?.slice('member:'.length);
     // The reader record, then (for an owner) the same record with the owner fields; each compared by its exact text.
     const access = currentCallerAccess();
+    // The caller's own folder rules and pending prefixes ride in its record, as storePageTextPolicy's do; the store
+    // judges a held fact under a satisfied rule by them.
+    const folders = {
+      satisfiedRuleIds: [...access.satisfiedRuleIds],
+      folderCoverage: access.folderCoverage.map(c => ({ source_id: c.source_id, prefix: c.prefix })),
+    };
+    // sharedHeldRuledSql renders no satisfied rule unless every id is a valid qualified id; the store is sent none then.
+    const validRules = folders.satisfiedRuleIds.every(validQualifiedRuleId);
+    const stored = {
+      ...(folders.satisfiedRuleIds.length && validRules ? { satisfiedRuleIds: folders.satisfiedRuleIds } : {}),
+      ...(folders.folderCoverage.length ? { folderCoverage: folders.folderCoverage } : {}),
+    };
     const records: Array<Partial<CallerAccess>> = [{ ...readers, hidePrivate: true, restricted: !open }];
+    if (folders.satisfiedRuleIds.length || folders.folderCoverage.length) records.push({ ...readers, ...folders, hidePrivate: true, restricted: !open });
     if (access.owner) {
       records.push({ ...readers, hidePrivate: access.hidePrivate, restricted: !open, owner: true, ...(access.ownerReads ? { ownerReads: access.ownerReads } : {}) });
+      if (access.lineage && !access.ownerReadsRestricted && access.audienceKindMembers.length === 0) {
+        records.push({ ...readers, ...folders, hidePrivate: access.hidePrivate, restricted: !open, owner: true, lineage: true, ...(access.ownerReads ? { ownerReads: access.ownerReads } : {}) });
+      }
     }
     for (const record of records) {
       for (const form of FACT_FORMS) {
@@ -231,7 +261,8 @@ function storePrivacyPolicyRendered(
         const judged = form.memberCase && memberPage !== undefined && canonical.includes(`pp.slug = '${memberPage}'`);
         // A local owner reading with privacy off renders no privacy part on the provenance page either.
         const provenancePrivacyOff = record.owner === true && !canonical.includes(privateSnapshotFilterFragment('pp'));
-        return { ...factPolicyFlags(canonical), ...readers, ...(judged ? { memberPage } : {}), ...(provenancePrivacyOff ? { provenancePrivacyOff: true } : {}) };
+        const withFolders = 'satisfiedRuleIds' in record || 'folderCoverage' in record;
+        return { ...factPolicyFlags(canonical), ...readers, ...(withFolders ? stored : {}), ...(judged ? { memberPage } : {}), ...(provenancePrivacyOff ? { provenancePrivacyOff: true } : {}), ...(record.lineage ? { ownerRead: true } : {}) };
       }
     }
     return undefined;
@@ -280,7 +311,7 @@ export function storeMemberReadPolicy(member: string, q: { owner: boolean; ident
 
 function storeMemberReadPolicyRendered(member: string, q: { owner: boolean; identity: readonly string[]; satisfied: readonly string[] }): StorePrivacyPolicy {
   if (q.satisfied.length > 0) refuseMember(member, 'a member page whose reader meets a folder rule');
-  if (q.owner) return storeOwnerReadPolicy(member, q.identity);
+  if (q.owner) return storeOwnerReadPolicyRendered(member, q.identity);
   const text = normalizeConceptInputs(readPolicyFragment('p', q.identity, true, q.satisfied));
   const open = currentCallerAccess().restricted === false;
   const reference = renderForStoreCaller(open ? { restricted: false } : {}, () => readPolicyFragment('p', q.identity, true, []));
@@ -292,13 +323,68 @@ function storeMemberReadPolicyRendered(member: string, q: { owner: boolean; iden
 }
 
 /**
+ * The store policy for what `ownerReachesFact` judges each page of a fact by, for an owner bound to a member:
+ * `ownerReadPolicyFragment('pp', identity, satisfied)` (GST-2490's owner read rule with the opt-in off) AND
+ * `readPolicyFragment('pp', identity, true, satisfied)` (`owner_reads_page` in privacy.rs). Both texts must equal the
+ * same two fragments rendered for a reference caller, and the store reads the form off the reference that matches:
+ * outside any caller record (the live pending prefixes), inside a caller record that holds the caller's folder coverage
+ * (`callerRecord`, whose coverage replaces the live prefixes), and inside such a record for an owner (whose
+ * readPolicyFragment has no owner-only test, `ownerOnly` off). The short member-access form of a brain with no
+ * restriction (`restricted` false) is the same record with `open`. Any other ambient caller (a labelled-only or audience
+ * record, a text that differs in any other way) matches none of them and refuses. The identity and the satisfied rule
+ * ids must appear in the owner text as written: the fragments drop every one of them when one is not valid
+ * (`validIdentity`, `validQualifiedRuleId`), which the store would not, so a set the text dropped refuses; the owner
+ * text always renders the full form, so it decides this when the other is the short form.
+ */
+export function storeOwnerReachPolicy(member: string, q: { identity: readonly string[]; satisfied: readonly string[] }): StorePrivacyPolicy {
+  return selfChecked(member, { mode: 'owner_reach', identity: [...q.identity], satisfied: [...q.satisfied] }, () => storeOwnerReachPolicyRendered(member, q));
+}
+
+function storeOwnerReachPolicyRendered(member: string, q: { identity: readonly string[]; satisfied: readonly string[] }): StorePrivacyPolicy {
+  const access = currentCallerAccess();
+  const open = access.restricted === false;
+  const folderCoverage = access.folderCoverage.map(c => ({ source_id: c.source_id, prefix: c.prefix }));
+  const owner = () => ownerReadPolicyFragment('pp', q.identity, q.satisfied);
+  const readable = () => readPolicyFragment('pp', q.identity, true, q.satisfied);
+  const ownerText = normalizeConceptInputs(owner());
+  const readableText = normalizeConceptInputs(readable());
+  const named = [...q.identity, ...q.satisfied].every(id => ownerText.includes(`'${id}'`));
+  const inRecord: Partial<CallerAccess> = { folderCoverage, restricted: !open };
+  const references: Array<{ record: Partial<CallerAccess>; callerRecord: boolean }> = [
+    { record: open ? { restricted: false } : {}, callerRecord: open },
+    { record: inRecord, callerRecord: true },
+    { record: { ...inRecord, owner: true }, callerRecord: true },
+  ];
+  if (named) {
+    for (const { record, callerRecord } of references) {
+      const ownerReference = renderForStoreCaller(record, owner);
+      const readableReference = renderForStoreCaller(record, readable);
+      const honorAliases = readableReference.includes(privacyAliasSql('pp'));
+      if (ownerText !== normalizeConceptInputs(ownerReference) || readableText !== normalizeConceptInputs(readableReference)) continue;
+      // The owner text holds no owner-only test, and both apply the same process setting.
+      if (ownerOnlyFormIn(ownerReference, 'pages', 'pp') !== 'off' || ownerReference.includes(privacyAliasSql('pp')) !== honorAliases) continue;
+      return {
+        honorAliases,
+        entityPrivacy: true,
+        ownerOnly: ownerOnlyFormIn(readableReference, 'pages', 'pp'),
+        identity: [...q.identity],
+        ...(q.satisfied.length ? { satisfiedRuleIds: [...q.satisfied] } : {}),
+        ...(open ? { open: true } : {}),
+        ...(callerRecord ? { callerRecord: true, ...(folderCoverage.length ? { folderCoverage } : {}) } : {}),
+      };
+    }
+  }
+  refuseMember(member, 'an owner read of a fact\'s pages whose policy is not one the store models');
+}
+
+/**
  * The owner read rule, `ownerReadPolicyFragment('pp', identity, [])` (GST-2346, GST-2490 with the opt-in off): the
  * owner's readers and the privacy part, with a derived page's origins judged by the owner's identity
  * (`gbrain_access_origin_hidden_for`, the store's `ownerRead`) and no owner-only test. The text is compared with the
  * same fragment for a fresh record of the caller's remote policy. An identity with no valid member principal renders
  * `FALSE` (the owner reads no page but its own) and refuses, and so does an identity the fragment drops as invalid.
  */
-function storeOwnerReadPolicy(member: string, identity: readonly string[]): StorePrivacyPolicy {
+function storeOwnerReadPolicyRendered(member: string, identity: readonly string[]): StorePrivacyPolicy {
   const text = normalizeConceptInputs(ownerReadPolicyFragment('p', identity, []));
   const reference = normalizeConceptInputs(renderForStoreCaller({}, () => ownerReadPolicyFragment('p', identity, [])));
   const named = identity.every(id => text.includes(`'${id}'`));
@@ -347,7 +433,7 @@ export function storePageTextPolicy(
   rendered: () => string,
   opts: { callerReaders?: boolean; noReaders?: boolean; fragment?: StorePageFragment; renderedIn?: { record: CallerAccess | null } } = {},
 ): StorePrivacyPolicy {
-  if (!accessSelfCheckOn()) return storePageTextPolicyRendered(member, rendered, opts);
+  if (!accessDerivationOn()) return storePageTextPolicyRendered(member, rendered, opts);
   const labelled = opts.fragment ? PAGE_FRAGMENTS[opts.fragment] : undefined;
   const at = opts.renderedIn;
   checkFragment(member, 'page_text', rendered, labelled && at
@@ -370,6 +456,11 @@ function storePageTextPolicyRendered(
     const text = normalizeConceptInputs(rendered());
     const baseline = renderForStoreCaller(open ? { restricted: false } : {}, () => privatePagesFilterForCaller('p'));
     if (text === normalizeConceptInputs(baseline)) return pagePolicyFlags(baseline);
+    // The remote read floor (remoteReadFloorSql for a caller with no labelled-only record) is the no-caller page policy
+    // without its pending-coverage and unreadable-state clauses. The store judges it as a caller record with no readers,
+    // grants or coverage: a page that names readers fails, and a pending prefix hides nothing (privacy.rs caller_record).
+    const floor = renderForStoreCaller({ hidePrivate: true, ...(open ? { restricted: false } : {}) }, () => privatePagesFilterFragment('p'));
+    if (text === normalizeConceptInputs(floor)) return { ...pagePolicyFlags(floor), identity: [], privateReadableSources: [], callerRecord: true };
     if (!opts.callerReaders && !opts.noReaders) return undefined;
     if (opts.noReaders) {
       const none = { identity: [], privateReadableSources: [] };
@@ -393,6 +484,12 @@ function storePageTextPolicyRendered(
       const owner = renderForStoreCaller({ ...callerReaders, ...folders, hidePrivate: access.hidePrivate, restricted: !open, owner: true,
         ...(access.ownerReads ? { ownerReads: access.ownerReads } : {}) }, () => privatePagesFilterForCaller('p'));
       if (text === normalizeConceptInputs(owner)) return { ...pagePolicyFlags(owner), ...callerReaders, ...stored, callerRecord: true };
+      // The remote owner's lineage read (GST-2490, the opt-in off, no audience): the owner read rule, served as `ownerRead`.
+      if (access.lineage && !access.ownerReadsRestricted && access.audienceKindMembers.length === 0) {
+        const lineage = renderForStoreCaller({ ...callerReaders, ...folders, hidePrivate: access.hidePrivate, restricted: !open, owner: true, lineage: true,
+          ...(access.ownerReads ? { ownerReads: access.ownerReads } : {}) }, () => privatePagesFilterForCaller('p'));
+        if (text === normalizeConceptInputs(lineage)) return { ...pagePolicyFlags(lineage), ...callerReaders, ...stored, callerRecord: true, ownerRead: true };
+      }
     }
     return undefined;
   });
@@ -440,6 +537,28 @@ export function judgeWidenedCaller<T>(judge: (readers: StoreCallerReaders) => T 
 export function callerReadersPagePolicy(readers: StoreCallerReaders): StorePrivacyPolicy {
   const canonical = renderForStoreCaller({ ...readers, hidePrivate: true }, () => privatePagesFilterForCaller('p'));
   return { ...pagePolicyFlags(canonical), ...readers };
+}
+
+/** The caller's own folder rules and pending prefixes, as a caller record holds them and the store reads them. */
+export function callerFolders(): { satisfiedRuleIds: string[]; folderCoverage: Array<{ source_id: string; prefix: string }> } {
+  const access = currentCallerAccess();
+  return {
+    satisfiedRuleIds: [...access.satisfiedRuleIds],
+    folderCoverage: access.folderCoverage.map(c => ({ source_id: c.source_id, prefix: c.prefix })),
+  };
+}
+
+/**
+ * callerReadersPagePolicy for a record that also holds the caller's folder rules and pending prefixes (callerFolders):
+ * the reference storePageTextPolicy serves such a caller under, with the folders it sends the store.
+ */
+export function callerFoldersPagePolicy(readers: StoreCallerReaders, folders: ReturnType<typeof callerFolders>): StorePrivacyPolicy {
+  const canonical = renderForStoreCaller({ ...readers, ...folders, hidePrivate: true }, () => privatePagesFilterForCaller('p'));
+  return {
+    ...pagePolicyFlags(canonical), ...readers, callerRecord: true,
+    ...(folders.satisfiedRuleIds.length ? { satisfiedRuleIds: folders.satisfiedRuleIds } : {}),
+    ...(folders.folderCoverage.length ? { folderCoverage: folders.folderCoverage } : {}),
+  };
 }
 
 /**
@@ -504,4 +623,32 @@ export function reflexPolicy(member: string, privacy: ReflexPrivacy): StorePriva
   if (privacy === 'caller') return storePageTextPolicy(member, () => privatePagesFilterForCaller('p'), { callerReaders: true, fragment: 'caller' });
   if (privacy === 'floor') return storePageTextPolicy(member, () => remoteReadFloorSql('p'), { callerReaders: true, fragment: 'floor' });
   refuseMember(member, `privacy ${String(privacy)}`);
+}
+
+/**
+ * The store page policy a retirement hop applies: the caller's page policy and the remote read floor through
+ * storePageTextPolicy; member access alone (privacy off) when the caller's `callerAccessAllowedSql` is the no-caller
+ * text or the canonical one for its reader identities, as the page visibility guards serve it (page-visibility.ts).
+ * Any other caller refuses before the read. The entity retirement hops and the admin slug filter
+ * (admin-reads.ts listVisiblePageSlugs) share it.
+ */
+export function retirementHopPolicy(privacy: RetirementPrivacy, member = 'readRetirementHop'): StorePrivacyPolicy | undefined {
+  if (privacy === 'none') return undefined;
+  if (privacy === 'caller') return storePageTextPolicy(member, () => privatePagesFilterForCaller('p'), { callerReaders: true, fragment: 'caller' });
+  // The floor never reads the caller's readers (remoteReadFloorSql is privatePagesFilterFragment for a caller that is not
+  // labelled-only), so it is served as the policy of a record with no readers, as brief-reads.ts serves it.
+  if (privacy === 'floor') return storePageTextPolicy(member, () => remoteReadFloorSql('p'), { noReaders: true, fragment: 'floor' });
+  return selfChecked(member, { mode: 'access_part_plain' }, () => accessPartPlainRendered(member));
+}
+
+/** retirementHopPolicy's `access` branch: member access alone, as the TypeScript renderers decide it. */
+function accessPartPlainRendered(member: string): StorePrivacyPolicy {
+  const text = callerAccessAllowedSql('p');
+  const off = { honorAliases: false, entityPrivacy: false, ownerOnly: ownerOnlyFormIn(text, 'pages', 'p') };
+  if (text === withoutCallerAccess(() => callerAccessAllowedSql('p'))) return off;
+  const access = currentCallerAccess();
+  const readers = { identity: [...access.identity], privateReadableSources: [...access.privateReadableSources] };
+  const canonical = withoutCallerAccess(() => withCallerAccess({ ...readers, hidePrivate: true }, () => callerAccessAllowedSql('p')));
+  if (text === canonical) return { ...off, ...readers };
+  refuseMember(member, 'a caller whose member pages, grants or lineage widen the member-access policy');
 }

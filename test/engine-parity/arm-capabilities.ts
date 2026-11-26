@@ -15,9 +15,18 @@
  *    `holdSchemaMigrationLock` is an optional member only Postgres implements;
  *    PGLite (and Rust) serialize schema migrations in-process instead
  *    (src/core/schema-migration-lock.ts).
+ *  - `multi_writer` (I-8 name) is the engine's own report that many writers can use one brain at once. Postgres has it;
+ *    PGLite is one connection and the Rust engine reports it only with the multi-user switch on and optimistic explicit
+ *    transactions active, so neither has it here. A missing `multi_writer` is `n/a` (the case does not run on that arm). The
+ *    multi-writer conformance cases (multi-writer-cases.ts) are decided per arm by their support matrix instead of by
+ *    `requires`; the Rust labels check the capability on the engine itself at run time.
  *  - `managed_persistence` refuses on an arm without it, naming it (src/core/engine-capabilities.ts). The Rust engine does
  *    not report it until the managed-persistence program is done (rust-engine/store-capabilities.ts holds it), so a write
  *    to a managed worktree, and the first write to a rooted source that would claim one, refuse naming it there.
+ *
+ *    With `GBRAIN_TEST_RUST_MANAGED=1` (test/engine-parity/rust-managed.ts) the Rust arm lifts that hold on every engine
+ *    it opens and reports `managed_persistence` here too, so a `requires: 'managed_persistence'` case runs its body on
+ *    Rust and is pinned in rust-managed-tally.tsv instead of rust-tally.tsv. Users never see the lift.
  *
  * When `BrainEngine.capabilities` and `src/core/engine-capabilities.ts` land
  * (plan PR 5), `armCapabilities` reads the engine's own set instead of this
@@ -29,7 +38,7 @@ export const PARITY_ARMS = ['pglite', 'postgres', 'rust'] as const;
 export type ParityArmName = typeof PARITY_ARMS[number];
 
 /** Capabilities a parity case can require (a subset of the planned engine capability set). */
-export type EngineCapability = 'raw_sql' | 'schema_migration_lock' | 'managed_persistence';
+export type EngineCapability = 'raw_sql' | 'schema_migration_lock' | 'managed_persistence' | 'multi_writer';
 
 export interface MissingCapability {
   /** `refuses`: the arm throws `engine_capability_missing`; `n/a`: the case does not run on the arm. */
@@ -43,22 +52,30 @@ export function missingCapability(capability: EngineCapability): MissingCapabili
     case 'raw_sql': return { kind: 'refuses', label: 'refuses:raw_sql' };
     case 'schema_migration_lock': return { kind: 'n/a', label: 'n/a:postgres-only' };
     case 'managed_persistence': return { kind: 'refuses', label: 'refuses:managed_persistence' };
+    case 'multi_writer': return { kind: 'n/a', label: 'n/a:multi_writer' };
     default: return assertNever(capability);
   }
 }
 
-export function armCapabilities(arm: ParityArmName): ReadonlySet<EngineCapability> {
+/** The lifted-hold test mode (rust-managed.ts): the Rust arm runs managed persistence with the user-facing hold kept. */
+export const RUST_MANAGED_FLAG = 'GBRAIN_TEST_RUST_MANAGED';
+
+export function rustManagedRequested(env: Record<string, string | undefined> = process.env): boolean {
+  return env[RUST_MANAGED_FLAG] === '1';
+}
+
+export function armCapabilities(arm: ParityArmName, env: Record<string, string | undefined> = process.env): ReadonlySet<EngineCapability> {
   switch (arm) {
     case 'pglite': return new Set<EngineCapability>(['raw_sql', 'managed_persistence']);
-    case 'postgres': return new Set<EngineCapability>(['raw_sql', 'schema_migration_lock', 'managed_persistence']);
+    case 'postgres': return new Set<EngineCapability>(['raw_sql', 'schema_migration_lock', 'managed_persistence', 'multi_writer']);
     // No `managed_persistence` while store-capabilities.ts holds it: a Rust brain refuses managed mode with the typed refusal.
-    case 'rust': return new Set<EngineCapability>();
+    case 'rust': return new Set<EngineCapability>(rustManagedRequested(env) ? ['managed_persistence'] : []);
     default: return assertNever(arm);
   }
 }
 
-export function armHas(arm: ParityArmName, capability: EngineCapability | undefined): boolean {
-  return capability === undefined || armCapabilities(arm).has(capability);
+export function armHas(arm: ParityArmName, capability: EngineCapability | undefined, env: Record<string, string | undefined> = process.env): boolean {
+  return capability === undefined || armCapabilities(arm, env).has(capability);
 }
 
 /**

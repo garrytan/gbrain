@@ -9,6 +9,8 @@
  * cold-start path. Finalizing is idempotent per op object, so a process
  * that later loads operations.ts sees the same objects in the same state.
  */
+import { MULTIUSER_FORWARDED_OPERATIONS } from './rust-engine/owner-ipc/forwarded-names.ts';
+import { rustMultiuserFromEnv } from './rust-engine/multiuser-switch.ts';
 import type { Operation } from './ops/contract.ts';
 import { withOutputRedaction } from './search/output-redaction.ts';
 import { withEngineScope } from './engine-scope.ts';
@@ -42,7 +44,7 @@ const OP_AREAS: Record<string, string> = {
   put_raw_data: 'pages', get_raw_data: 'pages',
   fetch: 'pages', // #4039 deep-research read adapter (search/fetch pair)
   // search
-  search: 'search', search_exact: 'search', query: 'search', search_by_image: 'search', assemble_evidence: 'search',
+  search: 'search', search_exact: 'search', query: 'search', search_by_image: 'search', assemble_evidence: 'search', check_claims: 'search',
   // tags
   add_tag: 'tags', remove_tag: 'tags', get_tags: 'tags',
   // links + graph
@@ -104,6 +106,7 @@ const OP_AREAS: Record<string, string> = {
   entity_identity_list: 'entities',
   // v0.47 open-loop engine (google source kind)
   open_loops: 'loops', loops_close: 'loops', loops_mute: 'loops', loops_unmute: 'loops',
+  household_due: 'household', household_add: 'household', household_mark: 'household', household_replace: 'household',
   learned: 'insights', learned_keep: 'insights', learned_undo: 'insights', // nightly learning ledger (ops/learned.ts)
   questions_pin: 'questions', questions_list: 'questions', questions_status: 'questions', questions_refresh: 'questions', questions_unpin: 'questions', // C4
   // insight / signal reads
@@ -120,7 +123,13 @@ const OP_AREAS: Record<string, string> = {
   schema_explain_type: 'schema', schema_review_orphans: 'schema',
   schema_apply_mutations: 'schema', reload_schema_pack: 'schema',
   // discovery
-  request_tools: 'discovery',
+  request_tools: 'discovery', capabilities: 'discovery',
+  // agent policy (advisory rules for outside actions)
+  policy_check: 'agent-policy', agent_policy: 'agent-policy', policy_reserve: 'agent-policy',
+  // action ledger (what agents did outside the brain, with evidence)
+  log_action: 'action-ledger', ledger: 'action-ledger',
+  // first-session suggestion (onboarding PR 2)
+  onboarding_status: 'onboarding', onboarding_off: 'onboarding',
 };
 
 const finalized = new WeakSet<Operation>();
@@ -153,8 +162,20 @@ export function finalizeOperation(op: Operation): void {
   // Slug params are normalized outermost (ops/slug-params.ts), so every wrapper and the handler see the stored form.
   const handler = withNormalizedSlugParams(op,
     withOutputRedaction({ handler: withPrivacyHoldReplies(op, withGuestMarks(op, op.handler)), outputRedaction: op.outputRedaction }));
-  op.handler = (ctx, params) => withEngineScope(ctx.engine,
+  const scoped: Operation['handler'] = (ctx, params) => withEngineScope(ctx.engine,
     () => withRemoteCaller(isRemoteCaller() || ctx.remote !== false, () => handler(ctx, params)));
+  // Multi-user Rust: a trusted local client of the brain's owner sends these writes whole (owner-ipc/forwarded-names.ts).
+  op.handler = MULTIUSER_FORWARDED_OPERATIONS.has(op.name) ? forwardedToOwner(op.name, scoped) : scoped;
+}
+
+/** The handler, sent whole to the Rust owner when this process is its trusted local client in multi-user mode. */
+function forwardedToOwner(name: string, scoped: Operation['handler']): Operation['handler'] {
+  return async (ctx, params) => {
+    if ((ctx.engine?.kind as string) !== 'rust' || ctx.remote !== false || isRemoteCaller() || !rustMultiuserFromEnv()) return scoped(ctx, params);
+    const { forwardOwnerOperation } = await import('./rust-engine/owner-ipc/whole-op.ts');
+    const forwarded = await forwardOwnerOperation(ctx, name, params);
+    return forwarded ? forwarded.result : scoped(ctx, params);
+  };
 }
 
 /** The finalized operation named `name`, loading only the module that defines it. */

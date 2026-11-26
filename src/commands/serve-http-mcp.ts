@@ -4,6 +4,7 @@
  * verifier, the per-request effective surface, tools/list and tools/call
  * through the shared dispatcher, request logging and the admin SSE feed.
  */
+import { withHttpPrincipalSession } from '../core/rust-engine/served/http-session.ts';
 import { createHash } from 'node:crypto';
 import type { Express, NextFunction, Request, Response } from 'express';
 import { buildDefaultLimiters, type RateLimiter } from '../mcp/rate-limit.ts';
@@ -244,7 +245,8 @@ function createMcpRequestServer(
   const server = new Server(
     { name: 'gbrain', version: VERSION, description: MCP_SERVER_DESCRIPTION },
     {
-      capabilities: { tools: {}, resources: {} },
+      // listChanged: request_tools sends tools/list_changed on its own response stream after a persisted surface change.
+      capabilities: { tools: { listChanged: true }, resources: {} },
       // #4748: contract (+ opt-in writeback section) + deployment identity.
       instructions: resolveMcpInstructions(config, process.env, { writeback: writebackOpts }),
     },
@@ -278,7 +280,8 @@ function createMcpRequestServer(
     return server;
   }
   server.setRequestHandler(ListToolsRequestSchema, async () => listMcpTools(ctx, state));
-  server.setRequestHandler(CallToolRequestSchema, async (request) => callMcpTool(ctx, state, request));
+  server.setRequestHandler(CallToolRequestSchema, async (request, extra) => callMcpTool(ctx, state, request,
+    () => extra.sendNotification({ method: 'notifications/tools/list_changed' })));
   return server;
 }
 
@@ -351,7 +354,7 @@ async function listMcpTools(ctx: ServeHttpContext, state: McpRequestState) {
   return { tools };
 }
 
-async function callMcpTool(ctx: ServeHttpContext, state: McpRequestState, request: CallToolRequest): Promise<ToolResult> {
+async function callMcpTool(ctx: ServeHttpContext, state: McpRequestState, request: CallToolRequest, notifyToolListChanged?: () => Promise<void>): Promise<ToolResult> {
   const { engine, broadcastEvent, logFullParams } = ctx;
   const { authInfo, agentName, startTime, mcpOperations, surface, surfaceCeiling, surfaceAllowedOps, resultRows, thinClient } = state;
   const { name, arguments: params } = request.params;
@@ -452,7 +455,8 @@ async function callMcpTool(ctx: ServeHttpContext, state: McpRequestState, reques
   const sessionId = requestMetaSessionId(request.params);
   let toolResult: Awaited<ReturnType<typeof dispatchToolCall>>;
   try {
-    toolResult = await dispatchToolCall(engine, name, params as Record<string, unknown> | undefined, {
+    toolResult = await withHttpPrincipalSession(engine, authInfo.token, principalSession => dispatchToolCall(engine, name, params as Record<string, unknown> | undefined, {
+      ...(principalSession ? { principalSession } : {}),
       remote: true,
       admissionOrigin: 'interactive',
       config: ctx.config,
@@ -478,6 +482,7 @@ async function callMcpTool(ctx: ServeHttpContext, state: McpRequestState, reques
       surface,
       // WP4 (D2): request_tools bounds its catalog + persist by this.
       surfaceCeiling,
+      ...(notifyToolListChanged ? { notifyToolListChanged } : {}),
       // D2: a callable tool the advertised surface leaves out of tools/list (same rule as listMcpTools).
       isListed: async op => advertisedOps([op], surface, await clientAdvertisedSurface(authInfo, engine, ctx.config, ctx.advertise ?? null)).length > 0,
       resultRows,
@@ -493,7 +498,7 @@ async function callMcpTool(ctx: ServeHttpContext, state: McpRequestState, reques
         warn: (msg: string) => console.error(`[WARN] ${msg}`),
         error: (msg: string) => console.error(`[ERROR] ${msg}`),
       },
-    });
+    }));
   } catch (e) {
     // dispatchToolCall absorbs OperationError + Error and returns
     // isError:true; only an unexpected throw lands here. Treat as the

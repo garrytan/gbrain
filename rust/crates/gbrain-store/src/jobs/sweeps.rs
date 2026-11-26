@@ -176,7 +176,7 @@ impl Store {
     pub fn kill_timed_out_jobs_fenced(&self, fence: Option<&LeaseToken>) -> Result<Vec<Value>> {
         self.write(|tx| {
             fence::begin(self, tx, fence, "kill_timed_out_jobs")?;
-            let now = self.env.now_micros();
+            let now = self.lease_clock();
             kill_where(self, tx, fence, now, "timeout exceeded", |r| {
                 r.timeout_at.is_some_and(|t| t < now) && r.lock_until.is_some_and(|l| l > now)
             })
@@ -197,7 +197,7 @@ impl Store {
     ) -> Result<Vec<Value>> {
         self.write(|tx| {
             fence::begin(self, tx, fence, "kill_wall_clock_jobs")?;
-            let now = self.env.now_micros();
+            let now = self.lease_clock();
             kill_where(self, tx, fence, now, "wall-clock timeout exceeded", |r| {
                 let Some(started) = r.started_at else {
                     return false;

@@ -25,7 +25,7 @@ import { sqlQueryForEngine } from '../../src/core/sql-query.ts';
 import { hashToken } from '../../src/core/utils.ts';
 import { buildServeHttpApp } from '../../src/commands/serve-http.ts';
 import { parseRegisterClientArgs, preflightOauthClientColumns, registerScopedClient } from '../../src/commands/auth.ts';
-import { parityArms } from './harness.ts';
+import { OWNER_ONLY_STOP, parityArms, stopOnOwnerOnlyRefusal } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -86,7 +86,9 @@ describe('engine parity: OAuth client registration', () => {
     });
 
   parityTest('serve --http --enable-dcr: a remote client registers, takes a client_credentials token and calls a tool',
-    { methods: ['putPage', 'insertOauthClient', 'readOauthClient'], timeout: 120_000 }, async (engine) => {
+    { methods: ['putPage', 'insertOauthClient', 'readOauthClient'], timeout: 120_000,
+      // While the Rust store is multi-user the owner-only session gate refuses the client-credentials token (L4 opens it); nothing is read.
+      rustMultiuserStop: OWNER_ONLY_STOP() }, async (engine) => {
       await engine.putPage('notes/dcr-example', { type: 'note', title: 'DCR example', compiled_truth: 'A page read after a dynamic registration.', timeline: '' });
       const app = express();
       const server: Server = await new Promise(resolve => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); });
@@ -120,6 +122,7 @@ describe('engine parity: OAuth client registration', () => {
           token: { status: tok.status, type: token.token_type ?? null, scope: token.scope ?? null },
           call: { status: res.status, isError: result?.isError ?? null, slug: page?.slug ?? null, title: page?.title ?? null, error: result?.isError ? result.content[0]?.text : null },
         };
+        stopOnOwnerOnlyRefusal(out.call.error, ['A page read after a dynamic registration.']);
         // Not vacuous: the registration, the token and the tool call all succeed, on every arm.
         expect(out.call.slug).toBe('notes/dcr-example');
         return out;

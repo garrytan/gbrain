@@ -30,6 +30,8 @@ export { LEASE_LOST_REASONS, type LeaseLostReason } from '../store-errors.ts';
 
 export interface RustLeases {
   acquire(name: string, holder: WriteOrigin, ttlMs: number): Promise<LeaseToken | null>;
+  /** The next epoch of `name` when its record is still at `expectedEpoch` (the caller proved that holder dead), else null. */
+  takeOver(name: string, expectedEpoch: number, holder: WriteOrigin, ttlMs: number): Promise<LeaseToken | null>;
   renew(lease: LeaseToken, ttlMs: number): Promise<void>;
   release(lease: LeaseToken): Promise<void>;
   read(name: string): Promise<LeaseState | null>;
@@ -42,6 +44,8 @@ export function leasesOn(brain: StoreBrain): RustLeases {
   return {
     acquire: (name, holder, ttlMs) =>
       storeCall({ member: 'acquireLease' }, () => brain.acquireLease({ name, holder, ttl_ms: ttlMs })) as Promise<LeaseToken | null>,
+    takeOver: (name, expectedEpoch, holder, ttlMs) =>
+      storeCall({ member: 'takeOverLease' }, () => brain.takeOverLease({ name, expected_epoch: expectedEpoch, holder, ttl_ms: ttlMs })) as Promise<LeaseToken | null>,
     renew: async (lease, ttlMs) => { await storeCall({ member: 'renewLease' }, () => brain.renewLease({ lease, ttl_ms: ttlMs })); },
     release: async (lease) => { await storeCall({ member: 'releaseLease' }, () => brain.releaseLease(lease)); },
     read: (name) => storeCall({ member: 'readLease' }, () => brain.readLease(name)) as Promise<LeaseState | null>,

@@ -18,7 +18,8 @@
  *    folder coverage or a relaxed privacy setting renders other text. `readForgetTarget`, `readLinkedFactCopies`
  *    and `readFactWithdrawalClaim` under `remoteFloor`, and `hasHiddenFactCopy` (always under the floor), refuse the same;
  *  - `ownerReachesFact` for an owner bound to a member (ownerReadPolicyFragment renders GST-2490's owner read rule rather
- *    than FALSE), which the store does not model.
+ *    than FALSE) whose rule text, or the member read rule's, is not the canonical rendering `storeOwnerReachPolicy`
+ *    compares (a caller context that changes it, or an identity or satisfied rule the text dropped as invalid).
  */
 import type { BrainEngine, FactWithdrawalClaim, ForgetTargetRow, LinkedFactCopy } from '../../engine.ts';
 import { MEMBER_PAGE_PREFIX, factVisibilitySql } from '../../access/member-facts.ts';
@@ -27,7 +28,7 @@ import {
   privateProvenanceFilterUnderPolicy, ownerReadPolicyFragment,
 } from '../../search/private-visibility.ts';
 import { assertStoreSerializedTransactions, refuseMember, storeCall, type StoreMember } from './common.ts';
-import { storePrivacyPolicy } from './private-provenance.ts';
+import { storeOwnerReachPolicy, storePrivacyPolicy } from './private-provenance.ts';
 import { storeRemoteFloor } from './remote-floor.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
@@ -117,10 +118,10 @@ export const hasHiddenFactCopy: Member<'hasHiddenFactCopy'> = (brain, spec) => {
 export const ownerReachesFact: Member<'ownerReachesFact'> = (brain, spec) => {
   const member = 'ownerReachesFact';
   requireInteger(member, spec.id);
-  if (ownerReadPolicyFragment('pp', spec.identity, spec.satisfied) !== 'FALSE') {
-    refuseMember(member, 'an owner bound to a member, whose pages the owner read rule (GST-2490 lineage) judges, which the store does not model');
-  }
-  return storeCall({ member }, () => brain.ownerReachesFact({ id: spec.id, sourceId: spec.sourceId }));
+  // An owner bound to no member reads no page (the rule renders FALSE); one bound to a member sends its identity and
+  // satisfied folder rules, which the store judges as the rule's text does, or the member refuses the rendering.
+  const policy = ownerReadPolicyFragment('pp', spec.identity, spec.satisfied) === 'FALSE' ? undefined : storeOwnerReachPolicy(member, spec);
+  return storeCall({ member }, () => brain.ownerReachesFact({ id: spec.id, sourceId: spec.sourceId, ...(policy ? { policy } : {}) }));
 };
 
 /** `lock` skips the row lock while explicit transactions hold the writer (`serialized_transactions`); it asserts that. */

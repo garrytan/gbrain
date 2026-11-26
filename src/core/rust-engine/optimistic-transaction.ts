@@ -17,6 +17,7 @@
  */
 import type { AsyncLocalStorage } from 'node:async_hooks';
 import type { TransactionOptions } from '../engine.ts';
+import type { CommitPosition } from '../engine-members/commit-log.ts';
 import { opError } from '../ops/contract.ts';
 import { transactionAborted } from '../postgres-engine/transaction-abort.ts';
 import type { RustEngine, RustTransactionScope } from '../rust-engine.ts';
@@ -200,7 +201,8 @@ async function runAttempt<T>(
     scope.live = false;
     if (scope.ended) throw mapStoreError({ code: 'store_closed' }, { member: 'transaction' });
     try {
-      await brain.commitTransaction();
+      // The position it committed at, kept on its scope (`lastCommitPosition` on the transaction's engine).
+      scope.committedAt = await brain.commitTransaction() as CommitPosition;
     } catch (error) {
       await settle(brain.rollbackTransaction());
       if (isConflict(error)) return { kind: 'conflict', error };

@@ -181,6 +181,7 @@ function boundEngine(parent: RustEngine, scope: RustTransactionScope, held: Held
     multiuser: parent.openStoreIfOpen('transaction')?.multiuser === true,
     // The transaction runs on the parent's store, so it carries that store's promise.
     serializedTransactions: parent.capabilities.has('serialized_transactions'),
+    commitLog: parent.openStoreIfOpen('transaction')?.commitLog === true,
     importRelation: refuseSeed('importRelation'), replaceRelationRows: refuseSeed('replaceRelationRows'), replaceInterval: refuseSeed('replaceInterval'),
     relationDigest: refuseSeed('relationDigest'), relationEntries: refuseSeed('relationEntries'), allocatorCheck: refuseSeed('allocatorCheck'),
     factFingerprints: refuseSeed('factFingerprints'), seedPlan: refuseSeed('seedPlan'),

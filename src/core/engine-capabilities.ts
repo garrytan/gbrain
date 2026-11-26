@@ -77,17 +77,25 @@ export const ENGINE_CAPABILITIES = [
   'ontology',
   /** The session cursor and checkpoint manifest of context_pack and delta (`session_context_state`, key tag `y`). */
   'session_state',
+  /**
+   * The commit log and commit positions (`readCommitLog`, `lastCommitPosition`): a Rust store in multi-user mode with the
+   * commit log on (rust/docs/store/commit-log.md). No SQL engine reports it; the Rust engine reports it only while its
+   * store keeps a log, and refuses both members naming it otherwise.
+   */
+  'commit_log',
 ] as const;
 
 /**
- * Capabilities of the multi-user program (docs/designs/rust-engine/multi-user-server.md, interface I-8). They are
+ * Capabilities of the multi-user program (docs/designs/rust-engine/multi-user-server.md, interface I-8.v2). They are
  * reported only while the multi-user switch is on (rust-engine/multiuser-switch.ts), so with it off every engine's capability
  * set, and the error catalogue that lists ENGINE_CAPABILITIES, stay exactly what they were.
  *
  * - `multi_writer`: explicit transactions on many connections run at once, each one validated at commit (Postgres:
  *   yes; PGLite: no, one connection; Rust: yes when its optimistic transactions are on).
+ * - `served`: the engine is a client of a brain server over protocol v3 (rust-engine/served/); only a served Rust
+ *   engine reports it.
  */
-export const MULTIUSER_CAPABILITIES = ['multi_writer'] as const;
+export const MULTIUSER_CAPABILITIES = ['multi_writer', 'served'] as const;
 
 export type Capability = (typeof ENGINE_CAPABILITIES)[number] | (typeof MULTIUSER_CAPABILITIES)[number];
 
@@ -102,10 +110,11 @@ const ENGINE_ONLY: Readonly<Record<SqlEngineKind, readonly Capability[]>> = {
   postgres: ['postgres_admin'],
 };
 
-/** Capabilities neither PGLite nor Postgres reports: they take their locks instead. */
-const NO_SQL_ENGINE: readonly Capability[] = ['serialized_transactions'];
+/** Capabilities only a Rust engine can report: no SQL engine kind gets them. PGLite and Postgres take the locks
+ * `serialized_transactions` skips, and keep no commit log. */
+const RUST_ONLY: readonly Capability[] = ['commit_log', 'serialized_transactions'];
 
-const ENGINE_SPECIFIC = new Set<Capability>([...Object.values(ENGINE_ONLY).flat(), ...NO_SQL_ENGINE]);
+const ENGINE_SPECIFIC = new Set<Capability>([...Object.values(ENGINE_ONLY).flat(), ...RUST_ONLY]);
 
 /** What each SQL engine adds while the multi-user switch is on (MULTIUSER_CAPABILITIES). */
 const MULTIUSER_ONLY: Readonly<Record<SqlEngineKind, readonly Capability[]>> = {

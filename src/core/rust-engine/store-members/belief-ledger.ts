@@ -12,12 +12,11 @@
  */
 import type { RustEngine } from '../../rust-engine.ts';
 import type { BrainEngine } from '../../engine.ts';
-import type { BeliefCoverageRow } from '../../engine-sql/belief-ledger.ts';
+import type { BeliefCoverageRow, BeliefNewestEventRow } from '../../engine-sql/belief-ledger.ts';
 import type { BeliefStateRows, BeliefStateRowsInput } from '../../engine-sql/belief-state.ts';
-import { privatePagesFilterFragment } from '../../search/private-visibility.ts';
 import type { StoreBrain } from '../store.ts';
 import { storeCall, type StoreMember } from './common.ts';
-import { pagePolicyFlags } from './private-provenance.ts';
+import { plainPageFlags } from './private-provenance.ts';
 import { applyTransactionSettings, readTransactionSettings } from './transactions.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
@@ -49,6 +48,15 @@ export const listBeliefBaselinePending: Member<'listBeliefBaselinePending'> = (b
 
 export const countBeliefBaselineSlugs: Member<'countBeliefBaselineSlugs'> = (brain, sourceId, runId) =>
   storeCall({ member: 'countBeliefBaselineSlugs', sourceId }, () => brain.countBeliefBaselineSlugs(sourceId, runId));
+
+export const listBeliefDriftCandidates: Member<'listBeliefDriftCandidates'> = (brain, sourceId, incarnation) =>
+  storeCall({ member: 'listBeliefDriftCandidates', sourceId }, () => brain.listBeliefDriftCandidates(sourceId, incarnation));
+
+// The store's recorded_at carries microseconds; PGLite returns a Date, which the engine-sql member turns to ISO milliseconds.
+export const readNewestBeliefEvent: Member<'readNewestBeliefEvent'> = async (brain, sourceId, incarnation, slug) => {
+  const row = await storeCall({ member: 'readNewestBeliefEvent', sourceId }, () => brain.readNewestBeliefEvent(sourceId, incarnation, slug)) as BeliefNewestEventRow | null;
+  return row ? { ...row, recorded_at: new Date(row.recorded_at).toISOString(), id: Number(row.id) } : null;
+};
 
 export const readBeliefRedactions: Member<'readBeliefRedactions'> = (brain, sourceId, subjectKeys, fieldHashes) =>
   storeCall({ member: 'readBeliefRedactions', sourceId },
@@ -90,7 +98,7 @@ export const readMovedBeliefLifetimes: Member<'readMovedBeliefLifetimes'> = (bra
  */
 export const readBeliefStateRows = async function readBeliefStateRows(this: RustEngine, brain: StoreBrain, input: BeliefStateRowsInput): Promise<BeliefStateRows> {
   const rows = await storeCall({ member: 'readBeliefStateRows', sourceId: input.sourceId }, () => brain.readBeliefStateRows({ sourceId: input.sourceId,
-    slugs: [...input.slugs], pageIds: [...input.pageIds], knownFp: input.knownFp, visibility: pagePolicyFlags(privatePagesFilterFragment('p')) })) as BeliefStateRows;
+    slugs: [...input.slugs], pageIds: [...input.pageIds], knownFp: input.knownFp, visibility: plainPageFlags('readBeliefStateRows') })) as BeliefStateRows;
   const [writerTier] = await readTransactionSettings.call(this, brain, ['gbrain.write_trust_tier']);
   if (input.planModePrev != null) await applyTransactionSettings.call(this, brain, ['plan_cache_mode'], [input.planModePrev]);
   return { ...rows, writer_tier: writerTier ?? null };

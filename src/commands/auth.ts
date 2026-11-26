@@ -1467,6 +1467,8 @@ export async function runAuth(args: string[]): Promise<void> {
   const [cmd, ...rest] = args;
   switch (cmd) {
     case 'create': {
+      // Multi-user Rust only: the owner server token a brain server accepts over the network (rust-engine/served/).
+      if (rest.includes('--rust-server-owner')) { await (await import('./auth-rust-server-owner.ts')).createRustServerOwner(rest.filter(a => a !== '--rust-server-owner')); return; }
       // v0.28: optional --takes-holders world,garry,brain (default: world only)
       // #4043: optional --scopes read,write (default: full access, grandfathered)
       let binding: ReturnType<typeof takeBindingFlags>;

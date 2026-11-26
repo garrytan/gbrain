@@ -80,6 +80,8 @@ mod effect_worker;
 pub(crate) mod effects;
 mod embedding_candidates;
 mod freshness;
+mod git_durability;
+mod git_effects;
 mod git_holds;
 mod head_blocker;
 mod housekeeping;
@@ -92,6 +94,14 @@ mod lease_order_tests;
 mod noop_settle;
 mod notifier;
 mod op_checkpoint;
+
+/// Whether an `op_checkpoints` parent row (`op`, `fingerprint`) exists. A part holding NUL names no row.
+pub(crate) fn op_checkpoint_exists(read: &dyn KvRead, op: &str, fingerprint: &str) -> Result<bool> {
+    match op_checkpoint::parent_key(op, fingerprint) {
+        Ok(key) => Ok(read.get(&key)?.is_some()),
+        Err(_) => Ok(false),
+    }
+}
 mod origin_holds;
 mod owner_scans;
 pub(crate) mod projection_queue;
@@ -106,6 +116,7 @@ mod sync_orphan_reads;
 mod sync_pass_pages;
 mod sync_run_reads;
 pub(crate) mod topology;
+mod topology_store;
 pub(crate) use topology::purge_probe_rows as purge_probe_topology_rows;
 mod worktree_admission;
 #[cfg(test)]
@@ -119,9 +130,13 @@ mod writer_versions;
 pub use checkpoint_validation::{IncompleteSyncReceiptSpec, OpenPassWorkSpec};
 pub use connector_orphans::OrphanBounds;
 pub use diagnostic_checkpoints::HeldHitQuery;
-pub use effect_worker::{EffectClaim, EffectSettle, InstallClaim, LinksRearm, Settle};
+pub use effect_worker::{
+    CoalescedGitClaim, EffectClaim, EffectSettle, InstallClaim, LinksRearm, Settle,
+};
 pub use effects::{PublicationEffectsSpec, QueuedEffect, WithdrawalEffectsSpec};
 pub(crate) use effects::{all_effects, request_effects};
+pub use git_durability::{GitDurabilityRead, GitDurabilityWrite};
+pub use git_effects::{GitClaimRef, GitEffectRead, GitEffectWrite};
 pub use head_blocker::HeadBlockerSpec;
 pub use housekeeping::{HousekeepingClaim, HousekeepingTurn, TrueUpReservation};
 pub(crate) use housekeeping::{HousekeepingRow, turn_key};
@@ -135,6 +150,7 @@ pub use notifier::{
     NotifierCoverage, NotifierLeaseClaim, NotifierStateError, NotifierStatePatch, WantedMarkerInput,
 };
 pub use op_checkpoint::AtomGenerationBump;
+pub use topology_store::{TopologyRead, TopologyWrite};
 mod trust_scan_cursor;
 
 pub(crate) use op_checkpoint::{
@@ -923,6 +939,18 @@ pub(crate) fn insert_write_request_in(
         completed_at_us: None,
         extra,
     };
+    let mut record = record;
+    crate::journal::stamp_origin(
+        &mut record.extra,
+        &record.principal_kind,
+        &record.principal_id,
+        None,
+    );
+    crate::commit_log::scope::note(
+        &record.request_id,
+        &record.principal_kind,
+        &record.principal_id,
+    );
     write_request(tx, &record)?;
     tx.put(
         &keys::request_by_principal(&record.principal_kind, &record.principal_id, &request_id),
@@ -1895,10 +1923,10 @@ impl Store {
             fence::begin(self, tx, stamp.fence.as_ref(), "stamp_write_claim")?;
             // Multi-user: a stamp takes only a request that is claimable now, read in this same write, so a delayed
             // direct stamp cannot take a live claim or revive finished work. A plain store stamps as it always has.
-            if self.multiuser() && !write_claimable_now(&*tx, &*self.env, &stamp.id)? {
+            if self.multiuser() && !write_claimable_now(&*tx, &*self.claim_env(), &stamp.id)? {
                 return Ok(None);
             }
-            let row = stamp_write_claim_in(tx, &*self.env, stamp)?;
+            let row = stamp_write_claim_in(tx, &*self.claim_env(), stamp)?;
             if let Some(id) = row.as_ref().and_then(|r| r["id"].as_str()) {
                 let ttl = (stamp.lease_ms.is_finite() && stamp.lease_ms >= 1.0)
                     .then_some(stamp.lease_ms as u64);
@@ -1968,7 +1996,7 @@ impl Store {
                 Some(&stamp.token),
                 stamp.fence.as_ref(),
             )?;
-            renew_write_claim_in(tx, &*self.env, stamp)
+            renew_write_claim_in(tx, &*self.claim_env(), stamp)
         })
     }
 
@@ -1992,7 +2020,8 @@ impl Store {
         self.write(|tx| {
             fence::begin(self, tx, spec.fence.as_ref(), "expire_stale_write_claims")?;
             let mut expired = Vec::new();
-            let released = expire_stale_write_claims_in(tx, &*self.env, spec, &mut expired)?;
+            let released =
+                expire_stale_write_claims_in(tx, &*self.claim_env(), spec, &mut expired)?;
             for id in &expired {
                 fence::claim_ended(
                     self,
@@ -2008,7 +2037,7 @@ impl Store {
 
     /// `hasClaimableWrite(spec)`.
     pub fn has_claimable_write(&self, spec: &ClaimableSpec) -> Result<bool> {
-        has_claimable_write_in(&*self.read()?, &*self.env, spec)
+        has_claimable_write_in(&*self.read()?, &*self.claim_env(), spec)
     }
 
     /// `selectClaimableWrite(spec)`: the row `claimNextWrite` claims next, or `None`; the claim's
@@ -2018,7 +2047,7 @@ impl Store {
         self.assert_serialized_transactions("selectClaimableWrite")?;
         let read = self.read()?;
         crate::leases::check_fence(self, &*read, spec.fence.as_ref(), "select_claimable_write")?;
-        select_claimable_write_in(&*read, &*self.env, spec)
+        select_claimable_write_in(&*read, &*self.claim_env(), spec)
     }
 
     /// `countOutstandingBySource(principalKind, principalId)`: `[{ source_id, n }]`, one row per source

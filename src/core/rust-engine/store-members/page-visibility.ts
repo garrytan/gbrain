@@ -14,12 +14,12 @@
  * The store keeps OAuth clients, but this read does not read a client's fence yet, so it refuses; a local writer's fence is its stored grant
  * ceiling's `slugPrefixes`. What each member answers and why: rust/docs/store/page-visibility.md.
  */
-import type { CallerPageAccessRow, PagePolicyPart, WriteVisibilityProbe } from '../../engine-sql/page-visibility.ts';
-import { callerAccessAllowedSql, privacyPartSql, privatePagesFilterForCaller, readPolicyFragment, withCallerAccess } from '../../search/private-visibility.ts';
-import { refuseMember, storeCall, type StoreMember } from './common.ts';
+import type { CallerPageAccessRow, PagePolicyPart, PrivateOnlySlugScope, WriteVisibilityProbe } from '../../engine-sql/page-visibility.ts';
+import { callerAccessAllowedSql, privatePagesFilterForCaller, readPolicyFragment, withCallerAccess } from '../../search/private-visibility.ts';
+import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 import { selfChecked } from '../access-self-check.ts';
 import { readOauthClient } from './jobs-oauth-clients.ts';
-import { judgeWidenedCaller, ownerOnlyFormIn, pagePolicyFlags, renderForStoreCaller, storePageTextPolicy, type StorePrivacyPolicy } from './private-provenance.ts';
+import { judgeWidenedCaller, ownerOnlyFormIn, privacyPartAliases, renderForStoreCaller, storePageTextPolicy, type StorePrivacyPolicy } from './private-provenance.ts';
 
 /**
  * The store policy for page policy part `part` of the current caller, or a refusal. The caller is judged by
@@ -28,11 +28,11 @@ import { judgeWidenedCaller, ownerOnlyFormIn, pagePolicyFlags, renderForStoreCal
  */
 function callerPolicy(member: string, part: PagePolicyPart): StorePrivacyPolicy {
   if (part === 'read') return storePageTextPolicy(member, () => privatePagesFilterForCaller('p'), { callerReaders: true, fragment: 'caller' });
-  return selfChecked(member, { mode: 'member_access' }, () => callerAccessPolicy(member));
+  return selfChecked(member, { mode: 'member_access' }, () => callerAccessPolicyRendered(member));
 }
 
 /** The `access` part of {@link callerPolicy}: member access alone, with the privacy part off. */
-function callerAccessPolicy(member: string): StorePrivacyPolicy {
+function callerAccessPolicyRendered(member: string): StorePrivacyPolicy {
   const policy = judgeWidenedCaller<StorePrivacyPolicy>(readers => {
     const text = callerAccessAllowedSql('p');
     const off = { honorAliases: false, entityPrivacy: false, ownerOnly: ownerOnlyFormIn(text, 'pages', 'p') };
@@ -59,6 +59,23 @@ export const readCallerPageAccess: StoreMember<[pages: readonly { source_id: str
   };
 
 /**
+ * get_page's fuzzy candidates: the slugs whose every in-scope row the caller's page policy (the `read` part) hides. The
+ * scope keeps the SQL's precedence (a non-empty array, else a non-empty scalar, else every source); the store judges
+ * each row with `page_hidden`. A caller the store's policy cannot express refuses before the read (callerPolicy).
+ */
+export const readPrivateOnlySlugs: StoreMember<[slugs: readonly string[], scope?: PrivateOnlySlugScope, opts?: { includeDeleted?: boolean }], string[]> =
+  async (brain, slugs, scope, opts) => {
+    const taken = takeOptions('readPrivateOnlySlugs', scope, ['sourceId', 'sourceIds']);
+    const { includeDeleted } = takeOptions('readPrivateOnlySlugs', opts, ['includeDeleted']);
+    if (slugs.length === 0) return [];
+    const policy = callerPolicy('readPrivateOnlySlugs', 'read');
+    const sourceIds = Array.isArray(taken.sourceIds) && taken.sourceIds.length > 0 ? [...taken.sourceIds as string[]] : null;
+    const sourceId = sourceIds === null && typeof taken.sourceId === 'string' && taken.sourceId !== '' ? taken.sourceId : null;
+    return storeCall({ member: 'readPrivateOnlySlugs', sourceId: sourceId ?? undefined }, () =>
+      brain.readPrivateOnlySlugs([...slugs], sourceId, sourceIds, includeDeleted === true, policy)) as Promise<string[]>;
+  };
+
+/**
  * The probe's page policy is the empty-identity policy with privacy (`readPolicyFragment(p, [], true)`), whoever the
  * caller is. It is rendered in the current record with the identity and grant emptied, and served when it equals the
  * no-caller rendering or a fresh record's rendering for the empty identity (storePageTextPolicy with callerReaders).
@@ -77,8 +94,7 @@ export const readWriteVisibilityProbe: StoreMember<[sourceId: string, slug: stri
 export const readPagePrivacyHidden: StoreMember<[sourceId: string, slug: string], boolean | null> =
   async (brain, sourceId, slug) =>
     await storeCall({ member: 'readPagePrivacyHidden', slug, sourceId }, () =>
-      brain.readPagePrivacyHidden(sourceId, slug, selfChecked('readPagePrivacyHidden', { mode: 'privacy_part_aliases' },
-        () => pagePolicyFlags(privacyPartSql('p')).honorAliases))) as boolean | null;
+      brain.readPagePrivacyHidden(sourceId, slug, privacyPartAliases('readPagePrivacyHidden'))) as boolean | null;
 
 /**
  * A local writer's fence comes from the stored registration; an OAuth client's from its stored client record

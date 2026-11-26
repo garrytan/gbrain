@@ -42,7 +42,7 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, normalize } from 'node:path';
 import ts from 'typescript';
 import { OWNER_IPC_TYPED_READS } from '../src/core/rust-engine/owner-ipc/typed-member-classes.ts';
 import { STORE_MEMBERS } from '../src/core/rust-engine/store-members/index.ts';
@@ -314,32 +314,48 @@ function matchBrace(t: string, open: number): number {
 interface RustFn { name: string; file: string; line: number; body: string; bodyAt: number; text: string; napi: boolean }
 
 /**
- * The files of the modules a `#[cfg(test)] mod name;` line declares (`dir/name.rs` and everything under `dir/name/`,
- * where `dir` is the declaring file's module directory): test-only code, skipped like an inline `#[cfg(test)] mod`.
+ * The files of the modules a `#[cfg(test)] mod name;` declaration loads: test-only code, skipped like an inline
+ * `#[cfg(test)] mod`. Without a `#[path]` attribute that is `dir/name.rs` and everything under `dir/name/`, where `dir` is
+ * the declaring file's module directory. With `#[path = "p"]` (in either order next to `#[cfg(test)]`) it is the file `p`,
+ * relative to the declaring file's own directory, as rustc resolves it. A `#[path]` module without `#[cfg(test)]` is
+ * production code and stays in the scan.
  */
 function testModuleFiles(files: readonly string[], read: (file: string) => string = file => readFileSync(file, 'utf8')): Set<string> {
   const out = new Set<string>();
   for (const file of files) {
-    // Comments and strings blanked first, so a commented-out declaration hides nothing.
-    const text = stripRust(read(file));
+    const raw = read(file);
+    // Comments and strings blanked first (offsets kept), so a commented-out declaration hides nothing; the path string is
+    // then read from the raw text at the same offsets.
+    const text = stripRust(raw);
     const base = file.replace(/\.rs$/, '');
     const dir = /\/(?:lib|main|mod)\.rs$/.test(file) ? file.replace(/\/[^/]+$/, '') : base;
-    for (const m of text.matchAll(/#\[cfg\(test\)\]\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+(\w+)\s*;/g)) {
-      const mod = join(dir, m[1]!);
+    const own = file.replace(/\/[^/]+$/, '');
+    for (const m of text.matchAll(/((?:#\[[^\]]*\]\s*)+)(?:pub(?:\([^)]*\))?\s+)?mod\s+(\w+)\s*;/g)) {
+      const attrs = m[1]!;
+      if (!/#\[\s*cfg\s*\(\s*test\s*\)\s*\]/.test(attrs)) continue;
+      // The `=` only: the blanked string is spaces in `attrs`, so whitespace after it is read from the raw text.
+      const pathAttr = /#\[\s*path\s*=/.exec(attrs);
+      if (pathAttr !== null) {
+        const at = m.index! + pathAttr.index + pathAttr[0].length;
+        const lit = /^\s*"([^"]*)"/.exec(raw.slice(at));
+        if (lit !== null) { const target = normalize(join(own, lit[1]!)); if (files.includes(target)) out.add(target); }
+        continue;
+      }
+      const mod = join(dir, m[2]!);
       for (const candidate of files) if (candidate === `${mod}.rs` || candidate === join(mod, 'mod.rs') || candidate.startsWith(`${mod}/`)) out.add(candidate);
     }
   }
   return out;
 }
 
-function buildRustIndex(): Map<string, RustFn[]> {
+/** The index of every Rust function outside test-only code, for `crates` (each a file list, and whether it is the napi crate). */
+function rustIndexOf(crates: ReadonlyArray<{ files: readonly string[]; napi: boolean }>, read: (file: string) => string = file => readFileSync(file, 'utf8')): Map<string, RustFn[]> {
   const fns = new Map<string, RustFn[]>();
-  for (const crate of ['gbrain-store', 'gbrain-napi']) {
-    const files = listFiles(join(ROOT, 'rust/crates', crate, 'src'), '.rs');
-    const testOnly = testModuleFiles(files);
+  for (const { files, napi } of crates) {
+    const testOnly = testModuleFiles(files, read);
     for (const file of files) {
       if (testOnly.has(file)) continue;
-      let t = stripRust(readFileSync(file, 'utf8'));
+      let t = stripRust(read(file));
       const test = /#\[cfg\(test\)\]\s*mod\s+\w+\s*\{/g;
       for (let m = test.exec(t); m; m = test.exec(t)) {
         const e = matchBrace(t, m.index + m[0].length - 1);
@@ -353,13 +369,17 @@ function buildRustIndex(): Map<string, RustFn[]> {
         while (k < t.length && t[k] !== '{' && t[k] !== ';') k++;
         if (k >= t.length || t[k] === ';') continue;
         const e = matchBrace(t, k);
-        const def: RustFn = { name: m[1]!, file: rel(file), line: lineAt(t, m.index), body: t.slice(k, e + 1), bodyAt: k, text: t, napi: crate === 'gbrain-napi' };
+        const def: RustFn = { name: m[1]!, file: file.startsWith(ROOT) ? rel(file) : file, line: lineAt(t, m.index), body: t.slice(k, e + 1), bodyAt: k, text: t, napi };
         const l = fns.get(def.name);
         if (l) l.push(def); else fns.set(def.name, [def]);
       }
     }
   }
   return fns;
+}
+
+function buildRustIndex(): Map<string, RustFn[]> {
+  return rustIndexOf(['gbrain-store', 'gbrain-napi'].map(crate => ({ files: listFiles(join(ROOT, 'rust/crates', crate, 'src'), '.rs'), napi: crate === 'gbrain-napi' })));
 }
 
 /**
@@ -381,7 +401,9 @@ const RUST_STOP = new Set(('new get read run from into default len is_empty iter
 
 function callsOf(body: string): Set<string> {
   const out = new Set<string>();
-  for (const re of [RUST_BARE, RUST_SELF, RUST_PATH]) for (const m of body.matchAll(re)) out.add(m[1]!);
+  // Attributes (`#[derive(Default)]`, `#![allow(..)]`) are not calls: blanked before the call patterns run.
+  const code = body.replace(/#!?\[[^\]]*\]/g, a => ' '.repeat(a.length));
+  for (const re of [RUST_BARE, RUST_SELF, RUST_PATH]) for (const m of code.matchAll(re)) out.add(m[1]!);
   return out;
 }
 
@@ -490,6 +512,66 @@ describe('the Rust scan skips only test-only modules', () => {
       '/r/src/hidden.rs': 'pub fn hidden() {}\n', '/r/src/tests.rs': 'mod helpers;\n', '/r/src/tests/helpers.rs': 'fn h() {}\n',
     };
     expect([...testModuleFiles(files, file => text[file]!)].sort()).toEqual(['/r/src/tests.rs', '/r/src/tests/helpers.rs']);
+  });
+});
+
+describe('a test module loaded through #[path] is test-only code too', () => {
+  // A crate where a production read (napi `read_members`) calls `member_rows` by name. Production `member_rows` (members.rs)
+  // only reads; a test helper of the same name in scope_tests.rs, which scope.rs loads as `#[cfg(test)] #[path] mod tests;`,
+  // writes. With two definitions of the name, the scan follows both, so the helper must be skipped as test-only code.
+  const crate = (extra: Record<string, string>) => {
+    const text: Record<string, string> = {
+      '/r/napi/lib.rs': 'pub fn read_members(s: &Store) -> u32 { member_rows(s) }\n',
+      '/r/src/lib.rs': 'mod members;\nmod scope;\n',
+      '/r/src/members.rs': 'pub fn member_rows(s: &Store) -> u32 { s.count() }\n',
+      '/r/src/scope.rs': 'pub fn scope_of() -> u32 { 1 }\n\n#[cfg(test)]\n#[path = "scope_tests.rs"]\nmod tests;\n',
+      '/r/src/scope_tests.rs': 'fn member_rows(s: &Store) -> u32 { s.write(|w| w.put(b"m", b"1")); 1 }\n',
+      ...extra,
+    };
+    const store = Object.keys(text).filter(f => f.startsWith('/r/src/'));
+    const index = rustIndexOf([{ files: store, napi: false }, { files: ['/r/napi/lib.rs'], napi: true }], file => text[file]!);
+    return { index, text };
+  };
+
+  // Value: protects=a test helper loaded through `#[path = "..."]` never charges a production read with its write;
+  // fails_when=the test-module scan only matches `#[cfg(test)] mod x;` with nothing between (the scope_tests.rs case);
+  // why_new=three store modules load their tests through #[path]; seam=in-memory files
+  test('a #[cfg(test)] #[path] module, in either attribute order, is skipped', () => {
+    const { index, text } = crate({});
+    expect(rustWrites(index, 'read_members', 'readMembers')).toEqual([]);
+    const files = Object.keys(text).filter(f => f.startsWith('/r/src/'));
+    expect([...testModuleFiles(files, file => text[file]!)]).toEqual(['/r/src/scope_tests.rs']);
+    const swapped: Record<string, string> = { ...text, '/r/src/scope.rs': '#[path = "scope_tests.rs"]\n#[cfg(test)]\npub(crate) mod tests;\n' };
+    expect([...testModuleFiles(files, file => swapped[file]!)]).toEqual(['/r/src/scope_tests.rs']);
+    // A #[path] module without #[cfg(test)] is production code and stays in the scan.
+    const production: Record<string, string> = { ...text, '/r/src/scope.rs': '#[path = "scope_tests.rs"]\nmod tests;\n' };
+    expect([...testModuleFiles(files, file => production[file]!)]).toEqual([]);
+  });
+
+  // Value: protects=skipping #[path] test modules never hides a real production writer; fails_when=the skip drops more than the
+  // module the attribute names; why_new=pairs with the case above; seam=in-memory files
+  test('a production writer that a read reaches is still flagged', () => {
+    const { index } = crate({ '/r/src/members.rs': 'pub fn member_rows(s: &Store) -> u32 { s.write(|w| w.put(b"m", b"2")); 2 }\n' });
+    const hits = rustWrites(index, 'read_members', 'readMembers');
+    expect(hits.map(h => h.at)).toEqual(['/r/src/members.rs:1']);
+  });
+});
+
+describe('an attribute is not a call', () => {
+  // Value: protects=a `#[derive(...)]` attribute inside a read's body is never taken for a call to a store function named
+  // `derive` (access_derive.rs has one); fails_when=calls are scanned from text that still holds attributes; why_new=the
+  // access self-check added a production `derive`; seam=in-memory files
+  test('#[derive(Default)] inside a function body does not reach fn derive', () => {
+    const text: Record<string, string> = {
+      '/r/src/checks.rs': 'pub fn count_rows(s: &Store) -> u32 {\n    #[derive(Default)]\n    struct Acc { n: u32 }\n    s.count()\n}\n',
+      '/r/src/access.rs': 'pub fn derive(s: &Store) -> u32 { s.write(|w| w.put(b"a", b"1")); 1 }\n',
+    };
+    const index = rustIndexOf([{ files: Object.keys(text), napi: false }], file => text[file]!);
+    expect(rustWrites(index, 'count_rows', 'countRows')).toEqual([]);
+    // A real call to that function is still followed.
+    const calling: Record<string, string> = { ...text, '/r/src/checks.rs': 'pub fn count_rows(s: &Store) -> u32 { derive(s) }\n' };
+    const real = rustIndexOf([{ files: Object.keys(calling), napi: false }], file => calling[file]!);
+    expect(rustWrites(real, 'count_rows', 'countRows').map(h => h.at)).toEqual(['/r/src/access.rs:1']);
   });
 });
 

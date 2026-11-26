@@ -1206,25 +1206,7 @@ export async function findPrivateOnlySlugs(
   opts: { includeDeleted?: boolean } = {},
 ): Promise<Set<string>> {
   if (slugs.length === 0) return new Set();
-  const params: unknown[] = [slugs];
-  let scopeClause = '';
-  if (scope.sourceIds && scope.sourceIds.length > 0) {
-    params.push(scope.sourceIds);
-    scopeClause = `AND p.source_id = ANY($${params.length}::text[])`;
-  } else if (scope.sourceId) {
-    params.push(scope.sourceId);
-    scopeClause = `AND p.source_id = $${params.length}`;
-  }
-  const rows = await engine.executeRaw<{ slug: string }>(
-    `SELECT p.slug FROM pages p
-      WHERE p.slug = ANY($1::text[])
-        ${opts.includeDeleted ? '' : 'AND p.deleted_at IS NULL'}
-        ${scopeClause}
-      GROUP BY p.slug
-      HAVING bool_and(NOT (${privatePagesFilterForCaller('p')}))`,
-    params,
-  );
-  return new Set(rows.map(r => r.slug));
+  return new Set(await engine.readPrivateOnlySlugs(slugs, scope, opts));
 }
 
 const CACHE_TTL_MS = 30_000;
@@ -1373,8 +1355,13 @@ export async function requestRemotePolicy(engine: BrainEngine): Promise<RemotePo
   return rows ? remotePolicyFrom(rows) : readRemotePolicyNow(engine);
 }
 
+/** The incident escape hatch GBRAIN_REMOTE_PRIVATE_PAGES=1, an operator setting of this process (the multi-user store reads no environment, so a principal session hands it over). */
+export function remotePrivacyHatch(): boolean {
+  return process.env.GBRAIN_REMOTE_PRIVATE_PAGES === '1';
+}
+
 function remotePolicyFrom(config: Record<string, string>): RemotePolicy {
-  const hatch = process.env.GBRAIN_REMOTE_PRIVATE_PAGES === '1';
+  const hatch = remotePrivacyHatch();
   const owner = config[OWNER_MEMBER_KEY]?.trim();
   const schemaVersion = Number.parseInt(config[SCHEMA_VERSION_KEY] ?? '', 10);
   return { privacyRelaxed: hatch || ['visible', 'true', '1'].includes(config[REMOTE_PRIVATE_PAGES_KEY] ?? ''), restricted: config[ACCESS_RESTRICTIONS_KEY] === '1',

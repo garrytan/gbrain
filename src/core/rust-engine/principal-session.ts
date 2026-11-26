@@ -5,7 +5,10 @@
  * asks the store to verify the token against its own `access_tokens` records and admit it (rust/crates/gbrain-store/
  * src/scope.rs; napi `mintScope`). Every call of that connection then runs through `session.admit(member)` first, which
  * has the store revalidate the session against its current records (a revoke, a disabled member, a changed owner or a
- * narrowed grant refuses the next call) and refuses a write member for a credential whose grant has no `write` scope.
+ * narrowed grant refuses the next call) and checks the grant's scopes. `member` is a store member or an MCP operation
+ * name (serve --http passes the tool name): an operation is admitted by its own declared scope, as serve --http admits
+ * it on any engine (`operationScopesAllowed`), so a read-scope key runs read tools and refuses write and admin tools;
+ * a store member that only reads runs under any grant; anything else needs the `write` scope.
  * The call's grant comes from `session.grant`, the store-verified token row read through the same grant model the
  * HTTP transport uses (grants/model.ts), never from anything else the client sent. `session.release()` when the
  * connection closes.
@@ -15,10 +18,13 @@
  */
 import { opError } from '../ops/contract.ts';
 import { grantFromTokenRow, type PrincipalGrant } from '../grants/model.ts';
-import { hasScope } from '../scope.ts';
-import { storeMultiuser } from './access-self-check.ts';
+import { hasScope, operationScopesAllowed } from '../scope.ts';
+import { operationsByName } from '../operations.ts';
 import { ownerMemberOnlyReads } from './owner-ipc/routes.ts';
 import type { RustStore } from './store.ts';
+import { storeMultiuser, withAccessStore } from './access-self-check.ts';
+import { remotePrivacyHatch, withCallerAccess, withoutCallerAccess, type CallerAccess } from '../search/private-visibility.ts';
+
 
 /** One authenticated connection's session. */
 export interface PrincipalSession {
@@ -28,8 +34,21 @@ export interface PrincipalSession {
   readonly grant: PrincipalGrant;
   /** Revalidates the session and checks the grant's write ceiling before `member` runs. */
   admit(member: string): Promise<void>;
+  /**
+   * Runs one call of `member` for the principal: admits it, then runs `fn` under the caller record the store builds
+   * for the principal (`scopeCallerRecord`) and in server mode, where every privacy policy is the store's derivation
+   * alone. A caller record or policy the client sent never applies.
+   */
+  run<T>(member: string, opts: SessionCallOptions, fn: () => Promise<T>): Promise<T>;
   /** Forgets the session. */
   release(): void;
+}
+
+/** What a call adds to the store's caller record: whether it only reads, and the grant's private sources it may read. */
+export interface SessionCallOptions {
+  readOnly: boolean;
+  privateReadableSources?: readonly string[];
+  privateFactSources?: readonly string[];
 }
 
 const DENIED = 'This credential cannot open a multi-user session on this brain (only the brain owner\'s own key is admitted for now).';
@@ -45,7 +64,7 @@ function asDenied(error: unknown, detail: string): never {
 }
 
 /** Opens a session for `bearer` on `store`, or refuses `permission_denied`. */
-export async function openPrincipalSession(store: RustStore, bearer: string): Promise<PrincipalSession> {
+export async function openPrincipalSession(store: RustStore, bearer: string, addon: object = {}): Promise<PrincipalSession> {
   if (!storeMultiuser(store)) throw denied('reason=multiuser_off');
   const brain = store.brain;
   let handle: string;
@@ -57,13 +76,33 @@ export async function openPrincipalSession(store: RustStore, bearer: string): Pr
   const grant = grantFromTokenRow(row as never);
   const writes = hasScope(grant.scopes, 'write');
   let released = false;
+  const admit = async (member: string) => {
+    if (released) throw denied('reason=released');
+    try { await brain.checkScope(handle); } catch (error) { released = true; asDenied(error, `reason=revalidate member=${member}`); }
+    // An operation by its own declared scope (never anything the client sent); a store member by whether it only reads.
+    const op = Object.hasOwn(operationsByName, member) ? operationsByName[member] : undefined;
+    if (op ? !operationScopesAllowed(grant.scopes, op) : !ownerMemberOnlyReads(member) && !writes) {
+      throw denied(`reason=${op ? 'operation_scope' : 'read_only_grant'} member=${member}`);
+    }
+  };
   return {
     handle,
     grant,
-    async admit(member: string) {
-      if (released) throw denied('reason=released');
-      try { await brain.checkScope(handle); } catch (error) { released = true; asDenied(error, `reason=revalidate member=${member}`); }
-      if (!ownerMemberOnlyReads(member) && !writes) throw denied(`reason=read_only_grant member=${member}`);
+    admit,
+    async run<T>(member: string, opts: SessionCallOptions, fn: () => Promise<T>): Promise<T> {
+      await admit(member);
+      let record: Record<string, unknown>;
+      try {
+        record = await brain.scopeCallerRecord(handle, {
+          readOnly: opts.readOnly, privateReadableSources: [...opts.privateReadableSources ?? []],
+          privateFactSources: [...opts.privateFactSources ?? []], processPrivacyRelaxed: remotePrivacyHatch(),
+        }) as Record<string, unknown>;
+      } catch (error) { released = true; asDenied(error, `reason=record member=${member}`); }
+      // The owner-only form's schema version is the store's own: the one in the record it built (A12).
+      const version = (record.remotePolicy as { schemaVersion?: unknown } | undefined)?.schemaVersion;
+      const storeSchemaVersion = typeof version === 'number' && Number.isInteger(version) ? version : null;
+      return withoutCallerAccess(() => withCallerAccess(record as Partial<CallerAccess>,
+        () => withAccessStore(store, addon, fn, { server: true, storeSchemaVersion })));
     },
     release() {
       if (released) return;

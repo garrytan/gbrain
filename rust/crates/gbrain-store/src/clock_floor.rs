@@ -1,16 +1,16 @@
-//! The clock rule of multi-user mode (design note "M3", "Clocks"; lane L5 plan step 7, rule 2 as decided A1):
-//! only the store's process clock writes times, and a time the store hands out is never below the last committed time
-//! it has seen, nor below a time it handed out before, on one server. So a wall clock that steps backwards, or a
-//! restart on a machine whose clock is behind, never makes `created_at` run backwards.
+//! The clock rule of multi-user mode (I-4.v2.1; design note "M3", "Clocks"): only the store's process clock writes
+//! times; a row's `created_at` is its transaction's clock time, never below the clock floor at open; the commit
+//! record's `commit_time` is the strictly rising time; order is the commit position.
 //!
-//! How: on a store opened in multi-user mode the store's [`Env`] is wrapped in [`ClockFloor`]: `now_micros` is the
-//! larger of the system time and the floor, and every reading raises the floor. Every committed write raises the
-//! durable high-water mark `~L 0x04` (`leases::CLOCK_HIGH_WATER`) to the time it ran at, with `raise_counter`, which
-//! never conflicts on the concurrent store; an open reads it back as the floor's start.
+//! The floor is the newest durable commit time, `M\0ctime` (`Store::last_commit_time`, lane L2): every commit in
+//! multi-user mode writes it atomically with its data, so a snapshot, a copy, a takeover or a rebuild from the log
+//! carries it with the data. A promoted follower's floor is max(its own `M\0ctime`, the last applied record's
+//! `commit_time`), which is the same value once the record is applied. On a store opened in multi-user mode the
+//! store's [`Env`] is wrapped in [`ClockFloor`]: `now_micros` is the larger of the system time and the floor, and
+//! every reading raises the floor in memory, so a wall clock that steps back never moves stored times back.
 //!
-//! Not covered yet (pending on lane L2's accept-hook commit time): two independent transactions that commit in the
-//! reverse of the order they read the clock in still store their own times, as Postgres `now()` does; commit order is
-//! the order (the commit position), not `created_at`.
+//! The key `~L 0x04` (`leases::CLOCK_HIGH_WATER`) held this floor before the commit time existed. It was never written
+//! by a shipped build; a store that has it opens normally and the key is ignored.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
@@ -18,32 +18,63 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use crate::env::Env;
 use crate::error::Result;
 use crate::keys;
-use crate::kv::{KvRead, KvWrite};
+use crate::kv::KvRead;
 use crate::leases::CLOCK_HIGH_WATER;
 
-/// The key of the durable high-water mark: `~L 0x04`.
-pub fn high_water_key() -> Vec<u8> {
+/// The retired key `~L 0x04` (the floor before the commit time existed); a store that holds it ignores it.
+pub fn retired_high_water_key() -> Vec<u8> {
     let mut key = keys::LEASES.to_vec();
     key.push(CLOCK_HIGH_WATER);
     key
 }
 
-/// The stored high-water mark (microseconds), 0 when none.
+/// The floor a multi-user open starts its clock at: the newest durable commit time (microseconds; 0 when none).
 pub fn read_high_water(read: &dyn KvRead) -> Result<i64> {
-    Ok(read
-        .get(&high_water_key())?
-        .and_then(|b| keys::be8(&b))
-        .map_or(0, |v| i64::try_from(v).unwrap_or(i64::MAX)))
+    Ok(crate::redb_kv::read_commit_time(read)?.unwrap_or(0))
 }
 
-/// Raises the stored high-water mark to `at` (never lowers it, never conflicts).
-pub fn raise_high_water(tx: &mut dyn KvWrite, at: i64) -> Result<()> {
-    tx.raise_counter(&high_water_key(), at.max(0) as u64)
+/// The live, floored clock as an `Env` whose `now_micros` is the moment of the call (`Env::clock_micros`): what the claim
+/// and lease members read in multi-user mode (G16), so a claim stamped late in a long or rerun transaction is stamped at
+/// the time it is taken, never at the transaction's start, and never below the clock floor.
+pub(crate) struct LiveClock(pub(crate) Arc<dyn Env>);
+
+impl Env for LiveClock {
+    fn now_micros(&self) -> i64 {
+        self.0.clock_micros()
+    }
+    fn clock_micros(&self) -> i64 {
+        self.0.clock_micros()
+    }
+    fn new_uuid(&self) -> String {
+        self.0.new_uuid()
+    }
 }
 
 impl crate::Store {
-    /// The stored clock high-water mark (microseconds; 0 when none): the floor a multi-user open starts its clock at.
-    /// It is brain state: a snapshot, a copy or a takeover of the store carries it with the data.
+    /// The time claim and lease deadlines are computed and checked at (G16): in multi-user mode the moment of the call on
+    /// the floored store clock, so a claim taken late in a transaction opened long ago is not already expired when it
+    /// commits; with the mode off the store's time exactly as before (inside a transaction, its start).
+    pub(crate) fn lease_clock(&self) -> i64 {
+        if self.multiuser() {
+            self.env.clock_micros()
+        } else {
+            self.env.now_micros()
+        }
+    }
+
+    /// [`Self::lease_clock`] as an `Env`, for the claim members that take one.
+    pub(crate) fn claim_env(&self) -> Arc<dyn Env> {
+        if self.multiuser() {
+            Arc::new(LiveClock(self.env.clone()))
+        } else {
+            self.env.clone()
+        }
+    }
+}
+
+impl crate::Store {
+    /// The clock floor: the newest durable commit time (`M\0ctime`; 0 when none). It is brain state: a snapshot, a
+    /// copy, a takeover or a rebuild from the log carries it with the data.
     pub fn clock_high_water(&self) -> Result<i64> {
         read_high_water(&*self.read()?)
     }
@@ -195,7 +226,19 @@ mod tests {
         wall.0.fetch_sub(10_000_000, Ordering::SeqCst);
         let second = acquired_at(&store, "b");
         assert_eq!(second, first - 10_000_000);
-        assert_eq!(store.read().unwrap().get(&high_water_key()).unwrap(), None);
+        assert_eq!(
+            store
+                .read()
+                .unwrap()
+                .get(&retired_high_water_key())
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            store.last_commit_time().unwrap(),
+            None,
+            "no commit time is written with the switch off"
+        );
     }
 
     /// Stays ignored by ruling (I-4.v2.1, Ember A1, Nov 25: created_at is transaction time, order is commit
@@ -235,5 +278,161 @@ mod tests {
                 assert!(t >= floor, "{mode}: {t} below the floor {floor}");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod commit_time_floor {
+    use super::*;
+    use crate::test_support::{mem_kv, occ_kv};
+    use crate::write_origin::WriteOrigin;
+    use crate::{OpenOptions, Store};
+
+    struct Frozen(i64);
+    impl Env for Frozen {
+        fn now_micros(&self) -> i64 {
+            self.0
+        }
+        fn new_uuid(&self) -> String {
+            "00000000-0000-4000-8000-000000000001".into()
+        }
+    }
+
+    /// L6's finding, I-4.v2.1: with a wall clock that does not move, each commit time is the previous one plus 1 µs,
+    /// so the durable commit time runs ahead of the wall clock. After a reopen, a row written by the next transaction
+    /// must not be below the commit time the store held at open (the floor).
+    #[test]
+    fn a_row_written_after_reopen_is_never_below_the_commit_time_at_open() {
+        for (mode, kv) in [
+            ("single", mem_kv()),
+            ("concurrent", Arc::new(occ_kv()) as Arc<dyn crate::kv::Kv>),
+        ] {
+            let env: Arc<dyn Env> = Arc::new(Frozen(2_000_000_000_000_000));
+            let options = || OpenOptions {
+                multiuser: true,
+                keyword_index_builder: false,
+                ..OpenOptions::default()
+            };
+            let origin = WriteOrigin {
+                host_id: "h".into(),
+                incarnation: "i".into(),
+                writer_id: "local_cli:t".into(),
+            };
+            let store = Store::open_kv(kv.clone(), env.clone(), options()).unwrap();
+            for i in 0..20 {
+                store.set_config(&format!("k{i}"), "v").unwrap();
+            }
+            drop(store);
+            let store = Store::open_kv(kv.clone(), env.clone(), options()).unwrap();
+            let floor = store.last_commit_time().unwrap().expect("a commit time");
+            store
+                .acquire_lease("after-reopen", &origin, 60_000)
+                .unwrap()
+                .unwrap();
+            let stored = store
+                .read_lease("after-reopen")
+                .unwrap()
+                .unwrap()
+                .acquired_at_us;
+            assert!(
+                stored >= floor,
+                "{mode}: row time {stored} below the floor at open {floor}"
+            );
+        }
+    }
+
+    /// Acceptance check from L6's commit-log proof (c22, first step): a brain with the commit log on, its commits made
+    /// through explicit transactions, reopened on a clock 5 s below the persisted floor: the floor read at open is the
+    /// persisted commit time, and every row time written after open is at or above it.
+    #[test]
+    fn c22_a_reopen_on_a_clock_below_the_floor_writes_no_row_time_below_it_with_the_commit_log_on()
+    {
+        for (mode, kv) in [
+            ("single", mem_kv()),
+            ("concurrent", Arc::new(occ_kv()) as Arc<dyn crate::kv::Kv>),
+        ] {
+            let options = || OpenOptions {
+                multiuser: true,
+                keyword_index_builder: false,
+                multiuser_writes: crate::MultiUserWrites {
+                    commit_log: true,
+                    host_id: Some("h".into()),
+                    ..Default::default()
+                },
+                ..OpenOptions::default()
+            };
+            let origin = WriteOrigin {
+                host_id: "h".into(),
+                incarnation: "i".into(),
+                writer_id: "local_cli:t".into(),
+            };
+            let t0 = 1_800_000_000_000_000;
+            let store = Store::open_kv(kv.clone(), Arc::new(Frozen(t0)), options()).unwrap();
+            for i in 0..8 {
+                let tx = store.begin_transaction(false).unwrap();
+                tx.set_config(&format!("c22/{i}"), "primary commit")
+                    .unwrap();
+                tx.commit_transaction().unwrap();
+            }
+            let floor = store.last_commit_time().unwrap().expect("a commit time");
+            drop(store);
+            let reopened =
+                Store::open_kv(kv.clone(), Arc::new(Frozen(floor - 5_000_000)), options()).unwrap();
+            assert_eq!(
+                reopened.last_commit_time().unwrap(),
+                Some(floor),
+                "{mode}: the floor at open"
+            );
+            for n in 0..4 {
+                reopened
+                    .acquire_lease(&format!("rows/{n}"), &origin, 60_000)
+                    .unwrap()
+                    .unwrap();
+                let t = reopened
+                    .read_lease(&format!("rows/{n}"))
+                    .unwrap()
+                    .unwrap()
+                    .acquired_at_us;
+                assert!(
+                    t >= floor,
+                    "{mode}: a row time {t} is below the clock floor {floor} read at open"
+                );
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod retired_key {
+    use super::*;
+    use crate::test_support::mem_kv;
+    use crate::{OpenOptions, Store, SystemEnv};
+
+    /// Ruling (1b): a store that still holds the retired `~L 0x04` key opens cleanly and ignores it: a huge stale value
+    /// never becomes the floor.
+    #[test]
+    fn a_store_with_the_retired_floor_key_opens_and_ignores_it() {
+        let kv = mem_kv();
+        let store =
+            Store::open_kv(kv.clone(), Arc::new(SystemEnv), OpenOptions::default()).unwrap();
+        drop(store);
+        let mut tx = kv.begin_write().unwrap();
+        tx.put(
+            &retired_high_water_key(),
+            &(i64::MAX as u64 / 2).to_be_bytes(),
+        )
+        .unwrap();
+        tx.commit().unwrap();
+        let options = OpenOptions {
+            multiuser: true,
+            keyword_index_builder: false,
+            ..OpenOptions::default()
+        };
+        let store = Store::open_kv(kv.clone(), Arc::new(SystemEnv), options).unwrap();
+        let floor = store.clock_high_water().unwrap();
+        assert!(
+            floor > 0 && floor < i64::MAX / 4,
+            "the floor comes from the commit time, not the retired key: {floor}"
+        );
     }
 }

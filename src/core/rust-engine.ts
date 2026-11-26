@@ -30,13 +30,20 @@ import { mapStoreError } from './rust-engine/store-errors.ts';
 import { STORE_MEMBERS } from './rust-engine/store-members/index.ts';
 import { brainWithCallDeadline, endOptimisticTransactions, runOptimisticTransaction, type OptimisticTransactions } from './rust-engine/optimistic-transaction.ts';
 import { servedCapabilities } from './rust-engine/store-capabilities.ts';
+import { rustMultiuserFromEnv, rustMultiuserSubSwitch } from './rust-engine/multiuser-switch.ts';
+import { existingHostIdFor, hostIdFor } from './persistence/identity.ts';
 import { RECEIPT_STOP_OWNERS } from './rust-engine/receipt-stops.ts';
 import { electOwner, type OwnerRole } from './rust-engine/owner-ipc/election.ts';
 import { callEndCheck, installOwnerClient, untilCallEnds } from './rust-engine/owner-ipc/client.ts';
 import { ownerWholeOperations } from './rust-engine/owner-ipc/owner-ops.ts';
-import type { OwnerServerStats } from './rust-engine/owner-ipc/server.ts';
+import type { OwnerEngineServer, OwnerServerStats } from './rust-engine/owner-ipc/server.ts';
 import { withAccessStore } from './rust-engine/access-self-check.ts';
 import { provenUnderMultiuser } from './rust-engine/lock-skip-guarantees.ts';
+import { servedServerOptionsFor } from './rust-engine/served/serve-listen.ts';
+import type { ServedServerOptions } from './rust-engine/served/session.ts';
+import { connectServedEngine, type ServedTarget } from './rust-engine/served/engine.ts';
+import type { CommitLogPage, CommitPosition } from './engine-members/commit-log.ts';
+import * as commitLog from './rust-engine/store-members/commit-log.ts';
 
 /**
  * The empty async context: no request, job, deadline, signal or caller mark. The engine runs its election, and the
@@ -94,6 +101,10 @@ export interface OpenRustEngineOptions {
    * capability and every lock skip refuses `engine_capability_missing`. Nothing in production sets it.
    */
   withholdSerializedTransactions?: boolean;
+  /** Multi-user Rust: the brain server this engine is a client of; it then never opens a store (rust-engine/served/). */
+  served?: ServedTarget;
+  /** Multi-user Rust, as an owner: protocol v3 options merged over the defaults (tests inject the bearer check). */
+  servedOptions?: Partial<ServedServerOptions>;
 }
 
 /**
@@ -107,6 +118,8 @@ export interface RustTransactionScope {
   ended: boolean;
   /** The attribution and source-scope settings applied in it (store-members/transactions.ts); trust ones live in the store. */
   readonly settings: Map<string, string>;
+  /** The position its commit got (`lastCommitPosition` on its engine), set once it committed. */
+  committedAt?: CommitPosition;
 }
 
 /** The transactions whose callback the current async context runs inside, innermost first. */
@@ -176,6 +189,8 @@ export class RustEngine implements BrainEngine {
   /** True from the first synchronous step of `disconnect()`, which also captures the stop hooks: no work that needs a hook may start after it. */
   get disconnecting(): boolean { return this._disconnecting > 0; }
   private readonly _ownerWaitMs: number | undefined;
+  private readonly _served: ServedTarget | undefined;
+  private readonly _servedOptions: Partial<ServedServerOptions> | undefined;
   private _owner: OwnerRole | null = null;
   private _leaveOwner: (() => void) | null = null;
   /** Set on a transaction-bound clone (store-members/transactions.ts); null on the engine itself. */
@@ -192,6 +207,8 @@ export class RustEngine implements BrainEngine {
     this.databasePath = opts.databasePath;
     this._ownerWaitMs = opts.ownerWaitMs;
     this._withholdSerializedTransactions = opts.withholdSerializedTransactions === true;
+    this._served = opts.served;
+    this._servedOptions = opts.servedOptions;
   }
 
   private readonly _withholdSerializedTransactions: boolean;
@@ -241,6 +258,9 @@ export class RustEngine implements BrainEngine {
   /** The owner's call pool, when this process owns the brain. */
   ownerStats(): OwnerServerStats | null { return this._owner?.role === 'owner' ? this._owner.server.stats() : null; }
 
+  /** The owner socket server, when this process owns the brain (the brain server listener attaches to it). */
+  ownerServer(): OwnerEngineServer | null { return this._owner?.role === 'owner' ? this._owner.server : null; }
+
   /**
    * Becomes the brain's owner (opens the store, serves the owner socket) or a client of the process that owns it. A
    * second `connect` while connected changes nothing, and connects that overlap share one election. A `disconnect`
@@ -250,7 +270,20 @@ export class RustEngine implements BrainEngine {
   async connect(config: EngineConfig): Promise<void> {
     this._savedConfig = config;
     if (this._connected) return;
+    if (this._served) { await this._connectServed(this._served); return; }
     await this._electOnce();
+  }
+
+  /**
+   * A client of a brain server (rust-engine/served/engine.ts): no election, no store, no fallback to one. A disconnect
+   * that wins against the connect closes what it made.
+   */
+  private async _connectServed(target: ServedTarget): Promise<void> {
+    const generation = this._generation;
+    const leave = await connectServedEngine(this, target);
+    if (generation !== this._generation || this._disconnecting) { leave(); throw mapStoreError({ code: 'store_closed' }, { member: 'connect' }); }
+    this._leaveOwner = leave;
+    this._connected = true;
   }
 
   /** The one open in progress, started if there is none: connects that overlap, and takeovers, share it. */
@@ -276,7 +309,9 @@ export class RustEngine implements BrainEngine {
     // connection (a bound method) finds the engine already elected, and does nothing: a second election would make the
     // owner a client of its own socket and drop the owner lock it holds.
     const current = this._owner?.role === 'client' && this._owner.connection === from;
-    return current && this._connected && !this._disconnecting ? this._electOnce() : Promise.resolve();
+    if (current && this._connected && !this._disconnecting) return this._electOnce();
+    // A takeover another call of this engine already started: wait for it, so this call runs on what it elects.
+    return this._opening ?? Promise.resolve();
   }
 
   private async _open(generation: number): Promise<void> {
@@ -287,7 +322,11 @@ export class RustEngine implements BrainEngine {
     let storeFailure: { error: unknown } | null = null;
     let role: OwnerRole;
     try {
+      // Once the store is open and its multi-user mode resolved, a brain in multi-user mode also speaks protocol v3
+      // (rust-engine/served/): the election reads `served` after onLock. Off, it stays undefined.
+      let servedOpts: ServedServerOptions | undefined;
       role = await electOwner(this as unknown as BrainEngine, this.databasePath, {
+        get served() { return servedOpts; },
         wholeOperations: ownerWholeOperations({ config: (this._savedConfig ?? undefined) as GBrainConfig | undefined }),
         ...(this._ownerWaitMs !== undefined ? { waitMs: this._ownerWaitMs } : {}),
         // Holding the owner lock: open the store before the socket serves, so no client call reaches this engine
@@ -300,8 +339,10 @@ export class RustEngine implements BrainEngine {
           this._claiming = true;
           let store: RustStore;
           try {
-            store = await openRustStore(this.addon, this.databasePath, await seedEmbeddingIdentity(this),
-              { withholdSerializedTransactions: this._withholdSerializedTransactions });
+            store = await openRustStore(
+              this.addon, this.databasePath, await seedEmbeddingIdentity(this),
+              this._multiuserOrigin(), { withholdSerializedTransactions: this._withholdSerializedTransactions },
+            );
             if (generation !== this._generation) {
               await store.close().catch(() => undefined);
               throw abandoned();
@@ -311,6 +352,9 @@ export class RustEngine implements BrainEngine {
             if (store.multiuser) (this.capabilities as Set<Capability>).add('multi_writer');
             // Before the owner socket serves: the hello carries this store's promise.
             this._applyStoreGuarantees();
+            if (store.commitLog) (this.capabilities as Set<Capability>).add('commit_log');
+            const served = servedServerOptionsFor(this, store);
+            if (served) servedOpts = { ...served, ...this._servedOptions };
           } catch (error) {
             storeFailure = { error };
             throw error;
@@ -365,6 +409,7 @@ export class RustEngine implements BrainEngine {
       prior();
       for (const capability of this._ownCapabilities()) (this.capabilities as Set<Capability>).add(capability);
       this._applyStoreGuarantees();
+      if (this._store?.commitLog) (this.capabilities as Set<Capability>).add('commit_log');
     }
     this._connected = true;
   }
@@ -378,6 +423,30 @@ export class RustEngine implements BrainEngine {
     // Leaving the owner empties the capability set; this engine reports what its own store serves again.
     for (const capability of this._ownCapabilities()) (this.capabilities as Set<Capability>).add(capability);
     this._applyStoreGuarantees();
+    if (this._store?.commitLog) (this.capabilities as Set<Capability>).add('commit_log');
+  }
+
+  /**
+   * The host id the multi-user write origin stamps, read only when a sub-switch asks for it. With the switch itself on
+   * the identity may be minted (`hostIdFor`); otherwise (a brain that may be on through its config row) only an
+   * existing identity is sent, and `mint` names this machine only after the store answered that the brain is on and
+   * needs it (`HOST_ID_REQUIRED`), so a brain that is off never mints an identity.
+   */
+  private _multiuserOrigin(): { hostId?: string; mint: () => string } | undefined {
+    const wanted = rustMultiuserSubSwitch('GBRAIN_RUST_WRITE_ORIGIN', { multiuser: true })
+      || rustMultiuserSubSwitch('GBRAIN_RUST_COMMIT_LOG', { multiuser: true });
+    if (!wanted) return undefined;
+    const mint = () => hostIdFor(this);
+    if (rustMultiuserFromEnv()) return { hostId: mint(), mint };
+    let existing: string | null = null;
+    try {
+      existing = existingHostIdFor(this);
+    } catch (error) {
+      // silent-read-ok: an unreadable identity is sent as none; the store refuses the open if it needs one, and the
+      // retry mints it through hostIdFor, whose own error then surfaces
+      void error;
+    }
+    return existing ? { hostId: existing, mint } : { mint };
   }
 
   async disconnect(): Promise<void> {
@@ -395,6 +464,10 @@ export class RustEngine implements BrainEngine {
     this._generation++;
     const opening = this._opening;
     this._opening = null;
+    // Multi-user mode (the owner speaks protocol v3): a handoff, first. The owner answers what it has not started as
+    // handed over and finishes what it started while everything it runs on is still up: the store, and this process's
+    // persistence consumer, which a stop hook below ends (a forwarded write admitted here is applied before it does).
+    if (this._owner?.role === 'owner' && this._owner.server.attachServed) await this._owner.server.close();
     const stops = [...this._beforeDisconnect];
     this._beforeDisconnect.clear();
     for (const stop of stops) {
@@ -545,7 +618,7 @@ export class RustEngine implements BrainEngine {
       scope.live = false;
       if (scope.ended) throw mapStoreError({ code: 'store_closed' }, { member: 'transaction' });
       try {
-        await brain.commitTransaction();
+        scope.committedAt = await brain.commitTransaction() as CommitPosition;
       } catch (error) {
         await brain.rollbackTransaction().catch(() => undefined);
         throw mapStoreError(error, { member: 'transaction' });
@@ -582,6 +655,10 @@ export class RustEngine implements BrainEngine {
     await this.disconnect();
     await this.connect(config);
   }
+
+  /** engine-members/commit-log.ts; refused naming commit_log unless the store keeps a commit log. */
+  readCommitLog(after: CommitPosition | null, limit: number): Promise<CommitLogPage> { return commitLog.readCommitLog(this as never, after, limit); }
+  lastCommitPosition(): Promise<CommitPosition | null> { return commitLog.lastCommitPosition(this as never); }
 
   registerBeforeDisconnect(stop: () => Promise<void>): () => void {
     this._beforeDisconnect.add(stop);

@@ -14,7 +14,7 @@ import { provenUnderMultiuser } from '../lock-skip-guarantees.ts';
 export type StoreMember<Args extends unknown[], R> = (brain: StoreBrain, ...args: Args) => Promise<R>;
 
 /** The capability a member belongs to in the Rust member table. */
-function memberCapability(member: string): Capability {
+export function memberCapability(member: string): Capability {
   const cls = (RUST_ENGINE_MEMBERS as Record<string, string>)[member];
   return cls as Capability;
 }

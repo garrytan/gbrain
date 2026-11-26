@@ -30,17 +30,16 @@ import { OperationError } from '../ops/contract.ts';
 const MOVE_TABLES = new Set(['belief_events', 'belief_page_lifetimes', 'fact_purges', 'fact_withdrawals', 'facts', 'files', 'page_aliases', 'pages',
   'secret_store_occurrence', 'slug_aliases', 'slug_rename_history', 'sources', 'take_purges']);
 
-async function rowSecurityBrainTables(db: Pick<BrainEngine, 'executeRaw'>): Promise<string[]> {
-  return (await db.executeRaw<{ t: string }>(`SELECT c.relname::text AS t FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-    WHERE n.nspname = ANY(pg_catalog.current_schemas(false)) AND c.relkind IN ('r', 'p') AND pg_catalog.row_security_active(c.oid) ORDER BY 1`)).map(row => row.t);
+async function rowSecurityBrainTables(db: Pick<BrainEngine, 'readRowSecurityBrainTables'>): Promise<string[]> {
+  return db.readRowSecurityBrainTables();
 }
 
 /**
  * The tables of `tables` that row-level security applies to for the running role, in name order. A policy's existence does
  * not prove it shows every row (a `USING (false)` policy hides them all), so a read of such a table can come back short.
  */
-export async function rowSecurityTables(db: Pick<BrainEngine, 'executeRaw'>, tables: readonly string[]): Promise<string[]> {
-  return (await db.executeRaw<{ t: string }>('SELECT t FROM unnest($1::text[]) AS t WHERE pg_catalog.row_security_active(t) ORDER BY t', [[...tables]])).map(row => row.t);
+export async function rowSecurityTables(db: Pick<BrainEngine, 'readRowSecurityTables'>, tables: readonly string[]): Promise<string[]> {
+  return db.readRowSecurityTables(tables);
 }
 
 /**
@@ -50,7 +49,7 @@ export async function rowSecurityTables(db: Pick<BrainEngine, 'executeRaw'>, tab
  * security does not apply to (the owner of every table without FORCE ROW LEVEL SECURITY, or a BYPASSRLS role) may preview
  * or move a page.
  */
-export async function assertGuardTablesReadable(tx: Pick<BrainEngine, 'executeRaw'>, sourceId: string): Promise<void> {
+export async function assertGuardTablesReadable(tx: Pick<BrainEngine, 'readRowSecurityBrainTables'>, sourceId: string): Promise<void> {
   const all = await rowSecurityBrainTables(tx);
   if (!all.length) return;
   // Name the tables the move itself reads or re-keys first; the rest only by count.
@@ -75,4 +74,14 @@ export async function carryGuards(tx: Pick<BrainEngine, 'executeRaw'>, sourceId:
     SELECT source_id, $3, claim_hash, request_id, purged_at FROM take_purges WHERE source_id = $1 AND subject = $2
     ON CONFLICT DO NOTHING RETURNING claim_hash`, [sourceId, from, to]);
   return { fact_purges: facts.length, take_purges: takes.length };
+}
+
+/**
+ * Re-keys the page's attachments to `to`: this source's `files` rows of page `pageId`, and rows with no page id that name
+ * `from`. Returns how many rows moved. Raw SQL: on a Rust brain it is the typed raw_sql refusal (the store writes every slug
+ * in normal form, so no page there ever needs this move; docs/designs/RUST_ENGINE.md names the loss).
+ */
+export async function rekeyAttachments(tx: Pick<BrainEngine, 'executeRaw'>, sourceId: string, from: string, to: string, pageId: number): Promise<number> {
+  const files = await tx.executeRaw('UPDATE files SET page_slug = $3 WHERE source_id = $1 AND page_slug = $2 AND (page_id = $4 OR page_id IS NULL) RETURNING id', [sourceId, from, to, pageId]);
+  return files.length;
 }

@@ -403,6 +403,8 @@ export interface PageFilters {
    * read none of those fields (list_pages).
    */
   listColumnsOnly?: boolean;
+  /** The listing columns plus frontmatter: `compiled_truth` and `timeline` come back as '', so a frontmatter scan never ships page bodies. */
+  omitBodies?: boolean;
   /** #7159: frontmatter equality (search/frontmatter-where.ts). */
   where?: import('./search/frontmatter-where.ts').FrontmatterWhere;
 }
@@ -2378,6 +2380,11 @@ export interface EngineConfig {
   pglite_shared_buffers?: string;
   /** Postgres: connections the module pool may open (a one-shot read: 2); unset keeps GBRAIN_POOL_SIZE or the default. */
   pool_max?: number;
+  /**
+   * Rust with multi-user on: the brain server this client reaches instead of opening a store (rust-engine/served/).
+   * `token_env` names the environment variable that holds the owner server token; the token itself is never in config.
+   */
+  rust_server?: { url?: string; token_env?: string; ca_file?: string };
 }
 
 // Errors

@@ -3,6 +3,10 @@ import type { BrainEngine } from '../../engine.ts';
 import type { MemberClass } from '../members.ts';
 
 export const LEDGER_MEMBERS = {
+  // The commit log and commit positions (multi-user mode, store-members/commit-log.ts): shell members that refuse naming
+  // commit_log unless the store keeps a log.
+  readCommitLog: 'implemented',
+  lastCommitPosition: 'implemented',
   // Group D (takes, salience and code-edge reads)
   countOffGridTakeWeights: 'takes',
   countTakes: 'takes',
@@ -81,6 +85,9 @@ export const LEDGER_MEMBERS = {
   listConceptIncomingLinks: 'pages',
   carryConceptIncomingLinks: 'pages',
   readTombstoneWindow: 'pages',
+  readConceptStatedKinds: 'pages',
+  readRebuildAccess: 'pages',
+  readHeldConceptRows: 'pages',
   // the engine graduation inventory's catalog reads (engine-sql/graduation-catalog.ts)
   listCatalogRelations: 'schema',
   readCatalogSchemaVersion: 'schema',
@@ -166,6 +173,12 @@ export const LEDGER_MEMBERS = {
   hasBeliefBaseline: 'belief_ledger',
   listBeliefBaselinePending: 'belief_ledger',
   countBeliefBaselineSlugs: 'belief_ledger',
+  listBeliefDriftCandidates: 'belief_ledger',
+  readNewestBeliefEvent: 'belief_ledger',
+  listOrphanLifetimes: 'belief_ledger',
+  // the cycle's changed-page window (engine-sql/cycle-reads.ts)
+  readCycleListingInstant: 'pages',
+  listSourceChangedPagesAfter: 'pages',
   readBeliefRedactions: 'belief_ledger',
   insertBeliefRedaction: 'belief_ledger',
   releaseBeliefRedactions: 'belief_ledger',

@@ -19,6 +19,8 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { opError, type OperationError } from '../ops/contract.ts';
 import { accessSettingsSnapshot, callerAccessRecord } from '../search/private-visibility.ts';
 import { rustMultiuserFromEnv, rustMultiuserSubSwitch } from './multiuser-switch.ts';
+import { capabilityMissing } from './errors.ts';
+import { memberCapability } from './store-members/common.ts';
 
 /** What a helper asks the store to derive (`DeriveRequest` in access_derive.rs). */
 export type AccessDeriveRequest =
@@ -29,11 +31,29 @@ export type AccessDeriveRequest =
   | { mode: 'member_access' }
   | { mode: 'remote_floor' }
   | { mode: 'visibility'; list?: string[] }
-  | { mode: 'privacy_part_aliases' };
+  | { mode: 'privacy_part_aliases' }
+  | { mode: 'plain_page_flags' }
+  | { mode: 'access_part_plain' }
+  | { mode: 'member_access_policy'; identity?: string[]; satisfied: string[] }
+  | { mode: 'row_owner_only' }
+  | { mode: 'owner_reach'; identity: string[]; satisfied: string[] }
+  | { mode: 'open_page_floor' }
+  | { mode: 'writer_policy'; policy: { identities: string[][]; satisfiedRuleIds: string[]; folderCoverage: Array<{ source_id: string; prefix: string }>; owner: boolean; labelledOnly: boolean } }
+  | { mode: 'snapshot_policy'; identity: string[]; privateReadableSources: string[] };
 
 type Deriver = (ctx: unknown) => unknown;
 /** The store a served member runs on, as the self-check reads it: its multi-user answer and the addon's derivation. */
-interface AccessStore { readonly multiuser: boolean; readonly derive?: Deriver }
+interface AccessStore {
+  readonly multiuser: boolean;
+  readonly derive?: Deriver;
+  readonly server?: boolean;
+  /**
+   * Server mode: the store's own schema version (from the caller record the store built; null when it records none),
+   * the one the derivation settings carry instead of the version the TypeScript engine scope recorded (audit row A12:
+   * the owner-only form is the store's decision).
+   */
+  readonly storeSchemaVersion?: number | null;
+}
 const accessStore = new AsyncLocalStorage<AccessStore>();
 
 /**
@@ -49,10 +69,36 @@ export function storeMultiuser(store: object): boolean {
  * Runs `fn`, a served member on `store`, with the store's answer in context when the store is in multi-user mode;
  * otherwise just runs it. `addon` holds the pure `deriveAccessPolicy` export the self-check compares with.
  */
-export function withAccessStore<T>(store: object, addon: object, fn: () => T): T {
+export function withAccessStore<T>(store: object, addon: object, fn: () => T, opts: { server?: boolean; storeSchemaVersion?: number | null } = {}): T {
   if (!storeMultiuser(store)) return fn();
-  const derive = (addon as { deriveAccessPolicy?: unknown }).deriveAccessPolicy;
-  return accessStore.run({ multiuser: true, ...(typeof derive === 'function' ? { derive: derive as Deriver } : {}) }, fn);
+  const outer = accessStore.getStore();
+  const own = (addon as { deriveAccessPolicy?: unknown }).deriveAccessPolicy;
+  // Inside a principal session the session's derivation holds (the same addon in production).
+  const derive = outer?.server === true && outer.derive ? outer.derive : typeof own === 'function' ? own as Deriver : outer?.derive;
+  // Server mode, once set by a principal session (principal-session.ts), holds for every member call inside it.
+  const server = opts.server === true || outer?.server === true;
+  const pinned = opts.server === true ? opts.storeSchemaVersion : outer?.server === true ? outer.storeSchemaVersion : undefined;
+  return accessStore.run({ multiuser: true, ...(derive ? { derive } : {}), ...(server ? { server } : {}),
+    ...(server ? { storeSchemaVersion: pinned ?? null } : {}) }, fn);
+}
+
+/** Server mode: a principal session's call, whose every privacy policy is the store's derivation alone. */
+export function accessServerModeOn(): boolean {
+  return accessStore.getStore()?.server === true;
+}
+
+/** A policy helper must ask the store: the self-check compares, or server mode uses the store's answer alone. */
+export function accessDerivationOn(): boolean {
+  return accessServerModeOn() || accessSelfCheckOn();
+}
+
+/** Comparisons the self-check made in this process, and how many it refused (the CI self-check lane reads them). */
+let compared = 0;
+let refused = 0;
+
+/** The self-check's counts in this process: comparisons made and refusals raised. */
+export function accessSelfCheckStats(): { compared: number; refused: number } {
+  return { compared, refused };
 }
 
 /** The self-check is on: the store runs in multi-user mode and the access sub-switch is set. */
@@ -64,7 +110,14 @@ export function accessSelfCheckOn(): boolean {
 /** The context the store derives from: the record as it stands (none outside one), the settings and the request. */
 export function accessDeriveContext(request: AccessDeriveRequest): unknown {
   const record = callerAccessRecord();
-  return { record: record ? JSON.parse(JSON.stringify(record)) : null, settings: accessSettingsSnapshot(), request };
+  const settings = accessSettingsSnapshot();
+  const scope = accessStore.getStore();
+  // Server mode: the schema version is the store's own (A12), never the one the TypeScript engine scope recorded.
+  if (scope?.server === true) {
+    delete settings.scopeSchemaVersion;
+    if (typeof scope.storeSchemaVersion === 'number') settings.scopeSchemaVersion = scope.storeSchemaVersion;
+  }
+  return { record: record ? JSON.parse(JSON.stringify(record)) : null, settings, request };
 }
 
 /** A helper refusal (`refuseMember`): the policy is not one the store models. */
@@ -83,6 +136,22 @@ function outcomeJson(value: unknown, refused: boolean): unknown {
 function storeJson(value: unknown): unknown {
   if (value && typeof value === 'object' && (value as { $refuse?: unknown }).$refuse === true) return { $refuse: true };
   return value;
+}
+
+/**
+ * Server mode: the store's derivation is the policy. A refusal raises the same `engine_capability_missing` refusal the
+ * TypeScript helper raises; no derivation in context, or one the store cannot read, refuses (fail closed).
+ */
+function storeDerived<T>(member: string, request: AccessDeriveRequest): T {
+  const derive = accessStore.getStore()?.derive;
+  if (!derive) throw accessSelfCheckMismatch(member, request.mode, '$derive (no store derivation is in context)');
+  const got = derive(accessDeriveContext(request)) as Record<string, unknown> | null;
+  if (got && typeof got === 'object' && !Array.isArray(got)) {
+    if (got.$invalid !== undefined) throw accessSelfCheckMismatch(member, request.mode, '$invalid');
+    if (got.$refuse === true) throw capabilityMissing(memberCapability(member), `${member} (${String(got.why ?? 'a policy the store does not model')})`);
+    if (got.$none === true) return undefined as T;
+  }
+  return got as T;
 }
 
 /** The first path where `a` and `b` differ, or null when they are equal (key order ignored). */
@@ -122,21 +191,23 @@ export function accessSelfCheckMismatch(member: string, mode: string, at: string
  * rethrown unchanged when they agree.
  */
 export function selfChecked<T>(member: string, request: AccessDeriveRequest, run: () => T): T {
+  if (accessServerModeOn() && !accessSelfCheckOn()) return storeDerived<T>(member, request);
   if (!accessSelfCheckOn()) return run();
   let value: T | undefined;
   let refusal: unknown;
-  let refused = false;
+  let helperRefused = false;
   try {
     value = run();
   } catch (error) {
     if (!isHelperRefusal(error)) throw error;
     refusal = error;
-    refused = true;
+    helperRefused = true;
   }
   const derive = accessStore.getStore()?.derive;
   const got = derive ? storeJson(derive(accessDeriveContext(request))) : { $invalid: 'no store derivation is in context' };
-  const at = firstDifference(outcomeJson(value, refused), got);
-  if (at !== null) throw accessSelfCheckMismatch(member, request.mode, at);
-  if (refused) throw refusal;
+  const at = firstDifference(outcomeJson(value, helperRefused), got);
+  compared++;
+  if (at !== null) { refused++; throw accessSelfCheckMismatch(member, request.mode, at); }
+  if (helperRefused) throw refusal;
   return value as T;
 }

@@ -290,7 +290,7 @@ fn read_link(read: &dyn KvRead, from: u64, id: u64) -> Result<Option<LinkRecord>
 }
 
 /// The link that holds a unique key, if any.
-fn link_at(read: &dyn KvRead, from: u64, unique: &[u8]) -> Result<Option<LinkRecord>> {
+pub(crate) fn link_at(read: &dyn KvRead, from: u64, unique: &[u8]) -> Result<Option<LinkRecord>> {
     match read.get(unique)? {
         Some(bytes) => {
             let id = keys::be8(&bytes).ok_or_else(|| corrupt("link unique"))?;

@@ -3,9 +3,11 @@
 //! `derivation_unpriced_model`). SQL in `src/core/engine-sql/doctor-derived.ts`, docs in
 //! `rust/docs/store/cli-reads-doctor-derived.md`. Each read takes one snapshot.
 //!
-//! `page_extraction_state` has no Rust writer (the Rust engine refuses `executeRaw`, which writes
-//! it), so the receipts that table holds contribute nothing; the receipts of
-//! `page_segment_derivations` (a typed member writes them) are the whole answer.
+//! The receipts come from two tables: `page_extraction_state` (`page_extraction_state.rs`, the
+//! extraction watermark's receipt, written by `commitPageExtraction` and
+//! `writePageExtractionReceipt`) and `page_segment_derivations` (the per-segment derivation
+//! receipts). A page held for an undetected format (`detection_ambiguous`) hides its derivation
+//! receipts for that pipeline, as the SQL's `NOT EXISTS` does.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -17,10 +19,13 @@ use crate::Store;
 use crate::error::Result;
 use crate::kv::KvRead;
 use crate::page_body::health::{Derivation, all_derivations, segmented_body, tiling};
+use crate::page_extraction_state::all_states;
 use crate::pages::{all_pages, read_page_by_id};
 
 /// The samples a receipt group lists (`[1:3]`).
 const SAMPLES: usize = 3;
+/// The `LIMIT 20` of the ambiguous-input statement.
+const AMBIGUOUS_LIMIT: usize = 20;
 
 /// A receipt group member: `(updated_at_us, page id, "source:slug" plus its detail)`.
 type Sample = (i64, u64, String);
@@ -117,13 +122,80 @@ impl Store {
         Ok(found.into_iter().map(|(_, row)| row).collect())
     }
 
-    /// `listExtractionInputReceipts()`: the derivation receipts that say an extraction read only
-    /// part of its input (any `kind` but `unpriced_model`, or the `purge_sweep_pending` reason),
-    /// by pipeline and kind, with the number of live pages and the three most recently updated
-    /// `source:slug` samples (a failed-windows receipt adds its first window and occurrence).
+    /// `listAmbiguousExtractionInputs()`: the live conversation pages held for an undetected
+    /// format (a `conversation_facts` receipt of kind `detection_ambiguous`), newest first and
+    /// then by page id, at most 20, each `{ page: "source:slug", grammars, total }` where
+    /// `grammars` is the receipt's `grammars` and `total` counts every held page.
+    pub fn list_ambiguous_extraction_inputs(&self) -> Result<Vec<Value>> {
+        let read = self.read()?;
+        let mut live = LivePages::new(&*read);
+        let mut held: Vec<(i64, u64, String, Value)> = Vec::new();
+        for s in all_states(&*read)? {
+            let Some(receipt) = s.record.receipt() else {
+                continue;
+            };
+            if s.pipeline != "conversation_facts"
+                || receipt_text(receipt, "kind").as_deref() != Some("detection_ambiguous")
+            {
+                continue;
+            }
+            if let Some(name) = live.name(s.page_id)? {
+                let grammars = receipt.get("grammars").cloned().unwrap_or(Value::Null);
+                held.push((s.record.updated_at_us(), s.page_id, name, grammars));
+            }
+        }
+        // `ORDER BY s.updated_at DESC, s.page_id`
+        held.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+        let total = held.len();
+        Ok(held
+            .into_iter()
+            .take(AMBIGUOUS_LIMIT)
+            .map(|(_, _, page, grammars)| json!({ "page": page, "grammars": grammars, "total": total }))
+            .collect())
+    }
+
+    /// `listExtractionInputReceipts()`: the receipts that say an extraction read only part of its
+    /// input, by pipeline and kind, with the number of live pages and the three most recently
+    /// updated `source:slug` samples. Two kinds of receipt count: an extraction-state receipt
+    /// (any `kind` but `detection_ambiguous` and `grammar_chosen`; a missing kind reads
+    /// `unknown`) and a derivation receipt (any `kind` but `unpriced_model`, or the
+    /// `purge_sweep_pending` reason; a failed-windows receipt adds its first window and occurrence
+    /// to the sample). A page held for an undetected format hides its derivation receipts of that
+    /// pipeline.
     pub fn list_extraction_input_receipts(&self) -> Result<Vec<Value>> {
         let read = self.read()?;
         let mut live = LivePages::new(&*read);
+        let states = all_states(&*read)?;
+        let ambiguous: BTreeSet<(u64, &str)> = states
+            .iter()
+            .filter(|s| {
+                s.record.receipt().is_some_and(|r| {
+                    receipt_text(r, "kind").as_deref() == Some("detection_ambiguous")
+                })
+            })
+            .map(|s| (s.page_id, s.pipeline.as_str()))
+            .collect();
+        // One entry per row of the statement's `receipts` CTE: `(pipeline, kind, page id, update, detail)`.
+        let mut rows: Vec<(String, String, u64, i64, Option<String>)> = Vec::new();
+        for s in &states {
+            let Some(receipt) = s.record.receipt() else {
+                continue;
+            };
+            let kind = receipt_text(receipt, "kind");
+            if matches!(
+                kind.as_deref(),
+                Some("detection_ambiguous" | "grammar_chosen")
+            ) {
+                continue;
+            }
+            rows.push((
+                s.pipeline.clone(),
+                kind.unwrap_or_else(|| "unknown".into()),
+                s.page_id,
+                s.record.updated_at_us(),
+                None,
+            ));
+        }
         // `GROUP BY page_id, pipeline, kind`: newest update, and the smallest failed-window detail.
         let mut receipts: BTreeMap<(u64, String, String), Receipt> = BTreeMap::new();
         for d in all_derivations(&*read)? {
@@ -131,6 +203,9 @@ impl Store {
             let purge =
                 receipt_text(&d.receipt, "reason").as_deref() == Some("purge_sweep_pending");
             if !(kind.as_deref().is_some_and(|k| k != "unpriced_model") || purge) {
+                continue;
+            }
+            if ambiguous.contains(&(d.page_id, d.pipeline.as_str())) {
                 continue;
             }
             let group_kind = if purge {
@@ -157,15 +232,23 @@ impl Store {
                 entry.detail = Some(detail);
             }
         }
-        let mut groups: BTreeMap<(String, String), Vec<Sample>> = BTreeMap::new();
         for ((page_id, pipeline, kind), receipt) in receipts {
+            rows.push((
+                pipeline,
+                kind,
+                page_id,
+                receipt.updated_at_us,
+                receipt.detail,
+            ));
+        }
+        let mut groups: BTreeMap<(String, String), Vec<Sample>> = BTreeMap::new();
+        for (pipeline, kind, page_id, updated_at_us, detail) in rows {
             if let Some(name) = live.name(page_id)? {
-                let sample = format!("{name}{}", receipt.detail.unwrap_or_default());
-                groups.entry((pipeline, kind)).or_default().push((
-                    receipt.updated_at_us,
-                    page_id,
-                    sample,
-                ));
+                let sample = format!("{name}{}", detail.unwrap_or_default());
+                groups
+                    .entry((pipeline, kind))
+                    .or_default()
+                    .push((updated_at_us, page_id, sample));
             }
         }
         Ok(groups
@@ -173,8 +256,9 @@ impl Store {
             .map(|((pipeline, kind), mut pages)| {
                 // `ORDER BY r.updated_at DESC`: ties have no order in SQL; page id keeps it stable.
                 pages.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+                let distinct: BTreeSet<u64> = pages.iter().map(|p| p.1).collect();
                 let samples: Vec<&str> = pages.iter().take(SAMPLES).map(|p| p.2.as_str()).collect();
-                json!({ "pipeline": pipeline, "kind": kind, "pages": pages.len(), "samples": samples })
+                json!({ "pipeline": pipeline, "kind": kind, "pages": distinct.len(), "samples": samples })
             })
             .collect())
     }

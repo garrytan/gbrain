@@ -43,17 +43,19 @@ export async function readWriterVersionCutoff(exec: LegacyUnscopedRead): Promise
 }
 
 /** `listWriterVersions`: the text persistence/writer-versions.ts `listWriterVersions` always sent. */
-// DISTINCT ON keeps the newest row per group by created_at or publication time; the final sort, over both arms, is last_seen, then the group keys by byte, so rows with one last_seen keep one order (the Rust store's newest_first).
+// DISTINCT ON keeps the newest row per group by created_at or publication time, and of rows with one time the lowest request id
+// (the order the Rust store scans them); the final sort, over both arms, is last_seen, then the group keys by byte with no host
+// first, so rows with one last_seen keep one order (the Rust store's newest_first).
 export const LIST_WRITER_VERSIONS_SQL = `SELECT * FROM (SELECT * FROM (
       SELECT DISTINCT ON (admitter_host_id,principal_kind,principal_id) 'admitter' AS role,admitter_host_id::text AS host_id,
         principal_kind||':'||principal_id AS principal,admitter_version AS version,created_at AS last_seen
-      FROM persistence_requests ORDER BY admitter_host_id,principal_kind,principal_id,created_at DESC) a
+      FROM persistence_requests ORDER BY admitter_host_id,principal_kind,principal_id,created_at DESC,id) a
     UNION ALL SELECT * FROM (
       SELECT DISTINCT ON (consumer_host_id,principal_kind,principal_id) 'consumer' AS role,consumer_host_id::text AS host_id,
         principal_kind||':'||principal_id AS principal,consumer_version AS version,COALESCE(published_at,completed_at) AS last_seen
       FROM persistence_requests WHERE state='committed'
-      ORDER BY consumer_host_id,principal_kind,principal_id,COALESCE(published_at,completed_at) DESC) c) v
-    ORDER BY last_seen DESC, role COLLATE "C", host_id COLLATE "C", principal COLLATE "C" LIMIT $1`;
+      ORDER BY consumer_host_id,principal_kind,principal_id,COALESCE(published_at,completed_at) DESC,id) c) v
+    ORDER BY last_seen DESC, role COLLATE "C", host_id COLLATE "C" NULLS FIRST, principal COLLATE "C" LIMIT $1`;
 
 /** The latest admitter and consumer version per host and principal across all retained requests, newest first. */
 export async function listWriterVersions(exec: LegacyUnscopedRead, limit: number): Promise<WriterVersionRow[]> {
@@ -64,19 +66,20 @@ export async function listWriterVersions(exec: LegacyUnscopedRead, limit: number
 export const RECENT_WRITER_VERSIONS_SQL = `WITH cutoff AS (SELECT writer_version_cutoff AS at FROM persistence_brain WHERE singleton=1 AND writer_version_cutoff IS NOT NULL),
     recent AS (SELECT r.*,COALESCE(r.published_at,r.completed_at) AS publication FROM persistence_requests r
       WHERE r.state='committed' AND COALESCE(r.published_at,r.completed_at)>=now()-($1::double precision*interval '1 day'))
-    SELECT 'admitter' AS role,r.admitter_host_id::text AS host_id,r.principal_kind||':'||r.principal_id AS principal,
+    SELECT * FROM (SELECT 'admitter' AS role,r.admitter_host_id::text AS host_id,r.principal_kind||':'||r.principal_id AS principal,
       r.admitter_version AS version,MAX(r.created_at) AS last_seen,COUNT(*)::integer AS requests
     FROM recent r CROSS JOIN cutoff c WHERE r.created_at>=c.at GROUP BY 2,3,4
     UNION ALL
     SELECT 'consumer' AS role,COALESCE(r.consumer_host_id,w.owner_host_id)::text AS host_id,r.principal_kind||':'||r.principal_id AS principal,
       r.consumer_version AS version,MAX(r.publication) AS last_seen,COUNT(*)::integer AS requests
-    FROM recent r LEFT JOIN persistence_worktrees w ON w.id=r.worktree_id CROSS JOIN cutoff c WHERE r.publication>=c.at GROUP BY 2,3,4
-    ORDER BY last_seen DESC`;
+    FROM recent r LEFT JOIN persistence_worktrees w ON w.id=r.worktree_id CROSS JOIN cutoff c WHERE r.publication>=c.at GROUP BY 2,3,4) v
+    ORDER BY last_seen DESC, role COLLATE "C", host_id COLLATE "C" NULLS FIRST, principal COLLATE "C", version COLLATE "C" NULLS FIRST`;
 
 /**
  * Committed requests published in the last `days`, grouped per role, host and principal; admitters count only when
  * admitted after the cutoff and consumers only when published after it. An unstamped consumer's host falls back to the
- * worktree owner.
+ * worktree owner. Newest first; rows with one last_seen by role, host (no host first), principal and version in byte
+ * order, as the Rust store's newest_first.
  */
 export async function recentWriterVersions(exec: LegacyUnscopedRead, days: number): Promise<RecentWriterVersionRow[]> {
   return (await exec.executeRaw<RawRow>(RECENT_WRITER_VERSIONS_SQL, [days])).map(recentWriterVersionRow);
@@ -91,11 +94,12 @@ export interface SegmentedGateEvidenceRow {
 
 /**
  * The segmented-storage gate's evidence: every writer seen in the last `$1` days, per role, host, principal, version and
- * segment-reader mark, newest first. The ingest log is read in two arms, unmarked and marked rows, each on its partial
+ * segment-reader mark, newest first (a tie by role, host with no host first, principal, version and mark, in byte order, as
+ * the Rust store sorts it). The ingest log is read in two arms, unmarked and marked rows, each on its partial
  * index (ingest_log_unmarked_idx, v254; ingest_log_marked_idx, v259), so the read never scans the whole log.
  */
 export const SEGMENTED_GATE_EVIDENCE_SQL = `WITH win AS (SELECT now()-($1::double precision*interval '1 day') AS since)
-    SELECT 'admitter' AS role,r.admitter_host_id::text AS host_id,r.principal_kind||':'||r.principal_id AS principal,r.admitter_version AS version,
+    SELECT * FROM (SELECT 'admitter' AS role,r.admitter_host_id::text AS host_id,r.principal_kind||':'||r.principal_id AS principal,r.admitter_version AS version,
       COALESCE(r.admitter_segment_reader,false) AS segment_reader,MAX(r.created_at) AS last_seen,COUNT(*)::integer AS requests,
       MIN(r.created_at) AS first_seen
     FROM persistence_requests r CROSS JOIN win WHERE r.created_at>=win.since GROUP BY 2,3,4,5
@@ -113,8 +117,8 @@ export const SEGMENTED_GATE_EVIDENCE_SQL = `WITH win AS (SELECT now()-($1::doubl
     FROM ingest_log l CROSS JOIN win WHERE l.writer_segment_reader IS TRUE AND l.created_at>=win.since GROUP BY 2,3,4
     UNION ALL
     SELECT 'resident',c.host_id::text,'process:'||c.kind,c.version,COALESCE(c.segment_reader,false),MAX(c.renewed_at),COUNT(*)::integer,MIN(c.started_at)
-    FROM persistence_consumers c CROSS JOIN win WHERE c.renewed_at>=win.since GROUP BY 2,3,4,5
-    ORDER BY last_seen DESC`;
+    FROM persistence_consumers c CROSS JOIN win WHERE c.renewed_at>=win.since GROUP BY 2,3,4,5) v
+    ORDER BY last_seen DESC, role COLLATE "C", host_id COLLATE "C" NULLS FIRST, principal COLLATE "C", version COLLATE "C" NULLS FIRST, segment_reader`;
 
 /** The row as every engine returns it (ISO times, a numeric count, a boolean mark). */
 export function segmentedGateEvidenceRow(row: Omit<SegmentedGateEvidenceRow, 'last_seen' | 'first_seen' | 'requests'> & { last_seen: unknown; first_seen: unknown; requests: unknown }): SegmentedGateEvidenceRow {

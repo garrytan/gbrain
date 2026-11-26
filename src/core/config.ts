@@ -35,6 +35,8 @@ function getConfigPath() { return configPath(); }
 
 export interface GBrainConfig {
   engine: 'postgres' | 'pglite' | 'rust';
+  /** Rust with multi-user on: the brain server to reach (types.ts EngineConfig.rust_server); ignored while it is off. */
+  rust_server?: { url?: string; token_env?: string; ca_file?: string };
   /** File-plane hook-lane keys (read by engine-free hook/push children).
    * `gbrain config set` routes these two dotted keys here, not to the DB. */
   push?: { allow_unverified_remote?: boolean };
@@ -43,6 +45,8 @@ export interface GBrainConfig {
   secrets?: { on_push?: 'redact' | 'refuse' };
   /** #7242 terminal hook (minions/terminal-hook.ts): file plane only, read by `gbrain jobs work`. */
   minions?: { terminal_hook?: string[] | { argv: string[]; timeout_ms?: number } };
+  /** GST-3849 Google token socket (core/google-socket/config.ts): file plane only, read engine-free by both start paths. */
+  google?: { mint_socket?: boolean; broker_act?: boolean; broker_allow_root_gateway?: boolean; socket_peers?: number[]; broker_joint_probe?: number };
   /** Ambient-writeback MIRROR of the DB-plane `memory.*` keys — `gbrain
    * config set memory.*` dual-writes both planes so the engine-free Stop-hook
    * child and the stdio boot resolve see the same truth the serve does. The
@@ -74,6 +78,8 @@ export interface GBrainConfig {
    * memorableGateAllowed in core/context/hook-heartbeat.ts.
    */
   integrations?: { memorable?: { enabled?: boolean } };
+  /** L1: whether the brain-first block carries the agent-policy line (on|off); written only owner-confirmed (commands/config/reserved-keys.ts). */
+  brain_first?: { policy_line?: string };
   /** Monthly backup-coverage check. File-plane for engine-free hook children. */
   backup?: { check_enabled?: boolean | string; check_interval_days?: number | string };
   /** #5232: CLI write wait in ms (file plane; persistence/write-wait.ts). */
@@ -1981,6 +1987,8 @@ export function toEngineConfig(config: GBrainConfig): EngineConfig {
     database_url: config.database_url,
     database_path: config.database_path,
     keyword_statement_timeout_ms: config.search?.keyword_statement_timeout_ms,
+    // Only a config that names a brain server carries the key, so every other config converts exactly as before.
+    ...(config.rust_server ? { rust_server: config.rust_server } : {}),
   };
 }
 

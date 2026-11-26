@@ -125,9 +125,9 @@ pub const ACCESS_RULES: u8 = b'z';
 /// `reason_purge_tombstones`, `1 source \0 commit \0 path`. Every letter is taken, so this family
 /// uses a digit; `y` is `SESSION_STATE`.
 pub const REASON_TOMBSTONE: u8 = b'1';
-// Tag `2` is free. It held the `embedding_holds` family (a page's hold state and reason), dropped
-// at the main join: a page's embedding hold now lives only in its `page_embedding_budget` ledger
-// record (`page_embedding_budget.rs`). No store holds a record under it, so a new family may take it.
+// Tag `2` is the commit log's (multi-user mode, `commit_log::COMMIT_LOG`, interface I-4; claimed in the tag
+// registry of docs/designs/RUST_ENGINE_INTERFACES.md). It is declared in `commit_log.rs`, not here, so the keyspace
+// catalog stays as it is while the mode is off. It once held the `embedding_holds` family, dropped at the main join.
 /// Family `secret_store` (`secret_store.rs`): the `secret_store` entries and the `secret_store_occurrence` rows. The byte
 /// after the tag names the record (`ENTRY`, `BY_MAC`, `BY_ENTRY`, `OCCURRENCE`, `BY_SLUG`, `BY_PAGE` in that module).
 /// The digit `3`: every letter is taken or reserved across the lanes (`x` by `ACCESS_MEMBERS`, `y` by
@@ -163,6 +163,12 @@ pub fn family_text(tag: [u8; 2], parts: &[&str]) -> Vec<u8> {
     }
     key
 }
+
+/// Family `page_extraction_state` (`page_extraction_state.rs`): the extraction watermark and the partial-input receipt of a
+/// page, one record per page and pipeline, `~e <page id> <pipeline>`. A two-byte family tag: the one-byte tags are taken, and
+/// the first version of this family on a branch used tag `2`, which `rust-engine/main` keeps free; no store holds a record
+/// of the family under `2`.
+pub const PAGE_EXTRACTION_STATE: [u8; 2] = family_tag(b'e');
 
 pub fn text(tag: u8, parts: &[&str]) -> Vec<u8> {
     let mut key = vec![tag];

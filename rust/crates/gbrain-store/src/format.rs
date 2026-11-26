@@ -43,6 +43,13 @@ use std::path::Path;
 pub const FORMAT_VERSION: u32 = 8;
 /// Every format version this build can open. Addon exports list these as `formatVersions`.
 pub const FORMAT_VERSIONS: &[u32] = &[1, 2, 3, 4, 5, 6, 7, FORMAT_VERSION];
+/// The commit log format (`commit_log.rs`, registry row `opt-in`): a brain opened with the commit
+/// log on (`GBRAIN_RUST_MULTIUSER=1`). Its records are a base format's shapes; the format record
+/// keeps that base as `log.base_format`. A new brain never starts here, `FORMAT_VERSIONS` does not
+/// list it, and a build without the log refuses it as newer.
+pub const LOG_FORMAT_VERSION: u32 = 16;
+/// Every format this build opens: the base formats and the commit log format.
+pub const OPENED_FORMATS: &[u32] = &[1, 2, 3, 4, 5, 6, 7, FORMAT_VERSION, LOG_FORMAT_VERSION];
 
 pub const FORMAT_FILE: &str = "FORMAT";
 pub const RECORDS_FILE: &str = "records.redb";
@@ -56,6 +63,17 @@ pub struct FormatRecord {
     pub schema_version: u32,
     pub brain_id: String,
     pub created_by: String,
+    /// Set on a commit log brain (`LOG_FORMAT_VERSION`): where its log starts. Absent otherwise,
+    /// and then not written, so `FORMAT` keeps its bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub log: Option<FormatLog>,
+}
+
+/// `FORMAT.log` of a commit log brain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FormatLog {
+    /// The activation commit: every commit after it has a commit record.
+    pub since: crate::commit_log::CommitPosition,
 }
 
 /// Checks a version number read from `FORMAT` or from the format record in the store.
@@ -69,6 +87,13 @@ pub(crate) fn check_version_in(version: u32, known: &[u32]) -> Result<()> {
     if known.contains(&version) {
         return Ok(());
     }
+    // The message names the base formats only: the commit log format is an extra a build opens
+    // beside them, not a newer base.
+    let known: Vec<u32> = known
+        .iter()
+        .copied()
+        .filter(|v| *v != LOG_FORMAT_VERSION)
+        .collect();
     let newest = known.last().copied().unwrap_or(0);
     let why = if version > newest { "newer" } else { "older" };
     Err(StoreError::new(
@@ -81,7 +106,7 @@ pub(crate) fn check_version_in(version: u32, known: &[u32]) -> Result<()> {
 
 /// Reads `FORMAT`; `None` when the file does not exist.
 pub fn read(dir: &Path) -> Result<Option<FormatRecord>> {
-    read_in(dir, FORMAT_VERSIONS)
+    read_in(dir, OPENED_FORMATS)
 }
 
 /// `read` for a build that opens only the formats in `known` (see `check_version_in`).
