@@ -1775,6 +1775,132 @@ fn the_check_reads_only() {
     assert_eq!(sequences(&s), counters);
 }
 
+// ---- allocatorAdvance ------------------------------------------------------------------------
+
+fn counter_of(s: &Store, relation: &str) -> String {
+    check_of(s, relation, None).counter
+}
+
+#[test]
+fn advance_raises_a_meta_counter_and_a_seq_counter_to_the_floor_plus_one() {
+    let s = linked_pages();
+    assert_eq!(counter_of(&s, "pages"), "10");
+    assert_eq!(counter_of(&s, "mcp_spend_log"), "1");
+    let report = s
+        .allocator_advance(
+            SEED,
+            &maxima(&[("pages", Some("500")), ("mcp_spend_log", Some("70"))]),
+        )
+        .unwrap();
+    let find = |relation: &str| report.iter().find(|c| c.relation == relation).unwrap();
+    assert_eq!(find("pages").counter, "501");
+    assert_eq!(find("pages").primary_max.as_deref(), Some("500"));
+    assert_eq!(find("mcp_spend_log").counter, "71");
+    assert!(report.iter().all(|c| c.ok));
+    // The counters really moved, and the store hands out the next id from them.
+    assert_eq!(counter_of(&s, "pages"), "501");
+    assert_eq!(counter_of(&s, "mcp_spend_log"), "71");
+    assert_eq!(
+        crate::jobs::read_seq(&*s.read().unwrap(), "mcp_spend_log").unwrap(),
+        70
+    );
+    // A floor equal to the counter's last handed-out id raises it by one.
+    s.allocator_advance(SEED, &maxima(&[("pages", Some("501"))]))
+        .unwrap();
+    assert_eq!(counter_of(&s, "pages"), "502");
+    // Every counted relation reports ok against its own floor.
+    let all: Vec<(&str, Option<&str>)> = super::allocators::counted_relations()
+        .into_iter()
+        .map(|r| (r, Some("9000")))
+        .collect();
+    let report = s.allocator_advance(SEED, &maxima(&all)).unwrap();
+    assert!(report.iter().all(|c| c.ok && c.counter == "9001"));
+}
+
+#[test]
+fn advance_never_lowers_a_counter_and_leaves_a_none_floor_alone() {
+    let s = linked_pages();
+    s.allocator_advance(SEED, &maxima(&[("mcp_spend_log", Some("70"))]))
+        .unwrap();
+    let before = sequences(&s);
+    let report = s
+        .allocator_advance(
+            SEED,
+            &maxima(&[
+                ("pages", Some("3")),
+                ("mcp_spend_log", Some("5")),
+                ("links", None),
+            ]),
+        )
+        .unwrap();
+    assert_eq!(sequences(&s), before);
+    assert_eq!(counter_of(&s, "pages"), "10");
+    assert_eq!(counter_of(&s, "mcp_spend_log"), "71");
+    assert!(report.iter().all(|c| c.ok));
+    // A floor just below the counter's last id also leaves it; an empty map changes nothing.
+    s.allocator_advance(SEED, &maxima(&[("pages", Some("9"))]))
+        .unwrap();
+    s.allocator_advance(SEED, &maxima(&[])).unwrap();
+    assert_eq!(sequences(&s), before);
+}
+
+#[test]
+fn advance_refuses_what_the_check_refuses_and_changes_nothing() {
+    let s = linked_pages();
+    let before = sequences(&s);
+    let snap = snapshot(&s);
+    for bad in [
+        maxima(&[("pages", Some("500")), ("nope", Some("1"))]),
+        maxima(&[("pages", Some("500")), ("links", Some("abc"))]),
+        maxima(&[("pages", Some("500")), ("links", Some("-1"))]),
+        maxima(&[
+            ("pages", Some("500")),
+            ("links", Some("18446744073709551616")),
+        ]),
+        // A floor the counters cannot hold.
+        maxima(&[
+            ("pages", Some("500")),
+            ("links", Some("18446744073709551615")),
+        ]),
+        maxima(&[
+            ("pages", Some("500")),
+            ("mcp_spend_log", Some("9223372036854775808")),
+        ]),
+    ] {
+        let err = s.allocator_advance(SEED, &bad).unwrap_err();
+        assert_eq!(err.code, INVALID_ARGUMENT, "{bad:?}");
+        assert_eq!(sequences(&s), before, "{bad:?}");
+    }
+    let err = s.allocator_advance("seed-2", &maxima(&[])).unwrap_err();
+    assert_eq!(err.code, INVALID_STATE);
+    let err = store()
+        .allocator_advance(SEED, &maxima(&[("pages", Some("5"))]))
+        .unwrap_err();
+    assert_eq!(err.code, INVALID_STATE);
+    let err = s.allocator_advance("", &maxima(&[])).unwrap_err();
+    assert_eq!(err.code, INVALID_ARGUMENT);
+    assert_eq!(sequences(&s), before);
+    assert_eq!(snapshot(&s), snap);
+    // A relation with no counter may be named: nothing to raise.
+    s.allocator_advance(SEED, &maxima(&[("tags", Some("5"))]))
+        .unwrap();
+    assert_eq!(sequences(&s), before);
+}
+
+#[test]
+fn advance_twice_gives_the_same_result() {
+    let s = linked_pages();
+    let floors = maxima(&[("pages", Some("500")), ("mcp_spend_log", Some("70"))]);
+    let first = s.allocator_advance(SEED, &floors).unwrap();
+    let counters = sequences(&s);
+    let snap = snapshot(&s);
+    let second = s.allocator_advance(SEED, &floors).unwrap();
+    assert_eq!(first, second);
+    assert_eq!(sequences(&s), counters);
+    assert_eq!(snapshot(&s), snap);
+    assert_eq!(second, s.allocator_check(SEED, &floors).unwrap());
+}
+
 #[test]
 fn a_follow_upsert_of_a_row_above_the_counter_raises_the_counter_past_it() {
     let relations = plan().relations;

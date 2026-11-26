@@ -81,18 +81,39 @@ describe('engine swap --plan', () => {
     expect(plan.routes.env).toEqual(['GBRAIN_DATABASE_URL']);
     expect(plan.routes.services).toEqual([{ name: 'com.gbrain.serve.plist', kind: 'launchd', sets: ['GBRAIN_DATABASE_URL'] }]);
     expect(typeof plan.disk.free_bytes).toBe('number');
-    expect(Object.keys(plan.deferred).sort()).toEqual(['capability_report', 'expected_write_pause']);
+    // The policy in force at the real clock: the opt-in override's 5 days until the end of Dec 8 PST, 14 days after.
+    expect(plan.policy.text).toMatch(/minimum shadow duration (5 days until 2026-12-09T08:00:00\.000Z|14 days)/);
+    expect(plan.policy.hash).toMatch(/^[0-9a-f]{16}$/);
+    expect(Array.isArray(plan.capability_report.served)).toBe(true);
+    expect(plan.write_pause.seconds).toBeGreaterThanOrEqual(1);
+    expect(plan.blockers).toEqual([]);
     expect(plan.plan_hash).toMatch(/^[0-9a-f]{16}$/);
     expect(r.stdout).not.toContain('VALUECANARY');
   });
 
-  test('the human plan names the verdict, every criterion and the deferred items, and no value', async () => {
+  test('the human plan states the way back, its known limits, what failback does not carry and the fingerprint rule', async () => {
+    const r = await run(['--to', 'rust', '--plan']);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('Way back: After a swap, the old engine is not kept current; failback');
+    expect(r.stdout).toContain('Known limit: The Rust store\'s shadow digests are written only by the seed and the follower');
+    expect(r.stdout).toContain('Failback accepted losses (counted by its plan): page_version_collapse, new_row_ids');
+    expect(r.stdout).toMatch(/Failback does not carry \(no Rust read call returns it, or failback does not write it back\), \d+ table\(s\): .*page_versions/);
+    expect(r.stdout).toContain('Fingerprint rule (the probe\'s own rule, both directions)');
+    const json = JSON.parse((await run(['--to', 'rust', '--plan', '--json'])).stdout);
+    expect(json.way_back.losses.not_carried_tables).toContain('page_versions');
+    expect(json.way_back.known_limits.length).toBe(3);
+    expect(r.stdout).toContain('Named loss for remote callers: A remote read by the brain owner on a Rust brain refuses by name');
+    expect(json.way_back.remote_limits.length).toBe(1);
+  });
+
+  test('the human plan names the verdict, every criterion, the policy, the capability report and the write pause, and no value', async () => {
     const r = await run(['--to', 'rust', '--dry-run']);
     expect(r.code).toBe(0);
     expect(r.stdout).toContain('verdict: NOT READY (no_shadow)');
     expect(r.stdout).toContain('8. [reported] speed (reported, not gating: D23)');
     expect(r.stdout).toContain('Capability report: ');
-    expect(r.stdout).toContain('Expected write pause: ');
+    expect(r.stdout).toContain('Expected write pause: about ');
+    expect(r.stdout).toMatch(/Readiness policy: minimum shadow duration (5 days until 2026-12-09T08:00:00\.000Z|14 days)/);
     expect(r.stdout).toContain('Nothing was written.');
     expect(r.stdout).not.toContain('VALUECANARY');
   });
@@ -106,10 +127,11 @@ describe('engine swap --plan', () => {
   });
 
   test.each([
-    [['--to', 'rust'], 'add --plan'],
-    [['--to', 'rust', '--yes', '--expect', 'abc'], 'not supported yet: --yes --expect'],
-    [['--to', 'postgres', '--plan'], '--to postgres is not available'],
-    [['--plan'], '--to (missing) is not available'],
+    [['--to', 'rust', '--yes'], '--yes needs --expect'],
+    [['--to', 'rust', '--plan', '--resume'], 'Use one of'],
+    [['--to', 'rust', '--bogus'], 'Not a flag of engine swap: --bogus'],
+    [['--to', 'mysql', '--plan'], '--to mysql is not an engine'],
+    [['--plan'], '--to (missing) is not an engine'],
   ])('%j is refused as usage, before the brain is opened', async (args, text) => {
     let opened = false;
     const r = await run(args as string[], { openEngine: async () => { opened = true; throw new Error('opened'); } });

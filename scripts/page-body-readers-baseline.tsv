@@ -791,3 +791,5 @@ src/core/engine-sql/repair-applies.ts	readFactRestorePage	sql	STREAM	moved from 
 src/core/engine-sql/visibility-scans.ts	listAliasOnlyPrivatePages	sql	META	moved from src/core/repair/visibility.ts planAliases, same statement
 src/core/engine-sql/visibility-scans.ts	listAtomLineageRows	sql	META	moved from src/core/repair/visibility.ts planLineage, same statement
 src/core/engine-sql/visibility-scans.ts	listChronicleEventVisibilityRows	sql	META	moved from src/core/repair/visibility.ts planEvents, same statement
+src/core/engine-swap/failback-copy.ts	writePage	call:putPage	SEGW	failback writes the Rust engine's answer for a changed page back into the fenced old primary; a page kept in segments on either engine refuses failback_unavailable at the plan, before any write
+src/core/engine-swap/failback-copy.ts	writePage	field	SEGW	failback writes the Rust engine's answer for a changed page back into the fenced old primary; a page kept in segments on either engine refuses failback_unavailable at the plan, before any write

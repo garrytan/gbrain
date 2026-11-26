@@ -97,6 +97,8 @@ export interface RustStore {
    * not reported; an unknown relation in `primaryMax` is `invalid_argument`.
    */
   allocatorCheck(seedId: string, primaryMax: Record<string, string | null>): Promise<SeedAllocatorCheck[]>;
+  /** Raises every id counter so its next id is above the floor (the primary's highest id per relation); never lowers one. Resolves the allocatorCheck report taken after the write. */
+  allocatorAdvance(seedId: string, primaryFloor: Record<string, string | null>): Promise<SeedAllocatorCheck[]>;
   /** The store's fact fingerprints of `texts`: the normalized one and the earlier raw-text one. */
   factFingerprints(texts: string[]): Promise<FactFingerprints[]>;
   /**
@@ -304,6 +306,7 @@ export async function openRustStore(addon: object, databasePath: string, embeddi
     relationDigest: (seedId, relation, lo, hi) => call('relationDigest', () => brain.relationDigest(seedId, relation, lo, hi)),
     relationEntries: (seedId, relation, lo, hi, limit) => call('relationEntries', () => brain.relationEntries(seedId, relation, lo, hi, limit)),
     allocatorCheck: (seedId, primaryMax) => call('allocatorCheck', () => brain.allocatorCheck(seedId, primaryMax)),
+    allocatorAdvance: (seedId, primaryFloor) => call('allocatorAdvance', () => brain.allocatorAdvance(seedId, primaryFloor)),
     factFingerprints: (texts) => call('factFingerprints', () => brain.factFingerprints(texts)),
     seedPlan: () => call('seedPlan', () => brain.seedPlan()),
     snapshotTo: (target, options) => call('snapshotTo', () => brain.snapshotTo(target, { v: 1, ...options })),

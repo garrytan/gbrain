@@ -17,6 +17,7 @@ import { readEpoch } from './evidence-epoch.ts';
 import { readSeedRecord, RESEED_STEPS } from './seed.ts';
 import { writeSampleRate, type ShadowState } from './state.ts';
 import { readWriteTally } from './write-compare.ts';
+import { readQualifyingWrites, type QualifyingWrites } from './write-bar.ts';
 
 export interface ProbeRecord {
   state: 'pass' | 'fail' | 'not_run'; checked_at: string | null; server_version: string | null; collation: string | null; mismatches: number;
@@ -135,6 +136,8 @@ export interface FollowStatus {
   write_comparisons: {
     state: 'capability_missing' | 'measured'; sample_rate: number | null; comparable: number; unexplained_difference: number; uncomparable: number; capability_missing: number;
     unresolved_replays?: number; capability_missing_by_family?: Record<string, number>; uncomparable_by_reason?: Record<string, number>;
+    /** The brain's qualifying write calls by day (write-bar.ts), the source of criterion 5's bar; null when unreadable. */
+    qualifying_writes: QualifyingWrites | null;
   };
   fingerprints: { checked_rows: number; mismatches: number; probe: ProbeRecord };
   seed: { seed_id: string | null; finished_at: string | null; unseeded_gap_rows_total: number | null };
@@ -193,6 +196,7 @@ export function buildFollowStatus(dir: string, state: ShadowState | null, now: D
       comparable: writes?.comparable ?? 0, unexplained_difference: writes?.unexplained_difference ?? 0, uncomparable: writes?.uncomparable ?? 0, capability_missing: writes?.capability_missing ?? 0,
       ...(writes?.in_flight.length ? { unresolved_replays: writes.in_flight.length } : {}),
       ...(writes ? { capability_missing_by_family: writes.capability_missing_by_family, uncomparable_by_reason: writes.uncomparable_by_reason } : {}),
+      qualifying_writes: readQualifyingWrites(dir, now),
     },
     fingerprints: { checked_rows: counted?.fingerprints.checked_rows ?? 0, mismatches: counted?.fingerprints.mismatches ?? 0, probe: counted?.probe ?? NOT_RUN_PROBE },
     seed: { seed_id: seed?.seed_id ?? null, finished_at: seed?.finished_at ?? null, unseeded_gap_rows_total: seed?.unseeded_gap_rows_total ?? null },
