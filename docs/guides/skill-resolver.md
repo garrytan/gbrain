@@ -771,9 +771,9 @@ The JSON Schemas are checked in under `docs/schemas/`:
   carries `vectors`.
 - `skill-resolver.v1.build-input.json`: the `--from-json` catalog,
   `[{id, name, description?, when_to_use?, triggers?, routing?, body?, path?,
-  eligible?, disable_model_invocation?, deprecated?, replaced_by?}]`. With the
+  eligible?, disable_model_invocation?, deprecated?, replaced_by?, audience?}]`. With the
   same fields a SKILL.md folder has (`when_to_use`, `disable-model-invocation`,
-  `deprecated`, `replaced_by`), a JSON build gives
+  `deprecated`, `replaced_by`, `audience`), a JSON build gives
   the same `catalog_hash` and `index_hash` as the folder build.
 - `skill-resolver.v1.build-receipt.json`: the build receipt, also saved as
   `receipt.json` beside the index.
