@@ -216,6 +216,13 @@ jobs:
       - name: Unit tests
         working-directory: rust
         run: cargo test --locked
+      # The same store suite on the optimistic record file: the plain openers read this variable, and
+      # the tests that name a mode (`_single`, `_optimistic`) run in both modes either way.
+      - name: Unit tests, optimistic store
+        working-directory: rust
+        env:
+          GBRAIN_RUST_CONCURRENT_WRITES: "1"
+        run: cargo test --locked -p gbrain-store
       # A pinned prebuilt binary, checked against its SHA-256, so CI does not compile cargo-deny
       # and does not depend on a third-party action.
       - name: Install cargo-deny 0.21.0

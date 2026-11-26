@@ -90,7 +90,7 @@ describe('Rust engine on the store', () => {
     expect(await second.engine.getConfig('k')).toBe('v');
   });
 
-  withAddon('a second engine on an open brain directory becomes a client of the first, and opens the store once the first closes', async () => {
+  withAddon('embedded, one owner: a second engine on an open brain directory becomes a client of the first, and opens the store once the first closes', async () => {
     const first = await open();
     await first.engine.putPage('notes/a', page);
     expect(first.engine.ownerRole).toBe('owner');
@@ -104,6 +104,7 @@ describe('Rust engine on the store', () => {
     expect(second.engine.ownerRole).toBe('owner');
     expect((await second.engine.getPage('notes/a'))?.compiled_truth).toBe('Body.');
   });
+  test.todo('multi-writer (C17): a second engine on an open brain directory becomes a client of the server and never gets an error', () => {});
 
   withAddon('a served member on a closed engine refuses engine_closed', async () => {
     const made = await newEngine();

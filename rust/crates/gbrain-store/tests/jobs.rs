@@ -1,10 +1,13 @@
 //! Minion jobs: admission, claim, lease, finish and the stall sweep, matched to the PGLite engine.
+//!
+//! Every test holds in both store modes and runs in both: `<name>_single` on one writer at a time,
+//! `<name>_optimistic` on optimistic transactions (`memory_env::brain_in`, which keeps the injected clock).
 
 mod memory_env;
 
 use gbrain_store::error::{ADMISSION_REFUSED, INVALID_STATE};
 use gbrain_store::jobs::{AdmitSpec, ClaimSpec, ListFilter, TokenDelta};
-use memory_env::{Brain, brain};
+use memory_env::{Brain, StoreMode, both_modes, brain_in};
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
@@ -60,12 +63,11 @@ fn job(b: &Brain, id: i64) -> Value {
 
 /// Workers claim and complete while a submitter keeps adding jobs. With concurrent writes on, a
 /// claim that loses a race to another claim, a completion or a submission runs again.
-#[test]
-fn many_workers_with_jobs_arriving_claim_and_complete_each_job_once() {
+fn many_workers_with_jobs_arriving_claim_and_complete_each_job_once(mode: StoreMode) {
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicBool, Ordering};
     for workers in [4usize, 16, 64] {
-        let b = brain("jobs-arrivals");
+        let b = brain_in("jobs-arrivals", mode);
         let first: Vec<i64> = (0..64)
             .map(|i| add(&b, "work", json!({ "priority": i % 3 })))
             .collect();
@@ -144,9 +146,8 @@ fn many_workers_with_jobs_arriving_claim_and_complete_each_job_once() {
     }
 }
 
-#[test]
-fn two_workers_claiming_at_once_never_get_the_same_job() {
-    let b = brain("jobs-race");
+fn two_workers_claiming_at_once_never_get_the_same_job(mode: StoreMode) {
+    let b = brain_in("jobs-race", mode);
     let all: BTreeSet<i64> = (0..64).map(|_| add(&b, "work", json!({}))).collect();
     let store = &b.store;
     let claimed: Vec<Vec<i64>> = std::thread::scope(|s| {
@@ -179,9 +180,8 @@ fn two_workers_claiming_at_once_never_get_the_same_job() {
     }
 }
 
-#[test]
-fn an_idempotency_key_coalesces_and_a_dead_holder_releases_it() {
-    let b = brain("jobs-key");
+fn an_idempotency_key_coalesces_and_a_dead_holder_releases_it(mode: StoreMode) {
+    let b = brain_in("jobs-key", mode);
     let first = add(&b, "work", json!({"idempotency_key": "k1"}));
     let again = admit(
         &b,
@@ -230,9 +230,8 @@ fn an_idempotency_key_coalesces_and_a_dead_holder_releases_it() {
     assert_eq!(freed["data"]["__released_idempotency_key"], "k1");
 }
 
-#[test]
-fn quota_backpressure_and_parent_checks_refuse_or_coalesce() {
-    let b = brain("jobs-admit");
+fn quota_backpressure_and_parent_checks_refuse_or_coalesce(mode: StoreMode) {
+    let b = brain_in("jobs-admit", mode);
     add(&b, "work", json!({"data": {"sourceId": "s1"}}));
     let err = admit(
         &b,
@@ -259,9 +258,8 @@ fn quota_backpressure_and_parent_checks_refuse_or_coalesce() {
     assert_eq!(err.code, INVALID_STATE);
 }
 
-#[test]
-fn completing_the_last_child_rolls_tokens_up_and_wakes_the_parent() {
-    let b = brain("jobs-parent");
+fn completing_the_last_child_rolls_tokens_up_and_wakes_the_parent(mode: StoreMode) {
+    let b = brain_in("jobs-parent", mode);
     let parent = add(&b, "parent", json!({}));
     let child = add(&b, "work", json!({"parent_job_id": parent}));
     assert_eq!(job(&b, parent)["status"], "waiting-children");
@@ -280,9 +278,8 @@ fn completing_the_last_child_rolls_tokens_up_and_wakes_the_parent() {
     assert_eq!(job(&b, parent)["status"], "waiting");
 }
 
-#[test]
-fn a_lease_renews_only_for_its_token_and_an_expired_one_is_reclaimed() {
-    let b = brain("jobs-lease");
+fn a_lease_renews_only_for_its_token_and_an_expired_one_is_reclaimed(mode: StoreMode) {
+    let b = brain_in("jobs-lease", mode);
     let id = add(&b, "work", json!({"max_stalled": 2}));
     assert!(claim(&b, "w:1").is_some());
     assert!(b.renew_job_lease(id, "w:1", 1000.0).unwrap());
@@ -298,9 +295,8 @@ fn a_lease_renews_only_for_its_token_and_an_expired_one_is_reclaimed() {
     assert_eq!(job(&b, id)["status"], "dead");
 }
 
-#[test]
-fn list_jobs_filters_and_orders_newest_first() {
-    let b = brain("jobs-list");
+fn list_jobs_filters_and_orders_newest_first(mode: StoreMode) {
+    let b = brain_in("jobs-list", mode);
     let a = add(&b, "work", json!({}));
     b.clock.advance(1);
     let c = add(&b, "other", json!({}));
@@ -317,9 +313,8 @@ fn list_jobs_filters_and_orders_newest_first() {
     assert_eq!(ids(json!({"limit": 1, "offset": 1})), vec![a]);
 }
 
-#[test]
-fn a_capacity_probe_answers_a_coalesce_or_capacity_and_writes_nothing() {
-    let b = brain("jobs-capacity-probe");
+fn a_capacity_probe_answers_a_coalesce_or_capacity_and_writes_nothing(mode: StoreMode) {
+    let b = brain_in("jobs-capacity-probe", mode);
     let probe = |extra: Value, more: Value| {
         let mut spec = json!({"insert": insert("work", extra), "capacityCheck": true});
         for (k, v) in more.as_object().unwrap() {
@@ -357,9 +352,8 @@ fn a_capacity_probe_answers_a_coalesce_or_capacity_and_writes_nothing() {
     assert_eq!(b.list_jobs(&ListFilter::default()).unwrap().len(), 1);
 }
 
-#[test]
-fn admit_job_runs_as_a_statement_of_an_open_transaction() {
-    let b = brain("jobs-admit-in-transaction");
+fn admit_job_runs_as_a_statement_of_an_open_transaction(mode: StoreMode) {
+    let b = brain_in("jobs-admit-in-transaction", mode);
     let tx = b.begin_transaction(false).unwrap();
     // The probe and the admission run on the bound store; the probe keeps nothing.
     let probe = admit(
@@ -382,9 +376,8 @@ fn admit_job_runs_as_a_statement_of_an_open_transaction() {
     assert_eq!(b.list_jobs(&ListFilter::default()).unwrap().len(), 1);
 }
 
-#[test]
-fn the_idempotency_key_step_alone_coalesces_frees_or_hands_back_a_conflict() {
-    let b = brain("jobs-key-alone");
+fn the_idempotency_key_step_alone_coalesces_frees_or_hands_back_a_conflict(mode: StoreMode) {
+    let b = brain_in("jobs-key-alone", mode);
     let app = json!({"version": 1, "kind": "application"});
     let other = json!({"version": 1, "kind": "remote", "client": "c"});
     assert_eq!(
@@ -424,9 +417,8 @@ fn the_idempotency_key_step_alone_coalesces_frees_or_hands_back_a_conflict() {
     assert_ne!(second, first);
 }
 
-#[test]
-fn a_released_key_is_kept_in_non_object_data_as_jsonb_concatenation_keeps_it() {
-    let b = brain("jobs-key-release-shapes");
+fn a_released_key_is_kept_in_non_object_data_as_jsonb_concatenation_keeps_it(mode: StoreMode) {
+    let b = brain_in("jobs-key-release-shapes", mode);
     let app = json!({"version": 1, "kind": "application"});
     for (n, data, want) in [
         (1, json!([]), json!([{"__released_idempotency_key": "a1"}])),
@@ -452,9 +444,8 @@ fn a_released_key_is_kept_in_non_object_data_as_jsonb_concatenation_keeps_it() {
 
 /// Postgres refuses a NUL byte in text, and the claim index uses it as the queue separator: a queue named
 /// `default\0private` must not be admitted, or a worker on `default` would claim its job.
-#[test]
-fn a_queue_name_with_a_nul_byte_is_refused_and_never_claimed_by_another_queue() {
-    let b = brain("jobs-queue-nul");
+fn a_queue_name_with_a_nul_byte_is_refused_and_never_claimed_by_another_queue(mode: StoreMode) {
+    let b = brain_in("jobs-queue-nul", mode);
     let err = admit(
         &b,
         json!({ "insert": insert("work", json!({ "queue": "default\u{0}private" })) }),
@@ -468,9 +459,8 @@ fn a_queue_name_with_a_nul_byte_is_refused_and_never_claimed_by_another_queue() 
 
 /// `tokens_input` is an `INTEGER`: a roll-up that overflows it fails the completion (as the SQL `+` does)
 /// rather than wrapping to a negative count in a release build.
-#[test]
-fn a_token_roll_up_that_overflows_an_integer_refuses_the_completion() {
-    let b = brain("jobs-token-overflow");
+fn a_token_roll_up_that_overflows_an_integer_refuses_the_completion(mode: StoreMode) {
+    let b = brain_in("jobs-token-overflow", mode);
     let parent = add(&b, "parent", json!({}));
     let kids: Vec<i64> = (0..2)
         .map(|_| add(&b, "work", json!({ "parent_job_id": parent })))
@@ -502,9 +492,8 @@ fn a_token_roll_up_that_overflows_an_integer_refuses_the_completion() {
 /// A job admitted on a store bound to a transaction is one statement of it (the facts backstop
 /// effect queues its facts-absorb job inside the effect's transaction): it does not wait for a
 /// second writer, it is seen inside the transaction, and a rollback keeps no row.
-#[test]
-fn admit_inside_a_transaction_is_one_statement() {
-    let b = brain("jobs-in-tx");
+fn admit_inside_a_transaction_is_one_statement(mode: StoreMode) {
+    let b = brain_in("jobs-in-tx", mode);
     let spec: AdmitSpec =
         serde_json::from_value(json!({ "insert": insert("work", json!({})), "maxSpawnDepth": 5 }))
             .unwrap();
@@ -532,3 +521,18 @@ fn admit_inside_a_transaction_is_one_statement() {
     // Outside a transaction the sequence continues past every id handed out.
     assert!(add(&b, "work", json!({})) > after);
 }
+
+both_modes!(many_workers_with_jobs_arriving_claim_and_complete_each_job_once => many_workers_with_jobs_arriving_claim_and_complete_each_job_once_single, many_workers_with_jobs_arriving_claim_and_complete_each_job_once_optimistic);
+both_modes!(two_workers_claiming_at_once_never_get_the_same_job => two_workers_claiming_at_once_never_get_the_same_job_single, two_workers_claiming_at_once_never_get_the_same_job_optimistic);
+both_modes!(an_idempotency_key_coalesces_and_a_dead_holder_releases_it => an_idempotency_key_coalesces_and_a_dead_holder_releases_it_single, an_idempotency_key_coalesces_and_a_dead_holder_releases_it_optimistic);
+both_modes!(quota_backpressure_and_parent_checks_refuse_or_coalesce => quota_backpressure_and_parent_checks_refuse_or_coalesce_single, quota_backpressure_and_parent_checks_refuse_or_coalesce_optimistic);
+both_modes!(completing_the_last_child_rolls_tokens_up_and_wakes_the_parent => completing_the_last_child_rolls_tokens_up_and_wakes_the_parent_single, completing_the_last_child_rolls_tokens_up_and_wakes_the_parent_optimistic);
+both_modes!(a_lease_renews_only_for_its_token_and_an_expired_one_is_reclaimed => a_lease_renews_only_for_its_token_and_an_expired_one_is_reclaimed_single, a_lease_renews_only_for_its_token_and_an_expired_one_is_reclaimed_optimistic);
+both_modes!(list_jobs_filters_and_orders_newest_first => list_jobs_filters_and_orders_newest_first_single, list_jobs_filters_and_orders_newest_first_optimistic);
+both_modes!(a_capacity_probe_answers_a_coalesce_or_capacity_and_writes_nothing => a_capacity_probe_answers_a_coalesce_or_capacity_and_writes_nothing_single, a_capacity_probe_answers_a_coalesce_or_capacity_and_writes_nothing_optimistic);
+both_modes!(admit_job_runs_as_a_statement_of_an_open_transaction => admit_job_runs_as_a_statement_of_an_open_transaction_single, admit_job_runs_as_a_statement_of_an_open_transaction_optimistic);
+both_modes!(the_idempotency_key_step_alone_coalesces_frees_or_hands_back_a_conflict => the_idempotency_key_step_alone_coalesces_frees_or_hands_back_a_conflict_single, the_idempotency_key_step_alone_coalesces_frees_or_hands_back_a_conflict_optimistic);
+both_modes!(a_released_key_is_kept_in_non_object_data_as_jsonb_concatenation_keeps_it => a_released_key_is_kept_in_non_object_data_as_jsonb_concatenation_keeps_it_single, a_released_key_is_kept_in_non_object_data_as_jsonb_concatenation_keeps_it_optimistic);
+both_modes!(a_queue_name_with_a_nul_byte_is_refused_and_never_claimed_by_another_queue => a_queue_name_with_a_nul_byte_is_refused_and_never_claimed_by_another_queue_single, a_queue_name_with_a_nul_byte_is_refused_and_never_claimed_by_another_queue_optimistic);
+both_modes!(a_token_roll_up_that_overflows_an_integer_refuses_the_completion => a_token_roll_up_that_overflows_an_integer_refuses_the_completion_single, a_token_roll_up_that_overflows_an_integer_refuses_the_completion_optimistic);
+both_modes!(admit_inside_a_transaction_is_one_statement => admit_inside_a_transaction_is_one_statement_single, admit_inside_a_transaction_is_one_statement_optimistic);

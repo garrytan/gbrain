@@ -3,6 +3,17 @@
 
 use gbrain_store::{OpenOptions, Store};
 use std::path::{Path, PathBuf};
+
+pub mod clock;
+pub mod format;
+pub mod logged;
+#[allow(clippy::duplicate_mod)]
+pub mod mode;
+pub mod mu;
+
+pub use mode::StoreMode;
+#[allow(unused_imports)]
+pub(crate) use mode::both_modes;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 static NEXT: AtomicU32 = AtomicU32::new(0);
@@ -47,6 +58,15 @@ pub fn open(dir: &TempDir) -> Store {
 pub fn open_concurrent(dir: &TempDir) -> Store {
     let options = OpenOptions {
         concurrent_writes: true,
+        ..OpenOptions::default()
+    };
+    Store::open_dir(&dir.path().join("brain"), options).unwrap()
+}
+
+/// Opens the test brain in an explicit mode, whatever `GBRAIN_RUST_CONCURRENT_WRITES` says.
+pub fn open_in(dir: &TempDir, mode: StoreMode) -> Store {
+    let options = OpenOptions {
+        concurrent_writes: mode.optimistic(),
         ..OpenOptions::default()
     };
     Store::open_dir(&dir.path().join("brain"), options).unwrap()
