@@ -421,6 +421,7 @@ mod tests {
                 "0B9C4F0E-1A2B-4C3D-8E4F-5A6B7C8D9E01",
                 "application",
                 "host:test",
+                "",
             ]),
         )
         .unwrap();
@@ -448,10 +449,17 @@ mod tests {
                 guest_note_is_request: false,
             }
         );
-        // `gbrain.guest_note` names this write's request: the write publishes a guest note.
+        // `gbrain.guest_note` names this write's request, as text (the trigger compares the two settings as set): the
+        // write publishes a guest note. The lower-case spelling of the same UUID is not the same text.
         s.apply_write_trust(
             &strings(&[WRITE_GUEST_NOTE]),
             &strings(&["0b9c4f0e-1a2b-4c3d-8e4f-5a6b7c8d9e01"]),
+        )
+        .unwrap();
+        assert!(!s.write_trust().unwrap().guest_note_is_request);
+        s.apply_write_trust(
+            &strings(&[WRITE_GUEST_NOTE]),
+            &strings(&["0B9C4F0E-1A2B-4C3D-8E4F-5A6B7C8D9E01"]),
         )
         .unwrap();
         assert!(s.write_trust().unwrap().guest_note_is_request);
