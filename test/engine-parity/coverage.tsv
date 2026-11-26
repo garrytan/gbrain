@@ -133,10 +133,10 @@ listCatalogRelations	lifecycle	yes	1	no	yes	yes	serves
 readCatalogSchemaVersion	lifecycle	yes	1	no	yes	yes	serves
 listCatalogForeignKeys	lifecycle	yes	1	no	yes	yes	serves
 getPage	pages	yes	288	yes	yes	yes	serves
-readPageSnapshot	pages	yes	103	no	yes	yes	serves
+readPageSnapshot	pages	yes	106	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	7	no	yes	yes	serves
 lockPageKeys	pages	yes	17	no	yes	yes	serves
-putPage	pages	yes	1362	yes	yes	yes	serves
+putPage	pages	yes	1367	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	45	yes	yes	yes	serves
@@ -356,7 +356,7 @@ deleteChunksForPages	chunks	yes	3	no	yes	yes	serves
 listContextualModeCandidates	chunks	yes	1	no	yes	yes	serves
 resolveFrozenHits	chunks	yes	6	no	yes	yes	serves
 upsertChunks	chunks	yes	73	yes	yes	yes	serves
-sealChunks	chunks	yes	98	no	yes	yes	serves
+sealChunks	chunks	yes	99	no	yes	yes	serves
 getChunks	chunks	yes	77	yes	yes	yes	serves
 getChunkPage	chunks	yes	14	no	yes	yes	serves
 getChunkWindows	chunks	yes	14	no	yes	yes	serves
@@ -407,7 +407,7 @@ listFactsFencePages	extraction	no	0	no	-	-	-
 listSweepStalePages	extraction	yes	1	no	yes	yes	serves
 listSweepDeferredPages	extraction	no	0	no	-	-	-
 listPageRefsForSlugs	extraction	yes	1	no	yes	yes	serves
-addLink	links	yes	166	yes	yes	yes	serves
+addLink	links	yes	168	yes	yes	yes	serves
 addLinksBatch	links	yes	42	yes	yes	yes	serves
 replaceDerivedLinks	links	yes	18	no	yes	yes	serves
 replaceDerivedLinksBatch	links	yes	1	no	yes	yes	serves
@@ -648,11 +648,11 @@ readFactTrustTier	facts	yes	2	no	yes	yes	serves
 listFenceFactRowNums	facts	yes	2	no	yes	yes	serves
 readLiveFactRowTier	facts	yes	1	no	yes	yes	serves
 insertFact	facts	yes	199	yes	yes	yes	serves
-insertFacts	facts	yes	272	no	yes	yes	serves
+insertFacts	facts	yes	273	no	yes	yes	serves
 deleteFactsForPage	facts	yes	8	no	yes	yes	serves
 expireFact	facts	yes	94	no	yes	yes	serves
-listFactsByEntity	facts	yes	66	yes	yes	yes	serves
-listFactsSince	facts	yes	43	yes	yes	yes	serves
+listFactsByEntity	facts	yes	67	yes	yes	yes	serves
+listFactsSince	facts	yes	44	yes	yes	yes	serves
 listFactsKeyset	facts	yes	11	no	yes	yes	serves
 listFactsBySession	facts	yes	13	yes	yes	yes	serves
 listSupersessions	facts	yes	7	yes	yes	yes	serves
@@ -733,8 +733,8 @@ installSegmentedVectors	segmented_body	yes	2	no	yes	yes	serves
 listLiveEmbedSegments	segmented_body	yes	1	no	yes	yes	serves
 listSegmentChunkRows	segmented_body	yes	1	no	yes	yes	serves
 listInlineVersionTexts	versions	yes	2	no	yes	yes	serves
-createVersion	versions	yes	92	no	yes	yes	serves
-getVersions	versions	yes	35	no	yes	yes	serves
+createVersion	versions	yes	94	no	yes	yes	serves
+getVersions	versions	yes	36	no	yes	yes	serves
 readLatestVersionId	versions	yes	1	no	yes	yes	serves
 readLatestVersionIdAtTier	versions	yes	1	no	yes	yes	serves
 stampVersionChangeReason	versions	yes	1	no	yes	yes	serves
@@ -761,7 +761,7 @@ listVisiblePageSlugs	stats_ingest	yes	1	no	yes	yes	serves
 readPagesForVersionHistory	stats_ingest	yes	1	no	yes	yes	serves
 logIngest	stats_ingest	yes	10	no	yes	yes	serves
 getIngestLog	stats_ingest	yes	2	no	yes	yes	serves
-updateSlug	sync_aliases	yes	44	no	yes	yes	serves
+updateSlug	sync_aliases	yes	45	no	yes	yes	serves
 rewriteLinks	sync_aliases	yes	1	no	yes	yes	serves
 resolveSlugWithAlias	sync_aliases	yes	3	yes	yes	yes	serves
 resolveSlugWithAliasDetailed	sync_aliases	yes	1	yes	yes	yes	serves
