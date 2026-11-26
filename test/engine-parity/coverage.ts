@@ -50,8 +50,6 @@ export const COVERAGE_FILE = join(PARITY_DIR, 'coverage.tsv');
  * method forces a visible family assignment here.
  */
 export const FAMILIES: Record<string, readonly string[]> = {
-  // The commit log members (engine-members/commit-log.ts): only a Rust engine whose store keeps a log answers; the rest refuse commit_log.
-  commit_log: ['readCommitLog', 'lastCommitPosition'],
   lifecycle: ['connect', 'disconnect', 'reconnect', 'initSchema', 'listCatalogRelations', 'readCatalogSchemaVersion', 'listCatalogForeignKeys', 'holdSchemaMigrationLock', 'transaction', 'transactionDirect',
     'registerBeforeDisconnect', 'withReservedConnection'],
   pages: [

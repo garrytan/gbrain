@@ -7,7 +7,6 @@
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
 # covered: 2403/2427
-# commit_log: 2/2
 # lifecycle: 12/12
 # pages: 141/142
 # search: 8/8
@@ -119,6 +118,7 @@
 # doctor_sources: 5/5
 # session_state: 7/7
 # doctor_join: 6/6
+# commit_log: 2/2
 # multi-writer cases: 22/22
 # multi-writer C01 [compare]: pglite=runs postgres=runs rust=runs rust-mu=runs store-single=runs store-optimistic=runs
 # multi-writer C02 [compare]: pglite=runs postgres=runs rust=runs rust-mu=runs store-single=runs store-optimistic=runs
@@ -144,8 +144,6 @@
 # multi-writer C21 [standalone, needs multi_writer]: pglite=n/a postgres=pending(L3 server) rust=pending(L3 server) rust-mu=pending(L3 server) store-single=runs store-optimistic=runs
 # multi-writer C22 [standalone, needs commit_log]: pglite=n/a postgres=n/a rust=n/a rust-mu=runs store-single=runs store-optimistic=runs
 method	family	covered	parity_cases	legacy_e2e	pglite	postgres	rust
-readCommitLog	commit_log	yes	1	no	n/a:commit_log	n/a:commit_log	serves
-lastCommitPosition	commit_log	yes	1	no	n/a:commit_log	n/a:commit_log	serves
 connect	lifecycle	yes	3	yes	yes	yes	serves
 disconnect	lifecycle	yes	3	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
@@ -2571,3 +2569,5 @@ listPagesReadByNobody	doctor_join	yes	1	no	yes	yes	serves
 listRulePagesReadByNobody	doctor_join	yes	1	no	yes	yes	serves
 listGoogleSourceMembers	doctor_join	yes	1	no	yes	yes	serves
 listOwnerMemberLinks	doctor_join	yes	1	no	yes	yes	serves
+readCommitLog	commit_log	yes	1	no	n/a:commit_log	n/a:commit_log	serves
+lastCommitPosition	commit_log	yes	1	no	n/a:commit_log	n/a:commit_log	serves

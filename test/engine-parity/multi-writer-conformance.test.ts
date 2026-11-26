@@ -560,7 +560,9 @@ describe('engine parity: multi-writer conformance', () => {
       await tx.declarePersistence();
       const next = await tx.selectClaimableEffect<{ id: string | number }>(host, dead);
       if (!next?.id) return null;
-      return tx.stampEffectClaim<Claimed>({ id: next.id, token: token(i), ownerJson: owner(i), ...fenceOf(i) });
+      // The stamp takes the same proven-dead owners the selection was given: a multi-user stamp takes a running effect only when
+      // its claim lapsed or its owner is proven dead (the SQL engines ignore the list).
+      return tx.stampEffectClaim<Claimed>({ id: next.id, token: token(i), ownerJson: owner(i), ...fenceOf(i), deadOwners: dead });
     });
     const won = await together(8, (i) => claim(i, []));
     const winners = won.map((row, i) => (row ? i : -1)).filter(i => i >= 0);
