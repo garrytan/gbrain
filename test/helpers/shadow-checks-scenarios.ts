@@ -274,8 +274,10 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       const primary = ctx.primary();
       const ids = await privacyFixture(primary);
       await vectorFixture(primary);
+      // pregate-literal: SHADOW_ADAPTER_VERSION=10 the number 10 on the next line is test data (a count, size, index or slice), not the adapter version
       const opts = { limit: 10, excludePrivate: true, ...o.opts };
       const theirs = await withCallerAccess(ALICE, () => primary.searchVector(vec(3), opts)) as unknown as Rows;
+      // pregate-literal: SHADOW_ADAPTER_VERSION=10 index 10 picks the eleventh row, not the adapter version
       const spare = (await withCallerAccess(ALICE, () => primary.searchVector(vec(3), { ...opts, limit: 12 })) as unknown as Rows)[10]!; // a real chunk the caller may read, outside the top ten
       const rig = await start(o.child ? { child: o.child } : {});
       if (o.noRecall) { // the recall score has its own waits: leave it out, so the waits counted are the rerun's
@@ -397,6 +399,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       const primary = ctx.primary();
       await vectorFixture(primary);
       const all = await withCallerAccess(ALICE, () => primary.searchVector(vec(3), { limit: 12, excludePrivate: true })) as unknown as Rows;
+      // pregate-literal: SHADOW_ADAPTER_VERSION=11 the number 11 on the next line is test data (a count, size, index or date), not the adapter version
       const banned = all[11]!; // a real chunk the caller may read, that this query excludes
       const opts = { exclude_slugs: [String(banned.slug)] };
       counts(await ranked((theirs) => [...theirs, banned], { opts }));
@@ -606,6 +609,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
         await ctx.primary().executeRaw(`CREATE TABLE ${probe} (x int)`);
         try {
           let ticks = 0; let io = 0; let running = true;
+          // pregate-literal: SHADOW_ADAPTER_VERSION=10 the number 10 on the next line is test data (a count, size, index or slice), not the adapter version
           const timer = setInterval(() => { ticks++; }, 10);
           const spin = (): void => { if (running) readFile(import.meta.path, () => { io++; setImmediate(spin); }); };
           spin();
@@ -617,6 +621,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
           running = false; clearInterval(timer);
           expect(r.rows[0]).toMatchObject({ outcome: 'diff', reason: 'extra_rows_cleared' });
           expect(second!.at - first!.at).toBeGreaterThanOrEqual(450); // it waited 0.5 s
+          // pregate-literal: SHADOW_ADAPTER_VERSION=10 the number 10 on the next line is test data (a count, size, index or slice), not the adapter version
           expect(second!.ticks - first!.ticks).toBeGreaterThan(20); // a timer ran about every 10 ms through the wait: a blocked loop gives none
           expect(second!.io - first!.io).toBeGreaterThan(0); // and file reads completed
         } finally { await ctx.primary().executeRaw(`DROP TABLE IF EXISTS ${probe}`); }
@@ -648,6 +653,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       const reads = openReadSource(primary);
       try {
         const handler = makeAskHandler({ engine: primary, reads, dir: '/none', samples, rpc: (async () => ({})) as never });
+        // pregate-literal: SHADOW_ADAPTER_VERSION=10 the number 10 on the next line is test data (a count, size, index or slice), not the adapter version
         const sid = samples.add({ op: 'searchVector', args: encodeValue([vec(3), { limit: 10, excludePrivate: true }]), result: [], at: Date.now(), lsn: 'x' }, 100);
         for (const rows of ['not a list', [{ payload: 'p', id: 'seven' }], [null]]) expect(await handler({ id: 1, kind: 'privacy', sid, phase: 'sample', rows })).toEqual({ verdict: 'clean', complete: false });
         expect(await handler({ id: 2, kind: 'privacy', sid, phase: 'sample', rows: [] })).toEqual({ verdict: 'clean', complete: true }); // control: nothing extra, nothing invalid
@@ -679,6 +685,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       const reads = openReadSource(primary);
       try {
         const handler = makeAskHandler({ engine: primary, reads, dir: '/none', samples, rpc: (async () => ({})) as never });
+        // pregate-literal: SHADOW_ADAPTER_VERSION=10 the number 10 on the next line is test data (a count, size, index or slice), not the adapter version
         const sid = samples.add({ op: 'searchVector', args: encodeValue([vec(3), { limit: 10, excludePrivate: true }]), result: [], at: Date.now(), lsn: 'x' }, 100);
         for (const rows of ['not a list', [{ payload: 'p', id: 'seven' }], [null]]) expect(await handler({ id: 1, kind: 'privacy', sid, phase: 'sample', rows })).toEqual({ verdict: 'clean', complete: false });
         expect(await handler({ id: 2, kind: 'privacy', sid, phase: 'sample', rows: [] })).toEqual({ verdict: 'clean', complete: true }); // control: nothing extra, nothing invalid
@@ -757,6 +764,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       await installFixtureChunks(primary, 'summary/x', [{ chunk_index: 0, chunk_text: 'a summary of the secret plan', chunk_source: 'compiled_truth', embedding: vec(501), model: 'openai:text-embedding-3-large', token_count: 3 }]);
       await vectorFixture(primary);
       const [chunk] = await primary.executeRaw<{ id: number; chunk_text: string }>(`SELECT c.id, c.chunk_text FROM content_chunks c WHERE c.page_id = $1`, [ids['summary/x']]);
+      // pregate-literal: SHADOW_ADAPTER_VERSION=10 the number 10 on the next line is test data (a count, size, index or slice), not the adapter version
       const opts = { limit: 10, excludePrivate: true };
       const theirs = await withCallerAccess(ALICE, () => primary.searchVector(vec(3), opts)) as unknown as Rows;
       const rig = await start();
@@ -788,6 +796,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       rig.rust.listPages = async () => [];
       rig.rust.searchVector = async () => [];
       await sample(rig);
+      // pregate-literal: SHADOW_ADAPTER_VERSION=10 the number 10 on the next line is test data (a count, size, index or slice), not the adapter version
       await rig.engine.searchVector(vec(3), { limit: 10 });
       const rows = await rig.finish(2);
       expect(rows.map((r) => r.epoch_id)).toEqual([undefined, undefined]); // a client names no epoch
@@ -940,12 +949,14 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
         const { handler, ask, reference } = await untilNotMoved(async () => { // an unrelated commit moves the token: asked again from a new capture
           const samples = new SampleRegistry();
           const handler = makeAskHandler({ engine: primary, reads, dir: '/none', samples, rpc: (async () => ({})) as never });
+          // pregate-literal: SHADOW_ADAPTER_VERSION=10 the number 10 on the next line is test data (a count, size, index or slice), not the adapter version
           const ask = { id: 1, kind: 'vector', sid: samples.add({ op: 'searchVector', args: encodeValue([embedded.embedding, { limit: 10, exclude_slugs: ['priv/chunked', 'summary/x'] }]), at: Date.now(), lsn: await createLsnWatch(real).live() }, 100) }; // the filters of the caller's own read apply
           return { handler, ask, reference: await handler(ask) as RankedKey[] };
         });
         const cosine = (a: Float32Array, b: Float32Array): number => { let d = 0, x = 0, y = 0; for (let i = 0; i < a.length; i++) { d += a[i]! * b[i]!; x += a[i]! ** 2; y += b[i]! ** 2; } return d / Math.sqrt(x * y); };
         const exact = [...chunkOf.keys()].sort((p, q) => cosine(vec(3), vec(q)) - cosine(vec(3), vec(p))).map((i) => String(chunkOf.get(i)));
         expect(reference).toHaveLength(Math.min(RECALL_REFERENCE_LIMIT, 12)); // asked for more than the caller's ten, so a tie at the cutoff is visible
+        // pregate-literal: SHADOW_ADAPTER_VERSION=10 the number 10 on the next line is test data (a count, size, index or slice), not the adapter version
         expect(new Set(reference.slice(0, 10).map((r) => r.k))).toEqual(new Set(exact.slice(0, 10)));
         expect(sql.slice(0, 2)).toEqual(['SET LOCAL enable_indexscan = off', 'SET LOCAL enable_bitmapscan = off']); // before any search statement
         await expect(handler(ask)).rejects.toMatchObject({ code: 'rate_limited' });
@@ -962,6 +973,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
         const reference = async (opts: Record<string, unknown>): Promise<string[]> => untilNotMoved(async () => {
           const samples = new SampleRegistry();
           const handler = makeAskHandler({ engine: primary, reads: real, dir: '/none', samples, rpc: (async () => ({})) as never });
+          // pregate-literal: SHADOW_ADAPTER_VERSION=10 the number 10 on the next line is test data (a count, size, index or slice), not the adapter version
           const sid = samples.add({ op: 'searchVector', args: encodeValue([vec(3), { limit: 10, ...opts }]), at: Date.now(), lsn: await createLsnWatch(real).live() }, 100);
           return ((await handler({ id: 1, kind: 'vector', sid })) as RankedKey[]).map((r) => r.k);
         });
@@ -978,6 +990,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       const reads = openReadSource(primary);
       try {
         const watch = createLsnWatch(reads);
+        // pregate-literal: SHADOW_ADAPTER_VERSION=10 the number 10 on the next line is test data (a count, size, index or slice), not the adapter version
         const args = encodeValue([vec(3), { limit: 10 }]);
         const samples = new SampleRegistry();
         const handler = (now: number) => makeAskHandler({ engine: primary, reads, dir: '/none', samples, rpc: (async () => ({})) as never, watch, now: () => now });
@@ -1004,6 +1017,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       try {
         const watch = createLsnWatch(reads);
         const samples = new SampleRegistry();
+        // pregate-literal: SHADOW_ADAPTER_VERSION=10 the number 10 on the next line is test data (a count, size, index or slice), not the adapter version
         const args = encodeValue([vec(3), { limit: 10, excludePrivate: true }]);
         const handler = (now: number) => makeAskHandler({ engine: primary, reads, dir: '/none', samples, rpc: (async () => ({})) as never, watch, now: () => now });
         const captured = samples.add({ op: 'searchVector', args, at: Date.now(), lsn: await watch.live() }, 100);
@@ -1023,6 +1037,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       try {
         const watch = createLsnWatch(reads);
         const samples = new SampleRegistry();
+        // pregate-literal: SHADOW_ADAPTER_VERSION=10 the number 10 on the next line is test data (a count, size, index or slice), not the adapter version
         const args = encodeValue([vec(3), { limit: 10 }]);
         const handler = (now: number) => makeAskHandler({ engine: primary, reads, dir: '/none', samples, rpc: (async () => ({})) as never, watch, now: () => now });
         const changes: Array<[string, unknown[], string, unknown[]]> = [
@@ -1051,6 +1066,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       try {
         const watch = createLsnWatch(reads);
         const samples = new SampleRegistry();
+        // pregate-literal: SHADOW_ADAPTER_VERSION=10 the number 10 on the next line is test data (a count, size, index or slice), not the adapter version
         const args = encodeValue([vec(3), { limit: 10 }]);
         let clock = 0;
         const handler = makeAskHandler({ engine: primary, reads, dir: '/none', samples, rpc: (async () => ({})) as never, watch, now: () => (clock += 120_000) }); // the reference's one-a-minute gate opens for each
@@ -1090,6 +1106,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       try {
         const watch = createLsnWatch(reads);
         const samples = new SampleRegistry();
+        // pregate-literal: SHADOW_ADAPTER_VERSION=10 the number 10 on the next line is test data (a count, size, index or slice), not the adapter version
         const args = encodeValue([vec(3), { limit: 10, excludePrivate: true }]);
         let clock = 0;
         const handler = makeAskHandler({ engine: primary, reads, dir: '/none', samples, rpc: (async () => ({})) as never, watch, now: () => (clock += 120_000) });
@@ -1098,6 +1115,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
         await admin.executeRaw(`ALTER SYSTEM SET synchronous_standby_names = 'gbrain_test_never_connects'`);
         await admin.executeRaw(`SELECT pg_reload_conf()`);
         const reloaded = async (): Promise<boolean> => (await admin.executeRaw<{ s: string }>(`SELECT current_setting('synchronous_standby_names') AS s`))[0]!.s === 'gbrain_test_never_connects';
+        // pregate-literal: SHADOW_ADAPTER_VERSION=10 the number 10 on the next line is test data (a count, size, index or slice), not the adapter version
         for (const end = Date.now() + 15_000; !(await reloaded()) && Date.now() < end;) await new Promise((r) => setTimeout(r, 10)); // the server has passed the new settings on
         await admin.executeRaw(`CHECKPOINT`); // the checkpointer takes the reload before this checkpoint, and it is the one that tells committing sessions a standby is named
         let writerPid = 0;
@@ -1111,6 +1129,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
         let held = false;
         for (const end = Date.now() + 15_000; !held && !settled && Date.now() < end;) {
           held = writerPid > 0 && (await admin.executeRaw<{ w: string | null }>(`SELECT wait_event AS w FROM pg_stat_activity WHERE pid = $1`, [writerPid]))[0]?.w === 'SyncRep';
+          // pregate-literal: SHADOW_ADAPTER_VERSION=10 the number 10 on the next line is test data (a count, size, index or slice), not the adapter version
           if (!held) await new Promise((r) => setTimeout(r, 10));
         }
         expect(held).toBe(true); // the writer's COMMIT record is flushed and it waits for the standby: still in progress to every snapshot
@@ -1144,6 +1163,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
         try {
           const watch = createLsnWatch(reads);
           const samples = new SampleRegistry();
+          // pregate-literal: SHADOW_ADAPTER_VERSION=10 the number 10 on the next line is test data (a count, size, index or slice), not the adapter version
           const args = encodeValue([vec(3), { limit: 10, excludePrivate: true }]);
           let clock = 0;
           const handler = makeAskHandler({ engine: primary, reads, dir: '/none', samples, rpc: (async () => ({})) as never, watch, now: () => (clock += 120_000) }); // the reference's one-a-minute gate opens for each
@@ -1350,6 +1370,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
         const token = await watch.live();
         expect(token.split('|')[1]).toBe('!');
         const samples = new SampleRegistry();
+        // pregate-literal: SHADOW_ADAPTER_VERSION=10 the number 10 on the next line is test data (a count, size, index or slice), not the adapter version
         const sid = samples.add({ op: 'searchVector', args: encodeValue([vec(3), { limit: 10 }]), at: Date.now(), lsn: token }, 100);
         let clock = 0;
         const handler = makeAskHandler({ engine: primary, reads, dir: '/none', samples, rpc: (async () => ({})) as never, watch, now: () => (clock += 120_000) });
@@ -1370,6 +1391,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       try {
         const watch = createLsnWatch(stubbed);
         const samples = new SampleRegistry();
+        // pregate-literal: SHADOW_ADAPTER_VERSION=10 the number 10 on the next line is test data (a count, size, index or slice), not the adapter version
         const args = encodeValue([vec(3), { limit: 10 }]);
         let clock = 0;
         const handler = makeAskHandler({ engine: primary, reads: stubbed, dir: '/none', samples, rpc: (async () => ({})) as never, watch, now: () => (clock += 120_000) });
@@ -1405,6 +1427,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       try {
         const watch = createLsnWatch(stubbed);
         const samples = new SampleRegistry();
+        // pregate-literal: SHADOW_ADAPTER_VERSION=10 the number 10 on the next line is test data (a count, size, index or slice), not the adapter version
         const args = encodeValue([vec(3), { limit: 10 }]);
         let clock = 0;
         const handler = makeAskHandler({ engine: primary, reads: stubbed, dir: '/none', samples, rpc: (async () => ({})) as never, watch, now: () => (clock += 120_000) });
@@ -1437,11 +1460,14 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
         for (let i = 0; i < 262; i++) await add(`win/n${i}`, mix(0.9 - i * 0.0015, 1000 + i));
         for (let i = 0; i < 12; i++) await add(`boost/b${i}`, mix(0.3, 2000 + i));
         const boosted = new Set((await primary.executeRaw<{ id: number }>(`SELECT c.id FROM content_chunks c JOIN pages p ON p.id = c.page_id WHERE p.slug LIKE 'boost/%'`)).map((r) => String(r.id)));
+        // pregate-literal: SHADOW_ADAPTER_VERSION=10 the number 10 on the next line is test data (a count, size, index or slice), not the adapter version
         const opts = { limit: 10, source_boosts: { 'boost/': 5 } };
         const samples = new SampleRegistry();
         const reference = await untilNotMoved(async () => makeAskHandler({ engine: primary, reads, dir: '/none', samples, rpc: (async () => ({})) as never })({ id: 1, kind: 'vector', sid: samples.add({ op: 'searchVector', args: encodeValue([vec(3), opts]), at: Date.now(), lsn: await createLsnWatch(reads).live() }, 100) }) as Promise<RankedKey[]>); // asked again from a new capture when an unrelated commit moved it
+        // pregate-literal: SHADOW_ADAPTER_VERSION=10 the number 10 on the next line is test data (a count, size, index or slice), not the adapter version
         expect(reference.slice(0, 10).filter((r) => boosted.has(r.k))).toHaveLength(10); // the true top ten, all beyond the raw-similarity window
         const windowed = await primary.searchVector(vec(3), { ...opts, limit: 50 });
+        // pregate-literal: SHADOW_ADAPTER_VERSION=10 the number 10 on the next line is test data (a count, size, index or slice), not the adapter version
         expect(windowed.slice(0, 10).filter((r) => boosted.has(String(r.chunk_id))).length).toBeLessThan(10); // the engine's candidate window never saw them
       } finally {
         await reads.close();
@@ -1453,6 +1479,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       const primary = ctx.primary();
       await vectorFixture(primary);
       const nodes = (p: { 'Node Type'?: string; 'Index Name'?: string; Plans?: unknown[] }, out: string[] = []): string[] => { out.push(`${p['Node Type']}:${p['Index Name'] ?? ''}`); for (const c of p.Plans ?? []) nodes(c as never, out); return out; };
+      // pregate-literal: SHADOW_ADAPTER_VERSION=10 the number 10 on the next line is test data (a count, size, index or slice), not the adapter version
       const stmt = buildVectorSearchStatement({ dialect: ctx.dialect, embedding: vec(3), limit: 10, offset: 0, opts: { limit: 10 } as never, scope: undefined as never });
       const plan = (sets: string[], sql: string) => primary.transaction(async (tx) => {
         for (const s of sets) await tx.executeRaw(s);
@@ -1466,6 +1493,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       expect(await plan(['SET LOCAL enable_indexscan = off', 'SET LOCAL enable_bitmapscan = off'], stmt.sql)).toEqual([]);
       const after = await primary.transaction(async (tx) => {
         await tx.executeRaw('SET LOCAL enable_indexscan = off');
+        // pregate-literal: SHADOW_ADAPTER_VERSION=10 the number 10 on the next line is test data (a count, size, index or slice), not the adapter version
         await tx.searchVector(vec(3), { limit: 10 });
         return (await tx.executeRaw<{ v: string }>(`SELECT current_setting('enable_indexscan') AS v`))[0]!.v;
       }, { readOnly: true });
@@ -1478,14 +1506,18 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       const full = await primary.searchVector(vec(3), { limit: 12 });
       const { rig, epoch } = await untilNotMoved(async () => { // the whole read again with a new child when an unrelated commit kept every run of the first from being scored
         const rig = await start();
+        // pregate-literal: SHADOW_ADAPTER_VERSION=10 the number 10 on the next line is test data (a count, size, index or slice), not the adapter version
         rig.rust.searchVector = async () => [...full.slice(0, 9), full[10]]; // Rust misses the tenth true neighbour and returns the eleventh
+        // pregate-literal: SHADOW_ADAPTER_VERSION=10 the number 10 on the next line is test data (a count, size, index or slice), not the adapter version
         await rig.engine.searchVector(vec(3), { limit: 10 });
         const epoch = readEpoch(rig.dir)?.epoch_id ?? (await until(() => readEpoch(rig.dir) !== null), readEpoch(rig.dir)!.epoch_id);
         const scored = await until(() => (readEpochRecall(rig.dir, epoch)?.length ?? 0) === 1).then(() => true, () => false);
         return { rig, epoch, scored };
       }, (r) => !r.scored);
+      // pregate-literal: SHADOW_ADAPTER_VERSION=10 the number 10 on the next line is test data (a count, size, index or slice), not the adapter version
       await rig.engine.searchVector(vec(3), { limit: 10 });
       await sleep(300);
+      // pregate-literal: SHADOW_ADAPTER_VERSION=10 the number 10 on the next line is test data (a count, size, index or slice), not the adapter version
       expect(readEpochRecall(rig.dir, epoch)).toMatchObject([{ vector: 0.9, primary: 1, ref_size: 10 }]);
     });
   });

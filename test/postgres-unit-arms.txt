@@ -264,6 +264,7 @@ test/engine-parity/effect-scans.test.ts
 test/engine-parity/embed-stale-work.test.ts
 test/engine-parity/embedding-catalog.test.ts
 test/engine-parity/embedding-install.test.ts
+test/engine-parity/enforced-member-reads.test.ts
 test/engine-parity/entity-anchor-reads.test.ts
 test/engine-parity/entity-basename.test.ts
 test/engine-parity/entity-card-option-reads.test.ts
