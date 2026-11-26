@@ -42,7 +42,7 @@ test/engine-parity/chunk-vector-overflow.test.ts	1	0
 test/engine-parity/chunks.test.ts	21	0
 test/engine-parity/cli-capabilities.test.ts	2	0
 test/engine-parity/cli-reads-export.test.ts	18	0
-test/engine-parity/cli-reads-import.test.ts	20	0
+test/engine-parity/cli-reads-import.test.ts	21	0
 test/engine-parity/cli-reads-ops.test.ts	24	0
 test/engine-parity/code-eval-salience.test.ts	13	0
 test/engine-parity/collate-aggregated-lists.test.ts	5	0
@@ -180,7 +180,7 @@ test/engine-parity/holding-page-purges.test.ts	3	0
 test/engine-parity/hot-memory-meta.test.ts	3	0
 test/engine-parity/hot-memory-watermark.test.ts	2	0
 test/engine-parity/identity-auto-sweeps.test.ts	3	0
-test/engine-parity/identity-finder.test.ts	4	0
+test/engine-parity/identity-finder.test.ts	5	0
 test/engine-parity/import-folder-stamp.test.ts	5	0
 test/engine-parity/import-members.test.ts	10	0
 test/engine-parity/import-path.test.ts	8	0

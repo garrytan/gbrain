@@ -244,20 +244,35 @@ is too slow there. `gbrain setup openclaw --skill-loading resolve --gbrain-bin <
 installs a separate plugin, `gbrain-skill-resolver`, that ranks inside the
 gateway's Node process instead:
 
-1. It builds one catalog per agent, `openclaw-<agent>`, from the skill
-   directories OpenClaw loads for that agent, and writes the Node library to
-   `~/.gbrain/lib/<sha256>.mjs`.
+1. It builds one catalog per agent, `openclaw-<agent>`, from every skill
+   folder OpenClaw loads for that agent: the workspace and `.agents/skills`
+   folders, managed, Skill Workshop, custodian and bundled skills, and each
+   extra dir (`skills.load.extraDirs` and plugin skill folders). When two
+   folders hold a skill of the same name, the catalog keeps the copy OpenClaw
+   loads. It writes the Node library to `~/.gbrain/lib/<sha256>.mjs`.
 2. It writes the plugin to `<openclaw state dir>/gbrain/gbrain-skill-resolver`
-   and its state to `~/.gbrain/openclaw-skill-resolver.json` (mode 0600: per
-   agent the mode, catalog, top_k, floor, top_gate when set, pinned block and rollout knobs).
+   and its state to `~/.gbrain/openclaw-skill-resolver.json` (mode 0600). The
+   state names `gbrain_home` (the gbrain home the plugin reads, so another
+   tool can check it agrees) and, per agent, the mode, catalog, top_k, floor,
+   top_gate when set, pinned block, rollout knobs, the skill folders with
+   their OpenClaw source (`skill_roots`; `skill_dirs` lists the same
+   folders), each skill's `SKILL.md` path (`skill_files`), and which paths
+   the agent's `read` tool may open (`path_reads`: `any`, `workspace`
+   under `tools.fs.workspaceOnly` with `workspace_dir`, or `none` in a
+   sandbox).
 3. It runs `openclaw plugins install --link`, `plugins enable` and
    `config set ...hooks.allowConversationAccess true`, then
    `plugins inspect` and one self-test turn under Node. Anything short of a
    loaded plugin exits 3 with `skill_resolver_plugin_not_installed` and the
    commands still to run; it never reports a partial install as done.
 
-Setup also asks OpenClaw which skills each agent's model can use
-(`openclaw skills list --json --agent <id>`, its `modelVisible` field). A
+Setup asks OpenClaw which skills each agent's model can use and where each
+one lives: the running gateway's `skills.status` first (`openclaw gateway
+call skills.status`, about 2 s), and when no gateway answers,
+`openclaw skills list --json --agent <id>` plus one `openclaw skills info
+--json` for each source whose folder it cannot place (that list carries no
+file paths; about 4 s per call). A skill OpenClaw loads from a different folder
+than the catalog's copy is never suggested, and setup counts them. A
 skill in the agent's directories that OpenClaw hides from it (not eligible on
 this host, outside the agent's skill filter, model invocation off) or does not
 list at all (cut at load, see `skill_resolver_host_load_cut`) goes into that
@@ -278,7 +293,14 @@ turn (`before_prompt_build`; inter-session and other internal turns are
 skipped) it ranks the message the user just sent (OpenClaw's `event.prompt`;
 `event.messages` holds only earlier turns) and puts up to 3 suggestions with at
 least a description match in `appendContext`, and the pinned block in
-`appendSystemContext`. A turn whose run OpenClaw already ended (its
+`appendSystemContext`. Each suggestion carries its `SKILL.md` path, and the
+block tells the model to open it with `read` first and fall back to
+`skills_read` by name (through `dispatch_action` when OpenClaw lists
+`skills_read` only behind its tool search). That still works with OpenClaw's
+skill listing off (`skillsLimits.maxSkillsPromptChars: 0`). When a
+suggested skill sits where the agent's `read` cannot reach (outside the
+workspace under `tools.fs.workspaceOnly`, or anywhere in a sandbox), the
+block leads with `skills_read` instead. A turn whose run OpenClaw already ended (its
 `assertActive` check throws) commits nothing toward the session. Ranking runs
 in a worker thread with a 50 ms deadline: a miss injects nothing, commits
 nothing and is logged as `timeout`; three misses in a row restart the worker.
@@ -316,12 +338,21 @@ way every lane does, so a bad value makes setup refuse with
 the next `gbrain setup openclaw`.
 
 Each turn appends one line (agent, outcome, duration, error code, arm,
-suggested ids; never turn text) to
-`skill-index/logs/openclaw-<date>.jsonl`, and a `read` line when the model
-opens a skill, marked with whether it was suggested. `gbrain doctor --only
-skill_resolver` reports the plugin, the library, each agent's catalog and pins
-and, over the last 24 hours, the turns, outcomes, how many reads were of
-suggested skills and the deadline-miss rate. Above 5% over at least 20 turns
+suggested ids, the session class and each suggestion's OpenClaw source; never
+turn text) to `skill-index/logs/openclaw-<date>.jsonl`, and a `read` line
+when the model opens a skill, by `skills_read` or by `read` of its
+`SKILL.md` path, directly or through `dispatch_action` (counted once),
+marked with whether it was suggested, the tool, the source and the session
+class. The session class is `owner`, `direct`, `group`, `channel`,
+`conversation`, `relay`, `webhook`, `cron`, `heartbeat`, `internal`
+or `unknown` when OpenClaw sends no memory audience. `gbrain doctor --only
+skill_resolver` reports the plugin, the library, the gbrain home, each agent's
+catalog, pins, skill listing and read reach and, over the last 24 hours, the
+turns, outcomes, how many reads were of suggested skills (also split by
+session class and by source) and the deadline-miss rate. An agent with
+OpenClaw's listing off reads `listing off, resolver live` while the plugin
+suggests for it; a load cut then does not warn when its `read` may open any
+path (`path_reads: any`). Above 5% over at least 20 turns
 it warns with `skill_resolve_timeout`; keep a rollout in shadow until the rate
 is under that on the real host.
 
@@ -464,7 +495,9 @@ turn embeds the message with the same model and compares the two.
   A skill named in the turn still bypasses it.
 - **How long it waits.** At most 1 second for the message's vector with the
   picker off; with the picker on, the picker's own wait covers both, and when
-  the picker answers the vector is not waited for. With the picker off,
+  the picker answers the vector is not waited for. Either way the wait ends
+  at least 100 ms before the caller's deadline, so a late timer on a busy
+  machine still leaves the word matcher time to answer. With the picker off,
   Claude Code's hook waits at most 1.5 seconds in all and every other harness
   2 seconds; with it on, the picker's own wait sets the limit.
 - **When it can't answer.** The turn is the word matcher's, byte for byte,
@@ -1113,7 +1146,8 @@ run. Run `gbrain setup openclaw --skill-loading resolve --agent <id>`.
 OpenClaw does not list some of the skills in the agent's skill directories (it
 caps each root with `skills.limits.maxCandidatesPerRoot` and each source with
 `skills.limits.maxSkillsLoadedPerSource`), so `skills_read` could not open
-them. Setup leaves those skills out of the agent's suggestions and names them;
+them. An agent with the skill listing off whose `read` may open any path is
+not warned: the block names each path. Setup leaves those skills out of the agent's suggestions and names them;
 doctor warns when the plugin still suggests one (the limits changed since
 setup ran). To get them back, raise those limits in `openclaw.json` or split
 the root, then run setup again. gbrain never edits these limits itself.

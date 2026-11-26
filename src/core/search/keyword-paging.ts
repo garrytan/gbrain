@@ -170,6 +170,11 @@ export function queryKeywordCountFilters(p: Record<string, unknown>, where: Sear
   };
 }
 
+/** The `query` filters the count applied that search's keyword listing cannot take, so that listing holds more pages than the count. */
+export function queryUnlistedCountFilters(p: Record<string, unknown>): string[] {
+  return (['since', 'until', 'lang', 'symbol_kind'] as const).filter(k => typeof p[k] === 'string' && p[k] !== '');
+}
+
 /** Adds count fields (and the unavailable stage) to a built retrieval meta. */
 export function withCountMeta(meta: Record<string, unknown>, extra: { meta: Record<string, unknown>; degraded?: DegradedStageEntry }): Record<string, unknown> {
   if (!extra.degraded) return { ...meta, ...extra.meta };
@@ -177,11 +182,11 @@ export function withCountMeta(meta: Record<string, unknown>, extra: { meta: Reco
 }
 
 /** Response meta for the hybrid path: `keyword_total` / `keyword_truncated`, or the unavailable stage. `entityResolved`: the query names an entity or fanned out to another name. */
-export function keywordCountMeta(count: KeywordCount, shownThrough: number, entityResolved = false): { meta: Record<string, unknown>; degraded?: DegradedStageEntry } {
+export function keywordCountMeta(count: KeywordCount, shownThrough: number, entityResolved = false, unlisted: string[] = []): { meta: Record<string, unknown>; degraded?: DegradedStageEntry } {
   if ('unavailable' in count) {
     return { meta: { keyword_total: null }, degraded: { stage: 'keyword_count_unavailable', ...(count.unavailable === 'timeout' ? { reason: 'timeout' as const } : {}) } };
   }
-  return { meta: { keyword_total: count.total, keyword_truncated: count.capped || count.total > shownThrough, ...(count.capped ? { keyword_total_capped: true } : {}), ...(entityResolved ? { query_entity_resolved: true } : {}) } };
+  return { meta: { keyword_total: count.total, keyword_truncated: count.capped || count.total > shownThrough, ...(count.capped ? { keyword_total_capped: true } : {}), ...(entityResolved ? { query_entity_resolved: true } : {}), ...(unlisted.length ? { keyword_unlisted_filters: unlisted } : {}) } };
 }
 
 export interface KeywordPage {
@@ -281,5 +286,7 @@ export function searchCountLine(rows: unknown, retrieval: unknown, tool = 'searc
   const count = typeof r.keyword_total === 'number'
     ? `Keyword matches: ${countWords(r.keyword_total, r.keyword_total_capped === true)} (pages matching the query's keywords, not a count of these rows)`
     : `Keyword match count unavailable (${reason}; not a count of zero)`;
-  return `[gbrain search] Rows are a ranked top-K, not proof of coverage. ${count}. List every keyword match with ${tool === 'search' ? '' : 'the search tool and '}match: "keyword".`;
+  const unlisted = Array.isArray(r.keyword_unlisted_filters) && r.keyword_unlisted_filters.length
+    ? ` That listing ignores ${(r.keyword_unlisted_filters as string[]).join(', ')}, so it also holds pages this count left out.` : '';
+  return `[gbrain search] Rows are a ranked top-K, not proof of coverage. ${count}. List every keyword match with ${tool === 'search' ? '' : 'the search tool and '}match: "keyword".${unlisted}`;
 }

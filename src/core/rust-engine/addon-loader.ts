@@ -84,6 +84,15 @@ export function installedAddonPath(rustDir: string, version: string, target: str
   return manifest && entry ? addonPath(rustDir, manifest.engine_build, target, entry.sha256) : null;
 }
 
+/**
+ * The file the loader opened for `addon`: the development override (the caller's GBRAIN_RUST_ENGINE_ADDON, passed in so this module reads no env), else the installed addon the
+ * cached manifest of the running version names for the addon's target; null when neither names a file. The shadow child
+ * (which records the file's digest in the evidence epoch) and the shadow drill (which must hash the same file) both call it.
+ */
+export function loadedAddonPath(addon: { target?: unknown }, override: string | undefined): string | null {
+  return override?.trim() || installedAddonPath(gbrainPath('engines', 'rust'), VERSION, String(addon.target));
+}
+
 /** Reads the cached manifest, or null when it is absent, unreadable or for another version. */
 export function readCachedManifest(rustDir: string, version: string): RustAddonManifest | null {
   try {

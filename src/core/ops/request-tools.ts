@@ -117,6 +117,25 @@ async function visibleOpsForCaller(
 }
 
 /**
+ * MCP clients (initialize `clientInfo.name`) that build the model's tool list
+ * once and never take a tool request_tools adds in the same turn, read from
+ * their source: Codex 0.170 logs tools/list_changed and drops it (its refresh
+ * is the off-by-default `mcp_tool_list_changed` feature, read per turn), and
+ * OpenClaw 2026.11 drops its cached catalog on tools/list_changed but builds a
+ * run's tools when the run starts. For these clients request_tools says so
+ * instead of telling the model to call the new tools now.
+ */
+const NO_MIDTURN_RELOAD: Readonly<Record<string, string>> = {
+  'codex-mcp-client': 'Codex does not reload its tool list after tools/list_changed (unless its experimental mcp_tool_list_changed feature is on, and then only from the next turn), so you cannot call these tools in this turn. Answer with the tools already in your list. For every tool from the start of a session, the user re-registers gbrain with `gbrain setup codex --surface full`.',
+  'openclaw-bundle-mcp': "OpenClaw builds its tool list when a run starts, so these tools become callable from the user's next message in this session, not in this run. Answer now with the tools already in your list. For every tool from the start of a session, the user moves gbrain's OpenClaw entry to `serve --surface full` (`gbrain setup openclaw` prints the command).",
+};
+
+function midTurnReloadNote(ctx: OperationContext): string | undefined {
+  const client = ctx.mcpCaller?.client;
+  return client && Object.hasOwn(NO_MIDTURN_RELOAD, client) ? NO_MIDTURN_RELOAD[client] : undefined;
+}
+
+/**
  * Stdio branch of the {surface} call: widen this session's allow-set (the
  * one tools/list and dispatch share), never past `--access read-only` or
  * GBRAIN_MCP_FORCE_SURFACE, then answer with the newly allowed tools'
@@ -152,7 +171,7 @@ async function widenStdioSession(ctx: OperationContext, requested: 'verbs' | 'st
   return {
     persisted: false, scope: 'session', surface: target, previous: change.from,
     tools: buildToolDefs(visible, { strictParams }),
-    note: `This session now serves '${target}' (tools/list_changed was sent). Call the new tools by name now; their schemas are above. A new session starts at the registered surface. ${persistent}`,
+    note: `This session now serves '${target}' (tools/list_changed was sent). ${midTurnReloadNote(ctx) ?? 'Call the new tools by name now; their schemas are above.'} A new session starts at the registered surface. ${persistent}`,
   };
 }
 
@@ -279,7 +298,9 @@ const request_tools: Operation = {
         new: requested,
         via: 'request_tools',
       });
-      return { persisted: true, surface: requested, note: 're-issue tools/list to see the new catalog' };
+      if (!ctx.notifyToolListChanged) return { persisted: true, surface: requested, note: 're-issue tools/list to see the new catalog' };
+      const sent = await ctx.notifyToolListChanged().then(() => true, () => false);
+      return { persisted: true, surface: requested, note: sent ? 'tools/list_changed was sent; re-issue tools/list to see the new catalog' : 're-issue tools/list to see the new catalog' };
     }
 
     // A widenable stdio session lists what request_tools {surface} can add, not only what it serves now.
@@ -343,8 +364,25 @@ const request_tools: Operation = {
       if (ctx.revealTools) {
         // A widenable session's catalog reaches past what it serves; only tools it can call now are listed.
         const callable = catalogCeiling === ceiling ? visibleSet : new Set((await visibleOpsForCaller(ctx, ceiling)).map(o => o.name));
-        const reachable = picked.filter(o => callable.has(o.name)).map(o => o.name);
+        const reachableOps = picked.filter(o => callable.has(o.name));
+        const reachable = reachableOps.map(o => o.name);
         const outside = picked.filter(o => !callable.has(o.name)).map(o => `\`${o.name}\``);
+        const reload = midTurnReloadNote(ctx);
+        if (reload) {
+          // Only a tool the client's latest tools/list answer carried is callable now; anything else waits for its next tool list.
+          const served = ctx.toolAccess?.servedToClient, isListed = ctx.toolAccess?.isListed;
+          const grows = isListed ? (await Promise.all(reachableOps.map(o => isListed(o)))).some(listed => !listed) : reachable.length > 0;
+          if (reachable.length) ctx.revealTools(reachable);
+          const tick = (names: string[]) => names.map(n => `\`${n}\``).join(', ');
+          const fresh = reachable.filter(n => !served?.(n)), already = reachable.filter(n => served?.(n) === true);
+          const parts = [
+            fresh.length ? `${tick(fresh)} ${fresh.length === 1 ? 'is' : 'are'} now listed by this server${grows ? ' (tools/list_changed was sent)' : ''}.` : '',
+            already.length ? `${tick(already)} ${already.length === 1 ? 'is' : 'are'} already in your tool list; call ${already.length === 1 ? 'it' : 'them'} directly.` : '',
+            outside.length ? `${outside.join(', ')} ${outside.length === 1 ? 'is' : 'are'} outside this session's '${ceiling}' surface, so ${outside.length === 1 ? 'it is' : 'they are'} not listed; request_tools {"surface":"full"} adds ${outside.length === 1 ? 'it' : 'them'} to this session.` : '',
+            fresh.length || outside.length ? reload : '',
+          ];
+          return { tools: buildToolDefs(picked, { strictParams }), listed: !outside.length, note: parts.filter(Boolean).join(' ') };
+        }
         if (reachable.length) ctx.revealTools(reachable);
         if (!outside.length) return { tools: buildToolDefs(picked, { strictParams }), listed: true, note: 'These tools are now in your tool list (tools/list_changed was sent); call them directly.' };
         return {
