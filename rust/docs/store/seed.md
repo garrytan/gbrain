@@ -301,7 +301,8 @@ store takes both as lowercase hex of whole bytes and a digest is exactly 32 byte
 The relations `allocatorCheck` reports are those whose import raises an id counter: `pages`, `content_chunks`,
 `links`, `timeline_entries`, `facts`, `takes`, `page_versions`, `files`, `code_edges_chunk`, `code_edges_symbol`,
 `open_loops`, `trust_proposals`, `wanted_links`, `mcp_spend_log`, `decide_calibrations`, `decision_receipts`,
-`decide_proposals`, `decide_review_proposals`, `calibration_profiles`, `wake_cron_runs` and `wake_forgets`. Every
+`decide_proposals`, `decide_review_proposals`, `calibration_profiles`, `wake_cron_runs`, `wake_forgets` and
+`link_transitions`. Every
 write that stores a row with an id (`importRelation`, `replaceRelationRows` and `replaceInterval` alike) raises its
 counter past that id, also for a row the store drops (a retired or segment chunk), so the store never hands out an id
 the primary used. A delete does not lower a counter.
@@ -373,8 +374,10 @@ The relations whose rows are looked up this way, with the column sets that are u
 relation's follow spec: `pages` (source, slug), `tags` (page, tag), `content_chunks` (page, index), `links` (from, to,
 type, source, origin), `slug_aliases`, `page_aliases`, `facts` (the markdown row fence and the stint index), `timeline_entries` (page, date, summary, source), `takes`
 (page, row), `raw_data`, `files` (storage path), `open_loops`, `wanted_links`, `trust_proposals` (the pending key),
-`code_edges_chunk`, `code_edges_symbol`, `decide_proposals`, `decide_review_proposals` and `wake_forgets`. The holder is
-found through the digest entries' identity columns, scanning the relation's entries once per call that has a row to
+`code_edges_chunk`, `code_edges_symbol`, `decide_proposals`, `decide_review_proposals`, `wake_forgets`, `entity_identities` (source, page) and
+`link_transitions` (origin, from, to, type, link source, kind, day, producer). The holder is
+found through the digest entries' identity columns (an `access_tokens` row that takes the hash of a stored token finds that
+token by the hash itself, which no digest entry holds), scanning the relation's entries once per call that has a row to
 check (a row that moves a key, or collides), so a swap costs a pass over the relation. A stored row that has no digest entry (imported without digests) cannot be found:
 the collision stays an error, except for a row with no entry of its own, which replaces the stored row it names by its
 primary key as before.
@@ -385,7 +388,8 @@ primary key as before.
   entry go. Rows that depend on it go or change the way the primary's foreign keys say: `ON DELETE CASCADE` removes them
   and their digest entries, `SET NULL` clears the column. Deleting a page removes its tags, chunks (and their
   code edges), links from and to it, timeline entries, versions, raw data, takes (and the citations of those takes),
-  wanted links and facts reconcile mark, and the digest entries of those rows go with them.
+  wanted links, facts reconcile mark, entity identity memberships, link relationship state and link transitions, and the
+  digest entries of those rows go with them.
 - Replace (the row changed): the old row is removed or overwritten in place and the new one stored, and its dependents
   stay. Replacing a page keeps its chunks, links and tags readable. Where a relation's importer
   overwrites a different stored value itself (`sources`, `config`), the row is stored over the old one.
