@@ -349,7 +349,7 @@ term rarity with `rankOrFallbackByRarity`) and the store answers each statement:
 
 - `searchKeywordArm(match, rank, options)`: chunks matching `websearch_to_tsquery(match)`, scored with
   `ts_rank(vector, websearch_to_tsquery(rank))` × phrase factor × source factor, the best chunk per page, the
-  `innerLimit` (`min(limit × 3, cap × 3)`) inner window, then `offset` and `limit`.
+  `innerLimit` (`min((offset + limit) × 3, cap × 3)`) inner window, then `offset` and `limit`.
 - `keywordRareTermPages(terms, cap)`: per term, the pages holding it, up to `RARE_TERM_CHUNK_CAP` chunks.
 - the slug handles go through `searchKeywordPages` with `handlesOnly`.
 
