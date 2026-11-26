@@ -57,6 +57,7 @@ import { disabledOpsForPublishGates } from './publish-gates.ts';
 import { loadServeConfigs } from './serve-config.ts';
 import { buildDefaultLimiters, type RateLimiter } from './rate-limit.ts';
 import { sqlQueryForEngine } from '../core/sql-query.ts';
+import { rustHttpServing, withHttpPrincipalSession } from '../core/rust-engine/served/http-session.ts';
 import { degradedLastError, isEngineDegraded } from '../core/degraded-marker.ts';
 import { classifyPgAccessError } from '../core/pg-access-classify.ts';
 import { redactConnectionInfo } from '../core/audit/redact-connection-info.ts';
@@ -209,6 +210,15 @@ function qmAudienceRefusal(req: Request, body: { method?: string; params?: any; 
   const op = method === 'tools/call' ? String(params?.name ?? 'unknown') : method!;
   const refused = audienceRefusal(op, { auth, transport: 'http' });
   return method === 'tools/call' ? { log: `tools/call:${op}`, body: { jsonrpc: '2.0', id, result: refused.result } } : { log: op, body: { jsonrpc: '2.0', id, error: refused.rpc } };
+}
+
+/**
+ * The /health database probe. A multi-user Rust brain has no raw SQL, so it answers through a typed engine read
+ * (rust-engine/served/http-session.ts); every other engine runs `SELECT 1`.
+ */
+async function healthProbe(engine: BrainEngine, sql: ReturnType<typeof sqlQueryForEngine>): Promise<void> {
+  if (rustHttpServing(engine as never)) await engine.getConfig('version');
+  else await sql`SELECT 1`;
 }
 
 export async function startHttpTransport(opts: HttpTransportOptions) {
@@ -373,7 +383,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
           );
         }
         try {
-          await sql`SELECT 1`;
+          await healthProbe(engine, sql);
           return Response.json(
             { status: 'ok', version: VERSION, transport: 'http', db: 'ok' },
             { headers: corsHeaders(origin) },
@@ -563,8 +573,8 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
             localFederated = await localFederatedSourceIds(engine, auth.sourceId, 'seed_default');
           } catch { /* scalar scope stands */ }
         }
-        const result = await dispatchToolCall(engine, toolName, args, {
-          remote: true,
+        const result = await withHttpPrincipalSession(engine, auth.auth?.token, async principalSession => dispatchToolCall(engine, toolName, args, {
+          ...(principalSession ? { principalSession } : {}), remote: true,
           admissionOrigin: 'interactive', config: operationConfig,
           // WP1/D7: network transport — the dispatch-layer localOnly
           // backstop keys off this marker.
@@ -583,7 +593,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
           surfaceCeiling: surface,
           resultRows: resultRowsForRequest(req.headers.get(GBRAIN_CLIENT_HEADER), await resolveResultRowsMode(engine, fileConfig)), // C1; row shape only, never authority
           ...(isGbrainThinClient(req.headers.get(GBRAIN_CLIENT_HEADER)) ? { thinClient: true } : {}), // large pages: default body mode only, never authority
-        });
+        }));
         // Same status taxonomy as the OAuth transport (denied_after_list /
         // success_with_warnings feed the amendment-33 metric + E4 usage).
         const status = requestLogStatusForResult(result);

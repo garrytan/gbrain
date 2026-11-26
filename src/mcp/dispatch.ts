@@ -1024,7 +1024,7 @@ export async function dispatchToolCall(
   // GBRA-218: a remote call also carries its credential's member identity, which every caller-aware read checks page readers against.
   // GBRA-231: or the audience a shared agent's harness asserts, resolved (and refused) on every call before any work.
   const run = async () => {
-    if (session) return qmMemoryToolResult(name, await runInSession(session, name, readOnly, privateSources, privateFactSources, () => withRequestIdentityMemo(() => dispatchResolvedCall(engine, name, args, resolved))));
+    if (session) return qmMemoryToolResult(name, await runInSession(session, name, readOnly, privateSources, privateFactSources, () => withRequestIdentityMemo(() => dispatchResolvedCall(engine, name, args, resolved))).catch(e => { if (e instanceof OperationError) return errorResult(e, opts, { op: name }); throw e; })); // a session refusal answers in the error envelope
     if (opts.remote === false) return qmMemoryToolResult(name, await withCallerAccess({ privateReadableSources: [], privateFactSources: [] }, () => withRequestIdentityMemo(() => dispatchResolvedCall(engine, name, params, resolved))));
     // GST-359 C1: or the person a trusted system attests (x-qm-actor), decided here too, before any work (access/actor.ts).
     let audience: AudiencePrincipal[] | null = null;
