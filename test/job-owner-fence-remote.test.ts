@@ -155,8 +155,8 @@ describe('who keeps the whole-queue view', () => {
     await engine.executeRaw("INSERT INTO access_members (id) VALUES ('owner-example') ON CONFLICT (id) DO NOTHING");
     const operator = await queue.add('maintenance', { prompt: 'operator-only canary' });
     const theirs = await submit(remote('client-b'));
-    const owner = { remote: true, transport: 'http' as const, sourceId: 'default',
-      auth: credential('client-owner', { member: { id: 'owner-example', groups: [] } }) };
+    const asOwner = credential('client-owner', { member: { id: 'owner-example', groups: [] } });
+    const owner = { remote: true, transport: 'http' as const, sourceId: 'default', auth: asOwner };
     const unset = body(await dispatchToolCall(engine, 'list_jobs', {}, owner));
     expect(unset).toEqual([]);
     await engine.setConfig('access.owner_member', 'owner-example');
