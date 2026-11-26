@@ -106,6 +106,40 @@ describe('engine parity: the enforced member CLI reads', () => {
     return out;
   });
 
+  // The SQL renderer empties a whole identity or satisfied-rule set when any entry of it is invalid (validIdentity,
+  // validQualifiedRuleId), so a member holding one invalid entry reads nothing through that set. The store matches
+  // entries one by one, so the Rust members must send the set the SQL applies, not the raw one.
+  parityTest('a set with one invalid entry is emptied whole, as the SQL renders it, by both member reads', {
+    methods: ['putPage', 'readMemberPageReadable', 'readHiddenPageSlugs'],
+  }, async (engine, backend) => {
+    await seed(engine, backend);
+    const probe = async (identity: string[], satisfied: string[]) => {
+      const record = { ...MEMBER_RECORD, identity, satisfiedRuleIds: satisfied };
+      const run = <T>(read: () => Promise<T>) => withCallerAccess(record, read).then((value) => ({ value }), (e: { code?: string }) => ({ refused: e.code ?? String(e) }));
+      return {
+        readable: await run(async () => Object.fromEntries(await Promise.all(['notes/listed', 'team-a/plan', 'notes/open'].map(async slug =>
+          [slug, await engine.readMemberPageReadable('default', slug, identity, satisfied, false)] as const)))),
+        hidden: await run(() => engine.readHiddenPageSlugs(['notes/listed', 'team-a/plan', 'notes/open'], [])),
+      };
+    };
+    const out = {
+      validBoth: await probe(['member:tess-example'], ['default:team-a']),
+      badSatisfied: await probe(['member:tess-example'], ['default:team-a', 'invalid']),
+      badIdentity: await probe(['member:tess-example', 'not a principal'], []),
+      badIdentityValidSatisfied: await probe(['member:tess-example', 'not a principal'], ['default:team-a']),
+    };
+    const denied = { readable: { value: { 'notes/listed': true, 'team-a/plan': false, 'notes/open': true } }, hidden: { value: ['team-a/plan'] } };
+    expect(out.validBoth).toEqual({ readable: { value: { 'notes/listed': true, 'team-a/plan': true, 'notes/open': true } }, hidden: { value: [] } });
+    // One invalid rule id empties the satisfied set: the rule page is denied though the valid id is in the set.
+    expect(out.badSatisfied).toEqual(denied);
+    // One invalid principal empties the identity: the page naming the member is denied too.
+    for (const bad of [out.badIdentity, out.badIdentityValidSatisfied]) {
+      expect(bad.readable).toMatchObject({ value: { 'notes/listed': false, 'notes/open': true } });
+    }
+    expect(out.badIdentity.readable).toEqual({ value: { 'notes/listed': false, 'team-a/plan': false, 'notes/open': true } });
+    return out;
+  });
+
   // A labelled-only member reads an existing page only when it names the member (labelledOnlyForSql); the store does not
   // model that conjunct yet, so the Rust member refuses before any read (row ec05-1, test/rust-stop-pins/ec05-enforced-member.tsv).
   parityTest('a labelled-only member read of a page names the member on the SQL engines and stops on Rust', {
