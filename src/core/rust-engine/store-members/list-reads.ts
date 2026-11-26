@@ -5,11 +5,10 @@
  */
 import type { PageReadPolicy } from '../../types.ts';
 import type { AttendanceWindowRow, CardFindQuery, CardHitRow, CardListQuery, ChatCensusRow, PredictionLedgerEvent, PredictionQuery, PredictionRow, TakeGradeRow, TakeHorizonRow, WhoCanReadRow, CardRow, CompanyBrainEvidenceRows, MentionScanLinkRow, MentionScanPageRow, PageBodyRow, PageSourceIdRow, RetypeProbeQuery, ShelfPageRow, SourceIdScope, TargetProbeSqlRow } from '../../engine-sql/list-reads.ts';
-import { selfChecked } from '../access-self-check.ts';
 import { storeCall, takeOptions, type StoreMember } from './common.ts';
+import { memberAccessPolicy } from './access-policies.ts';
 import { storePagePolicy, storePageTextPolicy } from './private-provenance.ts';
-import { accessAllowedSql, currentCallerAccess, privatePagesFilterFragment } from '../../search/private-visibility.ts';
-import { ownerOnlyFormIn } from './private-provenance.ts';
+import { currentCallerAccess, privatePagesFilterFragment } from '../../search/private-visibility.ts';
 import type { OwnerOnlyForm } from '../../access/owner-only.ts';
 import type { BeliefCoverageEventRow } from '../../engine-sql/belief-ledger.ts';
 
@@ -134,31 +133,6 @@ export const readChatCensusRows: StoreMember<[sourceIds: readonly string[], chat
 
 export const readWhoCanReadRows: StoreMember<[slug: string, sourceId: string | undefined, form: OwnerOnlyForm], WhoCanReadRow[]> = async (brain, slug, sourceId, form) =>
   (await storeCall({ member: 'readWhoCanReadRows' }, () => brain.readWhoCanReadRows(slug, sourceId || null, form === 'closed' ? 'closed' : 'fn'))) as WhoCanReadRow[];
-
-/**
- * The member-access and folder-rule tests (`accessAllowedSql`, `folderRulesAllowedSql`) run under the current caller
- * record, which supplies only the folder coverage and the owner flag; the identity and satisfied set are the call's own.
- * The store judges the member-access part alone (no privacy part) with that record: the identity, the satisfied rules,
- * the coverage, and the owner-only test in the form the SQL renders (`ownerOnlyFormIn`; none for the owner).
- */
-/** memberAccessPolicyRendered, derived by the store under the multi-user switch; a null identity is the folder-rules read. */
-export function memberAccessPolicy(identity: readonly string[] | null, satisfied: readonly string[]): Record<string, unknown> {
-  if (identity === null) {
-    return selfChecked('readPageFolderRulesAllowed', { mode: 'member_access_policy', satisfied: [...satisfied] },
-      () => memberAccessPolicyRendered([], satisfied, ''));
-  }
-  return selfChecked('readPageAccessAllowed', { mode: 'member_access_policy', identity: [...identity], satisfied: [...satisfied] },
-    () => memberAccessPolicyRendered(identity, satisfied, accessAllowedSql('p', identity)));
-}
-
-function memberAccessPolicyRendered(identity: readonly string[], satisfied: readonly string[], rendered: string): Record<string, unknown> {
-  const access = currentCallerAccess();
-  return {
-    honorAliases: false, entityPrivacy: false, identity: [...identity], satisfiedRuleIds: [...satisfied],
-    folderCoverage: access.folderCoverage.map(c => ({ source_id: c.source_id, prefix: c.prefix })),
-    callerRecord: true, ownerOnly: ownerOnlyFormIn(rendered, 'pages', 'p'), open: access.restricted === false,
-  };
-}
 
 export const readPageAccessAllowed: StoreMember<[sourceId: string, slug: string, identity: readonly string[]], boolean> = async (brain, sourceId, slug, identity) => {
   const access = currentCallerAccess();

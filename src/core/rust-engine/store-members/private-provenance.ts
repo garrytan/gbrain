@@ -41,6 +41,7 @@
  */
 import {
   type CallerAccess,
+  callerAccessAllowedSql,
   currentCallerAccess,
   privacyAliasSql,
   privatePagesFilterForCaller,
@@ -57,6 +58,7 @@ import {
   readPolicyFragment,
   ownerReadPolicyFragment,
 } from '../../search/private-visibility.ts';
+import type { RetirementPrivacy } from '../../engine-sql/entity-reads.ts';
 import type { ReflexPrivacy } from '../../engine-sql/reflex-reads.ts';
 import { MEMBER_PAGE_PREFIX } from '../../access/principals.ts';
 import { ownerOnlyFactSql, ownerOnlyPageSql, ownerOnlyTakeSql, ownerOnlyTimelineSql } from '../../access/owner-only.ts';
@@ -515,4 +517,29 @@ export function reflexPolicy(member: string, privacy: ReflexPrivacy): StorePriva
   if (privacy === 'caller') return storePageTextPolicy(member, () => privatePagesFilterForCaller('p'), { callerReaders: true, fragment: 'caller' });
   if (privacy === 'floor') return storePageTextPolicy(member, () => remoteReadFloorSql('p'), { callerReaders: true, fragment: 'floor' });
   refuseMember(member, `privacy ${String(privacy)}`);
+}
+
+/**
+ * The store page policy a retirement hop applies: the caller's page policy and the remote read floor through
+ * storePageTextPolicy; member access alone (privacy off) when the caller's `callerAccessAllowedSql` is the no-caller
+ * text or the canonical one for its reader identities, as the page visibility guards serve it (page-visibility.ts).
+ * Any other caller refuses before the read.
+ */
+export function retirementHopPolicy(privacy: RetirementPrivacy, member = 'readRetirementHop'): StorePrivacyPolicy | undefined {
+  if (privacy === 'none') return undefined;
+  if (privacy === 'caller') return storePageTextPolicy(member, () => privatePagesFilterForCaller('p'), { callerReaders: true, fragment: 'caller' });
+  if (privacy === 'floor') return storePageTextPolicy(member, () => remoteReadFloorSql('p'), { callerReaders: true, fragment: 'floor' });
+  return selfChecked(member, { mode: 'access_part_plain' }, () => accessPartPlainRendered(member));
+}
+
+/** retirementHopPolicy's `access` branch: member access alone, as the TypeScript renderers decide it. */
+function accessPartPlainRendered(member: string): StorePrivacyPolicy {
+  const text = callerAccessAllowedSql('p');
+  const off = { honorAliases: false, entityPrivacy: false, ownerOnly: ownerOnlyFormIn(text, 'pages', 'p') };
+  if (text === withoutCallerAccess(() => callerAccessAllowedSql('p'))) return off;
+  const access = currentCallerAccess();
+  const readers = { identity: [...access.identity], privateReadableSources: [...access.privateReadableSources] };
+  const canonical = withoutCallerAccess(() => withCallerAccess({ ...readers, hidePrivate: true }, () => callerAccessAllowedSql('p')));
+  if (text === canonical) return { ...off, ...readers };
+  refuseMember(member, 'a caller whose member pages, grants or lineage widen the member-access policy');
 }
