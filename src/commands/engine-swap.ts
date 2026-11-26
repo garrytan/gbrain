@@ -68,6 +68,7 @@ export function renderPlanText(p: SwapPlan): string {
     `Free disk at ${p.disk.path || '(unknown)'}: ${p.disk.free_bytes === null ? 'unknown' : `${(p.disk.free_bytes / 2 ** 30).toFixed(1)} GiB`}`,
     `Capability report: ${p.deferred.capability_report}`,
     `Expected write pause: ${p.deferred.expected_write_pause}`,
+    ...(p.managed_known_losses ?? []).map(loss => `Managed mode on a multi-user Rust brain, known loss: ${loss}`),
     p.reason ? `A run would refuse with engine_swap_refused (${p.reason}): ${SWAP_RECOVERY[p.reason].blocker}` : 'READY is evidence, not permission: the swap needs its own approval.',
     'Nothing was written.',
   ];

@@ -51,6 +51,8 @@ export interface SwapPlan {
   routes: { env: string[]; services: ServiceDefinition[] };
   disk: { path: string; free_bytes: number | null };
   deferred: typeof DEFERRED_TO_S5B;
+  /** Present only for a managed brain with the multi-user switch on: what managed mode does not yet do there (MANAGED_MULTIUSER_LOSSES). */
+  managed_known_losses?: string[];
   plan_hash: string;
 }
 
@@ -102,10 +104,19 @@ export function rustHoldsManagedStorage(destination: DestinationOptions | undefi
 /** Throws `engine_swap_refused` / `managed_storage` when the brain uses managed storage and the Rust destination cannot
  * hold it (rustHoldsManagedStorage). A persistence state that is missing or malformed refuses `storage_error`
  * (readManagedMode), never reads as unmanaged. */
-export async function assertNotManaged(engine: BrainEngine, destination?: DestinationOptions): Promise<void> {
+export async function assertNotManaged(engine: BrainEngine, destination?: DestinationOptions): Promise<boolean> {
   const managed = await readManagedMode(engine, { refusal: { subject: 'The engine swap plan', consequence: 'the swap refuses rather than guess whether the brain uses managed storage' } });
   if (managed && !rustHoldsManagedStorage(destination)) throw managedStorageError(servedCapabilities().has('managed_persistence') ? 'multiuser' : 'unsupported');
+  return managed;
 }
+
+/**
+ * What a managed brain loses on a multi-user Rust destination today, named in the plan instead of refused (RUST_ENGINE.md
+ * conflict row 55). Empty for an unmanaged brain or a single-host destination, and then absent from the plan.
+ */
+export const MANAGED_MULTIUSER_LOSSES: readonly string[] = [
+  'A Git effect that fails (git_unavailable, a push refusal) records its failure through raw SQL (persistence/effects.ts recordFailure) until lane 7\'s typed persistenceUpkeepStore (rust-engine/managed-parity-rows 20da396ebd) reaches rust-engine/multiuser, so on a multi-user Rust brain it refuses raw_sql instead of retrying and parking. Owner: lane 7.',
+];
 
 /** The plan hash binds what a run would act on, never volatile readings (time, free space). */
 function planHash(p: Omit<SwapPlan, 'plan_hash'>, dest: DestinationOptions | undefined): string {
@@ -122,7 +133,7 @@ function planHash(p: Omit<SwapPlan, 'plan_hash'>, dest: DestinationOptions | und
 /** Builds the read-only plan. Throws `engine_swap_refused` (`managed_storage` when the destination cannot hold a managed brain,
  * `refresh_unsettled`) before reading any criterion. */
 export async function planEngineSwap(engine: BrainEngine, deps: SwapPlanInputs = {}): Promise<SwapPlan> {
-  await assertNotManaged(engine, deps.destination);
+  const managed = await assertNotManaged(engine, deps.destination);
   await assertRefreshesSettled(engine);
   const status = deps.readShadowStatus ? await deps.readShadowStatus(engine) : null;
   const readiness = evaluateReadiness(status, deps.now ?? new Date(), deps.destination);
@@ -139,6 +150,7 @@ export async function planEngineSwap(engine: BrainEngine, deps: SwapPlanInputs =
     routes: { env: [...(deps.envNames ?? [])], services: [...(deps.services ?? [])] },
     disk: deps.disk ?? { path: '', free_bytes: null },
     deferred: DEFERRED_TO_S5B,
+    ...(managed && (deps.destination?.multiuser ?? rustMultiuserFromEnv()) ? { managed_known_losses: [...MANAGED_MULTIUSER_LOSSES] } : {}),
   };
   return { ...base, plan_hash: planHash(base, deps.destination) };
 }

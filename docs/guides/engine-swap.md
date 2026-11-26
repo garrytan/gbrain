@@ -24,7 +24,10 @@ a store that already exists: a PGLite store with no `PG_VERSION` file is refused
 because connecting would otherwise initialize a new, empty brain. With a store in place, it opens the brain without
 migrating it and reads whether the brain uses managed storage. The Rust engine holds managed storage on one host and, since lane LM slice 3, on a multi-user store
 (`GBRAIN_RUST_MULTIUSER=1`, where its checkout locks are leases). A managed brain is refused with `engine_swap_refused`
-(reason `managed_storage`) only when the build's Rust engine does not serve managed mode. It reads the worktree
+(reason `managed_storage`) only when the build's Rust engine does not serve managed mode. A managed brain with the
+multi-user switch on gets its plan with a `managed_known_losses` list (one "known loss" line in the text plan): today a
+failing Git effect there refuses `raw_sql` instead of parking ([RUST_ENGINE.md](../designs/RUST_ENGINE.md) conflict row
+55); no other plan carries the field. It reads the worktree
 refresh journal and the shadow status, and lists. The shadow status is the same document `gbrain engine shadow
 status --json` prints for this brain; with no shadow for it, the verdict is `NOT READY` with reason `no_shadow`:
 
