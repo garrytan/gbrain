@@ -54,6 +54,7 @@ fn begin_host(s: &Store, i: usize) -> MuTxn {
         mode: TxnMode::Optimistic,
         deadline: None,
         origin: Some(origin(i)),
+        ..TxnOptions::default()
     })
     .unwrap_or_else(|e| panic!("{e}"))
 }

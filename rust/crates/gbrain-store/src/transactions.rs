@@ -172,6 +172,11 @@ impl Transaction {
         self.store.commit_transaction()
     }
 
+    /// [`Transaction::commit`] with the commit's own position (`commit_log.rs`).
+    pub fn commit_at(self) -> Result<CommitPosition> {
+        self.store.commit_transaction_at()
+    }
+
     /// Ends the transaction without keeping its writes.
     pub fn rollback(self) -> Result<()> {
         self.store.rollback_transaction()
@@ -181,6 +186,14 @@ impl Transaction {
     /// the transaction (interface I-1 / I-5; `Store::assert_lease`).
     pub fn assert_lease(&self, token: &crate::leases::LeaseToken) -> Result<()> {
         self.store.assert_lease(token)
+    }
+}
+
+/// A transaction reads and writes through its bound store, so it can stand where a `&Store` is wanted.
+impl std::ops::Deref for Transaction {
+    type Target = Store;
+    fn deref(&self) -> &Store {
+        &self.store
     }
 }
 

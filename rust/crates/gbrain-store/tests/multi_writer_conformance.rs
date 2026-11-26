@@ -22,8 +22,8 @@ mod common;
 mod memory_env;
 
 use common::mu::{
-    self, CommitPosition, L1_TXN, L2_LOG, L3_SERVER, L5_HOSTS, LEASE_LOST, LeaseToken, LostReason,
-    MuStore, MuTxn, SingleFlightKey, TxnMode, TxnOptions, WriteOrigin,
+    self, CommitPosition, L2_LOG, L3_SERVER, L5_HOSTS, LEASE_LOST, LeaseToken, LostReason, MuStore,
+    MuTxn, SingleFlightKey, TxnMode, TxnOptions, WriteOrigin,
 };
 use common::{StoreMode, TempDir, clock, open, open_in};
 use gbrain_store::chunks::{ChunkInput, UpsertChunksOptions};
@@ -245,6 +245,7 @@ fn host_options(i: usize) -> TxnOptions {
         mode: TxnMode::Optimistic,
         deadline: None,
         origin: Some(origin(i)),
+        ..TxnOptions::default()
     }
 }
 
@@ -3145,25 +3146,17 @@ fn mu_adapter_stubs_are_still_pending() {
             Ok(_) => panic!("{call} is no longer pending: edit this test with its stub"),
         }
     }
-    let (dir, other) = (TempDir::new("mu"), TempDir::new("mu-tx"));
-    let (store, holder) = (open(&dir), open(&other));
-    let txn = || MuTxn::from_store(holder.begin_transaction(false).unwrap());
+    let dir = TempDir::new("mu");
+    let store = open(&dir);
+    // Landed with the optimistic-transactions lane (I-1), so no longer stubs: `begin_with`, `single_flight` and the commit
+    // position of a transaction (`MuStore::commit_position` calls the real `Transaction::commit_at`).
+    let txn = store.begin_with(TxnOptions::default()).unwrap();
     let key = SingleFlightKey {
         source_id: "default".into(),
         slug: "a".into(),
     };
-    assert_eq!(
-        owner("begin_with", store.begin_with(TxnOptions::default())),
-        L1_TXN
-    );
-    assert_eq!(
-        owner("single_flight", store.single_flight(&txn(), &[key])),
-        L1_TXN
-    );
-    assert_eq!(
-        owner("commit_position", store.commit_position(txn())),
-        L2_LOG
-    );
+    store.single_flight(&txn, &[key]).unwrap();
+    store.commit_position(txn).unwrap();
     assert_eq!(
         owner("promote_from_log", store.promote_from_log(None)),
         L2_LOG
