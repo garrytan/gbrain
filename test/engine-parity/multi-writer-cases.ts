@@ -462,8 +462,8 @@ export const MW_CASES: readonly MwCase[] = [
     scope: 'Postgres: a writer-process crash (SIGKILL after acknowledged writes), not a database-server crash: the reopening engine is the parent\'s connected pool, so Postgres durability (WAL, fsync) is not exercised; that guarantee is Postgres\'s own. Rust: the store\'s own recovery of a brain directory the killed writer owned. PGLite is in-memory (n/a).',
     members: ['putPage', 'readPageSnapshot', 'admitJob', 'listJobs'],
     storeTests: {
-      runnable: ['c19_crash_after_commit_keeps_acknowledged_writes'],
-      pending: ['c19_crash_after_commit_keeps_acknowledged_writes_multi_writer', 'c19_crash_keeps_commit_times_rising_and_equal_to_last_commit_time_multi_writer'],
+      runnable: ['c19_crash_after_commit_keeps_acknowledged_writes', 'c19_crash_keeps_commit_times_rising_and_equal_to_last_commit_time'],
+      pending: ['c19_crash_after_commit_keeps_acknowledged_writes_multi_writer'],
     },
     cells: {
       pglite: na('PGLite is in-memory: there is no durable brain for a killed writer to leave behind'), postgres: RUNS,
@@ -517,8 +517,8 @@ export const MW_CASES: readonly MwCase[] = [
     reference: 'standalone',
     members: ['putPage'],
     storeTests: {
-      runnable: ['c22_commit_position_strictly_increases'],
-      pending: ['c22_commit_position_strictly_increases_multi_writer', 'c22_follower_replay_keeps_commit_times_rising_and_row_times_above_the_floor_multi_writer'],
+      runnable: ['c22_commit_position_strictly_increases', 'c22_commit_position_strictly_increases_multi_writer', 'c22_logged_single_writer_positions_have_index_zero_and_each_matches_a_record'],
+      pending: ['c22_follower_replay_keeps_commit_times_rising_and_row_times_above_the_floor_multi_writer'],
     },
     cells: {
       pglite: pending('L2 commit log', 'typed position member (no engine exposes a commit position or a commit log today)'), postgres: pending('L2 commit log', 'typed position member (no engine exposes a commit position or a commit log today)'),

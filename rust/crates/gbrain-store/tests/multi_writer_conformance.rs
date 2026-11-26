@@ -2100,6 +2100,7 @@ const C19_DIR: &str = "GBRAIN_C19_DIR";
 const C19_WRITERS: &str = "GBRAIN_C19_WRITERS";
 const C19_OPTIMISTIC: &str = "GBRAIN_C19_OPTIMISTIC";
 const C19_EXPLICIT_TXN: &str = "GBRAIN_C19_EXPLICIT_TXN";
+const C19_LOGGED: &str = "GBRAIN_C19_LOGGED";
 const C19_CHILD: &str = "c19_child_writer";
 
 /// The child of a C19 run, started by the tests below (ignored in a normal run; with no `GBRAIN_C19_DIR` it does
@@ -2114,14 +2115,21 @@ fn c19_child_writer() {
     let writers: usize = std::env::var(C19_WRITERS).unwrap().parse().unwrap();
     let optimistic = std::env::var(C19_OPTIMISTIC).is_ok_and(|v| v == "1");
     let explicit = std::env::var(C19_EXPLICIT_TXN).is_ok_and(|v| v == "1");
-    let store = Store::open_dir(
-        &Path::new(&dir).join("brain"),
-        OpenOptions {
-            concurrent_writes: optimistic,
-            ..OpenOptions::default()
-        },
-    )
-    .unwrap();
+    let logged = std::env::var(C19_LOGGED).is_ok_and(|v| v == "1");
+    let brain = Path::new(&dir).join("brain");
+    let store = if logged {
+        // Multi-user mode and the commit log on, in this process, and asserted: a child that lost the switch exits and the parent fails.
+        mu::open_dir_logged(&brain, optimistic, mu::TEST_HOST).unwrap()
+    } else {
+        Store::open_dir(
+            &brain,
+            OpenOptions {
+                concurrent_writes: optimistic,
+                ..OpenOptions::default()
+            },
+        )
+        .unwrap()
+    };
     let out = Mutex::new(std::io::stdout());
     let say = |line: String| {
         let mut o = out.lock().unwrap();
@@ -2194,6 +2202,7 @@ fn kill_child_writer(
     writers: usize,
     optimistic: bool,
     explicit: bool,
+    logged: bool,
     min_acks: usize,
 ) -> Killed {
     use std::os::unix::process::ExitStatusExt;
@@ -2204,6 +2213,7 @@ fn kill_child_writer(
         .env(C19_WRITERS, writers.to_string())
         .env(C19_OPTIMISTIC, if optimistic { "1" } else { "0" })
         .env(C19_EXPLICIT_TXN, if explicit { "1" } else { "0" })
+        .env(C19_LOGGED, if logged { "1" } else { "0" })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -2478,7 +2488,7 @@ fn c19_crash_after_commit_keeps_acknowledged_writes() {
     } else {
         StoreMode::Single
     };
-    let killed = kill_child_writer(&dir, 1, optimistic, false, 40);
+    let killed = kill_child_writer(&dir, 1, optimistic, false, false, 40);
     crash_keeps_acknowledged_writes(&dir, mode, killed, 1);
 }
 
@@ -2489,40 +2499,40 @@ fn c19_crash_after_commit_keeps_acknowledged_writes() {
 fn c19_crash_after_commit_keeps_acknowledged_writes_multi_writer() {
     let dir = TempDir::new("c19m");
     require_transactions(&open_optimistic(&dir));
-    let killed = kill_child_writer(&dir, 8, true, true, 80);
+    let killed = kill_child_writer(&dir, 8, true, true, false, 80);
     crash_keeps_acknowledged_writes(&dir, StoreMode::Optimistic, killed, 8);
 }
 
-/// C19, I-4.v2 clocks: after a SIGKILL of eight optimistic writers and a reopen, the commit times in the log strictly rise in
-/// position order and the newest equals `last_commit_time()`; every acknowledged write has a record.
+/// C19, I-4.v2 clocks, against the commit-log lane's real code: eight plain writers on the optimistic store, multi-user mode and the
+/// log on in the child and in the parent (asserted at every open), SIGKILL, reopen. The records after the pre-write cursor are the
+/// child's commits, in position order, with strictly rising commit times; the newest equals `last_commit_time()`; and every
+/// acknowledged request id is in the write ids of exactly one record, so an upkeep or in-flight record cannot stand in for a lost
+/// acknowledged one. (The explicit-transaction variant, `c19_crash_after_commit_keeps_acknowledged_writes_multi_writer`, waits for L1.)
 #[test]
-#[ignore = "multi_writer"]
-fn c19_crash_keeps_commit_times_rising_and_equal_to_last_commit_time_multi_writer() {
+fn c19_crash_keeps_commit_times_rising_and_equal_to_last_commit_time() {
     let dir = TempDir::new("c19-clock");
+    let brain = dir.path().join("brain");
     // The cursor before the child writes anything: open-time upkeep and the activation commit are behind it.
     let start = {
-        let probe = open_optimistic(&dir);
+        let probe = mu::open_dir_logged(&brain, true, mu::TEST_HOST).unwrap();
         probe
             .read_commit_log(None, 1)
             .unwrap_or_else(|e| panic!("{e}"))
             .newest
     };
-    let killed = kill_child_writer(&dir, 8, true, true, 80);
-    let store = open_optimistic(&dir);
+    let killed = kill_child_writer(&dir, 8, true, false, true, 80);
+    let store = mu::open_dir_logged(&brain, true, mu::TEST_HOST).unwrap();
     let log = store
         .read_commit_log(start, usize::MAX)
         .unwrap_or_else(|e| panic!("{e}"));
     assert!(!log.snapshot_required);
     let last = store.last_commit_time().unwrap_or_else(|e| panic!("{e}"));
-    // The records after the cursor are the child's commits, in position order, with commit times rising.
     clock::commit_times_rise(&log.records).unwrap_or_else(|e| panic!("{e}"));
     assert_eq!(
         log.records.last().map(|r| r.commit_time),
         last,
         "last_commit_time is not the newest record's commit time"
     );
-    // Every acknowledged request id is in the write ids of exactly one record: a record for an in-flight or upkeep commit cannot
-    // stand in for a missing acknowledged one.
     let ids: Vec<String> = killed.acked.keys().map(|&n| request_id(n)).collect();
     clock::request_ids_match_records(&ids, &log.records).unwrap_or_else(|e| panic!("{e}"));
 }
@@ -2772,77 +2782,185 @@ fn c22_commit_position_strictly_increases() {
     assert!(store.commit_version().unwrap() >= *all.iter().next_back().unwrap());
 }
 
-/// C22, commit log, optimistic store: every transaction commits at its own `CommitPosition` even when a group commit batches
-/// several. Rounds of `WRITERS` transactions are all open before any commits, so the pipeline groups them; the test requires at
-/// least one group of two or more members, and for each group checks the `(sequence, index)` of every member (indices 0..k, each once),
-/// that no two commits share a position, that each returned position has exactly one record (from the cursor taken before the
-/// writers), and that the commit times in the log strictly rise. Per-transaction positions wait for the commit-log lane.
+/// C22, commit log, optimistic store, against the commit-log lane's real code (multi-user mode and the log on in the run, asserted):
+/// every transaction commits at its own `CommitPosition` even when a group commit batches several. The pipeline is held with an
+/// exclusive write, eight store writers (each a `submit_page_mutation` with its own request id) and eight raw writes queue behind it,
+/// and releasing it lets them go as group commits. The test requires at least one group of two or more, and then checks: every raw
+/// write's returned `(sequence, index)` is a record that holds that write's key; the members of each sequence have indices 0..k each
+/// once; no two commits share a position; every acknowledged request id is in the write ids of exactly one record; commit times
+/// strictly rise and the newest equals `last_commit_time()`. (The explicit-transaction variant that needs `begin_with` is L1's.)
 #[test]
-#[ignore = "multi_writer"]
 fn c22_commit_position_strictly_increases_multi_writer() {
-    const ROUNDS: usize = 6;
     let dir = TempDir::new("c22m");
-    let store = Arc::new(open_optimistic(&dir));
-    // The first call that is not yet a member; its newest position is the cursor before any writer commits.
+    let brain = mu::open_logged(
+        &dir.path().join("records.redb"),
+        true,
+        Arc::new(gbrain_store::SystemEnv),
+        mu::TEST_HOST,
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    let store = Arc::new(brain.store);
+    let kv = brain.kv;
     let start = store
         .read_commit_log(None, 1)
         .unwrap_or_else(|e| panic!("{e}"))
         .newest;
-    let (s, gate) = (store.clone(), Arc::new(Barrier::new(WRITERS)));
-    let positions = together(WRITERS, move |i| {
-        (0..ROUNDS)
-            .map(|round| {
-                let tx = begin_host(&s, i);
-                put(&tx, &format!("c22m/{i}-{round}"), "one commit");
-                gate.wait(); // every transaction of the round is open before the first commits
-                match s.commit_position(tx) {
-                    Ok(position) => position,
-                    Err(e) => {
-                        assert!(is_conflict(&e), "an untyped refusal: {e}");
-                        let retry = begin_host(&s, i);
-                        put(&retry, &format!("c22m/{i}-{round}"), "one commit");
-                        commit_host(&s, retry)
-                    }
-                }
-            })
-            .collect::<Vec<CommitPosition>>()
-    });
-    for mine in &positions {
+    let raw_key = |i: usize| gbrain_store::keys::meta(&format!("c22/raw/{i}"));
+    // Hold the pipeline: everything below queues until the exclusive write is dropped.
+    let hold = kv.begin_write_exclusive().unwrap();
+    let mut store_writers = Vec::new();
+    for i in 0..8usize {
+        let s = store.clone();
+        store_writers.push(thread::spawn(move || {
+            submit(&s, 700 + i, &format!("c22m/{i}"), "one commit");
+            request_id(700 + i)
+        }));
+    }
+    let mut raw_writers = Vec::new();
+    for i in 0..8usize {
+        let mut tx = kv.begin_write().unwrap();
+        tx.put(&raw_key(i), format!("raw {i}").as_bytes()).unwrap();
+        raw_writers.push(thread::spawn(move || (i, tx.commit_position())));
+    }
+    thread::sleep(Duration::from_millis(400));
+    drop(hold);
+    let acked: Vec<String> = store_writers
+        .into_iter()
+        .map(|h| h.join().unwrap())
+        .collect();
+    let raw: Vec<(usize, CommitPosition)> = raw_writers
+        .into_iter()
+        .map(|h| {
+            let (i, r) = h.join().unwrap();
+            (i, r.unwrap_or_else(|e| panic!("raw write {i}: {e}")))
+        })
+        .collect();
+    let log = store
+        .read_commit_log(start, usize::MAX)
+        .unwrap_or_else(|e| panic!("{e}"));
+    assert!(!log.snapshot_required);
+    // Positions: unique, and every returned raw position is a record that holds that write.
+    let positions: BTreeSet<CommitPosition> = raw.iter().map(|(_, p)| *p).collect();
+    assert_eq!(
+        positions.len(),
+        raw.len(),
+        "two raw commits share a position"
+    );
+    for (i, position) in &raw {
+        let record = log
+            .records
+            .iter()
+            .find(|r| r.position == *position)
+            .unwrap_or_else(|| panic!("returned position {position:?} has no record"));
         assert!(
-            mine.windows(2).all(|w| w[0] < w[1]),
-            "positions went back: {mine:?}"
+            record.ops.iter().any(|(k, _)| *k == raw_key(*i)),
+            "the record at {position:?} does not hold raw write {i}"
         );
     }
-    let returned: Vec<CommitPosition> = positions.iter().flatten().copied().collect();
-    let all: BTreeSet<CommitPosition> = returned.iter().copied().collect();
-    assert_eq!(all.len(), WRITERS * ROUNDS, "two commits share a position");
-    // A forced group of at least two: members of one sequence have distinct indices 0..k.
+    // A forced group of at least two: members of one sequence have indices 0..k, each once.
     let mut groups: BTreeMap<u64, Vec<u32>> = BTreeMap::new();
-    for p in &returned {
-        groups.entry(p.sequence).or_default().push(p.index);
+    for r in &log.records {
+        groups
+            .entry(r.position.sequence)
+            .or_default()
+            .push(r.position.index);
     }
     assert!(
         groups.values().any(|g| g.len() >= 2),
-        "no group commit of two or more was formed, so the test did not exercise per-member positions"
+        "no group commit of two or more was formed, so the test did not exercise per-member positions: {groups:?}"
     );
     for (sequence, indices) in &mut groups {
         indices.sort_unstable();
         let want: Vec<u32> = (0..indices.len() as u32).collect();
         assert_eq!(
             *indices, want,
-            "group {sequence}: members' indices are not 0..k each once"
+            "group {sequence}: indices are not 0..k each once"
         );
     }
-    let log = store
-        .read_commit_log(start, usize::MAX)
-        .unwrap_or_else(|e| panic!("{e}"));
-    assert!(!log.snapshot_required);
-    assert_eq!(log.newest, all.iter().next_back().copied());
-    clock::positions_match_records(&returned, &log.records, 0).unwrap_or_else(|e| panic!("{e}"));
-    // Each transaction in a group commit has its own, strictly rising commit time (I-4.v2).
+    let all: BTreeSet<CommitPosition> = log.records.iter().map(|r| r.position).collect();
+    assert_eq!(all.len(), log.records.len(), "two records share a position");
+    clock::request_ids_match_records(&acked, &log.records).unwrap_or_else(|e| panic!("{e}"));
     clock::commit_times_rise(&log.records).unwrap_or_else(|e| panic!("{e}"));
     let last = store.last_commit_time().unwrap_or_else(|e| panic!("{e}"));
     clock::last_commit_time_matches(&log.records, last).unwrap_or_else(|e| panic!("{e}"));
+}
+
+/// C22, commit log, single-writer store, against the real log (multi-user mode and the log on, asserted): explicit transactions
+/// return `(sequence, 0)`, strictly rising per writer, no two the same, and each returned position is the record that holds that
+/// transaction's page; commit times rise and the newest equals `last_commit_time()`.
+#[test]
+fn c22_logged_single_writer_positions_have_index_zero_and_each_matches_a_record() {
+    let dir = TempDir::new("c22s");
+    let store = Arc::new(
+        mu::open_dir_logged(&dir.path().join("brain"), false, mu::TEST_HOST)
+            .unwrap_or_else(|e| panic!("{e}")),
+    );
+    let start = store
+        .read_commit_log(None, 1)
+        .unwrap_or_else(|e| panic!("{e}"))
+        .newest;
+    let s = store.clone();
+    let positions = together(8, move |i| {
+        (0..4)
+            .map(|n| {
+                let tx = s.begin_transaction(false).unwrap();
+                put(&tx, &format!("c22s/{i}-{n}"), "one commit");
+                (format!("c22s/{i}-{n}"), tx.commit_transaction_at().unwrap())
+            })
+            .collect::<Vec<_>>()
+    });
+    for mine in &positions {
+        assert!(
+            mine.windows(2).all(|w| w[0].1 < w[1].1),
+            "positions went back: {mine:?}"
+        );
+        assert!(
+            mine.iter().all(|(_, p)| p.index == 0),
+            "a single-writer index is not 0: {mine:?}"
+        );
+    }
+    let returned: Vec<CommitPosition> = positions.iter().flatten().map(|(_, p)| *p).collect();
+    let log = store
+        .read_commit_log(start, usize::MAX)
+        .unwrap_or_else(|e| panic!("{e}"));
+    clock::positions_match_records(&returned, &log.records, 0).unwrap_or_else(|e| panic!("{e}"));
+    for (slug, position) in positions.iter().flatten() {
+        let record = log
+            .records
+            .iter()
+            .find(|r| r.position == *position)
+            .unwrap();
+        let key_has_slug = record
+            .ops
+            .iter()
+            .any(|(k, _)| String::from_utf8_lossy(k).contains(slug.as_str()));
+        assert!(
+            key_has_slug,
+            "the record at {position:?} does not hold {slug}"
+        );
+    }
+    clock::commit_times_rise(&log.records).unwrap_or_else(|e| panic!("{e}"));
+    let last = store.last_commit_time().unwrap_or_else(|e| panic!("{e}"));
+    clock::last_commit_time_matches(&log.records, last).unwrap_or_else(|e| panic!("{e}"));
+}
+
+/// The resolved state is asserted, so a run with the mode off fails: a store opened plain reports no multi-user mode and no log, and
+/// `assert_logged` panics on it; the logged open passes.
+#[test]
+fn a_plain_open_fails_the_resolved_state_assertion_and_the_logged_open_passes() {
+    let dir = TempDir::new("resolved");
+    let plain = open_in(&dir, StoreMode::Optimistic);
+    assert!(!plain.multiuser() && !plain.info().commit_log);
+    let refused =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| mu::assert_logged(&plain)));
+    assert!(
+        refused.is_err(),
+        "a plain open passed the resolved-state assertion"
+    );
+    drop(plain);
+    let other = TempDir::new("resolved-logged");
+    let logged = mu::open_dir_logged(&other.path().join("brain"), true, mu::TEST_HOST).unwrap();
+    assert!(logged.multiuser() && logged.info().commit_log);
 }
 
 /// The creation time of a page row, in microseconds.
@@ -2854,6 +2972,9 @@ fn page_created_us(s: &Store, slug: &str) -> i64 {
     gbrain_store::env::parse_iso(snap["page"]["created_at"].as_str().unwrap()).unwrap()
 }
 
+/// PENDING ON L5 hosts (the follower row-time floor is the hosts lane's: the ruling is that the promoted primary's clock floor and
+/// its fence arrive with the host lane) and on a public follower-apply member (`apply_log` stays a stub: L2 has only
+/// `commit_log::apply_record` over a raw write handle). Not a C22 failure.
 /// C22, log replay by a follower (I-4.v2, I-4.v2.1): the log's commit times strictly rise in position order and the newest equals
 /// `last_commit_time()`. The primary reopens on a clock BELOW its persisted floor and every row time it then writes is at or above
 /// that floor. A follower is given the log's actual records (not just its newest position), on a clock below the applied floor, and
@@ -3144,9 +3265,14 @@ fn mu_adapter_stubs_are_still_pending() {
         owner("single_flight", store.single_flight(&txn(), &[key])),
         L1_TXN
     );
+    // `commit_position` is served by the commit-log lane (`commit_transaction_at`): a real position, not a stub.
+    let tx = txn();
+    put(&tx, "stubs/commit-position", "one commit");
+    assert!(store.commit_position(tx).unwrap().sequence > 0);
     assert_eq!(
-        owner("commit_position", store.commit_position(txn())),
-        L2_LOG
+        owner("apply_log", store.apply_log(&[])),
+        L2_LOG,
+        "no Store member applies commit records: a public follower-apply path is still missing"
     );
     assert_eq!(
         owner("promote_from_log", store.promote_from_log(None)),
