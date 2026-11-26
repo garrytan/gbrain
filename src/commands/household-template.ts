@@ -37,7 +37,7 @@ import { setMemberLabelledOnly } from '../core/access/labelled-only.ts';
 import { brainServes, SERVES_KEY } from '../core/access/serves.ts';
 import { normalizeRule, type FolderRule } from '../core/access/folder-rules.ts';
 import { aboutOf, classifySubjects, HOUSEHOLD_GROUPS, placementFolderRules, placeRecord, type HouseholdAudience } from '../core/household/placement.ts';
-import { HOUSEHOLD_TYPE, readHouseholdRecord } from '../core/household/record.ts';
+import { HOUSEHOLD_KINDS, HOUSEHOLD_TYPE, readHouseholdRecord } from '../core/household/record.ts';
 import { assertReceiptTarget, latestReceipt, loadReceipt, markStep, newReceipt, receiptDir, receiptKey, saveReceipt, stepState, type TemplateReceipt } from './setup-template-receipt.ts';
 import { addFolderRules, currentFolderRules } from './access-rules.ts';
 import { mintToken } from './auth-mint.ts';
@@ -100,7 +100,8 @@ export interface TemplateResult {
 }
 
 export interface TemplateOpts {
-  source: string;
+  /** Unset: a resume uses its receipt's source, and a new run uses default. */
+  source?: string;
   harness?: string | null;
   owner?: string;
   members?: string;
@@ -124,7 +125,7 @@ export function templateRules(owner: string): FolderRule[] {
   });
 }
 
-async function plan(engine: BrainEngine, opts: TemplateOpts, roster: RosterEntry[] | null, receipt: TemplateReceipt | null): Promise<TemplateResult> {
+async function plan(engine: BrainEngine, opts: TemplateOpts & { source: string }, roster: RosterEntry[] | null, receipt: TemplateReceipt | null): Promise<TemplateResult> {
   const keyDir = opts.keyDir ?? memberKeyDir();
   const gitRoot = gitRootAbove(keyDir);
   if (gitRoot) {
@@ -200,7 +201,7 @@ async function plan(engine: BrainEngine, opts: TemplateOpts, roster: RosterEntry
     const r = receipt?.keys.find(k => k.member === m.id);
     const at = { issued: r?.issued?.at ?? null, delivered: r?.delivered?.at ?? null };
     const k = (action: TemplateKey['action'], detail?: string): TemplateKey => ({ member: m.id, token_name: name, path, scopes, action, ...at, ...(detail ? { detail } : {}) });
-    const [token] = await engine.executeRaw<{ member_id: string | null; token_hash: string }>('SELECT member_id, token_hash FROM access_tokens WHERE name = $1 AND revoked_at IS NULL', [name]);
+    const [token] = await engine.executeRaw<{ member_id: string | null; token_hash: string; scopes: string[] | null; source_grant: string | null; source_id: string | null }>('SELECT member_id, token_hash, scopes, source_grant, source_id FROM access_tokens WHERE name = $1 AND revoked_at IS NULL', [name]);
     const rec = records.get(m.id);
     if (rec && rec.status !== 'enabled') keys.push(k('blocked', 'the member is not enabled'));
     else if (!token && existsSync(path)) keys.push(k('blocked', `a key file is already at ${path} but no live key is named ${name} (another brain's key, or one revoked by hand); move or delete the file, then run this again`));
@@ -212,6 +213,8 @@ async function plan(engine: BrainEngine, opts: TemplateOpts, roster: RosterEntry
         : `the key ${name} exists but its file is gone and a key is shown only once; revoke it (gbrain auth revoke ${name}) and run this again to issue a new one`));
     } else if (hashToken(readFileSync(path, 'utf8').trim()) !== token.token_hash) {
       keys.push(k('blocked', `the file does not hold the live key ${name}; revoke it (gbrain auth revoke ${name}), delete ${path} and run this again`));
+    } else if (token.source_grant !== 'scalar' || token.source_id !== source || !token.scopes || !sameSet(token.scopes, scopes)) {
+      keys.push(k('blocked', `the key ${name} grants ${token.scopes?.join('+') ?? 'every scope'} on ${token.source_grant === 'scalar' ? `source ${token.source_id}` : `a ${token.source_grant ?? 'legacy'} grant`}, not ${scopes.join('+')} on source ${source} only; revoke it (gbrain auth revoke ${name}), delete ${path} and run this again to issue one`));
     } else keys.push(k('keep'));
   }
   step('keys', keys.map(k => ({ what: k.member, action: k.action === 'mint' ? 'mint' : k.action, command: `gbrain auth create ${k.token_name} --member ${k.member} --scopes ${k.scopes.join(',')} --sources ${source}`, ...(k.detail ? { detail: k.detail } : {}) })));
@@ -229,7 +232,7 @@ export async function householdTemplate(engine: BrainEngine, opts: TemplateOpts)
   const dir = opts.receiptDir ?? receiptDir();
   const prior = opts.resume ? loadReceipt(opts.resume, TEMPLATE, dir) : null;
   if (prior) assertReceiptTarget(prior, { source_id: opts.source, harness: opts.harness ?? null });
-  const source = prior?.source_id ?? opts.source;
+  const source = prior?.source_id ?? opts.source ?? 'default';
   const roster = prior ? (prior.params.roster as RosterEntry[]) : null;
   const result = await plan(engine, { ...opts, source, owner: prior ? String(prior.params.owner) : opts.owner }, roster, prior);
   const finished = (id: StepId) => prior !== null && stepState(prior, id) === 'done' && id !== 'keys';
@@ -311,7 +314,7 @@ export async function householdTemplate(engine: BrainEngine, opts: TemplateOpts)
   return result;
 }
 
-export interface RoleProof { member: string; role: TemplateRole; key: 'delivered' | 'missing' | 'unreadable' | 'none'; expected: number; read: number; missing: string[]; extra: string[]; due_extra: string[]; ok: boolean }
+export interface RoleProof { member: string; role: TemplateRole; key: 'delivered' | 'missing' | 'unreadable' | 'none'; expected: number; read: number; missing: string[]; extra: string[]; due_extra: string[]; due_truncated: string[]; ok: boolean }
 export interface TemplateStatus { receipt: Omit<TemplateReceipt, 'params'> & { roster: RosterEntry[] }; complete: boolean; proof: RoleProof[]; ok: boolean }
 
 /** Who the table lets read each household record in the source: the roles of its audience, narrowed by a readers list its author wrote. */
@@ -352,25 +355,31 @@ export async function householdTemplateStatus(engine: BrainEngine, opts: { recei
   for (const m of roster.slice(1)) {
     const want = [...expected].filter(([, who]) => who.has(m.id)).map(([slug]) => slug).sort();
     const entry = receipt.keys.find(k => k.member === m.id);
-    const p: RoleProof = { member: m.id, role: m.role, key: !entry ? 'none' : entry.delivered && existsSync(entry.path) ? 'delivered' : 'missing', expected: want.length, read: 0, missing: [], extra: [], due_extra: [], ok: false };
+    const p: RoleProof = { member: m.id, role: m.role, key: !entry ? 'none' : entry.delivered && existsSync(entry.path) ? 'delivered' : 'missing', expected: want.length, read: 0, missing: [], extra: [], due_extra: [], due_truncated: [], ok: false };
     if (p.key === 'delivered') {
       let auth: AuthInfo | null = null;
-      try { auth = await provider.verifyAccessToken(readFileSync(entry!.path, 'utf8').trim()) as unknown as AuthInfo; } catch { p.key = 'unreadable'; }
+      try { auth = await provider.verifyAccessToken(readFileSync(entry!.path, 'utf8').trim(), { touch: false }) as unknown as AuthInfo; } catch { p.key = 'unreadable'; }
       if (auth) {
         const call = async (op: string, params: Record<string, unknown>) => {
-          const out = await dispatchToolCall(engine, op, params, { remote: true, transport: 'http', auth, sourceId: receipt.source_id, takesHoldersAllowList: ['world'] } as never);
+          const out = await dispatchToolCall(engine, op, params, { remote: true, transport: 'http', auth, sourceId: receipt.source_id, takesHoldersAllowList: ['world'], readLog: false } as never);
           return { isError: out.isError === true, text: out.content.map((c: { text: string }) => c.text).join('\n') };
         };
         const read: string[] = [];
         for (const slug of expected.keys()) if (!(await call('get_page', { slug })).isError) read.push(slug);
-        const due = await call('household_due', { include: 'all', window_days: 366, limit: 100 });
-        let items: string[] = [];
-        try { items = ((JSON.parse(due.text) as { items?: Array<{ slug: string }> }).items ?? []).map(i => i.slug); } catch { /* an error answer reads nothing */ }
+        const items: string[] = [];
+        for (const kind of HOUSEHOLD_KINDS) {
+          const due = await call('household_due', { include: 'all', window_days: 366, limit: 100, kinds: [kind] });
+          try {
+            const answer = JSON.parse(due.text) as { items?: Array<{ slug: string }>; truncated?: boolean };
+            items.push(...(answer.items ?? []).map(i => i.slug));
+            if (answer.truncated) p.due_truncated.push(kind);
+          } catch { /* an error answer reads nothing */ }
+        }
         p.read = read.length;
         p.missing = want.filter(s => !read.includes(s));
         p.extra = read.filter(s => !want.includes(s)).sort();
         p.due_extra = items.filter(s => !want.includes(s)).sort();
-        p.ok = !p.missing.length && !p.extra.length && !p.due_extra.length;
+        p.ok = !p.missing.length && !p.extra.length && !p.due_extra.length && !p.due_truncated.length;
       }
     }
     proof.push(p);
@@ -405,13 +414,13 @@ export function statusLines(s: TemplateStatus): string[] {
     `Household setup receipt ${r.id} (harness ${r.harness ?? 'none'}, source ${r.source_id}, ${s.complete ? 'complete' : 'NOT complete'}):`,
     ...r.steps.map(x => `  ${x.id.padEnd(14)} ${x.state}${x.at ? ` ${x.at}` : ''}${x.detail ? `  (${x.detail})` : ''}`),
     ...r.keys.map(k => `  key ${k.member.padEnd(10)} issued ${k.issued?.at ?? 'no'}; delivered ${k.delivered ? `${k.delivered.at} to ${k.path}` : 'NO'}`),
-    ...s.proof.map(p => `  proof ${p.member} (${p.role}): ${p.key !== 'delivered' ? `key ${p.key}` : `reads ${p.read} of the ${p.expected} household record(s) the table expects${p.missing.length ? `; missing ${p.missing.join(', ')}` : ''}${p.extra.length ? `; EXTRA ${p.extra.join(', ')}` : ''}${p.due_extra.length ? `; household_due EXTRA ${p.due_extra.join(', ')}` : ''}`} ${p.ok ? 'ok' : 'NOT ok'}`),
+    ...s.proof.map(p => `  proof ${p.member} (${p.role}): ${p.key !== 'delivered' ? `key ${p.key}` : `reads ${p.read} of the ${p.expected} household record(s) the table expects${p.missing.length ? `; missing ${p.missing.join(', ')}` : ''}${p.extra.length ? `; EXTRA ${p.extra.join(', ')}` : ''}${p.due_extra.length ? `; household_due EXTRA ${p.due_extra.join(', ')}` : ''}${p.due_truncated.length ? `; household_due returned only its first 100 ${p.due_truncated.join(', ')} item(s), so the rest were not compared` : ''}`} ${p.ok ? 'ok' : 'NOT ok'}`),
     ...(r.error ? [`  stopped: ${r.error.message}; finish with gbrain setup ${r.harness ?? '<harness>'} --shape household --resume ${r.id} --yes`] : []),
   ];
 }
 
 export async function runHouseholdTemplate(engine: BrainEngine, args: string[], json: boolean, value: (flag: string) => string | undefined): Promise<void> {
-  const source = value('--source') ?? 'default';
+  const source = value('--source');
   const harness = value('--harness') ?? null;
   if (args.includes('--status')) {
     const s = await householdTemplateStatus(engine, { receipt: value('--receipt'), source: value('--source'), harness });

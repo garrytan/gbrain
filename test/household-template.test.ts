@@ -4,7 +4,7 @@
  * resume never issues a second key on its own. PGLite, repo-less (the rules go to the database store). Invented names only.
  */
 import { describe, expect, test, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -12,8 +12,10 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { getMember, listMembers } from '../src/core/access/members.ts';
 import { ownerMemberId } from '../src/core/access/owner.ts';
 import { currentFolderRules, addFolderRules } from '../src/commands/access-rules.ts';
-import { householdTemplate, householdTemplateStatus, parseHouseholdMembers, templateLines, templateRules } from '../src/commands/household-template.ts';
+import { householdTemplate, householdTemplateStatus, parseHouseholdMembers, runHouseholdTemplate, templateLines, templateRules } from '../src/commands/household-template.ts';
 import { loadReceipt } from '../src/commands/setup-template-receipt.ts';
+import { mintToken } from '../src/commands/auth-mint.ts';
+import { flushAccessReadLog } from '../src/core/access/read-log.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 
@@ -147,4 +149,60 @@ describe('household template', () => {
     expect(r.steps[0]!.state).toBe('blocked');
     expect(await listMembers(engine)).toEqual([]);
   });
+  test('gbrain household template --resume of a receipt for another source needs no --source: it takes the receipt\'s own', async () => {
+    await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', ['family-example']);
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-hh-home-'));
+    try {
+      await withEnv({ GBRAIN_HOME: home }, async () => {
+        const stopped = await withEnv({ GBRAIN_SETUP_ABORT_AFTER: 'household-rules' }, () => householdTemplate(engine, { source: 'family-example', harness: 'codex', owner: OWNER, apply: true }));
+        expect(stopped.error?.message).toContain('household-rules');
+        const flags: Record<string, string> = { '--harness': 'codex', '--resume': stopped.receipt_id! };
+        const log = console.log;
+        console.log = () => {};
+        try { await runHouseholdTemplate(engine, ['--yes'], true, f => flags[f]); } finally { console.log = log; }
+        const after = loadReceipt(stopped.receipt_id!, 'household');
+        expect(after.source_id).toBe('family-example');
+        expect(after.steps.every(s => s.state === 'done')).toBe(true);
+      });
+    } finally { rmSync(home, { recursive: true, force: true }); }
+  }, 120_000);
+
+  test('a live member key with wider scopes or another grant than the template issues is BLOCKED, never kept as read-only', async () => {
+    expect((await run()).error).toBeUndefined();
+    const path = join(keyDir, 'helper.key');
+    await engine.executeRaw("UPDATE access_tokens SET revoked_at = now() WHERE name = 'member-helper'");
+    const wide = await mintToken(engine, 'member-helper', { scopes: ['read', 'write'], binding: { member: 'helper' }, sources: { kind: 'scalar', writeSource: 'default' } });
+    writeFileSync(path, wide.token, { mode: 0o600 });
+    const r = await run();
+    const key = r.keys.find(k => k.member === 'helper')!;
+    expect(key.action).toBe('blocked');
+    expect(key.detail).toContain('grants read+write on source default, not read on source default only');
+    expect(templateLines(r).some(l => l.startsWith('  key helper:'))).toBe(false);
+  }, 120_000);
+
+  test('a key file that cannot be written revokes the key it just issued, and a re-run issues a fresh one', async () => {
+    const blocker = join(keyDir, 'not-a-dir');
+    writeFileSync(blocker, '');
+    const failed = await run({ keyDir: join(blocker, 'keys') });
+    expect(failed.error).toBeDefined();
+    expect(await liveTokens()).toEqual([]);
+    const receipt = loadReceipt(failed.receipt_id!, 'household', receiptDir);
+    expect(receipt.keys.every(k => k.issued === null && k.delivered === null)).toBe(true);
+    const again = await run({ resume: failed.receipt_id!, keyDir: join(keyDir, 'keys') });
+    expect(again.error).toBeUndefined();
+    expect(await liveTokens()).toEqual(['member-adult-b', 'member-family-chat', 'member-helper']);
+  }, 120_000);
+
+  test('the --status proof leaves no read in the access log and keeps each key\'s last_used_at', async () => {
+    const r = await run();
+    expect(r.error).toBeUndefined();
+    await flushAccessReadLog();
+    await engine.executeRaw('DELETE FROM access_read_log');
+    const status = await householdTemplateStatus(engine, { receipt: r.receipt_id!, receiptDir });
+    expect(status.ok).toBe(true);
+    await flushAccessReadLog();
+    await Bun.sleep(50);
+    expect(await engine.executeRaw('SELECT member FROM access_read_log')).toEqual([]);
+    expect(await engine.executeRaw("SELECT name FROM access_tokens WHERE revoked_at IS NULL AND last_used_at IS NOT NULL")).toEqual([]);
+  }, 120_000);
 });
