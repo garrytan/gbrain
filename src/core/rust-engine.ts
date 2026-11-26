@@ -433,6 +433,9 @@ export class RustEngine implements BrainEngine {
    * transaction-bound clone (store-members/transactions.ts) answers with its transaction's handle, never the root
    * store: a member run on the root store inside an open transaction waits for the writer that transaction holds.
    */
+  /** The engine this object stands for: a transaction-bound clone answers its root, any other call (through a wrapper too) answers the engine itself. */
+  _engineRoot(): RustEngine { return this._txScope?.root ?? this; }
+
   openStoreIfOpen(member: string): RustStore | null { return this._store ? this.openStore(member) : null; }
 
   /** The open store a served member runs on; rejects `engine_closed` when the engine is not connected. */

@@ -51,7 +51,16 @@ export function hostRegistrationOf(engine: object): HostRegistration | null {
     const found = registrations.get(at);
     if (found) return found;
   }
-  return null;
+  // A wrapper of the engine (a recording proxy, a scoped view) keeps no registration of its own: it reads the engine's.
+  const root = engineRootOf(engine);
+  return root !== engine ? hostRegistrationOf(root) : null;
+}
+
+/** The engine object a wrapper or a transaction-bound clone stands for (a Rust engine answers `_engineRoot`), else `engine`. */
+export function engineRootOf(engine: object): object {
+  const at = engine as { _engineRoot?: () => object };
+  if (typeof at._engineRoot !== 'function') return engine;
+  try { return at._engineRoot() ?? engine; } catch { return engine; }
 }
 
 /** The fence a protected call on `engine` carries: the registration's lease, or null (off, or not registered). */

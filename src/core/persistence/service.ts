@@ -169,13 +169,16 @@ export function startPersistenceConsumer(engine: BrainEngine, config: GBrainConf
   });
   // The consumer's publications (embeddings included) run in its engine's scope (engine-scope.ts).
   const start = () => withEngineScope(engine, () => consumer.start());
-  if (rustMultiuserEngine(engine)) {
+  if (rustMultiuserEngine(engine) && consumer instanceof PersistenceConsumer) {
     // Lane LM slice 3 (gate C1): on a multi-user Rust brain every protected write carries this process's host fence, so the
-    // consumer starts claiming only once the process has its own registration (managed-registration.ts). A process that
-    // could not register still starts: its protected calls then refuse `lease_lost` / `fence_missing`, as without a consumer.
-    service.starting = ensureProcessRegistration(engine, `consumer_${kind}`).then(() => undefined, () => undefined)
-      .then(() => { if (!service.stopping) start(); });
-  } else start();
+    // consumer's first tick waits until the process has its own registration (managed-registration.ts). A process that could
+    // not register still runs: its protected calls then refuse `lease_lost` / `fence_missing`, as without a consumer.
+    const said = (message: string) => { if (!service.stopping) process.stderr.write(`[persistence] phase=host_registration ${message}; fix: gbrain engine status --json\n`); };
+    service.starting = consumer.registration = ensureProcessRegistration(engine, `consumer_${kind}`).then(registered => {
+      if (!registered) said('reason=not_registered message="no host registration within the wait; protected writes from this process refuse lease_lost until it registers"');
+    }, (error: unknown) => said(`reason=registration_failed message="${error instanceof Error ? error.message.replace(/\s+/g, ' ').slice(0, 200) : String(error)}"`));
+  }
+  start();
   return consumer;
 }
 export async function stopPersistenceConsumer(engine: BrainEngine): Promise<void> {

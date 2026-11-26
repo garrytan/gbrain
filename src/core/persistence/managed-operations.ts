@@ -21,6 +21,7 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import { opError } from '../ops/contract.ts';
+import { engineRootOf } from './host-fence.ts';
 import { rustLeases, type LeaseToken } from '../rust-engine/store-members/leases.ts';
 import { leaseLostError, type LeaseLostReason } from '../rust-engine/store-errors.ts';
 
@@ -42,7 +43,7 @@ const live = new WeakMap<object, Set<ManagedOperation>>();
 
 /** The engine whose registry a call belongs to: a transaction-bound clone shares its root's. */
 export function managedRoot(engine: object): object {
-  return (engine as { _txScope?: { root?: object } })._txScope?.root ?? engine;
+  return engineRootOf((engine as { _txScope?: { root?: object } })._txScope?.root ?? engine);
 }
 
 export function registerManagedOperation(engine: object, operation: ManagedOperation): () => void {

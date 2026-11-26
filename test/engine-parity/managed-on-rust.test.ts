@@ -34,6 +34,8 @@ import { servedCapabilities, storeCapabilities } from '../../src/core/rust-engin
 import { writerAdminState } from '../../src/core/persistence/admin-intent.ts';
 import { runPersistenceAdministration } from '../../src/core/persistence/administration.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
+import { fenceOpts } from '../../src/core/persistence/host-fence.ts';
+import { ensureProcessRegistration } from '../../src/core/persistence/managed-registration.ts';
 import { submitPageMutation } from '../../src/core/persistence/page-mutations.ts';
 import { installFaultHook, type FaultPoint } from '../../src/core/persistence/fault-points.ts';
 import { hostIdFor, localHostId, readLocalWriter } from '../../src/core/persistence/identity.ts';
@@ -230,7 +232,9 @@ describe('managed mode on a Rust brain', () => {
       terminalReservation: 4096, targetKind: 'page', protocolVersion: 1, admitterVersion: 'parity', admitterHostId: host, counterKeys: ['brain'],
       clientRequestId: null, state: 'queued', deferredRefreshId: null });
     // A claimed request is a publication in flight (running under a live claim).
-    expect((await engine.stampWriteClaim(inFlight, 'c0000000-0000-4000-8000-0000000000c9', 60_000, JSON.stringify({ phase: 'parity' })))?.state).toBe('running');
+    // On a multi-user Rust brain a claim carries the process's host fence (its own registration); everywhere else `fenceOpts` is empty.
+    await ensureProcessRegistration(engine, 'parity');
+    expect((await engine.stampWriteClaim(inFlight, 'c0000000-0000-4000-8000-0000000000c9', 60_000, JSON.stringify({ phase: 'parity' }), fenceOpts(engine)))?.state).toBe('running');
     const archive = await codeOf(() => runManagedSourceLifecycle(engine, { operation: 'archive', sourceId: 'work' }));
     const after = await engine.readSourceMembership('work');
     const out = { archive, archived: after?.archived ?? null, incarnation: after?.incarnation === source.incarnation };
