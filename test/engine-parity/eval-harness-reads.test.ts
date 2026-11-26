@@ -17,6 +17,10 @@
  *    records map (pages, content_chunks, facts, takes, timeline_entries, sources, write_gate_*, trust_proposals,
  *    page_purges) and names every other record by its keyspace, and it scans every stored record. So these cases
  *    compare which tokens each engine finds and the slugs they are about, never the table and column names of a hit.
+ *    withManagedPersistencePaused(fn) turns managed persistence off without moving mode_epoch, runs fn and puts the
+ *    prior enabled value back only while the brain row is still paused at the same epoch (compare-and-set): a real
+ *    activation or deactivation during fn is kept and reported as paused_state_changed; a throw is rethrown after the
+ *    restore. The evals wrote enabled=true unconditionally before, which turned a classic brain managed.
  *  - Seam: none. Real engines; ids and timestamps are compared by shape, not by literal.
  */
 import { describe, expect } from 'bun:test';
@@ -153,5 +157,68 @@ describe('engine parity: the eval harness reads', () => {
     const present = Object.fromEntries(wanted.map(w => [w, cols.has(w)]));
     expect(present).toEqual(Object.fromEntries(wanted.map(w => [w, true])));
     return present;
+  });
+
+  /** The brain row the writer admin state reads, and the rest of that state (sources, worktrees, bindings, hosts). */
+  const brainState = async (engine: BrainEngine) => {
+    const state = JSON.parse(await engine.readWriterAdminState()) as { brain: { enabled: boolean; mode_epoch: number | string } } & Record<string, unknown>;
+    const { brain, ...rest } = state;
+    return { enabled: brain.enabled, epoch: Number(brain.mode_epoch), rest: JSON.stringify(rest) };
+  };
+  const setEnabled = async (engine: BrainEngine, enabled: boolean) => { await (await engine.writerReleaseStore()).setBrainEnabled(enabled); };
+
+  parityTest('withManagedPersistencePaused pauses a managed brain without moving mode_epoch and restores it after fn', {
+    methods: ['writerReleaseStore', 'readWriterAdminState', 'withManagedPersistencePaused'],
+  }, async (engine) => {
+    await setEnabled(engine, true);
+    const before = await brainState(engine);
+    let during: Awaited<ReturnType<typeof brainState>> | null = null;
+    const out = await engine.withManagedPersistencePaused(async () => { during = await brainState(engine); return 'ran'; });
+    const after = await brainState(engine);
+    const result = { out, during: { enabled: during!.enabled, sameEpoch: during!.epoch === before.epoch, sameRest: during!.rest === before.rest },
+      after: { enabled: after.enabled, sameEpoch: after.epoch === before.epoch, sameRest: after.rest === before.rest } };
+    expect(result).toEqual({ out: { result: 'ran', restore: 'restored' }, during: { enabled: false, sameEpoch: true, sameRest: true },
+      after: { enabled: true, sameEpoch: true, sameRest: true } });
+    return result;
+  });
+
+  parityTest('withManagedPersistencePaused leaves a classic brain classic', {
+    methods: ['readWriterAdminState', 'withManagedPersistencePaused'],
+  }, async (engine) => {
+    const before = await brainState(engine);
+    const out = await engine.withManagedPersistencePaused(async () => (await brainState(engine)).enabled);
+    const after = await brainState(engine);
+    const result = { before: before.enabled, out, after: after.enabled, sameEpoch: after.epoch === before.epoch };
+    expect(result).toEqual({ before: false, out: { result: false, restore: 'restored' }, after: false, sameEpoch: true });
+    return result;
+  });
+
+  parityTest('withManagedPersistencePaused restores the prior state and then rethrows when fn throws', {
+    methods: ['writerReleaseStore', 'readWriterAdminState', 'withManagedPersistencePaused'],
+  }, async (engine) => {
+    await setEnabled(engine, true);
+    const before = await brainState(engine);
+    const thrown = await engine.withManagedPersistencePaused(async () => { throw new Error('import failed'); }).then(() => 'resolved', (e: Error) => e.message);
+    const after = await brainState(engine);
+    const result = { thrown, enabled: after.enabled, sameEpoch: after.epoch === before.epoch };
+    expect(result).toEqual({ thrown: 'import failed', enabled: true, sameEpoch: true });
+    return result;
+  });
+
+  parityTest('withManagedPersistencePaused keeps an activation or deactivation that ran during fn and reports paused_state_changed', {
+    methods: ['writerReleaseStore', 'readWriterAdminState', 'withManagedPersistencePaused'],
+  }, async (engine) => {
+    const before = await brainState(engine);
+    const activated = await engine.withManagedPersistencePaused(async () => { await setEnabled(engine, true); });
+    const afterActivate = await brainState(engine);
+    const deactivated = await engine.withManagedPersistencePaused(async () => { await setEnabled(engine, false); });
+    const afterDeactivate = await brainState(engine);
+    const result = {
+      activated: activated.restore, afterActivate: { enabled: afterActivate.enabled, epoch: afterActivate.epoch - before.epoch },
+      deactivated: deactivated.restore, afterDeactivate: { enabled: afterDeactivate.enabled, epoch: afterDeactivate.epoch - before.epoch },
+    };
+    expect(result).toEqual({ activated: 'paused_state_changed', afterActivate: { enabled: true, epoch: 1 },
+      deactivated: 'paused_state_changed', afterDeactivate: { enabled: false, epoch: 2 } });
+    return result;
   });
 });
