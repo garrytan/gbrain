@@ -3,7 +3,8 @@
  * (persistence/skill-activation.ts, shared-skills/publication.ts adoptSharedSkillpack).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Contract: activation with the writer admin state a reviewed status printed passes; a stale state refuses
+ *  - Contract: activation with the writer admin state a reviewed status printed passes and makes that state stale
+ *    (the brain row reports shared publication on, protocol floor 2), so replaying it refuses; a stale state refuses
  *    writer_admin_state_changed and leaves the admin state as it was. After activation, adopting a brain-resident
  *    pack from the source's canonical root commits it, and the sealed pack row (readSharedSkillPackRow) and the live
  *    source (readSourceIncarnationArchived) that adoption reads give the same answers on every engine arm (PGLite
@@ -111,10 +112,21 @@ describe('engine parity: reviewed shared-skill activation and canonical pack ado
     const unchanged = await writerAdminState(engine) === before;
     const reviewed = await outcome(() => activateSharedSkillPersistence(engine, { confirmQuiesced: true, expectedState: before }));
     const ok = (reviewed as { ok?: Record<string, unknown> }).ok;
-    const result = { stale, unchanged, reviewed: ok ? { activated: ok.activated, protocol_version: ok.protocol_version, filesystem_sources: ok.filesystem_sources } : reviewed };
+    // Activation is itself a topology change: the reviewed state goes stale, the brain row reports it, and a replay
+    // of the same reviewed state refuses.
+    const after = await writerAdminState(engine);
+    const brainRow = (JSON.parse(await engine.readWriterAdminState()) as { brain: { skill_bundles_enabled: boolean; writer_protocol_floor: number } }).brain;
+    const replay = await outcome(() => activateSharedSkillPersistence(engine, { confirmQuiesced: true, expectedState: before }));
+    const result = { stale, unchanged, reviewed: ok ? { activated: ok.activated, protocol_version: ok.protocol_version, filesystem_sources: ok.filesystem_sources } : reviewed,
+      moved: after !== before, flag: { skill_bundles_enabled: brainRow.skill_bundles_enabled, writer_protocol_floor: brainRow.writer_protocol_floor }, replay,
+      replayUnchanged: await writerAdminState(engine) === after };
     expect(result.stale).toMatchObject({ code: 'writer_admin_state_changed' });
     expect(result.unchanged).toBe(true);
     expect(result.reviewed).toEqual({ activated: true, protocol_version: 2, filesystem_sources: 1 });
+    expect(result.moved).toBe(true);
+    expect(result.flag).toEqual({ skill_bundles_enabled: true, writer_protocol_floor: 2 });
+    expect(result.replay).toMatchObject({ code: 'writer_admin_state_changed' });
+    expect(result.replayUnchanged).toBe(true);
     return result;
   })));
 

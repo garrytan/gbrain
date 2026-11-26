@@ -630,18 +630,22 @@ fn agg(rows: Vec<Value>) -> Value {
 
 /// `WRITER_ADMIN_STATE_SQL` (`engine-sql/writer-admin.ts`): the writer topology as jsonb text,
 /// read in one snapshot. `enabled` and `mode_epoch` are the stored brain mode
-/// (worktrees/release.rs); `skill_bundles_enabled` and `writer_protocol_floor` hold their column
-/// defaults. A store with no brain id has no brain row (null).
+/// (worktrees/release.rs); `skill_bundles_enabled` and `writer_protocol_floor` are the stored
+/// shared-publication flag (shared_skill_publication.rs), so a reviewed state goes stale when
+/// activation turns publication on, as on the SQL engines. A store with no brain id has no brain
+/// row (null).
 pub(crate) fn writer_admin_state_text_in(read: &dyn KvRead, brain_id: &str) -> Result<String> {
     let brain = if brain_id.is_empty() {
         Value::Null
     } else {
         let mode = release::brain_mode_in(read)?;
+        let (skill_bundles_enabled, writer_protocol_floor) =
+            crate::shared_skill_publication::publication_flag_in(read)?;
         json!({
             "id": brain_id,
             "enabled": mode.enabled,
-            "skill_bundles_enabled": false,
-            "writer_protocol_floor": 1,
+            "skill_bundles_enabled": skill_bundles_enabled,
+            "writer_protocol_floor": writer_protocol_floor,
             "mode_epoch": mode.mode_epoch,
         })
     };
