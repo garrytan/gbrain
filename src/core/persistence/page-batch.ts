@@ -33,6 +33,7 @@ import { emitFenceNotice, initializeLocalPersistence, pageMutationSource, pendin
   withLiveSearchable } from './page-mutations.ts';
 import { throwIfHeld } from '../trust/gate-outcomes.ts';
 import type { PageTypeWarning } from './page-input.ts';
+import type { SecretsRedacted } from './write-secrets.ts';
 import { clientRequestIdOf, parseWriteRequestId } from './preconditions.ts';
 import { parseWireWriteWaitMs } from './write-wait.ts';
 
@@ -45,7 +46,7 @@ const PREPARE_CONCURRENCY = 8;
 const BATCH_ADMISSION_BUDGET_MS = 30_000;
 const PAGE_KEYS = new Set(['slug', 'content', 'expected_revision', 'allow_empty', 'allow_shrink', 'drop_timeline', 'reason']);
 interface BatchPage { slug: string; content: string; expected_revision?: unknown; allow_empty?: unknown; allow_shrink?: unknown; drop_timeline?: unknown; reason?: string }
-interface PageResult { index: number; slug: string; row?: WriteRequest; refusal?: OperationError; typeWarning?: PageTypeWarning | null; repeatOf?: number }
+interface PageResult { index: number; slug: string; row?: WriteRequest; refusal?: OperationError; typeWarning?: PageTypeWarning | null; secretsRedacted?: SecretsRedacted | null; repeatOf?: number }
 interface BatchMarker { id: string; index: number; size: number; repeats?: number[] }
 
 const invalid = (message: string, suggestion: string) => new OperationError('invalid_params', message, suggestion);
@@ -126,7 +127,7 @@ function pageEntry(result: PageResult): Record<string, unknown> {
   if (result.refusal) return { ...base, state: 'refused', error: result.refusal.toJSON() };
   if (!result.row) return { ...base, state: 'not_admitted' };
   const row = result.row;
-  const warning = result.typeWarning ? { type_warning: result.typeWarning } : {};
+  const warning = { ...(result.typeWarning ? { type_warning: result.typeWarning } : {}), ...(result.secretsRedacted ? { secrets_redacted: result.secretsRedacted } : {}) };
   if (!isTerminal(row)) return { ...base, request_id: row.request_id, state: row.state, ...warning };
   try {
     const receipt = writeResponse(row);
@@ -297,7 +298,7 @@ export async function submitPageBatch(ctx: OperationContext, params: Record<stri
     if (entry === undefined) return;
     if (entry instanceof OperationError) results[index]!.refusal = entry;
     else if (entry.prior) results[index]!.row = entry.prior;
-    else { admissions.push({ index, admission: entry.admission }); results[index]!.typeWarning = entry.typeWarning; }
+    else { admissions.push({ index, admission: entry.admission }); Object.assign(results[index]!, { typeWarning: entry.typeWarning, secretsRedacted: entry.secretsRedacted }); }
   });
   if (admissions.length) {
     let admitted: WriteRequest[];

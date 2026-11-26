@@ -40,7 +40,7 @@ export interface GBrainConfig {
   push?: { allow_unverified_remote?: boolean };
   hooks?: { stop_push_debounce_min?: number | string };
   /** GST-2988: what a publish does with secrets in unpushed commits (file plane: engine-free publishers read it); default redact. */
-  secrets?: { on_push?: 'redact' | 'refuse' };
+  secrets?: { on_push?: 'redact' | 'refuse'; on_write?: 'off' | 'redact' | 'block' };
   /** #7242 terminal hook (minions/terminal-hook.ts): file plane only, read by `gbrain jobs work`. */
   minions?: { terminal_hook?: string[] | { argv: string[]; timeout_ms?: number } };
   /** GST-3849 Google token socket (core/google-socket/config.ts): file plane only, read engine-free by both start paths. */
@@ -1331,6 +1331,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'push.allow_unverified_remote',
   'hooks.stop_push_debounce_min',
   'secrets.on_push', // GST-2988 file plane: redact (default) or refuse secrets in unpushed commits at publish (git/redact-unpushed.ts)
+  'secrets.on_write', // file plane: off (default), redact or block secrets in remote page writes (persistence/write-secrets.ts)
   // File-plane backup-check keys (routed to ~/.gbrain/config.json by `config
   // set` — the engine-free render sites read loadConfigFileOnly). Default ON /
   // 30 days; interval clamps to >=1 day at read time (backup/status-file.ts).
