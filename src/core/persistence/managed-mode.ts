@@ -77,6 +77,10 @@ export async function readManagedMode(engine: RawSqlEngine, opts: ManagedModeRea
   const rows = await engine.executeRaw<{ enabled: unknown }>(sql, undefined, opts.signal ? { signal: opts.signal } : undefined);
   return managedModeFromRows(rows, opts.refusal).enabled;
 }
+/** `readManagedMode` with no lock and no signal, through the typed `readManagedModeRows` member (every engine serves it). */
+export async function readManagedModeTyped(engine: Pick<BrainEngine, 'readManagedModeRows'>, refusal?: ManagedModeRefusalContext): Promise<boolean> {
+  return managedModeFromRows(await engine.readManagedModeRows(), refusal).enabled;
+}
 /**
  * Read-only inspection for the diagnostics that *report* the persistence state (`writer status`, the fix the refusal
  * names; doctor): the well-formed row, or null with the reason the strict readers refuse. Never used to route a write.

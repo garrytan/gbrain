@@ -146,3 +146,52 @@ export async function readAudiencePrincipals(exec: MemberLookupRead, memberIds: 
   const groups = groupIds.length ? (await exec.executeRaw<{ id: string }>(AUDIENCE_GROUPS_SQL, [groupIds])).map(r => r.id) : [];
   return { members: members.map(r => ({ id: r.id, groups: r.groups ?? [] })), groups };
 }
+
+/** One access_members row with its groups (sorted group ids), as access/members.ts turns it into a MemberRecord. */
+export interface AccessMemberRow {
+  id: string;
+  display_name: string | null;
+  email: string | null;
+  kind: string | null;
+  labelled_only: boolean | null;
+  disabled_at: unknown;
+  tombstoned_at: unknown;
+  created_at: unknown;
+  groups: string[];
+}
+
+/**
+ * Which members to read: the one member with this id (any status), the members declaring this email (any status), or
+ * every member (removed ones only when asked).
+ */
+export type AccessMemberLookup = { id: string } | { email: string } | { includeRemoved: boolean };
+
+/**
+ * The statements access/members.ts getMember, memberByEmail and listMembers ran through executeRaw, each spelled out
+ * as one literal (the engine-sql dynamic-SQL guard): the member columns and groups, then the filter.
+ */
+export const ACCESS_MEMBER_SQL = {
+  by_id: `SELECT m.id, m.display_name, m.email, m.kind, m.labelled_only, m.disabled_at, m.tombstoned_at, m.created_at,
+  COALESCE(array_agg(g.group_id ORDER BY g.group_id COLLATE "C") FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
+  FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id WHERE m.id = $1 GROUP BY m.id`,
+  by_email: `SELECT m.id, m.display_name, m.email, m.kind, m.labelled_only, m.disabled_at, m.tombstoned_at, m.created_at,
+  COALESCE(array_agg(g.group_id ORDER BY g.group_id COLLATE "C") FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
+  FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id WHERE m.email = $1 GROUP BY m.id ORDER BY m.id COLLATE "C"`,
+  live: `SELECT m.id, m.display_name, m.email, m.kind, m.labelled_only, m.disabled_at, m.tombstoned_at, m.created_at,
+  COALESCE(array_agg(g.group_id ORDER BY g.group_id COLLATE "C") FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
+  FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id WHERE m.tombstoned_at IS NULL GROUP BY m.id ORDER BY m.id COLLATE "C"`,
+  all: `SELECT m.id, m.display_name, m.email, m.kind, m.labelled_only, m.disabled_at, m.tombstoned_at, m.created_at,
+  COALESCE(array_agg(g.group_id ORDER BY g.group_id COLLATE "C") FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
+  FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id GROUP BY m.id ORDER BY m.id COLLATE "C"`,
+} as const;
+
+/**
+ * The member rows `by` names, by id: one member by exact id (none when absent), the members whose declared email is
+ * exactly `email` (the caller case-folds it), or every member, where a removed
+ * (tombstoned) member is filtered out in the statement unless `includeRemoved`. A failure is thrown unchanged.
+ */
+export async function readAccessMembers(exec: MemberLookupRead, by: AccessMemberLookup): Promise<AccessMemberRow[]> {
+  if ('id' in by) return exec.executeRaw<AccessMemberRow>(ACCESS_MEMBER_SQL.by_id, [by.id]);
+  if ('email' in by) return exec.executeRaw<AccessMemberRow>(ACCESS_MEMBER_SQL.by_email, [by.email]);
+  return exec.executeRaw<AccessMemberRow>(by.includeRemoved ? ACCESS_MEMBER_SQL.all : ACCESS_MEMBER_SQL.live);
+}

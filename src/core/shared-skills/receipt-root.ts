@@ -9,6 +9,7 @@
 import { realpathSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { SqlEngine } from '../persistence/model.ts';
+import type { ContentReceiptStore } from '../engine-sql/writer-admin.ts';
 
 export interface ContentReceiptRebind { source_id: string; source_incarnation: string; from: string | null; to: string }
 
@@ -32,18 +33,11 @@ export function rootIdentity(path: string): { root: string; root_identity: { dev
 
 /**
  * Rebinds the owned content receipts of the sources bound to `worktreeIds` (only `sourceIds` when given) to their
- * root under `hostId`'s binding; returns what moved. Runs on the caller's transaction.
+ * root under `hostId`'s binding; returns what moved. Runs on the caller's transaction, through its store: the writer-admin
+ * store (an accept), or `sqlContentReceiptStore(tx)` (engine-sql/writer-admin.ts) for a SQL transaction.
  */
-export async function rebindContentReceipts(tx: SqlEngine, worktreeIds: string[], hostId: string, sourceIds?: string[]): Promise<ContentReceiptRebind[]> {
-  const rows = await tx.executeRaw<{ source_id: string; incarnation: string; relative_path: string; local_path: string; brain_id: string; key: string; value: string }>(
-    `SELECT b.source_id,b.source_incarnation::text AS incarnation,b.relative_path,h.local_path,p.brain_id,c.key,c.value
-       FROM persistence_source_bindings b
-       JOIN sources s ON s.id=b.source_id AND s.incarnation=b.source_incarnation AND NOT s.archived
-       JOIN persistence_host_bindings h ON h.worktree_id=b.worktree_id AND h.host_id=$2::uuid
-       JOIN persistence_brain p ON p.singleton=1
-       JOIN config c ON c.key='shared_skills.content.v1.'||b.source_id||'.'||b.source_incarnation::text
-      WHERE b.worktree_id=ANY($1::uuid[]) AND ($3::text[] IS NULL OR b.source_id=ANY($3::text[])) ORDER BY b.source_id`,
-    [worktreeIds, hostId, sourceIds ?? null]);
+export async function rebindContentReceipts(store: ContentReceiptStore, worktreeIds: string[], hostId: string, sourceIds?: string[]): Promise<ContentReceiptRebind[]> {
+  const rows = await store.contentReceiptRows(worktreeIds, hostId, sourceIds);
   const moved: ContentReceiptRebind[] = [];
   for (const row of rows) {
     const receipt = ownedContentReceipt(row.value, row.brain_id, row.source_id, row.incarnation);
@@ -51,7 +45,7 @@ export async function rebindContentReceipts(tx: SqlEngine, worktreeIds: string[]
     if (!receipt || !next) continue;
     const identity = receipt.root_identity as { device?: number; inode?: number } | undefined;
     if (receipt.root === next.root && identity?.device === next.root_identity.device && identity?.inode === next.root_identity.inode) continue;
-    await tx.executeRaw('UPDATE config SET value=$2 WHERE key=$1 AND value=$3', [row.key, JSON.stringify({ ...receipt, ...next }), row.value]);
+    await store.swapConfigValue(row.key, JSON.stringify({ ...receipt, ...next }), row.value);
     moved.push({ source_id: row.source_id, source_incarnation: row.incarnation, from: typeof receipt.root === 'string' ? receipt.root : null, to: next.root });
   }
   return moved;
