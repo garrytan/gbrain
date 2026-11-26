@@ -512,4 +512,5 @@ test/cli-reads-under-live-serve.serial.test.ts	global-state	global-state: starts
 test/shadow-capture.serial.test.ts	global-state	global-state: sets GBRAIN_HOME and GBRAIN_SHADOW_CAPTURE with withEnv and writes the capture directory under that home
 test/shadow-replay.serial.test.ts	global-state	global-state: sets GBRAIN_HOME and GBRAIN_RUST_ENGINE_ADDON with withEnv and spawns the real engine shadow __replay-child process against an on-disk capture directory
 test/engine-swap-kill.serial.test.ts	global-state	global-state: spawns and SIGKILLs a child gbrain swap process on its own file-backed PGLite brain and Rust store under a temp home
+test/engine-swap-run-postgres.serial.test.ts	global-state	global-state: each case creates its own Postgres database and Rust store under a temp home, runs pg_dump and fences the database
 test/engine-swap-run.serial.test.ts	global-state	global-state: each case opens its own file-backed PGLite brain (the swap checkpoints its data directory and fences it) plus a Rust store and follow rig, kills and resumes runs, and switches the config file under a withEnv GBRAIN_HOME
