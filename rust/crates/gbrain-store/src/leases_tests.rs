@@ -370,19 +370,115 @@ fn store_commit(tx: &Store) {
 }
 
 #[test]
-fn a_multiuser_store_refuses_a_protected_write_with_no_fence_and_a_plain_store_keeps_today_s_path()
-{
+fn a_protected_write_with_no_fence_passes_on_both_modes_and_writes_nothing() {
     let clock = Clock::new();
     let plain = single(&clock, false);
     plain
         .write(|tx| check_fence(&plain, tx, None, "complete_job"))
         .unwrap();
     let multi = concurrent(&clock, true);
-    let e = multi
+    multi
         .write(|tx| check_fence(&multi, tx, None, "complete_job"))
-        .unwrap_err();
-    assert_eq!(reason(&e), "fence_missing");
+        .unwrap();
     assert!(multi.multiuser() && !plain.multiuser());
+    // A fence still has to hold: no record, no lease.
+    let missing = LeaseToken {
+        name: "consumer:h".into(),
+        epoch: 1,
+        token: "t".into(),
+    };
+    assert_eq!(
+        reason(&multi.check_fence_now(Some(&missing), "x").unwrap_err()),
+        "not_found"
+    );
+}
+
+#[test]
+fn an_implicit_lease_takes_the_next_epoch_of_its_name_with_the_claim_s_own_ttl() {
+    let clock = Clock::new();
+    let store = concurrent(&clock, true);
+    let take = |ttl: Option<u64>| {
+        store
+            .write(|tx| take_implicit_lease(&store, tx, CLAIM_JOB, "42", "claim_next_job", ttl))
+            .unwrap()
+    };
+    let first = take(Some(30_000));
+    assert_eq!(first.name, "implicit:01:42");
+    assert_eq!(first.epoch, 1);
+    let hex: String = first.token.chars().filter(|c| *c != '-').collect();
+    assert_eq!(&hex[12..13], "7", "a UUID v7 token");
+    let state = store.read_lease("implicit:01:42").unwrap().unwrap();
+    assert_eq!(
+        (
+            state.holder.host_id.as_str(),
+            state.holder.incarnation.as_str(),
+            state.holder.writer_id.as_str()
+        ),
+        ("unregistered", "unregistered", "claim_next_job")
+    );
+    assert_eq!(state.expires_at_us - state.acquired_at_us, 30_000 * 1000);
+    assert!(state.live && !state.released);
+    // The claim records its epoch under the implicit lease, which the token it returns matches.
+    store
+        .check_claim_epoch_now(CLAIM_JOB, "42", &first)
+        .unwrap();
+    // A second take of a live name (the claim was won again) always lands, one epoch higher, with the 60 s default.
+    let second = take(None);
+    assert_eq!((second.epoch, second.name.as_str()), (2, "implicit:01:42"));
+    assert_ne!(second.token, first.token);
+    let state = store.read_lease("implicit:01:42").unwrap().unwrap();
+    assert_eq!(state.expires_at_us - state.acquired_at_us, 60_000 * 1000);
+    assert_eq!(
+        reason(
+            &store
+                .check_claim_epoch_now(CLAIM_JOB, "42", &first)
+                .unwrap_err()
+        ),
+        "claim_epoch_mismatch"
+    );
+    // Another family and another id are other names; the family byte is two hex digits.
+    let drain = store
+        .write(|tx| take_implicit_lease(&store, tx, CLAIM_CYCLE_LOCK, "gbrain-sync:x", "w", None))
+        .unwrap();
+    assert_eq!(
+        (drain.name.as_str(), drain.epoch),
+        ("implicit:05:gbrain-sync:x", 1)
+    );
+}
+
+#[test]
+fn an_unfenced_caller_is_held_off_only_by_a_registered_holders_live_lease() {
+    let clock = Clock::new();
+    let store = concurrent(&clock, true);
+    let unheld =
+        |id: &str| store.write(|tx| check_claim_unheld(tx, CLAIM_JOB, id, clock.now_micros()));
+    // No record: nothing to be held by.
+    unheld("1").unwrap();
+    // An implicit lease never holds anyone off, live or not.
+    store
+        .write(|tx| take_implicit_lease(&store, tx, CLAIM_JOB, "2", "w", None))
+        .unwrap();
+    unheld("2").unwrap();
+    // A registered holder's live lease does, and the refusal writes nothing.
+    let a = store
+        .acquire_lease("consumer:h", &origin("a"), 1_000)
+        .unwrap()
+        .unwrap();
+    store.record_claim_epoch_now(CLAIM_JOB, "3", &a).unwrap();
+    let e = unheld("3").unwrap_err();
+    assert_eq!(reason(&e), "held_by_another");
+    store.check_claim_epoch_now(CLAIM_JOB, "3", &a).unwrap();
+    // Released or expired, it holds no one off: the member's own token rules decide.
+    store.release_lease(&a).unwrap();
+    unheld("3").unwrap();
+    let b = store
+        .acquire_lease("consumer:h", &origin("b"), 1_000)
+        .unwrap()
+        .unwrap();
+    store.record_claim_epoch_now(CLAIM_JOB, "4", &b).unwrap();
+    assert_eq!(reason(&unheld("4").unwrap_err()), "held_by_another");
+    clock.advance_ms(2_000);
+    unheld("4").unwrap();
 }
 
 #[test]
@@ -539,5 +635,106 @@ fn inside_an_explicit_transaction_the_lease_is_read_through_the_transaction() {
             "{mode}: the committed lease is live, so the taker gets none"
         );
         store.assert_lease(&a).unwrap();
+    }
+}
+
+/// G17: a read-only transaction can assert a lease (the check reads through the transaction's view and writes nothing).
+#[test]
+fn a_read_only_transaction_can_assert_a_lease() {
+    let clock = Clock::new();
+    for (mode, store) in both(&clock) {
+        let a = store
+            .acquire_lease("ro", &origin("a"), 1_000)
+            .unwrap()
+            .unwrap();
+        let tx = store.begin_transaction(true).unwrap();
+        tx.assert_lease(&a)
+            .unwrap_or_else(|e| panic!("{mode}: {e}"));
+        tx.commit_transaction().unwrap();
+    }
+}
+
+/// The typed members L6's harness uses: check_fence_now, record_claim_epoch_now, check_claim_epoch_now.
+#[test]
+fn the_typed_fence_members_check_record_and_compare_claim_epochs() {
+    let clock = Clock::new();
+    let store = concurrent(&clock, true);
+    store.check_fence_now(None, "x").unwrap();
+    let a = store
+        .acquire_lease("consumer:h", &origin("a"), 1_000)
+        .unwrap()
+        .unwrap();
+    store.check_fence_now(Some(&a), "x").unwrap();
+    store.record_claim_epoch_now(CLAIM_JOB, "7", &a).unwrap();
+    store.check_claim_epoch_now(CLAIM_JOB, "7", &a).unwrap();
+    clock.advance_ms(2_000);
+    let b = store
+        .acquire_lease("consumer:h", &origin("b"), 1_000)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        reason(&store.check_claim_epoch_now(CLAIM_JOB, "7", &b).unwrap_err()),
+        "claim_epoch_mismatch"
+    );
+    assert_eq!(
+        reason(
+            &store
+                .record_claim_epoch_now(CLAIM_JOB, "8", &a)
+                .unwrap_err()
+        ),
+        "epoch_moved"
+    );
+}
+
+/// A caller that proved the holder dead takes a live lease at the next epoch, but only at the epoch it proved; the dead
+/// holder's token is then refused (`epoch_moved`).
+#[test]
+fn a_proven_dead_holder_s_live_lease_is_taken_over_only_at_the_epoch_proved() {
+    let clock = Clock::new();
+    for (mode, store) in both(&clock) {
+        let dead = store
+            .acquire_lease("consumer:h", &origin("dead"), 60_000)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            store
+                .acquire_lease("consumer:h", &origin("new"), 60_000)
+                .unwrap(),
+            None,
+            "{mode}: live"
+        );
+        assert_eq!(
+            store
+                .take_over_lease("consumer:h", dead.epoch + 1, &origin("new"), 60_000)
+                .unwrap(),
+            None,
+            "{mode}"
+        );
+        assert_eq!(
+            store
+                .take_over_lease("never", 1, &origin("new"), 60_000)
+                .unwrap(),
+            None,
+            "{mode}"
+        );
+        let next = store
+            .take_over_lease("consumer:h", dead.epoch, &origin("new"), 60_000)
+            .unwrap()
+            .unwrap();
+        assert_eq!(next.epoch, dead.epoch + 1, "{mode}");
+        assert_eq!(
+            reason(&store.assert_lease(&dead).unwrap_err()),
+            "epoch_moved",
+            "{mode}"
+        );
+        // The same proof cannot be used twice: the epoch moved.
+        assert_eq!(
+            store
+                .take_over_lease("consumer:h", dead.epoch, &origin("third"), 60_000)
+                .unwrap(),
+            None,
+            "{mode}"
+        );
+        store.assert_lease(&next).unwrap();
     }
 }

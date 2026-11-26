@@ -384,7 +384,9 @@ mod tests {
         // - the kv backends and their trait: `kv.rs` (the trait and its two defaults),
         //   `redb_kv.rs` (the table create on first open, the writable backend's `begin_write`, and
         //   `RedbSink`'s three redb transactions on the new record file a store snapshot fills: no
-        //   brain store has that file open, so no store write handle exists to flag),
+        //   brain store has that file open, so no store write handle exists to flag, and the
+        //   follower's replica write (`follower.rs`), which copies a primary's records, already
+        //   flagged there, onto a record file no store has open),
         //   `fjall_kv.rs`, and
         //   `occ_kv.rs` (its trait methods and the commit onto the base store);
         // - `lib.rs`: the brain-create write, the two arms of `Store::write`'s unbound loop, the
@@ -408,7 +410,8 @@ mod tests {
         // - `test_support.rs`'s `FaultyKv`, which wraps a record store in tests to make a write
         //   transaction fail like a disk and passes every call on (4 calls and definitions);
         // - `leases_tests.rs`, a whole file under `#[cfg(test)]` whose read-set test opens raw write transactions on the
-        //   concurrent store to show a lease read is checked again at commit (3 calls).
+        //   concurrent store to show a lease read is checked again at commit (3 calls);
+        // - `lib.rs`'s multi-user open, which records the clock floor once in its own write (no page record).
         let allowed: &[(&str, usize)] = &[
             ("access_flag.rs", 1),
             ("facts/entity_order_tests.rs", 1),
@@ -418,10 +421,10 @@ mod tests {
             ("keyword/index_writer/tests.rs", 2),
             ("kv.rs", 5),
             ("leases_tests.rs", 3),
-            ("lib.rs", 5),
+            ("lib.rs", 6),
             ("occ_kv.rs", 4),
             ("page_body/purge_record.rs", 1),
-            ("redb_kv.rs", 7),
+            ("redb_kv.rs", 8),
             ("seed/v0_60_766_tests.rs", 1),
             ("test_support.rs", 4),
             ("transactions.rs", 2),

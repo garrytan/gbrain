@@ -646,7 +646,8 @@ impl Brain {
         })
     }
 
-    /// `installSegmentedVectors(pageId, model, updates)`: how many rows took a vector.
+    /// `installSegmentedVectors(pageId, model, updates, claim?)`: how many rows took a vector. `claim` is an
+    /// effect's `{ effectId, token, fence }`: on a multi-user store the same write checks it.
     #[napi]
     pub fn install_segmented_vectors<'env>(
         &self,
@@ -654,11 +655,16 @@ impl Brain {
         page_id: i64,
         model: Option<String>,
         updates: Value,
+        claim: Option<Value>,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
             let updates: Vec<gbrain_store::page_body::SegmentedVectorInput> =
                 required(updates, "installSegmentedVectors updates")?;
-            s.install_segmented_vectors(page_id, model.as_deref(), &updates)
+            let claim: Option<gbrain_store::persistence::InstallClaim> = claim
+                .filter(|c| !c.is_null())
+                .map(|c| required(c, "installSegmentedVectors claim"))
+                .transpose()?;
+            s.install_segmented_vectors_claimed(page_id, model.as_deref(), &updates, claim.as_ref())
         })
     }
 

@@ -15,6 +15,7 @@ import type { DoctorTallyMembers } from './engine-members/doctor-tallies.ts';
 import type { ListReadMembers } from './engine-members/list-reads.ts';
 import type { SurfacedReadMembers } from './engine-members/surfaced-reads.ts';
 import type { HandoverReadMembers } from './engine-members/handover-reads.ts';
+import type { CommitLogMembers } from './engine-members/commit-log.ts';
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
 import type * as AccessMembersSql from './engine-sql/access-members.ts';
 import type * as LinkSlugReadsSql from './engine-sql/link-slug-reads.ts';
@@ -58,7 +59,7 @@ import type { TrustTable } from './trust/schema.ts';
 import type { NewTrustProposal, PendingContradictionFilter, PendingContradictionRow, TrustProposalFilter, TrustProposalRow, TrustProposalStatus, TrustProposalTransition } from './engine-sql/trust-proposals.ts';
 import type { ImportedPageSeal, InlinePageRegionsRow, LivePageBodyRow, OriginClaimRow, PageIndexingState, PageIngestStamp, PageOriginRow, PageOriginTarget, RevivalPageRow } from './engine-sql/write-guards.ts';
 import type { PageEmbeddingBudgetRow, PageEmbeddingReservation, PageEmbeddingReserveInput } from './engine-sql/page-embedding-budget.ts';
-import type { EmbeddingCompletionOpts, EmbeddingCompletionRow } from './engine-sql/embedding-install.ts';
+import type { EffectInstallClaim, EmbeddingCompletionOpts, EmbeddingCompletionRow } from './engine-sql/embedding-install.ts';
 import type { CallerPageAccessRow, PagePolicyPart, WriteVisibilityProbe } from './engine-sql/page-visibility.ts';
 import type { PageRefRow, RelationalPageRow } from './engine-sql/relational-reads.ts';
 import type { DefaultSourceSplit, LiveIdentityHolderRow, LocalPathSourceRow, PlainSyncSourceRow, RenameIdentityRow, SourceCheckRow, SourceInsert, SourcesNotReadableOpts, SourceUpstreamObservation, PageIdentityRow, PageSizeRow, ReasonPurgeTombstone, SourcePathPageRow, SourceRoutingRow, SourcePathRow } from './engine-sql/sources.ts';
@@ -1088,7 +1089,7 @@ export function clampSearchLimit(limit: number | undefined, defaultLimit = 20, c
   return Math.min(Math.floor(limit), cap);
 }
 
-export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers, PersistenceMembers, LedgerMembers, GovernanceMembers, DecideMembers, JobsMembers, DoctorMembers, MentionPassMembers, EmbedStaleMembers, DoctorTallyMembers, ListReadMembers, FenceProjectionMembers, SurfacedReadMembers, SegmentedWriteMembers, HandoverReadMembers {
+export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers, PersistenceMembers, LedgerMembers, GovernanceMembers, DecideMembers, JobsMembers, DoctorMembers, MentionPassMembers, EmbedStaleMembers, DoctorTallyMembers, ListReadMembers, FenceProjectionMembers, SurfacedReadMembers, SegmentedWriteMembers, HandoverReadMembers, CommitLogMembers {
   /** Discriminator: lets migrations and other consumers branch on engine kind without instanceof + dynamic imports. */
   readonly kind: 'postgres' | 'pglite' | 'rust';
   readonly capabilities: EngineCapabilities; // what this engine can do, by name (engine-capabilities.ts); ask it instead of branching on kind
@@ -4030,7 +4031,7 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
    * current vector, the effect claim under its row lock, the embedding switch's share lock and one batch of the install.
    */
   readEmbeddingCompletion(pageId: number, opts: EmbeddingCompletionOpts): Promise<EmbeddingCompletionRow[]>;
-  lockEffectClaimRow(effectId: number | string): Promise<{ state: string; execution_token: string | null } | null>;
+  lockEffectClaimRow(effectId: number | string, claim?: EffectInstallClaim): Promise<{ state: string; execution_token: string | null } | null>;
   lockEmbeddingSwitch(): Promise<void>;
   installChunkEmbeddings(pageId: number, column: ResolvedColumn, batch: string): Promise<void>;
   // Page visibility guards (engine-sql/page-visibility.ts): the current caller's page policy, rendered in its access record.

@@ -84,8 +84,11 @@ export function mapStoreError(error: unknown, ctx: StoreErrorContext): unknown {
   }
 }
 
-/** The `lease_lost` reasons the store sends (`leases::LostReason`). */
-export const LEASE_LOST_REASONS = ['not_found', 'epoch_moved', 'released', 'expired', 'fence_missing', 'claim_epoch_mismatch'] as const;
+/**
+ * The `lease_lost` reasons the store sends (`leases::LostReason`). `fence_missing` is retired: a protected call with no
+ * fence is no longer refused for lacking one, but a receipt an older build wrote may carry it, so it still parses.
+ */
+export const LEASE_LOST_REASONS = ['not_found', 'epoch_moved', 'released', 'expired', 'claim_epoch_mismatch', 'held_by_another', 'fence_missing'] as const;
 export type LeaseLostReason = typeof LEASE_LOST_REASONS[number];
 
 /** The store's `lease_lost` message as `opError('lease_lost')` with its reason, or the error unchanged. */

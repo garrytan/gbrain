@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2401/2425
+# covered: 2401/2427
 # lifecycle: 12/12
 # pages: 141/142
 # search: 8/8
@@ -118,6 +118,7 @@
 # doctor_sources: 5/5
 # session_state: 7/7
 # doctor_join: 6/6
+# commit_log: 0/2
 # multi-writer cases: 22/22
 # multi-writer C01 [compare]: pglite=runs postgres=runs rust=runs rust-mu=runs store-single=runs store-optimistic=runs
 # multi-writer C02 [compare]: pglite=runs postgres=runs rust=runs rust-mu=runs store-single=runs store-optimistic=runs
@@ -2568,3 +2569,5 @@ listPagesReadByNobody	doctor_join	yes	1	no	yes	yes	serves
 listRulePagesReadByNobody	doctor_join	yes	1	no	yes	yes	serves
 listGoogleSourceMembers	doctor_join	yes	1	no	yes	yes	serves
 listOwnerMemberLinks	doctor_join	yes	1	no	yes	yes	serves
+readCommitLog	commit_log	no	0	no	-	-	-
+lastCommitPosition	commit_log	no	0	no	-	-	-

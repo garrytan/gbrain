@@ -3,6 +3,10 @@ import type { BrainEngine } from '../../engine.ts';
 import type { MemberClass } from '../members.ts';
 
 export const LEDGER_MEMBERS = {
+  // The commit log and commit positions (multi-user mode, store-members/commit-log.ts): shell members that refuse naming
+  // commit_log unless the store keeps a log.
+  readCommitLog: 'implemented',
+  lastCommitPosition: 'implemented',
   // Group D (takes, salience and code-edge reads)
   countOffGridTakeWeights: 'takes',
   countTakes: 'takes',

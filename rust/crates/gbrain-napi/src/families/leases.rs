@@ -25,6 +25,15 @@ struct AcquireArgs {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct TakeOverArgs {
+    name: String,
+    expected_epoch: u64,
+    holder: WriteOrigin,
+    ttl_ms: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RenewArgs {
     lease: LeaseToken,
     ttl_ms: u64,
@@ -38,6 +47,16 @@ impl Brain {
         self.run(env, move |s| {
             let a: AcquireArgs = required(args, "acquireLease args")?;
             s.acquire_lease(&a.name, &a.holder, a.ttl_ms)
+        })
+    }
+
+    /// `takeOverLease({ name, expected_epoch, holder, ttl_ms })`: the next epoch when the record is still at `expected_epoch`
+    /// (the caller proved that holder dead), else null.
+    #[napi]
+    pub fn take_over_lease<'env>(&self, env: &'env Env, args: Value) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: TakeOverArgs = required(args, "takeOverLease args")?;
+            s.take_over_lease(&a.name, a.expected_epoch, &a.holder, a.ttl_ms)
         })
     }
 

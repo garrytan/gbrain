@@ -45,15 +45,24 @@ impl Brain {
         })
     }
 
-    /// `lockEffectClaimRow(effectId)`: the effect's state and execution token, or null.
+    /// `lockEffectClaimRow(effectId, claim?)`: the effect's state and execution token, or null. `claim` is an
+    /// install's `{ effectId, token, fence }`: on a multi-user store the read checks it.
     #[napi]
     pub fn lock_effect_claim_row<'env>(
         &self,
         env: &'env Env,
         effect_id: Value,
+        claim: Option<Value>,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
-            s.lock_effect_claim_row(required(effect_id, "lockEffectClaimRow effectId")?)
+            let claim: Option<gbrain_store::persistence::InstallClaim> = claim
+                .filter(|c| !c.is_null())
+                .map(|c| required(c, "lockEffectClaimRow claim"))
+                .transpose()?;
+            s.lock_effect_claim_row_claimed(
+                required(effect_id, "lockEffectClaimRow effectId")?,
+                claim.as_ref(),
+            )
         })
     }
 }

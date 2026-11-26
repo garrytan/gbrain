@@ -702,11 +702,20 @@ fn c05_expired_claim_is_reclaimed_once_multi_writer() {
             .unwrap(),
         "the old token renewed"
     );
-    // A sweeper with no fence on a multi-user store is refused before anything is written.
-    assert_lost(
-        &b.reclaim_stalled_jobs_fenced(0.0, MARK, None).unwrap_err(),
-        LostReason::FenceMissing,
-        "an unfenced sweep",
+    // A sweeper with no fence on a multi-user store is no longer refused for lacking one (design note rule 7, the
+    // implicit lease, L5): it runs, finds nothing stalled after the reclaim above, and changes nothing. The reclaim
+    // still happened exactly once.
+    let before = b.get_job(id).unwrap();
+    let unfenced = b.reclaim_stalled_jobs_fenced(0.0, MARK, None).unwrap();
+    assert_eq!(
+        unfenced["requeued"].as_array().unwrap().len(),
+        0,
+        "{unfenced}"
+    );
+    assert_eq!(
+        b.get_job(id).unwrap(),
+        before,
+        "an unfenced sweep changed the job"
     );
 }
 
@@ -879,7 +888,7 @@ fn fenced_stamp(id: &str, token: &str, fence: Option<&LeaseToken>) -> ClaimStamp
 /// C06, a partitioned host, through the landed members (a multi-user brain on the injected clock): host A takes a lease with a short
 /// ttl and claims a write under it; the clock passes the expiry and A's renewal is refused `expired`; host B takes the lease under
 /// epoch + 1; A's old-epoch finish is refused `epoch_moved` and writes nothing, B's fence cannot finish A's claim
-/// (`claim_epoch_mismatch`), an unfenced protected call is `fence_missing`, a released lease is `released` and a lease nobody took is
+/// (`claim_epoch_mismatch`), an unfenced protected call on a claim a live registered lease covers is `held_by_another`, a released lease is `released` and a lease nobody took is
 /// `not_found`. Every `lease_lost` reason is asserted. This part holds today because an explicit transaction on the current store
 /// holds the writer; the in-flight old-epoch transaction is the multi_writer twin.
 #[test]
@@ -976,12 +985,13 @@ fn c06_partitioned_host_claims_and_leases_are_refused_by_reason() {
         "B finishes A's claim",
     );
     assert_eq!(request(&b), held, "a claim of the old epoch was finished");
-    // A protected entry point with no fence on a multi-user store.
+    // A protected entry point with no fence on a multi-user store, on a claim a registered holder's live lease covers:
+    // refused `held_by_another` (design note rule 7, L5), and nothing is written.
     assert_lost(
         &b.complete_write_row(&write_completion(&id, None))
             .unwrap_err(),
-        LostReason::FenceMissing,
-        "no fence on a multi-user store",
+        LostReason::HeldByAnother,
+        "no fence, on a claim another holder's live lease covers",
     );
     assert_eq!(request(&b), held);
 
@@ -1096,8 +1106,8 @@ fn the_lease_lost_reasons_round_trip_through_the_error_message() {
             "epoch_moved",
             "released",
             "expired",
-            "fence_missing",
-            "claim_epoch_mismatch"
+            "claim_epoch_mismatch",
+            "held_by_another"
         ]
     );
     for reason in mu::LOST_REASONS {
@@ -1139,6 +1149,7 @@ fn effect_claimed_once_then_rerun(store: Arc<Store>) {
                 token: token.into(),
                 owner_json: owner.to_string(),
                 fence: None,
+                dead_owners: Vec::new(),
             };
             tx.stamp_effect_claim(&claim).unwrap()
         });
@@ -1212,6 +1223,7 @@ fn c07_effect_claimed_once_rerun_after_host_lease_expiry() {
             token: token.into(),
             owner_json: owner.to_string(),
             fence: Some(fence.clone()),
+            dead_owners: Vec::new(),
         })
     };
     let settle = |token: &str, effect: &Value, fence: &LeaseToken| EffectSettle {
@@ -1264,6 +1276,9 @@ fn c07_effect_claimed_once_rerun_after_host_lease_expiry() {
             token: TOKEN_B.into(),
             owner_json: owner.to_string(),
             fence: Some(taken.clone()),
+            // The stamp takes the same proven-dead owner the selection above was given (G6: a multi-user stamp takes a
+            // running effect only when its claim lapsed or its owner is proven dead).
+            dead_owners: vec!["7:n:s".to_string()],
         })
         .unwrap()
         .expect("B claims the effect again");
@@ -1325,6 +1340,7 @@ fn c07_effect_claimed_once_by_racing_hosts_multi_writer() {
                         json!({"token": i, "owner": {"pid": 7, "nonce": "n", "start": "s"}})
                             .to_string(),
                     fence: Some(f[i].clone()),
+                    dead_owners: Vec::new(),
                 })
                 .unwrap()
             });
