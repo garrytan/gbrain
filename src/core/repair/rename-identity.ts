@@ -47,7 +47,6 @@ import { IDENTITY_DOWNGRADE_OP, IDENTITY_HOLD_RELEASE, MANAGED_REMEDY_UNAVAILABL
   renameIdentityPreviewArgv, settleIdentityDowngrade, withIdentityRemedies, type IdentityDowngrade, type IdentityRemedyDisposition, type IdentityRemedyParts } from '../sync-identity-downgrades.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairPlanOptions } from './core.ts';
 import { assertOriginUnclaimed } from '../persistence/origin-guard.ts';
-import { withTrustKeep } from '../persistence/context.ts';
 
 const DOCS = 'docs/guides/repair.md#rename-identity';
 /** The restore alternative, named only where the source admits a restore (an unbound Postgres source with a checkout does not). */

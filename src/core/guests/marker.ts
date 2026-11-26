@@ -13,7 +13,6 @@ import type { Operation } from '../ops/contract.ts';
 import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import { isMissingSchemaObject } from '../utils.ts';
 import { guestSourceSql } from './note.ts';
-import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 
 export const GUEST_ORIGIN = 'guest';
 /** get_brain_identity lists it: this brain stamps the guest warning on every read, so a guest broker may switch on. */

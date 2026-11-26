@@ -20,7 +20,6 @@ import { randomUUID } from 'node:crypto';
 import { lockedBeliefBatch } from '../../core/belief/writers.ts';
 import { markBeliefCommits } from '../../core/belief/append.ts';
 import { bindOrigin, classifyOriginUniqueViolation } from '../../core/persistence/origin-guard.ts';
-import { withTrustKeep } from '../../core/persistence/context.ts';
 
 export type RenameOutcome = 'renamed' | 'noop' | 'live_destination';
 

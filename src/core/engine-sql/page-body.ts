@@ -63,8 +63,6 @@ import { overlayCanonicalBodies, readPageSnapshot } from '../page-state/snapshot
  * STAGE_BATCH_BYTES per engine, manifest and chunk rows by `jsonRowBatches`
  * under the same byte bound; the flip touches O(changed rows).
  */
-import type { SegmentedEmbedPage, SegmentedEmbedRef } from '../page-body/types.ts';
-import { currentTextProjectionFilter } from '../search/safe-chunks.ts';
 
 export const LIVE_STAGING_STATES = ['open', 'sealed', 'prepared'];
 const TERMINAL_STAGING_STATES = ['committed', 'aborted', 'expired'];

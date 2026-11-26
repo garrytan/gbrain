@@ -21,7 +21,6 @@ import { inlineRegions } from '../page-body/tail-digest.ts';
 import { validateSlug } from '../utils.ts';
 import { isRemoteWantedPagesEnabled, replaceWantedLinks } from '../wanted-links.ts';
 import { isGuestWrite, skipsGuestNote } from '../guests/derived.ts';
-import { writerReadPolicy } from './page-visibility.ts';
 
 /** `mcp.remote_auto_links`: unset is on; false/0/no/off (any case) turns the remote `links` effect off. */
 export async function isRemoteAutoLinksEnabled(engine: Pick<BrainEngine, 'getConfig'>): Promise<boolean> {
