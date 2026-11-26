@@ -729,19 +729,18 @@ describe('every sample the child was sent ends in the tally (sample accounting)'
     }, 60_000);
   }
 
-  test('status counts a receipt of the current epoch (or one with no epoch) as unresolved and names it; a receipt of an older epoch is named, never counted; with no directory nothing is counted', () => {
+  test('status counts a receipt of the current epoch, of no epoch and of another epoch as unresolved and names it; with no directory nothing is counted', () => {
     const dir = tmp(); const { epoch } = tallyOn(dir); saved(dir, epoch);
     expect(stat(dir)).toMatchObject({ state: 'measured', comparable: 1000 });
     writeFileSync(receiptFile(dir, 'now'), JSON.stringify({ session: 'now', sent: 3, pid: process.pid, epoch_id: epoch }));
     writeFileSync(receiptFile(dir, 'bare'), JSON.stringify({ session: 'bare', sent: 3, pid: process.pid }));
     writeFileSync(receiptFile(dir, 'old'), JSON.stringify({ session: 'old', sent: 3, pid: process.pid, epoch_id: 'a-retired-epoch' }));
     const s = stat(dir);
-    expect(s).toMatchObject({ state: 'capability_missing', unresolved_replays: 2 });
-    expect([...(s.outstanding_receipts ?? [])].sort()).toEqual([basename(receiptFile(dir, 'bare')), basename(receiptFile(dir, 'now'))].sort());
-    expect(s.retired_receipts).toEqual([basename(receiptFile(dir, 'old'))]);
+    expect(s).toMatchObject({ state: 'capability_missing', unresolved_replays: 3 }); // was 2: the receipt of another epoch was left out
+    expect([...(s.outstanding_receipts ?? [])].sort()).toEqual(['bare', 'now', 'old'].map((n) => basename(receiptFile(dir, n))).sort()); // was bare and now only
+    expect((s as Record<string, unknown>).retired_receipts).toBeUndefined(); // was [old]: there is no longer a list of receipts status does not count
     rmSync(receiptFile(dir, 'now')); rmSync(receiptFile(dir, 'bare'));
-    expect(stat(dir)).toMatchObject({ state: 'measured' }); // only the older epoch's receipt is left: named, not counted
-    expect(stat(dir).unresolved_replays).toBeUndefined();
+    expect(stat(dir)).toMatchObject({ state: 'capability_missing', unresolved_replays: 1 }); // was measured with no unresolved: a receipt of another epoch is a deficit nobody recorded, so it keeps status at no evidence
     expect(() => stat(join(dir, 'gone'))).not.toThrow();
     expect(stat(join(dir, 'gone')).unresolved_replays).toBeUndefined();
   });
@@ -790,12 +789,45 @@ describe('every sample the child was sent ends in the tally (sample accounting)'
     });
   }, 60_000);
 
-  test('a leftover receipt of an older epoch is removed by the next owner worker with no count', async () => {
+  test('an orphaned receipt keeps status at no evidence until an owner worker settles it as receipt_orphaned (uncomparable); then the receipt is gone and the unresolved mark clears', async () => {
+    await withEnv({ GBRAIN_HOME: tmp() }, async () => {
+      const dir = tmp(); writeSeedRecord(dir, SEED);
+      const epoch = await runChild(dir, 'sess-a'); saved(dir, epoch); // a passing tally of 1,000 comparable writes under the current epoch
+      writeFileSync(receiptFile(dir, 'dead'), JSON.stringify({ session: 'dead', sent: 7, pid: deadPid() })); // a command that died: its receipt is nobody's
+      const before = stat(dir);
+      expect(before).toMatchObject({ state: 'capability_missing', comparable: 1000, unresolved_replays: 1, outstanding_receipts: [basename(receiptFile(dir, 'dead'))] }); // not measured while seven samples are unaccounted for
+      expect(readWriteTally(dir, epoch)!.uncomparable).toBe(0);
+      expect(await runChild(dir, 'sess-b')).toBe(epoch); // the next owner worker settles it
+      const t = readWriteTally(dir, epoch)!;
+      expect(t.uncomparable_by_reason).toEqual({ receipt_orphaned: 7 });
+      expect(t).toMatchObject({ comparable: 1000, uncomparable: 7 }); // booked uncomparable, never compared
+      expect(existsSync(receiptFile(dir, 'dead'))).toBe(false);
+      const after = stat(dir);
+      expect(after.unresolved_replays).toBeUndefined();
+      expect(after.outstanding_receipts).toBeUndefined();
+      expect(after).toMatchObject({ state: 'measured', comparable: 1000, uncomparable: 7 }); // every deficit is now recorded
+    });
+  }, 60_000);
+
+  test('a receipt that names another epoch keeps status at no evidence, then is settled as receipt_orphaned (uncomparable), never compared', async () => {
+    await withEnv({ GBRAIN_HOME: tmp() }, async () => {
+      const dir = tmp(); writeSeedRecord(dir, SEED);
+      const epoch = await runChild(dir, 'sess-a'); saved(dir, epoch); // a passing tally of 1,000 comparable writes
+      writeFileSync(receiptFile(dir, 'dead'), JSON.stringify({ session: 'dead', sent: 7, pid: deadPid(), epoch_id: 'a-retired-epoch' }));
+      expect(stat(dir)).toMatchObject({ state: 'capability_missing', unresolved_replays: 1, outstanding_receipts: [basename(receiptFile(dir, 'dead'))] }); // before: measured, the receipt was listed as retired and not counted
+      expect(await runChild(dir, 'sess-b')).toBe(epoch);
+      expect(readWriteTally(dir, epoch)!).toMatchObject({ comparable: 1000, uncomparable: 7, uncomparable_by_reason: { receipt_orphaned: 7 } });
+      expect(existsSync(receiptFile(dir, 'dead'))).toBe(false);
+      expect(stat(dir)).toMatchObject({ state: 'measured', comparable: 1000, uncomparable: 7 }); // measured only once every deficit is recorded
+    });
+  }, 60_000);
+
+  test('a leftover receipt that names another epoch is settled by the next owner worker as receipt_orphaned like any other', async () => {
     await withEnv({ GBRAIN_HOME: tmp() }, async () => {
       const dir = tmp(); writeSeedRecord(dir, SEED);
       writeFileSync(receiptFile(dir, 'dead'), JSON.stringify({ session: 'dead', sent: 7, pid: deadPid(), epoch_id: 'a-retired-epoch' }));
       const epoch = await runChild(dir, 'sess-a');
-      expect(readWriteTally(dir, epoch)?.uncomparable_by_reason ?? {}).toEqual({});
+      expect(readWriteTally(dir, epoch)?.uncomparable_by_reason ?? {}).toEqual({ receipt_orphaned: 7 }); // was {}: it was removed with no count
       expect(existsSync(receiptFile(dir, 'dead'))).toBe(false);
     });
   }, 60_000);

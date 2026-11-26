@@ -6,7 +6,7 @@
 - A command wrote its sent count twice on a clean exit. The worker had already removed the first, so the second one was left behind. It is now written once, and a write that failed is tried again when the command stops.
 
 ### Changed
-- `gbrain engine shadow status` counts every sent count still on disk as a replay with no verdict (so no evidence), and lists them as `outstanding_receipts`. A sent count that names another evidence epoch than the current one is listed as `retired_receipts` and never counted (commands write none today, because they cannot know which epoch their worker opens).
+- `gbrain engine shadow status` counts every sent count still on disk as a replay with no verdict (so no evidence), and lists them as `outstanding_receipts`. A sent count that names another evidence epoch than the current one counts the same way (commands write none, because they cannot know which epoch their worker opens, so only a hand-written one can).
 - A sent count left by a command that has died is added once, as `uncomparable` with the new reason `receipt_orphaned`, by the next shadow worker that owns the store. It may count samples that were already compared as lost as well, never fewer. Each shadow save now lists the shadow directory once to find these.
 - Nothing about what counts as `comparable` changes, and a lost or uncompared sample is never counted as compared.
 

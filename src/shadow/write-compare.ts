@@ -173,20 +173,14 @@ export const readReceipt = (dir: string, session: string): SentReceipt | null | 
 /** The sent count for `session`: a number, null when there is no receipt, `'unreadable'` when there is one that cannot be read (the child raises a fault and leaves it). */
 export function readSent(dir: string, session: string): number | null | 'unreadable' { const r = readReceipt(dir, session); return r === null || r === 'unreadable' ? r : r.sent; }
 /**
- * The receipts still on disk, by name: `counted` are the ones status reads as no evidence (unreadable, of this epoch, or of no epoch); `retired` are those of an older epoch, named and never counted.
- * With no epoch nothing is counted; a missing directory has none; a listing that fails otherwise counts one.
+ * The receipts still on disk, by name: every one is a deficit nobody has recorded, so status reads each as no evidence (an unreadable one, one that names another epoch than this one, and one that names none alike:
+ * only a recorded deficit may let status read measured). With no epoch nothing is counted; a missing directory has none; a listing that fails otherwise counts one.
  */
-export function outstandingReceipts(dir: string, epoch: string | null): { counted: string[]; retired: string[] } {
-  const out = { counted: [] as string[], retired: [] as string[] };
-  if (epoch === null) return out;
+export function outstandingReceipts(dir: string, epoch: string | null): string[] {
+  if (epoch === null) return [];
   let names: string[];
-  try { names = readdirSync(dir).filter((n) => RECEIPT_NAME.test(n)).sort(); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') out.counted.push('write-sent.*'); return out; }
-  for (const name of names) {
-    const r = parseReceipt(join(dir, name));
-    if (r === null) continue;
-    if (r !== 'unreadable' && r.epoch_id !== undefined && r.epoch_id !== epoch) out.retired.push(name); else out.counted.push(name);
-  }
-  return out;
+  try { names = readdirSync(dir).filter((n) => RECEIPT_NAME.test(n)).sort(); } catch (e) { return (e as NodeJS.ErrnoException).code === 'ENOENT' ? [] : ['write-sent.*']; }
+  return names.filter((name) => parseReceipt(join(dir, name)) !== null);
 }
 /** The most samples one `recordLost` call stands for (the child's own cap on a `dropped` count). */
 const MAX_LOST_PER_RECORD = 10_000;
@@ -303,7 +297,7 @@ export class WriteTally {
   }
   /**
    * The receipts (sent counts) of sessions that are gone, settled by an owner worker (one with an epoch): the whole sent count becomes `uncomparable` `receipt_orphaned` lost samples (what that worker had read is unknown, so this can
-   * count samples it had already tallied, never fewer), and the receipt is removed only after every one is on disk. A receipt that names another epoch than the manifest's (a stamp the serving process does not write, see supervisor.ts `recordSent`) is removed with no count; one that names none is the current epoch's. A worker whose own epoch is no longer the manifest's settles nothing. A worker is gone when its pid is above 1 and not running, or its file is
+   * count samples it had already tallied, never fewer), and the receipt is removed only after every one is on disk. A worker whose own epoch is no longer the manifest's settles nothing. A worker is gone when its pid is above 1 and not running, or its file is
    * old; an unreadable receipt, a running worker's and a fresh one with no usable pid are left (status counts them). Cost: one listing of the shadow directory per call (at start and each save), and one read per receipt found.
    */
   private settleLeftovers(): void {
@@ -316,7 +310,7 @@ export class WriteTally {
         if (r === null || r === 'unreadable') continue;
         const age = Date.now() - statSync(path).mtimeMs;
         if (!(age > STALE_RECEIPT_MS || (r.pid !== undefined && r.pid > 1 && r.pid !== this.pid && !running(r.pid)))) continue;
-        if (r.epoch_id === undefined || r.epoch_id === epoch) { if (recordLostCount(this.dir, epoch, 'receipt_orphaned', r.sent) < r.sent) continue; }
+        if (recordLostCount(this.dir, epoch, 'receipt_orphaned', r.sent) < r.sent) continue; // a receipt that names another epoch is settled like any other (it can only be hand-written: commands write none)
         if (readEpoch(this.dir)?.epoch_id !== epoch) return; // the epoch moved while this was booked: the receipt stays for the new owner
         rmSync(path, { force: true });
       }
