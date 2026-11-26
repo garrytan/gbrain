@@ -412,7 +412,7 @@ export const MW_CASES: readonly MwCase[] = [
     },
     cells: {
       pglite: na('PGLite has one connection: a brain cannot be opened twice'),
-      postgres: pending('L3 server', 'no PostgreSQL scenario: the case drives the Rust commit-log format upgrade; a database behind the code with concurrent initSchema openers is not written'),
+      postgres: pending('L6 harness', 'no PostgreSQL scenario yet: the case drives the Rust commit-log format upgrade; a database behind the code with concurrent initSchema openers is the harness lane\'s to write'),
       rust: na('the upgrade the case drives (an older brain\'s first open with the commit log on) exists only in multi-user mode with the log on; the plain Rust arm keeps no log'),
       'rust-mu': RUNS,
       'store-single': RUNS, 'store-optimistic': RUNS,

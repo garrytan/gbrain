@@ -31,7 +31,7 @@ const REPO = join(import.meta.dir, '..');
 const read = (...path: string[]) => readFileSync(join(REPO, ...path), 'utf8');
 
 /** The owners a pending cell may name (the lane names every pending reason uses). */
-const OWNERS = new Set(['L1 optimistic transactions', 'L2 commit log', 'L3 server', 'L4 access', 'L5 hosts', 'L1 sim seam']);
+const OWNERS = new Set(['L1 optimistic transactions', 'L2 commit log', 'L3 server', 'L4 access', 'L5 hosts', 'L1 sim seam', 'L6 harness']);
 
 interface Declaration { name: string; methods: string[]; mwCase: string | null }
 
