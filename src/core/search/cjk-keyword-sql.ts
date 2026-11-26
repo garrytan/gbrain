@@ -192,7 +192,9 @@ function likeClauses(terms: string[], likeParamIndices: number[], any: boolean, 
     const operator = term.toLowerCase() === term.toUpperCase() ? 'LIKE' : 'ILIKE';
     return `cc.chunk_text ${operator} $${idx} ESCAPE '\\'`;
   });
-  const strict = anyOf(groups.map(group => group.map(term => likes[terms.indexOf(term)]).join(' AND ')));
+  const firstIndex = new Map<string, number>();
+  terms.forEach((term, i) => { if (!firstIndex.has(term)) firstIndex.set(term, i); });
+  const strict = anyOf(groups.map(group => group.map(term => likes[firstIndex.get(term)!]).join(' AND ')));
   const strictBonus = groups.length > 1 ? ` + (${strict})::int * ${likes.length + 1}` : '';
   return {
     whereLikeClause: any ? `(${likes.join(' OR ')})` : strict,

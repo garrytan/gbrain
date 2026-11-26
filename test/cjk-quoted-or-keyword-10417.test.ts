@@ -86,6 +86,14 @@ describe('#10417 CJK quoted phrases and OR', () => {
     expect(ranked[0]).toBe('notes/daejeon');
   });
 
+  test('building the SQL for a very long CJK query stays linear in its terms', () => {
+    const terms = Array.from({ length: 40_000 }, (_, i) => String.fromCharCode(0xAC00 + (i % 11_172)) + String.fromCharCode(0xAC00 + Math.floor(i / 11_172)));
+    const started = performance.now();
+    expect(buildCJKKeywordSql(terms.join(' '), { limit: 10, offset: 0, innerLimit: 50, sourceFactorCase: '1.0', hardExcludeClause: '',
+      visibilityClause: '', detailFilter: '', opts: undefined, dedup: true })).not.toBeNull();
+    expect(performance.now() - started).toBeLessThan(1_000);
+  });
+
   test('OR finds pages with either name', async () => {
     expect(await pages('"홍길동" OR "김철수"')).toEqual(['notes/alice', 'notes/bob']);
     expect(await chunks('"홍길동" OR "김철수"')).toEqual(['notes/alice', 'notes/bob']);
