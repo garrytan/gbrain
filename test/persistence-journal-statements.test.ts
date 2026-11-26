@@ -55,7 +55,7 @@ import { NEWEST_SYNC_RECEIPT_EXCLUSION, OPEN_SYNC_CURSOR_EXCLUSION } from '../sr
 import { UNRESOLVED_CALLER_REFUSAL_SQL } from '../src/core/persistence/terminal-classify.ts';
 import { COMPACTED_RECEIPT_BYTES_SQL } from '../src/core/persistence/receipt-bytes.ts';
 import { CLAIMABLE_EFFECT_SQL } from '../src/core/engine-sql/persistence-effect-scans.ts';
-import { CLAIM_COALESCED_GIT_EFFECTS_SQL } from '../src/core/engine-sql/persistence-effect-worker.ts';
+import { CLAIM_COALESCED_GIT_EFFECTS_SQL, CLAIM_EFFECT_RECOVERY_SQL } from '../src/core/engine-sql/persistence-effect-worker.ts';
 import { TOPOLOGY_STORE_STATEMENTS } from '../src/core/engine-sql/topology-store.ts';
 import { REFRESH_STORE_STATEMENTS } from '../src/core/engine-sql/refresh-store.ts';
 import { GROUP_PUBLISH_STORE_STATEMENTS } from '../src/core/engine-sql/group-publish-store.ts';
@@ -67,7 +67,7 @@ import { EXPIRED_ARCHIVE_SQL } from '../src/core/engine-sql/sources.ts';
 import { ACTIVE_REFRESH_STATES_SQL, CHECKOUT_EFFECT_KINDS_SQL, RELEASED_DEFERRED } from '../src/core/persistence/worktree-refresh-schema.ts';
 import { PERSISTENCE_PROTOCOL_PREDICATE } from '../src/core/persistence/protocol.ts';
 import { requireSynchronousCommit, SYNCHRONOUS_COMMIT_SQL } from '../src/core/engine-sql/persistence-declaration.ts';
-import { claimHeadStatement, claimHeadText } from '../src/core/engine-sql/persistence-claims.ts';
+import { claimHeadStatement, claimHeadText, laneHeadStatement, laneHeadText, LANE_HEAD_STAMP_SQL, RECLAIM_RELEASED_SQL } from '../src/core/engine-sql/persistence-claims.ts';
 import { CLAIM_ORDER, FOREGROUND_WAITING_ON, GROUP_KEY_SQL } from '../src/core/persistence/journal.ts';
 import { DEAD_OWNER_EFFECT_SQL } from '../src/core/persistence/effect-journal.ts';
 import { refreshFenceClear } from '../src/core/persistence/worktree-refresh-schema.ts';
@@ -287,6 +287,47 @@ describe('the FIFO head read copies the journal claim formula', () => {
     expect(claimHeadStatement({ ...spec, leaseHolder: null }).params).toEqual(['h', ['x'], ['f'], ['l'], 'n', '{"w":"3"}']);
     expect(claimHeadStatement({ ...spec, leaseHolder: { lockPrefix: 'p:', pid: 7, host: 'host' } }).params)
       .toEqual(['h', ['x'], ['f'], ['l'], 'n', '{"w":"3"}', 'p:', 7, 'host']);
+  });
+});
+
+describe('the lane head claim and the reclaim copy the journal statements', () => {
+  // The texts journal.ts claimNextLaneHead and reclaimReleasedWrite sent through executeRaw before the typed members, built from the journal's own fragments.
+  const laneHeadJournalText = (prio: string) => `SELECT r.* FROM persistence_requests r
+      JOIN persistence_worktrees w ON w.id=r.worktree_id
+      WHERE r.worktree_id=$2::uuid AND r.state='queued' AND ${BACKOFF_ELAPSED('r')} AND r.intent->>'lane'=$3 AND r.intent->>'group'=r.request_id::text
+        AND w.owner_host_id=$1::uuid AND w.state='active' AND ${refreshFenceClear('r')}
+        AND NOT EXISTS (SELECT 1 FROM persistence_effects blocked WHERE blocked.worktree_id=r.worktree_id AND blocked.recovery IS NOT NULL)
+        AND NOT EXISTS (SELECT 1 FROM persistence_effects mirror WHERE mirror.worktree_id=r.worktree_id
+          AND mirror.kind='withdrawal-mirror' AND mirror.state IN ('queued','running'))
+        AND NOT EXISTS (SELECT 1 FROM persistence_requests blocked WHERE blocked.worktree_id=r.worktree_id AND blocked.recovery IS NOT NULL)
+        AND NOT EXISTS (SELECT 1 FROM persistence_requests earlier WHERE earlier.worktree_id=r.worktree_id AND earlier.sequence<r.sequence
+          AND (earlier.state IN ('queued','recovering') OR ${RELEASED_DEFERRED('earlier')} OR (earlier.state='running' AND COALESCE(earlier.intent->>'lane','')<>$3)))
+        -- #5984 Phase 4.5: no new lane head while a foreground write that may go first waits (a claimed one publishes
+        -- beside the lanes), except one head after each foreground commit since this run's last head claim.
+        AND NOT ((${prio}) AND r.worktree_id IN (SELECT f.worktree_id FROM (${FOREGROUND_WAITING_ON('$5::text', '$4::bigint', 'f.worktree_id=$2::uuid')}) f))
+      ORDER BY r.sequence LIMIT 1 FOR UPDATE OF r SKIP LOCKED`;
+
+  test('selectClaimableLaneHead sends the journal text for each priority', () => {
+    for (const priority of [null, true, false] as const) expect(laneHeadText(priority)).toBe(laneHeadJournalText(foregroundPriorityText(priority)));
+    expect(laneHeadText(null)).toBe(laneHeadJournalText(foregroundPrioritySql()));
+  });
+
+  test('the lane head binds its five parameters in the journal order', () => {
+    expect(laneHeadStatement({ hostId: 'h', worktreeId: 'w', run: 'r', seenSequence: '7', nonce: 'n', priority: null }).params).toEqual(['h', 'w', 'r', '7', 'n']);
+  });
+
+  test('the lane head stamp and the reclaim are the journal statements', () => {
+    expect(LANE_HEAD_STAMP_SQL).toBe(`UPDATE persistence_requests SET state='running',
+      execution_token=$2::uuid,claim_expires_at=now()+($3::double precision*interval '1 millisecond'),
+      updated_at=now(),blocked_reason=NULL,claim_phase=$4::text::jsonb WHERE id=$1::uuid RETURNING *,(SELECT max(sequence) FROM persistence_requests)::text AS seen_sequence`);
+    expect(RECLAIM_RELEASED_SQL).toBe(`UPDATE persistence_requests SET state='running',execution_token=$2::uuid,
+    claim_expires_at=now()+($3::double precision*interval '1 millisecond'),updated_at=now(),blocked_reason=NULL,claim_phase=$4::text::jsonb
+    WHERE id=$1::uuid AND state='queued' AND recovery IS NULL AND ${BACKOFF_ELAPSED('persistence_requests')} AND ${PERSISTENCE_PROTOCOL_PREDICATE} RETURNING *`);
+  });
+
+  test('the effect recovery claim is the effects statement', () => {
+    expect(CLAIM_EFFECT_RECOVERY_SQL).toBe(`UPDATE persistence_effects SET state='running',execution_token=$2::uuid,claim_owner=$3::text::jsonb,
+      claim_expires_at=now()+interval '2 minutes',attempts=attempts+1,updated_at=now() WHERE id=$1 AND recovery IS NOT NULL AND ${PERSISTENCE_PROTOCOL_PREDICATE} RETURNING *`);
   });
 });
 

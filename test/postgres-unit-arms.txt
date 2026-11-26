@@ -362,6 +362,7 @@ test/engine-parity/link-temporal.test.ts
 test/engine-parity/links.test.ts
 test/engine-parity/list-reads.test.ts
 test/engine-parity/loop-mutes.test.ts
+test/engine-parity/managed-claims-on-rust.test.ts
 test/engine-parity/managed-on-rust.test.ts
 test/engine-parity/managed-recovery-on-rust.test.ts
 test/engine-parity/managed-refresh-on-rust.test.ts
