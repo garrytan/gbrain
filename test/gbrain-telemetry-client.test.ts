@@ -10,6 +10,7 @@ import {
   sizeBand, syncTelemetry, telemetryDir, telemetryStatus,
 } from '../src/core/telemetry/client.ts';
 import { telemetryAfterCli } from '../src/cli/telemetry-hook.ts';
+import { CWD_DOTENV_PROTECTED_KEYS } from '../src/core/env-trust.ts';
 import type { GBrainConfig } from '../src/core/config.ts';
 import { withEnv } from './helpers/with-env.ts';
 
@@ -618,6 +619,55 @@ describe('gbrain telemetry client: a consent change is final for what came befor
     writeFileSync(join(dir('counts'), `${yesterday()}.json`), JSON.stringify({ [`none|0.1.0.0|test`]: { command_counts: { doctor: 2 } } }));
     const rollup = buildBatch().events.find(e => e.event_type === 'daily_rollup');
     expect(rollup).toMatchObject({ gbrain_version: '0.1.0.0', source: 'test', transport: 'none', command_counts: { doctor: 2 } });
+  });
+
+  // Value: protects=a send reads the tier and the queue in one locked section, so a tier switch in another process can never pair new events with the old tier or install id; fails_when=buildBatch runs outside queue.lock again; why_new=the in-flight test covers what lands after the POST, not what goes into it; seam=a held lock file stands in for the other process; no_claim=two real processes
+  it('a send waits for the queue lock, so it never reads a queue a tier switch is rewriting', async () => {
+    setTier('community');
+    recordEvent({ event_type: 'setup', outcome: 'success' });
+    const s = standIn([200]);
+    try {
+      await withEnv({ GBRAIN_TELEMETRY_URL: s.url }, async () => {
+        writeFileSync(dir('queue.lock'), '');
+        expect((await syncTelemetry({ force: true })).status).toBe('busy');
+        rmSync(dir('queue.lock'));
+        expect(s.posts).toEqual([]);
+      });
+    } finally {
+      s.stop();
+    }
+  });
+
+  // Value: protects=an opt-out is saved before anything is deleted, so a failed delete can never leave the old answer in force; fails_when=clearFiles runs before settings.json is written again; why_new=no test injected a delete failure; seam=fs.rmSync spy; no_claim=a real disk error
+  it('telemetry off is saved even when deleting the queue fails', () => {
+    setTier('anonymous');
+    recordEvent({ event_type: 'setup', outcome: 'success' });
+    const spy = spyOn(fs, 'rmSync').mockImplementation(() => { throw new Error('EBUSY'); });
+    try {
+      expect(() => setTier('off')).toThrow('EBUSY');
+    } finally {
+      spy.mockRestore();
+    }
+    expect(readSettings().tier).toBe('off');
+  });
+
+  // Value: protects=the first yes moves held events and queues its consent event in the same locked section that saves it, and any later answer deletes a leftover held file; fails_when=releaseHeld or the consent event go back to their own lock attempts, or a tier switch keeps pending.jsonl; why_new=the held-release test never contended the lock; seam=a held lock file; no_claim=two real processes
+  it('an answer under a busy lock still releases held events with its consent event, and a switch drops a stray held file', () => {
+    mkdirSync(join(process.env.GBRAIN_HOME!, '.gbrain'), { recursive: true });
+    recordEvent({ event_type: 'setup', harness: 'codex', outcome: 'success' });
+    writeFileSync(dir('queue.lock'), '');
+    setTier('anonymous');
+    rmSync(dir('queue.lock'));
+    expect(existsSync(dir('pending.jsonl'))).toBe(false);
+    expect(queue().map(e => [e.event_type, e.answer ?? null])).toEqual([['setup', null], ['consent', 'anonymous']]);
+    writeFileSync(dir('pending.jsonl'), `${JSON.stringify({ qid: 'stray', ts: new Date().toISOString(), event_type: 'setup', gbrain_version: '0.1.0.0' })}\n`);
+    setTier('community');
+    expect(existsSync(dir('pending.jsonl'))).toBe(false);
+    expect(queue().map(e => [e.event_type, e.answer])).toEqual([['consent', 'community']]);
+  });
+
+  it('a cwd .env can never set the telemetry kill switch or traffic source', () => {
+    expect(CWD_DOTENV_PROTECTED_KEYS).toEqual(expect.arrayContaining(['GBRAIN_TELEMETRY', 'GBRAIN_TELEMETRY_SOURCE', 'GBRAIN_TELEMETRY_URL', 'GBRAIN_TELEMETRY_KEY']));
   });
 
   it('the CLI seam reads the command after global flags and the setup harness after its value flags', () => {

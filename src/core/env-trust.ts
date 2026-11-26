@@ -189,6 +189,8 @@ export const CWD_DOTENV_PROTECTED_KEYS: readonly string[] = [
   'GBRAIN_OAUTH_RELAY_URL',          // the OAuth relay that hands back Google tokens (creds/relay-client.ts): a planted relay is token theft
   'GBRAIN_TELEMETRY_URL',            // telemetry endpoint override (core/telemetry/endpoint.ts): a planted URL would receive the install id, forge the pulse and fake a forget confirmation
   'GBRAIN_TELEMETRY_KEY',            // the key sent with GBRAIN_TELEMETRY_URL; read only beside it
+  'GBRAIN_TELEMETRY',                // =off is the operator's kill switch; a planted empty value would shadow it
+  'GBRAIN_TELEMETRY_SOURCE',         // tags reports live, test or ci; a planted value would mark test traffic as real installs
   'GBRAIN_OPENCLAW_GATEWAY_URL',     // GST-2768: the Gateway the archive's openclaw child calls with GBRAIN_OPENCLAW_GATEWAY_TOKEN; a planted URL would receive the token and serve forged history
   'GBRAIN_OPENCLAW_GATEWAY_TOKEN',   // GST-2768: the credential that child presents; a planted one pairs with a planted Gateway to archive forged history
   'GBRAIN_HOOK_CWD',                 // #8424: the session directory the hook launcher records; a planted value moves the yield checks and the turn-rule project match

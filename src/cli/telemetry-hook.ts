@@ -21,7 +21,7 @@ import { spawn } from '../core/spawn.ts';
 import { VERSION } from '../version.ts';
 import { renderedCliErrorCodes } from '../core/telemetry/error-tally.ts';
 import {
-  awaitingAnswer, countCommand, countCrash, countErrorCode, currentTier, flushCounts, harnessOf, noteRunVersion, recordEvent, shouldSpawnSync,
+  awaitingAnswer, countCommand, countCrash, countErrorCode, currentTier, flushCounts, harnessOf, noteRunVersion, recordEvent, shouldSpawnSync, telemetryDir,
 } from '../core/telemetry/client.ts';
 
 const NO_SEND_COMMANDS = new Set(['serve', 'hook', 'mcp', 'telemetry', 'check-update', 'self-upgrade', 'upgrade', 'post-upgrade']);
@@ -74,6 +74,7 @@ function spawnSync(): void {
   const child = spawn(exec, isDevRuntime ? [process.argv[1], ...args] : args, {
     detached: true,
     stdio: 'ignore',
+    cwd: telemetryDir(),
     env: { ...process.env, GBRAIN_SKIP_STARTUP_HOOKS: '1' },
   });
   child.on('error', () => {});
@@ -98,6 +99,6 @@ export function telemetryAfterCli(exitCode: number, crash?: unknown, rawArgv: re
     noteRunVersion(channelName());
     recordOutcomes(command, argv, exitCode);
     flushCounts();
-    if (!jsonRequested(rawArgv) && !NO_SEND_COMMANDS.has(command) && shouldSpawnSync()) spawnSync();
+    if (!jsonRequested(rawArgv) && !NO_SEND_COMMANDS.has(command) && process.env.GBRAIN_ENFORCED_MEMBER === undefined && shouldSpawnSync()) spawnSync();
   } catch { /* silent-read-ok: telemetry never breaks a command, and a failed read sends nothing */ }
 }

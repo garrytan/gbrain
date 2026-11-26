@@ -106,7 +106,7 @@ describe('gbrain telemetry CLI', () => {
 
   test('telemetry takes one subcommand, so a flag value or a second word never picks a tier', async () => {
     const home = join(ROOT, 'two-words');
-    for (const args of [['telemetry', '--source', 'community', 'off'], ['telemetry', 'community', 'off']]) {
+    for (const args of [['telemetry', '--source', 'community', 'off'], ['telemetry', 'community', 'off'], ['telemetry', '--source', 'community']]) {
       const r = await runCli([...args, '--json'], { home });
       expect(r.exitCode).not.toBe(0);
       expect(r.stdout + r.stderr).toContain('invalid_params');

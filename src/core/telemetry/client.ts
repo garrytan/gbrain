@@ -113,12 +113,16 @@ function withQueueLock(fn: () => void): void {
  * the lock an optional write is skipped; a required one (a consent choice, a
  * confirmed forget) is written anyway.
  */
-function updateSettings(change: (s: Settings) => Settings | null, required: boolean): Settings | null {
+function updateSettings(change: (s: Settings) => Settings | null, required: boolean, after?: (prev: Settings, next: Settings) => void): Settings | null {
   const lock = acquire('queue.lock', 50);
   if (!lock && !required) return null;
   try {
-    const next = change(readSettings());
-    if (next) writeJson('settings.json', next);
+    const prev = readSettings();
+    const next = change(prev);
+    if (next) {
+      writeJson('settings.json', next);
+      after?.(prev, next);
+    }
     return next;
   } finally {
     if (lock) release(lock);
@@ -169,17 +173,19 @@ export function setTier(tier: Tier): Settings {
     const n: Settings = { ...s, tier, answered_at: new Date().toISOString() };
     if (tier === 'community' && !n.installation_id) n.installation_id = randomUUID();
     if (tier !== 'off') n.last_run_version ??= VERSION;
-    if (tier === 'off' || (s.tier !== 'off' && s.tier !== tier)) {
-      n.epoch = epochOf(s) + 1;
-      clearFiles(tier === 'off' ? [...SENDABLE_FILES, 'pending.jsonl'] : SENDABLE_FILES);
-    }
+    if (tier === 'off' || (s.tier !== 'off' && s.tier !== tier)) n.epoch = epochOf(s) + 1;
     return n;
-  }, true)!;
+  }, true, (prev, n) => {
+    if (epochOf(n) !== epochOf(prev)) clearFiles(tier === 'off' ? [...SENDABLE_FILES, 'pending.jsonl'] : SENDABLE_FILES);
+    if (tier === 'off' || forcedOff()) return;
+    const now = Date.now();
+    const consent = sanitize({ ...environmentFields(), event_type: 'consent', answer: tier });
+    const queued = [...readQueue().filter(freshAt(now)), ...(prev.answered_at ? [] : readHeld(now))];
+    if (consent) queued.push({ qid: randomUUID(), ts: hourStamp(now), ...consent });
+    writeQueue(queued.slice(-MAX_QUEUED_EVENTS));
+    rmSync(file('pending.jsonl'), { force: true });
+  })!;
   tierCache = null;
-  if (tier !== 'off') {
-    releaseHeld();
-    recordEvent({ event_type: 'consent', answer: tier });
-  }
   return next;
 }
 
@@ -349,15 +355,6 @@ function holdForAnswer(fields: Row): void {
     if (readSettings().answered_at) return;
     const kept = readHeld(now).slice(-(MAX_HELD_EVENTS - 1));
     writeAtomic(file('pending.jsonl'), [...kept, { qid: randomUUID(), ts: hourStamp(now), ...clean }].map(r => `${JSON.stringify(r)}\n`).join(''));
-  });
-}
-
-function releaseHeld(): void {
-  const now = Date.now();
-  withQueueLock(() => {
-    const held = readHeld(now);
-    if (held.length) writeQueue([...readQueue().filter(freshAt(now)), ...held].slice(-MAX_QUEUED_EVENTS));
-    rmSync(file('pending.jsonl'), { force: true });
   });
 }
 
@@ -542,8 +539,17 @@ export async function syncTelemetry(opts: { force?: boolean; now?: number } = {}
       settings = updateSettings(s => (s.tier === 'community' && !s.installation_id ? { ...s, installation_id: randomUUID() } : null), true) ?? readSettings();
       if (settings.tier === 'off') return { status: 'off' };
     }
+    const queueLock = acquire('queue.lock', 50);
+    if (!queueLock) return { status: 'busy' };
+    let batch: Batch;
+    try {
+      settings = readSettings();
+      if (forcedOff() || settings.tier === 'off') return { status: 'off' };
+      batch = buildBatch(settings, now);
+    } finally {
+      release(queueLock);
+    }
     const epoch = epochOf(settings);
-    const batch = buildBatch(settings, now);
     if (!batch.events.length) {
       removeSent(batch, now, epoch);
       return { status: 'empty' };
@@ -615,10 +621,7 @@ export async function forgetInstallation(): Promise<{ status: ForgetStatus; http
     }
     const body = (await res.json().catch(() => ({}))) as Row;
     if (!res.ok || body.forgotten !== true) return { status: 'failed', http: res.status };
-    updateSettings(({ installation_id: _gone, ...rest }) => {
-      clearFiles(SENDABLE_FILES);
-      return { ...rest, epoch: epochOf(rest as Settings) + 1 };
-    }, true);
+    updateSettings(({ installation_id: _gone, ...rest }) => ({ ...rest, epoch: epochOf(rest as Settings) + 1 }), true, () => clearFiles(SENDABLE_FILES));
     tierCache = null;
     return { status: 'forgotten', http: res.status, events_cleared: typeof body.events_cleared === 'number' ? body.events_cleared : 0 };
   } finally {
