@@ -80,12 +80,14 @@ test('#9129: a walk cut off after a batch holding migrated mail never leaves uns
     const f = await source(engine, config);
     const cfg = parseGoogleSourceConfig(config, f.dir);
     const controller = new AbortController();
-    const first = gmail(cfg.account, 100, n => { if (n >= 27) controller.abort(); });
+    const first = gmail(cfg.account, 100, n => { if (n >= 52) controller.abort(); });
     await runGoogleSync(engine, f.id, cfg, { ...options, signal: controller.signal }, first.fetcher)
       .catch((e: unknown) => { if ((e as Error).name !== 'AbortError') throw e; });
     const cut = await gmailState(engine, f.id);
     expect(cut?.gmail_backfill_done).toBe(false);
     const floor = cut?.gmail_backfill_floor_ms ?? Infinity;
+    // The migrated thread in the first batch must not pin the second batch's floor proof.
+    expect(floor).toBeLessThanOrEqual(RECENT[48]!.ms);
     expect(LISTED.filter(m => m.ms >= floor && !first.fetched.has(m.tid))).toEqual([]);
     const second = gmail(cfg.account, 100);
     await runGoogleSync(engine, f.id, cfg, options, second.fetcher);

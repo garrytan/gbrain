@@ -434,9 +434,9 @@ async function walkGmailWindow(g: GmailSweep, floorKey: 'gmail_backfill_floor_ms
     for (const m of listing.ids) if (!versions.has(m.threadId)) versions.set(m.threadId, m.id);
     const threadIds = [...versions.keys()];
     let batchFailed = false;
-    let batchOldest = floorMs;
     for (let i = 0; i < threadIds.length; i += BACKFILL_BATCH_THREADS) {
       if (signal?.aborted) break;
+      let batchOldest = floorMs;
       for (const tid of threadIds.slice(i, i + BACKFILL_BATCH_THREADS)) {
         if (signal?.aborted) break;
         const outcome = await attemptThread(g, tid, versions.get(tid) ?? null);
