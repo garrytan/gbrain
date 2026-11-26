@@ -1,0 +1,1 @@
+- The agent CLI reports an interrupted PostgreSQL data-file read to the database host administrator and tells callers to inspect the original receipt before retrying a write.

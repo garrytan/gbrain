@@ -91,7 +91,11 @@ describe('#10351 interrupted PostgreSQL data-file reads', () => {
     expect(d.fix).toBeUndefined();
     expect(d.remediation).toContain('not a sign of damaged rows');
     const out = JSON.parse(renderCliError(pg(message), { json: true, command: 'jobs submit', tty: false }).stdout!);
-    expect(out).toMatchObject({ code: 'database_error', reason: 'storage_interrupted' });
+    expect(out).toMatchObject({
+      code: 'database_error', reason: 'storage_interrupted', retryable: false,
+      fix: { actor: 'host_admin', next: 'report' },
+    });
+    expect(out.fix.argv).toBeUndefined();
     expect(out.suggestion).toContain('original job or write receipt');
   });
   test('a real damaged read and an unrelated interrupted call keep their classes', () => {

@@ -786,6 +786,16 @@ function dbParts(e: unknown, ctx: AgentErrorContext): EnvelopeParts | undefined 
       ...(verb ? { detail: 'schema_missing', protocol_version: 1 as const } : {}),
     };
   }
+  if (d.reason === 'storage_interrupted') {
+    const code = verb ? 'unavailable' : 'database_error';
+    return {
+      error: code, code, reason: d.reason, retryable: false,
+      message: 'PostgreSQL reported an interrupted data-file read.',
+      suggestion: d.remediation,
+      fix: { consent: [], actor: 'host_admin', why: d.remediation, requires_exclusive: false },
+      ...(verb ? { detail: d.reason, protocol_version: 1 as const } : {}),
+    };
+  }
   return {
     error: verb ? 'unavailable' : 'database_error', code: verb ? 'unavailable' : 'database_error', reason: d.reason,
     message: d.message, suggestion: `${formatDbAccessMarker(d)}. ${d.remediation} Run: gbrain db-repair`,
