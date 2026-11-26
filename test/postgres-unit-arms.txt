@@ -507,6 +507,7 @@ test/notifier-passed-freshness-marker-7941.test.ts
 test/notifier-retry-unwatched-gst2515.test.ts
 test/notifier-sync-disabled-gst2515.test.ts
 test/ns-read-move-parity.test.ts
+test/oauth-refresh-grace-9364.test.ts
 test/on-commit-embedding.serial.test.ts
 test/onboarding-ops.test.ts
 test/oneshot-consumer-direct-route.test.ts
@@ -542,6 +543,7 @@ test/page-purge-claim-sweep-9743.test.ts
 test/page-purge-journal-timeout-6511.test.ts
 test/page-spend-reservation.test.ts
 test/page-state-engine.test.ts
+test/pages-prune-history-9737.test.ts
 test/pages-source-created-idx-7379.test.ts
 test/pages-status-7179.test.ts
 test/parallel-projection-drain-9192.test.ts
@@ -810,6 +812,7 @@ test/setup-company-access.test.ts
 test/setup-serves-several.test.ts
 test/share-about-member-gst2897.test.ts
 test/shared-content-freshness.test.ts
+test/shared-skills-adoption-keeps-files.test.ts
 test/shared-skills-catalog.test.ts
 test/shared-skills-retention-capacity.test.ts
 test/shared-skills-source-opt-out.test.ts
@@ -928,6 +931,7 @@ test/timeline-chunk-reuse.test.ts
 test/timeline-date-parity.test.ts
 test/timeline-placement-drift.test.ts
 test/transcript-redaction-key-names.test.ts
+test/transcripts-accept-fences-9427.test.ts
 test/trust-channel-writes.test.ts
 test/trust-claim-chronicle-9284.test.ts
 test/trust-claim-chronicle-timeline-10176.test.ts

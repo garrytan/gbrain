@@ -842,6 +842,18 @@ serves gets `invalid_grant` on refresh. Point the client at the accepted URL
 or fix `--public-url`, then reconnect. ChatGPT specifics
 are in [CHATGPT.md](CHATGPT.md#troubleshooting).
 
+**A client lost its sign-in after a refresh, or every session of a client was signed out at once**
+Each refresh rotates the refresh token. For 60 seconds after a rotation, the
+same client sending the token it just gave up gets the pair that replaced it
+again, so two tabs, parallel clients or a retry after a lost response keep
+the sign-in. Any other reuse of an old refresh token (after those 60 seconds,
+from a different client, or a token older than the one just replaced) is
+treated as a stolen token: every access and refresh token of that sign-in is
+deleted, and the client must reconnect and get owner approval again. Other
+sign-ins of the same client are not touched. A client that waits longer than
+60 seconds before retrying a refresh whose answer it never got still has to
+reconnect.
+
 **A claude.ai connector can search but not save**
 The `/mcp` challenge hints `read write`, and each token is capped to the
 client's registered scope. A connector approved before v0.60.5.0 received a

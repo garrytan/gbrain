@@ -5,6 +5,7 @@
  * the question page itself is written by ./pages.ts through the coordinator.
  */
 import type { BrainEngine } from '../engine.ts';
+import { privatePagesFilterForCaller } from '../search/private-visibility.ts';
 import { formatQuestionId, type QuestionScope } from './identity.ts';
 
 export type PinState = 'active' | 'inactive' | 'archived';
@@ -100,18 +101,25 @@ export function pinScope(row: Pick<PinRow, 'source_id' | 'scope_slug_prefix' | '
   };
 }
 
-export async function getPin(engine: BrainEngine, sourceId: string, slug: string, opts: { forUpdate?: boolean } = {}): Promise<PinRow | null> {
+/** The pin's question page is live and the current caller reads it (its readers and privacy, as page reads judge them). */
+function readablePageSql(): string {
+  return `EXISTS (SELECT 1 FROM pages p WHERE p.source_id = pinned_questions.source_id AND p.slug = pinned_questions.slug
+    AND p.deleted_at IS NULL AND ${privatePagesFilterForCaller('p')})`;
+}
+
+export async function getPin(engine: BrainEngine, sourceId: string, slug: string, opts: { forUpdate?: boolean; readablePage?: boolean } = {}): Promise<PinRow | null> {
   const rows = await engine.executeRaw<Record<string, unknown>>(
-    `SELECT ${COLUMNS} FROM pinned_questions WHERE source_id = $1 AND slug = $2${opts.forUpdate ? ' FOR UPDATE' : ''}`, [sourceId, slug]);
+    `SELECT ${COLUMNS} FROM pinned_questions WHERE source_id = $1 AND slug = $2${opts.readablePage ? ` AND ${readablePageSql()}` : ''}${opts.forUpdate ? ' FOR UPDATE' : ''}`, [sourceId, slug]);
   return rows[0] ? toPinRow(rows[0]) : null;
 }
 
-export async function listPins(engine: BrainEngine, opts: { sourceIds?: string[]; includeArchived?: boolean; states?: PinState[] } = {}): Promise<PinRow[]> {
+export async function listPins(engine: BrainEngine, opts: { sourceIds?: string[]; includeArchived?: boolean; states?: PinState[]; readablePage?: boolean } = {}): Promise<PinRow[]> {
   const params: unknown[] = [];
   const where: string[] = [];
   if (opts.sourceIds) { params.push(opts.sourceIds); where.push(`source_id = ANY($${params.length}::text[])`); }
   if (opts.states) { params.push(opts.states); where.push(`state = ANY($${params.length}::text[])`); }
   else if (!opts.includeArchived) where.push(`state <> 'archived'`);
+  if (opts.readablePage) where.push(readablePageSql());
   const rows = await engine.executeRaw<Record<string, unknown>>(
     `SELECT ${COLUMNS} FROM pinned_questions ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY source_id, created_at, id`, params);
   return rows.map(toPinRow);

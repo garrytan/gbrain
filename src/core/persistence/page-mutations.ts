@@ -10,6 +10,7 @@ import { isHostAbsolutePath } from '../path-confine.ts';
 import type { OperationContext } from '../ops/contract.ts';
 import { OperationError } from '../ops/contract.ts';
 import { admitChangeReason, CHANGE_REASON_OPERATIONS } from './change-reason.ts';
+import { screenWriteSecrets, type SecretsRedacted } from './write-secrets.ts';
 import { grantedWriteSource, readsButWritesOnly, writeGrantRefusal } from './write-grant.ts';
 import { VERSION } from '../../version.ts';
 import { ownerBuildMismatch } from './publication-failure.ts';
@@ -284,7 +285,8 @@ export async function submitPageMutation(ctx: OperationContext,
   }
   const response = await withLiveSearchable(ctx, throwIfHeld(pendingAwareResponse(ctx, await waitForWrite(ctx.engine, row, ctx.config, waitMs())), false));
   emitFenceNotice(ctx, response, row.slug);
-  return { ...response, ...(prepared.typeWarning ? { type_warning: prepared.typeWarning } : {}), ...(prepared.slugAdvisory ? { slug_advisory: prepared.slugAdvisory } : {}) };
+  return { ...response, ...(prepared.typeWarning ? { type_warning: prepared.typeWarning } : {}), ...(prepared.slugAdvisory ? { slug_advisory: prepared.slugAdvisory } : {}),
+    ...(prepared.secretsRedacted ? { secrets_redacted: prepared.secretsRedacted } : {}) };
 }
 
 /**
@@ -384,7 +386,8 @@ export async function preparePageAdmission(ctx: OperationContext,
     databaseOnly?: 'overwrite_restore' | 'detached'; stagedBody?: true;
     /** pages-02: put_page's handler (and put_pages, and commit_page_upload for a new page, when the caller named no source) asks for the unsourced-put fork refusal, applied to a fresh request after the write authority. */
     unsourcedForkGuard?: true }
-): Promise<{ prior: WriteRequest; admission?: undefined; typeWarning?: undefined; slugAdvisory?: undefined } | { prior?: undefined; admission: WriteAdmission; typeWarning: PageTypeWarning | null; slugAdvisory: string | null }> {
+): Promise<{ prior: WriteRequest; admission?: undefined; typeWarning?: undefined; slugAdvisory?: undefined; secretsRedacted?: undefined }
+  | { prior?: undefined; admission: WriteAdmission; typeWarning: PageTypeWarning | null; slugAdvisory: string | null; secretsRedacted: SecretsRedacted | null }> {
   if (input.operation === 'put_page' && ['kind', 'preview', 'backup_reference'].some(key => Object.hasOwn(input.params, key))) {
     if (ctx.remote !== false || input.managedFileImport !== true || !OWNER_FILE_INTENTS.has(String(input.params.kind)) ||
       ['preview', 'backup_reference'].some(key => Object.hasOwn(input.params, key))) {
@@ -425,7 +428,9 @@ export async function preparePageAdmission(ctx: OperationContext,
     throw new OperationError('request_too_large', contentSizeHold(bodyBytes, PAGE_MAX_BYTES)!.message,
       `Nothing was admitted or written, and the same content is refused on every retry. Pages up to ${PAGE_MAX_BYTES} bytes are stored and searchable; send a smaller page.`);
   }
-  const { page_batch: _forged, timeline_section: _section, [GUEST_NOTE_INTENT_KEY]: _guestNote, ...params } = input.params;
+  // secrets.on_write: a remote write's text is screened before anything reads it, so a refused or redacted value is never journaled.
+  const screened = screenWriteSecrets(ctx, input.operation, input.params);
+  const { page_batch: _forged, timeline_section: _section, [GUEST_NOTE_INTENT_KEY]: _guestNote, ...params } = screened.params;
   const p: Record<string, unknown> = { ...params, ...parseMutationPrecondition(params) };
   if (p.content_origin !== undefined) contentOriginTier(p.content_origin);
   if (input.batch) p.page_batch = { id: input.batch.id, index: input.batch.index, size: input.batch.size, ...(input.batch.repeats?.length ? { repeats: input.batch.repeats } : {}) };
@@ -617,7 +622,7 @@ export async function preparePageAdmission(ctx: OperationContext,
     && !publishesDatabaseOnly(join(binding.local_path, binding.relative_path), slug, snapshot)) {
     throw colonSlugWindowsRefusal(slug, sourceId);
   }
-  return { typeWarning, slugAdvisory, admission: { origin: ctx.admissionOrigin, principal, operation: input.operation, sourceId, sourceIncarnation: source.incarnation,
+  return { typeWarning, slugAdvisory, secretsRedacted: screened.redacted, admission: { origin: ctx.admissionOrigin, principal, operation: input.operation, sourceId, sourceIncarnation: source.incarnation,
     slug, pageId: snapshot?.page.id ?? null, requestId, clientRequestId: input.batch ? undefined : clientRequestIdOf(params.request_id), callerIntent, intent, authority,
     ...(input.operation === 'edit_page' ? { terminalReservation: receiptReservation({ intent, authority }, (await import('./page-edit.ts')).EDIT_PAGE_RECEIPT_RESERVE) } : {}),
     worktreeId: writeThrough ? binding?.worktree_id : null, topologyGeneration: writeThrough ? binding?.topology_generation : null, deferrable: true } };
