@@ -619,8 +619,8 @@ impl Store {
         let mut pages = BTreeMap::new();
         let mut out = Vec::new();
         for v in versions {
-            if !pages.contains_key(&v.page_id) {
-                pages.insert(v.page_id, read_page_by_id(read, v.page_id)?);
+            if let std::collections::btree_map::Entry::Vacant(slot) = pages.entry(v.page_id) {
+                slot.insert(read_page_by_id(read, v.page_id)?);
             }
             let Some(Some(page)) = pages.get(&v.page_id) else {
                 continue;
