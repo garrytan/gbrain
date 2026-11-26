@@ -263,6 +263,36 @@ describe('who may save a rule, and whose receipt it is', () => {
     expect(row!.n).toBe(1);
   });
 
+  test('a correction never names a fact in another member\'s personal source', async () => {
+    const seeded = await seedFact('Alice Example keeps a diary in the top drawer.');
+    await engine.executeRaw("INSERT INTO access_member_sources (member_id, source_id) VALUES ($1, 'default')", [THIRD]);
+    try {
+      const r = await remote(MEMBER, 'correct', { rule: 'Alice Example keeps a diary in the bottom drawer.', fact_id: seeded, scope: 'team', dry_run: true });
+      expect({ isError: r.isError, code: r.json.code }).toEqual({ isError: true, code: 'fact_not_found' });
+      expect(r.text).not.toContain('people/alice-example');
+    } finally {
+      await engine.executeRaw("DELETE FROM access_member_sources WHERE source_id = 'default'");
+    }
+  });
+
+  test('a withdrawn fact cannot be named by a new correction', async () => {
+    const gone = await seedFact('Alice Example rides the night bus.');
+    const out = await local('forget', { id: gone, reason: 'test' });
+    expect((await factRow(gone))!.expired_at).not.toBeNull();
+    const r = await remote(MEMBER, 'correct', { rule: 'Alice Example rides the day bus.', fact_id: gone, corrected_fact: 'Alice Example rides the day bus.', scope: 'team' });
+    expect({ out: !!out, isError: r.isError, code: r.json.code }).toEqual({ out: true, isError: true, code: 'fact_not_found' });
+  });
+
+  test('a retry of an approved correction returns its receipt after the fact is withdrawn', async () => {
+    const wrong = await seedFact('Alice Example walks to work.');
+    const call = { rule: 'Alice Example cycles to work.', fact_id: wrong, scope: 'team', request_id: 'gst4000-retry-1' };
+    const r = await remote(MEMBER, 'correct', call);
+    expect((await approve(r.json.rule_id + '@' + r.json.revision)).approved).toBe(true);
+    expect((await factRow(wrong))!.expired_at).not.toBeNull();
+    const again = await remote(MEMBER, 'correct', call);
+    expect({ isError: again.isError, receipt_id: again.json.receipt_id, state: again.json.state }).toEqual({ isError: false, receipt_id: r.json.receipt_id, state: 'committed' });
+  });
+
   test('a dry run saves no rule and changes no fact', async () => {
     const wrong = await seedFact('Alice Example takes the early train.');
     const rules = async () => (await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM pages WHERE slug LIKE 'rules/%'"))[0]!.n;

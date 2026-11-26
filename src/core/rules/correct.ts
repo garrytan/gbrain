@@ -23,6 +23,7 @@ import { initializeLocalPersistence, pageMutationSource, requestPrincipalForCont
 import { refuseGuestSourceWrite } from '../guests/admission.ts';
 import { callerIsOwner, currentCallerAccess, privateProvenanceFilterUnderPolicy, resolveExcludePrivatePages, withoutCallerAccess } from '../search/private-visibility.ts';
 import { callerMember, factVisibilitySql, memberPageSlug, ownerSpeaksForItself } from '../access/member-facts.ts';
+import { hiddenPersonalSources } from '../access/member-sources.ts';
 import { projectionEligibleSql } from '../eligibility/sql.ts';
 import { resolveReadEligibility } from '../eligibility/policy.ts';
 import { ownerReachesFact, readForgetTarget } from '../persistence/forget-prepare.ts';
@@ -431,16 +432,18 @@ const factNotFound = (id: string) => opError('fact_not_found', `No fact with id 
  * The fact a remote caller names, read under the rules recall and forget apply (visibility, read eligibility, the fact's
  * page and its entity's privacy), with the page it is about from the same read. A member only withdraws a fact on its
  * own member page, never replaces it (`own`), and is never told the page such a fact is about; the owner speaking for
- * itself does either.
+ * itself does either. A withdrawn fact, or one in a personal source the caller does not own, is never named.
  */
 async function remoteFact(ctx: OperationContext, id: number, sourceId: string, member: string | null, withdraw: boolean, owner: boolean): Promise<{ entity_slug: string | null; own: boolean } | null> {
+  if (!owner && !callerIsOwner() && (await hiddenPersonalSources(ctx.engine, [sourceId], member ?? '', false)).has(sourceId)) return null;
   const excludePrivate = await resolveExcludePrivatePages(ctx.engine, true);
-  const mine = member ? await readForgetTarget(ctx.engine, id, sourceId, true, excludePrivate, false, memberPageSlug(member)) : null;
+  const found = member ? await readForgetTarget(ctx.engine, id, sourceId, true, excludePrivate, false, memberPageSlug(member)) : null;
+  const mine = found && !found.expired_at ? found : null;
   if (mine) return owner ? { entity_slug: mine.entity_slug ?? null, own: false } : withdraw ? { entity_slug: mine.entity_slug ?? null, own: true } : null;
   const readable = !withdraw ? "facts.visibility = 'world'" : callerIsOwner() ? 'TRUE' : factVisibilitySql('facts', ['world']);
   const eligible = projectionEligibleSql('facts', 'facts', await resolveReadEligibility(ctx));
   const provenance = excludePrivate ? ` AND ${privateProvenanceFilterUnderPolicy('facts')}` : '';
-  const [row] = await ctx.engine.executeRaw<{ entity_slug: string | null }>(`SELECT entity_slug FROM facts WHERE id=$1 AND source_id=$2 AND ${readable} AND ${eligible}${provenance}`, [id, sourceId]);
+  const [row] = await ctx.engine.executeRaw<{ entity_slug: string | null }>(`SELECT entity_slug FROM facts WHERE id=$1 AND source_id=$2 AND expired_at IS NULL AND ${readable} AND ${eligible}${provenance}`, [id, sourceId]);
   if (row) return { entity_slug: row.entity_slug ?? null, own: false };
   return null;
 }
@@ -582,17 +585,17 @@ export async function runCorrect(ctx: OperationContext, p: Record<string, unknow
   }
   const key = receiptPrincipal(principal);
   let receiptId = `cr-${digestOf([key, input.request_id ?? intentOf(input)]).slice(0, 16)}`;
+  const intent = intentOf(input);
+  let prior = await readReceipt(ctx.engine, receiptId);
+  if (prior && !input.request_id && (prior.state === 'committed' || prior.state === 'conflicted')) { receiptId = `cr-${randomBytes(8).toString('hex')}`; prior = null; }
+  if (prior && !ctx.dryRun) {
+    if (prior.intent !== intent) throw opError('idempotency_conflict', 'The request_id already belongs to a different correction, so nothing was written.', 'Use a new request_id for a new correction.');
+    return receiptView(prior.state === 'conflicted' ? prior : await continueReceipt(ctx, prior), remote);
+  }
   const entity = input.fact_id
     ? await factEntity(ctx, input.fact_id, input.source_id, input.entity, remote ? { member: author.member, withdraw: !input.corrected_fact, owner: author.owner } : null)
     : input.entity;
   if (ctx.dryRun) return { dry_run: true, action: 'correct', scope: input.scope, rule: input.rule, fact: input.fact_id ? { action: input.corrected_fact ? 'replace' : 'withdraw', id: input.fact_id, entity } : null };
-  const intent = intentOf(input);
-  let prior = await readReceipt(ctx.engine, receiptId);
-  if (prior && !input.request_id && (prior.state === 'committed' || prior.state === 'conflicted')) { receiptId = `cr-${randomBytes(8).toString('hex')}`; prior = null; }
-  if (prior) {
-    if (prior.intent !== intent) throw opError('idempotency_conflict', 'The request_id already belongs to a different correction, so nothing was written.', 'Use a new request_id for a new correction.');
-    return receiptView(prior.state === 'conflicted' ? prior : await continueReceipt(ctx, prior), remote);
-  }
   const underCap = async (stored: Awaited<ReturnType<typeof readAllReceipts>>) => {
     if (remote && stored.filter(({ receipt: r }) => r?.principal?.split('|')[0] === principalKey(principal) && OPEN_STATES.has(r.state)).length >= OPEN_RECEIPTS_PER_PRINCIPAL) {
       throw opError('correct_proposals_capped', `This connection already has ${OPEN_RECEIPTS_PER_PRINCIPAL} corrections waiting (proposed or unfinished), so nothing was written.`,
