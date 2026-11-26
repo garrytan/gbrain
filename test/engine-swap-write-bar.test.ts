@@ -80,6 +80,56 @@ describe('the per-brain write bar', () => {
   });
 });
 
+describe('a bar the compared writes do not reach: the reason and the counts', () => {
+  /** A 5-day epoch of `perDay` qualifying writes, `inTx` of them each day inside a transaction (never comparable). */
+  function epoch(perDay: number, inTx: number, compared: number, extra: Partial<NonNullable<ShadowStatus['write_comparisons']>> = {}): ShadowStatus {
+    const h = history(UNDER_OVERRIDE, perDay);
+    const in_transaction_by_day = Object.fromEntries(Object.keys(h.by_day).map(d => [d, inTx]));
+    return {
+      epoch_started_at: new Date(UNDER_OVERRIDE.getTime() - 5 * DAY).toISOString(),
+      write_comparisons: { state: 'measured', sample_rate: 1, comparable: compared, unexplained_difference: 0, uncomparable: 0, capability_missing: 0,
+        qualifying_writes: { ...h, in_transaction_by_day }, ...extra },
+    };
+  }
+
+  test('pin: a brain with 5,000 of its own writes in the window needs the 1,000 cap', () => {
+    const h = history(UNDER_OVERRIDE, 1000);
+    expect(writeBar(h, 5, UNDER_OVERRIDE)).toMatchObject({ writes_in_window: 5000, bar: 1000 });
+    expect(criterion5(doc(999, h), UNDER_OVERRIDE).state).toBe('fail');
+    expect(criterion5(doc(1000, h), UNDER_OVERRIDE).state).toBe('pass');
+  });
+
+  test('writes that cannot be compared are named and counted, and the plan says when the bar is reached at this share', () => {
+    // 50 a day, 20 of them inside a transaction: 30 a day can be compared, so 150 in 5 days, short of the 250 bar.
+    const row = criterion5(epoch(50, 20, 150, { uncomparable: 4, capability_missing: 6 }), UNDER_OVERRIDE);
+    expect(row.state).toBe('fail');
+    expect(row.detail).toContain('150 of 250 compared writes');
+    expect(row.detail).toContain('write_bar_not_reached');
+    expect(row.detail).toContain('in a transaction 100');
+    expect(row.detail).toContain('uncomparable 4');
+    expect(row.detail).toContain('capability_missing 6');
+    expect(row.detail).toMatch(/reached after about 8\.3 days of shadow/);
+  });
+
+  test('a brain none of whose writes can be compared is named unreachable, and never passes', () => {
+    const row = criterion5(epoch(50, 50, 0), UNDER_OVERRIDE);
+    expect(row.state).toBe('fail');
+    expect(row.detail).toContain('write_bar_unreachable');
+    expect(row.detail).toContain('in a transaction 250');
+  });
+
+  test('a call inside a transaction is counted in W and as in a transaction', async () => {
+    const noted: Array<[string, string]> = [];
+    const tx = { kind: 'pglite', putPage: async () => ({}) } as unknown as BrainEngine;
+    const stub = { kind: 'pglite', putPage: async () => ({}), transaction: async (fn: (t: BrainEngine) => Promise<unknown>) => fn(tx) } as unknown as BrainEngine;
+    const sink: ShadowSink = { counters: {} as never, offer: () => undefined, active: () => true, noteWrite: (op: string, inTx?: boolean) => { noted.push([op, inTx ? 'tx' : 'out']); } };
+    const wrapped = wrapShadowEngine(stub, sink, { sampleRate: 0 });
+    await wrapped.putPage('a', {} as never);
+    await wrapped.transaction(async (t) => { await t.putPage('b', {} as never); });
+    expect(noted).toEqual([['putPage', 'out'], ['putPage', 'tx']]);
+  });
+});
+
 describe('qualifying writes are counted from the brain\'s own call counts, sampled-out calls included', () => {
   const dirs: string[] = [];
   afterAll(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); });
@@ -92,6 +142,7 @@ describe('qualifying writes are counted from the brain\'s own call counts, sampl
     appendWriteUsage(dir, { ts: '2026-12-04T10:00:00.000Z', epoch_id: 'e1', ops: { addLinksBatch: { offered: 3, sampled_out: 3, shed: 0, skipped_in_transaction: 0, unmirrorable: 0 }, putRawData: { offered: 7, sampled_out: 0, shed: 0, skipped_in_transaction: 0, unmirrorable: 0 } } });
     const got = readQualifyingWrites(dir, now)!;
     expect(got.by_day).toEqual({ '2026-12-03': 10, '2026-12-04': 3 });
+    expect(got.in_transaction_by_day).toEqual({});
     expect(got.first_seen).toBe('2026-12-03T10:00:00.000Z');
     expect([...QUALIFYING_WRITE_OPS]).toEqual(['putPage', 'deletePage', 'addLink', 'addLinksBatch', 'removeLink']);
   });
