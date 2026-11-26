@@ -31,8 +31,10 @@ cast refuses it; zero or below names no page. The store runs one write at a time
 
 ## Differences from PGLite
 
-- **Stores the store does not keep.** `core_edit_notices`, `guest_marks` and `guest_promotions` hold no rows here, and a
-  page never has a withheld source path, so those stated kinds never apply.
+- **Stores the store does not keep.** `guest_marks` and `guest_promotions` hold no rows here, and a
+  page never has a withheld source path, so those stated kinds never apply. `core_edit_notices` is kept
+  ([core-edit-notices.md](core-edit-notices.md)): the kind applies when any notice, pending or acknowledged, is filed on the
+  page's source and slug (`STATED_SQL` has no `acked_at` filter).
 - **Write-gate holds.** A hold here keeps no `page_id` or `page_candidates`, so it reaches the concept by its slug, or
   through the source's slug aliases (alias to canonical) and rename record (old to new), as `holdReachCte` follows them.
 - **Order of the held report.** Rows come by source then slug in byte order; Postgres orders them by its database

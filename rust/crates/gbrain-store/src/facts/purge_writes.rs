@@ -14,10 +14,9 @@
 //!   trigger), and the text seal and embedding signature are cleared, as the statement does.
 //!
 //! Each call is one store write, so it commits or rolls back with the purge's transaction. A row
-//! lock has no meaning here: one writer runs at a time. What the store does not keep and the
-//! TypeScript members answer (src/core/rust-engine/store-members/facts-purge.ts):
-//! `blankPurgeCoreEditNotices` blanks nothing, as no core edit notice is ever stored (the core
-//! guard writes them through `executeRaw`, which this engine refuses).
+//! lock has no meaning here: one writer runs at a time. `blankPurgeCoreEditNotices` is the
+//! core edit notices' (`core_edit_notices.rs`): it clears the base text of the source's notices
+//! that hold the purged fact.
 
 use super::{delete_fact, read_fact};
 use crate::Store;

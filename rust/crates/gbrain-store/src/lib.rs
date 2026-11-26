@@ -21,6 +21,7 @@ pub mod chunks;
 pub mod cli_reads;
 pub mod concept_rebuild;
 pub mod config;
+pub mod core_edit_notices;
 pub mod env;
 pub mod error;
 #[cfg(test)]

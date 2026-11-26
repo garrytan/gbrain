@@ -69,9 +69,11 @@ engine keeps is read, and a store it keeps no rows of is answered 0 by the membe
 | `segment_texts` | segment texts | texts of the source holding a needle byte for byte, named by a manifest row or not as asked |
 | `effect_payload` | effects | effects of the source whose data, outcome or recovery holds a form, or (given a page) its Git effects on the slug whose data holds a reason form |
 
-Answered 0 in the member, because the store keeps no such rows: `core_edit_notices`, `retrieval_event_pages`,
+Answered 0 in the member, because the store keeps no such rows: `retrieval_event_pages`,
 `retrieval_event_links`, `retrieval_feedback`, `retrieval_weights`, `context_volunteer_events`,
-`mention_gazetteer_entries` and `query_cache` (as `clearQueryCache` answers 0). A segment text that is not UTF-8 refuses, as
+`mention_gazetteer_entries` and `query_cache` (as `clearQueryCache` answers 0). The store keeps `core_edit_notices`
+([core-edit-notices.md](core-edit-notices.md)): a `slug_key` probe of it counts the notices of the source filed under the slug,
+acknowledged ones included. A segment text that is not UTF-8 refuses, as
 `convert_from` does. Pinned by `rust/crates/gbrain-store/tests/purge_store_probe.rs` and
 `test/engine-parity/page-purge-probes.test.ts`.
 
@@ -85,8 +87,8 @@ The receipt of a fact purge (`verifyFactPurge`) counts the rows that still carry
   for a named subject, is the subject page) and take proposals of the source whose claim has the purged fact's fingerprint.
   `claim_text` counts live pages (body, timeline, title, frontmatter as JSON text), chunks of every generation (a soft-deleted
   page's too), page versions (the same text, or a change reason holding the claim or the reason) and journal requests (intent,
-  outcome, error detail or message) that state the claim, its JSON form or the reason's. `core_edit_notices` is answered 0 in the
-  member: the store keeps no edit notice.
+  outcome, error detail or message) that state the claim, its JSON form or the reason's, and the core edit notices of the source
+  whose base text holds the claim (`strpos(lower(base_text), claim) > 0`; a notice with no base text never matches).
 - The swept inventory stores, through `countPurgeProbe` of a `table` probe (`facts/purge_probe.rs` `for_each_table_row`, one row
   streamer in each owning module): `belief_events`, `derived_generations`, `derived_generation_items`, `files`, `open_loops`,
   `page_aliases`, `page_body_manifest`, `page_body_stagings`, `page_body_staging_texts`, `page_segment_texts`,

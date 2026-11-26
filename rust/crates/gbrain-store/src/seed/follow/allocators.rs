@@ -40,6 +40,10 @@ const ALLOCATORS: &[(&str, Counter)] = &[
     ("code_edges_chunk", Counter::Meta("next_code_edge_chunk")),
     ("code_edges_symbol", Counter::Meta("next_code_edge_symbol")),
     ("open_loops", Counter::Meta(crate::facts::loops::COUNTER)),
+    (
+        "core_edit_notices",
+        Counter::Meta(crate::core_edit_notices::COUNTER),
+    ),
     ("trust_proposals", Counter::Meta("trust_proposals")),
     (
         "wanted_links",

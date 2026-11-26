@@ -455,11 +455,11 @@ Members whose SQL has no order (`RETURNING`, `UNION`) answer sorted, as the SQL 
 | `deletePageStagings(sourceId, slug, pageId)`, `deletePageSegmentTexts(sourceId, shas)` | how many stagings of the slug or page (with their client keys and recorded texts) and how many unreferenced, unrecorded texts among the shas |
 | `sweepPageTextsForClaims(sourceId, cursor, forms, chunkBytes)` | `{ last, deleted }`: one statement of the claim sweep over the source's unreferenced texts after the cursor, 4096 at most, bounded by `chunkBytes` before each text, deleting those whose lowered text holds a form and that no live staging recorded |
 | `listPageChangeReasons(sourceId, slug, pageId)`, `listRequestsRecordingReasons(sourceId, slug)` | `[{ reason }]` (NULL first, then byte order); `[{ id, principal_kind, principal_id }]` by sequence, first 10000 |
-| `deletePurgedSlugStoreRows(sourceId, slugs)` | `{ removed, secretStore }`: rows scrubbed from take proposals, open loops, page aliases, slug aliases and rename history; a slug named twice counts once |
+| `deletePurgedSlugStoreRows(sourceId, slugs)` | `{ removed, secretStore }`: rows scrubbed from take proposals, open loops, core edit notices (acknowledged ones too), page aliases, slug aliases and rename history; a slug named twice counts once |
 | `listPageSecretOccurrences(pageIds)` | `[]`, without a store call |
 
-The store keeps no `core_edit_notices` and no secret store, so `deletePurgedSlugStoreRows` answers `core_edit_notices: 0` and
-`secretStore: false`, and `scrubPurgedSlugStores` then reports `secret_store_occurrence` and `secret_store` as 0 (it does so
+The store keeps the core edit notices ([core-edit-notices.md](core-edit-notices.md)) and no secret store, so
+`deletePurgedSlugStoreRows` counts the notices it deletes under `core_edit_notices` and answers `secretStore: false`, and `scrubPurgedSlugStores` then reports `secret_store_occurrence` and `secret_store` as 0 (it does so
 only when the caller did not pass `ifPresent`, which names a restored archive). `listPageSecretOccurrences` has nothing to
 read. A text is needed while a manifest row names it or a live staging (a live state, or one an outstanding request names)
 recorded it; a text that is not UTF-8 refuses the claim sweep, as `convert_from` does. `sweepPurgedPage` itself still stops on
@@ -1137,8 +1137,8 @@ store write that answers what the SQL member answers:
 - `updatePageBodyForPurge(sourceId, pageId, compiled, timeline, hash)`: an inline page's body and content hash, the text
   seal and embedding signature cleared; a changed body takes a new knowledge revision, as the revision trigger does.
 
-`blankPurgeCoreEditNotices` answers 0 in TypeScript: the store keeps no core edit notices (the core guard writes them
-through `executeRaw`, which this engine refuses). `rewritePageBodies` versions an inline page through `createVersion`
+`blankPurgeCoreEditNotices` is the store's ([core-edit-notices.md](core-edit-notices.md)): it clears the base text of the
+source's notices that hold the lowered fact and counts them. `rewritePageBodies` versions an inline page through `createVersion`
 with the preimage it read, which the Rust `createVersion` serves (the store versions the read revision and metadata,
 [pages.md](pages.md)); its saved-version read is `listPurgeVersionBodies`.
 `deletePurgeTakeProposals` and the segmented-storage writes (`abortPurgedStagings`, `deletePurgedStagingParts`,
@@ -1506,7 +1506,7 @@ read: the version-body SELECT of `rewriteVersionBodies` builds its WHERE, column
 | `deletePurgeWriteGateHolds` | Deletes the source's held writes whose fact or claim text has the fingerprint; the ids deleted. Writes write_gate_holds; run it in the purge transaction. |
 | `deletePurgeWriteGateReceipts` | Deletes the gate receipts that name one of the facts, takes or held writes (ids as text); how many. Writes write_gate_receipts; run it in the purge transaction. |
 | `deletePurgeTakeProposals` | Deletes the source's take proposals whose claim text has the fingerprint; how many. Writes take_proposals; run it in the purge transaction. |
-| `blankPurgeCoreEditNotices` | Blanks the base text of the source's core edit notices that quote the lowered fact; how many. Writes core_edit_notices; run it in the purge transaction. |
+| `blankPurgeCoreEditNotices` | Blanks the base text of the source's core edit notices that quote the lowered fact; how many. Writes core_edit_notices; run it in the purge transaction. Served by the store (core-edit-notices.md). |
 | `deletePurgedFacts` | Deletes the facts with these ids from the source; how many. Writes facts; run it in the purge transaction. |
 | `deletePurgedChunks` | Deletes the chunks of these pages and voids the text projection that certified them; returns how many chunk rows were deleted. Writes content_chunks and pages; run it in the purge transaction. |
 | `listPurgedPageRevisions` | The id, slug and knowledge revision of the source's pages with these ids, in slug order. Reads pages. |
@@ -1525,8 +1525,8 @@ What the store would need to hold to answer them, by family:
   segment texts and the manifest that references them.
 
 The parity cases seed pages, tags, versions, facts, chunks and write requests through the typed writers. Stagings, takes,
-review and proposal rows, gate holds and receipts, open loops, core edit notices and view digests have no typed fixture, so
-those members are compared on empty tables only; `insertTakePurge` is compared by its
+review and proposal rows, gate holds and receipts, open loops and view digests have no typed fixture, so
+those members are compared on empty tables only (the core edit notices have one, `insertCoreEditNotice`); `insertTakePurge` is compared by its
 boolean (true, then false for the same key) and by the refusals its tombstones cause (take-purge-ledger.test.ts). `insertHoldingPagePurges` is compared by the claim checks that read its tombstones back
 (holding-page-purges.test.ts).
 

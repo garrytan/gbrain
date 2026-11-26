@@ -18,7 +18,8 @@
 //!   claim or the reason;
 //! - `persistence_requests`: a journal request of the source whose intent, outcome, error detail or error message holds the
 //!   claim, its JSON form or the reason's;
-//! - `core_edit_notices` is a store this crate keeps no rows of: the TypeScript member answers it, and a probe of it refuses.
+//! - `core_edit_notices`: a notice of the source whose base text holds the claim (`core_edit_notices.rs`); a notice with no
+//!   base text never matches.
 //!
 //! Text matching follows the SQL: `strpos(lower(x), n) > 0` is `pg_lower(x).contains(n)` with a NULL column never matching
 //! (`COALESCE(x, '')` where the SQL coalesces it), and a jsonb column's text is `jsonb_text`. Needles are matched as given.
@@ -264,6 +265,9 @@ pub(super) fn count_claim_text(
         "content_chunks" => count_chunks(read, q, cap),
         "page_versions" => count_versions(read, q, cap),
         "persistence_requests" => count_requests(read, q, cap),
+        "core_edit_notices" => {
+            crate::core_edit_notices::count_claim_text(read, q.source_id, q.claim, cap)
+        }
         other => Err(invalid(format!(
             "{op}: the {other} claim rows are not kept"
         ))),
@@ -392,10 +396,47 @@ mod tests {
             visibility: "world",
             subject: "*",
         };
-        let claim_err = count_claim_text(&store, "core_edit_notices", &q, "op", 2).unwrap_err();
+        let claim_err = count_claim_text(&store, "page_aliases", &q, "op", 2).unwrap_err();
         assert!(claim_err.to_string().contains("claim rows are not kept"));
         let fp_err = count_fingerprint(&store, "pages", &f, "op", 2).unwrap_err();
         assert!(fp_err.to_string().contains("fingerprint rows are not kept"));
+    }
+
+    #[test]
+    fn the_notice_count_serves_core_edit_notices_and_stops_at_the_cap() {
+        let (store, _dir) = open("purge-claim-notices");
+        let notice = |source: &str, slug: &str, base: Option<&str>| {
+            let input: crate::core_edit_notices::CoreEditNoticeInput = serde_json::from_value(json!({
+                "sourceId": source, "slug": slug, "pageId": null, "revision": "r", "baseRevision": null,
+                "baseText": base, "actor": "remote:agent",
+            }))
+            .unwrap();
+            store.insert_core_edit_notice(&input).unwrap();
+        };
+        for n in 0..6 {
+            notice(
+                "default",
+                &format!("core/p{n}"),
+                Some("The Harbor Will Reopen soon"),
+            );
+        }
+        notice("default", "core/none", None);
+        notice("default", "core/other", Some("unrelated"));
+        let q = claim("default");
+        let snap = snapshot(&store);
+        // Not refused: a count, stopping at the cap.
+        assert_eq!(
+            count_claim_text(&snap, "core_edit_notices", &q, "op", 100).unwrap(),
+            6
+        );
+        assert_eq!(
+            count_claim_text(&snap, "core_edit_notices", &q, "op", 3).unwrap(),
+            3
+        );
+        assert_eq!(
+            count_claim_text(&snap, "core_edit_notices", &claim("other"), "op", 100).unwrap(),
+            0
+        );
     }
 
     #[test]

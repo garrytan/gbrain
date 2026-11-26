@@ -93,6 +93,7 @@ keyset batches in key order. The relations come in groups, each in its own file 
 | `raw_data` | the raw data of a page and source | the serial `id` is not kept; `fetched_at` is kept |
 | `code_edges_chunk`, `code_edges_symbol` | the edge, its unique key and every index key | both chunks must exist (checked against the chunk id counter) |
 | `open_loops` | the loop with its status, times and dedup key | a dedup key held by another id is `constraint_violation` |
+| `core_edit_notices` | the notice with its id, revision, base text and times, and its acknowledgement (`acked_at`), and its per-page index entry | none: the table has no foreign key, so a notice of a source or slug the store lacks is copied; the id counter is raised past the copied id |
 | `synthesis_evidence` | the citation and its reverse index | the take must be stored |
 | `trust_proposals` | the proposal with its status and decision, the pending unique key (pending rows) and the row index | the proposer's principal and `write_request_id` are not kept |
 | `wanted_links` | the row with `checked_at` (`-infinity` is no time) and `first_seen_at` | |
@@ -159,7 +160,7 @@ relation when that family reaches master, in the same PR as the store bridge tha
 | `sync_identity_downgrades` (`op_checkpoints` rows of op `sync-identity-downgrade`) | `rust-engine/main`, `rust-engine/identity-downgrade-rust` | pending rename repairs are lost: the purge of deleted pages no longer holds the old page, so the repair can find nothing to restore |
 | `budget_ledger`, `budget_reservations` | key tag only on `rust-engine/main` | the resolver's daily budget restarts at zero |
 | `retrieval_weights` | key tag only on `rust-engine/main` | ranking: every page weight reads 0.5, so the feedback boost is off |
-| `belief_*`, `core_edit_notices`, `derived_generation_activations`, `derived_generation_attempts`, `derived_generation_valve`, `drift_decisions`, `entity_identity_reviews`, `git_canonical_brain`, `ingest_applied_captures`, `link_edge_proposals`, `loop_suppressions`, `memory_proposals`, `page_derivation_spend`, `page_extraction_state`, `page_label_guards`, `page_write_guards`, `pinned_questions`, `question_evidence`, `secret_store`, `secret_store_occurrence`, `shared_skill_*`, `source_ingestion_receipts`, `take_domain_assignments`, `take_horizons`, `take_proposals`, `trust_allow_rules` | none on master or `rust-engine/main` | each is user data, security or spend state the primary reads |
+| `belief_*`, `derived_generation_activations`, `derived_generation_attempts`, `derived_generation_valve`, `drift_decisions`, `entity_identity_reviews`, `git_canonical_brain`, `ingest_applied_captures`, `link_edge_proposals`, `loop_suppressions`, `memory_proposals`, `page_derivation_spend`, `page_extraction_state`, `page_label_guards`, `page_write_guards`, `pinned_questions`, `question_evidence`, `secret_store`, `secret_store_occurrence`, `shared_skill_*`, `source_ingestion_receipts`, `take_domain_assignments`, `take_horizons`, `take_proposals`, `trust_allow_rules` | none on master or `rust-engine/main` | each is user data, security or spend state the primary reads |
 
 ### Gap columns (`seed::GAP_COLUMNS`)
 
@@ -298,7 +299,7 @@ store takes both as lowercase hex of whole bytes and a digest is exactly 32 byte
 
 The relations `allocatorCheck` reports are those whose import raises an id counter: `pages`, `content_chunks`,
 `links`, `timeline_entries`, `facts`, `takes`, `page_versions`, `files`, `code_edges_chunk`, `code_edges_symbol`,
-`open_loops`, `trust_proposals`, `wanted_links`, `mcp_spend_log`, `decide_calibrations`, `decision_receipts`,
+`open_loops`, `core_edit_notices`, `trust_proposals`, `wanted_links`, `mcp_spend_log`, `decide_calibrations`, `decision_receipts`,
 `decide_proposals`, `decide_review_proposals`, `calibration_profiles`, `wake_cron_runs` and `wake_forgets`. Every
 write that stores a row with an id (`importRelation`, `replaceRelationRows` and `replaceInterval` alike) raises its
 counter past that id, also for a row the store drops (a retired or segment chunk), so the store never hands out an id

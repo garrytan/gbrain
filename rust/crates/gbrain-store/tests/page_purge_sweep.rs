@@ -743,6 +743,31 @@ fn the_slug_store_scrub_counts_each_store_and_leaves_other_slugs_and_sources() {
         json!({ "removed": { "take_proposals": 0, "open_loops": 0, "core_edit_notices": 0,
             "page_aliases": 0, "slug_aliases": 0, "slug_rename_history": 0 }, "secretStore": false })
     );
+    // A notice on the slug is deleted and counted, the acknowledged one too; another slug's and another source's stay.
+    let notice = |source: &str, slug: &str| -> u64 {
+        let input = args(
+            json!({ "sourceId": source, "slug": slug, "pageId": null, "revision": "r1",
+            "baseRevision": null, "baseText": "before", "actor": "remote:agent" }),
+        );
+        store.insert_core_edit_notice(&input).unwrap()
+    };
+    let first = notice("default", SLUG);
+    notice("default", SLUG);
+    notice("default", "notes/b");
+    notice("other", SLUG);
+    store
+        .ack_core_edit_notices("default", SLUG, Some(first as i64))
+        .unwrap();
+    let out = store
+        .delete_purged_slug_store_rows("default", &[SLUG.to_string()])
+        .unwrap();
+    assert_eq!(out["removed"]["core_edit_notices"], 2);
+    assert_eq!(out["removed"]["open_loops"], 0);
+    assert_eq!(
+        store.list_pending_core_edit_notices(None).unwrap().len(),
+        2,
+        "the other slug and the other source keep theirs"
+    );
     assert_eq!(
         store
             .delete_purged_slug_store_rows("default", &["a\0".to_string()])

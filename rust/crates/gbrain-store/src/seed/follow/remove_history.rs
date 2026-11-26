@@ -77,6 +77,7 @@ pub(super) static SPECS: &[(&str, Follow)] = &[
             remove_loop,
         ),
     ),
+    ("core_edit_notices", follow(&["id"], remove_notice)),
     (
         "synthesis_evidence",
         follow(
@@ -183,6 +184,10 @@ fn remove_symbol_edge(tx: &mut dyn KvWrite, id: &Identity, _: Mode) -> Result<bo
 
 fn remove_loop(tx: &mut dyn KvWrite, id: &Identity, _: Mode) -> Result<bool> {
     crate::facts::loops::remove_open_loop(tx, need!(id, "id", u64))
+}
+
+fn remove_notice(tx: &mut dyn KvWrite, id: &Identity, _: Mode) -> Result<bool> {
+    crate::core_edit_notices::remove_core_edit_notice(tx, need!(id, "id", u64))
 }
 
 fn remove_evidence(tx: &mut dyn KvWrite, id: &Identity, _: Mode) -> Result<bool> {

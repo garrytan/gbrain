@@ -4,8 +4,8 @@
 //! scrub of the stores keyed to a purged slug outside any foreign key. The fact tombstones a purge writes are
 //! `purge_ledger.rs`'s.
 //!
-//! The store keeps no `core_edit_notices` (they answer 0) and no secret store (`secretStore` is false, so the caller has no
-//! secret occurrences to purge); every other store of the scrub is kept and scrubbed here.
+//! The store keeps no secret store (`secretStore` is false, so the caller has no secret occurrences to purge); every other
+//! store of the scrub, the core edit notices (`core_edit_notices.rs`) included, is kept and scrubbed here.
 
 use super::page_purge_reads::page_facts;
 use super::read_fact;
@@ -40,7 +40,7 @@ impl Store {
     }
 
     /// `deletePurgedSlugStoreRows(sourceId, slugs)`: deletes the rows of `slugs` in the source from the stores keyed to a page by
-    /// source and slug: take proposals, open loops, (core edit notices: none kept), page aliases, the slug aliases that resolve to
+    /// source and slug: take proposals, open loops, core edit notices, page aliases, the slug aliases that resolve to
     /// a slug and the rename rows that end at one. `{ removed, secretStore: false }`; `removed` is empty for no slugs.
     pub fn delete_purged_slug_store_rows(
         &self,
@@ -59,12 +59,14 @@ impl Store {
         self.write(|tx| {
             let take_proposals = crate::takes::proposals::remove_for_slugs(tx, source_id, &wanted)?;
             let open_loops = crate::facts::loops::remove_for_slugs(tx, source_id, &wanted)?;
+            let core_edit_notices =
+                crate::core_edit_notices::remove_for_slugs(tx, source_id, &wanted)?;
             let aliases = crate::aliases::scrub_purged_slug_stores(tx, source_id, slugs)?;
             Ok(json!({
                 "removed": {
                     "take_proposals": take_proposals,
                     "open_loops": open_loops,
-                    "core_edit_notices": 0,
+                    "core_edit_notices": core_edit_notices,
                     "page_aliases": aliases.page_aliases,
                     "slug_aliases": aliases.slug_aliases,
                     "slug_rename_history": aliases.slug_rename_history,

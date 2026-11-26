@@ -66,12 +66,15 @@ fn cells(line: &str) -> Vec<String> {
 fn the_registry_numbers_every_format_once_in_order() {
     let rows = rows();
     assert!(!rows.is_empty(), "the registry table is empty");
-    for (i, row) in rows.iter().enumerate() {
-        assert_eq!(
-            row.format,
-            i as u32 + 1,
-            "format numbers must be unique and run 1, 2, 3, … with no gap"
+    let mut shipped_so_far = 0;
+    let mut previous = 0;
+    for row in &rows {
+        assert!(
+            row.format > previous,
+            "format {} repeats or is out of order: numbers are unique and ascend",
+            row.format
         );
+        previous = row.format;
         assert!(
             row.status == "shipped" || row.status == "reserved",
             "format {} has status {:?}; use shipped or reserved",
@@ -83,6 +86,24 @@ fn the_registry_numbers_every_format_once_in_order() {
             "format {} names no branch",
             row.format
         );
+        if row.status == "shipped" {
+            // Shipped formats run 1, 2, 3, … with no gap: a brain at any of them upgrades one step at a time.
+            shipped_so_far += 1;
+            assert_eq!(
+                row.format, shipped_so_far,
+                "shipped format numbers must run 1, 2, 3, … with no gap"
+            );
+        } else {
+            // A reserved row sits above every shipped one. It may skip numbers: the trunk holds a number for a
+            // branch that has not landed (rust/docs/store/format.md, "The registry"), and the numbers between
+            // belong to branches whose rows this file does not carry yet.
+            assert_eq!(
+                shipped_so_far,
+                rows.iter().filter(|r| r.status == "shipped").count() as u32,
+                "format {} is reserved below a shipped format",
+                row.format
+            );
+        }
     }
 }
 

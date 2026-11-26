@@ -158,6 +158,56 @@ fn a_request_still_naming_the_page_counts_and_the_purge_itself_does_not() {
     assert_eq!(probe(own, "notes/doomed"), 0);
 }
 
+fn notice(store: &Store, source: &str, slug: &str, base_text: Option<&str>) {
+    let input = args(
+        json!({ "sourceId": source, "slug": slug, "pageId": null, "revision": "r1",
+        "baseRevision": null, "baseText": base_text, "actor": "remote:agent" }),
+    );
+    store.insert_core_edit_notice(&input).unwrap();
+}
+
+#[test]
+fn the_core_edit_notices_are_served_by_slug_and_by_claim_text_and_no_longer_refused() {
+    let (_dir, store) = brain("purge-store-probe-notices");
+    // An empty brain counts 0 for both, as before.
+    assert_eq!(slug_key(&store, "core_edit_notices", "default", SLUG), 0);
+    let claim = |source: &str, needle: &str| {
+        count(
+            &store,
+            json!({ "kind": "claim_text", "store": "core_edit_notices", "sourceId": source,
+            "claim": needle, "json": needle, "reason": "x", "reasonJson": "x" }),
+            10,
+        )
+    };
+    assert_eq!(claim("default", "harbor"), 0);
+    notice(&store, "default", SLUG, Some("The Harbor will reopen"));
+    notice(&store, "default", SLUG, None);
+    notice(&store, "other", SLUG, Some("harbor elsewhere"));
+    assert_eq!(slug_key(&store, "core_edit_notices", "default", SLUG), 2);
+    assert_eq!(slug_key(&store, "core_edit_notices", "other", SLUG), 1);
+    assert_eq!(
+        slug_key(&store, "core_edit_notices", "default", "notes/nobody"),
+        0
+    );
+    assert_eq!(claim("default", "harbor"), 1);
+    assert_eq!(claim("other", "harbor"), 1);
+    assert_eq!(claim("default", "elsewhere"), 0);
+    // The purge blanks the base text; the slug rows stay until the sweep removes them.
+    assert_eq!(
+        store
+            .blank_purge_core_edit_notices("default", "harbor")
+            .unwrap(),
+        1
+    );
+    assert_eq!(claim("default", "harbor"), 0);
+    assert_eq!(slug_key(&store, "core_edit_notices", "default", SLUG), 2);
+    store
+        .delete_purged_slug_store_rows("default", &[SLUG.to_string()])
+        .unwrap();
+    assert_eq!(slug_key(&store, "core_edit_notices", "default", SLUG), 0);
+    assert_eq!(slug_key(&store, "core_edit_notices", "other", SLUG), 1);
+}
+
 #[test]
 fn the_stores_the_store_does_not_keep_refuse_and_a_probe_missing_its_fields_does_not_parse() {
     let (_dir, store) = brain("purge-store-probe-refusals");
@@ -166,7 +216,7 @@ fn the_stores_the_store_does_not_keep_refuse_and_a_probe_missing_its_fields_does
         store.count_purge_store_probe(&q).unwrap_err().to_string()
     };
     assert!(
-        refused(json!({ "kind": "slug_key", "store": "core_edit_notices", "sourceId": "default", "slug": SLUG }))
+        refused(json!({ "kind": "slug_key", "store": "query_cache", "sourceId": "default", "slug": SLUG }))
             .contains("not kept")
     );
     assert!(
@@ -175,7 +225,7 @@ fn the_stores_the_store_does_not_keep_refuse_and_a_probe_missing_its_fields_does
     );
     assert!(
         refused(
-            json!({ "kind": "claim_text", "store": "core_edit_notices", "sourceId": "default",
+            json!({ "kind": "claim_text", "store": "query_cache", "sourceId": "default",
             "claim": "x", "json": "x", "reason": "x", "reasonJson": "x" })
         )
         .contains("not kept")

@@ -5,17 +5,17 @@
 //!
 //! Kinds served here, with the store each reads:
 //! - `slug_key`: `pages` (a soft-deleted page counts), `facts` (by `source_markdown_slug`), `take_proposals`, `open_loops`,
-//!   `page_aliases`, `slug_aliases` (by canonical slug), `eval_candidates.retrieved_slugs` (a slug a page of another covered
+//!   `core_edit_notices` (acknowledged ones count), `page_aliases`, `slug_aliases` (by canonical slug), `eval_candidates.retrieved_slugs` (a slug a page of another covered
 //!   source still holds does not count), `context_volunteer_events` (`volunteer_events.rs`), `files` (detached, naming the slug) and `write_gate_holds`;
 //! - `page_rows`: the page's chunks, versions, takes and timeline entries;
 //! - `fact_refs`: the decide proposals and the review queue and proposals that name a fact id;
 //! - `trust_proposals`, `page_requests`, `page_segment_texts`, `segment_texts` and `effect_payload`;
 //! - `fingerprint` (facts, takes, take proposals) and `claim_text` (pages, content chunks, page versions, journal requests).
 //!
-//! The stores this crate keeps no rows of (`core_edit_notices`, `mention_gazetteer_entries`,
-//! `query_cache`, and the retrieval event, link, feedback and weight stores) are answered by the TypeScript member; a probe
-//! of one that reaches this module refuses. `fingerprint` and `claim_text` are the fact purge's probes, served by
-//! `purge_claim_probe.rs` (its `claim_text` serves every store but `core_edit_notices`, which the TypeScript member answers).
+//! The stores this crate keeps no rows of (`query_cache`, and the retrieval event, link, feedback and weight stores) are
+//! answered by the TypeScript member; a probe of one that reaches this module refuses. `fingerprint` and `claim_text` are the
+//! fact purge's probes, served by `purge_claim_probe.rs` (its `claim_text` serves the pages, content chunks, page versions,
+//! journal requests and core edit notices).
 //!
 //! Text matching follows the SQL: `strpos(lower(COALESCE(x::text, '')), n) > 0` is `pg_lower(text).contains(n)` with a NULL
 //! column read as the empty text, and a jsonb column's text is `jsonb_text`. The caller lowers the needles.
@@ -488,6 +488,7 @@ fn slug_key(
         "facts" => Ok(super::page_rows(read, source_id, slug)?.len()),
         "take_proposals" => crate::takes::proposals::count_for_slug(read, source_id, slug),
         "open_loops" => super::loops::count_for_slug(read, source_id, slug),
+        "core_edit_notices" => crate::core_edit_notices::count_for_slug(read, source_id, slug),
         "page_aliases" => crate::aliases::count_alias_rows(read, source_id, slug, false),
         "slug_aliases" => crate::aliases::count_alias_rows(read, source_id, slug, true),
         "eval_candidates.retrieved_slugs" => count_retrieved_slug(read, source_id, slug),

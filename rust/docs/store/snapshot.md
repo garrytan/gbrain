@@ -73,7 +73,9 @@ directory without `SNAPSHOT.json` is incomplete.
 created_at_us}`. `tags` maps each first key byte actually present (two hex digits, never a fixed list) to
 `{keys, sha256}`; the hash covers `u64be(len key) || key || u64be(len value) || value` in key order.
 `relations` appears for a seeded store: the digest of each seeded relation's digest entries, the same
-bytes as `relationDigest`, streamed (`relation_digest_stream` keeps one entry in memory). Parsing is
+bytes as `relationDigest`, streamed (`relation_digest_stream` keeps one entry in memory); a seeded store that holds
+core edit notices lists `core_edit_notices` there. The notices themselves (tag `32`: the rows and their per-page index,
+[core-edit-notices.md](core-edit-notices.md)) are copied and digested like every tag; no code names the family. Parsing is
 strict: unknown fields, a different `version`, tags that are not hex or counts that do not add up are
 `invalid_argument`. Numbers past 2^32 reach the addon as floats; whole floats are accepted.
 

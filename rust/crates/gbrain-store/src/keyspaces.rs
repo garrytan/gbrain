@@ -102,6 +102,11 @@ pub const KEYSPACES: &[Keyspace] = &[
         "purged change reasons",
     ),
     ks(
+        keys::CORE_EDIT_NOTICE,
+        "core_edit_notices",
+        "core edit notices and their per-page index",
+    ),
+    ks(
         keys::SECRET_STORE,
         "secret_store",
         "secret store entries and occurrences",

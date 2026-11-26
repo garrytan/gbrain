@@ -202,6 +202,7 @@ Reserved tags:
 | persistence_journal, the `derived_generations` ledger (with its attempt counters and valve windows), the `derivation_inputs` edges and their input index (`h 0x0A`, `h 0x0B`) | `h` | `DERIVED_GENERATION` | no (a source delete removes its rows) |
 | access_rules (folder rules, pending prefixes, policy state and revisions; the module owns the sub-tags) | `z` | `ACCESS_RULES` | no |
 | reason_purge_tombstones | `1` | `REASON_TOMBSTONE` | no |
+| core_edit_notices (the notice rows `2 0x01 id` and the per-page index `2 0x02 source \0 slug \0 id`; `core_edit_notices.rs`) | `2` | `CORE_EDIT_NOTICE` | no (a hard page delete and the page purge sweep remove the slug's notices through the slug-store scrub; a source delete removes the source's notices) |
 | session_state | `y` | `SESSION_STATE` | no |
 | access_members | `x`, sub-tags `0x01` members, `0x02` groups, `0x03` group members | `ACCESS_MEMBERS` | no |
 | secret_store (the `secret_store` entries and `secret_store_occurrence` rows; the module owns the sub-tags) | `3` | `SECRET_STORE` | yes (a hard page delete clears the occurrences' `page_id`, the purge then removes the page's occurrences and the entries only they held; a source delete removes the source's entries) |
@@ -238,7 +239,7 @@ change to this table and to `keys.rs`.
 ### Tag registry
 
 The one-byte tags on `rust-engine/main` are the "Key layout" and "Reserved tags" tables above: every capital letter,
-every small letter but `x` and `y`, and the digits `1` and `2`. The "Reserved tags" row for `x` (`ACCESS_MEMBERS`)
+every small letter but `x` and `y`, and the digits `1` and `2` (`2` is `CORE_EDIT_NOTICE`). The "Reserved tags" row for `x` (`ACCESS_MEMBERS`)
 records a claim whose constant is still only on the access branches, listed below as a branch claim. This table lists every other tag claimed on any
 branch, and the reserved ones, with the owner who claimed it. The rules:
 
@@ -262,7 +263,7 @@ branch, and the reserved ones, with the owner who claimed it. The rules:
 | `0` | `GUEST_SOURCE` | not named on the branch; the trunk names it at intake | branch rust-engine/collate-equal |
 | `3` | `SECRET_STORE` | lane 10 | reserved (the trunk holds it for the secret store) |
 | `~` | `FAMILY_ESCAPE` | core | main once this lands: the escape for two-byte family tags |
-| `~e` | `PAGE_EXTRACTION_STATE` | lane 8 (rust-members-tail) | branch rust-engine/rust-members-tail: the `page_extraction_state` family (the extraction watermark and partial-input receipt of a page); a hard page delete removes the page's rows; the tag `2` stays free |
+| `~e` | `PAGE_EXTRACTION_STATE` | lane 8 (rust-members-tail) | branch rust-engine/rust-members-tail: the `page_extraction_state` family (the extraction watermark and partial-input receipt of a page); a hard page delete removes the page's rows; the tag `2` is `core_edit_notices`' |
 
 Free one-byte tags: the digits `4` to `9` (approved rows only) and punctuation other than `~`, which stays unclaimed
 unless a reviewed change to this table names it.

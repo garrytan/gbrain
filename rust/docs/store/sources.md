@@ -94,7 +94,8 @@ The source members below behave differently on the Rust engine. Each difference 
   `state` and `reason` and lists a page with any ledger row, of any size.
 - A page's embedding hold lives only in its `page_embedding_budget` ledger row
   (`page_embedding_budget.rs`, `holdPageEmbedding` and `recordPageEmbeddingHold`; docs/store/embeddings.md).
-  There is no separate hold family: key tag `2` (the old `embedding_holds`) is free.
+  There is no separate hold family: the old `embedding_holds` family's key tag `2` is now the core edit notices'
+  (core-edit-notices.md).
   `readPageSizeRows` reads the ledger row's `state` and `reason`, so it reports the same as the SQL
   engines (which left-join the row) and lists a page with any ledger row, of any size.
 - `readReasonPurgeTombstones` sorts pairs by commit, then path, in byte order. The SQL engines
@@ -116,7 +117,6 @@ The source members below behave differently on the Rust engine. Each difference 
   SQL engines now do (`s.id COLLATE "C" DESC`).
 - `deleteSourceRecord` always removes the pages, as the `pages -> sources` cascade does, so it
   never reports `stranded` pages (the SQL engines report them when that cascade would not fire,
-  #7072). The store keeps no `persistence_source_bindings`, retrieval events or feedback,
-  `context_volunteer_events` or `core_edit_notices`, so those steps of the SQL delete have nothing
-  to remove. The SQL engines run the scrub again in a second statement for a write that waited on
+  #7072). The source's `core_edit_notices` go with the records keyed by source (the SQL delete's
+  `scrub_core_edit_notices` step, run again in the rescrub), acknowledged ones too. The SQL engines run the scrub again in a second statement for a write that waited on
   the delete; the store's one write transaction leaves no such gap.

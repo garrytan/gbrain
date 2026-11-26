@@ -11,9 +11,9 @@
 //! always fires here, so no page is ever stranded), the records keyed by source
 //! (`cascade::remove_source_rows`), then the rows the SQL scrubs by hand: the source's
 //! managed-sync cursors, its write gate holds with their receipts and the eval candidates'
-//! retrieved slugs no other covered source has. The store keeps no persistence source bindings,
-//! no retrieval events or feedback, no volunteer events and no core edit notices, so those steps
-//! have nothing to remove. An OAuth client that names the source refuses the delete, as the
+//! retrieved slugs no other covered source has. The source's core edit notices go with the
+//! records keyed by source (`cascade::remove_source_rows`) and again in the rescrub
+//! (`rescrub_removed_source_in`). An OAuth client that names the source refuses the delete, as the
 //! `ON DELETE RESTRICT` key does.
 //!
 //! The archive times live on the source record (`archived_at_us`, `archive_expires_at_us`), as
@@ -306,6 +306,7 @@ pub(crate) fn delete_source_incarnation_in(
 
 /// `removedSourceRescrubStatement`: the rows that name the source outside a foreign key, ungated.
 pub(crate) fn rescrub_removed_source_in(tx: &mut dyn crate::kv::KvWrite, id: &str) -> Result<()> {
+    crate::core_edit_notices::remove_source_rows(tx, id)?;
     crate::trust::write_gate::remove_source_holds(tx, id)?;
     crate::eval_capture::remove_source_retrieved_slugs(tx, id)?;
     crate::retrieval_feedback::remove_source_rows(tx, id)?;

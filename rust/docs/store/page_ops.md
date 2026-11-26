@@ -104,10 +104,10 @@ outer catch of the retrieval reflex in `src/core/context/reflex.ts`.
   `timestamptz` text).
 - `revertToVersion` writes no new version, as PGLite. The interface spec says it snapshots first.
 - A hard delete (`deletePages`, `purgeDeletedPages`) scrubs, in the delete's write, the eval candidates, retrieval
-  records, the take proposals (with their idempotency entries and nudges) and open loops (with their dedupe keys) filed
-  under the slug in its source, and the page aliases, slug aliases and rename history, as PGLite's
-  `deletePurgedSlugStoreRows` does. PGLite also scrubs ratings, weights, the volunteer log, the gazetteer, core-edit
-  notices and write-gate holds, which this scrub does not touch.
+  records, the take proposals (with their idempotency entries and nudges), open loops (with their dedupe keys) and
+  core-edit notices (acknowledged ones too, [core-edit-notices.md](core-edit-notices.md)) filed under the slug in its
+  source, and the page aliases, slug aliases and rename history, as PGLite's `deletePurgedSlugStoreRows` does. PGLite
+  also scrubs write-gate holds, which this scrub does not touch.
 
 ## The purgeDeletedPages holds
 

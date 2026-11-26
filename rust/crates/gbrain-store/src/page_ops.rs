@@ -470,8 +470,8 @@ pub(crate) fn write_changed(
 /// gazetteer (`mention_state::scrub_purged_entries`), the volunteer log (`volunteer_events::scrub_purged_slugs`) and the
 /// retrieval logs, ratings and weights (`retrieval_feedback::scrub_purged_slugs`) and, of `scrubPurgedSlugStores`, the
 /// take proposals (with their idempotency entries and nudges), the open loops (with their dedupe keys), the page aliases,
-/// slug aliases and rename history, scrubbed in PGLite's order (src/core/engine-sql/pages.ts deletePages). Core-edit
-/// notices and write-gate holds are not scrubbed here.
+/// slug aliases and rename history, and the core-edit notices (`core_edit_notices.rs`), scrubbed in PGLite's order
+/// (src/core/engine-sql/pages.ts deletePages). Write-gate holds are not scrubbed here.
 fn scrub_purged_slugs(
     tx: &mut dyn KvWrite,
     source_id: &str,
@@ -482,11 +482,12 @@ fn scrub_purged_slugs(
     crate::mention_state::scrub_purged_entries(tx, source_id, slugs)?;
     crate::volunteer_events::scrub_purged_slugs(tx, source_id, slugs)?;
     crate::retrieval_feedback::scrub_purged_slugs(tx, source_id, slugs)?;
-    // `deletePurgedSlugStoreRows` (engine-sql/purge-slug-stores.ts SLUG_STORE_DELETES), in its order: the take proposals
-    // and open loops filed under the slug, then the aliases and rename history.
+    // `deletePurgedSlugStoreRows` (engine-sql/purge-slug-stores.ts SLUG_STORE_DELETES), in its order: the take proposals,
+    // open loops and core-edit notices filed under the slug, then the aliases and rename history.
     let wanted: BTreeSet<&str> = slugs.iter().map(String::as_str).collect();
     crate::takes::proposals::remove_for_slugs(tx, source_id, &wanted)?;
     crate::facts::loops::remove_for_slugs(tx, source_id, &wanted)?;
+    crate::core_edit_notices::remove_for_slugs(tx, source_id, &wanted)?;
     crate::aliases::scrub_purged_slug_stores(tx, source_id, slugs)?;
     crate::secret_store::purge_for_deleted_pages(tx, source_id, slugs, secret_occurrences)?;
     Ok(())

@@ -1,5 +1,5 @@
-//! Brain history and graph: page versions, files, raw data, code edges, open loops, synthesis
-//! evidence, trust proposals, wanted links, the facts reconcile watermark, fact relink attempts and
+//! Brain history and graph: page versions, files, raw data, code edges, open loops, core edit
+//! notices, synthesis evidence, trust proposals, wanted links, the facts reconcile watermark, fact relink attempts and
 //! the derived generation ledger.
 
 use super::decode::Row;
@@ -8,6 +8,9 @@ use super::{
     Losses, Outcome, Relation, raise_counter, require_page, require_source,
 };
 use crate::code_edges::{EdgeRecord, Table, seed_edge};
+use crate::core_edit_notices::{
+    COUNTER as NEXT_CORE_EDIT_NOTICE_ID, NoticeRecord, seed_core_edit_notice,
+};
 use crate::dream::jsonb;
 use crate::error::{Result, StoreError};
 use crate::facts::loops::{COUNTER as NEXT_OPEN_LOOP_ID, LoopRecord, seed_open_loop};
@@ -32,6 +35,7 @@ pub(super) const RELATIONS: &[(&str, &Relation)] = &[
     ("code_edges_chunk", &CODE_EDGES_CHUNK),
     ("code_edges_symbol", &CODE_EDGES_SYMBOL),
     ("open_loops", &OPEN_LOOPS),
+    ("core_edit_notices", &CORE_EDIT_NOTICES),
     ("synthesis_evidence", &SYNTHESIS_EVIDENCE),
     ("trust_proposals", &TRUST_PROPOSALS),
     ("wanted_links", &WANTED_LINKS),
@@ -384,6 +388,46 @@ fn import_open_loop(tx: &mut dyn KvWrite, row: &Row, _: &mut Losses) -> Result<O
         return Ok(Outcome::Skipped);
     }
     raise_counter(tx, NEXT_OPEN_LOOP_ID, id)?;
+    Ok(Outcome::Imported)
+}
+
+// ---- core_edit_notices ---------------------------------------------------------------------
+
+/// The table has no foreign key: a notice names its source and slug as text, so the import checks neither.
+static CORE_EDIT_NOTICES: Relation = Relation {
+    key: &["id"],
+    columns: &[
+        ("id", Kept),
+        ("source_id", Kept),
+        ("slug", Kept),
+        ("page_id", Kept),
+        ("revision", Kept),
+        ("base_revision", Kept),
+        ("base_text", Kept),
+        ("actor", Kept),
+        ("created_at", Kept),
+        ("acked_at", Kept),
+    ],
+    import: import_core_edit_notice,
+};
+
+fn import_core_edit_notice(tx: &mut dyn KvWrite, row: &Row, _: &mut Losses) -> Result<Outcome> {
+    let id = row.req_id("id")?;
+    let record = NoticeRecord {
+        source_id: row.req("source_id")?,
+        slug: row.req("slug")?,
+        page_id: row.i64("page_id")?,
+        revision: row.text("revision"),
+        base_revision: row.text("base_revision"),
+        base_text: row.text("base_text"),
+        actor: row.req("actor")?,
+        created_at_us: row.req_ts("created_at")?,
+        acked_at_us: row.ts("acked_at")?,
+    };
+    if !seed_core_edit_notice(tx, id, &record)? {
+        return Ok(Outcome::Skipped);
+    }
+    raise_counter(tx, NEXT_CORE_EDIT_NOTICE_ID, id)?;
     Ok(Outcome::Imported)
 }
 

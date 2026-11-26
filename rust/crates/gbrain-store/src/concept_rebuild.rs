@@ -277,8 +277,10 @@ fn stated_kinds(
         "slug_aliases",
         crate::aliases::count_alias_rows(read, source_id, slug, true)? > 0,
     );
-    // The store keeps no core_edit_notices (facts/page_purge_sweep.rs), so none is stated here.
-    add("core_edit_notices", false);
+    add(
+        "core_edit_notices",
+        crate::core_edit_notices::has_for_slug(read, source_id, slug)?,
+    );
     let mut hold = false;
     for start in crate::trust::write_gate::source_hold_slugs(read, source_id)? {
         // A hold keeps no page id or candidate list here, so it reaches the page by its slug or a rename of it.

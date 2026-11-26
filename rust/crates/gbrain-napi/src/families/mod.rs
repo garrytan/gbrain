@@ -100,6 +100,7 @@ mod chronicle_state;
 mod chunk_queries;
 mod code_edges;
 mod contradictions;
+mod core_edit_notices;
 mod cycle_reads;
 mod decide_store;
 mod derivation_trust;

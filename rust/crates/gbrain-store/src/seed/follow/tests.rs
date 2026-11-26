@@ -682,6 +682,91 @@ fn an_interval_replace_removes_the_entries_the_primary_no_longer_holds() {
     assert_eq!(entries(&s, "config"), 0);
 }
 
+fn notice_row(id: &str, acked_at: Option<&str>) -> SeedRow {
+    let mut r = row(&[
+        ("id", id),
+        ("source_id", "default"),
+        ("slug", "core/user"),
+        ("revision", "rev-2"),
+        ("base_text", "The page before the remote edit"),
+        ("actor", "remote:agent"),
+        ("created_at", "2026-05-04 11:00:00.25+00"),
+    ]);
+    for column in ["page_id", "base_revision", "acked_at"] {
+        r.insert(column.to_string(), None);
+    }
+    if let Some(at) = acked_at {
+        r.insert("acked_at".to_string(), Some(at.to_string()));
+    }
+    r
+}
+
+#[test]
+fn the_follower_carries_core_edit_notices_with_their_ids_and_acknowledgements() {
+    let s = store();
+    // The seed copied two pending notices, no source row needed (the table has no foreign key).
+    s.import_relation_with_digests(
+        SEED,
+        "core_edit_notices",
+        vec![notice_row("3", None), notice_row("4", None)],
+        &[dig(3), dig(4)],
+    )
+    .unwrap();
+    assert_eq!(s.list_pending_core_edit_notices(None).unwrap().len(), 1);
+    assert_eq!(digest_of(&s, "core_edit_notices").0, 2);
+    // The primary acknowledged notice 3 and a user deleted notice 4; a newer notice 9 arrived.
+    s.replace_relation_rows(
+        SEED,
+        "core_edit_notices",
+        1,
+        &[
+            key(3, &[("id", "3")]),
+            key(4, &[("id", "4")]),
+            key(9, &[("id", "9")]),
+        ],
+        &[
+            notice_row("3", Some("2026-05-05 12:00:00+00")),
+            notice_row("9", None),
+        ],
+        &[dig(3), dig(9)],
+    )
+    .unwrap();
+    assert_eq!(
+        s.ack_core_edit_notices("default", "core/user", Some(3))
+            .unwrap(),
+        0,
+        "notice 3 is acknowledged"
+    );
+    assert!(
+        s.read_oldest_pending_core_edit_notice("default", "core/user")
+            .unwrap()
+            .is_some()
+    );
+    assert_eq!(
+        s.find_core_edit_notice_id_by_revision("default", "core/user", "rev-2")
+            .unwrap(),
+        Some(9)
+    );
+    assert_eq!(digest_of(&s, "core_edit_notices").0, 2, "ids 3 and 9");
+    // An interval replace to the primary's rows drops what it no longer holds, and the row's index entry with it.
+    let r = s
+        .replace_interval(SEED, "core_edit_notices", 2, None, None, &[], &[])
+        .unwrap();
+    assert_eq!(r.deleted, 2);
+    assert!(s.list_pending_core_edit_notices(None).unwrap().is_empty());
+    assert!(
+        s.read_oldest_pending_core_edit_notice("default", "core/user")
+            .unwrap()
+            .is_none()
+    );
+    // The counter was raised past the copied ids, so the next notice lands above them.
+    let input = serde_json::from_value(serde_json::json!({
+        "sourceId": "default", "slug": "core/user", "actor": "remote:agent",
+    }))
+    .unwrap();
+    assert_eq!(s.insert_core_edit_notice(&input).unwrap(), 10);
+}
+
 #[test]
 fn an_interval_replace_skips_entries_of_a_later_generation() {
     let s = seeded_config();
@@ -1022,6 +1107,21 @@ fn fixtures() -> Vec<(&'static str, Vec<SeedRow>)> {
                 ("closed_by", "manual"),
                 ("created_at", "2026-05-01 08:00:01+00"),
                 ("updated_at", "2026-05-03 10:00:01+00"),
+            ])],
+        ),
+        (
+            "core_edit_notices",
+            vec![row(&[
+                ("id", "1"),
+                ("source_id", "default"),
+                ("slug", "core/user"),
+                ("page_id", "7"),
+                ("revision", "rev-2"),
+                ("base_revision", "rev-1"),
+                ("base_text", "The page before the remote edit"),
+                ("actor", "remote:agent"),
+                ("created_at", "2026-05-04 11:00:00.25+00"),
+                ("acked_at", "2026-05-05 12:00:00+00"),
             ])],
         ),
         (

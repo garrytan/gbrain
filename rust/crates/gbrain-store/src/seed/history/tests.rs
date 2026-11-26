@@ -558,6 +558,98 @@ fn list_loops(s: &Store) -> Vec<Value> {
         .unwrap()
 }
 
+fn notice_row(id: &str, revision: &str, acked_at: Option<&str>) -> SeedRow {
+    let mut r = row(&[
+        ("id", id),
+        ("source_id", "default"),
+        ("slug", "people/alice-example"),
+        ("page_id", "7"),
+        ("revision", revision),
+        ("base_revision", "rev-0"),
+        ("base_text", "The page before the remote edit"),
+        ("actor", "remote:agent"),
+        ("created_at", "2026-05-04 11:00:00.25+00"),
+    ]);
+    r.insert("acked_at".to_string(), acked_at.map(str::to_owned));
+    r
+}
+
+#[test]
+fn core_edit_notices_keep_ids_times_and_acknowledgement() {
+    // No page or source is seeded first: the table has no foreign key.
+    let s = store();
+    let r = import(
+        &s,
+        "core_edit_notices",
+        vec![
+            notice_row("5", "rev-1", Some("2026-05-05 12:00:00.5+00")),
+            notice_row("8", "rev-2", None),
+        ],
+    );
+    assert_eq!((r.imported, r.skipped), (2, 0));
+    assert!(r.unmapped_columns.is_empty());
+    let pending = s.list_pending_core_edit_notices(None).unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0]["revision"], "rev-2");
+    assert_eq!(pending[0]["created_at"], "2026-05-04 11:00:00.25+00");
+    assert_eq!(
+        s.find_core_edit_notice_id_by_revision("default", "people/alice-example", "rev-1")
+            .unwrap(),
+        Some(5)
+    );
+    let oldest = s
+        .read_oldest_pending_core_edit_notice("default", "people/alice-example")
+        .unwrap()
+        .unwrap();
+    assert_eq!(oldest["base_text"], "The page before the remote edit");
+
+    // A retry skips the rows it has; a changed copy of a held id is skipped, not overwritten.
+    assert_eq!(
+        import(
+            &s,
+            "core_edit_notices",
+            vec![notice_row("5", "rev-1", None)]
+        )
+        .skipped,
+        1
+    );
+    assert_eq!(
+        import(
+            &s,
+            "core_edit_notices",
+            vec![notice_row("8", "rev-9", None)]
+        )
+        .skipped,
+        1
+    );
+    assert_eq!(
+        s.list_pending_core_edit_notices(None).unwrap()[0]["revision"],
+        "rev-2"
+    );
+
+    // The counter holds the next id, above the highest copied one.
+    assert_eq!(counter(&s, "next_core_edit_notices_id"), 9);
+    let input = serde_json::from_value(json!({
+        "sourceId": "default", "slug": "people/alice-example", "actor": "remote:agent",
+    }))
+    .unwrap();
+    assert_eq!(s.insert_core_edit_notice(&input).unwrap(), 9);
+}
+
+#[test]
+fn a_core_edit_notice_without_its_required_columns_is_refused() {
+    let s = store();
+    for missing in ["source_id", "slug", "actor", "created_at"] {
+        let mut r = notice_row("1", "rev-1", None);
+        r.remove(missing);
+        let err = s
+            .import_relation(SEED, "core_edit_notices", vec![r])
+            .unwrap_err();
+        assert!(!err.to_string().is_empty(), "{missing}");
+    }
+    assert!(s.list_pending_core_edit_notices(None).unwrap().is_empty());
+}
+
 #[test]
 fn open_loops_keep_ids_times_status_and_the_dedup_key() {
     let s = seeded_pages();
