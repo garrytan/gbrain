@@ -1,21 +1,26 @@
 /**
- * BrainEngine parity: a page the caller may not see reads exactly as a page that does not exist, on a read that
+ * BrainEngine parity: a page the caller may not see at a slug that is also an alias fails closed, on a read that
  * follows slug aliases and keeps an exact slug's identity (the remote `fetch` read: `readPageSnapshot` with
  * `excludePrivate`, `resolveAlias`, `requireLiveSource` and `preserveExactIdentity`).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Contract: for a slug X that is an alias of a visible page Y, a remote read of X answers Y when X holds no page,
- *    and answers Y when X holds a page the caller may not see (`visibility: private`, or `readable_by` naming another
- *    member). Only a page at X the caller may see keeps its own identity and answers itself. A trusted local read
- *    (no `excludePrivate`) is unchanged: any page at X answers itself.
- *  - Regression: a remote read whose existence check for X ignores the caller's visibility. It answers nothing for X
- *    when X holds a hidden page and Y when X holds no page, so the caller could tell a page it may not see from a page
- *    that does not exist.
- *  - Why existing coverage misses it: no parity case reads a slug that is both an alias and (hidden) page, and the
+ *  - Contract: for a slug X that is an alias of a visible page Y, a remote read of X answers Y when X holds no page.
+ *    When X holds a page the caller may not see (`visibility: private`, or `readable_by` naming another member), the
+ *    read answers nothing: the hidden page is never shown, and its alias target never stands in for it, so an id that
+ *    named the page X never opens a different page. `fetch` of that id gives the plain `page_not_found`, the same error
+ *    as a slug that holds no page and no alias. A page at X the caller may see answers itself. A trusted local read (no
+ *    `excludePrivate`) is unchanged: any page at X answers itself. The deep research contract
+ *    (test/helpers/deep-research-contract.ts, "private exact pages cannot substitute a readable stale alias target")
+ *    pins the same rule through `fetch`.
+ *  - Known loss: a remote caller that already knows X was renamed to Y can tell that X now holds a page it may not
+ *    see (X answers nothing where a renamed-away X would answer Y). It learns that one fact, never the page's content.
+ *  - Regression: a remote read whose exact-slug check ignores the caller's visibility follows the alias from a hidden
+ *    page at X to Y, so a citation of X opens a different page.
+ *  - Why existing coverage misses it: no parity case reads a slug that is both an alias and a (hidden) page, and the
  *    alias cases in pages.test.ts and sync-aliases.test.ts never pass `excludePrivate`.
  *  - Seam: none for the parity cases (typed methods only; the alias is made by renaming a page, then the old slug is
  *    written again). The Rust arm's `readPageSnapshot` member does not carry these options yet and stops on that typed
- *    refusal, which a parity case counts as a pass, so a plain test reads the Rust store through its own handle with
+ *    refusal, which a parity case counts as a pass, so plain tests read the Rust store through its own handle with
  *    the options and policy the SQL arms use and must return the same answers.
  */
 import { describe, expect, test } from 'bun:test';
@@ -25,6 +30,7 @@ import { PageSnapshotAmbiguousError } from '../../src/core/page-state/types.ts';
 import { storePagePolicy, storePageTextPolicy } from '../../src/core/rust-engine/store-members/private-provenance.ts';
 import { privatePagesFilterForCaller, withCallerAccess, type CallerAccess } from '../../src/core/search/private-visibility.ts';
 import { operationsByName, type OperationContext } from '../../src/core/operations.ts';
+import { encodeDeepResearchId } from '../../src/core/deep-research-id.ts';
 import { createSource, parityArms, resetArm, type ParityBackend } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
@@ -75,11 +81,12 @@ async function reads(read: Read, hidden: string, missing: string, visible: strin
   };
 }
 
-function expectHiddenReadsAsMissing(got: Awaited<ReturnType<typeof reads>>): void {
+function expectHiddenFailsClosed(got: Awaited<ReturnType<typeof reads>>): void {
+  // No page at X: the alias answers. A hidden page at X: nothing answers, never the alias target.
   expect(got.missingRemote).toBe('target');
   expect(got.missingRemoteLegacy).toBe('target');
-  expect(got.hiddenRemote).toBe(got.missingRemote);
-  expect(got.hiddenRemoteLegacy).toBe(got.missingRemoteLegacy);
+  expect(got.hiddenRemote).toBeNull();
+  expect(got.hiddenRemoteLegacy).toBeNull();
   // A page the caller may see keeps its identity, and a trusted local read sees every page at the slug.
   expect(got.visibleRemote).toBe('self');
   expect(got.hiddenLocal).toBe('self');
@@ -132,11 +139,11 @@ async function callerReads(read: (slug: string, legacy: boolean) => Promise<stri
 }
 
 function expectCallerAnswers(got: Awaited<ReturnType<typeof callerReads>>): void {
-  // (a) X hidden to the caller and Y visible answers Y, as no page at X does.
+  // (a) No page at X and Y visible answers Y; X hidden to the caller answers nothing, never Y in its place.
   expect(got.missingXSeenY).toBe('target');
   expect(got.missingXSeenYLegacy).toBe('target');
-  expect(got.hiddenXSeenY).toBe(got.missingXSeenY);
-  expect(got.hiddenXSeenYLegacy).toBe(got.missingXSeenYLegacy);
+  expect(got.hiddenXSeenY).toBeNull();
+  expect(got.hiddenXSeenYLegacy).toBeNull();
   // (b) X visible to the caller keeps its identity.
   expect(got.seenX).toBe('self');
   // (c) X hidden and Y hidden answers nothing, as no page at X with Y hidden does.
@@ -209,13 +216,18 @@ async function twoSourceReads(read: LegacyRead) {
 
 function expectTwoSourceAnswers(got: Record<string, string | null>): void {
   for (const variant of ['page', 'alias']) {
-    // Hidden X reads as missing X, in every scope, including the ambiguity a second candidate makes.
-    for (const scope of ['legacy', 'in-default', 'in-other']) expect(got[`h-${variant}-${scope}`]).toBe(got[`m-${variant}-${scope}`]);
-    expect(got[`m-${variant}-legacy`]).toBe('ambiguous');
+    // In `default`, hidden X answers nothing (its alias target never stands in); missing X answers the alias.
+    expect(got[`h-${variant}-in-default`]).toBeNull();
     expect(got[`m-${variant}-in-default`]).toBe('default:target');
+    expect(got[`m-${variant}-legacy`]).toBe('ambiguous');
+    // `other` answers alike whatever `default` holds at X.
+    expect(got[`h-${variant}-in-other`]).toBe(got[`m-${variant}-in-other`]);
   }
   expect(got['m-page-in-other']).toBe('other:self');
   expect(got['m-alias-in-other']).toBe('other:target');
+  // A legacy read across both sources finds only `other`'s answer: the hidden page in `default` adds no candidate.
+  expect(got['h-page-legacy']).toBe('other:self');
+  expect(got['h-alias-legacy']).toBe('other:target');
 }
 
 function remoteOpContext(engine: BrainEngine): OperationContext {
@@ -232,29 +244,29 @@ async function fetchCode(engine: BrainEngine, id: string): Promise<string> {
   }
 }
 
-describe('engine parity: a hidden page at an aliased slug reads as a missing page', () => {
+describe('engine parity: a hidden page at an aliased slug fails closed', () => {
   parityTest(
-    'a private page at an aliased slug reads as missing to a remote read, not as the page itself being absent',
+    'a private page at an aliased slug answers nothing to a remote read, never the alias target in its place',
     { methods: ['putPage', 'updateSlug', 'readPageSnapshot'] },
     async (engine) => {
       await aliasOf(engine, 'notes/never-written', 'notes/target-missing');
       await aliasWithPage(engine, 'notes/hidden-private', 'notes/target-private', { visibility: 'private' });
       await aliasWithPage(engine, 'notes/open-twin', 'notes/target-open', {});
       const got = await reads(engineRead(engine), 'notes/hidden-private', 'notes/never-written', 'notes/open-twin');
-      expectHiddenReadsAsMissing(got);
+      expectHiddenFailsClosed(got);
       return got;
     },
   );
 
   parityTest(
-    'a page that names other readers at an aliased slug reads as missing to a remote read',
+    'a page that names other readers at an aliased slug answers nothing to a remote read, never the alias target',
     { methods: ['putPage', 'updateSlug', 'readPageSnapshot'] },
     async (engine) => {
       await aliasOf(engine, 'notes/never-written', 'notes/target-missing');
       await aliasWithPage(engine, 'notes/hidden-readers', 'notes/target-readers', { readable_by: ['bob-example'] });
       await aliasWithPage(engine, 'notes/open-twin', 'notes/target-open', {});
       const got = await reads(engineRead(engine), 'notes/hidden-readers', 'notes/never-written', 'notes/open-twin');
-      expectHiddenReadsAsMissing(got);
+      expectHiddenFailsClosed(got);
       return got;
     },
   );
@@ -262,7 +274,7 @@ describe('engine parity: a hidden page at an aliased slug reads as a missing pag
 
   // One case per caller record: the caller's own filter decides which pages are hidden.
   parityTest(
-    'for a named member, a hidden page at an aliased slug reads as missing, a visible one as itself',
+    'for a named member, a hidden page at an aliased slug answers nothing, a visible one itself',
     { methods: ['putPage', 'updateSlug', 'readPageSnapshot'] },
     async (engine) => {
       await seedCaller(engine, CALLERS[0]!);
@@ -273,7 +285,7 @@ describe('engine parity: a hidden page at an aliased slug reads as a missing pag
   );
 
   parityTest(
-    'for a labelled-only member, a hidden page at an aliased slug reads as missing, a visible one as itself',
+    'for a labelled-only member, a hidden page at an aliased slug answers nothing, a visible one itself',
     { methods: ['putPage', 'updateSlug', 'readPageSnapshot'] },
     async (engine) => {
       await seedCaller(engine, CALLERS[1]!);
@@ -284,7 +296,7 @@ describe('engine parity: a hidden page at an aliased slug reads as a missing pag
   );
 
   parityTest(
-    'for an audience of two members, a hidden page at an aliased slug reads as missing, a visible one as itself',
+    'for an audience of two members, a hidden page at an aliased slug answers nothing, a visible one itself',
     { methods: ['putPage', 'updateSlug', 'readPageSnapshot'] },
     async (engine) => {
       await seedCaller(engine, CALLERS[2]!);
@@ -295,7 +307,7 @@ describe('engine parity: a hidden page at an aliased slug reads as a missing pag
   );
 
   parityTest(
-    'for an owner read, a hidden page at an aliased slug reads as missing, a visible one as itself',
+    'for an owner read, a hidden page at an aliased slug answers nothing, a visible one itself',
     { methods: ['putPage', 'updateSlug', 'readPageSnapshot'] },
     async (engine) => {
       await seedCaller(engine, CALLERS[3]!);
@@ -306,7 +318,7 @@ describe('engine parity: a hidden page at an aliased slug reads as a missing pag
   );
 
   parityTest(
-    'for a caller with a private-readable grant, a hidden page at an aliased slug reads as missing, a visible one as itself',
+    'for a caller with a private-readable grant, a hidden page at an aliased slug answers nothing, a visible one itself',
     { methods: ['putPage', 'updateSlug', 'readPageSnapshot'] },
     async (engine) => {
       await seedCaller(engine, CALLERS[4]!);
@@ -317,7 +329,7 @@ describe('engine parity: a hidden page at an aliased slug reads as a missing pag
   );
 
   parityTest(
-    'over two allowed sources, a hidden page at an aliased slug reads as missing: the same answers, the same ambiguity',
+    'over two allowed sources, a hidden page at an aliased slug answers nothing in its source and adds no candidate',
     { methods: ['putPage', 'updateSlug', 'readPageSnapshot'] },
     async (engine, backend) => {
       await seedTwoSources(engine, backend);
@@ -335,7 +347,7 @@ describe('engine parity: a hidden page at an aliased slug reads as a missing pag
   );
 
   parityTest(
-    'over two allowed sources, fetch by a legacy id answers ambiguous_id for a hidden page and for a missing page alike',
+    'over two allowed sources, fetch by a legacy id opens the other source\'s page past a hidden one, never its alias target',
     { methods: ['putPage', 'updateSlug', 'readPageSnapshot'] },
     async (engine, backend) => {
       await seedTwoSources(engine, backend);
@@ -343,13 +355,30 @@ describe('engine parity: a hidden page at an aliased slug reads as a missing pag
         hiddenPage: await fetchCode(engine, 'notes/h-page-x'), missingPage: await fetchCode(engine, 'notes/m-page-x'),
         hiddenAlias: await fetchCode(engine, 'notes/h-alias-x'), missingAlias: await fetchCode(engine, 'notes/m-alias-x'),
       };
-      expect(got).toEqual({ hiddenPage: 'ambiguous_id', missingPage: 'ambiguous_id', hiddenAlias: 'ambiguous_id', missingAlias: 'ambiguous_id' });
+      expect(got).toEqual({ hiddenPage: 'read', missingPage: 'ambiguous_id', hiddenAlias: 'read', missingAlias: 'ambiguous_id' });
+      return got;
+    },
+  );
+
+  parityTest(
+    'fetch of a hidden page\'s id at a slug with a readable stale alias gives the plain not-found, never the alias target',
+    { methods: ['putPage', 'updateSlug', 'readPageSnapshot'] },
+    async (engine) => {
+      await aliasWithPage(engine, 'notes/hidden-cited', 'notes/stale-target', { visibility: 'private' });
+      await aliasWithPage(engine, 'notes/readers-cited', 'notes/stale-target-readers', { readable_by: ['bob-example'] });
+      const got = {
+        hidden: await fetchCode(engine, encodeDeepResearchId('default', 'notes/hidden-cited')),
+        readers: await fetchCode(engine, encodeDeepResearchId('default', 'notes/readers-cited')),
+        nothing: await fetchCode(engine, encodeDeepResearchId('default', 'notes/no-page-no-alias')),
+        target: await fetchCode(engine, encodeDeepResearchId('default', 'notes/stale-target')),
+      };
+      expect(got).toEqual({ hidden: 'page_not_found', readers: 'page_not_found', nothing: 'page_not_found', target: 'read' });
       return got;
     },
   );
 
   // A parity case counts a typed refusal as a pass, and the Rust member refuses these options, so this reads the store.
-  test('the Rust store answers a hidden page at an aliased slug as it answers a missing page', async () => {
+  test('the Rust store answers nothing for a hidden page at an aliased slug, never the alias target', async () => {
     const arm = arms().find((a) => a.backend === 'rust');
     if (!arm) return; // GBRAIN_TEST_RUST_ARM is off: nothing to read
     await resetArm(arm);
@@ -365,7 +394,7 @@ describe('engine parity: a hidden page at an aliased slug reads as a missing pag
       ...SOURCE_READS, requireUnambiguous: legacy, ...(remote ? { excludePrivate: policy } : {}),
     }));
     for (const hidden of ['notes/hidden-private', 'notes/hidden-readers']) {
-      expectHiddenReadsAsMissing(await reads(read, hidden, 'notes/never-written', 'notes/open-twin'));
+      expectHiddenFailsClosed(await reads(read, hidden, 'notes/never-written', 'notes/open-twin'));
     }
   });
   // The Rust store gets the policy each caller's record renders. A caller whose policy the store cannot express is
@@ -395,7 +424,7 @@ describe('engine parity: a hidden page at an aliased slug reads as a missing pag
     expect({ served, refused }).toEqual(RUST_CALLER_POLICY);
   });
 
-  test('the Rust store answers a hidden page over two allowed sources as it answers a missing page, ambiguity included', async () => {
+  test('the Rust store answers a hidden page over two allowed sources as the SQL engines do, adding no candidate', async () => {
     const arm = arms().find((a) => a.backend === 'rust');
     if (!arm) return;
     await resetArm(arm);

@@ -1139,11 +1139,12 @@ fn resolve_alias_follows_a_rename_alias_and_require_unambiguous_refuses_two_cand
     );
 }
 
-/// A page the caller may not see at an aliased slug reads exactly as no page: the alias answers, as
-/// it does when the slug holds nothing. A page the caller may see keeps its identity, and a read
-/// with no `excludePrivate` (a trusted local caller) is unchanged.
+/// A page the caller may not see at an aliased slug fails closed: the read answers nothing, and the
+/// alias target never stands in for it. A slug that holds no page answers the alias. A page the
+/// caller may see keeps its identity, and a read with no `excludePrivate` (a trusted local caller)
+/// is unchanged.
 #[test]
-fn a_hidden_page_at_an_aliased_slug_reads_as_a_missing_page() {
+fn a_hidden_page_at_an_aliased_slug_fails_closed() {
     let dir = TempDir::new("pages-alias-hidden-exact");
     let store = open(&dir);
     let private: PageInput = serde_json::from_value(json!({
@@ -1190,11 +1191,8 @@ fn a_hidden_page_at_an_aliased_slug_reads_as_a_missing_page() {
     put(&store, "people/open-twin", "recreated");
     let missing = read("people/never-written", true);
     assert_eq!(missing.as_deref(), Some("people/target-missing"));
-    for (hidden, target) in [
-        ("people/hidden-private", "people/target-private"),
-        ("people/hidden-readers", "people/target-readers"),
-    ] {
-        assert_eq!(read(hidden, true).as_deref(), Some(target));
+    for hidden in ["people/hidden-private", "people/hidden-readers"] {
+        assert_eq!(read(hidden, true), None);
         // The trusted local read still sees the page at the slug itself.
         assert_eq!(read(hidden, false).as_deref(), Some(hidden));
     }
