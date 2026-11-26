@@ -22,6 +22,14 @@ export function rethrowByDesignStop(error: unknown, member: string, row: string)
 }
 
 /**
+ * A raw_sql stop routed to later work: the code under test still reads through `executeRaw`, no Rust caller reaches it
+ * (its command refuses at dispatch), and RUST_ENGINE.md row `row` names the owner and when the family is ported.
+ */
+export function rethrowRoutedStop(error: unknown, member: string, row: string): never {
+  return rethrowStop(error, 'raw_sql', member, row);
+}
+
+/**
  * A managed-mode stop: a managed sync on the Rust arm refuses `engine_capability_missing` reason
  * `managed_persistence`, naming `performManagedSync` (RUST_ENGINE.md row 47, the managed-mode program).
  */
