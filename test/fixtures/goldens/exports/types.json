@@ -2892,7 +2892,8 @@
           "engine?: \"postgres\" | \"pglite\" | \"rust\" | undefined",
           "keyword_statement_timeout_ms?: number | undefined",
           "pglite_shared_buffers?: string | undefined",
-          "pool_max?: number | undefined"
+          "pool_max?: number | undefined",
+          "rust_server?: { url?: string; token_env?: string; ca_file?: string; } | undefined"
         ],
         "name": "EngineConfig"
       },
@@ -7440,6 +7441,7 @@
           "retrieval_reflex_max_pointers?: number | undefined",
           "retrieval_reflex_volunteer?: boolean | undefined",
           "retrieval_reflex_window_turns?: number | undefined",
+          "rust_server?: { url?: string; token_env?: string; ca_file?: string; } | undefined",
           "schema_pack?: string | undefined",
           "search?: { adaptive_return?: boolean; adaptive_return_entity_max?: number; adaptive_return_other_max?: number; adaptive_return_min_keep?: number; vector_legacy_guard?: boolean; hnsw_iterative_scan?: string; cjk_keyword_deadline_ms?: number; keyword_statement_timeout_ms?: number; } | undefined",
           "search_embedding_column?: string | undefined",
@@ -19211,7 +19213,8 @@
           "engine?: \"postgres\" | \"pglite\" | \"rust\" | undefined",
           "keyword_statement_timeout_ms?: number | undefined",
           "pglite_shared_buffers?: string | undefined",
-          "pool_max?: number | undefined"
+          "pool_max?: number | undefined",
+          "rust_server?: { url?: string; token_env?: string; ca_file?: string; } | undefined"
         ],
         "name": "EngineConfig"
       },

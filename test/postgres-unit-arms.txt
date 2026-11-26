@@ -1224,6 +1224,7 @@ test/rust-generation-managed.test.ts
 test/rust-generation-publish.test.ts
 test/rust-generation-repair.test.ts
 test/rust-generation-scrub.test.ts
+test/rust-session-owner-reads.serial.test.ts
 test/salience-enrich-parity.test.ts
 test/schema-missing-tables.test.ts
 test/schema-replay-deadlock-6143.test.ts

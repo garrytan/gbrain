@@ -165,6 +165,189 @@ rules a network client needs most, and they are built and tested.
 CLI, JSON and MCP goldens are identical against an embedded brain and a served brain; the added
 latency is measured and listed.
 
+## M1 as built (lane L3, behind `GBRAIN_RUST_MULTIUSER`)
+
+Status: built on the multi-user integration branch, default off. With `GBRAIN_RUST_MULTIUSER` unset nothing below
+runs: the owner speaks only protocol v2, a v3 hello gets the v2 version refusal, and a configured `rust_server` is
+ignored. Per-user access (M2), leases and cross-host claims (M3), per-transaction positions and optimistic explicit
+transactions are other lanes; this section says where M1 waits for them.
+
+**Run a server.** On the machine that holds the brain:
+
+```bash
+export GBRAIN_RUST_MULTIUSER=1
+gbrain auth create laptop --rust-server-owner          # prints the owner server token once
+export GBRAIN_RUST_SERVER_TLS_CERT=/path/cert.pem GBRAIN_RUST_SERVER_TLS_KEY=/path/key.pem
+gbrain serve --rust-listen 0.0.0.0:4141                # plain TCP is allowed only on 127.0.0.1
+```
+
+**Connect a client.** On another machine, no brain directory and no Rust addon are needed:
+
+```json
+{ "engine": "rust", "rust_server": { "url": "gbrain+tls://brain-host:4141", "token_env": "GBRAIN_RUST_SERVER_TOKEN", "ca_file": "/path/ca.pem" } }
+```
+
+with `GBRAIN_RUST_MULTIUSER=1` and the token in `GBRAIN_RUST_SERVER_TOKEN`. `GBRAIN_RUST_SERVER_URL` overrides the URL.
+The client verifies the server certificate before it sends the token; there is no switch to turn that off.
+
+**Say to your agent:** *"Connect this machine to the brain on my home server"* (the agent sets `rust_server` and
+the token variable, then runs `gbrain stats`).
+
+### Protocol v3
+
+Grown from the owner socket v2 (`src/core/rust-engine/owner-ipc/protocol.ts`, "Protocol v3"); the server side is
+`src/core/rust-engine/served/session.ts` in front of the owner's one dispatcher, so the Unix socket and the network
+share permits, queues, bounds and the confirming-read holds.
+
+- Hello `{ t: 'hello', v: 3, version: 3, caps, auth? }`; the server answers with its v2 hello fields plus `caps` (the
+  intersection) and `server_id`. A v2 owner answers a v3 hello with its v2 hello, so the client names both versions.
+- Transports: TCP with TLS, or plain TCP on loopback, with `u32 BE` length frames and an optional binary tail for
+  large byte and float arrays; the Unix owner socket keeps JSON lines and needs no token (the kernel proved the peer).
+- `call` and `fn` frames carry `req` (UUID v7), `retry`, `remote`, `min_position`, `txn`; results carry `position`
+  for writes and `cid` (a correlation id the server logs) for an unexpected error. Over the network, errors cross
+  without stacks or causes.
+- `cbcall` / `cbresult`: a function argument that returns a value (for example a job admission policy) runs on the
+  client; an open transaction handle passed to it crosses as a reference, and calls on it run in that transaction on
+  the server. A callback that does not answer within 10 s fails the call and rolls its transaction back.
+- `txn` frames (`begin`, `commit`, `rollback`): interactive transactions over the wire, answered only when the server
+  engine reports `multi_writer` (lane L1) or under the test-only sub-switch `GBRAIN_RUST_SERVED_SERIAL_TXN=1`.
+  A transaction rolls back on disconnect and after 30 s. When the server engine loses the commit to another writer (optimistic
+  transactions), it does not run the waiting callback again: it ends the transaction `revision_conflict` reason
+  `transaction_conflict`, nothing of it kept, and the client runs its own callback again from a fresh transaction, at
+  most 8 more times, then `revision_conflict` reason `transaction_contention`, as the in-process engine does. Until then `transaction(fn)` on a served client refuses
+  exactly as on a local second process (decision N: whole operations first).
+
+### Who gets in (until M2)
+
+Only an owner server token: a legacy access token minted with `--rust-server-owner` (its id is in the brain config
+key `rust_server.owner_token_ids`) that verifies through the HTTP server's bearer check with full scopes and no
+operation list, source grant, slug fence, takes-holder list, member or act-for binding, attest right or trust floor.
+OAuth clients and every narrower token refuse `permission_denied` (`token_not_owner`) before any call runs. The
+token is re-verified every 2 s while a connection lives, and its expiry at every admission: a revoked or expired
+token stops new work within about 2 s, and so does a recheck that has not answered within 30 s; transaction
+begin and commit and callback answers pass the same check (a commit after revocation rolls back). Work already
+started is not undone. Such a connection runs with the owner's
+trusted local view (`Scope::trusted_local`, I-6). A frame's caller access record and `remote: true` only narrow it:
+a remote caller reads through the remote read allow-list and sends no writes or whole operations, on both sides.
+`remote: false` refuses for a principal whose floor is remote (none exists before M2).
+
+### Request ids, positions and busy owners
+
+| Case | Server answer |
+|---|---|
+| fresh `req` | runs |
+| `retry`, same principal, still running | attaches; answered with that call's outcome |
+| `retry`, same principal, finished | the stored outcome; nothing runs |
+| `retry`, no record (server restart, about 10 min old, eviction) | a read runs again; `put_page` runs again with its journal request id bound to `req`, so the write journal answers with its recorded receipt; any other write ends `owner_unavailable` `outcome_unknown` with the confirming read and never runs again |
+| same `req`, other arguments | `idempotency_conflict`; nothing runs |
+| refused before it ran (`owner_busy`, a credential or protocol refusal) | no record; the client's resend is fresh |
+
+The client resends every waiting call after a reconnect (bounded at 10 s): with `retry: true` when a copy of it was
+written and no answer since says it never ran, so the server answers by its request id and a write never runs twice;
+fresh when it was never written or its last answer was `owner_busy`. Calls inside a transaction are not resent: their
+transaction rolled back with the connection. A connection that dropped while idle reconnects on the next call; when
+no connection comes back, a call ends `owner_unavailable`, `outcome_unknown` if it may have run, else `not_sent`. It
+retries `owner_busy` with backoff inside the caller's deadline (60 s when there is none), so a caller sees `timeout`
+only at its own deadline (decision R).
+
+Positions: on the single-writer store every commit is alone in its batch, so the server returns
+`{ sequence: <commit sequence>, index: 0 }`, which is exact. On the optimistic store
+(`GBRAIN_RUST_CONCURRENT_WRITES=1`) several transactions share a sequence, so the server returns no position and a
+read with a token refuses, until lane L2's per-transaction positions merge. A read with `min_position`
+(`cp1:<sequence>.<index>`) waits until the published position reaches it, bounded by its deadline (30 s when it has
+none). No position appears in CLI, JSON or MCP output.
+
+### File locality
+
+A network client's paths are not the server's. `importFromFile` and `importImageFile` read the file on the client
+and send its bytes (`importClientFile`); the server imports a private copy at the same relative path and removes it
+(the import's source root is that copy). The symlink check runs on the client and names the client's path.
+`importManagedFiles` refuses (`managed_persistence`), and `snapshotStore`, which names a path on the server host,
+refuses with `engine_capability_missing` reason `served`: run it on the server.
+
+### Stores a member returns, and the publication store calls
+
+Members that return a store object (`worktreeClaimStore`, `writerAdminStore`, `writerReleaseStore`,
+`publicationJournalStore`, `chronicleStore`) are proxies on a served client: each method crosses as
+`<member>.<method>` inside a transaction, or as the v3-only whole operation `servedStoreCall`. The shared-skill
+publication path, which calls a few store methods directly (`shared-skills/rust-publication.ts`), reaches them as
+`brain.<method>` or `servedBrainCall`, limited to the methods `served/store-returning.ts` lists. A transaction handle
+records the page keys its `lockPageKeys` took on the server, so held-key checks answer as in process. A plain member
+called on a transaction must be one the owner forwards; the call keeps the frame's caller access record and deadline.
+
+### Client file limits
+
+The client opens the file once without following a final symlink, refuses anything that is not a regular file, and
+reads at most the import's own size limit (24 MiB for Markdown, 5 MB for code, 20 MiB for images); a larger file is
+not sent, and the server answers the importer's own size skip. The server refuses bytes over the limit before writing
+anything, and passes only data options (`noEmbed`, `inferFrontmatter`, `sourceId`, `forceRechunk`) with one
+normalised relative path. Segmented storage of a Markdown file over 24 MiB is not available to a network client.
+
+### Capability
+
+`served` is in `MULTIUSER_CAPABILITIES` (I-8.v2), not `ENGINE_CAPABILITIES`, so with the switch off every
+capability set and the error catalogue's list of capabilities stay as they were.
+
+### Follower frames
+
+`src/core/rust-engine/served/follower-frames.ts` defines the frames that carry `gbrain_store::follower` over protocol
+v3. They are offered under a capability `follower` that the server does not list yet, so every hello and every existing
+frame is unchanged. Records ship as the store's raw record bytes (I-4.v2); TypeScript never parses one.
+
+| Frame | Direction | Layout |
+|---|---|---|
+| `repl_records` | primary to follower | `{ id, seq, brain_id, lineage: [{ id, from: { sequence, index } }], records: [{ sequence, index, off, len }], tail_len }` + tail: the records' bytes in order. Positions strictly increase; the slices tile the tail exactly. These are `Follower::apply_raw(brain_id, lineage, records)`. |
+| `repl_follow` | follower to primary | `{ id, cursor }`: start (or resume) after `cursor` (`null` for an empty follower). Once per connection. |
+| `repl_ack` | follower to primary | `{ id, seq, ok: true, applied, skipped, cursor }` or `{ id, seq, ok: false, error }` (`snapshot_required`, `invalid_state`). |
+| `repl_snap_begin` | primary to follower | `{ id, xfer, manifest, chunk_bytes, files: [{ name, bytes, sha256 }] }`. `manifest` is the snapshot's `SnapshotManifest`, checked before any byte is accepted (its validation and its brain id); `files` is exactly `records.redb`, `FORMAT`, `SNAPSHOT.json`, in that order; `chunk_bytes` is at most 32 MiB (default 8 MiB). |
+| `repl_snap_chunk` | primary to follower | `{ id, xfer, file, off, tail_len }` + tail: bytes `[off, off + tail_len)` of `file`. Files in order, each from 0 with no gap. |
+| `repl_snap_window` | follower to primary | `{ id, xfer, file, through }`: bytes durably written; the primary keeps at most 64 MiB unacknowledged. |
+| `repl_snap_end` | primary to follower | `{ id, xfer }`. Each file's size and sha256 must match and `SNAPSHOT.json` must equal the begin manifest; only then is `SNAPSHOT.json` written, and the follower calls `install_snapshot(dir, Some(&manifest))`, whose answer is sent as `repl_ack` with `seq: 0`. |
+
+The served path is `src/core/rust-engine/served/follower-apply.ts`: on the primary, `primaryRecordsFrame` reads the
+commit log with `Brain#readCommitLogRaw` and `primarySnapshotFrames` copies the brain with `snapshotTo`; on the
+follower, `FollowerApplier` stages a snapshot and calls L2's napi `Follower#applyRaw` and `#installSnapshot`. Store
+refusals (`snapshot_required`, `invalid_state`) cross back in `repl_ack` with the store's code and message unchanged.
+The follower is opened only with `Follower.open`.
+
+Following over a connection (`served/follower-serve.ts`): the server offers capability `follower` only with multi-user
+Rust on, on a network connection whose principal is an owner server token, to a client that lists it, on a brain with
+a commit log; a client that does not ask gets the hello it always got, and `follower` is not in the server's default
+cap list. The follower (`followPrimary`) sends `repl_follow { id, cursor }` with `Follower#cursor()`; the primary's send
+loop reads the log after the cursor, sends `repl_records` and waits for each `repl_ack`. When the cursor is null (an
+empty follower), the log cannot continue the cursor, or the follower answers `snapshot_required`, it streams a snapshot with at most 64 MiB of chunk bytes past
+the follower's last `repl_snap_window`. A refusal it cannot get past ends the connection with `refused`. After a drop
+the follower reconnects and sends its cursor again, so nothing is applied twice.
+
+Positions are JSON integers: a sequence must be a safe integer (below 2^53), an index at most `u32::MAX` (the
+`end_of` position included). A refusal is `owner_ipc_protocol` reason `frame_malformed`; nothing of the frame is
+applied and no snapshot is installed.
+
+### Network bounds
+
+Before its hello is authenticated a connection may send one frame of at most 64 KiB within 5 s (TLS handshake
+included), and nothing more until the hello is answered; at most 32 connections wait for a hello at once; partly received frames of every connection share one
+512 MiB budget, checked before bytes are held. Past any bound the connection is closed and nothing ran.
+
+### Errors added
+
+| Code | Reason | When | Next step |
+|---|---|---|---|
+| `permission_denied` | `token_missing`, `token_invalid`, `token_not_owner`, `token_expired`, `remote_mismatch` | the hello or a call's credential | mint an owner server token on the server host; nothing ran |
+| `owner_ipc_protocol` | `hello_timeout`, `hello_too_large`, `frame_malformed`, `budget_exhausted` | a connection broke a v3 rule | upgrade the client; `budget_exhausted` is retryable |
+| `owner_unavailable` | `server_unreachable`, `tls_untrusted` | the client could not reach or trust the server | check `rust_server.url` and `ca_file`; no token was sent |
+| `owner_unavailable` | `outcome_unknown` | a retried write the server has no record of | run the confirming read the error names |
+| `timeout` | `position_not_reached`, `callback_timeout`, `transaction_deadline` | a bounded wait passed | retry once within a new deadline |
+| `idempotency_conflict` | | a `req` reused with other arguments | send a new request id |
+| `engine_capability_missing` | `served` | an operation that names a server path | run it on the server host |
+
+### Still pending
+
+- M2: the server derives each caller's scope in the store (lane L4); until its self-check passes, owner tokens only.
+- Positions on the optimistic store and C22 (lane L2); interactive transactions without the sub-switch (lane L1).
+- The brain config key `engine.rust.multiuser` is read by `rustMultiuserOnFor` but the owner's election uses the
+  environment switch only, so a server needs `GBRAIN_RUST_MULTIUSER=1` in its environment.
+
 ## M2: per-user access
 
 Today the access record a call runs under is built by the caller. In process that is the CLI or MCP
@@ -289,8 +472,8 @@ against a stub that implements exactly this contract, behind the same switch.
   path, record, frame and output is byte-identical to `rust-engine/main` at the branch's merge base.
 - Branches may add sub-switches for development, but each is read only when `GBRAIN_RUST_MULTIUSER=1` is also set.
   The groundwork sub-flags (`GBRAIN_RUST_WRITE_ORIGIN`, `GBRAIN_RUST_COMMIT_LOG`, `GBRAIN_RUST_OWNER_REQUEST_IDS`,
-  `GBRAIN_RUST_ACCESS_SELF_CHECK`, `GBRAIN_RUST_TXN_DEADLINE_MS`, `GBRAIN_RUST_OWNER_REMOTE_CHECK`) become sub-switches
-  under it.
+  `GBRAIN_RUST_ACCESS_SELF_CHECK`, `GBRAIN_RUST_TXN_DEADLINE_MS`) become sub-switches under it. The owner-side
+  remote check (G11, audit row B2) has no switch of its own: multi-user mode turns it on.
 - `GBRAIN_RUST_CONCURRENT_WRITES=1` (existing optimistic store) stays as is; multi-user mode implies it.
 
 ### I-1. Store transactions (Rust, `gbrain-store`)
@@ -490,9 +673,20 @@ store side: `Store::authenticate_bearer`, `Scope::from_principal` and `Scope::re
 6. **Remote flag.** The principal is a remote caller. Pass `principalRemote: true` to `ownerRemoteRefusal` (groundwork K,
    `src/core/rust-engine/owner-ipc/remote-check.ts`); a frame that marks itself local on such a connection refuses.
 7. **Close.** Call `session.release()` when the connection closes.
+8. **Run.** `session.run(member, { readOnly, privateReadableSources, privateFactSources }, fn)` does step 4, then runs
+   the call under the caller record the store builds for the principal (`scopeCallerRecord`,
+   `rust/crates/gbrain-store/src/access_record.rs`: the remote read policy, the token's live member and groups, owner,
+   lineage, folder-rule access, labelled-only and audience members) and in server mode, where every privacy policy is
+   the store's derivation of that record (`access_derive.rs`). A caller record the client set, and the TypeScript
+   rendering, never apply; a policy the store does not model refuses. The private sources come from `session.grant`.
+   The owner-only form (audit row A12) is the store's too: the schema version that picks it (closed before v320, the
+   lineage function since) is the one in the record the store built, never the version the TypeScript engine scope
+   recorded.
 
-What the session does not do yet: derive the read policy from the principal for non-owner keys (the access
-self-check proves the derivation first), and carry a session across a reconnect (a reconnect opens a new session).
+What the session does not do yet: admit keys other than the owner's (ruling A1), and carry a session across a
+reconnect (a reconnect opens a new session). An owner's read-only call carries member lineage, which the store serves
+as the owner read rule (the opt-in `access.owner_reads_restricted` off, no audience members); with the opt-in on, or
+with audience members, it still refuses typed (fail closed).
 
 ### I-7. Wire protocol v3 (grown from owner socket v2, `src/core/rust-engine/owner-ipc/protocol.ts`)
 
@@ -665,7 +859,7 @@ Ranked by what it buys for the server phases per line and per unit of risk:
 | G8 | Access self-check. With a flag on, the store re-derives the caller's privacy policy and owner-only form from the access record and refuses when it differs from what TypeScript sent (audit rows A12, B1). This is the first step of "only the authentication boundary builds a scope". | dark code + test mode | about 250 | `GBRAIN_RUST_ACCESS_SELF_CHECK=1`, default off. | Off: unchanged. On in a CI cell: every privacy parity case must still pass, which proves the store and TypeScript agree. | Touches visibility members: after the swap only. | After Dec 4; needs decision P first. |
 | G9 | Split the tests that bake in one writer into an embedded variant and a pending multi-writer twin (list in "Tests to write now"). | tests | about 250 | Twins are pending. | Embedded assertions stay; names change to say "embedded, one owner". | Renames touch test files swap branches edit; after the swap. | Dec 2 or later. |
 | G10 | Bounded waits. The optimistic store's key-lock wait ends at the caller's deadline with `timeout` (audit row A9); an explicit transaction gets a wrapper deadline that rolls it back (A2). | dark code | about 100 | Key-lock wait: only on the opt-in optimistic store. Transaction deadline: `GBRAIN_RUST_TXN_DEADLINE_MS`, unset by default. | Off: no timer exists. | Small; after the swap. | Dec 3 or later. |
-| G11 | Owner-side remote check. The owner applies `OWNER_IPC_REMOTE_READS` itself to frames marked remote, instead of trusting the client to (audit row B2). | dark code | about 70 | `GBRAIN_RUST_OWNER_REMOTE_CHECK=1`, default off. | Off: unchanged. On: the remote-caller tests pass unchanged, since the client already refuses first. | Owner socket: after the swap. | Dec 4 or later. |
+| G11 | Owner-side remote check. The owner applies `OWNER_IPC_REMOTE_READS` itself to frames marked remote, instead of trusting the client to (audit row B2). | dark code | about 70 | On whenever the store runs in multi-user mode (no switch of its own); off with multi-user mode off. | Off: unchanged. On: the remote-caller tests pass unchanged, since the client already refuses first. | Owner socket: after the swap. | Dec 4 or later. |
 | G12 | Small cleanups: the process-wide vector cache moves onto `Store` (A10); the comments in A14 say "while explicit transactions hold the writer". | cleanup | about 60 | No flag: same results; the 64 MiB bound becomes per store. | Unchanged answers; vector cache tests. | None; after the swap. | Ride with G1. |
 
 Not on the list on purpose: a scope type threaded through every store entry point (L, it is M2 work

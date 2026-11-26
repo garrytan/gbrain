@@ -17,6 +17,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
+use gbrain_store::access_record::RecordInputs;
 use gbrain_store::scope::Scope;
 use gbrain_store::{Store, StoreError};
 use napi::Env;
@@ -165,6 +166,52 @@ impl Brain {
                 .principal()
                 .map(|p| p.row().clone())
                 .unwrap_or(Value::Null))
+        })
+    }
+
+    /// `scopeCallerRecord(handle, inputs)`: the caller record the store builds for a live session's principal
+    /// (`gbrain_store::access_record`), from which every privacy policy of its calls is derived. Refuses
+    /// `permission_denied` for a dead handle.
+    #[napi]
+    pub fn scope_caller_record<'env>(
+        &self,
+        env: &'env Env,
+        handle: String,
+        inputs: Value,
+    ) -> napi::Result<Object<'env>> {
+        let table = self.scopes.clone();
+        let closes = self.closes.load(Ordering::SeqCst);
+        let current = self.current();
+        self.run(env, move |s| {
+            let id = current.as_ref().map(store_id).ok_or_else(refused)?;
+            let h = parse_handle(&handle)?;
+            let scope = table
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(h, id, closes)
+                .ok_or_else(refused)?;
+            let principal = scope.principal().ok_or_else(refused)?;
+            let inputs: RecordInputs =
+                crate::store_binding::required(inputs, "scopeCallerRecord inputs")?;
+            s.token_caller_record(principal.token_id(), &inputs)
+        })
+    }
+
+    /// `tokenCallerRecord(bearer, inputs)`: the caller record the store builds for any live token, with no session
+    /// and no owner gate (a trusted local read for diagnosis and the differential tests). An unknown token reads
+    /// `permission_denied`.
+    #[napi]
+    pub fn token_caller_record<'env>(
+        &self,
+        env: &'env Env,
+        bearer: String,
+        inputs: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let principal = s.authenticate_bearer(&bearer)?;
+            let inputs: RecordInputs =
+                crate::store_binding::required(inputs, "tokenCallerRecord inputs")?;
+            s.token_caller_record(principal.token_id(), &inputs)
         })
     }
 

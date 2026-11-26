@@ -15,6 +15,7 @@
  * is re-exported below.
  */
 
+import { rustHttpServing } from '../core/rust-engine/served/http-session.ts';
 import { listenOrRefuse, type AdoptableServer } from './serve-http-listen.ts';
 import express from 'express';
 import type { Socket } from 'net';
@@ -857,7 +858,7 @@ export function runServeHttp(engine: BrainEngine, options: ServeHttpOptions) {
     // ---------------------------------------------------------------------------
     // Start server
     // ---------------------------------------------------------------------------
-    const clientCount = await sql`SELECT count(*)::int as count FROM oauth_clients`;
+    const clientCount = rustHttpServing(engine) ? [{ count: 'n/a' }] : await sql`SELECT count(*)::int as count FROM oauth_clients`; // multi-user Rust: no SQL
 
     const httpServer = await listenOrRefuse(app, port, bind, options.adoptServer);
     console.error(`

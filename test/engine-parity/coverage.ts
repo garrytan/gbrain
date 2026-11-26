@@ -689,8 +689,10 @@ export function buildCoverage(): CoverageReport {
     if (reqs.some(runsOn)) return 'yes';
     const plain = reqs.find((r) => r.mwCase === undefined && r.requires !== undefined);
     if (plain) return missingCapability(plain.requires!).label;
-    const cell = mwEntry(reqs.find((r) => r.mwCase !== undefined)!.mwCase!).cells[arm];
-    return cell.status === 'pending' ? `pending:${cell.owner}` : missingCapability('multi_writer').label;
+    const entry = mwEntry(reqs.find((r) => r.mwCase !== undefined)!.mwCase!);
+    const cell = entry.cells[arm];
+    // A row that needs the commit log is n/a where the engine keeps none; every other n/a mw cell keeps its generic label.
+    return cell.status === 'pending' ? `pending:${cell.owner}` : entry.needs === 'commit_log' ? 'n/a:commit_log' : missingCapability('multi_writer').label;
   };
   const legacy = legacyMethods(methods);
   const covered = methods.filter((m) => cases.has(m));

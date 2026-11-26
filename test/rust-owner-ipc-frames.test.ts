@@ -388,5 +388,7 @@ describe('deadlines over 2^31-1 ms', () => {
 
 test('owner_ipc_protocol is registered with every reason the owner socket gives', () => {
   const rows = CODES as unknown as Record<string, { reasons?: readonly string[] }>;
-  expect(rows.owner_ipc_protocol?.reasons).toEqual(['version_mismatch', 'hello_missing', 'duplicate_id', 'args_not_array', 'result_undecodable']);
+  // The last four are protocol v3's network admission rules (rust-engine/served/errors.ts), given only with multi-user Rust on.
+  expect(rows.owner_ipc_protocol?.reasons).toEqual(['version_mismatch', 'hello_missing', 'duplicate_id', 'args_not_array', 'result_undecodable',
+    'hello_timeout', 'hello_too_large', 'frame_malformed', 'budget_exhausted']);
 });

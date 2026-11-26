@@ -24,6 +24,9 @@ import {
 } from '../src/core/search/private-visibility.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { rustArmAddonPath } from './engine-parity/rust-arm.ts';
+import { plainPageFlags } from '../src/core/rust-engine/store-members/private-provenance.ts';
+import { memberAccessPolicy, openPageFloorPolicy, rowOwnerOnly, snapshotServed, writerPolicy } from '../src/core/rust-engine/store-members/access-policies.ts';
+import { retirementHopPolicy, storeOwnerReachPolicy } from '../src/core/rust-engine/store-members/private-provenance.ts';
 
 const ADDON = rustArmAddonPath();
 let derive: (ctx: unknown) => unknown;
@@ -97,6 +100,15 @@ const EDGE_PATCHES: Array<Partial<CallerAccess> | null> = [
   { identity: ['member:alice-example'], labelledOnly: true, lineage: true, owner: true, hidePrivate: false, remotePolicy: { privacyRelaxed: false, restricted: true, schemaVersion: 330 } },
   { identity: [], labelledOnly: true, lineage: true, owner: true },
   { identity: ['group:team-a'], labelledOnly: true, lineage: true, owner: true, satisfiedRuleIds: ['wiki:team'] },
+  // Owner lineage reads served as the owner read rule (opt-in off, no audience members), with and without folders.
+  { identity: ['member:alice-example'], owner: true, lineage: true },
+  { identity: ['member:alice-example'], owner: true, lineage: true, hidePrivate: false },
+  { identity: ['group:team-a', 'member:alice-example'], owner: true, lineage: true, satisfiedRuleIds: ['wiki:team'], folderCoverage: [{ source_id: 'wiki', prefix: 'p/' }] },
+  { identity: ['member:alice-example'], owner: true, ownerReads: true, lineage: true, remotePolicy: { privacyRelaxed: false, restricted: true, schemaVersion: 330 } },
+  { identity: ['member:alice-example'], owner: true, lineage: true, restricted: false },
+  // Not served: the owner opt-in, and audience-kind members, still refuse.
+  { identity: ['member:alice-example'], owner: true, lineage: true, ownerReadsRestricted: true },
+  { identity: ['member:alice-example'], owner: true, lineage: true, audienceKindMembers: ['room-a'] },
   { identity: ['member:alice-example'], privateFactSources: ['wiki'] },
   { identity: ['member:alice-example'], privateReadableSources: ['wiki'], satisfiedRuleIds: ['wiki:team'], folderCoverage: [{ source_id: 'wiki', prefix: 'p/' }] },
   { identity: [], audience: ['member:alice-example', 'member:bob-example'], audienceIdentities: [['member:alice-example'], ['member:bob-example']] },
@@ -116,6 +128,23 @@ const MEMBER_READS = [
   { owner: true, identity: ['member:carol-example'], satisfied: [] },
   { owner: true, identity: ['group:x'], satisfied: [] },
   { owner: true, identity: [], satisfied: [] },
+];
+
+const WRITERS = [
+  { identities: [], satisfiedRuleIds: [], folderCoverage: [], owner: false, labelledOnly: false },
+  { identities: [], satisfiedRuleIds: [], folderCoverage: [{ source_id: 'wiki', prefix: 'secret/' }], owner: false, labelledOnly: false },
+  { identities: [['member:alice-example']], satisfiedRuleIds: [], folderCoverage: [], owner: false, labelledOnly: false },
+  { identities: [['group:team-a', 'member:alice-example']], satisfiedRuleIds: [], folderCoverage: [], owner: true, labelledOnly: false },
+  { identities: [['member:alice-example']], satisfiedRuleIds: ['wiki:team'], folderCoverage: [], owner: false, labelledOnly: false },
+  { identities: [['member:alice-example']], satisfiedRuleIds: [], folderCoverage: [], owner: false, labelledOnly: true },
+  { identities: [['member:alice-example'], ['member:bob-example']], satisfiedRuleIds: [], folderCoverage: [], owner: false, labelledOnly: false },
+  { identities: [['Bad Id']], satisfiedRuleIds: [], folderCoverage: [{ source_id: 'BAD', prefix: 'x/' }], owner: false, labelledOnly: false },
+];
+const SNAPSHOT_READERS = [
+  { identity: [], privateReadableSources: [] },
+  { identity: ['member:alice-example'], privateReadableSources: [] },
+  { identity: ['group:team-a', 'member:alice-example'], privateReadableSources: ['wiki'] },
+  { identity: ['member:bob-example'], privateReadableSources: [] },
 ];
 
 const PAGE_THUNKS = {
@@ -164,6 +193,22 @@ function cases(): Case[] {
   for (const q of MEMBER_READS) out.push({ request: { mode: 'member_read', ...q }, run: () => storeMemberReadPolicy('m', q) });
   for (const list of VISIBILITY_LISTS) {
     out.push({ request: { mode: 'visibility', ...(list ? { list } : {}) }, run: () => storeVisibility('m', list) });
+  }
+  out.push({ request: { mode: 'plain_page_flags' }, run: () => plainPageFlags('m') });
+  out.push({ request: { mode: 'open_page_floor' }, run: () => openPageFloorPolicy() });
+  out.push({ request: { mode: 'access_part_plain' }, run: () => retirementHopPolicy('member_access', 'm') });
+  out.push({ request: { mode: 'row_owner_only' }, run: () => rowOwnerOnly(true, 'takes') });
+  out.push({ request: { mode: 'row_owner_only' }, run: () => rowOwnerOnly(true, 'timeline_entries') });
+  for (const q of MEMBER_READS) {
+    out.push({ request: { mode: 'member_access_policy', identity: q.identity, satisfied: q.satisfied }, run: () => memberAccessPolicy(q.identity, q.satisfied) });
+  }
+  out.push({ request: { mode: 'member_access_policy', satisfied: ['wiki:team'] }, run: () => memberAccessPolicy(null, ['wiki:team']) });
+  for (const w of WRITERS) out.push({ request: { mode: 'writer_policy', policy: w }, run: () => writerPolicy(w) });
+  for (const q of MEMBER_READS) {
+    out.push({ request: { mode: 'owner_reach', identity: q.identity, satisfied: q.satisfied }, run: () => storeOwnerReachPolicy('m', q) });
+  }
+  for (const r of SNAPSHOT_READERS) {
+    out.push({ request: { mode: 'snapshot_policy', ...r }, run: () => snapshotServed('m', r) });
   }
   out.push({ request: { mode: 'member_access' }, run: async () => {
     const { brain, sent } = recordingBrain();
@@ -283,8 +328,12 @@ describe('store access derivation equals the TypeScript policy helpers', () => {
         seen.get(key)!.add(kind);
       }
     }
-    for (const mode of ['page_text', 'fact', 'floor_policy', 'member_read', 'member_access', 'remote_floor', 'visibility']) {
+    for (const mode of ['page_text', 'fact', 'floor_policy', 'member_read', 'member_access', 'remote_floor', 'visibility',
+      'plain_page_flags', 'open_page_floor', 'access_part_plain', 'row_owner_only', 'member_access_policy', 'writer_policy', 'snapshot_policy', 'owner_reach']) {
       expect({ mode, value: seen.get(mode)?.has('value') }).toEqual({ mode, value: true });
+    }
+    for (const mode of ['open_page_floor', 'access_part_plain', 'writer_policy', 'snapshot_policy', 'owner_reach']) {
+      expect({ mode, refuse: seen.get(mode)?.has('refuse') }).toEqual({ mode, refuse: true });
     }
     for (const mode of ['page_text', 'fact', 'floor_policy', 'member_read', 'member_access', 'remote_floor', 'visibility']) {
       expect({ mode, refuse: seen.get(mode)?.has('refuse') }).toEqual({ mode, refuse: true });

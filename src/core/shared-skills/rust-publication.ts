@@ -5,6 +5,7 @@
  * local_path, and a publication commits its revisions, pack row and receipt in one store transaction, then replaces
  * the canonical files it staged before that commit (rust-canonical-files.ts).
  */
+import { servedBrainFor } from '../rust-engine/served/store-returning.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { RustEngine } from '../rust-engine.ts';
 import { storeCall } from '../rust-engine/store-members/common.ts';
@@ -17,6 +18,9 @@ export function isRustBrain(engine: unknown): boolean {
 }
 
 async function call<T>(engine: BrainEngine, member: string, run: (brain: StoreBrain) => Promise<unknown>): Promise<T> {
+  // A served Rust client has no store of its own: the store calls cross to the brain server (served/store-returning.ts).
+  const served = servedBrainFor(engine);
+  if (served) return await storeCall({ member }, () => run(served as StoreBrain)) as T;
   const rust = engine as unknown as RustEngine & { _admit(member: string): Promise<void>; storeFor(member: string): Promise<{ brain: StoreBrain }> };
   await rust._admit(member);
   const brain = (await rust.storeFor(member)).brain;

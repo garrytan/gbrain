@@ -4,7 +4,7 @@
 //! No lane adds a write path that skips it." Each `every_write_path_is_logged_*` test snapshots every key and value of the record file
 //! before a scenario and after it, replays the scenario's log records onto the before-image, and requires byte equality with the
 //! after-image (`common::logged::log_explains_change`): a key that changed with no record fails, and so does a record whose change is
-//! not in the store. They are `#[ignore = "multi_writer"]`, pending on `L2 commit log` (the open that turns the log on); the check
+//! not in the store. They run against the commit-log lane's real code, with multi-user mode and the log on in the run (`mu::open_logged`, which asserts the resolved state); the check
 //! itself runs today against hand-built images, and `the_write_path_check_passes_an_exact_replay_and_fails_each_unlogged_change` shows
 //! it fails a write that bypasses the log, a doctored after-image, and a rollback that left a change.
 //!
@@ -178,7 +178,6 @@ fn clock_env() -> Arc<Clock> {
 
 /// Ordinary writes on both stores: pages, config, journal admissions, tags, and writers from four threads.
 #[test]
-#[ignore = "multi_writer"]
 fn every_write_path_is_logged_ordinary_writes_multi_writer() {
     for optimistic in MODES {
         let dir = TempDir::new("log-ordinary");
@@ -221,7 +220,6 @@ fn every_write_path_is_logged_ordinary_writes_multi_writer() {
 /// An open that writes by itself: the access-flag scan, the keyword index reset and the source-index backfill run at open of a
 /// brain whose markers are gone, and each write is in the log.
 #[test]
-#[ignore = "multi_writer"]
 fn every_write_path_is_logged_open_time_upkeep_multi_writer() {
     opened_brain_is_explained_by_its_log(UpkeepKind::UpkeepOnly);
 }
@@ -231,7 +229,6 @@ fn every_write_path_is_logged_open_time_upkeep_multi_writer() {
 /// activation commit outside the log by design, so a replay from the log's start cannot cover it. That is a question for the log
 /// lane, not something this check skips: see the answer that came with this test.)
 #[test]
-#[ignore = "multi_writer"]
 fn every_write_path_is_logged_format_upgrade_multi_writer() {
     opened_brain_is_explained_by_its_log(UpkeepKind::OlderBase);
 }
@@ -319,7 +316,6 @@ fn the_open_time_check_needs_the_records_after_the_cursor_not_any_record() {
 /// Commit times are exactly `max(store clock, previous commit time + 1 µs)` (I-4.v2): the injected clock is held for several
 /// commits, advanced, then moved back. An increasing counter would rise and equal `last_commit_time()`; this fails it.
 #[test]
-#[ignore = "multi_writer"]
 fn commit_times_are_the_max_of_the_clock_and_the_previous_time_plus_one_multi_writer() {
     for optimistic in MODES {
         let dir = TempDir::new("log-clock-exact");
@@ -353,7 +349,6 @@ fn commit_times_are_the_max_of_the_clock_and_the_previous_time_plus_one_multi_wr
 /// A rolled-back explicit transaction leaves no change and no record of its data. A rollback that writes id sequences forward commits
 /// counters only (`commit-log.md`): any record it leaves holds counter ops and nothing else.
 #[test]
-#[ignore = "multi_writer"]
 fn every_write_path_is_logged_rolled_back_transaction_multi_writer() {
     for optimistic in MODES {
         let dir = TempDir::new("log-rollback");
@@ -388,7 +383,6 @@ fn every_write_path_is_logged_rolled_back_transaction_multi_writer() {
 
 /// An optimistic commit that was aborted (its transaction dropped) and then retried: the abort leaves no record, the retry exactly one.
 #[test]
-#[ignore = "multi_writer"]
 fn every_write_path_is_logged_aborted_then_retried_optimistic_commit_multi_writer() {
     let dir = TempDir::new("log-retry");
     let path = dir.path().join("records.redb");
@@ -396,7 +390,7 @@ fn every_write_path_is_logged_aborted_then_retried_optimistic_commit_multi_write
     let store = &brain.store;
     let (_, start) = log_since(store, None);
     let before = mu::image_of(&*brain.kv);
-    let aborted = begin_host(store, 1);
+    let aborted = store.begin_transaction(false).unwrap();
     put(&aborted, "retried/page", "first attempt");
     drop(aborted);
     let (records, _) = log_since(store, start);
@@ -409,9 +403,9 @@ fn every_write_path_is_logged_aborted_then_retried_optimistic_commit_multi_write
     );
     logged::log_explains_change(&before, &mu::image_of(&*brain.kv), &records)
         .unwrap_or_else(|e| panic!("after the abort: {e}"));
-    let retry = begin_host(store, 1);
+    let retry = store.begin_transaction(false).unwrap();
     put(&retry, "retried/page", "second attempt");
-    let position = commit_host(store, retry);
+    let position = retry.commit_transaction_at().unwrap();
     let (records, _) = log_since(store, start);
     let data_records: Vec<&CommitRecord> = records
         .iter()
@@ -441,6 +435,8 @@ fn assert_lost(e: &StoreError, reason: LostReason, what: &str) {
 /// A's last commit time, applies A's records in order and is promoted; B then commits more. Every new position is above A's last, the
 /// commit times keep strictly rising across the move, B's floor is `max(its own M\0ctime, A's last commit_time)`, every row time after
 /// the promotion is at or above it, every key A's records touched holds A's value on B, and A's write after the move is refused.
+/// PENDING: `apply_log` and `promote_from_log` have no `Store` member in the commit-log lane (L2: `commit_log::apply_record` takes a raw
+/// write handle), the old primary's fence is L5 hosts, and the wire handover is L3 server.
 #[test]
 #[ignore = "multi_writer"]
 fn second_host_promotion_keeps_clock_floor_and_positions_multi_writer() {

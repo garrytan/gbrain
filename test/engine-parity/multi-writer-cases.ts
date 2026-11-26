@@ -62,7 +62,7 @@ export interface MwCase {
    */
   reference: 'compare' | 'standalone';
   /** A capability the engine itself must report on an arm whose cell is `runs` (I-8 name), checked at runtime. */
-  needs?: 'multi_writer';
+  needs?: 'multi_writer' | 'commit_log';
   /** What the case does NOT prove, where a reader could assume more (shown by the bar). */
   scope?: string;
   /** The exact typed BrainEngine members the engine-level case calls (also its parityTest `methods`). */
@@ -83,7 +83,7 @@ export interface MwVariant {
   /** What must hold; the scenario asserts it inline. */
   invariant: string;
   reference: 'compare' | 'standalone';
-  needs?: 'multi_writer';
+  needs?: 'multi_writer' | 'commit_log';
   members: readonly string[];
   cells: Readonly<Record<MwEngineArm, MwCell>>;
 }
@@ -191,8 +191,8 @@ export const MW_CASES: readonly MwCase[] = [
     reference: 'compare',
     members: ['admitJob', 'claimNextJob', 'reclaimStalledJobs', 'renewJobLease', 'getJob'],
     storeTests: {
-      runnable: ['c05_expired_claim_is_reclaimed_once'],
-      pending: ['c05_expired_claim_is_reclaimed_once_multi_writer'],
+      runnable: ['c05_expired_claim_is_reclaimed_once', 'c05_expired_claim_is_reclaimed_once_multi_writer'],
+      pending: [],
     },
     cells: {
       pglite: RUNS, postgres: RUNS,
@@ -296,8 +296,8 @@ export const MW_CASES: readonly MwCase[] = [
     reference: 'compare',
     members: ['insertFact', 'listFactsByEntity'],
     storeTests: {
-      runnable: ['c10_facts_of_one_entity_form_one_total_order'],
-      pending: ['c10_facts_of_one_entity_form_one_total_order_multi_writer'],
+      runnable: ['c10_facts_of_one_entity_form_one_total_order', 'c10_facts_of_one_entity_form_one_total_order_multi_writer'],
+      pending: [],
     },
     cells: {
       pglite: RUNS, postgres: RUNS,
@@ -462,8 +462,8 @@ export const MW_CASES: readonly MwCase[] = [
     scope: 'Postgres: a writer-process crash (SIGKILL after acknowledged writes), not a database-server crash: the reopening engine is the parent\'s connected pool, so Postgres durability (WAL, fsync) is not exercised; that guarantee is Postgres\'s own. Rust: the store\'s own recovery of a brain directory the killed writer owned. PGLite is in-memory (n/a).',
     members: ['putPage', 'readPageSnapshot', 'admitJob', 'listJobs'],
     storeTests: {
-      runnable: ['c19_crash_after_commit_keeps_acknowledged_writes'],
-      pending: ['c19_crash_after_commit_keeps_acknowledged_writes_multi_writer', 'c19_crash_keeps_commit_times_rising_and_equal_to_last_commit_time_multi_writer'],
+      runnable: ['c19_crash_after_commit_keeps_acknowledged_writes', 'c19_crash_keeps_commit_times_rising_and_equal_to_last_commit_time'],
+      pending: ['c19_crash_after_commit_keeps_acknowledged_writes_multi_writer'],
     },
     cells: {
       pglite: na('PGLite is in-memory: there is no durable brain for a killed writer to leave behind'), postgres: RUNS,
@@ -515,15 +515,16 @@ export const MW_CASES: readonly MwCase[] = [
     operation: 'commit log',
     invariant: 'no two commits share a position; positions only grow',
     reference: 'standalone',
-    members: ['putPage'],
+    needs: 'commit_log',
+    members: ['putPage', 'transaction', 'readCommitLog', 'lastCommitPosition'],
     storeTests: {
-      runnable: ['c22_commit_position_strictly_increases'],
-      pending: ['c22_commit_position_strictly_increases_multi_writer', 'c22_follower_replay_keeps_commit_times_rising_and_row_times_above_the_floor_multi_writer'],
+      runnable: ['c22_commit_position_strictly_increases', 'c22_commit_position_strictly_increases_multi_writer', 'c22_logged_single_writer_positions_have_index_zero_and_each_matches_a_record'],
+      pending: ['c22_follower_replay_keeps_commit_times_rising_and_row_times_above_the_floor_multi_writer'],
     },
     cells: {
-      pglite: pending('L2 commit log', 'typed position member (no engine exposes a commit position or a commit log today)'), postgres: pending('L2 commit log', 'typed position member (no engine exposes a commit position or a commit log today)'),
-      rust: pending('L2 commit log', 'typed position member (no engine exposes a commit position or a commit log today)'),
-      'rust-mu': pending('L2 commit log', 'typed position member (no engine exposes a commit position or a commit log today)'),
+      pglite: na('a SQL engine keeps no commit log: it refuses engine_capability_missing, reason commit_log'), postgres: na('a SQL engine keeps no commit log: it refuses engine_capability_missing, reason commit_log'),
+      rust: na('the commit log is off on the plain Rust arm: it refuses engine_capability_missing, reason commit_log'),
+      'rust-mu': RUNS,
       'store-single': RUNS, 'store-optimistic': RUNS,
     },
   },
