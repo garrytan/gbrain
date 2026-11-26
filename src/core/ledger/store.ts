@@ -28,15 +28,19 @@ import { callerAccessRecord, callerIdentities, currentCallerAccess, isPrivatePag
 import { currentReadMode } from '../access/scope-read.ts';
 import { callerScopes, checkPolicy, type PolicyCheckAnswer } from '../policy/check.ts';
 import type { PolicyLimit, PolicyRule } from '../policy/fence.ts';
-import { ACTION_SOURCE, AGENT_ACTION_TYPE, MAX_SUMMARY, SERVER_STAMPED_KEYS, actionSlug, canTransition, isActionSlug, validateActionFrontmatter,
+import { OperationError } from '../ops/contract.ts';
+import { ACTION_SOURCE, AGENT_ACTION_TYPE, MAX_SUMMARY, SERVER_STAMPED_KEYS, actionSlug, actionTimeKey, canTransition, isActionSlug, validateActionFrontmatter,
   type ActionEvidence, type ActionRecord, type ActionStatus, type Approver, type ClaimBasis, type SavedPeriod } from './action.ts';
 import type { WindowUsage } from '../policy/evaluate.ts';
-import { ledgerTotals, windowStart, windowUsage, type BudgetWindow, type LedgerTotals, type StoredAction } from './totals.ts';
+import { holdLive, ledgerTotals, windowStart, windowUsage, type BudgetWindow, type LedgerTotals, type StoredAction } from './totals.ts';
 import type { Action } from '../agent-output.ts';
 
 export const HOLD_TTL_MS = 24 * 3600 * 1000;
 /** Actions one ledger read scans at most; past it the read is partial and names the narrowing filters. */
 export const LEDGER_SCAN_MAX = 5000;
+/** Action pages one read looks at, readable or not, before it stops as partial: the bound on work, never on what a caller reads. */
+export const LEDGER_RAW_SCAN_MAX = LEDGER_SCAN_MAX * 10;
+const SCAN_BATCH = 500;
 /** The earliest a ledger read reaches back, in days; an older since is clamped to it. */
 export const MAX_SINCE_DAYS = 3660;
 const RESERVE_LOCK_ID = 'gbrain-ledger-reserve';
@@ -106,22 +110,39 @@ async function readStored(engine: BrainEngine, slug: string): Promise<{ record: 
 
 export interface ScanResult { rows: StoredAction[]; partial: boolean; scanned: number }
 
-/** The caller's readable actions with action.at in [since, until), scanning at most LEDGER_SCAN_MAX pages. */
-export async function scanActions(engine: BrainEngine, reader: LedgerReader, since: Date, until: Date, max = LEDGER_SCAN_MAX): Promise<ScanResult> {
+/**
+ * The caller's readable actions with action.at in [since, until), plus, with `liveHoldsAt`, every hold still live then.
+ * Only readable rows count toward `max`, so other people's actions never make a caller's read partial. An action id
+ * starts with its creation time and action.at is never earlier (a settled hold moves it to the settlement, within
+ * HOLD_TTL_MS), so the walk starts at since - HOLD_TTL_MS and stops at until, by slug. LEDGER_RAW_SCAN_MAX bounds
+ * the pages it looks at.
+ */
+export async function scanActions(engine: BrainEngine, reader: LedgerReader, since: Date, until: Date, max = LEDGER_SCAN_MAX, liveHoldsAt?: Date): Promise<ScanResult> {
   const rows: StoredAction[] = [];
   if (reader.kind === 'none') return { rows, partial: false, scanned: 0 };
+  const from = new Date(since.getTime() - HOLD_TTL_MS);
+  const low = actionTimeKey(from);
+  const high = actionTimeKey(until);
   let scanned = 0;
-  for (let month = new Date(Date.UTC(since.getUTCFullYear(), since.getUTCMonth(), 1)); month < until; month = new Date(Date.UTC(month.getUTCFullYear(), month.getUTCMonth() + 1, 1))) {
+  let read = 0;
+  for (let month = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), 1)); month < until; month = new Date(Date.UTC(month.getUTCFullYear(), month.getUTCMonth() + 1, 1))) {
     const prefix = `actions/${month.getUTCFullYear()}/${String(month.getUTCMonth() + 1).padStart(2, '0')}/`;
-    const pages = await withoutCallerAccess(() => engine.listPages({ type: AGENT_ACTION_TYPE as never, slugPrefix: prefix, sort: 'slug', limit: max + 1 - scanned, sourceId: ACTION_SOURCE }));
-    scanned += pages.length;
-    if (scanned > max) return { rows, partial: true, scanned };
-    for (const page of pages) {
-      if (!isActionSlug(page.slug) || !readable(reader, page.frontmatter)) continue;
-      const checked = validateActionFrontmatter(page.frontmatter ?? {});
-      if (!checked.ok) continue;
-      const at = Date.parse(checked.record.action.at);
-      if (at >= since.getTime() && at < until.getTime()) rows.push({ slug: page.slug, record: checked.record });
+    let after = prefix + low;
+    for (;;) {
+      const pages = await withoutCallerAccess(() => engine.listPages({ type: AGENT_ACTION_TYPE as never, slugPrefix: prefix, slugAfter: after, sort: 'slug', limit: SCAN_BATCH, sourceId: ACTION_SOURCE, omitBodies: true }));
+      for (const page of pages) {
+        if (page.slug.slice(prefix.length, prefix.length + 10) >= high) return { rows, partial: false, scanned };
+        if (++read > LEDGER_RAW_SCAN_MAX) return { rows, partial: true, scanned };
+        if (!isActionSlug(page.slug) || !readable(reader, page.frontmatter)) continue;
+        const checked = validateActionFrontmatter(page.frontmatter ?? {}, { read: true });
+        if (!checked.ok) continue;
+        const at = Date.parse(checked.record.action.at);
+        if (!(at >= since.getTime() && at < until.getTime()) && !(liveHoldsAt && holdLive(checked.record, liveHoldsAt))) continue;
+        if (++scanned > max) return { rows, partial: true, scanned };
+        rows.push({ slug: page.slug, record: checked.record });
+      }
+      if (pages.length < SCAN_BATCH) break;
+      after = pages[pages.length - 1]!.slug;
     }
   }
   return { rows, partial: false, scanned };
@@ -138,7 +159,7 @@ export function usageLookup(engine: BrainEngine, reader: LedgerReader, now: Date
       return out;
     }
     const earliest = new Date(Math.min(...windowed.map(r => windowStart(r.window as BudgetWindow, now).getTime())));
-    const scan = await scanActions(engine, reader, earliest, new Date(now.getTime() + 1));
+    const scan = await scanActions(engine, reader, earliest, new Date(now.getTime() + 1), LEDGER_SCAN_MAX, now);
     const rows = excludeSlug ? scan.rows.filter(row => row.slug !== excludeSlug) : scan.rows;
     for (const r of windowed) {
       out.set(r.id, scan.partial ? null : windowUsage(rows, { verb: q.verb, merchant: r.merchant, currency: r.limit!.currency, since: windowStart(r.window as BudgetWindow, now) }, now));
@@ -152,9 +173,11 @@ export interface EvidenceCheck { ref: string; resolved: boolean }
 async function checkEvidence(engine: BrainEngine, reader: LedgerReader, evidence: readonly ActionEvidence[]): Promise<EvidenceCheck[]> {
   return Promise.all(evidence.map(async e => {
     if (/^[a-z][a-z0-9+.-]*:\/\//i.test(e.ref)) return { ref: e.ref, resolved: false };
-    const page = await withoutCallerAccess(() => engine.getPage(e.ref.replace(/\.md$/, ''), { sourceId: ACTION_SOURCE }));
-    const resolved = !!page && (reader.kind === 'brain' || (readable(reader, page.frontmatter) && !isPrivatePageForCaller(page)));
-    return { ref: e.ref, resolved };
+    const slug = e.ref.replace(/\.md$/, '');
+    if (reader.kind === 'brain') return { ref: e.ref, resolved: !!await withoutCallerAccess(() => engine.getPage(slug, { sourceId: ACTION_SOURCE })) };
+    if (reader.kind !== 'member') return { ref: e.ref, resolved: false };
+    const page = await engine.getPage(slug, { sourceId: ACTION_SOURCE, excludePrivate: true });
+    return { ref: e.ref, resolved: !!page && !isPrivatePageForCaller(page) };
   }));
 }
 
@@ -198,18 +221,64 @@ async function memberReaders(engine: BrainEngine, actor: string): Promise<string
   return [...new Set([actor.slice('member:'.length), ...(ownerMember ? [ownerMember] : [])])];
 }
 
-async function writeAction(ctx: OperationContext, slug: string, fm: Record<string, unknown>, summary: string, requestId: string, expected?: string): Promise<void> {
-  await withoutCallerAccess(() => submitPageMutation(trustedCtx(ctx), { operation: 'put_page', params: {
-    slug, source_id: ACTION_SOURCE, content: renderActionPage(fm, summary), request_id: requestId, ...(expected ? { expected_revision: expected } : {}) } }));
+function stillWriting(requestId: string): OperationError {
+  return opError('write_pending', `The call with request_id ${requestId} is still being written, so it was not repeated.`,
+    `Retry in a few seconds with request_id ${requestId}; the retry returns the action once it is written.`, { retryable: true, detail: `request_id=${requestId}` });
 }
 
-async function priorWrite(ctx: OperationContext, id: string): Promise<string | null> {
+/** A write still publishing answers write_pending: the retry with the same request_id is the caller's receipt, never the internal writer's. */
+async function writeAction(ctx: OperationContext, slug: string, fm: Record<string, unknown>, summary: string, callerRequestId: string, requestId: string, expected?: string): Promise<void> {
+  try {
+    await withoutCallerAccess(() => submitPageMutation(trustedCtx(ctx), { operation: 'put_page', params: {
+      slug, source_id: ACTION_SOURCE, content: renderActionPage(fm, summary), request_id: requestId, ...(expected ? { expected_revision: expected } : {}) } }));
+  } catch (error) {
+    throw error instanceof OperationError && error.code === 'write_pending' ? stillWriting(callerRequestId) : error;
+  }
+}
+
+/** One fingerprint per call, request_id aside, so a retry that changed anything is told apart from a replay. */
+function requestHash(kind: string, input: object): string {
+  const canonical = (v: unknown): unknown => Array.isArray(v) ? v.map(canonical)
+    : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().filter(k => k !== 'request_id' && (v as Record<string, unknown>)[k] !== undefined).map(k => [k, canonical((v as Record<string, unknown>)[k])])) : v;
+  return createHash('sha256').update(JSON.stringify([kind, canonical(input)])).digest('hex');
+}
+
+/** The fingerprint of the call that created an action; an action from before request_hash keeps its creator's last_request. */
+function creatorHash(record: ActionRecord): string | undefined {
+  return record.request_hash ?? (record.last_request && record.last_request.id === record.request_id ? record.last_request.hash : undefined);
+}
+
+function replayConflict(requestId: string, slug: string): OperationError {
+  return opError('idempotency_conflict', `request_id ${requestId} was already used for a different call on ${slug}, so this call was not applied.`,
+    'Use a new request_id for each new call; reuse one only to retry the exact same call.');
+}
+
+/**
+ * Any ledger write still publishing; a reserve waits for them, so a hold that was accepted always counts. Only action
+ * pages of the source's current incarnation count, and a running write whose claim expired is left to recovery, so a
+ * crashed writer never blocks every reserve. A queued write always counts: it may still commit.
+ */
+export async function settleLedgerWrites(engine: BrainEngine, deadline: number): Promise<void> {
+  for (;;) {
+    const pending = await engine.executeRaw<{ n: number }>(
+      `SELECT 1 AS n FROM persistence_requests r JOIN sources s ON s.id = r.source_id AND s.incarnation = r.source_incarnation
+        WHERE r.source_id = $1 AND r.slug LIKE 'actions/____/__/%' AND r.state IN ('queued', 'deferred', 'running', 'recovering')
+          AND NOT (r.state IN ('running', 'recovering') AND r.claim_expires_at IS NOT NULL AND r.claim_expires_at <= now()) LIMIT 1`, [ACTION_SOURCE]);
+    if (!pending.length) return;
+    if (Date.now() >= deadline) throw opError('ledger_busy', 'An earlier action is still being written, so this reservation was not checked or held.', 'Retry in a few seconds with the same request_id.', { retryable: true });
+    await new Promise(r => setTimeout(r, 50));
+  }
+}
+
+async function priorWrite(ctx: OperationContext, id: string, callerRequestId: string): Promise<string | null> {
   let prior: Awaited<ReturnType<typeof getWriteRequest>> = null;
   try {
     prior = await withoutCallerAccess(async () => getWriteRequest(ctx.engine as never, await requestPrincipalForContext(trustedCtx(ctx)), id));
   } catch { return null; } // silent-read-ok: no local writer registered yet means no earlier write of this request
-  if (prior && !isTerminal(prior)) {
-    throw opError('write_pending', 'The earlier call with this request_id is still being written, so it was not repeated.', 'Retry in a few seconds with the same request_id.', { retryable: true });
+  if (prior && !isTerminal(prior)) throw stillWriting(callerRequestId);
+  if (prior && prior.state !== 'committed') {
+    throw opError((prior.error_code ?? 'storage_error') as Parameters<typeof opError>[0], `The earlier call with this request_id did not change ${prior.slug}: ${prior.error_message ?? prior.state}.`,
+      'A retry with the same request_id gets this same answer; fix the cause and send the call with a new request_id.');
   }
   return prior?.slug ?? null;
 }
@@ -229,13 +298,17 @@ export async function logAction(ctx: OperationContext, input: LogActionInput, no
   const reader = ledgerReader(remote, ctx);
   const requestId = input.request_id ?? randomUUID();
   const wid = writeRequestId(actor, requestId);
-  const replay = await priorWrite(ctx, wid);
+  const hash = requestHash('log_action', input);
+  const replay = await priorWrite(ctx, wid, requestId);
   if (replay) {
     const stored = await readStored(ctx.engine, replay);
     if (stored && ((input.action_id ?? replay) !== replay || (input.action_id === undefined) !== (stored.record.request_id === requestId))) {
       throw opError('idempotency_conflict', `request_id ${requestId} already ${stored.record.request_id === requestId ? 'created' : 'moved'} ${replay}, so this different call was not applied.`,
         'Use a new request_id for each new call; settle a reservation with its action_id and a request_id of its own.');
     }
+    const first = stored?.record.request_id === requestId ? creatorHash(stored.record) : undefined;
+    const latest = stored?.record.last_request?.id === requestId ? stored.record.last_request.hash : undefined;
+    if ((first ?? latest) !== undefined && (first ?? latest) !== hash) throw replayConflict(requestId, replay);
     if (stored) return { action_id: replay, status: stored.record.action.status, claim_basis: stored.record.claim_basis, evidence: (stored.record.evidence ?? []).map(e => ({ ref: e.ref, resolved: stored.record.claim_basis === 'evidenced' })), replayed: true };
   }
   const existing = input.action_id ? await readStored(ctx.engine, input.action_id) : null;
@@ -250,6 +323,10 @@ export async function logAction(ctx: OperationContext, input: LogActionInput, no
       throw opError('action_transition_invalid', `${input.action_id} is ${prior.action.status}; it cannot become ${status}, so nothing was changed.`,
         prior.action.status === 'done' ? 'A done action is never edited: log a new action with supersedes set to its action_id.' : 'Log a new action instead.', { detail: `${prior.action.status}->${status}` });
     }
+    if (prior.hold && status === 'done' && !holdLive(prior, now)) {
+      throw opError('action_transition_invalid', `The hold on ${input.action_id} expired at ${prior.hold.expires_at}, so it counts toward nothing and cannot be settled.`,
+        'Log the spend as a new action (without action_id), and mark this reservation cancelled or failed.', { detail: 'expired_hold->done' });
+    }
   }
   const evidence = [...(prior?.evidence ?? []), ...(input.evidence ?? []).filter(e => !(prior?.evidence ?? []).some(p => p.ref === e.ref))];
   const checks = await checkEvidence(ctx.engine, reader, evidence);
@@ -260,7 +337,7 @@ export async function logAction(ctx: OperationContext, input: LogActionInput, no
     throw opError('money_unevidenced', 'An amount was logged with no evidence gbrain could read and without estimated: true, so nothing was logged.',
       'Add evidence (the slug of a page that shows the amount, such as the saved receipt) or pass estimated: true.', { detail: checks.map(c => c.ref).join(', ') || 'no evidence' });
   }
-  const at = prior ? prior.action.at : input.at ?? now.toISOString();
+  const at = prior?.hold && status === 'done' ? now.toISOString() : prior ? prior.action.at : input.at ?? now.toISOString();
   const summary = (input.summary ?? prior?.action.summary ?? '').trim();
   if (!summary) throw invalid('summary', 'summary is required');
   if (summary.length > MAX_SUMMARY) throw invalid('summary', `summary is at most ${MAX_SUMMARY} characters`);
@@ -284,6 +361,8 @@ export async function logAction(ctx: OperationContext, input: LogActionInput, no
     claim_basis: claim,
     ...(keepHold ? { hold: prior!.hold } : {}),
     request_id: prior?.request_id ?? requestId,
+    ...(prior ? creatorHash(prior) ? { request_hash: creatorHash(prior) } : {} : { request_hash: hash }),
+    last_request: { id: requestId, hash },
   };
   const checked = validateActionFrontmatter(fm);
   if (!checked.ok) throw invalid(checked.field, checked.message);
@@ -294,7 +373,7 @@ export async function logAction(ctx: OperationContext, input: LogActionInput, no
     }
   }
   const slug = input.action_id ?? actionSlug(new Date(at), actor, requestId);
-  await writeAction(ctx, slug, fm, summary, wid, existing?.revision);
+  await writeAction(ctx, slug, fm, summary, requestId, wid, existing?.revision);
   return { action_id: slug, status, claim_basis: claim, evidence: checks, replayed: false, ...(prior?.hold && !keepHold ? { settled_hold: true } : {}) };
 }
 
@@ -321,18 +400,33 @@ async function underReserveLock<T>(engine: BrainEngine, fn: () => Promise<T>): P
 }
 
 /** policy_reserve: check the policy with its budget windows and hold the amount, under one lock. A deny holds nothing. */
-export async function policyReserve(ctx: OperationContext, input: ReserveInput, now = new Date()): Promise<ReserveResult> {
+export async function policyReserve(ctx: OperationContext, input: ReserveInput, clock?: Date): Promise<ReserveResult> {
   const remote = ctx.remote !== false;
   assertLedgerWriteGrant(ctx, remote);
   const reader = ledgerReader(remote, ctx);
+  await settleLedgerWrites(ctx.engine, Date.now() + RESERVE_WAIT_MS);
   return underReserveLock(ctx.engine, async () => {
     const actor = actorFor(remote);
+    let now = clock ?? new Date();
     const requestId = input.request_id ?? randomUUID();
-    const replay = await priorWrite(ctx, writeRequestId(actor, requestId));
+    const hash = requestHash('policy_reserve', input);
+    const replay = await priorWrite(ctx, writeRequestId(actor, requestId), requestId);
     const stored = replay ? await readStored(ctx.engine, replay) : null;
+    if (stored && stored.record.request_id === requestId) {
+      const created = creatorHash(stored.record);
+      if (created !== undefined && created !== hash) throw replayConflict(requestId, replay!);
+      const answer = await checkPolicy(ctx.engine, { verb: input.verb, amount: input.amount, merchant: input.merchant, to: input.to }, callerScopes(remote),
+        { usage: usageLookup(ctx.engine, reader, now, replay!) });
+      const decision = stored.record.approval.by === 'policy' ? 'allow' : 'ask';
+      const original = { ...answer, decision, rule_id: stored.record.approval.rule ?? null, policy_revision: stored.record.approval.policy_revision ?? null,
+        requires_approval: answer.requires_approval || decision === 'ask', reason: `the answer this request_id got when it first held the amount (${stored.record.action.at})` } as PolicyCheckAnswer;
+      const hold = stored.record.hold;
+      return { ...original, reservation: hold ? { action_id: replay!, amount: `${hold.amount} ${hold.currency}`, expires_at: hold.expires_at } : null, replayed: true };
+    }
+    await settleLedgerWrites(ctx.engine, Date.now() + RESERVE_WAIT_MS);
+    now = clock ?? new Date();
     const answer = await checkPolicy(ctx.engine, { verb: input.verb, amount: input.amount, merchant: input.merchant, to: input.to }, callerScopes(remote),
-      { usage: usageLookup(ctx.engine, reader, now, stored ? replay! : undefined) });
-    if (stored?.record.hold) return { ...answer, reservation: { action_id: replay!, amount: `${stored.record.hold.amount} ${stored.record.hold.currency}`, expires_at: stored.record.hold.expires_at }, replayed: true };
+      { usage: usageLookup(ctx.engine, reader, now) });
     if (answer.decision === 'deny') return { ...answer, reservation: null };
     const summary = input.summary.trim();
     if (!summary || summary.length > MAX_SUMMARY) throw invalid('summary', `summary is required, at most ${MAX_SUMMARY} characters`);
@@ -345,12 +439,12 @@ export async function policyReserve(ctx: OperationContext, input: ReserveInput, 
         ...(input.counterparty ?? input.merchant ? { counterparty: input.counterparty ?? input.merchant } : {}), ...(input.harness ? { harness: input.harness } : {}), actor },
       evidence: [],
       approval: { by: answer.decision === 'allow' ? 'policy' : 'none', ...(answer.rule_id ? { rule: answer.rule_id } : {}), ...(answer.policy_revision ? { policy_revision: answer.policy_revision } : {}) },
-      claim_basis: 'estimated', hold, request_id: requestId,
+      claim_basis: 'estimated', hold, request_id: requestId, request_hash: hash, last_request: { id: requestId, hash },
     };
     const checked = validateActionFrontmatter(fm);
     if (!checked.ok) throw invalid(checked.field, checked.message);
     const slug = actionSlug(now, actor, requestId);
-    await writeAction(ctx, slug, fm, summary, writeRequestId(actor, requestId));
+    await writeAction(ctx, slug, fm, summary, requestId, writeRequestId(actor, requestId));
     return { ...answer, reservation: { action_id: slug, amount: `${hold.amount} ${hold.currency}`, expires_at: hold.expires_at } };
   });
 }
@@ -363,7 +457,8 @@ export async function confirmAction(ctx: OperationContext, slug: string): Promis
   if (stored.record.claim_basis === 'user_confirmed') return { action_id: slug, claim_basis: 'user_confirmed', unchanged: true };
   const fm: Record<string, unknown> = { ...stored.frontmatter, type: AGENT_ACTION_TYPE, claim_basis: 'user_confirmed' };
   for (const key of SERVER_STAMPED_KEYS) delete fm[key];
-  await writeAction(ctx, slug, fm, stored.record.action.summary, randomUUID(), stored.revision);
+  const confirmId = randomUUID();
+  await writeAction(ctx, slug, fm, stored.record.action.summary, confirmId, confirmId, stored.revision);
   return { action_id: slug, claim_basis: 'user_confirmed', unchanged: false };
 }
 
@@ -388,8 +483,8 @@ export async function ledgerReport(engine: BrainEngine, reader: LedgerReader, q:
         why: `More than ${max} actions fall in this window; a shorter since window fits in one read.` } };
   }
   const party = q.counterparty?.trim().toLowerCase();
-  const rows = scan.rows.filter(r => (!q.verb || r.record.action.verb === q.verb) && (!party || r.record.action.counterparty?.trim().toLowerCase() === party));
-  return { state: 'complete', scope, ...window, totals: ledgerTotals(rows, now), note: TOTALS_NOTE };
+  const keep = (r: StoredAction) => (!q.verb || r.record.action.verb === q.verb) && (!party || r.record.action.counterparty?.trim().toLowerCase() === party);
+  return { state: 'complete', scope, ...window, totals: ledgerTotals(scan.rows, now, keep), note: TOTALS_NOTE };
 }
 
 /** Parse --since/since: <n>d, or an ISO date. */
