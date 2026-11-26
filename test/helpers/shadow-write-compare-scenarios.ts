@@ -914,6 +914,21 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       expect(event!.then).toBeUndefined(); // and the stamp is not replayed
     }, 60_000);
 
+    test('a table lock is benign alone, and cannot hide a write that rides behind it in the same batch (a page update after LOCK is a later write)', async () => {
+      await ctx.reset(); await fillSeedFixture(primary());
+      const after = async (statement: (tx: BrainEngine) => Promise<unknown>) => {
+        const { inbox, wrapped } = rig();
+        await wrapped.transaction(async (tx) => { await tx.putPage('people/rex-example', page('Rex Example')); await statement(tx); });
+        await sampleOf(inbox);
+        return verdicts(inbox)[0];
+      };
+      expect(await after((tx) => tx.executeRaw('LOCK TABLE content_chunks IN SHARE UPDATE EXCLUSIVE MODE NOWAIT'))).toEqual(['sample', undefined]);
+      if (ctx.kind !== 'postgres') return; // PGLite refuses a batch of several statements
+      expect(await after((tx) => tx.executeRaw("LOCK TABLE pages IN ROW EXCLUSIVE MODE; UPDATE pages SET contextual_retrieval_mode='title' WHERE slug='people/rex-example'"))).toEqual(['uncomparable', 'in_transaction_later_write']);
+      expect(await after((tx) => tx.executeRaw("LOCK TABLE sources IN ROW EXCLUSIVE MODE; UPDATE facts SET fact = fact WHERE id = -1"))).toEqual(['uncomparable', 'in_transaction_later_write']);
+      expect(await after((tx) => tx.executeRaw("LOCK TABLE sources IN ROW EXCLUSIVE MODE; UPDATE sources SET name = name WHERE id = 'default'"))).toEqual(['sample', undefined]); // every statement is checked, and this one writes bookkeeping only
+    }, 60_000);
+
     test('a raw write is benign when every table it writes is bookkeeping, and not otherwise: a table outside the set, a statement that mixes one in, and a drifted page statement are uncomparable', async () => {
       await ctx.reset(); await fillSeedFixture(primary());
       const after = async (statement: (tx: BrainEngine) => Promise<unknown>) => {

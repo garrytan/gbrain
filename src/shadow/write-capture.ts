@@ -142,11 +142,13 @@ const AFTER_PAGE_WRITE: ReadonlySet<string> = new Set([
     WHERE source_id=$1 AND slug=$2 RETURNING id`),
   squash('UPDATE pages SET chunker_version=$3 WHERE source_id=$1 AND slug=$2'),
 ]);
+/** A single `LOCK TABLE <names> IN <mode> MODE [NOWAIT]` statement: no `;` inside, so no second statement can ride behind it. (The write parser reads `SHARE UPDATE EXCLUSIVE` as an UPDATE, so a lock is never left to it.) */
+const PURE_LOCK = /^\s*LOCK\s+TABLE\s+(ONLY\s+)?[\w."]+(\s*,\s*(ONLY\s+)?[\w."]+)*\s+IN\s+[A-Za-z ]+\s+MODE(\s+NOWAIT)?\s*;?\s*$/i;
 function rawKind(args: unknown[]): 'bookkeeping' | 'seal' | undefined {
   const sql = args[0];
   if (typeof sql !== 'string') return undefined;
   if (AFTER_PAGE_WRITE.has(squash(sql))) return 'seal';
-  if (/^\s*LOCK\s+TABLE\s/i.test(sql)) return 'bookkeeping'; // a table lock changes no row
+  if (PURE_LOCK.test(sql)) return 'bookkeeping'; // one table lock and nothing else changes no row; a batch that holds more goes through the table check below, whole
   try { const writes = sqlWrites(sql); return writes.length > 0 && writes.every((w) => w.kind === 'relation' && BOOKKEEPING.has(w.relation)) ? 'bookkeeping' : undefined; } catch { return undefined; }
 }
 const pageKey = (name: string, args: unknown[]): string => { const r = pageRefs(name === STAMP ? 'putPage' : name, name === STAMP ? [args[0], undefined, { sourceId: args[1] }] : args)[0]; return r ? `${r.source}\0${r.slug}` : ''; };
