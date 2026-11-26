@@ -21,12 +21,39 @@ export type EffectId = string | number;
 
 /** `stampEffectClaim`: claims effect `id` under `token`; `ownerJson` is the `claim_owner` stamp (`effectClaimStamp`). */
 export interface EffectClaim { id: EffectId; token: string; ownerJson: string }
+/** `claimCoalescedGitEffects`: the host, its worktree, how many, the owners proved dead, and the `claim_owner` owner (`claimOwner()` as JSON). */
+export interface CoalescedGitClaim { hostId: string; worktreeId: string; limit: number; deadOwners: readonly string[]; ownerJson: string }
 /** A held claim: the effect's id and the claim's execution token (null matches no claim). */
 export interface EffectClaimRef { id: EffectId; token: string | null }
 
 /** `stampEffectClaim`: $1 id, $2 token, $3 the owner stamp. The text `claimPersistenceEffect` has always sent. */
 export const STAMP_EFFECT_CLAIM_SQL = `UPDATE persistence_effects SET state='running',execution_token=$2::uuid,claim_owner=$3::text::jsonb,
       claim_expires_at=now()+interval '2 minutes',attempts=attempts+1,updated_at=now() WHERE id=$1 RETURNING *`;
+
+/**
+ * `claimCoalescedGitEffects`: $1 host id, $2 worktree id, $3 limit, $4 the owner keys proved dead, $5 the owner stamp.
+ * The text `claimCoalescedGitEffects` (persistence/effect-journal.ts) has always sent, with `refreshFenceClear('w', 'id')`
+ * and `DEAD_OWNER_EFFECT_SQL('e', '$4')` written out; test/persistence-journal-statements.test.ts checks it against those
+ * fragments.
+ */
+export const CLAIM_COALESCED_GIT_EFFECTS_SQL = `WITH ready AS (SELECT e.id,gen_random_uuid() AS token FROM persistence_effects e
+      WHERE EXISTS (SELECT 1 FROM persistence_worktrees w WHERE w.id=$2::uuid AND w.owner_host_id=$1::uuid
+        AND NOT EXISTS (SELECT 1 FROM persistence_worktree_refreshes fence WHERE fence.worktree_id=w.id
+        AND fence.state IN ('fenced','merged','recovery_required'))
+        AND NOT EXISTS (SELECT 1 FROM persistence_effects blocked WHERE blocked.worktree_id=w.id AND blocked.recovery IS NOT NULL)
+        AND NOT EXISTS (SELECT 1 FROM persistence_requests blocked WHERE blocked.worktree_id=w.id AND blocked.recovery IS NOT NULL))
+      AND e.worktree_id=$2::uuid AND e.kind='git' AND e.data ? 'relative_path'
+      AND NOT (e.data ? 'targets') AND NOT (e.data ? 'source_scan') AND NOT (e.data ? 'version')
+      AND (e.state='queued' OR e.state='running' AND e.claim_expires_at<now() OR e.state='running' AND e.recovery IS NULL
+  AND e.claim_owner->>'token'=e.execution_token::text AND concat_ws(':',e.claim_owner->'owner'->>'pid',e.claim_owner->'owner'->>'nonce',e.claim_owner->'owner'->>'start')=ANY($4::text[])) AND e.next_attempt_at<=now()
+      AND e.recovery IS NULL
+      AND NOT EXISTS (SELECT 1 FROM persistence_effects mirror
+        WHERE mirror.request_id=e.request_id AND mirror.kind='withdrawal-mirror' AND mirror.state IN ('queued','running'))
+      ORDER BY e.next_attempt_at,e.id LIMIT $3 FOR UPDATE OF e SKIP LOCKED)
+      UPDATE persistence_effects p SET state='running',execution_token=ready.token,
+      claim_owner=jsonb_build_object('token',ready.token::text,'owner',$5::text::jsonb),
+      claim_expires_at=now()+interval '2 minutes',attempts=attempts+1,updated_at=now()
+      FROM ready WHERE p.id=ready.id RETURNING p.*`;
 
 /** `renewEffectClaim`: $1 id, $2 token. The text `renewPersistenceEffectClaim` has always sent. */
 export const RENEW_EFFECT_CLAIM_SQL = `UPDATE persistence_effects SET claim_expires_at=now()+interval '2 minutes',updated_at=now()
@@ -101,6 +128,15 @@ export interface MirrorGateRow { request_id: string; state: string; data: Record
 export async function stampEffectClaim<R = Record<string, unknown>>(exec: EffectExec, claim: EffectClaim): Promise<R | null> {
   const [row] = await exec.executeRaw<R>(STAMP_EFFECT_CLAIM_SQL, [claim.id, claim.token, claim.ownerJson]);
   return row ?? null;
+}
+
+/**
+ * Claims up to `limit` more ready single-file Git effects of worktree `worktreeId` for host `hostId` (#5530), each under a
+ * fresh token with `ownerJson` as its stamp's owner, under the readiness, recovery and withdrawal-mirror rules of
+ * `selectClaimableEffect`, so the runner commits them together. The claimed rows, in the order the statement returns them.
+ */
+export async function claimCoalescedGitEffects<R = Record<string, unknown>>(exec: EffectExec, input: CoalescedGitClaim): Promise<R[]> {
+  return exec.executeRaw<R>(CLAIM_COALESCED_GIT_EFFECTS_SQL, [input.hostId, input.worktreeId, input.limit, [...input.deadOwners], input.ownerJson]);
 }
 
 /** Extends an effect claim's lease; true while the effect is still running under the token with no recovery. */

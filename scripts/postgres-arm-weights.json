@@ -357,6 +357,7 @@
   "test/engine-parity/page-vector-flip.test.ts": 5632,
   "test/engine-parity/page-vector-overflow.test.ts": 8059,
   "test/engine-parity/page-visibility.test.ts": 7042,
+  "test/engine-parity/page-window-chunk-reads.test.ts": 8000,
   "test/engine-parity/page-write-readers.test.ts": 8200,
   "test/engine-parity/pages.test.ts": 16255,
   "test/engine-parity/persistence-declaration.test.ts": 9427,

@@ -100,11 +100,8 @@ by id that `get_versions` resolves). Their capability in `members.ts` is `pages`
 `tail_reads.md`) reads the page record of each id: `id`, `slug`, `source_id` and `frontmatter`, in id order, each id once,
 soft-deleted pages included (the statement does not filter them). An unknown or negative id names no row.
 
-`listVisiblePageSlugs` is not served by this branch: it refuses with `engine_capability_missing` naming the member. What
-the store would need to serve it:
-
-| Members | Reads | The store would need |
-| --- | --- | --- |
-| `listVisiblePageSlugs` | the slugs of live pages the caller's policy admits, within the sources given | the page scan with the caller's page policy (read or access form) applied per page |
+`listVisiblePageSlugs` is served: `Store::list_visible_page_slugs` (`gbrain-store/src/cli_reads/admin_reads.rs`, see
+`admin-reads.md`) keeps the slugs of the live pages in the given sources that the caller's page policy (read or access
+form, as the typed store policy) does not hide, in byte order.
 
 The policy text is Postgres text only; the store reads the typed arguments, never the statement.
