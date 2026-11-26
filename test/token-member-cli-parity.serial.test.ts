@@ -143,6 +143,22 @@ const LABELLED_SCRIPT: Step[] = [
   { args: ['get', 'notes/lab-new'] },
 ];
 
+/**
+ * An enforced member's `remember` on a brain whose members read lineage (access.members_read_lineage). The output guard
+ * judges pages by a record that reads through lineage, which a Rust brain does not serve yet (row ec05-1), so the guard
+ * refuses engine_capability_missing. A write must not run before a guard that refuses: on Rust the remember writes
+ * nothing (no fact in the page, no revision change, no new page) while PGLite and Postgres save the fact. Run last, on
+ * the brain of every engine.
+ */
+const LINEAGE_SCRIPT: Step[] = [
+  { args: ['access', 'members-read-lineage', 'on'] },
+  { label: 'stats-before', args: ['stats', '--json'] },
+  { label: 'remember', args: ['remember', 'Tess likes harbour views', '--entity', 'notes/launch-plan', '--provenance', 'test', '--json'], member: 'tess-example' },
+  { label: 'page-after', args: ['get', 'notes/launch-plan'] },
+  { label: 'stats-after', args: ['stats', '--json'] },
+  { label: 'rev-check', args: ['put', 'notes/launch-plan', '--expected-revision', '{rev}', '--json'], rev: 'rewrite', stdin: PLAN('A later edit by the owner.') },
+];
+
 type Engine = 'pglite' | 'postgres' | 'rust';
 interface Brain { engine: Engine; home: string }
 interface Run { exitCode: number; stdout: string; stderr: string }
@@ -216,6 +232,7 @@ beforeAll(async () => {
 /** The second script's brains and what each command printed. */
 const enforcedBrains: Brain[] = [];
 const enforcedRuns = new Map<Engine, Run[]>();
+const labelled = new Map<Engine, Map<string, Run>>();
 let closeEnforcedPg: (() => Promise<void>) | undefined;
 
 beforeAll(async () => {
@@ -230,10 +247,13 @@ beforeAll(async () => {
   await Promise.all(enforcedBrains.map(async (brain) => {
     const out: Run[] = [];
     const revisions = new Map<string, string>();
-    for (const step of [...ENFORCED_SCRIPT, ...(brain.engine === 'rust' ? LABELLED_SCRIPT : [])]) {
+    const byLabel = new Map<string, Run>();
+    labelled.set(brain.engine, byLabel);
+    for (const step of [...ENFORCED_SCRIPT, ...(brain.engine === 'rust' ? LABELLED_SCRIPT : []), ...LINEAGE_SCRIPT]) {
       const args = step.args.map((a) => a === '{rev}' ? revisions.get(step.rev ?? '') ?? '' : a);
       const run = await cli(brain, args, { member: step.member, stdin: step.stdin });
       out.push(run);
+      if (step.label) byLabel.set(step.label, run);
       if (step.label) { try { revisions.set(step.label, String(JSON.parse(run.stdout).revision ?? '')); } catch { /* not JSON: the compared output shows it */ } }
     }
     enforcedRuns.set(brain.engine, out);
@@ -273,7 +293,7 @@ const withoutBackupNotice = (text: string) => text.split('\n').filter((l) => !l.
 
 describe('a put on a brain of several members, plain and under GBRAIN_ENFORCED_MEMBER, on every engine', () => {
   test('the script runs as written on PGLite', () => {
-    const codes = enforcedRuns.get('pglite')!.map((r, i) => `${r.exitCode} ${ENFORCED_SCRIPT[i].label ?? ENFORCED_SCRIPT[i].args[0]}`);
+    const codes = enforcedRuns.get('pglite')!.slice(0, ENFORCED_SCRIPT.length).map((r, i) => `${r.exitCode} ${ENFORCED_SCRIPT[i].label ?? ENFORCED_SCRIPT[i].args[0]}`);
     expect(codes).toEqual(ENFORCED_SCRIPT.map((s) => `${s.exit ?? 0} ${s.label ?? s.args[0]}`));
   });
 
@@ -284,6 +304,22 @@ describe('a put on a brain of several members, plain and under GBRAIN_ENFORCED_M
     const stopped = (r: Run) => ({ exitCode: r.exitCode, code: /"code": "([a-z_]+)"/.exec(r.stdout + r.stderr)?.[1], nothing: /outcome=none written=nothing/.test(r.stdout + r.stderr) });
     expect([listed.exitCode, stopped(rewrite), stopped(create)]).toEqual([0, { exitCode: 1, code: 'engine_capability_missing', nothing: true }, { exitCode: 1, code: 'engine_capability_missing', nothing: true }]);
     expect([/Body one\./.test(getPlan.stdout), /Body two\./.test(getPlan.stdout), getNew.exitCode]).toEqual([true, false, 1]);
+  });
+
+  test('an enforced remember on a brain whose members read lineage writes nothing when the output guard cannot run', () => {
+    const outcome = (engine: Engine) => {
+      const r = labelled.get(engine);
+      if (!r) return null; // that engine is not configured on this run
+      const text = (run: Run) => run.stdout + run.stderr;
+      return { remember: r.get('remember')!.exitCode, code: r.get('remember')!.exitCode === 0 ? null : /"code": "([a-z_]+)"/.exec(text(r.get('remember')!))?.[1] ?? null,
+        factInPage: /Tess likes harbour views/.test(r.get('page-after')!.stdout), statsKept: r.get('stats-after')!.stdout === r.get('stats-before')!.stdout, revisionKept: r.get('rev-check')!.exitCode === 0 };
+    };
+    for (const engine of ['pglite', 'postgres'] as const) {
+      const out = outcome(engine);
+      if (out) expect({ engine, ...out }).toEqual({ engine, remember: 0, code: null, factInPage: true, statsKept: true, revisionKept: false });
+    }
+    const rust = outcome('rust');
+    if (rust) expect(rust).toEqual({ remember: 1, code: 'engine_capability_missing', factInPage: false, statsKept: true, revisionKept: true });
   });
 
   for (const engine of ['postgres', 'rust'] as const) {
