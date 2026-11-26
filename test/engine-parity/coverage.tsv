@@ -154,7 +154,7 @@ pagePrefixSamples	pages	yes	3	no	yes	yes	serves
 countPagesByTypeForSource	pages	yes	2	no	yes	yes	serves
 resolveSlugs	pages	yes	8	no	yes	yes	serves
 getAllSlugs	pages	yes	4	no	yes	yes	serves
-listEntityKeyRows	pages	yes	9	no	yes	yes	serves
+listEntityKeyRows	pages	yes	10	no	yes	yes	serves
 listIdentityDecisions	pages	yes	10	no	yes	yes	serves
 listRestrictedIdentityMembers	pages	yes	1	no	yes	yes	serves
 applyIdentityDecisions	pages	yes	12	no	yes	yes	serves
@@ -648,7 +648,7 @@ readFactTrustTier	facts	yes	2	no	yes	yes	serves
 listFenceFactRowNums	facts	yes	2	no	yes	yes	serves
 readLiveFactRowTier	facts	yes	1	no	yes	yes	serves
 insertFact	facts	yes	199	yes	yes	yes	serves
-insertFacts	facts	yes	272	no	yes	yes	serves
+insertFacts	facts	yes	273	no	yes	yes	serves
 deleteFactsForPage	facts	yes	8	no	yes	yes	serves
 expireFact	facts	yes	94	no	yes	yes	serves
 listFactsByEntity	facts	yes	66	yes	yes	yes	serves
@@ -1968,8 +1968,8 @@ hasCompanyBrainReceipt	cli_reads_import	yes	1	no	yes	yes	serves
 readGuestSourceRow	cli_reads_import	yes	1	no	yes	yes	serves
 listGuestSourceIds	cli_reads_import	yes	1	no	yes	yes	serves
 hasGuestSource	cli_reads_import	yes	1	no	yes	yes	serves
-readPageTrustRows	cli_reads_import	yes	20	no	yes	yes	serves
-readRowTrustRows	cli_reads_import	yes	15	no	yes	yes	serves
+readPageTrustRows	cli_reads_import	yes	21	no	yes	yes	serves
+readRowTrustRows	cli_reads_import	yes	16	no	yes	yes	serves
 readDatabaseClock	cli_reads_import	yes	1	no	yes	yes	serves
 listLinkPageMetadata	cli_reads_import	yes	2	no	yes	yes	serves
 listLinkPageMetadataForSlugs	cli_reads_import	yes	2	no	yes	yes	serves

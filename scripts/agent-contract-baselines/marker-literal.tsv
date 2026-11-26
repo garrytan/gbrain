@@ -2,7 +2,7 @@
 src/commands/config.ts	1
 src/commands/doctor/upgrade-banner.ts	6
 src/commands/google-attachments.ts	1
-src/commands/google.ts	4
+src/commands/google.ts	2
 src/commands/upgrade.ts	2
 src/core/advisor/render.ts	2
 src/core/skillpack/brain-pack-advisory.ts	1

@@ -1633,6 +1633,7 @@ jobs:
         env:
           ARTIFACT_DIR: ${{ runner.temp }}/full-suite
           MANIFEST: ${{ runner.temp }}/ci-manifest/ci-manifest.json
+          EXECUTED_RECEIPTS: ${{ needs.executed-receipts.result }}
           RUN_ID: ${{ github.run_id }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
           WORKFLOW: ${{ github.workflow }}
