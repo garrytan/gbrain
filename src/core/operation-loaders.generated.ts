@@ -16,6 +16,7 @@ const load_chunks = () => import('./ops/chunks.ts') as Promise<Record<string, un
 const load_claims = () => import('./ops/claims.ts') as Promise<Record<string, unknown>>;
 const load_code_intel = () => import('./ops/code-intel.ts') as Promise<Record<string, unknown>>;
 const load_connectors = () => import('./ops/connectors.ts') as Promise<Record<string, unknown>>;
+const load_correct = () => import('./ops/correct.ts') as Promise<Record<string, unknown>>;
 const load_embedding_migration = () => import('./ops/embedding-migration.ts') as Promise<Record<string, unknown>>;
 const load_entity_identity = () => import('./ops/entity-identity.ts') as Promise<Record<string, unknown>>;
 const load_extraction = () => import('./ops/extraction.ts') as Promise<Record<string, unknown>>;
@@ -167,6 +168,7 @@ export const OPERATION_LOADERS: Record<string, readonly [() => Promise<Record<st
   "storage_update": [load_storage_manifest, "storageManifestOperations"],
   "reveal_secret": [load_secrets, "secretsOperations"],
   "check_claims": [load_claims, "claimsOperations"],
+  "correct": [load_correct, "correctOperations"],
   "policy_check": [load_policy, "policyOperations"],
   "agent_policy": [load_policy, "policyOperations"],
   "capabilities": [load_policy, "policyOperations"],

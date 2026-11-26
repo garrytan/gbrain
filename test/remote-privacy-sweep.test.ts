@@ -236,6 +236,7 @@ const PARAM_FACTORY: Record<string, Record<string, unknown>> = {
   set_memory_writeback: { mode: 'off' },
   memory_conversation_mode: { mode: 'all' },
   household_add: { kind: 'supply', title: 'Sweep supply', cadence: '7d' },
+  correct: { rule: 'Sweep rule: call the sweep page by its title.' },
   household_mark: { slug: 'household/supplies/sweep-missing', event: 'bought' },
 };
 
@@ -247,7 +248,7 @@ const PARAM_FACTORY: Record<string, Record<string, unknown>> = {
 const COORDINATED_WRITES = new Set(['put_page', 'put_pages', 'capture', 'delete_page', 'restore_page', 'revert_version', 'edit_page', 'append_page',
   'remember', 'forget', 'add_tag', 'remove_tag', 'add_timeline_entry',
   'takes_add', 'takes_update', 'takes_supersede', 'takes_resolve',
-  'get_write_request', 'list_write_requests', 'cancel_write_request', 'household_add', 'household_mark']);
+  'get_write_request', 'list_write_requests', 'cancel_write_request', 'household_add', 'household_mark', 'correct']);
 
 const EXPECTED_BY_SHAPE: Record<string, Partial<Record<Shape, Outcome>>> = {
   whoami: { scalar: 'error', federated: 'ok' },
@@ -461,6 +462,8 @@ const EXPECTED_OUTCOME: Record<string, Outcome> = {
   // GST-3825 H1: the fixture holds no household record, so household_due answers empty and household_mark finds none.
   household_due: 'ok',
   household_add: 'ok',
+  // C2: an unbound credential's rule is saved proposed (the owner approves it), so the call succeeds.
+  correct: 'ok',
   household_mark: 'error',
   loops_mute: 'error',
   loops_unmute: 'error',

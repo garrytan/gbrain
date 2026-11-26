@@ -100,6 +100,7 @@ op	rate_answer	no_canonical_write	Writes only retrieval_* feedback tables (answe
 op	purge_fact	coordinator	submitPurgeFactMutation admits a journaled write and deletes the purged rows under withCoordinatedWrite (trusted local CLI only).
 op	unpurge_page	no_canonical_write	Deletes only purge tombstone rows (page_purges, fact_purges, take_purges); restores no canonical row (trusted local CLI only).
 op	confirm_memory	coordinator	applyOwnerAction raises the row to user_confirmed through the owner action path (journaled owner page mutation or withCoordinatedWrite on a managed brain).
+op	correct	coordinator	runCorrect writes the rule page through submitPageMutation and supersedes or withdraws the fact through the remember and forget verbs (never purge); its receipt is a config row.
 cli	src/commands/enrich.ts	coordinator	gbrain enrich preflights maintenance authority, then publishMaintenancePage per page.
 cli	src/commands/extract-conversation-facts.ts	coordinator	Bulk conversation facts publish in batches of pages as receipted managed_maintenance_conversation_facts requests after a maintenance preflight.
 cli	src/commands/pages.ts	coordinator	gbrain pages purge-deleted runs purgeDeletedPagesCoordinated.
@@ -109,5 +110,6 @@ cli	src/core/facts/fence-write.ts	coordinator	Direct fence writes publish throug
 cli	src/core/chronicle/extract-events.ts	coordinator	Chronicle events and their depth timeline rows publish through publishMaintenancePage.
 cli	src/core/persistence/purge-deleted.ts	coordinator	Shared purge used by the cycle, the purge job, the operation and the CLI.
 cli	src/commands/sources-refresh.ts	coordinator	gbrain sources refresh drains and fences the worktree, fast-forwards it under the native lock, then imports through the managed --no-pull sync's journaled page requests.
+cli	src/commands/rules.ts	coordinator	gbrain rules approve and retire write the rule page through submitPageMutation; approve runs the receipt's fact step through the remember or forget verb.
 op	learned_keep	no_canonical_write	Marks learning_items ledger rows kept; no page, fact, link, loop or canonical file is written.
 op	learned_undo	coordinator	Runs forget, loops_close or revert_version as the caller, each through its own coordinated mutation; a local conflict undo only moves a decide_proposals row to rejected.

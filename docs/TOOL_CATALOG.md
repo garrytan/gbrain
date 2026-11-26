@@ -4,7 +4,7 @@
 <!-- Regenerate: bun run scripts/generate-tool-catalog.ts -->
 <!-- Freshness-guarded by scripts/check-tool-catalog-fresh.sh (bun run verify). -->
 
-Every non-localOnly operation on the MCP surface: 197 tools across 32 areas. **Starter** marks membership in the ~42-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
+Every non-localOnly operation on the MCP surface: 198 tools across 33 areas. **Starter** marks membership in the ~43-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
 
 ## action-ledger
 
@@ -63,6 +63,12 @@ Every non-localOnly operation on the MCP surface: 197 tools across 32 areas. **S
 | `code_def` | Where is this symbol defined? | read |  |  |
 | `code_flow` | When tracing how a request flows through the codebase from entry point to side effect (DB write, HTTP call, file I/O), run code_flow from the entry point. | read |  |  |
 | `code_refs` | Find every reference to a symbol across the codebase (every file, every line). | read |  |  |
+
+## correct
+
+| Tool | Description | Scope | Starter | Gate |
+|---|---|---|---|---|
+| `correct` | The user corrected you: saves their standing rule and replaces fact_id with corrected_fact (or withdraws it). | write | yes |  |
 
 ## discovery
 

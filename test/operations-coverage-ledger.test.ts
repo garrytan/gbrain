@@ -235,6 +235,7 @@ const LEDGER: Record<string, string> = {
   loops_close: 'test/ops-loops.test.ts',
   household_due: 'test/household-ops.test.ts',
   household_add: 'test/household-ops.test.ts',
+  correct: 'test/correct-rules-c2.test.ts',
   household_mark: 'test/household-ops.test.ts',
   household_replace: 'test/household-remote.test.ts',
   loops_mute: 'test/ops-loops.test.ts',

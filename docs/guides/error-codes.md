@@ -1699,6 +1699,46 @@ More: [docs/guides/core-memory.md#remote-edits](../../docs/guides/core-memory.md
 |---|---|---|---|---|---|---|
 | A corpus window failed after its model call on every allowed attempt, so the sweep stopped paying for it; its file stays pending until an operator retries it. | A window that can never commit was re-extracted forever before #6785. The count is per window and source incarnation; tail growth and changing error codes do not reset it, and one extraction-config change (model, provider, key presence) retries it once. | Fix the cause the last code names (for writer_coordinator_required: gbrain sources writer status <source>), then ask the user before gbrain sweep --retry-failed --apply: the retry pays for the extraction again. Run: gbrain sweep --retry-failed --json | agent | `repeat the read that failed` | 1 | no |
 
+### correct_guest_refused
+
+<a id="correct_guest_refused"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| correct was refused because the write source is a guest source, so no rule was saved and no fact changed. | A guest writes only guest notes; a standing rule changes what every agent loads, so only the brain's owner or its members save one. | Tell the user what should be corrected; the brain's owner saves the rule. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/standing-rules.md#correct_guest_refused](../../docs/guides/standing-rules.md#correct_guest_refused)
+
+### correct_instruction_refused
+
+<a id="correct_instruction_refused"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| correct was refused because the rule reads like an instruction to override an agent, send data out or handle credentials, so nothing was written. | Standing rules reach every agent at session start; the write gate's override, exfiltration and credential families never become one. | Rephrase the rule as the user's own preference about a fact or a way of working. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/standing-rules.md#correct_instruction_refused](../../docs/guides/standing-rules.md#correct_instruction_refused)
+
+### correct_origin_refused
+
+<a id="correct_origin_refused"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| correct was refused because content_origin was not user_said (tool output or an inference), so nothing was written. | A standing rule is what the user told their agent; text a tool returned or an agent inferred could plant a rule nobody asked for. | Call correct only with the user's own correction; save what a tool returned with remember instead. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/standing-rules.md#correct_origin_refused](../../docs/guides/standing-rules.md#correct_origin_refused)
+
+### correct_receipt_not_found
+
+<a id="correct_receipt_not_found"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| No correction receipt with that id was made by this connection. | A receipt is read and resumed only by the caller that made it, or on the brain host, so one connection never learns about another's corrections. | Use the receipt_id that correct returned to this connection, or run gbrain correct status <receipt> on the brain host. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/standing-rules.md#correct_receipt_not_found](../../docs/guides/standing-rules.md#correct_receipt_not_found)
+
 ### cost_cap_exceeded
 
 <a id="cost_cap_exceeded"></a>
@@ -4813,6 +4853,16 @@ More: [docs/ENGINES.md#pg-pool-stalled](../../docs/ENGINES.md#pg-pool-stalled)
 
 More: [docs/ENGINES.md#pg-statement-build-failed](../../docs/ENGINES.md#pg-statement-build-failed)
 
+### pg_storage_interrupted
+
+<a id="pg_storage_interrupted"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| PostgreSQL was interrupted (EINTR, "Interrupted system call") while opening or reading one of its data files. | The operating system interrupted the server's file access: a fault on the database host (its storage or a network filesystem), not damaged rows, so no repair command applies and the statement that hit it did not finish. | PostgreSQL was interrupted reading a data file on the database host, which is not a sign of damaged rows. Check its storage and the PostgreSQL log; once it reads again, check the original job or write receipt before resubmitting. | host_admin | `gbrain doctor --json` | 1 | no |
+
+More: [docs/ENGINES.md#the-gbrain_db_access-marker](../../docs/ENGINES.md#the-gbrain_db_access-marker)
+
 ### pglite_busy
 
 <a id="pglite_busy"></a>
@@ -5825,6 +5875,56 @@ More: [docs/guides/windowed-reads.md#revision_changed](../../docs/guides/windowe
 
 More: [docs/guides/google-socket.md#error-codes](../../docs/guides/google-socket.md#error-codes)
 
+### rule_exists
+
+<a id="rule_exists"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| correct was refused because a proposed or active rule with the same words already exists, so nothing was written. | One rule per wording keeps approvals and retirements unambiguous. | Ask the owner to approve the existing rule, or leave it: it is already saved. Run: gbrain rules list | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/standing-rules.md#rule_exists](../../docs/guides/standing-rules.md#rule_exists)
+
+### rule_owner_only
+
+<a id="rule_owner_only"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A remote caller tried to write, move or retype a standing rule page outside the correct verb, so nothing was written. | Rules change only through correct (which writes the rule and its fact fix together, with a receipt) or gbrain rules on the brain host, so an agent cannot edit a rule its owner confirmed. | Use correct to save a rule; ask the owner to retire one with gbrain rules retire <id>. | user | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/standing-rules.md#rule_owner_only](../../docs/guides/standing-rules.md#rule_owner_only)
+
+### rule_proposed
+
+<a id="rule_proposed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The standing rule is saved but waits for the owner: it is proposed, or active for retrieval and not yet confirmed for the standing-rules section. | An agent can sound like its user; a rule reaches every session only after the owner confirms its exact revision in their own terminal. | Relay the receipt's next.user_message to the user; they run gbrain rules approve <id>@<revision> in their own terminal. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/standing-rules.md#rule_proposed](../../docs/guides/standing-rules.md#rule_proposed)
+
+### rule_revision_stale
+
+<a id="rule_revision_stale"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The revision named for approval is not the rule page's current revision, so nothing was approved. | Approval binds one exact revision; approving another would load words the owner did not see. | Run gbrain rules show <id> to read the current revision, then approve that one. Run: gbrain rules list | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/standing-rules.md#rule_revision_stale](../../docs/guides/standing-rules.md#rule_revision_stale)
+
+### rule_transition
+
+<a id="rule_transition"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A write to a standing rule page was refused because it moves the rule's status in a way rules never move (proposed → active → retired, never back), so nothing was written. | A retired rule stays retired so an old approval can never come back to life; a new rule gets its own confirmation. | Save a new rule with correct instead of reviving a retired one. Run: gbrain rules list | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/standing-rules.md#rule_transition](../../docs/guides/standing-rules.md#rule_transition)
+
 ### runtime_build_skew
 
 <a id="runtime_build_skew"></a>
@@ -6670,6 +6770,16 @@ More: [docs/guides/repair.md#slug-spelling](../../docs/guides/repair.md#slug-spe
 | gbrain repair slug-spelling did not move any page because the database's encoding is not UTF8; nothing was written. | Finding every stored spelling of a name compares composed Unicode text, which only a UTF8 database can evaluate; without it the repair could miss another page that prints the same name and merge two pages. | Move the brain to a database created with UTF8 encoding (gbrain doctor reports database_encoding), then preview again with gbrain repair slug-spelling --source <id>. | user | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/repair.md#slug-spelling](../../docs/guides/repair.md#slug-spelling)
+
+### slug_too_long
+
+<a id="slug_too_long"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A page slug is longer than the 255 characters a slug can be, so nothing was written (sync holds the file). | Every operation that names a page (get, put, delete, repair) refuses a slug over 255 characters, so a page stored under one could never be read, fixed or removed again (#10080). The message names the length, never the slug. | Move the file to a shorter path (or give it a shorter slug: line), commit and sync. A page an older sync already stored under such a slug can be removed with gbrain delete. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#slug_too_long](../../docs/guides/write-refusals.md#slug_too_long)
 
 ### source_binding_required
 
@@ -7534,6 +7644,16 @@ More: [docs/guides/troubleshooting.md#upstream-rewritten](../../docs/guides/trou
 | An `as_of` read found no version of the page that declares a readable `valid_from`, so no edition can be placed on the date. | Valid time comes only from the `valid_from` / `valid_until` frontmatter the page carries; gbrain never infers when text took effect. Only the user knows the date, so the fix asks them before a templated edit_page records it. | Ask the user when the text took effect and record it as a quoted valid_from (the fix carries the edit). For what the brain had recorded at a time, read with known_as_of instead. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/page-history.md#valid_time_undeclared](../../docs/guides/page-history.md#valid_time_undeclared)
+
+### value_unavailable
+
+<a id="value_unavailable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Every count on the value card failed to read, so nothing was counted. | The card reads pages, links, facts, the archive ledger, telemetry and the brain score with separate queries; it fails only when all of them fail, which means the brain itself could not be read. | Run gbrain doctor --json on the brain host to see why the brain cannot be read, then ask again. Run: gbrain doctor --json | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/value-card.md#when-a-count-is-unavailable](../../docs/guides/value-card.md#when-a-count-is-unavailable)
 
 ### vault_generation_changed
 
