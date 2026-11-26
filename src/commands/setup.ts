@@ -243,6 +243,10 @@ function parseFlags(args: string[]): SetupFlags | string {
   if (args.includes('--status') && args.includes('--resume')) return 'pass --status or --resume, not both';
   if (args.includes('--receipt') && !args.includes('--status')) return '--receipt names the receipt --status reads; --resume takes the receipt id itself';
   if (owner !== undefined && !ACCESS_ID_RE.test(owner)) return `invalid --owner '${owner}'; a member id is lower-case letters, digits, '.', '_' and '-' (1-64 characters, starting with a letter or digit)`;
+  if (named && (!['claude-code', 'codex'].includes(positionals[0] ?? '') || ['--instructions-only', '--remove', '--skills-index-only', '--wakeshift'].some((f) => args.includes(f)))) {
+    const roster = [value('--members') && `--members ${value('--members')}`, value('--members-file') && `--members-file ${value('--members-file')}`, source && `--source ${source}`, args.includes('--labelled-only') && '--labelled-only', owner && `--owner ${owner}`].filter(Boolean).join(' ');
+    return `--members sets up per-member access only in gbrain setup claude-code or codex (not --instructions-only, --remove, --skills-index-only or --wakeshift); to label the people of this brain, preview gbrain access serves several ${roster}, and add --yes once you have settled whether members read the existing history; nothing was written`;
+  }
   let stdioMember: string | undefined;
   try { stdioMember = parseStdioMemberFlag(args); } catch (e) { return `${(e as Error).message}; nothing was written`; }
   const noStdioMember = args.includes('--no-stdio-member');
@@ -462,10 +466,6 @@ export async function runSetup(args: string[], deps: { openclaw?: { bin?: string
   if (flags.skillsIndexOnly) return runSkillsIndexOnly(flags, out);
   if (flags.wakeshift) return runWakeshiftOpenclaw(flags, args, out, deps.openclaw ?? {});
   if ((flags.instructionsOnly && (isBrainFirstHarness(flags.harness) || adapter)) || (isBrainFirstHarness(flags.harness) && !mcpWired)) {
-    if (flags.members !== undefined || flags.membersFile !== undefined) {
-      process.stderr.write(`gbrain setup: --members sets up per-member access only in gbrain setup claude-code or codex, and this ${flags.harness} run writes instructions only; label the people with gbrain access serves several --members <ids> (preview, then --yes). Nothing was written.\n`);
-      return 2;
-    }
     return runInstructionsOnly(flags, out);
   }
   if (!isSetupHarness(flags.harness) || capabilityRows(flags.harness).every((r) => r.setup !== 'supported')) {

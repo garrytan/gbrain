@@ -77,6 +77,25 @@ describe('per-member access by default when setup names the people (HARN-1)', ()
     expect(existsSync(join(b.home, '.gbrain'))).toBe(false);
   }, 120_000);
 
+  test('every run that cannot set up members refuses them before writing, and names a recovery that keeps the source and privacy asked for', async () => {
+    const b = box();
+    const roster = join(b.home, 'roster.txt');
+    writeFileSync(roster, 'alice-example\nbob-example\n');
+    const said = async (args: string[]) => { const r = await setup(b, args); expect(r.exitCode).toBe(2); return r.stdout + r.stderr; };
+    for (const args of [
+      ['claude-code', '--instructions-only', '--members-file', roster],
+      ['claude-code', '--skills-index-only', '--members', 'alice-example,bob-example'],
+      ['claude-code', '--remove', '--members', 'alice-example'],
+      ['codex', '--remove', '--members-file', roster],
+      ['pi', '--members', 'alice-example,bob-example'],
+      ['openclaw', '--wakeshift', '--members', 'alice-example'],
+    ]) expect(await said(args)).toContain('--members sets up per-member access only');
+    const hint = await said(['hermes', '--members', 'alice-example,bob-example', '--source', 'team', '--labelled-only']);
+    expect(hint).toContain('gbrain access serves several --members alice-example,bob-example --source team --labelled-only');
+    expect(hint).not.toContain('--labelled-only --yes');
+    expect(existsSync(join(b.home, '.gbrain'))).toBe(false);
+  }, 180_000);
+
   test('a one-person setup stays keyless and unchanged: no members, no rules, no keys', async () => {
     const b = box();
     const r = await setup(b, ['claude-code']);
