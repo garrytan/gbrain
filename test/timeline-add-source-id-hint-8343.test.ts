@@ -13,6 +13,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { provenanceSourceFlagError } from '../src/cli/source-scope.ts';
 
 const REPO = fileURLToPath(new URL('..', import.meta.url));
 
@@ -40,4 +41,14 @@ describe('timeline-add --source-id hint (#8343)', () => {
     expect(r.stderr).not.toContain('did you mean --source?');
     expect(r.stderr).toContain('GBRAIN_SOURCE=<id>');
   }, 60_000);
+
+  const source = { type: 'string' as const, description: 'x' };
+  test('an op whose --source is a real filter (questions_list) keeps the generic error, so its did-you-mean survives', () => {
+    expect(provenanceSourceFlagError({ name: 'questions_list', params: { source } }, 'questions-list', '--source-id', 'unknown flag', ['--source-id', 'a'], false)).toBeNull();
+  });
+  test('a thin client is pointed at its connection grant, not GBRAIN_SOURCE, which its router ignores for these ops', () => {
+    const err = provenanceSourceFlagError({ name: 'add_timeline_entry', params: { source } }, 'timeline-add', '--source-id', 'unknown flag', ['--source-id', 'source-a'], true);
+    expect(err?.message).toContain('gbrain whoami');
+    expect(err?.message).not.toContain('GBRAIN_SOURCE');
+  });
 });

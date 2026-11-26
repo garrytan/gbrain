@@ -503,7 +503,7 @@ async function main() {
       const flagOp = cliOps.get(command) ?? cliAliases.get(command);
       const curated = findCliCommand(command)?.help;
       const known = curated ? (await curated()).help.flags.map(f => f.name) : CLI_FLAG_REGISTRY[command] ?? Object.keys(flagOp?.params ?? {}).map(k => `--${k.replace(/_/g, '-')}`);
-      exitCliError(provenanceSourceFlagError(flagOp, command, unknown, message, subArgs) ?? unknownFlagError(command, unknown, message, known), command, { legacy: { status: 'error', reason: 'invalid_flag', message } });
+      exitCliError(provenanceSourceFlagError(flagOp, command, unknown, message, subArgs, isThinClient(loadConfig())) ?? unknownFlagError(command, unknown, message, known), command, { legacy: { status: 'error', reason: 'invalid_flag', message } });
     }
     const curated = await curatedFlagError(command, subArgs);
     if (curated) exitCliError(curated, command);

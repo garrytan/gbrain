@@ -6,11 +6,17 @@ import { DEFAULT_INVENTORY_LIMITS, inventoryLimitKey, type InventoryLimits } fro
 
 export const setupHash = (content: string | Uint8Array): string => createHash('sha256').update(content).digest('hex');
 
+/** The deepest existing ancestor of `path`, stopping at the filesystem root even when that root is missing (an unmapped drive). */
+export function existingAncestor(path: string, exists: (p: string) => boolean = existsSync): string {
+  let current = resolve(path);
+  while (!exists(current) && dirname(current) !== current) current = dirname(current);
+  return current;
+}
+
 /** The path with its deepest existing ancestor resolved through any symlinks. */
 export function resolvedPath(path: string): string {
   const target = resolve(path);
-  let existing = target;
-  while (!existsSync(existing)) existing = dirname(existing);
+  const existing = existingAncestor(target);
   return join(realpathSync(existing), relative(existing, target));
 }
 
