@@ -9,6 +9,8 @@
  * 2. Fails when: a session read refuses (`engine_capability_missing`, the pre-lineage state), shows a page or a derived
  *    page PGLite hides, or hides one PGLite shows; or the fixture stops exercising lineage (the reference read-only and
  *    write-class answers must differ).
+ *    The owner's key has the read scope only, as a read-only remote client's does: the session admits each read tool
+ *    by the operation's own scope (as serve --http does for PGLite) and still refuses a write or admin tool.
  * 3. Real seams: the same seed on every arm (members, a folder rule, tokens minted by the token service and bound to
  *    members, the owner set by setOwner), the operation handlers called with a remote context, the Rust brain reopened
  *    with GBRAIN_RUST_MULTIUSER=1 so the store resolves multi-user mode at open (asserted in the run), and the session
@@ -26,8 +28,9 @@ import { loadRustAddon } from '../src/core/rust-engine/addon-loader.ts';
 import { openRustEngine, type RustEngine } from '../src/core/rust-engine.ts';
 import { openPrincipalSession } from '../src/core/rust-engine/principal-session.ts';
 import { importFromContent } from '../src/core/import-file.ts';
-import { operations } from '../src/core/operations.ts';
+import { operations, operationsByName } from '../src/core/operations.ts';
 import { buildOperationContext } from '../src/mcp/dispatch.ts';
+import { operationScopesAllowed } from '../src/core/scope.ts';
 import { remoteCallerAccess } from '../src/core/access/caller.ts';
 import { addMember, bindCredential } from '../src/core/access/members.ts';
 import { setOwner } from '../src/core/access/owner.ts';
@@ -98,7 +101,7 @@ async function seed(engine: BrainEngine): Promise<string> {
     links.push({ from_slug: slug, to_slug: HUB, link_type: 'mentions', context: `${key} names hub` });
   }
   await engine.addLinksBatch(links);
-  const minted = await mintLegacyToken(engine, { name: 'owner', scopes: ['read', 'write'], takesHolders: ['world'], sourceGrant: ['default'] });
+  const minted = await mintLegacyToken(engine, { name: 'owner', scopes: ['read'], takesHolders: ['world'], sourceGrant: ['default'] });
   await bindCredential(engine, { kind: 'token', id: minted.id }, { member: OWNER });
   await setOwner(engine, OWNER);
   await drainProjections(engine);
@@ -197,7 +200,15 @@ describe('owner page reads in a principal session on a multi-user Rust store', (
           out[mode][label] = await session.run(tool, { readOnly, privateReadableSources: auth.privatePages?.sources ?? [] }, () => read(engine, auth, tool, params));
         }
       }
+      // A write-class tool from the read-scope key still refuses, before any work, as serve --http refuses it on PGLite.
+      for (const tool of ['put_page', 'add_tag', 'delete_page', 'sources_add', 'no_such_tool']) {
+        let ran = false;
+        const refused = await session.run(tool, { readOnly: false }, async () => { ran = true; }).then(() => 'ok', e => (e as { code?: string }).code);
+        const http = operationsByName[tool] ? operationScopesAllowed(auth.scopes ?? [], operationsByName[tool]!) : false;
+        expect({ tool, refused, ran, http }).toEqual({ tool, refused: 'permission_denied', ran: false, http: false });
+      }
     } finally { session.release(); }
+    expect(auth.scopes).toEqual(['read']);
     expect(Object.keys(reference).sort()).toEqual([...testBackends()].sort());
     for (const [kind, ref] of Object.entries(reference)) {
       for (const mode of ['read', 'write'] as const) {
