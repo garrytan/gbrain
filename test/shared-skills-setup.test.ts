@@ -9,6 +9,7 @@ import { setupSharedBrainContent, contentSetupKey } from '../src/core/shared-ski
 import { packagedSharedSkills } from '../src/core/shared-skills/setup-bundle.ts';
 import { inventorySkillpack, setupHash } from '../src/core/shared-skills/setup-files.ts';
 import { legacyPublication, migrationCheckpointKey, runSharedSkillsMigration } from '../src/core/shared-skills/migration.ts';
+import { owedConflicts } from '../src/core/shared-skills/migration-host-work.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { stubSourceMembers } from './helpers/source-members-stub.ts';
 
@@ -184,6 +185,46 @@ describe('staged skill migration', () => {
     expect(reopened.status).toBe('conflict');
     expect(reopened.sources[0].stages.at(-1)?.reason).toContain('skills/memory-care/SKILL.md');
     expect(readFileSync(join(root, 'skills/memory-care/SKILL.md'), 'utf8')).toBe('private: true\nLocal instructions');
+  });
+  test('a client of a Rust brain\'s owner defers only the skillpack.json check, as host action, never a conflict', async () => {
+    // A process owns the brain, so this one is its client: the skill store is the owner's alone.
+    const root = temp(), f = fixture(root); writePack(root);
+    const packReads: unknown[] = [];
+    asRustBrain(f, async key => { packReads.push(key); return null; });
+    expect((await runSharedSkillsMigration(f.ctx)).status).toBe('action_required');
+    const manifest = readFileSync(join(root, 'skillpack.json'), 'utf8');
+    writeFileSync(join(root, 'skillpack.json'), JSON.stringify(JSON.parse(manifest), null, 4) + '\n');
+    Object.assign(f.ctx.engine, { ownerRole: 'client' });
+    for (let run = 0; run < 2; run++) {
+      const client = await runSharedSkillsMigration(f.ctx);
+      expect(client.status).toBe('action_required');
+      expect(client.sources[0].stages.map(stage => [stage.stage, stage.status, stage.code])).toEqual([['inventory', 'complete', undefined], ['inventory', 'action_required', 'owner_unavailable']]);
+    }
+    expect(packReads).toEqual([]);
+    // Whether a person must settle anything is unknown from a client, never "nothing" (doctor and the wedge notice read this).
+    expect(owedConflicts(await runSharedSkillsMigration(f.ctx, { dryRun: true }))).toBeNull();
+    // A change on disk is a conflict without the sealed hash, so the client reports it.
+    writeFileSync(join(root, 'skills/memory-care/SKILL.md'), 'private: true\nLocal instructions');
+    expect((await runSharedSkillsMigration(f.ctx)).status).toBe('conflict');
+    expect(packReads).toEqual([]);
+    // Back on the owner, the edits are still compared against the inventory taken before them.
+    Object.assign(f.ctx.engine, { ownerRole: 'owner' });
+    expect((await runSharedSkillsMigration(f.ctx)).status).toBe('conflict');
+    expect(readFileSync(join(root, 'skills/memory-care/SKILL.md'), 'utf8')).toBe('private: true\nLocal instructions');
+  });
+  test('a deferred client check keeps the evidence that refuses a moved root', async () => {
+    const root = temp(), moved = temp(), f = fixture(root); writePack(root); writePack(moved);
+    asRustBrain(f, async () => null);
+    expect((await runSharedSkillsMigration(f.ctx)).status).toBe('action_required');
+    const manifest = readFileSync(join(root, 'skillpack.json'), 'utf8');
+    writeFileSync(join(root, 'skillpack.json'), JSON.stringify(JSON.parse(manifest), null, 4) + '\n');
+    Object.assign(f.ctx.engine, { ownerRole: 'client' });
+    expect((await runSharedSkillsMigration(f.ctx)).status).toBe('action_required');
+    Object.assign(f.ctx.engine, { ownerRole: 'owner' });
+    f.source.local_path = moved;
+    const report = await runSharedSkillsMigration(f.ctx);
+    expect(report.status).toBe('conflict');
+    expect(report.sources[0].stages.at(-1)?.reason).toContain('The source root changed since migration inventory');
   });
   test('the source list never parses a source config, so a malformed one stays a per-source matter', async () => {
     const root = temp(), f = fixture(root); writePack(root);

@@ -59,6 +59,7 @@ const CONSTANT_ALLOWLIST: Record<string, string> = {
   ACTIVATION_SERVED_REVISION: 'src/core/search/safe-chunks.ts: the constant v153 served-index marker uuid (#9192); no input',
   UNBACKED_FACT_SQL: 'src/core/engine-sql/fact-relink-writes.ts: constant live-row-on-an-unbacked-name-key predicate over the facts alias f (unbackedEntitySql plus LIVE_FACT_SQL); no input',
   ACTIVE_UNLINKED_FACT_SQL: 'src/core/engine-sql/fact-relink-writes.ts: constant live-row-with-no-entity predicate over the facts alias f; no input',
+  REDACT_PURGED_KEYS_LEGACY_SQL: 'src/core/belief/legacy-fingerprint.ts: the constant purged-key redaction UPDATE with the legacySubjectKeysSql CTE over the constant factFingerprintV2Sql (placeholders $1 to $4 bound by redactPurgedBeliefKeys); no input',
   FACT_POOL_COLUMNS: 'src/core/engine-sql/facts-trust.ts: constant select list of the facts pool columns (no input)',
   RELEASE_STAGED_CTE: 'src/core/persistence/limits.ts: constant CTE releasing upload reservations of a preceding gone CTE (no input)',
   EXPIRED_ARCHIVE_SQL: 'src/core/engine-sql/sources.ts: constant archive-window-elapsed predicate over sources (no input)',

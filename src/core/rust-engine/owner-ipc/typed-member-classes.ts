@@ -436,6 +436,9 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'listRevivalPages', 'listSourceRequestsByRequestId', 'lockEffectRow', 'readHeldHitRows', 'readSourceRequestById',
   // The segmented write path's reads (engine-sql/segmented-writes.ts). lockSegmentedGenerationPage takes a row lock only.
   'readSegmentedLivePage', 'listSegmentedRechunkCandidates', 'readSegmentedRechunkPage', 'listOccurrenceChunks', 'readMaterializingRevision', 'readSegmentedRewritePage', 'lockSegmentedGenerationPage', 'hasLiveSegmentedPage', 'countSegmentedEmbedRows', 'listSegmentedStaleRows', 'readSegmentChunkInputHashes', 'listLiveEmbedSegments', 'listSegmentChunkRows',
+  // The belief-ledger half of a purge (engine-sql/belief-purge-ledger.ts; trust/belief_purge_ledger.rs, `self.read` only): plain SELECTs.
+  'listDerivedStreamSlugs', 'listMissingPreimages', 'listBeliefCarrierEvents', 'readBeliefEventValue', 'listBeliefQuotingRows', 'listPageBeliefLifetimes',
+  'listPagePurgeLiveClaims', 'listPageVersionFenceBodies', 'listLifetimeClaimEvents', 'listPurgeCarrierVersions', 'listKnownBeliefSubjectKeys',
   // The memory-trust evals' harness reads (engine-sql/eval-harness-reads.ts): SELECTs over the catalog, facts and pages; the
   // store functions (eval_harness_reads.rs, eval_harness_catalog.rs) only `self.read`.
   'getFactsByIds', 'findLiveFactsByText', 'listPageIdSlugs', 'hasTable', 'hasColumn', 'listTextBearingColumns', 'scanTextColumns',
@@ -886,6 +889,9 @@ export const OWNER_IPC_TYPED_CONFIRMING_READS: Readonly<Record<string, string>> 
   registerPurgeRedaction: 'readBeliefRedactions',
   releasePurgeRedactionsForField: 'readBeliefRedactions',
   replayPagePurges: 'readBeliefRedactions',
+  redactPurgedBeliefKeys: 'listBeliefEventsForPurgeProbe for that source',
+  rewriteBeliefEventFields: 'readBeliefEventValue',
+  rechainBeliefPriorHash: 'readBeliefEventValue for that subject\'s later events',
   writeOpCheckpointRecord: 'readOpCheckpointRecord for that operation',
   // Added when the batch 10 lanes merged: typed writes and the read that confirms each.
   acknowledgeSharedSkillDeliveryBatch: 'readSharedSkillDeliveryBatch for that batch',
