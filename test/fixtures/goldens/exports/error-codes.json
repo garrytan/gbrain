@@ -500,6 +500,7 @@
     "pg_connection_stuck",
     "pg_pool_stalled",
     "pg_statement_build_failed",
+    "pg_storage_interrupted",
     "pglite_busy",
     "pglite_vector_index_too_large",
     "plan_output_failed",
