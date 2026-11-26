@@ -219,7 +219,7 @@ describe('gbrain telemetry client: sending', () => {
     try {
       await withEnv({ GBRAIN_TELEMETRY_URL: s.url }, async () => {
         setTier('anonymous');
-        for (const want of ['kept', 'kept', 'kept', 'kept', 'dropped']) {
+        for (const want of ['kept', 'kept', 'kept', 'kept', 'dropped'] as const) {
           expect((await syncTelemetry({ force: true })).status).toBe(want);
         }
         expect(queue()).toEqual([]);
