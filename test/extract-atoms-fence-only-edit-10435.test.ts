@@ -16,6 +16,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { ChatOpts, ChatResult } from '../src/core/ai/gateway.ts';
 import { countExtractAtomsBacklog, runPhaseExtractAtoms } from '../src/core/cycle/extract-atoms.ts';
+import { EXTRACT_MAX_INPUT_CHARS_KEY } from '../src/core/cycle/extract-atoms-input.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
@@ -178,6 +179,49 @@ describe('#10435 extract_atoms skips a page whose extraction input did not chang
       expect(await liveAtoms(engine, sourceId), backend).toEqual(before);
       expect((await engine.executeRaw<{ v: string }>(`SELECT frontmatter->>'visibility' AS v FROM pages
         WHERE source_id=$1 AND type='atom' AND deleted_at IS NULL AND frontmatter->>'source_slug'=$2`, [sourceId, SLUG])).map(r => r.v), backend).toEqual(['private']);
+    }
+  }, 120_000);
+  test('a hard abort while the skip checks the outputs leaves the edited page pending', async () => {
+    for (const { backend, engine } of engines) {
+      const sourceId = `fence-only-abort-${backend}`;
+      const { run, edit } = await extracted(backend, engine, sourceId);
+      expect(await run(), backend).toBe(1);
+      await edit(2);
+      const controller = new AbortController();
+      const aborting = new Proxy(engine, { get(target, key) {
+        if (key === 'executeRaw') return async (sql: string, params?: unknown[]) => {
+          const rows = await target.executeRaw(sql, params);
+          if (sql.includes('AS complete')) controller.abort(new Error('test abort'));
+          return rows;
+        };
+        const value = Reflect.get(target, key, target);
+        return typeof value === 'function' ? value.bind(target) : value;
+      } });
+      await runPhaseExtractAtoms(aborting, { sourceId, _chat: countingChat().chat, _transcripts: [], signal: controller.signal }).catch(() => undefined);
+      expect(controller.signal.aborted, backend).toBe(true);
+      expect(await countExtractAtomsBacklog(engine, sourceId), backend).toBe(1);
+    }
+  }, 120_000);
+
+  test('a partial read after the last full scan never stands in for a full read once the input cap is raised', async () => {
+    for (const { backend, engine } of engines) {
+      const sourceId = `fence-only-partial-${backend}`;
+      const { run } = await extracted(backend, engine, sourceId);
+      await engine.setConfig(EXTRACT_MAX_INPUT_CHARS_KEY, '2000');
+      try {
+        expect(await run(), backend).toBe(1);
+        await engine.putPage(SLUG, { type: 'note', title: 'Launch review', compiled_truth: `${BODY}\n${'Partner teams now get a second launch checklist. '.repeat(20)}\n`, timeline: '' }, { sourceId });
+        expect(await run(), backend).toBe(1);
+        await engine.setConfig(EXTRACT_MAX_INPUT_CHARS_KEY, '10000');
+        let prompt = '';
+        const counted = countingChat();
+        await runPhaseExtractAtoms(engine, { sourceId, _transcripts: [], _chat: async opts => { prompt += JSON.stringify(opts); return counted.chat(opts); } });
+        expect(counted.calls(), backend).toBe(1);
+        expect(prompt, backend).toContain('clear exit criteria');
+        expect(prompt, backend).toContain('second launch checklist');
+      } finally {
+        await engine.unsetConfig(EXTRACT_MAX_INPUT_CHARS_KEY);
+      }
     }
   }, 120_000);
 });

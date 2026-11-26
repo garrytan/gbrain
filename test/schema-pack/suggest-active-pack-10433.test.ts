@@ -61,3 +61,11 @@ test('coverage reads every type in a folder and every folder: a sixth undeclared
     await wide.disconnect();
   }
 }, 120_000);
+
+test('a folder of untyped notes, which ingestion types as concept, is still suggested', async () => {
+  for (let i = 0; i < 5; i++) {
+    await engine.putPage(`scratch-notes/page-${i}`, { type: 'concept' as never, title: `scratch ${i}`, compiled_truth: 'Synthetic body.', timeline: '' });
+  }
+  const result = await runSuggest(engine, { sourceId: 'default' });
+  expect(result.suggestions.map(s => s.summary).some(s => s.includes('`scratch-notes/`'))).toBe(true);
+});

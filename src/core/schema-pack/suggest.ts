@@ -18,14 +18,15 @@ import type { ResolvedPack } from './registry.ts';
 /**
  * #10433: the detected prefixes that are real gaps in the active pack. A prefix the pack declares as a path prefix, or
  * whose typed pages all carry a type the pack declares (or one of its aliases), already has a type, so suggesting one
- * named after the folder would only duplicate it. No resolvable pack filters nothing.
+ * named after the folder would only duplicate it. `concept` is what ingestion assigns a page no rule types, so it is
+ * never evidence of coverage. No resolvable pack filters nothing.
  */
 export function undeclaredPrefixes(detected: DetectResult, pack: Pick<ResolvedPack, 'manifest'> | null): DetectResult['prefixes'] {
   if (!pack) return detected.prefixes;
   const prefixes = new Set(pack.manifest.page_types.flatMap(t => t.path_prefixes.map(p => p.toLowerCase())));
   const types = new Set(pack.manifest.page_types.flatMap(t => [t.name, ...t.aliases]));
   return detected.prefixes.filter(p => !prefixes.has(p.prefix.toLowerCase())
-    && !(p.sample_types.length > 0 && p.sample_types.every(type => types.has(type))));
+    && !(p.sample_types.length > 0 && p.sample_types.every(type => type !== 'concept' && types.has(type))));
 }
 
 export interface SuggestOpts {

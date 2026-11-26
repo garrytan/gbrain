@@ -1122,7 +1122,7 @@ export async function runPhaseExtractAtoms(
       const visibility = origin?.visibility ?? effectiveVisibility(item.kind === 'transcript' ? { kind: 'transcript' } // #5525
         : { kind: 'page', page: sourcePage && { ...sourcePage, folder_restricted: await folderRestricted(engine, sourceId, item.slug) } });
       // #10435: discovery offered the page because its content hash moved; a fence-only edit left its input and its atoms' metadata unchanged
-      if (!managed && opts._pages === undefined && item.kind === 'page' && mark && pageInputUnchanged(input, mark) && await atomOutputsCurrent(engine, item, contentDate, visibility)) { if (!opts.dryRun) await stampAtomsScanHash(item); duplicatesSkipped++; continue; }
+      if (!managed && opts._pages === undefined && item.kind === 'page' && mark && pageInputUnchanged(input, mark) && await atomOutputsCurrent(engine, item, contentDate, visibility)) { throwIfAborted(opts.signal, 'extract_atoms'); if (!opts.dryRun) await stampAtomsScanHash(item); duplicatesSkipped++; continue; }
       throwIfAborted(opts.signal, 'extract_atoms');
       const resumed = !opts.dryRun && managed && origin ? await resumeManagedAtoms(engine, managed, origin) : 'run';
       if (resumed === 'done') { duplicatesSkipped++; continue; }

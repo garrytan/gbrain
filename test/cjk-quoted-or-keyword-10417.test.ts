@@ -15,6 +15,7 @@ import { installFixtureChunks } from './helpers/page-projection.ts';
 import { prepareMarkdownChunks } from '../src/core/markdown-chunks.ts';
 import { buildKeywordCountStatement, buildKeywordPagesStatement } from '../src/core/search/keyword-statement.ts';
 import { cjkMatchGroups } from '../src/core/cjk.ts';
+import { buildCJKKeywordSql } from '../src/core/search/cjk-keyword-sql.ts';
 
 let engine: PGLiteEngine;
 async function page(slug: string, body: string): Promise<void> {
@@ -36,6 +37,8 @@ beforeAll(async () => {
   await page('notes/daejeon', '대전 기록');
   await page('notes/gwangju-ulsan', '광주 울산 기록');
   await page('notes/ulsan-pohang', '울산 포항 기록');
+  await page('notes/gwangju-loud', '광주 울산 '.repeat(40));
+  await page('notes/ulsan-loud', '울산 포항 '.repeat(40));
 });
 afterAll(async () => { await engine.disconnect(); });
 
@@ -74,6 +77,13 @@ describe('#10417 CJK quoted phrases and OR', () => {
     const q = '대전 OR 광주 울산 포항';
     expect(await pages(q)).toEqual(['notes/daejeon']);
     expect([...new Set((await engine.searchKeyword(q, { limit: 2, orFallback: true })).map(r => r.slug))]).toContain('notes/daejeon');
+  });
+
+  test('a boosted partial match that repeats its terms still ranks below a page satisfying an alternative', async () => {
+    const built = buildCJKKeywordSql('대전 OR 광주 울산 포항', { limit: 2, offset: 0, innerLimit: 50, sourceFactorCase: '100.0', hardExcludeClause: '',
+      visibilityClause: '', detailFilter: '', opts: undefined, dedup: true }, { match: 'any' })!;
+    const ranked = (await engine.executeRaw<{ slug: string }>(built.sql, built.params)).map(r => r.slug);
+    expect(ranked[0]).toBe('notes/daejeon');
   });
 
   test('OR finds pages with either name', async () => {

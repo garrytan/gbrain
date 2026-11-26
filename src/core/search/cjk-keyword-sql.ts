@@ -114,7 +114,8 @@ export function buildCJKKeywordSql(query: string, ctx: CjkKeywordCtx, variant: C
     // chunk-visibility-ok: ctx.visibilityClause is buildVisibilityClause(..., { chunkAlias: 'cc' }) (engine searchKeywordCJK)
     fromClause = `unnest($${params.length}::bigint[]) AS cand(id) JOIN content_chunks cc ON cc.id = cand.id`;
   }
-  const { whereLikeClause, matchedExpr } = likeClauses(terms, likeParamIndices, any, cjkMatchGroups(qRaw));
+  const groups = cjkMatchGroups(qRaw);
+  const { whereLikeClause, matchedExpr } = likeClauses(terms, likeParamIndices, any, groups);
 
   const termFreqExpr = rawTermIndices
     .map(idx => `((LENGTH(cc.chunk_text) - LENGTH(REPLACE(cc.chunk_text, $${idx}, ''))) / NULLIF(LENGTH($${idx}), 0)::real)`)
@@ -138,7 +139,10 @@ export function buildCJKKeywordSql(query: string, ctx: CjkKeywordCtx, variant: C
         + ${positionExpr})
       * ${sourceFactorCase})
     `;
-  const scoreExpr = any ? `(${MATCHED_TERM_WEIGHT} * (${matchedExpr}) + ${tfScoreExpr})` : tfScoreExpr;
+  // #10417: with OR alternatives the term-frequency part is held below one matched-term step, so a chunk satisfying an
+  // alternative outranks every partial chunk however often (or in however boosted a source) the partial repeats a term.
+  const tfPart = groups.length > 1 ? `LEAST(${tfScoreExpr}, ${MATCHED_TERM_WEIGHT - 1})` : tfScoreExpr;
+  const scoreExpr = any ? `(${MATCHED_TERM_WEIGHT} * (${matchedExpr}) + ${tfPart})` : tfScoreExpr;
   return assemble({ dedup, fromClause, scoreExpr, orderExpr, whereLikeClause, detailFilter, extraFilter, hardExcludeClause, visibilityClause, innerLimitIndex, limitIndex, offsetIndex, params });
 }
 
