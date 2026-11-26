@@ -58,6 +58,9 @@ on:
       - 'src/core/engine.ts'
       - 'src/core/engine-*.ts'
       - 'src/core/engine-sql/**'
+      - 'src/core/engine-swap/**'
+      - 'src/commands/engine-swap.ts'
+      - 'test/engine-swap-run.serial.test.ts'
       - 'src/schema.sql'
       - 'src/core/migrate.ts'
       - 'src/core/schema-migrations/**'
@@ -84,6 +87,9 @@ on:
       - 'src/core/engine.ts'
       - 'src/core/engine-*.ts'
       - 'src/core/engine-sql/**'
+      - 'src/core/engine-swap/**'
+      - 'src/commands/engine-swap.ts'
+      - 'test/engine-swap-run.serial.test.ts'
       - 'src/schema.sql'
       - 'src/core/migrate.ts'
       - 'src/core/schema-migrations/**'
@@ -326,6 +332,8 @@ jobs:
           set -euo pipefail
           if [ "$SHARD" = 1 ]; then
             bun test --timeout=60000 test/rust-engine-store.test.ts test/rust-engine-shell.test.ts test/rust-engine-differential.test.ts
+            # The engine swap run on the real addon: every state, kill and resume, full disk, failed digest and probe, failback.
+            bun test --timeout=120000 test/engine-swap-run.serial.test.ts
           fi
           position=0
           ran=0

@@ -36,7 +36,7 @@ const RESULT = { upserted: 1, deleted: 0, skipped_older: 0, displaced: 0, droppe
 function fakeStore(over: Partial<FollowStore> = {}): FollowStore {
   return {
     replaceRelationRows: async () => RESULT, replaceInterval: async () => RESULT, relationDigest: async () => ({ rows: 0, digest: '' }),
-    relationEntries: async () => [], allocatorCheck: async () => [], factFingerprints: async (texts) => texts.map(() => ({ fingerprint: 'a', fingerprint_v1: 'b' })),
+    relationEntries: async () => [], allocatorCheck: async () => [], allocatorAdvance: async () => [], factFingerprints: async (texts) => texts.map(() => ({ fingerprint: 'a', fingerprint_v1: 'b' })),
     seedPlan: async () => ({ relations: [], carried: [], not_copied: [], gap_columns: [] }) as never, ...over,
   };
 }
