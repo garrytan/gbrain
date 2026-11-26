@@ -35,7 +35,7 @@ async function count(engine: BrainEngine, sql: string): Promise<number> {
 /** The local paths of this brain's sources (where `.gbrain/access.yml` would be). */
 async function sourceRoots(engine: BrainEngine): Promise<string[]> {
   try {
-    const rows = await engine.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE local_path IS NOT NULL ORDER BY id');
+    const rows = await engine.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE local_path IS NOT NULL ORDER BY id COLLATE "C"');
     return rows.map(r => r.local_path!).filter(Boolean);
   } catch (error) {
     rethrowCapabilityRefusal(error);

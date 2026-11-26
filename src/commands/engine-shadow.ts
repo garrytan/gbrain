@@ -306,18 +306,32 @@ async function readStorage(brain: ResolvedBrain, deps: EngineShadowDeps, now: ()
   }
 }
 
-/** The write sample rate of this start: the flag's, or every write on a brain that can opt in to the swap, or the default. */
+/**
+ * The write sample rate of this start: the flag's; else the default on a brain known to use managed storage (it cannot
+ * opt in to the swap); else every write. An unread mode counts as a brain that can opt in (D1): it fails toward more
+ * checking, so an opt-in brain whose mode read failed still reaches criterion 5's bar.
+ */
 function writeSampleRateFor(o: StartOpts, storage: ManagedStorageRecord | null | undefined): number {
   if (o.writeSampleRateGiven) return o.writeSampleRate;
-  return storage?.managed === false ? OPT_IN_WRITE_SAMPLE_RATE : DEFAULT_SHADOW_WRITE_SAMPLE_RATE;
+  return storage?.managed === true ? DEFAULT_SHADOW_WRITE_SAMPLE_RATE : OPT_IN_WRITE_SAMPLE_RATE;
+}
+
+/** The plan line that says why every write is compared, or null when the flag set the rate or the brain is managed. */
+function everyWriteLine(o: StartOpts, storage: ManagedStorageRecord | null | undefined): string | null {
+  if (o.writeSampleRateGiven || storage?.managed === true) return null;
+  if (storage?.managed === false) {
+    return `write comparisons: every write (rate ${OPT_IN_WRITE_SAMPLE_RATE}), because this brain can opt in to the engine swap; each save is about 2x slower while the shadow runs`;
+  }
+  return `write comparisons: storage could not be read (${storage?.reason ?? 'unknown'}); every write is compared (rate ${OPT_IN_WRITE_SAMPLE_RATE}) in case this brain can opt in to the engine swap; `
+    + 'if this brain uses managed storage, each save is about 2x slower until gbrain engine shadow start runs again and reads the mode';
 }
 
 async function start(
   brain: ResolvedBrain, o: StartOpts, deps: EngineShadowDeps,
   out: (l: string) => void, err: (l: string) => void, now: () => Date,
 ): Promise<number> {
-  // A brain that can opt in to the swap (no managed storage) compares every write unless --write-sample-rate says otherwise
-  // (D26, ask D): criterion 5's bar is then reachable inside the 5-day shadow.
+  // A brain that can opt in to the swap (no managed storage, or a mode that could not be read) compares every write unless
+  // --write-sample-rate says otherwise (D26, ask D; D1): criterion 5's bar is then reachable inside the 5-day shadow.
   const storage = await readStorage(brain, deps, now);
   o = { ...o, writeSampleRate: writeSampleRateFor(o, storage) };
   const { plan, hash } = shadowPlan(brain.key, brain.engine, brain.dir, o);
@@ -330,7 +344,8 @@ async function start(
     out(`  never writes: ${plan.never_writes.join(', ')}`);
     const line = storageLine(storage);
     if (line) out(`  storage: ${line}`);
-    if (storage?.managed === false && !o.writeSampleRateGiven) out(`  write comparisons: every write (rate ${OPT_IN_WRITE_SAMPLE_RATE}), because this brain can opt in to the engine swap; each save is about 2x slower while the shadow runs`);
+    const every = everyWriteLine(o, storage);
+    if (every) out(`  ${every}`);
     out(`  the installed Rust engine addon is loaded and verified now`);
     out(`plan_hash: ${hash}`);
     out(`To turn it on: gbrain engine shadow start --yes --expect ${hash}${o.sampleRate !== DEFAULT_SHADOW_SAMPLE_RATE ? ` --sample-rate ${o.sampleRate}` : ''}${o.writeSampleRateGiven ? ` --write-sample-rate ${o.writeSampleRate}` : ''}${o.queueBound !== DEFAULT_SHADOW_QUEUE_BOUND ? ` --queue-bound ${o.queueBound}` : ''}`);
