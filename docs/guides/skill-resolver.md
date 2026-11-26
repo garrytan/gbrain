@@ -277,8 +277,10 @@ skill in the agent's directories that OpenClaw hides from it (not eligible on
 this host, outside the agent's skill filter, model invocation off) or does not
 list at all (cut at load, see `skill_resolver_host_load_cut`) goes into that
 agent's `exclude_ids` and is never suggested, and setup names it. If the
-command fails, or lists none of the catalog's skills (usually a different
-workspace), nothing is filtered and setup says so. Run setup again after you
+command fails on a later run, the skills it hid at the last run it answered
+stay hidden, and setup says so; on a first setup, or when it lists none of the
+catalog's skills (usually a different workspace), nothing is filtered and
+setup says so. Run setup again after you
 change which skills an agent can use; `gbrain doctor --only skill_resolver`
 asks OpenClaw again (read-only) and warns when the plugin still suggests a
 skill OpenClaw now hides or no longer lists; its fix,
@@ -289,11 +291,11 @@ either plugin when OpenClaw's config already loads, enables and allows it and
 its plugin policy (`plugins.enabled`, `allow`, `deny`) lets it load.
 
 The plugin never adds to or edits OpenClaw's own skill list. On each real user
-turn (`before_prompt_build`; inter-session and other internal turns are
-skipped) it ranks the message the user just sent (OpenClaw's `event.prompt`;
+turn (`before_prompt_build`; see [session classes](#session-classes) for the
+turns it skips) it ranks the message the user just sent (OpenClaw's `event.prompt`;
 `event.messages` holds only earlier turns) and puts up to 3 suggestions with at
-least a description match in `appendContext`, and the pinned block in
-`appendSystemContext`. Each suggestion carries its `SKILL.md` path, and the
+least a description match in `appendContext`, and the pinned block for the
+turn's session class in `appendSystemContext`. Each suggestion carries its `SKILL.md` path, and the
 block tells the model to open it with `read` first and fall back to
 `skills_read` by name (through `dispatch_action` when OpenClaw lists
 `skills_read` only behind its tool search). That still works with OpenClaw's
@@ -321,11 +323,18 @@ on its next turn, so no OpenClaw command runs and the gateway does not reload:
   the agents already on, else `main`.
 - `--live-fraction <0-1>`: the share of sessions that see suggestions; the
   rest are logged as the control arm.
-- `--pins-route system|first_turn`: pins every turn in the system context
-  (default), or in the turn context on a session's first turn and after
-  compaction.
+- `--pins-route system|first_turn`: the owner's pins every turn in the system
+  context (default), or once per session as the session-start brief (see
+  below). Conversation pins always go in the system context.
 - `--owner-sender <id>` (repeatable): only turns from these senders get
-  suggestions; others get the pins only.
+  suggestions; others get the pins only. When OpenClaw sends no memory
+  audience, a direct session from one of these senders also counts as the
+  owner's, and a turn from anyone else on the shared main session (OpenClaw's
+  default `session.dmScope: main` puts every DM there) counts as another
+  person's DM. Set it when people other than you can message the agent and
+  OpenClaw has no memory provider.
+- `--suggest-in owner|conversation|owner,conversation`: which session classes
+  get suggestions (default both). Pins are unaffected.
 - `--skill-loading off`: uninstalls the plugin and removes its files and
   state. Pins stay in config.json.
 
@@ -343,9 +352,9 @@ turn text) to `skill-index/logs/openclaw-<date>.jsonl`, and a `read` line
 when the model opens a skill, by `skills_read` or by `read` of its
 `SKILL.md` path, directly or through `dispatch_action` (counted once),
 marked with whether it was suggested, the tool, the source and the session
-class. The session class is `owner`, `direct`, `group`, `channel`,
-`conversation`, `relay`, `webhook`, `cron`, `heartbeat`, `internal`
-or `unknown` when OpenClaw sends no memory audience. `gbrain doctor --only
+class. Each line also says whether OpenClaw sent a memory audience (`audience`:
+`host` or `unknown`); a line with `brief: true` delivered the session-start
+brief. `gbrain doctor --only
 skill_resolver` reports the plugin, the library, the gbrain home, each agent's
 catalog, pins, skill listing and read reach and, over the last 24 hours, the
 turns, outcomes, how many reads were of suggested skills (also split by
@@ -355,6 +364,44 @@ suggests for it; a load cut then does not warn when its `read` may open any
 path (`path_reads: any`). Above 5% over at least 20 turns
 it warns with `skill_resolve_timeout`; keep a rollout in shadow until the rate
 is under that on the real host.
+
+### Session classes
+
+Each turn gets a session class, and the class decides what the plugin adds:
+
+| Class | When | Pins | Suggestions | `audience: owner` skills |
+|---|---|---|---|---|
+| `owner`, `main` | the agent owner's own session | owner pins (or the session-start brief) | yes | yes |
+| `direct`, `group`, `channel`, `conversation`, `unknown` | anyone else's DM, a group, a channel, or a session gbrain cannot place | conversation pins | yes | never |
+| `relay`, `cron`, `heartbeat`, `webhook`, `internal` | another session's message, a scheduled run, a webhook, a subagent | none | none | never |
+
+The class comes from what OpenClaw resolved for the turn: its trigger and
+input provenance first (cron, heartbeat, a webhook's `event` trigger, an
+inter-session relay), then its `memoryAudience` (`owner-private` is the
+owner; `conversation` is a group, channel or another person's DM). OpenClaw
+sends a memory audience only with a native memory provider. Without one, the
+class comes from the session key's shape (`agent:<id>:main` is `main`,
+`...:direct:<peer>` is `direct` unless the sender is an `--owner-sender`, and
+with `--owner-sender` set, `main` from any other sender, or with no sender
+id, is `direct` too,
+`...:group:<id>` is `group`, `...:cron:...`, `...:relay-<sender>`,
+`...:subagent:...` and `hook:...` are silent) and the log line says
+`audience: unknown`. Owner pins and owner-only skills never reach a session
+that is not the owner's, with or without an audience.
+
+A skill whose `SKILL.md` front matter says `audience: owner` is suggested
+and pinned only in the owner's sessions. `owner` is the only defined value;
+any other non-empty `audience` (a list, a typo, `true`, a number, a mapping)
+is treated as `owner`, and so is front matter that does not parse but has an
+`audience:` line, so a mistake never makes a skill public. A catalog built before gbrain recorded
+audiences suggests nothing and pins nothing outside the owner's sessions
+until it is rebuilt, which happens on its own after an upgrade.
+
+**The session-start brief.** With `--pins-route first_turn`, the owner's pins
+arrive once, on the first turn of each owner session, and again after a
+compaction. gbrain records each session by OpenClaw's durable session id in
+`~/.gbrain/openclaw-session-briefs.jsonl`, so a gateway restart or a retried
+run never repeats the brief; a new session (`/new`, a reset) gets a new one.
 
 ## Pi extension
 
@@ -445,9 +492,19 @@ and a catalog with no pins gets no pinned block. They differ from
 
 ```bash
 gbrain skills pin add deploy-example --catalog openclaw-main --line "Before any production deploy"
+gbrain skills pin add house-rules-example --catalog openclaw-main --class owner,conversation
 gbrain skills pin list --catalog openclaw-main
 gbrain skills pin remove deploy-example --catalog openclaw-main
 ```
+
+On OpenClaw a pin shows in the owner's own sessions unless `--class` says
+otherwise: `--class conversation` for groups, channels and other people's DMs
+only, `--class owner,conversation` for both ([session classes](#session-classes)).
+Adding a pin again without `--class` (to change its `--line`) keeps its
+classes; `--class owner` sets it back to the owner's sessions.
+A pin OpenClaw hides from the agent, loads from another folder, or marks
+`audience: owner` (in a conversation) is left out of the block, and setup
+names it (`skill_resolver_pin_withheld`).
 
 A pin must name a skill in that catalog (`skill_resolver_pin_unknown`
 otherwise), its line is at most 100 characters with no `<` or `>`, a catalog
@@ -714,9 +771,9 @@ The JSON Schemas are checked in under `docs/schemas/`:
   carries `vectors`.
 - `skill-resolver.v1.build-input.json`: the `--from-json` catalog,
   `[{id, name, description?, when_to_use?, triggers?, routing?, body?, path?,
-  eligible?, disable_model_invocation?, deprecated?, replaced_by?}]`. With the
+  eligible?, disable_model_invocation?, deprecated?, replaced_by?, audience?}]`. With the
   same fields a SKILL.md folder has (`when_to_use`, `disable-model-invocation`,
-  `deprecated`, `replaced_by`), a JSON build gives
+  `deprecated`, `replaced_by`, `audience`), a JSON build gives
   the same `catalog_hash` and `index_hash` as the folder build.
 - `skill-resolver.v1.build-receipt.json`: the build receipt, also saved as
   `receipt.json` beside the index.
@@ -1100,6 +1157,13 @@ The message carries the library or worker code; fix that and run setup again.
 A pin names a skill that is not in its catalog. `pin add` refuses and writes
 nothing; an existing pin whose skill disappeared is left out of the block.
 Check the id with `gbrain skills pin list --catalog <c>`.
+
+### skill_resolver_pin_withheld
+
+A pinned skill is in the catalog, but OpenClaw hides it from the agent's model,
+loads a different copy of it, or it is marked `audience: owner` and the pin is
+for conversations. It is left out of that block. Fix the skill (or the agent's
+skill filter), or remove the pin.
 
 ### skill_resolver_library_missing
 
