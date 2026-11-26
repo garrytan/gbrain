@@ -598,7 +598,6 @@ src/core/transcripts/hermes.ts	driver_call	1
 src/core/transcripts/ingest.ts	execute_raw	3
 src/core/transcripts/recover.ts	execute_raw	1
 src/core/transcripts/secret-audit.ts	execute_raw	1
-src/core/trust/allow-rules.ts	execute_raw	5
 src/core/trust/backfill.ts	execute_raw	6
 src/core/trust/channel.ts	execute_raw	1
 src/core/trust/claim.ts	execute_raw	7

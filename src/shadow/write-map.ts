@@ -181,6 +181,13 @@ export const WRITE_MAP: Record<string, WriteSpec> = {
   updateSourceConfig: { tables: ['sources', 'owner_only_marks'], plan: (a) => [{ relation: 'sources', sel: { id: a[0] } }, ...OWNER_MARKS] },
   upsertGuestSource: { tables: ['guest_sources'], plan: (a) => [{ relation: 'guest_sources', sel: { source_id: a[0] } }] },
   createVersion: { tables: ['page_versions'], plan: (a) => [child('page_versions', a[0], a[1]?.sourceId, true)] },
+  // The owner's allow rules (trust/allow-rules.ts): an add writes one row the reply names (a new one, or the active one
+  // already holding its key, which it leaves unchanged); a remove marks the rule `id` removed, keeping the row.
+  addTrustAllowRule: {
+    tables: ['trust_allow_rules'], late: true,
+    plan: (_a, r) => (r?.row?.id != null ? [{ relation: 'trust_allow_rules', sel: { id: id(r.row.id) } }] : []),
+  },
+  removeTrustAllowRule: { tables: ['trust_allow_rules'], plan: (a) => [{ relation: 'trust_allow_rules', sel: { id: id(a[0]) } }] },
   // Relation-level: no stable selector on the member's arguments
   applyIdentityDecisions: { tables: ['entity_identities', 'entity_identity_reviews'] },
   addCodeEdges: { tables: ['code_edges_chunk', 'code_edges_symbol'] },

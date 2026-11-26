@@ -493,6 +493,9 @@ export const FACTS_MEMBERS = {
   upsertWriteGateHold: 'facts',
   listWriteGateHoldRows: 'facts',
   listTrustAllowRuleRows: 'facts',
+  addTrustAllowRule: 'facts',
+  removeTrustAllowRule: 'facts',
+  readTrustAllowRule: 'facts',
   getWriteGateHoldRow: 'facts',
   decideWriteGateHold: 'facts',
   // trust: the trust decision queue (engine-sql/trust-proposals.ts)
