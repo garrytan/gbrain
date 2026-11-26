@@ -423,6 +423,7 @@ test/engine-parity/title-fuzzy-like-bound.test.ts	1	0
 test/engine-parity/title-fuzzy-unicode.test.ts	1	0
 test/engine-parity/topology-named-stop.test.ts	0	2
 test/engine-parity/transaction-settings.test.ts	12	0
+test/engine-parity/transfer-git-durability.test.ts	4	0
 test/engine-parity/traversal-cache.test.ts	7	0
 test/engine-parity/trust-backfill.test.ts	0	1
 test/engine-parity/trust-fence.test.ts	7	0

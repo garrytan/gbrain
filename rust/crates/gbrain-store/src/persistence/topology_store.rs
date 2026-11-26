@@ -924,6 +924,7 @@ fn topology_write_in(tx: &mut dyn KvWrite, env: &dyn Env, what: &TopologyWrite) 
                         local_path: local_path.clone(),
                         coordination_path: coordination_path.clone(),
                         git_durability: None,
+                        carry_durability: false,
                     },
                 )?;
             }

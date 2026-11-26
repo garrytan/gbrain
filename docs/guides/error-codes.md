@@ -6215,6 +6215,16 @@ More: [docs/guides/repair.md#slug-spelling](../../docs/guides/repair.md#slug-spe
 
 More: [docs/guides/repair.md#slug-spelling](../../docs/guides/repair.md#slug-spelling)
 
+### slug_too_long
+
+<a id="slug_too_long"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A page slug is longer than the 255 characters a slug can be, so nothing was written (sync holds the file). | Every operation that names a page (get, put, delete, repair) refuses a slug over 255 characters, so a page stored under one could never be read, fixed or removed again (#10080). The message names the length, never the slug. | Move the file to a shorter path (or give it a shorter slug: line), commit and sync. A page an older sync already stored under such a slug can be removed with gbrain delete. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#slug_too_long](../../docs/guides/write-refusals.md#slug_too_long)
+
 ### source_binding_required
 
 <a id="source_binding_required"></a>

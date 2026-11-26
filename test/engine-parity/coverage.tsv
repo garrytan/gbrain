@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2442/2469
+# covered: 2443/2469
 # lifecycle: 12/12
 # pages: 141/142
 # search: 8/8
@@ -77,7 +77,7 @@
 # entity_identities: 5/5
 # cli_reads_import: 16/16
 # wanted_links: 2/2
-# write_misc: 123/138
+# write_misc: 124/138
 # repair_bookkeeping: 59/59
 # write_attribution: 5/5
 # telemetry: 14/14
@@ -1984,13 +1984,13 @@ readSourceState	write_misc	yes	18	no	yes	yes	serves
 readAdmissionSource	write_misc	yes	2	no	yes	yes	serves
 sharedSkillPackTablePresent	write_misc	yes	1	no	yes	yes	serves
 listSharedSkillPackRoots	write_misc	yes	1	no	yes	yes	serves
-getWorktreeBinding	write_misc	yes	26	no	yes	yes	serves
+getWorktreeBinding	write_misc	yes	30	no	yes	yes	serves
 listHostTopologyRows	write_misc	yes	2	no	yes	yes	serves
 listWorktreeMembers	write_misc	yes	2	no	yes	yes	serves
-worktreeClaimStore	write_misc	yes	41	no	yes	yes	serves
+worktreeClaimStore	write_misc	yes	42	no	yes	yes	serves
 readWriterAdminState	write_misc	yes	10	no	yes	yes	serves
-readWorktreeManifest	write_misc	yes	1	no	yes	yes	serves
-writerAdminStore	write_misc	yes	3	no	yes	yes	serves
+readWorktreeManifest	write_misc	yes	5	no	yes	yes	serves
+writerAdminStore	write_misc	yes	7	no	yes	yes	serves
 writerReleaseStore	write_misc	yes	13	no	yes	yes	serves
 publicationJournalStore	write_misc	yes	2	no	yes	yes	serves
 chronicleStore	write_misc	yes	2	no	yes	yes	serves
@@ -2042,7 +2042,7 @@ attachSourcePath	write_misc	yes	14	no	yes	yes	serves
 readAtomGeneration	write_misc	yes	2	no	yes	yes	serves
 recordAtomGenerationBump	write_misc	yes	2	no	yes	yes	serves
 addPersistenceCounters	write_misc	yes	4	no	yes	yes	serves
-gitDurabilityStore	write_misc	no	0	no	-	-	-
+gitDurabilityStore	write_misc	yes	4	no	yes	yes	serves
 gitEffectStore	write_misc	no	0	no	-	-	-
 topologyStore	write_misc	yes	1	no	yes	yes	serves
 manualLinkStore	write_misc	no	0	no	-	-	-
