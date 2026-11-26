@@ -123,6 +123,17 @@ export interface ParityCaseOpts {
    */
   rustPendingStop?: { capability: string; member: string; site: string; frame?: string; owner: string; due: string };
   /**
+   * Rust only, and only while the Rust store runs multi-user (`rustArmMultiuser() !== 'off'`: either rust-mu route, or a lane
+   * that started with the switch on): the case ends on a refusal the multi-user session gate gives by design until its owner's
+   * work lands (a non-owner key, refused `permission_denied` with the owner-only text). On such a run the scenario must end on
+   * a `MultiuserStopError` (the scenario calls `stopOnOwnerOnlyRefusal` where it sees the refusal) carrying exactly this `code`
+   * and `message`, and `noEffect` (when given) must then find that nothing the case would have written exists. The case counts
+   * as a known gap of the multi-user run (never as equal), and the pin FAILS when the case does not stop that way (it flips
+   * back when keys open: remove the pin) or its `due` date has passed. With the switch off the option does nothing at all.
+   * Use `OWNER_ONLY_STOP()` for the pin the owner-only gate needs.
+   */
+  rustMultiuserStop?: { code: string; message: string; owner: string; due: string; noEffect?: (engine: BrainEngine) => Promise<void> };
+  /**
    * A multi-writer conformance case id (`'C04'`, a string literal: coverage.ts reads it statically). The case's row in
    * multi-writer-cases.ts decides per arm whether it runs, is n/a or pending; a `runs` cell is held to strict acceptance
    * (checkMwArm) and the case writes one line per arm to the GBRAIN_TEST_MW_LEDGER ledger. Takes no `requires`.
@@ -173,6 +184,36 @@ export function rustArmModeProblem(resolved: boolean | undefined, mode: 'off' | 
   return mode === 'ambient'
     ? 'the Rust arm runs with GBRAIN_RUST_MULTIUSER=1 set when the process started, but its store did not resolve multi-user mode'
     : 'the rust-mu arm ran a store that did not resolve multi-user mode';
+}
+
+/** The owner-only session gate's refusal (the server lane): `permission_denied`, with this text in its message. */
+export const OWNER_ONLY_CODE = 'permission_denied';
+export const OWNER_ONLY_MESSAGE = "only the brain owner's own key is admitted";
+
+/** The pin for a case the owner-only gate refuses while the store is multi-user; `noEffect` asserts nothing was written. */
+export function OWNER_ONLY_STOP(noEffect?: (engine: BrainEngine) => Promise<void>): NonNullable<ParityCaseOpts['rustMultiuserStop']> {
+  return { code: OWNER_ONLY_CODE, message: OWNER_ONLY_MESSAGE, owner: 'L4 non-owner keys', due: '2026-12-02', ...(noEffect && { noEffect }) };
+}
+
+/** What a scenario throws when a multi-user store refuses its call by design (see `rustMultiuserStop`). */
+export class MultiuserStopError extends Error {
+  readonly code: string;
+  constructor(code: string, message: string) { super(message); this.name = 'MultiuserStopError'; this.code = code; }
+}
+
+/**
+ * Call where a scenario sees the reply of a call to a served tool or route. While the Rust store runs multi-user and the reply
+ * is the owner-only gate's refusal (code and message text both present), throw `MultiuserStopError` (the harness accepts it
+ * only for a case that pins it). `mustNotContain` are strings the call would have returned had it run (a page body): the
+ * refusal carrying one means the call ran. Anything else, and any run with the switch off, returns and changes nothing.
+ */
+export function stopOnOwnerOnlyRefusal(reply: unknown, mustNotContain: readonly string[] = [], mode = rustArmMultiuser()): void {
+  if (mode === 'off') return;
+  const text = typeof reply === 'string' ? reply : JSON.stringify(reply ?? '');
+  if (!text.includes(OWNER_ONLY_CODE) || !text.includes(OWNER_ONLY_MESSAGE)) return;
+  const leaked = mustNotContain.filter((needle) => text.includes(needle));
+  if (leaked.length > 0) throw new Error(`the owner-only gate refused the call, yet its reply carries what the call would have returned (${leaked.join(', ')}): ${text.slice(0, 300)}`);
+  throw new MultiuserStopError(OWNER_ONLY_CODE, `${OWNER_ONLY_CODE}: ${OWNER_ONLY_MESSAGE}`);
 }
 
 /** The Rust arm: a new brain directory per case (reset), removed when the arm closes. */
@@ -831,7 +872,12 @@ export function parityArms(backends: readonly TestBackend[]): ParitySuite {
       for (const stop of tally.stops ?? []) console.log(`[${rustLabel} arm] ${testFile} ${stop.caught ? 'caught (answer equal)' : 'stopped'}: "${stop.name}" on ${stop.member} (${stop.capability})${stop.pinned ? ` pinned until ${stop.pinned.due} (${stop.pinned.owner})` : ''}`);
       if (muGaps.length > 0) console.log(`[${rustLabel} arm] ${testFile}: ${muGaps.length} known gap(s), skipped here and not counted as equal: the matrix holds them pending on rust-mu but runs them on rust (the pin check allows for them): ${muGaps.join(', ')}`);
       // The standalone count is summed by checkRustTally itself (rust-tally.ts), so `skipped` stays the skipped cases only.
-      const better = checkRustTally(testFile, { ...tally, skipped, ...(muRoute !== null && { muView: true, knownGaps: muGaps.length }) }, registered);
+      // A pinned multi-user stop is a known gap of a multi-user run: skipped for the sum, allowed against the off pin by name,
+      // never equal. Any multi-user run (either rust-mu route, or a lane started with the switch on) is held to the off pin this way.
+      const mode = rustArmMultiuser();
+      const stops = tally.multiuserStops ?? [];
+      if (stops.length > 0) console.log(`[${rustLabel} arm] ${testFile}: ${stops.length} case(s) pinned to the multi-user owner-only refusal (rustMultiuserStop, not counted as equal; the pin check allows for them): ${stops.join(' | ')}`);
+      const better = checkRustTally(testFile, { ...tally, skipped: skipped + stops.length, ...(mode !== 'off' && { muView: true, knownGaps: muGaps.length + stops.length }) }, registered);
       if (better !== null) console.log(better);
     }
   }, 60_000);
@@ -898,7 +944,7 @@ export function parityArms(backends: readonly TestBackend[]): ParitySuite {
             const caughtPins = rows.filter((row) => row.member.includes('@'));
             try {
               await checkRustArm({ name, opts, run: () => scenario(given, arm.backend, ctx), calls, refusals,
-                reference: results[0], divergence, pin, caughtPins }, tally);
+                reference: results[0], divergence, pin, caughtPins, multiuserMode: rustArmMultiuser(), engine: given }, tally);
             } finally {
               for (const engine of extra) await engine.disconnect().catch(() => undefined);
             }
@@ -953,6 +999,8 @@ export interface RustTally {
   compared: number; refused: number; diverged: number;
   /** Multi-writer cases whose row is `standalone`: they passed on their inline invariant alone and are never counted as equal to PGLite. */
   standalone?: number;
+  /** Cases that ended on a pinned multi-user stop (`rustMultiuserStop`): known gaps of a multi-user run, never equal and never stopped. */
+  multiuserStops?: string[];
   /** The per-case ledger of stopped cases (optional: a caller that only wants the counts leaves it out). */
   stops?: Array<{ name: string; member: string; capability: string; pinned?: StopPin; caught?: true }>;
 }
@@ -971,6 +1019,10 @@ export interface RustCase<T> {
   pin?: StopPin | undefined;
   /** Rows of test/rust-stop-pins/ for refusals the case catches on its way (member `name@src/...` file). */
   caughtPins?: StopPin[];
+  /** The multi-user mode the Rust store runs in (`rustArmMultiuser()`); absent means off. Only a mode other than off arms `opts.rustMultiuserStop`. */
+  multiuserMode?: 'off' | 'env' | 'config' | 'ambient';
+  /** The engine the case ran on, for the pin's `noEffect` check. */
+  engine?: BrainEngine;
 }
 
 /** `member@site` of a caught refusal: the member it names and the first src/ file outside the engine that called it. */
@@ -1057,6 +1109,26 @@ export async function checkRustArm<T>(c: RustCase<T>, tally: RustTally): Promise
     outcome = { value: await c.run() };
   } catch (error) {
     outcome = { error };
+  }
+  const muPin = c.opts.rustMultiuserStop;
+  if (muPin !== undefined && c.multiuserMode !== undefined && c.multiuserMode !== 'off') {
+    // A multi-user run of a case pinned to the owner-only gate: it must end on that refusal and nothing else.
+    const where = `[rust] "${c.name}" has a rustMultiuserStop pin (${muPin.code}, ${muPin.owner}, due ${muPin.due})`;
+    if (!('error' in outcome)) throw new Error(`${where} but it returned in multi-user mode; the key is admitted now, so remove the pin and expect equal`);
+    const e = outcome.error;
+    const named = e instanceof MultiuserStopError && e.code === muPin.code && e.message.includes(muPin.message);
+    if (!named) {
+      const why = e instanceof Error ? e.message : String(e);
+      if (e instanceof Error) { e.message = `${where} but ended on something else (it is not the refusal the pin names, so fix the case or remove the pin): ${why}`; throw e; }
+      throw new Error(`${where} but ended on something else: ${why}`);
+    }
+    if (muPin.due < today()) throw new Error(`${where} has passed its due date (${muPin.owner}); open the key path or move the date`);
+    if (muPin.noEffect !== undefined) {
+      if (c.engine === undefined) throw new Error(`${where} has a noEffect check but the case ran with no engine`);
+      await muPin.noEffect(c.engine);
+    }
+    (tally.multiuserStops ??= []).push(c.name);
+    return;
   }
   const reached = [...new Set([...c.calls, ...c.opts.methods])];
   const refusing = reached.filter((m) => rustRefusal(m) !== null);

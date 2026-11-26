@@ -213,6 +213,8 @@ export async function insertBackupRows(engine: BrainEngine, entries: BackupEntry
   const byEntry = new Map<string, BackupOccurrenceRow[]>();
   for (const o of occurrences) byEntry.set(o.entry_id, [...(byEntry.get(o.entry_id) ?? []), o]);
   await engine.transaction(async tx => {
+    // A multi-user Rust brain may run this again after a lost commit: count only the run that commits.
+    written = 0; occ = 0; skippedNoPage = 0;
     for (const row of entries) {
       const own = byEntry.get(row.id) ?? [];
       const anchored = own.length === 0 || own.some(o => !onPage(o));

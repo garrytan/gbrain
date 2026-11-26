@@ -1805,3 +1805,112 @@ fn a_log_brain_is_stamped_format_16_opens_with_the_switch_on_and_refuses_without
         assert_eq!(files(&brain), before, "the refused open changed a file");
     }
 }
+
+/// Lane L1 twin of the rule above, on the optimistic transaction kinds (`Store::begin_with`,
+/// `TxnMode::Optimistic`, multi-user mode): a rollback, a drop, and a run whose commit lost its
+/// validation leave no data in the log (at most a record of counter ops), and the successful run
+/// again logs its data exactly once. On the single-writer store an optimistic transaction runs
+/// serialized, so both store modes are checked.
+#[test]
+fn an_optimistic_rollback_drop_or_lost_run_logs_no_data_and_the_rerun_logs_it_once() {
+    use gbrain_store::pages::{PageInput, PutPageOptions};
+    use gbrain_store::transactions::{TxnMode, TxnOptions};
+    let page = |body: &str| -> PageInput {
+        serde_json::from_value(json!({"type": "note", "title": "t", "compiled_truth": body}))
+            .unwrap()
+    };
+    let optimistic = || TxnOptions {
+        mode: TxnMode::Optimistic,
+        ..TxnOptions::default()
+    };
+    let only_counters = |records: &[commit_log::CommitRecord], what: &str| {
+        for r in records {
+            for (k, op) in &r.ops {
+                assert!(
+                    matches!(op, LogOp::AddI64(_) | LogOp::RaiseCounter(_)),
+                    "{what} left a data op on {}: {op:?}",
+                    k.escape_ascii()
+                );
+            }
+        }
+    };
+    for concurrent in MODES {
+        let dir = TempDir::new("optimistic-no-data");
+        let (kv, store) = leader(&dir.path().join("r.redb"), concurrent, mu());
+        let mut follower = Follower::copy_of(&*kv, &dir.path().join("f.redb"));
+        let start = store.read_commit_log(None, usize::MAX).unwrap().newest;
+        // Rolled back.
+        let tx = store.begin_with(optimistic()).unwrap();
+        assert_eq!(tx.store().transaction_optimistic(), concurrent);
+        tx.store()
+            .put_page("opt/rolled", &page("never"), &PutPageOptions::default())
+            .unwrap();
+        tx.rollback().unwrap();
+        // Dropped.
+        {
+            let tx = store.begin_with(optimistic()).unwrap();
+            tx.store()
+                .put_page("opt/dropped", &page("never"), &PutPageOptions::default())
+                .unwrap();
+        }
+        // A run that loses its validation (concurrent store only: a single-writer one holds the
+        // writer, so nothing can change what it read).
+        let first = store.begin_with(optimistic()).unwrap();
+        first
+            .store()
+            .put_page(
+                "opt/retried",
+                &page("first run"),
+                &PutPageOptions::default(),
+            )
+            .unwrap();
+        if concurrent {
+            assert!(first.store().get_config("opt.gate").unwrap().is_none());
+            store.set_config("opt.gate", "moved").unwrap();
+            assert_eq!(first.commit().unwrap_err().code, WRITE_CONFLICT);
+        } else {
+            first.rollback().unwrap();
+        }
+        let gate_at = store.read_commit_log(start, usize::MAX).unwrap().records;
+        let aborted: Vec<_> = gate_at
+            .into_iter()
+            .filter(|r| {
+                !r.ops
+                    .iter()
+                    .any(|(k, _)| k.windows(8).any(|w| w == b"opt.gate"))
+            })
+            .collect();
+        only_counters(
+            &aborted,
+            &format!("concurrent {concurrent}: an aborted optimistic run"),
+        );
+        // The run again: one record carries its data.
+        let again = store.begin_with(optimistic()).unwrap();
+        again
+            .store()
+            .put_page(
+                "opt/retried",
+                &page("second run"),
+                &PutPageOptions::default(),
+            )
+            .unwrap();
+        let at = again.store().commit_transaction_at().unwrap();
+        drop(again);
+        let with_data: Vec<_> = store
+            .read_commit_log(start, usize::MAX)
+            .unwrap()
+            .records
+            .into_iter()
+            .filter(|r| {
+                r.ops.iter().any(|(k, o)| {
+                    matches!(o, LogOp::Put(_) | LogOp::Delete)
+                        && !k.windows(8).any(|w| w == b"opt.gate")
+                })
+            })
+            .collect();
+        assert_eq!(with_data.len(), 1, "concurrent {concurrent}: {with_data:?}");
+        assert_eq!(with_data[0].position, at);
+        follower.catch_up(&store);
+        assert_eq!(follower.data(), data(&*kv));
+    }
+}

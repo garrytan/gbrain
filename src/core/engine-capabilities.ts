@@ -14,6 +14,8 @@
  * except the engine-specific `single_owner` and `postgres_admin`.
  */
 
+import { rustMultiuserFromEnv } from './rust-engine/multiuser-switch.ts';
+
 export const ENGINE_CAPABILITIES = [
   // Raw SQL entry points: executeRaw, executeRawDirect, withReservedConnection.
   // The Rust engine never reports it (D18: no SQL dialect).
@@ -105,6 +107,12 @@ const RUST_ONLY: readonly Capability[] = ['commit_log'];
 
 const ENGINE_SPECIFIC = new Set<Capability>([...Object.values(ENGINE_ONLY).flat(), ...RUST_ONLY]);
 
+/** What each SQL engine adds while the multi-user switch is on (MULTIUSER_CAPABILITIES). */
+const MULTIUSER_ONLY: Readonly<Record<SqlEngineKind, readonly Capability[]>> = {
+  pglite: [],
+  postgres: ['multi_writer'],
+};
+
 /**
  * The full capability set PGLite or Postgres reports: every shared capability
  * plus its own engine-specific ones. Returns a fresh set, so one engine can
@@ -113,6 +121,8 @@ const ENGINE_SPECIFIC = new Set<Capability>([...Object.values(ENGINE_ONLY).flat(
 export function capabilitiesForEngineKind(kind: SqlEngineKind): EngineCapabilities {
   const caps = new Set<Capability>(ENGINE_CAPABILITIES.filter(c => !ENGINE_SPECIFIC.has(c)));
   for (const c of ENGINE_ONLY[kind]) caps.add(c);
+  // Multi-user mode only (environment switch; the SQL engines read no Rust config).
+  if (rustMultiuserFromEnv()) for (const c of MULTIUSER_ONLY[kind]) caps.add(c);
   return caps;
 }
 

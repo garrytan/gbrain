@@ -3,6 +3,7 @@
  * and mapping the store's rejections (store-errors.ts).
  */
 import type { Capability } from '../../engine-capabilities.ts';
+import type { BrainEngine } from '../../engine.ts';
 import { RetryAbortError } from '../../retry.ts';
 import { capabilityMissing } from '../errors.ts';
 import { RUST_ENGINE_MEMBERS } from '../members.ts';
@@ -80,4 +81,12 @@ export function throwIfAborted(signal: AbortSignal | undefined): void {
  */
 export function namedSourceIds(ids: readonly unknown[]): string[] {
   return [...new Set(ids.filter((id): id is string => typeof id === 'string' && id !== ''))];
+}
+
+/**
+ * A transaction handle for a `decide` callback that must not reach the database: any use refuses. It lives here, not in
+ * a member module, because the store-members index serves every export of a member module as a member.
+ */
+export function noDatabase(member: string): BrainEngine {
+  return new Proxy({}, { get: () => refuseMember(member, 'the coalesce policy read the database') }) as BrainEngine;
 }

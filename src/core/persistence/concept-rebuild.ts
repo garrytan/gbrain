@@ -191,6 +191,7 @@ export async function rebuildHeldConcept(engine: BrainEngine, sourceId: string, 
   const publicationId = randomUUID(), report = { appended: 0 };
   let parked: string | undefined;
   await engine.transaction(async tx => {
+    parked = undefined; report.appended = 0; // a rerun after a lost optimistic commit starts clean
     await declarePersistenceProtocol(tx);
     const slugs = [...new Set([slug, ...await linkStreamSlugs(tx, sourceId, rebuild.page_id)])].sort();
     await tx.lockPageKeys(slugs.map(key => ({ sourceId, slug: key })));

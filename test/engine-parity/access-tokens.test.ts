@@ -47,7 +47,7 @@ import { OAuthGrants } from '../../src/core/oauth-grants.ts';
 import { createHash } from 'node:crypto';
 import { sqlQueryForEngine } from '../../src/core/sql-query.ts';
 import { addMember, bindCredential } from '../../src/core/access/members.ts';
-import { createSource, parityArms } from './harness.ts';
+import { createSource, OWNER_ONLY_STOP, parityArms, stopOnOwnerOnlyRefusal } from './harness.ts';
 import { migrateLegacyTokens, rescopeLegacyToken, type RescopeTokenArgs } from '../../src/core/grants/legacy-token.ts';
 import type { Server } from 'node:http';
 import express from 'express';
@@ -382,7 +382,9 @@ describe('engine parity: access_tokens members', () => {
       return out;
     });
   parityTest('serve --http end to end: one MCP tool call with a valid access token returns the same result, and an unknown token gets 401',
-    { methods: ['putPage', 'insertAccessToken', 'readActiveAccessTokenByHash'], timeout: 120_000 }, async (engine) => {
+    { methods: ['putPage', 'insertAccessToken', 'readActiveAccessTokenByHash'], timeout: 120_000,
+      // While the Rust store is multi-user, the owner-only session gate refuses this non-owner key (L4 opens it); nothing is read.
+      rustMultiuserStop: OWNER_ONLY_STOP() }, async (engine) => {
       await engine.putPage('notes/served-example', { type: 'note', title: 'Served example', compiled_truth: 'A page read over serve --http.', timeline: '' });
       await insert(engine, 'http-reader', 'tok-http-reader');
       const app = express();
@@ -408,6 +410,7 @@ describe('engine parity: access_tokens members', () => {
         };
         const ok = await call('tok-http-reader');
         const unknown = await call('tok-http-nobody');
+        stopOnOwnerOnlyRefusal((ok as { error?: unknown }).error, ['A page read over serve --http.']);
         // Not vacuous: the valid token reads the page and the unknown one is refused, on every arm.
         if (ok.status !== 200 || (ok as { page?: { slug?: unknown } }).page?.slug !== 'notes/served-example') throw new Error(`valid token: ${JSON.stringify(ok)}`);
         if (unknown.status !== 401) throw new Error(`unknown token: ${JSON.stringify(unknown)}`);

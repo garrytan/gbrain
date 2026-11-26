@@ -49,10 +49,11 @@ import {
 } from './protocol.ts';
 import {
   OWNER_IPC_CALLBACK_KEYS, OWNER_IPC_REMOTE_READS, OWNER_IPC_ROUTES, ownerCallCancelled, ownerCallTimeout, ownerGone, ownerIpcProtocol, ownerIpcRefusal,
-  ownerPeerRefused, isOwnerHandoff, ownerMemberOnlyReads,
+  ownerPeerRefused, isOwnerHandoff, ownerHandoff, ownerMemberOnlyReads,
 } from './routes.ts';
 import { rustMultiuserFromEnv } from '../multiuser-switch.ts';
 import { remoteFrameMark } from './remote-check.ts';
+import { HELD_ROW_HOOK, HELD_ROW_MEMBERS, HELD_ROW_TAG, withHeldRowHook } from './held-row.ts';
 import { setDeadlineTimer, type DeadlineTimer } from './timer.ts';
 
 /** How long past `deadline_at` the client waits for the owner's own timeout before it ends the call itself. */
@@ -123,7 +124,7 @@ function lastKey(path: string): string {
   return at === -1 ? path : path.slice(at + 1).replace(/\]$/, '');
 }
 
-function callDeadline(): { deadlineAt?: number; readDeadlineAt?: number } {
+export function callDeadline(): { deadlineAt?: number; readDeadlineAt?: number } {
   const read = readDeadline();
   const statement = currentStatementDeadline()?.deadlineAt ?? undefined;
   const candidates = [read, statement].filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
@@ -271,6 +272,9 @@ export function connectOwner(legacySocketPath: string, opts: ConnectOwnerOptions
     });
     const pending = new Map<number, Pending>();
     let closed = false;
+    // A multi-user owner's last frame when it hands the brain over: it read nothing after it, so a call still unanswered
+    // (or sent after it) never ran, and ends `owner_handoff` for the next owner instead of `outcome_unknown`.
+    let bye = false;
     let nextId = 1;
     const refresh = () => { if (pending.size) socket.ref(); else socket.unref(); };
     const send = (frame: object) => { if (!socket.destroyed) socket.write(frameLine(frame, Number.MAX_SAFE_INTEGER)!); };
@@ -302,6 +306,7 @@ export function connectOwner(legacySocketPath: string, opts: ConnectOwnerOptions
         refresh();
         return;
       }
+      if (frame.t === 'bye') { bye = true; return; }
       // Ids and keys are read as scalars only: an object field would run its own conversion and throw out of this callback.
       const call = typeof frame.id === 'number' ? pending.get(frame.id) : undefined;
       if (!call) return;
@@ -328,7 +333,7 @@ export function connectOwner(legacySocketPath: string, opts: ConnectOwnerOptions
       clearTimeout(timer);
       closed = true;
       if (!hello) { reject(early ?? Object.assign(new Error('The brain owner closed the connection before its hello.'), { code: 'ECONNRESET' })); return; }
-      for (const call of pending.values()) { call.cleanup(); call.reject(ownerGone(call.member, hello.pid, true)); }
+      for (const call of pending.values()) { call.cleanup(); call.reject(bye ? ownerHandoff(call.member, hello.pid) : ownerGone(call.member, hello.pid, true)); }
       pending.clear();
     });
 
@@ -338,6 +343,7 @@ export function connectOwner(legacySocketPath: string, opts: ConnectOwnerOptions
         return Promise.reject(ownerIpcRefusal(member, 'a remote caller\'s write is not sent to the brain owner'));
       }
       if (closed || !hello) return Promise.reject(ownerGone(member, hello?.pid ?? null, false));
+      if (bye) return Promise.reject(ownerHandoff(member, hello.pid));
       const id = nextId++;
       const startedAt = Date.now();
       const callbacks = new Map<string, (...args: unknown[]) => void>();
@@ -351,6 +357,7 @@ export function connectOwner(legacySocketPath: string, opts: ConnectOwnerOptions
           onFunction: (fn, path): Wire => {
             const table = grouperTables.get(fn);
             if (table) return { $t: 'fn', grouper: table };
+            if (fn === HELD_ROW_HOOK) return HELD_ROW_TAG;
             const key = lastKey(path);
             if (!OWNER_IPC_CALLBACK_KEYS.has(key)) throw ownerIpcRefusal(member, `its argument ${path.replace(/^value/, 'args')} is a function, and functions do not cross the owner socket`);
             const k = String(callbacks.size);
@@ -497,6 +504,8 @@ export function installOwnerClient(engine: object, connection: OwnerConnection, 
       ? () => Promise.reject(ownerIpcRefusal(member, 'transactions, reserved connections and engine callbacks do not cross the owner socket'))
       : member === 'countPagesBy'
         ? (...args: unknown[]) => countPagesByThroughOwner(connection, args)
+        : HELD_ROW_MEMBERS.has(member)
+        ? (...args: unknown[]) => withHeldRowHook(member, args, sent => connection.request('call', member, sent))
         : (...args: unknown[]) => connection.request('call', member, args);
     const value = !rejoin ? direct : async function viaOwner(...args: unknown[]): Promise<unknown> {
       if (connection.closed) {

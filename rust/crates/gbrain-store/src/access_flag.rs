@@ -381,22 +381,27 @@ mod tests {
         let code = |name: &str| &sources.iter().find(|(n, _)| n == name).unwrap().1;
 
         // Raw write handles, each reviewed:
-        // - the kv backends and their trait: `kv.rs` (the trait and its two defaults),
+        // - the kv backends and their trait: `kv.rs` (the trait and its three defaults),
         //   `redb_kv.rs` (the table create on first open, the writable backend's `begin_write`, and
         //   `RedbSink`'s three redb transactions on the new record file a store snapshot fills: no
         //   brain store has that file open, so no store write handle exists to flag, and the
         //   follower's replica write (`follower.rs`), which copies a primary's records, already
         //   flagged there, onto a record file no store has open),
         //   `fjall_kv.rs`, and
-        //   `occ_kv.rs` (its trait methods and the commit onto the base store);
-        // - `lib.rs`: the brain-create write, the two arms of `Store::write`'s unbound loop, the
+        //   `occ_kv.rs` (its trait methods, the deadline-bounded locked begin, the commit onto
+        //   the base store, and two in its `sim` feature test module);
+        // - `lib.rs`: the brain-create write, the three arms of `Store::write`'s unbound loop, the
         //   commit log's activation (the format record and the log's meta record only), and
         //   the format upgrade (no page records; the format-5 carry-over in `seed/format_5.rs` writes
         //   purge tombstones, generations and oauth clients on it);
-        // - `transactions.rs`: a transaction's exclusive base handle (its statements run through
-        //   the bound arm of `Store::write`); a rollback writes its counters forward on that same
-        //   handle, except with the commit log on, where it drops that handle and raises its id
-        //   sequences on a second one (counter keys only, no page record);
+        // - `transactions.rs`: a transaction's base handle, exclusive (serialized) or optimistic (plain,
+        //   or queued for the keys an earlier run lost on); its statements run through the bound arm
+        //   of `Store::write`. A serialized rollback writes its counters forward on that same handle,
+        //   except with the commit log on, where it drops that handle and raises its id sequences on a
+        //   second one; an optimistic one that did not commit raises them in one write of
+        //   `raise_counter` operations only (`raise_forward`). Neither writes a page record;
+        // - `transactions/optimistic_tests.rs` and `transactions/review_tests.rs`, whole files under
+        //   `#[cfg(test)]` that hold retry keys directly on the store's `Kv`;
         // - this module's open-time scan, the keyword index
         //   repair (`keyword/index_build.rs`, postings only) and the open-time repair of the
         //   derivation sweep records' source index (`page_body/purge_record.rs`, index keys only);
@@ -419,20 +424,23 @@ mod tests {
             ("keyword/index_build.rs", 1),
             ("keyword/index_build/tests.rs", 1),
             ("keyword/index_writer/tests.rs", 2),
-            ("kv.rs", 5),
+            ("kv.rs", 7),
             ("leases_tests.rs", 3),
-            ("lib.rs", 6),
-            ("occ_kv.rs", 4),
+            ("lib.rs", 7),
+            ("occ_kv.rs", 8),
             ("page_body/purge_record.rs", 1),
             ("redb_kv.rs", 8),
             ("seed/v0_60_766_tests.rs", 1),
             ("test_support.rs", 4),
-            ("transactions.rs", 2),
+            ("transactions.rs", 4),
+            ("transactions/optimistic_tests.rs", 4),
+            ("transactions/review_tests.rs", 1),
         ];
         let opens = |c: &str| {
             [
                 "begin_write(",
                 "begin_write_locked(",
+                "begin_write_locked_until(",
                 "begin_write_exclusive(",
             ]
             .iter()

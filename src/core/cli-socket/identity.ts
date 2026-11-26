@@ -47,6 +47,9 @@ export const READ_BEHAVIOR_ENV: readonly string[] = [
   // the SHA-256 of each value enters the identity); the serial-transaction switch decides whether a served client's
   // transaction runs or is refused, so a read inside one can answer differently.
   'GBRAIN_RUST_SERVER_URL', 'GBRAIN_RUST_SERVER_TOKEN', 'GBRAIN_RUST_SERVED_SERIAL_TXN',
+  // In multi-user mode, the deadline of an explicit transaction with none of its own: past it the call ends `timeout`
+  // instead of answering, so a serve and a CLI with different values answer the same call differently.
+  'GBRAIN_RUST_TXN_DEADLINE_MS',
 ];
 /** Provider credentials: only whether each is set enters the identity. Every other provider variable (endpoints, deployments, versions, org/project/group ids) enters with its value. */
 const SECRET_PROVIDER_ENV = /(_API_KEY|_TOKEN|_SECRET)$/;

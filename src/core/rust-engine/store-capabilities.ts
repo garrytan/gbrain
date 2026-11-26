@@ -23,7 +23,7 @@ import { STORE_MEMBERS } from './store-members/index.ts';
  *
  * A multi-user store serves it too (lane LM slice 3): its checkout locks are I-5 leases with the owner host's native lock
  * beneath them (persistence/managed-lock.ts), and its claims carry the host fence and epochs, so MULTIUSER_WITHHELD is empty.
- * The array and its gate (`storeCapabilities`, RustEngine._reportStoreCapabilities, the engine-swap plan) stay: a capability
+ * The array and its gate (`storeCapabilities`, the engine-swap plan) stay: a capability
  * a multi-user store cannot yet fence is listed there and every multi-user Rust brain then refuses it by name.
  */
 export const HELD_FOR_CALLERS: Partial<Record<Capability, readonly string[]>> = {};

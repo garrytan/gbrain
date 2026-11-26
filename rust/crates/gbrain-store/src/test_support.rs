@@ -217,3 +217,28 @@ impl crate::kv::Kv for FaultyKv {
         self.inner.version()
     }
 }
+
+/// A brain behind the concurrent store with the multi-user switch resolved on (optimistic explicit
+/// transactions, `transactions.rs`).
+pub(crate) fn mu_store() -> Store {
+    let kv = RedbKv::open_backend(Box::<MemFile>::default()).unwrap();
+    mu_store_over(kv)
+}
+
+/// [`mu_store`] on `file`: created on first open, opened again on the same bytes after that.
+pub(crate) fn mu_store_on_file(file: &FlakyFile) -> Store {
+    let kv = RedbKv::open_backend(Box::new(file.clone())).unwrap();
+    mu_store_over(kv)
+}
+
+fn mu_store_over(kv: RedbKv) -> Store {
+    Store::open_kv(
+        Arc::new(crate::occ_kv::OccKv::new(kv).unwrap()),
+        Arc::new(SystemEnv),
+        OpenOptions {
+            multiuser: true,
+            ..OpenOptions::default()
+        },
+    )
+    .unwrap()
+}
