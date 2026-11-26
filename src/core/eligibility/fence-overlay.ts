@@ -262,7 +262,7 @@ export interface LoadFenceOverlayOpts {
  * that publishes it inserts it at the writer's tier, which is the page's).
  */
 export async function loadFenceChunkOverlay(
-  engine: Pick<BrainEngine, 'executeRaw'>,
+  engine: Pick<BrainEngine, 'readFenceOverlayRows'>,
   page: { sourceId: string; slug: string; compiled_truth: string; timeline?: string | null },
   opts: LoadFenceOverlayOpts = {},
 ): Promise<FenceChunkOverlay | undefined> {
@@ -271,9 +271,7 @@ export async function loadFenceChunkOverlay(
   const fingerprint = opts.holdFingerprint === undefined ? factHoldFingerprint : opts.holdFingerprint;
   const incoming = rows.map(row => ({ row_num: row.rowNum, claim: row.claim, visibility: row.visibility,
     fp: fingerprint ? fingerprint(fenceRowHoldTexts(row)) : null }));
-  const sql = opts.hideHeld ? OVERLAY_SQL(fingerprint !== null, true) : fingerprint ? OVERLAY_SQL_WITH_HOLDS : OVERLAY_SQL_WITHOUT_HOLDS;
-  const found = await engine.executeRaw<{ row_num: number; page_tier: string | null; row_tier: string | null; row_flagged: boolean | null; purged: boolean; held: boolean; narrower: boolean }>(
-    sql, [page.sourceId, page.slug, JSON.stringify(incoming)]);
+  const found = await engine.readFenceOverlayRows({ sourceId: page.sourceId, slug: page.slug }, incoming, { hideHeld: opts.hideHeld === true });
   const pending = pendingRows.getStore();
   const pendingHere = pending && pending.sourceId === page.sourceId && pending.slug === page.slug ? new Set(pending.rowNums) : null;
   const omit = new Set<number>();
@@ -299,7 +297,7 @@ export async function loadFenceChunkOverlay(
  * fact reads are world-only (heldRowSql, against the facts as they stand now), as sanitizeRemoteBody's `omitRows`;
  * undefined for any other caller, who reads the body as stored.
  */
-export async function heldRowsForCaller(engine: Pick<BrainEngine, 'executeRaw'>, remote: boolean | undefined,
+export async function heldRowsForCaller(engine: Pick<BrainEngine, 'readFenceOverlayRows'>, remote: boolean | undefined,
   page: { sourceId: string; slug: string; compiled_truth: string; timeline?: string | null }): Promise<ReadonlySet<number> | undefined> {
   return worldOnlyFacts(remote) ? (await loadFenceChunkOverlay(engine, page, { hideHeld: true }))?.held : undefined;
 }
@@ -329,35 +327,26 @@ export function storedEdge(e: { from_source_id: string; from_slug: string; to_so
  * (`edge(row)`, the same text or a read's truncation of it); the caller keeps it when one of them was supplied by a writer
  * (add_link provenances, frontmatter fields) and holds no fence marker (unify-types' preserve_notes stores a page's
  * opening as a manual context), or reads, whitespace-collapsed as the extractor collapses it, inside its origin page as
- * it is now and as get_page shows it to the caller (sanitizeRemoteBody less heldRowsForCaller). The origin bodies are
- * read in one query, for at most LINK_CONTEXT_PAGE_BOUND pages in result order. Otherwise it is emptied, as it is when
- * no stored row matches, the page is past the bound, stored in segments or gone, or a lookup fails (fail closed).
+ * it is now and as get_page shows it to the caller (sanitizeRemoteBody less heldRowsForCaller). The stored rows are
+ * one typed read (readLinkContextMatches) and the origin bodies another (readLinkContextOriginPages), for at most
+ * LINK_CONTEXT_PAGE_BOUND pages in result order. Otherwise it is emptied, as it is when no stored row matches, the page
+ * is past the bound, stored in segments or gone, or a lookup fails (fail closed).
  * Every other caller reads contexts as stored and costs no query.
  */
 export async function worldLinkContexts<T extends { context?: string | null }>(
-  engine: Pick<BrainEngine, 'executeRaw'>, remote: boolean | undefined, rows: T[], edge: (row: T) => StoredEdgeRef,
+  engine: Pick<BrainEngine, 'readFenceOverlayRows' | 'readLinkContextMatches' | 'readLinkContextOriginPages'>, remote: boolean | undefined, rows: T[], edge: (row: T) => StoredEdgeRef,
 ): Promise<T[]> {
   if (!worldOnlyFacts(remote)) return rows;
   const asked = rows.flatMap((row, i) => (row.context ? [{ i, ref: edge(row), context: row.context }] : []));
   if (asked.length === 0) return rows;
   const kept = new Set<number>();
   try {
-    const matches = await engine.executeRaw<{ i: number; link_source: string | null; context: string; page_id: number | null }>(
-      `SELECT u.i, l.link_source, l.context, e.id AS page_id
-       FROM unnest($1::int[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::text[]) AS u(i, fs, fslug, ts, tslug, lt, ctx)
-       JOIN pages f ON f.source_id = u.fs AND f.slug = u.fslug
-       JOIN pages t ON t.source_id = u.ts AND t.slug = u.tslug
-       JOIN links l ON l.from_page_id = f.id AND l.to_page_id = t.id AND l.link_type = u.lt
-         AND (l.context = u.ctx OR (right(u.ctx, 1) = '…' AND left(l.context, char_length(u.ctx) - 1) = left(u.ctx, char_length(u.ctx) - 1)))
-       LEFT JOIN pages e ON e.id = COALESCE(l.origin_page_id, l.from_page_id) AND e.deleted_at IS NULL`,
-      [asked.map(a => a.i), asked.map(a => a.ref.from.sourceId), asked.map(a => a.ref.from.slug), asked.map(a => a.ref.to.sourceId),
-        asked.map(a => a.ref.to.slug), asked.map(a => a.ref.linkType), asked.map(a => a.context)]);
+    const matches = await engine.readLinkContextMatches(asked.map(a => ({ i: a.i, fromSourceId: a.ref.from.sourceId, fromSlug: a.ref.from.slug,
+      toSourceId: a.ref.to.sourceId, toSlug: a.ref.to.slug, linkType: a.ref.linkType, context: a.context })));
     const excerpted = matches.filter(m => m.link_source == null || BODY_EXCERPT_LINK_SOURCES.includes(m.link_source)).sort((a, b) => Number(a.i) - Number(b.i));
     for (const m of matches) if (!excerpted.includes(m) && !holdsFenceMarker(m.context)) kept.add(Number(m.i));
     const pageIds = [...new Set(excerpted.flatMap(m => (m.page_id == null ? [] : [Number(m.page_id)])))].slice(0, LINK_CONTEXT_PAGE_BOUND);
-    const pages = pageIds.length ? await engine.executeRaw<{ id: number; source_id: string; slug: string; compiled_truth: string | null; timeline: string | null }>(
-      `SELECT id, source_id, slug, compiled_truth, timeline FROM pages
-       WHERE id = ANY($1::bigint[]) AND body_storage IS DISTINCT FROM 'segmented'`, [pageIds]) : [];
+    const pages = pageIds.length ? await engine.readLinkContextOriginPages(pageIds) : [];
     const views = new Map<number, string>();
     for (const p of pages) {
       const compiled = p.compiled_truth ?? '';
