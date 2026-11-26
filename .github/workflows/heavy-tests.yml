@@ -175,7 +175,7 @@ jobs:
       OPENCODE_VERSION: "1.18.18"
       # Same pins as plugin-doors; update both jobs together.
       CODEX_NPM_VERSION: "0.147.0"
-      CLAUDE_NPM_VERSION: "2.1.233"
+      CLAUDE_NPM_VERSION: "2.1.332"
     steps:
       - id: checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
@@ -793,7 +793,7 @@ jobs:
     timeout-minutes: 30
     env:
       CODEX_NPM_VERSION: "0.147.0"
-      CLAUDE_NPM_VERSION: "2.1.233"
+      CLAUDE_NPM_VERSION: "2.1.332"
     steps:
       - id: checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4

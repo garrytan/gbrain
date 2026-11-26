@@ -499,7 +499,7 @@ async function pinPass(engine: BrainEngine, input: SyncPassInput, lease: NonNull
   const driftMoved = (await movedDriftHolds(engine, sourceId, holds)).size > 0;
   // Working mode (design §2.2): the stat cache this process kept from the round its last stamp used; a cold process has none.
   const cacheKey = passFingerprint(sourceId, incarnation);
-  const kindStarted = Date.now();
+  const kindStarted = performance.now();
   // LC-1: committed mode re-stats the paths the stamp settled on a delete's uncommitted removal (sync-removal-pending.ts).
   const working = mode === 'working' && converged ? await workingIdleChange(context, recallWorkingStatCache(cacheKey))
     : { changed: mode === 'working' || removalPendingChanged(converged?.removal_pending, path => workingFileStat(context.gitRoot, path)), cache: null };
@@ -565,7 +565,8 @@ async function stampIdlePass(engine: BrainEngine, input: SyncPassInput, lease: N
   // Design §7: an owner approval (--yes) on an idle tick still makes an unknown cost known again.
   if (opts.costApproved && value.obligations.cost?.approved_usd === null) value.obligations.cost = (await passCostDecision(engine, { sourceId, incarnation,
     scope: episode?.full_id ?? passId, priorRow: true, prior: value.obligations.cost, approved: true })).cost;
-  value.telemetry = { ...value.telemetry, outcome: 'up_to_date', ended_at: at, duration_ms: Date.now() - started, timings_ms: { setup: kindStarted - started, kind: Date.now() - kindStarted } };
+  const durationMs = Math.round(performance.now() - started), setupMs = Math.round(kindStarted - started);
+  value.telemetry = { ...value.telemetry, outcome: 'up_to_date', ended_at: at, duration_ms: durationMs, timings_ms: { setup: setupMs, kind: durationMs - setupMs } };
   await engine.transaction(tx => withCoordinatedWrite(tx, [sourceId], async () => {
     assertActive();
     // One round trip: the lease check, the stamp and the row (started at the transaction's clock) are pipelined; a lost
@@ -648,7 +649,7 @@ async function stampUnchangedPass(engine: BrainEngine, input: SyncPassInput, rou
     value.obligations.converged = { target: head, at, ...watermark, ...(level.removalPending !== undefined ? { removal_pending: level.removalPending } : {}), parser_fp: parserFp, pack, selection_fp: selectionFp,
       last_full_at: kind === 'full' || !converged ? at : converged.last_full_at, passes_since_full: kind === 'full' || !converged ? 0 : converged.passes_since_full + 1 };
     Object.assign(value.obligations, { not_converged_streak: 0, mismatch: {}, stuck_since: null });
-    value.telemetry = { ...value.telemetry, outcome: 'up_to_date', ended_at: at, remaining: 0, duration_ms: Date.now() - started, counts: { ...counts, ...passApplyCounts(applied) },
+    value.telemetry = { ...value.telemetry, outcome: 'up_to_date', ended_at: at, remaining: 0, duration_ms: Math.round(performance.now() - started), counts: { ...counts, ...passApplyCounts(applied) },
       classes: applied.classes, ...(applied.summary ? { summary: applied.summary } : {}) };
     await writePassRow(tx, value);
   }, principalAttribution(authority.writer.principal)));
@@ -813,9 +814,9 @@ async function envelopeCrossed(engine: BrainEngine, value: ManagedSyncPassValue,
 
 /** #7243: a round's level read, then its `managed_sync.round_level` progress event, so a long round (the legacy sweep, the import walk) says where it stands first. */
 async function readLevelReporting(engine: BrainEngine, levelInput: Parameters<typeof readShadowLevel>[1], round: number, onProgress: SyncOpts['onProgress']): Promise<Awaited<ReturnType<typeof readShadowLevel>>> {
-  const started = Date.now();
+  const started = performance.now();
   const level = await readShadowLevel(engine, levelInput);
-  if (level) onProgress?.({ phase: 'managed_sync.round_level', round: { round, target: level.head, paths: level.paths.length, read_ms: Date.now() - started, ...(level.confirm?.taken ? { patched: true } : {}) } });
+  if (level) onProgress?.({ phase: 'managed_sync.round_level', round: { round, target: level.head, paths: level.paths.length, read_ms: Math.round(performance.now() - started), ...(level.confirm?.taken ? { patched: true } : {}) } });
   return level;
 }
 
@@ -825,8 +826,9 @@ export async function runSyncPass(engine: BrainEngine, input: SyncPassInput): Pr
   const lease = currentDrainLease(sourceId);
   if (!lease) throw new Error(`The live sync pass of ${sourceId} runs only under the source's drain lease.`);
   lease.tailClear = false; lease.idleClear = false;
-  const started = Date.now(), startedAt = new Date(started).toISOString();
-  const pinned = await pinPass(engine, input, lease, started);
+  // #10441: durations read the monotonic clock; a wall-clock step during the pass neither adds nor hides time.
+  const started = performance.now(), startedAtMs = Date.now(), startedAt = new Date(startedAtMs).toISOString();
+  const pinned = await pinPass(engine, input, lease, startedAtMs);
   if (pinned.ended) return pinned.ended;
   const { prior, admission, tail, retry, failed, holds, mode, selection, configured, selectionFp, parserFp, obligations, passId, optOutEpisode,
     processingOptions, inherited, pack, converged, cacheKey, working, kind, value, markersOwed, heldDeletions, levelReuse } = pinned;
@@ -885,7 +887,7 @@ export async function runSyncPass(engine: BrainEngine, input: SyncPassInput): Pr
     }
     value.telemetry = { ...value.telemetry, outcome, stop_reason: stopReason, settled: S.size + (yieldSettled || roundSettled + inBatch), counts: { ...counts, ...passApplyCounts(applied) },
       classes: applied.classes, ...(applied.summary ? { summary: applied.summary } : {}),
-      ...(ended ? { ended_at: new Date().toISOString(), duration_ms: Date.now() - started, step: undefined } : {}) };
+      ...(ended ? { ended_at: new Date().toISOString(), duration_ms: Math.round(performance.now() - started), step: undefined } : {}) };
     if (outcome === 'blocked' || stopReason === 'not_converged') value.obligations.stuck_since ??= new Date().toISOString();
     await engine.transaction(async tx => { if (fenced) await assertDrainLease(tx, sourceId); await writePassRow(tx, value, { pin, onlyOpen }); });
   };

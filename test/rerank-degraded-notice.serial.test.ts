@@ -45,6 +45,9 @@ const { dispatchToolCall } = await import('../src/mcp/dispatch.ts');
 const engineStub = {
   getConfig: async () => null,
   resolveCaseSensitiveAliases: async () => [],
+  // The freshness notice reads coverage through a typed member (it was a raw read these stubs answered with no rows): none recorded.
+  hasNotifierCoverage: async () => false,
+  readPageTrustRows: async () => [], // the result labels' trust read is a typed member too (no rows: unrecorded)
   executeRaw: async (sql: string) => sql.includes('AS pending') ? [{ pending: false }] : [],
   countKeywordPages: async () => 0,
 } as unknown as BrainEngine;
