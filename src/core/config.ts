@@ -306,6 +306,7 @@ export interface GBrainConfig {
     autopilot_launcher?: 'external';
     /** #9483: a launcher outside gbrain's serve service starts serve again when it exits (`gbrain upgrade` stops serve and waits for it, or restarts the systemd unit serve runs in). */
     serve_launcher?: 'external';
+    worker_launcher?: 'external';
   };
 
   /**
@@ -1578,6 +1579,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'conversation_parser.llm_fallback_enabled',
   // Dream cycle config
   'dream.synthesize.session_corpus_dir', 'dream.synthesize.conversation_pages', // #4419 conversation pages feed synthesis
+  'dream.synthesize.since',
   'dream.synthesize.meeting_transcripts_dir',
   'dream.synthesize.last_completion_ts',
   'dream.synthesize.verdict_model',
@@ -1702,6 +1704,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'self_upgrade.last_applied_version',
   'self_upgrade.autopilot_launcher',
   'self_upgrade.serve_launcher',
+  'self_upgrade.worker_launcher',
   // Misc
   'artifacts_sync_mode',
   'cross_project_learnings',

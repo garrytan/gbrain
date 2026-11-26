@@ -17,7 +17,7 @@ import { createHash } from 'node:crypto';
 import { parseDataFrontmatter } from '../data-frontmatter.ts';
 import { pruneDir } from '../sync.ts';
 import { realpathOrResolve, resolvedPrefixContained } from '../path-confine.ts';
-import { CORPUS_SPOOL_SUBDIR, corpusFileSessionId } from '../context/corpus-segments.ts';
+import { CORPUS_SPOOL_SUBDIR, corpusFileSessionId, parseWbFileName } from '../context/corpus-segments.ts';
 import { withoutOffPeriodTurns } from '../context/capture-consent.ts';
 import { readSeatSidecar } from '../context/seat.ts';
 import { corpusFileSpeaker } from '../context/session-speaker.ts';
@@ -42,7 +42,18 @@ export interface DiscoveredTranscript {
   speaker?: string;
 }
 
-export interface DiscoverOpts {
+interface TranscriptDateFilter {
+  /** Restrict to a single calendar day (YYYY-MM-DD). Writeback mtimes are read in UTC. */
+  date?: string;
+  /** Inclusive range start (YYYY-MM-DD). */
+  from?: string;
+  /** Inclusive range end (YYYY-MM-DD). */
+  to?: string;
+  /** Inclusive floor in epoch milliseconds. */
+  sinceMs?: number;
+}
+
+export interface DiscoverOpts extends TranscriptDateFilter {
   /** Source directory. Required. */
   corpusDir: string;
   /** Optional second source. */
@@ -51,12 +62,6 @@ export interface DiscoverOpts {
   minChars?: number;
   /** Word-boundary regex strings. The discoverer auto-wraps bare words. */
   excludePatterns?: string[];
-  /** Restrict to a single date (YYYY-MM-DD, matched against `inferredDate`). */
-  date?: string;
-  /** Inclusive range start (YYYY-MM-DD). */
-  from?: string;
-  /** Inclusive range end (YYYY-MM-DD). */
-  to?: string;
   /**
    * Disable the self-consumption guard. Caller must opt in explicitly via
    * `--unsafe-bypass-dream-guard`; never auto-applied for `--input` because
@@ -80,6 +85,7 @@ export interface DiscoverOpts {
 }
 
 const DATE_RE = /^(\d{4}-\d{2}-\d{2})/;
+const ISO_DATE_OR_TIME_RE = /^(\d{4}-\d{2}-\d{2})(?:(T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)(Z|[+-]\d{2}:?\d{2})?)?$/i;
 const WORD_BOUNDARY_HEURISTIC = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
 
 /** A transcript's frontmatter; none, or unreadable, is `{}` (a plain-text header is not an error). */
@@ -96,8 +102,20 @@ function frontmatterDay(fm: Record<string, unknown>): string | null {
   const raw = fm.date instanceof Date ? fm.date.toISOString() : typeof fm.date === 'string' ? fm.date : '';
   const day = DATE_RE.exec(raw)?.[1];
   if (!day) return null;
+  return isCalendarDay(day) ? day : null;
+}
+
+function isCalendarDay(day: string): boolean {
   const ms = Date.parse(`${day}T00:00:00Z`);
-  return Number.isFinite(ms) && new Date(ms).toISOString().startsWith(day) ? day : null;
+  return Number.isFinite(ms) && new Date(ms).toISOString().startsWith(day);
+}
+
+export function parseTranscriptDate(value: unknown): number | null {
+  if (value instanceof Date) return Number.isFinite(value.getTime()) ? value.getTime() : null;
+  const match = typeof value === 'string' ? ISO_DATE_OR_TIME_RE.exec(value.trim()) : null;
+  if (!match || !isCalendarDay(match[1])) return null;
+  const ms = Date.parse(match[2] ? `${match[1]}${match[2]}${match[3] ?? 'Z'}` : match[1]);
+  return Number.isFinite(ms) ? ms : null;
 }
 
 /**
@@ -241,13 +259,26 @@ function hashContent(text: string): string {
   return createHash('sha256').update(text, 'utf8').digest('hex');
 }
 
-function isInDateRange(date: string | null, opts: DiscoverOpts): boolean {
+function isInDateRange(date: string | null, opts: TranscriptDateFilter): boolean {
   if (!opts.date && !opts.from && !opts.to) return true;
   if (!date) return false; // file has no inferable date but a filter is active
   if (opts.date && date !== opts.date) return false;
   if (opts.from && date < opts.from) return false;
   if (opts.to && date > opts.to) return false;
   return true;
+}
+
+function passesFileDates(filePath: string, nameDate: string | null, fm: Record<string, unknown>,
+  inferredDate: string | null, opts: TranscriptDateFilter): boolean {
+  const { sinceMs } = opts;
+  const datedAt = sinceMs === undefined ? null : parseTranscriptDate(nameDate) ?? parseTranscriptDate(fm.date);
+  const useCaptureDay = !inferredDate && (opts.date || opts.from || opts.to) && parseWbFileName(basename(filePath));
+  let captureTime: Date | undefined;
+  if ((sinceMs !== undefined && datedAt === null) || useCaptureDay) {
+    try { captureTime = statSync(filePath).mtime; } catch { return false; }
+  }
+  return (sinceMs === undefined || (datedAt ?? captureTime?.getTime() ?? -Infinity) >= sinceMs)
+    && isInDateRange(inferredDate ?? (useCaptureDay ? captureTime?.toISOString().slice(0, 10) ?? null : null), opts);
 }
 
 /** Labels of every compiled pattern that matches `text` (empty when none). */
@@ -302,7 +333,8 @@ function listTextFiles(dir: string): string[] {
  *
  * Skips files that:
  *  - aren't `.txt`
- *  - have a date (basename prefix, else frontmatter `date`, #7267) outside the requested window
+ *  - have a date outside the requested window or floor (basename prefix, else frontmatter `date`;
+ *    the floor also accepts file mtime, and the window accepts it for writeback files)
  *  - have content shorter than `minChars`
  *  - are gbrain claude-cli self-captures (`selfCaptureSessionIds`) or sit under a
  *    dream output directory (`excludeDirs`); each class is counted in one stderr line
@@ -353,8 +385,9 @@ export function discoverTranscripts(opts: DiscoverOpts): DiscoveredTranscript[] 
       // #6091: turns captured under memory.auto_writeback off never feed synthesis.
       if (ext === '.txt') content = withoutOffPeriodTurns(filePath, content);
       if (content === null || content.length < minChars) continue;
-      const inferredDate = nameDate ?? frontmatterDay(transcriptFrontmatter(content));
-      if (!isInDateRange(inferredDate, opts)) continue;
+      const fm = !nameDate || opts.sinceMs !== undefined ? transcriptFrontmatter(content) : {};
+      const inferredDate = nameDate ?? frontmatterDay(fm);
+      if (!passesFileDates(filePath, nameDate, fm, inferredDate, opts)) continue;
       if (isDreamOutput(content, bypass)) {
         process.stderr.write(`[dream] skipped ${baseName}: dream_generated marker (self-consumption guard)\n`);
         continue;
@@ -390,13 +423,13 @@ export function discoverTranscripts(opts: DiscoverOpts): DiscoveredTranscript[] 
 
 /**
  * Read a single ad-hoc transcript file (`gbrain dream --input <file>`).
- * Bypasses the corpus-dir scan and date filters but still applies
+ * Bypasses the corpus-dir scan and CLI date window but still applies the configured floor,
  * minChars + exclude_patterns when provided. The self-consumption guard
  * also still fires unless `bypassGuard` is set explicitly.
  */
 export function readSingleTranscript(
   filePath: string,
-  opts: { minChars?: number; excludePatterns?: string[]; bypassGuard?: boolean } = {},
+  opts: { minChars?: number; excludePatterns?: string[]; bypassGuard?: boolean; sinceMs?: number } = {},
 ): DiscoveredTranscript | null {
   const minChars = opts.minChars ?? 2000;
   const bypass = opts.bypassGuard === true;
@@ -423,14 +456,18 @@ export function readSingleTranscript(
     return null;
   }
   const ext = filePath.endsWith('.md') ? '.md' : '.txt';
-      const baseName = transcriptBaseName(filePath, ext);
+  const baseName = transcriptBaseName(filePath, ext);
+  const nameDate = DATE_RE.exec(baseName)?.[1] ?? null;
+  const fm = !nameDate || opts.sinceMs !== undefined ? transcriptFrontmatter(content) : {};
+  const inferredDate = nameDate ?? frontmatterDay(fm);
+  if (!passesFileDates(filePath, nameDate, fm, inferredDate, opts)) return null;
   const seat = transcriptSeat(filePath);
   return {
     filePath,
     contentHash: hashContent(content),
     content,
     basename: baseName,
-    inferredDate: DATE_RE.exec(baseName)?.[1] ?? frontmatterDay(transcriptFrontmatter(content)),
+    inferredDate,
     ...(seat ? { seat } : {}),
     ...transcriptSpeaker(filePath),
   };
@@ -494,13 +531,10 @@ function transcriptSpeaker(filePath: string): { speaker?: string } {
 
 export const CONVERSATION_PAGE_URI_PREFIX = 'gbrain-page://';
 
-export interface ConversationPageDiscoverOpts {
+export interface ConversationPageDiscoverOpts extends TranscriptDateFilter {
   sourceId: string;
   minChars?: number;
   excludePatterns?: string[];
-  date?: string;
-  from?: string;
-  to?: string;
   bypassGuard?: boolean;
   /** #5413: gbrain's own claude-cli session ids; their imported pages are self-captures. */
   selfCaptureSessionIds?: ReadonlySet<string>;
@@ -552,11 +586,10 @@ export async function discoverConversationPages(
   for (const row of rows) {
     const fm = frontmatterOf(row);
     const date = pageDate(fm, row.slug);
-    if (opts.date || opts.from || opts.to) {
-      if (!date) continue;
-      if (opts.date && date !== opts.date) continue;
-      if (opts.from && date < opts.from) continue;
-      if (opts.to && date > opts.to) continue;
+    if (!isInDateRange(date, opts)) continue;
+    if (opts.sinceMs !== undefined) {
+      const timestamp = parseTranscriptDate(fm.date);
+      if (timestamp === null || timestamp < opts.sinceMs) continue;
     }
     if (fm.mode === 'lsd' || (fm.dream_generated === true && !opts.bypassGuard)) { guarded++; continue; }
     const imported = fm.transcript_import as { session_id?: unknown } | undefined;
@@ -595,7 +628,7 @@ export async function conversationPagesOptedIn(engine: Pick<BrainEngine, 'getCon
  */
 export async function withConversationPages(
   engine: BrainEngine,
-  opts: { inputFile?: string; sourceId?: string; date?: string; from?: string; to?: string; bypassDreamGuard?: boolean },
+  opts: TranscriptDateFilter & { inputFile?: string; sourceId?: string; bypassDreamGuard?: boolean },
   config: { corpusDir: string | null; minChars: number; excludePatterns: string[] },
   corpus: DiscoveredTranscript[],
 ): Promise<DiscoveredTranscript[]> {
@@ -604,7 +637,7 @@ export async function withConversationPages(
   if (setting === 'false' || (setting !== 'true' && !config.corpusDir)) return corpus;
   const pages = await discoverConversationPages(engine, {
     sourceId: opts.sourceId ?? 'default', minChars: config.minChars, excludePatterns: config.excludePatterns,
-    date: opts.date, from: opts.from, to: opts.to, bypassGuard: opts.bypassDreamGuard,
+    date: opts.date, from: opts.from, to: opts.to, sinceMs: opts.sinceMs, bypassGuard: opts.bypassDreamGuard,
     selfCaptureSessionIds: claudeCliSelfSessionIds(),
   });
   const seen = new Set(corpus.map((t) => t.contentHash));

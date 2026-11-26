@@ -75,6 +75,7 @@ import { claudeCliSelfSessionIds } from '../ai/providers/claude-cli-scratch.ts';
 import { BudgetExhausted, BudgetTracker, loadPricingOverrides } from '../budget/budget-tracker.ts';
 import type { MaintenanceWriteWait } from '../persistence/maintenance-wait.ts';
 import { connectorAtomExclusionSql } from './connector-atoms.ts';
+import { SOURCE_ATOM_OPT_OUT_SQL, SOURCE_ATOM_OPTED_OUT_SQL, sourceAtomPolicySkip } from './source-atom-policy.ts';
 import { resolveExtractAtomsCostGate, resolveEmbedModelForCostGate, settleExtractAtomsCostGate } from './extract-atoms-cost-gate.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
 import { classifyRunStop, providerHaltReason, upsertExtractRollup } from '../extract/rollup-writer.ts';
@@ -432,6 +433,7 @@ export async function discoverExtractablePages(
       ${MANAGED_ATOM_DISCOVERY_SQL}
       ${PAGE_SCAN_STATE_EXCLUSION_SQL}
       ${connectorExclusion}
+      ${SOURCE_ATOM_OPT_OUT_SQL}
       ${heldAtomInputExclusionSql('$5')}
       ${hasFilter ? "AND p.slug = ANY($6::text[])" : ''}
       AND NOT EXISTS (
@@ -495,11 +497,14 @@ export async function discoverExtractablePages(
  * Fail-soft: returns null on error so the doctor check can report a warn
  * (query failed) rather than a misleading 0. `opts.signal` cancels the query
  * (the drain bounds it by its remaining deadline); a cancelled count is null.
+ *
+ * #9888: pages of a source with `extract_atoms` off are not backlog. With
+ * `sourcePolicy: 'excluded'` it counts only those pages instead, for doctor.
  */
 export async function countExtractAtomsBacklog(
   engine: BrainEngine,
   sourceId?: string,
-  opts: { signal?: AbortSignal } = {},
+  opts: { signal?: AbortSignal; sourcePolicy?: 'apply' | 'excluded' } = {},
 ): Promise<number | null> {
   try {
     // Two modes: scoped (the phase's per-source `remaining`) vs brain-wide
@@ -509,6 +514,7 @@ export async function countExtractAtomsBacklog(
     const scoped = sourceId !== undefined;
     const connectorExclusion = await connectorAtomExclusionSql(engine);
     const holdIds = await currentHoldIds(engine, 'atom');
+    const sourcePolicy = opts.sourcePolicy === 'excluded' ? SOURCE_ATOM_OPTED_OUT_SQL : SOURCE_ATOM_OPT_OUT_SQL;
     const sql = scoped
       ? `SELECT COUNT(*) AS cnt FROM pages p
          WHERE p.source_id = $1
@@ -522,6 +528,7 @@ export async function countExtractAtomsBacklog(
            ${managedAtomDiscoverySql('$4::integer')}
            ${pageScanStateExclusionSql('$4::integer')}
            ${connectorExclusion}
+           ${sourcePolicy}
            ${heldAtomInputExclusionSql('$5')}
            AND NOT EXISTS (
              SELECT 1 FROM pages atom
@@ -541,6 +548,7 @@ export async function countExtractAtomsBacklog(
            ${managedAtomDiscoverySql('$3::integer')}
            ${pageScanStateExclusionSql('$3::integer')}
            ${connectorExclusion}
+           ${sourcePolicy}
            ${heldAtomInputExclusionSql('$4')}
            AND NOT EXISTS (
              SELECT 1 FROM pages atom
@@ -715,6 +723,8 @@ export async function runPhaseExtractAtoms(
   const sourceId = opts.sourceId ?? 'default';
   const guestSkip = await (await import('../guests/derived.ts')).guestSourceSkip(engine, 'extract_atoms', sourceId);
   if (guestSkip) return { phase: 'extract_atoms', status: 'skipped', duration_ms: 0, summary: `extract_atoms: ${guestSkip.summary}`, details: guestSkip.details };
+  const policySkip = await sourceAtomPolicySkip(engine, sourceId);
+  if (policySkip) return { phase: 'extract_atoms', status: 'skipped', duration_ms: 0, summary: `extract_atoms: ${policySkip.summary}`, details: policySkip.details };
   if (await (await import('../storage-manifest/door.ts')).isStorageManifestSource(engine, sourceId)) return { phase: 'extract_atoms', status: 'skipped', duration_ms: 0, summary: `extract_atoms: source ${sourceId} is the storage shelf, which holds archive records, not pages to extract atoms from`, details: { reason: 'storage_manifest_source' } };
   const chat = opts._chat ?? gatewayChat;
   const managed = await managedAtomSession(engine, sourceId, opts._managedRetry, opts.attempt?.writeWait, opts.signal);

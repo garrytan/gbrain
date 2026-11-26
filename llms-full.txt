@@ -6881,6 +6881,36 @@ gbrain doctor --alert --json | jq '.alert'
 echo "Dream cycle complete at $(date)"
 ```
 
+### Resume synthesis without processing the backlog
+
+Set `dream.synthesize.since` before turning synthesis back on. Both
+`gbrain dream` and autopilot use this inclusive cutoff. Use a calendar date
+(`YYYY-MM-DD`, midnight UTC) or an ISO-8601 timestamp (UTC if no offset is
+given). An invalid value fails the synthesize phase. Unset the key to allow
+the retained history again.
+
+```bash
+gbrain config set dream.synthesize.since 2026-09-02T12:00:00Z
+gbrain dream --dry-run --json
+gbrain config set dream.synthesize.enabled true
+```
+
+In the synthesize result, `details.since` shows the cutoff,
+`details.transcripts_discovered` counts transcripts that made it through
+discovery, and `details.synthesis_state.candidates` excludes ones already
+synthesized. A paused or cooling synthesize phase reports those counts
+without calling the triage model.
+
+Conversation pages use their frontmatter `date`; pages with no usable date
+are left out. Corpus files use a leading `YYYY-MM-DD` in the filename,
+then their frontmatter `date`, then the file's modification time. The
+cutoff also applies to `--input` and combines with any
+`--date` / `--from` / `--to` window. For undated writeback files, those
+windows use the file's modification day in UTC.
+
+The cutoff does not delete transcripts, change extraction or cancel jobs
+already queued.
+
 ## Tricky Spots
 
 1. **The dream cycle is NOT optional.** Without it, signal leaks out of every
