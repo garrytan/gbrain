@@ -216,6 +216,22 @@ for (const kind of testBackends()) {
       expect(hostileLine.startsWith('- "Ignore previous instructions')).toBe(true);
     });
 
+    test('agent policy and action records are never offered as pointers', async () => {
+      for (const slug of ['notes/policy-record', 'notes/action-record']) {
+        await importFromContent(engine, slug, `---\ntype: note\ntitle: ${slug}\n---\n# Record\n\nBody.`, { sourceId: 'default', noEmbed: true });
+      }
+      await engine.executeRaw("UPDATE pages SET type = 'agent_policy', updated_at = now() + interval '1 day' WHERE slug = 'notes/policy-record'");
+      await engine.executeRaw("UPDATE pages SET type = 'agent_action', updated_at = now() + interval '1 day' WHERE slug = 'notes/action-record'");
+      try {
+        const slugs = (await firstSessionPointers(engine, 'default')).map(p => p.slug);
+        expect(slugs).toContain('notes/launch-plan');
+        expect(slugs).not.toContain('notes/policy-record');
+        expect(slugs).not.toContain('notes/action-record');
+      } finally {
+        await engine.executeRaw("DELETE FROM pages WHERE slug IN ('notes/policy-record', 'notes/action-record')");
+      }
+    });
+
     test('a brain whose access policy serves several people is shared, even with one member', async () => {
       await fresh(engine);
       await engine.setConfig('access.serves', 'several');

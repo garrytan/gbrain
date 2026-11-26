@@ -27,7 +27,7 @@ import { encodeArgs } from '../src/shadow/codec.ts';
 import { configDir } from '../src/core/config.ts';
 import { shadowRoot } from '../src/shadow/state.ts';
 import { scratchRootDefault } from '../src/shadow/write-compare-child.ts';
-import { movedOutsideFootprint, pageRefs, readWriteTally, writeTallyPath, WriteTally, type WriteEvent } from '../src/shadow/write-compare.ts';
+import { lostPath, movedOutsideFootprint, pageRefs, readWriteTally, recordLost, unfoldedLost, writeTallyPath, WriteTally, type WriteEvent } from '../src/shadow/write-compare.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { defineWriteCompareScenarios, fakeComparer, page, row5, settle, tallyOn, watchPreimage } from './helpers/shadow-write-compare-scenarios.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -76,6 +76,87 @@ describe('the locked write tally', () => {
   /** A saved passing tally: 1,000 comparable writes, none unexplained. */
   const saved = (dir: string, epoch: string): void => writeFileSync(writeTallyPath(dir), JSON.stringify({ version: 1, epoch_id: epoch, updated_at: '', comparable: 1000, unexplained_difference: 0, uncomparable: 0, capability_missing: 0, capability_missing_by_family: {}, uncomparable_by_reason: {}, in_flight: [] }));
   const status = (dir: string) => buildFollowStatus(dir, STATE, NOW).write_comparisons;
+
+  test('lost samples the serving process recorded are folded once into the owner child\'s epoch as uncomparable; until then status reads no evidence, and another epoch\'s lines never count', () => {
+    const dir = tmp();
+    const { tally, epoch, counts } = tallyOn(dir); saved(dir, epoch);
+    expect(recordLost(dir, epoch, 'send_shed')).toBe(true);
+    recordLost(dir, epoch, 'send_shed'); recordLost(dir, 'a-retired-epoch', 'send_shed');
+    appendFileSync(lostPath(dir, process.pid), 'not json\n'); // a line that cannot be read is counted too, never skipped
+    expect(status(dir)).toMatchObject({ state: 'capability_missing', unresolved_replays: 3 }); // two readable lines of this epoch and the unreadable one, none folded
+    expect(row5({ write_comparisons: status(dir) as ShadowStatus['write_comparisons'] }).state).toBe('missing');
+    tally.save();
+    expect(counts()).toMatchObject({ comparable: 1000, uncomparable: 3, uncomparable_by_reason: { send_shed: 2, lost_unreadable: 1 } });
+    expect(status(dir)).toMatchObject({ state: 'measured', comparable: 1000 });
+    expect(status(dir).unresolved_replays).toBeUndefined();
+    tally.save();
+    expect(counts().uncomparable).toBe(3); // each line is added once
+    appendFileSync(lostPath(dir, process.pid), `{"epoch_id":"${epoch}","reason":"readback_`); // a line still being appended waits for its newline
+    tally.save();
+    expect(counts().uncomparable).toBe(3);
+    appendFileSync(lostPath(dir, process.pid), 'abandoned"}\n');
+    tally.save();
+    expect(counts()).toMatchObject({ uncomparable: 4, uncomparable_by_reason: { readback_abandoned: 1 } });
+    expect(recordLost(join(dir, 'gone'), epoch, 'send_shed')).toBe(false); // not recorded: the sampler then carries the count on its next line
+  });
+
+  test('an unreadable loss journal or a listing that fails is unresolved, never zero: status reads no evidence, and criterion 5 stays missing', () => {
+    const dir = tmp();
+    const { tally, epoch, counts } = tallyOn(dir); saved(dir, epoch);
+    expect(recordLost(dir, epoch, 'send_shed')).toBe(true);
+    rmSync(lostPath(dir, process.pid)); mkdirSync(lostPath(dir, process.pid)); // the journal can no longer be read (EISDIR stands for EIO)
+    expect(status(dir)).toMatchObject({ state: 'capability_missing', comparable: 1000, unresolved_replays: 1 });
+    expect(row5({ write_comparisons: status(dir) as ShadowStatus['write_comparisons'] }).state).toBe('missing');
+    tally.save();
+    expect(counts()).toMatchObject({ comparable: 1000, uncomparable: 0 }); // nothing is invented from what cannot be read
+    const aFile = join(dir, 'not-a-directory'); writeFileSync(aFile, '');
+    expect(unfoldedLost(aFile, epoch)).toBe(1); // a listing that fails (ENOTDIR) is unresolved
+    expect(unfoldedLost(join(dir, 'gone'), epoch)).toBe(0); // a directory that is gone has nothing to fold
+  });
+
+  test('a loss is acknowledged only after its journal file and directory entry are flushed: a failed flush returns false so the count is kept', async () => {
+    const durable = await import('../src/core/fs-durable.ts');
+    const dir = tmp();
+    const file = spyOn(durable, 'flushFile').mockImplementationOnce(() => { throw new Error('EIO'); });
+    expect(recordLost(dir, 'an-epoch', 'send_shed')).toBe(false);
+    file.mockRestore();
+    const directory = spyOn(durable, 'flushDirectory').mockImplementationOnce(() => { throw new Error('EIO'); });
+    expect(recordLost(dir, 'an-epoch', 'send_shed')).toBe(false);
+    directory.mockRestore();
+    expect(recordLost(dir, 'an-epoch', 'send_shed')).toBe(true);
+  });
+
+  test('an unfinished journal line is unresolved while its writer lives, and exactly one lost_unreadable once the writer is dead; the fold then moves past it', () => {
+    const dir = tmp();
+    const { tally, epoch, counts } = tallyOn(dir); saved(dir, epoch);
+    appendFileSync(lostPath(dir, process.pid), '{"epoch_id":'); // cut short, and its writer (this process) is alive
+    expect(status(dir)).toMatchObject({ state: 'capability_missing', comparable: 1000, unresolved_replays: 1 });
+    expect(row5({ write_comparisons: status(dir) as ShadowStatus['write_comparisons'] }).state).toBe('missing');
+    tally.save();
+    expect(counts()).toMatchObject({ comparable: 1000, uncomparable: 0 }); // nothing is invented while the writer may still finish the line
+    rmSync(lostPath(dir, process.pid));
+    const dead = 99_999_999; // no such process
+    writeFileSync(lostPath(dir, dead), `{"epoch_id":"${epoch}","reason":"send_shed"}\n{"epoch_id":`);
+    expect(status(dir)).toMatchObject({ state: 'capability_missing', unresolved_replays: 2 }); // the complete line and the cut-short one
+    tally.save();
+    expect(counts()).toMatchObject({ comparable: 1000, uncomparable: 2, uncomparable_by_reason: { send_shed: 1, lost_unreadable: 1 } });
+    expect(status(dir)).toMatchObject({ state: 'measured' });
+    expect(status(dir).unresolved_replays).toBeUndefined();
+    tally.save();
+    expect(counts().uncomparable).toBe(2); // the fold moved past the cut-short line: it is counted once
+  });
+
+  test('a lost sample of one epoch is never added to the next epoch (the owner child takes lines for its own fixed epoch only)', () => {
+    const dir = tmp();
+    const first = tallyOn(dir);
+    recordLost(dir, first.epoch, 'send_shed');
+    const second = ensureEpoch(dir, { seed_id: 's2', rust_addon_sha256: 'b', comparator_version: 1, adapter_version: 'x', capability_set_hash: null, readiness_policy_hash: 'p' }, NOW.getTime()).epoch_id;
+    expect(second).not.toBe(first.epoch);
+    const next = new WriteTally(dir, () => second, () => true, process.pid);
+    next.note('comparable');
+    expect(readWriteTally(dir, second)).toMatchObject({ comparable: 1, uncomparable: 0 });
+    expect(status(dir).unresolved_replays).toBeUndefined(); // the first epoch is retired: its lost line is not this epoch's
+  });
 
   test('two children: a mismatch the second saves is never lost when the first saves late, and neither clears the other\'s mark', () => {
     const dir = tmp();
@@ -473,4 +554,34 @@ describe('shadow mode off', () => {
       } finally { await engine.disconnect(); }
     });
   }, 60_000);
+});
+
+describe('every sample the child was sent ends in the tally (sample accounting)', () => {
+  const ADDON = async () => ({ ok: true as const, addon: { target: 'linux-x64-glibc', engineAbi: 1, engineBuild: 'b1', catalogVersion: 3 } as never });
+  const BASE = { loadAddon: ADDON, capabilities: () => ['search', 'pages'], readinessPolicyHash: () => 'p1', heartbeatMs: 60_000, childId: 'c1' };
+  const replayLine = (n: number) => JSON.stringify({ t: 'write', op: 'putPage', args: encodeArgs([`people/queued-${n}-example`, { type: 'person', title: `Queued ${n}`, compiled_truth: 'Q.', timeline: '' }]) as unknown[], pre: { sources: [], pages: [], links: [] }, post: { pages: [null], links: [] } }) + '\n';
+
+  test('a child that reaches its exit deadline with replays still queued counts them (uncomparable, named), never drops them uncounted', async () => {
+    await withEnv({ GBRAIN_HOME: tmp() }, async () => {
+      const dir = tmp();
+      writeSeedRecord(dir, { version: 1, seed_id: 'seed-1', started_at: '2026-01-01T00:00:00.000Z', finished_at: '2026-01-01T00:01:00.000Z', unseeded_gap_rows_total: 0, unseeded_gap_rows: {}, relations: {}, digests: true } as never);
+      const input = new PassThrough();
+      let exitCode = null as number | null;
+      // The scratch store of the first replay never opens (a slow or stuck replay); the next two wait behind it in the child's queue.
+      void runShadowChild(dir, {
+        input, writeControl: () => {}, ...BASE, addonSha256: () => 'a'.repeat(64),
+        openEngine: () => ({ ownerRole: 'owner', async connect() {}, async disconnect() {}, storeFor: () => new Promise(() => {}) }) as never,
+        exitDeadlineMs: 300, exit: (code) => { exitCode = code; },
+      });
+      for (let n = 0; n < 3; n++) input.write(replayLine(n));
+      input.end(); // the serving process disconnects
+      const until = Date.now() + 10_000;
+      while (exitCode === null && Date.now() < until) await new Promise((r) => setTimeout(r, 25));
+      expect(exitCode).toBe(0);
+      const t = readWriteTally(dir, readEpoch(dir)!.epoch_id)!;
+      // The stuck replay keeps its in-flight mark (the next child counts it unexplained); the two queued behind it must be counted too.
+      expect(t.comparable + t.unexplained_difference + t.uncomparable + t.capability_missing + t.in_flight.length).toBe(3);
+      expect(t.comparable).toBe(0);
+    });
+  }, 30_000);
 });
