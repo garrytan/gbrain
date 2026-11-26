@@ -117,6 +117,15 @@ for (const backend of backends) {
       expect(new Date((await storedFrom(engine(), DATED_UNDATED))!).toISOString()).toBe('2024-03-05T00:00:00.000Z');
     });
 
+    test('that fact keeps an empty date cell, so correcting the page date moves it', async () => {
+      const page = (await engine().getPage(DATED_PAGE))!;
+      const cell = parseFactsFence(page.compiled_truth).facts.find(f => f.claim === DATED_UNDATED)!;
+      expect(cell.validFrom ?? null).toBeNull();
+      await call(engine(), 'put_page', { slug: DATED_PAGE, content: `---\ntype: note\ntitle: Fictional sync\ndate: 2024-03-07\n---\n${page.compiled_truth}\n`,
+        expected_revision: (await call(engine(), 'get_page', { slug: DATED_PAGE })).revision });
+      expect(new Date((await storedFrom(engine(), DATED_UNDATED))!).toISOString()).toBe('2024-03-07T00:00:00.000Z');
+    });
+
     test('v339 makes valid_from nullable, keeps its default and rewrites no row', async () => {
       const column = async () => (await engine().executeRaw<{ is_nullable: string; column_default: string | null }>(
         `SELECT is_nullable, column_default FROM information_schema.columns WHERE table_name = 'facts' AND column_name = 'valid_from'`))[0]!;

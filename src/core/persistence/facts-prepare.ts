@@ -211,7 +211,7 @@ export async function prepareManagedFactsMutation(engine: BrainEngine, row: Writ
   // #6333 shadow (managed mirror of the backstop's counter): a same-page rewording is counted on the entity outcome
   // and named on stderr; nothing is dropped. The count is frozen in the receipt, so a replay reports it, not recounts it.
   let wouldDedupSamePage = 0;
-  // #10288: a filed fact with no event date takes the page's fact date, as the projection of its empty cell would.
+  // #10288: a filed fact with no event date keeps an empty cell and is indexed at the page's fact date, as its projection is.
   const pageDate = pageFactDate({ slug: row.slug, frontmatter: page0?.frontmatter, timeZone: await engine.getConfig('brain.timezone') });
   for (const fact of facts) {
     if (p.withdrawn === 'skip') {
@@ -236,7 +236,7 @@ export async function prepareManagedFactsMutation(engine: BrainEngine, row: Writ
     if (rowNum !== undefined) refuseUnparsedRewrite(fenced, row.slug, row.source_id, () => fence.append({
       rowNum, claim: fact.fact, kind: fact.kind, visibility: fact.visibility,
       confidence: fact.confidence ?? 1, notability: fact.notability ?? 'medium', source: fact.source, context: fact.context ?? undefined,
-      validFrom: filed.valid_from ? formatFenceDate(filed.valid_from) : undefined, validUntil: fact.valid_until ? formatFenceDate(fact.valid_until) : undefined,
+      validFrom: fact.valid_from ? formatFenceDate(fact.valid_from) : undefined, validUntil: fact.valid_until ? formatFenceDate(fact.valid_until) : undefined,
       claimMetric: fact.claim_metric ?? undefined, claimValue: fact.claim_value ?? undefined,
       claimUnit: fact.claim_unit ?? undefined, claimPeriod: fact.claim_period ?? undefined,
       ...(fact.attributed_to ? { attributedTo: fact.attributed_to } : {}),
@@ -249,7 +249,7 @@ export async function prepareManagedFactsMutation(engine: BrainEngine, row: Writ
     entries.push({ fact: filed, duplicateId: null, rowNum, supersedes, gate });
   }
   const next = fence.page();
-  const canonicalFacts = extractFactsFromFenceText(parseFactsFenceFor(next[section], { slug: row.slug }).facts, row.slug, row.source_id);
+  const canonicalFacts = extractFactsFromFenceText(parseFactsFenceFor(next[section], { slug: row.slug }).facts, row.slug, row.source_id, { pageEffectiveDate: pageDate ?? undefined });
   for (const entry of entries) {
     if (entry.rowNum === undefined) continue;
     const canonical = canonicalFacts.find(fact => fact.row_num === entry.rowNum);

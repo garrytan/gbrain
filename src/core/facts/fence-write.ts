@@ -271,11 +271,9 @@ export async function commitFactFenceFile(
   recordWriteFailure(slug, sourceId, ['git_durability_commit_failed'], filePath);
 }
 
-/** #10288: a fact with no event date takes the page's fact date, as the projection of its empty fence cell would. */
-async function withPageFactDate(engine: BrainEngine, slug: string, body: string, facts: FenceInputFact[]): Promise<FenceInputFact[]> {
-  if (facts.every(f => f.validFrom)) return facts;
-  const pageDate = pageFactDate({ slug, frontmatter: parseMarkdown(body, `${slug}.md`).frontmatter, timeZone: await engine.getConfig('brain.timezone') });
-  return pageDate ? facts.map(f => (f.validFrom ? f : { ...f, validFrom: pageDate })) : facts;
+/** #10288: the date an empty fence cell on this page projects to (the page's fact date), as sync reads it. */
+async function bodyFactDate(engine: BrainEngine, slug: string, body: string): Promise<Date | undefined> {
+  return pageFactDate({ slug, frontmatter: parseMarkdown(body, `${slug}.md`).frontmatter, timeZone: await engine.getConfig('brain.timezone') }) ?? undefined;
 }
 
 /**
@@ -532,7 +530,7 @@ export async function writeFactsToFence(
       let nextRowNum = Math.max(fileMaxRowNum, dbMaxRowNum) + 1;
 
       const assignedRowNums: number[] = [];
-      for (const f of await withPageFactDate(engine, target.slug, body, facts)) {
+      for (const f of facts) {
         const { body: updated, rowNum } = upsertFactRow(body, {
           rowNum:      nextRowNum++,
           claim:       f.fact,
@@ -575,7 +573,7 @@ export async function writeFactsToFence(
         return { inserted: 0, ids: [], fenceWriteFailed: true };
       }
 
-      const allExtracted = extractFactsFromFenceText(parsed.facts, target.slug, target.sourceId);
+      const allExtracted = extractFactsFromFenceText(parsed.facts, target.slug, target.sourceId, { pageEffectiveDate: await bodyFactDate(engine, target.slug, tmpBody) });
       const newRowSet = new Set(assignedRowNums);
       const toInsert = allExtracted.filter(r => newRowSet.has(r.row_num));
 

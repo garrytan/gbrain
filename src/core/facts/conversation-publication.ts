@@ -530,9 +530,10 @@ export async function publishConversationFacts(tx: BrainEngine, sourceId: string
   let duplicates = 0;
   for (const entry of retire || opts.scope === 'window' || segments ? kept : kept.filter(({ row }) => OUTCOME_SOURCES.has(row.source))) {
     const { row } = entry;
-    const [prior] = row.dimension && row.value && row.entity_slug && row.valid_from != null ? await tx.executeRaw<{ value_hash: string }>(`SELECT value_hash FROM facts
+    const [prior] = row.dimension && row.value && row.entity_slug ? await tx.executeRaw<{ value_hash: string }>(`SELECT value_hash FROM facts
       WHERE source_id=$1 AND entity_slug=$2 AND dimension=$3 AND value_hash IS NOT NULL AND expired_at IS NULL AND superseded_by IS NULL AND ${CONVERSATION_SLOT_SQL}
-        AND valid_from <= $4::timestamptz ORDER BY valid_from DESC, id DESC LIMIT 1`, [sourceId, row.entity_slug, row.dimension, new Date(row.valid_from).toISOString()]) : [];
+        AND COALESCE(valid_from, created_at) <= $4::timestamptz ORDER BY COALESCE(valid_from, created_at) DESC, id DESC LIMIT 1`,
+      [sourceId, row.entity_slug, row.dimension, (row.valid_from ? new Date(row.valid_from) : new Date()).toISOString()]) : [];
     if (OUTCOME_SOURCES.has(row.source) || (prior && prior.value_hash !== valueHash(row.value!)) || !await findCaptureDuplicate(scope, { fact: row.fact, entitySlug: row.entity_slug ?? null,
       visibility: row.visibility ?? 'private', attributedTo: row.attributed_to ?? null })) published.push(entry);
     else duplicates++;

@@ -89,7 +89,7 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
     ...(p.member_page === true || p.scope_page === true ? { page_slug: row.slug } : {}),
     ...(claim ? { slot: { ...claim, valid_from: p.valid_from == null ? null : String(p.valid_from) } } : {}) };
   const snapshot = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id, includeDeleted: true });
-  // #10288: a fact with no event date takes the page's fact date, as the projection of its empty fence cell would.
+  // #10288: a fact with no event date takes the page's fact date, as the projection of its empty fence cell does.
   const pageDate = p.valid_from == null && snapshot ? pageFactDate({ slug: row.slug, frontmatter: snapshot.page.frontmatter, timeZone: await engine.getConfig('brain.timezone') }) : null;
   const statedFrom = p.valid_from == null ? pageDate?.toISOString() ?? null : String(p.valid_from);
   if (input.slot) input.slot = { ...input.slot, valid_from: statedFrom };
@@ -180,16 +180,18 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   if (gate.action === 'hold') return { observedRevision, noop: true, validate, apply: async tx => heldOutcome(gate.assessment, (await recordWriteGateHold(tx, gate.hold!)).holdId) };
   const retiredUntil = status === 'superseded' ? supersededValidUntil(decision.candidate!, validFrom) : null;
   // The fact is published as a row of its entity page's facts fence, file before facts row (facts/fence-fact-append.ts).
+  // #10288: the fence cell holds only a stated date; an empty one is indexed at the page's fact date there.
+  const cellFact = p.valid_from == null ? { ...fact, valid_from: null } : fact;
   let fence: FenceFactAppend | undefined;
   if (p.fence === true && (snapshot || isHoldingSlug(row.slug))) {
     const old = decision.candidate;
-    fence = await prepareFenceFactAppend(engine, row, config, snapshot, { fact, pendingTier: fenceAppendPendingTier(writerTier), ...(widening ? { storedVisibility: widening.from } : {}),
+    fence = await prepareFenceFactAppend(engine, row, config, snapshot, { fact: cellFact, pendingTier: fenceAppendPendingTier(writerTier), ...(widening ? { storedVisibility: widening.from } : {}),
       supersede: status === 'superseded' && old?.source_markdown_slug === row.slug && old.row_num != null ? { rowNum: Number(old.row_num), validUntil: retiredUntil } : undefined }, signal);
   } else if (p.fence === true && p.member_page === true) {
-    fence = await prepareFenceFactCreate(engine, row, config, { fact, pendingTier: fenceAppendPendingTier(writerTier), ...(widening ? { storedVisibility: widening.from } : {}),
+    fence = await prepareFenceFactCreate(engine, row, config, { fact: cellFact, pendingTier: fenceAppendPendingTier(writerTier), ...(widening ? { storedVisibility: widening.from } : {}),
       frontmatter: memberPageFrontmatter(row.slug.slice(MEMBER_PAGE_PREFIX.length), new Date(row.created_at)), heading: `# Memory of ${row.slug.slice(MEMBER_PAGE_PREFIX.length)}` }, signal);
   } else if (p.fence === true && p.scope_page === true) {
-    fence = await prepareFenceFactCreate(engine, row, config, { fact, pendingTier: fenceAppendPendingTier(writerTier), ...(widening ? { storedVisibility: widening.from } : {}),
+    fence = await prepareFenceFactCreate(engine, row, config, { fact: cellFact, pendingTier: fenceAppendPendingTier(writerTier), ...(widening ? { storedVisibility: widening.from } : {}),
       frontmatter: scopePageFrontmatter(new Date(row.created_at)), heading: '# Scope memory' }, signal);
   }
   // GBRA-190 G4: linking a fact saved without an entity retires its holding row in the same publication.
