@@ -535,10 +535,9 @@ async function runPhaseSynthesizeInner(
       return noCandidates('no transcripts to process', { transcripts_discovered: 0 });
     }
 
-    // Best-effort housekeeping (#4069): expiry is enforced on reads
-    // regardless, so a sweep failure must not block synthesis when the
-    // database is otherwise usable.
-    try {
+    // Best-effort housekeeping (#4069): expiry is enforced on reads regardless, so a sweep failure must not
+    // block synthesis when the database is otherwise usable. A --dry-run preview deletes nothing (#10448).
+    if (!opts.dryRun) try {
       const swept = await engine.sweepDreamVerdicts();
       if (swept > 0) process.stderr.write(`[dream] swept ${swept} expired verdict cache row(s)\n`);
     } catch (e) {

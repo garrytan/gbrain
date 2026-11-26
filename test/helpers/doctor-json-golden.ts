@@ -175,7 +175,8 @@ export function normalizeDoctorText(text: string, roots: Record<string, string>,
   let out = scrubPaths(text, roots);
   for (const [pattern, label] of extra) out = typeof pattern === 'string' ? out.split(pattern).join(label) : out.replace(pattern, label);
   out = scrubTimestamps(out).replace(UUID, '<uuid>');
-  out = out.replace(/\(most recent caller: at [^()]*\([^()]*\)\)/g, '(most recent caller: <frame>)');
+  // #10431: queue_health caps the frame at 200 characters, which can cut off its own closing parenthesis.
+  out = out.replace(/\(most recent caller: at [^()\r\n]*\([^()\r\n]*\)(?:\)|(?=\.))/g, '(most recent caller: <frame>)');
   out = out.split(PACKAGE_VERSION).join('<version>');
   out = out.replace(SCHEMA_LATEST, (match, prefix: string, n: string) => (Number(n) === REGISTRY_LATEST ? `${prefix}<latest>` : match));
   out = out.split(`Bun ${Bun.version}`).join('Bun <bun-version>');

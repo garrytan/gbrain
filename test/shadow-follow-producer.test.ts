@@ -417,7 +417,7 @@ describe('write map coverage', () => {
   test('the 12 members the N3 step added are classified: six writers mapped or ignored, six reads read-only', () => {
     for (const name of ['attachSourcePath', 'closeOpenLoop', 'upsertOpenLoop', 'deleteTimelineRows']) expect(memberKind(name)).toBe('mapped');
     for (const name of ['expireMemoryProposals', 'purgeMemoryProposals']) expect(memberKind(name)).toBe('ignored');
-    for (const name of ['normalizeFenceLines', 'notifierCoverageRecorded', 'sampleEffectiveDates', 'sampleEffectiveDateSources', 'sharedSkillPackTablePresent', 'storedTimelineRowsByPageIds']) {
+    for (const name of ['normalizeFenceLines', 'hasNotifierCoverage', 'sampleEffectiveDates', 'sampleEffectiveDateSources', 'sharedSkillPackTablePresent', 'storedTimelineRowsByPageIds']) {
       expect(memberKind(name)).toBe('read_name');
     }
   });
