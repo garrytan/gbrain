@@ -6,7 +6,7 @@
 import { describe, expect, spyOn, test } from 'bun:test';
 import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { evaluateReadiness, WRITE_CLIENT_LIMIT, WRITE_COVERAGE_LIMIT, WRITE_PGLITE_LIMIT, type ShadowStatus } from '../../src/core/engine-swap/readiness.ts';
+import { evaluateReadiness, WRITE_CLIENT_LIMIT, WRITE_COVERAGE_LIMIT, WRITE_COVERAGE_NAMED, WRITE_PGLITE_LIMIT, type ShadowStatus } from '../../src/core/engine-swap/readiness.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { importFile } from '../../src/core/import-file.ts';
 import { operationsByName, type OperationContext } from '../../src/core/operations.ts';
@@ -206,6 +206,7 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       expect(row.state).toBe('fail'); // 1 of 1,000 comparable: the pass rule is unchanged
       expect(row.detail).toContain('1 of 1000 comparable');
       expect(row.detail).toContain(WRITE_COVERAGE_LIMIT);
+      expect(row.detail).toContain(WRITE_COVERAGE_NAMED); // the owner's wording, verbatim, names every write type left uncompared
       expect(row.detail).toContain('sampled so far: tags 1');
       expect(row.detail).toContain(WRITE_PGLITE_LIMIT);
       expect(renderFollowStatus(status).join('\n')).toContain(`comparable 1, unexplained 0`);
