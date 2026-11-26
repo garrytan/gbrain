@@ -1276,7 +1276,9 @@ fn c07_effect_claimed_once_rerun_after_host_lease_expiry() {
             token: TOKEN_B.into(),
             owner_json: owner.to_string(),
             fence: Some(taken.clone()),
-            dead_owners: Vec::new(),
+            // The stamp takes the same proven-dead owner the selection above was given (G6: a multi-user stamp takes a
+            // running effect only when its claim lapsed or its owner is proven dead).
+            dead_owners: vec!["7:n:s".to_string()],
         })
         .unwrap()
         .expect("B claims the effect again");
