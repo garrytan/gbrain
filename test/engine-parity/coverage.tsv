@@ -137,7 +137,7 @@ getPage	pages	yes	289	yes	yes	yes	serves
 readPageSnapshot	pages	yes	104	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	7	no	yes	yes	serves
 lockPageKeys	pages	yes	17	no	yes	yes	serves
-putPage	pages	yes	1371	yes	yes	yes	serves
+putPage	pages	yes	1372	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	45	yes	yes	yes	serves
@@ -249,8 +249,8 @@ readSourceIncarnationArchived	pages	yes	1	no	yes	yes	serves
 listEnabledLabelledOnlyMemberIds	pages	yes	1	no	yes	yes	serves
 readChatCensusRows	pages	yes	3	no	yes	yes	serves
 readWhoCanReadRows	pages	yes	4	no	yes	yes	serves
-readPageAccessAllowed	pages	yes	2	no	yes	yes	serves
-readPageFolderRulesAllowed	pages	yes	1	no	yes	yes	serves
+readPageAccessAllowed	pages	yes	3	no	yes	yes	serves
+readPageFolderRulesAllowed	pages	yes	2	no	yes	yes	serves
 countLineageClosingRules	pages	yes	1	no	yes	yes	serves
 readOpCheckpointCompletedKeys	pages	yes	1	no	yes	yes	serves
 readForecastPredictions	pages	yes	2	no	yes	yes	serves
@@ -2021,9 +2021,9 @@ readPageTruthLead	write_misc	yes	2	no	yes	yes	serves
 readStoredPageHead	write_misc	yes	2	no	yes	yes	serves
 readVersionSourcePath	write_misc	yes	2	no	yes	yes	serves
 readStoredPageLabels	write_misc	yes	1	no	yes	yes	serves
-readMemberPageReadable	write_misc	yes	3	no	yes	yes	serves
+readMemberPageReadable	write_misc	yes	4	no	yes	yes	serves
 readSlugFolderRules	write_misc	yes	2	no	yes	yes	serves
-readHiddenPageSlugs	write_misc	yes	2	no	yes	yes	serves
+readHiddenPageSlugs	write_misc	yes	3	no	yes	yes	serves
 listActiveAccessMembers	write_misc	yes	7	no	yes	yes	serves
 hasLabelledOnlyMember	write_misc	yes	1	no	yes	yes	serves
 listAccessTokens	write_misc	yes	8	no	yes	yes	serves
@@ -2104,7 +2104,7 @@ switchAccessMigration	write_misc	yes	4	no	yes	yes	serves
 listAccessPolicySources	write_misc	yes	1	no	yes	yes	serves
 countPeopleFolderPages	write_misc	yes	1	no	yes	yes	serves
 countOpenPages	write_misc	yes	4	no	yes	yes	serves
-readAccessMembers	write_misc	yes	20	no	yes	yes	serves
+readAccessMembers	write_misc	yes	21	no	yes	yes	serves
 readAccessCredentials	write_misc	yes	5	no	yes	yes	serves
 listOwnerCredentialRows	write_misc	yes	2	no	yes	yes	serves
 insertPinnedQuestion	write_misc	yes	1	no	yes	yes	serves
@@ -2257,7 +2257,7 @@ readPrivateOnlySlugs	page_visibility	yes	1	no	yes	yes	serves
 setEffectTransactionLimits	remote_links	yes	1	no	yes	yes	serves
 readOwnedLinks	remote_links	yes	1	no	yes	yes	serves
 deleteOwnedLinks	remote_links	yes	1	no	yes	yes	serves
-readLinkTargetPages	remote_links	yes	12	no	yes	yes	serves
+readLinkTargetPages	remote_links	yes	13	no	yes	yes	serves
 readPageHiddenFromWriter	remote_links	yes	1	no	yes	yes	serves
 rearmLinksEffects	remote_links	yes	1	no	yes	yes	serves
 hasPendingFactsExtraction	facts_backstop	yes	1	no	yes	yes	serves

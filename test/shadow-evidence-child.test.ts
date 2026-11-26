@@ -144,7 +144,7 @@ describe('per-operation usage', () => {
     let at = 0;
     writeManifest(dir, 'e1');
     const meter = new UsageMeter();
-    // pregate-literal: SHADOW_ADAPTER_VERSION=11 the 11 on the next line is the month of a fixed timestamp, not the adapter version
+    // pregate-literal: SHADOW_ADAPTER_VERSION=11 the number 11 on the next line is test data (a count, size, index or date), not the adapter version
     meter.bind({ epoch: epochWatch(dir, () => at, 1_000), register: (epoch_id, op) => appendUsage(dir, { ts: '2026-11-23T00:00:00.000Z', epoch_id, ops: { [op]: zeroUsage() } }) });
     meter.note('getPage', 'offered');
     meter.note('getPage', 'offered'); // the same class again: not registered twice
@@ -349,7 +349,7 @@ describe('evidence epoch in the child', () => {
     await runChild(probe, [], { openEngine: engine });
     const inputs = manifest(probe).inputs; // what this child's epoch is made of, but for the comparator
     const dir = seeded();
-    // pregate-literal: SHADOW_ADAPTER_VERSION=11 the 11 on the next line is the month of a fixed date, not the adapter version
+    // pregate-literal: SHADOW_ADAPTER_VERSION=11 the 11 on the next line is the month of a date, not the adapter version
     const old = ensureEpoch(dir, { ...inputs, comparator_version: 2 } as never, Date.parse('2026-11-24T00:00:00Z'));
     // pregate-literal: SHADOW_ADAPTER_VERSION=10 ref_size 10 is the top-ten recall size, not the adapter version
     for (let i = 0; i < 30; i++) appendRecall(dir, { ts: new Date().toISOString(), epoch_id: old.epoch_id, vector: 1, primary: 1, overlap: 1, ref_size: 10 }); // thirty perfect scores of the old rule

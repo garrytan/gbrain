@@ -14,9 +14,8 @@
  */
 import type { LinksRearm, LinkTargetPage, OwnedLink, WriterReadPolicy } from '../../engine-sql/remote-links.ts';
 import { renderWriterReadPolicy } from '../../engine-sql/remote-links.ts';
-import { validQualifiedRuleId } from '../../access/folder-rules.ts';
 import type { RustEngine } from '../../rust-engine.ts';
-import { callerAccessAllowedSql, labelledOnlyForSql, labelledOnlyTerms, privacyPartSql } from '../../search/private-visibility.ts';
+import { callerAccessAllowedSql, labelledOnlyForSql, labelledOnlyTerms, privacyPartSql, sqlAppliedSets } from '../../search/private-visibility.ts';
 import type { StoreBrain } from '../store.ts';
 import { mapStoreError } from '../store-errors.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
@@ -68,20 +67,31 @@ function unlabelledWriterPolicy(policy: WriterReadPolicy, member = 'readLinkTarg
     return { ...off, identity: [], ...(folderCoverage.length ? { folderCoverage } : {}), callerRecord: true };
   }
   const [identity] = policy.identities;
+  // The SQL text empties a whole set when one entry is invalid (readersAllowedSql, folderRulesAllowedSql), so the store is sent the
+  // sets the SQL applies, never the raw ones: it matches entries one by one and would admit what the text denies.
+  const applied = sqlAppliedSets(identity ?? [], policy.satisfiedRuleIds);
+  if (policy.identities.length === 1 && identity?.length && !applied.identity.length) {
+    // One identity holding an invalid entry reads as a writer with no identity. Beside rules the SQL still applies it is a policy
+    // the store cannot hold (it judges the rules only for a named identity), and an owner record is not modelled for it.
+    if (applied.satisfiedRuleIds.length) refuseMember('readLinkTargetPages', 'a writer whose identity holds an invalid entry beside satisfied folder rules');
+    if (text === fragment({ identity: [], satisfiedRuleIds: [], folderCoverage })) {
+      return { ...off, identity: [], ...(folderCoverage.length ? { folderCoverage } : {}), callerRecord: true };
+    }
+    refuseMember('readLinkTargetPages', 'a writer whose identity holds an invalid entry and whose record is not a plain member record');
+  }
   // The owner speaking for itself renders the same text without the owner-only clause (CallerAccess.owner), which `off` reads as no test.
   const oneIdentity = (owner: boolean, folders: object) => policy.identities.length === 1 && identity
     && text === fragment({ identity: [...identity], privateReadableSources: [], hidePrivate: true, ...folders, ...(owner ? { owner } : {}) });
   if (oneIdentity(false, {}) || oneIdentity(true, {})) {
-    return { ...off, identity: [...identity], privateReadableSources: [] };
+    return { ...off, identity: applied.identity, privateReadableSources: [] };
   }
   // One identity under folder rules it satisfies and the pending prefixes its record names: the record's own folder access
   // (callerRecord), as the no-identity form above, judged for that identity.
   if (identity && (policy.satisfiedRuleIds.length || folderCoverage.length)) {
     const folders = { satisfiedRuleIds: [...policy.satisfiedRuleIds], folderCoverage };
-    // The SQL text drops the whole set when one id is not a valid qualified id (folderRulesAllowedSql); so does the store's.
-    const satisfiedRuleIds = policy.satisfiedRuleIds.every(validQualifiedRuleId) ? folders.satisfiedRuleIds : [];
+    const { satisfiedRuleIds } = applied;
     if (oneIdentity(false, folders) || oneIdentity(true, folders)) {
-      return { ...off, identity: [...identity], privateReadableSources: [], callerRecord: true,
+      return { ...off, identity: applied.identity, privateReadableSources: [], callerRecord: true,
         ...(satisfiedRuleIds.length ? { satisfiedRuleIds } : {}), ...(folderCoverage.length ? { folderCoverage } : {}) };
     }
   }

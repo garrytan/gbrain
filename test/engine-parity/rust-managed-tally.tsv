@@ -102,7 +102,7 @@ test/engine-parity/effect-scans.test.ts	3	0
 test/engine-parity/embed-stale-work.test.ts	10	0
 test/engine-parity/embedding-catalog.test.ts	8	0
 test/engine-parity/embedding-install.test.ts	3	0
-test/engine-parity/enforced-member-reads.test.ts	2	1
+test/engine-parity/enforced-member-reads.test.ts	3	1
 test/engine-parity/entity-anchor-reads.test.ts	2	0
 test/engine-parity/entity-basename.test.ts	3	0
 test/engine-parity/entity-card-option-reads.test.ts	6	0
@@ -223,6 +223,7 @@ test/engine-parity/mention-coverage.test.ts	9	0
 test/engine-parity/mention-pass.test.ts	4	0
 test/engine-parity/migrate-embeddings-usage.test.ts	1	0
 test/engine-parity/migrate-engine-source.test.ts	2	0
+test/engine-parity/mixed-set-forwarding.test.ts	4	0
 test/engine-parity/notifier-freshness.test.ts	3	0
 test/engine-parity/notifier-resident.test.ts	4	0
 test/engine-parity/notifier.test.ts	4	0

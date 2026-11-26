@@ -42,6 +42,15 @@ Also served:
   page, or of a page that names only other members, is `readable: false` and the remote write ends on `page_not_found`, as on PGLite
   and Postgres (`test/engine-parity/labelled-only-policy.test.ts`).
 
+- A set holding an invalid entry. The SQL text empties a whole identity or satisfied-rule set when any one entry is not valid
+  (`readersAllowedSql`: `validIdentity`; `folderRulesAllowedSql`: `validQualifiedRuleId`), so the member sends the store the sets the
+  SQL applies (`sqlAppliedSets`), never the raw ones: the store matches entries one by one and would admit a page the text denies. One
+  identity with an invalid entry is the writer with no identity above (an empty identity, the record's own coverage), and an invalid
+  rule id alone empties the rule set. One identity emptied that way beside valid satisfied rules, or with the owner flag, is a policy
+  the store cannot hold (it judges rules only for a named identity), so it refuses `engine_capability_missing`. No stored writer can
+  hold such an entry (ids are checked on write), so this is a guard on the member's own argument. Pinned in
+  `test/rust-remote-links-writer-policy.test.ts` and, end to end on every engine, `test/engine-parity/mixed-set-forwarding.test.ts`.
+
 Any other writer (an owner record other than the owner speaking for itself, several identities, an empty policy object) refuses
 `engine_capability_missing` before any read. The remote page write check (`authorizePageVisibility`) reads the live page against
 the writer's policy through this member.
