@@ -600,7 +600,7 @@ describe('adapter identity', () => {
     // test-reads-source-ok[raw-bytes]: the adapter's source bytes are the fingerprint under test; a change must bump the epoch input
     for (const f of files) digest.update(`${f}\0${readFileSync(join(root, f), 'utf8')}\0`);
     // When this fails, the adapter's mapping changed: bump SHADOW_ADAPTER_VERSION (a new evidence epoch) and set both values here.
-    expect([SHADOW_ADAPTER_VERSION, digest.digest('hex')]).toEqual([12, 'fbe07846e1f648f34edab8342e3caf5f6df565daad1691b254a070c9365ab81b']);
+    expect([SHADOW_ADAPTER_VERSION, digest.digest('hex')]).toEqual([12, '796d54ad72ae3c67ecfecefab612605e2ac4fd14b634f06c9fd5e2057d083744']);
   });
 });
 
@@ -612,6 +612,7 @@ describe('unreadable fault history', () => {
     const { dir, epoch } = epochDir();
     writeFileSync(faultsFile(dir), good(epoch) + good(epoch));
     expect(status(dir).child).toEqual({ panics: 0, faults: 2 });
+    // pregate-literal: SHADOW_ADAPTER_VERSION=11 the number 11 on the next line is test data (a count, size, index or date), not the adapter version
     appendFileSync(faultsFile(dir), '{"ts":"2026-11-29T00:00:00.000Z","ki'); // a writer died mid-line
     expect(status(dir).child).toEqual({ panics: 0, faults: 2 });
     for (const bad of ['not json\n', '{}\n', '[]\n', 'null\n', '{"ts":"x","kind":5}\n', JSON.stringify({ ts: 'x', kind: 'child_exit', epoch_id: 7 }) + '\n']) {

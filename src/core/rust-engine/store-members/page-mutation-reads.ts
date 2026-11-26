@@ -5,9 +5,7 @@
  */
 import type { BrainEngine } from '../../engine.ts';
 import { hiddenSlugsPolicySql, memberViewPolicySql } from '../../engine-sql/page-mutation-reads.ts';
-import { validQualifiedRuleId } from '../../access/folder-rules.ts';
-import { validIdentity } from '../../access/principals.ts';
-import { currentCallerAccess } from '../../search/private-visibility.ts';
+import { currentCallerAccess, sqlAppliedSets } from '../../search/private-visibility.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
 import { normalizeConceptInputs, pagePolicyFlags, renderForStoreCaller, type StorePrivacyPolicy } from './private-provenance.ts';
 
@@ -36,8 +34,7 @@ function enforcedMemberPolicy(member: string, rendered: () => string, rawIdentit
   // validQualifiedRuleId), so a member holding one invalid entry reads nothing through that set. The store matches entries one by
   // one, so it is sent the set the SQL applies, never the raw one. An identity emptied that way beside rules the SQL still
   // applies is a policy the store cannot hold (it judges the rules only for a named identity), so it refuses.
-  const identity = rawIdentity.length && validIdentity(rawIdentity) ? rawIdentity : [];
-  const satisfied = rawSatisfied.length && rawSatisfied.every(validQualifiedRuleId) ? rawSatisfied : [];
+  const { identity, satisfiedRuleIds: satisfied } = sqlAppliedSets(rawIdentity, rawSatisfied);
   if (!identity.length && satisfied.length) refuseMember(member, 'a member whose identity holds an invalid entry beside satisfied folder rules');
   const folders = { satisfiedRuleIds: [...satisfied], folderCoverage: access.folderCoverage.map(c => ({ source_id: c.source_id, prefix: c.prefix })) };
   const reference = renderForStoreCaller({ identity: [...identity], privateReadableSources: [], hidePrivate: true, owner: false, restricted: access.restricted, ...folders }, rendered);
