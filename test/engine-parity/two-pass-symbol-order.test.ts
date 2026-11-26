@@ -1,27 +1,29 @@
 /**
- * BrainEngine parity: the two-pass walk's symbol lookups (search/two-pass.ts, the typed read listSymbolChunkIds) leave
- * structural search on PGLite and Postgres exactly as master had it. Master ran four statements with LIMIT 50 and no
- * ORDER BY; the typed read runs the same four statements, so which rows come back past the limit, and their order, is
- * still the plan's. The Rust store answers in id order: past the limit it keeps the 50 lowest ids, an expected
- * difference (test/rust-expected-divergence/two_pass.tsv: master's order past LIMIT is unspecified and unstable on
- * PGLite).
+ * BrainEngine parity: the two-pass walk's symbol lookups (search/two-pass.ts, the typed read listSymbolChunkIds) order
+ * their rows by the page's source and slug (byte order), then the chunk's index, then its id, on every engine. Master
+ * ran four statements with LIMIT 50 and no ORDER BY, so past the limit the plan chose which rows were kept (and on
+ * PGLite the choice could change once the statement's plan was cached). Now the same 50 rows come back, in the same
+ * order, on PGLite, Postgres and Rust, and structural search built on them returns the same JSON on all three.
  *
  * The brain makes the orders differ where they can: symbols are inserted out of name order, half the pages are
- * rewritten (a rewrite moves rows on Postgres), and both lookups have matches below and above the limit (7 and 54
- * near-symbol anchors; 10 and 80 unresolved targets).
+ * rewritten before any edge is added (a rewrite gives chunks new ids on PGLite and Postgres and keeps them on Rust), and both lookups have
+ * matches below and above the limit (7 and 54 near-symbol anchors; 10 and 80 unresolved targets).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Contract: on PGLite and Postgres the typed read returns what master's statement returns, and the walk built on it
- *    is master's walk; below the limit every engine returns the same rows; above it every engine returns 50 rows that
- *    define the asked symbols, and Rust's are the 50 lowest ids.
- *  - Failure it catches: a lookup that changes master's statements, drops or adds rows below the limit, or returns
- *    the wrong count or foreign rows past it.
+ *  - Contract: below the limit the rows are master's rows; at any size they are the first 50 of the asked symbols'
+ *    chunks by (source, slug, chunk index), the same on every engine; structural search (near-symbol and a walk, with
+ *    deterministic embeddings so the vector arm and the expansion run) returns the same JSON on every engine, and
+ *    master's rows and score sequence when no lookup passes the limit (the near-symbol search with 7 anchors) (rows with tied scores now come in source,
+ *    slug, chunk index order; master's came in plan order).
+ *  - Failure it catches: a lookup that keeps the plan's rows or the lowest ids past the limit, an engine whose order
+ *    differs, or search output that depends on chunk ids.
  */
 import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { ChunkInput, PageInput, SearchResult } from '../../src/core/types.ts';
 import { expandAnchors } from '../../src/core/search/two-pass.ts';
-import { parityArms, sorted } from './harness.ts';
+import { hybridSearch } from '../../src/core/search/hybrid.ts';
+import { basisEmbedding, parityArms, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { chunk, installChunks } from './chunk-fixtures.ts';
 
@@ -38,7 +40,7 @@ function sym(i: number, text: string, qualified: string): ChunkInput {
 
 type Lookup = 'near_symbol' | 'edge_targets';
 
-/** Master's four statements (search/two-pass.ts at a597e7a6c6), byte for byte, with master's parameters. */
+/** Master's four statements (search/two-pass.ts at a597e7a6c6), byte for byte, with master's parameters: the baseline. */
 const MASTER = {
   near_symbol: { scoped: "SELECT cc.id FROM content_chunks cc\n             JOIN pages p ON p.id = cc.page_id\n             WHERE cc.symbol_name_qualified = $1 AND p.source_id = $2\n             LIMIT 50", any: "SELECT id FROM content_chunks WHERE symbol_name_qualified = $1 LIMIT 50" },
   edge_targets: { scoped: "SELECT cc.id FROM content_chunks cc\n                 JOIN pages p ON p.id = cc.page_id\n                 WHERE cc.symbol_name_qualified = ANY($1::text[])\n                   AND p.source_id = $2\n                 LIMIT 50", any: "SELECT id FROM content_chunks WHERE symbol_name_qualified = ANY($1::text[]) LIMIT 50" },
@@ -83,8 +85,10 @@ async function seed(engine: BrainEngine): Promise<{ slugs: string[]; id: (label:
     await installChunks(engine, slug, chunks);
     slugs.push(slug);
   };
-  await page('src/start', [sym(0, 'function start() { t_d(); t_b(); t_c(); t_a(); }', 'mod.start')]);
-  await page('src/small', [sym(0, 'function small() { s_y(); s_x(); }', 'mod.small')]);
+  // The two callers carry one embedding each, so structural search's vector arm finds them (the keyword-only path
+  // skips the expansion). They are not rewritten below: their call edges are added after the seed.
+  await page('src/start', [{ ...sym(0, 'function start() { t_d(); t_b(); t_c(); t_a(); }', 'mod.start'), embedding: basisEmbedding(1) } as ChunkInput]);
+  await page('src/small', [{ ...sym(0, 'function small() { s_y(); s_x(); }', 'mod.small'), embedding: basisEmbedding(2) } as ChunkInput]);
   // Targets inserted interleaved and in reverse name order: t.d before t.a, chunks of each symbol spread over pages.
   const targets = ['t.d', 't.b', 't.c', 't.a'];
   for (let p = 0; p < 10; p++) {
@@ -99,7 +103,7 @@ async function seed(engine: BrainEngine): Promise<{ slugs: string[]; id: (label:
       sym(j, `function near_${p}_${j}() { anchor(); }`, j === 0 && p < 7 ? 'near.few' : 'near.anchor')));
   }
   // Rewrite every other page's chunks in place (same chunk index, new text).
-  for (const slug of slugs.filter((_, i) => i % 2 === 0)) {
+  for (const slug of slugs.filter((slug, i) => i % 2 === 0 && slug !== 'src/start' && slug !== 'src/small')) {
     const chunks = (await engine.getChunks(slug)).sort((a, b) => a.chunk_index - b.chunk_index).map(c => sym(c.chunk_index,
       `${c.chunk_text} // rewritten`, String((c as unknown as { symbol_name_qualified: string }).symbol_name_qualified)));
     await installChunks(engine, slug, chunks);
@@ -109,7 +113,7 @@ async function seed(engine: BrainEngine): Promise<{ slugs: string[]; id: (label:
   return { slugs, ids, id: (label: string) => byLabel.get(label)! };
 }
 
-describe('two-pass symbol lookups keep master\'s statements', () => {
+describe('two-pass symbol lookups order the same on every engine', () => {
   const setup = async (engine: BrainEngine) => {
     const brain = await seed(engine);
     const edge = (from: string, fromSym: string, to: string) => ({ from_chunk_id: brain.id(from), from_symbol_qualified: fromSym, to_symbol_qualified: to, edge_type: 'calls' });
@@ -151,42 +155,67 @@ describe('two-pass symbol lookups keep master\'s statements', () => {
       return out;
     });
 
-  parityTest('past the limit every engine returns 50 rows of the asked symbols; Rust keeps the 50 lowest ids',
+  parityTest('past the limit every engine keeps the first 50 by source, slug and chunk index',
     { methods: ['putPage', 'sealChunks', 'getChunks', 'addCodeEdges', 'getEdgesByChunk', 'listSymbolChunkIds'] }, async (engine) => {
       const { ids, anchor } = await setup(engine);
-      const all = async (symbols: string[]) => [...ids.keys()].filter(id => symbols.includes(matches.get(id) ?? ''));
       const matches = new Map<number, string>();
       for (const slug of new Set([...ids.values()].map(l => l.split('#')[0]!))) {
         for (const c of await engine.getChunks(slug)) matches.set(c.id, String((c as unknown as { symbol_name_qualified: string }).symbol_name_qualified));
       }
+      // The expected cut, from labels only (no ids): source is 'default' for every page, so slug then chunk index.
+      const byKey = (a: string, b: string) => {
+        const [sa, ia] = a.split('#'); const [sb, ib] = b.split('#');
+        return sa! < sb! ? -1 : sa! > sb! ? 1 : Number(ia) - Number(ib);
+      };
       const out: Record<string, unknown> = {};
-      let rustCut: Record<string, boolean> | undefined;
       for (const sourceId of ['default', undefined]) {
         const tag = sourceId ?? 'any-source';
         const asks: Array<[Lookup, string[]]> = [['near_symbol', ['near.anchor']], ['edge_targets', ['t.d', 't.b', 't.c', 't.a']]];
         for (const [lookup, symbols] of asks) {
-          const rows = await engine.listSymbolChunkIds(lookup, symbols, sourceId);
-          const pool = await all(symbols);
-          const view = { count: rows.length, distinct: new Set(rows).size, of: pool.length, foreign: rows.filter(id => !pool.includes(id)).length };
-          if (engine.kind !== 'rust') {
-            // Master's statement returns the same count, all of the asked symbols (which 50 is the plan's).
-            const master = await masterRows(engine, lookup, symbols, sourceId);
-            expect({ count: master.length, foreign: master.filter(id => !pool.includes(id)).length }).toEqual({ count: view.count, foreign: 0 });
-          } else {
-            (rustCut ??= {})[`${lookup}:${tag}`] = JSON.stringify(rows) === JSON.stringify([...pool].sort((a, b) => a - b).slice(0, 50));
-          }
-          out[`${lookup}:${tag}`] = view;
+          const rows = (await engine.listSymbolChunkIds(lookup, symbols, sourceId)).map(id => ids.get(id) ?? `foreign:${id}`);
+          const pool = [...ids].filter(([id]) => symbols.includes(matches.get(id) ?? '')).map(([, l]) => l).sort(byKey);
+          expect(rows).toEqual(pool.slice(0, 50));
+          out[`${lookup}:${tag}`] = rows;
         }
         const walk = await expandAnchors(engine, [anchor('src/start#0', 0.9), anchor('src/small#0', 0.4)], { nearSymbol: 'near.anchor', walkDepth: 1, sourceId });
-        out[`walk:${tag}`] = { rows: walk.length, anchors: walk.filter(r => r.source === 'anchor').length, neighbors: walk.filter(r => r.source === 'neighbor').length };
+        out[`walk:${tag}`] = walk.map(r => `${ids.get(r.chunk_id)}:${r.hop}:${r.source}:${r.score}`);
       }
-      expect(out['near_symbol:default']).toEqual({ count: 50, distinct: 50, of: 54, foreign: 0 });
-      expect(out['edge_targets:default']).toEqual({ count: 50, distinct: 50, of: 80, foreign: 0 });
-      // The Rust store's cut is deterministic: the 50 lowest ids (rust-expected-divergence/two_pass.tsv sets it aside).
-      if (rustCut) {
-        expect(Object.values(rustCut).every(Boolean)).toBe(true);
-        out.rust_limit_cut = rustCut;
+      return out;
+    });
+
+  parityTest('structural search returns the same JSON on every engine, and master\'s rows and scores when no lookup passes the limit',
+    { methods: ['putPage', 'sealChunks', 'getChunks', 'addCodeEdges', 'getEdgesByChunk', 'listSymbolChunkIds'] }, async (engine) => {
+      const { ids } = await setup(engine);
+      const relabel = ids;
+      const base = { sourceId: 'default', expansion: false, useCache: false, limit: 100, excludePrivate: false, queryEmbedFn: () => basisEmbedding(1) };
+      const asks: Array<[string, string, Record<string, unknown>]> = [
+        ['near-below', 'start', { nearSymbol: 'near.few' }],
+        ['walk-small', 'small', { walkDepth: 1, queryEmbedFn: () => basisEmbedding(2) }],
+        ['near-above', 'start', { nearSymbol: 'near.anchor' }],
+        ['walk-above', 'start', { walkDepth: 2 }],
+      ];
+      // Labelled JSON: chunk and page ids differ between engines (and change on a PGLite or Postgres rewrite).
+      const view = (rows: SearchResult[]) => JSON.stringify(rows.map(r => {
+        const { chunk_id, page_id, ...rest } = r as SearchResult & { page_id?: number };
+        void page_id;
+        return { ...rest, chunk: relabel.get(chunk_id) ?? `foreign:${chunk_id}` };
+      }));
+      const out: Record<string, string> = {};
+      for (const [name, query, extra] of asks) {
+        const rows = await hybridSearch(engine, query, { ...base, ...extra } as never);
+        out[name] = view(rows);
+        if (engine.kind !== 'rust' && name === 'near-below') {
+          // Only near-below keeps every lookup under the limit (the walks start from every top result, and src/start
+          // calls 80 targets). There master's statements return the same rows, so the search returns master's rows; only the
+          // order of rows with tied scores can differ (master's came in plan order, these in source, slug, index order).
+          const master = JSON.parse(view(await hybridSearch(masterEngine(engine), query, { ...base, ...extra } as never))) as Array<{ chunk: string; score: number }>;
+          const mine = JSON.parse(out[name]!) as Array<{ chunk: string; score: number }>;
+          const bySort = (rows: Array<Record<string, unknown>>) => rows.map(r => JSON.stringify(r)).sort();
+          expect(bySort(mine)).toEqual(bySort(master));
+          expect(mine.map(r => r.score)).toEqual(master.map(r => r.score));
+        }
       }
+      for (const name of Object.keys(out)) expect(JSON.parse(out[name]!).length).toBeGreaterThan(1);
       return out;
     });
 });
