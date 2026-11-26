@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 327/468
+# covered: 330/468
 # calibration_profiles: 0/2
 # trust: 0/6
 # minion_queue: 0/2
@@ -24,7 +24,7 @@
 # access_members: 0/1
 # cli_reads_import: 0/6
 # lifecycle: 9/9
-# pages: 32/42
+# pages: 33/42
 # search: 7/7
 # search_reads: 9/9
 # chunks: 22/31
@@ -63,7 +63,7 @@
 # search_vector: 0/1
 # open_loops: 5/7
 # write_misc: 0/29
-# entity_reads: 0/2
+# entity_reads: 2/2
 # owner_only: 1/1
 # wanted_links: 2/2
 # salience_enrich: 5/5
@@ -151,13 +151,13 @@ getPage	pages	yes	52	yes	yes	yes	serves
 readPageSnapshot	pages	yes	21	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	1	no	yes	yes	refuses:transactions
-putPage	pages	yes	199	yes	yes	yes	serves
+putPage	pages	yes	202	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	17	yes	yes	yes	serves
 deletePages	pages	yes	3	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	50	yes	yes	yes	serves
+softDeletePage	pages	yes	53	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	8	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	5	no	yes	yes	serves
@@ -173,13 +173,13 @@ applyIdentityDecisions	pages	yes	1	no	yes	yes	refuses:pages
 listAllPageRefs	pages	yes	1	yes	yes	yes	serves
 listAllSources	pages	yes	5	no	yes	yes	serves
 updateSourceConfig	pages	yes	13	no	yes	yes	serves
-getSource	pages	yes	2	no	yes	yes	serves
+getSource	pages	yes	3	no	yes	yes	serves
 listSourceLocalPaths	pages	yes	1	no	yes	yes	serves
 listLocalPathSources	pages	no	0	no	-	-	-
 listSourceRoutingRows	pages	no	0	no	-	-	-
 countDefaultSourceSplit	pages	no	0	no	-	-	-
 readSourceRow	pages	no	0	no	-	-	-
-markSourceSynced	pages	no	0	no	-	-	-
+markSourceSynced	pages	yes	1	no	yes	yes	serves
 listActiveSourceConfigs	pages	no	0	no	-	-	-
 readOwnerOnlySourcesPresent	pages	no	0	no	-	-	-
 readOwnerOnlySourceConfig	pages	no	0	no	-	-	-
@@ -526,8 +526,8 @@ readLiveMember	write_misc	no	0	no	-	-	-
 readFolderAccess	write_misc	no	0	no	-	-	-
 readMayActFor	write_misc	no	0	no	-	-	-
 readAudiencePrincipals	write_misc	no	0	no	-	-	-
-readIgnoredPrivacyLabelPages	entity_reads	no	0	no	-	-	-
-readLivePageFrontmatter	entity_reads	no	0	no	-	-	-
+readIgnoredPrivacyLabelPages	entity_reads	yes	2	no	yes	yes	serves
+readLivePageFrontmatter	entity_reads	yes	1	no	yes	yes	serves
 ownerOnlyMarkTriggers	owner_only	yes	2	no	yes	yes	refuses:raw_sql
 lockRegisteredSourceIds	wanted_links	yes	1	no	yes	yes	refuses:links
 replaceWantedLinkRows	wanted_links	yes	4	no	yes	yes	refuses:links

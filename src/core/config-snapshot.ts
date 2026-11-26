@@ -91,6 +91,8 @@ interface RequestSnapshot {
   engine: object;
   open: boolean;
   rows: Promise<Map<string, string> | null> | null;
+  /** True once `rows` holds the whole table (a seed, or a finished bulk read), so a bounded read can answer from it without waiting. */
+  loaded: boolean;
   /** Other request-stable reads of the same engine (`requestSnapshotRead`), dropped with `rows`. */
   reads: Map<string, Promise<unknown>>;
 }
@@ -127,7 +129,7 @@ export async function withRequestConfigSnapshot<T>(engine: BulkConfigReader, fn:
 export interface RequestConfigSnapshot { run<T>(fn: () => Promise<T>): Promise<T>; close(): void }
 
 export function openRequestConfigSnapshot(engine: BulkConfigReader, seed?: Record<string, string>): RequestConfigSnapshot {
-  const held: RequestSnapshot = { engine, open: true, rows: seed ? Promise.resolve(new Map(Object.entries(seed))) : null, reads: new Map() };
+  const held: RequestSnapshot = { engine, open: true, rows: seed ? Promise.resolve(new Map(Object.entries(seed))) : null, loaded: !!seed, reads: new Map() };
   return {
     run: fn => activeSnapshot(engine) ? fn() : requestSnapshot.run({ held, live: false }, fn),
     close: () => { held.open = false; },
@@ -142,13 +144,14 @@ export async function withoutRequestConfigSnapshot<T>(fn: () => Promise<T>): Pro
     return await requestSnapshot.run({ held: store.held, live: true }, fn);
   } finally {
     store.held.rows = null;
+    store.held.loaded = false;
     store.held.reads.clear();
   }
 }
 
 function snapshotRows(engine: BulkConfigReader, held: RequestSnapshot): Promise<Map<string, string> | null> {
   held.rows ??= requestSnapshot.run({ held, live: true }, () => loadConfigSnapshot(engine))
-    .then(rows => rows ? new Map(Object.entries(rows)) : null);
+    .then(rows => { held.loaded = rows !== null; return rows ? new Map(Object.entries(rows)) : null; });
   return held.rows;
 }
 
@@ -162,6 +165,18 @@ export async function requestConfigValue(engine: BulkConfigReader, key: string):
   const held = activeSnapshot(engine);
   if (!held) return undefined;
   const rows = await snapshotRows(engine, held);
+  return rows ? rows.get(key) ?? null : undefined;
+}
+
+/**
+ * `requestConfigValue` for a read the caller bounds: answers only from a snapshot that already holds the whole table, and
+ * never starts (or waits for) the bulk read, which has no bound of its own. undefined means the key must be read by its own
+ * bounded statement.
+ */
+export async function loadedRequestConfigValue(engine: BulkConfigReader, key: string): Promise<string | null | undefined> {
+  const held = activeSnapshot(engine);
+  if (!held?.loaded || !held.rows) return undefined;
+  const rows = await held.rows;
   return rows ? rows.get(key) ?? null : undefined;
 }
 

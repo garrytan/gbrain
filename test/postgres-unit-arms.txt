@@ -160,6 +160,7 @@ test/engine-parity/decide-store.test.ts
 test/engine-parity/extraction.test.ts
 test/engine-parity/facts.test.ts
 test/engine-parity/field-usage.test.ts
+test/engine-parity/ignored-privacy-label-reads.test.ts
 test/engine-parity/import-command.test.ts
 test/engine-parity/import-path.test.ts
 test/engine-parity/import-writes.test.ts
