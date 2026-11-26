@@ -171,6 +171,17 @@ A run checks the plan hash (`preview_changed`), that no other process owns the R
 
 A brain that fails back can swap again later with a new plan.
 
+<a id="collation_order_differs"></a>
+### Lists whose order changes: `collation_order_differs`
+
+The Rust engine lists text keys in byte order, as PGLite does. A Postgres brain whose collation is not byte order (libc
+`en_US`, or any ICU locale) lists some of them in its own order, so a few lists answer differently after the swap. This
+is a named loss, never a refusal. The plan (and `--plan --json`, field `collation`) names each such list in one of
+three classes: the same rows in another order, different rows in a capped list, and the sites not traced to their
+output; it counts the text sorts that do not change. A C or POSIX Postgres brain and a PGLite brain get no list. When
+the shadow's fingerprint probe has not recorded the source collation, the plan says so and lists every site. Repair
+previews made before the swap must be run again: a preview's list order, and so its approval hash, can change.
+
 <a id="remote-callers"></a>
 ### Remote callers after a swap
 

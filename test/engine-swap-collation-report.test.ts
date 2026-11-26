@@ -12,7 +12,9 @@
  * repair-preview line is missing, or when the report changes the verdict or the plan hash. (3) Nothing else reports
  * collation order. (4) No seam: the real evaluator and plan over a PGLite engine with a stubbed shadow status.
  */
-import { describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { collationReport, COLLATION_SITES, REPAIR_PREVIEW_LINE } from '../src/core/engine-swap/collation-report.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { planEngineSwap } from '../src/core/engine-swap/plan.ts';
@@ -60,12 +62,23 @@ describe('the collation_order_differs report', () => {
   });
 });
 
+describe('the site list stays true to the code', () => {
+  test('every listed site is a text sort that is not pinned to byte order; a site pinned later must leave the list', () => {
+    for (const s of COLLATION_SITES) {
+      const [file, line] = s.site.split(':') as [string, string];
+      const text = readFileSync(join(import.meta.dir, '..', file), 'utf8').split('\n')[Number(line) - 1] ?? '';
+      expect({ site: s.site, sorts: /ORDER BY/.test(text), pinned: /COLLATE "C"/.test(text) }).toEqual({ site: s.site, sorts: true, pinned: false });
+    }
+  });
+});
+
 describe('the swap plan carries the report, report-only', () => {
+  let engine: PGLiteEngine;
+  beforeAll(async () => { engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema(); }, 120_000);
+  afterAll(async () => { await engine.disconnect(); });
+
   test('an ICU source: the plan names the report and the classes, and the verdict and hash do not move', async () => {
-    const engine = new PGLiteEngine();
-    await engine.connect({});
-    await engine.initSchema();
-    try {
+    {
       const now = new Date('2026-12-01T00:00:00Z');
       const icu = readinessReadyFor();
       icu.fingerprints!.probe = { ...icu.fingerprints!.probe, collation: 'C.UTF-8', locale_provider: 'i', locale: 'en-US' } as never;
@@ -78,6 +91,6 @@ describe('the swap plan carries the report, report-only', () => {
       expect(withC.collation.applies).toBe(false);
       expect(withIcu.verdict).toBe(withC.verdict);
       expect(withIcu.plan_hash).toBe(withC.plan_hash);
-    } finally { await engine.disconnect(); }
+    }
   }, 120_000);
 });

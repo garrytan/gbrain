@@ -39,7 +39,7 @@ export interface ShadowStatus {
   fingerprints?: {
     checked_rows?: number;
     mismatches?: number;
-    probe?: { state?: 'pass' | 'fail' | 'not_run'; checked_at?: string; server_version?: string; collation?: string; mismatches?: number };
+    probe?: { state?: 'pass' | 'fail' | 'not_run'; checked_at?: string; server_version?: string; collation?: string; locale_provider?: string | null; locale?: string | null; mismatches?: number };
   };
   allocators?: { verified?: boolean; checked_at?: string };
   seed?: { seed_id?: string; finished_at?: string | null; unseeded_gap_rows_total?: number };
