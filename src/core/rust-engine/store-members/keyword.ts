@@ -253,7 +253,7 @@ export const searchKeyword: StoreMember<[query: string, opts?: SearchOpts], Sear
     console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${cap}`);
   }
   options.limit = limit;
-  options.innerLimit = Math.min(limit * 3, cap * 3);
+  options.innerLimit = Math.min((offset + limit) * 3, cap * 3);
   options.offset = offset;
   const rankQuery = opts?.rankQuery ? String(opts.rankQuery) : undefined;
   const call = (match: string, rank: string): Promise<Row[]> =>

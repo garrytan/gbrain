@@ -89,12 +89,12 @@ export function confirmRequiredError(argv: string[], problem: { reason: 'agent_m
  * policy_confirm_required (naming the marker or the missing terminal) when this process cannot
  * be the owner, or when the code is not typed.
  */
-export async function confirmOnTerminal(opts: { argv: string[]; summary: string[]; digest: string; probe?: TerminalProbe }): Promise<OwnerProof> {
+export async function confirmOnTerminal(opts: { argv: string[]; summary: string[]; digest: string; probe?: TerminalProbe; subject?: string }): Promise<OwnerProof> {
   const problem = terminalAuthorityProblem(opts.probe);
   if (problem) throw confirmRequiredError(opts.argv, problem);
   const code = opts.digest.slice(0, CONFIRM_CODE_LENGTH);
   process.stderr.write(`${opts.summary.map(l => `  ${l}`).join('\n')}\n`);
-  const prompt = `Type ${code} to approve this agent policy change (anything else cancels): `;
+  const prompt = `Type ${code} to approve this ${opts.subject ?? 'agent policy change'} (anything else cancels): `;
   const answer = opts.probe?.readAnswer ? await opts.probe.readAnswer(prompt) : await promptLineStderr(prompt, { timeoutMs: 300_000 });
   if (answer?.trim().toLowerCase() !== code) throw confirmRequiredError(opts.argv, { reason: 'declined' });
   let by = 'owner';

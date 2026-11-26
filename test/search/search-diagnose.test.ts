@@ -63,4 +63,19 @@ describe('search diagnose', () => {
     // title boost fired (query is a phrase in the title)
     expect(report.hybrid.title_match_boost).toBeGreaterThan(1.0);
   });
+
+  test('#10314 source_id is the filter applied: null without --source, the named source with it', async () => {
+    const slug = 'notes/quartz-reference';
+    const body = 'A fictional barometer calibration used a quartz reference.';
+    await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $2)', ['field-notes', 'Field Notes']);
+    await engine.putPage(slug, { type: 'note' as never, title: 'Quartz reference', compiled_truth: body }, { sourceId: 'field-notes' });
+    await installFixtureChunks(engine, slug, [{ chunk_index: 0, chunk_text: body, chunk_source: 'compiled_truth', token_count: 10 }], { sourceId: 'field-notes' });
+    const args = ['diagnose', 'quartz reference', '--target', slug, '--json'];
+    const unfiltered = await captureJson(() => runSearchDiagnose(engine, args));
+    expect(unfiltered).toMatchObject({ source_id: null, keyword: { rank: 1 } });
+    const scoped = await captureJson(() => runSearchDiagnose(engine, [...args, '--source', 'field-notes']));
+    expect(scoped).toMatchObject({ source_id: 'field-notes', keyword: { rank: 1 } });
+    const elsewhere = await captureJson(() => runSearchDiagnose(engine, [...args, '--source', 'default']));
+    expect(elsewhere).toMatchObject({ source_id: 'default', keyword: { rank: null } });
+  });
 });

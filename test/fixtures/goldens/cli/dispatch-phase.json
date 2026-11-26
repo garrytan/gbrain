@@ -530,6 +530,13 @@
         "thinClient": "none",
         "thinClientRoutedSubcommands": []
       },
+      "correct": {
+        "hasSwitchCase": true,
+        "phase": "post-connect",
+        "preConnectRules": [],
+        "thinClient": "refuse",
+        "thinClientRoutedSubcommands": []
+      },
       "creds": {
         "hasSwitchCase": false,
         "phase": "pre-connect",
@@ -1449,6 +1456,13 @@
         "thinClient": "refuse",
         "thinClientRoutedSubcommands": []
       },
+      "propose": {
+        "hasSwitchCase": true,
+        "phase": "post-connect",
+        "preConnectRules": [],
+        "thinClient": "refuse",
+        "thinClientRoutedSubcommands": []
+      },
       "protocol": {
         "hasSwitchCase": false,
         "phase": "pre-connect",
@@ -1729,6 +1743,13 @@
           }
         ],
         "thinClient": "none",
+        "thinClientRoutedSubcommands": []
+      },
+      "rules": {
+        "hasSwitchCase": true,
+        "phase": "post-connect",
+        "preConnectRules": [],
+        "thinClient": "refuse",
         "thinClientRoutedSubcommands": []
       },
       "salience": {
@@ -2180,6 +2201,13 @@
           }
         ],
         "thinClient": "none",
+        "thinClientRoutedSubcommands": []
+      },
+      "value": {
+        "hasSwitchCase": true,
+        "phase": "post-connect",
+        "preConnectRules": [],
+        "thinClient": "refuse",
         "thinClientRoutedSubcommands": []
       },
       "waiting": {

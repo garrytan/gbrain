@@ -805,7 +805,7 @@ pub(crate) fn swap_config_value_in(
 impl Store {
     /// `readWriterAdminState()`: the writer topology as jsonb text.
     pub fn writer_admin_state_text(&self) -> Result<String> {
-        writer_admin_state_text_in(&*self.read()?, self.brain_id())
+        writer_admin_state_text_in(&*self.read()?, &self.brain_id())
     }
 
     /// The id of the worktree a prepared transfer holds, or None.
@@ -842,7 +842,7 @@ impl Store {
     ) -> Result<Vec<Value>> {
         content_receipt_rows_in(
             &*self.read()?,
-            self.brain_id(),
+            &self.brain_id(),
             worktree_ids,
             host_id,
             source_ids,

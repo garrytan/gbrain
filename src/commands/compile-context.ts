@@ -67,6 +67,8 @@ interface CompileFlags {
   json: boolean;
   includeCore: boolean;
   removeCore: boolean;
+  /** C2: append the owner's confirmed standing rules after core (never into a git-tracked file). */
+  includeRules: boolean;
 }
 
 class UsageError extends Error {}
@@ -119,6 +121,7 @@ function parseCompileFlags(args: string[]): CompileFlags {
     // codex-global exists to carry core, so it includes core unless told to remove it.
     includeCore: !args.includes('--remove-core') && (args.includes('--include-core') || target === 'codex-global'),
     removeCore: args.includes('--remove-core'),
+    includeRules: args.includes('--include-rules'),
   };
 }
 
@@ -225,6 +228,8 @@ Flags:
   --include-core     Render always-loaded core memory first, in full. Refused
                      when the output file is tracked by git.
   --remove-core      Recompile without core (codex-global: remove the block).
+  --include-rules    Add your confirmed standing rules after core (gbrain rules).
+                     Refused when the output file is tracked by git.
   --json             Machine-readable result envelope on stdout.
   --help             Show this help.
 
@@ -299,11 +304,11 @@ export async function runCompileContext(
 
     const outPath = flags.out ?? defaultOutPath(flags.target, cwd);
     // Core reaches every session that loads this file, so it never goes into a shared (git-tracked) file.
-    if (flags.includeCore && !flags.stdout) {
+    if ((flags.includeCore || flags.includeRules) && !flags.stdout) {
       if (flags.target === 'hermes' && !isGitTracked(outPath)) ensureGitExcluded(outPath);
       if (isGitTracked(outPath)) {
-        process.stderr.write(`compile-context: ${outPath} is tracked by git, so always-loaded core memory will not be written into it (it would be committed and shared). `
-          + 'Use a local target (--target claude-code, hermes or codex-global) or --out <untracked path>, or drop --include-core.\n');
+        process.stderr.write(`compile-context: ${outPath} is tracked by git, so always-loaded core memory and standing rules will not be written into it (they would be committed and shared). `
+          + 'Use a local target (--target claude-code, hermes or codex-global) or --out <untracked path>, or drop --include-core and --include-rules.\n');
         return EXIT_ERROR;
       }
     }
@@ -326,6 +331,7 @@ export async function runCompileContext(
       excludeSlugs,
       ...(core ? { core } : {}),
       ...(flags.target === 'codex-global' ? { coreOnly: true } : {}),
+      ...(flags.includeRules ? { rules: (await (await import('../core/rules/section.ts')).rulesSectionFor(engine, { remote: false, sourceId }))?.text } : {}),
     });
 
     // Drops are always reported: slug + family + fingerprint, never the text.
