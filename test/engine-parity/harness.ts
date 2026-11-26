@@ -147,6 +147,34 @@ export function rustMultiuserView(env: Record<string, string | undefined> = proc
   return rustMuRoute(env) ?? 'off';
 }
 
+/**
+ * Whether this process was started with the multi-user switch already on (`GBRAIN_RUST_MULTIUSER=1` visible to it when the
+ * harness loaded, before any arm set it): a lane that runs the whole suite in multi-user mode (for example with
+ * GBRAIN_TEST_KEEP_AMBIENT_ENV=1). Read once at load, so the rust-mu view setting the variable later never counts.
+ */
+const AMBIENT_MULTIUSER = process.env.GBRAIN_RUST_MULTIUSER === '1';
+
+/**
+ * The multi-user mode a Rust brain on this arm must resolve: the rust-mu view's route, else `ambient` when the process
+ * started with the switch on, else `off`. A scenario that checks or depends on the store's mode reads this.
+ */
+export function rustArmMultiuser(env: Record<string, string | undefined> = process.env, ambient = AMBIENT_MULTIUSER): 'off' | 'env' | 'config' | 'ambient' {
+  const view = rustMultiuserView(env);
+  return view !== 'off' ? view : ambient ? 'ambient' : 'off';
+}
+
+/**
+ * The mode check for one Rust brain: null when the store resolved what the arm runs (`mode`), else the failure. On a plain
+ * run (`off`) a multi-user store is a leak and fails; on the view or an ambient multi-user run a plain store fails.
+ */
+export function rustArmModeProblem(resolved: boolean | undefined, mode: 'off' | 'env' | 'config' | 'ambient'): string | null {
+  if (mode === 'off') return resolved === true ? 'the plain Rust arm ran a multi-user store' : null;
+  if (resolved === true) return null;
+  return mode === 'ambient'
+    ? 'the Rust arm runs with GBRAIN_RUST_MULTIUSER=1 set when the process started, but its store did not resolve multi-user mode'
+    : 'the rust-mu arm ran a store that did not resolve multi-user mode';
+}
+
 /** The Rust arm: a new brain directory per case (reset), removed when the arm closes. */
 async function openRustArm(route?: RustMuRoute): Promise<ParityArm> {
   const opened = await openRustBrain(route);

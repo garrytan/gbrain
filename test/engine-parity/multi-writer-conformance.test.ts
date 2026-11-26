@@ -33,7 +33,7 @@ import type { CommitPosition } from '../../src/core/engine-members/commit-log.ts
 import type { PageInput } from '../../src/core/types.ts';
 import type { LeaseToken, FenceOpts } from '../../src/core/engine-sql/lease-token.ts';
 import { rustLeases, type RustLeases, type WriteOrigin } from '../../src/core/rust-engine/store-members/leases.ts';
-import { parityArms, type ParityBackend, type ParityContext, rustMultiuserView } from './harness.ts';
+import { parityArms, type ParityBackend, type ParityContext, rustArmModeProblem, rustArmMultiuser, rustMultiuserView } from './harness.ts';
 import { clearHostRegistration, fenceOpts, hostLeaseName, setHostRegistration } from '../../src/core/persistence/host-fence.ts';
 import { resolvedMultiuser } from './rust-arm.ts';
 import { testBackends } from '../helpers/test-backends.ts';
@@ -101,12 +101,9 @@ function refusalOf(result: { ok: true } | { ok: false; error: unknown }): { code
  * The view must be real: the case fails when the store did not resolve multi-user mode, and on plain Rust when it did.
  */
 async function hostsOf(engine: BrainEngine, backend: ParityBackend, prefix = 'c06') {
-  const mu = backend === 'rust' && rustMultiuserView() !== 'off';
-  if (backend === 'rust') {
-    const resolved = resolvedMultiuser(engine);
-    if (mu) expect(resolved, 'the rust-mu arm ran a store that did not resolve multi-user mode').toBe(true);
-    else expect(resolved, 'the plain Rust arm ran a multi-user store').not.toBe(true);
-  }
+  const mode = rustArmMultiuser();
+  const mu = backend === 'rust' && mode !== 'off';
+  if (backend === 'rust') expect(rustArmModeProblem(resolvedMultiuser(engine), mode)).toBeNull();
   const leases = (e: BrainEngine): RustLeases => rustLeases(e as never);
   const origin = (n: number): WriteOrigin => ({ host_id: `${prefix}-host-${n}`, incarnation: `inc-${n}`, writer_id: `writer-${n}` });
   return {
@@ -883,7 +880,7 @@ describe('engine parity: multi-writer conformance', () => {
       const brain = config as unknown as { database_path: string };
       // The config route's brain carries its own switch row: connecting the spare seeds it (and asserts it resolved), so the writer finds it on disk.
       if (route === 'config') { await spare.connect(config); await spare.disconnect(); }
-      writerConfig = { ...base, backend: 'rust', databasePath: brain.database_path, ...(route !== 'off' && { muRoute: route }) };
+      writerConfig = { ...base, backend: 'rust', databasePath: brain.database_path, ...(route !== 'off' && { muRoute: route }), ...(rustArmMultiuser() === 'ambient' && { ambient: true }) };
       reopen = async () => { await spare.connect(config); return spare; };
     } else {
       throw new Error(`C19 needs a durable brain to crash; ${backend} has none`);
@@ -892,7 +889,7 @@ describe('engine parity: multi-writer conformance', () => {
     const route = rustMultiuserView();
     // On a Rust brain the writer process proves what mode its own store resolved (it fails to start otherwise).
     if (backend === 'rust') await writer.until(lines => lines.some(l => l.startsWith('RESOLVED ')), 30_000, 'open its brain');
-    if (backend === 'rust') expect(writer.lines().includes('RESOLVED true'), `the writer's store resolved multi-user mode as ${writer.lines().find(l => l.startsWith('RESOLVED '))} on route ${route}`).toBe(route !== 'off');
+    if (backend === 'rust') expect(writer.lines().includes('RESOLVED true'), `the writer's store resolved multi-user mode as ${writer.lines().find(l => l.startsWith('RESOLVED '))} on route ${route}, mode ${rustArmMultiuser()}`).toBe(rustArmMultiuser() !== 'off');
     const acks = (lines: string[]) => lines.filter(l => l.startsWith('ACK ')).map(l => Number(l.slice(4)));
     await writer.until(lines => acks(lines).length >= killAfter, 60_000, `acknowledge ${killAfter} writes`);
     const ended = await writer.kill();
@@ -902,8 +899,7 @@ describe('engine parity: multi-writer conformance', () => {
     expect(acknowledged.length, 'the writer finished before the kill').toBeLessThan(base.max);
     // The brain after the crash, through an engine this process owns.
     const brain = await reopen();
-    if (backend === 'rust' && route !== 'off') expect(resolvedMultiuser(brain), 'the reopened brain did not resolve multi-user mode').toBe(true);
-    if (backend === 'rust' && route === 'off') expect(resolvedMultiuser(brain), 'the reopened plain brain resolved multi-user mode').not.toBe(true);
+    if (backend === 'rust') expect(rustArmModeProblem(resolvedMultiuser(brain), rustArmMultiuser()), 'the reopened brain').toBeNull();
     type Seen = CrashObservation & { ids: Map<string, number> };
     const observe = async (): Promise<Seen> => {
       const jobRowsByKey = new Map<string, number>();

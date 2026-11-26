@@ -31,9 +31,14 @@ async function connect(c: WriterConfig): Promise<BrainEngine> {
   const engine = await openRustBrainAt(c.databasePath!, c.muRoute);
   // Plain Rust: the writer's store must not be multi-user either.
   const resolved = resolvedMultiuser(engine);
-  if (c.muRoute === undefined && resolved === true) {
+  if (c.muRoute === undefined && c.ambient !== true && resolved === true) {
     await engine.disconnect().catch(() => undefined);
     throw new Error('mw-writer: the store resolved multi-user mode for a plain Rust brain');
+  }
+  // An ambient multi-user run: the switch came from the environment the process started with, and the store must have it on.
+  if (c.muRoute === undefined && c.ambient === true && resolved !== true) {
+    await engine.disconnect().catch(() => undefined);
+    throw new Error('mw-writer: the process started with GBRAIN_RUST_MULTIUSER=1 but its store did not resolve multi-user mode');
   }
   process.stdout.write(`RESOLVED ${String(resolved)}\n`);
   return engine as unknown as BrainEngine;

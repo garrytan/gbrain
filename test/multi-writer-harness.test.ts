@@ -20,7 +20,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assertMultiuserCapabilityName, recordingEngine, checkMwArm, checkRustArm, mwArmPlan, runMwCase, rustMultiuserView, type MwArmHandle, type MwArmStarted, type RustTally } from './engine-parity/harness.ts';
+import { assertMultiuserCapabilityName, recordingEngine, rustArmModeProblem, rustArmMultiuser, checkMwArm, checkRustArm, mwArmPlan, runMwCase, rustMultiuserView, type MwArmHandle, type MwArmStarted, type RustTally } from './engine-parity/harness.ts';
 import { checkRustTally } from './engine-parity/rust-tally.ts';
 import { MW_ARMS, type MwArm, type MwCase, type MwCell } from './engine-parity/multi-writer-cases.ts';
 import { type LedgerLine } from './engine-parity/multi-writer-ledger.ts';
@@ -590,6 +590,30 @@ describe('the recording wrapper keeps the Proxy invariant', () => {
     expect(wrapped.openStore()).toEqual({ brain: 'b' });
     void wrapped.putPage();
     expect([...calls]).toEqual(['putPage']);
+  });
+});
+
+describe('the Rust arm under an ambient multi-user mode', () => {
+  // Value: protects=a lane that starts the whole suite with GBRAIN_RUST_MULTIUSER=1 gets its plain Rust arm checked as a
+  // multi-user arm (its store must resolve the mode on), while a normal run still fails a plain brain that resolved it;
+  // fails_when=the plain-arm guard ignores how the process started; why_new=the multi-user self-check lane runs the suite with
+  // the switch in its environment; seam=pure functions
+  test('the mode is the view, else ambient when the process started with the switch, else off', () => {
+    expect(rustArmMultiuser({}, false)).toBe('off');
+    expect(rustArmMultiuser({}, true)).toBe('ambient');
+    expect(rustArmMultiuser({ GBRAIN_TEST_RUST_MU_ARM: 'env' }, true)).toBe('env');
+    expect(rustArmMultiuser({ GBRAIN_TEST_RUST_MU_ARM: 'config' }, false)).toBe('config');
+  });
+
+  test('a normal run still fails a plain brain that resolved multi-user mode; an ambient run fails one that did not', () => {
+    expect(rustArmModeProblem(true, 'off')).toBe('the plain Rust arm ran a multi-user store');
+    expect(rustArmModeProblem(false, 'off')).toBeNull();
+    expect(rustArmModeProblem(undefined, 'off')).toBeNull();
+    expect(rustArmModeProblem(true, 'ambient')).toBeNull();
+    expect(rustArmModeProblem(false, 'ambient')).toMatch(/GBRAIN_RUST_MULTIUSER=1 set when the process started/);
+    expect(rustArmModeProblem(undefined, 'ambient')).toMatch(/did not resolve/);
+    expect(rustArmModeProblem(true, 'env')).toBeNull();
+    expect(rustArmModeProblem(false, 'config')).toMatch(/rust-mu arm/);
   });
 });
 
