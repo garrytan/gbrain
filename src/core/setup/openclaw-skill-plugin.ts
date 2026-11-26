@@ -502,6 +502,7 @@ export async function syncOpenclawSkillPlugin(opts: OpenclawSkillSyncOptions): P
     const policy = openclawAgentPolicy(id, roster, host?.workspaceDir);
     const none = { block: '', ids: [] as string[], unknown: [] as string[], withheld: [] as string[] };
     const root = readRootFor(policy.path_reads, policy.workspace);
+    const builtAt = catalogBuiltAt(home, catalog);
     const pins = dryRun ? none : pinnedBlockFor(home, catalog, 'openclaw', root, { cls: 'owner', hidden });
     const talk = dryRun ? none : pinnedBlockFor(home, catalog, 'openclaw', root, { cls: 'conversation', hidden });
     const sources: Record<string, number> = {};
@@ -511,7 +512,7 @@ export async function syncOpenclawSkillPlugin(opts: OpenclawSkillSyncOptions): P
       path_reads: policy.path_reads, ...(policy.workspace ? { workspace_dir: policy.workspace } : {}),
       top_k: lane.top_k, min_match: lane.min_match, ...(lane.top_gate !== undefined ? { top_gate: lane.top_gate } : {}), exclude_ids: [...new Set([...lane.exclude_ids, ...hidden])],
       live_fraction: tune.live_fraction ?? before?.live_fraction ?? 1, pins_route: tune.pins_route ?? before?.pins_route ?? 'system',
-      pinned_block: pins.block, pinned_ids: pins.ids, conversation_pinned_block: talk.block, conversation_pinned_ids: talk.ids, host_hidden: [...new Set(hidden)], pins_built_at: catalogBuiltAt(home, catalog),
+      pinned_block: pins.block, pinned_ids: pins.ids, conversation_pinned_block: talk.block, conversation_pinned_ids: talk.ids, host_hidden: [...new Set(hidden)], pins_built_at: builtAt,
       ...((tune.suggest_classes ?? before?.suggest_classes) ? { suggest_classes: tune.suggest_classes ?? before!.suggest_classes } : {}),
       owner_sender_ids: tune.owner_sender_ids ?? before?.owner_sender_ids ?? [],
     };
@@ -600,9 +601,9 @@ export function refreshOpenclawPins(home: string): string[] {
   for (const [id, a] of Object.entries(agents)) {
     const hidden = a.host_hidden ?? (a.exclude_ids ?? []).filter((x) => !lane.includes(x));
     const root = readRootFor(a.path_reads, a.workspace_dir);
+    const builtAt = catalogBuiltAt(home, a.catalog);
     const pins = pinnedBlockFor(home, a.catalog, 'openclaw', root, { cls: 'owner', hidden });
     const talk = pinnedBlockFor(home, a.catalog, 'openclaw', root, { cls: 'conversation', hidden });
-    const builtAt = catalogBuiltAt(home, a.catalog);
     if (pins.block === a.pinned_block && JSON.stringify(pins.ids) === JSON.stringify(a.pinned_ids)
       && talk.block === (a.conversation_pinned_block ?? '') && JSON.stringify(talk.ids) === JSON.stringify(a.conversation_pinned_ids ?? []) && builtAt === (a.pins_built_at ?? null)) continue;
     agents[id] = { ...a, pinned_block: pins.block, pinned_ids: pins.ids, conversation_pinned_block: talk.block, conversation_pinned_ids: talk.ids, pins_built_at: builtAt };

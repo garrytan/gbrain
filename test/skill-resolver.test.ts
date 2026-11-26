@@ -1198,6 +1198,8 @@ describe('owner-only skills (audience: owner)', () => {
       '---\nname: a\ndescription: Review the ledger\naudience: owner\n\nSteps.\n',
       '---\nname: a\n"audience": owner\ntriggers: [unclosed\n---\nSteps.\n',
       '---\nname: a\nAudience: owner\n---\nSteps.\n',
+      '\uFEFF---\nname: a\naudience: owner\n---\nSteps.\n',
+      '---  \nname: a\naudience: owner\n\nSteps.\n',
     ]) expect(parseSkillDoc(doc).audience).toBe('owner');
     expect(parseSkillDoc('Steps.\naudience: owner\n').audience).toBeUndefined();
     expect(parseSkillDoc('---\nname: a\ndescription: Review the ledger\n---\nSteps.\n').audience).toBeUndefined();

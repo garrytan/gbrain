@@ -60,7 +60,7 @@ const AUDIENCE_LINE = /^\s*["']?audience["']?\s*:/im;
 function ownerOnly(text: string, raw: string | null, fm: Record<string, unknown> | null): boolean {
   if (fm) return Object.entries(fm).some(([k, v]) => k.toLowerCase() === 'audience' && restricted(v));
   if (raw !== null) return AUDIENCE_LINE.test(raw);
-  return text.startsWith('---\n') && AUDIENCE_LINE.test(text);
+  return /^\s*---[ \t]*\n/.test(text) && AUDIENCE_LINE.test(text);
 }
 
 function stringList(v: unknown): string[] {
@@ -71,7 +71,7 @@ function stringList(v: unknown): string[] {
 
 /** Parse one SKILL.md text (already bounded to SKILL_FILE_CAP_BYTES). */
 export function parseSkillDoc(input: string): SkillDoc {
-  const text = input.replace(/\r\n/g, '\n');
+  const text = input.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n');
   const m = /^---\n([\s\S]*?)\n---/.exec(text);
   const raw = m ? m[1] : '';
   const fm = m ? yamlFields(raw) : null;
