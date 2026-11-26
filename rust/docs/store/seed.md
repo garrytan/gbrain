@@ -88,6 +88,7 @@ keyset batches in key order. The relations come in groups, each in its own file 
 | `fact_withdrawals` | the withdrawal, with the primary's `fact_hash` and `withdrawn_at` | the hash is not computed again |
 | `page_purges` | the purge tombstone (slug, request id, time) | |
 | `oauth_clients` | the spend columns: client id, name, scope, bound tools, daily budget, `deleted_at` | every other column is reported as unmapped (the store keeps no credentials yet) |
+| `guest_sources` | source id, writers (in the primary's order) and trust ceiling; imported after the pages, so the trust stamp's guest-source rules never refuse the seed's own page rows | `created_at` is reported as unmapped |
 | `page_versions` | the snapshot, its tier and origin, change reason and body reference | the version id and `snapshot_at` are kept |
 | `files` | the file, its page index entry | a path held by another id is `constraint_violation` |
 | `raw_data` | the raw data of a page and source | the serial `id` is not kept; `fetched_at` is kept |
@@ -150,7 +151,7 @@ relation when that family reaches master, in the same PR as the store bridge tha
 | `oauth_tokens` | `rust-engine/access-rule-writes-3`, `rust-engine/access-reads-rust` | issued OAuth tokens do not authorize |
 | `oauth_codes` | `rust-engine/oauth-http-rust` | an OAuth handshake in flight restarts |
 | `oauth_grant_audit`, `guest_marks`, `guest_promotions` | none found | grant audit and guest promotion history are not listed |
-| `guest_sources`, `context_volunteer_events`, `retrieval_feedback` | `rust-engine/collate-equal` | guest writer lists and tier ceilings are not enforced; doctor volunteer counts and feedback history start empty |
+| `context_volunteer_events`, `retrieval_feedback` | `rust-engine/collate-equal` | doctor volunteer counts and feedback history start empty |
 | `chronicle_judge_reservations` | `rust-engine/main` (`chronicle_ledger.rs`; not seeded) | the 24-hour judge cap restarts at zero |
 | `page_embedding_budget` | `rust-engine/main` | held large pages could embed without consent |
 | `entity_identities`, `link_relationships`, `link_transitions`, `fact_purges` | `rust-engine/main` | entity identity unions, link temporal state and the fact purge guard are missing |
@@ -208,7 +209,7 @@ Its Rust family must reach master first. "Branch" is the newest branch with a re
 | `fact_purges` | 0 / 1 / 0 | `facts/purge_ledger.rs` | `rust-engine/main` 0ce95bbf7f | yes |
 | `take_purges` | 0 / 1 / 0 | `facts/take_purges.rs` | `rust-engine/page-purge-rust` 4bcab3a4f1 | no |
 | `take_horizons` | 0 / 1 / 0 | `takes/horizons.rs` | `rust-engine/page-purge-rust` 4bcab3a4f1 | no |
-| `guest_sources` | 0 / 1 / 0 | `guest_sources.rs` | `rust-engine/collate-equal` 3a2532707c | no |
+| `guest_sources` | 0 / 1 / 0 | `guest_sources.rs` | `rust-engine/guest-sources-rust` (copied by the seed since then) | no |
 | `pinned_questions` | 0 / 1 / 0 | `jobs/pinned_questions.rs` | `rust-engine/collate-equal` 3a2532707c | no |
 | `context_volunteer_events` | 0 / 1 / 0 | `volunteer_events.rs` | `rust-engine/collate-equal` 3a2532707c | no |
 

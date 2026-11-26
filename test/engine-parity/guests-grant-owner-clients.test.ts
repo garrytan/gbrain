@@ -1,31 +1,26 @@
 /**
  * BrainEngine parity: `gbrain guests grant-owner-clients` (loss row 32m-3). The guest-source check runs through the
- * typed `hasGuestSourceRow` member instead of caller SQL. PGLite and Postgres answer it with the statement the caller
- * ran; a Rust brain keeps no guest_sources and refuses it typed, naming the guest_sources capability.
+ * typed `hasGuestSourceRow` member: PGLite and Postgres answer it with the statement the caller ran, and a Rust brain
+ * from its guest_sources record (rust/crates/gbrain-store/src/guest_sources.rs).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Contract: for a guest source made by `guests init --yes`, PGLite and Postgres print the same preview, `--json` and
- *    `--json --yes` and grant the same credentials; for a source that is not a guest source, both print the same "is not
- *    a guest source" line, exit 2 and write nothing. A Rust brain refuses both with engine_capability_missing
- *    (capability guest_sources), prints nothing, asks for no exit, writes nothing, and the CLI reports the same stderr
- *    and exit code for both.
- *  - Regression: the check ran `SELECT 1 FROM guest_sources` through executeRaw, so a Rust brain refused it as raw_sql,
- *    a refusal that names no storage the Rust engine could add; a store that answered "no row" would send the operator
- *    to `guests init` for a real guest source.
+ *  - Contract: for a guest source made by `guests init --yes`, every arm prints the same preview, `--json` and
+ *    `--json --yes` and grants the same credentials; for a source that is not a guest source, every arm prints the same
+ *    "is not a guest source" line, exits 2 and writes nothing.
+ *  - Regression: the check ran `SELECT 1 FROM guest_sources` through executeRaw, so a Rust brain refused it as raw_sql;
+ *    then, with no guest record, it refused it typed (guest_sources).
  *  - Why existing coverage misses it: test/guests-grant-owner-clients.test.ts runs on PGLite only.
- *  - Seam: none. Real engines. `guests init --yes` refuses on Rust (row 32m-3, next item), so the Rust arm's guest
- *    source is the config record `guests init` writes (createSource with guest: true), the only guest record it keeps.
+ *  - Seam: none. Real engines.
  */
-import { describe, expect, test } from 'bun:test';
+import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { runGuests } from '../../src/commands/guests.ts';
-import { writeCliError } from '../../src/cli/cli-error.ts';
 import { addMember, bindCredential } from '../../src/core/access/members.ts';
 import { setOwner } from '../../src/core/access/owner.ts';
-import { createSource, parityArms, resetArm, type ParityBackend } from './harness.ts';
+import { createSource, parityArms, type ParityBackend } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
-const { parityTest, arms } = parityArms(testBackends());
+const { parityTest } = parityArms(testBackends());
 
 const OWNER = 'owner-example';
 const PLAIN = 'source-a';
@@ -64,17 +59,16 @@ async function clientReads(engine: BrainEngine): Promise<Record<string, string[]
   return Object.fromEntries(rows.map(r => [r.client_id, [...((r as { federated_read?: string[] | null }).federated_read ?? [])]]).sort());
 }
 
-/** A guest source the way this arm can make one: `guests init --yes`, or on Rust the config record init writes. */
-async function makeGuest(engine: BrainEngine, backend: ParityBackend): Promise<void> {
-  if (backend === 'rust') { await createSource(engine, backend, 'guests', { federated: true, guest: true, trust_ceiling: 'external_untrusted' }); return; }
+/** A guest source made the way `gbrain guests init --source guests --yes` makes one, on every arm. */
+async function makeGuest(engine: BrainEngine): Promise<void> {
   expect((await captured(() => runGuests(engine, ['init', '--source', 'guests', '--yes']))).exits).toEqual([]);
 }
 
 describe('guests grant-owner-clients (row 32m-3)', () => {
-  parityTest('guests.ts:140 a guest source: the preview, --json and --json --yes agree; Rust refuses guest_sources',
-    { methods: ['hasGuestSourceRow', 'insertOauthClient'] }, async (engine, backend) => {
+  parityTest('guests.ts:140 a guest source: the preview, --json and --json --yes agree on every arm',
+    { methods: ['hasGuestSourceRow', 'insertOauthClient', 'upsertGuestSource'] }, async (engine, backend) => {
       await seedCredentials(engine, backend);
-      await makeGuest(engine, backend);
+      await makeGuest(engine);
       const preview = await captured(() => runGuests(engine, ['grant-owner-clients']));
       const json = await captured(() => runGuests(engine, ['grant-owner-clients', '--json']));
       const before = await clientReads(engine);
@@ -84,7 +78,7 @@ describe('guests grant-owner-clients (row 32m-3)', () => {
       return { preview, json, before, applied, after, again };
     });
 
-  parityTest('guests.ts:140 a source that is not a guest source: the same line, exit 2, nothing written; Rust refuses guest_sources',
+  parityTest('guests.ts:140 a source that is not a guest source: the same line, exit 2, nothing written, on every arm',
     { methods: ['hasGuestSourceRow', 'insertOauthClient'] }, async (engine, backend) => {
       await seedCredentials(engine, backend);
       await createSource(engine, backend, 'not-guest');
@@ -93,40 +87,4 @@ describe('guests grant-owner-clients (row 32m-3)', () => {
       expect(run.exits).toEqual([2]);
       return { run, unchanged: JSON.stringify(await clientReads(engine)) === JSON.stringify(before) };
     });
-
-  // The parity harness counts a typed refusal as a stop; this pins what the Rust arm does at the CLI: the error, the
-  // stderr and exit code the CLI writes for it, and that no credential changed.
-  test('a Rust brain refuses guests grant-owner-clients with the typed guest_sources refusal, writes nothing, and the CLI exits with it', async () => {
-    const rust = arms().find(arm => arm.backend === 'rust');
-    if (!rust) return;
-    const outcomes: unknown[] = [];
-    for (const source of ['guests', 'not-guest']) {
-      await resetArm(rust);
-      const { engine } = rust;
-      await seedCredentials(engine, 'rust');
-      if (source === 'guests') await makeGuest(engine, 'rust');
-      else await createSource(engine, 'rust', source);
-      const before = JSON.stringify(await clientReads(engine));
-      let thrown: unknown = null;
-      const printed = await captured(async () => {
-        try { await runGuests(engine, ['grant-owner-clients', '--source', source, '--yes']); } catch (e) { thrown = e; }
-      });
-      const stderr: string[] = [];
-      const write = process.stderr.write.bind(process.stderr);
-      (process.stderr as { write: unknown }).write = (s: string | Uint8Array) => { stderr.push(String(s)); return true; };
-      let exitCode: number;
-      try { exitCode = writeCliError(thrown, 'guests', { json: false }); } finally { (process.stderr as { write: unknown }).write = write; }
-      const e = thrown as { code?: string; message?: string; reason?: string; detail?: string } | null;
-      outcomes.push({ source, code: e?.code, reason: e?.reason, detail: e?.detail, message: e?.message, printed, exitCode, stderr: stderr.join(''),
-        unchanged: JSON.stringify(await clientReads(engine)) === before });
-    }
-    const refusal = "This brain's engine does not support hasGuestSourceRow yet (it needs the guest_sources capability), so nothing ran.";
-    expect(outcomes).toEqual(['guests', 'not-guest'].map(source => ({
-      source, code: 'engine_capability_missing', reason: 'guest_sources',
-      detail: 'member=hasGuestSourceRow capability=guest_sources outcome=none written=nothing', message: refusal,
-      printed: { out: [], err: [], exits: [] }, exitCode: expect.any(Number), stderr: expect.stringContaining(refusal), unchanged: true,
-    })));
-    expect((outcomes[0] as { exitCode: number }).exitCode).toBe((outcomes[1] as { exitCode: number }).exitCode);
-    expect((outcomes[0] as { stderr: string }).stderr).toBe((outcomes[1] as { stderr: string }).stderr);
-  }, 120_000);
 });

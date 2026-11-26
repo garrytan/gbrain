@@ -16,7 +16,8 @@
  *    same in every locale, and CI's Postgres runs in C.UTF-8. Every case here uses ids that differ by byte and by
  *    en_US; run it against an en_US Postgres to see it fail.
  *  - Seam: the CLI cases stub process.exit and capture console.error; the link-hint case captures the logger. Source
- *    rows come from the createSource fixture and guest-source rows from harness-only SQL.
+ *    rows come from the createSource fixture and guest-source rows from the typed upsertGuestSource, written after
+ *    the pages.
  */
 import { describe, expect, spyOn } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
@@ -27,6 +28,7 @@ import { runQuarantine } from '../../src/commands/quarantine.ts';
 import { runExtractConversationFacts } from '../../src/commands/extract-conversation-facts.ts';
 import { resolvePageRef } from '../../src/core/trust/refs.ts';
 import { promoteGuestNote } from '../../src/core/guests/promote.ts';
+import { GUEST_TRUST_CEILING } from '../../src/core/guests/sources.ts';
 import { OperationError } from '../../src/core/ops/contract.ts';
 import { probeTarget } from '../../src/core/search/explain-target.ts';
 import { resolveChainAnchors } from '../../src/core/search/relational-chain.ts';
@@ -107,9 +109,10 @@ describe('a slug held in several sources lists those sources by byte', () => {
     return named(err);
   });
 
-  parityTest('promoteGuestNote names the guest sources by byte', { methods: ['putPage', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('promoteGuestNote names the guest sources by byte', { methods: ['putPage', 'upsertGuestSource', 'listGuestNotes'] }, async (engine, backend) => {
     await seed(engine, backend);
-    for (const id of MIXED_SOURCES) await engine.executeRaw('INSERT INTO guest_sources (source_id) VALUES ($1) ON CONFLICT DO NOTHING', [id]);
+    // The pages come first: a guest source takes no write from an owner path, and the row is all the note read needs.
+    for (const id of MIXED_SOURCES) await engine.upsertGuestSource(id, [], GUEST_TRUST_CEILING);
     const e = await errorOf(() => promoteGuestNote(ctxFor(engine), { slug: SLUG }));
     expect(e.message).toContain(`exists in several guest sources (${BYTE_SOURCES.join(', ')})`);
     return e.message;

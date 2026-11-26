@@ -91,6 +91,7 @@ import {
   EmbeddingColumnNotRegisteredError,
 } from './search/embedding-column.ts';
 import { hasCJK } from './cjk.ts';
+import * as collateGuestSourcesImpl from './engine-sql/collate-guest-sources.ts';
 import * as factsImpl from './engine-sql/facts.ts';
 import * as embedStaleWorkImpl from './engine-sql/embed-stale-work.ts';
 import * as embeddingProvenanceImpl from './engine-sql/embedding-provenance.ts';
@@ -3123,6 +3124,8 @@ export class PGLiteEngine implements BrainEngine {
   hasCompanyBrainReceipt(sourceId: string) { return cliReadsImpl.hasCompanyBrainReceipt(this.cliReads, sourceId); }
   readGuestSourceRow(sourceId: string) { return cliReadsImpl.readGuestSourceRow(this.cliReads, sourceId); }
   hasGuestSourceRow(sourceId: string) { return cliReadsImpl.hasGuestSourceRow(this.cliReads, sourceId); }
+  upsertGuestSource(sourceId: string, writers: readonly string[], trustCeiling: string) { return collateGuestSourcesImpl.upsertGuestSource(this.rawRead, sourceId, writers, trustCeiling); }
+  listGuestNotes(slug: string, guestSource?: string) { return collateGuestSourcesImpl.listGuestNotes(this.rawRead, slug, guestSource); }
   listGuestSourceIds(sourceIds: readonly string[]) { return cliReadsImpl.listGuestSourceIds(this.cliReads, sourceIds); }
   hasGuestSource() { return cliReadsImpl.hasGuestSource(this.cliReads); }
   readPageTrustRows(lookup: PageTrustLookup) { return cliReadsImpl.readPageTrustRows(this.cliReads, lookup); }

@@ -262,8 +262,8 @@ src/core/grants/service.ts	sql_template	11	+1: stampReadShared writes oauth_clie
 src/core/guard-ledger-checks.ts	execute_raw	3
 src/core/guests/admission.ts	execute_raw	3
 src/core/guests/marker.ts	execute_raw	1
-src/core/guests/promote.ts	execute_raw	4
-src/core/guests/sources.ts	execute_raw	7	came from master #9625 (shared company brains: owner setup, member keys), which landed after this ratchet was cut
+src/core/guests/promote.ts	execute_raw	3
+src/core/guests/sources.ts	execute_raw	2	came from master #9625 (shared company brains: owner setup, member keys), which landed after this ratchet was cut
 src/core/guests/stamp-readable.ts	execute_raw	1
 src/core/heal-audit.ts	execute_raw	3
 src/core/identity/speaker-owner.ts	execute_raw	2	GST-3216 PR 2: the speaker-owner trust read joins a page's live revision to its write request, source kind and member bindings in one statement, and the connector stamp reads a source's bound members; both move behind typed reads when the access and journal tables get engine methods

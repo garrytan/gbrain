@@ -946,6 +946,15 @@ fn fixtures() -> Vec<(&'static str, Vec<SeedRow>)> {
             ])],
         ),
         (
+            "guest_sources",
+            vec![row(&[
+                ("source_id", "default"),
+                ("writers", "{oauth_client:broker-a}"),
+                ("trust_ceiling", "external_untrusted"),
+                ("created_at", "2026-01-02 03:04:05+00"),
+            ])],
+        ),
+        (
             "page_versions",
             vec![row(&[
                 ("id", "31"),
