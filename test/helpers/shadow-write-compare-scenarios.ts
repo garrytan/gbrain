@@ -855,10 +855,11 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       await ctx.reset(); await fillSeedFixture(primary());
       let gen = 0; // PGLite has no data fence (one process writes): the serving process\'s write count says it; Postgres is caught by the fence alone
       const { inbox, wrapped } = rig(ctx.kind === 'pglite' ? { generation: () => gen } : {});
-      const original = primary().getPage.bind(primary()); let once = true;
-      const hook = spyOn(primary(), 'getPage').mockImplementation((async (...args: Parameters<BrainEngine['getPage']>) => {
-        if (once) { once = false; gen += 2; await primary().putPage('companies/acme-example', page('Acme Edited Elsewhere')); }
-        return original(...args);
+      const realGetPage = primary().getPage as (...a: Parameters<BrainEngine['getPage']>) => ReturnType<BrainEngine['getPage']>; let once = true;
+      // Fires at the read-back (the getPage on the primary itself), not at the sampler's pin read, which runs on the transaction's own engine while the transaction still holds the page row: a writer started there would wait for that lock.
+      const hook = spyOn(primary(), 'getPage').mockImplementation((async function (this: unknown, ...args: Parameters<BrainEngine['getPage']>) {
+        if (once && this === primary()) { once = false; gen += 2; await primary().putPage('companies/acme-example', page('Acme Edited Elsewhere')); }
+        return realGetPage.apply(this, args);
       }) as never);
       try {
         await wrapped.transaction(async (tx) => { await tx.putPage('companies/acme-example', page('Acme Renamed')); });
@@ -1451,6 +1452,20 @@ export function defineFenceNegatives(ctx: WriteCompareContext): void {
       try { await putAlice(wrapped); await until(() => ofPage(inbox, 'people/alice-example').length >= 1); } finally { hook.restore(); }
       expect(Boolean(ofPage(inbox, 'people/alice-example')[0]!.moved)).toBe(true);
     }, 120_000);
+
+    test('the pin read never waits behind another writer queued on the page row: the save commits within the bound and its sample is sent, moved or not', async () => {
+      await linked();
+      const { inbox, wrapped } = prod();
+      let other: Promise<unknown> | undefined; const started = Date.now();
+      await putAlice(wrapped, async () => {
+        other = primary().executeRaw("UPDATE pages SET title = title || ' (queued)' WHERE slug = 'people/alice-example'"); // waits for the transaction's own row lock until it commits
+        await new Promise((r) => setTimeout(r, 300));
+      });
+      expect(Date.now() - started).toBeLessThan(2_000); // the pin (statement timeout 2 s) did not queue behind it, nor did the commit
+      await other;
+      await until(() => ofPage(inbox, 'people/alice-example').length >= 1);
+      expect(['sample', 'uncomparable']).toContain(ofPage(inbox, 'people/alice-example')[0]!.outcome ?? 'sample');
+    }, 60_000);
 
     test('the page row stays locked by the transaction\'s own putPage until it commits: another transaction\'s update of it waits, so the revision read just before the commit is the transaction\'s own', async () => {
       await fresh();
