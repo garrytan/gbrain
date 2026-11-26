@@ -2718,18 +2718,19 @@ fn c20_no_deadlock_across_two_pages_in_both_orders_multi_writer() {
     let (done, finished) = mpsc::channel();
     thread::spawn(move || {
         let positions = together(8, move |i| {
-            let keys: Vec<SingleFlightKey> = ["pair/a", "pair/b"]
+            let order = if i % 2 == 0 {
+                ["pair/a", "pair/b"]
+            } else {
+                ["pair/b", "pair/a"]
+            };
+            // The keys are named in each writer's own order: the store takes them sorted, so opposite orders cannot wait on each other.
+            let keys: Vec<SingleFlightKey> = order
                 .iter()
                 .map(|slug| SingleFlightKey {
                     source_id: "default".into(),
                     slug: slug.to_string(),
                 })
                 .collect();
-            let order = if i % 2 == 0 {
-                ["pair/a", "pair/b"]
-            } else {
-                ["pair/b", "pair/a"]
-            };
             let mut mine = Vec::new();
             for round in 0..3 {
                 loop {
