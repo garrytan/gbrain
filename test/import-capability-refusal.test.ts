@@ -8,7 +8,7 @@
  * failure ledger row and prints no partial result; every other per-file failure still ends the run "partial" with its
  * failures listed and its ledger rows, and an import on an engine that serves every member is unchanged.
  * Fails when the per-file catch records a capability refusal as a file failure.
- * Hermetic PGLite in-memory behind the Rust-engine stand-in (test/helpers/rust-stand-in.ts); GBRAIN_HOME is a temp directory.
+ * Hermetic PGLite in-memory; the refusing engine is PGLite with `transaction` refusing as the Rust engine does; GBRAIN_HOME is a temp directory.
  */
 import { afterAll, beforeAll, beforeEach, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
@@ -19,7 +19,6 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runImport } from '../src/commands/import.ts';
 import { loadSyncFailures } from '../src/core/sync-failure-ledger.ts';
 import { isEngineCapabilityRefusal } from '../src/core/engine-capability-refusal.ts';
-import { rustStandIn } from './helpers/rust-stand-in.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { withEnv } from './helpers/with-env.ts';
 
@@ -58,8 +57,15 @@ async function runCaptured(view: BrainEngine) {
   return { stdout: lines.join('\n'), error, ledger, returned: out.r };
 }
 
+/** An engine that refuses the transaction every file's write opens, whatever else the stand-in serves (part D serves them all). */
+const refusingTransaction = () => new Proxy(engine, { get(target, key) {
+  if (key === 'transaction') return async () => { throw Object.assign(new Error("This brain's engine does not support transaction yet (it needs the transactions capability), so nothing ran."), { code: 'engine_capability_missing' }); };
+  const value = (target as unknown as Record<PropertyKey, unknown>)[key];
+  return typeof value === 'function' ? value.bind(target) : value;
+} }) as unknown as BrainEngine;
+
 test('a capability refusal on a file ends the import with that refusal, no partial result and no ledger row', async () => {
-  const { stdout, error, ledger } = await runCaptured(rustStandIn(engine));
+  const { stdout, error, ledger } = await runCaptured(refusingTransaction());
   expect(isEngineCapabilityRefusal(error), `rejected with ${String(error)}`).toBe(true);
   expect(ledger).toBe(0);
   expect(stdout).not.toContain('"status":"partial"');
