@@ -456,8 +456,8 @@ for (const kind of testBackends()) {
       await site(f, 'src/core/ops/admin.ts:313', e => M.versionWriters(e, versions), e => e.listVersionReasonWriters(versions));
       await site(f, 'src/core/ops/admin.ts:313', e => M.versionWriters(e, []), e => e.listVersionReasonWriters([]), { nonEmpty: false });
       const typed = ['default:export/a', 'default:export/b', 'default:export/gone', 'default:people/alice-example'].map(k => f.world.ids[k]!);
-      await site(f, 'src/core/search/transcript-quote.ts:111', e => M.pageTypes(e, [...typed, typed[0]!, 999_999]), e => e.listPageTypesByIds([...typed, typed[0]!, 999_999]));
-      await site(f, 'src/core/search/transcript-quote.ts:111', async e => rowsOf(await M.pageTypes(e, [])), async e => e.listPageTypesByIds([]), { nonEmpty: false });
+      await site(f, 'src/core/search/transcript-quote.ts:111', e => M.pageTypes(e, [...typed, typed[0]!, 999_999]), e => e.listPageRefsByIds([...typed, typed[0]!, 999_999]).then(rows => rows.map(({ id, type }) => ({ id, type }))));
+      await site(f, 'src/core/search/transcript-quote.ts:111', async e => rowsOf(await M.pageTypes(e, [])), async e => e.listPageRefsByIds([]).then(rows => rows.map(({ id, type }) => ({ id, type }))), { nonEmpty: false });
     });
 
     // -------- withdrawal-discovery.ts:26, :81, :117, :144, :205

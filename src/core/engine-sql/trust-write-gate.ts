@@ -120,6 +120,14 @@ export async function upsertWriteGateReceipt(exec: SqlExecutor, input: WriteGate
   return Number(rows[0]!.id);
 }
 
+export async function upsertPageWriteGateReceipt(exec: SqlExecutor, sourceId: string, slug: string, receipt: WriteGateReceiptFields): Promise<number | null> {
+  const { rows } = await exec.run<{ id: string }>(sqlFragment`INSERT INTO write_gate_receipts (${RECEIPT_COLUMNS})
+     SELECT 'pages', p.id::text, p.source_id, ${receiptValues(receipt)}
+       FROM pages p WHERE p.source_id = ${sourceId} AND p.slug = ${slug} AND p.deleted_at IS NULL
+     ${RECEIPT_UPSERT}`);
+  return rows[0] ? Number(rows[0].id) : null;
+}
+
 export async function listWriteGateReceiptsFor(exec: LegacyUnscopedRead, targetTable: string, targetId: string, limit: number): Promise<WriteGateReceiptRow[]> {
   const rows = await exec.executeRaw<Record<string, unknown>>(
     `SELECT id::text AS id, verdict, reason_families, detector_version, tier, created_at, last_seen_at

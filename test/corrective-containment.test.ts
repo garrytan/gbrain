@@ -71,6 +71,10 @@ describe('remote history uses strict body sanitization', () => {
           getVersions: getVersions as never,
           // Trusted local history also reads write attribution (Foundations 1 F1b); none is recorded here.
           executeRaw: (async () => []) as never,
+          // Guest stamping reads page trust through the typed member; no page rows are recorded here either.
+          readPageTrustRows: (async () => []) as never,
+          // The facts-table overlay (held and low-trust rows) is a typed member too; no row is held here.
+          readFenceOverlayRows: (async () => []) as never,
           // History in a remote context also reads each version's trust tier and reason writer through engine members.
           listVersionTrustTiers: (async () => []) as never,
           listVersionReasonWriters: (async () => []) as never,
