@@ -944,11 +944,33 @@ describe('engine parity: multi-writer conformance', () => {
       const body = await bodyOf(engine, stressSlug(id, round));
       if (body !== null) pageBodies.set(stressSlug(id, round), body);
     }
+    // The drain. A writer's claim may legitimately answer null while committed waiting work exists (the rows it can see are locked by
+    // other claimers in flight, and a job committed after its statement's snapshot is invisible to it). So once every writer has
+    // finished, this process claims what is left, until null: at most 64 calls, and every job it takes must have been waiting (a
+    // job that was active would be a claim that was lost).
+    const statusBefore = new Map<number, string>();
+    for (const job of await engine.listJobs({ limit: 500 })) statusBefore.set(Number(job.id), String(job.status));
+    const drained: number[] = [];
+    for (let calls = 0; ; calls++) {
+      expect(calls, 'the drain did not reach an empty queue within 64 claims').toBeLessThan(64);
+      const row = await engine.claimNextJob(claimSpec('c18-drain:a'));
+      if (!row) break;
+      drained.push(Number(row.id));
+    }
+    expect(drained.filter(id => statusBefore.get(id) !== 'waiting').map(id => `${id}:${statusBefore.get(id)}`), 'the drain took a job that was not waiting (a lost claim)').toEqual([]);
     const jobIdsByKey = new Map<string, number[]>();
-    for (const job of await engine.listJobs({ limit: 500 })) jobIdsByKey.set(String(job.idempotency_key), [...(jobIdsByKey.get(String(job.idempotency_key)) ?? []), Number(job.id)]);
-    expect(stressViolations({ reports, pageBodies, jobIdsByKey }), 'the stress run lost or duplicated work, or did not contend').toEqual([]);
+    const statusAfter = new Map<number, string>();
+    for (const job of await engine.listJobs({ limit: 500 })) {
+      jobIdsByKey.set(String(job.idempotency_key), [...(jobIdsByKey.get(String(job.idempotency_key)) ?? []), Number(job.id)]);
+      statusAfter.set(Number(job.id), String(job.status));
+    }
+    const violations = stressViolations({ reports, pageBodies, jobIdsByKey, drained });
+    // When the claims do not add up, say what state each unclaimed stored job was in before and after the drain.
+    const unclaimed = [...jobIdsByKey.values()].flat().filter(id => !drained.includes(id) && !reports.flatMap(r => r.results).some(w => w.job === id));
+    const states = unclaimed.map(id => `${id}: ${statusBefore.get(id)} before the drain, ${statusAfter.get(id)} after`);
+    expect(violations, `the stress run lost or duplicated work, or did not contend${states.length ? `; unclaimed stored jobs: ${states.join('; ')}` : ''}`).toEqual([]);
     const jobs = [...jobIdsByKey.values()].flat();
-    const claimedIds = reports.flatMap(r => r.results).map(o => o.job).filter((id): id is number => id !== null);
+    const claimedIds = [...reports.flatMap(r => r.results).map(o => o.job).filter((id): id is number => id !== null), ...drained];
     return { processes: 8, writers: 64, pages: 128, jobs: jobs.length, claimed: claimedIds.length, twice: 0, busy: 0, overlapped: true };
   });
 

@@ -21,7 +21,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import ts from 'typescript';
 import {
-  acknowledgedWriteViolations, crashBody, crashKey, crashSlug, stressBody, stressKey, stressSlug, stressViolations,
+  acknowledgedWriteViolations, claimAccountViolations, crashBody, crashKey, crashSlug, stressBody, stressKey, stressSlug, stressViolations,
   type CrashObservation, type StressObservation,
 } from './engine-parity/multi-writer-support.ts';
 import { MW_ARMS, MW_CASES, MW_CASE_IDS, MW_ENGINE_ARMS, MW_STORE_ARMS, MW_VARIANT_IDS, mwCase, mwCell, mwVariant, mwVariantCell } from './engine-parity/multi-writer-cases.ts';
@@ -237,7 +237,7 @@ describe('multi-writer support matrix', () => {
   });
 
   test('the C18 check rejects a run that did not overlap, a wrong page body, a missing page, stray claim ids and a doubled key, and accepts a whole run', () => {
-    type Mutable = { reports: StressObservation['reports'][number][]; pageBodies: Map<string, string>; jobIdsByKey: Map<string, number[]> };
+    type Mutable = { reports: StressObservation['reports'][number][]; pageBodies: Map<string, string>; jobIdsByKey: Map<string, number[]>; drained: number[] };
     const whole = (): Mutable => {
       const reports = Array.from({ length: 8 }, (_, p) => ({
         startedAt: 1_000 + p, finishedAt: 2_000 + p,
@@ -246,7 +246,7 @@ describe('multi-writer support matrix', () => {
       const pageBodies = new Map<string, string>();
       for (let id = 0; id < 64; id++) for (let r = 0; r < 2; r++) pageBodies.set(stressSlug(id, r), stressBody(id, r));
       const jobIdsByKey = new Map<string, number[]>(Array.from({ length: 64 }, (_, id) => [stressKey(id), [500 + id]] as const));
-      return { reports, pageBodies, jobIdsByKey };
+      return { reports, pageBodies, jobIdsByKey, drained: [] };
     };
     expect(stressViolations(whole())).toEqual([]);
     // The old check accepted each of these: pages only had to exist, claimed ids only had to be 64 distinct numbers.
@@ -256,14 +256,36 @@ describe('multi-writer support matrix', () => {
     expect(stressViolations(wrongBody)).toEqual([`${stressSlug(7, 1)}: its body is wrong`]);
     const noPage = whole(); noPage.pageBodies.delete(stressSlug(63, 0));
     expect(stressViolations(noPage)).toEqual([`${stressSlug(63, 0)}: the page is missing`]);
-    const strayClaims = whole(); strayClaims.reports[1]!.results[0]!.job = 9_999; // distinct, but not a stored job
-    expect(stressViolations(strayClaims)).toEqual(['the claimed ids are not the stored jobs\' ids']);
-    const twice = whole(); twice.reports[2]!.results[0]!.job = 500; // a job claimed by two writers
-    expect(stressViolations(twice)).toContain('a job was claimed twice');
+    const strayClaims = whole(); strayClaims.reports[1]!.results[0]!.job = 9_999; // distinct, but not a stored job (and job 508 is left unclaimed)
+    expect(stressViolations(strayClaims).slice(0, 2)).toEqual(['claimed id 9999 is not a stored job', 'stored job 508 was never claimed, not even by the drain']);
+    const twice = whole(); twice.reports[2]!.results[0]!.job = 500; // a job claimed by two writers (and job 516 is left unclaimed)
+    expect(stressViolations(twice).slice(0, 2)).toEqual(['job 500 was claimed 2 times', 'stored job 516 was never claimed, not even by the drain']);
     const doubled = whole(); doubled.jobIdsByKey.set(stressKey(3), [503, 777]);
-    expect(stressViolations(doubled)).toEqual([`request key ${stressKey(3)} has 2 rows`, 'the claimed ids are not the stored jobs\' ids']);
+    expect(stressViolations(doubled).slice(0, 2)).toEqual([`request key ${stressKey(3)} has 2 rows`, 'stored job 777 was never claimed, not even by the drain']);
     const busy = whole(); busy.reports[3]!.results[1]!.refused = ['owner_busy'];
     expect(stressViolations(busy)).toEqual([`writer ${3 * 8 + 1} was refused (owner_busy): a busy error`]);
+  });
+
+  test('claim accounting: a null claim whose job the drain took passes; a job claimed twice, a stray id and a job left unclaimed after the drain each fail with the ids in the message', () => {
+    const stored = [10, 11, 12, 13];
+    // A writer's null claim is allowed when the drain claims the job it could not see.
+    expect(claimAccountViolations({ writerClaims: [10, 11, null, 13], drained: [12], stored })).toEqual([]);
+    expect(claimAccountViolations({ writerClaims: [null, null, null, null], drained: [10, 11, 12, 13], stored })).toEqual([]);
+    // Left unclaimed after the drain.
+    const left = claimAccountViolations({ writerClaims: [10, 11, null, 13], drained: [], stored });
+    expect(left[0]).toBe('stored job 12 was never claimed, not even by the drain');
+    expect(left[1]).toBe('claim accounting: 4 stored jobs [10, 11, 12, 13]; 3 writer claims and 1 null writer claims; drained 0 []; claimed but not stored []; stored but never claimed [12]; claimed more than once []');
+    // Claimed twice, across a writer and the drain.
+    const twice = claimAccountViolations({ writerClaims: [10, 11, 12, 13], drained: [12], stored });
+    expect(twice[0]).toBe('job 12 was claimed 2 times');
+    expect(twice[1]).toContain('drained 1 [12]; claimed but not stored []; stored but never claimed []; claimed more than once [12]');
+    // A claimed id that is not a stored job.
+    const stray = claimAccountViolations({ writerClaims: [10, 11, 99, 13], drained: [12], stored });
+    expect(stray[0]).toBe('claimed id 99 is not a stored job');
+    expect(stray[1]).toContain('claimed but not stored [99]');
+    // Two problems at once name both ids.
+    expect(claimAccountViolations({ writerClaims: [10, 10, 99, null], drained: [], stored }).slice(0, 4)).toEqual([
+      'job 10 was claimed 2 times', 'claimed id 99 is not a stored job', 'stored job 11 was never claimed, not even by the drain', 'stored job 12 was never claimed, not even by the drain']);
   });
 
   test('C19 and C18 say what they do not prove, so a client-crash case is never read as a database-server crash test', () => {
