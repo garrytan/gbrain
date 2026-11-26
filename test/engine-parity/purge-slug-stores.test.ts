@@ -146,6 +146,58 @@ describe('engine parity: purge slug stores', () => {
   );
 
   parityTest(
+    'deletePurgedSlugHolds reads deletedAt as Postgres text and with a UTC offset, and refuses text that is not a time',
+    { methods: ['deletePurgedSlugHolds'] },
+    async (engine) => {
+      const slugs = ['notes/z', 'notes/offset', 'notes/space', 'notes/shifted', 'notes/between', 'notes/bad'];
+      for (const slug of slugs) await engine.putPage(slug, note(slug));
+      const pages = new Map<string, number>();
+      for (const slug of slugs) pages.set(slug, Number((await engine.getPage(slug))!.id));
+      const seed = async (slug: string, fp: string) => {
+        const id = await hold(engine, SRC, slug, fp);
+        await receipt(engine, SRC, id);
+      };
+      const purge = (slug: string, deletedAt: string) => engine.deletePurgedSlugHolds(SRC, [{ slug, id: pages.get(slug)!, deletedAt }]);
+      const kept = { write_gate_holds: 0, write_gate_receipts: 0 };
+      const gone = { write_gate_holds: 1, write_gate_receipts: 1 };
+      // Each form of a time after the hold deletes it; the same form long before it keeps it.
+      const forms = [
+        ['notes/z', '2999-01-01T00:00:00.000000Z', '2000-01-01T00:00:00.000000Z'],
+        ['notes/offset', '2999-01-01T00:00:00.000000+00:00', '2000-01-01T00:00:00.000000+00:00'],
+        ['notes/space', '2999-01-01 00:00:00.123456+00', '2000-01-01 00:00:00.123456+00'],
+        ['notes/shifted', '2999-01-01 05:30:00.000000+05:30', '2000-01-01 05:30:00.000000+05:30'],
+      ] as const;
+      for (const [slug] of forms) await seed(slug, `fp-${slug}`);
+      const out: Record<string, unknown> = {};
+      for (const [slug, after, before] of forms) {
+        out[`${slug} before`] = await purge(slug, before);
+        out[`${slug} after`] = await purge(slug, after);
+        out[`${slug} again`] = await purge(slug, after);
+      }
+      // A cutoff between two holds, written with an offset: the hold seen before it goes, the one after stays.
+      await seed('notes/between', 'fp-first');
+      await new Promise(r => setTimeout(r, 60));
+      const cut = new Date(Date.now() - 30 + 5.5 * 3600_000).toISOString().replace('T', ' ').replace('Z', '000+05:30');
+      await new Promise(r => setTimeout(r, 60));
+      await seed('notes/between', 'fp-second');
+      out.between = await purge('notes/between', cut);
+      out.betweenRest = await engine.deletePurgedSlugHolds(SRC, [{ slug: 'notes/between', id: pages.get('notes/between')! }]);
+      // Text that is not a time is refused before anything is deleted (each engine words the refusal its own way).
+      await seed('notes/bad', 'fp-bad');
+      out.bad = await purge('notes/bad', 'not a time').then(() => 'deleted', () => 'refused');
+      out.badRest = await engine.deletePurgedSlugHolds(SRC, [{ slug: 'notes/bad', id: pages.get('notes/bad')! }]);
+      expect(out).toEqual({
+        ...Object.fromEntries(['notes/z', 'notes/offset', 'notes/space', 'notes/shifted'].flatMap(slug => [[`${slug} before`, kept], [`${slug} after`, gone], [`${slug} again`, kept]])),
+        between: gone,
+        betweenRest: gone,
+        bad: 'refused',
+        badRest: gone,
+      });
+      return out;
+    },
+  );
+
+  parityTest(
     'the stores with no typed writer: core edit notices, slug aliases, rename history and page secret occurrences',
     { methods: ['executeRaw', 'deletePurgedSlugStoreRows', 'listPageSecretOccurrences'], requires: 'raw_sql' },
     async (engine) => {
