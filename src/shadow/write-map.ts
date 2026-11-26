@@ -155,6 +155,9 @@ export const WRITE_MAP: Record<string, WriteSpec> = {
   updateTake: { tables: ['takes'], plan: (a) => [{ relation: 'takes', sel: { page_id: id(a[0]), row_num: id(a[1]) } }] },
   resolveTake: { tables: ['takes'], plan: (a) => [{ relation: 'takes', sel: { page_id: id(a[0]), row_num: id(a[1]) } }] },
   stampTakeResolvedAt: { tables: ['takes'], plan: (a) => [{ relation: 'takes', sel: { page_id: id(a[0]), row_num: id(a[1]) } }] },
+  // The chronicle ledger row the decision names (the seed copies chronicle_page_state row for row).
+  upsertChronicleRow: { tables: ['chronicle_page_state'], plan: (a) => [{ relation: 'chronicle_page_state', sel: {
+    source_id: String(a[0].sourceId), page_id: id(a[0].pageId), content_hash: String(a[0].contentHash), extractor_version: id(a[0].extractorVersion) } }] },
   supersedeTake: { tables: ['takes'], plan: (a) => [childById('takes', a[0])] },
   deleteTakeRows: { tables: ['takes', 'owner_only_marks'], plan: (a) => [childById('takes', a[0], true), ...OWNER_MARKS] },
   // A page publication's fence projection and fence guard (engine-sql/fence-projection.ts, trust-fence.ts): the page's
@@ -310,7 +313,7 @@ export const UNMAPPED_WRITE_MEMBERS: ReadonlySet<string> = new Set([
   'archiveSource', 'assertCycleLease', 'attachWantedMarkerJob', 'backfillSearchVectors', 'beginSnapshotRead',
   'bindPageOrigin', 'blankPurgeCoreEditNotices', 'bumpGenerationValve', 'bumpPageKnowledgeRevision', 'bumpPageRetrievals',
   'bumpSourcePurgeEpoch', 'bumpWithdrawnPageRevisions', 'cancelJobs', 'cancelWriteRow', 'capSessionStatePerClient',
-  'claimFilePage', 'claimHousekeepingTurn', 'claimNextJob', 'claimNotifierLease', 'claimSegmentedProjection',
+  'claimCoalescedGitEffects', 'claimFilePage', 'claimHousekeepingTurn', 'claimNextJob', 'claimNotifierLease', 'claimSegmentedProjection',
   'claimWakeForgets', 'claimWakeWatch', 'clearChunkVectors', 'clearConversationPageFacts', 'clearFenceCandidateParts',
   'clearFenceHoldRows', 'clearGenerationAttempts', 'clearImageSealVectors', 'clearMentionSourceIndex',
   'clearOntologySlots', 'clearPageChildOrphans', 'clearTieHeldGenerationRows', 'clearUnkeptChunkVectors',
@@ -337,7 +340,7 @@ export const UNMAPPED_WRITE_MEMBERS: ReadonlySet<string> = new Set([
   'expireFactWithNote', 'expireFactsByIds', 'expireFactsByWithdrawal', 'expireFactsOfGonePages', 'expirePageFactsBySource',
   'expireSourceFactNow', 'expireSpendReservations', 'expireStaleWriteClaims', 'expireSupersededFact', 'failEffectRow',
   'failJob', 'failParentJob', 'failSubagentToolExecution', 'fetchSyncImportPageCursor', 'finishAccessRestamp',
-  'forgetWakeCredential', 'forgetWakeMember', 'holdPageEmbedding', 'insertAccessMember', 'insertAccessMemberLink',
+  'forgetWakeCredential', 'forgetWakeMember', 'gitDurabilityStore', 'gitEffectStore', 'holdPageEmbedding', 'insertAccessMember', 'insertAccessMemberLink',
   'insertAccessMigration', 'insertAccessPolicyRevision', 'insertAccessReadLogRows', 'insertAccessToken', 'insertBeliefEvents',
   'insertBeliefRedaction', 'insertCalibrationProfile', 'insertCanonicalTimelineRows', 'insertDerivedAliasRows',
   'insertFactPurge', 'insertFactWithdrawal', 'insertHoldingPagePurges', 'insertJobAttachment', 'insertLeasePressure',
@@ -351,7 +354,7 @@ export const UNMAPPED_WRITE_MEMBERS: ReadonlySet<string> = new Set([
   'lockMentionEntries', 'lockMentionSources', 'lockNoopEmbeddingWindow', 'lockOAuthClient', 'lockOauthClientName',
   'lockOverdueHold', 'lockPageById', 'lockPersistenceCounters', 'lockPurgeSource', 'lockReconcileRevision',
   'lockSourceRow', 'lockSourceShared', 'lockWriteRequest', 'lockWriteRequestsById', 'logChatUsage', 'logMcpRequest',
-  'lowerTrustTier', 'markAccessRevisionsApplied', 'markBeliefCommits', 'markEdgeProposalStale', 'markEdgeProposalUndone',
+  'lowerTrustTier', 'manualLinkStore', 'markAccessRevisionsApplied', 'markBeliefCommits', 'markEdgeProposalStale', 'markEdgeProposalUndone',
   'markGenerationActivated', 'markJobWatchdogSuspect', 'markNeedsRederive', 'markProjectionRebuildFailed',
   'markRevertedEdgeProposals', 'markSourceSynced', 'markSpendUsageUnknown', 'mintBeliefLifetime',
   'moveConversationSourceWindows', 'moveFactToPage', 'moveFactWithdrawalSubject', 'moveKeptFactRows',
@@ -391,7 +394,7 @@ export const UNMAPPED_WRITE_MEMBERS: ReadonlySet<string> = new Set([
   'softDeleteOauthClient', 'stampConversationSourceWindows', 'stampDeferredProjectionJob', 'stampDreamPageProvenance',
   'stampEffectClaim', 'stampPageFrontmatter', 'stampPageIngest', 'stampVersionChangeReason', 'stampWorktreeHeartbeats',
   'stampWriteClaim', 'startSubagentToolExecution', 'storeSegmentDerivationsIfLive', 'swapFactsFtsIndex',
-  'switchAccessMigration', 'takePageEmbeddingLease', 'tombstoneAccessMember', 'touchAccessTokenLastUsed',
+  'switchAccessMigration', 'takePageEmbeddingLease', 'tombstoneAccessMember', 'topologyStore', 'touchAccessTokenLastUsed',
   'touchUnclaimedProjectionJob', 'transitionTrustProposal', 'trueUpReservations', 'unlinkEntityIdentityRow',
   'updateFenceFactCells', 'updateJobProgress', 'updateOauthClientBudget', 'updatePageBodyForPurge',
   'updatePendingTrustProposalAfter', 'upsertCliFileRow', 'upsertFactRelinkAttempt', 'upsertFenceCandidatePart',
@@ -411,9 +414,11 @@ export const UNMAPPED_WRITE_MEMBERS: ReadonlySet<string> = new Set([
   'restoreConsolidationTie', 'restoreExtractorFact', 'supersedeDuplicateFacts', 'tightenDatabaseFactVisibility',
   // Batch 11 typed writes (page purge port, take grades, horizons and proposals, chronicle ledger, connector stamps, sync conversions,
   // source rename): not mapped to a write plan yet, so they publish invalid like the rest of the list.
-  'carryConceptIncomingLinks', 'chronicleStore', 'claimTakeProposal', 'clearQueryCache', 'continueDerivationSweep', 'deleteFactPurgesByRequests', 'deleteOriginHoldRows', 'deletePagePurgeTombstones', 'deletePageSegmentTexts', 'deletePageStagings', 'deletePurgedFeedbackRows', 'deletePurgedNameStoreRows', 'deletePurgedPageFacts', 'deletePurgedPageFiles', 'deletePurgedPageGateReceipts', 'deletePurgedPageHolds', 'deletePurgedPageTrustProposals', 'deletePurgedSlugHolds', 'deletePurgedSlugStoreRows', 'deleteTakeGrade', 'deleteTakeHorizon', 'deleteTakeProposalTombstones', 'deleteTakePurgesByRequests', 'insertConfigIfAbsent', 'insertPageFactPurges', 'insertTakeGrade', 'insertTakeNudge', 'insertTakeProposal', 'pruneChronicleReservations', 'purgeTakeNudgesByWave', 'recordConnectorSyncAttempt', 'recordDerivationPurgeRow', 'recordOwedPurgeRows', 'recordSyncConversion', 'redactWriteRequestRow', 'rejectTakeProposal', 'releaseTakeProposalClaim', 'releaseTerminalBytes', 'renameSource', 'reserveChronicleJudgeSlot', 'revertWaveTakeResolutions', 'setTakeProposalPromotedRow', 'sweepPageTextsForClaims', 'unapplyWaveTakeGrades', 'upsertChronicleRow', 'upsertDerivedOriginPark', 'upsertExtractRollupDay', 'upsertTakeHorizon', 'writeConnectorDbCursor', 'writeOpCheckpointDoc', 'writePageLabelGuard',
+  'carryConceptIncomingLinks', 'chronicleStore', 'claimTakeProposal', 'clearQueryCache', 'continueDerivationSweep', 'deleteFactPurgesByRequests', 'deleteOriginHoldRows', 'deletePagePurgeTombstones', 'deletePageSegmentTexts', 'deletePageStagings', 'deletePurgedFeedbackRows', 'deletePurgedNameStoreRows', 'deletePurgedPageFacts', 'deletePurgedPageFiles', 'deletePurgedPageGateReceipts', 'deletePurgedPageHolds', 'deletePurgedPageTrustProposals', 'deletePurgedSlugHolds', 'deletePurgedSlugStoreRows', 'deleteTakeGrade', 'deleteTakeHorizon', 'deleteTakeProposalTombstones', 'deleteTakePurgesByRequests', 'insertConfigIfAbsent', 'insertPageFactPurges', 'insertTakeGrade', 'insertTakeNudge', 'insertTakeProposal', 'pruneChronicleReservations', 'purgeTakeNudgesByWave', 'recordConnectorSyncAttempt', 'recordDerivationPurgeRow', 'recordOwedPurgeRows', 'recordSyncConversion', 'redactWriteRequestRow', 'rejectTakeProposal', 'releaseTakeProposalClaim', 'releaseTerminalBytes', 'renameSource', 'reserveChronicleJudgeSlot', 'revertWaveTakeResolutions', 'setTakeProposalPromotedRow', 'sweepPageTextsForClaims', 'unapplyWaveTakeGrades', 'upsertDerivedOriginPark', 'upsertExtractRollupDay', 'upsertTakeHorizon', 'writeConnectorDbCursor', 'writeOpCheckpointDoc', 'writePageLabelGuard',
   // embed --stale writes (engine-sql/embed-stale-work.ts): the content-drift sweep's cursor row and one drift batch.
   'invalidateContentDriftChunks', 'lockContentDriftState',
+  // The soak counters' write (engine-sql/soak-counters.ts): one op_checkpoints row per day, which no write plan maps yet.
+  'addSoakCounterEvent',
   // Batch 12 typed writes (repair-rust b9/b6b, lanes 6, 13 and the segmented and secret-store members): not mapped to a write plan yet, so they publish invalid like the rest of the list.
   'clearCodeEdgesLeavingChunks', 'deleteChunksByIds', 'deleteManagedSyncFailureObservation', 'deleteUnreferencedSecretEntry', 'dispatchBudgetReservation', 'insertBackupSecretEntry', 'insertBackupSecretOccurrence', 'insertOpCheckpointIfAbsent', 'insertRemirrorEffects', 'insertSecretEntry', 'insertSecretOccurrence', 'markSecretEntryAllowed', 'movePageVersions', 'moveTwinFacts', 'moveTwinPageChildren', 'moveTwinRelationships', 'reclaimBudgetReservations', 'recordRenameAlias', 'releaseBudgetReservation', 'replaceOpCheckpointAtVersion', 'reserveBudgetReservation', 'retireStaleSegmentChunks', 'setRawDataValue', 'setRedactedPageFields', 'setRedactedRowText', 'setRetainedVersionBody', 'settleBudgetReservation', 'upsertFenceTrendRunRecord',
   // The segmented write path's typed writes (engine-members/segmented-writes.ts): a re-chunk, a fence rewrite and a segmented embed.
@@ -423,6 +428,8 @@ export const UNMAPPED_WRITE_MEMBERS: ReadonlySet<string> = new Set([
   'applyRetrievalRatings', 'insertPinnedQuestion', 'insertRetrievalEvents', 'insertVolunteerEvents',
   // Lane 4 (sweep-facts-rust) typed edge-proposal writes: not mapped to a write plan yet.
   'deleteEdgeProposalError', 'deleteHeldEdgeProposalErrors', 'markEdgeProposalDated',
+  // Lane 8 (rust-members-tail) typed writes (the extraction watermark and receipt, the volunteer retention delete): not mapped to a write plan yet.
+  'clearPageExtractionState', 'commitPageExtraction', 'deleteVolunteerEventsOlderThan', 'writePageExtractionReceipt',
   // Lane 5 eval harness pause (engine-sql/eval-harness-reads.ts): the brain row's enabled flag, not mapped to a write plan yet.
   'pauseManagedPersistence', 'restoreManagedPersistence',
 ]);
