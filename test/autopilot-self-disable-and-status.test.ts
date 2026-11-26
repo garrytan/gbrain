@@ -6,9 +6,13 @@
  *   classifyAutopilotStatus — tri-state verdict + exit code, so `--status` can
  *     no longer answer "installed" for a daemon that died 71 days ago.
  *
- * Both are pure, so no daemon is installed here.
+ * These checks do not install or start a scheduler.
  */
 import { describe, test, expect } from 'bun:test';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { runCli } from './helpers/cli-spawn.ts';
 import {
   generateSelfDisableGuard,
   crontabIndicatesAutopilotInstall,
@@ -103,6 +107,49 @@ describe('crontabIndicatesAutopilotInstall', () => {
     expect(crontabIndicatesAutopilotInstall('0 3 * * * /usr/local/bin/backup.sh')).toBe(false);
     expect(crontabIndicatesAutopilotInstall('')).toBe(false);
   });
+});
+
+test('installed Autopilot cannot report fresh from the lock of an exited process', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'gbrain-autopilot-exit-'));
+  const config = join(home, '.gbrain');
+  const lockPath = join(config, 'autopilot.lock');
+  const heartbeatPath = join(config, 'autopilot.heartbeat.json');
+  const owner = Bun.spawn([process.execPath, '-e', 'await Bun.sleep(30000)'], { stdout: 'ignore', stderr: 'ignore' });
+  try {
+    mkdirSync(config);
+    const wrapper = join(config, 'autopilot-run.sh');
+    writeFileSync(wrapper, '#!/bin/sh\n');
+    writeFileSync(join(config, 'start-autopilot.sh'), `nohup '${wrapper}' &\n`);
+    const lock = String(owner.pid);
+    writeFileSync(lockPath, lock);
+    const heartbeat = JSON.stringify({
+      pid: owner.pid, written_at: new Date().toISOString(), phase: 'sleep',
+      base_interval_s: 300, interval_s: 600, next_tick_at: new Date(Date.now() + 600_000).toISOString(),
+    });
+    writeFileSync(heartbeatPath, heartbeat);
+
+    const live = await runCli(['autopilot', '--status', '--json'], { home });
+    expect(live.exitCode).toBe(0);
+    expect(JSON.parse(live.stdout)).toMatchObject({ state: 'fresh', stale_after_source: 'daemon' });
+    owner.kill();
+    await owner.exited;
+
+    const dead = await runCli(['autopilot', '--status', '--json'], { home });
+    expect(dead.exitCode).toBe(1);
+    expect(JSON.parse(dead.stdout)).toMatchObject({ state: 'stale', next_tick_at: null });
+    expect(readFileSync(lockPath, 'utf8')).toBe(lock);
+    expect(readFileSync(heartbeatPath, 'utf8')).toBe(heartbeat);
+
+    writeFileSync(lockPath, 'legacy heartbeat');
+    rmSync(heartbeatPath);
+    const legacy = await runCli(['autopilot', '--status', '--json'], { home });
+    expect(legacy.exitCode).toBe(0);
+    expect(JSON.parse(legacy.stdout)).toMatchObject({ state: 'fresh', stale_after_source: 'flag' });
+  } finally {
+    if (owner.exitCode === null && owner.signalCode === null) owner.kill();
+    await owner.exited;
+    rmSync(home, { recursive: true, force: true });
+  }
 });
 
 describe('classifyAutopilotStatus', () => {
