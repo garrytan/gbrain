@@ -6,7 +6,7 @@
 import { describe, expect, spyOn, test } from 'bun:test';
 import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { evaluateReadiness, WRITE_CLIENT_LIMIT, WRITE_COVERAGE_LIMIT, WRITE_PGLITE_LIMIT, type ShadowStatus } from '../../src/core/engine-swap/readiness.ts';
+import { evaluateReadiness, WRITE_CLIENT_LIMIT, WRITE_COVERAGE_LIMIT, WRITE_COVERAGE_NAMED, WRITE_PGLITE_LIMIT, type ShadowStatus } from '../../src/core/engine-swap/readiness.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { importFile } from '../../src/core/import-file.ts';
 import { operationsByName, type OperationContext } from '../../src/core/operations.ts';
@@ -21,9 +21,14 @@ import { buildFollowStatus, readFollowerFile, renderFollowStatus } from '../../s
 import { newMirrorCounters } from '../../src/shadow/mirror.ts';
 import { writeSeedRecord } from '../../src/shadow/seed.ts';
 import { wrapShadowEngine } from '../../src/shadow/wrapper.ts';
-import { completeWriteRow, lockPersistenceCounters } from '../../src/core/engine-sql/persistence-journal.ts';
-import { createWriteSampler, JOURNAL_MEMBER_STATEMENTS, PUT_PAGE_OPTIONS, readPreimage } from '../../src/shadow/write-capture.ts';
+import { completeWriteRow, insertPublicationEffects, lockPersistenceCounters } from '../../src/core/engine-sql/persistence-journal.ts';
+import { sqlWrites } from '../../src/shadow/sql-writes.ts';
+import { sealImportedPage } from '../../src/core/engine-sql/write-guards.ts';
+import { renderFragment } from '../../src/core/engine-sql/fragment.ts';
+import { pageSearchVectorSql } from '../../src/core/fts-language.ts';
+import { bookkeepingStatements, createWriteSampler, JOURNAL_MEMBER_STATEMENTS, PUT_PAGE_OPTIONS, readPreimage } from '../../src/shadow/write-capture.ts';
 import { createWriteComparer } from '../../src/shadow/write-compare-child.ts';
+import { openRustEngine, type RustEngineAddonHandle } from '../../src/core/rust-engine.ts';
 import { readWriteTally, WriteTally, type WriteEvent } from '../../src/shadow/write-compare.ts';
 import { ensureEpoch } from '../../src/shadow/evidence-epoch.ts';
 import { withEnv } from './with-env.ts';
@@ -206,6 +211,7 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       expect(row.state).toBe('fail'); // 1 of 1,000 comparable: the pass rule is unchanged
       expect(row.detail).toContain('1 of 1000 comparable');
       expect(row.detail).toContain(WRITE_COVERAGE_LIMIT);
+      expect(row.detail).toContain(WRITE_COVERAGE_NAMED); // the owner's wording, verbatim, names every write type left uncompared
       expect(row.detail).toContain('sampled so far: tags 1');
       expect(row.detail).toContain(WRITE_PGLITE_LIMIT);
       expect(renderFollowStatus(status).join('\n')).toContain(`comparable 1, unexplained 0`);
@@ -824,7 +830,7 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
 
     test('an option the Rust store does not take is uncomparable (unknown_option), in a transaction or not; the ones it takes are not; the list is the store\'s own', async () => {
       await ctx.reset(); await fillSeedFixture(primary());
-      const unknown = [{ contextualRetrieval: { mode: 'title', corpusGeneration: null } }, { reuseSegments: {} }, { prepare: () => undefined }, { sourceId: 'default', somethingNew: 1 }];
+      const unknown = [{ reuseSegments: {} }, { prepare: () => undefined }, { sourceId: 'default', somethingNew: 1 }];
       for (const opts of unknown) {
         for (const inTransaction of [false, true]) {
           const { inbox, wrapped } = rig();
@@ -958,6 +964,71 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       expect(verdicts(inbox)).toEqual([['sample', undefined]]);
     }, 60_000);
 
+    test('the swap report names what criterion 5 leaves uncompared, and the warm single-write path is no longer one of them', () => {
+      const detail = row5({}).detail ?? '';
+      expect(detail).toContain(WRITE_COVERAGE_NAMED);
+      expect(WRITE_COVERAGE_NAMED).toContain('chunks, tags, aliases, timeline entries, takes, facts, fact withdrawals, open loops, sources, owner-only marks and the decide store');
+      expect(detail).not.toContain('warm single-write path');
+    });
+
+    // The warm single-write lane: a reserved connection's own transaction (Postgres only; PGLite's reserved connection has none).
+    const lane = async <T>(wrapped: BrainEngine, run: (tx: BrainEngine) => Promise<T>, opts?: Record<string, unknown>): Promise<T> =>
+      (wrapped as any).withReservedConnection((conn: any) => conn.transaction(run, opts));
+
+    test('a page write in the warm lane transaction is sampled after the commit, a rolled-back one is dropped, and the warm transaction itself is unchanged', async () => {
+      if (ctx.kind !== 'postgres') return;
+      const { inbox, wrapped } = await fresh();
+      await lane(wrapped, async (tx) => { await tx.putPage('people/una-example', page('Una Example'), { sourceId: 'default', inline: true }); expect(putEvents(inbox)).toEqual([]); });
+      expect((await primary().getPage('people/una-example'))?.title).toBe('Una Example');
+      expect((await sampleOf(inbox)).length).toBe(1);
+      expect(putEvents(inbox)[0]!.outcome).toBeUndefined(); // a full sample: the rows read before the write travel with it
+      await expect(lane(wrapped, async (tx) => { await tx.putPage('people/vic-example', page('Vic Example')); throw new Error('roll back'); })).rejects.toThrow('roll back');
+      await new Promise((r) => setTimeout(r, 300));
+      expect(putEvents(inbox)).toHaveLength(1); // nothing more: the rolled-back write is never compared
+      expect(await primary().getPage('people/vic-example')).toBeNull();
+    }, 60_000);
+
+    test('a warm-lane write is never sampled through the savepoint while another call runs: parallel inline writes and a version row all survive the commit', async () => {
+      if (ctx.kind !== 'postgres') return;
+      await ctx.reset(); await fillSeedFixture(primary());
+      await primary().putPage('people/wes-example', page('Wes Example'));
+      const { inbox, wrapped } = rig();
+      const snapshot = await primary().readPageSnapshot('people/wes-example');
+      await lane(wrapped, async (tx) => {
+        await Promise.all([
+          tx.putPage('people/xia-example', page('Xia Example'), { sourceId: 'default', inline: true }),
+          tx.putPage('people/yan-example', page('Yan Example'), { sourceId: 'default', inline: true }),
+          tx.createVersion('people/wes-example', { sourceId: 'default', preimage: snapshot } as never),
+          tx.putPage('people/wes-example', page('Wes Renamed'), { sourceId: 'default', inline: true }),
+        ]);
+      });
+      for (const slug of ['people/xia-example', 'people/yan-example']) expect(await primary().getPage(slug)).not.toBeNull();
+      expect((await primary().getPage('people/wes-example'))?.title).toBe('Wes Renamed');
+      expect(await primary().getVersions('people/wes-example')).toHaveLength(1);
+      await sampleOf(inbox, 3);
+      expect(verdicts(inbox).filter(([, reason]) => reason === 'in_transaction_busy').length).toBe(2);
+    }, 60_000);
+
+    test('the warm lane keeps its first statement first: with pipelineFirst the declaration is sent before BEGIN is answered, and every preimage statement follows it', async () => {
+      if (ctx.kind !== 'postgres') return;
+      const { inbox, wrapped } = await fresh();
+      const declaration = "SELECT set_config('gbrain.persistence_protocol','2',true)";
+      const seen: string[] = [];
+      const original = primary().executeRaw as (...a: unknown[]) => Promise<unknown>;
+      const spy = spyOn(primary(), 'executeRaw').mockImplementation(function (this: unknown, sql: unknown, ...rest: unknown[]) { if (typeof sql === 'string') seen.push(sql); return original.call(this, sql, ...rest); } as never);
+      try {
+        await lane(wrapped, async (tx) => { await tx.executeRaw(declaration); await tx.putPage('people/zed-example', page('Zed Example'), { sourceId: 'default', inline: true }); },
+          { pipelineFirst: (statement: string) => statement === declaration });
+      } finally { spy.mockRestore(); }
+      await sampleOf(inbox);
+      const first = seen.findIndex((q) => q === declaration);
+      const preimage = seen.map((q, i) => (q.includes('shadow write preimage') ? i : -1)).filter((i) => i >= 0);
+      expect(first).toBe(0);
+      expect(preimage.length).toBeGreaterThan(0);
+      expect(preimage.every((i) => i > first)).toBe(true);
+      expect((await primary().getPage('people/zed-example'))?.title).toBe('Zed Example');
+    }, 60_000);
+
     test('the journal members the sampler treats as bookkeeping send only the statements it judged: each typed member, on both dialects, sends exactly its mapped statements and nothing else', async () => {
       const record = async (dialect: 'postgres' | 'pglite', run: (exec: never) => Promise<unknown>) => {
         const sent: string[] = [];
@@ -972,8 +1043,32 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
         expect(await record(dialect, (exec) => completeWriteRow(exec, completion(false) as never))).toEqual([complete!]);
         expect(await record(dialect, (exec) => completeWriteRow(exec, completion(true) as never))).toEqual([probe!]);
       }
-      expect([...JOURNAL_MEMBER_STATEMENTS.keys()].sort()).toEqual(['completeWriteRow', 'lockPersistenceCounters']); // upsertWriteGateReceipt and insertPublicationEffects are not bookkeeping: they stay ordinary writes
+      const effects = JOURNAL_MEMBER_STATEMENTS.get('insertPublicationEffects')!;
+      for (const dialect of ['postgres', 'pglite'] as const) {
+        expect(await record(dialect, (exec) => insertPublicationEffects(exec, { requestId: '00000000-0000-4000-8000-000000000000', revision: null, sourceId: 'default', sourceIncarnation: '00000000-0000-4000-8000-000000000001', worktreeId: null, effects: [{ kind: 'links', data: {} }] } as never))).toEqual([effects[0]!]);
+      }
+      expect([...JOURNAL_MEMBER_STATEMENTS.keys()].sort()).toEqual(['completeWriteRow', 'insertPublicationEffects', 'lockPersistenceCounters']); // upsertWriteGateReceipt is not bookkeeping: it stays an ordinary write
     }, 30_000);
+
+    test('insertPublicationEffects is bookkeeping only while its statement writes persistence_effects and nothing else: a statement that writes another table is an ordinary write', () => {
+      const [effects] = JOURNAL_MEMBER_STATEMENTS.get('insertPublicationEffects')!;
+      expect(sqlWrites(effects!).map((w) => `${w.kind}:${(w as { relation?: string }).relation}`)).toEqual(['relation:persistence_effects']);
+      expect(bookkeepingStatements([effects!])).toBe(true);
+      expect(bookkeepingStatements([`WITH moved AS (INSERT INTO pages (slug) VALUES ('x') RETURNING 1) ${effects!}`])).toBe(false);
+      expect(bookkeepingStatements([effects!, 'UPDATE pages SET title = title'])).toBe(false);
+    });
+
+    test('the closing seal the sampler treats as a seal is exactly the page update the sealImportedPage member sends: any other text is an ordinary write again', async () => {
+      let sent = '';
+      await sealImportedPage({ run: async (fragment: never) => { sent = renderFragment(fragment).text; return { rows: [] }; } } as never, 'notes/a',
+        { sourceId: 'default', revision: '00000000-0000-4000-8000-000000000000', timelineText: '', chunkerVersion: 1 });
+      const norm = (text: string) => text.replace(/\s+/g, ' ').replace(/\$\d+/g, '$').trim();
+      expect(norm(sent)).toBe(norm(`UPDATE pages SET chunker_version=$1,
+        text_projection_revision=CASE WHEN knowledge_revision=$2::uuid THEN knowledge_revision ELSE text_projection_revision END,
+        search_vector=CASE WHEN knowledge_revision=$2::uuid THEN ${pageSearchVectorSql('title', 'v.seal_input')} ELSE search_vector END
+        FROM (SELECT $3::text AS seal_input) v
+        WHERE pages.source_id=$4 AND pages.slug=$5 RETURNING pages.id`));
+    });
 
     test('calls made while the preimage is read keep their order behind the sampled write (a tag added right after a new page lands on it)', async () => {
       const { inbox, wrapped } = await fresh();
@@ -1010,6 +1105,18 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       });
       await until(() => putEvents(inbox).length === 2);
       expect(putEvents(inbox).map((e) => (e.args as string[])[0]).sort()).toEqual(['people/ivy-example', 'people/jon-example']);
+      expect(await real(putEvents(inbox))).toMatchObject({ comparable: 2, unexplained_difference: 0, uncomparable: 0 });
+    }, 120_000);
+
+    test('a page write in the warm lane transaction is replayed and comparable (a create and an update of the same page, default contextual-retrieval mode)', async () => {
+      if (ctx.kind !== 'postgres') return;
+      await ctx.reset(); await fillSeedFixture(primary());
+      const { inbox, wrapped } = rig();
+      const run = (title: string) => (wrapped as any).withReservedConnection((conn: any) => conn.transaction(async (tx: BrainEngine) => {
+        await tx.putPage('people/abe-example', page(title), { sourceId: 'default', inline: true, contextualRetrieval: { mode: 'title', corpusGeneration: 'generation-example' } });
+      }));
+      await run('Abe Example'); await run('Abe Renamed');
+      await until(() => putEvents(inbox).length === 2);
       expect(await real(putEvents(inbox))).toMatchObject({ comparable: 2, unexplained_difference: 0, uncomparable: 0 });
     }, 120_000);
 
@@ -1092,7 +1199,39 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       for (const reason of Object.keys(tally.uncomparable_by_reason)) expect(['in_transaction_busy', 'preimage_not_loaded']).toContain(reason);
     }, 180_000);
 
-    test('a real sync import of a new page and then a changed one ends up in the tally: comparable when contextual retrieval is off, uncomparable by name when it stamps the write', async () => {
+    test('three arms store the same contextual-retrieval stamp: the primary (PGLite or Postgres) and the Rust engine through its store member', async () => {
+      await ctx.reset();
+      const stamp = { mode: 'title', corpusGeneration: 'generation-example' };
+      const dir = join(ctx.tempDir(), 'store');
+      const rust: any = openRustEngine({ addon: addonOf() as unknown as RustEngineAddonHandle, databasePath: dir });
+      try {
+        await rust.connect({ database_path: dir });
+        for (const engine of [primary(), rust]) await engine.putPage('notes/stamp-example', page('Stamp Example'), { sourceId: 'default', contextualRetrieval: stamp });
+        const [row] = await primary().executeRaw<{ contextual_retrieval_mode: string; corpus_generation: string }>("SELECT contextual_retrieval_mode, corpus_generation FROM pages WHERE slug = 'notes/stamp-example'");
+        const theirs = await rust.getPage('notes/stamp-example');
+        expect({ mode: row!.contextual_retrieval_mode, generation: row!.corpus_generation }).toEqual({ mode: 'title', generation: 'generation-example' });
+        expect(theirs.contextual_retrieval_mode).toBe(row!.contextual_retrieval_mode);
+        // The Rust engine reads the stamp back as the page's mode; no engine member returns its corpus generation, so that column is checked on the primary only.
+        // A `none` stamp writes nothing on every arm, as the primary's own putPage leaves both columns alone for it.
+        for (const engine of [primary(), rust]) await engine.putPage('notes/stamp-none', page('Stamp None'), { sourceId: 'default', contextualRetrieval: { mode: 'none', corpusGeneration: null } });
+        const [none] = await primary().executeRaw<{ contextual_retrieval_mode: string | null }>("SELECT contextual_retrieval_mode FROM pages WHERE slug = 'notes/stamp-none'");
+        expect((await rust.getPage('notes/stamp-none')).contextual_retrieval_mode ?? null).toBe(none!.contextual_retrieval_mode ?? null);
+      } finally { await rust.disconnect().catch(() => undefined); }
+    }, 120_000);
+
+    test('a real sync import in the default contextual-retrieval mode (title) is compared: the stamp it sends is carried to the replay, and both the new and the changed page are comparable', async () => {
+      await ctx.reset();
+      const root = ctx.tempDir(); const file = join(root, 'default-mode.md');
+      const { inbox, wrapped } = rig();
+      const sync = async (body: string) => { writeFileSync(file, `---\ntype: note\ntitle: Default Mode\n---\n\n${body}\n`); await importFile(wrapped as never, file, 'notes/default-mode.md', { noEmbed: true }); };
+      await sync('First body of the page.'); await sync('A changed body of the page.');
+      await until(() => putEvents(inbox).length === 2);
+      expect(await real(putEvents(inbox))).toMatchObject({ comparable: 2, unexplained_difference: 0, uncomparable: 0 });
+      const sent = putEvents(inbox).map((e) => (e.args as unknown[])[2] as { contextualRetrieval?: { mode?: string } });
+      expect(sent.map((o) => o.contextualRetrieval?.mode)).toEqual(['title', 'title']); // the default brain sends the option, and it is carried
+    }, 120_000);
+
+    test('a real sync import of a new page and then a changed one ends up in the tally: comparable when contextual retrieval is off and when it stamps the write', async () => {
       await ctx.reset();
       const root = ctx.tempDir(); const file = join(root, 'sync-example.md');
       const sync = async (body: string) => { writeFileSync(file, `---\ntype: note\ntitle: Sync Example\n---\n\n${body}\n`); await importFile(wrapped as never, file, 'notes/sync-example.md', { noEmbed: true }); };
@@ -1105,7 +1244,7 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       ({ inbox, wrapped } = rig());
       await sync('A third body of the page.');
       await until(() => putEvents(inbox).length === 1);
-      expect(await real(putEvents(inbox))).toMatchObject({ comparable: 0, uncomparable: 1, uncomparable_by_reason: { unknown_option: 1 } });
+      expect(await real(putEvents(inbox))).toMatchObject({ comparable: 1, unexplained_difference: 0, uncomparable: 0 });
     }, 120_000);
   });
 }

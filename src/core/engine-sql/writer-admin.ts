@@ -68,12 +68,14 @@ export interface WriterAdminStore extends ContentReceiptStore {
   publicationPending(worktreeId: string): Promise<boolean>;
   /** The persistence brain id; null when the brain row is missing. */
   brainId(): Promise<string | null>;
+  /** The worktree's bound, unarchived sources that have a last imported commit, by source id (#10260: the Git history a self-transfer checks before it re-creates a lost ownership reservation). */
+  syncedSources(worktreeId: string): Promise<Array<{ source: string; path: string; commit: string }>>;
   /** Records a prepared transfer: state `draining`, the manifest with `prepared_at` set to now. */
   markWorktreeDraining(id: string, manifest: object): Promise<void>;
   /** Cancels a prepared transfer: state `active`, no manifest. */
   reactivateWorktree(id: string): Promise<void>;
-  /** Records the accepting host's paths for the worktree, replacing the paths it had (its Git durability is kept). */
-  upsertHostBinding(row: Omit<HostBindingInsert, 'gitDurability'>): Promise<void>;
+  /** Records the accepting host's paths for the worktree, replacing the paths it had. Its Git durability is kept, except that `carryDurability` (a cross-host accept, #10123) also takes `gitDurability` when it is set. */
+  upsertHostBinding(row: Omit<HostBindingInsert, 'gitDurability'> & { gitDurability?: HostBindingInsert['gitDurability']; carryDurability?: boolean }): Promise<void>;
   /** Accepts a transfer: `hostId` owns the worktree at the next epoch, `active`, heartbeat now; the manifest is kept. */
   acceptWorktreeOwner(id: string, hostId: string): Promise<void>;
 }
@@ -96,6 +98,12 @@ const WRITER_ADMIN_STATE_SQL = `SELECT jsonb_build_object(
     'legacy_locks', (SELECT jsonb_agg(jsonb_build_array(id,holder_pid,holder_host,acquisition_token,acquired_at) ORDER BY id COLLATE "C") FROM gbrain_cycle_locks
       WHERE NOT starts_with(id, $1))
   )::text AS state`;
+
+/** The worktree's recorded manifest; null when it has none or the worktree is missing. */
+export async function readWorktreeManifest(engine: RawSql, worktreeId: string): Promise<StoredWorktreeManifest | null> {
+  const [row] = await engine.executeRaw<{ manifest: StoredWorktreeManifest | null }>('SELECT manifest FROM persistence_worktrees WHERE id=$1::uuid', [worktreeId]);
+  return row?.manifest ?? null;
+}
 
 /** The content-receipt store over a transaction-bound engine. */
 export function sqlContentReceiptStore(tx: RawSql): ContentReceiptStore {
@@ -124,6 +132,11 @@ export async function readWriterAdminState(engine: RawSql, opts: WriterAdminStat
   const [row] = await engine.executeRaw<{ state: string }>(WRITER_ADMIN_STATE_SQL, [PAGE_EMBEDDING_LEASE_PREFIX]);
   return row.state;
 }
+
+const UPSERT_HOST_BINDING = `INSERT INTO persistence_host_bindings(worktree_id,host_id,local_path,coordination_path,git_durability)
+  VALUES($1::uuid,$2::uuid,$3,$4,$5) ON CONFLICT(worktree_id,host_id) DO UPDATE SET local_path=EXCLUDED.local_path,coordination_path=EXCLUDED.coordination_path`;
+const UPSERT_HOST_BINDING_CARRYING = `INSERT INTO persistence_host_bindings(worktree_id,host_id,local_path,coordination_path,git_durability)
+  VALUES($1::uuid,$2::uuid,$3,$4,$5) ON CONFLICT(worktree_id,host_id) DO UPDATE SET local_path=EXCLUDED.local_path,coordination_path=EXCLUDED.coordination_path,git_durability=COALESCE(EXCLUDED.git_durability,persistence_host_bindings.git_durability)`;
 
 /** The SQL store over a transaction-bound engine. */
 export function sqlWriterAdminStore(tx: BrainEngine): WriterAdminStore {
@@ -163,6 +176,11 @@ export function sqlWriterAdminStore(tx: BrainEngine): WriterAdminStore {
       const [brain] = await tx.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1');
       return brain?.brain_id ?? null;
     },
+    async syncedSources(worktreeId) {
+      const [row] = await tx.executeRaw<{ synced: Array<{ source: string; path: string; commit: string }> | null }>(`SELECT (SELECT json_agg(json_build_object('source',s.id,'path',b.relative_path,'commit',s.last_commit) ORDER BY s.id)
+        FROM persistence_source_bindings b JOIN sources s ON s.id=b.source_id AND s.incarnation=b.source_incarnation WHERE b.worktree_id=$1::uuid AND s.last_commit IS NOT NULL AND NOT s.archived) AS synced`, [worktreeId]);
+      return row?.synced ?? [];
+    },
     async markWorktreeDraining(id, manifest) {
       await tx.executeRaw(`UPDATE persistence_worktrees SET state='draining',manifest=$2::text::jsonb||jsonb_build_object('prepared_at',now()) WHERE id=$1::uuid`,
         [id, JSON.stringify(manifest)]);
@@ -171,9 +189,8 @@ export function sqlWriterAdminStore(tx: BrainEngine): WriterAdminStore {
       await tx.executeRaw(`UPDATE persistence_worktrees SET state='active',manifest=NULL WHERE id=$1::uuid`, [id]);
     },
     async upsertHostBinding(row) {
-      await tx.executeRaw(`INSERT INTO persistence_host_bindings(worktree_id,host_id,local_path,coordination_path)
-        VALUES($1::uuid,$2::uuid,$3,$4) ON CONFLICT(worktree_id,host_id) DO UPDATE SET local_path=EXCLUDED.local_path,coordination_path=EXCLUDED.coordination_path`,
-        [row.worktreeId, row.hostId, row.localPath, row.coordinationPath]);
+      await tx.executeRaw(row.carryDurability ? UPSERT_HOST_BINDING_CARRYING : UPSERT_HOST_BINDING,
+        [row.worktreeId, row.hostId, row.localPath, row.coordinationPath, row.gitDurability ?? null]);
     },
     async acceptWorktreeOwner(id, hostId) {
       await tx.executeRaw(`UPDATE persistence_worktrees SET owner_host_id=$2::uuid,owner_epoch=owner_epoch+1,state='active',heartbeat_at=now() WHERE id=$1::uuid`, [id, hostId]);

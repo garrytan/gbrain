@@ -11,10 +11,11 @@
 import { readCapacityForecast, type CapacityForecast } from '../../core/persistence/capacity-forecast.ts';
 import type { JournalLimits, SqlEngine } from '../../core/persistence/model.ts';
 import { currentStatementDeadline, deadlineBoundEngine, deadlineFailure, withStatementDeadline } from '../../core/statement-deadline.ts';
+import type { BrainEngine } from '../../core/engine.ts';
 
 const KEY = 'capacity_forecast';
 
-export function doctorCapacityForecast(engine: SqlEngine & { kind?: string }, opts: { limits: JournalLimits }): Promise<CapacityForecast> {
+export function doctorCapacityForecast(engine: SqlEngine & Pick<BrainEngine, 'readJournalLimitRows' | 'readCapacityForecastInputs' | 'getConfigValues'> & { kind?: string }, opts: { limits: JournalLimits }): Promise<CapacityForecast> {
   const scope = currentStatementDeadline();
   const memo = scope?.memo;
   if (!scope || !memo) return readCapacityForecast(engine, opts);

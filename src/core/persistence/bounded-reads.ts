@@ -111,7 +111,9 @@ export const TYPED_PREPARATION_READS: ReadonlySet<string> = new Set(['getSource'
   // The access, page-visibility, grant and source reads a preparation makes (caller identity, folder rules, writer fences, credential
   // grants, source rows): each ran as a raw statement through this view's `executeRaw` before it became a typed member.
   'readWriteVisibilityProbe', 'readWriterSlugFence', 'readOAuthClientWriteGrant', 'readAccessTokenWriteGrant', 'shareLockWriteCredential', 'readSourceRow',
-  'readMayActFor', 'readAudiencePrincipals', 'readScopeSourceConfigs', 'readOwnerOnlySourcesPresent', 'readOwnerOnlySourceConfig']);
+  'readMayActFor', 'readAudiencePrincipals', 'readScopeSourceConfigs', 'readOwnerOnlySourcesPresent', 'readOwnerOnlySourceConfig',
+  // The fence overlay, stored-body and purge-ledger reads a page preparation makes (page-prepare.ts): raw statements before they became typed members.
+  'readFenceOverlayRows', 'readLiveStoredBody', 'readSourcePurgeFlags', 'listPurgedTakeRows']);
 
 /** Test seam (test/e2e/typed-preparation-reads-guard-postgres.test.ts): told of every engine method a bounded view hands out. */
 type PreparationMemberObserver = (member: string, typed: boolean, engineReads: boolean) => void;
