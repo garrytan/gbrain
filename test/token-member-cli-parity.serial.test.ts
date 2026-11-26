@@ -144,7 +144,7 @@ const LABELLED_SCRIPT: Step[] = [
 ];
 
 /**
- * An enforced member's `remember` on a brain whose members read lineage (access.members_read_lineage). The output guard
+ * An enforced member's put and `remember` on a brain whose members read lineage (access.members_read_lineage). The output guard
  * judges pages by a record that reads through lineage, which a Rust brain does not serve yet (row ec05-1), so the guard
  * refuses engine_capability_missing. A write must not run before a guard that refuses: on Rust the remember writes
  * nothing (no fact in the page, no revision change, no new page) while PGLite and Postgres save the fact. Run last, on
@@ -153,6 +153,8 @@ const LABELLED_SCRIPT: Step[] = [
 const LINEAGE_SCRIPT: Step[] = [
   { args: ['access', 'members-read-lineage', 'on'] },
   { label: 'stats-before', args: ['stats', '--json'] },
+  { label: 'lineage-put', args: ['put', 'notes/launch-plan', '--expected-revision', '{rev}', '--json'], rev: 'rewrite', member: 'tess-example', stdin: PLAN('Tess edits the plan under lineage.') },
+  { label: 'page-after-put', args: ['get', 'notes/launch-plan'] },
   { label: 'remember', args: ['remember', 'Tess likes harbour views', '--entity', 'notes/launch-plan', '--provenance', 'test', '--json'], member: 'tess-example' },
   { label: 'page-after', args: ['get', 'notes/launch-plan'] },
   { label: 'stats-after', args: ['stats', '--json'] },
@@ -312,14 +314,15 @@ describe('a put on a brain of several members, plain and under GBRAIN_ENFORCED_M
       if (!r) return null; // that engine is not configured on this run
       const text = (run: Run) => run.stdout + run.stderr;
       return { remember: r.get('remember')!.exitCode, code: r.get('remember')!.exitCode === 0 ? null : /"code": "([a-z_]+)"/.exec(text(r.get('remember')!))?.[1] ?? null,
-        factInPage: /Tess likes harbour views/.test(r.get('page-after')!.stdout), statsKept: r.get('stats-after')!.stdout === r.get('stats-before')!.stdout, revisionKept: r.get('rev-check')!.exitCode === 0 };
+        putInPage: /Tess edits the plan under lineage\./.test(r.get('page-after-put')!.stdout), putExit: r.get('lineage-put')!.exitCode,
+        putCode: r.get('lineage-put')!.exitCode === 0 ? null : /"code": "([a-z_]+)"/.exec(text(r.get('lineage-put')!))?.[1] ?? null, factInPage: /Tess likes harbour views/.test(r.get('page-after')!.stdout), statsKept: r.get('stats-after')!.stdout === r.get('stats-before')!.stdout, revisionKept: r.get('rev-check')!.exitCode === 0 };
     };
     for (const engine of ['pglite', 'postgres'] as const) {
       const out = outcome(engine);
-      if (out) expect({ engine, ...out }).toEqual({ engine, remember: 0, code: null, factInPage: true, statsKept: true, revisionKept: false });
+      if (out) expect({ engine, ...out }).toEqual({ engine, putInPage: true, putExit: 0, putCode: null, remember: 0, code: null, factInPage: true, statsKept: true, revisionKept: false });
     }
     const rust = outcome('rust');
-    if (rust) expect(rust).toEqual({ remember: 1, code: 'engine_capability_missing', factInPage: false, statsKept: true, revisionKept: true });
+    if (rust) expect(rust).toEqual({ putInPage: false, putExit: 1, putCode: 'engine_capability_missing', remember: 1, code: 'engine_capability_missing', factInPage: false, statsKept: true, revisionKept: true });
   });
 
   for (const engine of ['postgres', 'rust'] as const) {
