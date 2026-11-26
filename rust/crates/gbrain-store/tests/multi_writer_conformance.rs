@@ -1989,13 +1989,17 @@ fn c16_format_upgrade_runs_once_under_concurrent_openers() {
 }
 
 /// C16, `upgrade_format`: concurrent openers of an old-format brain all get a working store, and the upgrade runs once.
-/// The extra openers are clients of the one owner (C17), so this waits for the server lane.
+/// Stays ignored on purpose: a raw `Store` has no client path (a second raw open is `store_locked`, the permanent invariant of
+/// `c17_a_second_raw_opener_is_refused_with_a_typed_store_locked`), so openers that become clients of the upgrading owner exist only
+/// in the TypeScript owner socket. It is proven at the engine level by engine C16 (test/engine-parity/multi-writer-conformance.test.ts,
+/// `rust-mu`, both routes): five engines open an older brain at once, one owns and upgrades it, four are clients, and its commit log
+/// start and newest commit equal those of a brain a lone opener upgraded.
 #[test]
 #[ignore = "multi_writer"]
 fn c16_format_upgrade_runs_once_under_concurrent_openers_multi_writer() {
     mu::pending_member::<()>(
         L3_SERVER,
-        "a second opener becomes a client of the upgrading owner",
+        "a raw Store has no client path; proven at the engine level by engine C16 (rust-mu)",
     )
     .unwrap_or_else(|e| panic!("{e}"));
     let dir = TempDir::new("c16m");
@@ -2058,13 +2062,18 @@ fn c17_a_second_raw_opener_is_refused_with_a_typed_store_locked() {
 }
 
 /// C17, `open_brain`: a second opener becomes a client, never an error.
-/// Client behavior (calls in flight retry by request id) is owner-process behavior in TypeScript; the store half is that a
-/// second open of a live brain is not `store_locked`.
+/// Stays ignored on purpose: the client, and the retry of calls in flight by request id across an owner handover, are owner-socket
+/// behavior in TypeScript; a raw `Store` never serves a second opener (`store_locked` is permanent). Proven at the engine level by
+/// engine C17 (test/engine-parity/multi-writer-conformance.test.ts, `rust-mu`): the second opener is a client of the owner, and 48
+/// calls in flight when the owner exits all succeed (plain Rust ends them `owner_unavailable`).
 #[test]
 #[ignore = "multi_writer"]
 fn c17_second_opener_becomes_a_client_never_an_error_multi_writer() {
-    mu::pending_member::<()>(L3_SERVER, "a second opener becomes a client")
-        .unwrap_or_else(|e| panic!("{e}"));
+    mu::pending_member::<()>(
+        L3_SERVER,
+        "a raw Store has no client path; proven at the engine level by engine C17 (rust-mu)",
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
     let dir = TempDir::new("c17m");
     let first = open_optimistic(&dir);
     put(&first, "notes/a", "kept");
@@ -2105,11 +2114,16 @@ fn c18_sixty_four_writers_no_busy_error() {
 /// C18, all rows from 64 writers in 8 processes. PARTIAL: after its pending probe this runs the one-process 64-thread helper
 /// (so it does not by itself show the eight-process rule). The eight-process half (8 children of this test binary, one store
 /// handle each, as C19 does) is not written because a second open of a live brain is `store_locked` until C17 lands, so there is
-/// nothing yet to run it against. Waits for an opener that is not `store_locked` (C17).
+/// nothing to run it against at store level. Stays ignored: the eight-process stress is an engine case (engine C18, writer processes
+/// that are owner-socket clients), and its Rust cell is pending: a client process's `admitJob` is refused `engine_capability_missing`
+/// (capability `minion_queue`), because its policy argument carries functions that do not cross the owner socket.
 #[test]
 #[ignore = "multi_writer"]
 fn c18_sixty_four_writers_no_busy_error_multi_writer() {
-    mu::pending_member::<()>(L3_SERVER, "eight processes, one store handle each")
+    mu::pending_member::<()>(
+        L3_SERVER,
+        "eight processes: engine C18 on Rust is pending, a client process's admitJob is refused (minion_queue)",
+    )
         .unwrap_or_else(|e| panic!("{e}"));
     let dir = TempDir::new("c18m");
     sixty_four_writers_no_busy_error(Arc::new(open_optimistic(&dir)));
@@ -2745,9 +2759,13 @@ fn c21_read_your_writes_token_on_a_second_connection() {
 fn c21_read_your_writes_token_on_a_second_connection_multi_writer() {
     let dir = TempDir::new("c21m");
     let store = Arc::new(open_optimistic(&dir));
-    // The token on a connection that is another process waits for the server lane.
-    mu::pending_member::<()>(L3_SERVER, "a read token on a second connection")
-        .unwrap_or_else(|e| panic!("{e}"));
+    // The token on a connection that is another process: the v3 wire has `min_position`, but no typed engine member or client option
+    // sends it (engine C21 is pending on that missing member), so this stays ignored.
+    mu::pending_member::<()>(
+        L3_SERVER,
+        "a read token on a second connection: no typed read-with-position member (engine C21)",
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
     let tx = begin_host(&store, 1);
     put(&tx, "notes/a", "acknowledged on A");
     let position = commit_host(&store, tx);

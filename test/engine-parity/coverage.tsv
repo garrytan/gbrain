@@ -137,8 +137,8 @@
 # multi-writer C13 [standalone, needs multi_writer]: pglite=n/a postgres=runs rust=pending(L1 optimistic transactions) rust-mu=pending(L1 optimistic transactions) store-single=runs store-optimistic=runs
 # multi-writer C14 [compare]: pglite=runs postgres=runs rust=runs rust-mu=runs store-single=runs store-optimistic=runs
 # multi-writer C15 [compare]: pglite=runs postgres=runs rust=runs rust-mu=runs store-single=runs store-optimistic=runs
-# multi-writer C16 [standalone]: pglite=n/a postgres=pending(L3 server) rust=pending(L3 server) rust-mu=pending(L3 server) store-single=runs store-optimistic=runs
-# multi-writer C17 [standalone, needs multi_writer]: pglite=n/a postgres=runs rust=pending(L3 server) rust-mu=pending(L3 server) store-single=runs store-optimistic=runs
+# multi-writer C16 [standalone, needs commit_log]: pglite=n/a postgres=pending(L3 server) rust=n/a rust-mu=runs store-single=runs store-optimistic=runs
+# multi-writer C17 [standalone]: pglite=n/a postgres=runs rust=n/a rust-mu=runs store-single=runs store-optimistic=runs
 # multi-writer C18 [standalone]: pglite=n/a postgres=runs rust=pending(L3 server) rust-mu=pending(L3 server) store-single=runs store-optimistic=runs
 # multi-writer C19 [standalone]: pglite=n/a postgres=runs rust=runs rust-mu=runs store-single=runs store-optimistic=runs
 # multi-writer C20 [compare]: pglite=runs postgres=runs rust=runs rust-mu=runs store-single=runs store-optimistic=runs
@@ -2614,5 +2614,5 @@ listPagesReadByNobody	doctor_join	yes	1	no	yes	yes	serves
 listRulePagesReadByNobody	doctor_join	yes	1	no	yes	yes	serves
 listGoogleSourceMembers	doctor_join	yes	1	no	yes	yes	serves
 listOwnerMemberLinks	doctor_join	yes	1	no	yes	yes	serves
-readCommitLog	commit_log	yes	1	no	n/a:commit_log	n/a:commit_log	serves
+readCommitLog	commit_log	yes	2	no	n/a:commit_log	pending:L3 server	serves
 lastCommitPosition	commit_log	yes	1	no	n/a:commit_log	n/a:commit_log	serves
