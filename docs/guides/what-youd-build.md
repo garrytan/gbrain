@@ -19,8 +19,8 @@ and merges remote commits without touching anyone else's work. A brain with no r
 record instead. Guides: [shared checkout](shared-checkout-git.md), [live sync](live-sync.md).
 
 **The simpler alternative.** A folder of Markdown files, or a repository you commit to by hand. That covers one
-writer. With several writers on one checkout, plain `git add -A`, stash and rebase sweep up or overwrite each other's
-half-written files.
+writer. With several writers on one checkout, committing every changed file, stashing or rebasing sweeps up or
+overwrites another writer's half-written files.
 
 ## Hybrid search
 
