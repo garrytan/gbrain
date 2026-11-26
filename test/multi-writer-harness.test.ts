@@ -20,7 +20,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assertMultiuserCapabilityName, recordingEngine, rustArmModeProblem, rustArmMultiuser, checkMwArm, checkRustArm, mwArmPlan, runMwCase, rustMultiuserView, type MwArmHandle, type MwArmStarted, type RustTally } from './engine-parity/harness.ts';
+import { assertMultiuserCapabilityName, recordingEngine, rustArmModeProblem, rustArmMultiuser, checkMwArm, checkRustArm, mwArmPlan, runMwCase, rustMultiuserView, MultiuserStopError, OWNER_ONLY_MESSAGE, OWNER_ONLY_STOP, stopOnOwnerOnlyRefusal, type MwArmHandle, type MwArmStarted, type RustTally } from './engine-parity/harness.ts';
 import { checkRustTally } from './engine-parity/rust-tally.ts';
 import { MW_ARMS, type MwArm, type MwCase, type MwCell } from './engine-parity/multi-writer-cases.ts';
 import { type LedgerLine } from './engine-parity/multi-writer-ledger.ts';
@@ -617,3 +617,65 @@ describe('the Rust arm under an ambient multi-user mode', () => {
   });
 });
 
+describe('rustMultiuserStop: a case pinned to the multi-user owner-only refusal (checkRustArm)', () => {
+  const refusalText = JSON.stringify({ error: 'permission_denied', code: 'permission_denied', message: `This credential cannot open a multi-user session on this brain (${OWNER_ONLY_MESSAGE} for now).` });
+  const stop = () => { stopOnOwnerOnlyRefusal(refusalText, ['a page body'], 'env'); };
+  const tally = (): RustTally => ({ compared: 0, refused: 0, diverged: 0, stops: [] });
+  const engine = { marker: 'engine' } as never;
+  const kase = (over: { run: () => Promise<unknown>; mode?: 'off' | 'env' | 'config' | 'ambient'; pin?: ReturnType<typeof OWNER_ONLY_STOP> }) => ({
+    name: 'a case', opts: { methods: ['getConfig'], rustMultiuserStop: over.pin ?? OWNER_ONLY_STOP() } as never, run: over.run, calls: new Set(['getConfig']), refusals: [],
+    reference: { backend: 'pglite' as const, value: 'same' }, divergence: undefined, multiuserMode: over.mode ?? 'env', engine });
+
+  test('mode on, the scenario ends on the owner-only refusal: accepted, named, counted as a known gap and never as equal or stopped', async () => {
+    const t = tally();
+    const seen: unknown[] = [];
+    await checkRustArm(kase({ run: async () => { stop(); return 'x'; }, pin: OWNER_ONLY_STOP(async (e) => { seen.push(e); }) }), t);
+    expect([t.compared, t.refused, t.diverged, t.multiuserStops]).toEqual([0, 0, 0, ['a case']]);
+    expect(seen).toEqual([engine]); // the no-effect check ran on the case's engine
+    for (const mode of ['env', 'config', 'ambient'] as const) await checkRustArm(kase({ mode, run: async () => { stop(); return 'x'; } }), tally());
+  });
+
+  test('mode on, the case returns: the pin fails and says to remove it (the key is admitted)', async () => {
+    await expect(checkRustArm(kase({ run: async () => 'same' }), tally())).rejects.toThrow(/returned in multi-user mode; the key is admitted now, so remove the pin/);
+  });
+
+  test('mode on, the case ends on anything else (another error, or another refusal text): the pin fails and names what it ended on', async () => {
+    await expect(checkRustArm(kase({ run: async () => { throw new Error('boom'); } }), tally())).rejects.toThrow(/ended on something else.*boom/);
+    await expect(checkRustArm(kase({ run: async () => { throw new MultiuserStopError('permission_denied', 'permission_denied: another reason'); } }), tally())).rejects.toThrow(/ended on something else/);
+    await expect(checkRustArm(kase({ run: async () => { throw new MultiuserStopError('invalid_params', `invalid_params: ${OWNER_ONLY_MESSAGE}`); } }), tally())).rejects.toThrow(/ended on something else/);
+  });
+
+  test('mode on, the refusal came but the case left an effect: the no-effect check fails the case', async () => {
+    await expect(checkRustArm(kase({ run: async () => { stop(); return 'x'; }, pin: OWNER_ONLY_STOP(async () => { throw new Error('a row exists'); }) }), tally())).rejects.toThrow(/a row exists/);
+  });
+
+  test('a pin past its due date fails even on the right refusal', async () => {
+    await expect(checkRustArm(kase({ run: async () => { stop(); }, pin: { ...OWNER_ONLY_STOP(), due: '2020-01-01' } }), tally())).rejects.toThrow(/has passed its due date/);
+  });
+
+  test('mode off: the pin does nothing, the case compares with the reference as before, and a refusal is no stop', async () => {
+    const t = tally();
+    await checkRustArm(kase({ mode: 'off', run: async () => 'same' }), t);
+    expect([t.compared, t.multiuserStops]).toEqual([1, undefined]);
+    // A case that differs from its reference fails with the pin present (the pin does not hide a switch-off failure).
+    await expect(checkRustArm(kase({ mode: 'off', run: async () => 'other' }), tally())).rejects.toThrow();
+    // The helper itself does nothing off, even on the refusal text, so the scenario's own failure path runs unchanged.
+    expect(() => stopOnOwnerOnlyRefusal(refusalText, [], 'off')).not.toThrow();
+  });
+
+  test('the helper stops only on the owner-only refusal, and fails loudly when the refusal carries what the call would have returned', () => {
+    expect(() => stopOnOwnerOnlyRefusal(refusalText, [], 'env')).toThrow(MultiuserStopError);
+    expect(() => stopOnOwnerOnlyRefusal('plain text', [], 'env')).not.toThrow();
+    expect(() => stopOnOwnerOnlyRefusal(JSON.stringify({ code: 'permission_denied' }), [], 'env')).not.toThrow(); // the code alone is not the owner-only gate
+    expect(() => stopOnOwnerOnlyRefusal(`${refusalText} a page body`, ['a page body'], 'env')).toThrow(/yet its reply carries what the call would have returned/);
+  });
+
+  test('the tally: pinned stops allow the multi-user run against the off pin by name, and never count as equal', () => {
+    const pins = new Map([['test/engine-parity/x.test.ts', { equal: 3, stopped: 0 }]]);
+    const f = 'test/engine-parity/x.test.ts';
+    // 3 cases: 1 equal, 2 pinned stops (skipped for the sum, allowed as known gaps).
+    expect(checkRustTally(f, { compared: 1, refused: 0, diverged: 0, skipped: 2, muView: true, knownGaps: 2 }, 3, pins, {})).toBeNull();
+    expect(() => checkRustTally(f, { compared: 1, refused: 0, diverged: 0, skipped: 2, muView: true, knownGaps: 1 }, 3, pins, {})).toThrow(/pins 3 equal/);
+    expect(() => checkRustTally(f, { compared: 1, refused: 0, diverged: 0, skipped: 2 }, 3, pins, {})).toThrow(/pins 3 equal/); // the switch off gets no allowance
+  });
+});
