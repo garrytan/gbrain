@@ -18,7 +18,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 const CACHE_MAX_AGE_MS = 60 * 60 * 1000;
 const CLAIM_MS = 5 * 60 * 1000;
 const VERSION_URL = "https://raw.githubusercontent.com/garrytan/gbrain/master/VERSION";
-const VERSION_RE = /^[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,6}(\.[0-9]{1,6})?$/;
+const VERSION_RE = /^(0|[1-9][0-9]{0,3})\.(0|[1-9][0-9]{0,3})\.(0|[1-9][0-9]{0,5})(\.(0|[1-9][0-9]{0,5}))?$/;
 const HEADERS = { "Content-Type": "application/json", "Cache-Control": "public, max-age=3600" };
 const STALE_HEADERS = { "Content-Type": "application/json", "Cache-Control": "public, max-age=60" };
 

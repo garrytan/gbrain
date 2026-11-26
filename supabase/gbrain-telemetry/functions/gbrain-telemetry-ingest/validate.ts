@@ -129,7 +129,7 @@ export const ENUMS: Record<string, string[]> = {
 export const MAX_BATCH = 100;
 export const MAX_BYTES = 50_000;
 
-const VERSION_RE = /^[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,6}(\.[0-9]{1,6})?$/;
+const VERSION_RE = /^(0|[1-9][0-9]{0,3})\.(0|[1-9][0-9]{0,3})\.(0|[1-9][0-9]{0,5})(\.(0|[1-9][0-9]{0,5}))?$/;
 const IDENT_RE = /^[a-z][a-z0-9_-]{0,63}$/;
 const BUN_RE = /^[0-9]{1,3}\.[0-9]{1,3}$/;
 export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;

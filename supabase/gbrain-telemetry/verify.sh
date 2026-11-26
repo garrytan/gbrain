@@ -16,7 +16,9 @@
 #   bash supabase/gbrain-telemetry/verify.sh
 #
 # Signed-in checks: set GBRAIN_VERIFY_AUTH_JWT to a user JWT. Without it they are
-# skipped and the verdict is INCOMPLETE. Neither key nor JWT is ever printed.
+# skipped and the verdict is INCOMPLETE, which exits 2. Neither key nor JWT is
+# ever printed or put on a command line: curl reads each header set from a
+# mode-0600 file.
 set -uo pipefail
 
 URL="${GBRAIN_TELEMETRY_URL:-}"
@@ -26,6 +28,16 @@ if [ -z "$URL" ] || [ -z "$KEY" ]; then
   echo "verify.sh: set GBRAIN_TELEMETRY_URL and GBRAIN_TELEMETRY_KEY (the publishable key)" >&2
   exit 2
 fi
+
+HDR_DIR="$(mktemp -d)"
+trap 'rm -rf "$HDR_DIR"' EXIT
+umask 077
+headers() { # <file> <bearer>
+  printf 'apikey: %s\nAuthorization: Bearer %s\n' "$KEY" "$2" > "$HDR_DIR/$1"
+}
+headers anon "$KEY"
+printf 'apikey: %s\n' "$KEY" > "$HDR_DIR/key"
+if [ -n "$JWT" ]; then headers authenticated "$JWT"; fi
 
 TABLES="gbrain_telemetry_events gbrain_installations gbrain_ingest_daily gbrain_pulse_cache gbrain_telemetry_live"
 FUNCS="gbrain_ingest_reserve gbrain_telemetry_forget gbrain_telemetry_prune gbrain_pulse_summary"
@@ -71,33 +83,34 @@ rpc_args() {
   esac
 }
 
-run_role() { # <role label> <bearer>
-  local who="$1" bearer="$2" t f
+run_role() { # <role label>
+  local who="$1" t f
+  local auth="@$HDR_DIR/$who"
   for t in $TABLES; do
-    denied "$who select $t" -H "apikey: $KEY" -H "Authorization: Bearer $bearer" "$URL/rest/v1/$t?select=*&limit=1"
-    denied "$who insert $t" -X POST -H "apikey: $KEY" -H "Authorization: Bearer $bearer" -H "Content-Type: application/json" -d '{}' "$URL/rest/v1/$t"
-    denied "$who update $t" -X PATCH -H "apikey: $KEY" -H "Authorization: Bearer $bearer" -H "Content-Type: application/json" -d "$(update_body "$t")" "$URL/rest/v1/$t?$(update_filter "$t")"
+    denied "$who select $t" -H "$auth" "$URL/rest/v1/$t?select=*&limit=1"
+    denied "$who insert $t" -X POST -H "$auth" -H "Content-Type: application/json" -d '{}' "$URL/rest/v1/$t"
+    denied "$who update $t" -X PATCH -H "$auth" -H "Content-Type: application/json" -d "$(update_body "$t")" "$URL/rest/v1/$t?$(update_filter "$t")"
   done
   for f in $FUNCS; do
-    denied "$who call $f" -X POST -H "apikey: $KEY" -H "Authorization: Bearer $bearer" -H "Content-Type: application/json" -d "$(rpc_args "$f")" "$URL/rest/v1/rpc/$f"
+    denied "$who call $f" -X POST -H "$auth" -H "Content-Type: application/json" -d "$(rpc_args "$f")" "$URL/rest/v1/rpc/$f"
   done
 }
 
-run_role anon "$KEY"
+run_role anon
 if [ -n "$JWT" ]; then
-  run_role authenticated "$JWT"
+  run_role authenticated
 else
   echo "SKIP authenticated checks (set GBRAIN_VERIFY_AUTH_JWT)"; SKIP=1
 fi
 
 # One test-source event (the live view and the pulse leave it out) proves the write path.
 PROBE='{"v":1,"ts":"'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'","event_type":"setup","gbrain_version":"0.0.0","tier":"anonymous","source":"test"}'
-ING="$(curl -s --max-time 15 -X POST -H "apikey: $KEY" -H "Content-Type: application/json" -d "$PROBE" "$URL/functions/v1/gbrain-telemetry-ingest" 2>/dev/null || true)"
+ING="$(curl -s --max-time 15 -X POST -H "@$HDR_DIR/key" -H "Content-Type: application/json" -d "$PROBE" "$URL/functions/v1/gbrain-telemetry-ingest" 2>/dev/null || true)"
 if printf '%s' "$ING" | grep -q '"accepted":1'; then echo "PASS ingest stores a test event"; PASS=$((PASS + 1)); else echo "FAIL ingest: $(printf '%s' "$ING" | head -c 200)"; FAIL=$((FAIL + 1)); fi
 
-PUL="$(curl -s --max-time 30 -H "apikey: $KEY" "$URL/functions/v1/gbrain-telemetry-pulse" 2>/dev/null || true)"
+PUL="$(curl -s --max-time 30 -H "@$HDR_DIR/key" "$URL/functions/v1/gbrain-telemetry-pulse" 2>/dev/null || true)"
 if printf '%s' "$PUL" | grep -q '"status":"ok"'; then echo "PASS pulse answers"; PASS=$((PASS + 1)); else echo "FAIL pulse: $(printf '%s' "$PUL" | head -c 200)"; FAIL=$((FAIL + 1)); fi
 
 if [ "$FAIL" -gt 0 ]; then echo "VERDICT: FAIL pass=$PASS fail=$FAIL"; exit 1; fi
-if [ "$SKIP" -gt 0 ]; then echo "VERDICT: INCOMPLETE pass=$PASS (signed-in checks skipped)"; exit 0; fi
+if [ "$SKIP" -gt 0 ]; then echo "VERDICT: INCOMPLETE pass=$PASS (signed-in checks skipped)"; exit 2; fi
 echo "VERDICT: PASS pass=$PASS"

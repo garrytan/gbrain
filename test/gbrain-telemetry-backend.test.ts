@@ -107,6 +107,44 @@ describe('gbrain telemetry backend: locked down and separate from gstack', () =>
     expect(toRow(JSON.parse(out))).toMatchObject({ source: 'test', event_type: 'setup' });
   });
 
+  // Value: protects=verify.sh never puts the publishable key or a signed-in user's JWT on a command line, and a run that skipped the signed-in checks never exits 0; fails_when=a curl line carries a key or JWT again, the header files stop reaching the server, or INCOMPLETE exits 0; why_new=the other verify.sh tests are static; seam=a local HTTP stand-in for the project; no_claim=a live Supabase answer
+  test('verify.sh sends its keys from files and fails an incomplete run', async () => {
+    for (const l of VERIFY.split('\n').filter(l => l.includes('curl '))) expect(l).not.toMatch(/\$(KEY|JWT|bearer)\b/);
+    const seen: string[] = [];
+    const server = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch(req) {
+      const path = new URL(req.url).pathname;
+      seen.push(`${req.headers.get('apikey')}|${req.headers.get('authorization') ?? ''}`);
+      if (path.endsWith('gbrain-telemetry-ingest')) return Response.json({ accepted: 1, rejected: 0 });
+      if (path.endsWith('gbrain-telemetry-pulse')) return Response.json({ status: 'ok' });
+      return Response.json({ code: '42501' }, { status: 401 });
+    } });
+    const run = async (jwt?: string) => {
+      const env: Record<string, string> = { PATH: process.env.PATH ?? '', GBRAIN_TELEMETRY_URL: `http://127.0.0.1:${server.port}`, GBRAIN_TELEMETRY_KEY: 'pk-example' };
+      if (jwt) env.GBRAIN_VERIFY_AUTH_JWT = jwt;
+      const proc = Bun.spawn(['bash', join(DIR, 'verify.sh')], { env, stdout: 'pipe', stderr: 'pipe' });
+      const out = await new Response(proc.stdout).text();
+      return { code: await proc.exited, out };
+    };
+    try {
+      const partial = await run();
+      expect(partial.out).not.toContain('FAIL');
+      expect(partial.out).toContain('VERDICT: INCOMPLETE');
+      expect(partial.code).toBe(2);
+      expect(seen).toContain('pk-example|Bearer pk-example');
+      seen.length = 0;
+      const full = await run('jwt-example');
+      expect(full.out).toContain('VERDICT: PASS');
+      expect(full.code).toBe(0);
+      expect(seen).toContain('pk-example|Bearer jwt-example');
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test('only a live event records an installation, so verify.sh and test probes never do', () => {
+    expect(INGEST).toMatch(/typeof r\.installation_id === "string" && r\.source === "live"/);
+  });
+
   test('the ingest writes with the service-role key and never the caller\'s', () => {
     expect(INGEST).toContain('Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")');
     expect(INGEST).not.toMatch(/req\.headers\.get\("(authorization|apikey)"\)/i);
@@ -165,6 +203,10 @@ describe('gbrain telemetry ingest: field checks (validate.ts)', () => {
     expect(toRow({ ...base, gbrain_version: 'latest' })).toBeNull();
     expect(toRow({ ...base, tier: 'off' })).toBeNull();
     expect(toRow({ ...base, event_type: 'page_read' })).toBeNull();
+    expect(toRow({ ...base, gbrain_version: '00.60.760.0' })).toBeNull();
+    expect(toRow({ ...base, gbrain_version: '0.060.760.0' })).toBeNull();
+    expect(toRow({ ...base, gbrain_version: '0.60.0.0' })!.gbrain_version).toBe('0.60.0.0');
+    expect(toRow({ ...base, event_type: 'upgrade', from_version: '0.60.07.0' })!.from_version).toBeNull();
     expect(toRow({ ...base, ts: new Date(Date.now() + 3 * 3_600_000).toISOString() })).toBeNull();
     expect(toRow({ ...base, ts: new Date(Date.now() - 40 * 86_400_000).toISOString() })).toBeNull();
   });

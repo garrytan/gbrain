@@ -12,7 +12,7 @@ gbrain's opt-in telemetry lands here: two Supabase edge functions and the SQL be
 
 ## Who can do what
 
-- The publishable (anon) key the client ships can't read or write any table, view or function here: RLS is on with no policies and every privilege is revoked from `anon` and `authenticated`.
+- The publishable (anon) key the client sends can't read or write any table, view or function here: RLS is on with no policies and every privilege is revoked from `anon` and `authenticated`.
 - Only `service_role`, which the two functions hold in their own environment, reads and writes.
 - The pulse is public by design: counts only, no installation id. A cell crossed with brain size needs 5 distinct community installs, which stops a casual reader from singling out one install but can't stop a caller who invents ids.
 - Every row is an unauthenticated report, so the pulse is a lead to check, not proof, for anyone reading it (the severe sweep included). Its per-version lists cover 10 versions (the newest release always, then the most-reported), and one report's count for any command or error code is capped at 10,000.
@@ -32,7 +32,7 @@ The ceiling is one bucket shared by every caller, so one caller can fill it. The
 
 1. Apply `migrations/G001_gbrain_telemetry.sql` as the project owner (psql or the dashboard SQL editor). It runs in one transaction and is safe to run twice.
 2. Deploy both functions with JWT verification off (`supabase functions deploy gbrain-telemetry-ingest --no-verify-jwt` and the same for `gbrain-telemetry-pulse`, or paste each `index.ts` into the dashboard editor and turn off "Enforce JWT verification"; each file is self-contained). The client sends only the publishable key in an `apikey` header, which is not a JWT, so with verification on every request is refused with 401 before the function runs.
-3. Run `GBRAIN_TELEMETRY_URL=… GBRAIN_TELEMETRY_KEY=… bash supabase/gbrain-telemetry/verify.sh` and keep its `VERDICT:` line.
+3. Run `GBRAIN_TELEMETRY_URL=… GBRAIN_TELEMETRY_KEY=… GBRAIN_VERIFY_AUTH_JWT=… bash supabase/gbrain-telemetry/verify.sh` with a signed-in user's JWT and keep its `VERDICT:` line. Without the JWT the signed-in checks are skipped and it ends `INCOMPLETE` with exit 2. It reads both secrets from the environment and never puts them on a command line.
 4. Retention: run `select public.gbrain_telemetry_prune();` daily. Where pg_cron is enabled: `select cron.schedule('gbrain-telemetry-prune', '17 4 * * *', 'select public.gbrain_telemetry_prune()');` Otherwise run it by hand at least monthly.
 
 ## Changing it

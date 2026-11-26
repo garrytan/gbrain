@@ -78,7 +78,7 @@ Deno.serve(async (req) => {
   const today = new Date().toISOString().slice(0, 10);
   const installs = new Map<string, Row>();
   for (const r of rows) {
-    if (typeof r.installation_id === "string") {
+    if (typeof r.installation_id === "string" && r.source === "live") {
       installs.set(r.installation_id, { installation_id: r.installation_id, last_seen: today, gbrain_version: r.gbrain_version, os: r.os });
     }
   }

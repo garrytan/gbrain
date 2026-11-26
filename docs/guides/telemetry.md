@@ -90,8 +90,8 @@ Events older than 30 days are dropped. The server keeps stored events for 400
 days.
 
 Data goes to gbrain's own tables in the Supabase project gbrain shares with
-gstack, through one validated endpoint. The publishable key in the code can call
-that endpoint and the public aggregate, and cannot read or write any table.
+gstack, through one validated endpoint. The publishable key the client sends can
+call that endpoint and the public aggregate, and cannot read or write any table.
 
 `gbrain search stats` reads a different, local-only search log that is never
 sent.
