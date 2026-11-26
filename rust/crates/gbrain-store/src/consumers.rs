@@ -329,6 +329,7 @@ mod tests {
             purge_ms: 120_000,
             boot_id: None,
             process_start: None,
+            fence: None,
         }
     }
 
