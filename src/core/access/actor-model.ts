@@ -37,6 +37,8 @@ export const ACTOR_DEFERRED_OPS: ReadonlySet<string> = new Set([
   'begin_page_upload', 'upload_page_part', 'commit_page_upload', 'abort_page_upload',
   'put_raw_data', 'extract_entities', 'questions_pin', 'questions_refresh', 'questions_unpin',
   'rate_answer', 'log_ingest', 'loops_mute', 'loops_unmute',
+  'household_add', 'household_mark',
+  'log_action', 'policy_reserve',
 ]);
 
 /** Canonical person ids: 1-256 visible ASCII characters (QM's credential broker rule), no case folding. */

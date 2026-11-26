@@ -18,7 +18,7 @@ import { mountAdminApiKeys } from './serve-http-api-keys.ts';
 import { mountAdminClients } from './serve-http-clients.ts';
 import { mountAdminRegistration } from './serve-http-registration.ts';
 import { parseAdminGrantRequest, grantHttpStatus, GRANT_TOKEN_IMPLICATIONS, mountAdminGrantDiscovery, mountAdminGrantEdits } from './serve-http-grants.ts';
-import { mountAdminAccess, mountAdminMemoryProposals } from './serve-http-access.ts';
+import { mountAdminAccess, mountAdminMemoryProposals, mountAdminPolicy } from './serve-http-access.ts';
 import { probeHealth } from './serve-http-metrics.ts';
 import type { ServeHttpContext } from './serve-http.ts';
 
@@ -485,6 +485,7 @@ function mountAdminClientApi(app: Express, ctx: ServeHttpContext): void {
   mountAdminGrantEdits(app, requireAdmin, engine, oauthProvider);
   mountAdminAccess(app, requireAdmin, engine);
   mountAdminMemoryProposals(app, requireAdmin, engine);
+  mountAdminPolicy(app, requireAdmin, engine);
 
   // Revoke OAuth client
   app.post('/admin/api/revoke-client', requireAdmin, express.json(), async (req: Request, res: Response) => {

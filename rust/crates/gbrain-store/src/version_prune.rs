@@ -15,6 +15,11 @@
 //! holding page (`memory/unattributed`, `memory/unattributed-private`). It keeps the newest
 //! `LARGE_PAGE_VERSIONS_KEPT` versions that are not segmented, deletes at most
 //! `HOLDING_PAGE_VERSIONS_PRUNED_PER_WRITE` of the oldest others, and marks the history it cut.
+//!
+//! No prune touches an `agent_policy` page (#10304): its saved versions are the audit trail of who
+//! changed the policy. The inline large-page prune reads the snapshot's type, as PGLite reads the
+//! page it saved; the segmented and holding prunes read the live page, as their SQL does
+//! (`pages.type IS DISTINCT FROM 'agent_policy'`, which a missing page also fails).
 
 use std::collections::BTreeMap;
 
@@ -33,6 +38,8 @@ pub(crate) const PAGE_INLINE_MAX_BYTES: u64 = 1024 * 1024;
 pub(crate) const LARGE_PAGE_VERSIONS_KEPT: usize = 5;
 /// `HOLDING_PAGE_VERSIONS_PRUNED_PER_WRITE` (`src/core/engine-sql/version-prune.ts`).
 pub(crate) const HOLDING_PAGE_VERSIONS_PRUNED_PER_WRITE: usize = 100;
+/// `AGENT_POLICY_TYPE` (`src/core/policy/slugs.ts`): the page type whose versions no prune removes.
+const AGENT_POLICY_TYPE: &str = "agent_policy";
 /// `DEFAULT_SEGMENTED_VERSIONS_MAX_PER_PAGE`.
 const DEFAULT_SEGMENTED_MAX_PER_PAGE: i64 = 50;
 /// `DEFAULT_SEGMENTED_VERSIONS_MAX_PINNED_BYTES`.
@@ -55,7 +62,11 @@ pub(crate) fn prune_after_snapshot(
 ) -> Result<()> {
     let page_id = snapshot.page_id;
     if snapshot.body_storage.is_some() {
-        let pruned = prune_segmented(tx, page_id)?;
+        let pruned = if prunable_page(&*tx, page_id)? {
+            prune_segmented(tx, page_id)?
+        } else {
+            Vec::new()
+        };
         mark_pruned_history(tx, env, page_id, &pruned)?;
         if !pruned.is_empty() {
             let now = now(env);
@@ -70,7 +81,9 @@ pub(crate) fn prune_after_snapshot(
         }
         return Ok(());
     }
-    if inline_bytes(snapshot).is_none_or(|bytes| bytes <= PAGE_INLINE_MAX_BYTES) {
+    if snapshot.page_type == AGENT_POLICY_TYPE
+        || inline_bytes(snapshot).is_none_or(|bytes| bytes <= PAGE_INLINE_MAX_BYTES)
+    {
         return Ok(());
     }
     let mut large: Vec<u64> = versions_of(&*tx, page_id)?
@@ -91,6 +104,9 @@ pub(crate) fn prune_after_snapshot(
 /// `HOLDING_PAGE_VERSIONS_PRUNED_PER_WRITE` of them, marks the history it cut and answers how many
 /// it deleted.
 pub(crate) fn prune_holding(tx: &mut dyn KvWrite, env: &dyn Env, page_id: u64) -> Result<u64> {
+    if !prunable_page(&*tx, page_id)? {
+        return Ok(0);
+    }
     let mut inline: Vec<u64> = versions_of(&*tx, page_id)?
         .iter()
         .filter(|v| v.body_storage.as_deref() != Some("segmented"))
@@ -105,6 +121,12 @@ pub(crate) fn prune_holding(tx: &mut dyn KvWrite, env: &dyn Env, page_id: u64) -
     }
     mark_pruned_history(tx, env, page_id, &excess)?;
     Ok(excess.len() as u64)
+}
+
+/// `EXISTS (SELECT 1 FROM pages WHERE id = $1 AND type IS DISTINCT FROM 'agent_policy')`: the live
+/// page exists and is not an agent policy page.
+fn prunable_page(read: &dyn KvRead, page_id: u64) -> Result<bool> {
+    Ok(read_page_by_id(read, page_id)?.is_some_and(|page| page.page_type != AGENT_POLICY_TYPE))
 }
 
 /// `pruneSegmentedVersions`: deletes the segmented versions past the count cap or the pinned

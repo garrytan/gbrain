@@ -156,6 +156,7 @@ test/drain-lease-key-share-7442.test.ts	#7442: the drain-lease fence lets the re
 test/dry-fix.test.ts	autoFixDryViolations	12	readFileSync
 test/e2e/bootstrap-real-codex.serial.test.ts	bootstrap rendered protocol — ambient boundaries (always runs)	5	readFileSync
 test/e2e/codex-plugin-install-real.serial.test.ts	(file-level)	2	readFileSync
+test/e2e/household-cross-harness-real.serial.test.ts	(file-level)	2	readFileSync
 test/e2e/migration-flow.test.ts	(file-level)	4	readFileSync
 test/e2e/openclaw-reference-compat.test.ts	OpenClaw reference workspace compat (W1 + W2 + W3)	8	readFileSync
 test/e2e/segmented-rls-scope.test.ts	(file-level)	6	readFileSync
@@ -330,8 +331,7 @@ test/schema-pack/suggest.test.ts	runSuggest — source-text contract (structural
 test/scripts/build-lookup-table.test.ts	build-lookup-table	2	readFileSync
 test/scripts/build-schema-migrations.test.ts	generator diagnostics (FAIL/Why/Fix/See)	9	exec-scan
 test/scripts/build-schema-migrations.test.ts	out-of-order landing check	2	exec-scan
-test/scripts/check-agent-contract-baselines.test.ts	agent-contract baselines	2	readFileSync
-test/scripts/check-bytecode-parity.test.ts	bytecode release build	6	readFileSync
+test/scripts/check-bytecode-parity.test.ts	bytecode release build	7	readFileSync
 test/scripts/check-core-world-reads.test.ts	check-core-world-reads.ts: the ratchet	5	readFileSync
 test/scripts/check-dynamic-ci.test.ts	check-dynamic-ci.ts	3	exec-scan,readFileSync
 test/scripts/check-function-size.test.ts	check-function-size.ts rules	11	readFileSync
@@ -383,6 +383,7 @@ test/scripts/nightly-issue.test.ts	nightly-watch coverage ratchet	2	readFileSync
 test/scripts/nightly-issue.test.ts	nightly-watch incidents	9	readFileSync
 test/scripts/nightly-issue.test.ts	nightly-watch routing and guard	9	readFileSync
 test/scripts/nightly-issue.test.ts	operator messages carry docs anchors that resolve	1	readFileSync
+test/scripts/openclaw-cell-receipts.test.ts	(file-level)	2	readFileSync
 test/scripts/postgres-lane-coverage.test.ts	check-postgres-lane-coverage.ts	9	readFileSync
 test/scripts/postgres-unit-arms.test.ts	postgres-unit-arms list	14	readFileSync
 test/scripts/pregate-remote-gate.test.ts	.gstack policy floor	1	readFileSync
@@ -425,6 +426,8 @@ test/serve-stdin-eof-drain.test.ts	serve-sync-runner stays off the boot path (#4
 test/setup-brain-layout.test.ts	setup --shape personal	9	readFileSync
 test/setup-pi-skill-extension.test.ts	(file-level)	7	readFileSync
 test/setup.test.ts	gbrain setup: setup migrations on the brain it creates (Cat 41 run 4)	3	readFileSync
+test/shadow-drill.test.ts	the probe of the opened copy	7	readFileSync
+test/shadow-drill.test.ts	the stop word list is the Rust engine list (review round 2)	2	readFileSync
 test/shadow-replay.test.ts	comparison	2	readFileSync
 test/shadow-replay.test.ts	replay child (in-memory arms)	4	readFileSync
 test/shadow-replay.test.ts	review fixes (ship final review of the queued head)	4	readFileSync

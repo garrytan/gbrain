@@ -3253,6 +3253,7 @@
           "limit?: number | undefined",
           "listColumnsOnly?: boolean | undefined",
           "offset?: number | undefined",
+          "omitBodies?: boolean | undefined",
           "slugAfter?: string | undefined",
           "slugPrefix?: string | undefined",
           "slugPrefixAlso?: string[] | undefined",
@@ -7372,6 +7373,7 @@
           "azure_openai_use_entra?: string | undefined",
           "backup?: { check_enabled?: boolean | string; check_interval_days?: number | string; } | undefined",
           "brain?: { audience?: string; } | undefined",
+          "brain_first?: { policy_line?: string; } | undefined",
           "chat_fallback_chain?: string[] | undefined",
           "chat_fallback_on_refusal?: boolean | undefined",
           "chat_model?: string | undefined",
@@ -7395,6 +7397,7 @@
           "engine: \"postgres\" | \"pglite\" | \"rust\"",
           "eval?: { capture?: boolean; scrub_pii?: boolean; } | undefined",
           "expansion_model?: string | undefined",
+          "google?: { mint_socket?: boolean; broker_act?: boolean; broker_allow_root_gateway?: boolean; socket_peers?: number[]; broker_joint_probe?: number; } | undefined",
           "google_api_key?: string | undefined",
           "hooks?: { stop_push_debounce_min?: number | string; } | undefined",
           "integrations?: { memorable?: { enabled?: boolean; }; } | undefined",
@@ -11145,6 +11148,7 @@
           "flagged: boolean",
           "guest: boolean",
           "id: number",
+          "precedence: string",
           "slug: string",
           "source_id: string",
           "trust_tier: string",
@@ -11202,6 +11206,7 @@
           "contested: string | null",
           "flagged: boolean",
           "id: number",
+          "precedence: string | null",
           "trust_tier: string",
           "write_origin: unknown"
         ],
@@ -12246,7 +12251,7 @@
         "kind": "function",
         "name": "importFromContent",
         "signature": [
-          "(engine: BrainEngine, slug: string, content: string, opts?: { prepare?: (prepared: PreparedContentImport) => Promise<ImportResult>; history?: VersionHistory; coordinated?: boolean; boundedChunkWrites?: true; existingSnapshot?: PageSnapshot | null; prepareFrontmatter?: (page: ParsedPage) => void; noEmbed?: boolean; sourceId?: string; filename?: string; sourcePath?: string; sourceRoot?: string; fileTimes?: { birthtime?: Date; mtime?: Date; firstCommit?: Date; }; forceRechunk?: boolean; activePack?: ParseOpts[\"activePack\"]; source_kind?: string | null; source_uri?: string | null; ingested_via?: string | null; segmentedOwner?: SegmentedStagingOwner; reuseSegments?: SegmentedImport; remote?: boolean; restoreHeldRows?: boolean; preserveGateMarkers?: boolean; allowEmptyOverwrite?: boolean; overrideTier?: unknown; writeGate?: WriteGateInput; holdNoncanonicalPrivate?: boolean; beforeCommit?: (tx: BrainEngine, slug: string) => Promise<void>; expectedBaseRevision?: string | null; onPostCommitEmbedding?: (complete: () => Promise<ImportEmbeddingResult>) => void; } & ImportFenceOptions) => Promise<ImportResult>"
+          "(engine: BrainEngine, slug: string, content: string, opts?: { prepare?: (prepared: PreparedContentImport) => Promise<ImportResult>; history?: VersionHistory; coordinated?: boolean; boundedChunkWrites?: true; existingSnapshot?: PageSnapshot | null; prepareFrontmatter?: (page: ParsedPage) => void; noEmbed?: boolean; sourceId?: string; filename?: string; sourcePath?: string; sourceRoot?: string; fileTimes?: { birthtime?: Date; mtime?: Date; firstCommit?: Date; }; forceRechunk?: boolean; activePack?: ParseOpts[\"activePack\"]; source_kind?: string | null; source_uri?: string | null; ingested_via?: string | null; segmentedOwner?: SegmentedStagingOwner; reuseSegments?: SegmentedImport; remote?: boolean; restoreHeldRows?: boolean; householdOwner?: () => Promise<boolean>; preserveGateMarkers?: boolean; allowEmptyOverwrite?: boolean; overrideTier?: unknown; writeGate?: WriteGateInput; holdNoncanonicalPrivate?: boolean; beforeCommit?: (tx: BrainEngine, slug: string) => Promise<void>; expectedBaseRevision?: string | null; onPostCommitEmbedding?: (complete: () => Promise<ImportEmbeddingResult>) => void; } & ImportFenceOptions) => Promise<ImportResult>"
         ]
       },
       {
@@ -13992,6 +13997,7 @@
           "localSourceImplicit?: boolean | undefined",
           "logger: Logger",
           "mcpCaller?: { client?: string; userAgent?: string; meta?: Record<string, unknown>; } | undefined",
+          "notifyToolListChanged?: (() => Promise<void>) | undefined",
           "remote: boolean",
           "replayAuthority?: WriteAuthority | undefined",
           "resultRows?: \"full\" | \"lean\" | undefined",
@@ -14005,6 +14011,7 @@
           "surfaceCeiling?: \"full\" | \"verbs\" | \"starter\" | undefined",
           "takesHoldersAllowList?: string[] | undefined",
           "thinClient?: boolean | undefined",
+          "toolAccess?: { connection: () => ToolConnection; isListed?: (op: OperationMeta) => Promise<boolean>; servedToClient?: (name: string) => boolean; } | undefined",
           "transport?: \"stdio\" | \"http\" | undefined",
           "viaSubagent?: boolean | undefined",
           "writeWaitMs?: number | undefined"
@@ -18227,7 +18234,7 @@
         "kind": "type",
         "name": "CatalogHandleOptions",
         "signature": [
-          "{ home?: string | undefined; failOpen?: boolean | undefined; deadlineMs?: number | undefined; sessionTokenBudget?: number | undefined; loadHint?: string | undefined; namesOnly?: boolean | undefined; explainTarget?: string | undefined; router?: boolean | undefined; env?: NodeJS.ProcessEnv | undefined; now?: (() => number) | undefined; }"
+          "{ home?: string | undefined; failOpen?: boolean | undefined; deadlineMs?: number | undefined; sessionTokenBudget?: number | undefined; loadHint?: string | undefined; readRoot?: string | undefined; namesOnly?: boolean | undefined; explainTarget?: string | undefined; router?: boolean | undefined; env?: NodeJS.ProcessEnv | undefined; now?: (() => number) | undefined; }"
         ]
       },
       {
@@ -18247,7 +18254,7 @@
         "kind": "type",
         "name": "CatalogTurnOptions",
         "signature": [
-          "{ failOpen?: boolean | undefined; deadlineMs?: number | undefined; sessionTokenBudget?: number | undefined; loadHint?: string | undefined; namesOnly?: boolean | undefined; explainTarget?: string | undefined; router?: boolean | undefined; now?: (() => number) | undefined; }"
+          "{ failOpen?: boolean | undefined; deadlineMs?: number | undefined; sessionTokenBudget?: number | undefined; loadHint?: string | undefined; readRoot?: string | undefined; namesOnly?: boolean | undefined; explainTarget?: string | undefined; router?: boolean | undefined; now?: (() => number) | undefined; }"
         ]
       },
       {
@@ -18322,6 +18329,7 @@
           "loadHint?: string | undefined",
           "namesOnly?: boolean | undefined",
           "now?: (() => number) | undefined",
+          "readRoot?: string | undefined",
           "router?: boolean | undefined",
           "sessionTokenBudget?: number | undefined"
         ],
@@ -19531,6 +19539,7 @@
           "limit?: number | undefined",
           "listColumnsOnly?: boolean | undefined",
           "offset?: number | undefined",
+          "omitBodies?: boolean | undefined",
           "slugAfter?: string | undefined",
           "slugPrefix?: string | undefined",
           "slugPrefixAlso?: string[] | undefined",

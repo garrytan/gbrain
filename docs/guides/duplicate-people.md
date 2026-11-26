@@ -3,8 +3,8 @@
 The same person often has two or three pages: a contact from Google or Apple Contacts, a page in each source, a stray
 spelling. `gbrain dedupe classes` looks at every pair of person pages that might be one person and counts them by the
 evidence for and against. `gbrain dedupe sample` picks a random set of pairs from one class so someone can check them
-by hand. Both only read: nothing is linked, edited or removed. `gbrain dedupe auto` links the pairs of the classes
-that passed such a check ([Automatic links](#automatic-links)).
+by hand. Both only read: nothing is linked, edited or removed. `gbrain dedupe auto` links or collapses the pairs of
+the classes that passed such a check ([Automatic links](#automatic-links)).
 
 ## Which pairs are looked at
 
@@ -29,14 +29,14 @@ pages it pairs with are not copies of each other (different emails, say), every 
 | C4 | same full name and company, two or more pages that link both, no other page of that name | wait (counted first) |
 | C5 | the names agree and nothing else is shared | wait, likeliest first |
 | C6 | a contradiction: different account ids, a role mailbox like team@, a value a third page also holds, or an id that a page with another name also holds (ids copied between cofounders' pages) | wait |
-| C7 | two pages in one source with the same name and a shared id | collapse into one |
+| C7 | two pages in one source with the same name and a shared id | collapse into one with `gbrain dedupe auto` |
 | M1 | a chat handle (phone or email) only one person page holds belongs, in your chats, to someone with the other page's name | link |
 | X1 | a web search for each page, with a different clue, finds the same profile | link |
 | X2 | the web searches find two different profiles | marked probably different |
 | C5+email+messaging, C5+email+C4, C5+messaging+C4 | a name-only pair with two independent kinds of evidence | link |
 
 A pair can be in more than one class. "What would happen" is what the evidence says; only the classes listed under
-[Automatic links](#automatic-links) are linked without you.
+[Automatic links](#automatic-links) are linked or collapsed without you.
 
 ## How the evidence combines
 
@@ -100,23 +100,39 @@ pair same, different or unsure; a class with more than 2 wrong in 100 stays manu
 
 ## Automatic links
 
-`gbrain dedupe auto` lists the pairs it would link and changes nothing; `gbrain dedupe auto --apply` links them. It
-links only classes that passed a labelled sample, today C2: an email or phone that only these two person pages hold,
-in two sources, with names that differ only in form (a one-word handle or card label beside a name). It leaves out a
-pair of two full names that disagree, a pair with a family, minor or non-person page or a page not every reader may
-read (private visibility, named readers, a privacy label, a folder rule or an owner-only source, with or without a
-repository), a pair with any contradiction (including two different profiles from web searches already cached; auto
-sends no search), a pair whose page is in another pair it would link (in any source, whatever `--source` names), and a pair whose page is
-already in an identity group, so a third page never joins two linked ones on a second signal.
+`gbrain dedupe auto` lists the pairs it would join and changes nothing; `gbrain dedupe auto --apply` joins them. It
+joins only classes that passed a labelled sample, today C2 and C7:
+
+- **C2 is linked.** An email or phone that only these two person pages hold, in two sources, with names that differ only
+  in form (a one-word handle or card label beside a name). Two full names that disagree are held, and so are a title
+  with a digit in it and a one-word title that is a common first name, since those read as a different person as often
+  as a handle.
+- **C7 is collapsed.** Two person pages in one source with the same name and a shared id, email or phone are one page
+  kept twice. The newer page gets `merged_into: <the older page's slug>` and a `dedupe_collapse` record; the older
+  page gets the newer one's title and aliases in `aliases`. Lookups, links, search and mentions follow `merged_into`,
+  and the newer page keeps its body: nothing is deleted or renamed. With a repository, both files change in one commit
+  (its parent is the backup); without one, both pages are edited through the page history (`gbrain revert` works too).
+  A read-only source (a mirror or a URL clone) and a file with edits not committed yet are left out.
+
+Auto leaves out a pair with a family, minor or non-person page or a page not every reader may read (private
+visibility, named readers, a privacy label, a folder rule or an owner-only source, with or without a repository), a
+pair with any contradiction (including two different profiles from web searches already cached; auto sends no search),
+a pair whose page is in another pair it would join (in any source, whatever `--source` names), and a pair whose page is
+already in an identity group, so a third page never joins two joined ones on a second signal. A phone number with an
+extension counts as its own number, and a page that names the other in `distinct_from` keeps the pair apart in any
+source.
 
 Each link is a "same" decision, recorded like your own `gbrain dedupe confirm` (in git when the brain has a
-repository, in the database otherwise) with `decided_by: dedupe:auto:<class>`. So:
+repository, in the database otherwise) with `decided_by: dedupe:auto:<class>`. Each write checks again first, so a
+plan you previewed never writes over a reject, an `--off` or a page edit that landed after it. So:
 
-- `gbrain dedupe undo <decision>` removes one link (the next `--apply` can make it again);
-- `gbrain dedupe reject <identity id>` marks a wrong pair as different people for good;
-- `gbrain dedupe auto --off <class>` stops a class and removes every link it made; `--on <class>` starts it again;
-- `gbrain doctor` prints the last 24 hours of automatic links by class, with the undo commands (`dedupe_auto_links`).
+- `gbrain dedupe reject <identity id or collapse id>` takes back one link or collapse and marks the pair as different
+  people for good, even after a page is renamed or moved; the reject is recorded as a correction of the class;
+- `gbrain dedupe undo <decision or collapse id>` takes back one without a verdict (the next `--apply` can do it again);
+- `gbrain dedupe auto --off <class>` stops a class and takes back everything it did; `--on <class>` starts it again;
+- `gbrain doctor` prints the last 24 hours of automatic links and collapses by class, with the reject commands
+  (`dedupe_auto_links`).
 
 Check each class weekly: `gbrain dedupe sample --class C2 --since 7d --n 20 --json` picks 20 of the links it made in
-the last week, each with the reject command that keeps it apart if it is wrong. More than one wrong in 20 means
-switching the class off.
+the last week, each with the reject command that keeps it apart if it is wrong, and counts the ones you already
+corrected. More than one wrong in 20 means switching the class off.
