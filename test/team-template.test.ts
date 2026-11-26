@@ -19,7 +19,7 @@ import { addGroup, addMember, listGroups, listMembers } from '../src/core/access
 import { ownerMemberId } from '../src/core/access/owner.ts';
 import { addFolderRules, currentFolderRules } from '../src/commands/access-rules.ts';
 import { policySeams, policyStatus } from '../src/core/access/policy.ts';
-import { applyBrainLayout } from '../src/commands/setup-brain-layout.ts';
+import { applyBrainLayout, teamPreflight } from '../src/commands/setup-brain-layout.ts';
 import { copyFileSync, mkdirSync as mkdirSyncFs, mkdtempSync, writeFileSync as writeFileSyncFs } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { mintToken } from '../src/commands/auth-mint.ts';
@@ -411,12 +411,14 @@ describe('team template final-review fixes', () => {
     const flags = __testing.parseFlags(['codex', '--template', 'team', '--members', MEMBERS, '--yes']) as any;
     const seen: string[][] = [];
     const blocked = { template: 'team', steps: [{ id: 'group', state: 'blocked', actions: [{ what: 'team-members', action: 'blocked', command: 'gbrain setup <harness> --template team --team-group <another id>', detail: 'a group named team-members already exists' }] }] };
-    const e = __testing.teamPreflight(flags, 'gbrain', 'codex', true, false, (argv) => { seen.push(argv); return { stdout: JSON.stringify(blocked), stderr: '' }; });
+    const opts = { dryRun: flags.dryRun, source: null, owner: OWNER };
+    expect(flags.dryRun).toBe(false);
+    const e = teamPreflight(flags.teamRun, opts, 'gbrain', 'codex', true, false, (argv) => { seen.push(argv); return { stdout: JSON.stringify(blocked), stderr: '' }; });
     expect(e?.code).toBe('setup_team_blocked');
     expect(e?.message).toContain('BLOCKED group team-members');
     expect(seen[0]).not.toContain('--yes');
-    expect(__testing.teamPreflight(flags, 'gbrain', 'codex', true, false, () => ({ stdout: JSON.stringify({ template: 'team', steps: [] }), stderr: '' }))).toBeNull();
+    expect(teamPreflight(flags.teamRun, opts, 'gbrain', 'codex', true, false, () => ({ stdout: JSON.stringify({ template: 'team', steps: [] }), stderr: '' }))).toBeNull();
     const guests = __testing.parseFlags(['codex', '--template', 'team', '--members', MEMBERS, '--guests', 'oauth_client:broker-a', '--yes']) as any;
-    expect(__testing.teamPreflight(guests, 'gbrain', 'codex', false, false)?.code).toBe('setup_team_blocked');
+    expect(teamPreflight(guests.teamRun, opts, 'gbrain', 'codex', false, false)?.code).toBe('setup_team_blocked');
   });
 });

@@ -39,6 +39,7 @@ import { bunSpawnSync } from '../core/spawn.ts';
 import { readLine } from '../core/interaction.ts';
 import { templateLines, type TemplateResult } from './household-template.ts';
 import { templateLines as teamTemplateLines, type TeamResult } from './team-template.ts';
+import { opError, type OperationError } from '../core/ops/contract.ts';
 
 export type BrainShape = 'personal' | 'company' | 'both' | 'household' | 'none';
 
@@ -588,6 +589,26 @@ export function teamTemplateArgs(harness: string, source: string | null, flags: 
   return ['access', 'template', 'team', '--harness', harness, ...(source ? ['--source', source] : []), ...(t.members !== undefined ? ['--members', t.members] : []),
     ...(t.guests !== undefined ? ['--guests', t.guests] : []), ...(t.group !== undefined ? ['--team-group', t.group] : []), ...(t.owner ? ['--owner', t.owner] : []),
     ...(t.history === 'private' ? ['--labelled-only'] : t.history === 'open' ? ['--open-history'] : []), ...(flags.dryRun ? [] : ['--yes'])];
+}
+
+/**
+ * Lane 5 O1: before setup writes anything (harness entry, pages, imports), the team template's own preview on an
+ * existing brain; a BLOCKED line refuses the whole run, so "nothing written" holds. A brain this run creates holds no
+ * group, rule or history to block on, but has no OAuth client a --guests writer could name either.
+ */
+export function teamPreflight(t: { members?: string; guests?: string; group?: string; history?: 'private' | 'open'; status?: boolean; resume?: string },
+  opts: { dryRun: boolean; source: string | null; owner?: string }, launcher: string, harness: string, hasBrain: boolean, liveOurs: boolean,
+  exec: (argv: string[]) => { stdout: string; stderr: string } = run): OperationError | null {
+  if (t.status || t.resume || opts.dryRun || liveOurs) return null;
+  const refuse = (lines: string[]) => opError('setup_team_blocked', `The team template cannot run as asked; nothing was written.\n${lines.join('\n')}`,
+    `Fix each BLOCKED line, then run gbrain setup ${harness} --template team again.`);
+  if (!hasBrain) return t.guests?.split(',').some(w => w.trim().startsWith('oauth_client:')) ? refuse(['  BLOCKED guests: --guests names OAuth clients, and this brain does not exist yet, so it has none; set the brain up first, register each client, then add --guests']) : null;
+  const child = exec([launcher, ...teamTemplateArgs(harness, opts.source, { dryRun: true, template: { members: t.members, guests: t.guests, group: t.group, history: t.history, owner: opts.owner } }), '--json']);
+  let result: TeamResult | null = null;
+  try { result = JSON.parse(child.stdout) as TeamResult; } catch { return null; } // silent-read-ok: a preview that prints no result is reported by the template step itself after setup runs it
+  if (result?.template !== 'team') return null;
+  const blocked = result.steps.flatMap(s => s.actions.filter(a => a.action === 'blocked').map(a => `  BLOCKED ${s.id} ${a.what}: ${a.command}${a.detail ? `  (${a.detail})` : ''}`));
+  return blocked.length ? refuse(blocked) : null;
 }
 
 function runTeamTemplate(exec: Run, launcher: string, harness: string, source: string | null, flags: LayoutFlags): NonNullable<LayoutOutcome['teamTemplate']> {
