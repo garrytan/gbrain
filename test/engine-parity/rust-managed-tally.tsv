@@ -154,6 +154,7 @@ test/engine-parity/field-usage.test.ts	3	0
 test/engine-parity/files-ops-sites.test.ts	9	0
 test/engine-parity/first-due.test.ts	1	0
 test/engine-parity/floor-folder-rule.test.ts	1	0
+test/engine-parity/folder-rule-fact-reads.test.ts	3	1
 test/engine-parity/forget-commit.test.ts	3	0
 test/engine-parity/forget-fence-path.test.ts	3	0
 test/engine-parity/forget-members.test.ts	3	0
@@ -196,7 +197,9 @@ test/engine-parity/journal-purge-terminal.test.ts	2	0
 test/engine-parity/journal-typed-sites.test.ts	7	0
 test/engine-parity/keyword-visibility.test.ts	7	0
 test/engine-parity/label-guard-tiers.test.ts	2	0
+test/engine-parity/labelled-access-allowed.test.ts	2	0
 test/engine-parity/labelled-only-policy.test.ts	17	0
+test/engine-parity/labelled-only-reads.test.ts	6	1
 test/engine-parity/large-page.test.ts	3	0
 test/engine-parity/lifecycle.test.ts	10	1
 test/engine-parity/link-read-options.test.ts	17	0
