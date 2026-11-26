@@ -6,6 +6,7 @@ import { LARGE_PAGE_VERSIONS_KEPT, readPageBodyPolicy } from '../page-body/limit
 import { opError, type OperationError } from '../ops/contract.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { markPrunedHistory } from '../engine-sql/version-prune.ts';
+import { AGENT_POLICY_TYPE } from '../policy/slugs.ts';
 
 export { LARGE_PAGE_VERSIONS_KEPT };
 /** GST-2497: the holding-page prune is the typed member `pruneHoldingPageVersions` (engine-sql/version-prune.ts). */
@@ -45,7 +46,7 @@ export async function createPageVersion(engine: BrainEngine, slug: string, sourc
       (page_id,compiled_truth,frontmatter,knowledge_revision,timeline,title,type,tags,is_deleted,source_path,change_reason)
       VALUES ($1,$2,$3::text::jsonb,$4::uuid,$5,$6,$7,$8::text::jsonb,$9,$10,$11) RETURNING *`,
     [page.id, page.compiled_truth, JSON.stringify(page.frontmatter), revision, page.timeline, page.title, page.type, JSON.stringify(tags), page.deleted_at != null, page.source_path ?? null, reason]);
-    if (isLargePageBytes(Buffer.byteLength(page.compiled_truth ?? '', 'utf-8') + Buffer.byteLength(page.timeline ?? '', 'utf-8'))) {
+    if (page.type !== AGENT_POLICY_TYPE && isLargePageBytes(Buffer.byteLength(page.compiled_truth ?? '', 'utf-8') + Buffer.byteLength(page.timeline ?? '', 'utf-8'))) {
       const pruned = await tx.executeRaw<{ id: number }>(`DELETE FROM page_versions WHERE page_id = $1 AND id IN (SELECT id FROM page_versions WHERE page_id = $1
         AND octet_length(compiled_truth) + octet_length(COALESCE(timeline, '')) > $2 ORDER BY id DESC OFFSET $3) RETURNING id`,
       [page.id, PAGE_INLINE_MAX_BYTES, LARGE_PAGE_VERSIONS_KEPT]);
@@ -107,9 +108,9 @@ export async function pruneSegmentedVersions(tx: BrainEngine, pageId: number): P
     kept AS (
       SELECT v.id, v.rk, sum(COALESCE(per_rank.bytes, 0)) OVER (ORDER BY v.rk) AS bytes
         FROM v LEFT JOIN per_rank ON per_rank.rk = v.rk),
-    cap AS (SELECT GREATEST($3::bigint, COALESCE(body_bytes, 0)) AS bytes FROM pages WHERE id = $1)
+    cap AS (SELECT GREATEST($3::bigint, COALESCE(body_bytes, 0)) AS bytes FROM pages WHERE id = $1 AND type IS DISTINCT FROM $4)
     DELETE FROM page_versions WHERE id IN (SELECT kept.id FROM kept, cap WHERE kept.rk > $2 OR kept.bytes > cap.bytes)
-    RETURNING id`, [pageId, policy.versionsMaxPerPage, policy.versionsMaxPinnedBytes]);
+    RETURNING id`, [pageId, policy.versionsMaxPerPage, policy.versionsMaxPinnedBytes, AGENT_POLICY_TYPE]);
   await markPrunedHistory(tx, pageId, deleted.map(row => Number((row as { id: number }).id)));
   return deleted.length;
 }

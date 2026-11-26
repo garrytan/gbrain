@@ -302,6 +302,8 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   // thin client: pricing writes the host brain's `pricing.overrides`. Registration is trusted-local
   // only: a remote caller could declare $0 and void a cost cap, so it is never an operation either.
   { name: 'pricing', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/pricing.ts') },
+  { name: 'policy', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/policy.ts') },
+  { name: 'ledger', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/ledger.ts') },
   { name: 'migrate', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/migrate.ts') },
   { name: 'retrieval-upgrade', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/retrieval-upgrade.ts') },
   // selfHelp: #3686 (the #578 residue): eval / storage / reindex each ship real usage — eval's
@@ -385,8 +387,9 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   // follow-up TODO.
   { name: 'takes', phase: 'post-connect', thinClient: 'route-then-refuse', selfHelp: true, load: () => import('./commands/takes.ts') },
   { name: 'onboard', phase: 'post-connect', thinClient: 'none', help: () => import('./help/onboard.ts'), load: () => import('./commands/onboard.ts') },
+  { name: 'onboarding', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/onboarding.ts') },
   { name: 'founder', phase: 'post-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/founder.ts') },
-  { name: 'profile', phase: 'post-connect', thinClient: 'none', selfHelp: true, json: 'document', read_only: true, load: () => import('./commands/profile.ts') },
+  { name: 'profile', phase: 'post-connect', thinClient: 'none', selfHelp: true, json: 'document', load: () => import('./commands/profile.ts') },
   { name: 'think', phase: 'post-connect', thinClient: 'none', selfHelp: true, routes_source: true, load: () => import('./commands/think.ts') },
   { name: 'recall', phase: 'post-connect', thinClient: 'none', selfHelp: true, routes_source: true, load: () => import('./commands/recall.ts') },
   // CLI_ONLY: v0.42.58 (#2035 class, caught by the handleCliOnly reachability sweep): full handler
@@ -403,6 +406,10 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   // CLI_ONLY: Open-loop engine CLI (engine-bound; trusted-local op dispatch).
   { name: 'waiting', phase: 'pre-connect-own-engine', thinClient: 'none', selfHelp: true, routes_source: true, load: () => import('./commands/waiting.ts') },
   { name: 'loops', phase: 'post-connect', thinClient: 'none', selfHelp: true, routes_source: true, load: () => import('./commands/loops.ts') },
+  // CLI_ONLY: C3 claims check; trusted-local op dispatch of check_claims (a thin client calls the check_claims MCP tool).
+  { name: 'claims', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, routes_source: true, load: () => import('./commands/claims.ts') },
+  // CLI_ONLY: household records (agent platform H1); trusted-local op dispatch of the household_* ops.
+  { name: 'household', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, routes_source: true, load: () => import('./commands/household.ts') },
   // CLI_ONLY: pinned questions (C4); trusted-local op dispatch of the questions_* ops.
   { name: 'questions', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, routes_source: true, load: () => import('./commands/questions.ts') },
   // CLI_ONLY: relationship-contradiction proposals (temporal typed edges); host-local, writes canonical timeline lines.

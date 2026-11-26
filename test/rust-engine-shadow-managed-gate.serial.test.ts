@@ -20,7 +20,7 @@ import { runEngineShadow, shadowPlan } from '../src/commands/engine-shadow.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { EngineConfig } from '../src/core/types.ts';
-import { DEFAULT_SHADOW_QUEUE_BOUND, DEFAULT_SHADOW_SAMPLE_RATE, readShadowState, shadowBrainKey, shadowDirFor } from '../src/shadow/state.ts';
+import { DEFAULT_SHADOW_QUEUE_BOUND, DEFAULT_SHADOW_SAMPLE_RATE, DEFAULT_SHADOW_WRITE_SAMPLE_RATE, OPT_IN_WRITE_SAMPLE_RATE, readShadowState, shadowBrainKey, shadowDirFor } from '../src/shadow/state.ts';
 import { snapshotPersistence, snapshotTree } from './helpers/primary-snapshot.ts';
 
 const LINE = 'this brain cannot swap while it uses managed storage';
@@ -57,8 +57,9 @@ async function snapshotPrimary(): Promise<{ tables: Record<string, string[]>; fi
 const MANAGED = 'UPDATE persistence_brain SET enabled=true WHERE singleton=1';
 const UNMANAGED = 'UPDATE persistence_brain SET enabled=false WHERE singleton=1';
 const shadowDir = (): string => shadowDirFor(shadowBrainKey(config)!);
-const planHash = (): string => shadowPlan(shadowBrainKey(config)!, 'pglite', shadowDir(),
-  { sampleRate: DEFAULT_SHADOW_SAMPLE_RATE, queueBound: DEFAULT_SHADOW_QUEUE_BOUND }).hash;
+/** The plan hash `start` shows: a managed brain keeps the default write sample rate, an unmanaged one compares every write. */
+const planHash = (managed = true): string => shadowPlan(shadowBrainKey(config)!, 'pglite', shadowDir(),
+  { sampleRate: DEFAULT_SHADOW_SAMPLE_RATE, queueBound: DEFAULT_SHADOW_QUEUE_BOUND, writeSampleRate: managed ? DEFAULT_SHADOW_WRITE_SAMPLE_RATE : OPT_IN_WRITE_SAMPLE_RATE }).hash;
 const okAddon = async () => ({ ok: true as const, addon: { target: 'linux-x64-glibc', engineAbi: 1, engineBuild: 'b1' } as never });
 const NOW = new Date('2026-03-04T05:06:07.000Z');
 
@@ -116,8 +117,8 @@ describe('engine shadow start on a managed-storage brain', () => {
     const state = readShadowState(shadowDir())!;
     expect(state.enabled).toBe(true);
     expect(state.storage).toEqual({ managed: true, checked_at: NOW.toISOString() });
-    // A managed brain cannot opt in to the swap: its shadow keeps the general write sample rate (no field: the default).
-    expect(state.write_sample_rate).toBeUndefined();
+    // A managed brain cannot opt in to the swap: its shadow keeps the general write sample rate.
+    expect(state.write_sample_rate).toBe(DEFAULT_SHADOW_WRITE_SAMPLE_RATE);
     expect(JSON.parse(readFileSync(join(shadowDir(), 'state.json'), 'utf8')).storage).toEqual({ managed: true, checked_at: NOW.toISOString() });
   });
 
@@ -229,7 +230,7 @@ describe('engine shadow start on a managed-storage brain', () => {
     const plan = await run(['start', '--plan']);
     expect(plan.code).toBe(0);
     expect(plan.text).not.toContain('storage:');
-    const go = await run(['start', '--yes', '--expect', planHash()]);
+    const go = await run(['start', '--yes', '--expect', planHash(false)]);
     expect(go.code).toBe(0);
     expect(go.text).not.toContain('storage:');
     expect(readShadowState(shadowDir())?.storage).toEqual({ managed: false, checked_at: NOW.toISOString() });
@@ -240,7 +241,7 @@ describe('engine shadow start on a managed-storage brain', () => {
 
   test('a state file written before the field existed still reads, and reports storage: null', async () => {
     await onBrain(UNMANAGED);
-    await run(['start', '--yes', '--expect', planHash()]);
+    await run(['start', '--yes', '--expect', planHash(false)]);
     const file = join(shadowDir(), 'state.json');
     const old = JSON.parse(readFileSync(file, 'utf8'));
     delete old.storage;

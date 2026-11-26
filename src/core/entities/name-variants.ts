@@ -141,6 +141,9 @@ function sameGivenName(a: string, b: string): boolean {
   return false;
 }
 
+/** A word that is a given name the nickname table knows (`sarah`, `michael`, `mike`), lowercased. */
+export const isKnownGivenName = (word: string) => NICKNAMES.has(word.toLowerCase());
+
 /** Alternate forms that are English stopwords: full-text search drops them, so a variant would lose its given name. */
 const STOPWORD_GIVEN_FORMS: ReadonlySet<string> = new Set(['will', 'don']);
 

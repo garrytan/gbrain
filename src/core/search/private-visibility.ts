@@ -575,9 +575,18 @@ export function callerReadersAllowedSql(alias: string, row: 'page' | 'snapshot' 
 type LabelledRecord = Pick<CallerAccess, 'identity' | 'audienceIdentities' | 'satisfiedRuleIds' | 'lineage' | 'owner'>;
 
 /** GBRA-108 design 1: every principal a labelled-only read may be named by (the identity, or each audience entry's). */
-function labelledIdentity(access: LabelledRecord): string[] {
+function labelledIdentity(access: Pick<LabelledRecord, 'identity' | 'audienceIdentities'>): string[] {
   const identity = [...new Set([...access.identity, ...access.audienceIdentities.flat()])].sort();
   return identity.length && validIdentity(identity) ? identity : [];
+}
+
+/**
+ * GBRA-108 design 1: the two sets a labelled-only conjunct tests a page against, as labelledOnlySql embeds them: the principals
+ * the page's readers may name (empty when any is not a valid identity) and the folder rules a page may hold (empty when any
+ * is not a valid qualified id). The Rust store takes them as data (`LabelledOnly`), so both engines judge the same sets.
+ */
+export function labelledOnlyTerms(access: Pick<LabelledRecord, 'identity' | 'audienceIdentities' | 'satisfiedRuleIds'>): { identity: string[]; satisfiedRuleIds: string[] } {
+  return { identity: labelledIdentity(access), satisfiedRuleIds: access.satisfiedRuleIds.every(validQualifiedRuleId) ? [...access.satisfiedRuleIds] : [] };
 }
 
 /**
@@ -589,8 +598,9 @@ function labelledIdentity(access: LabelledRecord): string[] {
  * `readers` false tests only the rules (a version snapshot carries its own readers). Ids embed as validated literals.
  */
 function labelledOnlySql(alias: string, access: LabelledRecord, readers = true): string {
-  const identity = textArraySql(labelledIdentity(access));
-  const satisfied = textArraySql(access.satisfiedRuleIds.every(validQualifiedRuleId) ? access.satisfiedRuleIds : []);
+  const terms = labelledOnlyTerms(access);
+  const identity = textArraySql(terms.identity);
+  const satisfied = textArraySql(terms.satisfiedRuleIds);
   const named = `(${readers ? `COALESCE(${alias}.page_readers && ${identity}, false) OR ` : ''}COALESCE(${alias}.folder_rule_ids && ${satisfied}, false))`;
   if (!access.lineage || access.owner) return named;
   return `(${named} OR ((${alias}.type IN ('atom', 'question', 'concept', 'event') OR ${alias}.frontmatter ? 'derived_from')
@@ -1194,25 +1204,7 @@ export async function findPrivateOnlySlugs(
   opts: { includeDeleted?: boolean } = {},
 ): Promise<Set<string>> {
   if (slugs.length === 0) return new Set();
-  const params: unknown[] = [slugs];
-  let scopeClause = '';
-  if (scope.sourceIds && scope.sourceIds.length > 0) {
-    params.push(scope.sourceIds);
-    scopeClause = `AND p.source_id = ANY($${params.length}::text[])`;
-  } else if (scope.sourceId) {
-    params.push(scope.sourceId);
-    scopeClause = `AND p.source_id = $${params.length}`;
-  }
-  const rows = await engine.executeRaw<{ slug: string }>(
-    `SELECT p.slug FROM pages p
-      WHERE p.slug = ANY($1::text[])
-        ${opts.includeDeleted ? '' : 'AND p.deleted_at IS NULL'}
-        ${scopeClause}
-      GROUP BY p.slug
-      HAVING bool_and(NOT (${privatePagesFilterForCaller('p')}))`,
-    params,
-  );
-  return new Set(rows.map(r => r.slug));
+  return new Set(await engine.readPrivateOnlySlugs(slugs, scope, opts));
 }
 
 const CACHE_TTL_MS = 30_000;

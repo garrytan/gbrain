@@ -129,7 +129,6 @@ src/core/link-source-check-repair.ts	kind_compare	1
 src/core/maintenance/run.ts	kind_compare	2
 src/core/mcp-request-log-retention.ts	kind_compare	2
 src/core/migrate.ts	kind_compare	4
-src/core/migration-orchestration-lock.ts	kind_compare	2
 src/core/migration-preludes.ts	kind_compare	3
 src/core/minions/db-probe.ts	kind_compare	1
 src/core/minions/embed-backfill-admission.ts	kind_compare	4
@@ -148,7 +147,6 @@ src/core/page-state/projections.ts	kind_compare	1
 src/core/page-state/rebuild-estimate.ts	kind_compare	1
 src/core/page-state/transactions.ts	kind_compare	1
 src/core/persistence/bounded-reads.ts	kind_compare	2
-src/core/persistence/checkpoint-validation.ts	kind_compare	1
 src/core/persistence/consumer-diagnostics.ts	kind_compare	4
 src/core/persistence/consumer-election.ts	kind_compare	2
 src/core/persistence/consumer-heartbeat.ts	kind_compare	3

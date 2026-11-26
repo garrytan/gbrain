@@ -525,6 +525,15 @@ fn all_holds(read: &dyn KvRead) -> Result<Vec<HoldRecord>> {
 
 /// A page purge receipt's probe of the write-gate holds (`countPurgeStoreProbe` on `write_gate_holds`): how many holds of
 /// `source_id` name `slug`, in any status.
+/// The slugs of the holds of `source_id` (a hold keeps no page id here, so it reaches a page by slug alone).
+pub(crate) fn source_hold_slugs(read: &dyn KvRead, source_id: &str) -> Result<Vec<String>> {
+    Ok(all_holds(read)?
+        .into_iter()
+        .filter(|h| h.source_id == source_id)
+        .map(|h| h.slug)
+        .collect())
+}
+
 pub(crate) fn count_for_slug(read: &dyn KvRead, source_id: &str, slug: &str) -> Result<usize> {
     Ok(all_holds(read)?
         .iter()

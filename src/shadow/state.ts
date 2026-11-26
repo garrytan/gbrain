@@ -26,6 +26,8 @@ import type { ManagedStorageRecord } from './managed-gate.ts';
 export const SHADOW_STATE_VERSION = 1;
 /** Default share of eligible reads mirrored (`shadow.read_sample` in the plan). */
 export const DEFAULT_SHADOW_SAMPLE_RATE = 0.1;
+/** Default share of eligible page and link writes compared (`shadow.write_sample` in the plan, D13); separate from the read share. */
+export const DEFAULT_SHADOW_WRITE_SAMPLE_RATE = 0.05;
 /** Default bound on queued mirror events in the serving process. */
 export const DEFAULT_SHADOW_QUEUE_BOUND = 256;
 /**
@@ -43,8 +45,8 @@ export interface ShadowState {
   /** ISO time `stop` ran, when it has. */
   stopped_at?: string;
   sample_rate: number;
-  /** Share of writes compared. Set to OPT_IN_WRITE_SAMPLE_RATE by `start` on a brain that can opt in to the swap;
-   * absent otherwise (the write comparison's general default applies). */
+  /** Share of writes compared (`shadow.write_sample`). `start` sets OPT_IN_WRITE_SAMPLE_RATE on a brain that can opt in to
+   * the swap (no managed storage). Absent in a state written before it existed, or for any other brain: the default applies. */
   write_sample_rate?: number;
   queue_bound: number;
   /** The plan hash `start --yes --expect` confirmed. */
@@ -70,6 +72,12 @@ export interface ShadowState {
   writer_coverage_restarted_at?: string;
   /** Set by `stop` before it removes the hooks. Counted like the restart time, and the state itself counts while shadow mode is off. */
   writer_coverage_stopped_at?: string;
+}
+
+/** The write sample share: the state's own when it is a share above 0 and at most 1, else the default (a bad hand edit is never an always-on sample). */
+export function writeSampleRate(state: Pick<ShadowState, 'write_sample_rate'>): number {
+  const n = state.write_sample_rate;
+  return typeof n === 'number' && n > 0 && n <= 1 ? n : DEFAULT_SHADOW_WRITE_SAMPLE_RATE;
 }
 
 /** The identity of the brain a config opens, without credentials. Null when the config names no brain store. */
