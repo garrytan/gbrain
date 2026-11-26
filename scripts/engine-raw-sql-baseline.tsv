@@ -296,6 +296,7 @@ src/core/access/read-log.ts	execute_raw	3	GST-2476 gap 1: the access read log wr
 src/core/access/requester-scope.ts	execute_raw	4
 src/core/access/room.ts	execute_raw	2
 src/core/access/serves.ts	execute_raw	2
+src/core/access/token-member-status.ts	sql_template	1
 src/core/advisor/collect-chronicle.ts	execute_raw	1
 src/core/advisor/collect-mcp-client-fit.ts	execute_raw	1
 src/core/advisor/collect-stalled-jobs.ts	execute_raw	1
