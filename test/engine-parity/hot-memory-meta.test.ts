@@ -22,7 +22,7 @@
  *    which is still read raw on Rust: its Rust arm stops on that typed refusal until that read is typed.
  */
 import { describe, expect } from 'bun:test';
-import { parityArms } from './harness.ts';
+import { OWNER_ONLY_STOP, parityArms, stopOnOwnerOnlyRefusal } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { callTool, startServeHttp } from '../helpers/live-mcp-servers.ts';
@@ -76,13 +76,20 @@ function payload(meta: Record<string, unknown> | undefined): unknown {
 
 async function propose(base: string, token: string, args: Record<string, unknown>) {
   const result = await callTool(base, token, 'ontology_propose', args);
+  if (result.isError) stopOnOwnerOnlyRefusal(result.content[0]?.text ?? ''); // the multi-user owner-only gate: the case stops here (rustMultiuserStop)
   let body: any = result.content[0]?.text ?? '';
   try { body = JSON.parse(body); } catch { /* plain text */ }
   return { isError: result.isError === true, inserted: result.isError ? null : body?.action ?? null, meta: payload(result._meta) };
 }
 
+/** The pin's no-effect check: while the owner-only gate refuses the call, the observation was not written. */
+const unwritten = (entity: string) => async (engine: BrainEngine): Promise<void> => {
+  expect((await engine.getOntology(entity, { asof: '2031-01-01' })).filter(r => r.source === 'notes/agent')).toEqual([]);
+};
+
 describe('hot memory on: the _meta payload of an MCP reply', () => {
   parityTest('suppress: an ontology_propose reply carries the withheld count of the flagged agent facts and no fact', {
+    rustMultiuserStop: OWNER_ONLY_STOP(unwritten('people/kai-example')),
     methods: ['putPage', 'insertAccessToken', 'setConfig', 'insertFacts', 'upsertWriteGateReceipt', 'listFactsSince', 'readRowTrustRows', 'mergeOntologyFact'], timeout: 120_000,
   }, async (engine) => {
     await put(engine, 'people/kai-example');
@@ -106,6 +113,7 @@ describe('hot memory on: the _meta payload of an MCP reply', () => {
   });
 
   parityTest('allow: a flagged fact rides labelled unconfirmed, and the untrusted reader gets each lower-tier fact quoted', {
+    rustMultiuserStop: OWNER_ONLY_STOP(unwritten('people/lea-example')),
     methods: ['putPage', 'insertAccessToken', 'insertFacts', 'upsertWriteGateReceipt', 'listFactsSince', 'readRowTrustRows', 'listFactsFromQuotedPages', 'listOwnerTierFacts', 'mergeOntologyFact'], timeout: 120_000,
   }, async (engine) => {
     await put(engine, 'people/lea-example');

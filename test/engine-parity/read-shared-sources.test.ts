@@ -33,7 +33,7 @@ import { importFromContent } from '../../src/core/import-file.ts';
 import { startHttpTransport } from '../../src/mcp/http-transport.ts';
 import { RateLimiter } from '../../src/mcp/rate-limit.ts';
 import { hashToken } from '../../src/core/utils.ts';
-import { archiveSource, createSource, parityArms, type ParityBackend } from './harness.ts';
+import { archiveSource, createSource, OWNER_ONLY_STOP, parityArms, stopOnOwnerOnlyRefusal, type ParityBackend } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -97,7 +97,8 @@ describe('engine parity: the read-shared source set', () => {
     });
 
   parityTest('the legacy MCP transport: a switched token reads a page in a shared source',
-    { methods: ['setConfig'] }, async (engine, backend) => {
+    // While the Rust store is multi-user the owner-only session gate refuses this non-owner key (L4 opens it); nothing is read.
+    { methods: ['setConfig'], rustMultiuserStop: OWNER_ONLY_STOP() }, async (engine, backend) => {
       await seed(engine, backend);
       await importFromContent(engine, 'wiki/roadmap', ['---', 'type: note', 'title: Roadmap', '---', '# Roadmap', '', 'Harbor rsharedroadmap.'].join('\n'), { sourceId: 'team' });
       const minted = await mintLegacyToken(engine, { name: 't-mcp', scopes: ['read'], takesHolders: ['world'], sourceGrant: ['private-src'], readShared: true });
@@ -107,6 +108,7 @@ describe('engine parity: the read-shared source set', () => {
         const res = await fetch(`http://127.0.0.1:${server.port}/mcp`, { method: 'POST', headers: { authorization: `Bearer ${minted.token}`, 'content-type': 'application/json' },
           body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'get_page', arguments: { slug: 'wiki/roadmap' } } }) });
         const text = await res.text();
+        stopOnOwnerOnlyRefusal(text);
         const out = { status: res.status, readsTheSharedPage: text.includes('rsharedroadmap'), unresolvedNotice: text.includes('read_shared_unresolved') };
         if (!out.readsTheSharedPage) throw new Error(`the shared page was not read: ${text.slice(0, 300)}`);
         return out;

@@ -27,15 +27,18 @@
  * skipped by the harness, never run, and is the edit that turns the case on when its owner lands.
  */
 import { describe, expect } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { BrainEngine, FactRow } from '../../src/core/engine.ts';
 import type { JobInsertValues } from '../../src/core/engine-sql/jobs.ts';
 import type { CommitPosition } from '../../src/core/engine-members/commit-log.ts';
 import type { PageInput } from '../../src/core/types.ts';
 import type { LeaseToken, FenceOpts } from '../../src/core/engine-sql/lease-token.ts';
 import { rustLeases, type RustLeases, type WriteOrigin } from '../../src/core/rust-engine/store-members/leases.ts';
+import { withEnv } from '../helpers/with-env.ts';
 import { parityArms, type ParityBackend, type ParityContext, rustArmModeProblem, rustArmMultiuser, rustMultiuserView } from './harness.ts';
 import { clearHostRegistration, fenceOpts, hostLeaseName, setHostRegistration } from '../../src/core/persistence/host-fence.ts';
-import { resolvedMultiuser } from './rust-arm.ts';
+import { openRustBrainAt, resolvedMultiuser, RUST_MULTIUSER_CONFIG_KEY } from './rust-arm.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import {
   JOB_POLICY, acknowledgedWriteViolations, claimSpec, crashBody, crashKey, crashSlug, jobValues, runStressWriters, startWriter, stressSlug, stressViolations,
@@ -780,26 +783,96 @@ describe('engine parity: multi-writer conformance', () => {
     return { mostHolders: most, committed, aborted, released: true };
   });
 
-  // C16: a format upgrade runs once under concurrent openers. Pending on every engine that has a second connection:
-  // no typed engine member reports the store's format after connect, and an older-format brain is made with
-  // engine-private code, so the upgrade count and the old-or-new view are not observable through BrainEngine. The
-  // body is the part that is: four openers connect to a brain with data at once, and every one reports the same
-  // schema version and sees the whole brain. The store-level cases (upgrade once, concurrent open) are the exam today.
-  parityTest('C16 format upgrade runs once under concurrent openers', { methods: ['putPage', 'getPage', 'getConfig'], mwCase: 'C16' }, async (engine, _backend, ctx) => {
-    await engine.putPage('notes/c16', NOTE('C16', 'kept across the upgrade'));
-    const openers = await together<BrainEngine>(4, () => ctx.sameBrainEngine());
-    const seen = await Promise.all([engine, ...openers].map(async e => ({ version: await e.getConfig('version'), body: (await e.getPage('notes/c16'))?.compiled_truth ?? null })));
-    expect(new Set(seen.map(s => s.version)).size, 'openers report different formats').toBe(1);
-    expect(seen.map(s => s.body), 'an opener saw a partial brain').toEqual(seen.map(() => 'kept across the upgrade'));
-    return { openers: seen.length, oneFormat: true, wholeBrain: true };
+  // C16: a format upgrade runs once under concurrent openers; each sees the whole brain, old or new, never a partial one.
+  // The upgrade this case drives is the one an older brain gets when it is first opened in multi-user mode with the commit log
+  // on (the store enables the log, upgrades the format to 13 and logs its own upkeep): so it runs on the `rust-mu` view only.
+  // A brain is made in plain mode (log off, older format), closed, and then five engines open it at once with the mode on:
+  // the one that wins the owner lock upgrades it, and the others become clients of that owner (never an error, never a
+  // second upgrade). The proof of "exactly once" is a control: the upgrade writes records to the commit log, and a brain that
+  // one engine upgrades alone gets the very same records as the brain five engines opened together. PostgreSQL's equivalent
+  // (concurrent `initSchema` on a database behind the code) is not written: its cell stays pending.
+  parityTest('C16 format upgrade runs once under concurrent openers', { methods: ['putPage', 'getPage', 'getConfig', 'readCommitLog'], mwCase: 'C16' }, async (engine, backend, ctx) => {
+    if (backend !== 'rust') throw new Error(`C16 drives the Rust commit-log format upgrade; there is no ${backend} scenario yet`);
+    const mode = rustArmMultiuser();
+    expect(mode, 'C16 upgrades a brain by opening it in multi-user mode: the arm must be multi-user').not.toBe('off');
+    const route = rustMultiuserView();
+    const SWITCHES = ['GBRAIN_RUST_MULTIUSER', 'GBRAIN_RUST_COMMIT_LOG'] as const;
+    const formatOf = (dir: string) => JSON.parse(readFileSync(join(dir, 'FORMAT'), 'utf8')) as { format_version: number; log?: unknown };
+    const roleOf = (e: unknown) => (e as { ownerRole?: string }).ownerRole;
+    const openers: BrainEngine[] = [];
+    try {
+      /** An older-format brain: made in plain mode (the switches off), three pages, closed. On the config route it carries the row that turns multi-user on at its next open. */
+      const oldBrain = async (dir: string) => {
+        await withEnv(Object.fromEntries(SWITCHES.map(name => [name, undefined])), async () => {
+          const plain = await openRustBrainAt(dir);
+          try {
+            for (let i = 0; i < 3; i++) await plain.putPage(`notes/c16-${i}`, NOTE(`C16 ${i}`, `kept across the upgrade ${i}`));
+            if (route === 'config') await plain.setConfig(RUST_MULTIUSER_CONFIG_KEY, 'true');
+          } finally { await plain.disconnect(); }
+        });
+        expect(formatOf(dir).log, 'the brain was not made in the older format').toBeUndefined();
+        expect(formatOf(dir).format_version, 'the brain was not made in the older format').not.toBe(13);
+      };
+      // What an upgrade leaves in the brain: the log's start and newest position (commits it made), and the format's log block.
+      const upgraded = async (e: BrainEngine, dir: string) => {
+        const page = await e.readCommitLog(null, 10_000);
+        const log = formatOf(dir).log as { since?: unknown; base_format?: unknown } | undefined;
+        return { newest: page.newest, oldest: page.oldest_retained, records: page.records.map(r => ({ ops: r.op_count, writes: r.write_ids.length })), since: log?.since, base: log?.base_format };
+      };
+      const whole = async (e: BrainEngine) => Promise.all([0, 1, 2].map(async i => (await e.getPage(`notes/c16-${i}`))?.compiled_truth ?? null));
+      const expected = [0, 1, 2].map(i => `kept across the upgrade ${i}`);
+
+      // The control: one engine (a spare of the arm, opened the way the arm opens every spare) upgrades an older brain alone.
+      const control = ctx.unconnectedEngine();
+      const solo = (control.config as unknown as { database_path: string }).database_path;
+      await oldBrain(solo);
+      await control.engine.connect(control.config);
+      expect(formatOf(solo).format_version, 'a single opener did not upgrade the brain').toBe(13);
+      const soloUpgrade = await upgraded(control.engine, solo);
+      expect(soloUpgrade.newest, 'the upgrade committed nothing: the control proves nothing').not.toBeNull();
+
+      // Five openers at once. The first is another spare of the arm, opened the same way as the control, the others are plain engines.
+      const { engine: first, config } = ctx.unconnectedEngine();
+      const dir = (config as unknown as { database_path: string }).database_path;
+      await oldBrain(dir);
+      const connecting = [first.connect(config), ...Array.from({ length: 4 }, async () => { const e = await openRustBrainAt(dir, route === 'off' ? undefined : route); openers.push(e as unknown as BrainEngine); })];
+      const settled = await Promise.allSettled(connecting);
+      expect(settled.flatMap(r => (r.status === 'rejected' ? [codeOf(r.reason)] : [])), 'an opener of the brain being upgraded got an error').toEqual([]);
+      const all = [first, ...openers];
+      expect(all.map(roleOf).filter(r => r === 'owner'), 'not exactly one opener owns the brain').toHaveLength(1);
+      expect(all.map(roleOf).filter(r => r === 'client'), 'the other openers are not clients of the owner').toHaveLength(4);
+      expect(formatOf(dir).format_version, 'the brain was not upgraded').toBe(13);
+      for (const e of all) expect(await whole(e), 'an opener saw a partial brain').toEqual(expected);
+      const versions = await Promise.all(all.map(e => e.getConfig('version')));
+      expect(new Set(versions).size, 'openers report different formats').toBe(1);
+      const togetherUpgrade = await upgraded(first, dir);
+      expect(togetherUpgrade, 'five concurrent openers upgraded the brain other than once (its log start, newest commit and records are not the lone opener\'s)').toEqual(soloUpgrade);
+      // A write after the upgrade, through whichever opener the arm holds, is seen by every opener.
+      await first.putPage('notes/c16-after', NOTE('after', 'written after the upgrade'));
+      for (const e of all) expect((await e.getPage('notes/c16-after'))?.compiled_truth, 'a write after the upgrade is not seen by every opener').toBe('written after the upgrade');
+      return { openers: 5, owners: 1, clients: 4, upgradedTo: 13, wholeBrain: true, upgradeEqualsALoneOpener: true };
+    } finally {
+      for (const e of openers) await e.disconnect().catch(() => undefined);
+    }
   });
 
-  // C17: a second opener becomes a client, never an error. Postgres: a second connection to the brain never gets a busy
-  // error, and calls in flight on both connections all succeed. PGLite refuses a second opener by design (n/a). The
-  // owner-socket behavior of Rust (the client retries calls in flight by request id) is the server's: pending there.
-  parityTest('C17 a second opener becomes a client, never an error', { methods: ['putPage', 'getPage'], mwCase: 'C17' }, async (engine, _backend, ctx) => {
+  // C17: a second opener becomes a client, never an error; calls in flight retry and succeed.
+  //  - Postgres: a second connection to the brain never gets a busy error; calls in flight on both connections all succeed.
+  //  - Rust (the owner socket): the first engine is the owner, the second is a client of it (asserted by their roles, not
+  //    assumed), the two see each other's writes, and 16 calls in flight on both succeed with no `store_locked`/`owner_busy`.
+  //  - Rust with multi-user mode on (`rust-mu`, mode asserted on the arm's brain; the client has no store of its own and
+  //    reaches that owner): the owner EXITS while 48 client calls are in flight. An exiting owner answers the calls it has not
+  //    started as handed over and finishes the rest, and the client sends the handed-over calls again to the next owner, so
+  //    every call succeeds, none is lost and no call ends `owner_unavailable`. Plain Rust ends such calls
+  //    `owner_unavailable` (outcome unknown), so that half is multi-user only.
+  //  PGLite refuses a second opener by design (n/a).
+  parityTest('C17 a second opener becomes a client, never an error', { methods: ['putPage', 'getPage'], mwCase: 'C17' }, async (engine, backend, ctx) => {
     await engine.putPage('notes/c17-a', NOTE('A', 'written by the first opener'));
     const second = await ctx.sameBrainEngine();
+    if (backend === 'rust') {
+      expect((engine as unknown as { ownerRole?: string }).ownerRole, 'the first opener is not the owner').toBe('owner');
+      expect((second as unknown as { ownerRole?: string }).ownerRole, 'the second opener did not become a client of the owner').toBe('client');
+    }
     expect((await second.getPage('notes/c17-a'))?.compiled_truth, 'the second opener does not see the first\'s write').toBe('written by the first opener');
     await second.putPage('notes/c17-b', NOTE('B', 'written by the second opener'));
     expect((await engine.getPage('notes/c17-b'))?.compiled_truth, 'the first opener does not see the second\'s write').toBe('written by the second opener');
@@ -807,7 +880,23 @@ describe('engine parity: multi-writer conformance', () => {
     const refused = inFlight.flatMap(r => (r.status === 'rejected' ? [codeOf(r.reason)] : []));
     expect(refused.filter(code => BUSY_CODES.has(code)), 'a call in flight got a busy error').toEqual([]);
     expect(refused, 'a call in flight was refused').toEqual([]);
-    return { secondOpened: true, mutuallyVisible: true, inFlightRefused: refused.length };
+    let handedOver = 0;
+    if (backend === 'rust' && rustArmMultiuser() !== 'off') {
+      const calls = Array.from({ length: 48 }, (_, i) => second.putPage(`notes/c17-h${i}`, NOTE(`H${i}`, `in flight at the handover ${i}`)));
+      // Let the calls reach the owner (a call still unread in the socket when the owner closes ends outcome_unknown, which is
+      // the same race a crash has); the owner then exits with some answered, some running and some queued.
+      await Bun.sleep(10);
+      await engine.disconnect();
+      const settled = await Promise.allSettled(calls);
+      const lost = settled.flatMap(r => (r.status === 'rejected' ? [codeOf(r.reason)] : []));
+      expect(lost, 'a call in flight at the owner\'s exit ended in an error instead of being sent again').toEqual([]);
+      for (let i = 0; i < 48; i++) expect(await bodyOf(second, `notes/c17-h${i}`), `the call ${i} in flight at the handover was lost`).toBe(`in flight at the handover ${i}`);
+      expect((second as unknown as { ownerRole?: string }).ownerRole, 'the client did not take the brain over').toBe('owner');
+      // The brain the client took over runs in the mode the arm turned on (it resolves the switch itself, from the env or its config row).
+      expect(rustArmModeProblem(resolvedMultiuser(second), rustArmMultiuser()), 'the brain the client took over').toBeNull();
+      handedOver = 48;
+    }
+    return { secondOpened: true, mutuallyVisible: true, inFlightRefused: refused.length, handedOver: handedOver > 0 };
   });
 
   // C18: many writers, every row family, no busy error: 64 writers in 8 processes. This process and seven writer processes
@@ -815,16 +904,27 @@ describe('engine parity: multi-writer conformance', () => {
   // writers; every writer writes two pages, submits a job under its request key and claims a job. The parent holds a start
   // barrier: it sends `GO` only after all seven children reported READY, and the case proves the loads overlapped (every
   // process started before any finished). It then checks every expected page slug and body, every request key once, and that the
-  // claimed ids are exactly the stored jobs' ids. No lost update, no double claim, no busy error. Postgres only: PGLite is
-  // in-memory and one connection (n/a), and a Rust brain has one owner process (pending: a second Rust process is a client
-  // that refuses the job members today).
+  // claimed ids are exactly the stored jobs' ids. No lost update, no double claim, no busy error. Postgres: seven pools.
+  // Rust: this process owns the brain and the seven are owner-socket clients (a second Rust process is a client; its `admitJob`
+  // carries a policy object with functions, which do not cross the owner socket, so the cell is pending). PGLite is in-memory (n/a).
   parityTest('C18 64 writers in 8 processes, no busy error', { methods: ['putPage', 'readPageSnapshot', 'admitJob', 'claimNextJob', 'listJobs'], mwCase: 'C18' }, async (engine, backend, ctx) => {
-    if (backend !== 'postgres') throw new Error(`C18 runs its writer processes on Postgres only, not on ${backend}`);
-    const databaseUrl = (ctx.unconnectedEngine().config as { database_url?: string }).database_url!;
+    if (backend !== 'postgres' && backend !== 'rust') throw new Error(`C18 runs its writer processes on Postgres and Rust only, not on ${backend}`);
+    // Postgres: each child has its own pool on the arm's database. Rust: the brain has one owner (this process, asserted below) and
+    // each child is an owner-socket client of it, opened in the mode the arm runs (the child asserts what its brain resolved).
+    const mode = rustArmMultiuser();
+    const route = rustMultiuserView();
+    if (backend === 'rust') {
+      expect((engine as unknown as { ownerRole?: string }).ownerRole, 'this process does not own the brain the writer processes share').toBe('owner');
+      expect(rustArmModeProblem(resolvedMultiuser(engine), mode), 'the owner of the brain').toBeNull();
+    }
+    const writerConfig = (index: number): WriterConfig => backend === 'postgres'
+      ? { role: 'stress', backend: 'postgres', databaseUrl: (ctx.unconnectedEngine().config as { database_url?: string }).database_url!, index, startOnGo: true, deadlineMs: 90_000 }
+      : { role: 'stress', backend: 'rust', databasePath: (engine as unknown as { databasePath: string }).databasePath, index, startOnGo: true, deadlineMs: 90_000,
+        ...(route !== 'off' && { muRoute: route }), ...(mode === 'ambient' && { ambient: true }) };
     const children: ReturnType<typeof startWriter>[] = [];
     let reports: StressReport[];
     try {
-      for (let i = 0; i < 7; i++) children.push(startWriter({ role: 'stress', backend: 'postgres', databaseUrl, index: i + 1, startOnGo: true, deadlineMs: 90_000 }));
+      for (let i = 0; i < 7; i++) children.push(startWriter(writerConfig(i + 1)));
       await Promise.all(children.map(c => c.until(lines => lines.includes('READY'), 30_000, 'connect')));
       // The barrier: everyone is connected; the children start on GO and this process starts at once.
       for (const c of children) c.go();
