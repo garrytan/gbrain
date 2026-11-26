@@ -71,6 +71,10 @@ agent-repo/
 What you know. People, companies, deals, meetings, ideas, media.
 This is the repo GBrain indexes.
 
+On `gbrain-base-v2`, `originals/` and `ideas/` both use `type: concept`.
+Set `subtype: original` or `subtype: idea` in frontmatter; see
+[Idea Capture](idea-capture.md#the-authorship-test).
+
 ```
 brain/
 ├── people/                # Person dossiers (compiled truth + timeline)

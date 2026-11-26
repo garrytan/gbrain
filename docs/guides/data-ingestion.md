@@ -81,6 +81,19 @@ gbrain transcripts ingest --max-bytes 4gb <store>          # oversized store; om
 gbrain transcripts status                    # found vs imported, per harness
 ```
 
+If you converted another platform's history to a supported format, set its
+origin separately from the parser:
+
+```bash
+gbrain transcripts ingest converted.json --format claude-export --provider muse-example
+```
+
+`--provider` moves the import under `conversations/<provider>/` and labels
+the page ID and provenance with that provider. It does not add a parser or
+rename pages from earlier imports. Use 1–40 characters: lowercase letters
+or digits, with single hyphens between them. Reruns with the same provider skip
+unchanged pages; `--since last` has a separate checkpoint for each provider.
+
 For one redacted page per conversation per local day plus a daily index (off until `gbrain transcripts archive on`), see the [conversation archive](conversation-archive.md).
 
 **Say to your agent:** *"Import my conversations from my chatgpt export at ~/Downloads/conversations.json"* — *"Archive my session transcripts"* — and later, *"When did I first discuss agent memory?"* (the archive answers origin questions with dated quotes).

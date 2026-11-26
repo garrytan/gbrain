@@ -335,6 +335,7 @@ test/scripts/check-item-allowlist-catches.test.ts	CLI	2	readFileSync
 test/scripts/check-public-surface.test.ts	dropped manifest entries	7	bun-file
 test/scripts/check-public-surface.test.ts	the base it compares with	10	bun-file
 test/scripts/check-public-surface.test.ts	the committed manifest	3	bun-file
+test/scripts/check-test-discriminates.test.ts	(file-level)	3	exec-scan
 test/scripts/chunk-visibility-ratchet.test.ts	check-chunk-visibility.ts	6	readFileSync
 test/scripts/ci-bounded-run.test.ts	(file-level)	7	readFileSync
 test/scripts/ci-executed-counts.test.ts	CLI	2	readFileSync

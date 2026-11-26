@@ -314,8 +314,15 @@ process this brain runs on the host, or refuses before it installs anything:
    process) and waits for it. Either way it acts only on a serve whose
    environment shows this brain's home, and a stopped serve that does not
    come back is reported with the command line it was started with. Undeclared, the refusal names that unit's restart command or that
-   command line. A serve or worker started by
-   hand, an autopilot started any other way, a running `gbrain sync`, or an MCP server an agent
+   command line. For a jobs worker that your container's process manager or
+   another external launcher starts again when it exits, set
+   `gbrain config set self_upgrade.worker_launcher external`. The restart
+   sends SIGTERM so the worker drains its jobs, then waits for a new worker
+   on the installed build with the same brain home. If none comes back,
+   the upgrade reports the command line used to launch it. Workers that
+   gbrain's jobs supervisor or autopilot runs still restart with their owner.
+   An undeclared serve or worker outside gbrain's supervision, an autopilot
+   started any other way, a running `gbrain sync`, or an MCP server an agent
    harness started refuses the upgrade with `restart_refused` (exit 3), naming
    the exact step for each process; nothing is installed. For MCP servers the
    fix asks the user, then reruns with `--stop-mcp`: the upgrade stops them
@@ -324,13 +331,14 @@ process this brain runs on the host, or refuses before it installs anything:
    `/mcp`, then reconnect; other harnesses: a new session).
 2. **After the swap and migrations** the new build runs
    `gbrain upgrade --restart-only`: serve first, then autopilot, then the
-   supervisor, then an autopilot handed to its launcher, then the MCP servers
-   `--stop-mcp` named. It then polls for up to three minutes (six when an
-   autopilot was handed to its launcher) until no old pid is alive, every process reports the installed
+   supervisor, then processes handed to their launchers, then the MCP servers
+   `--stop-mcp` named. It then polls for up to three minutes (six when any
+   process was handed to its launcher) until no old pid is alive, every process reports the installed
    build (a process that records no build must have started after the restart
-   from an install that holds it; a compiled binary's build is inferred from
-   its start time and listed as such), each restarted role and the supervisor's
-   worker came back, and, when serve had a warm CLI socket, the
+   from an install that holds it; a compiled binary's build may be inferred from
+   its start time, but an external worker must report its build or start from
+   an install that holds it), each restarted role and the supervisor's worker
+   came back, and, when serve had a warm CLI socket, the
    socket accepts this build (a handshake-only probe). Anything short of that is
    `restart_unverified` with the processes still on another build.
 
@@ -375,8 +383,9 @@ audit as `restart_serve` (`applied`, or `skipped` with `manual` or
 `unverified`). It leaves alone a serve that the service does not run (one
 started by hand or from another install), a serve service installed for
 another brain on the same OS user (its wrapper is under another
-`GBRAIN_HOME`), the jobs supervisor and MCP servers. For those, doctor's `runtime_build_skew` fails while two builds run,
-and `gbrain upgrade --restart-only` is its fix.
+`GBRAIN_HOME`), independently launched jobs workers, the jobs supervisor and MCP servers. For those,
+doctor's `runtime_build_skew` fails while two builds run, and `gbrain upgrade --restart-only` is its fix.
+Use that command to hand off an external worker declared with `self_upgrade.worker_launcher external`.
 
 <a id="restart-and-verify"></a>
 ### Restart and verify: a deploy ends with data movement

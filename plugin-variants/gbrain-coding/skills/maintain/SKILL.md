@@ -274,10 +274,13 @@ To cap spend, use
 `dream.synthesize.max_submissions_per_source_per_day`. Explicit `--input` /
 `--date` / `--from` / `--to` invocations bypass cooldown and the hold.
 
-**`--dry-run` semantics:** runs the scored triage pass (judges + caches
-verdicts for new files) but skips the synthesis subagents. NOT zero LLM
-calls — for a zero-call preview from cached scores use
-`gbrain dream retriage --dry-run` instead.
+**`--dry-run` semantics:** runs scored triage but skips synthesis subagents.
+With an inclusive `dream.synthesize.since` cutoff set, a paused or cooling
+phase instead reports `details.since` and candidate counts without triage.
+Set the [cutoff](https://github.com/garrytan/gbrain/blob/master/docs/guides/cron-schedule.md#resume-synthesis-without-processing-the-backlog)
+before re-enabling synthesis to keep older transcripts out of both CLI and
+autopilot runs. Without the cutoff, use `gbrain dream retriage --dry-run`
+for a zero-call preview of cached scores.
 
 **Configure synthesize on a fresh brain:**
 ```bash
