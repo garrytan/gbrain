@@ -53,15 +53,22 @@ import { peerCredSupport, peerUid, type PeerCredSupport } from '../../peer-cred.
 import { decodeValue, encodeError, encodeValue, type Wire } from './codec.ts';
 import {
   OWNER_IPC_DEFAULT_PERMITS, OWNER_IPC_MAX_CONNECTIONS, OWNER_IPC_MAX_FRAME_BYTES, OWNER_IPC_MAX_INFLIGHT_BYTES, OWNER_IPC_MAX_QUEUED, OWNER_IPC_REFUSED_DRAIN_MS, OWNER_IPC_REFUSED_LIMIT,
-  OWNER_IPC_VERSION, frameLine, readFrames, type OwnerHello,
+  OWNER_IPC_VERSION, OWNER_IPC_VERSION_V3, frameLine, readFrames, type OwnerHello,
 } from './protocol.ts';
 import {
   OWNER_IPC_ROUTES, ownerBusy, ownerCallTimeout, ownerEarlierCallRunning, ownerIpcProtocol, ownerIpcRefusal, ownerMemberOnlyReads,
-  ownerPeerRefused, ownerResponseTooLarge,
+  ownerPeerRefused, ownerResponseTooLarge, ownerHandoff,
 } from './routes.ts';
 import { ownerRemoteRefusal } from './remote-check.ts';
 import { membersWaitingFor } from './confirming-reads.ts';
 import { setDeadlineTimer, type DeadlineTimer } from './timer.ts';
+import { servedSession, type ServedHooks, type ServedServerOptions, type ServedServerSide, type ServedSession, type ServedCall } from '../served/session.ts';
+import { encodeLengthFrame } from '../served/framing.ts';
+import { IMPORT_CLIENT_FILE } from '../served/client-files.ts';
+import { SERVED_BRAIN_CALL, SERVED_STORE_CALL } from '../served/store-returning.ts';
+
+/** Whole operations only a protocol v3 session sends. */
+const V3_ONLY_OPERATIONS: ReadonlySet<string> = new Set([IMPORT_CLIENT_FILE, SERVED_STORE_CALL, SERVED_BRAIN_CALL]);
 
 /** A whole operation the owner runs for a client in one request (whole-op.ts); it may open its own transaction. */
 export type OwnerWholeOperation = (engine: BrainEngine, ...args: unknown[]) => Promise<unknown>;
@@ -81,6 +88,11 @@ export interface OwnerServerOptions {
   /** The peer-uid reader (default: the platform's) and this process's uid; tests inject another user. */
   peerCred?: PeerCredSupport;
   uid?: () => number | undefined;
+  /**
+   * Protocol v3 (served/session.ts): present only with multi-user Rust on. Absent, a v3 hello gets the v2 version
+   * refusal and nothing of v3 runs (off is identical).
+   */
+  served?: ServedServerOptions;
 }
 
 export interface OwnerServerStats { active: number; queued: number; connections: number; inflightBytes: number }
@@ -89,9 +101,14 @@ export interface OwnerEngineServer {
   socketPath: string;
   stats(): OwnerServerStats;
   close(): Promise<void>;
+  /**
+   * Serves one network connection (served/listener.ts) with this owner's dispatcher: protocol v3 only, length-prefixed
+   * frames, the bearer hello. Undefined unless `served` was given.
+   */
+  attachServed?: (socket: Socket) => void;
 }
 
-interface PendingCall {
+export interface PendingCall {
   id: number;
   member: string;
   run: () => Promise<unknown>;
@@ -112,6 +129,10 @@ interface PendingCall {
   write: boolean;
   /** True once the engine call has settled (its then-handlers ran), whether or not its reply was still wanted. */
   settled: boolean;
+  /** True once the call left the queue to run. */
+  started?: boolean;
+  /** Protocol v3 hooks of the call (served/session.ts); absent on v2. */
+  served?: ServedHooks;
   reply(frame: object): void;
 }
 
@@ -162,9 +183,14 @@ async function claimOwnerSocket(legacySocketPath: string) {
   return binding;
 }
 
+/** A call's error in its protocol's form: v3 strips stacks and causes and adds a correlation id (served/session.ts). */
+function callError(call: PendingCall, error: unknown): Wire {
+  return call.served ? call.served.encodeError(error) : encodeError(error);
+}
+
 function expire(call: PendingCall, queued: boolean): void {
   call.timer?.clear();
-  call.reply({ t: 'result', id: call.id, ok: false, error: encodeError(ownerCallTimeout(call.member, 0, queued ? 'queued' : 'sent')) });
+  call.reply({ t: 'result', id: call.id, ok: false, error: callError(call, ownerCallTimeout(call.member, 0, queued ? 'queued' : 'sent')) });
   call.controller.abort(timeoutReason());
 }
 
@@ -186,12 +212,19 @@ function orphanAhead(started: ReadonlySet<PendingCall>, call: PendingCall): stri
 /** Ends a call an orphan held back until its deadline: nothing ran, and it says which earlier call held it. */
 function holdExpired(call: PendingCall, earlier: string): void {
   call.timer?.clear();
-  call.reply({ t: 'result', id: call.id, ok: false, error: encodeError(ownerEarlierCallRunning(call.member, earlier, call.deadlineMs ?? 0)) });
+  call.reply({ t: 'result', id: call.id, ok: false, error: callError(call, ownerEarlierCallRunning(call.member, earlier, call.deadlineMs ?? 0)) });
   call.controller.abort(timeoutReason());
 }
 
 /** Answers a started call with its engine result once it settles, unless the call already ended. */
 function answerCall(call: PendingCall, settled: Promise<unknown>): Promise<void> {
+  // A v3 call settles through its session: the outcome is kept for its request id even when no one waits for the
+  // reply any more, and a write's result carries its commit position (served/session.ts).
+  if (call.served) {
+    const served = call.served;
+    return settled.then(value => { call.settled = true; return served.settle(call, true, value); },
+      error => { call.settled = true; return served.settle(call, false, error); });
+  }
   return settled.then(
     value => {
       call.settled = true;
@@ -250,10 +283,12 @@ function takeInTurn(lanes: Lanes, ready: (calls: PendingCall[]) => PendingCall |
  */
 function runnableCall(
   calls: PendingCall[], closing: boolean, started: ReadonlySet<PendingCall>, leaveQueue: (call: PendingCall) => void,
+  handoff: ((call: PendingCall) => void) | null = null,
 ): PendingCall | undefined {
   for (let at = 0; at < calls.length;) {
     const call = calls[at]!;
     if (call.done) { leaveQueue(call); continue; }
+    if (closing && handoff) { handoff(call); leaveQueue(call); continue; }
     if (closing) { call.done = true; leaveQueue(call); call.controller.abort(new DOMException('The brain owner is closing.', 'AbortError')); continue; }
     const earlier = orphanAhead(started, call);
     // A timer fires on a later turn, so a call whose deadline passed while it waited is checked here, before it runs.
@@ -266,6 +301,142 @@ function runnableCall(
     return call;
   }
   return undefined;
+}
+
+/**
+ * The JSON-line writer of one Unix-socket connection. `member` names the call a result answers; `reply` passes it
+ * because it drops the call from `calls` first. A frame over the cap becomes `response_too_large` for its call.
+ */
+function lineSender(socket: Socket, calls: Map<number, PendingCall>, maxFrameBytes: number): (frame: object, member?: string) => void {
+  return (frame, member) => {
+    if (socket.destroyed) return;
+    const line = frameLine(frame, maxFrameBytes);
+    if (line !== null) { socket.write(line); return; }
+    const id = (frame as { id?: number }).id;
+    const name = member ?? (id === undefined ? undefined : calls.get(id)?.member);
+    if ((frame as { t?: string }).t === 'result' && name !== undefined) {
+      socket.write(frameLine({ t: 'result', id, ok: false, error: encodeError(ownerResponseTooLarge(name, maxFrameBytes)) })!);
+    }
+  };
+}
+
+/** A v3 call whose connection's credential stopped working while it waited never runs (served/auth.ts); true if refused. */
+function refusedStale(call: PendingCall): boolean {
+  const stale = call.served?.staleCredential?.();
+  if (!stale) return false;
+  call.timer?.clear();
+  call.reply({ t: 'result', id: call.id, ok: false, error: callError(call, stale) });
+  return true;
+}
+
+/** What a protocol v3 session reaches of an owner: its engine and the one dispatcher both transports share. */
+function servedSideOf(engine: BrainEngine,
+  admit: (frame: Record<string, unknown>, bytes: number, calls: Map<number, PendingCall>, send: (frame: object, member?: string) => void, helloed: boolean, served?: ServedHooks) => void,
+  cancel: (calls: Map<number, PendingCall>, id: number) => void): ServedServerSide {
+  return {
+    engine,
+    admit: (frame, bytes, calls, send, hooks) => admit(frame, bytes, calls as unknown as Map<number, PendingCall>, send, true, hooks),
+    cancel: (calls, id) => cancel(calls as unknown as Map<number, PendingCall>, id),
+  };
+}
+
+/** A call the owner will not start because it is handing the brain over: answered as never run (`owner_handoff`). */
+function answerHandedOver(call: PendingCall, release: () => void): void {
+  call.timer?.clear();
+  call.reply({ t: 'result', id: call.id, ok: false, error: callError(call, ownerHandoff(call.member, process.pid)) });
+  release();
+}
+
+/**
+ * The handoff drain: every call that has not started is answered as never run, so its client sends it to the next
+ * owner; every call that started is finished (and answered) before any connection closes.
+ */
+async function drainForHandoff(lanes: Map<unknown, PendingCall[]>, running: Set<Promise<unknown>>, handOff: (call: PendingCall) => void,
+  leaveQueue: (call: PendingCall) => void): Promise<void> {
+  for (const calls of [...lanes.values()]) for (const call of [...calls]) { if (!call.done) handOff(call); leaveQueue(call); }
+  while (running.size) await Promise.allSettled([...running]);
+}
+
+/** Ends each connection so the answers just written reach their clients, then cuts what lingers past one second. */
+async function endConnections(list: Socket[]): Promise<void> {
+  await Promise.all(list.map(socket => new Promise<void>(resolve => {
+    if (socket.destroyed) { resolve(); return; }
+    const cut = setTimeout(() => { socket.destroy(); resolve(); }, 1_000);
+    cut.unref?.();
+    socket.once('close', () => { clearTimeout(cut); resolve(); });
+    socket.end();
+  })));
+}
+
+/** The owner server's close: the handoff drain (multi-user mode), the calls left, the connections, the server. */
+async function closeOwnerServer(o: {
+  server: Server; lanes: Map<unknown, PendingCall[]>; running: Set<Promise<unknown>>;
+  handOff: ((call: PendingCall) => void) | null; leaveQueue: (call: PendingCall) => void; live: () => Socket[];
+}): Promise<void> {
+  const serverClosed = new Promise<void>(resolve => o.server.close(() => resolve()));
+  if (o.handOff) await drainForHandoff(o.lanes, o.running, o.handOff, o.leaveQueue);
+  for (const calls of [...o.lanes.values()]) {
+    for (const call of [...calls]) {
+      o.leaveQueue(call);
+      if (!call.done) { call.done = true; call.controller.abort(new DOMException('The brain owner is closing.', 'AbortError')); }
+    }
+  }
+  if (o.handOff) await endConnections(o.live());
+  for (const socket of o.live()) socket.destroy();
+  while (o.running.size) await Promise.allSettled([...o.running]);
+  await serverClosed;
+}
+
+/** A connection that closes aborts every call it started; calls of other connections keep running. */
+function endConnectionCalls(calls: Map<number, PendingCall>, leaveQueue: (call: PendingCall) => void): void {
+  for (const call of calls.values()) {
+    call.done = true;
+    call.timer?.clear();
+    leaveQueue(call);
+    // A call that started keeps its request record: it may still commit, and a retry learns its outcome (review G3).
+    if (!call.started) call.served?.neverRan?.(call);
+    call.controller.abort(new DOMException('The client closed its connection.', 'AbortError'));
+  }
+  calls.clear();
+}
+
+/** The caller's cancel: the call ends with nothing more sent; a call that never started forgets its request id. */
+function cancelOneCall(calls: Map<number, PendingCall>, id: number, leaveQueue: (call: PendingCall) => void): void {
+  const call = calls.get(id);
+  if (!call) return;
+  calls.delete(call.id);
+  call.done = true;
+  call.timer?.clear();
+  leaveQueue(call);
+  if (!call.started) call.served?.neverRan?.(call);
+  call.controller.abort(new DOMException('The caller cancelled the call.', 'AbortError'));
+}
+
+/**
+ * Serves one network connection (served/listener.ts) with the owner's dispatcher: protocol v3 only, with the owner's
+ * permits, queue and bounds; past the connection cap it gets a `refused` frame.
+ */
+function attachServedSocket(socket: Socket, owner: {
+  closing: () => boolean; sockets: Set<Socket>; maxConnections: number; side: ServedServerSide; options: ServedServerOptions;
+  hello: OwnerHello; endCalls: (calls: Map<number, PendingCall>) => void;
+}): void {
+  socket.on('error', () => { /* a lost client only ends its own calls */ });
+  if (owner.closing()) { socket.destroy(); return; }
+  if (owner.sockets.size >= owner.maxConnections) {
+    const drain = setTimeout(() => socket.destroy(), OWNER_IPC_REFUSED_DRAIN_MS);
+    drain.unref();
+    socket.once('close', () => clearTimeout(drain));
+    socket.end(encodeLengthFrame({ t: 'refused', error: encodeError(ownerBusy('connections', null, owner.maxConnections)) })!);
+    return;
+  }
+  owner.sockets.add(socket);
+  const calls = new Map<number, PendingCall>();
+  const session = servedSession(owner.side, owner.options, { transport: 'tcp', socket, calls: calls as unknown as Map<number, ServedCall>, hello: owner.hello });
+  socket.once('close', () => {
+    owner.sockets.delete(socket);
+    session.close();
+    owner.endCalls(calls);
+  });
 }
 
 export async function serveOwnerEngine(
@@ -295,6 +466,8 @@ export async function serveOwnerEngine(
   let active = 0;
   let inflightBytes = 0;
   let closing = false;
+  // Multi-user mode only (served options): a closing owner hands over what it has not started; off, null (server.ts close).
+  const handOff = opts.served ? (call: PendingCall) => answerHandedOver(call, () => releaseBytes(call)) : null;
   let closed: Promise<void> | undefined;
   // Engine work that has started and not settled. close() waits for all of it before the owner lock can be released.
   const running = new Set<Promise<unknown>>();
@@ -318,7 +491,7 @@ export async function serveOwnerEngine(
   // the orphan settles.
   const pump = () => {
     while (active < permits) {
-      const next = takeInTurn(lanes, calls => runnableCall(calls, closing, started, leaveQueue));
+      const next = takeInTurn(lanes, calls => runnableCall(calls, closing, started, leaveQueue, handOff));
       if (!next) return;
       start(next);
     }
@@ -326,6 +499,8 @@ export async function serveOwnerEngine(
 
   const start = (call: PendingCall) => {
     call.queued = false;
+    if (refusedStale(call)) { releaseBytes(call); return; }
+    call.started = true;
     active++;
     started.add(call);
     let settled: Promise<unknown>;
@@ -348,6 +523,9 @@ export async function serveOwnerEngine(
     capabilities: [...((engine as { capabilities?: Iterable<string> }).capabilities ?? [])].map(String),
     serve: opts.serve === true,
   };
+
+  const closeConnectionCalls = (calls: Map<number, PendingCall>) => endConnectionCalls(calls, leaveQueue);
+  const cancelCall = (calls: Map<number, PendingCall>, id: number) => cancelOneCall(calls, id, leaveQueue);
 
   const onConnection = (socket: Socket) => {
     socket.on('error', () => { /* a lost client only ends its own calls */ });
@@ -378,31 +556,24 @@ export async function serveOwnerEngine(
     // `helloed` turns on with a hello of this version. `refused` turns on with a hello of another version: the owner
     // answers with its own hello so the client can name both versions, then reads nothing more from the connection.
     const conn = { helloed: false, refused: false };
-    // `member` names the call a result answers; `reply` passes it because it drops the call from `calls` first.
-    const send = (frame: object, member?: string) => {
-      if (socket.destroyed) return;
-      const line = frameLine(frame, maxFrameBytes);
-      if (line !== null) { socket.write(line); return; }
-      const id = (frame as { id?: number }).id;
-      const name = member ?? (id === undefined ? undefined : calls.get(id)?.member);
-      if ((frame as { t?: string }).t === 'result' && name !== undefined) {
-        socket.write(frameLine({ t: 'result', id, ok: false, error: encodeError(ownerResponseTooLarge(name, maxFrameBytes)) })!);
-      }
-    };
+    const send = lineSender(socket, calls, maxFrameBytes);
+    // Set by a protocol v3 hello (only when `served` is on); from then on the session reads every frame.
+    let session: ServedSession | null = null;
     socket.once('close', () => {
       sockets.delete(socket);
-      for (const call of calls.values()) {
-        call.done = true;
-        call.timer?.clear();
-        leaveQueue(call);
-        call.controller.abort(new DOMException('The client closed its connection.', 'AbortError'));
-      }
-      calls.clear();
+      session?.close();
+      closeConnectionCalls(calls);
     });
     readFrames(socket, (frame, bytes) => {
       if (conn.refused) return;
+      if (session) { session.onFrame(frame, null, bytes); return; }
       switch (frame.t) {
         case 'hello':
+          if (opts.served && !conn.helloed && frame.version === OWNER_IPC_VERSION_V3) {
+            session = servedSession(servedSide, opts.served, { transport: 'unix', socket, calls: calls as unknown as Map<number, ServedCall>, send, hello });
+            session.onFrame(frame, null, bytes);
+            return;
+          }
           if (frame.version !== OWNER_IPC_VERSION) {
             conn.refused = true;
             send(hello);
@@ -414,16 +585,7 @@ export async function serveOwnerEngine(
           conn.helloed = true;
           send(hello);
           return;
-        case 'cancel': {
-          const call = calls.get(Number(frame.id));
-          if (!call) return;
-          calls.delete(call.id);
-          call.done = true;
-          call.timer?.clear();
-          leaveQueue(call);
-          call.controller.abort(new DOMException('The caller cancelled the call.', 'AbortError'));
-          return;
-        }
+        case 'cancel': cancelCall(calls, Number(frame.id)); return;
         case 'call': case 'fn': admit(frame, bytes, calls, send, conn.helloed); return;
         default: socket.destroy();
       }
@@ -432,19 +594,25 @@ export async function serveOwnerEngine(
 
   const admit = (
     frame: Record<string, unknown>, bytes: number, calls: Map<number, PendingCall>, send: (frame: object, member?: string) => void,
-    helloed: boolean,
+    helloed: boolean, served?: ServedHooks,
   ) => {
     const id = Number(frame.id);
     const member = String(frame.t === 'fn' ? frame.name : frame.member);
+    // A v3 call refused before it ran leaves no request-id record, so its retry runs fresh (served/requests.ts).
+    const refusedEarly = (error: unknown) => {
+      served?.neverRan?.(null);
+      send({ t: 'result', id, ok: false, error: served ? served.encodeError(error) : encodeError(error) }, member);
+    };
+    // A call that arrives while a handoff drains never starts here: the next owner takes it.
+    if (closing && handOff) { refusedEarly(ownerHandoff(member, process.pid)); return; }
     // These refusals never touch `calls`: a duplicate id must not take the first call's entry, its cancel or its abort.
     const protocolRefusal = (reason: Parameters<typeof ownerIpcProtocol>[0], detail: string) =>
-      send({ t: 'result', id, ok: false, error: encodeError(ownerIpcProtocol(reason, member, detail)) }, member);
+      refusedEarly(ownerIpcProtocol(reason, member, detail));
     if (!helloed) { protocolRefusal('hello_missing', 'the call came before a hello of this protocol version'); return; }
     if (calls.has(id)) { protocolRefusal('duplicate_id', `id=${id} is still open on this connection`); return; }
     if (frame.args === undefined) { protocolRefusal('args_not_array', 'the call has no argument list'); return; }
     // The bounds are checked before the arguments are decoded, so a refused call costs the owner nothing more.
-    const busy = (reason: 'queue_full' | 'inflight_bytes', limit: number) =>
-      send({ t: 'result', id, ok: false, error: encodeError(ownerBusy(reason, member, limit)) }, member);
+    const busy = (reason: 'queue_full' | 'inflight_bytes', limit: number) => refusedEarly(ownerBusy(reason, member, limit));
     if (inflightBytes + bytes > maxInflightBytes) { busy('inflight_bytes', maxInflightBytes); return; }
     // A call held behind an orphan waits with permits free, so a non-empty queue counts against the cap too.
     if ((active >= permits || lanes.size > 0) && queuedCount(lanes) >= maxQueued) { busy('queue_full', maxQueued); return; }
@@ -452,16 +620,25 @@ export async function serveOwnerEngine(
     const call: PendingCall = {
       id, member, controller, done: false, queued: false, lane: calls, bytes, released: true, run: () => Promise.resolve(),
       write: frame.t === 'fn' || !ownerMemberOnlyReads(member), settled: false,
-      reply: out => { if (calls.get(id) === call) calls.delete(id); call.done = true; send(out, member); },
+      ...(served ? { served } : {}),
+      reply: out => {
+        if (calls.get(id) === call) calls.delete(id);
+        const first = !call.done;
+        call.done = true;
+        // A call answered before it ran (a refusal, a queued deadline) never ran: its request id is forgotten.
+        if (first && !call.started) served?.neverRan?.(call);
+        send(out, member);
+      },
     };
     calls.set(id, call);
-    const refuse = (error: unknown) => call.reply({ t: 'result', id, ok: false, error: encodeError(error) });
+    const refuse = (error: unknown) => call.reply({ t: 'result', id, ok: false, error: served ? served.encodeError(error) : encodeError(error) });
     // Multi-user groundwork K: in multi-user mode the owner refuses a remote caller's write itself (remote-check.ts).
     const remoteRefusal = ownerRemoteRefusal(engine, frame, member);
     if (remoteRefusal) { refuse(remoteRefusal); return; }
     let target: (...args: unknown[]) => Promise<unknown>;
     if (frame.t === 'fn') {
-      const operation = Object.hasOwn(wholeOperations, member) ? wholeOperations[member] : undefined;
+      // An operation of protocol v3 only is, on v2, one the owner does not run (the same refusal as an unknown name).
+      const operation = Object.hasOwn(wholeOperations, member) && (served || !V3_ONLY_OPERATIONS.has(member)) ? wholeOperations[member] : undefined;
       if (!operation) { refuse(ownerIpcRefusal(member, 'the owner does not run this operation for other processes')); return; }
       target = (...args) => operation(engine, ...args);
     } else {
@@ -473,7 +650,7 @@ export async function serveOwnerEngine(
     let args: unknown[];
     try {
       const decoded = decodeValue(frame.args as Wire, {
-        onFunction: wire => rebuildFunction(wire, call, send),
+        onFunction: wire => served?.rebuildFunction ? served.rebuildFunction(wire, call) : rebuildFunction(wire, call, send),
         onSignal: () => controller.signal,
       });
       if (!Array.isArray(decoded)) {
@@ -488,8 +665,9 @@ export async function serveOwnerEngine(
     try { access = frame.access === undefined ? null : callerAccessOf(member, decodeValue(frame.access as Wire)); } catch (error) { refuse(error); return; }
     const invoke = () => readDeadlineAt === undefined ? target(...args) : withReadDeadline(readDeadlineAt, () => target(...args));
     // The call runs under the caller's access record, re-checked by withCallerAccess, or under none when it had none.
-    call.run = () => withRequestSignal(controller.signal, () =>
-      access ? withCallerAccess(access, invoke) : withoutCallerAccess(invoke));
+    // A v3 call runs inside its session's scope too (served/session.ts: the remote mark, a transaction binding).
+    const scoped = () => access ? withCallerAccess(access, invoke) : withoutCallerAccess(invoke);
+    call.run = () => withRequestSignal(controller.signal, () => served ? served.wrapRun(scoped) : scoped());
     if (deadlineAt !== undefined) {
       call.deadlineAt = deadlineAt;
       // A request that arrives after its deadline never starts: a fast write would otherwise commit before the timer.
@@ -501,9 +679,8 @@ export async function serveOwnerEngine(
         const queued = call.queued;
         // A call still queued behind an orphan never ran, but it cannot say the orphan did not commit either.
         const earlier = queued ? orphanAhead(started, call) : undefined;
-        call.reply({ t: 'result', id, ok: false, error: encodeError(earlier
-          ? ownerEarlierCallRunning(member, earlier, ms)
-          : ownerCallTimeout(member, ms, queued ? 'queued' : 'sent')) });
+        const timedOut = earlier ? ownerEarlierCallRunning(member, earlier, ms) : ownerCallTimeout(member, ms, queued ? 'queued' : 'sent');
+        call.reply({ t: 'result', id, ok: false, error: served ? served.encodeError(timedOut) : encodeError(timedOut) });
         leaveQueue(call);
         controller.abort(timeoutReason());
       }, ms, { unref: true });
@@ -515,6 +692,12 @@ export async function serveOwnerEngine(
     if (lane) lane.push(call); else lanes.set(calls, [call]);
     pump();
   };
+
+  const servedSide = servedSideOf(engine, admit, cancelCall);
+
+  const attachServed = opts.served ? (socket: Socket) => attachServedSocket(socket, {
+    closing: () => closing, sockets, maxConnections, side: servedSide, options: opts.served!, hello, endCalls: closeConnectionCalls,
+  }) : undefined;
 
   const server: Server = net.createServer(onConnection);
   server.once('close', () => { void binding.release(); });
@@ -537,22 +720,14 @@ export async function serveOwnerEngine(
 
   return {
     socketPath,
+    ...(attachServed ? { attachServed } : {}),
     stats: () => ({ active, queued: queuedCount(lanes, true), connections: sockets.size, inflightBytes }),
     // Stops new work, aborts every queued and running call, and resolves only when the server is closed AND every
     // engine call that started has settled, so the caller cannot release the owner lock while old work still runs.
     // A second close() gets the same promise, so no caller can release the lock before the drain ends.
     close: () => (closed ??= (async () => {
       closing = true;
-      const serverClosed = new Promise<void>(resolve => server.close(() => resolve()));
-      for (const calls of [...lanes.values()]) {
-        for (const call of [...calls]) {
-          leaveQueue(call);
-          if (!call.done) { call.done = true; call.controller.abort(new DOMException('The brain owner is closing.', 'AbortError')); }
-        }
-      }
-      for (const socket of [...sockets, ...refused]) socket.destroy();
-      while (running.size) await Promise.allSettled([...running]);
-      await serverClosed;
+      await closeOwnerServer({ server, lanes, running, handOff, leaveQueue, live: () => [...sockets, ...refused] });
     })()),
   };
 }

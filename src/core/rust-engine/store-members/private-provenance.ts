@@ -58,8 +58,8 @@ import {
   readPolicyFragment,
   ownerReadPolicyFragment,
 } from '../../search/private-visibility.ts';
-import type { RetirementPrivacy } from '../../engine-sql/entity-reads.ts';
 import type { ReflexPrivacy } from '../../engine-sql/reflex-reads.ts';
+import type { RetirementPrivacy } from '../../engine-sql/entity-reads.ts';
 import { MEMBER_PAGE_PREFIX } from '../../access/principals.ts';
 import { ownerOnlyFactSql, ownerOnlyPageSql, ownerOnlyTakeSql, ownerOnlyTimelineSql } from '../../access/owner-only.ts';
 import type { HybridSearchOpts, PostFusionOpts } from '../../search/hybrid.ts';

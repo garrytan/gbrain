@@ -11,6 +11,7 @@ import { savedFactsNoticeBlock, wholeItemsWithin, type SavedFactNotice } from '.
 import { writeReceiptCapacityNotices } from '../core/persistence/capacity-snapshot.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { operations, OperationError, enforceBoundClientOpAllowList, opError } from '../core/operations.ts';
+import { runInSession, sessionHeaderRefusal, type PrincipalSessionRunner } from './session-dispatch.ts';
 import type { OperationContext, AuthInfo } from '../core/operations.ts';
 import { asSegmentedWriteRefusal } from '../core/page-body/page-shape.ts';
 import type { Operation, OperationMeta } from '../core/ops/contract.ts';
@@ -184,6 +185,8 @@ export interface ToolResult {
 }
 
 export interface DispatchOpts {
+  /** Multi-user Rust over HTTP: the request's store session; a remote call runs in it (mcp/session-dispatch.ts). */
+  principalSession?: PrincipalSessionRunner;
   /** Wakeshift: the MCP caller as the transport saw it (OperationContext.mcpCaller); never from tool arguments. */
   mcpCaller?: OperationContext['mcpCaller'];
   /** GST-359 C1: the x-qm-actor header the HTTP transport read (a trusted system names the person); stdio never sets it. */
@@ -1013,7 +1016,8 @@ export async function dispatchToolCall(
   // GBRA-498: a room declaration only marks the answer; its argument is taken out here, before any validation,
   // handler, cache, retry call or stored write intent sees it, and a trusted local caller's is ignored.
   // An engine without `access_control` (the Rust engine) answers only the trusted local caller (mcp/engine-access-refusal.ts).
-  const accessRefusal = remoteAccessRefusal(engine, name, opts.remote);
+  const session = opts.remote !== false ? opts.principalSession : undefined;
+  const accessRefusal = session ? sessionHeaderRefusal(opts) : remoteAccessRefusal(engine, name, opts.remote);
   if (accessRefusal) return errorResult(accessRefusal, opts, { op: name });
   const roomRead = readRoomDeclaration(opts.remote === false ? undefined : opts.room, params);
   params = roomRead.args;
@@ -1026,6 +1030,7 @@ export async function dispatchToolCall(
   // GBRA-218: a remote call also carries its credential's member identity, which every caller-aware read checks page readers against.
   // GBRA-231: or the audience a shared agent's harness asserts, resolved (and refused) on every call before any work.
   const run = async () => {
+    if (session) return qmMemoryToolResult(name, await runInSession(session, name, readOnly, privateSources, privateFactSources, () => withRequestIdentityMemo(() => dispatchResolvedCall(engine, name, args, resolved))).catch(e => { if (e instanceof OperationError) return errorResult(e, opts, { op: name }); throw e; })); // a session refusal answers in the error envelope
     if (opts.remote === false) return qmMemoryToolResult(name, await withCallerAccess({ privateReadableSources: [], privateFactSources: [] }, () => withRequestIdentityMemo(() => dispatchResolvedCall(engine, name, params, resolved))));
     // GST-359 C1: or the person a trusted system attests (x-qm-actor), decided here too, before any work (access/actor.ts).
     let audience: AudiencePrincipal[] | null = null;

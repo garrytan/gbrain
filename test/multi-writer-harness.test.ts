@@ -20,11 +20,11 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assertMultiuserCapabilityName, recordingEngine, checkMwArm, checkRustArm, mwArmPlan, runMwCase, rustMultiuserView, type MwArmHandle, type MwArmStarted, type RustTally } from './engine-parity/harness.ts';
+import { assertMultiuserCapabilityName, recordingEngine, rustArmModeProblem, rustArmMultiuser, checkMwArm, checkRustArm, mwArmPlan, runMwCase, rustMultiuserView, type MwArmHandle, type MwArmStarted, type RustTally } from './engine-parity/harness.ts';
 import { checkRustTally } from './engine-parity/rust-tally.ts';
 import { MW_ARMS, type MwArm, type MwCase, type MwCell } from './engine-parity/multi-writer-cases.ts';
 import { type LedgerLine } from './engine-parity/multi-writer-ledger.ts';
-import { assertRustMultiuserResolved, installMuConnect, rustArmAddonPath, rustMuRoute, RUST_MULTIUSER_CONFIG_KEY } from './engine-parity/rust-arm.ts';
+import { assertRustCommitLogResolved, assertRustMultiuserResolved, installMuConnect, rustArmAddonPath, rustMuRoute, RUST_MULTIUSER_CONFIG_KEY } from './engine-parity/rust-arm.ts';
 import { mwEntries, mwEntry } from './engine-parity/multi-writer-entries.ts';
 import { parityDeclarations } from './engine-parity/coverage.ts';
 
@@ -130,6 +130,17 @@ describe('strict acceptance of a `runs` cell (checkMwArm)', () => {
       const withIt = base({ row: row({ needs: 'multi_writer', reference: 'standalone' }), label, backend: 'rust', capabilities: new Set(['pages', 'multi_writer']) });
       expect((await checkMwArm(withIt.call)).standalone).toBe(true);
     }
+  });
+
+  test('a row that needs commit_log fails on a Rust label unless the engine itself reports it, naming it, on both labels; a SQL arm never has it', async () => {
+    for (const label of ['rust-mu-env', 'rust-mu-config'] as const) {
+      const without = base({ row: row({ needs: 'commit_log', reference: 'standalone' }), label, backend: 'rust', capabilities: new Set(['pages', 'multi_writer']) });
+      await expect(checkMwArm(without.call)).rejects.toThrow(/needs commit_log, but the engine does not report it \(engine\.capabilities has multi_writer, pages\)/);
+      const withIt = base({ row: row({ needs: 'commit_log', reference: 'standalone' }), label, backend: 'rust', capabilities: new Set(['pages', 'commit_log']) });
+      await expect(checkMwArm(withIt.call)).resolves.toBeDefined();
+    }
+    const pg = base({ row: row({ needs: 'commit_log', reference: 'standalone' }), label: 'postgres', backend: 'postgres' });
+    await expect(checkMwArm(pg.call)).rejects.toThrow(/needs commit_log, but the arm has no such capability/);
   });
 
   test('a row that needs multi_writer passes on Postgres (its arm table has it) and fails on PGLite (it has none)', async () => {
@@ -342,6 +353,30 @@ describe('the rust-mu route: the flag, and what the store resolved', () => {
     expect(() => assertRustMultiuserResolved(engineWith('absent', 'client'), 'env')).not.toThrow();
   });
 
+  const logEngine = (commitLog: unknown, caps: string[], ownerRole = 'owner', open = true) => ({ ownerRole, capabilities: new Set(caps), openStoreIfOpen: () => (open ? { multiuser: true, commitLog } : null) });
+
+  test('a rust-mu brain must keep a commit log and report commit_log: a store without one, or an engine without the capability, FAILS naming it', () => {
+    expect(() => assertRustCommitLogResolved(logEngine(true, ['commit_log']))).not.toThrow();
+    expect(() => assertRustCommitLogResolved(logEngine(false, ['commit_log']))).toThrow(/keeps no commit log.*GBRAIN_RUST_COMMIT_LOG=1/);
+    expect(() => assertRustCommitLogResolved(logEngine(undefined, ['commit_log']))).toThrow(/keeps no commit log/);
+    // The control: the store keeps a log but the engine does not report the capability a row that needs it is held to.
+    expect(() => assertRustCommitLogResolved(logEngine(true, ['raw_sql']))).toThrow(/does not report the capability commit_log/);
+    expect(() => assertRustCommitLogResolved(logEngine(true, [], 'owner', false))).toThrow(/no open store/);
+    expect(() => assertRustCommitLogResolved(logEngine(false, [], 'client'))).not.toThrow();
+  });
+
+  test('a connect on the rust-mu view fails (and cleans up) when the log is not on, even though multi-user mode resolved', async () => {
+    const log: string[] = [];
+    const engine = {
+      ownerRole: 'owner', capabilities: new Set<string>(),
+      async connect() { log.push('connect'); }, async disconnect() { log.push('disconnect'); }, async setConfig() {},
+      openStoreIfOpen: () => ({ multiuser: true, commitLog: false }),
+    };
+    installMuConnect(engine as never, 'env', () => log.push('removed'));
+    await expect(engine.connect()).rejects.toThrow(/keeps no commit log/);
+    expect(log.slice(-2)).toEqual(['disconnect', 'removed']);
+  });
+
   /** A fake engine that records what connect, setConfig and disconnect did, and what the store resolves after each connect. */
   function fakeEngine(resolveAfter: (connects: number, seeded: boolean) => unknown) {
     const log: string[] = [];
@@ -352,7 +387,8 @@ describe('the rust-mu route: the flag, and what the store resolved', () => {
       async connect() { connects++; log.push('connect'); },
       async disconnect() { log.push('disconnect'); },
       async setConfig(key: string, value: string) { seeded = true; log.push(`setConfig ${key}=${value}`); },
-      openStoreIfOpen: () => ({ multiuser: resolveAfter(connects, seeded) }),
+      capabilities: new Set(['commit_log']),
+      openStoreIfOpen: () => ({ multiuser: resolveAfter(connects, seeded), commitLog: true }),
     };
     return { engine, log };
   }
@@ -497,6 +533,15 @@ describe('coverage.ts reads mwCase statically, for cases and variants', () => {
   });
 });
 
+describe('commit_log is an ordinary engine capability a row may need', () => {
+  test('it must be in ENGINE_CAPABILITIES (the Rust engine reports it only while its store keeps a log), unlike multi_writer', () => {
+    expect(() => assertMultiuserCapabilityName('commit_log')).not.toThrow();
+    expect(() => assertMultiuserCapabilityName('commit_log', { ENGINE_CAPABILITIES: ['raw_sql'] })).toThrow(/not in ENGINE_CAPABILITIES/);
+    expect(() => assertMultiuserCapabilityName('commit_log', { ENGINE_CAPABILITIES: ['raw_sql', 'commit_log'], MULTIUSER_CAPABILITIES: ['multi_writer'] })).not.toThrow();
+    expect(() => assertMultiuserCapabilityName('multi_writer', { ENGINE_CAPABILITIES: ['raw_sql', 'commit_log', 'multi_writer'] })).toThrow(/ENGINE_CAPABILITIES/);
+  });
+});
+
 describe('multi_writer is a multi-user capability', () => {
   test('it is never in ENGINE_CAPABILITIES, and when MULTIUSER_CAPABILITIES exists it is listed there', () => {
     expect(() => assertMultiuserCapabilityName('multi_writer')).not.toThrow();
@@ -545,6 +590,30 @@ describe('the recording wrapper keeps the Proxy invariant', () => {
     expect(wrapped.openStore()).toEqual({ brain: 'b' });
     void wrapped.putPage();
     expect([...calls]).toEqual(['putPage']);
+  });
+});
+
+describe('the Rust arm under an ambient multi-user mode', () => {
+  // Value: protects=a lane that starts the whole suite with GBRAIN_RUST_MULTIUSER=1 gets its plain Rust arm checked as a
+  // multi-user arm (its store must resolve the mode on), while a normal run still fails a plain brain that resolved it;
+  // fails_when=the plain-arm guard ignores how the process started; why_new=the multi-user self-check lane runs the suite with
+  // the switch in its environment; seam=pure functions
+  test('the mode is the view, else ambient when the process started with the switch, else off', () => {
+    expect(rustArmMultiuser({}, false)).toBe('off');
+    expect(rustArmMultiuser({}, true)).toBe('ambient');
+    expect(rustArmMultiuser({ GBRAIN_TEST_RUST_MU_ARM: 'env' }, true)).toBe('env');
+    expect(rustArmMultiuser({ GBRAIN_TEST_RUST_MU_ARM: 'config' }, false)).toBe('config');
+  });
+
+  test('a normal run still fails a plain brain that resolved multi-user mode; an ambient run fails one that did not', () => {
+    expect(rustArmModeProblem(true, 'off')).toBe('the plain Rust arm ran a multi-user store');
+    expect(rustArmModeProblem(false, 'off')).toBeNull();
+    expect(rustArmModeProblem(undefined, 'off')).toBeNull();
+    expect(rustArmModeProblem(true, 'ambient')).toBeNull();
+    expect(rustArmModeProblem(false, 'ambient')).toMatch(/GBRAIN_RUST_MULTIUSER=1 set when the process started/);
+    expect(rustArmModeProblem(undefined, 'ambient')).toMatch(/did not resolve/);
+    expect(rustArmModeProblem(true, 'env')).toBeNull();
+    expect(rustArmModeProblem(false, 'config')).toMatch(/rust-mu arm/);
   });
 });
 

@@ -179,6 +179,7 @@ mod repair_applies;
 mod salience;
 mod schema_detect;
 mod secret_store;
+mod served_position;
 mod stats;
 mod sync_orphan_reads;
 mod tail_reads;

@@ -155,3 +155,61 @@ export function readFrames(socket: Socket, onFrame: (frame: Record<string, unkno
     }
   });
 }
+
+/**
+ * Protocol v3 (docs/designs/rust-engine/multi-user-server.md, "M1 as built"; interface I-7). Spoken only with
+ * multi-user Rust on (multiuser.ts); off, a v3 hello gets the v2 refusal above. A v3 hello names both `v` and
+ * `version`, so a v2 owner answers it with its own hello and closes, and the client names both versions.
+ *
+ *   client -> server  { t: 'hello', v: 3, version: 3, caps, auth?: { scheme: 'bearer', token } }
+ *   server -> client  { t: 'hello', v: 3, version: 3, pid, kind, capabilities, serve, caps, server_id }
+ *   client -> server  call/fn frames add `req` (UUID v7, reused on a resend), `retry` (true on a resend), `remote`,
+ *                     `min_position` (`cp1:<sequence>.<index>`), `txn` (a transaction id the server gave), `ph`
+ *                     (a hash of member and arguments, for idempotency conflicts)
+ *   server -> client  result frames add `position` ({ sequence, index }) for writes, `cid` (correlation id) for errors
+ *   server -> client  { t: 'cbcall', id, cb, key, args }    a callback of call `id` that returns a value
+ *   client -> server  { t: 'cbresult', cb, ok, value | error }
+ *   client -> server  { t: 'txn', id, op: 'begin' | 'commit' | 'rollback', txn?, read_only? }   (cap `txn`)
+ *
+ * Over TCP each frame is a u32 big-endian length, then the JSON header, then `tail_len` bytes of binary tail when the
+ * header names one (served/framing.ts). The Unix socket keeps JSON lines. Unknown top-level fields are ignored by
+ * both decoders; an unknown value tag refuses.
+ */
+export const OWNER_IPC_VERSION_V3 = 3;
+
+/** What a v3 server offers; a session uses the intersection with the client's list. */
+export const SERVED_SERVER_CAPS = ['request_ids', 'positions', 'whole_ops', 'binary_tail', 'remote_check', 'callbacks', 'txn'] as const;
+export type ServedCap = typeof SERVED_SERVER_CAPS[number];
+
+export interface ServedHello extends OwnerHello {
+  v: 3;
+  caps: string[];
+  /** A random id of this server process, so a client can tell a restarted server from the one it lost. */
+  server_id: string;
+}
+
+/** The I-2 position of a commit; ordered by (sequence, index). */
+export interface CommitPositionWire { sequence: number; index: number }
+
+const POSITION_TOKEN = /^cp1:(\d{1,20})\.(\d{1,10})$/;
+const U32_MAX = 0xffff_ffff;
+
+/** Parses a read token `cp1:<sequence>.<index>`; null when it is not one (checked before any wait). */
+export function parsePositionToken(token: unknown): CommitPositionWire | null {
+  if (typeof token !== 'string') return null;
+  const m = POSITION_TOKEN.exec(token);
+  if (!m) return null;
+  const sequence = Number(m[1]);
+  const index = Number(m[2]);
+  if (!Number.isSafeInteger(sequence) || !Number.isSafeInteger(index) || index > U32_MAX) return null;
+  return { sequence, index };
+}
+
+export function positionToken(position: CommitPositionWire): string {
+  return `cp1:${position.sequence}.${position.index}`;
+}
+
+/** Negative when `a` is before `b`, zero when equal. */
+export function comparePositions(a: CommitPositionWire, b: CommitPositionWire): number {
+  return a.sequence !== b.sequence ? a.sequence - b.sequence : a.index - b.index;
+}

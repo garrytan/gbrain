@@ -42,6 +42,12 @@ describe('engine capabilities', () => {
     expect(engine.capabilities.size).toBe(shared.length + 1);
   });
 
+  test('the multi-user list (I-8.v2) is apart from ENGINE_CAPABILITIES, and neither SQL engine reports served', () => {
+    expect((ENGINE_CAPABILITIES as readonly string[]).includes('served')).toBe(false);
+    expect(pglite.capabilities.has('served')).toBe(false);
+    expect(postgres.capabilities.has('served')).toBe(false);
+  });
+
   test('Postgres reports every shared capability, raw_sql and postgres_admin, and is not single-owner', () => {
     const engine = postgres;
     for (const c of shared) expect(engine.capabilities.has(c)).toBe(true);
