@@ -134,7 +134,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'refreshPageBody', 'updatePageContextualRetrievalState', 'migrateFactsToCanonical',
   // Config + migration + raw SQL
   'getConfig', 'setConfig', 'unsetConfig', 'listConfigKeys', 'runMigration',
-  'getChunksWithEmbeddings', 'executeRaw', 'executeRawDirect', 'keywordBoundedRead',
+  'getChunksWithEmbeddings', 'executeRaw', 'executeRawDirect', 'findLiveMinionClaim', 'keywordBoundedRead',
   // v0.46.28-34 master waves (classified at the test-gap-wave merge):
   // #3980 bulk config read, #3776 takes-embedding update, #3674 scoped
   // link removal.
