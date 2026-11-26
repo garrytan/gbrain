@@ -22,6 +22,19 @@ impl Brain {
         self.run(env, move |s| s.read_embedding_backlog_age(&column))
     }
 
+    /// `readEmbedBacklogRows(column, sourceIds)`: `{ source_id, pending, unaged, oldest }[]`.
+    #[napi]
+    pub fn read_embed_backlog_rows<'env>(
+        &self,
+        env: &'env Env,
+        column: String,
+        source_ids: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_embed_backlog_rows(&column, &source_ids)
+        })
+    }
+
     /// `readAtomProvenanceCounts()`: the one aggregate row.
     #[napi]
     pub fn read_atom_provenance_counts<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {

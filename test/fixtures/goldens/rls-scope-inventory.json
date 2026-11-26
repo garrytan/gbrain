@@ -10713,6 +10713,7 @@
         "readEdgeProposalSourceId": "none",
         "readEffectBytes": "none",
         "readEmbedBackfillBySource": "none",
+        "readEmbedBacklogRows": "none",
         "readEmbeddingBacklogAge": "none",
         "readEmbeddingCompletion": "none",
         "readEmbeddingIdentity": "none",

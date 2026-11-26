@@ -34,6 +34,7 @@ No member is refused any more: the nine that were (wave 1) are served now, and t
 | `brain.readPageCompiledTruths(ids)` | `{ id, body }` of the named pages (deleted ones too), by id | `readPageCompiledTruths` |
 | `brain.listAtomFenceCandidates({ sourceIds, atomId, after, limit })` | live world atoms whose live origin page is unread or names a facts or takes fence | `listAtomFenceCandidates` |
 | `brain.readEmbeddingBacklogAge(column)` | `{ age_s, unaged, backfilled }` over chunks of live pages (not `embed_skip`) with no vector | `readEmbeddingBacklogAge` |
+| `brain.readEmbedBacklogRows(column, sourceIds)` | `{ source_id, pending, unaged, oldest }[]`: per asked source, the live-body chunks (`chunkGenerationFilter`) of live pages (not `embed_skip`) with no vector, those with no pending-since stamp, and the oldest stamp as ISO text; byte order of the source id | `readEmbedBacklogRows` |
 | `brain.readAtomProvenanceCounts()` | `{ total, slug_unbound, drifted, source_changed, source_gone, oldest_ext }` over live atoms with a `source_hash` | `readAtomProvenanceCounts` |
 | `brain.countCredentialProjectionPending(sourceIds?)` | `{ rebuildable, kept }` of live pages with a private key block and a projection behind the knowledge revision | `countCredentialProjectionPending` |
 | `brain.readIgnoredPrivacyLabelCounts(sourceIds?)` | up to 50 `{ key, raw, is_string, pages, scanned, groups }` groups of access labels the privacy filter ignores | `readIgnoredPrivacyLabelCounts` |
@@ -63,6 +64,9 @@ No member is refused any more: the nine that were (wave 1) are served now, and t
   joins the atom's title, compiled truth and `source_quote` with newlines, skipping the NULL ones (`concat_ws`). The statement
   deadline (`timeoutMs`) has no effect: the store answers from one snapshot.
 - `readPageCompiledTruths`: `body` is null for a segmented page.
+- `readEmbedBacklogRows`: the `gbrain sync` pending backlog and the doctor's managed-sync latency. Unlike the backlog age, it counts only
+  the page's live body: an inline chunk of a page that is not segmented, or a segment chunk of a published occurrence at or below the
+  page's generation. A staged rewrite's chunks do not count. A source with no such chunk has no row.
 - `readEmbeddingBacklogAge`: the store keeps one vector per chunk, so `column` names the only column there is. `age_s` is now minus the
   oldest `pending_since` of a chunk with no vector; `unaged` counts those with none. `backfilled` compares that oldest stamp with the config
   key `embedding_pending_since_backfilled_at`, which the Rust store never writes, so it is `null` (as on a PGLite brain that never ran the

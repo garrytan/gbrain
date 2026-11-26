@@ -34,6 +34,8 @@ export const readPageCompiledTruths: Member<'readPageCompiledTruths'> = async (b
 /** The one aggregate row; the store holds one vector column, so `column` names it. */
 export const readEmbeddingBacklogAge: Member<'readEmbeddingBacklogAge'> = async (brain, column) =>
   storeCall({ member: 'readEmbeddingBacklogAge' }, () => brain.readEmbeddingBacklogAge(column));
+export const readEmbedBacklogRows: Member<'readEmbedBacklogRows'> = async (brain, column, sourceIds) =>
+  storeCall({ member: 'readEmbedBacklogRows' }, () => brain.readEmbedBacklogRows(column, sourceIds));
 export const readAtomProvenanceCounts: Member<'readAtomProvenanceCounts'> = async (brain) =>
   storeCall({ member: 'readAtomProvenanceCounts' }, () => brain.readAtomProvenanceCounts());
 export const countCredentialProjectionPending: Member<'countCredentialProjectionPending'> = async (brain, sourceIds) =>

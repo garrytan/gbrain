@@ -14,6 +14,7 @@ export const DOCTOR_MEMBERS = {
   listTimelineHistoryBatch: 'health',
   readPageCompiledTruths: 'health',
   readEmbeddingBacklogAge: 'health',
+  readEmbedBacklogRows: 'health',
   listBudgetLimitedRows: 'health',
   readBudgetHoldAge: 'health',
   listImageAssetFiles: 'health',

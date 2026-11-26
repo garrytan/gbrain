@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2401/2425
+# covered: 2402/2426
 # lifecycle: 12/12
 # pages: 141/142
 # search: 8/8
@@ -104,7 +104,7 @@
 # shared_skill_members: 16/16
 # brief_reads: 6/6
 # reflex_reads: 3/3
-# doctor_derived: 25/25
+# doctor_derived: 26/26
 # doctor_persistence: 36/36
 # doctor_pages: 18/18
 # doctor_search: 11/11
@@ -124,14 +124,14 @@ disconnect	lifecycle	yes	3	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	4	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	389	no	yes	yes	serves
+transaction	lifecycle	yes	390	no	yes	yes	serves
 transactionDirect	lifecycle	yes	24	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
 listCatalogRelations	lifecycle	yes	1	no	yes	yes	serves
 readCatalogSchemaVersion	lifecycle	yes	1	no	yes	yes	serves
 listCatalogForeignKeys	lifecycle	yes	1	no	yes	yes	serves
-getPage	pages	yes	280	yes	yes	yes	serves
+getPage	pages	yes	281	yes	yes	yes	serves
 readPageSnapshot	pages	yes	100	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	7	no	yes	yes	serves
 lockPageKeys	pages	yes	17	no	yes	yes	serves
@@ -365,7 +365,7 @@ invalidateContentDriftEmbeddings	chunks	yes	2	no	yes	yes	serves
 listStaleChunks	chunks	yes	4	no	yes	yes	serves
 countChunklessPagesWithContent	chunks	yes	6	yes	yes	yes	serves
 listChunklessPagesWithContent	chunks	yes	4	yes	yes	yes	serves
-readEmbeddingStateCounts	chunks	yes	3	no	yes	yes	serves
+readEmbeddingStateCounts	chunks	yes	5	no	yes	yes	serves
 listEmbeddingStateRows	chunks	yes	4	no	yes	yes	serves
 deleteChunks	chunks	yes	4	no	yes	yes	serves
 deleteChunksExcept	chunks	yes	4	no	yes	yes	serves
@@ -683,7 +683,7 @@ readSegmentTexts	segmented_body	yes	18	no	yes	yes	serves
 stageManifestRows	segmented_body	yes	49	no	yes	yes	serves
 readManifest	segmented_body	yes	25	no	yes	yes	serves
 readSegmentedEmbedPage	segmented_body	yes	3	no	yes	yes	serves
-stageSegmentChunks	segmented_body	yes	17	no	yes	yes	serves
+stageSegmentChunks	segmented_body	yes	18	no	yes	yes	serves
 createSegmentedPageShell	segmented_body	yes	80	no	yes	yes	serves
 flipBodyGeneration	segmented_body	yes	66	no	yes	yes	serves
 sealSegmentedPage	segmented_body	yes	17	no	yes	yes	serves
@@ -764,7 +764,7 @@ refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	3	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	2	no	yes	yes	serves
 getConfig	config	yes	57	no	yes	yes	serves
-setConfig	config	yes	97	no	yes	yes	serves
+setConfig	config	yes	98	no	yes	yes	serves
 unsetConfig	config	yes	4	no	yes	yes	serves
 listConfigKeys	config	yes	5	no	yes	yes	serves
 getAllConfig	config	yes	2	no	yes	yes	serves
@@ -1859,7 +1859,7 @@ listSegmentedPages	withdrawal_pages	yes	2	no	yes	yes	serves
 invalidateWithdrawnPages	withdrawal_pages	yes	2	no	yes	yes	serves
 hasWithdrawnFenceClaim	withdrawal_fence	yes	2	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	91	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	90	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 addCodeEdges	code_edges	yes	7	yes	yes	yes	serves
@@ -2369,6 +2369,7 @@ listUntiledSegmentedPageRows	doctor_derived	yes	1	no	yes	yes	serves
 listTimelineHistoryBatch	doctor_derived	yes	1	no	yes	yes	serves
 readPageCompiledTruths	doctor_derived	yes	1	no	yes	yes	serves
 readEmbeddingBacklogAge	doctor_derived	yes	1	no	yes	yes	serves
+readEmbedBacklogRows	doctor_derived	yes	2	no	yes	yes	serves
 listBudgetLimitedRows	doctor_derived	yes	3	no	yes	yes	serves
 readBudgetHoldAge	doctor_derived	yes	2	no	yes	yes	serves
 listImageAssetFiles	doctor_derived	yes	1	no	yes	yes	serves
