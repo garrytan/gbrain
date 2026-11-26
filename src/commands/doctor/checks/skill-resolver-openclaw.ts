@@ -49,7 +49,9 @@ export interface OpenclawSkillView {
   gbrain_home: string | null;
   agents: Array<{ id: string; mode: string; catalog: string; fresh: boolean | null; stale_reason: string | null; skills: number; pins: number; conversation_pins: number; suggest_in: string[]; listing: 'on' | 'off'; path_reads: OpenclawPathReads; verdict: string | null; host?: { hidden: string[]; cut: string[] } | null;
     /** Live, on dmScope main, with no owner_sender_ids and no require_owner_sender, and not every recent turn had a memory audience: another person's DM may count as the owner's. */
-    owner_unverified: boolean }>;
+    owner_unverified: boolean;
+    /** --require-owner-sender is set in state (enforced only once a logged turn shows the gateway running version 6 or later). */
+    require_owner_sender: boolean }>;
   recent: { turns: number; outcomes: Record<string, number>; errors: Record<string, number>; deadline_misses: number; miss_rate: number | null; reads: number; reads_of_suggested: number;
     by_session_class: Record<string, SplitCounts>; by_source: Record<string, SourceCounts>;
     /** Turns by whether OpenClaw sent a memory audience (host) or the class came from the session key (unknown). */
@@ -133,11 +135,10 @@ export async function openclawSkillView(home: string, now = Date.now()): Promise
     const policy = openclawAgentPolicy(id);
     agents.push({ id, mode: a.mode, catalog: a.catalog, fresh: s ? s.fresh : null, stale_reason: s?.stale_reason ?? (s ? null : 'missing'), skills: s?.receipt?.skill_count ?? 0, pins: a.pinned_ids.length,
       conversation_pins: a.conversation_pinned_ids?.length ?? 0, suggest_in: a.suggest_classes ?? ['owner', 'conversation'],
-      listing: policy.listing, path_reads: policy.path_reads, verdict: null, ...(ids ? { host } : {}), owner_unverified: openclawOwnerUnverified(id, guardRuns ? a : { ...a, require_owner_sender: false }) });
+      listing: policy.listing, path_reads: policy.path_reads, verdict: null, ...(ids ? { host } : {}), owner_unverified: openclawOwnerUnverified(id, guardRuns ? a : { ...a, require_owner_sender: false }), require_owner_sender: !!a.require_owner_sender });
   }
   const recent = recentOpenclaw(home, now);
-  const current = (n: number | null) => n !== null && n >= OPENCLAW_SKILL_PLUGIN_CODE_VERSION;
-  if (!current(recent.running_version) && recent.running_version !== null) for (const a of agents) if (a.mode === 'live') a.owner_unverified = openclawOwnerUnverified(a.id, { ...state!.agents[a.id]!, require_owner_sender: false });
+  if (recent.running_version === null || recent.running_version < OPENCLAW_SKILL_PLUGIN_CODE_VERSION) for (const a of agents) if (a.mode === 'live') a.owner_unverified = openclawOwnerUnverified(a.id, { ...state!.agents[a.id]!, require_owner_sender: false });
   for (const a of agents) {
     const seen = recent.by_agent_audience[a.id];
     if (seen && (seen.host ?? 0) > 0 && !seen.unknown) a.owner_unverified = false;
@@ -167,7 +168,7 @@ export function describeOpenclawSkill(v: OpenclawSkillView): { line: string; pro
   else if (on.length && v.running_version !== null && v.running_version < OPENCLAW_SKILL_PLUGIN_CODE_VERSION) problem = { code: 'skill_resolver_plugin_outdated', what: `the gateway still runs older plugin code (${v.running_version ? `version ${v.running_version}` : 'from before version 6'}) on its newest logged turn, so it ignores newer settings until it restarts (the warning clears after the first turn on the new code)` };
   else if (on.length && v.library !== 'ok') problem = { code: v.library === 'mismatch' ? 'skill_resolver_library_mismatch' : 'skill_resolver_library_missing', what: `the library the state names is ${v.library}` };
   else if (on.some((a) => a.fresh === null)) problem = { code: 'skill_index_missing', what: 'an agent has no catalog' };
-  else if (exposed) problem = { code: 'skill_resolver_owner_unverified', agent: exposed.id, what: `agent ${exposed.id}: OpenClaw puts every direct message on this agent's main session (session.dmScope main), no owner sender is set, and its turns in the last 24 hours did not all carry OpenClaw's memory audience, so anyone who messages the agent directly gets the owner's pins, brief, operator rule and owner-only skill suggestions` };
+  else if (exposed) problem = { code: 'skill_resolver_owner_unverified', agent: exposed.id, what: `agent ${exposed.id}: OpenClaw puts every direct message on this agent's main session (session.dmScope main), no owner sender is set, and its turns in the last 24 hours did not all carry OpenClaw's memory audience, so anyone who messages the agent directly gets the owner's pins, brief, operator rule and owner-only skill suggestions${exposed.require_owner_sender ? ' (--require-owner-sender is set, but no turn in the last 24 hours shows the gateway running the plugin code that enforces it; the warning clears after the first such turn)' : ''}` };
   else if (drift?.host) {
     const { hidden } = drift.host;
     const cut = reachableByPath(drift) ? [] : drift.host.cut;

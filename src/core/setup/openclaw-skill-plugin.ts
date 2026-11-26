@@ -456,7 +456,7 @@ export function openclawLoaderVersion(): number | null {
 }
 
 /** The setup command that sets an owner sender for an agent (the fix doctor and setup print). */
-export const ownerSenderFix = (agentId: string): string => `gbrain setup openclaw --skill-loading resolve --agent ${agentId} --owner-sender <your sender id>`;
+export const ownerSenderFix = (agentId: string): string => `gbrain setup openclaw --skills-index-only --agent ${agentId} --owner-sender <your sender id>`;
 
 export interface OpenclawSkillSyncOptions {
   mode: 'live' | 'shadow' | null;

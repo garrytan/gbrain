@@ -197,7 +197,7 @@ export function skillResolverCheck(v: SkillResolverView | null): Check | null {
         user_message: 'The OpenClaw skill-resolver plugin running in your gateway is older than this gbrain, so it ignores the operator rule, --brief pins and --require-owner-sender. Rerun the gbrain setup openclaw command you installed with (keep its --workspace, --name and --agent flags), then restart the OpenClaw gateway once.' } };
   }
   if (oc?.code === 'skill_resolver_owner_unverified') {
-    const argv = ['gbrain', 'setup', 'openclaw', '--skill-loading', 'resolve', '--agent', oc.agent ?? 'main', '--owner-sender', '<sender-id>'];
+    const argv = ['gbrain', 'setup', 'openclaw', '--skills-index-only', '--agent', oc.agent ?? 'main', '--owner-sender', '<sender-id>'];
     return { name, status: 'warn', message: `${describeSkillResolver(v)} OpenClaw: ${oc.what}.`, details: { ...details, code: oc.code },
       fix: { argv, consent: [], actor: 'user', requires_exclusive: false, verify: doctorVerify(name), docs: `docs/guides/skill-resolver.md#${oc.code}`,
         inputs: [{ name: 'sender-id', how: "Ask the user for their own sender id on the channel they message the agent from, as OpenClaw's commands.ownerAllowFrom names it (for example telegram:123456789)." }],

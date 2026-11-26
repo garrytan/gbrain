@@ -318,7 +318,7 @@ function briefLedger() {
     for (const line of readFileSync(BRIEF_LEDGER, 'utf8').split('\n')) {
       if (!line) continue;
       briefAppends += 1;
-      try { const j = JSON.parse(line); if (j && typeof j.k === 'string') { if (j.drop) briefed.delete(j.k); else remember(briefed, j.k, 1, SESSIONS_MAX); } } catch { /* a torn line */ }
+      try { const j = JSON.parse(line); if (j && typeof j.k === 'string') { if (j.drop) briefed.delete(j.k); else remember(briefed, j.k, typeof j.d === 'string' ? j.d : '', SESSIONS_MAX); } } catch { /* a torn line */ }
     }
   } catch { /* none yet */ }
   return briefed;
@@ -329,14 +329,14 @@ function briefKeyOf(event, ctx, agentId, sessionKey) {
   return agentId + '\0' + sid.slice(0, 256);
 }
 
-function markBriefed(key, drop) {
-  if (drop) { if (!briefLedger().delete(key)) return; } else remember(briefLedger(), key, 1, SESSIONS_MAX);
+function markBriefed(key, drop, digest) {
+  if (drop) { if (!briefLedger().delete(key)) return; } else remember(briefLedger(), key, digest, SESSIONS_MAX);
   try {
-    appendFileSync(BRIEF_LEDGER, JSON.stringify({ k: key, ...(drop ? { drop: true } : {}), at: new Date().toISOString() }) + '\n', { mode: 0o600 });
+    appendFileSync(BRIEF_LEDGER, JSON.stringify({ k: key, ...(drop ? { drop: true } : { d: digest }), at: new Date().toISOString() }) + '\n', { mode: 0o600 });
     if (++briefAppends < SESSIONS_MAX) return;
     briefAppends = 0;
     const tmp = BRIEF_LEDGER + '.tmp';
-    writeFileSync(tmp, [...briefed.keys()].map((k) => JSON.stringify({ k })).join('\n') + '\n', { mode: 0o600 });
+    writeFileSync(tmp, [...briefed].map(([k, d]) => JSON.stringify({ k, d })).join('\n') + '\n', { mode: 0o600 });
     renameSync(tmp, BRIEF_LEDGER);
   } catch { /* a lost line only repeats one brief */ }
 }
@@ -491,12 +491,13 @@ async function resolveTurn(event, ctx, opts) {
   const prior = memo.get(memoKey);
   const carried = (block) => !!block && (prior.text !== text || (Array.isArray(event && event.messages) && event.messages.some((m) => m && textOf(m.content).includes(block))));
   const briefKey = briefKeyOf(event, ctx, agentId, sessionKey);
-  const due = !!briefBlock && !prior && (rebrief.has(sessionKey) || !briefLedger().has(briefKey));
+  const briefDigest = briefBlock ? createHash('sha256').update(briefBlock).digest('hex').slice(0, 16) : '';
+  const due = !!briefBlock && !prior && (rebrief.has(sessionKey) || briefLedger().get(briefKey) !== briefDigest);
   const finish = (line, block) => {
     const fresh = due && !opts.selfTest && isActive(ctx);
     if (fresh) {
       rebrief.delete(sessionKey);
-      markBriefed(briefKey);
+      markBriefed(briefKey, false, briefDigest);
       const m = memo.get(memoKey);
       if (m) m.brief = briefBlock; else remember(memo, memoKey, { block: '', text, brief: briefBlock, unresolved: true }, MEMO_MAX);
     }

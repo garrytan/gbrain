@@ -1287,11 +1287,13 @@ carried OpenClaw's memory audience. Fix it with your sender id (as OpenClaw's
 `commands.ownerAllowFrom` names it):
 
 ```bash
-gbrain setup openclaw --skill-loading resolve --agent main --owner-sender <your sender id>
+gbrain setup openclaw --skills-index-only --agent main --owner-sender <your sender id>
 ```
 
 or add `--require-owner-sender` to treat the main session as another person's
-DM until a sender is set. A `dmScope` of `per-peer`, `per-channel-peer` or
+DM until a sender is set. Doctor counts `--require-owner-sender` as in force
+only once a turn logged in the last 24 hours shows the gateway running plugin
+code that enforces it (version 6 or later). A `dmScope` of `per-peer`, `per-channel-peer` or
 `per-account-channel-peer` gives each DM its own session, which never counts
 as the owner's without `--owner-sender`.
 

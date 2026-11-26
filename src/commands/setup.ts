@@ -298,7 +298,13 @@ function parseFlags(args: string[]): SetupFlags | string {
   const chosenLoading = flagLoading ?? (envLoading || undefined);
   const tuningFlags = '--live-fraction, --pins-route, --owner-sender, --suggest-in, --operator-rule, --conversation-operator-rule and --require-owner-sender';
   if (tuningGiven && (chosenLoading === 'off' || chosenLoading === 'spring' || args.includes('--remove'))) return `${tuningFlags} cannot be set while turning the OpenClaw skill resolver off; nothing was written`;
-  if (tuningGiven && chosenLoading !== 'resolve' && chosenLoading !== 'shadow' && !Object.values(readOpenclawSkillState(configDir())?.agents ?? {}).some((a) => a.mode !== 'off')) return `the OpenClaw skill resolver is not on for any agent here, so ${tuningFlags} would not be kept: pass them with --skill-loading resolve (or shadow); nothing was written`;
+  if (tuningGiven && chosenLoading !== 'resolve' && chosenLoading !== 'shadow') {
+    const stateAgents = readOpenclawSkillState(configDir())?.agents ?? {};
+    const off = agentFlags.filter((id) => (stateAgents[id]?.mode ?? 'off') === 'off');
+    if (args.includes('--all-agents')) return `${tuningFlags} with --all-agents can switch the resolver on for agents that have it off: pass --skill-loading resolve (or shadow) to choose that, or name the agents with --agent; nothing was written`;
+    if (off.length) return `the OpenClaw skill resolver is not on for agent ${off.join(', ')}, so ${tuningFlags} would switch it on there: pass --skill-loading resolve (or shadow) to choose that; nothing was written`;
+    if (!Object.values(stateAgents).some((a) => a.mode !== 'off')) return `the OpenClaw skill resolver is not on for any agent here, so ${tuningFlags} would not be kept: pass them with --skill-loading resolve (or shadow); nothing was written`;
+  }
   const cursor = positionals[0] === 'cursor';
   const skillResolver = !resolverHarness || chosenLoading === undefined || (cursor && chosenLoading === 'spring') ? undefined : chosenLoading === 'resolve' ? 'on' as const : chosenLoading === 'shadow' ? 'shadow' as const : 'off' as const;
   // resolve replaces the spring index (on Cursor the pins sit beside it, so neither run removes the other): the skills block is decided as off, explicitly, so GBRAIN_SKILL_LOADING=resolve is never read as a block mode.

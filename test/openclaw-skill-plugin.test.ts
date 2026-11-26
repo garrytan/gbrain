@@ -819,6 +819,59 @@ describe.skipIf(!NODE)('session classes and the session-start brief', () => {
     expect(list.pins).toEqual([{ name: 'deploy-service' }, { name: 'email-triage', line: 'Start of a session again', brief: true }]);
     await pin(b, 'email-triage', '--every-turn');
     expect(readState(b).agents.main).toMatchObject({ pinned_ids: ['deploy-service', 'email-triage'], brief_ids: [], brief_block: '' });
+    const listed = async () => JSON.parse((await runCli(['skills', 'pin', 'list', '--catalog', 'openclaw-main', '--json'], { env: b.env })).stdout).pins;
+    expect(await listed()).toEqual([{ name: 'deploy-service' }, { name: 'email-triage', line: 'Start of a session again' }]);
+    await pin(b, 'email-triage', '--brief');
+    expect(await listed()).toEqual([{ name: 'deploy-service' }, { name: 'email-triage', line: 'Start of a session again', brief: true }]);
+  });
+
+  test('a brief pin added during a session reaches that session on its next turn, even across a gateway restart, and only once', async () => {
+    const b = box();
+    expectExit(await setup(b, ['--skill-loading', 'resolve']), 0);
+    await pin(b, 'email-triage', '--brief');
+    const owner = { ...OWNER, sessionId: 'sess-a' };
+    const first = drive(b, [['turn', { text: 'sync the calendar', ctx: owner }]], undefined, { DRIVE_LOG_LINES: '1' });
+    expect(first[0].appendContext).toContain('"email-triage"');
+    await pin(b, 'deploy-service', '--brief');
+    const next = drive(b, [
+      ['turn', { text: 'sync the calendar again', ctx: owner }],
+      ['turn', { text: 'sync the calendar once more', ctx: owner }],
+    ], undefined, { DRIVE_LOG_LINES: '3' });
+    expect(next[0].appendContext).toContain('"deploy-service"');
+    expect(next[1]?.appendContext ?? '').not.toContain('<session_brief>');
+  });
+
+  test('the owner_unverified fix doctor prints works on a multi-agent gateway and leaves the workspace rule alone', async () => {
+    const b = box();
+    expectExit(await setup(b, ['--skill-loading', 'resolve']), 0);
+    const cfg = join(b.state, 'openclaw.json');
+    const conf = existsSync(cfg) ? JSON.parse(readFileSync(cfg, 'utf8')) : {};
+    writeFileSync(cfg, JSON.stringify({ ...conf, agents: { ...(conf.agents ?? {}), list: [{ id: 'main', workspace: join(b.state, 'workspace') }, { id: 'ops' }] } }));
+    const agentsMd = join(b.state, 'workspace', 'AGENTS.md');
+    const rule = existsSync(agentsMd) ? readFileSync(agentsMd, 'utf8') : null;
+    const d = JSON.parse((await runCli(['doctor', '--only', 'skill_resolver', '--json'], { env: b.env })).stdout).checks.find((c: any) => c.name === 'skill_resolver');
+    expect(d.details.code).toBe('skill_resolver_owner_unverified');
+    const argv = d.fix.argv.slice(1).map((x: string) => (x === '<sender-id>' ? 'owner-1' : x));
+    const r = await runCli([...argv, '--json'], { env: b.env, timeoutMs: 110_000 });
+    expect(r.exitCode, r.stdout + r.stderr).toBe(0);
+    expect(readState(b).agents.main.owner_sender_ids).toEqual(['owner-1']);
+    expect(existsSync(agentsMd) ? readFileSync(agentsMd, 'utf8') : null).toBe(rule);
+  });
+
+  test('tuning flags never switch the resolver on for an agent that has it off: a named agent that is off and --all-agents refuse without an explicit --skill-loading', async () => {
+    const b = box();
+    expectExit(await setup(b, ['--skill-loading', 'resolve']), 0);
+    const before = readFileSync(statePath(b), 'utf8');
+    for (const extra of [['--agent', 'other', '--operator-rule', 'Ask first.'], ['--all-agents', '--require-owner-sender']]) {
+      const r = await runCli(['setup', 'openclaw', '--skills-index-only', '--json', ...extra], { env: b.env, timeoutMs: 110_000 });
+      expect(r.exitCode).toBe(2);
+      expect(r.stdout + r.stderr).toContain('--skill-loading resolve');
+    }
+    expect(readFileSync(statePath(b), 'utf8')).toBe(before);
+    const ok = await runCli(['setup', 'openclaw', '--skills-index-only', '--json', '--agent', 'main', '--operator-rule', 'Ask first.'], { env: b.env, timeoutMs: 110_000 });
+    expect(ok.exitCode, ok.stderr).toBe(0);
+    expect(readState(b).agents.main.operator_rule).toBe('Ask first.');
+    expect(Object.keys(readState(b).agents)).toEqual(['main']);
   });
 
   test('owner sender guard: setup and doctor warn when a live agent on dmScope main has no owner sender; --require-owner-sender fails closed without changing the default; a host audience still decides; per-peer DMs do not warn', async () => {
@@ -827,12 +880,12 @@ describe.skipIf(!NODE)('session classes and the session-start brief', () => {
     const first = await setup(b, ['--skill-loading', 'resolve']);
     expectExit(first, 0);
     expect(first.resolver.notes.join('\n')).toContain('skill_resolver_owner_unverified');
-    expect(first.resolver.notes.join('\n')).toContain('gbrain setup openclaw --skill-loading resolve --agent main --owner-sender <your sender id>');
+    expect(first.resolver.notes.join('\n')).toContain('gbrain setup openclaw --skills-index-only --agent main --owner-sender <your sender id>');
     await pin(b, 'deploy-service');
     const doctor = async () => JSON.parse((await runCli(['doctor', '--only', 'skill_resolver', '--json'], { env: b.env })).stdout).checks.find((c: any) => c.name === 'skill_resolver');
     const warn = await doctor();
     expect(warn).toMatchObject({ status: 'warn', details: { code: 'skill_resolver_owner_unverified' } });
-    expect(warn.fix).toMatchObject({ actor: 'user', argv: ['gbrain', 'setup', 'openclaw', '--skill-loading', 'resolve', '--agent', 'main', '--owner-sender', '<sender-id>'] });
+    expect(warn.fix).toMatchObject({ actor: 'user', argv: ['gbrain', 'setup', 'openclaw', '--skills-index-only', '--agent', 'main', '--owner-sender', '<sender-id>'] });
     expect(warn.fix.user_message).toContain('--require-owner-sender');
     const text = 'review the private household ledger';
     const open = drive(b, [['turn', { text: 'sync the calendar', sender: 'stranger', session: 'agent:main:main' }]], undefined, { DRIVE_LOG_LINES: '1' });
@@ -946,7 +999,9 @@ describe.skipIf(!NODE)('session classes and the session-start brief', () => {
     const refresh = await runCli(['setup', 'openclaw', '--skills-index-only', '--json'], { env: b.env, timeoutMs: 110_000 });
     expect(refresh.stdout).toContain('skill_resolver_plugin_outdated');
     expectExit(await setup(b, []), 0);
-    expect((await doctor()).status).toBe('ok');
+    const unseen = await doctor();
+    expect(unseen.details.code).toBe('skill_resolver_owner_unverified');
+    expect(unseen.message).toContain('--require-owner-sender is set');
     const dir = join(gbrainHome(b), 'skill-index', 'logs');
     mkdirSync(dir, { recursive: true });
     const at = new Date().toISOString();

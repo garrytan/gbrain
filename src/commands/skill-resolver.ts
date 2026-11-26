@@ -391,7 +391,8 @@ async function runPin(args: string[]): Promise<void> {
       const kept = classes ? (classes.length !== 1 || classes[0] !== 'owner' ? PIN_CLASSES.filter((c) => classes.includes(c)) : undefined) : pins.find((x) => x.name === name)?.classes;
       const inBrief = brief || (!everyTurn && !!pins.find((x) => x.name === name)?.brief);
       if (inBrief && kept?.includes('conversation')) usage('A brief pin shows only in the owner\'s sessions, so it cannot have the conversation class.', 'Drop --class conversation, or pass --every-turn.');
-      pins = [...others, { name, ...(line !== undefined ? { line } : {}), ...(kept ? { classes: kept } : {}), ...(inBrief ? { brief: true as const } : {}) }];
+      const keptLine = line ?? (brief || everyTurn ? pins.find((x) => x.name === name)?.line : undefined);
+      pins = [...others, { name, ...(keptLine !== undefined ? { line: keptLine } : {}), ...(kept ? { classes: kept } : {}), ...(inBrief ? { brief: true as const } : {}) }];
     } else {
       if (line !== undefined) usage('--line is for pin add.', 'Drop --line.');
       if (classes) usage('--class is for pin add.', 'Drop --class.');
