@@ -89,7 +89,7 @@ import { withScreeningPaths } from './screening-paths.ts';
 import { publicationBeliefOptions, withBeliefBatch } from '../belief/ledger.ts';
 import { markBeliefCommits } from '../belief/append.ts';
 import { PAGE_CHANGED_DURING_PREPARATION_MESSAGE } from './verb-errors.ts';
-import { fenceOpts } from './host-fence.ts';
+import { claimBatchFenceOpts } from './host-fence.ts';
 
 /** A `put_pages` or managed import group publishes at most this many pages per transaction, so one commit stays a few seconds long. */
 export const PAGE_BATCH_GROUP_MAX = 8;
@@ -386,7 +386,7 @@ export async function publishGroup(engine: BrainEngine, rows: WriteRequest[], pr
         () => declarePublication(tx, opened),
         () => guardOwnership(tx, journal, head, hostId),
         // A published file needs recovery even if this transaction rolls back; claims are verified first.
-        () => members.length ? groupStore.startPublication(members.map(row => ({ id: row.id, token: row.execution_token! })), fenceOpts(tx)) : Promise.resolve([]),
+        () => members.length ? groupStore.startPublication(members.map(row => ({ id: row.id, token: row.execution_token! })), claimBatchFenceOpts(tx, members.map(row => row.execution_token))) : Promise.resolve([]),
         () => prepared.some(member => member.file) ? sourceMirrorReadOnly(tx, head.source_id, true) : Promise.resolve(false),
         // A group prepared strict rechecks its flag under the source lock; one prepared without it publishes as before.
         () => strict ? sourceCanonicalGit(tx, head.source_id, true) : Promise.resolve(false),
@@ -658,7 +658,7 @@ export async function completeGroup(tx: BrainEngine, rows: WriteRequest[], outco
     need: jsonBytes(outcomes[i]) + jsonBytes(row.authority) + 1024, principalKey: principalKey(requestPrincipal(row)),
     // #6696 (A1): each member's true-up target, sized down at commit once none of its effects is unfinished.
     retained: retainedReceiptBytes({ intent: row.intent, authority: row.authority, outcome: outcomes[i], error_detail: row.error_detail,
-      client_request_id: row.client_request_id }, { stage: 'terminal' }) })), keys, stamp.version, stamp.hostId, fenceOpts(tx));
+      client_request_id: row.client_request_id }, { stage: 'terminal' }) })), keys, stamp.version, stamp.hostId, claimBatchFenceOpts(tx, rows.map(row => row.execution_token)));
   if (completed.length !== rows.length) throw new OperationError('write_claim_lost', 'A group member failed its claim or terminal-reservation check before publication.',
     'The group rolls back and its members publish one at a time, where each member reports its own outcome; inspect the requests rather than resubmitting.');
   const byId = new Map(completed.map(({ principal_key: _key, ...row }) => [row.id, row as WriteRequest]));

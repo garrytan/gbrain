@@ -6,7 +6,9 @@
  *  - a valid fenced claim, renewal, start, result and release succeeds and ends the claim;
  *  - a stale fence (the host lease taken over) refuses `lease_lost` / `epoch_moved` and changes no row;
  *  - a replacement-epoch fence (same host, new registration epoch) on the OLD claim refuses `claim_epoch_mismatch`;
- *  - a call with no fence on a multi-user brain refuses `fence_missing` before anything is written;
+ *  - a call with no fence on a multi-user brain is not refused for lacking one (multiuser rule: a caller with no host
+ *    registered takes an implicit lease for a new claim) and refuses `held_by_another`, writing nothing, only on a claim a
+ *    live registered holder owns;
  *  - the same calls with multi-user off and no fence behave as they always did.
  * The callers' own pass-through (`fenceOpts(engine)`) is checked for the group renewal, which reads the registered fence.
  *
@@ -162,15 +164,16 @@ describe('grouped publication followers', () => {
     });
   });
 
-  withAddon('a call with no fence on a multi-user brain refuses fence_missing and writes nothing', async () => {
+  withAddon('a call with no fence on a multi-user brain is not refused for lacking one, and cannot touch a live holder\'s claim', async () => {
     await on(true, async engine => {
       const a = await register(engine);
       const head = await setup(engine);
       const rows = await claim(engine, head, a);
       const store = await engine.groupPublishStore();
-      expect(await refusal(() => claim(engine, head))).toEqual(lost('fence_missing'));
-      expect(await refusal(() => store.completeGroup(completion(rows), ['brain'], 'v', HOST))).toEqual(lost('fence_missing'));
-      expect(await refusal(() => store.renewClaims(members(rows), 1000))).toEqual(lost('fence_missing'));
+      // Every follower is claimed, so a claim with no fence takes nothing and is not refused.
+      expect(await claim(engine, head)).toEqual([]);
+      expect(await refusal(() => store.completeGroup(completion(rows), ['brain'], 'v', HOST))).toEqual(lost('held_by_another'));
+      expect(await refusal(() => store.renewClaims(members(rows), 1000))).toEqual(lost('held_by_another'));
       expect(await states(engine)).toEqual(['running', 'running', 'running']);
     });
   });
@@ -250,15 +253,15 @@ describe('coalesced Git effects', () => {
     });
   });
 
-  withAddon('a call with no fence on a multi-user brain refuses fence_missing', async () => {
+  withAddon('a call with no fence on a multi-user brain is not refused for lacking one, and cannot touch a live holder\'s claim', async () => {
     await on(true, async engine => {
       const a = await register(engine);
       await setup(engine, 2);
       const rows = await claim(engine, a);
-      expect(await refusal(() => claim(engine))).toEqual(lost('fence_missing'));
+      expect(await claim(engine)).toEqual([]);
       const store = await engine.gitEffectStore();
-      expect(await refusal(() => store.yieldToPublications(refs(rows), 1000))).toEqual(lost('fence_missing'));
-      expect(await refusal(() => store.recordPlainOutcome(refs(rows), '{}'))).toEqual(lost('fence_missing'));
+      expect(await refusal(() => store.yieldToPublications(refs(rows), 1000))).toEqual(lost('held_by_another'));
+      expect(await refusal(() => store.recordPlainOutcome(refs(rows), '{}'))).toEqual(lost('held_by_another'));
     });
   });
 
@@ -317,16 +320,16 @@ describe('refresh rows', () => {
     });
   });
 
-  withAddon('a call with no fence on a multi-user brain refuses fence_missing', async () => {
+  withAddon('a call with no fence on a multi-user brain is not refused for lacking one, and cannot touch a live holder\'s claim', async () => {
     await on(true, async engine => {
       await (await engine.topologyStore()).insertWorktree(WT, HOST);
       const a = await register(engine);
       const store = await engine.refreshStore();
       const row = await insert(engine, a);
-      expect(await refusal(() => insert(engine))).toEqual(lost('fence_missing'));
-      expect(await refusal(() => store.transition(row.id, ['draining'], 'fenced', {}, false))).toEqual(lost('fence_missing'));
-      expect(await refusal(() => store.setHolder(row.id, { pid: 2 }))).toEqual(lost('fence_missing'));
+      expect(await refusal(() => store.transition(row.id, ['draining'], 'fenced', {}, false))).toEqual(lost('held_by_another'));
       expect((await store.read(row.id))?.state).toBe('draining');
+      // A new holder takes the claim under an implicit lease: not refused for lacking a fence.
+      await store.setHolder(row.id, { pid: 2 });
     });
   });
 
@@ -379,15 +382,17 @@ describe('managed sync checkpoints', () => {
     });
   });
 
-  withAddon('a call with no fence on a multi-user brain refuses fence_missing', async () => {
+  withAddon('a call with no fence on a multi-user brain is not refused for lacking one, and cannot touch a live holder\'s claim', async () => {
     await on(true, async engine => {
       const a = await register(engine);
       await insert(engine, a);
       const before = await cursor(engine);
-      for (const call of [() => insert(engine), () => swap(engine, 0, 1), () => adopt(engine), () => done(engine)]) {
-        expect(await refusal(call)).toEqual(lost('fence_missing'));
-      }
+      expect(await refusal(() => swap(engine, 0, 1))).toEqual(lost('held_by_another'));
+      expect(await insert(engine)).toEqual([]);
       expect(await cursor(engine)).toEqual(before);
+      // The adoption and the done mark name no claim to check: neither is refused for lacking a fence.
+      await adopt(engine);
+      await done(engine);
     });
   });
 

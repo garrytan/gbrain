@@ -18,7 +18,7 @@ import type { WriteRequest } from './model.ts';
 import { fileAtCommit, landedCommit } from './pending-import.ts';
 import { sha256 } from './digest.ts';
 import { writeSwitchOn } from './switches.ts';
-import { fenceOpts } from './host-fence.ts';
+import { claimFenceOpts } from './host-fence.ts';
 
 const IMPORT_HELD_OPERATIONS = ['put_page', 'capture', 'remember', 'add_timeline_entry'];
 /** A held write that renders the caller's whole body over the imported page, so it names what it replaced. */
@@ -45,7 +45,7 @@ export async function holdForImport(engine: BrainEngine, row: WriteRequest, erro
     const refusal = await deferredReplayRefusal(engine, row, [file]);
     if (refusal) return engine.transaction(tx => completeWrite(tx, row, refusal.state, {}, refusal.failure));
   }
-  return (await engine.refreshStore()).holdForImport(row.id, row.execution_token!, from, fenceOpts(engine));
+  return (await engine.refreshStore()).holdForImport(row.id, row.execution_token!, from, claimFenceOpts(engine, row.execution_token));
 }
 
 /** The trailer value a superseding write commits with: `<path>: revision <revision> from <commit>`. */

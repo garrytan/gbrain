@@ -28,7 +28,7 @@ import { isEmbedRetriableError, MAX_RATE_LIMIT_RETRIES, rateLimitDelayMs, restam
 import { AIConfigError, normalizeAIError } from '../ai/errors.ts';
 import { EMBEDDING_ZERO_NORM, isEmbeddingZeroNormError, type EmbeddingZeroNormError } from '../ai/embedding-guard.ts';
 import { isAIInvocationPolicyError, withAIInvocationPreflight } from '../ai/invocation-guard.ts';
-import { effectInstallClaim, fenceOpts } from './host-fence.ts';
+import { bindClaimFence, claimFenceGroups, effectInstallClaim, fenceOpts } from './host-fence.ts';
 import { quoteIdentifier } from '../search/embedding-column.ts';
 import type { ResolvedColumn } from '../types.ts';
 import { acquireWorktree, acquireWorktreeWaiting, getWorktreeBinding, type WorktreeBinding } from './ownership.ts';
@@ -801,7 +801,9 @@ export async function claimAndRecoverEffect(engine: BrainEngine, id: string | nu
   let claimed: PersistenceEffect | undefined;
   try {
     const token = randomUUID();
-    claimed = await engine.claimEffectRecovery<PersistenceEffect>({ id, token, ownerJson: effectClaimStamp(token), ...fenceOpts(engine) }) ?? undefined;
+    const fence = fenceOpts(engine);
+    claimed = await engine.claimEffectRecovery<PersistenceEffect>({ id, token, ownerJson: effectClaimStamp(token), ...fence }) ?? undefined;
+    if (claimed) bindClaimFence(token, fence.fence ?? null);
     if (claimed) await recoverEffectPublication(engine, claimed, hostId, { ...hooks, between: hooks.between ?? effectClaimKeeper(engine, claimed, effectRenewalIntervalMs) });
   } catch (error) { if (claimed) await recordFailure(engine, claimed, error); }
   return claimed;
@@ -940,7 +942,10 @@ async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: Ef
     if (effects.every(effect => effect.attempts <= GIT_YIELD_ATTEMPTS)) {
       const store = await engine.gitEffectStore();
       if (await store.publicationsPending(effects[0]!.worktree_id!)) {
-        await store.yieldToPublications(effects.map(effect => ({ id: String(effect.id), token: effect.execution_token })), GIT_YIELD_MS, fenceOpts(engine));
+        // Each effect settles under the fence its claim was stamped under (one write per fence; one in practice).
+        for (const group of claimFenceGroups(engine, effects, effect => effect.execution_token)) {
+          await store.yieldToPublications(group.items.map(effect => ({ id: String(effect.id), token: effect.execution_token })), GIT_YIELD_MS, group.opts);
+        }
         return;
       }
     }
@@ -1046,7 +1051,10 @@ async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: Ef
     if (!recorded.length) return;
     try {
       for (const { effect } of recorded) await faultPoint(EFFECT_FAULT_POINTS.git, { effectId: effect.id, requestId: effect.request_id, sourceId: effect.source_id });
-      await (await engine.gitEffectStore()).recordPlainOutcome(recorded.map(({ effect }) => ({ id: String(effect.id), token: effect.execution_token })), JSON.stringify(DURABILITY_NOT_ENABLED), fenceOpts(engine));
+      const store = await engine.gitEffectStore();
+      for (const group of claimFenceGroups(engine, recorded, ({ effect }) => effect.execution_token)) {
+        await store.recordPlainOutcome(group.items.map(({ effect }) => ({ id: String(effect.id), token: effect.execution_token })), JSON.stringify(DURABILITY_NOT_ENABLED), group.opts);
+      }
     } catch (error) { for (const { effect, target } of recorded) await recordFailure(engine, effect, error, opts.signal, target); }
   };
   // A deferred effect that requeues itself (a page walk advancing its cursor,

@@ -28,7 +28,7 @@ import { isStalePlanError } from '../retry-matcher.ts';
 import { classifyPgAccessError } from '../pg-access-classify.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { WriteRequest } from './model.ts';
-import { fenceOpts } from './host-fence.ts';
+import { claimFenceOpts } from './host-fence.ts';
 import { publicationDeadlinePassed } from './publication-deadline.ts';
 
 export const TRANSIENT_BACKOFF_BASE_MS = 1_000;
@@ -81,6 +81,6 @@ export function chargedInterruptionDetail(interruption: TransientInterruption | 
  * in the transaction that releases or finishes the claim, so a crash never counts an interruption twice. Returns the count.
  */
 export async function chargeTransientInterruption(engine: Pick<BrainEngine, 'chargeTransientInterruption'>, row: WriteRequest): Promise<number> {
-  const charged = await engine.chargeTransientInterruption({ id: row.id, token: row.execution_token, baseMs: TRANSIENT_BACKOFF_BASE_MS, maxMs: TRANSIENT_BACKOFF_MAX_MS, ...fenceOpts(engine) });
+  const charged = await engine.chargeTransientInterruption({ id: row.id, token: row.execution_token, baseMs: TRANSIENT_BACKOFF_BASE_MS, maxMs: TRANSIENT_BACKOFF_MAX_MS, ...claimFenceOpts(engine, row.execution_token) });
   return charged?.transient_interruptions ?? (row.transient_interruptions ?? 0) + 1;
 }

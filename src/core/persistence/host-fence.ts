@@ -120,6 +120,33 @@ export function bindClaimFence(token: string, fence: LeaseToken | null): void {
   }
 }
 
+/** Binds every claim in `tokens` to `fence` (the stamp that took them together). */
+export function bindClaimFences(tokens: readonly (string | null | undefined)[], fence: LeaseToken | null): void {
+  for (const token of tokens) if (token) bindClaimFence(token, fence);
+}
+
+/**
+ * `{ fence }` for a write on claims taken together (a group's members, one coalesced Git claim): the fence the first
+ * bound member was stamped under; none of them bound uses the engine's, as `claimFenceOpts` does.
+ */
+export function claimBatchFenceOpts(engine: object, tokens: readonly (string | null | undefined)[]): { fence?: LeaseToken } {
+  return claimFenceOpts(engine, tokens.find(token => token && claimFences.has(token)) ?? null);
+}
+
+/**
+ * `items` split by the fence their claim was stamped under (`tokenOf` names each item's execution token), so one write
+ * never carries a fence for a claim another stamp took. Items whose claims share a fence stay together, in order.
+ */
+export function claimFenceGroups<T>(engine: object, items: readonly T[], tokenOf: (item: T) => string | null | undefined): Array<{ opts: { fence?: LeaseToken }; items: T[] }> {
+  const groups: Array<{ opts: { fence?: LeaseToken }; items: T[] }> = [];
+  for (const item of items) {
+    const opts = claimFenceOpts(engine, tokenOf(item));
+    const group = groups.find(g => g.opts.fence === opts.fence || (g.opts.fence && opts.fence && JSON.stringify(g.opts.fence) === JSON.stringify(opts.fence)));
+    if (group) group.items.push(item); else groups.push({ opts, items: [item] });
+  }
+  return groups;
+}
+
 /** `{ fence }` for a write on claim `token`: the fence it was stamped under; a claim stamped elsewhere uses the engine's. */
 export function claimFenceOpts(engine: object, token: string | null | undefined): { fence?: LeaseToken } {
   if (token && claimFences.has(token)) {

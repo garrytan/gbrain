@@ -36,6 +36,7 @@ import { recordUpstreamObservation } from '../sync-upstream.ts';
 import { checkpointRetryCommand } from './checkpoint-validation.ts';
 import { persistenceHome, hostIdFor, existingHostIdFor } from './identity.ts';
 import { managedLock, nativeLockFailureAsBusy, probeNativeLock } from './managed-lock.ts';
+import { managedRoot } from './managed-operations.ts';
 import { getWorktreeBinding, managedPersistenceEnabled, type WorktreeBinding } from './ownership.ts';
 import { withReadDeadline } from '../read-deadline.ts';
 import { isPhysicalRootMetadata } from './physical-root-record.ts';
@@ -89,7 +90,8 @@ export interface RefreshHolder { host_id: string | null; hostname: string; pid: 
 export type RefreshLiveness = 'live' | 'orphaned' | 'unknown';
 /** A new holder of an existing refresh row (resume, recovery, abandon) adopts its claim: a multi-user Rust brain takes a new claim under the caller's fence; every other engine has nothing to adopt. */
 async function adoptRefreshClaim(engine: BrainEngine, refreshId: string): Promise<void> {
-  const opts = fenceOpts(engine);
+  // The claim is taken under the registration the managed transactions below run under: the process's own, on the root engine.
+  const opts = fenceOpts(managedRoot(engine));
   if (opts.fence) await (await engine.refreshStore()).adoptClaim?.(refreshId, opts);
 }
 const refreshHolder = (engine: object): RefreshHolder => ({ host_id: existingHostIdFor(engine), hostname: hostname(), pid: process.pid,
@@ -1374,7 +1376,7 @@ async function resumeOrAbandon(engine: BrainEngine, sourceId: string, opts: Refr
  * #7679: the caller becomes the row's holder; `previous_holder` keeps the first holder replaced (the refresher that died), so a refused --resume never hides it.
  */
 async function resumeHeld(engine: BrainEngine, git: Git, sourceId: string, refreshId: string, root: string, head: string | null, empty: WorktreeRefreshResult, syncBudgetMs: number, unattended = false, run?: RefreshRun): Promise<WorktreeRefreshResult> {
-  await (await engine.refreshStore()).setHolder(refreshId, refreshHolder(engine), fenceOpts(engine));
+  await (await engine.refreshStore()).setHolder(refreshId, refreshHolder(engine), fenceOpts(managedRoot(engine)));
   let row = await withTopologyLocks(engine, sourceId, async () => recoverOne(engine, git, await readRefresh(engine, refreshId), root, unattended), undefined, 30_000);
   if (row.state === 'recovery_required' && head !== null) {
     const moved = await membersPastStart(engine, row, root);

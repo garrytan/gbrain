@@ -252,7 +252,7 @@ export async function getWriteRequestById(engine: Pick<BrainEngine, 'readWriteRe
 export { WRITE_PROGRESS_SQL, type WriteRequestProgress } from '../engine-sql/persistence-journal.ts';
 import type { CompletedWriteRow, WriteCompletion, WriteRequestProgress } from '../engine-sql/persistence-journal.ts';
 import { syncRows } from '../engine-sql/managed-sync-store.ts';
-import { bindClaimFence, claimFenceOpts, fenceFor, fenceOpts } from './host-fence.ts';
+import { bindClaimFence, bindClaimFences, claimBatchFenceOpts, claimFenceOpts, fenceFor, fenceOpts } from './host-fence.ts';
 export async function getWriteRequestProgress(engine: Pick<BrainEngine, 'readWriteRequestProgress'>, id: string, signal?: AbortSignal): Promise<WriteRequestProgress | null> {
   return engine.readWriteRequestProgress(id, { signal });
 }
@@ -502,7 +502,10 @@ export async function claimGroupFollowers(engine: BrainEngine, head: WriteReques
     // #6278: a follower carries no phase until its wave dispatches it (`markDispatched`), so an undispatched follower is never
     // charged. #6650: it does carry its token, owner and claim time, so a consumer that proves the owner dead reclaims it with
     // the head, and writer status and doctor age the claim from when it was taken.
-    return (await tx.groupPublishStore()).claimFollowers({ worktree_id: head.worktree_id!, sequence: head.sequence }, group, max, leaseMs, claimOwner(), fenceOpts(tx));
+    const fence = fenceOpts(tx);
+    const followers = await (await tx.groupPublishStore()).claimFollowers({ worktree_id: head.worktree_id!, sequence: head.sequence }, group, max, leaseMs, claimOwner(), fence);
+    bindClaimFences(followers.map(row => row.execution_token), fence.fence ?? null);
+    return followers;
   });
 }
 
@@ -515,7 +518,7 @@ export async function claimGroupFollowers(engine: BrainEngine, head: WriteReques
 export async function renewGroupClaims(engine: Pick<BrainEngine, 'groupPublishStore'>, rows: WriteRequest[], leaseMs = 30_000, signal?: AbortSignal,
   stamps: string | null | Array<string | null> = null): Promise<Set<string>> {
   const perMember = Array.isArray(stamps) ? stamps.map(stamp => stamp ?? null) : rows.map(() => stamps);
-  const held = await (await engine.groupPublishStore()).renewClaims(rows.map((row, i) => ({ id: row.id, token: row.execution_token!, stamp: perMember[i] ?? null })), leaseMs, { signal, ...fenceOpts(engine) });
+  const held = await (await engine.groupPublishStore()).renewClaims(rows.map((row, i) => ({ id: row.id, token: row.execution_token!, stamp: perMember[i] ?? null })), leaseMs, { signal, ...claimBatchFenceOpts(engine, rows.map(row => row.execution_token)) });
   return new Set(held);
 }
 /**
@@ -527,7 +530,7 @@ export async function renewGroupClaims(engine: Pick<BrainEngine, 'groupPublishSt
  */
 export async function markDispatched(engine: Pick<BrainEngine, 'groupPublishStore'>, members: Array<{ row: WriteRequest; stamp: string }>, signal?: AbortSignal): Promise<Set<string>> {
   if (!members.length) return new Set();
-  const marked = await (await engine.groupPublishStore()).markDispatched(members.map(m => ({ id: m.row.id, token: m.row.execution_token!, stamp: m.stamp })), { signal, ...fenceOpts(engine) });
+  const marked = await (await engine.groupPublishStore()).markDispatched(members.map(m => ({ id: m.row.id, token: m.row.execution_token!, stamp: m.stamp })), { signal, ...claimBatchFenceOpts(engine, members.map(m => m.row.execution_token)) });
   return new Set(marked);
 }
 /**
@@ -804,7 +807,9 @@ export async function claimNextLaneHead(engine: BrainEngine, hostId: string, wor
       priority: foregroundPriorityOverride(), ...fenceOpts(tx) });
     if (!row) return null;
     const token = randomUUID();
-    const claimed = await tx.stampLaneHeadClaim<WriteRequest & { seen_sequence: string }>({ id: row.id, token, leaseMs, phaseJson: claimPhaseStamp(startClaimPhase(), token), ...fenceOpts(tx) });
+    const laneFence = fenceOpts(tx);
+    const claimed = await tx.stampLaneHeadClaim<WriteRequest & { seen_sequence: string }>({ id: row.id, token, leaseMs, phaseJson: claimPhaseStamp(startClaimPhase(), token), ...laneFence });
+    if (claimed) bindClaimFence(token, laneFence.fence ?? null);
     return claimed ? { ...claimed, previous_claim_phase: row.claim_phase } : claimed;
   });
 }
@@ -876,7 +881,7 @@ export async function prepareRecoveries(engine: BrainEngine, members: { row: Wri
     const [, counters] = await pipelined(tx, [() => declareDurablePersistence(tx), () => lockCounters(tx, ['brain', `worktree:${worktree}`])]) as [unknown, Counter[]];
     for (const c of counters) if (Number(c.recovery_bytes) + total > (c.key === 'brain' ? limits.brainRecoveryBytes : limits.worktreeRecoveryBytes)) throw capacityError('recovery bytes currently reserved by other requests');
     const recorded = await (await tx.groupPublishStore()).recordRecoveries(members.map(member => ({ id: member.row.id, token: member.row.execution_token!, record: member.record, bytes: member.bytes })),
-      total, counters.map(c => c.key), fenceOpts(tx));
+      total, counters.map(c => c.key), claimBatchFenceOpts(tx, members.map(member => member.row.execution_token)));
     if (recorded.length !== members.length) throw opError('write_claim_lost', 'A grouped write claim changed before its recovery was recorded.',
       'Another owner pass holds one of the grouped requests; the group publishes nothing and its members publish one at a time.');
   });
@@ -901,7 +906,9 @@ export async function clearResolvedRecoveries(engine: BrainEngine, rows: WriteRe
 /** #6007: claims again a request this owner pass released to the queue itself, while it still holds the worktree's native lock; never before its backoff (LPH b). */
 export async function reclaimReleasedWrite(engine: BrainEngine, id: string, leaseMs = 30_000): Promise<WriteRequest | null> {
   const token = randomUUID();
-  const claimed = await engine.reclaimReleasedWrite<WriteRequest>({ id, token, leaseMs, phaseJson: claimPhaseStamp(startClaimPhase(), token), ...fenceOpts(engine) });
+  const reclaimFence = fenceOpts(engine);
+  const claimed = await engine.reclaimReleasedWrite<WriteRequest>({ id, token, leaseMs, phaseJson: claimPhaseStamp(startClaimPhase(), token), ...reclaimFence });
+  if (claimed) bindClaimFence(token, reclaimFence.fence ?? null);
   return claimed ?? null;
 }
 
