@@ -1,0 +1,148 @@
+/**
+ * BrainEngine parity — the MCP verb `memory_recall` (src/core/ops/qm-memory.ts) for an ordinary member and for the owner,
+ * with access.members_read_lineage off and on (row 32e-b-7), on PGLite, Postgres and Rust.
+ *
+ * Authoring gate (docs/TESTING.md#authoring-gate):
+ *  - Contract: memory_recall answers plain-text lines `- <fact> (<date>; <kind>)`: the caller's own recent facts, then the facts it
+ *    may read ranked by the query. The date is the day the database writes for the fact: valid_from, else created_at, in UTC
+ *    (a driver's own timestamp parse reads years 1-99 as 19xx, so the database writes the day). Every engine answers the same
+ *    lines for the same caller, and a fact the caller may not read is in none of them.
+ *  - Regression: on a Rust brain memory_recall refused with engine_capability_missing at a raw SQL read of the facts' written
+ *    dates (qm-memory.ts, ctx.engine.executeRaw), for every caller, lineage off and on. memory_recall is an agent-facing MCP
+ *    verb, so a refusal for every caller breaks the byte-exact agent contract. Each case returns the refusal as a value
+ *    ({ refused }), so an arm that still refuses fails the comparison with PGLite instead of counting as stopped.
+ *  - Why existing coverage misses it: qm-memory-tools.test.ts runs memory_recall on PGLite and Postgres only, and
+ *    lineage-fact-reads.test.ts skips the verb on the Rust arm by name. Neither compares the Rust answer.
+ *  - Seam: members through createMember; pages and facts through typed members; the caller is the stdio member path of the real
+ *    dispatch. Fact text names each fact, so ids that differ between arms never enter the answer.
+ */
+import { describe, expect } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import type { BrainEngine } from '../../src/core/engine.ts';
+import { createMember, parityArms, restrictFolder, type ParityBackend } from './harness.ts';
+import { testBackends } from '../helpers/test-backends.ts';
+import { withEnv } from '../helpers/with-env.ts';
+import { setMembersReadLineage } from '../../src/core/access/lineage.ts';
+import { setOwner } from '../../src/core/access/owner.ts';
+import { dispatchToolCall } from '../../src/mcp/dispatch.ts';
+import { drainProjections } from '../../src/core/page-state/projections.ts';
+
+const { parityTest } = parityArms(testBackends());
+
+const OWNER = 'alice-example';
+const MEMBER = 'bob-example';
+const QUERY = 'budget ledger';
+const OWNER_PAGE = `memory/members/${OWNER}`;
+const MEMBER_PAGE = `memory/members/${MEMBER}`;
+
+interface PageSeed { slug: string; type?: string; frontmatter: Record<string, unknown> }
+const PAGES: readonly PageSeed[] = [
+  { slug: 'people/open-example', type: 'person', frontmatter: {} },
+  { slug: 'open/plain', frontmatter: {} },
+  { slug: 'open/readers-owner', frontmatter: { readable_by: [OWNER] } },
+  { slug: 'open/readers-member', frontmatter: { readable_by: [MEMBER] } },
+  { slug: OWNER_PAGE, frontmatter: { readable_by: [`member:${OWNER}`] } },
+  { slug: MEMBER_PAGE, frontmatter: { readable_by: [`member:${MEMBER}`] } },
+];
+
+/** A fact: the page its text sits on and the day it is valid from. The dates cover the cases the written-date read decides. */
+interface FactSeed { id: string; page: string; validFrom: string }
+const FACTS: readonly FactSeed[] = [
+  { id: 'own-owner', page: OWNER_PAGE, validFrom: '2026-03-05T10:00:00Z' },
+  { id: 'own-member', page: MEMBER_PAGE, validFrom: '2026-03-04T10:00:00Z' },
+  { id: 'plain', page: 'open/plain', validFrom: '2026-05-06T12:00:00Z' },
+  { id: 'year-fifty', page: 'open/plain', validFrom: '0050-03-04T00:00:00Z' },
+  { id: 'late-utc', page: 'open/plain', validFrom: '2026-12-31T23:30:00Z' },
+  { id: 'early-utc', page: 'open/plain', validFrom: '2026-01-01T00:30:00Z' },
+  { id: 'readers-owner', page: 'open/readers-owner', validFrom: '2026-04-07T09:00:00Z' },
+  { id: 'readers-member', page: 'open/readers-member', validFrom: '2026-04-08T09:00:00Z' },
+];
+const text = (f: FactSeed): string => `budget ledger note ${f.id}`;
+
+async function inFreshHome<T>(fn: () => Promise<T>): Promise<T> {
+  const home = mkdtempSync(join(tmpdir(), 'gbrain-parity-memory-recall-'));
+  try { return await withEnv({ GBRAIN_HOME: home }, fn); }
+  finally { rmSync(home, { recursive: true, force: true }); }
+}
+
+async function seed(engine: BrainEngine, backend: ParityBackend, lineage: boolean): Promise<void> {
+  await createMember(engine, backend, { id: OWNER, email: 'alice@example.com' });
+  await createMember(engine, backend, { id: MEMBER });
+  await setOwner(engine, OWNER);
+  await restrictFolder(engine, backend, 'default', 'sealed/', 'pending');
+  for (const p of PAGES) {
+    await engine.putPage(p.slug, { type: (p.type ?? 'note') as never, title: p.slug, compiled_truth: `page ${p.slug}`, timeline: '', frontmatter: p.frontmatter }, { sourceId: 'default' });
+  }
+  await drainProjections(engine);
+  for (const [i, f] of FACTS.entries()) {
+    await engine.insertFacts([{
+      fact: text(f), kind: 'fact', visibility: 'world', source: 'test', entity_slug: 'people/open-example', source_markdown_slug: f.page, row_num: i + 1,
+      valid_from: new Date(f.validFrom),
+    }] as never, { source_id: 'default' });
+  }
+  if (lineage) await setMembersReadLineage(engine, true, { remote: false });
+}
+
+/** `member`'s memory_recall through the real dispatch on the stdio member path: its text lines, or the typed refusal as a value. */
+async function memoryRecall(engine: BrainEngine, member: string): Promise<unknown> {
+  const out = await dispatchToolCall(engine, 'memory_recall', { query: QUERY }, { remote: true, transport: 'stdio', sourceId: 'default', stdioMember: member } as never)
+    .catch((e: { code?: string }) => ({ thrown: String(e.code) }));
+  if ('thrown' in out) return { refused: out.thrown };
+  const body = out.content.map(part => (part as { text?: string }).text ?? '').join('');
+  let parsed: unknown = body;
+  try { parsed = JSON.parse(body.includes('[gbrain') ? body.slice(0, body.indexOf('[gbrain')) : body); } catch { /* plain text */ }
+  if (!out.isError) return parsed;
+  const code = (parsed as { code?: string } | null)?.code;
+  if (code === 'engine_capability_missing') return { refused: code };
+  return { error: code ?? body.slice(0, 200) };
+}
+
+/** The lines of a memory_recall answer, newest-first order as the verb wrote them. */
+const linesOf = (answer: unknown): string[] => (typeof answer === 'string' ? answer : String((answer as { text?: string } | null)?.text ?? '')).split('\n').filter(Boolean);
+
+/** The written date of each seeded fact the answer names. */
+function datesIn(answer: unknown): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const line of linesOf(answer)) {
+    const f = FACTS.find(x => line.includes(text(x)));
+    const date = /\((\d{4}-\d{2}-\d{2}|undated);/.exec(line)?.[1];
+    if (f && date) out[f.id] = date;
+  }
+  return out;
+}
+
+/**
+ * What each caller reads, confirmed on PGLite: its own page and the open pages; a page that names the caller only for the owner, and for an
+ * ordinary member only with lineage on (the ranked read judges a page's readers by lineage).
+ */
+const OPEN = ['plain', 'year-fifty', 'late-utc', 'early-utc'];
+const reads = (member: string, lineage: boolean): string[] => member === OWNER
+  ? ['own-owner', 'readers-owner', ...OPEN]
+  : ['own-member', ...(lineage ? ['readers-member'] : []), ...OPEN];
+const DATES: Record<string, string> = {
+  'own-owner': '2026-03-05', 'own-member': '2026-03-04', plain: '2026-05-06', 'year-fifty': '0050-03-04', 'late-utc': '2026-12-31',
+  'early-utc': '2026-01-01', 'readers-owner': '2026-04-07', 'readers-member': '2026-04-08',
+};
+
+describe('engine parity: memory_recall answers the same lines, with the written date of each fact, on every engine', () => {
+  for (const [member, who] of [[MEMBER, 'an ordinary member'], [OWNER, 'the owner']] as const) {
+    for (const lineage of [false, true]) {
+      parityTest(`${who} reads its facts and their written dates, access.members_read_lineage ${lineage ? 'on' : 'off'}`, {
+        methods: ['putPage', 'insertFacts', 'listFactsSince'], timeout: 360_000,
+      }, (engine, backend) => inFreshHome(async () => {
+        await seed(engine, backend, lineage);
+        const answer = await memoryRecall(engine, member);
+        if (backend !== 'rust' || !(answer && typeof answer === 'object' && 'refused' in answer)) {
+          const seen = datesIn(answer);
+          const want = reads(member, lineage);
+          expect(Object.keys(seen).sort()).toEqual([...want].sort());
+          for (const id of want) expect({ id, date: seen[id] }).toEqual({ id, date: DATES[id] });
+          expect(linesOf(answer)[0]).toContain(member === OWNER ? 'own-owner' : 'own-member');
+        }
+        return answer;
+      }));
+    }
+  }
+});
