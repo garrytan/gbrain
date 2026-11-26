@@ -166,6 +166,18 @@ describe('team template refuses a brain that is not fresh, before any write', ()
     await expectNothingWritten(['carol-example'], ['old-agent']);
   });
 
+  test('credentials that may act for other people, or the owner-read override', async () => {
+    await addMember(engine, OWNER, { remote: false });
+    await mintToken(engine, 'shared-agent', { scopes: ['read'], binding: { member: OWNER } });
+    await engine.executeRaw("UPDATE access_tokens SET may_act_for = ARRAY['*'] WHERE name = 'shared-agent'");
+    await engine.setConfig('mcp.stdio_may_act_for', ALICE);
+    await engine.setConfig('access.owner_reads_restricted', '1');
+    const r = await run();
+    expect(r.fresh.problems.map(p => p.what).sort()).toEqual(['owner reads', 'stdio may_act_for', 'token shared-agent']);
+    expect(await liveTokens()).toEqual(['shared-agent']);
+    expect(readdirSync(keyDir)).toEqual([]);
+  });
+
   test('pages that arrive while it runs stop it before any member key is issued', async () => {
     const original = engine.setConfig.bind(engine);
     const spy = spyOn(engine, 'setConfig').mockImplementation(async (k: string, v: string) => {

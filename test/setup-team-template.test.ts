@@ -105,6 +105,26 @@ describe('setup --template team', () => {
     expect(existsSync(join(b.home, '.gbrain'))).toBe(false);
   }, 120_000);
 
+  test('a brain set up by gbrain access team is wired by setup --template team, tied to the owner', async () => {
+    const b = box();
+    expect((await gbrain(b, ['init', '--pglite', '--no-embedding', '--json'])).exitCode).toBe(0);
+    expect((await gbrain(b, ['access', 'team', '--members', 'alice-example,bob-example', '--groups', 'eng:alice-example', '--owner', OWNER, '--yes', '--json'])).exitCode).toBe(0);
+    const r = await setup(b, [...TEAM, '--yes']);
+    expect(r.exitCode).toBe(0);
+    expect(readFileSync(join(b.home, '.claude.json'), 'utf8')).toContain(`"--stdio-member",\n        "${OWNER}"`);
+  }, 400_000);
+
+  test('a member key that cannot be issued is refused before the entry is written', async () => {
+    const b = box();
+    expect((await gbrain(b, ['init', '--pglite', '--no-embedding', '--json'])).exitCode).toBe(0);
+    mkdirSync(keyDir(b), { recursive: true });
+    writeFileSync(join(keyDir(b), 'alice-example.key'), 'stale');
+    const r = await setup(b, [...TEAM, '--yes']);
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stdout + r.stderr).toContain('team_template_not_fresh');
+    expect(existsSync(join(b.home, '.claude.json'))).toBe(false);
+  }, 400_000);
+
   test('a roster that does not parse is refused before the brain or the entry is written', async () => {
     const b = box();
     const said = (r: CliResult) => r.stdout + r.stderr;

@@ -36,7 +36,8 @@ import { bunSpawnSync } from '../core/spawn.ts';
 import { usageError } from '../cli/cli-error.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { addGroup, addMember, assertAccessId, listGroups, listMembers, type MemberRecord } from '../core/access/members.ts';
-import { ownerView, setOwner } from '../core/access/owner.ts';
+import { ownerReadsRestrictedOn, ownerView, setOwner } from '../core/access/owner.ts';
+import { STDIO_MAY_ACT_FOR_KEY } from '../core/access/audience.ts';
 import { setMemberLabelledOnly } from '../core/access/labelled-only.ts';
 import { SERVES_KEY } from '../core/access/serves.ts';
 import { normalizeRule, type FolderRule } from '../core/access/folder-rules.ts';
@@ -203,6 +204,8 @@ async function accessProblems(engine: BrainEngine, roster: TeamRoster, source: s
       if (!mine) out.push({ what: `rule ${s.id}:${rule.id}`, detail: `source ${s.id} already has folder rule "${rule.id}" on ${rule.prefix} (readable by ${readerArg(rule.readable_by)})`, remedy: 'The team template writes its own rules on a brand-new brain only; use a new brain' });
     }
   }
+  if (await ownerReadsRestrictedOn(engine)) out.push({ what: 'owner reads', detail: 'config access.owner_reads_restricted is on, which lets the owner read pages kept to other members', remedy: 'Turn it off (gbrain config set access.owner_reads_restricted 0), or use a new brain' });
+  out.push(...await delegationProblems(engine));
   const tokens = await engine.executeRaw<{ name: string; member_id: string | null }>('SELECT DISTINCT name, member_id FROM access_tokens WHERE revoked_at IS NULL ORDER BY name');
   for (const t of tokens) {
     if (t.member_id === null) out.push({ what: `token ${t.name}`, detail: `live token ${t.name} is bound to no member, so it could read pages no rule keeps`, remedy: `Revoke it (gbrain auth revoke ${t.name}) or bind it to the owner (gbrain auth rescope --token ${t.name} --member ${roster.owner})` });
@@ -210,6 +213,19 @@ async function accessProblems(engine: BrainEngine, roster: TeamRoster, source: s
   for (const c of await engine.executeRaw<{ client_id: string }>('SELECT client_id FROM oauth_clients WHERE deleted_at IS NULL AND member_id IS NULL ORDER BY client_id')) {
     out.push({ what: `client ${c.client_id}`, detail: `OAuth client ${c.client_id} is bound to no member`, remedy: `Bind it to the owner (gbrain auth rescope --client ${c.client_id} --member ${roster.owner}) or remove it` });
   }
+  return out;
+}
+
+/** Credentials that may read as someone else (may_act_for, on a token, an OAuth client or the stdio config): each could read another person's folder. */
+async function delegationProblems(engine: BrainEngine): Promise<FreshProblem[]> {
+  const out: FreshProblem[] = [];
+  for (const t of await engine.executeRaw<{ name: string }>('SELECT DISTINCT name FROM access_tokens WHERE revoked_at IS NULL AND cardinality(coalesce(may_act_for, ARRAY[]::text[])) > 0 ORDER BY name')) {
+    out.push({ what: `token ${t.name}`, detail: `live token ${t.name} may act for other people (may_act_for), so it could read their folders`, remedy: `Clear it (gbrain auth rescope --token ${t.name} --may-act-for none) or revoke it (gbrain auth revoke ${t.name})` });
+  }
+  for (const c of await engine.executeRaw<{ client_id: string }>('SELECT client_id FROM oauth_clients WHERE deleted_at IS NULL AND cardinality(coalesce(may_act_for, ARRAY[]::text[])) > 0 ORDER BY client_id')) {
+    out.push({ what: `client ${c.client_id}`, detail: `OAuth client ${c.client_id} may act for other people (may_act_for)`, remedy: `Clear it (gbrain auth rescope --client ${c.client_id} --may-act-for none) or remove it` });
+  }
+  if ((await engine.getConfig(STDIO_MAY_ACT_FOR_KEY))?.trim()) out.push({ what: 'stdio may_act_for', detail: `config ${STDIO_MAY_ACT_FOR_KEY} lets local stdio sessions act for other people`, remedy: `Unset it (gbrain config unset ${STDIO_MAY_ACT_FOR_KEY}), or use a new brain` });
   return out;
 }
 
@@ -299,7 +315,9 @@ export function teamPreflight(launcher: string, t: { members: string; groups?: s
     const message = said.match(/"message"\s*:\s*"((?:[^"\\]|\\.)*)"/)?.[1] ?? said.trim().split('\n')[0]?.slice(0, 300) ?? 'no output';
     return opError('invalid_params', `The team template could not check this brain (${message}); nothing was written.`, `Run ${['gbrain', ...argv.slice(1)].join(' ')} to see why.`);
   }
-  return r.fresh.ok ? null : notFreshError(r);
+  if (!r.fresh.ok) return notFreshError(r);
+  const blocked = r.keys.filter(k => k.action === 'blocked');
+  return blocked.length ? opError('team_template_not_fresh', `The team template cannot issue every member key: ${blocked.map(k => k.detail).join('; ')}. Nothing was written.`, blocked[0]!.detail ?? 'Use a new brain for the team.') : null;
 }
 
 export function notFreshError(r: TeamResult) {
@@ -334,8 +352,8 @@ export async function teamTemplate(engine: BrainEngine, opts: TeamOpts): Promise
     const applied = await appliedRules(engine, source);
     const missing = teamRules(roster).filter(r => !applied.some(x => x.prefix === r.prefix && sameSet(x.readable_by, r.readable_by)));
     if (missing.length) throw opError('team_template_rules_pending', `The team rules for ${missing.map(r => r.prefix).join(', ')} are not in force yet, so no member key was issued.`, `Finish with gbrain access resume --source ${source}, then run this again.`);
-    const late = await contentProblems(engine);
-    if (late.length) throw opError('team_template_not_fresh', `Pages arrived while the team template ran (${late.map(p => p.detail).join('; ')}), so no member key was issued.`, 'Check who wrote the new pages (gbrain access who-can-read on each) before you run this again.');
+    const late = [...await contentProblems(engine), ...await delegationProblems(engine)];
+    if (late.length) throw opError('team_template_not_fresh', `Pages or delegated credentials arrived while the team template ran (${late.map(p => p.detail).join('; ')}), so no member key was issued.`, 'Check who wrote the new pages (gbrain access who-can-read on each) before you run this again.');
     for (const k of result.keys.filter(x => x.action === 'mint')) {
       const minted = await mintToken(engine, k.token_name, { scopes: KEY_SCOPES, binding: { member: k.member }, sources: { kind: 'scalar', writeSource: source } });
       try { writeKeyFile(k.path, minted.token); } catch (e) {

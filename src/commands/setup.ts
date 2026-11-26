@@ -592,7 +592,7 @@ export async function runSetup(args: string[], deps: { openclaw?: { bin?: string
         actor: 'agent', argv: ['gbrain', 'bootstrap', 'harness', '--remove', '--dry-run'],
         why: 'Preview removing the bootstrap harness wiring first, or keep it and skip setup.', verify: verifyDryRun('claude-code', flags.name) }), out);
     }
-    const servesPlan = servesPreflight(flags, launcher, 'claude-code', !!cfg, !!liveOwner?.ours, binding);
+    const servesPlan = servesPreflight(flags, launcher, 'claude-code', !!cfg, !!liveOwner?.ours, flags.teamRun && !binding.member ? { ...binding, member: flags.owner ?? loginOwnerId() } : binding);
     if (servesPlan instanceof OperationError) return refuse(servesPlan, out);
     const tie = ownerTie(flags, servesPlan, binding, !!pluginOwner);
     const unbound = householdTieRefusal(flags, servesPlan, binding, !!pluginOwner, tie, 'claude-code');
@@ -861,7 +861,7 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
         actor: 'agent', argv: harnessLane ? ['gbrain', 'bootstrap', 'harness', '--remove', '--dry-run'] : ['gbrain', 'setup', 'codex', laneEvents.every((e) => e === 'SessionEnd') ? '--no-capture' : '--no-hooks', '--dry-run', '--json'],
         why: harnessLane ? 'Preview removing the bootstrap harness wiring first, or keep it and skip setup.' : 'Keep the bootstrap lane for those events and preview setup without them.', verify: verifyDryRun('codex', flags.name) }), out);
     }
-    const servesPlan = servesPreflight(flags, launcher, 'codex', !!cfg, !!liveOwner?.ours, binding);
+    const servesPlan = servesPreflight(flags, launcher, 'codex', !!cfg, !!liveOwner?.ours, flags.teamRun && !binding.member ? { ...binding, member: flags.owner ?? loginOwnerId() } : binding);
     if (servesPlan instanceof OperationError) return refuse(servesPlan, out);
     const tie = ownerTie(flags, servesPlan, binding, !!pluginOwner);
     const unbound = householdTieRefusal(flags, servesPlan, binding, !!pluginOwner, tie, 'codex');
