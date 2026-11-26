@@ -775,6 +775,7 @@
     "gbrain skills library --json",
     "gbrain skills library --out",
     "gbrain skills pin --catalog",
+    "gbrain skills pin --class",
     "gbrain skills pin --json",
     "gbrain skills pin --line",
     "gbrain skills resolve --catalog",

@@ -136,6 +136,10 @@ export interface ResolveOptions {
   loadHint?: string;
   /** OpenClaw: the only directory the agent may read files from by path; a suggestion outside it leads the load line with skills_read. */
   readRoot?: string;
+  /** OpenClaw: 'others' for a turn outside the agent owner's own sessions. An `audience: owner` skill is never offered then, and a catalog built before audiences were recorded offers nothing until it is rebuilt. */
+  audience?: 'owner' | 'others';
+  /** Skill ids the host hides from the agent (the caller's own list, not the turn's, so EXCLUDE_MAX does not cut it). */
+  hidden?: readonly string[];
   namesOnly?: boolean;
   explainTarget?: string;
   /** Let the turn call the model picker when skills.resolver.router is on. Only the command line and the Claude Code and Codex hook lanes pass it. */
@@ -406,6 +410,13 @@ async function resolveInner(input: ReturnType<typeof normalizeTurnInput>, opts: 
     };
 
     if (isAcknowledgement(input.message)) return finish({ ...base, no_skill: true, no_skill_reason: 'ack', block_reason: 'ack' }, { tokens: 0, suggested: [], resuggested: [] });
+    const others = opts.audience === 'others';
+    const unrecorded = others ? loaded.filter(l => l.receipt.catalog.audiences !== 1) : [];
+    if (unrecorded.length) {
+      for (const l of unrecorded) stampStale(home, l, 'audiences_missing', settings.autoRebuild);
+      base.meta.index_stale = true;
+      return finish({ ...base, no_skill: true, no_skill_reason: 'no_match', block_reason: 'no_match' }, { tokens: 0, suggested: [], resuggested: [] });
+    }
 
     const pickerOn = Boolean(opts.router && settings.router.on);
     const total = loaded.reduce((n, l) => n + l.ix.n, 0);
@@ -475,7 +486,7 @@ async function resolveInner(input: ReturnType<typeof normalizeTurnInput>, opts: 
     let pick: Extract<PickOutcome, { ok: true }> | null = null;
     if (pickerOn) {
       const descriptions = loaded.map(l => readPickerDescriptions(home, l));
-      const offer = (c: number, doc: number) => { const m = metaOf(c, doc); if (!m.dep && !offered.has(m.id)) offered.set(m.id, { c, doc }); };
+      const offer = (c: number, doc: number) => { const m = metaOf(c, doc); if (!m.dep && !(others && m.aud) && !offered.has(m.id)) offered.set(m.id, { c, doc }); };
       if (total <= PICKER_FULL_CATALOG_MAX) loaded.forEach((l, c) => { for (let d = 0; d < l.ix.n; d++) offer(c, d); });
       else {
         await awaitVectors();
@@ -510,13 +521,13 @@ async function resolveInner(input: ReturnType<typeof normalizeTurnInput>, opts: 
       const fields = ranks[x.c]!.matchedFields(x.doc).fields;
       return STRENGTH_FIELDS.find(f => f !== 'body' && fields[f]?.length) ?? (near(x) ? 'vector' : 'body');
     };
-    const excluded = new Set(input.exclude);
+    const excluded = new Set([...input.exclude, ...(opts.hidden ?? [])]);
     const floor = MATCH_STRENGTHS.indexOf(input.min_match_strength ?? 'body');
     const window: Cand[] = [];
     const seen = new Set<string>();
     const admit = (x: Cand) => {
       seen.add(x.id);
-      if (window.length < kEff && !excluded.has(x.id) && (x.explicit || !metaOf(x.c, x.doc).dep) && MATCH_STRENGTHS.indexOf(strengthOf(x)) <= floor) window.push(x);
+      if (window.length < kEff && !excluded.has(x.id) && (x.explicit || !metaOf(x.c, x.doc).dep) && !(others && metaOf(x.c, x.doc).aud) && MATCH_STRENGTHS.indexOf(strengthOf(x)) <= floor) window.push(x);
     };
     loaded.forEach((_, c) => {
       for (const r of ranks[c]!.ranked) {
