@@ -136,7 +136,7 @@ getPage	pages	yes	288	yes	yes	yes	serves
 readPageSnapshot	pages	yes	102	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	7	no	yes	yes	serves
 lockPageKeys	pages	yes	17	no	yes	yes	serves
-putPage	pages	yes	1360	yes	yes	yes	serves
+putPage	pages	yes	1361	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	45	yes	yes	yes	serves
@@ -648,7 +648,7 @@ readFactTrustTier	facts	yes	2	no	yes	yes	serves
 listFenceFactRowNums	facts	yes	2	no	yes	yes	serves
 readLiveFactRowTier	facts	yes	1	no	yes	yes	serves
 insertFact	facts	yes	199	yes	yes	yes	serves
-insertFacts	facts	yes	272	no	yes	yes	serves
+insertFacts	facts	yes	274	no	yes	yes	serves
 deleteFactsForPage	facts	yes	8	no	yes	yes	serves
 expireFact	facts	yes	94	no	yes	yes	serves
 listFactsByEntity	facts	yes	66	yes	yes	yes	serves
@@ -681,8 +681,8 @@ moveGuardedFenceRows	facts	yes	1	no	yes	yes	serves
 listTrustedPrivateCopies	facts	yes	1	no	yes	yes	serves
 readLiveFenceFactAt	facts	yes	1	no	yes	yes	serves
 listFactsAboveWriter	facts	yes	2	no	yes	yes	serves
-readRowTrustTier	facts	yes	1	no	yes	yes	serves
-setRowTrustTier	facts	yes	1	no	yes	yes	serves
+readRowTrustTier	facts	yes	4	no	yes	yes	serves
+setRowTrustTier	facts	yes	2	no	yes	yes	serves
 readTierProjectionPage	facts	yes	1	no	yes	yes	serves
 readPageInlineBody	facts	yes	2	no	yes	yes	serves
 allocateBodyOccurrenceIds	segmented_body	yes	43	no	yes	yes	serves
@@ -1687,7 +1687,7 @@ listInactiveTakeIds	facts_repair	yes	1	no	yes	yes	serves
 expireCapturedFacts	facts_repair	yes	1	no	yes	yes	serves
 listExpiredFactIds	facts_repair	yes	1	no	yes	yes	serves
 readEntityRehomeState	facts_repair	yes	1	no	yes	yes	serves
-rehomeEntityFacts	facts_repair	yes	4	no	yes	yes	serves
+rehomeEntityFacts	facts_repair	yes	5	no	yes	yes	serves
 restoreConsolidationTie	facts_repair	yes	1	no	yes	yes	serves
 listLiveDuplicateRows	facts_repair	yes	1	no	yes	yes	serves
 supersedeDuplicateFacts	facts_repair	yes	1	no	yes	yes	serves
@@ -1923,7 +1923,7 @@ queueWithdrawalReview	trust	yes	1	no	yes	yes	serves
 listSegmentedPagesBySlug	trust	yes	1	no	yes	yes	serves
 bumpWithdrawnPageRevisions	trust	yes	1	no	yes	yes	serves
 readPageRevisions	trust	yes	2	no	yes	yes	serves
-appendFactForgetReason	trust	yes	1	no	yes	yes	serves
+appendFactForgetReason	trust	yes	2	no	yes	yes	serves
 readFactWithdrawnRow	trust	yes	1	no	yes	yes	serves
 readFactWithdrawnBacking	trust	yes	1	no	yes	yes	serves
 upsertWriteGateReceipt	trust	yes	34	no	yes	yes	serves
@@ -2568,9 +2568,9 @@ countConversationPipelinePages	doctor_facts_trust	yes	1	no	yes	yes	serves
 listPersistentWriterContention	doctor_facts_trust	yes	1	no	yes	yes	serves
 countRowTrustTiers	doctor_facts_trust	yes	1	no	yes	yes	serves
 countLegacyUnknownBySource	doctor_facts_trust	yes	1	no	yes	yes	serves
-listTrustColumns	doctor_facts_trust	yes	1	no	yes	yes	serves
-listTrustClaimTargets	doctor_facts_trust	yes	1	no	yes	yes	serves
-countClaimLiftedRows	doctor_facts_trust	yes	1	no	yes	yes	serves
+listTrustColumns	doctor_facts_trust	yes	3	no	yes	yes	serves
+listTrustClaimTargets	doctor_facts_trust	yes	2	no	yes	yes	serves
+countClaimLiftedRows	doctor_facts_trust	yes	2	no	yes	yes	serves
 readDoctorSources	doctor_sources	yes	1	no	yes	yes	serves
 listGuestSourceRows	doctor_sources	yes	2	no	yes	yes	serves
 listCheckoutRoots	doctor_sources	yes	1	no	yes	yes	serves

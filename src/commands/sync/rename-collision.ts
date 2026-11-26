@@ -19,6 +19,7 @@ import { randomUUID } from 'node:crypto';
 import { lockedBeliefBatch } from '../../core/belief/writers.ts';
 import { markBeliefCommits } from '../../core/belief/append.ts';
 import { bindOrigin, classifyOriginUniqueViolation } from '../../core/persistence/origin-guard.ts';
+import { withTrustKeep } from '../../core/persistence/context.ts';
 
 export type RenameOutcome = 'renamed' | 'noop' | 'live_destination';
 
@@ -62,8 +63,9 @@ export async function renamePageOntoSlug(engine: BrainEngine, input: { sourceId:
       return await recorded(await maintenanceTransaction(engine, async tx => {
         await tx.lockPageKeys([{ sourceId, slug: oldSlug }, { sourceId, slug: newSlug }]);
         // origin-guard-ok: rekeys a tombstone only (deleted_at IS NOT NULL), which claims no origin
-        const rekeyed = await tx.executeRaw<{ id: number }>(
-          'UPDATE pages SET slug = $1 WHERE id = $2 AND source_id = $3 AND deleted_at IS NOT NULL RETURNING id', [purgedSlug(newSlug, tombstoneId), tombstoneId, sourceId]);
+        // #10003: the re-key authors no text, so the tombstone keeps its stored trust tier.
+        const rekeyed = await withTrustKeep(tx, ['pages'], () => tx.executeRaw<{ id: number }>(
+          'UPDATE pages SET slug = $1 WHERE id = $2 AND source_id = $3 AND deleted_at IS NOT NULL RETURNING id', [purgedSlug(newSlug, tombstoneId), tombstoneId, sourceId]));
         if (!rekeyed.length) return 'live_destination' as const;
         await moveSlugBindings(tx, sourceId, newSlug, purgedSlug(newSlug, tombstoneId));
         if (await move(tx) === 0) throw nothingToMove;

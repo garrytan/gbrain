@@ -427,6 +427,7 @@ test/engine-parity/traversal-cache.test.ts	7	0
 test/engine-parity/trust-backfill.test.ts	0	1
 test/engine-parity/trust-fence.test.ts	7	0
 test/engine-parity/trust-floor-refusal.test.ts	1	0
+test/engine-parity/trust-keep-ports-sync20.test.ts	3	1
 test/engine-parity/trust-proposals.test.ts	5	0
 test/engine-parity/trust-reads.test.ts	13	0
 test/engine-parity/trust-tier-reads.test.ts	27	0
