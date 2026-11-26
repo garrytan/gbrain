@@ -6633,7 +6633,7 @@ More: [docs/guides/skill-resolver.md#skill_resolver_plugin_not_installed](../../
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The OpenClaw skill-resolver plugin code installed in OpenClaw is older than this gbrain, so it ignores settings added since (the operator rule line, --brief pins, --require-owner-sender). | The request itself was wrong or no longer matches the brain; nothing was changed. | Run gbrain setup openclaw --instructions-only, which rewrites and reinstalls the plugin files, then restart the gateway once. | agent | `repeat the read that failed` | 1 | no |
+| The OpenClaw skill-resolver plugin code installed in OpenClaw is older than this gbrain, so it ignores settings added since (the operator rule line, --brief pins, --require-owner-sender). | The request itself was wrong or no longer matches the brain; nothing was changed. | Rerun the gbrain setup openclaw command you installed with (its --workspace, --name and --agent flags), which rewrites and reinstalls the plugin files, then restart the gateway once. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/skill-resolver.md#skill_resolver_plugin_outdated](../../docs/guides/skill-resolver.md#skill_resolver_plugin_outdated)
 

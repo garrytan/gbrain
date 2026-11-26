@@ -167,7 +167,7 @@ function log(line) {
   try {
     const at = Date.now();
     const file = join(LOG_DIR, 'openclaw-' + day(at) + '.jsonl');
-    const text = JSON.stringify({ at: new Date(at).toISOString(), ...line }) + '\n';
+    const text = JSON.stringify({ at: new Date(at).toISOString(), plugin: PLUGIN_VERSION, ...line }) + '\n';
     logTail = logTail.then(() => appendFile(file, text, { mode: 0o600 })).catch(() => {});
   } catch { /* logging never fails a turn */ }
 }

@@ -41,6 +41,8 @@ export interface OpenclawSkillView {
   plugin: 'installed' | 'files_only' | 'absent';
   /** The plugin code version in the installed index.js; older than this gbrain's, it ignores newer state fields (the rule line, brief pins, require_owner_sender). */
   loader_version: number | null;
+  /** The version the gateway ran on its newest logged turn: older than the installed files until the gateway restarts. */
+  running_version: number | null;
   library: 'ok' | 'missing' | 'mismatch' | 'none';
   gbrain_version: string | null;
   /** The gbrain home the plugin state belongs to (the state file's gbrain_home), null for a state written before it was recorded. */
@@ -53,11 +55,13 @@ export interface OpenclawSkillView {
     /** Turns by whether OpenClaw sent a memory audience (host) or the class came from the session key (unknown). */
     by_audience: Record<string, number>;
     /** The same split per agent. */
-    by_agent_audience: Record<string, Record<string, number>> };
+    by_agent_audience: Record<string, Record<string, number>>;
+    /** The plugin code version the gateway ran on the newest turn it logged (0: a version from before turns recorded it), null with no turn logged. */
+    running_version: number | null };
 }
 
 function recentOpenclaw(home: string, now: number): OpenclawSkillView['recent'] {
-  const recent: OpenclawSkillView['recent'] = { turns: 0, outcomes: {}, errors: {}, deadline_misses: 0, miss_rate: null, reads: 0, reads_of_suggested: 0, by_session_class: {}, by_source: {}, by_audience: {}, by_agent_audience: {} };
+  const recent: OpenclawSkillView['recent'] = { turns: 0, outcomes: {}, errors: {}, deadline_misses: 0, miss_rate: null, reads: 0, reads_of_suggested: 0, by_session_class: {}, by_source: {}, by_audience: {}, by_agent_audience: {}, running_version: null };
   const cls = (v: unknown) => (recent.by_session_class[typeof v === 'string' && v ? v : 'unknown'] ??= { turns: 0, suggested: 0, would_suggest: 0, reads: 0, reads_of_suggested: 0 });
   const src = (v: unknown) => (recent.by_source[typeof v === 'string' && v ? v : 'unknown'] ??= { suggested: 0, would_suggest: 0, reads: 0, reads_of_suggested: 0 });
   const dir = logsDir(home);
@@ -73,9 +77,10 @@ function recentOpenclaw(home: string, now: number): OpenclawSkillView['recent'] 
     } catch { continue; }
     for (const line of text.split('\n')) {
       if (!line) continue;
-      let j: { at?: unknown; agent?: unknown; outcome?: unknown; code?: unknown; suggested?: unknown; session_class?: unknown; audience?: unknown; source?: unknown; sources?: unknown };
+      let j: { at?: unknown; agent?: unknown; plugin?: unknown; outcome?: unknown; code?: unknown; suggested?: unknown; session_class?: unknown; audience?: unknown; source?: unknown; sources?: unknown };
       try { j = JSON.parse(line); } catch { continue; }
       if (typeof j.outcome !== 'string' || typeof j.at !== 'string' || now - Date.parse(j.at) > LOG_WINDOW_MS) continue;
+      if (typeof j.agent === 'string') recent.running_version = Number(j.plugin) || 0;
       if (j.outcome === 'read') {
         const c = cls(j.session_class), s = src(j.source);
         recent.reads++; c.reads++; s.reads++;
@@ -131,13 +136,15 @@ export async function openclawSkillView(home: string, now = Date.now()): Promise
       listing: policy.listing, path_reads: policy.path_reads, verdict: null, ...(ids ? { host } : {}), owner_unverified: openclawOwnerUnverified(id, guardRuns ? a : { ...a, require_owner_sender: false }) });
   }
   const recent = recentOpenclaw(home, now);
+  const current = (n: number | null) => n !== null && n >= OPENCLAW_SKILL_PLUGIN_CODE_VERSION;
+  if (!current(recent.running_version) && recent.running_version !== null) for (const a of agents) if (a.mode === 'live') a.owner_unverified = openclawOwnerUnverified(a.id, { ...state!.agents[a.id]!, require_owner_sender: false });
   for (const a of agents) {
     const seen = recent.by_agent_audience[a.id];
     if (seen && (seen.host ?? 0) > 0 && !seen.unknown) a.owner_unverified = false;
   }
   const plugin = files ? (openclawSkillPluginRegistered(dir) ? 'installed' : 'files_only') : 'absent';
   for (const a of agents) if (a.listing === 'off' && a.mode === 'live' && plugin === 'installed') a.verdict = LISTING_OFF_RESOLVER_LIVE;
-  return { plugin, loader_version: loader, library, gbrain_version: state?.gbrain_version ?? null, gbrain_home: state?.gbrain_home ?? null, agents, recent };
+  return { plugin, loader_version: loader, running_version: recent.running_version, library, gbrain_version: state?.gbrain_version ?? null, gbrain_home: state?.gbrain_home ?? null, agents, recent };
 }
 
 /** One line for doctor's message, and the problem to warn about (null when healthy). */
@@ -156,7 +163,8 @@ export function describeOpenclawSkill(v: OpenclawSkillView): { line: string; pro
   const drift = on.find((a) => a.host && ((a.host.cut.length && !reachableByPath(a)) || a.host.hidden.length));
   const names = (ids: string[]) => `${ids.slice(0, 5).join(', ')}${ids.length > 5 ? ` and ${ids.length - 5} more` : ''}`;
   if (on.length && v.plugin !== 'installed') problem = { code: 'skill_resolver_plugin_not_installed', what: v.plugin === 'absent' ? 'the plugin files are missing' : "OpenClaw's config does not load, enable and allow the plugin" };
-  else if (on.length && v.loader_version !== null && v.loader_version < OPENCLAW_SKILL_PLUGIN_CODE_VERSION) problem = { code: 'skill_resolver_plugin_outdated', what: `the installed plugin code (version ${v.loader_version}) is older than this gbrain's (${OPENCLAW_SKILL_PLUGIN_CODE_VERSION}), so it ignores newer settings (the operator rule, --brief pins, --require-owner-sender)` };
+  else if (on.length && (v.loader_version === null || v.loader_version < OPENCLAW_SKILL_PLUGIN_CODE_VERSION)) problem = { code: 'skill_resolver_plugin_outdated', what: `the installed plugin code (${v.loader_version === null ? 'no readable version' : `version ${v.loader_version}`}) is older than this gbrain's (${OPENCLAW_SKILL_PLUGIN_CODE_VERSION}), so it ignores newer settings (the operator rule, --brief pins, --require-owner-sender)` };
+  else if (on.length && v.running_version !== null && v.running_version < OPENCLAW_SKILL_PLUGIN_CODE_VERSION) problem = { code: 'skill_resolver_plugin_outdated', what: `the gateway still runs older plugin code (${v.running_version ? `version ${v.running_version}` : 'from before version 6'}) on its newest logged turn, so it ignores newer settings until it restarts (the warning clears after the first turn on the new code)` };
   else if (on.length && v.library !== 'ok') problem = { code: v.library === 'mismatch' ? 'skill_resolver_library_mismatch' : 'skill_resolver_library_missing', what: `the library the state names is ${v.library}` };
   else if (on.some((a) => a.fresh === null)) problem = { code: 'skill_index_missing', what: 'an agent has no catalog' };
   else if (exposed) problem = { code: 'skill_resolver_owner_unverified', agent: exposed.id, what: `agent ${exposed.id}: OpenClaw puts every direct message on this agent's main session (session.dmScope main), no owner sender is set, and its turns in the last 24 hours did not all carry OpenClaw's memory audience, so anyone who messages the agent directly gets the owner's pins, brief, operator rule and owner-only skill suggestions` };

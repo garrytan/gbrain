@@ -450,7 +450,9 @@ export function openclawOwnerUnverified(agentId: string, a: Pick<OpenclawSkillAg
 
 /** The plugin code version installed in OpenClaw (its index.js), or null when none is readable. An older one ignores state fields added since. */
 export function openclawLoaderVersion(): number | null {
-  try { const m = /const PLUGIN_VERSION = "(\d+)";/.exec(readFileSync(join(openclawSkillPluginDir(), 'index.js'), 'utf8')); return m ? Number(m[1]) : null; } catch { return null; }
+  try { const m = /const PLUGIN_VERSION = "(\d+)";/.exec(readFileSync(join(openclawSkillPluginDir(), 'index.js'), 'utf8')); return m ? Number(m[1]) : null; } catch { // silent-read-ok: null is not "healthy" here: doctor reports an unreadable loader as skill_resolver_plugin_outdated
+    return null;
+  }
 }
 
 /** The setup command that sets an owner sender for an agent (the fix doctor and setup print). */
@@ -604,7 +606,7 @@ export async function syncOpenclawSkillPlugin(opts: OpenclawSkillSyncOptions): P
   out.steps.push({ step: 'state', action: stateChanged ? 'write' : 'keep', detail: `${openclawSkillStatePath(home)} (${Object.entries(agents).map(([id, a]) => `${id} ${a.mode}`).join(', ')})` });
   if (opts.refreshOnly) {
     const loader = openclawLoaderVersion();
-    if (loader !== null && loader < OPENCLAW_SKILL_PLUGIN_CODE_VERSION) out.notes.push(`the installed plugin code (version ${loader}) is older than this gbrain's (${OPENCLAW_SKILL_PLUGIN_CODE_VERSION}), so it ignores the operator rule, the --brief pins and --require-owner-sender; gbrain setup openclaw --instructions-only updates it (skill_resolver_plugin_outdated)`);
+    if (loader !== null && loader < OPENCLAW_SKILL_PLUGIN_CODE_VERSION) out.notes.push(`the installed plugin code (version ${loader}) is older than this gbrain's (${OPENCLAW_SKILL_PLUGIN_CODE_VERSION}), so it ignores the operator rule, the --brief pins and --require-owner-sender; rerun gbrain setup openclaw with the flags you installed with (--workspace, --name, --agent) to update it, then restart the gateway (skill_resolver_plugin_outdated)`);
     return out;
   }
 

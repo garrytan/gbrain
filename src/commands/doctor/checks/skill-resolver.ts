@@ -192,8 +192,9 @@ export function skillResolverCheck(v: SkillResolverView | null): Check | null {
   const oc = v.openclaw ? describeOpenclawSkill(v.openclaw).problem : null;
   if (oc?.code === 'skill_resolver_plugin_outdated') {
     return { name, status: 'warn', message: `${describeSkillResolver(v)} OpenClaw: ${oc.what}.`, details: { ...details, code: oc.code },
-      fix: { argv: ['gbrain', 'setup', 'openclaw', '--instructions-only'], consent: ['persistent_install'], actor: 'agent', requires_exclusive: false, verify: doctorVerify(name), docs: `docs/guides/skill-resolver.md#${oc.code}`,
-        why: 'Rewrites the plugin files with this gbrain\'s code and reinstalls them in OpenClaw (restart the gateway once to load them); modes, pins and settings stay as they are.' } };
+      fix: { consent: ['persistent_install'], actor: 'user', requires_exclusive: false, verify: doctorVerify(name), docs: `docs/guides/skill-resolver.md#${oc.code}`,
+        why: 'Setup rewrites and reinstalls the plugin only when it runs with the flags the install used (--workspace, --name, --agent), which only the user knows; a gateway restart then loads the new code. Modes, pins and settings stay as they are.',
+        user_message: 'The OpenClaw skill-resolver plugin running in your gateway is older than this gbrain, so it ignores the operator rule, --brief pins and --require-owner-sender. Rerun the gbrain setup openclaw command you installed with (keep its --workspace, --name and --agent flags), then restart the OpenClaw gateway once.' } };
   }
   if (oc?.code === 'skill_resolver_owner_unverified') {
     const argv = ['gbrain', 'setup', 'openclaw', '--skill-loading', 'resolve', '--agent', oc.agent ?? 'main', '--owner-sender', '<sender-id>'];
