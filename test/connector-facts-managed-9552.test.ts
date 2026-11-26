@@ -20,12 +20,13 @@ import { parseMeetingsSourceConfig } from '../src/core/meetings/source-config.ts
 import { firefliesProvider } from '../src/core/meetings/providers/fireflies.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { configureGateway, resetGateway, __setChatTransportForTests, type ChatResult } from '../src/core/ai/gateway.ts';
-import { runFactsDrain } from '../src/core/facts/drain.ts';
+import { runFactsDrain, __resetFactsDrainNoticesForTests } from '../src/core/facts/drain.ts';
 import { runPhaseConversationFactsBackfill } from '../src/core/cycle/conversation-facts-backfill.ts';
 
 const { engines, env, setup, teardown, source } = createConnectorFixture();
 beforeAll(setup, 120_000);
-afterAll(async () => { __setChatTransportForTests(null); resetGateway(); await teardown(); });
+// runFactsDrain leaves its first-run notice in a process-wide slot that the next stdio tool reply takes; no test here reads it, so it must not outlive this file (a later file in the same bun process, such as onboarding-ops, would get it as an extra reply item).
+afterAll(async () => { __setChatTransportForTests(null); resetGateway(); __resetFactsDrainNoticesForTests(); await teardown(); });
 
 const KEYS = { ANTHROPIC_API_KEY: 'sk-test-9552', OPENAI_API_KEY: 'sk-test-9552' };
 const MODEL = 'anthropic:claude-sonnet-4-6';
