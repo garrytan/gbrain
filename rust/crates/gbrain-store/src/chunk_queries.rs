@@ -9,7 +9,7 @@
 //! findCodeRefChunks, countOversizedEmbedSkips, countOrphanChunks, countCodeChunkPages,
 //! codeChunksExist, currentCodeChunksExist, listQualifiedSymbolNames, listWithdrawalChunks,
 //! deleteChunksForPages, deleteChunksExcept, listContextualModeCandidates, resolveFrozenHits,
-//! listSymbolLanguages, listSupportedChunkIds, listSymbolChunkIds and readReindexSpendInputs (`walk_reads`).
+//! listSymbolLanguages, listSupportedChunkIds, listSymbolChunkIds, listWalkChunkRows and readReindexSpendInputs (`walk_reads`).
 //!
 //! Every member reads records other families own (pages, chunks, sources) through their
 //! `pub(crate)` readers; the two deletes remove chunk rows through the chunks family's
@@ -49,6 +49,7 @@ pub use site_reads::{
 pub(crate) use site_reads::{Policy as PageReadPolicy, served};
 pub use walk_reads::{
     ReindexSpendInput, SupportedChunkIdsInput, SymbolChunkIdsInput, SymbolLanguagesInput,
+    WalkChunkRowsInput,
 };
 
 /// `listChunklessPagesWithContent`'s default batch size.

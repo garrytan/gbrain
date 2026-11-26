@@ -810,6 +810,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listSymbolLanguages': OOS.refusalSwallowSites,
   'listSupportedChunkIds': OOS.refusalSwallowSites,
   'listSymbolChunkIds': OOS.refusalSwallowSites,
+  'listWalkChunkRows': OOS.refusalSwallowSites,
   'readReindexSpendInputs': OOS.refusalSwallowSites,
   'listWithdrawalChunks': OOS.chunkReads,
   'deleteChunksForPages': OOS.chunkReads,

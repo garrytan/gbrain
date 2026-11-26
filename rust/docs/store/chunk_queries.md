@@ -19,7 +19,8 @@ methods in `rust/crates/gbrain-napi/src/families/chunk_queries.rs` and the membe
 | `listQualifiedSymbolNames(sourceId, symbol, { match, limit })` | served |
 | `listSymbolLanguages(sourceId, qualified)` | served (`chunk_queries/walk_reads.rs`); the code walk's language gate: distinct languages of served live pages' chunks that define the name, byte order, any `page_kind` |
 | `listSupportedChunkIds(chunkIds, languages)` | served (`walk_reads.rs`); any stored chunk row, in id order, as the SQL reads |
-| `listSymbolChunkIds(lookup, symbols, sourceId?)` | served (`walk_reads.rs`, input `{ symbols, sourceId, limit: 50 }`); the two-pass walk's near-symbol anchors and unresolved edge targets: any stored chunk row, in id order. PGLite and Postgres run master's statements with no ORDER BY, so past the limit the rows kept and their order differ (expected difference, `test/rust-expected-divergence/two_pass.tsv`) |
+| `listSymbolChunkIds(lookup, symbols, sourceId?)` | served (`walk_reads.rs`, input `{ symbols, sourceId, limit: 50 }`); the two-pass walk's near-symbol anchors and unresolved edge targets: any stored chunk row, ordered by the page's source and slug (bytes), then chunk index, then id, as the SQL statements order them, so the 50 kept past the limit are the same on every engine |
+| `listWalkChunkRows(chunkIds)` | served (`walk_reads.rs`); the structural walk's hydration: the visible chunks among the ids (a served page; `visible_chunks`, the `chunkVisibleFilter` generation rule) with their pages; the member returns them in the ids' order |
 | `readReindexSpendInputs(chunkerVersion, type)` | served (`walk_reads.rs`); see `remediation-records.md` |
 | `countOversizedEmbedSkips`, `countOrphanChunks`, `countCodeChunkPages` | served |
 | `listWithdrawalChunks`, `deleteChunksForPages` | served |

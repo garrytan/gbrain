@@ -95,7 +95,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'deleteChunks', 'getChunksWithEmbeddings', 'deleteChunksExcept', 'setChunkerVersion', 'readSourceChunkerVersion', 'setSourceChunkerVersion', 'writeTextProjectionSeal',
     'moveChunkIndexes', 'getChunkReuseRows', 'findCodeDefinitions', 'listSymbolTypesForName', 'findCodeRefChunks',
     'countOversizedEmbedSkips', 'countOrphanChunks', 'countCodeChunkPages', 'codeChunksExist', 'hasUnsealedPages', 'currentCodeChunksExist',
-    'listQualifiedSymbolNames', 'listSymbolLanguages', 'listSupportedChunkIds', 'listSymbolChunkIds', 'readReindexSpendInputs', 'listWithdrawalChunks', 'deleteChunksForPages', 'listContextualModeCandidates', 'resolveFrozenHits', 'readSegmentRegions'],
+    'listQualifiedSymbolNames', 'listSymbolLanguages', 'listSupportedChunkIds', 'listSymbolChunkIds', 'listWalkChunkRows', 'readReindexSpendInputs', 'listWithdrawalChunks', 'deleteChunksForPages', 'listContextualModeCandidates', 'resolveFrozenHits', 'readSegmentRegions'],
   extraction: ['countStalePagesForExtraction', 'listStalePagesForExtraction', 'markPagesExtractedBatch', 'markPagesAttendanceBlocked',
     'countStaleFrontmatterKeyPages', 'listStaleFrontmatterKeyPages', 'stripStaleFrontmatterKeys',
     'listFactsFencePages', 'listSweepStalePages', 'listSweepDeferredPages', 'listPageRefsForSlugs', 'readExtractReceiptSlot', 'readExtractReceiptSeal', 'upsertExtractRollupDay'],

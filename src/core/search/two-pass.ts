@@ -24,7 +24,6 @@
 import type { BrainEngine } from '../engine.ts';
 import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import type { SearchResult } from '../types.ts';
-import { chunkVisibleFilter } from './safe-chunks.ts';
 import { readEdgeResolution } from '../chunkers/symbol-resolver.ts';
 
 const MAX_WALK_DEPTH = 2;
@@ -184,17 +183,7 @@ export async function hydrateChunks(
   chunkIds: number[],
 ): Promise<SearchResult[]> {
   if (chunkIds.length === 0) return [];
-  const rows = await engine.executeRaw<{
-    slug: string; page_id: number; title: string; type: string; source_id: string;
-    chunk_id: number; chunk_index: number; chunk_text: string; chunk_source: string;
-  }>(
-    `SELECT p.slug, p.id as page_id, p.title, p.type, p.source_id,
-            cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source
-       FROM content_chunks cc
-       JOIN pages p ON p.id = cc.page_id
-       WHERE cc.id = ANY($1::int[]) AND ${chunkVisibleFilter('p', 'cc')}`,
-    [chunkIds],
-  );
+  const rows = await engine.listWalkChunkRows(chunkIds); // engine-sql/chunk-reads.ts: visible chunks, in chunkIds order
   return rows.map((r) => ({
     slug: r.slug,
     page_id: r.page_id,

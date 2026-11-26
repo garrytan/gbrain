@@ -3,13 +3,16 @@
  * anchor and unresolved-edge target lookups (search/two-pass.ts), the reindex spend estimate
  * (reindex-consent.ts) and the remediation impact log (onboard/impact-capture.ts) ran through `executeRaw` before they
  * moved to engine-sql/chunk-reads.ts and engine-sql/remediation-records.ts. The language read gains only a byte-order
- * `ORDER BY` (its caller asks only whether some language is supported). The two-pass symbol lookups are master's four
- * statements byte for byte. Every other statement and parameter list is the text the callers composed.
+ * `ORDER BY` (its caller asks only whether some language is supported). The two-pass symbol lookups gain an order every
+ * engine shares (source, slug, chunk index, id), bind the near-symbol name as a one-element array and bind the limit;
+ * test/engine-parity/two-pass-symbol-order.test.ts holds master's four statements as the baseline. Every other
+ * statement and parameter list is the text the callers composed.
  */
 import { expect, test } from 'bun:test';
-import { listSupportedChunkIds, listSymbolChunkIds, listSymbolLanguages } from '../src/core/engine-sql/chunk-reads.ts';
+import { listSupportedChunkIds, listSymbolChunkIds, listSymbolLanguages, listWalkChunkRows } from '../src/core/engine-sql/chunk-reads.ts';
 import { insertImpactLogRow, readReindexSpendInputs, REMEDIATION_RECORDS_SQL } from '../src/core/engine-sql/remediation-records.ts';
 import { codeReadFilter } from '../src/core/code-intel/read-scope.ts';
+import { chunkVisibleFilter } from '../src/core/search/safe-chunks.ts';
 import { MARKDOWN_CHUNKER_VERSION } from '../src/core/chunkers/recursive.ts';
 
 const squash = (sql: string) => sql.replace(/\s+/g, ' ').trim();
@@ -79,26 +82,33 @@ test('the impact log insert is master\'s statement; details bind as text for the
   }]);
 });
 
-/** Master's four statements in search/two-pass.ts at a597e7a6c6, byte for byte (whitespace included). */
-const MASTER_TWO_PASS = {
-  nearScoped: "SELECT cc.id FROM content_chunks cc\n             JOIN pages p ON p.id = cc.page_id\n             WHERE cc.symbol_name_qualified = $1 AND p.source_id = $2\n             LIMIT 50",
-  nearAnySource: "SELECT id FROM content_chunks WHERE symbol_name_qualified = $1 LIMIT 50",
-  targetsScoped: "SELECT cc.id FROM content_chunks cc\n                 JOIN pages p ON p.id = cc.page_id\n                 WHERE cc.symbol_name_qualified = ANY($1::text[])\n                   AND p.source_id = $2\n                 LIMIT 50",
-  targetsAnySource: "SELECT id FROM content_chunks WHERE symbol_name_qualified = ANY($1::text[]) LIMIT 50",
-};
-
-test('the two-pass symbol lookups send master\'s four statements byte for byte, with master\'s parameters', async () => {
+test('the two-pass symbol lookups order by source, slug, chunk index and id, scoped by source when one is named', async () => {
   const calls: Array<{ sql: string; params: unknown[] }> = [];
-  const exec = { executeRaw: async (sql: string, params: unknown[] = []) => { calls.push({ sql, params }); return [{ id: '3' }, { id: 5 }]; } } as never;
-  expect(await listSymbolChunkIds(exec, 'near_symbol', ['mod.helper'], 'src-a')).toEqual([3, 5]);
-  expect(await listSymbolChunkIds(exec, 'near_symbol', ['mod.helper'])).toEqual([3, 5]);
-  expect(await listSymbolChunkIds(exec, 'edge_targets', ['mod.a', 'mod.b'], 'src-a')).toEqual([3, 5]);
+  const exec = { executeRaw: async (sql: string, params: unknown[] = []) => { calls.push({ sql: squash(sql), params }); return [{ id: '3' }, { id: 5 }]; } } as never;
+  expect(await listSymbolChunkIds(exec, 'near_symbol', ['mod.helper', 'ignored'], 'src-a')).toEqual([3, 5]);
   expect(await listSymbolChunkIds(exec, 'edge_targets', ['mod.a', 'mod.b'])).toEqual([3, 5]);
   expect(await listSymbolChunkIds(exec, 'edge_targets', [])).toEqual([]);
+  const order = 'ORDER BY p.source_id COLLATE "C", p.slug COLLATE "C", cc.chunk_index, cc.id LIMIT';
   expect(calls).toEqual([
-    { sql: MASTER_TWO_PASS.nearScoped, params: ['mod.helper', 'src-a'] },
-    { sql: MASTER_TWO_PASS.nearAnySource, params: ['mod.helper'] },
-    { sql: MASTER_TWO_PASS.targetsScoped, params: [['mod.a', 'mod.b'], 'src-a'] },
-    { sql: MASTER_TWO_PASS.targetsAnySource, params: [['mod.a', 'mod.b']] },
+    { sql: `SELECT cc.id FROM content_chunks cc JOIN pages p ON p.id = cc.page_id WHERE cc.symbol_name_qualified = ANY($1::text[]) AND p.source_id = $2 ${order} $3`,
+      params: [['mod.helper'], 'src-a', 50] },
+    { sql: `SELECT cc.id FROM content_chunks cc JOIN pages p ON p.id = cc.page_id WHERE cc.symbol_name_qualified = ANY($1::text[]) ${order} $2`,
+      params: [['mod.a', 'mod.b'], 50] },
   ]);
+});
+
+test('the walk hydration sends master\'s statement and returns rows in the order of the ids asked', async () => {
+  const calls: Array<{ sql: string; params: unknown[] }> = [];
+  const answer = [7, 3, 9].map(id => ({ slug: `s${id}`, page_id: String(id * 10), title: 't', type: 'code', source_id: 'default', chunk_id: String(id), chunk_index: '0', chunk_text: 'x', chunk_source: 'compiled_truth' }));
+  const exec = { executeRaw: async (sql: string, params: unknown[] = []) => { calls.push({ sql: squash(sql), params }); return answer; } } as never;
+  expect((await listWalkChunkRows(exec, [9, 3, 7])).map(r => [r.chunk_id, r.page_id, r.chunk_index])).toEqual([[9, 90, 0], [3, 30, 0], [7, 70, 0]]);
+  expect(await listWalkChunkRows(exec, [])).toEqual([]);
+  expect(calls).toEqual([{
+    sql: squash(`SELECT p.slug, p.id as page_id, p.title, p.type, p.source_id,
+            cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source
+       FROM content_chunks cc
+       JOIN pages p ON p.id = cc.page_id
+       WHERE cc.id = ANY($1::int[]) AND ${chunkVisibleFilter('p', 'cc')}`),
+    params: [[9, 3, 7]],
+  }]);
 });

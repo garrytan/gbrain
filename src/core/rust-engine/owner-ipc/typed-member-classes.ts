@@ -426,7 +426,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'readSegmentedLivePage', 'listSegmentedRechunkCandidates', 'readSegmentedRechunkPage', 'listOccurrenceChunks', 'readMaterializingRevision', 'readSegmentedRewritePage', 'lockSegmentedGenerationPage', 'hasLiveSegmentedPage', 'countSegmentedEmbedRows', 'listSegmentedStaleRows', 'readSegmentChunkInputHashes', 'listLiveEmbedSegments', 'listSegmentChunkRows',
   // The code walk's language gate and mixed-language filter, the two-pass walk's symbol chunk lookup (engine-sql/chunk-reads.ts) and the reindex spend estimate
   // (engine-sql/remediation-records.ts): SELECTs only; the store answers each from a read snapshot.
-  'listSymbolLanguages', 'listSupportedChunkIds', 'listSymbolChunkIds', 'readReindexSpendInputs',
+  'listSymbolLanguages', 'listSupportedChunkIds', 'listSymbolChunkIds', 'listWalkChunkRows', 'readReindexSpendInputs',
 ];
 
 const nothingSetting = 'nothing: the setting lasts only for the call, so running it again repeats no write';

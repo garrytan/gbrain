@@ -1,5 +1,5 @@
 //! The recursive code walk's two chunk reads, the two-pass walk's symbol chunk lookup and the
-//! paid reindex's spend read (`src/core/engine-sql/chunk-reads.ts` `listSymbolLanguages`,
+//! structural walk's hydration (`listWalkChunkRows`) and the paid reindex's spend read (`src/core/engine-sql/chunk-reads.ts` `listSymbolLanguages`,
 //! `listSupportedChunkIds` and `listSymbolChunkIds`,
 //! `src/core/engine-sql/remediation-records.ts` `readReindexSpendInputs`).
 //!
@@ -13,7 +13,7 @@
 
 use super::site_reads::{ChunkReadScope, Policy, served};
 use crate::Store;
-use crate::chunks::{ChunkRecord, read_chunks};
+use crate::chunks::{ChunkRecord, read_chunks, visible_chunks};
 use crate::error::Result;
 use crate::pages::all_pages;
 use crate::timeline_queries::jsonb_field_text;
@@ -44,6 +44,13 @@ pub struct SymbolChunkIdsInput {
     pub symbols: Vec<String>,
     pub source_id: Option<String>,
     pub limit: u64,
+}
+
+/// `listWalkChunkRows(chunkIds)`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct WalkChunkRowsInput {
+    pub chunk_ids: Vec<i64>,
 }
 
 /// `readReindexSpendInputs(chunkerVersion, type)`.
@@ -113,13 +120,15 @@ impl Store {
     }
 
     /// `listSymbolChunkIds(symbols, { sourceId?, limit })`: chunk ids whose qualified symbol is one of `symbols`,
-    /// on pages of the source when one is named, in id order, at most `limit`. Any stored chunk row, as the SQL reads.
+    /// on pages of the source when one is named, at most `limit`, ordered by the page's source and slug (bytes), then
+    /// the chunk's index, then its id: the SQL's `ORDER BY p.source_id COLLATE "C", p.slug COLLATE "C",
+    /// cc.chunk_index, cc.id`. Any stored chunk row, as the SQL reads.
     pub fn list_symbol_chunk_ids(&self, input: &SymbolChunkIdsInput) -> Result<Vec<u64>> {
         if input.symbols.is_empty() || input.limit == 0 {
             return Ok(Vec::new());
         }
         let read = self.read()?;
-        let mut found: BTreeSet<u64> = BTreeSet::new();
+        let mut found: Vec<(String, String, u32, u64)> = Vec::new();
         for page in all_pages(&*read)? {
             if input
                 .source_id
@@ -132,12 +141,52 @@ impl Store {
                 if meta_text(&chunk, "symbol_name_qualified")
                     .is_some_and(|qualified| input.symbols.contains(&qualified))
                 {
-                    found.insert(chunk.id);
+                    found.push((
+                        page.source_id.clone(),
+                        page.slug.clone(),
+                        chunk.chunk_index,
+                        chunk.id,
+                    ));
                 }
             }
         }
+        found.sort();
         let limit = usize::try_from(input.limit).unwrap_or(usize::MAX);
-        Ok(found.into_iter().take(limit).collect())
+        Ok(found
+            .into_iter()
+            .take(limit)
+            .map(|(_, _, _, id)| id)
+            .collect())
+    }
+
+    /// `listWalkChunkRows(chunkIds)`: the chunks among the ids that `chunkVisibleFilter` keeps (a served page, the
+    /// chunk's generation not past the page's), each with its page. Any order: the member puts them in the ids' order.
+    pub fn list_walk_chunk_rows(&self, input: &WalkChunkRowsInput) -> Result<Vec<Value>> {
+        let wanted: BTreeSet<u64> = input
+            .chunk_ids
+            .iter()
+            .filter_map(|id| u64::try_from(*id).ok())
+            .collect();
+        if wanted.is_empty() {
+            return Ok(Vec::new());
+        }
+        let read = self.read()?;
+        let mut out = Vec::new();
+        for page in all_pages(&*read)? {
+            if !served(&page) {
+                continue;
+            }
+            for chunk in visible_chunks(&*read, page.id)? {
+                if wanted.contains(&chunk.id) {
+                    out.push(json!({
+                        "slug": page.slug, "page_id": page.id, "title": page.title, "type": page.page_type,
+                        "source_id": page.source_id, "chunk_id": chunk.id, "chunk_index": chunk.chunk_index,
+                        "chunk_text": chunk.chunk_text, "chunk_source": chunk.chunk_source,
+                    }));
+                }
+            }
+        }
+        Ok(out)
     }
 
     /// `readReindexSpendInputs(chunkerVersion, type)`: `{ pages, chars }`.
@@ -272,8 +321,9 @@ mod tests {
     }
 
     #[test]
-    fn symbol_chunk_ids_are_in_id_order_scoped_and_bounded() {
+    fn symbol_chunk_ids_are_in_slug_and_index_order_scoped_and_bounded() {
         let store = store();
+        let b = code(&store, "b", "code", &[("m.f", "typescript")]);
         let a = code(
             &store,
             "a",
@@ -289,11 +339,41 @@ mod tests {
                 })
                 .unwrap()
         };
-        assert_eq!(read(&["m.f"], None, 50), vec![a[0], a[2]]);
-        assert_eq!(read(&["m.f", "m.g"], Some("default"), 50), a);
+        // Page `a` sorts before `b` although `b` was written first (lower ids): slug order, then chunk index.
+        assert_eq!(read(&["m.f"], None, 50), vec![a[0], a[2], b[0]]);
+        assert_eq!(
+            read(&["m.f", "m.g"], Some("default"), 50),
+            vec![a[0], a[1], a[2], b[0]]
+        );
         assert_eq!(read(&["m.f", "m.g"], Some("default"), 2), vec![a[0], a[1]]);
         assert!(read(&["m.f"], Some("other"), 50).is_empty());
         assert!(read(&[], None, 50).is_empty());
+    }
+
+    #[test]
+    fn walk_rows_hydrate_only_named_visible_chunks() {
+        let store = store();
+        let a = code(
+            &store,
+            "a",
+            "code",
+            &[("m.f", "typescript"), ("m.g", "rust")],
+        );
+        let rows = store
+            .list_walk_chunk_rows(&WalkChunkRowsInput {
+                chunk_ids: vec![a[1] as i64, -3, 999_999],
+            })
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["chunk_id"], json!(a[1]));
+        assert_eq!(rows[0]["slug"], json!("a"));
+        assert_eq!(rows[0]["chunk_index"], json!(1));
+        assert!(
+            store
+                .list_walk_chunk_rows(&WalkChunkRowsInput { chunk_ids: vec![] })
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]

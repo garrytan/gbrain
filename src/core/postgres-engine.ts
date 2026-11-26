@@ -5690,6 +5690,7 @@ export class PostgresEngine implements BrainEngine {
   listSymbolLanguages(sourceId: string, qualified: string) { return chunkReadsImpl.listSymbolLanguages(this.chunkRead, sourceId, qualified); }
   listSupportedChunkIds(chunkIds: readonly number[], languages: readonly string[]) { return chunkReadsImpl.listSupportedChunkIds(this.chunkRead, chunkIds, languages); }
   listSymbolChunkIds(lookup: 'near_symbol' | 'edge_targets', symbols: readonly string[], sourceId?: string) { return chunkReadsImpl.listSymbolChunkIds(this.chunkRead, lookup, symbols, sourceId); }
+  listWalkChunkRows(chunkIds: readonly number[]) { return chunkReadsImpl.listWalkChunkRows(this.chunkRead, chunkIds); }
   readReindexSpendInputs(chunkerVersion: number, type: string | null) { return remediationRecordsImpl.readReindexSpendInputs(this, chunkerVersion, type); }
   insertImpactLogRow(row: remediationRecordsImpl.ImpactLogRow) { return remediationRecordsImpl.insertImpactLogRow(this, row); }
   async planFactPurgeTakes(spec: takesReads.PurgeTakesSpec) { return takesReads.planFactPurgeTakes(this, spec); }

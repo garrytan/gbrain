@@ -115,6 +115,7 @@ export const CONTENT_MEMBERS = {
   listSymbolLanguages: 'chunks',
   listSupportedChunkIds: 'chunks',
   listSymbolChunkIds: 'chunks',
+  listWalkChunkRows: 'chunks',
   readReindexSpendInputs: 'chunks',
   listWithdrawalChunks: 'chunks',
   deleteChunksForPages: 'chunks',

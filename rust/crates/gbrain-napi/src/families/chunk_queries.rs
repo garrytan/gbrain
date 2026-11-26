@@ -217,6 +217,20 @@ impl Brain {
         })
     }
 
+    /// `listWalkChunkRows(input)`: the hydrated walk chunks.
+    #[napi]
+    pub fn list_walk_chunk_rows<'env>(
+        &self,
+        env: &'env Env,
+        input: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let input: gbrain_store::chunk_queries::WalkChunkRowsInput =
+                arg(input, "listWalkChunkRows input")?;
+            s.list_walk_chunk_rows(&input)
+        })
+    }
+
     /// `readReindexSpendInputs(input)`: `{ pages, chars }`.
     #[napi]
     pub fn read_reindex_spend_inputs<'env>(

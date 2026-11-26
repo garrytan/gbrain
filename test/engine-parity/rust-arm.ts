@@ -130,13 +130,6 @@ export interface DivergenceRow { file: string; name: string; normalizer: string;
  * after the row's normaliser, so a row states exactly how the engines differ and nothing else.
  */
 export const DIVERGENCE_NORMALIZERS: Record<string, (value: unknown) => unknown> = {
-  // The two-pass symbol lookups past their LIMIT (test/rust-expected-divergence/two_pass.tsv): the SQL engines keep the
-  // plan's rows, the Rust store the 50 lowest ids, which the case checks and reports under `rust_limit_cut`. Set that
-  // key aside; the counts must still agree.
-  'rust-limit-cut': (value) => {
-    if (value === null || typeof value !== 'object' || Array.isArray(value)) return value;
-    return Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'rust_limit_cut'));
-  },
   // Keyword ranking is BM25 (design D5): scores differ and ties order differently. Set aside the score and the order
   // of the rows; the same pages must still be found.
   'ranking-order-and-score': (value) => {

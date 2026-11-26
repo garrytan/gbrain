@@ -4,7 +4,7 @@
  * (countChunklessPagesWithContent, listChunklessPagesWithContent), the import's deleteChunksExcept, and the chunk reads
  * and deletes of src/core/engine-sql/chunk-reads.ts (findCodeDefinitions, listSymbolTypesForName, findCodeRefChunks,
  * countOversizedEmbedSkips, countOrphanChunks, countCodeChunkPages, codeChunksExist, hasUnsealedPages, currentCodeChunksExist,
- * listQualifiedSymbolNames, listSymbolLanguages, listSupportedChunkIds, listSymbolChunkIds, listWithdrawalChunks, deleteChunksForPages, listContextualModeCandidates,
+ * listQualifiedSymbolNames, listSymbolLanguages, listSupportedChunkIds, listSymbolChunkIds, listWalkChunkRows, listWithdrawalChunks, deleteChunksForPages, listContextualModeCandidates,
  * resolveFrozenHits), and search dedup's segmented-region read (readSegmentRegions).
  *
  * Export only BrainEngine members from this file, each a `StoreMember` named after the member it serves (see tags.ts):
@@ -21,7 +21,7 @@
  * reads and `currentCodeChunksExist`, and of the frozen-hit read on resolveFrozenHits. The other chunk-reads members refuse a trust or flag option: no production caller passes one, so no store read was
  * built. getChunkPage and getChunkWindows ignore both, as their SQL does. See rust/docs/store/chunk_queries.md.
  */
-import { SYMBOL_CHUNK_LOOKUP_LIMIT } from '../../engine-sql/chunk-reads.ts';
+import { SYMBOL_CHUNK_LOOKUP_LIMIT, type WalkChunkRow } from '../../engine-sql/chunk-reads.ts';
 import { mapChunkWindowRows, type ChunkWindowOpts, type ChunkWindowPage, type ChunkWindowRequest } from '../../search/chunk-windows.ts';
 import type { Chunk, ChunklessPageRow, PageReadScope } from '../../types.ts';
 import { DEF_TYPES } from '../../chunkers/def-types.ts';
@@ -251,13 +251,23 @@ export const listSupportedChunkIds: StoreMember<[chunkIds: readonly number[], la
     return storeCall({ member: 'listSupportedChunkIds' }, () => brain.listSupportedChunkIds({ chunkIds: ids, languages: [...languages] }));
   };
 
-/** In id order (deterministic); the SQL engines run master's statements, whose order past the limit is the plan's. */
+/** Ordered by source, slug, chunk index and id, as engine-sql/chunk-reads.ts orders its statements. */
 export const listSymbolChunkIds: StoreMember<[lookup: 'near_symbol' | 'edge_targets', symbols: readonly string[], sourceId?: string], number[]> =
   async (brain, lookup, symbols, sourceId) => {
     if (symbols.length === 0) return [];
     return storeCall({ member: 'listSymbolChunkIds' }, () => brain.listSymbolChunkIds({
       symbols: lookup === 'near_symbol' ? [symbols[0]!] : [...symbols], sourceId: sourceId || null, limit: SYMBOL_CHUNK_LOOKUP_LIMIT }));
   };
+
+/** The visible chunks among the ids with their pages; the order is put back to the ids' order here, as in engine-sql. */
+export const listWalkChunkRows: StoreMember<[chunkIds: readonly number[]], WalkChunkRow[]> = async (brain, chunkIds) => {
+  const ids = [...chunkIds].map(Number);
+  if (!ids.every(Number.isSafeInteger)) refuseMember('listWalkChunkRows', 'a chunk id that is not an integer');
+  if (ids.length === 0) return [];
+  const found: WalkChunkRow[] = await storeCall({ member: 'listWalkChunkRows' }, () => brain.listWalkChunkRows({ chunkIds: ids }));
+  const at = new Map(ids.map((id, i) => [id, i] as const));
+  return found.sort((a, b) => (at.get(a.chunk_id) ?? 0) - (at.get(b.chunk_id) ?? 0));
+};
 
 export const listWithdrawalChunks: StoreMember<[sourceId: string, keys: WithdrawalChunkKey[], opts: { after: number; limit: number; subjects: string[] | null }], WithdrawalChunkRow[]> =
   async (brain, sourceId, keys, opts) => {
