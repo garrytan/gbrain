@@ -11,7 +11,6 @@
 //! Nothing here touches product code, and nothing in the product reads these types.
 
 use gbrain_store::{Env, Kv, Store, StoreError};
-use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::ops::Deref;
 use std::path::Path;
@@ -87,72 +86,12 @@ pub struct SingleFlightKey {
     pub slug: String,
 }
 
-// ---- I-2 ---------------------------------------------------------------------------------------
+// ---- I-2 and I-4 -------------------------------------------------------------------------------
 
-/// `#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd)] pub struct CommitPosition`, ordered by
-/// (sequence, index); the single-writer index is always 0. The field order is what makes the derived
-/// `Ord` the right one.
-#[derive(
-    Copy, Clone, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize,
-)]
-pub struct CommitPosition {
-    pub sequence: u64,
-    pub index: u32,
-}
-
-impl CommitPosition {
-    pub const fn new(sequence: u64, index: u32) -> Self {
-        Self { sequence, index }
-    }
-
-    /// The position a completion that commits nothing reports when it saw batch `sequence`: after every commit of that batch and
-    /// before the first of the next.
-    pub const fn end_of(sequence: u64) -> Self {
-        Self {
-            sequence,
-            index: u32::MAX,
-        }
-    }
-
-    /// The read token string, `cp1:<sequence>.<index>`.
-    pub fn token(&self) -> String {
-        format!("cp1:{}.{}", self.sequence, self.index)
-    }
-}
-
-// ---- I-4 ---------------------------------------------------------------------------------------
-
-/// One logical change of a commit, as `gbrain_store::commit_log::LogOp` has it on the commit-log branch (record op codes 1 put, 2
-/// delete, 3 add_i64 as the delta, 4 raise_counter as the value).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LogOp {
-    Put(Vec<u8>),
-    Delete,
-    AddI64(i64),
-    RaiseCounter(u64),
-}
-
-/// One commit record, as `gbrain_store::commit_log::CommitRecord` has it on the commit-log branch.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CommitRecord {
-    pub position: CommitPosition,
-    pub origin: WriteOrigin,
-    /// The commit's time: strictly increasing in position order across the log. (JSON form, where a record is decoded to JSON,
-    /// says `commit_time_us`.)
-    pub commit_time: i64,
-    pub write_ids: Vec<String>,
-    /// In key order; at most one op per key.
-    pub ops: Vec<(Vec<u8>, LogOp)>,
-}
-
-/// One page of the log, read from one snapshot (`gbrain_store::commit_log::LogPage`).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LogPage {
-    pub records: Vec<CommitRecord>,
-    pub oldest_retained: Option<CommitPosition>,
-    pub newest: Option<CommitPosition>,
-    pub snapshot_required: bool,
-}
+/// I-2 and I-4, landed with the commit-log lane: re-exported, so a test and the store agree on one type. `CommitPosition` is
+/// ordered by (sequence, index), the single-writer index is always 0, and `token()` is the `cp1:<sequence>.<index>` read token.
+#[allow(unused_imports)]
+pub use gbrain_store::commit_log::{CommitPosition, CommitRecord, LogOp, LogPage};
 
 /// The clock floor of a server that takes over as primary from the log (I-4.v2): the larger of its own `M\0ctime` and the last
 /// applied record's commit time. `None` when there is neither.

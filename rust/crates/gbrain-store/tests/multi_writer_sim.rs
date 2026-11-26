@@ -59,7 +59,6 @@
 mod common;
 
 use common::clock;
-use common::mu::MuStore;
 use gbrain_sim::check::{
     self, Committed, Model, Own, ReadObs, Reopen, WriteSet, apply_writes, merge_range,
 };
