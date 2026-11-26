@@ -79,7 +79,7 @@ describe('household template', () => {
     expect(three.error).toBeUndefined();
     expect(three.keys.map(k => [k.member, k.scopes.join(',')])).toEqual([['bob-example', 'read,write'], ['dana-example', 'read,write']]);
     expect(await engine.getConfig('access.serves')).toBe('several');
-    expect((await getMember(engine, 'bob-example'))!.labelled_only).toBe(false);
+    expect((await getMember(engine, 'bob-example'))!.labelled_only).toBe(true);
   });
 
   test('a re-run converges: every step kept, no second key', async () => {
@@ -92,6 +92,17 @@ describe('household template', () => {
     expect(second.steps.flatMap(s => s.actions.map(a => a.action)).filter(a => a !== 'keep' && a !== 'run')).toEqual([]);
     expect(await liveTokens()).toEqual(tokens);
     expect((await currentFolderRules(engine, 'default')).length).toBe(templateRules(OWNER).length);
+  });
+
+  test('a household group that holds someone the roster puts elsewhere, or leaves out, is BLOCKED, and nothing is written', async () => {
+    expect((await run()).error).toBeUndefined();
+    const tokens = await liveTokens();
+    const r = await run({ members: 'adult:dana-example,chat:family-chat' });
+    expect(r.applied).toBe(false);
+    const blocked = r.steps.find(s => s.id === 'groups')!.actions.filter(a => a.action === 'blocked');
+    expect(blocked.map(a => a.command)).toEqual(['gbrain access group rm household-adults --members adult-b', 'gbrain access group rm household-helpers --members helper']);
+    expect(blocked[0]!.detail).toContain('is not an adult in this roster');
+    expect(await liveTokens()).toEqual(tokens);
   });
 
   test('a hand rule on a template folder is never overwritten: BLOCKED, and nothing is written', async () => {

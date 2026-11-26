@@ -624,7 +624,7 @@ export function layoutNotices(o: LayoutOutcome | null, harness: string, scope: L
   }
   const hh = o.household;
   if (hh && (!hh.result || hh.result.error || hh.result.steps.some(s => s.state === 'blocked'))) {
-    const resume = hh.result?.error && hh.result.receipt_id ? [...setupArgv(harness, scope, source), '--shape', 'household', '--resume', hh.result.receipt_id, '--yes'] : [...hh.argv, '--yes'];
+    const resume = hh.result?.error && hh.result.receipt_id ? [...setupArgv(harness, scope, source), '--shape', 'household', '--resume', hh.result.receipt_id, '--yes'] : [...hh.argv.filter(a => a !== '--yes'), '--yes'];
     out.push({
       code: 'household_template_pending', kind: 'coaching',
       why: hh.result?.error ? `The household template stopped: ${hh.result.error.message}. Every step is idempotent.`

@@ -75,7 +75,7 @@ export function parseHouseholdMembers(spec: string | undefined, owner: string): 
     }
     const memberId = assertAccessId(id);
     if (roster.some(r => r.id === memberId)) throw usageError(`--household-members names ${memberId} twice (or names the owner).`, 'Give each member one role; the owner is always in the household.');
-    roster.push({ id: memberId, role: role as TemplateRole, kind: role === 'chat' ? 'audience' : 'person', labelled_only: role !== 'adult' });
+    roster.push({ id: memberId, role: role as TemplateRole, kind: role === 'chat' ? 'audience' : 'person', labelled_only: true });
   }
   return roster;
 }
@@ -173,7 +173,9 @@ async function plan(engine: BrainEngine, opts: TemplateOpts & { source: string }
     const adds = want.filter(id => !held?.includes(id));
     const extra = (held ?? []).filter(id => !want.includes(id));
     const command = `gbrain access group add ${g}${want.length ? ` --members ${want.join(',')}` : ''}`;
-    return { what: g, action: !held || adds.length ? 'add' : 'keep', command, ...(extra.length ? { detail: `also holds ${extra.join(', ')}, kept (the template never removes a group member)` } : {}) };
+    if (extra.length) return { what: g, action: 'blocked', command: `gbrain access group rm ${g} --members ${extra.join(',')}`,
+      detail: `also holds ${extra.join(', ')}, who ${extra.length === 1 ? 'is' : 'are'} not ${g === HOUSEHOLD_GROUPS.adults ? 'an adult' : `a ${g.replace(/^household-/, '').replace(/s$/, '')}`} in this roster and would keep reading its records; the template never removes a group member, so remove them (or add them to --household-members with that role), then run this again` };
+    return { what: g, action: !held || adds.length ? 'add' : 'keep', command };
   }));
 
   const current = await currentFolderRules(engine, source);
@@ -201,7 +203,7 @@ async function plan(engine: BrainEngine, opts: TemplateOpts & { source: string }
     const r = receipt?.keys.find(k => k.member === m.id);
     const at = { issued: r?.issued?.at ?? null, delivered: r?.delivered?.at ?? null };
     const k = (action: TemplateKey['action'], detail?: string): TemplateKey => ({ member: m.id, token_name: name, path, scopes, action, ...at, ...(detail ? { detail } : {}) });
-    const [token] = await engine.executeRaw<{ member_id: string | null; token_hash: string; scopes: string[] | null; source_grant: string | null; source_id: string | null }>('SELECT member_id, token_hash, scopes, source_grant, source_id FROM access_tokens WHERE name = $1 AND revoked_at IS NULL', [name]);
+    const [token] = await engine.executeRaw<{ member_id: string | null; token_hash: string; scopes: string[] | null; source_grant: string | null; source_id: string | null; read_shared_revision: unknown }>('SELECT member_id, token_hash, scopes, source_grant, source_id, read_shared_revision FROM access_tokens WHERE name = $1 AND revoked_at IS NULL', [name]);
     const rec = records.get(m.id);
     if (rec && rec.status !== 'enabled') keys.push(k('blocked', 'the member is not enabled'));
     else if (!token && existsSync(path)) keys.push(k('blocked', `a key file is already at ${path} but no live key is named ${name} (another brain's key, or one revoked by hand); move or delete the file, then run this again`));
@@ -213,8 +215,8 @@ async function plan(engine: BrainEngine, opts: TemplateOpts & { source: string }
         : `the key ${name} exists but its file is gone and a key is shown only once; revoke it (gbrain auth revoke ${name}) and run this again to issue a new one`));
     } else if (hashToken(readFileSync(path, 'utf8').trim()) !== token.token_hash) {
       keys.push(k('blocked', `the file does not hold the live key ${name}; revoke it (gbrain auth revoke ${name}), delete ${path} and run this again`));
-    } else if (token.source_grant !== 'scalar' || token.source_id !== source || !token.scopes || !sameSet(token.scopes, scopes)) {
-      keys.push(k('blocked', `the key ${name} grants ${token.scopes?.join('+') ?? 'every scope'} on ${token.source_grant === 'scalar' ? `source ${token.source_id}` : `a ${token.source_grant ?? 'legacy'} grant`}, not ${scopes.join('+')} on source ${source} only; revoke it (gbrain auth revoke ${name}), delete ${path} and run this again to issue one`));
+    } else if (token.source_grant !== 'scalar' || token.source_id !== source || token.read_shared_revision != null || !token.scopes || !sameSet(token.scopes, scopes)) {
+      keys.push(k('blocked', `the key ${name} grants ${token.scopes?.join('+') ?? 'every scope'} on ${token.source_grant === 'scalar' ? `source ${token.source_id}${token.read_shared_revision != null ? ' and every shared source' : ''}` : `a ${token.source_grant ?? 'legacy'} grant`}, not ${scopes.join('+')} on source ${source} only; revoke it (gbrain auth revoke ${name}), delete ${path} and run this again to issue one`));
     } else keys.push(k('keep'));
   }
   step('keys', keys.map(k => ({ what: k.member, action: k.action === 'mint' ? 'mint' : k.action, command: `gbrain auth create ${k.token_name} --member ${k.member} --scopes ${k.scopes.join(',')} --sources ${source}`, ...(k.detail ? { detail: k.detail } : {}) })));
@@ -314,7 +316,7 @@ export async function householdTemplate(engine: BrainEngine, opts: TemplateOpts)
   return result;
 }
 
-export interface RoleProof { member: string; role: TemplateRole; key: 'delivered' | 'missing' | 'unreadable' | 'none'; expected: number; read: number; missing: string[]; extra: string[]; due_extra: string[]; due_truncated: string[]; ok: boolean }
+export interface RoleProof { member: string; role: TemplateRole; key: 'delivered' | 'missing' | 'unreadable' | 'none'; expected: number; read: number; missing: string[]; extra: string[]; due_extra: string[]; due_truncated: string[]; due_failed: string[]; ok: boolean }
 export interface TemplateStatus { receipt: Omit<TemplateReceipt, 'params'> & { roster: RosterEntry[] }; complete: boolean; proof: RoleProof[]; ok: boolean }
 
 /** Who the table lets read each household record in the source: the roles of its audience, narrowed by a readers list its author wrote. */
@@ -355,31 +357,31 @@ export async function householdTemplateStatus(engine: BrainEngine, opts: { recei
   for (const m of roster.slice(1)) {
     const want = [...expected].filter(([, who]) => who.has(m.id)).map(([slug]) => slug).sort();
     const entry = receipt.keys.find(k => k.member === m.id);
-    const p: RoleProof = { member: m.id, role: m.role, key: !entry ? 'none' : entry.delivered && existsSync(entry.path) ? 'delivered' : 'missing', expected: want.length, read: 0, missing: [], extra: [], due_extra: [], due_truncated: [], ok: false };
+    const p: RoleProof = { member: m.id, role: m.role, key: !entry ? 'none' : entry.delivered && existsSync(entry.path) ? 'delivered' : 'missing', expected: want.length, read: 0, missing: [], extra: [], due_extra: [], due_truncated: [], due_failed: [], ok: false };
     if (p.key === 'delivered') {
       let auth: AuthInfo | null = null;
       try { auth = await provider.verifyAccessToken(readFileSync(entry!.path, 'utf8').trim(), { touch: false }) as unknown as AuthInfo; } catch { p.key = 'unreadable'; }
       if (auth) {
         const call = async (op: string, params: Record<string, unknown>) => {
           const out = await dispatchToolCall(engine, op, params, { remote: true, transport: 'http', auth, sourceId: receipt.source_id, takesHoldersAllowList: ['world'], readLog: false } as never);
-          return { isError: out.isError === true, text: out.content.map((c: { text: string }) => c.text).join('\n') };
+          return { isError: out.isError === true, text: String(out.content[0]?.text ?? '') };
         };
         const read: string[] = [];
         for (const slug of expected.keys()) if (!(await call('get_page', { slug })).isError) read.push(slug);
         const items: string[] = [];
         for (const kind of HOUSEHOLD_KINDS) {
           const due = await call('household_due', { include: 'all', window_days: 366, limit: 100, kinds: [kind] });
-          try {
-            const answer = JSON.parse(due.text) as { items?: Array<{ slug: string }>; truncated?: boolean };
-            items.push(...(answer.items ?? []).map(i => i.slug));
-            if (answer.truncated) p.due_truncated.push(kind);
-          } catch { /* an error answer reads nothing */ }
+          let answer: { items?: Array<{ slug: string }>; truncated?: boolean } | null = null;
+          try { answer = due.isError ? null : JSON.parse(due.text); } catch { answer = null; }
+          if (!answer || !Array.isArray(answer.items)) { p.due_failed.push(kind); continue; }
+          items.push(...answer.items.map(i => i.slug));
+          if (answer.truncated) p.due_truncated.push(kind);
         }
         p.read = read.length;
         p.missing = want.filter(s => !read.includes(s));
         p.extra = read.filter(s => !want.includes(s)).sort();
         p.due_extra = items.filter(s => !want.includes(s)).sort();
-        p.ok = !p.missing.length && !p.extra.length && !p.due_extra.length && !p.due_truncated.length;
+        p.ok = !p.missing.length && !p.extra.length && !p.due_extra.length && !p.due_truncated.length && !p.due_failed.length;
       }
     }
     proof.push(p);
@@ -414,7 +416,7 @@ export function statusLines(s: TemplateStatus): string[] {
     `Household setup receipt ${r.id} (harness ${r.harness ?? 'none'}, source ${r.source_id}, ${s.complete ? 'complete' : 'NOT complete'}):`,
     ...r.steps.map(x => `  ${x.id.padEnd(14)} ${x.state}${x.at ? ` ${x.at}` : ''}${x.detail ? `  (${x.detail})` : ''}`),
     ...r.keys.map(k => `  key ${k.member.padEnd(10)} issued ${k.issued?.at ?? 'no'}; delivered ${k.delivered ? `${k.delivered.at} to ${k.path}` : 'NO'}`),
-    ...s.proof.map(p => `  proof ${p.member} (${p.role}): ${p.key !== 'delivered' ? `key ${p.key}` : `reads ${p.read} of the ${p.expected} household record(s) the table expects${p.missing.length ? `; missing ${p.missing.join(', ')}` : ''}${p.extra.length ? `; EXTRA ${p.extra.join(', ')}` : ''}${p.due_extra.length ? `; household_due EXTRA ${p.due_extra.join(', ')}` : ''}${p.due_truncated.length ? `; household_due returned only its first 100 ${p.due_truncated.join(', ')} item(s), so the rest were not compared` : ''}`} ${p.ok ? 'ok' : 'NOT ok'}`),
+    ...s.proof.map(p => `  proof ${p.member} (${p.role}): ${p.key !== 'delivered' ? `key ${p.key}` : `reads ${p.read} of the ${p.expected} household record(s) the table expects${p.missing.length ? `; missing ${p.missing.join(', ')}` : ''}${p.extra.length ? `; EXTRA ${p.extra.join(', ')}` : ''}${p.due_extra.length ? `; household_due EXTRA ${p.due_extra.join(', ')}` : ''}${p.due_truncated.length ? `; household_due returned only its first 100 ${p.due_truncated.join(', ')} item(s), so the rest were not compared` : ''}${p.due_failed.length ? `; household_due gave no answer for ${p.due_failed.join(', ')}` : ''}`} ${p.ok ? 'ok' : 'NOT ok'}`),
     ...(r.error ? [`  stopped: ${r.error.message}; finish with gbrain setup ${r.harness ?? '<harness>'} --shape household --resume ${r.id} --yes`] : []),
   ];
 }

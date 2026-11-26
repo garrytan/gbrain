@@ -941,6 +941,7 @@ function entryBinding(flags: SetupFlags, previous: string | undefined): EntryBin
  * attendees. Never where a plugin serves the entry, a shared-stdio harness is installed, or --no-stdio-member is given.
  */
 function ownerTie(flags: SetupFlags, plan: ServesPlan, entry: EntryBinding, plugin: boolean): string | null {
+  if (flags.householdRun && !flags.noStdioMember && !entry.member && !plugin) return sharedStdioHarness() ? null : flags.owner ?? loginOwnerId() ?? null;
   if (flags.serves !== 'several' || (flags.brain !== 'company' && flags.brain !== 'both') || flags.noStdioMember || entry.member || plugin || !plan.tie) return null;
   return sharedStdioHarness() ? null : plan.tie;
 }
@@ -1366,7 +1367,9 @@ async function finish(out: Out, doc: {
     process.stderr.write(`gbrain setup: the ${k} import of ${i.dir} failed (${i.detail ?? 'unknown error'}). The rest of setup finished; fix that, then run: ${shellQuoteArgv(i.argv)}
 `);
   }
-  const code = skillsFailed(doc.skills ?? null) || doc.resolver?.error || !servesOk(doc.serves ?? null) || importsFailed.length ? 1 : doc.history?.exit ?? 0;
+  const hh = doc.dryRun ? undefined : doc.layout?.household;
+  const householdFailed = !!hh && (!hh.result || !!hh.result.error || hh.result.steps.some(s => s.state === 'blocked'));
+  const code = skillsFailed(doc.skills ?? null) || doc.resolver?.error || !servesOk(doc.serves ?? null) || importsFailed.length || householdFailed ? 1 : doc.history?.exit ?? 0;
   const plugins = harness === 'claude-code' && !doc.remove ? claudeCodeChannelPlugins() : [];
   const exposure = plugins.length ? sharedTokenNotice({ kind: 'stdio', harness }, { channelPlugins: plugins, serves: exposureServesVia(doc.launcher) }) : null;
   const notices = exposure ? [...doc.notices, exposure] : doc.notices;

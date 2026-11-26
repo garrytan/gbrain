@@ -52,6 +52,7 @@ describe('setup --shape household', () => {
     expect(hh.result.error).toBeUndefined();
     expect(hh.result.steps.every((s: any) => s.state === 'done')).toBe(true);
     expect(hh.result.key_dir).toBe(join(b.home, '.gbrain', 'member-keys'));
+    expect(readFileSync(join(b.home, '.claude.json'), 'utf8')).toContain('"--stdio-member",\n        "alice-example"');
     const keys = readdirSync(join(b.home, '.gbrain', 'member-keys')).sort();
     expect(keys).toEqual(['adult-b.key', 'family-chat.key', 'helper.key']);
     for (const k of keys) {

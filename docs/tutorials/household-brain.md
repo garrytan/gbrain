@@ -21,6 +21,9 @@ invented: Alice and Bob are two parents, Casey helps with the house, and Robin i
 
   Bills, credits, returns and **everything about a child** stay with the adults. The full table is in
   [Household records](../guides/household.md#who-can-read-what).
+- **Your own notes stay yours.** Every key reads only pages that name its reader (labelled-only), so Bob's key reads
+  the household records and nothing else you keep, such as your journal or chat history. To share all of it with him,
+  run `gbrain access member labelled-only adult-b off` yourself.
 - **Robin gets no member and no key.** A child is a page marked `household_role: child`, never a login.
 - **Your agent never buys, pays, books, calls or sends anything** without your yes.
 

@@ -34,6 +34,7 @@ const OWNER = 'alice-example';
 const ADULT = 'bob-example';
 const HELPER = 'casey-example';
 const CHAT = 'family-chat-example';
+const PERSONAL = 'journal/2026-11-01';
 const CHILD = 'people/robin-example';
 
 /** One record about the child of each kind; the table keeps every one adults only. */
@@ -77,6 +78,7 @@ beforeAll(async () => {
   await engine.setConfig('brain.timezone', TIMEZONE);
   for (const [title, slug] of await seedSyntheticHousehold(local)) slugs.set(title, slug);
   for (const r of CHILD_RECORDS) slugs.set(String(r.title), (await local('household_add', r)).slug);
+  await local('put_page', { slug: PERSONAL, content: '---\ntitle: A private journal entry\ntype: note\n---\nAn entry that no rule and no readers list covers.' });
   keyDir = mkdtempSync(join(tmpdir(), 'gbrain-hh-keys-'));
   receiptDir = mkdtempSync(join(tmpdir(), 'gbrain-hh-receipts-'));
   applied = await householdTemplate(engine, { source: 'default', harness: 'claude-code', owner: OWNER, apply: true,
@@ -114,16 +116,21 @@ describe('household template privacy matrix (W1b)', () => {
     for (const r of rules) expect({ prefix: r.prefix, owner: r.readable_by.includes('member:' + OWNER) }).toEqual({ prefix: r.prefix, owner: true });
   });
 
-  test('access check reads each key as its member: the helper and the chat labelled-only, in their own groups', async () => {
+  test('access check reads each key as its member, every one labelled-only, in their own groups', async () => {
     const groups = new Map((await listGroups(engine)).map(g => [g.id, g.members]));
     expect(groups.get('household-adults')).toEqual([OWNER, ADULT].sort());
     expect(groups.get('household-helpers')).toEqual([HELPER]);
     expect(groups.get('household-chats')).toEqual([CHAT]);
-    for (const [who, labelled] of [[ADULT, false], [HELPER, true], [CHAT, true]] as const) {
+    for (const [who, labelled] of [[ADULT, true], [HELPER, true], [CHAT, true]] as const) {
       const c = await accessCheck(engine, { token: 'member-' + who });
       expect({ who, verdict: c.verdict, labelled: c.labelled_only, reads: c.reads_now }).toEqual({ who, verdict: 'reads_as_member', labelled, reads: ['default'] });
     }
     expect((await getMember(engine, CHAT))!.kind).toBe('audience');
+  });
+
+  test('a page outside the household that nothing labels stays the owner\'s: no member key reads it', async () => {
+    expect((await remote(OWNER, 'get_page', { slug: PERSONAL })).isError).toBeFalsy();
+    for (const who of [ADULT, HELPER, CHAT]) expect({ who, reads: !(await remote(who, 'get_page', { slug: PERSONAL })).isError }).toEqual({ who, reads: false });
   });
 
   test('direct reads: every record of every kind against every key', async () => {
