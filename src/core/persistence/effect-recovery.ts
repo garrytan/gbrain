@@ -34,14 +34,13 @@ export async function guardEffectSource(tx: BrainEngine, effect: PersistenceEffe
   await declarePersistenceProtocol(tx);
   // Lock order is brain row, then source row: the effect-row protocol trigger share-locks the brain row,
   // and a worktree claim holds the brain row while it locks the source (#6007 deadlock).
-  await tx.executeRaw('SELECT singleton FROM persistence_brain WHERE singleton=1 FOR SHARE');
+  const owner = await tx.lockEffectGuard(effect.worktree_id ?? null);
   if (effect.worktree_id) {
-    const [owner] = await tx.executeRaw<{ owner_host_id: string; state: string }>('SELECT owner_host_id,state FROM persistence_worktrees WHERE id=$1::uuid FOR SHARE', [effect.worktree_id]);
     if (!owner || owner.owner_host_id !== hostId || owner.state !== 'active') throw opError('owner_unavailable', 'The effect requires its active canonical owner.',
       `This host is not the active canonical owner of source ${effect.source_id}'s worktree, so its ${effect.kind} effect waits for the owner; the committed write is unaffected. Inspect the owner; the effect runs there.`,
       { fix: effectStatusFix(effect) });
   }
-  const [source] = await tx.executeRaw<{ incarnation: string; archived: boolean }>('SELECT incarnation,archived FROM sources WHERE id=$1 FOR SHARE', [effect.source_id]);
+  const source = await tx.readSourceState(effect.source_id, { lock: 'share' });
   if (!source || source.archived || source.incarnation !== effect.source_incarnation) throw opError('source_changed', 'The effect source was archived or replaced.',
     `Source ${effect.source_id} was archived, removed or re-created after this ${effect.kind} effect was recorded, so it no longer applies and nothing was done for it. Inspect the source before acting on its old effects.`,
     { fix: effectStatusFix(effect) });

@@ -416,7 +416,7 @@ export interface IpcPathConfig {
  */
 export function resolveSocketPathForConfig(cfg: IpcPathConfig | null | undefined, kind: 'resolve' | 'persistence' | 'read' = 'resolve', sourceId?: string): string | null {
   if (!cfg) return null;
-  if (cfg.engine === 'pglite' && cfg.database_path) return kind === 'read' ? null : localIpcSocketPath(join(cfg.database_path, `.gbrain-${kind}.sock`));
+  if ((cfg.engine === 'pglite' || cfg.engine === 'rust') && cfg.database_path) return kind === 'read' ? null : localIpcSocketPath(join(cfg.database_path, `.gbrain-${kind}.sock`));
   if (cfg.engine === 'postgres' && cfg.database_url) {
     const sourceKey = kind !== 'persistence' && sourceId ? `-${hash12(sourceId)}` : '';
     return localIpcSocketPath(join(ipcRunDir(), `${kind}-${hash12(cfg.database_url)}${sourceKey}.sock`));

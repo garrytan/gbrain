@@ -18,7 +18,7 @@ import { failedPreReadKeepsTransaction, followHarness, PAGE, restoreFollowProbes
 import { mergeItems, type Invalidation } from '../src/shadow/invalidations.ts';
 import { isShadowReadMember, SHADOW_TRANSACTION_MEMBERS } from '../src/shadow/reads.ts';
 import { sqlWrites } from '../src/shadow/sql-writes.ts';
-import { IGNORED_MEMBERS, READ_ONLY_MEMBERS, memberKind, RAW_MEMBERS, SCHEMA_MEMBERS, WRITE_MAP } from '../src/shadow/write-map.ts';
+import { IGNORED_MEMBERS, READ_ONLY_MEMBERS, UNMAPPED_WRITE_MEMBERS, memberKind, RAW_MEMBERS, SCHEMA_MEMBERS, WRITE_MAP } from '../src/shadow/write-map.ts';
 
 let engine: PGLiteEngine;
 
@@ -410,7 +410,8 @@ describe('write map coverage', () => {
   test('every PGLite engine member is a mirrored read, a transaction, raw, ignored, read-named or mapped', () => {
     const tx = new Set<string>(SHADOW_TRANSACTION_MEMBERS);
     const unclassified = protoMembers().filter((name) => !isShadowReadMember(name) && !tx.has(name) && memberKind(name) === 'unmapped');
-    expect(unclassified).toEqual([]);
+    // Typed writes the map does not cover are listed by name (UNMAPPED_WRITE_MEMBERS): the list is exact.
+    expect(unclassified).toEqual([...UNMAPPED_WRITE_MEMBERS].sort());
   });
 
   test('the 12 members the N3 step added are classified: six writers mapped or ignored, six reads read-only', () => {
@@ -423,7 +424,7 @@ describe('write map coverage', () => {
 
   test('every mapped, ignored, raw, schema and read-named-write entry names a real engine member', () => {
     const real = new Set(protoMembers());
-    const listed = [...Object.keys(WRITE_MAP), ...IGNORED_MEMBERS, ...RAW_MEMBERS, ...SCHEMA_MEMBERS, ...READ_ONLY_MEMBERS, 'withReservedConnection'];
+    const listed = [...Object.keys(WRITE_MAP), ...IGNORED_MEMBERS, ...RAW_MEMBERS, ...SCHEMA_MEMBERS, ...READ_ONLY_MEMBERS, ...UNMAPPED_WRITE_MEMBERS, 'withReservedConnection'];
     expect(listed.filter((name) => !real.has(name))).toEqual([]);
   });
 

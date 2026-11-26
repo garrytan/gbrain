@@ -170,6 +170,12 @@ export async function getWorktreeBinding(exec: LegacyUnscopedRead, sourceId: str
   return row ?? null;
 }
 
+/** `getWorktreeBinding` for a handle that has only `executeRaw` (ownership.ts, the backup path): the same statement, the same row. */
+export async function getWorktreeBindingRaw(handle: Pick<SqlExecutor, 'executeRaw'>, sourceId: string, hostId: string | null): Promise<WorktreeBinding | null> {
+  const [row] = await handle.executeRaw<WorktreeBinding>(WORKTREE_BINDING_SQL, [sourceId, hostId]);
+  return row ?? null;
+}
+
 /** Whether the page has an extracted chronicle generation with events. */
 export async function hasExtractedEvents(exec: LegacyUnscopedRead, sourceId: string, pageId: number): Promise<boolean> {
   const rows = await exec.executeRaw(

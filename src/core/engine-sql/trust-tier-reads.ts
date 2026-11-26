@@ -12,8 +12,14 @@
  * back as numbers.
  */
 import type { BrainEngine } from '../engine.ts';
+import { renderFragment, type SqlFragment } from './fragment.ts';
 
 type Raw = Pick<BrainEngine, 'executeRaw'>;
+
+async function rows<T>(tx: Raw, fragment: SqlFragment): Promise<T[]> {
+  const { text, params } = renderFragment(fragment);
+  return tx.executeRaw<T>(text, params);
+}
 
 // ---------------------------------------------------------------------------------------------------------------
 // Page history

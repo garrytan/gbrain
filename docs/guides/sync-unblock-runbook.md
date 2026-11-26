@@ -161,6 +161,7 @@ Every hold and error has three fields, from one table
 | `page_write_failed` | page | upgrade | yes | always: the writer cannot place the failure |
 | `file_unreadable` | page | none | yes | always: only a change to the checkout makes the file readable |
 | `tag_too_long` | page | none | yes | always: only an edit to the file clears it |
+| `slug_too_long` | page | none | yes | always: only a move or rename of the file clears it |
 | `visibility_noncanonical` | page | none | yes | always: only an edit to the file clears it |
 | `readers_noncanonical` | page | none | yes | always: only an edit to the file clears it |
 | `content_null_bytes` | page | none | yes | always: only an edit to the file or its removal clears it |

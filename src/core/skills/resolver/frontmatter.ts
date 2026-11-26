@@ -1,7 +1,7 @@
 /**
  * Bounded SKILL.md reader for the resolver: name, description,
- * when_to_use, triggers, `disable-model-invocation`, `eligible`, `deprecated`
- * and `replaced_by`, plus
+ * when_to_use, triggers, `disable-model-invocation`, `eligible`, `deprecated`,
+ * `replaced_by` and `audience: owner` (a skill only the agent's owner sees), plus
  * the first 4 KB of the body. Reads at most 64 KB of a file. Leaf module
  * (alias-bounded js-yaml via data-frontmatter.ts and the one-line description rule only).
  *
@@ -24,6 +24,7 @@ export interface SkillDoc {
   eligible: boolean;
   deprecated: boolean;
   replacedBy?: string;
+  audience?: 'owner';
   body: string;
 }
 
@@ -43,6 +44,14 @@ function yamlFields(raw: string): Record<string, unknown> | null {
   } catch {
     return null;
   }
+}
+
+/** Any non-empty `audience` keeps a skill to the owner: only `owner` is defined, and an unknown value or a typo fails closed. */
+export function restricted(v: unknown): boolean {
+  if (v === undefined || v === null) return false;
+  if (typeof v === 'string') return cleanText(v) !== '';
+  if (Array.isArray(v)) return v.some((x) => restricted(x));
+  return true;
 }
 
 function stringList(v: unknown): string[] {
@@ -71,6 +80,7 @@ export function parseSkillDoc(input: string): SkillDoc {
     eligible: !(fm && (fm.eligible === false || fm.eligible === 'false')),
     deprecated: Boolean(fm && (fm.deprecated === true || fm.deprecated === 'true')),
     ...(replacedBy ? { replacedBy } : {}),
+    ...((fm ? restricted(fm.audience) : /^audience\s*:/m.test(raw)) ? { audience: 'owner' as const } : {}),
     body: boundBody(text),
   };
 }

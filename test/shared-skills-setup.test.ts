@@ -226,6 +226,9 @@ describe('staged skill migration', () => {
       if (sql.includes('FROM persistence_source_bindings')) return [{ source_id: 'default', state: 'active', owner_host_id: 'host-a', local_path: root, relative_path: '' }];
       return base(sql, params as never);
     };
+    // ownership.ts reads the binding through the typed getWorktreeBinding member; it answers the row the raw branch above does.
+    (f.ctx.engine as { getWorktreeBinding: unknown }).getWorktreeBinding = async () =>
+      ({ source_id: 'default', state: 'active', owner_host_id: 'host-a', local_path: root, relative_path: '' });
     const report = await withEnv({ GBRAIN_HOME: temp() }, () => runSharedSkillsMigration(f.ctx, { dryRun: true }));
     expect(report.status).toBe('conflict');
     expect(report.sources[0].stages.at(-1)).toMatchObject({ stage: 'projection', status: 'conflict', code: 'shared_skills_unmanifested' });

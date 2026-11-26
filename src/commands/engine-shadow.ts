@@ -94,6 +94,8 @@ takes its process lock, and PGLite rewrites its own control and log files. A bra
 opened. A store is seeded once: to seed again, delete the shadow directory first.
 seed runs on a brain that uses managed storage too; only the swap refuses such a brain. seed reads the brain's storage
 mode right before its snapshot and records it in seed.json; a mode it cannot read does not stop the seed.
+A brain that cannot be opened stops the seed: exit 1, \`could not open the brain (pglite_busy)\` while another process
+holds a PGLite brain, and nothing is written.
 
 A seeded brain is followed: each committed write is read back from the brain and applied to the Rust store. reconcile
 compares the whole store with the brain (digests per 500-row interval) and repairs what differs; it needs the Rust
