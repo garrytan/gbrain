@@ -10,6 +10,94 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.775.0] - 2026-11-26
+
+### Fixed
+
+- Agent spending budgets count a live hold until it is settled, even past midnight UTC, and count the settled spend on the day it was paid.
+- `gbrain ledger` totals for a member are never cut short by other people's actions, and a correction counts only once it is done. A correction that was done and then reversed still replaces the original.
+- A retried `log_action` or `policy_reserve` that changed the call is refused instead of replaying the first one, and a reserve retry keeps its first answer. A changed reserve retry is refused even after its hold was settled.
+- A ledger write whose writer crashed no longer makes every budget reservation answer `ledger_busy`, an answer of `write_pending` names the `request_id` to retry with, and an action written by a newer gbrain still counts in this one's totals.
+- A member's receipt page counts as evidence when the member can read it the ordinary way, with folder and derived-page rules applied.
+- Budget sums are exact for decimal amounts: 0.10 used and 0.20 asked fits a 0.30 budget.
+
+**Agents can record what they did for you outside the brain, and gbrain totals it with evidence.**
+
+### Added
+- `log_action` MCP tool and `gbrain ledger add`: one private `agent_action` page per outside action at `actions/YYYY/MM/<id>`, with a strict shape, the actor stamped by gbrain and `claim_basis` (evidenced, user_confirmed, estimated) computed on the server. An amount needs readable evidence or `estimated: true` (`money_unevidenced`).
+- `ledger` MCP tool and `gbrain ledger [--since]`: totals per currency split by claim basis, verb and counterparty, over the actions the caller can read; a window too large returns `state: partial` and the narrower call. `gbrain ledger digest --week [--save]` writes the week as deterministic text.
+- `gbrain ledger confirm <action_id>` marks a done action's amounts as confirmed by the user; it refuses from an agent session or with no terminal (`ledger_confirm_required`).
+- Agent policy budgets: `--window day|week|month` on `gbrain policy allow|ask|deny`. `policy_check` returns each budget as advice and `requires_approval`; the new `policy_reserve` tool checks the budget and holds the amount for 24 hours in one locked step, settled by `log_action` (a settle with no amount records the held amount as an estimate).
+
+### Changed
+- Remote callers cannot write action pages directly (`ledger_log_action_only`), and ledger reads and writes follow the connection's source grants; `actions/` pages are demoted in search like `extracts/`.
+
+<!-- behavior-change: action_ledger_l2_gst3824 -->
+
+**The Google token socket is harder to misuse: turning writes off stops a write that was still waiting for its token, a throttled approval can be sent again, and the owner sees who a paused calendar invite would reach.**
+
+### Fixed
+- A write that was waiting for its token when `google.broker_act` was turned off is no longer sent.
+- If Google throttles a call the owner approved or confirmed, the approval is kept, so the call can be repeated after `retry_after_s` within the prompt's 10 minutes.
+- The repeat of a safety pause the owner already confirmed goes through even when 64 calls are waiting.
+- A throttled call reserved before UTC midnight gives its place back to the day it was charged to, so the next day's cap stays exact.
+- A mint with `"fresh": true` skips the socket's cached read-only token, for a caller Google answered with a 401.
+- For an account on a public mail domain (gmail.com, icloud.com, outlook.com, yahoo.com, aol.com, proton.me and their aliases), every invitee but the account itself counts as outside for the safety pause.
+- `gbrain google approvals` shows a paused invite's outside addresses before its arguments, marks arguments cut at 600 characters, and indents Google's prompt text so it can't pose as another field.
+- `gbrain google mint status` notes each non-root peer uid that can't open the 0600 socket in this release.
+- A client whose connection the socket closes, or that can't open it, gets `peer_refused` at once instead of waiting 2 minutes; a `call` cut off that way gets `outcome_unknown`, since it may have been sent.
+- A socket that fails to start after taking its bind lock now releases the lock.
+- A write Google accepted whose outcome can't be saved to disk is still reported as a success, with a warning.
+- The Google connect guide and llms.txt now link the token socket guide.
+
+**Your local agent can get read-only Google tokens and make approved Google Workspace writes through a private socket, without ever holding your refresh token, client secret or a write-capable token.**
+
+### Added
+- `gbrain google mint serve` (or `gbrain serve --http` with `google.mint_socket` set) opens a Unix socket at `$GBRAIN_HOME/.gbrain/run/google.sock` that only your own user, and uids you list in `google.socket_peers`, can use. `mint` returns a short-lived read-only Google token; minted tokens are never written to the vault, so sync's own token is untouched. Guide: docs/guides/google-socket.md.
+- A write broker behind the socket's `call` op makes one allowlisted Google Workspace MCP call at a time with a write-capable token that never leaves gbrain's memory. Google's approval prompt is relayed, and answered only by the owner (a repeat with `owner_verdict` ALLOW_ONCE, or `gbrain google approvals`); calendar writes never email attendees, drafts are capped at 20 recipients, the second outside invite and the eleventh trash in one turn wait for the owner, and a write whose reply was lost is never resent. It is off until `google.broker_act` and its other preconditions hold (`gbrain google mint status` lists them); a root gateway needs the explicit `google.broker_allow_root_gateway` opt-in.
+- `gbrain google exec --account <email> -- gwscli …` runs gwscli with a read-only token and replaces the token in its output.
+- `gbrain google approvals` lists prompts held for the owner and answers one at a terminal.
+
+**A remote agent that is not the brain's owner can no longer learn how many hidden household records are about a person by trying to change that person's role.**
+
+### Fixed
+- On a brain that serves several people, a remote `put_page` or `edit_page` from anyone but the owner that would make a subject a child, or remove its `household_role`, is refused with one `household_reclassify` message whatever records exist. Before, the refusal counted the records about the subject that were shared with helpers, including records the caller could not read. The owner, and `gbrain household replace` on the brain host, still reclassify as before.
+
+### Added
+- A live check that Claude Code and Codex get the same household answer through gbrain, and that their own notes files alone miss part of it (`test/e2e/household-cross-harness-real.serial.test.ts`, opt-in with `GBRAIN_TEST_HOUSEHOLD_LIVE=1`). `bun scripts/synthetic-household.ts <dir>` seeds a keyless brain with the invented household it uses.
+
+**New brains suggest one useful thing in their first sessions, and a second agent session on the same brain is told nothing is broken.**
+
+### Added
+- For the first 3 sessions within 14 days of `gbrain setup claude-code` or `gbrain setup codex` on a new personal brain, the session-start context tells the agent to offer one thing it found in the brain, citing the page, then one more import. A session counts only after the hook wrote the context that held it; Claude Code and Codex at once each get their own session.
+- `gbrain onboarding status|off` and the MCP tools `onboarding_status` and `onboarding_off` (the install's owner only; `onboarding_owner_only` otherwise) say why it shows and turn it off, read back from the store. `setup --no-suggestion` turns it off at install, and `setup --json` reports a `suggestion` marker next to `history`.
+- The company brain instruction block tells the agent to name the readers of a team decision with `readable_by`.
+
+### Fixed
+- A second agent session on a PGLite brain another session's server holds gets a `gbrain_status` answer that names the owner's PID and start time, carries `expected: true` and says nothing needs fixing.
+- `gbrain onboarding --help` prints its help without a brain.
+
+<!-- behavior-change: first_session_suggestion -->
+<!-- behavior-change: lock_held_concurrent_expected -->
+
+**Codex sessions get gbrain's session-start context again on a new brain, instead of Codex rejecting the hook.**
+
+### Fixed
+- In Codex, `gbrain hook session-start --harness codex` now prints Codex's JSON envelope (`hookSpecificOutput.additionalContext`) instead of plain text. Codex reads any hook output that starts with `[` or `{` as JSON, and a new brain with no core memory starts its context with `[gbrain] First sessions on this brain`, so Codex marked the hook failed and dropped all of it while gbrain still counted the first-session suggestion as delivered. Context trimmed inside an emoji is also made well-formed first, since Codex rejects JSON that holds half of one. Claude Code still gets plain text. Existing Codex installs get the fix on upgrade with no new `gbrain setup codex` run, because their hook command already passes `--harness codex`.
+
+**On a new brain, the first-session suggestion now lists the conversations setup just imported.**
+
+### Fixed
+- The "Recent pages in the brain" list in the first-session suggestion read only the source the session is bound to, while `gbrain setup`'s history import writes conversations into their own federated source (`conversations`). On a fresh install the list was always empty. It now reads the bound source and the sources it federates with, the same set the agent's unqualified searches read; a source set to `federated: false` still lists only its own pages. Agent policy and action records and the archive's per-day index pages are left out, so the three pointers are conversations or notes worth offering.
+
+**`gbrain profile import` moves what another assistant remembers about you onto your own gbrain profile.**
+
+### Added
+- `gbrain profile import <file>` reads Muse's `Memory.md`, the memories JSON in a Claude data export, or the `[YYYY-MM-DD] - memory` list any assistant prints, and previews each fact with its line and facet. Nothing is saved until you run the printed `--yes --preview <hash>` command, which refuses if the file, its parse, your profile or the brain changed since the preview.
+- Every imported fact is saved private and marked inferred on your own profile (a member's import lands on its own member page, never the owner's), and never replaces a fact you stated yourself. Lines that look like a password, key or token are dropped and named by line, never printed.
+- Each apply keeps a receipt: `gbrain profile import --status <receipt>` shows what was saved line by line, and `--resume <receipt>` finishes an apply that stopped, sending nothing twice. The import exits 10 while writes are still finishing and 1 if anything failed.
+- `--source <id>` picks the source a local import saves into; a thin client refuses `--brain` and `--source`, because the remote brain saves into the source your credential is granted.
+
 ## [0.60.774.0] - 2026-11-25
 
 **Four tests that failed on busy CI machines for no real reason now fail only when something is actually broken.**
