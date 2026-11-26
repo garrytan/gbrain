@@ -69,7 +69,7 @@ import { createGlobalLlmHaltTracker, haltedClassOf, providerContentBlockReason, 
 import { derivedWriteThrough, reportDerivedWriteThrough } from './derived-write-through.ts';
 import { emptySessionSourceRouting, keepSessionSourceTranscripts, withSessionSourceRouting } from './synthesize-source-routing.ts';
 import { serializeMarkdown } from '../markdown.ts';
-import { DEFAULT_EXTRACT_MAX_INPUT_CHARS, extractAtomsInput, inputTruncatedLine, recordPartialDisposition, releasePartialDispositions, resolveExtractAtomsInputCap, stampTranscriptTombstone, type ExtractAtomsInput, type ExtractAtomsItem } from './extract-atoms-input.ts';
+import { DEFAULT_EXTRACT_MAX_INPUT_CHARS, extractAtomsInput, extractedInputUnchanged, inputTruncatedLine, recordPartialDisposition, releasePartialDispositions, resolveExtractAtomsInputCap, stampTranscriptTombstone, type ExtractAtomsInput, type ExtractAtomsItem } from './extract-atoms-input.ts';
 import { commitExtractionPlan, readPageWatermark } from '../extraction-watermark.ts';
 import { claudeCliSelfSessionIds } from '../ai/providers/claude-cli-scratch.ts';
 import { BudgetExhausted, BudgetTracker, loadPricingOverrides } from '../budget/budget-tracker.ts';
@@ -1114,7 +1114,8 @@ export async function runPhaseExtractAtoms(
     // item, so a quote can only verify against text the model actually saw.
     // #6503: a cut item is extracted once from its head and gets a partial
     // disposition instead of a completion stamp (extract-atoms-input.ts).
-    const input = extractAtomsInput(item, maxInputChars, item.kind === 'page' ? (await readPageWatermark(engine, sourceId, item.slug, 'extract_atoms')).stored : null);
+    const stored = item.kind === 'page' ? (await readPageWatermark(engine, sourceId, item.slug, 'extract_atoms')).stored : null;
+    const input = extractAtomsInput(item, maxInputChars, stored);
     const { promptContent, truncated } = input;
     let origin: AtomOrigin | null = null;
     try {
@@ -1129,6 +1130,8 @@ export async function runPhaseExtractAtoms(
       if (resumed === 'held') { heldFailed++; continue; } // #6325: settled after repeated failures; doctor lists it
       // GBRA-161: a complete read whose result for this same input and policy is already held is not computed again.
       if (!opts.dryRun && !truncated && await heldForInput(engine, atomGenerationOrigin(sourceId, item).key, origin ? atomOriginPin(origin) : atomInputPin(item))) { duplicatesSkipped++; continue; }
+      // #10435: a fence-only edit changes content_hash, not what the model reads; the committed watermark proves the same input was extracted.
+      if (!opts.dryRun && !managed && item.kind === 'page' && item.identity && await extractedInputUnchanged(engine, item.identity.pageId, input, stored)) { await stampAtomsScanHash(item); duplicatesSkipped++; continue; }
       const cutLine = truncated ? inputTruncatedLine(originLabel, input, maxInputChars) : null; // A7: a complete appended-tail read prints nothing
       if (cutLine) { inputTruncated++; console.error(cutLine); } // counted only for a model call
 

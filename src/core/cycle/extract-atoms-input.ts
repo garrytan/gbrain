@@ -21,7 +21,7 @@ import type { SqlEngine } from '../persistence/model.ts';
 import { truncateUtf8 } from '../text-safe.ts';
 import { corpusTextForExtraction } from '../context/corpus-segments.ts';
 import { AtomPageStateError, type AtomPageInput } from './extract-atoms-page-state.ts';
-import { planExtraction, type ExtractionPlan, type StoredWatermark } from '../extraction-watermark.ts';
+import { EXTRACTION_PIPELINE_VERSION, planExtraction, readExtractionReceipt, type ExtractionPlan, type StoredWatermark } from '../extraction-watermark.ts';
 import { publicBody } from '../mentions/aliases.ts';
 
 export const DEFAULT_EXTRACT_MAX_INPUT_CHARS = 50_000;
@@ -80,6 +80,18 @@ export function extractAtomsInput(item: ExtractAtomsItem, maxInputChars: number,
   const text = corpusTextForExtraction(item.filePath, item.content);
   const promptContent = truncateUtf8(text, maxInputChars);
   return { promptContent, truncated: promptContent.length < text.length, inputChars: text.length };
+}
+
+/**
+ * #10435: true when the last committed extraction read exactly this input: the stored watermark covers the whole current
+ * public body (same version, bytes and sha256) and no partial-input receipt says the read was cut. The page's content_hash
+ * also moves on a fence-only edit, which the model never sees.
+ */
+export async function extractedInputUnchanged(engine: BrainEngine, pageId: number, input: ExtractAtomsInput, stored: StoredWatermark | null): Promise<boolean> {
+  const next = input.plan?.next;
+  if (!stored || !next || input.truncated) return false;
+  if (stored.pipelineVersion !== EXTRACTION_PIPELINE_VERSION.extract_atoms || stored.bytes !== next.bytes || stored.sha256 !== next.sha256) return false;
+  return (await readExtractionReceipt(engine, pageId, 'extract_atoms')) === null;
 }
 
 /** The one stderr line per cut item; names the knob that raises the cap. Null for a complete appended-tail read. */
