@@ -44,7 +44,7 @@ src/commands/doctor/checks/managed-guard.ts	execute_raw	1
 src/commands/doctor/checks/managed-sync-convergence.ts	execute_raw	1
 src/commands/doctor/checks/managed-sync-movement.ts	execute_raw	1
 src/commands/doctor/checks/orphan-estimate.ts	execute_raw	2
-src/commands/doctor/checks/owner-host-stale.ts	execute_raw	2
+src/commands/doctor/checks/owner-host-stale.ts	execute_raw	1
 src/commands/doctor/checks/persistence-requests.ts	execute_raw	1
 src/commands/doctor/checks/pglite-worker.ts	sql_template	1
 src/commands/doctor/checks/postgres-tls.ts	execute_raw	1
@@ -441,7 +441,6 @@ src/core/persistence/sync-pass-fold.ts	execute_raw	1
 src/core/persistence/sync-run.ts	execute_raw	17
 src/core/persistence/sync-waivers.ts	execute_raw	8
 src/core/persistence/sync-window.ts	execute_raw	2
-src/core/persistence/transient-retry.ts	execute_raw	1
 src/core/persistence/unbound-source.ts	execute_raw	4
 src/core/persistence/unimported-file.ts	execute_raw	1
 src/core/persistence/unindexed-files.ts	execute_raw	8

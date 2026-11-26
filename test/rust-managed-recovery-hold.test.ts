@@ -29,7 +29,9 @@ import { runManagedSourceLifecycle } from '../src/core/persistence/source-lifecy
 import { recoverSourceTopologies } from '../src/core/persistence/topology-recovery.ts';
 import { readTopologyRecoveryStops } from '../src/core/persistence/topology-stop.ts';
 import { ownerActivity } from '../src/core/persistence/owner-activity.ts';
-import { admitWrite, claimNextWrite } from '../src/core/persistence/journal.ts';
+import { admitWrite, claimNextLaneHead, claimNextWrite, reclaimReleasedWrite } from '../src/core/persistence/journal.ts';
+import { claimAndRecoverEffect } from '../src/core/persistence/effects.ts';
+import { ownerHostStaleCheck } from '../src/commands/doctor/checks/owner-host-stale.ts';
 import { hostIdFor, registerLocalWriter } from '../src/core/persistence/identity.ts';
 import { bigintToStringReplacer } from '../src/core/utils.ts';
 
@@ -116,6 +118,33 @@ describe.skipIf(!rustArmRequested())('a user\'s Rust brain keeps refusing the re
       const status = await readTopologyRecoveryStops(engine, host);
       expect({ listed: status.recovering.map(row => ({ source: row.source_id, operation: row.operation, stop: row.stop })), stop: status.stop })
         .toEqual({ listed: [{ source: 'work', operation: 'writer_claim', stop: 'source_topology_recovery' }], stop: 'source_topology_recovery' });
+    }), 120_000);
+
+  test('the lane head claim, the reclaim, the effect recovery claim and the owner_host_stale read answer as before; nothing changed', () =>
+    withEnv({ GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
+      expect(engine.capabilities.has('managed_persistence')).toBe(false);
+      const host = hostIdFor(engine);
+      const WORKTREE = 'd0000000-0000-4000-8000-0000000000f3';
+      const REQUEST_ROW = 'd0000000-0000-4000-8000-0000000000f4';
+      const stamp = { id: REQUEST_ROW, token: 'd0000000-0000-4000-8000-0000000000f5', leaseMs: 30_000, phaseJson: '{"phase":"preparing"}' };
+      const before = { owners: await engine.listRunningClaimOwners(host), source: await engine.readSourceMembership('work') };
+      const out = {
+        // The three claim statements each went through executeRaw: the callers and the members refuse by it, before any read or write.
+        laneHead: await refusal(() => claimNextLaneHead(engine, host, WORKTREE, 'run-a', 30_000, null)),
+        reclaim: await refusal(() => reclaimReleasedWrite(engine, REQUEST_ROW)),
+        members: await Promise.all([
+          refusal(() => engine.selectClaimableLaneHead({ hostId: host, worktreeId: WORKTREE, run: 'run-a', seenSequence: null, nonce: 'n', priority: null })),
+          refusal(() => engine.stampLaneHeadClaim(stamp)),
+          refusal(() => engine.reclaimReleasedWrite(stamp)),
+          refusal(() => engine.claimEffectRecovery({ id: '1', token: stamp.token, ownerJson: '{}' })),
+        ]),
+        // claimAndRecoverEffect has always answered a refused claim as no claim.
+        effect: (await claimAndRecoverEffect(engine, 1, host)) ?? null,
+      };
+      expect(out).toEqual({ laneHead: RAW, reclaim: RAW, members: [RAW, RAW, RAW, RAW], effect: null });
+      // owner_host_stale still skips by name (nothing can wait on a worktree while the hold is on), and says it is not a pass.
+      expect(await ownerHostStaleCheck(engine)).toMatchObject({ name: 'owner_host_stale', status: 'ok', details: { outcome: 'skipped', reason: 'raw_sql', count: 'unknown' } });
+      expect({ owners: await engine.listRunningClaimOwners(host), source: await engine.readSourceMembership('work') }).toEqual(before);
     }), 120_000);
 
   test('the claim-owner list answers as before: the claims on no worktree', () =>

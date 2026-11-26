@@ -778,7 +778,7 @@ updatePageContextualRetrievalState	sync_aliases	yes	3	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	2	no	yes	yes	serves
 getConfig	config	yes	61	no	yes	yes	serves
 getConfig	config	yes	59	no	yes	yes	serves
-setConfig	config	yes	97	no	yes	yes	serves
+setConfig	config	yes	98	no	yes	yes	serves
 unsetConfig	config	yes	4	no	yes	yes	serves
 listConfigKeys	config	yes	5	no	yes	yes	serves
 getAllConfig	config	yes	2	no	yes	yes	serves
@@ -926,7 +926,7 @@ listChronicleCoverageGapRows	persistence_journal	yes	1	no	yes	yes	serves
 readAtomOriginInput	persistence_journal	yes	2	no	yes	yes	serves
 listProducerVersionRows	persistence_journal	yes	1	no	yes	yes	serves
 listAtomWriteReceipts	persistence_journal	yes	1	no	yes	yes	serves
-readWriteRequest	persistence_journal	yes	19	no	yes	yes	serves
+readWriteRequest	persistence_journal	yes	20	no	yes	yes	serves
 readWriteRequestsByRequestIds	persistence_journal	yes	3	no	yes	yes	serves
 readWriteRequestsByRequestId	persistence_journal	yes	1	no	yes	yes	serves
 readWriteRequestById	persistence_journal	yes	19	no	yes	yes	serves
@@ -1013,7 +1013,7 @@ listTopologyRecoveries	persistence_journal	yes	7	no	yes	yes	serves
 readTopologyChange	persistence_journal	yes	4	no	yes	yes	serves
 insertTopologyChange	persistence_journal	yes	10	no	yes	yes	serves
 renewWriteClaim	persistence_journal	yes	1	no	yes	yes	serves
-releaseUnpublishedClaim	persistence_journal	yes	4	no	yes	yes	serves
+releaseUnpublishedClaim	persistence_journal	yes	5	no	yes	yes	serves
 expireStaleWriteClaims	persistence_journal	yes	1	no	yes	yes	serves
 hasClaimableWrite	persistence_journal	yes	3	no	yes	yes	serves
 readHeadBlockerRows	persistence_journal	yes	1	no	yes	yes	serves
@@ -1056,7 +1056,7 @@ lockEffectRow	persistence_journal	yes	2	no	yes	yes	serves
 listEmbeddingCandidates	persistence_journal	yes	1	no	yes	yes	serves
 listOverdueHeldWrites	persistence_journal	yes	1	no	yes	yes	serves
 lockOverdueHold	persistence_journal	yes	1	no	yes	yes	serves
-listOwnerRecoveryHeads	persistence_journal	yes	1	no	yes	yes	serves
+listOwnerRecoveryHeads	persistence_journal	yes	2	no	yes	yes	serves
 listResumableRefreshes	persistence_journal	yes	1	no	yes	yes	serves
 listSourceLastCommits	persistence_journal	yes	1	no	yes	yes	serves
 stampEffectClaim	persistence_journal	yes	9	no	yes	yes	serves
