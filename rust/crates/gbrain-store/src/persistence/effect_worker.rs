@@ -537,7 +537,7 @@ impl Store {
 
     /// `selectClaimableEffect(hostId, deadOwners)`: the next effect to claim as its row, or null.
     pub fn select_claimable_effect(&self, host_id: &str, dead_owners: &[String]) -> Result<Value> {
-        let now = self.env.now_micros();
+        let now = self.lease_clock();
         Ok(
             select_claimable_effect_in(&*self.read()?, now, host_id, dead_owners)?
                 .map_or(Value::Null, |e| e.to_row()),
@@ -597,11 +597,11 @@ impl Store {
             // Multi-user: only an effect that is claimable now, read in this same write (see `effect_claimable_now`).
             if self.multiuser()
                 && let Some(e) = effect_by_id(&*tx, effect_id(&claim.id)?)?
-                && !effect_claimable_now(&e, self.env.now_micros(), &claim.dead_owners)
+                && !effect_claimable_now(&e, self.lease_clock(), &claim.dead_owners)
             {
                 return Ok(None);
             }
-            let row = stamp_effect_claim_in(tx, &*self.env, claim)?;
+            let row = stamp_effect_claim_in(tx, &*self.claim_env(), claim)?;
             if row.is_some() {
                 let id = effect_id(&claim.id)?.to_string();
                 fence::claim_taken(
@@ -636,7 +636,7 @@ impl Store {
             {
                 fence::claim_held(self, tx, CLAIM_EFFECT, &id.to_string(), fence)?;
             }
-            let settled = settle_effect_in(tx, &*self.env, action, spec)?;
+            let settled = settle_effect_in(tx, &*self.claim_env(), action, spec)?;
             // Every settle but a renewal ends the claim (it releases the execution token). A settle that matched
             // a claim parsed its id.
             if settled && action != Settle::Renew {

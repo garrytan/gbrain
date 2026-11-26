@@ -1905,10 +1905,10 @@ impl Store {
             fence::begin(self, tx, stamp.fence.as_ref(), "stamp_write_claim")?;
             // Multi-user: a stamp takes only a request that is claimable now, read in this same write, so a delayed
             // direct stamp cannot take a live claim or revive finished work. A plain store stamps as it always has.
-            if self.multiuser() && !write_claimable_now(&*tx, &*self.env, &stamp.id)? {
+            if self.multiuser() && !write_claimable_now(&*tx, &*self.claim_env(), &stamp.id)? {
                 return Ok(None);
             }
-            let row = stamp_write_claim_in(tx, &*self.env, stamp)?;
+            let row = stamp_write_claim_in(tx, &*self.claim_env(), stamp)?;
             if let Some(id) = row.as_ref().and_then(|r| r["id"].as_str()) {
                 let ttl = (stamp.lease_ms.is_finite() && stamp.lease_ms >= 1.0)
                     .then_some(stamp.lease_ms as u64);
@@ -1978,7 +1978,7 @@ impl Store {
                 Some(&stamp.token),
                 stamp.fence.as_ref(),
             )?;
-            renew_write_claim_in(tx, &*self.env, stamp)
+            renew_write_claim_in(tx, &*self.claim_env(), stamp)
         })
     }
 
@@ -2002,7 +2002,8 @@ impl Store {
         self.write(|tx| {
             fence::begin(self, tx, spec.fence.as_ref(), "expire_stale_write_claims")?;
             let mut expired = Vec::new();
-            let released = expire_stale_write_claims_in(tx, &*self.env, spec, &mut expired)?;
+            let released =
+                expire_stale_write_claims_in(tx, &*self.claim_env(), spec, &mut expired)?;
             for id in &expired {
                 fence::claim_ended(
                     self,
@@ -2018,7 +2019,7 @@ impl Store {
 
     /// `hasClaimableWrite(spec)`.
     pub fn has_claimable_write(&self, spec: &ClaimableSpec) -> Result<bool> {
-        has_claimable_write_in(&*self.read()?, &*self.env, spec)
+        has_claimable_write_in(&*self.read()?, &*self.claim_env(), spec)
     }
 
     /// `selectClaimableWrite(spec)`: the row `claimNextWrite` claims next, or `None`; the claim's
@@ -2026,7 +2027,7 @@ impl Store {
     pub fn select_claimable_write(&self, spec: &ClaimableSpec) -> Result<Option<Value>> {
         let read = self.read()?;
         crate::leases::check_fence(self, &*read, spec.fence.as_ref(), "select_claimable_write")?;
-        select_claimable_write_in(&*read, &*self.env, spec)
+        select_claimable_write_in(&*read, &*self.claim_env(), spec)
     }
 
     /// `countOutstandingBySource(principalKind, principalId)`: `[{ source_id, n }]`, one row per source

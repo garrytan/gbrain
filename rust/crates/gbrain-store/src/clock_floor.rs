@@ -33,6 +33,45 @@ pub fn read_high_water(read: &dyn KvRead) -> Result<i64> {
     Ok(crate::redb_kv::read_commit_time(read)?.unwrap_or(0))
 }
 
+/// The live, floored clock as an `Env` whose `now_micros` is the moment of the call (`Env::clock_micros`): what the claim
+/// and lease members read in multi-user mode (G16), so a claim stamped late in a long or rerun transaction is stamped at
+/// the time it is taken, never at the transaction's start, and never below the clock floor.
+pub(crate) struct LiveClock(pub(crate) Arc<dyn Env>);
+
+impl Env for LiveClock {
+    fn now_micros(&self) -> i64 {
+        self.0.clock_micros()
+    }
+    fn clock_micros(&self) -> i64 {
+        self.0.clock_micros()
+    }
+    fn new_uuid(&self) -> String {
+        self.0.new_uuid()
+    }
+}
+
+impl crate::Store {
+    /// The time claim and lease deadlines are computed and checked at (G16): in multi-user mode the moment of the call on
+    /// the floored store clock, so a claim taken late in a transaction opened long ago is not already expired when it
+    /// commits; with the mode off the store's time exactly as before (inside a transaction, its start).
+    pub(crate) fn lease_clock(&self) -> i64 {
+        if self.multiuser() {
+            self.env.clock_micros()
+        } else {
+            self.env.now_micros()
+        }
+    }
+
+    /// [`Self::lease_clock`] as an `Env`, for the claim members that take one.
+    pub(crate) fn claim_env(&self) -> Arc<dyn Env> {
+        if self.multiuser() {
+            Arc::new(LiveClock(self.env.clone()))
+        } else {
+            self.env.clone()
+        }
+    }
+}
+
 impl crate::Store {
     /// The clock floor: the newest durable commit time (`M\0ctime`; 0 when none). It is brain state: a snapshot, a
     /// copy, a takeover or a rebuild from the log carries it with the data.

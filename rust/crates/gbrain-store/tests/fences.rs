@@ -1783,3 +1783,132 @@ fn g18b_a_claimant_step_under_another_live_claim_is_still_refused() {
     }
     assert_eq!(request(&b, &id), held);
 }
+
+// ---- G16: claim and lease times follow the clock at the claim, not the transaction's start ----------------------------
+
+/// G16 (second-model review; Ember's ruling, Nov 25): a claim stamped inside an explicit transaction that has been open
+/// longer than the claim's own lease must not commit already expired. Before the fix the deadline was the transaction's
+/// start time plus the lease, so a sweep right after the commit expired a live claim. Multi-user mode, both store modes.
+#[test]
+fn g16_a_write_claim_stamped_late_in_a_long_transaction_is_not_expired_at_its_commit() {
+    let b = brain("g16-write", true);
+    let a = b.lease("consumer:h", "a");
+    let id = admit_request(&b, REQ);
+    let tx = b.store.begin_transaction(false).unwrap();
+    b.advance_ms(60_000); // longer than the 30 s claim lease
+    assert!(
+        tx.stamp_write_claim(&stamp(&id, TOKEN, Some(&a)))
+            .unwrap()
+            .is_some()
+    );
+    tx.commit_transaction().unwrap();
+    let spec = ExpireClaims {
+        host_id: HOST.into(),
+        charge: false,
+        dead_owners: vec![],
+        fence: Some(a.clone()),
+    };
+    b.store.expire_stale_write_claims(&spec).unwrap();
+    assert_eq!(
+        request(&b, &id)["state"],
+        "running",
+        "a live claim was expired at its own commit"
+    );
+}
+
+#[test]
+fn g16_a_job_claimed_late_in_a_long_transaction_is_not_reclaimed_at_its_commit() {
+    let b = brain("g16-job", true);
+    let a = b.lease("consumer:h", "a");
+    let id = add_job(&b, "work");
+    let tx = b.store.begin_transaction(false).unwrap();
+    b.advance_ms(60_000);
+    assert!(
+        tx.claim_next_job(&claim_spec("w:1", Some(&a)))
+            .unwrap()
+            .is_some()
+    );
+    tx.commit_transaction().unwrap();
+    let swept = b
+        .store
+        .reclaim_stalled_jobs_fenced(0.0, MARK, Some(&a))
+        .unwrap();
+    assert_eq!(swept["requeued"].as_array().unwrap().len(), 0, "{swept}");
+    assert_eq!(job(&b, id)["status"], "active");
+}
+
+#[test]
+fn g16_a_cycle_lock_taken_late_in_a_long_transaction_is_live_at_its_commit() {
+    let b = brain("g16-lock", true);
+    let a = b.lease("consumer:h", "a");
+    let tx = b.store.begin_transaction(false).unwrap();
+    b.advance_ms(11 * 60_000); // longer than the 10 minute lock
+    assert!(
+        tx.acquire_cycle_lock("gbrain-sync:default", &lock_acquire(LOCK_TOKEN, Some(&a)))
+            .unwrap()
+            .is_some()
+    );
+    tx.commit_transaction().unwrap();
+    assert!(
+        b.store
+            .assert_cycle_lease_fenced("gbrain-sync:default", LOCK_TOKEN, Some(&a))
+            .unwrap(),
+        "the lock was already stale at its own commit"
+    );
+}
+
+#[test]
+fn g16_an_effect_claimed_late_in_a_long_transaction_is_not_claimable_again_at_its_commit() {
+    let b = brain("g16-effect", true);
+    let a = b.lease("consumer:h", "a");
+    let id = admit_request(&b, REQ);
+    queue_effect(&b, &id);
+    let candidate = b.store.select_claimable_effect(HOST, &[]).unwrap();
+    let tx = b.store.begin_transaction(false).unwrap();
+    b.advance_ms(3 * 60_000); // longer than the 2 minute effect claim
+    let owner = json!({ "token": TOKEN, "owner": { "pid": 7, "nonce": "n", "start": "s" } });
+    assert!(
+        tx.stamp_effect_claim(&EffectClaim {
+            id: candidate["id"].as_str().unwrap().into(),
+            token: TOKEN.into(),
+            owner_json: owner.to_string(),
+            fence: Some(a.clone()),
+            dead_owners: vec![],
+        })
+        .unwrap()
+        .is_some()
+    );
+    tx.commit_transaction().unwrap();
+    assert!(
+        b.store
+            .select_claimable_effect(HOST, &[])
+            .unwrap()
+            .is_null(),
+        "a live effect claim is claimable again"
+    );
+}
+
+/// With the mode off the time behavior is exactly as before: a claim inside a transaction keeps the transaction's time.
+#[test]
+fn g16_with_the_mode_off_a_claim_keeps_the_transaction_s_time() {
+    let b = brain("g16-off", false);
+    let id = admit_request(&b, REQ);
+    let tx = b.store.begin_transaction(false).unwrap();
+    b.advance_ms(60_000);
+    tx.stamp_write_claim(&stamp(&id, TOKEN, None))
+        .unwrap()
+        .unwrap();
+    tx.commit_transaction().unwrap();
+    let spec = ExpireClaims {
+        host_id: HOST.into(),
+        charge: false,
+        dead_owners: vec![],
+        fence: None,
+    };
+    b.store.expire_stale_write_claims(&spec).unwrap();
+    assert_eq!(
+        request(&b, &id)["state"],
+        "queued",
+        "off-mode behavior changed"
+    );
+}
