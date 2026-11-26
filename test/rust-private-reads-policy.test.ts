@@ -95,7 +95,7 @@ describe('the Rust page and fact policy translator under excludePrivate', () => 
       expect({ name, lineageProvenance: two?.lineageProvenance, ownerRead: two?.ownerRead, callerRecord: two?.callerRecord }).toEqual({ name, lineageProvenance: false, ownerRead: true, callerRecord: true });
       // The pending prefixes and satisfied rules of the record are sent, so the store hides what the text hides (a missing field was a leak in row 32e-b-2).
       for (const policy of [one, two]) expect({ name, folders: { satisfiedRuleIds: policy?.satisfiedRuleIds, folderCoverage: policy?.folderCoverage } }).toEqual({ name, folders });
-      expect({ name, terms: one?.labelledOnly }).toEqual({ name, terms: record.labelledOnly ? { identity: ['member:alice-example'], satisfiedRuleIds: ['default:r1'], lineage: true, member: 'alice-example' } : undefined });
+      expect({ name, terms: one?.labelledOnly }).toEqual({ name, terms: 'labelledOnly' in record ? { identity: ['member:alice-example'], satisfiedRuleIds: ['default:r1'], lineage: true, member: 'alice-example' } : undefined });
     }
     // Without lineage the policy carries none of it: the earlier rule stays.
     for (const read of [first, second]) {
