@@ -817,7 +817,7 @@ export async function getDefaultSourcePath(
   // (absent means NULL), so it is not read again.
   const localPath = seen.registered
     ? seen.registered.find(r => r.id === sourceId)?.local_path ?? null
-    : (await engine.getSource(sourceId))?.local_path ?? null;
+    : (await engine.readSourceRow(sourceId))?.local_path ?? null; // the row the source checks read: `getSource` also selects columns a brain older than v90 lacks
   if (localPath) return localPath;
 
   // Legacy fallback: pre-v0.18 brains stored the repo path in the global

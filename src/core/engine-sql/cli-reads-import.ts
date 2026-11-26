@@ -60,9 +60,11 @@ export async function readPageTrustRows(exec: LegacyUnscopedRead, lookup: PageTr
  * `newest_content_at` (pre-v109) is read again without it, and one that also lacks `archived` (pre-v0.26.5) with the historical minimal columns, so a brain
  * that has `archived` always reports it.
  */
-export async function listSourceRecords(exec: RawQuery): Promise<SourceRecordRow[]> {
+export async function listSourceRecords(exec: RawQuery, attempt: <T>(run: (exec: RawQuery) => Promise<T>) => Promise<T> = run => run(exec)): Promise<SourceRecordRow[]> {
+  // `attempt` runs one shape as its own read: an engine that reads under a deadline puts each in its own transaction, which a missing-column error would otherwise leave failed for the next shape.
+  const read = (sql: string) => attempt(e => e.executeRaw<SourceRecordRow>(sql));
   try {
-    return await exec.executeRaw<SourceRecordRow>(
+    return await read(
       `SELECT id, name, local_path, last_commit, last_sync_at, config, created_at, archived, newest_content_at
          FROM sources
        ORDER BY (id = 'default') DESC, id`,
@@ -71,7 +73,7 @@ export async function listSourceRecords(exec: RawQuery): Promise<SourceRecordRow
     if (!isUndefinedColumnError(err)) throw err;
   }
   try {
-    return await exec.executeRaw<SourceRecordRow>(
+    return await read(
       `SELECT id, name, local_path, last_commit, last_sync_at, config, created_at, archived
          FROM sources
        ORDER BY (id = 'default') DESC, id`,
@@ -79,7 +81,7 @@ export async function listSourceRecords(exec: RawQuery): Promise<SourceRecordRow
   } catch (err) {
     if (!isUndefinedColumnError(err)) throw err;
   }
-  return exec.executeRaw<SourceRecordRow>(
+  return read(
     `SELECT id, name, local_path, last_commit, last_sync_at, config, created_at
        FROM sources
      ORDER BY (id = 'default') DESC, id`,

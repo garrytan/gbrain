@@ -106,7 +106,7 @@ export const TYPED_PREPARATION_READS: ReadonlySet<string> = new Set(['getSource'
   'listFactWithdrawalDates', 'listCorePageRows', 'lockRegisteredSourceIds',
   'getConfig', 'getAllConfig', 'listConfigKeys', 'readStoredConfigValue', 'readPageSnapshot', 'getPage',
   'findDuplicatePage', 'findByTitleFuzzy', 'searchKeyword',
-  'readSegmentTexts', 'readManifest', 'readSegmentedGateEvidence', 'readJobSourceState', 'readJobPrincipal', 'readOauthClient', 'hasLabelledOnlyMember', 'readSegmentedPageHead', 'readSourceIncarnation', 'readStoredPageTier', 'readFactSnapshots',
+  'readSegmentTexts', 'readManifest', 'readSegmentedGateEvidence', 'readJobSourceState', 'readJobPrincipal', 'readOauthClient', 'hasLabelledOnlyMember', 'readSegmentedPageHead', 'readSourceIncarnation', 'hasCompanyBrainReceipt', 'readGuestSourceRow', 'listAllSources', 'readStoredPageTier', 'readFactSnapshots',
   'listForcedCutSeqs', 'readSegmentedVersionBodyBytes',
   // The access, page-visibility, grant and source reads a preparation makes (caller identity, folder rules, writer fences, credential
   // grants, source rows): each ran as a raw statement through this view's `executeRaw` before it became a typed member.
