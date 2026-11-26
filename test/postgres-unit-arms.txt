@@ -273,6 +273,7 @@ test/engine-parity/entity-fuzzy.test.ts
 test/engine-parity/entity-identities.test.ts
 test/engine-parity/entity-names-siblings.test.ts
 test/engine-parity/entity-reads.test.ts
+test/engine-parity/eval-harness-reads.test.ts
 test/engine-parity/export-bytes.test.ts
 test/engine-parity/extract-all-segmented.test.ts
 test/engine-parity/extract-bookkeeping.test.ts
@@ -655,6 +656,7 @@ test/entity-company-auto-link.test.ts
 test/entity-dedupe-decisions.test.ts
 test/entity-dedupe-person-confirm.test.ts
 test/entity-duplicates-finder.test.ts
+test/eval-harness-scan-sql.test.ts
 test/eval-log-tables-parity.test.ts
 test/extract-all-stamp-intersection.serial.test.ts
 test/extract-atoms-concurrent-run-7923.test.ts

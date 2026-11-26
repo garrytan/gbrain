@@ -198,5 +198,7 @@ mod source_cr_mode;
 mod synopsis_tier;
 // The page-list, slug-source, access and connector-status reads (rust/docs/store/list-reads.md).
 mod list_reads;
+// The memory-trust evals' harness reads (rust/docs/store/eval-harness-reads.md).
+mod eval_harness_reads;
 // The legacy_slug_spellings doctor check's page scan (rust/docs/store/slug-spelling-repair.md).
 mod slug_spelling_repair;
