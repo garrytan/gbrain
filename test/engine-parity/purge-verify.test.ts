@@ -7,9 +7,9 @@
  *  - Contract: countPurgeProbe counts each receipt probe kind's rows within the source and stops one row past its row
  *    bound; listPurgeProbeItems names the rows a named-row or effect probe matches, in item order. Both return the
  *    same observable result on every engine arm (PGLite always; Postgres with DATABASE_URL; the Rust arm with
- *    GBRAIN_TEST_RUST_ARM=1). verifyPagePurge builds the same receipt on PGLite and Postgres; the Rust arm serves
- *    the page purge's store probes, so the receipt stops there on the typed `engine_capability_missing` refusal naming
- *    listBeliefEventsForPurgeProbe (lane 3; the source-prose scan, listPageProseHits of lane 4, is another stop of the same receipt). The all-kinds count case runs on the Rust arm: its `fingerprint` and `claim_text` probes are served
+ *    GBRAIN_TEST_RUST_ARM=1). verifyPagePurge builds the same receipt on every engine: the Rust arm serves the page
+ *    purge's store probes, the ledger report's recorded values (listBeliefEventsForPurgeProbe, lane 3) and the
+ *    source-prose scan (listPageProseHits, lane 4). The all-kinds count case runs on the Rust arm: its `fingerprint` and `claim_text` probes are served
  *    (rust/crates/gbrain-store/src/facts/purge_claim_probe.rs; test/engine-parity/fact-purge-probes.test.ts pins them in full).
  *  - Regression: an engine that counts a probe differently reports a purged page or claim as gone while a store still
  *    holds it (or the reverse); the Rust engine has no SQL, so each probe has to exist as a typed member it can
@@ -99,20 +99,11 @@ describe('engine parity: purge receipt reads', () => {
     return { links, timeline };
   });
 
-  parityTest('verifyPagePurge builds the same receipt; the Rust arm refuses naming the ledger read, its lane and its due date', {
-    methods: ['countPurgeProbe', 'listPurgeProbeItems', 'listPageProseHits', 'countPagePurgeTombstones'] }, async (engine, backend) => {
+  parityTest('verifyPagePurge builds the same receipt on every engine', {
+    methods: ['countPurgeProbe', 'listPurgeProbeItems', 'listPageProseHits', 'countPagePurgeTombstones', 'listBeliefEventsForPurgeProbe'] }, async (engine) => {
     const { pageId, factId } = await seed(engine);
     const receipt = await verifyPagePurge(engine, { sourceId: SRC, slug: 'notes/gone', requestId: randomUUID(), removed: {}, blobsRemaining: [],
-      context: { needles: ['Secret Plan'], reasons: ['tidy'], factIds: [factId], pageId, paths: [], segmentShas: [] } }).catch((error: unknown) => {
-      // The refusal is rethrown (the Rust arm counts the case as stopped); it names its lane and when the lane owes the read. The first
-      // read that ends the page receipt on Rust is the ledger report's recorded values (lane 3); the source-prose scan
-      // (listPageProseHits, lane 4, due 5 PM PST Nov 25) is another stop of the same receipt.
-      if (backend === 'rust') {
-        expect((error as Error).message).toContain('listBeliefEventsForPurgeProbe (owner lane 3 (rust-belief-purge e211982aba), due 5 PM PST Nov 24)');
-        expect((error as { detail?: unknown }).detail).toBe('member=listBeliefEventsForPurgeProbe capability=facts outcome=none written=nothing owner="lane 3 (rust-belief-purge e211982aba)" due="5 PM PST Nov 24"');
-      }
-      throw error;
-    });
+      context: { needles: ['Secret Plan'], reasons: ['tidy'], factIds: [factId], pageId, paths: [], segmentShas: [] } });
     const blind = await verifyPagePurge(engine, { sourceId: SRC, slug: 'notes/missing', requestId: randomUUID(), removed: {}, blobsRemaining: [], context: null });
     type Report = { store: string; status: string; remaining?: number; reason?: string; items?: unknown[] };
     const shape = (r: Record<string, unknown>) => ({

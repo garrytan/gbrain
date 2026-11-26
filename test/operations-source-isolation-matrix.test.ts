@@ -134,6 +134,10 @@ const MATRIX: Row[] = [
   { name: 'get_brain_identity', mode: 'brainwide', args: {}, rationale: 'brain-level identity document by design' },
   { name: 'get_brain_health', mode: 'skip', reason: 'returns count bands with no slug or source identity, so the beta-marker scan here would pass vacuously; test/doctor-ops-remote-6696.test.ts seeds per-source write failures and pins the handler to the scalar and federated grant' },
   { name: 'whoami', mode: 'brainwide', args: {}, rationale: 'caller identity/transport echo, no page data' },
+  { name: 'policy_check', mode: 'brainwide', args: { verb: 'send' }, rationale: 'derived decision from the owner-approved agent policy (rule id, revision, state); no page data from any source' },
+  { name: 'agent_policy', mode: 'brainwide', args: {}, rationale: 'the owner-approved agent policy rules (brain-wide by design, company-only for member credentials); no page data from any source' },
+  { name: 'capabilities', mode: 'brainwide', args: {}, rationale: 'per-op served/listed/callable flags for this connection; no page data' },
+  { name: 'ledger', mode: 'brainwide', args: {}, rationale: 'derived totals over the agent_action pages the caller can read (default source; a member reads its own, a guest none); no page text' },
   { name: 'get_memory_settings', mode: 'brainwide', args: {}, rationale: 'brain-wide memory writeback config and its rule text; no page data' },
   { name: 'sources_list', mode: 'brainwide', args: {}, rationale: 'listing sources is its purpose; exposes ids/names only' },
   { name: 'request_tools', mode: 'brainwide', args: { tools: ['get_page'] }, rationale: 'tool registry surface, no page data' },
@@ -159,8 +163,12 @@ const MATRIX: Row[] = [
     expectScoped: r => { expect(r === null || leakToken(r) === null).toBe(true); } },
   { name: 'entity_identity_list', mode: 'isolated', args: {} },
   { name: 'list_pages', mode: 'isolated', args: { limit: 100 } },
+  { name: 'onboarding_status', mode: 'skip', reason: 'reads only the install receipt and the first-session record (state, counts, a reason code), never a page or a source; test/first-session-suggestion.test.ts pins its states' },
+  { name: 'household_due', mode: 'skip', reason: 'reads only type household pages, which this fixture does not seed; test/household-remote.test.ts pins its source posture (a token granted another source reads no record, an out-of-grant source_id is refused) and member scoping' },
   { name: 'find_pages', mode: 'isolated', args: { pattern: '*', limit: 100 } },
   { name: 'search', mode: 'isolated', args: { query: 'BETAMARKER', limit: 20 } },
+  // check_claims cites an allowed-claims line only from a source the caller reads (C3).
+  { name: 'check_claims', mode: 'isolated', args: { text: 'We have 77 widgets.' } },
   { name: 'query', mode: 'isolated', args: { query: 'BETAMARKER', limit: 20 } },
   // search_exact echoes its phrase, so the probe reads the matches and the unreadable-page sample.
   { name: 'search_exact', mode: 'isolated', args: { phrase: 'BETAMARKER' },
@@ -256,6 +264,11 @@ beforeAll(async () => {
       type: 'note', title: `${MARK} Note`, compiled_truth: `${name}-secret-content ${MARK}`,
       timeline: `- ${TODAY}: ${MARK} timeline entry`, frontmatter: { marker: MARK },
     }, { sourceId: src });
+    if (name === 'beta') {
+      await engine.putPage('facts/beta-claims', {
+        type: 'facts', title: `${MARK} Facts`, compiled_truth: `- 2026-01-01: 77 ${MARK} widgets.`, frontmatter: { claims: 'allowed' },
+      }, { sourceId: src });
+    }
     // Typeless page: schema_review_orphans lists pages with NULL/empty type.
     await engine.putPage(`misc/${name}-orphan`, {
       type: 'note', title: `${MARK} Orphan`, compiled_truth: `${MARK} orphan`, frontmatter: {},

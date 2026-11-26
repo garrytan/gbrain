@@ -510,16 +510,11 @@ describe('engine parity: purge, purge receipt and held-fact move statements of t
     return { first: first.contexts, second: second.contexts, third: third.contexts, fromOther: fromOther.contexts };
   });
 
-  // Named Rust stop: the purge dry run refuses first on countPurgeVersionsCarryingClaim, served by lane 3's purge-sweep
-  // commit 77bea7e975 (not on this base). The next stop is listBeliefEventsForPurgeProbe, which stays refused on Rust
-  // (an empty answer would report belief_events clean on a store that records them); lane 3 serves it as a keyset read
-  // of belief_events. Whichever lands second unpins this case.
-  // On a Rust brain the CLI call stops at the purge's pre-write check (persistence/fact-purge-path-members.ts): with the
-  // purge transaction's members served, its first stop is the raw-SQL site rewriteLiveSegmentedFences (segmented
-  // rewrite, owner and date in that list), so the case needs raw_sql there. The MCP call is refused as host-only first.
+  // On a Rust brain the receipt's ledger reads (listBeliefEventsForPurgeProbe, listFactContextsForPurgeProbe) are served
+  // and the source records no belief events, so the CLI call passes the purge's pre-write check
+  // (persistence/fact-purge-path-members.ts) and equals PGLite. The MCP call is refused as host-only first.
   parityTest('purge_fact gives CLI and MCP callers the same belief_events and fact_context reports when the brain records no belief events', {
     methods: ['insertFact', 'listBeliefEventsForPurgeProbe', 'listFactContextsForPurgeProbe'],
-    requires: 'raw_sql',
     timeout: 120_000,
   }, async (engine) => {
     const target = await fact(engine, 'Alice likes oolong tea', { entity_slug: 'people/alice', context: 'said at lunch' });

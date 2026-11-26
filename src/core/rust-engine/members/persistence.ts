@@ -185,6 +185,7 @@ export const PERSISTENCE_MEMBERS = {
   insertOpCheckpointIfAbsent: 'persistence_journal',
   replaceOpCheckpointAtVersion: 'persistence_journal',
   upsertFenceTrendRunRecord: 'persistence_journal',
+  addSoakCounterEvent: 'persistence_journal',
   readOldestSyncHoldAt: 'persistence_journal',
   reclaimBudgetReservations: 'persistence_journal',
   reserveBudgetReservation: 'persistence_journal',
@@ -291,6 +292,8 @@ export const PERSISTENCE_MEMBERS = {
   listResumableRefreshes: 'persistence_journal',
   listSourceLastCommits: 'persistence_journal',
   stampEffectClaim: 'persistence_journal',
+  // Refuses as the executeRaw it replaced did while the managed_persistence hold is on (store-members/managed-hold.ts).
+  claimCoalescedGitEffects: 'raw_sql',
   renewEffectClaim: 'persistence_journal',
   advanceEffectRow: 'persistence_journal',
   completeEffectRow: 'persistence_journal',

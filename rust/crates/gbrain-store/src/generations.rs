@@ -31,6 +31,8 @@
 //! - The reads of `gbrain repair generations` add no keys (`generations/repair.rs`, members
 //!   readGenerationItemsByIds, listUnmatchedGenerationRows, listRestorableGenerationRows,
 //!   listHeldGenerationRows and readHeldGenerationProposal).
+//! - The doctor's generation reads add no keys (`generations/doctor_reads.rs`, members
+//!   listLiveGenerationRetirements and listHeldGenerations).
 //! - The fence evidence reads of `generations/fence-evidence.ts` and the fence restore reads of
 //!   `generations/fence-restore.ts` add no keys (`generations/fence_evidence.rs`, members
 //!   listRecordedFenceItemKeys, hasBodylessPageVersion and listFenceVersionBodies;
@@ -67,7 +69,8 @@ use std::collections::BTreeSet;
 mod activations;
 mod atom_reads;
 mod chronicle_events;
-mod derivation_inputs;
+pub(crate) mod derivation_inputs;
+mod doctor_reads;
 mod fence_evidence;
 mod fence_restore;
 mod lost_fence;

@@ -7,6 +7,7 @@ import type { AmendmentNotAppliedRow, AmendmentsNotAppliedSpec, BeliefHistoryRow
 import type { BodyManifestMeta, BodyManifestOutline, BodyManifestRow, ExportPageKey, ExportPageKeyQuery, ExportPageRow, ExportWithdrawalRow, NormalizedFenceLines, SegmentedPageHead } from '../engine-sql/export-reads.ts';
 import type { BriefEntityPageOpts, BriefEntityPageRow, ReflexPageMatch, ReflexPageRow, ReflexScope } from '../engine-sql/reflex-reads.ts';
 import type * as BriefReadsSql from '../engine-sql/brief-reads.ts';
+import type * as ConceptRebuildSql from '../engine-sql/concept-rebuild.ts';
 import type * as EmbeddingCatalogSql from '../engine-sql/embedding-catalog.ts';
 import type * as ChronicleReadsSql from '../engine-sql/chronicle-reads.ts';
 import type { EntityAnchoredPages, EntityCardMatch, EntityCardRow, ExtractionLagCounts, ExtractionLagQuery, FuzzyEntityCandidateRow, IgnoredLabelPageRow, InboundLinkerCountRow, LivePageTypeRow, MentionDueQuery, MentionIndexRecount, MentionIndexStatusRow, NameVariantCandidateQuery, NameVariantCandidateRow, PrefixCandidateQuery, PrefixCandidateRow, PrefixTitleRow, ResolverPrivacy, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow, SlugPatternPageRow, TextMentionPageRow, TrigramCandidateQuery, TrigramCandidateRow } from '../engine-sql/entity-reads.ts';
@@ -15,6 +16,7 @@ import type { ExactIdentityRow, ExactIdentityStatementOpts } from '../engine-sql
 import type { ExactRescanChunkRow, ExactSnippetChunkRow, ExactSnippetKey, ExtractionPendingRow, FenceOverlayIncomingRow, FenceOverlayRow, FenceRowKey, FenceRowTrust, HeldFenceCellKey, HeldFenceCellRow, LongPageSizeRow, PageTypeProbe, RankCoverageRow, UnattributedFactRow, WantedPageRow } from '../engine-sql/cli-reads-ops.ts';
 import type { FactReadableSpec, FactWithdrawalClaim, FactWithdrawalClaimSpec, ForgetTargetRow, ForgetTargetSpec, LinkedFactCopiesSpec, LinkedFactCopy, OwnerReachSpec, SourceWriteRow } from '../engine.ts';
 import type { PageReadScope } from '../types.ts';
+import type { PrivateOnlySlugScope } from '../engine-sql/page-visibility.ts';
 import type { FrontmatterWhere } from '../search/frontmatter-where.ts';
 import type { RankCoverageStatementOpts, RankEntitiesStatementOpts, RankEntityRow } from '../engine-sql/graph-rank.ts';
 import type { WithdrawalDiscoveryKind, WithdrawalDiscoveryRead, WithdrawalDiscoveryRows } from '../engine-sql/withdrawal-discovery.ts';
@@ -192,6 +194,14 @@ export interface ReadStatementMembers {
   readEntityAnchoredPages(sourceId: string, entitySlug: string): Promise<EntityAnchoredPages>;
   /** The title of each page id, deleted or not, in no set order. */
   readPageTitlesById(ids: readonly number[]): Promise<Array<{ id: number; title: string }>>;
+  /** `{ has_visual }` of the image page row at `slug` when it is sealed past the safe-chunk fence, else null (importImageFile). */
+  readImageSealProbe(sourceId: string, slug: string): Promise<{ has_visual: boolean } | null>;
+  /** The stored chunker version of the page row with the id (live, deleted or segmented), or null when no row has it. */
+  readPageChunkerVersion(pageId: number): Promise<{ chunker_version: number | null } | null>;
+  /** Up to 10 newest live pages of the source under a literal slug prefix, no question, synthesis or pinned-question page. */
+  readPrefixAnchoredPages(sourceId: string, prefix: string): Promise<Array<{ id: number; slug: string }>>;
+  /** The slugs whose every in-scope page row (live unless `includeDeleted`) the caller's page policy hides, in no set order. */
+  readPrivateOnlySlugs(slugs: readonly string[], scope?: PrivateOnlySlugScope, opts?: { includeDeleted?: boolean }): Promise<string[]>;
   /** The live pages at `slugs` in `sourceIds` with title, type, frontmatter and `COALESCE(effective_date, updated_at)` as `date` (the entity card's text mentions). */
   readTextMentionPages(sourceIds: readonly string[], slugs: readonly string[]): Promise<TextMentionPageRow[]>;
   /** The retrieval reflex's alias live recheck: the live pages in the scope at `slugs`, as (slug, source_id), in no set order. */
@@ -326,6 +336,12 @@ export interface ReadStatementMembers {
   carryConceptIncomingLinks(sourceId: string, slug: string, incoming: readonly unknown[], oldId: number): Promise<{ id: number; carried: number } | null>;
   /** When a tombstone's `hours` recovery window ends (ISO, UTC) and whether it has; null for a live or missing page. */
   readTombstoneWindow(pageId: number, hours: number): Promise<{ until: string; past: boolean } | null>;
+  /** What on or about the concept row synthesis did not write (the stated kinds), with its bounded lead and segmented mark. */
+  readConceptStatedKinds(pageId: number, sourceId: string, slug: string, lists: ConceptRebuildSql.StatedKindLists): Promise<ConceptRebuildSql.ConceptStatedRow>;
+  /** Who may read the page row with the id, live or deleted, as the read predicate decides it; null when no row has it. */
+  readRebuildAccess(pageId: number): Promise<ConceptRebuildSql.RebuildAccess | null>;
+  /** Every held concept, by source then slug, with whether it is private and whether a live member page is. */
+  readHeldConceptRows(): Promise<ConceptRebuildSql.HeldConceptRow[]>;
   /**
    * The engine graduation inventory's catalog reads (SQL in engine-sql/graduation-catalog.ts). listCatalogRelations
    * returns the SQL relations of the current schema, or on a store with no relations (the Rust engine) its keyspace
