@@ -5,10 +5,10 @@ src/core/code-graph-readiness.ts	1
 src/core/code-intel/read-scope.ts	1
 src/core/code-intel/recursive-walk.ts	2
 src/core/embed-stale-images.ts	1
-src/core/embedding-invalidation.ts	4
+src/core/embedding-invalidation.ts	3
 src/core/embedding-migration-retention.ts	1
 src/core/embedding-migration-worst-case.ts	2
-src/core/embedding-migration.ts	8
+src/core/embedding-migration.ts	7
 src/core/engine-sql/chunks.ts	6
 src/core/engine-sql/code-edges.ts	1
 src/core/engine-sql/entity-reads.ts	3

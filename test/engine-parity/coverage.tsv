@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2456/2483
+# covered: 2462/2489
 # lifecycle: 12/12
 # pages: 141/142
 # search: 8/8
@@ -45,7 +45,7 @@
 # cli_reads_export: 14/14
 # cli_reads_ops: 15/15
 # facts_doctor: 14/14
-# embedding_catalog: 8/8
+# embedding_catalog: 14/14
 # fact_relink_attempts: 3/3
 # fact_relink_writes: 3/3
 # facts_cycle: 13/13
@@ -137,7 +137,7 @@ getPage	pages	yes	289	yes	yes	yes	serves
 readPageSnapshot	pages	yes	104	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	7	no	yes	yes	serves
 lockPageKeys	pages	yes	17	no	yes	yes	serves
-putPage	pages	yes	1367	yes	yes	yes	serves
+putPage	pages	yes	1371	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	45	yes	yes	yes	serves
@@ -356,14 +356,14 @@ listWithdrawalChunks	chunks	yes	1	no	yes	yes	serves
 deleteChunksForPages	chunks	yes	3	no	yes	yes	serves
 listContextualModeCandidates	chunks	yes	1	no	yes	yes	serves
 resolveFrozenHits	chunks	yes	6	no	yes	yes	serves
-upsertChunks	chunks	yes	73	yes	yes	yes	serves
+upsertChunks	chunks	yes	74	yes	yes	yes	serves
 sealChunks	chunks	yes	97	no	yes	yes	serves
 getChunks	chunks	yes	78	yes	yes	yes	serves
 getChunkPage	chunks	yes	14	no	yes	yes	serves
 getChunkWindows	chunks	yes	14	no	yes	yes	serves
 countStaleChunks	chunks	yes	9	no	yes	yes	serves
 sumStaleChunkChars	chunks	yes	4	no	yes	yes	serves
-setPageEmbeddingSignature	chunks	yes	6	no	yes	yes	serves
+setPageEmbeddingSignature	chunks	yes	7	no	yes	yes	serves
 invalidateStaleSignatureEmbeddings	chunks	yes	1	no	yes	yes	serves
 invalidateContentDriftEmbeddings	chunks	yes	2	no	yes	yes	serves
 listStaleChunks	chunks	yes	4	no	yes	yes	serves
@@ -649,7 +649,7 @@ readFactTrustTier	facts	yes	2	no	yes	yes	serves
 listFenceFactRowNums	facts	yes	2	no	yes	yes	serves
 readLiveFactRowTier	facts	yes	1	no	yes	yes	serves
 insertFact	facts	yes	199	yes	yes	yes	serves
-insertFacts	facts	yes	278	no	yes	yes	serves
+insertFacts	facts	yes	279	no	yes	yes	serves
 deleteFactsForPage	facts	yes	8	no	yes	yes	serves
 expireFact	facts	yes	94	no	yes	yes	serves
 listFactsByEntity	facts	yes	66	yes	yes	yes	serves
@@ -772,8 +772,8 @@ replaceDerivedAliases	sync_aliases	yes	18	no	yes	yes	serves
 refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	3	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	2	no	yes	yes	serves
-getConfig	config	yes	61	no	yes	yes	serves
-setConfig	config	yes	97	no	yes	yes	serves
+getConfig	config	yes	60	no	yes	yes	serves
+setConfig	config	yes	99	no	yes	yes	serves
 unsetConfig	config	yes	4	no	yes	yes	serves
 listConfigKeys	config	yes	5	no	yes	yes	serves
 getAllConfig	config	yes	2	no	yes	yes	serves
@@ -1438,6 +1438,12 @@ countSegmentedCensusPages	facts_doctor	yes	2	no	yes	yes	serves
 readFactTableCatalog	facts_doctor	yes	1	no	yes	yes	serves
 listFactsPageBodies	facts_doctor	yes	3	no	yes	yes	serves
 readChunkVectorColumn	embedding_catalog	yes	4	no	yes	yes	serves
+readEmbeddingColumnTypmod	embedding_catalog	yes	3	no	yes	yes	serves
+readEmbeddingSignatureCensus	embedding_catalog	yes	4	no	yes	yes	serves
+countUnembeddedLiveFacts	embedding_catalog	yes	2	no	yes	yes	serves
+countSynopsisTierPages	embedding_catalog	yes	1	no	yes	yes	serves
+countEmbedSkipNullChunks	embedding_catalog	yes	1	no	yes	yes	serves
+readFalseStampedChunkCounts	embedding_catalog	yes	3	no	yes	yes	serves
 readEmbeddingIdentity	embedding_catalog	yes	1	no	yes	yes	serves
 listEmbeddingStores	embedding_catalog	yes	1	no	yes	yes	serves
 hasStoredVectors	embedding_catalog	yes	2	no	yes	yes	serves

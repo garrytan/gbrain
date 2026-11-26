@@ -19,6 +19,7 @@ import { budgetRowAppliesFilter } from '../src/core/page-size-policy.ts';
 import { chunkGenerationFilter, chunkGenerationProbe, requiresSafeChunks, safeChunksFilter, servedTextProjectionFilter } from '../src/core/search/safe-chunks.ts';
 import { TIMELINE_SEPARATOR } from '../src/core/page-window/document.ts';
 import { quoteIdentifier } from '../src/core/search/embedding-column.ts';
+import { falseStampPageWhere } from '../src/core/embedding-invalidation.ts';
 import { retiredPageSql } from '../src/core/entities/resolve.ts';
 import { rankingLinkSql } from '../src/core/link-ranking-policy.ts';
 import { boundedBodyPrefixSql } from '../src/core/page-window/bounded-lead.ts';
@@ -2776,6 +2777,63 @@ const PINS: Pin[] = [
     EXISTS (SELECT 1 FROM derivation_inputs d JOIN pages m ON m.id::text = d.input_id AND d.input_table = 'pages'
       WHERE d.derived_table = 'pages' AND d.derived_id = p.id::text AND m.deleted_at IS NULL AND NOT (${privatePagesFilterFragment('m')})) AS members_private
     FROM (SELECT $1::text AS owed_op) q, pages p WHERE ${HELD_CONCEPT_SQL} ORDER BY p.source_id, p.slug`],
+  },
+  {
+    from: 'src/core/embedding-migration.ts:542 readDimPinnedWidths (one table\'s declared vector width; at 85ad984039)',
+    case: { method: 'readEmbeddingColumnTypmod', variant: 'default', run: e => e.readEmbeddingColumnTypmod('facts') },
+    texts: [`SELECT a.atttypmod AS dim
+           FROM pg_attribute a
+           JOIN pg_class c ON c.oid = a.attrelid
+           JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE n.nspname = 'public' AND c.relkind = 'r'
+            AND c.relname = $1 AND a.attname = 'embedding'
+            AND a.attnum > 0 AND NOT a.attisdropped`],
+  },
+  {
+    from: 'src/core/embedding-migration.ts:808 readMigrationStatus (the signature census; at 85ad984039)',
+    case: { method: 'readEmbeddingSignatureCensus', variant: 'default', run: e => e.readEmbeddingSignatureCensus() },
+    texts: [`SELECT embedding_signature AS signature, count(*)::int AS pages
+         FROM pages WHERE deleted_at IS NULL
+        GROUP BY embedding_signature ORDER BY count(*) DESC LIMIT 5`],
+  },
+  {
+    from: 'src/core/embedding-migration.ts:818 readMigrationStatus (facts pending; at 85ad984039)',
+    case: { method: 'countUnembeddedLiveFacts', variant: 'default', run: e => e.countUnembeddedLiveFacts(['audit']) },
+    texts: [`SELECT count(*)::int AS n FROM facts
+        WHERE embedding IS NULL AND expired_at IS NULL
+          AND NOT (source = ANY($1::text[]))`],
+  },
+  {
+    from: 'src/core/embedding-migration.ts:829 readMigrationStatus (the synopsis tier; at 85ad984039)',
+    case: { method: 'countSynopsisTierPages', variant: 'default', run: e => e.countSynopsisTierPages() },
+    texts: [`SELECT count(*)::int AS n FROM pages
+        WHERE deleted_at IS NULL AND contextual_retrieval_mode = 'per_chunk_synopsis'`],
+  },
+  {
+    from: 'src/core/embedding-migration.ts:845 readMigrationStatus (embed_skip chunks with no vector; at 85ad984039)',
+    case: { method: 'countEmbedSkipNullChunks', variant: 'default', run: e => e.countEmbedSkipNullChunks() },
+    texts: [`SELECT count(*)::int AS n FROM content_chunks cc
+         JOIN pages p ON p.id = cc.page_id
+        WHERE cc.embedding IS NULL
+          AND (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')`],
+  },
+  {
+    from: 'src/core/embedding-invalidation.ts:124 countFalseStampedChunks (#4305; at 85ad984039)',
+    case: { method: 'readFalseStampedChunkCounts', variant: 'default', run: e => e.readFalseStampedChunkCounts('embedding', 'openai:text-embedding-3-large:1536', 'openai:text-embedding-3-large') },
+    // The caller's interpolations (the quoted column and falseStampPageWhere) are rebuilt from their builders, so a drift fails.
+    texts: () => {
+      const colId = quoteIdentifier('embedding');
+      return [`WITH fs AS (
+       SELECT p.id FROM pages p
+        WHERE ${falseStampPageWhere(colId)}
+     )
+     SELECT count(DISTINCT fs.id)::int AS pages,
+            count(cc.id)::int AS chunks,
+            COALESCE(sum(length(cc.chunk_text)), 0)::bigint AS chars
+       FROM fs
+       JOIN content_chunks cc ON cc.page_id = fs.id
+      WHERE cc.${colId} IS NOT NULL`];
+    },
   },
   {
     from: 'src/core/search/entity-anchor.ts:116 applyEntityAnchoring (the anchored page titles; at efeb078093)',

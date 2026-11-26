@@ -295,7 +295,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'countUnlinkedFactsByOrigin', 'countUnlinkedFactStats', 'countFactRelinkOutcomes', 'listUnlinkedConversationSlugs', 'countFactEmbeddingCoverage',
     'countStaleFactEmbeddings', 'countSegmentedCensusPages', 'listFactsPageBodies', 'readFactTableCatalog'],
   // embedding_catalog: the vector column catalog the embedding commands read (engine-sql/embedding-catalog.ts)
-  embedding_catalog: ['readChunkVectorColumn', 'readEmbeddingIdentity', 'listEmbeddingStores', 'hasStoredVectors', 'countChunkVectorCoverage',
+  embedding_catalog: ['readChunkVectorColumn', 'readEmbeddingColumnTypmod', 'readEmbeddingSignatureCensus', 'countUnembeddedLiveFacts', 'countSynopsisTierPages', 'countEmbedSkipNullChunks', 'readFalseStampedChunkCounts', 'readEmbeddingIdentity', 'listEmbeddingStores', 'hasStoredVectors', 'countChunkVectorCoverage',
     'readChunkColumnTypes', 'countChunkColumnCoverage', 'hasChunkImageVectors'],
 
   // fact_relink_attempts: relink-attempt memos

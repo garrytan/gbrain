@@ -1479,6 +1479,12 @@ export class PostgresEngine implements BrainEngine {
   countSegmentedCensusPages(sourceIds: string[], checkedOutSourceIds: string[]) { return factsDoctorImpl.countSegmentedCensusPages(this.executeRaw.bind(this), sourceIds, checkedOutSourceIds); }
   readFactTableCatalog() { return factsDoctorImpl.readFactTableCatalog(this.executeRaw.bind(this)); }
   readChunkVectorColumn(column: string) { return embeddingCatalogImpl.readChunkVectorColumn(this.executeRaw.bind(this), column); }
+  readEmbeddingColumnTypmod(table: string) { return embeddingCatalogImpl.readEmbeddingColumnTypmod(this.executeRaw.bind(this), table); }
+  readEmbeddingSignatureCensus() { return embeddingCatalogImpl.readEmbeddingSignatureCensus(this.executeRaw.bind(this)); }
+  countUnembeddedLiveFacts(excludedSources: readonly string[]) { return embeddingCatalogImpl.countUnembeddedLiveFacts(this.executeRaw.bind(this), excludedSources); }
+  countSynopsisTierPages() { return embeddingCatalogImpl.countSynopsisTierPages(this.executeRaw.bind(this)); }
+  countEmbedSkipNullChunks() { return embeddingCatalogImpl.countEmbedSkipNullChunks(this.executeRaw.bind(this)); }
+  readFalseStampedChunkCounts(column: string, signature: string, model: string) { return embeddingCatalogImpl.readFalseStampedChunkCounts(this.executeRaw.bind(this), column, signature, model); }
   readEmbeddingIdentity() { return embeddingCatalogImpl.readEmbeddingIdentity(this.executeRaw.bind(this), () => this.getConfig('embedding_model')); }
   listEmbeddingStores() { return embeddingCatalogImpl.listEmbeddingStores(this.executeRaw.bind(this)); }
   hasStoredVectors(store: embeddingCatalogImpl.EmbeddingStore) { return embeddingCatalogImpl.hasStoredVectors(this.executeRaw.bind(this), store); }

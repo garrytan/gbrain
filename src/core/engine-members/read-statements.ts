@@ -101,6 +101,18 @@ export interface ReadStatementMembers {
   // and PGLite read their catalog; the Rust engine reads its per-vector records (an empty store has no column yet).
   /** A `content_chunks` vector column: whether it exists and its width (null when the type is not a vector type). */
   readChunkVectorColumn(column: string): Promise<EmbeddingCatalogSql.ChunkVectorColumn>;
+  /** migrate embeddings --status: the declared width of `table`.embedding (one row, or none when absent). */
+  readEmbeddingColumnTypmod(table: string): Promise<Array<{ dim: number | null }>>;
+  /** migrate embeddings --status: live pages per stored embedding signature, the five largest groups. */
+  readEmbeddingSignatureCensus(): Promise<Array<{ signature: string | null; pages: number }>>;
+  /** migrate embeddings --status: unexpired facts with no vector outside `excludedSources`. */
+  countUnembeddedLiveFacts(excludedSources: readonly string[]): Promise<number>;
+  /** migrate embeddings --status: live pages on the per-chunk synopsis tier. */
+  countSynopsisTierPages(): Promise<number>;
+  /** migrate embeddings --status: chunks with no vector on embed_skip pages. */
+  countEmbedSkipNullChunks(): Promise<number>;
+  /** #4305: live pages stamped `signature` whose embedded chunks in `column` carry another model, with those chunks. */
+  readFalseStampedChunkCounts(column: string, signature: string, model: string): Promise<{ pages: number; chunks: number; chars: number }>;
   /** The stored embedding identity (model and width of `content_chunks.embedding`); null when the brain has no vector column. Postgres and PGLite throw when the width is unknown. */
   readEmbeddingIdentity(): Promise<EmbeddingCatalogSql.EmbeddingIdentity | null>;
   /** The tables that carry an `embedding` vector column, in PRIMARY_EMBEDDING_TABLES order. */
