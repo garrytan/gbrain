@@ -269,7 +269,11 @@ fn the_known_lists_match_the_key_files() {
     found.retain(|b| *b >= 0x20); // the keyword kind bytes are numbers, not tags
     assert_eq!(
         found,
-        KNOWN_TAGS.iter().copied().collect(),
+        KNOWN_TAGS
+            .iter()
+            .chain(UNCLASSIFIED_TAGS)
+            .copied()
+            .collect(),
         "classify a new key tag in restore.rs (a tag that holds authority must refuse, since nothing revokes it)"
     );
     let mut jobs = BTreeSet::new();

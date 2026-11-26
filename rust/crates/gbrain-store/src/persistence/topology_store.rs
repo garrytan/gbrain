@@ -957,7 +957,7 @@ fn topology_write_in(tx: &mut dyn KvWrite, env: &dyn Env, what: &TopologyWrite) 
 impl crate::Store {
     /// One `topologyStore()` read (`TopologyRead`) as JSON.
     pub fn topology_rows(&self, what: &TopologyRead) -> Result<Value> {
-        topology_rows_in(&*self.read()?, &*self.env, self.brain_id(), what)
+        topology_rows_in(&*self.read()?, &*self.env, &self.brain_id(), what)
     }
 
     /// One `topologyStore()` write (`TopologyWrite`); its result as JSON.
