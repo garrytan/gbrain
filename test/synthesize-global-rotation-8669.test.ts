@@ -170,6 +170,7 @@ describe('the synthesize turn moves forward through every owning source (#8669)'
         await engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', [id, join(dir, id)]);
       }
       await engine.setConfig('dream.synthesize.rotation_turn', 'default');
+      await engine.setConfig('dream.synthesize.rotation_owners', '[]');
       await run(alpha, beta);
     } finally {
       await engine.executeRaw('DELETE FROM sources WHERE id = ANY($1::text[])', [[alpha, beta]]);
@@ -187,6 +188,15 @@ describe('the synthesize turn moves forward through every owning source (#8669)'
       expect(await step(result('ok', routing([alpha, beta])))).toEqual({ ran: 'default', next: alpha });
       expect(await step(result('fail', {}))).toEqual({ ran: alpha, next: beta });
       expect(await step(result('ok', routing(['default', alpha])))).toEqual({ ran: beta, next: 'default' });
+    });
+  });
+
+  test('a malformed stored owners value does not freeze the turn', async () => {
+    await withSources(async (alpha, beta) => {
+      await engine.setConfig('dream.synthesize.rotation_owners', 'not-json');
+      expect(await step(result('ok', routing([alpha, beta])))).toEqual({ ran: 'default', next: alpha });
+      await engine.setConfig('dream.synthesize.rotation_owners', 'not-json');
+      expect(await step(result('fail', {}))).toEqual({ ran: alpha, next: 'default' });
     });
   });
 

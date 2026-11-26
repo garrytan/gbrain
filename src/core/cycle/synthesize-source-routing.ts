@@ -189,11 +189,13 @@ async function passSynthesisTurn(engine: BrainEngine, home: string, ran: string,
   if (result.status === 'skipped' && (result.details.reason === 'cooldown_active' || result.details.reason === 'insufficient_cycle_budget')) return;
   const routing = result.details.source_routing as SessionSourceRouting | undefined;
   const seen = Object.keys(routing?.corpus_source_other ?? {});
-  const stored: unknown = JSON.parse(await engine.getConfig(SYNTHESIS_OWNERS_KEY) ?? '[]');
+  const raw = await engine.getConfig(SYNTHESIS_OWNERS_KEY);
+  let stored: unknown = [];
+  try { stored = JSON.parse(raw ?? '[]'); } catch { /* silent-read-ok: a malformed owners list is rebuilt from this run's routing and rewritten below */ }
   const known = Array.isArray(stored) ? stored.filter((id): id is string => typeof id === 'string') : [];
   const checkouts = await turnCheckouts(engine);
   const owners = [...new Set(ran === home && routing ? seen : [...known, ...seen])].filter(id => id !== home && checkouts.has(id)).sort();
-  if (owners.join('\n') !== known.join('\n')) await engine.setConfig(SYNTHESIS_OWNERS_KEY, JSON.stringify(owners));
+  if (owners.join('\n') !== known.join('\n') || !Array.isArray(stored)) await engine.setConfig(SYNTHESIS_OWNERS_KEY, JSON.stringify(owners));
   const order = [home, ...owners].sort();
   await engine.setConfig(SYNTHESIS_TURN_KEY, order.find(id => id > ran) ?? order[0]!);
 }
