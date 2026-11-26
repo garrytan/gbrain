@@ -151,7 +151,7 @@ never a pass. With no shadow running, every criterion is `missing`.
     fetch the eval gates."*
 11. Eligibility: exactly one observed writer host in the last 7 days with no unknown write path (zero observed hosts
     is no evidence, `writer_coverage_unknown`, never "one host"), a personal brain (not a mounted team brain), and a
-    shadow host on a preview target. An observed writer since the current evidence epoch began (less the 10 minute refresh slack; the 7-day window does not cut it off, however long the epoch runs)
+    shadow host on a preview target. An observed writer since the current evidence epoch began (less the 10 minute refresh slack; the 7-day window does not cut it off, however long the epoch runs; an epoch manifest that is there and cannot be read counts as an unknown write path too, while no manifest at all means no epoch yet)
     whose row has no `write_protocol`, or one below this build's (2), was written by an older build that keeps no
     per-session record of write samples, so its lost samples cannot be shown to be recorded: it counts as an unknown
     write path (`legacy_write_writers`). The column is added by an additive migration (nullable, no default, no

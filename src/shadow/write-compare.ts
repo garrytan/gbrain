@@ -195,8 +195,15 @@ export function outstandingReceipts(dir: string, epoch: string | null): string[]
 export function sampleWeight(line: string): number {
   if (!line.startsWith('{"t":"write"')) return 0;
   const dropped = /,"dropped":(\d{1,5})\}\n$/.exec(line.length > 40 ? line.slice(-40) : line);
-  return 1 + (dropped ? Math.min(Number(dropped[1]), 10_000) : 0);
+  return 1 + (dropped ? droppedWeight(Number(dropped[1])) : 0);
 }
+/** The most earlier losses one sample line carries (the sampler cuts to it and keeps the rest for later lines). */
+export const MAX_DROPPED = 10_000;
+/**
+ * How many owed samples the `dropped` count of a line stands for: the ONE rule the sampler (which never writes more than `MAX_DROPPED`), the supervisor's `sampleWeight` (which reads at most five digits) and the child (which credits what it read)
+ * all use, so a line settles exactly the weight it was owed and never more. A count that is not a whole number from 1 to 99,999 is no count at all (a line the sampler did not write): 0.
+ */
+export const droppedWeight = (n: unknown): number => (Number.isInteger(n) && (n as number) >= 1 && (n as number) <= 99_999 ? Math.min(n as number, MAX_DROPPED) : 0);
 
 /** The name a session has in file names, in the tally's `settled` map and on lost lines. */
 export const sessionKey = (session: string): string => session.replace(/[^A-Za-z0-9_-]/g, '_');

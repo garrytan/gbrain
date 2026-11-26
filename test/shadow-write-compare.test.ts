@@ -30,7 +30,8 @@ import { shadowRoot } from '../src/shadow/state.ts';
 import { scratchRootDefault } from '../src/shadow/write-compare-child.ts';
 import { faultsPath, readFaults } from '../src/shadow/ledger.ts';
 import { sampleWeight } from '../src/shadow/supervisor.ts';
-import { lostPath, movedOutsideFootprint, owedPath, pageRefs, readWriteSnapshot, readWriteTally, recordLost, sentPath, sessionKey, unfoldedLost, unfoldedLines, writeOwed, writeTallyPath, WriteTally, SAVE_FAILURE_EXIT_MS, type OwedRecord, type WriteEvent } from '../src/shadow/write-compare.ts';
+import { createWriteSampler } from '../src/shadow/write-capture.ts';
+import { droppedWeight, MAX_DROPPED, lostPath, movedOutsideFootprint, owedPath, pageRefs, readWriteSnapshot, readWriteTally, recordLost, sentPath, sessionKey, unfoldedLost, unfoldedLines, writeOwed, writeTallyPath, WriteTally, SAVE_FAILURE_EXIT_MS, type OwedRecord, type WriteEvent } from '../src/shadow/write-compare.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { defineWriteCompareScenarios, fakeComparer, page, row5, settle, tallyOn, watchPreimage } from './helpers/shadow-write-compare-scenarios.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -1340,6 +1341,7 @@ describe('S2c: the shadow child settles its session', () => {
 
 // Every credit site: each place a verdict is noted settles exactly the weight of the line it stands for (the weight the serving process owed, supervisor.ts sampleWeight): not less (the session would block for its whole life), not more (a false "measured").
 describe('S2c: every credit site settles exactly the weight it stands for', () => {
+  const SEED_F1 = { version: 1, seed_id: 'seed-1', started_at: '2026-01-01T00:00:00.000Z', finished_at: '2026-01-01T00:01:00.000Z', unseeded_gap_rows_total: 0, unseeded_gap_rows: {}, relations: {}, digests: true } as never;
   const INPUTS = { seed_id: 's', rust_addon_sha256: 'a', comparator_version: 1, adapter_version: 'x', capability_set_hash: null, readiness_policy_hash: 'p' } as const;
   const put = (n = 0, over: Partial<WriteEvent> = {}): WriteEvent => ({ t: 'write', op: 'putPage', args: encodeArgs([`people/credit-${n}-example`, { type: 'person', title: 'C', compiled_truth: 'C.', timeline: '' }]) as unknown[], pre: { sources: [], pages: [], links: [] }, post: { pages: [null], links: [] }, ...over });
   /** The line the sampler writes for `e` carrying `dropped` earlier losses (its last field), and its weight as the serving process counts it. */
@@ -1384,6 +1386,51 @@ describe('S2c: every credit site settles exactly the weight it stands for', () =
     await exact([wire({ t: 'write', op: 'putPage' }, 2)], {}, { no_sample: 1, send_shed: 2 });
     await exact([wire({ t: 'write', op: 'putPage' }, 99_999)], {}, { send_shed: 10_000 }); // the weight is capped at 10,000 on both sides: 1 + 10,000
   });
+
+  test('F1: a dropped count of six digits cannot mint credit: the line weighs 1 on the supervisor\'s side, so the child settles exactly 1, and a hand-made count is no count at all', async () => {
+    await exact([wire({ t: 'write', op: 'putPage' }, 100_000)], {}, { no_sample: 1 }); // was 10,001 settled against 1 owed
+    await exact([wire({ t: 'write', op: 'putPage' }, 1_000_000)], {}, { no_sample: 1 });
+    const { line, event } = wire({ t: 'write', op: 'putPage' }, 0); event.dropped = 12.5; // a count the sampler never writes
+    expect(sampleWeight(line)).toBe(1);
+    const r = rig(); r.owe(1); r.c.handle(event, line.length); await r.c.idle();
+    expect(r.settled()).toBe(1);
+  });
+
+  test('F1: droppedWeight is the one rule: whole numbers 1 to 99,999 count, capped at 10,000; anything else is 0; sampleWeight and the child agree', () => {
+    expect([0, 1, 9_999, 10_000, 10_001, 99_999, 100_000, 12.5, -3, Number.NaN, '7', undefined].map(droppedWeight)).toEqual([0, 1, 9_999, 10_000, 10_000, 10_000, 0, 0, 0, 0, 0, 0]);
+    expect(MAX_DROPPED).toBe(10_000);
+    for (const n of [1, 5, 10_000, 10_001, 99_999]) {
+      const line = `{"t":"write","op":"putPage","dropped":${n}}\n`; expect(sampleWeight(line)).toBe(1 + droppedWeight(n));
+    }
+    expect(sampleWeight('{"t":"write","op":"putPage","dropped":100000}\n')).toBe(1 + droppedWeight(100_000)); // 1 on both sides
+  });
+
+  test('F1: the sampler carries at most 10,000 refused samples per line and keeps the rest for later lines, so every refused sample is carried once and no line weighs more than it carries', async () => {
+    const lines: string[] = []; let refuse = 25_000;
+    const sampler = createWriteSampler({ rate: 1, random: () => 0, active: () => true, send: (line) => { if (refuse > 0) { refuse--; return false; } lines.push(line); return true; } }); // no `lost`: a refusal is carried, not journaled
+    const fn = async () => 1; const ctx = { engine: {}, inTransaction: false, mayWrite: () => true };
+    for (let i = 0; i < 25_000; i++) await (sampler.wrap('addTag', fn, ctx as never) as () => Promise<unknown>)();
+    for (let i = 0; i < 4; i++) await (sampler.wrap('addTag', fn, ctx as never) as () => Promise<unknown>)(); // accepted lines now
+    const carried = lines.map((l) => droppedWeight(Number(/"dropped":(\d+)/.exec(l)?.[1] ?? 0)));
+    expect(carried).toEqual([10_000, 10_000, 5_000, 0]); // was: the first line carried all 25,000 (weight 1 on the supervisor, 10,001 credited) and the rest was cleared
+    expect(carried.reduce((a, b) => a + b, 0)).toBe(25_000); // every refused sample is carried once
+    for (const l of lines) expect(sampleWeight(l)).toBe(1 + droppedWeight(Number(/"dropped":(\d+)/.exec(l)?.[1] ?? 0)));
+  });
+
+  test('F1: end to end, a line the serving process owed as 1 is settled as 1 by the child, whatever its dropped field says', async () => {
+    await withEnv({ GBRAIN_HOME: tmp() }, async () => {
+      const dir = tmp(); writeSeedRecord(dir, SEED_F1);
+      writeOwed(dir, { v: 1, session: 'cf1', serving_pid: process.pid, owed: 12, closed: true, child_exited: false }); // 2 read, 10 the pipe never delivered
+      const input = new PassThrough();
+      const done = runShadowChild(dir, { input, writeControl: () => {}, loadAddon: async () => ({ ok: true as const, addon: { target: 'linux-x64-glibc', engineAbi: 1, engineBuild: 'b1', catalogVersion: 3 } as never }), capabilities: () => ['search', 'pages'], readinessPolicyHash: () => 'p1', heartbeatMs: 60_000, childId: 'c1', session: 'cf1', addonSha256: () => 'a'.repeat(64), openEngine: () => ({ ownerRole: 'owner', async connect() {}, async disconnect() {} }) as never });
+      input.write('{"t":"write","op":"putPage","dropped":100000}\n'); input.write('{"t":"write","op":"putPage"}\n');
+      input.end(); await done;
+      const t = readWriteTally(dir, readEpoch(dir)!.epoch_id)!;
+      expect(t.settled).toEqual({ cf1: 12 }); // was 10,012 (and the 10 undelivered samples went unbooked: the child believed it had read 10,002)
+      expect(t.uncomparable_by_reason.pipe_unflushed).toBe(10);
+      expect(t.uncomparable_by_reason.send_shed).toBeUndefined();
+    });
+  }, 30_000);
 
   test('a sample the queue refuses (queue_full) is credited when it is refused, and the ones that waited are credited at their verdicts: 300 samples, settled 300', async () => {
     const r = rig(); const lines = Array.from({ length: 300 }, (_, n) => wire(put(n))); r.owe(300);

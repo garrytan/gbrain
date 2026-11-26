@@ -12,7 +12,7 @@ import { openRustEngine, type RustEngineAddonHandle } from '../core/rust-engine.
 import { configDir } from '../core/config.ts';
 import { safeCode } from './child-checks.ts';
 import { decodeValue, encodeValue } from './codec.ts';
-import { pageRefs, pageSet, readBack, readBackText, SAVE_FAILURE_EXIT_MS, type WriteEvent, type WriteOutcome, type WriteTally } from './write-compare.ts';
+import { droppedWeight, pageRefs, pageSet, readBack, readBackText, SAVE_FAILURE_EXIT_MS, type WriteEvent, type WriteOutcome, type WriteTally } from './write-compare.ts';
 
 /** Columns the seed always reports as unmapped and the typed read-back never shows (rust/docs/store/seed.md, "Some unmapped columns are expected": `pages.generation`, the primary's cache clock). */
 const EXPECTED_UNMAPPED: ReadonlySet<string> = new Set(['generation']);
@@ -126,7 +126,8 @@ export function createWriteComparer(d: WriteComparerDeps): { handle(event: Write
     /** `bytes`: the size of the line the sample arrived in (0 when not known). */
     handle(event, bytes = 0) {
       // A line stands for 1 + `dropped` owed samples (supervisor.ts sampleWeight): the earlier losses it carries settle here, at once, and the sample itself settles with its own last outcome, so each is credited once.
-      if (Number.isInteger(event.dropped) && event.dropped! > 0) { const shed = Math.min(event.dropped!, 10_000); d.tally.note('uncomparable', 'send_shed', shed, false, shed); }
+      const shed = droppedWeight(event.dropped);
+      if (shed > 0) d.tally.note('uncomparable', 'send_shed', shed, false, shed);
       // The serving process can only report what it saw itself; a verdict (`comparable`, `unexplained_difference`) is made here, from a replay.
       if (event.outcome === 'capability_missing' || event.outcome === 'uncomparable') { d.tally.note(event.outcome, event.family ?? event.reason, 1, false, 1); return; }
       if (!event.pre || !event.args) { d.tally.note('uncomparable', 'no_sample', 1, false, 1); return; }

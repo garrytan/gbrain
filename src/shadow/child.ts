@@ -34,7 +34,7 @@ import { FollowChild, type FollowEvent, type FollowStore } from './follow-child.
 import { appendFault, appendLedgerRows, writeSummaryFile, type ShadowLedgerRow, type ShadowSummaryFile } from './ledger.ts';
 import { newMirrorCounters, type MirrorCounters } from './mirror.ts';
 import { createWriteComparer } from './write-compare-child.ts';
-import { readOwed, sampleWeight, WriteTally } from './write-compare.ts';
+import { droppedWeight, readOwed, sampleWeight, WriteTally } from './write-compare.ts';
 import { appendRecall, IntervalGate, recallEligible, RECALL_INTERVAL_MS, scoreRecall, type RankedKey } from './recall.ts';
 import { isShadowReadMember, SHADOW_READ_MEMBERS, type ShadowReadMember } from './reads.ts';
 import { readSeedRecord } from './seed.ts';
@@ -554,7 +554,7 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
     try { event = JSON.parse(line); } catch { const w = sampleWeight(`${line}\n`); if (w > 0) { received += w; writes.unreadable(w); } continue; } // a write line that cannot be read still stands for the samples its text states: settled once, as `uncomparable`
     if (event.t === 'apply' || event.t === 'watermark' || event.t === 'depth' || event.t === 'rpc') { follow.handle(event as FollowEvent); continue; }
     if (event.t === 'answer') { ask.answer(event as never); continue; }
-    if (event.t === 'write') { received += 1 + (Number.isInteger(event.dropped) && event.dropped! > 0 ? Math.min(event.dropped!, 10_000) : 0); writes.handle(event as never, line.length); continue; } // the weight the serving process counted when it sent the line (write-compare.ts sampleWeight)
+    if (event.t === 'write') { received += 1 + droppedWeight(event.dropped); writes.handle(event as never, line.length); continue; } // the weight the serving process counted when it sent the line (write-compare.ts sampleWeight)
     if (event.t === 'stats' && event.counters) { summary.primary = { ...newMirrorCounters(), ...event.counters }; summary.primary_pid = event.pid; continue; }
     if (event.t !== 'read' || paused) continue;
     if (pending.length >= SHADOW_CHILD_QUEUE_BOUND) { summary.child_shed++; continue; }

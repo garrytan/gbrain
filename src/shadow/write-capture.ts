@@ -11,7 +11,7 @@ import { DIGEST_SESSION_SETTINGS, digestQuery } from '../core/persistence/gradua
 import { CAPTURE_BUDGET_BYTES, encodeArgs, encodeValue } from './codec.ts';
 import { pageSearchVectorSql } from '../core/fts-language.ts';
 import { relationRead } from './seed.ts';
-import { MAX_PRE_LINKS, MAX_PRE_PAGES, movedOutsideFootprint, PILOT_WRITES, pageRefs, pageSet, readBack, writeFamily, type PageRef, type PreImage, type WriteEvent } from './write-compare.ts';
+import { MAX_DROPPED, MAX_PRE_LINKS, MAX_PRE_PAGES, movedOutsideFootprint, PILOT_WRITES, pageRefs, pageSet, readBack, writeFamily, type PageRef, type PreImage, type WriteEvent } from './write-compare.ts';
 import { sqlWrites } from './sql-writes.ts';
 import { memberKind } from './write-map.ts';
 import { COMPLETE_WRITE_PURGE_PROBE_SQL, COMPLETE_WRITE_SQL, ENSURE_COUNTERS_SQL, LOCK_COUNTERS_SQL } from '../core/engine-sql/persistence-journal.ts';
@@ -201,9 +201,10 @@ export function createWriteSampler(o: WriteSamplerOptions): WriteSampler {
   const unsaid: string[] = []; // reasons of losses the journal could not take: the next accepted line carries their count, and settle() retries them
   const send = (event: WriteEvent): void => {
     try {
-      let line = JSON.stringify({ ...event, ...(unsaid.length ? { dropped: unsaid.length } : {}) }) + '\n';
-      if (Buffer.byteLength(line) > MAX_SAMPLE_BYTES) line = JSON.stringify({ t: 'write', op: event.op, outcome: 'uncomparable', reason: 'sample_too_large', ...(unsaid.length ? { dropped: unsaid.length } : {}) }) + '\n';
-      if (o.send(line)) unsaid.length = 0; else if (!o.lost?.('send_shed')) unsaid.push('send_shed');
+      const carry = Math.min(unsaid.length, MAX_DROPPED); // a line carries at most what the weight rule counts; the rest waits for later lines, never cleared unsaid
+      let line = JSON.stringify({ ...event, ...(carry ? { dropped: carry } : {}) }) + '\n';
+      if (Buffer.byteLength(line) > MAX_SAMPLE_BYTES) line = JSON.stringify({ t: 'write', op: event.op, outcome: 'uncomparable', reason: 'sample_too_large', ...(carry ? { dropped: carry } : {}) }) + '\n';
+      if (o.send(line)) unsaid.splice(0, carry); else if (!o.lost?.('send_shed')) unsaid.push('send_shed');
     } catch { /* the shadow never fails a write */ }
   };
   const uncomparable = (op: string, reason: string): void => send({ t: 'write', op, outcome: 'uncomparable', reason });

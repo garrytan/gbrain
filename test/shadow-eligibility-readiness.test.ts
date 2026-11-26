@@ -7,14 +7,16 @@
  * criterion 11 is `missing` (NOT READY), never a pass. Regression it catches: a producer field name that drifts from
  * the ShadowStatus interface, or an omission that reads as zero hosts.
  */
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { afterAll, beforeAll, beforeEach, describe, expect, spyOn, test } from 'bun:test';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { evaluateReadiness, type ShadowStatus } from '../src/core/engine-swap/readiness.ts';
 import { buildEligibilityStatus } from '../src/shadow/eligibility.ts';
+import * as epochModule from '../src/shadow/evidence-epoch.ts';
+import * as eligibilityModule from '../src/shadow/eligibility.ts';
 import { ensureEpoch } from '../src/shadow/evidence-epoch.ts';
 import { WriterObserver } from '../src/shadow/writer-observations.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
@@ -294,6 +296,58 @@ describe('criterion 11 counts writers of an older build (write_protocol)', () =>
     await insertRow('gbrain cli:3:before000', null, new Date(started - 11 * 60_000).toISOString()); // still ignored: before the epoch began, less the slack
     expect((await criterion11({ engine: primary, dir: d })).out.eligibility.legacy_write_writers).toBe(1);
     rmSync(d, { recursive: true, force: true });
+  });
+
+  test('F2: the manifest read is three-way for criterion 11: a torn manifest fails closed (one unknown path), no manifest at all keeps the window start, and a readable one binds the epoch', async () => {
+    const day = 86_400_000; const started = Date.now() - 15 * day; const d = epochDir(started);
+    await observe(HOST, 'gbrain cli:1:modern000');
+    await insertRow('gbrain cli:2:legacy000', null, new Date(started + day).toISOString()); // an older writer seen 14 days ago, inside the epoch
+    expect((await criterion11({ engine: primary, dir: d })).out.eligibility).toMatchObject({ legacy_write_writers: 1 });
+    const file = join(d, 'evidence', 'epoch.json'); const text = readFileSync(file, 'utf8');
+    writeFileSync(file, '{"version":1,"epoch_id"'); // torn for a moment
+    const torn = await criterion11({ engine: primary, dir: d });
+    expect(torn.out.eligibility.unknown_writer_paths).toBeGreaterThanOrEqual(1); // was 0: with no readable epoch the query fell back to the 7-day window and the 14-day-old writer was dropped
+    expect(torn.row.state).toBe('fail');
+    rmSync(file); mkdirSync(file); // a read error (EISDIR stands for EIO) is the same as torn
+    expect((await criterion11({ engine: primary, dir: d })).out.eligibility.unknown_writer_paths).toBeGreaterThanOrEqual(1);
+    rmSync(file, { recursive: true });
+    expect((await criterion11({ engine: primary, dir: d })).out.eligibility.unknown_writer_paths).toBe(0); // no manifest at all: no epoch yet, the window start applies as before
+    writeFileSync(file, text);
+    expect((await criterion11({ engine: primary, dir: d })).out.eligibility.legacy_write_writers).toBe(1);
+    const input = { dir: d, state: null, engine: primary, source: { name: 'test', unknownPaths: () => 0 }, brainId: () => 'host', addonTarget: () => 'linux-x64-glibc' };
+    expect((await buildEligibilityStatus({ ...input, epoch: { kind: 'unreadable' } })).eligibility.unknown_writer_paths).toBeGreaterThanOrEqual(1); // a handed-in read is the one used, whatever is on disk now
+    writeFileSync(file, '{"torn"'); // torn on disk, but the caller's read was good
+    const good = epochModule.readEpochState(d); expect(good.kind).toBe('unreadable');
+    expect((await buildEligibilityStatus({ ...input, epoch: { kind: 'absent' } })).eligibility.unknown_writer_paths).toBe(0);
+    writeFileSync(file, text);
+    rmSync(d, { recursive: true, force: true });
+  });
+
+  test('F2: the status document reads the manifest once and hands it to eligibility: a read that fails only for that one read fails criterion 11 closed, whatever the later epoch-bound reads find', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-elig-doc2-'));
+    try {
+      await withEnv({ GBRAIN_HOME: home }, async () => {
+        const config = { engine: 'pglite' as const, database_path: join(home, 'brain.pglite') };
+        const sdir = shadowDirFor(shadowBrainKey(config)!); const day = 86_400_000; const started = Date.now() - 15 * day;
+        mkdirSync(sdir, { recursive: true });
+        writeShadowState(sdir, { version: SHADOW_STATE_VERSION, enabled: true, started_at: new Date(started).toISOString(), sample_rate: 1, queue_bound: 8, plan_hash: 'h', brain: 'b', primary_engine: 'pglite' });
+        ensureEpoch(sdir, { seed_id: 's', rust_addon_sha256: 'a', comparator_version: 4, adapter_version: 'x', capability_set_hash: null, readiness_policy_hash: 'p' }, started);
+        await observe(HOST, 'gbrain cli:1:modern000');
+        await insertRow('gbrain cli:2:legacy000', null, new Date(started + day).toISOString());
+        const calls = spyOn(epochModule, 'readEpochState');
+        const once = calls.mockImplementationOnce(() => ({ kind: 'unreadable' }) as never);
+        const real = eligibilityModule.buildEligibilityStatus; let readsInside = -1;
+        const wrapped = spyOn(eligibilityModule, 'buildEligibilityStatus').mockImplementation(async (input) => { const before = calls.mock.calls.length; const out = await real(input); readsInside = calls.mock.calls.length - before; return out; });
+        const doc = await readConfiguredShadowStatus(() => config, new Date(), primary);
+        wrapped.mockRestore();
+        expect(doc?.eligibility?.unknown_writer_paths).toBeGreaterThanOrEqual(1); // the one failed read is the one eligibility used
+        expect(doc?.epoch_id).not.toBeNull(); // and the later epoch-bound reads found the epoch
+        expect(readsInside).toBe(0); // eligibility did not read the manifest itself: the status document's single read was handed in
+        once.mockRestore();
+        const ok = await readConfiguredShadowStatus(() => config, new Date(), primary);
+        expect(ok?.eligibility).toMatchObject({ legacy_write_writers: 1 }); // a readable manifest counts the 14-day-old writer
+      });
+    } finally { rmSync(home, { recursive: true, force: true }); }
   });
 
   test('M1: with no epoch on disk the window start bounds it; and where the migration has not run (no write_protocol column) the read fails and criterion 11 is missing, never a pass', async () => {
