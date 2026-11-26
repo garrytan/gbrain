@@ -71,6 +71,7 @@ import { currentVerifiedLocalWriter, readLocalWriter, verifyLocalWriter, withReq
 import { frameOverCap, resultTooLargeError } from '../core/egress-budget.ts';
 import { withRemoteCaller } from '../core/remote-caller.ts';
 import { isAIInvocationPolicyError } from '../core/ai/invocation-guard.ts';
+import { countOperation } from '../core/telemetry/client.ts';
 
 // WP3: normalization + validation moved to validate-params.ts (direct unit
 // surface). Re-exported here so existing imports/tests keep working.
@@ -1021,6 +1022,7 @@ export async function dispatchToolCall(
   params = roomRead.args;
   const roomDeclaration = opts.remote === false ? undefined : roomRead.declaration ?? undefined;
   const op = operations.find(o => o.name === name);
+  if (op && (opts.transport === 'stdio' || opts.transport === 'http')) countOperation(op.name, opts.transport);
   const readOnly = op?.mutating === false;
   const args = op && params ? normalizeOptionalParams(op, params) : params;
   const [privateSources, privateFactSources] = readOnly && opts.remote !== false && !WORLD_ONLY_PACK_OPS.has(name) ? [opts.auth?.privatePages?.sources, opts.auth?.privateFacts?.sources] : [];

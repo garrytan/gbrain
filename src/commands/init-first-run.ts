@@ -27,6 +27,8 @@ import { configReadiness, embeddingEnablement, harnessWiringEntry } from '../cor
 import type { SearchMode } from '../core/search/mode.ts';
 import { costMatrixSentence, OPENAI_COST_MATRIX_MODELS } from '../core/search/mode-advice.ts';
 import type { McpSurface } from '../mcp/surface.ts';
+import { awaitingAnswer } from '../core/telemetry/client.ts';
+import { telemetryEndpoint } from '../core/telemetry/endpoint.ts';
 
 export interface InitFirstRunInputs {
   /** The search mode the install-time picker applied and why; absent when `--search-mode` recorded the operator's choice. */
@@ -43,6 +45,8 @@ export interface InitFirstRunInputs {
   upkeep?: { embedding: boolean };
   /** GST-2768: the conversation archive line, a setting in effect: on (a personal brain) or offered (a shared one). */
   archive?: { state: 'on' | 'offered'; embedding: boolean };
+  /** Opt-in usage telemetry has no answer yet (docs/guides/telemetry.md); only a person answers it. */
+  telemetry?: boolean;
 }
 
 /** GBRA-438: what runs on its own, stated as a setting in effect (the plan's wording; the keyed form names the one capped paid step). */
@@ -80,6 +84,27 @@ function archiveDecision(state: 'on' | 'offered', embedding: boolean): Decision 
     default_reason: state === 'on'
       ? 'In effect now: on by default on a personal brain; nothing needs an answer.'
       : 'A shared brain is only offered the archive; it stays off until the owner turns it on.',
+  };
+}
+
+/** What the person is told about opt-in usage telemetry; the agent relays it and never answers for them. */
+export const TELEMETRY_LINE = 'Usage data: gbrain sends nothing unless you say yes. If you want to help find broken setups and upgrades, say anonymous '
+  + '(setup, upgrade and doctor results and daily command and error-code counts) or community (the same plus a random install id); '
+  + 'it never sends your pages, queries, file paths or error messages, and gbrain telemetry show prints exactly what would be sent.';
+
+function telemetryDecision(): Decision {
+  const set = (tier: string) => ['gbrain', 'telemetry', tier];
+  return {
+    id: 'telemetry',
+    question: `${TELEMETRY_LINE} Only the person answers this: ask them, run the command for the option they pick, and leave it unanswered when no person can answer. Never pick one yourself, and --yes or an unattended run never answers it.`,
+    options: [
+      { id: 'unanswered', label: 'Leave it unanswered (in effect now: nothing is sent)' },
+      { id: 'anonymous', label: 'Anonymous: usage results and counts, no install id', argv: set('anonymous') },
+      { id: 'community', label: 'Community: the same plus a random install id', argv: set('community') },
+      { id: 'off', label: 'Off: send nothing and stop asking', argv: set('off') },
+    ],
+    default: 'unanswered',
+    default_reason: 'In effect now: nothing is sent. No option is recommended, because only the person can agree to share usage data.',
   };
 }
 
@@ -169,6 +194,7 @@ export function buildInitFirstRunNotices(inputs: InitFirstRunInputs): Notice[] {
   if (inputs.searchMode) decisions.push(searchModeDecision(inputs.searchMode));
   if (inputs.writeback) decisions.push(writebackDecision());
   if (inputs.skillsScaffold?.missing.length) decisions.push(skillsScaffoldDecision(inputs.skillsScaffold));
+  if (inputs.telemetry) decisions.push(telemetryDecision());
   const wiring = inputs.config ? harnessWiringNotice(inputs.config, inputs.surface) : null;
   if (decisions.length === 0 && !(wiring && inputs.upkeep)) return wiring ? [wiring] : [];
   if (inputs.upkeep) decisions.push(upkeepDecision(inputs.upkeep.embedding));
@@ -176,6 +202,7 @@ export function buildInitFirstRunNotices(inputs: InitFirstRunInputs): Notice[] {
   const searchMode = decisions.find(d => d.id === 'search_mode');
   const upkeep = decisions.find(d => d.id === 'upkeep');
   const archive = decisions.find(d => d.id === 'conversation_archive');
+  const telemetry = decisions.some(d => d.id === 'telemetry');
   const inEffect = [
     ...(searchMode ? [`search mode ${searchMode.default}`] : []),
     ...(decisions.some(d => d.id === 'writeback') ? [WRITEBACK_IN_EFFECT] : []),
@@ -186,7 +213,7 @@ export function buildInitFirstRunNotices(inputs: InitFirstRunInputs): Notice[] {
     why: 'The brain is ready and these first-run settings are in effect as listed; none blocks memory. '
       + 'Relay them once, in the reply that reports the install, as the current settings and how to change them; do not hold the install open or end it waiting on an answer. '
       + 'When the user picks an option, run its command. Nothing paid turns on from these settings without a key the user supplied.',
-    user_message: `gbrain is installed.${inEffect.length ? ` In effect: ${inEffect.join('; ')}.` : ''}${upkeep ? ` ${upkeep.question}` : ''}${archive ? ` ${archive.question}` : ''}${searchMode ? ` ${costMatrixSentence()}` : ''} Nothing needs an answer now; tell me any time if you want to change any of these, and I'll apply it.`,
+    user_message: `gbrain is installed.${inEffect.length ? ` In effect: ${inEffect.join('; ')}.` : ''}${upkeep ? ` ${upkeep.question}` : ''}${archive ? ` ${archive.question}` : ''}${searchMode ? ` ${costMatrixSentence()}` : ''}${telemetry ? ` ${TELEMETRY_LINE}` : ''} Nothing needs an answer now; tell me any time if you want to change any of these, and I'll apply it.`,
     decisions,
   }];
 }
@@ -217,7 +244,8 @@ export function setupFirstRunNotices(initNotices: readonly unknown[], harness: s
     ...(searchMode ? [`search mode ${searchMode.default}`] : []),
     ...(decisions.some(d => d.id === 'writeback') ? [WRITEBACK_IN_EFFECT] : []),
   ];
-  if (inEffect.length === 0 && !upkeep && !archive) return [];
+  const telemetry = decisions.some(d => d.id === 'telemetry');
+  if (inEffect.length === 0 && !upkeep && !archive && !telemetry) return [];
   const reportBack = opts.reportBack
     ? 'Report back (Wakeshift): on. gbrain wakeshift disable turns it off.'
     : 'Report back (Wakeshift): off. gbrain wakeshift enable turns it on.';
@@ -227,7 +255,7 @@ export function setupFirstRunNotices(initNotices: readonly unknown[], harness: s
     why: `Setup is complete: the brain is ready and ${harness} is wired, so memory works now. These first-run settings are in effect as listed; none blocks memory or needs a new session to answer. `
       + 'Relay them once, in the reply that reports this install, as the current settings and how to change them; do not hold the install open or end it waiting on an answer. '
       + 'When the user picks an option, run its command. Automatic saving (`writeback`) is separate from setup\'s capture decision (Stop/SessionEnd hooks); while unanswered it comes back in a later session until the user answers or mutes it.',
-    user_message: `gbrain is set up and ${harness} is wired, so memory works now.${inEffect.length ? ` In effect: ${inEffect.join('; ')}.` : ''} ${reportBack}${upkeep ? ` ${upkeep.question}` : ''}${archive ? ` ${archive.question}` : ''}${searchMode ? ` ${matrix}` : ''} Nothing needs an answer now; tell me any time if you want to change any of these, and I'll apply it.`,
+    user_message: `gbrain is set up and ${harness} is wired, so memory works now.${inEffect.length ? ` In effect: ${inEffect.join('; ')}.` : ''} ${reportBack}${upkeep ? ` ${upkeep.question}` : ''}${archive ? ` ${archive.question}` : ''}${searchMode ? ` ${matrix}` : ''}${telemetry ? ` ${TELEMETRY_LINE}` : ''} Nothing needs an answer now; tell me any time if you want to change any of these, and I'll apply it.`,
     decisions,
   }];
 }
@@ -256,6 +284,7 @@ export async function firstRunBundle(engine: BrainEngine, searchMode: { mode: Se
   return buildInitFirstRunNotices({
     searchMode, config: loadConfig(), writeback: await writebackAskApplies(engine), skillsScaffold: initSkillsScaffold(), surface, upkeep: { embedding },
     ...(archiveState ? { archive: { state: archiveState, embedding } } : {}),
+    telemetry: awaitingAnswer() && telemetryEndpoint() !== null,
   });
 }
 
