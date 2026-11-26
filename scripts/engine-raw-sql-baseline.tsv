@@ -505,7 +505,7 @@ src/core/facts/relink-publish.ts	execute_raw	8
 src/core/facts/relink.ts	execute_raw	5
 src/core/facts/retire.ts	execute_raw	1
 src/core/facts/similar-active.ts	execute_raw	2
-src/core/facts/single-prepare.ts	execute_raw	7
+src/core/facts/single-prepare.ts	execute_raw	6
 src/core/facts/slot-tagging.ts	execute_raw	1	GBRA-574 #9668: the live person-page read that picks slot-tagging candidates, written before this ratchet landed; moves behind a typed facts engine method with its area
 src/core/facts/subject-infer.ts	execute_raw	1
 src/core/facts/unfenced-facts.ts	execute_raw	9	GST-3490 #10005: the sweep's unfenced read counts unfenceable rows on the server before reading only fenceable ones; moves behind a typed facts engine method with its area
