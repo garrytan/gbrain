@@ -417,7 +417,7 @@ export interface PersistenceMembers {
   /** Leases this host's housekeeping turn; true when it was free. `direct` sends it on the Postgres direct pool. */
   claimHousekeepingTurn(claim: HousekeepingTurnClaim, opts?: { signal?: AbortSignal; direct?: boolean }): Promise<boolean>;
   /** Marks this host's leased housekeeping turn finished. `direct` sends it on the Postgres direct pool. */
-  completeHousekeepingTurn(turn: { op: string; hostId: string }, opts?: { direct?: boolean }): Promise<void>;
+  completeHousekeepingTurn(turn: { op: string; hostId: string } & FenceOpts, opts?: { direct?: boolean }): Promise<void>;
   /** The explicit receipt retention (null when unset), the brain's reserved terminal bytes and now minus `floorDays`, as text. */
   readReceiptBudget(retentionKey: string, floorDays: number): Promise<ReceiptBudget>;
   /** Up to 100 compactable receipts completed over `retentionDays` ago, oldest first, without unresolved caller refusals or open-sync rows. */

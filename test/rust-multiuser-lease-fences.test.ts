@@ -16,6 +16,7 @@ import { detectAddonTarget } from '../src/core/rust-engine/addon-target.ts';
 import { openRustEngine, type RustEngine } from '../src/core/rust-engine.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { acquirePageEmbeddingLease } from '../src/core/page-embedding-lease.ts';
+import { claimHousekeepingTurn, completeHousekeepingTurn } from '../src/core/persistence/housekeeping-turn.ts';
 import { registerHostLease } from './helpers/rust-host-fence.ts';
 import { withEnv } from './helpers/with-env.ts';
 
@@ -73,6 +74,19 @@ describe('lease families carry the host fence (I-5, host fence table)', () => {
       expect(await refusal(() => lease.busy ? Promise.resolve() : lease.assertHeld(engine as unknown as BrainEngine))).toEqual({ code: 'lease_lost', reason: 'epoch_moved' });
       await lease[Symbol.asyncDispose]();
       expect(await rows()).toEqual(before);
+    });
+  });
+});
+
+describe('family 2, the housekeeping turn', () => {
+  withAddon('after a takeover the old holder cannot complete its turn or claim the next one', async () => {
+    await onStaleableHost(async (engine, takeOver) => {
+      const e = engine as unknown as BrainEngine;
+      const hostId = 'd0000000-0000-4000-8000-0000000000d1';
+      expect(await claimHousekeepingTurn(e, hostId, 60_000)).toBe(true);
+      await takeOver();
+      expect(await refusal(() => completeHousekeepingTurn(e, hostId))).toEqual({ code: 'lease_lost', reason: 'epoch_moved' });
+      expect(await refusal(() => claimHousekeepingTurn(e, hostId, 0))).toEqual({ code: 'lease_lost', reason: 'epoch_moved' });
     });
   });
 });

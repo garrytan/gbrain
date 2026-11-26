@@ -24,13 +24,14 @@ import {
 } from '../../engine-sql/writer-versions.ts';
 import { requestRow } from '../store-codec.ts';
 import { storeCall, type StoreMember } from './common.ts';
+import type { LeaseToken } from '../../engine-sql/lease-token.ts';
 
 /** Leases this host's turn when it is free; no resident consumer is ever live on this engine. */
 export const claimHousekeepingTurn: StoreMember<[claim: HousekeepingTurnClaim, opts?: { signal?: AbortSignal; direct?: boolean }], boolean> =
   (brain, claim) => storeCall({ member: 'claimHousekeepingTurn' }, () => brain.claimHousekeepingTurn({ ...claim, consumerKinds: [...claim.consumerKinds] }));
 
 /** Marks the host's leased turn finished; a turn this host does not hold is left as it is. */
-export const completeHousekeepingTurn: StoreMember<[turn: { op: string; hostId: string }, opts?: { direct?: boolean }], void> = async (brain, turn) => {
+export const completeHousekeepingTurn: StoreMember<[turn: { op: string; hostId: string; fence?: LeaseToken }, opts?: { direct?: boolean }], void> = async (brain, turn) => {
   await storeCall({ member: 'completeHousekeepingTurn' }, () => brain.completeHousekeepingTurn(turn));
 };
 
