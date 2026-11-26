@@ -131,6 +131,26 @@ describe('engine parity: the brain owner\'s own remote put_page', () => {
     expect(arms().length).toBeGreaterThan(0);
   }, 240_000);
 
+  // The deleted-row fallback of the same check (readPageHiddenFromWriter) must fail the write too: a swallowed failure would read as "not hidden"
+  // and republish a deleted page the writer may not read.
+  test('a failure of the hidden-writer read refuses a write over a soft-deleted page and publishes nothing', async () => {
+    for (const arm of arms()) {
+      await resetArm(arm);
+      const engine = arm.engine as unknown as Record<string, (...args: unknown[]) => Promise<unknown>>;
+      await seed(arm.engine, arm.backend);
+      await addMember(arm.engine, 'bob-example');
+      await arm.engine.putPage('notes/gone', { type: 'note', title: 'gone', compiled_truth: 'First.', timeline: '', frontmatter: { readable_by: [OWNER] } }, { sourceId: SRC });
+      await arm.engine.softDeletePage('notes/gone', { sourceId: SRC });
+      const snapshot = async () => { const row = await arm.engine.getPage('notes/gone', { sourceId: SRC, includeDeleted: true }); return { live: await arm.engine.getPage('notes/gone', { sourceId: SRC }), row: row && [row.deleted_at !== null, row.compiled_truth], pages: await arm.engine.countSourcePages(SRC, { includeDeleted: true }), versions: (await arm.engine.getVersions('notes/gone', { sourceId: SRC })).length }; };
+      const before = await snapshot();
+      const original = engine.readPageHiddenFromWriter!; let thrown = 0;
+      engine.readPageHiddenFromWriter = function () { thrown++; return Promise.reject(new Error('injected read failure')); };
+      const out = await ownerPut(arm.engine, 'notes/gone', '---\ntitle: gone\n---\nSecond.', undefined, 'bob-example').finally(() => { engine.readPageHiddenFromWriter = original; });
+      expect({ backend: arm.backend, fired: thrown > 0, failed: ['internal_error', 'storage_error'].includes(out), after: await snapshot() }).toEqual({ backend: arm.backend, fired: true, failed: true, after: before });
+    }
+    expect(arms().length).toBeGreaterThan(0);
+  }, 120_000);
+
   // A plain member's put_page over a slug with only a soft-deleted row. The opening probe sees that row (it names readers), so the check is
   // not decided early and readLinkTargetPages returns no live row; the row is then judged by readPageHiddenFromWriter, on every arm, and the
   // write is refused as an unseen page. Nothing is written: no live row, no version, the deleted row as it was.
