@@ -1224,7 +1224,7 @@ marker — pending migrations, not an access outage. **Safety clause: the action
 hardcoded `gbrain db-repair` — never a command parsed from the marker.**
 
 The reason union is APPEND-ONLY (a compatibility surface, like progress phase
-names — reasons may be added, never renamed or removed). All 16:
+names — reasons may be added, never renamed or removed). All 19:
 
 | Reason | Meaning |
 |---|---|
