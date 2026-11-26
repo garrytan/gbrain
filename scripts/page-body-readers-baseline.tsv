@@ -75,8 +75,8 @@ src/core/belief/page-at-time.ts	withBodies	sql	STREAM	known_as_of read: a segmen
 src/core/belief/page-at-time.ts	livePage	field	STREAM	known_as_of read: a segmented version or page returns body segmented with body_ref (window read via get_page version_id), never a body string; inline bodies only
 src/core/belief/page-at-time.ts	withBodies	field	STREAM	known_as_of read: a segmented version or page returns body segmented with body_ref (window read via get_page version_id), never a body string; inline bodies only
 src/core/belief/preimages.ts	preimageGaps	sql	META	size only (octet_length) to exempt large pages; segmented pages and versions are excluded by body_storage
-src/core/belief/purge.ts	pagePurgeClaims	sql	STREAM	segmented version: NULL body parses no fence claims; the live rows' and the lifetimes' event claims still cover it
-src/core/belief/purge.ts	registerVersionCarriers	sql	STREAM	segmented version: NULL body registers no carriers; the backfill skips the same version (segmented_version_body), so nothing it appends can copy one
+src/core/engine-sql/belief-purge-ledger.ts	listPageVersionFenceBodies	sql	STREAM	segmented version (pagePurgeClaims): NULL body parses no fence claims; the live rows' and the lifetimes' event claims still cover it
+src/core/engine-sql/belief-purge-ledger.ts	listPurgeCarrierVersions	sql	STREAM	segmented version (registerVersionCarriers): NULL body registers no carriers; the backfill skips the same version (segmented_version_body), so nothing it appends can copy one
 src/core/belief/purge.ts	pagePurgeClaims	field	STREAM	segmented version: NULL body parses no fence claims; the live rows' and the lifetimes' event claims still cover it
 src/core/belief/purge.ts	registerVersionCarriers	field	STREAM	segmented version: NULL body registers no carriers; the backfill skips the same version (segmented_version_body), so nothing it appends can copy one
 src/core/engine-sql/belief-state.ts	readBeliefStateRows	sql	META	size only (the over-1 MiB creation rule); a segmented page counts as large by body_storage

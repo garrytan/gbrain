@@ -51,6 +51,7 @@ pub mod belief_events;
 pub mod belief_history;
 pub mod belief_lifetimes;
 pub mod belief_purge;
+pub mod belief_purge_ledger;
 pub mod belief_redactions;
 pub mod belief_state;
 pub mod derivation;

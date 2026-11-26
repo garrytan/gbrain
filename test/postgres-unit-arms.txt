@@ -182,6 +182,7 @@ test/engine-parity/attest-rights.test.ts
 test/engine-parity/attested-actor-link.test.ts
 test/engine-parity/backup-readiness-callers.test.ts
 test/engine-parity/belief-ledger.test.ts
+test/engine-parity/belief-purge-ledger.test.ts
 test/engine-parity/belief-purge-probes.test.ts
 test/engine-parity/bench-save-repro.test.ts
 test/engine-parity/bound-write.test.ts
@@ -288,6 +289,7 @@ test/engine-parity/fact-purge-inventory-probes.test.ts
 test/engine-parity/fact-purge-ledger.test.ts
 test/engine-parity/fact-purge-members.test.ts
 test/engine-parity/fact-purge-probes.test.ts
+test/engine-parity/fact-purge-receipt-e2e.test.ts
 test/engine-parity/fact-purge-sites.test.ts
 test/engine-parity/fact-recall-pool-widening.test.ts
 test/engine-parity/fact-relink-attempts.test.ts
@@ -362,6 +364,7 @@ test/engine-parity/journal-typed-sites.test.ts
 test/engine-parity/keyword-visibility.test.ts
 test/engine-parity/label-guard-tiers.test.ts
 test/engine-parity/labelled-only-for.test.ts
+test/engine-parity/labelled-only-policy.test.ts
 test/engine-parity/large-page.test.ts
 test/engine-parity/legacy-slug-spellings-doctor.test.ts
 test/engine-parity/lifecycle.test.ts
@@ -454,6 +457,7 @@ test/engine-parity/read-shared-sources.test.ts
 test/engine-parity/reads-privacy.test.ts
 test/engine-parity/reason-tombstones.test.ts
 test/engine-parity/recall-members.test.ts
+test/engine-parity/rechunk-chunk-ids.test.ts
 test/engine-parity/referrer-reads.test.ts
 test/engine-parity/refusal-blocker-sites.test.ts
 test/engine-parity/refusal-swallow-extract.test.ts

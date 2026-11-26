@@ -17,9 +17,9 @@
  *      isOriginTwinPage                             lane 10, rust-engine/repair-rust b5945d814f (readPageDatabaseOnlyReason)
  *      the publication_started stamp                 lane 5, rust-engine/bound-write-rust 075a30ef45 (journal.markPublicationStarted)
  *      scrubGenerationLedger                         lane 4, 61b18fbbc (scrubGenerationPageRows, scrubGenerationTextRows)
- *      the receipt's recorded-value probe            lane 3, rust-engine/rust-belief-purge e211982aba (once merged)
  *    (lane 4's rust-5a serves listPageProseHits, readPurgeReceiptSourcePath, readDeletePageRequest, listPurgeEffects and
- *    the receipt's fact-context probe, so they are off the list.)
+ *    the receipt's fact-context probe, and lane 3's rust-belief-purge e211982aba the receipt's recorded-value probe, so
+ *    they are off the list.)
  *  - Why existing coverage misses it: delete-page.test.ts pins only the refusal on Rust; the page purge suites
  *    (test/page-purge*.test.ts) run on PGLite and Postgres only.
  *  - Seam: the delete_page and put_page operation handlers, whole, with a local (trusted) caller and the arm's own
@@ -47,9 +47,7 @@ afterEach(async () => {
 type R = Record<string, unknown>;
 
 /** What the Rust arm still cannot serve on the purge path, in the order the check names them: member or site, owner and due date. */
-const RUST_KNOWN_STOP = [
-  { name: 'listBeliefEventsForPurgeProbe', owner: 'lane 3 (rust-belief-purge e211982aba)', due: '5 PM PST Nov 24' },
-];
+const RUST_KNOWN_STOP: { name: string; owner: string; due: string }[] = [];
 
 /** `engine`, keeping every capability refusal a call on it (or on a transaction handle it opens) raised, caught or not. */
 function keepingRefusals(engine: BrainEngine, refusals: unknown[]): BrainEngine {
