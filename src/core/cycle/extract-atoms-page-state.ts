@@ -2,6 +2,7 @@ import type { SqlEngine } from '../persistence/model.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { stableJson } from '../persistence/digest.ts';
 import type { BrainEngine } from '../engine.ts';
+import { FACTS_FENCE_BEGIN } from '../facts-fence.ts';
 
 /**
  * gbrain#4148: consecutive same-content failures of a content-deterministic
@@ -34,6 +35,27 @@ export class AtomPageStateError extends Error {
       storage: 'atom page scan state could not be saved; check database access and schema migrations. The page remains retryable',
     }[reason]);
     this.name = 'AtomPageStateError';
+  }
+}
+
+/**
+ * #10332: one discovered page as the phase reads it. A facts-fenced page's body is its canonical snapshot (withdrawals
+ * overlaid), the same text readAtomOrigin pins on a managed brain and every reader sees; the stored bytes would conflict
+ * with that check on every attempt and could carry a withdrawn claim. A snapshot that moved past the discovered revision
+ * or cannot be read leaves only this page pending this run.
+ */
+export async function atomDiscoveryInput(engine: BrainEngine, sourceId: string,
+  row: { id: number; knowledge_revision: string; source_incarnation: string; slug: string; compiled_truth: string; content_hash: string }): Promise<AtomPageInput | null> {
+  const identity = { pageId: row.id, sourceIncarnation: row.source_incarnation, revision: row.knowledge_revision };
+  if (!row.compiled_truth.includes(FACTS_FENCE_BEGIN)) return { slug: row.slug, content: row.compiled_truth, contentHash: row.content_hash, identity };
+  try {
+    const snapshot = await engine.readPageSnapshot(row.slug, { sourceId });
+    const current = snapshot && Number(snapshot.page.id) === Number(row.id) && snapshot.sourceIncarnation === row.source_incarnation
+      && snapshot.revision === row.knowledge_revision && snapshot.page.content_hash === row.content_hash;
+    return current ? { slug: row.slug, content: snapshot.page.compiled_truth, contentHash: row.content_hash, identity } : null;
+  } catch (error) {
+    console.error(`[extract_atoms] ${row.slug}: its canonical body could not be read (${error instanceof Error ? error.message : String(error)}); it stays pending`);
+    return null;
   }
 }
 
