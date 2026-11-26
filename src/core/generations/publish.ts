@@ -162,21 +162,25 @@ export async function recordHeld(tx: BrainEngine, key: GenerationKey, config: Ge
   return { state: 'held', reason, holdId, context };
 }
 
-/** The hold ids of held atom results whose policy is the current one: the rows `heldForInput` would match. */
-export async function currentAtomHoldIds(engine: BrainEngine): Promise<string[]> {
+type HeldRow = { kind: string; source_id: string; owner_key: string; input_pin: string | null; hold_id: string; item_set_hash: string; held_reason: string };
+
+/** Held rows whose hold id is current for the policy: the rows `heldForInput` matches. `scope` narrows the held rows. */
+async function currentHeldRows(engine: BrainEngine, scope: string, params: unknown[]): Promise<HeldRow[]> {
   const config = await readGenerationsConfig(engine);
-  const rows = await engine.executeRaw<{ source_id: string; owner_key: string; input_pin: string | null; hold_id: string; item_set_hash: string; held_reason: string }>(
-    `SELECT source_id, owner_key, input_pin, hold_id, item_set_hash, held_reason FROM derived_generations WHERE kind='atom' AND state='held' AND input_pin IS NOT NULL`);
-  return rows.filter(r => r.hold_id === holdIdFor({ sourceId: r.source_id, kind: 'atom', ownerKey: r.owner_key } as GenerationKey, r.input_pin, config, r.item_set_hash, r.held_reason as HeldReason))
-    .map(r => r.hold_id);
+  const rows = await engine.executeRaw<HeldRow>(
+    `SELECT source_id, kind, owner_key, input_pin, hold_id, item_set_hash, held_reason FROM derived_generations WHERE state='held' AND input_pin IS NOT NULL AND ${scope}`, params);
+  return rows.filter(r => r.hold_id === holdIdFor({ sourceId: r.source_id, kind: r.kind, ownerKey: r.owner_key } as GenerationKey, r.input_pin, config, r.item_set_hash, r.held_reason as HeldReason));
+}
+
+/** The hold ids of held atom results whose policy is the current one, so the backlog can skip what the phase skips. */
+export async function currentAtomHoldIds(engine: BrainEngine): Promise<string[]> {
+  return (await currentHeldRows(engine, `kind='atom'`, [])).map(r => r.hold_id);
 }
 
 /** Whether `key` holds a result for this same input and policy, so the producer can skip recomputing it (CEO-outside r3 F5). */
 export async function heldForInput(engine: BrainEngine, key: GenerationKey, pin: string): Promise<boolean> {
   const config = await readGenerationsConfig(engine);
-  const rows = await engine.executeRaw<{ hold_id: string; item_set_hash: string; held_reason: string }>(
-    `SELECT hold_id, item_set_hash, held_reason FROM derived_generations WHERE source_id=$1 AND kind=$2 AND owner_key=$3 AND state='held' AND input_pin=$4`,
-    [key.sourceId, key.kind, key.ownerKey, pin]);
+  const rows = await currentHeldRows(engine, 'source_id=$1 AND kind=$2 AND owner_key=$3 AND input_pin=$4', [key.sourceId, key.kind, key.ownerKey, pin]);
   return rows.some(row => row.hold_id === holdIdFor(key, pin, config, row.item_set_hash, row.held_reason as HeldReason));
 }
 
