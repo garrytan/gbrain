@@ -34,8 +34,9 @@ raw files beat gbrain on very long chat histories (BEAM-10M), so try it before y
 
 ## Facts with provenance
 
-**What it does.** Each fact the brain keeps records where it came from and when, a newer fact supersedes an older one
-instead of sitting beside it, and `gbrain forget` withdraws a fact from active memory. Pages from email, web pages
+**What it does.** Each fact the brain keeps records where it came from and when. A new fact supersedes an older one
+about the same entity when the two closely match (this matching needs an embedding key) or when the caller names the
+fact it replaces; otherwise near-duplicates can sit side by side. `gbrain forget` withdraws a fact from active memory. Pages from email, web pages
 and tool output carry trust labels, so a later session can tell an outside claim from what you said. Guides:
 [facts on entities](entity-scoped-facts.md), [memory boundaries](memory-boundaries.md).
 
@@ -46,14 +47,15 @@ adopted an attacker's false claim in 10.2% of later sessions, against 2.8% with 
 ## Access control per page and folder
 
 **What it does.** A page can carry `readable_by` with members or groups, and a folder rule can cover a whole folder. Each
-member's credential is bound to that member, and search, reads, links and facts all honour it, so gbrain never hands a
-restricted page to that member's agent. The page is still an ordinary Markdown file in the brain's git repository, so
+member's credential is bound to that member, and search, reads, links and facts all honour it, so a member's authenticated
+agent is not handed a restricted page through those paths. That is tested on specific access paths, not a universal
+no-leak guarantee, and shared database credentials are a separate boundary these rules don't cover. The page is still an ordinary Markdown file in the brain's git repository, so
 anyone who can clone the repository can read it: keep repository access to the people every page is meant for. Guides: [access designations](access-designations.md),
 [company brain](../tutorials/company-brain.md).
 
 **The simpler alternative.** Separate folders or separate brains per audience, or filtering results after search.
-Separate brains work when audiences never overlap. A memory without per-page permissions leaks: in 100 permission
-runs a plain Postgres memory put finance-only text into the agent's context 97 times, and plain files 100 times; gbrain
+Separate brains work when audiences never overlap. In our permission test, setups without per-page permissions leaked: in
+100 runs a plain Postgres memory put finance-only text into the agent's context 97 times, and plain files 100 times; gbrain
 put it there 0 times.
 
 ## Entity resolution and duplicate classes
