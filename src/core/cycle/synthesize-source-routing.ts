@@ -154,15 +154,30 @@ async function turnCheckouts(engine: BrainEngine): Promise<Map<string, string>> 
 }
 
 /** The source this global cycle synthesizes and its checkout, or null for the cycle's own source. */
-export async function synthesisTurn(engine: BrainEngine, home: string): Promise<{ sourceId: string; brainDir: string } | null> {
+async function synthesisTurn(engine: BrainEngine, home: string): Promise<{ sourceId: string; brainDir: string } | null> {
   const turn = await engine.getConfig(SYNTHESIS_TURN_KEY);
   if (!turn || turn === home) return null;
   const brainDir = (await turnCheckouts(engine)).get(turn);
   return brainDir ? { sourceId: turn, brainDir } : null;
 }
 
+/**
+ * A rotating cycle's turn (null when the cycle names a source or a target), and `settle`, which labels the phase result
+ * with the turn's source and, outside a dry run, passes the turn on.
+ */
+export async function synthesisRotation(engine: BrainEngine, home: string, rotates: boolean): Promise<{
+  turn: { sourceId: string; brainDir: string } | null; settle: (result: PhaseResult, dryRun: boolean) => Promise<void>;
+} | null> {
+  if (!rotates) return null;
+  const turn = await synthesisTurn(engine, home);
+  return { turn, settle: async (result, dryRun) => {
+    if (turn) result.details = { ...result.details, source_id: turn.sourceId };
+    if (!dryRun) await passSynthesisTurn(engine, home, turn?.sourceId ?? home, result);
+  } };
+}
+
 /** Passes the turn to the next source, by id, among the cycle's own, the one that ran and the other owners its run found; a run skipped before discovery keeps it. */
-export async function passSynthesisTurn(engine: BrainEngine, home: string, ran: string, result: PhaseResult): Promise<void> {
+async function passSynthesisTurn(engine: BrainEngine, home: string, ran: string, result: PhaseResult): Promise<void> {
   if (result.status === 'skipped' && (result.details.reason === 'cooldown_active' || result.details.reason === 'insufficient_cycle_budget')) return;
   const others = Object.keys((result.details.source_routing as SessionSourceRouting | undefined)?.corpus_source_other ?? {});
   const checkouts = await turnCheckouts(engine);

@@ -2336,13 +2336,10 @@ async function runCycleUnscoped(
         phaseResults.push(skipNoBrainDir('synthesize'));
       } else {
         progress.start('cycle.synthesize');
-        const { runPhaseSynthesize } = await import('./cycle/synthesize.ts');
-        const { synthesisTurn, passSynthesisTurn } = await import('./cycle/synthesize-source-routing.ts');
-        // #8669: with no --source and no explicit target, the run takes turns over the sources that own captured sessions.
-        const rotates = !opts.sourceId && !opts.synthInputFile && !opts.synthDate && !opts.synthFrom && !opts.synthTo;
-        const turn = rotates ? await synthesisTurn(engine, cycleSourceId ?? 'default') : null;
+        const [{ runPhaseSynthesize }, { synthesisRotation }] = await Promise.all([import('./cycle/synthesize.ts'), import('./cycle/synthesize-source-routing.ts')]);
+        const rotation = await synthesisRotation(engine, cycleSourceId ?? 'default', !opts.sourceId && !opts.synthInputFile && !opts.synthDate && !opts.synthFrom && !opts.synthTo);
         const { result, duration_ms } = await racedTimePhase(() => runPhaseSynthesize(engine, {
-          brainDir: turn?.brainDir ?? brainDir,
+          brainDir: rotation?.turn?.brainDir ?? brainDir,
           dryRun,
           // W0 (Tier-1 #1): wrap the caller hook so this phase ALSO refreshes
           // the cycle lock (pre-fix these sites passed the raw — in production
@@ -2354,10 +2351,8 @@ async function runCycleUnscoped(
           from: opts.synthFrom,
           to: opts.synthTo,
           bypassDreamGuard: opts.synthBypassDreamGuard,
-          // #1586: scope synthesized writes to the cycle's resolved source
-          // (explicit --source wins, else derived from the checkout dir).
-          sourceId: turn?.sourceId ?? cycleSourceId,
-          sessionsOnly: !!turn,
+          // #1586: synthesized writes go to the cycle's resolved source (--source, else the checkout), or #8669's turn.
+          sourceId: rotation?.turn?.sourceId ?? cycleSourceId, sessionsOnly: !!rotation?.turn,
           once: opts.onceForPhase === 'synthesize',
           // #4077: combined external-abort + lock-steal signal, so a
           // cancelled cycle stops judge calls, inline children, and
@@ -2370,12 +2365,10 @@ async function runCycleUnscoped(
           privateQueueOwnerJobId: opts.privateQueueOwnerJobId ?? null,
         }), 'synthesize');
         result.duration_ms = duration_ms;
-        if (turn) result.details = { ...result.details, source_id: turn.sourceId };
         phaseResults.push(result);
-        if (rotates && !dryRun) await passSynthesisTurn(engine, cycleSourceId ?? 'default', turn?.sourceId ?? cycleSourceId ?? 'default', result);
-        // v0.29: capture synthesize-written slugs so the recompute_emotional_weight
-        // phase can union them with sync's pagesAffected for incremental mode.
-        if (!turn && result.details && Array.isArray(result.details.written_slugs)) {
+        await rotation?.settle(result, dryRun);
+        // v0.29: synthesize-written slugs join sync's pagesAffected for recompute_emotional_weight's incremental mode.
+        if (!rotation?.turn && result.details && Array.isArray(result.details.written_slugs)) {
           synthesizeWrittenSlugs = result.details.written_slugs as string[];
         }
         progress.finish();

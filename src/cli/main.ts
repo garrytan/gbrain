@@ -66,7 +66,7 @@ import { formatSearchExact } from './search-exact-format.ts';
 import { routeCommand } from './command-route.ts';
 import type { CliOptions } from '../core/cli-options.ts';
 import { RemoteMcpError, extractResponseMeta } from '../core/remote-mcp-error.ts';
-import { assertSingleSourceScopeFlag, checkHostHonoredParams, hintAmbientNarrowing, type AmbientSourceBinding } from './source-scope.ts';
+import { assertSingleSourceScopeFlag, checkHostHonoredParams, hintAmbientNarrowing, provenanceSourceFlagError, type AmbientSourceBinding } from './source-scope.ts';
 import { formatFindPages, formatStatsBy } from './format-page-lookup.ts';
 import { maybePromptForUpgrade } from '../core/thin-client-upgrade-prompt.ts';
 import { CLI_FLAG_REGISTRY } from '../core/cli-flag-registry.generated.ts';
@@ -503,15 +503,7 @@ async function main() {
       const flagOp = cliOps.get(command) ?? cliAliases.get(command);
       const curated = findCliCommand(command)?.help;
       const known = curated ? (await curated()).help.flags.map(f => f.name) : CLI_FLAG_REGISTRY[command] ?? Object.keys(flagOp?.params ?? {}).map(k => `--${k.replace(/_/g, '-')}`);
-      const bare = unknown.split('=')[0];
-      if (flagOp && opOwnsSource(flagOp) && (bare === '--source-id' || bare === '--all-sources')) {
-        const at = subArgs.findIndex(a => a.split('=')[0] === bare);
-        const id = bare === '--source-id' ? (subArgs[at]!.includes('=') ? subArgs[at]!.slice(bare.length + 1) : subArgs[at + 1]) : undefined;
-        const route = `GBRAIN_SOURCE=${id && !id.startsWith('--') ? id : '<id>'}`;
-        const scoped = `${message}: its --source is the entry's provenance, not the source it writes to; set ${route} to choose that`;
-        exitCliError(unknownFlagError(command, unknown, scoped), command, { legacy: { status: 'error', reason: 'invalid_flag', message: scoped } });
-      }
-      exitCliError(unknownFlagError(command, unknown, message, known), command, { legacy: { status: 'error', reason: 'invalid_flag', message } });
+      exitCliError(provenanceSourceFlagError(flagOp, command, unknown, message, subArgs) ?? unknownFlagError(command, unknown, message, known), command, { legacy: { status: 'error', reason: 'invalid_flag', message } });
     }
     const curated = await curatedFlagError(command, subArgs);
     if (curated) exitCliError(curated, command);

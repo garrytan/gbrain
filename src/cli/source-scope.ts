@@ -7,6 +7,8 @@
 import type { Operation } from '../core/operations.ts';
 import { opOwnsSource } from '../core/ops/contract.ts';
 import { ignoredRemoteParams } from '../core/remote-mcp-error.ts';
+import type { OperationError } from '../core/ops/contract.ts';
+import { unknownFlagError } from './cli-error.ts';
 
 /** Where an ambient (not flag-supplied) thin-client source scope came from. */
 export type AmbientSourceBinding = { sourceId: string; via: 'GBRAIN_SOURCE' | '.gbrain-source' };
@@ -22,6 +24,19 @@ export function assertSingleSourceScopeFlag(op: Operation, params: Record<string
   if (explicit && (params.source_id !== undefined || params.all_sources === true)) {
     throw new Error('Pass either --source or --source-id/--all-sources, not both.');
   }
+}
+
+/**
+ * #8343: an unknown --source-id / --all-sources on an op whose own --source is a provenance ref (timeline-add) names
+ * GBRAIN_SOURCE, the route that picks the source it writes to, instead of a did-you-mean pointing at that --source.
+ */
+export function provenanceSourceFlagError(op: Pick<Operation, 'params'> | undefined, command: string, flag: string, message: string, args: string[]): OperationError | null {
+  const bare = flag.split('=')[0];
+  if (!op || !opOwnsSource(op) || (bare !== '--source-id' && bare !== '--all-sources')) return null;
+  const at = args.findIndex(a => a.split('=')[0] === bare);
+  const id = bare === '--source-id' ? (args[at]?.includes('=') ? args[at]!.slice(bare.length + 1) : args[at + 1]) : undefined;
+  const route = `GBRAIN_SOURCE=${id && !id.startsWith('--') ? id : '<id>'}`;
+  return unknownFlagError(command, flag, `${message}: its --source is the entry's provenance, not the source it writes to; set ${route} to choose that`);
 }
 
 /** Per-call scope params a thin client must never see silently dropped. */

@@ -140,7 +140,7 @@ async function runIndexAudit(ctx: DoctorContext): Promise<Check[]> {
                      `Do not drop without confirming.`,
           });
         }
-      } catch (e) {
+      } catch (e) { // capability-refusal-ok: an opt-in audit reports any failed read, a refusal included, as a warn naming it
         const msg = e instanceof Error ? e.message : String(e);
         checks.push({ name: 'index_audit', status: 'warn', message: `Index audit failed: ${msg}` });
       }

@@ -1574,8 +1574,7 @@ export class PGLiteEngine implements BrainEngine {
       console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${searchLimitCap()}`);
     }
 
-    // Fetch 3x the rows through this page to give dedup headroom, then page-dedup + re-limit; the pool
-    // is cut before OFFSET, so it must reach past the skipped rows (#9922).
+    // Fetch 3x the rows through this page (the pool is cut before OFFSET, #9922), then page-dedup + re-limit.
     const innerLimit = Math.min((offset + limit) * 3, searchLimitCap() * 3);
 
     // Source-aware ranking (v0.22): see postgres-engine.ts for rationale.

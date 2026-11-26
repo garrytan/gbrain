@@ -97,7 +97,7 @@ import { isOpPageSlug } from '../ops/context.ts';
 import type { WriteReceipt } from '../persistence/types.ts';
 import { acceptedPendingReceipt } from '../persistence/accepted-pending.ts';
 import { AtomPageStateError, MAX_DETERMINISTIC_FAILURES, readAtomPageIdentity, writeAtomPageState, type AtomPageInput } from './extract-atoms-page-state.ts';
-import { atomGenerationOrigin, atomInputPin, heldLine, publishUnmanagedAtoms, resolveTranscriptAtomSlug, resolveTranscriptKeys, transcriptRoot } from './extract-atoms-generation.ts';
+import { atomGenerationOrigin, atomInputPin, heldAtomInputExclusionSql, heldLine, publishUnmanagedAtoms, resolveTranscriptAtomSlug, resolveTranscriptKeys, transcriptRoot } from './extract-atoms-generation.ts';
 import { currentHoldIds, heldForInput } from '../generations/publish.ts';
 import { ATOM_TYPES, ATOMS_RESPONSE_SCHEMA } from './extract-atoms-schema.ts';
 import { parseAtomsOutcome } from './extract-atoms-parse.ts';
@@ -384,18 +384,6 @@ empty fields, boilerplate), output exactly {"atoms":[]} — never invent an atom
 never explain in prose.
 
 Output ONLY the JSON object, no prose. Use null for unavailable optional metadata.`;
-
-/**
- * #10270: a page whose complete read already has a held result for its current input pin and the current policy (the
- * hold ids `currentHoldIds` returns, bound at `placeholder`) is skipped by the phase (`heldForInput`), so discovery and
- * the backlog leave it out too; doctor's `generation_held` lists it with its release.
- */
-function heldAtomInputExclusionSql(placeholder: string): string {
-  return `AND NOT EXISTS (SELECT 1 FROM derived_generations dg
-        WHERE dg.source_id = p.source_id AND dg.kind = 'atom' AND dg.state = 'held' AND dg.owner_key = 'source_slug:' || p.slug
-          AND dg.hold_id = ANY(${placeholder}::text[]) AND COALESCE(dg.held_context->>'partial', 'false') <> 'true'
-          AND dg.input_pin IN (p.content_hash, p.content_hash || ':' || p.id::text || ':' || p.knowledge_revision::text))`;
-}
 
 /**
  * v0.41.2.1 (D2) — single-SQL discovery + idempotency filter for brain
