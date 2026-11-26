@@ -19,7 +19,7 @@ import { existsSync } from 'node:fs';
 import { withEnv } from './helpers/with-env.ts';
 import { CODES } from '../src/core/error-registry.ts';
 import { SWAP_RECOVERY, SWAP_REFUSAL_REASONS } from '../src/core/engine-swap/refusals.ts';
-import { WRITE_COVERAGE_NAMED, type ShadowStatus } from '../src/core/engine-swap/readiness.ts';
+import { WRITE_COVERAGE_LIMIT, WRITE_COVERAGE_LOSS, WRITE_COVERAGE_NAMED, type ShadowStatus } from '../src/core/engine-swap/readiness.ts';
 import { PILOT_WRITES, writeFamily } from '../src/shadow/write-compare.ts';
 import { WRITE_MAP } from '../src/shadow/write-map.ts';
 
@@ -204,7 +204,7 @@ describe('engine_swap_refused recovery table', () => {
 });
 
 describe('the swap report names each write type criterion 5 does not compare', () => {
-  const NAMED_LOSS = 'Named loss: only putPage, deletePage, addLink, addLinksBatch and removeLink are compared, so other page and link writes (for example pages:softDeletePage) are counted capability_missing although the sentence above says page and link writes are covered. A write that touches several tables is counted under its first table only, so the side effects of deletePages, purgeDeletedPages and updateSlug (aliases, open loops, owner-only marks, fact withdrawals) land under pages:* keys, and a type\'s line above reads only the writes whose first table it is.';
+  const NAMED_LOSS = 'Named loss: only putPage, deletePage, addLink, addLinksBatch and removeLink are compared, so these other page and link writes are counted capability_missing and are not compared: pages:deletePages, pages:softDeletePage, pages:softDeletePages, pages:restorePage, pages:purgeDeletedPages, pages:updateSlug, pages:refreshPageBody, pages:refreshPageOrigin, pages:updatePageContextualRetrievalState, pages:stripStaleFrontmatterKeys, pages:markPagesExtractedBatch, pages:markPagesAttendanceBlocked, pages:setPageEmbeddingSignature, pages:setChunkerVersion, pages:writeTextProjectionSeal, pages:revertToVersion, pages:setEmotionalWeightBatch, pages:invalidateWithdrawnPages, pages:createSegmentedPageShell, pages:sealSegmentedPage, pages:flipBodyGeneration, links:removeLinksByPagesAndSource, links:replaceDerivedLinks, links:replaceDerivedLinksBatch. A write that touches several tables is counted under its first table only, so the side effects of deletePages, purgeDeletedPages and updateSlug (aliases, open loops, owner-only marks, fact withdrawals) land under pages:* keys, and a type\'s line above reads only the writes whose first table it is.';
   const sampled = (byFamily: Record<string, unknown>) => ({
     write_comparisons: { state: 'measured', sample_rate: 1, comparable: 5, unexplained_difference: 0, uncomparable: 0, capability_missing: 0, capability_missing_by_family: byFamily },
   }) as unknown as ShadowStatus;
@@ -258,10 +258,42 @@ describe('the swap report names each write type criterion 5 does not compare', (
   });
 
   test('the sentence, the guide and the named loss are pinned', () => {
-    expect(WRITE_COVERAGE_NAMED).toBe('Criterion 5 covers page and link writes only (#10350, #10360, #10382, #10390). These write types are not compared and get named lines in the swap report: chunks, tags, aliases, timeline entries, takes, facts, fact withdrawals, open loops, sources, owner-only marks and the decide store.');
+    expect(WRITE_COVERAGE_NAMED).toBe('Criterion 5 covers the pilot page and link writes (putPage, deletePage, addLink, addLinksBatch, removeLink) only (#10350, #10360, #10382, #10390). These write types are not compared and get named lines in the swap report: chunks, tags, aliases, timeline entries, takes, facts, fact withdrawals, open loops, sources, owner-only marks and the decide store.');
     const guide = readFileSync(join(import.meta.dir, '..', 'docs', 'guides', 'engine-swap.md'), 'utf8');
     expect(guide).toContain(WRITE_COVERAGE_NAMED);
     expect(guide).toContain(NAMED_LOSS);
+  });
+
+  test('the named loss names every page and link write that is not a pilot write, and no other', () => {
+    // The set the code counts as capability_missing under pages:<op> or links:<op>: the family writeFamily gives each non-pilot WRITE_MAP member.
+    const fromCode = Object.keys(WRITE_MAP).filter(op => !PILOT_WRITES.has(op)).map(op => writeFamily(op)).filter(f => /^(pages|links):/.test(f));
+    expect(fromCode.length).toBe(24);
+    const guide = readFileSync(join(import.meta.dir, '..', 'docs', 'guides', 'engine-swap.md'), 'utf8');
+    // WRITE_COVERAGE_LOSS is the evaluated string, so the guide holds the same text with no source escape.
+    // The guide mentions pages:updateSlug elsewhere (the fact withdrawals line), so read only its named-loss paragraph.
+    const guideLoss = guide.slice(guide.indexOf('Named loss:')).split('\n')[0]!;
+    expect(guideLoss).toBe(WRITE_COVERAGE_LOSS);
+    for (const text of [WRITE_COVERAGE_LOSS, guideLoss]) {
+      const named = text.match(/\b(?:pages|links):[A-Za-z]\w*/g) ?? [];
+      expect(named.length).toBe(fromCode.length);
+      expect(new Set(named)).toEqual(new Set(fromCode));
+    }
+    // The sentence names exactly the five pilot writes.
+    const pilot = /the pilot page and link writes \(([^)]*)\) only/.exec(WRITE_COVERAGE_NAMED)![1]!.split(', ');
+    expect(new Set(pilot)).toEqual(new Set(PILOT_WRITES));
+    expect(WRITE_COVERAGE_NAMED).not.toContain('covers page and link writes only');
+  });
+
+  test('the short coverage sentence says the pilot writes, in the report, the status line, the guide and ENGINES.md', () => {
+    expect(WRITE_COVERAGE_LIMIT).toBe('a criterion 5 pass covers the pilot page and link writes only');
+    const docs = ['docs/guides/engine-swap.md', 'docs/ENGINES.md', 'llms-full.txt'].map(f => readFileSync(join(import.meta.dir, '..', f), 'utf8'));
+    expect(docs[0]).toContain(`**A criterion 5 pass covers the pilot page and link writes only.**`);
+    expect(docs[0]).toContain('so a criterion 5 pass still covers the pilot page and link writes only');
+    for (const doc of docs.slice(1)) {
+      expect(doc).toContain('`write_comparisons` (the pilot page and link writes only;');
+      expect(doc).toContain('write comparisons cover the pilot page and link writes only');
+    }
+    for (const doc of docs) expect(doc).not.toMatch(/(?:covers?|\() ?page and link writes only/);
   });
 
   test('every write family a non-pilot write is counted under is named, a pages or links key, or on the other line', () => {

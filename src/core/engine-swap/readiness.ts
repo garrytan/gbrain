@@ -107,9 +107,9 @@ export const MIN_VECTOR_RECALL = 0.98;
 export const MIN_BENCH_PAIRS = 100;
 
 /** What a criterion 5 pass covers, said wherever write comparisons are shown (the shadow status line, this report). */
-export const WRITE_COVERAGE_LIMIT = 'a criterion 5 pass covers page and link writes only';
+export const WRITE_COVERAGE_LIMIT = 'a criterion 5 pass covers the pilot page and link writes only';
 /** The lane owner's wording for what criterion 5 leaves uncompared; the swap report appends it to the criterion 5 detail. */
-export const WRITE_COVERAGE_NAMED = 'Criterion 5 covers page and link writes only (#10350, #10360, #10382, #10390). These write types are not compared and get named lines in the swap report: chunks, tags, aliases, timeline entries, takes, facts, fact withdrawals, open loops, sources, owner-only marks and the decide store.';
+export const WRITE_COVERAGE_NAMED = 'Criterion 5 covers the pilot page and link writes (putPage, deletePage, addLink, addLinksBatch, removeLink) only (#10350, #10360, #10382, #10390). These write types are not compared and get named lines in the swap report: chunks, tags, aliases, timeline entries, takes, facts, fact withdrawals, open loops, sources, owner-only marks and the decide store.';
 /**
  * The named write types and the `capability_missing_by_family` keys each one reads, in the order of WRITE_COVERAGE_NAMED. A key is the first table of the
  * sampled member (`writeFamily`, src/shadow/write-compare.ts), so a type's line reads only the writes whose first table it is.
@@ -129,7 +129,7 @@ const WRITE_NAMED_TYPES: ReadonlyArray<readonly [string, readonly string[]]> = [
 ];
 const FACT_WITHDRAWALS_FAMILY = 'pages:updateSlug';
 /** A named loss, not a fix: what the sentence above does not say. It is the last line under criterion 5 and the last limit in the guide. */
-export const WRITE_COVERAGE_LOSS = 'Named loss: only putPage, deletePage, addLink, addLinksBatch and removeLink are compared, so other page and link writes (for example pages:softDeletePage) are counted capability_missing although the sentence above says page and link writes are covered. A write that touches several tables is counted under its first table only, so the side effects of deletePages, purgeDeletedPages and updateSlug (aliases, open loops, owner-only marks, fact withdrawals) land under pages:* keys, and a type\'s line above reads only the writes whose first table it is.';
+export const WRITE_COVERAGE_LOSS = 'Named loss: only putPage, deletePage, addLink, addLinksBatch and removeLink are compared, so these other page and link writes are counted capability_missing and are not compared: pages:deletePages, pages:softDeletePage, pages:softDeletePages, pages:restorePage, pages:purgeDeletedPages, pages:updateSlug, pages:refreshPageBody, pages:refreshPageOrigin, pages:updatePageContextualRetrievalState, pages:stripStaleFrontmatterKeys, pages:markPagesExtractedBatch, pages:markPagesAttendanceBlocked, pages:setPageEmbeddingSignature, pages:setChunkerVersion, pages:writeTextProjectionSeal, pages:revertToVersion, pages:setEmotionalWeightBatch, pages:invalidateWithdrawnPages, pages:createSegmentedPageShell, pages:sealSegmentedPage, pages:flipBodyGeneration, links:removeLinksByPagesAndSource, links:replaceDerivedLinks, links:replaceDerivedLinksBatch. A write that touches several tables is counted under its first table only, so the side effects of deletePages, purgeDeletedPages and updateSlug (aliases, open loops, owner-only marks, fact withdrawals) land under pages:* keys, and a type\'s line above reads only the writes whose first table it is.';
 /** And on which brains: a PGLite brain's single connection cannot bound the read a sampled write waits for, so it samples no writes and criterion 5 stays missing. */
 export const WRITE_PGLITE_LIMIT = 'PGLite brains record no write comparisons';
 /** And by whom: only the shadow child that owns the Rust store records; a client child adds no evidence and can never make criterion 5 pass. */
