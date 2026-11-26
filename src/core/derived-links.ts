@@ -168,7 +168,7 @@ const lockedExtractionGeneration = async (tx: BrainEngine) => (await tx.executeR
   'SELECT value FROM config WHERE key = $1 FOR SHARE', [LINK_EXTRACTION_GENERATION_KEY]))[0]?.value ?? null;
 
 export async function replaceDerivedLinks(
-  engine: Pick<BrainEngine, 'transaction' | 'executeRaw'>,
+  engine: Pick<BrainEngine, 'transaction' | 'executeRaw' | 'markBeliefCommits'>,
   origin: DerivedLinkOrigin,
   links: LinkBatchInput[],
   opts: DerivedLinkReplacementOptions = {},
@@ -200,7 +200,7 @@ export interface DerivedLinkBatchItem { origin: DerivedLinkOrigin; links: LinkBa
  * one by one through replaceDerivedLinks.
  */
 export async function replaceDerivedLinksBatch(
-  engine: Pick<BrainEngine, 'transaction' | 'executeRaw'>,
+  engine: Pick<BrainEngine, 'transaction' | 'executeRaw' | 'markBeliefCommits'>,
   items: readonly DerivedLinkBatchItem[],
 ): Promise<Array<{ created: number; removed: number }>> {
   const prepared = items.map(item => ({ origin: item.origin, opts: item.opts ?? {}, ...derivedLinkRows(item.origin, item.links, item.opts ?? {}) }));

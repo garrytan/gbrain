@@ -495,6 +495,12 @@ content receipt of every moved gbrain-owned content source (nested sources by re
 their own transaction and report them as `content_receipts`; a receipt an older release left
 behind is rebound by `gbrain repair content-receipt-root` ([repair guide](../guides/repair.md#content-receipt-root)).
 
+**Git durability follows the owner.** A cross-host accept records the previous owner's
+[`git_durability`](#git-durability) on the successor's binding: `disabled` as is, `enabled` only when
+the read-only push probe `git-durability --enable` runs passes on the accepted checkout; otherwise
+nothing is recorded and the accept result carries the `git_durability_not_enabled` warning, with the
+probe failure and the enable command, as `writer activate` does.
+
 <a id="transfer-manifest-scope"></a>**What the manifest covers.** In a Git checkout, the transfer, `sources
 set-path` (rebind), clone and reclone manifest covers the files Git tracks
 (`git ls-files --cached`), hashed from their bytes in the working tree; a

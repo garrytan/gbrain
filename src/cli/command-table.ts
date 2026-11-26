@@ -388,6 +388,8 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   { name: 'takes', phase: 'post-connect', thinClient: 'route-then-refuse', selfHelp: true, load: () => import('./commands/takes.ts') },
   { name: 'onboard', phase: 'post-connect', thinClient: 'none', help: () => import('./help/onboard.ts'), load: () => import('./commands/onboard.ts') },
   { name: 'onboarding', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/onboarding.ts') },
+  // roadmap PR 3: the value card, trusted local CLI only in phase 1 (no MCP operation, no thin-client routing).
+  { name: 'value', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, json: 'document', read_only: true, slowRead: () => 'the value card counts', load: () => import('./commands/value.ts') },
   { name: 'founder', phase: 'post-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/founder.ts') },
   { name: 'profile', phase: 'post-connect', thinClient: 'none', selfHelp: true, json: 'document', load: () => import('./commands/profile.ts') },
   { name: 'think', phase: 'post-connect', thinClient: 'none', selfHelp: true, routes_source: true, load: () => import('./commands/think.ts') },
