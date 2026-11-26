@@ -1,6 +1,6 @@
 import { execFile, execFileSync, spawn } from '../spawn.ts';
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { existsSync, realpathSync, statSync } from 'node:fs';
 import { buildGitEnv } from '../git-remote.ts';
 import { pushStatusPathForRoot, readPushStatusForRoot } from '../workspace-push.ts';
 import { readManifest } from '../bootstrap/format.ts';
@@ -74,28 +74,6 @@ function git(root: string, args: string[]): string {
   }).trim();
 }
 
-/** The pack-root files the shared skill publisher may write next to skillpack.json (publication.ts initial_files, setup-bundle.ts). */
-const PACK_ROOT_FILES = new Set(['skillpack.json', 'LICENSE', 'NOTICE', 'PROVENANCE.md', 'provenance.json']);
-
-/**
- * #10357: a shared-skill pack the publisher adopted into a git-backed root is published from the database and queues no
- * Git effect, so its files stay untracked. While the root skillpack.json itself is untracked, the untracked pack files
- * (it, the pack-root files and the skill directories it lists) are not uncommitted brain content. Anything else, a tracked
- * pack file or an untracked file under skills/ outside the listed directories included, still counts.
- */
-function untrackedPackFilter(root: string): (line: string) => boolean {
-  let manifest = '', packSkills = false;
-  try {
-    manifest = git(root, ['status', '--porcelain', '-unormal', '--', 'skillpack.json']);
-    const pack = manifest === '?? skillpack.json' ? JSON.parse(readFileSync(`${root}/skillpack.json`, 'utf8')) as { skills?: unknown; shared_deps?: unknown } : {};
-    const dirs = [pack.skills, pack.shared_deps].flatMap(list => Array.isArray(list) ? list.filter((dir): dir is string => typeof dir === 'string' && dir.startsWith('skills/')) : []).map(dir => `${dir.replace(/\/+$/, '')}/`);
-    packSkills = dirs.length > 0 && git(root, ['ls-files', '--others', '--exclude-standard', '--', 'skills/']).split('\n').every(file => !file || dirs.some(dir => file.startsWith(dir)));
-  } catch { // silent-read-ok: a failed probe exempts nothing, so every untracked line still reads dirty
-  }
-  if (manifest !== '?? skillpack.json') return () => false;
-  return line => line.startsWith('?? ') && (PACK_ROOT_FILES.has(line.slice(3)) || packSkills && line.slice(3).startsWith('skills/'));
-}
-
 /**
  * #6907: does the tree hold changes besides physical-root metadata? Reads
  * `git status --porcelain` as it streams and stops git at the first other
@@ -104,8 +82,6 @@ function untrackedPackFilter(root: string): (line: string) => boolean {
  * Fails on a timeout or a git error, like the other local probes.
  */
 function worktreeDirty(root: string): Promise<boolean> {
-  const unpublishedPack = untrackedPackFilter(root);
-  const changes = (lines: string[]) => withoutPhysicalRootMetadata(lines.filter(line => !unpublishedPack(line)).join('\n')).length > 0;
   return new Promise((resolve, reject) => {
     const child = spawn('git', ['-C', root, 'status', '--porcelain'], { stdio: ['ignore', 'pipe', 'ignore'], env: backupGitEnv() });
     let pending = '';
@@ -122,10 +98,10 @@ function worktreeDirty(root: string): Promise<boolean> {
     child.stdout!.on('data', (chunk: string) => {
       const lines = (pending + chunk).split('\n');
       pending = lines.pop()!;
-      if (changes(lines) || pending.length > 1024 * 1024) settle(true);
+      if (withoutPhysicalRootMetadata(lines.join('\n')).length > 0 || pending.length > 1024 * 1024) settle(true);
     });
     child.on('error', settle);
-    child.on('close', (code: number | null) => settle(code === 0 ? changes([pending]) : new Error(`git status exited ${code}`)));
+    child.on('close', (code: number | null) => settle(code === 0 ? withoutPhysicalRootMetadata(pending).length > 0 : new Error(`git status exited ${code}`)));
   });
 }
 
