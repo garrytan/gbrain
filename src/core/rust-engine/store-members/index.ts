@@ -76,6 +76,7 @@ import * as persistence from './persistence.ts';
 import * as syncHoldStore from './sync-hold-store.ts';
 import * as syncStatusReads from './sync-status-reads.ts';
 import * as cliEntities from './cli-entities.ts';
+import * as adminReads from './admin-reads.ts';
 import * as reflexReads from './reflex-reads.ts';
 import * as briefReads from './brief-reads.ts';
 import * as factsDoctor from './facts-doctor.ts';
@@ -138,6 +139,7 @@ import * as ownerScans from './owner-scans.ts';
 import * as effectWorker from './effect-worker.ts';
 import * as noopSettle from './noop-settle.ts';
 import * as pageEmbeddingBudget from './page-embedding-budget.ts';
+import * as pageExtractionState from './page-extraction-state.ts';
 import * as embeddingInstall from './embedding-install.ts';
 import * as persistenceIdentity from './persistence-identity.ts';
 import * as writeMisc from './write-misc.ts';
@@ -147,6 +149,10 @@ import * as worktreeClaim from './worktree-claim.ts';
 import * as writerAdmin from './writer-admin.ts';
 import * as writerRelease from './writer-release.ts';
 import * as publicationJournal from './publication-journal.ts';
+import * as gitDurability from './git-durability.ts';
+import * as gitEffects from './git-effects.ts';
+import * as topologyStore from './topology-store.ts';
+import * as manualLinks from './manual-links.ts';
 import * as writerStatus from './writer-status.ts';
 import * as collateStoreReads from './collate-store-reads.ts';
 import * as writeAttribution from './write-attribution.ts';
@@ -161,6 +167,7 @@ import * as entityIdentities from './entity-identities.ts';
 import * as writeGuards from './write-guards.ts';
 import * as ownerOnlyMarks from './owner-only-marks.ts';
 import * as pageVisibility from './page-visibility.ts';
+import * as conceptRebuild from './concept-rebuild.ts';
 import * as largePage from './large-page.ts';
 import * as trustFence from './trust-fence.ts';
 import * as trustProposals from './trust-proposals.ts';
@@ -192,6 +199,7 @@ import * as doctorJoin from './doctor-join.ts';
 import * as doctorCheckpoints from './doctor-checkpoints.ts';
 import * as doctorTerminal from './doctor-terminal.ts';
 import * as doctorBrain from './doctor-brain.ts';
+import * as slugSpellingRepair from './slug-spelling-repair.ts';
 import * as doctorSync from './doctor-sync.ts';
 import * as doctorFactsTrust from './doctor-facts-trust.ts';
 import * as fenceCensus from './fence-census.ts';
@@ -200,6 +208,7 @@ import * as sweepReads from './sweep-reads.ts';
 import * as graduationCatalog from './graduation-catalog.ts';
 import * as cliReadsExport from './cli-reads-export.ts';
 import * as beliefLedger from './belief-ledger.ts';
+import * as cycleReads from './cycle-reads.ts';
 import * as repairBookkeeping from './repair-bookkeeping.ts';
 import * as managedSyncOrphans from './managed-sync-orphans.ts';
 import * as repairPageReads from './repair-page-reads.ts';
@@ -240,7 +249,7 @@ export const STORE_MEMBERS = {
   ...cliReadsImport, ...cliReadsOps, ...cliReadsSearchPages, ...sweepReads,
   // The reads gbrain export makes (rust/docs/store/cli-reads-export.md).
   ...cliReadsExport,
-  ...cliEntities, ...reflexReads, ...briefReads,
+  ...cliEntities, ...adminReads, ...reflexReads, ...briefReads,
   // Group 5 facts statements (docs/research/rust-cli-contract-map.md).
   ...factsDoctor, ...embeddingCatalog, ...fenceHolds, ...derivedGenerations, ...factsCycle, ...factsPurge, ...purgePlan, ...purgeEffects, ...beliefPurge, ...projectionRebuild, ...factsRepair, ...labelRepairReads, ...factTextRepair, ...lostFenceReads, ...factsTrust, ...derivationTrust, ...factsTrustReads, ...factsTrustOwner, ...factRelinkAttempts,
   ...ontologyRepair, ...factsRecall, ...factsForget, ...factsRemember, ...factsWritePath, ...factsProvenance, ...factsQuoted,
@@ -259,7 +268,7 @@ export const STORE_MEMBERS = {
   // Typed reads of stamped trust tiers (rust/docs/store/trust.md, "Tier reads").
   ...trustTierReads,
   // Belief ledger writes and the append's reads (rust/docs/store/trust.md, "The belief ledger").
-  ...beliefLedger,
+  ...beliefLedger, ...cycleReads,
   // The reads remember and forget make before admission (rust/docs/store/memory_mutation_reads.md).
   ...headBlocker,
   ...checkpointValidation,
@@ -300,7 +309,7 @@ export const STORE_MEMBERS = {
   // The commit notifier's host lease and host source list (rust/docs/store/persistence.md, "Commit notifier").
   ...notifier,
   // The page embedding ledger on the paid path (rust/docs/store/embeddings.md).
-  ...pageEmbeddingBudget,
+  ...pageEmbeddingBudget, ...pageExtractionState,
   ...embeddingInstall,
   ...writeMisc,
   // The write-time chronicle ledger decision (rust/docs/store/chronicle-ledger.md).
@@ -316,6 +325,10 @@ export const STORE_MEMBERS = {
   ...writerReleaseMembers,
   // A bound publication's request-row reads and writes around its files (same doc, "Publication journal").
   ...publicationJournal,
+  ...gitDurability,
+  ...gitEffects,
+  ...topologyStore,
+  ...manualLinks,
   ...writerStatus,
   // Reads callers once ran through executeRaw: feedback, pins, credentials (rust/docs/store).
   ...collateStoreReads,
@@ -341,6 +354,8 @@ export const STORE_MEMBERS = {
   ...writeGuards, ...trustFence, ...trustProposals,
   // The page visibility guards a remote page write runs (rust/docs/store/page-visibility.md).
   ...pageVisibility,
+  // The held-concept rebuild's reads and link carry (rust/docs/store/concept_rebuild.md).
+  ...conceptRebuild,
   // The owner-only mark state; the store marks in code and has no SQL triggers (rust/docs/store/keyword.md).
   ...ownerOnlyMarks,
   // The large-page write guard's stored body size read (rust/docs/store/large-page.md).
@@ -382,6 +397,8 @@ export const STORE_MEMBERS = {
   ...doctorTerminal,
   // Doctor brain reads: the page, tag, fact, source and checkpoint statements the storage, archive, backup, git-hold and connector checks ran through executeRaw (rust/docs/store/cli-reads-doctor-brain.md).
   ...doctorBrain,
+  // The legacy_slug_spellings doctor check's reads: row security (none in the store) and the candidate page scan (rust/docs/store/slug-spelling-repair.md).
+  ...slugSpellingRepair,
   // Doctor sync reads: the managed-sync cursor, failure and orphan statements doctor ran through executeRaw (rust/docs/store/cli-reads-doctor-sync.md).
   ...doctorSync,
   // The doctor reads over sources (rust/docs/store/cli-reads-doctor-src.md).

@@ -32,7 +32,6 @@ import { testBackends } from '../helpers/test-backends.ts';
 import { withEnv } from '../helpers/with-env.ts';
 import { withCoordinatedWrite } from '../../src/core/persistence/context.ts';
 import { TEST_WRITE_ATTRIBUTION } from '../helpers/write-attribution.ts';
-import { segmentedWriteThrough } from '../helpers/segmented-writes-proxy.ts';
 
 const home = mkdtempSync(join(tmpdir(), 'gbrain-restore-deferred-'));
 const env = { GBRAIN_HOME: home, OPENAI_API_KEY: undefined, VOYAGE_API_KEY: undefined, ANTHROPIC_API_KEY: undefined };
@@ -41,18 +40,11 @@ const ctx = (engine: BrainEngine): OperationContext => ({ engine, sourceId: 'def
   config: { engine: engine.kind, embedding_disabled: true, storage: { backend: 'local', bucket: 'b', localPath: join(home, 'storage') } },
   logger: { info() {}, warn() {}, error() {} } } as OperationContext);
 const op = (name: string) => operations.find(o => o.name === name)!;
-const PROJECTION_PAGE_READ = "FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL AND body_storage='segmented'";
-
 /** The engine with the segmented projection's page read failing: the post-commit projection is lost. */
 function projectionLost(engine: BrainEngine): BrainEngine {
   return new Proxy(engine, {
-    get(target, prop, receiver) {
-      if (prop === 'executeRaw') {
-        return (sql: string, params?: unknown[]) => sql.includes(PROJECTION_PAGE_READ)
-          ? Promise.reject(new Error('projection lost (probe)')) : target.executeRaw(sql, params);
-      }
-      const through = segmentedWriteThrough(prop, receiver);
-      if (through) return through;
+    get(target, prop) {
+      if (prop === 'readSegmentedProjectionPage') return () => Promise.reject(new Error('projection lost (probe)'));
       const value = Reflect.get(target, prop, target);
       return typeof value === 'function' ? value.bind(target) : value;
     },
