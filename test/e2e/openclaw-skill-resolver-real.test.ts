@@ -199,7 +199,8 @@ describe.skipIf(!BIN)('gbrain-skill-resolver in a real OpenClaw gateway', () => 
   test('doctor reads the plugin healthy', async () => {
     const r = await oc.gbrain(['doctor', '--only', 'skill_resolver', '--json']);
     const check = JSON.parse(r.stdout).checks.find((c: { name: string }) => c.name === 'skill_resolver');
-    expect(check.status).toBe('ok');
+    const exposed = check.details.openclaw.agents.find((a: { id: string }) => a.id === 'main')?.owner_unverified;
+    expect({ status: check.status, code: check.details.code }).toEqual(exposed ? { status: 'warn', code: 'skill_resolver_owner_unverified' } : { status: 'ok', code: undefined });
     expect(check.details.openclaw).toMatchObject({ plugin: 'installed', library: 'ok' });
     expect(check.details.openclaw.recent.deadline_misses).toBe(0);
     expect(check.details.openclaw.agents).toEqual([expect.objectContaining({ id: 'main', mode: 'live', fresh: true, pins: 1 })]);
@@ -429,7 +430,8 @@ describe.skipIf(!BIN)('listing off with a skill outside the workspace in a real 
   test('doctor reads "listing off, resolver live", names the gbrain home and splits recent counts by source and session class', async () => {
     const r = await oc.gbrain(['doctor', '--only', 'skill_resolver', '--json']);
     const check = JSON.parse(r.stdout.slice(r.stdout.indexOf('{'))).checks.find((c: { name: string }) => c.name === 'skill_resolver');
-    expect({ status: check.status, message: check.message }).toEqual({ status: 'ok', message: expect.stringContaining('listing off, resolver live') });
+    const exposed = check.details.openclaw.agents.find((a: { id: string }) => a.id === 'main')?.owner_unverified;
+    expect({ status: check.status, code: check.details.code, message: check.message }).toEqual({ status: exposed ? 'warn' : 'ok', code: exposed ? 'skill_resolver_owner_unverified' : undefined, message: expect.stringContaining('listing off, resolver live') });
     const d = check.details.openclaw;
     expect(d.gbrain_home).toBe(oc.gbrainHome);
     expect(d.agents[0]).toMatchObject({ id: 'main', listing: 'off', path_reads: 'any', verdict: 'listing off, resolver live' });
