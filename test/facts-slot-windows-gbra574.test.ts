@@ -374,8 +374,19 @@ for (const backend of testBackends()) {
           hot: shown((await op(as, 'list_pages', { limit: 1 })).meta?.brain_hot_memory?.facts),
         };
       }
-      /** search's saved_facts (the named entity's facts, then the word matches) as the caller gets them. */
-      const searchSaved = async (as: As) => shown((await op(as, 'search', { query: 'Alice Example' })).meta?.retrieval?.saved_facts);
+      /**
+       * The facts `search` shows the caller: its saved_facts (the named entity's facts, then the word matches) and the fact rows the facts arm
+       * adds to the results (a fact shown as a row is not repeated in saved_facts), each with its valid_until day.
+       */
+      const searchSaved = async (as: As) => {
+        const { json, meta } = await op(as, 'search', { query: 'Alice Example' });
+        const rows = (Array.isArray(json) ? json : json.results ?? []) as Array<{ result_type?: string; chunk_text?: string }>;
+        const asRows = rows.filter(r => r.result_type === 'fact').map(r => {
+          const saved = /Saved fact \([^)]*?(?:valid from [^;]*?(?: to (\d{4}-\d{2}-\d{2}))?); [^)]*\): ([^\n]*)\n```/.exec(r.chunk_text ?? '');
+          return { fact: saved?.[2] ?? r.chunk_text ?? '', valid_until: saved?.[1] ?? null };
+        });
+        return shown([...(meta?.retrieval?.saved_facts ?? []), ...asRows]);
+      };
       /** Local `gbrain recall --json`. */
       async function cliRecall(args: string[]): Promise<Shown> {
         let out = '';
