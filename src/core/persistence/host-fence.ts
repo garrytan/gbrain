@@ -89,5 +89,33 @@ export function withFence<T extends object | undefined>(engine: object, opts: T)
  * host fence and the claim epoch; every other engine ignores it. Null token (no claim): nothing to check.
  */
 export function effectInstallClaim(engine: object, effect: { execution_token: string | null }): { token: string; fence?: LeaseToken } | undefined {
-  return effect.execution_token ? { token: effect.execution_token, ...fenceOpts(engine) } : undefined;
+  return effect.execution_token ? { token: effect.execution_token, ...claimFenceOpts(engine, effect.execution_token) } : undefined;
+}
+
+/**
+ * The fence each write or effect claim was stamped under, by its execution token (a fresh UUID per claim). Every later
+ * write on that claim carries the same fence, or none when the claim was stamped with none (an implicit lease), never
+ * whichever registration is current when it runs: a registration that appears, or is taken again under a new epoch,
+ * after the stamp cannot finish the claim under the wrong epoch.
+ */
+const claimFences = new Map<string, LeaseToken | null>();
+const MAX_BOUND_CLAIMS = 16_384;
+
+/** Records the fence (or none) claim `token` was stamped under. */
+export function bindClaimFence(token: string, fence: LeaseToken | null): void {
+  claimFences.delete(token);
+  claimFences.set(token, fence);
+  for (const oldest of claimFences.keys()) {
+    if (claimFences.size <= MAX_BOUND_CLAIMS) break;
+    claimFences.delete(oldest);
+  }
+}
+
+/** `{ fence }` for a write on claim `token`: the fence it was stamped under; a claim stamped elsewhere uses the engine's. */
+export function claimFenceOpts(engine: object, token: string | null | undefined): { fence?: LeaseToken } {
+  if (token && claimFences.has(token)) {
+    const fence = claimFences.get(token);
+    return fence ? { fence } : {};
+  }
+  return fenceOpts(engine);
 }
