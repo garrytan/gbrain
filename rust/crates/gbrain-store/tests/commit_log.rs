@@ -1057,7 +1057,8 @@ fn the_switch_off_leaves_format_and_records_without_any_log_field() {
     let info = serde_json::to_value(store.info()).unwrap();
     assert_eq!(
         sorted_keys(&info),
-        vec!["brain_id", "created", "format_version", "schema_version"],
+        // `serialized_transactions` is the store's lock-skip promise (groundwork G1), in every open result.
+        vec!["brain_id", "created", "format_version", "schema_version", "serialized_transactions"],
         "the open result keeps its shape"
     );
     assert_eq!(store.commit_log_since(), None);

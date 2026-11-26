@@ -418,8 +418,8 @@ mod tests {
         //   concurrent store to show a lease read is checked again at commit (3 calls);
         // - `lib.rs`'s multi-user open, which records the clock floor once in its own write (no page record);
         // - `kv.rs`'s `Unserialized`, which wraps a record store to withhold
-        //   `serialized_transactions` and passes every call on (6 calls and definitions beside the
-        //   trait's 5).
+        //   `serialized_transactions` and passes every call on (8 calls and definitions beside the
+        //   trait's 7).
         let allowed: &[(&str, usize)] = &[
             ("access_flag.rs", 1),
             ("facts/entity_order_tests.rs", 1),
@@ -427,7 +427,7 @@ mod tests {
             ("keyword/index_build.rs", 1),
             ("keyword/index_build/tests.rs", 1),
             ("keyword/index_writer/tests.rs", 2),
-            ("kv.rs", 13),
+            ("kv.rs", 15),
             ("leases_tests.rs", 3),
             ("lib.rs", 7),
             ("occ_kv.rs", 8),
