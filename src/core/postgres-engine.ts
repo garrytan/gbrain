@@ -1,6 +1,6 @@
 import { tryAcquirePoolLongHold, PoolCapacityError } from './pool-budget.ts';
 import { capabilitiesForEngineKind, type EngineCapabilities } from './engine-capabilities.ts';
-import { assertReservedConfigWrite, noteRequestConfigWrite, loadedRequestConfigValue, requestConfigRows, requestConfigValue } from './config-snapshot.ts';
+import { assertReservedConfigWrite, noteRequestConfigWrite, requestConfigRows, requestConfigValue } from './config-snapshot.ts';
 import { replaceDerivedLinks, replaceDerivedLinksBatch, type DerivedLinkBatchItem, type DerivedLinkOrigin, type DerivedLinkReplacementOptions } from './derived-links.ts';
 import { mutatePageTag } from './page-state/tags.ts';
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
@@ -3193,14 +3193,14 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async getConfig(key: string, opts?: { timeoutMs?: number }): Promise<string | null> {
-    // A caller that bounds the read (the privacy notice) takes no part in the request snapshot's lazy bulk read, which has no bound: it answers from a snapshot already loaded, or reads the key itself.
-    const held = opts?.timeoutMs ? await loadedRequestConfigValue(this, key) : await requestConfigValue(this, key);
-    if (held !== undefined) return held;
-    // The bounded read is a statement the server ends at the bound, not a read the client walks away from.
+    // A caller that bounds the read (the privacy notice) reads the key itself, as master's one raw statement did: it takes no part in the request
+    // snapshot, whose lazy bulk read has no bound. The statement is one the server ends at the bound, not a read the client walks away from.
     if (opts?.timeoutMs) {
       const rows = await this.executeRaw<{ value: string }>('SELECT value FROM config WHERE key = $1', [key], { timeoutMs: opts.timeoutMs });
       return rows.length > 0 ? rows[0].value : null;
     }
+    const held = await requestConfigValue(this, key);
+    if (held !== undefined) return held;
     // #1603: a transient pooler drop on this read used to throw / fall through
     // to defaults silently — which on remote Postgres surfaces as the wrong
     // search mode/knobs and empty-stdout queries.
