@@ -139,6 +139,18 @@ async function cli(args: string[]): Promise<{ doc: Record<string, unknown>; exit
     expect(await listed()).not.toContain(TRANSCRIPTS[2]);
     await engine.executeRaw("UPDATE facts SET visibility = 'world' WHERE source_markdown_slug = $1", [TRANSCRIPTS[2]]);
     expect(await listed()).toContain(TRANSCRIPTS[2]);
+    await acceptAll();
+    await engine.executeRaw("UPDATE facts SET source_session = 'another-session' WHERE source_markdown_slug = $1", [TRANSCRIPTS[2]]);
+    expect(await listed()).toContain(TRANSCRIPTS[2]);
+  }, 60_000);
+
+  test('an acceptance does not depend on the session time zone', async () => {
+    await acceptAll();
+    const before = await listed();
+    if (kind === 'pglite') {
+      await engine.executeRaw("SET TimeZone = 'America/Los_Angeles'");
+      try { expect(await listed()).toEqual(before); } finally { await engine.executeRaw("SET TimeZone = 'UTC'"); }
+    }
   }, 60_000);
 
   test('a conversation page with no importer stamp stays for per-page review', async () => {

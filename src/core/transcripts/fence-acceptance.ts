@@ -26,16 +26,17 @@ export interface FenceAcceptance { page_id: number; source_id: string; slug: str
 
 /** Imported pages whose body is outside-authored text and that have fence rows indexed as facts, takes or links. */
 export async function listOutsideFencePages(engine: BrainEngine): Promise<OutsideFencePage[]> {
-  const rows = await engine.executeRaw<OutsideFencePage & { page_id: number | string }>(
+  // The fingerprint hashes each row's fields as JSON; a fixed session time zone keeps a timestamp's text the same everywhere.
+  const rows = await engine.transaction(async tx => { await tx.executeRaw("SET LOCAL TimeZone = 'UTC'"); return tx.executeRaw<OutsideFencePage & { page_id: number | string }>(
     `SELECT p.id AS page_id, p.source_id, p.slug, p.type, sum(x.facts)::int AS facts, sum(x.world_facts)::int AS world_facts,
             sum(x.takes)::int AS takes, sum(x.links)::int AS links, md5(string_agg(x.k, ',' ORDER BY x.k)) AS fingerprint,
             bool_and(p.type = 'conversation' AND p.frontmatter ? 'transcript_import' AND ${importerWroteLiveRevisionSql('p', 'r', '$1')}
                      AND COALESCE(r.intent->>'ingested_via', p.ingested_via) = $1) AS imported_transcript
-       FROM (SELECT fp.id AS page_id, 1 AS facts, CASE WHEN f.visibility = 'world' THEN 1 ELSE 0 END AS world_facts, 0 AS takes, 0 AS links, 'f' || f.id || ':' || md5(concat_ws('|', f.entity_slug, f.fact, f.kind, f.visibility, f.notability, f.context, f.valid_from, f.valid_until, f.confidence, f.source)) AS k
+       FROM (SELECT fp.id AS page_id, 1 AS facts, CASE WHEN f.visibility = 'world' THEN 1 ELSE 0 END AS world_facts, 0 AS takes, 0 AS links, 'f' || f.id || ':' || md5((to_jsonb(f) - 'embedding' - 'embedded_at' - 'created_at' - 'updated_at' - 'consolidated_at' - 'consolidated_into')::text) AS k
                FROM facts f JOIN pages fp ON fp.source_id = f.source_id AND fp.slug = f.source_markdown_slug
               WHERE f.row_num IS NOT NULL AND f.expired_at IS NULL
-             UNION ALL SELECT t.page_id, 0, 0, 1, 0, 't' || t.id || ':' || md5(concat_ws('|', t.claim, t.kind, t.holder, t.weight, t.since_date, t.until_date, t.source)) FROM takes t WHERE t.active
-             UNION ALL SELECT l.origin_page_id, 0, 0, 0, 1, 'l' || l.id || ':' || md5(concat_ws('|', l.from_page_id, l.to_page_id, l.link_type, l.context, l.link_kind)) FROM links l WHERE l.origin_field = 'links_fence') x
+             UNION ALL SELECT t.page_id, 0, 0, 1, 0, 't' || t.id || ':' || md5((to_jsonb(t) - 'embedding' - 'embedded_at' - 'created_at' - 'updated_at')::text) FROM takes t WHERE t.active
+             UNION ALL SELECT l.origin_page_id, 0, 0, 0, 1, 'l' || l.id || ':' || md5((to_jsonb(l) - 'created_at')::text) FROM links l WHERE l.origin_field = 'links_fence') x
        JOIN pages p ON p.id = x.page_id
        JOIN sources s ON s.id = p.source_id
        LEFT JOIN persistence_requests r ON r.id = p.revision_write_request_id
@@ -43,7 +44,7 @@ export async function listOutsideFencePages(engine: BrainEngine): Promise<Outsid
         AND ((s.config->>'kind' = 'google' AND p.type IN ('email', 'meeting')) OR s.config->>'kind' = 'github'
              OR p.frontmatter ? 'transcript_import')
       GROUP BY p.id, p.source_id, p.slug, p.type
-      ORDER BY p.source_id, p.slug`, [IMPORTER_INGESTED_VIA]);
+      ORDER BY p.source_id, p.slug`, [IMPORTER_INGESTED_VIA]); });
   return rows.map(row => ({ ...row, page_id: Number(row.page_id), imported_transcript: row.imported_transcript === true }));
 }
 

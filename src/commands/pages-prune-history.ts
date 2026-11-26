@@ -99,8 +99,8 @@ function describePlan(plan: HistoryPrunePlan, apply: string[] | null): string {
 async function prune(engine: BrainEngine, args: string[]): Promise<void> {
   const parsed = parseHistoryPruneArgs(args);
   const plan = await planHistoryPrune(engine, parsed);
-  const sources = [...new Set(plan.pages.map(page => page.source_id))];
-  if (parsed.slug !== undefined && parsed.sourceId === undefined && sources.length > 1) {
+  const sources = plan.slug_sources ?? [];
+  if (sources.length > 1) {
     throw usageError(`${parsed.slug} names a page in ${sources.length} sources (${sources.join(', ')}); nothing was pruned.`, `Name the one you mean: ${previewArgv({ ...parsed, sourceId: sources[0] }).join(' ')}`);
   }
   const print = (doc: unknown, text: string) => process.stdout.write((parsed.json ? JSON.stringify(doc, null, 2) : text) + '\n');

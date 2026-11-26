@@ -52,6 +52,8 @@ export interface HistoryPrunePlan {
   totals: { pages: number; versions: number; bytes: number; oldest_at: string | null; newest_at: string | null };
   /** Matching history this command never prunes, so the preview says it stays. */
   kept_by_rule: { segmented_versions: number; agent_policy_pages: number };
+  /** A bare slug only: every source with a live page at that slug, whatever its history (more than one needs --source). */
+  slug_sources?: string[];
 }
 
 interface Row { source_id: string; slug: string; page_id: number | string; id: number | string; snapshot_at: Date | string; bytes: number | string; total: number | string }
@@ -103,13 +105,17 @@ export async function planHistoryPrune(engine: BrainEngine, sel: HistoryPruneSel
   const [brain] = await engine.executeRaw<{ brain_id: string }>('SELECT brain_id::text AS brain_id FROM persistence_brain WHERE singleton=1');
   const params = parameters(sel);
   const plan_hash = computePlanHash({ brain: brain?.brain_id ?? 'unknown', source: sel.sourceId ?? null, operation: 'history_prune',
-    records: pages.flatMap(page => page.version_ids.map(id => ({ id: String(id), revision: page.page_id }))), parameters: params, effects: ['destructive'] });
+    records: pages.flatMap(page => page.version_ids.map(id => ({ id: String(id), revision: `${page.page_id}:${page.source_id}:${page.slug}` }))), parameters: params, effects: ['destructive'] });
+  const slugSources = sel.slug !== undefined && sel.sourceId === undefined
+    ? (await engine.executeRaw<{ source_id: string }>('SELECT DISTINCT source_id FROM pages WHERE slug = $1 AND deleted_at IS NULL ORDER BY source_id', [sel.slug])).map(r => r.source_id)
+    : undefined;
   const stamps = pages.flatMap(page => [page.oldest_pruned_at, page.newest_pruned_at]).sort();
   return {
     plan_hash, parameters: params, pages,
     totals: { pages: pages.length, versions: pages.reduce((n, p) => n + p.versions_pruned, 0), bytes: pages.reduce((n, p) => n + p.bytes_pruned, 0),
       oldest_at: stamps[0] ?? null, newest_at: stamps[stamps.length - 1] ?? null },
     kept_by_rule: { segmented_versions: Number(kept?.segmented ?? 0), agent_policy_pages: Number(kept?.policy ?? 0) },
+    ...(slugSources ? { slug_sources: slugSources } : {}),
   };
 }
 
@@ -119,7 +125,7 @@ export async function applyHistoryPrune(engine: BrainEngine, plan: HistoryPruneP
   for (const page of plan.pages) {
     const n = await engine.transaction(async tx => {
       await tx.lockPageKeys([{ sourceId: page.source_id, slug: page.slug }]);
-      return pruneInlineVersionsById(tx, { pageId: page.page_id, sourceId: page.source_id, slug: page.slug }, page.version_ids);
+      return pruneInlineVersionsById(tx, { pageId: page.page_id, sourceId: page.source_id, slug: page.slug, type: (plan.parameters.type as string | null) ?? null }, page.version_ids);
     });
     versions += n;
     if (n) pages++;

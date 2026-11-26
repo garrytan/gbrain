@@ -254,7 +254,7 @@ async function processThread(
   }
   deps.processedThreads.add(thread.threadId);
   const verdict = await applyLoopDetection(deps, thread, slug);
-  if (verdict && deps.loopState) recordGraceVerdict(deps.loopState, thread, verdict, slug, deps.myAddresses, deps.log, deps.exclusion);
+  if (verdict && deps.loopState) recordGraceVerdict(deps.loopState, thread, verdict, slug, myAddressSet(deps.entry), deps.log, deps.exclusion);
   if (verdict && deps.loopState) recordWithheldVerdict(deps.loopState, verdict);
   if (verdict?.withheld) summary.loopsWithheld[verdict.withheld.reason] = (summary.loopsWithheld[verdict.withheld.reason] ?? 0) + 1;
   // LLM extraction candidates: trickle + the bounded recent window only —
@@ -393,6 +393,8 @@ const WINDOW_LIST_PAGES = 20;
 const MIN_WINDOW_MS = 60_000;
 /** How long the one listing that proves an aborted walk's progress may take, under its own signal. */
 const ABORT_PROOF_MS = 15_000;
+/** How many proof listings a managed walk spends trying to bank before its first batch ends (#10473). */
+const EARLY_BANK_TRIES = 3;
 
 /**
  * Drain `[lowerMs, state[floorKey])` newest→oldest, committing the floor per
@@ -422,6 +424,7 @@ async function walkGmailWindow(g: GmailSweep, floorKey: 'gmail_backfill_floor_ms
   let floorMs = state[floorKey] ?? Date.now() + 60_000;
   let spanMs = floorMs - lowerMs;
   let bankedFirst = false;
+  let earlyBankTries = 0;
   while (floorMs > lowerMs) {
     if (signal?.aborted) return 'aborted';
     const afterMs = Math.max(lowerMs, floorMs - spanMs);
@@ -461,7 +464,7 @@ async function walkGmailWindow(g: GmailSweep, floorKey: 'gmail_backfill_floor_ms
           if (outcome.newestMs > 0 && outcome.newestMs < batchOldest) batchOldest = outcome.newestMs;
           // #10473: a managed sweep cannot write once its deadline aborts it, so it banks as soon as a proof holds after a
           // thread lands (as the delta drain banks its first thread); a sweep cut off inside its first batch still moves the floor.
-          if (deps.managed && !batchFailed && !bankedFirst && batchOldest < floorMs) bankedFirst = await bank(batchOldest);
+          if (deps.managed && !batchFailed && !bankedFirst && earlyBankTries < EARLY_BANK_TRIES && batchOldest < floorMs) { earlyBankTries++; bankedFirst = await bank(batchOldest); }
         } else if (outcome.kind === 'failed' || outcome.kind === 'rate_limited') {
           // A failed thread NEWER than a committed floor would fall outside
           // the resume window (`before:floor`) forever, so the batch holds the
@@ -1210,7 +1213,7 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
       if (deps.graceBackfillSeeded) state.loop_grace_backfill_done = true;
       if (managed) {
         try {
-          catchup = await runLoopsCatchup({ engine, sourceId, state, log, signal: opts.signal, myAddresses: deps.myAddresses,
+          catchup = await runLoopsCatchup({ engine, sourceId, state, log, signal: opts.signal, myAddresses: myAddressSet(entry),
             exclusion: deps.exclusion, inFlight: new Set(deps.extractCandidates.map(c => c.slug)),
             fetchThread: async (tid) => {
               try { return await gmail.getThread(tid, cfg.account, opts.signal ? { signal: opts.signal } : {}); }

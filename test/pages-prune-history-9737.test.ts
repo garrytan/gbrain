@@ -164,6 +164,28 @@ for (const kind of testBackends()) {
       expect(await applyHistoryPrune(engine, plan)).toEqual({ pages: 0, versions: 0, unchanged_pages: 1 });
       const [left] = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM page_versions pv JOIN pages p ON p.id = pv.page_id WHERE p.source_id = $1', [other]);
       expect(left!.n).toBe(2);
+
+      const lone = `notes/lone-${kind}`;
+      await history(lone, ['l1', 'l2']);
+      await asOwner(engine, tx => tx.putPage(lone, { type: 'note', title: lone, compiled_truth: 'no history' }, { sourceId: other }));
+      expect((await cli([lone, '--keep', '0'])).exit).toBe(2);
+      expect(await count(lone)).toBe(1);
+    });
+
+    test('an approval binds where each page is and what type it has: a rename in the prefix or a type change keeps the history', async () => {
+      const prefix = `moved-${kind}/`;
+      await history(`${prefix}a`, ['a1', 'a2', 'a3']);
+      const preview = await cli(['--prefix', prefix, '--keep', '0']);
+      await engine.executeRaw('UPDATE pages SET slug = $1 WHERE slug = $2', [`${prefix}b`, `${prefix}a`]);
+      const stale = await cli(['--prefix', prefix, '--keep', '0', '--yes', '--expect', String(preview.doc.plan_hash)]);
+      expect(stale.doc.error).toBe('preview_changed');
+      expect(await count(`${prefix}b`)).toBe(2);
+
+      const typed = await planHistoryPrune(engine, { prefix, type: 'note', keep: 0 });
+      expect(typed.totals.versions).toBe(2);
+      await engine.executeRaw("UPDATE pages SET type = 'concept' WHERE slug = $1", [`${prefix}b`]);
+      expect(await applyHistoryPrune(engine, typed)).toMatchObject({ versions: 0, unchanged_pages: 1 });
+      expect(await count(`${prefix}b`)).toBe(2);
     });
 
     test('the selection and bounds are required, and no operation or remote caller reaches the prune', async () => {

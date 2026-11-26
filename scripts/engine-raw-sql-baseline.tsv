@@ -733,7 +733,7 @@ src/core/page-spend.ts	execute_raw	4
 src/core/page-state/contextual-proof.ts	execute_raw	3
 src/core/page-state/credential-reseal.ts	execute_raw	6
 src/core/page-state/guards.ts	execute_raw	11
-src/core/page-state/history-prune.ts	execute_raw	3	#9737 history prune preview: lists inline versions and their pages for the selection; the page-state area is still raw SQL (versions.ts) and converts with it
+src/core/page-state/history-prune.ts	execute_raw	4	#9737 history prune preview: lists inline versions and their pages for the selection, the brain id the plan_hash binds and the sources a bare slug names; the page-state area is still raw SQL (versions.ts) and converts with it
 src/core/page-state/image-seal.ts	execute_raw	5
 src/core/page-state/materialize.ts	execute_raw	5
 src/core/page-state/projection-status.ts	execute_raw	1
@@ -1203,7 +1203,7 @@ src/core/token-mint.ts	execute_raw	3
 src/core/token-mint.ts	sql_template	1
 src/core/transcripts/archive.ts	execute_raw	15
 src/core/transcripts/discover.ts	execute_raw	2
-src/core/transcripts/fence-acceptance.ts	execute_raw	4	#9427: the outside-fences scan moved here from doctor/checks/outside-content-fences.ts (its row moves with it), the brain id the plan_hash binds, and the apply row lock (insert-if-missing, SELECT FOR UPDATE) that keeps two applies from dropping each other; the transcripts area is still raw SQL and converts with it
+src/core/transcripts/fence-acceptance.ts	execute_raw	5	#9427: the outside-fences scan moved here from doctor/checks/outside-content-fences.ts (its row moves with it) under a UTC session time zone so its fingerprint is stable, the brain id the plan_hash binds, and the apply row lock (insert-if-missing, SELECT FOR UPDATE) that keeps two applies from dropping each other; the transcripts area is still raw SQL and converts with it
 src/core/transcripts/hermes.ts	driver_call	1
 src/core/transcripts/ingest.ts	execute_raw	3
 src/core/transcripts/recover.ts	execute_raw	1
