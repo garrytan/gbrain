@@ -182,16 +182,28 @@ fn hidden_from_writer_judges_a_soft_deleted_row_like_a_live_one() {
     let bob = policy(&["member:bob"], false);
     for prefix in ["notes", "gone"] {
         // A row that names another reader hides the slug, whether or not the row is deleted; one that names the writer does not.
-        assert!(hidden(&format!("{prefix}/names-alice"), &bob, true), "{prefix}");
-        assert!(!hidden(&format!("{prefix}/names-bob"), &bob, true), "{prefix}");
+        assert!(
+            hidden(&format!("{prefix}/names-alice"), &bob, true),
+            "{prefix}"
+        );
+        assert!(
+            !hidden(&format!("{prefix}/names-bob"), &bob, true),
+            "{prefix}"
+        );
         assert!(!hidden(&format!("{prefix}/open"), &bob, true), "{prefix}");
         // The privacy part hides a private page only when asked.
         assert!(hidden(&format!("{prefix}/private"), &bob, true), "{prefix}");
-        assert!(!hidden(&format!("{prefix}/private"), &bob, false), "{prefix}");
+        assert!(
+            !hidden(&format!("{prefix}/private"), &bob, false),
+            "{prefix}"
+        );
         // A labelled-only writer reads only a page that names it, soft-deleted or not.
         let carol = policy(&["member:carol"], true);
         assert!(hidden(&format!("{prefix}/open"), &carol, true), "{prefix}");
-        assert!(hidden(&format!("{prefix}/names-bob"), &carol, true), "{prefix}");
+        assert!(
+            hidden(&format!("{prefix}/names-bob"), &carol, true),
+            "{prefix}"
+        );
     }
     let names_carol = policy(&["member:bob", "member:carol"], true);
     assert!(!hidden("gone/names-bob", &names_carol, true));
