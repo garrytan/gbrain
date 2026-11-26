@@ -904,10 +904,13 @@ fn a_follower_carries_the_clock_floor_and_a_promotion_starts_above_it() {
             "concurrent {concurrent}: the follower holds a retired floor row"
         );
         drop(primary);
+        let cursor = follower.cursor().unwrap();
         let promoted = follower.promote(mu(concurrent)).unwrap();
         promoted.set_config("test.after", "1").unwrap();
+        // The first commit after the cursor (the promotion open's own upkeep commit, if any), not the newest one.
+        let first = promoted.read_commit_log(Some(cursor), 1).unwrap();
         assert!(
-            promoted.last_commit_time().unwrap().unwrap() > high,
+            first.records[0].commit_time > high,
             "concurrent {concurrent}: the first promoted commit time is not above the floor"
         );
         assert!(
