@@ -8,6 +8,7 @@ import type { DecideMembers } from './engine-members/decide.ts';
 import type { JobsMembers } from './engine-members/jobs.ts';
 import type { DoctorMembers } from './engine-members/doctor.ts';
 import type { MentionPassMembers } from './engine-members/mentions.ts';
+import type { CycleReadMembers } from './engine-members/cycle-reads.ts';
 import type { FenceProjectionMembers } from './engine-members/fence-projection.ts';
 import type { SegmentedWriteMembers } from './engine-members/segmented-writes.ts';
 import type { EmbedStaleMembers } from './engine-members/embed-stale.ts';
@@ -18,7 +19,6 @@ import type { HandoverReadMembers } from './engine-members/handover-reads.ts';
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
 import type * as AccessMembersSql from './engine-sql/access-members.ts';
 import type * as LinkSlugReadsSql from './engine-sql/link-slug-reads.ts';
-import type * as CycleWindowSql from './engine-sql/cycle-window.ts';
 import type * as SlugSpellingsSql from './engine-sql/slug-spellings.ts';
 import type * as FederationExposureSql from './engine-sql/federation-exposure.ts';
 import type * as DreamCycleSql from './engine-sql/dream-cycle.ts';
@@ -57,6 +57,7 @@ import type { FenceFactRow, FenceRowsTarget, GuardedTakeRow, GuardedTakeRowsQuer
 import type { PageBodySizes } from './engine-sql/large-page.ts';
 import type { TrustTable } from './trust/schema.ts';
 import type { NewTrustProposal, PendingContradictionFilter, PendingContradictionRow, TrustProposalFilter, TrustProposalRow, TrustProposalStatus, TrustProposalTransition } from './engine-sql/trust-proposals.ts';
+import type { PageExtractionCommit, PageExtractionPipeline, PageExtractionWatermarkRow } from './engine-sql/page-extraction-state.ts';
 import type { ImportedPageSeal, InlinePageRegionsRow, LivePageBodyRow, OriginClaimRow, PageIndexingState, PageIngestStamp, PageOriginRow, PageOriginTarget, RevivalPageRow } from './engine-sql/write-guards.ts';
 import type { PageEmbeddingBudgetRow, PageEmbeddingReservation, PageEmbeddingReserveInput } from './engine-sql/page-embedding-budget.ts';
 import type { EmbeddingCompletionOpts, EmbeddingCompletionRow } from './engine-sql/embedding-install.ts';
@@ -74,6 +75,7 @@ import type {
 } from './engine-sql/write-misc.ts';
 import type { ChronicleJudgeKey, ChronicleRowKey, ChronicleRowUpsert } from './engine-sql/chronicle-ledger.ts';
 import type { StoredPageHead } from './engine-sql/page-mutation-reads.ts';
+import type { PageChunkCounts, WindowChunkRow } from './engine-sql/page-window-chunks.ts';
 import type { ChronicleLedgerRow } from './chronicle/contract.ts';
 import type { WorktreeClaimStore } from './engine-sql/worktree-claim.ts';
 import type { WriterAdminStateOptions, WriterAdminStore } from './engine-sql/writer-admin.ts';
@@ -1089,7 +1091,7 @@ export function clampSearchLimit(limit: number | undefined, defaultLimit = 20, c
   return Math.min(Math.floor(limit), cap);
 }
 
-export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers, PersistenceMembers, LedgerMembers, GovernanceMembers, DecideMembers, JobsMembers, DoctorMembers, MentionPassMembers, EmbedStaleMembers, DoctorTallyMembers, ListReadMembers, FenceProjectionMembers, SurfacedReadMembers, SegmentedWriteMembers, HandoverReadMembers {
+export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers, PersistenceMembers, LedgerMembers, GovernanceMembers, DecideMembers, JobsMembers, DoctorMembers, MentionPassMembers, CycleReadMembers, EmbedStaleMembers, DoctorTallyMembers, ListReadMembers, FenceProjectionMembers, SurfacedReadMembers, SegmentedWriteMembers, HandoverReadMembers {
   /** Discriminator: lets migrations and other consumers branch on engine kind without instanceof + dynamic imports. */
   readonly kind: 'postgres' | 'pglite' | 'rust';
   readonly capabilities: EngineCapabilities; // what this engine can do, by name (engine-capabilities.ts); ask it instead of branching on kind
@@ -1739,6 +1741,10 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   readStoredPageHead(sourceId: string, slug: string): Promise<StoredPageHead | null>;
   /** A version's `source_path` when the version belongs to `pageId`, or null. */
   readVersionSourcePath(versionId: number, pageId: number): Promise<string | null>;
+  /** The text chunk a get_page window around `chunkId` centers on, when it is a chunk of `pageId` at its live generation, or null. */
+  readWindowChunk(chunkId: number, pageId: number): Promise<WindowChunkRow | null>;
+  /** The chunk count of `pageId` at its live generation and how many of those chunks have a vector (get_page body none). */
+  countPageChunks(pageId: number): Promise<PageChunkCounts>;
   listActiveAccessMembers(): Promise<string[]>;
   /** Whether any access member, live or not, carries the labelled-only grant; a failed read throws (engine-sql/write-misc.ts). */
   hasLabelledOnlyMember(): Promise<boolean>;
@@ -2276,10 +2282,6 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   readLiveSlugAliases(sourceId: string, targets: readonly string[]): Promise<LinkSlugReadsSql.LiveSlugAliasRow[]>;
   /** Link preparation's slug fingerprint of a source and the slugs above `afterId` (engine-sql/link-slug-reads.ts). */
   readSourceSlugProbe(sourceId: string, afterId: number): Promise<LinkSlugReadsSql.SourceSlugProbe>;
-  /** A per-source cycle's listing instant, UTC ISO with microseconds, or null (engine-sql/cycle-window.ts). */
-  readCycleListingInstant(): Promise<string | null>;
-  /** Up to `limit` live pages of a source after the cursor `(since, slug)`, by (updated_at, slug bytes) (engine-sql/cycle-window.ts). */
-  listSourceChangedPagesAfter(sourceId: string, since: string | null, slug: string, limit: number): Promise<CycleWindowSql.SourceChangedPageRow[]>;
   /** A scalar slug read's stored-spelling scan: up to 200 stored slugs with spelling key `key`, after `after` by bytes (engine-sql/slug-spellings.ts). */
   readStoredSlugSpellings(key: string, scope: SlugSpellingsSql.StoredSpellingScope, after: string, keys?: readonly string[] | null): Promise<string[]>;
 
@@ -4030,6 +4032,16 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   openPageEmbeddingHold(pageId: number): Promise<void>;
   reservePageEmbedding(pageId: number, input: PageEmbeddingReserveInput): Promise<PageEmbeddingReservation>;
   settlePageEmbeddingReservation(pageId: number, settle: { window: string | null; reservedUsd: number; bookedUsd: number; unpricedCalls: number }): Promise<void>;
+  /**
+   * The extraction watermark and partial-input receipt (engine-sql/page-extraction-state.ts; extraction-watermark.ts owns
+   * the policy), one row per page and pipeline: the live page's id with its stored watermark, the commit of a successful
+   * extraction, the receipt read, the row delete and the receipt upsert. A hard page delete and a source delete remove the rows.
+   */
+  readPageExtractionWatermark(sourceId: string, slug: string, pipeline: PageExtractionPipeline): Promise<PageExtractionWatermarkRow | null>;
+  commitPageExtraction(commit: PageExtractionCommit): Promise<void>;
+  readPageExtractionReceipt(pageId: number, pipeline: PageExtractionPipeline): Promise<Record<string, unknown> | null>;
+  clearPageExtractionState(pageId: number, pipeline: PageExtractionPipeline): Promise<void>;
+  writePageExtractionReceipt(pageId: number, pipeline: PageExtractionPipeline, pipelineVersion: number, receipt: Record<string, unknown>): Promise<void>;
   /**
    * The embedding effect's install path (engine-sql/embedding-install.ts): the page's visible chunks and which carry a
    * current vector, the effect claim under its row lock, the embedding switch's share lock and one batch of the install.

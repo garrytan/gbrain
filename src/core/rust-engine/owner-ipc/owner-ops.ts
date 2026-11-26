@@ -13,6 +13,7 @@ import type { OperationContext } from '../../ops/contract.ts';
 import { importFromContent, importFromFile, importImageFile } from '../../import-file.ts';
 import { importManagedFiles } from '../../persistence/import-mutations.ts';
 import { ownerIpcRefusal } from './routes.ts';
+import { snapshotStatus, snapshotStore, type SnapshotStoreOptions } from '../store-snapshot.ts';
 import type { OwnerWholeOperation } from './server.ts';
 import {
   OWNER_FORWARDED_OPERATIONS, OWNER_RUN_OPERATION, type ForwardedOperationContext, type ForwardedOperationResult,
@@ -58,5 +59,7 @@ export function ownerWholeOperations(opts: { config?: GBrainConfig } = {}): Read
     importImageFile: (engine, ...args) => importImageFile(engine, ...(args as Args<typeof importImageFile>)),
     importManagedFiles: (engine, ...args) => importManagedFiles(engine, ...(args as Args<typeof importManagedFiles>)),
     [OWNER_RUN_OPERATION]: (engine, name, params, context) => runOperation(engine, opts.config, name, params, context),
+    snapshotStore: (engine, target, options) => snapshotStore(engine, String(target), options as SnapshotStoreOptions),
+    snapshotStatus: (_engine, opId) => Promise.resolve(snapshotStatus(String(opId))),
   };
 }

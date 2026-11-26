@@ -18,6 +18,11 @@ unicode-normalization = "0.1"
 # The storage bake-off only (`fjall_kv`); off by default, so the addon does not link it.
 fjall = { version = "3.1", optional = true }
 
+# Directory-relative removal (`unlinkat`) for a cancelled store snapshot (`snapshot.rs`); already in the
+# lockfile through redb.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [features]
 fjall = ["dep:fjall"]
 

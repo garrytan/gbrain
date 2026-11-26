@@ -327,8 +327,11 @@ repository links them as it syncs; pages written by `gbrain import`, `put_page` 
 group by hand but not unlinked by hand: reject it instead. `gbrain dedupe reject <identity>` removes one and keeps the pair apart;
 the decision keeps a fingerprint (a hash of each page's name and ids, never
 the values), so a renamed or moved page is still kept apart. People are
-never linked automatically, except contact pages by exactly the same email
-or phone: Apple Contacts on every sync, and Google Contacts after
+linked automatically only by `gbrain dedupe auto --apply` (a "same" decision
+recorded like a confirm, `decided_by: dedupe:auto:<class>`, for the classes
+that passed a labelled sample; see
+[Duplicate people](../guides/duplicate-people.md#automatic-links)), and contact
+pages by exactly the same email or phone: Apple Contacts on every sync, and Google Contacts after
 `gbrain dedupe link-contacts --source <id> --apply`
 ([Google connect](../guides/google-connect.md#link-each-contact-to-its-person-page)).
 

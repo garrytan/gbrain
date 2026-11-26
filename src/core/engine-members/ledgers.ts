@@ -27,9 +27,9 @@ export interface LedgerMembers {
   // Belief ledger writes (engine-sql/belief-ledger.ts). Each runs the statement its caller in src/core/belief/ ran through executeRaw.
   /** The fingerprints among `factFps` and `takeFps` that a fact or take purge of the source tombstoned (subject '*' included). No set order. */
   readBeliefTombstones(sourceId: string, factFps: readonly string[], takeFps: readonly string[]): Promise<string[]>;
-  /** Of `claims`, each one the ledger recorded under its pre-v339 Postgres fingerprint, with that fingerprint (belief/legacy-fingerprint.ts). A claim with none is absent; the Rust store never held one, so it answers none. */
+  /** Of `claims`, each one the ledger recorded under its pre-v341 Postgres fingerprint, with that fingerprint (belief/legacy-fingerprint.ts). A claim with none is absent; the Rust store never held one, so it answers none. */
   readLegacyClaimFingerprints(sourceId: string, claims: readonly string[]): Promise<BeliefLedgerSql.LegacyClaimFingerprintRow[]>;
-  /** The `claimFp` of each probe whose claim a purge of the source tombstoned under its current or its pre-v339 fingerprint. No set order; the Rust store answers none. */
+  /** The `claimFp` of each probe whose claim a purge of the source tombstoned under its current or its pre-v341 fingerprint. No set order; the Rust store answers none. */
   readLegacyBeliefTombstones(sourceId: string, probes: readonly BeliefLedgerSql.LegacyTombstoneProbe[]): Promise<string[]>;
   /** The coverage state of the source's current incarnation: its newest coverage event other than `coverage.restored`, or null. */
   readLatestBeliefCoverage(sourceId: string): Promise<BeliefLedgerSql.BeliefCoverageRow | null>;
@@ -37,6 +37,10 @@ export interface LedgerMembers {
   hasBeliefBaseline(sourceId: string, slug: string, runId: string): Promise<boolean>;
   /** The source's slugs (pages, then page-less database-only fact subjects) lacking a baseline of run `runId`, after `after` and not in `skip`; the first `limit` in byte order. */
   listBeliefBaselinePending(sourceId: string, runId: string, after: string, skip: readonly string[], limit: number): Promise<string[]>;
+  /** The slugs the drift scan may check in the source's incarnation (pages, page-less fact subjects, open lifetimes), most recently touched first and in byte order within a tie. */
+  listBeliefDriftCandidates(sourceId: string, incarnation: string): Promise<string[]>;
+  /** The newest event of `slug` in the source's incarnation other than a coverage event or a backfill, or null. */
+  readNewestBeliefEvent(sourceId: string, incarnation: string, slug: string): Promise<BeliefLedgerSql.BeliefNewestEventRow | null>;
   /** How many distinct slugs of the source have a baseline event of run `runId`. */
   countBeliefBaselineSlugs(sourceId: string, runId: string): Promise<number>;
   /** The source's suppressions on any of `subjectKeys` or on a field whose text hashes to one of `fieldHashes`. No set order. */
@@ -59,8 +63,6 @@ export interface LedgerMembers {
   renameBeliefLifetime(lifetime: string, slug: string, pageId: number): Promise<void>;
   /** The open lifetime of each of `pageIds` whose page still has the lifetime's slug. No set order. */
   readMovedBeliefLifetimes(pageIds: readonly number[]): Promise<BeliefLedgerSql.BeliefMovedLifetimeRow[]>;
-  /** Orphaned lifetimes of a source: open with no page at their slug, and (`deep`) named by an event with no lifetime; by bytes, at most `limit`, with the count. */
-  listOrphanLifetimes(sourceId: string, limit: number, deep: boolean): Promise<BeliefLedgerSql.OrphanLifetimeSamples>;
   /** The raw state of belief streams in one read (belief/state.ts shapes it): pages, write counters, facts, takes, owned links and transitions, their endpoints and the writer tier. Restores `plan_cache_mode` to `input.planModePrev` (null: no net change). */
   readBeliefStateRows(input: BeliefStateSql.BeliefStateRowsInput): Promise<BeliefStateSql.BeliefStateRows>;
   /** Fact rows by id in the state read's columns, for a guard event whose row is outside the batch's streams. No set order. */
@@ -149,6 +151,8 @@ export interface LedgerMembers {
   applyAccessRuleChanges(sourceId: string, changes: AccessRuleChanges): Promise<void>;
   restampAccessWindow(sourceId: string, after: number, batch: number): Promise<AccessRestampWindow>;
   finishAccessRestamp(sourceId: string): Promise<number>;
+  /** The pages of the source whose kept folder rule ids differ from the rules that cover them now (what a restamp would change). */
+  countAccessFolderDrift(sourceId: string): Promise<number>;
   insertAccessPolicyRevision(row: AccessRevisionInsert): Promise<void>;
   markAccessRevisionsApplied(sourceId: string, upTo?: number): Promise<void>;
   approveAccessPolicyRevision(sourceId: string, revision: number, actor: string): Promise<void>;
@@ -207,6 +211,8 @@ export interface LedgerMembers {
   insertVolunteerEvents(rows: readonly VolunteerEventsSql.VolunteerEventInsert[]): Promise<void>;
   /** The volunteered and later-retrieved counts per match arm and channel over the last `days` days, by byte of arm then channel. */
   readVolunteerUsage(sourceIds: readonly string[], days: number): Promise<VolunteerEventsSql.VolunteerUsageRow[]>;
+  /** The retention delete: removes the volunteered-page log rows older than `ttlDays` days; how many went (context/volunteer-events.ts purgeStaleVolunteerEvents). */
+  deleteVolunteerEventsOlderThan(ttlDays: number): Promise<number>;
   /** Records a chronicle decision for a page revision; false when the ledger guards keep the existing row (chronicle/ledger.ts). */
   upsertChronicleRow(w: ChronicleLedgerSql.ChronicleRowUpsert): Promise<boolean>;
   /** Takes one automatic chronicle judge slot when fewer than `limit` were taken in the last 24 hours; false otherwise. */

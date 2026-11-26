@@ -71,6 +71,12 @@ export interface CodexSetupReceipt {
   launcher: string;
   source_id: string | null;
   surface: McpSurface;
+  /**
+   * I1: `explicit` when --surface (or GBRAIN_SURFACE) chose the surface or setup adopted an entry it did not write;
+   * `default` when it follows the Codex default (registrationProfile('codex')), which a re-run moves it to. Absent on a
+   * receipt written before setup recorded it: a re-run keeps that entry and prints the line that would move it.
+   */
+  surface_origin?: 'explicit' | 'default';
   /** The registration's `--advertise` (absent: tools/list shows the whole surface). */
   advertise?: McpSurface;
   config_path: string;
@@ -97,6 +103,8 @@ export interface CodexSetupPlan {
   surface: McpSurface;
   /** `serve --advertise`; null lists the whole surface. */
   advertise: McpSurface | null;
+  /** I1: recorded in the receipt as surface_origin; unset keeps a pre-origin receipt as it was. */
+  surfaceOrigin?: 'explicit' | 'default';
   events: CodexSetupEvent[];
   /** GST-363: `serve --stdio-member`: this entry's sessions read as that member. Only a named --stdio-member or the entry setup already wrote sets it. */
   stdioMember?: string;
@@ -295,7 +303,8 @@ export async function applyCodexSetup(
     const notes: string[] = [];
     const mcpDone = opts.pluginOwner !== null || found.mcp.state === 'current';
     const consentSame = prior?.consent !== undefined && consentValues(prior.consent) === consentValues(consent);
-    if (prior?.status === 'installed' && consentSame && mcpDone && found.hooksCurrent && found.trustCurrent && !opts.brainCreated) {
+    const originSame = prior?.surface_origin === plan.surfaceOrigin;
+    if (prior?.status === 'installed' && consentSame && originSame && mcpDone && found.hooksCurrent && found.trustCurrent && !opts.brainCreated) {
       steps.push({ step: 'receipt', action: 'keep', detail: `${paths.receiptPath} already records this install` });
       steps.push({ step: 'mcp', action: opts.pluginOwner ? 'skip' : 'keep', detail: opts.pluginOwner ? `the '${opts.pluginOwner}' plugin serves '${plan.name}'` : `[mcp_servers.${plan.name}] in ${paths.configPath} is current` });
       steps.push({ step: 'hooks', action: 'keep', detail: plan.events.length ? `${plan.events.join(', ')} in ${paths.hooksPath} are current` : 'no hooks wanted' });
@@ -307,7 +316,8 @@ export async function applyCodexSetup(
     const receipt: CodexSetupReceipt = {
       harness: 'codex', connection: 'local-stdio', setup_receipt_version: CODEX_SETUP_RECEIPT_VERSION, status: 'prepared',
       name: plan.name, gbrain_home: plan.brainHome, ...(plan.gbrainHomeEnv ? { gbrain_home_env: plan.gbrainHomeEnv } : {}),
-      launcher: plan.launcher, source_id: plan.sourceId, surface: plan.surface, ...(plan.advertise ? { advertise: plan.advertise } : {}),
+      launcher: plan.launcher, source_id: plan.sourceId, surface: plan.surface, ...(plan.surfaceOrigin ? { surface_origin: plan.surfaceOrigin } : {}),
+      ...(plan.advertise ? { advertise: plan.advertise } : {}),
       config_path: paths.configPath, hooks_path: paths.hooksPath,
       entry_hash: prior?.entry_hash ?? null, pending_entry_hash: opts.pluginOwner ? null : desiredHash,
       ...(prior?.mcp_adopted ? { mcp_adopted: true } : {}),

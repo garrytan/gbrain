@@ -8,9 +8,10 @@
  * the same rows in its op checkpoint store (src/core/rust-engine/store-members/sync-hold-store.ts).
  */
 import { GIT_HOLD_OP, GIT_HOLD_SUMMARY_OP } from './persistence-journal.ts';
+import { MANAGED_SYNC_PASS_OP } from './sync-hold-op.ts';
 
-/** The op_checkpoints op of a source incarnation's managed sync pass row (sync-pass-row.ts re-exports it). */
-export const MANAGED_SYNC_PASS_OP = 'managed-sync-pass';
+/** The op_checkpoints op of a source incarnation's managed sync pass row (sync-pass-row.ts re-exports it; defined in the leaf sync-hold-op.ts). */
+export { MANAGED_SYNC_PASS_OP };
 
 /** The engine's own executeRaw (see the module comment). */
 export interface HoldStoreExec {

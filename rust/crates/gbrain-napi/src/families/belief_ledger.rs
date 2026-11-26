@@ -184,21 +184,6 @@ impl Brain {
         })
     }
 
-    /// `listOrphanBeliefLifetimes(sourceId, limit, deep)`: `{ total, rows: [{ slug, page_lifetime, reason }] }` by slug
-    /// and lifetime bytes; `reason` is `no_page`, or `no_lifetime` for the events a `deep` read finds.
-    #[napi]
-    pub fn list_orphan_belief_lifetimes<'env>(
-        &self,
-        env: &'env Env,
-        source_id: String,
-        limit: u32,
-        deep: bool,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            s.list_orphan_belief_lifetimes(&source_id, limit as usize, deep)
-        })
-    }
-
     /// `readBeliefHistoryRows(query)`: resolves one page of history rows.
     #[napi]
     pub fn read_belief_history_rows<'env>(
@@ -303,6 +288,33 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
             s.count_belief_baseline_slugs(&source_id, &run_id)
+        })
+    }
+
+    /// `listBeliefDriftCandidates(sourceId, incarnation)`: resolves the slugs the drift scan may check.
+    #[napi]
+    pub fn list_belief_drift_candidates<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        incarnation: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_belief_drift_candidates(&source_id, &incarnation)
+        })
+    }
+
+    /// `readNewestBeliefEvent(sourceId, incarnation, slug)`: resolves the slug's newest event, or null.
+    #[napi]
+    pub fn read_newest_belief_event<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        incarnation: String,
+        slug: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_newest_belief_event(&source_id, &incarnation, &slug)
         })
     }
 

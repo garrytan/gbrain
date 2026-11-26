@@ -7,16 +7,16 @@
  *    DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1): the fact guards neither refuse nor expire it, the take
  *    guard admits it, the withdrawal and purge checks answer false, and the fence overlays keep its row. The space
  *    spelling itself stays refused, expired and dropped.
- *  - Regression: Postgres matched every ledger hash also by the pre-v339 fingerprints (_v2, _v1), which fold the
+ *  - Regression: Postgres matched every ledger hash also by the pre-v341 fingerprints (_v2, _v1), which fold the
  *    locale's [[:space:]]; on en_US.utf8 that takes U+1680, so the old hash of "X\u1680Y" is the current hash of
  *    "X Y" and a purge of "X Y" refused "X\u1680Y" on Postgres only.
  *  - Why existing coverage misses it: the fingerprint tests seed ledger rows under the old fingerprint of a claim
  *    holding U+0085 (where no current hash can collide), and PGLite's [[:space:]] is the explicit list, so only a
  *    Postgres arm writing a current hash and reading a U+1680 spelling shows it.
- *  - Seam: withdrawals and facts go through the typed insertFactWithdrawal, insertFact and insertFacts. The store has
- *    no member that writes a purge tombstone and no fact insert guard, so the purge cases seed fact_purges and
- *    take_purges with SQL and the guard cases read the facts back with SQL; the Rust arm stops on the typed raw_sql
- *    refusal there. Synthetic claims only.
+ *  - Seam: none. Withdrawals and facts go through the typed insertFactWithdrawal, insertFact and insertFacts; the purge
+ *    tombstones through insertFactPurge and insertTakePurge, with the fingerprint computed here (the current
+ *    gbrain_fact_fingerprint); the facts are read back with listFactsByEntity (expired rows included). The withdrawal
+ *    guard and the purge guards are the SQL engines' triggers and the Rust store's own write path. Synthetic claims only.
  */
 import { describe, expect } from 'bun:test';
 import { createHash } from 'node:crypto';
@@ -59,12 +59,17 @@ async function outcome(write: () => Promise<unknown>): Promise<string> {
   }
 }
 
-/** Whether each fact of `entity` (by its claim) is expired, read with SQL (raw_sql cases only). */
+/** Whether each fact of `entity` (by its claim) is expired, expired rows included. */
 async function expiredByClaim(engine: BrainEngine, entity: string): Promise<Record<string, boolean>> {
-  const rows = await engine.executeRaw<{ fact: string; expired: boolean }>(
-    `SELECT fact, expired_at IS NOT NULL AS expired FROM facts WHERE source_id = $1 AND entity_slug = $2 ORDER BY fact`, [SRC, entity]);
-  return Object.fromEntries(rows.map(r => [r.fact, r.expired === true]));
+  const rows = await engine.listFactsByEntity(SRC, entity, { activeOnly: false });
+  return Object.fromEntries(rows.map(r => [r.fact, r.expired_at != null]).sort(([a], [b]) => String(a) < String(b) ? -1 : 1));
 }
+
+/** A purge tombstone of `claim` for every subject of the source: a fact one, or a take one. */
+const purgeFact = (engine: BrainEngine, claim: string) =>
+  engine.insertFactPurge({ sourceId: SRC, visibility: 'world', subject: '*', factHash: fingerprint(claim), requestId: null, actor: null, reason: null });
+const purgeTake = (engine: BrainEngine, claim: string) =>
+  engine.insertTakePurge({ sourceId: SRC, subject: '*', claimHash: fingerprint(claim), requestId: null });
 
 describe('engine parity: a ledger row of one spelling never reaches a U+1680 spelling', () => {
   parityTest('a withdrawal of "X Y" covers that claim and not "X\\u1680Y" in the covering check and the fence dates', {
@@ -83,10 +88,9 @@ describe('engine parity: a ledger row of one spelling never reaches a U+1680 spe
     return { covering, dates };
   });
 
-  // The withdrawal insert guard is a database trigger; the Rust store has none yet, so this case reads the facts it
-  // wrote back with SQL and stops on the Rust arm's typed raw_sql refusal.
+  // The withdrawal insert guard: a trigger on the SQL engines, the fact write path on the Rust store.
   parityTest('a withdrawal of "X Y" expires that claim and leaves "X\\u1680Y" active when either is written', {
-    methods: ['insertFactWithdrawal', 'insertFact', 'insertFacts', 'executeRaw'], requires: 'raw_sql',
+    methods: ['insertFactWithdrawal', 'insertFact', 'insertFacts', 'listFactsByEntity'],
   }, async (engine) => {
     const spaced = 'Beta withdrawn claim', ogham = `Beta${OGHAM}withdrawn claim`;
     await engine.insertFactWithdrawal(SRC, 'world', spaced, '*', T1);
@@ -101,7 +105,7 @@ describe('engine parity: a ledger row of one spelling never reaches a U+1680 spe
     return { single, batch };
   });
 
-  parityTest('a withdrawal of "X Y" is not a withdrawal of "X\\u1680Y" for a writer', { methods: ['insertFactWithdrawal'], requires: 'raw_sql' }, async (engine) => {
+  parityTest('a withdrawal of "X Y" is not a withdrawal of "X\\u1680Y" for a writer', { methods: ['insertFactWithdrawal', 'isFactWithdrawn'] }, async (engine) => {
     const spaced = 'Gamma withdrawn claim', ogham = `Gamma${OGHAM}withdrawn claim`;
     await engine.insertFactWithdrawal(SRC, 'world', spaced, '*', T1);
     const withdrawn = {
@@ -113,12 +117,11 @@ describe('engine parity: a ledger row of one spelling never reaches a U+1680 spe
   });
 
   parityTest('a purge of "X Y" refuses that claim and admits "X\\u1680Y" as a fact, a fence row and a take', {
-    methods: ['insertFact', 'insertFacts', 'putPage', 'getPage', 'addTakesBatch', 'executeRaw'], requires: 'raw_sql',
+    methods: ['insertFactPurge', 'insertTakePurge', 'insertFact', 'insertFacts', 'putPage', 'getPage', 'addTakesBatch', 'listFactsByEntity', 'isFactPurged'],
   }, async (engine) => {
     const spaced = 'Delta purged claim', ogham = `Delta${OGHAM}purged claim`;
     const takeSpaced = 'Epsilon purged take', takeOgham = `Epsilon${OGHAM}purged take`;
-    await engine.executeRaw(`INSERT INTO fact_purges(source_id,visibility,subject,fact_hash) VALUES ($1,'world','*',gbrain_fact_fingerprint($2))`, [SRC, spaced]);
-    await engine.executeRaw(`INSERT INTO take_purges(source_id,subject,claim_hash) VALUES ($1,'*',gbrain_fact_fingerprint($2))`, [SRC, takeSpaced]);
+    expect([await purgeFact(engine, spaced), await purgeTake(engine, takeSpaced)]).toEqual([true, true]);
     const fact = (claim: string) => () => engine.insertFact({ fact: claim, visibility: 'world', entity_slug: 'people/delta', source: 'chat' }, { source_id: SRC });
     const row = (claim: string, rowNum: number) => () => engine.insertFacts([{ fact: claim, visibility: 'world', entity_slug: 'people/delta', source: 'fence',
       row_num: rowNum, source_markdown_slug: 'notes/delta' }], { source_id: SRC });
@@ -139,9 +142,9 @@ describe('engine parity: a ledger row of one spelling never reaches a U+1680 spe
     return { saved, facts, purged };
   });
 
-  parityTest('a purge of "X Y" drops that fence row and keeps the "X\\u1680Y" row in both fence overlays', { methods: ['executeRaw'], requires: 'raw_sql' }, async (engine) => {
+  parityTest('a purge of "X Y" drops that fence row and keeps the "X\\u1680Y" row in both fence overlays', { methods: ['insertFactPurge'] }, async (engine) => {
     const spaced = 'Zeta purged claim', ogham = `Zeta${OGHAM}purged claim`;
-    await engine.executeRaw(`INSERT INTO fact_purges(source_id,visibility,subject,fact_hash) VALUES ($1,'world','*',gbrain_fact_fingerprint($2))`, [SRC, spaced]);
+    expect(await purgeFact(engine, spaced)).toBe(true);
     const body = 'Lead.\n\n' + fence(spaced, ogham, 'A live claim');
     const kept = await dropPurgedFenceRows(engine, SRC, body, 'notes/zeta');
     const overlay = await loadFenceChunkOverlay(engine, { sourceId: SRC, slug: 'notes/zeta', compiled_truth: body });

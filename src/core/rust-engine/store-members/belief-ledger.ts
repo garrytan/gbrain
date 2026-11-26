@@ -5,14 +5,14 @@
  *
  * `readBeliefTombstones` answers the fact half from the fact purge ledger and the take half from the take purge ledger.
  * `readLegacyClaimFingerprints` and `readLegacyBeliefTombstones` make no store call: they find a claim recorded, or purged, under the
- * Postgres fingerprint from before fact_fingerprint_v3 (v339, which folded whitespace by the locale). The store has always
+ * Postgres fingerprint from before fact_fingerprint_v3 (v341, which folded whitespace by the locale). The store has always
  * folded the one explicit list, so no claim of it has an older fingerprint and both answer none.
  * The state reads (`readBeliefStateRows`, `readBeliefFactsById`; trust/belief_state.rs) read every part: the store keeps
  * no per-transaction write counters, so `counts` is null, as on a database with `track_counts` off.
  */
 import type { RustEngine } from '../../rust-engine.ts';
 import type { BrainEngine } from '../../engine.ts';
-import type { BeliefCoverageRow } from '../../engine-sql/belief-ledger.ts';
+import type { BeliefCoverageRow, BeliefNewestEventRow } from '../../engine-sql/belief-ledger.ts';
 import type { BeliefStateRows, BeliefStateRowsInput } from '../../engine-sql/belief-state.ts';
 import { privatePagesFilterFragment } from '../../search/private-visibility.ts';
 import type { StoreBrain } from '../store.ts';
@@ -30,7 +30,7 @@ export const readBeliefTombstones: Member<'readBeliefTombstones'> = async (brain
   return answer.fps;
 };
 
-// A Rust brain holds no pre-v339 Postgres fingerprint (header), so there is nothing to alias.
+// A Rust brain holds no pre-v341 Postgres fingerprint (header), so there is nothing to alias.
 export const readLegacyClaimFingerprints: Member<'readLegacyClaimFingerprints'> = async () => [];
 
 export const readLegacyBeliefTombstones: Member<'readLegacyBeliefTombstones'> = async () => [];
@@ -49,6 +49,15 @@ export const listBeliefBaselinePending: Member<'listBeliefBaselinePending'> = (b
 
 export const countBeliefBaselineSlugs: Member<'countBeliefBaselineSlugs'> = (brain, sourceId, runId) =>
   storeCall({ member: 'countBeliefBaselineSlugs', sourceId }, () => brain.countBeliefBaselineSlugs(sourceId, runId));
+
+export const listBeliefDriftCandidates: Member<'listBeliefDriftCandidates'> = (brain, sourceId, incarnation) =>
+  storeCall({ member: 'listBeliefDriftCandidates', sourceId }, () => brain.listBeliefDriftCandidates(sourceId, incarnation));
+
+// The store's recorded_at carries microseconds; PGLite returns a Date, which the engine-sql member turns to ISO milliseconds.
+export const readNewestBeliefEvent: Member<'readNewestBeliefEvent'> = async (brain, sourceId, incarnation, slug) => {
+  const row = await storeCall({ member: 'readNewestBeliefEvent', sourceId }, () => brain.readNewestBeliefEvent(sourceId, incarnation, slug)) as BeliefNewestEventRow | null;
+  return row ? { ...row, recorded_at: new Date(row.recorded_at).toISOString(), id: Number(row.id) } : null;
+};
 
 export const readBeliefRedactions: Member<'readBeliefRedactions'> = (brain, sourceId, subjectKeys, fieldHashes) =>
   storeCall({ member: 'readBeliefRedactions', sourceId },
@@ -82,12 +91,6 @@ export const renameBeliefLifetime: Member<'renameBeliefLifetime'> = (brain, life
 
 export const readMovedBeliefLifetimes: Member<'readMovedBeliefLifetimes'> = (brain, pageIds) =>
   storeCall({ member: 'readMovedBeliefLifetimes' }, () => brain.readMovedBeliefLifetimes([...pageIds]));
-/** Orphaned lifetimes, from the store's lifetime and event records (trust/belief_lifetimes.rs list_orphan_belief_lifetimes). */
-export const listOrphanLifetimes: Member<'listOrphanLifetimes'> = async (brain, sourceId, limit, deep) => {
-  const found = await storeCall({ member: 'listOrphanLifetimes', sourceId }, () => brain.listOrphanBeliefLifetimes(sourceId, Math.max(1, Math.floor(limit)), deep)) as
-    { total: number; rows: Array<{ slug: string; page_lifetime: string; reason: 'no_page' | 'no_lifetime' }> };
-  return { count: found.total, samples: found.rows };
-};
 
 /**
  * The streams' raw state. A page's `visible` is judged by the no-caller page policy (`privatePagesFilterFragment`), as

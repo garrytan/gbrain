@@ -43,10 +43,10 @@ export async function readBeliefTombstones(exec: LegacyUnscopedRead, sourceId: s
 export interface LegacyClaimFingerprintRow { claim: string; fingerprint: string }
 
 /**
- * For each of `claims` whose pre-v339 Postgres fingerprint (gbrain_fact_fingerprint before fact_fingerprint_v3, which folded
+ * For each of `claims` whose pre-v341 Postgres fingerprint (gbrain_fact_fingerprint before fact_fingerprint_v3, which folded
  * whitespace by the locale's `[[:space:]]`) differs from the current one and names an event of `sourceId` that recorded
  * this claim (the event's fact or claim text has the claim's current fingerprint, so a new claim never joins an older,
- * different claim that shares the old fold), the claim and its pre-v339 fingerprint. A claim with none is absent.
+ * different claim that shares the old fold), the claim and its pre-v341 fingerprint. A claim with none is absent.
  */
 export async function readLegacyClaimFingerprints(exec: LegacyUnscopedRead, sourceId: string, claims: readonly string[]): Promise<LegacyClaimFingerprintRow[]> {
   if (!claims.length) return [];
@@ -62,7 +62,7 @@ export interface LegacyTombstoneProbe { kind: 'fact' | 'take'; claimFp: string; 
 
 /**
  * The `claimFp` of each probe whose claim text a purge of the source tombstoned under the claim's current fingerprint or a
- * pre-v339 one no current fingerprint can equal (legacyFingerprintV2Sql): a purge recorded before v339 matches a draft keyed
+ * pre-v341 one no current fingerprint can equal (legacyFingerprintV2Sql): a purge recorded before v341 matches a draft keyed
  * by the current fingerprint, and a purge recorded after matches a draft keyed by the claim's old one. A fact probe reads
  * `fact_purges`, a take probe `take_purges`. No set order.
  */
@@ -105,6 +105,30 @@ export async function listBeliefBaselinePending(exec: LegacyUnscopedRead, source
     ) s WHERE s.slug COLLATE "C" > $3 AND NOT (s.slug = ANY($4::text[])) AND NOT EXISTS (SELECT 1 FROM belief_events e WHERE e.source_id = $1 AND e.slug = s.slug AND e.event_type = 'baseline' AND e.cause->>'run' = $2)
     ORDER BY s.slug COLLATE "C" LIMIT $5`, [sourceId, runId, after, [...skip], limit]);
   return rows.map(r => r.slug);
+}
+
+/** A slug's newest event as the drift check reads it: the id, the slug's state hash after it and its ISO `recorded_at`. */
+export interface BeliefNewestEventRow { id: number; state_hash: string; recorded_at: string }
+
+/**
+ * The slugs the drift scan may check in the source's incarnation: its pages (live and soft-deleted), its page-less fact
+ * subjects and its open page lifetimes, the most recently touched first (a page by `updated_at`, a fact subject by its
+ * newest fact, a lifetime by `started_at`) and byte order within a tie (COLLATE "C", as PGLite and the Rust store sort).
+ */
+export async function listBeliefDriftCandidates(exec: LegacyUnscopedRead, sourceId: string, incarnation: string): Promise<string[]> {
+  const rows = await exec.executeRaw<{ slug: string }>(`SELECT slug FROM (
+      SELECT p.slug, p.updated_at AS at FROM pages p WHERE p.source_id = $1
+      UNION ALL SELECT f.entity_slug, max(f.created_at) FROM facts f WHERE f.source_id = $1 AND f.source_markdown_slug IS NULL AND f.entity_slug IS NOT NULL GROUP BY f.entity_slug
+      UNION ALL SELECT l.slug, l.started_at FROM belief_page_lifetimes l WHERE l.source_id = $1 AND l.source_incarnation = $2::uuid AND l.ended_at IS NULL
+    ) c GROUP BY slug ORDER BY max(at) DESC NULLS LAST, slug COLLATE "C"`, [sourceId, incarnation]);
+  return rows.map(r => r.slug);
+}
+
+/** The newest event of `slug` in the source's incarnation other than a coverage event or a backfill, or null. */
+export async function readNewestBeliefEvent(exec: LegacyUnscopedRead, sourceId: string, incarnation: string, slug: string): Promise<BeliefNewestEventRow | null> {
+  const [row] = await exec.executeRaw<{ id: number | string; state_hash: string; recorded_at: string | Date }>(`SELECT id, state_hash, recorded_at FROM belief_events
+    WHERE source_id = $1 AND source_incarnation = $2::uuid AND slug = $3 AND subject_kind <> 'coverage' AND origin <> 'backfill' ORDER BY id DESC LIMIT 1`, [sourceId, incarnation, slug]);
+  return row ? { id: Number(row.id), state_hash: row.state_hash, recorded_at: new Date(row.recorded_at).toISOString() } : null;
 }
 
 /** How many distinct slugs of the source have a baseline event of run `runId`. */
@@ -211,24 +235,4 @@ export async function readBeliefCoverageEvents(exec: Pick<SqlExecutor, 'executeR
   return exec.executeRaw<BeliefCoverageEventRow>(`SELECT e.id, e.event_type, e.recorded_at, e.value, e.cause, e.source_incarnation::text AS incarnation
     FROM belief_events e JOIN sources s ON s.id = e.source_id AND s.incarnation = e.source_incarnation
     WHERE e.source_id = $1 AND e.subject_kind = 'coverage' AND e.subject_key = $2 ORDER BY e.id`, [sourceId, COVERAGE_KEY]);
-}
-
-/** Why a lifetime is orphaned: an open lifetime with no page at its slug, or (deep) an event naming no lifetime. */
-export type OrphanLifetimeReason = 'no_page' | 'no_lifetime';
-export interface OrphanLifetimeSamples { count: number; samples: Array<{ slug: string; page_lifetime: string; reason: OrphanLifetimeReason }> }
-
-/**
- * Open lifetimes of the source's current incarnation with no page at their slug (an untracked hard delete), and (`deep`, a
- * whole-ledger read) the source's events naming a lifetime that does not exist; by slug then lifetime bytes, at most
- * `limit` (at least 1), with the count of all. The statement is the one coverage-report.ts `orphanLifetimes` ran, except
- * that the limit is a bound parameter (`$3`) instead of a number spliced into the text.
- */
-export async function listOrphanLifetimes(exec: LegacyUnscopedRead, sourceId: string, limit: number, deep: boolean): Promise<OrphanLifetimeSamples> {
-  const rows = await exec.executeRaw<{ slug: string; page_lifetime: string; reason: OrphanLifetimeReason; total: number }>(`SELECT slug, page_lifetime, reason, count(*) OVER ()::int AS total FROM (
-      SELECT l.slug, l.page_lifetime::text AS page_lifetime, 'no_page' AS reason FROM belief_page_lifetimes l JOIN sources s ON s.id = l.source_id AND s.incarnation = l.source_incarnation
-      WHERE l.source_id = $1 AND l.ended_at IS NULL AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id = l.source_id AND p.slug = l.slug)
-      UNION ALL SELECT DISTINCT e.slug, e.page_lifetime::text, 'no_lifetime' FROM belief_events e
-      WHERE $2::boolean AND e.source_id = $1 AND e.page_lifetime IS NOT NULL AND NOT EXISTS (SELECT 1 FROM belief_page_lifetimes l WHERE l.page_lifetime = e.page_lifetime)
-    ) o ORDER BY slug COLLATE "C", page_lifetime COLLATE "C" LIMIT $3`, [sourceId, deep, Math.max(1, Math.floor(limit))]);
-  return { count: Number(rows[0]?.total ?? 0), samples: rows.map(r => ({ slug: r.slug, page_lifetime: r.page_lifetime, reason: r.reason })) };
 }

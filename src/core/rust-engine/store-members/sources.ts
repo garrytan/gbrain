@@ -2,7 +2,6 @@
 import type { SourceDetailRow, SourceRow } from '../../engine.ts';
 import type { SourceSyncStampOptions, SyncCheckpointAdvance } from '../../engine-sql/sources.ts';
 import type { LiveSlugAliasRow, SourceSlugProbe } from '../../engine-sql/link-slug-reads.ts';
-import type { SourceChangedPageRow } from '../../engine-sql/cycle-window.ts';
 import type { StoredSpellingScope } from '../../engine-sql/slug-spellings.ts';
 import type { FederationExposedRow } from '../../engine-sql/federation-exposure.ts';
 import { privacyAliasSql, privateSnapshotFilterFragment } from '../../search/private-visibility.ts';
@@ -38,14 +37,6 @@ export const readLiveSlugAliases: StoreMember<[sourceId: string, targets: readon
 /** Link preparation's slug fingerprint; the store's hash is its own (a sum of per-slug FNV-1a hashes), as the caller only compares it with itself. */
 export const readSourceSlugProbe: StoreMember<[sourceId: string, afterId: number], SourceSlugProbe> = (brain, sourceId, afterId) =>
   storeCall({ member: 'readSourceSlugProbe', sourceId }, () => brain.readSourceSlugProbe(sourceId, afterId)) as Promise<SourceSlugProbe>;
-
-/** A per-source cycle's listing instant: the store clock (one writer, no other connection holds it back; cycle_window.rs). */
-export const readCycleListingInstant: StoreMember<[], string | null> = async (brain) =>
-  await storeCall({ member: 'readCycleListingInstant' }, () => brain.readCycleListingInstant()) as string | null;
-
-/** A per-source cycle's changed pages after a cursor, by (updated_at, slug bytes) (cycle_window.rs). */
-export const listSourceChangedPagesAfter: StoreMember<[sourceId: string, since: string | null, slug: string, limit: number], SourceChangedPageRow[]> = async (brain, sourceId, since, slug, limit) =>
-  await storeCall({ member: 'listSourceChangedPagesAfter', sourceId }, () => brain.listSourceChangedPagesAfter(sourceId, since, slug, limit)) as SourceChangedPageRow[];
 
 /** A scalar slug read's stored-spelling scan; the store keys each stored slug as `SPELLING_KEY_SQL` does (slug_spellings.rs). */
 export const readStoredSlugSpellings: StoreMember<[key: string, scope: StoredSpellingScope, after: string], string[]> = (brain, key, scope, after) =>

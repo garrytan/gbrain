@@ -110,27 +110,6 @@ impl Brain {
         })
     }
 
-    /// `readCycleListingInstant()`: UTC ISO text with microseconds.
-    #[napi]
-    pub fn read_cycle_listing_instant<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.read_cycle_listing_instant())
-    }
-
-    /// `listSourceChangedPagesAfter(sourceId, since, slug, limit)`: `[{ slug, updated_at }]`.
-    #[napi]
-    pub fn list_source_changed_pages_after<'env>(
-        &self,
-        env: &'env Env,
-        source_id: String,
-        since: Option<String>,
-        slug: String,
-        limit: u32,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            s.list_source_changed_pages_after(&source_id, since.as_deref(), &slug, limit as usize)
-        })
-    }
-
     /// `readFederationExposedPages(sourceId, hidePrivate, honorAliases)`: `{ slug, member, total }[]`.
     #[napi]
     pub fn read_federation_exposed_pages<'env>(

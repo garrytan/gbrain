@@ -32,10 +32,14 @@ one `surface_env_invalid` info notice naming the surface actually served.
 `serve --http` ignores `GBRAIN_SURFACE` (its ceiling widens only through an
 explicit `--surface` restart; `GBRAIN_MCP_FORCE_SURFACE` narrows it).
 
-**Registrations.** Every stdio registration gbrain writes pins `starter`
-(`REGISTRATION_SURFACE` in `src/core/mcp-registration.ts`): readiness's
-`harness_wiring` fix, `gbrain init`'s quickstart line, `gbrain bootstrap
-hooks` for Claude Code, Codex and opencode, and the plugins.
+**Registrations.** Every stdio registration gbrain writes takes its surface
+from `registrationProfile(harness)` in `src/core/mcp-registration.ts`: Codex
+pins `full`; Claude Code, opencode and other hosts pin `starter` listing the
+memory verbs (`--advertise verbs`). That covers readiness's `harness_wiring`
+fix, `gbrain init`'s quickstart line and `gbrain bootstrap hooks` for Claude
+Code, Codex and opencode; the Claude Code and Codex plugins pin `full`.
+`gbrain config set mcp.default_surface_<claude_code|codex|hermes> full|starter`
+turns one harness's default (`config unset` restores the shipped one).
 `gbrain init --surface` and `gbrain bootstrap hooks --surface` pick another.
 `bootstrap hooks` never narrows an existing install: a matching registration
 is kept untouched, and a replaced one keeps its form (a pinned `--surface x`

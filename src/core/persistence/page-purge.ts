@@ -65,7 +65,7 @@ import { appendPurgeIntent } from '../belief/purge-mirror.ts';
 import { scrubPurgedSlugs } from '../feedback/store.ts';
 import { scrubPurgedNameStores } from './purge-name-stores.ts';
 import { scrubPurgedSlugStores } from './purge-slug-stores.ts';
-import { dropPurgedCandidates, holdOwnedByDeletedPageSql } from '../write-gate-binding.ts';
+import { dropPurgedCandidates, holdOwnedByDeletedPageSql, noteKeptHoldsCte } from '../write-gate-binding.ts';
 import { appendDerivedHidden, bumpPurgeEpoch, derivedBeliefTargets, derivedStreamSlugs, pageLifetimesOf, pagePurgeClaims, redactCarryingFields, redactPurgedKeys, registerLiveCarriers,
   sourceHasBeliefEvents, type LedgerPurgeReport } from '../belief/purge.ts';
 
@@ -333,7 +333,7 @@ export interface PurgedPageSweep {
 }
 
 /** The stores the shared sweep touches that an older restored archive may not have yet. */
-export const PURGE_SWEEP_STORES = ['decide_review_queue', 'decide_review_proposals', 'decide_proposals', 'trust_proposals', 'write_gate_holds', 'write_gate_receipts',
+export const PURGE_SWEEP_STORES = ['decide_review_queue', 'decide_review_proposals', 'decide_proposals', 'trust_proposals', 'write_gate_holds', 'write_gate_hold_rechecks', 'write_gate_receipts',
   'persistence_requests', 'persistence_effects', 'files', 'derived_generations', 'derived_generation_items', 'retrieval_event_pages', 'mention_gazetteer_entries', 'op_checkpoints'] as const;
 type SweptStore = typeof PURGE_SWEEP_STORES[number];
 

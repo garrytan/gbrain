@@ -23,6 +23,7 @@ src/commands/core.ts	suggestCandidates	field	INLINE
 src/commands/doctor/checks/calibration.ts	checkLinkResolutionOpportunity	field	LEAD	
 src/commands/enrich.ts	enrichOneLocked	field	SEGW	
 src/commands/enrich.ts	enrichOneLocked	call:serializeMarkdown	SEGW	
+src/commands/enrich.ts	readableEvidence	field	INLINE	segmented holding page: body never read, so its facts stay out of a labelled page's evidence (fail closed)
 src/commands/extract-mentions-explain.ts	explainMention	field	STREAM	
 src/core/engine-sql/embed-stale-work.ts	countArchivedEmbeddingWork	sql	META	moved from embedding-readiness.ts: body <> '' predicate on archived pages
 src/core/engine-sql/embed-stale-work.ts	sumEmbedBackfillChars	sql	META	moved from embed-consent.ts estimateEmbedBackfillUsd: character length of chunkless inline bodies for the cost estimate; a segmented page's NULL columns add nothing
@@ -192,6 +193,8 @@ src/core/engine-sql/doctor-derived.ts	CREDENTIAL_PENDING_SQL	sql	STREAM	literal 
 src/core/engine-sql/doctor-derived.ts	DERIVED_VISIBILITY_SQL	sql	NONE	moved from doctor/checks/derived-visibility.ts derivedVisibilityCheck unchanged: not the page body, p.* in a CTE, only metadata columns read
 src/core/engine-sql/doctor-derived.ts	PAGE_COMPILED_TRUTHS_SQL	sql	INLINE	moved from repair/atom-fence-rows.ts findAtomFenceRows unchanged: reads only the origin pages the batch marked readable (inline)
 src/core/engine-sql/doctor-derived.ts	TIMELINE_BATCH_SQL	sql	STREAM	moved from repair/timeline.ts scanTimelineHistory unchanged: inline pages only (body_storage = inline)
+src/core/engine-sql/doctor-derived.ts	readBodyRecheckPage	sql	INLINE	moved from commands/doctor/checks/atom-body-recheck.ts unchangedBodyAtoms unchanged: the group query joins only inline pages, and a page read back segmented is skipped (isSegmentedPage), keeping its drift verdict
+src/core/engine-sql/doctor-derived.ts	listBodyRecheckVersions	sql	INLINE	moved from commands/doctor/checks/atom-body-recheck.ts unchangedBodyAtoms unchanged: reads inline page_versions only (body_storage = inline), whose edition the re-check compares with the live inline body
 src/core/engine-sql/fence-census.ts	LIST_FENCE_CENSUS_PAGES_BY_ID_SQL	sql	INLINE	moved from fence-repair/census.ts unchanged: strpos over compiled_truth and timeline of inline pages only; a segmented page's NULL body holds no fence text here, so it is not counted fenced
 src/core/engine-sql/fence-census.ts	LIST_FENCE_CENSUS_PAGES_UPDATED_SQL	sql	INLINE	moved from fence-repair/census.ts unchanged: strpos over compiled_truth and timeline of inline pages only; a segmented page's NULL body holds no fence text here, so it is not counted fenced
 src/core/engine-sql/doctor-pages.ts	FACTS_PAGE_BODIES_SQL	sql	LEAD	moved from doctor/checks/facts-pages.ts unchanged: left(coalesce(compiled_truth, truth_lead), 65536), so a segmented page answers its stored lead
@@ -658,7 +661,7 @@ src/core/schema-migrations/v123-configurable-fts-language.ts	v123	sql	NONE	not t
 src/core/schema-migrations/v124-page-search-vector-drop-compiled-truth.ts	v124	sql	NONE	not the page body: historical search-vector trigger
 src/core/schema-migrations/v189-pages-credential-projection-pending.ts	v189	sql	NONE	not a live reader: historical migration over inline pages (segmented pages did not exist)
 src/core/schema-migrations/v248-segmented-page-storage.ts	COMMON_SQL	sql	NONE	not a live reader: migration DDL for the segmented body columns and their CHECK
-src/core/schema-migrations/v339-fact-fingerprint-v3.ts	FACT_FINGERPRINT_V3_SQL	sql	NONE	not a live reader: one-shot migration that reads inline bodies from pages and segmented bodies from page_segment_texts to find fence cells needing a twin withdrawal row
+src/core/schema-migrations/v341-fact-fingerprint-v3.ts	FACT_FINGERPRINT_V3_SQL	sql	NONE	not a live reader: one-shot migration that reads inline bodies from pages and segmented bodies from page_segment_texts to find fence cells needing a twin withdrawal row
 src/core/schema-pack/field-usage.ts	runFieldUsage	field	LEAD	
 src/core/schema-pack/page-to-alias.ts	resolveValue	field	LEAD	
 src/core/schema-pack/page-to-alias.ts	runPageToAliasCore	field	LEAD	
@@ -728,7 +731,6 @@ src/cli/enforced-member.ts	checkEnforcedWrite	field	INLINE	the stored page comes
 src/cli/enforced-member.ts	markdownLabels	field	NONE	not a stored page body: the parsed markdown a put or a committed file submits
 src/cli/enforced-member.ts	pageLabels	field	INLINE	reads a page from storedPage (segmented refused by assertInlineBody) or parsed submitted markdown
 src/cli/enforced-member.ts	storedPage	sql	INLINE	refuses a segmented page with assertInlineBody before its body is read
-src/commands/doctor/checks/atom-body-recheck.ts	unchangedBodyAtoms	sql	INLINE	doctor atom_provenance_drift re-check (#6825): the group query joins only inline pages, and a page read back segmented is skipped (isSegmentedPage), keeping its drift verdict; compares a page_versions edition with the live body
 src/commands/doctor/checks/atom-body-recheck.ts	unchangedBodyAtoms	call:contentHash	INLINE	doctor atom_provenance_drift re-check (#6825): the group query joins only inline pages, and a page read back segmented is skipped (isSegmentedPage), keeping its drift verdict; compares a page_versions edition with the live body
 src/commands/doctor/checks/atom-body-recheck.ts	unchangedBodyAtoms	field	INLINE	doctor atom_provenance_drift re-check (#6825): the group query joins only inline pages, and a page read back segmented is skipped (isSegmentedPage), keeping its drift verdict; compares a page_versions edition with the live body
 src/core/engine-sql/trust-tier-reads.ts	PV_BODY_KEY	sql	META	moved from valid-time-read.ts bodyKey: md5 over an inline version's body columns, content_hash for a segmented one; no text leaves the database
@@ -743,7 +745,7 @@ src/core/guests/promote.ts	promoteGuestNote	field	INLINE	assertInlineBody before
 src/core/guests/promote.ts	promoteGuestNote	call:serializeMarkdown	INLINE	assertInlineBody refuses a guest note stored in segments (page_body_segmented) before its body is copied into the owner page
 src/core/rust-engine/store-codec.ts	guardNullBody	field	META	reads only whether the Rust store sent compiled_truth/timeline as null (a segmented shell, PGLite pages_body_storage_chk), never the body text; a null body becomes the guarded segmented page of rowToPage
 src/core/rust-engine/store-members/write-guards.ts	readLiveStoredBody	field	SEGW	the Rust readLiveStoredBody: the inline columns of readLivePageBody, NULL for a segmented page, and every caller holds it
-src/core/persistence/concept-rebuild.ts	STATED_SQL	sql	INLINE	reads only an inline page timeline for emptiness; a segmented page counts as unread and stays hidden
+src/core/engine-sql/concept-rebuild.ts	STATED_SQL	sql	INLINE	reads only an inline page timeline for emptiness; a segmented page counts as unread and stays hidden (moved from persistence/concept-rebuild.ts statedKinds)
 src/core/engine-sql/purge-verify.ts	carriesClaim	sql	STREAM	moved from facts/purge-verify.ts verifyPagePurge unchanged: strpos over NULL never matches a segmented page; withSegmentedProse probes its segment texts
 src/core/engine-sql/take-proposals.ts	listProposeTakesCandidatePages	sql	STREAM	moved from cycle/propose-takes.ts listCandidatePages unchanged
 src/core/engine-sql/facts-repair.ts	listConceptLineageRows	sql	META	length(compiled_truth) only, the size the visibility preview prints; a segmented concept reads a NULL size

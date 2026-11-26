@@ -19,6 +19,7 @@
  */
 import type { BrainEngine } from '../core/engine.ts';
 import { registerEngineView } from '../core/persistence/switches.ts';
+import { callerAccessRecord } from '../core/search/private-visibility.ts';
 import { CAPTURE_BUDGET_BYTES, CaptureTooLargeError, encodeArgs, encodeValue } from './codec.ts';
 import { followRaw, followScope, followWrite, type FollowContext, type FollowOptions, type Frame } from './follow.ts';
 import type { CapturedRead, MirrorCounters, UsageField } from './mirror.ts';
@@ -32,6 +33,8 @@ export interface ShadowSink {
   offer(capture: () => CapturedRead, op?: string): void;
   /** Notes one call of an operation class on the per-operation meter (mirror.ts `UsageMeter`); a sink without one skips it. */
   use?(op: string, field: UsageField): void;
+  /** The generation and freshness token known BEFORE a read starts (mirror.ts `MirrorQueue.token`); a sink without one leaves the sample unproven. */
+  token?(): { gen?: number; lsn?: string };
   /** False once mirroring stopped in this process (state off, restart budget spent, privacy pause). */
   active(): boolean;
 }
@@ -135,13 +138,16 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
       use(op, tooLarge ? 'shed' : 'unmirrorable');
       return fn.apply(engine, args);
     }
+    const access = callerAccessRecord() ?? undefined; // frozen; none outside a caller's record, and then Rust runs under none (a record changes the page policy text Rust serves)
+    let token: { gen?: number; lsn?: string } = {};
+    try { token = sink.token?.() ?? {}; } catch { /* no token: the sample is never proven unchanged */ } // taken BEFORE the call: never newer than the snapshot the answer is read from
     const started = now();
     const out = fn.apply(engine, args);
     if (!isThenable(out)) return out;
     return out.then((result: unknown) => {
       const primaryMs = now() - started;
       try {
-        sink.offer(() => ({ op, args: encodedArgs, result: encodeValue(result, undefined, { left: CAPTURE_BUDGET_BYTES }), primary_ms: primaryMs, at: Date.now() }), op);
+        sink.offer(() => ({ op, args: encodedArgs, result: encodeValue(result, undefined, { left: CAPTURE_BUDGET_BYTES }), primary_ms: primaryMs, at: Date.now(), access, gen: token.gen, lsn: token.lsn }), op);
       } catch { /* the shadow never fails a call */ }
       return result;
     }, (error: unknown) => {

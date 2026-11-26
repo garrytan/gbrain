@@ -14,8 +14,8 @@ export interface MentionRaw {
 export const LOCK_MENTION_SOURCES_SHARED_SQL = "SELECT count(pg_advisory_xact_lock_shared(hashtext('gbrain:mention-publish:' || s)::bigint))\n    FROM (SELECT DISTINCT s FROM unnest($1::text[]) AS x(s) ORDER BY s) k";
 export const LOCK_MENTION_SOURCES_EXCLUSIVE_SQL = "SELECT count(pg_advisory_xact_lock(hashtext('gbrain:mention-publish:' || s)::bigint))\n    FROM (SELECT DISTINCT s FROM unnest($1::text[]) AS x(s) ORDER BY s) k";
 /** listMentionCandidatePages with and without the LIKE prefilter: one whole statement each. */
-export const MENTION_CANDIDATES_MATCHING_SQL = "SELECT id, slug, source_id, body_storage, COALESCE(title, '') || E'\\n\\n' || COALESCE(compiled_truth, '') || E'\\n\\n' || COALESCE(timeline, '') AS body,\n              frontmatter->'mention_ignore' AS mention_ignore\n         FROM pages WHERE deleted_at IS NULL AND source_id = ANY($1::text[]) AND id > $2\n          AND (body_storage = 'segmented' OR lower(COALESCE(title, '') || ' ' || COALESCE(compiled_truth, '') || ' ' || COALESCE(timeline, '')) LIKE ANY($4::text[]))\n        ORDER BY id LIMIT $3";
-export const MENTION_CANDIDATES_ALL_SQL = "SELECT id, slug, source_id, body_storage, COALESCE(title, '') || E'\\n\\n' || COALESCE(compiled_truth, '') || E'\\n\\n' || COALESCE(timeline, '') AS body,\n              frontmatter->'mention_ignore' AS mention_ignore\n         FROM pages WHERE deleted_at IS NULL AND source_id = ANY($1::text[]) AND id > $2\n          \n        ORDER BY id LIMIT $3";
+export const MENTION_CANDIDATES_MATCHING_SQL = "SELECT p.id, p.slug, p.source_id, p.body_storage,\n              CASE WHEN p.body_storage = 'segmented' OR lower(COALESCE(p.title, '') || ' ' || COALESCE(p.compiled_truth, '') || ' ' || COALESCE(p.timeline, '')) LIKE ANY($4::text[])\n                   THEN COALESCE(p.title, '') || E'\\n\\n' || COALESCE(p.compiled_truth, '') || E'\\n\\n' || COALESCE(p.timeline, '') END AS body,\n              p.frontmatter->'mention_ignore' AS mention_ignore\n         FROM (SELECT id FROM pages WHERE deleted_at IS NULL AND source_id = ANY($1::text[]) AND id > $2 ORDER BY id LIMIT $3) w\n         JOIN pages p ON p.id = w.id ORDER BY p.id";
+export const MENTION_CANDIDATES_ALL_SQL = "SELECT p.id, p.slug, p.source_id, p.body_storage,\n              CASE WHEN true\n                   THEN COALESCE(p.title, '') || E'\\n\\n' || COALESCE(p.compiled_truth, '') || E'\\n\\n' || COALESCE(p.timeline, '') END AS body,\n              p.frontmatter->'mention_ignore' AS mention_ignore\n         FROM (SELECT id FROM pages WHERE deleted_at IS NULL AND source_id = ANY($1::text[]) AND id > $2 ORDER BY id LIMIT $3) w\n         JOIN pages p ON p.id = w.id ORDER BY p.id";
 /** readMentionGenerations, plain and row-locked: one whole statement each. */
 export const MENTION_GENERATIONS_SQL = "SELECT source_id, generation::text AS generation FROM mention_index_status WHERE source_id = ANY($1::text[])";
 export const MENTION_GENERATIONS_FOR_SHARE_SQL = "SELECT source_id, generation::text AS generation FROM mention_index_status WHERE source_id = ANY($1::text[]) FOR SHARE";
@@ -44,7 +44,7 @@ export interface MentionDuePageRow {
 
 export interface DerivedAliasStateRow { slug: string; alias_norm: string; origin: string; case_sensitive: boolean; alias_text: string | null }
 export interface DerivedAliasInsertRow { slug: string; alias_norm: string; origin: string; case_sensitive: boolean; alias_text: string | null }
-export interface MentionCandidatePageRow { id: number; slug: string; source_id: string; body_storage: string; body: string; mention_ignore: unknown }
+export interface MentionCandidatePageRow { id: number; slug: string; source_id: string; body_storage: string; /** null: a prefiltered page that is neither segmented nor matches a pattern. */ body: string | null; mention_ignore: unknown }
 export interface GazetteerEntryKeyRow { source_id: string; name_norm: string; target_slug: string; case_sensitive: boolean }
 export interface PageOutLinkRow { id: number; from_page_id: number; to_slug: string; to_source_id: string; plain: boolean }
 
@@ -162,8 +162,8 @@ export async function upsertPageAliasState(raw: MentionRaw, sourceId: string, pa
 }
 
 /**
- * Live pages of `sourceIds` after id `after`, by id, up to `limit`, with their text; with `patterns` only segmented pages
- * and pages whose lowered text is LIKE one of them (pass.ts pagesMatchingNames).
+ * The next `limit` live pages of `sourceIds` after id `after`, by id, with their text; with `patterns` a page that is
+ * neither segmented nor has lowered text LIKE one of them comes back with a null body (pass.ts pagesMatchingNames).
  */
 export function listMentionCandidatePages(raw: MentionRaw, sourceIds: readonly string[], after: number, limit: number, patterns: readonly string[] | null): Promise<MentionCandidatePageRow[]> {
   return patterns !== null

@@ -33,21 +33,6 @@ pub(crate) struct LifetimeRecord {
     pub ended_at_us: Option<i64>,
 }
 
-/// One orphaned lifetime (`listOrphanLifetimes`): `reason` is `no_page` or `no_lifetime`.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct OrphanLifetime {
-    pub slug: String,
-    pub page_lifetime: String,
-    pub reason: String,
-}
-
-/// `listOrphanLifetimes`: a sample of orphaned lifetimes and the count of all of them.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct OrphanLifetimes {
-    pub total: usize,
-    pub rows: Vec<OrphanLifetime>,
-}
-
 /// One open lifetime, as `readOpenBeliefLifetimes` answers it.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct OpenLifetime {
@@ -117,6 +102,14 @@ pub(crate) fn cast_uuid(text: &Option<String>) -> Result<Option<String>> {
 pub(crate) fn record_key(lifetime: &str) -> Vec<u8> {
     let mut key = vec![keys::TRUST, LIFETIMES, RECORD];
     key.extend_from_slice(lifetime.as_bytes());
+    key
+}
+
+/// `t 0x0a 0x01 incarnation \0`: every open lifetime of the incarnation (value: the lifetime id).
+pub(crate) fn open_prefix(incarnation: &str) -> Vec<u8> {
+    let mut key = vec![keys::TRUST, LIFETIMES, OPEN];
+    key.extend_from_slice(incarnation.as_bytes());
+    key.push(0);
     key
 }
 
@@ -325,90 +318,6 @@ impl Store {
         }
         Ok(out)
     }
-
-    /// `listOrphanLifetimes(sourceId, limit, deep)`: the open lifetimes of the source's current
-    /// incarnation whose slug has no page row (a soft-deleted page is a row; reason `no_page`) and,
-    /// when `deep`, the lifetimes the source's events (any incarnation) name that no lifetime record
-    /// holds (reason `no_lifetime`, one row per slug and lifetime). Ordered by slug then lifetime
-    /// bytes, at most `max(1, limit)` of them, with the count of all of them.
-    pub fn list_orphan_belief_lifetimes(
-        &self,
-        source_id: &str,
-        limit: usize,
-        deep: bool,
-    ) -> Result<OrphanLifetimes> {
-        let read = self.read()?;
-        let incarnation = crate::sources::read_source(&*read, source_id)?.map(|s| s.incarnation);
-        let prefix = vec![keys::TRUST, LIFETIMES, RECORD];
-        let mut known = std::collections::BTreeSet::new();
-        let mut open = Vec::new();
-        let mut failure = None;
-        scan_prefix(&*read, &prefix, false, &mut |k, v| {
-            let lifetime = String::from_utf8_lossy(&k[prefix.len()..]).into_owned();
-            match serde_json::from_slice::<LifetimeRecord>(v) {
-                Ok(rec) => {
-                    if rec.source_id == source_id
-                        && rec.ended_at_us.is_none()
-                        && incarnation.as_deref() == Some(rec.source_incarnation.as_str())
-                    {
-                        open.push((rec.slug, lifetime.clone()));
-                    }
-                    known.insert(lifetime);
-                }
-                Err(e) => failure = Some(StoreError::from(e)),
-            }
-            failure.is_none()
-        })?;
-        if let Some(e) = failure {
-            return Err(e);
-        }
-        let mut orphans = std::collections::BTreeSet::new();
-        for (slug, lifetime) in open {
-            if crate::pages::read_page(&*read, source_id, &slug)?.is_none() {
-                orphans.insert((slug, lifetime, "no_page"));
-            }
-        }
-        if deep {
-            let events = super::belief_events::part_key(
-                &[
-                    keys::TRUST,
-                    super::belief_events::EVENTS,
-                    super::belief_events::EVENT,
-                ],
-                &[source_id],
-                None,
-            );
-            let mut failure = None;
-            scan_prefix(&*read, &events, false, &mut |_, v| {
-                match serde_json::from_slice::<super::belief_events::EventRecord>(v) {
-                    Ok(e) if e.source_id == source_id => {
-                        if let Some(lifetime) = e.page_lifetime
-                            && !known.contains(&lifetime)
-                        {
-                            orphans.insert((e.slug, lifetime, "no_lifetime"));
-                        }
-                    }
-                    Ok(_) => {}
-                    Err(e) => failure = Some(StoreError::from(e)),
-                }
-                failure.is_none()
-            })?;
-            if let Some(e) = failure {
-                return Err(e);
-            }
-        }
-        let total = orphans.len();
-        let rows = orphans
-            .into_iter()
-            .take(limit.max(1))
-            .map(|(slug, page_lifetime, reason)| OrphanLifetime {
-                slug,
-                page_lifetime,
-                reason: reason.to_string(),
-            })
-            .collect();
-        Ok(OrphanLifetimes { total, rows })
-    }
 }
 
 #[cfg(test)]
@@ -502,56 +411,6 @@ mod tests {
                 .read_moved_belief_lifetimes(&[page])
                 .unwrap()
                 .is_empty()
-        );
-    }
-
-    #[test]
-    fn orphaned_lifetimes_are_the_open_ones_with_no_page_sampled_by_bytes() {
-        let store = store();
-        let inc = crate::sources::read_source(&*store.read().unwrap(), "default")
-            .unwrap()
-            .unwrap()
-            .incarnation;
-        let mint_at = |lifetime: &str, slug: &str| {
-            store
-                .mint_belief_lifetime(&LifetimeMint {
-                    lifetime: Some(lifetime.into()),
-                    source_id: Some("default".into()),
-                    incarnation: Some(inc.clone()),
-                    slug: Some(slug.into()),
-                    page_id: Some(1),
-                })
-                .unwrap()
-        };
-        mint_at(L1, "b-gone");
-        mint_at(L2, "a-gone");
-        mint_at("cccccccc-cccc-cccc-cccc-cccccccccccc", "ended");
-        store
-            .end_belief_lifetime("cccccccc-cccc-cccc-cccc-cccccccccccc")
-            .unwrap();
-        // An open lifetime of an old incarnation is not the source's: it is never an orphan here.
-        mint(&store, "dddddddd-dddd-dddd-dddd-dddddddddddd", "old", 1).unwrap();
-        let all = store
-            .list_orphan_belief_lifetimes("default", 20, false)
-            .unwrap();
-        assert_eq!(all.total, 2);
-        assert_eq!(
-            all.rows
-                .iter()
-                .map(|r| (r.slug.as_str(), r.reason.as_str()))
-                .collect::<Vec<_>>(),
-            vec![("a-gone", "no_page"), ("b-gone", "no_page")]
-        );
-        let capped = store
-            .list_orphan_belief_lifetimes("default", 0, true)
-            .unwrap();
-        assert_eq!((capped.total, capped.rows.len()), (2, 1));
-        assert_eq!(
-            store
-                .list_orphan_belief_lifetimes("ghost", 20, true)
-                .unwrap()
-                .total,
-            0
         );
     }
 }

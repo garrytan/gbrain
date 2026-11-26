@@ -247,7 +247,9 @@ function speed(r: Reader): Check {
     const i = r.missing.indexOf(p); if (i >= 0) r.missing.splice(i, 1);
   }
   if (pairs === undefined || noWorse === undefined) return { state: 'reported', detail: 'not measured yet (reported, not gating: D23)' };
-  const parts = [`${pairs} paired samples`, noWorse ? 'Rust no worse on every class' : 'Rust slower on at least one class'];
+  // A loss line that says "not measured" is a gap in the evidence, not a slowdown: say "slower" only when a measured loss exists.
+  const onlyUnmeasured = !noWorse && !!losses?.length && losses.every(l => / not measured\b/.test(l));
+  const parts = [`${pairs} paired samples`, noWorse ? 'Rust no worse on every class' : onlyUnmeasured ? 'Rust not shown to be no worse (rows not measured)' : 'Rust slower on at least one class'];
   if (margin !== undefined) parts.push(margin ? 'filtered vector margin met' : 'filtered vector margin not met');
   if (losses?.length) parts.push(`losses: ${losses.join(', ')}`);
   if (pairs < MIN_BENCH_PAIRS) parts.push(`under ${MIN_BENCH_PAIRS} pairs, inconclusive`);

@@ -598,7 +598,7 @@ not register Hermes's MCP server, run the command in
 brain-first rule:
 
 ```bash
-openclaw mcp add gbrain --command "$(command -v gbrain)" --arg serve --arg --surface --arg starter --arg --advertise --arg verbs --env GBRAIN_HOME=$HOME
+openclaw mcp add gbrain --command "$(command -v gbrain)" --arg serve --arg --surface --arg full --env GBRAIN_HOME=$HOME
 gbrain setup openclaw
 ```
 

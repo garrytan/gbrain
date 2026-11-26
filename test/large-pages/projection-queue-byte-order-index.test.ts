@@ -1,6 +1,6 @@
 /**
  * The projection queue's walks compare and order `slug COLLATE "C"` (byte order on every engine). The primary key of
- * page_projection_jobs is (source_incarnation, slug) in the database's default collation, so it cannot serve them; v337
+ * page_projection_jobs is (source_incarnation, slug) in the database's default collation, so it cannot serve them; v339
  * adds idx_page_projection_jobs_slug_c on (source_incarnation, slug COLLATE "C").
  *
  * 1. Protects: initSchema leaves a valid idx_page_projection_jobs_slug_c, and on Postgres the resident window read
@@ -8,7 +8,7 @@
  *    over a seeded, analyzed queue. CI Postgres sorts text in en_US.utf8; the default collation and "C" are different
  *    collations to the planner either way, so only this index matches the "C" comparison.
  * 2. Fails when: the index is missing or its collation is not "C": the lanes then read the whole queue and sort it
- *    (the control below drops the index and sees exactly that), and rerunning v337 rebuilds it.
+ *    (the control below drops the index and sees exactly that), and rerunning v339 rebuilds it.
  * Runs on PGLite (index present), and on Postgres when DATABASE_URL is set (test/postgres-unit-arms.txt).
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
@@ -17,7 +17,7 @@ import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { MIGRATIONS, runMigrations } from '../../src/core/migrate.ts';
 import { projectionWindowFragment } from '../../src/core/engine-sql/persistence-housekeeping.ts';
 import { renderFragment } from '../../src/core/engine-sql/fragment.ts';
-import { PAGE_PROJECTION_JOBS_BYTE_ORDER_INDEX } from '../../src/core/schema-migrations/v337-projection-jobs-byte-order-index.ts';
+import { PAGE_PROJECTION_JOBS_BYTE_ORDER_INDEX } from '../../src/core/schema-migrations/v339-projection-jobs-byte-order-index.ts';
 import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
@@ -70,7 +70,7 @@ for (const kind of testBackends()) {
       expect(plan).not.toMatch(LANE_SORT);
     }, 120_000);
 
-    test('control: without the index the lanes scan and sort the queue, and rerunning v337 rebuilds it', async () => {
+    test('control: without the index the lanes scan and sort the queue, and rerunning v339 rebuilds it', async () => {
       const [source] = await engine.executeRaw<{ incarnation: string }>(`SELECT incarnation::text AS incarnation FROM sources WHERE id='default'`);
       const latest = await engine.getConfig('version');
       await engine.executeRaw(`DROP INDEX ${INDEX}`);

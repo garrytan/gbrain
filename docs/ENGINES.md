@@ -1751,11 +1751,15 @@ addon, and refusing a missing or mismatched one, belong to the loader (below), n
   or the refusal `rust_engine_addon_missing` or `rust_engine_addon_mismatch` with its `reason` (`gbrain errors
   <code>`), before the brain is touched. It uses `GBRAIN_RUST_ENGINE_ADDON` (an absolute path to a build from `bun run
   rust:build`; it skips only the release checksum pin) first, then an addon cached at
-  `<gbrain home>/engines/rust/<engine_build>/<target>.node` whose SHA-256 equals the cached manifest of this gbrain
+  `<gbrain home>/engines/rust/<engine_build>/<target>-<sha256>.node` whose SHA-256 equals the cached manifest of this gbrain
   version. It never reaches the network and writes nothing: with no cached addon it refuses with reason
-  `not_installed`, and a cached file that fails a check stays as it was. Fetching the release's addon into that cache
-  arrives with the capability gate. Only the Rust engine's open path may import the loader, lazily, so a PGLite or
+  `not_installed`, and a cached file that fails a check stays as it was. `engine install rust` fills it
+  (below). Only the Rust engine's open path may import the loader, lazily, so a PGLite or
   Postgres brain never loads the addon or creates `<gbrain home>/engines/`.
+- **Installing the addon.** Releases ship it for linux-x64-glibc (glibc 2.35+) and darwin-arm64 with an attested
+  SHA-256 manifest. `gbrain engine install rust` installs it after checking both; upgrades run it for a
+  Rust or shadow brain ([refusals](guides/troubleshooting.md#rust-addon-install)).
+  **Say to your agent:** *"Install the Rust engine addon."*
 - **Shared memory.** The addon refuses a typed array whose buffer the runtime (`napi_is_arraybuffer`) does not call a
   plain `ArrayBuffer`, so a `SharedArrayBuffer` view is refused with `InvalidArg` however JavaScript globals or
   prototypes have been changed (`rust/README.md`).
@@ -1937,7 +1941,7 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   `access` or `confidentiality` alias the primary reads as private; an alias row counts only when the primary's own answer left it out,
   because a brain can turn the aliases off and the child cannot read that setting.
   Not checked, because the result carries nothing to check: `resolveSlugs`, `resolveSlugWithAlias`, `getTags`, `getTimeline`,
-  `getChunks`, `findByTitleFuzzy`, `getStats`, `countKeywordPages` and `searchTakes` rows have no source column, search rows only
+  `getChunks`, `findByTitleFuzzy`, `getStats`, `countKeywordPages`, `searchTakes` and `searchTakesVector` rows have no source column, search rows only
   when they carry `source_id`, and `excludePrivate` only on rows with `frontmatter` (so not facts, links, finds or search rows).
   A leak in those shows as `diff`.
 - **Brains and deleting.** Each brain gets its own directory, keyed by its engine and where it lives: the database path for PGLite, or the host, port, database and user name for Postgres
@@ -1967,7 +1971,7 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   write effects or its writer coordination locks. The residual risk is to the evidence: a write the owner process or an effect worker
   applies outside the wrapped engine is not seen by shadow mode, so the comparison for it may differ; such a write
   shows up as a difference or a miss in the counts, never as silent equality.
-- **No network in the background.** gbrain downloads no addon. `start --yes`, the child
+- **No network in the background.** Only `gbrain engine install rust`, `gbrain post-upgrade` and autopilot's automatic upgrade download the addon. `start --yes`, the child
   and `gbrain doctor` only use an addon that is already installed; without one, `start --yes` refuses and stays off, `gbrain doctor` fails
   the `rust_engine_addon` check, and the child records `addon_unavailable` (`rust_engine_addon_missing`, reason `not_installed`).
 - **Doctor.** `rust_engine_addon` checks the installed addon when shadow mode is on and is not applicable otherwise.
@@ -2098,6 +2102,58 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   `status` says the brain needs a reseed (`follower.state` is `needs_reseed`, with the steps in `follower.action`).
   Reseed with `gbrain engine shadow stop --delete`, then `gbrain engine shadow seed`, then `gbrain engine shadow start --plan`,
   then `gbrain engine shadow start --yes --expect <plan_hash>` (a bare `start` only prints the plan).
+- **Privacy, stable rerun and vector recall evidence.** Each sampled read carries the caller's access record (none, when there was
+  none), and the shadow runs Rust under it. On a mismatch of a read made under `excludePrivate` (plain, under `remote`, or a find's `untrusted`
+  policy), every Rust row the primary's own answer lacked is judged on the primary with its read
+  policy for that caller (ids only; a row the caller may not read is `privacy_diverged` and pauses comparison, and counts against
+  criteria 6 and 3). A mismatch nothing explains is `inconclusive` and gets one stable rerun behind a barrier on the follow stream
+  (30 s, queue of 64); a rerun that still differs is a `diff`, one that matches closes unsuccessful, and one that could not run
+  stays unexplained. Vector recall@10 is scored against the primary's own search with index scans off, at most once a minute, and
+  appears after 30 scored samples in the epoch. **What counts as unexplained:** ten reads
+  carry no source or private marker (`resolveSlugs`, `resolveSlugWithAlias`, `getTags`, `getTimeline`, `getChunks`,
+  `findByTitleFuzzy`, `getStats`, `countKeywordPages`, `searchTakes`, `searchTakesVector`), so every unexplained `diff` on them counts into
+  `reads.diverged_unexplained_7d`; on the two take searches only a different row set counts, not the same rows in another order. Facts,
+  links, finds and search rows read under `excludePrivate` count a `diff` too. The one exception: a ranked `searchVector` diff
+  under `excludePrivate` whose extra Rust rows ALL passed the per-row check (same captured record, the primary's policy text) is a
+  ranking difference, because vector and default-ranker membership differences are legitimate (the ranked-search rule: a vector search may return different rows of equal rank). A row the check cannot
+  evaluate (no page identity, a page the primary lacks, a failed, skipped or moved check) is unchecked, and the diff counts. Accepted
+  ranking differences are never dropped: the status and the report list them per member (`evidence.ranking_differences`) next to the
+  rule. What the child sends back carries no content: the serving process keeps a bounded registry of recent samples (arguments, the
+  caller's record and the primary's own answer) and the child asks about a sample by an opaque sample id. The child sends only
+  the identities of the Rust rows (page, chunk and digests; a slug only for a row with no page id), the serving process does the comparing, and an answer is a verdict
+  (a rerun's answer is the epoch, a stamp, digests and an attempt id, plus the chunk ids and scores of a vector read's first ten rows), never a row, a title, a slug or chunk text. A failure is an allowlisted code, and
+  an answer is bound to the asking child's session, so a restarted child never receives its predecessor's. An unresolved
+  comparison is written to the ledger (`rerun: pending`) before its rerun starts and settled by a completion row with the same
+  sample id; one never completed (a crash, a restart) counts as unexplained. A ranked diff is cleared only at row identity
+  and only when nothing the policy reads changed since the read. A Rust row is held when it is byte-equal to a primary row in every
+  field but the ranking ones; a row with a primary row's page and chunk but another payload (a substituted title or flag), or one
+  that claims a chunk without a numeric chunk id, is never cleared and the diff counts. A new row is judged on the primary with the
+  read policy, the safe-chunk fence the read asked for and the chunk visibility the primary used, and it clears only when every field but the ranking ones is the primary's own stored one for that page and chunk (the same read, with its limit widened to five times the caller's, at least 50 and at most 500, under the same filters, so a row the caller's own query filters exclude is never one the primary holds, and a row ranked beyond the widened limit is not found); a stored row that cannot be read leaves the row unexplained. "Nothing changed" is proven by a freshness token taken from the primary BEFORE the primary read started (never a newer one) and
+  checked again at the end of the check. The token is the transaction snapshot's upper bound (`pg_snapshot_xmax(pg_current_snapshot())`, one more than the
+  newest transaction that has finished anywhere in the cluster, kept as the whole 64-bit `xid8` and never cut to 32 bits) and the list of transactions in progress at that moment (the snapshot's
+  own list and the one each session is running; a subtransaction becomes visible only with its top-level transaction, so that is the one listed), all
+  from one query. It holds only if the upper bound is the same, none of the listed transactions has committed (one that is no longer
+  known counts as committed), no prepared (two-phase) transaction exists, and this process's write generation is the
+  same (the privacy check also needs the access tables' generation to hold, and no page or access row to carry a time later than the read). A transaction
+  that commits has to finish, and finishing moves the upper bound or ends a listed transaction, so any committed write to any table, to the
+  catalog (a policy altered in place) or a change undone again (A, B, A) moves the token, in this database or any other of the same
+  cluster, including a commit made with `synchronous_commit=off` or held back by `commit_delay` or a synchronous standby. What does not move it is
+  what changes nothing a read can see: a read that prunes dead rows, a checkpoint, a standby snapshot, a plain vacuum, a logical message. A role that is neither a superuser nor in
+  `pg_read_all_stats` cannot see other sessions' transactions, so its token is blind and clears nothing, and a prepared transaction at the capture blinds it too. The proof is for a primary only: a server in recovery (a hot standby) replays writers that no list shows, so its token is blind and the end of a check refuses.
+  When it moved, both engines and the reference are run again from a new position, up to 3 times (a recall score gets 3 runs in all, the first included, so it waits at most twice). Each run after a move
+  starts only after a wait that grows (about 0.5 s, then 2 s, then 8 s, each varied by up to a quarter either way, about 13 s at most for one sample), so a short burst of writes
+  (a batch job, a bulk import) can pass. The wait is a timer in the shadow child: it blocks neither the serving process nor the child's comparison of new reads (other reruns queue behind it), and it ends at once when the child is told to stop.
+  It does not touch the 30 s limit of each run, and a rerun that is waiting holds its place in the queue of 64. A sample still moving
+  after that stays unresolved (`skipped:moved`) and counts into `reads.diverged_unexplained_7d` (criterion 3). So busy brains clear
+  fewer samples; an idle one clears them all, because a read of its own no longer moves the token. Waiting helps when writes come in bursts or at irregular times, because the later reruns land in quieter moments; it cannot help when the cluster writes all the time, and on a busy shared cluster some samples still stay unresolved and count under criterion 3.
+  Each rerun is its own attempt, with its own answer and position; the follow-up questions name the attempt, and an unknown or dropped one is never proven. The privacy question of a read made under `excludePrivate` is open by default, and only an allowlist settles it: a row of such a read settles it when its rerun matched or differed, or when its outcome is one that completed a comparison (`match`, `order_diff`, `collation_order`, `diff`, `privacy_diverged`, or `stale`, the lagged mismatch; `order_diff` only after a completed compare with a clean privacy check, because any other privacy verdict makes the row `inconclusive` or `privacy_diverged` first) and no rerun is pending or skipped. Every other row counts in `privacy_checks_unsettled_7d`, whatever reason it carries or lacks: a row still pending (a crash or restart left it so), a skip, a timeout, an error, `capability_missing`, an inconclusive row with no completed rerun, and any outcome added later until it is classified. `privacy_diverged` is absent while any is open. A brain with no `excludePrivate` reads has no such row, so nothing reads as unsettled there. The registry's 64 MiB cap holds for a rerun's answer too: charging an entry evicts the oldest other entries until the total is within the cap, and an answer that would pass the cap on its own is not kept (the rerun ends as `too_large`, unresolved and counted). The rerun's wait for the follow lock has the same deadline as its Rust call, and so does the wait of a recall score's rerun (that sample is then not scored): an apply that never ends ends the rerun as a timeout (unresolved and counted), makes the child unhealthy by itself (it stops heartbeating until the stuck chain recovers, so the supervisor's watchdog restarts it, even while ordinary reads still answer and later reruns time out earlier, at their barrier), and never lets the abandoned read run later. Each question of the child runs in the serving process with a signal and a 45 s deadline of its own, never the cancelled signal of the request that started the child. A recall score that finishes after `engine shadow stop --delete`, or for a replaced epoch, is dropped (the directory is never recreated), and a recall directory that cannot be read makes recall unavailable. A list of more than 2,000 row identities, or one holding anything invalid,
+  is never complete. The vector reference is the engine's own exact statement with no candidate
+  window and is used only when the same proof holds from the sample's capture to the end of the reference run; otherwise the sample is
+  not scored. Tied rows at the cutoff count only for the top-ten places the strictly better rows leave, and a reference whose last row
+  (of 50) still ties the cutoff is not scored. A stable rerun compares digests: the whole answer, and for a ranked read its rows without scores in a fixed order, so the same
+  rows in another order or with other scores are an `order_diff` (closed as matched on the reads that ignore order). The comparator
+  version is 3 (it was 1): a running shadow opens a new evidence epoch, so records written under the earlier rules never count. Known limits, not fixed here: a position that does not move proves nothing was written but says nothing about a change that is not WAL-logged (an unlogged table), and a server in recovery (a hot standby or read replica) is never proven; and a read the caller was authorized to make that
+  returns a private page still reads `private_row_returned` and pauses comparison (it fails closed).
 - **Status fields.** `status --json` adds: `follower.state` (`not_seeded`, `needs_reseed`, `stopped`, `invalid`, `behind`,
   `following`), `follower.action` (the reseed steps, or `null`), `lag_ms`, `lag_ms_p99_24h` and `lag_ms_p99_epoch` (a power-of-two bucket upper bound, not an exact
   value), `queue_depth`, `applied_rows`, `coverage_watermark`; `reconcile.state` (`never_run`, `ok`, `repaired`,
@@ -2114,9 +2170,10 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
 - **Evidence fields.** `status --json` also carries the swap's read and search evidence for the current epoch (`report` prints
   the same counts):
   `reads` (successful comparisons per operation class with their minimum, and the 7-day counts of `capability_missing`,
-  unresolved `rust_error` and unexplained divergences), `search` (trigram and keyword/title exact disagreements), `child`
-  (panics and faults) and `evidence` (`epoch_id`, `epoch_started_at`, `readiness_days`, `earliest_ready_at` and the counting
-  rules). A count with no evidence is left out, never zero, and the swap reads it as `NOT READY`. The follower and evidence
+  unresolved `rust_error` and unexplained divergences), `search` (trigram and keyword/title exact disagreements, plus `vector_recall_at_10` and `primary_recall_at_10` once 30 samples are scored), `privacy_diverged`
+  (the count of rows a caller may not read; absent until something is compared, and while a privacy check of the last 7 days is unsettled), `child`
+  (panics and faults) and `evidence` (`epoch_id`, `epoch_started_at`, `readiness_days`, `earliest_ready_at`, `recall_samples`,
+  `ranking_differences`, `privacy_checks_unsettled_7d` and the counting rules). A count with no evidence is left out, never zero, and the swap reads it as `NOT READY`. The follower and evidence
   fields are read from one epoch; if the epoch keeps changing while the document is built, `epoch_id` is `null`, the
   evidence fields are left out and `evidence_epoch_unstable` is `true`. `gbrain engine swap --plan` reads this same document.
 - **Fingerprint probe.** Withdrawals and purge tombstones key on the fact fingerprint, so a primary whose `lower()` or
@@ -2142,6 +2199,8 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   are not built yet, and the readiness decision come in later phases of the plan
   (`docs/designs/RUST_ENGINE.md`, Phase S). Until the Rust engine serves reads, comparisons record
   `capability_missing`.
+
+[Shadow capture](guides/shadow-capture.md) records engine calls for a later replay.
 
 ## Adding a new engine
 

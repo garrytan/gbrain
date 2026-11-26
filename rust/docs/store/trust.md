@@ -56,7 +56,7 @@ The `fact_withdrawals` ledger (src/core/facts/withdrawal-schema.ts). One record 
 `t 0x01 source \0 visibility \0 subject \0 fact_hash` -> `{"withdrawn_at_us": <i64>}`
 
 `fact_hash` is `gbrain_fact_fingerprint(claim)` (`trust::fingerprint::fact_fingerprint`). Rows written before v174
-hold `gbrain_fact_fingerprint_v1(claim)`, and every read matches both. Postgres rows written before v339 can hold
+hold `gbrain_fact_fingerprint_v1(claim)`, and every read matches both. Postgres rows written before v341 can hold
 `gbrain_fact_fingerprint_v2(claim)` (whitespace by the database locale); the SQL reads match that hash too. The store
 never wrote one: it folds the explicit `is_pg_space` list, which `gbrain_fact_fingerprint` folds on every engine. Deleting a source removes its rows (the table's
 `ON DELETE CASCADE`, through `cascade::remove_source_rows`). A slug rename (`updateSlug`) moves them in its own
@@ -368,14 +368,14 @@ because enable refused on this engine before it, so no store could hold a baseli
 - `mintBeliefLifetime` answers the lifetime already open at the pair, or fails on the primary key for a lifetime id
   already used. `renameBeliefLifetime` moves an open or an ended lifetime; an open one moved onto a pair with
   another open lifetime fails on `belief_page_lifetimes_open`. `readOpenBeliefLifetimes` answers a pair given twice
-  twice, as the `unnest` join does. `readMovedBeliefLifetimes` matches the page by id in any source, deleted or not. `listOrphanLifetimes` (`list_orphan_belief_lifetimes`) answers the open lifetimes of the source's current incarnation whose slug has no page row (a soft-deleted page is a row; `no_page`) and, with `deep`, the lifetimes the source's events (any incarnation) name that no lifetime record holds (`no_lifetime`), by slug then lifetime bytes, at most `max(1, limit)`, with the count of all.
+  twice, as the `unnest` join does. `readMovedBeliefLifetimes` matches the page by id in any source, deleted or not.
 - `readBeliefRedactions` answers each matching suppression once, in id order. `releaseBeliefRedactions` updates the
   listed ids in any source.
 - `readBeliefTombstones` reads the fact half from the fact purge ledger (`F 0x0F`, any visibility and any subject)
   and the take half from the take purge ledger (`facts.md`, "The take purge ledger"). A fingerprint found in both
   halves, or asked twice, is answered once.
 - `readLegacyClaimFingerprints` and `readLegacyBeliefTombstones` make no store call and answer none: they find a claim
-  recorded or purged under the pre-v339 Postgres fingerprint, which the store never held (it folds the explicit
+  recorded or purged under the pre-v341 Postgres fingerprint, which the store never held (it folds the explicit
   `is_pg_space` list).
 - `readBeliefHistoryRows` reads the source's current incarnation by id, ascending or descending, in batches, with
   the slug, subject key, recorded-time window, subject key list and `beforeId` filters. Each row carries
@@ -398,6 +398,18 @@ because enable refused on this engine before it, so no store could hold a baseli
   unexpired page-less database-only facts (their entity) and of unexpired slot facts with no row (their page), less
   the run's baselined slugs and the skip list, up to the limit. The source row lock `enableBeliefLedger` and
   `disableBeliefLedger` take is `lockSourceRow`, a plain read here: the store runs one write transaction at a time.
+- The drift scan's reads (`trust::belief_coverage`): `listBeliefDriftCandidates` lists the slugs of the source's page rows
+  (live and soft-deleted), of its page-less facts (their entity, by the newest fact) and of the incarnation's open
+  lifetimes, newest first (a page by `updated_at`, a lifetime by `started_at`) and in byte order within a tie.
+  `readNewestBeliefEvent` answers the newest event of a slug in an incarnation other than a coverage event or a
+  backfill (id, state hash, recorded time), or none. The ledger keeps no per-slug event index, so it walks the
+  incarnation's events newest first until one names the slug: a read for the drift scan's sample, not a hot path.
+- `listOrphanLifetimes` (`orphanLifetimes`, belief/coverage-report.ts) answers `{ count, samples }`: the source's open
+  lifetimes of its current incarnation with no page row at their slug (a soft-deleted page is still a row) and, when
+  `deep`, the source's events of any incarnation that name a page lifetime no lifetime record holds (in any source, as the
+  SQL tests it), one finding per distinct slug and lifetime. Findings sort by slug then lifetime bytes; `count` is all of
+  them and `samples` the first `max(1, limit)`. An unknown source has no open lifetimes, but its events still answer the
+  deep read.
 - The state reads (`trust::belief_state`): `readBeliefStateRows` reads each stream of the source (a listed slug, or a
   listed page id in the source): its live or soft-deleted page, the unexpired fence facts it projects and the
   unexpired database-only facts about it, its takes, the links and transitions whose origin, else from, page it is,

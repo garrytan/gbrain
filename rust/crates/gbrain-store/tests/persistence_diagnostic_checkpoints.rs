@@ -403,3 +403,42 @@ fn revival_pages_list_the_tombstones_of_a_slug_by_source_bytes() {
             .is_empty()
     );
 }
+
+#[test]
+fn soak_counter_events_add_up_per_day_and_keep_the_other_counters() {
+    let (store, _) = brain("soak-counter-events");
+    store
+        .add_soak_counter_event("sync-soak-counters", "2026-01-02", "repair_apply", 1)
+        .unwrap();
+    store
+        .add_soak_counter_event("sync-soak-counters", "2026-01-02", "repair_apply", 3)
+        .unwrap();
+    store
+        .add_soak_counter_event("sync-soak-counters", "2026-01-02", "needs_human", 2)
+        .unwrap();
+    let rows = store
+        .read_op_checkpoint_records(
+            "sync-soak-counters",
+            &["2026-01-02".into(), "2026-01-03".into()],
+        )
+        .unwrap();
+    assert_eq!(
+        rows,
+        json!([{ "day": "2026-01-02", "repair_apply": 4, "needs_human": 2 }])
+    );
+    // A count past an int4 refuses, as the `::int` arithmetic does, and leaves the row as it was.
+    assert!(
+        store
+            .add_soak_counter_event(
+                "sync-soak-counters",
+                "2026-01-02",
+                "repair_apply",
+                i64::from(i32::MAX)
+            )
+            .is_err()
+    );
+    let rows = store
+        .read_op_checkpoint_records("sync-soak-counters", &["2026-01-02".into()])
+        .unwrap();
+    assert_eq!(rows[0]["repair_apply"], json!(4));
+}

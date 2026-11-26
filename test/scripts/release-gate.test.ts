@@ -219,7 +219,8 @@ describe('release.yml waits for the CI gate', () => {
     for (const job of ['build', 'release', 'publish-template', 'publish-codex-plugin']) {
       expect(wf.jobs[job]!.needs).toContain('ci-gate');
       expect(wf.jobs[job]!.if).toContain("needs.ci-gate.outputs.publish == 'true'");
-      expect(wf.jobs[job]!.steps[0]!.with?.ref).toBe('${{ needs.ci-gate.outputs.sha }}');
+      // A release dry run (addon_dry_run) skips ci-gate and builds the dispatched commit; every real run builds ci-gate's commit.
+      expect(wf.jobs[job]!.steps[0]!.with?.ref).toBe(job === 'build' ? '${{ inputs.addon_dry_run && github.sha || needs.ci-gate.outputs.sha }}' : '${{ needs.ci-gate.outputs.sha }}');
     }
     const steps = wf.jobs.release!.steps;
     expect(steps.find(s => s.with?.target_commitish)!.with!.target_commitish).toBe('${{ needs.ci-gate.outputs.sha }}');

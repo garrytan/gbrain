@@ -2790,6 +2790,22 @@ DO \$rls\$ BEGIN
   END IF;
 END \$rls\$;
 
+CREATE TABLE IF NOT EXISTS write_gate_hold_rechecks (
+  id               BIGSERIAL PRIMARY KEY,
+  source_id        TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+  hold_id          BIGINT NOT NULL,
+  observed_version TEXT NOT NULL,
+  survivor_ids     BIGINT[] NOT NULL DEFAULT '{}',
+  queued_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS write_gate_hold_rechecks_queue_idx ON write_gate_hold_rechecks (queued_at, id);
+CREATE INDEX IF NOT EXISTS write_gate_hold_rechecks_hold_idx ON write_gate_hold_rechecks (hold_id);
+DO \$rls\$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
+    ALTER TABLE write_gate_hold_rechecks ENABLE ROW LEVEL SECURITY;
+  END IF;
+END \$rls\$;
+
 
 -- Pinned questions (C4): answers and their evidence pointers live outside pages.
 CREATE TABLE IF NOT EXISTS pinned_questions (

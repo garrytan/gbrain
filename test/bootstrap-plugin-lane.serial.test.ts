@@ -20,7 +20,7 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -34,7 +34,6 @@ import {
 } from '../src/core/bootstrap/harness.ts';
 import { initState, setAnswer, readBackHash, confirm } from '../src/core/bootstrap/interview.ts';
 import { readReceipt } from '../src/core/bootstrap/format.ts';
-import { REGISTRATION_ADVERTISE, REGISTRATION_SURFACE } from '../src/core/mcp-registration.ts';
 
 const REQUIRED_ANSWERS: Record<string, string> = {
   AGENT_NAME: 'Lanekeeper',
@@ -243,7 +242,8 @@ describe('runHooks plugin-lane skip (serial: env fixtures)', () => {
     expect(r.result).toBe(0);
     const add = calls.find((c) => c[0] === 'codex' && c[1] === 'mcp' && c[2] === 'add');
     expect(add).toBeDefined();
-    expect(add!.join(' ')).toContain('serve --surface starter');
+    expect(add!.join(' ')).toContain('serve --surface full');
+    expect(add!.join(' ')).not.toContain('--advertise');
   }, 30_000);
 
   test('codex + an enabled persona variant (gbrain-coding) → the MCP substep skips too (#7963)', async () => {
@@ -272,9 +272,19 @@ describe('runHooks plugin-lane skip (serial: env fixtures)', () => {
       if (argv[2] === 'get') return { code: 0, stdout: calls.some((c) => c[2] === 'remove') ? lastAdd!.join(' ') : 'gbrain\n  transport: stdio\n  command: /opt/elsewhere/gbrain-wrapper\n', stderr: '' };
       return { code: 0, stdout: '', stderr: '' };
     };
-    const r = await capture(() =>
-      runBootstrap(['hooks', '--workspace', ws, '--harness', 'codex', '--gbrain-bin', process.execPath], { runner }),
-    );
+    // Codex registers full by default (I1); turn its default back to starter so the re-add's own choice (full) shows.
+    const cfgPath = join(process.env.GBRAIN_HOME!, '.gbrain', 'config.json');
+    const had = existsSync(cfgPath) ? readFileSync(cfgPath, 'utf8') : null;
+    mkdirSync(join(process.env.GBRAIN_HOME!, '.gbrain'), { recursive: true });
+    writeFileSync(cfgPath, JSON.stringify({ ...(had ? JSON.parse(had) : { engine: 'pglite' }), mcp: { default_surface_codex: 'starter' } }));
+    let r: { result: number; out: string; err: string };
+    try {
+      r = await capture(() =>
+        runBootstrap(['hooks', '--workspace', ws, '--harness', 'codex', '--gbrain-bin', process.execPath], { runner }),
+      );
+    } finally {
+      if (had === null) rmSync(cfgPath, { force: true }); else writeFileSync(cfgPath, had);
+    }
     expect(r.result).toBe(0);
     const adds = calls.filter((c) => c[0] === 'codex' && c[2] === 'add');
     expect(adds).toHaveLength(2);
@@ -284,7 +294,7 @@ describe('runHooks plugin-lane skip (serial: env fixtures)', () => {
 
   test('hooks --help names the real default surface (#7962)', async () => {
     const r = await capture(() => runBootstrap(['hooks', '--help']));
-    expect(r.out + r.err).toContain(`--surface ${REGISTRATION_SURFACE} --advertise ${REGISTRATION_ADVERTISE} unless given; a replaced entry keeps its surface, full when unreadable`);
+    expect(r.out + r.err).toContain("unless given: Codex --surface full, Claude Code and opencode --surface starter --advertise verbs; config mcp.default_surface_<harness> turns a harness's default; a replaced entry keeps its surface, full when unreadable");
   });
 
   test('codex + plugin + --mcp-even-if-plugin → registration forced through', async () => {

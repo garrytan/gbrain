@@ -31,12 +31,6 @@ export interface SourceCycleWindow {
 }
 
 /**
- * The listing instant is the engine's `readCycleListingInstant` (engine-sql/cycle-window.ts): the clock, moved back to
- * just before the oldest transaction still open on another connection the cycle's role can see (at most 10 minutes
- * back). `pages.updated_at` is its writer's transaction start, so a page that commits after the listing still lands
- * after the cursor. An autovacuum worker never writes a page, so its transaction does not move the instant; one open
- * across the listing made the next cycle walk the pages written since it started again.
- *
  * One window of the source's live pages after `since` (every page when null), and the cursor the next one starts after.
  * Cursors bind as text: a driver that reads a timestamp parameter as a JS date keeps only milliseconds.
  * They are written as UTC ISO with microseconds whatever the session DateStyle and TimeZone (#8771): the queued
@@ -44,7 +38,7 @@ export interface SourceCycleWindow {
  */
 export async function listSourceChangedPages(engine: BrainEngine, sourceId: string, since: string | null): Promise<SourceCycleWindow> {
   const at = await engine.readCycleListingInstant();
-  const config = (await engine.readSourceState(sourceId))?.config as Record<string, unknown> | undefined;
+  const config = (await engine.readSourceState(sourceId))?.config;
   const stamped = config?.last_source_cycle_window_at;
   const stampedSlug = config?.last_source_cycle_window_slug;
   const slug = since !== null && stamped === since && typeof stampedSlug === 'string' ? stampedSlug : '';
