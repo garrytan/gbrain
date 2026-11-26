@@ -19,7 +19,7 @@ import type { OwnerWholeOperation } from './server.ts';
 import { IMPORT_CLIENT_FILE, importClientFile } from '../served/client-files.ts';
 import { SERVED_BRAIN_CALL, SERVED_STORE_CALL, STORE_RETURNING_MEMBERS, servedBrainMethod } from '../served/store-returning.ts';
 import {
-  OWNER_FORWARDED_OPERATIONS, OWNER_RUN_OPERATION, type ForwardedOperationContext, type ForwardedOperationResult,
+  forwardsWhole, OWNER_RUN_OPERATION, type ForwardedOperationContext, type ForwardedOperationResult,
   type WholeOperationName,
 } from './whole-op.ts';
 
@@ -30,7 +30,8 @@ const CONTEXT_KEYS: ReadonlySet<string> = new Set(['sourceId', 'admissionOrigin'
 
 async function runOperation(engine: BrainEngine, config: GBrainConfig | undefined, name: unknown, params: unknown,
   context: unknown): Promise<ForwardedOperationResult> {
-  if (typeof name !== 'string' || !OWNER_FORWARDED_OPERATIONS.has(name)) {
+  const multiuser = (engine as { openStoreIfOpen?: (m: string) => { multiuser?: boolean } | null }).openStoreIfOpen?.('runOperation')?.multiuser === true;
+  if (typeof name !== 'string' || !forwardsWhole(name, multiuser)) {
     throw ownerIpcRefusal(String(name), 'the brain owner runs only page writes and imports whole');
   }
   if (!params || typeof params !== 'object' || Array.isArray(params)) throw ownerIpcRefusal(name, 'its parameters are not an object');

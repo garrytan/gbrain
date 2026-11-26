@@ -46,8 +46,8 @@ export type WholeOperationName =
 /** The owner's entry for a registry operation sent whole (owner-ops.ts runs it). */
 export const OWNER_RUN_OPERATION = 'runOperation';
 
-/** Registry operations a client sends whole to an owner that reports persistence_journal. */
-export const OWNER_FORWARDED_OPERATIONS: ReadonlySet<string> = new Set(['put_page']);
+export { MULTIUSER_FORWARDED_OPERATIONS, OWNER_FORWARDED_OPERATIONS, forwardsWhole } from './forwarded-names.ts';
+import { forwardsWhole } from './forwarded-names.ts';
 
 /**
  * The context fields a forwarded operation carries to the owner: plain data of a trusted local caller. Engine, config,
@@ -168,7 +168,7 @@ const HANDOFF_RESENDS = 5;
 
 export async function forwardOwnerOperation(ctx: OperationContext, name: string, params: Record<string, unknown>, resends = 0): Promise<{ result: unknown } | undefined> {
   const connection = ownerConnectionFor(ctx.engine);
-  if (!connection || !OWNER_FORWARDED_OPERATIONS.has(name)) return undefined;
+  if (!connection || !forwardsWhole(name, rustMultiuserFromEnv())) return undefined;
   if (connection.closed) {
     const rejoin = ownerRejoinFor(connection);
     if (!rejoin) return undefined; // the engine's own members give the owner_unavailable refusal

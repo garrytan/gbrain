@@ -9,6 +9,8 @@
  * cold-start path. Finalizing is idempotent per op object, so a process
  * that later loads operations.ts sees the same objects in the same state.
  */
+import { MULTIUSER_FORWARDED_OPERATIONS } from './rust-engine/owner-ipc/forwarded-names.ts';
+import { rustMultiuserFromEnv } from './rust-engine/multiuser-switch.ts';
 import type { Operation } from './ops/contract.ts';
 import { withOutputRedaction } from './search/output-redaction.ts';
 import { withEngineScope } from './engine-scope.ts';
@@ -153,8 +155,20 @@ export function finalizeOperation(op: Operation): void {
   // Slug params are normalized outermost (ops/slug-params.ts), so every wrapper and the handler see the stored form.
   const handler = withNormalizedSlugParams(op,
     withOutputRedaction({ handler: withPrivacyHoldReplies(op, withGuestMarks(op, op.handler)), outputRedaction: op.outputRedaction }));
-  op.handler = (ctx, params) => withEngineScope(ctx.engine,
+  const scoped: Operation['handler'] = (ctx, params) => withEngineScope(ctx.engine,
     () => withRemoteCaller(isRemoteCaller() || ctx.remote !== false, () => handler(ctx, params)));
+  // Multi-user Rust: a trusted local client of the brain's owner sends these writes whole (owner-ipc/forwarded-names.ts).
+  op.handler = MULTIUSER_FORWARDED_OPERATIONS.has(op.name) ? forwardedToOwner(op.name, scoped) : scoped;
+}
+
+/** The handler, sent whole to the Rust owner when this process is its trusted local client in multi-user mode. */
+function forwardedToOwner(name: string, scoped: Operation['handler']): Operation['handler'] {
+  return async (ctx, params) => {
+    if ((ctx.engine?.kind as string) !== 'rust' || ctx.remote !== false || isRemoteCaller() || !rustMultiuserFromEnv()) return scoped(ctx, params);
+    const { forwardOwnerOperation } = await import('./rust-engine/owner-ipc/whole-op.ts');
+    const forwarded = await forwardOwnerOperation(ctx, name, params);
+    return forwarded ? forwarded.result : scoped(ctx, params);
+  };
 }
 
 /** The finalized operation named `name`, loading only the module that defines it. */

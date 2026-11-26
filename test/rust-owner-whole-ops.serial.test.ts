@@ -88,8 +88,12 @@ describeAddon('registry writes from a client process go to the owner whole', () 
     };
     for (const [name, r] of Object.entries(results)) {
       expect({ name, transactions: /cannot run from a second process|"transactions"/.test(r.text) }).toEqual({ name, transactions: false });
-      // The operation's own receipt: written, or accepted and pending (a brain without L5's fence fix).
-      expect({ name, ok: !r.isError || r.code === 'write_pending' }).toEqual({ name, ok: true });
+      // The operation's own answer from the owner: written, or accepted and pending (a brain without L5's fence fix). On
+      // such a brain the target page is itself still pending, so a write that needs the page answers page_not_found.
+      // remember's pending receipt says it in words ("accepted and awaiting completion").
+      const pending = r.code === 'write_pending' || r.text.includes('accepted and awaiting completion');
+      const ownAnswer = !r.isError || pending || (put.code === 'write_pending' && r.code === 'page_not_found');
+      expect({ name, ok: ownAnswer, code: ownAnswer ? undefined : r.code }).toEqual({ name, ok: true, code: undefined });
     }
   }, 120_000);
 
