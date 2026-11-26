@@ -6,7 +6,7 @@
 
 ### Fixed
 - `gbrain sources writer transfer accept` on another host carries the previous owner's Git durability to the new host (enabled only when the push probe passes there) and warns with the enable command when the new host will not commit or push. Before, every cross-host transfer silently turned durability off (#10123).
-- `transfer accept`, `gbrain doctor` and every command that lists managed roots no longer abort when an old recorded root sits under a directory this user cannot enter (EACCES or EPERM); the record keeps fencing its literal path, and an unreadable record now names its file and the cause (#10122).
+- `transfer accept` and the commands that read the managed-root registry no longer abort when an old recorded root sits under a directory this user cannot enter (EACCES or EPERM); the record keeps fencing its literal path, and an unreadable record now names its file and the cause (#10122). Guarded file writes and the doctor checks that test whether a path is managed still fail with EACCES on such a host; that is a follow-up.
 - Sync writes a single-folder `db_only` entry to `.gitignore` as `/folder/`, so a tracked nested folder of the same name is no longer ignored and `git pull --ff-only` no longer breaks over it (#10102).
 - A page an older sync stored under a slug over 255 characters can be deleted, restored and purged, and keeps syncing and reindexing; sync now holds a new file with such a slug as `slug_too_long` (and `gbrain import` on an unmanaged brain skips it) instead of storing a page nothing can name (#10080).
 - The post-write links effect reuses the per-source slug index write preparation keeps, instead of listing every slug of the source for each landed page (about 15 MB per page on a 121k-page source) (#10101).
