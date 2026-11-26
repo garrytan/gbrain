@@ -11,6 +11,7 @@
 import type { BrainEngine } from '../../engine.ts';
 import { storeCall, type StoreMember } from './common.ts';
 import { managedServed } from './managed-hold.ts';
+import type { RustEngine } from '../../rust-engine.ts';
 import type { StoreBrain } from '../store.ts';
 import { readPersistenceBrainId } from './persistence-identity.ts';
 import type { GitPushHoldRow, OrphanBindingRow, OwnerBindingRow, StalledCatchupRow } from '../../engine-sql/doctor-persistence.ts';
@@ -151,8 +152,11 @@ export const listStaleEmbeddingEffects: Member<'listStaleEmbeddingEffects'> = (b
 export const listSourceBindingsForMovement: Member<'listSourceBindingsForMovement'> = async (brain, sourceIds) =>
   await storeCall({ member: 'listSourceBindingsForMovement' }, () => brain.movementBindingRows(sourceIds)) as Awaited<ReturnType<BrainEngine['listSourceBindingsForMovement']>>;
 export const listConsumerOwners: Member<'listConsumerOwners'> = async () => [];
-export const listStuckWorktreeRefreshes: Member<'listStuckWorktreeRefreshes'> = (brain, minutes) =>
-  storeCall({ member: 'listStuckWorktreeRefreshes' }, () => brain.refreshRows({ kind: 'stuck', minutes })) as ReturnType<Member<'listStuckWorktreeRefreshes'>>;
+// A brain that does not serve managed mode (a user's, while the hold is on) has no refresh row: none is stuck.
+export const listStuckWorktreeRefreshes = async function listStuckWorktreeRefreshes(this: RustEngine, brain: StoreBrain, minutes: number): ReturnType<Member<'listStuckWorktreeRefreshes'>> {
+  if (!managedServed(this)) return [];
+  return storeCall({ member: 'listStuckWorktreeRefreshes' }, () => brain.refreshRows({ kind: 'stuck', minutes })) as ReturnType<Member<'listStuckWorktreeRefreshes'>>;
+};
 /**
  * The request ids of the page and fact purges the store's `page_purges` (`F 0x0C`) and `fact_purges` (`F 0x0F`) ledgers
  * hold. The store keeps no `take_purges` row, so that arm adds nothing.

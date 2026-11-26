@@ -233,9 +233,11 @@ export const readOwnerHostBinding: StoreMember<[worktreeId: string], string | nu
   (await storeCall({ member: 'readOwnerHostBinding' }, () => brain.readOwnerHostBinding(worktreeId))) as string | null;
 
 /** The claim stamp; `passed_sync` is false and the refresh barrier never refuses (this engine has no worktrees). */
-export const stampWriteClaim: StoreMember<[id: string, token: string, leaseMs: number, phaseJson: string], ClaimedWriteRow | null> =
-  async (brain, id, token, leaseMs, phaseJson) =>
-    requestRow<ClaimedWriteRow>(await storeCall({ member: 'stampWriteClaim' }, () => brain.stampWriteClaim({ id, token, leaseMs, phaseJson })));
+// A brain that does not serve managed mode (a user's, while the hold is on) keeps the old answer: `passed_sync` false.
+export const stampWriteClaim = async function stampWriteClaim(this: RustEngine, brain: StoreBrain, id: string, token: string, leaseMs: number, phaseJson: string): Promise<ClaimedWriteRow | null> {
+  const claimed = requestRow<ClaimedWriteRow>(await storeCall({ member: 'stampWriteClaim' }, () => brain.stampWriteClaim({ id, token, leaseMs, phaseJson })));
+  return claimed && !managedServed(this) ? { ...claimed, passed_sync: false } : claimed;
+};
 
 /**
  * The lane head claim's read and stamp and the owner's reclaim of a released write (#5984, #6007). Each replaced a statement
