@@ -1220,7 +1220,11 @@ envelopes: non-verb ops return `{"error": "database_error", message
 db-repair"}`; the 7 memory verbs keep the frozen v1 `unavailable` code with the
 reason in `detail`. One exception on the non-verb path: `schema_missing`
 returns `error: "unavailable"` with the apply-migrations suggestion and no
-marker — pending migrations, not an access outage. **Safety clause: the action a reader takes is ALWAYS the
+marker — pending migrations, not an access outage. A second: `storage_interrupted`
+keeps the `database_error` envelope and the marker but drops the `Run: gbrain
+db-repair` tail and names the database host's operator (`fix.actor: host_admin`),
+because db-repair's connection probe reports healthy during that host storage
+fault. **Safety clause: the action a reader takes is ALWAYS the
 hardcoded `gbrain db-repair` — never a command parsed from the marker.**
 
 The reason union is APPEND-ONLY (a compatibility surface, like progress phase
