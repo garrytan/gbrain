@@ -13,7 +13,7 @@
  *  4. Seams: a PGLite engine in memory and a Rust engine on a temp store, written through the same typed members. It needs
  *     the addon `bun run rust:build` writes; it skips without it (GBRAIN_TEST_RUST_ADDON_REQUIRED=1 makes that an error).
  */
-import { afterAll, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -48,23 +48,27 @@ async function writes(engine: BrainEngine): Promise<unknown> {
 }
 
 describe.skipIf(!HAVE_ADDON)('the shadow compare after a replayed chunk seal', () => {
-  test('the Rust copy names the chunk ids its primary names, so no row reads as unidentified or extra', async () => {
-    const pglite = new PGLiteEngine();
+  let pglite: PGLiteEngine;
+  let rust: BrainEngine;
+  beforeAll(async () => {
+    pglite = new PGLiteEngine();
     await pglite.connect({});
     await pglite.initSchema();
-    const rust = openRustEngine({ addon: await loadRustAddon({ env: { GBRAIN_RUST_ENGINE_ADDON: ADDON } }), databasePath: join(dir, 'db') });
+    rust = openRustEngine({ addon: await loadRustAddon({ env: { GBRAIN_RUST_ENGINE_ADDON: ADDON } }), databasePath: join(dir, 'db') });
     await rust.connect({ engine: 'pglite', database_path: join(dir, 'db') } as never);
     await rust.initSchema();
-    try {
-      const primary = rowIdentities(await writes(pglite));
-      const copy = rowIdentities(await writes(rust));
-      expect(primary.length).toBeGreaterThan(0);
-      expect({ ids: copy.map(r => typeof r.chunk === 'object' ? r.chunk.id : null), extra: extraIds(primary, copy) })
-        .toEqual({ ids: primary.map(r => typeof r.chunk === 'object' ? r.chunk.id : null), extra: { rows: [], unidentified: 0 } });
-    } finally {
-      await disposePersistenceConsumer(pglite);
-      await pglite.disconnect();
-      await rust.disconnect();
-    }
+  }, 120_000);
+  afterAll(async () => {
+    await disposePersistenceConsumer(pglite);
+    await pglite.disconnect();
+    await rust.disconnect();
+  });
+
+  test('the Rust copy names the chunk ids its primary names, so no row reads as unidentified or extra', async () => {
+    const primary = rowIdentities(await writes(pglite));
+    const copy = rowIdentities(await writes(rust));
+    expect(primary.length).toBeGreaterThan(0);
+    expect({ ids: copy.map(r => typeof r.chunk === 'object' ? r.chunk.id : null), extra: extraIds(primary, copy) })
+      .toEqual({ ids: primary.map(r => typeof r.chunk === 'object' ? r.chunk.id : null), extra: { rows: [], unidentified: 0 } });
   }, 120_000);
 });
