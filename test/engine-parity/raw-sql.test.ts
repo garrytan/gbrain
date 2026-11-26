@@ -23,6 +23,7 @@ import { parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { buildEntityCard } from '../../src/core/verbs/entity-card.ts';
 import { entityLookupFault, FAULT_MESSAGE } from '../helpers/entity-lookup-fault.ts';
+import { rethrowByDesignStop } from '../helpers/rust-by-design-stop.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -35,9 +36,10 @@ describe('engine parity: raw_sql', () => {
     async (engine) => {
       await engine.putPage('notes/raw-a', PAGE('Raw A', 'first'));
       await engine.putPage('notes/raw-b', PAGE('Raw B', 'second'));
+      // The Rust arm's stop, by design (RUST_ENGINE.md row 55): no SQL dialect.
       const scalar = await engine.executeRaw<{ n: number; s: string; nothing: null }>(
         'SELECT $1::int + 1 AS n, $2::text AS s, NULL AS nothing', [41, 'text'],
-      );
+      ).catch((e: unknown) => rethrowByDesignStop(e, 'executeRaw', '55'));
       expect(scalar).toEqual([{ n: 42, s: 'text', nothing: null }]);
       const pages = await engine.executeRaw<{ slug: string; title: string }>(
         `SELECT slug, title FROM pages WHERE slug LIKE $1 AND deleted_at IS NULL ORDER BY slug`, ['notes/raw-%'],
@@ -52,7 +54,8 @@ describe('engine parity: raw_sql', () => {
     { methods: ['putPage', 'executeRawDirect', 'transaction'], requires: 'raw_sql' },
     async (engine) => {
       await engine.putPage('notes/direct', PAGE('Direct', 'body'));
-      const direct = await engine.executeRawDirect<{ slug: string }>('SELECT slug FROM pages WHERE slug = $1', ['notes/direct']);
+      const direct = await engine.executeRawDirect<{ slug: string }>('SELECT slug FROM pages WHERE slug = $1', ['notes/direct'])
+        .catch((e: unknown) => rethrowByDesignStop(e, 'executeRawDirect', '55'));
       // Inside a transaction the tx handle's direct read sees the tx's own uncommitted write.
       const inTx = await engine.transaction(async (tx) => {
         await tx.putPage('notes/direct-tx', PAGE('Direct tx', 'body'));
@@ -70,7 +73,7 @@ describe('engine parity: raw_sql', () => {
       await engine.runMigration(9_000_001, `
         CREATE TABLE IF NOT EXISTS parity_raw_probe (id int PRIMARY KEY, label text NOT NULL);
         INSERT INTO parity_raw_probe (id, label) VALUES (1, 'one'), (2, 'two');
-      `);
+      `).catch((e: unknown) => rethrowByDesignStop(e, 'runMigration', '55'));
       const rows = await engine.executeRaw<{ id: number; label: string }>('SELECT id, label FROM parity_raw_probe ORDER BY id');
       await engine.runMigration(9_000_002, 'DROP TABLE parity_raw_probe;');
       const gone = await engine.executeRaw<{ present: boolean }>(`SELECT to_regclass('parity_raw_probe') IS NOT NULL AS present`);
@@ -85,7 +88,8 @@ describe('engine parity: raw_sql', () => {
     async (engine) => {
       await engine.putPage('notes/bounded', PAGE('Bounded', 'body'));
       const read = await engine.keywordBoundedRead((db) =>
-        db.executeRaw<{ slug: string }>('SELECT slug FROM pages WHERE slug = $1', ['notes/bounded']));
+        db.executeRaw<{ slug: string }>('SELECT slug FROM pages WHERE slug = $1', ['notes/bounded']))
+        .catch((e: unknown) => rethrowByDesignStop(e, 'keywordBoundedRead', '55'));
       const thrown = await engine.keywordBoundedRead(async () => { throw new Error('read refused'); })
         .then(() => 'no error', (e: unknown) => (e instanceof Error ? e.message : String(e)));
       const after = (await engine.getPage('notes/bounded'))?.title ?? null;
