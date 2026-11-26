@@ -223,7 +223,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'countUnlinkedFactsByOrigin', 'countUnlinkedFactStats', 'countFactRelinkOutcomes', 'listUnlinkedConversationSlugs', 'countFactEmbeddingCoverage',
   'countStaleFactEmbeddings',
   // Embedding catalog (engine-sql/embedding-catalog.ts; covered by test/engine-parity/embedding-catalog.test.ts)
-  'readChunkVectorColumn', 'readEmbeddingIdentity', 'listEmbeddingStores', 'hasStoredVectors', 'countChunkVectorCoverage',
+  'readChunkVectorColumn', 'readEmbeddingColumnTypmod', 'readEmbeddingSignatureCensus', 'countUnembeddedLiveFacts', 'countSynopsisTierPages', 'countEmbedSkipNullChunks', 'readFalseStampedChunkCounts', 'readEmbeddingIdentity', 'listEmbeddingStores', 'hasStoredVectors', 'countChunkVectorCoverage',
   'readChunkColumnTypes', 'countChunkColumnCoverage', 'hasChunkImageVectors',
   // Semantic query-cache clear (engine-sql/query-cache.ts; covered by test/engine-parity/search-refusal-swallows.test.ts)
   // Doctor reads (engine-sql/doctor-reads.ts; covered by test/engine-parity/doctor-reads.test.ts)

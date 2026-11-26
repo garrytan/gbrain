@@ -764,9 +764,7 @@ src/core/embedding-migration-retention.ts#assertRetainedEmbeddingRebuildability	
 src/core/embedding-migration.ts#applyEmbeddingMigration	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/embedding-migration.ts#planEmbeddingMigration	capability_refusal_swallowed	2
 src/core/embedding-migration.ts#planEmbeddingMigration	catch_empty	3
-src/core/embedding-migration.ts#readDimPinnedWidths	capability_refusal_swallowed	1
 src/core/embedding-migration.ts#readDimPinnedWidths	catch_empty	1
-src/core/embedding-migration.ts#readMigrationStatus	capability_refusal_swallowed	4
 src/core/embedding-migration.ts#readMigrationStatus	catch_empty	12
 src/core/embedding-migration.ts#resolveRerankerPlan	catch_empty	1
 src/core/embedding-migration.ts#runSchemaTransition	capability_refusal_swallowed	1

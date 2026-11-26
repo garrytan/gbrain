@@ -212,11 +212,11 @@ src/core/embed-stale-images.ts	execute_raw	2
 src/core/embed-takes.ts	execute_raw	1
 src/core/embedding-ann-build.ts	execute_raw	8
 src/core/embedding-dim-check.ts	execute_raw	2
-src/core/embedding-invalidation.ts	execute_raw	7
+src/core/embedding-invalidation.ts	execute_raw	6
 src/core/embedding-migration-budget.ts	execute_raw	2
 src/core/embedding-migration-retention.ts	execute_raw	6
 src/core/embedding-migration-worst-case.ts	execute_raw	3
-src/core/embedding-migration.ts	execute_raw	34
+src/core/embedding-migration.ts	execute_raw	29
 src/core/embedding-restamp.ts	execute_raw	2
 src/core/embedding-state.ts	execute_raw	1
 src/core/enrichment-service.ts	execute_raw	2
