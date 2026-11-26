@@ -30,10 +30,6 @@ export interface RefreshInsert {
   worktreeId: string; sourceIds: readonly string[]; principalId: string; ownerEpoch: string; topologyGeneration: string;
   oldHead: string; targetHead: string; upstreamRef: string; preserved: readonly string[]; outcome: Record<string, unknown>;
 }
-/** One worktree's owner and the evidence of its activity (persistence/owner-activity.ts). */
-export interface OwnerActivityRow {
-  worktree_id: string; owner_host_id: string; live: boolean; last_active: string | Date | null; oldest_open: string | Date | null; db_now: string | Date;
-}
 /** The session settings a refresh transaction takes before its statements. */
 export type RefreshSettings = 'synchronous_commit' | 'fence' | 'lock_timeout';
 
@@ -73,9 +69,6 @@ export interface RefreshStore {
   sourceCommits(sourceIds: readonly string[]): Promise<Array<{ id: string; last_commit: string | null }>>;
   /** Each member's last commit, in no stated order. */
   memberCommits(sourceIds: readonly string[]): Promise<Array<{ last_commit: string | null }>>;
-
-  /** When the host that owns each worktree was last active (the owner-activity evidence), for the worktrees that have an owner. */
-  ownerActivity(worktreeIds: readonly string[], lapsedMs: number, opts?: { signal?: AbortSignal }): Promise<OwnerActivityRow[]>;
 
   /** The worktree's member source ids, in byte order. */
   memberIds(worktreeId: string): Promise<string[]>;
@@ -162,20 +155,6 @@ const LATER_WRITE_SQL = `SELECT r.request_id::text AS request_id FROM persistenc
 const DEFERRED_BACKLOG_SQL = `SELECT count(*)::int AS count,
     (EXTRACT(EPOCH FROM now()-min(created_at))*1000)::bigint AS oldest_age_ms FROM persistence_requests
     WHERE (deferred_refresh_id IS NOT NULL OR deferred_import_from IS NOT NULL) AND state IN ('deferred','queued','running','recovering')`;
-const OWNER_ACTIVITY_SQL = `
-    SELECT now() AS db_now, w.id::text AS worktree_id, w.owner_host_id::text AS owner_host_id,
-      EXISTS (SELECT 1 FROM persistence_consumers c WHERE c.host_id=w.owner_host_id
-        AND c.renewed_at > now() - ($2::double precision * interval '1 millisecond')) AS live,
-      GREATEST(w.heartbeat_at,
-        (SELECT max(c.renewed_at) FROM persistence_consumers c WHERE c.host_id=w.owner_host_id),
-        (SELECT COALESCE(r.published_at, r.completed_at) FROM persistence_requests r WHERE r.worktree_id>=w.id AND r.worktree_id<=w.id
-          AND r.state='committed' AND NOT COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%' ORDER BY r.worktree_id DESC, r.sequence DESC LIMIT 1),
-        (SELECT max(x.completed_at) FROM sources s CROSS JOIN LATERAL (SELECT r.completed_at FROM persistence_requests r
-          WHERE r.worktree_id=w.id AND r.source_incarnation=s.incarnation AND r.state='committed' AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%'
-          ORDER BY r.completed_at DESC LIMIT 1) x)) AS last_active,
-      (SELECT min(r.created_at) FROM persistence_requests r WHERE r.worktree_id=w.id AND r.state IN ('queued','deferred','running','recovering')) AS oldest_open
-    FROM persistence_worktrees w
-    WHERE w.id::text = ANY($1::text[]) AND w.owner_host_id IS NOT NULL`;
 const MEMBER_IDS_SQL = 'SELECT source_id FROM persistence_source_bindings WHERE worktree_id=$1::uuid ORDER BY source_id COLLATE "C"';
 const HOST_LOCAL_PATH_SQL = 'SELECT local_path FROM persistence_host_bindings WHERE worktree_id=$1::uuid AND host_id=$2::uuid';
 const SOURCE_LAST_COMMIT_SQL = 'SELECT last_commit FROM sources WHERE id=$1';
@@ -215,7 +194,6 @@ export function sqlRefreshStore(exec: RawSql): RefreshStore {
     membersPastStart: (sourceIds, barrierSequence) => exec.executeRaw(MEMBERS_PAST_START_SQL, [sourceIds, barrierSequence]),
     sourceCommits: sourceIds => exec.executeRaw(SOURCE_COMMITS_SQL, [sourceIds]),
     memberCommits: sourceIds => exec.executeRaw(MEMBER_COMMITS_SQL, [sourceIds]),
-    ownerActivity: (worktreeIds, lapsedMs, opts) => exec.executeRaw(OWNER_ACTIVITY_SQL, [worktreeIds, lapsedMs], opts),
     memberIds: async worktreeId => (await exec.executeRaw<{ source_id: string }>(MEMBER_IDS_SQL, [worktreeId])).map(row => row.source_id),
     hostLocalPath: async (worktreeId, hostId) => (await first<{ local_path: string | null }>(HOST_LOCAL_PATH_SQL, [worktreeId, hostId]))?.local_path ?? null,
     sourceLastCommit: async sourceId => (await first<{ last_commit: string | null }>(SOURCE_LAST_COMMIT_SQL, [sourceId]))?.last_commit ?? null,

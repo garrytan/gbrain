@@ -11,6 +11,9 @@
  */
 import type { OverdueHold, OverdueHoldKind } from '../../engine-sql/persistence-owner-scans.ts';
 import { storeCall, type StoreMember } from './common.ts';
+import { managedServed } from './managed-hold.ts';
+import type { RustEngine } from '../../rust-engine.ts';
+import type { StoreBrain } from '../store.ts';
 
 /** The deferred writes on worktrees `hostId` owns whose `hold` is past `maxWaitMs`, in sequence order. */
 export const listOverdueHeldWrites: StoreMember<[hostId: string, maxWaitMs: number, hold: OverdueHoldKind, opts?: { signal?: AbortSignal }], Record<string, unknown>[]> =
@@ -27,8 +30,11 @@ export const listOwnerRecoveryHeads: StoreMember<[hostId: string, excluded: read
   (brain, hostId, excluded) => storeCall({ member: 'listOwnerRecoveryHeads' }, () => brain.listOwnerRecoveryHeads(hostId, [...excluded]));
 
 /** The interrupted refreshes of worktrees `hostId` owns that an owner's topology scan converges, at most 16 (each carries `stale`: no move for `budgetMs`). */
-export const listResumableRefreshes: StoreMember<[hostId: string, budgetMs: number], (Record<string, unknown> & { stale: boolean })[]> =
-  (brain, hostId, budgetMs) => storeCall({ member: 'listResumableRefreshes' }, () => brain.listResumableRefreshes(hostId, budgetMs));
+// A brain that does not serve managed mode (a user's, while the hold is on) has no refresh row, so none is interrupted; a host id that is not a uuid still refuses.
+export const listResumableRefreshes = async function listResumableRefreshes(this: RustEngine, brain: StoreBrain, hostId: string, budgetMs: number): Promise<(Record<string, unknown> & { stale: boolean })[]> {
+  const rows = await storeCall({ member: 'listResumableRefreshes' }, () => brain.listResumableRefreshes(hostId, budgetMs)) as (Record<string, unknown> & { stale: boolean })[];
+  return managedServed(this) ? rows : [];
+};
 
 /**
  * Each named source that exists, in id order, with its last commit. The store keeps no `last_commit`

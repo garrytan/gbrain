@@ -20,7 +20,6 @@
  * so status can say who holds it, and a row whose lock is free is orphaned: the
  * next plain refresh finishes it through the `--resume` path before refreshing.
  */
-import { syncRows } from '../engine-sql/managed-sync-store.ts';
 import { closeSync, fstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, rmSync } from 'node:fs';
 import { homedir, hostname } from 'node:os';
 import { join } from 'node:path';
@@ -56,6 +55,7 @@ import { ledgerLocation, readLedger } from '../git/commit-ledger.ts';
 import { upstreamBeforeFetch, upstreamRewriteReason } from '../git/upstream-history.ts';
 import { gitDurabilityPolicy } from './git-durability-policy.ts';
 import { sqlRefreshStore, type RefreshRow } from '../engine-sql/refresh-store.ts';
+import { managesWorktrees, requireRawSql } from '../rust-engine/errors.ts';
 
 export type WorktreeRefreshRow = RefreshRow;
 export type RefreshBoundary = 'drained' | 'fenced' | 'merged' | 'syncing' | 'synced';
@@ -795,6 +795,8 @@ function finished(row: WorktreeRefreshRow, sync: { synced: RefreshMemberSync[]; 
  * host only; refusals throw catalogue errors (`code`, cause, literal fix, docs). Callers omit `run`, the record of one run (GST-3107).
  */
 export async function refreshWorktree(engine: BrainEngine, sourceId: string, opts: RefreshOptions = {}, run?: RefreshRun): Promise<WorktreeRefreshResult> {
+  // An engine that serves neither raw SQL nor managed worktrees (a user's Rust brain, while the hold is on) refuses by name, before any step.
+  if (!managesWorktrees(engine)) requireRawSql(engine, 'the refresh writer (persistence/worktree-refresh.ts): gbrain sources refresh writes no refresh row here');
   if (!run) return withRefreshRun(engine, { beforeDrain: opts.hooks?.backlog, redact }, next => refreshWorktree(engine, sourceId, opts, next));
   let result: WorktreeRefreshResult;
   try { result = await runRefresh(engine, sourceId, opts, run); }
@@ -1430,7 +1432,7 @@ async function adoptOrphanedRefresh(engine: BrainEngine, sourceId: string, syncB
  * freezes a cursor against the pre-refresh HEAD; the next cycle retries.
  */
 export async function assertManagedSyncAllowed(engine: BrainEngine, worktreeId: string, sourceId: string): Promise<void> {
-  const [refresh] = await syncRows<{ id: string; state: string }>(engine, 'blocking_refresh', [worktreeId]);
+  const refresh = await (await engine.refreshStore()).blocking(worktreeId);
   if (!refresh) return;
   if (refresh.state === 'recovery_required') throw refusal('refresh_recovery_required',
     `Refresh ${refresh.id} could not verify the checkout HEAD of source ${sourceId}; sync stays fenced.`,

@@ -21,7 +21,7 @@
  * publication (persistence/coordinator.ts, group-publish.ts); preparers that
  * know more (sync markers, derivation inputs) declare their own.
  */
-import { SYNC_STATEMENTS, syncRows } from '../engine-sql/managed-sync-store.ts';
+import { SYNC_STATEMENTS } from '../engine-sql/managed-sync-store.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { WriteRequest } from '../persistence/model.ts';
 import { CONNECTOR_SOURCE_KINDS } from '../persistence/connector-identity.ts';

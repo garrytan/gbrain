@@ -16,12 +16,13 @@
 //! Triggers. `gbrain_release_refresh_barrier` stamps `released_at` when a refresh first reaches `completed` or `aborted`;
 //! `transition` does the same.
 
-use super::effects::all_effects;
 use super::effect_worker::pg_uuid;
+use super::effects::all_effects;
 use super::op_checkpoint::list_op_checkpoint_records_in;
 use super::topology::all_change_records;
 use super::worktree_admission::{
-    ACTIVE_REFRESH_STATES, RefreshRecord, all_refreshes, put_refresh, read_refresh, released_deferred,
+    ACTIVE_REFRESH_STATES, RefreshRecord, all_refreshes, put_refresh, read_refresh,
+    released_deferred,
 };
 use super::worktree_rows::read_worktree_row;
 use super::worktrees::read_worktree_record;
@@ -45,23 +46,59 @@ use std::collections::HashMap;
     deny_unknown_fields
 )]
 pub enum RefreshRead {
-    Active { worktree_id: String },
-    Row { id: String },
-    Released { id: String },
-    CompletedTargets { worktree_id: String, upstream_ref: String },
-    Newest { worktree_id: String },
-    Blocking { worktree_id: String },
-    RecoveryProbe { worktree_id: String },
-    DrainCounts { worktree_id: String },
-    UnfinishedSyncCursor { members: Vec<String> },
-    MembersPastStart { source_ids: Vec<String>, barrier_sequence: Option<String> },
-    SourceCommits { source_ids: Vec<String> },
-    MemberCommits { source_ids: Vec<String> },
-    LaterWrite { source_id: String, slug: String, sequence: String },
-    ActiveRows { source_id: Option<String> },
-    Resumable { host_id: String, budget_ms: f64 },
-    Stuck { minutes: f64 },
-    OwnerActivity { ids: Vec<String> },
+    Active {
+        worktree_id: String,
+    },
+    Row {
+        id: String,
+    },
+    Released {
+        id: String,
+    },
+    CompletedTargets {
+        worktree_id: String,
+        upstream_ref: String,
+    },
+    Newest {
+        worktree_id: String,
+    },
+    Blocking {
+        worktree_id: String,
+    },
+    RecoveryProbe {
+        worktree_id: String,
+    },
+    DrainCounts {
+        worktree_id: String,
+    },
+    UnfinishedSyncCursor {
+        members: Vec<String>,
+    },
+    MembersPastStart {
+        source_ids: Vec<String>,
+        barrier_sequence: Option<String>,
+    },
+    SourceCommits {
+        source_ids: Vec<String>,
+    },
+    MemberCommits {
+        source_ids: Vec<String>,
+    },
+    LaterWrite {
+        source_id: String,
+        slug: String,
+        sequence: String,
+    },
+    ActiveRows {
+        source_id: Option<String>,
+    },
+    Resumable {
+        host_id: String,
+        budget_ms: f64,
+    },
+    Stuck {
+        minutes: f64,
+    },
     DeferredBacklog {},
     DeferredWaiting {
         source_id: String,
@@ -86,7 +123,11 @@ pub enum RefreshWrite {
         outcome: Value,
         terminal: bool,
     },
-    Replan { id: String, old_head: String, target_head: String },
+    Replan {
+        id: String,
+        old_head: String,
+        target_head: String,
+    },
     InsertDraining {
         worktree_id: String,
         source_ids: Vec<String>,
@@ -99,10 +140,23 @@ pub enum RefreshWrite {
         preserved: Vec<String>,
         outcome: Value,
     },
-    MarkMergeStarted { id: String, at_ms: f64 },
-    SetHolder { id: String, holder: Value },
-    RecordMergedUpstream { source_ids: Vec<String>, target_head: String },
-    HoldForImport { id: String, token: String, import_from: String },
+    MarkMergeStarted {
+        id: String,
+        at_ms: f64,
+    },
+    SetHolder {
+        id: String,
+        holder: Value,
+    },
+    RecordMergedUpstream {
+        source_ids: Vec<String>,
+        target_head: String,
+    },
+    HoldForImport {
+        id: String,
+        token: String,
+        import_from: String,
+    },
 }
 
 fn same(a: &str, b: &str) -> bool {
@@ -155,7 +209,9 @@ fn active(r: &RefreshRecord) -> bool {
 }
 
 fn newest_first(a: &RefreshRecord, b: &RefreshRecord) -> std::cmp::Ordering {
-    b.created_at_us.cmp(&a.created_at_us).then_with(|| a.id.cmp(&b.id))
+    b.created_at_us
+        .cmp(&a.created_at_us)
+        .then_with(|| a.id.cmp(&b.id))
 }
 
 /// `COALESCE(last_commit,'')` of a stored source.
@@ -164,13 +220,16 @@ fn last_commit_of(read: &dyn KvRead, source_id: &str) -> Result<Option<Option<St
 }
 
 fn sequence_param(text: &str) -> Result<i64> {
-    text.trim()
-        .parse::<i64>()
-        .map_err(|_| StoreError::invalid(format!("invalid input syntax for type bigint: \"{text}\"")))
+    text.trim().parse::<i64>().map_err(|_| {
+        StoreError::invalid(format!("invalid input syntax for type bigint: \"{text}\""))
+    })
 }
 
 /// Worktrees' requests of `worktree_id` (case-folded uuid text).
-fn requests_on<'a>(requests: &'a [RequestRecord], worktree_id: &'a str) -> impl Iterator<Item = &'a RequestRecord> {
+fn requests_on<'a>(
+    requests: &'a [RequestRecord],
+    worktree_id: &'a str,
+) -> impl Iterator<Item = &'a RequestRecord> {
     requests.iter().filter(move |r| {
         r.extra
             .get("worktree_id")
@@ -188,7 +247,11 @@ fn claim_live(r: &RequestRecord, now_us: i64) -> bool {
         .is_some_and(|expires| expires > now_us)
 }
 
-pub(crate) fn refresh_rows_in(read: &dyn KvRead, env: &dyn Env, what: &RefreshRead) -> Result<Value> {
+pub(crate) fn refresh_rows_in(
+    read: &dyn KvRead,
+    env: &dyn Env,
+    what: &RefreshRead,
+) -> Result<Value> {
     let now = env.now_micros();
     match what {
         RefreshRead::Active { worktree_id } => {
@@ -412,10 +475,10 @@ pub(crate) fn refresh_rows_in(read: &dyn KvRead, env: &dyn Env, what: &RefreshRe
                 let old_head = extra_str(&f, "old_head").map(str::to_owned);
                 let mut member_behind = false;
                 for id in &f.source_ids {
-                    if let Some(s) = read_source(read, id)? {
-                        if s.last_commit.is_none() || s.last_commit == old_head {
-                            member_behind = true;
-                        }
+                    if let Some(s) = read_source(read, id)?
+                        && (s.last_commit.is_none() || s.last_commit == old_head)
+                    {
+                        member_behind = true;
                     }
                 }
                 if f.state != "syncing" || stale || !member_behind {
@@ -444,52 +507,6 @@ pub(crate) fn refresh_rows_in(read: &dyn KvRead, env: &dyn Env, what: &RefreshRe
                     .collect(),
             ))
         }
-        RefreshRead::OwnerActivity { ids } => {
-            let all = all_requests(read)?;
-            let mut out = Vec::new();
-            let mut seen = std::collections::HashSet::new();
-            for id in ids {
-                if !crate::env::is_uuid(id) || !seen.insert(id.to_lowercase()) {
-                    continue;
-                }
-                let w = id.to_lowercase();
-                let Some(worktree) = read_worktree_record(read, &w)? else { continue };
-                let Some(owner) = worktree.owner_host_id.clone() else { continue };
-                let on: Vec<&RequestRecord> = requests_on(&all, &w).collect();
-                // The newest committed foreground receipt (ordered by sequence) and each live source's newest sync receipt.
-                let foreground = on
-                    .iter()
-                    .filter(|r| r.state == "committed" && !sync_kind(&r.intent))
-                    .max_by_key(|r| r.sequence)
-                    .and_then(|r| {
-                        r.extra
-                            .get("published_at")
-                            .and_then(Value::as_str)
-                            .and_then(parse_iso)
-                            .or(r.completed_at_us)
-                    });
-                let mut sync: Option<i64> = None;
-                for r in on.iter().filter(|r| r.state == "committed" && sync_kind(&r.intent)) {
-                    let current = read_source(read, &r.source_id)?
-                        .map(|s| s.incarnation)
-                        .is_some_and(|i| same(&i, &r.source_incarnation));
-                    if current {
-                        sync = sync.max(r.completed_at_us);
-                    }
-                }
-                // `persistence_consumers` stays empty, so no consumer heartbeat counts and none is live.
-                let last_active = [worktree.heartbeat_at_us, foreground, sync].into_iter().flatten().max();
-                let open = on
-                    .iter()
-                    .filter(|r| matches!(r.state.as_str(), "queued" | "deferred" | "running" | "recovering"))
-                    .map(|r| r.created_at_us)
-                    .min();
-                out.push(json!({ "worktree_id": w, "owner_host_id": owner.to_lowercase(), "live": false,
-                    "last_active": last_active.map(iso), "oldest_open": open.map(iso), "db_now": iso(now) }));
-            }
-            out.sort_by(|a, b| a["worktree_id"].as_str().cmp(&b["worktree_id"].as_str()));
-            Ok(Value::Array(out))
-        }
         RefreshRead::DeferredBacklog {} => {
             let held: Vec<RequestRecord> = all_requests(read)?
                 .into_iter()
@@ -515,11 +532,23 @@ pub(crate) fn refresh_rows_in(read: &dyn KvRead, env: &dyn Env, what: &RefreshRe
     }
 }
 
-pub(crate) fn refresh_write_in(tx: &mut dyn KvWrite, env: &dyn Env, what: &RefreshWrite) -> Result<Value> {
+pub(crate) fn refresh_write_in(
+    tx: &mut dyn KvWrite,
+    env: &dyn Env,
+    what: &RefreshWrite,
+) -> Result<Value> {
     let now = env.now_micros();
     match what {
-        RefreshWrite::Transition { id, from, to, outcome, terminal } => {
-            let Some(mut r) = read_refresh(&*tx, &pg_uuid(id)?)? else { return Ok(json!(false)) };
+        RefreshWrite::Transition {
+            id,
+            from,
+            to,
+            outcome,
+            terminal,
+        } => {
+            let Some(mut r) = read_refresh(&*tx, &pg_uuid(id)?)? else {
+                return Ok(json!(false));
+            };
             if !from.iter().any(|state| state == &r.state) {
                 return Ok(json!(false));
             }
@@ -536,9 +565,18 @@ pub(crate) fn refresh_write_in(tx: &mut dyn KvWrite, env: &dyn Env, what: &Refre
             put_refresh(tx, &r)?;
             Ok(json!(true))
         }
-        RefreshWrite::Replan { id, old_head, target_head } => {
-            let Some(mut r) = read_refresh(&*tx, &pg_uuid(id)?)? else { return Ok(Value::Null) };
-            let started = r.outcome.get("merge_started").and_then(|v| json_text(Some(v)));
+        RefreshWrite::Replan {
+            id,
+            old_head,
+            target_head,
+        } => {
+            let Some(mut r) = read_refresh(&*tx, &pg_uuid(id)?)? else {
+                return Ok(Value::Null);
+            };
+            let started = r
+                .outcome
+                .get("merge_started")
+                .and_then(|v| json_text(Some(v)));
             if r.state != "fenced" || started.as_deref() == Some("true") {
                 return Ok(Value::Null);
             }
@@ -549,7 +587,16 @@ pub(crate) fn refresh_write_in(tx: &mut dyn KvWrite, env: &dyn Env, what: &Refre
             Ok(refresh_row(&r))
         }
         RefreshWrite::InsertDraining {
-            worktree_id, source_ids, principal_id, owner_epoch, topology_generation, old_head, target_head, upstream_ref, preserved, outcome,
+            worktree_id,
+            source_ids,
+            principal_id,
+            owner_epoch,
+            topology_generation,
+            old_head,
+            target_head,
+            upstream_ref,
+            preserved,
+            outcome,
         } => {
             let w = pg_uuid(worktree_id)?;
             if read_worktree_row(&*tx, &w)?.is_none() {
@@ -559,7 +606,10 @@ pub(crate) fn refresh_write_in(tx: &mut dyn KvWrite, env: &dyn Env, what: &Refre
                 ));
             }
             // The partial unique index `persistence_worktree_refreshes_active`: one active refresh per worktree.
-            if all_refreshes(&*tx)?.iter().any(|r| same(&r.worktree_id, &w) && active(r)) {
+            if all_refreshes(&*tx)?
+                .iter()
+                .any(|r| same(&r.worktree_id, &w) && active(r))
+            {
                 return Ok(json!({ "conflict": true }));
             }
             let barrier = all_requests(&*tx)?.iter().map(|r| r.sequence).max();
@@ -570,7 +620,10 @@ pub(crate) fn refresh_write_in(tx: &mut dyn KvWrite, env: &dyn Env, what: &Refre
             extra.insert("old_head".into(), json!(old_head));
             extra.insert("upstream_ref".into(), json!(upstream_ref));
             extra.insert("preserved_uncommitted".into(), json!(preserved));
-            extra.insert("barrier_sequence".into(), barrier.map_or(Value::Null, |s| json!(s.to_string())));
+            extra.insert(
+                "barrier_sequence".into(),
+                barrier.map_or(Value::Null, |s| json!(s.to_string())),
+            );
             let mut outcome_map = Map::new();
             merge_outcome(&mut outcome_map, outcome);
             let record = RefreshRecord {
@@ -590,28 +643,42 @@ pub(crate) fn refresh_write_in(tx: &mut dyn KvWrite, env: &dyn Env, what: &Refre
             Ok(refresh_row(&record))
         }
         RefreshWrite::MarkMergeStarted { id, at_ms } => {
-            let Some(mut r) = read_refresh(&*tx, &pg_uuid(id)?)? else { return Ok(json!(false)) };
+            let Some(mut r) = read_refresh(&*tx, &pg_uuid(id)?)? else {
+                return Ok(json!(false));
+            };
             if r.state != "fenced" {
                 return Ok(json!(false));
             }
             r.outcome.insert("merge_started".into(), json!(true));
-            r.outcome.insert("merge_started_at".into(), json!(*at_ms as i64));
+            r.outcome
+                .insert("merge_started_at".into(), json!(*at_ms as i64));
             r.updated_at_us = now;
             put_refresh(tx, &r)?;
             Ok(json!(true))
         }
         RefreshWrite::SetHolder { id, holder } => {
-            let Some(mut r) = read_refresh(&*tx, &pg_uuid(id)?)? else { return Ok(Value::Null) };
+            let Some(mut r) = read_refresh(&*tx, &pg_uuid(id)?)? else {
+                return Ok(Value::Null);
+            };
             if !active(&r) {
                 return Ok(Value::Null);
             }
-            let previous = r.outcome.get("previous_holder").filter(|v| !v.is_null()).or_else(|| r.outcome.get("holder")).cloned();
+            let previous = r
+                .outcome
+                .get("previous_holder")
+                .filter(|v| !v.is_null())
+                .or_else(|| r.outcome.get("holder"))
+                .cloned();
             r.outcome.insert("holder".into(), holder.clone());
-            r.outcome.insert("previous_holder".into(), previous.unwrap_or(Value::Null));
+            r.outcome
+                .insert("previous_holder".into(), previous.unwrap_or(Value::Null));
             put_refresh(tx, &r)?;
             Ok(Value::Null)
         }
-        RefreshWrite::RecordMergedUpstream { source_ids, target_head } => {
+        RefreshWrite::RecordMergedUpstream {
+            source_ids,
+            target_head,
+        } => {
             for id in source_ids {
                 if let Some(mut s) = read_source(&*tx, id)? {
                     s.upstream_checked_at_us = Some(now);
@@ -622,19 +689,39 @@ pub(crate) fn refresh_write_in(tx: &mut dyn KvWrite, env: &dyn Env, what: &Refre
             }
             Ok(Value::Null)
         }
-        RefreshWrite::HoldForImport { id, token, import_from } => {
+        RefreshWrite::HoldForImport {
+            id,
+            token,
+            import_from,
+        } => {
             let rid = pg_uuid(id)?;
-            let Some(mut r) = request_by_id(&*tx, &rid)? else { return Ok(Value::Null) };
-            let token_matches = r.extra.get("execution_token").and_then(Value::as_str).is_some_and(|t| same(t, token));
-            let started = r.extra.get("publication_started").and_then(Value::as_bool).unwrap_or(false);
+            let Some(mut r) = request_by_id(&*tx, &rid)? else {
+                return Ok(Value::Null);
+            };
+            let token_matches = r
+                .extra
+                .get("execution_token")
+                .and_then(Value::as_str)
+                .is_some_and(|t| same(t, token));
+            let started = r
+                .extra
+                .get("publication_started")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
             if !token_matches || r.state != "running" || !extra_is_null(&r, "recovery") || started {
                 return Ok(Value::Null);
             }
             r.state = "deferred".into();
             r.blocked_reason = None;
             r.updated_at_us = now;
-            r.extra.insert("deferred_import_from".into(), json!(import_from));
-            for column in ["deferred_refresh_id", "execution_token", "claim_expires_at", "claim_phase"] {
+            r.extra
+                .insert("deferred_import_from".into(), json!(import_from));
+            for column in [
+                "deferred_refresh_id",
+                "execution_token",
+                "claim_expires_at",
+                "claim_phase",
+            ] {
                 r.extra.insert(column.into(), Value::Null);
             }
             write_request(tx, &r)?;
@@ -667,7 +754,11 @@ mod tests {
 
     fn fenced_store() -> Store {
         let s = store();
-        s.topology_write(&TopologyWrite::InsertWorktree { id: WT.into(), host_id: HOST.into() }).unwrap();
+        s.topology_write(&TopologyWrite::InsertWorktree {
+            id: WT.into(),
+            host_id: HOST.into(),
+        })
+        .unwrap();
         s
     }
 
@@ -706,16 +797,36 @@ mod tests {
         let row = draining(&s);
         assert_eq!(row["state"], "draining");
         assert_eq!(row["released_at"], Value::Null);
-        assert_eq!(draining(&s), json!({ "conflict": true }), "the active index admits one");
+        assert_eq!(
+            draining(&s),
+            json!({ "conflict": true }),
+            "the active index admits one"
+        );
         let id = row["id"].as_str().unwrap().to_owned();
-        assert!(!transition(&s, &id, &["fenced"], "merged", false), "a row not in `from` stays");
+        assert!(
+            !transition(&s, &id, &["fenced"], "merged", false),
+            "a row not in `from` stays"
+        );
         assert!(transition(&s, &id, &["draining"], "aborted", true));
-        let done = s.refresh_rows(&RefreshRead::Row { id: id.clone() }).unwrap();
+        let done = s
+            .refresh_rows(&RefreshRead::Row { id: id.clone() })
+            .unwrap();
         assert_eq!(done["state"], "aborted");
-        assert!(done["released_at"].is_string(), "the first terminal move releases the barrier");
+        assert!(
+            done["released_at"].is_string(),
+            "the first terminal move releases the barrier"
+        );
         assert!(done["completed_at"].is_string());
-        assert_eq!(draining(&s)["state"], "draining", "the next refresh may start");
-        let none = s.refresh_rows(&RefreshRead::Active { worktree_id: "e0000000-0000-4000-8000-0000000000e1".into() }).unwrap();
+        assert_eq!(
+            draining(&s)["state"],
+            "draining",
+            "the next refresh may start"
+        );
+        let none = s
+            .refresh_rows(&RefreshRead::Active {
+                worktree_id: "e0000000-0000-4000-8000-0000000000e1".into(),
+            })
+            .unwrap();
         assert_eq!(none, Value::Null);
     }
 
@@ -743,21 +854,51 @@ mod tests {
     fn replan_moves_only_a_fenced_row_whose_merge_has_not_started() {
         let s = fenced_store();
         let id = draining(&s)["id"].as_str().unwrap().to_owned();
-        let replan = |s: &Store| s.refresh_write(&RefreshWrite::Replan { id: id.clone(), old_head: "ccc".into(), target_head: "ddd".into() }).unwrap();
+        let replan = |s: &Store| {
+            s.refresh_write(&RefreshWrite::Replan {
+                id: id.clone(),
+                old_head: "ccc".into(),
+                target_head: "ddd".into(),
+            })
+            .unwrap()
+        };
         assert_eq!(replan(&s), Value::Null, "a draining row is not replanned");
         assert!(transition(&s, &id, &["draining"], "fenced", false));
-        assert!(s.refresh_write(&RefreshWrite::MarkMergeStarted { id: id.clone(), at_ms: 5.0 }).unwrap().as_bool().unwrap());
+        assert!(
+            s.refresh_write(&RefreshWrite::MarkMergeStarted {
+                id: id.clone(),
+                at_ms: 5.0
+            })
+            .unwrap()
+            .as_bool()
+            .unwrap()
+        );
         assert_eq!(replan(&s), Value::Null, "a started merge is not replanned");
     }
 
     #[test]
     fn the_unfinished_sync_cursor_and_the_members_commits_read_the_stored_sources() {
         let s = fenced_store();
-        s.upsert_source(&crate::sources::SourceInput { id: "alpha".into(), name: None, local_path: None, last_sync_at: None, config: None }).unwrap();
+        s.upsert_source(&crate::sources::SourceInput {
+            id: "alpha".into(),
+            name: None,
+            local_path: None,
+            last_sync_at: None,
+            config: None,
+        })
+        .unwrap();
         s.advance_source_commit("alpha", "abc123", None).unwrap();
-        let commits = s.refresh_rows(&RefreshRead::SourceCommits { source_ids: vec!["alpha".into(), "gone".into()] }).unwrap();
+        let commits = s
+            .refresh_rows(&RefreshRead::SourceCommits {
+                source_ids: vec!["alpha".into(), "gone".into()],
+            })
+            .unwrap();
         assert_eq!(commits, json!([{ "id": "alpha", "last_commit": "abc123" }]));
-        let cursor = s.refresh_rows(&RefreshRead::UnfinishedSyncCursor { members: vec!["alpha".into()] }).unwrap();
+        let cursor = s
+            .refresh_rows(&RefreshRead::UnfinishedSyncCursor {
+                members: vec!["alpha".into()],
+            })
+            .unwrap();
         assert_eq!(cursor, Value::Null);
     }
 }
