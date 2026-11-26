@@ -55,7 +55,7 @@ export interface LayoutFlags {
   /** H2, --shape household: --household-members and the owner the template names when none is set. */
   household?: { members?: string; owner?: string };
   /** Lane 5 O1, --template team: the team's members, guest writers and group, and the owner the template names when none is set. */
-  template?: { members?: string; guests?: string; group?: string; owner?: string };
+  template?: { members?: string; guests?: string; group?: string; owner?: string; history?: 'private' | 'open' };
   dryRun: boolean;
 }
 
@@ -517,6 +517,7 @@ export function applyBrainLayout(opts: { harness: string; scope?: LayoutScope; s
         const detail = `not run: the ${COMPANY_SOURCE} source could not be set up (${company.detail ?? 'unknown error'})`;
         if (flags.docs) outcome.docs = { dir: flags.docs, files: 0, action: 'failed', argv: ['gbrain', 'import', flags.docs, '--no-embed', '--source', COMPANY_SOURCE], detail };
         if (flags.transcripts) outcome.transcripts = { dir: flags.transcripts, files: 0, action: 'failed', argv: ['gbrain', 'import', flags.transcripts, '--calls', '--prefix', CALLS_PREFIX, '--no-embed', '--source', COMPANY_SOURCE], detail };
+        if (flags.template) outcome.teamTemplate = { result: null, argv: ['gbrain', ...teamTemplateArgs(harness, source, flags)], detail };
       }
       if (company.action !== 'failed') {
         outcome.pages.push(...writePages(exec, launcher, COMPANY_PAGES, COMPANY_SOURCE, flags.dryRun));
@@ -582,10 +583,15 @@ function runHouseholdTemplate(exec: Run, launcher: string, harness: string, sour
 }
 
 /** Lane 5 O1: the team template as a child of the launcher, after the company source exists; a preview on a dry run. */
-function runTeamTemplate(exec: Run, launcher: string, harness: string, source: string | null, flags: LayoutFlags): NonNullable<LayoutOutcome['teamTemplate']> {
+function teamTemplateArgs(harness: string, source: string | null, flags: LayoutFlags): string[] {
   const t = flags.template ?? {};
-  const args = ['access', 'template', 'team', '--harness', harness, ...(source ? ['--source', source] : []), ...(t.members !== undefined ? ['--members', t.members] : []),
-    ...(t.guests !== undefined ? ['--guests', t.guests] : []), ...(t.group !== undefined ? ['--team-group', t.group] : []), ...(t.owner ? ['--owner', t.owner] : []), ...(flags.dryRun ? [] : ['--yes'])];
+  return ['access', 'template', 'team', '--harness', harness, ...(source ? ['--source', source] : []), ...(t.members !== undefined ? ['--members', t.members] : []),
+    ...(t.guests !== undefined ? ['--guests', t.guests] : []), ...(t.group !== undefined ? ['--team-group', t.group] : []), ...(t.owner ? ['--owner', t.owner] : []),
+    ...(t.history === 'private' ? ['--labelled-only'] : t.history === 'open' ? ['--open-history'] : []), ...(flags.dryRun ? [] : ['--yes'])];
+}
+
+function runTeamTemplate(exec: Run, launcher: string, harness: string, source: string | null, flags: LayoutFlags): NonNullable<LayoutOutcome['teamTemplate']> {
+  const args = teamTemplateArgs(harness, source, flags);
   const argv = ['gbrain', ...args];
   const child = exec([launcher, ...args, '--json']);
   try {

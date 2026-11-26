@@ -18,6 +18,10 @@ import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { addGroup, addMember, listGroups, listMembers } from '../src/core/access/members.ts';
 import { ownerMemberId } from '../src/core/access/owner.ts';
 import { addFolderRules, currentFolderRules } from '../src/commands/access-rules.ts';
+import { policySeams } from '../src/core/access/policy.ts';
+import { applyBrainLayout } from '../src/commands/setup-brain-layout.ts';
+import { copyFileSync, mkdirSync as mkdirSyncFs, mkdtempSync, writeFileSync as writeFileSyncFs } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { mintToken } from '../src/commands/auth-mint.ts';
 import { loadReceipt } from '../src/commands/setup-template-receipt.ts';
 import { parseGuestWriters, parseTeamMembers, teamTemplate, teamTemplateStatus, templateLines } from '../src/commands/team-template.ts';
@@ -66,7 +70,7 @@ beforeEach(async () => {
   await importFromContent(engine, 'people/carol-example/notes', page('people/carol-example/notes'), { sourceId: 'default', noEmbed: true });
 });
 
-afterEach(() => { delete process.env.GBRAIN_SETUP_ABORT_AFTER; });
+afterEach(() => { delete process.env.GBRAIN_SETUP_ABORT_AFTER; policySeams.afterInstall = undefined; });
 
 describe('team template', () => {
   test('the preview lists the exact access and auth steps and writes nothing', async () => {
@@ -215,5 +219,107 @@ describe('team template', () => {
   test('the brain-layout block names correct --scope team only for the team template', () => {
     expect(renderLayoutBlock('codex', 'user', null, 'company', true)).toContain('correct --scope team');
     expect(renderLayoutBlock('codex', 'user', null, 'company')).not.toContain('correct --scope team');
+  });
+});
+
+describe('team template review fixes', () => {
+  const keyOf = (r: { keys: Array<{ member: string; path: string }> }, m: string) => readFileSync(r.keys.find(k => k.member === m)!.path, 'utf8').trim();
+
+  test('a one-person brain holding unlabeled history needs the history choice; --labelled-only keeps it from the members', async () => {
+    await importFromContent(engine, 'notes/journal', page('notes/journal'), { sourceId: 'default', noEmbed: true });
+    const r = await run();
+    expect(r.applied).toBe(false);
+    const serves = r.steps.find(x => x.id === 'serves')!;
+    expect(serves.state).toBe('blocked');
+    expect(serves.actions.find(a => a.what === 'history')!.detail).toContain('--labelled-only');
+    expect(await listMembers(engine)).toEqual([]);
+    expect(await liveTokens()).toEqual([]);
+    const kept = await run({ history: 'private' });
+    expect(kept.error).toBeUndefined();
+    expect(kept.applied).toBe(true);
+    const bob = keyOf(kept, 'bob-example');
+    expect(await reads(bob, 'notes/journal')).toBe(false);
+    expect(await reads(bob, 'company/decisions', 'company')).toBe(true);
+    expect(await reads(bob, 'people/bob-example/notes')).toBe(true);
+    expect(loadReceipt(kept.receipt_id!, 'team', receiptDir).params.history).toBe('private');
+    expect(typeof __testing.parseFlags(['codex', '--template', 'team', '--members', MEMBERS, '--labelled-only'])).toBe('object');
+    expect(typeof __testing.parseFlags(['codex', '--template', 'team', '--members', MEMBERS, '--open-history'])).toBe('object');
+  });
+
+  test('d17: a hand-made group holding exactly the roster is BLOCKED too, and keeps its members', async () => {
+    for (const m of [OWNER, 'bob-example', 'carol-example']) await addMember(engine, m, { remote: false } as never);
+    await addGroup(engine, 'team-members', [OWNER, 'bob-example', 'carol-example']);
+    const before = await listGroups(engine);
+    const r = await run();
+    expect(r.applied).toBe(false);
+    expect(r.steps.find(x => x.id === 'group')!.state).toBe('blocked');
+    expect(await listGroups(engine)).toEqual(before);
+    expect(existsSync(receiptDir)).toBe(false);
+  });
+
+  test('a rule installed before its pages were restamped is finished on resume, so members read the existing pages', async () => {
+    policySeams.afterInstall = (src) => { if (src === 'company') throw new Error('stopped before the restamp'); };
+    const first = await run();
+    expect(first.error?.message).toContain('stopped before the restamp');
+    policySeams.afterInstall = undefined;
+    const resumed = await run({ resume: first.receipt_id, members: undefined, owner: undefined, source: undefined });
+    expect(resumed.error).toBeUndefined();
+    expect(await reads(keyOf(resumed, 'bob-example'), 'company/decisions', 'company')).toBe(true);
+    expect((await status()).ok).toBe(true);
+  });
+
+  test('status counts a nested owner-only rule, and a scalar readable_by, as the rules say', async () => {
+    await importFromContent(engine, 'company/board/minutes', page('company/board/minutes'), { sourceId: 'company', noEmbed: true });
+    await addFolderRules(engine, 'company', [{ id: 'board', prefix: 'company/board/', readable_by: [`member:${OWNER}`] } as never], { apply: true, json: true });
+    await importFromContent(engine, 'people/bob-example/plan', page('people/bob-example/plan', 'readable_by: bob-example\n'), { sourceId: 'default', noEmbed: true });
+    const r = await run();
+    expect(r.error).toBeUndefined();
+    expect(await reads(keyOf(r, 'bob-example'), 'company/board/minutes', 'company')).toBe(false);
+    const s = await status();
+    expect(s.proof.map(p => [p.member, p.missing, p.extra, p.ok])).toEqual([['bob-example', [], [], true], ['carol-example', [], [], true]]);
+    expect(s.ok).toBe(true);
+  });
+
+  test('status refuses a key file holding another member key', async () => {
+    await engine.executeRaw("DELETE FROM pages WHERE slug LIKE 'people/%'");
+    const r = await run();
+    expect(r.error).toBeUndefined();
+    copyFileSync(r.keys.find(k => k.member === 'carol-example')!.path, r.keys.find(k => k.member === 'bob-example')!.path);
+    const s = await status();
+    expect(s.proof.find(p => p.member === 'bob-example')!.key).toBe('mismatch');
+    expect(s.ok).toBe(false);
+  });
+
+  test('a receipt is bound to the brain it ran on: resume against another brain behind the same config dir is refused', async () => {
+    const first = await withEnv({ GBRAIN_HOME: home, GBRAIN_SETUP_ABORT_AFTER: 'team-serves' },
+      () => teamTemplate(engine, { source: 'default', harness: 'codex', owner: OWNER, members: MEMBERS, apply: true, receiptDir }));
+    expect(first.error?.message).toContain('team-serves');
+    const read = engine.readPersistenceBrainId.bind(engine);
+    engine.readPersistenceBrainId = (async () => '00000000-0000-4000-8000-000000000000') as never;
+    try {
+      await expect(run({ resume: first.receipt_id, members: undefined, owner: undefined, source: undefined })).rejects.toThrow(/another brain/);
+      expect(await listGroups(engine)).toEqual([]);
+    } finally { engine.readPersistenceBrainId = read as never; }
+  });
+
+  test('a plugin-served entry bound to nobody refuses the team template before anything is written', () => {
+    const flags = __testing.parseFlags(['claude-code', '--template', 'team', '--members', MEMBERS, '--yes']) as any;
+    const e = __testing.householdTieRefusal(flags, { roster: [], status: null } as never, { member: null, previous: null }, true, null, 'claude-code');
+    expect(e?.code).toBe('setup_team_unbound');
+    expect(e?.message).toContain('plugin');
+  });
+
+  test('setup reports the team template as failed when the company source cannot be set up', () => {
+    const root = mkdtempSync(join(tmpdir(), 'gbrain-team-layout-'));
+    mkdirSyncFs(join(root, 'company'));
+    writeFileSyncFs(join(root, 'company', 'mine.md'), '# Mine\n');
+    const o = applyBrainLayout({ harness: 'codex', launcher: 'gbrain', instructionsPath: null, flags: { brain: 'company', dryRun: false, template: { members: MEMBERS } } as never,
+      run: (argv) => {
+        if (argv[1] === 'sources') return { code: 0, stdout: JSON.stringify({ sources: [{ id: 'default', local_path: join(root, 'default'), federated: true }] }), stderr: '' };
+        return argv[1] === 'get' ? { code: 1, stdout: '{"code":"page_not_found"}', stderr: '' } : { code: 0, stdout: '', stderr: '' };
+      } })!;
+    expect(o.company!.action).toBe('failed');
+    expect(o.teamTemplate).toMatchObject({ result: null });
+    expect(o.teamTemplate!.detail).toContain('company source could not be set up');
   });
 });

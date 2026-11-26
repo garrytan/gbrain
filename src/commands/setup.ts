@@ -196,7 +196,7 @@ interface SetupFlags {
   /** H2, --shape household: --household-members, and --status [--receipt] or --resume <id> (household-template.ts). */
   householdRun?: { members?: string; status: boolean; resume?: string; receipt?: string };
   /** Lane 5 O1, --template team: --members, --guests, --team-group, and --status [--receipt] or --resume <id> (team-template.ts). */
-  teamRun?: { members?: string; guests?: string; group?: string; status: boolean; resume?: string; receipt?: string };
+  teamRun?: { members?: string; guests?: string; group?: string; history?: 'private' | 'open'; status: boolean; resume?: string; receipt?: string };
   /** Onboarding PR 1: --history, --history-dir, --history-decision and --no-extract (setup-history.ts). */
   historyImport: HistoryFlags;
   /** Onboarding PR 2: --no-suggestion turns the first-session suggestion off for this install (setup-suggestion.ts). */
@@ -238,8 +238,8 @@ function parseFlags(args: string[]): SetupFlags | string {
   if (team && args.includes('--members-file')) return '--template team takes the team as --members <id,...>';
   if ((args.includes('--members') || args.includes('--members-file')) && serves !== 'several' && !team) return '--members and --members-file name the people of --serves several or --template team';
   for (const f of ['--guests', '--team-group']) if (args.includes(f) && !team) return `${f} applies to --template team`;
-  if (args.includes('--labelled-only') && serves !== 'several') return '--labelled-only applies to the people of --serves several';
-  if (args.includes('--open-history') && serves !== 'several') return '--open-history applies to the people of --serves several';
+  if (args.includes('--labelled-only') && serves !== 'several' && !team) return '--labelled-only applies to the people of --serves several or --template team';
+  if (args.includes('--open-history') && serves !== 'several' && !team) return '--open-history applies to the people of --serves several or --template team';
   if (args.includes('--open-history') && args.includes('--labelled-only')) return 'pass --labelled-only (keep the history private) or --open-history (members read it), not both';
   const owner = value('--owner');
   const household = value('--shape') === 'household';
@@ -335,7 +335,7 @@ function parseFlags(args: string[]): SetupFlags | string {
     noStdioMember,
     ...layout,
     ...(household ? { householdRun: { members: value('--household-members'), status: args.includes('--status'), resume: value('--resume'), receipt: value('--receipt') } } : {}),
-    ...(team ? { teamRun: { members: value('--members'), guests: value('--guests'), group: value('--team-group'), status: args.includes('--status'), resume: value('--resume'), receipt: value('--receipt') } } : {}),
+    ...(team ? { teamRun: { members: value('--members'), guests: value('--guests'), group: value('--team-group'), ...(args.includes('--labelled-only') ? { history: 'private' as const } : args.includes('--open-history') ? { history: 'open' as const } : {}), status: args.includes('--status'), resume: value('--resume'), receipt: value('--receipt') } } : {}),
     historyImport,
     noSuggestion,
   };
@@ -680,7 +680,7 @@ async function layoutFor(harness: SetupHarnessId, flags: SetupFlags, launcher: s
   const outcome = applyBrainLayout({ harness, scope, source, launcher, instructionsPath: instructions?.path ?? null, instructionsDeclined: instructions?.decision.value === 'declined',
     flags: { brain: shape.brain, notes: shape.notes, docs: shape.docs, transcripts: shape.transcripts, team: shape.team, dryRun: flags.dryRun,
       ...(shape.brain === 'household' ? { household: { members: flags.householdRun?.members, owner: flags.owner ?? loginOwnerId() ?? undefined } } : {}),
-      ...(flags.teamRun ? { template: { members: flags.teamRun.members, guests: flags.teamRun.guests, group: flags.teamRun.group, owner: flags.owner ?? loginOwnerId() ?? undefined } } : {}) } });
+      ...(flags.teamRun ? { template: { members: flags.teamRun.members, guests: flags.teamRun.guests, group: flags.teamRun.group, history: flags.teamRun.history, owner: flags.owner ?? loginOwnerId() ?? undefined } } : {}) } });
   return { outcome, notices: (base) => [...(ask && !shape.brain ? withBrainShape(base, brainShapeDecision(harness, undefined, scope, source)) : base), ...layoutNotices(outcome, harness, scope, source)] };
 }
 
@@ -978,6 +978,10 @@ function ownerTie(flags: SetupFlags, plan: ServesPlan, entry: EntryBinding, plug
  * leaves bound to nobody would read none of the household records, and every later setup run would refuse it.
  */
 function householdTieRefusal(flags: SetupFlags, plan: ServesPlan, entry: EntryBinding, plugin: boolean, tie: string | null, harness: string): OperationError | null {
+  if (flags.teamRun && plugin && !entry.member && !plan.status?.stdio_member) {
+    return opError('setup_team_unbound', `The team template sets this brain to serve several people, and the gbrain plugin serves this ${harness} connection bound to nobody; the owner's own agent would then read none of the team's company pages. Nothing was written.`,
+      'Bind the plugin connection to the owner first: gbrain config set mcp.stdio_member <owner>, then run setup again.');
+  }
   if ((!flags.householdRun && !flags.teamRun) || tie || entry.member || plugin || plan.status?.stdio_member || flags.householdRun?.members?.trim() === 'none') return null;
   const shared = sharedStdioHarness();
   if (!shared && !flags.noStdioMember) return null;
@@ -1459,4 +1463,4 @@ async function finish(out: Out, doc: {
 /** An index the user asked for by flag that could not be written fails the run (the rest of the install still finished). */
 const skillsFailed = (o: SkillsBlockOutcome | null): boolean => skillsOutcomeFailed(o);
 
-export const __testing = { parseFlags, setupChoices };
+export const __testing = { parseFlags, setupChoices, householdTieRefusal };

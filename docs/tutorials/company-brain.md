@@ -42,6 +42,8 @@ It sets the brain up as a company brain (`--shape company`), then adds, in order
 
 The template never changes a group or folder rule it did not make. If a group called `team-members` already exists, or a hand-written rule already covers `company/` or `rules/team/`, that line reads BLOCKED with the command that changes it, and nothing is written. Use `--team-group <id>` to give the team another group.
 
+If this brain already serves just you and holds notes that no rule or `readable_by` restricts, turning it shared would let every member's key read them, so the run reads BLOCKED until you choose: add `--labelled-only` to keep those notes private (members read the team folders and their own), or `--open-history` to let every member read them.
+
 Every step is safe to run again. Setup keeps a receipt with no key values in it:
 
 ```bash
@@ -51,7 +53,7 @@ gbrain setup claude-code --template team --status
 gbrain setup claude-code --template team --resume <receipt id> --yes
 ```
 
-`gbrain access check --token member-<member> --as <member>` shows one member's grant in detail. The rest of this tutorial covers the larger, hosted shape: Postgres, OAuth clients per teammate and per-person crons.
+`--status` also checks that each key file holds the key issued to that member, and reports `mismatch` when it does not. `gbrain access check --token member-<member> --as <member>` shows one member's grant in detail. The rest of this tutorial covers the larger, hosted shape: Postgres, OAuth clients per teammate and per-person crons.
 
 ---
 

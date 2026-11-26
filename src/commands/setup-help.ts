@@ -48,9 +48,9 @@ Flags:
                        people (2+ enabled members) refuses rather than write a connection bound
                        to nobody, unless this harness's entry or config mcp.stdio_member binds it.
   --members IDS        The people of --serves several, comma-separated (e.g. alice-example,bob-example).
-  --labelled-only      With --serves several: each member's key reads only pages labelled for
+  --labelled-only      With --serves several or --template team: each member's key reads only pages labelled for
                        that member (readable_by or a rule), never the owner's. Opt-in.
-  --open-history       With --serves several on a brain that serves one person and already holds
+  --open-history       With --serves several or --template team on a brain that serves one person and already holds
                        pages: let the members read them. Without it or --labelled-only, setup
                        refuses (setup_history_choice_required) and writes nothing.
   --members-file PATH  The same, one id per line.
@@ -138,6 +138,8 @@ Flags:
                        and company/ and rules/team/ readable by the owner and that group.
                        --guests KIND:ID,... adds the guest source with those writers. A
                        group or rule it did not make is never changed (BLOCKED instead).
+                       A brain that serves one person and holds other pages needs
+                       --labelled-only or --open-history first (BLOCKED without).
                        --status [--receipt ID] and --resume ID --yes as for household.
                        Guide: docs/tutorials/company-brain.md.
   --shape none         Remove that block; the pages stay.

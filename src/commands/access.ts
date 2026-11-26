@@ -115,13 +115,16 @@ Serves several people (GST-363):
                                              no member with the command that binds each; it rebinds none
 
 Team template (agent platform O1; the brain side of gbrain setup <harness> --template team):
-  gbrain access template team --members a,b [--guests <kind>:<id>,...] [--owner <id>] [--team-group <id>] [--source <id>] [--yes]
+  gbrain access template team --members a,b [--guests <kind>:<id>,...] [--owner <id>] [--team-group <id>] [--source <id>]
+                              [--labelled-only | --open-history] [--yes]
                                              Preview first; --yes runs serves several for the members, adds the
                                              team group (team-members) with the owner and the members, and rules
                                              company/ (source company) and rules/team/ readable by the owner and the
                                              group; --guests sets up the guest source with those writers and lets
                                              every owner credential read it. A group or rule it did not make is
-                                             never changed (BLOCKED instead)
+                                             never changed (BLOCKED instead). A brain that serves one person and
+                                             holds other pages needs --labelled-only (keep them from the members)
+                                             or --open-history (members read them) first
   gbrain access template team --status [--receipt <id>] | --resume <receipt id> --yes
                                              The run's receipt with a read proof per member key; finish a run
 
