@@ -361,7 +361,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'listQuestionCandidatePages', 'listPublishedQuestionAnswers', 'listQuestionEvidenceFacts', 'listQuestionEvidenceTimeline',
   'listQuestionEvidenceTakes', 'readQuestionEvidenceClock', 'readQuestionPageRow',
   'listQuestionEvidenceJoin', 'hasNewQuestionPages', 'hasNewQuestionFacts', 'lockQuestionEvidenceRows',
-  // The pin row locks (engine-sql/question-store.ts; the store functions only `self.read`): FOR UPDATE takes a row lock and writes nothing.
+  // The pin row locks (engine-sql/question-store.ts; the store functions only `self.read`): FOR UPDATE only locks the row and writes nothing.
   'readPinnedQuestionForUpdate', 'lockPinRowForPublish',
   'pingStore', 'probePageTypes', 'readAccessGroups', 'readAccessMemberLink', 'readAccessTokenAttest', 'readAccessTokenMemberGrant',
   'readAccessTokenReceiptGrant', 'readActiveAccessTokenByHash', 'readActiveAccessTokenGrant', 'readAdmissionSample',
