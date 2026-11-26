@@ -83,19 +83,23 @@ function isLoginLink(url: string): boolean {
   return u.pathname.split('/').some(tokenish);
 }
 
-/** `text` with every labelled one-time code, sign-in link, credential and labelled password replaced by its placeholder. */
-export function redactMailSecrets(text: string): string {
+/**
+ * `text` with every labelled one-time code, sign-in link, credential and labelled password replaced by its placeholder.
+ * `context` (the subject) only helps decide what the message is about; it is never rewritten.
+ */
+export function redactMailSecrets(text: string, context = ''): string {
+  const about = `${context}\n${text}`;
   const spans: Array<{ start: number; end: number; kind: Kind }> = [];
   const take = (start: number, end: number, kind: Kind): void => {
     if (!spans.some((s) => start < s.end && s.start < end)) spans.push({ start, end, kind });
   };
-  if (LOGIN_CONTEXT_RE.test(text)) {
+  if (LOGIN_CONTEXT_RE.test(about)) {
     for (const m of text.matchAll(URL_RE)) {
       const url = m[0].replace(/[.,;:!?*_]+$/, '');
       if (isLoginLink(url)) take(m.index, m.index + url.length, 'login-link');
     }
   }
-  const otpContext = OTP_CONTEXT_RE.test(text);
+  const otpContext = OTP_CONTEXT_RE.test(about);
   for (const { re, context } of OTP_PATTERNS) {
     for (const m of text.matchAll(re)) {
       if (!codeShaped(m.groups!.v!)) continue;
@@ -127,5 +131,5 @@ export function redactMailSecrets(text: string): string {
 /** With `on`, a copy of `thread` whose message bodies went through `redactMailSecrets`; otherwise `thread` itself. */
 export function redactThreadBodies(thread: GmailThreadData, on: boolean | undefined): GmailThreadData {
   if (!on) return thread;
-  return { ...thread, messages: thread.messages.map((m) => ({ ...m, bodyText: redactMailSecrets(m.bodyText) })) };
+  return { ...thread, messages: thread.messages.map((m) => ({ ...m, bodyText: redactMailSecrets(m.bodyText, m.subject) })) };
 }

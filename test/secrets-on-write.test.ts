@@ -152,6 +152,20 @@ describe('secrets.on_write block', () => {
     });
   });
 
+  test('a sealed upload resumed by a later commit is screened too, so a crash after sealing cannot skip the screen', async () => {
+    const slug = 'notes/block-upload-resumed';
+    const text = '# Upload\n\nThe key is ' + TOKEN + '.\n';
+    const session = await call(remote(), 'begin_page_upload', { slug, mode: 'create', total_bytes: Buffer.byteLength(text), sha256: hex(text), request_id: randomUUID() });
+    await call(remote(), 'upload_page_part', { upload_id: session.upload_id, part: 0, text, part_sha256: hex(text) });
+    await engine.executeRaw("UPDATE page_body_stagings SET state = 'sealed' WHERE id = $1::uuid", [session.upload_id]);
+    await withMode('block', async () => {
+      expectSecretRefusal(await refusal(() => call(remote(), 'commit_page_upload', { upload_id: session.upload_id })));
+    });
+    expect(await page(slug)).toBeNull();
+    const [staging] = await engine.executeRaw<{ state: string }>('SELECT state FROM page_body_stagings WHERE id = $1::uuid', [session.upload_id]);
+    expect(staging!.state).toBe('aborted');
+  });
+
   test('documentation placeholders, masks and environment variable names pass', async () => {
     const DOC_DB_URL = `${'postgres'}://user:password@localhost:5432/app`;
     const MASK = '***';

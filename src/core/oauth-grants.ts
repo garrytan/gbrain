@@ -380,6 +380,10 @@ export class OAuthGrants {
    * token of the family, under the owning client's row lock, and commits before the caller is refused.
    */
   private async replay(sql: SqlQuery, clientId: string, token: string, requested?: string[], requestedResource?: URL): Promise<OAuthTokens | typeof FAMILY_REVOKED> {
+    const [owner] = await sql`SELECT client_id FROM oauth_refresh_rotations WHERE token_hash = ${hashToken(token)}`;
+    if (!owner) throw new InvalidGrantError('Refresh token not found');
+    // Lock order is client rows, then rotation rows, as the owning client's own refresh and revocation take them.
+    if (owner.client_id !== clientId) await sql`SELECT client_id FROM oauth_clients WHERE client_id = ${String(owner.client_id)} FOR UPDATE`;
     const [rotation] = await sql`SELECT * FROM oauth_refresh_rotations WHERE token_hash = ${hashToken(token)} FOR UPDATE`;
     if (!rotation) throw new InvalidGrantError('Refresh token not found');
     const family = String(rotation.family_id);
@@ -390,12 +394,14 @@ export class OAuthGrants {
       : [];
     const pair = replacement ? openPair(token, rotation.sealed_pair) : null;
     if (!pair) {
-      if (rotation.client_id !== clientId) await sql`SELECT client_id FROM oauth_clients WHERE client_id = ${String(rotation.client_id)} FOR UPDATE`;
       await sql`DELETE FROM oauth_tokens WHERE family_id = ${family}`;
       await sql`UPDATE oauth_refresh_rotations SET sealed_pair = NULL WHERE family_id = ${family}`;
       return FAMILY_REVOKED;
     }
-    if (requested?.some(scope => !hasScope(parseScopeString(pair.tokens.scope), scope))) throw new InvalidGrantError('Requested scope exceeds refresh token grant');
+    const granted = parseScopeString(pair.tokens.scope);
+    if (requested && (new Set(requested).size !== granted.length || requested.some(scope => !granted.includes(scope)))) {
+      throw new InvalidGrantError('Requested scope differs from the refresh this token already completed; use the refresh token it returned');
+    }
     if (requestedResource && requestedResource.toString() !== pair.resource) throw new InvalidGrantError('Requested resource exceeds the approved grant');
     return { ...pair.tokens, expires_in: Math.max(0, pair.accessExpiresAt - Math.floor(nowMs / 1000)) };
   }
@@ -456,9 +462,10 @@ export class OAuthGrants {
     });
   }
 
-  /** Rotation records outlive their family's grace only until the rotated token would have expired. */
+  /** Sealed pairs are wiped once their grace window passes; rotation records outlive it until the rotated token would have expired. */
   async sweepExpiredRotations(): Promise<number> {
     if (!await this.hasRefreshFamilies(this.options.sql)) return 0;
+    await this.options.sql`UPDATE oauth_refresh_rotations SET sealed_pair = NULL WHERE sealed_pair IS NOT NULL AND rotated_at_ms <= ${this.now() - REFRESH_REUSE_GRACE_MS}`;
     return (await this.options.sql`DELETE FROM oauth_refresh_rotations WHERE expires_at < ${Math.floor(this.now() / 1000)} RETURNING 1`).length;
   }
 

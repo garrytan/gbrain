@@ -358,12 +358,6 @@ const commit_page_upload: Operation = {
           throw opError('invalid_params', 'The uploaded bytes do not match the sha256 declared at begin, so the upload was discarded and nothing was written.',
             'Begin again with the SHA-256 of exactly the content you send.');
         }
-        // secrets.on_write: the assembled body is screened, so a secret split across parts is found; a refused upload is discarded.
-        const secret = await screenUploadedSecrets(ctx, stagedUploadParts(ctx.engine, { kind: 'staging', staging_id: row.id, sha256: row.declared_sha256, bytes: row.declared_bytes }));
-        if (secret) {
-          await abortUpload(ctx.engine, row.id);
-          throw secret;
-        }
         row = { ...row, state: 'sealed' };
       }
     }
@@ -374,6 +368,15 @@ const commit_page_upload: Operation = {
       if (row.state === 'open') throw opError('write_pending', 'Another call is committing this upload.', 'Call commit_page_upload again with this upload_id.', { fix: statusFix(row.id) });
     }
     const bodyRef: StagingBodyRef = { kind: 'staging', staging_id: row.id, sha256: row.declared_sha256, bytes: row.declared_bytes };
+    // secrets.on_write: every call that would submit a sealed body screens it whole, including one that lost the seal
+    // race or resumes after a crash, so a secret split across parts is found; a refused upload is discarded.
+    if (!submitted) {
+      const secret = await screenUploadedSecrets(ctx, stagedUploadParts(ctx.engine, bodyRef));
+      if (secret) {
+        await abortUpload(ctx.engine, row.id);
+        throw secret;
+      }
+    }
     if (row.mode === 'append') {
       try {
         return await admitPageAppend(ctx, { slug: row.slug, source_id: row.source_id, request_id: row.client_request_id, body_ref: bodyRef,

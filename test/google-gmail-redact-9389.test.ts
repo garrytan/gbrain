@@ -133,6 +133,26 @@ describe('ordinary mail text is never rewritten', () => {
   });
 });
 
+describe('the subject decides what a message is about', () => {
+  test('a reset link and a bare code are redacted when only the subject says what the message is', () => {
+    const link = `Use this link within the hour:\nhttps://acme-example.invalid/r?token=${FAKE_TOKEN}`;
+    expect(redactMailSecrets(link)).toBe(link);
+    expect(redactMailSecrets(link, 'Reset your password')).toBe(`Use this link within the hour:\n${LINK}`);
+    const code = 'Your code: 482913.';
+    expect(redactMailSecrets(code)).toBe(code);
+    expect(redactMailSecrets(code, 'Verify your account')).toBe(`Your code: ${OTP}.`);
+  });
+
+  test('redactThreadBodies passes each message subject, and never rewrites the subject itself', () => {
+    const msg = { id: 'bb22', threadId: 't2', from: 'Acme <no-reply@acme-example.invalid>', fromAddress: 'no-reply@acme-example.invalid', to: ['owner@example.invalid'],
+      cc: [], subject: 'Reset your password', dateIso: '2026-11-01T00:00:00.000Z', internalDateMs: 0, labelIds: ['INBOX'], listUnsubscribe: false, calendarMethod: null,
+      bodyText: `Open https://acme-example.invalid/r?token=${FAKE_TOKEN} to continue.` };
+    const out = redactThreadBodies({ threadId: 't2', account: 'owner@example.invalid', messages: [msg] }, true);
+    expect(out.messages[0]!.bodyText).toBe(`Open ${LINK} to continue.`);
+    expect(out.messages[0]!.subject).toBe('Reset your password');
+  });
+});
+
 describe('thread and config', () => {
   test('redactThreadBodies rewrites every message body and nothing else', () => {
     const msg = { id: 'aa11', threadId: 't1', from: 'Acme <no-reply@acme-example.invalid>', fromAddress: 'no-reply@acme-example.invalid', to: ['owner@example.invalid'],

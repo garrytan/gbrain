@@ -131,6 +131,60 @@ for (const kind of testBackends()) {
       expect(next.refresh_token).toBeDefined();
     });
 
+    test('a grace retry asking for different scopes is refused and revokes nothing; the plain retry still gets the pair', async () => {
+      clock = Date.now();
+      const p = provider();
+      const clientId = (await p.registerClientManual('grace-scopes', ['authorization_code', 'refresh_token'], 'read write', [CALLBACK], 'default', undefined, 'none')).clientId;
+      const client = (await p.clientsStore.getClient(clientId))!;
+      let redirect = '';
+      await authorizeAsOwner(p, client, { codeChallenge: TEST_PKCE_CHALLENGE, redirectUri: CALLBACK, scopes: ['read', 'write'] }, { redirect: (u: string) => { redirect = u; } } as never);
+      const tokens = await p.exchangeAuthorizationCode(client, new URL(redirect).searchParams.get('code')!, TEST_PKCE_VERIFIER, CALLBACK);
+      const first = await grants().refresh(clientId, tokens.refresh_token!);
+      const narrower = await refused(grants().refresh(clientId, tokens.refresh_token!, ['read']), tokens.refresh_token!);
+      expect(narrower.message).toContain('differs');
+      expect(await live(first.refresh_token!)).toBe(true);
+      expect(await live(first.access_token)).toBe(true);
+      expect((await grants().refresh(clientId, tokens.refresh_token!)).refresh_token).toBe(first.refresh_token);
+      expect((await grants().refresh(clientId, tokens.refresh_token!, ['write', 'read'])).refresh_token).toBe(first.refresh_token);
+    });
+
+    test('a cross-client replay racing the owner client\'s refresh and revocation never deadlocks', async () => {
+      for (let round = 0; round < 8; round++) {
+        clock = Date.now();
+        const owner = await signIn('grace-race-owner-' + round);
+        const attacker = await signIn('grace-race-attacker-' + round);
+        const rotated = await grants().refresh(owner.clientId, owner.tokens.refresh_token!);
+        clock += REFRESH_REUSE_GRACE_MS + 1_000;
+        const outcomes = await Promise.allSettled([
+          grants().refresh(attacker.clientId, owner.tokens.refresh_token!),
+          grants().refresh(owner.clientId, rotated.refresh_token!),
+          grants().refresh(attacker.clientId, owner.tokens.refresh_token!),
+          grants().revokeClient(owner.clientId),
+        ]);
+        for (const outcome of outcomes) {
+          if (outcome.status === 'rejected') expect(String((outcome.reason as Error).message)).not.toMatch(/deadlock/i);
+        }
+        expect(outcomes[0]!.status).toBe('rejected');
+        expect(outcomes[3]!.status).toBe('fulfilled');
+        expect(await liveRefreshCount(owner.clientId)).toBe(0);
+        expect(await live(attacker.tokens.refresh_token!)).toBe(true);
+      }
+    }, 60_000);
+
+    test('the sweep wipes sealed pairs once the window passes, before the rotation record expires', async () => {
+      clock = Date.now();
+      const { clientId, tokens } = await signIn('grace-sweep');
+      await grants().refresh(clientId, tokens.refresh_token!);
+      const sealed = async () => (await engine.executeRaw<{ sealed_pair: string | null }>('SELECT sealed_pair FROM oauth_refresh_rotations WHERE token_hash = $1', [hashToken(tokens.refresh_token!)]))[0];
+      await grants().sweepExpiredRotations();
+      expect((await sealed())!.sealed_pair).toBeTruthy();
+      clock += REFRESH_REUSE_GRACE_MS + 1_000;
+      await grants().sweepExpiredRotations();
+      const row = await sealed();
+      expect(row).toBeDefined();
+      expect(row!.sealed_pair).toBeNull();
+    });
+
     test('a refresh token minted before families existed starts one on its first refresh', async () => {
       clock = Date.now();
       const { clientId, tokens } = await signIn('grace-legacy');
