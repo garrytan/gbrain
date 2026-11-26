@@ -33,7 +33,7 @@ const PINS: Pin[] = [
   { name: 'readSourceState (share lock)', call: e => e.readSourceState(SRC, { lock: 'share' }), text: ['FROM sources WHERE id=$1 FOR SHARE'], params: [SRC] },
   { name: 'readAdmissionSource', call: e => e.readAdmissionSource(SRC), text: ['s.config->>\'kind\' AS kind', 'guest_sources', 'FROM sources s'], params: [SRC] },
   { name: 'sharedSkillPackTablePresent', call: e => e.sharedSkillPackTablePresent(), text: ["SELECT to_regclass('shared_skill_packs') IS NOT NULL AS present"], params: [] },
-  { name: 'notifierCoverageRecorded', call: e => e.notifierCoverageRecorded(), text: ['SELECT EXISTS (SELECT 1 FROM sync_notifier_sources WHERE observed_at IS NOT NULL) AS covered'], params: [] },
+  { name: 'hasNotifierCoverage', call: e => e.hasNotifierCoverage(), text: ['SELECT EXISTS (SELECT 1 FROM sync_notifier_sources WHERE observed_at IS NOT NULL) AS covered'], params: [] },
   { name: 'readOpCheckpointKeys', call: e => e.readOpCheckpointKeys('sync', 'fp-1'), text: ['FROM op_checkpoint_paths WHERE op = $1 AND fingerprint = $2 UNION ALL', "jsonb_typeof(completed_keys) = 'array'", "jsonb_typeof(completed_keys) <> 'array'"], params: ['sync', 'fp-1'] },
   { name: 'readHealthMemoClock', call: e => e.readHealthMemoClock(), text: ['FROM persistence_brain WHERE singleton = 1', 'last_value FROM page_generation_clock_seq'], params: [] },
   { name: 'listSynopsisSourceIds', call: e => e.listSynopsisSourceIds(), text: ["SELECT id FROM sources WHERE contextual_retrieval_mode = 'per_chunk_synopsis' AND NOT archived ORDER BY id"], params: [] },

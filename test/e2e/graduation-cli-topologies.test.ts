@@ -7,7 +7,7 @@
  */
 import { describe, expect, test } from 'bun:test';
 import postgres from '#postgres';
-import { DATABASE_URL, gbrain, graduationTest, graduationTestIf, hostedRoleTarget, passwordOf, pooledUrl } from '../helpers/graduation-e2e.ts';
+import { DATABASE_URL, emptyTarget, gbrain, graduationTest, graduationTestIf, hostedRoleTarget, passwordOf, pooledUrl } from '../helpers/graduation-e2e.ts';
 import { useGraduationCases } from '../helpers/graduation-cli-cases.ts';
 import { expectGraduated, planAndRun } from '../helpers/graduation-scenarios.ts';
 
@@ -15,7 +15,11 @@ const { cleanups, fresh } = useGraduationCases();
 
 describe.skipIf(!DATABASE_URL)('graduation: connection topologies', () => {
   graduationTestIf(!process.env.GBRAIN_PGBOUNCER_URL)('through transaction-mode PgBouncer with DDL on the direct route', async () => {
-    const c = await fresh('pgbouncer');
+    // #10430: the pooler may front another server than DATABASE_URL (ci-local shards 2-4), so the target lives behind
+    // it: created on its direct route, reached pooled for traffic and direct for DDL.
+    const target = await emptyTarget(process.env.GBRAIN_PGBOUNCER_DIRECT_URL || DATABASE_URL);
+    cleanups.push(() => target.close());
+    const c = await fresh('pgbouncer', target);
     const pooled = pooledUrl(c.target)!;
     const { argv, env } = await planAndRun(c, { url: pooled, env: { GBRAIN_DIRECT_DATABASE_URL: c.target.url } });
     const run = await gbrain(argv, { home: c.fx.home, env, timeoutMs: 900_000 });
