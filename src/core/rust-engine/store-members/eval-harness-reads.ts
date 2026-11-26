@@ -7,7 +7,7 @@
  * SQL tables it maps keep their names; every other record is named by its keyspace.
  */
 import type { BrainEngine } from '../../engine.ts';
-import type { FactStateRow, PageIdSlugRow, TextColumnRow, TextScanHit } from '../../engine-sql/eval-harness-reads.ts';
+import type { FactStateRow, ManagedPausePrior, PageIdSlugRow, TextColumnRow, TextScanHit } from '../../engine-sql/eval-harness-reads.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
@@ -52,3 +52,13 @@ export const scanTextColumns: Member<'scanTextColumns'> = async (brain, spec) =>
   return rows.map((r): TextScanHit => ({ table: String(r.table), column: String(r.column), slug: (r.slug as string | null) ?? null,
     page_id: r.page_id === null || r.page_id === undefined ? null : Number(r.page_id), entity_slug: (r.entity_slug as string | null) ?? null, value: String(r.value) }));
 };
+
+/** One store write: read the brain mode and turn enabled off with no epoch bump (gbrain-store `pause_managed_persistence`). */
+export const pauseManagedPersistence: Member<'pauseManagedPersistence'> = async (brain) => {
+  const prior: { enabled: boolean; mode_epoch: string } = await storeCall({ member: 'pauseManagedPersistence' }, () => brain.pauseManagedPersistence());
+  return { enabled: prior.enabled === true, mode_epoch: String(prior.mode_epoch) } satisfies ManagedPausePrior;
+};
+
+/** One compare-and-set store write: put enabled back only while still paused at the prior epoch. */
+export const restoreManagedPersistence: Member<'restoreManagedPersistence'> = (brain, prior) =>
+  storeCall<boolean>({ member: 'restoreManagedPersistence' }, () => brain.restoreManagedPersistence({ enabled: prior.enabled, mode_epoch: prior.mode_epoch }));

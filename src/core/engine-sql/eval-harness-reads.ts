@@ -181,3 +181,50 @@ export async function scanTextColumns(engine: Raw, spec: TextScanSpec): Promise<
 
 /** Byte order on the UTF-16 code units, as the Rust store sorts its UTF-8 (equal for the ASCII names it sorts). */
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+
+/** The brain row's managed state before a harness pause: `enabled` and `mode_epoch` (text). */
+export interface ManagedPausePrior { enabled: boolean; mode_epoch: string }
+
+/** What withManagedPersistencePaused reports: fn's result and whether the prior state was put back. */
+export interface ManagedPauseOutcome<T> { result: T; restore: 'restored' | 'paused_state_changed' }
+
+/** Reads the brain row's enabled and mode_epoch and turns enabled off in one statement, moving nothing else. */
+export const PAUSE_MANAGED_SQL = `WITH prior AS (SELECT enabled, mode_epoch FROM persistence_brain WHERE singleton = 1 FOR UPDATE),
+      paused AS (UPDATE persistence_brain SET enabled = false WHERE singleton = 1)
+    SELECT enabled, mode_epoch::text AS mode_epoch FROM prior`;
+/** Puts `enabled` back only while the row is still paused at the epoch the pause read (compare-and-set). */
+export const RESTORE_MANAGED_SQL = 'UPDATE persistence_brain SET enabled = $1 WHERE singleton = 1 AND enabled = false AND mode_epoch = $2::bigint RETURNING true AS restored';
+
+/** Turns managed persistence off with no mode_epoch bump; returns the prior state. Refuses a brain with no brain row. */
+export async function pauseManagedPersistence(engine: Raw): Promise<ManagedPausePrior> {
+  const [row] = await engine.executeRaw<{ enabled: boolean; mode_epoch: string }>(PAUSE_MANAGED_SQL);
+  if (!row) throw new Error('pauseManagedPersistence: this brain has no persistence brain row');
+  return { enabled: row.enabled === true, mode_epoch: String(row.mode_epoch) };
+}
+
+/** Puts the prior enabled value back when the row is still paused at the prior epoch; false (nothing written) otherwise. */
+export async function restoreManagedPersistence(engine: Raw, prior: ManagedPausePrior): Promise<boolean> {
+  const rows = await engine.executeRaw<{ restored: boolean }>(RESTORE_MANAGED_SQL, [prior.enabled, prior.mode_epoch]);
+  return rows.length > 0;
+}
+
+/**
+ * Runs `fn` with managed persistence paused (a harness step such as one import), on any engine: pause with no
+ * mode_epoch bump, run fn, then compare-and-set the prior enabled value back. A real activation or deactivation that
+ * ran during fn moved the epoch, so it is kept and the outcome reports paused_state_changed. When fn throws, the restore
+ * still runs and fn's error is rethrown.
+ */
+export async function withManagedPersistencePaused<T>(
+  engine: Pick<BrainEngine, 'pauseManagedPersistence' | 'restoreManagedPersistence'>, fn: () => Promise<T>,
+): Promise<ManagedPauseOutcome<T>> {
+  const prior = await engine.pauseManagedPersistence();
+  let result: T;
+  try {
+    result = await fn();
+  } catch (error) {
+    await engine.restoreManagedPersistence(prior);
+    throw error;
+  }
+  const restored = await engine.restoreManagedPersistence(prior);
+  return { result, restore: restored ? 'restored' : 'paused_state_changed' };
+}

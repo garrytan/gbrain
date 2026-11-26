@@ -423,6 +423,48 @@ impl Store {
         writer_release_rows_in(&*self.read()?, &*self.env, what)
     }
 
+    /// `pauseManagedPersistence()` (the evals' harness pause, src/core/engine-sql/eval-harness-reads.ts):
+    /// in one write, reads the brain mode and turns `enabled` off with no epoch bump, leaving the
+    /// activation time, worktrees and bindings alone. Returns the prior `{ enabled, mode_epoch }`
+    /// (the epoch as text). A store with no brain id has no brain row and refuses.
+    pub fn pause_managed_persistence(&self) -> Result<Value> {
+        let brain_id = self.brain_id().to_string();
+        self.write(|tx| {
+            if brain_id.is_empty() {
+                return Err(StoreError::invalid(
+                    "this brain has no persistence brain row",
+                ));
+            }
+            let mut mode = brain_mode_in(&*tx)?;
+            let prior =
+                json!({ "enabled": mode.enabled, "mode_epoch": mode.mode_epoch.to_string() });
+            mode.enabled = false;
+            put_json(tx, &brain_mode_key(), &mode)?;
+            Ok(prior)
+        })
+    }
+
+    /// `restoreManagedPersistence({ enabled, mode_epoch })`: one compare-and-set write. Puts
+    /// `enabled` back only while the brain mode is still paused (`enabled` false) at `mode_epoch`;
+    /// otherwise a real activation or deactivation moved it during the pause, and nothing is written.
+    /// True when it wrote.
+    pub fn restore_managed_persistence(&self, enabled: bool, mode_epoch: &str) -> Result<bool> {
+        let epoch: i64 = mode_epoch.parse().map_err(|_| {
+            StoreError::invalid(format!(
+                "restoreManagedPersistence: mode_epoch is not a whole number: {mode_epoch}"
+            ))
+        })?;
+        self.write(|tx| {
+            let mut mode = brain_mode_in(&*tx)?;
+            if mode.enabled || mode.mode_epoch != epoch {
+                return Ok(false);
+            }
+            mode.enabled = enabled;
+            put_json(tx, &brain_mode_key(), &mode)?;
+            Ok(true)
+        })
+    }
+
     /// Turns managed persistence on or off; returns the new mode epoch as text.
     pub fn set_brain_enabled(&self, enabled: bool) -> Result<String> {
         let brain_id = self.brain_id().to_string();

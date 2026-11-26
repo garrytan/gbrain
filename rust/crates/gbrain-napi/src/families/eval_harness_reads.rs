@@ -87,6 +87,27 @@ impl Brain {
             s.scan_text_columns(&a)
         })
     }
+
+    /// `pauseManagedPersistence()`: turns managed persistence off with no epoch bump; resolves the
+    /// prior `{ enabled, mode_epoch }`.
+    #[napi]
+    pub fn pause_managed_persistence<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.pause_managed_persistence())
+    }
+
+    /// `restoreManagedPersistence({ enabled, mode_epoch })`: the compare-and-set restore; resolves
+    /// true when it wrote.
+    #[napi]
+    pub fn restore_managed_persistence<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: RestoreArgs = required(args, "restoreManagedPersistence args")?;
+            s.restore_managed_persistence(a.enabled, &a.mode_epoch)
+        })
+    }
 }
 
 #[derive(serde::Deserialize)]
@@ -100,4 +121,11 @@ struct TableArgs {
 struct ColumnArgs {
     table: String,
     column: String,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RestoreArgs {
+    enabled: bool,
+    mode_epoch: String,
 }

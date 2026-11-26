@@ -356,6 +356,15 @@ export interface ReadStatementMembers {
   hasColumn(table: string, column: string): Promise<boolean>;
   listTextBearingColumns(): Promise<EvalHarnessSql.TextColumnRow[]>;
   scanTextColumns(spec: EvalHarnessSql.TextScanSpec): Promise<EvalHarnessSql.TextScanHit[]>;
+  /**
+   * The evals' harness pause (engine-sql/eval-harness-reads.ts): pauseManagedPersistence turns managed persistence off
+   * with no mode_epoch bump and returns the prior enabled and epoch; restoreManagedPersistence puts enabled back only
+   * while the row is still paused at that epoch (true when it wrote). withManagedPersistencePaused runs fn between them
+   * and reports paused_state_changed when a real mode change during fn is kept; a throw is rethrown after the restore.
+   */
+  pauseManagedPersistence(): Promise<EvalHarnessSql.ManagedPausePrior>;
+  restoreManagedPersistence(prior: EvalHarnessSql.ManagedPausePrior): Promise<boolean>;
+  withManagedPersistencePaused<T>(fn: () => Promise<T>): Promise<EvalHarnessSql.ManagedPauseOutcome<T>>;
   /** The page's stored takes by row number while its take_fence generation is held `fence_absent`; none otherwise. */
   listHeldFenceTakeRows(spec: HeldFenceTakeSpec): Promise<HeldFenceTakeRow[]>;
   /** The take at a page's row number with its claim and stored trust tier; null when the page has none there. */

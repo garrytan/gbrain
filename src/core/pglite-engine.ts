@@ -5532,6 +5532,9 @@ export class PGLiteEngine implements BrainEngine {
   hasColumn(table: string, column: string) { return evalHarnessReads.hasColumn(this, table, column); }
   listTextBearingColumns() { return evalHarnessReads.listTextBearingColumns(this); }
   scanTextColumns(spec: evalHarnessReads.TextScanSpec) { return evalHarnessReads.scanTextColumns(this, spec); }
+  pauseManagedPersistence() { return evalHarnessReads.pauseManagedPersistence(this); }
+  restoreManagedPersistence(prior: evalHarnessReads.ManagedPausePrior) { return evalHarnessReads.restoreManagedPersistence(this, prior); }
+  withManagedPersistencePaused<T>(fn: () => Promise<T>) { return evalHarnessReads.withManagedPersistencePaused(this, fn); }
   async countMcpResolvedTakes(spec: takesReads.McpResolvedSpec) { return takesReads.countMcpResolvedTakes(this, spec); }
   async listTopResolvedTakesForHolder(holder: string) { return takesReads.listTopResolvedTakesForHolder(this, holder); }
   async listAbandonedTakes() { return takesReads.listAbandonedTakes(this); }
