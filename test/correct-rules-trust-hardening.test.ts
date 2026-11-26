@@ -21,7 +21,7 @@ import { GBrainOAuthProvider } from '../src/core/oauth-provider.ts';
 import { sqlQueryForEngine } from '../src/core/sql-query.ts';
 import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
 import type { AuthInfo } from '../src/core/ops/contract.ts';
-import { __correctFaults, approveRule, localRulesCtx, retireRule, runCorrect } from '../src/core/rules/correct.ts';
+import { __correctFaults, approveRule, localRulesCtx, RECEIPT_PREFIX, retireRule, runCorrect } from '../src/core/rules/correct.ts';
 import { renderRulePage } from '../src/core/rules/record.ts';
 import { CONFIRM_CODE_LENGTH, type TerminalProbe } from '../src/core/policy/authority.ts';
 import { installTripwire, type Tripwire } from './helpers/ai-tripwire.ts';
@@ -37,10 +37,10 @@ const tokens: Record<string, string> = {};
 const local = (op: string, params: Record<string, unknown>) => (handleToolCall(engine, op, params) as Promise<any>).catch(e => e);
 const provider = () => new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
 
-async function remote(who: string, op: string, params: Record<string, unknown>, audience?: string[]): Promise<{ isError: boolean; text: string; json: any }> {
+async function remote(who: string, op: string, params: Record<string, unknown>, audience?: string[], guest?: string): Promise<{ isError: boolean; text: string; json: any }> {
   const auth = await provider().verifyAccessToken(tokens[who]!) as unknown as AuthInfo;
   const out = await dispatchToolCall(engine, op, params, { remote: true, transport: 'http', auth, sourceId: 'default', takesHoldersAllowList: ['world'], inboundFrameBytes: 4 * 1024 * 1024,
-    ...(audience ? { onBehalfOf: { requestMeta: { on_behalf_of: audience } } } : {}) } as never);
+    ...(audience ? { onBehalfOf: { requestMeta: { on_behalf_of: audience } } } : {}), ...(guest ? { guest: { header: guest } } : {}) } as never);
   const text = out.content.map((c: { text: string }) => c.text).join('\n');
   let json: any = {};
   try { json = JSON.parse(text); } catch { /* prose */ }
@@ -85,6 +85,9 @@ beforeAll(async () => {
   const bot = await mintLegacyToken(engine, { name: 'g4-bot', scopes: ['read', 'write'], takesHolders: ['world'] });
   await bindCredential(engine, { kind: 'token', id: bot.id }, { mayActFor: ['guest', 'member:' + MEMBER, 'member:' + THIRD] });
   tokens.bot = bot.token;
+  const ownerBot = await mintLegacyToken(engine, { name: 'g4-owner-bot', scopes: ['read', 'write'], takesHolders: ['world'] });
+  await bindCredential(engine, { kind: 'token', id: ownerBot.id }, { member: OWNER, mayActFor: ['member:' + OWNER] });
+  tokens.ownerBot = ownerBot.token;
   const loose = await mintLegacyToken(engine, { name: 'g4-loose', scopes: ['read', 'write'], takesHolders: ['world'] });
   tokens.loose = loose.token;
   for (const p of ['alice-example', 'bob-example', 'carol-example']) {
@@ -131,6 +134,14 @@ describe('the fact\'s own page is the only entity', () => {
     expect(r.text).not.toContain('hidden-example');
   });
 
+  test('a member cannot replace a fact on its own member page, only withdraw it', async () => {
+    const saved = await remote(MEMBER, 'remember', { fact: 'Alice Example drinks green tea at noon.', entity: 'people/alice-example', visibility: 'private', provenance: 'test', content_origin: 'user_said' });
+    const id = /"id":\s*"(\d+)"/.exec(saved.text)![1]!;
+    const r = await remote(MEMBER, 'correct', { rule: 'Alice Example drinks black tea at noon.', fact_id: id, corrected_fact: 'Alice Example drinks black tea at noon.', scope: 'me' });
+    expect({ isError: r.isError, code: r.json.code }).toEqual({ isError: true, code: 'fact_not_found' });
+    expect((await factRow(id))!.expired_at).toBeNull();
+  });
+
   test('a fact never lands on a rule page through a retired page\'s redirect', async () => {
     const made = await runCorrect(localRulesCtx(engine), { rule: 'Deploys wait for a green build.', scope: 'team' }) as any;
     expect(made.state).toBe('committed');
@@ -160,21 +171,84 @@ describe('host resume and resumed activation', () => {
     expect(await liveFacts('people/alice-example')).toContain(right);
   });
 
+  test('a host resume of a remote owner\'s stopped withdrawal asks at the terminal, then withdraws the fact', async () => {
+    const wrong = await seedFact('Alice Example owns a scooter.');
+    __correctFaults.before = s => { if (s === 'fact') throw new Error('stopped before the fact'); };
+    let r: any;
+    try { r = await remote(OWNER, 'correct', { rule: 'Alice Example owns no scooter.', fact_id: wrong, scope: 'team' }); } finally { __correctFaults.before = undefined; }
+    expect(r.json.state).toBe('partial');
+    expect((await hostResume(r.json.receipt_id, noTty)).code).toBe('policy_confirm_required');
+    expect((await factRow(wrong))!.expired_at).toBeNull();
+    expect((await hostResume(r.json.receipt_id, ownerTty())).state).toBe('committed');
+    expect((await factRow(wrong))!.expired_at).not.toBeNull();
+  });
+
+  test('a host resume of a remote owner\'s rule with no fact change still asks before making it active', async () => {
+    __correctFaults.before = s => { if (s === 'activate') throw new Error('stopped before activation'); };
+    let r: any;
+    try { r = await remote(OWNER, 'correct', { rule: 'Retros run every second Friday.', scope: 'team' }); } finally { __correctFaults.before = undefined; }
+    expect(r.json.state).toBe('partial');
+    expect((await hostResume(r.json.receipt_id, noTty)).code).toBe('policy_confirm_required');
+    expect((await frontmatter('rules/' + r.json.rule_id))?.status).toBe('proposed');
+    expect((await hostResume(r.json.receipt_id, ownerTty())).state).toBe('committed');
+  });
+
+  test('a receipt edited while the owner answers a host resume is refused and changes nothing', async () => {
+    const a = await seedFact('Alice Example uses desk one.');
+    const b = await seedFact('Alice Example uses desk two.');
+    __correctFaults.before = s => { if (s === 'fact') throw new Error('stopped before the fact'); };
+    let r: any;
+    try { r = await remote(OWNER, 'correct', { rule: 'Alice Example uses desk three.', fact_id: a, corrected_fact: 'Alice Example uses desk three.', scope: 'team' }); } finally { __correctFaults.before = undefined; }
+    const key = RECEIPT_PREFIX + r.json.receipt_id;
+    const probe: TerminalProbe = { ...ownerTty(), readAnswer: async p => {
+      const s = JSON.parse((await engine.getConfig(key))!);
+      s.fact = { ...s.fact, action: 'withdraw', id: b, text: null };
+      await engine.setConfig(key, JSON.stringify(s));
+      return /Type ([0-9a-f]+) /.exec(p)![1]!.slice(0, CONFIRM_CODE_LENGTH);
+    } };
+    expect((await hostResume(r.json.receipt_id, probe)).code).toBe('rule_transition');
+    expect((await factRow(a))!.expired_at).toBeNull();
+    expect((await factRow(b))!.expired_at).toBeNull();
+  });
+
   test('an activation stopped after its write finishes when resumed from another connection', async () => {
     let fired = false;
     __correctFaults.after = s => { if (s === 'activate' && !fired) { fired = true; throw new Error('stopped after activation'); } };
     let r: any;
     try { r = await remote(OWNER, 'correct', { rule: 'Standups start at nine.', scope: 'team' }); } finally { __correctFaults.after = undefined; }
     expect(r.json.state).toBe('partial');
-    const done = await hostResume(r.json.receipt_id, noTty);
+    const done = await hostResume(r.json.receipt_id, ownerTty());
     expect(done.state).toBe('committed');
   });
 });
 
 describe('who may save a rule, and whose receipt it is', () => {
+  test('the owner\'s credential acting for an audience proposes, and its own rule stays private to the owner', async () => {
+    const wrong = await seedFact('Alice Example sits in row one.');
+    const r = await remote('ownerBot', 'correct', { rule: 'Alice Example sits in row two.', fact_id: wrong, corrected_fact: 'Alice Example sits in row two.', scope: 'team' }, [OWNER]);
+    expect(r.json.state).toBe('proposed');
+    expect((await factRow(wrong))!.expired_at).toBeNull();
+    const mine = await remote('ownerBot', 'correct', { rule: 'I take calls after ten.', scope: 'me' }, [OWNER]);
+    expect(mine.json.state).toBe('proposed');
+    const fm = await frontmatter('rules/' + mine.json.rule_id);
+    expect({ visibility: fm?.visibility, readable_by: fm?.readable_by }).toEqual({ visibility: 'private', readable_by: undefined });
+  });
+
   test('a call made for a guest audience is refused', async () => {
     const r = await remote('bot', 'correct', { rule: 'Guests get the lobby wifi.', scope: 'team' }, ['guest']);
     expect({ isError: r.isError, code: r.json.code }).toEqual({ isError: true, code: 'correct_guest_refused' });
+  });
+
+  test('a call carrying a guest attribution is refused, even for a member audience', async () => {
+    const r = await remote('bot', 'correct', { rule: 'The guest room has a projector.', scope: 'team' }, [MEMBER], 'visitor-example');
+    expect({ isError: r.isError, code: r.json.code }).toEqual({ isError: true, code: 'correct_guest_refused' });
+  });
+
+  test('a remote owner cannot propose replacing a fact only the host can replace', async () => {
+    const hidden = await local('remember', { fact: 'Alice Example keeps a spare key.', entity: 'people/alice-example', visibility: 'private', provenance: 'test seed', request_id: 'gst4000-private-1' });
+    const r = await remote(OWNER, 'correct', { rule: 'Alice Example keeps no spare key.', fact_id: String(hidden.id), corrected_fact: 'Alice Example keeps no spare key.', scope: 'team' });
+    expect({ isError: r.isError, code: r.json.code }).toEqual({ isError: true, code: 'fact_not_found' });
+    expect((await factRow(String(hidden.id)))!.expired_at).toBeNull();
   });
 
   test('a scope me rule from a connection that acts for no member is refused', async () => {

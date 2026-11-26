@@ -86,8 +86,8 @@ a remote connection cannot clear the problem itself).
   like an instruction to override an agent, send data out or handle credentials (`correct_instruction_refused`).
 
 A rule page changes only through `correct` or `gbrain rules`. A remote `put_page` to `rules/...`, or a page
-declaring `type: rule` anywhere else, is refused (`rule_owner_only`), and no fact is ever saved onto a rule page, from
-any caller or through a retired page that points at one. A rule's status moves proposed → active →
+declaring `type: rule` anywhere else, is refused (`rule_owner_only`), and `remember` never saves a fact onto a rule
+page, from any caller or through a retired page that points at one. A rule's status moves proposed → active →
 retired and never back (`rule_transition`). An edit made on the brain host outside these commands drops the rule
 from the standing-rules section until you approve the new revision. One call at a time changes a given rule: a
 retirement started while an approval runs waits for it (`rule_busy` after 15 seconds), and a correction never

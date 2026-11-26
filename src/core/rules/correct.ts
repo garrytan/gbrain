@@ -333,7 +333,11 @@ async function advance(ctx: OperationContext, r: CorrectReceipt, owner: boolean,
           throw new OperationError('rule_transition', 'The rule page changed or was retired before its fact was fixed, so the fact was left unchanged.', `Run gbrain rules show ${ruleIdOf(r.rule.slug)}.`);
         }
         await __correctFaults.before?.(step, r);
-        const entity = r.fact.action === 'replace' ? r.fact.entity ?? (await readForgetTarget(engine, Number(r.fact.id), r.source_id, false, false))?.entity_slug ?? null : null;
+        const target = r.fact.action === 'replace' ? await readForgetTarget(engine, Number(r.fact.id), r.source_id, false, false) : null;
+        if (r.fact.entity && target && target.entity_slug?.toLowerCase() !== r.fact.entity.toLowerCase()) {
+          throw new OperationError('rule_transition', 'The fact is no longer on the page this correction names, so the fact was left unchanged.', `Run gbrain rules show ${ruleIdOf(r.rule.slug)}.`);
+        }
+        const entity = r.fact.action === 'replace' ? r.fact.entity ?? target?.entity_slug ?? null : null;
         const own = tried ? await getWriteRequest(engine as never, submittedBy, parseWriteRequestId(requestId)!) : null;
         if (own?.state === 'committed' && !writesFact(own, r.fact, r.source_id, entity)) {
           throw new OperationError('rule_transition', 'Another write already used this correction\'s fact request, so the fact was left as it is.', `Run gbrain rules show ${ruleIdOf(r.rule.slug)}.`);
@@ -425,18 +429,19 @@ const factNotFound = (id: string) => opError('fact_not_found', `No fact with id 
 
 /**
  * The fact a remote caller names, read under the rules recall and forget apply (visibility, read eligibility, the fact's
- * page and its entity's privacy), with the page it is about from the same read. `own`: readable only as a fact on the
- * caller's own member page, for a withdrawal; that connection is never told the page such a fact is about.
+ * page and its entity's privacy), with the page it is about from the same read. A fact on the caller's own member page
+ * is only withdrawn, never replaced (`own`), and that connection is never told the page such a fact is about.
  */
 async function remoteFact(ctx: OperationContext, id: number, sourceId: string, member: string | null, withdraw: boolean): Promise<{ entity_slug: string | null; own: boolean } | null> {
   const excludePrivate = await resolveExcludePrivatePages(ctx.engine, true);
-  const readable = callerIsOwner() ? 'TRUE' : factVisibilitySql('facts', ['world']);
+  const mine = member ? await readForgetTarget(ctx.engine, id, sourceId, true, excludePrivate, false, memberPageSlug(member)) : null;
+  if (mine) return withdraw ? { entity_slug: mine.entity_slug ?? null, own: true } : null;
+  const readable = !withdraw ? "facts.visibility = 'world'" : callerIsOwner() ? 'TRUE' : factVisibilitySql('facts', ['world']);
   const eligible = projectionEligibleSql('facts', 'facts', await resolveReadEligibility(ctx));
   const provenance = excludePrivate ? ` AND ${privateProvenanceFilterUnderPolicy('facts')}` : '';
   const [row] = await ctx.engine.executeRaw<{ entity_slug: string | null }>(`SELECT entity_slug FROM facts WHERE id=$1 AND source_id=$2 AND ${readable} AND ${eligible}${provenance}`, [id, sourceId]);
   if (row) return { entity_slug: row.entity_slug ?? null, own: false };
-  const mine = withdraw && member ? await readForgetTarget(ctx.engine, id, sourceId, true, excludePrivate, false, memberPageSlug(member)) : null;
-  return mine ? { entity_slug: mine.entity_slug ?? null, own: true } : null;
+  return null;
 }
 
 /** An entity that names a standing rule page in any spelling remember would turn into that slug. */
@@ -454,7 +459,7 @@ async function factEntity(ctx: OperationContext, factId: string, sourceId: strin
   if (!seen && (!reader || reader.owner)) {
     const access = currentCallerAccess();
     const reach = !reader || await ownerReachesFact(ctx.engine, id, sourceId, { identity: access.identity, satisfied: access.satisfiedRuleIds });
-    const target = reach ? await readForgetTarget(ctx.engine, id, sourceId, false, false) : null;
+    const target = reach ? await readForgetTarget(ctx.engine, id, sourceId, !!reader && !reader.withdraw, false) : null;
     if (target) seen = { entity_slug: target.entity_slug ?? null, own: false };
   }
   if (!seen) throw factNotFound(factId);
@@ -502,13 +507,15 @@ const changedReceipt = (id: string) => opError('rule_transition', `The correctio
  * approved it, and then under the owner's authority, so a write left pending by the approval finishes on the next read.
  */
 async function continueReceipt(ctx: OperationContext, r: CorrectReceipt, probe?: TerminalProbe): Promise<CorrectReceipt> {
-  if (ctx.remote === false) await initializeLocalPersistence(ctx);
-  const host = ctx.remote === false && r.author.owner && r.steps.fact?.state !== 'committed' ? approvedFact(r.fact) : null;
-  if (host && r.principal !== receiptPrincipal(await requestPrincipalForContext(ctx)) && !approvalHolds(r, await readApproval(ctx.engine, r.receipt_id))) {
+  const foreign = await foreignOnHost(ctx, r);
+  if (foreign && r.author.owner) {
+    const fact = r.steps.fact?.state !== 'committed' ? approvedFact(r.fact) : null;
+    const on = fact ? (await readForgetTarget(ctx.engine, Number(fact.id), r.source_id, false, false))?.entity_slug : null;
     const argv = ['gbrain', 'correct', 'resume', r.receipt_id];
-    const bound = approvalDigest(ruleDigest(r.rule), host);
+    const bound = approvalDigest(ruleDigest(r.rule), fact);
     const proof = await confirmOnTerminal({ argv, digest: bound, probe, subject: 'correction',
-      summary: [`Correction ${r.receipt_id}, saved by ${oneLine(r.author.client)}: rule ${ruleIdOf(r.rule.slug)}: ${oneLine(r.rule.text)}`, `Resuming it on this host changes a fact. ${factLine(host)}`] });
+      summary: [`Correction ${r.receipt_id}, saved by ${oneLine(r.author.client)}: rule ${ruleIdOf(r.rule.slug)} (${r.rule.scope}): ${oneLine(r.rule.text)}`,
+        `Resuming it on this host makes the rule active${fact ? ` and changes a fact. ${factLine(fact)} (${on ? `on ${on}` : 'on no entity page'})` : ''}`] });
     if (proof.digest !== bound) throw confirmRequiredError(argv, { reason: 'declined' });
   }
   return withRuleLease(ctx.engine, r.source_id, r.rule.slug, async () => {
@@ -521,9 +528,26 @@ async function continueReceipt(ctx: OperationContext, r: CorrectReceipt, probe?:
       if (done.state === 'committed' || done.state === 'conflicted') await clearApproval(ctx.engine, fresh.receipt_id, approval.proof);
       return done;
     }
+    if (foreign && (fresh.author.owner !== r.author.owner || JSON.stringify(payloadOf(fresh)) !== JSON.stringify(payloadOf(r)))) throw changedReceipt(ruleIdOf(r.rule.slug));
+    if (foreign && !fresh.author.owner && fresh.steps.rule?.state !== 'committed') {
+      const snap = await ctx.engine.readPageSnapshot(fresh.rule.slug, { sourceId: fresh.source_id });
+      const landed = snap && !snap.page.deleted_at ? readRule({ ...snap.page, source_id: fresh.source_id }) : null;
+      if (landed?.receipt !== fresh.receipt_id) return fresh;
+    }
     if (fresh.author.owner) return advance(ctx, fresh, authorOf(ctx).owner, null);
     return advance(ctx, fresh, false, null);
   });
+}
+
+/**
+ * A receipt the brain host continues for another connection, with no owner approval behind it: the host asks at the
+ * terminal before it runs a remote owner's remaining steps, and never writes a member's rule page as itself (it only
+ * records a page the member's own call already wrote).
+ */
+async function foreignOnHost(ctx: OperationContext, r: CorrectReceipt): Promise<boolean> {
+  if (ctx.remote !== false) return false;
+  await initializeLocalPersistence(ctx);
+  return r.principal !== receiptPrincipal(await requestPrincipalForContext(ctx)) && !approvalHolds(r, await readApproval(ctx.engine, r.receipt_id));
 }
 
 const intentOf = (i: CorrectInput) => digestOf([i.rule, i.scope, i.fact_id, i.corrected_fact, i.entity, i.checks, i.source_id]);
@@ -537,15 +561,18 @@ export async function runCorrect(ctx: OperationContext, p: Record<string, unknow
   try {
     await refuseGuestSourceWrite(ctx.engine, input.source_id, () => Promise.resolve(principal), 'correct');
   } catch (e) {
+    if (codeOf(e) !== 'source_writer_restricted' && codeOf(e) !== 'guest_page_immutable') throw e;
     throw opError('correct_guest_refused', `Source ${input.source_id} is a guest source; a guest cannot save standing rules or correct facts there. Nothing was written.`,
       'Tell the user what should be corrected; the brain\'s owner saves the rule.', { detail: codeOf(e) });
   }
   const author = authorOf(ctx);
-  if (currentCallerAccess().audience?.includes('guest')) {
-    throw opError('correct_guest_refused', 'This call acts for a guest, and a guest cannot save standing rules or correct facts. Nothing was written.',
+  const meta = ctx.guestChannels?.requestMeta;
+  if (currentCallerAccess().audience?.includes('guest') || ctx.guestChannels?.header?.trim() || (!!meta && typeof meta === 'object' && Object.hasOwn(meta, 'guest'))) {
+    throw opError('correct_guest_refused', 'This call acts for a guest (an on_behalf_of audience or a guest attribution), and a guest cannot save standing rules or correct facts. Nothing was written.',
       'Tell the user what should be corrected; the brain\'s owner saves the rule.');
   }
-  if (remote && input.scope === 'me' && !author.owner && !author.member) {
+  const ownerSubject = !remote || callerIsOwner();
+  if (remote && input.scope === 'me' && !ownerSubject && !author.member) {
     throw opError('invalid_params', 'A rule with scope me belongs to one member, and this connection acts for no member, so nothing was written.',
       'Pass scope team, or call with a credential bound to one member.');
   }
@@ -570,7 +597,7 @@ export async function runCorrect(ctx: OperationContext, p: Record<string, unknow
   const stored = await readAllReceipts(ctx.engine);
   await underCap(stored);
   await pruneReceipts(ctx.engine, stored);
-  const slug = await chooseSlug(ctx.engine, input.source_id, input.scope, input.rule, receiptId, input.scope === 'me' && !author.owner ? (author.member ?? key) : '');
+  const slug = await chooseSlug(ctx.engine, input.source_id, input.scope, input.rule, receiptId, input.scope === 'me' && !ownerSubject ? (author.member ?? key) : '');
   const fact: ApprovedFact | null = input.fact_id ? { action: input.corrected_fact ? 'replace' : 'withdraw', id: input.fact_id, text: input.corrected_fact } : null;
   const proof = !remote && !terminalAuthorityProblem(opts.probe)
     ? await confirmOnTerminal({ argv: ['gbrain', 'correct'], subject: 'standing rule', digest: approvalDigest(ruleDigest({ slug, scope: input.scope, text: input.rule, corrects: input.corrects, checks: input.checks }), fact), probe: opts.probe,
@@ -581,12 +608,12 @@ export async function runCorrect(ctx: OperationContext, p: Record<string, unknow
   const receipt: CorrectReceipt = {
     receipt_id: receiptId, created_at: new Date().toISOString(), principal: key, intent, author, source_id: input.source_id,
     rule: { slug, scope: input.scope, text: input.rule, corrects: input.corrects, checks: input.checks, attribution: `saved by ${author.client} on ${day}`,
-      ...(input.scope === 'me' ? (author.owner ? { visibility: 'private' as const } : member ? { readable_by: [member] } : { visibility: 'private' as const }) : {}) },
+      ...(input.scope === 'me' ? (ownerSubject ? { visibility: 'private' as const } : member ? { readable_by: [member] } : { visibility: 'private' as const }) : {}) },
     fact: { action: input.fact_id ? (input.corrected_fact ? 'replace' : 'withdraw') : 'none', id: input.fact_id, text: input.corrected_fact, entity, provenance: input.provenance },
     steps: {}, state: 'partial', step: 'rule', confirmed: false,
   };
   const claimed = remote
-    ? await withLease(ctx.engine, `@${key}`, () => opError('rule_busy', 'Another correction from this connection is being saved, so nothing was written.',
+    ? await withLease(ctx.engine, `@${principalKey(principal)}`, () => opError('rule_busy', 'Another correction from this connection is being saved, so nothing was written.',
       'Retry in a few seconds; the other call finishes on its own.'), async () => { await underCap(await readAllReceipts(ctx.engine)); return claimReceipt(ctx.engine, receipt); })
     : await claimReceipt(ctx.engine, receipt);
   if (!claimed) {
@@ -617,7 +644,7 @@ async function ownReceipt(ctx: OperationContext, id: string): Promise<CorrectRec
 export async function correctStatus(ctx: OperationContext, id: string, probe?: TerminalProbe): Promise<Record<string, unknown>> {
   const r = await ownReceipt(ctx, id);
   const approved = (r.state === 'proposed' || r.state === 'partial') && approvalHolds(r, await readApproval(ctx.engine, r.receipt_id));
-  if (r.state === 'pending' || approved) return receiptView(await continueReceipt(ctx, r, probe), ctx.remote !== false);
+  if (approved || (r.state === 'pending' && !(r.author.owner && await foreignOnHost(ctx, r)))) return receiptView(await continueReceipt(ctx, r, probe), ctx.remote !== false);
   if (r.state === 'committed' && !r.confirmed) {
     const c = (await readConfirmations(ctx.engine, [{ source_id: r.source_id, slug: r.rule.slug }])).values().next().value;
     if (c && c.revision === r.steps.activate?.revision) { r.confirmed = true; await saveReceipt(ctx.engine, r); }
