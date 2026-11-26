@@ -243,6 +243,18 @@ describe('team template on a repo-backed brain', () => {
     expect(existsSync(join(root, '.gbrain'))).toBe(false);
   });
 
+  test('a nested index.md that sync imports as a page, a missing folder, or a remote source is refused', async () => {
+    mkdirSync(join(root, 'projects'), { recursive: true });
+    writeFileSync(join(root, 'projects', 'index.md'), page('projects'));
+    expect((await run()).fresh.problems[0]!.detail).toContain('index.md');
+    rmSync(join(root, 'projects'), { recursive: true, force: true });
+    await engine.executeRaw("UPDATE sources SET local_path = $1 WHERE id = 'default'", [join(root, 'gone')]);
+    expect((await run()).fresh.problems.map(p => p.detail).join(' ')).toContain('is missing on this host');
+    await engine.executeRaw("UPDATE sources SET local_path = $1, config = jsonb_build_object('remote_url', 'https://example.com/notes.git') WHERE id = 'default'", [root]);
+    expect((await run()).fresh.problems.map(p => p.detail).join(' ')).toContain('syncs from a remote');
+    await expectNothingWritten();
+  });
+
   test('a repo folder holding files another sync strategy imports (code) is refused too', async () => {
     mkdirSync(join(root, 'src'), { recursive: true });
     writeFileSync(join(root, 'src', 'main.ts'), 'export const x = 1;\n');

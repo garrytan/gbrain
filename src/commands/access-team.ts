@@ -28,7 +28,8 @@
 import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, readdirSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
-import { isSyncable, SYNC_STRATEGIES } from '../core/sync.ts';
+import { isSyncable, readMetafilePagesMode, SYNC_STRATEGIES, type MetafilePagesMode } from '../core/sync.ts';
+import { diskMetafileHeads, metafilePagePredicate } from '../core/sync-metafile-pages.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { opError } from '../core/ops/contract.ts';
 import { hashToken } from '../core/utils.ts';
@@ -137,8 +138,9 @@ function seededFiles(root: string): Map<string, string> {
 }
 
 /** The first file under `root` a sync would import as a page and gbrain did not seed itself, or null. */
-function firstNote(root: string): string | null {
+function firstNote(root: string, mode: MetafilePagesMode): string | null {
   const seeded = seededFiles(root);
+  const metafilePage = metafilePagePredicate(mode, diskMetafileHeads(root));
   const walk = (dir: string): string | null => {
     let names: string[];
     try { names = readdirSync(dir).sort(); } catch { return dir; } // silent-read-ok: a folder it cannot read counts as holding notes (fails closed)
@@ -149,7 +151,7 @@ function firstNote(root: string): string | null {
       if (st.isSymbolicLink()) continue;
       const rel = relative(root, p);
       if (st.isDirectory()) { if (!name.startsWith('.')) { const f = walk(p); if (f) return f; } continue; }
-      if (!SYNC_STRATEGIES.some(strategy => isSyncable(rel, { strategy }))) continue;
+      if (!SYNC_STRATEGIES.some(strategy => isSyncable(rel, { strategy, metafilePage }))) continue;
       if (rel === 'skillpack.json' && seeded.size) continue;
       if (seeded.get(rel) === createHash('sha256').update(readFileSync(p)).digest('hex')) continue;
       return p;
@@ -166,14 +168,17 @@ async function rowCount(engine: BrainEngine, table: string): Promise<number> {
 /** Content checks: pages (soft-deleted too), facts and page history, and files waiting in a source folder. */
 async function contentProblems(engine: BrainEngine): Promise<FreshProblem[]> {
   const out: FreshProblem[] = [];
+  const mode = await readMetafilePagesMode(engine);
   const pages = await rowCount(engine, 'pages');
   if (pages) out.push({ what: 'pages', detail: `the brain holds ${pages} page(s), soft-deleted ones included`, remedy: 'The team template sets up brand-new brains only; create a new brain for the team (a new GBRAIN_HOME), or share this one by hand with gbrain setup and --members instead' });
   for (const t of HISTORY_TABLES) {
     const n = await rowCount(engine, t);
     if (n) out.push({ what: t, detail: `the brain holds ${n} row(s) of ${t.replace(/_/g, ' ')}`, remedy: 'A brain with history is not fresh; create a new brain for the team (a new GBRAIN_HOME)' });
   }
-  for (const s of await engine.executeRaw<{ id: string; local_path: string | null }>('SELECT id, local_path FROM sources ORDER BY id')) {
-    const file = s.local_path && existsSync(s.local_path) ? firstNote(s.local_path) : null;
+  for (const s of await engine.executeRaw<{ id: string; local_path: string | null; config: { remote_url?: unknown } | null }>('SELECT id, local_path, config FROM sources ORDER BY id')) {
+    if (s.config?.remote_url) out.push({ what: `source ${s.id}`, detail: `it syncs from a remote (${String(s.config.remote_url)}), whose notes this host cannot check`, remedy: 'Use a new brain whose sources are empty local folders' });
+    else if (s.local_path && !(existsSync(s.local_path) && lstatSync(s.local_path).isDirectory())) out.push({ what: `source ${s.id}`, detail: `its folder ${s.local_path} is missing on this host, so its notes cannot be checked`, remedy: `Create the folder empty, or point the source at an empty folder (gbrain sources list)` });
+    const file = s.local_path && existsSync(s.local_path) && lstatSync(s.local_path).isDirectory() ? firstNote(s.local_path, mode) : null;
     if (file) out.push({ what: `source ${s.id}`, detail: `its folder ${s.local_path} already holds notes a sync would import (first: ${file})`, remedy: `Point the team brain at an empty folder, or move those files out of ${s.local_path}` });
   }
   return out;

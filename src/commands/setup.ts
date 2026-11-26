@@ -63,7 +63,7 @@ import { claudeUserSettingsPath, type ClaudeHookEvent } from '../core/bootstrap/
 import { readHarnessReceiptState } from '../core/bootstrap/format.ts';
 import { smokeStdioRegistration } from './doctor/checks/harness-wiring.ts';
 import { finishFreshSetupMigrations } from './setup-migrations.ts';
-import { parseTeamRoster, teamBlocked, teamPreflight } from './access-team.ts';
+import { parseTeamRoster, teamBlocked, teamPreflight, teamRules } from './access-team.ts';
 import { loginOwnerId, readServesStatus, sharedStdioHarness, servesAfterLayout, servesApply, servesLines, servesOk, servesPreflight, type EntryBinding, type ServesOutcome, type ServesPlan } from './setup-serves.ts';
 import type { McpSurface } from '../mcp/surface.ts';
 import {
@@ -241,7 +241,7 @@ function parseFlags(args: string[]): SetupFlags | string {
     for (const f of TEAM_REFUSED_FLAGS) if (args.some(a => a.split('=')[0] === f)) return `${f} is not part of --template team, which sets up a brand-new brain for a team (--members, --groups, --owner, --source); nothing was written`;
     if (!['claude-code', 'codex'].includes(positionals[0] ?? '')) return '--template team sets up the brain behind gbrain setup claude-code or codex; nothing was written';
     if (!value('--members')?.trim()) return '--template team needs --members <id,...>, the people on the team besides the owner; nothing was written';
-    try { parseTeamRoster(value('--members'), value('--groups'), value('--owner') ?? loginOwnerId() ?? 'owner'); } catch (e) { return `${(e as Error).message} Nothing was written.`; }
+    try { teamRules(parseTeamRoster(value('--members'), value('--groups'), value('--owner') ?? loginOwnerId() ?? 'owner')); } catch (e) { return `${(e as Error).message} Nothing was written.`; }
   }
   if (args.includes('--groups') && !team) return '--groups names the groups of --template team';
   const serves = value('--serves');

@@ -130,6 +130,7 @@ describe('setup --template team', () => {
     const said = (r: CliResult) => r.stdout + r.stderr;
     expect(said(await setup(b, ['claude-code', '--template', 'team', '--members', ' , ,', '--owner', OWNER, '--yes']))).toContain('at least one person besides the owner');
     expect(said(await setup(b, ['claude-code', '--template', 'team', '--members', 'alice-example', '--groups', 'eng:carol-example', '--owner', OWNER, '--yes']))).toContain('carol-example is not in --members');
+    expect(said(await setup(b, ['claude-code', '--template', 'team', '--members', 'alice..example', '--owner', OWNER, '--yes']))).toContain('is not valid');
     expect(existsSync(join(b.home, '.gbrain'))).toBe(false);
     expect(existsSync(join(b.home, '.claude.json'))).toBe(false);
   }, 120_000);
