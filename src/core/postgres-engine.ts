@@ -505,7 +505,7 @@ export class PostgresEngine implements BrainEngine {
   private preparationRead<T>(fn: (exec: SqlExecutor) => Promise<T>, unbounded?: boolean): Promise<T> {
     try { throwIfRequestAborted(); } catch (error) { return Promise.reject(error); } // a cancelled request reserves no connection and sends no BEGIN, as executeRaw refused it (R2)
     const deadlineAt = this._pageTransaction || unbounded ? undefined : readDeadline();
-    if (deadlineAt === undefined) return fn(refuseWrites(this.autocommitSql));
+    if (deadlineAt === undefined) return fn(refuseWrites(refuseAborted(this.autocommitSql))); // before every statement, as executeRaw refused an aborted request
     return runDeadlineRead(this.sql, deadlineAt, tx => fn(refuseWrites(refuseAborted(this.engineSqlOn(tx)))), this.checkoutGauge, cancelSettleMs(), readDeadlineSignal());
   }
 
