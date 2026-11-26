@@ -10437,6 +10437,7 @@
         "listWaitingChildJobIds": "none",
         "listWakeCrons": "none",
         "listWakeWatches": "none",
+        "listWalkChunkRows": "none",
         "listWantedPages": "none",
         "listWaveAppliedTakeIds": "none",
         "listWithdrawalChunks": "none",

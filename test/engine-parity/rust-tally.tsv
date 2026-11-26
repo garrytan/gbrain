@@ -416,7 +416,7 @@ test/engine-parity/trust-tier-reads.test.ts	27	0
 test/engine-parity/trust-withdrawals.test.ts	8	0
 test/engine-parity/trust-write-gate.test.ts	5	1
 test/engine-parity/twin-merge-rows.test.ts	3	0
-test/engine-parity/two-pass-symbol-order.test.ts	1	0
+test/engine-parity/two-pass-symbol-order.test.ts	3	0
 test/engine-parity/typed-config-reads.test.ts	3	0
 test/engine-parity/unbound-claim.test.ts	0	3
 test/engine-parity/unowned-refusal-sites.test.ts	4	0
