@@ -3,6 +3,7 @@ import { isMissingSchemaObject } from '../utils.ts';
 import { MOVE_WITHDRAWAL_SUBJECT_SQL } from '../facts/withdrawal-schema.ts';
 import { dropRekeyDuplicates } from '../facts/ontology-rekey.ts';
 import { carryHoldsToPage } from '../write-gate-binding.ts';
+import { withTrustKeep } from '../persistence/context.ts';
 
 /**
  * Record `old -> new` in slug_aliases when a page is renamed, inside the
@@ -89,14 +90,20 @@ export async function recordSlugLineAlias(tx: Pick<BrainEngine, 'transaction'>, 
  * already holds is dropped before its key moves (B-10, dropRekeyDuplicates).
  * A brain whose schema predates the facts or alias tables skips them inside a
  * savepoint.
+ * #10003: the move re-keys facts and authors no text, so every fact it moves keeps its stored trust tier (the tier
+ * trigger counts entity_slug and source_markdown_slug as content), whoever calls it.
  */
 export async function moveSlugBindings(
-  tx: Pick<BrainEngine, 'transaction' | 'executeRaw'>,
+  tx: Pick<BrainEngine, 'transaction' | 'executeRaw' | 'readTransactionSettings' | 'applyTransactionSettings'>,
   sourceId: string,
   oldSlug: string,
   newSlug: string,
 ): Promise<void> {
   if (oldSlug === newSlug) return;
+  await withTrustKeep(tx, ['facts'], () => moveBindings(tx, sourceId, oldSlug, newSlug));
+}
+
+async function moveBindings(tx: Pick<BrainEngine, 'transaction' | 'executeRaw'>, sourceId: string, oldSlug: string, newSlug: string): Promise<void> {
   await tx.executeRaw(MOVE_WITHDRAWAL_SUBJECT_SQL, [sourceId, oldSlug, newSlug]);
   type Savepoint = Pick<BrainEngine, 'executeRaw'>;
   const sql = (text: string) => (savepoint: Savepoint) => savepoint.executeRaw(text, [sourceId, oldSlug, newSlug]);
