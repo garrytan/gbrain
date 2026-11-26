@@ -61,6 +61,7 @@ import {
 import { GbrainioGmailReader } from './gbrainio-gmail.ts';
 import { applyTierFrontmatter, classifyThreadTier, entryHash, isPrivateThread, parsePrivateSenders, type IngestTier, type PrivateSenders } from './ingest-tiers.ts';
 import { renderThreadPage, threadRelPath } from './google-render.ts';
+import { gmailRedactionOn, redactThreadBodies } from './gmail-redact.ts';
 import { slugifyPath } from '../sync.ts';
 import {
   ALL_GOOGLE_SERVICES,
@@ -210,9 +211,10 @@ async function processThread(
   seen: { thread?: GmailThreadData; tier?: IngestTier; slug?: string | null } = {},
   cutoffMs?: number,
 ): Promise<GmailThreadData | null> {
-  const thread = await gmail.getThread(threadId, deps.cfg.account, {
+  const fetched = await gmail.getThread(threadId, deps.cfg.account, {
     ...(deps.opts.signal ? { signal: deps.opts.signal } : {}),
   });
+  const thread = redactThreadBodies(fetched, deps.redactCredentials);
   seen.thread = thread;
   summary.threadsSeen++;
   const newestMs = thread.messages[thread.messages.length - 1]?.internalDateMs ?? 0;
@@ -1049,7 +1051,7 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
   // A configured private-senders list that cannot be read stops the run here, before any page is written.
   const privateSenders = cfg.privateSendersFile ? loadPrivateSenders(cfg.privateSendersFile) : null;
   const deps: GoogleSyncDeps = { engine, sourceId, cfg, opts, entry, myAddresses: await ownerAddressSet(engine, entry, cfg.services.includes('gmail'), log), log, tick, exclusion: NO_EXCLUSION, extractCandidates: [], managed, processedThreads: new Set(),
-    privateSenders };
+    privateSenders, redactCredentials: await gmailRedactionOn(engine) };
 
   const summary: GoogleSyncSummary = {
     status: 'synced',
@@ -1219,7 +1221,7 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
           catchup = await runLoopsCatchup({ engine, sourceId, state, log, signal: opts.signal, myAddresses: myAddressSet(entry),
             exclusion: deps.exclusion, inFlight: new Set(deps.extractCandidates.map(c => c.slug)),
             fetchThread: async (tid) => {
-              try { return await gmail.getThread(tid, cfg.account, opts.signal ? { signal: opts.signal } : {}); }
+              try { return redactThreadBodies(await gmail.getThread(tid, cfg.account, opts.signal ? { signal: opts.signal } : {}), deps.redactCredentials); }
               catch (e) { if (e instanceof GoogleCursorExpiredError && e.status === 404) return null; throw e; }
             } });
         } catch (e) {

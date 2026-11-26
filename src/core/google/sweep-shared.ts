@@ -120,6 +120,8 @@ export interface GoogleSyncDeps {
   graceBackfillSeeded?: boolean;
   /** The source's private-senders list, loaded once per run before any write (ingest-tiers.ts). */
   privateSenders?: PrivateSenders | null;
+  /** #9389: rewrite each fetched Gmail body through gmail-redact.ts before anything reads it (`google.gmail.redact_credentials`). */
+  redactCredentials?: boolean;
 }
 
 export type ActivePack = { page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string> }> } | undefined;
