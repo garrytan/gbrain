@@ -169,6 +169,15 @@ pub(crate) fn seed_token(tx: &mut dyn KvWrite, record: &TokenRecord) -> Result<b
     Ok(true)
 }
 
+/// The shadow follow (`seed/follow.rs`): the id of the stored token that holds `token_hash`, if any. The digest identity of a
+/// token is its id only, so the follow finds the holder of a hash by the hash itself.
+pub(crate) fn token_hash_holder(read: &dyn KvRead, token_hash: &str) -> Result<Option<String>> {
+    Ok(all_tokens(read)?
+        .into_iter()
+        .find(|t| t.token_hash == token_hash)
+        .map(|t| t.id))
+}
+
 /// The shadow follow (`seed/follow/remove_state.rs`): removes the token `id`. `false` when there is none.
 pub(crate) fn remove_token(tx: &mut dyn KvWrite, id: &str) -> Result<bool> {
     if tx.get(&token_key(id))?.is_none() {

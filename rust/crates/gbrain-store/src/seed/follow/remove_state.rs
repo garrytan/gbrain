@@ -1,8 +1,9 @@
 //! The follow spec of the identity, link, purge and token relations.
 //!
 //! `access_tokens` keeps only its id in the digest identity: the token hash is the family's unique key, but the digest
-//! entry never holds it, so a hash is stored once, in the token record. A second token with a stored hash is refused by the
-//! importer (`constraint_violation`) and the batch fails.
+//! entry never holds it, so a hash is stored once, in the token record. The importer refuses a second token with a stored
+//! hash (`constraint_violation`); the follow then finds the holder by the hash (`Apply::held_by`) and, like any holder of a
+//! unique key, removes it with its entry unless the store holds a newer generation of it.
 
 use super::remove_core::need;
 use super::{Follow, Identity, Mode, Replace, number, text};

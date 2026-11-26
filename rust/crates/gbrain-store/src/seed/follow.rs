@@ -735,6 +735,20 @@ impl<'a> Apply<'a> {
         Ok(false)
     }
 
+    /// The identity of the stored row, other than the call's own, that holds a unique key the digest identity does not
+    /// carry. Only `access_tokens` has one: its hash, which stays out of every digest entry.
+    fn held_by(&self, tx: &dyn KvRead, todo: &Todo) -> Result<Option<Identity>> {
+        if self.relation != "access_tokens" {
+            return Ok(None);
+        }
+        let Some(hash) = todo.row.value("token_hash") else {
+            return Ok(None);
+        };
+        Ok(crate::jobs::token_hash_holder(tx, hash)?
+            .filter(|id| todo.fresh.get("id") != Some(id))
+            .map(|id| Identity::from([("id".to_owned(), id)])))
+    }
+
     /// The live entries, other than the call's own, that hold a unique natural key of the row.
     fn holders(
         &mut self,
@@ -742,7 +756,8 @@ impl<'a> Apply<'a> {
         todo: &Todo,
         sorts: &BTreeSet<&[u8]>,
     ) -> Result<Vec<(Vec<u8>, Entry)>> {
-        if self.follow.unique.is_empty() {
+        let held = self.held_by(&*tx, todo)?;
+        if self.follow.unique.is_empty() && held.is_none() {
             return Ok(Vec::new());
         }
         if self.live.is_none() {
@@ -750,12 +765,13 @@ impl<'a> Apply<'a> {
         }
         let unique = self.follow.unique;
         let holds = |entry: &Entry| {
-            unique.iter().any(|set| {
-                set.iter().any(|col| todo.fresh.contains_key(*col))
-                    && set
-                        .iter()
-                        .all(|col| entry.identity.get(*col) == todo.fresh.get(*col))
-            })
+            held.as_ref() == Some(&entry.identity)
+                || unique.iter().any(|set| {
+                    set.iter().any(|col| todo.fresh.contains_key(*col))
+                        && set
+                            .iter()
+                            .all(|col| entry.identity.get(*col) == todo.fresh.get(*col))
+                })
         };
         Ok(self
             .live

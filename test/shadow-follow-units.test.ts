@@ -318,6 +318,14 @@ describe('fingerprint probe v2: per-code-point answers', () => {
     expect(record({})).toMatchObject({ state: 'pass', differing_code_points: [], differing_code_points_total: 0 });
   });
 
+  test('purge tombstones fail the probe while code points differ: they keep only a hash, so a purged claim could be saved again', () => {
+    const meta = { differing_code_points: ['U+1680'], differing_code_points_total: 1, facts_with_differing_code_points: 0 };
+    expect(record({ ...meta, fact_purges_unverifiable: 3 })).toMatchObject({ state: 'fail', fact_purges_unverifiable: 3 });
+    expect(record({ ...meta, fact_purges_unverifiable: 0 })).toMatchObject({ state: 'pass' });
+    // No differing code point: every claim hashes alike, so tombstones are checkable and do not matter.
+    expect(record({ fact_purges_unverifiable: 3 })).toMatchObject({ state: 'pass' });
+  });
+
   test('a corpus row that differs with no differing code point to explain it still fails', () => {
     expect(record({ corpus_mismatches: 2, corpus_mismatch_rows: ['seeded 0001'] })).toMatchObject({ state: 'fail', corpus_mismatches: 2 });
     expect(record({ corpus_mismatches: 2, differing_code_points_total: 3, facts_with_differing_code_points: 0 })).toMatchObject({ state: 'pass' });

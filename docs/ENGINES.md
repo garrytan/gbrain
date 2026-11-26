@@ -2182,7 +2182,7 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   database's `collation`, `ctype`, `locale_provider` (`c` libc, `i` ICU, `b` builtin) and `locale` (`datlocale` on Postgres 17,
   `daticulocale` on 16, `null` where absent), `differing_code_points` (the first 50 as `U+XXXX`) with
   `differing_code_points_total`, `corpus_mismatches` with `corpus_mismatch_rows` (the first five row names, never text) and
-  `facts_with_differing_code_points`. `state` is `fail` when code points differ and at least one stored fact holds one, or when
+  `facts_with_differing_code_points`. When code points differ the probe also counts the primary's `fact_purges` rows (`fact_purges_unverifiable`; a count, never a hash): a tombstone keeps only the claim's hash, so its claim cannot be checked for a differing code point. `state` is `fail` when code points differ and at least one stored fact holds one or any purge tombstone exists, or when
   a corpus row or the fixed corpus differs and no differing code point explains it; otherwise `pass`, and a pass still lists the
   differing code points so a swap report can name them. A probe that errors is `not_run`. A glibc `en_US.utf8` host differs
   (U+0085, U+1680, circled letters and more); a C-ctype host differs on every cased non-ASCII letter, so it fails once a fact

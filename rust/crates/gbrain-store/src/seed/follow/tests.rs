@@ -715,6 +715,95 @@ fn a_changed_membership_and_a_changed_token_replace_their_old_version() {
     );
 }
 
+/// The fixture token of `access_tokens`, with the id and hash a test names.
+fn token_with(id: &str, hash: &str) -> SeedRow {
+    let all = fixtures();
+    let mut token = all.iter().find(|(n, _)| *n == "access_tokens").unwrap().1[0].clone();
+    token.insert("id".into(), Some(id.into()));
+    token.insert("token_hash".into(), Some(hash.into()));
+    token
+}
+
+const OLD_TOKEN: &str = "0a1b2c3d-0000-4000-8000-0000000000f9";
+const NEW_TOKEN: &str = "0a1b2c3d-0000-4000-8000-0000000000a1";
+const MOVED_HASH: &str = "hash-held-by-the-old-id";
+
+fn token_key(sort: u8, id: &str) -> KeyInput {
+    key(sort, &[("id", id)])
+}
+
+fn token_ids(s: &Store) -> Vec<String> {
+    let mut ids: Vec<String> = s
+        .list_access_tokens()
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["id"].as_str().unwrap().to_owned())
+        .collect();
+    ids.sort();
+    ids
+}
+
+#[test]
+fn a_token_hash_that_moves_to_another_id_replaces_the_stale_holder() {
+    // The primary deleted the old id and minted the new one with the same hash. The new id sorts first, so a reconcile
+    // meets it before the old id's interval: the stale holder is removed with its entry, and the pass goes on.
+    let s = stateful_pages();
+    import_with_digests(&s, "access_tokens", &[token_with(OLD_TOKEN, MOVED_HASH)]);
+    let r = s
+        .replace_relation_rows(
+            SEED,
+            "access_tokens",
+            1,
+            &[token_key(0, NEW_TOKEN)],
+            &[token_with(NEW_TOKEN, MOVED_HASH)],
+            &[digv(0, 7)],
+        )
+        .unwrap();
+    assert_eq!((r.upserted, r.displaced), (1, 1));
+    assert_eq!(token_ids(&s), [NEW_TOKEN]);
+    assert_eq!(entries(&s, "access_tokens"), 1);
+    // The old id's interval then finds nothing left to remove.
+    s.replace_relation_rows(
+        SEED,
+        "access_tokens",
+        1,
+        &[token_key(1, OLD_TOKEN)],
+        &[],
+        &[],
+    )
+    .unwrap();
+    assert_eq!(token_ids(&s), [NEW_TOKEN]);
+    assert_eq!(entries(&s, "access_tokens"), 1);
+}
+
+#[test]
+fn a_token_holder_of_a_later_generation_stays_and_the_row_is_skipped() {
+    let s = stateful_pages();
+    s.replace_relation_rows(
+        SEED,
+        "access_tokens",
+        5,
+        &[token_key(2, OLD_TOKEN)],
+        &[token_with(OLD_TOKEN, MOVED_HASH)],
+        &[digv(2, 3)],
+    )
+    .unwrap();
+    let r = s
+        .replace_relation_rows(
+            SEED,
+            "access_tokens",
+            1,
+            &[token_key(1, NEW_TOKEN)],
+            &[token_with(NEW_TOKEN, MOVED_HASH)],
+            &[digv(1, 7)],
+        )
+        .unwrap();
+    assert_eq!((r.upserted, r.skipped_older, r.displaced), (0, 1, 0));
+    assert_eq!(token_ids(&s), [OLD_TOKEN]);
+}
+
 // ---- replaceInterval -------------------------------------------------------------------------
 
 #[test]

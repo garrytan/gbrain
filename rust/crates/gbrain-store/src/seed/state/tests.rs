@@ -647,6 +647,177 @@ fn a_token_with_no_created_at_is_stored_at_time_zero_and_counted() {
     assert_eq!(row["created_at"], iso(0));
 }
 
+// ---- the cases a row can hold that the family keys differently ------------------------------
+
+#[test]
+fn a_membership_of_another_source_for_a_held_page_is_counted_and_the_held_one_stays() {
+    let s = seeded_pages();
+    import(
+        &s,
+        "entity_identities",
+        vec![identity_row("4", "person/alice", "7", "t")],
+    );
+    // The table keeps one membership per (source, page); the store keeps one per page. The second source's row cannot be
+    // stored beside the first, so it is counted (a swap is refused while one exists), never taken for a retried batch.
+    let mut other = identity_row("5", "person/alice-2", "7", "f");
+    other.insert("source_id".into(), Some("wiki".into()));
+    let r = import(&s, "entity_identities", vec![other]);
+    assert_eq!((r.imported, r.skipped, r.dropped), (0, 0, 1));
+    assert_eq!(r.losses.get("entity_identity_other_source"), Some(&1));
+    let listed = s
+        .list_entity_identities(&IdentityFilter::default())
+        .unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0]["entity_id"], "person/alice");
+    // The same row again is still a retry.
+    let again = import(
+        &s,
+        "entity_identities",
+        vec![identity_row("4", "person/alice", "7", "t")],
+    );
+    assert_eq!((again.imported, again.skipped, again.dropped), (0, 1, 0));
+}
+
+#[test]
+fn a_transition_of_another_source_than_its_from_page_is_read_and_removed_under_the_page() {
+    let s = seeded_pages();
+    let mut other = transition_row("5", "start", "2021-04-01", "manual");
+    other.insert("source_id".into(), Some("wiki".into()));
+    let r = import(&s, "link_transitions", vec![other.clone()]);
+    assert_eq!((r.imported, r.dropped), (1, 0));
+    // The evidence read looks under the from page's source, and finds the row.
+    let evidence = existing_rows(&s);
+    let transitions = evidence["transitions"].as_array().unwrap();
+    assert_eq!(transitions.len(), 1, "{evidence}");
+    // The record keeps the row's own source id.
+    let read = s.read().unwrap();
+    let all = crate::link_queries::link_temporal::all_transitions(&*read).unwrap();
+    assert_eq!(all.len(), 1);
+    assert_eq!(all[0].source_id, "wiki");
+    drop(read);
+    // A retry is held, whatever the source.
+    let again = import(&s, "link_transitions", vec![other]);
+    assert_eq!((again.imported, again.skipped), (0, 1));
+    // The follow's removal finds it the same way, and a second removal finds nothing.
+    let removed = |s: &Store| {
+        s.write(|tx| {
+            crate::link_queries::link_temporal::remove_transition(tx, "wiki", (7, 9, "works_at"), 5)
+        })
+        .unwrap()
+    };
+    assert!(removed(&s));
+    assert!(!removed(&s));
+    assert!(
+        existing_rows(&s)["transitions"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn a_token_array_with_a_null_element_keeps_the_text_elements_and_counts_the_nulls() {
+    let s = store();
+    let mut with_null = token_row(TOKEN_A, "agent-key", HASH);
+    with_null.insert("scopes".into(), Some("{read,NULL}".into()));
+    with_null.insert("attest_ops".into(), Some("{NULL,\"NULL\",put_page}".into()));
+    let r = import(&s, "access_tokens", vec![with_null]);
+    assert_eq!((r.imported, r.dropped), (1, 0));
+    assert_eq!(r.losses.get("token_array_null_element"), Some(&2));
+    let stored = s.read_active_access_token_by_hash(HASH).unwrap().unwrap();
+    assert_eq!(stored["scopes"], json!(["read"]));
+    // A quoted "NULL" is the text, not a NULL element.
+    assert_eq!(stored["attest_ops"], json!(["NULL", "put_page"]));
+    // A NULL column stays NULL and an empty array stays empty: they authorize differently.
+    let mut null_column = token_row(TOKEN_B, "old-key", OTHER_HASH);
+    null_column.insert("scopes".into(), None);
+    null_column.insert("takes_holders".into(), Some("{}".into()));
+    let r = import(&s, "access_tokens", vec![null_column]);
+    assert!(r.losses.is_empty(), "{:?}", r.losses);
+    let stored = s
+        .read_active_access_token_by_hash(OTHER_HASH)
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored["scopes"], Value::Null);
+    assert_eq!(stored["takes_holders"], json!([]));
+    // No loss or error names a value of the row.
+    assert!(!format!("{r:?}").contains(OTHER_HASH));
+}
+
+#[test]
+fn a_relationship_with_an_infinite_bound_is_stored_as_the_primary_prints_it() {
+    let s = seeded_pages();
+    let mut open_ended = relationship_row("7", "9", "all");
+    open_ended.insert(
+        "valid_ranges".into(),
+        Some("{[2020-01-01,infinity)}".into()),
+    );
+    let mut from_the_start = relationship_row("7", "9", "world");
+    from_the_start.insert(
+        "valid_ranges".into(),
+        Some("{[-infinity,2020-01-01)}".into()),
+    );
+    let r = import(&s, "link_relationships", vec![open_ended, from_the_start]);
+    assert_eq!((r.imported, r.dropped), (2, 0));
+    let read = s.read().unwrap();
+    let ranges = |scope: &str| {
+        crate::link_queries::link_temporal::relationship(&*read, &relationship_key(), scope)
+            .unwrap()
+            .unwrap()
+            .valid_ranges
+    };
+    assert_eq!(ranges("all"), "{[2020-01-01,infinity)}");
+    assert_eq!(ranges("world"), "{[-infinity,2020-01-01)}");
+}
+
+#[test]
+fn the_purge_tombstones_are_planned_before_the_facts_they_guard() {
+    let plan = crate::seed::plan();
+    let at = |name: &str| {
+        plan.relations
+            .iter()
+            .position(|p| p.relation == name)
+            .unwrap()
+    };
+    assert!(at("fact_purges") > at("sources"));
+    assert!(at("fact_purges") < at("facts"));
+    // A claim the tombstone covers is refused until the tombstone is gone: a reconcile that finds the purge cleared must
+    // remove it before it imports the claim.
+    let s = seeded_pages();
+    import(
+        &s,
+        "fact_purges",
+        vec![purge_row("*", "Alice owes Acme money")],
+    );
+    let fact = row(&[
+        ("id", "501"),
+        ("source_id", "default"),
+        ("entity_slug", "people/alice-example"),
+        ("fact", "Alice owes Acme money"),
+        ("visibility", "world"),
+        ("valid_from", "2026-01-01 00:00:00+00"),
+        ("source", "meeting"),
+        ("created_at", "2026-03-01 00:00:00+00"),
+    ]);
+    let e = s
+        .import_relation(SEED, "facts", vec![fact.clone()])
+        .unwrap_err();
+    assert!(e.message.contains("purged_content"), "{e:?}");
+    assert!(
+        s.write(|tx| crate::facts::purge_ledger::remove_fact_purge(
+            tx,
+            [
+                "default",
+                "world",
+                "*",
+                &crate::facts::fact_fingerprint("Alice owes Acme money"),
+            ],
+        ))
+        .unwrap()
+    );
+    assert_eq!(import(&s, "facts", vec![fact]).imported, 1);
+}
+
 // ---- the plan ------------------------------------------------------------------------------
 
 #[test]

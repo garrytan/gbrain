@@ -1,6 +1,6 @@
 //! Identity, link and access state: entity identity groups, link relationship state and dated transitions, fact purge
 //! tombstones and bearer tokens. Each table has a Rust family on master; the importers store the primary's rows through the
-//! family's own keys.
+//! family's own keys. The tombstones are listed in the core group, before the facts they guard.
 //!
 //! `access_tokens` rows carry `token_hash`, the stored hash of a bearer token. The importer keeps exactly what the family
 //! keeps, never puts a value in a message or a loss, and leaves the hash out of the digest identity.
@@ -10,7 +10,7 @@ use super::{
     Column::{Kept, Unmapped},
     Losses, Outcome, Relation, require_page, require_source,
 };
-use crate::entity_identities::{self, IdentityRecord};
+use crate::entity_identities::{self, IdentityRecord, SeedIdentity};
 use crate::error::{Result, StoreError};
 use crate::jobs::{self, TokenRecord};
 use crate::kv::KvWrite;
@@ -21,7 +21,6 @@ pub(super) const RELATIONS: &[(&str, &Relation)] = &[
     ("entity_identities", &ENTITY_IDENTITIES),
     ("link_relationships", &LINK_RELATIONSHIPS),
     ("link_transitions", &LINK_TRANSITIONS),
-    ("fact_purges", &FACT_PURGES),
     ("access_tokens", &ACCESS_TOKENS),
 ];
 
@@ -66,9 +65,14 @@ fn import_identity(tx: &mut dyn KvWrite, row: &Row, _: &mut Losses) -> Result<Ou
         established_at_us: row.req_ts("established_at")?,
         canonical: row.bool("canonical")?.unwrap_or(false),
     };
-    Ok(stored(entity_identities::seed_identity(
-        tx, page_id, &record,
-    )?))
+    Ok(
+        match entity_identities::seed_identity(tx, page_id, &record)? {
+            SeedIdentity::Stored => Outcome::Imported,
+            SeedIdentity::Held => Outcome::Skipped,
+            // The page's other membership stays; this row is counted, so a swap is refused while it exists.
+            SeedIdentity::OtherSource => Outcome::Dropped("entity_identity_other_source"),
+        },
+    )
 }
 
 // ---- link_relationships --------------------------------------------------------------------
@@ -177,7 +181,7 @@ fn import_transition(tx: &mut dyn KvWrite, row: &Row, _: &mut Losses) -> Result<
 
 // ---- fact_purges ---------------------------------------------------------------------------
 
-static FACT_PURGES: Relation = Relation {
+pub(super) static FACT_PURGES: Relation = Relation {
     key: &["source_id", "visibility", "subject", "fact_hash"],
     columns: &[
         ("source_id", Kept),
@@ -253,17 +257,36 @@ fn import_token(tx: &mut dyn KvWrite, row: &Row, losses: &mut Losses) -> Result<
             0
         }
     };
+    // A `text[]` column may hold NULL elements (`{read,NULL}`), which no value of the family's list can be. They are left
+    // out and counted, so the loss is named; a NULL column stays NULL and an empty array stays empty.
+    let mut array = |col: &str| -> Result<Option<Vec<String>>> {
+        Ok(row.text_array_without_nulls(col)?.map(|(items, nulls)| {
+            (0..nulls).for_each(|_| losses.add("token_array_null_element"));
+            items
+        }))
+    };
+    let (scopes, federated_read, allowed_operations, takes_holders) = (
+        array("scopes")?,
+        array("federated_read")?,
+        array("allowed_operations")?,
+        array("takes_holders")?,
+    );
+    let (may_act_for, attest_ops, attest_sources) = (
+        array("may_act_for")?,
+        array("attest_ops")?,
+        array("attest_sources")?,
+    );
     let record = TokenRecord {
         id: row.req("id")?,
         name: row.req("name")?,
         token_hash: row.req("token_hash")?,
-        scopes: row.text_array("scopes")?,
+        scopes,
         permissions: crate::jsonb::order(need(row, "permissions", row.json("permissions")?)?),
         source_grant: row.text("source_grant"),
         source_id: row.text("source_id"),
-        federated_read: row.text_array("federated_read")?,
-        allowed_operations: row.text_array("allowed_operations")?,
-        takes_holders: row.text_array("takes_holders")?,
+        federated_read,
+        allowed_operations,
+        takes_holders,
         grant_revision: row.i32("grant_revision")?.unwrap_or(0),
         read_shared_revision: row.i32("read_shared_revision")?,
         min_trust: row.text("min_trust"),
@@ -271,10 +294,10 @@ fn import_token(tx: &mut dyn KvWrite, row: &Row, losses: &mut Losses) -> Result<
         created_at,
         last_used_at: row.ts("last_used_at")?,
         member_id: row.text("member_id"),
-        may_act_for: row.text_array("may_act_for")?,
+        may_act_for,
         attest_actor: row.text("attest_actor"),
-        attest_ops: row.text_array("attest_ops")?,
-        attest_sources: row.text_array("attest_sources")?,
+        attest_ops,
+        attest_sources,
         attest_read: row.text("attest_read"),
         reads_unscoped: row.ts("reads_unscoped")?,
         private_pages: row.text_or("private_pages", "none"),
