@@ -300,8 +300,8 @@ Following over a connection (`served/follower-serve.ts`): the server offers capa
 Rust on, on a network connection whose principal is an owner server token, to a client that lists it, on a brain with
 a commit log; a client that does not ask gets the hello it always got, and `follower` is not in the server's default
 cap list. The follower (`followPrimary`) sends `repl_follow { id, cursor }` with `Follower#cursor()`; the primary's send
-loop reads the log after the cursor, sends `repl_records` and waits for each `repl_ack`. When the log cannot continue
-the cursor, or the follower answers `snapshot_required`, it streams a snapshot with at most 64 MiB of chunk bytes past
+loop reads the log after the cursor, sends `repl_records` and waits for each `repl_ack`. When the cursor is null (an
+empty follower), the log cannot continue the cursor, or the follower answers `snapshot_required`, it streams a snapshot with at most 64 MiB of chunk bytes past
 the follower's last `repl_snap_window`. A refusal it cannot get past ends the connection with `refused`. After a drop
 the follower reconnects and sends its cursor again, so nothing is applied twice.
 

@@ -68,6 +68,7 @@ describeAddon('a Rust follower follows its primary over a socket', () => {
   let follower: FollowerHandle;
   let link: FollowerLink | null = null;
   const acks: Ack[] = [];
+  const received: string[] = [];
   const windows: Array<{ unacked: number; waited: boolean }> = [];
   const url = () => `gbrain+tcp://127.0.0.1:${listener.port}`;
   const newest = async () => (await store.brain.readCommitLogRaw(null, 1) as { newest: unknown }).newest;
@@ -128,8 +129,11 @@ describeAddon('a Rust follower follows its primary over a socket', () => {
   });
 
   test('an empty follower gets a whole snapshot in windowed chunks, then later writes, and reaches the primary', async () => {
-    link = await followPrimary({ url: url(), token: OWNER_TOKEN, follower, stagingDir: tmp('f-staging'), onAck: a => acks.push(a) });
+    link = await followPrimary({ url: url(), token: OWNER_TOKEN, follower, stagingDir: tmp('f-staging'), onAck: a => acks.push(a), onFrame: h => received.push(String(h.t)) });
     await until(caughtUp);
+    // An empty follower (null cursor) starts with the snapshot: no records frame it would only refuse.
+    expect(received[0]).toBe('repl_snap_begin');
+    expect(acks[0]).toMatchObject({ seq: 0, ok: true });
     expect(acks.some(a => a.seq === 0 && a.ok === true)).toBe(true);
     expect(windows.length).toBeGreaterThan(0);
     expect(Math.max(...windows.map(w => w.unacked))).toBeLessThanOrEqual(WINDOW);

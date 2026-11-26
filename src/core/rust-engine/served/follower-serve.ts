@@ -116,7 +116,8 @@ export function primaryFollowerSession(ctx: {
     let cursor = from;
     let seq = 0;
     let snapshots = 0;
-    let needSnapshot = false;
+    // An empty follower (no cursor) holds nothing a records frame could continue: start with the snapshot.
+    let needSnapshot = cursor === null;
     while (!closed) {
       if (needSnapshot) {
         needSnapshot = false;
@@ -195,6 +196,8 @@ export interface FollowPrimaryOptions {
   timeoutMs?: number;
   /** Every `repl_ack` the follower sends (tests, monitoring). */
   onAck?(ack: Record<string, unknown>): void;
+  /** Every replication frame the follower receives, before it is applied (tests, monitoring). */
+  onFrame?(header: Record<string, unknown>): void;
   /** Why following stopped for good (a refusal the follower cannot get past). */
   onStop?(error: unknown): void;
 }
@@ -263,6 +266,7 @@ export async function followPrimary(opts: FollowPrimaryOptions): Promise<Followe
             s.destroy();
             return;
           }
+          opts.onFrame?.(header);
           chain = chain.then(async () => {
             const replies = await applierFor(header).onFrame(header, tail);
             for (const reply of replies) {
