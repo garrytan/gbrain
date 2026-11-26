@@ -29,7 +29,8 @@ describe('#10307 schema-pack advisor', () => {
 describe('#10275 fact_bulk_dates', () => {
   test('the diagnosis does not claim same-day dates are load dates', async () => {
     const day = { source_id: 'events', day: '2025-04-10', facts: 200, entities: 20, source_facts: 200, top_sources: [], dated_claims: 0 };
-    const engine = { executeRaw: async () => [day] } as unknown as BrainEngine;
+    // The bulk-day detection is the typed findBulkFactDays member on this trunk (the raw statement on master).
+    const engine = { executeRaw: async () => [day], findBulkFactDays: async () => [day] } as unknown as BrainEngine;
     const check = await factBulkDatesCheck(engine, ['events']);
     expect(check.status).toBe('warn');
     expect(check.message).not.toContain('These dates record when the facts were loaded, not when they happened');

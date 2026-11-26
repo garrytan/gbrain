@@ -207,6 +207,8 @@ for (const kind of testBackends()) {
         get(t, k) {
           if (k === 'executeRaw') return async (sql: string, params?: unknown[]) => { if (match(sql)) throw new Error('simulated read failure'); return t.executeRaw(sql, params as never); };
           if (k === 'getHealth' && match('getHealth')) return async () => { throw new Error('simulated read failure'); };
+          // The archive ledger reads through the typed config members here (they never go through executeRaw), so the failure is named for them too.
+          if (k === 'listConfigKeys' && match('listConfigKeys')) return async () => { throw new Error('simulated read failure'); };
           const v = (t as unknown as Record<PropertyKey, unknown>)[k];
           return typeof v === 'function' ? v.bind(t) : v;
         },
