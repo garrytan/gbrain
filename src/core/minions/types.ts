@@ -868,3 +868,27 @@ export function jobActorSql(first: number, alias?: string): string {
   const audience = `COALESCE(CASE WHEN jsonb_typeof(${actingFor}) = 'array' THEN (SELECT string_agg(DISTINCT e COLLATE "C", ',' ORDER BY e COLLATE "C") FROM jsonb_array_elements_text(${actingFor}) e) WHEN ${actingFor} IS NOT NULL THEN '!' END, '') = $${first + 3}::text`;
   return [...['system', 'external_id', 'member'].map((key, i) => `COALESCE(${grant}->'actor'->>'${key}', '') = $${first + i}::text`), audience].join(' AND ');
 }
+
+/**
+ * GST-4010: the remote caller a fenced job read or control matches (ops/jobs.ts agentOwnerFence). `principal` is the
+ * verifier-derived credential every remote submission records as submission_authority.principal; `clientId` matches the
+ * `__owner_client_id` stamp of agent rows queued before submission authority existed; `actor` is jobActorSql's.
+ */
+export interface JobOwner { principal: { kind: string; id: string } | null; clientId: string | null; actor: JobActor }
+
+/**
+ * SQL: the job belongs to the JobOwner in the seven parameters starting at `$first` (jobOwnerParams). A job with a
+ * recorded principal matches on that principal only, so caller-visible data can never claim a remote job; a job with
+ * none (local or pre-authority rows) matches only its `__owner_client_id` stamp. Either way its actor and audience must
+ * equal the caller's. `alias` is a code-provided table alias.
+ */
+export function jobOwnedSql(first: number, alias?: string): string {
+  const t = alias ? `${alias}.` : '';
+  const principal = `${t}submission_authority->'principal'`;
+  return `((${principal}->>'kind' = $${first}::text AND ${principal}->>'id' = $${first + 1}::text)
+      OR (${principal} IS NULL AND ${t}data->>'__owner_client_id' = $${first + 2}::text)) AND ${jobActorSql(first + 3, alias)}`;
+}
+
+export function jobOwnerParams(owner: JobOwner): unknown[] {
+  return [owner.principal?.kind ?? null, owner.principal?.id ?? null, owner.clientId, ...owner.actor];
+}

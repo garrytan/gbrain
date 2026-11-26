@@ -102,10 +102,13 @@ async function addMember(id: string): Promise<void> {
   await engine.executeRaw("INSERT INTO access_members (id) VALUES ($1) ON CONFLICT (id) DO UPDATE SET disabled_at = NULL, tombstoned_at = NULL", [id]);
 }
 
-async function seedJob(status = 'active'): Promise<number> {
+/** A job owned by `owner` (GST-4010: a remote watcher watches only its own jobs), else unowned; a legacy token owns it by principal. */
+async function seedJob(status = 'active', owner?: string, legacyToken = false): Promise<number> {
+  const authority = legacyToken ? { version: 1, kind: 'remote_generic', principal: { kind: 'legacy_token', id: owner } } : { version: 1, kind: 'application' };
   const rows = await engine.executeRaw<{ id: number }>(
     `INSERT INTO minion_jobs (submission_authority, name, queue, status, data, started_at)
-     VALUES ('{"version":1,"kind":"application"}'::jsonb, 'sync', 'default', $1, '{"__submitter":"cli:test"}'::jsonb, now()) RETURNING id`, [status]);
+     VALUES ($3::text::jsonb, 'sync', 'default', $1, $2::text::jsonb, now()) RETURNING id`,
+    [status, JSON.stringify({ __submitter: 'cli:test', ...(owner && !legacyToken ? { __owner_client_id: owner } : {}) }), JSON.stringify(authority)]);
   return Number(rows[0]!.id);
 }
 
@@ -304,7 +307,7 @@ describe('shared-brain terms', () => {
     await addMember('alice-example');
     await addClient('client-m', 'alice-example');
     writeConfig({ enabled: true, url: fake.url, terms_url: TERMS, privacy_url: PRIVACY });
-    const job = await seedJob();
+    const job = await seedJob('active', 'client-m');
     const step = body(await call('watch_job', { id: job }, client('client-m')));
     expect(step).toMatchObject({ watching: false, agreement_required: true, operator_terms_url: TERMS, operator_privacy_url: PRIVACY,
       wakeshift_connector_terms_url: WAKESHIFT_CONNECTOR_TERMS_URL, wakeshift_privacy_url: WAKESHIFT_PRIVACY_URL,
@@ -325,7 +328,7 @@ describe('shared-brain terms', () => {
 
   test('a watch whose principal never accepted the current terms ends with terms_not_accepted instead of waking', async () => {
     await addClient('client-n');
-    const job = await seedJob();
+    const job = await seedJob('active', 'client-n');
     expect(body(await call('watch_job', { id: job }, client('client-n')))).toMatchObject({ watching: true });
     await addMember('alice-example');
     writeConfig({ enabled: true, url: fake.url, terms_url: TERMS, privacy_url: PRIVACY });
@@ -349,9 +352,9 @@ describe('forget on remove', () => {
     await addMember('alice-example');
     await addClient('client-f', 'alice-example');
     writeConfig({ enabled: true, url: fake.url, terms_url: TERMS, privacy_url: PRIVACY });
-    const step = body(await call('watch_job', { id: await seedJob() }, client('client-f')));
+    const step = body(await call('watch_job', { id: await seedJob('active', 'client-f') }, client('client-f')));
     await call('accept_wakeshift_terms', { terms_version: step.terms_version }, client('client-f'));
-    expect(body(await call('watch_job', { id: await seedJob() }, client('client-f')))).toMatchObject({ watching: true });
+    expect(body(await call('watch_job', { id: await seedJob('active', 'client-f') }, client('client-f')))).toMatchObject({ watching: true });
     const user = paths('/event-subscriptions')[0]!.body.call.user;
     fake.calls.length = 0;
     await removeMember(engine, 'alice-example');
@@ -368,7 +371,7 @@ describe('forget on remove', () => {
     const minted = await mintLegacyToken(engine, { name: 'wake-token', takesHolders: ['world'], scopes: ['read', 'write', 'admin'] });
     const ctx = { remote: true, transport: 'http' as const, sourceId: 'default', config: { engine: 'pglite' }, logger: log,
       auth: { token: 't', clientId: minted.id, principal: { kind: 'legacy_token' as const, id: minted.id }, scopes: ['read', 'write', 'admin'] } };
-    expect(body(await call('watch_job', { id: await seedJob() }, ctx))).toMatchObject({ watching: true });
+    expect(body(await call('watch_job', { id: await seedJob('active', minted.id, true) }, ctx))).toMatchObject({ watching: true });
     writeConfig({ enabled: false, url: fake.url });
     fake.calls.length = 0;
     expect(await revokeLegacyTokenById(sqlQueryForEngine(engine), minted.id)).toBe(true);
@@ -383,7 +386,7 @@ describe('forget on remove', () => {
   test('OAuth client delete: the revoke-client hook ends and queues; a delete the hook never saw is caught at emit time', async () => {
     await addClient('client-d1');
     await addClient('client-d2');
-    const [j1, j2] = [await seedJob(), await seedJob()];
+    const [j1, j2] = [await seedJob('active', 'client-d1'), await seedJob('active', 'client-d2')];
     await call('watch_job', { id: j1 }, client('client-d1'));
     await call('watch_job', { id: j2 }, client('client-d2'));
     await engine.executeRaw("DELETE FROM oauth_clients WHERE client_id = 'client-d1'");
@@ -399,7 +402,7 @@ describe('forget on remove', () => {
 
   test('a forget that cannot be queued leaves the watch open instead of ending it unforgotten', async () => {
     await addClient('client-f2');
-    await call('watch_job', { id: await seedJob() }, client('client-f2'));
+    await call('watch_job', { id: await seedJob('active', 'client-f2') }, client('client-f2'));
     const real = sqlQueryForEngine(engine);
     const failing: typeof real = (strings, ...values) =>
       strings.join('').includes('INSERT INTO wake_forgets') ? Promise.reject(new Error('transient')) : real(strings, ...values);
@@ -411,9 +414,9 @@ describe('forget on remove', () => {
     await addMember('alice-example');
     await addClient('client-r', 'alice-example');
     writeConfig({ enabled: true, url: fake.url, terms_url: TERMS, privacy_url: PRIVACY });
-    const step = body(await call('watch_job', { id: await seedJob() }, client('client-r')));
+    const step = body(await call('watch_job', { id: await seedJob('active', 'client-r') }, client('client-r')));
     await call('accept_wakeshift_terms', { terms_version: step.terms_version }, client('client-r'));
-    expect(body(await call('watch_job', { id: await seedJob() }, client('client-r')))).toMatchObject({ watching: true });
+    expect(body(await call('watch_job', { id: await seedJob('active', 'client-r') }, client('client-r')))).toMatchObject({ watching: true });
     await removeMember(engine, 'alice-example');
     await engine.executeRaw('DELETE FROM wake_forgets');
     expect((await removeMember(engine, 'alice-example')).member.status).toBe('removed');
@@ -425,7 +428,7 @@ describe('forget on remove', () => {
     const minted = await mintLegacyToken(engine, { name: 'wake-token-upper', takesHolders: ['world'], scopes: ['read', 'write', 'admin'] });
     const ctx = { remote: true, transport: 'http' as const, sourceId: 'default', config: { engine: 'pglite' }, logger: log,
       auth: { token: 't', clientId: minted.id, principal: { kind: 'legacy_token' as const, id: minted.id }, scopes: ['read', 'write', 'admin'] } };
-    expect(body(await call('watch_job', { id: await seedJob() }, ctx))).toMatchObject({ watching: true });
+    expect(body(await call('watch_job', { id: await seedJob('active', minted.id, true) }, ctx))).toMatchObject({ watching: true });
     writeConfig({ enabled: false, url: fake.url });
     expect(await revokeLegacyTokenById(sqlQueryForEngine(engine), minted.id.toUpperCase())).toBe(true);
     expect(await engine.executeRaw('SELECT state, last_error FROM wake_subscriptions')).toEqual([{ state: 'ended', last_error: 'principal_revoked' }]);
@@ -439,9 +442,9 @@ describe('forget on remove', () => {
     await addClient('client-m2', 'bob-example');
     writeConfig({ enabled: true, url: fake.url, terms_url: TERMS, privacy_url: PRIVACY });
     for (const c of ['client-m1', 'client-m2']) {
-      const step = body(await call('watch_job', { id: await seedJob() }, client(c)));
+      const step = body(await call('watch_job', { id: await seedJob('active', c) }, client(c)));
       await call('accept_wakeshift_terms', { terms_version: step.terms_version }, client(c));
-      expect(body(await call('watch_job', { id: await seedJob() }, client(c)))).toMatchObject({ watching: true });
+      expect(body(await call('watch_job', { id: await seedJob('active', c) }, client(c)))).toMatchObject({ watching: true });
     }
     await engine.executeRaw("UPDATE access_members SET tombstoned_at = now(), disabled_at = now() WHERE id = 'alice-example'");
     await engine.executeRaw("UPDATE oauth_clients SET deleted_at = now() WHERE client_id = 'client-m2'");
