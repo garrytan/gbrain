@@ -5,6 +5,7 @@
  * `pages unsearchable` (#6696 B3) lists embedding-state rows; its body is pages-unsearchable.ts.
  * `pages ghosts [--source <id>] [--json]` (#6696 B5, pages-ghosts.ts) lists ghost pages, read-only.
  * `pages status <slug...> [--source <id>] [--json]` (#7179, pages-status.ts) says whether each page is searchable and why, read-only.
+ * `pages prune-history` (#9737, pages-prune-history.ts) removes saved versions from pages' history, preview first.
  * Manual escape hatch alongside the autopilot purge phase. Hard-deletes pages
  * whose `deleted_at` is older than the cutoff; cascades to content_chunks,
  * page_links, chunk_relations via existing FKs.
@@ -126,6 +127,17 @@ Subcommands:
                                     Mirror of the autopilot purge phase. On a managed brain a
                                     page whose purge failed ${PURGE_PARK_LIMIT} times is parked;
                                     --retry-parked tries each parked page once more.
+  prune-history <slug> | --prefix <p> | --type <t> | --all [--source <id>]
+        (--keep N | --older-than 72h|30d | --version <id>...) [--json] [--yes --expect <plan_hash>]
+                                    Remove saved versions from pages' history (what get_versions
+                                    returns). --keep keeps each page's newest N; --older-than only
+                                    takes versions saved before then (combines with --keep);
+                                    --version names exact versions of one <slug>. Without --yes it
+                                    previews the pages, counts, dates and plan_hash and changes
+                                    nothing; --yes --expect <plan_hash> applies that exact plan.
+                                    The live page never changes. agent_policy pages, deleted pages
+                                    and segmented versions keep their history. A pruned version
+                                    can't be restored.
   unsearchable --source <id> [--state <state>] [--limit N] [--json]
                                     Read-only: pages search cannot fully see, one row per
                                     page and embedding state (pending, keyword_only,
@@ -158,6 +170,7 @@ export async function runPages(engine: BrainEngine, args: string[]): Promise<voi
     case 'unsearchable': return (await import('./pages-unsearchable.ts')).runPagesUnsearchable(engine, args.slice(1));
     case 'ghosts': return (await import('./pages-ghosts.ts')).runPagesGhosts(engine, args.slice(1));
     case 'status': return (await import('./pages-status.ts')).runPagesStatus(engine, args.slice(1));
+    case 'prune-history': return (await import('./pages-prune-history.ts')).runPruneHistory(engine, args.slice(1));
     case undefined:
       printUsage();
       return;

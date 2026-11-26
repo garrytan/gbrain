@@ -198,6 +198,7 @@ const HELP = `Usage:
   gbrain transcripts status              # found vs imported gap table
   gbrain transcripts recover codex       # restore user turns lost to #5163 (preview; --apply)
   gbrain transcripts audit-secrets       # list imported pages that still carry a credential (read-only)
+  gbrain transcripts accept-fences       # review fence rows on imported transcripts in one pass (preview; --yes --expect)
   gbrain transcripts archive run|backfill|status|adopt-legacy|on|off   # day-sliced conversation archive (on by default on a personal brain, offered on a shared one)
   gbrain transcripts recent [options]
 
@@ -630,6 +631,11 @@ export async function runTranscripts(engine: BrainEngine, args: string[], dispat
     await runTranscriptsAuditSecrets(engine, args.slice(1));
     return;
   }
+  if (sub === 'accept-fences') {
+    const { runTranscriptsAcceptFences } = await import('./transcripts-accept-fences.ts');
+    await runTranscriptsAcceptFences(engine, args.slice(1));
+    return;
+  }
   if (sub === 'archive') {
     const { runTranscriptsArchive } = await import('./transcripts-archive.ts');
     await runTranscriptsArchive(engine, args.slice(1), dispatch);
@@ -643,7 +649,7 @@ export async function runTranscripts(engine: BrainEngine, args: string[], dispat
   if (sub !== 'recent') {
     if (sub !== '--help' && sub !== '-h' && args.includes('--json')) {
       const { exitCliError, usageError } = await import('../cli/cli-error.ts');
-      exitCliError(usageError(sub && !sub.startsWith('-') ? `Unknown transcripts subcommand: ${sub}` : 'gbrain transcripts needs a subcommand: ingest, status, recover, audit-secrets, archive or recent.',
+      exitCliError(usageError(sub && !sub.startsWith('-') ? `Unknown transcripts subcommand: ${sub}` : 'gbrain transcripts needs a subcommand: ingest, status, recover, audit-secrets, accept-fences, archive or recent.',
         'Run `gbrain transcripts recent --json` to list recent transcripts, or `gbrain transcripts --help`.'), 'transcripts', { json: true });
     }
     console.log(HELP);

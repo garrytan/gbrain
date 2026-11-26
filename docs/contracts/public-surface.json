@@ -2297,6 +2297,7 @@
     "loops.extraction_enabled",
     "loops.extraction_exclude_labels",
     "loops.extraction_max_usd_per_day",
+    "loops.owner_addresses",
     "loops.updates_require_reciprocity",
     "maintenance.auto",
     "maintenance.embed_daily_usd",
