@@ -99,6 +99,56 @@ pub trait KvWrite: KvRead + Send {
         let value = decode_i64(self.get(key)?)?;
         Ok((value >= cap).then_some(value))
     }
+
+    /// [`KvWrite::counter_below`] without keeping the commit-time check: a refusal is a recorded read, as
+    /// there; an admission returns the bound the latest committed value must stay at or under for it to
+    /// hold, and the caller hands that bound back with [`KvWrite::add_guard`] when the admission is kept.
+    /// Only an optimistic explicit transaction's statement layers use it (`transactions.rs`): a layer that
+    /// is dropped must leave no check behind. A store that holds its writer needs no check, so the default
+    /// bound is `i64::MAX`.
+    fn counter_check(&mut self, key: &[u8], cap: i64) -> Result<CounterCheck> {
+        let value = decode_i64(self.get(key)?)?;
+        Ok(if value >= cap {
+            CounterCheck::Refused(value)
+        } else {
+            CounterCheck::Admitted { bound: i64::MAX }
+        })
+    }
+
+    /// The commit sequence this write reads at, when it reads from a snapshot (the concurrent store);
+    /// `None` for a write that holds the writer.
+    fn snapshot_sequence(&self) -> Option<u64> {
+        None
+    }
+
+    /// [`KvWrite::snapshot_sequence`], and a dependency on it: the commit is refused when any other
+    /// commit was accepted after this write's snapshot (a value derived from the sequence would be
+    /// stale). `None` for a write that holds the writer (nothing commits meanwhile).
+    fn observe_sequence(&self) -> Option<u64> {
+        None
+    }
+
+    /// Moves a write that has read nothing and written nothing to the latest committed state, keeping
+    /// any keys it queued for. False when the write cannot (it read or wrote, or holds the writer).
+    fn refresh_snapshot(&mut self) -> Result<bool> {
+        Ok(false)
+    }
+
+    /// Keeps a commit-time check from [`KvWrite::counter_check`]: the commit fails with `write_conflict`
+    /// when the latest committed value of `key` is above `bound`. A store that holds its writer ignores it.
+    fn add_guard(&mut self, key: &[u8], bound: i64) -> Result<()> {
+        let _ = (key, bound);
+        Ok(())
+    }
+}
+
+/// What [`KvWrite::counter_check`] decided.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CounterCheck {
+    /// The counter is at or over the cap; the value seen.
+    Refused(i64),
+    /// Under the cap; the commit-time bound to keep with [`KvWrite::add_guard`].
+    Admitted { bound: i64 },
 }
 
 /// The counter under `key` (8-byte little-endian i64, 0 when absent).
@@ -130,6 +180,16 @@ pub trait Kv: Send + Sync {
     ) -> Result<Box<dyn KvWrite>> {
         let _ = keys;
         self.begin_write()
+    }
+    /// [`Kv::begin_write_locked`] with an absolute deadline for the key wait: past it the call ends
+    /// `timeout` (reason `key_wait`) holding no key. `None` waits as `begin_write_locked` does.
+    fn begin_write_locked_until(
+        &self,
+        keys: &std::collections::BTreeSet<Vec<u8>>,
+        deadline: Option<std::time::Instant>,
+    ) -> Result<Box<dyn KvWrite>> {
+        let _ = deadline;
+        self.begin_write_locked(keys)
     }
     /// Begins a write that holds the store's writer until it ends: nothing else commits while it
     /// is open, so it never conflicts and is never run again. An explicit transaction runs on

@@ -201,23 +201,48 @@ impl VectorIndex {
 
 /// One [`VectorIndex`] per store, rebuilt when the vector generation moves. Reads only committed
 /// snapshots (`Store::read`), so a rolled-back write never reaches it. An older snapshot never
-/// replaces a newer index.
+/// replaces a newer index. A build that a [`VectorCache::clear`] overtook is not cached: the clear
+/// moves the epoch, and an index is installed only under the epoch its build started in.
 #[derive(Debug, Default)]
 pub(crate) struct VectorCache {
     slot: Mutex<Option<Arc<VectorIndex>>>,
+    /// Bumped by every `clear`; read before a build and checked, under the slot lock, at install.
+    epoch: std::sync::atomic::AtomicU64,
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Test seam: runs in `VectorCache::index` after the index is built and before it is cached.
+    static AFTER_BUILD: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = std::cell::RefCell::new(None);
+}
+
+fn after_build() {
+    #[cfg(test)]
+    if let Some(hook) = AFTER_BUILD.with(|h| h.borrow_mut().take()) {
+        hook();
+    }
 }
 
 impl VectorCache {
+    /// The cached index, for tests.
+    #[cfg(test)]
+    fn cached(&self) -> Option<Arc<VectorIndex>> {
+        self.slot.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
     /// Drops the cached index. A transaction's store calls it when a savepoint or the transaction
     /// rolls back: the vector generation goes back with the dropped writes, so the next write
     /// would reach a cached generation number again with other vectors.
     pub(crate) fn clear(&self) {
-        *self.slot.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        let mut slot = self.slot.lock().unwrap_or_else(|e| e.into_inner());
+        self.epoch.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        *slot = None;
     }
 
     /// The index of `read`'s snapshot, from the cache when its generation matches.
     pub(crate) fn index(&self, read: &dyn KvRead) -> Result<Arc<VectorIndex>> {
         let generation = vector_generation(read)?;
+        let epoch = self.epoch.load(std::sync::atomic::Ordering::SeqCst);
         {
             let slot = self.slot.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(index) = slot.as_ref().filter(|i| i.generation == generation) {
@@ -225,8 +250,11 @@ impl VectorCache {
             }
         }
         let built = Arc::new(VectorIndex::build(read, generation)?);
+        after_build();
         let mut slot = self.slot.lock().unwrap_or_else(|e| e.into_inner());
-        if slot.as_ref().is_none_or(|i| i.generation < generation) {
+        if self.epoch.load(std::sync::atomic::Ordering::SeqCst) == epoch
+            && slot.as_ref().is_none_or(|i| i.generation < generation)
+        {
             *slot = Some(Arc::clone(&built));
         }
         Ok(built)
@@ -1959,6 +1987,30 @@ mod tests {
                 "people/bob-example#0 0.7071"
             ]
         );
+    }
+
+    /// Second-model review 1.6: a clear (a savepoint or transaction rollback) that lands while a
+    /// search builds an index keeps that index out of the cache: it was built from writes the
+    /// rollback dropped, and the next write reaches the same generation number with other vectors.
+    #[test]
+    fn a_clear_during_a_build_keeps_the_built_index_out_of_the_cache() {
+        let s = corpus();
+        let cache = Arc::new(VectorCache::default());
+        let clearing = cache.clone();
+        AFTER_BUILD.with(|h| *h.borrow_mut() = Some(Box::new(move || clearing.clear())));
+        let built = cache.index(&*s.read().unwrap()).unwrap();
+        assert_eq!(
+            built.chunks.len(),
+            6,
+            "the caller still gets the index it built"
+        );
+        assert!(
+            cache.cached().is_none(),
+            "an index built before a clear was cached"
+        );
+        // With no clear in between, the next build is cached as before.
+        let again = cache.index(&*s.read().unwrap()).unwrap();
+        assert!(Arc::ptr_eq(&again, &cache.cached().unwrap()));
     }
 
     #[test]

@@ -9,7 +9,7 @@
  * it is, so it is refused as before. `parentAuthorityKind` is never called by the store and stays on the client.
  */
 import type { Wire } from './codec.ts';
-import { noDatabase } from '../store-members/jobs.ts';
+import { noDatabase } from '../store-members/common.ts';
 import { refuseMember } from '../store-members/common.ts';
 
 /** The members whose policy carries a `decide` hook. */

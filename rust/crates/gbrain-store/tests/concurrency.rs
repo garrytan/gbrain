@@ -403,6 +403,7 @@ fn optimistic_options(i: usize) -> TxnOptions {
             incarnation: format!("incarnation-{i}"),
             writer_id: format!("writer-{i}"),
         }),
+        ..TxnOptions::default()
     }
 }
 

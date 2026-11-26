@@ -166,6 +166,7 @@ export async function admitKeepDbReconcile(engine: BrainEngine, artifact: KeepDb
     let fenced: { error: unknown } | undefined;
     let paused = false;
     const transaction = <T>(fn: (tx: BrainEngine) => Promise<T>) => engine.transaction(async tx => {
+      fenced = undefined; paused = false; // a rerun after a lost optimistic commit starts clean
       const row = await fn(tx);
       if (!admissionAllows(await readSyncAdmission(tx), 'destructive')) {
         paused = true;

@@ -15,7 +15,7 @@ import type { RustEngine } from '../../rust-engine.ts';
 import { withDates } from '../store-codec.ts';
 import type { StoreBrain } from '../store.ts';
 import { storeErrorCode } from '../store-errors.ts';
-import { refuseMember, storeCall, type StoreMember } from './common.ts';
+import { noDatabase, refuseMember, storeCall, type StoreMember } from './common.ts';
 import type { FenceOpts } from '../../engine-sql/lease-token.ts';
 
 /** The `timestamptz` columns of `minion_jobs`. */
@@ -30,10 +30,6 @@ const jobRow = (row: JobRow | null | undefined): JobRow | null => (row ? withDat
  */
 const keyedRow = (row: JobRow): JobRow => ({ ...jobRow(row)!, legacy_authority_is_null: row.submission_authority == null });
 
-/** A transaction handle for a `decide` callback that must not reach the database: any use refuses. */
-export function noDatabase(member: string): BrainEngine {
-  return new Proxy({}, { get: () => refuseMember(member, 'the coalesce policy read the database') }) as BrainEngine;
-}
 
 /** Store rejections of admitJob that PGLite raises as other errors. */
 function admitError(error: unknown, spec: AdmitJobSpec): unknown {

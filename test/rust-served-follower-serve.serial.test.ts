@@ -132,8 +132,10 @@ describeAddon('a Rust follower follows its primary over a socket', () => {
 
   test('a client that does not ask to follow gets the hello it always got', async () => {
     const c = await connectServed(url(), { token: OWNER_TOKEN });
-    // Every v3 cap but `txn`, which needs optimistic transactions (lane L1) or the test sub-switch; never `follower`.
-    try { expect([...c.caps].sort()).toEqual(SERVED_SERVER_CAPS.filter(cap => cap !== 'txn').sort()); } finally { c.close(); }
+    // Every v3 cap; `txn` only when the brain runs optimistic transactions (it reports multi_writer, lane L1) or the
+    // test sub-switch is on; never `follower`.
+    const txn = primary.capabilities?.has('multi_writer' as never) === true;
+    try { expect([...c.caps].sort()).toEqual(SERVED_SERVER_CAPS.filter(cap => cap !== 'txn' || txn).sort()); } finally { c.close(); }
   });
 
   test('an empty follower gets a whole snapshot in windowed chunks, then later writes, and reaches the primary', async () => {

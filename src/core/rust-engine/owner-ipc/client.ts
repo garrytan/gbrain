@@ -124,7 +124,7 @@ function lastKey(path: string): string {
   return at === -1 ? path : path.slice(at + 1).replace(/\]$/, '');
 }
 
-function callDeadline(): { deadlineAt?: number; readDeadlineAt?: number } {
+export function callDeadline(): { deadlineAt?: number; readDeadlineAt?: number } {
   const read = readDeadline();
   const statement = currentStatementDeadline()?.deadlineAt ?? undefined;
   const candidates = [read, statement].filter((v): v is number => typeof v === 'number' && Number.isFinite(v));

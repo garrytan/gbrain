@@ -150,7 +150,9 @@ export async function runTrustScan(engine: BrainEngine, opts: TrustScanOptions =
       const limit = table === 'pages' ? Math.min(batchSize, 100) : batchSize;
       const rows = (await engine.listTrustScanRows({ table, afterId: after, limit, tiers: SCAN_TIERS })).filter(r => r.id <= until);
       if (rows.length === 0) { cursor.ids[table] = until; await saveCursor(engine, cursor); report.done = true; break; }
+      const flaggedBefore = report.flagged;
       await engine.transaction(async tx => {
+        report.flagged = flaggedBefore; // a rerun after a lost optimistic commit counts its rows once
         for (const row of rows) {
           const assessment = assess(table, row);
           if (assessment.verdict !== 'flag') continue;
