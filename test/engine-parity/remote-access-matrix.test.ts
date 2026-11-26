@@ -25,9 +25,8 @@
  *    OAuth provider as serve --http does, owner set by setOwner and credentials bound by bindCredential). The members are
  *    seeded by addMember (typed). The folder rules go through the real policy path (proposeRevision), which applies on every
  *    arm, the Rust one included (asserted: `applied:applied`). Embeddings are off, so search and query run keyword-only.
- *  - The owner on the Rust arm: the store does not model the owner's lineage read yet, so every remote owner read refuses
- *    by name before any work (ownerLineageRefusal, src/mcp/engine-access-refusal.ts); the owner cases assert that every
- *    cell refused that way and leaked no page or fact, then stop on the pin in test/rust-stop-pins/remote-access.tsv.
+ *  - The owner on the Rust arm: the store serves the owner's lineage read (storePageTextPolicy and storePrivacyPolicy send
+ *    it as `ownerRead`), so the owner cases answer as PGLite does on every arm.
  *  - Every page is sealed before the reads (seed drains the projection queue): an unsealed page is left out of keyword
  *    search, and whether the background resealer reached it depends on what ran before on the arm.
  *
@@ -84,39 +83,14 @@ const pageText = (title: string, canary: string, fm: readonly string[]) =>
 /** Who reads what, as a literal table (engine-independent). A page not in a caller's list is hidden from it on every tool. */
 const CALLERS = ['unbound-http', 'bob-http', 'owner-http', 'unbound-stdio', 'bob-stdio', 'owner-stdio', 'local'] as const;
 /**
- * The owner's remote reads are their own cases: the Rust store does not model the owner's lineage read yet (the origin
- * check and the fact provenance of rust-engine/member-page-withdrawal-owner), so on the Rust arm every owner read must
- * refuse (fail closed) and the case is pinned in test/rust-stop-pins/remote-access.tsv. The other callers must
- * answer exactly as PGLite does.
+ * The owner's remote reads are their own cases (the owner lineage read, GST-2490): on every arm, the Rust one included,
+ * each caller must answer exactly as PGLite does.
  */
 const GROUPS = {
   members: ['unbound-http', 'bob-http', 'unbound-stdio', 'bob-stdio', 'local'],
   owner: ['owner-http', 'owner-stdio'],
 } as const satisfies Record<string, readonly (typeof CALLERS)[number][]>;
 type Group = keyof typeof GROUPS;
-/** On the Rust arm every owner read refuses by name (mcp/engine-access-refusal.ts ownerLineageRefusal) before any work. */
-const OWNER_REFUSAL = "for the brain owner's remote read (the owner lineage read)";
-const ownerUnserved = (group: Group, backend: ParityBackend) => group === 'owner' && backend === 'rust';
-/** The typed refusals the unserved owner cells of the running case answered, in call order. */
-let unservedRefusals: Array<Record<string, unknown>> = [];
-/** An unserved owner cell: refused, and nothing of any page or fact in the answer. */
-function expectUnserved(who: Caller, what: string, cell: Cell): void {
-  const message = String((cell.body as { message?: unknown } | null)?.message ?? '');
-  // recall answers in the memory-verb envelope, whose code for a refused read is `unavailable`; its message names the refusal.
-  const code = cell.error === 'unavailable' && what.startsWith('recall') ? 'engine_capability_missing' : cell.error;
-  expect({ who, what, error: code, named: message.includes(OWNER_REFUSAL), pages: cell.pages, facts: cell.facts })
-    .toEqual({ who, what, error: 'engine_capability_missing', named: true, pages: [], facts: [] });
-  if (cell.error === 'engine_capability_missing') unservedRefusals.push(cell.body as Record<string, unknown>);
-}
-/**
- * After every owner cell of a case was checked on the Rust arm, the case stops on the first typed refusal (rebuilt from
- * its envelope), so the harness classifies it against its row in test/rust-stop-pins/remote-access.tsv.
- */
-function stopOnUnserved(): never {
-  const first = unservedRefusals[0];
-  if (!first) throw new Error('every owner read was expected to refuse with engine_capability_missing on the Rust arm, and none did');
-  throw Object.assign(new Error(String(first.message)), first);
-}
 type Caller = typeof CALLERS[number];
 const VISIBLE: Record<Caller, PageKey[]> = {
   'unbound-http': ['open'],
@@ -259,7 +233,6 @@ describe('engine parity: remote read-access matrix over MCP', () => {
   parityTest(`page reads (${group}): get_page, search, query, list_pages and find_pages show each caller only the pages it may read`, {
     methods: ['getPage', 'searchKeyword', 'listPages', 'readFolderAccess', 'readAccessMembers'],
   }, async (engine, backend) => {
-    unservedRefusals = [];
     const fx = await seed(engine, backend);
     expect(fx.folderRules).toBe('applied:applied');
     const out: Record<string, unknown> = { folderRules: fx.folderRules };
@@ -268,7 +241,6 @@ describe('engine parity: remote read-access matrix over MCP', () => {
       const mine: Record<string, unknown> = {};
       for (const key of KEYS) {
         const cell = await observe(engine, fx, who, 'get_page', { slug: PAGES[key].slug });
-        if (ownerUnserved(group, backend)) { expectUnserved(who, `get_page ${key}`, cell); mine[`get_page ${key}`] = cell.payload; continue; }
         // The open page carries the entity's facts; which of them a caller gets is compared across arms (the owner over
         // stdio gets only the world fact there on PGLite), but a caller never gets one outside its own fact table.
         const facts = cell.facts;
@@ -288,7 +260,6 @@ describe('engine parity: remote read-access matrix over MCP', () => {
       ];
       for (const [label, tool, params, by, inScope] of lists) {
         const cell = await observe(engine, fx, who, tool, params, by);
-        if (ownerUnserved(group, backend)) { expectUnserved(who, label, cell); mine[label] = cell.payload; continue; }
         const retrieval = tool === 'search' || tool === 'query';
         expect(verdict(who, label, cell)).toEqual({
           who, what: label, error: null, pages: inKeyOrder(visible.filter(inScope)), facts: retrieval ? FACTS[who] : [],
@@ -299,14 +270,12 @@ describe('engine parity: remote read-access matrix over MCP', () => {
     }
     // The access read log writes on a timer: flush it, so a refused write lands in the case whose reads it logs.
     await flushAccessReadLog();
-    if (ownerUnserved(group, backend)) stopOnUnserved();
     return out;
   });
 
   parityTest(`edge and fact reads (${group}): get_tags, get_links, get_backlinks, get_timeline and recall show each caller only what it may read`, {
     methods: ['getTags', 'getLinks', 'getBacklinks', 'getTimeline', 'listFactsByEntity', 'listFactsSince'],
   }, async (engine, backend) => {
-    unservedRefusals = [];
     const fx = await seed(engine, backend);
     expect(fx.folderRules).toBe('applied:applied');
     const out: Record<string, unknown> = { folderRules: fx.folderRules };
@@ -326,19 +295,16 @@ describe('engine parity: remote read-access matrix over MCP', () => {
         ];
         for (const [tool, by, pages] of want) {
           const cell = await observe(engine, fx, who, tool, { slug: PAGES[key].slug }, by);
-          if (ownerUnserved(group, backend)) { expectUnserved(who, `${tool} ${key}`, cell); mine[`${tool} ${key}`] = cell.payload; continue; }
           expect(verdict(who, `${tool} ${key}`, cell)).toEqual({ who, what: `${tool} ${key}`, error: null, pages, facts: [] });
           mine[`${tool} ${key}`] = cell.payload;
         }
       }
       // The hub is open and names every page: its edges out reach only the pages the caller reads.
       const hubLinks = await observe(engine, fx, who, 'get_links', { slug: HUB }, 'slug');
-      if (ownerUnserved(group, backend)) expectUnserved(who, 'get_links hub', hubLinks);
-      else expect(verdict(who, 'get_links hub', hubLinks)).toEqual({ who, what: 'get_links hub', error: null, pages: inKeyOrder(visible), facts: [] });
+      expect(verdict(who, 'get_links hub', hubLinks)).toEqual({ who, what: 'get_links hub', error: null, pages: inKeyOrder(visible), facts: [] });
       mine['get_links hub'] = hubLinks.payload;
       for (const params of [{ entity: PAGES.open.slug }, { question: QUERY }, {}]) {
         const cell = await observe(engine, fx, who, 'recall', params);
-        if (ownerUnserved(group, backend)) { expectUnserved(who, `recall ${JSON.stringify(params)}`, cell); mine[`recall ${JSON.stringify(params)}`] = cell.payload; continue; }
         expect(verdict(who, `recall ${JSON.stringify(params)}`, cell)).toEqual({ who, what: `recall ${JSON.stringify(params)}`, error: null, pages: [], facts: FACTS[who] });
         mine[`recall ${JSON.stringify(params)}`] = cell.payload;
       }
@@ -346,7 +312,6 @@ describe('engine parity: remote read-access matrix over MCP', () => {
       if (group === 'owner') {
         for (const key of KEYS) {
           const cell = await observe(engine, fx, who, 'recall', { query: canaryOf(key), limit: 100 });
-          if (ownerUnserved(group, backend)) { expectUnserved(who, `recall query ${key}`, cell); mine[`recall query ${key}`] = cell.payload; continue; }
           expect({ who, what: `recall query ${key}`, error: cell.error, pages: cell.pages }).toEqual({ who, what: `recall query ${key}`, error: null, pages: visible.includes(key) ? [key] : [] });
           expect(cell.facts.every(f => FACTS[who].includes(f))).toBe(true);
           mine[`recall query ${key}`] = cell.payload;
@@ -356,7 +321,6 @@ describe('engine parity: remote read-access matrix over MCP', () => {
     }
     // The access read log writes on a timer: flush it, so a refused write lands in the case whose reads it logs.
     await flushAccessReadLog();
-    if (ownerUnserved(group, backend)) stopOnUnserved();
     return out;
   });
 
@@ -364,7 +328,6 @@ describe('engine parity: remote read-access matrix over MCP', () => {
   parityTest('recall query: the page arm returns only pages the caller may read, the same pages on every engine', {
     methods: ['searchKeyword'],
   }, async (engine, backend) => {
-    unservedRefusals = [];
     const fx = await seed(engine, backend);
     expect(fx.folderRules).toBe('applied:applied');
     const out: Record<string, unknown> = { folderRules: fx.folderRules };
@@ -375,7 +338,6 @@ describe('engine parity: remote read-access matrix over MCP', () => {
       // is cut at a score tie that differs by engine, which says nothing about access.
       for (const key of KEYS) {
         const cell = await observe(engine, fx, who, 'recall', { query: canaryOf(key), limit: 100 });
-        if (ownerUnserved(group, backend)) { expectUnserved(who, `recall query ${key}`, cell); mine[`recall query ${key}`] = cell.payload; continue; }
         // Every page is sealed (seed drains the projection queue), so the canary finds its page exactly when the caller may read it.
         expect({ who, what: `recall query ${key}`, error: cell.error, pages: cell.pages }).toEqual({ who, what: `recall query ${key}`, error: null, pages: visible.includes(key) ? [key] : [] });
         expect(cell.facts.every(f => FACTS[who].includes(f))).toBe(true);
@@ -385,7 +347,6 @@ describe('engine parity: remote read-access matrix over MCP', () => {
     }
     // The access read log writes on a timer: flush it, so a refused write lands in the case whose reads it logs.
     await flushAccessReadLog();
-    if (ownerUnserved(group, backend)) stopOnUnserved();
     return out;
   });
   }

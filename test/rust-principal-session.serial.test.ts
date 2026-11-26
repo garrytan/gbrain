@@ -93,6 +93,8 @@ describe('a multi-user session on a Rust store', () => {
     expect(session.grant.scopes).toContain('write');
     expect(await code(session.admit('getConfig'))).toBe('ok');
     expect(await code(session.admit('setConfig'))).toBe('ok');
+    // Tools by their own scope: the read-write key runs read and write tools; a sources-admin tool needs that scope.
+    for (const [tool, got] of [['get_page', 'ok'], ['put_page', 'ok'], ['sources_add', 'permission_denied']] as const) expect({ tool, got: await code(session.admit(tool)) }).toEqual({ tool, got });
     session.release();
     expect(await code(session.admit('getConfig'))).toBe('permission_denied');
   });
@@ -108,6 +110,10 @@ describe('a multi-user session on a Rust store', () => {
     expect(await code(session.admit('getConfig'))).toBe('ok');
     expect(await code(session.admit('setConfig'))).toBe('permission_denied');
     expect(await code(session.admit('noSuchMember'))).toBe('permission_denied');
+    // A tool call (serve --http passes the operation name) is classified by the operation's own scope: a read tool runs,
+    // a write, sources-admin or unknown tool refuses.
+    for (const tool of ['get_page', 'list_pages', 'search', 'get_tags', 'get_backlinks', 'find_pages']) expect({ tool, got: await code(session.admit(tool)) }).toEqual({ tool, got: 'ok' });
+    for (const tool of ['put_page', 'add_tag', 'sources_add', 'no_such_tool']) expect({ tool, got: await code(session.admit(tool)) }).toEqual({ tool, got: 'permission_denied' });
     session.release();
   });
 
@@ -137,16 +143,13 @@ describe('a multi-user session on a Rust store', () => {
     const addon = { deriveAccessPolicy: (ctx: unknown) => { derived++; return (engine.addon as unknown as { deriveAccessPolicy(c: unknown): unknown }).deriveAccessPolicy(ctx); } };
     const session = await openPrincipalSession(store(), 'secret-owner', addon);
     // The owner's session reads it, even inside the stranger's record, and every policy came from the store.
-    // (A write-class call: an owner's read-only call carries member lineage, which neither the store nor TypeScript
-    // models for a Rust brain yet, so both refuse it; the next lines pin that the two agree.)
-    const seen = await withCallerAccess({ identity: ['member:mallory-example'], hidePrivate: true },
-      () => session.run('readPageHiddenFromCaller', { readOnly: false }, read));
-    expect(seen).toBe(false);
-    expect(derived).toBeGreaterThan(0);
-    const lineage = await session.run('readPageHiddenFromCaller', { readOnly: true }, read).catch(e => e);
-    expect((lineage as { code?: string }).code).toBe('engine_capability_missing');
-    const tsLineage = await withCallerAccess({ identity: ['member:owner-example'], owner: true, lineage: true, hidePrivate: false }, read).catch(e => e);
-    expect((tsLineage as { code?: string }).code).toBe('engine_capability_missing');
+    for (const readOnly of [false, true]) {
+      // A read-only call carries the owner's member lineage, served as the owner read rule.
+      const seen = await withCallerAccess({ identity: ['member:mallory-example'], hidePrivate: true },
+        () => session.run('readPageHiddenFromCaller', { readOnly }, read));
+      expect({ readOnly, seen }).toEqual({ readOnly, seen: false });
+    }
+    expect(derived).toBeGreaterThan(1);
     session.release();
   });
 

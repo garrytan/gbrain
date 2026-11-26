@@ -5,9 +5,9 @@
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: a read with no caller record, an empty record, a remote caller with no member, with a member identity or a
  *    private-readable grant, an unrestricted remote caller, a member with an audience (whose policy text is the member's),
- *    and the local and remote owner are served; a record whose text the store cannot apply (a labelled-only grant, a
- *    lineage read) still refuses with
- *    engine_capability_missing. The owner records are the only ones the owner match added.
+ *    the local and remote owner, and the remote owner's lineage read (the opt-in off, no audience) are served; a record
+ *    whose text the store cannot apply (a labelled-only grant, a member's lineage read, an owner lineage read under the
+ *    opt-in or for an audience) still refuses with engine_capability_missing. The owner records are the only ones the owner match added.
  *  - Regression: an owner record refused for every page and fact read on a Rust brain; a looser match would serve a
  *    record the store cannot apply and widen what that caller reads.
  *  - Why existing coverage misses it: the engine parity files read each served record end to end but never pin the
@@ -34,6 +34,10 @@ const RECORDS: Array<[name: string, record: Record<string, unknown> | null, serv
   ['member with an audience', { ...MEMBER, audience: ['member:bob-example'], audienceIdentities: [['member:bob-example']] }, true],
   ['labelled-only member', { ...MEMBER, labelledOnly: true }, false],
   ['member with a lineage read', { ...MEMBER, lineage: true }, false],
+  // The remote owner's lineage read (GST-2490): served as the owner read rule with the opt-in off and no audience.
+  ['remote owner lineage read', { ...REMOTE, identity: ['member:owner-example'], owner: true, ownerReads: true, lineage: true }, true],
+  ['remote owner lineage read under the opt-in', { ...REMOTE, identity: ['member:owner-example'], owner: true, ownerReads: true, lineage: true, ownerReadsRestricted: true }, false],
+  ['remote owner lineage read for an audience', { ...REMOTE, identity: ['member:owner-example'], owner: true, ownerReads: true, lineage: true, audienceKindMembers: ['bob-example'] }, false],
 ];
 
 function outcome(run: () => unknown, record: Record<string, unknown> | null): 'served' | 'refused' {

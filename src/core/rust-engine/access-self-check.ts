@@ -36,6 +36,7 @@ export type AccessDeriveRequest =
   | { mode: 'access_part_plain' }
   | { mode: 'member_access_policy'; identity?: string[]; satisfied: string[] }
   | { mode: 'row_owner_only' }
+  | { mode: 'owner_reach'; identity: string[]; satisfied: string[] }
   | { mode: 'open_page_floor' }
   | { mode: 'writer_policy'; policy: { identities: string[][]; satisfiedRuleIds: string[]; folderCoverage: Array<{ source_id: string; prefix: string }>; owner: boolean; labelledOnly: boolean } }
   | { mode: 'snapshot_policy'; identity: string[]; privateReadableSources: string[] };
