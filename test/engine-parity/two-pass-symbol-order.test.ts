@@ -184,7 +184,7 @@ describe('two-pass symbol lookups order the same on every engine', () => {
     });
 
   parityTest('structural search returns the same JSON on every engine, and master\'s rows and scores when no lookup passes the limit',
-    { methods: ['putPage', 'sealChunks', 'getChunks', 'addCodeEdges', 'getEdgesByChunk', 'listSymbolChunkIds'] }, async (engine) => {
+    { methods: ['putPage', 'sealChunks', 'getChunks', 'addCodeEdges', 'getEdgesByChunk', 'listSymbolChunkIds', 'listWalkChunkRows'] }, async (engine) => {
       const { ids } = await setup(engine);
       const relabel = ids;
       const base = { sourceId: 'default', expansion: false, useCache: false, limit: 100, excludePrivate: false, queryEmbedFn: () => basisEmbedding(1) };
@@ -216,6 +216,11 @@ describe('two-pass symbol lookups order the same on every engine', () => {
         }
       }
       for (const name of Object.keys(out)) expect(JSON.parse(out[name]!).length).toBeGreaterThan(1);
+      // The hydration read itself: rows in the order of the ids asked, an unknown id skipped.
+      const asked = ['src/targets-03#2', 'src/near-01#0', 'src/small#0'].map(l => [...ids].find(([, v]) => v === l)![0]);
+      const hydrated = await engine.listWalkChunkRows([...asked, 999_999]);
+      expect(hydrated.map(r => `${r.slug}#${r.chunk_index}`)).toEqual(['src/targets-03#2', 'src/near-01#0', 'src/small#0']);
+      out.hydrated = JSON.stringify(hydrated.map(r => ({ ...r, chunk_id: ids.get(r.chunk_id), page_id: r.slug })));
       return out;
     });
 });
