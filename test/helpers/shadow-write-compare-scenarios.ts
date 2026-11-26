@@ -960,6 +960,13 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       expect(verdicts(inbox)).toEqual([['sample', undefined]]);
     }, 60_000);
 
+    test('the swap report names what criterion 5 leaves uncompared, and the warm single-write path is no longer one of them', () => {
+      const detail = row5({}).detail ?? '';
+      expect(detail).toContain(WRITE_COVERAGE_NAMED);
+      expect(WRITE_COVERAGE_NAMED).toContain('chunks, tags, aliases, timeline entries, takes, facts, fact withdrawals, open loops, sources, owner-only marks and the decide store');
+      expect(detail).not.toContain('warm single-write path');
+    });
+
     // The warm single-write lane: a reserved connection's own transaction (Postgres only; PGLite's reserved connection has none).
     const lane = async <T>(wrapped: BrainEngine, run: (tx: BrainEngine) => Promise<T>, opts?: Record<string, unknown>): Promise<T> =>
       (wrapped as any).withReservedConnection((conn: any) => conn.transaction(run, opts));
