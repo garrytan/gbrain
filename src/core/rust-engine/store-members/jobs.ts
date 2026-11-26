@@ -31,7 +31,7 @@ const jobRow = (row: JobRow | null | undefined): JobRow | null => (row ? withDat
 const keyedRow = (row: JobRow): JobRow => ({ ...jobRow(row)!, legacy_authority_is_null: row.submission_authority == null });
 
 /** A transaction handle for a `decide` callback that must not reach the database: any use refuses. */
-function noDatabase(member: string): BrainEngine {
+export function noDatabase(member: string): BrainEngine {
   return new Proxy({}, { get: () => refuseMember(member, 'the coalesce policy read the database') }) as BrainEngine;
 }
 
