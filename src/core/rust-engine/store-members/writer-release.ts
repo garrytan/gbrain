@@ -51,6 +51,9 @@ function rustWriterReleaseStore(brain: StoreBrain): WriterReleaseStore {
     },
     async lockCycleLocks() {
       assertStoreSerializedTransactions(brain, 'writerRelease.lockCycleLocks');
+      // Multi-user mode: the table lock becomes a read of every cycle-lock row, so a lock taken or moved before the
+      // commit refuses it and the release runs again. Single-user mode reads nothing, as before.
+      if (brain.multiuser === true) await call(() => brain.readCycleLocks({ by: 'all' }));
     },
     async shareWorktree(id) {
       assertStoreSerializedTransactions(brain, 'writerRelease.shareWorktree');

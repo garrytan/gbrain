@@ -151,15 +151,17 @@ describe('serialized_transactions in multi-user mode (optimistic explicit transa
     expect((await brainOf(engine)).serializedTransactions).toBe(false);
   });
 
-  withAddon('a skip with no proven multi-user guarantee refuses there, and runs with multi-user mode off', async () => {
+  withAddon('every marked skip is proven, so a multi-user brain runs them; a site with no proof would refuse there', async () => {
     const engine = await openMultiuser();
     const site = 'retireManagedSyncPassSlugMode';
-    expect(provenUnderMultiuser(site)).toBe(false);
+    expect(provenUnderMultiuser(site)).toBe(true);
     const target = { cursorKey: 'k', sourceId: 's', incarnation: null, runId: null, requestId: null } as never;
     const retire = (e: RustEngine) => (e as unknown as { retireManagedSyncPassSlugMode(t: never, l: string): Promise<unknown> }).retireManagedSyncPassSlugMode(target, 'l');
-    expectRefusal(await rejection(() => retire(engine)), site);
-    const off = await open();
-    expect(await retire(off)).toBe(false);
+    expect(await retire(engine)).toBe(false);
+    // A site absent from the proof table refuses on a multi-user store, as every skip did before its proof.
+    expect(provenUnderMultiuser('unprovenSite')).toBe(false);
+    expectRefusal(refusal(() => assertStoreSerializedTransactions({ serializedTransactions: false, multiuser: true } as never, 'unprovenSite')), 'unprovenSite');
+    expect(refusal(() => assertStoreSerializedTransactions({ serializedTransactions: false, multiuser: true } as never, site))).toBeUndefined();
   });
 });
 

@@ -43,6 +43,7 @@ import * as writerAdmin from '../src/core/rust-engine/store-members/writer-admin
 import * as writerRelease from '../src/core/rust-engine/store-members/writer-release.ts';
 import { reserve, reserveGroup, readGroupSpend } from '../src/core/minions/budget-meter.ts';
 import { BudgetExceededError } from '../src/core/spend-log.ts';
+import { lockCycleUnderFence, registerHostLease } from './helpers/rust-host-fence.ts';
 
 const TARGET = detectAddonTarget();
 // GBRAIN_TEST_RUST_ADDON overrides the built file (a build made with the Rust lock-skip rows of the same tree).
@@ -181,7 +182,25 @@ const BESPOKE = {
   },
 } as const;
 
+/** The cycle lock the two cycle-lock guards read, taken by a lease-fenced writer (lane L5, test/helpers/rust-host-fence.ts). */
+const CYCLE_LOCK = 'gbrain-sync:default';
+const RETIRE_TARGET = { cursorKey: 'k', sourceId: 'default', incarnation: null, runId: null, requestId: null } as never;
+
 const CASES: Case[] = [
+  // ------------------------------------------------------------- cycle-lock rows (written only under a host's lease fence)
+  {
+    name: 'cycle-lock rows: a cycle lock taken under a host lease before the commit reruns the cycle-lock guards',
+    sites: ['writerRelease.lockCycleLocks', 'retireManagedSyncPassSlugMode'],
+    // The host registers its lease, so the concurrent writer's cycle-lock acquire carries a fence, as a real host does.
+    setup: (engine) => registerHostLease(engine, 'consumer:lock-skips'),
+    probe: [
+      async (tx) => (await tx.writerReleaseStore()).lockCycleLocks(),
+      (tx) => (tx as unknown as { retireManagedSyncPassSlugMode(t: never, l: string): Promise<boolean> }).retireManagedSyncPassSlugMode(RETIRE_TARGET, CYCLE_LOCK),
+    ],
+    change: (engine) => lockCycleUnderFence(engine, CYCLE_LOCK),
+    // Without the cycle-lock read the same acquire leaves the transaction alone.
+    without: async (tx) => { await tx.getConfig('lock_skips.unrelated'); },
+  },
   // ---------------------------------------------------------------- the source row
   {
     name: 'source row, whole table: a source written before the commit reruns lockAllSourceRows',
@@ -687,6 +706,7 @@ describe('multi-user lock skips: the guarantee that replaces the lock holds with
       ['lockMentionEntries', ['listGazetteerEntryKeys'], (b) => mentionPass.lockMentionEntries(b, 's')],
       ['writerRelease.shareBrain', ['writerReleaseRows'], async (b) => (await store(writerRelease.writerReleaseStore, b)).shareBrain()],
       ['writerRelease.lockWorktreesAndSources', ['writerAdminStateText'], async (b) => (await store(writerRelease.writerReleaseStore, b)).lockWorktreesAndSources()],
+      ['writerRelease.lockCycleLocks', ['readCycleLocks'], async (b) => (await store(writerRelease.writerReleaseStore, b)).lockCycleLocks()],
       ['writerRelease.shareWorktree', ['readWorktreeOwner'], async (b) => (await store(writerRelease.writerReleaseStore, b)).shareWorktree('w')],
       ['writerAdmin.lockBrain', ['writerReleaseRows'], async (b) => (await store(writerAdmin.writerAdminStore, b)).lockBrain()],
       ['worktreeClaimStore', ['writerReleaseRows'], (b) => store(worktreeClaim.worktreeClaimStore, b)],

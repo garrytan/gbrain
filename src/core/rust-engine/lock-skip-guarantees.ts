@@ -57,6 +57,8 @@ export const MULTIUSER_PROVEN: Readonly<Record<string, ProvenLockSkip>> = {
   'worktreeClaim.lockSource': { guarantee: 'read-set', test: 'test/multiuser-lock-skips.serial.test.ts::source row: a source written before the commit reruns the claim and publication source locks' },
   'publicationJournal.lockSource': { guarantee: 'read-set', test: 'test/multiuser-lock-skips.serial.test.ts::source row: a source written before the commit reruns the claim and publication source locks' },
   'writerRelease.configuredSources': { guarantee: 'read-set', test: 'test/multiuser-lock-skips.serial.test.ts::source row: a source written before the commit reruns the claim and publication source locks' },
+  'writerRelease.lockCycleLocks': { guarantee: 'read-set', test: 'test/multiuser-lock-skips.serial.test.ts::cycle-lock rows: a cycle lock taken under a host lease before the commit reruns the cycle-lock guards' },
+  retireManagedSyncPassSlugMode: { guarantee: 'read-set', test: 'test/multiuser-lock-skips.serial.test.ts::cycle-lock rows: a cycle lock taken under a host lease before the commit reruns the cycle-lock guards' },
   'writerRelease.lockWorktreesAndSources': { guarantee: 'read-set', test: 'test/multiuser-lock-skips.serial.test.ts::source row: a source written before the commit reruns the claim and publication source locks' },
   readConfigForUpdate: { guarantee: 'read-set', test: 'test/multiuser-lock-skips.serial.test.ts::config row: a change committed before the commit reruns the config guards' },
   lockAgentWritebackSetting: { guarantee: 'read-set', test: 'test/multiuser-lock-skips.serial.test.ts::config row: a change committed before the commit reruns the config guards' },
