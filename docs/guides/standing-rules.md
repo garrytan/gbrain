@@ -38,7 +38,9 @@ Leave out `fact_id` to save only the rule (for a mistake no stored fact caused).
 ## The receipt
 
 `correct` returns a receipt. Read it again with `gbrain correct status <receipt>` or `correct {"receipt_id": ...}`.
-Only the connection that made a receipt can read it, apart from the brain host.
+Only the connection that made a receipt can read it, apart from the brain host; a shared credential acting for
+different audiences (`on_behalf_of`) keeps each audience's receipts apart. On the brain host,
+`gbrain correct resume <receipt>` asks for a short code before it finishes a fact change another connection started.
 
 | `state` | What it means |
 |---|---|
@@ -58,9 +60,11 @@ a remote connection cannot clear the problem itself).
 
 - **You, at your own terminal** (`gbrain correct` with no agent marker in the environment): you type a short code,
   and the rule is active and loaded by your agents straight away.
-- **Your own agent** (a connection bound to you, or the CLI run by an agent): the rule is active for search at once
+- **Your own agent** (your credential speaking for itself, or the CLI run by an agent): the rule is active for search at once
   and reads as "you told your agent this". It joins the standing-rules section only after you approve that exact
-  revision: `gbrain rules approve <id>@<revision>`. The receipt's `next` names the command.
+  revision: `gbrain rules approve <id>@<revision>`. The receipt's `next` names the command. A call your credential
+  makes for an audience, for an attested person, or through a subagent or slug fence proposes the rule instead, as
+  another member's agent does.
 - **Another member's agent**: the rule stays proposed and the fact unchanged until you approve it. Approving finishes
   the correction: the fact is fixed, then the rule is made active. The approve prompt shows the fact change, the page
   it is on, the entity the rule corrects and whose agents the rule applies to, and the code you type covers all of it.
@@ -70,17 +74,20 @@ a remote connection cannot clear the problem itself).
   twice. That key also records which steps your approval has finished, so the next read skips only those, and a fact
   change the receipt says was already made counts only when the write journal shows that exact change. A receipt that
   changes while you read the prompt, or no longer matches the rule page (its words, its source, or for a `me` rule
-  whose agents it applies to), is refused (`rule_transition`). A correction whose `entity` is a rule page in any
-  spelling (`/rules/...` too), or is not the page the fact is on, is refused (`invalid_params`); a remote caller that
-  cannot read the fact, or the page the fact is about, gets `fact_not_found` instead. One connection can have at most 20 corrections waiting at a time, counted under a
+  whose agents it applies to), is refused (`rule_transition`). A replacement fact is always saved on the page the old
+  fact is on, with or without `entity`. A correction whose `entity` is a rule page in any spelling (`/rules/...` too),
+  is not the page the fact is on, or names a page for a fact on no page, is refused (`invalid_params`); a remote caller
+  that cannot read the fact, or the page the fact is about, gets `fact_not_found` instead. One connection can have at most 20 corrections waiting at a time, counted under a
   lock so calls sent together cannot pass it (`correct_proposals_capped`). A member's `me` rule loads only for that member's
-  agents, never for yours.
-- **Guests** cannot correct anything (`correct_guest_refused`).
+  agents, never for yours; a connection that acts for no member cannot save a `me` rule (`invalid_params`). A team rule
+  a member proposes is readable by every agent of the brain, never only by the member who wrote it.
+- **Guests**, and calls made on behalf of a guest, cannot correct anything (`correct_guest_refused`).
 - Text a tool returned, or something an agent inferred, is refused (`correct_origin_refused`). So is a rule that reads
   like an instruction to override an agent, send data out or handle credentials (`correct_instruction_refused`).
 
 A rule page changes only through `correct` or `gbrain rules`. A remote `put_page` to `rules/...`, or a page
-declaring `type: rule` anywhere else, is refused (`rule_owner_only`). A rule's status moves proposed → active →
+declaring `type: rule` anywhere else, is refused (`rule_owner_only`), and no fact is ever saved onto a rule page, from
+any caller or through a retired page that points at one. A rule's status moves proposed → active →
 retired and never back (`rule_transition`). An edit made on the brain host outside these commands drops the rule
 from the standing-rules section until you approve the new revision. One call at a time changes a given rule: a
 retirement started while an approval runs waits for it (`rule_busy` after 15 seconds), and a correction never
@@ -120,7 +127,7 @@ confirmed), saying why. `gbrain doctor` runs the same check as `rules_regression
 ## Errors
 
 ### correct_guest_refused
-The write source is a guest source. Guests write only guest notes, so tell the user what should be corrected; the
+The write source is a guest source, or the call acts for a guest audience. Guests write only guest notes, so tell the user what should be corrected; the
 brain's owner saves the rule.
 
 ### correct_origin_refused
