@@ -37,7 +37,7 @@ use gbrain_store::persistence::{
     ClaimStamp, ClaimableSpec, EffectClaim, EffectSettle, PublicationEffectsSpec, Settle,
     WriteCompletion, WriteRequestInsert,
 };
-use gbrain_store::{FORMAT_VERSION, OpenOptions, Store, StoreError};
+use gbrain_store::{FORMAT_VERSION, Kv, OpenOptions, Store, StoreError};
 use memory_env::{Brain, brain, brain_in};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -2784,7 +2784,7 @@ fn c22_commit_position_strictly_increases() {
 
 /// C22, commit log, optimistic store, against the commit-log lane's real code (multi-user mode and the log on in the run, asserted):
 /// every transaction commits at its own `CommitPosition` even when a group commit batches several. The pipeline is held with an
-/// exclusive write, eight store writers (each a `submit_page_mutation` with its own request id) and eight raw writes queue behind it,
+/// exclusive write (the test waits on `OccKv::queued_commits` until all sixteen are queued), eight store writers (each a `submit_page_mutation` with its own request id) and eight raw writes queue behind it,
 /// and releasing it lets them go as group commits. The test requires at least one group of two or more, and then checks: every raw
 /// write's returned `(sequence, index)` is a record that holds that write's key; the members of each sequence have indices 0..k each
 /// once; no two commits share a position; every acknowledged request id is in the write ids of exactly one record; commit times
@@ -2792,15 +2792,13 @@ fn c22_commit_position_strictly_increases() {
 #[test]
 fn c22_commit_position_strictly_increases_multi_writer() {
     let dir = TempDir::new("c22m");
-    let brain = mu::open_logged(
+    let (kv, store) = mu::open_logged_occ(
         &dir.path().join("records.redb"),
-        true,
         Arc::new(gbrain_store::SystemEnv),
         mu::TEST_HOST,
     )
     .unwrap_or_else(|e| panic!("{e}"));
-    let store = Arc::new(brain.store);
-    let kv = brain.kv;
+    let store = Arc::new(store);
     let start = store
         .read_commit_log(None, 1)
         .unwrap_or_else(|e| panic!("{e}"))
@@ -2822,7 +2820,16 @@ fn c22_commit_position_strictly_increases_multi_writer() {
         tx.put(&raw_key(i), format!("raw {i}").as_bytes()).unwrap();
         raw_writers.push(thread::spawn(move || (i, tx.commit_position())));
     }
-    thread::sleep(Duration::from_millis(400));
+    // Wait until all sixteen first commits are queued behind the held pipeline, so they go as group commits.
+    let queued_by = Instant::now() + Duration::from_secs(20);
+    while kv.queued_commits() < 16 {
+        assert!(
+            Instant::now() < queued_by,
+            "only {} of 16 commits queued behind the held pipeline",
+            kv.queued_commits()
+        );
+        thread::sleep(Duration::from_millis(5));
+    }
     drop(hold);
     let acked: Vec<String> = store_writers
         .into_iter()

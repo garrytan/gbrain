@@ -33,7 +33,7 @@
 //!     /// Like `OccKv::new`, but starts no pipeline thread: commits queue until `step_pipeline` runs.
 //!     pub fn new_stepped(base: RedbKv) -> Result<OccKv>;
 //!     /// Commit requests queued and not yet taken by a step.
-//!     pub fn queued_commits(&self) -> usize;
+//!     pub fn queued_commits(&self) -> usize; // landed on the trunk with this exact signature (L2); the stub no longer declares it
 //!     /// One iteration of `Pipeline::run`'s loop on the calling thread: takes up to `max_batch` queued commits in
 //!     /// arrival order (an exclusive-write message ends the batch), validates and writes them as one batch, answers
 //!     /// each, and reports what happened. `Ok(None)` when nothing was queued.
@@ -1191,7 +1191,6 @@ mod optimistic_driver {
 
         pub trait StepPipeline: Sized {
             fn new_stepped(base: RedbKv) -> Result<Self, StoreError>;
-            fn queued_commits(&self) -> usize;
             fn step_pipeline(&self, max_batch: usize) -> Result<Option<PipelineStep>, StoreError>;
         }
 
@@ -1205,9 +1204,6 @@ mod optimistic_driver {
         impl StepPipeline for OccKv {
             fn new_stepped(_base: RedbKv) -> Result<Self, StoreError> {
                 Err(pending())
-            }
-            fn queued_commits(&self) -> usize {
-                0
             }
             fn step_pipeline(&self, _max_batch: usize) -> Result<Option<PipelineStep>, StoreError> {
                 Err(pending())

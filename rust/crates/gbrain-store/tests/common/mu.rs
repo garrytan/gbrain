@@ -297,6 +297,20 @@ pub fn open_logged(
     Ok(LoggedBrain { kv, store })
 }
 
+/// `open_logged` on the optimistic store, keeping the concrete `OccKv` so a test can hold its pipeline and watch its queue
+/// (`OccKv::queued_commits`).
+pub fn open_logged_occ(
+    path: &Path,
+    env: Arc<dyn Env>,
+    host_id: &str,
+) -> MuResult<(Arc<OccKv>, Store)> {
+    let occ = Arc::new(OccKv::new(RedbKv::open_path(path)?)?);
+    let kv: Arc<dyn Kv> = occ.clone();
+    let store = Store::open_kv(kv, env, logged_options(true, host_id))?;
+    assert_logged(&store);
+    Ok((occ, store))
+}
+
 /// A closed logged brain that the next open must write to without any caller: `OlderBase` is one whose records are at an older
 /// base format (its upgrade runs at open), `UpkeepOnly` one at the current format whose open-time markers are gone (the
 /// access-flag scan, the keyword index reset and the source-index backfill run at open).
