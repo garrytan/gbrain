@@ -10,8 +10,9 @@
 //! Records:
 //!
 //! - `R 0x07 page_id chunk_index` and `R 0x08 page_id`: the document's whole posting set as the
-//!   last write left it, as `kind(1) len(2) term vlen(2) value` entries. A document left with no
-//!   postings has none: its postings are deleted at once, so a purge leaves no text behind. While it exists, the document's postings and forward record are those of the last
+//!   last write left it, as `kind(1) len(2) term vlen(2) value` entries. Only a write that adds
+//!   terms or changes positions stages one: a write that removes a term the stored postings hold
+//!   writes the postings at once, so a purge leaves no removed text in a live record. While it exists, the document's postings and forward record are those of the last
 //!   fold and every reader takes the pending set instead.
 //! - `R 0x09`: how many pending records exist (an `add_i64` counter, so concurrent writers that
 //!   stage different documents never conflict on it).
@@ -25,13 +26,17 @@
 
 use std::collections::BTreeMap;
 
-use super::index::{Doc, Posting, doc_of, folded_postings, replace_postings};
+use super::index::{Doc, Posting, doc_of, folded_postings, folded_terms, replace_postings};
 use crate::error::{Result, STORE_CORRUPT, StoreError};
 use crate::keys::{self, KW_CHUNK_PENDING, KW_CHUNK_POSTING, KW_PAGE_PENDING};
 use crate::kv::{KvRead, KvWrite, read_i64, scan_prefix};
 
 /// The pending count at which a write folds every pending record.
 pub(crate) const FOLD_AT: i64 = 64;
+
+/// The most postings a document stages; a larger document writes its postings at once, so every
+/// read decodes at most `FOLD_AT` x this many pending postings.
+pub(crate) const STAGE_MAX_POSTINGS: usize = 512;
 
 #[cfg(test)]
 thread_local! {
@@ -90,9 +95,9 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<Vec<Posting>> {
 }
 
 /// Makes `new` the effective postings of the document: writes its pending record unless the
-/// effective postings already are `new`. A document left with no postings (deleted, purged or
-/// emptied) has its postings deleted at once instead, so a purge leaves none of its text in the
-/// record file.
+/// effective postings already are `new`. A document that loses a term its stored postings hold
+/// (an edit, a purge, a delete) has its postings written at once instead and its pending record
+/// dropped, so a purge leaves none of the removed text in a live record.
 pub(super) fn stage(
     w: &mut dyn KvWrite,
     forward: &[u8],
@@ -100,7 +105,17 @@ pub(super) fn stage(
     doc: &[u8],
     new: Vec<Posting>,
 ) -> Result<()> {
-    if new.is_empty() {
+    // A document that loses a term (an edit, a purge, a delete) has its postings written at once,
+    // so no removed text stays in a live record until the next fold; so has a document with more
+    // than `STAGE_MAX_POSTINGS` postings, which bounds what a read decodes. Only additions and
+    // changed positions of a document that size are staged.
+    let folded = folded_terms(&*w, forward)?;
+    let kept: std::collections::BTreeSet<(u8, &[u8])> =
+        new.iter().map(|p| (p.kind, &p.term[..])).collect();
+    if new.is_empty()
+        || new.len() > STAGE_MAX_POSTINGS
+        || folded.iter().any(|(k, t)| !kept.contains(&(*k, &t[..])))
+    {
         replace_postings(w, forward, doc, new)?;
         return drop_pending(w, pending);
     }
@@ -209,7 +224,10 @@ impl Overlay {
         })?;
         let mut docs = BTreeMap::new();
         for (doc, bytes) in raw {
-            docs.insert(doc, decode(&bytes)?);
+            // Sorted by kind and term, so a term lookup is a binary search, not a scan.
+            let mut postings = decode(&bytes)?;
+            postings.sort_by(|a, b| (a.kind, &a.term).cmp(&(b.kind, &b.term)));
+            docs.insert(doc, postings);
         }
         Ok(Overlay { docs })
     }
@@ -232,9 +250,9 @@ impl Overlay {
     ) -> impl Iterator<Item = (Doc, &'a [u8])> + 'a {
         self.docs.iter().filter_map(move |(doc, postings)| {
             postings
-                .iter()
-                .find(|p| p.kind == kind && p.term == term)
-                .map(|p| (*doc, p.value.as_slice()))
+                .binary_search_by(|p| (p.kind, &p.term[..]).cmp(&(kind, term)))
+                .ok()
+                .map(|at| (*doc, postings[at].value.as_slice()))
         })
     }
 
@@ -251,7 +269,7 @@ impl Overlay {
         self.docs.len()
     }
 
-    /// The pending set of `doc`, if any.
+    /// The pending set of `doc`, if any, sorted by kind and term.
     pub(crate) fn get(&self, doc: Doc) -> Option<&[Posting]> {
         self.docs.get(&doc).map(Vec::as_slice)
     }

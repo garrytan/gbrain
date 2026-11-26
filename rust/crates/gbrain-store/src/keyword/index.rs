@@ -144,6 +144,14 @@ fn posting_key(kind: u8, term: &[u8], doc: &[u8]) -> Vec<u8> {
     key
 }
 
+/// The `(kind, term)` pairs the document's forward record lists (the last fold's postings).
+pub(super) fn folded_terms(read: &dyn KvRead, forward: &[u8]) -> Result<BTreeSet<(u8, Vec<u8>)>> {
+    Ok(match read.get(forward)? {
+        Some(bytes) => decode_forward(&bytes).into_iter().collect(),
+        None => BTreeSet::new(),
+    })
+}
+
 /// The document's postings as stored (the last fold's), in its forward record's order, with their
 /// values; a listed posting the store lacks reads as an empty value.
 pub(super) fn folded_postings(

@@ -256,7 +256,9 @@ pub(crate) fn verify(read: &dyn KvRead, max_pages: Option<u64>) -> Result<Keywor
             if !complete_walk && !walked.contains(&doc.0) {
                 continue;
             }
-            if overlay.get(doc) != Some(expected_postings(read, chunk, doc)?.as_slice()) {
+            let mut want = expected_postings(read, chunk, doc)?;
+            want.sort_by(|a, b| (a.kind, &a.term).cmp(&(b.kind, &b.term)));
+            if overlay.get(doc) != Some(want.as_slice()) {
                 changed += 1;
             }
         }

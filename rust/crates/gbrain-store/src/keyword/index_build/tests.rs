@@ -352,3 +352,45 @@ fn a_state_without_the_build_has_nothing_to_do() {
     let read: Box<dyn KvRead> = store.read().unwrap();
     assert!(read_state(&*read).unwrap().is_none());
 }
+
+#[test]
+fn verify_finds_a_wrong_pending_set_and_a_drifted_pending_count() {
+    let kv = mem_kv();
+    let store = open(&kv, false).unwrap();
+    crate::keyword::index::tests::corpus(&store);
+    let read = || store.read().unwrap();
+    let report = super::verify(&*read(), None).unwrap();
+    assert!(report.ok, "{report:?}");
+    // A pending count that no longer matches the records.
+    store
+        .write(|w| w.add_i64(&keys::keyword_pending_count(), 1))
+        .unwrap();
+    let report = super::verify(&*read(), None).unwrap();
+    assert!(!report.ok && report.changed > 0, "{report:?}");
+    store
+        .write(|w| w.add_i64(&keys::keyword_pending_count(), -1))
+        .unwrap();
+    // A pending set that is well formed but not the document's postings.
+    let key = {
+        let mut found = None;
+        crate::kv::scan_prefix(
+            &*read(),
+            &[keys::TRIGRAM, keys::KW_PAGE_PENDING],
+            false,
+            &mut |k, _| {
+                found = Some(k.to_vec());
+                false
+            },
+        )
+        .unwrap();
+        found.expect("the corpus leaves a page pending")
+    };
+    let wrong = crate::keyword::pending::encode(&[crate::keyword::index::Posting {
+        kind: keys::KW_PAGE_POSTING,
+        term: b"notaword".to_vec(),
+        value: vec![0, 1],
+    }]);
+    store.write(|w| w.put(&key, &wrong)).unwrap();
+    let report = super::verify(&*read(), None).unwrap();
+    assert!(!report.ok && report.changed > 0, "{report:?}");
+}

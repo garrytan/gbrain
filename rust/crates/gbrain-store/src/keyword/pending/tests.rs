@@ -161,7 +161,14 @@ fn a_brain_at_each_earlier_format_from_8_opens_at_this_format_with_the_same_answ
         assert!(pending_keys(&store).is_empty(), "from {version}");
         assert!(members(&store) > 0);
         with_fold_at(i64::MAX, || {
-            put(&store, "notes/one", "One", "green pear", "", json!({}));
+            put(
+                &store,
+                "notes/after-upgrade",
+                "After",
+                "green pear",
+                "",
+                json!({}),
+            );
             assert!(!pending_keys(&store).is_empty());
             assert!(members(&store) > 0);
         });
@@ -285,6 +292,165 @@ fn a_deleted_page_leaves_no_keyword_record_behind() {
             "records left for the deleted page: {left:?}"
         );
         drop(read);
+        assert!(members(&store) > 0);
+    });
+}
+
+/// Every page-document keyword record (page posting, title trigram, basename, page forward, page
+/// pending) whose bytes hold `needle`. Chunk records are left out: a purge rewrites a page's
+/// chunks in its own later write (`upsertChunks`), as before this format.
+fn records_holding(store: &Store, needle: &[u8]) -> Vec<Vec<u8>> {
+    let read = store.read().unwrap();
+    let mut out = Vec::new();
+    scan_prefix(&*read, &[keys::TRIGRAM], false, &mut |k, v| {
+        let hit = |b: &[u8]| b.windows(needle.len()).any(|w| w == needle);
+        let page_doc = matches!(
+            k.get(1),
+            Some(
+                &(keys::KW_PAGE_POSTING
+                    | keys::KW_TITLE_TRIGRAM
+                    | keys::KW_BASENAME
+                    | keys::KW_PAGE_FORWARD
+                    | keys::KW_PAGE_PENDING)
+            )
+        );
+        if page_doc && (hit(k) || hit(v)) {
+            out.push(k.to_vec());
+        }
+        true
+    })
+    .unwrap();
+    out
+}
+
+/// A fact purge that rewrites a surviving page's timeline, with fewer records pending than the
+/// fold threshold, leaves no page keyword record holding the purged text.
+#[test]
+fn a_purge_of_part_of_a_page_leaves_no_keyword_record_of_the_purged_text() {
+    let kv = mem_kv();
+    let store = open(&kv).unwrap();
+    with_fold_at(i64::MAX, || {
+        corpus(&store);
+        put(
+            &store,
+            "notes/secret",
+            "Secret",
+            "zebra walrus",
+            "met quokkasecret at noon",
+            json!({}),
+        );
+        store.write(|w| super::fold_all(w)).unwrap();
+        assert!(!records_holding(&store, b"quokkasecret").is_empty());
+        let page = crate::pages::read_page(&*store.read().unwrap(), "default", "notes/secret")
+            .unwrap()
+            .unwrap();
+        store
+            .update_page_body_for_purge(
+                "default",
+                page.id as i64,
+                "zebra walrus",
+                "met at noon",
+                "h",
+            )
+            .unwrap();
+        assert_eq!(
+            records_holding(&store, b"quokkasecret"),
+            Vec::<Vec<u8>>::new(),
+            "a purge left the purged text in a live keyword record"
+        );
+        assert!(members(&store) > 0);
+    });
+}
+
+/// An edit that removes a word writes the postings at once; an edit that only adds words stages.
+#[test]
+fn an_edit_that_removes_a_word_writes_at_once_and_an_addition_stages() {
+    let kv = mem_kv();
+    let store = open(&kv).unwrap();
+    with_fold_at(i64::MAX, || {
+        put(&store, "notes/a", "Alpha", "body", "red apple", json!({}));
+        store.write(|w| super::fold_all(w)).unwrap();
+        assert!(!records_holding(&store, b"red").is_empty());
+        put(
+            &store,
+            "notes/a",
+            "Alpha",
+            "body",
+            "red apple pear",
+            json!({}),
+        );
+        assert!(!pending_keys(&store).is_empty());
+        put(&store, "notes/a", "Alpha", "body", "apple pear", json!({}));
+        assert!(records_holding(&store, b"red").is_empty());
+        assert!(members(&store) > 0);
+    });
+}
+
+/// A wide query over the widest pending set a store can hold (60 pending pages, each past the
+/// staging cap; written here directly) stays a lookup per term. A write never stages a document
+/// above `STAGE_MAX_POSTINGS`, checked below.
+#[test]
+fn a_wide_query_over_wide_pending_documents_is_a_lookup_per_term() {
+    let mut postings: Vec<super::Posting> = (0..5_000)
+        .map(|i| super::Posting {
+            kind: keys::KW_PAGE_POSTING,
+            term: format!("w{i:05}").into_bytes(),
+            value: vec![0, 1],
+        })
+        .collect();
+    postings.reverse();
+    let bytes = encode(&postings);
+    let kv = mem_kv();
+    let store = open(&kv).unwrap();
+    store
+        .write(|w| {
+            for page in 1..=60u64 {
+                w.put(&keys::page_pending(page), &bytes)?;
+            }
+            Ok(())
+        })
+        .unwrap();
+    let start = std::time::Instant::now();
+    let overlay = Overlay::read(&*store.read().unwrap(), false).unwrap();
+    let mut hits = 0;
+    for i in (0..5_000).step_by(20).take(256) {
+        hits += overlay
+            .entries(keys::KW_PAGE_POSTING, format!("w{i:05}").as_bytes())
+            .count();
+    }
+    let lookups = start.elapsed();
+    assert_eq!(hits, 250 * 60);
+    eprintln!("overlay read + 256 lookups over 60 x 5,000 pending postings: {lookups:?}");
+}
+
+#[test]
+fn a_document_past_the_staging_cap_writes_its_postings_at_once() {
+    let kv = mem_kv();
+    let store = open(&kv).unwrap();
+    let timeline: String = (0..(super::STAGE_MAX_POSTINGS + 50))
+        .map(|i| format!("word{i} "))
+        .collect();
+    with_fold_at(i64::MAX, || {
+        put(&store, "notes/wide", "Wide", "body", &timeline, json!({}));
+        assert!(
+            pending_keys(&store)
+                .iter()
+                .all(|k| k[1] != keys::KW_PAGE_PENDING),
+            "a document past the staging cap was staged"
+        );
+        put(
+            &store,
+            "notes/narrow",
+            "Narrow",
+            "body",
+            "word1 word2",
+            json!({}),
+        );
+        assert!(
+            pending_keys(&store)
+                .iter()
+                .any(|k| k[1] == keys::KW_PAGE_PENDING)
+        );
         assert!(members(&store) > 0);
     });
 }
