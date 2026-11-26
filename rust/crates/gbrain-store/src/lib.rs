@@ -188,6 +188,9 @@ pub struct OpenOptions {
     /// brain records the write gate's scan baseline under it, as migration v227 does on the SQL engines;
     /// `None` records it under `DEFAULT_WRITE_GATE_DETECTOR_VERSION`.
     pub write_gate_detector_version: Option<u32>,
+    /// False: the directory must already hold a brain (its `FORMAT` file or its record file); `open_dir` creates
+    /// nothing and refuses with `store_missing` otherwise. True (the default) creates a missing brain, as before.
+    pub create_missing: bool,
 }
 
 impl Default for OpenOptions {
@@ -201,6 +204,7 @@ impl Default for OpenOptions {
             keyword_index_builder: true,
             initial_config: Vec::new(),
             write_gate_detector_version: None,
+            create_missing: true,
         }
     }
 }
@@ -333,6 +337,20 @@ impl Store {
     /// `open_dir` for a build that opens only the formats in `known`: the seam the older-build
     /// tests use (`format::check_version_in`).
     pub(crate) fn open_dir_in(dir: &Path, options: OpenOptions, known: &[u32]) -> Result<Store> {
+        if !options.create_missing
+            && !dir.join(format::FORMAT_FILE).exists()
+            && !dir.join(format::RECORDS_FILE).exists()
+        {
+            return Err(StoreError::new(
+                error::STORE_MISSING,
+                format!(
+                    "{} holds no brain (no {} and no {}); nothing was created",
+                    dir.display(),
+                    format::FORMAT_FILE,
+                    format::RECORDS_FILE
+                ),
+            ));
+        }
         fs::create_dir_all(dir)
             .map_err(|e| StoreError::io(format!("creating {}: {e}", dir.display())))?;
         // FORMAT is judged before the record file is opened: a newer brain is never touched.
@@ -1169,6 +1187,45 @@ mod older_build_tests {
         assert_eq!(kept.unwrap().as_deref(), Some(&b"kept"[..]));
         drop(store);
         let _ = fs::remove_dir_all(dir.parent().unwrap());
+    }
+
+    /// An open that must find its brain refuses an empty or missing directory and creates nothing; the default still
+    /// creates one.
+    #[test]
+    fn an_open_without_create_missing_refuses_a_directory_without_a_brain_and_creates_nothing() {
+        let root = fresh_dir("create-missing");
+        let missing = root.join("gone");
+        let options = || OpenOptions {
+            create_missing: false,
+            keyword_index_builder: false,
+            ..OpenOptions::default()
+        };
+        let err = Store::open_dir(&missing, options()).err().unwrap();
+        assert_eq!(err.code, error::STORE_MISSING);
+        assert!(!missing.exists(), "the refused open created the directory");
+        fs::create_dir_all(&missing).unwrap();
+        assert_eq!(
+            Store::open_dir(&missing, options()).err().unwrap().code,
+            error::STORE_MISSING
+        );
+        assert_eq!(
+            fs::read_dir(&missing).unwrap().count(),
+            0,
+            "the refused open wrote into the folder"
+        );
+        // The default creates it, and then an open that must find it does.
+        drop(
+            Store::open_dir(
+                &missing,
+                OpenOptions {
+                    keyword_index_builder: false,
+                    ..OpenOptions::default()
+                },
+            )
+            .unwrap(),
+        );
+        drop(Store::open_dir(&missing, options()).unwrap());
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

@@ -641,7 +641,9 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
   }
 
   // No live serve owns the selected brain; connect through the normal lock path.
-  const engine = await timeCliPhase('connect', () => connectEngine({ oneShotRead: op.scope === 'read' }));
+  // A read never creates a Rust store (a moved or missing store is refused, src/core/engine-connect.ts); `stats` reads too.
+  const readOnly = op.scope === 'read' || READ_ONLY_COMMANDS.has(command);
+  const engine = await timeCliPhase('connect', () => connectEngine({ oneShotRead: op.scope === 'read', readOnly }));
   // #2084: the teardown contract (bounded drain of every background-work sink,
   // bounded disconnect, computed-deadline backstop) lives in finishCliTeardown
   // — see src/core/cli-force-exit.ts for the full design. The hard-deadline
@@ -2297,7 +2299,8 @@ async function runReadOnlyTimeoutDispatch(command: string, args: string[]): Prom
     const label = `gbrain ${command}`;
     let engine: BrainEngine;
     try {
-      engine = await withTimeout(connectEngine({ oneShotRead: command === 'search' || args[0] === 'list' || args[0] === undefined }), readOnlyTimeoutMs, `${label}: connect`);
+      // Only read-only commands reach this path: a missing or moved Rust store is refused, never created.
+      engine = await withTimeout(connectEngine({ oneShotRead: command === 'search' || args[0] === 'list' || args[0] === undefined, readOnly: true }), readOnlyTimeoutMs, `${label}: connect`);
     } catch (e) {
       if (e instanceof OperationTimeoutError) {
         const hint = userTimeoutMs ? '' : ` (default ${e.ms}ms; pass --timeout=Ns to override)`;
@@ -2522,7 +2525,7 @@ async function connectCliOnlyEngine(command: string, args: string[]): Promise<Br
     // A one-shot `recall` only reads the brain (its --since-last-run cursor is a file); --watch polls for minutes.
     let oneShotRead = false;
     if (command === 'recall') oneShotRead = !args.includes('--watch');
-    engine = await connectEngine({ probeOnly: findCliCommand(command)?.startup === 'observational' || (command === 'jobs' && args[0] === 'supervisor' && args[1] === 'status'), oneShotRead });
+    engine = await connectEngine({ probeOnly: findCliCommand(command)?.startup === 'observational' || (command === 'jobs' && args[0] === 'supervisor' && args[1] === 'status'), oneShotRead, readOnly: oneShotRead || READ_ONLY_COMMANDS.has(command) });
   } catch (serveConnectError) {
     if (command === 'wakeshift' && args[0] === 'emit') return await (await import('../commands/wakeshift.ts')).reportEmitConnectFailure(args.slice(1), serveConnectError, dbMarkerBrainId());
     if (command === 'jobs' && args[0] === 'child-readiness') {
@@ -2669,6 +2672,9 @@ let activeBrainId: string = 'host';
 /** The command main() dispatched; connectEngine's thin-client refusal names it. */
 let dispatchedCommand = '';
 
+/** CLI commands that only read the brain: on a Rust brain whose store is missing or moved they refuse, never create it. */
+const READ_ONLY_COMMANDS: ReadonlySet<string> = new Set(['status', 'stats', 'get', 'search', 'query', 'list']);
+
 /**
  * Connect to a mounted brain (brain axis, non-host). Routes through
  * BrainRegistry so:
@@ -2736,7 +2742,7 @@ async function connectEngine(opts?: EngineConnectOptions): Promise<BrainEngine> 
     refuseThinClient(dispatchedCommand, config.remote_mcp!.mcp_url);
   }
   // The throw-only connect (src/core/engine-connect.ts) behind the CLI's exits.
-  return exitOnRepairFailed(() => connectEngineForServe(ENGINE_CONNECT_HOOKS, opts));
+  return exitOnRepairFailed(() => connectEngineForServe(ENGINE_CONNECT_HOOKS, { ...opts, command: opts?.command ?? (dispatchedCommand || undefined) }));
 }
 
 /** Startup after the probe-only connect: migrations, retired-marker cleanup, DB-plane config merge. Mounts: none. */

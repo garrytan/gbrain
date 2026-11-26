@@ -35,7 +35,7 @@ export async function constructEngine(config: EngineConfig): Promise<BrainEngine
           ? addonMismatch(loaded.reason as Parameters<typeof addonMismatch>[0], loaded.message)
           : addonMissing(loaded.reason as Parameters<typeof addonMissing>[0], loaded.message);
       }
-      return openRustEngine({ addon: loaded.addon, databasePath });
+      return openRustEngine({ addon: loaded.addon, databasePath, ...(config.create_store === false ? { createStore: false } : {}) });
     }
     default:
       throw new Error(

@@ -35,6 +35,8 @@ export type OwnerRole =
 
 export interface ElectOptions extends OwnerServerOptions {
   waitMs?: number;
+  /** False: the store directory must already be there; nothing is created and a missing one throws `brain_missing`. */
+  createStore?: boolean;
   /**
    * Runs once this process holds the owner lock and before its socket serves (the Rust engine opens its store here).
    * It returns the step that undoes it, run before the lock is released when serving fails. When it throws, the lock
@@ -55,10 +57,17 @@ function retryable(error: unknown): boolean {
 export async function electOwner(engine: BrainEngine, databasePath: string, opts: ElectOptions = {}): Promise<OwnerRole> {
   const lockPath = ownerLockPath(databasePath);
   const socketPath = ownerSocketPath(databasePath);
+  const storeDir = canonicalDatabasePath(databasePath);
+  if (opts.createStore === false) {
+    // An existing brain: no folder is made, so a moved store or an unmounted drive is never replaced by an empty one.
+    const { rustStoreGuard } = await import('../../../commands/doctor/missing-brain.ts');
+    const { configPath } = await import('../../config.ts');
+    const verdict = rustStoreGuard(storeDir, configPath(), 'serve', false);
+    if (typeof verdict !== 'string') throw verdict;
+  }
   mkdirSync(dirname(lockPath), { recursive: true });
   // The store directory is private whatever the socket length: a short socket path hardens it to 0700 as the socket's
   // parent, but a long one moves the socket elsewhere, so the store's own files would keep the umask's mode.
-  const storeDir = canonicalDatabasePath(databasePath);
   mkdirSync(storeDir, { recursive: true, mode: 0o700 });
   if (process.platform !== 'win32') chmodSync(storeDir, 0o700);
   const deadline = Date.now() + (opts.waitMs ?? OWNER_ELECTION_WAIT_MS);
@@ -70,7 +79,7 @@ export async function electOwner(engine: BrainEngine, databasePath: string, opts
       try { undo = await opts.onLock?.(); }
       catch (error) { await lock.release(); throw error; }
       try {
-        const { waitMs: _waitMs, onLock: _onLock, ...serverOpts } = opts;
+        const { waitMs: _waitMs, onLock: _onLock, createStore: _createStore, ...serverOpts } = opts;
         const server = await serveOwnerEngine(engine, socketPath, { ...serverOpts, serve: opts.serve ?? processIsServe() });
         if (server) { recordOwnedRustBrain(databasePath, lock); return { role: 'owner', lock, server }; }
         lastError = new Error('The owner socket is claimed by another process.');

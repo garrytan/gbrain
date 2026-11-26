@@ -86,6 +86,12 @@ export interface OpenRustEngineOptions {
   databasePath: string;
   /** How long `connect` waits to become the owner or reach it (owner-ipc/election.ts); tests shorten it. */
   ownerWaitMs?: number;
+  /**
+   * False: the store must already be there (the CLI's connect to an existing brain). Owner election makes no folder,
+   * the store is checked again under the owner lock, and the store's own open creates nothing; a missing store is refused
+   * with `brain_missing`. Unset or true creates a missing store, as an embedded open or a seed does.
+   */
+  createStore?: boolean;
 }
 
 /**
@@ -125,6 +131,14 @@ function isReadMember(member: string): boolean {
 }
 
 /** Builds the Rust engine around an addon the loader has already verified. Nothing is opened or written yet. */
+/** Throws the `brain_missing` refusal when the Rust store at `databasePath` is not there (src/commands/doctor/missing-brain.ts). */
+async function refuseMissingStore(databasePath: string): Promise<void> {
+  const { rustStoreGuard } = await import('../commands/doctor/missing-brain.ts');
+  const { configPath } = await import('./config.ts');
+  const verdict = rustStoreGuard(databasePath, configPath(), 'serve', false);
+  if (typeof verdict !== 'string') throw verdict;
+}
+
 export function openRustEngine(opts: OpenRustEngineOptions): RustEngine {
   return new RustEngine(opts);
 }
@@ -174,7 +188,11 @@ export class RustEngine implements BrainEngine {
     this.addon = opts.addon;
     this.databasePath = opts.databasePath;
     this._ownerWaitMs = opts.ownerWaitMs;
+    this._createStore = opts.createStore !== false;
   }
+
+  /** `OpenRustEngineOptions.createStore`. */
+  private readonly _createStore: boolean;
 
   /** True between `connect()` and `disconnect()`. */
   get connected(): boolean { return this._connected; }
@@ -237,6 +255,7 @@ export class RustEngine implements BrainEngine {
       role = await electOwner(this as unknown as BrainEngine, this.databasePath, {
         wholeOperations: ownerWholeOperations({ config: (this._savedConfig ?? undefined) as GBrainConfig | undefined }),
         ...(this._ownerWaitMs !== undefined ? { waitMs: this._ownerWaitMs } : {}),
+        ...(this._createStore ? {} : { createStore: false }),
         // Holding the owner lock: open the store before the socket serves, so no client call reaches this engine
         // without it. A call this process makes meanwhile waits for the open (`storeFor`), and ends at once when its
         // caller cancels or its deadline passes.
@@ -247,7 +266,10 @@ export class RustEngine implements BrainEngine {
           this._claiming = true;
           let store: RustStore;
           try {
-            store = await openRustStore(this.addon, this.databasePath, await seedEmbeddingIdentity(this));
+            // Holding the owner lock: a store that must be there is checked again, so one moved during the election is
+            // refused, not recreated (the store's open refuses too, `createMissing`).
+            if (!this._createStore) await refuseMissingStore(this.databasePath);
+            store = await openRustStore(this.addon, this.databasePath, await seedEmbeddingIdentity(this), { createMissing: this._createStore });
             if (generation !== this._generation) {
               await store.close().catch(() => undefined);
               throw abandoned();

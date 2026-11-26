@@ -11,7 +11,8 @@
  * status-only serve applies to the host brain alone.
  */
 import type { BrainEngine } from './engine.ts';
-import { isThinClient, loadConfig, toEngineConfig, type GBrainConfig } from './config.ts';
+import { isAbsolute } from 'node:path';
+import { configPath, isThinClient, loadConfig, toEngineConfig, type GBrainConfig } from './config.ts';
 import { buildGatewayConfig } from './ai/build-gateway-config.ts';
 import { opError } from './ops/contract.ts';
 import { openRequestConfigSnapshot, type RequestConfigSnapshot } from './config-snapshot.ts';
@@ -53,6 +54,14 @@ export interface EngineConnectOptions {
    * read writes config, and a migration that ran drops the snapshot's rows, so the read takes fresh ones.
    */
   oneShotRead?: boolean;
+  /**
+   * The command only reads: a Rust brain whose store is missing or moved is refused with `brain_missing` and nothing is
+   * created. Unset, a command may still create a brand-new Rust brain's store, but never replaces one that was there
+   * (`rustStoreGuard`, src/commands/doctor/missing-brain.ts).
+   */
+  readOnly?: boolean;
+  /** The command named in a refusal (`gbrain <command>`). */
+  command?: string;
 }
 
 /** No config on this machine: the classified error with the keyless-init fix. */
@@ -83,10 +92,20 @@ export async function connectEngineForServe(hooks: EngineConnectHooks, opts: Eng
   // The gateway is configured before the connect: initSchema needs the embedding dimensions.
   const { configureGateway } = await import('./ai/gateway.ts');
   configureGateway(buildGatewayConfig(config));
+  // A Rust brain's store is judged before anything opens: a read never creates it, and a write creates it only for a
+  // brain that never had one (a moved or missing store is never quietly replaced by an empty one).
+  let createStore: boolean | undefined;
+  if (config.engine === 'rust' && config.database_path && isAbsolute(config.database_path)) {
+    const { rustStoreGuard } = await import('../commands/doctor/missing-brain.ts');
+    const verdict = rustStoreGuard(config.database_path, configPath(), opts.command ?? 'serve', opts.readOnly !== true);
+    if (typeof verdict !== 'string') throw verdict;
+    createStore = verdict === 'create';
+  }
   const { createEngine } = await import('./engine-factory.ts');
-  const engineConfig = !opts.oneShotRead ? toEngineConfig(config)
-    : config.engine === 'pglite' ? { ...toEngineConfig(config), pglite_shared_buffers: ONE_SHOT_READ_SHARED_BUFFERS }
-    : { ...toEngineConfig(config), ...(process.env.GBRAIN_POOL_SIZE ? {} : { pool_max: ONE_SHOT_READ_POOL_MAX }) };
+  const baseConfig = createStore === undefined ? toEngineConfig(config) : { ...toEngineConfig(config), create_store: createStore };
+  const engineConfig = !opts.oneShotRead ? baseConfig
+    : config.engine === 'pglite' ? { ...baseConfig, pglite_shared_buffers: ONE_SHOT_READ_SHARED_BUFFERS }
+    : { ...baseConfig, ...(process.env.GBRAIN_POOL_SIZE ? {} : { pool_max: ONE_SHOT_READ_POOL_MAX }) };
   const engine = await createEngine(engineConfig);
   hooks.SELECTED_CONFIG_BY_ENGINE.set(engine, config);
   const noRetry = process.argv.includes('--no-retry-connect') || process.env.GBRAIN_NO_RETRY_CONNECT === '1';
