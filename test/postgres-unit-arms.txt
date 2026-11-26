@@ -612,6 +612,7 @@ test/engine-parity/unrestricted-caller-reads.test.ts
 test/engine-parity/unrestricted-fact-list-reads.test.ts
 test/engine-parity/unrestricted-member-page-reads.test.ts
 test/engine-parity/valid-time-member-reads.test.ts
+test/engine-parity/vector-candidate-window.test.ts
 test/engine-parity/vector-options.test.ts
 test/engine-parity/version-preimage.test.ts
 test/engine-parity/versions-raw.test.ts
