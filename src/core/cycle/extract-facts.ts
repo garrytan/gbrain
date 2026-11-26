@@ -85,7 +85,7 @@ import { fenceUnfencedFacts, isFenceHold, planUnfencedFacts } from '../facts/unf
 import { heldMoveIncomplete, moveHeldFacts } from '../facts/held-fact-move.ts';
 import { classifyRunStop, upsertExtractRollup } from '../extract/rollup-writer.ts';
 import { factsFenceView } from '../facts-fence.ts';
-import { clearFenceHold, fenceOwnerKey, fenceReadOf, publishFenceGeneration, readFenceBlocks, FACT_FENCE_KIND, type FenceRead } from '../generations/fence.ts';
+import { clearFenceHold, fenceOwnerKey, fenceReadOf, listFenceHolds, publishFenceGeneration, readFenceBlocks, FACT_FENCE_KIND, type FenceRead } from '../generations/fence.ts';
 import { factsFenceHeld, moveKeptRows } from '../generations/fence-evidence.ts';
 import type { BodyStorage } from '../page-body/types.ts';
 import { factFenceItems, factPreimages, factRetireItem } from '../generations/adapters/fact-rows.ts';
@@ -185,7 +185,7 @@ function factCellsDiffer(stored: ExistingPageFact, desired: FenceExtractedFact):
     || numbersDiffer(stored.claim_value, desired.claim_value)
     || (stored.claim_unit ?? null) !== (desired.claim_unit ?? null)
     || (stored.claim_period ?? null) !== (desired.claim_period ?? null)
-    || (desired.valid_from != null && wholeSecond(stored.valid_from) !== desired.valid_from.getTime())
+    || (desired.valid_from != null && timeOf(stored.valid_from) !== desired.valid_from.getTime() && wholeSecond(stored.valid_from) !== desired.valid_from.getTime())
     || (stored.expired_at == null) !== desiredActive
     || (desiredActive && timeOf(stored.valid_until) !== timeOf(desired.valid_until));
 }
@@ -571,7 +571,7 @@ async function writeFenceReconcile(tx: BrainEngine, sourceId: string, slug: stri
   for (const f of plan.updates) {
     await tx.executeRaw(
       `UPDATE facts SET kind = $3, visibility = $4, notability = $5, context = $6,
-          valid_from = CASE WHEN $7::timestamptz IS NULL OR date_trunc('second', valid_from) = $7::timestamptz THEN valid_from ELSE $7::timestamptz END,
+          valid_from = CASE WHEN $7::timestamptz IS NULL OR valid_from = $7::timestamptz OR date_trunc('second', valid_from) = $7::timestamptz THEN valid_from ELSE $7::timestamptz END,
           valid_until = CASE WHEN $8::boolean THEN $9::timestamptz ELSE valid_until END,
           expired_at = CASE WHEN $10::timestamptz IS NULL THEN NULL ELSE COALESCE(expired_at, $10::timestamptz) END,
           source = $11, confidence = $12,
@@ -1056,6 +1056,8 @@ export async function runExtractFacts(
   // stamped and 'complete' was stamped inside the write transaction.
   type PageOutcome = FactsReconcileOutcome | 'unchanged' | 'skipped' | 'stop';
   let revision: string | null | undefined;
+  // #10067: an in-sync page answers a fence hold, so the walk reads the source's held fact fences once.
+  const heldFences = new Set(opts.dryRun ? [] : (await listFenceHolds(engine, [sourceId])).filter(hold => hold.kind === FACT_FENCE_KIND).map(hold => hold.slug));
   const reconcilePage = async (slug: string): Promise<PageOutcome> => {
     const page = await engine.getPage(slug, { sourceId });
     if (!page) {
@@ -1071,6 +1073,7 @@ export async function runExtractFacts(
     if (plan.fenceRows > 0) result.pagesWithFacts += 1;
     if (opts.dryRun) return 'skipped';
     if (plan.inSync) {
+      if (plan.read.state !== 'parsed' || !heldFences.has(slug)) return 'unchanged';
       await engine.transaction(async tx => {
         await tx.lockPageKeys([{ sourceId, slug }]);
         const current = await tx.getPage(slug, { sourceId });

@@ -624,7 +624,8 @@ export function compileCanonicalProjections(page: ParsedPage, slug: string, sour
   const scan=scanCanonicalFences({ ...page, slug });
   if(scan.defects.length) throw fenceOperationError(scan.defects[0]!, slug, sourceId);
   const fields:Array<[FenceSection,string]>=[['body',page.compiled_truth],['timeline',page.timeline ?? '']];
-  return { factRows: extractFactsFromFenceText(scan.facts,slug,sourceId,{ pageEffectiveDate: factDate }), takes: scan.takes, sections: scan.sections, quoted: scan.quoting ? quotedFenceRows(fields) : null };
+  return { factRows: extractFactsFromFenceText(scan.facts,slug,sourceId,{ pageEffectiveDate: factDate }), takes: scan.takes, sections: scan.sections, quoted: scan.quoting ? quotedFenceRows(fields) : null,
+    untilCells: new Set(scan.facts.filter(f => f.validUntil?.trim()).map(f => f.rowNum)) };
 }
 
 /**
@@ -668,7 +669,7 @@ export async function prepareCanonicalProjections(engine: BrainEngine, page: Par
   prior: PageSnapshot | null, writer: ProjectionWriter, policy?: TimelineWritePolicy): Promise<(tx: BrainEngine, pageId?: number) => Promise<CanonicalProjectionResult>> {
   // #7247: a fence row without a valid_from takes the page's stated date, as extract_facts does, never the import time.
   const factDate = pageFactDate({ slug, frontmatter: page.frontmatter, timeZone: await engine.getConfig('brain.timezone') });
-  const { factRows, takes, quoted, sections } = compileCanonicalProjections(page, slug, sourceId, factDate);
+  const { factRows, takes, quoted, sections, untilCells } = compileCanonicalProjections(page, slug, sourceId, factDate);
   // #6259: a page the content-quality gate hid as junk projects no facts or takes. Rows projected before it
   // was quarantined are left as they are (hiding them would need a new row state); only new projection stops.
   const projectFences = !isQuarantined(page.frontmatter);
@@ -751,24 +752,24 @@ export async function prepareCanonicalProjections(engine: BrainEngine, page: Par
       AND NOT ${openedFactRowSql('f', '$3')}`, [sourceId, slug, incoming, ids]);
     // #6574: every fence row's fields refresh in one statement, not one round trip per row.
     const fieldRows = JSON.stringify([...new Map(factRows.map(fact => [fact.row_num, fact])).values()].map(fact => ({ row_num: fact.row_num, kind: fact.kind, notability: fact.notability,
-      context: fact.context, valid_from: fact.valid_from?.toISOString() ?? null, valid_until: fact.valid_until?.toISOString() ?? null,
+      context: fact.context, valid_from: fact.valid_from?.toISOString() ?? null, valid_until: fact.valid_until?.toISOString() ?? null, until_cell: untilCells.has(fact.row_num),
       expired_at: fact.expired_at?.toISOString() ?? null, source: fact.source, confidence: fact.confidence, claim_metric: fact.claim_metric ?? null,
       claim_value: fact.claim_value ?? null, claim_unit: fact.claim_unit ?? null, claim_period: fact.claim_period ?? null, attributed_to: fact.attributed_to ?? null })));
-    // #10055: a row that stays retired keeps its history. Its fence cell renders the stored retirement to the second and
-    // a superseded row's context as the generated `superseded by #N` marker, so reading those back would restamp the
-    // retirement time, drop the original context and record an unrelated edit as a write of the archived row. A changed
-    // valid_until or an explicit note in the context cell still updates the row. Every row keeps a stored valid_from that
+    // #10055: a row that stays retired keeps its history. Its fence cell renders the stored retirement to the second, a
+    // blank valid_until cell reads back as today and a superseded row's context renders as the generated `superseded by #N`
+    // marker, so reading those back would restamp the retirement time, drop the original context and record an unrelated
+    // edit as a write of the archived row. A changed valid_until or an explicit note in the context cell still updates it. Every row keeps a stored valid_from that
     // its cell renders to the second, so the sub-second instant `remember` stored survives an unrelated edit.
     const retired = 'f.expired_at IS NOT NULL AND r.expired_at IS NOT NULL';
     const context = `CASE WHEN ${retired} AND f.superseded_by IS NOT NULL AND r.context ~* '^superseded by #[0-9]+$' THEN f.context ELSE r.context END`;
-    const validUntil = `CASE WHEN ${retired} AND date_trunc('second', f.valid_until) = r.valid_until::timestamptz THEN f.valid_until ELSE r.valid_until::timestamptz END`;
+    const validUntil = `CASE WHEN ${retired} AND (NOT r.until_cell OR date_trunc('second', f.valid_until) = r.valid_until::timestamptz) THEN f.valid_until ELSE r.valid_until::timestamptz END`;
     const expiredAt = 'CASE WHEN r.expired_at IS NULL THEN NULL ELSE COALESCE(f.expired_at, r.expired_at::timestamptz) END';
     const validFrom = `CASE WHEN r.valid_from IS NULL OR date_trunc('second', f.valid_from) = r.valid_from::timestamptz THEN f.valid_from ELSE r.valid_from::timestamptz END`;
     const factFields = () => factRows.length ? tx.executeRaw(`UPDATE facts f SET kind=r.kind,notability=r.notability,context=${context},
         valid_from=${validFrom},valid_until=${validUntil},expired_at=${expiredAt},
         source=r.source,confidence=r.confidence,claim_metric=r.claim_metric,claim_value=r.claim_value,claim_unit=r.claim_unit,
         claim_period=r.claim_period,attributed_to=r.attributed_to
-      FROM jsonb_to_recordset($3::text::jsonb) AS r(row_num integer,kind text,notability text,context text,valid_from text,valid_until text,
+      FROM jsonb_to_recordset($3::text::jsonb) AS r(row_num integer,kind text,notability text,context text,valid_from text,valid_until text,until_cell boolean,
         expired_at text,source text,confidence real,claim_metric text,claim_value double precision,claim_unit text,claim_period text,attributed_to text)
       WHERE f.source_id=$1 AND f.source_markdown_slug=$2 AND f.row_num=r.row_num
         AND (f.kind,f.notability,f.context,f.valid_from,f.valid_until,f.expired_at,f.source,f.confidence,f.claim_metric,f.claim_value,f.claim_unit,

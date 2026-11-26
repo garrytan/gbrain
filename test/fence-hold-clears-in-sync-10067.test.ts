@@ -75,6 +75,23 @@ for (const kind of testBackends()) {
       expect(await tiers()).toEqual(before);
     }, 120_000);
 
+    test('an in-sync page with no hold opens no transaction', async () => {
+      const slug = 'people/alice-example-4';
+      await put(FENCED, slug);
+      await runExtractFacts(engine, { slugs: [slug] });
+      let transactions = 0;
+      const counted = new Proxy(engine, {
+        get(target, key) {
+          if (key === 'transaction') return (fn: (tx: BrainEngine) => Promise<unknown>) => { transactions++; return target.transaction(fn); };
+          const value = Reflect.get(target, key, target);
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      });
+      await runExtractFacts(counted, { slugs: [slug] });
+      expect(transactions).toBe(0);
+      expect(await holds(slug)).toEqual([]);
+    }, 120_000);
+
     test('a reconcile that read the page before its fence was removed leaves the newer hold in place', async () => {
       const slug = 'people/alice-example-3';
       await put(FENCED, slug);

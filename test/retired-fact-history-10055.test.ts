@@ -84,6 +84,40 @@ for (const kind of testBackends()) {
       expect(after).toMatchObject({ expired_at: before.expired_at, valid_until: before.valid_until, superseded_by: before.superseded_by });
     }, 120_000);
 
+    test('a struck row with a blank valid_until keeps its recorded end across a later prose edit', async () => {
+      const slug = 'people/alice-example-struck';
+      const page = (prose: string) => PAGE.replace('A person.', prose)
+        .replace('| 2 | Alice Example likes tea. |', '| 2 | ~~Alice Example owned a boat.~~ |');
+      const struck = async () => (await engine.executeRaw<Record<string, unknown>>(
+        `SELECT valid_until::text AS valid_until, expired_at::text AS expired_at, last_write_request_id FROM facts
+          WHERE source_markdown_slug = $1 AND row_num = 2`, [slug]))[0]!;
+      setSystemTime(new Date('2026-11-20T12:00:00Z'));
+      expect((await call('put_page', { slug, content: page('A person.') })).isError).toBe(false);
+      const before = await struck();
+      expect(before.expired_at).not.toBeNull();
+      expect(before.valid_until).not.toBeNull();
+
+      setSystemTime(new Date('2026-11-23T12:00:00Z'));
+      const revision = (await engine.readPageSnapshot(slug, { sourceId: 'default' }))!.revision;
+      expect((await call('put_page', { slug, content: page('A person who sails.'), expected_revision: revision })).isError).toBe(false);
+      expect(await struck()).toEqual(before);
+      await runExtractFacts(engine, { slugs: [slug] });
+      expect(await struck()).toEqual(before);
+    }, 120_000);
+
+    test('a fence cell with a sub-second valid_from reconciles once and then stays in sync', async () => {
+      const slug = 'people/alice-example-millis';
+      const content = PAGE.replace('| 2 | Alice Example likes tea. | preference | 1.0 | world | medium | 2026-10-01T00:00:00Z |',
+        '| 2 | Alice Example likes tea. | preference | 1.0 | world | medium | 2026-10-01T10:00:00.123Z |');
+      expect((await call('put_page', { slug, content })).isError).toBe(false);
+      const validFrom = async () => (await engine.executeRaw<{ v: string }>(
+        `SELECT to_char(valid_from AT TIME ZONE 'UTC', 'HH24:MI:SS.MS') AS v FROM facts WHERE source_markdown_slug = $1 AND row_num = 2`, [slug]))[0]!.v;
+      expect(await validFrom()).toBe('10:00:00.123');
+      expect((await runExtractFacts(engine, { slugs: [slug] })).factsUpdated).toBe(0);
+      expect((await runExtractFacts(engine, { slugs: [slug] })).factsUpdated).toBe(0);
+      expect(await validFrom()).toBe('10:00:00.123');
+    }, 120_000);
+
     test('a remembered fact keeps its sub-second valid_from, retired or active, across an unrelated edit and the reconcile', async () => {
       const row = async (id: number) => (await engine.executeRaw<Record<string, unknown>>(
         `SELECT valid_from::text AS valid_from, expired_at::text AS expired_at, context, last_write_request_id FROM facts WHERE id = $1`, [id]))[0]!;
