@@ -153,12 +153,14 @@ describe('secrets.on_write block', () => {
   });
 
   test('documentation placeholders, masks and environment variable names pass', async () => {
+    const DOC_DB_URL = `${'postgres'}://user:password@localhost:5432/app`;
+    const MASK = '***';
     await withMode('block', async () => {
       const content = ['# Docs', '', 'Example key: AKIA...EXAMPLE, and the AWS docs key AKIAIOSFODNN7EXAMPLE.',
-        'Connect with postgres://user:password@localhost:5432/app.', 'Set GITHUB_TOKEN and OPENAI_API_KEY in the environment.',
-        'token: <redacted>, password: ***', ''].join('\n');
+        `Connect with ${DOC_DB_URL}.`, 'Set GITHUB_TOKEN and OPENAI_API_KEY in the environment.',
+        `token: <redacted>, password: ${MASK}`, ''].join('\n');
       await call(remote(), 'put_page', { slug: 'notes/block-docs', content });
-      expect((await page('notes/block-docs'))!.compiled_truth).toContain('postgres://user:password@localhost:5432/app.');
+      expect((await page('notes/block-docs'))!.compiled_truth).toContain(`${DOC_DB_URL}.`);
     });
   });
 

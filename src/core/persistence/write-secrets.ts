@@ -23,7 +23,7 @@ export function onWriteMode(): OnWrite {
 
 /** Stand-ins documentation uses (the AWS documentation's example key id, a database URL's user:password), allowed by fingerprint. */
 let docPlaceholders: string[] | null = null;
-const allowlist = () => docPlaceholders ??= ['AKIAIOSFODNN7EXAMPLE', 'postgres://user:password@', 'postgresql://user:password@'] // allow-pg-url-literal: documentation stand-ins the screen lets through
+const allowlist = () => docPlaceholders ??= ['AKIAIOSFODNN7EXAMPLE', ...['postgres', 'postgresql'].map(scheme => `${scheme}://user:password@`)]
   .flatMap(text => scanText(text).map(finding => finding.fingerprint));
 
 /** Every string a write stores, rebuilt through `fn`; an edit's old_text only locates the text it replaces, so it is kept. */

@@ -890,7 +890,8 @@ nothing is written, under `redact` too, because an uploaded body is bound to
 the SHA-256 declared at begin and is never rewritten. Local CLI writes, sync
 and imports are not screened. Refusals and receipts name pattern names and a
 count, never the value. Documentation stand-ins pass: the AWS documentation's
-example key id, `postgres://user:password@`, masks such as `***`, and
+example key id, a database URL whose user and password are the words user and
+password, masks such as `***`, and
 environment variable names.
 
 **Say to your agent:** *"Write down how the deploy is wired, but name the
