@@ -63,8 +63,10 @@ const NFD_ZOE = 'people/zoë-example';
 const LEGACY_REFUSAL = (stored: string, composed: string) => `Page ${stored} is stored under an older decomposed Unicode spelling of its name, so a put by that spelling is refused and nothing was changed. `
   + `To move the page to the normal spelling ${composed}, preview gbrain repair slug-spelling --source default, then run the apply command it prints after the owner agrees; until then the page cannot be replaced by put.`;
 const AMBIGUOUS_REFUSAL = (asked: string, decomposed: string, composed: string) => `The slug "${asked}" is ambiguous: this brain stores two pages whose slugs read the same, "${decomposed}" (decomposed, with capitals) and "${composed}" (composed, with capitals), and "${asked}" is neither of them exactly.`;
+// A Rust write ends on the first persistence-journal member the engine does not serve. readPersistenceBrainId is served now
+// (import part A), so the first one a write meets is the local writer row.
 const RUST_JOURNAL_STOP =
-  "This brain's engine does not support readPersistenceBrainId yet (it needs the persistence_journal capability), so nothing ran.";
+  "This brain's engine does not support readLocalWriterRow yet (it needs the persistence_journal capability), so nothing ran.";
 const RUST_RAW_SQL_STOP =
   "This brain's engine does not support executeRaw yet (it needs the raw_sql capability), so nothing ran.";
 const RUST_RESOLVE_ALIAS_STOP =
