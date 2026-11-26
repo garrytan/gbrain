@@ -32,7 +32,7 @@ export interface ManagedMultiuserBrain {
 export async function openManagedMultiuserBrain(opts: { activate?: boolean; source?: string } = {}): Promise<ManagedMultiuserBrain> {
   const home = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-managed-mu-')));
   const source = opts.source ?? 'work';
-  const env = <T>(run: () => Promise<T>) => withEnv({ GBRAIN_HOME: home, GBRAIN_RUST_MULTIUSER: '1', DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined, GBRAIN_GIT_ALLOW_FILE_TRANSPORT: '1' }, run);
+  const env = <T>(run: () => Promise<T>) => withEnv({ GBRAIN_HOME: home, GBRAIN_RUST_MULTIUSER: '1', GBRAIN_RUST_COMMIT_LOG: '1', DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined, GBRAIN_GIT_ALLOW_FILE_TRANSPORT: '1' }, run);
   const brain = await env(async () => {
     const opened = await openRustBrain('env');
     liftManagedHold(opened.engine);

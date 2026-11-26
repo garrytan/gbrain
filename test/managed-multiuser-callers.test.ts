@@ -43,14 +43,14 @@ describe.skipIf(!rustArmRequested())('managed mode on a multi-user Rust brain: e
   beforeAll(async () => {
     home = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-managed-mu-callers-')));
     // GBRAIN_RUST_MULTIUSER is read when the arm opens the store; the checkout and the identity live under the scratch home.
-    await withEnv({ GBRAIN_HOME: home, GBRAIN_RUST_MULTIUSER: '1', DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
+    await withEnv({ GBRAIN_HOME: home, GBRAIN_RUST_MULTIUSER: '1', GBRAIN_RUST_COMMIT_LOG: '1', DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
       brain = await openRustBrain('env');
       liftManagedHold(brain.engine);
       engine = brain.engine as unknown as BrainEngine;
     });
   }, 60_000);
   afterAll(async () => {
-    await withEnv({ GBRAIN_HOME: home, GBRAIN_RUST_MULTIUSER: '1' }, async () => {
+    await withEnv({ GBRAIN_HOME: home, GBRAIN_RUST_MULTIUSER: '1', GBRAIN_RUST_COMMIT_LOG: '1' }, async () => {
       await disposePersistenceConsumer(engine);
       await engine.disconnect();
     });
@@ -58,7 +58,7 @@ describe.skipIf(!rustArmRequested())('managed mode on a multi-user Rust brain: e
     rmSync(home, { recursive: true, force: true });
   }, 60_000);
 
-  const env = <T>(run: () => Promise<T>) => withEnv({ GBRAIN_HOME: home, GBRAIN_RUST_MULTIUSER: '1', DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, run);
+  const env = <T>(run: () => Promise<T>) => withEnv({ GBRAIN_HOME: home, GBRAIN_RUST_MULTIUSER: '1', GBRAIN_RUST_COMMIT_LOG: '1', DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, run);
   const reviewed = async (operation: string) => ({ admin_intent: operation, expected_state: await writerAdminState(engine) });
   const leases = () => rustLeases(engine as never);
   const take = async (name: string): Promise<LeaseToken> => (await leases().acquire(name, other, 600_000))!;
