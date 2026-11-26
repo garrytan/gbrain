@@ -31,6 +31,7 @@ import { seedHostBinding, seedSource, seedSourceBinding, seedWorktree } from './
 import { testBackends } from '../helpers/test-backends.ts';
 import { BYTE_IDS, BYTE_SLUGS, MIXED_IDS, MIXED_SLUGS, byteOrder } from '../helpers/byte-order.ts';
 import { withEnv } from '../helpers/with-env.ts';
+import { declarePersistenceProtocol } from '../../src/core/persistence/protocol.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { GIT_HOLD_OP, GIT_HOLD_SUMMARY_OP } from '../../src/core/engine-sql/persistence-journal.ts';
 import { activatePersistence } from '../../src/core/persistence/activation.ts';
@@ -127,6 +128,38 @@ async function lockRows(engine: BrainEngine, ids: readonly string[]): Promise<vo
   for (const id of ids) {
     await engine.executeRaw(`INSERT INTO gbrain_cycle_locks(id,holder_pid,holder_host,ttl_expires_at) VALUES ($1,$2,'collate-host',now()+interval '1 hour')`, [id, 2_000_000_000]);
   }
+}
+
+/**
+ * One committed request of `source` on `worktree` with one Git effect that the effect worker failed with `code`, written
+ * through the journal members the managed writer uses (`insertWriteRequest`, `completeWriteRow`, `insertPublicationEffects`,
+ * then a claim by the worktree's `owner` and `failEffectRow`), so every engine arm holds the same rows.
+ */
+async function seedFailedWorktreeEffect(engine: BrainEngine, e: { source: string; incarnation: string; worktree: string; owner: string; code: string }): Promise<void> {
+  const row = await engine.transaction(async tx => {
+    await declarePersistenceProtocol(tx);
+    return tx.insertWriteRequest({
+      principalKind: 'local_cli', principalId: 'collate', requestId: randomUUID(), operation: 'put_page', sourceId: e.source,
+      sourceIncarnation: e.incarnation, pageId: null, slug: 'notes/x', worktreeId: e.worktree, topologyGeneration: null, digest: 'x', intent: {},
+      authority: {}, intentBytes: 0, terminalReservation: 0, targetKind: 'page', protocolVersion: 1, admitterVersion: 'v-collate',
+      admitterHostId: null, counterKeys: [], clientRequestId: null, state: 'queued', deferredRefreshId: null,
+    });
+  });
+  await engine.transaction(async tx => {
+    await declarePersistenceProtocol(tx);
+    await tx.completeWriteRow({ id: row.id, state: 'committed', outcome: null, errorCode: null, errorMessage: null, consumerVersion: 'v-collate',
+      consumerHostId: null, errorDetail: null, resultBytes: 0, counterKeys: [], intentBytes: 0, retainedBytes: 0, terminalReservation: 0, probePurges: false });
+    await tx.insertPublicationEffects({ requestId: row.id, revision: null, sourceId: e.source, sourceIncarnation: e.incarnation, worktreeId: e.worktree,
+      effects: [{ kind: 'git', data: {} }] });
+  });
+  const effect = await engine.selectClaimableEffect<{ id: string | number }>(e.owner, []);
+  if (!effect) throw new Error(`seedFailedWorktreeEffect: no claimable effect on worktree ${e.worktree}`);
+  const token = randomUUID();
+  await engine.transaction(async tx => {
+    await declarePersistenceProtocol(tx);
+    await tx.stampEffectClaim({ id: effect.id, token, ownerJson: JSON.stringify({ token, owner: { pid: 1, nonce: 'collate', start: 'collate' } }) });
+    await tx.failEffectRow({ id: effect.id, token, reason: e.code });
+  });
 }
 
 /** The same leases as `lockRows`, taken through the typed `acquireCycleLock` (a held lease an hour long). */
@@ -399,17 +432,19 @@ describe('git durability and push-hold readers sort by byte', () => {
   });
 
   parityTest('readGitPushHolds lists holds by byte source id and names the byte-first local path as the root', {
-    methods: ['executeRaw', 'transaction'], requires: 'raw_sql',
-  }, async (engine) => {
+    methods: ['worktreeClaimStore', 'insertWriteRequest', 'completeWriteRow', 'insertPublicationEffects', 'selectClaimableEffect',
+      'stampEffectClaim', 'failEffectRow', 'listGitPushHoldRows'],
+  }, async (engine, backend) => {
     for (const id of MIXED_SRC) {
-      const incarnation = await addSource(engine, id);
-      const worktree = await addWorktree(engine);
-      await bind(engine, id, incarnation, worktree);
+      const incarnation = await seedSource(engine, backend, id);
+      // The worktree has an owner, so the effect worker's claim (`selectClaimableEffect` by owner host) can fail its effects.
+      const owner = randomUUID();
+      const worktree = await seedWorktree(engine, owner);
+      await seedSourceBinding(engine, id, incarnation, worktree);
       // One checkout path per host of the worktree: the reader names the byte-first one.
-      for (const path of MIXED_IDS) await hostBind(engine, worktree, randomUUID(), `/collate/${path}`);
+      for (const path of MIXED_IDS) await seedHostBinding(engine, worktree, randomUUID(), `/collate/${path}`);
       for (const code of ['push_unconfirmed', 'git_push_unavailable']) {
-        const request = await seedRequest(engine, { source: id, incarnation, state: 'committed', worktree });
-        await seedEffect(engine, { request: request.id, source: id, incarnation, worktree, state: 'failed', errorCode: code });
+        await seedFailedWorktreeEffect(engine, { source: id, incarnation, worktree, owner, code });
       }
     }
     const holds = await readGitPushHolds(engine);
@@ -439,10 +474,10 @@ describe('git durability and push-hold readers sort by byte', () => {
 
 describe('topology status and blocker lists sort source ids by byte', () => {
   parityTest('writerAdminState folds bindings and legacy locks in byte order, and writer status lists bindings by byte source id', {
-    methods: ['executeRaw'], requires: 'raw_sql',
-  }, async (engine) => inHome(async () => withEnv({ GBRAIN_BRAIN_ID: 'host', GBRAIN_SOURCE: undefined }, async () => {
-    for (const id of MIXED_SRC) await bind(engine, id, await addSource(engine, id), await addWorktree(engine));
-    await lockRows(engine, MIXED_IDS);
+    methods: ['worktreeClaimStore', 'acquireCycleLock', 'readWriterAdminState'],
+  }, async (engine, backend) => inHome(async () => withEnv({ GBRAIN_BRAIN_ID: 'host', GBRAIN_SOURCE: undefined }, async () => {
+    for (const id of MIXED_SRC) await seedSourceBinding(engine, id, await seedSource(engine, backend, id), await seedWorktree(engine));
+    await typedLockRows(engine, MIXED_IDS);
     // The admin state is a hash, so read the document it hashes: the typed member returns the one statement's JSON text.
     await writerAdminState(engine);
     const document = await engine.readWriterAdminState();
@@ -458,12 +493,12 @@ describe('topology status and blocker lists sort source ids by byte', () => {
   })));
 
   parityTest('hostIdentityMismatches lists the sources of a foreign worktree by byte id', {
-    methods: ['executeRaw'], requires: 'raw_sql',
-  }, async (engine) => {
+    methods: ['worktreeClaimStore', 'listOwnerBindings'],
+  }, async (engine, backend) => {
     const owner = randomUUID();
-    const worktree = await addWorktree(engine, owner);
-    await hostBind(engine, worktree, owner, '/collate/foreign');
-    for (const id of MIXED_SRC) await bind(engine, id, await addSource(engine, id), worktree, id);
+    const worktree = await seedWorktree(engine, owner);
+    await seedHostBinding(engine, worktree, owner, '/collate/foreign');
+    for (const id of MIXED_SRC) await seedSourceBinding(engine, id, await seedSource(engine, backend, id), worktree, id);
     const me = { id: randomUUID(), path: '/collate/host.json', persistence_home: '/collate/home', minted_under: { machine_id: 'collate-machine', home: 'a', gbrain_home: 'b', hostname: 'collate' } };
     const found = await hostIdentityMismatches(engine, me as never, { exists: () => true, marked: () => true, hostJsonMintedAt: Date.now() + 1_000_000 });
     expect(found.length).toBe(1);
