@@ -92,6 +92,7 @@ import { evaluateQuietHours, type QuietHoursConfig } from './quiet-hours.ts';
 import { endedByShutdown, releaseUndrainedClaims, settleShutdownInterruptedJob } from './worker-shutdown.ts';
 import { isWatchdogSuspect, settleWatchdogAbort } from './watchdog-attribution.ts';
 import { IdleWaiter } from './idle-wait.ts';
+import { readActiveClaim } from './claim-readback.ts';
 import { jobOutcomeResult, jobResultOutcome } from './job-outcome.ts';
 import { DEFAULT_LONG_JOB_NAMES, DEFAULT_SHORT_JOB_RESERVED_SLOTS, claimExclusions } from './lanes.ts';
 import { jobRefusal, refusedJobResult } from './refusal.ts';
@@ -857,7 +858,17 @@ export class MinionWorker extends EventEmitter {
               this.opts.queue,
               this.registeredNames,
               { excludeWatchdogSuspects: this.inFlight.size > 0, suspectWaitMs: this.suspectOverdue ? this.opts.watchdogSuspectWaitMs : undefined, excludeNames: claimExclusions(this.opts, [...this.inFlight.values()].map(f => f.job.name)) },
-            ).then(claimed => {
+            ).catch(async e => {
+              if (isLocalConfigurationError(e)) throw e;
+              if (isWatchdogConnectionLoss(e)) {
+                console.error('[worker] claim connection retired by the Postgres watchdog; checking its claim token');
+              } else {
+                if (!isRetryableConnError(e) && !isVanishedSocketError(e) && !isServerRefusingConnections(e)) throw e;
+                console.error('[worker] claim hit a connection error; reconnecting to check its claim token');
+                await this.reconnectAfterConnectionError('claim', e);
+              }
+              return readActiveClaim(this.engine, this.opts.queue, lockToken);
+            }).then(claimed => {
               if (claimed) {
                 this.executions.set(lockToken, { job: claimed, lockToken, stopped: true });
                 if (this.configurationDrainFinished) {
@@ -878,18 +889,7 @@ export class MinionWorker extends EventEmitter {
               break;
             }
             this.pendingClaim = null;
-            // UPDATE ... RETURNING may have committed before its reply was lost (#1678).
-            // Poll on the next tick and let the normal lease recovery handle any unacknowledged claim.
-            if (isWatchdogConnectionLoss(e)) {
-              console.error('[worker] claim connection retired by the Postgres watchdog; polling resumes on the next tick');
-            } else {
-              if (!isRetryableConnError(e) && !isVanishedSocketError(e) && !isServerRefusingConnections(e)) throw e;
-              const msg = e instanceof Error ? e.message : String(e);
-              console.error(`[worker] claim hit a connection error; reconnecting, retry on next tick: ${msg}`);
-              await this.reconnectAfterConnectionError('claim', e);
-            }
-            await new Promise(resolve => setTimeout(resolve, this.opts.pollInterval));
-            continue;
+            throw e;
           }
 
           if (job) {

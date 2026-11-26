@@ -37,8 +37,8 @@ test('a connect to a vanished Unix socket is recognised; a missing file is not, 
 });
 
 test.each([
-  ['a vanished socket', vanishedSocketError, ['claim', 'reconnect', 'claim']],
-  ['a watchdog-retired connection', async () => Object.assign(new Error('write CONNECTION_STUCK /example/socket'), { code: 'CONNECTION_STUCK' }), ['claim', 'claim']],
+  ['a vanished socket', vanishedSocketError, ['claim', 'reconnect', 'read-claim', 'claim']],
+  ['a watchdog-retired connection', async () => Object.assign(new Error('write CONNECTION_STUCK /example/socket'), { code: 'CONNECTION_STUCK' }), ['claim', 'read-claim', 'claim']],
 ] as const)('the worker keeps polling after %s during a claim', async (_, failure, expected) => {
   const error = await failure();
   const events: string[] = [];
@@ -49,6 +49,7 @@ test.each([
       if (sql.includes('SELECT id, submission_authority FROM minion_jobs') && sql.includes('submission_authority IS DISTINCT FROM')) return [];
       throw new Error('Unexpected SQL in worker socket fixture');
     },
+    executeRawDirect: async () => { events.push('read-claim'); return []; },
     reconnect: async () => { events.push('reconnect'); },
   } as unknown as BrainEngine;
   const worker = new MinionWorker(engine, { pollInterval: 1, stalledInterval: 60_000, healthCheckInterval: 0 });
