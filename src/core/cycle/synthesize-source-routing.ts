@@ -147,6 +147,8 @@ export async function refuseChangedSessionSource(engine: BrainEngine,
  * missing source, or one without a checkout, never does, and its sessions stay held or counted as they were.
  */
 const SYNTHESIS_TURN_KEY = 'dream.synthesize.rotation_turn';
+/** The other owning sources the rotation knows: the cycle's own run replaces them, any other run adds what it saw. */
+const SYNTHESIS_OWNERS_KEY = 'dream.synthesize.rotation_owners';
 
 async function turnCheckouts(engine: BrainEngine): Promise<Map<string, string>> {
   const rows = await engine.executeRaw<{ id: string; local_path: string | null }>('SELECT id, local_path FROM sources WHERE archived = false');
@@ -179,12 +181,20 @@ export async function synthesisRotation(engine: BrainEngine, home: string, rotat
   } };
 }
 
-/** Passes the turn to the next source, by id, among the cycle's own, the one that ran and the other owners its run found; a run skipped before discovery keeps it. */
+/**
+ * Passes the turn to the next source after the one that ran, by id, among the cycle's own and the known owners (so a run
+ * that failed before discovery still moves the turn forward); a cooldown or budget skip keeps it.
+ */
 async function passSynthesisTurn(engine: BrainEngine, home: string, ran: string, result: PhaseResult): Promise<void> {
   if (result.status === 'skipped' && (result.details.reason === 'cooldown_active' || result.details.reason === 'insufficient_cycle_budget')) return;
-  const others = Object.keys((result.details.source_routing as SessionSourceRouting | undefined)?.corpus_source_other ?? {});
+  const routing = result.details.source_routing as SessionSourceRouting | undefined;
+  const seen = Object.keys(routing?.corpus_source_other ?? {});
+  const stored: unknown = JSON.parse(await engine.getConfig(SYNTHESIS_OWNERS_KEY) ?? '[]');
+  const known = Array.isArray(stored) ? stored.filter((id): id is string => typeof id === 'string') : [];
   const checkouts = await turnCheckouts(engine);
-  const order = [...new Set([home, ran, ...others.filter(id => checkouts.has(id))])].sort();
+  const owners = [...new Set(ran === home && routing ? seen : [...known, ...seen])].filter(id => id !== home && checkouts.has(id)).sort();
+  if (owners.join('\n') !== known.join('\n')) await engine.setConfig(SYNTHESIS_OWNERS_KEY, JSON.stringify(owners));
+  const order = [home, ...owners].sort();
   await engine.setConfig(SYNTHESIS_TURN_KEY, order.find(id => id > ran) ?? order[0]!);
 }
 

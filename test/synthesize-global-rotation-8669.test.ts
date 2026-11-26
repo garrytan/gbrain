@@ -13,7 +13,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { runCycle } from '../src/core/cycle.ts';
+import { runCycle, type PhaseResult } from '../src/core/cycle.ts';
+import { synthesisRotation } from '../src/core/cycle/synthesize-source-routing.ts';
 import { ensureCorpusSpoolDir, sessionCorpusFileName } from '../src/core/context/corpus-segments.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { __setMaintenanceWriteWaitForTests } from '../src/core/persistence/maintenance-wait.ts';
@@ -153,3 +154,48 @@ describe('global synthesize takes turns over the sources that own captured sessi
     });
   }, 240_000);
 });
+
+describe('the synthesize turn moves forward through every owning source (#8669)', () => {
+  const result = (status: PhaseResult['status'], details: Record<string, unknown>): PhaseResult =>
+    ({ phase: 'synthesize', status, duration_ms: 0, summary: '', details });
+  const routing = (others: string[]) => ({ source_routing: { corpus_source_other: Object.fromEntries(others.map(id => [id, 1])), held: {} } });
+
+  async function withSources(run: (alpha: string, beta: string) => Promise<void>) {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-synth-turn-'));
+    const suffix = randomUUID().slice(0, 8);
+    const [alpha, beta] = [`alpha-${suffix}`, `beta-${suffix}`];
+    try {
+      for (const id of [alpha, beta]) {
+        mkdirSync(join(dir, id));
+        await engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', [id, join(dir, id)]);
+      }
+      await engine.setConfig('dream.synthesize.rotation_turn', 'default');
+      await run(alpha, beta);
+    } finally {
+      await engine.executeRaw('DELETE FROM sources WHERE id = ANY($1::text[])', [[alpha, beta]]);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+  const step = async (outcome: PhaseResult) => {
+    const rotation = (await synthesisRotation(engine, 'default', true))!;
+    await rotation.settle(outcome, false);
+    return { ran: rotation.turn?.sourceId ?? 'default', next: await engine.getConfig('dream.synthesize.rotation_turn') };
+  };
+
+  test('a source whose run fails before discovery passes the turn on instead of back to the cycle\'s own source', async () => {
+    await withSources(async (alpha, beta) => {
+      expect(await step(result('ok', routing([alpha, beta])))).toEqual({ ran: 'default', next: alpha });
+      expect(await step(result('fail', {}))).toEqual({ ran: alpha, next: beta });
+      expect(await step(result('ok', routing(['default', alpha])))).toEqual({ ran: beta, next: 'default' });
+    });
+  });
+
+  test('a cooldown or budget skip keeps the turn', async () => {
+    await withSources(async (alpha, beta) => {
+      await step(result('ok', routing([alpha, beta])));
+      expect(await step(result('skipped', { reason: 'cooldown_active' }))).toEqual({ ran: alpha, next: alpha });
+      expect(await step(result('skipped', { reason: 'insufficient_cycle_budget' }))).toEqual({ ran: alpha, next: alpha });
+    });
+  });
+});
+

@@ -2200,8 +2200,8 @@ async function runCycleUnscoped(
   // synthesize_concepts still can't carry one (W6). Steal-free cycles behave
   // byte-identically to timePhase.
   // Phase containment (#5484): a failing phase returns a `fail` result so later phases run; abort, lease loss and budget exhaustion still stop the job.
-  const timePhase = async <T extends PhaseResult,>(fn: () => Promise<T>, phase: CyclePhase) => { await notifyPhaseStart(opts, phase, phases); return timeContainedPhase({ engine, sourceId: cycleSourceId ?? 'default', signal: cycleSignal }, phase, fn); };
-  const racedTimePhase = <T extends PhaseResult,>(fn: () => Promise<T>, phase: CyclePhase) => raceStolen(timePhase(fn, phase));
+  const timePhase = async <T extends PhaseResult,>(fn: () => Promise<T>, phase: CyclePhase, sourceId = cycleSourceId ?? 'default') => { await notifyPhaseStart(opts, phase, phases); return timeContainedPhase({ engine, sourceId, signal: cycleSignal }, phase, fn); };
+  const racedTimePhase = <T extends PhaseResult,>(fn: () => Promise<T>, phase: CyclePhase, sourceId?: string) => raceStolen(timePhase(fn, phase, sourceId));
 
   // #1972: reap dead-holder sync/cycle locks at cycle start — before the sync
   // phase needs them — so a crashed sync's stranded lock self-heals THIS tick
@@ -2363,7 +2363,7 @@ async function runCycleUnscoped(
           // timeout domain — clamped via the patterns.ts childBudget template).
           deadlineAtMs: opts.deadlineAtMs ?? null,
           privateQueueOwnerJobId: opts.privateQueueOwnerJobId ?? null,
-        }), 'synthesize');
+        }), 'synthesize', rotation?.turn?.sourceId);
         result.duration_ms = duration_ms;
         phaseResults.push(result);
         await rotation?.settle(result, dryRun);
