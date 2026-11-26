@@ -299,7 +299,9 @@ could be lifted to "your notes" by an earlier claim (#6533).
 whose own signals now say lower, and `gbrain trust claim-sources --relower`
 lowers them. It only lowers: it never raises a row, it touches only rows with
 `write_origin.channel = "trust_claim"`, rows on a lowered page follow it, and
-each lowered row records `write_origin.channel = "trust_relower"`.
+each lowered row records `write_origin.channel = "trust_relower"`. It leaves
+alone a row you confirmed or lowered with `gbrain trust confirm` or `lower`,
+and the facts on a page you confirmed.
 
 Legacy Life Chronicle event pages (`captured_via: life-chronicle:auto`) are
 model summaries of another page (#9284). A claim caps them at "written by an

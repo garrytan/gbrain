@@ -178,10 +178,10 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
       supersede: status === 'superseded' && old?.source_markdown_slug === row.slug && old.row_num != null ? { rowNum: Number(old.row_num), validUntil: retiredUntil } : undefined }, signal);
   } else if (p.fence === true && p.member_page === true) {
     fence = await prepareFenceFactCreate(engine, row, config, { fact, pendingTier: fenceAppendPendingTier(writerTier), ...(widening ? { storedVisibility: widening.from } : {}),
-      frontmatter: memberPageFrontmatter(row.slug.slice(MEMBER_PAGE_PREFIX.length)), heading: `# Memory of ${row.slug.slice(MEMBER_PAGE_PREFIX.length)}` }, signal);
+      frontmatter: memberPageFrontmatter(row.slug.slice(MEMBER_PAGE_PREFIX.length), new Date(row.created_at)), heading: `# Memory of ${row.slug.slice(MEMBER_PAGE_PREFIX.length)}` }, signal);
   } else if (p.fence === true && p.scope_page === true) {
     fence = await prepareFenceFactCreate(engine, row, config, { fact, pendingTier: fenceAppendPendingTier(writerTier), ...(widening ? { storedVisibility: widening.from } : {}),
-      frontmatter: scopePageFrontmatter(), heading: '# Scope memory' }, signal);
+      frontmatter: scopePageFrontmatter(new Date(row.created_at)), heading: '# Scope memory' }, signal);
   }
   // GBRA-190 G4: linking a fact saved without an entity retires its holding row in the same publication.
   const old = status === 'superseded' ? decision.candidate! : null;

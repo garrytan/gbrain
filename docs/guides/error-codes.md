@@ -4813,6 +4813,16 @@ More: [docs/ENGINES.md#pg-pool-stalled](../../docs/ENGINES.md#pg-pool-stalled)
 
 More: [docs/ENGINES.md#pg-statement-build-failed](../../docs/ENGINES.md#pg-statement-build-failed)
 
+### pg_storage_interrupted
+
+<a id="pg_storage_interrupted"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| PostgreSQL was interrupted (EINTR, "Interrupted system call") while opening or reading one of its data files. | The operating system interrupted the server's file access: a fault on the database host (its storage or a network filesystem), not damaged rows, so no repair command applies and the statement that hit it did not finish. | PostgreSQL was interrupted reading a data file on the database host, which is not a sign of damaged rows. Check its storage and the PostgreSQL log; once it reads again, check the original job or write receipt before resubmitting. | host_admin | `gbrain doctor --json` | 1 | no |
+
+More: [docs/ENGINES.md#the-gbrain_db_access-marker](../../docs/ENGINES.md#the-gbrain_db_access-marker)
+
 ### pglite_busy
 
 <a id="pglite_busy"></a>
@@ -6691,6 +6701,16 @@ More: [docs/guides/repair.md#slug-spelling](../../docs/guides/repair.md#slug-spe
 
 More: [docs/guides/repair.md#slug-spelling](../../docs/guides/repair.md#slug-spelling)
 
+### slug_too_long
+
+<a id="slug_too_long"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A page slug is longer than the 255 characters a slug can be, so nothing was written (sync holds the file). | Every operation that names a page (get, put, delete, repair) refuses a slug over 255 characters, so a page stored under one could never be read, fixed or removed again (#10080). The message names the length, never the slug. | Move the file to a shorter path (or give it a shorter slug: line), commit and sync. A page an older sync already stored under such a slug can be removed with gbrain delete. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#slug_too_long](../../docs/guides/write-refusals.md#slug_too_long)
+
 ### source_binding_required
 
 <a id="source_binding_required"></a>
@@ -7554,6 +7574,16 @@ More: [docs/guides/troubleshooting.md#upstream-rewritten](../../docs/guides/trou
 | An `as_of` read found no version of the page that declares a readable `valid_from`, so no edition can be placed on the date. | Valid time comes only from the `valid_from` / `valid_until` frontmatter the page carries; gbrain never infers when text took effect. Only the user knows the date, so the fix asks them before a templated edit_page records it. | Ask the user when the text took effect and record it as a quoted valid_from (the fix carries the edit). For what the brain had recorded at a time, read with known_as_of instead. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/page-history.md#valid_time_undeclared](../../docs/guides/page-history.md#valid_time_undeclared)
+
+### value_unavailable
+
+<a id="value_unavailable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Every count on the value card failed to read, so nothing was counted. | The card reads pages, links, facts, the archive ledger, telemetry and the brain score with separate queries; it fails only when all of them fail, which means the brain itself could not be read. | Run gbrain doctor --json on the brain host to see why the brain cannot be read, then ask again. Run: gbrain doctor --json | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/value-card.md#when-a-count-is-unavailable](../../docs/guides/value-card.md#when-a-count-is-unavailable)
 
 ### vault_generation_changed
 
