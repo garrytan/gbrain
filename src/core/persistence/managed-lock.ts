@@ -56,7 +56,7 @@ export interface ManagedLockOptions {
   waitMs: number;
   signal?: AbortSignal;
   /** Test seam for the lease timing. */
-  timing?: { ttlMs?: number; renewMs?: number; pollMs?: number };
+  timing?: { ttlMs?: number; renewMs?: number; pollMs?: number; registrationWaitMs?: number };
 }
 
 /** The lease name of a managed lock. */
@@ -114,7 +114,7 @@ export async function managedLock(engine: BrainEngine | object | undefined, kind
     return nativeLock(opts, opts.waitMs);
   }
   const root = managedRoot(engine);
-  const registration = hostRegistrationOf(root) ?? await ensureProcessRegistration(root, `managed_${kind}`);
+  const registration = hostRegistrationOf(root) ?? await ensureProcessRegistration(root, `managed_${kind}`, opts.timing?.registrationWaitMs !== undefined ? { waitMs: opts.timing.registrationWaitMs } : {});
   if (!registration) throw leaseLostError(new Error(JSON.stringify({ reason: 'fence_missing', name: managedLeaseName(kind, id), epoch: 0 })));
   const leases = rustLeases(root as { openStore(member: string): { brain: never } });
   const ttlMs = opts.timing?.ttlMs ?? MANAGED_LEASE_TTL_MS;

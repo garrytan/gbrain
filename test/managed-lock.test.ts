@@ -114,6 +114,28 @@ describe('managedLock on a multi-user Rust brain', () => {
     });
   });
 
+  withAddon('F3: no registration can be taken: the lock refuses lease_lost / fence_missing before any lease or native lock is taken, and nothing runs unfenced', async () => {
+    await withBrain(true, async (engine, home) => {
+      const path = join(home, 'locks', 'wt.lock');
+      // A view of the engine whose lease member never grants a lease (a store that cannot register this process).
+      const view = Object.create(engine, {
+        openStore: { value(member: string) {
+          const store = engine.openStore(member);
+          if (member !== 'leases') return store;
+          const brain = new Proxy(store.brain as object, { get: (target, prop) => prop === 'acquireLease' ? async () => null : Reflect.get(target, prop) });
+          return { ...store, brain };
+        } },
+      }) as RustEngine;
+      const outcome = await refusal(() => managedLock(view, 'worktree', WORKTREE, { path, waitMs: 0, timing: { registrationWaitMs: 150 } }));
+      expect(outcome).toEqual({ code: 'lease_lost', reason: 'fence_missing' });
+      expect(hostRegistrationOf(view)).toBeNull();
+      expect(heldManagedOperations(view)).toEqual([]);
+      const free = await probeNativeLock(path);
+      expect(free).not.toBeNull();
+      await free!.release();
+    });
+  });
+
   withAddon('F3: the process registers itself on the first managed lock (no setHostRegistration seeding) and releases at disconnect', async () => {
     await withBrain(true, async (engine, home) => {
       expect(hostRegistrationOf(engine)).toBeNull();

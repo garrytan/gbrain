@@ -112,17 +112,18 @@ describe.skipIf(!rustArmRequested())('managed mode on a multi-user Rust brain: e
 
   test('the writer transfer forms (prepare, self-transfer prepare, cancel, accept) each refuse write_pending under a competing worktree lease; the worktree stays active', () => env(async () => {
     const rival = await take(`managed:worktree:${worktreeId}`);
-    const state = async () => (await engine.getWorktreeBinding('work', hostIdFor(engine)))!.state;
-    expect(await state()).toBe('active');
-    const refusals = {
-      prepare: await code(async () => runPersistenceAdministration(engine, 'writer_transfer_prepare', { source_id: 'work', ...await reviewed('writer_transfer_prepare') })),
-      selfPrepare: await code(async () => runPersistenceAdministration(engine, 'writer_transfer_prepare', { source_id: 'work', self_transfer: true, ...await reviewed('writer_transfer_prepare') })),
-      cancel: await code(async () => runPersistenceAdministration(engine, 'writer_transfer_cancel', { source_id: 'work', expected_epoch: '1', ...await reviewed('writer_transfer_cancel') })),
-      accept: await code(async () => runPersistenceAdministration(engine, 'writer_transfer_accept', { source_id: 'work', path: root, expected_epoch: '1', manifest: 'x'.repeat(64), ...await reviewed('writer_transfer_accept') })),
-    };
-    expect(refusals).toEqual({ prepare: 'write_pending', selfPrepare: 'write_pending', cancel: 'write_pending', accept: 'write_pending' });
-    expect(await state()).toBe('active');
-    await freeLease(rival);
+    try {
+      const state = async () => (await engine.getWorktreeBinding('work', hostIdFor(engine)))!.state;
+      expect(await state()).toBe('active');
+      const refusals = {
+        prepare: await code(async () => runPersistenceAdministration(engine, 'writer_transfer_prepare', { source_id: 'work', ...await reviewed('writer_transfer_prepare') })),
+        selfPrepare: await code(async () => runPersistenceAdministration(engine, 'writer_transfer_prepare', { source_id: 'work', self_transfer: true, ...await reviewed('writer_transfer_prepare') })),
+        cancel: await code(async () => runPersistenceAdministration(engine, 'writer_transfer_cancel', { source_id: 'work', expected_epoch: '1', ...await reviewed('writer_transfer_cancel') })),
+        accept: await code(async () => runPersistenceAdministration(engine, 'writer_transfer_accept', { source_id: 'work', path: root, expected_epoch: '1', manifest: 'a'.repeat(64), ...await reviewed('writer_transfer_accept') })),
+      };
+      expect(refusals).toEqual({ prepare: 'write_pending', selfPrepare: 'write_pending', cancel: 'write_pending', accept: 'write_pending' });
+      expect(await state()).toBe('active');
+    } finally { await freeLease(rival); }
   }), 180_000);
 
   test('shared-skill activation on a Rust brain takes the store\'s own activation, never a worktree lock: a competing lease changes nothing', () => env(async () => {
