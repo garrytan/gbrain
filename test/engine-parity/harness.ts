@@ -195,20 +195,6 @@ export function OWNER_ONLY_STOP(noEffect?: (engine: BrainEngine) => Promise<void
   return { code: OWNER_ONLY_CODE, message: OWNER_ONLY_MESSAGE, owner: 'L4 non-owner keys', due: '2026-12-02', ...(noEffect && { noEffect }) };
 }
 
-/**
- * The config-route stop (ruling B, 2026-11-26): on the rust-mu config route, a brain that is multi-user only through its
- * config row is not gated by the server lane's owner-only session gate, because `rustHttpServing()` requires the environment
- * switch too. So a case pinned with `rustMultiuserStop` is admitted there instead of refused. Until the gate is fixed, such a
- * case on that route must return (the known behaviour) and is listed by name with this owner and date on every run; it fails
- * when the gate starts refusing (flip to the pins: remove this stop) and when the date passes.
- */
-export const CONFIG_ROUTE_GATE_STOP = {
-  owner: 'L3 config-route owner-only gate',
-  due: '2026-12-02',
-  reason: 'a brain multi-user only via its config row admits non-owner keys over serve --http (rustHttpServing() requires rustMultiuserFromEnv())',
-} as const;
-export type ConfigRouteStop = { owner: string; due: string; reason: string };
-
 /** What a scenario throws when a multi-user store refuses its call by design (see `rustMultiuserStop`). */
 export class MultiuserStopError extends Error {
   readonly code: string;
@@ -891,10 +877,7 @@ export function parityArms(backends: readonly TestBackend[]): ParitySuite {
       const mode = rustArmMultiuser();
       const stops = tally.multiuserStops ?? [];
       if (stops.length > 0) console.log(`[${rustLabel} arm] ${testFile}: ${stops.length} case(s) pinned to the multi-user owner-only refusal (rustMultiuserStop, not counted as equal; the pin check allows for them): ${stops.join(' | ')}`);
-      const cfg = tally.configRouteStops ?? [];
-      if (cfg.length > 0) console.log(`[${rustLabel} arm] ${testFile}: KNOWN RED ${cfg.length} case(s) on the config-route stop, owner ${CONFIG_ROUTE_GATE_STOP.owner}, due ${CONFIG_ROUTE_GATE_STOP.due}: ${CONFIG_ROUTE_GATE_STOP.reason}: ${cfg.join(' | ')}`);
-      const gaps = stops.length + cfg.length;
-      const better = checkRustTally(testFile, { ...tally, skipped: skipped + gaps, ...(mode !== 'off' && { muView: true, knownGaps: muGaps.length + gaps }) }, registered);
+      const better = checkRustTally(testFile, { ...tally, skipped: skipped + stops.length, ...(mode !== 'off' && { muView: true, knownGaps: muGaps.length + stops.length }) }, registered);
       if (better !== null) console.log(better);
     }
   }, 60_000);
@@ -1018,8 +1001,6 @@ export interface RustTally {
   standalone?: number;
   /** Cases that ended on a pinned multi-user stop (`rustMultiuserStop`): known gaps of a multi-user run, never equal and never stopped. */
   multiuserStops?: string[];
-  /** Pinned cases the config route admits (CONFIG_ROUTE_GATE_STOP): a named, dated known gap, never equal and never stopped. */
-  configRouteStops?: string[];
   /** The per-case ledger of stopped cases (optional: a caller that only wants the counts leaves it out). */
   stops?: Array<{ name: string; member: string; capability: string; pinned?: StopPin; caught?: true }>;
 }
@@ -1042,8 +1023,6 @@ export interface RustCase<T> {
   multiuserMode?: 'off' | 'env' | 'config' | 'ambient';
   /** The engine the case ran on, for the pin's `noEffect` check. */
   engine?: BrainEngine;
-  /** The stop a pinned case takes on the config route (defaults to CONFIG_ROUTE_GATE_STOP; a test passes another date). */
-  configRouteStop?: ConfigRouteStop;
 }
 
 /** `member@site` of a caught refusal: the member it names and the first src/ file outside the engine that called it. */
@@ -1132,21 +1111,6 @@ export async function checkRustArm<T>(c: RustCase<T>, tally: RustTally): Promise
     outcome = { error };
   }
   const muPin = c.opts.rustMultiuserStop;
-  if (muPin !== undefined && c.multiuserMode === 'config') {
-    // The config route: the owner-only gate does not switch on there yet (CONFIG_ROUTE_GATE_STOP), so the call is admitted.
-    const stop = c.configRouteStop ?? CONFIG_ROUTE_GATE_STOP;
-    const where = `[rust] "${c.name}" takes the config-route stop (${stop.owner}, due ${stop.due}: ${stop.reason})`;
-    if (stop.due < today()) throw new Error(`${where}: the config-route stop has passed its due date; fix the gate or move the date`);
-    if ('error' in outcome) {
-      const e = outcome.error;
-      if (e instanceof MultiuserStopError && e.code === muPin.code && e.message.includes(muPin.message)) {
-        throw new Error(`${where}, but the config route now refuses with the owner-only gate: the gate is fixed, so flip this route to the pins (remove CONFIG_ROUTE_GATE_STOP)`);
-      }
-      throw e;
-    }
-    (tally.configRouteStops ??= []).push(c.name);
-    return;
-  }
   if (muPin !== undefined && c.multiuserMode !== undefined && c.multiuserMode !== 'off') {
     // A multi-user run of a case pinned to the owner-only gate: it must end on that refusal and nothing else.
     const where = `[rust] "${c.name}" has a rustMultiuserStop pin (${muPin.code}, ${muPin.owner}, due ${muPin.due})`;
