@@ -532,7 +532,7 @@ src/core/sources-ops.ts	execute_raw	1	#9634, pre-ratchet: +1 is the INSERT that 
 src/core/sql-query.ts	execute_raw	2
 src/core/storage-manifest/adopt.ts	execute_raw	4
 src/core/storage-manifest/source.ts	execute_raw	4
-src/core/sync-anchor.ts	execute_raw	2
+src/core/sync-anchor.ts	execute_raw	1
 src/core/sync-attempt.ts	execute_raw	1
 src/core/sync-identity-downgrades.ts	execute_raw	1
 src/core/sync-pending.ts	execute_raw	1
@@ -547,7 +547,7 @@ src/core/takes-write.ts	execute_raw	5
 src/core/think/index.ts	execute_raw	2
 src/core/think/persist-take.ts	execute_raw	1
 src/core/timeline-dedup-repair.ts	execute_raw	11
-src/core/timeline-extract.ts	execute_raw	6
+src/core/timeline-extract.ts	execute_raw	5
 src/core/timeline-write-through.ts	execute_raw	1
 src/core/transcripts/archive.ts	execute_raw	10
 src/core/transcripts/discover.ts	execute_raw	2
