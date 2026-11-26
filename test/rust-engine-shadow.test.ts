@@ -23,10 +23,10 @@ import { MirrorQueue, newMirrorCounters, type CapturedRead } from '../src/shadow
 import { managedFilesystemDatastorePath, registerManagedFilesystemEngine } from '../src/core/persistence/filesystem-guard.ts';
 import { SHADOW_READ_MEMBERS } from '../src/shadow/reads.ts';
 import { buildProvisionalReport, renderProvisionalMarkdown } from '../src/shadow/report.ts';
-import { recordAllSentAtExit, sampleWeight, ShadowSupervisor } from '../src/shadow/supervisor.ts';
+import { recordAllSentAtExit, sampleQualifyingWeight, sampleWeight, ShadowSupervisor } from '../src/shadow/supervisor.ts';
 import { ensureEpoch } from '../src/shadow/evidence-epoch.ts';
 import { buildFollowStatus } from '../src/shadow/follow-status.ts';
-import { readSent } from '../src/shadow/write-compare.ts';
+import { readReceipt, readSent } from '../src/shadow/write-compare.ts';
 import { wrapShadowEngine, type ShadowSink } from '../src/shadow/wrapper.ts';
 import { shadowChildArgv } from '../src/shadow/attach.ts';
 import { parseBenchmarkEngineKind, createBenchmarkBrain, RustEngineAddonUnavailableError } from '../src/eval/longmemeval/harness.ts';
@@ -763,6 +763,27 @@ describe('supervisor sample accounting (a sample is received, refused and counte
     h.sup.recordSent();
     expect(h.sent()).toBe(4); // the refused sample is not in the sent count: its sender counts it send_shed
     h.done();
+  });
+
+  test('the sent count also says how many of the samples were qualifying writes (page and link writes), so a lost sample that could never be compared is not counted against the share', () => {
+    const h = harness({ maxBufferedBytes: 1_000_000 });
+    const other = (extra = ''): string => `{"t":"write","op":"updatePageContextualRetrievalState","outcome":"capability_missing","family":"pages:updatePageContextualRetrievalState"${extra}}\n`;
+    for (const line of [sample(0, 10), sample(1, 10), other(), other(), other(',"dropped":2')]) expect(h.sup.send(line)).toBe(true);
+    h.sup.send('{"t":"read","op":"putPage"}\n'); // not a write sample: in neither count
+    h.sup.recordSent();
+    const receipt = readReceipt(h.dir, h.sessions[0]!);
+    // 2 putPage + 2 other writes + 1 other write carrying 2 earlier refusals = 7. Qualifying: the 2 putPage, and the 2 refusals (which write they were is not known, so they count as qualifying, never as less).
+    expect(receipt).toMatchObject({ sent: 7, sent_qualifying: 4 });
+    h.done();
+  });
+
+  test('a sample is qualifying only by the op the sampler wrote as its second key, never by text inside the page', () => {
+    expect(sampleQualifyingWeight('{"t":"write","op":"putPage","args":[]}\n')).toBe(1);
+    for (const op of ['deletePage', 'addLink', 'addLinksBatch', 'removeLink']) expect(sampleQualifyingWeight(`{"t":"write","op":"${op}"}\n`)).toBe(1);
+    expect(sampleQualifyingWeight('{"t":"write","op":"softDeletePages","outcome":"capability_missing"}\n')).toBe(0);
+    expect(sampleQualifyingWeight('{"t":"write","op":"softDeletePages","args":[{"op":"putPage"}],"dropped":3}\n')).toBe(3); // the refusals it carries only
+    expect(sampleQualifyingWeight('{"t":"read","op":"putPage"}\n')).toBe(0);
+    expect(sampleQualifyingWeight('{"t":"write","x":{"op":"putPage"}}\n')).toBe(0);
   });
 
   test('drain returns as soon as every callback has fired and the child\'s input has ended, and at once when nothing was sent', async () => {

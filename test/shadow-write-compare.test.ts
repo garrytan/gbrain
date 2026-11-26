@@ -633,11 +633,11 @@ describe('every sample the child was sent ends in the tally (sample accounting)'
     });
   }, 30_000);
 
-  async function childWithSent(sent: number, lines: string[], prepare?: (dir: string) => void) {
+  async function childWithSent(sent: number, lines: string[], prepare?: (dir: string) => void, sentQualifying?: number) {
     return withEnv({ GBRAIN_HOME: tmp() }, async () => {
       const dir = tmp();
       writeSeedRecord(dir, { version: 1, seed_id: 'seed-1', started_at: '2026-01-01T00:00:00.000Z', finished_at: '2026-01-01T00:01:00.000Z', unseeded_gap_rows_total: 0, unseeded_gap_rows: {}, relations: {}, digests: true } as never);
-      writeFileSync(sentPath(dir, 'sess-3'), JSON.stringify({ session: 'sess-3', sent }) + '\n');
+      writeFileSync(sentPath(dir, 'sess-3'), JSON.stringify({ session: 'sess-3', sent, ...(sentQualifying === undefined ? {} : { sent_qualifying: sentQualifying }) }) + '\n');
       prepare?.(dir);
       const input = new PassThrough();
       const done = runShadowChild(dir, { input, writeControl: () => {}, ...BASE, session: 'sess-3', addonSha256: () => 'a'.repeat(64), openEngine: () => ({ ownerRole: 'owner', async connect() {}, async disconnect() {} }) as never });
@@ -647,6 +647,26 @@ describe('every sample the child was sent ends in the tally (sample accounting)'
       return { dir, epoch: readEpoch(dir)!.epoch_id };
     });
   }
+
+  test('a lost sample counts against the share only when it was a qualifying write: the rest is booked capability_missing pipe_unflushed_nonqualifying, still counted and visible', async () => {
+    const other = '{"t":"write","op":"updatePageContextualRetrievalState","outcome":"capability_missing","family":"pages:updatePageContextualRetrievalState"}\n';
+    const { dir, epoch } = await childWithSent(10, ['{"t":"write","op":"putPage"}\n', '{"t":"write","op":"putPage"}\n', other], undefined, 6);
+    const t = readWriteTally(dir, epoch)!;
+    // 10 sent, 6 of them qualifying; 3 read, 2 of them qualifying: 4 qualifying and 3 other samples were lost.
+    expect(t.uncomparable_by_reason).toMatchObject({ no_sample: 2, pipe_unflushed: 4 });
+    expect(t.capability_missing_by_family).toMatchObject({ 'pages:updatePageContextualRetrievalState': 1, pipe_unflushed_nonqualifying: 3 });
+    expect(t.uncomparable).toBe(6);
+    expect(t.comparable + t.unexplained_difference + t.uncomparable + t.capability_missing).toBe(10);
+    expect(existsSync(sentPath(dir, 'sess-3'))).toBe(false);
+  }, 60_000);
+
+  test('a sent count written before it carried the qualifying count books every lost sample pipe_unflushed, as before (never fewer against the share)', async () => {
+    const other = '{"t":"write","op":"updatePageContextualRetrievalState","outcome":"capability_missing","family":"pages:updatePageContextualRetrievalState"}\n';
+    const { dir, epoch } = await childWithSent(10, ['{"t":"write","op":"putPage"}\n', other]);
+    const t = readWriteTally(dir, epoch)!;
+    expect(t.uncomparable_by_reason).toMatchObject({ no_sample: 1, pipe_unflushed: 8 });
+    expect(t.capability_missing_by_family.pipe_unflushed_nonqualifying).toBeUndefined();
+  }, 60_000);
 
   test('a deficit larger than 10,000 is counted whole, never cut (20,001 sent, 1 read: 20,000 counted pipe_unflushed)', async () => {
     const { dir, epoch } = await childWithSent(20_001, ['{"t":"write","op":"putPage"}\n']);
