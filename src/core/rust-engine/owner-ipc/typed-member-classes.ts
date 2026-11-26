@@ -505,6 +505,7 @@ export const OWNER_IPC_TYPED_CONFIRMING_READS: Readonly<Record<string, string>> 
   blankPurgeCoreEditNotices: 'probePurgeDerivations for that purge',
   deletePageViewDigests: 'probePurgeDerivations for that purge',
   writePageViewDigest: nothingDigest,
+  insertImpactLogRow: 'nothing: the store keeps no migration impact log and refuses the write by name before any work, so running it again writes nothing',
   deleteRewrittenSegmentDerivations: 'readSegmentDerivations for that page',
   deleteUnstagedSegmentChunks: 'getChunks for that page generation',
   // The segmented write path's writes (engine-sql/segmented-writes.ts).
