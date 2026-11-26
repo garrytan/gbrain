@@ -93,6 +93,10 @@ describe('#10351 interrupted PostgreSQL data-file reads', () => {
     const out = JSON.parse(renderCliError(pg(message), { json: true, command: 'jobs submit', tty: false }).stdout!);
     expect(out).toMatchObject({ code: 'database_error', reason: 'storage_interrupted' });
     expect(out.suggestion).toContain('original job or write receipt');
+    // #10408: a host storage fault goes to the host admin; db-repair only probes the connection and reports healthy.
+    expect(out.fix).toMatchObject({ actor: 'host_admin', next: 'report' });
+    expect(out.fix.argv).toBeUndefined();
+    expect(JSON.stringify(out)).not.toContain('db-repair');
   });
   test('a real damaged read and an unrelated interrupted call keep their classes', () => {
     expect(classifyPgAccessError(pg('could not read block 3 in file "base/42/83": read only 0 of 8192 bytes')).reason).toBe('storage_corrupt');
