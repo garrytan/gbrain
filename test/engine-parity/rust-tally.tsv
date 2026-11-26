@@ -264,7 +264,7 @@ test/engine-parity/page-write-readers.test.ts	1	0
 test/engine-parity/pages.test.ts	46	0
 test/engine-parity/persistence-binding-reads.test.ts	3	0
 test/engine-parity/persistence-declaration.test.ts	10	3
-test/engine-parity/persistence.test.ts	72	1
+test/engine-parity/persistence.test.ts	72	0
 test/engine-parity/person-duplicates.test.ts	5	0
 test/engine-parity/plain-member-reads.test.ts	1	0
 test/engine-parity/plain-member-writes.test.ts	1	0
