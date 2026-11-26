@@ -33,7 +33,7 @@
 
 import { readFileSync, existsSync } from 'fs';
 import type { BrainEngine } from '../core/engine.ts';
-import { findExperts, type WhoknowsResult } from './whoknows.ts';
+import { findExperts, localExpertScope, type WhoknowsResult } from './whoknows.ts';
 import { loadConfig, isThinClient } from '../core/config.ts';
 import { callRemoteTool, unpackToolResult } from '../core/mcp-client.ts';
 
@@ -369,7 +369,7 @@ export async function runEvalWhoknows(
         );
         return unpackToolResult<WhoknowsResult[]>(raw);
       }
-    : async (topic, limit) => findExperts(engine!, { topic, limit });
+    : async (topic, limit) => findExperts(engine!, { topic, limit, ...await localExpertScope(engine!) });
 
   const quality = await runQualityGate(whoknows, fixture, opts.limit);
   // Regression gate auto-skips on thin-client: eval_candidates lives in
