@@ -193,8 +193,8 @@ export async function enforcedAccess(engine: BrainEngine, command: string): Prom
 /** Refuses a named source the member cannot read: another member's personal source, or one that is not registered (the same refusal, so the two read alike). */
 export async function checkEnforcedSource(engine: BrainEngine, command: string, sourceId: string): Promise<void> {
   const ea = await enforcedAccess(engine, command);
-  const [row] = ea.hiddenSources.has(sourceId) ? [] : await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE id = $1 AND archived = false', [sourceId]);
-  if (!row) await refuseEnforced(command, 'target_not_readable', { engine });
+  const row = ea.hiddenSources.has(sourceId) ? null : await engine.readSourceRow(sourceId);
+  if (!row || row.archived) await refuseEnforced(command, 'target_not_readable', { engine });
 }
 
 /** Every source an operation's arguments name: --source (unless the operation owns a param called source), --source-id, --source-ids. */

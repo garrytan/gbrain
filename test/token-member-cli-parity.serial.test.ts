@@ -127,6 +127,22 @@ const ENFORCED_SCRIPT: Step[] = [
   { args: ['get', 'notes/tess-notes'], member: 'tess-example' },
 ];
 
+/**
+ * A labelled-only member's put is a named stop on a Rust brain (row ec05-1): the store does not model the labelled-only
+ * read of an existing page, so the put refuses with engine_capability_missing before it writes anything. Run after
+ * ENFORCED_SCRIPT on the brain of every engine; only the Rust outcome is asserted here (the SQL engines answer it, and
+ * the engine-parity case in test/engine-parity/enforced-member-reads.test.ts compares the read itself).
+ */
+const LABELLED_SCRIPT: Step[] = [
+  { args: ['access', 'member', 'add', 'lab-example', '--json'] },
+  { args: ['access', 'member', 'labelled-only', 'lab-example', 'on'] },
+  { label: 'listed', args: ['put', 'notes/lab-plan', '--json'], stdin: '---\ntitle: Lab plan\nreadable_by:\n  - lab-example\n---\n# Lab plan\n\nBody one.\n' },
+  { args: ['put', 'notes/lab-plan', '--expected-revision', '{rev}', '--json'], rev: 'listed', member: 'lab-example', stdin: '---\ntitle: Lab plan\nreadable_by:\n  - lab-example\n---\n# Lab plan\n\nBody two.\n' },
+  { args: ['put', 'notes/lab-new', '--json'], member: 'lab-example', stdin: '---\ntitle: Lab new\n---\n# Lab new\n\nFresh.\n' },
+  { args: ['get', 'notes/lab-plan'] },
+  { args: ['get', 'notes/lab-new'] },
+];
+
 type Engine = 'pglite' | 'postgres' | 'rust';
 interface Brain { engine: Engine; home: string }
 interface Run { exitCode: number; stdout: string; stderr: string }
@@ -214,7 +230,7 @@ beforeAll(async () => {
   await Promise.all(enforcedBrains.map(async (brain) => {
     const out: Run[] = [];
     const revisions = new Map<string, string>();
-    for (const step of ENFORCED_SCRIPT) {
+    for (const step of [...ENFORCED_SCRIPT, ...(brain.engine === 'rust' ? LABELLED_SCRIPT : [])]) {
       const args = step.args.map((a) => a === '{rev}' ? revisions.get(step.rev ?? '') ?? '' : a);
       const run = await cli(brain, args, { member: step.member, stdin: step.stdin });
       out.push(run);
@@ -261,12 +277,21 @@ describe('a put on a brain of several members, plain and under GBRAIN_ENFORCED_M
     expect(codes).toEqual(ENFORCED_SCRIPT.map((s) => `${s.exit ?? 0} ${s.label ?? s.args[0]}`));
   });
 
+  test('a labelled-only member stops on a Rust brain before its put writes anything', () => {
+    const rust = enforcedRuns.get('rust');
+    if (!rust) return; // no Rust addon on this run
+    const [listed, rewrite, create, getPlan, getNew] = rust.slice(ENFORCED_SCRIPT.length + 2);
+    const stopped = (r: Run) => ({ exitCode: r.exitCode, code: /"code": "([a-z_]+)"/.exec(r.stdout + r.stderr)?.[1], nothing: /outcome=none written=nothing/.test(r.stdout + r.stderr) });
+    expect([listed.exitCode, stopped(rewrite), stopped(create)]).toEqual([0, { exitCode: 1, code: 'engine_capability_missing', nothing: true }, { exitCode: 1, code: 'engine_capability_missing', nothing: true }]);
+    expect([/Body one\./.test(getPlan.stdout), /Body two\./.test(getPlan.stdout), getNew.exitCode]).toEqual([true, false, 1]);
+  });
+
   for (const engine of ['postgres', 'rust'] as const) {
     test(`${engine} prints what PGLite prints for every put and read`, () => {
       const theirs = enforcedRuns.get(engine);
       if (!theirs) return; // that engine is not configured on this run
       const ours = enforcedRuns.get('pglite')!;
-      const view = (r: Run[]) => r.slice(1).map((run, i) => ({
+      const view = (r: Run[]) => r.slice(1, ENFORCED_SCRIPT.length).map((run, i) => ({
         command: ENFORCED_SCRIPT[i + 1].label ?? ENFORCED_SCRIPT[i + 1].args.join(' '), exitCode: run.exitCode, stdout: masked(run.stdout), stderr: withoutBackupNotice(masked(run.stderr)),
       }));
       expect(view(theirs)).toEqual(view(ours));

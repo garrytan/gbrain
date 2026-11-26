@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2442/2469
+# covered: 2446/2473
 # lifecycle: 12/12
 # pages: 141/142
 # search: 8/8
@@ -77,7 +77,7 @@
 # entity_identities: 5/5
 # cli_reads_import: 16/16
 # wanted_links: 2/2
-# write_misc: 123/138
+# write_misc: 127/142
 # repair_bookkeeping: 59/59
 # write_attribution: 5/5
 # telemetry: 14/14
@@ -136,13 +136,13 @@ getPage	pages	yes	288	yes	yes	yes	serves
 readPageSnapshot	pages	yes	102	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	7	no	yes	yes	serves
 lockPageKeys	pages	yes	17	no	yes	yes	serves
-putPage	pages	yes	1360	yes	yes	yes	serves
+putPage	pages	yes	1363	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	45	yes	yes	yes	serves
 deletePages	pages	yes	10	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	2	yes	yes	yes	serves
-softDeletePage	pages	yes	344	yes	yes	yes	serves
+softDeletePage	pages	yes	346	yes	yes	yes	serves
 softDeletePages	pages	yes	4	yes	yes	yes	serves
 restorePage	pages	yes	18	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	12	no	yes	yes	serves
@@ -179,7 +179,7 @@ listSourceIds	pages	yes	3	no	yes	yes	serves
 readSoleSourceId	pages	yes	1	no	yes	yes	serves
 readFirstSourceId	pages	yes	1	no	yes	yes	serves
 lockAllSourceRows	pages	yes	1	no	yes	yes	serves
-readSourceRow	pages	yes	8	no	yes	yes	serves
+readSourceRow	pages	yes	9	no	yes	yes	serves
 lockSourceRow	pages	yes	8	no	yes	yes	serves
 lockSourceForUpdate	pages	yes	4	no	yes	yes	serves
 advanceSourceCommit	pages	yes	8	no	yes	yes	serves
@@ -2005,6 +2005,10 @@ insertConfigIfAbsent	write_misc	yes	1	no	yes	yes	serves
 readPageTruthLead	write_misc	yes	2	no	yes	yes	serves
 readStoredPageHead	write_misc	yes	2	no	yes	yes	serves
 readVersionSourcePath	write_misc	yes	2	no	yes	yes	serves
+readStoredPageLabels	write_misc	yes	1	no	yes	yes	serves
+readMemberPageReadable	write_misc	yes	3	no	yes	yes	serves
+readSlugFolderRules	write_misc	yes	2	no	yes	yes	serves
+readHiddenPageSlugs	write_misc	yes	2	no	yes	yes	serves
 listActiveAccessMembers	write_misc	yes	7	no	yes	yes	serves
 hasLabelledOnlyMember	write_misc	yes	1	no	yes	yes	serves
 listAccessTokens	write_misc	yes	8	no	yes	yes	serves
