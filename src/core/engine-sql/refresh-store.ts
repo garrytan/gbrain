@@ -13,6 +13,7 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import type { WriteRequest } from '../persistence/model.ts';
+import type { FenceOpts, LeaseToken } from './lease-token.ts';
 
 type RawSql = Pick<BrainEngine, 'executeRaw'>;
 
@@ -29,6 +30,8 @@ export interface RefreshRow {
 export interface RefreshInsert {
   worktreeId: string; sourceIds: readonly string[]; principalId: string; ownerEpoch: string; topologyGeneration: string;
   oldHead: string; targetHead: string; upstreamRef: string; preserved: readonly string[]; outcome: Record<string, unknown>;
+  /** The caller's host fence (a multi-user Rust brain): the row is claimed under it. The SQL engines ignore it. */
+  fence?: LeaseToken;
 }
 /** The session settings a refresh transaction takes before its statements. */
 export type RefreshSettings = 'synchronous_commit' | 'fence' | 'lock_timeout';
@@ -40,15 +43,20 @@ export interface RefreshStore {
   readActive(worktreeId: string): Promise<RefreshRow | null>;
   read(id: string): Promise<RefreshRow | null>;
   /** Conditional transition: true when the row was in one of `from` and moved to `to` (a terminal state stamps `completed_at`). */
-  transition(id: string, from: readonly string[], to: string, outcome: Record<string, unknown>, terminal: boolean): Promise<boolean>;
+  transition(id: string, from: readonly string[], to: string, outcome: Record<string, unknown>, terminal: boolean, opts?: FenceOpts): Promise<boolean>;
   /** A fenced row whose merge has not started takes a new start and target; the row, or null. */
-  replan(id: string, oldHead: string, targetHead: string): Promise<RefreshRow | null>;
+  replan(id: string, oldHead: string, targetHead: string, opts?: FenceOpts): Promise<RefreshRow | null>;
   /** The fence insert; the unique violation of a second active refresh of the worktree is thrown with code `23505`. */
   insertDraining(insert: RefreshInsert): Promise<RefreshRow>;
   /** Marks the merge started on a still fenced row; whether it did. */
-  markMergeStarted(id: string, atMs: number): Promise<boolean>;
+  markMergeStarted(id: string, atMs: number, opts?: FenceOpts): Promise<boolean>;
   /** The caller becomes the active row's holder; `previous_holder` keeps the first holder replaced. */
-  setHolder(id: string, holder: object): Promise<void>;
+  setHolder(id: string, holder: object, opts?: FenceOpts): Promise<void>;
+  /**
+   * The explicit adoption of an active row by a new holder (resume, recovery, abandon): a multi-user Rust brain takes a new claim of
+   * the row under the caller's fence, overwriting the old holder's; true when the row is active. Only that store has it.
+   */
+  adoptClaim?(id: string, opts?: FenceOpts): Promise<boolean>;
   /** The members' upstream observation after the merge: checked now, at the target, none behind. */
   recordMergedUpstream(sourceIds: readonly string[], targetHead: string): Promise<void>;
   /** The target heads of the worktree's last 100 completed refreshes of `upstreamRef`, newest first. */
@@ -81,7 +89,7 @@ export interface RefreshStore {
 
   // The writes that wait behind a refresh or an import (import-deferral.ts, refresh-barrier.ts).
   /** A claimed write whose preparation was refused `pending_import` moves back to `deferred` behind that import; the row or null. */
-  holdForImport(id: string, token: string, importFrom: string): Promise<WriteRequest | null>;
+  holdForImport(id: string, token: string, importFrom: string, opts?: FenceOpts): Promise<WriteRequest | null>;
   /** The refresh row as a deferred write's replay reads it: its state, heads, and whether it was released; null when it does not exist. */
   readReleased(id: string): Promise<{ state: string; old_head: string; target_head: string; released: boolean } | null>;
   /** The request id of the oldest committed write to the page accepted after `sequence`, other than the managed import a held write waited for. */

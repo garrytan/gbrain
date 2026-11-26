@@ -257,7 +257,24 @@ impl Store {
 
     /// One write statement of the managed sync (`syncStoreWrite`); its `RETURNING` rows.
     pub fn sync_store_write(&self, name: &str, params: &[Value]) -> Result<Value> {
+        self.sync_store_write_fenced(name, params, None)
+    }
+
+    /// `sync_store_write` under the caller's host registration (lane LM slice 3): the cursor statements that take, check or
+    /// end a sync checkpoint claim run `fence::begin` and the claim lifecycle of `managed_sync_run_store::fenced_write`;
+    /// every other statement ignores the fence and runs as it always did.
+    pub fn sync_store_write_fenced(
+        &self,
+        name: &str,
+        params: &[Value],
+        fence: Option<&crate::leases::LeaseToken>,
+    ) -> Result<Value> {
         self.write(|tx| {
+            if let Some(done) =
+                super::managed_sync_run_store::fenced_write(self, tx, name, params, fence)?
+            {
+                return Ok(done);
+            }
             if let Some(rows) = super::managed_sync_status::write(tx, &*self.env, name, params)? {
                 return Ok(rows);
             }

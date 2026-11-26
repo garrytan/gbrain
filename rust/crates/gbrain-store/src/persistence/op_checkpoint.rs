@@ -587,6 +587,7 @@ pub(crate) fn purge_stale_checkpoints_in(
     tx: &mut dyn KvWrite,
     env: &dyn Env,
     ttl_days: f64,
+    deleted: &mut Vec<(String, String)>,
 ) -> Result<i64> {
     if !ttl_days.is_finite() {
         return Err(StoreError::invalid(
@@ -623,6 +624,7 @@ pub(crate) fn purge_stale_checkpoints_in(
     for p in &stale {
         tx.delete(&p.key)?;
         delete_op_checkpoint_paths_in(tx, &p.op, &p.fingerprint)?;
+        deleted.push((p.op.clone(), p.fingerprint.clone()));
     }
     Ok(stale.len() as i64)
 }
@@ -872,7 +874,25 @@ impl Store {
 
     /// `deleteOpCheckpoint(op, fingerprint)`.
     pub fn delete_op_checkpoint(&self, op: &str, fingerprint: &str) -> Result<()> {
-        self.write(|tx| delete_op_checkpoint_in(tx, op, fingerprint))
+        self.write(|tx| {
+            delete_op_checkpoint_in(tx, op, fingerprint)?;
+            self.sync_checkpoint_ended(tx, op, fingerprint)
+        })
+    }
+
+    /// A deleted sync cursor ends its checkpoint claim (`CLAIM_SYNC_CHECKPOINT`, no fence: a deletion carries none). A store
+    /// that is not multi-user touches no `~L` key.
+    fn sync_checkpoint_ended(
+        &self,
+        tx: &mut dyn KvWrite,
+        op: &str,
+        fingerprint: &str,
+    ) -> Result<()> {
+        if op != "managed-sync" {
+            return Ok(());
+        }
+        let id = super::managed_sync_run_store::checkpoint_claim_id(op, fingerprint);
+        crate::fence::claim_ended(self, tx, crate::leases::CLAIM_SYNC_CHECKPOINT, &id, None)
     }
 
     /// `deleteOpCheckpointPaths(op, fingerprint)`.
@@ -882,7 +902,14 @@ impl Store {
 
     /// `purgeStaleCheckpoints(ttlDays)`.
     pub fn purge_stale_checkpoints(&self, ttl_days: f64) -> Result<i64> {
-        self.write(|tx| purge_stale_checkpoints_in(tx, &*self.env, ttl_days))
+        self.write(|tx| {
+            let mut deleted = Vec::new();
+            let purged = purge_stale_checkpoints_in(tx, &*self.env, ttl_days, &mut deleted)?;
+            for (op, fingerprint) in &deleted {
+                self.sync_checkpoint_ended(tx, op, fingerprint)?;
+            }
+            Ok(purged)
+        })
     }
 }
 

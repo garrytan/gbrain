@@ -11,9 +11,10 @@ use super::effect_worker::pg_uuid;
 use super::effects::{effect_by_id, write_effect};
 use super::write_claim_terms::worktree_of;
 use super::{all_requests, extra_is_null, extra_time};
-use crate::env::Env;
 use crate::error::{Result, StoreError};
+use crate::fence;
 use crate::kv::{KvRead, KvWrite};
+use crate::leases::{CLAIM_EFFECT, LeaseToken};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -68,12 +69,18 @@ pub enum GitEffectWrite {
     YieldToPublications {
         claims: Vec<GitClaimRef>,
         delay_ms: f64,
+        /// The caller's host registration (lane L5): the yield releases claims taken under its epoch only.
+        #[serde(default)]
+        fence: Option<LeaseToken>,
     },
     /// `GIT_PLAIN_OUTCOME_SQL`: each claimed effect with no recovery settles with the outcome:
     /// `failed` `targets_parked` when it parked targets, else `committed`.
     RecordPlainOutcome {
         claims: Vec<GitClaimRef>,
         outcome_json: String,
+        /// The caller's host registration (lane L5): the outcome settles claims taken under its epoch only.
+        #[serde(default)]
+        fence: Option<LeaseToken>,
     },
 }
 
@@ -132,14 +139,45 @@ fn claim_key(claim: &GitClaimRef) -> Result<(i64, Option<String>)> {
     Ok((id, claim.token.as_deref().map(pg_uuid).transpose()?))
 }
 
-fn git_effect_write_in(
+/// Before anything is written: every effect the claims name whose claim holds (`matches`) was claimed under `fence`'s
+/// lease name and epoch (`CLAIM_EFFECT`). One that was not refuses the whole write. No fence, no check.
+fn claims_held(
     tx: &mut dyn KvWrite,
-    env: &dyn Env,
+    fence: Option<&LeaseToken>,
+    claims: &[GitClaimRef],
+    plain: bool,
+) -> Result<()> {
+    if fence.is_none() {
+        return Ok(());
+    }
+    for claim in claims {
+        let (id, token) = claim_key(claim)?;
+        let Some(token) = token else { continue };
+        let Some(e) = effect_by_id(&*tx, id)? else {
+            continue;
+        };
+        if e.execution_token.as_deref() != Some(token.as_str()) || (plain && e.recovery.is_some()) {
+            continue;
+        }
+        fence::claim_held(tx, CLAIM_EFFECT, &id.to_string(), fence)?;
+    }
+    Ok(())
+}
+
+fn git_effect_write_in(
+    store: &crate::Store,
+    tx: &mut dyn KvWrite,
     what: &GitEffectWrite,
 ) -> Result<Value> {
-    let now = env.now_micros();
+    let now = store.env.now_micros();
     match what {
-        GitEffectWrite::YieldToPublications { claims, delay_ms } => {
+        GitEffectWrite::YieldToPublications {
+            claims,
+            delay_ms,
+            fence,
+        } => {
+            fence::begin(store, tx, fence.as_ref(), "git_yield_to_publications")?;
+            claims_held(tx, fence.as_ref(), claims, false)?;
             let delay_us = (delay_ms * 1000.0).round() as i64;
             for claim in claims {
                 let (id, token) = claim_key(claim)?;
@@ -159,13 +197,17 @@ fn git_effect_write_in(
                 e.next_attempt_at_us = now + delay_us;
                 e.updated_at_us = now;
                 write_effect(tx, &e)?;
+                fence::claim_ended(store, tx, CLAIM_EFFECT, &e.id.to_string(), fence.as_ref())?;
             }
             Ok(Value::Null)
         }
         GitEffectWrite::RecordPlainOutcome {
             claims,
             outcome_json,
+            fence,
         } => {
+            fence::begin(store, tx, fence.as_ref(), "git_record_plain_outcome")?;
+            claims_held(tx, fence.as_ref(), claims, true)?;
             let outcome: Value = serde_json::from_str(outcome_json).map_err(|e| {
                 StoreError::invalid(format!("invalid input syntax for type json: {e}"))
             })?;
@@ -196,6 +238,7 @@ fn git_effect_write_in(
                 e.outcome = Some(outcome.clone());
                 e.updated_at_us = now;
                 write_effect(tx, &e)?;
+                fence::claim_ended(store, tx, CLAIM_EFFECT, &e.id.to_string(), fence.as_ref())?;
             }
             Ok(Value::Null)
         }
@@ -211,6 +254,6 @@ impl crate::Store {
 
     /// One `gitEffectStore()` write (`GitEffectWrite`); its result as JSON.
     pub fn git_effect_write(&self, what: &GitEffectWrite) -> Result<Value> {
-        self.write(|tx| git_effect_write_in(tx, &*self.env, what))
+        self.write(|tx| git_effect_write_in(self, tx, what))
     }
 }

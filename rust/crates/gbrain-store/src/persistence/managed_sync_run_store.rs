@@ -7,6 +7,13 @@
 //! through to managed_sync_store.rs. A cursor row's `completed_keys` is compared as a JSON value, as the `completed_keys=$3::text::jsonb`
 //! compare of the SQL does: an object's keys are unordered. The row locks (`FOR UPDATE`, `FOR SHARE`) are not reads here, as in
 //! managed_sync_store.rs: a transaction is Serialized, and under optimistic transactions the rows read are in its read set.
+//!
+//! Fences (lane LM slice 3, I-5; `fenced_write`). The sync cursor (op `managed-sync`) is the claim of the run that holds it,
+//! identified by `<op> 0x00 <fingerprint>` under `CLAIM_SYNC_CHECKPOINT`. `cursor_insert` creates it (a lost insert takes
+//! nothing), `cursor_swap` checks it before the compare-and-swap writes, `checkpoint_touch` of a cursor row is the explicit
+//! adoption by a resuming run (a new claim, overwriting the record), `cursor_mark_done` (the owner's checkpoint publication,
+//! which runs under its own request claim) and `finished_cursor_delete` end it. Every one runs `fence::begin` once in its own
+//! write transaction. With no fence on a store that is not multi-user each does what it always did and writes no `~L` key.
 
 use serde_json::{Value, json};
 
@@ -19,10 +26,13 @@ use super::projection_queue::parse_timestamptz;
 use super::worktrees::read_worktree_record;
 use super::write_claim_terms::worktree_of;
 use super::{RequestRecord, all_requests, json_text, request_by_id, uuid_param};
+use crate::Store;
 use crate::chunks::{in_live_body, read_chunks, read_segment_view, segmented};
 use crate::env::Env;
 use crate::error::{Result, StoreError};
+use crate::fence;
 use crate::kv::{KvRead, KvWrite};
+use crate::leases::{CLAIM_SYNC_CHECKPOINT, LeaseToken};
 use crate::pages::{PageRecord, all_pages};
 
 const OPEN: [&str; 3] = ["queued", "running", "recovering"];
@@ -362,6 +372,93 @@ fn refused_checkpoint(read: &dyn KvRead, p: &[Value]) -> Result<Value> {
         vec![json!({ "?column?": 1 })]
     } else {
         vec![]
+    }))
+}
+
+/// The claim id of a checkpoint row: `<op> 0x00 <fingerprint>`.
+pub(super) fn checkpoint_claim_id(op: &str, fingerprint: &str) -> String {
+    format!("{op}\u{0}{fingerprint}")
+}
+
+/// The cursor statements that take, check or end a sync checkpoint claim, run under `fence`; `None` for any other
+/// statement (the caller runs it as it always did, with no fence).
+pub(super) fn fenced_write(
+    store: &Store,
+    tx: &mut dyn KvWrite,
+    name: &str,
+    p: &[Value],
+    fence: Option<&LeaseToken>,
+) -> Result<Option<Value>> {
+    let env = &*store.env;
+    // `checkpoint_touch` touches a manifest row (no claim) unless it names a cursor row, which is the adoption.
+    let adoption = name == "checkpoint_touch" && text(p, 0).is_ok_and(|op| op == CURSOR_OP);
+    if !matches!(
+        name,
+        "cursor_insert" | "cursor_swap" | "cursor_mark_done" | "finished_cursor_delete"
+    ) && !adoption
+    {
+        return Ok(None);
+    }
+    fence::begin(store, tx, fence, name)?;
+    let run = |tx: &mut dyn KvWrite| -> Result<Value> {
+        match write(tx, env, name, p)? {
+            Some(done) => Ok(done),
+            None => super::managed_sync_status::write(tx, env, name, p)?.ok_or_else(|| {
+                StoreError::invalid(format!("the store has no sync statement named {name}"))
+            }),
+        }
+    };
+    let changed = |rows: &Value| rows.as_array().is_some_and(|a| !a.is_empty());
+    Ok(Some(match name {
+        "cursor_insert" => {
+            let done = run(tx)?;
+            if changed(&done) {
+                let id = checkpoint_claim_id(&text(p, 0)?, &text(p, 1)?);
+                fence::claim_taken(tx, CLAIM_SYNC_CHECKPOINT, &id, fence)?;
+            }
+            done
+        }
+        "cursor_swap" => {
+            let (op, fingerprint) = (text(p, 0)?, text(p, 1)?);
+            let before = jsonb_param(p, 2)?;
+            // A swap that would lose (no row, or another value) writes nothing and has no claim to check.
+            if op_row(&*tx, &op, &fingerprint)?.is_some_and(|row| row.completed_keys == before) {
+                fence::claim_held(
+                    tx,
+                    CLAIM_SYNC_CHECKPOINT,
+                    &checkpoint_claim_id(&op, &fingerprint),
+                    fence,
+                )?;
+            }
+            run(tx)?
+        }
+        "checkpoint_touch" => {
+            let (op, fingerprint) = (text(p, 0)?, text(p, 1)?);
+            if op_row(&*tx, &op, &fingerprint)?.is_some() {
+                fence::claim_taken(
+                    tx,
+                    CLAIM_SYNC_CHECKPOINT,
+                    &checkpoint_claim_id(&op, &fingerprint),
+                    fence,
+                )?;
+            }
+            run(tx)?
+        }
+        "cursor_mark_done" => {
+            let done = run(tx)?;
+            let id = checkpoint_claim_id(CURSOR_OP, &text(p, 0)?);
+            fence::claim_ended(store, tx, CLAIM_SYNC_CHECKPOINT, &id, fence)?;
+            done
+        }
+        _ => {
+            // finished_cursor_delete: a deleted cursor ends its claim.
+            let done = run(tx)?;
+            if changed(&done) {
+                let id = checkpoint_claim_id(CURSOR_OP, &text(p, 0)?);
+                fence::claim_ended(store, tx, CLAIM_SYNC_CHECKPOINT, &id, fence)?;
+            }
+            done
+        }
     }))
 }
 

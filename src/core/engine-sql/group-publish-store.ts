@@ -16,6 +16,7 @@ import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
 import type { WriteRequest } from '../persistence/model.ts';
 import { pipelined } from '../page-state/transactions.ts';
+import type { FenceOpts } from './lease-token.ts';
 
 type RawSql = Pick<BrainEngine, 'executeRaw'>;
 
@@ -27,17 +28,17 @@ export interface ImportSourceRoot { id: string; local_path: string | null; workt
 
 export interface GroupPublishStore {
   /** Claims the queued members that directly follow `head` in its group (at most `max`), in sequence order; each carries the phase its row held. */
-  claimFollowers(head: { worktree_id: string; sequence: string | number }, group: string, max: number, leaseMs: number, owner: unknown): Promise<Array<WriteRequest & { previous_claim_phase: unknown }>>;
+  claimFollowers(head: { worktree_id: string; sequence: string | number }, group: string, max: number, leaseMs: number, owner: unknown, opts?: FenceOpts): Promise<Array<WriteRequest & { previous_claim_phase: unknown }>>;
   /** Renews the members' claims (and their phase stamps) in one step; the ids still held. */
-  renewClaims(members: readonly GroupClaimMember[], leaseMs: number, opts?: { signal?: AbortSignal }): Promise<string[]>;
+  renewClaims(members: readonly GroupClaimMember[], leaseMs: number, opts?: { signal?: AbortSignal } & FenceOpts): Promise<string[]>;
   /** Stores each member's dispatch stamp; the ids whose claim still held. */
-  markDispatched(members: readonly GroupClaimMember[], opts?: { signal?: AbortSignal }): Promise<string[]>;
+  markDispatched(members: readonly GroupClaimMember[], opts?: { signal?: AbortSignal } & FenceOpts): Promise<string[]>;
   /** Whether a request (other than `excluded`) or an effect of the worktree carries a recovery record. */
   recoveryBlocked(worktreeId: string, excluded: readonly string[]): Promise<boolean>;
   /** Marks the members' publication started where their claim holds; the ids marked. */
-  startPublication(members: ReadonlyArray<{ id: string; token: string }>): Promise<string[]>;
+  startPublication(members: ReadonlyArray<{ id: string; token: string }>, opts?: FenceOpts): Promise<string[]>;
   /** Completes every member in one step (missing counters created, then locked, then the rows completed and the counters released); the completed rows, each with its `principal_key`. */
-  completeGroup(members: readonly GroupCompletionMember[], keys: readonly string[], version: string, hostId: string | null): Promise<Array<WriteRequest & { principal_key: string }>>;
+  completeGroup(members: readonly GroupCompletionMember[], keys: readonly string[], version: string, hostId: string | null, opts?: FenceOpts): Promise<Array<WriteRequest & { principal_key: string }>>;
   /** The owner's host binding rows of the worktree (`local_path`); none when the worktree has no owner binding. */
   hostBinding(worktreeId: string): Promise<Array<{ local_path: string | null }>>;
   /** The state of the request a principal submitted under `requestId`, or null. */
@@ -49,9 +50,9 @@ export interface GroupPublishStore {
   /** Every live source with its own root and its binding on this host. */
   importRoots(hostId: string): Promise<ImportSourceRoot[]>;
   /** Records every member's recovery record and reserves `total` recovery bytes on the counters, all or nothing; the ids recorded (fewer than the members: nothing was). */
-  recordRecoveries(members: ReadonlyArray<{ id: string; token: string; record: unknown; bytes: number }>, total: number, counterKeys: readonly string[]): Promise<string[]>;
+  recordRecoveries(members: ReadonlyArray<{ id: string; token: string; record: unknown; bytes: number }>, total: number, counterKeys: readonly string[], opts?: FenceOpts): Promise<string[]>;
   /** Clears the resolved recovery records of terminal members of one worktree (each `record` must still be the stored one) and releases their bytes; the ids cleared. */
-  clearRecoveries(resolved: ReadonlyArray<{ id: string; record: unknown }>, counterKeys: readonly string[], worktreeId: string | null): Promise<string[]>;
+  clearRecoveries(resolved: ReadonlyArray<{ id: string; record: unknown }>, counterKeys: readonly string[], worktreeId: string | null, opts?: FenceOpts): Promise<string[]>;
   /** The pending-import checkpoints of `op` under these fingerprints: each fingerprint with its completed keys. */
   readImportCheckpoints<R = unknown>(op: string, fingerprints: readonly string[]): Promise<Array<{ fingerprint: string; completed_keys: [R] }>>;
   /** Stores each pending-import checkpoint (`docs[i]`, the JSON text of its completed keys) unless its fingerprint has one. */

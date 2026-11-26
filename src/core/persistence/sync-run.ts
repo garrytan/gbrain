@@ -80,6 +80,7 @@ import { serr } from '../console-prefix.ts';
 import { noteIdentityDowngrades } from '../sync-identity-downgrades.ts';
 import { isContentRefusal } from '../import-screen.ts';
 import { requireManagedPersistence } from '../rust-engine/errors.ts';
+import { fenceOpts } from './host-fence.ts';
 import { syncRows } from '../engine-sql/managed-sync-store.ts';
 
 export interface ManagedSyncWriteDiagnostic {
@@ -274,14 +275,14 @@ async function writeCursor(tx: BrainEngine, key: string, before: Cursor | null, 
   if (before === null) {
     if (synchronous) await syncRows(tx, 'sync_commit_on');
     await syncRows(tx, 'cursor_manifest_insert', [`${OP}-manifest`, next.runId, JSON.stringify(next.entries)]);
-    const inserted = await syncRows(tx, 'cursor_insert', [OP, key, JSON.stringify([header(next)])]);
+    const inserted = await syncRows(tx, 'cursor_insert', [OP, key, JSON.stringify([header(next)])], fenceOpts(tx));
     // #6278 (B7): what rides a fresh cursor's save (the retry schedule it consumed) commits only with the insert that won.
     if (inserted.length) await inTx?.(tx);
   } else {
     // #5984: the settings, the compare-and-swap and the manifest touch go out together; a won swap is the saved cursor.
     const [, saved] = await pipelined(tx, [
       () => synchronous ? syncRows(tx, 'sync_commit_on') : Promise.resolve([]),
-      () => syncRows(tx, 'cursor_swap', [OP, key, JSON.stringify([header(before)]), JSON.stringify([header(next)])]),
+      () => syncRows(tx, 'cursor_swap', [OP, key, JSON.stringify([header(before)]), JSON.stringify([header(next)])], fenceOpts(tx)),
       () => syncRows(tx, 'checkpoint_touch', [`${OP}-manifest`, next.runId]),
     ]) as [unknown, unknown[]];
     // #5988: a hold write or clear commits with the cursor step that passes its entry, never without it.
@@ -557,6 +558,9 @@ async function freezeNext(engine: BrainEngine, cursor: Cursor, key: string, asse
  */
 async function adoptCursor(engine: BrainEngine, key: string, cursor: Cursor, input: { authority: SyncAuthority; processingOptions: SyncProcessingOptions;
   embedDeferred?: boolean; assertActive: () => void }): Promise<Cursor> {
+  // A resuming run takes a new claim of the cursor first (a multi-user Rust brain; every other engine has nothing to adopt).
+  const fence = fenceOpts(engine);
+  if (fence.fence) await syncRows(engine, 'checkpoint_touch', [OP, key], fence);
   const { authority } = input;
   // #6696: a cost-gate deferral is this run's constraint (each request it freezes carries `embedDeferred`), never an opt-out the cursor keeps.
   const processingOptions = input.embedDeferred ? { ...input.processingOptions, noEmbed: false } : input.processingOptions;

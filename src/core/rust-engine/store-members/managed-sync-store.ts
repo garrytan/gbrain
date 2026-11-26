@@ -29,10 +29,10 @@ const REQUEST_ROW_STATEMENTS: ReadonlySet<SyncStatementName> = new Set(['cursor_
 const INLINED_TEXT: Partial<Record<SyncStatementName, readonly unknown[]>> = { refused_checkpoint: [[...PAGE_REMOVAL_OPERATIONS]] };
 
 /** While the managed hold is on (a user's Rust brain) the statement refuses as the `executeRaw` it replaced did (managed-hold.ts). */
-export const runSyncStatement = async function runSyncStatement(this: RustEngine, brain: StoreBrain, name: SyncStatementName, params: readonly unknown[] = [], _opts?: SyncStatementOptions): Promise<unknown[]> {
+export const runSyncStatement = async function runSyncStatement(this: RustEngine, brain: StoreBrain, name: SyncStatementName, params: readonly unknown[] = [], opts?: SyncStatementOptions): Promise<unknown[]> {
   if (!managedServed(this)) return heldRefusal(this);
   const bound = [...params, ...INLINED_TEXT[name] ?? [], ...statementExtras(name)];
   const rows = await storeCall({ member: 'runSyncStatement' }, () =>
-    (SYNC_STATEMENTS[name].kind === 'write' ? brain.syncStoreWrite(name, bound) : brain.syncStoreRows(name, bound)) as Promise<unknown[]>);
+    (SYNC_STATEMENTS[name].kind === 'write' ? (opts?.fence ? brain.syncStoreWrite(name, bound, opts.fence) : brain.syncStoreWrite(name, bound)) : brain.syncStoreRows(name, bound)) as Promise<unknown[]>);
   return REQUEST_ROW_STATEMENTS.has(name) ? rows.map(row => requestRow<object>(row)) : rows;
 };

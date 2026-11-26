@@ -236,7 +236,7 @@ export async function claimCoalescedGitEffects(engine: BrainEngine, hostId: stri
     // One statement (engine-sql/persistence-effect-worker.ts CLAIM_COALESCED_GIT_EFFECTS_SQL): the worktree-wide
     // conditions (owner, refresh fence, recovery blocks) are one InitPlan, so the claim walks persistence_effects_pending
     // in order and stops at `limit` rows instead of probing every ready effect of the worktree.
-    return tx.claimCoalescedGitEffects<PersistenceEffect>({ hostId, worktreeId, limit, deadOwners, ownerJson: JSON.stringify(claimOwner()) });
+    return tx.claimCoalescedGitEffects<PersistenceEffect>({ hostId, worktreeId, limit, deadOwners, ownerJson: JSON.stringify(claimOwner()), ...fenceOpts(tx) });
   }, { pipelineFirst: isPersistenceDeclaration });
   return rows.sort((a, b) => Number(a.id) - Number(b.id));
 }
