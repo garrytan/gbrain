@@ -60,7 +60,7 @@ describe('PeopleClient (#6324)', () => {
       nextSyncToken: 'ppl-1',
     }));
     const { contacts } = await people.listConnections({});
-    expect(CONTACT_PERSON_FIELDS).toBe('names,emailAddresses,organizations,phoneNumbers,memberships,metadata');
+    expect(CONTACT_PERSON_FIELDS).toBe('names,emailAddresses,organizations,phoneNumbers,memberships,birthdays,metadata');
     expect(calls[0].searchParams.get('personFields')).toBe(CONTACT_PERSON_FIELDS);
     expect(contacts[0].phones).toEqual(['+15550100', '555 0101']);
     expect(contacts[0].groups).toEqual([{ id: 'contactGroups/abc123', name: null }]);

@@ -287,6 +287,11 @@ title, phone numbers and user-created contact groups:
   supplies it, else as entered. Phones are exact identifiers for a manual
   `entity_identity_link` join, not aliases: a digit string never takes part
   in mention matching.
+- `birthday:` appears when the contact has one: `YYYY-MM-DD`, or `--MM-DD`
+  when Google holds no year. The page body repeats it as text
+  (`Birthday: March 4, 1990.`) so a search for the date or the month finds
+  the person. Adding the field changes the People field mask, so the first
+  sweep after an upgrade lists every contact again.
 - `groups:` lists the display names of the contact's user-created groups
   (Google's built-in groups such as My Contacts or Starred are omitted). The
   names come from one bounded `contactGroups` read per sweep that needs it;

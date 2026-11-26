@@ -24,6 +24,7 @@ import type {
 import {
   CalendarClient,
   CONTACT_PERSON_FIELDS,
+  contactBirthday,
   extractCalendarMethod,
   GmailClient,
   GoogleApiClient,
@@ -1025,6 +1026,15 @@ describe('PeopleClient', () => {
     await expect(client.fetchJSON(url, api)).rejects.toBeInstanceOf(CredentialError);
   });
 
+  test('contactBirthday: full date, year-less date, and nothing usable', () => {
+    expect(CONTACT_PERSON_FIELDS.split(',')).toContain('birthdays');
+    expect(contactBirthday([{ date: { year: 1990, month: 3, day: 4 } }])).toBe('1990-03-04');
+    expect(contactBirthday([{ date: { month: 12, day: 25 } }])).toBe('--12-25');
+    expect(contactBirthday([{ date: { year: 1990 } }])).toBeNull();
+    expect(contactBirthday([{}])).toBeNull();
+    expect(contactBirthday(undefined)).toBeNull();
+  });
+
   test('listConnections requests personFields and normalizes contacts', async () => {
     const h = makeHarness((u) => {
       expect(u.searchParams.get('personFields')).toBe(CONTACT_PERSON_FIELDS);
@@ -1039,6 +1049,7 @@ describe('PeopleClient', () => {
             ],
             emailAddresses: [{ value: ' Alice@Example.com ' }, { value: 'not-an-email' }],
             organizations: [{ name: 'Acme Example', title: 'Engineer', metadata: { primary: true } }],
+            birthdays: [{ date: { month: 12, day: 25 } }, { date: { year: 1990, month: 3, day: 4 }, metadata: { primary: true } }],
           },
           { resourceName: 'people/c000000002', metadata: { deleted: true } },
         ],
@@ -1056,6 +1067,7 @@ describe('PeopleClient', () => {
       phones: [],
       organization: 'Acme Example',
       title: 'Engineer',
+      birthday: '1990-03-04', // the primary birthday wins
       groups: [],
       deleted: false,
     });

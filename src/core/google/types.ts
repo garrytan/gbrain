@@ -394,6 +394,8 @@ export interface ContactData {
   phones: string[];
   organization: string | null;
   title: string | null;
+  /** The contact's birthday: `YYYY-MM-DD`, or `--MM-DD` when Google holds no year. Absent or null when none is set. */
+  birthday?: string | null;
   /**
    * #6324: user-created contact groups (system groups dropped). The client
    * fills `id` (`contactGroups/<id>`); the sweep resolves `name` from the

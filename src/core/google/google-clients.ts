@@ -736,6 +736,7 @@ interface RawPerson {
   phoneNumbers?: Array<{ value?: string; canonicalForm?: string }>;
   organizations?: Array<{ name?: string; title?: string; metadata?: { primary?: boolean } }>;
   memberships?: Array<{ contactGroupMembership?: { contactGroupResourceName?: string } }>;
+  birthdays?: Array<{ date?: { year?: number; month?: number; day?: number }; metadata?: { primary?: boolean } }>;
   metadata?: { deleted?: boolean };
 }
 
@@ -755,7 +756,7 @@ interface RawContactGroup {
  * merged-away contact); without it the API sends a bare {resourceName, etag}
  * and the page is never retired.
  */
-export const CONTACT_PERSON_FIELDS = 'names,emailAddresses,organizations,phoneNumbers,memberships,metadata';
+export const CONTACT_PERSON_FIELDS = 'names,emailAddresses,organizations,phoneNumbers,memberships,birthdays,metadata';
 
 /** Google's built-in groups (`contactGroups/myContacts`, `starred`, …) say nothing a page should carry. */
 const SYSTEM_CONTACT_GROUPS = new Set(
@@ -764,6 +765,17 @@ const SYSTEM_CONTACT_GROUPS = new Set(
 
 /** Bounded directory walk: 1000 groups a page, ten pages; past that the result is explicitly incomplete. */
 const CONTACT_GROUP_PAGES = 10;
+
+/** `YYYY-MM-DD`, or `--MM-DD` when the contact's birthday has no year; null when there is no usable month and day. */
+export function contactBirthday(
+  birthdays: Array<{ date?: { year?: number; month?: number; day?: number }; metadata?: { primary?: boolean } }> | undefined,
+): string | null {
+  const b = birthdays?.find((x) => x.metadata?.primary && x.date) ?? birthdays?.find((x) => x.date);
+  const { year, month, day } = b?.date ?? {};
+  if (!month || !day || month < 1 || month > 12 || day < 1 || day > 31) return null;
+  const md = `${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  return year && year > 0 ? `${String(year).padStart(4, '0')}-${md}` : `--${md}`;
+}
 
 function contactData(p: RawPerson): ContactData {
   const primaryName = p.names?.find((n) => n.metadata?.primary) ?? p.names?.[0];
@@ -780,6 +792,7 @@ function contactData(p: RawPerson): ContactData {
       .filter((n) => n.length > 0))],
     organization: primaryOrg?.name ?? null,
     title: primaryOrg?.title ?? null,
+    ...(contactBirthday(p.birthdays) ? { birthday: contactBirthday(p.birthdays) } : {}),
     groups: [...new Set((p.memberships ?? [])
       .map((m) => m.contactGroupMembership?.contactGroupResourceName ?? '')
       .filter((g) => g.startsWith('contactGroups/') && !SYSTEM_CONTACT_GROUPS.has(g)))]

@@ -451,6 +451,16 @@ export interface PersonPageOptions {
  * marker are connector-owned and fully re-rendered; hand-authored pages at
  * the same path are skipped entirely — body AND frontmatter untouched.
  */
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+/** "March 4, 1990" for `1990-03-04`, "March 4" for `--03-04`: text a search for the month or the date finds. */
+function birthdayText(birthday: string): string {
+  const m = /^(?:(\d{4})|-)-(\d{2})-(\d{2})$/.exec(birthday);
+  if (!m) return birthday;
+  const text = `${MONTH_NAMES[Number(m[2]) - 1] ?? m[2]} ${Number(m[3])}`;
+  return m[1] ? `${text}, ${m[1]}` : text;
+}
+
 export function renderPersonPage(c: ContactData, disambiguate = false, dir: string = DEFAULT_CONTACTS_DIR, opts: PersonPageOptions = {}): RenderedPage | null {
   const slug = personSlugFromContact(c, disambiguate, dir);
   if (!slug || (c.emails.length === 0 && c.phones.length === 0)) return null;
@@ -472,6 +482,7 @@ export function renderPersonPage(c: ContactData, disambiguate = false, dir: stri
     ...(opts.names?.nickname ? [`nickname: ${yamlStr(opts.names.nickname)}`] : []),
     ...(c.organization ? [`company: ${yamlStr(c.organization)}`] : []),
     ...(c.title ? [`role: ${yamlStr(c.title)}`] : []),
+    ...(c.birthday ? [`birthday: ${yamlStr(c.birthday)}`] : []),
     ...(groups.length > 0 ? [`${opts.groupsKey ?? 'groups'}: ${yamlList(groups)}`] : []),
     ...(opts.private ? ['visibility: private'] : []),
     '---',
@@ -483,6 +494,7 @@ export function renderPersonPage(c: ContactData, disambiguate = false, dir: stri
     [
       c.title && c.organization ? neutralizeOutsideText(`${c.title} at ${c.organization}.`) : c.organization ? neutralizeOutsideText(`Works at ${c.organization}.`) : null,
       neutralizeOutsideText(`Contact: ${[...c.emails, ...c.phones].map((v) => opts.valueLabels?.get(v) ? `${v} (${opts.valueLabels.get(v)})` : v).join(', ')}.`),
+      c.birthday ? `Birthday: ${birthdayText(c.birthday)}.` : null,
       `[Source: ${opts.sourceLabel ?? 'Google Contacts'}]`,
     ]
       .filter(Boolean)

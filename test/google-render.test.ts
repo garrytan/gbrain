@@ -514,4 +514,21 @@ describe('renderPersonPage', () => {
   test('no emails renders null', () => {
     expect(renderPersonPage(contact({ emails: [] }))).toBeNull();
   });
+
+  test('a birthday is carried in frontmatter and as searchable text', () => {
+    const md = renderPersonPage(contact({ birthday: '1990-03-04' }))!.markdown;
+    expect(md).toContain('birthday: "1990-03-04"');
+    expect(md).toContain('Birthday: March 4, 1990. [Source: Google Contacts]');
+  });
+
+  test('a birthday without a year keeps the --MM-DD form and names only the day', () => {
+    const md = renderPersonPage(contact({ birthday: '--12-25' }))!.markdown;
+    expect(md).toContain('birthday: "--12-25"');
+    expect(md).toContain('Birthday: December 25. [Source: Google Contacts]');
+  });
+
+  test('a contact with no birthday renders no birthday line', () => {
+    expect(renderPersonPage(contact())!.markdown).not.toContain('irthday');
+    expect(renderPersonPage(contact({ birthday: null }))!.markdown).not.toContain('irthday');
+  });
 });
