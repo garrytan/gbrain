@@ -291,7 +291,7 @@ export async function collectFactCandidates(engine: BrainEngine, question: strin
     const tsq = `NULLIF(replace(plainto_tsquery('${getFtsLanguage()}'::regconfig, $${p.length + 1})::text, ' & ', ' | '), '')::tsquery`;
     return customPlan<Row>(engine,
       `SELECT ${COLS}, ${allSim ? simSql : 'NULL::float8 AS similarity'} FROM facts f WHERE ${where} AND ${doc} @@ ${tsq}
-       ORDER BY ts_rank_cd(${doc}, ${tsq}) DESC, f.valid_from DESC, f.id DESC LIMIT $${p.length + 2}`,
+       ORDER BY ts_rank_cd(${doc}, ${tsq}) DESC, COALESCE(f.valid_from, f.created_at) DESC, f.id DESC LIMIT $${p.length + 2}`,
       [...p, searched.join(' '), opts.depth.keyword]);
   };
   const nearest = async (): Promise<Row[]> => {

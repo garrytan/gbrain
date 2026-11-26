@@ -271,6 +271,13 @@ export async function commitFactFenceFile(
   recordWriteFailure(slug, sourceId, ['git_durability_commit_failed'], filePath);
 }
 
+/** #10288: a fact with no event date takes the page's fact date, as the projection of its empty fence cell would. */
+async function withPageFactDate(engine: BrainEngine, slug: string, body: string, facts: FenceInputFact[]): Promise<FenceInputFact[]> {
+  if (facts.every(f => f.validFrom)) return facts;
+  const pageDate = pageFactDate({ slug, frontmatter: parseMarkdown(body, `${slug}.md`).frontmatter, timeZone: await engine.getConfig('brain.timezone') });
+  return pageDate ? facts.map(f => (f.validFrom ? f : { ...f, validFrom: pageDate })) : facts;
+}
+
 /**
  * Stub-create body for a new entity page. Minimum frontmatter so the
  * page validates as gbrain-canonical markdown and survives an
@@ -525,12 +532,7 @@ export async function writeFactsToFence(
       let nextRowNum = Math.max(fileMaxRowNum, dbMaxRowNum) + 1;
 
       const assignedRowNums: number[] = [];
-      // #10288: a fact with no event date takes the page's fact date, as the projection of its empty cell would.
-      const pageDate = facts.some(f => !f.validFrom)
-        ? pageFactDate({ slug: target.slug, frontmatter: parseMarkdown(body, `${target.slug}.md`).frontmatter, timeZone: await engine.getConfig('brain.timezone') })
-        : null;
-      for (const f of facts) {
-        const validFrom = f.validFrom ?? pageDate;
+      for (const f of await withPageFactDate(engine, target.slug, body, facts)) {
         const { body: updated, rowNum } = upsertFactRow(body, {
           rowNum:      nextRowNum++,
           claim:       f.fact,
@@ -538,7 +540,7 @@ export async function writeFactsToFence(
           confidence:  f.confidence ?? 1.0,
           visibility:  f.visibility,
           notability:  f.notability ?? 'medium',
-          validFrom:   validFrom ? formatFenceDate(validFrom) : undefined,
+          validFrom:   f.validFrom ? formatFenceDate(f.validFrom) : undefined,
           // MEMORY_VERBS v1 (c5): remember's ttl threads through to the fence
           // cell — was hard-coded undefined, which silently dropped expiry on
           // this path. extractFactsFromFenceText derives the DB column from it.

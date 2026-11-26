@@ -247,6 +247,14 @@ for (const kind of testBackends()) {
       expect(await proposals(src)).toHaveLength(4);
     });
 
+    test('#10288: two claims with no event date in one bucket pair by their save time', async () => {
+      const src = await source();
+      const older = await fact(src, { value: 40000, at: null as never });
+      const newer = await fact(src, { value: 45000, at: null as never });
+      const preview = await runClaimConflicts(engine, { sourceIds: [src], dryRun: true });
+      expect(pairKeys(preview.sources[0]!.pairs)).toEqual([newer + '>' + older]);
+    });
+
     test('concurrent runs file one proposal per pair; a pair with a pending trust supersede_fact proposal is skipped', async () => {
       const src = await source();
       await fact(src, { value: 1, at: '2026-03-01T00:00:00Z' });

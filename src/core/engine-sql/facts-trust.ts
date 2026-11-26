@@ -179,7 +179,7 @@ export async function listFactsForRelevance(raw: EngineRawRead, transaction: Eng
     const doc = trustedSql(factsFtsDocument('f'));
     const tsq = sqlFragment`NULLIF(replace(plainto_tsquery('${trustedSql(getFtsLanguage())}'::regconfig, ${q.terms ?? ''})::text, ' & ', ' | '), '')::tsquery`;
     return customPlan<FactRelevanceRow>(transaction, sqlFragment`SELECT ${trustedSql(FACT_POOL_COLUMNS)}, ${sim} FROM facts f WHERE ${poolWhere(q.scope, q.filters)} AND ${doc} @@ ${tsq}
-       ORDER BY ts_rank_cd(${doc}, ${tsq}) DESC, f.valid_from DESC, f.id DESC LIMIT ${q.limit}`);
+       ORDER BY ts_rank_cd(${doc}, ${tsq}) DESC, COALESCE(f.valid_from, f.created_at) DESC, f.id DESC LIMIT ${q.limit}`);
   }
   const named = q.entity!;
   // GST-3170: a future-dated fact ranks as of when it was written, and #10288 an undated one as of when it was saved;
@@ -502,7 +502,7 @@ export async function computeFactFingerprints(raw: EngineRawRead, texts: string[
 }
 
 const ACTIVE_CLAIMS_HEAD = `WITH f AS (
-  SELECT id, entity_slug, visibility, claim_metric, claim_value, claim_unit, claim_period, valid_from, source_markdown_slug, `;
+  SELECT id, entity_slug, visibility, claim_metric, claim_value, claim_unit, claim_period, COALESCE(valid_from, created_at) AS at, source_markdown_slug, `;
 const ACTIVE_CLAIMS_TAIL = ` AS bucket
     FROM facts
    WHERE source_id = $1 AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now())
@@ -515,7 +515,7 @@ FROM f n JOIN f o
    AND o.bucket = n.bucket AND o.claim_value <> n.claim_value
    AND (NOT (`;
 const PAIR_JOIN_TAIL = `) OR o.source_markdown_slug = n.source_markdown_slug)
-   AND (o.valid_from < n.valid_from OR (o.valid_from = n.valid_from AND o.id < n.id))
+   AND (o.at < n.at OR (o.at = n.at AND o.id < n.id))
  WHERE NOT EXISTS (SELECT 1 FROM decide_proposals p WHERE p.source_id = $1
          AND LEAST(p.new_fact_id, p.old_fact_id) = LEAST(n.id, o.id) AND GREATEST(p.new_fact_id, p.old_fact_id) = GREATEST(n.id, o.id))
    AND NOT EXISTS (SELECT 1 FROM trust_proposals tp WHERE tp.status = 'pending' AND tp.action = 'supersede_fact'

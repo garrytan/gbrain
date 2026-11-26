@@ -15,7 +15,7 @@ import { assertFactNotWithdrawn, decideSingleFact, factWithdrawnRefusal, type Fa
 import { supersededValidUntil } from '../facts/supersede-interval.ts';
 import { assertFactNotPurged, isFactWithdrawn } from '../facts/withdrawal.ts';
 import { samePageRewording, warnSamePageShadow } from '../facts/same-page-shadow.ts';
-import { extractFactsFromFenceText } from '../facts/extract-from-fence.ts';
+import { extractFactsFromFenceText, pageFactDate } from '../facts/extract-from-fence.ts';
 import { authorizeWrite } from './authority.ts';
 import { authorizePageVisibility } from './page-visibility.ts';
 import { authorizeFactsBackstop } from './effect-facts.ts';
@@ -211,6 +211,8 @@ export async function prepareManagedFactsMutation(engine: BrainEngine, row: Writ
   // #6333 shadow (managed mirror of the backstop's counter): a same-page rewording is counted on the entity outcome
   // and named on stderr; nothing is dropped. The count is frozen in the receipt, so a replay reports it, not recounts it.
   let wouldDedupSamePage = 0;
+  // #10288: a filed fact with no event date takes the page's fact date, as the projection of its empty cell would.
+  const pageDate = pageFactDate({ slug: row.slug, frontmatter: page0?.frontmatter, timeZone: await engine.getConfig('brain.timezone') });
   for (const fact of facts) {
     if (p.withdrawn === 'skip') {
       await assertFactNotPurged(engine, row.source_id, fact);
@@ -229,21 +231,22 @@ export async function prepareManagedFactsMutation(engine: BrainEngine, row: Writ
       input: derivedGateInput(taint.trust, row.id), cfg: gateCfg! }) : undefined;
     if (gate && gate.action !== 'insert') { blocked.push(gate); continue; }
     const rowNum = fact.entity_slug !== null && !fallback(fact) || await holdable(fact) ? nextRow++ : undefined;
+    const filed = rowNum !== undefined && fact.valid_from == null && pageDate ? { ...fact, valid_from: pageDate } : fact;
     // #6385 R12: an entity fence that does not parse cleanly refuses typed instead of losing the rows it skipped.
     if (rowNum !== undefined) refuseUnparsedRewrite(fenced, row.slug, row.source_id, () => fence.append({
       rowNum, claim: fact.fact, kind: fact.kind, visibility: fact.visibility,
       confidence: fact.confidence ?? 1, notability: fact.notability ?? 'medium', source: fact.source, context: fact.context ?? undefined,
-      validFrom: fact.valid_from ? formatFenceDate(fact.valid_from) : undefined, validUntil: fact.valid_until ? formatFenceDate(fact.valid_until) : undefined,
+      validFrom: filed.valid_from ? formatFenceDate(filed.valid_from) : undefined, validUntil: fact.valid_until ? formatFenceDate(fact.valid_until) : undefined,
       claimMetric: fact.claim_metric ?? undefined, claimValue: fact.claim_value ?? undefined,
       claimUnit: fact.claim_unit ?? undefined, claimPeriod: fact.claim_period ?? undefined,
       ...(fact.attributed_to ? { attributedTo: fact.attributed_to } : {}),
       ...(fact.entity_slug && fact.entity_slug !== row.slug ? { entity: fact.entity_slug } : {}) }));
     // Strike the superseded row in this page's fence, as the remember mutation does (#6686: in the section that holds it).
     if (supersedes && rowNum !== undefined && supersedes.source_markdown_slug === row.slug && supersedes.row_num != null) {
-      const until = supersededValidUntil(supersedes, fact.valid_from ?? null);
+      const until = supersededValidUntil(supersedes, filed.valid_from ?? null);
       fence.strike(Number(supersedes.row_num), rowNum, until ? formatFenceDate(until) : undefined);
     }
-    entries.push({ fact, duplicateId: null, rowNum, supersedes, gate });
+    entries.push({ fact: filed, duplicateId: null, rowNum, supersedes, gate });
   }
   const next = fence.page();
   const canonicalFacts = extractFactsFromFenceText(parseFactsFenceFor(next[section], { slug: row.slug }).facts, row.slug, row.source_id);

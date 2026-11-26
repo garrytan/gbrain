@@ -207,7 +207,7 @@ for (const backend of testBackends()) describe(`[${backend}] G4: forget is a fen
     expect({ code: refused.code, detail: refused.detail }).toEqual({ code: 'unavailable', detail: 'read_only_mirror' });
     expect(refused.message).toBe(`Source 'default' is a read-only mirror with no canonical owner, so forget cannot withdraw fact ${id}: a page file in the mirror carries it, and gbrain never writes the mirror's checkout.`);
     expect(refused.suggestion).toContain('Nothing was withdrawn. Remove the claim at the authoritative source');
-    expect(refused.suggestion).toContain('gbrain sources refresh default');
+    expect(refused.suggestion).toContain('gbrain sync --source default');
     expect(refused.suggestion).toContain('gbrain sources mirror-writable default --dry-run');
     expect(refused.fix).toMatchObject({ ask_user: true, actor: 'user' });
     expect(readFileSync(join(root, 'notes/a.md'), 'utf8')).toBe(before);
