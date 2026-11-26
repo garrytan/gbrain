@@ -8,7 +8,7 @@
  * changes the plugin code itself.
  */
 
-export const OPENCLAW_SKILL_PLUGIN_CODE_VERSION = 5;
+export const OPENCLAW_SKILL_PLUGIN_CODE_VERSION = 6;
 
 export interface LoaderConstants { home: string; libDir: string; statePath: string; logDir: string; gbrainBin: string; gbrainHomeEnv: string | null }
 
@@ -87,14 +87,15 @@ parentPort.on('message', async (m) => {
 
 const LOADER_JS = String.raw`// Managed by gbrain setup openclaw; a re-run rewrites this file. Remove: gbrain setup openclaw --skill-loading off
 // gbrain-skill-resolver: after each user message, up to a few installed skills that fit it (appendContext),
-// plus the operator's pinned skills (appendSystemContext). Mode, pins and agents come from a data-only
+// plus the operator's rule line and pinned skills (appendSystemContext) and its session-start brief (appendContext). Mode, pins and agents come from a data-only
 // state file gbrain writes, re-read when it changes, so a mode or pin change never reloads this plugin.
 // Every failure path lets the turn proceed unchanged; no handler waits more than DEADLINE_MS. Each log line
 // names the turn's session class (from OpenClaw's memoryAudience and trigger, else the session key's shape),
 // whether the host sent an audience, and each skill's OpenClaw source; never the turn's text. The owner's
-// sessions get the owner pins (on a session's first turn when pins_route is first_turn: the session-start
-// brief, recorded per durable session so a restart or a retried run never repeats it); conversations get
-// their own pins and no owner-only skill; relay, cron, heartbeat, webhook and internal turns get nothing.
+// sessions get the operator rule line and the owner pins every turn, and the session-start brief (the --brief
+// pins, plus the owner pins when pins_route is first_turn) on a session's first turn, recorded per durable
+// session so a restart or a retried run never repeats it; conversations get their own rule line and pins and
+// no owner-only skill; relay, cron, heartbeat, webhook and internal turns get nothing.
 import { Worker } from 'node:worker_threads';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
@@ -121,6 +122,7 @@ const WORKER_URL = new URL('./worker.js', import.meta.url);
 const BRIEF_LEDGER = join(HOME, 'openclaw-session-briefs.jsonl');
 const REFRESH_AFTER_MS = Number(process.env.GBRAIN_TEST_OPENCLAW_SKILL_REFRESH_MS) || 300_000;
 const OWNER_CLASSES = new Set(['owner', 'main']);
+const RULE_MAX = 200;
 const SILENT_CLASSES = new Set(['relay', 'cron', 'heartbeat', 'webhook', 'internal']);
 
 let state = null;
@@ -241,6 +243,12 @@ function sessionOf(event, ctx, agentId) {
   return typeof k === 'string' && k ? k.slice(0, 256) : 'agent:' + agentId;
 }
 
+// The operator's rule line in its own block; a line that is not one line of visible text without < or > is never sent.
+function ruleBlock(line) {
+  if (typeof line !== 'string' || !line.trim() || line !== line.trim() || line.length > RULE_MAX || /[\u0000-\u001f\u007f-\u009f\u2028\u2029<>]/.test(line)) return '';
+  return '<operator_rule>\n' + line + '\n</operator_rule>';
+}
+
 // A session key's class, by OpenClaw's key shapes (agent:<id>:main, agent:<id>:<channel>:direct|group|channel:<peer>,
 // agent:<id>:cron:<job>, agent:<id>:relay-<sender>, agent:<id>:subagent:<n>, hook:<...>): used only when the host
 // sent no memory audience, and for which kind of conversation an audience names.
@@ -262,7 +270,8 @@ function keyClassOf(key) {
 // The turn's session class and whether the host resolved its audience. With an audience (OpenClaw's memoryAudience):
 // owner (owner-private on a user turn), or group, channel or direct (another person's DM) for a conversation. With
 // none (a host without a native memory provider), the session key's class, logged audience unknown: its main session
-// counts as the owner's, and so does a direct session whose sender is one of the agent's owner_sender_ids. Relay
+// counts as the owner's (with require_owner_sender, or once owner_sender_ids is set, only for a turn from one of
+// them), and so does a direct session whose sender is one of the agent's owner_sender_ids. Relay
 // (another session's message), cron, heartbeat, webhook and internal come from the trigger and provenance first.
 function sessionClassOf(event, ctx, a, sessionKey) {
   const pick = (k) => (ctx && ctx[k] !== undefined ? ctx[k] : event && event[k]);
@@ -286,9 +295,10 @@ function sessionClassOf(event, ctx, a, sessionKey) {
     if (type === 'private' || type === 'direct' || type === 'dm') return of('direct');
     return of(keyed === 'group' || keyed === 'channel' || keyed === 'direct' ? keyed : 'conversation');
   }
-  if ((keyed === 'direct' || keyed === 'main') && Array.isArray(a.owner_sender_ids) && a.owner_sender_ids.length) {
+  const owners = Array.isArray(a.owner_sender_ids) ? a.owner_sender_ids : [];
+  if ((keyed === 'direct' || keyed === 'main') && (owners.length || a.require_owner_sender === true)) {
     const sender = senderOf(event, ctx);
-    if (sender === null || !a.owner_sender_ids.includes(sender)) return of('direct');
+    if (sender === null || !owners.includes(sender)) return of('direct');
     if (keyed === 'direct') return of('owner');
   }
   return of(keyed);
@@ -465,9 +475,15 @@ async function resolveTurn(event, ctx, opts) {
   if (stalePins) refreshSoon();
   const pinBlock = tier === 'owner' ? a.pinned_block : tier === 'conversation' && !stalePins ? a.conversation_pinned_block : '';
   const pinIds = (tier === 'owner' ? a.pinned_ids : tier === 'conversation' ? a.conversation_pinned_ids : null) || [];
-  const pinsOn = a.mode === 'live' && typeof pinBlock === 'string' && pinBlock !== '';
+  const briefIds = (tier === 'owner' && Array.isArray(a.brief_ids) ? a.brief_ids : []);
+  const live = a.mode === 'live';
+  const pinsOn = live && typeof pinBlock === 'string' && pinBlock !== '';
   const briefRoute = tier === 'owner' && a.pins_route === 'first_turn';
-  if (pinsOn && !briefRoute) result.appendSystemContext = pinBlock;
+  const listed = tier === 'owner' && live && typeof a.brief_block === 'string' ? a.brief_block : '';
+  const briefBlock = [briefRoute && pinsOn ? pinBlock : '', listed].filter(Boolean).join('\n\n');
+  const rule = live ? ruleBlock(tier === 'owner' ? a.operator_rule : tier === 'conversation' ? a.conversation_operator_rule : null) : '';
+  const system = [rule, pinsOn && !briefRoute ? pinBlock : ''].filter(Boolean).join('\n\n');
+  if (system) result.appendSystemContext = system;
   const text = turnText(event);
   const runId = ctx && typeof ctx.runId === 'string' && ctx.runId ? ctx.runId : null;
   const turnId = (event && (event.currentUserMessageId || event.messageId)) || (runId ? 'run:' + runId : createHash('sha256').update(text).digest('hex').slice(0, 16));
@@ -475,19 +491,19 @@ async function resolveTurn(event, ctx, opts) {
   const prior = memo.get(memoKey);
   const carried = (block) => !!block && (prior.text !== text || (Array.isArray(event && event.messages) && event.messages.some((m) => m && textOf(m.content).includes(block))));
   const briefKey = briefKeyOf(event, ctx, agentId, sessionKey);
-  const due = pinsOn && briefRoute && !prior && (rebrief.has(sessionKey) || !briefLedger().has(briefKey));
+  const due = !!briefBlock && !prior && (rebrief.has(sessionKey) || !briefLedger().has(briefKey));
   const finish = (line, block) => {
     const fresh = due && !opts.selfTest && isActive(ctx);
     if (fresh) {
       rebrief.delete(sessionKey);
       markBriefed(briefKey);
       const m = memo.get(memoKey);
-      if (m) m.brief = pinBlock; else remember(memo, memoKey, { block: '', text, brief: pinBlock, unresolved: true }, MEMO_MAX);
+      if (m) m.brief = briefBlock; else remember(memo, memoKey, { block: '', text, brief: briefBlock, unresolved: true }, MEMO_MAX);
     }
-    const brief = fresh ? pinBlock : prior && pinsOn && prior.brief && !carried(prior.brief) ? prior.brief : '';
+    const brief = fresh ? briefBlock : prior && live && prior.brief && !carried(prior.brief) ? prior.brief : '';
     const ctxText = [brief, block || ''].filter(Boolean).join('\n\n');
     if (ctxText) result.appendContext = ctxText;
-    log({ agent: agentId, arm, session_class: cls, audience, ms: Date.now() - t0, pins: pinsOn ? pinIds.length : 0, ...(fresh ? { brief: true } : {}), ...(stalePins ? { pins_stale: true } : {}), ...line });
+    log({ agent: agentId, arm, session_class: cls, audience, ms: Date.now() - t0, pins: pinsOn ? pinIds.length : 0, ...(rule ? { rule: true } : {}), ...(fresh ? { brief: true } : {}), ...(stalePins ? { pins_stale: true } : {}), ...line });
     return Object.keys(result).length ? result : undefined;
   };
   if (tier === 'silent') {
@@ -507,7 +523,7 @@ async function resolveTurn(event, ctx, opts) {
   const w = ensureWorker(s);
   if (!w) return finish({ outcome: 'error', code: 'skill_resolver_worker_unavailable' });
   const reset = resetNext.delete(sessionKey);
-  const input = { message: text, session_id: sessionKey, harness: 'openclaw', top_k: Number.isInteger(a.top_k) ? a.top_k : 3, exclude: pinIds.slice(0, 64), shadow: arm !== 'live', ...(typeof a.top_gate === 'number' ? { top_gate: a.top_gate } : {}), ...(reset ? { reset_session: true } : {}) };
+  const input = { message: text, session_id: sessionKey, harness: 'openclaw', top_k: Number.isInteger(a.top_k) ? a.top_k : 3, exclude: [...new Set([...pinIds, ...briefIds])].slice(0, 64), shadow: arm !== 'live', ...(typeof a.top_gate === 'number' ? { top_gate: a.top_gate } : {}), ...(reset ? { reset_session: true } : {}) };
   const reply = await ask(w, { type: 'resolve', input, catalog: a.catalog, deadlineMs: DEADLINE_MS - 5, floor: a.min_match || null, dirs: a.skill_dirs || [], readRoot: readRootOf(a),
     audience: tier === 'owner' ? 'owner' : 'others', hidden: Array.isArray(a.exclude_ids) ? a.exclude_ids : [] });
   if (reply.late) {
@@ -572,7 +588,7 @@ function onToolCall(event, ctx) {
     const sessionKey = sessionOf(event, ctx, agentId);
     const r = recent.get(agentId + '\0' + sessionKey);
     log({ agent: agentId, outcome: 'read', skill, tool: name === 'read' ? 'read' : 'skills_read', via, source: sourceOf(a, path), session_class: r ? r.cls : 'unknown',
-      suggested: !!(r && r.names.has(skill)), pinned: Array.isArray(a.pinned_ids) && a.pinned_ids.includes(skill), arm: r ? r.arm : armFor(a, sessionKey) });
+      suggested: !!(r && r.names.has(skill)), pinned: Array.isArray(a.pinned_ids) && a.pinned_ids.includes(skill), ...(Array.isArray(a.brief_ids) && a.brief_ids.includes(skill) ? { brief: true } : {}), arm: r ? r.arm : armFor(a, sessionKey) });
   } catch { /* observing never fails a turn */ }
 }
 

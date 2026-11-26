@@ -27,7 +27,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { removeHermesTurnHook, syncHermesTurnHook } from '../core/setup/hermes-turn-hook.ts';
 import { hermesMcpStep } from './setup-hermes-mcp.ts';
 import { removeOpenclawTurnPlugin, syncOpenclawTurnPlugin } from '../core/setup/openclaw-turn-plugin.ts';
-import { describeOpenclawSkill, readOpenclawSkillState, removeOpenclawSkillPlugin, syncOpenclawSkillPlugin, type OpenclawSkillResult } from '../core/setup/openclaw-skill-plugin.ts';
+import { describeOpenclawSkill, operatorRuleProblem, readOpenclawSkillState, removeOpenclawSkillPlugin, syncOpenclawSkillPlugin, type OpenclawSkillResult, type OpenclawSkillTuning } from '../core/setup/openclaw-skill-plugin.ts';
 import { describePiSkill, readPiSkillState, removePiSkillExtension, syncPiSkillExtension } from '../core/setup/pi-skill-extension.ts';
 import { hasTurnRuleHook, isTurnRuleHarness, removeTurnRuleHook, syncTurnRuleHook, type TurnHookOutcome, type TurnRuleHarness } from '../core/setup/turn-hook.ts';
 import { inspectTurnHook, TURN_HOOK_NATIVE_INSPECT, turnHookFix, verifyTurnHook, type TurnHookVerdict } from '../core/setup/turn-hook-check.ts';
@@ -168,8 +168,8 @@ interface SetupFlags {
   skillResolver?: 'on' | 'shadow' | 'off';
   /** OpenClaw: the agents --skill-loading applies to (--agent <id>, repeatable, or --all-agents); unset means the agents already on, else main. */
   agents?: string[] | 'all';
-  /** OpenClaw rollout knobs written to the plugin's state (hot, no reload): --live-fraction, --pins-route, --owner-sender, --suggest-in. */
-  openclawTuning?: { live_fraction?: number; pins_route?: 'system' | 'first_turn'; owner_sender_ids?: string[]; suggest_classes?: Array<'owner' | 'conversation'> };
+  /** OpenClaw rollout knobs written to the plugin's state (hot, no reload): --live-fraction, --pins-route, --owner-sender, --suggest-in, --operator-rule, --conversation-operator-rule, --require-owner-sender. */
+  openclawTuning?: OpenclawSkillTuning;
   /** GST-363: whom the brain serves; several labels each person (setup-serves.ts). */
   serves?: 'one' | 'several';
   members?: string;
@@ -201,7 +201,7 @@ interface SetupFlags {
   noSuggestion: boolean;
 }
 
-export const VALUE_FLAGS = new Set(['--shape', '--notes', '--docs', '--transcripts', '--surface', '--advertise', '--scope', '--name', '--source', '--gbrain-bin', '--workspace', '--skill-loading', '--agent', '--live-fraction', '--pins-route', '--owner-sender', '--suggest-in', '--serves', '--members', '--members-file', '--stdio-member', '--owner', '--household-members', '--receipt', '--resume', ...HISTORY_VALUE_FLAGS]);
+export const VALUE_FLAGS = new Set(['--shape', '--notes', '--docs', '--transcripts', '--surface', '--advertise', '--scope', '--name', '--source', '--gbrain-bin', '--workspace', '--skill-loading', '--agent', '--live-fraction', '--pins-route', '--owner-sender', '--suggest-in', '--operator-rule', '--conversation-operator-rule', '--serves', '--members', '--members-file', '--stdio-member', '--owner', '--household-members', '--receipt', '--resume', ...HISTORY_VALUE_FLAGS]);
 
 function parseFlags(args: string[]): SetupFlags | string {
   const value = (flag: string): string | undefined => {
@@ -274,13 +274,22 @@ function parseFlags(args: string[]): SetupFlags | string {
   const pinsRoute = value('--pins-route');
   const owners = args.flatMap((a, i) => (a === '--owner-sender' ? [args[i + 1] ?? ''] : []));
   const suggestIn = value('--suggest-in');
-  if ((liveFraction !== undefined || pinsRoute !== undefined || owners.length || suggestIn !== undefined) && !openclaw) return '--live-fraction, --pins-route, --owner-sender and --suggest-in are for openclaw only';
+  const rule = value('--operator-rule');
+  const talkRule = value('--conversation-operator-rule');
+  const requireOwner = args.includes('--require-owner-sender') ? true : args.includes('--no-require-owner-sender') ? false : undefined;
+  if (args.includes('--require-owner-sender') && args.includes('--no-require-owner-sender')) return 'pass --require-owner-sender or --no-require-owner-sender, not both';
+  if ((liveFraction !== undefined || pinsRoute !== undefined || owners.length || suggestIn !== undefined || rule !== undefined || talkRule !== undefined || requireOwner !== undefined) && !openclaw) return '--live-fraction, --pins-route, --owner-sender, --suggest-in, --operator-rule, --conversation-operator-rule and --require-owner-sender are for openclaw only';
+  for (const [flag, v] of [['--operator-rule', rule], ['--conversation-operator-rule', talkRule]] as const) {
+    const problem = v ? operatorRuleProblem(v) : null;
+    if (problem) return `${flag} ${problem} (an empty value clears it)`;
+  }
   const suggestClasses = suggestIn === undefined ? undefined : [...new Set(suggestIn.split(',').map((s) => s.trim()))];
   if (suggestClasses && (!suggestClasses.length || suggestClasses.some((c) => c !== 'owner' && c !== 'conversation'))) return '--suggest-in takes owner, conversation or owner,conversation (the session classes that get skill suggestions; relay, cron, heartbeat, webhook and internal turns never do)';
   if (liveFraction !== undefined && !(/^(0(\.\d+)?|1(\.0+)?)$/.test(liveFraction))) return '--live-fraction must be a number from 0 to 1 (the share of sessions that see suggestions; the rest are logged as control)';
   if (pinsRoute !== undefined && pinsRoute !== 'system' && pinsRoute !== 'first_turn') return '--pins-route must be system (appendSystemContext, every turn) or first_turn (appendContext on a session\'s first turn and after compaction)';
   if (owners.some((o) => !/^[\x21-\x7e]{1,128}$/.test(o))) return '--owner-sender needs a sender id';
-  const openclawTuning = { ...(liveFraction !== undefined ? { live_fraction: Number(liveFraction) } : {}), ...(pinsRoute ? { pins_route: pinsRoute as 'system' | 'first_turn' } : {}), ...(owners.length ? { owner_sender_ids: owners } : {}), ...(suggestClasses ? { suggest_classes: suggestClasses as Array<'owner' | 'conversation'> } : {}) };
+  const openclawTuning = { ...(liveFraction !== undefined ? { live_fraction: Number(liveFraction) } : {}), ...(pinsRoute ? { pins_route: pinsRoute as 'system' | 'first_turn' } : {}), ...(owners.length ? { owner_sender_ids: owners } : {}), ...(suggestClasses ? { suggest_classes: suggestClasses as Array<'owner' | 'conversation'> } : {}),
+    ...(rule !== undefined ? { operator_rule: rule } : {}), ...(talkRule !== undefined ? { conversation_operator_rule: talkRule } : {}), ...(requireOwner !== undefined ? { require_owner_sender: requireOwner } : {}) };
   const chosenLoading = flagLoading ?? (envLoading || undefined);
   const cursor = positionals[0] === 'cursor';
   const skillResolver = !resolverHarness || chosenLoading === undefined || (cursor && chosenLoading === 'spring') ? undefined : chosenLoading === 'resolve' ? 'on' as const : chosenLoading === 'shadow' ? 'shadow' as const : 'off' as const;
