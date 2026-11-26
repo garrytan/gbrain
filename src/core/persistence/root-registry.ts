@@ -125,6 +125,15 @@ function resolveFilesystemPath(path: string, realpath: (path: string) => string)
     }
   }
 }
+/** #10122: a recorded root this user cannot traverse (EACCES/EPERM) keeps fencing by its literal path; any other failure throws. */
+function recordedRootPath(root: string): string {
+  try { return canonicalFilesystemPath(root); }
+  catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'EACCES' || code === 'EPERM') return resolve(root);
+    throw error;
+  }
+}
 const rootRank = (record: ManagedRootRecord) => [record.worktree_id ? 0 : 1, record.worktree_id, record.source_id, record.source_incarnation, record.topology_generation]
   .map(value => value == null ? '\u{10FFFF}' : String(value));
 /**
@@ -136,7 +145,7 @@ const rootRank = (record: ManagedRootRecord) => [record.worktree_id ? 0 : 1, rec
 export function canonicalManagedRoots(records: ManagedRootRecord[]): ManagedRootRecord[] {
   const byRoot = new Map<string, ManagedRootRecord>();
   for (const record of records) {
-    const root = canonicalFilesystemPath(record.local_path);
+    const root = recordedRootPath(record.local_path);
     const held = byRoot.get(root);
     if (held) {
       const [next, current] = [rootRank(record), rootRank(held)];
@@ -202,10 +211,11 @@ export function registeredManagedRootRecords(): Array<{ root: string; source_id?
     try {
       const value = JSON.parse(readFileSync(join(directory, file), 'utf8'));
       if (value.version !== 1 || typeof value.root !== 'string' || !isAbsolute(value.root)) throw new Error('invalid record');
-      records.push({ root: canonicalFilesystemPath(value.root), ...(typeof value.source_id === 'string' ? { source_id: value.source_id } : {}) });
-    } catch {
+      records.push({ root: recordedRootPath(value.root), ...(typeof value.source_id === 'string' ? { source_id: value.source_id } : {}) });
+    } catch (error) {
+      const cause = (error as NodeJS.ErrnoException).code ?? (error instanceof Error ? error.message : String(error));
       throw new OperationError('writer_coordinator_required', 'Managed-root ownership records are unreadable.',
-        'Repair the local persistence registry through writer administration before running filesystem maintenance.');
+        `gbrain could not read the managed-root record ${join(directory, file)} (${cause}). Repair the local persistence registry through writer administration before running filesystem maintenance.`);
     }
   }
   return records;

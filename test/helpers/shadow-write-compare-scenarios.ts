@@ -21,7 +21,8 @@ import { buildFollowStatus, readFollowerFile, renderFollowStatus } from '../../s
 import { newMirrorCounters } from '../../src/shadow/mirror.ts';
 import { writeSeedRecord } from '../../src/shadow/seed.ts';
 import { wrapShadowEngine } from '../../src/shadow/wrapper.ts';
-import { createWriteSampler, PUT_PAGE_OPTIONS, readPreimage } from '../../src/shadow/write-capture.ts';
+import { completeWriteRow, lockPersistenceCounters } from '../../src/core/engine-sql/persistence-journal.ts';
+import { createWriteSampler, JOURNAL_MEMBER_STATEMENTS, PUT_PAGE_OPTIONS, readPreimage } from '../../src/shadow/write-capture.ts';
 import { createWriteComparer } from '../../src/shadow/write-compare-child.ts';
 import { openRustEngine, type RustEngineAddonHandle } from '../../src/core/rust-engine.ts';
 import { readWriteTally, WriteTally, type WriteEvent } from '../../src/shadow/write-compare.ts';
@@ -1017,6 +1018,23 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       expect((await primary().getPage('people/zed-example'))?.title).toBe('Zed Example');
     }, 60_000);
 
+    test('the journal members the sampler treats as bookkeeping send only the statements it judged: each typed member, on both dialects, sends exactly its mapped statements and nothing else', async () => {
+      const record = async (dialect: 'postgres' | 'pglite', run: (exec: never) => Promise<unknown>) => {
+        const sent: string[] = [];
+        await run({ dialect, executeRaw: async (sql: string) => { sent.push(sql); return []; } } as never);
+        return sent;
+      };
+      const [ensure, lockSql] = JOURNAL_MEMBER_STATEMENTS.get('lockPersistenceCounters')!;
+      const [complete, probe] = JOURNAL_MEMBER_STATEMENTS.get('completeWriteRow')!;
+      const completion = (probePurges: boolean) => ({ id: '00000000-0000-4000-8000-000000000000', state: 'committed', outcome: {}, errorCode: null, errorMessage: null, consumerVersion: 'test', consumerHostId: null, errorDetail: null, resultBytes: 0, counterKeys: ['brain'], intentBytes: 0, retainedBytes: 0, terminalReservation: 0, probePurges });
+      for (const dialect of ['postgres', 'pglite'] as const) {
+        expect(await record(dialect, (exec) => lockPersistenceCounters(exec, ['brain', 'x']))).toEqual([ensure!, lockSql!]);
+        expect(await record(dialect, (exec) => completeWriteRow(exec, completion(false) as never))).toEqual([complete!]);
+        expect(await record(dialect, (exec) => completeWriteRow(exec, completion(true) as never))).toEqual([probe!]);
+      }
+      expect([...JOURNAL_MEMBER_STATEMENTS.keys()].sort()).toEqual(['completeWriteRow', 'lockPersistenceCounters']); // upsertWriteGateReceipt and insertPublicationEffects are not bookkeeping: they stay ordinary writes
+    }, 30_000);
+
     test('calls made while the preimage is read keep their order behind the sampled write (a tag added right after a new page lands on it)', async () => {
       const { inbox, wrapped } = await fresh();
       await wrapped.transaction(async (tx) => { const put = tx.putPage('people/fay-example', page('Fay Example')); const tag = tx.addTag('people/fay-example', 'first'); await Promise.all([put, tag]); });
@@ -1076,6 +1094,28 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       });
       await until(() => putEvents(inbox).length === 1);
       expect(await real(putEvents(inbox))).toMatchObject({ comparable: 1, unexplained_difference: 0, uncomparable: 0 });
+    }, 120_000);
+
+    test('a typed counter lock before the page write and the request completion after it are bookkeeping, as their raw statements are; a typed link delete before it is not', async () => {
+      await ctx.reset(); await fillSeedFixture(primary());
+      const { inbox, wrapped } = rig();
+      const completion = { id: '00000000-0000-4000-8000-000000000000', state: 'committed', outcome: {}, errorCode: null, errorMessage: null, consumerVersion: 'test', consumerHostId: null,
+        errorDetail: null, resultBytes: 0, counterKeys: ['brain'], intentBytes: 0, retainedBytes: 0, terminalReservation: 0, probePurges: false } as const;
+      await wrapped.transaction(async (tx) => {
+        await tx.lockPersistenceCounters(['brain']);
+        await tx.putPage('people/kim-example', page('Kim Example'));
+        await tx.completeWriteRow(completion as never);
+      });
+      await until(() => putEvents(inbox).length === 1);
+      expect(await real(putEvents(inbox))).toMatchObject({ comparable: 1, unexplained_difference: 0, uncomparable: 0 });
+      const second = rig();
+      await second.wrapped.transaction(async (tx) => {
+        await tx.lockPersistenceCounters(['brain']);
+        await tx.deleteOwnedLinks(1, 'markdown', [1]);
+        await tx.putPage('people/lea-example', page('Lea Example'));
+      });
+      await until(() => putEvents(second.inbox).length === 1);
+      expect(await real(putEvents(second.inbox))).toMatchObject({ comparable: 0, uncomparable: 1, uncomparable_by_reason: { in_transaction_prior_write: 1 } });
     }, 120_000);
 
     test('a real put_page through the operation layer, with contextual retrieval off, is compared: comparable when it runs alone on its transaction, otherwise busy by name; never a difference', async () => {

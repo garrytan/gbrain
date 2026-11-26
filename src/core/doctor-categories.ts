@@ -282,6 +282,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'memory_proposals_pending',
   // L1: the owner and company agent policies' state (doctor/checks/policy-valid.ts).
   'policy_valid',
+  // C2: confirmed standing rules whose keyless checks fail (doctor/checks/rules-regression.ts).
+  'rules_regression',
   // #7160: title-prefixed person pages that likely duplicate an unprefixed page (preview only).
   'person_title_duplicates',
   // plan autoplan-20261117192252 PR 1: likely duplicate person and company pages (read-only, gbrain dedupe --preview).

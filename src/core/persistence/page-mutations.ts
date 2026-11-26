@@ -31,7 +31,7 @@ import { contentSizeHold, frontmatterBodyOffset, parseMarkdownHead } from '../ma
 import { dataFrontmatter, dumpFrontmatterYaml } from '../data-frontmatter.ts';
 import { throwIfHeld } from '../trust/gate-outcomes.ts';
 import { admitWrite, assertPageRequestIdentity, assertReplayIntent, getWriteRequest, intentDigest, type WriteAdmission } from './journal.ts';
-import { submissionAuthority, authorizeStoredRequest } from './authority.ts';
+import { submissionAuthority, authorizeStoredRequest, sharedWriterRow } from './authority.ts';
 import { currentVerifiedLocalWriter, hostIdFor, readLocalWriter, registerLocalWriter, withVerifiedLocalRegistration } from './identity.ts';
 import type { BrainEngine } from '../engine.ts';
 import { claimWorktree, getWorktreeBinding } from './ownership.ts';
@@ -60,6 +60,7 @@ import { currentCallerAccess } from '../search/private-visibility.ts';
 import { assertStorageSourceWriter } from '../storage-manifest/door.ts';
 import { OWNED_FOLDER_KINDS } from '../owned-folder/paths.ts';
 import { assertPolicySlugWrite } from '../policy/admission.ts';
+import { assertRuleSlugWrite } from '../rules/admission.ts';
 import { assertActionSlugWrite } from '../ledger/admission.ts';
 
 export async function requestPrincipalForContext(ctx: OperationContext): Promise<Principal> {
@@ -108,7 +109,7 @@ export const SCREENING_SHARED_READS: ReadonlySet<string> = new Set([
   WRITER_ROW_SQL,
   'SELECT p.source_id,p.source_incarnation,s.local_path AS source_root, h.local_path AS worktree_root,b.relative_path FROM shared_skill_packs p JOIN sources s ON s.id=p.source_id AND s.incarnation=p.source_incarnation LEFT JOIN persistence_source_bindings b ON b.source_id=p.source_id AND b.source_incarnation=p.source_incarnation LEFT JOIN persistence_host_bindings h ON h.worktree_id=b.worktree_id AND h.host_id=$1::uuid',
 ]);
-/** The shared reads above, plus their typed twins: the brain identity always, the unlocked writer row when `extra` names it. */
+/** The shared reads above, plus their typed twins: the brain identity and the unlocked writer row. */
 export function batchSharedReads(engine: BrainEngine, extra?: ReadonlySet<string>): BrainEngine {
   const reads = new Map<string, Promise<unknown>>();
   const once = <T>(id: string, read: () => Promise<T>): Promise<T> => {
@@ -120,8 +121,9 @@ export function batchSharedReads(engine: BrainEngine, extra?: ReadonlySet<string
     if (key === 'executeRaw') return (sql: string, params?: unknown[], opts?: { signal?: AbortSignal }) =>
       BATCH_SHARED_READS.has(flatSql(sql)) || extra?.has(flatSql(sql)) ? once(JSON.stringify([flatSql(sql), params ?? null]), () => target.executeRaw(sql, params, opts)) : target.executeRaw(sql, params, opts);
     if (key === 'readPersistenceBrainId') return () => once('typed:brain', () => target.readPersistenceBrainId());
-    if (key === 'readLocalWriterRow' && extra?.has(WRITER_ROW_SQL)) return (id: string, opts?: { lock?: boolean }) => opts?.lock ? target.readLocalWriterRow(id, opts)
-      : once(JSON.stringify(['typed:writer', id]), () => target.readLocalWriterRow(id)).then(row => row && { ...row });
+    // The authorization's plain writer read (once the shared LOCAL_WRITER_SQL statement above, now the typed member) and
+    // the screen's credential check, once per batch.
+    if (key === 'readLocalWriterRow') return sharedWriterRow(target, reads, once);
     if (key === 'getConfig') return (name: string) => once(`config:${name}`, () => target.getConfig(name));
     // The unsourced-put fork guard lists the sources once per batch, not once per page; a caller gets its own copy of each row.
     if (key === 'listAllSources') return (opts?: { includeArchived?: boolean; localPathOnly?: boolean }) =>
@@ -427,6 +429,7 @@ export async function preparePageAdmission(ctx: OperationContext,
   const requestId = input.batch ? input.batch.requestId : typeof p.request_id === 'string' ? p.request_id : randomUUID();
   const sourceId = pageMutationSource(ctx, p, input.operation);
   assertPolicySlugWrite(ctx.remote !== false, p);
+  assertRuleSlugWrite(ctx.remote !== false, p);
   assertActionSlugWrite(ctx.remote !== false, p);
   await initializeLocalPersistence(ctx);
   const captureSlug = input.operation === 'capture' ? await resolveCaptureFile(ctx, sourceId, p) : null;

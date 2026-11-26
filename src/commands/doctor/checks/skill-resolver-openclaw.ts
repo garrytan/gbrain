@@ -6,7 +6,8 @@
  * and the library the state names is present with that sha256; and from the
  * last 24 hours of its daily logs, the turns, outcomes, error codes, the
  * deadline-miss rate and how often a suggested skill was then read, split
- * by session class and by the skill's OpenClaw source. An agent whose
+ * by session class, by whether OpenClaw sent a memory audience and by the
+ * skill's OpenClaw source. An agent whose
  * OpenClaw prompt lists no skills (maxSkillsPromptChars 0) while the
  * resolver is live reads "listing off, resolver live": skills reach its
  * model only through the suggestions, by path or skills_read.
@@ -37,13 +38,15 @@ export interface OpenclawSkillView {
   gbrain_version: string | null;
   /** The gbrain home the plugin state belongs to (the state file's gbrain_home), null for a state written before it was recorded. */
   gbrain_home: string | null;
-  agents: Array<{ id: string; mode: string; catalog: string; fresh: boolean | null; stale_reason: string | null; skills: number; pins: number; listing: 'on' | 'off'; path_reads: OpenclawPathReads; verdict: string | null; host?: { hidden: string[]; cut: string[] } | null }>;
+  agents: Array<{ id: string; mode: string; catalog: string; fresh: boolean | null; stale_reason: string | null; skills: number; pins: number; conversation_pins: number; suggest_in: string[]; listing: 'on' | 'off'; path_reads: OpenclawPathReads; verdict: string | null; host?: { hidden: string[]; cut: string[] } | null }>;
   recent: { turns: number; outcomes: Record<string, number>; errors: Record<string, number>; deadline_misses: number; miss_rate: number | null; reads: number; reads_of_suggested: number;
-    by_session_class: Record<string, SplitCounts>; by_source: Record<string, SourceCounts> };
+    by_session_class: Record<string, SplitCounts>; by_source: Record<string, SourceCounts>;
+    /** Turns by whether OpenClaw sent a memory audience (host) or the class came from the session key (unknown). */
+    by_audience: Record<string, number> };
 }
 
 function recentOpenclaw(home: string, now: number): OpenclawSkillView['recent'] {
-  const recent: OpenclawSkillView['recent'] = { turns: 0, outcomes: {}, errors: {}, deadline_misses: 0, miss_rate: null, reads: 0, reads_of_suggested: 0, by_session_class: {}, by_source: {} };
+  const recent: OpenclawSkillView['recent'] = { turns: 0, outcomes: {}, errors: {}, deadline_misses: 0, miss_rate: null, reads: 0, reads_of_suggested: 0, by_session_class: {}, by_source: {}, by_audience: {} };
   const cls = (v: unknown) => (recent.by_session_class[typeof v === 'string' && v ? v : 'unknown'] ??= { turns: 0, suggested: 0, would_suggest: 0, reads: 0, reads_of_suggested: 0 });
   const src = (v: unknown) => (recent.by_source[typeof v === 'string' && v ? v : 'unknown'] ??= { suggested: 0, would_suggest: 0, reads: 0, reads_of_suggested: 0 });
   const dir = logsDir(home);
@@ -59,7 +62,7 @@ function recentOpenclaw(home: string, now: number): OpenclawSkillView['recent'] 
     } catch { continue; }
     for (const line of text.split('\n')) {
       if (!line) continue;
-      let j: { at?: unknown; outcome?: unknown; code?: unknown; suggested?: unknown; session_class?: unknown; source?: unknown; sources?: unknown };
+      let j: { at?: unknown; outcome?: unknown; code?: unknown; suggested?: unknown; session_class?: unknown; audience?: unknown; source?: unknown; sources?: unknown };
       try { j = JSON.parse(line); } catch { continue; }
       if (typeof j.outcome !== 'string' || typeof j.at !== 'string' || now - Date.parse(j.at) > LOG_WINDOW_MS) continue;
       if (j.outcome === 'read') {
@@ -68,10 +71,11 @@ function recentOpenclaw(home: string, now: number): OpenclawSkillView['recent'] 
         if (j.suggested === true) { recent.reads_of_suggested++; c.reads_of_suggested++; s.reads_of_suggested++; }
         continue;
       }
-      if (['rebuilt', 'compaction'].includes(j.outcome)) continue;
+      if (['rebuilt', 'compaction', 'refreshed'].includes(j.outcome)) continue;
       if (j.session_class !== undefined || j.outcome !== 'error') {
         const c = cls(j.session_class);
         c.turns++;
+        if (j.audience === 'host' || j.audience === 'unknown') recent.by_audience[j.audience] = (recent.by_audience[j.audience] ?? 0) + 1;
         const names = Array.isArray(j.suggested) ? j.suggested : [];
         const field = j.outcome === 'would_suggest' ? 'would_suggest' : j.outcome === 'suggested' ? 'suggested' : null;
         if (field) {
@@ -107,6 +111,7 @@ export async function openclawSkillView(home: string, now = Date.now()): Promise
     const host = ids ? openclawHostDrift(id, [...ids], a.exclude_ids ?? []) : null;
     const policy = openclawAgentPolicy(id);
     agents.push({ id, mode: a.mode, catalog: a.catalog, fresh: s ? s.fresh : null, stale_reason: s?.stale_reason ?? (s ? null : 'missing'), skills: s?.receipt?.skill_count ?? 0, pins: a.pinned_ids.length,
+      conversation_pins: a.conversation_pinned_ids?.length ?? 0, suggest_in: a.suggest_classes ?? ['owner', 'conversation'],
       listing: policy.listing, path_reads: policy.path_reads, verdict: null, ...(ids ? { host } : {}) });
   }
   const plugin = files ? (openclawSkillPluginRegistered(dir) ? 'installed' : 'files_only') : 'absent';
@@ -117,12 +122,13 @@ export async function openclawSkillView(home: string, now = Date.now()): Promise
 /** One line for doctor's message, and the problem to warn about (null when healthy). */
 export function describeOpenclawSkill(v: OpenclawSkillView): { line: string; problem: { code: string; what: string } | null } {
   const on = v.agents.filter((a) => a.mode !== 'off');
-  const agents = v.agents.map((a) => `${a.id} ${a.mode}, ${a.skills} skills, ${a.fresh === null ? 'no catalog' : a.fresh ? 'fresh' : `stale (${a.stale_reason})`}, ${a.pins} pinned${a.verdict ? `, ${a.verdict}` : ''}`).join('; ');
+  const agents = v.agents.map((a) => `${a.id} ${a.mode}, ${a.skills} skills, ${a.fresh === null ? 'no catalog' : a.fresh ? 'fresh' : `stale (${a.stale_reason})`}, ${a.pins} pinned${a.conversation_pins ? ` (+${a.conversation_pins} for conversations)` : ''}${a.verdict ? `, ${a.verdict}` : ''}`).join('; ');
   const r = v.recent;
   const miss = r.miss_rate === null ? '' : `, deadline misses ${(r.miss_rate * 100).toFixed(1)}%`;
   const reads = r.reads ? `, ${r.reads_of_suggested}/${r.reads} skill reads were suggested` : '';
   const errs = Object.entries(r.errors).map(([c, n]) => `${c} x${n}`).join(', ');
-  const line = `openclaw plugin ${v.plugin}, library ${v.library}; ${agents || 'no agent'}${r.turns ? `; last 24h ${r.turns} turns${miss}${reads}${errs ? `, ${errs}` : ''}` : ''}`;
+  const keyed = r.by_audience.unknown ? `, ${r.by_audience.unknown} without a memory audience (classed by session key)` : '';
+  const line = `openclaw plugin ${v.plugin}, library ${v.library}; ${agents || 'no agent'}${r.turns ? `; last 24h ${r.turns} turns${keyed}${miss}${reads}${errs ? `, ${errs}` : ''}` : ''}`;
   let problem: { code: string; what: string } | null = null;
   const reachableByPath = (a: OpenclawSkillView['agents'][number]) => a.verdict === LISTING_OFF_RESOLVER_LIVE && a.path_reads === 'any';
   const drift = on.find((a) => a.host && ((a.host.cut.length && !reachableByPath(a)) || a.host.hidden.length));

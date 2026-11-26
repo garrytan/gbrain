@@ -121,6 +121,11 @@ fn flag(read: &dyn KvRead) -> Result<Option<FlagRecord>> {
     get_json(read, &keys::meta(FLAG))
 }
 
+/// True once publication was activated on this brain (`skill_bundles_enabled`), whatever the floor.
+pub(crate) fn publication_activated(read: &dyn KvRead) -> Result<bool> {
+    Ok(flag(read)?.is_some_and(|f| f.skill_bundles_enabled))
+}
+
 /// `skill_bundles_enabled AND writer_protocol_floor = 2`.
 pub(crate) fn publication_enabled(read: &dyn KvRead) -> Result<bool> {
     Ok(flag(read)?.is_some_and(|f| f.skill_bundles_enabled && f.writer_protocol_floor == 2))
