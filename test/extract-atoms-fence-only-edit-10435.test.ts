@@ -121,4 +121,63 @@ describe('#10435 extract_atoms skips a page whose extraction input did not chang
       expect(await countExtractAtomsBacklog(engine, sourceId), backend).toBe(0);
     }
   }, 120_000);
+  const fenceEdit = (n: number) => BODY.replace(`| 1 | ${HIDDEN_TAKE_ROW} | take | brain | 0.6 | 2026-01 | test |`,
+    `| 1 | ${HIDDEN_TAKE_ROW} | take | brain | 0.6 | 2026-01 | test |\n${NEW_TAKE_ROW.replace('| 2 |', `| ${n} |`)}`);
+  async function extracted(backend: string, engine: BrainEngine, sourceId: string) {
+    await engine.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1)', [sourceId]);
+    await engine.putPage(SLUG, { type: 'note', title: 'Launch review', compiled_truth: BODY, timeline: '' }, { sourceId });
+    const run = async (chat?: (opts: ChatOpts) => Promise<ChatResult>) => { const counted = countingChat();
+      await runPhaseExtractAtoms(engine, { sourceId, _chat: chat ?? counted.chat, _transcripts: [] }); return counted.calls(); };
+    const edit = (n: number) => engine.putPage(SLUG, { type: 'note', title: 'Launch review', compiled_truth: fenceEdit(n), timeline: '' }, { sourceId });
+    return { run, edit, backend };
+  }
+
+  test('a successful extraction after a malformed response still lets a later fence-only edit skip', async () => {
+    for (const { backend, engine } of engines) {
+      const sourceId = `fence-only-retry-${backend}`;
+      const { run, edit } = await extracted(backend, engine, sourceId);
+      const malformed = async (): Promise<ChatResult> => ({ text: 'not json', blocks: [{ type: 'text', text: 'not json' }], stopReason: 'end',
+        usage: { input_tokens: 10, output_tokens: 10, cache_read_tokens: 0, cache_creation_tokens: 0 }, model: 'anthropic:claude-haiku-4-5', providerId: 'anthropic' });
+      await run(malformed);
+      expect(await liveAtoms(engine, sourceId), backend).toEqual([]);
+      expect(await run(), backend).toBe(1);
+      const before = await liveAtoms(engine, sourceId);
+      expect(before.length, backend).toBe(1);
+      await edit(2);
+      expect(await run(), backend).toBe(0);
+      expect(await liveAtoms(engine, sourceId), backend).toEqual(before);
+    }
+  }, 120_000);
+
+  test('an atom another page or a transcript links from this page does not make the page look stale', async () => {
+    for (const { backend, engine } of engines) {
+      const sourceId = `fence-only-linked-${backend}`;
+      const { run, edit } = await extracted(backend, engine, sourceId);
+      expect(await run(), backend).toBe(1);
+      const before = await liveAtoms(engine, sourceId);
+      await engine.putPage('atoms/session-insight', { type: 'atom', title: 'Session insight', compiled_truth: 'A session insight.', timeline: '',
+        frontmatter: { source_path: 'sessions/2025-01-01.txt', date: '2025-01-01', visibility: 'private' } }, { sourceId });
+      await engine.executeRaw(`INSERT INTO links (from_page_id, to_page_id, link_type, link_source)
+        SELECT p.id, a.id, 'derived', 'atom-provenance' FROM pages p, pages a WHERE p.source_id=$1 AND p.slug=$2 AND a.source_id=$1 AND a.slug='atoms/session-insight'`, [sourceId, SLUG]);
+      await edit(2);
+      expect(await run(), backend).toBe(0);
+      expect(await liveAtoms(engine, sourceId), backend).toEqual(before);
+    }
+  }, 120_000);
+
+  test('a fence-only edit never re-extracts an atom someone made private, so its visibility never widens', async () => {
+    for (const { backend, engine } of engines) {
+      const sourceId = `fence-only-private-${backend}`;
+      const { run, edit } = await extracted(backend, engine, sourceId);
+      expect(await run(), backend).toBe(1);
+      const before = await liveAtoms(engine, sourceId);
+      await engine.executeRaw(`UPDATE pages SET frontmatter = frontmatter || '{"visibility":"private"}'::jsonb
+        WHERE source_id=$1 AND type='atom' AND frontmatter->>'source_slug'=$2`, [sourceId, SLUG]);
+      await edit(2);
+      expect(await run(), backend).toBe(0);
+      expect(await liveAtoms(engine, sourceId), backend).toEqual(before);
+      expect((await engine.executeRaw<{ v: string }>(`SELECT frontmatter->>'visibility' AS v FROM pages
+        WHERE source_id=$1 AND type='atom' AND deleted_at IS NULL AND frontmatter->>'source_slug'=$2`, [sourceId, SLUG])).map(r => r.v), backend).toEqual(['private']);
+    }
+  }, 120_000);
 });

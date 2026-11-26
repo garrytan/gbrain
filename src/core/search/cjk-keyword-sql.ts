@@ -179,7 +179,7 @@ export function buildCJKCandidateSql(
   };
 }
 
-/** #10417: the all-terms stage requires every term of one cjkMatchGroups alternative; the any-term stage any term. */
+/** #10417: the all-terms stage requires every term of one cjkMatchGroups alternative; the any-term stage any term, ranking a chunk that satisfies an alternative above every partial one. */
 const anyOf = (alternatives: string[]) => alternatives.length === 1 ? alternatives[0]! : `(${alternatives.map(alt => `(${alt})`).join(' OR ')})`;
 
 function likeClauses(terms: string[], likeParamIndices: number[], any: boolean, groups: string[][]): { whereLikeClause: string; matchedExpr: string } {
@@ -188,9 +188,11 @@ function likeClauses(terms: string[], likeParamIndices: number[], any: boolean, 
     const operator = term.toLowerCase() === term.toUpperCase() ? 'LIKE' : 'ILIKE';
     return `cc.chunk_text ${operator} $${idx} ESCAPE '\\'`;
   });
+  const strict = anyOf(groups.map(group => group.map(term => likes[terms.indexOf(term)]).join(' AND ')));
+  const strictBonus = groups.length > 1 ? ` + (${strict})::int * ${likes.length + 1}` : '';
   return {
-    whereLikeClause: any ? `(${likes.join(' OR ')})` : anyOf(groups.map(group => group.map(term => likes[terms.indexOf(term)]).join(' AND '))),
-    matchedExpr: likes.map(l => `(${l})::int`).join(' + '),
+    whereLikeClause: any ? `(${likes.join(' OR ')})` : strict,
+    matchedExpr: likes.map(l => `(${l})::int`).join(' + ') + strictBonus,
   };
 }
 
