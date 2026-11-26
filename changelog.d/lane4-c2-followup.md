@@ -1,7 +1,7 @@
 **Standing-rule corrections finish after an interrupted approval, never race a retirement, and `gbrain rules check` refuses a rule id it does not know.**
 
 ### Fixed
-- When you approve a correction and a write is still being saved, your approval is kept and the next read of the receipt finishes it and confirms the rule, instead of waiting for you to approve again. The approval lives in a reserved config key only `gbrain rules approve` writes, so an agent that edits a receipt cannot approve its own rule.
+- When you approve a correction and a write is still being saved, your approval is kept and the next read of the receipt finishes it and confirms the rule, instead of waiting for you to approve again. The approval, with the rule and fact change the prompt showed, lives in a reserved config key only `gbrain rules approve` writes, and a later read runs exactly that, so an agent that edits a receipt cannot approve its own rule or change what an approval does. A receipt that changes while you read the prompt is refused, and the prompt names the page a replacement fact is saved on.
 - A correction resumed under a different connection (an owner's remote session, then your approval at the terminal) finds the fact change it already made instead of failing or changing the fact twice.
 - Two calls retrying the same correction at once no longer delete its receipt, and a rule retired outside `gbrain rules retire` has its waiting correction settled by the next retire.
 - A retirement started while an approval runs now waits for it, so a retired rule's fact is never changed afterwards and the receipt always says what happened (`rule_busy` after 15 seconds).

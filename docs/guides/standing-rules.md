@@ -64,9 +64,11 @@ a remote connection cannot clear the problem itself).
 - **Another member's agent**: the rule stays proposed and the fact unchanged until you approve it. Approving finishes
   the correction: the fact is fixed, then the rule is made active. The approve prompt shows the fact change, the page
   it is on, the entity the rule corrects and whose agents the rule applies to, and the code you type covers all of it.
-  Your approval is kept in a reserved config key only your approval writes (not on the receipt, which agents can
-  edit), so if a write is still being saved when you approve, the next read of the receipt (by you or by the member's
-  agent) finishes it; you don't approve twice. A correction whose `entity` is a rule page in any spelling (`/rules/...`
+  Your approval, with the rule and fact change exactly as the prompt showed them, is kept in a reserved config key only
+  your approval writes (not on the receipt, which agents can edit), so if a write is still being saved when you
+  approve, the next read of the receipt (by you or by the member's agent) finishes what you approved; you don't approve
+  twice. A receipt that changes while you read the prompt, or no longer matches the rule page, is refused
+  (`rule_transition`). A correction whose `entity` is a rule page in any spelling (`/rules/...`
   too), or is not the page the fact is on, is refused (`invalid_params`); a remote caller that cannot read the fact
   gets `fact_not_found` instead. One connection can have at most 20 corrections waiting at a time, counted under a
   lock so calls sent together cannot pass it (`correct_proposals_capped`). A member's `me` rule loads only for that member's

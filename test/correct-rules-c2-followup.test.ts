@@ -25,6 +25,8 @@ import { OperationError, type AuthInfo } from '../src/core/ops/contract.ts';
 import { __correctFaults, approveRule, localRulesCtx, OPEN_RECEIPTS_PER_PRINCIPAL, retireRule, runCorrect } from '../src/core/rules/correct.ts';
 import { approvalDigest } from '../src/core/rules/confirm.ts';
 import { readRule, renderRulePage, ruleDigest } from '../src/core/rules/record.ts';
+import { withRegisteredLocalWriter } from '../src/core/persistence/identity.ts';
+import { withRemoteCaller } from '../src/core/remote-caller.ts';
 import { runRulesCheck } from '../src/core/rules/check.ts';
 import { runRulesRegressionDoctor } from '../src/commands/doctor/checks/rules-regression.ts';
 import { CONFIRM_CODE_LENGTH, type TerminalProbe } from '../src/core/policy/authority.ts';
@@ -101,6 +103,7 @@ beforeAll(async () => {
 afterAll(async () => {
   __correctFaults.after = undefined;
   __correctFaults.before = undefined;
+  __correctFaults.claimed = undefined;
   tripwire.dispose();
   await close?.();
 });
@@ -386,6 +389,83 @@ describe('second review round: races, forged approvals and entity spellings', ()
     const outs = await Promise.all([0, 1, 2].map(i => remote(THIRD, 'correct', { rule: `Concurrent last rule ${i} for carol-example.`, scope: 'team' })));
     expect(outs.filter(o => o.json.state === 'proposed')).toHaveLength(1);
     expect(outs.filter(o => o.text.includes('correct_proposals_capped'))).toHaveLength(2);
+  });
+});
+
+describe('final review: approvals run only what the owner approved', () => {
+  test('a remote owner names the entity of a fact on a page it reads', async () => {
+    await local('put_page', { slug: 'notes/alice-only', content: '---\ntitle: Alice notes\nreadable_by: [alice-example]\n---\n\nNotes.' });
+    const f = await seedFact('Alice Example prefers window seats.', 'notes/alice-only');
+    const r = await remote(OWNER, 'correct', { rule: 'Alice Example prefers aisle seats.', fact_id: f, entity: 'notes/alice-only', scope: 'me' });
+    expect(r.isError).toBe(false);
+  });
+
+  test('a fact change found committed on resume keeps its new fact id', async () => {
+    const wrong = await seedFact('Alice Example parks on level two.');
+    const right = 'Alice Example parks on level three.';
+    __correctFaults.after = s => { if (s === 'fact') throw new Error('killed'); };
+    let first: any;
+    try { first = await runCorrect(localRulesCtx(engine), { rule: right, fact_id: wrong, corrected_fact: right, scope: 'team', request_id: 'outcome-kept-1' }, { probe: noTty }); } finally { __correctFaults.after = undefined; }
+    const key = `correct.receipt.${first.receipt_id}`;
+    const stored = JSON.parse((await engine.getConfig(key))!);
+    delete stored.steps.fact.fact_id;
+    await engine.setConfig(key, JSON.stringify(stored));
+    const resumed = await runCorrect(localRulesCtx(engine), { receipt_id: first.receipt_id, resume: true }) as any;
+    expect(resumed.state).toBe('committed');
+    expect(resumed.effect.new_fact_id).toBeDefined();
+  });
+
+  test('a receipt edited after the owner approved it runs what the owner approved', async () => {
+    const wrong = await seedFact('Alice Example waters the plants on Monday.');
+    const right = 'Alice Example waters the plants on Tuesday.';
+    const r = await remote(MEMBER, 'correct', { rule: right, fact_id: wrong, corrected_fact: right, scope: 'team' });
+    let fired = false;
+    __correctFaults.before = s => { if (s === 'fact' && !fired) { fired = true; throw new OperationError('write_pending', 'The write is accepted and is still pending.', 'Read the receipt again.'); } };
+    try { await approveRule(engine, `${r.json.rule_id}@${r.json.revision}`, { probe: ownerTty() }); } finally { __correctFaults.before = undefined; }
+    const key = `correct.receipt.${r.json.receipt_id}`;
+    const stored = JSON.parse((await engine.getConfig(key))!);
+    stored.fact.entity = 'people/bob-example';
+    await engine.setConfig(key, JSON.stringify(stored));
+    const polled = (await remote(MEMBER, 'correct', { receipt_id: r.json.receipt_id })).json;
+    expect(polled.state).toBe('committed');
+    expect(await liveFacts('people/bob-example')).not.toContain(right);
+  });
+
+  test('a receipt edited while the owner reads the prompt is refused and changes nothing', async () => {
+    const wrong = await seedFact('Alice Example eats lunch at noon.');
+    const right = 'Alice Example eats lunch at one.';
+    const r = await remote(MEMBER, 'correct', { rule: right, fact_id: wrong, corrected_fact: right, scope: 'team' });
+    const key = `correct.receipt.${r.json.receipt_id}`;
+    const probe: TerminalProbe = { ...ownerTty(), readAnswer: async prompt => {
+      const stored = JSON.parse((await engine.getConfig(key))!);
+      stored.fact.entity = 'people/bob-example';
+      await engine.setConfig(key, JSON.stringify(stored));
+      return /Type ([0-9a-f]+) /.exec(prompt)![1]!.slice(0, CONFIRM_CODE_LENGTH);
+    } };
+    const out = await approveRule(engine, `${r.json.rule_id}@${r.json.revision}`, { probe }).catch(e => e);
+    expect(out.code).toBe('rule_transition');
+    expect((await factRow(wrong))!.expired_at).toBeNull();
+  });
+
+  test('a receipt whose rule no longer matches the page is refused at approval', async () => {
+    const r = await remote(MEMBER, 'correct', { rule: 'Bob Example takes notes in the standup.', scope: 'me' });
+    const key = `correct.receipt.${r.json.receipt_id}`;
+    const stored = JSON.parse((await engine.getConfig(key))!);
+    delete stored.rule.readable_by;
+    await engine.setConfig(key, JSON.stringify(stored));
+    const out = await approveRule(engine, `${r.json.rule_id}@${r.json.revision}`, { probe: ownerTty() }).catch(e => e);
+    expect(out.code).toBe('rule_transition');
+  });
+
+  test('an approved receipt finished from a stdio connection completes under the owner', async () => {
+    const wrong = await seedFact('Alice Example cycles on Thursdays.');
+    const right = 'Alice Example cycles on Fridays.';
+    const r = await remote(MEMBER, 'correct', { rule: right, fact_id: wrong, corrected_fact: right, entity: 'people/alice-example', scope: 'team' });
+    let fired = false;
+    __correctFaults.before = s => { if (s === 'fact' && !fired) { fired = true; throw new OperationError('write_pending', 'The write is accepted and is still pending.', 'Read the receipt again.'); } };
+    try { await approveRule(engine, `${r.json.rule_id}@${r.json.revision}`, { probe: ownerTty() }); } finally { __correctFaults.before = undefined; }
+    const polled = await withRegisteredLocalWriter(engine, 'stdio', () => withRemoteCaller(true, () => runCorrect(localRulesCtx(engine), { receipt_id: r.json.receipt_id }))) as any;
+    expect(polled).toMatchObject({ state: 'committed', confirmed: true });
   });
 });
 

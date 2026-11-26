@@ -55,11 +55,11 @@ export async function saveConfirmation(engine: BrainEngine, c: RuleConfirmation)
 }
 
 /**
- * The owner's approval of one proposal (a correct receipt) that has not finished yet: its revision, the rule's digest
- * and the proof. It lives under the reserved prefix too, so only the owner's approval writes it and a later read or
+ * The owner's approval of one proposal (a correct receipt) that has not finished yet: its revision, the rule's digest,
+ * the proof and the approved payload (source, rule and fact change as the owner saw them). It lives under the reserved prefix too, so only the owner's approval writes it and a later read or
  * resume can trust it to finish the proposal under the owner's authority; nothing stored in the receipt is trusted.
  */
-export interface PendingApproval { revision: string; rule_digest: string; proof: OwnerProof }
+export interface PendingApproval { revision: string; rule_digest: string; proof: OwnerProof; payload: Record<string, unknown> }
 
 export const APPROVAL_PREFIX = `${RULE_CONFIRM_PREFIX}approval.`;
 
