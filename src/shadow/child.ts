@@ -28,13 +28,13 @@ import { RERUN_DEADLINE_MS } from './checks.ts';
 import { createAsker, createSerialQueue, createWaiter, membersDigest, policyApplies, privacyVerdict, RERUN_QUEUE_BOUND, resultDigest, safeCode } from './child-checks.ts';
 import { classifyError, classifyResult, type Classification } from './classify.ts';
 import { decodeValue, encodeValue } from './codec.ts';
-import { adapterIdentity, capabilitySetHash, currentBuild, ensureEpoch, internalErrorRecorder, type EpochBuild, type EpochManifest } from './evidence-epoch.ts';
+import { adapterIdentity, capabilitySetHash, currentBuild, ensureEpoch, internalErrorRecorder, readEpoch, type EpochBuild, type EpochManifest } from './evidence-epoch.ts';
 import { exactnessArm, qualifyMismatch, SHADOW_COMPARATOR_VERSION } from './exactness.ts';
 import { FollowChild, type FollowEvent, type FollowStore } from './follow-child.ts';
 import { appendFault, appendLedgerRows, writeSummaryFile, type ShadowLedgerRow, type ShadowSummaryFile } from './ledger.ts';
 import { newMirrorCounters, type MirrorCounters } from './mirror.ts';
 import { createWriteComparer } from './write-compare-child.ts';
-import { WriteTally } from './write-compare.ts';
+import { readSent, recordLostCount, sentPath, WriteTally } from './write-compare.ts';
 import { appendRecall, IntervalGate, recallEligible, RECALL_INTERVAL_MS, scoreRecall, type RankedKey } from './recall.ts';
 import { isShadowReadMember, SHADOW_READ_MEMBERS, type ShadowReadMember } from './reads.ts';
 import { readSeedRecord } from './seed.ts';
@@ -537,14 +537,15 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
     return draining;
   };
 
+  let received = 0; // write samples read from the pipe, whole lines only (a line the exit of the serving process cut short is not one)
   const rl = createInterface({ input: deps.input, crlfDelay: Infinity });
   for await (const line of rl) {
     if (!line) continue;
-    let event: { t?: string; counters?: MirrorCounters; pid?: number };
+    let event: { t?: string; counters?: MirrorCounters; pid?: number; dropped?: number };
     try { event = JSON.parse(line); } catch { continue; }
     if (event.t === 'apply' || event.t === 'watermark' || event.t === 'depth' || event.t === 'rpc') { follow.handle(event as FollowEvent); continue; }
     if (event.t === 'answer') { ask.answer(event as never); continue; }
-    if (event.t === 'write') { writes.handle(event as never); continue; }
+    if (event.t === 'write') { received += 1 + (Number.isInteger(event.dropped) && event.dropped! > 0 ? Math.min(event.dropped!, 10_000) : 0); writes.handle(event as never, line.length); continue; } // the weight the serving process counted when it sent the line (supervisor.ts sampleWeight)
     if (event.t === 'stats' && event.counters) { summary.primary = { ...newMirrorCounters(), ...event.counters }; summary.primary_pid = event.pid; continue; }
     if (event.t !== 'read' || paused) continue;
     if (pending.length >= SHADOW_CHILD_QUEUE_BOUND) { summary.child_shed++; continue; }
@@ -554,6 +555,17 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
   if (deps.exit) {
     const timer = setTimeout(() => { summary.child_shed += pending.length; writes.abandon(); flush(true); deps.exit!(0); }, deps.exitDeadlineMs ?? SHADOW_CHILD_EXIT_DEADLINE_MS);
     (timer as { unref?: () => void }).unref?.();
+  }
+  // The serving process wrote down how many write samples it sent us before it ended our stdin; what it sent and we never read was dropped in its pipe at its exit, and is counted once (supervisor.ts recordSent).
+  // The difference is written as lost samples (durable appends, split so none is cut; the owner child folds them into the tally exactly once), and the count is removed only after every one is down: a
+  // failed append leaves a fault line naming the rest (except a disk-write failure that also stops the fault line, see S2b).
+  const sent = readSent(shadowDir, session);
+  if (sent !== null) {
+    const missing = Math.max(0, sent - received);
+    const epoch = readEpoch(shadowDir)?.epoch_id;
+    const done = missing === 0 ? 0 : epoch === undefined ? 0 : recordLostCount(shadowDir, epoch, 'pipe_unflushed', missing);
+    if (done < missing) { try { appendFault(shadowDir, { ts: new Date(now()).toISOString(), kind: 'write_samples_unrecorded', detail: `pipe_unflushed n=${missing - done}`, ...(epoch ? { epoch_id: epoch } : {}) }); } catch { /* disk: the count is only in memory */ } }
+    try { rmSync(sentPath(shadowDir, session), { force: true }); } catch { /* a leftover count is read again by no one: its session is gone */ } // every sample is now received, recorded or named in a fault (except when both writes failed, see S2b)
   }
   // The serving process ended our stdin: nothing it was asked can still be answered. A queued rerun ends as skipped.
   ask.closeAll(); waiter.close(); // a rerun waiting for a quiet window ends now, as skipped

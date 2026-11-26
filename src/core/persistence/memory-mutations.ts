@@ -1,4 +1,5 @@
 import { throwIfHeld } from '../trust/gate-outcomes.ts';
+import { screenWriteSecrets } from './write-secrets.ts';
 import { assertStorageSourceWriter } from '../storage-manifest/door.ts';
 import { forgetRequiresOwner, guardRemoteForget, remoteForgetRaced, supersessionGuarded } from '../trust/supersede-handlers.ts';
 import { storedTrustTier } from '../trust/tier.ts';
@@ -237,6 +238,8 @@ export async function submitRememberMutation(ctx: OperationContext, params: Reco
     const refused = ruleOwnerOnly(String(params.entity));
     throw Object.assign(verbError('scope_denied', refused.message, refused.suggestion ?? ''), { canonical: 'rule_owner_only' });
   }
+  const screened = screenWriteSecrets(ctx, 'remember', params);
+  params = screened.params;
   const { visibility: _defaulted, ...withoutDefault } = params;
   const sub = await submission(ctx, 'remember', params, opts.visibilityDefaulted ? withoutDefault : params);
   if (sub.prior) { const prior = sub.prior; const settled = await waitForWrite(ctx.engine, prior, ctx.config, waitMs ?? ctx.writeWaitMs); return rememberLanded(ctx, settled, throwIfHeld(withRememberTarget(prior, () => writeResponse(settled)))); }
@@ -305,7 +308,7 @@ export async function submitRememberMutation(ctx: OperationContext, params: Reco
       session_id: ctx.sessionId ?? null, share_held: heldFor ?? undefined },
     authority, worktreeId: writeThrough ? binding?.worktree_id : null, topologyGeneration: writeThrough ? binding?.topology_generation : null, deferrable: true });
   const written = await waitForWrite(ctx.engine, row, ctx.config, waitMs ?? ctx.writeWaitMs);
-  const response = throwIfHeld(withRememberTarget(row, () => writeResponse(written)));
+  const response = { ...throwIfHeld(withRememberTarget(row, () => writeResponse(written))), ...(screened.redacted ? { secrets_redacted: screened.redacted } : {}) };
   emitFenceNotice(ctx, response, row.slug);
   return rememberLanded(ctx, written, response);
 }

@@ -320,6 +320,12 @@ export async function runMemoryWrite<T>(run: () => Promise<T>): Promise<T> {
       Object.assign(guest, { canonical: error.code, docs: error.docs });
       throw guest;
     }
+    // secrets.on_write: a refused secret keeps the frozen invalid_params; the canonical code, docs and why ride along.
+    if (error.code === 'secret_in_write') {
+      const secret = verbError('invalid_params', error.message, error.suggestion ?? 'Remove the secret and send the write again with a new request_id.');
+      Object.assign(secret, { canonical: 'secret_in_write', docs: error.docs, why: error.why, detail: error.detail });
+      throw secret;
+    }
     // GBRA-585: an entity page this connection cannot read or write keeps the frozen code; page_not_found is the canonical
     // code (a caller refusal, not an outage, so no doctor step), and the next step is the save this connection can make.
     if (error.code === 'page_not_found') {

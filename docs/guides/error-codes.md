@@ -1729,6 +1729,16 @@ More: [docs/guides/standing-rules.md#correct_instruction_refused](../../docs/gui
 
 More: [docs/guides/standing-rules.md#correct_origin_refused](../../docs/guides/standing-rules.md#correct_origin_refused)
 
+### correct_proposals_capped
+
+<a id="correct_proposals_capped"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| correct was refused because this connection already has 20 corrections waiting for the owner or unfinished, so nothing was written. | A rule another member proposes waits for the owner; a cap per connection keeps one agent from filling the brain with proposals nobody reviews. | Ask the owner to approve or retire the waiting rules, or finish a stopped correction with correct {receipt_id, resume: true}. Run: gbrain rules list | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/standing-rules.md#correct_proposals_capped](../../docs/guides/standing-rules.md#correct_proposals_capped)
+
 ### correct_receipt_not_found
 
 <a id="correct_receipt_not_found"></a>
@@ -5887,6 +5897,16 @@ More: [docs/guides/windowed-reads.md#revision_changed](../../docs/guides/windowe
 
 More: [docs/guides/google-socket.md#error-codes](../../docs/guides/google-socket.md#error-codes)
 
+### rule_busy
+
+<a id="rule_busy"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Another correction, approval or retirement of the same standing rule was running, so nothing was written. | One call at a time changes a rule and its fact, so a retirement never lands between an approval's check and its fact change. | Retry in a few seconds; the other call finishes on its own. | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/standing-rules.md#rule_busy](../../docs/guides/standing-rules.md#rule_busy)
+
 ### rule_exists
 
 <a id="rule_exists"></a>
@@ -6102,6 +6122,16 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | A search offset was over the 10,000 limit. | The request itself was wrong or no longer matches the brain; nothing was changed. | Page with match: "keyword" and the next object each response returns; a cursor has no depth limit. | agent | `repeat the read that failed` | 1 | no |
+
+### secret_in_write
+
+<a id="secret_in_write"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A remote page write looks like it holds a secret and the brain host set secrets.on_write to block (a chunked upload is refused under redact too), so nothing was written; the message names pattern names and a count, never the value. | A page is read by everyone the brain serves and sent to its model providers, so a credential stored in one is exposed to all of them. | Remove the secret (name the environment variable or secret store entry that holds it instead) and send the write again with a new request_id. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#secret_in_write](../../docs/guides/write-refusals.md#secret_in_write)
 
 ### secret_reveal_forbidden
 

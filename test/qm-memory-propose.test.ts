@@ -18,7 +18,7 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
-import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -46,6 +46,7 @@ import { managedBrain, settleManagedGitEffects } from './helpers/managed-brain.t
 import { durableGitRepo, git } from './helpers/git-publication.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 const SRC = 'qm-propose';
 const ALICE_ID = 'alice-example@acme.test';
@@ -494,6 +495,27 @@ for (const kind of testBackends()) {
         expect(list.json.requests.map((r: { request_id: string }) => r.request_id)).toContain(id);
       } finally { await engine.executeRaw('UPDATE oauth_clients SET allowed_operations = NULL WHERE client_id = $1', [qmClient]); }
     }, 90_000);
+
+    test('secrets.on_write screens a proposal as it is held: block refuses it, redact holds the redacted text', async () => {
+      const token = 'ghp_' + 'Qr7Ws1Ex3Dc5Rv7Tg9Yh1Uj3Ik5Ol7Pz9Ma2';
+      const withOnWrite = async <T>(mode: string, fn: () => Promise<T>) => {
+        const home = mkdtempSync(join(tmpdir(), 'qm-on-write-'));
+        mkdirSync(join(home, '.gbrain'), { recursive: true });
+        writeFileSync(join(home, '.gbrain', 'config.json'), JSON.stringify({ secrets: { on_write: mode } }));
+        try { return await withEnv({ GBRAIN_HOME: home }, fn); } finally { rmSync(home, { recursive: true, force: true }); }
+      };
+      const blocked = await withOnWrite('block', () => timeline(carol, 'Deploy key canaryonwriteblock ' + token));
+      expect(blocked.isError).toBe(true);
+      expect(blocked.all).toContain('secret_in_write');
+      expect(blocked.all).not.toContain(token);
+      expect(await engine.executeRaw("SELECT 1 FROM memory_proposals WHERE payload::text LIKE '%canaryonwriteblock%'")).toHaveLength(0);
+      const held = await withOnWrite('redact', () => timeline(carol, 'Deploy key canaryonwriteredact ' + token));
+      expect(held.isError).toBe(false);
+      const row = await proposalRow(held.structured!.request_id as string);
+      expect(JSON.stringify(row!.payload)).toContain('canaryonwriteredact <REDACTED:github_token>');
+      expect(JSON.stringify(row)).not.toContain(token);
+      await engine.executeRaw('DELETE FROM memory_proposals WHERE request_id = $1::uuid', [held.structured!.request_id]);
+    }, 60_000);
 
     test('unapproved text never reaches recall, search or an export; doctor and status count the pending proposals', async () => {
       const id = (await timeline(bob, 'Held secret canaryneverout')).structured!.request_id as string;

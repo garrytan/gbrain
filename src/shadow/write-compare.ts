@@ -14,6 +14,7 @@ import { appendFileSync, existsSync, readdirSync, readFileSync, renameSync, writ
 import { join } from 'node:path';
 import { flushDirectory, flushFile } from '../core/fs-durable.ts';
 import { readEpoch, withLock } from './evidence-epoch.ts';
+import { appendFault } from './ledger.ts';
 import { memberKind, WRITE_MAP } from './write-map.ts';
 
 export const PILOT_WRITES: ReadonlySet<string> = new Set(['putPage', 'deletePage', 'addLink', 'addLinksBatch', 'removeLink']);
@@ -149,11 +150,27 @@ export function readWriteTally(dir: string, epochId: string | null): WriteTallyF
   try { const f = loadTally(dir); return f && epochId !== null && f.epoch_id === epochId ? f : null; } catch { return null; } // silent-read-ok: no readable tally is no count; the status shows zero and criterion 5 stays missing
 }
 
+/** How many write samples a serving process sent the child of `session` (supervisor.ts `recordSent`); the child reads it at the end of its input and counts what it never received as lost (`pipe_unflushed`). */
+export const sentPath = (dir: string, session: string): string => join(dir, `write-sent.${session.replace(/[^A-Za-z0-9_-]/g, '_')}.json`);
+/** The sent count for `session`, or null when there is none (or it is not a count; an unreadable or truncated file also reads as none, with no fault: S2b). */
+export function readSent(dir: string, session: string): number | null {
+  try { const f = JSON.parse(readFileSync(sentPath(dir, session), 'utf8')) as { session?: unknown; sent?: unknown }; return f.session === session && Number.isInteger(f.sent) && (f.sent as number) >= 0 ? f.sent as number : null; } catch { return null; } // silent-read-ok: no readable count is no count; the child then counts only what it received
+}
+/** The most samples one `recordLost` call stands for (the child's own cap on a `dropped` count). */
+const MAX_LOST_PER_RECORD = 10_000;
 /** Samples the serving process lost (a refused send, a read-back abandoned at disconnect) are never written into the tally by that process (a locked write could stall it): each is one `{epoch_id, reason}` line appended, with no lock, to its own file; the owner child folds them in. True only when the line and its directory entry are flushed to disk; false otherwise. */
 export const lostPath = (dir: string, pid: number): string => join(dir, `write-lost.${pid}.jsonl`);
-export function recordLost(dir: string, epoch: string, reason: string): boolean {
+export function recordLost(dir: string, epoch: string, reason: string, n = 1): boolean {
+  if (!Number.isInteger(n) || n < 1 || n > MAX_LOST_PER_RECORD) return false; // one append stands for exactly n samples: a larger count is `recordLostCount`'s (it splits it), never cut here
   const path = lostPath(dir, process.pid);
-  try { appendFileSync(path, JSON.stringify({ epoch_id: epoch, reason }) + '\n', { flag: 'a', mode: 0o600 }); flushFile(path); flushDirectory(dir); return true; } catch { return false; } // silent-read-ok: false is the answer, never a pass: the sampler then carries the count on its next line
+  const line = JSON.stringify({ epoch_id: epoch, reason }) + '\n';
+  try { appendFileSync(path, line.repeat(n), { flag: 'a', mode: 0o600 }); flushFile(path); flushDirectory(dir); return true; } catch { return false; } // silent-read-ok: false is the answer, never a pass: the sampler then carries the count on its next line
+}
+/** Records `n` lost samples in appends of at most `MAX_LOST_PER_RECORD`; returns how many were recorded (all of them, or the ones before the first append that failed), so a caller keeps exactly the remainder. */
+export function recordLostCount(dir: string, epoch: string, reason: string, n: number): number {
+  let done = 0;
+  while (done < n) { const k = Math.min(n - done, MAX_LOST_PER_RECORD); if (!recordLost(dir, epoch, reason, k)) break; done += k; }
+  return done;
 }
 /** The lost lines past what `applied` took, per file: the complete lines' end offset and the reasons of this epoch's (another epoch's are retired and skipped; a line that is not readable, or an unfinished one whose writer is dead, counts as `lost_unreadable`). */
 function readLost(dir: string, epoch: string, applied: Record<string, number> = {}): Array<{ name: string; end: number; reasons: string[]; unreadable?: true }> {
@@ -173,6 +190,8 @@ function readLost(dir: string, epoch: string, applied: Record<string, number> = 
 /** Lost samples of `epoch` that no tally has taken yet: status reads any as no evidence, like a standing in-flight mark. */
 export function unfoldedLost(dir: string, epoch: string | null, taken?: Record<string, number>): number { return epoch === null ? 0 : readLost(dir, epoch, taken).reduce((n, l) => n + l.reasons.length + (l.unreadable ? 1 : 0), 0); }
 
+/** A client child's uncounted verdicts are written once this many are waiting (and at every save). */
+const UNOWNED_BATCH = 256;
 const MAX_KEYS = 64;
 const bump = (map: Record<string, number>, key: string, n: number): void => { const k = key in map || Object.keys(map).length < MAX_KEYS ? key : 'other'; map[k] = (map[k] ?? 0) + n; };
 function applyVerdict(file: WriteTallyFile, outcome: WriteOutcome, key: string | undefined, n: number): void {
@@ -196,6 +215,7 @@ export class WriteTally {
   private pending: Array<{ seq: number; delta: WriteTallyFile; ending: boolean }> = [];
   private sealed = 0; // the first `sealed` pending batches were in a save that may have landed: never added to, until a durable save takes them
   private seq = 0;
+  private unowned = 0; // verdicts of a client child not yet written as lost samples (flushUnowned)
   private readonly id: string;
   constructor(private readonly dir: string, private readonly epoch: () => string | null, private readonly alive: () => boolean = () => existsSync(dir), private readonly pid: number = process.pid) { this.id = `${pid}.${randomBytes(4).toString('hex')}`; }
   /** One locked read-modify-write: dead pids recovered, then this child's unsaved batches, then `change`. False when nothing was saved (the batches are kept). `fresh`: a mark under this pid is from an earlier process that had it. */
@@ -214,7 +234,7 @@ export class WriteTally {
         file.in_flight = file.in_flight.filter((p) => !dead.includes(p));
         for (const id of Object.keys(file.applied)) if (id !== this.id && !running(Number.parseInt(id, 10))) delete file.applied[id];
         const todo = batches.filter((b) => b.seq > (file.applied![this.id] ?? 0));
-        const lost = readLost(this.dir, epoch, file.lost_applied).filter((l) => l.end > (file.lost_applied?.[l.name] ?? 0)); // the serving processes' lost samples, taken once under the same lock
+        const lost = readLost(this.dir, epoch, file.lost_applied).filter((l) => l.end > (file.lost_applied?.[l.name] ?? 0) && (l.reasons.length > 0 || l.unreadable)); // a file holding only another epoch's lines has nothing to fold: it is left as it is (no tally is written for it) // the serving processes' lost samples, taken once under the same lock
         if (!change && !dead.length && !todo.length && !lost.length) return;
         file.lost_applied ??= {};
         for (const l of lost) { for (const r of l.reasons) applyVerdict(file, 'uncomparable', r, 1); file.lost_applied[l.name] = l.end; }
@@ -237,16 +257,32 @@ export class WriteTally {
       return true;
     } catch { if (renamed) this.sealed = batches.length; return false; } // silent-read-ok: false is the answer, never a pass: begin() refuses the replay, and note() keeps the unsaved batches for the next save
   }
+  /**
+   * The verdicts a client child (no epoch of its own) could not count: written as `no_epoch` lost samples of the epoch current on disk, for the owner child to add up, in one append per batch
+   * (every `UNOWNED_BATCH` verdicts and at each save), never one durable write per verdict. The tally file itself is not touched (a client child records nothing in it). With no epoch on
+   * disk yet the count waits for the next save; at the last one (`final`) it becomes a fault line (except a disk-write failure, see S2b).
+   */
+  private flushUnowned(final: boolean): boolean {
+    if (this.unowned === 0 || !this.alive()) { this.unowned = 0; return true; }
+    const epoch = readEpoch(this.dir)?.epoch_id;
+    if (epoch !== undefined) { this.unowned -= recordLostCount(this.dir, epoch, 'no_epoch', this.unowned); if (this.unowned === 0) return true; } // only what was written is released: the rest waits for the next flush
+    if (final) { try { appendFault(this.dir, { ts: new Date().toISOString(), kind: 'write_samples_unrecorded', detail: `no_epoch n=${this.unowned}` }); this.unowned = 0; } catch { /* disk: the count stays in memory */ } }
+    return false;
+  }
   /** Publishes this pid as having a replay in flight. True only when that is durable on disk: on false the replay must not run. */
   begin(): boolean { return this.update((file) => { if (!file.in_flight.includes(this.pid)) file.in_flight.push(this.pid); }); }
   /** At child start: counts the marks of dead processes (and of an earlier process with this pid), and saves any verdict still unsaved. */
   recover(): void { this.update(undefined, true); }
   /** One more try to save batches an earlier save could not take (true when nothing is left unsaved). */
-  save(): boolean { return this.update(); }
+  save(): boolean { const noted = this.flushUnowned(true); return this.epoch() === null ? noted : this.update() && noted; }
   /** Counts one outcome; `ends` is a replay's own verdict, which removes its mark. */
   note(outcome: WriteOutcome, key?: string, n = 1, ends = false): void {
     const epoch = this.epoch();
-    if (epoch === null || !this.alive()) return;
+    if (epoch === null) { // a client child (another process owns the store): it records nothing in the tally, but its verdict is counted (except a disk-write failure, see S2b; see flushUnowned)
+      if (this.alive()) { this.unowned += n; if (this.unowned >= UNOWNED_BATCH) this.flushUnowned(false); }
+      return;
+    }
+    if (!this.alive()) return;
     let batch = this.pending.at(-1);
     if (!batch || this.pending.length === this.sealed) this.pending.push(batch = { seq: ++this.seq, delta: blank(epoch), ending: false });
     applyVerdict(batch.delta, outcome, key, n);

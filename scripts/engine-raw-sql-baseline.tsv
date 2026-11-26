@@ -661,7 +661,7 @@ src/core/notifier/nudge.ts	execute_raw	1
 src/core/notifier/resident.ts	execute_raw	3
 src/core/notifier/status.ts	execute_raw	1
 src/core/notifier/store.ts	execute_raw	15
-src/core/oauth-grants.ts	sql_template	16
+src/core/oauth-grants.ts	sql_template	29	#9364 refresh families: the v338 table probe, the family column on issue, the rotation record and its grace wipe, the replay lookup (owner read, then the owning client lock before the rotation row), the family revocation (tokens, sealed pairs, the owning client lock), the client-revoke and expiry sweeps (the grace-window wipe and the expired-record delete, each skipping locked rows); all run inside the OAuth client-row lock transaction, which has no engine method yet; converts with the rest of the OAuth grant lifecycle
 src/core/oauth-provider.ts	sql_template	22
 src/core/onboard/checks.ts	execute_raw	5
 src/core/onboard/first-session.ts	execute_raw	3	first-session suggestion: the onboarding.first_session record compare-and-swap in config (insert and update) and the pointer read of recent world-visible pages under remoteReadFloorSql; converts with setup-history.ts
@@ -1059,7 +1059,7 @@ src/core/repair/url-clone-fences.ts	execute_raw	5
 src/core/repair/visibility.ts	execute_raw	11
 src/core/restore-target.ts	execute_raw	4
 src/core/review-lists.ts	execute_raw	1
-src/core/rules/correct.ts	execute_raw	1	GST-3827 C2: the atomic claim of a new correction receipt (INSERT INTO config ... ON CONFLICT DO NOTHING RETURNING); no typed engine method claims a config key
+src/core/rules/correct.ts	execute_raw	3	GST-3827 C2: the atomic claim of a config key (a new correction receipt, and the per-rule lease) and its compare-and-delete release (INSERT INTO config ... ON CONFLICT DO NOTHING RETURNING; DELETE ... WHERE key AND value); no typed engine method claims or releases a config key. +1 (#10456 final review): the remote fact read an entity check needs before it names the fact's page, the same predicate forget's readsUnder runs in memory-mutations.ts; no typed engine method reads a fact under the caller's policy
 src/core/schema-migrations/helpers.ts	execute_raw	12
 src/core/schema-migrations/v039-multimodal-dual-column-v0-27-1.ts	execute_raw	1
 src/core/schema-migrations/v045-facts-hot-memory-v0-31.ts	execute_raw	2

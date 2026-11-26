@@ -5513,10 +5513,10 @@
       {
         "handler": "absent",
         "idempotent": true,
-        "name": "facts_valid_from_nullable",
+        "name": "oauth_refresh_rotations",
         "sql": {
-          "length": 241,
-          "sha256": "dd6f72061b3e5339570d9d0933568be17d043206a77ed2750946612c2f77dc61"
+          "length": 1068,
+          "sha256": "9406039c9a23a8e1d2fe8d266c2b773e25e3b6c7d7c1a4f195d826359b02d1ae"
         },
         "sqlFor": "absent",
         "transaction": "absent",
