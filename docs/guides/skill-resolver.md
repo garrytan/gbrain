@@ -151,11 +151,12 @@ and gives the harness's own load line; Codex lines also carry the SKILL.md path.
 The lane always exits 0 and prints nothing when it cannot deliver:
 
 - **Deadline:** 50 ms for the turn, counted from the moment the ranking
-  worker thread has loaded, plus at most 250 ms for that worker to load. A
-  cold machine can take most of 50 ms just to load it (measured: up to about
-  50 ms on an idle 4-core machine with an empty file cache, and up to about
-  105 ms with the CPU oversubscribed), so the turn's own clock starts once it
-  is ready. With the [model picker](#model-picker-opt-in) on, the turn also
+  worker thread has loaded and the hook's input has been read, plus at most
+  250 ms for both. A cold machine can take most of 50 ms just to load the
+  worker (measured: up to about 50 ms on an idle 4-core machine with an empty
+  file cache, and up to about 105 ms with the CPU oversubscribed), and Hermes
+  pipes a long session's whole conversation history to stdin, so the turn's
+  own clock starts once both are done. With the [model picker](#model-picker-opt-in) on, the turn also
   gets the picker's wait (`router_timeout_ms`) plus 100 ms; with it off and a
   catalog built with [skill vectors](#skill-vectors), the turn also gets 1
   second for the message's vector plus 100 ms. At either limit
@@ -226,7 +227,9 @@ answered, the fallback code and the picker's wait, and with skill vectors,
 for the message's vector; never turn text) to `skill-index/logs/lane-<UTC date>.jsonl`, one file per day,
 kept 14 days and capped at 2 MB a day. `gbrain doctor` (`skill_resolver`, and
 `harness_wiring`'s details) reports the hook, each catalog's freshness and
-the recent error codes; it says nothing while the resolver is off. A hook from
+the recent error codes; it says nothing while the resolver is off. When 20%
+or more of at least 20 recent prompts from a harness that is on timed out, it
+warns with [`skill_resolve_timeout`](#skill_resolve_timeout) and the counts. A hook from
 before the compaction reset (UserPromptSubmit without SessionStart) shows as
 `outdated` and warns with its fix, `gbrain setup codex --skill-loading
 resolve` (or `claude-code`).
@@ -1007,7 +1010,9 @@ holder is reclaimed when its lease expires.
 ### skill_resolve_timeout
 
 The turn ran past the caller's deadline. Nothing was committed. Check the
-catalog size with `gbrain skills index status`.
+catalog size with `gbrain skills index status`. From the hook lane, doctor
+warns once 20% or more of at least 20 recent prompts from one harness time
+out; a machine that is busy during turns times out more often.
 
 ### skill_index_removed
 
