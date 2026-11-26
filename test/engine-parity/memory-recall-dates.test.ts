@@ -21,13 +21,16 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../../src/core/engine.ts';
-import { createMember, parityArms, restrictFolder, type ParityBackend } from './harness.ts';
+import { createMember, createSource, parityArms, restrictFolder, type ParityBackend } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { withEnv } from '../helpers/with-env.ts';
 import { setMembersReadLineage } from '../../src/core/access/lineage.ts';
 import { setOwner } from '../../src/core/access/owner.ts';
 import { dispatchToolCall } from '../../src/mcp/dispatch.ts';
 import { drainProjections } from '../../src/core/page-state/projections.ts';
+import { remoteCallerAccess } from '../../src/core/access/caller.ts';
+import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
+import { ownMemberFactIds } from '../../src/core/access/member-facts.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -174,4 +177,82 @@ describe('engine parity: readFactWrittenDates, the date column of memory_recall'
     expect(out.none).toEqual([]);
     return out;
   });
+});
+
+/**
+ * ownMemberFactIds (access/member-facts.ts): of the fact ids asked for, the ones that are private facts of `sourceId` on the
+ * caller's own member page, while that page is live, names the caller as a reader and passes the caller's page policy. memory_recall
+ * reports it as `own_page`; forget_fact and the owner's default save (persistence/memory-mutations.ts) ask the same question.
+ */
+describe('engine parity: ownMemberFactIds, the own_page flag of memory_recall', () => {
+  const CAROL = 'carol-example';
+  const DANA = 'dana-example';
+  const PAGES_OWN: ReadonlyArray<{ slug: string; frontmatter: Record<string, unknown> }> = [
+    { slug: MEMBER_PAGE, frontmatter: { readable_by: [`member:${MEMBER}`] } },
+    { slug: OWNER_PAGE, frontmatter: { readable_by: [`member:${OWNER}`] } },
+    // carol's own page names someone else, not carol: it is not a page that admits her
+    { slug: `memory/members/${CAROL}`, frontmatter: { readable_by: [`member:${DANA}`] } },
+    { slug: 'open/plain', frontmatter: {} },
+  ];
+  // [label, page, source, visibility]
+  const ROWS: ReadonlyArray<[string, string, string, string]> = [
+    ['member-private', MEMBER_PAGE, 'default', 'private'],
+    ['member-world', MEMBER_PAGE, 'default', 'world'],
+    ['member-private-two', MEMBER_PAGE, 'default', 'private'],
+    ['owner-private', OWNER_PAGE, 'default', 'private'],
+    ['carol-private', `memory/members/${CAROL}`, 'default', 'private'],
+    ['open-private', 'open/plain', 'default', 'private'],
+    ['member-private-elsewhere', MEMBER_PAGE, 'other', 'private'],
+  ];
+
+  parityTest('a member owns its private facts on its own live member page in the source asked, and no one else\'s', {
+    methods: ['putPage', 'insertFacts'], timeout: 360_000,
+  }, (engine, backend) => inFreshHome(async () => {
+    await createMember(engine, backend, { id: OWNER, email: 'alice@example.com' });
+    await createMember(engine, backend, { id: MEMBER });
+    await createMember(engine, backend, { id: CAROL });
+    await createMember(engine, backend, { id: DANA });
+    await setOwner(engine, OWNER);
+    await createSource(engine, backend, 'other');
+    await restrictFolder(engine, backend, 'default', 'sealed/', 'pending');
+    for (const sourceId of ['default', 'other']) {
+      for (const pg of PAGES_OWN) await engine.putPage(pg.slug, { type: 'note' as never, title: pg.slug, compiled_truth: `page ${pg.slug}`, timeline: '', frontmatter: pg.frontmatter }, { sourceId });
+    }
+    await drainProjections(engine);
+    const ids = new Map<string, number>();
+    for (const [i, [label, page, sourceId, visibility]] of ROWS.entries()) {
+      const out = await engine.insertFacts([{ fact: `own page ${label}`, kind: 'fact', visibility, source: 'test', entity_slug: null, source_markdown_slug: page, row_num: i + 1, valid_from: new Date('2026-03-04T00:00:00Z') }] as never, { source_id: sourceId });
+      ids.set(label, Number(out.ids[0]));
+    }
+    const label = new Map([...ids].map(([name, id]) => [id, name]));
+    const every = [...ids.values()];
+    const asked = [...every, every[0]!, 999_999];
+    const answer = async (member: string | null, sourceId = 'default', list: readonly number[] = asked): Promise<unknown> => {
+      const record = member ? { ...await remoteCallerAccess(engine, undefined, [], 'stdio', null, member, false) } : { identity: [] as string[], hidePrivate: true };
+      try {
+        const owned = await withCallerAccess(record, () => ownMemberFactIds(engine, sourceId, list));
+        return [...owned].map(id => label.get(id) ?? `unknown:${id}`).sort();
+      } catch (e) {
+        if ((e as { code?: string } | null)?.code === 'engine_capability_missing') return { refused: 'engine_capability_missing' };
+        throw e;
+      }
+    };
+    const out = {
+      member: await answer(MEMBER),
+      owner: await answer(OWNER),
+      carol: await answer(CAROL),
+      noMember: await answer(null),
+      otherSource: await answer(MEMBER, 'other'),
+      oneId: await answer(MEMBER, 'default', [ids.get('member-private-two')!]),
+      noIds: await answer(MEMBER, 'default', []),
+    };
+    expect(out.member).toEqual(['member-private', 'member-private-two']);
+    expect(out.owner).toEqual(['owner-private']);
+    expect(out.carol).toEqual([]);
+    expect(out.noMember).toEqual([]);
+    expect(out.otherSource).toEqual(['member-private-elsewhere']);
+    expect(out.oneId).toEqual(['member-private-two']);
+    expect(out.noIds).toEqual([]);
+    return out;
+  }));
 });
