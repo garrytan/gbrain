@@ -259,7 +259,7 @@ test/engine-parity/page-vector-flip.test.ts	1	0
 test/engine-parity/page-vector-overflow.test.ts	2	0
 test/engine-parity/page-visibility.test.ts	6	0
 test/engine-parity/page-window-chunk-reads.test.ts	2	0
-test/engine-parity/page-withdrawal-overlay.test.ts	5	0
+test/engine-parity/page-withdrawal-overlay.test.ts	6	0
 test/engine-parity/page-write-readers.test.ts	1	0
 test/engine-parity/pages.test.ts	46	0
 test/engine-parity/persistence-binding-reads.test.ts	3	0
