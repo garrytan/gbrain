@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2442/2469
+# covered: 2443/2469
 # lifecycle: 12/12
 # pages: 141/142
 # search: 8/8
@@ -32,7 +32,7 @@
 # sync_aliases: 10/10
 # config: 7/7
 # import_guards: 13/13
-# persistence_journal: 282/285
+# persistence_journal: 283/285
 # label_door: 6/6
 # page_purge: 46/46
 # mention_pass: 40/40
@@ -947,7 +947,7 @@ stampWriteClaim	persistence_journal	yes	49	no	yes	yes	serves
 lockWriteRequest	persistence_journal	yes	8	no	yes	yes	serves
 completeWriteRow	persistence_journal	yes	59	no	yes	yes	serves
 lockWriteRequestsById	persistence_journal	yes	2	no	yes	yes	serves
-compactTerminalIntent	persistence_journal	no	0	no	-	-	-
+compactTerminalIntent	persistence_journal	yes	1	no	yes	yes	serves
 cancelWriteRow	persistence_journal	yes	3	no	yes	yes	serves
 insertPublicationEffects	persistence_journal	yes	26	no	yes	yes	serves
 insertWithdrawalEffects	persistence_journal	yes	8	no	yes	yes	serves
