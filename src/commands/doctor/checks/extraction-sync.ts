@@ -996,7 +996,7 @@ export async function computeExtractHealthCheck(
          MAX(updated_at) AS last_updated_at,
          (now() AT TIME ZONE 'UTC')::date - MAX(day) FILTER (WHERE halt_count > 0) AS last_halt_age_days
        FROM extract_rollup_7d
-       WHERE day >= CURRENT_DATE - 7
+       WHERE day >= (now() AT TIME ZONE 'UTC')::date - 7
        GROUP BY kind
        ORDER BY kind`;
     let rows: RollupRow[];
