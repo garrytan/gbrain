@@ -229,14 +229,16 @@ function parseFlags(args: string[]): SetupFlags | string {
   if (args.includes('--instructions') && args.includes('--no-instructions')) return 'pass --instructions or --no-instructions, not both';
   const serves = value('--serves');
   if (serves !== undefined && serves !== 'one' && serves !== 'several') return `unknown --serves '${serves}'; pass one or several`;
-  if ((args.includes('--members') || args.includes('--members-file')) && serves !== 'several') return '--members and --members-file name the people of --serves several';
-  if (args.includes('--labelled-only') && serves !== 'several') return '--labelled-only applies to the people of --serves several';
-  if (args.includes('--open-history') && serves !== 'several') return '--open-history applies to the people of --serves several';
+  const named = args.includes('--members') || args.includes('--members-file');
+  if (named && serves === 'one') return '--members and --members-file name the people of a brain that serves several; drop --serves one, or drop --members for a brain for one person';
+  const several = named || serves === 'several';
+  if (args.includes('--labelled-only') && !several) return '--labelled-only applies to the people of --serves several';
+  if (args.includes('--open-history') && !several) return '--open-history applies to the people of --serves several';
   if (args.includes('--open-history') && args.includes('--labelled-only')) return 'pass --labelled-only (keep the history private) or --open-history (members read it), not both';
   const owner = value('--owner');
   const household = value('--shape') === 'household';
-  if (owner !== undefined && serves !== 'several' && !household) return '--owner names the brain owner of --serves several or --shape household';
-  if (household && serves === 'several') return '--shape household sets up the people of the household itself; drop --serves several';
+  if (owner !== undefined && !several && !household) return '--owner names the brain owner of --serves several or --shape household';
+  if (household && several) return '--shape household sets up the people of the household itself; drop --serves several and --members';
   for (const f of ['--household-members', '--status', '--resume', '--receipt']) if (args.includes(f) && !household) return `${f} applies to --shape household`;
   if (args.includes('--status') && args.includes('--resume')) return 'pass --status or --resume, not both';
   if (args.includes('--receipt') && !args.includes('--status')) return '--receipt names the receipt --status reads; --resume takes the receipt id itself';
@@ -332,7 +334,7 @@ function parseFlags(args: string[]): SetupFlags | string {
     ...(skillResolver ? { skillResolver } : {}),
     ...(agentFlags.length ? { agents: agentFlags } : args.includes('--all-agents') ? { agents: 'all' as const } : {}),
     ...(Object.keys(openclawTuning).length ? { openclawTuning } : {}),
-    ...(serves ? { serves: serves as 'one' | 'several' } : {}),
+    ...(several ? { serves: 'several' as const } : serves ? { serves: serves as 'one' | 'several' } : {}),
     ...(value('--members') !== undefined ? { members: value('--members') } : {}),
     ...(value('--members-file') !== undefined ? { membersFile: value('--members-file') } : {}),
     ...(args.includes('--labelled-only') ? { labelledOnly: true } : {}),
