@@ -454,6 +454,46 @@ impl Store {
         })
     }
 
+    /// `take_over_lease(name, expected_epoch, holder, ttl_ms)`: takes the lease at the next epoch even while its record
+    /// still reads live, but only when the record is still at `expected_epoch`: the caller has proved the holder at that
+    /// epoch dead (a process of this machine that is gone, `consumerProvablyDead`), which the store cannot see. A record at
+    /// another epoch (someone else took it meanwhile) or no record returns `None` and writes nothing. Every write the dead
+    /// holder still had in flight carries the old epoch and is refused at its commit (`epoch_moved`).
+    pub fn take_over_lease(
+        &self,
+        name: &str,
+        expected_epoch: u64,
+        holder: &WriteOrigin,
+        ttl_ms: u64,
+    ) -> Result<Option<LeaseToken>> {
+        check_name(name)?;
+        holder.check()?;
+        let ttl_us = check_ttl(ttl_ms)?;
+        self.write(|tx| {
+            let now = self.env.clock_micros();
+            let Some(old) = load(tx, name)? else {
+                return Ok(None);
+            };
+            if old.epoch != expected_epoch {
+                return Ok(None);
+            }
+            let rec = LeaseRecord {
+                name: name.to_owned(),
+                epoch: old.epoch.checked_add(1).ok_or_else(|| {
+                    StoreError::new(crate::error::INVALID_STATE, "the lease epoch cannot grow further")
+                })?,
+                token: uuid_v7(&*self.env),
+                holder: holder.clone(),
+                acquired_at_us: now,
+                renewed_at_us: now,
+                expires_at_us: now.saturating_add(ttl_us),
+                released: false,
+            };
+            put_json(tx, &lease_key(name), &rec)?;
+            Ok(Some(LeaseToken { name: rec.name, epoch: rec.epoch, token: rec.token }))
+        })
+    }
+
     /// `renew_lease(token, ttl_ms)`: moves the expiry `ttl_ms` past now. `lease_lost` when the epoch or token moved,
     /// the lease was released, or it expired on the store clock: an expired holder (a machine back from a partition)
     /// takes the lease again with `acquire_lease`, under a new epoch, so every write it started under the old epoch is

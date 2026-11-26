@@ -256,3 +256,30 @@ describe('review fixes (second-model review G9, G11)', () => {
     });
   });
 });
+
+describe('a host lease left by a process that exited without releasing it', () => {
+  withAddon('is taken over at once at the next epoch when the holder is provably gone; a live holder still waits', async () => {
+    const { processOrigin } = await import('../src/core/persistence/host-registration.ts');
+    const { consumerIdentity } = await import('../src/core/persistence/consumer-heartbeat.ts');
+    await withEnv({ GBRAIN_RUST_MULTIUSER: '1' }, async () => {
+      const engine = await open();
+      const self = consumerIdentity();
+      // A process of this machine that has exited: its pid is gone.
+      const child = Bun.spawnSync(['true']);
+      const deadPid = child.pid;
+      const dead = { ...self, pid: deadPid, nonce: 'dead-nonce' };
+      const leases = rustLeases(engine);
+      const left = await leases.acquire(hostLeaseName(HOST), processOrigin(HOST, 'local_consumer:serve', dead), 60_000);
+      expect(left?.epoch).toBe(1);
+      const reg = startHostRegistration(engine, { hostId: HOST, origin: processOrigin(HOST, 'local_consumer:serve', self), self, everyMs: 60_000 });
+      expect(await reg.first).toMatchObject({ name: hostLeaseName(HOST), epoch: 2 });
+      await reg.stop();
+      // A live holder (this very process under another nonce) is not taken over.
+      const live = await leases.acquire(hostLeaseName(HOST), processOrigin(HOST, 'local_consumer:serve', { ...self, nonce: 'live-nonce' }), 60_000);
+      expect(live?.epoch).toBe(3);
+      const waits = startHostRegistration({}, { hostId: HOST, origin: processOrigin(HOST, 'local_consumer:serve', { ...self, nonce: 'other' }), self: { ...self, nonce: 'other' }, everyMs: 60_000, leases });
+      expect(await waits.first).toBeNull();
+      await waits.stop();
+    });
+  });
+});
