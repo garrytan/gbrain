@@ -84,6 +84,12 @@ export function coordinationHomeIgnored(root: string, recordedPath: string): Coo
       + 'No gbrain command relocates a recorded lock yet (docs/architecture/topologies.md#coordination-lock).' };
 }
 
+/** The database facts a reservation repair checks: this brain's id, and whether a worktree row exists for an id. */
+export interface ReservationRepairFacts {
+  brainId(): Promise<string | null>;
+  worktree(id: string): Promise<unknown>;
+}
+
 /** How long a repair waits for another repairer of the same root before refusing. */
 const REPAIR_GUARD_WAIT_MS = 2000;
 

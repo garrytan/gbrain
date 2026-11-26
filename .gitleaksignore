@@ -97,3 +97,9 @@ ef56be48bd4bca977ed5eee7012070573039b142:.gitleaksignore:generic-api-key:77
 0ed8030e796de5f4099838e78ea53c9822ff5bf3:rust/crates/gbrain-store/src/cli_reads/doctor_derived_health.rs:private-key:480
 0ed8030e796de5f4099838e78ea53c9822ff5bf3:rust/crates/gbrain-store/src/cli_reads/doctor_derived_health.rs:private-key:484
 0ed8030e796de5f4099838e78ea53c9822ff5bf3:rust/crates/gbrain-store/tests/cli_reads_doctor_derived_health.rs:private-key:221
+# Rust store policy PR: an illustrative base64-looking probe body in test/pregate-allowlist-cache-keys.test.ts (commit 4db2d5b384) read as generic-api-key;
+# the next commit replaced it with plain filler text. This history-only fingerprint is not a secret.
+4db2d5b384e0c3c5e3f32bb246fe7a55ab425a70:test/pregate-allowlist-cache-keys.test.ts:generic-api-key:279
+# GST-3849 PR 2: a synthetic minted Google access token literal in test/google-socket.test.ts (commit d9c7d3d) read as
+# generic-api-key; the tree now builds it with a join. This history-only fingerprint is not a secret.
+d9c7d3d9371298b996d7de93f28ce9ab0875d827:test/google-socket.test.ts:generic-api-key:251

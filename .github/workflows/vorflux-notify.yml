@@ -1,27 +1,50 @@
 name: Vorflux notify
 
-# Wakes the agent that works on the Rust engine (Vorflux) only when something
-# on one of its pull requests needs it, instead of on every comment in the
-# repository. A pull request is its when it carries the rust-engine label and
-# its head branch lives in garrytan/gbrain. It rings for:
-#   - a comment, review or review comment by capy-ai[bot];
-#   - a comment, review or review comment by garrytan whose body lacks the
-#     <!-- vorflux-session --> marker (the marker means Vorflux wrote it); a
-#     garrytan review with an empty body is skipped, because GitHub sends one
-#     for each single inline reply and its review comment event already rang;
-#   - the pull request being merged or closed;
-#   - a push to its head by anyone other than garrytan;
-#   - a full required check (full-suite, e2e-full-suite or macOS 26
-#     validation) ending red or timing out on its current head.
+# Wakes the agent that works on the Rust engine (Vorflux) about its own pull
+# requests, at once for what needs it and in one 30-minute digest for the
+# rest. A pull request is its when it carries the rust-engine label and its
+# head branch lives in garrytan/gbrain. Events on any other pull request start
+# no runner, except a failed full run on a non-Rust-engine head: a
+# workflow_run event carries no labels, so the job checks those through the
+# REST API and sends nothing.
 #
-# Safety: every filter sits in the job-level if, so other events start no
-# runner. Nothing is checked out and no pull-request code runs; the job reads
-# event fields through env and the REST API, and posts a small JSON body built
-# with jq from ids, logins and SHAs (never comment text). pull_request_target
-# and workflow_run run this file from the default branch. The hook URL comes
-# only from the VORFLUX_HOOK_URL secret, handed to curl on stdin so it never
-# appears on a command line; when the secret is empty the job fails. The body's
-# delivery_id is built from stable ids so a rerun sends the same id.
+# The notify job rings at once for:
+#   - a comment, review or review comment by capy-ai[bot] (every one: telling
+#     whether a bot comment asks a question or asks for a change would mean
+#     reading its text, which is not reliable);
+#   - a comment, review or review comment by garrytan whose body lacks the
+#     <!-- vorflux-session --> marker (the marker means Vorflux wrote it), so
+#     the maintainer's own replies never wait for the digest; a garrytan review
+#     with an empty body is skipped, because GitHub sends one for each single
+#     inline reply and its review comment event already rang;
+#   - the pull request being merged or closed;
+#   - a full required check (full-suite or e2e-full-suite from a full-ci
+#     dispatch, or macOS 26 validation) ending red or timing out on its
+#     current head.
+#
+# The digest job runs on a schedule at :05 and :35 and reads the 30-minute
+# window that ended at the last :00 or :30 through the REST API: pushes by
+# anyone other than garrytan, label and other pull-request events, comments,
+# reviews and review comments by anyone other than capy-ai[bot] and garrytan,
+# and Test, E2E and macOS 26 validation runs on the current head that rang
+# nothing. Pull-request events by garrytan, capy-ai[bot] and github-actions[bot]
+# (the agents' own label changes and full-ci's label removal) are left out too.
+# It posts one body only when that window holds something. When a scheduled
+# run was delayed or dropped, the window starts where the last successful
+# scheduled run's window ended (at most six hours back), so no half hour goes
+# unread. The window comes from the run's created_at and the scheduled runs
+# created before it, so a rerun reads the same window and sends the same
+# delivery_id. A manual dispatch prints the digest and posts nothing.
+#
+# Safety: every filter that the event payload allows sits in the job-level
+# if, so other events start no runner. Nothing is checked out and no
+# pull-request code runs; the jobs read event fields through env and the REST
+# API, and post small JSON bodies built with jq from ids, logins, SHAs and
+# kinds (never comment text). pull_request_target, workflow_run and schedule
+# run this file from the default branch. The hook URL comes only from the
+# VORFLUX_HOOK_URL secret, handed to curl on stdin so it never appears on a
+# command line; when the secret is empty the job fails. Every delivery_id is
+# built from stable ids so a rerun sends the same id.
 
 on:
   issue_comment:
@@ -32,10 +55,14 @@ on:
     types: [created]
   pull_request_target:
     branches: [master]
-    types: [closed, synchronize]
+    types: [closed]
   workflow_run:
     workflows: [Test, E2E Tests, macOS 26 validation]
     types: [completed]
+    branches-ignore: [master, 'gh-readonly-queue/**']
+  schedule:
+    - cron: '5,35 * * * *'
+  workflow_dispatch:
 
 permissions: {}
 
@@ -57,14 +84,16 @@ jobs:
        (github.event.review.user.login == 'capy-ai[bot]' ||
         (github.event.review.user.login == 'garrytan' && github.event.review.body &&
          !contains(github.event.review.body, '<!-- vorflux-session -->')))) ||
-      (github.event_name == 'pull_request_target' &&
+      (github.event_name == 'pull_request_target' && github.event.action == 'closed' &&
        contains(github.event.pull_request.labels.*.name, 'rust-engine') &&
-       github.event.pull_request.head.repo.full_name == 'garrytan/gbrain' &&
-       (github.event.action == 'closed' ||
-        (github.event.action == 'synchronize' && github.event.sender.login != 'garrytan'))) ||
+       github.event.pull_request.head.repo.full_name == 'garrytan/gbrain') ||
       (github.event_name == 'workflow_run' &&
        (github.event.workflow_run.conclusion == 'failure' || github.event.workflow_run.conclusion == 'timed_out') &&
-       github.event.workflow_run.head_repository.full_name == 'garrytan/gbrain')
+       github.event.workflow_run.head_repository.full_name == 'garrytan/gbrain' &&
+       ((github.event.workflow_run.event == 'workflow_dispatch' &&
+         (github.event.workflow_run.name == 'Test' || github.event.workflow_run.name == 'E2E Tests')) ||
+        (github.event.workflow_run.name == 'macOS 26 validation' &&
+         (github.event.workflow_run.event == 'workflow_dispatch' || github.event.workflow_run.event == 'pull_request'))))
     runs-on: ubicloud-standard-2-ubuntu-2404
     timeout-minutes: 5
     permissions:
@@ -77,7 +106,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           EVENT_NAME: ${{ github.event_name }}
-          ACTION: ${{ github.event.action }}
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
           COMMENT_ID: ${{ github.event.comment.id }}
           REVIEW_ID: ${{ github.event.review.id }}
@@ -116,9 +144,7 @@ jobs:
             pull_request_review)
               event=review; review_id=$REVIEW_ID; delivery="review:$REVIEW_ID" ;;
             pull_request_target)
-              if [ "$ACTION" = synchronize ]; then
-                event=push; delivery="push:$PR_NUMBER:$HEAD_SHA"
-              elif [ "$MERGED" = true ]; then
+              if [ "$MERGED" = true ]; then
                 event=merged; merge_sha=$MERGE_SHA; delivery="merged:$PR_NUMBER:$MERGE_SHA"
               else
                 event=closed; delivery="closed:$PR_NUMBER:$HEAD_SHA"
@@ -161,3 +187,136 @@ jobs:
               -H 'Content-Type: application/json' --data-binary "$body" -o "$RUNNER_TEMP/vorflux-response" ||
             { status=$?; echo "::error::The POST to Vorflux failed (curl exit $status)."; head -c 2000 "$RUNNER_TEMP/vorflux-response" 2>/dev/null || true; exit "$status"; }
           echo "Vorflux accepted $delivery"
+
+  digest:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubicloud-standard-2-ubuntu-2404
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      issues: read
+      pull-requests: read
+    steps:
+      - name: Send the 30-minute digest
+        env:
+          VORFLUX_HOOK_URL: ${{ secrets.VORFLUX_HOOK_URL }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = schedule ]; then
+            if [ -z "$VORFLUX_HOOK_URL" ]; then
+              echo "::error::The VORFLUX_HOOK_URL secret is empty, so there is nowhere to send the digest. Add it under Settings, Secrets and variables, Actions."
+              exit 1
+            fi
+            case "$VORFLUX_HOOK_URL" in *$'\n'*|*$'\r'*) echo "::error::The VORFLUX_HOOK_URL secret holds a line break; store the URL on one line."; exit 1 ;; esac
+          fi
+          run=$(gh api "repos/$REPO/actions/runs/$RUN_ID")
+          created=$(jq -r '.created_at' <<<"$run")
+          end=$(( $(date -u -d "$created" +%s) / 1800 * 1800 )); start=$(( end - 1800 ))
+          prev=$(gh api "repos/$REPO/actions/workflows/$(jq -r '.workflow_id' <<<"$run")/runs?event=schedule&status=success&created=%3C$created&per_page=1" --jq '.workflow_runs[0].created_at // empty')
+          if [ -n "$prev" ]; then
+            prev_end=$(( $(date -u -d "$prev" +%s) / 1800 * 1800 ))
+            start=$(( prev_end > end - 21600 ? prev_end : end - 21600 ))
+          fi
+          START=$(date -u -d "@$start" +%Y-%m-%dT%H:%M:%SZ); END=$(date -u -d "@$end" +%Y-%m-%dT%H:%M:%SZ)
+          if [ "$start" -ge "$end" ]; then
+            echo "::notice::Nothing sent: an earlier scheduled run already read up to $END"
+            exit 0
+          fi
+          echo "Window $START to $END"
+          items="$RUNNER_TEMP/vorflux-digest-items.jsonl"
+          open=$(gh api --paginate "repos/$REPO/issues?labels=rust-engine&state=open&per_page=100")
+          closed=$(gh api --paginate "repos/$REPO/issues?labels=rust-engine&state=closed&since=$START&per_page=100")
+          prs=$(jq -c '.[] | select(.pull_request) | {number, updated_at}' <<<"$open$closed" | jq -sc 'unique_by(.number)')
+          ember='[]'
+          {
+          while IFS= read -r issue <&3; do
+            n=$(jq -r '.number' <<<"$issue")
+            pr=$(gh api "repos/$REPO/pulls/$n")
+            [ "$(jq -r '.head.repo.full_name // ""' <<<"$pr")" = "garrytan/gbrain" ] || continue
+            ember=$(jq -c --argjson n "$n" '. + [$n]' <<<"$ember")
+            sha=$(jq -r '.head.sha' <<<"$pr")
+            if [ "$(jq -r '.state' <<<"$pr")" = open ]; then
+              gh api --paginate "repos/$REPO/actions/runs?head_sha=$sha&status=completed&per_page=100" |
+                jq -c --argjson n "$n" --arg s "$START" --arg e "$END" '.workflow_runs[]
+                  | select(.updated_at >= $s and .updated_at < $e)
+                  | select(.name == "Test" or .name == "E2E Tests" or .name == "macOS 26 validation")
+                  | {pr: $n, kind: "run", run_id: .id, workflow: .name, run_event: .event, conclusion, head_sha,
+                     suite: .check_suite_id,
+                     maybe_rang: ((.conclusion == "failure" or .conclusion == "timed_out") and
+                       ((.event == "workflow_dispatch" and (.name == "Test" or .name == "E2E Tests")) or
+                        (.name == "macOS 26 validation" and (.event == "workflow_dispatch" or .event == "pull_request"))))}' |
+                while IFS= read -r item; do
+                  if [ "$(jq -r '.maybe_rang' <<<"$item")" = true ]; then
+                    case "$(jq -r '.workflow' <<<"$item")" in
+                      Test) check=full-suite ;;
+                      "E2E Tests") check=e2e-full-suite ;;
+                      *) check="macOS 26 validation" ;;
+                    esac
+                    rang=$(gh api "repos/$REPO/commits/$sha/check-runs?filter=latest&check_name=$(jq -rn --arg c "$check" '$c | @uri')" </dev/null |
+                      jq --argjson suite "$(jq '.suite' <<<"$item")" \
+                        '[.check_runs[] | select(.check_suite.id == $suite)] | sort_by(.completed_at) | last | (.conclusion == "failure" or .conclusion == "timed_out")')
+                    [ "$rang" = true ] && continue
+                  fi
+                  jq -c 'del(.suite, .maybe_rang)' <<<"$item"
+                done
+            fi
+            [[ "$(jq -r '.updated_at' <<<"$issue")" < "$START" ]] && continue
+            ref=$(jq -r '.head.ref | @uri' <<<"$pr")
+            gh api --paginate "repos/$REPO/activity?ref=refs%2Fheads%2F$ref&time_period=day&per_page=100" |
+              jq -c --argjson n "$n" --arg s "$START" --arg e "$END" '.[]
+                | select(.timestamp >= $s and .timestamp < $e)
+                | select(.activity_type == "push" or .activity_type == "force_push")
+                | select(.actor.login != "garrytan")
+                | {pr: $n, kind: .activity_type, activity_id: .id, author: .actor.login, before, after}'
+            gh api --paginate "repos/$REPO/issues/$n/events?per_page=100" |
+              jq -c --argjson n "$n" --arg s "$START" --arg e "$END" '.[]
+                | select(.created_at >= $s and .created_at < $e)
+                | select(.event as $k | ["closed", "merged", "mentioned", "subscribed", "unsubscribed", "referenced", "head_ref_force_pushed"] | index([$k]) | not)
+                | select(.actor.login as $a | ["garrytan", "capy-ai[bot]", "github-actions[bot]"] | index([$a]) | not)
+                | {pr: $n, kind: "event", event, event_id: .id, author: .actor.login, label: .label.name, commit_id}
+                | with_entries(select(.value != null))'
+            gh api --paginate "repos/$REPO/pulls/$n/reviews?per_page=100" |
+              jq -c --argjson n "$n" --arg s "$START" --arg e "$END" '.[]
+                | select(.submitted_at != null and .submitted_at >= $s and .submitted_at < $e)
+                | select(.user.login != "capy-ai[bot]" and .user.login != "garrytan")
+                | {pr: $n, kind: "review", review_id: .id, author: .user.login, state}'
+          done 3< <(jq -c '.[]' <<<"$prs")
+          gh api --paginate "repos/$REPO/issues/comments?since=$START&per_page=100" |
+            jq -c --argjson prs "$ember" --arg s "$START" --arg e "$END" '.[]
+              | select(.created_at >= $s and .created_at < $e)
+              | (.issue_url | sub(".*/"; "") | tonumber) as $n | select(any($prs[]; . == $n))
+              | select(.user.login != "capy-ai[bot]" and .user.login != "garrytan")
+              | {pr: $n, kind: "comment", comment_id: .id, author: .user.login}'
+          gh api --paginate "repos/$REPO/pulls/comments?since=$START&per_page=100" |
+            jq -c --argjson prs "$ember" --arg s "$START" --arg e "$END" '.[]
+              | select(.created_at >= $s and .created_at < $e)
+              | (.pull_request_url | sub(".*/"; "") | tonumber) as $n | select(any($prs[]; . == $n))
+              | select(.user.login != "capy-ai[bot]" and .user.login != "garrytan")
+              | {pr: $n, kind: "review_comment", comment_id: .id, author: .user.login}'
+          } > "$items"
+          count=$(wc -l < "$items")
+          if [ "$count" -eq 0 ]; then
+            echo "::notice::Nothing sent: no Rust engine pull request had routine events from $START to $END"
+            exit 0
+          fi
+          body=$(jq -sc --arg repo "$REPO" --arg start "$START" --arg end "$END" \
+            '{repo: $repo, event: "digest", window_start: $start, window_end: $end,
+              delivery_id: ("digest:" + $start + ":" + $end), count: length,
+              items: (sort_by(.pr, .kind) | .[:300]), truncated: ([length - 300, 0] | max)}' "$items")
+          if [ "$EVENT_NAME" != schedule ]; then
+            echo "Dry run (manual dispatch), nothing sent: $body"
+            exit 0
+          fi
+          echo "Sending $body"
+          url=${VORFLUX_HOOK_URL//\\/\\\\}; url=${url//\"/\\\"}
+          printf 'url = "%s"\n' "$url" |
+            curl --fail-with-body -sS --connect-timeout 10 --max-time 20 --config - \
+              -H 'Content-Type: application/json' --data-binary "$body" -o "$RUNNER_TEMP/vorflux-response" ||
+            { status=$?; echo "::error::The POST to Vorflux failed (curl exit $status)."; head -c 2000 "$RUNNER_TEMP/vorflux-response" 2>/dev/null || true; exit "$status"; }
+          echo "Vorflux accepted digest:$START:$END"

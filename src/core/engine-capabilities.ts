@@ -21,6 +21,10 @@ export const ENGINE_CAPABILITIES = [
 
   // Subsystems that still reach the database through raw SQL.
   'persistence_journal',
+  // The managed checkout side of a write: worktree admission (refresh fence, owner and binding checks), the refresh
+  // barrier, writes held behind an import, grouped admission and the background owner check. The Rust engine never
+  // reports it: it has no managed worktree, so a write to one refuses naming this capability.
+  'managed_persistence',
   'minion_queue',
   'access_control',
   'belief_ledger',
@@ -53,10 +57,16 @@ export const ENGINE_CAPABILITIES = [
   'health',
   'raw_data',
   'eval_capture',
+  /** Search telemetry, MCP usage, retrieval feedback and the budget ledger (key tag `a`). */
+  'telemetry',
+  /** Cross-source entity identity groups (migration v137; key tag `i`). */
+  'entity_identities',
   'ingest_log',
   'dream_verdicts',
   'contradictions',
   'ontology',
+  /** The session cursor and checkpoint manifest of context_pack and delta (`session_context_state`, key tag `y`). */
+  'session_state',
 ] as const;
 
 export type Capability = (typeof ENGINE_CAPABILITIES)[number];

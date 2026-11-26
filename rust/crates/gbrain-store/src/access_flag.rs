@@ -382,7 +382,9 @@ mod tests {
 
         // Raw write handles, each reviewed:
         // - the kv backends and their trait: `kv.rs` (the trait and its two defaults),
-        //   `redb_kv.rs` (the table create on first open and the writable backend's `begin_write`),
+        //   `redb_kv.rs` (the table create on first open, the writable backend's `begin_write`, and
+        //   `RedbSink`'s three redb transactions on the new record file a store snapshot fills: no
+        //   brain store has that file open, so no store write handle exists to flag),
         //   `fjall_kv.rs`, and
         //   `occ_kv.rs` (its trait methods and the commit onto the base store);
         // - `lib.rs`: the brain-create write, the two arms of `Store::write`'s unbound loop, and
@@ -408,7 +410,7 @@ mod tests {
             ("kv.rs", 5),
             ("lib.rs", 4),
             ("occ_kv.rs", 4),
-            ("redb_kv.rs", 4),
+            ("redb_kv.rs", 7),
             ("seed/v0_60_766_tests.rs", 1),
             ("test_support.rs", 4),
             ("transactions.rs", 1),

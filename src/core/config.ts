@@ -43,6 +43,8 @@ export interface GBrainConfig {
   secrets?: { on_push?: 'redact' | 'refuse' };
   /** #7242 terminal hook (minions/terminal-hook.ts): file plane only, read by `gbrain jobs work`. */
   minions?: { terminal_hook?: string[] | { argv: string[]; timeout_ms?: number } };
+  /** GST-3849 Google token socket (core/google-socket/config.ts): file plane only, read engine-free by both start paths. */
+  google?: { mint_socket?: boolean; broker_act?: boolean; broker_allow_root_gateway?: boolean; socket_peers?: number[]; broker_joint_probe?: number };
   /** Ambient-writeback MIRROR of the DB-plane `memory.*` keys — `gbrain
    * config set memory.*` dual-writes both planes so the engine-free Stop-hook
    * child and the stdio boot resolve see the same truth the serve does. The
@@ -74,6 +76,8 @@ export interface GBrainConfig {
    * memorableGateAllowed in core/context/hook-heartbeat.ts.
    */
   integrations?: { memorable?: { enabled?: boolean } };
+  /** L1: whether the brain-first block carries the agent-policy line (on|off); written only owner-confirmed (commands/config/reserved-keys.ts). */
+  brain_first?: { policy_line?: string };
   /** Monthly backup-coverage check. File-plane for engine-free hook children. */
   backup?: { check_enabled?: boolean | string; check_interval_days?: number | string };
   /** #5232: CLI write wait in ms (file plane; persistence/write-wait.ts). */
@@ -160,11 +164,11 @@ export interface GBrainConfig {
   chat_model?: string;
   /**
    * Optional chat fallback chain for `chatWithFallback()` (v0.27+): tried in
-   * order when a chat call fails or refuses. Each entry is a "provider:modelId"
+   * order when a chat call fails (or refuses, with chat_fallback_on_refusal true). Each entry is a "provider:modelId"
    * string. Judge, critic and eval call sites pin their model (allowFallback).
    */
   chat_fallback_chain?: string[];
-  /** `false`: the chain still covers errors but never forwards a refused request. Default true (env, file, DB). */
+  /** `true`: the chain also forwards a refused request to the next model. Default false (env, file, DB): errors only. */
   chat_fallback_on_refusal?: boolean;
   /** Optional base URL overrides for openai-compatible providers (keyed by recipe id). */
   provider_base_urls?: Record<string, string>;
@@ -531,6 +535,8 @@ export interface GBrainConfig {
      * the initialize response byte-identical to the canonical contract.
      */
     instructions?: string;
+    /** I1: the profile `gbrain setup` registers per harness (full, or starter listing verbs); unset = shipped default (core/mcp-registration.ts). */
+    default_surface_claude_code?: 'full' | 'starter'; default_surface_codex?: 'full' | 'starter'; default_surface_hermes?: 'full' | 'starter';
     /**
      * Gate for `list_skills` / `get_skill` over a REMOTE transport. Runtime
      * default is OFF (absent key → OFF) so an upgrade never silently grants
@@ -1285,6 +1291,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'integrations.memorable.enabled',
   // MEMORY_VERBS v1 (Cathedral 1)
   'mcp_surface',
+  'mcp.default_surface_claude_code', 'mcp.default_surface_codex', 'mcp.default_surface_hermes', // I1: setup's per-harness default (file plane)
   'protocol_installed_at',
   'provider_chat_options',
   'storage',
@@ -1559,6 +1566,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // Always-loaded core memory + context-pressure notice (docs/guides/core-memory.md#configuration).
   'memory.core.enabled', 'memory.core.max_chars', 'memory.core.remote_edit',
   'memory.pressure.enabled', 'memory.pressure.warn_ratio', 'memory.pressure.context_window',
+  'learning.note.push', // nightly learning's session-start count line (default on; false turns it off); learning/push.ts
   // Declared brain audience: 'personal' | 'shared'. Set by the operator, by
   // company-brainify's Phase-5 handoff (shared), or from the bootstrap
   // interview. Declaration beats the conservative client-count heuristic in
@@ -1618,7 +1626,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'dream.patterns.subagent_timeout_ms',
   'dream.patterns.subagent_wait_timeout_ms',
   'dream.patterns.min_interval_hours', 'dream.patterns.child_read_budget_kb', // #6297: hours (default 6) / KB (default 200), 0 = off; cycle/phase-config-values.ts
-  'dream.claim_conflicts.mode', 'dream.claim_conflicts.max_pairs', // GBRA-216: propose | off (default off) / pairs per source per run (default 500); facts/claim-conflicts.ts
+  'dream.claim_conflicts.mode', 'dream.claim_conflicts.max_pairs', // GBRA-216: propose | off (default propose) / pairs per source per run (default 500); facts/claim-conflicts.ts
   // Paid-loop breaker: dead submissions of one dream key within 24h before
   // it is refused (default 3; 0 disables). `gbrain dream reset-key` clears one.
   'dream.breaker.max_dead_submissions',
@@ -1635,6 +1643,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // A11: IANA timezone for offset-less frontmatter datetimes in effective_date.
   // Unset → UTC (date-only values are always UTC calendar dates). Validated at set time.
   'brain.timezone',
+  'rules.session_start', // C2 (opt-in, off until the cross-harness eval passes): the session-start standing-rules section
   // A12 (opt-in, default off): undated new pages in git-backed sources take the
   // file's git first-commit date as their effective-date fallback on full import.
   'sync.git_first_commit_dates',
@@ -1657,9 +1666,9 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // #4702: per-pattern opt-out (JSON array or comma-separated names) —
   // finer than junk_patterns_enabled (all patterns) / disabled (kill-switch).
   'content_sanity.disabled_patterns',
-  // #5575 write gate (local-only): quarantine|flag|reject|off and flag|off; read by import-screen.ts.
+  // #5575 write gate (local-only): quarantine|flag|reject|off and flag|off; read by import-screen.ts. orphan_sweep (default on) is read by write-gate-recheck.ts.
   'write_gate.external_mode',
-  'write_gate.agent_mode',
+  'write_gate.agent_mode', 'write_gate.orphan_sweep',
   // #5575 read side (local-only): label|filter and suppress|allow; read by eligibility/policy.ts.
   'trust.read_policy',
   'trust.agent_activation',

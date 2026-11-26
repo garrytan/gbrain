@@ -17,6 +17,8 @@ import { capabilitySetHash, readEpoch } from '../../src/shadow/evidence-epoch.ts
 import { buildEvidenceStatus } from '../../src/shadow/evidence.ts';
 import { writeSeedRecord } from '../../src/shadow/seed.ts';
 import { fillSeedFixture, seedInto } from './shadow-seed-fixture.ts';
+import { readEpochRecall } from '../../src/shadow/recall.ts';
+import { vec, vectorFixture } from './shadow-checks-scenarios.ts';
 import { withEnv } from './with-env.ts';
 
 export interface EvidenceScenarioContext {
@@ -67,6 +69,36 @@ export function defineEvidenceScenarios(ctx: EvidenceScenarioContext): void {
         expect(evidence.reads!.ops.reduce((n, o) => n + o.successful, 0)).toBe(rows().filter((r) => r.outcome === 'match').length);
         expect(evidence.child).toEqual({ panics: 0, faults: 0 });
         expect(evidence.evidence!.epoch_id).toBe(manifest.epoch_id);
+      });
+    } finally { rmSync(home, { recursive: true, force: true }); }
+  }, 120_000);
+
+  test('a vector read through a real child is scored against the primary\'s exact reference: the real Rust engine\'s recall is measured, not assumed', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-shadow-recall-real-'));
+    try {
+      const primary = ctx.primary();
+      await vectorFixture(primary);
+      const { record } = await seedInto(primary, ctx.addon(), home, ctx.kind);
+      writeSeedRecord(home, record);
+      const state = { version: 1, enabled: true, started_at: 'x', sample_rate: 1, queue_bound: 64, plan_hash: 'h', brain: 'b', primary_engine: ctx.kind };
+      await withEnv({ GBRAIN_RUST_ENGINE_ADDON: ctx.addonPath }, async () => {
+        const attached = attachShadowParts(primary, home, state as never, { gbrainArgv: [process.execPath, join(import.meta.dir, '..', '..', 'src', 'cli.ts')] });
+        await attached.lsnWatch.ready(); // the freshness token the sample is held to is taken before the read starts
+        // A moved first check is retried as in production, and the retry is refused until a reconcile pass has made the coverage watermark valid: run one first.
+        const pass = await attached.reconciler!.run('full');
+        expect(pass.error).toBeUndefined();
+        const validBy = Date.now() + 30_000;
+        while (Date.now() < validBy && !(await attached.supervisor.request<{ valid: boolean }>('state')).valid) await new Promise((resolve) => setTimeout(resolve, 100));
+        expect((await attached.supervisor.request<{ valid: boolean }>('state')).valid).toBe(true);
+        await attached.engine.searchVector(vec(3), { limit: 10 });
+        await attached.follower!.settle();
+        const deadline = Date.now() + 60_000;
+        let lines = readEpochRecall(home, readEpoch(home)?.epoch_id ?? 'none') ?? [];
+        while (Date.now() < deadline && lines.length < 1) { await new Promise((resolve) => setTimeout(resolve, 100)); lines = readEpochRecall(home, readEpoch(home)?.epoch_id ?? 'none') ?? []; }
+        attached.supervisor.stop();
+        attached.reconciler!.stop();
+        expect(lines).toHaveLength(1);
+        expect(lines[0]).toMatchObject({ vector: 1, primary: 1, ref_size: 10 }); // the real Rust engine returned the exact top ten
       });
     } finally { rmSync(home, { recursive: true, force: true }); }
   }, 120_000);

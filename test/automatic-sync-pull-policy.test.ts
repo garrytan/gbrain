@@ -31,6 +31,11 @@ function stub(singleton: readonly unknown[], claimed = false, fail = false): Sql
     if (sql.includes('FROM persistence_brain')) return singleton;
     if (sql.includes('FROM persistence_source_bindings')) return claimed ? [{ source_id: 'example' }] : [];
     throw new Error(`unexpected query: ${sql}`);
+  },
+  // ownership.ts reads the binding through the typed getWorktreeBinding member; it answers as the raw branch above.
+  getWorktreeBinding: async () => {
+    if (fail) throw new Error('synthetic metadata unavailable');
+    return claimed ? { source_id: 'example' } : null;
   } } as unknown as SqlEngine;
 }
 

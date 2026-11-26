@@ -2,8 +2,9 @@
 
 `chat_fallback_chain` is an ordered list of `provider:model` entries. When a
 chat call's own model fails (a rate or subscription limit, an outage, a
-timeout, a rejected key) or refuses, `gateway.chat()` retries the same call
-on each entry in order. The chain is off until you set it, and every hop
+timeout, a rejected key), `gateway.chat()` retries the same call on each
+entry in order. A request the model refused is not retried elsewhere unless
+you turn on `chat_fallback_on_refusal`. The chain is off until you set it, and every hop
 sends the request to another provider, so turning it on is a decision about
 where your text may go.
 
@@ -53,8 +54,8 @@ startup and keeps the old value until it restarts.
 {
   "name": "chat_fallback_chain",
   "status": "ok",
-  "message": "chat_fallback_chain is active from the brain database (gbrain config set): openai:gpt-5.6-luna -> anthropic:claude-sonnet-4-6. Providers that receive traffic when a call's own model fails: openai, anthropic. It falls back on errors and on refusals, so content one provider refused is sent to the next (chat_fallback_on_refusal=false stops that). Removal is optional; ask the user.",
-  "details": { "plane": "db", "chain": ["openai:gpt-5.6-luna", "anthropic:claude-sonnet-4-6"], "providers": ["openai", "anthropic"], "shadowed": [], "on_refusal": { "value": true, "plane": "default" } }
+  "message": "chat_fallback_chain is active from the brain database (gbrain config set): openai:gpt-5.6-luna -> anthropic:claude-sonnet-4-6. Providers that receive traffic when a call's own model fails: openai, anthropic. It falls back on errors only: a request a model refused is returned, not sent to another model (chat_fallback_on_refusal is off by default; gbrain config set chat_fallback_on_refusal true turns refusal fallback on). Removal is optional; ask the user.",
+  "details": { "plane": "db", "chain": ["openai:gpt-5.6-luna", "anthropic:claude-sonnet-4-6"], "providers": ["openai", "anthropic"], "shadowed": [], "on_refusal": { "value": false, "plane": "default" } }
 }
 ```
 
@@ -72,17 +73,18 @@ chain on its own.
 - A refusal (a `refusal` / `content_filter` stop reason, or a provider
   content block, including an HTTP 400 that refuses the prompt on content
   policy: OpenAI `invalid_prompt`, Azure OpenAI `content_filter`, DeepSeek
-  "Content Exists Risk") also moves on by default, so content one provider refused
-  goes to the next. To keep outage fallback but never forward refused
-  content:
+  "Content Exists Risk") does not move on by default: the refusal comes back
+  to the caller and the content is not sent to another provider. To also
+  send refused content to the next entry:
 
   ```bash
-  gbrain config set chat_fallback_on_refusal false
+  gbrain config set chat_fallback_on_refusal true
   ```
 
-  The same key works as `GBRAIN_CHAT_FALLBACK_ON_REFUSAL=false` or
-  `"chat_fallback_on_refusal": false` in `config.json`, with the same
-  precedence as the chain.
+  The same key works as `GBRAIN_CHAT_FALLBACK_ON_REFUSAL=true` or
+  `"chat_fallback_on_refusal": true` in `config.json`, with the same
+  precedence as the chain. An explicit `false` on a higher plane wins over a
+  `true` below it.
 - A gbrain budget refusal or your own cancel stops the chain. A cancel that
   lands while a model is refusing returns that refusal; the content is not
   sent on. When every

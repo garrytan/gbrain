@@ -12,9 +12,11 @@
  */
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { WRITE_CLIENT_LIMIT, WRITE_COVERAGE_LIMIT, WRITE_PGLITE_LIMIT } from '../core/engine-swap/readiness.ts';
 import { readEpoch } from './evidence-epoch.ts';
 import { readSeedRecord, RESEED_STEPS } from './seed.ts';
-import type { ShadowState } from './state.ts';
+import { writeSampleRate, type ShadowState } from './state.ts';
+import { readWriteTally, unfoldedLost } from './write-compare.ts';
 
 export interface ProbeRecord {
   state: 'pass' | 'fail' | 'not_run'; checked_at: string | null; server_version: string | null; collation: string | null; mismatches: number;
@@ -126,7 +128,14 @@ export interface FollowStatus {
     consecutive_clean_full_passes: number;
     next_full_pass_due: string | null;
   };
-  write_comparisons: { state: 'capability_missing'; sample_rate: number | null; comparable: number; unexplained_difference: number; uncomparable: number; capability_missing: number };
+  /**
+   * Page and link write comparisons only (write-compare.ts). `capability_missing` until one comparison has produced a verdict (`comparable` or
+   * `unexplained_difference`) and while any replay has no verdict written (`unresolved_replays`); `measured` after. `capability_missing` counts sampled writes of every other family, by family.
+   */
+  write_comparisons: {
+    state: 'capability_missing' | 'measured'; sample_rate: number | null; comparable: number; unexplained_difference: number; uncomparable: number; capability_missing: number;
+    unresolved_replays?: number; capability_missing_by_family?: Record<string, number>; uncomparable_by_reason?: Record<string, number>;
+  };
   fingerprints: { checked_rows: number; mismatches: number; probe: ProbeRecord };
   seed: { seed_id: string | null; finished_at: string | null; unseeded_gap_rows_total: number | null };
   allocators: { verified: boolean; checked_at: string | null };
@@ -144,6 +153,8 @@ export function buildFollowStatus(dir: string, state: ShadowState | null, now: D
   // and lag histograms must be tagged with it, and a reconcile pass must have started and finished in it. With no epoch
   // yet nothing is filtered (the status carries no epoch_id, so readiness reads it as missing).
   const counted = live && (!epoch || live.evidence_epoch === epoch.epoch_id) ? live : null;
+  const writes = readWriteTally(dir, epoch?.epoch_id ?? null);
+  const unresolved = (writes?.in_flight.length ?? 0) + unfoldedLost(dir, epoch?.epoch_id ?? null, writes?.lost_applied); // a lost sample no tally has taken yet reads as no evidence, like a replay with no verdict
   const everyPass = readPasses(dir);
   const passes = epoch ? everyPass.filter((p) => p.epoch_id === epoch.epoch_id && Date.parse(p.started_at) >= Date.parse(epoch.started_at)) : everyPass;
   const last = passes.at(-1) ?? null;
@@ -178,7 +189,12 @@ export function buildFollowStatus(dir: string, state: ShadowState | null, now: D
       consecutive_clean_full_passes: clean,
       next_full_pass_due: lastFull ? new Date(Date.parse(lastFull.finished_at) + NIGHTLY_MS).toISOString() : null,
     },
-    write_comparisons: { state: 'capability_missing', sample_rate: state?.sample_rate ?? null, comparable: 0, unexplained_difference: 0, uncomparable: 0, capability_missing: 0 },
+    write_comparisons: {
+      state: writes && !unresolved && writes.comparable + writes.unexplained_difference > 0 ? 'measured' : 'capability_missing', sample_rate: state ? writeSampleRate(state) : null,
+      comparable: writes?.comparable ?? 0, unexplained_difference: writes?.unexplained_difference ?? 0, uncomparable: writes?.uncomparable ?? 0, capability_missing: writes?.capability_missing ?? 0,
+      ...(unresolved ? { unresolved_replays: unresolved } : {}),
+      ...(writes ? { capability_missing_by_family: writes.capability_missing_by_family, uncomparable_by_reason: writes.uncomparable_by_reason } : {}),
+    },
     fingerprints: { checked_rows: counted?.fingerprints.checked_rows ?? 0, mismatches: counted?.fingerprints.mismatches ?? 0, probe: counted?.probe ?? NOT_RUN_PROBE },
     seed: { seed_id: seed?.seed_id ?? null, finished_at: seed?.finished_at ?? null, unseeded_gap_rows_total: seed?.unseeded_gap_rows_total ?? null },
     allocators: counted?.allocators ?? { verified: false, checked_at: null },
@@ -196,6 +212,9 @@ export function renderFollowStatus(s: FollowStatus): string[] {
   lines.push(`  reconcile: ${r.state}; clean full passes in a row ${r.consecutive_clean_full_passes}; next full pass ${r.next_full_pass_due ?? 'when one runs'}`);
   if (r.last_pass) lines.push(`    last pass ${r.last_pass.kind} ${r.last_pass.finished_at}: repaired ${r.last_pass.repaired_rows}, follower misses ${r.last_pass.follower_misses}`);
   lines.push(`  fingerprints (epoch): checked ${s.fingerprints.checked_rows}, mismatches ${s.fingerprints.mismatches}; probe ${s.fingerprints.probe.state}`);
-  lines.push(`  allocators: ${s.allocators.verified ? `verified ${s.allocators.checked_at}` : 'not verified'}; write comparisons: ${s.write_comparisons.state}`);
+  const wc = s.write_comparisons;
+  const families = Object.entries(wc.capability_missing_by_family ?? {}).map(([name, n]) => `${name} ${n}`).join(', ');
+  lines.push(`  allocators: ${s.allocators.verified ? `verified ${s.allocators.checked_at}` : 'not verified'}; write comparisons: ${wc.state}`);
+  lines.push(`    writes (epoch): comparable ${wc.comparable}, unexplained ${wc.unexplained_difference}, uncomparable ${wc.uncomparable}; capability_missing ${wc.capability_missing}${families ? ` (by family: ${families})` : ''}${wc.unresolved_replays ? `; ${wc.unresolved_replays} replay(s) with no verdict written yet, so no evidence` : ''}; ${WRITE_COVERAGE_LIMIT}; ${WRITE_PGLITE_LIMIT}; ${WRITE_CLIENT_LIMIT}`);
   return lines;
 }

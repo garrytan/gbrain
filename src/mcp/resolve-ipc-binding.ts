@@ -44,6 +44,7 @@ import { logBriefDeliveryFireAndForget, logTurnContextDeliveryFireAndForget } fr
 import { persistenceSocketPathForConfig, startPersistenceIpcServer, type PersistenceIpcProvider, type PersistenceIpcBinding } from '../core/persistence/ipc.ts';
 import { residentPersistenceConfig } from '../core/persistence/local-client.ts';
 import { findIpcPathTooLong, ipcPathTooLongMessage } from '../core/context/ipc-path-too-long.ts';
+import { rustOwnerServesPersistence } from '../core/rust-engine/owner-ipc/client.ts';
 
 export interface ResolveIpcBinding {
   /** The bound listener for this serve's own resolve socket, or null while it is not bound (best-effort). */
@@ -146,6 +147,8 @@ export async function bindResolveIpcForServe(
     rememberCallable?: boolean | (() => boolean);
     /** #7599: a lean serve (a read-only stdio serve on Postgres, `readOnlyServeSkipsResidentDuties`) registers no delegated sync, nudge or sweep kind (clients get the polite refusal); PGLite keeps them. #7612: it binds only its read socket, never the source or legacy socket a read-write serve answers delegation on. */
     lean?: boolean;
+    /** Onboarding PR 2: the hook lane this serve answers for. Only 'owner' (a stdio serve bound to no member or to the owner) gets the first-session section; unset (HTTP) gets none. */
+    firstSessionLane?: import('../core/onboard/first-session.ts').FirstSessionLane;
     /** Delay before each re-bind attempt of a socket this serve does not hold; tests inject a short one. */
     rebindDelayMs?: () => number;
   } = {},
@@ -172,7 +175,10 @@ export async function bindResolveIpcForServe(
 
     // The owner socket follows the brain the engine opened, which may be a mount (#5237).
     const owner = residentPersistenceConfig(cfg);
-    if (persistenceProvider && owner?.engine === 'pglite') {
+    // A Rust brain's serve owner publishes the same socket in its store directory (rust-engine/owner-ipc/), but only
+    // once its engine reports persistence_journal: the provider runs SQL, which the Rust engine does not have yet.
+    const rustOwner = (owner?.engine as string | undefined) === 'rust' && rustOwnerServesPersistence(engine.capabilities);
+    if (persistenceProvider && (owner?.engine === 'pglite' || rustOwner)) {
       const persistenceSocket = persistenceSocketPathForConfig(owner);
       if (persistenceSocket && !tooLong(persistenceSocket)) {
         try { persistence = await startPersistenceIpcServer(persistenceSocket, persistenceProvider); }
@@ -280,7 +286,7 @@ export async function bindResolveIpcForServe(
       // context-pack-handler.ts (directly testable against a real engine);
       // the runtime owns entity merge, banking, the since-cursor, and the
       // complete-pack-only monotonic cursor advance.
-      context_pack: makeContextPackIpcHandler(engine, defaultSource),
+      context_pack: makeContextPackIpcHandler(engine, defaultSource, opts.firstSessionLane ? { firstSessionLane: opts.firstSessionLane } : {}),
       ...syncHandlers,
       ...sweepHandlers,
     };

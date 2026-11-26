@@ -1278,7 +1278,8 @@ impl Store {
     /// oldSlug)`, soft-deleted or not, to `newSlug`, and returns the number of pages moved (0 when
     /// there is none). The page is versioned as it stood first, then moved by
     /// `pages::rename_page`; a real move records `old -> new` in the rename history and the slug aliases, moves the records
-    /// other families key by slug (`cascade::rename_slug_rows`) and moves the page's alias rows. `invalid_slug` for a bad new slug, `constraint_violation` when the new
+    /// other families key by slug (`cascade::rename_slug_rows`), moves the page's alias rows and its attachments
+    /// (`raw_files::rename_page_files`). `invalid_slug` for a bad new slug, `constraint_violation` when the new
     /// slug is taken; either keeps nothing. A segmented page is versioned as a reference to its live body generation
     /// (`pages::snapshot_in`, PGLite's `insertSegmentedVersion`), so its body never moves. A NULL body with no segmented
     /// generation behind it is refused with `invalid_state` before anything is written: PGLite's CHECK makes that row
@@ -1325,6 +1326,7 @@ impl Store {
                 // this family's page aliases (steps 7-8).
                 crate::cascade::rename_slug_rows(tx, trust, source, &page.slug, &moved.slug)?;
                 move_page_aliases(tx, source, &page.slug, &moved.slug)?;
+                crate::raw_files::rename_page_files(tx, source, &page.slug, &moved.slug, &moved)?;
             }
             Ok(1)
         })

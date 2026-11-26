@@ -35,7 +35,7 @@ import { existsSync, lstatSync, readdirSync, realpathSync, statSync } from 'node
 import { basename, dirname, join, sep } from 'node:path';
 import { ResolverError } from './errors.ts';
 import { readBounded, readHead } from './fsutil.ts';
-import { boundBody, cleanText, parseSkillDoc, SKILL_FILE_CAP_BYTES } from './frontmatter.ts';
+import { boundBody, cleanText, parseSkillDoc, restricted, SKILL_FILE_CAP_BYTES } from './frontmatter.ts';
 import { parseRoutingTable } from './routing.ts';
 import { listingKey, skippedEntry } from './catalog-files.ts';
 export { fingerprintChanged } from './catalog-files.ts';
@@ -64,6 +64,11 @@ export interface SkillRecord {
   body: string;
   path?: string;
   namespace?: string;
+  /** Loads when a turn names it; never suggested by a match or the picker. */
+  deprecated?: true;
+  replacedBy?: string;
+  /** `audience: owner` frontmatter: suggested and pinned only in the agent owner's own sessions. */
+  audience?: 'owner';
 }
 
 export type SkipReason = 'duplicate_id' | 'not_model_invocable' | 'ineligible' | 'symlink_outside_root' | 'unreadable' | 'invalid_entry';
@@ -181,7 +186,7 @@ export function readDirSources(dirs: readonly string[], rootNamespaces: readonly
           if (won !== undefined) { skipped.push({ reason: 'duplicate_id', id, path: real, kept: won }); continue; }
           seen.set(id, real);
           skills.push({ id, name: name0, description: cut(doc.description, MAX_DESCRIPTION), ...(doc.whenToUse ? { whenToUse: cut(doc.whenToUse, MAX_DESCRIPTION) } : {}),
-            triggers: boundTriggers(doc.triggers), routing: [], body: doc.body, path: real, ...(ns ? { namespace: ns } : {}) });
+            triggers: boundTriggers(doc.triggers), routing: [], body: doc.body, path: real, ...(ns ? { namespace: ns } : {}), ...deprecation(doc.deprecated, doc.replacedBy), ...(doc.audience ? { audience: doc.audience } : {}) });
         }
       }
       level = next.sort();
@@ -189,6 +194,9 @@ export function readDirSources(dirs: readonly string[], rootNamespaces: readonly
   }
   return { kind: 'dir', skills, skipped, fingerprint: fp };
 }
+
+const deprecation = (deprecated: boolean | undefined, replacedBy: string | undefined): Pick<SkillRecord, 'deprecated' | 'replacedBy'> =>
+  deprecated ? { deprecated: true, ...(replacedBy ? { replacedBy: cut(replacedBy, MAX_ID) } : {}) } : {};
 
 /** gbrain's own bundled skills (owner audience), ids `gbrain:<name>`. */
 export async function readBundledSource(): Promise<SourceRead> {
@@ -198,13 +206,14 @@ export async function readBundledSource(): Promise<SourceRead> {
   const skills: SkillRecord[] = b.bundledSkills('owner').map(s => {
     const text = b.bundledSkillText(s);
     const description = cleanText(oneLineDescription(parseSkillFrontmatter(text)?.raw ?? '', text.replace(/^---\n[\s\S]*?\n---\n?/, '')));
-    return { id: `gbrain:${s.name}`, name: s.name, description, triggers: boundTriggers(b.bundledSkillTriggers(s).map(cleanText)), routing: [], body: boundBody(text), namespace: 'gbrain' };
+    const doc = parseSkillDoc(text);
+    return { id: `gbrain:${s.name}`, name: s.name, description, triggers: boundTriggers(b.bundledSkillTriggers(s).map(cleanText)), routing: [], body: boundBody(text), namespace: 'gbrain', ...deprecation(doc.deprecated, doc.replacedBy) };
   });
   return { kind: 'bundled', skills, skipped: [] };
 }
 
 function invalid(message: string): ResolverError {
-  return new ResolverError('skill_source_invalid', message, { suggestion: 'Pass a JSON array of {id, name, description, when_to_use?, triggers?, routing?, body?, path?, eligible?, disable_model_invocation?} objects, or OpenClaw\'s skills list --json output as is (at most 10,000 entries, 64 MB).' });
+  return new ResolverError('skill_source_invalid', message, { suggestion: 'Pass a JSON array of {id, name, description, when_to_use?, triggers?, routing?, body?, path?, eligible?, disable_model_invocation?, deprecated?, replaced_by?} objects, or OpenClaw\'s skills list --json output as is (at most 10,000 entries, 64 MB).' });
 }
 
 const optStr = (v: unknown) => v === undefined || typeof v === 'string';
@@ -222,14 +231,14 @@ function settledBody(text: string): string {
 function badField(o: Record<string, unknown>, openclaw: boolean): string | null {
   if (!openclaw && (typeof o.id !== 'string' || !o.id.trim() || o.id.length > MAX_ID)) return `id (a required string of at most ${MAX_ID} characters)`;
   if (typeof o.name !== 'string' || !o.name.trim() || (openclaw && o.name.length > MAX_ID)) return 'name (a required string)';
-  for (const f of ['description', 'when_to_use', 'body', 'path'] as const) if (!optStr(o[f])) return `${f} (a string)`;
+  for (const f of ['description', 'when_to_use', 'body', 'path', 'replaced_by', 'audience'] as const) if (!optStr(o[f])) return `${f} (a string)`;
   for (const f of ['triggers', 'routing'] as const) if (!optStrList(o[f])) return `${f} (an array of strings)`;
-  for (const f of ['eligible', 'disable_model_invocation', ...(openclaw ? [...OPENCLAW_HIDDEN, 'modelVisible'] : [])]) if (!optBool(o[f])) return `${f} (a boolean)`;
+  for (const f of ['eligible', 'disable_model_invocation', 'deprecated', ...(openclaw ? [...OPENCLAW_HIDDEN, 'modelVisible'] : [])]) if (!optBool(o[f])) return `${f} (a boolean)`;
   return null;
 }
 
 /**
- * An adapter's catalog snapshot: `[{id, name, description, when_to_use?, triggers?, routing?, body?, path?, eligible?, disable_model_invocation?}]`,
+ * An adapter's catalog snapshot: `[{id, name, description, when_to_use?, triggers?, routing?, body?, path?, eligible?, disable_model_invocation?, deprecated?, replaced_by?, audience?}]`,
  * `{skills: [...]}`, or OpenClaw's `skills list --json` document.
  */
 export function readJsonSource(text: string): SourceRead {
@@ -264,7 +273,8 @@ export function readJsonSource(text: string): SourceRead {
     skills.push({ id, name: cut(cleanText(o.name), MAX_NAME), description: cut(cleanText(o.description ?? ''), MAX_DESCRIPTION), ...(whenToUse ? { whenToUse } : {}),
       triggers: boundTriggers(((o.triggers as string[] | undefined) ?? []).map(cleanText).filter(Boolean)),
       routing: ((o.routing as string[] | undefined) ?? []).map(cleanText).filter(Boolean).slice(0, MAX_ROUTING_ROWS),
-      body: typeof o.body === 'string' ? bodyOf(o.body) : '', ...at });
+      body: typeof o.body === 'string' ? bodyOf(o.body) : '', ...at, ...deprecation(o.deprecated === true, typeof o.replaced_by === 'string' ? cleanText(o.replaced_by) : undefined),
+      ...(restricted(o.audience) ? { audience: 'owner' as const } : {}) });
   });
   if (bytes <= JSON_SOURCE_CAP_BYTES) return { kind: 'json', skills, skipped, snapshot: text };
   for (const e of list) { const o = e as Record<string, unknown>; if (typeof o.body === 'string') o.body = settledBody(o.body); }
@@ -288,7 +298,8 @@ export function mergeSkillFolders(json: SourceRead, folders: SourceRead): Source
     const f = byName.get(s.name) ?? byName.get(s.id);
     if (!f) return s;
     return { ...s, description: s.description || f.description, ...(s.whenToUse ?? f.whenToUse ? { whenToUse: s.whenToUse ?? f.whenToUse } : {}),
-      triggers: s.triggers.length ? s.triggers : f.triggers, body: s.body || f.body, ...(s.path ?? f.path ? { path: s.path ?? f.path } : {}) };
+      triggers: s.triggers.length ? s.triggers : f.triggers, body: s.body || f.body, ...(s.path ?? f.path ? { path: s.path ?? f.path } : {}),
+      ...deprecation(s.deprecated ?? f.deprecated, s.replacedBy ?? f.replacedBy) };
   });
   return { ...json, skills };
 }

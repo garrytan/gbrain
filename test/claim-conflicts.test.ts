@@ -28,7 +28,7 @@ import type { GBrainConfig } from '../src/core/config.ts';
 import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import { AUDIT_ROW_SOURCES } from '../src/core/facts/audit-sources.ts';
 import { claimBucket, claimBucketSql, parseClaimParams, sameClaimSlot } from '../src/core/facts/typed-claim.ts';
-import { CLAIM_CONFLICTS_MODE_KEY, claimConflictsCyclePhase, claimConflictsModeRefusal, runClaimConflicts } from '../src/core/facts/claim-conflicts.ts';
+import { CLAIM_CONFLICTS_MODE_KEY, claimConflictsCyclePhase, claimConflictsMode, claimConflictsModeRefusal, runClaimConflicts } from '../src/core/facts/claim-conflicts.ts';
 import { withDecideContested, type ContestedLookup } from '../src/core/facts/contested-claims.ts';
 import type { Contested } from '../src/core/eligibility/labels.ts';
 import { CLAIM_CONFLICTS_MAX_PAIRS_KEY, parsePhaseConfigValue } from '../src/core/cycle/phase-config-values.ts';
@@ -273,15 +273,20 @@ for (const kind of testBackends()) {
       } finally { await engine.executeRaw('DELETE FROM config WHERE key = $1', [CLAIM_CONFLICTS_MAX_PAIRS_KEY]); }
     });
 
-    test('the dream phase is off by default, runs on a source with no local path when set to propose, and runs through runCycle', async () => {
+    test('the dream phase is on by default (unset reads propose), off when stored off or any other value, runs on a source with no local path and through runCycle', async () => {
       const src = await source();
       expect((await engine.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id = $1', [src]))[0]!.local_path).toBeNull();
       await fact(src, { value: 7, at: '2026-06-01T00:00:00Z' });
       await fact(src, { value: 8, at: '2026-06-02T00:00:00Z' });
-      expect(await claimConflictsCyclePhase(engine, false)).toMatchObject({ phase: 'claim_conflicts', status: 'skipped', details: { reason: 'mode_off' } });
-      expect(await proposals(src)).toEqual([]);
-      await engine.setConfig(CLAIM_CONFLICTS_MODE_KEY, 'propose');
       try {
+        for (const stored of ['off', 'OFF', 'maybe']) {
+          await engine.setConfig(CLAIM_CONFLICTS_MODE_KEY, stored);
+          expect(await claimConflictsCyclePhase(engine, false)).toMatchObject({ phase: 'claim_conflicts', status: 'skipped', details: { reason: 'mode_off' } });
+        }
+        expect(await proposals(src)).toEqual([]);
+        expect(await claimConflictsMode({ getConfig: async () => { throw new Error('config unreadable'); } })).toBe('off');
+        await engine.executeRaw('DELETE FROM config WHERE key = $1', [CLAIM_CONFLICTS_MODE_KEY]);
+        expect(await claimConflictsMode(engine)).toBe('propose');
         const dry = await claimConflictsCyclePhase(engine, true);
         expect(dry.status).toBe('ok');
         expect(await proposals(src)).toEqual([]);

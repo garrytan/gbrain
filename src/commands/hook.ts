@@ -59,7 +59,8 @@ import {
   type TurnContextResponse,
   type ContextPackResponse,
 } from '../core/context/resolve-ipc.ts';
-import { contextSourceId, requestSessionStartPack, sessionStartAwaitsServe } from '../core/context/session-start-pack.ts';
+import { contextSourceId, firstSessionPackOutcome, requestSessionStartPack, sessionStartAwaitsServe, settleFirstSession, type FirstSessionPackState } from '../core/context/session-start-pack.ts';
+import { recordFirstSessionOutcome } from '../core/context/session-start-sections.ts';
 import type { WindowTurn } from '../core/context/entity-salience.ts';
 import {
   confineTranscriptPath,
@@ -95,7 +96,7 @@ import {
 } from '../core/context/hook-heartbeat.ts';
 import { CLAUDE_HOOK_OUTPUT_CAP_CHARS } from '../core/bootstrap/host-specs.ts';
 import { pluginHookYields } from '../core/bootstrap/plugin-lanes.ts';
-import { composeSessionStartOutput } from '../core/context/session-start-output.ts';
+import { composeSessionStartWithSections } from '../core/context/session-start-output.ts';
 import { claudeCodePressure } from '../core/context/pressure.ts';
 import { readManifest, readReceipt, type InstallReceipt } from '../core/bootstrap/format.ts';
 import { githubOwnerRepoString } from '../core/repo-visibility.ts';
@@ -519,9 +520,17 @@ async function hookSessionStart(io: HookIo): Promise<number> {
   // Deferred nag records: fire ONLY after the digest actually reached stdout
   // (record-after-write — a deadline-suppressed note must re-fire next time).
   const deferredRecords: Array<() => void> = [];
+  // Onboarding PR 2: coaching parts (and their records) a confirmed first-session section suppresses for this session,
+  // and what the pack step learned about the named sections (copied at compose time; a late pack changes nothing).
+  const coaching = new Map<string, () => void>();
+  const pack6: FirstSessionPackState = { reached: false, sections: [] };
+  let startup = false;
+  let sessionId = 'unknown';
 
   try {
     const j = await readStdinJson(io, 250);
+    startup = j?.source === 'startup';
+    sessionId = sanitizeSessionId(j?.session_id);
     const ws = io.cwd ?? (typeof j?.cwd === 'string' ? (j.cwd as string) : hookSessionCwd());
     const awaitServe = sessionStartAwaitsServe(j?.source, io.harness ?? 'claude-code', ws);
     const deadlineMs = awaitServe ? SESSION_START_SERVE_WAIT_DEADLINE_MS : SESSION_START_DEADLINE_MS;
@@ -541,7 +550,7 @@ async function hookSessionStart(io: HookIo): Promise<number> {
       const backupNote = backupSessionStartNote();
       if (backupNote) {
         out.push(backupNote.text);
-        deferredRecords.push(backupNote.record);
+        coaching.set(backupNote.text, backupNote.record);
       }
 
       // 4. Visible degradation [B3] + parser-drift status file [G3].
@@ -577,16 +586,26 @@ async function hookSessionStart(io: HookIo): Promise<number> {
         // Same session-id sanitizer as compact banking (a raw id splits the cursor key).
         serveNotReady = awaitServe; // still true if the deadline fires mid-wait
         const sourceId = await contextSource(io, cfg, j?.session_id, ws);
+        pack6.reached = true;
+        pack6.sourceId = sourceId;
         const res = await requestSessionStartPack(cfg, {
           sourceId,
           sessionId: sanitizeSessionId(j?.session_id),
           trigger: typeof j?.source === 'string' ? `session-start:${j.source as string}` : 'session-start',
           deadlineAt: t0 + deadlineMs,
           awaitServe,
+          sections: ['first_session', 'nightly_learning', 'standing_rules'],
+          harness: io.harness ?? 'claude-code',
+          retryOnce: startup,
         });
         serveNotReady = res.serveNotReady;
         if (res.ipcUnavailable && outcome === 'ok') { outcome = 'degraded'; reason = 'ipc_unavailable'; }
         const pack = res.pack;
+        Object.assign(pack6, firstSessionPackOutcome(res), res.retried ? { retried: true } : {});
+        if (pack?.ok) {
+          pack6.sections = pack.block?.sections ?? [];
+          pack6.firstSession = pack.block?.firstSession;
+        }
         if (pack && !pack.ok && pack.error === 'source_mismatch' && outcome === 'ok') { outcome = 'degraded'; reason = 'source_mismatch'; } // #5941
         if (pack?.ok && pack.degradedReason === 'server_budget' && outcome === 'ok') { outcome = 'degraded'; reason = 'server_budget'; }
         if (pack?.ok && pack.block?.text) out.push(pack.block.text);
@@ -602,17 +621,24 @@ async function hookSessionStart(io: HookIo): Promise<number> {
     }
     // Print whatever accumulated before the deadline — a partial digest
     // beats an empty one (the deadline bounds latency, not usefulness).
-    // Always-loaded core first; digest/pack trimmed to the cap (session-start-output.ts).
-    const text = composeSessionStartOutput(coreBox.core?.text ?? '', out.filter(Boolean));
+    // Always-loaded core first, then the named sections in priority order (onboarding PR 2), then the digest/pack
+    // parts, trimmed to the cap; coaching goes quiet only when the payload still holds the first-session section.
+    const sections = res === DEADLINE && !pack6.outcome && !pack6.firstSession ? [] : [...pack6.sections];
+    const { text, quiet, emitted, first } = composeSessionStartWithSections(coreBox.core?.text ?? '', sections, out.filter(Boolean), new Set(coaching.keys()));
     if (text) {
-      write(io, text + '\n');
-      for (const record of deferredRecords) {
+      write(io, io.harness === 'codex' ? `${JSON.stringify({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: text.toWellFormed() } })}\n` : text + '\n');
+      const records = [...deferredRecords, ...(quiet ? [] : [...coaching.values()])];
+      for (const record of records) {
         try {
           record();
         } catch {
           /* fail-open — worst case the note re-fires */
         }
       }
+    }
+    if (startup) {
+      const settled = await settleFirstSession(loadConfig(), { ...pack6, deadline: res === DEADLINE, emitted, receipt: first?.receipt, sessionId });
+      if (!io.disableTelemetry) recordFirstSessionOutcome({ harness: io.harness ?? 'claude-code', sessionId, ...settled });
     }
   } catch (e) {
     outcome = 'error';

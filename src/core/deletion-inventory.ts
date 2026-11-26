@@ -220,6 +220,7 @@ const ROWS: readonly Row[] = [
   ['wake_subscriptions', 'out_of_scope', 'no_memory_text', 'event target target_ref principal_kind principal_id member_id wake_user ws_subscription_id state delivered_marker last_error'],
   ['wake_terms_acceptances', 'out_of_scope', 'no_memory_text', 'principal_key terms_version'],
   ['wanted_links', 'out_of_scope', 'probed_reported', 'source_id producer ref_kind target_source_id target_ref link_type context', 'context'],
+  ['write_gate_hold_rechecks', 'out_of_scope', 'text_free_ledger', 'source_id observed_version'],
   ['write_gate_holds', 'swept', 'review_rows', 'kind source_id slug page_id page_candidates fingerprint payload write_origin tier reason_families reasons request_id status decided_by'],
   ['write_gate_receipts', 'out_of_scope', 'text_free_ledger', 'target_table target_id source_id content_hash tier verdict reason_families reasons request_id'],
 ];

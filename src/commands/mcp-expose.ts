@@ -47,7 +47,7 @@ import {
   SERVE_LAUNCHD_LABEL, SERVE_SYSTEMD_UNIT, uninstallServeService, wrapperPath as wrapperPathFor, writeExposeReceipt,
   type ExposeReceipt, type ServiceState, type ServiceTarget, type UninstallServiceResult,
 } from '../core/serve-service.ts';
-import { registrationAdvertise, shellQuote } from '../core/mcp-registration.ts';
+import { registrationAdvertise, registrationProfile, shellQuote } from '../core/mcp-registration.ts';
 import { connectorInstallLinks, installLinkLines, printInstallLinks, type ConnectorInstallLinks } from '../core/connector-install-links.ts';
 import { cliRenderContext, renderNotice } from '../core/agent-output.ts';
 import { EXPOSE_FRICTION_REASONS, hostedOptionLine, hostedOptionMuted, hostedOptionNotice } from '../core/onboard/hosted-option.ts';
@@ -624,7 +624,7 @@ async function runPublish(d: Resolved, s: Session, opts: ExposeOptions): Promise
   const engine = engineKind(cfg);
   const receiptPath = receiptPathFor(d.serveDir);
   const existing = readExposeReceipt(receiptPath);
-  const advertise = registrationAdvertise({ userChoseSurface: opts.surfaceChosen, prior: existing });
+  const advertise = registrationAdvertise({ userChoseSurface: opts.surfaceChosen, prior: existing, profile: registrationProfile('other') });
   const tailscaleBinary = opts.noTailscale ? null : findTailscaleBinary({ which: d.which, fileExists: d.fileExists });
   const hasBrew = !!d.which('brew');
   const installPlan = tailscaleInstallPlan(d.platform, hasBrew);

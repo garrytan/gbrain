@@ -18,7 +18,7 @@
 #   - idle-pass statement bounds: test/persistence-consumer-*.test.ts files that mention idle
 #   - tree walkers: tests that read every file under src/ or test/, named in WALKERS below
 # minus test/e2e/ (Postgres), *.serial.test.ts and *.slow.test.ts (their own
-# full-ci jobs) and test/setup.test.ts (about 7 minutes on its own).
+# full-ci jobs) and the setup migration ledger (fresh local brain installs).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -33,7 +33,7 @@ list() {
     git ls-files test | grep -E "$ENUMERATION" || true
     git ls-files test | grep -E "$WALKERS" || true
     git grep -l -i idle -- 'test/persistence-consumer-*.test.ts' || true
-  } | grep '\.test\.ts$' | grep -v -E '^test/e2e/|\.(serial|slow)\.test\.ts$|^test/setup\.test\.ts$' | LC_ALL=C sort -u
+  } | grep '\.test\.ts$' | grep -v -E '^test/e2e/|\.(serial|slow)\.test\.ts$|^test/setup(-migrations)?\.test\.ts$' | LC_ALL=C sort -u
 }
 
 if [ "$#" -eq 0 ]; then

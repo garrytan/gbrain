@@ -3,7 +3,8 @@
  *
  * `encodeValue` turns call arguments and results into plain JSON that survives the pipe to the shadow child:
  * typed arrays become `{ "$typed": "Float32Array", "v": [...] }`, Dates `{ "$date": iso }`, bigints
- * `{ "$bigint": "123" }`. AbortSignals, functions and symbols are dropped (a mirrored call never shares the caller's
+ * `{ "$bigint": "123" }`. A plain object that has a key spelled like one of these tags (a frontmatter `$date`, say) is
+ * wrapped as `{ "$obj": {...} }`, so it never reads back as a tag. AbortSignals, functions and symbols are dropped (a mirrored call never shares the caller's
  * cancellation). `decodeValue` reverses it in the child so a vector search gets a real Float32Array back.
  *
  * `canonicalJson` is the comparison form: the encoded value with object keys sorted, so two engines that build the
@@ -30,8 +31,18 @@ function spend(budget: CaptureBudget | undefined, bytes: number): void {
   if (budget.left < 0) throw new CaptureTooLargeError('capture over budget');
 }
 
+/** A cancellation signal (this realm's or another's), never a caller's data: only these are left out. */
 function isAbortSignal(value: object): boolean {
-  return typeof AbortSignal !== 'undefined' && value instanceof AbortSignal;
+  return (typeof AbortSignal !== 'undefined' && value instanceof AbortSignal) || Object.prototype.toString.call(value) === '[object AbortSignal]';
+}
+
+/** The keys `encodeValue` uses as type tags; a plain object holding any of them is escaped with `$obj`. */
+const CODEC_TAGS = new Set(['$typed', '$date', '$bigint', '$number', '$undefined', '$map', '$set', '$cycle', '$obj']);
+
+/** The fields of an escaped plain object (`{ "$obj": {...} }`), or null when `rec` is not one. */
+export function escapedObject(rec: Record<string, unknown>): Record<string, unknown> | null {
+  const inner = rec.$obj;
+  return inner && typeof inner === 'object' && !Array.isArray(inner) && Object.keys(rec).length === 1 ? inner as Record<string, unknown> : null;
 }
 
 /** Plain-JSON form of a value; never throws on cycles (a repeated object becomes `{ "$cycle": true }`). */
@@ -64,13 +75,12 @@ export function encodeValue(value: unknown, seen: WeakSet<object> = new WeakSet(
     if (obj instanceof Set) return { $set: [...obj].map((v) => encodeValue(v, seen, budget)) };
     const out: Record<string, unknown> = {};
     for (const [key, item] of Object.entries(obj)) {
-      if (key === 'signal') continue;
       spend(budget, key.length + 4);
       if (item === undefined) continue; // an option left undefined stays absent, as JSON would have it; a null would be a different option
       const e = encodeValue(item, seen, budget);
       if (e !== undefined) out[key] = e;
     }
-    return out;
+    return Object.keys(out).some(k => CODEC_TAGS.has(k)) ? { $obj: out } : out;
   } finally {
     seen.delete(obj);
   }
@@ -89,6 +99,8 @@ export function decodeValue(value: unknown): unknown {
   if (value === null || typeof value !== 'object') return value;
   if (Array.isArray(value)) return value.map(decodeValue);
   const rec = value as Record<string, unknown>;
+  const plain = escapedObject(rec);
+  if (plain) { const out: Record<string, unknown> = {}; for (const [key, item] of Object.entries(plain)) out[key] = decodeValue(item); return out; }
   if (typeof rec.$typed === 'string' && Array.isArray(rec.v) && rec.$typed in TYPED_ARRAYS) {
     return new TYPED_ARRAYS[rec.$typed as TypedArrayName](rec.v as number[]);
   }

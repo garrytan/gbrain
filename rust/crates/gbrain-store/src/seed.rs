@@ -37,9 +37,10 @@ pub(crate) use format_5::carry_over as carry_over_format_5;
 /// What a person runs to replace a shadow store this build will not open (`src/shadow/seed.ts`
 /// `RESEED_STEPS`).
 pub const RESEED_STEPS: &str = "gbrain engine shadow stop --delete (deletes the store, ledger and reports), then gbrain engine shadow seed, then gbrain engine shadow start --plan, then gbrain engine shadow start --yes --expect <plan_hash> to turn shadow mode on again";
+pub(crate) use follow::relation_digest_stream_until;
 pub use follow::{
     AllocatorCheck, DigestInput, EntryInfo, FactFingerprints, FollowResult, IntervalDigest,
-    KeyInput, MAX_ENTRIES, UNSUPPORTED, fact_fingerprints,
+    KeyInput, MAX_ENTRIES, UNSUPPORTED, fact_fingerprints, relation_digest_stream,
 };
 pub use not_copied::{GapRows, LossKind, NOT_COPIED, NotCopied};
 

@@ -59,3 +59,9 @@ export async function insertLocalWriterRow(exec: SqlExecutor, row: LocalWriterIn
     VALUES($1::uuid,$2,$3,$4::text::jsonb) ON CONFLICT DO NOTHING RETURNING id`, [row.id, row.lane, row.credentialHash, JSON.stringify(row.grant)]);
   return inserted.length > 0;
 }
+
+/** Revokes a local writer registration (a second revoke keeps the first time); true when the registration exists. */
+export async function revokeLocalWriterRow(exec: SqlExecutor, id: string): Promise<boolean> {
+  const rows = await exec.executeRaw('UPDATE persistence_local_writers SET revoked_at=COALESCE(revoked_at,now()) WHERE id=$1::uuid RETURNING id', [id]);
+  return rows.length === 1;
+}

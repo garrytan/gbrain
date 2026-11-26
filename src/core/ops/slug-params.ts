@@ -24,6 +24,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { normalizeSlug, withStoredSlug } from '../utils.ts';
 import { isEngineCapabilityRefusal } from '../engine-capability-refusal.ts';
 import { storedWriteSlug } from '../persistence/legacy-slug-put.ts';
+import { SCAN_KEY_SQL, SPELLING_KEY_SQL, spellingKeys } from '../slug-spelling-key.ts';
 import type { Page } from '../types.ts';
 import { opError, type Operation } from './contract.ts';
 import { federatedSearchScope, parseSourceIdParam, sourceScopeOpts } from './context.ts';
@@ -55,6 +56,8 @@ export const SLUG_PARAMS: Readonly<Record<string, readonly string[]>> = {
   extract_entities: ['source_slug'], extract_facts: ['source_slug', 'entity_hints[]'],
   log_ingest: ['pages_updated[]'], memory_propose: ['target'],
   questions_pin: ['scope.entity', 'scope.slug_prefix'],
+  // household records (GST-3825 H1)
+  household_mark: ['slug'],
 };
 
 /** Params whose name or description says "slug" but whose value is not a page slug, so they are left as sent. */
@@ -67,6 +70,7 @@ export const SLUG_PARAM_EXEMPT: Readonly<Record<string, Readonly<Record<string, 
   list_pages: { updated_after_slug: 'continuation cursor: the last row\'s stored slug, compared byte for byte in the keyset order' },
   delta: { since_slug: 'continuation cursor: a stored slug, compared byte for byte in the keyset order' },
   open_loops: { counterparty: 'slug or email address' },
+  household_add: { slug: 'a name for the new record, slugified under its placement folder; not a page slug' },
   submit_agent: { allowed_slug_prefixes: 'write prefixes, compared with normalizeSlugPrefix' },
   capture: { who: 'names or slugs (entity resolution)' },
   think: { anchor: 'name or slug (entity resolution)' },
@@ -184,15 +188,15 @@ function readScope(ctx: Ctx, op: string, params: Params): { sourceId?: string; s
 }
 
 /**
- * The SQL side of `normalizeSlug`, cut down to ASCII letters and digits, so every row that normalizes to a slug shares its key with
- * it (`storedSpellings` then compares with `normalizeSlug` itself). The capitals are lowered by hand, never by the engine's locale:
- * ASCII, and the two whose lowercase holds ASCII (U+0130 lowers to `i` and a combining dot, U+212A to `k`); then the text is composed.
+ * Every stored spelling in `scope` that normalizes to `normalized` and is not in `skip`, in code-unit order (the scope applies
+ * before any row is kept). The rows come from the spelling index, probed by the slug's own key and the keys of its capital
+ * forms; a slug with more capital forms than `MAX_SPELLING_VARIANTS` is read by scanning the ASCII key instead. Either way
+ * `normalizeSlug` has the last word on each row.
  */
-const SPELLING_KEY_SQL = `regexp_replace(normalize(translate(replace(replace(slug, chr(304), 'i' || chr(775)), chr(8490), 'k'), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), NFC), '[^a-z0-9]', '', 'g')`;
-
-/** Every stored spelling in `scope` that normalizes to `normalized` and is not in `skip`, in code-unit order (the scope applies before any row is kept). */
 async function storedSpellings(ctx: Ctx, normalized: string, scope: { sourceId?: string; sourceIds?: string[] }, skip: readonly string[]): Promise<string[]> {
-  const args: unknown[] = [normalized.replace(/[^a-z0-9]/g, '')];
+  const keys = spellingKeys(normalized);
+  const args: unknown[] = keys ? [keys] : [normalized.replace(/[^a-z0-9]/g, '')];
+  const match = keys ? `${SPELLING_KEY_SQL} = ANY($1::text[])` : `${SCAN_KEY_SQL} = $1`;
   let scoped = '';
   if (scope.sourceIds) { args.push(scope.sourceIds); scoped = `AND source_id = ANY($${args.length}::text[])`; }
   else if (scope.sourceId !== undefined) { args.push(scope.sourceId); scoped = `AND source_id = $${args.length}`; }
@@ -200,7 +204,7 @@ async function storedSpellings(ctx: Ctx, normalized: string, scope: { sourceId?:
   const found = new Set<string>();
   for (;;) {
     const rows = await ctx.engine.executeRaw<{ s: string }>(
-      `SELECT DISTINCT slug COLLATE "C" AS s FROM pages WHERE ${SPELLING_KEY_SQL} = $1 ${scoped} AND slug COLLATE "C" > $${args.length} ORDER BY s LIMIT 200`, args);
+      `SELECT DISTINCT slug COLLATE "C" AS s FROM pages WHERE ${match} ${scoped} AND slug COLLATE "C" > $${args.length} ORDER BY s LIMIT 200`, args);
     for (const { s } of rows) if (!skip.includes(s) && normalizeSlug(s) === normalized) found.add(s);
     if (rows.length < 200) return [...found].sort();
     args[args.length - 1] = rows[rows.length - 1]!.s;

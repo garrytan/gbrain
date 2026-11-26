@@ -42,6 +42,20 @@ under `env_vars` in `[mcp_servers.gbrain]`. Codex forwards each one that is set
 and skips the rest, so a key you already use gives the session semantic search.
 Only names are written, never values.
 
+Codex 0.147 and newer wait only one second for MCP servers to start before a
+session's first turn, and a server still starting after that is left out of the
+whole `codex exec` run, with no warning. `gbrain serve` takes about a second to
+start, so setup also sets `mcp_optional_startup_grace_ms = 0` at the top of
+config.toml. On Codex 0.151 and newer, Codex then waits for each server up to its `startup_timeout_sec`
+(10 seconds unless you set one), and starts without a server that is broken.
+The setting applies to every MCP server in that config, not only gbrain. Setup
+never changes a value you set yourself (it says so when yours is above 0), and
+`--remove` deletes the key only while it is still setup's `0`. The plugin and
+`codex mcp add` paths write nothing here: add the line yourself if a session
+sometimes lists no gbrain tools. Codex 0.147 to 0.150 have no such setting and
+ignore the key, except that `codex exec --strict-config` refuses to load a
+config that has it; upgrade Codex to 0.151 or newer to get the longer wait.
+
 ## Install as a Codex plugin (recommended)
 
 gbrain ships as a native Codex plugin — MCP server + a curated brain-first
@@ -81,7 +95,7 @@ sanctioned install location is preferred over PATH so a stray `gbrain` earlier
 on PATH can't shadow it).
 `full` is every operation (the seven memory verbs, page and bulk writes
 such as `put_pages`, graph and skill tools); the plugin keeps it because a plugin
-update rewrites existing installs (new `gbrain setup` registrations pin starter). The curated skills drive host-side work through the
+update rewrites existing installs (`gbrain setup codex` registers `full` too; new registrations for other harnesses pin starter). The curated skills drive host-side work through the
 `gbrain` CLI. A harness that caps its tool count can narrow every new session
 on this machine with `GBRAIN_SURFACE=starter` (or `verbs`) in the env that
 launches Codex, or use the bootstrap lane below. Unlike the OpenClaw bundle, the plugin ships the host-side skills
@@ -276,11 +290,19 @@ codex mcp remove gbrain
   `GBRAIN_REMOTE_TOKEN` out of version control and prefer a scoped token if
   your host supports one.
 - Local stdio also works if you run the brain on the same machine:
-  `gbrain setup codex` registers `serve --surface starter --advertise verbs` behind
-  gbrain's launcher, so the session directory's `bunfig.toml` and `.env` never load
-  (`gbrain serve` registered with a bare `codex mcp add` loads them). That is the
-  daily-driver tool list every new registration gbrain writes pins (`request_tools`
-  reaches the rest; `--surface full` is the opt-in for every operation). A
+  `gbrain setup codex` registers `serve --surface full` behind gbrain's launcher, so
+  the session directory's `bunfig.toml` and `.env` never load (`gbrain serve`
+  registered with a bare `codex mcp add` loads them). Codex gets every tool listed
+  because it does not reload its tool list: a tool `request_tools` unlocks stays
+  uncallable there, and on [harness-evals#609](https://github.com/garrytan/harness-evals/pull/609)
+  the starter registration got 12 of 64 right calls against 62 on full, at about the
+  same cost per request. To keep the starter registration, pin it:
+  `gbrain setup codex --surface starter --advertise verbs`. A pinned entry (any
+  `--surface`) stays as it is on every re-run; an entry that follows the default
+  moves with it, and setup prints the move and the line that keeps the old one. A
+  receipt written before setup recorded this keeps its entry and prints the line
+  that would move it. `gbrain config set mcp.default_surface_codex starter` turns the
+  Codex default back without an upgrade (`config unset` restores full). A
   `GBRAIN_SURFACE` value in the Codex server entry's `env` table overrides the flag.
 - **PGLite brains are single-process.** PGLite is a single-writer embedded
   Postgres: the first running `gbrain serve` (the plugin's, or a stdio

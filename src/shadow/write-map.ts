@@ -208,6 +208,9 @@ export const IGNORED_MEMBERS: ReadonlySet<string> = new Set([
   // The memory proposal queue: the Rust store does not serve memory_proposals yet (rust/docs/store/seed.md lists it under "Gaps: not served by the Rust store"),
   // so the seed does not copy it, nothing follows it, and a row in it blocks a swap.
   'expireMemoryProposals', 'purgeMemoryProposals',
+  // The applied-capture records (ingest_applied_captures): bookkeeping the seed does not copy (rust/docs/store/seed.md), so
+  // the stale purge changes nothing the shadow follows.
+  'purgeStaleAppliedCaptures',
 ]);
 
 /**
@@ -229,6 +232,7 @@ export const RAW_MEMBERS: ReadonlySet<string> = new Set(['executeRaw', 'executeR
 const READ_PREFIX = /^(get|list|count|find|search|read|resolve|has|is|sum|cosines|traverse|relational|batchLoad|discover|load)/;
 /** Read-only members whose names do not start with a read prefix (search-read helpers). */
 export const READ_ONLY_MEMBERS: ReadonlySet<string> = new Set([
+  'probePurgeDerivations',
   'activeEmbeddingColId', 'aliasCanonicalRefs', 'generatedPagesIn', 'livePageIdsAt', 'pageCollapseFacts', 'pagesLinkingTo',
   'slugsEndingIn', 'supersedingPageSlugs',
   'dailyDecideSpend', 'decideConflictNoEntityCounts', 'decideSlotUsage',
@@ -238,6 +242,15 @@ export const READ_ONLY_MEMBERS: ReadonlySet<string> = new Set([
 export type MemberKind = 'read_name' | 'raw' | 'reserved' | 'ignored' | 'schema' | 'mapped' | 'unmapped';
 
 /** How the follow wrapper treats a member name (mirrored reads and transactions are decided before this). */
+/**
+ * Typed write members the write map does not cover yet (as on the main branch). Each one writes through its own statement, so a
+ * write through it is unmapped: the wrapper publishes `invalid` (`unmapped_write:<member>`) and reconcile re-reads what
+ * changed, as for any member outside the map. The set is exact (test/shadow-follow-producer.test.ts).
+ */
+export const UNMAPPED_WRITE_MEMBERS: ReadonlySet<string> = new Set([
+  'insertFactPurge', 'insertTakePurge', 'upsertPagePurges', 'setPurgeProbeTimeout', 'deletePurgeReviewQueue', 'deletePurgeReviewProposals', 'deletePurgeDecideProposals', 'declarePersistence', 'requireSynchronousCommit', 'shareLockWriteCredential', 'lockPersistenceCounters', 'insertWriteRequest', 'stampWriteClaim', 'lockWriteRequest', 'lockWriteRequestsById', 'compactTerminalIntent', 'completeWriteRow', 'insertPublicationEffects', 'renewWriteClaim', 'renewEffectClaim', 'completeEffectRow', 'failEffectRow', 'lockEffectGuard', 'beginSnapshotRead', 'markBeliefCommits', 'lockSourceRow', 'worktreeClaimStore', 'writerAdminStore', 'deleteOpCheckpoint', 'recordPageEmbeddingHold', 'openPageEmbeddingHold', 'reservePageEmbedding', 'settlePageEmbeddingReservation', 'lockEffectClaimRow', 'lockEmbeddingSwitch', 'installChunkEmbeddings', 'setEffectTransactionLimits', 'deleteOwnedLinks', 'insertTrustProposal', 'takePageEmbeddingLease', 'renewPageEmbeddingLease', 'releasePageEmbeddingLease', 'insertCalibrationProfile', 'upsertWriteGateReceipt', 'upsertWriteGateHold',
+]);
+
 export function memberKind(name: string): MemberKind {
   if (name.startsWith('_')) return 'ignored';
   if (name === 'withReservedConnection') return 'reserved';

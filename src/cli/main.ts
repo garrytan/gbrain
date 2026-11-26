@@ -56,7 +56,7 @@ import { migrationsNotice, pendingUpgradeMigrationsNotice } from './migrations-n
 import { opError, opOwnsSource } from '../core/ops/contract.ts';
 import { PAGE_MAX_BYTES } from '../core/page-size-policy.ts';
 import { opBooleanValue, opFlagValue, opParamValue, opStructuredValue } from './op-param-values.ts';
-import { parseGlobalFlags, setCliOptions, getCliOptions } from '../core/cli-options.ts';
+import { parseGlobalFlags, setCliOptions, getCliOptions, THIN_CLIENT_BRAIN_FLAG_MESSAGE } from '../core/cli-options.ts';
 import { runCliPreflight } from '../core/cli-preflight.ts';
 import { isBooleanLiteral, isKnownOpFlag } from '../core/op-flag-tokens.ts';
 import { conceptNudge } from '../core/search/query-intent.ts';
@@ -66,7 +66,7 @@ import { formatSearchExact } from './search-exact-format.ts';
 import { routeCommand } from './command-route.ts';
 import type { CliOptions } from '../core/cli-options.ts';
 import { RemoteMcpError, extractResponseMeta } from '../core/remote-mcp-error.ts';
-import { assertSingleSourceScopeFlag, checkHostHonoredParams, hintAmbientNarrowing, type AmbientSourceBinding } from './source-scope.ts';
+import { assertSingleSourceScopeFlag, checkHostHonoredParams, hintAmbientNarrowing, provenanceSourceFlagError, type AmbientSourceBinding } from './source-scope.ts';
 import { formatFindPages, formatStatsBy } from './format-page-lookup.ts';
 import { maybePromptForUpgrade } from '../core/thin-client-upgrade-prompt.ts';
 import { CLI_FLAG_REGISTRY } from '../core/cli-flag-registry.generated.ts';
@@ -150,9 +150,12 @@ const SELF_HELP_WITHOUT_ENGINE: Record<string, true | (() => Promise<(engine: ne
     (await import('../commands/compile-context.ts')).runCompileContext as never,
   // runLoops / runWaiting answer --help before touching the engine.
   loops: async () => (await import('../commands/loops.ts')).runLoops as never,
+  household: async () => (await import('../commands/household.ts')).runHousehold as never,
   beliefs: async () => (await import('../commands/beliefs.ts')).runBeliefs as never,
   'edge-proposals': async () => (await import('../commands/edge-proposals.ts')).runEdgeProposals as never,
   'memory-proposals': async () => (await import('../commands/memory-proposals.ts')).runMemoryProposals as never,
+  policy: async () => (await import('../commands/policy.ts')).runPolicy as never, // usage prints before the engine
+  ledger: async () => (await import('../commands/ledger.ts')).runLedger as never, // usage prints before the engine
   questions: async () => (await import('../commands/questions.ts')).runQuestions as never, // --help before the engine
   access: async () => (await import('../commands/access.ts')).runAccess as never, // GBRA-218: usage prints before the engine
   // runSources's `--help`/`-h`/undefined-subcommand branch calls printHelp()
@@ -168,10 +171,10 @@ const SELF_HELP_WITHOUT_ENGINE: Record<string, true | (() => Promise<(engine: ne
   agent: async () => (await import('../commands/agent.ts')).runAgent as never,
   // D3: post-connect records whose handler answers --help before the engine; run through the table.
   advisor: true, anomalies: true, feedback: true, backfill: true, 'book-mirror': true, 'edges-backfill': true, embed: true, features: true,
-  founder: true, 'graph-query': true, orphans: true, salience: true, think: true,
+  founder: true, profile: true, 'graph-query': true, orphans: true, salience: true, think: true,
   brainstorm: true, lsd: true, migrate: true, pages: true, pricing: true, 'retrieval-upgrade': true, whoknows: true, core: true, trust: true, wakeshift: true,
   secrets: true,
-  dedupe: true, identity: true, 'apple-contacts': true,
+  dedupe: true, identity: true, 'apple-contacts': true, onboarding: true, value: true, propose: true,
 };
 
 /** Returns true when the command's own help was printed. */
@@ -500,7 +503,7 @@ async function main() {
       const flagOp = cliOps.get(command) ?? cliAliases.get(command);
       const curated = findCliCommand(command)?.help;
       const known = curated ? (await curated()).help.flags.map(f => f.name) : CLI_FLAG_REGISTRY[command] ?? Object.keys(flagOp?.params ?? {}).map(k => `--${k.replace(/_/g, '-')}`);
-      exitCliError(unknownFlagError(command, unknown, message, known), command, { legacy: { status: 'error', reason: 'invalid_flag', message } });
+      exitCliError(provenanceSourceFlagError(flagOp, command, unknown, message, subArgs, isThinClient(loadConfig())) ?? unknownFlagError(command, unknown, message, known), command, { legacy: { status: 'error', reason: 'invalid_flag', message } });
     }
     const curated = await curatedFlagError(command, subArgs);
     if (curated) exitCliError(curated, command);
@@ -1587,7 +1590,7 @@ export function formatResult(
       const answerId = typeof meta?.answer_id === 'string' ? meta.answer_id : undefined;
       if (answerId && results.length > 0) process.stderr.write(`answer: ${answerId} (rate with: gbrain rate ${answerId} 1-5)\n`);
       const capLine = pageCapLine(meta, '--limit'), savedFacts: string = require('../mcp/saved-facts-notice.ts').cliSavedFacts(getCliOptions().room === undefined ? meta : null, params.json === true); // --room marks no saved fact, so none prints
-      if (capLine) process.stderr.write(capLine + '\n');
+      for (const line of [capLine, require('../core/search/keyword-count-text.ts').cliKeywordCountLine(results, meta)]) if (line) process.stderr.write(line + '\n'); // #9412: the literal keyword count
       if (params.json === true) {
         const incompleteNotice = retrievalIncompleteLine(meta);
         if (incompleteNotice) process.stderr.write(incompleteNotice);
@@ -1618,6 +1621,8 @@ export function formatResult(
       return tags.length > 0 ? tags.join(', ') + '\n' : 'No tags.\n';
     }
     case 'find_pages': return formatFindPages(result);
+    case 'learned_keep':
+    case 'learned_undo': return require('../core/learning/decide.ts').formatDecisions(result);
     case 'learned': return (result as { stats?: unknown }).stats ? require('../core/learning/stats.ts').formatLearnedStats((result as { stats: unknown }).stats) : require('../core/learning/read.ts').formatLearned(result);
     case 'get_stats': {
       const s = result as any;
@@ -1830,7 +1835,6 @@ function thinRefusalSubcommand(command: string): string[] {
   return argv.includes(command) && /^[a-z][a-z0-9-]*$/.test(next) ? [next, ...(command === 'trust' && /^(?:(?:f|t|h|e|a|tp)\d{1,18}|p:[a-z0-9_-]{1,64}\/[a-z0-9][a-z0-9/_.-]{0,200})$/.test(ref) ? [ref] : [])] : [];
 }
 
-const THIN_CLIENT_BRAIN_FLAG_MESSAGE = '--brain is not supported on a thin-client install: the remote server is a single brain.';
 
 const ENGINE_CONNECT_HOOKS: EngineConnectHooks = { SELECTED_CONFIG_BY_ENGINE, completeStartup: completeEngineStartup };
 /** Dispatcher-owned pieces the command modules under src/cli/commands/ receive (see CliDispatchContext). */
@@ -2468,7 +2472,7 @@ async function prepareConnectedDispatch(command: string, args: string[]): Promis
 
   // These handlers already call their MCP twin on a thin client and never touch
   // the engine there; run them engine-free instead of opening one (#5102).
-  if ((command === 'salience' || command === 'anomalies' || command === 'graph-query' || command === 'whoknows' || command === 'founder') &&
+  if ((command === 'salience' || command === 'anomalies' || command === 'graph-query' || command === 'whoknows' || command === 'founder' || command === 'profile') &&
     isThinClient(loadConfig())) {
     await dispatchConnectedCommand(command, null as never, args);
     return null;

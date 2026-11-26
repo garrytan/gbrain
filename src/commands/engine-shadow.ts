@@ -12,12 +12,17 @@
  * once, in one read-only snapshot, and writes `seed.json` (src/shadow/seed.ts).
  */
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { loadConfig } from '../core/config.ts';
 import type { EngineConfig } from '../core/types.ts';
 import type { BrainEngine } from '../core/engine.ts';
+import { OperationError } from '../core/ops/contract.ts';
 import type { RustEngineAddonLoad } from '../core/rust-engine/addon-loader.ts';
+import { buildBenchStatus, renderBenchStatus } from '../shadow/bench.ts';
+import { BENCH_DOCS, importBenchReceipt, sanitizeText } from '../shadow/bench-receipt.ts';
+import type { DrillDeps, DrillReason } from '../shadow/drill.ts';
+import type { FetchDeps } from '../shadow/eval-gates.ts';
 import { renderEvidenceStatus } from '../shadow/evidence.ts';
 import { renderFollowStatus } from '../shadow/follow-status.ts';
 import { readManagedStorage, storageLine, type ManagedStorageRecord } from '../shadow/managed-gate.ts';
@@ -26,7 +31,7 @@ import { seedStatus, shadowStatusDocument } from '../shadow/status-document.ts';
 import { installWriterHooks, primaryTakesWriterHooks, removeWriterHooks } from '../shadow/writer-hooks.ts';
 import { buildProvisionalReport, renderProvisionalMarkdown, writeProvisionalReport } from '../shadow/report.ts';
 import {
-  brainIdentity, DEFAULT_SHADOW_QUEUE_BOUND, DEFAULT_SHADOW_SAMPLE_RATE, readShadowState, shadowBrainKey, shadowDirFor,
+  brainIdentity, DEFAULT_SHADOW_QUEUE_BOUND, DEFAULT_SHADOW_SAMPLE_RATE, DEFAULT_SHADOW_WRITE_SAMPLE_RATE, readShadowState, writeSampleRate, shadowBrainKey, shadowDirFor, shadowStatePath,
   SHADOW_STATE_VERSION, writeShadowState, type ShadowState,
 } from '../shadow/state.ts';
 
@@ -50,18 +55,25 @@ export interface EngineShadowDeps {
   reconcileSupervisor?: Partial<import('../shadow/supervisor.ts').ShadowSupervisorOptions>;
   /** Opens the Rust store `seed` writes; default openRustStore on the loaded addon at `<dir>/store`. */
   openStore?: (addon: object, storePath: string) => Promise<SeedTarget & { close(): Promise<void> }>;
+  /** Test seams for `drill`: the owner, verifier and clock of the restore drill, and the HTTP of the eval-gates fetch. */
+  drill?: DrillDeps;
+  fetchEvals?: Partial<FetchDeps>;
 }
 
 const HELP = `gbrain engine shadow — compare the Rust engine against this brain's reads, off the request path
 
 Usage:
-  gbrain engine shadow start [--plan] [--sample-rate <0..1>] [--queue-bound <n>]
-  gbrain engine shadow start --yes --expect <plan_hash> [--sample-rate <0..1>] [--queue-bound <n>]
+  gbrain engine shadow start [--plan] [--sample-rate <0..1>] [--write-sample-rate <0..1>] [--queue-bound <n>]
+  gbrain engine shadow start --yes --expect <plan_hash> [--sample-rate <0..1>] [--write-sample-rate <0..1>] [--queue-bound <n>]
   gbrain engine shadow status [--json]
   gbrain engine shadow stop [--delete]
   gbrain engine shadow report [--json]
   gbrain engine shadow seed [--json] [--reseed]
   gbrain engine shadow reconcile [--full] [--json]
+  gbrain engine shadow capture on --yes | off | status [--json] | delete --yes
+  gbrain engine shadow replay [--json] [--budget-minutes <n>]
+  gbrain engine shadow bench --import <receipt.json> [--json]
+  gbrain engine shadow drill [--backup] [--evals] [--json]
 
 Shadow mode is off by default. When on, a sample of reads this brain answers is sent, after the answer, to a
 supervised child process that runs the same read on the Rust engine and records match, diff or why it could not
@@ -82,6 +94,8 @@ takes its process lock, and PGLite rewrites its own control and log files. A bra
 opened. A store is seeded once: to seed again, delete the shadow directory first.
 seed runs on a brain that uses managed storage too; only the swap refuses such a brain. seed reads the brain's storage
 mode right before its snapshot and records it in seed.json; a mode it cannot read does not stop the seed.
+A brain that cannot be opened stops the seed: exit 1, \`could not open the brain (pglite_busy)\` while another process
+holds a PGLite brain, and nothing is written.
 
 A seeded brain is followed: each committed write is read back from the brain and applied to the Rust store. reconcile
 compares the whole store with the brain (digests per 500-row interval) and repairs what differs; it needs the Rust
@@ -89,14 +103,23 @@ store to be free, so run it when no serving process holds it. Plain reconcile an
 shows the follower's lag and coverage, the last pass, fingerprint checks and the allocator check; the fingerprint and
 comparison counts are totals for the current seed.
 
+capture records every engine call (reads and writes) into owner-only files on this machine; it is off by default
+(docs/guides/shadow-capture.md). replay plays each night's recording on private PGLite and Rust copies and compares
+them (docs/guides/shadow-replay.md).
+
+drill copies the shadow's own Rust store at one moment through its owner, checks the copy without opening it normally, opens
+it once, deletes the copy and records the result (swap criterion 10, restore drill). It never pauses the shadow. --evals
+instead downloads the eval-gates file pinned to this shadow's release, checks its SHA-256 and keeps a copy; status and the
+swap only read that copy and never fetch. With neither flag both run.
+
 The report is provisional and always says NOT READY.`;
 
 class UsageError extends Error {}
 
-interface StartOpts { plan: boolean; yes: boolean; expect: string | null; sampleRate: number; queueBound: number }
+interface StartOpts { plan: boolean; yes: boolean; expect: string | null; sampleRate: number; writeSampleRate: number; queueBound: number }
 
 function parseStart(args: string[]): StartOpts {
-  const o: StartOpts = { plan: false, yes: false, expect: null, sampleRate: DEFAULT_SHADOW_SAMPLE_RATE, queueBound: DEFAULT_SHADOW_QUEUE_BOUND };
+  const o: StartOpts = { plan: false, yes: false, expect: null, sampleRate: DEFAULT_SHADOW_SAMPLE_RATE, writeSampleRate: DEFAULT_SHADOW_WRITE_SAMPLE_RATE, queueBound: DEFAULT_SHADOW_QUEUE_BOUND };
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     const value = (): string => {
@@ -111,6 +134,10 @@ function parseStart(args: string[]): StartOpts {
       const n = Number(value());
       if (!Number.isFinite(n) || n <= 0 || n > 1) throw new UsageError('--sample-rate must be a number above 0 and at most 1');
       o.sampleRate = n;
+    } else if (a === '--write-sample-rate') {
+      const n = Number(value());
+      if (!Number.isFinite(n) || n <= 0 || n > 1) throw new UsageError('--write-sample-rate must be a number above 0 and at most 1');
+      o.writeSampleRate = n;
     } else if (a === '--queue-bound') {
       const n = Number(value());
       if (!Number.isInteger(n) || n < 1 || n > 100_000) throw new UsageError('--queue-bound must be a whole number from 1 to 100000');
@@ -134,15 +161,17 @@ export interface ShadowPlan {
   primary_engine: string;
   directory: string;
   sample_rate: number;
+  /** Share of page and link writes compared on a scratch Rust store (write-compare.ts). */
+  write_sample_rate: number;
   queue_bound: number;
   mirrors: string;
   writes: string[];
   never_writes: string[];
 }
 
-export function shadowPlan(brain: string, primaryEngine: string, dir: string, o: Pick<StartOpts, 'sampleRate' | 'queueBound'>): { plan: ShadowPlan; hash: string } {
+export function shadowPlan(brain: string, primaryEngine: string, dir: string, o: Pick<StartOpts, 'sampleRate' | 'queueBound'> & Partial<Pick<StartOpts, 'writeSampleRate'>>): { plan: ShadowPlan; hash: string } {
   const plan: ShadowPlan = {
-    brain, primary_engine: primaryEngine, directory: dir, sample_rate: o.sampleRate, queue_bound: o.queueBound,
+    brain, primary_engine: primaryEngine, directory: dir, sample_rate: o.sampleRate, write_sample_rate: o.writeSampleRate ?? DEFAULT_SHADOW_WRITE_SAMPLE_RATE, queue_bound: o.queueBound,
     mirrors: 'a sample of reads and searches this brain answers, after the answer; none inside a transaction',
     writes: [`${dir}/state.json`, `${dir}/store (the Rust engine's own store)`, `${dir}/ledger, summaries, faults.jsonl, reports, child.log`,
       'the brain database: one row per writing process in engine_writer_observations, at most every 10 minutes (swap eligibility)',
@@ -199,12 +228,23 @@ export async function runEngineShadow(args: string[], deps: EngineShadowDeps = {
       });
       return await run(dir);
     }
+    if (sub === 'capture') {
+      const { runShadowCaptureCommand } = await import('./engine-shadow-capture.ts');
+      return await runShadowCaptureCommand(rest, { out, err, now, brain: await resolveBrain(deps) });
+    }
+    if (sub === 'replay' || sub === '__replay-child') {
+      const { runShadowReplayCommand } = await import('./engine-shadow-replay.ts');
+      const brain = sub === '__replay-child' ? { key: '', dir: '', engine: '' } : await resolveBrain(deps);
+      return await runShadowReplayCommand(sub, rest, { out, err, now, brain, config: deps.config ?? (() => loadConfig()), openPrimary: deps.openPrimary ?? openConfiguredPrimary });
+    }
+    if (sub === 'bench') return await bench(rest, deps, out, err, now);
     const brain = await resolveBrain(deps);
     if (sub === 'start') return await start(brain, parseStart(rest), deps, out, err, now);
     if (sub === 'status') return await status(brain, flags(rest, ['--json'], 'status').has('--json'), out, now);
-    if (sub === 'stop') return await stop(brain, flags(rest, ['--delete'], 'stop').has('--delete'), deps, out, err, now);
+    if (sub === 'stop') return await stopWithDrillLock(brain, flags(rest, ['--delete'], 'stop').has('--delete'), deps, out, err, now);
     if (sub === 'report') return report(brain, flags(rest, ['--json'], 'report').has('--json'), out, now);
     if (sub === 'seed') return await seed(brain, flags(rest, ['--json', '--reseed'], 'seed'), deps, out, err, now);
+    if (sub === 'drill') return await drillCommand(brain, flags(rest, ['--json', '--backup', '--evals'], 'drill'), deps, out, err);
     if (sub === 'reconcile') return await reconcileCommand(brain, flags(rest, ['--json', '--full'], 'reconcile').has('--json'), deps, out, err);
     throw new UsageError(`Unknown engine shadow subcommand: ${sub}`);
   } catch (e) {
@@ -274,13 +314,14 @@ async function start(
     out(`Shadow mode plan for brain ${plan.brain} (${plan.primary_engine}):`);
     out(`  mirrors: ${plan.mirrors}`);
     out(`  sample rate ${plan.sample_rate}, serving-process queue bound ${plan.queue_bound}`);
+    out(`  write sample rate ${plan.write_sample_rate}: that share of page and link writes is checked on a throwaway Rust store (a write inside a transaction is not checked, and a PGLite brain samples no writes); a checked write first waits (at most 2 s) for one read of the rows it touches`);
     for (const w of plan.writes) out(`  writes: ${w}`);
     out(`  never writes: ${plan.never_writes.join(', ')}`);
     const line = storageLine(await readStorage(brain, deps, now));
     if (line) out(`  storage: ${line}`);
     out(`  the installed Rust engine addon is loaded and verified now`);
     out(`plan_hash: ${hash}`);
-    out(`To turn it on: gbrain engine shadow start --yes --expect ${hash}${o.sampleRate !== DEFAULT_SHADOW_SAMPLE_RATE ? ` --sample-rate ${o.sampleRate}` : ''}${o.queueBound !== DEFAULT_SHADOW_QUEUE_BOUND ? ` --queue-bound ${o.queueBound}` : ''}`);
+    out(`To turn it on: gbrain engine shadow start --yes --expect ${hash}${o.sampleRate !== DEFAULT_SHADOW_SAMPLE_RATE ? ` --sample-rate ${o.sampleRate}` : ''}${o.writeSampleRate !== DEFAULT_SHADOW_WRITE_SAMPLE_RATE ? ` --write-sample-rate ${o.writeSampleRate}` : ''}${o.queueBound !== DEFAULT_SHADOW_QUEUE_BOUND ? ` --queue-bound ${o.queueBound}` : ''}`);
     return o.plan ? 0 : 3;
   }
   if (o.expect !== hash) {
@@ -340,7 +381,7 @@ async function start(
   }
   deps.afterHooks?.(); // test seam: a throw here stands for a start killed after the hooks changed and before the state is published
   const state: ShadowState = {
-    version: SHADOW_STATE_VERSION, enabled: true, started_at: now().toISOString(), sample_rate: o.sampleRate,
+    version: SHADOW_STATE_VERSION, enabled: true, started_at: now().toISOString(), sample_rate: o.sampleRate, write_sample_rate: o.writeSampleRate,
     queue_bound: o.queueBound, plan_hash: hash, brain: brain.key, primary_engine: brain.engine, storage,
     writer_evidence_since: evidenceSince, writer_evidence_seed: seedId,
     ...(continuing ? { writer_coverage_restarted_at: now().toISOString() } : {}),
@@ -364,7 +405,7 @@ async function status(brain: { key: string; dir: string }, json: boolean, out: (
   }
   const { state, totals, recent_faults: faults } = doc;
   out(`Shadow mode: ${state?.enabled ? 'on' : 'off'} (brain ${brain.key})`);
-  if (state) out(`  started ${state.started_at}${state.stopped_at ? `, stopped ${state.stopped_at}` : ''}; sample rate ${state.sample_rate}`);
+  if (state) out(`  started ${state.started_at}${state.stopped_at ? `, stopped ${state.stopped_at}` : ''}; sample rate ${state.sample_rate}, write sample rate ${writeSampleRate(state)}`);
   const line = storageLine(state?.storage);
   if (line) out(`  storage: ${line}`);
   const compared = Object.values(totals).reduce((a, b) => a + b, 0);
@@ -379,6 +420,7 @@ async function status(brain: { key: string; dir: string }, json: boolean, out: (
   if (seedStorage) out(`  storage: ${seedStorage}`);
   if (seeded) for (const line of [...renderFollowStatus(doc), ...renderEvidenceStatus(doc)]) out(line);
   if (doc.evidence_epoch_unstable) out('  evidence epoch: it changed while this status was read, so the epoch-bound evidence is left out; run the status again');
+  for (const line of renderBenchStatus(doc.bench)) out(line);
   for (const f of faults) out(`  fault ${f.ts} ${f.kind}: ${f.detail}`);
   return 0;
 }
@@ -387,6 +429,68 @@ async function status(brain: { key: string; dir: string }, json: boolean, out: (
 export { seedStatus };
 
 const RESEED_STEP = `A Rust store is seeded once. To seed again, start from a new shadow directory: ${RESEED_STEPS}.`;
+
+const BENCH_IMPORT_FIX = 'gbrain engine shadow bench --import <receipt.json> [--json]';
+
+function benchRefusal(code: 'invalid_params' | 'not_found' | 'internal_error', message: string, fix: string): OperationError {
+  return new OperationError(code, message, fix, BENCH_DOCS);
+}
+
+/** The refusal of `bench`: stderr text with the safe fix, and with --json the error envelope on stdout; the exit code is the registered code's. */
+async function refuseBench(e: OperationError, json: boolean, out: (l: string) => void, err: (l: string) => void): Promise<number> {
+  const { renderCliError } = await import('../core/agent-output.ts');
+  const r = renderCliError(e, { json: true, command: 'engine shadow bench', tty: false });
+  if (json) out(r.stdout!.trimEnd());
+  err(`engine shadow bench: ${e.message} [${e.code}${e.docs ? `; ${e.docs}` : ''}]`);
+  if (e.suggestion) err(`Fix: ${e.suggestion}`);
+  return r.exitCode;
+}
+
+/**
+ * `bench --import <receipt>`: loads an engine-bench speed receipt into the shadow's swap-readiness evidence (criterion 8,
+ * reported and never gating). Replaying paired samples on this brain is not built, so plain `bench` refuses and says so.
+ * The import never starts a shadow and never opens the brain; with no shadow for this brain nothing is written.
+ */
+async function bench(args: string[], deps: EngineShadowDeps, out: (l: string) => void, err: (l: string) => void, now: () => Date): Promise<number> {
+  const json = args.includes('--json');
+  try {
+    let path: string | undefined;
+    for (let i = 0; i < args.length; i++) {
+      const a = args[i]!;
+      if (a === '--json') continue;
+      if (a !== '--import') return await refuseBench(benchRefusal('invalid_params', `unknown argument for engine shadow bench: ${sanitizeText(a, 60)}`, BENCH_IMPORT_FIX), json, out, err);
+      path = args[i + 1];
+      if (!path || path.startsWith('--')) return await refuseBench(benchRefusal('invalid_params', '--import needs the path of an engine-bench speed receipt', BENCH_IMPORT_FIX), json, out, err);
+      i++;
+    }
+    if (!path) {
+      return await refuseBench(benchRefusal('invalid_params', 'nothing to import: the owner-brain bench (gbrain engine shadow bench replaying paired samples on this brain) is not built, and --import loads an engine-bench speed receipt', BENCH_IMPORT_FIX), json, out, err);
+    }
+    let brain: { key: string; dir: string; engine: string };
+    try {
+      brain = await resolveBrain(deps);
+    } catch (e) {
+      if (!(e instanceof UsageError)) throw e;
+      return await refuseBench(benchRefusal('invalid_params', `${sanitizeText(e.message, 300)} Nothing was written.`, 'Run it without --brain (and with GBRAIN_BRAIN_ID unset) on a host with a configured brain.'), json, out, err);
+    }
+    if (!existsSync(shadowStatePath(brain.dir))) {
+      return await refuseBench(benchRefusal('not_found', 'no shadow for this brain, so there is nowhere to keep bench evidence; nothing was written', 'Ask the brain owner whether to start a shadow (gbrain engine shadow start --plan shows the plan). A bench import never starts one; once the owner has one, rerun the same import.'), json, out, err);
+    }
+    const res = importBenchReceipt(brain.dir, path, { now: now() });
+    if (!res.ok) return await refuseBench(res.error, json, out, err);
+    const { bench: block } = buildBenchStatus({ dir: brain.dir, primaryEngine: readShadowState(brain.dir)?.primary_engine ?? null });
+    if (json) out(JSON.stringify(block, null, 2));
+    else {
+      out(`Imported ${res.summary.source_file} (receipt ${res.summary.receipt_sha256.slice(0, 12)}) as the bench corpus evidence for brain ${brain.key}. Nothing else was changed.`);
+      for (const line of renderBenchStatus(block)) out(line);
+    }
+    return 0;
+  } catch (e) {
+    if (e instanceof OperationError) return await refuseBench(e, json, out, err);
+    const name = e instanceof Error ? e.name : 'Error';
+    return await refuseBench(benchRefusal('internal_error', `unexpected ${name} while importing the receipt: ${sanitizeText(e instanceof Error ? e.message : e, 160)}; nothing else was changed`, 'Rerun the same command once with --json; if it fails again, report it with the command and this message.'), json, out, err);
+  }
+}
 
 async function seed(
   brain: { key: string; dir: string; engine: string }, f: Set<string>, deps: EngineShadowDeps,
@@ -471,6 +575,57 @@ async function seedFrom(
   }
 }
 
+const DRILL_FIX: Partial<Record<DrillReason, string>> = {
+  no_seed: 'Run gbrain engine shadow seed first.',
+  no_epoch: 'Start shadow mode (gbrain engine shadow start) and let its child run once, so the evidence epoch exists.',
+  no_store: 'The shadow has no Rust store; run gbrain engine shadow seed.',
+  addon_unavailable: 'The Rust engine addon is not installed; run gbrain doctor.',
+  disk_space: 'Free disk space: the drill needs twice the store file plus 2 GiB.',
+  drill_running: 'Another drill is running; wait for it to end. If none is, remove drills/drill.lock (one that cannot be read) or drills/drill.lock.takeover (left by a crash).',
+  addon_mismatch: 'The addon this command loaded is not the one the evidence epoch started on; run the drill with the same addon the shadow child runs (the installed addon, or the same GBRAIN_RUST_ENGINE_ADDON).',
+  no_probe_term: 'No stored word got a keyword hit on the copy; check gbrain doctor and the shadow store, then run the drill again.',
+  shadow_gone: 'The shadow directory was deleted or replaced while the drill ran; nothing was recorded.',
+  cleanup_pending: 'A copy from an earlier drill is still ending; run the drill again in a minute.',
+};
+
+/** `drill`: the restore drill on the shadow store (`--backup`) and the eval-gates fetch (`--evals`); both without a flag. */
+async function drillCommand(
+  brain: { key: string; dir: string }, f: Set<string>, deps: EngineShadowDeps, out: (l: string) => void, err: (l: string) => void,
+): Promise<number> {
+  const [{ renderDrill, runBackupDrill }, { fetchEvalGates }, { readEpoch }] = await Promise.all([
+    import('../shadow/drill.ts'), import('../shadow/eval-gates.ts'), import('../shadow/evidence-epoch.ts'),
+  ]);
+  const json = f.has('--json');
+  const both = !f.has('--backup') && !f.has('--evals');
+  const result: Record<string, unknown> = {};
+  let ok = true;
+  if (both || f.has('--backup')) {
+    const abort = new AbortController();
+    const onSignal = (): void => abort.abort();
+    process.once('SIGINT', onSignal);
+    process.once('SIGTERM', onSignal);
+    try {
+      const record = await runBackupDrill(brain.dir, { signal: abort.signal, ...deps.drill });
+      result.backup = record;
+      ok = ok && record.pass;
+      if (record.op_id === null && record.reason) err(`engine shadow: shadow_drill_failed (${record.reason}): ${DRILL_FIX[record.reason] ?? 'see gbrain doctor'}`);
+      else if (!json) for (const line of renderDrill(record)) out(line);
+    } finally {
+      process.off('SIGINT', onSignal);
+      process.off('SIGTERM', onSignal);
+    }
+  }
+  if (both || f.has('--evals')) {
+    const { detectAddonTarget } = await import('../core/rust-engine/addon-target.ts');
+    const fetched = await fetchEvalGates(brain.dir, readEpoch(brain.dir), { hostTarget: detectAddonTarget(), ...deps.fetchEvals });
+    result.evals = fetched;
+    ok = ok && fetched.passed;
+    if (!json) out(fetched.passed ? 'Eval gates E1 to E3: pass (cached under drills/)' : `Eval gates E1 to E3: not a pass (${fetched.reason ?? 'unknown'})${fetched.cached ? '; the file was cached' : '; nothing was cached'}`);
+  }
+  if (json) out(JSON.stringify(result, null, 2));
+  return ok ? 0 : 1;
+}
+
 /** One full reconcile pass from the CLI, through a child that holds the Rust store. */
 async function reconcileCommand(
   brain: { key: string; dir: string }, json: boolean, deps: EngineShadowDeps, out: (l: string) => void, err: (l: string) => void,
@@ -553,6 +708,15 @@ function renderSeed(r: SeedRecord, path: string, out: (l: string) => void): void
     : '  unseeded gap rows: 0');
 }
 
+/** `stop`; with `--delete` it first takes the drill lock (made if no drill has run yet), so a delete never runs under a restore drill and no first drill starts under it: it refuses (exit 1) and changes nothing. The lock is held until the shadow is gone. */
+async function stopWithDrillLock(brain: { key: string; dir: string; engine: string }, del: boolean, deps: EngineShadowDeps, out: (l: string) => void, err: (l: string) => void, now: () => Date): Promise<number> {
+  if (!del) return stop(brain, del, deps, out, err, now);
+  const done = (await import('../shadow/drill.ts')).takeDrillLockForDelete(brain.dir);
+  if (!done) { err(`engine shadow: drill_running: ${DRILL_FIX.drill_running} Nothing was stopped or deleted.`); return 1; }
+  let deleted = false;
+  try { const code = await stop(brain, del, deps, out, err, now); deleted = true; return code; } finally { done(deleted); }
+}
+
 async function stop(brain: { key: string; dir: string; engine: string }, del: boolean, deps: EngineShadowDeps, out: (l: string) => void, err: (l: string) => void, now: () => Date): Promise<number> {
   const state = readShadowState(brain.dir);
   // The stop time is written before the hooks go: from here on nothing is proven to record writers (a file, so it cannot fail like a gap insert).
@@ -575,13 +739,17 @@ async function stop(brain: { key: string; dir: string; engine: string }, del: bo
     }
   }
   if (del) {
-    rmSync(brain.dir, { recursive: true, force: true });
+    // One destructive-delete path with `capture delete`: the replay lock first, then the folder.
+    const { deleteReplayState } = await import('../shadow/capture-lock.ts');
+    deleteReplayState(brain.dir, { whole: true, keep: ['drills'] }); // the drill lock lives in drills/: `stopWithDrillLock` removes it last
     out(`Shadow mode is off for brain ${brain.key}; ${brain.dir} is deleted.`);
   } else {
     out(state?.enabled ? `Shadow mode is off for brain ${brain.key}. Running processes stop mirroring within 30 seconds.` : `Shadow mode was already off for brain ${brain.key}.`);
   }
   return hooksLeft ? 1 : 0;
 }
+/** Test seam: `stop` with no primary (a PGLite brain takes no writer hooks). */
+export const __stopForTests = (brain: { key: string; dir: string; engine: string }, del: boolean, out: (l: string) => void) => stopWithDrillLock(brain, del, {}, out, out, () => new Date());
 
 function report(brain: { key: string; dir: string }, json: boolean, out: (l: string) => void, now: () => Date): number {
   const r = buildProvisionalReport(brain.dir, brain.key, readShadowState(brain.dir), now());

@@ -473,6 +473,54 @@ impl Store {
             .collect())
     }
 
+    /// `countOpenLoopsByCounterpartyEmail`: the open loops of `loop_type` in `source_id` per
+    /// counterparty email among `emails`, one `{ email, n }` per email with any, in email byte
+    /// order, with no limit (the withheld-noise card of `open_loops`).
+    pub fn count_open_loops_by_counterparty_email(
+        &self,
+        source_id: &str,
+        emails: &[String],
+        loop_type: &str,
+    ) -> Result<Vec<Value>> {
+        let op = "countOpenLoopsByCounterpartyEmail";
+        no_nul(op, &[("sourceId", source_id), ("loopType", loop_type)])?;
+        for e in emails {
+            no_nul(op, &[("email", e.as_str())])?;
+        }
+        if emails.is_empty() {
+            return Ok(Vec::new());
+        }
+        let read = self.read()?;
+        let mut counts: std::collections::BTreeMap<String, i64> = std::collections::BTreeMap::new();
+        let mut failed = None;
+        scan_prefix(&*read, &[keys::FACT, ROW], false, &mut |_k, v| {
+            match serde_json::from_slice::<LoopRecord>(v) {
+                Ok(r) => {
+                    if r.source_id == source_id
+                        && r.status == "open"
+                        && r.loop_type == loop_type
+                        && let Some(email) =
+                            r.counterparty_email.as_ref().filter(|e| emails.contains(e))
+                    {
+                        *counts.entry(email.clone()).or_insert(0) += 1;
+                    }
+                }
+                Err(e) => {
+                    failed = Some(e);
+                    return false;
+                }
+            }
+            true
+        })?;
+        if let Some(e) = failed {
+            return Err(StoreError::invalid(format!("{op}: corrupt record: {e}")));
+        }
+        Ok(counts
+            .into_iter()
+            .map(|(email, n)| json!({ "email": email, "n": n }))
+            .collect())
+    }
+
     /// `closeOpenLoop`: closes the open loop `id` (in `source_id` when given) as `status`, by
     /// `closed_by`, now. `None` when no open loop matches.
     pub fn close_open_loop(
@@ -756,6 +804,47 @@ mod tests {
         }
         // the stored row still reads, and so does the listing
         assert_eq!(s.upsert_open_loop(&input("src", "k", T2)).unwrap().id, 1);
+    }
+
+    #[test]
+    fn counts_open_loops_per_counterparty_email_with_no_limit() {
+        let s = store();
+        source(&s, "src");
+        source(&s, "other");
+        for i in 0..1005 {
+            s.upsert_open_loop(&input("src", &format!("k{i}"), T1))
+                .unwrap();
+        }
+        let mut b = input("src", "b1", T1);
+        b.counterparty_email = Some("b@example.com".into());
+        s.upsert_open_loop(&b).unwrap();
+        s.upsert_open_loop(&input("other", "o1", T1)).unwrap();
+        s.close_open_loop(Some("src"), 1, "done", "manual").unwrap();
+        let emails = vec![
+            "a@example.com".to_string(),
+            "b@example.com".to_string(),
+            "c@example.com".to_string(),
+        ];
+        let got = s
+            .count_open_loops_by_counterparty_email("src", &emails, "unanswered_inbound")
+            .unwrap();
+        assert_eq!(
+            got,
+            vec![
+                json!({ "email": "a@example.com", "n": 1004 }),
+                json!({ "email": "b@example.com", "n": 1 })
+            ]
+        );
+        assert!(
+            s.count_open_loops_by_counterparty_email("src", &emails, "awaiting_reply")
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            s.count_open_loops_by_counterparty_email("src", &[], "unanswered_inbound")
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]

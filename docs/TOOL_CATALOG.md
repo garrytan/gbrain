@@ -4,7 +4,14 @@
 <!-- Regenerate: bun run scripts/generate-tool-catalog.ts -->
 <!-- Freshness-guarded by scripts/check-tool-catalog-fresh.sh (bun run verify). -->
 
-Every non-localOnly operation on the MCP surface: 181 tools across 28 areas. **Starter** marks membership in the ~41-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
+Every non-localOnly operation on the MCP surface: 198 tools across 33 areas. **Starter** marks membership in the ~43-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
+
+## action-ledger
+
+| Tool | Description | Scope | Starter | Gate |
+|---|---|---|---|---|
+| `ledger` | Totals of the outside actions you can read for a window: spent and saved per currency, split by evidenced, user_confirmed and estimated, by verb and by counterparty, plus live budget holds. | read |  |  |
+| `log_action` | After you act on the user's behalf outside this brain (send, spend, cancel, sign up...), record it. | write |  |  |
 
 ## admin
 
@@ -28,6 +35,14 @@ Every non-localOnly operation on the MCP surface: 181 tools across 28 areas. **S
 |---|---|---|---|---|
 | `advisor` | Ranked, read-only "what to do next" for this brain: version drift, pending migrations, schema-pack issues, stalled jobs, usage-shape gaps, and setup smells. | read |  | `mcp.publish_advisor` |
 
+## agent-policy
+
+| Tool | Description | Scope | Starter | Gate |
+|---|---|---|---|---|
+| `agent_policy` | The user's agent policy rules that apply to you, as rows, with its state and revision. | read |  |  |
+| `policy_check` | Before you send, spend, delete, sign up, call or publish on the user's behalf outside this brain, ask whether the user's agent policy allows it. | read |  |  |
+| `policy_reserve` | Before a spend, check the agent policy with its day, week and month budgets and hold the amount for 24 hours, in one step, so two agents cannot both use the last of a budget. | write |  |  |
+
 ## chronicle
 
 | Tool | Description | Scope | Starter | Gate |
@@ -49,10 +64,17 @@ Every non-localOnly operation on the MCP surface: 181 tools across 28 areas. **S
 | `code_flow` | When tracing how a request flows through the codebase from entry point to side effect (DB write, HTTP call, file I/O), run code_flow from the entry point. | read |  |  |
 | `code_refs` | Find every reference to a symbol across the codebase (every file, every line). | read |  |  |
 
+## correct
+
+| Tool | Description | Scope | Starter | Gate |
+|---|---|---|---|---|
+| `correct` | The user corrected you: saves their standing rule and replaces fact_id with corrected_fact (or withdraws it). | write | yes |  |
+
 ## discovery
 
 | Tool | Description | Scope | Starter | Gate |
 |---|---|---|---|---|
+| `capabilities` | Which gbrain ops this installation serves and this connection can call now, listed or not, with the fix for each one that is not callable. | read |  |  |
 | `request_tools` | More tools and params: no arguments lists your catalog; {tools: [names]} returns schemas with every param you may pass; {surface} widens it (per client or stdio session). | read | yes |  |
 
 ## entities
@@ -68,6 +90,14 @@ Every non-localOnly operation on the MCP surface: 181 tools across 28 areas. **S
 | Tool | Description | Scope | Starter | Gate |
 |---|---|---|---|---|
 | `purge_fact` | Owner-only, trusted local CLI on the brain host (`gbrain forget <id> --purge`). | admin |  |  |
+
+## household
+
+| Tool | Description | Scope | Starter | Gate |
+|---|---|---|---|---|
+| `household_add` | Add one household record (supply, birthday, bill, deadline, appointment, return or credit). | write |  |  |
+| `household_due` | Household items overdue, at risk or coming up (bills, supplies, birthdays, school dates, returns, credits), ranked, each with a reason, its slug and a proposed action. | read | yes |  |
+| `household_mark` | Record what happened to a household record: done, bought, paid, booked, submitted, returned, used, gift_ideas, gift_bought, given, skip, pause, resume or archive. | write |  |  |
 
 ## identity
 
@@ -94,6 +124,8 @@ Every non-localOnly operation on the MCP surface: 181 tools across 28 areas. **S
 | `get_calibration_profile` | Read the active calibration profile for a holder. | read |  |  |
 | `get_recent_salience` | Recently touched pages ranked by salience. | read | yes |  |
 | `learned` | What the brain learned since you last looked: new facts its extractors saved, facts that disagree (which one is right?), promises people made to you, people who may be the same person (with the gbrain dedupe confirm and reject commands, run on the brain host), thin pages it filled in, and rows you typed into Facts fences (shown, never counted). | read |  |  |
+| `learned_keep` | Keep items from the learned note: mark what the brain learned as right. | write |  |  |
+| `learned_undo` | Undo items from the learned note through the operation that owns each change: a new fact is forgotten (withdrawn; history kept), a promise is dropped, a filled-in page is reverted to the version before it was filled (refused when the page was edited since, with the commands to choose a version). | write |  |  |
 | `volunteer_context` | Push-based context: volunteer brain pages relevant to a rolling conversation window WITHOUT being asked. | read |  |  |
 
 ## jobs
@@ -175,6 +207,15 @@ Every non-localOnly operation on the MCP surface: 181 tools across 28 areas. **S
 | `remember` | Save {fact, provenance (required), `entity` (subject; recall needs it)} or items[]. | write | yes |  |
 | `synthesize` | [EXPENSIVE / SLOW: LLM calls] Cited answer to a broad question across pages. | read | yes |  |
 
+## onboarding
+
+| Tool | Description | Scope | Starter | Gate |
+|---|---|---|---|---|
+| `onboarding_off` | Turn the first-session suggestion off for this install (the owner only). | write |  |  |
+| `onboarding_status` | Whether the first-session suggestion is armed on this brain, and why not when it is off: not_new_install, not_personal, window_expired, sessions_exhausted or stopped. | read |  |  |
+| `propose_decide` | Record the user's answer to one proposed job (the owner only): accepted or declined, by signal. | write |  |  |
+| `propose_jobs` | Jobs your agent could take on, found in data already in the brain with no model call: people waiting on the user, threads they owe a reply, recurring meetings with no prep page, bulk senders they never wrote to, and the same question asked in two agents. | read |  |  |
+
 ## ontology
 
 | Tool | Description | Scope | Starter | Gate |
@@ -249,6 +290,7 @@ Every non-localOnly operation on the MCP surface: 181 tools across 28 areas. **S
 |---|---|---|---|---|
 | `assemble_evidence` | Deliver whole evidence for an ordered list of search hits (each {source_id, slug, chunk_id} from a prior search/query result): the same windows, sections or pages `query` returns with return_unit, packed into token_budget. | read |  |  |
 | `cache_stats` | Semantic query-cache introspection: resolved knobs (enabled, similarity threshold, TTL) plus row counts and total hits. | admin |  |  |
+| `check_claims` | Check the numbers in a draft against allowed-claims pages (type: facts, claims: allowed) before stating them. | read |  |  |
 | `query` | Hybrid search for concept/landscape questions and people/companies/projects by topic; adds fact rows. | read | yes |  |
 | `rate_answer` | Rate how useful an answer's retrieved evidence was, so this brain ranks better next time (zero LLM calls). | write |  |  |
 | `search` | Cheap hybrid search, no LLM expansion, top 20: exact tokens, names, field values. | read | yes |  |

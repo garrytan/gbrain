@@ -12,6 +12,7 @@ use sha2::{Digest as _, Sha256};
 
 mod displace;
 mod fences;
+mod stream;
 mod swaps;
 
 const SEED: &str = "seed-1";

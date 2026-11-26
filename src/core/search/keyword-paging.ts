@@ -28,9 +28,11 @@ import { opError, type OperationContext } from '../ops/contract.ts';
 import { invalidParam } from '../ops/op-fix.ts';
 import { expandEngineTypeFilters } from '../schema-pack/query-types.ts';
 import { KEYWORD_COUNT_CAP, type KeywordPageAfter } from './keyword-statement.ts';
+import { countUnavailableReason, countWords } from './keyword-count-text.ts';
 import { hasCJK } from '../cjk.ts';
 import { loadConfigWithEngine } from '../config.ts';
 import { resolveCjkKeywordDeadlineMs } from './cjk-keyword-deadline.ts';
+import { resolveSearchDateBounds } from './date-bounds.ts';
 
 export type SearchMatch = 'hybrid' | 'keyword';
 
@@ -158,18 +160,33 @@ export function startKeywordCount(engine: BrainEngine, query: string, types: str
   })().catch((): KeywordCount => ({ unavailable: 'error' }));
 }
 
+/** #9412: the `query` op's filters the count shares with its hybrid search (language, symbol kind, dates, frontmatter). */
+export function queryKeywordCountFilters(p: Record<string, unknown>, where: SearchOpts['where']): SearchOpts {
+  return {
+    ...(where ? { where } : {}),
+    language: (p.lang as string) || undefined,
+    symbolKind: (p.symbol_kind as string) || undefined,
+    ...resolveSearchDateBounds({ since: typeof p.since === 'string' ? p.since : undefined, until: typeof p.until === 'string' ? p.until : undefined }),
+  };
+}
+
+/** The `query` filters the count applied that search's keyword listing cannot take, so that listing holds more pages than the count. */
+export function queryUnlistedCountFilters(p: Record<string, unknown>): string[] {
+  return (['since', 'until', 'lang', 'symbol_kind'] as const).filter(k => typeof p[k] === 'string' && p[k] !== '');
+}
+
 /** Adds count fields (and the unavailable stage) to a built retrieval meta. */
 export function withCountMeta(meta: Record<string, unknown>, extra: { meta: Record<string, unknown>; degraded?: DegradedStageEntry }): Record<string, unknown> {
   if (!extra.degraded) return { ...meta, ...extra.meta };
   return { ...meta, ...extra.meta, degraded: [...((meta.degraded as unknown[] | undefined) ?? []), extra.degraded] };
 }
 
-/** Response meta for the hybrid path: `keyword_total` / `keyword_truncated`, or the unavailable stage. */
-export function keywordCountMeta(count: KeywordCount, shownThrough: number): { meta: Record<string, unknown>; degraded?: DegradedStageEntry } {
+/** Response meta for the hybrid path: `keyword_total` / `keyword_truncated`, or the unavailable stage. `entityResolved`: the query names an entity or fanned out to another name. */
+export function keywordCountMeta(count: KeywordCount, shownThrough: number, entityResolved = false, unlisted: string[] = []): { meta: Record<string, unknown>; degraded?: DegradedStageEntry } {
   if ('unavailable' in count) {
     return { meta: { keyword_total: null }, degraded: { stage: 'keyword_count_unavailable', ...(count.unavailable === 'timeout' ? { reason: 'timeout' as const } : {}) } };
   }
-  return { meta: { keyword_total: count.total, keyword_truncated: count.capped || count.total > shownThrough, ...(count.capped ? { keyword_total_capped: true } : {}) } };
+  return { meta: { keyword_total: count.total, keyword_truncated: count.capped || count.total > shownThrough, ...(count.capped ? { keyword_total_capped: true } : {}), ...(entityResolved ? { query_entity_resolved: true } : {}), ...(unlisted.length ? { keyword_unlisted_filters: unlisted } : {}) } };
 }
 
 export interface KeywordPage {
@@ -244,18 +261,15 @@ export function keepEnumeratedRows<T extends SearchResult>(enumerated: SearchRes
   return enumerated.map(r => byPage.get(r.page_id) ?? { ...r, chunk_text: '', evidence_omitted: true });
 }
 
-const countWords = (n: number, capped: boolean | undefined) => `${capped ? `${n}+` : n} page${n === 1 && !capped ? '' : 's'}`;
-
 /**
  * The model-visible line after the rows (null when the call carries no
  * count): which set the rows are, which set the count covers, and the next
  * call. Reads only `_meta.retrieval` keys this module writes.
  */
-export function searchCountLine(rows: unknown, retrieval: unknown): string | null {
+export function searchCountLine(rows: unknown, retrieval: unknown, tool = 'search'): string | null {
   if (retrieval === null || typeof retrieval !== 'object') return null;
   const r = retrieval as Record<string, unknown>;
-  const stage = Array.isArray(r.degraded) ? r.degraded.find(d => (d as { stage?: unknown })?.stage === 'keyword_count_unavailable') : undefined;
-  const reason = (stage as { reason?: unknown } | undefined)?.reason === 'timeout' ? 'timed out' : 'failed';
+  const reason = countUnavailableReason(r) === 'timeout' ? 'timed out' : 'failed';
   if (r.match === 'keyword') {
     const names = Array.isArray(r.match_names) && r.match_names.length > 1
       ? ` for any of this entity's names (${(r.match_names as string[]).map(n => `"${n}"`).join(', ')})` : '';
@@ -272,5 +286,7 @@ export function searchCountLine(rows: unknown, retrieval: unknown): string | nul
   const count = typeof r.keyword_total === 'number'
     ? `Keyword matches: ${countWords(r.keyword_total, r.keyword_total_capped === true)} (pages matching the query's keywords, not a count of these rows)`
     : `Keyword match count unavailable (${reason}; not a count of zero)`;
-  return `[gbrain search] Rows are a ranked top-K, not proof of coverage. ${count}. List every keyword match with match: "keyword".`;
+  const unlisted = Array.isArray(r.keyword_unlisted_filters) && r.keyword_unlisted_filters.length
+    ? ` That listing ignores ${(r.keyword_unlisted_filters as string[]).join(', ')}, so it also holds pages this count left out.` : '';
+  return `[gbrain search] Rows are a ranked top-K, not proof of coverage. ${count}. List every keyword match with ${tool === 'search' ? '' : 'the search tool and '}match: "keyword".${unlisted}`;
 }

@@ -230,7 +230,7 @@ describe('blocker 4: importing content for a stored decomposed slug never writes
     expect(rows.map(r => r.slug)).toEqual([stored]);
     expect(result.status).toBe('error');
     expect(result.error).toBe(`Page ${stored} is stored under an older spelling of its name (capitals or decomposed Unicode), and an import writes the normal spelling imp/caf\u00e9, which would create a second page that prints the same name, so nothing was imported. `
-      + 'Fix: leave this content out until the page moves to imp/caf\u00e9, or import it under a different slug.');
+      + 'Fix: leave this content out until the page moves to imp/caf\u00e9 (preview gbrain repair slug-spelling --source default), or import it under a different slug.');
     expect((await engine.getPage(stored))?.title).toBe('Before import');
   });
 

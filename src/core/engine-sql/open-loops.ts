@@ -159,3 +159,20 @@ export async function listOpenLoops(exec: LegacyUnscopedRead, opts: ListLoopsOpt
     ],
   );
 }
+
+/** One sender's open loop count, as `countOpenLoopsByCounterpartyEmail` returns it. */
+export interface CounterpartyEmailLoopCount { email: string; n: number }
+
+/**
+ * The open loops of `loopType` in `sourceId` per counterparty email among `emails`, one row per email with any, in no
+ * set order (the withheld-noise card of `open_loops`, ops/loops.ts). No limit: every loop counts.
+ */
+export async function countOpenLoopsByCounterpartyEmail(exec: LegacyUnscopedRead, sourceId: string, emails: readonly string[], loopType: string): Promise<CounterpartyEmailLoopCount[]> {
+  if (emails.length === 0) return [];
+  const found = await exec.executeRaw<{ email: string; n: number | string }>(
+    `SELECT counterparty_email AS email, count(*)::int AS n FROM open_loops
+      WHERE source_id = $1 AND status = 'open' AND loop_type = $3
+        AND counterparty_email = ANY(string_to_array($2, E'\n'))
+      GROUP BY counterparty_email`, [sourceId, emails.join('\n'), loopType]);
+  return found.map(r => ({ email: r.email, n: Number(r.n) }));
+}

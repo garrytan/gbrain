@@ -19,6 +19,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
+import { parseFactsFence } from '../../src/core/facts-fence.ts';
 import type { OperationContext } from '../../src/core/operations.ts';
 import { PAGE_MAX_BYTES } from '../../src/core/page-size-policy.ts';
 import { claimWorktree } from '../../src/core/persistence/ownership.ts';
@@ -38,6 +39,7 @@ const env = { GBRAIN_HOME: home, OPENAI_API_KEY: undefined, VOYAGE_API_KEY: unde
 const logger = { info() {}, warn() {}, error() {} };
 const SLUG = 'notes/fenced-ledger';
 const WITHDRAWN = 'Door code is 5512';
+const WITHDRAWN_AT = '2026-01-02T23:59:59.999Z';
 
 const ROW = (n: number, claim: string) => '| ' + n + ' | ' + claim + ' | fact | 1.0 | world | medium | 2026-01-01 |  | chat |  |';
 const FENCE = (rows: string[]) => '<!--- gbrain:facts:begin -->\n| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |\n'
@@ -85,7 +87,8 @@ async function importPage(engine: BrainEngine, f: Fixture, content: string): Pro
 }
 
 const withdraw = (engine: BrainEngine, f: Fixture, subject: string, claim = WITHDRAWN) => engine.executeRaw(
-  "INSERT INTO fact_withdrawals (source_id, visibility, subject, fact_hash) VALUES ($1, 'world', $2, gbrain_fact_fingerprint($3)) ON CONFLICT DO NOTHING", [f.sourceId, subject, claim]);
+  "INSERT INTO fact_withdrawals (source_id, visibility, subject, fact_hash, withdrawn_at) VALUES ($1, 'world', $2, gbrain_fact_fingerprint($3), $4::timestamptz) ON CONFLICT DO NOTHING",
+  [f.sourceId, subject, claim, WITHDRAWN_AT]);
 
 async function deletion(engine: BrainEngine, f: Fixture, extra: Record<string, unknown> = {}): Promise<string> {
   const snapshot = await engine.readPageSnapshot(SLUG, { sourceId: f.sourceId, includeDeleted: true });
@@ -108,14 +111,20 @@ test('a segmented page whose own facts row is withdrawn deletes and purges as it
         const f = await managedSource(engine, storage === 'segmented');
         const purged = await managedSource(engine, storage === 'segmented');
         const stored = [await importPage(engine, f, FENCED), await importPage(engine, purged, FENCED)];
-        for (const fixture of [f, purged]) await withdraw(engine, fixture, subject === 'slug' ? SLUG : '*');
+        const databaseNow = storage === 'segmented' ? WITHDRAWN_AT : '2026-01-03T00:00:00.000Z';
+        await engine.transaction(async tx => {
+          await tx.executeRaw(`ALTER TABLE fact_withdrawals ALTER COLUMN withdrawn_at SET DEFAULT TIMESTAMPTZ '${databaseNow}'`);
+          for (const fixture of [f, purged]) await withdraw(tx, fixture, subject === 'slug' ? SLUG : '*');
+          await tx.executeRaw('ALTER TABLE fact_withdrawals ALTER COLUMN withdrawn_at SET DEFAULT now()');
+        });
         const body = (await materializedSnapshot(engine, await engine.readPageSnapshot(SLUG, { sourceId: f.sourceId })))!.page.compiled_truth;
         bodies[storage] = createHash('sha256').update(body).digest('hex');
-        seen[subject + ':' + storage] = { stored, struck: body.includes('~~' + WITHDRAWN + '~~'), deleted: await deletion(engine, f), purged: await deletion(engine, purged, { purge: true }) };
+        const validUntil = parseFactsFence(body).facts.find(fact => fact.claim === WITHDRAWN)?.validUntil;
+        seen[subject + ':' + storage] = { stored, struck: body.includes('~~' + WITHDRAWN + '~~'), validUntil, deleted: await deletion(engine, f), purged: await deletion(engine, purged, { purge: true }) };
       }
       seen[subject + ':same_body'] = bodies.segmented === bodies.inline;
     }
-    const twin = (storage: string) => ({ stored: [storage, storage], struck: true, deleted: 'soft_deleted', purged: 'purged' });
+    const twin = (storage: string) => ({ stored: [storage, storage], struck: true, validUntil: '2026-01-02', deleted: 'soft_deleted', purged: 'purged' });
     expect({ engine: engine.kind, seen }).toEqual({ engine: engine.kind, seen: {
       'slug:segmented': twin('segmented'), 'slug:inline': twin('inline'), 'slug:same_body': true,
       '*:segmented': twin('segmented'), '*:inline': twin('inline'), '*:same_body': true } });

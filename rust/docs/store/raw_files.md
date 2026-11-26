@@ -40,6 +40,9 @@ Cascades:
 - Page hard delete (`remove_page_rows`): deletes the page's raw data (`ON DELETE CASCADE`) and sets
   `page_id` to null on its files (`ON DELETE SET NULL`). The file rows and their `page_slug` stay.
   Soft delete changes nothing here; `getRawData` hides the rows of a soft-deleted page.
+- Page rename (`updateSlug`, `aliases.rs`): `rename_page_files` gives the page's files named by the old slug the new
+  `page_slug`, finding them through the `r 0x03` page index, so only rows bound by `page_id` move. A file with no
+  `page_id` stays, as on PGLite.
 - Source delete (`remove_source_rows`): deletes the files of that source and their page index entries.
   Raw data hangs off pages, so the page hook removes it. Files are keyed by path, so the hook scans every
   file record.

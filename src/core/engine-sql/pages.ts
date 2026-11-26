@@ -573,7 +573,10 @@ export async function listPages(exec: ScopedRead, filters?: PageFilters): Promis
     const columns = filters?.listColumnsOnly === true
       ? sqlFragment`p.id, p.source_id, p.slug, p.type, p.page_kind, p.title, p.created_at, p.updated_at, p.deleted_at,
           p.effective_date, p.effective_date_source, p.body_storage, p.body_bytes, ''::text AS compiled_truth, ''::text AS timeline, '{}'::jsonb AS frontmatter`
-      : sqlFragment`p.*`;
+      : filters?.omitBodies === true
+        ? sqlFragment`p.id, p.source_id, p.slug, p.type, p.page_kind, p.title, p.created_at, p.updated_at, p.deleted_at,
+          p.effective_date, p.effective_date_source, p.body_storage, p.body_bytes, ''::text AS compiled_truth, ''::text AS timeline, p.frontmatter`
+        : sqlFragment`p.*`;
       const { rows } = await exec.run(sqlFragment`
         SELECT ${columns}, to_char(p.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at_iso FROM pages p
         ${tagJoin}

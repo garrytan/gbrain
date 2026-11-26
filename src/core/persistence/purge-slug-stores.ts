@@ -1,5 +1,5 @@
 import type { BrainEngine } from '../engine.ts';
-import { dropPurgedCandidates, holdOwnedByDeletedPageSql } from '../write-gate-binding.ts';
+import { dropPurgedCandidates, holdOwnedByDeletedPageSql, noteKeptHoldsCte } from '../write-gate-binding.ts';
 
 /** Each store keyed to a page by source and slug outside any foreign key, with its slug column, keyed as the purge receipt names it. */
 const SLUG_STORES: ReadonlyArray<readonly [table: string, column: string]> = [
@@ -68,8 +68,14 @@ export async function scrubPurgedSlugHolds(
   pages: ReadonlyArray<{ slug: string; id?: number | null; deletedAt?: string | null }>,
 ): Promise<{ write_gate_holds: number; write_gate_receipts: number }> {
   if (!pages.length) return { write_gate_holds: 0, write_gate_receipts: 0 };
-  const holds: string[] = (await engine.executeRaw<{ id: string }>(`DELETE FROM write_gate_holds h USING unnest($2::text[], $3::bigint[], $4::timestamptz[]) AS d(slug, id, upto)
-    WHERE h.source_id = $1 AND ${holdOwnedByDeletedPageSql('h', 'd.id', 'd.slug')} AND (d.upto IS NULL OR GREATEST(h.created_at, h.last_seen_at) <= d.upto) RETURNING h.id::text AS id`,
+  // One statement: the holds kept for another page are noted in the delete decision's own snapshot (write-gate-binding.ts),
+  // once the notes table exists (a brain whose v337 migration has not run yet still purges).
+  const upto = '(d.upto IS NULL OR GREATEST(h.created_at, h.last_seen_at) <= d.upto)';
+  const [notes] = await engine.executeRaw<{ ok: boolean }>("SELECT pg_catalog.to_regclass('write_gate_hold_rechecks') IS NOT NULL AS ok");
+  const noted = notes?.ok ? `, ${noteKeptHoldsCte('$1', 'd.id', 'd.slug', q => `EXISTS (SELECT 1 FROM d WHERE d.id = ${q}.id)`, 'FROM d', upto)}` : '';
+  const holds: string[] = (await engine.executeRaw<{ id: string }>(`WITH d AS (SELECT * FROM unnest($2::text[], $3::bigint[], $4::timestamptz[]) AS d(slug, id, upto))${noted}
+    DELETE FROM write_gate_holds h USING d
+    WHERE h.source_id = $1 AND ${holdOwnedByDeletedPageSql('h', 'd.id', 'd.slug')} AND ${upto} RETURNING h.id::text AS id`,
   [sourceId, pages.map(p => p.slug), pages.map(p => p.id ?? null), pages.map(p => p.deletedAt ?? null)])).map(h => h.id);
   holds.push(...await dropPurgedCandidates(engine, sourceId, pages));
   const receipts = holds.length ? (await engine.executeRaw("DELETE FROM write_gate_receipts WHERE target_table = 'write_gate_holds' AND target_id = ANY($1::text[]) RETURNING 1", [holds])).length : 0;

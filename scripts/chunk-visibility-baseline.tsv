@@ -45,3 +45,4 @@ src/core/sync-status-report.ts	1
 src/eval/brainbench/metrics/deletion.ts	1
 src/eval/brainbench/metrics/trust-reads.ts	1
 src/eval/longmemeval/retrieval-arms.ts	1
+src/core/engine-sql/facts-purge.ts	1

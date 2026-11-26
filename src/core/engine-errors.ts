@@ -50,3 +50,16 @@ export function assertPurgeAge(olderThanHours: number): void {
     throw new PurgeAgeError(olderThanHours);
   }
 }
+
+/**
+ * A read whose trust floor (`minTrust`, a policy `floor`) names no trust tier. Every engine refuses it with this error,
+ * code `invalid_argument`, before it builds a statement (an empty tier list is not valid SQL: `trust_tier IN ()`).
+ * The message is the Rust store's.
+ */
+export class TrustFloorError extends Error {
+  readonly code = 'invalid_argument';
+  constructor(public readonly floor: unknown) {
+    super(`minTrust: "${String(floor)}" names no trust tier`);
+    this.name = 'TrustFloorError';
+  }
+}

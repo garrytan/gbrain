@@ -97,6 +97,10 @@ fn decode_i64(value: Option<Vec<u8>>) -> Result<i64> {
 
 pub trait Kv: Send + Sync {
     fn snapshot(&self) -> Result<Box<dyn KvRead>>;
+    /// A snapshot that can move to another thread, with the commit sequence it sees. The sequence
+    /// is read from inside the snapshot, so the two always agree: a `snapshot` and a `version`
+    /// taken apart can straddle a commit. The store snapshot (`snapshot.rs`) pins one.
+    fn versioned_snapshot(&self) -> Result<(Box<dyn KvRead + Send>, u64)>;
     fn begin_write(&self) -> Result<Box<dyn KvWrite>>;
     /// Begins a write that runs again after it lost a conflict on `keys`. A store with concurrent
     /// writers first queues for those keys (a row lock); a single-writer store ignores them.
@@ -112,6 +116,11 @@ pub trait Kv: Send + Sync {
     /// one. A single-writer store's `begin_write` already is one.
     fn begin_write_exclusive(&self) -> Result<Box<dyn KvWrite>> {
         self.begin_write()
+    }
+    /// True for a handle that refuses every write (`Store::open_dir_read_only`): a restore asks before it
+    /// touches anything, without beginning a write.
+    fn is_read_only(&self) -> bool {
+        false
     }
     /// The commit sequence of the latest commit (0 on a database nothing was committed to).
     fn version(&self) -> Result<u64>;

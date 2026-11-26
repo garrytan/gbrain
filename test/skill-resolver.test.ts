@@ -28,18 +28,21 @@ import { estimateTokens } from '../src/core/skills/resolver/block.ts';
 import { acquireLease, holdsLease, releaseLease, tryAcquireLease } from '../src/core/skills/resolver/lock.ts';
 import { commitSession, commitSessionAsync, gcSessions, gcSessionsAsync, loadSession, sessionGcSettled, sessionKey } from '../src/core/skills/resolver/session.ts';
 import { catalogFile } from '../src/core/skills/resolver/paths.ts';
+import { parseSkillDoc } from '../src/core/skills/resolver/frontmatter.ts';
 import { appendDailyLog, appendDailyLogSync, DAILY_LOG_DAY_CAP_BYTES, dailyLogFile, LANE_LOG, readRecentDailyLog, RESOLVER_LOG } from '../src/core/skills/resolver/daily-log.ts';
 import { EXCLUDE_MAX, STAT_CHECK_SLICE } from '../src/core/skills/resolver/resolve.ts';
 import { RACY_MTIME_MS } from '../src/core/skills/resolver/build.ts';
 import { TOP_GATE_DEFAULT } from '../src/core/skills/resolver/limits.ts';
 import { DEFAULT_SESSION_TOKEN_BUDGET } from '../src/core/skills/resolver/config.ts';
 import { CODES } from '../src/core/error-registry.ts';
+import { pinnedBlockFor, writePins } from '../src/core/setup/skill-pins.ts';
+import { readResolverConfig } from '../src/core/setup/skill-resolver-config.ts';
 
 const scratch: string[] = [];
 afterAll(() => { for (const d of scratch) rmSync(d, { recursive: true, force: true }); });
 function tmp(prefix = 'skres-'): string { const d = mkdtempSync(join(tmpdir(), prefix)); scratch.push(d); return d; }
 
-interface J { id: string; name: string; description?: string; triggers?: string[]; routing?: string[]; body?: string; path?: string; eligible?: boolean }
+interface J { id: string; name: string; description?: string; triggers?: string[]; routing?: string[]; body?: string; path?: string; eligible?: boolean; deprecated?: boolean; replaced_by?: string }
 async function jsonCatalog(home: string, catalog: string, skills: J[], extra: Record<string, unknown> = {}) {
   const f = join(tmp('skres-src-'), 'catalog.json');
   writeFileSync(f, JSON.stringify(skills));
@@ -348,17 +351,18 @@ describe('sessions', () => {
     await jsonCatalog(home, 'c', [...targets, ...weak]);
     const strong = [1, 10, 18, 25, 37, 50];
     const perTurn: { turn: number; n: number; tokens: number }[] = [];
+    // pregate-literal: DEFAULT_SESSION_TOKEN_BUDGET=2000 this test pins the old budget on purpose to check pacing under a tight budget
+    const budget = 2000;
     for (let t = 1; t <= 50; t++) {
       const s = strong.indexOf(t);
       const message = s >= 0 ? `can you ${targets[s]!.name} this` : `${pool[t % 12]} ${pool[(t + 5) % 12]}`;
-      // pregate-literal: DEFAULT_SESSION_TOKEN_BUDGET=2000 this test pins the old budget on purpose to check pacing under a tight budget
-      const r = await resolveSkills({ message, session_id: 'fifty', top_gate: 0 }, { home, sessionTokenBudget: 2000 });
+      const r = await resolveSkills({ message, session_id: 'fifty', top_gate: 0 }, { home, sessionTokenBudget: budget });
       perTurn.push({ turn: t, n: r.output.suggestions.length, tokens: r.output.block_tokens });
       expect(await r.commit()).toBe(true);
     }
     for (const t of [10, 25, 50]) expect({ turn: t, n: perTurn[t - 1]!.n > 0 }).toEqual({ turn: t, n: true });
     const total = perTurn.reduce((a, x) => a + x.tokens, 0);
-    expect(total).toBeLessThanOrEqual(2000);
+    expect(total).toBeLessThanOrEqual(budget);
     expect(sessionStatus('fifty', { home }).spent).toBe(total);
     const late = perTurn.filter(x => x.turn > 12 && !strong.includes(x.turn));
     expect(late.every(x => x.n === 0)).toBe(true);
@@ -594,6 +598,24 @@ describe('block', () => {
     const custom = await resolveSkills({ message: 'deploy', top_gate: 0 }, { home, loadHint: 'Load it with my_loader <now>' });
     expect(custom.output.block).toContain('Load it with my_loader  now');
     expect(custom.output.suggestions[0]!.path).toBe(p);
+  });
+
+  test('openclaw: the path comes first unless a suggested skill sits outside the root the agent may read', async () => {
+    const home = tmp();
+    const root = tmp('skres-dir-');
+    skillDir(root, 'deploy', { name: 'deploy', description: 'Ship a service to production' });
+    await buildSkillIndex({ catalog: 'c', dirs: [root] }, { home });
+    const block = async (readRoot?: string) => (await resolveSkills({ message: 'deploy', harness: 'openclaw', top_gate: 0 }, { home, ...(readRoot === undefined ? {} : { readRoot }) })).output.block;
+    const pathFirst = 'To use one, read the SKILL.md at its path with read before acting; if that read fails, load it with skills_read({name})';
+    const nameFirst = 'To use one, load it with skills_read({name}) using its name (through dispatch_action when skills_read is not listed) before acting';
+    for (const b of [await block(), await block(root)]) {
+      expect(b).toContain(pathFirst);
+      expect(b.indexOf('read the SKILL.md')).toBeLessThan(b.indexOf('skills_read'));
+    }
+    for (const b of [await block(tmp('skres-other-')), await block('')]) {
+      expect(b).toContain(nameFirst);
+      expect(b).not.toContain('read the SKILL.md');
+    }
   });
 
   test('codex can load by path from the block alone', async () => {
@@ -1064,5 +1086,152 @@ describe('daily logs', () => {
     writeFileSync(full, 'y'.repeat(DAILY_LOG_DAY_CAP_BYTES));
     await appendDailyLog(dir, LANE_LOG, 'z\n', now + day);
     expect(readFileSync(full, 'utf8').endsWith('z\n')).toBe(false);
+  });
+});
+
+describe('deprecated skills', () => {
+  test('a SKILL.md with deprecated: true drops out of matched suggestions but still loads when the turn names it, with its replacement in the reason', async () => {
+    const home = tmp();
+    const root = tmp('skres-dir-');
+    const old = skillDir(root, 'reports', { name: 'reports', description: 'Write weekly status reports for a team', deprecated: true, replaced_by: 'status-digest' });
+    skillDir(root, 'status-digest', { name: 'status-digest', description: 'Write a weekly status digest for a team' });
+    await buildSkillIndex({ catalog: 'c', dirs: [root] }, { home });
+    const matched = await resolveSkills({ message: 'write the weekly status reports for the team', top_k: 8, top_gate: 0 }, { home });
+    expect(matched.output.suggestions.map(s => s.id)).toEqual(['status-digest']);
+    const named = await resolveSkills({ message: 'use the reports skill', top_gate: 0 }, { home });
+    expect(named.output.suggestions[0]).toMatchObject({ id: 'reports', match_strength: 'named', path: old });
+    expect(named.output.suggestions[0]!.reason).toStartWith('named in the turn; deprecated, use status-digest instead; ');
+  });
+
+  test('a JSON entry takes deprecated and replaced_by the same way, and a deprecated that is not a boolean is refused', async () => {
+    const home = tmp();
+    await jsonCatalog(home, 'c', [...BASIC, { id: 'gbrain:old-deploy', name: 'old-deploy', description: 'Ship a service to production after the tests pass', deprecated: true }]);
+    const matched = await resolveSkills({ message: 'ship the service to production', top_k: 8, top_gate: 0 }, { home });
+    expect(matched.output.suggestions.map(s => s.id)).not.toContain('gbrain:old-deploy');
+    expect(matched.output.suggestions[0]!.id).toBe('gbrain:deploy');
+    const named = await resolveSkills({ message: 'run /old-deploy now', top_gate: 0 }, { home });
+    expect(named.output.suggestions[0]).toMatchObject({ id: 'gbrain:old-deploy', match_strength: 'named' });
+    expect(named.output.suggestions[0]!.reason).toStartWith('named in the turn; deprecated; ');
+    expect(await codeOf(jsonCatalog(tmp(), 'c', [{ id: 'a', name: 'a', deprecated: 'yes' } as unknown as J]))).toBe('skill_source_invalid');
+    expect(await codeOf(jsonCatalog(tmp(), 'c', [{ id: 'a', name: 'a', replaced_by: 3 } as unknown as J]))).toBe('skill_source_invalid');
+  });
+});
+
+describe('owner-only skills (audience: owner)', () => {
+  test('a SKILL.md with audience: owner is offered to the owner only: outside the owner it is never suggested, matched or named', async () => {
+    const home = tmp();
+    const root = tmp('skres-dir-');
+    skillDir(root, 'private-ledger', { name: 'private-ledger', description: 'Review the private household ledger and its balances', audience: 'owner' });
+    skillDir(root, 'ledger-export', { name: 'ledger-export', description: 'Export a ledger to a spreadsheet' });
+    await buildSkillIndex({ catalog: 'c', dirs: [root] }, { home });
+    const ask = (message: string, audience?: 'owner' | 'others') => resolveSkills({ message, top_k: 8, top_gate: 0 }, { home, ...(audience ? { audience } : {}) });
+    expect((await ask('review the private household ledger balances', 'owner')).output.suggestions.map(s => s.id)).toContain('private-ledger');
+    expect((await ask('review the private household ledger balances', 'others')).output.suggestions.map(s => s.id)).not.toContain('private-ledger');
+    expect((await ask('use the private-ledger skill', 'others')).output.suggestions.map(s => s.id)).not.toContain('private-ledger');
+    expect((await ask('review the private household ledger balances')).output.suggestions.map(s => s.id)).toContain('private-ledger');
+  });
+
+  test('a JSON entry takes audience the same way, its catalog hash changes with it, and a non-string audience is refused', async () => {
+    const home = tmp();
+    const a = await jsonCatalog(home, 'c', [...BASIC, { id: 'x:diary', name: 'diary', description: 'Write the owner diary entry for today' }]);
+    const b = await jsonCatalog(home, 'c', [...BASIC, { id: 'x:diary', name: 'diary', description: 'Write the owner diary entry for today', audience: 'owner' } as J]);
+    expect(b.catalog.catalog_hash).not.toBe(a.catalog.catalog_hash);
+    const others = await resolveSkills({ message: 'write the owner diary entry for today', top_k: 8, top_gate: 0 }, { home, audience: 'others' });
+    expect(others.output.suggestions.map(s => s.id)).not.toContain('x:diary');
+    expect(await codeOf(jsonCatalog(tmp(), 'c', [{ id: 'a', name: 'a', audience: 3 } as unknown as J]))).toBe('skill_source_invalid');
+  });
+
+  test('a catalog built before audiences were recorded offers nothing outside the owner and marks itself stale', async () => {
+    const home = tmp();
+    const root = tmp('skres-dir-');
+    skillDir(root, 'ledger-export', { name: 'ledger-export', description: 'Export a ledger to a spreadsheet' });
+    await buildSkillIndex({ catalog: 'c', dirs: [root] }, { home });
+    const receiptPath = catalogFile(home, 'c', 'receipt.json');
+    const receipt = JSON.parse(readFileSync(receiptPath, 'utf8'));
+    delete receipt.catalog.audiences;
+    writeFileSync(receiptPath, JSON.stringify(receipt));
+    const others = await resolveSkills({ message: 'export the ledger to a spreadsheet', top_k: 8, top_gate: 0 }, { home, audience: 'others' });
+    expect(others.output.suggestions).toEqual([]);
+    expect(others.output.meta.index_stale).toBe(true);
+    expect(existsSync(catalogFile(home, 'c', 'stale.stamp'))).toBe(true);
+    const owner = await resolveSkills({ message: 'export the ledger to a spreadsheet', top_k: 8, top_gate: 0 }, { home, audience: 'owner' });
+    expect(owner.output.suggestions.map(s => s.id)).toEqual(['ledger-export']);
+  });
+
+  test('any other audience value fails closed: a list or a typo keeps the skill to the owner', async () => {
+    const home = tmp();
+    const root = tmp('skres-dir-');
+    skillDir(root, 'ledger-typo', { name: 'ledger-typo', description: 'Review the private household ledger typo copy', audience: 'owners' });
+    mkdirSync(join(root, 'ledger-list'), { recursive: true });
+    writeFileSync(join(root, 'ledger-list', 'SKILL.md'), '---\nname: ledger-list\ndescription: Review the private household ledger list copy\naudience:\n  - owner\n---\nSteps.\n');
+    skillDir(root, 'ledger-export', { name: 'ledger-export', description: 'Export the household ledger to a spreadsheet' });
+    await buildSkillIndex({ catalog: 'c', dirs: [root] }, { home });
+    const others = await resolveSkills({ message: 'review the private household ledger', top_k: 8, top_gate: 0 }, { home, audience: 'others' });
+    expect(others.output.suggestions.map(s => s.id)).not.toContain('ledger-typo');
+    expect(others.output.suggestions.map(s => s.id)).not.toContain('ledger-list');
+    const owner = await resolveSkills({ message: 'review the private household ledger', top_k: 8, top_gate: 0 }, { home, audience: 'owner' });
+    expect(owner.output.suggestions.map(s => s.id)).toEqual(expect.arrayContaining(['ledger-typo', 'ledger-list']));
+  });
+
+  test('a non-string audience fails closed too: true, a number, a mapping, or front matter that does not parse', async () => {
+    const home = tmp();
+    const root = tmp('skres-dir-');
+    const fm = (name: string, audience: string, extra = '') => {
+      mkdirSync(join(root, name), { recursive: true });
+      writeFileSync(join(root, name, 'SKILL.md'), '---\nname: ' + name + '\ndescription: Review the private household ledger ' + name + ' copy\naudience: ' + audience + '\n' + extra + '---\nSteps.\n');
+    };
+    fm('ledger-true', 'true');
+    fm('ledger-number', '1');
+    fm('ledger-map', '\n  who: owner');
+    fm('ledger-broken', 'owner', 'triggers: [unclosed\n');
+    skillDir(root, 'ledger-export', { name: 'ledger-export', description: 'Export the household ledger to a spreadsheet' });
+    await buildSkillIndex({ catalog: 'c', dirs: [root] }, { home });
+    const ids = ['ledger-true', 'ledger-number', 'ledger-map', 'ledger-broken'];
+    const others = await resolveSkills({ message: 'review the private household ledger copy', top_k: 8, top_gate: 0 }, { home, audience: 'others' });
+    for (const id of ids) expect(others.output.suggestions.map(s => s.id)).not.toContain(id);
+    const owner = await resolveSkills({ message: 'review the private household ledger copy', top_k: 8, top_gate: 0 }, { home, audience: 'owner' });
+    expect(owner.output.suggestions.map(s => s.id)).toEqual(expect.arrayContaining(ids));
+  });
+
+  test('an audience key stays owner-only when the front matter is never closed, quotes the key or spells it in another case', () => {
+    for (const doc of [
+      '---\nname: a\ndescription: Review the ledger\naudience: owner\n\nSteps.\n',
+      '---\nname: a\n"audience": owner\ntriggers: [unclosed\n---\nSteps.\n',
+      '---\nname: a\nAudience: owner\n---\nSteps.\n',
+      '\uFEFF---\nname: a\naudience: owner\n---\nSteps.\n',
+      '---  \nname: a\naudience: owner\n\nSteps.\n',
+    ]) expect(parseSkillDoc(doc).audience).toBe('owner');
+    expect(parseSkillDoc('Steps.\naudience: owner\n').audience).toBeUndefined();
+    expect(parseSkillDoc('---\nname: a\ndescription: Review the ledger\n---\nSteps.\n').audience).toBeUndefined();
+  });
+
+  test('conversation pins from a catalog built before audiences were recorded are all withheld until it is rebuilt', async () => {
+    const home = tmp();
+    const root = tmp('skres-dir-');
+    skillDir(root, 'ledger-export', { name: 'ledger-export', description: 'Export a ledger to a spreadsheet' });
+    await buildSkillIndex({ catalog: 'openclaw-main', dirs: [root] }, { home });
+    const read = readResolverConfig(home);
+    if (read.state === 'unreadable') throw new Error('config unreadable');
+    writePins(read, 'openclaw-main', [{ name: 'ledger-export', classes: ['owner', 'conversation'] }]);
+    expect(pinnedBlockFor(home, 'openclaw-main', 'openclaw', undefined, { cls: 'conversation' }).withheld).toEqual([]);
+    const receiptPath = catalogFile(home, 'openclaw-main', 'receipt.json');
+    const receipt = JSON.parse(readFileSync(receiptPath, 'utf8'));
+    delete receipt.catalog.audiences;
+    writeFileSync(receiptPath, JSON.stringify(receipt));
+    const conversation = pinnedBlockFor(home, 'openclaw-main', 'openclaw', undefined, { cls: 'conversation' });
+    expect(conversation.withheld).toEqual(['ledger-export']);
+    expect(conversation.block).toBe('');
+    expect(pinnedBlockFor(home, 'openclaw-main', 'openclaw', undefined, { cls: 'owner' }).withheld).toEqual([]);
+  });
+
+  test('hidden ids from the caller are never suggested, and more than EXCLUDE_MAX of them still all count', async () => {
+    const home = tmp();
+    const skills: J[] = Array.from({ length: EXCLUDE_MAX + 20 }, (_, i) => ({ id: `h:${String(i).padStart(4, '0')}`, name: `chore-${i}`, description: `Handle filler chore number ${i}` }));
+    await jsonCatalog(home, 'c', skills);
+    const message = `handle filler chore number ${EXCLUDE_MAX + 19}`;
+    const shown = await resolveSkills({ message, top_k: 3, top_gate: 0 }, { home });
+    expect(shown.output.suggestions.map(s => s.id)).toContain(skills.at(-1)!.id);
+    const hidden = await resolveSkills({ message, top_k: 3, top_gate: 0 }, { home, hidden: skills.map(s => s.id) });
+    expect(hidden.output.suggestions).toEqual([]);
   });
 });
