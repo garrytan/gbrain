@@ -2742,7 +2742,8 @@
           "3 process_kind text/text NOT NULL",
           "4 gbrain_version text/text NOT NULL",
           "5 first_seen timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
-          "6 last_seen timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+          "6 last_seen timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "7 write_protocol integer/int4 NULL"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },

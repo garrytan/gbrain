@@ -25,7 +25,7 @@ import { appendUsage } from './usage.ts';
 import { wrapShadowEngine } from './wrapper.ts';
 import { createWriteSampler } from './write-capture.ts';
 import { recordLost } from './write-compare.ts';
-import { WriterObserver, type WriterIdentity } from './writer-observations.ts';
+import { WRITE_PROTOCOL, WriterObserver, type WriterIdentity } from './writer-observations.ts';
 import { ensureWriterHooks, primaryTakesWriterHooks } from './writer-hooks.ts';
 import { claimOwner } from '../core/persistence/claim-phase.ts';
 import { hostIdFor } from '../core/persistence/identity.ts';
@@ -159,7 +159,7 @@ export function writerIdentity(engine: BrainEngine): WriterIdentity {
   const owner = claimOwner();
   // The same text db.ts gbrainApplicationName() gives the pools (pinned by a test), without loading the driver here.
   const applicationName = `gbrain ${owner.kind}:${owner.pid}:${(owner.nonce ?? '').slice(0, 8)}`.slice(0, 63);
-  return { hostId: hostIdFor(engine), applicationName, processKind: owner.kind, gbrainVersion: VERSION };
+  return { hostId: hostIdFor(engine), applicationName, processKind: owner.kind, gbrainVersion: VERSION, writeProtocol: WRITE_PROTOCOL };
 }
 
 /** The engine factory's entry point: the wrapped engine. */

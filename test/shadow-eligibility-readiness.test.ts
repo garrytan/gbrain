@@ -15,6 +15,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { evaluateReadiness, type ShadowStatus } from '../src/core/engine-swap/readiness.ts';
 import { buildEligibilityStatus } from '../src/shadow/eligibility.ts';
+import { ensureEpoch } from '../src/shadow/evidence-epoch.ts';
 import { WriterObserver } from '../src/shadow/writer-observations.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { readConfiguredShadowStatus } from '../src/shadow/status-document.ts';
@@ -50,9 +51,9 @@ async function observe(host: string, app: string): Promise<void> {
   o.stop();
 }
 
-async function criterion11(input: { engine?: BrainEngine; unknown?: number; brain?: string; target?: string | null }) {
+async function criterion11(input: { engine?: BrainEngine; unknown?: number; brain?: string; target?: string | null; dir?: string }) {
   const out = await buildEligibilityStatus({
-    dir, state: null, engine: input.engine, source: { name: 'test', unknownPaths: () => input.unknown ?? 0 },
+    dir: input.dir ?? dir, state: null, engine: input.engine, source: { name: 'test', unknownPaths: () => input.unknown ?? 0 },
     brainId: () => input.brain ?? 'host', addonTarget: () => (input.target === undefined ? 'linux-x64-glibc' : input.target),
   });
   const verdict = evaluateReadiness({ eligibility: out.eligibility } as ShadowStatus);
@@ -236,5 +237,62 @@ describe('the status document the swap reads', () => {
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
+  });
+});
+
+describe('criterion 11 counts writers of an older build (write_protocol)', () => {
+  const HOST = '11111111-1111-4111-8111-111111111111';
+  const epochDir = (startedAtMs: number): string => {
+    const d = mkdtempSync(join(tmpdir(), 'gbrain-elig-protocol-'));
+    ensureEpoch(d, { seed_id: 's', rust_addon_sha256: 'a', comparator_version: 4, adapter_version: 'x', capability_set_hash: null, readiness_policy_hash: 'p' }, startedAtMs);
+    return d;
+  };
+  const insertRow = (app: string, protocol: number | null, lastSeen: string): Promise<unknown> =>
+    primary.executeRaw(`INSERT INTO engine_writer_observations (host_id, application_name, process_kind, gbrain_version, write_protocol, last_seen) VALUES ($1, $2, 'cli', 'old', $3, $4::timestamptz)`, [HOST, app, protocol, lastSeen]);
+
+  test('M1: a row with no write_protocol seen in the epoch is an unknown writer path: criterion 11 fails, and the producer names it', async () => {
+    const d = epochDir(Date.now() - 3_600_000);
+    await observe(HOST, 'gbrain cli:1:aaaaaaaa');
+    await insertRow('gbrain cli:2:old00000', null, new Date().toISOString());
+    const { out, row, verdict } = await criterion11({ engine: primary, dir: d });
+    expect(out.eligibility).toMatchObject({ legacy_write_writers: 1, unknown_writer_paths: 1 });
+    expect(row.state).toBe('fail');
+    expect(row.detail).toContain('older build');
+    expect(verdict.reason).toBe('writer_coverage_unknown');
+    rmSync(d, { recursive: true, force: true });
+  });
+
+  test('M1: a row with a lower write_protocol is the same, and a row of this build (write_protocol 2) passes', async () => {
+    const d = epochDir(Date.now() - 3_600_000);
+    await observe(HOST, 'gbrain cli:1:aaaaaaaa'); // written by this build: protocol 2
+    expect((await primary.executeRaw<{ write_protocol: number }>('SELECT write_protocol FROM engine_writer_observations'))[0]!.write_protocol).toBe(2);
+    expect((await criterion11({ engine: primary, dir: d })).row.state).toBe('pass');
+    await insertRow('gbrain cli:3:lower000', 1, new Date().toISOString());
+    const { out, row } = await criterion11({ engine: primary, dir: d });
+    expect(out.eligibility.legacy_write_writers).toBe(1);
+    expect(row.state).toBe('fail');
+    rmSync(d, { recursive: true, force: true });
+  });
+
+  test('M1: an older writer last seen before the epoch started (less the 10 minute refresh slack) is ignored; one inside the slack counts', async () => {
+    const started = Date.now() - 3_600_000; const d = epochDir(started);
+    await observe(HOST, 'gbrain cli:1:aaaaaaaa');
+    await insertRow('gbrain cli:4:before00', null, new Date(started - 11 * 60_000).toISOString());
+    expect((await criterion11({ engine: primary, dir: d })).row.state).toBe('pass');
+    await insertRow('gbrain cli:5:slack000', null, new Date(started - 5 * 60_000).toISOString());
+    expect((await criterion11({ engine: primary, dir: d })).out.eligibility.legacy_write_writers).toBe(1);
+    rmSync(d, { recursive: true, force: true });
+  });
+
+  test('M1: with no epoch on disk the window start bounds it; and where the migration has not run (no write_protocol column) the read fails and criterion 11 is missing, never a pass', async () => {
+    await observe(HOST, 'gbrain cli:1:aaaaaaaa');
+    await insertRow('gbrain cli:6:oldnoepo', null, new Date().toISOString());
+    expect((await criterion11({ engine: primary })).out.eligibility.legacy_write_writers).toBe(1);
+    await primary.executeRaw('ALTER TABLE engine_writer_observations DROP COLUMN write_protocol');
+    try {
+      const { out, row } = await criterion11({ engine: primary });
+      expect(out.eligibility_evidence).toMatchObject({ state: 'read_failed' });
+      expect(row.state).toBe('missing');
+    } finally { await primary.executeRaw('ALTER TABLE engine_writer_observations ADD COLUMN IF NOT EXISTS write_protocol INTEGER'); }
   });
 });

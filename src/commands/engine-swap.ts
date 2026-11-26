@@ -104,7 +104,7 @@ function freeBytes(path: string): number | null {
   try { const s = statfsSync(path); return Number(s.bavail) * Number(s.bsize); } catch { return null; }
 }
 
-export interface EngineSwapCliDeps extends Pick<SwapPlanInputs, 'readShadowStatus' | 'now'> {
+export interface EngineSwapCliDeps extends Pick<SwapPlanInputs, 'readShadowStatus' | 'now' | 'clock' | 'sleep'> {
   env?: Readonly<Record<string, string | undefined>>;
   home?: string;
   /** Directory whose file system the plan reports free space for (default: home). */
@@ -157,7 +157,7 @@ export async function runEngineSwap(args: readonly string[], deps: EngineSwapCli
     const home = deps.home ?? env.HOME ?? '';
     const dataDir = deps.dataDir ?? home;
     const plan = await planEngineSwap(engine, {
-      readShadowStatus: deps.readShadowStatus, now: deps.now,
+      readShadowStatus: deps.readShadowStatus, now: deps.now, clock: deps.clock, sleep: deps.sleep,
       envNames: ENGINE_SELECTING_ENV.filter(v => (env[v] ?? '') !== ''),
       services: home ? serviceDefinitions(home) : [],
       disk: { path: dataDir, free_bytes: dataDir ? freeBytes(dataDir) : null },

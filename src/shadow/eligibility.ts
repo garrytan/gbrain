@@ -21,6 +21,7 @@ import { HOST_BRAIN_ID } from '../core/brain-registry.ts';
 import { detectAddonTarget } from '../core/rust-engine/addon-target.ts';
 import { RELEASE_ADDON_TARGETS } from '../core/rust-engine/addon-manifest.ts';
 import type { ShadowState } from './state.ts';
+import { readEpoch } from './evidence-epoch.ts';
 import { OBSERVATION_REFRESH_MS, readWriterEvidence } from './writer-observations.ts';
 import { primaryTakesWriterHooks, WRITER_EVIDENCE_TABLES, WRITER_HOOK_TRIGGER } from './writer-hooks.ts';
 import { planAsWrittenSource, type WriterCoverageSource } from './writer-coverage.ts';
@@ -30,6 +31,8 @@ export const ELIGIBILITY_WINDOW_MS = 7 * 86_400_000;
 export interface EligibilityFields {
   writer_hosts_7d?: number;
   unknown_writer_paths?: number;
+  /** Observed writers in this evidence epoch (less the refresh slack) with no `write_protocol` or one below this build's: counted in `unknown_writer_paths`, named here. */
+  legacy_write_writers?: number;
   team_brain: boolean;
   preview_target: boolean;
 }
@@ -111,11 +114,14 @@ export async function buildEligibilityStatus(input: EligibilityInput): Promise<E
   const stateMissing = input.stateRequired === true && !input.state;
   let ev;
   try {
-    ev = await readWriterEvidence(input.engine, since, hooksExpected, WRITER_HOOK_TRIGGER, WRITER_EVIDENCE_TABLES);
+    // A writer of an older build (no write_protocol, or a lower one) seen since this evidence epoch began may have lost write samples nothing can prove were recorded: it counts from the epoch start (less the refresh slack), or the window start when there is no epoch.
+    const epochStart = Date.parse(readEpoch(input.dir)?.started_at ?? '');
+    const legacySince = Number.isFinite(epochStart) ? new Date(Math.max(since.getTime(), epochStart - OBSERVATION_REFRESH_MS)) : since;
+    ev = await readWriterEvidence(input.engine, since, hooksExpected, WRITER_HOOK_TRIGGER, WRITER_EVIDENCE_TABLES, legacySince);
   } catch (error) {
     return { eligibility: fields, eligibility_evidence: { state: 'read_failed', code: errorCode(error) } };
   }
   const source = input.source ?? planAsWrittenSource(input.dir);
-  const unknown = ev.unresolved + ev.gaps + ev.unhooked + ev.uncovered_roles + source.unknownPaths(since) + coverageBreaks(input.state, since) + (stateDisagrees ? 1 : 0) + (stateMissing ? 1 : 0);
-  return { eligibility: { writer_hosts_7d: ev.hosts, unknown_writer_paths: unknown, ...fields } };
+  const unknown = ev.legacy_write_writers + ev.unresolved + ev.gaps + ev.unhooked + ev.uncovered_roles + source.unknownPaths(since) + coverageBreaks(input.state, since) + (stateDisagrees ? 1 : 0) + (stateMissing ? 1 : 0);
+  return { eligibility: { writer_hosts_7d: ev.hosts, unknown_writer_paths: unknown, legacy_write_writers: ev.legacy_write_writers, ...fields } };
 }
