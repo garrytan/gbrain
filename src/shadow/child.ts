@@ -34,7 +34,7 @@ import { FollowChild, type FollowEvent, type FollowStore } from './follow-child.
 import { appendFault, appendLedgerRows, writeSummaryFile, type ShadowLedgerRow, type ShadowSummaryFile } from './ledger.ts';
 import { newMirrorCounters, type MirrorCounters } from './mirror.ts';
 import { createWriteComparer } from './write-compare-child.ts';
-import { readSent, recordLostCount, sentPath, WriteTally } from './write-compare.ts';
+import { readReceipt, recordLostCount, sentPath, WriteTally } from './write-compare.ts';
 import { appendRecall, IntervalGate, recallEligible, RECALL_INTERVAL_MS, scoreRecall, type RankedKey } from './recall.ts';
 import { isShadowReadMember, SHADOW_READ_MEMBERS, type ShadowReadMember } from './reads.ts';
 import { readSeedRecord } from './seed.ts';
@@ -556,16 +556,19 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
     const timer = setTimeout(() => { summary.child_shed += pending.length; writes.abandon(); flush(true); deps.exit!(0); }, deps.exitDeadlineMs ?? SHADOW_CHILD_EXIT_DEADLINE_MS);
     (timer as { unref?: () => void }).unref?.();
   }
-  // The serving process wrote down how many write samples it sent us before it ended our stdin; what it sent and we never read was dropped in its pipe at its exit, and is counted once (supervisor.ts recordSent).
-  // The difference is written as lost samples (durable appends, split so none is cut; the owner child folds them into the tally exactly once), and the count is removed only after every one is down: a
-  // failed append leaves a fault line naming the rest (except a disk-write failure that also stops the fault line, see S2b).
-  const sent = readSent(shadowDir, session);
-  if (sent !== null) {
-    const missing = Math.max(0, sent - received);
-    const epoch = readEpoch(shadowDir)?.epoch_id;
-    const done = missing === 0 ? 0 : epoch === undefined ? 0 : recordLostCount(shadowDir, epoch, 'pipe_unflushed', missing);
-    if (done < missing) { try { appendFault(shadowDir, { ts: new Date(now()).toISOString(), kind: 'write_samples_unrecorded', detail: `pipe_unflushed n=${missing - done}`, ...(epoch ? { epoch_id: epoch } : {}) }); } catch { /* disk: the count is only in memory */ } }
-    try { rmSync(sentPath(shadowDir, session), { force: true }); } catch { /* a leftover count is read again by no one: its session is gone */ } // every sample is now received, recorded or named in a fault (except when both writes failed, see S2b)
+  // The serving process wrote down how many write samples it sent us before it ended our stdin (a receipt); what it sent and we never read was dropped in its pipe at its exit, and is counted once (supervisor.ts recordSent).
+  // The difference is written as lost samples (durable appends, split so none is cut; the owner child folds them into the tally exactly once), and the receipt is removed ONLY when every one is down: a fault line
+  // is a signal, never a settlement (no readiness input reads it), so a failed append keeps the receipt and status reads no evidence. A receipt that is there and cannot be read is a fault line and stays too; one of an older epoch is retired.
+  const receipt = readReceipt(shadowDir, session);
+  const epoch = readEpoch(shadowDir)?.epoch_id;
+  const faultLine = (detail: string): void => { try { appendFault(shadowDir, { ts: new Date(now()).toISOString(), kind: 'write_samples_unrecorded', detail, ...(epoch ? { epoch_id: epoch } : {}) }); } catch { /* disk: the receipt stays, which is what status reads */ } };
+  if (receipt === 'unreadable') faultLine(`sent_count_unreadable file=write-sent.${session.replace(/[^A-Za-z0-9_-]/g, '_')}.json`);
+  else if (receipt !== null) {
+    const missing = Math.max(0, receipt.sent - received);
+    const retired = receipt.epoch_id !== undefined && epoch !== undefined && receipt.epoch_id !== epoch; // samples of an epoch that is gone are not this epoch's evidence: never booked into it
+    const done = retired || missing === 0 ? missing : epoch === undefined ? 0 : recordLostCount(shadowDir, epoch, 'pipe_unflushed', missing);
+    if (done >= missing) { try { rmSync(sentPath(shadowDir, session), { force: true }); } catch { /* the receipt stays: the next owner worker settles it, or status reads no evidence */ } }
+    else faultLine(`pipe_unflushed n=${missing - done}`);
   }
   // The serving process ended our stdin: nothing it was asked can still be answered. A queued rerun ends as skipped.
   ask.closeAll(); waiter.close(); // a rerun waiting for a quiet window ends now, as skipped

@@ -790,6 +790,19 @@ describe('supervisor sample accounting (a sample is received, refused and counte
     h.done();
   });
 
+  test('a clean disconnect (drain, then stop) writes the sent count once: a count the child already took is never written again', async () => {
+    const h = harness();
+    h.sup.send(sample(0)); h.sup.send(sample(1));
+    const waiting = h.sup.drain(5_000);
+    h.children[0]!.flush();
+    await waiting;
+    expect(h.sent()).toBe(2);
+    rmSync(join(h.dir, `write-sent.${h.sessions[0]}.json`)); // the child took it and removed it
+    h.sup.stop();
+    expect(h.sent()).toBeNull(); // before: stop() wrote it again, and the next worker counted two samples that had arrived as lost
+    h.done();
+  });
+
   test('a sample weighs 1 plus the earlier losses it carries (its last field); a page key named dropped, nested or not, changes nothing', () => {
     expect(sampleWeight(sample(0, 10, ',"dropped":4'))).toBe(5);
     expect(sampleWeight(`{"t":"write","op":"putPage","args":[{"frontmatter":{"dropped":9}}],"pre":{"dropped":7}}\n`)).toBe(1);
