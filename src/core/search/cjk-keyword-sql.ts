@@ -179,7 +179,9 @@ export function buildCJKCandidateSql(
   };
 }
 
-/** #10417: the all-terms stage requires every cjkMatchGroups group (one of its alternatives); the any-term stage any term. */
+/** #10417: the all-terms stage requires every term of one cjkMatchGroups alternative; the any-term stage any term. */
+const anyOf = (alternatives: string[]) => alternatives.length === 1 ? alternatives[0]! : `(${alternatives.map(alt => `(${alt})`).join(' OR ')})`;
+
 function likeClauses(terms: string[], likeParamIndices: number[], any: boolean, groups: string[][]): { whereLikeClause: string; matchedExpr: string } {
   const likes = likeParamIndices.map((idx, termIndex) => {
     const term = terms[termIndex];
@@ -187,7 +189,7 @@ function likeClauses(terms: string[], likeParamIndices: number[], any: boolean, 
     return `cc.chunk_text ${operator} $${idx} ESCAPE '\\'`;
   });
   return {
-    whereLikeClause: any ? `(${likes.join(' OR ')})` : groups.map(group => `(${group.map(term => likes[terms.indexOf(term)]).join(' OR ')})`).join(' AND '),
+    whereLikeClause: any ? `(${likes.join(' OR ')})` : anyOf(groups.map(group => group.map(term => likes[terms.indexOf(term)]).join(' AND '))),
     matchedExpr: likes.map(l => `(${l})::int`).join(' + '),
   };
 }

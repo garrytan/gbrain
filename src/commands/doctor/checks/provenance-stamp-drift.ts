@@ -5,7 +5,7 @@
  * (trust/provenance-drift.ts, at most `DRIFT_SCAN_LIMIT` live pages). `warn` when a remote or unattributed write did
  * the damage or a marker is missing; the owner's own edits are listed in details only. Pages a later local edit changed
  * again (needs_review, #10190) have no repair target: they are named and never offered the repair, and hold the check
- * at warn only when a remote write's loss of their lowering marker still stands. The fix previews
+ * at warn only while their file lacks the lowering marker their stored tier needs (lost to a remote write, or missing). The fix previews
  * `gbrain repair provenance`, which writes nothing; applying it only lowers trust and is the user's call.
  */
 import type { Check } from '../../doctor.ts';
@@ -23,9 +23,9 @@ async function runProvenanceStampDrift(ctx: DoctorContext): Promise<Check[]> {
     const scans: SourceDrift[] = [];
     for (const sourceId of sourceIds) scans.push(await scanProvenanceDrift(engine, sourceId));
     // #10190: a needs_review page (a later local edit changed the stamp again) has no repair target: it is named and never
-    // offered the repair. It holds the check at warn only while a remote write's raise of its trust cap stands (marker_lost).
+    // offered the repair. It holds the check at warn while its file would re-read above its stored tier (marker_lost or marker_missing).
     const pick = (scan: SourceDrift, kind: 'repair' | 'exposed' | 'named') => scan.items.filter(item => item.verdict.class !== 'local'
-      && (item.verdict.class !== 'needs_review' ? kind === 'repair' : (item.verdict.marker_lost ? 'exposed' : 'named') === kind));
+      && (item.verdict.class !== 'needs_review' ? kind === 'repair' : (item.verdict.marker_lost || item.verdict.marker_missing ? 'exposed' : 'named') === kind));
     const pages = (scan: SourceDrift) => pick(scan, 'repair').length;
     const manual = scans.flatMap(scan => [...pick(scan, 'exposed'), ...pick(scan, 'named')].map(item => `${scan.source_id}:${item.slug}`));
     const exposed = scans.reduce((sum, scan) => sum + pick(scan, 'exposed').length, 0);
@@ -41,7 +41,7 @@ async function runProvenanceStampDrift(ctx: DoctorContext): Promise<Check[]> {
         message: `No page has provenance stamps or a trust marker that another writer removed${manual.length ? ' and gbrain can put back' : ''}${local ? `; ${local} page(s) changed them in the owner's own edits (listed in details)` : ''}${bounded}. ${manualNote}`.trimEnd() });
       return checks;
     }
-    const exposedNote = exposed ? `${exposed} of them lost a lowering trust marker to a remote write, so gbrain may trust them more than it should; edit those pages by hand. ` : '';
+    const exposedNote = exposed ? `${exposed} of them lack the lowering trust marker their stored tier needs, so a re-read may trust them more than it should; edit those pages by hand. ` : '';
     if (!found.length) {
       checks.push({ name: 'provenance_stamp_drift', status: 'warn', details, message: `${manualNote}${exposedNote}`.trimEnd() + bounded });
       return checks;

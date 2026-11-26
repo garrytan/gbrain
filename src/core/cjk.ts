@@ -241,12 +241,13 @@ export function stripKoreanParticle(term: string): string {
 }
 
 /**
- * #10417: what a CJK keyword query requires, as AND-ed groups of OR-ed
- * substrings, with the operators the non-CJK branch's websearch_to_tsquery
- * honors. A double-quoted phrase is one exact substring (particles kept; an
- * unclosed quote runs to the end of the query), `OR` between two items puts
- * them in one group, a dangling `OR` is dropped, and every other
- * whitespace-split word is its own group with its Korean particle stripped.
+ * #10417: what a CJK keyword query requires, as OR-ed alternatives of AND-ed
+ * substrings, with the operators and precedence the non-CJK branch's
+ * websearch_to_tsquery honors (`a OR b c` is `a | (b & c)`). A double-quoted
+ * phrase is one exact substring (particles kept; an unclosed quote runs to the
+ * end of the query), `OR` in any case between two items starts the next
+ * alternative, a dangling `OR` is dropped, and every other whitespace-split
+ * word is one more required substring with its Korean particle stripped.
  * Quote characters never reach a pattern. The count, the keyword pages and the
  * chunk search all read this, so a count never disagrees with the rows.
  */
@@ -254,24 +255,22 @@ export function cjkMatchGroups(query: string): string[][] {
   const items: Array<{ term: string } | 'OR'> = [];
   for (const [, quoted, word] of query.matchAll(/"([^"]*)(?:"|$)|([^\s"]+)/g)) {
     if (quoted !== undefined) { const phrase = quoted.trim(); if (phrase) items.push({ term: phrase }); }
-    else if (word === 'OR') items.push('OR');
+    else if (word!.toUpperCase() === 'OR') items.push('OR');
     else items.push({ term: stripKoreanParticle(word!) });
   }
-  const groups: string[][] = [];
-  let join = false;
+  const alternatives: string[][] = [[]];
   for (const item of items) {
-    if (item === 'OR') { join = groups.length > 0; continue; }
-    if (join) groups[groups.length - 1]!.push(item.term); else groups.push([item.term]);
-    join = false;
+    if (item !== 'OR') alternatives[alternatives.length - 1]!.push(item.term);
+    else if (alternatives[alternatives.length - 1]!.length) alternatives.push([]);
   }
   const seen = new Set<string>();
-  return groups.map(group => Array.from(new Set(group))).filter(group => {
+  return alternatives.filter(group => group.length).map(group => Array.from(new Set(group))).filter(group => {
     const key = JSON.stringify([...group].sort());
     return !seen.has(key) && !!seen.add(key);
   });
 }
 
-/** Every substring cjkMatchGroups names, deduplicated in order: ranking and the any-term fallback read it. */
+/** Every substring cjkMatchGroups names (one alternative is the old strict AND), deduplicated in order: ranking and the any-term fallback read it. */
 export function cjkMatchTerms(query: string): string[] {
   return Array.from(new Set(cjkMatchGroups(query).flat()));
 }

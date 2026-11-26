@@ -91,7 +91,7 @@ describe('#10332 atom extraction reads the canonical withdrawal view', () => {
     }
   }, 120_000);
 
-  test('managed: discovery hands the canonical body, so the origin check passes and the page leaves the backlog', async () => {
+  test.skipIf(!testBackends().includes('pglite'))('managed: discovery hands the canonical body, so the origin check passes and the page leaves the backlog', async () => {
     const engine = engines.find(e => e.backend === 'pglite')!.engine;
     const home = mkdtempSync(join(tmpdir(), 'gbrain-withdrawn-atoms-'));
     try {

@@ -92,6 +92,21 @@ export async function writeAtomPageState(
   return Number(row.fail_count);
 }
 
+/**
+ * #10435: an unchanged extraction input stands in for a new extraction only while that extraction's outputs stand: this source
+ * incarnation holds a completed scan of the page (a soft delete, a restore or a source move clears it), and every live atom
+ * still carries the date and visibility the page gives it now (a date-only or visibility-only edit leaves the input unchanged).
+ */
+export async function atomOutputsCurrent(engine: SqlEngine, item: AtomPageInput, date: string | null, visibility: string): Promise<boolean> {
+  if (!item.identity) return false;
+  const [row] = await engine.executeRaw<{ complete: boolean; stale: boolean }>(
+    `SELECT EXISTS (SELECT 1 FROM extract_atoms_page_state WHERE source_incarnation=$1::uuid AND page_id=$2 AND tombstoned AND fail_count=0) AS complete,
+            EXISTS (SELECT 1 FROM links l JOIN pages a ON a.id=l.to_page_id WHERE l.from_page_id=$2 AND l.link_source='atom-provenance'
+              AND a.deleted_at IS NULL AND (a.frontmatter->>'date' IS DISTINCT FROM $3::text OR a.frontmatter->>'visibility' IS DISTINCT FROM $4::text)) AS stale`,
+    [item.identity.sourceIncarnation, item.identity.pageId, date, visibility]);
+  return row?.complete === true && row.stale === false;
+}
+
 const LEGACY_KEYS = ['atoms_scan_hash', 'atoms_fail_hash', 'atoms_fail_count'];
 
 export function matchingLegacyAtomPageState(frontmatter: Record<string, unknown>, contentHash: string): { fail_count: number; tombstoned: boolean } | null {

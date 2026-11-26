@@ -92,4 +92,33 @@ describe('#10435 extract_atoms skips a page whose extraction input did not chang
       expect(third.calls(), backend).toBe(1);
     }
   }, 120_000);
+  test('the skip never stands in for an extraction whose outputs moved: a date or visibility edit, or a page restored after its atoms were retired, extracts again', async () => {
+    for (const { backend, engine } of engines) {
+      const sourceId = `fence-only-outputs-${backend}`;
+      await engine.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1)', [sourceId]);
+      const put = (frontmatter: Record<string, unknown>) => engine.putPage(SLUG, { type: 'note', title: 'Launch review', compiled_truth: BODY, timeline: '', frontmatter }, { sourceId });
+      const run = async () => { const counted = countingChat(); expect((await runPhaseExtractAtoms(engine, { sourceId, _chat: counted.chat, _transcripts: [] })).status, backend).toBe('ok'); return counted.calls(); };
+      const atomFields = async () => (await engine.executeRaw<{ date: string | null; visibility: string | null }>(
+        `SELECT frontmatter->>'date' AS date, frontmatter->>'visibility' AS visibility FROM pages
+          WHERE source_id=$1 AND type='atom' AND deleted_at IS NULL AND frontmatter->>'source_slug'=$2`, [sourceId, SLUG]));
+      await put({ date: '2026-04-02' });
+      expect(await run(), backend).toBe(1);
+      expect((await atomFields()).map(a => a.date?.slice(0, 10)), backend).toEqual(['2026-04-02']);
+
+      await put({ date: '2026-05-03' });
+      expect(await run(), backend).toBe(1);
+      expect((await atomFields()).map(a => a.date?.slice(0, 10)), backend).toEqual(['2026-05-03']);
+
+      await put({ date: '2026-05-03', visibility: 'private' });
+      expect(await run(), backend).toBe(1);
+      expect((await atomFields()).map(a => a.visibility), backend).toEqual(['private']);
+
+      await engine.executeRaw('UPDATE pages SET deleted_at=now() WHERE source_id=$1 AND slug=$2', [sourceId, SLUG]);
+      await engine.executeRaw(`UPDATE pages SET deleted_at=now() WHERE source_id=$1 AND type='atom' AND frontmatter->>'source_slug'=$2`, [sourceId, SLUG]);
+      await engine.executeRaw('UPDATE pages SET deleted_at=NULL WHERE source_id=$1 AND slug=$2', [sourceId, SLUG]);
+      expect(await countExtractAtomsBacklog(engine, sourceId), backend).toBe(1);
+      expect(await run(), backend).toBe(1);
+      expect(await countExtractAtomsBacklog(engine, sourceId), backend).toBe(0);
+    }
+  }, 120_000);
 });

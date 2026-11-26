@@ -399,7 +399,7 @@ src/core/cycle/edge-contradictions.ts	execute_raw	13
 src/core/cycle/edge-contradictions.ts	sql_template	1
 src/core/cycle/extract-atoms-generation.ts	execute_raw	4
 src/core/cycle/extract-atoms-input.ts	execute_raw	6
-src/core/cycle/extract-atoms-page-state.ts	execute_raw	4
+src/core/cycle/extract-atoms-page-state.ts	execute_raw	5	+1 #10435: atomOutputsCurrent reads the completed scan row and the live atoms' date and visibility in one statement, beside the scan-state SQL already here (until atom page state gets a typed engine member)
 src/core/cycle/extract-atoms-stamp.ts	execute_raw	1
 src/core/cycle/extract-atoms.ts	execute_raw	6
 src/core/cycle/extract-facts.ts	execute_raw	13

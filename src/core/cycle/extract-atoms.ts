@@ -96,7 +96,7 @@ import { OperationError } from '../ops/contract.ts';
 import { isOpPageSlug } from '../ops/context.ts';
 import type { WriteReceipt } from '../persistence/types.ts';
 import { acceptedPendingReceipt } from '../persistence/accepted-pending.ts';
-import { AtomPageStateError, atomDiscoveryInput, MAX_DETERMINISTIC_FAILURES, readAtomPageIdentity, writeAtomPageState, type AtomPageInput } from './extract-atoms-page-state.ts';
+import { AtomPageStateError, atomDiscoveryInput, atomOutputsCurrent, MAX_DETERMINISTIC_FAILURES, readAtomPageIdentity, writeAtomPageState, type AtomPageInput } from './extract-atoms-page-state.ts';
 import { atomGenerationOrigin, atomInputPin, heldAtomInputExclusionSql, heldLine, publishUnmanagedAtoms, resolveTranscriptAtomSlug, resolveTranscriptKeys, transcriptRoot } from './extract-atoms-generation.ts';
 import { currentHoldIds, heldForInput } from '../generations/publish.ts';
 import { ATOM_TYPES, ATOMS_RESPONSE_SCHEMA } from './extract-atoms-schema.ts';
@@ -1116,13 +1116,13 @@ export async function runPhaseExtractAtoms(
     const { promptContent, truncated } = input;
     let origin: AtomOrigin | null = null;
     try {
-      // #10435: discovery offered the page because its content hash moved; a fence-only edit left its input unchanged
-      if (!managed && opts._pages === undefined && item.kind === 'page' && mark && pageInputUnchanged(input, mark)) { if (!opts.dryRun) await stampAtomsScanHash(item); duplicatesSkipped++; continue; }
       origin = managed ? { ...await readAtomOrigin(engine, managed, item), ...(truncated ? { partialInputChars: maxInputChars } : {}) } : null;
       const sourcePage = item.kind === 'page' ? await engine.getPage(item.slug, { sourceId }) : null;
       const contentDate = await (item.kind === 'page' ? atomSourceDate(engine, sourcePage) : transcriptAtomSourceDate(engine, item.content, sourceDate(item.filePath, ''))); // #6720, #7268: captured with the input, before inference
       const visibility = origin?.visibility ?? effectiveVisibility(item.kind === 'transcript' ? { kind: 'transcript' } // #5525
         : { kind: 'page', page: sourcePage && { ...sourcePage, folder_restricted: await folderRestricted(engine, sourceId, item.slug) } });
+      // #10435: discovery offered the page because its content hash moved; a fence-only edit left its input and its atoms' metadata unchanged
+      if (!managed && opts._pages === undefined && item.kind === 'page' && mark && pageInputUnchanged(input, mark) && await atomOutputsCurrent(engine, item, contentDate, visibility)) { if (!opts.dryRun) await stampAtomsScanHash(item); duplicatesSkipped++; continue; }
       throwIfAborted(opts.signal, 'extract_atoms');
       const resumed = !opts.dryRun && managed && origin ? await resumeManagedAtoms(engine, managed, origin) : 'run';
       if (resumed === 'done') { duplicatesSkipped++; continue; }

@@ -139,8 +139,8 @@ for (const kind of testBackends()) {
         expect(await proposals(slug)).toEqual([]);
       }, 120_000);
 
-      // Value: protects=#10190 a needs_review page (a later local edit changed the stamp again, no repair target) is named and never offered the repair that reports affected 0; it holds the check at warn only while a remote write's loss of its lowering marker stands; fails_when=a stamps-only needs_review page warns, a needs_review page is offered repair provenance or counted as repairable, or a marker-lost one reads ok; why_new=no row covered needs_review in doctor; seam=none; no_claim=how to decide those pages (manual)
-      test('needs_review pages are named, never offered the repair, and warn only while a lost marker stands (#10190)', async () => {
+      // Value: protects=#10190 a needs_review page (a later local edit changed the stamp again, no repair target) is named and never offered the repair that reports affected 0; it holds the check at warn only while its lowering marker is lost to a remote write or missing; fails_when=a stamps-only needs_review page warns, a needs_review page is offered repair provenance or counted as repairable, or a marker-lost or marker-missing one reads ok; why_new=no row covered needs_review in doctor; seam=none; no_claim=how to decide those pages (manual)
+      test('needs_review pages are named, never offered the repair, and warn only while a needed marker is lost or missing (#10190)', async () => {
         const stamps = 'inbox/later-local-stamp';
         await seed(stamps, STORED);
         await rewrite(stamps, { ...STORED, ingested_at: '2026-03-01T00:00:00.000Z' }, 'oauth_client');
@@ -163,13 +163,26 @@ for (const kind of testBackends()) {
         expect(exposed.status).toBe('warn');
         expect(exposed.fix).toBeUndefined();
         expect(exposed.message).toContain('2 page(s) need manual review');
-        expect(exposed.message).toContain('1 of them lost a lowering trust marker');
+        expect(exposed.message).toContain('1 of them lack the lowering trust marker');
+
+        const unmarked = 'inbox/later-local-unmarked';
+        await seed(unmarked, { ingested_at: STORED.ingested_at }, 'agent_written');
+        await rewrite(unmarked, { ingested_at: '2026-03-01T00:00:00.000Z' }, 'oauth_client');
+        await rewrite(unmarked, { ingested_at: '2026-04-01T00:00:00.000Z' }, 'local_cli');
+        await fixtureWrite(null, async tx => { await withTrustPromotion(tx, 'user_confirmed', () =>
+          tx.executeRaw(`UPDATE pages SET trust_tier = 'agent_written' WHERE source_id = 'default' AND slug = $1`, [unmarked])); });
+        const missing = await doctor();
+        expect(missing.details.sources[0]).toMatchObject({ needs_review: 3, marker_missing: 1 });
+        expect(missing.status).toBe('warn');
+        expect(missing.fix).toBeUndefined();
+        expect(missing.message).toContain('2 of them lack the lowering trust marker');
 
         const remote = 'inbox/remote-drop-beside';
         await seed(remote, STORED);
         await rewrite(remote, {}, 'oauth_client');
         const mixed = await doctor();
         expect(mixed.status).toBe('warn');
+        expect(mixed.message).toContain('3 page(s) need manual review');
         expect(mixed.message).toMatch(/^1 page\(s\)/);
         expect(mixed.fix.argv).toEqual(['gbrain', 'repair', 'provenance', '--source', 'default', '--json']);
         expect(mixed.fix.user_message).toContain(`1 page(s) (for example ${remote})`);

@@ -1,6 +1,7 @@
 /**
- * #10417: CJK keyword search honors a quoted phrase and OR, as the non-CJK
- * branch does through websearch_to_tsquery.
+ * #10417: CJK keyword search honors a quoted phrase and OR (with its precedence:
+ * `a OR b c` is `a | (b & c)`), as the non-CJK branch does through
+ * websearch_to_tsquery.
  *
  * Before the fix a CJK query was split on whitespace with quotes kept, so
  * `"회귀 원인을"` required the patterns `%"회귀%` and `%원인을"%` (no page
@@ -29,6 +30,9 @@ beforeAll(async () => {
   await page('notes/alice', '홍길동 회의록');
   await page('notes/bob', '김철수 메모');
   await page('notes/tokyo', '東京で会議があった');
+  await page('notes/seoul', '서울 출장 메모');
+  await page('notes/busan', '부산 출장 메모');
+  await page('notes/busan-jeju', '부산 그리고 제주 출장 메모');
 });
 afterAll(async () => { await engine.disconnect(); });
 
@@ -41,8 +45,9 @@ const chunks = async (q: string) => [...new Set((await engine.searchKeyword(q)).
 describe('#10417 CJK quoted phrases and OR', () => {
   test('groups: a quoted phrase is one exact substring, OR joins its neighbours, quotes never reach a pattern', () => {
     expect(cjkMatchGroups('"회귀 원인을"')).toEqual([['회귀 원인을']]);
-    expect(cjkMatchGroups('"홍길동" OR "김철수"')).toEqual([['홍길동', '김철수']]);
-    expect(cjkMatchGroups('혈당에서 수치')).toEqual([['혈당'], ['수치']]);
+    expect(cjkMatchGroups('"홍길동" OR "김철수"')).toEqual([['홍길동'], ['김철수']]);
+    expect(cjkMatchGroups('혈당에서 수치')).toEqual([['혈당', '수치']]);
+    expect(cjkMatchGroups('서울 or 부산 제주')).toEqual([['서울'], ['부산', '제주']]);
     expect(cjkMatchGroups('"東京で会議')).toEqual([['東京で会議']]);
     expect(cjkMatchGroups('東京 OR')).toEqual([['東京']]);
   });
@@ -52,6 +57,14 @@ describe('#10417 CJK quoted phrases and OR', () => {
     expect(await chunks('"회귀 원인을"')).toEqual(['notes/regression']);
     expect(await count('"회귀 원인을"')).toBeGreaterThan(0);
     expect(await pages('회귀 원인을')).toEqual(['notes/regression', 'notes/split']);
+  });
+
+  test('OR binds looser than AND and is case-insensitive, as in websearch_to_tsquery', async () => {
+    for (const q of ['서울 OR 부산 제주', '서울 or 부산 제주']) {
+      expect(await pages(q)).toEqual(['notes/busan-jeju', 'notes/seoul']);
+      expect(await chunks(q)).toEqual(['notes/busan-jeju', 'notes/seoul']);
+      expect(await count(q)).toBeGreaterThan(0);
+    }
   });
 
   test('OR finds pages with either name', async () => {

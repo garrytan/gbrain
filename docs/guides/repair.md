@@ -949,9 +949,9 @@ source from page history and write receipts, split by who made the write
 (remote, local, unattributed), and names the first pages. It writes nothing.
 A page a later local edit also changed (`needs_review`) is named in an ok
 message and never offered the repair, since no automatic repair applies; the
-check stays at warn only while such a page has lost a lowering trust marker to
-a remote write, because it then still reads as more trusted than it should
-(#10190).
+check stays at warn only while such a page lacks the lowering trust marker its
+stored tier needs (lost to a remote write, or missing), because a re-read would
+then trust it more than it should (#10190).
 
 Preview, show the user the list, then apply after they agree:
 

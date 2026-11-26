@@ -38,3 +38,26 @@ test('declared prefixes and folders of declared types are skipped; untyped and u
   expect(summaries.some(s => s.includes('`gadgets/`'))).toBe(true);
   expect(result.notes.join('\n')).toContain('2 prefix(es) skipped');
 });
+
+test('coverage reads every type in a folder and every folder: a sixth undeclared type and a gap behind 50 covered folders are suggested', async () => {
+  const wide = new PGLiteEngine();
+  await wide.connect({});
+  await wide.initSchema();
+  try {
+    for (const [i, type] of ['analysis', 'company', 'concept', 'deal', 'guide', 'zebra-kind'].entries()) {
+      await wide.putPage(`mixed-notes/page-${i}`, { type: type as never, title: `mixed ${i}`, compiled_truth: 'Synthetic body.', timeline: '' });
+    }
+    for (let f = 0; f < 50; f++) {
+      for (let i = 0; i < 6; i++) await wide.putPage(`covered-${f}/page-${i}`, { type: 'person' as never, title: `covered ${f} ${i}`, compiled_truth: 'Synthetic body.', timeline: '' });
+    }
+    for (let i = 0; i < 5; i++) await wide.putPage(`gizmos/page-${i}`, { type: 'gizmo' as never, title: `gizmo ${i}`, compiled_truth: 'Synthetic body.', timeline: '' });
+    const result = await runSuggest(wide, { sourceId: 'default' });
+    const summaries = result.suggestions.map(s => s.summary);
+    expect(summaries.some(s => s.includes('`mixed-notes/`'))).toBe(true);
+    expect(summaries.some(s => s.includes('`gizmos/`'))).toBe(true);
+    expect(summaries.some(s => s.includes('`covered-'))).toBe(false);
+    expect(result.notes.join('\n')).toContain('50 prefix(es) skipped');
+  } finally {
+    await wide.disconnect();
+  }
+}, 120_000);

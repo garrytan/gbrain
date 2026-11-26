@@ -89,11 +89,14 @@ export async function runSuggest(
   const sourceId = opts.sourceId ?? 'default';
   const maxSampleSize = opts.maxSampleSize ?? 200;
 
-  const found = await runDetect(engine, { sourceId, maxTypes: 50 });
+  // #10433: coverage reads every prefix and every type in it, so declared folders never crowd a gap out of the first 50
+  const found = await runDetect(engine, { sourceId, maxTypes: 1_000_000, allSampleTypes: true });
   const notes: string[] = [];
   const gaps = undeclaredPrefixes(found, await loadActivePackForLocalEngine(engine, { sourceId }));
   if (gaps.length < found.prefixes.length) notes.push(`${found.prefixes.length - gaps.length} prefix(es) skipped: the active schema pack already declares their type.`);
-  const detected: DetectResult = { ...found, prefixes: gaps };
+  const kept = new Set(gaps.slice(0, 50).map(p => p.prefix));
+  const detected: DetectResult = { ...found, prefixes: gaps.slice(0, 50).map(p => ({ ...p, sample_types: p.sample_types.slice(0, 5) })),
+    candidate: { ...found.candidate, page_types: found.candidate.page_types.filter(t => t.path_prefixes.some(p => kept.has(p))) } };
 
   const promptInput: SuggestPromptInput = {
     detected,
