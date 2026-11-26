@@ -2162,7 +2162,7 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async deleteChunksExcept(slug: string, keepIds: readonly number[], opts?: { sourceId?: string }): Promise<void> {
-    return chunksImpl.deleteChunksExcept(this.autocommitSql, slug, keepIds, opts);
+    return chunksImpl.deleteChunksExcept(refuseAborted(this.autocommitSql), slug, keepIds, opts);
   }
 
   async setChunkerVersion(slug: string, version: number, opts?: { sourceId?: string }): Promise<void> {
@@ -2884,7 +2884,7 @@ export class PostgresEngine implements BrainEngine {
   }
   async stageManifestRows(rows: readonly ManifestRowInput[]): Promise<void> { return pageBodyImpl.stageManifestRows(this.engineSql, rows); }
   async readManifest(pageId: number, opts?: { generation?: number; stagingId?: string; region?: BodyRegion; lastN?: number }): Promise<ManifestRow[]> {
-    return pageBodyImpl.readManifest(unscopedExecutor(this.engineSql, 'page-body: page-id keyed internal read'), pageId, opts);
+    return pageBodyImpl.readManifest(unscopedExecutor(refuseAborted(this.engineSql), 'page-body: page-id keyed internal read'), pageId, opts);
   }
   readSegmentedEmbedPage(ref: SegmentedEmbedRef) { return pageBodyImpl.readSegmentedEmbedPage(unscopedExecutor(refuseAborted(this.engineSql), 'page-body: segmented embed page read'), ref); }
   async stageSegmentChunks(pageId: number, generation: number, chunks: readonly SegmentChunkInput[], opts?: { embeddingColumn?: ResolvedColumn }): Promise<number[]> {

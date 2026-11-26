@@ -17,6 +17,7 @@ import { PostgresEngine } from '../src/core/postgres-engine.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { withRequestSignal } from '../src/core/request-signal.ts';
 import { makeFakeSql } from './helpers/fake-postgres-sql.ts';
+import { derivationScope } from '../src/core/page-body/segment-derive.ts';
 
 const UUID = '00000000-0000-0000-0000-000000000001';
 
@@ -63,6 +64,8 @@ const MEMBERS: Array<[string, (e: BrainEngine) => Promise<unknown>]> = [
   ['hasUnsealedPages', e => e.hasUnsealedPages({ sourceIds: ['default'], excludePrivate: false, excludeSlugPrefixes: [] } as never)],
   ['readLinkContextMatches', e => e.readLinkContextMatches([{ sourceId: 'default', name: 'a' } as never])],
   ['readLinkContextOriginPages', e => e.readLinkContextOriginPages([1])],
+  ['readManifest', e => e.readManifest(1, { generation: 1 })],
+  ['deleteChunksExcept', e => e.deleteChunksExcept('a', [1], { sourceId: 'default' })],
 ];
 
 for (const [name, call] of MEMBERS) {
@@ -79,3 +82,43 @@ for (const [name, call] of MEMBERS) {
     expect(fake.statements()).toHaveLength(0);
   });
 }
+
+// The two-statement call sites whose second statement used to be a refused executeRaw: the request aborts while the
+// first statement settles, and the second must not be sent.
+test('derivationScope sends no manifest read after the request aborts during the page head read', async () => {
+  const controller = new AbortController();
+  const fake = makeFakeSql(stmt => {
+    if (stmt.text.includes('body_storage')) { controller.abort(new Error('client went away')); return [{ id: 1, body_storage: 'segmented', body_generation: '1' }]; }
+    return [];
+  });
+  const engine = new PostgresEngine();
+  (engine as unknown as { _sql: unknown })._sql = fake.sql;
+  const error = await withRequestSignal(controller.signal, () => derivationScope(engine as unknown as BrainEngine, { id: 1, slug: 'x', source_id: 'default' } as never)).then(() => null, (e: unknown) => e);
+  expect((error as Error | null)?.name).toBe('AbortError');
+  expect(fake.statements().filter(s => s.text.includes('page_body_manifest'))).toHaveLength(0);
+});
+
+test('a projection replacement sends no DELETE after the request aborts during the keep-state read, inside its transaction', async () => {
+  const controller = new AbortController();
+  const fake = makeFakeSql(stmt => {
+    if (stmt.text.includes('embedding_input_hash')) { controller.abort(new Error('client went away')); return []; }
+    return [];
+  });
+  const engine = new PostgresEngine();
+  (engine as unknown as { _sql: unknown })._sql = fake.sql;
+  const column = { name: 'embedding', dimensions: 1536 } as never;
+  const error = await withRequestSignal(controller.signal, () => (engine as unknown as BrainEngine).transaction(async tx => {
+    await tx.readChunkKeepState(1, null, column);
+    await tx.deleteChunksExcept('a', [1], { sourceId: 'default' });
+  })).then(() => null, (e: unknown) => e);
+  expect((error as Error | null)?.name).toBe('AbortError');
+  expect(fake.statements().filter(s => s.text.startsWith('DELETE FROM content_chunks'))).toHaveLength(0);
+});
+
+test('deleteChunksExcept outside a request still sends its DELETE inside a transaction', async () => {
+  const fake = makeFakeSql();
+  const engine = new PostgresEngine();
+  (engine as unknown as { _sql: unknown })._sql = fake.sql;
+  await (engine as unknown as BrainEngine).transaction(async tx => { await tx.deleteChunksExcept('a', [1], { sourceId: 'default' }); });
+  expect(fake.statements().some(s => s.text.includes('DELETE FROM content_chunks') && s.lane === 'tx')).toBe(true);
+});

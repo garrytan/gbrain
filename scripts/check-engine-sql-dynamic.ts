@@ -126,6 +126,7 @@ const VETTED_BUILDERS: Record<string, string> = {
   precedenceSql: 'src/core/eligibility/precedence.ts: constant source-precedence CASE over caller-given constant aliases and the vetted guest predicate (no input)',
   guestSourceSql: 'src/core/guests/note.ts: constant guest-source predicate over caller-given constant aliases (no input)',
   contestedRefSql: 'src/core/eligibility/sql.ts: constant pending-supersede-proposal subquery over a caller alias; the table name comes from the facts/takes union, the actions are literals; no values',
+  holdAppliesToPageSql: 'src/core/write-gate-binding.ts: the quarantine-hold page match (bound id, unbound slug, candidates, rename reach) over constant hold alias and SQL expressions the caller passes as literals; no input',
   heldRowSql: 'src/core/eligibility/fence-overlay.ts: the held fence-cell test over constant key column aliases; widened only by memberFactAdmitSql (member id passed ACCESS_ID_RE) and grantedPrivateFactSql (each source id checked by isValidSourceId before it is quoted in); no values',
   embeddingCandidateWhere: 'src/core/engine-sql/persistence-effect-scans.ts: the constant stale-embedding-effect predicate; its error codes pass assertCandidateCodes (each code must match /^[a-z0-9_]+$/) before they are spliced into the text[] literal; no caller values',
   outcomeMarkerSql: 'src/core/facts/audit-sources.ts: constant checkpoint-row predicate over a caller facts alias; the source and fact lists are module constants',
