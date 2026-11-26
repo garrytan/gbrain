@@ -5,13 +5,13 @@
  *
  * Protects: a bounded read under an unseeded request snapshot sends only its own statement with the transaction-local bound
  * and never the whole-table read; under a loaded snapshot it answers from the snapshot with no statement; an unbounded read
- * still loads the snapshot once.
+ * still loads the snapshot once; a bulk read an invalidation replaced does not mark its successor loaded.
  * Fails when a bounded read starts or waits for the snapshot's bulk read.
  * No database: the engine runs on the recording fake.
  */
 import { expect, test } from 'bun:test';
 import { PostgresEngine } from '../src/core/postgres-engine.ts';
-import { withRequestConfigSnapshot } from '../src/core/config-snapshot.ts';
+import { loadedRequestConfigValue, requestConfigRows, withoutRequestConfigSnapshot, withRequestConfigSnapshot } from '../src/core/config-snapshot.ts';
 import { makeFakeSql } from './helpers/fake-postgres-sql.ts';
 
 function engineWith(rows: Array<{ key: string; value: string }>) {
@@ -58,4 +58,44 @@ test('a bounded read after the snapshot is loaded answers from it', async () => 
     return { bounded, extra: fake.statements().length - before };
   });
   expect(value).toEqual({ bounded: '1', extra: 0 });
+});
+
+/** An engine whose bulk reads the test settles one at a time. */
+function gatedBulk() {
+  const gates: Array<(rows: Record<string, string>) => void> = [];
+  const engine = { getConfig: async () => null, getAllConfig: () => new Promise<Record<string, string>>(resolve => { gates.push(resolve); }) };
+  return { engine, gates };
+}
+const settles = (p: Promise<unknown>) => Promise.race([p.then(() => true), Bun.sleep(60).then(() => false)]);
+
+test('a bulk read that an invalidation replaced does not mark the next bulk read loaded', async () => {
+  const { engine, gates } = gatedBulk();
+  const outcome = await withRequestConfigSnapshot(engine, async () => {
+    const first = requestConfigRows(engine);                       // bulk read A
+    await Bun.sleep(5);
+    await withoutRequestConfigSnapshot(async () => undefined);     // a write inside the request drops the snapshot
+    const second = requestConfigRows(engine);                      // bulk read B
+    await Bun.sleep(5);
+    gates[0]!({ k: 'from-A' });                                    // A finishes, B is still pending
+    await first;
+    const bounded = loadedRequestConfigValue(engine, 'k');
+    const answeredWhileBPending = await settles(bounded);
+    gates[1]!({ k: 'from-B' });
+    await second;
+    return { answeredWhileBPending, afterB: await loadedRequestConfigValue(engine, 'k') };
+  });
+  expect(outcome).toEqual({ answeredWhileBPending: true, afterB: 'from-B' });
+});
+
+test('a loaded snapshot answers a bounded read, and an invalidation makes it unloaded again', async () => {
+  const { engine, gates } = gatedBulk();
+  const outcome = await withRequestConfigSnapshot(engine, async () => {
+    const rows = requestConfigRows(engine);
+    gates[0]!({ k: 'v' });
+    await rows;
+    const loaded = await loadedRequestConfigValue(engine, 'k');
+    await withoutRequestConfigSnapshot(async () => undefined);
+    return { loaded, afterInvalidation: await loadedRequestConfigValue(engine, 'k') };
+  });
+  expect(outcome).toEqual({ loaded: 'v', afterInvalidation: undefined });
 });
