@@ -2384,6 +2384,12 @@ export interface EngineConfig {
    * `openEngine`, a seed, a test) creates the store when it is missing, as before.
    */
   create_store?: boolean;
+  /**
+   * Rust: set by `toEngineConfig` for the brain the gbrain config names (every CLI command that opens it). With
+   * `create_store` unset, the open creates a missing store only for a brain that never had one, and refuses a moved or
+   * missing store with `brain_missing` (src/commands/doctor/missing-brain.ts `rustStoreGuard`).
+   */
+  guard_store?: boolean;
 }
 
 // Errors

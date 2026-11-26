@@ -186,6 +186,47 @@ describe.skipIf(!HAVE_ADDON)('a write creates a Rust store only for a brain that
   }, 180_000);
 });
 
+describe.skipIf(!HAVE_ADDON)('more ways a missing store must not be created', () => {
+  let h: string;
+  const cfg = (path: string) => writeFileSync(join(h, '.gbrain', 'config.json'), JSON.stringify({ engine: 'rust', database_path: path }));
+  beforeAll(() => {
+    h = mkdtempSync(join(tmpdir(), 'gbrain-missing-more-rust-'));
+    mkdirSync(join(h, '.gbrain'), { recursive: true });
+  });
+  afterAll(() => { try { rmSync(h, { recursive: true, force: true }); } catch { /* best effort */ } });
+
+  test('a brain that never had a store: reads (diag included) refuse and create nothing', async () => {
+    const fresh = join(h, '.gbrain', 'fresh.rust');
+    cfg(fresh);
+    for (const args of [['get', 'alpha', '--json'], ['diag', '--json'], ['search', 'stats']]) {
+      const r = await runCli(args, { home: h, env: env(), timeoutMs: 120_000 });
+      expect(r.exitCode, `${args.join(' ')}: ${r.stdout}${r.stderr}`).toBe(1);
+      expect(`${r.stdout}${r.stderr}`, args.join(' ')).toContain('brain_missing');
+      expect(existsSync(fresh), `${args.join(' ')} created the store`).toBe(false);
+    }
+  }, 600_000);
+
+  test('a configured path with a trailing slash: a moved store is still recognised and a write refuses', async () => {
+    const real = join(h, '.gbrain', 'slash.rust');
+    const notes = join(h, 'notes');
+    mkdirSync(notes, { recursive: true });
+    writeFileSync(join(notes, 'alpha.md'), '---\ntitle: Alpha\n---\nAlpha body.\n');
+    cfg(`${real}/`);
+    const made = await runCli(['import', notes, '--no-embed'], { home: h, env: env(), timeoutMs: 120_000 });
+    expect(made.exitCode, made.stderr).toBe(0);
+    renameSync(real, `${real}.away`);
+    const r = await runCli(['import', notes, '--no-embed'], { home: h, env: env(), timeoutMs: 120_000 });
+    expect(r.exitCode, `${r.stdout}${r.stderr}`).toBe(1);
+    expect(`${r.stdout}${r.stderr}`).toContain('brain_missing');
+    expect(existsSync(real), 'the write replaced the moved store').toBe(false);
+    // A command that opens the engine itself (not through the CLI connect) refuses the same way.
+    const cache = await runCli(['cache', 'stats'], { home: h, env: env(), timeoutMs: 120_000 });
+    expect(cache.exitCode, `${cache.stdout}${cache.stderr}`).not.toBe(0);
+    expect(existsSync(real), 'cache stats replaced the moved store').toBe(false);
+    renameSync(`${real}.away`, real);
+  }, 600_000);
+});
+
 describe.skipIf(!HAVE_ADDON)('an embedded open still creates a new Rust store', () => {
   // `openEngine` takes postgres or pglite only; a library caller opens a Rust brain through the engine factory
   // (`createEngine`), which no CLI connect flag reaches: it creates a missing store as before.

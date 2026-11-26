@@ -65,10 +65,12 @@ export async function electOwner(engine: BrainEngine, databasePath: string, opts
     const verdict = rustStoreGuard(storeDir, configPath(), 'serve', false);
     if (typeof verdict !== 'string') throw verdict;
   }
-  mkdirSync(dirname(lockPath), { recursive: true });
-  // The store directory is private whatever the socket length: a short socket path hardens it to 0700 as the socket's
-  // parent, but a long one moves the socket elsewhere, so the store's own files would keep the umask's mode.
-  mkdirSync(storeDir, { recursive: true, mode: 0o700 });
+  if (opts.createStore !== false) {
+    mkdirSync(dirname(lockPath), { recursive: true });
+    // The store directory is private whatever the socket length: a short socket path hardens it to 0700 as the socket's
+    // parent, but a long one moves the socket elsewhere, so the store's own files would keep the umask's mode.
+    mkdirSync(storeDir, { recursive: true, mode: 0o700 });
+  }
   if (process.platform !== 'win32') chmodSync(storeDir, 0o700);
   const deadline = Date.now() + (opts.waitMs ?? OWNER_ELECTION_WAIT_MS);
   let lastError: unknown;

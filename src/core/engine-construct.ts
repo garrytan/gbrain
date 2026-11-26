@@ -35,7 +35,17 @@ export async function constructEngine(config: EngineConfig): Promise<BrainEngine
           ? addonMismatch(loaded.reason as Parameters<typeof addonMismatch>[0], loaded.message)
           : addonMissing(loaded.reason as Parameters<typeof addonMissing>[0], loaded.message);
       }
-      return openRustEngine({ addon: loaded.addon, databasePath, ...(config.create_store === false ? { createStore: false } : {}) });
+      let createStore = config.create_store;
+      if (createStore === undefined && config.guard_store) {
+        // A configured brain opened by a command that did not judge its store (the CLI connect does): a missing store
+        // is created only for a brain that never had one.
+        const { rustStoreGuard } = await import('../commands/doctor/missing-brain.ts');
+        const { configPath } = await import('./config.ts');
+        const verdict = rustStoreGuard(databasePath, configPath(), process.argv[2] ?? 'gbrain', true);
+        if (typeof verdict !== 'string') throw verdict;
+        createStore = verdict === 'create';
+      }
+      return openRustEngine({ addon: loaded.addon, databasePath, ...(createStore === false ? { createStore: false } : {}) });
     }
     default:
       throw new Error(

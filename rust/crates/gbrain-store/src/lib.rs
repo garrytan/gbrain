@@ -188,8 +188,8 @@ pub struct OpenOptions {
     /// brain records the write gate's scan baseline under it, as migration v227 does on the SQL engines;
     /// `None` records it under `DEFAULT_WRITE_GATE_DETECTOR_VERSION`.
     pub write_gate_detector_version: Option<u32>,
-    /// False: the directory must already hold a brain (its `FORMAT` file or its record file); `open_dir` creates
-    /// nothing and refuses with `store_missing` otherwise. True (the default) creates a missing brain, as before.
+    /// False: the directory must already hold a brain (its record file); `open_dir` creates no file or folder
+    /// and refuses with `store_missing` otherwise, also when the store moves away during the open. True (the default) creates a missing brain, as before.
     pub create_missing: bool,
 }
 
@@ -254,6 +254,11 @@ pub struct Store {
 /// a build with the `fjall` feature (never the addon's) keeps the records in a fjall database
 /// instead when `GBRAIN_RUST_BAKEOFF_STORE=fjall`.
 fn open_records(dir: &Path, concurrent: bool) -> Result<Arc<dyn Kv>> {
+    open_records_as(dir, concurrent, true)
+}
+
+/// `open_records`, which with `create` false opens only a record file that is already there.
+fn open_records_as(dir: &Path, concurrent: bool, create: bool) -> Result<Arc<dyn Kv>> {
     #[cfg(feature = "fjall")]
     if std::env::var("GBRAIN_RUST_BAKEOFF_STORE").is_ok_and(|v| v == "fjall") {
         let kv = fjall_kv::FjallKv::open_dir(&dir.join("records.fjall"))?;
@@ -263,7 +268,12 @@ fn open_records(dir: &Path, concurrent: bool) -> Result<Arc<dyn Kv>> {
             Arc::new(kv)
         });
     }
-    let kv = redb_kv::RedbKv::open_path(&dir.join(format::RECORDS_FILE))?;
+    let path = dir.join(format::RECORDS_FILE);
+    let kv = if create {
+        redb_kv::RedbKv::open_path(&path)?
+    } else {
+        redb_kv::RedbKv::open_existing_path(&path)?
+    };
     Ok(if concurrent {
         Arc::new(occ_kv::OccKv::new(kv)?)
     } else {
@@ -337,22 +347,22 @@ impl Store {
     /// `open_dir` for a build that opens only the formats in `known`: the seam the older-build
     /// tests use (`format::check_version_in`).
     pub(crate) fn open_dir_in(dir: &Path, options: OpenOptions, known: &[u32]) -> Result<Store> {
-        if !options.create_missing
-            && !dir.join(format::FORMAT_FILE).exists()
-            && !dir.join(format::RECORDS_FILE).exists()
-        {
+        // With `create_missing` false nothing below creates a file or folder: the directory and its
+        // record file must be there, and a store moved away mid-open is refused, not recreated.
+        if !options.create_missing && !dir.join(format::RECORDS_FILE).is_file() {
             return Err(StoreError::new(
                 error::STORE_MISSING,
                 format!(
-                    "{} holds no brain (no {} and no {}); nothing was created",
+                    "{} holds no brain (no {}); nothing was created",
                     dir.display(),
-                    format::FORMAT_FILE,
                     format::RECORDS_FILE
                 ),
             ));
         }
-        fs::create_dir_all(dir)
-            .map_err(|e| StoreError::io(format!("creating {}: {e}", dir.display())))?;
+        if options.create_missing {
+            fs::create_dir_all(dir)
+                .map_err(|e| StoreError::io(format!("creating {}: {e}", dir.display())))?;
+        }
         // FORMAT is judged before the record file is opened: a newer brain is never touched.
         let existing = format::read_in(dir, known)?;
         if existing.is_none() {
@@ -365,7 +375,7 @@ impl Store {
                 format::check_version_in(stored.format_version, known)?;
             }
         }
-        let kv = open_records(dir, options.concurrent_writes)?;
+        let kv = open_records_as(dir, options.concurrent_writes, options.create_missing)?;
         let mut store = Store::open_kv_in(kv, Arc::new(SystemEnv), options.clone(), known)?;
         store.dir = Some(dir.to_path_buf());
         // FORMAT follows the records: written when missing (a crash before it, or a deleted
@@ -1213,6 +1223,17 @@ mod older_build_tests {
             0,
             "the refused open wrote into the folder"
         );
+        // A FORMAT file without the record file is no brain either; the open writes nothing.
+        fs::write(missing.join(format::FORMAT_FILE), b"{}").unwrap();
+        assert_eq!(
+            Store::open_dir(&missing, options()).err().unwrap().code,
+            error::STORE_MISSING
+        );
+        assert!(
+            !missing.join(format::RECORDS_FILE).exists(),
+            "the refused open created the record file"
+        );
+        fs::remove_file(missing.join(format::FORMAT_FILE)).unwrap();
         // The default creates it, and then an open that must find it does.
         drop(
             Store::open_dir(

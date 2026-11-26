@@ -443,7 +443,8 @@ async function main() {
     const timeoutMs = isDiagnose ? 60_000 : 10_000;
     let engine: BrainEngine;
     try {
-      engine = await withTimeout(connectEngine(), timeoutMs, `${label}: connect`);
+      // The dashboard and diagnose only read: a missing or moved Rust store is refused, never created.
+      engine = await withTimeout(connectEngine({ readOnly: true }), timeoutMs, `${label}: connect`);
     } catch (e) {
       if (e instanceof OperationTimeoutError) { console.error(`${e.label} timed out.`); process.exit(124); }
       throw e;
@@ -2525,7 +2526,7 @@ async function connectCliOnlyEngine(command: string, args: string[]): Promise<Br
     // A one-shot `recall` only reads the brain (its --since-last-run cursor is a file); --watch polls for minutes.
     let oneShotRead = false;
     if (command === 'recall') oneShotRead = !args.includes('--watch');
-    engine = await connectEngine({ probeOnly: findCliCommand(command)?.startup === 'observational' || (command === 'jobs' && args[0] === 'supervisor' && args[1] === 'status'), oneShotRead, readOnly: oneShotRead || READ_ONLY_COMMANDS.has(command) });
+    engine = await connectEngine({ probeOnly: findCliCommand(command)?.startup === 'observational' || (command === 'jobs' && args[0] === 'supervisor' && args[1] === 'status'), oneShotRead, readOnly: oneShotRead || READ_ONLY_COMMANDS.has(command) || findCliCommand(command)?.read_only === true });
   } catch (serveConnectError) {
     if (command === 'wakeshift' && args[0] === 'emit') return await (await import('../commands/wakeshift.ts')).reportEmitConnectFailure(args.slice(1), serveConnectError, dbMarkerBrainId());
     if (command === 'jobs' && args[0] === 'child-readiness') {

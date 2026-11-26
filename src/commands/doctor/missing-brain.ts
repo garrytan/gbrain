@@ -15,6 +15,7 @@ import { opError, OperationError } from '../../core/ops/contract.ts';
 import { installPgliteCreateGuard } from '../../core/pglite-create-guard.ts';
 import { pgliteLockDirFor } from '../../core/pglite-lock.ts';
 import { probeStatus, statusFix, type StatusModeState } from '../../mcp/status-mode.ts';
+import { canonicalDatabasePath, ownerLockPath } from '../../core/rust-engine/owner-ipc/protocol.ts';
 
 /**
  * True when a PGLite connect to `dir` would build a new datastore: the path is absent, or a folder without
@@ -120,7 +121,9 @@ export function guardMissingBrainAtLock(brainId = 'host'): () => void {
  */
 export function rustStoreGuard(dir: string, configFile: string, command: string, write: boolean): 'open' | 'create' | OperationError {
   if (!connectWouldCreate(dir, 'rust')) return 'open';
-  const hadStore = existsSync(`${dir}.gbrain-owner.lock`) || !existsSync(dirname(dir));
+  // The lock path exactly as owner election names it (canonical path, no trailing separator).
+  const canonical = canonicalDatabasePath(dir);
+  const hadStore = existsSync(ownerLockPath(dir)) || !existsSync(dirname(canonical));
   if (write && !hadStore) return 'create';
   return refusalFor({ config_path: configFile, brain_path: dir, engine: 'rust', command });
 }
