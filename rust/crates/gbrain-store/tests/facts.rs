@@ -993,7 +993,7 @@ fn a_widening_record_admits_own_member_and_granted_open_private_facts_only() {
 }
 
 /// `labelledOnlyFactSql`: a labelled-only caller reads a fact only on its own member page, while that page names it.
-/// The entity and holding pages are judged without the conjunct, and a policy under lineage is not answered.
+/// The entity and holding pages are judged without the conjunct, and with lineage on the own page is still read.
 #[test]
 fn a_labelled_only_caller_reads_a_fact_only_on_its_own_member_page() {
     let b = brain("facts-labelled-own-page");
@@ -1064,11 +1064,116 @@ fn a_labelled_only_caller_reads_a_fact_only_on_its_own_member_page() {
             .unwrap()
             .is_empty()
     );
-    // A fact policy under lineage is never answered by the store.
+    // With lineage on the own page is read as before, and a page that names nobody is still not read.
     assert_eq!(
-        read(Some("carol"), true, "memory/members/carol")
-            .unwrap_err()
-            .code,
-        INVALID_ARGUMENT
+        facts(&read(Some("carol"), true, "memory/members/carol").unwrap()),
+        ["memory/members/carol"]
+    );
+}
+
+/// A member's fact read with `access.members_read_lineage` on (row 32e-b-4), as the TypeScript member sends it
+/// (`lineageProvenance`, `ownerRead`, `callerRecord`): the first form's provenance page is judged by the member's lineage,
+/// the second form's by the plain policy, and a labelled-only member also reads a fact on a page that names it or whose
+/// every origin does. Another member's page and a derived page with a null origin are never read.
+#[test]
+fn a_member_reads_a_fact_by_its_provenance_page_under_lineage() {
+    let b = brain("facts-lineage-provenance");
+    let pages: [(&str, &str, Value); 8] = [
+        (
+            "note",
+            "memory/members/carol",
+            json!({ "readable_by": ["member:carol"] }),
+        ),
+        (
+            "note",
+            "memory/members/bob",
+            json!({ "readable_by": ["member:bob"] }),
+        ),
+        ("note", "open/plain", json!({})),
+        (
+            "note",
+            "open/origin-carol",
+            json!({ "readable_by": ["member:carol"] }),
+        ),
+        (
+            "note",
+            "open/origin-dana",
+            json!({ "readable_by": ["member:dana"] }),
+        ),
+        (
+            "atom",
+            "walk/atom-carol",
+            json!({ "visibility": "world", "source_slug": "open/origin-carol" }),
+        ),
+        (
+            "atom",
+            "walk/atom-dana",
+            json!({ "visibility": "world", "source_slug": "open/origin-dana" }),
+        ),
+        (
+            "note",
+            "walk/null-mix",
+            json!({ "visibility": "world", "derived_from": ["open/origin-carol.md", null] }),
+        ),
+    ];
+    for (kind, slug, frontmatter) in &pages {
+        let page: gbrain_store::pages::PageInput = args(json!({
+            "type": kind, "title": slug, "compiled_truth": "x", "frontmatter": frontmatter }));
+        b.put_page(slug, &page, &args(json!({}))).unwrap();
+    }
+    let held: Vec<(&str, &str)> = pages
+        .iter()
+        .map(|(_, slug, _)| (*slug, "subject"))
+        .collect();
+    batch(&b, Value::Array(pages_rows(&held)));
+    let read = |who: &str, labelled: bool, first_form: bool, coverage: Value| {
+        let mut policy = json!({
+            "honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn",
+            "identity": [format!("member:{who}")], "ownerRead": true, "callerRecord": true,
+            "lineageProvenance": first_form, "folderCoverage": coverage,
+        });
+        if first_form {
+            policy["memberPage"] = json!(format!("memory/members/{who}"));
+        }
+        if labelled {
+            policy["labelledOnly"] = json!({ "identity": [format!("member:{who}")], "satisfiedRuleIds": [], "lineage": true, "member": who });
+        }
+        let q: FactQuery = args(
+            json!({ "sourceId": "default", "entitySlug": "subject", "activeOnly": true, "limit": 50, "excludePrivate": policy }),
+        );
+        let mut seen: Vec<String> = facts(&b.list_facts_by_entity(&q).unwrap())
+            .into_iter()
+            .map(str::to_string)
+            .collect();
+        seen.sort();
+        seen
+    };
+    let none = json!([]);
+    // Carol, labelled-only: her own page, the page that names her, and the atom whose origin does.
+    assert_eq!(
+        read("carol", true, true, none.clone()),
+        [
+            "memory/members/carol",
+            "open/origin-carol",
+            "walk/atom-carol"
+        ]
+    );
+    // Dana, ordinary, first form: the open page and the atom whose origin names her; not another member's page, an origin that names
+    // someone else, or the derived page with a null origin.
+    assert_eq!(
+        read("dana", false, true, none.clone()),
+        ["open/origin-dana", "open/plain", "walk/atom-dana"]
+    );
+    // Dana, second form: the plain policy hides every page that names readers and every page derived from one.
+    assert_eq!(read("dana", false, false, none.clone()), ["open/plain"]);
+    // A pending prefix in the caller's record hides a page under it, whoever reads.
+    let pending = json!([{ "source_id": "default", "prefix": "walk/" }]);
+    assert_eq!(
+        read("carol", true, true, pending.clone()),
+        ["memory/members/carol", "open/origin-carol"]
+    );
+    assert_eq!(
+        read("dana", false, true, pending),
+        ["open/origin-dana", "open/plain"]
     );
 }

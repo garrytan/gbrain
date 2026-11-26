@@ -6,5 +6,4 @@
 - `gbrain access who-can-read` now says that, with lineage on, a labelled-only member reads a derived page when every origin names it, instead of saying none of them reads it (same text on every engine).
 
 ### Known gap
-- On a Rust brain, a fact read with `access.members_read_lineage` on is still refused with `engine_capability_missing` for every member (PGLite and Postgres answer it); with lineage on that includes `recall` and `search`, because search also reads saved facts. Nothing wrong is shown. Tracked as row 32e-b-4 in the Rust engine design doc.
 - With lineage on, `gbrain access who-can-read` does not list a labelled-only member for a derived page whose origin names it, on every engine; the member can still read the page.

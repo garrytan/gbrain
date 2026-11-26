@@ -9,7 +9,7 @@
  *    on its own member page (labelledOnlyFactSql), whatever folder rule it satisfies. What a caller may not read is absent from
  *    every list and its page comes back page_not_found, the same on PGLite, Postgres and Rust.
  *  - Regression: the Rust store never served a fact read for a caller that satisfies a folder rule, and refused every
- *    labelled-only fact read, with engine_capability_missing. Each case returns a refusal as a value ({ refused }), so a Rust
+ *    labelled-only fact read, and every fact read with access.members_read_lineage on, with engine_capability_missing. Each case returns a refusal as a value ({ refused }), so a Rust
  *    arm that refuses fails the comparison with PGLite instead of counting as stopped.
  *  - Why existing coverage misses it: no parity case read facts as a member that meets a folder rule, or as a labelled-only member.
  *  - Seam: members through createMember and the typed labelled-only write; folder rules through restrictFolder; the read is
@@ -20,7 +20,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../../src/core/engine.ts';
-import { createMember, parityArms, resetArm, restrictFolder, type ParityBackend } from './harness.ts';
+import { createMember, parityArms, restrictFolder, type ParityBackend } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { withEnv } from '../helpers/with-env.ts';
 import { setMemberLabelledOnly } from '../../src/core/access/labelled-only.ts';
@@ -30,7 +30,7 @@ import { dispatchToolCall } from '../../src/mcp/dispatch.ts';
 import { remoteCallerAccess } from '../../src/core/access/caller.ts';
 import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 
-const { arms, parityTest } = parityArms(testBackends());
+const { parityTest } = parityArms(testBackends());
 
 const CAROL = 'carol-example';
 const DANA = 'dana-example';
@@ -138,15 +138,11 @@ describe('engine parity: remote fact reads of a member under a folder rule', () 
   }
 });
 
-/** The recall verb turns a store refusal into its own `unavailable` error; either spelling is the Rust engine declining. */
-const declined = (a: unknown): boolean => !!a && typeof a === 'object' && ('refused' in a || (a as { error?: unknown }).error === 'unavailable');
-
-describe('engine parity: named losses of the fact reads (RUST_ENGINE.md, row 32e-b-4)', () => {
-  // The fact list read of a member with lineage on: PGLite and Postgres answer it, and the Rust store stops at listFactsSince
-  // (the fact policy under lineage judges every provenance page by the member's lineage, which the store does not model). It
-  // is a parity case with a stop pin (test/rust-stop-pins/labelled-reads-lineage-facts.tsv), so the day Rust answers it the case
-  // fails and the row goes. Without lineage the same read is served and equal (the cases above).
-  parityTest('with access.members_read_lineage on, a labelled-only and an ordinary member read their facts on PGLite and Postgres, and the Rust store stops (row 32e-b-4)', {
+describe('engine parity: fact reads with access.members_read_lineage on (RUST_ENGINE.md, row 32e-b-4)', () => {
+  // The fact list read of a member with lineage on is answered by every engine: the fact policy judges each provenance page by the
+  // member's lineage (test/engine-parity/lineage-fact-reads.test.ts has the 12 families and the pending-prefix and hidden-page cases).
+  // Without lineage the same read is served and equal (the cases above).
+  parityTest('with access.members_read_lineage on, a labelled-only and an ordinary member read their facts on every engine', {
     methods: ['putPage', 'insertFacts', 'listFactsSince'], timeout: 240_000,
   }, (engine, backend) => inFreshHome(async () => {
     await seed(engine, backend);
@@ -162,19 +158,18 @@ describe('engine parity: named losses of the fact reads (RUST_ENGINE.md, row 32e
     return answers;
   }));
 
-  // Not a parityTest: the arms must answer differently on purpose (the SQL engines answer, Rust declines), which a parity
-  // case cannot express. The day Rust answers a fact read under lineage this fails and the row goes.
-  test('with access.members_read_lineage on, recall answers on PGLite and Postgres and Rust declines it, for a labelled-only and an ordinary member', async () => {
-    for (const arm of arms()) {
-      await resetArm(arm);
-      await seed(arm.engine, arm.backend);
-      await setMembersReadLineage(arm.engine, true, { remote: false });
-      for (const member of [CAROL, DANA]) {
-        const answer = await remote(arm.engine, member, 'recall', {});
-        if (arm.backend === 'rust') expect({ backend: arm.backend, member, declined: declined(answer) }).toEqual({ backend: arm.backend, member, declined: true });
-        else expect({ backend: arm.backend, member, ids: factIds(answer) }).toEqual({ backend: arm.backend, member, ids: [...LINEAGE_WANT[member]!].sort() });
-      }
+  // Recall answers on every engine with lineage on, for a labelled-only and an ordinary member.
+  parityTest('with access.members_read_lineage on, recall answers the same facts on every engine, for a labelled-only and an ordinary member', {
+    methods: ['putPage', 'insertFacts', 'listFactsSince', 'listFactsByEntity'], timeout: 240_000,
+  }, (engine, backend) => inFreshHome(async () => {
+    await seed(engine, backend);
+    await setMembersReadLineage(engine, true, { remote: false });
+    const answers: Record<string, unknown> = {};
+    for (const member of [CAROL, DANA]) {
+      const ids = factIds(await remote(engine, member, 'recall', {}));
+      expect({ member, ids }).toEqual({ member, ids: [...LINEAGE_WANT[member]!].sort() });
+      answers[member] = ids;
     }
-    expect(arms().length).toBeGreaterThan(0);
-  }, 120_000);
+    return answers;
+  }));
 });

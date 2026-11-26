@@ -233,7 +233,7 @@ describe('Rust engine on the store', () => {
     expect(await code(() => asLineage(() => engine.getRecentSalience({ days: 7 })))).toBeUndefined();
   });
 
-  withAddon('excludePrivate on the fact reads serves a reader identity and grant and its satisfied folder rules and a labelled-only grant but refuses audiences and lineage', async () => {
+  withAddon('excludePrivate on the fact reads serves a reader identity and grant, its satisfied folder rules, a labelled-only grant and a lineage read, and refuses audiences', async () => {
     const { engine } = await open();
     await engine.putPage('notes/a', page);
     await engine.insertFacts([{ fact: 'f', entity_slug: 'people/a-example', source_markdown_slug: 'notes/a', row_num: 1, kind: 'fact', visibility: 'world', source: 'fence' }] as never, { source_id: 'default' });
@@ -245,12 +245,14 @@ describe('Rust engine on the store', () => {
     const reader = { identity: ['member:alice-example'], privateReadableSources: ['default'] };
     // The reader's satisfied folder rules ride in its record (storePrivacyPolicy), and the store judges a held fact under
     // them as sharedHeldRuledSql does (test/engine-parity/held-fact-folder-rule.test.ts), so that read is served too.
-    const served = { reader, folderRule: { ...reader, satisfiedRuleIds: ['default:team-notes'] }, labelledOnly: { ...reader, labelledOnly: true } };
-    // Each of these changes the fact policy text, and the store has no form for it (row 32e-b-4 for lineage).
+    // A lineage read is served too (row 32e-b-4): the lineage case of the policy and the labelled lineage arm ride in the policy.
+    const served = {
+      reader, folderRule: { ...reader, satisfiedRuleIds: ['default:team-notes'] }, labelledOnly: { ...reader, labelledOnly: true },
+      lineage: { ...reader, lineage: true }, labelledLineage: { ...reader, labelledOnly: true, lineage: true },
+    };
+    // This changes the fact policy text, and the store has no form for it.
     const refused = {
       audience: { audience: ['member:alice-example', 'member:bob-example'], audienceIdentities: [['member:alice-example'], ['member:bob-example']] },
-      lineage: { ...reader, lineage: true },
-      labelledLineage: { ...reader, labelledOnly: true, lineage: true },
     };
     for (const [name, read] of Object.entries(reads)) {
       for (const [kind, access] of Object.entries(served)) {

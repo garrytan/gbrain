@@ -45,6 +45,7 @@
 //! scan the sources for each.
 
 use super::FactRecord;
+use crate::Result;
 use crate::access_flag::RESTRICTIONS_PRESENT_KEY;
 use crate::access_policy::{kept_rules, retired_rules};
 use crate::access_rules::{
@@ -57,7 +58,6 @@ use crate::links::out_links;
 use crate::owner_only::{OwnerOnlyForm, OwnerOnlySources};
 use crate::pages::{PageRecord, read_page, read_page_by_id};
 use crate::timeline_queries::jsonb_field_text;
-use crate::{Result, StoreError};
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
@@ -141,6 +141,15 @@ pub struct PrivacyPolicy {
     /// judged without it, as `privateEntityFilterForCaller` does.
     #[serde(default)]
     pub labelled_only: Option<Box<LabelledOnly>>,
+    /// A member's fact read with `access.members_read_lineage` on (row 32e-b-4): how the provenance page is judged, whatever
+    /// `owner_read` says for the entity gate. `Some(true)` is `privateProvenanceFilterUnderPolicy`'s lineage case: the caller's
+    /// own member page (`member_page`) by `identity` and the plain origin rule, any other `memory/members/` page by the empty
+    /// identity, and every other page by the member's lineage (`lineageAccessSql`, judged as an origin) and the privacy part.
+    /// `Some(false)` is `privateFactFilterForCaller`, whose provenance part is the plain no-caller fragment: lineage changes
+    /// only the labelled-only conjunct and the entity gate. None keeps the earlier rule: `identity` only on `member_page`, and
+    /// the policy's own `owner_read`.
+    #[serde(default)]
+    pub provenance_lineage: Option<bool>,
 }
 
 /// The terms of [`PrivacyPolicy::labelled_only`]: every principal a labelled-only writer may be named by, and the folder
@@ -254,9 +263,10 @@ pub(crate) fn hidden_by_private_provenance(
     if owner_only.fact_hidden(read, policy.owner_only, row.id, &row.source_id)? {
         return Ok(true);
     }
-    // `labelledOnlyFactSql`: a labelled-only caller reads a fact only on its own member page.
+    // `labelledOnlyFactSql`: a labelled-only caller reads a fact only on its own member page, and with lineage on also on a
+    // provenance page that names it.
     if let Some(labelled) = &policy.labelled_only
-        && !own_page_fact(read, row, labelled)?
+        && !fact_labelled(read, row, labelled, policy.caller_record)?
     {
         return Ok(true);
     }
@@ -360,14 +370,8 @@ fn hidden_by_provenance_page_with(
         return Ok(false);
     };
     let access = if restricted {
-        member_access_allows(
-            read,
-            &page,
-            provenance_identity(policy, slug),
-            policy,
-            true,
-            owner_only,
-        )?
+        let (identity, owner_read) = provenance_judge(policy, slug);
+        member_access_allows_by(read, &page, identity, policy, true, owner_only, owner_read)?
     } else {
         !names_readers(&page)
             && stamped_rules(read, &page)?.is_empty()
@@ -377,13 +381,19 @@ fn hidden_by_provenance_page_with(
         && (policy.provenance_privacy_off || privacy_allows(read, &page, policy.honor_aliases)?)))
 }
 
-/// The identity the provenance page at `slug` is judged by: the caller's on its own member page,
-/// else the empty identity (`readPolicyFragment('pp', [], ...)`).
-fn provenance_identity<'a>(policy: &'a PrivacyPolicy, slug: &str) -> &'a [String] {
-    if policy.member_page.as_deref() == Some(slug) {
-        &policy.identity
-    } else {
-        &[]
+/// The identity and origin test the provenance page at `slug` is judged by. Without lineage
+/// ([`PrivacyPolicy::provenance_lineage`] unset): the caller's identity on its own member page, else the empty identity
+/// (`readPolicyFragment('pp', [], ...)`), with the policy's own origin test. With it: the caller's own member page by
+/// its identity and the plain origin rule; under the lineage case (`Some(true)`) every page that is not a member page by the
+/// caller's identity and the lineage origin test (`lineageAccessSql`); every other page by the empty identity and the plain
+/// origin rule.
+fn provenance_judge<'a>(policy: &'a PrivacyPolicy, slug: &str) -> (&'a [String], bool) {
+    let own = policy.member_page.as_deref() == Some(slug);
+    match policy.provenance_lineage {
+        None => (if own { &policy.identity } else { &[] }, policy.owner_read),
+        Some(_) if own => (&policy.identity, false),
+        Some(true) if !slug.starts_with("memory/members/") => (&policy.identity, true),
+        Some(_) => (&[], false),
     }
 }
 
@@ -1101,15 +1111,33 @@ fn declared_items(frontmatter: &Map<String, Value>) -> Option<Vec<Option<String>
     )
 }
 
-/// `labelledOnlyFactSql`'s own-page case: the fact sits on `memory/members/<member>` (the caller's own member page, in the
-/// fact's source), and that page names `member:<member>`. No member, or a malformed one, reads as `FALSE`. A policy that
-/// carries lineage never reaches the store (the TypeScript member refuses the fact policy under lineage), so it errors.
-fn own_page_fact(read: &dyn KvRead, row: &FactRecord, labelled: &LabelledOnly) -> Result<bool> {
-    if labelled.lineage {
-        return Err(StoreError::invalid(
-            "a labelled-only fact read under lineage is not modelled",
-        ));
+/// `labelledOnlyFactSql`: the fact sits on the caller's own member page ([`own_page_fact`]) or, with lineage on, on a provenance
+/// page (the fact's source and `source_markdown_slug`, a soft-deleted page included, as the SQL has no `deleted_at` test) that
+/// `labelledOnlySql` passes ([`page_labelled`]). With no such page the second arm is false, and `own` alone decides.
+fn fact_labelled(
+    read: &dyn KvRead,
+    row: &FactRecord,
+    labelled: &LabelledOnly,
+    record: bool,
+) -> Result<bool> {
+    if own_page_fact(read, row, labelled)? {
+        return Ok(true);
     }
+    if !labelled.lineage {
+        return Ok(false);
+    }
+    let Some(slug) = row.source_markdown_slug.as_deref() else {
+        return Ok(false);
+    };
+    match read_page(read, &row.source_id, slug)? {
+        Some(page) => page_labelled(read, &page, labelled, record),
+        None => Ok(false),
+    }
+}
+
+/// `labelledOnlyFactSql`'s own-page case: the fact sits on `memory/members/<member>` (the caller's own member page, in the
+/// fact's source), and that page names `member:<member>`. No member, or a malformed one, reads as `FALSE`.
+fn own_page_fact(read: &dyn KvRead, row: &FactRecord, labelled: &LabelledOnly) -> Result<bool> {
     let Some(member) = labelled.member.as_deref().filter(|m| access_id(m)) else {
         return Ok(false);
     };
@@ -2010,5 +2038,179 @@ mod tests {
         assert!(reads("notes/open", &policy(false, OwnerOnlyForm::Fn)));
         assert!(!reads("notes/open", &policy(false, OwnerOnlyForm::Closed)));
         assert!(reads("notes/open", &policy(false, OwnerOnlyForm::Off)));
+    }
+
+    /// `provenance_judge` for each page kind (row 32e-b-4): the caller's own member page, another member's page and any other page,
+    /// under the lineage case of the first fact form, the plain provenance part of the second, and no lineage at all.
+    #[test]
+    fn the_provenance_judge_follows_the_lineage_form() {
+        let policy = |lineage: Option<bool>, owner_read: bool| PrivacyPolicy {
+            identity: vec!["member:dana-example".into()],
+            member_page: Some("memory/members/dana-example".into()),
+            owner_read,
+            provenance_lineage: lineage,
+            ..Default::default()
+        };
+        let own = "memory/members/dana-example";
+        let other_member = "memory/members/bob-example";
+        let ordinary = "notes/page";
+        let identity = ["member:dana-example".to_string()];
+        let judged = |p: &PrivacyPolicy, slug: &str| {
+            let (who, owner_read) = provenance_judge(p, slug);
+            (who.to_vec(), owner_read)
+        };
+        // The lineage case: own page by its identity with the plain origin rule; another member's page by nobody; the rest by the
+        // member's lineage.
+        let case = policy(Some(true), true);
+        assert_eq!(judged(&case, own), (identity.to_vec(), false));
+        assert_eq!(judged(&case, other_member), (Vec::new(), false));
+        assert_eq!(judged(&case, ordinary), (identity.to_vec(), true));
+        // The second form: the policy's `owner_read` still serves the entity gate, and never the provenance page.
+        let plain = policy(Some(false), true);
+        assert_eq!(judged(&plain, own), (identity.to_vec(), false));
+        assert_eq!(judged(&plain, other_member), (Vec::new(), false));
+        assert_eq!(judged(&plain, ordinary), (Vec::new(), false));
+        // A policy that does not carry the key judges as it did before: the identity only on its own member page, and the
+        // policy's own origin test (the owner read rule of a member page's withdrawal sets it).
+        for owner_read in [false, true] {
+            let before = policy(None, owner_read);
+            assert_eq!(judged(&before, own), (identity.to_vec(), owner_read));
+            assert_eq!(judged(&before, other_member), (Vec::new(), owner_read));
+            assert_eq!(judged(&before, ordinary), (Vec::new(), owner_read));
+        }
+    }
+
+    /// A fact read with lineage on (row 32e-b-4): the provenance page of an atom is judged by the member's lineage in the first
+    /// form and by the plain policy in the second, another member's page is hidden, the caller's own page is read, and a
+    /// labelled-only caller also reads a fact whose provenance page names it, or whose every origin does.
+    #[test]
+    fn a_member_reads_a_fact_by_its_provenance_page_under_lineage() {
+        let store = store();
+        let put_as = |slug: &str, page_type: &str, frontmatter: Value| {
+            let input: PageInput = serde_json::from_value(json!({
+                "type": page_type, "title": slug, "compiled_truth": "body", "timeline": "", "frontmatter": frontmatter,
+            }))
+            .unwrap();
+            store
+                .put_page(slug, &input, &PutPageOptions::default())
+                .unwrap();
+        };
+        let world = json!({ "visibility": "world" });
+        let with = |extra: Value| {
+            let mut base = world.as_object().unwrap().clone();
+            base.extend(extra.as_object().unwrap().clone());
+            Value::Object(base)
+        };
+        put_as("open/plain", "note", json!({}));
+        put_as(
+            "open/origin-dana",
+            "note",
+            json!({ "readable_by": ["dana-example"] }),
+        );
+        put_as(
+            "open/origin-carol",
+            "note",
+            json!({ "readable_by": ["carol-example"] }),
+        );
+        put_as(
+            "walk/atom-dana",
+            "atom",
+            with(json!({ "source_slug": "open/origin-dana" })),
+        );
+        put_as(
+            "walk/atom-carol",
+            "atom",
+            with(json!({ "source_slug": "open/origin-carol" })),
+        );
+        put_as(
+            "walk/null-mix",
+            "note",
+            with(json!({ "derived_from": ["open/origin-carol.md", null] })),
+        );
+        put_as(
+            "memory/members/bob-example",
+            "note",
+            json!({ "readable_by": ["member:bob-example"] }),
+        );
+        put_as(
+            "memory/members/dana-example",
+            "note",
+            json!({ "readable_by": ["member:dana-example"] }),
+        );
+        put_as(
+            "memory/members/carol-example",
+            "note",
+            json!({ "readable_by": ["member:carol-example"] }),
+        );
+        let fact = |slug: &str| FactRecord {
+            source_id: "default".into(),
+            source_markdown_slug: Some(slug.to_string()),
+            ..Default::default()
+        };
+        let hidden = |policy: &PrivacyPolicy, slug: &str| {
+            let read = store.read().unwrap();
+            hidden_by_private_provenance(&*read, &fact(slug), policy).unwrap()
+        };
+        let dana = |form: bool| PrivacyPolicy {
+            honor_aliases: true,
+            entity_privacy: true,
+            identity: vec!["member:dana-example".into()],
+            member_page: form.then(|| "memory/members/dana-example".to_string()),
+            owner_only: OwnerOnlyForm::Off,
+            owner_read: true,
+            caller_record: true,
+            provenance_lineage: Some(form),
+            ..Default::default()
+        };
+        // Form 1: dana reads the atom her origin names, not the atom of an origin that names carol, not bob's page, and her own page.
+        let one = dana(true);
+        assert!(!hidden(&one, "open/plain"));
+        assert!(!hidden(&one, "walk/atom-dana"));
+        assert!(hidden(&one, "walk/atom-carol"));
+        assert!(hidden(&one, "walk/null-mix"));
+        assert!(hidden(&one, "memory/members/bob-example"));
+        assert!(!hidden(&one, "memory/members/dana-example"));
+        assert!(hidden(&one, "open/origin-carol"));
+        // Form 2: the provenance part is the plain policy, so an atom derived from a page that names readers is hidden too.
+        let two = dana(false);
+        assert!(!hidden(&two, "open/plain"));
+        assert!(hidden(&two, "walk/atom-dana"));
+        assert!(hidden(&two, "memory/members/dana-example"));
+        // Carol, labelled-only, lineage on: a fact is read on her own page, on a page that names her and on an atom whose origin does;
+        // and a fact on a page that names nobody, a derived page with a null origin, or on no page, is not.
+        let carol = |form: bool| PrivacyPolicy {
+            honor_aliases: true,
+            entity_privacy: true,
+            identity: vec!["member:carol-example".into()],
+            member_page: form.then(|| "memory/members/carol-example".to_string()),
+            owner_only: OwnerOnlyForm::Off,
+            owner_read: true,
+            caller_record: true,
+            provenance_lineage: Some(form),
+            labelled_only: Some(Box::new(LabelledOnly {
+                identity: vec!["member:carol-example".into(), "carol-example".into()],
+                satisfied_rule_ids: Vec::new(),
+                lineage: true,
+                member: Some("carol-example".into()),
+            })),
+            ..Default::default()
+        };
+        let c = carol(true);
+        assert!(!hidden(&c, "memory/members/carol-example"));
+        assert!(!hidden(&c, "open/origin-carol"));
+        assert!(!hidden(&c, "walk/atom-carol"));
+        assert!(hidden(&c, "open/plain"));
+        assert!(hidden(&c, "walk/null-mix"));
+        assert!(hidden(&c, "walk/atom-dana"));
+        assert!(
+            hidden(&c, "nowhere/page"),
+            "no page names the caller, so the labelled conjunct fails"
+        );
+        // The labelled lineage arm needs the flag: without it only the caller's own page is read.
+        let mut off = carol(true);
+        off.labelled_only.as_mut().unwrap().lineage = false;
+        assert!(!hidden(&off, "memory/members/carol-example"));
+        assert!(hidden(&off, "open/origin-carol"));
+        assert!(hidden(&off, "walk/atom-carol"));
     }
 }

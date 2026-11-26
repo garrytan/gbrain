@@ -84,9 +84,15 @@ judges the caller's own member page (`memory/members/<member>`, the actor's memb
 second form has no CASE and sends no `memberPage`. A labelled-only caller is served too: the member sends `labelledOnly: { identity, satisfiedRuleIds, member }`, and the
 store hides a fact unless it sits on `memory/members/<member>` and that page names `member:<member>` (`own_page_fact`,
 `labelledOnlyFactSql`); the entity and holding pages are judged without the labelled-only conjunct, as
-`privateEntityFilterForCaller` does. A non-owner caller under `access.members_read_lineage` (ordinary or labelled-only), or an
-audience whose policy matches none of the reference renderings (including a labelled-only audience of several identities),
-is refused with `engine_capability_missing` (row 32e-b-4 for lineage; `src/core/rust-engine/store-members/private-provenance.ts`). A keyed-slug entity
+`privateEntityFilterForCaller` does. A non-owner caller under `access.members_read_lineage` (ordinary or labelled-only) is served too (row 32e-b-4): the member sends
+`lineageProvenance` (`provenance_lineage` in `facts/privacy.rs`) and `callerRecord`, with the record's satisfied rules and pending prefixes.
+In the first form (`privateProvenanceFilterUnderPolicy`) the provenance page is judged by `provenance_judge`: the caller's own member page by its
+identity and the plain origin rule, any other `memory/members/` page by the empty identity, and every other page by the member's lineage as an
+origin (`lineageAccessSql`, `derived` true) and the privacy part. In the second form (`privateFactFilterForCaller`) the provenance part is the plain
+no-caller fragment, so lineage changes only the entity gate (the policy's `owner_read`) and the labelled-only conjunct. A labelled-only caller with lineage
+reads a fact on its own member page or on a provenance page (the fact's source and slug, a soft-deleted page included) that `page_labelled` passes
+(`fact_labelled`, `labelledOnlyFactSql`). An audience whose policy matches none of the reference renderings (including a labelled-only audience of several identities)
+is refused with `engine_capability_missing` (row 32e-b-5; `src/core/rust-engine/store-members/private-provenance.ts`). A keyed-slug entity
 (an `entity_slug` with no `/`) is judged at the name-key page directories (`NAME_KEY_PAGE_DIRS`) by
 `facts/privacy.rs`, as `privateEntityFilterForCaller` does.
 An anonymous caller on a brain that never named readers (`restricted` false in its
@@ -114,8 +120,7 @@ bare list. Otherwise it sends `widen` only when the caller's text matches a fres
 identity, private-readable grant and private-facts grant, plus the supported labelled-only and lineage fields from
 `callerReference`, optionally with its satisfied folder rules and pending prefixes. `member` is the member that
 record reads as; `memberPagePolicy` carries its page policy and reference flags. A caller whose text matches none
-of these renderings refuses with `engine_capability_missing`. The separate private-provenance fact gate still
-refuses non-owner lineage reads (row 32e-b-4). Covered by
+of these renderings refuses with `engine_capability_missing`. The private-provenance fact gate serves non-owner lineage reads (row 32e-b-4). Covered by
 `test/engine-parity/fact-visibility-widening.test.ts`, `fact-trajectory-widening.test.ts` and
 `fact-pool-widening.test.ts`, which share `fact-widening-fixture.ts`.
 
@@ -738,7 +743,7 @@ a soft-deleted page, the trust floor and the filters), so a row the caller canno
 
 The TypeScript members refuse (`engine_capability_missing`) a vector-typed column (the store keeps `halfvec`) and any visibility
 or private-provenance policy whose text matches none of the supported reference renderings described above. Supported
-labelled-only callers with lineage off are served; non-owner lineage reads remain refused by the private-provenance
+labelled-only callers, with lineage off or on, and non-owner lineage reads are served by the private-provenance
 fact gate (row 32e-b-4). `hnswIterativeScan` only changes the Postgres plan, so the store ignores it.
 Parity: `test/engine-parity/recall-members.test.ts` (edges of each member and the pool functions a search and a recall call, whole),
 and the same members in `facts-rest-sites.test.ts`.

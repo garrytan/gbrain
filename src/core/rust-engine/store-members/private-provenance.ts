@@ -10,8 +10,10 @@
  * serves a fresh record of only a reader identity and a private-readable grant: the entity gate judges by both, and the
  * provenance page by the identity only on the caller's own member page (`memberPage`, the member-page case of
  * privateProvenanceFilterUnderPolicy; the other form has none), plus a labelled-only grant (callerReference: the store keeps a fact
- * to the caller's own member page). Any other caller (an audience, a lineage or owner read, a relaxed remote read) refuses with
- * `engine_capability_missing`; so does every fact policy under access.members_read_lineage (RUST_ENGINE.md row 32e-b-4).
+ * to the caller's own member page, and with lineage to a provenance page that names it) and a member's lineage read
+ * (`lineageProvenance`: the first form's lineage case judges the provenance page by the member's lineage; the second form's
+ * provenance part is the plain one, so lineage changes only its labelled-only conjunct and its entity gate; RUST_ENGINE.md row
+ * 32e-b-4). Any other caller (an audience, an owner's lineage read, a relaxed remote read) refuses with `engine_capability_missing`.
  *
  * A page read under `excludePrivate` (pageReadFilter, src/core/search/read-policy-sql.ts) adds the page policy
  * `privatePagesFilterForCaller('p')` instead, which the entity gate of the fact policy applies to its entity page;
@@ -100,6 +102,13 @@ export interface StorePrivacyPolicy {
   callerRecord?: boolean;
   /** A local owner's fact policy with privacy off: the provenance page is judged with no privacy part. */
   provenancePrivacyOff?: boolean;
+  /**
+   * A member's fact read with `access.members_read_lineage` on. true: the text holds the lineage case of
+   * privateProvenanceFilterUnderPolicy (the caller's own member page by its identity, any other `memory/members/` page by the empty
+   * identity, every other page by `lineageAccessSql` judged as an origin and the privacy part). false: the plain provenance part
+   * (privateFactFilterForCaller). Absent: no lineage (`provenance_lineage` in privacy.rs).
+   */
+  lineageProvenance?: boolean;
   /**
    * The labelled-only conjunct (`labelledOnlySql`): the page names one of `identity` or has a folder rule in `satisfiedRuleIds`
    * (`LabelledOnly` in privacy.rs). `lineage`: access.members_read_lineage is on, so a derived page also passes when every
@@ -204,9 +213,9 @@ export function storePrivacyPolicy(
       ...(folders.satisfiedRuleIds.length && validRules ? { satisfiedRuleIds: folders.satisfiedRuleIds } : {}),
       ...(folders.folderCoverage.length ? { folderCoverage: folders.folderCoverage } : {}),
     };
-    // A labelled-only grant rides in the reference record and the flags (callerReference). A lineage read refuses: the fact policy
-    // under lineage judges every provenance page by the member's lineage, which the store does not model (row 32e-b-4).
-    const reference = access.lineage && !access.owner ? null : callerReference();
+    // A labelled-only grant and a member's lineage read ride in the reference record and the flags (callerReference): the canonical
+    // text is rendered under the same lineage record as the caller's own, so a text match is the proof (row 32e-b-4).
+    const reference = callerReference();
     if (!reference) return undefined;
     const records: Array<Partial<CallerAccess>> = [{ ...readers, ...reference.record, hidePrivate: true, restricted: !open }];
     if (folders.satisfiedRuleIds.length || folders.folderCoverage.length) records.push({ ...readers, ...folders, ...reference.record, hidePrivate: true, restricted: !open });
@@ -222,7 +231,12 @@ export function storePrivacyPolicy(
         // A local owner reading with privacy off renders no privacy part on the provenance page either.
         const provenancePrivacyOff = record.owner === true && !canonical.includes(privateSnapshotFilterFragment('pp'));
         const withFolders = 'satisfiedRuleIds' in record || 'folderCoverage' in record;
-        return { ...factPolicyFlags(canonical), ...readers, ...(withFolders ? stored : {}), ...(judged ? { memberPage } : {}), ...(provenancePrivacyOff ? { provenancePrivacyOff: true } : {}), ...reference.flags };
+        // A member's lineage read (never an owner record: its text holds no lineage reference). The lineage case of the first form
+        // is read off the canonical text; the second form has none.
+        const lineage = record.lineage === true && record.owner !== true;
+        const lineageCase = form.memberCase && canonical.includes(`CASE WHEN starts_with(pp.slug, '${MEMBER_PAGE_PREFIX}') THEN`);
+        const lineageFlags = lineage ? { lineageProvenance: lineageCase, callerRecord: true } : {};
+        return { ...factPolicyFlags(canonical), ...readers, ...(withFolders ? stored : {}), ...(judged ? { memberPage } : {}), ...(provenancePrivacyOff ? { provenancePrivacyOff: true } : {}), ...reference.flags, ...lineageFlags };
       }
     }
     return undefined;

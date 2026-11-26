@@ -93,8 +93,6 @@ async function remoteRead(engine: BrainEngine, slug: string, withSearch: boolean
     refuse(got);
     if (!/page_not_found/.test(text(got))) throw new Error(`get_page ${slug}: ${text(got).slice(0, 300)}`);
   }
-  // With lineage on, search also matches saved facts under the fact policy of a lineage read, which the Rust store refuses (row 32e-b-4,
-  // pinned in labelled-only-reads.test.ts), so the search arm is read only with lineage off.
   if (!withSearch) return { get: got.isError ? 'page_not_found' : 'visible', search: null };
   const found = await call('search', { query: WORD, limit: 50 });
   if (found.isError) { refuse(found); throw new Error(`search ${slug}: ${text(found).slice(0, 300)}`); }
@@ -160,17 +158,17 @@ describe('engine parity: a labelled-only member against who-can-read and the pag
     return table;
   }));
 
-  // (2) carol's remote read (get_page, and search with lineage off, through the stdio member path), the same on every engine.
+  // (2) carol's remote read (get_page and search, lineage off and on, through the stdio member path), the same on every engine.
   parityTest('a labelled-only member reads over the remote path only the pages that name it, the same on every engine', {
     methods: ['putPage', 'sealChunks', 'readPageSnapshot'], timeout: 240_000,
   }, (engine, backend) => inFreshHome(async () => {
     await seed(engine, backend);
     const table = await eachLineage(engine, async (lineage) => {
       const reads: Record<string, unknown> = {};
-      for (const s of SHAPES) reads[s.slug] = await remoteRead(engine, s.slug, lineage === 'off');
+      for (const s of SHAPES) reads[s.slug] = await remoteRead(engine, s.slug, true);
       const visible = SHAPES.filter(s => (reads[s.slug] as { get: string }).get === 'visible').map(s => s.slug);
       expect(visible).toEqual(SHAPES.map(s => s.slug).filter(slug => VISIBLE[lineage].includes(slug)));
-      if (lineage === 'off') expect(SHAPES.filter(s => (reads[s.slug] as { search: boolean }).search).map(s => s.slug)).toEqual(visible);
+      expect(SHAPES.filter(s => (reads[s.slug] as { search: boolean }).search).map(s => s.slug)).toEqual(visible);
       return reads;
     });
     return table;
