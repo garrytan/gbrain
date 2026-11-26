@@ -124,6 +124,7 @@ TOOLS
   feedback <status|reset>            retrieval feedback: learned page weights; rate answers with gbrain rate
   transcripts <ingest|status|recent> v0.46: import agent session logs + chat exports (local-only)
   onboarding <status|off> [--json]   First-session suggestion: why it shows or not; turn it off
+  propose [--days N] [--json]        Jobs your agent could take on, from what is already in the brain
   value [--json]                     What your brain holds and has done for you, as counts
   dream [--dry-run] [--json]         Run the overnight maintenance cycle once (cron-friendly).
                                      See also: autopilot --install (continuous daemon).

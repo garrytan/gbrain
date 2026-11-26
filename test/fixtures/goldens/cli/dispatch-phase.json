@@ -1456,6 +1456,13 @@
         "thinClient": "refuse",
         "thinClientRoutedSubcommands": []
       },
+      "propose": {
+        "hasSwitchCase": true,
+        "phase": "post-connect",
+        "preConnectRules": [],
+        "thinClient": "refuse",
+        "thinClientRoutedSubcommands": []
+      },
       "protocol": {
         "hasSwitchCase": false,
         "phase": "pre-connect",

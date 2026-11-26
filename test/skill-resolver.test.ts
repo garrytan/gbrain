@@ -28,6 +28,7 @@ import { estimateTokens } from '../src/core/skills/resolver/block.ts';
 import { acquireLease, holdsLease, releaseLease, tryAcquireLease } from '../src/core/skills/resolver/lock.ts';
 import { commitSession, commitSessionAsync, gcSessions, gcSessionsAsync, loadSession, sessionGcSettled, sessionKey } from '../src/core/skills/resolver/session.ts';
 import { catalogFile } from '../src/core/skills/resolver/paths.ts';
+import { parseSkillDoc } from '../src/core/skills/resolver/frontmatter.ts';
 import { appendDailyLog, appendDailyLogSync, DAILY_LOG_DAY_CAP_BYTES, dailyLogFile, LANE_LOG, readRecentDailyLog, RESOLVER_LOG } from '../src/core/skills/resolver/daily-log.ts';
 import { EXCLUDE_MAX, STAT_CHECK_SLICE } from '../src/core/skills/resolver/resolve.ts';
 import { RACY_MTIME_MS } from '../src/core/skills/resolver/build.ts';
@@ -1190,6 +1191,18 @@ describe('owner-only skills (audience: owner)', () => {
     for (const id of ids) expect(others.output.suggestions.map(s => s.id)).not.toContain(id);
     const owner = await resolveSkills({ message: 'review the private household ledger copy', top_k: 8, top_gate: 0 }, { home, audience: 'owner' });
     expect(owner.output.suggestions.map(s => s.id)).toEqual(expect.arrayContaining(ids));
+  });
+
+  test('an audience key stays owner-only when the front matter is never closed, quotes the key or spells it in another case', () => {
+    for (const doc of [
+      '---\nname: a\ndescription: Review the ledger\naudience: owner\n\nSteps.\n',
+      '---\nname: a\n"audience": owner\ntriggers: [unclosed\n---\nSteps.\n',
+      '---\nname: a\nAudience: owner\n---\nSteps.\n',
+      '\uFEFF---\nname: a\naudience: owner\n---\nSteps.\n',
+      '---  \nname: a\naudience: owner\n\nSteps.\n',
+    ]) expect(parseSkillDoc(doc).audience).toBe('owner');
+    expect(parseSkillDoc('Steps.\naudience: owner\n').audience).toBeUndefined();
+    expect(parseSkillDoc('---\nname: a\ndescription: Review the ledger\n---\nSteps.\n').audience).toBeUndefined();
   });
 
   test('conversation pins from a catalog built before audiences were recorded are all withheld until it is rebuilt', async () => {
