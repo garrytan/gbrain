@@ -43,6 +43,10 @@ export const READ_BEHAVIOR_ENV: readonly string[] = [
   // Rust multi-user mode (default off): the mode decides how the store opens (leases, fences, commit log), the access
   // self-check can refuse a read whose privacy policies differ, and the commit log adds the `commit_log` capability.
   'GBRAIN_RUST_MULTIUSER', 'GBRAIN_RUST_ACCESS_SELF_CHECK', 'GBRAIN_RUST_COMMIT_LOG',
+  // Rust brain server (multi-user mode): the URL and token decide which brain a served client reads, and as whom (only
+  // the SHA-256 of each value enters the identity); the serial-transaction switch decides whether a served client's
+  // transaction runs or is refused, so a read inside one can answer differently.
+  'GBRAIN_RUST_SERVER_URL', 'GBRAIN_RUST_SERVER_TOKEN', 'GBRAIN_RUST_SERVED_SERIAL_TXN',
 ];
 /** Provider credentials: only whether each is set enters the identity. Every other provider variable (endpoints, deployments, versions, org/project/group ids) enters with its value. */
 const SECRET_PROVIDER_ENV = /(_API_KEY|_TOKEN|_SECRET)$/;

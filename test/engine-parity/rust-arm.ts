@@ -208,7 +208,7 @@ let servedTls: { cert: Buffer; key: Buffer } | undefined;
  * The arm's owner server token. The served arm must not write a token row or a config row into the brain each case
  * reads (token and config listings would then differ from PGLite), so the owner checks this one token through the
  * served/auth.ts `verify` and `ownerIds` seams, shaped as the real bearer check answers for an owner server token
- * (test/rust-served-cli.serial.test.ts and test/rust-served-wire.test.ts cover the real token path).
+ * (test/rust-served-cli.test.ts and test/rust-served-wire.test.ts cover the real token path).
  */
 const SERVED_ARM_TOKEN = `gbrain_served_arm_${process.pid}`;
 const SERVED_ARM_OWNER = { principal: { kind: 'legacy_token', id: 'served-arm' }, scopes: ['read', 'write', 'admin'], sourceId: 'default', hasSourceGrant: false, member: null, mayActFor: null, attest: null };

@@ -8,7 +8,7 @@
  *
  * 1. Protects: the MCP contract of a served brain: the same JSON an embedded brain gives, error results included.
  * 2. Fails on: any read tool whose served answer differs in one byte, or a remote read the served client refuses.
- * 3. Existing coverage: rust-served-cli.serial.test.ts compares CLI output; nothing compared MCP tool results served.
+ * 3. Existing coverage: rust-served-cli.test.ts compares CLI output; nothing compared MCP tool results served.
  * 4. Seam: the owner's bearer check is served/auth.ts's `verify` seam (as the served parity variant); everything else
  *    is the real engine, listener, client and MCP dispatcher. Needs the addon `bun run rust:build` writes.
  */
