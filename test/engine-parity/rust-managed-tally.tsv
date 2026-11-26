@@ -218,6 +218,7 @@ test/engine-parity/meeting-pages.test.ts	1	0
 test/engine-parity/meetings-sync.test.ts	1	0
 test/engine-parity/memory-mutation-reads.test.ts	6	0
 test/engine-parity/memory-proposal-reads.test.ts	3	0
+test/engine-parity/memory-recall-dates.test.ts	3	3	three pinned stops (test/rust-stop-pins/memory-recall-dates.tsv): the ordinary member with lineage on (row 32e-b-4) and the owner with lineage off or on (RA-1)
 test/engine-parity/mention-coverage.test.ts	9	0
 test/engine-parity/mention-pass.test.ts	4	0
 test/engine-parity/migrate-embeddings-usage.test.ts	1	0

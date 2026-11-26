@@ -262,6 +262,8 @@ describe('engine parity: ownMemberFactIds, the own_page flag of memory_recall', 
     const label = new Map([...ids].map(([name, id]) => [id, name]));
     const every = [...ids.values()];
     const asked = [...every, every[0]!, 999_999];
+    // The owner is left out: its remote record renders other admission text (the owner lineage read), which a Rust brain refuses by name
+    // (row RA-1, test/rust-stop-pins/memory-recall-dates.tsv covers the owner's memory_recall); the SQL arms answer it ['owner-private'].
     const answer = async (member: string | null, sourceId = 'default', list: readonly number[] = asked): Promise<unknown> => {
       const record = member ? { ...await remoteCallerAccess(engine, undefined, [], 'stdio', null, member, false) } : { identity: [] as string[], hidePrivate: true };
       try {
@@ -274,7 +276,6 @@ describe('engine parity: ownMemberFactIds, the own_page flag of memory_recall', 
     };
     const out = {
       member: await answer(MEMBER),
-      owner: await answer(OWNER),
       carol: await answer(CAROL),
       noMember: await answer(null),
       otherSource: await answer(MEMBER, 'other'),
@@ -282,7 +283,6 @@ describe('engine parity: ownMemberFactIds, the own_page flag of memory_recall', 
       noIds: await answer(MEMBER, 'default', []),
     };
     expect(out.member).toEqual(['member-private', 'member-private-two']);
-    expect(out.owner).toEqual(['owner-private']);
     expect(out.carol).toEqual([]);
     expect(out.noMember).toEqual([]);
     expect(out.otherSource).toEqual(['member-private-elsewhere']);
