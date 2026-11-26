@@ -403,6 +403,9 @@ async function importScanned(engine: BrainEngine, input: { file: FileHandle; bom
   }
   if (parsed.typeExplicit !== true && existing && !opts.coordinated?.moved) parsed.type = existing.type;
   resolveParsedSubtype(parsed, existing);
+  if (parsed.type === 'household' || (existing && !existing.deleted_at && existing.type === 'household') || parsed.frontmatter.household_role !== undefined || existing?.frontmatter?.household_role !== undefined) {
+    return hold(slug, size, 'household write admission reads the stored page and the whole incoming one');
+  }
   const typeClass = parsed.typeExplicit === true && opts.activePack ? classifyStoredType(parsed.type, opts.activePack) : null;
   const typeWarning = typeClass?.kind === 'alias_of' ? { kind: 'alias_of' as const, type: parsed.type, canonical: typeClass.canonical, directory: typeClass.directory }
     : typeClass?.kind === 'undeclared' ? { kind: 'undeclared' as const, type: parsed.type } : undefined;

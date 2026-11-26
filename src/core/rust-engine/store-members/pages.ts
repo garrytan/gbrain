@@ -83,7 +83,7 @@ export const restorePage: StoreMember<[slug: string, opts?: { sourceId?: string 
   storeCall({ member: 'restorePage', slug }, () => brain.restorePage(slug, takeOptions('restorePage', opts, ['sourceId'])));
 
 const LIST_FILTERS = ['type', 'tag', 'limit', 'offset', 'updated_after', 'updatedAfterKeyset', 'slugAfter', 'slugPrefix',
-  'excludeSlugPrefixes', 'includeDeleted', 'sort', 'sourceId', 'sourceIds', 'excludePrivate', 'listColumnsOnly'] as const;
+  'excludeSlugPrefixes', 'includeDeleted', 'sort', 'sourceId', 'sourceIds', 'excludePrivate', 'listColumnsOnly', 'omitBodies'] as const;
 
 /**
  * A page as PGLite's `listPages({ listColumnsOnly: true })` row reads: only the list columns (id, source, slug, type,
@@ -91,11 +91,11 @@ const LIST_FILTERS = ['type', 'tag', 'limit', 'offset', 'updated_after', 'update
  * frontmatter. `content_hash` and `emotional_weight` are present and undefined, as rowToPage leaves them when the list
  * columns omit them. Every other page field is absent.
  */
-function listColumns(page: Page): Page {
+function listColumns(page: Page, keepFrontmatter = false): Page {
   const { id, source_id, slug, type, title, created_at, updated_at, updated_at_iso, deleted_at, effective_date,
     effective_date_source, body_storage, body_bytes } = page;
   return {
-    id, source_id, slug, type, title, compiled_truth: '', timeline: '', frontmatter: {}, content_hash: undefined,
+    id, source_id, slug, type, title, compiled_truth: '', timeline: '', frontmatter: keepFrontmatter ? page.frontmatter : {}, content_hash: undefined,
     emotional_weight: undefined, created_at, updated_at,
     ...(updated_at_iso !== undefined && { updated_at_iso }),
     ...(deleted_at !== undefined && { deleted_at }),
@@ -106,10 +106,12 @@ function listColumns(page: Page): Page {
 }
 
 export const listPages: StoreMember<[filters?: PageFilters], Page[]> = async (brain, filters) => {
-  // The store reads whole pages; `listColumnsOnly` keeps PGLite's list projection of each (listColumns).
-  const { listColumnsOnly, ...options } = pageScope('listPages', filters, LIST_FILTERS);
+  // The store reads whole pages; `listColumnsOnly` keeps PGLite's list projection of each (listColumns), and `omitBodies`
+  // (#10302, household scans) the same projection with the frontmatter kept.
+  const { listColumnsOnly, omitBodies, ...options } = pageScope('listPages', filters, LIST_FILTERS);
   const pages: Page[] = await storeCall({ member: 'listPages' }, () => brain.listPages(options));
-  return pages.map((page) => (listColumnsOnly === true ? listColumns(toListPage(page)) : toListPage(page)));
+  return pages.map((page) => (listColumnsOnly === true ? listColumns(toListPage(page))
+    : omitBodies === true ? listColumns(toListPage(page), true) : toListPage(page)));
 };
 
 /**
