@@ -203,7 +203,7 @@ test/engine-parity/journal-typed-sites.test.ts	6	1
 test/engine-parity/keyword-visibility.test.ts	7	0
 test/engine-parity/label-guard-tiers.test.ts	2	0
 test/engine-parity/labelled-access-allowed.test.ts	2	0
-test/engine-parity/labelled-only-floor-stops.test.ts	0	6
+test/engine-parity/labelled-only-floor-stops.test.ts	0	7
 test/engine-parity/labelled-only-for.test.ts	1	0
 test/engine-parity/labelled-only-policy.test.ts	17	0
 test/engine-parity/labelled-only-reads.test.ts	11	0

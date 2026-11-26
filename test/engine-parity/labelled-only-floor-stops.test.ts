@@ -101,10 +101,10 @@ async function seedPending(engine: BrainEngine, backend: ParityBackend): Promise
 }
 
 /** dana's record, holding the pending prefix: an ordinary member, never labelled-only. */
-const danaRecord = async (engine: BrainEngine): Promise<Record<string, unknown>> => {
+const danaRecord = async (engine: BrainEngine, pending = true): Promise<Record<string, unknown>> => {
   const record = await remoteCallerAccess(engine, undefined, [], 'stdio', null, DANA, true);
   expect(record.labelledOnly).not.toBe(true);
-  expect((record.folderCoverage as unknown[]).length).toBeGreaterThan(0);
+  if (pending) expect((record.folderCoverage as unknown[]).length).toBeGreaterThan(0);
   return { ...record };
 };
 
@@ -210,6 +210,21 @@ describe('engine parity: named stops of row 32e-b-5 (a labelled-only member: fac
     const on = await all();
     expect(off).toEqual({ open: 'found', pending: 'none' });
     expect(on).toEqual({ open: 'found', pending: 'none' });
+    return { off, on };
+  });
+  parityTest('an ordinary member whose own member page widens the world-only fact list reads a fact check on an open page only, lineage off and on, on PGLite and Postgres, and the Rust store stops on factReadableUnder (row 32e-b-5)', {
+    methods: ['putPage', 'insertFacts', 'factReadableUnder'], timeout: 240_000,
+  }, async (engine, backend) => {
+    const ids = await seed(engine, backend);
+    const readable = async (id: number) => withCallerAccess(await danaRecord(engine, false) as never, () =>
+      engine.factReadableUnder({ id, sourceId: 'default', anyVisibility: false, eligibility: undefined, excludePrivate: true }));
+    const all = async () => ({ open: await readable(ids.open), own: await readable(ids.own) });
+    const off = await all();
+    await setMembersReadLineage(engine, true, { remote: false });
+    const on = await all();
+    // The fact on an open page is read; the fact on another member's page is not.
+    expect(off).toEqual({ open: true, own: false });
+    expect(on).toEqual({ open: true, own: false });
     return { off, on };
   });
 });

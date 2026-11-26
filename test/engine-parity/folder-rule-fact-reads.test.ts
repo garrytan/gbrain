@@ -160,7 +160,7 @@ describe('engine parity: fact reads with access.members_read_lineage on (RUST_EN
 
   // Recall answers on every engine with lineage on, for a labelled-only and an ordinary member.
   parityTest('with access.members_read_lineage on, recall answers the same facts on every engine, for a labelled-only and an ordinary member', {
-    methods: ['putPage', 'insertFacts', 'listFactsSince', 'listFactsByEntity'], timeout: 240_000,
+    methods: ['putPage', 'insertFacts', 'listFactsSince'], timeout: 240_000,
   }, (engine, backend) => inFreshHome(async () => {
     await seed(engine, backend);
     await setMembersReadLineage(engine, true, { remote: false });

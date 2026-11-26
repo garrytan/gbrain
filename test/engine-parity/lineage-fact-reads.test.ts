@@ -264,9 +264,11 @@ const FAMILIES: readonly Family[] = [
   }, check: (m, g) => { expect(g.keyword).toEqual(WANT(1, m)); expect(g.entity).toEqual(WANT(1, m)); expect(g.uncomparable).toEqual([{ source_id: 'default', n: WANT(1, m).length }]); } },
   { name: 'listSimilarActiveFacts', form: 1, run: async (engine, s) =>
     labelsOf(s, (await engine.listSimilarActiveFacts({ sourceId: 'default', factId: s.anchor, remote: true, excludePrivate: true, minCosine: 0, limit: 100 })).rows as never), check: (m, g) => expect(g).toEqual(LABELS.filter(l => WANT(1, m).includes(l) || l === 'gone-dana')) },
+  // anyVisibility true: the world-only form renders a visibility list that a member's own member page widens, which the Rust store refuses
+  // with lineage off too (row 32e-b-5, labelled-only-floor-stops.test.ts); the policy under test is the same private-provenance policy.
   { name: 'factReadableUnder', form: 1, run: async (engine, s) => {
     const read: string[] = [];
-    for (const [label, id] of s.ids) if (await engine.factReadableUnder({ id, sourceId: 'default', anyVisibility: false, eligibility: undefined, excludePrivate: true })) read.push(label);
+    for (const [label, id] of s.ids) if (await engine.factReadableUnder({ id, sourceId: 'default', anyVisibility: true, eligibility: undefined, excludePrivate: true })) read.push(label);
     return LABELS.filter(l => read.includes(l));
   }, check: (m, g) => expect(g).toEqual(WANT(1, m)) },
   { name: 'readBriefWorldFacts', form: 2, run: async (engine, s) => labelsOf(s, await engine.readBriefWorldFacts(ALL(s))), check: (m, g) => expect(g).toEqual(WANT(2, m)) },
