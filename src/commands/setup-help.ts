@@ -131,8 +131,9 @@ Flags:
                        --status [--receipt ID] prints the run's receipt and what each key
                        reads; --resume ID --yes finishes a stopped run.
                        Guide: docs/tutorials/household-brain.md.
-  --template team      claude-code, codex: set the brain up for a team (--shape company, or
-                       both). Needs --members ID,ID (the owner is in the team already).
+  --template team      claude-code, codex: set the brain up for a team (--shape company; not
+                       with --shape both or --transcripts). Needs --members ID,ID (the owner
+                       is in the team already).
                        Preview first; --yes applies: each member with a folder only they
                        read and one key in a 0600 file under <config>/member-keys/ (never
                        printed), the team-members group (--team-group ID names another),
@@ -149,11 +150,12 @@ Flags:
                        500 markdown files, setup prints the import command instead.
   --docs DIR           With --shape company or both: import a company docs folder into
                        the company source the same way, read only.
-  --transcripts DIR    With --shape company or both (not --team): import exported call
-                       transcripts (.txt, .md) once each as company/calls/<date>-<title>
-                       pages in the company source: words kept, credentials redacted,
-                       keyword-only, readable by whoever reads that source. Setup says
-                       who that is. Not the conversation archive (conversations/).
+  --transcripts DIR    With --shape company or both (not --team or --template team):
+                       import exported call transcripts (.txt, .md) once each as
+                       company/calls/<date>-<title> pages in the company source: words
+                       kept, credentials redacted, keyword-only, readable by whoever
+                       reads that source. Setup says who that is. Not the conversation
+                       archive (conversations/).
   --team | --solo      With a company shape: --team prints where a team's shared company
                        brain lives and creates nothing for it; --solo (the default) makes
                        the company part on this brain.

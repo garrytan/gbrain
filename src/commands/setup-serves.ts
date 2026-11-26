@@ -209,7 +209,7 @@ export interface ServesPlan { roster: string[]; status: ServesStatus | null; own
  * Before setup writes anything: the roster (an empty one refuses), the brain's serves view (none for a brain setup is
  * about to create, or while this registration's own stdio serve holds a PGLite brain), and the one-person refusal.
  */
-export function servesPreflight(flags: ServesFlags, launcher: string, harness: string, hasBrain: boolean, liveOurs: boolean, entry: EntryBinding = { member: null, previous: null }): ServesPlan | OperationError {
+export function servesPreflight(flags: ServesFlags, launcher: string, harness: string, hasBrain: boolean, liveOurs: boolean, entry: EntryBinding = { member: null, previous: null }, /** The entry is tied to the brain owner later in the run (the team template). */ tiesOwner = false): ServesPlan | OperationError {
   const roster = servesRoster(flags, harness);
   if (roster instanceof OperationError) return roster;
   const named = flags.stdioMember;
@@ -237,7 +237,8 @@ export function servesPreflight(flags: ServesFlags, launcher: string, harness: s
       `Name one of: ${status?.enabled_members.join(', ') || '(none yet; label them with --serves several --members <ids>)'}.`,
       { fix: { argv: ['gbrain', 'access', 'serves', '--json'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Read-only: lists the enabled members a --stdio-member may name.' } });
   }
-  const refusal = servesOneRefusal(status, harness, entry);
+  const tied = tiesOwner && !entry.member && status?.owner ? { ...entry, member: status.owner } : entry;
+  const refusal = servesOneRefusal(status, harness, tied);
   return refusal ?? { roster, status };
 }
 

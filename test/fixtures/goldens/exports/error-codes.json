@@ -657,6 +657,7 @@
     "setup_receipt_target_mismatch",
     "setup_serves_several",
     "setup_serves_unreadable",
+    "setup_team_blocked",
     "setup_team_unbound",
     "shadow_drill_failed",
     "shared_skills_unavailable",

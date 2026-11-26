@@ -122,7 +122,7 @@ describe('team template', () => {
       ['carol-example', 'delivered', 3, 3, [], [], true],
     ]);
     expect(s.ok).toBe(true);
-    expect(s.proof[0]!.check).toBe('gbrain access check --token member-bob-example --as bob-example');
+    expect(s.proof[0]!.check).toBe('gbrain access check --token member-bob-example');
 
     const again = await run();
     expect(again.error).toBeUndefined();
@@ -420,5 +420,145 @@ describe('team template final-review fixes', () => {
     expect(teamPreflight(flags.teamRun, opts, 'gbrain', 'codex', true, false, () => ({ stdout: JSON.stringify({ template: 'team', steps: [] }), stderr: '' }))).toBeNull();
     const guests = __testing.parseFlags(['codex', '--template', 'team', '--members', MEMBERS, '--guests', 'oauth_client:broker-a', '--yes']) as any;
     expect(teamPreflight(guests.teamRun, opts, 'gbrain', 'codex', false, false)?.code).toBe('setup_team_blocked');
+  });
+});
+
+describe('team template last-round fixes', () => {
+  const keyOf = (r: { keys: Array<{ member: string; path: string }> }, m: string) => readFileSync(r.keys.find(k => k.member === m)!.path, 'utf8').trim();
+  const groupStep = (r: { steps: Array<{ id: string; state: string; actions: Array<{ action: string; detail?: string }> }> }) => r.steps.find(x => x.id === 'group')!;
+
+  test('--template team refuses --shape both and --transcripts before anything is written', () => {
+    expect(__testing.parseFlags(['codex', '--template', 'team', '--members', MEMBERS, '--shape', 'both'])).toContain('--shape both is not set up with it');
+    const calls = mkdtempSync(join(tmpdir(), 'gbrain-team-calls-'));
+    const refused = __testing.parseFlags(['codex', '--template', 'team', '--members', MEMBERS, '--transcripts', calls]);
+    expect(refused).toContain('does not import call transcripts in the same run');
+    expect(refused).toContain(`gbrain import ${calls} --calls --prefix company/calls --source company`);
+    expect((__testing.parseFlags(['codex', '--template', 'team', '--members', MEMBERS, '--shape', 'company']) as any).brain).toBe('company');
+  });
+
+  test('a rule waiting for its removal to be approved still names the group, so making the group is BLOCKED', async () => {
+    await addFolderRules(engine, 'default', [{ id: 'old-team', prefix: 'notes/old-team/', readable_by: [`member:${OWNER}`, 'group:team-members'] } as never], { apply: true, json: true });
+    await importFromContent(engine, 'notes/old-team/plan', page('notes/old-team/plan'), { sourceId: 'default', noEmbed: true });
+    const { runAccessRules } = await import('../src/commands/access-rules.ts');
+    const log = console.log;
+    console.log = () => {};
+    try { await runAccessRules(engine, 'rule', ['rm', 'old-team', '--source', 'default', '--yes'], true); } finally { console.log = log; }
+    expect((await currentFolderRules(engine, 'default')).some(r => r.id === 'old-team')).toBe(false);
+    expect((await policyStatus(engine, 'default')).held.length).toBeGreaterThan(0);
+    const r = await run();
+    expect(r.applied).toBe(false);
+    expect(groupStep(r).state).toBe('blocked');
+    expect(groupStep(r).actions[0]!.detail).toContain('default:notes/old-team/');
+    expect(await listGroups(engine)).toEqual([]);
+  });
+
+  test('a group removed and made again by hand is not the template\'s, and a later run never adds the team to it', async () => {
+    expect((await run()).error).toBeUndefined();
+    const { removeGroup } = await import('../src/core/access/members.ts');
+    await removeGroup(engine, 'team-members');
+    await addGroup(engine, 'team-members', [OWNER]);
+    const r = await run({ members: 'bob-example,carol-example,dana-example' });
+    expect(r.applied).toBe(false);
+    expect(groupStep(r).state).toBe('blocked');
+    expect((await listGroups(engine)).find(g => g.id === 'team-members')!.members).toEqual([OWNER]);
+  });
+
+  test('a group another writer makes while the run is writing is never claimed, on the run or on its resume', async () => {
+    const tx = engine.transaction.bind(engine);
+    let armed = true;
+    engine.transaction = (async (fn: any, opts?: any) => {
+      const servesDone = existsSync(receiptDir) && readdirSync(receiptDir).some(f => JSON.parse(readFileSync(join(receiptDir, f), 'utf8')).steps?.some((x: { id: string; state: string }) => x.id === 'serves' && x.state === 'done'));
+      if (armed && servesDone) { armed = false; await addGroup(engine, 'team-members', []); }
+      return tx(fn, opts);
+    }) as never;
+    let first;
+    try { first = await run(); } finally { delete (engine as { transaction?: unknown }).transaction; }
+    expect(first!.error?.message).toContain('changed since the preview');
+    const resumed = await run({ resume: first!.receipt_id, members: undefined, owner: undefined, source: undefined });
+    expect(groupStep(resumed).state).toBe('blocked');
+    expect((await listGroups(engine)).find(g => g.id === 'team-members')!.members).toEqual([]);
+  });
+
+  test('an insert-only rule add refuses a same-id rule added since the preview, and keeps an identical one', async () => {
+    await addFolderRules(engine, 'company', [{ id: 'company', prefix: 'company/', readable_by: [`member:${OWNER}`] } as never], { apply: true, json: true });
+    const before = await currentFolderRules(engine, 'company');
+    await expect(addFolderRules(engine, 'company', [{ id: 'company', prefix: 'company/', readable_by: [`member:${OWNER}`, 'group:team-members'] } as never], { apply: true, json: true, insertOnly: true })).rejects.toThrow(/since the preview/);
+    expect(await currentFolderRules(engine, 'company')).toEqual(before);
+    await addFolderRules(engine, 'company', before, { apply: true, json: true, insertOnly: true });
+    expect(await currentFolderRules(engine, 'company')).toEqual(before);
+  });
+
+  test('a brain already shared with no team receipt on this machine needs the history choice', async () => {
+    await importFromContent(engine, 'notes/journal', page('notes/journal'), { sourceId: 'default', noEmbed: true });
+    const { labelSeveral } = await import('../src/commands/access-serves.ts');
+    await withEnv({ GBRAIN_HOME: home }, () => labelSeveral(engine, ['bob-example'], 'default', true, true, { owner: OWNER, labelledOnly: true, companyRule: false }));
+    const r = await run();
+    expect(r.applied).toBe(false);
+    expect(r.steps.find(x => x.id === 'serves')!.actions.find(a => a.what === 'history')?.action).toBe('blocked');
+    expect((await listMembers(engine)).some(m => m.id === 'carol-example')).toBe(false);
+    const chosen = await run({ history: 'private' });
+    expect(chosen.error).toBeUndefined();
+    expect(chosen.applied).toBe(true);
+    expect(await reads(keyOf(chosen, 'carol-example'), 'notes/journal')).toBe(false);
+  });
+
+  test('the preflight reads a team entry setup ties to the owner as bound, so a second harness on a shared brain is not refused', async () => {
+    const { servesPreflight } = await import('../src/commands/setup-serves.ts');
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-team-launcher-'));
+    const launcher = join(dir, 'gbrain');
+    writeFileSyncFs(launcher, `#!/bin/sh\necho '${JSON.stringify({ serves: 'several', from: 'config', enabled_members: [OWNER, 'bob-example'], since: null, owner: OWNER, stdio_member: null })}'\n`, { mode: 0o755 });
+    const flags = __testing.parseFlags(['codex', '--template', 'team', '--members', MEMBERS, '--yes']) as any;
+    const entry = { member: null, previous: null };
+    expect((servesPreflight(flags, launcher, 'codex', true, false, entry) as any).code).toBe('setup_serves_several');
+    expect((servesPreflight(flags, launcher, 'codex', true, false, entry, true) as any).code).toBeUndefined();
+  });
+
+  test('a members step refused when it runs is a failed step, never done', async () => {
+    const { servesRefusal } = await import('../src/commands/team-template.ts') as any;
+    const refused = servesRefusal({ applied: false, owner: null, members: [{ id: 'carol-example', action: 'blocked' }], rules: [], keys: [] } as never);
+    expect(refused?.message).toContain('refused (member carol-example)');
+    expect(servesRefusal({ applied: true, owner: null, members: [], rules: [], keys: [] } as never)).toBeNull();
+  });
+
+  test('the group check survives a source whose rules this host cannot read, and BLOCKS instead', async () => {
+    await engine.executeRaw("INSERT INTO sources (id, name, config) VALUES ('notes-b', 'notes-b', '{\"access_store\":\"git\"}'::jsonb)");
+    const r = await run();
+    expect(r.applied).toBe(false);
+    expect(groupStep(r).actions[0]!.detail).toContain('cannot be read on this host');
+  });
+
+  test('status counts a private company page as correctly denied, and flags a group that now holds someone else', async () => {
+    await importFromContent(engine, 'company/board-comp', page('company/board-comp', 'visibility: private\n'), { sourceId: 'company', noEmbed: true });
+    expect((await run()).error).toBeUndefined();
+    const s = await status();
+    expect(s.proof.every(p => p.ok)).toBe(true);
+    expect(s.ok).toBe(true);
+    await addMember(engine, 'dana-example', { remote: false } as never);
+    await addGroup(engine, 'team-members', ['dana-example']);
+    const drifted = await status();
+    expect(drifted.ok).toBe(false);
+    expect(drifted.drift.join(' ')).toContain('group team-members holds');
+  });
+
+  test('resume replans a step marked done that no longer holds: a group removed after its step is made again', async () => {
+    const first = await withEnv({ GBRAIN_HOME: home, GBRAIN_SETUP_ABORT_AFTER: 'team-group' },
+      () => teamTemplate(engine, { source: 'default', harness: 'codex', owner: OWNER, members: MEMBERS, apply: true, receiptDir }));
+    expect(first.error?.message).toContain('team-group');
+    const { removeGroup } = await import('../src/core/access/members.ts');
+    await removeGroup(engine, 'team-members');
+    const resumed = await run({ resume: first.receipt_id, members: undefined, owner: undefined, source: undefined });
+    expect(resumed.error).toBeUndefined();
+    expect((await listGroups(engine)).find(g => g.id === 'team-members')?.members.sort()).toEqual([OWNER, 'bob-example', 'carol-example']);
+    expect((await status()).ok).toBe(true);
+  });
+
+  test('an update stopped before its group step does not hide the group the first run made', async () => {
+    expect((await run()).error).toBeUndefined();
+    const stopped = await withEnv({ GBRAIN_HOME: home, GBRAIN_SETUP_ABORT_AFTER: 'team-serves' },
+      () => teamTemplate(engine, { source: 'default', harness: 'codex', owner: OWNER, members: 'bob-example,carol-example,dana-example', apply: true, receiptDir }));
+    expect(stopped.error?.message).toContain('team-serves');
+    const retry = await run({ members: 'bob-example,carol-example,dana-example' });
+    expect(retry.error).toBeUndefined();
+    expect((await listGroups(engine)).find(g => g.id === 'team-members')?.members).toContain('dana-example');
   });
 });

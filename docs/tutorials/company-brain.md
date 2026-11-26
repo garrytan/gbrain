@@ -32,7 +32,7 @@ gbrain setup claude-code --template team --members bob-example,carol-example
 gbrain setup claude-code --template team --members bob-example,carol-example --yes
 ```
 
-It sets the brain up as a company brain (`--shape company`), then adds, in order:
+It sets the brain up as a company brain (`--shape company`; it refuses `--shape both`), then adds, in order:
 
 1. **The people.** You are the owner. Each name in `--members` becomes a member with a folder only they read (`people/<member>/`), so member notes stay private by default.
 2. **One key per member.** Each key goes to a file only you can read (mode 0600) under `~/.gbrain/member-keys/`. Setup never prints a key and never sends one; handing a key to its person is your own step.
@@ -40,9 +40,11 @@ It sets the brain up as a company brain (`--shape company`), then adds, in order
 4. **Two folder rules.** `company/` (in the `company` source) and `rules/team/` are readable by you and the team group. A decision saved to `company/` reaches the whole team; `gbrain correct --scope team` saves a rule every member's agent reads.
 5. **Guest notes (optional).** `--guests oauth_client:<client id>` sets up the guest source for notes saved by outside guests, writable only by those writers, and lets each of your own credentials read it.
 
-The template never changes a group or folder rule it did not make. A rule that already names exactly the team's readers is kept. A `team-members` group it made on an earlier run is kept, and a rerun adds anyone new in `--members` to it; if that group also holds someone not in `--members`, the line reads BLOCKED, because the template never removes a member. The line also reads BLOCKED, and the template writes nothing, when a `team-members` group exists that the template did not make, when no such group exists yet but pages or rules already name `group:team-members` as a reader, or when a hand-written rule with other readers covers `company/` or `rules/team/`. Each BLOCKED line carries the command that changes it. Use `--team-group <id>` to give the team another group.
+The template never changes a group or folder rule it did not make. A rule that already names exactly the team's readers is kept. A `team-members` group it made on an earlier run (the brain records which group it made) is kept, and a rerun adds anyone new in `--members` to it; if that group also holds someone not in `--members`, the line reads BLOCKED, because the template never removes a member. The line also reads BLOCKED, and the template writes nothing, when a `team-members` group exists that the template did not make, when no such group exists yet but pages or rules (in force, or waiting for approval) already name `group:team-members` as a reader, or when a hand-written rule with other readers covers `company/` or `rules/team/`. Each BLOCKED line carries the command that changes it. Use `--team-group <id>` to give the team another group.
 
-If this brain already serves just you and holds notes that no rule or `readable_by` restricts, turning it shared would let every member's key read them, so the run reads BLOCKED until you choose: add `--labelled-only` to keep those notes private (members read the team folders and their own), or `--open-history` to let every member read them. The choice is kept in the receipt, so a later run that adds people keeps it.
+If this brain already serves just you and holds notes that no rule or `readable_by` restricts, turning it shared would let every member's key read them, so the run reads BLOCKED until you choose: add `--labelled-only` to keep those notes private (members read the team folders and their own), or `--open-history` to let every member read them. The choice is kept in the receipt, so a later run that adds people keeps it. On a brain that already serves several people and has no team receipt on this machine, the run reads BLOCKED until you pass one of the two.
+
+The template does not import call transcripts: `--transcripts` is refused with `--template team`, because imported calls are kept to their attendees only once the team exists. Set the team up first, then import them with `gbrain import <dir> --calls --prefix company/calls --source company`.
 
 On a brain that already exists, setup runs this preview before it changes anything, the harness entry included: when setup refuses with `setup_team_blocked`, nothing was written. If the preview cannot run first (a brain setup creates in the same run, one that this connection's own running gbrain server holds open, or a preview that prints no result setup can read), a BLOCKED line from the template itself leaves what setup already wrote, such as the harness entry and the company starter pages, in place; fix the line and run setup again.
 
@@ -55,7 +57,7 @@ gbrain setup claude-code --template team --status
 gbrain setup claude-code --template team --resume <receipt id> --yes
 ```
 
-`--status` also checks that each key file holds the key issued to that member, and reports `mismatch` when it does not. A read that fails for a reason other than a denial is reported as inconclusive, never as proof, and a folder with more than 100 pages is compared on its first 100 only, so that member's proof reads NOT ok. `gbrain access check --token member-<member> --as <member>` shows one member's grant in detail. The rest of this tutorial covers the larger, hosted shape: Postgres, OAuth clients per teammate and per-person crons.
+`--status` also checks that each key file holds the key issued to that member, and reports `mismatch` when it does not. A read that fails for a reason other than a denial is reported as inconclusive, never as proof, and a folder with more than 100 pages is compared on its first 100 only, so that member's proof reads NOT ok. `--status` also lists, as DRIFT, a team rule or a member's folder rule that is no longer in force as the template set it, and a team group that no longer holds exactly the team. `gbrain access check --token member-<member>` shows one member's grant in detail. The rest of this tutorial covers the larger, hosted shape: Postgres, OAuth clients per teammate and per-person crons.
 
 ---
 

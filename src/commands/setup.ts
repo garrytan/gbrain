@@ -260,10 +260,12 @@ function parseFlags(args: string[]): SetupFlags | string {
   if (memberFlag && (!['claude-code', 'codex'].includes(positionals[0] ?? '') || args.includes('--instructions-only') || args.includes('--remove'))) return `${memberFlag} changes the stdio MCP entry setup writes for claude-code or codex (not --instructions-only or --remove); nothing was written`;
   const shared = stdioMember === undefined ? null : sharedStdioHarness();
   if (shared) return `--stdio-member refused: ${shared} is installed on this host, and its sessions serve several people, so a stdio entry bound to one member is not something setup writes here; give each person their own key over HTTP instead (gbrain serve --http with gbrain auth create <name> --member <id> per person); nothing was written`;
+  const calls = value('--transcripts');
+  if (team && calls !== undefined && calls !== 'none') return `--template team does not import call transcripts in the same run: calls are kept to their attendees only once the team exists. Set up the team first, then import them with gbrain import ${calls} --calls --prefix company/calls --source company`;
   const layout = parseLayoutFlags(value, (f) => args.includes(f), positionals[0]);
   if (typeof layout === 'string') return layout;
   if (team) {
-    if (layout.brain !== undefined && layout.brain !== 'company' && layout.brain !== 'both') return '--template team builds a company brain; pass --shape company or both, or leave --shape out';
+    if (layout.brain !== undefined && layout.brain !== 'company') return '--template team builds a company brain with its own team folders; pass --shape company or leave --shape out (--shape both is not set up with it)';
     if (layout.team) return '--template team sets this brain up for the team itself; drop --team';
     layout.brain ??= 'company';
   }
@@ -561,7 +563,7 @@ export async function runSetup(args: string[], deps: { openclaw?: { bin?: string
         actor: 'agent', argv: ['gbrain', 'bootstrap', 'harness', '--remove', '--dry-run'],
         why: 'Preview removing the bootstrap harness wiring first, or keep it and skip setup.', verify: verifyDryRun('claude-code', flags.name) }), out);
     }
-    const servesPlan = servesPreflight(flags, launcher, 'claude-code', !!cfg, !!liveOwner?.ours, binding);
+    const servesPlan = servesPreflight(flags, launcher, 'claude-code', !!cfg, !!liveOwner?.ours, binding, teamTiesOwner(flags, binding, !!pluginOwner));
     if (servesPlan instanceof OperationError) return refuse(servesPlan, out);
     const tie = ownerTie(flags, servesPlan, binding, !!pluginOwner);
     const unbound = householdTieRefusal(flags, servesPlan, binding, !!pluginOwner, tie, 'claude-code');
@@ -838,7 +840,7 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
         actor: 'agent', argv: harnessLane ? ['gbrain', 'bootstrap', 'harness', '--remove', '--dry-run'] : ['gbrain', 'setup', 'codex', laneEvents.every((e) => e === 'SessionEnd') ? '--no-capture' : '--no-hooks', '--dry-run', '--json'],
         why: harnessLane ? 'Preview removing the bootstrap harness wiring first, or keep it and skip setup.' : 'Keep the bootstrap lane for those events and preview setup without them.', verify: verifyDryRun('codex', flags.name) }), out);
     }
-    const servesPlan = servesPreflight(flags, launcher, 'codex', !!cfg, !!liveOwner?.ours, binding);
+    const servesPlan = servesPreflight(flags, launcher, 'codex', !!cfg, !!liveOwner?.ours, binding, teamTiesOwner(flags, binding, !!pluginOwner));
     if (servesPlan instanceof OperationError) return refuse(servesPlan, out);
     const tie = ownerTie(flags, servesPlan, binding, !!pluginOwner);
     const unbound = householdTieRefusal(flags, servesPlan, binding, !!pluginOwner, tie, 'codex');
@@ -982,13 +984,18 @@ function ownerTie(flags: SetupFlags, plan: ServesPlan, entry: EntryBinding, plug
   return sharedStdioHarness() ? null : plan.tie;
 }
 
+/** Whether ownerTie will tie this team-template entry to the brain owner, so the preflight reads it as bound to the owner. */
+function teamTiesOwner(flags: SetupFlags, entry: EntryBinding, plugin: boolean): boolean {
+  return !!flags.teamRun && !flags.noStdioMember && !entry.member && !plugin && !sharedStdioHarness();
+}
+
 /**
  * H2: --shape household with people besides the owner sets the brain to serve several people, so a harness entry it
  * leaves bound to nobody would read none of the household records, and every later setup run would refuse it.
  */
 function householdTieRefusal(flags: SetupFlags, plan: ServesPlan, entry: EntryBinding, plugin: boolean, tie: string | null, harness: string): OperationError | null {
   if (flags.teamRun && plugin && !entry.member && !plan.status?.stdio_member) {
-    return opError('setup_team_unbound', `The team template sets this brain to serve several people, and the gbrain plugin serves this ${harness} connection bound to nobody; the owner's own agent would then read none of the team's company pages. Nothing was written.`,
+    return opError('setup_team_unbound', `The team template sets this brain to serve several people, and the plugin serves this ${harness} connection bound to nobody; the owner's own agent would then read none of the team's company pages. Nothing was written.`,
       'Bind the plugin connection to the owner first: gbrain config set mcp.stdio_member <owner>, then run setup again.');
   }
   if ((!flags.householdRun && !flags.teamRun) || tie || entry.member || plugin || plan.status?.stdio_member || flags.householdRun?.members?.trim() === 'none') return null;

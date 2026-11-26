@@ -87,12 +87,12 @@ export function loadReceipt(id: string, template: string, dir: string = receiptD
 }
 
 /** The newest receipt of `template` for this brain, narrowed to a source and harness when given; null when there is none. */
-export function latestReceipt(template: string, filter: { source_id?: string; harness?: string | null } = {}, dir: string = receiptDir()): TemplateReceipt | null {
+export function latestReceipt(template: string, filter: { source_id?: string; harness?: string | null; where?: (r: TemplateReceipt) => boolean } = {}, dir: string = receiptDir()): TemplateReceipt | null {
   if (!existsSync(dir)) return null;
   const brain = brainIdentity();
   const all = readdirSync(dir).filter(f => f.endsWith('.json')).map(f => parse(join(dir, f))).filter((r): r is TemplateReceipt => !!r
     && r.template === template && r.brain === brain && (filter.source_id === undefined || r.source_id === filter.source_id)
-    && (filter.harness == null || r.harness === filter.harness));
+    && (filter.harness == null || r.harness === filter.harness) && (!filter.where || filter.where(r)));
   return all.sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id))[0] ?? null;
 }
 

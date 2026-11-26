@@ -322,9 +322,15 @@ function editLines(r: EditResult): string[] {
  * GST-363: adds folder rules through the same path as `gbrain access rule add`: one desired rulebook (the store's
  * base plus `rules`), previewed, then written with the preview's revision as --expect when `apply` is set.
  */
-export async function addFolderRules(engine: BrainEngine, sourceId: string, rules: FolderRule[], opts: { apply: boolean; json: boolean }): Promise<{ preview: RulePreview; result: EditResult | null }> {
+export async function addFolderRules(engine: BrainEngine, sourceId: string, rules: FolderRule[], opts: { apply: boolean; json: boolean; /** Refuse instead of replacing a rule with the same id or prefix; an identical rule is kept. */ insertOnly?: boolean }): Promise<{ preview: RulePreview; result: EditResult | null }> {
   const { store, persisted, root } = await resolveStore(engine, sourceId);
   const base = await baseRules(engine, sourceId, store, root);
+  if (opts.insertOnly) {
+    const same = (a: FolderRule, b: FolderRule) => a.id === b.id && a.prefix === b.prefix && a.readable_by.length === b.readable_by.length && a.readable_by.every(x => b.readable_by.includes(x));
+    const clash = rules.find(r => base.some(b => (b.id === r.id || b.prefix === r.prefix) && !same(b, r)));
+    if (clash) throw new Error(`a rule on ${clash.prefix} or with id ${clash.id} was added to source ${sourceId} since the preview; nothing was changed, so run this again to preview it`);
+    rules = rules.filter(r => !base.some(b => same(b, r)));
+  }
   const desired = sortRules([...base.filter(b => !rules.some(r => r.id === b.id)), ...rules]);
   const preview = await previewRules(engine, sourceId, store, persisted, desired);
   if (!opts.apply) return { preview, result: null };
