@@ -35,7 +35,7 @@ import { withEnv } from '../helpers/with-env.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { writerAdminState } from '../../src/core/persistence/admin-intent.ts';
 import { runPersistenceAdministration } from '../../src/core/persistence/administration.ts';
-import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
+import { disposePersistenceConsumer, persistenceConsumerConfig, startPersistenceConsumer } from '../../src/core/persistence/service.ts';
 import { submitPageMutation } from '../../src/core/persistence/page-mutations.ts';
 import { installFaultHook } from '../../src/core/persistence/fault-points.ts';
 import { hostIdFor, readLocalWriter } from '../../src/core/persistence/identity.ts';
@@ -248,6 +248,12 @@ describe('managed claims on a Rust brain, hold kept for users', () => {
     const release = holdConsumer();
     await submitPageMutation(ctxFor(engine) as never, { operation: 'put_page', waitMs: 0,
       params: { slug: 'notes/mira-example', content: '---\ntype: note\ntitle: Mira Example\n---\nWorks at widget-co.\n', request_id } }).catch(() => null);
+    // On a multi-user brain the consumer elects first (consumer-election.ts) and only then starts its full consumer, which can
+    // be after the effect below is staged, and would drain it before this case selects it: wait for it, then stop its effect
+    // drain for the case (the write hold above keeps its write claims). Nothing else in the case needs the consumer's effects.
+    const consumer = startPersistenceConsumer(engine, persistenceConsumerConfig(engine)!) as unknown as { effectsStop?: AbortController; inner?: { effectsStop: AbortController } };
+    for (let waited = 0; !consumer.effectsStop && !consumer.inner && waited < 20_000; waited += 25) await new Promise(resolve => setTimeout(resolve, 25));
+    (consumer.inner ?? consumer).effectsStop!.abort();
     const claimed = await claimNextWrite(engine, host, 30_000);
     await engine.transaction(async tx => { await tx.lockPersistenceCounters(KEYS); await completeWrite(tx, (await tx.lockWriteRequest(claimed!.id))!, 'committed', {}); });
     const incarnation = (await engine.readSourceMembership('work'))!.incarnation;
