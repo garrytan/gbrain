@@ -1056,8 +1056,8 @@ export async function importFromFile(
   }
 
   const preInferenceParsed = parseMarkdown(content, relativePath, { validate: true });
-  const pathSlug = slugifyPath(relativePath);
-  const preInferenceHold = classifyImportHold(preInferenceParsed, { createsPage: pathSlug.length <= 255 || !await engine.getPage(pathSlug, { sourceId: opts.sourceId }) });
+  const storedSlug = preInferenceParsed.slug || slugifyPath(relativePath);
+  const preInferenceHold = classifyImportHold(preInferenceParsed, { createsPage: storedSlug.length <= 255 || !await engine.getPage(storedSlug, { sourceId: opts.sourceId, includeDeleted: true }) });
   if (preInferenceHold) {
     return { slug: slugifyPath(relativePath), status: 'skipped', chunks: 0, error: preInferenceHold.message, refusal: preInferenceHold, skip_reason: preInferenceHold.code };
   }

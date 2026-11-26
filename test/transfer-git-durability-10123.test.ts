@@ -11,7 +11,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { cpSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -73,6 +73,35 @@ describe('#10123 transfer accept carries git durability', () => {
     expect(accepted.warnings).toEqual([expect.objectContaining({ code: 'git_durability_not_enabled', source_id: t.id, state: 'unknown',
       enable_command: `gbrain sources writer git-durability ${t.id} --enable --dry-run` })]);
     expect(accepted.warnings[0].message).toContain('push probe');
+    expect(accepted.warnings[0].message).not.toContain('missing-remote');
+  }), 120_000);
+
+  test('the probe runs only after the manifest check, with pre-push hooks off', () => withEnv(env, async () => {
+    const t = await preparedTransfer('enabled'), successorHost = randomUUID();
+    const marker = join(directory, `${t.id}-hook-ran`), hook = join(t.successor, '.git', 'hooks', 'pre-push');
+    writeFileSync(hook, `#!/bin/sh\ntouch '${marker}'\n`); chmodSync(hook, 0o755);
+    await expect(acceptWriterTransfer(engine, t.id, t.successor, t.prepared.owner_epoch, 'f'.repeat(64), successorHost)).rejects.toThrow();
+    await acceptWriterTransfer(engine, t.id, t.successor, t.prepared.owner_epoch, t.prepared.manifest.digest, successorHost);
+    expect((await getWorktreeBinding(engine, t.id, successorHost))!.git_durability).toBe('enabled');
+    expect(existsSync(marker)).toBe(false);
+  }), 120_000);
+
+  test('a successor branch with no tracking remote is not carried as enabled', () => withEnv(env, async () => {
+    const t = await preparedTransfer('enabled'), successorHost = randomUUID();
+    git(t.successor, 'branch', '--unset-upstream');
+    const accepted = await acceptWriterTransfer(engine, t.id, t.successor, t.prepared.owner_epoch, t.prepared.manifest.digest, successorHost);
+    expect(accepted.durability_probe_failure).toBe('no_tracking_remote');
+    expect((await getWorktreeBinding(engine, t.id, successorHost))!.git_durability).toBeNull();
+  }), 120_000);
+
+  test('a host taking a source back keeps its own recorded setting when nothing carries', () => withEnv(env, async () => {
+    const t = await preparedTransfer('enabled'), successorHost = randomUUID();
+    const owner = await getWorktreeBinding(engine, t.id);
+    await engine.executeRaw("INSERT INTO persistence_host_bindings(worktree_id,host_id,local_path,coordination_path,git_durability) SELECT worktree_id,$2::uuid,$3,coordination_path,'enabled' FROM persistence_host_bindings WHERE worktree_id=$1::uuid AND coordination_path IS NOT NULL LIMIT 1", [owner!.worktree_id, successorHost, t.successor]);
+    git(t.successor, 'remote', 'set-url', 'origin', join(directory, 'missing-remote.git'));
+    const accepted = await acceptWriterTransfer(engine, t.id, t.successor, t.prepared.owner_epoch, t.prepared.manifest.digest, successorHost);
+    expect(accepted.durability_probe_failure).toBeDefined();
+    expect((await getWorktreeBinding(engine, t.id, successorHost))!.git_durability).toBe('enabled');
   }), 120_000);
 
   test('a disabled owner: the successor binding is disabled', () => withEnv(env, async () => {

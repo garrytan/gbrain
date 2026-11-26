@@ -50,6 +50,16 @@ test('a page an older sync stored under a long slug still re-imports by content 
   expect((await engine.getPage(slug))?.compiled_truth).toContain('edited deep in');
 });
 
+test('a returning file whose long-slug page was soft-deleted re-imports instead of being skipped', async () => {
+  const rel = pathOfSlug(277), slug = rel.slice(0, -3);
+  await engine.putPage(slug, { type: 'note', title: 'Deep', compiled_truth: 'Stored by an older sync.', timeline: '' });
+  await engine.executeRaw('UPDATE pages SET deleted_at=now() WHERE slug=$1', [slug]);
+  const file = join(home, 'returning', rel);
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, body);
+  expect(await importFromFile(engine, file, rel, { noEmbed: true } as never)).not.toMatchObject({ skip_reason: 'slug_too_long' });
+});
+
 test('a file import skips a file whose slug is over 255 characters and stores nothing', async () => {
   const rel = pathOfSlug(270);
   const file = join(home, 'import', rel);

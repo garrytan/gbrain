@@ -91,5 +91,6 @@ export async function runWriterTransferAdministration(engine: BrainEngine, opera
   const { warnings } = binding ? await gitDurabilityWarnings([binding]) : {};
   const refused = accepted.durability_probe_failure;
   return { transferred: true, binding, ...(accepted.content_receipts.length ? { content_receipts: accepted.content_receipts } : {}),
-    ...(warnings ? { warnings: warnings.map(warning => refused ? { ...warning, message: `${warning.message} The previous owner had Git durability enabled, but it was not carried: the read-only push probe on ${binding!.local_path} failed (${refused}).` } : warning) } : {}) };
+    ...(refused && !warnings ? { durability_probe_failure: refused } : {}),
+    ...(warnings ? { warnings: warnings.map(warning => refused ? { ...warning, message: `${warning.message} The previous owner had Git durability enabled, but it was not carried: the read-only push probe on ${binding!.local_path} did not pass (${refused}); the enable preview shows why.` } : warning) } : {}) };
 }

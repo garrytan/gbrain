@@ -479,14 +479,6 @@ export async function acceptWriterTransfer(engine: BrainEngine, sourceId: string
   const ownerDurability = async (sql: SqlEngine) => (await sql.executeRaw<{ git_durability: GitDurabilitySetting }>(
     'SELECT git_durability FROM persistence_host_bindings WHERE worktree_id=$1::uuid AND host_id=$2::uuid', [binding.worktree_id, binding.owner_host_id]))[0]?.git_durability ?? null;
   let probed = false, probeFailure: string | undefined;
-  if (crossHost && !opts.dryRun && await ownerDurability(engine) === 'enabled') {
-    const { inspectDurabilityCheckout, probeDurabilityPush } = await import('./git-durability-administration.ts');
-    try {
-      const probe = await probeDurabilityPush(root, await inspectDurabilityCheckout(root), text => text);
-      if (!probe.ok) probeFailure = `${probe.reason}: ${probe.detail || probe.reason}`;
-    } catch (error) { probeFailure = error instanceof Error ? error.message : String(error); }
-    probed = true;
-  }
   const lock = await acquireNativeLock(coordination, { timeoutMs: 5000 });
   if (!lock) throw opError('write_pending', 'Successor worktree is busy.',
     `Another gbrain process holds the successor checkout's coordination lock, so source ${sourceId}'s transfer was not accepted. Run transfer accept again once that process has finished.`,
@@ -496,6 +488,14 @@ export async function acceptWriterTransfer(engine: BrainEngine, sourceId: string
     const [prepared] = await engine.executeRaw<{ manifest: StoredWorktreeManifest | null }>('SELECT manifest FROM persistence_worktrees WHERE id=$1::uuid', [binding.worktree_id]);
     const candidate = worktreeManifest(root, { progress: humanManifestProgress(), scope: storedManifestScope(prepared?.manifest) });
     if (candidate.digest !== expectedManifest) throw successorManifestMismatch(sourceId, root, expectedManifest, prepared?.manifest ?? null, candidate);
+    if (crossHost && !opts.dryRun && await ownerDurability(engine) === 'enabled') {
+      const { inspectDurabilityCheckout, probeDurabilityPush } = await import('./git-durability-administration.ts');
+      try {
+        const probe = await probeDurabilityPush(root, await inspectDurabilityCheckout(root), () => '', { noHooks: true });
+        if (!probe.ok || probe.skipped) probeFailure = probe.ok ? probe.skipped : probe.reason;
+      } catch { probeFailure = 'git_unavailable'; }
+      probed = true;
+    }
     return await engine.transaction(async tx => {
       await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
       await assertWriterAdminState(tx, expectedAdminState);
@@ -525,7 +525,7 @@ export async function acceptWriterTransfer(engine: BrainEngine, sourceId: string
       const carried: GitDurabilitySetting = from === 'disabled' || (from === 'enabled' && probed && !probeFailure) ? from : null;
       await tx.executeRaw(`INSERT INTO persistence_host_bindings(worktree_id,host_id,local_path,coordination_path,git_durability)
         VALUES($1::uuid,$2::uuid,$3,$4,$5) ON CONFLICT(worktree_id,host_id) DO UPDATE SET local_path=EXCLUDED.local_path,coordination_path=EXCLUDED.coordination_path${
-          crossHost ? ',git_durability=EXCLUDED.git_durability' : ''}`, [binding.worktree_id, hostId, root, coordination, carried]);
+          crossHost ? ',git_durability=COALESCE(EXCLUDED.git_durability,persistence_host_bindings.git_durability)' : ''}`, [binding.worktree_id, hostId, root, coordination, carried]);
       const contentReceipts = await (await import('../shared-skills/receipt-root.ts')).rebindContentReceipts(tx, [binding.worktree_id], hostId);
       await tx.executeRaw(`UPDATE persistence_worktrees SET owner_host_id=$2::uuid,owner_epoch=owner_epoch+1,state='active',heartbeat_at=now() WHERE id=$1::uuid`, [binding.worktree_id, hostId]);
       await refreshManagedFilesystemRoots(tx, managedFilesystemDatastorePath(engine));
