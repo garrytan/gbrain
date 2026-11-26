@@ -216,7 +216,9 @@ mod tests {
             deleted_at_micros("2026-11-18 02:37:05.123457+00").unwrap(),
             us + 1
         );
-        for bad in ["", "not a time", "2026-11-18", "2026-02-30 00:00:00+00"] {
+        // Postgres takes an offset up to +/-15:59 and refuses one beyond it ("time zone displacement out of range").
+        assert!(deleted_at_micros("2026-11-18 02:37:05+15:59").is_ok());
+        for bad in ["", "not a time", "2026-11-18", "2026-02-30 00:00:00+00", "2026-11-18 02:37:05+16", "2026-11-18 02:37:05-16", "2026-11-18 02:37:05+05:60"] {
             let err = deleted_at_micros(bad).unwrap_err();
             assert_eq!(err.code, crate::error::INVALID_ARGUMENT, "{bad}");
             assert!(

@@ -185,12 +185,17 @@ describe('engine parity: purge slug stores', () => {
       // Text that is not a time is refused before anything is deleted (each engine words the refusal its own way).
       await seed('notes/bad', 'fp-bad');
       out.bad = await purge('notes/bad', 'not a time').then(() => 'deleted', () => 'refused');
+      // An offset with 60 minutes is out of range for timestamptz, so every engine refuses it. (An hour beyond 15, '+16',
+      // is refused by PGLite and the Rust store but accepted by the Postgres engine, whose driver reads timestamptz
+      // parameters client-side, so it is pinned in the Rust store's unit test, not here.)
+      out['bad +05:60'] = await purge('notes/bad', '2999-01-01 00:00:00.000000+05:60').then(() => 'deleted', () => 'refused');
       out.badRest = await engine.deletePurgedSlugHolds(SRC, [{ slug: 'notes/bad', id: pages.get('notes/bad')! }]);
       expect(out).toEqual({
         ...Object.fromEntries(['notes/z', 'notes/offset', 'notes/space', 'notes/shifted'].flatMap(slug => [[`${slug} before`, kept], [`${slug} after`, gone], [`${slug} again`, kept]])),
         between: gone,
         betweenRest: gone,
         bad: 'refused',
+        'bad +05:60': 'refused',
         badRest: gone,
       });
       return out;
