@@ -64,7 +64,7 @@ describe('engine parity: purge slug stores', () => {
         elsewhere: await hold(engine, OTHER, 'notes/gone', 'fp-3'),
       };
       for (const [src, id] of [[SRC, holds.gone], [SRC, holds.kept], [OTHER, holds.elsewhere]] as const) await receipt(engine, src, id);
-      const out = {
+      const seen = {
         empty: await engine.deletePurgedSlugStoreRows(SRC, []),
         noPages: await engine.listPageSecretOccurrences([]),
         noSecrets: await engine.listPageSecretOccurrences([Number(gone!.id)]),
@@ -77,20 +77,69 @@ describe('engine parity: purge slug stores', () => {
         keptStores: await engine.deletePurgedSlugStoreRows(OTHER, ['notes/gone']),
         keptHolds: await engine.deletePurgedSlugHolds(SRC, [{ slug: 'notes/kept', id: Number(kept!.id) }]),
       };
+      // Whether the database has the secret store is the one answer that differs by engine: the Rust store keeps none.
+      const hasSecretStore = [seen.empty, seen.removed, seen.again, seen.keptStores].map(r => r.secretStore);
+      expect(hasSecretStore).toEqual(Array(4).fill(backend !== 'rust'));
+      const out = { ...seen, empty: seen.empty.removed, removed: seen.removed.removed, again: seen.again.removed, keptStores: seen.keptStores.removed };
       const stores = { take_proposals: 1, open_loops: 1, core_edit_notices: 0, page_aliases: 1, slug_aliases: 0, slug_rename_history: 0 };
       const none = { take_proposals: 0, open_loops: 0, core_edit_notices: 0, page_aliases: 0, slug_aliases: 0, slug_rename_history: 0 };
       expect(out).toEqual({
-        empty: { removed: {}, secretStore: true },
+        empty: {},
         noPages: [],
         noSecrets: [],
-        removed: { removed: stores, secretStore: true },
-        again: { removed: none, secretStore: true },
+        removed: stores,
+        again: none,
         noHolds: { write_gate_holds: 0, write_gate_receipts: 0 },
         olderThanHold: { write_gate_holds: 0, write_gate_receipts: 0 },
         holds: { write_gate_holds: 1, write_gate_receipts: 1 },
         holdsAgain: { write_gate_holds: 0, write_gate_receipts: 0 },
-        keptStores: { removed: stores, secretStore: true },
+        keptStores: stores,
         keptHolds: { write_gate_holds: 1, write_gate_receipts: 1 },
+      });
+      return out;
+    },
+  );
+
+  parityTest(
+    'deletePurgedSlugHolds drops the holds of several slugs at once, up to each page\'s deletedAt, with the receipts of those holds only',
+    { methods: ['deletePurgedSlugHolds'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, OTHER);
+      for (const slug of ['notes/one', 'notes/two', 'notes/three']) await engine.putPage(slug, note(slug));
+      const one = await engine.getPage('notes/one');
+      const two = await engine.getPage('notes/two');
+      const three = await engine.getPage('notes/three');
+      const first = await hold(engine, SRC, 'notes/one', 'fp-a');
+      const second = await hold(engine, SRC, 'notes/one', 'fp-b');
+      const twoHold = await hold(engine, SRC, 'notes/two', 'fp-c');
+      const threeHold = await hold(engine, SRC, 'notes/three', 'fp-d');
+      const elsewhere = await hold(engine, OTHER, 'notes/one', 'fp-e');
+      for (const [src, id] of [[SRC, first], [SRC, second], [SRC, twoHold], [SRC, threeHold], [OTHER, elsewhere]] as const) await receipt(engine, src, id);
+      // A receipt of another table whose target id spells a hold id is not the hold's receipt.
+      await engine.upsertWriteGateReceipt({
+        target_table: 'facts', target_id: String(first), source_id: SRC, content_hash: 'h-fact', tier: 'agent_written',
+        detector_version: 1, verdict: 'flag', reason_families: ['prompt_injection'], reasons: ['x'], detector_error: false, request_id: null,
+      });
+      const future = '2999-01-01T00:00:00.000000Z';
+      const out = {
+        // Two pages purged in one call: one bounded by a deletedAt after its holds, one unbounded; the third page's hold stays.
+        both: await engine.deletePurgedSlugHolds(SRC, [
+          { slug: 'notes/one', id: Number(one!.id), deletedAt: future },
+          { slug: 'notes/two', id: Number(two!.id), deletedAt: null },
+        ]),
+        again: await engine.deletePurgedSlugHolds(SRC, [{ slug: 'notes/one', id: Number(one!.id), deletedAt: future }, { slug: 'notes/two', id: Number(two!.id) }]),
+        unknownSlug: await engine.deletePurgedSlugHolds(SRC, [{ slug: 'notes/never', id: 987654 }]),
+        other: await engine.deletePurgedSlugHolds(OTHER, [{ slug: 'notes/three', id: Number(three!.id) }]),
+        third: await engine.deletePurgedSlugHolds(SRC, [{ slug: 'notes/three', id: Number(three!.id) }]),
+        elsewhere: await engine.deletePurgedSlugHolds(OTHER, [{ slug: 'notes/one', id: Number(one!.id) }]),
+      };
+      expect(out).toEqual({
+        both: { write_gate_holds: 3, write_gate_receipts: 3 },
+        again: { write_gate_holds: 0, write_gate_receipts: 0 },
+        unknownSlug: { write_gate_holds: 0, write_gate_receipts: 0 },
+        other: { write_gate_holds: 0, write_gate_receipts: 0 },
+        third: { write_gate_holds: 1, write_gate_receipts: 1 },
+        elsewhere: { write_gate_holds: 1, write_gate_receipts: 1 },
       });
       return out;
     },
