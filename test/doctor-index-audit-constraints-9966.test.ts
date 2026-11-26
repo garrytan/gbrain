@@ -13,6 +13,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { indexAuditEntry } from '../src/commands/doctor/checks/queue-assets.ts';
 import type { DoctorContext } from '../src/commands/doctor/context.ts';
+import type { Check } from '../src/commands/doctor.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 
@@ -27,7 +28,7 @@ for (const kind of testBackends()) describe(`index_audit and constraint indexes 
   }, 120_000);
   afterAll(async () => { await close?.(); });
 
-  const audit = () => indexAuditEntry.run({ engine, args: ['--index-audit'], progress } as unknown as DoctorContext);
+  const audit = async () => await indexAuditEntry.run({ engine, args: ['--index-audit'], progress } as unknown as DoctorContext) as Check[];
 
   test('a primary key and a unique constraint are not listed as zero-scan; a plain unread index is', async () => {
     if (kind === 'pglite') {
