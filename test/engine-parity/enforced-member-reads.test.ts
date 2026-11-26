@@ -70,7 +70,7 @@ describe('engine parity: the enforced member CLI reads', () => {
       hiddenNone: await hidden([], ['vault']),
     };
     expect(out.listed).toEqual({ type: 'note', frontmatter: { readable_by: ['tess-example'] }, compiled_truth: 'body of notes/listed', timeline: '', body_storage: 'inline', body_bytes: null });
-    expect(out.gone).toEqual({ ...out.listed, compiled_truth: 'body of notes/gone' });
+    expect(out.gone).toEqual({ ...out.listed!, compiled_truth: 'body of notes/gone' });
     expect([out.missing, out.otherSource]).toEqual([null, null]);
     expect(out.rules).toEqual([['default:team-a'], ['default:team-a'], null, null, null]);
     expect(out.tess).toEqual({ 'notes/open': true, 'notes/listed': true, 'notes/private': false, 'notes/gone': true, 'team-a/plan': false, 'notes/none': null, 'team-a/new': null });

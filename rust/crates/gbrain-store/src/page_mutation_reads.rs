@@ -219,4 +219,196 @@ mod tests {
         );
         assert_eq!(store.read_version_source_path(-1, page_id).unwrap(), None);
     }
+
+    /// A page of `source` at `slug` with `frontmatter` (JSON object text).
+    fn put(store: &crate::Store, source: &str, slug: &str, frontmatter: &str) {
+        use crate::pages::{PageInput, PutPageOptions};
+        let input = PageInput {
+            page_type: "note".into(),
+            title: slug.into(),
+            compiled_truth: format!("body of {slug}"),
+            frontmatter: serde_json::from_str(frontmatter).ok(),
+            ..PageInput::default()
+        };
+        let options = PutPageOptions {
+            source_id: Some(source.into()),
+            ..PutPageOptions::default()
+        };
+        store.put_page(slug, &input, &options).unwrap();
+    }
+
+    fn member_policy(identity: &str, satisfied: &[&str]) -> crate::facts::PrivacyPolicy {
+        serde_json::from_value(json!({
+            "honorAliases": false, "entityPrivacy": true, "ownerOnly": "fn",
+            "identity": [identity], "privateReadableSources": [], "callerRecord": true,
+            "satisfiedRuleIds": satisfied,
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn the_enforced_member_reads_answer_as_their_sql_does() {
+        let store = crate::test_support::store();
+        for id in ["vault"] {
+            let source: SourceInput =
+                serde_json::from_value(json!({ "id": id, "name": id })).unwrap();
+            store.upsert_source(&source).unwrap();
+        }
+        store.put_access_policy_state("default").unwrap();
+        store
+            .put_access_rule(crate::access_rules::AccessRuleRecord {
+                source_id: "default".into(),
+                rule_id: "team-a".into(),
+                prefix: "team-a/".into(),
+                readable_by: vec!["group:team-a".into()],
+                revision: 1,
+                covers_derived: true,
+                created_by: None,
+            })
+            .unwrap();
+        put(&store, "default", "notes/open", "{}");
+        put(
+            &store,
+            "default",
+            "notes/listed",
+            r#"{"readable_by":["member:tess-example"]}"#,
+        );
+        put(
+            &store,
+            "default",
+            "notes/private",
+            r#"{"visibility":"private"}"#,
+        );
+        put(
+            &store,
+            "default",
+            "notes/gone",
+            r#"{"readable_by":["member:tess-example"]}"#,
+        );
+        store.soft_delete_page("notes/gone", None).unwrap();
+        put(&store, "default", "team-a/plan", "{}");
+        put(
+            &store,
+            "default",
+            "notes/twin",
+            r#"{"readable_by":["member:bob-example"]}"#,
+        );
+        put(&store, "vault", "notes/twin", "{}");
+
+        // Labels as stored: the live and the soft-deleted page, an inline body, no row elsewhere.
+        let listed = store
+            .read_stored_page_labels("default", "notes/listed")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (
+                &listed["type"],
+                &listed["compiled_truth"],
+                &listed["timeline"],
+                &listed["body_storage"],
+                &listed["body_bytes"]
+            ),
+            (
+                &json!("note"),
+                &json!("body of notes/listed"),
+                &json!(""),
+                &json!("inline"),
+                &json!(null)
+            )
+        );
+        assert_eq!(
+            listed["frontmatter"],
+            json!({ "readable_by": ["member:tess-example"] })
+        );
+        assert_eq!(
+            store
+                .read_stored_page_labels("default", "notes/gone")
+                .unwrap()
+                .unwrap()["compiled_truth"],
+            json!("body of notes/gone")
+        );
+        assert_eq!(
+            store
+                .read_stored_page_labels("vault", "notes/listed")
+                .unwrap(),
+            None
+        );
+
+        // The rules that cover a slug, with or without a page; none under no rule or another source.
+        let rules = |source: &str, slug: &str| store.read_slug_folder_rules(source, slug).unwrap();
+        assert_eq!(
+            rules("default", "team-a/new"),
+            Some(vec!["default:team-a".to_string()])
+        );
+        assert_eq!(
+            rules("default", "team-a/plan"),
+            Some(vec!["default:team-a".to_string()])
+        );
+        assert_eq!(
+            (
+                rules("default", "notes/new"),
+                rules("default", "team-a"),
+                rules("vault", "team-a/new")
+            ),
+            (None, None, None)
+        );
+
+        // A member's read: none for no row, the soft-deleted row judged like a live one, a rule it must satisfy.
+        let tess = member_policy("member:tess-example", &[]);
+        let readable = |slug: &str, policy: &crate::facts::PrivacyPolicy| {
+            store
+                .read_member_page_readable("default", slug, policy)
+                .unwrap()
+        };
+        assert_eq!(
+            [
+                "notes/open",
+                "notes/listed",
+                "notes/private",
+                "notes/gone",
+                "team-a/plan",
+                "notes/none"
+            ]
+            .map(|s| readable(s, &tess)),
+            [
+                Some(true),
+                Some(true),
+                Some(false),
+                Some(true),
+                Some(false),
+                None
+            ]
+        );
+        let grouped = member_policy("member:tess-example", &["default:team-a"]);
+        assert_eq!(readable("team-a/plan", &grouped), Some(true));
+        assert_eq!(
+            readable("notes/listed", &member_policy("member:bob-example", &[])),
+            Some(false)
+        );
+
+        // The hidden slugs: a slug is hidden only when every page of it is, a hidden source hides its pages.
+        let hidden = |slugs: &[&str], sources: &[&str], policy: &crate::facts::PrivacyPolicy| {
+            let slugs: Vec<String> = slugs.iter().map(|s| s.to_string()).collect();
+            let sources: Vec<String> = sources.iter().map(|s| s.to_string()).collect();
+            store
+                .read_hidden_page_slugs(&slugs, &sources, policy)
+                .unwrap()
+        };
+        let all = [
+            "notes/open",
+            "notes/listed",
+            "notes/private",
+            "notes/gone",
+            "team-a/plan",
+            "notes/none",
+            "notes/twin",
+        ];
+        assert_eq!(hidden(&all, &[], &tess), ["notes/private", "team-a/plan"]);
+        assert_eq!(
+            hidden(&["notes/twin", "notes/listed"], &["vault"], &tess),
+            ["notes/twin"]
+        );
+        assert_eq!(hidden(&all, &[], &grouped), ["notes/private"]);
+        assert!(hidden(&[], &["vault"], &tess).is_empty());
+    }
 }
