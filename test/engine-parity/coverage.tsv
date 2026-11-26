@@ -124,7 +124,7 @@ disconnect	lifecycle	yes	3	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	4	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	388	no	yes	yes	serves
+transaction	lifecycle	yes	389	no	yes	yes	serves
 transactionDirect	lifecycle	yes	24	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
@@ -1965,7 +1965,7 @@ listSharedSkillPackRoots	write_misc	yes	1	no	yes	yes	serves
 getWorktreeBinding	write_misc	yes	25	no	yes	yes	serves
 listHostTopologyRows	write_misc	yes	2	no	yes	yes	serves
 listWorktreeMembers	write_misc	yes	2	no	yes	yes	serves
-worktreeClaimStore	write_misc	yes	32	no	yes	yes	serves
+worktreeClaimStore	write_misc	yes	33	no	yes	yes	serves
 readWriterAdminState	write_misc	yes	10	no	yes	yes	serves
 readWorktreeManifest	write_misc	yes	1	no	yes	yes	serves
 writerAdminStore	write_misc	yes	3	no	yes	yes	serves
