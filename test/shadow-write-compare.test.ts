@@ -22,7 +22,7 @@ import { writeSeedRecord } from '../src/shadow/seed.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { loadRustAddon, type RustAddon } from '../src/core/rust-engine/addon-loader.ts';
 import { detectAddonTarget } from '../src/core/rust-engine/addon-target.ts';
-import { ensureEpoch, readEpoch, withLock } from '../src/shadow/evidence-epoch.ts';
+import { ensureEpoch, epochPath, readEpoch, withLock } from '../src/shadow/evidence-epoch.ts';
 import { buildFollowStatus, renderFollowStatus } from '../src/shadow/follow-status.ts';
 import { encodeArgs } from '../src/shadow/codec.ts';
 import { configDir } from '../src/core/config.ts';
@@ -1143,14 +1143,14 @@ describe('S2c: a durable per-session obligation for write samples', () => {
     expect(stat(dir)).toMatchObject({ state: 'capability_missing', legacy_lines: 1, unresolved_replays: 1 });
   });
 
-  test('a client worker appends its credited lines once: an append that landed but whose flush failed is flushed on the retry, never appended again', async () => {
+  test('a client worker\'s credited lines count once: an append that landed but whose flush failed is written again with the same numbers on the retry, and the owner takes each number once', async () => {
     const dir = tmp(); const epoch = epochOf(dir); owe(dir, 'sc2', 3); passing(dir, epoch);
     const durable = await import('../src/core/fs-durable.ts');
     const client = new WriteTally(dir, () => null, () => true, 424242, 'sc2');
     client.note('uncomparable', 'moved', 2, false, 2); client.note('uncomparable', 'moved', 1, false, 1);
     const flush = spyOn(durable, 'flushFile').mockImplementationOnce(() => { throw new Error('EIO'); });
     expect(client.save()).toBe(false); flush.mockRestore(); // appended, flush failed
-    expect(client.save()).toBe(true); // flush only
+    expect(client.save()).toBe(true); // written again with the same numbers (was: flush only, and the lines were not appended twice)
     expect(client.save()).toBe(true);
     expect(unfoldedLines(dir, epoch).bySession).toEqual({ sc2: 3 }); // exactly three lines, not six
     const directory = spyOn(durable, 'flushDirectory').mockImplementationOnce(() => { throw new Error('EIO'); });
@@ -1246,6 +1246,45 @@ describe('S2c: a durable per-session obligation for write samples', () => {
     expect(existsSync(owedPath(dir, 'cl'))).toBe(true); // 1 of 3 settled, its worker alive: it is not the pass's to remove
     passing(dir, epoch, { settled: { cl: 3 } }); o.save();
     expect(existsSync(owedPath(dir, 'cl'))).toBe(false);
+  });
+
+  for (const foldBetween of [false, true]) {
+    test(`E2: a partial append followed by the retry of the whole batch credits each line once (${foldBetween ? 'the owner folds the prefix before the retry' : 'the owner folds after the retry'}): a later missing sample still blocks`, async () => {
+      const dir = tmp(); const epoch = epochOf(dir); owe(dir, 'se2', 101); passing(dir, epoch);
+      const fs = await import('node:fs');
+      const real = fs.appendFileSync; const owner = worker(dir, epoch, 'o');
+      const client = new WriteTally(dir, () => null, () => true, process.pid, 'se2'); // a running worker: its numbers stay until it is gone
+      client.note('uncomparable', 'moved', 100, false, 100); // 100 verdicts settle 100 of the 101 owed samples
+      const partial = spyOn(fs, 'appendFileSync').mockImplementationOnce(((path: string, data: string, opts: unknown) => {
+        real(path, data.split('\n').slice(0, 60).join('\n') + '\n', opts as never); // the first 60 lines reach the file, then the write fails (a file-size limit, ENOSPC)
+        throw Object.assign(new Error('EFBIG'), { code: 'EFBIG' });
+      }) as never);
+      expect(client.save()).toBe(false); partial.mockRestore();
+      if (foldBetween) { owner.save(); expect(settledOf(dir, epoch, 'se2')).toBe(60); }
+      expect(client.save()).toBe(true); // the whole batch is written again
+      expect(unfoldedLines(dir, epoch, readWriteTally(dir, epoch)?.lost_applied, readWriteTally(dir, epoch)?.line_seq).bySession).toEqual({ se2: foldBetween ? 40 : 100 }); // was 100 + 60 before the fold: the prefix counted twice
+      owner.save();
+      expect(settledOf(dir, epoch, 'se2')).toBe(100); // was 160
+      expect(stat(dir).outstanding_sessions).toEqual(['write-owed.se2.json']); // 101 owed, 100 settled: the later missing sample still blocks
+      expect(readWriteTally(dir, epoch)!.uncomparable_by_reason.no_epoch).toBe(100); // outcomes once too
+      client.save(); owner.save(); expect(settledOf(dir, epoch, 'se2')).toBe(100);
+    });
+  }
+
+  test('E3: a manifest that cannot be read for a moment does not retire the worker: it fails the save and tries again, and only a different epoch id retires it', () => {
+    const dir = tmp(); const epoch = epochOf(dir); passing(dir, epoch); owe(dir, 'se3', 2, { child_pid: process.pid });
+    const w = worker(dir, epoch, 'se3');
+    const manifest = readFileSync(epochPath(dir), 'utf8');
+    writeFileSync(epochPath(dir), '{"version":1,"epo'); // torn for a moment (a rename in progress on another filesystem, a read error)
+    expect(w.begin()).toBe(false);
+    w.note('comparable', undefined, 1, false, 1);
+    expect(settledOf(dir, epoch, 'se3')).toBeUndefined();
+    writeFileSync(epochPath(dir), manifest); // readable again
+    expect(w.begin()).toBe(true); // was false for the rest of the worker's life: it had been retired
+    w.note('comparable', undefined, 1, true, 1);
+    expect(settledOf(dir, epoch, 'se3')).toBe(2); // both verdicts, each once
+    ensureEpoch(dir, { ...INPUTS, rust_addon_sha256: 'e3' }, NOW.getTime() + 9000); // a different epoch id does retire it
+    expect(w.begin()).toBe(false);
   });
 
   test('each worker credits through its own session only: another session\'s verdicts never settle this one', () => {

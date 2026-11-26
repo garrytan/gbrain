@@ -130,6 +130,8 @@ export interface WriteTallyFile {
   lost_applied?: Record<string, number>;
   /** Write samples each session (`sessionKey`) has had settled, whatever the epoch: carried into a new epoch together with `lost_applied` and `applied` (a count and the cursor that stops its source being added again are one ledger). Written in the same rename as the outcomes it stands for. */
   settled?: Record<string, number>;
+  /** The highest line number (`n`) of each writer's (`w`, `<pid>.<nonce>`) credited lost lines this file has taken: a line retried after a partial append carries the same numbers, so it is added once however much of the first try reached the file. Travels with `settled` and `lost_applied`. */
+  line_seq?: Record<string, number>;
   /** Lost lines of this epoch that name no session (an older writer's): their obligation is unknown, so status reads no evidence for the epoch. */
   legacy_lines?: number;
 }
@@ -144,7 +146,7 @@ function loadTally(dir: string): WriteTallyFile | null {
   let text: string;
   try { text = readFileSync(writeTallyPath(dir), 'utf8'); } catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null; throw e; }
   const f = JSON.parse(text) as WriteTallyFile;
-  if (!(f?.version === 1 && typeof f.epoch_id === 'string' && OUTCOMES.every((o) => count(f[o])) && counts(f.capability_missing_by_family) && counts(f.uncomparable_by_reason) && (f.applied === undefined || counts(f.applied)) && (f.lost_applied === undefined || counts(f.lost_applied)) && (f.settled === undefined || counts(f.settled)) && (f.legacy_lines === undefined || count(f.legacy_lines)) && Array.isArray(f.in_flight) && f.in_flight.every(Number.isInteger))) throw new Error('not a write tally');
+  if (!(f?.version === 1 && typeof f.epoch_id === 'string' && OUTCOMES.every((o) => count(f[o])) && counts(f.capability_missing_by_family) && counts(f.uncomparable_by_reason) && (f.applied === undefined || counts(f.applied)) && (f.lost_applied === undefined || counts(f.lost_applied)) && (f.settled === undefined || counts(f.settled)) && (f.line_seq === undefined || counts(f.line_seq)) && (f.legacy_lines === undefined || count(f.legacy_lines)) && Array.isArray(f.in_flight) && f.in_flight.every(Number.isInteger))) throw new Error('not a write tally');
   return f;
 }
 
@@ -243,8 +245,10 @@ const MAX_LOST_PER_RECORD = 10_000;
  */
 export const lostPath = (dir: string, pid: number): string => join(dir, `write-lost.${pid}.jsonl`);
 /** Appends `n` lost lines (no flush). Throws when the append failed. */
-function appendLostLines(dir: string, epoch: string, reason: string, n: number, session: string): void {
-  appendFileSync(lostPath(dir, process.pid), (JSON.stringify({ epoch_id: epoch, reason, session }) + '\n').repeat(n), { flag: 'a', mode: 0o600 });
+function appendLostLines(dir: string, epoch: string, reason: string, n: number, session: string, numbered?: { w: string; from: number }): void {
+  // A numbered line (`w`, `n`) is added once by the owner however often it is written: a partial append that is retried whole leaves the same numbers twice, and the second copy of each is skipped.
+  const text = numbered ? Array.from({ length: n }, (_, i) => JSON.stringify({ epoch_id: epoch, reason, session, w: numbered.w, n: numbered.from + i }) + '\n').join('') : (JSON.stringify({ epoch_id: epoch, reason, session }) + '\n').repeat(n);
+  appendFileSync(lostPath(dir, process.pid), text, { flag: 'a', mode: 0o600 });
 }
 function flushLostFile(dir: string): void { flushFile(lostPath(dir, process.pid)); flushDirectory(dir); }
 export function recordLost(dir: string, epoch: string, reason: string, n = 1, session = ''): boolean {
@@ -258,7 +262,7 @@ export function recordLostCount(dir: string, epoch: string, reason: string, n: n
   return done;
 }
 /** One line of a lost file: its reason, whether it names the epoch asked for, and its session (`null`: no `session` key at all, an older writer's). */
-interface LostLine { reason: string; thisEpoch: boolean; session: string | null }
+interface LostLine { reason: string; thisEpoch: boolean; session: string | null; w: string | null; n: number | null }
 /** The lost lines past what `applied` took, per file: the complete lines' end offset and the lines (every epoch's: another epoch's settle their session but are no outcome here; a line that is not readable, or an unfinished one whose writer is dead, counts as `lost_unreadable`). */
 function readLost(dir: string, epoch: string, applied: Record<string, number> = {}): Array<{ name: string; end: number; lines: LostLine[]; unreadable?: true }> {
   let names: string[] = [];
@@ -270,19 +274,25 @@ function readLost(dir: string, epoch: string, applied: Record<string, number> = 
       const end = open && !running(Number(/\d+/.exec(name)![0])) ? buf.length : cut; // its writer is gone: it ends as one lost_unreadable (its offset moves past it); while the writer lives it is unresolved
       if (end <= from && !open) return [];
       const lines = buf.subarray(from, end).toString('utf8').split('\n').filter(Boolean).map((l): LostLine => {
-        try { const e = JSON.parse(l); return { reason: String(e?.reason), thisEpoch: e?.epoch_id === epoch, session: typeof e?.session === 'string' ? e.session : null }; } catch { return { reason: 'lost_unreadable', thisEpoch: true, session: '' }; }
+        try { const e = JSON.parse(l); return { reason: String(e?.reason), thisEpoch: e?.epoch_id === epoch, session: typeof e?.session === 'string' ? e.session : null, w: typeof e?.w === 'string' ? e.w : null, n: Number.isSafeInteger(e?.n) ? e.n : null }; } catch { return { reason: 'lost_unreadable', thisEpoch: true, session: '', w: null, n: null }; }
       });
       return [{ name, end: Math.max(end, from), lines, ...(open && end < buf.length ? { unreadable: true as const } : {}) }];
     } catch { return [{ name, end: 0, lines: [], unreadable: true }]; } // a file that cannot be read stays unfolded and unresolved: status reads it as no evidence
   });
 }
+/** The lines of one file this tally has not taken, without the second copies: a numbered line at or below its writer's highest number taken is a copy of one already counted. `seen` moves forward as lines are kept. */
+function firstCopies(lines: LostLine[], seen: Record<string, number>): LostLine[] {
+  return lines.filter((x) => { if (x.w === null || x.n === null) return true; if (x.n <= (seen[x.w] ?? 0)) return false; seen[x.w] = x.n; return true; });
+}
 /** Lost samples that no tally has taken yet: `outcomes` of `epoch` (status reads any as no evidence, like a standing in-flight mark) and, per session, the samples every epoch's lines would settle. */
-export function unfoldedLines(dir: string, epoch: string | null, taken?: Record<string, number>): { outcomes: number; bySession: Record<string, number> } {
+export function unfoldedLines(dir: string, epoch: string | null, taken?: Record<string, number>, lineSeq?: Record<string, number>): { outcomes: number; bySession: Record<string, number> } {
   const out = { outcomes: 0, bySession: {} as Record<string, number> };
   if (epoch === null) return out;
+  const seen = { ...lineSeq };
   for (const l of readLost(dir, epoch, taken)) {
-    out.outcomes += l.lines.filter((x) => x.thisEpoch).length + (l.unreadable ? 1 : 0);
-    for (const x of l.lines) if (x.session) out.bySession[x.session] = (out.bySession[x.session] ?? 0) + 1;
+    const lines = firstCopies(l.lines, seen);
+    out.outcomes += lines.filter((x) => x.thisEpoch).length + (l.unreadable ? 1 : 0);
+    for (const x of lines) if (x.session) out.bySession[x.session] = (out.bySession[x.session] ?? 0) + 1;
   }
   return out;
 }
@@ -304,7 +314,7 @@ export function readWriteSnapshot(dir: string, epoch: string | null, between?: (
   for (let attempt = 0; attempt < SNAPSHOT_TRIES; attempt++) {
     const before = tallyIdentity(dir);
     const writes = readWriteTally(dir, epoch); between?.('tally');
-    const lines = unfoldedLines(dir, epoch, writes?.lost_applied); between?.('lines');
+    const lines = unfoldedLines(dir, epoch, writes?.lost_applied, writes?.line_seq); between?.('lines');
     const owed = epoch === null ? { keys: [], failed: false } : listOwed(dir); between?.('owed');
     const outstanding: string[] = owed.failed ? ['write-owed.*'] : [];
     for (const key of owed.keys) {
@@ -345,7 +355,7 @@ interface Batch { seq: number; delta: WriteTallyFile; credit: number; ending: bo
  *
  * Settling. Each verdict is noted with the credit it settles: how many of the session's owed samples (`write-owed.<session>.json`) it stands for. The credit is part of the verdict's batch, so one rename takes both or neither (`settled[session]`).
  * A client child and a child whose epoch was retired cannot write the tally: their verdicts become lost lines tagged with the session (`no_epoch`, `epoch_retired`), which the owner folds into `settled` (any epoch's) and into the outcomes (this epoch's only).
- * Such a line is appended once: after an append that succeeded and a flush that failed, a retry flushes and never appends the same line again.
+ * Each such line is numbered (`w`, `n`) when its batch is first tried, and a retry writes the same numbers: after an append that failed part-way, or that succeeded and whose flush failed, the owner adds each number once, so no partial write can credit a line twice.
  */
 export class WriteTally {
   private pending: Batch[] = [];
@@ -353,7 +363,8 @@ export class WriteTally {
   private seq = 0;
   private retired = false; // the manifest names another epoch than this child's: its verdicts can only be lost lines
   private readonly journal = new Map<string, number>(); // lost lines not yet appended: `reason\0credited` -> count
-  private appended = false; // a lost line was appended and its flush failed: the retry flushes, never appends it again
+  private nextLine = 0; // the last line number given to a lost line
+  private attempt: { k: string; from: number; n: number } | null = null; // the batch being written: its numbers stay the same on every retry
   private failingSince: number | null = null;
   private readonly id: string;
   private readonly key: string;
@@ -362,7 +373,7 @@ export class WriteTally {
     this.key = session ? sessionKey(session) : '';
   }
   private journalSize(): number { let n = 0; for (const v of this.journal.values()) n += v; return n; }
-  private holding(): boolean { return this.pending.length > 0 || this.journal.size > 0 || this.appended; }
+  private holding(): boolean { return this.pending.length > 0 || this.journal.size > 0; }
   /** The result of a save, remembered: a save that fails while outcomes are still held starts the clock `stuckMs` reads. */
   private track(ok: boolean): boolean {
     if (ok) { if (!this.holding()) this.failingSince = null; } else if (this.holding()) this.failingSince ??= this.now();
@@ -379,10 +390,13 @@ export class WriteTally {
     const batches = this.pending; let renamed = false; let retiredNow = false;
     try {
       withLock(join(this.dir, 'write-comparisons.lock'), () => {
-        if (readEpoch(this.dir)?.epoch_id !== epoch) { retiredNow = true; return; } // a child of a retired epoch must not replace the current epoch's file
+        // Only a manifest that names ANOTHER epoch retires this child: one that cannot be read (a torn read, an I/O error) is a failed save, tried again, never a verdict that this child's epoch is gone.
+        const current = readEpoch(this.dir);
+        if (current === null) throw new Error('epoch manifest unreadable');
+        if (current.epoch_id !== epoch) { retiredNow = true; return; } // a child of a retired epoch must not replace the current epoch's file
         const saved = loadTally(this.dir);
         // A new epoch starts its outcomes at zero and keeps the settlement ledger whole: `settled`, the cursors that stop its sources being added again (`lost_applied`, `applied`) travel together.
-        const file = saved?.epoch_id === epoch ? saved : { ...blank(epoch), ...(saved?.settled ? { settled: { ...saved.settled } } : {}), ...(saved?.lost_applied ? { lost_applied: { ...saved.lost_applied } } : {}), ...(saved?.applied ? { applied: { ...saved.applied } } : {}) };
+        const file = saved?.epoch_id === epoch ? saved : { ...blank(epoch), ...(saved?.settled ? { settled: { ...saved.settled } } : {}), ...(saved?.lost_applied ? { lost_applied: { ...saved.lost_applied } } : {}), ...(saved?.line_seq ? { line_seq: { ...saved.line_seq } } : {}), ...(saved?.applied ? { applied: { ...saved.applied } } : {}) };
         file.applied ??= {};
         const dead = file.in_flight.filter((p) => (p === this.pid ? fresh : !running(p)));
         for (const p of dead) applyVerdict(file, 'unexplained_difference', undefined, 1);
@@ -393,8 +407,9 @@ export class WriteTally {
         if (!change && !dead.length && !todo.length && !lost.length) { if (this.sealed > 0) { flushFile(writeTallyPath(this.dir)); flushDirectory(this.dir); } return; } // a save that may have landed (renamed, directory flush failed) is durable only once this flush has succeeded
         file.lost_applied ??= {};
         const credited = new Set<string>();
+        file.line_seq ??= {};
         for (const l of lost) {
-          for (const x of l.lines) {
+          for (const x of firstCopies(l.lines, file.line_seq)) {
             if (x.thisEpoch) { applyVerdict(file, 'uncomparable', x.reason, 1); if (x.session === null) file.legacy_lines = (file.legacy_lines ?? 0) + 1; }
             if (x.session) { this.credit(file, x.session, 1); credited.add(x.session); }
           }
@@ -408,6 +423,8 @@ export class WriteTally {
           if (b.credit > 0 && this.key) { this.credit(file, this.key, b.credit); credited.add(this.key); }
           file.applied[this.id] = b.seq;
         }
+        for (const w of Object.keys(file.line_seq)) if (w !== this.id && !running(Number.parseInt(w, 10))) delete file.line_seq[w]; // a gone writer's numbers: its file was taken to the end above
+        if (!Object.keys(file.line_seq).length) delete file.line_seq;
         if (file.settled) { // a session whose owed file is gone is settled for good (it was credited on an earlier save): its entry goes
           const owed = listOwed(this.dir);
           if (!owed.failed) for (const k of Object.keys(file.settled)) if (!owed.keys.includes(k) && !credited.has(k)) delete file.settled[k];
@@ -445,19 +462,18 @@ export class WriteTally {
    */
   private flushJournal(): boolean {
     if (this.retired && !this.reconcileRetired()) return this.track(false);
-    if (!this.alive()) { this.journal.clear(); this.appended = false; return true; }
-    if (this.appended) { try { flushLostFile(this.dir); this.appended = false; } catch { return this.track(false); } } // appended earlier, flush failed: flush again, never append the same lines twice
-    for (const [k, n] of [...this.journal]) {
+    if (!this.alive()) { this.journal.clear(); this.attempt = null; return true; }
+    const keys = [...this.journal.keys()]; if (this.attempt && keys.includes(this.attempt.k)) keys.splice(keys.indexOf(this.attempt.k), 1), keys.unshift(this.attempt.k); // the batch that was being written goes first, with its own numbers
+    for (const k of keys) {
       const [reason, credited] = k.split('\0') as [string, string];
-      const epoch = this.retired ? this.epoch() : readEpoch(this.dir)?.epoch_id;
-      if (epoch === null || epoch === undefined) return this.track(false);
-      for (let left = n; left > 0;) {
-        const m = Math.min(left, MAX_LOST_PER_RECORD);
-        try { appendLostLines(this.dir, epoch, reason, m, credited === '1' ? this.key : ''); } catch { return this.track(false); }
-        left -= m; if (left > 0) this.journal.set(k, left); else this.journal.delete(k);
-        this.appended = true;
-        try { flushLostFile(this.dir); } catch { return this.track(false); }
-        this.appended = false;
+      for (let left = this.journal.get(k) ?? 0; left > 0; left = this.journal.get(k) ?? 0) {
+        const epoch = this.retired ? this.epoch() : readEpoch(this.dir)?.epoch_id;
+        if (epoch === null || epoch === undefined) return this.track(false);
+        if (!this.attempt || this.attempt.k !== k) { const n = Math.min(left, MAX_LOST_PER_RECORD); this.attempt = { k, from: this.nextLine + 1, n }; this.nextLine += n; }
+        const { from, n } = this.attempt;
+        try { appendLostLines(this.dir, epoch, reason, n, credited === '1' ? this.key : '', { w: this.id, from }); flushLostFile(this.dir); } catch { return this.track(false); } // a failure keeps the batch and its numbers: the retry writes them all again, and the owner takes each number once
+        this.attempt = null;
+        if (left - n > 0) this.journal.set(k, left - n); else this.journal.delete(k);
       }
     }
     return this.track(true);
@@ -477,7 +493,7 @@ export class WriteTally {
       const names = readdirSync(this.dir);
       let booked = false; const removable: Array<{ key: string; owed: number }> = [];
       let tally: WriteTallyFile | null = null; try { tally = loadTally(this.dir); } catch { return; } // silent-read-ok: a tally that cannot be read settles nothing now
-      const lines = unfoldedLines(this.dir, epoch, tally?.lost_applied);
+      const lines = unfoldedLines(this.dir, epoch, tally?.lost_applied, tally?.line_seq);
       for (const name of names) {
         const key = OWED_NAME.exec(name)?.[1];
         if (key === undefined || key === this.key) continue; // this child's own session is settled at the end of its input

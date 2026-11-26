@@ -284,6 +284,18 @@ describe('criterion 11 counts writers of an older build (write_protocol)', () =>
     rmSync(d, { recursive: true, force: true });
   });
 
+  test('M1: the epoch window has no 7-day clamp: a legacy writer seen early in a 15-day epoch still fails criterion 11, however many days ago it wrote', async () => {
+    const day = 86_400_000; const started = Date.now() - 15 * day; const d = epochDir(started);
+    await observe(HOST, 'gbrain cli:1:modern000'); // this build, seen now: supplies the one host
+    await insertRow('gbrain cli:2:legacy000', null, new Date(started + day).toISOString()); // an older build, last seen 14 days ago, inside the epoch
+    const { out, row } = await criterion11({ engine: primary, dir: d });
+    expect(out.eligibility.legacy_write_writers).toBe(1); // was 0: the rolling 7-day window cut it off and criterion 11 could pass
+    expect(row.state).toBe('fail');
+    await insertRow('gbrain cli:3:before000', null, new Date(started - 11 * 60_000).toISOString()); // still ignored: before the epoch began, less the slack
+    expect((await criterion11({ engine: primary, dir: d })).out.eligibility.legacy_write_writers).toBe(1);
+    rmSync(d, { recursive: true, force: true });
+  });
+
   test('M1: with no epoch on disk the window start bounds it; and where the migration has not run (no write_protocol column) the read fails and criterion 11 is missing, never a pass', async () => {
     await observe(HOST, 'gbrain cli:1:aaaaaaaa');
     await insertRow('gbrain cli:6:oldnoepo', null, new Date().toISOString());

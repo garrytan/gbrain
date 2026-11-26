@@ -114,9 +114,9 @@ export async function buildEligibilityStatus(input: EligibilityInput): Promise<E
   const stateMissing = input.stateRequired === true && !input.state;
   let ev;
   try {
-    // A writer of an older build (no write_protocol, or a lower one) seen since this evidence epoch began may have lost write samples nothing can prove were recorded: it counts from the epoch start (less the refresh slack), or the window start when there is no epoch.
+    // A writer of an older build (no write_protocol, or a lower one) seen since this evidence epoch began may have lost write samples nothing can prove were recorded: it counts from the epoch start (less the refresh slack) however long ago that was (the 7-day window is for hosts and coverage, not for this), or from the window start when there is no epoch.
     const epochStart = Date.parse(readEpoch(input.dir)?.started_at ?? '');
-    const legacySince = Number.isFinite(epochStart) ? new Date(Math.max(since.getTime(), epochStart - OBSERVATION_REFRESH_MS)) : since;
+    const legacySince = Number.isFinite(epochStart) ? new Date(epochStart - OBSERVATION_REFRESH_MS) : since; // no clamp to the 7-day window when an epoch exists: a writer that wrote early in a long epoch still disqualifies the rest of it
     ev = await readWriterEvidence(input.engine, since, hooksExpected, WRITER_HOOK_TRIGGER, WRITER_EVIDENCE_TABLES, legacySince);
   } catch (error) {
     return { eligibility: fields, eligibility_evidence: { state: 'read_failed', code: errorCode(error) } };
