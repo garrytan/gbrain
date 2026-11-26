@@ -1543,12 +1543,25 @@ fn derive_page_text(
             if access.owner_reads == Some(true) {
                 owner_patch.owner_reads = Some(true);
             }
-            let owner = page_caller(&reference(cur2, owner_patch, false, s), cx);
+            let owner = page_caller(&reference(cur2, owner_patch.clone(), false, s), cx);
             if text == owner {
                 let mut m = page_flags(&owner, s);
                 with_readers(&mut m, caller_readers_rec);
                 stored(&mut m);
                 return Some(m);
+            }
+            // The remote owner's lineage read (the opt-in off, no audience members): the owner read rule.
+            if owner_lineage_served(&access) {
+                let mut lineage_patch = owner_patch;
+                lineage_patch.lineage = Some(true);
+                let lineage = page_caller(&reference(cur2, lineage_patch, false, s), cx);
+                if text == lineage {
+                    let mut m = page_flags(&lineage, s);
+                    with_readers(&mut m, caller_readers_rec);
+                    stored(&mut m);
+                    m.insert("ownerRead".into(), json!(true));
+                    return Some(m);
+                }
             }
         }
         None
@@ -1559,6 +1572,20 @@ fn derive_page_text(
             "excludePrivate for a caller whose member pages, grants or lineage widen the policy",
         ),
     }
+}
+
+/// Which fact record a policy matched (`storePrivacyPolicy`'s record list).
+#[derive(Clone, Copy, Default)]
+struct FactRecord {
+    owner: bool,
+    folders: bool,
+    lineage: bool,
+}
+
+/// The remote owner's lineage read is served as the owner read rule: a lineage read with the owner opt-in off and
+/// no audience-kind members (`access.lineage && !access.ownerReadsRestricted && !access.audienceKindMembers.length`).
+fn owner_lineage_served(access: &CallerRecord) -> bool {
+    access.lineage && !access.owner_reads_restricted && access.audience_kind_members.is_empty()
 }
 
 /// `storePrivacyPolicy`.
@@ -1610,16 +1637,23 @@ fn derive_fact(
         let satisfied = access.satisfied_rule_ids.clone();
         let cov = access.folder_coverage.clone();
         let valid_rules = satisfied.iter().all(|r| valid_rule_id(r));
-        let mut records: Vec<(Patch, bool, bool)> = Vec::new();
+        let with_folders = |p: &mut Patch| {
+            p.satisfied_rule_ids = Some(satisfied.clone());
+            p.folder_coverage = Some(cov.clone());
+        };
+        let mut records: Vec<(Patch, FactRecord)> = Vec::new();
         let mut reader = readers_patch(readers);
         reader.hide_private = Some(true);
         reader.restricted = Some(!open);
-        records.push((reader.clone(), false, false));
+        records.push((reader.clone(), FactRecord::default()));
         if !satisfied.is_empty() || !cov.is_empty() {
             let mut folder = reader.clone();
-            folder.satisfied_rule_ids = Some(satisfied.clone());
-            folder.folder_coverage = Some(cov.clone());
-            records.push((folder, false, true));
+            with_folders(&mut folder);
+            let kind = FactRecord {
+                folders: true,
+                ..FactRecord::default()
+            };
+            records.push((folder, kind));
         }
         if access.owner {
             let mut owner = reader;
@@ -1628,9 +1662,26 @@ fn derive_fact(
             if access.owner_reads == Some(true) {
                 owner.owner_reads = Some(true);
             }
-            records.push((owner, true, false));
+            let kind = FactRecord {
+                owner: true,
+                ..FactRecord::default()
+            };
+            records.push((owner.clone(), kind));
+            // The remote owner's lineage read (the opt-in off, no audience members), with its folders.
+            if owner_lineage_served(&access) {
+                let mut lineage = owner;
+                with_folders(&mut lineage);
+                lineage.lineage = Some(true);
+                let kind = FactRecord {
+                    owner: true,
+                    folders: true,
+                    lineage: true,
+                };
+                records.push((lineage, kind));
+            }
         }
-        for (record, is_owner_record, with_folders) in records {
+        for (record, kind) in records {
+            let is_owner_record = kind.owner;
             let rec_cur = reference(cur2, record, false, s);
             for (form, member_case) in forms {
                 let canonical = fact_fragment(form, &rec_cur, cx);
@@ -1649,7 +1700,7 @@ fn derive_fact(
                 if judged {
                     m.insert("memberPage".into(), json!(member_page));
                 }
-                if with_folders {
+                if kind.folders {
                     if !satisfied.is_empty() && valid_rules {
                         m.insert("satisfiedRuleIds".into(), json!(satisfied));
                     }
@@ -1662,6 +1713,9 @@ fn derive_fact(
                 }
                 if provenance_privacy_off {
                     m.insert("provenancePrivacyOff".into(), json!(true));
+                }
+                if kind.lineage {
+                    m.insert("ownerRead".into(), json!(true));
                 }
                 return Some(m);
             }
@@ -2530,6 +2584,23 @@ mod tests {
         );
         assert!(!labelled(&rec(false, false)).lineage);
         assert!(!labelled(&rec(true, false)).lineage);
+    }
+
+    #[test]
+    fn the_owner_read_rule_serves_only_a_plain_lineage_read() {
+        let rec = |v: Value| -> CallerRecord { serde_json::from_value(v).unwrap() };
+        assert!(owner_lineage_served(&rec(
+            json!({ "identity": ["member:a"], "owner": true, "lineage": true })
+        )));
+        assert!(!owner_lineage_served(&rec(
+            json!({ "identity": ["member:a"], "owner": true, "lineage": true, "ownerReadsRestricted": true })
+        )));
+        assert!(!owner_lineage_served(&rec(
+            json!({ "identity": ["member:a"], "owner": true, "lineage": true, "audienceKindMembers": ["room"] })
+        )));
+        assert!(!owner_lineage_served(&rec(
+            json!({ "identity": ["member:a"], "owner": true })
+        )));
     }
 
     #[test]
