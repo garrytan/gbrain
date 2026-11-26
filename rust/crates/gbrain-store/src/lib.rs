@@ -195,6 +195,9 @@ pub struct OpenOptions {
     /// brain records the write gate's scan baseline under it, as migration v227 does on the SQL engines;
     /// `None` records it under `DEFAULT_WRITE_GATE_DETECTOR_VERSION`.
     pub write_gate_detector_version: Option<u32>,
+    /// False: the directory must already hold a brain (its record file); `open_dir` creates no file or folder
+    /// and refuses with `store_missing` otherwise, also when the store moves away during the open. True (the default) creates a missing brain, as before.
+    pub create_missing: bool,
 }
 
 impl Default for OpenOptions {
@@ -208,6 +211,7 @@ impl Default for OpenOptions {
             keyword_index_builder: true,
             initial_config: Vec::new(),
             write_gate_detector_version: None,
+            create_missing: true,
         }
     }
 }
@@ -256,7 +260,8 @@ pub struct Store {
 /// The record file of a brain directory, with one writer or many. Only for the storage bake-off:
 /// a build with the `fjall` feature (never the addon's) keeps the records in a fjall database
 /// instead when `GBRAIN_RUST_BAKEOFF_STORE=fjall`.
-fn open_records(dir: &Path, concurrent: bool) -> Result<Arc<dyn Kv>> {
+/// The record file of `dir`; with `create` false only one that is already there (never created).
+fn open_records_as(dir: &Path, concurrent: bool, create: bool) -> Result<Arc<dyn Kv>> {
     #[cfg(feature = "fjall")]
     if std::env::var("GBRAIN_RUST_BAKEOFF_STORE").is_ok_and(|v| v == "fjall") {
         let kv = fjall_kv::FjallKv::open_dir(&dir.join("records.fjall"))?;
@@ -266,7 +271,12 @@ fn open_records(dir: &Path, concurrent: bool) -> Result<Arc<dyn Kv>> {
             Arc::new(kv)
         });
     }
-    let kv = redb_kv::RedbKv::open_path(&dir.join(format::RECORDS_FILE))?;
+    let path = dir.join(format::RECORDS_FILE);
+    let kv = if create {
+        redb_kv::RedbKv::open_path(&path)?
+    } else {
+        redb_kv::RedbKv::open_existing_path(&path)?
+    };
     Ok(if concurrent {
         Arc::new(occ_kv::OccKv::new(kv)?)
     } else {
@@ -340,8 +350,22 @@ impl Store {
     /// `open_dir` for a build that opens only the formats in `known`: the seam the older-build
     /// tests use (`format::check_version_in`).
     pub(crate) fn open_dir_in(dir: &Path, options: OpenOptions, known: &[u32]) -> Result<Store> {
-        fs::create_dir_all(dir)
-            .map_err(|e| StoreError::io(format!("creating {}: {e}", dir.display())))?;
+        // With `create_missing` false nothing below creates a file or folder: the directory and its
+        // record file must be there, and a store moved away mid-open is refused, not recreated.
+        if !options.create_missing && !dir.join(format::RECORDS_FILE).is_file() {
+            return Err(StoreError::new(
+                error::STORE_MISSING,
+                format!(
+                    "{} holds no brain (no {}); nothing was created",
+                    dir.display(),
+                    format::RECORDS_FILE
+                ),
+            ));
+        }
+        if options.create_missing {
+            fs::create_dir_all(dir)
+                .map_err(|e| StoreError::io(format!("creating {}: {e}", dir.display())))?;
+        }
         // FORMAT is judged before the record file is opened: a newer brain is never touched.
         let existing = format::read_in(dir, known)?;
         if existing.is_none() {
@@ -354,7 +378,7 @@ impl Store {
                 format::check_version_in(stored.format_version, known)?;
             }
         }
-        let kv = open_records(dir, options.concurrent_writes)?;
+        let kv = open_records_as(dir, options.concurrent_writes, options.create_missing)?;
         let mut store = Store::open_kv_in(kv, Arc::new(SystemEnv), options.clone(), known)?;
         store.dir = Some(dir.to_path_buf());
         // FORMAT follows the records: written when missing (a crash before it, or a deleted
@@ -1176,6 +1200,56 @@ mod older_build_tests {
         assert_eq!(kept.unwrap().as_deref(), Some(&b"kept"[..]));
         drop(store);
         let _ = fs::remove_dir_all(dir.parent().unwrap());
+    }
+
+    /// An open that must find its brain refuses an empty or missing directory and creates nothing; the default still
+    /// creates one.
+    #[test]
+    fn an_open_without_create_missing_refuses_a_directory_without_a_brain_and_creates_nothing() {
+        let root = fresh_dir("create-missing");
+        let missing = root.join("gone");
+        let options = || OpenOptions {
+            create_missing: false,
+            keyword_index_builder: false,
+            ..OpenOptions::default()
+        };
+        let err = Store::open_dir(&missing, options()).err().unwrap();
+        assert_eq!(err.code, error::STORE_MISSING);
+        assert!(!missing.exists(), "the refused open created the directory");
+        fs::create_dir_all(&missing).unwrap();
+        assert_eq!(
+            Store::open_dir(&missing, options()).err().unwrap().code,
+            error::STORE_MISSING
+        );
+        assert_eq!(
+            fs::read_dir(&missing).unwrap().count(),
+            0,
+            "the refused open wrote into the folder"
+        );
+        // A FORMAT file without the record file is no brain either; the open writes nothing.
+        fs::write(missing.join(format::FORMAT_FILE), b"{}").unwrap();
+        assert_eq!(
+            Store::open_dir(&missing, options()).err().unwrap().code,
+            error::STORE_MISSING
+        );
+        assert!(
+            !missing.join(format::RECORDS_FILE).exists(),
+            "the refused open created the record file"
+        );
+        fs::remove_file(missing.join(format::FORMAT_FILE)).unwrap();
+        // The default creates it, and then an open that must find it does.
+        drop(
+            Store::open_dir(
+                &missing,
+                OpenOptions {
+                    keyword_index_builder: false,
+                    ..OpenOptions::default()
+                },
+            )
+            .unwrap(),
+        );
+        drop(Store::open_dir(&missing, options()).unwrap());
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

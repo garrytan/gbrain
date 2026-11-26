@@ -1985,6 +1985,8 @@ export function toEngineConfig(config: GBrainConfig): EngineConfig {
     database_url: config.database_url,
     database_path: config.database_path,
     keyword_statement_timeout_ms: config.search?.keyword_statement_timeout_ms,
+    // A configured Rust brain's store is never quietly replaced by an empty one (EngineConfig.guard_store).
+    ...(config.engine === 'rust' ? { guard_store: true } : {}),
   };
 }
 

@@ -71,6 +71,9 @@ pub struct BrainOpenOptions {
     /// A fresh brain records the write gate's scan baseline under this detector version (the
     /// TypeScript `WRITE_GATE_DETECTOR_VERSION`).
     pub write_gate_detector_version: Option<u32>,
+    /// False: the directory must already hold a brain; nothing is created and the open rejects `store_missing`.
+    /// Absent or true creates a missing brain, as before.
+    pub create_missing: Option<bool>,
 }
 
 #[napi]
@@ -200,6 +203,9 @@ impl Brain {
                         .push(("chunk_strategy".into(), strategy));
                 }
                 opts.write_gate_detector_version = options.write_gate_detector_version;
+                if let Some(create) = options.create_missing {
+                    opts.create_missing = create;
+                }
             }
             // Holding the slot while opening makes a second `open` on this handle wait, then see
             // the brain open.

@@ -199,6 +199,7 @@ Errors from the addon are real `Error` objects with a `code`:
 | `internal_error` | Rust code panicked. Carries a `diagnosticId`; the panic text is not sent to the caller. |
 | `engine_shutdown` | A call arrived after shutdown began. |
 | `store_locked` | Another handle or process has the brain open. |
+| `store_missing` | `open` with `createMissing: false` found no brain in the directory (no `FORMAT`, no record file). Nothing was created. The TypeScript wrapper maps it to `brain_missing`. |
 | `format_unknown` | `FORMAT` or the format record is not a version this build reads. Nothing was written. |
 | `store_closed` | The brain is not open on this handle. |
 | `store_io` | The file system or the storage engine failed; the write did not commit. |

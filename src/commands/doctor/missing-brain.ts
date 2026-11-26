@@ -8,13 +8,14 @@
  * so doctor and serve agree on what "missing" means.
  */
 import { existsSync, statSync } from 'node:fs';
-import { isAbsolute, join } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import { getMountsPath, loadMounts } from '../../core/brain-registry.ts';
 import { configPath, gbrainPath, loadConfig } from '../../core/config.ts';
 import { opError, OperationError } from '../../core/ops/contract.ts';
 import { installPgliteCreateGuard } from '../../core/pglite-create-guard.ts';
 import { pgliteLockDirFor } from '../../core/pglite-lock.ts';
 import { probeStatus, statusFix, type StatusModeState } from '../../mcp/status-mode.ts';
+import { canonicalDatabasePath, ownerLockPath } from '../../core/rust-engine/owner-ipc/protocol.ts';
 
 /**
  * True when a PGLite connect to `dir` would build a new datastore: the path is absent, or a folder without
@@ -45,7 +46,7 @@ function localFolder(engine: string | undefined, databasePath: string | undefine
   return engine === 'rust' && databasePath && isAbsolute(databasePath) ? databasePath : undefined;
 }
 
-interface MissingState extends Pick<StatusModeState, 'config_path' | 'brain_path'> { mount?: string; engine: LocalEngine }
+interface MissingState extends Pick<StatusModeState, 'config_path' | 'brain_path'> { mount?: string; engine: LocalEngine; command?: string }
 
 /** The selected brain's PGLite folder, whether or not it is there; null when a connect opens no local folder or the probe leaves the case to doctor's own diagnostics. */
 function selectedDatastore(brainId: string): MissingState | null {
@@ -108,6 +109,25 @@ export function guardMissingBrainAtLock(brainId = 'host'): () => void {
   });
 }
 
+/**
+ * The store-guard of a command that connects to a Rust brain (src/core/engine-connect.ts), for the store directory `dir`
+ * named in `configFile`:
+ *  - `'open'` when the store is there (its FORMAT file or record file);
+ *  - `'create'` when it is not, the command writes (`write`), and nothing says this brain ever had a store here, so the
+ *    connect may create a new one (how a brand-new Rust brain starts today);
+ *  - the `brain_missing` refusal otherwise: a read never creates a store, and a write never replaces one that was there.
+ *    "Was there" is the owner lock file an earlier open left next to the store (`<dir>.gbrain-owner.lock`, never unlinked
+ *    on release), or a missing parent folder (an unmounted drive or a moved tree takes the parent with it).
+ */
+export function rustStoreGuard(dir: string, configFile: string, command: string, write: boolean): 'open' | 'create' | OperationError {
+  if (!connectWouldCreate(dir, 'rust')) return 'open';
+  // The lock path exactly as owner election names it (canonical path, no trailing separator).
+  const canonical = canonicalDatabasePath(dir);
+  const hadStore = existsSync(ownerLockPath(dir)) || !existsSync(dirname(canonical));
+  if (write && !hadStore) return 'create';
+  return refusalFor({ config_path: configFile, brain_path: dir, engine: 'rust', command });
+}
+
 function refusalFor(found: MissingState): OperationError {
   const state = { reason: 'missing_brain' as const, config_path: found.config_path, brain_path: found.brain_path, checked_at: Date.now() };
   const where = state.brain_path ?? 'its configured path';
@@ -116,11 +136,12 @@ function refusalFor(found: MissingState): OperationError {
   const recreate = found.mount
     ? `Creating a new empty datastore for mount \`${found.mount}\` is your decision (the old notes would not be in it); \`gbrain init\` is not the way, it rewrites the host brain's config.`
     : found.engine === 'rust'
-      ? `Creating a new empty store there is your decision (the old notes would not be in it): the next command that opens this brain creates it.`
+      ? `Creating a new empty store there is your decision (the old notes would not be in it): delete the owner lock file ${where}.gbrain-owner.lock next to it, then the next command that writes to this brain creates it.`
       : `Creating a new empty brain is \`gbrain init --pglite --no-embedding --path ${where}\`, which is your decision (the old notes would not be in it).`;
   const subject = found.mount ? `The datastore of mount \`${found.mount}\`` : 'The brain';
+  const refused = found.command && found.command !== 'doctor' ? `\`gbrain ${found.command}\` did not open it` : 'doctor did not check it';
   return opError('brain_missing',
-    `${subject} configured in ${state.config_path} is not at ${where} (an unmounted drive or a moved folder?), so doctor did not check it. Nothing was created there.`,
+    `${subject} configured in ${state.config_path} is not at ${where} (an unmounted drive or a moved folder?), so ${refused}. Nothing was created there.`,
     `Mount or move the brain back, or point \`database_path\` in ${state.config_path} at where it lives now. ${recreate}`,
     {
       reason: 'missing_brain',
@@ -128,7 +149,7 @@ function refusalFor(found: MissingState): OperationError {
         ...fix,
         // Only the user can bring the brain back; an agent must stop and ask, not rerun doctor.
         ask_user: true,
-        why: `Mount or reconnect the drive that holds ${where}, or point \`database_path\` in ${state.config_path} at where the brain lives now; then run the verify command. Doctor created nothing, and a new empty datastore is only ever created on the user's say-so.`,
+        why: `Mount or reconnect the drive that holds ${where}, or point \`database_path\` in ${state.config_path} at where the brain lives now; then run the verify command. ${found.command && found.command !== 'doctor' ? `\`gbrain ${found.command}\`` : 'Doctor'} created nothing, and a new empty datastore is only ever created on the user's say-so.`,
       },
     });
 }
