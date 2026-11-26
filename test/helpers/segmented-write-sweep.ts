@@ -138,6 +138,7 @@ export const NO_PAGE_TARGET: Record<string, string> = {
   commit_page_upload: 'commits an upload begin_page_upload opened (driven there)',
   abort_page_upload: 'drops an open upload; no page read',
   cancel_write_request: 'cancels a write request row',
+  correct: 'writes its own small rule page under rules/; its fact step runs the remember and forget handlers swept above',
   rate_answer: 'stores feedback on an answer; page slugs are recorded as text',
   put_skill: 'skill packs, not pages', delete_skill: 'skill packs, not pages', set_skill_policy: 'skill packs, not pages',
   prune_skill_revisions: 'skill packs, not pages', retain_skill_revision: 'skill packs, not pages', import_skill_proposal: 'skill packs, not pages',

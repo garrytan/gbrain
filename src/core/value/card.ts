@@ -14,6 +14,7 @@
 import { OperationError, opError, type OperationContext } from '../ops/contract.ts';
 import { withdrawalCoversFactSql } from '../access/member-facts.ts';
 import { outcomeMarkerSql } from '../facts/audit-sources.ts';
+import { deletedPageProjectionHiddenSql } from '../eligibility/sql.ts';
 import { EMPTY_RESULT_MODE, RECALL_TELEMETRY_MODE, RERANK_GATE_TELEMETRY_MODE } from '../search/telemetry.ts';
 
 export const VALUE_SCHEMA = 'gbrain.value';
@@ -75,9 +76,9 @@ const n = (v: unknown): number => Number(v ?? 0);
 async function pagesRow(r: Reader): Promise<Measure> {
   const rows = await r.ctx.engine.executeRaw<{ type: string | null; n: number | string }>(
     'SELECT p.type, count(*)::int AS n FROM pages p WHERE p.deleted_at IS NULL GROUP BY p.type');
-  const byKind: Record<string, number> = {};
-  for (const row of rows) byKind[row.type ?? 'untyped'] = n(row.n);
-  return measured({ total: Object.values(byKind).reduce((a, b) => a + b, 0), by_kind: Object.fromEntries(Object.entries(byKind).sort(([a], [b]) => a.localeCompare(b))) });
+  const byKind = new Map<string, number>();
+  for (const row of rows) byKind.set(row.type ?? 'untyped', (byKind.get(row.type ?? 'untyped') ?? 0) + n(row.n));
+  return measured({ total: [...byKind.values()].reduce((a, b) => a + b, 0), by_kind: Object.fromEntries([...byKind].sort(([a], [b]) => a.localeCompare(b))) });
 }
 
 async function linksRow(r: Reader): Promise<Measure> {
@@ -90,9 +91,9 @@ async function factsRow(r: Reader): Promise<Measure> {
   const withdrawn = 'EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id = f.source_id AND w.visibility = f.visibility'
     + ' AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact), gbrain_fact_fingerprint_v1(f.fact)) AND ' + withdrawalCoversFactSql('w', 'f') + ')';
   const [row] = await r.ctx.engine.executeRaw<{ active: number | string; superseded: number | string; withdrawn: number | string }>(
-    'SELECT count(*) FILTER (WHERE NOT wd AND superseded_by IS NULL AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now()))::int AS active,'
+    'SELECT count(*) FILTER (WHERE NOT wd AND live AND superseded_by IS NULL AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now()))::int AS active,'
     + ' count(*) FILTER (WHERE NOT wd AND superseded_by IS NOT NULL)::int AS superseded, count(*) FILTER (WHERE wd)::int AS withdrawn'
-    + ' FROM (SELECT f.superseded_by, f.expired_at, f.valid_until, ' + withdrawn + ' AS wd FROM facts f WHERE NOT ' + outcomeMarkerSql('f') + ') x');
+    + ' FROM (SELECT f.superseded_by, f.expired_at, f.valid_until, ' + withdrawn + ' AS wd, ' + deletedPageProjectionHiddenSql('facts', 'f') + ' AS live FROM facts f WHERE NOT ' + outcomeMarkerSql('f') + ') x');
   return measured({ active: n(row?.active), superseded: n(row?.superseded), withdrawn: n(row?.withdrawn) });
 }
 

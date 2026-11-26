@@ -145,6 +145,8 @@ OPEN LOOPS (Gmail/Calendar/Contacts connector — v0.47)
   waiting [--top N] [--json]         Who is waiting on you, what you promised, context to respond
   loops list|show|done|drop|mute     Inspect and manage open loops (mute sender <email>)
   claims check "<draft>"             Check a draft's numbers against your allowed-claims facts pages
+  correct "<rule>" [--fact-id N]     Save the user's correction as a standing rule and fix the fact
+  rules list|show|approve|check      Standing rules your agents load (also retire)
   household due|add|mark|list        Bills, supplies, birthdays and school dates: what is at risk at home
   core list|show|status|add|remove   Always-loaded core memory (also diff|ack|init|suggest)
   creds list|remove|export|import    Generic credential vault (redacted output; encrypted bundles)

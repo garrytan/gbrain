@@ -1291,4 +1291,6 @@ src/core/remote-caller.ts	als_store	1	W2: engine scope (decision E) replaces ad 
 src/core/policy/authority.ts	process_env	1	W6: settings plane out of the core (GST-3824 L1: terminalAuthorityProblem reads the agent markers of this process)
 src/core/policy/authority.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context (GST-3824 L1: the owner proof of the running policy command)
 src/core/policy/store.ts	load_config	1	W6: settings plane out of the core (GST-3824 L1: the trusted local write context of a policy command)
+src/core/rules/admission.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context (GST-3827 C2: the rule-writer scope of the correct verb and gbrain rules)
+src/core/rules/correct.ts	load_config	1	W6: settings plane out of the core (GST-3827 C2: the trusted local write context of gbrain rules approve and retire, as in policy/store.ts)
 src/core/setup/brain-first-upgrade-notice.ts	fs_import	1	W7: filesystem boundary moves to the local app (GST-3824 L1: rewrites installed brain-first blocks when the policy line setting changes)

@@ -22,11 +22,11 @@ The card counts the whole brain, every source and every page, because only the b
 | Conversations archived | Conversations and the days they cover, from the conversation archive's published pages |
 | Pages | Live pages by kind (person, company, note, ...) |
 | Links | Links between two live pages |
-| Facts kept | Facts that are active, superseded by a newer fact, or withdrawn with `forget` |
+| Facts kept | Facts that are active, superseded by a newer fact, or withdrawn with `forget`; a fact whose page was deleted is not counted as active |
 | Lookups served | Searches and recalls search telemetry recorded in the last 30 days, including searches gbrain runs for itself |
 | Pages brought up on their own | Pages gbrain put into an agent's context without being asked, in the last 30 days |
 | Of those, later retrieved | How many of those pages a search or read later surfaced |
-| Nightly items | Items the nightly cycle recorded in the last 30 days (`gbrain learned` shows them), not counting Facts fence rows you typed; it reads "at least 100" past 100; hidden from the text card when there are none |
+| Nightly items | Items the nightly cycle recorded in the last 30 days (`gbrain learned` shows them), not counting Facts fence rows you typed; it reads "at least N" when the read reaches its 100-item limit; hidden from the text card when there are none |
 | Brain score | The doctor's brain score; on a brain with no embedding key it reads "N of N reachable without a key" |
 
 Conversations count only archive pages that were published; a conversation held back by redaction is not counted.

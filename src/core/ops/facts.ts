@@ -738,6 +738,7 @@ const context_pack: Operation = {
       description: 'Source-qualified entities: [{"source_id":"wiki","slug":"people/alice-example"}].', fullSurfaceOnly: true },
     prefer_source_id: { type: 'string', description: 'Source to try first (thin clients send .gbrain-source here); never narrows.', fullSurfaceOnly: true },
     profile: { type: 'boolean', description: 'true: add your own profile (facets, constraints, relationships, preferences).', fullSurfaceOnly: true },
+    include_rules: { type: 'boolean', description: 'true: add your confirmed standing rules (rules field).', fullSurfaceOnly: true, actsWhenTrue: true },
   },
   scope: 'read',
   verb: true,
@@ -957,6 +958,7 @@ const context_pack: Operation = {
       ...(await (await import('../questions/service.ts')).pinnedAnswersForPack(ctx, (res.cards ?? []).map((c) => ({ source_id: c.entity.source_id, slug: c.entity.slug })))
         .catch(() => null)),
       ...(await (await import('../policy/check.ts')).policyStateForPack(ctx.engine, ctx.remote !== false).catch(() => null)),
+      ...(p.include_rules === true ? await (await import('../rules/section.ts')).rulesForPack(ctx, p.source_id).catch(() => ({ rules_error: 'rules_unavailable' })) : {}),
     };
   },
 };
