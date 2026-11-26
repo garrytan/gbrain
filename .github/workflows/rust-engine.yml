@@ -391,9 +391,9 @@ jobs:
 
   # The shadow seed and follow tests that need the built addon and a PostgreSQL server together. The addon job
   # has no database (and its macOS cell cannot start a service container), and no other job has the addon, so
-  # these files skip everywhere else. The env vars make a missing addon an error instead of a skip (the first
-  # name is the one these files read), and the last step fails the job when a lane ran no test or any test in
-  # it did not pass. Linux only: it does not depend on the scope job and never adds a macOS cell.
+  # these files skip everywhere else. The env vars make a missing addon an error instead of a skip (these
+  # files read GBRAIN_TEST_RUST_ADDON_REQUIRED; the other name matches the addon job's lanes), and the last step
+  # fails the job when a lane ran no test or any test in it did not pass. Linux only: it does not depend on the scope job and never adds a macOS cell.
   shadow-follow:
     name: Shadow seed and follow with the Rust addon and PostgreSQL
     if: github.event_name != 'schedule'
