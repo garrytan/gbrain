@@ -43,12 +43,14 @@ describe('pinned questions for the owner over remote MCP (pglite, repo-less)', (
   const provider = () => new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
   const verify = async (who: string) => await provider().verifyAccessToken(tokens[who]!) as unknown as AuthInfo;
 
-  async function call(who: string, op: string, params: Record<string, unknown>, extra: { auth?: Partial<AuthInfo>; header?: string } = {}) {
+  /** `holders: null`: the credential reads every take holder (no allow list), as the owner's widened read does. */
+  async function call(who: string, op: string, params: Record<string, unknown>, extra: { auth?: Partial<AuthInfo>; header?: string; holders?: string[] | null } = {}) {
     const auth = { ...await verify(who), ...extra.auth } as AuthInfo;
     const sourceId = auth.sourceId ?? 'default';
     const localFederated = await noGrantFederatedScope(engine, auth.hasSourceGrant, sourceId);
     const out = await dispatchToolCall(engine, op, { ...params }, {
-      remote: true, transport: 'http', auth, sourceId, takesHoldersAllowList: auth.takesHoldersAllowList ?? ['world'],
+      remote: true, transport: 'http', auth, sourceId,
+      ...(extra.holders === null ? {} : { takesHoldersAllowList: extra.holders ?? auth.takesHoldersAllowList ?? ['world'] }),
       config: { engine: engine.kind, embedding_disabled: true } as never, logger,
       ...(localFederated ? { localFederatedSourceIds: localFederated } : {}), ...(extra.header ? { onBehalfOf: { header: extra.header } } : {}),
     });
@@ -103,7 +105,7 @@ describe('pinned questions for the owner over remote MCP (pglite, repo-less)', (
   });
 
   test('the owner reads status, without sentences drawn from a page it cannot read', async () => {
-    const out = await call('owner', 'questions_status', { id: pinA.id });
+    const out = await call('owner', 'questions_status', { id: pinA.id }, { holders: null });
     expect(out.isError).toBe(false);
     const receipt = out.body as unknown as QuestionReceipt;
     expect(receipt.answer!.some(s => s.text.includes('notes/widget-plan'))).toBe(true);
@@ -112,18 +114,20 @@ describe('pinned questions for the owner over remote MCP (pglite, repo-less)', (
     expect(receipt.sentences.withheld).toBeGreaterThan(0);
   });
 
-  test('a world-only grant hides a sentence citing a page that holds another holder\'s take; a grant naming that holder reads it', async () => {
-    const [cited] = await engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id = $1 AND slug = $2', [a.sourceId, 'notes/widget-plan']);
-    await engine.executeRaw("INSERT INTO takes (page_id, row_num, claim, kind, holder) VALUES ($1, 9001, 'A private view of the widget plan', 'take', 'alice-example')", [cited!.id]);
-    try {
-      const narrow = await call('owner', 'questions_status', { id: pinA.id });
-      expect(narrow.isError).toBe(false);
-      expect((narrow.body as unknown as QuestionReceipt).answer!.some(s => s.text.includes('notes/widget-plan'))).toBe(false);
-      const wide = await call('owner', 'questions_status', { id: pinA.id }, { auth: { takesHoldersAllowList: ['world', 'alice-example'] } });
-      expect((wide.body as unknown as QuestionReceipt).answer!.some(s => s.text.includes('notes/widget-plan'))).toBe(true);
-    } finally {
-      await engine.executeRaw('DELETE FROM takes WHERE page_id = $1 AND row_num = 9001', [cited!.id]);
+  test('a credential reading only some take holders gets every answer sentence withheld and counted', async () => {
+    const full = (await call('owner', 'questions_status', { id: pinA.id }, { holders: null })).body as unknown as QuestionReceipt;
+    expect(full.answer!.length).toBeGreaterThan(0);
+    for (const holders of [['world'], ['world', 'alice-example']]) {
+      const out = await call('owner', 'questions_status', { id: pinA.id }, { holders });
+      expect(out.isError).toBe(false);
+      const receipt = out.body as unknown as QuestionReceipt;
+      expect(receipt.answer ?? []).toEqual([]);
+      expect(receipt.sentences.withheld).toBe(pinA.answer!.length);
+      expect(out.text).not.toContain('notes/widget-plan');
     }
+    const listed = await call('owner', 'questions_list', {}, { holders: ['world'] });
+    expect((listed.body.questions as QuestionReceipt[]).map(q => q.id)).toEqual([pinA.id]);
+    expect(listed.text).not.toContain('notes/widget-plan');
   });
 
   test('the owner gets not_found for a pin in an ungranted source or one whose page names other readers', async () => {
@@ -174,7 +178,7 @@ describe('pinned questions for the owner over remote MCP (pglite, repo-less)', (
     const local = await questionStatus(localCtx(engine, a.sourceId), { id: pinA.id });
     const stale = local.answer!.filter(s => s.stale);
     expect(stale.length).toBeGreaterThan(0);
-    const owner = (await call('owner', 'questions_status', { id: pinA.id })).body as unknown as QuestionReceipt;
+    const owner = (await call('owner', 'questions_status', { id: pinA.id }, { holders: null })).body as unknown as QuestionReceipt;
     expect(owner.answer!.length).toBeGreaterThan(0);
     for (const s of stale) expect(owner.answer!.some(x => x.id === s.id)).toBe(false);
     expect(owner.answer!.every(s => !s.stale)).toBe(true);

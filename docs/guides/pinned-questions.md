@@ -154,7 +154,11 @@ Pinned questions are owner-private:
   sees only pins whose question page it can read under its source grant and
   [reader rules](access-designations.md), and the answer leaves out every
   sentence whose evidence has gone stale or that it cannot read
-  (`sentences.stale` and `sentences.withheld` count them). Pinning, refreshing and
+  (`sentences.stale` and `sentences.withheld` count them). A credential that
+  reads only some take holders (any `takes_holders` grant short of every
+  holder) gets the pin list and status with every answer sentence withheld,
+  because an answer is written from whole pages, takes included, and a
+  citation doesn't prove which of them a sentence came from. Pinning, refreshing and
   unpinning stay on the brain host for this credential, and its
   `context_pack` shows no pinned answers.
 

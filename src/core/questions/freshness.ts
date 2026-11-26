@@ -125,16 +125,12 @@ export function evidenceReasons(r: EvidenceJoinRow): StaleReason[] {
 
 /**
  * Whether the current caller reads one evidence row as its page reads would: the fact under the fact read gate, else
- * the cited page under its readers and privacy, its timeline row's event page, and its take's holder ($3, null for
- * every holder). A sentence citing a whole page was drawn from its body, takes fences included, so it is hidden when
- * that page holds a take of a holder outside the grant.
+ * the cited page under its readers and privacy, and its timeline row's event page.
  */
 function evidenceReadableSql(): string {
   return `CASE WHEN e.kind = 'fact' THEN f.id IS NOT NULL AND ${privateFactFilterForReader('f')}
     ELSE p.id IS NOT NULL AND ${privatePagesFilterForCaller('p')}
       AND (e.kind <> 'timeline' OR (t.id IS NOT NULL AND ${privateTimelineEventFilterForCaller('t')}))
-      AND (e.kind <> 'take' OR (k.id IS NOT NULL AND ($3::text[] IS NULL OR k.holder = ANY($3::text[]))))
-      AND (e.kind <> 'page' OR $3::text[] IS NULL OR NOT EXISTS (SELECT 1 FROM takes hk WHERE hk.page_id = p.id AND NOT (hk.holder = ANY($3::text[]))))
   END`;
 }
 
@@ -143,7 +139,9 @@ function evidenceReadableSql(): string {
  * trusted local view (every source); otherwise a sentence citing evidence in a
  * source outside the list is hidden, never returned. `ownerRead` (the brain
  * owner's remote read) also hides a sentence citing a row the owner's page
- * reads would not show it.
+ * reads would not show it, and every sentence when the credential reads only
+ * some take holders: an answer is written from whole pages, takes included,
+ * and its citations do not prove which input a sentence came from.
  */
 export async function evaluateAnswer(
   engine: BrainEngine,
@@ -167,13 +165,14 @@ export async function evaluateAnswer(
      LEFT JOIN timeline_entries t ON e.kind = 'timeline' AND t.id = e.item_id
      LEFT JOIN takes k ON e.kind = 'take' AND k.id = e.item_id
      WHERE e.question_id = $1 AND e.answer_revision = $2`,
-    opts.ownerRead ? [pin.id, pin.answer_revision, opts.ownerRead.takesHolders ?? null] : [pin.id, pin.answer_revision]);
+    [pin.id, pin.answer_revision]);
+  const narrowed = opts.ownerRead !== undefined && opts.ownerRead.takesHolders !== undefined;
   const bySentence = new Map<string, EvidenceJoinRow[]>();
   for (const r of rows) bySentence.set(r.sentence_id, [...(bySentence.get(r.sentence_id) ?? []), r]);
   const sentences = pin.answer.map((s): EvaluatedSentence => {
     const evidence = bySentence.get(s.id) ?? [];
     const reasons = evidence.length === 0 ? ['unverifiable' as const] : [...new Set(evidence.flatMap(evidenceReasons))];
-    const hidden = (opts.readableSources !== null && evidence.some(e => !opts.readableSources!.includes(e.source_id)))
+    const hidden = narrowed || (opts.readableSources !== null && evidence.some(e => !opts.readableSources!.includes(e.source_id)))
       || (opts.ownerRead !== undefined && evidence.some(e => e.readable !== true));
     return { ...s, stale: reasons.length > 0, hidden, reasons };
   });
