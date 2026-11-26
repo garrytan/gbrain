@@ -63,7 +63,7 @@ import { claudeUserSettingsPath, type ClaudeHookEvent } from '../core/bootstrap/
 import { readHarnessReceiptState } from '../core/bootstrap/format.ts';
 import { smokeStdioRegistration } from './doctor/checks/harness-wiring.ts';
 import { finishFreshSetupMigrations } from './setup-migrations.ts';
-import { notFreshError, teamBlocked, type TeamResult } from './access-team.ts';
+import { teamBlocked, teamPreflight } from './access-team.ts';
 import { loginOwnerId, readServesStatus, sharedStdioHarness, servesAfterLayout, servesApply, servesLines, servesOk, servesPreflight, type EntryBinding, type ServesOutcome, type ServesPlan } from './setup-serves.ts';
 import type { McpSurface } from '../mcp/surface.ts';
 import {
@@ -503,7 +503,6 @@ export async function runSetup(args: string[], deps: { openclaw?: { bin?: string
 
   if (flags.householdRun?.status || flags.householdRun?.resume) return runHouseholdReceipt(flags, launcher, out);
 
-
   let cfg: GBrainConfig | null;
   try { cfg = loadConfig(); } catch (e) {
     process.stderr.write(`gbrain setup: this install's config cannot be read (${(e as Error).message}); run \`gbrain doctor\`.\n`);
@@ -511,7 +510,7 @@ export async function runSetup(args: string[], deps: { openclaw?: { bin?: string
   }
   const brainHome = configDir();
   if (flags.teamRun && cfg) {
-    const refusal = teamPreflight(flags, launcher);
+    const refusal = teamPreflight(launcher, { ...flags.teamRun, owner: flags.owner ?? loginOwnerId(), source: flags.source });
     if (refusal) return refuse(refusal, out);
   }
   if (flags.harness === 'codex') {
@@ -729,25 +728,6 @@ async function runHouseholdReceipt(flags: SetupFlags, launcher: string, out: Out
   process.stderr.write(child.stderr?.toString() ?? '');
   if (out.json) await writeJsonDocument(stdout, (t) => process.stdout.write(t)); else process.stdout.write(stdout);
   return child.exitCode ?? 1;
-}
-
-/**
- * O1 v1: on a brain that already exists, the team template's preview runs before setup writes anything, so a brain
- * that is not fresh (pages, history, access state of its own) refuses here with nothing written.
- */
-function teamPreflight(flags: SetupFlags, launcher: string): OperationError | null {
-  const t = flags.teamRun!;
-  const owner = flags.owner ?? loginOwnerId();
-  const argv = [launcher, 'access', 'team', '--members', t.members, ...(t.groups ? ['--groups', t.groups] : []), ...(owner ? ['--owner', owner] : []), ...(flags.source ? ['--source', flags.source] : []), '--json'];
-  const child = Bun.spawnSync(argv, { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe', env: process.env });
-  const said = `${child.stdout?.toString() ?? ''}\n${child.stderr?.toString() ?? ''}`;
-  let r: TeamResult | null = null;
-  try { const doc = JSON.parse(child.stdout?.toString() ?? ''); if (doc?.template === 'team') r = doc as TeamResult; } catch { r = null; }
-  if (!r) {
-    const message = said.match(/"message"\s*:\s*"((?:[^"\\]|\\.)*)"/)?.[1] ?? said.trim().split('\n')[0]?.slice(0, 300) ?? 'no output';
-    return opError('invalid_params', `The team template could not check this brain (${message}); nothing was written.`, `Run ${['gbrain', ...argv.slice(1)].join(' ')} to see why.`);
-  }
-  return r.fresh.ok ? null : notFreshError(r);
 }
 
 /** Run the `gbrain init --json` child that creates a new keyless brain; returns setup's form of its first-run bundle. */

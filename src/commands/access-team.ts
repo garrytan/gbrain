@@ -32,6 +32,7 @@ import { isSyncable } from '../core/sync.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { opError } from '../core/ops/contract.ts';
 import { hashToken } from '../core/utils.ts';
+import { bunSpawnSync } from '../core/spawn.ts';
 import { usageError } from '../cli/cli-error.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { addGroup, addMember, assertAccessId, listGroups, listMembers, type MemberRecord } from '../core/access/members.ts';
@@ -280,6 +281,23 @@ async function plan(engine: BrainEngine, opts: TeamOpts): Promise<TeamResult> {
 }
 
 export const teamBlocked = (r: TeamResult): boolean => !r.fresh.ok || r.keys.some(k => k.action === 'blocked');
+
+/**
+ * O1 v1: on a brain that already exists, setup runs the team template's preview before it writes anything, so a brain
+ * that is not fresh (pages, history, access state of its own) refuses there with nothing written.
+ */
+export function teamPreflight(launcher: string, t: { members: string; groups?: string; owner?: string | null; source?: string | null }) {
+  const argv = [launcher, 'access', 'team', '--members', t.members, ...(t.groups ? ['--groups', t.groups] : []), ...(t.owner ? ['--owner', t.owner] : []), ...(t.source ? ['--source', t.source] : []), '--json'];
+  const child = bunSpawnSync(argv, { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe', env: process.env });
+  const said = `${child.stdout?.toString() ?? ''}\n${child.stderr?.toString() ?? ''}`;
+  let r: TeamResult | null = null;
+  try { const doc = JSON.parse(child.stdout?.toString() ?? ''); if (doc?.template === 'team') r = doc as TeamResult; } catch { r = null; }
+  if (!r) {
+    const message = said.match(/"message"\s*:\s*"((?:[^"\\]|\\.)*)"/)?.[1] ?? said.trim().split('\n')[0]?.slice(0, 300) ?? 'no output';
+    return opError('invalid_params', `The team template could not check this brain (${message}); nothing was written.`, `Run ${['gbrain', ...argv.slice(1)].join(' ')} to see why.`);
+  }
+  return r.fresh.ok ? null : notFreshError(r);
+}
 
 export function notFreshError(r: TeamResult) {
   return opError('team_template_not_fresh', `The team template sets up brand-new brains only, and this one is not fresh: ${r.fresh.problems.map(p => p.detail).join('; ')}. Nothing was written.`,
