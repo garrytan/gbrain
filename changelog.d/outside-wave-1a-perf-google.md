@@ -1,0 +1,12 @@
+---
+important: data-loss
+---
+**The Gmail backfill no longer skips mail that was migrated in from another account, deleted Google contacts now retire their pages, and four slow paths (remote search, OpenClaw's prompt cache, big-source sync and managed facts) are fast again.**
+
+### Fixed
+- Gmail backfill: the floor only moves past mail a complete listing has shown and the sync has settled. Mail imported from another account keeps its old date but lists among the mail of its import day, and one such thread used to drop the floor past years of mail, which was never listed and the backfill still finished as done. Windows that list more than 20 pages are narrowed until they list completely (#9129). Reported by @LeslieCBarry; first fix by @javieraldape.
+- Google contacts: the People field mask now asks for `metadata`, which is what carries `deleted: true` on a deleted or merged-away contact. Without it the API sent a bare tombstone and the contact's page stayed for good. The mask change re-lists contacts once on the next sync (#10246). Reported by @thebergerking91; first fix by @Masashi-Ono0611.
+- Remote search over several sources no longer spends about 3 s per call counting rebuild progress while image rows wait in the projection queue: the queue is read on its own first and reaches pages by source and slug (#10367). Reported by @ryangu00; first fix by @Masashi-Ono0611.
+- OpenClaw: the Live Context clock shows the local hour instead of the second, so the block stays byte-identical between turns in the same hour and the host's prompt cache is no longer rewritten on every new message (169k of a 220k-token prompt in the report) (#9998). Reported by @PropFunderBrett; first fix by @Masashi-Ono0611.
+- Page snapshots read a source's source-wide fact withdrawals once per batch instead of once per page, so a plain-directory sync of a large source with thousands of them fits its freshness deadline again (#9350). Reported by @DaCal90; first fix by @javieraldape.
+- Managed fact extraction finds a stored batch through indexed reads (the completion by request id, its entities by id) instead of scanning and detoasting every fact receipt the writer ever journaled, which took about 14 s per batch on a small Postgres (#9302). Reported by @lumbering-vocalist.

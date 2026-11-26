@@ -219,10 +219,13 @@ function buildFetch(fx: FakeGoogle): FetchImpl {
     }
 
     if (u.pathname.includes('/people/me/connections')) {
+      // #10246: like the People API, send a person's `metadata` (and with it a tombstone's `deleted`) only when the field mask asks.
+      const masked = (people: unknown[]) => (u.searchParams.get('personFields') ?? '').split(',').includes('metadata')
+        ? people : people.map((p) => { const { metadata: _metadata, ...rest } = p as Record<string, unknown>; return rest; });
       if (u.searchParams.get('syncToken')) {
-        return json({ connections: fx.contactsDelta, nextSyncToken: 'ppl-sync-2' });
+        return json({ connections: masked(fx.contactsDelta), nextSyncToken: 'ppl-sync-2' });
       }
-      return json({ connections: fx.contacts, nextSyncToken: 'ppl-sync-1' });
+      return json({ connections: masked(fx.contacts), nextSyncToken: 'ppl-sync-1' });
     }
 
     return json({ error: { message: `unhandled ${u.pathname}` } }, 400);
