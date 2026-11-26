@@ -397,6 +397,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       const primary = ctx.primary();
       await vectorFixture(primary);
       const all = await withCallerAccess(ALICE, () => primary.searchVector(vec(3), { limit: 12, excludePrivate: true })) as unknown as Rows;
+      // pregate-literal: SHADOW_ADAPTER_VERSION=11 the number 11 on the next line is test data (a count, size, index or slice), not the adapter version
       const banned = all[11]!; // a real chunk the caller may read, that this query excludes
       const opts = { exclude_slugs: [String(banned.slug)] };
       counts(await ranked((theirs) => [...theirs, banned], { opts }));

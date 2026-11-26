@@ -144,6 +144,7 @@ describe('per-operation usage', () => {
     let at = 0;
     writeManifest(dir, 'e1');
     const meter = new UsageMeter();
+    // pregate-literal: SHADOW_ADAPTER_VERSION=11 the number 11 on the next line is test data (a count, size, index or date), not the adapter version
     meter.bind({ epoch: epochWatch(dir, () => at, 1_000), register: (epoch_id, op) => appendUsage(dir, { ts: '2026-11-23T00:00:00.000Z', epoch_id, ops: { [op]: zeroUsage() } }) });
     meter.note('getPage', 'offered');
     meter.note('getPage', 'offered'); // the same class again: not registered twice
