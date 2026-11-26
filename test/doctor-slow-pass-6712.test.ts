@@ -5,7 +5,7 @@
  * `gbrain sync status --detail`, and it is never a fail. A pass that changed something, or one inside its target, reads ok.
  * A real idle tick records its own `timings_ms` (`setup`, `kind`). PGLite.
  */
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -31,7 +31,45 @@ const setTelemetry = (engine: BrainEngine, patch: Record<string, unknown>) => en
   "UPDATE op_checkpoints SET completed_keys=jsonb_build_array(jsonb_set(completed_keys->0,'{telemetry}',(completed_keys->0->'telemetry')||$2::text::jsonb)) WHERE op=$1 AND completed_keys->0->>'source_id'='default'",
   [MANAGED_SYNC_PASS_OP, JSON.stringify(patch)]);
 
+/**
+ * #10441: one idle pass while the wall clock steps by `stepMs` once the pass has pinned (its first config read), after
+ * `waitMs` of real time spent at that read. The pass's recorded durations must follow real elapsed time, not the step.
+ */
+async function idlePassWithClockStep(engine: BrainEngine, stepMs: number, waitMs = 0) {
+  const wall = Date.now;
+  let stepped = false;
+  const clock = spyOn(Date, 'now').mockImplementation(() => wall() + (stepped ? stepMs : 0));
+  const getConfig = engine.getConfig.bind(engine);
+  const config = spyOn(engine, 'getConfig').mockImplementation(async key => {
+    if (key === 'sync.include_working_tree' && !stepped) { stepped = true; if (waitMs) await Bun.sleep(waitMs); }
+    return getConfig(key);
+  });
+  const t0 = performance.now();
+  try {
+    expect((await performManagedSync(engine, OPTS)).status).toBe('up_to_date');
+    expect(stepped).toBe(true);
+    return performance.now() - t0;
+  } finally { config.mockRestore(); clock.mockRestore(); }
+}
+
 describe('#6712 PR 4b: doctor warns on a slow no-change pass', () => {
+  test('#10441: a forward wall-clock step adds nothing to an idle pass; a backward one hides no real slow pass', () => managedBrain(async ({ engine }) => {
+    expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
+    const elapsed = await idlePassWithClockStep(engine, 60_000);
+    const idle = await telemetry(engine);
+    const timings = idle.timings_ms as { setup: number; kind: number };
+    expect(idle).toMatchObject({ kind: 'idle', outcome: 'up_to_date' });
+    expect(idle.duration_ms as number).toBeLessThanOrEqual(Math.ceil(elapsed));
+    expect(timings.setup).toBeGreaterThanOrEqual(0);
+    expect(timings.kind).toBeGreaterThanOrEqual(0);
+    expect(timings.setup + timings.kind).toBe(idle.duration_ms as number);
+    expect((await doctor(engine)).status).toBe('ok');
+
+    await idlePassWithClockStep(engine, -60_000, 600);
+    expect((await telemetry(engine)).duration_ms as number).toBeGreaterThanOrEqual(600);
+    expect(await doctor(engine)).toMatchObject({ status: 'warn', details: { slow_passes: [expect.objectContaining({ kind: 'idle' })] } });
+  }, { setup }), 120_000);
+
   test('an idle tick records its timings; over its 0.5 s target it warns naming them, with the read-only --detail fix; inside it, or after a change, it is ok', () => managedBrain(async ({ engine }) => {
     expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
     expect((await performManagedSync(engine, OPTS)).status).toBe('up_to_date');
