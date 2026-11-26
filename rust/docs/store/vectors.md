@@ -17,42 +17,58 @@ one committed snapshot.
 
 ## searchVector
 
-- Every stored chunk vector is a candidate. The page and chunk filters apply inside the scan, before
-  ranking: soft delete, archived source, `quarantine` / `pinned_question` frontmatter, hard-exclude
-  prefixes, `type` / `types`, `exclude_slugs`, the source scope, `detail: 'low'` (compiled-truth chunks
-  only), `language`, `symbolKind`, the safe-chunk rule and the chunk's visibility (a chunk of a page whose
-  chunks are not sealed to its current revision is not read).
-- The model guard, as PGLite's: with a model, a vector counts only when the chunk's model label is that
-  model and the chunk's text hash is the hash of its current text, or absent (`chunks::EmbedState`; the
-  store keeps sha256 where PGLite keeps md5, and only equality is compared). With no model (PGLite's NULL),
-  every vector counts unless the `embedding_migration.state` config row exists.
+- The candidate window, as PGLite's statement (`vector-statement.ts`) and pool (`vector-pool.ts`) take it:
+  the nearest `offset + max(limit * 5, 100)` admitted chunks, by distance (`embedding <=> q`, NaN last, as
+  Postgres orders it), then chunk id. Only the window's chunks can rank. While the window is full and holds
+  fewer than `offset + limit` pages, it widens x4, to at most `max(initial, 20000)`, at most three times
+  (100, 400, 1,600, 6,400 for a limit of 20 or less); then the pages it holds are the answer, even when they
+  are fewer than the limit. A chunk is admitted by the page and chunk filters: soft delete, archived source,
+  `quarantine` / `pinned_question` frontmatter, hard-exclude prefixes, `type` / `types`, `exclude_slugs`,
+  the source scope, `detail: 'low'` (compiled-truth chunks only), `language`, `symbolKind`, the safe-chunk
+  rule and the chunk's visibility (a chunk of a page whose chunks are not sealed to its current revision is
+  not read), and by the model's generation filter below. A filtered-out chunk takes no window slot.
+- The model guard, as PGLite's: with a model, a chunk is admitted only when its model label is that model,
+  and it ranks only when its text hash is the hash of its current text, or absent (`chunks::EmbedState`; the
+  store keeps sha256 where PGLite keeps md5, and only equality is compared). The hash is checked after the
+  window, as PGLite's indexed statement checks it outside its window, so a stale chunk takes a window slot.
+  With no model (PGLite's NULL), every vector counts unless the `embedding_migration.state` config row
+  exists.
 - Score: pgvector's cosine of the query and the stored float32 vector, summed in float64 and kept in
   [-1, 1], times the page's source factor (an unverified auto-extracted stub takes no factor). It matches
   PGLite within 1e-6. A zero vector on either side gives NaN; NaN ranks first, as Postgres orders it, and
   goes out as `null` (the member turns it back into `NaN`).
-- One row per page, its best chunk (ties: the lower chunk id). Rows sort by score, then page id, then chunk
+- One row per page, its best chunk in the window (ties: the lower chunk id). Rows sort by score, then page id, then chunk
   id; `offset` and `limit` apply after the sort.
 
-## How searchVector reads (the bounded scan)
+## How searchVector reads
 
 The answer is the full scan's, byte for byte; only the reading order changes. Reading a page and its
-chunks costs far more than scoring a vector, so the store scores first and reads only the pages that can rank:
+chunks costs far more than scoring a vector, so the store scores first and reads as few pages as it can:
 
-1. Every chunk vector of the cached index is scored (`1 - (embedding <=> q)`, the same arithmetic as
-   above), split across the machine's cores when there are at least 4,096 vectors. Helper threads come
-   from one process-wide budget (cores minus one), so concurrent searches share the cores.
-2. Each page gets a bound: the largest of `raw * f` over its best and worst raw score and every factor `f`
-   the call can apply (1 and each source factor). A product is monotone in the raw for a fixed factor, so
-   no chunk of the page can score above it. A NaN raw gives a NaN bound, which ranks first.
-3. Pages are read in bound order. Each read applies every filter, the model guard and the source factor
-   above, with the same code the full scan runs. The best `offset + limit` hits are kept; the scan stops
-   when the next page's bound ranks strictly below the last kept hit (a tie is still read, since a lower
-   page id wins it).
+1. Every chunk vector of the cached index is scored (`embedding <=> q`, the same arithmetic as above),
+   split across the machine's cores when there are at least 4,096 vectors. Helper threads come from one
+   process-wide budget (cores minus one), so concurrent searches share the cores.
+2. The bounded scan. Each page gets a bound: the largest of `raw * f` over its best and worst raw score
+   and every factor `f` the call can apply (1 and each source factor). A product is monotone in the raw for
+   a fixed factor, so no chunk of the page can score above it. A NaN raw gives a NaN bound, which ranks
+   first. Pages are read in bound order, each with every filter, the model guard and the source factor.
+   The best `offset + limit` hits are kept; the scan stops when the next page's bound ranks strictly below
+   the last kept hit (a tie is still read, since a lower page id wins it).
+3. The window check (`window_covers`). The bounded scan's hits are the answer when every vector fits the
+   first window, or when it kept `offset + limit` hits and the vectors at most as far as its farthest kept
+   chunk number no more than the window. Then each kept chunk is in the window whatever the filters admit,
+   and the window only removes chunks, so no other page can rank above a kept one.
+4. Otherwise the window walk (`window_walk`): the vectors are sorted nearest first a batch at a time
+   (`select_nth_unstable`, each run of equal distances kept whole and ordered by chunk id), each page is
+   read once when its first vector comes up, and admitted chunks fill the window; the window widens as
+   above, continuing from where it stopped.
 
-The full scan still answers a call when the stored vectors have more than one width (so the width refusal
-stays the one above), when a source factor is not a finite number, and when `GBRAIN_RUST_VECTOR_SCAN=full`
-is set (the bench's reference; read on every call). With no model and an embedding migration running, the
-bounded scan returns no rows at once, as the full scan would.
+The full scan reads every page, admits every chunk and sorts them all; it answers a call when the stored
+vectors have more than one width (so the width refusal stays the one above) and when
+`GBRAIN_RUST_VECTOR_SCAN=full` is set (the bench's reference; read on every call). A source factor that is
+not a finite number has no bound, so that call takes the window walk. With no model and an embedding
+migration running, the store returns no rows at once, as the full scan would. The unit tests run every case
+through all three paths and compare the bytes.
 
 Measured with `rust/bench/vector-scan.sh` (an invented corpus, 1536 dims, 2 chunks per page on average,
 limit 50, 8 vCPU Xeon 6975P-C): unfiltered p50 165 ms before and 8.6 ms after at 10,000 pages, 887 ms
@@ -82,9 +98,12 @@ the shape `searchTakes` returns, with the cosine as `score`.
   `different vector dimensions <query> and <stored>`, as soon as the scan compares the first vector the
   filters admit. When the filters admit no vector, or the brain has none, nothing is compared and the
   answer is `[]` (PGLite fails the same way). The dimension check runs before the model guard.
-- **No candidate pool.** Every admitted vector can rank (the bounded scan above only skips pages that
-  cannot), so the HNSW pool knobs
-  (`vectorLegacyGuard`, `hnswIterativeScan`) change nothing and `onVectorPoolMeta` is never called.
+- **Exact candidates.** The window is taken over the exact distance order, so it holds the same chunks as
+  PGLite's exact plan; an HNSW plan's approximate window can hold others. With no index walk, scope scan or
+  exact fallback, the HNSW knobs (`vectorLegacyGuard`, `hnswIterativeScan`) change nothing and
+  `onVectorPoolMeta` is never called. Postgres's exact fallback after the last widening checks the content
+  hash inside its window; the store checks it after the window, as PGLite does, so the two can differ only
+  when stale chunks fill the last window.
 - **`excludePrivate`.** A truthy one hides the pages the page policy hides, as `facts/privacy.rs`
   `page_hidden` reads it (`privatePagesFilterForCaller('p')`: private visibility or access, derived pages
   whose origin is private, the member-access rules). The policy is checked per page before ranking, so a
