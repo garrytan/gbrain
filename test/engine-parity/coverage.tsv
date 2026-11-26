@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2402/2426
+# covered: 2404/2428
 # lifecycle: 12/12
 # pages: 141/142
 # search: 8/8
@@ -74,7 +74,7 @@
 # loop_mutes: 8/8
 # source_archive: 6/6
 # entity_identities: 5/5
-# cli_reads_import: 17/17
+# cli_reads_import: 19/19
 # wanted_links: 2/2
 # write_misc: 121/133
 # repair_bookkeeping: 59/59
@@ -131,11 +131,11 @@ withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
 listCatalogRelations	lifecycle	yes	1	no	yes	yes	serves
 readCatalogSchemaVersion	lifecycle	yes	1	no	yes	yes	serves
 listCatalogForeignKeys	lifecycle	yes	1	no	yes	yes	serves
-getPage	pages	yes	280	yes	yes	yes	serves
+getPage	pages	yes	281	yes	yes	yes	serves
 readPageSnapshot	pages	yes	100	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	7	no	yes	yes	serves
 lockPageKeys	pages	yes	17	no	yes	yes	serves
-putPage	pages	yes	1324	yes	yes	yes	serves
+putPage	pages	yes	1326	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	43	yes	yes	yes	serves
@@ -444,7 +444,7 @@ listMaterializedMarkerPages	timeline	yes	3	no	yes	yes	serves
 rewriteTimelineRow	timeline	yes	2	no	yes	yes	serves
 listDateBulletPages	timeline	yes	2	no	yes	yes	serves
 listConnectorFencePages	timeline	yes	2	no	yes	yes	serves
-addTimelineEntry	timeline	yes	85	yes	yes	yes	serves
+addTimelineEntry	timeline	yes	86	yes	yes	yes	serves
 addTimelineEntriesBatch	timeline	yes	4	no	yes	yes	serves
 getTimeline	timeline	yes	40	yes	yes	yes	serves
 getTimelineForDate	timeline	yes	9	no	yes	yes	serves
@@ -497,7 +497,7 @@ listReadableFilePaths	raw_files	yes	3	no	yes	yes	serves
 hasTakeClaim	takes	yes	1	no	yes	yes	serves
 listTakeRowNums	takes	yes	1	no	yes	yes	serves
 readTakeRowTierByClaim	takes	yes	1	no	yes	yes	serves
-addTakesBatch	takes	yes	130	yes	yes	yes	serves
+addTakesBatch	takes	yes	131	yes	yes	yes	serves
 updateTakeEmbeddings	takes	yes	10	no	yes	yes	serves
 listTakes	takes	yes	71	no	yes	yes	serves
 searchTakes	takes	yes	7	no	yes	yes	serves
@@ -640,7 +640,7 @@ readFactTrustTier	facts	yes	2	no	yes	yes	serves
 listFenceFactRowNums	facts	yes	2	no	yes	yes	serves
 readLiveFactRowTier	facts	yes	1	no	yes	yes	serves
 insertFact	facts	yes	198	yes	yes	yes	serves
-insertFacts	facts	yes	269	no	yes	yes	serves
+insertFacts	facts	yes	270	no	yes	yes	serves
 deleteFactsForPage	facts	yes	8	no	yes	yes	serves
 expireFact	facts	yes	94	no	yes	yes	serves
 listFactsByEntity	facts	yes	62	yes	yes	yes	serves
@@ -776,7 +776,7 @@ readPersistenceBrainId	import_guards	yes	32	no	yes	yes	serves
 readLocalWriterRow	import_guards	yes	12	no	yes	yes	serves
 insertLocalWriterRow	import_guards	yes	12	no	yes	yes	serves
 readTransactionSettings	import_guards	yes	15	no	yes	yes	serves
-applyTransactionSettings	import_guards	yes	110	no	yes	yes	serves
+applyTransactionSettings	import_guards	yes	112	no	yes	yes	serves
 beginSnapshotRead	import_guards	yes	3	no	yes	yes	serves
 readCurrentWriteTrust	import_guards	yes	1	no	yes	yes	serves
 setWriteContext	import_guards	yes	4	no	yes	yes	serves
@@ -1859,7 +1859,7 @@ listSegmentedPages	withdrawal_pages	yes	2	no	yes	yes	serves
 invalidateWithdrawnPages	withdrawal_pages	yes	2	no	yes	yes	serves
 hasWithdrawnFenceClaim	withdrawal_fence	yes	2	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	91	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	90	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 addCodeEdges	code_edges	yes	7	yes	yes	yes	serves
@@ -1944,10 +1944,12 @@ readSyncDispatchRow	cli_reads_import	yes	1	no	yes	yes	serves
 readRetainedSources	cli_reads_import	yes	1	no	yes	yes	serves
 hasCompanyBrainReceipt	cli_reads_import	yes	1	no	yes	yes	serves
 readGuestSourceRow	cli_reads_import	yes	1	no	yes	yes	serves
-hasGuestSourceRow	cli_reads_import	yes	2	no	yes	yes	refuses:guest_sources
-listGuestSourceIds	cli_reads_import	yes	1	no	yes	yes	serves
+hasGuestSourceRow	cli_reads_import	yes	5	no	yes	yes	serves
+upsertGuestSource	cli_reads_import	yes	7	no	yes	yes	serves
+listGuestNotes	cli_reads_import	yes	1	no	yes	yes	serves
+listGuestSourceIds	cli_reads_import	yes	3	no	yes	yes	serves
 hasGuestSource	cli_reads_import	yes	1	no	yes	yes	serves
-readPageTrustRows	cli_reads_import	yes	20	no	yes	yes	serves
+readPageTrustRows	cli_reads_import	yes	21	no	yes	yes	serves
 readRowTrustRows	cli_reads_import	yes	15	no	yes	yes	serves
 readDatabaseClock	cli_reads_import	yes	1	no	yes	yes	serves
 listLinkPageMetadata	cli_reads_import	yes	2	no	yes	yes	serves
@@ -2017,7 +2019,7 @@ purgeMemoryProposals	write_misc	yes	1	no	yes	yes	serves
 readPendingProposalSummary	write_misc	yes	1	no	yes	yes	serves
 listMemoryProposalRows	write_misc	yes	1	no	yes	yes	serves
 listOwnerProposalRows	write_misc	yes	1	no	yes	yes	serves
-attachSourcePath	write_misc	yes	14	no	yes	yes	serves
+attachSourcePath	write_misc	yes	15	no	yes	yes	serves
 readAtomGeneration	write_misc	yes	2	no	yes	yes	serves
 recordAtomGenerationBump	write_misc	yes	2	no	yes	yes	serves
 addPersistenceCounters	write_misc	yes	4	no	yes	yes	serves

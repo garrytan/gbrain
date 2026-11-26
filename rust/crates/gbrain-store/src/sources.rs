@@ -331,6 +331,7 @@ impl Store {
                 record.name = input.name.clone();
             }
             if input.local_path.is_some() {
+                crate::guest_sources::refuse_local_path_on_guest(&*tx, &input.id)?;
                 record.local_path = input.local_path.clone();
             }
             if last_sync.is_some() {

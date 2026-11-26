@@ -73,12 +73,30 @@ export function mapStoreError(error: unknown, ctx: StoreErrorContext): unknown {
       return new PageSnapshotAmbiguousError();
     case 'constraint_violation':
       return factsUniqueViolation(error);
+    case 'guest_source_guard:pages':
+    case 'guest_source_guard:facts':
+    case 'guest_source_guard:takes':
+    case 'guest_source_guard:timeline_entries':
+      return guestSourceGuard(error, code.slice('guest_source_guard:'.length));
     case 'unmodeled_input':
       // An input the store does not read as Postgres does: refused by name, before anything is written.
       return refusalFor(ctx.member, detail);
     default:
       return error;
   }
+}
+
+/**
+ * A guest-source rule of the trust trigger (rust/crates/gbrain-store/src/guest_sources.rs): the error the trigger
+ * raises, SQLSTATE `P0001` with the same message, constraint `guest_source_guard`, the table, and the trigger function
+ * in `where`, so persistence/publication-failure.ts reads it as it reads the SQL engines' refusal.
+ */
+function guestSourceGuard(error: unknown, table: string): Error {
+  const message = error instanceof Error ? error.message : String(error);
+  return Object.assign(new Error(message), {
+    severity: 'ERROR', code: 'P0001', schema_name: 'public', table_name: table, constraint_name: 'guest_source_guard',
+    where: 'PL/pgSQL function gbrain_stamp_trust_tier() line 1 at RAISE',
+  });
 }
 
 /** `engine_capability_missing` for `member`, under the capability the member table gives it, naming what was refused. */

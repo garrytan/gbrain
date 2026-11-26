@@ -119,3 +119,65 @@ fn guest_notes_list_live_pages_of_rows_only_by_source_byte_order() {
     assert!(b.list_guest_notes("missing", None).unwrap().is_empty());
     assert!(b.list_guest_notes("a\0b", None).is_err());
 }
+
+#[test]
+fn a_source_with_a_guest_row_takes_no_local_path() {
+    let b = brain("guest-sources-local-path");
+    source(&b, "guests", None);
+    b.upsert_guest_source("guests", &[], "external_untrusted")
+        .unwrap();
+    let refused = b
+        .attach_source_path("guests", "/srv/guests", None, None)
+        .unwrap_err();
+    assert!(
+        refused.message.starts_with("guest_source_database_only:"),
+        "{}",
+        refused.message
+    );
+    let upserted = b
+        .upsert_source(&SourceInput {
+            id: "guests".into(),
+            local_path: Some("/srv/guests".into()),
+            ..SourceInput::default()
+        })
+        .unwrap_err();
+    assert!(
+        upserted.message.starts_with("guest_source_database_only:"),
+        "{}",
+        upserted.message
+    );
+    assert!(b.has_guest_source_row("guests").unwrap());
+}
+
+#[test]
+fn a_page_in_a_guest_source_is_refused_without_a_listed_writer() {
+    let b = brain("guest-sources-page-rule");
+    source(&b, "guests", None);
+    b.upsert_guest_source(
+        "guests",
+        &names(&["oauth_client:broker-a"]),
+        "external_untrusted",
+    )
+    .unwrap();
+    let input = PageInput {
+        page_type: "note".into(),
+        title: "t".into(),
+        compiled_truth: "words".into(),
+        ..PageInput::default()
+    };
+    let refused = b
+        .put_page(
+            "notes/a",
+            &input,
+            &PutPageOptions {
+                source_id: Some("guests".into()),
+                ..PutPageOptions::default()
+            },
+        )
+        .unwrap_err();
+    assert_eq!(refused.code, "guest_source_guard:pages");
+    assert_eq!(
+        refused.message,
+        "source_writer_restricted: only the listed writers of a guest source may create its pages"
+    );
+}

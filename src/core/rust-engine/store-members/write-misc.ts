@@ -22,6 +22,7 @@ import { readOauthClient } from './jobs-oauth-clients.ts';
 import { storeCall, type StoreMember } from './common.ts';
 import { uuidText } from '../store-codec.ts';
 import { OWNER_MEMBER_KEY } from '../../search/private-visibility.ts';
+import type { GuestSourceLookupRow } from '../../engine.ts';
 
 /**
  * The source's incarnation, archived flag, local path and config, or null. `lock: 'share'` asks the SQL engines to hold
@@ -51,16 +52,17 @@ function jsonText(value: unknown): string | null {
 }
 
 /**
- * Page admission's source row. The store has no guest_sources table and no row-level security: a guest source is one
- * whose config says `guest: true` (as readGuestSourceRow), so no guest_sources row joins and nothing is hidden.
+ * Page admission's source row, with the source's guest row joined (guest_sources.rs) as the SQL engines join it. The
+ * store has no row-level security, so nothing is hidden.
  */
 export const readAdmissionSource: StoreMember<[sourceId: string], AdmissionSourceRow | null> = async (brain, sourceId) => {
   const row: SourceStateRow | null = await storeCall({ member: 'readAdmissionSource', sourceId }, () => brain.readSourceState(sourceId));
   if (!row) return null;
+  const guest: GuestSourceLookupRow = await storeCall({ member: 'readAdmissionSource', sourceId }, () => brain.readGuestSourceRow(sourceId));
   return {
     incarnation: row.incarnation, archived: row.archived, local_path: row.local_path,
     kind: jsonText(row.config.kind), role: jsonText(row.config.role),
-    guest_writers: null, guest_trust_ceiling: null, guest_sources_hidden: false,
+    guest_writers: guest.writers ?? null, guest_trust_ceiling: guest.trust_ceiling ?? null, guest_sources_hidden: false,
   };
 };
 

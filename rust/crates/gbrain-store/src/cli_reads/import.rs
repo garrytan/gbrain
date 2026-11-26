@@ -164,7 +164,7 @@ pub(crate) fn config_says_guest(config: &Map<String, Value>) -> bool {
 }
 
 fn source_is_guest(read: &dyn KvRead, id: &str) -> Result<bool> {
-    Ok(read_source(read, id)?.is_some_and(|s| config_says_guest(&s.config)))
+    crate::guest_sources::source_is_guest(read, id)
 }
 
 fn trust_row(read: &dyn KvRead, page: &PageRecord, by_id: bool) -> Result<PageTrustRow> {
@@ -259,7 +259,7 @@ impl Store {
         )
     }
 
-    /// The ids among `source_ids` (each once) of sources whose config says guest, in id order.
+    /// The ids among `source_ids` (each once) of guest sources (config says guest, or a guest row), in id order.
     pub fn list_guest_source_ids(&self, source_ids: &[String]) -> Result<Vec<String>> {
         let read = self.read()?;
         let mut out = Vec::new();
@@ -271,12 +271,23 @@ impl Store {
         Ok(out)
     }
 
-    /// Whether any source's config says guest.
+    /// Whether any source is a guest source (its config says guest, or it has a guest row).
     pub fn has_guest_source(&self) -> Result<bool> {
         let read = self.read()?;
-        Ok(all_sources(&*read)?
-            .iter()
-            .any(|s| config_says_guest(&s.config)))
+        for s in all_sources(&*read)? {
+            if config_says_guest(&s.config)
+                || crate::guest_sources::read_guest_row(&*read, &s.id)?.is_some()
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// `hasGuestSourceRow(sourceId)`: whether the source has a guest row (the record `upsertGuestSource` writes); a
+    /// source whose config alone says guest has none.
+    pub fn has_guest_source_row(&self, source_id: &str) -> Result<bool> {
+        Ok(crate::guest_sources::read_guest_row(&*self.read()?, source_id)?.is_some())
     }
 
     /// The trust rows of the pages named by id (deleted ones too) and by key (live ones unless

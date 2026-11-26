@@ -3666,6 +3666,28 @@
         ],
         "flagOnScopes": []
       },
+      "listGuestNotes#all": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listGuestNotes#one source": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listHeldGenerationRows#default": {
         "flagOffLanes": [
           "pool"
@@ -8923,6 +8945,17 @@
         ],
         "flagOnScopes": []
       },
+      "upsertGuestSource#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "upsertPageAliasState#default": {
         "flagOffLanes": [
           "pool"
@@ -10008,6 +10041,7 @@
         "listGlobalPurgeWithdrawals": "none",
         "listGoogleSourceMembers": "none",
         "listGuardedTakeRows": "none",
+        "listGuestNotes": "none",
         "listGuestSourceIds": "none",
         "listGuestSourceRows": "none",
         "listHandoverPrefixPages": "none",
@@ -11503,6 +11537,7 @@
         "upsertFenceCandidatePart": "none",
         "upsertFenceTrendRunRecord": "none",
         "upsertFile": "none",
+        "upsertGuestSource": "none",
         "upsertOpFileRow": "none",
         "upsertOpenLoop": "none",
         "upsertPageAliasState": "none",

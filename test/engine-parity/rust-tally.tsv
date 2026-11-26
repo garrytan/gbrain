@@ -168,7 +168,7 @@ test/engine-parity/generation-write-parity.test.ts	4	0
 test/engine-parity/git-durability-credential.test.ts	0	1
 test/engine-parity/git-holds.test.ts	7	0
 test/engine-parity/graduation-catalog.test.ts	1	2
-test/engine-parity/guests-grant-owner-clients.test.ts	0	2
+test/engine-parity/guests-grant-owner-clients.test.ts	2	0
 test/engine-parity/handover-reads.test.ts	2	1
 test/engine-parity/harness-consumer-stop.test.ts	2	0
 test/engine-parity/held-fence-cells.test.ts	5	0
@@ -446,3 +446,4 @@ test/engine-parity/writer-registration.test.ts	2	0
 test/engine-parity/writer-release.test.ts	4	0
 test/engine-parity/writer-status.test.ts	4	0
 test/engine-parity/writer-versions.test.ts	4	0
+test/engine-parity/guest-sources.test.ts	6	0

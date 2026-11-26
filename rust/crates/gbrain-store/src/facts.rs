@@ -693,6 +693,17 @@ pub(crate) fn write_fact(
     old: Option<&FactRecord>,
     new: &FactRecord,
 ) -> Result<()> {
+    crate::guest_sources::guard_row(
+        &*tx,
+        crate::guest_sources::GuardTable::Facts,
+        Some(new.source_id.as_str()),
+        match old {
+            None => crate::guest_sources::GuardOp::Insert,
+            Some(old) => crate::guest_sources::GuardOp::Update {
+                content_changed: old.trust_content_changed(new),
+            },
+        },
+    )?;
     let mut stamped = stamp_fact(trust, old, new)?;
     preserve_withdrawal(tx, old, &mut stamped)?;
     let new = &stamped;

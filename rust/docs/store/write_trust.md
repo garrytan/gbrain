@@ -3,9 +3,9 @@
 Part of the store contract in [rust/README.md](../../README.md) ("The brain store"): the rules there apply to every method here.
 
 PGLite's trust triggers, write attribution triggers and the fence guard's reads take the writer's trust and actor
-from nine transaction-local settings, which `src/core/persistence/context.ts` sets with
+from ten transaction-local settings, which `src/core/persistence/context.ts` sets with
 `set_config(name, value, true)` and reads with `current_setting(name, true)`. The store has no SQL session, so
-`gbrain_store::write_trust` holds the same nine settings on the open store. It writes no records and has no keys.
+`gbrain_store::write_trust` holds the same ten settings on the open store. It writes no records and has no keys.
 
 | Setting | Read as | Reader |
 | --- | --- | --- |
@@ -18,6 +18,7 @@ from nine transaction-local settings, which `src/core/persistence/context.ts` se
 | `gbrain.write_request` | the persistence request the write runs for (a UUID) | the timeline write receipt (`WriteAttribution::request_id`); the page, version, fact and take writers check it is a UUID |
 | `gbrain.write_principal_kind` | the kind of the writing principal | the timeline write receipt (`WriteAttribution::principal_kind`) |
 | `gbrain.write_principal_id` | the id of the writing principal | the timeline write receipt (`WriteAttribution::principal_id`) |
+| `gbrain.guest_note` | the write request a guest note's publication names (guests/admission.ts) | the guest-source page rule (`WriteTrust::guest_note_is_request`, guest_sources.rs `guard_page`) |
 
 ## Methods
 
@@ -66,7 +67,7 @@ retrieval coverage reads apply a trust floor and the flagged-page filter to them
 
 PGLite's settings end with the transaction. Each store has its own context. A store bound to a transaction
 (`begin_transaction`, `transactions.rs`) starts with an empty context, and the shared store never sees it, so two
-transactions never share one. Once the transactions family lands, the engine's `applyTransactionSettings` and `readTransactionSettings` route these nine
+transactions never share one. Once the transactions family lands, the engine's `applyTransactionSettings` and `readTransactionSettings` route these ten
 names to the transaction's handle; in this landing the engine serves no transaction, so only the store-level context exists. The transaction clears the context when it ends, at commit and at
 rollback, and a savepoint rollback sets the nine back to what they were when the savepoint opened.
 
