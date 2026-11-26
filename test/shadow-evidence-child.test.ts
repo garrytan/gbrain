@@ -342,7 +342,7 @@ describe('evidence epoch in the child', () => {
   });
 
   test('records an epoch of comparator version 2 collected stay out of the epoch the current comparator opens: their recall and clearance do not count', async () => {
-    expect(SHADOW_COMPARATOR_VERSION).toBeGreaterThanOrEqual(4); // the privacy, rerun and recall rules changed what a record means (3), and the per-session write-sample obligation did again (4)
+    expect(SHADOW_COMPARATOR_VERSION).toBeGreaterThanOrEqual(4); // the privacy, rerun and recall rules changed what a record means
     const engine = () => ({ async connect() {}, async disconnect() {}, getPage: async () => ({ slug: 'a' }) }) as never;
     const probe = seeded();
     await runChild(probe, [], { openEngine: engine });
