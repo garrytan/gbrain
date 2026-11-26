@@ -1,4 +1,4 @@
-**Shadow mode counts write samples a command loses at exit or in a burst; two disk-failure paths remain (fixed next).**
+**Shadow mode counts write samples a command loses at exit or in a burst; two disk-failure paths remained; S2b fixed them.**
 
 ### Fixed
 - A command such as `gbrain sync` hands its sampled writes to the shadow worker through a pipe and exits. Bun drops what the pipe has not delivered at exit, and nothing counted those samples (in a real run only 76 to 127 of 160 arrived). The command now waits up to 2 seconds for the pipe to flush before it exits and writes down how many samples it sent; the worker counts any it never received as `uncomparable` (`pipe_unflushed`), exactly once.
@@ -11,5 +11,5 @@
 - Nothing about what counts as `comparable` changes, and a lost or shed sample is never counted as compared.
 
 ### Known limits
-- Two disk-failure paths can still lose samples without a count or a fault line, as they did before this change (fixed next, S2b): when the disk is full and both the lost-sample append and the fault line fail, the worker still removes the sent count; and an unreadable or truncated sent count is read as no count, so nothing is reconciled and no fault is written.
+- Two disk-failure paths could still lose samples without a count or a fault line when this fragment was written; S2b fixed both: when the disk is full and both the lost-sample append and the fault line fail, the worker now keeps the sent count instead of removing it, and an unreadable or truncated sent count now raises a fault and stays instead of being read as no count. The paths S2b's own review found and did not fix (a command killed or a host crash around the sent count, a client worker killed with buffered results, the sent count and the fault line are written without fsync, and a cold-start sent-count fault with no epoch that status skips) are named for S2c, a swap blocker; until S2c lands, "measured" can be wrong only after a host crash, a killed worker or a persistent disk fault, never in an orderly run.
 - The worker still records each result with one durable write, so a very large burst can still outrun it and be counted `queue_full` or `child_exit_deadline`; batching those writes is the next step.

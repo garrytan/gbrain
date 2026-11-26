@@ -105,6 +105,7 @@ export class ShadowSupervisor implements MirrorTransport {
   private sampleBytes = 0;
   /** Write samples (with the losses they carry) accepted for the current child: written down at stop, so the child can count what its pipe never delivered (`recordSent`). */
   private sentWeight = 0;
+  private sentRecorded = ''; // the session and weight whose receipt `recordSent` published already
   private stdinRef: (NodeJS.WritableStream & { writableFinished?: boolean }) | null = null;
   private readonly drainWaiters = new Set<() => void>();
   private readonly o: Required<Omit<ShadowSupervisorOptions, 'spawn' | 'recordFault' | 'stillEnabled' | 'onDirty' | 'onAsk'>> & Pick<ShadowSupervisorOptions, 'spawn' | 'recordFault' | 'stillEnabled' | 'onDirty' | 'onAsk'>;
@@ -160,15 +161,17 @@ export class ShadowSupervisor implements MirrorTransport {
 
   /**
    * Writes down how many write samples this process sent the current child (`write-sent.<session>.json`, one small atomic file, no lock). The child counts the samples it read; at the end of its
-   * input it counts the difference as lost (`pipe_unflushed`), so a sample the pipe never delivered (Bun drops what it still holds when the process exits) is counted once by the child (except a disk-write failure, see S2b), whether the
-   * pipe was slow, the process exited at once or the exit came from anywhere else. A failed write of the sent count is a fault line (except a disk-write failure that also stops the fault line, see S2b).
+   * input it counts the difference as lost (`pipe_unflushed`), so a sample the pipe never delivered (Bun drops what it still holds when the process exits) is counted once by the child (the receipt stays, and status reads no evidence, when the child cannot write the count down), whether the
+   * pipe was slow, the process exited at once or the exit came from anywhere else. A failed write of the sent count is a fault line (except a disk-write failure that also stops the fault line, a known limit in the changelog).
    */
   recordSent(): void {
-    if (!this.session || this.sentWeight === 0) return;
+    if (!this.session || this.sentWeight === 0 || this.sentRecorded === `${this.session}:${this.sentWeight}`) return; // once per session: the child that took the receipt removes it, and one written after that would be counted again
     const path = sentPath(this.o.dir, this.session);
     try {
-      writeFileSync(`${path}.tmp`, JSON.stringify({ session: this.session, sent: this.sentWeight }) + '\n', { mode: 0o600 });
+      // No epoch is written: this process cannot know which epoch its worker opened (a worker that starts after a command ends may open a new one), and a wrong stamp would make the worker read its own receipt as another epoch's.
+      writeFileSync(`${path}.tmp`, JSON.stringify({ session: this.session, sent: this.sentWeight, ...(this.child?.pid ? { pid: this.child.pid } : {}) }) + '\n', { mode: 0o600 });
       renameSync(`${path}.tmp`, path);
+      this.sentRecorded = `${this.session}:${this.sentWeight}`; // only a published receipt is not written again: a failed write is tried again at stop()
     } catch { this.fault('write_samples_unrecorded', `sent_count n=${this.sentWeight}`); }
   }
 
