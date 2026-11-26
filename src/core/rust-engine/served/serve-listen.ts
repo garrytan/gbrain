@@ -56,7 +56,7 @@ export async function startRustListen(engine: BrainEngine, args: readonly string
   const owner = engine.kind === 'rust' ? (engine as unknown as { ownerServer?: () => OwnerEngineServer | null }).ownerServer?.() ?? null : null;
   if (!owner) {
     throw opError('engine_capability_missing', 'gbrain serve --rust-listen serves a Rust brain this process owns, and this one does not own it.',
-      'Stop the process that owns the brain (gbrain doctor names it), then start gbrain serve --rust-listen again.', { reason: 'served' });
+      'Stop the process that owns the brain (the doctor report names it), then start gbrain serve --rust-listen again.', { reason: 'served' });
   }
   const { host, port } = parseListenAddress(value);
   const listener = await listenServed(owner, { host, port, ...(tlsFromEnv() ? { tls: tlsFromEnv()! } : {}) });

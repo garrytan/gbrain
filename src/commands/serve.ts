@@ -359,6 +359,8 @@ async function serveBrain(
   const sourceGuard = args.includes('--source-guard');
   // Opt-in warm CLI socket (core/cli-socket/server.ts): off, the serve loads nothing and reads nothing for it.
   const cliSocketOn = args.includes('--cli-socket') || MERGED_CONFIG_BY_ENGINE.get(engine)?.serve_cli_socket === true;
+  // Opt-in Google token socket (core/google-socket/server.ts, file-plane google.mint_socket): off, the serve loads none of it.
+  const googleSocketOn = (await import('../core/config.ts')).loadConfigFileOnly()?.google?.mint_socket === true;
   // Opt-in vector index prewarm (core/vector-prewarm.ts): off, the serve loads nothing and reads nothing for it.
   if (MERGED_CONFIG_BY_ENGINE.get(engine)?.serve_vector_prewarm === true) {
     void import('../core/vector-prewarm.ts').then(m => m.prewarmAtServeStart(engine, opts.log ?? ((msg: string) => console.error(msg))));
@@ -463,6 +465,7 @@ async function serveBrain(
     const mcpLogPrune = installMcpLogPrune(engine, opts, httpLog, () => false);
 
     const cliSocket = cliSocketOn ? await (await import('../core/cli-socket/server.ts')).startCliSocket(engine, httpLog) : null;
+    const googleSocket = googleSocketOn ? await (await import('../core/google-socket/server.ts')).startGoogleSocketForServe(httpLog) : null;
     try {
       await runHttp(engine, { port, tokenTtl, enableDcr, enableDcrInsecure, publicUrl, logFullParams, bind, suppressBootstrapToken, printAdminToken, surface, ...(advertise ? { advertise } : {}), adoptServer: opts.adoptServer });
     } finally {
@@ -471,6 +474,7 @@ async function serveBrain(
       idleUpkeep?.stop();
       mcpLogPrune?.stop();
       cliSocket?.close();
+      googleSocket?.close();
     }
 
     await finishHttpServe(engine, opts);

@@ -359,3 +359,55 @@ fn privacy_hidden_judges_the_live_page_by_the_privacy_part_alone() {
     assert_eq!(hidden("notes/aliased", false), Some(false));
     assert_eq!(hidden("notes/shown", true), Some(false));
 }
+
+#[test]
+fn private_only_slugs_names_a_slug_every_scoped_row_of_which_is_hidden() {
+    let dir = TempDir::new("visibility-private-only");
+    let store = seeded(&dir);
+    store
+        .upsert_source(&SourceInput {
+            id: "second".into(),
+            ..Default::default()
+        })
+        .unwrap();
+    let input: PageInput = serde_json::from_value(
+        json!({"type": "note", "title": "t", "compiled_truth": "body", "frontmatter": {}}),
+    )
+    .unwrap();
+    let opts: PutPageOptions = serde_json::from_value(json!({"sourceId": "second"})).unwrap();
+    store.put_page("notes/private", &input, &opts).unwrap();
+    let slugs: Vec<String> = [
+        "notes/private",
+        "notes/open",
+        "notes/gone",
+        "notes/never",
+        "notes/private",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+    let read = |source_id: Option<&str>, source_ids: Option<&[&str]>, deleted: bool| {
+        store
+            .read_private_only_slugs(
+                &slugs,
+                source_id.map(str::to_owned),
+                source_ids.map(|ids| ids.iter().map(|s| s.to_string()).collect()),
+                deleted,
+                &read_policy(),
+            )
+            .unwrap()
+    };
+    // One source: its only row of notes/private is hidden; notes/gone has no live row.
+    assert_eq!(read(Some("default"), None, false), ["notes/private"]);
+    // Both sources, or every source: notes/private is open in `second`.
+    assert!(read(None, Some(&["default", "second"]), false).is_empty());
+    assert!(read(None, None, false).is_empty());
+    // A non-empty array wins over the scalar; an empty one does not.
+    assert_eq!(
+        read(Some("second"), Some(&["default"]), false),
+        ["notes/private"]
+    );
+    assert!(read(Some("second"), Some(&[]), false).is_empty());
+    // Soft-deleted rows count with include_deleted: notes/gone is open, so it is not named.
+    assert_eq!(read(Some("default"), None, true), ["notes/private"]);
+}

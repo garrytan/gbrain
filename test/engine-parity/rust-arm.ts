@@ -24,6 +24,7 @@ import { detectAddonTarget } from '../../src/core/rust-engine/addon-target.ts';
 import { RUST_ENGINE_MEMBERS } from '../../src/core/rust-engine/members.ts';
 import { STORE_MEMBERS } from '../../src/core/rust-engine/store-members/index.ts';
 import { openRustEngine, RustEngine } from '../../src/core/rust-engine.ts';
+import { liftManagedHoldWhenRequested } from './rust-managed.ts';
 
 export const RUST_ARM_FLAG = 'GBRAIN_TEST_RUST_ARM';
 
@@ -95,6 +96,21 @@ export function assertRustMultiuserResolved(engine: unknown, route: RustMuRoute)
   }
 }
 
+/**
+ * Assert that the Rust brain `engine` keeps a commit log on the `rust-mu` view, which turns the sub-switch on
+ * (GBRAIN_RUST_COMMIT_LOG=1) for the arm's lifetime: the open store must report `commitLog` and the engine must report the
+ * capability `commit_log`. A row that needs the log (C22) would otherwise be refused `engine_capability_missing` at its first
+ * member, or worse, pass on a brain that kept none. A client engine has no store of its own and is accepted (the owner was checked).
+ */
+export function assertRustCommitLogResolved(engine: unknown): void {
+  const e = engine as { ownerRole?: unknown; capabilities?: ReadonlySet<string>; openStoreIfOpen?: (member: string) => unknown };
+  if (e.ownerRole === 'client') return;
+  const store = e.openStoreIfOpen?.('commitLogSwitch') as { commitLog?: unknown } | null | undefined;
+  if (store === null || store === undefined) throw new Error('[rust-mu] no open store to read the commit log switch from; assert it after connect');
+  if (store.commitLog !== true) throw new Error('[rust-mu] the store keeps no commit log although the arm set GBRAIN_RUST_COMMIT_LOG=1 (the sub-switch is read only while the store is multi-user)');
+  if (e.capabilities?.has('commit_log') !== true) throw new Error('[rust-mu] the engine does not report the capability commit_log although its store keeps a commit log');
+}
+
 /** The capability a member needs (its row in the member table), or null for a lifecycle member or an unknown name. */
 export function rustMemberCapability(method: string): string | null {
   const cls = (RUST_ENGINE_MEMBERS as Record<string, string>)[method];
@@ -130,7 +146,8 @@ export interface RustBrainDir { engine: RustEngine; dir: string }
 /** A Rust engine on a new brain directory, not connected. `loadRustArmAddon` has run. */
 export function newRustBrain(): RustBrainDir {
   if (!addon) throw new Error('loadRustArmAddon has not run');
-  const engine = openRustEngine({ addon, databasePath: mkdtempSync(join(tmpdir(), 'gbrain-rust-arm-')) });
+  // GBRAIN_TEST_RUST_MANAGED=1 lifts the managed_persistence hold on this engine only (rust-managed.ts).
+  const engine = liftManagedHoldWhenRequested(openRustEngine({ addon, databasePath: mkdtempSync(join(tmpdir(), 'gbrain-rust-arm-')) }));
   return { engine, dir: engine.databasePath };
 }
 
@@ -160,6 +177,7 @@ export function installMuConnect(engine: MuConnectable, route: RustMuRoute, remo
         await connect(config);
       }
       assertRustMultiuserResolved(engine, route);
+      assertRustCommitLogResolved(engine);
     } catch (error) {
       await engine.disconnect().catch(() => undefined);
       removeDir();
@@ -272,7 +290,7 @@ export async function openRustBrainAt(dir: string, route?: RustMuRoute): Promise
   await engine.connect({ engine: 'pglite', database_path: dir } as never);
   if (route !== undefined) {
     // The brain was seeded by the arm that created it; a client reaches that owner, an owner resolves it from the brain itself.
-    try { assertRustMultiuserResolved(engine, route); } catch (error) { await engine.disconnect().catch(() => undefined); throw error; }
+    try { assertRustMultiuserResolved(engine, route); assertRustCommitLogResolved(engine); } catch (error) { await engine.disconnect().catch(() => undefined); throw error; }
   }
   return engine;
 }

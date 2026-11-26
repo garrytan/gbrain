@@ -144,11 +144,13 @@ describe('multi-writer support matrix', () => {
     }
   });
 
-  test('the design rules hold: C11 and the C21 token are pending everywhere, C13, C17 and C21 are n/a on PGLite, C22 waits on the commit log', () => {
-    for (const arm of MW_ENGINE_ARMS) {
-      expect(mwCell('C11', arm).status, `C11 ${arm}`).toBe('pending');
-      expect(mwCell('C22', arm), `C22 ${arm}`).toMatchObject({ status: 'pending', owner: 'L2 commit log' });
-    }
+  test('the design rules hold: C11 and the C21 token are pending everywhere, C13, C17 and C21 are n/a on PGLite, C22 needs the commit log, which only rust-mu keeps', () => {
+    for (const arm of MW_ENGINE_ARMS) expect(mwCell('C11', arm).status, `C11 ${arm}`).toBe('pending');
+    // C22: a SQL engine and a Rust engine with the log off keep no commit log (they refuse commit_log), so n/a; rust-mu keeps one and runs it.
+    for (const arm of ['pglite', 'postgres', 'rust'] as const) expect(mwCell('C22', arm), `C22 ${arm}`).toMatchObject({ status: 'n/a', why: expect.stringMatching(/engine_capability_missing, reason commit_log/) });
+    expect(mwCell('C22', 'rust-mu').status).toBe('runs');
+    expect(mwCase('C22').needs).toBe('commit_log');
+    expect(mwCase('C22').members).toEqual(['putPage', 'transaction', 'readCommitLog', 'lastCommitPosition']);
     for (const arm of MW_ENGINE_ARMS.filter(a => a !== 'pglite')) expect(mwCell('C21', arm).status, `C21 ${arm}`).toBe('pending');
     for (const id of ['C13', 'C17', 'C21'] as const) expect(mwCell(id, 'pglite').status, `${id} pglite`).toBe('n/a');
     // C16's engine cells name the observation that is missing, or stay pending; none claims an upgrade it cannot see.
@@ -157,8 +159,8 @@ describe('multi-writer support matrix', () => {
     for (const id of ['C13', 'C17', 'C21'] as const) expect(mwCase(id).needs, id).toBe('multi_writer');
   });
 
-  test('rust-mu runs what rust runs and waits on the same owner where rust waits', () => {
-    for (const row of MW_CASES) {
+  test('rust-mu runs what rust runs and waits on the same owner where rust waits (C22 alone differs: the log exists only on rust-mu)', () => {
+    for (const row of MW_CASES.filter(c => c.id !== 'C22')) {
       const rust = row.cells.rust;
       const mu = row.cells['rust-mu'];
       if (rust.status === 'runs') expect(mu.status, `${row.id}: multi-user on must answer what single-writer answers`).toBe('runs');
@@ -169,7 +171,7 @@ describe('multi-writer support matrix', () => {
 
   test('the single-writer Rust arm runs every case whose invariant holds there; the rest wait for a second connection, a new rule, or the multi-writer work', () => {
     expect(MW_CASES.filter(c => c.cells.rust.status !== 'runs').map(c => [c.id, c.cells.rust.status])).toEqual([
-      ['C11', 'pending'], ['C13', 'pending'], ['C16', 'pending'], ['C17', 'pending'], ['C18', 'pending'], ['C21', 'pending'], ['C22', 'pending'],
+      ['C11', 'pending'], ['C13', 'pending'], ['C16', 'pending'], ['C17', 'pending'], ['C18', 'pending'], ['C21', 'pending'], ['C22', 'n/a'],
     ]);
   });
 

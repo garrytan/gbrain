@@ -658,10 +658,14 @@ store side: `Store::authenticate_bearer`, `Scope::from_principal` and `Scope::re
    lineage, folder-rule access, labelled-only and audience members) and in server mode, where every privacy policy is
    the store's derivation of that record (`access_derive.rs`). A caller record the client set, and the TypeScript
    rendering, never apply; a policy the store does not model refuses. The private sources come from `session.grant`.
+   The owner-only form (audit row A12) is the store's too: the schema version that picks it (closed before v320, the
+   lineage function since) is the one in the record the store built, never the version the TypeScript engine scope
+   recorded.
 
-What the session does not do yet: admit keys other than the owner's (ruling A1), carry a session across a reconnect
-(a reconnect opens a new session), and serve an owner's read-only call on a Rust brain: such a call carries member
-lineage, which neither the store nor the TypeScript renderers model for a Rust brain yet, so it refuses typed.
+What the session does not do yet: admit keys other than the owner's (ruling A1), and carry a session across a
+reconnect (a reconnect opens a new session). An owner's read-only call carries member lineage, which the store serves
+as the owner read rule (the opt-in `access.owner_reads_restricted` off, no audience members); with the opt-in on, or
+with audience members, it still refuses typed (fail closed).
 
 ### I-7. Wire protocol v3 (grown from owner socket v2, `src/core/rust-engine/owner-ipc/protocol.ts`)
 

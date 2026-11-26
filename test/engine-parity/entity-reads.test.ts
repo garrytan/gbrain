@@ -242,9 +242,10 @@ describe('engine parity: entity and mention reads', () => {
       return result;
     });
 
-  // The read floor drops the folder pending-coverage clause for a remote caller, so its text is neither the no-caller
-  // page policy nor the caller's canonical one; the store refuses the hop typed rather than guess (retirementHopPolicy).
-  parityTest('readRetirementHop under the read floor for a remote caller hides a private page on the SQL engines and refuses typed on Rust',
+  // The read floor never reads the caller's readers and drops the folder pending-coverage clause for a remote caller, so the
+  // store serves it as the page policy of a record with no readers, grants or coverage (retirementHopPolicy, storePageTextPolicy):
+  // every arm hides the private page and keeps the live one; a labelled-only caller's floor still refuses typed.
+  parityTest('readRetirementHop under the read floor for a remote caller hides a private page and keeps a live one on every engine',
     { methods: ['readRetirementHop'] }, async (engine, backend) => {
       await seed(engine, backend);
       await engine.putPage('people/hop-private', ({ type: 'person', title: 'Hop', compiled_truth: 'Hop body.',

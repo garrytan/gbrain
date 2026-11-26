@@ -5,8 +5,8 @@
  *  - Contract: `forgetFactInFence` (facts/forget.ts) withdraws, supersedes (to a given end) or retires a fenced claim
  *    on a source without a checkout, expires it and strikes its row in the stored body; a second expiry answers
  *    `already_expired`, and an unknown id or one outside the caller's source answers `not_found`. The answers are
- *    equal on every engine arm (PGLite always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1),
- *    except the segmented gap below. The forget operation (operations.ts `forget`) on an inline page commits, expires
+ *    equal on every engine arm (PGLite always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1). The
+ *    forget operation (operations.ts `forget`) on an inline page commits, expires
  *    the claim, strikes its fence row and rebuilds the page's chunks after the commit, equal on every arm.
  *  - Regression: `forgetFactInFence` read the fact, expired it and read the stored body through raw SQL, which the
  *    Rust engine refuses, so on a Rust brain every withdrawal, supersession and retirement through it stopped before
@@ -18,15 +18,12 @@
  *    `put_page`. `forgetFactInFence` is called directly, as its callers do; their own reads are not in this file.
  *    Ids and times differ between arms, so they are folded out; the supersession's end is a fixed date and is compared.
  *    The segmented page is published with test/helpers/page-body-fixtures.ts `publishSegmentedPage` (typed body
- *    members), and on Rust only the segmented case calls rewriteLiveSegmentedFences itself after write_pending.
- *  - Known gap: on a segmented page the forget operation answers write_pending on Rust (the case's comment names the
- *    statement); the case counts as stopped in rust-tally.tsv and compares equal once Rust commits.
+ *    members); the forget operation on it commits on every arm.
  */
 import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { parseFactsFence } from '../../src/core/facts-fence.ts';
-import { rewriteLiveSegmentedFences } from '../../src/core/page-body/segment-rewrite.ts';
 import { forgetFactInFence } from '../../src/core/facts/forget.ts';
 import { importFromContent } from '../../src/core/import-file.ts';
 import { operationsByName, type OperationContext } from '../../src/core/operations.ts';
@@ -128,18 +125,14 @@ describe('a whole forget', () => {
       return { state: forget.state, ...await pageState(engine), chunks };
     });
 
-  // Known gap until rust-engine/segment-embed reaches main: on a segmented page the forget's withdrawal rewrites the
-  // live fence through rewriteLiveSegmentedFences (page-body/segment-rewrite.ts:174, called from facts/withdrawal.ts),
-  // which reads the page with raw SQL. On Rust the write is accepted and its publication is refused; it stays queued
-  // (write_pending) or, once the capability retry limit is spent (persistence/capability-retry.ts), ends failed with
-  // writeError engine_capability_missing, and the claim is not expired. The case then runs that one rewrite, so it ends on the raw_sql refusal
-  // the queued write is held on and counts as stopped in rust-tally.tsv. Once Rust commits, the case compares equal and
-  // the tally row changes, so the flip cannot be missed.
-  parityTest('the forget operation on a segmented page commits and expires the claim (Rust: write_pending, pinned)',
+  // On a segmented page the forget's withdrawal rewrites the live fence through rewriteLiveSegmentedFences
+  // (page-body/segment-rewrite.ts, called from facts/withdrawal.ts) and the post-commit projection rebuilds the page's
+  // chunks; both run on typed members the Rust store serves, so the write commits on every arm.
+  parityTest('the forget operation on a segmented page commits and expires the claim',
     { methods: ['createSegmentedPageShell', 'flipBodyGeneration', 'listFactsForPage'], timeout: 180_000 }, async (engine) => {
       opened.push(engine);
       configureGateway({ embedding_identity_unverified: true, env: { ...process.env } });
-      const { pageId } = await publishSegmentedPage(engine, SEGMENTED, [segmentText(`# Bob\n\n## Facts\n\n${fence(CLAIMS.slice(0, 2))}\n`),
+      await publishSegmentedPage(engine, SEGMENTED, [segmentText(`# Bob\n\n## Facts\n\n${fence(CLAIMS.slice(0, 2))}\n`),
         segmentText('## Notes\n\nNotes on the budget review.\n')]);
       await engine.transaction(async (tx) => {
         await tx.applyTransactionSettings(['gbrain.write_trust_tier', 'gbrain.write_trust_promotion', 'gbrain.write_origin'],
@@ -150,16 +143,7 @@ describe('a whole forget', () => {
       const facts = async () => (await engine.listFactsForPage(SRC, SEGMENTED)).map(f => ({ fact: f.fact, expired: f.expired_at !== null }));
       const [target] = (await engine.listFactsForPage(SRC, SEGMENTED)).filter(f => f.fact === CLAIMS[0]);
       const ctx = { engine, config: { engine: engine.kind }, logger: quiet, dryRun: false, remote: false, sourceId: SRC } as unknown as OperationContext;
-      let state: unknown;
-      try {
-        state = (await operationsByName.forget.handler(ctx, { id: String(target!.id), request_id: randomUUID(), wait_ms: 30_000 }) as Record<string, unknown>).state;
-      } catch (e) {
-        const writeError = (e as { writeError?: string }).writeError;
-        if ((writeError !== 'write_pending' && writeError !== 'engine_capability_missing') || engine.kind !== 'rust') throw e;
-        expect(await facts()).toEqual([{ fact: CLAIMS[0], expired: false }, { fact: CLAIMS[1], expired: false }]);
-        await rewriteLiveSegmentedFences(engine, pageId, async fence => fence);
-        throw new Error('rewriteLiveSegmentedFences ran on Rust; the queued forget should commit now, so remove this branch');
-      }
+      const { state } = await operationsByName.forget.handler(ctx, { id: String(target!.id), request_id: randomUUID(), wait_ms: 30_000 }) as Record<string, unknown>;
       return { state, facts: await facts() };
     });
 

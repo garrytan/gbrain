@@ -36,13 +36,24 @@ export type AccessDeriveRequest =
   | { mode: 'access_part_plain' }
   | { mode: 'member_access_policy'; identity?: string[]; satisfied: string[] }
   | { mode: 'row_owner_only' }
+  | { mode: 'owner_reach'; identity: string[]; satisfied: string[] }
   | { mode: 'open_page_floor' }
   | { mode: 'writer_policy'; policy: { identities: string[][]; satisfiedRuleIds: string[]; folderCoverage: Array<{ source_id: string; prefix: string }>; owner: boolean; labelledOnly: boolean } }
   | { mode: 'snapshot_policy'; identity: string[]; privateReadableSources: string[] };
 
 type Deriver = (ctx: unknown) => unknown;
 /** The store a served member runs on, as the self-check reads it: its multi-user answer and the addon's derivation. */
-interface AccessStore { readonly multiuser: boolean; readonly derive?: Deriver; readonly server?: boolean }
+interface AccessStore {
+  readonly multiuser: boolean;
+  readonly derive?: Deriver;
+  readonly server?: boolean;
+  /**
+   * Server mode: the store's own schema version (from the caller record the store built; null when it records none),
+   * the one the derivation settings carry instead of the version the TypeScript engine scope recorded (audit row A12:
+   * the owner-only form is the store's decision).
+   */
+  readonly storeSchemaVersion?: number | null;
+}
 const accessStore = new AsyncLocalStorage<AccessStore>();
 
 /**
@@ -58,7 +69,7 @@ export function storeMultiuser(store: object): boolean {
  * Runs `fn`, a served member on `store`, with the store's answer in context when the store is in multi-user mode;
  * otherwise just runs it. `addon` holds the pure `deriveAccessPolicy` export the self-check compares with.
  */
-export function withAccessStore<T>(store: object, addon: object, fn: () => T, opts: { server?: boolean } = {}): T {
+export function withAccessStore<T>(store: object, addon: object, fn: () => T, opts: { server?: boolean; storeSchemaVersion?: number | null } = {}): T {
   if (!storeMultiuser(store)) return fn();
   const outer = accessStore.getStore();
   const own = (addon as { deriveAccessPolicy?: unknown }).deriveAccessPolicy;
@@ -66,7 +77,9 @@ export function withAccessStore<T>(store: object, addon: object, fn: () => T, op
   const derive = outer?.server === true && outer.derive ? outer.derive : typeof own === 'function' ? own as Deriver : outer?.derive;
   // Server mode, once set by a principal session (principal-session.ts), holds for every member call inside it.
   const server = opts.server === true || outer?.server === true;
-  return accessStore.run({ multiuser: true, ...(derive ? { derive } : {}), ...(server ? { server } : {}) }, fn);
+  const pinned = opts.server === true ? opts.storeSchemaVersion : outer?.server === true ? outer.storeSchemaVersion : undefined;
+  return accessStore.run({ multiuser: true, ...(derive ? { derive } : {}), ...(server ? { server } : {}),
+    ...(server ? { storeSchemaVersion: pinned ?? null } : {}) }, fn);
 }
 
 /** Server mode: a principal session's call, whose every privacy policy is the store's derivation alone. */
@@ -97,7 +110,14 @@ export function accessSelfCheckOn(): boolean {
 /** The context the store derives from: the record as it stands (none outside one), the settings and the request. */
 export function accessDeriveContext(request: AccessDeriveRequest): unknown {
   const record = callerAccessRecord();
-  return { record: record ? JSON.parse(JSON.stringify(record)) : null, settings: accessSettingsSnapshot(), request };
+  const settings = accessSettingsSnapshot();
+  const scope = accessStore.getStore();
+  // Server mode: the schema version is the store's own (A12), never the one the TypeScript engine scope recorded.
+  if (scope?.server === true) {
+    delete settings.scopeSchemaVersion;
+    if (typeof scope.storeSchemaVersion === 'number') settings.scopeSchemaVersion = scope.storeSchemaVersion;
+  }
+  return { record: record ? JSON.parse(JSON.stringify(record)) : null, settings, request };
 }
 
 /** A helper refusal (`refuseMember`): the policy is not one the store models. */

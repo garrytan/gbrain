@@ -474,6 +474,40 @@ fn candidates_are_live_state_groups_with_two_targets_and_works_at_needs_an_emplo
     }
 }
 
+/// Groups that share one refresh stamp are cut by `maxSubjects` at the lowest subject page id, whichever
+/// source holds them: the SQL's `ORDER BY max(refreshed_at) DESC, from_page_id, link_type`.
+#[test]
+fn groups_that_tie_on_the_refresh_stamp_are_cut_at_the_lowest_subject_page_id() {
+    let b = brain("edge-tie-cut");
+    let first = page(&b, "people/first", "person");
+    let second = page(&b, "people/second", "person");
+    let acme = page(&b, "companies/acme", "company");
+    let widget = page(&b, "companies/widget", "company");
+    // The lower page id belongs to the source that sorts later, so a source-first order would cut the wrong subject.
+    let mut rows = Vec::new();
+    for (subject, source, hash) in [(first, "src-b", "f"), (second, "src-a", "s")] {
+        for (target, tag) in [(acme, "a"), (widget, "w")] {
+            let mut row = state(
+                subject,
+                target,
+                "works_at",
+                Value::Null,
+                &format!("{hash}{tag}"),
+            );
+            row["source_id"] = json!(source);
+            rows.push(row);
+        }
+    }
+    write_state(&b, json!(rows));
+    assert_eq!(
+        candidates(&b, query(json!({ "maxSubjects": 1 }))),
+        vec![
+            "people/first>companies/acme",
+            "people/first>companies/widget"
+        ]
+    );
+}
+
 #[test]
 fn a_hard_delete_removes_the_proposals_of_its_pages_and_clears_an_ending() {
     let b = brain("edge-cascade");

@@ -918,7 +918,9 @@ jobs:
     # for capability consent (exit 3) and `openclaw agent` has no
     # --session-key, so this test cannot run there. Bump a cell by editing it.
     # GBRAIN_TEST_REQUIRE_OPENCLAW=1 makes a missing CLI fail, and the receipt
-    # check fails an all-skip run.
+    # check fails an all-skip run. Each cell's receipts carry the arm
+    # openclaw-<version>, so the manifest keeps one entry per cell and a later
+    # passing cell never hides an earlier failing one.
     # Event parity (docs/TESTING.md#event-parity): a named exception like the
     # full-corpus coverage lanes; pull requests skip it, and e2e-status
     # requires it only on the full-corpus profile.
@@ -959,6 +961,7 @@ jobs:
           GBRAIN_TEST_REQUIRE_OPENCLAW: '1'
           GBRAIN_TEST_OPENCLAW_EXPECT_VERSION: ${{ matrix.openclaw }}
           GBRAIN_TEST_RECEIPT_DIR: ${{ runner.temp }}/receipts
+          GBRAIN_TEST_RECEIPT_ARM: openclaw-${{ matrix.openclaw }}
       - name: Require every test to run
         run: bun scripts/require-executed-tests.ts "$RUNNER_TEMP/receipts" openclaw-skill-resolver
       - name: Upload receipts
@@ -1394,7 +1397,7 @@ jobs:
   # in e2e-status; baseline comparisons run locally with
   #   bun scripts/ci-executed-counts.ts --base-run <id> --head-run <id>
   executed-receipts:
-    needs: [prepare-e2e, jsonb-parity, tier1, tier1-graduation, tier1-backend-matrix, tier2, selected-e2e, coverage-full-unit, coverage-full-serial, coverage-full-e2e]
+    needs: [prepare-e2e, jsonb-parity, tier1, tier1-graduation, tier1-backend-matrix, postgres15-compat, tier2, selected-e2e, coverage-full-unit, coverage-full-serial, coverage-full-e2e, openclaw-skill-resolver]
     if: ${{ needs.prepare-e2e.outputs.reuse != 'true' && always() }}
     runs-on: ubicloud-standard-2-ubuntu-2404
     timeout-minutes: 10
@@ -1597,6 +1600,7 @@ jobs:
         env:
           ARTIFACT_DIR: ${{ runner.temp }}/full-suite
           MANIFEST: ${{ runner.temp }}/ci-manifest/ci-manifest.json
+          EXECUTED_RECEIPTS: ${{ needs.executed-receipts.result }}
           RUN_ID: ${{ github.run_id }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
           WORKFLOW: ${{ github.workflow }}

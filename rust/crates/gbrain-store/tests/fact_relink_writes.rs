@@ -395,3 +395,32 @@ fn the_page_pick_counts_rows_and_breaks_ties_by_slug_bytes() {
         s(&["conversations/a-page"])
     );
 }
+
+#[test]
+fn a_page_created_in_the_clock_tick_of_the_attempt_re_arms_the_miss() {
+    // The clock does not move between the attempt and the page, so both carry one timestamp.
+    let b = brain("relink-same-tick");
+    let ids: Vec<u64> = (0..2)
+        .map(|i| {
+            derived(
+                &b,
+                "default",
+                "conversations/same-tick",
+                json!({ "fact": format!("claim {i}") }),
+            )
+        })
+        .collect();
+    for id in ids {
+        let a: AttemptInput = args(json!({
+            "factId": id, "outcome": "conversation_unresolved", "reason": "no_page", "tier": "mention",
+        }));
+        b.upsert_fact_relink_attempt("default", &a, &UpsertOptions::default())
+            .unwrap();
+    }
+    assert!(pick(&b, "default", 50, false, true).is_empty());
+    page(&b, "default", "people/new-example");
+    assert_eq!(
+        pick(&b, "default", 50, false, true),
+        vec!["conversations/same-tick".to_string()]
+    );
+}

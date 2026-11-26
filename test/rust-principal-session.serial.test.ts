@@ -16,7 +16,10 @@ import { loadRustAddon } from '../src/core/rust-engine/addon-loader.ts';
 import { openRustEngine, type RustEngine } from '../src/core/rust-engine.ts';
 import { openPrincipalSession } from '../src/core/rust-engine/principal-session.ts';
 import { hashToken } from '../src/core/utils.ts';
-import { withCallerAccess } from '../src/core/search/private-visibility.ts';
+import { withCallerAccess, withoutCallerAccess } from '../src/core/search/private-visibility.ts';
+import { selfChecked } from '../src/core/rust-engine/access-self-check.ts';
+import { engineScopeStore } from '../src/core/engine-scope-store.ts';
+import { noteSchemaVersion, schemaVersionSeen } from '../src/core/migrate-pending.ts';
 import { rustArmAddonPath } from './engine-parity/rust-arm.ts';
 
 const SWITCHES = ['GBRAIN_RUST_MULTIUSER'] as const;
@@ -93,6 +96,8 @@ describe('a multi-user session on a Rust store', () => {
     expect(session.grant.scopes).toContain('write');
     expect(await code(session.admit('getConfig'))).toBe('ok');
     expect(await code(session.admit('setConfig'))).toBe('ok');
+    // Tools by their own scope: the read-write key runs read and write tools; a sources-admin tool needs that scope.
+    for (const [tool, got] of [['get_page', 'ok'], ['put_page', 'ok'], ['sources_add', 'permission_denied']] as const) expect({ tool, got: await code(session.admit(tool)) }).toEqual({ tool, got });
     session.release();
     expect(await code(session.admit('getConfig'))).toBe('permission_denied');
   });
@@ -108,6 +113,10 @@ describe('a multi-user session on a Rust store', () => {
     expect(await code(session.admit('getConfig'))).toBe('ok');
     expect(await code(session.admit('setConfig'))).toBe('permission_denied');
     expect(await code(session.admit('noSuchMember'))).toBe('permission_denied');
+    // A tool call (serve --http passes the operation name) is classified by the operation's own scope: a read tool runs,
+    // a write, sources-admin or unknown tool refuses.
+    for (const tool of ['get_page', 'list_pages', 'search', 'get_tags', 'get_backlinks', 'find_pages']) expect({ tool, got: await code(session.admit(tool)) }).toEqual({ tool, got: 'ok' });
+    for (const tool of ['put_page', 'add_tag', 'sources_add', 'no_such_tool']) expect({ tool, got: await code(session.admit(tool)) }).toEqual({ tool, got: 'permission_denied' });
     session.release();
   });
 
@@ -137,16 +146,13 @@ describe('a multi-user session on a Rust store', () => {
     const addon = { deriveAccessPolicy: (ctx: unknown) => { derived++; return (engine.addon as unknown as { deriveAccessPolicy(c: unknown): unknown }).deriveAccessPolicy(ctx); } };
     const session = await openPrincipalSession(store(), 'secret-owner', addon);
     // The owner's session reads it, even inside the stranger's record, and every policy came from the store.
-    // (A write-class call: an owner's read-only call carries member lineage, which neither the store nor TypeScript
-    // models for a Rust brain yet, so both refuse it; the next lines pin that the two agree.)
-    const seen = await withCallerAccess({ identity: ['member:mallory-example'], hidePrivate: true },
-      () => session.run('readPageHiddenFromCaller', { readOnly: false }, read));
-    expect(seen).toBe(false);
-    expect(derived).toBeGreaterThan(0);
-    const lineage = await session.run('readPageHiddenFromCaller', { readOnly: true }, read).catch(e => e);
-    expect((lineage as { code?: string }).code).toBe('engine_capability_missing');
-    const tsLineage = await withCallerAccess({ identity: ['member:owner-example'], owner: true, lineage: true, hidePrivate: false }, read).catch(e => e);
-    expect((tsLineage as { code?: string }).code).toBe('engine_capability_missing');
+    for (const readOnly of [false, true]) {
+      // A read-only call carries the owner's member lineage, served as the owner read rule.
+      const seen = await withCallerAccess({ identity: ['member:mallory-example'], hidePrivate: true },
+        () => session.run('readPageHiddenFromCaller', { readOnly }, read));
+      expect({ readOnly, seen }).toEqual({ readOnly, seen: false });
+    }
+    expect(derived).toBeGreaterThan(1);
     session.release();
   });
 
@@ -175,6 +181,35 @@ describe('a multi-user session on a Rust store', () => {
     expect((err as { code?: string }).code).toBe('engine_capability_missing');
     session.release();
     refusing.release();
+  });
+
+  test('in a session the owner-only form follows the store\'s own schema version, not the one TypeScript recorded (A12)', async () => {
+    // The owner-only test's form (closed before v320, the lineage function since) is decided by the schema version. A
+    // policy with no caller record (row_owner_only here) reads the version from the derivation settings; in a session
+    // that is the store's own, whatever version the TypeScript engine scope recorded.
+    const seen: unknown[] = [];
+    const pure = (engine.addon as unknown as { deriveAccessPolicy(c: unknown): unknown }).deriveAccessPolicy;
+    const spy = { deriveAccessPolicy: (ctx: unknown) => { seen.push(ctx); return pure(ctx); } };
+    const truth = await engine.getConfig('version');
+    const recorded = schemaVersionSeen(engine);
+    const form = async (storeVersion: string, tsVersion: number) => {
+      await engine.setConfig('version', storeVersion);
+      const session = await openPrincipalSession(store(), 'secret-owner', spy);
+      noteSchemaVersion(engine, tsVersion);
+      try {
+        return await session.run('readPageHiddenFromCaller', { readOnly: true }, async () => withoutCallerAccess(() =>
+          engineScopeStore.run(engine, () => selfChecked('readPageHiddenFromCaller', { mode: 'row_owner_only' }, () => 'typescript'))));
+      } finally { session.release(); }
+    };
+    try {
+      expect(await form('300', 341)).toBe('closed');
+      expect((seen.at(-1) as { settings: { scopeSchemaVersion?: number } }).settings.scopeSchemaVersion).toBe(300);
+      expect(await form('341', 300)).toBe('fn');
+      expect((seen.at(-1) as { settings: { scopeSchemaVersion?: number } }).settings.scopeSchemaVersion).toBe(341);
+    } finally {
+      await engine.setConfig('version', truth!);
+      if (recorded !== undefined) noteSchemaVersion(engine, recorded);
+    }
   });
 
   test('a session call on a read-only key cannot write, and a revoked session runs nothing', async () => {

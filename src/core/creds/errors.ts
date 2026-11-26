@@ -44,6 +44,17 @@ export type CredentialErrorCode =
   | 'code_reused'
   | 'invalid_client'
   | 'no_refresh_token'
+  // Personal mode and vault custody
+  | 'personal_account_required'
+  | 'client_user_mismatch'
+  | 'client_record_mismatch'
+  | 'client_swap_refused'
+  | 'identity_unproven'
+  | 'write_scope_refused'
+  | 'import_invalid'
+  | 'vault_lock_busy'
+  | 'vault_generation_changed'
+  | 'refresh_lease_busy'
   // API usage
   | 'api_not_enabled'
   | 'rate_limited'
@@ -154,6 +165,56 @@ const CATALOG: Record<CredentialErrorCode, CatalogEntry> = {
     problem: 'Google did not return a refresh token.',
     cause: 'A prior consent for this client already exists, and Google only re-issues refresh tokens when consent is re-prompted.',
     fix: 'Re-run connect (the flow always sends prompt=consent); if it persists, remove the app at myaccount.google.com/permissions and reconnect.',
+  },
+  personal_account_required: {
+    problem: 'Personal mode needs the Google account it is for.',
+    cause: 'A Personal-mode client only works for the one Google account that created it, so gbrain binds each client to one account before consent.',
+    fix: 'Re-run with the account: `gbrain google setup --personal --account <email>`.',
+  },
+  client_user_mismatch: {
+    problem: 'This Personal-mode client belongs to a different Google account%s.',
+    cause: 'Google lets only the account that created a Personal-mode client sign in with it. Each mailbox needs its own one-click client, created while signed in as that mailbox.',
+    fix: 'Open the Personal-mode link printed by `gbrain google setup --personal --account <email>` while signed in as that account, create the client there, and connect with its JSON.',
+  },
+  client_record_mismatch: {
+    problem: 'The OAuth client that minted this account\'s tokens is no longer on file%s.',
+    cause: 'Refresh tokens only work with the client that minted them. The stored client was replaced or removed without re-consenting this account, so gbrain refuses to refresh with a different client.',
+    fix: 'Re-consent the account with its own client: `gbrain google connect --reauth <email>` (or `gbrain google setup --personal --account <email>`).',
+  },
+  client_swap_refused: {
+    problem: 'The new OAuth client was not saved because its consent did not finish%s.',
+    cause: 'A client replacement is only written together with a verified grant (a refresh token, the right account and read-only scopes). The account keeps its previous working client.',
+    fix: 'Re-run the connect and finish the consent in the browser; nothing changed in the vault.',
+  },
+  identity_unproven: {
+    problem: 'gbrain could not prove which Google account these tokens belong to%s.',
+    cause: 'Before a grant replaces anything in the vault, its account must be proven by Google (a valid ID token or the OpenID userinfo answer) and must match --account.',
+    fix: 'Check that the consent requested `openid email` and that --account names the account that consented, then retry. Nothing was written.',
+  },
+  write_scope_refused: {
+    problem: 'Google returned a token that can change your data, and gbrain refused to store it%s.',
+    cause: 'gbrain only persists read-only (ingest) access tokens. The grant on file includes a scope that can write (for example gmail.modify or calendar.events), and Google did not narrow the refreshed token to read-only.',
+    fix: 'Reconnect with read-only scopes: `gbrain google connect --reauth <email>` (gbrain requests only read-only scopes and does not merge earlier grants). Nothing was stored.',
+  },
+  import_invalid: {
+    problem: 'The credential import was refused before anything was written%s.',
+    cause: '`gbrain google connect --import -` reads one JSON object on stdin: the client JSON (or client_id and client_secret), a refresh_token and the account. Every field is validated, and the refresh token is tried once, before the vault changes.',
+    fix: 'Fix the named field and pipe the JSON again; nothing changed in the vault.',
+  },
+  vault_lock_busy: {
+    problem: 'Another gbrain process is writing the credential vault%s.',
+    cause: 'Vault writes take a short lock and never proceed without it, so a token can never be written or handed out unlocked.',
+    fix: 'Retry in a few seconds. If it persists, check for a stuck gbrain process holding ~/.gbrain/credentials.json.lock.',
+  },
+  vault_generation_changed: {
+    problem: 'The account was reconnected or disconnected while this token write was in flight%s.',
+    cause: 'Every token write carries the grant generation it read. A disconnect or a new consent changed it, so this older write was dropped instead of overwriting the newer state.',
+    fix: 'Nothing to do; retry the command to use the current grant.',
+  },
+  refresh_lease_busy: {
+    problem: 'Another gbrain process is refreshing this account\'s token%s.',
+    cause: 'Refreshes of one grant are serialized so a rotated refresh token is never lost; the other refresh did not finish in time.',
+    fix: 'Retry in a few seconds.',
   },
   api_not_enabled: {
     problem: 'The Google API for this service is not enabled in your project.',

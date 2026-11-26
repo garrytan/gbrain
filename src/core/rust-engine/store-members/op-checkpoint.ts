@@ -110,3 +110,9 @@ export const purgeStaleCheckpoints: StoreMember<[ttlDays: number], number> = (br
  * through `executeRaw`, which this engine refuses), so none is stale.
  */
 export const purgeStaleAppliedCaptures: StoreMember<[ttlDays: number], number> = async () => 0;
+
+/** One soak counter added to (persistence/op_checkpoint.rs `add_soak_counter_event_in`, one store write). */
+export const addSoakCounterEvent: StoreMember<[op: string, day: string, kind: string, n: number], void> = async (brain, op, day, kind, n) => {
+  await storeCall({ member: 'addSoakCounterEvent' }, () => brain.addSoakCounterEvent(op, day, kind, n));
+};
+
