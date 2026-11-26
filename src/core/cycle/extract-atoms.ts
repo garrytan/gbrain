@@ -69,7 +69,7 @@ import { createGlobalLlmHaltTracker, haltedClassOf, providerContentBlockReason, 
 import { derivedWriteThrough, reportDerivedWriteThrough } from './derived-write-through.ts';
 import { emptySessionSourceRouting, keepSessionSourceTranscripts, withSessionSourceRouting } from './synthesize-source-routing.ts';
 import { serializeMarkdown } from '../markdown.ts';
-import { DEFAULT_EXTRACT_MAX_INPUT_CHARS, extractAtomsInput, inputTruncatedLine, pageInputUnchanged, recordPartialDisposition, releasePartialDispositions, resolveExtractAtomsInputCap, stampTranscriptTombstone, type ExtractAtomsInput, type ExtractAtomsItem } from './extract-atoms-input.ts';
+import { DEFAULT_EXTRACT_MAX_INPUT_CHARS, extractAtomsInput, inputTruncatedLine, recordPartialDisposition, releasePartialDispositions, resolveExtractAtomsInputCap, stampTranscriptTombstone, type ExtractAtomsInput, type ExtractAtomsItem } from './extract-atoms-input.ts';
 import { commitExtractionPlan, readPageWatermark } from '../extraction-watermark.ts';
 import { claudeCliSelfSessionIds } from '../ai/providers/claude-cli-scratch.ts';
 import { BudgetExhausted, BudgetTracker, loadPricingOverrides } from '../budget/budget-tracker.ts';
@@ -96,7 +96,7 @@ import { OperationError } from '../ops/contract.ts';
 import { isOpPageSlug } from '../ops/context.ts';
 import type { WriteReceipt } from '../persistence/types.ts';
 import { acceptedPendingReceipt } from '../persistence/accepted-pending.ts';
-import { AtomPageStateError, atomDiscoveryInput, atomOutputsCurrent, MAX_DETERMINISTIC_FAILURES, readAtomPageIdentity, writeAtomPageState, type AtomPageInput } from './extract-atoms-page-state.ts';
+import { AtomPageStateError, MAX_DETERMINISTIC_FAILURES, readAtomPageIdentity, writeAtomPageState, type AtomPageInput } from './extract-atoms-page-state.ts';
 import { atomGenerationOrigin, atomInputPin, heldAtomInputExclusionSql, heldLine, publishUnmanagedAtoms, resolveTranscriptAtomSlug, resolveTranscriptKeys, transcriptRoot } from './extract-atoms-generation.ts';
 import { currentHoldIds, heldForInput } from '../generations/publish.ts';
 import { ATOM_TYPES, ATOMS_RESPONSE_SCHEMA } from './extract-atoms-schema.ts';
@@ -463,9 +463,12 @@ export async function discoverExtractablePages(
       compiled_truth: string;
       content_hash: string;
     }>(sql, params);
-    const pages: AtomPageInput[] = [];
-    for (const row of rows) { const page = await atomDiscoveryInput(engine, sourceId, row); if (page) pages.push(page); }
-    return pages;
+    return rows.map((r) => ({
+      slug: r.slug,
+      content: r.compiled_truth,
+      contentHash: r.content_hash,
+      identity: { pageId: r.id, sourceIncarnation: r.source_incarnation, revision: r.knowledge_revision },
+    }));
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[extract_atoms] page-discovery query failed: ${msg}`);
@@ -1111,8 +1114,7 @@ export async function runPhaseExtractAtoms(
     // item, so a quote can only verify against text the model actually saw.
     // #6503: a cut item is extracted once from its head and gets a partial
     // disposition instead of a completion stamp (extract-atoms-input.ts).
-    const mark = item.kind === 'page' ? await readPageWatermark(engine, sourceId, item.slug, 'extract_atoms') : null;
-    const input = extractAtomsInput(item, maxInputChars, mark?.stored ?? null);
+    const input = extractAtomsInput(item, maxInputChars, item.kind === 'page' ? (await readPageWatermark(engine, sourceId, item.slug, 'extract_atoms')).stored : null);
     const { promptContent, truncated } = input;
     let origin: AtomOrigin | null = null;
     try {
@@ -1121,8 +1123,6 @@ export async function runPhaseExtractAtoms(
       const contentDate = await (item.kind === 'page' ? atomSourceDate(engine, sourcePage) : transcriptAtomSourceDate(engine, item.content, sourceDate(item.filePath, ''))); // #6720, #7268: captured with the input, before inference
       const visibility = origin?.visibility ?? effectiveVisibility(item.kind === 'transcript' ? { kind: 'transcript' } // #5525
         : { kind: 'page', page: sourcePage && { ...sourcePage, folder_restricted: await folderRestricted(engine, sourceId, item.slug) } });
-      // #10435: discovery offered the page because its content hash moved; a fence-only edit left its input and its atoms' metadata unchanged
-      if (!managed && opts._pages === undefined && item.kind === 'page' && mark && pageInputUnchanged(input, mark) && await atomOutputsCurrent(engine, item, contentDate, visibility)) { throwIfAborted(opts.signal, 'extract_atoms'); if (!opts.dryRun) await stampAtomsScanHash(item); duplicatesSkipped++; continue; }
       throwIfAborted(opts.signal, 'extract_atoms');
       const resumed = !opts.dryRun && managed && origin ? await resumeManagedAtoms(engine, managed, origin) : 'run';
       if (resumed === 'done') { duplicatesSkipped++; continue; }

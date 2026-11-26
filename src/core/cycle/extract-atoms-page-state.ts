@@ -2,7 +2,6 @@ import type { SqlEngine } from '../persistence/model.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { stableJson } from '../persistence/digest.ts';
 import type { BrainEngine } from '../engine.ts';
-import { FACTS_FENCE_BEGIN } from '../facts-fence.ts';
 
 /**
  * gbrain#4148: consecutive same-content failures of a content-deterministic
@@ -38,27 +37,6 @@ export class AtomPageStateError extends Error {
   }
 }
 
-/**
- * #10332: one discovered page as the phase reads it. A facts-fenced page's body is its canonical snapshot (withdrawals
- * overlaid), the same text readAtomOrigin pins on a managed brain and every reader sees; the stored bytes would conflict
- * with that check on every attempt and could carry a withdrawn claim. A snapshot that moved past the discovered revision
- * or cannot be read leaves only this page pending this run.
- */
-export async function atomDiscoveryInput(engine: BrainEngine, sourceId: string,
-  row: { id: number; knowledge_revision: string; source_incarnation: string; slug: string; compiled_truth: string; content_hash: string }): Promise<AtomPageInput | null> {
-  const identity = { pageId: row.id, sourceIncarnation: row.source_incarnation, revision: row.knowledge_revision };
-  if (!row.compiled_truth.includes(FACTS_FENCE_BEGIN)) return { slug: row.slug, content: row.compiled_truth, contentHash: row.content_hash, identity };
-  try {
-    const snapshot = await engine.readPageSnapshot(row.slug, { sourceId });
-    const current = snapshot && Number(snapshot.page.id) === Number(row.id) && snapshot.sourceIncarnation === row.source_incarnation
-      && snapshot.revision === row.knowledge_revision && snapshot.page.content_hash === row.content_hash;
-    return current ? { slug: row.slug, content: snapshot.page.compiled_truth, contentHash: row.content_hash, identity } : null;
-  } catch (error) {
-    console.error(`[extract_atoms] ${row.slug}: its canonical body could not be read (${error instanceof Error ? error.message : String(error)}); it stays pending`);
-    return null;
-  }
-}
-
 export async function readAtomPageIdentity(engine: SqlEngine, sourceId: string, item: AtomPageInput): Promise<AtomPageIdentity | undefined> {
   const [row] = await engine.executeRaw<{ id: number; incarnation: string; knowledge_revision: string }>(
     `SELECT p.id, s.incarnation, p.knowledge_revision FROM pages p JOIN sources s ON s.id=p.source_id
@@ -90,24 +68,6 @@ export async function writeAtomPageState(
   });
   if (!row) throw new AtomPageStateError('changed');
   return Number(row.fail_count);
-}
-
-/**
- * #10435: an unchanged extraction input stands in for a new extraction only while that extraction's outputs stand: this source
- * incarnation's latest scan of the page succeeded (a soft delete, a restore or a source move clears it; a failure tombstone
- * or a later partial read does not count), and every live atom this page produced still carries the page's date and is no wider than its visibility
- * (a date-only or visibility-only edit leaves the input unchanged; an atom someone made private stays private).
- */
-export async function atomOutputsCurrent(engine: SqlEngine, item: AtomPageInput, date: string | null, visibility: string): Promise<boolean> {
-  if (!item.identity) return false;
-  const [row] = await engine.executeRaw<{ complete: boolean; stale: boolean }>(
-    `SELECT COALESCE((SELECT tombstoned AND fail_count<$5 FROM extract_atoms_page_state WHERE source_incarnation=$1::uuid AND page_id=$2
-              ORDER BY updated_at DESC LIMIT 1), false) AS complete,
-            EXISTS (SELECT 1 FROM links l JOIN pages a ON a.id=l.to_page_id WHERE l.from_page_id=$2 AND l.link_source='atom-provenance'
-              AND a.deleted_at IS NULL AND a.frontmatter->>'source_slug'=$6
-              AND (a.frontmatter->>'date' IS DISTINCT FROM $3::text OR ($4::text='private' AND a.frontmatter->>'visibility' IS DISTINCT FROM $4::text))) AS stale`,
-    [item.identity.sourceIncarnation, item.identity.pageId, date, visibility, MAX_DETERMINISTIC_FAILURES, item.slug]);
-  return row?.complete === true && row.stale === false;
 }
 
 const LEGACY_KEYS = ['atoms_scan_hash', 'atoms_fail_hash', 'atoms_fail_count'];

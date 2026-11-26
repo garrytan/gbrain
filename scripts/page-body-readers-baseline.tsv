@@ -118,8 +118,8 @@ src/core/cycle/concept-publication.ts	prepareManagedConcept	call:serializeMarkdo
 src/core/cycle/drift.ts	runPhaseDrift	call:serializeMarkdown	INLINE	
 src/core/cycle/edge-contradictions.ts	removeTimelineLine	call:serializeMarkdown	SEGW	
 src/core/cycle/edge-contradictions.ts	removeTimelineLine	field	SEGW	
-src/core/cycle/extract-atoms-page-state.ts	atomDiscoveryInput	field	STREAM	moved from discoverExtractablePages (#10332); see its sql row (segmented pages are never discovered); CAS is on content_hash + knowledge_revision
 src/core/cycle/extract-atoms-page-state.ts	transferLegacyAtomPageState	field	META	compares two snapshots; segmented page: getter throws page_body_segmented
+src/core/cycle/extract-atoms.ts	discoverExtractablePages	field	STREAM	see sql row; CAS is on content_hash + knowledge_revision
 src/core/cycle/extract-atoms.ts	discoverExtractablePages	sql	STREAM	minCompiledTruthChars is false for NULL: segmented pages are never discovered (skip until per-segment extraction, PR 4)
 src/core/cycle/extract-atoms.ts	minCompiledTruthChars	sql	STREAM	false for a segmented page (NULL body): skip
 src/core/cycle/extract-atoms.ts	runPhaseExtractAtoms	call:serializeMarkdown	SEGW	

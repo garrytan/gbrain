@@ -181,19 +181,19 @@ function warnStorageOnce(action: string, error: unknown): void {
 
 /** The page's id and stored watermark for `pipeline`; `pageId` is null when no live page has that slug. Fail-soft to no watermark. */
 export async function readPageWatermark(engine: BrainEngine, sourceId: string, slug: string,
-  pipeline: ExtractionPipeline): Promise<{ pageId: number | null; stored: StoredWatermark | null; truncated: boolean }> {
+  pipeline: ExtractionPipeline): Promise<{ pageId: number | null; stored: StoredWatermark | null }> {
   try {
-    const [row] = await engine.executeRaw<{ id: number; pipeline_version: number | null; watermark_bytes: string | number | null; watermark_sha256: string | null; truncated: boolean | null }>(
-      `SELECT p.id, s.pipeline_version, s.watermark_bytes, s.watermark_sha256, s.input_truncated IS NOT NULL AS truncated
+    const [row] = await engine.executeRaw<{ id: number; pipeline_version: number | null; watermark_bytes: string | number | null; watermark_sha256: string | null }>(
+      `SELECT p.id, s.pipeline_version, s.watermark_bytes, s.watermark_sha256
          FROM pages p LEFT JOIN page_extraction_state s ON s.page_id = p.id AND s.pipeline = $3
         WHERE p.source_id = $1 AND p.slug = $2 AND p.deleted_at IS NULL`, [sourceId, slug, pipeline]);
-    if (!row) return { pageId: null, stored: null, truncated: false };
+    if (!row) return { pageId: null, stored: null };
     const stored = row.pipeline_version !== null && row.watermark_bytes !== null && row.watermark_sha256
       ? { pipelineVersion: Number(row.pipeline_version), bytes: Number(row.watermark_bytes), sha256: row.watermark_sha256 } : null;
-    return { pageId: Number(row.id), stored, truncated: row.truncated === true };
+    return { pageId: Number(row.id), stored };
   } catch (error) {
     warnStorageOnce('read the extraction watermark', error);
-    return { pageId: null, stored: null, truncated: false };
+    return { pageId: null, stored: null };
   }
 }
 
