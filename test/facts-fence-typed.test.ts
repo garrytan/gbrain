@@ -263,7 +263,7 @@ describe('v0.35.4 (D-ENG-1) — extractFactsFromFenceText valid_from precedence'
     expect(out[0].valid_from?.toISOString().slice(0, 10)).toBe('2026-04-28');
   });
 
-  test('Path 3: missing fence validFrom AND undefined pageEffectiveDate → undefined (engine defaults to now)', () => {
+  test('Path 3: missing fence validFrom AND undefined pageEffectiveDate → null (event date unknown)', () => {
     const facts: ParsedFact[] = [{
       rowNum: 1,
       claim: 'no dates at all',
@@ -278,7 +278,7 @@ describe('v0.35.4 (D-ENG-1) — extractFactsFromFenceText valid_from precedence'
       pageEffectiveDate: null,
     });
     // valid_from is left undefined; the engine layer applies now() at insert.
-    expect(out[0].valid_from).toBeUndefined();
+    expect(out[0].valid_from).toBeNull();
   });
 
   test('typed-claim fields thread through with metric normalization applied', () => {

@@ -25,7 +25,7 @@ import { loadEmbeddingQueryPrefix } from '../search/query-prefix.ts';
 import { embedQueryBounded, makeQueryEmbedDeadline } from '../search/hybrid.ts';
 import { resolveHnswIterativeScan } from '../search/hnsw-iterative-scan.ts';
 import {
-  FACT_ADMISSION_FLOOR_EVIDENCE, QUESTION_ADMISSION_RULES, admitted, collectFactCandidates, countUncomparableFacts, isDatedFact, poolEntityPairs, queryTerms, scoreFactCandidates,
+  FACT_ADMISSION_FLOOR_EVIDENCE, QUESTION_ADMISSION_RULES, admitted, collectFactCandidates, countUncomparableFacts, factRecency, isDatedFact, poolEntityPairs, queryTerms, scoreFactCandidates,
   type FactPoolFilters, type FactPoolScope, type QuestionAdmissionRule,
 } from '../search/fact-relevance.ts';
 import { applySlotEnds } from '../search/slot-ends.ts';
@@ -300,7 +300,7 @@ function weighByConfidence(scored: Array<{ id: number; score: number }>, byId: M
     rank.set(id, score * f);
   }
   const order = scored.map(s => s.id).sort((a, b) => rank.get(b)! - rank.get(a)!
-    || (byId.get(b)?.valid_from.getTime() ?? 0) - (byId.get(a)?.valid_from.getTime() ?? 0) || b - a);
+    || factRecency(byId.get(b)) - factRecency(byId.get(a)) || b - a);
   for (const [id, s] of rank) rank.set(id, round4(s));
   return { order, rank, factor };
 }

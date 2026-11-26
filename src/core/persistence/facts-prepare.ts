@@ -59,7 +59,7 @@ function dedupEmbedding(fact: { embedding?: Float32Array | null; entity_inferred
 
 function thawFact(fact: FrozenExtractedFact): NewFact & { entity_slug: string | null; kind: NonNullable<NewFact['kind']>; visibility: NonNullable<NewFact['visibility']> } {
   return { ...fact, entity_slug: fact.entity_slug ?? null, kind: fact.kind ?? 'fact', visibility: fact.visibility ?? 'private',
-    valid_from: new Date(fact.valid_from), valid_until: fact.valid_until ? new Date(fact.valid_until) : null,
+    valid_from: fact.valid_from == null ? null : new Date(fact.valid_from), valid_until: fact.valid_until ? new Date(fact.valid_until) : null,
     embedding: fact.embedding ? new Float32Array(fact.embedding) : null };
 }
 
@@ -233,14 +233,14 @@ export async function prepareManagedFactsMutation(engine: BrainEngine, row: Writ
     if (rowNum !== undefined) refuseUnparsedRewrite(fenced, row.slug, row.source_id, () => fence.append({
       rowNum, claim: fact.fact, kind: fact.kind, visibility: fact.visibility,
       confidence: fact.confidence ?? 1, notability: fact.notability ?? 'medium', source: fact.source, context: fact.context ?? undefined,
-      validFrom: formatFenceDate(fact.valid_from!), validUntil: fact.valid_until ? formatFenceDate(fact.valid_until) : undefined,
+      validFrom: fact.valid_from ? formatFenceDate(fact.valid_from) : undefined, validUntil: fact.valid_until ? formatFenceDate(fact.valid_until) : undefined,
       claimMetric: fact.claim_metric ?? undefined, claimValue: fact.claim_value ?? undefined,
       claimUnit: fact.claim_unit ?? undefined, claimPeriod: fact.claim_period ?? undefined,
       ...(fact.attributed_to ? { attributedTo: fact.attributed_to } : {}),
       ...(fact.entity_slug && fact.entity_slug !== row.slug ? { entity: fact.entity_slug } : {}) }));
     // Strike the superseded row in this page's fence, as the remember mutation does (#6686: in the section that holds it).
     if (supersedes && rowNum !== undefined && supersedes.source_markdown_slug === row.slug && supersedes.row_num != null) {
-      const until = supersededValidUntil(supersedes, fact.valid_from!);
+      const until = supersededValidUntil(supersedes, fact.valid_from ?? null);
       fence.strike(Number(supersedes.row_num), rowNum, until ? formatFenceDate(until) : undefined);
     }
     entries.push({ fact, duplicateId: null, rowNum, supersedes, gate });
@@ -314,7 +314,7 @@ export async function prepareManagedFactsMutation(engine: BrainEngine, row: Writ
         if (entry.gate) await recordFlaggedRow(tx, entry.gate, { table: 'facts', id: ids[ids.length - 1], sourceId: row.source_id });
         if (entry.supersedes) {
           await tx.executeRaw('UPDATE facts SET expired_at=COALESCE(expired_at,now()),superseded_by=$3,valid_until=COALESCE($4::timestamptz,valid_until) WHERE id=$1 AND source_id=$2',
-            [entry.supersedes.id, row.source_id, ids[ids.length - 1], supersededValidUntil(entry.supersedes, entry.fact.valid_from!)]);
+            [entry.supersedes.id, row.source_id, ids[ids.length - 1], supersededValidUntil(entry.supersedes, entry.fact.valid_from ?? null)]);
           superseded++;
         }
       }

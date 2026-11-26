@@ -283,7 +283,8 @@ Save ONE fact with mandatory attribution.
   Empty ⇒ `provenance_required` error with a fix.
 - `entity`: set whenever the fact is about a specific person/company/project —
   entity-scoped recall will not find unattributed facts.
-- `valid_from` (ISO 8601): when the fact became true. Omitted ⇒ write time.
+- `valid_from` (ISO 8601): when the fact became true. Omitted ⇒ unknown: stored as
+  null, returned by `recall` as `valid_from: null` and left out of `since` windows.
 - `infer_entity` (additive, boolean, default `true`): when `entity` is omitted,
   the server may link the fact to the one entity page its text names exactly
   (zero LLM; a second competing name, a bare first name or an ambiguous match

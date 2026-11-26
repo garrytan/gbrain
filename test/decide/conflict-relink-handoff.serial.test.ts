@@ -172,9 +172,10 @@ describe('sweep pickup and chronology', () => {
     expect(body.state.fact).toBe('[g1][v1] Alice now leads design');
     const [q] = Object.values(body.questions) as any[];
     expect(q.instructions.candidate).toBe('[g1][v2] Alice leads research');
-    const [times] = await engine.executeRaw<{ newer_from: Date; older_from: Date }>(
+    const [times] = await engine.executeRaw<{ newer_from: Date | null; older_from: Date }>(
       'SELECT n.valid_from AS newer_from, o.valid_from AS older_from FROM facts n, facts o WHERE n.id = $1 AND o.id = $2', [newer, older]);
-    expect(body.state.fact_time).toContain(`valid from ${new Date(times!.newer_from).toISOString()}`);
+    expect(times!.newer_from).toBeNull();
+    expect(body.state.fact_time).toContain('valid from unknown');
     expect(q.instructions.candidate_time).toContain(`valid from ${new Date(times!.older_from).toISOString()}`);
   });
 

@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 335688,
-    "stdoutSha256": "527ce4b119eb1149d22a3295948e24883f8be6171f4131190addc85303df9506",
+    "stdoutBytes": 335911,
+    "stdoutSha256": "6d7e1fa8239dec51989b3a352d49ba47fffc1a572d6d24bb61346d4e6dbb7d82",
     "toolNames": [
       "remember",
       "entity",
@@ -7937,7 +7937,7 @@
               "type": "string"
             },
             "valid_from": {
-              "description": "#4206: ISO 8601 event time for the extracted facts — use when the turn is historical (importing an old transcript) so facts do not get stamped with import time. Fallback only: a date the extractor derives from the turn itself wins. Default: now().",
+              "description": "#4206: ISO 8601 event time for the extracted facts — use when the turn is historical (importing an old transcript) so facts do not get stamped with import time. Fallback only: a date the extractor derives from the turn itself wins. Omitted: the event date stays unknown.",
               "type": "string"
             },
             "visibility": {
@@ -7965,6 +7965,7 @@
           "grep": "string?",
           "include_expired": "boolean?",
           "include_pending": "boolean?",
+          "include_undated": "boolean?",
           "limit": "number?",
           "max_chars": "integer?",
           "min_trust": "string?",
@@ -8007,6 +8008,10 @@
             },
             "include_pending": {
               "description": "Pending count.",
+              "type": "boolean"
+            },
+            "include_undated": {
+              "description": "With since: also facts with no event date saved inside the window.",
               "type": "boolean"
             },
             "limit": {
