@@ -19,6 +19,8 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { opError, type OperationError } from '../ops/contract.ts';
 import { accessSettingsSnapshot, callerAccessRecord } from '../search/private-visibility.ts';
 import { rustMultiuserFromEnv, rustMultiuserSubSwitch } from './multiuser-switch.ts';
+import { capabilityMissing } from './errors.ts';
+import { memberCapability } from './store-members/common.ts';
 
 /** What a helper asks the store to derive (`DeriveRequest` in access_derive.rs). */
 export type AccessDeriveRequest =
@@ -33,7 +35,7 @@ export type AccessDeriveRequest =
 
 type Deriver = (ctx: unknown) => unknown;
 /** The store a served member runs on, as the self-check reads it: its multi-user answer and the addon's derivation. */
-interface AccessStore { readonly multiuser: boolean; readonly derive?: Deriver }
+interface AccessStore { readonly multiuser: boolean; readonly derive?: Deriver; readonly server?: boolean }
 const accessStore = new AsyncLocalStorage<AccessStore>();
 
 /**
@@ -49,10 +51,25 @@ export function storeMultiuser(store: object): boolean {
  * Runs `fn`, a served member on `store`, with the store's answer in context when the store is in multi-user mode;
  * otherwise just runs it. `addon` holds the pure `deriveAccessPolicy` export the self-check compares with.
  */
-export function withAccessStore<T>(store: object, addon: object, fn: () => T): T {
+export function withAccessStore<T>(store: object, addon: object, fn: () => T, opts: { server?: boolean } = {}): T {
   if (!storeMultiuser(store)) return fn();
-  const derive = (addon as { deriveAccessPolicy?: unknown }).deriveAccessPolicy;
-  return accessStore.run({ multiuser: true, ...(typeof derive === 'function' ? { derive: derive as Deriver } : {}) }, fn);
+  const outer = accessStore.getStore();
+  const own = (addon as { deriveAccessPolicy?: unknown }).deriveAccessPolicy;
+  // Inside a principal session the session's derivation holds (the same addon in production).
+  const derive = outer?.server === true && outer.derive ? outer.derive : typeof own === 'function' ? own as Deriver : outer?.derive;
+  // Server mode, once set by a principal session (principal-session.ts), holds for every member call inside it.
+  const server = opts.server === true || outer?.server === true;
+  return accessStore.run({ multiuser: true, ...(derive ? { derive } : {}), ...(server ? { server } : {}) }, fn);
+}
+
+/** Server mode: a principal session's call, whose every privacy policy is the store's derivation alone. */
+export function accessServerModeOn(): boolean {
+  return accessStore.getStore()?.server === true;
+}
+
+/** A policy helper must ask the store: the self-check compares, or server mode uses the store's answer alone. */
+export function accessDerivationOn(): boolean {
+  return accessServerModeOn() || accessSelfCheckOn();
 }
 
 /** Comparisons the self-check made in this process, and how many it refused (the CI self-check lane reads them). */
@@ -94,6 +111,22 @@ function storeJson(value: unknown): unknown {
   return value;
 }
 
+/**
+ * Server mode: the store's derivation is the policy. A refusal raises the same `engine_capability_missing` refusal the
+ * TypeScript helper raises; no derivation in context, or one the store cannot read, refuses (fail closed).
+ */
+function storeDerived<T>(member: string, request: AccessDeriveRequest): T {
+  const derive = accessStore.getStore()?.derive;
+  if (!derive) throw accessSelfCheckMismatch(member, request.mode, '$derive (no store derivation is in context)');
+  const got = derive(accessDeriveContext(request)) as Record<string, unknown> | null;
+  if (got && typeof got === 'object' && !Array.isArray(got)) {
+    if (got.$invalid !== undefined) throw accessSelfCheckMismatch(member, request.mode, '$invalid');
+    if (got.$refuse === true) throw capabilityMissing(memberCapability(member), `${member} (${String(got.why ?? 'a policy the store does not model')})`);
+    if (got.$none === true) return undefined as T;
+  }
+  return got as T;
+}
+
 /** The first path where `a` and `b` differ, or null when they are equal (key order ignored). */
 export function firstDifference(a: unknown, b: unknown, path = '$'): string | null {
   if (a === b) return null;
@@ -131,6 +164,7 @@ export function accessSelfCheckMismatch(member: string, mode: string, at: string
  * rethrown unchanged when they agree.
  */
 export function selfChecked<T>(member: string, request: AccessDeriveRequest, run: () => T): T {
+  if (accessServerModeOn() && !accessSelfCheckOn()) return storeDerived<T>(member, request);
   if (!accessSelfCheckOn()) return run();
   let value: T | undefined;
   let refusal: unknown;

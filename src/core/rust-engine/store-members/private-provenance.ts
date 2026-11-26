@@ -62,7 +62,7 @@ import { ownerOnlyFactSql, ownerOnlyPageSql, ownerOnlyTakeSql, ownerOnlyTimeline
 import type { HybridSearchOpts, PostFusionOpts } from '../../search/hybrid.ts';
 import type { PageReadScope } from '../../types.ts';
 import { refuseMember } from './common.ts';
-import { accessSelfCheckMismatch, accessSelfCheckOn, selfChecked } from '../access-self-check.ts';
+import { accessDerivationOn, accessSelfCheckMismatch, selfChecked } from '../access-self-check.ts';
 
 /** The policy flags the store reads (`PrivacyPolicy` in rust/crates/gbrain-store/src/facts/privacy.rs). */
 export interface StorePrivacyPolicy {
@@ -194,7 +194,7 @@ export function storePrivacyPolicy(
   rendered: () => string,
   opts: { callerReaders?: boolean; fragment?: StoreFactFragment } = {},
 ): StorePrivacyPolicy | undefined {
-  if (!accessSelfCheckOn()) return storePrivacyPolicyRendered(member, excludePrivate, rendered, opts);
+  if (!accessDerivationOn()) return storePrivacyPolicyRendered(member, excludePrivate, rendered, opts);
   checkFragment(member, 'fact', rendered, opts.fragment ? FACT_FRAGMENTS[opts.fragment] : undefined);
   return selfChecked(member, { mode: 'fact', excludePrivate: excludePrivate === true, fragment: opts.fragment!, callerReaders: opts.callerReaders === true },
     () => storePrivacyPolicyRendered(member, excludePrivate, rendered, opts));
@@ -347,7 +347,7 @@ export function storePageTextPolicy(
   rendered: () => string,
   opts: { callerReaders?: boolean; noReaders?: boolean; fragment?: StorePageFragment; renderedIn?: { record: CallerAccess | null } } = {},
 ): StorePrivacyPolicy {
-  if (!accessSelfCheckOn()) return storePageTextPolicyRendered(member, rendered, opts);
+  if (!accessDerivationOn()) return storePageTextPolicyRendered(member, rendered, opts);
   const labelled = opts.fragment ? PAGE_FRAGMENTS[opts.fragment] : undefined;
   const at = opts.renderedIn;
   checkFragment(member, 'page_text', rendered, labelled && at

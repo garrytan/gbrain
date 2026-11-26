@@ -469,9 +469,16 @@ store side: `Store::authenticate_bearer`, `Scope::from_principal` and `Scope::re
 6. **Remote flag.** The principal is a remote caller. Pass `principalRemote: true` to `ownerRemoteRefusal` (groundwork K,
    `src/core/rust-engine/owner-ipc/remote-check.ts`); a frame that marks itself local on such a connection refuses.
 7. **Close.** Call `session.release()` when the connection closes.
+8. **Run.** `session.run(member, { readOnly, privateReadableSources, privateFactSources }, fn)` does step 4, then runs
+   the call under the caller record the store builds for the principal (`scopeCallerRecord`,
+   `rust/crates/gbrain-store/src/access_record.rs`: the remote read policy, the token's live member and groups, owner,
+   lineage, folder-rule access, labelled-only and audience members) and in server mode, where every privacy policy is
+   the store's derivation of that record (`access_derive.rs`). A caller record the client set, and the TypeScript
+   rendering, never apply; a policy the store does not model refuses. The private sources come from `session.grant`.
 
-What the session does not do yet: derive the read policy from the principal for non-owner keys (the access
-self-check proves the derivation first), and carry a session across a reconnect (a reconnect opens a new session).
+What the session does not do yet: admit keys other than the owner's (ruling A1), carry a session across a reconnect
+(a reconnect opens a new session), and serve an owner's read-only call on a Rust brain: such a call carries member
+lineage, which neither the store nor the TypeScript renderers model for a Rust brain yet, so it refuses typed.
 
 ### I-7. Wire protocol v3 (grown from owner socket v2, `src/core/rust-engine/owner-ipc/protocol.ts`)
 
