@@ -312,7 +312,7 @@ src/core/onboard/setup-history.ts	execute_raw	7	setup history import: install-re
 src/core/ops/jobs.ts	execute_raw	3
 src/core/ops/known-as-of.ts	execute_raw	3
 src/core/ops/page-upload.ts	execute_raw	2
-src/core/ops/qm-memory.ts	execute_raw	2
+src/core/ops/qm-memory.ts	execute_raw	1
 src/core/ops/storage-manifest.ts	execute_raw	1
 src/core/ops/trust.ts	execute_raw	1
 src/core/oversized-backfill.ts	execute_raw	6

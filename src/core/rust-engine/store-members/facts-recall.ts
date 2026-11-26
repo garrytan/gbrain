@@ -3,7 +3,7 @@
  * (rust/crates/gbrain-store/src/facts/recall.rs). A member not exported here refuses with `engine_capability_missing`.
  *
  * Served: `readFactsEmbeddingColumn`, `listNearestFacts`, `listTypedClaimFactsAtPages`, `listSlotRows`, `listPoolUnbackedKeys`, `listCallOffCueFacts` and
- * `listPoolEntityPairs`. Each reads under the pool's read policy, which `poolArgs` (fact-pool.ts) resolves as it does for
+ * `listPoolEntityPairs`, and `readFactWrittenDates` (memory_recall's date column, a plain read by fact id). Each of the pool reads reads under the pool's read policy, which `poolArgs` (fact-pool.ts) resolves as it does for
  * `listFactsForRelevance`: the store answers it exactly when the visibility and privacy policies are ones it serves;
  * anything else refuses. `listNearestFacts` also refuses a vector-typed
  * column (the store keeps `halfvec`); its `hnswIterativeScan` only changes the plan, so the store ignores it.
@@ -32,6 +32,13 @@ export const listFactSourcePages: Member<'listFactSourcePages'> = async (brain, 
   if (!ids.length) return [];
   if (!ids.every(Number.isSafeInteger)) refuseMember('listFactSourcePages', 'a fact id that is not an integer');
   return await storeCall({ member: 'listFactSourcePages' }, () => brain.listFactSourcePages([...ids])) as Awaited<ReturnType<BrainEngine['listFactSourcePages']>>;
+};
+
+/** memory_recall's date column (BrainEngine readFactWrittenDates): the written day of each fact, from the store's facts (facts/recall.rs). */
+export const readFactWrittenDates: Member<'readFactWrittenDates'> = async (brain, ids) => {
+  if (!ids.length) return [];
+  if (!ids.every(Number.isSafeInteger)) refuseMember('readFactWrittenDates', 'a fact id that is not an integer');
+  return await storeCall({ member: 'readFactWrittenDates' }, () => brain.readFactWrittenDates([...ids])) as Awaited<ReturnType<BrainEngine['readFactWrittenDates']>>;
 };
 
 export const listNearestFacts: Member<'listNearestFacts'> = async (brain, q) => {

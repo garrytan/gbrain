@@ -365,7 +365,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     ],
 
   // facts_recall: the recall pool's candidate reads (nearest, slot, call-off, entity pairs, unbacked keys) and its final row read
-  facts_recall: ['readFactsEmbeddingColumn', 'listNearestFacts', 'listFactSourcePages', 'listTypedClaimFactsAtPages', 'listSlotRows', 'listPoolUnbackedKeys', 'listCallOffCueFacts', 'listPoolEntityPairs', 'listFactRowsByIds',
+  facts_recall: ['readFactsEmbeddingColumn', 'listNearestFacts', 'listFactSourcePages', 'listTypedClaimFactsAtPages', 'listSlotRows', 'listPoolUnbackedKeys', 'listCallOffCueFacts', 'listPoolEntityPairs', 'listFactRowsByIds', 'readFactWrittenDates',
     'listReadablePageSlugs'],
 
   // facts_conversation: conversation fact publication and relink

@@ -2092,6 +2092,7 @@ export class PostgresEngine implements BrainEngine {
   listCallOffCueFacts(scope: factsTrustImpl.FactPoolScope, pairs: ReadonlyArray<{ source_id: string; entity_slug: string }>) { return factsRecallImpl.listCallOffCueFacts(this.executeRaw.bind(this), scope, pairs); }
   listPoolEntityPairs(scope: factsTrustImpl.FactPoolScope, filters: factsTrustImpl.FactPoolFilters) { return factsRecallImpl.listPoolEntityPairs(this.executeRaw.bind(this), scope, filters); }
   listFactRowsByIds(sourceIds: readonly string[], ids: readonly number[]) { return factsRecallImpl.listFactRowsByIds(this.executeRaw.bind(this), sourceIds, ids); }
+  readFactWrittenDates(ids: readonly number[]) { return factsRecallImpl.readFactWrittenDates(this.executeRaw.bind(this), ids); }
   listOntologyStreamSlugs(sourceId: string, entitySlug: string, dimension: string) { return factsTrustImpl.listOntologyStreamSlugs(this.executeRaw.bind(this), sourceId, entitySlug, dimension); }
   readOntologyRival(sourceId: string, entitySlug: string, dimension: string, excludeId: number) { return factsTrustImpl.readOntologyRival(this.executeRaw.bind(this), sourceId, entitySlug, dimension, excludeId); }
   listBeliefStreamSlugs(table: 'facts' | 'takes' | 'pages', ids: readonly number[]) { return factsTrustImpl.listBeliefStreamSlugs(this.executeRaw.bind(this), table, ids); }

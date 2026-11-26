@@ -831,6 +831,8 @@ export interface FactsStatementMembers {
   listPoolEntityPairs(scope: FactsTrustSql.FactPoolScope, filters: FactsTrustSql.FactPoolFilters): Promise<Array<{ source_id: string; entity_slug: string }>>;
   /** The whole fact rows of these ids within these sources. */
   listFactRowsByIds(sourceIds: readonly string[], ids: readonly number[]): Promise<FactsRecallSql.FactRowSqlShape[]>;
+  /** The written day (`YYYY-MM-DD`, UTC, as the database writes it) of each of the facts `ids`: memory_recall's date column. A missing id has no row. */
+  readFactWrittenDates(ids: readonly number[]): Promise<FactsRecallSql.FactWrittenDateRow[]>;
   /** The provenance slug of each open non-conversation stint of an entity's (normalised) dimension, each once, sorted. */
   listOntologyStreamSlugs(sourceId: string, entitySlug: string, dimension: string): Promise<string[]>;
   /** The newest open, active, non-conversation stint of the dimension other than `excludeId`, with its stored tier; null: none. */

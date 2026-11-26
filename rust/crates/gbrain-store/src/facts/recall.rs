@@ -16,6 +16,7 @@
 //! - `listCallOffCueFacts`: for each `(source, entity)` pair, the newest 50 pool rows whose text holds a retraction or
 //!   call-off phrase (`\m(...)\M`, case-insensitive).
 //! - `listPoolEntityPairs`: the distinct `(source, entity)` pairs of the pool rows that have an entity.
+//! - `readFactWrittenDates`: memory_recall's date column, the UTC day (`YYYY-MM-DD`) each named fact is valid from.
 
 use super::embedding::{cosine_distance, parse_vector, to_halfvec};
 use super::saved_match::word_char;
@@ -23,6 +24,7 @@ use super::trust::{Pool, PoolArgs, VectorArg, pool_row, similarity};
 use super::{FactRecord, count_arg, invalid, source_rows};
 use crate::Store;
 use crate::chunks::embedding_dimensions;
+use crate::env::civil_from_days;
 use crate::error::Result;
 use crate::keyword::pg_lower;
 use crate::links::no_nul;
@@ -30,6 +32,14 @@ use crate::pages::read_page;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
+
+/// `to_char(<instant> AT TIME ZONE 'UTC', 'YYYY-MM-DD')`: the UTC day of `us` (microseconds since the Unix epoch). The year
+/// is at least four digits (`YYYY`), and a year before 1 CE prints as the BC year (`0001` for 1 BC), as Postgres does.
+fn written_day(us: i64) -> String {
+    let (year, month, day) = civil_from_days(us.div_euclid(super::DAY_US));
+    let year = if year > 0 { year } else { 1 - year };
+    format!("{year:04}-{month:02}-{day:02}")
+}
 
 /// Cue facts read per entity at most (`CALL_OFF_DEPTH`).
 const CALL_OFF_DEPTH: usize = 50;
@@ -370,6 +380,28 @@ impl Store {
         Ok(out)
     }
 
+    /// `readFactWrittenDates(ids)` (ops/qm-memory.ts, memory_recall's date column): for each distinct id that names a fact
+    /// (of any source and any state; the SQL has no other predicate), `{ id, d }` with `d` the day the fact is valid from,
+    /// in UTC, as `to_char(COALESCE(valid_from, created_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD')` writes it. `valid_from` is
+    /// NOT NULL, so the COALESCE never reaches `created_at`. A missing fact gives no row; the rows come in id order (the
+    /// SQL sets none, and the caller keys them by id).
+    pub fn read_fact_written_dates(&self, ids: &[f64]) -> Result<Vec<Value>> {
+        let mut wanted = BTreeSet::new();
+        for id in ids {
+            if let Ok(id) = u64::try_from(super::bigint("readFactWrittenDates", "ids", *id)?) {
+                wanted.insert(id);
+            }
+        }
+        let read = self.read()?;
+        let mut out = Vec::new();
+        for id in wanted {
+            if let Some(fact) = super::read_fact(&*read, id)? {
+                out.push(json!({ "id": fact.id, "d": written_day(fact.valid_from_us) }));
+            }
+        }
+        Ok(out)
+    }
+
     /// `listTypedClaimFactsAtPages(pageSlugs, entitySlugs)`: the facts whose `source_markdown_slug` is one of
     /// `page_slugs`, whose entity is one of `entity_slugs` and whose `claim_metric` is set, of any source and any state
     /// (the SQL has no other predicate), as `{ id, source_markdown_slug, source_id, entity_slug, claim_metric,
@@ -412,5 +444,37 @@ impl Store {
             }
         }
         Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod written_day_tests {
+    use super::written_day;
+    use crate::env::days_from_civil;
+
+    fn day(y: i64, m: i64, d: i64, extra_us: i64) -> String {
+        written_day(days_from_civil(y, m, d) * super::super::DAY_US + extra_us)
+    }
+
+    /// The same statement run on PGLite and Postgres 16 gave these days (`make_timestamptz(y, m, d, 0, 0, 0, 'UTC')`;
+    /// a negative `y` is a BC year there, so astronomical year 0 is 1 BC and prints `0001`).
+    #[test]
+    fn prints_the_utc_day_as_to_char_does() {
+        assert_eq!(
+            day(2026, 12, 31, 23 * 3_600_000_000 + 30 * 60_000_000),
+            "2026-12-31"
+        );
+        assert_eq!(day(2026, 1, 1, 30 * 60_000_000), "2026-01-01");
+        assert_eq!(day(50, 3, 4, 0), "0050-03-04");
+        assert_eq!(day(1, 3, 4, 0), "0001-03-04");
+        assert_eq!(day(-4, 3, 4, 0), "0005-03-04");
+        assert_eq!(day(0, 3, 4, 0), "0001-03-04");
+        assert_eq!(day(10_000, 3, 4, 0), "10000-03-04");
+    }
+
+    #[test]
+    fn a_time_before_the_epoch_rounds_down_to_its_own_day() {
+        assert_eq!(written_day(-1), "1969-12-31");
+        assert_eq!(written_day(0), "1970-01-01");
     }
 }

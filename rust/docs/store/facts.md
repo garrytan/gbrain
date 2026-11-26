@@ -716,7 +716,7 @@ Parity: `test/engine-parity/remember-members.test.ts` (the members one by one) a
 
 ## Recall candidate-pool reads (`facts/recall.rs`)
 
-Six of the `facts-recall.ts` members are served: the pool reads a recall, a search that adds facts and a question recall make
+Six of the `facts-recall.ts` members are served as pool reads, and a seventh read, `readFactWrittenDates`, is served beside them: the pool reads a recall, a search that adds facts and a question recall make
 (`search/fact-relevance.ts`). The TypeScript members are `rust-engine/store-members/facts-recall.ts`; the napi family is
 `families/facts_recall.rs`. Every read admits a row as `listFactsForRelevance` does (`Pool::admits` in `facts/trust.rs`: the
 source, the expiry clauses, the audit sources, a quarantined provenance page, the visibility and private-provenance policies,
@@ -730,6 +730,7 @@ a soft-deleted page, the trust floor and the filters), so a row the caller canno
 | `listPoolUnbackedKeys(scope, keys, limit)` | The distinct `(source, entity)` pairs of pool rows whose entity is in `keys` and has no live page (none, or soft-deleted), by source then slug, at most `limit`. |
 | `listCallOffCueFacts(scope, pairs)` | For each pair, the newest 50 pool rows (by `valid_from`, then id) whose text holds one of 28 retraction or call-off phrases as whole words, case-insensitive (`\m...\M`, so `cancelledX` and `retractor` do not match; `called off-site` does). |
 | `listPoolEntityPairs(scope, filters)` | The distinct `(source, entity)` pairs of pool rows that have an entity. |
+| `readFactWrittenDates(ids)` | Not a pool read: no policy applies, because memory_recall has already chosen the facts and only asks the day each was written. For each distinct id that names a fact (any source, any state), `{ id, d }` with `d` the UTC day the fact is valid from, written as Postgres `to_char(valid_from AT TIME ZONE 'UTC', 'YYYY-MM-DD')` writes it (`valid_from` is NOT NULL, so the `created_at` fallback of the SQL never applies): at least four year digits (`0050-03-04`), and a year before 1 CE as the BC year. A missing id gives no row; the rows come in id order. An id that is not a whole number is refused. |
 
 The TypeScript members refuse (`engine_capability_missing`) a vector-typed column (the store keeps `halfvec`) and a read policy
 other than the no-caller or reader-identity one; `hnswIterativeScan` only changes the Postgres plan, so the store ignores it.

@@ -5993,6 +5993,17 @@
         ],
         "flagOnScopes": []
       },
+      "readFactWrittenDates#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readFederationExposedPages#hidden": {
         "flagOffLanes": [
           "pool"
@@ -10942,6 +10953,7 @@
         "readFactWithdrawalClaim": "none",
         "readFactWithdrawnBacking": "none",
         "readFactWithdrawnRow": "none",
+        "readFactWrittenDates": "none",
         "readFactsEmbeddingColumn": "none",
         "readFactsFtsIndexState": "none",
         "readFederationExposedPages": "none",

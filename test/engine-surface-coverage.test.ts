@@ -378,7 +378,7 @@ const INTERFACE_METHODS: readonly string[] = [
   // Facts write-path and recall-pool statements (engine-sql/facts-trust.ts, facts-recall.ts; test/engine-parity/facts-rest-sites.test.ts)
   'readPendingWriteReceipt', 'lockSourceShared', 'listOversizedStaleFacts', 'listLivePersonTitles', 'readLiveFactEntityPage', 'lockAgentWritebackSetting', 'listFactsToRetireFromPage', 'listContestedProposalPairs', 'listFactProvenance', 'recordDerivationEdges', 'expireDerivedFacts', 'deactivateDerivedTakes', 'softDeleteDerivedPages', 'markNeedsRederive', 'readMemberPageWithdrawal', 'readClaimWithdrawal', 'readFactVisibility', 'readReplacementTarget', 'readPairFactRow', 'expireSupersededFact', 'retireSupersededFact', 'restoreSupersededFact', 'readFactForForget', 'expireFactSuperseded', 'expireFactAtDate', 'readWithdrawalAnchor', 'readFactActivity', 'readReviewAcceptedMark', 'readFactsFtsIndexState', 'swapFactsFtsIndex',
   'listAllUnarchivedSourceIds',
-  'readFactsEmbeddingColumn', 'listNearestFacts', 'listFactSourcePages', 'listTypedClaimFactsAtPages', 'listSlotRows', 'listPoolUnbackedKeys', 'listCallOffCueFacts', 'listPoolEntityPairs', 'listFactRowsByIds',
+  'readFactsEmbeddingColumn', 'listNearestFacts', 'listFactSourcePages', 'listTypedClaimFactsAtPages', 'listSlotRows', 'listPoolUnbackedKeys', 'listCallOffCueFacts', 'listPoolEntityPairs', 'listFactRowsByIds', 'readFactWrittenDates',
   'readEntityNewestFacts', 'matchHeadStems',
   'listOntologyStreamSlugs', 'readOntologyRival',
   'listBeliefStreamSlugs',

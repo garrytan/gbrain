@@ -175,6 +175,17 @@ export async function listFactRowsByIds(raw: EngineRawRead, sourceIds: readonly 
   return raw<FactRowSqlShape>('SELECT * FROM facts WHERE source_id = ANY($1::text[]) AND id = ANY($2::bigint[])', [[...sourceIds], [...ids]]);
 }
 
+/** One fact's written day: `d` is `YYYY-MM-DD` in UTC, as the database writes it (a driver's timestamp parse reads years 1-99 as 19xx). */
+export interface FactWrittenDateRow { id: number | string; d: string }
+
+/** The statement `ops/qm-memory.ts` ran through `executeRaw` for memory_recall's dates, byte for byte. `valid_from` is NOT NULL, so the COALESCE never reaches `created_at`. */
+export const FACT_WRITTEN_DATES_SQL = `SELECT id, to_char(COALESCE(valid_from, created_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS d FROM facts WHERE id = ANY($1::bigint[])`;
+
+/** The written day of each of the facts `ids` (memory_recall's date column); a missing id has no row, and the rows come in no set order. */
+export async function readFactWrittenDates(raw: EngineRawRead, ids: readonly number[]): Promise<FactWrittenDateRow[]> {
+  return raw<FactWrittenDateRow>(FACT_WRITTEN_DATES_SQL, [[...ids]]);
+}
+
 const READABLE_PAGE_SLUGS_HEAD = 'SELECT p.slug FROM pages p WHERE p.source_id = $1 AND p.slug = ANY($2::text[]) AND ';
 
 /**

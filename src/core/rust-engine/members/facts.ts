@@ -444,6 +444,7 @@ export const FACTS_MEMBERS = {
   listCallOffCueFacts: 'facts',
   listPoolEntityPairs: 'facts',
   listFactRowsByIds: 'facts',
+  readFactWrittenDates: 'facts',
   listReadablePageSlugs: 'facts',
 
   // ontology

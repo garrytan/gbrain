@@ -1,5 +1,5 @@
 //! The six candidate-pool reads of a fact recall: `readFactsEmbeddingColumn`, `listNearestFacts`, `listSlotRows`,
-//! `listPoolUnbackedKeys`, `listCallOffCueFacts` and `listPoolEntityPairs`.
+//! `listPoolUnbackedKeys`, `listCallOffCueFacts` and `listPoolEntityPairs`, and `readFactWrittenDates` (memory_recall's dates).
 //!
 //! One `#[napi] impl Brain` block; each method runs one `gbrain_store::facts::recall` call on the pool through
 //! `Brain::run` and resolves plain JSON. The TypeScript members (src/core/rust-engine/store-members/facts-recall.ts)
@@ -29,6 +29,16 @@ impl Brain {
         ids: Vec<f64>,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.list_fact_source_pages(&ids))
+    }
+
+    /// `readFactWrittenDates(ids)`: resolves `[{ id, d }]`, the UTC day (`YYYY-MM-DD`) each named fact is valid from.
+    #[napi]
+    pub fn read_fact_written_dates<'env>(
+        &self,
+        env: &'env Env,
+        ids: Vec<f64>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_fact_written_dates(&ids))
     }
 
     /// `listTypedClaimFactsAtPages(pageSlugs, entitySlugs)`: resolves the typed-claim facts held on those pages about

@@ -130,7 +130,7 @@ describe('engine parity: memory_recall answers the same lines, with the written 
   for (const [member, who] of [[MEMBER, 'an ordinary member'], [OWNER, 'the owner']] as const) {
     for (const lineage of [false, true]) {
       parityTest(`${who} reads its facts and their written dates, access.members_read_lineage ${lineage ? 'on' : 'off'}`, {
-        methods: ['putPage', 'insertFacts', 'listFactsSince'], timeout: 360_000,
+        methods: ['putPage', 'insertFacts', 'listFactsSince', 'readFactWrittenDates'], timeout: 360_000,
       }, (engine, backend) => inFreshHome(async () => {
         await seed(engine, backend, lineage);
         const answer = await memoryRecall(engine, member);
@@ -145,4 +145,33 @@ describe('engine parity: memory_recall answers the same lines, with the written 
       }));
     }
   }
+});
+
+describe('engine parity: readFactWrittenDates, the date column of memory_recall', () => {
+  parityTest('each named fact gets the UTC day it is valid from, as the database writes it; a missing or repeated id adds nothing', {
+    methods: ['insertFacts', 'readFactWrittenDates'],
+  }, async (engine) => {
+    const ids = new Map<string, number>();
+    for (const [i, f] of FACTS.entries()) {
+      const out = await engine.insertFacts([{
+        fact: text(f), kind: 'fact', visibility: 'world', source: 'test', entity_slug: null, source_markdown_slug: 'open/plain', row_num: i + 1, valid_from: new Date(f.validFrom),
+      }] as never, { source_id: 'default' });
+      ids.set(f.id, Number(out.ids[0]));
+    }
+    const label = new Map([...ids].map(([name, id]) => [id, name]));
+    const named = (rows: Array<{ id: number | string; d: string }>) => rows.map(r => ({ fact: label.get(Number(r.id)) ?? `unknown:${r.id}`, d: r.d })).sort((a, b) => a.fact.localeCompare(b.fact));
+    const every = [...ids.values()];
+    const out = {
+      all: named(await engine.readFactWrittenDates(every)),
+      repeated: named(await engine.readFactWrittenDates([every[0]!, every[0]!, every[2]!])),
+      missing: named(await engine.readFactWrittenDates([999_999, every[3]!])),
+      none: named(await engine.readFactWrittenDates([])),
+    };
+    expect(out.all.map(r => r.fact)).toEqual([...FACTS.map(f => f.id)].sort((a, b) => a.localeCompare(b)));
+    for (const r of out.all) expect({ fact: r.fact, d: r.d }).toEqual({ fact: r.fact, d: DATES[r.fact] });
+    expect(out.repeated).toHaveLength(2);
+    expect(out.missing).toEqual([{ fact: 'year-fifty', d: '0050-03-04' }]);
+    expect(out.none).toEqual([]);
+    return out;
+  });
 });

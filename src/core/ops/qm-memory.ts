@@ -164,8 +164,7 @@ async function recallFacts(ctx: OperationContext, query: string, maxChars: numbe
   const seen = new Set<number>();
   const rows = [...own.map(r => ({ ...r, arm: 'own' as const })), ...ranked.map(r => ({ ...r, arm: 'ranked' as const }))].filter(r => !seen.has(r.id) && !!seen.add(r.id));
   // The date as the database writes it: a driver's timestamp parse reads years 1-99 as 19xx.
-  const written = new Map(rows.length ? (await ctx.engine.executeRaw<{ id: number | string; d: string }>(
-    `SELECT id, to_char(COALESCE(valid_from, created_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS d FROM facts WHERE id = ANY($1::bigint[])`, [rows.map(r => r.id)])).map(r => [Number(r.id), r.d]) : []);
+  const written = new Map(rows.length ? (await ctx.engine.readFactWrittenDates(rows.map(r => r.id))).map(r => [Number(r.id), r.d]) : []);
   const owned = remote ? await ownMemberFactIds(ctx.engine, ctx.sourceId ?? 'default', rows.map(r => Number(r.id))) : new Set<number>();
   const plain = rows.map(r => ({ id: String(r.id), text: plainFactText(r.fact), date: isoDate(written.get(Number(r.id)) ?? r.valid_from ?? r.created_at), kind: String(r.kind), arm: r.arm, own_page: owned.has(Number(r.id)) }));
   const { redactRetrievalOutput } = await import('../search/output-redaction.ts');

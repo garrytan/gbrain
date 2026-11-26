@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2456/2483
+# covered: 2457/2484
 # lifecycle: 12/12
 # pages: 141/142
 # search: 8/8
@@ -55,7 +55,7 @@
 # projection_rebuild: 32/33
 # facts_repair: 75/75
 # facts_trust: 56/57
-# facts_recall: 10/10
+# facts_recall: 11/11
 # facts_conversation: 30/30
 # belief_ledger: 21/21
 # cycle_reads: 3/3
@@ -649,7 +649,7 @@ readFactTrustTier	facts	yes	2	no	yes	yes	serves
 listFenceFactRowNums	facts	yes	2	no	yes	yes	serves
 readLiveFactRowTier	facts	yes	1	no	yes	yes	serves
 insertFact	facts	yes	199	yes	yes	yes	serves
-insertFacts	facts	yes	279	no	yes	yes	serves
+insertFacts	facts	yes	280	no	yes	yes	serves
 deleteFactsForPage	facts	yes	8	no	yes	yes	serves
 expireFact	facts	yes	94	no	yes	yes	serves
 listFactsByEntity	facts	yes	66	yes	yes	yes	serves
@@ -1779,6 +1779,7 @@ listPoolUnbackedKeys	facts_recall	yes	6	no	yes	yes	serves
 listCallOffCueFacts	facts_recall	yes	5	no	yes	yes	serves
 listPoolEntityPairs	facts_recall	yes	6	no	yes	yes	serves
 listFactRowsByIds	facts_recall	yes	2	no	yes	yes	serves
+readFactWrittenDates	facts_recall	yes	2	no	yes	yes	serves
 listReadablePageSlugs	facts_recall	yes	1	no	yes	yes	serves
 readNewestConversationFactId	facts_conversation	yes	1	no	yes	yes	serves
 findSpentConversationRequest	facts_conversation	yes	2	no	yes	yes	serves

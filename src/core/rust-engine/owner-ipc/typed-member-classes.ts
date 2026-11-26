@@ -176,7 +176,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'readExactSnippetChunks', 'readExportPageRows', 'readExportWithdrawalLedgerBytes', 'readExtractionLagCounts',
   'readFactActivity', 'readFactCacheWatermark', 'readFactEntitySlug', 'readFactEntitySlugById', 'readFactForForget',
   'readFactForOwnerAction', 'readFactSubject', 'readFactTableCatalog', 'readFactVisibility',
-  'readFactWithdrawalClaim', 'readFactWithdrawnBacking', 'readFactWithdrawnRow', 'readFactsEmbeddingColumn',
+  'readFactWithdrawalClaim', 'readFactWithdrawnBacking', 'readFactWithdrawnRow', 'readFactWrittenDates', 'readFactsEmbeddingColumn',
   'readFactsFtsIndexState', 'readFenceOverlayRows', 'readFenceRowNumHint', 'readFenceRowOccupant', 'readFileOwner',
   'readFolderAccess', 'readForgetTarget', 'readGlobalMaintenanceDeaths', 'readGraduationGateRow',
   'readGroupSpendTotals', 'readGuestSourceRow', 'readHealthMemoClock', 'readHeldAccessState', 'readHeldConfigValue',

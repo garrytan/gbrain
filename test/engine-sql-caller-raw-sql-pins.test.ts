@@ -3586,6 +3586,11 @@ const PINS: Pin[] = [
        WHERE f.id = ANY($1::bigint[]) AND f.source_markdown_slug IS DISTINCT FROM f.entity_slug`],
   },
   {
+    from: 'src/core/ops/qm-memory.ts:167 recallFacts (the written-date read, at 85ad984039)',
+    case: { method: 'readFactWrittenDates', variant: 'default', run: e => e.readFactWrittenDates([1, 2]) },
+    texts: [`SELECT id, to_char(COALESCE(valid_from, created_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS d FROM facts WHERE id = ANY($1::bigint[])`],
+  },
+  {
     from: 'src/core/link-reconciliation.ts:229 fileLinkOwnership attendance origins (at 90ede8f55a)',
     case: { method: 'listAttendedOriginSlugs', variant: 'default', run: e => e.listAttendedOriginSlugs('default') },
     texts: [`SELECT DISTINCT o.slug FROM links l
