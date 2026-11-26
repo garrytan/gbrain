@@ -1976,7 +1976,9 @@ impl Store {
                 }
                 None => page,
             };
-            let mut row = snapshot_in(tx, &*self.env, &page)?;
+            // A caller's preimage keeps its tags in the order given, as PGLite's insert does; a page
+            // read sorts them.
+            let mut row = snapshot_in_with(tx, &*self.env, &page, options.preimage.is_none())?;
             // A segmented prune can delete the snapshot it follows; a reason never brings it back.
             let key = keys::version(page.id, row.id);
             if let Some(reason) = reason
@@ -2256,11 +2258,14 @@ impl VersionPreimage {
         out.tags = self.tags.clone();
         out.source_path = self.source_path.clone();
         // The snapshot's writer is the stored revision's only when the read is that revision, as the
-        // attribution trigger copies `write_*` only then: a stale read keeps them NULL.
-        if self.revision != page.knowledge_revision {
+        // attribution trigger copies `write_*` only then: a stale read keeps them NULL. The revision
+        // is a uuid, so any spelling of the stored one is the stored one, and it is kept lower-case,
+        // as the `::uuid` cast stores it.
+        let revision = self.revision.to_ascii_lowercase();
+        if revision != page.knowledge_revision.to_ascii_lowercase() {
             out.revision_receipt = RevisionReceipt::default();
         }
-        out.knowledge_revision = self.revision.clone();
+        out.knowledge_revision = revision;
         out.deleted_at_us = match (self.deleted, page.deleted_at_us) {
             (false, _) => None,
             (true, Some(at)) => Some(at),
@@ -2349,12 +2354,24 @@ pub(crate) fn snapshot_in(
     env: &dyn Env,
     page: &PageRecord,
 ) -> Result<VersionRecord> {
+    snapshot_in_with(tx, env, page, true)
+}
+
+/// `snapshot_in` with the tags sorted (a page read) or kept in the given order (a caller's preimage).
+fn snapshot_in_with(
+    tx: &mut dyn KvWrite,
+    env: &dyn Env,
+    page: &PageRecord,
+    sort_tags: bool,
+) -> Result<VersionRecord> {
     let context = crate::write_trust::stamp_context::current()?;
     // `gbrain_stamp_version_attribution` casts the request on every row inserted into `page_versions`.
     context.attribution.refuse_request_not_uuid()?;
     let id = next_id(tx, NEXT_VERSION_ID)?;
     let mut tags = page.tags.clone();
-    tags.sort();
+    if sort_tags {
+        tags.sort();
+    }
     let segmented = crate::page_body::segmented_reference(&*tx, page.id)?;
     // `snapshot_version_trust`: the snapshot copies the page's stamped tier and origin. No store
     // caller supplies its own, so the backfill branch never applies.

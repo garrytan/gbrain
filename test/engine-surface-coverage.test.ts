@@ -432,7 +432,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'readPageOrigin', 'listRevivalPages', 'listOriginClaims', 'bindPageOrigin', 'stampPageIngest', 'sealImportedPage', 'readLivePageBody', 'readInlinePageRegions', 'readStoredPageTier',
   'readPageIndexingState', 'hasSegmentStorage',
   // Page visibility guards of a remote page write (engine-sql/page-visibility.ts).
-  'readPageHiddenFromCaller', 'readCallerPageAccess', 'readWriteVisibilityProbe', 'readPagePrivacyHidden', 'readWriterSlugFence',
+  'readPageHiddenFromCaller', 'readPageWorldVisible', 'readCallerPageAccess', 'readWriteVisibilityProbe', 'readPagePrivacyHidden', 'readWriterSlugFence',
   // The remote links effect and a finished batch's re-arm (engine-sql/remote-links.ts).
   'setEffectTransactionLimits', 'readOwnedLinks', 'deleteOwnedLinks', 'readLinkTargetPages', 'rearmLinksEffects',
   // The facts backstop effect's extraction reads (engine-sql/facts-backstop.ts).

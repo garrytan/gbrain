@@ -11172,6 +11172,7 @@
         "readPageVersionEdition": "none",
         "readPageVersionRow": "none",
         "readPageViewDigest": "none",
+        "readPageWorldVisible": "none",
         "readPagesForVersionHistory": "none",
         "readPagesRowEstimate": "none",
         "readPairFactRow": "none",

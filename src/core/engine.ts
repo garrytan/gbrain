@@ -4053,6 +4053,8 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   // Page visibility guards (engine-sql/page-visibility.ts): the current caller's page policy, rendered in its access record.
   /** Whether a row of the page (live or soft-deleted) fails the current caller's policy: `read` (access, then privacy) or `access` alone. */
   readPageHiddenFromCaller(sourceId: string, slug: string, opts: { policy: PagePolicyPart }): Promise<boolean>;
+  /** Whether the live page passes the empty-identity page policy with privacy (no reader identity, grant or satisfied rule counts; the caller's folder coverage and owner flag do); false for a missing or soft-deleted page. */
+  readPageWorldVisible(sourceId: string, slug: string): Promise<boolean>;
   /** For each (source_id, slug) that names a page row, whether a live row of it passes the current caller's policy; in no set order. */
   readCallerPageAccess(pages: readonly { source_id: string; slug: string }[], opts: { policy: PagePolicyPart }): Promise<CallerPageAccessRow[]>;
   /** The opening read of a remote page write's visibility check: labelled-only members, what a reader identity could open on the page the empty-identity policy hides, owner-only sources. */

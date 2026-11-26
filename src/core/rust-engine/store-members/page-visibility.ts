@@ -1,5 +1,5 @@
 /**
- * The page visibility guards (BrainEngine readPageHiddenFromCaller, readCallerPageAccess, readWriteVisibilityProbe,
+ * The page visibility guards (BrainEngine readPageHiddenFromCaller, readCallerPageAccess, readPageWorldVisible, readWriteVisibilityProbe,
  * readPagePrivacyHidden, readWriterSlugFence): the reads a remote page write runs to learn whether the caller may see a page, which of a list
  * of pages the caller reads, what its visibility check opens with, and whether a stored writer carries a slug fence
  * (engine-sql/page-visibility.ts on the SQL engines).
@@ -15,7 +15,7 @@
  * ceiling's `slugPrefixes`. What each member answers and why: rust/docs/store/page-visibility.md.
  */
 import type { CallerPageAccessRow, PagePolicyPart, PrivateOnlySlugScope, WriteVisibilityProbe } from '../../engine-sql/page-visibility.ts';
-import { callerAccessAllowedSql, privacyPartSql, privatePagesFilterForCaller, readPolicyFragment, withCallerAccess } from '../../search/private-visibility.ts';
+import { callerAccessAllowedSql, currentCallerAccess, privacyPartSql, privatePagesFilterForCaller, privatePagesFilterFragment, readPolicyFragment, withCallerAccess } from '../../search/private-visibility.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 import { readOauthClient } from './jobs-oauth-clients.ts';
 import { judgeWidenedCaller, ownerOnlyFormIn, pagePolicyFlags, renderForStoreCaller, storePageTextPolicy, type StorePrivacyPolicy } from './private-provenance.ts';
@@ -43,6 +43,24 @@ export const readPageHiddenFromCaller: StoreMember<[sourceId: string, slug: stri
     const policy = callerPolicy('readPageHiddenFromCaller', opts.policy);
     return await storeCall({ member: 'readPageHiddenFromCaller', slug, sourceId }, () => brain.readPageHiddenFromCaller(sourceId, slug, policy)) === true;
   };
+
+/**
+ * World visibility is the empty-identity policy with privacy (`privatePagesFilterFragment`): no reader identity, grant
+ * or satisfied folder rule counts. It is judged as the probe's policy is, under the restricted rendering with the
+ * identity and grant emptied, and answered by the live-row read readCallerPageAccess runs: a missing or soft-deleted
+ * page is not world-visible. Two parts of the caller's record still count, as they do in the SQL fragment: its folder
+ * coverage (a page under a pending or invalid prefix is hidden; the policy carries it) and its owner flag (an owner read
+ * renders no owner-only test, so the policy is sent with the owner-only test off).
+ */
+export const readPageWorldVisible: StoreMember<[sourceId: string, slug: string], boolean> = async (brain, sourceId, slug) => {
+  const owner = currentCallerAccess().owner;
+  const rendered = withCallerAccess({ restricted: true, identity: [], privateReadableSources: [] }, () =>
+    storePageTextPolicy('readPageWorldVisible', () => privatePagesFilterFragment('p'), { callerReaders: true }));
+  const policy: StorePrivacyPolicy = owner ? { ...rendered, ownerOnly: 'off' } : rendered;
+  const rows = await storeCall({ member: 'readPageWorldVisible', slug, sourceId }, () =>
+    brain.readCallerPageAccess([{ sourceId, slug }], policy)) as CallerPageAccessRow[];
+  return rows.some(row => row.source_id === sourceId && row.slug === slug && row.readable === true);
+};
 
 export const readCallerPageAccess: StoreMember<[pages: readonly { source_id: string; slug: string }[], opts: { policy: PagePolicyPart }], CallerPageAccessRow[]> =
   async (brain, pages, opts) => {

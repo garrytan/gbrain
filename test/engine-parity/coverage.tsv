@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2442/2469
+# covered: 2443/2470
 # lifecycle: 12/12
 # pages: 141/142
 # search: 8/8
@@ -84,7 +84,7 @@
 # field_usage: 1/1
 # alias_fanout_reads: 18/18
 # write_guards: 16/16
-# page_visibility: 6/6
+# page_visibility: 7/7
 # remote_links: 5/5
 # facts_backstop: 2/2
 # large_page: 2/2
@@ -133,16 +133,16 @@ listCatalogRelations	lifecycle	yes	1	no	yes	yes	serves
 readCatalogSchemaVersion	lifecycle	yes	1	no	yes	yes	serves
 listCatalogForeignKeys	lifecycle	yes	1	no	yes	yes	serves
 getPage	pages	yes	288	yes	yes	yes	serves
-readPageSnapshot	pages	yes	102	no	yes	yes	serves
+readPageSnapshot	pages	yes	108	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	7	no	yes	yes	serves
 lockPageKeys	pages	yes	17	no	yes	yes	serves
-putPage	pages	yes	1360	yes	yes	yes	serves
+putPage	pages	yes	1364	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	45	yes	yes	yes	serves
 deletePages	pages	yes	10	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	2	yes	yes	yes	serves
-softDeletePage	pages	yes	344	yes	yes	yes	serves
+softDeletePage	pages	yes	345	yes	yes	yes	serves
 softDeletePages	pages	yes	4	yes	yes	yes	serves
 restorePage	pages	yes	18	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	12	no	yes	yes	serves
@@ -733,8 +733,8 @@ installSegmentedVectors	segmented_body	yes	2	no	yes	yes	serves
 listLiveEmbedSegments	segmented_body	yes	1	no	yes	yes	serves
 listSegmentChunkRows	segmented_body	yes	1	no	yes	yes	serves
 listInlineVersionTexts	versions	yes	2	no	yes	yes	serves
-createVersion	versions	yes	92	no	yes	yes	serves
-getVersions	versions	yes	35	no	yes	yes	serves
+createVersion	versions	yes	94	no	yes	yes	serves
+getVersions	versions	yes	39	no	yes	yes	serves
 readLatestVersionId	versions	yes	1	no	yes	yes	serves
 readLatestVersionIdAtTier	versions	yes	1	no	yes	yes	serves
 stampVersionChangeReason	versions	yes	1	no	yes	yes	serves
@@ -784,7 +784,7 @@ readPersistenceBrainId	import_guards	yes	32	no	yes	yes	serves
 readLocalWriterRow	import_guards	yes	12	no	yes	yes	serves
 insertLocalWriterRow	import_guards	yes	12	no	yes	yes	serves
 readTransactionSettings	import_guards	yes	15	no	yes	yes	serves
-applyTransactionSettings	import_guards	yes	111	no	yes	yes	serves
+applyTransactionSettings	import_guards	yes	112	no	yes	yes	serves
 beginSnapshotRead	import_guards	yes	3	no	yes	yes	serves
 readCurrentWriteTrust	import_guards	yes	1	no	yes	yes	serves
 setWriteContext	import_guards	yes	4	no	yes	yes	serves
@@ -2177,7 +2177,7 @@ requestGitHoldRetry	repair_bookkeeping	yes	1	no	yes	yes	serves
 readRepairBusyRows	repair_bookkeeping	yes	1	no	yes	yes	serves
 readWriteAttributionNames	write_attribution	yes	6	no	yes	yes	serves
 readPageRevisionAttribution	write_attribution	yes	3	no	yes	yes	serves
-readVersionAttributions	write_attribution	yes	4	no	yes	yes	serves
+readVersionAttributions	write_attribution	yes	5	no	yes	yes	serves
 readOldestVersionAttribution	write_attribution	yes	3	no	yes	yes	serves
 readRowAttribution	write_attribution	yes	4	no	yes	yes	serves
 recordSearchTelemetry	telemetry	yes	3	no	yes	yes	serves
@@ -2218,7 +2218,7 @@ readPageOrigin	write_guards	yes	3	no	yes	yes	serves
 listRevivalPages	write_guards	yes	2	no	yes	yes	serves
 listOriginClaims	write_guards	yes	2	no	yes	yes	serves
 bindPageOrigin	write_guards	yes	3	no	yes	yes	serves
-detachPageOrigin	write_guards	yes	2	no	yes	yes	serves
+detachPageOrigin	write_guards	yes	3	no	yes	yes	serves
 readPageDatabaseOnlyReason	write_guards	yes	5	no	yes	yes	serves
 bumpPageKnowledgeRevision	write_guards	yes	1	no	yes	yes	serves
 removePageFrontmatterKeys	write_guards	yes	2	no	yes	yes	serves
@@ -2230,6 +2230,7 @@ readInlinePageRegions	write_guards	yes	1	no	yes	yes	serves
 readStoredPageTier	write_guards	yes	1	no	yes	yes	serves
 readPageIndexingState	write_guards	yes	1	no	yes	yes	serves
 readPageHiddenFromCaller	page_visibility	yes	3	no	yes	yes	serves
+readPageWorldVisible	page_visibility	yes	2	no	yes	yes	serves
 readCallerPageAccess	page_visibility	yes	3	no	yes	yes	serves
 readWriteVisibilityProbe	page_visibility	yes	5	no	yes	yes	serves
 readPagePrivacyHidden	page_visibility	yes	3	no	yes	yes	serves

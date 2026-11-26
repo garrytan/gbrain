@@ -1073,6 +1073,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'lockEmbeddingSwitch': OOS.embeddingInstall,
   'installChunkEmbeddings': OOS.embeddingInstall,
   'readPageHiddenFromCaller': OOS.pageVisibility,
+  'readPageWorldVisible': OOS.pageVisibility,
   'readCallerPageAccess': OOS.pageVisibility,
   'readWriteVisibilityProbe': OOS.pageVisibility,
   'readPagePrivacyHidden': OOS.pageVisibility,

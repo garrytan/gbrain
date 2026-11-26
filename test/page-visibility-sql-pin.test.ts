@@ -2,7 +2,7 @@
  * The page visibility guards (engine-sql/page-visibility.ts) send Postgres the statement persistence/page-visibility.ts
  * sent through `executeRaw` before they became typed members: the same text and the same bound values.
  *
- * Protects: remoteTargetHidden, remotePageAccess, authorizePageVisibility's probe and storedOwnerSpeaksForItself keep
+ * Protects: remoteTargetHidden, remotePageAccess, the reason path's world-visibility read (persistence/change-reason.ts), authorizePageVisibility's probe and storedOwnerSpeaksForItself keep
  * their exact Postgres statements,
  * under the no-caller rendering and under a caller with a reader identity and a private-readable grant.
  * Fails when a member's text or parameter order drifts from the statement the caller wrote by hand.
@@ -10,7 +10,7 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { PostgresEngine } from '../src/core/postgres-engine.ts';
-import { callerAccessAllowedSql, privatePagesFilterForCaller, readPolicyFragment, withCallerAccess } from '../src/core/search/private-visibility.ts';
+import { callerAccessAllowedSql, privatePagesFilterForCaller, privatePagesFilterFragment, readPolicyFragment, withCallerAccess } from '../src/core/search/private-visibility.ts';
 import { ANY_OWNER_ONLY_SQL, OWNER_ONLY_LINEAGE_PRESENT_SQL, ownerOnlyLineageReadable, ownerOnlySourceSql } from '../src/core/access/owner-only.ts';
 import { makeFakeSql } from './helpers/fake-postgres-sql.ts';
 
@@ -51,6 +51,17 @@ describe('page visibility guards send the hand-written Postgres statement', () =
         expect(typed).toEqual(old);
       });
     }
+  }
+
+  for (const [name, caller] of Object.entries(CALLERS)) {
+    test(`readPageWorldVisible, ${name} caller`, async () => {
+      const under = <T>(fn: () => Promise<T>) => (caller ? withCallerAccess(caller, fn) : fn());
+      const old = await sent(/FROM pages/, e => under(() => e.executeRaw(
+        `SELECT ${privatePagesFilterFragment('p')} AS world FROM pages p WHERE p.source_id = $1 AND p.slug = $2 AND p.deleted_at IS NULL`, ['default', 'notes/a'])));
+      const typed = await sent(/FROM pages/, e => under(() => e.readPageWorldVisible('default', 'notes/a')));
+      expect(old).toHaveLength(1);
+      expect(typed).toEqual(old);
+    });
   }
 
   for (const [name, caller] of Object.entries(CALLERS)) {
