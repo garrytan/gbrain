@@ -148,7 +148,8 @@ impl Deref for MuTxn {
 
 // ---- the store side ----------------------------------------------------------------------------
 
-/// The multi-user members of `Store`, as the frozen interfaces spell them.
+/// The multi-user members of `Store` no lane has landed yet, as the frozen interfaces spell them. Landed with the commit-log
+/// lane and called on `Store` directly: `last_commit_time` (I-4.v2) and `read_commit_log` (I-4).
 pub trait MuStore {
     /// I-1 `Store::begin_with(&self, opts: TxnOptions) -> Result<Transaction>`. Owner: L1.
     fn begin_with(&self, opts: TxnOptions) -> MuResult<MuTxn>;
@@ -160,16 +161,10 @@ pub trait MuStore {
     /// A follower applies the given commit records, in order, to its own brain and returns the position of the last one
     /// (`None` for no records). Stand-in for the log-apply step; owner: L2.
     fn apply_log(&self, records: &[CommitRecord]) -> MuResult<Option<CommitPosition>>;
-    /// I-4.v2 `Store::last_commit_time(&self) -> Result<Option<i64>>`: the commit time of the newest commit, read from `M\0ctime`
-    /// (written only while the multi-user switch is on); the clock floor at open. Owner: L2.
-    fn last_commit_time(&self) -> MuResult<Option<i64>>;
     /// A follower that applied the log up to `applied` and takes over as primary: opens its clock at the floor
     /// `clock_floor(its M\0ctime, the last applied record)` and returns that floor. Stand-in for the promotion step; owners:
     /// L2 (the log) and L5 (the election).
     fn promote_from_log(&self, applied: Option<CommitPosition>) -> MuResult<Option<i64>>;
-    /// I-4 `Store::read_commit_log(&self, after: Option<CommitPosition>, max: usize) -> Result<LogPage>`.
-    /// Owner: L2.
-    fn read_commit_log(&self, after: Option<CommitPosition>, max: usize) -> MuResult<LogPage>;
 }
 
 impl MuStore for Store {
@@ -185,17 +180,11 @@ impl MuStore for Store {
     fn apply_log(&self, _records: &[CommitRecord]) -> MuResult<Option<CommitPosition>> {
         pending(L2_LOG, "apply commit records to a follower")
     }
-    fn last_commit_time(&self) -> MuResult<Option<i64>> {
-        pending(L2_LOG, "Store::last_commit_time")
-    }
     fn promote_from_log(&self, _applied: Option<CommitPosition>) -> MuResult<Option<i64>> {
         pending(
             L2_LOG,
             "promote a follower from the log (clock floor = max(M\\0ctime, last applied commit_time)); election: L5 hosts",
         )
-    }
-    fn read_commit_log(&self, _after: Option<CommitPosition>, _max: usize) -> MuResult<LogPage> {
-        pending(L2_LOG, "Store::read_commit_log")
     }
 }
 

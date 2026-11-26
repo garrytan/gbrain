@@ -3148,14 +3148,17 @@ fn mu_adapter_stubs_are_still_pending() {
         owner("commit_position", store.commit_position(txn())),
         L2_LOG
     );
-    assert_eq!(owner("last_commit_time", store.last_commit_time()), L2_LOG);
     assert_eq!(
         owner("promote_from_log", store.promote_from_log(None)),
         L2_LOG
     );
-    assert_eq!(
-        owner("read_commit_log", store.read_commit_log(None, 10)),
-        L2_LOG
+    // Landed with the commit-log lane, so no longer stubs: on a store with the switch off, the clock floor is unset and the
+    // log read is refused as a brain that keeps no log (never a pending error).
+    assert_eq!(store.last_commit_time().unwrap(), None);
+    let refused = store.read_commit_log(None, 10).unwrap_err();
+    assert!(
+        mu::pending_owner(&refused).is_none(),
+        "read_commit_log is real: {refused}"
     );
     assert_eq!(
         owner("pending_member", mu::pending_member::<()>(L3_SERVER, "x")),
