@@ -218,7 +218,9 @@ never a pass. With no shadow running, every criterion is `missing`.
    shadow that cannot compare writes (`capability_missing`) has no evidence. A brain that can opt in (one without
    managed storage) shadows with every write compared by default (rate 1.0; `--write-sample-rate` overrides it), so on
    Postgres the bar is reachable in 5 days when its writes can be compared; each save is about 2x slower while that
-   shadow runs. A PGLite brain samples no writes (below), so it cannot pass criterion 5 yet. A brain with fewer than 20 qualifying writes a day cannot reach the floor
+   shadow runs. When start cannot read the storage mode, it also compares every write and says so in the plan; if that
+   brain does use managed storage, each save is about 2x slower until `gbrain engine shadow start` runs again and reads
+   the mode. A PGLite brain samples no writes (below), so it cannot pass criterion 5 yet. A brain with fewer than 20 qualifying writes a day cannot reach the floor
    in a 5-day shadow.
    When the compared writes fall short of the bar, the plan says why: `write_bar_not_reached` with the share of the
    epoch's qualifying writes that were compared, the writes that cannot be (in a transaction, `uncomparable`,
