@@ -111,12 +111,10 @@ describeAddon('the legacy HTTP MCP transport on a multi-user Rust brain', () => 
     expect({ opened: opens - before.opens, released: releases - before.releases }).toEqual({ opened: 1, released: 1 });
   });
 
-  test('the owner\'s page reads refuse typed for now: the store does not model member lineage on a Rust brain (lane L4)', async () => {
-    // Fail closed, never a wider read. Flip this test to the page body once L4 models lineage.
+  test('the owner\'s page reads serve in a principal session, member lineage included (lane L4 bd19577dde)', async () => {
     const r = await callTool('secret-owner', 'get_page', { slug: 'notes/hello' });
-    expect({ status: r.status, isError: r.isError, code: r.code }).toEqual({ status: 200, isError: true, code: 'engine_capability_missing' });
-    expect(r.text).toContain('lineage');
-    expect(r.text).not.toContain('Hello from the owner.');
+    expect({ status: r.status, isError: r.isError, code: r.code }).toEqual({ status: 200, isError: false, code: undefined });
+    expect(r.text).toContain('Hello from the owner.');
   });
 
   test('the owner\'s own key writes over /mcp', async () => {
