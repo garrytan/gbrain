@@ -102,12 +102,13 @@ async function addMember(id: string): Promise<void> {
   await engine.executeRaw("INSERT INTO access_members (id) VALUES ($1) ON CONFLICT (id) DO UPDATE SET disabled_at = NULL, tombstoned_at = NULL", [id]);
 }
 
-/** A job owned by `owner` (GST-4010: a remote watcher watches only its own jobs), else unowned. */
-async function seedJob(status = 'active', owner?: string): Promise<number> {
+/** A job owned by `owner` (GST-4010: a remote watcher watches only its own jobs), else unowned; a legacy token owns it by principal. */
+async function seedJob(status = 'active', owner?: string, legacyToken = false): Promise<number> {
+  const authority = legacyToken ? { version: 1, kind: 'remote_generic', principal: { kind: 'legacy_token', id: owner } } : { version: 1, kind: 'application' };
   const rows = await engine.executeRaw<{ id: number }>(
     `INSERT INTO minion_jobs (submission_authority, name, queue, status, data, started_at)
-     VALUES ('{"version":1,"kind":"application"}'::jsonb, 'sync', 'default', $1, $2::text::jsonb, now()) RETURNING id`,
-    [status, JSON.stringify({ __submitter: 'cli:test', ...(owner ? { __owner_client_id: owner } : {}) })]);
+     VALUES ($3::text::jsonb, 'sync', 'default', $1, $2::text::jsonb, now()) RETURNING id`,
+    [status, JSON.stringify({ __submitter: 'cli:test', ...(owner && !legacyToken ? { __owner_client_id: owner } : {}) }), JSON.stringify(authority)]);
   return Number(rows[0]!.id);
 }
 
@@ -370,7 +371,7 @@ describe('forget on remove', () => {
     const minted = await mintLegacyToken(engine, { name: 'wake-token', takesHolders: ['world'], scopes: ['read', 'write', 'admin'] });
     const ctx = { remote: true, transport: 'http' as const, sourceId: 'default', config: { engine: 'pglite' }, logger: log,
       auth: { token: 't', clientId: minted.id, principal: { kind: 'legacy_token' as const, id: minted.id }, scopes: ['read', 'write', 'admin'] } };
-    expect(body(await call('watch_job', { id: await seedJob('active', minted.id) }, ctx))).toMatchObject({ watching: true });
+    expect(body(await call('watch_job', { id: await seedJob('active', minted.id, true) }, ctx))).toMatchObject({ watching: true });
     writeConfig({ enabled: false, url: fake.url });
     fake.calls.length = 0;
     expect(await revokeLegacyTokenById(sqlQueryForEngine(engine), minted.id)).toBe(true);
@@ -427,7 +428,7 @@ describe('forget on remove', () => {
     const minted = await mintLegacyToken(engine, { name: 'wake-token-upper', takesHolders: ['world'], scopes: ['read', 'write', 'admin'] });
     const ctx = { remote: true, transport: 'http' as const, sourceId: 'default', config: { engine: 'pglite' }, logger: log,
       auth: { token: 't', clientId: minted.id, principal: { kind: 'legacy_token' as const, id: minted.id }, scopes: ['read', 'write', 'admin'] } };
-    expect(body(await call('watch_job', { id: await seedJob('active', minted.id) }, ctx))).toMatchObject({ watching: true });
+    expect(body(await call('watch_job', { id: await seedJob('active', minted.id, true) }, ctx))).toMatchObject({ watching: true });
     writeConfig({ enabled: false, url: fake.url });
     expect(await revokeLegacyTokenById(sqlQueryForEngine(engine), minted.id.toUpperCase())).toBe(true);
     expect(await engine.executeRaw('SELECT state, last_error FROM wake_subscriptions')).toEqual([{ state: 'ended', last_error: 'principal_revoked' }]);

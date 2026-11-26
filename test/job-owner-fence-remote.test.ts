@@ -5,8 +5,8 @@
  * 1. Protects: a remote job records the verified principal and the person or audience its call declared on
  *    submission_authority; get_job, wait_job, list_jobs (both pages), get_job_progress, cancel_job, pause_job,
  *    resume_job, retry_job, replay_job and send_job_message answer a remote caller only for jobs with that principal and
- *    that person or audience. A foreign job and a missing id read as the same not_found. Job insight never names or
- *    counts another caller's parent, child, slot holder or spend. The local CLI, an unauthenticated local stdio server
+ *    that person or audience. A foreign job and a missing id read as the same not_found. Job insight and parent_job_id
+ *    never name another caller's parent, child or slot holder, and foreign spend is never counted. The local CLI, an unauthenticated local stdio server
  *    and an admin credential bound to the brain owner (access.owner_member) keep the whole-queue view.
  * 2. Fails when: a remote admin credential that is not the owner's reads, lists or steers a job another credential, another
  *    audience or the local operator queued; a foreign id answers differently from a missing one; or a carve-out loses
@@ -167,10 +167,12 @@ describe('who keeps the whole-queue view', () => {
     expect(body(await dispatchToolCall(engine, 'list_jobs', {}, notOwner))).toEqual([]);
   }));
 
-  test('a legacy agent row is matched by its __owner_client_id stamp; a row whose recorded principal is another client never is', () => isolated(async () => {
+  test('a legacy agent row is matched by its __owner_client_id stamp for an OAuth client only; a row whose recorded principal is another client never is', () => isolated(async () => {
     const agent = remote('agent-a', { scopes: ['agent'] });
     const legacy = await queue.add('subagent', { prompt: 'legacy', __owner_client_id: 'agent-a' }, {}, { allowProtectedSubmit: true });
     expect(((await op('get_job').handler(agent, { id: legacy.id })) as { id: number }).id).toBe(legacy.id);
+    const sameName = remote('agent-a', { scopes: ['agent'], principal: { kind: 'legacy_token', id: '7' } });
+    expect((await errorOf(() => op('get_job').handler(sameName, { id: legacy.id }))).code).toBe('not_found');
     await engine.executeRaw(`UPDATE minion_jobs SET submission_authority = $2::text::jsonb WHERE id = $1`, [legacy.id, JSON.stringify({
       version: 1, kind: 'remote_agent', principal: { kind: 'oauth_client', id: 'agent-b' },
       grant: { scopes: ['agent'], sourceId: 'default', sourceCreatedAt: new Date().toISOString(), allowedTools: ['get_page'], allowedSlugPrefixes: [] },
@@ -209,6 +211,13 @@ describe('job insight for a fenced admin credential', () => {
     await submittedLike(foreignParent.id, foreignRoot.id);
     expect(((await op('get_job').handler(mine, { id: underForeign.id })) as Record<string, unknown>).submitted_by).toEqual({ kind: 'parent_job' });
     expect(((await op('get_job').handler(local(), { id: underForeign.id })) as Record<string, unknown>).submitted_by).toEqual({ kind: 'parent_job', id: foreignParent.id });
+    expect(((await op('get_job').handler(mine, { id: underForeign.id })) as Record<string, unknown>).parent_job_id).toBeNull();
+    expect(((await op('get_job').handler(mine, { id: mineChild.id })) as Record<string, unknown>).parent_job_id).toBe(parent.id);
+    for (const args of [{}, { fields: ['id', 'parent_job_id'] }]) {
+      const listed = (await op('list_jobs').handler(mine, args)) as Array<{ id: number; parent_job_id: number | null }>;
+      expect(listed.find(j => j.id === underForeign.id)?.parent_job_id).toBeNull();
+    }
+    expect(((await op('get_job').handler(local(), { id: underForeign.id })) as Record<string, unknown>).parent_job_id).toBe(foreignParent.id);
     await engine.executeRaw("UPDATE minion_jobs SET status = 'active', claim_generation = claim_generation + 1, lock_token = 'w:' || id::text, lock_until = now() + interval '1 minute', started_at = now() WHERE id = $1", [foreignRoot.id]);
     const queued = (await op('get_job').handler(mine, { id: own.id })) as Record<string, any>;
     const slot = queued.blocked_by.find((b: { kind: string }) => b.kind === 'queue');

@@ -12,6 +12,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
+import { operationsByName, type OperationContext } from '../src/core/operations.ts';
+import { withCallerAccess } from '../src/core/search/private-visibility.ts';
 import { disabledOpsForPublishGates } from '../src/mcp/publish-gates.ts';
 import { encodeWakeshiftKey } from '../src/core/wakeshift/client.ts';
 import { wakeshiftManifestHash } from '../src/core/wakeshift/events.ts';
@@ -183,6 +185,16 @@ describe('access', () => {
     const ids = emits().map(e => e.body.id);
     expect(new Set(ids).size).toBe(2);
     expect(new Set(emits().map(e => e.body.to[0].user)).size).toBe(2);
+  });
+
+  test('a job watch for an audience is refused, so one audience never sees or ends another\'s watch', async () => {
+    await engine.executeRaw(`INSERT INTO oauth_clients (client_id, client_name) VALUES ('client-e', 'client-e') ON CONFLICT DO NOTHING`);
+    const id = await seedJob('active', 'client-e');
+    const c = { engine, config: {}, dryRun: false, logger: { info() {}, warn() {}, error() {}, debug() {} }, ...agent('client-e') } as unknown as OperationContext;
+    const refused = await withCallerAccess({ audience: ['member:alice-example'] }, () => operationsByName.watch_job!.handler(c, { id })).then(() => null, (e: unknown) => e);
+    expect(JSON.stringify(refused)).toContain('audience_not_supported');
+    expect(await engine.executeRaw('SELECT id FROM wake_subscriptions')).toEqual([]);
+    expect(fake.calls).toHaveLength(0);
   });
 
   test('list_watches and unwatch act only on the caller\'s own watches', async () => {

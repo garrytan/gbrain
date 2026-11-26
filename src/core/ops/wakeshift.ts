@@ -217,6 +217,10 @@ const watch_job: Operation = {
     const step = await termsStep(ctx, runtime, principal, 'watch_job');
     if (step) return step;
     const owner = agentOwnerFence(ctx, 'watch_job');
+    if (owner !== null && owner.actor[3] !== '') {
+      throw opError('actor_not_attested', 'watch_job cannot run for an audience yet: a watch is kept to the credential, not the audience it serves, so one audience would see or end another\'s. Nothing was read or written.',
+        `Call wait_job ${id} instead.`, { reason: 'audience_not_supported' });
+    }
     if (owner !== null) await assertJobOwned(ctx, id, owner);
     const [job] = await ctx.engine.executeRaw<{ status: string }>('SELECT status FROM minion_jobs WHERE id = $1', [id]);
     if (!job) throw jobNotFound(`Job not found: ${id}`);

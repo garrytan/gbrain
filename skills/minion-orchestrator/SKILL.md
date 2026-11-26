@@ -134,9 +134,10 @@ tasks where no LLM reasoning loop is needed.
 - **MCP boundary:** shell-job submission is CLI-only. `submit_job name="shell"`
   over MCP throws an `OperationError` with code `permission_denied`; generic
   remote submission accepts only `sync`, `import`, `lint`, and `lint-fix`.
-  Agents CAN observe shell jobs via `get_job` / `list_jobs` / `get_job_progress`
-  (not protected), but cannot submit them. Operator or autopilot submits;
-  agent observes.
+  A remote agent sees only the jobs it submitted, so an operator's shell job
+  shows in `get_job` / `list_jobs` / `get_job_progress` only for a credential
+  bound to the brain owner (`access.owner_member`); anyone else asks the
+  operator, who runs `gbrain jobs get <id>`.
 - **Verify setup:** after configuration, run `gbrain jobs stats` (CLI) to
   confirm the worker is registered and consuming the queue.
 

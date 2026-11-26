@@ -8,11 +8,22 @@ function publicJob(job: MinionJob) {
   return { ...visible, private_queue_owner_token: job.private_queue_owner_token == null ? null : '[redacted]' };
 }
 
+/** Public jobs for a caller: a fenced caller sees parent_job_id only for a parent it owns. */
+async function visibleJobs(ctx: OperationContext, jobs: MinionJob[], owner: JobOwner | null) {
+  const rows = jobs.map(publicJob);
+  const parents = owner === null ? [] : [...new Set(jobs.flatMap(j => (j.parent_job_id == null ? [] : [j.parent_job_id])))];
+  if (owner === null || parents.length === 0) return rows;
+  const owned = new Set((await ctx.engine.executeRaw<{ id: number }>(
+    `SELECT p.id FROM minion_jobs p WHERE p.id = ANY($1::int[]) AND ${jobOwnedSql(2, 'p')}`, [parents, ...jobOwnerParams(owner)])).map(r => Number(r.id)));
+  return rows.map(r => (r.parent_job_id != null && !owned.has(Number(r.parent_job_id)) ? { ...r, parent_job_id: null } : r));
+}
+
 /** #7241: public jobs with submitted_by, blocked_by, liveness and spend (job-insight.ts), fenced like the row read. */
 async function insightJobs(ctx: OperationContext, jobs: MinionJob[], owner: JobOwner | null) {
   const { describeJobs, withInsight } = await import('../minions/job-insight.ts');
   const insight = await describeJobs(ctx.engine, jobs, { owner, remote: ctx.remote !== false });
-  return jobs.map(job => withInsight(publicJob(job), insight.get(job.id)));
+  const visible = await visibleJobs(ctx, jobs, owner);
+  return jobs.map((job, i) => withInsight(visible[i]!, insight.get(job.id)));
 }
 
 /** Fields `list_jobs` may project to (F10 token trim): every public job field. */
@@ -99,7 +110,8 @@ export function agentOwnerFence(ctx: OperationContext, opName: string): JobOwner
 /** The JobOwner of a remote caller's credential (jobOwnedSql); null when it carries no credential identity. */
 function callerJobOwner(ctx: OperationContext): JobOwner | null {
   const principal = ctx.auth?.principal;
-  const clientId = typeof ctx.auth?.clientId === 'string' && ctx.auth.clientId ? ctx.auth.clientId : null;
+  const legacyStamp = !principal || principal.kind === 'oauth_client';
+  const clientId = legacyStamp && typeof ctx.auth?.clientId === 'string' && ctx.auth.clientId ? ctx.auth.clientId : null;
   if (!principal && !clientId) return null;
   return { principal: principal ? { kind: principal.kind, id: principal.id } : null, clientId, actor: callerJobActor() };
 }
@@ -714,7 +726,7 @@ const list_jobs: Operation = {
     const fields = parseJobFields(p.fields);
     const owner = agentOwnerFence(ctx, 'list_jobs');
     const project = async (jobs: MinionJob[]) => {
-      const visible = !fields || fields.some(f => (INSIGHT_JOB_FIELDS as readonly string[]).includes(f)) ? await insightJobs(ctx, jobs, owner) : jobs.map(publicJob);
+      const visible = !fields || fields.some(f => (INSIGHT_JOB_FIELDS as readonly string[]).includes(f)) ? await insightJobs(ctx, jobs, owner) : await visibleJobs(ctx, jobs, owner);
       return fields ? visible.map(j => Object.fromEntries(fields.map(f => [f, (j as Record<string, unknown>)[f]]))) : visible;
     };
     if (p.finished_since !== undefined) {
@@ -776,7 +788,7 @@ const cancel_job: Operation = {
     if (!cancelled) throw jobStateError(p.id, `Cannot cancel job ${p.id} (may already be in terminal status)`, 'Only waiting, active, delayed or paused jobs can be cancelled.');
     // private_queue_owner_token is a capability credential (lease renewal /
     // attach), not job data — never expose it over MCP envelopes.
-    return publicJob(cancelled);
+    return (await visibleJobs(ctx, [cancelled], owner))[0];
   },
 };
 
@@ -803,7 +815,7 @@ const retry_job: Operation = {
     if (!retried) throw jobStateError(p.id, `Cannot retry job ${p.id} (must be failed or dead)`, 'Only failed or dead jobs can be re-queued.');
     // private_queue_owner_token is a capability credential (lease renewal /
     // attach), not job data — never expose it over MCP envelopes.
-    return publicJob(retried);
+    return (await visibleJobs(ctx, [retried], owner))[0];
   },
 };
 
