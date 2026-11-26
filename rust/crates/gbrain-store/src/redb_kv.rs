@@ -4,6 +4,9 @@
 //! kept under key `M\0seq` and is bumped inside every write transaction, so it commits atomically
 //! with the records it counts.
 
+use crate::commit_log::{
+    AcceptHook, CommitClock, CommitMeta, CommitPosition, LogOpRef, LogSettings, LogState,
+};
 use crate::error::{
     READ_ONLY_TRANSACTION, Result, STORE_CLOSED, STORE_CORRUPT, STORE_IO, STORE_LOCKED, StoreError,
 };
@@ -12,8 +15,11 @@ use redb::{
     Database, Durability, ReadOnlyDatabase, ReadTransaction, ReadableDatabase, ReadableTable,
     StorageBackend, TableDefinition, WriteTransaction,
 };
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 const TABLE: TableDefinition<&[u8], &[u8]> = TableDefinition::new("kv");
 /// The commit sequence. It sorts just before the store's id counters (`M` + `next_...`), which
@@ -25,6 +31,22 @@ const SEQ_KEY: &[u8] = b"M\0seq";
 /// on such a file (the format upgrade) moves it to `SEQ_KEY` in the same transaction, so a crash
 /// never leaves an older build a file whose sequence it cannot find.
 const LEGACY_SEQ_KEY: &[u8] = b"\0seq";
+/// The newest durable commit time (8-byte big-endian i64; multi-user mode, `commit_log::CommitClock`),
+/// written in the same transaction as the commit it times. Reserved like `SEQ_KEY`: no store key
+/// equals it and no scan reaches it. Absent on a brain no commit clock ever ran on.
+pub const COMMIT_TIME_KEY: &[u8] = b"M\0ctime";
+
+/// The newest durable commit time `read` holds.
+pub fn read_commit_time(read: &dyn KvRead) -> Result<Option<i64>> {
+    match read.get(COMMIT_TIME_KEY)? {
+        None => Ok(None),
+        Some(bytes) => Ok(Some(i64::from_be_bytes(
+            bytes.as_slice().try_into().map_err(|_| {
+                StoreError::new(STORE_CORRUPT, "the commit time record is malformed")
+            })?,
+        ))),
+    }
+}
 
 fn map<E: Into<redb::Error>>(error: E) -> StoreError {
     match error.into() {
@@ -69,6 +91,22 @@ impl StorageBackend for Backend {
 
 pub struct RedbKv {
     db: Arc<Database>,
+    /// The commit log, once enabled (`Kv::enable_commit_log`); `None` keeps every commit as it
+    /// was before the log existed. Only a writer, which holds redb's write lock, takes it.
+    log: Arc<CommitLog>,
+}
+
+/// The single-writer store's commit log state.
+#[derive(Default)]
+struct CommitLog {
+    state: Mutex<Option<LogState>>,
+    on: AtomicBool,
+    /// A commit failed after its log bookkeeping was planned: the next writer reloads it.
+    dirty: AtomicBool,
+    /// The commit clock, once installed (`Kv::set_commit_clock`).
+    clock: Mutex<Option<Arc<CommitClock>>>,
+    /// Serializes a timed or logged commit from its accept step to its bookkeeping.
+    finish: Arc<Mutex<()>>,
 }
 
 impl RedbKv {
@@ -96,7 +134,10 @@ impl RedbKv {
             tx.open_table(TABLE).map_err(map)?;
             tx.commit().map_err(map)?;
         }
-        Ok(Self { db: Arc::new(db) })
+        Ok(Self {
+            db: Arc::new(db),
+            log: Arc::new(CommitLog::default()),
+        })
     }
 }
 
@@ -205,16 +246,23 @@ impl RedbSink {
         Ok(())
     }
 
-    /// Writes the commit sequence `version`, syncs every earlier batch with it and closes the
-    /// file cleanly.
-    pub fn finish(self, version: u64) -> Result<()> {
+    /// Writes the commit sequence `version` (and the source's durable commit time, when it kept
+    /// one), syncs every earlier batch with it and closes the file cleanly.
+    pub fn finish(self, version: u64, commit_time: Option<i64>) -> Result<()> {
         let mut tx = self.db.begin_write().map_err(map)?;
         tx.set_durability(Durability::Immediate)
             .map_err(|e| StoreError::io(format!("record store: {e}")))?;
-        tx.open_table(TABLE)
-            .map_err(map)?
-            .insert(SEQ_KEY, version.to_be_bytes().as_slice())
-            .map_err(map)?;
+        {
+            let mut table = tx.open_table(TABLE).map_err(map)?;
+            table
+                .insert(SEQ_KEY, version.to_be_bytes().as_slice())
+                .map_err(map)?;
+            if let Some(time) = commit_time {
+                table
+                    .insert(COMMIT_TIME_KEY, time.to_be_bytes().as_slice())
+                    .map_err(map)?;
+            }
+        }
         tx.commit().map_err(map)?;
         drop(self.db);
         Ok(())
@@ -272,14 +320,14 @@ fn scan_table(
     if reverse {
         for item in range.rev() {
             let (k, v) = item.map_err(map)?;
-            if k.value() != SEQ_KEY && !f(k.value(), v.value()) {
+            if k.value() != SEQ_KEY && k.value() != COMMIT_TIME_KEY && !f(k.value(), v.value()) {
                 break;
             }
         }
     } else {
         for item in range {
             let (k, v) = item.map_err(map)?;
-            if k.value() != SEQ_KEY && !f(k.value(), v.value()) {
+            if k.value() != SEQ_KEY && k.value() != COMMIT_TIME_KEY && !f(k.value(), v.value()) {
                 break;
             }
         }
@@ -289,7 +337,7 @@ fn scan_table(
 
 /// Refuses a key the adapter keeps for itself (`OccKv` applies the same rule to its writes).
 pub(crate) fn reject_reserved(key: &[u8]) -> Result<()> {
-    if key.first() == Some(&0) || key == SEQ_KEY {
+    if key.first() == Some(&0) || key == SEQ_KEY || key == COMMIT_TIME_KEY {
         return Err(StoreError::invalid(
             "keys starting with byte 0, and the commit sequence key, are reserved",
         ));
@@ -329,6 +377,21 @@ impl KvRead for Snapshot {
 
 struct Writer {
     tx: WriteTransaction,
+    /// Set when the store keeps a commit log: the final value (`None`: deleted) of each key this
+    /// write changed, and what it says about itself.
+    logged: Option<Logged>,
+    /// The commit clock, when one is installed: this commit's time, reported before it is durable.
+    clock: Option<Arc<CommitClock>>,
+    /// The commit time set by the optimistic pipeline over this store (`KvWrite::set_commit_time`).
+    commit_time: Option<i64>,
+    /// Held from a timed or logged commit's accept step to its bookkeeping (`CommitLog::finish`).
+    finish: Arc<Mutex<()>>,
+}
+
+struct Logged {
+    log: Arc<CommitLog>,
+    ops: BTreeMap<Vec<u8>, Option<Vec<u8>>>,
+    meta: CommitMeta,
 }
 
 impl KvRead for Writer {
@@ -355,6 +418,9 @@ impl KvWrite for Writer {
         reject_reserved(key)?;
         let mut table = self.tx.open_table(TABLE).map_err(map)?;
         table.insert(key, value).map_err(map)?;
+        if let Some(logged) = &mut self.logged {
+            logged.ops.insert(key.to_vec(), Some(value.to_vec()));
+        }
         Ok(())
     }
 
@@ -362,10 +428,120 @@ impl KvWrite for Writer {
         reject_reserved(key)?;
         let mut table = self.tx.open_table(TABLE).map_err(map)?;
         table.remove(key).map_err(map)?;
+        if let Some(logged) = &mut self.logged {
+            logged.ops.insert(key.to_vec(), None);
+        }
         Ok(())
     }
 
-    fn commit(mut self: Box<Self>) -> Result<u64> {
+    fn set_commit_meta(&mut self, meta: CommitMeta) {
+        if let Some(logged) = &mut self.logged {
+            logged.meta = meta;
+        }
+    }
+
+    fn set_commit_time(&mut self, time: i64) {
+        self.commit_time = Some(time);
+    }
+
+    fn commit(self: Box<Self>) -> Result<u64> {
+        self.commit_position().map(|p| p.sequence)
+    }
+
+    fn commit_position(mut self: Box<Self>) -> Result<CommitPosition> {
+        let clock = self.clock.take();
+        let logged = self.logged.take();
+        if clock.is_none() && logged.is_none() {
+            // Multi-user mode off: the commit as it always was.
+            return self
+                .bump_and_commit()
+                .map(|next| CommitPosition::new(next, 0));
+        }
+        // The commit's time, its record, the file commit and the bookkeeping after it happen under
+        // one lock: redb releases its write lock when the file commit returns, so without this the
+        // next writer could time or log its commit against state this one has not published yet.
+        let finish = self.finish.clone();
+        let _finish = finish.lock().unwrap_or_else(|p| p.into_inner());
+        let (current, _) = read_seq(&mut |key| self.get(key))?;
+        let position = CommitPosition::new(current + 1, 0);
+        if let Some(clock) = &clock {
+            // The accept step: this writer holds redb's write lock, so no later commit is accepted first.
+            self.commit_time = Some(clock.accept(position, None));
+        }
+        // With the log on: the record of this commit, its trims and the meta record go into the
+        // same redb transaction as the records (`commit_log.rs`).
+        let mut log = None;
+        if let Some(Logged {
+            log: shared,
+            ops,
+            meta,
+        }) = logged
+        {
+            let Some(commit_time) = self.commit_time else {
+                return Err(StoreError::new(
+                    STORE_CORRUPT,
+                    "the commit log is on but the commit has no commit time",
+                ));
+            };
+            let mut guard = shared.state.lock().unwrap_or_else(|p| p.into_inner());
+            let Some(state) = guard.as_mut() else {
+                return Err(StoreError::new(
+                    STORE_CORRUPT,
+                    "the commit log was enabled but holds no state",
+                ));
+            };
+            if shared.dirty.load(Ordering::Acquire) {
+                *state = LogState::load(&*self, state.settings.clone())?;
+                shared.dirty.store(false, Ordering::Release);
+            }
+            let origin = state.origin_for(&meta);
+            let value = crate::commit_log::encode_record(
+                &origin,
+                commit_time,
+                &meta.write_ids,
+                ops.iter().map(|(k, v)| {
+                    (
+                        k.as_slice(),
+                        match v {
+                            Some(v) => LogOpRef::Put(v),
+                            None => LogOpRef::Delete,
+                        },
+                    )
+                }),
+            );
+            let append = state.write(&mut *self, &[(position, value)])?;
+            drop(guard);
+            log = Some((shared, append));
+        }
+        let time = self.commit_time;
+        match self.bump_and_commit() {
+            Ok(next) => {
+                if let (Some(clock), Some(time)) = (&clock, time) {
+                    clock.committed(time);
+                }
+                if let Some((shared, append)) = log {
+                    let mut guard = shared.state.lock().unwrap_or_else(|p| p.into_inner());
+                    if let Some(state) = guard.as_mut() {
+                        state.applied(append);
+                    }
+                }
+                Ok(CommitPosition::new(next, 0))
+            }
+            Err(e) => {
+                // A failed commit leaves no time behind (the clock keeps its last durable time) and
+                // its log bookkeeping is reloaded before the next commit.
+                if let Some((shared, _)) = log {
+                    shared.dirty.store(true, Ordering::Release);
+                }
+                Err(e)
+            }
+        }
+    }
+}
+
+impl Writer {
+    /// Bumps the commit sequence in this transaction and commits it durably.
+    fn bump_and_commit(mut self: Box<Self>) -> Result<u64> {
         let next = {
             let mut table = self.tx.open_table(TABLE).map_err(map)?;
             let (current, legacy) = read_seq(&mut |key| {
@@ -381,6 +557,11 @@ impl KvWrite for Writer {
             table
                 .insert(SEQ_KEY, next.to_be_bytes().as_slice())
                 .map_err(map)?;
+            if let Some(time) = self.commit_time {
+                table
+                    .insert(COMMIT_TIME_KEY, time.to_be_bytes().as_slice())
+                    .map_err(map)?;
+            }
             next
         };
         self.tx
@@ -411,7 +592,24 @@ impl Kv for RedbKv {
 
     fn begin_write(&self) -> Result<Box<dyn KvWrite>> {
         let tx = self.db.begin_write().map_err(map)?;
-        Ok(Box::new(Writer { tx }))
+        let logged = self.log.on.load(Ordering::Acquire).then(|| Logged {
+            log: self.log.clone(),
+            ops: BTreeMap::new(),
+            meta: CommitMeta::default(),
+        });
+        let clock = self
+            .log
+            .clock
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone();
+        Ok(Box::new(Writer {
+            tx,
+            logged,
+            clock,
+            commit_time: None,
+            finish: self.log.finish.clone(),
+        }))
     }
 
     fn version(&self) -> Result<u64> {
@@ -419,6 +617,50 @@ impl Kv for RedbKv {
             tx: self.db.begin_read().map_err(map)?,
         };
         Ok(read_seq(&mut |key| snapshot.get(key))?.0)
+    }
+
+    fn enable_commit_log(&self, settings: LogSettings) -> Result<()> {
+        if self
+            .log
+            .clock
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .is_none()
+        {
+            return Err(StoreError::new(
+                crate::error::INVALID_STATE,
+                "the commit log needs the commit clock (`Kv::set_commit_clock`) first",
+            ));
+        }
+        let state = LogState::load(&*self.snapshot()?, settings)?;
+        *self.log.state.lock().unwrap_or_else(|p| p.into_inner()) = Some(state);
+        self.log.dirty.store(false, Ordering::Release);
+        self.log.on.store(true, Ordering::Release);
+        Ok(())
+    }
+
+    fn commit_log_enabled(&self) -> bool {
+        self.log.on.load(Ordering::Acquire)
+    }
+
+    fn clear_commit_clock(&self) {
+        *self.log.clock.lock().unwrap_or_else(|p| p.into_inner()) = None;
+    }
+
+    fn set_commit_clock(
+        &self,
+        clock: Arc<dyn crate::env::Env>,
+        hook: Option<AcceptHook>,
+    ) -> Result<()> {
+        let mut slot = self.log.clock.lock().unwrap_or_else(|p| p.into_inner());
+        if slot.is_none() {
+            let last = crate::commit_log::floor_time(&*self.snapshot()?)?;
+            *slot = Some(Arc::new(CommitClock::new(clock, last)));
+        }
+        if let Some(c) = slot.as_ref() {
+            c.set_hook(hook);
+        }
+        Ok(())
     }
 }
 

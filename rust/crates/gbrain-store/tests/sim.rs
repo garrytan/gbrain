@@ -12,6 +12,13 @@
 //!   chunk its postings, the index totals match the chunks, every journal request its index entry,
 //!   and the outstanding counters match the requests that have not ended.
 //!
+//! The logged runs (`logged_*`) open the store with the commit log on (multi-user mode,
+//! `commit_log.rs`). They pin the brain's records and log position right after the open (the
+//! log's activation is part of the open, so it is the baseline, not a logged change) and, after the
+//! crash and the reopen, replay every record after that position onto the baseline: the result
+//! must be exactly the recovered records, with the same acknowledged/in-doubt check as above
+//! beside it.
+//!
 //! Run more seeds with `GBRAIN_SIM_SEEDS=10000`; repeat one with `GBRAIN_SIM_SEED=<n>`.
 
 use gbrain_sim::check::{self, Class, Committed, Model, Reopen, Violation, WriteSet};
@@ -20,6 +27,7 @@ use gbrain_sim::{
     CrashMode, Cx, FaultPlan, Scheduler, SimDisk, SimFile, SimRng, Step, Task, seed::seeds,
 };
 use gbrain_store::chunks::{ChunkInput, tokenize};
+use gbrain_store::commit_log::{self, CommitPosition};
 use gbrain_store::env::uuid_from_bytes;
 use gbrain_store::journal::{FinishWrite, PageMutation, Principal, WriteAdmission};
 use gbrain_store::kv::{read_i64, scan_prefix};
@@ -31,7 +39,9 @@ use gbrain_store::redb_kv::RedbKv;
 use gbrain_store::timeline::{
     AddTimelineOptions, TimelineBatchInput, TimelineInput, TimelineOptions,
 };
-use gbrain_store::{Env, FileBackend, Kv, KvRead, KvWrite, OpenOptions, Store, StoreError, keys};
+use gbrain_store::{
+    Env, FileBackend, Kv, KvRead, KvWrite, MultiUserWrites, OpenOptions, Store, StoreError, keys,
+};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -135,6 +145,25 @@ impl Kv for RecKv {
     fn version(&self) -> Result<u64, StoreError> {
         self.inner.version()
     }
+    fn enable_commit_log(&self, settings: commit_log::LogSettings) -> Result<(), StoreError> {
+        self.inner.enable_commit_log(settings)
+    }
+    fn commit_log_enabled(&self) -> bool {
+        self.inner.commit_log_enabled()
+    }
+    fn set_commit_clock(
+        &self,
+        clock: Arc<dyn Env>,
+        hook: Option<commit_log::AcceptHook>,
+    ) -> Result<(), StoreError> {
+        self.inner.set_commit_clock(clock, hook)
+    }
+    fn last_commit_time(&self) -> Result<Option<i64>, StoreError> {
+        self.inner.last_commit_time()
+    }
+    fn clear_commit_clock(&self) {
+        self.inner.clear_commit_clock();
+    }
 }
 
 struct RecWrite {
@@ -161,13 +190,24 @@ impl KvRead for RecWrite {
 impl KvWrite for RecWrite {
     fn put(&mut self, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
         self.inner.put(key, value)?;
-        self.writes.push((key.to_vec(), Some(value.to_vec())));
+        // The log's own keys are its upkeep, checked by the logged runs, not records.
+        if !commit_log::is_log_key(key) {
+            self.writes.push((key.to_vec(), Some(value.to_vec())));
+        }
         Ok(())
     }
     fn delete(&mut self, key: &[u8]) -> Result<(), StoreError> {
         self.inner.delete(key)?;
-        self.writes.push((key.to_vec(), None));
+        if !commit_log::is_log_key(key) {
+            self.writes.push((key.to_vec(), None));
+        }
         Ok(())
+    }
+    fn set_commit_meta(&mut self, meta: commit_log::CommitMeta) {
+        self.inner.set_commit_meta(meta);
+    }
+    fn set_commit_time(&mut self, time: i64) {
+        self.inner.set_commit_time(time);
     }
     fn commit(self: Box<Self>) -> Result<u64, StoreError> {
         let RecWrite { inner, log, writes } = *self;
@@ -559,6 +599,8 @@ impl Task<World> for Client {
 struct Run {
     log: Arc<Mutex<Log>>,
     kv: Arc<dyn Kv>,
+    /// Logged runs: the records and the log position right after the open.
+    baseline: Option<(Model, CommitPosition)>,
     violations: Vec<Violation>,
     trace_hash: u64,
     /// I/O calls the disk had counted when the store was ready (the crash point is after them).
@@ -568,6 +610,29 @@ struct Run {
 
 /// Open the store on `disk`, apply `plan` once it is ready, and drive the seeded clients.
 fn workload(disk: &SimDisk, seed: u64, plan: Option<FaultPlan>) -> Result<Run, StoreError> {
+    workload_as(disk, seed, plan, false)
+}
+
+/// The options of a logged run: the commit log on, with a host id for the write origin.
+fn logged_options() -> OpenOptions {
+    OpenOptions {
+        multiuser: true,
+        multiuser_writes: MultiUserWrites {
+            commit_log: true,
+            write_origin: true,
+            host_id: Some("d0000000-0000-4000-8000-0000000000d1".into()),
+            log_retention_bytes: None,
+        },
+        ..OpenOptions::default()
+    }
+}
+
+fn workload_as(
+    disk: &SimDisk,
+    seed: u64,
+    plan: Option<FaultPlan>,
+    logged: bool,
+) -> Result<Run, StoreError> {
     let kv = open_kv(disk)?;
     let log = Arc::new(Mutex::new(Log {
         committed: Vec::new(),
@@ -581,8 +646,19 @@ fn workload(disk: &SimDisk, seed: u64, plan: Option<FaultPlan>) -> Result<Run, S
     let store = Store::open_kv(
         recording,
         Arc::new(SimEnv::new(seed ^ 0xE4E)),
-        OpenOptions::default(),
+        if logged {
+            logged_options()
+        } else {
+            OpenOptions::default()
+        },
     )?;
+    let baseline = if logged {
+        let read = kv.snapshot()?;
+        let meta = commit_log::read_meta(&*read)?.expect("a logged run's brain keeps a log");
+        Some((data_of(&*read)?, meta.newest))
+    } else {
+        None
+    };
     let setup_ops = disk.stats().io_ops;
     if let Some(plan) = plan {
         disk.set_plan(plan);
@@ -603,6 +679,7 @@ fn workload(disk: &SimDisk, seed: u64, plan: Option<FaultPlan>) -> Result<Run, S
     Ok(Run {
         log,
         kv,
+        baseline,
         violations: world.violations,
         trace_hash: scheduler.trace.hash(),
         setup_ops,
@@ -628,12 +705,92 @@ fn record(bytes: &[u8]) -> Value {
 }
 
 fn read_state(kv: &dyn Kv) -> Result<Model, StoreError> {
+    data_of(&*kv.snapshot()?)
+}
+
+/// Every record of `read` but the commit log's own (a brain opened with the log off has none).
+fn data_of(read: &dyn KvRead) -> Result<Model, StoreError> {
     let mut model = Model::new();
-    kv.snapshot()?.scan(&[1], &[0xFF], false, &mut |k, v| {
-        model.insert(k.to_vec(), v.to_vec());
+    read.scan(&[1], &[0xFF], false, &mut |k, v| {
+        if !commit_log::is_log_key(k) {
+            model.insert(k.to_vec(), v.to_vec());
+        }
         true
     })?;
     Ok(model)
+}
+
+/// A logged run's log check: every record after the baseline position, applied to the baseline
+/// in order, gives exactly the records `kv` holds. A gap, a record whose data is missing or data
+/// whose record is missing shows up as a difference.
+fn check_log_replay(kv: &dyn Kv, baseline: &(Model, CommitPosition)) -> Result<(), String> {
+    let read = kv.snapshot().map_err(|e| e.to_string())?;
+    let (start, cursor) = baseline;
+    let page = commit_log::read_commit_log(&*read, Some(*cursor), usize::MAX)
+        .map_err(|e| format!("reading the log: {e}"))?;
+    if page.snapshot_required {
+        return Err("the log no longer reaches back to the baseline".into());
+    }
+    let mut model = start.clone();
+    let mut prev = *cursor;
+    let mut prev_time: Option<i64> = None;
+    for record in &page.records {
+        if prev_time.is_some_and(|t| record.commit_time <= t) {
+            return Err(format!(
+                "commit time goes back at {}",
+                record.position.token()
+            ));
+        }
+        prev_time = Some(record.commit_time);
+        if !record.position.follows(prev) {
+            return Err(format!(
+                "the log jumps from {} to {}",
+                prev.token(),
+                record.position.token()
+            ));
+        }
+        prev = record.position;
+        for (key, op) in &record.ops {
+            match op {
+                commit_log::LogOp::Put(v) => {
+                    model.insert(key.clone(), v.clone());
+                }
+                commit_log::LogOp::Delete => {
+                    model.remove(key);
+                }
+                other => return Err(format!("the single-writer store logged {other:?}")),
+            }
+        }
+    }
+    if let Some(t) = prev_time {
+        let durable = kv.last_commit_time().map_err(|e| e.to_string())?;
+        if durable != Some(t) {
+            return Err(format!(
+                "the newest record's time is {t}, the durable time {durable:?}"
+            ));
+        }
+    }
+    let version = kv.version().map_err(|e| e.to_string())?;
+    if prev.sequence != version {
+        return Err(format!(
+            "the log ends at {}, the store at sequence {version}",
+            prev.token()
+        ));
+    }
+    let stored = data_of(&*read).map_err(|e| e.to_string())?;
+    if stored != model {
+        let differ: Vec<String> = stored
+            .keys()
+            .chain(model.keys())
+            .filter(|k| stored.get(*k) != model.get(*k))
+            .take(3)
+            .map(|k| k.escape_ascii().to_string())
+            .collect();
+        return Err(format!(
+            "the log replays to other records than the store holds: {differ:?}"
+        ));
+    }
+    Ok(())
 }
 
 /// Everything the store promises about its records that a crash must not break. Empty when sound.
@@ -1019,7 +1176,11 @@ fn corrupt(message: String) -> Violation {
 
 /// Reopen after a crash: what recovery gave, plus anything the store's own checks found. A
 /// recovered store must also take a new write.
-fn reopen(disk: &SimDisk, seed: u64) -> (Reopen, Vec<Violation>) {
+fn reopen(
+    disk: &SimDisk,
+    seed: u64,
+    baseline: Option<&(Model, CommitPosition)>,
+) -> (Reopen, Vec<Violation>) {
     let mut extra = Vec::new();
     let opened = catch_unwind(AssertUnwindSafe(|| -> Result<(u64, Model), StoreError> {
         let kv = open_kv(disk)?;
@@ -1028,10 +1189,21 @@ fn reopen(disk: &SimDisk, seed: u64) -> (Reopen, Vec<Violation>) {
         for problem in integrity(&*kv)? {
             extra.push(corrupt(format!("after recovery: {problem}")));
         }
+        if let Some(baseline) = baseline
+            && let Err(problem) = check_log_replay(&*kv, baseline)
+        {
+            extra.push(corrupt(format!(
+                "after recovery, the commit log: {problem}"
+            )));
+        }
         let store = Store::open_kv(
             kv.clone(),
             Arc::new(SimEnv::new(seed ^ 0x5EED)),
-            OpenOptions::default(),
+            if baseline.is_some() {
+                logged_options()
+            } else {
+                OpenOptions::default()
+            },
         )?;
         let input: PageInput = serde_json::from_value(
             json!({"type": "note", "title": "after", "compiled_truth": "written after recovery"}),
@@ -1050,6 +1222,13 @@ fn reopen(disk: &SimDisk, seed: u64) -> (Reopen, Vec<Violation>) {
                 "after the first write following recovery: {problem}"
             )));
         }
+        if let Some(baseline) = baseline
+            && let Err(problem) = check_log_replay(&*kv, baseline)
+        {
+            extra.push(corrupt(format!(
+                "after the first write following recovery, the commit log: {problem}"
+            )));
+        }
         Ok((version, state))
     }));
     let reopen = match opened {
@@ -1061,11 +1240,16 @@ fn reopen(disk: &SimDisk, seed: u64) -> (Reopen, Vec<Violation>) {
 }
 
 fn run_seed(seed: u64, kind: Kind) -> SeedResult {
+    run_seed_as(seed, kind, false)
+}
+
+fn run_seed_as(seed: u64, kind: Kind, logged: bool) -> SeedResult {
     let mut res = SeedResult::default();
     // Calibration: the same seed on an honest disk with no crash gives the I/O budget.
     let (setup_ops, total_ops) = {
         let disk = SimDisk::new(seed, FaultPlan::none());
-        let run = workload(&disk, seed, None).expect("the store opens on a fresh simulated disk");
+        let run = workload_as(&disk, seed, None, logged)
+            .expect("the store opens on a fresh simulated disk");
         (run.setup_ops, disk.stats().io_ops)
     };
 
@@ -1110,7 +1294,9 @@ fn run_seed(seed: u64, kind: Kind) -> SeedResult {
         crash_at_op: Some(crash_at),
         crash_mode: mode,
     };
-    let ran = catch_unwind(AssertUnwindSafe(|| workload(&disk, seed, Some(plan))));
+    let ran = catch_unwind(AssertUnwindSafe(|| {
+        workload_as(&disk, seed, Some(plan), logged)
+    }));
     let run = match ran {
         Ok(Ok(run)) => run,
         Ok(Err(e)) => {
@@ -1129,6 +1315,7 @@ fn run_seed(seed: u64, kind: Kind) -> SeedResult {
     let Run {
         log,
         kv,
+        baseline,
         violations,
         trace_hash,
         ..
@@ -1145,7 +1332,7 @@ fn run_seed(seed: u64, kind: Kind) -> SeedResult {
     res.violations.extend(violations);
 
     disk.reboot();
-    let (reopened, extra) = reopen(&disk, seed);
+    let (reopened, extra) = reopen(&disk, seed, baseline.as_ref());
     // The control tells the checker the disk was honest although it lied, so a clean refusal or
     // a lost acknowledged commit must show up as a violation.
     let lied = stats.fsync_lies > 0 && kind != Kind::Control;
@@ -1220,9 +1407,13 @@ impl Totals {
 }
 
 fn run_kind(kind: Kind, default_seeds: u64, label: &str) -> Totals {
+    run_kind_as(kind, default_seeds, label, false)
+}
+
+fn run_kind_as(kind: Kind, default_seeds: u64, label: &str, logged: bool) -> Totals {
     let mut totals = Totals::default();
     for seed in seeds(default_seeds) {
-        let result = run_seed(seed, kind);
+        let result = run_seed_as(seed, kind, logged);
         totals.add(seed, &result);
     }
     totals.print(label);
@@ -1403,5 +1594,52 @@ fn a_seed_replays_exactly() {
             );
             assert_eq!(a.violations, b.violations, "seed {seed} {kind:?}");
         }
+    }
+}
+
+#[test]
+fn logged_a_crash_at_any_point_keeps_the_log_and_the_records_in_step() {
+    let totals = run_kind_as(Kind::Crash, 200, "logged crash", true);
+    assert_clean(&totals, "logged crash");
+    assert_eq!(totals.refused, 0, "an honest disk must always reopen");
+    assert!(totals.crashes > 0, "no seed crashed mid-run");
+}
+
+#[test]
+fn logged_fsync_errors_and_lies_keep_the_log_and_the_records_in_step() {
+    let totals = run_kind_as(Kind::FsyncFault, 200, "logged fsync-fault", true);
+    assert_clean(&totals, "logged fsync-fault");
+}
+
+#[test]
+fn logged_the_control_run_must_report_violations() {
+    let totals = run_kind_as(
+        Kind::Control,
+        200,
+        "logged control (expected to find violations)",
+        true,
+    );
+    if totals.seeds >= 50 {
+        assert!(totals.violations() > 0, "the logged checker is blind");
+    }
+}
+
+#[test]
+fn logged_an_honest_run_has_a_log_that_replays_to_its_records() {
+    for seed in seeds(40) {
+        let disk = SimDisk::new(seed, FaultPlan::none());
+        let run = workload_as(&disk, seed, None, true).unwrap();
+        assert_eq!(run.stopped, None, "seed {seed}");
+        assert!(
+            run.violations.is_empty(),
+            "seed {seed}: {:?}",
+            run.violations
+        );
+        let baseline = run.baseline.clone().unwrap();
+        check_log_replay(&*run.kv, &baseline).unwrap_or_else(|e| panic!("seed {seed}: {e}"));
+        // The check is not blind: a key the log never wrote shows up.
+        let mut extra = baseline.clone();
+        extra.0.insert(b"zz/not-logged".to_vec(), b"x".to_vec());
+        assert!(check_log_replay(&*run.kv, &extra).is_err(), "seed {seed}");
     }
 }

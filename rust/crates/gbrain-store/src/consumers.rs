@@ -359,7 +359,15 @@ mod tests {
             );
             assert_eq!(rows[0]["renewed_age_ms"], "1000", "{mode}");
             assert_eq!(rows[0]["pool"], json!({ "max": 4 }), "{mode}");
-            assert_eq!(rows[0]["started_at"], "2027-01-15 08:00:00+00", "{mode}");
+            // The store clock never runs below the commit time at open (I-4.v2.1), so a frozen test clock can read a
+            // microsecond past its own value.
+            assert!(
+                rows[0]["started_at"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with("2027-01-15 08:00:00"),
+                "{mode}"
+            );
             // The probe sees host h1's live full consumer, not the caller and not other hosts.
             let probe = |pid, nonce: &str| ConsumerProbe {
                 host_id: "h1".into(),

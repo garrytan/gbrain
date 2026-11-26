@@ -173,6 +173,7 @@ function boundEngine(parent: RustEngine, scope: RustTransactionScope, held: Held
     brain: scope.brain, close: async () => undefined,
     // The transaction runs on its brain's store, in that store's mode (I-0).
     multiuser: parent.openStoreIfOpen('transaction')?.multiuser === true,
+    commitLog: parent.openStoreIfOpen('transaction')?.commitLog === true,
     importRelation: refuseSeed('importRelation'), replaceRelationRows: refuseSeed('replaceRelationRows'), replaceInterval: refuseSeed('replaceInterval'),
     relationDigest: refuseSeed('relationDigest'), relationEntries: refuseSeed('relationEntries'), allocatorCheck: refuseSeed('allocatorCheck'),
     factFingerprints: refuseSeed('factFingerprints'), seedPlan: refuseSeed('seedPlan'),

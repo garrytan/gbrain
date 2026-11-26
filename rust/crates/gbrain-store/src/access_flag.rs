@@ -417,7 +417,7 @@ mod tests {
             ("keyword/index_writer/tests.rs", 2),
             ("kv.rs", 5),
             ("leases_tests.rs", 3),
-            ("lib.rs", 5),
+            ("lib.rs", 6),
             ("occ_kv.rs", 4),
             ("page_body/purge_record.rs", 1),
             ("redb_kv.rs", 7),

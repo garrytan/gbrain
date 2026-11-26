@@ -779,6 +779,9 @@ impl Store {
         let schema_version = config::read_config(pin.read(), "version")?
             .and_then(|v| v.parse().ok())
             .unwrap_or(0);
+        // The durable commit time (multi-user mode) is an adapter key no scan reaches: carried over
+        // from the same pinned state, so the copy keeps its clock floor. Absent stays absent.
+        let commit_time = crate::redb_kv::read_commit_time(pin.read())?;
 
         let batch_bytes = op.batch_bytes.unwrap_or(BATCH_BYTES);
         let mut inventory = Inventory::default();
@@ -833,7 +836,7 @@ impl Store {
             return Err(SnapshotOp::cancelled());
         }
         let (keys, bytes, tags) = inventory.finish();
-        sink.finish(generation)?;
+        sink.finish(generation, commit_time)?;
         claim.verify()?;
         if reopen {
             drop(RedbReadOnlyKv::open_path(&root.join(RECORDS_FILE))?);

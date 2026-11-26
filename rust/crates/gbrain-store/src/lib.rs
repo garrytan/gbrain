@@ -21,6 +21,7 @@ pub mod chronicle_reads;
 pub mod chunks;
 pub mod cli_reads;
 pub mod clock_floor;
+pub mod commit_log;
 pub mod config;
 pub mod consumers;
 pub mod env;
@@ -160,10 +161,14 @@ use std::fs;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
+pub use crate::commit_log::{CommitPosition, LogPage};
 pub use crate::env::{Env, SystemEnv};
 pub use crate::error::{Result, StoreError};
-pub use crate::format::{FORMAT_VERSION, FORMAT_VERSIONS, FormatRecord};
+pub use crate::format::{
+    FORMAT_VERSION, FORMAT_VERSIONS, FormatRecord, LOG_FORMAT_VERSION, OPENED_FORMATS,
+};
 pub use crate::kv::{FileBackend, Kv, KvRead, KvWrite};
+pub use crate::write_origin::WriteOrigin;
 
 /// The TypeScript schema version a fresh brain reports as `getConfig('version')`
 /// (`LATEST_SCHEMA_VERSION`, `src/core/schema-migrations/latest.generated.ts`). The binding passes
@@ -199,6 +204,31 @@ pub struct OpenOptions {
     /// caller per brain). It implies `concurrent_writes`, and protected entry points then require a lease fence
     /// (`leases.rs`). Off (the default), the store behaves exactly as without the field.
     pub multiuser: bool,
+    /// The commit log and write origin sub-switches (`commit_log.rs`). Read only when the brain runs in
+    /// multi-user mode (`multiuser` or its config row, I-0.v2); off, or with the mode off, the store writes, reads
+    /// and returns exactly what it did before they existed.
+    pub multiuser_writes: MultiUserWrites,
+}
+
+/// The commit log and write origin sub-switches of multi-user mode (`GBRAIN_RUST_COMMIT_LOG=1`,
+/// `GBRAIN_RUST_WRITE_ORIGIN=1`). Each field is off by default.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MultiUserWrites {
+    /// Keep a commit record per commit. A brain opened with it becomes a commit log brain
+    /// (`LOG_FORMAT_VERSION`), which a writable open without it refuses.
+    pub commit_log: bool,
+    /// Stamp journal rows with this machine, this engine run and the writing principal.
+    pub write_origin: bool,
+    /// This machine's host id (`host.json`); required with `write_origin`.
+    pub host_id: Option<String>,
+    /// The log's retention cap in bytes (`commit_log::DEFAULT_RETENTION_BYTES` when `None`).
+    pub log_retention_bytes: Option<u64>,
+}
+
+impl MultiUserWrites {
+    fn any(&self) -> bool {
+        self.commit_log || self.write_origin
+    }
 }
 
 impl Default for OpenOptions {
@@ -213,6 +243,7 @@ impl Default for OpenOptions {
             initial_config: Vec::new(),
             write_gate_detector_version: None,
             multiuser: false,
+            multiuser_writes: MultiUserWrites::default(),
         }
     }
 }
@@ -225,6 +256,10 @@ pub struct StoreInfo {
     pub schema_version: u32,
     /// True when this open created the brain.
     pub created: bool,
+    /// True when the brain keeps a commit log and this open writes it (multi-user mode). Not
+    /// serialized while false, so the open result keeps its shape.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub commit_log: bool,
     /// True when the brain runs in multi-user mode (`Store::multiuser`). Left out of the serialized info when false,
     /// so an open with the mode off reports exactly what it did before.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
@@ -267,6 +302,12 @@ pub struct Store {
     /// The brain directory, when the store was opened on one (`open_dir`, `open_dir_read_only`):
     /// the snapshot copies its `FORMAT` (`snapshot.rs`). `None` over `open_kv`.
     dir: Option<std::path::PathBuf>,
+    /// Multi-user mode: this open's host and engine run (`None` while the mode is off), and
+    /// whether journal rows are stamped with them.
+    pub(crate) origin: Option<Arc<commit_log::scope::RowOrigin>>,
+    pub(crate) stamp_rows: bool,
+    /// Where the commit log starts, on a commit log brain.
+    pub(crate) log_since: Option<CommitPosition>,
     /// `OpenOptions::multiuser` as the brain was opened; bound and sibling stores copy it.
     multiuser: bool,
 }
@@ -352,7 +393,7 @@ impl Store {
     /// Errors: `store_locked` when another handle or process owns it, `format_unknown` for a
     /// `FORMAT` or format record this build does not read, `store_io` and `store_corrupt`.
     pub fn open_dir(dir: &Path, options: OpenOptions) -> Result<Store> {
-        Store::open_dir_in(dir, options, FORMAT_VERSIONS)
+        Store::open_dir_in(dir, options, OPENED_FORMATS)
     }
 
     /// `open_dir` for a build that opens only the formats in `known`: the seam the older-build
@@ -362,6 +403,25 @@ impl Store {
             .map_err(|e| StoreError::io(format!("creating {}: {e}", dir.display())))?;
         // FORMAT is judged before the record file is opened: a newer brain is never touched.
         let existing = format::read_in(dir, known)?;
+        // Multi-user mode from the brain's own config row picks the concurrent store at open; read without opening the
+        // file for writing. A file redb must repair first reads as off here; the open below still reads the row.
+        let records = dir.join(format::RECORDS_FILE);
+        let config_on = multiuser_config_on(
+            redb_kv::peek(&records, &config::config_key(MULTIUSER_CONFIG_KEY)?).as_deref(),
+        );
+        // The record file read without opening it for writing: when it cannot be (redb must recover it
+        // first), the brain's config row is unknown here, not off.
+        let readable =
+            !records.exists() || redb_kv::peek(&records, &keys::meta("format")).is_some();
+        // The commit log counts only in multi-user mode (I-0.v2). Refused up front only when the mode
+        // is known off; when it cannot be known yet, the open below decides before any write.
+        let log_on =
+            options.multiuser_writes.commit_log && (options.multiuser || config_on || !readable);
+        // A commit log brain (or one whose switch to the log was under way) is never opened for
+        // writing without the log: nothing may commit that the log would miss.
+        if existing.as_ref().is_some_and(|f| f.log.is_some()) && !log_on {
+            return Err(log_required());
+        }
         if existing.is_none() {
             // Without FORMAT the record file says which format it is. Read that without
             // opening the file for writing, so a newer brain is refused with every byte as it was.
@@ -370,6 +430,9 @@ impl Store {
                 peeked.and_then(|b| serde_json::from_slice::<StoredFormat>(&b).ok())
             {
                 format::check_version_in(stored.format_version, known)?;
+                if stored.log.is_some() && !log_on {
+                    return Err(log_required());
+                }
             }
         }
         // Multi-user mode from the brain's own config row picks the concurrent store at open; read without opening the
@@ -383,15 +446,27 @@ impl Store {
         );
         let concurrent = options.concurrent_writes || options.multiuser || config_on;
         let kv = open_records(dir, concurrent)?;
-        let mut store = Store::open_kv_in(kv, Arc::new(SystemEnv), options.clone(), known)?;
-        // The peek above reads nothing from a file redb had to repair first; the open repaired it and read the
-        // config row. A brain that turned out to be in multi-user mode reopens on the concurrent store.
-        if store.multiuser && !concurrent {
-            drop(store);
-            let kv = open_records(dir, true)?;
-            store = Store::open_kv_in(kv, Arc::new(SystemEnv), options.clone(), known)?;
-        }
+        let mut store = Store::open_kv_in(
+            kv,
+            Arc::new(SystemEnv),
+            options.clone(),
+            known,
+            OpenMode::Write { dir: Some(dir) },
+        )?;
         store.dir = Some(dir.to_path_buf());
+        if store.multiuser && !concurrent {
+            // The config row turned multi-user mode on but could not be read before the open (redb
+            // recovered the file first): open again, now on the concurrent store the mode needs.
+            drop(store);
+            return Store::open_dir_in(
+                dir,
+                OpenOptions {
+                    concurrent_writes: true,
+                    ..options
+                },
+                known,
+            );
+        }
         // FORMAT follows the records: written when missing (a crash before it, or a deleted
         // file) and repaired when it is behind the records.
         let record = store.format_record(&options)?;
@@ -418,7 +493,7 @@ impl Store {
     /// closed cleanly (redb repairs only on a writable open), and `store_locked` while a writable
     /// handle has the brain open.
     pub fn open_dir_read_only(dir: &Path) -> Result<Store> {
-        let existing = format::read_in(dir, FORMAT_VERSIONS)?;
+        let existing = format::read_in(dir, OPENED_FORMATS)?;
         let kv = Arc::new(redb_kv::RedbReadOnlyKv::open_path(
             &dir.join(format::RECORDS_FILE),
         )?);
@@ -426,7 +501,13 @@ impl Store {
             keyword_index_builder: false,
             ..OpenOptions::default()
         };
-        let mut store = Store::open_kv_in(kv, Arc::new(SystemEnv), options, FORMAT_VERSIONS)?;
+        let mut store = Store::open_kv_in(
+            kv,
+            Arc::new(SystemEnv),
+            options,
+            OPENED_FORMATS,
+            OpenMode::ReadOnly,
+        )?;
         store.dir = Some(dir.to_path_buf());
         if existing.is_some_and(|on_disk| on_disk.brain_id != store.info.brain_id) {
             return Err(StoreError::new(
@@ -440,7 +521,13 @@ impl Store {
     /// Opens a brain on any `Kv`: the entry point for the simulation and for tests that run the
     /// store on a fault-injecting disk. Creates the brain's records when the store is empty.
     pub fn open_kv(kv: Arc<dyn Kv>, env: Arc<dyn Env>, options: OpenOptions) -> Result<Store> {
-        Store::open_kv_in(kv, env, options, FORMAT_VERSIONS)
+        Store::open_kv_in(
+            kv,
+            env,
+            options,
+            OPENED_FORMATS,
+            OpenMode::Write { dir: None },
+        )
     }
 
     fn open_kv_in(
@@ -448,13 +535,108 @@ impl Store {
         env: Arc<dyn Env>,
         options: OpenOptions,
         known: &[u32],
+        mode: OpenMode<'_>,
     ) -> Result<Store> {
+        let read_only = matches!(mode, OpenMode::ReadOnly);
+        // Multi-user mode: the caller's resolved switch, or the brain's own config row (I-0). The commit log and
+        // write origin sub-switches count only while it is on (I-0.v2).
+        let multiuser_on = options.multiuser
+            || multiuser_config_on(
+                config::read_config(&*kv.snapshot()?, MULTIUSER_CONFIG_KEY)?
+                    .as_deref()
+                    .map(str::as_bytes),
+            );
+        let off = MultiUserWrites::default();
+        let multiuser = if multiuser_on {
+            &options.multiuser_writes
+        } else {
+            &off
+        };
+        if !read_only && multiuser.any() && multiuser.host_id.as_deref().is_none_or(str::is_empty) {
+            // Before any write: an origin without its machine is refused, never stamped empty.
+            return Err(StoreError::invalid(HOST_ID_REQUIRED));
+        }
+        // This open's origin: minted only in multi-user mode, so an open with the mode off draws
+        // nothing from `env` it did not draw before.
+        let origin = (!read_only && multiuser.any()).then(|| {
+            Arc::new(commit_log::scope::RowOrigin {
+                host_id: multiuser.host_id.clone().unwrap_or_default(),
+                incarnation: commit_log::uuid_v7(&*env),
+            })
+        });
+        let log_settings = || commit_log::LogSettings {
+            retention_bytes: multiuser
+                .log_retention_bytes
+                .unwrap_or(commit_log::DEFAULT_RETENTION_BYTES),
+            default_origin: WriteOrigin {
+                host_id: origin
+                    .as_ref()
+                    .map(|o| o.host_id.clone())
+                    .unwrap_or_default(),
+                incarnation: origin
+                    .as_ref()
+                    .map(|o| o.incarnation.clone())
+                    .unwrap_or_default(),
+                writer_id: String::new(),
+            },
+        };
         let snapshot = kv.snapshot()?;
         let stored: Option<StoredFormat> = get_json(&*snapshot, &keys::meta("format"))?;
         drop(snapshot);
+        // A log brain opened for writing with the mode or the log off is refused here, before this
+        // open changes anything about the adapter: a store already open on it keeps its clock.
+        if !read_only
+            && !multiuser.commit_log
+            && stored
+                .as_ref()
+                .is_some_and(|f| f.format_version == LOG_FORMAT_VERSION)
+        {
+            return Err(log_required());
+        }
+        // Multi-user mode: every accepted transaction gets a strictly increasing commit time, kept
+        // durable with its data, from this open on (its own upkeep writes included). An adapter reused
+        // from an open with the mode on keeps no commit clock into one with it off.
+        if !read_only {
+            if multiuser_on {
+                kv.set_commit_clock(env.clone(), None)?;
+            } else {
+                kv.clear_commit_clock();
+            }
+        }
+        let mut log_enabled = false;
         let (stored, created) = match stored {
+            Some(stored) if stored.format_version == LOG_FORMAT_VERSION => {
+                format::check_version_in(stored.format_version, known)?;
+                let log = stored.log.ok_or_else(|| {
+                    StoreError::new(
+                        error::STORE_CORRUPT,
+                        "the format record says commit log format but names no log",
+                    )
+                })?;
+                format::check_version(log.base_format)?;
+                if !read_only {
+                    if !multiuser.commit_log {
+                        return Err(log_required());
+                    }
+                    // Before any write of this open: every one of them is logged.
+                    kv.enable_commit_log(log_settings())?;
+                    log_enabled = true;
+                }
+                let stored = if log.base_format < FORMAT_VERSION {
+                    upgrade_format(&*kv)?
+                } else {
+                    stored
+                };
+                (stored, false)
+            }
             Some(stored) => {
                 format::check_version_in(stored.format_version, known)?;
+                if stored.log.is_some() {
+                    return Err(StoreError::new(
+                        error::STORE_CORRUPT,
+                        "the format record names a commit log on a format without one",
+                    ));
+                }
                 let stored = if stored.format_version < FORMAT_VERSION {
                     upgrade_format(&*kv)?
                 } else {
@@ -467,6 +649,7 @@ impl Store {
                     format_version: FORMAT_VERSION,
                     brain_id: env.new_uuid(),
                     created_at_us: env.now_micros(),
+                    log: None,
                 };
                 let mut tx = kv.begin_write()?;
                 // Another handle may have created the brain between the read and this write.
@@ -482,6 +665,15 @@ impl Store {
                 }
             }
         };
+        // Multi-user mode on a brain without a log yet: switch it to the log now, before the
+        // open-time upkeep below, so that upkeep is logged too.
+        let stored = if multiuser.commit_log && !read_only && !log_enabled {
+            let stored = activate_log(&*kv, stored, &options, mode)?;
+            kv.enable_commit_log(log_settings())?;
+            stored
+        } else {
+            stored
+        };
         // Sweep records kept before their source index existed get it.
         page_body::purge_record::backfill_source_index(&*kv)?;
         let index = keyword::open_index(&*kv)?;
@@ -491,35 +683,20 @@ impl Store {
         let schema_version = config::read_config(&*kv.snapshot()?, "version")?
             .and_then(|v| v.parse().ok())
             .unwrap_or(0);
-        // Multi-user mode: the caller's resolved switch, or the brain's own config row.
-        let multiuser = options.multiuser
-            || multiuser_config_on(
-                config::read_config(&*kv.snapshot()?, MULTIUSER_CONFIG_KEY)?
-                    .as_deref()
-                    .map(str::as_bytes),
-            );
-        // Multi-user mode: the store's clock never runs below the last committed time (`clock_floor.rs`).
-        let env: Arc<dyn Env> = if multiuser {
-            let floor = clock_floor::read_high_water(&*kv.snapshot()?)?;
-            // A brain with no high-water mark yet (just created, or just turned on) records one now, so the records
-            // it was seeded with stay below the floor of every later open.
-            // A read-only open writes nothing; its clock still starts at the floor it read.
-            if floor == 0 {
-                let recorded = kv.begin_write().and_then(|mut tx| {
-                    clock_floor::raise_high_water(&mut *tx, env.clock_micros())?;
-                    tx.commit()
-                });
-                match recorded {
-                    Err(e) if e.code == error::READ_ONLY_TRANSACTION => {}
-                    other => {
-                        other?;
-                    }
-                }
+        // Multi-user mode: the store's clock never runs below the newest durable commit time (`M\0ctime`,
+        // I-4.v2.1; `clock_floor.rs`). A brain with no commit time yet (just created or just turned on) commits one
+        // now, so the records it was seeded with stay below the floor of every later open; a read-only open writes
+        // nothing.
+        let env: Arc<dyn Env> = if multiuser_on {
+            if !read_only && kv.last_commit_time()?.is_none() {
+                kv.begin_write()?.commit()?;
             }
+            let floor = kv.last_commit_time()?.unwrap_or(0);
             Arc::new(clock_floor::ClockFloor::new(env, floor))
         } else {
             env
         };
+        let commit_log_on = kv.commit_log_enabled();
         Ok(Store {
             kv,
             env,
@@ -530,14 +707,18 @@ impl Store {
                 format_version: stored.format_version,
                 schema_version,
                 created,
-                multiuser,
+                commit_log: commit_log_on,
+                multiuser: multiuser_on,
             },
+            log_since: stored.log.map(|l| l.since),
             bound: None,
             builder: Mutex::new(None),
             runs_builder: options.keyword_index_builder,
             flag_assumed,
             dir: None,
-            multiuser,
+            stamp_rows: multiuser.write_origin && origin.is_some(),
+            origin,
+            multiuser: multiuser_on,
         })
         .inspect(|store| {
             if index.needs_build && store.runs_builder {
@@ -559,6 +740,9 @@ impl Store {
             runs_builder: false,
             flag_assumed: self.flag_assumed,
             dir: self.dir.clone(),
+            origin: self.origin.clone(),
+            stamp_rows: self.stamp_rows,
+            log_since: self.log_since,
             multiuser: self.multiuser,
         }
     }
@@ -628,6 +812,9 @@ impl Store {
             runs_builder: false,
             flag_assumed: self.flag_assumed,
             dir: self.dir.clone(),
+            origin: self.origin.clone(),
+            stamp_rows: self.stamp_rows,
+            log_since: self.log_since,
             multiuser: self.multiuser,
         }
     }
@@ -720,11 +907,13 @@ impl Store {
         if let Some(tx) = &self.bound {
             // A bound store's env is the transaction's clock (`transactions.rs`, "Time").
             let _clock = crate::env::transaction_clock::open(self.env.clone());
-            let _trust = crate::write_trust::stamp_context::open(stamp_trust()?);
+            let trust = stamp_trust()?;
+            let meta = self.meta_scope(&trust);
+            let _trust = crate::write_trust::stamp_context::open(trust);
             return tx.statement(|w| {
                 let value = write_chain(w, &mut f)?;
-                if self.multiuser {
-                    clock_floor::raise_high_water(w, self.env.clock_micros())?;
+                if let Some(meta) = meta.meta() {
+                    w.set_commit_meta(meta);
                 }
                 Ok(value)
             });
@@ -739,15 +928,16 @@ impl Store {
             };
             let outcome = {
                 let _clock = crate::env::transaction_clock::open(self.env.clone());
-                let _trust = crate::write_trust::stamp_context::open(stamp_trust()?);
+                let trust = stamp_trust()?;
+                let meta = self.meta_scope(&trust);
+                let _trust = crate::write_trust::stamp_context::open(trust);
                 match write_chain(&mut *tx, &mut f) {
-                    Ok(value) if self.multiuser => {
-                        match clock_floor::raise_high_water(&mut *tx, self.env.clock_micros()) {
-                            Ok(()) => tx.commit().map(|_| value),
-                            Err(e) => Err(e),
+                    Ok(value) => {
+                        if let Some(meta) = meta.meta() {
+                            tx.set_commit_meta(meta);
                         }
+                        tx.commit().map(|_| value)
                     }
-                    Ok(value) => tx.commit().map(|_| value),
                     Err(e) => Err(e),
                 }
             };
@@ -777,8 +967,170 @@ impl Store {
             schema_version: self.info.schema_version,
             brain_id: self.info.brain_id.clone(),
             created_by: options.created_by.clone(),
+            log: self.log_since.map(|since| format::FormatLog { since }),
         })
     }
+
+    /// The commit-meta scope of one write run in multi-user mode (`None` while it is off, so the
+    /// write runs exactly as before): journal rows the run admits are stamped with this open's
+    /// origin, and the commit names the run's requests and principal.
+    fn meta_scope(&self, trust: &crate::trust::WriteTrust) -> MetaScope {
+        let attribution = &trust.attribution;
+        MetaScope {
+            // A frame for every write run, the mode off included, so a write that runs inside another
+            // brain's write never sees that brain's origin or adds to its requests.
+            guard: commit_log::scope::open(
+                self.origin
+                    .as_ref()
+                    .filter(|_| self.stamp_rows)
+                    .map(|o| (**o).clone()),
+            ),
+            origin: self.origin.clone(),
+            request_id: attribution.request_id.clone(),
+            writer: attribution.principal_kind.as_ref().map(|kind| {
+                format!(
+                    "{kind}:{}",
+                    attribution.principal_id.as_deref().unwrap_or("")
+                )
+            }),
+        }
+    }
+
+    /// Installs the accept hook of this brain's record file (`commit_log::AcceptHook`), for
+    /// observation only: called for each accepted transaction, in commit order, with its position and
+    /// its commit time. Starts the commit clock when the brain's open did not (multi-user mode starts
+    /// it at open). Install it before the brain takes writes.
+    pub fn set_accept_hook(&self, hook: commit_log::AcceptHook) -> Result<()> {
+        // The commit clock writes its durable time only while the multi-user switch is on.
+        if !self.multiuser {
+            return Err(StoreError::new(
+                error::INVALID_STATE,
+                "the accept hook needs multi-user mode (GBRAIN_RUST_MULTIUSER=1)",
+            ));
+        }
+        self.kv.set_commit_clock(self.env.clone(), Some(hook))
+    }
+
+    /// The newest durable commit time (multi-user mode, `commit_log::CommitClock`): the floor every
+    /// later commit time is above, across restarts and other processes opening this store. `None`
+    /// before the first timed commit.
+    pub fn last_commit_time(&self) -> Result<Option<i64>> {
+        self.kv.last_commit_time()
+    }
+
+    /// Where the commit log starts, when this brain keeps one (`None` otherwise).
+    pub fn commit_log_since(&self) -> Option<CommitPosition> {
+        self.log_since
+    }
+
+    /// Up to `max` commit records after `after` (`None`: from where the log starts), read from
+    /// one snapshot (I-4). The records carry every key family, so this is a store-internal read:
+    /// nothing outside the store and its tests reads them. `invalid_state` when the brain keeps
+    /// no log.
+    pub fn read_commit_log(&self, after: Option<CommitPosition>, max: usize) -> Result<LogPage> {
+        commit_log::read_commit_log(&*self.kv.snapshot()?, after, max)
+    }
+}
+
+/// One write run's commit-meta scope (`Store::meta_scope`).
+struct MetaScope {
+    guard: commit_log::scope::Guard,
+    /// `None` while multi-user mode is off: the write then sets no commit meta.
+    origin: Option<Arc<commit_log::scope::RowOrigin>>,
+    request_id: Option<String>,
+    writer: Option<String>,
+}
+
+impl MetaScope {
+    /// The run's commit meta, or `None` while multi-user mode is off.
+    fn meta(&self) -> Option<commit_log::CommitMeta> {
+        let origin = self.origin.as_ref()?;
+        Some(commit_log::scope::meta_of(
+            Some(origin),
+            self.guard.take(),
+            self.request_id.clone(),
+            self.writer.clone(),
+        ))
+    }
+}
+
+/// How `open_kv_in` may touch the records: a writable open (with the brain directory, for the
+/// `FORMAT` stamp of a switch to the commit log), or a read-only one.
+#[derive(Clone, Copy)]
+enum OpenMode<'a> {
+    Write { dir: Option<&'a Path> },
+    ReadOnly,
+}
+
+/// The message of the refusal of a multi-user open that asks for the commit log or write origin
+/// without naming this machine (`invalid_argument`): every commit record and stamped row names it. The binding's caller opens again with the host id when it sees it.
+pub const HOST_ID_REQUIRED: &str = "multi-user write origin needs this machine's host id (GBRAIN_RUST_COMMIT_LOG=1 or GBRAIN_RUST_WRITE_ORIGIN=1); nothing was changed";
+
+/// The refusal of a writable open of a commit log brain without the log.
+fn log_required() -> StoreError {
+    StoreError::new(
+        error::FORMAT_UNKNOWN,
+        format!(
+            "this brain keeps a commit log (store format {LOG_FORMAT_VERSION}) and is opened for writing only with the log on: set GBRAIN_RUST_MULTIUSER=1; nothing was changed"
+        ),
+    )
+}
+
+/// Switches a brain to the commit log in one exclusive write: the format record becomes the log
+/// format (keeping the base format as `log.base_format`) and the log's meta record is written,
+/// with `since` the position of this very commit. `FORMAT` is stamped first, so an older build
+/// refuses the brain before it opens the record file even if this commit never lands; the open
+/// writes `FORMAT` again from the records afterwards.
+/// Its one raw write holds only the format record and the log's meta record, no page record, so it
+/// needs no flagging writer (`access_flag.rs` counts it).
+fn activate_log(
+    kv: &dyn Kv,
+    stored: StoredFormat,
+    options: &OpenOptions,
+    mode: OpenMode<'_>,
+) -> Result<StoredFormat> {
+    let mut tx = kv.begin_write_exclusive()?;
+    let mut current: StoredFormat = get_json(&*tx, &keys::meta("format"))?.unwrap_or(stored);
+    if current.log.is_some() {
+        return Ok(current);
+    }
+    let since = CommitPosition::new(kv.version()? + 1, 0);
+    current.log = Some(StoredLog {
+        since,
+        base_format: current.format_version,
+    });
+    current.format_version = LOG_FORMAT_VERSION;
+    if let OpenMode::Write { dir: Some(dir) } = mode {
+        let schema_version = config::read_config(&*tx, "version")?
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
+        format::write(
+            dir,
+            &FormatRecord {
+                format_version: LOG_FORMAT_VERSION,
+                engine_abi: options.engine_abi,
+                catalog_version: options.catalog_version,
+                schema_version,
+                brain_id: current.brain_id.clone(),
+                created_by: options.created_by.clone(),
+                log: Some(format::FormatLog { since }),
+            },
+        )?;
+    }
+    put_json(&mut *tx, &keys::meta("format"), &current)?;
+    commit_log::write_activation(&mut *tx, since)?;
+    let at = tx.commit_position()?;
+    if at != since {
+        return Err(StoreError::new(
+            error::STORE_CORRUPT,
+            format!(
+                "the commit log's activation committed at {}, not at {}",
+                at.token(),
+                since.token()
+            ),
+        ));
+    }
+    Ok(current)
 }
 
 /// Runs `f` on the store's write handle chain over `inner`: every `Store::write` run (one OCC
@@ -803,6 +1155,18 @@ pub(crate) struct StoredFormat {
     pub format_version: u32,
     pub brain_id: String,
     pub created_at_us: i64,
+    /// Set on a commit log brain (`LOG_FORMAT_VERSION`); absent, and not written, otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub log: Option<StoredLog>,
+}
+
+/// `log` of the format record of a commit log brain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize)]
+pub(crate) struct StoredLog {
+    /// The activation commit.
+    pub since: CommitPosition,
+    /// The format the records are in: the base format migrations run from.
+    pub base_format: u32,
 }
 
 /// The config key of the write gate's scan baseline (TypeScript `WRITE_GATE_SCAN_BASELINE_KEY`).
@@ -826,18 +1190,23 @@ fn upgrade_format(kv: &dyn Kv) -> Result<StoredFormat> {
     let mut tx = kv.begin_write_exclusive()?;
     let mut stored: StoredFormat = get_json(&*tx, &keys::meta("format"))?
         .ok_or_else(|| StoreError::new(error::STORE_CORRUPT, "the format record went missing"))?;
-    format::check_version(stored.format_version)?;
-    if stored.format_version >= FORMAT_VERSION {
+    // A commit log brain keeps its records' format as `log.base_format`: the steps run from it,
+    // inside the log (the caller enabled it), and only the base moves.
+    let base = stored
+        .log
+        .map_or(stored.format_version, |log| log.base_format);
+    format::check_version(base)?;
+    if base >= FORMAT_VERSION {
         return Ok(stored);
     }
-    if stored.format_version == 1 {
+    if base == 1 {
         chunks::fold_format_1_stats(&mut *tx)?;
         journal::fold_format_1_counters(&mut *tx)?;
     }
-    if stored.format_version <= 2 {
+    if base <= 2 {
         persistence::projection_queue::compact_format_2_jobs(&mut *tx)?;
     }
-    if stored.format_version <= 3 {
+    if base <= 3 {
         // Format 4 keeps keyword postings: the build starts from an empty, incomplete index.
         keyword::reset_index(&mut *tx)?;
     }
@@ -846,8 +1215,8 @@ fn upgrade_format(kv: &dyn Kv) -> Result<StoredFormat> {
     // a take without its tier.
     // Format 6: the records the v0.60.766.0 addon's shadow seed wrote at format 5 in other shapes
     // are carried over to this build's, or the brain is refused with the re-seed steps.
-    if stored.format_version <= 5 {
-        let from = stored.format_version;
+    if base <= 5 {
+        let from = base;
         seed::carry_over_format_5(&mut *tx).map_err(|e| {
             carry_over_failure(
                 e,
@@ -860,8 +1229,8 @@ fn upgrade_format(kv: &dyn Kv) -> Result<StoredFormat> {
     }
     // Format 7: the loop mutes leave the take purge ledger's `F 0x10` prefix for `F 0x11`, or the
     // brain is refused naming the record that is neither.
-    if stored.format_version <= 6 {
-        let from = stored.format_version;
+    if base <= 6 {
+        let from = base;
         facts::key_split::split_take_purges_from_loop_mutes(&mut *tx).map_err(|e| {
             carry_over_failure(
                 e,
@@ -874,8 +1243,8 @@ fn upgrade_format(kv: &dyn Kv) -> Result<StoredFormat> {
     }
     // Format 8: the shared-skill token secret leaves the member links' `x 0x04` prefix for `x 0x0d`,
     // or the brain is refused naming the record that is neither.
-    if stored.format_version <= 7 {
-        let from = stored.format_version;
+    if base <= 7 {
+        let from = base;
         access_key_split::split_token_secret_from_member_links(&mut *tx).map_err(|e| {
             carry_over_failure(
                 e,
@@ -886,7 +1255,10 @@ fn upgrade_format(kv: &dyn Kv) -> Result<StoredFormat> {
             )
         })?;
     }
-    stored.format_version = FORMAT_VERSION;
+    match stored.log.as_mut() {
+        Some(log) => log.base_format = FORMAT_VERSION,
+        None => stored.format_version = FORMAT_VERSION,
+    }
     put_json(&mut *tx, &keys::meta("format"), &stored)?;
     tx.commit()?;
     Ok(stored)
@@ -1261,6 +1633,41 @@ mod older_build_tests {
         assert_eq!(kept.unwrap().as_deref(), Some(&b"kept"[..]));
         drop(store);
         let _ = fs::remove_dir_all(dir.parent().unwrap());
+    }
+
+    /// A real commit log brain (written by this build with the log on) is refused by a build that
+    /// opens only the base formats, with and without `FORMAT`, and no byte changes; this build's
+    /// own refusal message names the base formats only.
+    #[test]
+    fn a_build_without_the_log_refuses_a_log_brain_and_changes_no_byte() {
+        let dir = fresh_dir("older-vs-log").join("brain");
+        let options = OpenOptions {
+            multiuser: true,
+            multiuser_writes: MultiUserWrites {
+                commit_log: true,
+                host_id: Some("d0000000-0000-4000-8000-0000000000d1".into()),
+                ..MultiUserWrites::default()
+            },
+            keyword_index_builder: false,
+            ..OpenOptions::default()
+        };
+        let store = Store::open_dir(&dir, options).unwrap();
+        store
+            .write(|tx| tx.put(&keys::meta("test/older-build"), b"kept"))
+            .unwrap();
+        drop(store);
+        assert_refused(&dir, FORMAT_VERSIONS, LOG_FORMAT_VERSION);
+        fs::remove_file(dir.join(format::FORMAT_FILE)).unwrap();
+        assert_refused(&dir, FORMAT_VERSIONS, LOG_FORMAT_VERSION);
+        let _ = fs::remove_dir_all(dir.parent().unwrap());
+        // An unknown format: this build's refusal lists the base formats as it always did.
+        let err = format::check_version_in(99, OPENED_FORMATS).unwrap_err();
+        assert_eq!(
+            err.message,
+            format!(
+                "this brain has store format 99, newer than the formats this build opens ({FORMAT_VERSIONS:?}); nothing was changed"
+            )
+        );
     }
 
     #[test]
