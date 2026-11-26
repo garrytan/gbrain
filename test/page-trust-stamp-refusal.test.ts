@@ -32,7 +32,7 @@ const fake = (raw: Raw, pages: PageTrustRow[] = []) => ({
 
 const page = (over: Partial<PageTrustRow> = {}): PageTrustRow => ({
   id: 1, source_id: 'default', slug: 'people/alice-example', trust_tier: 'operator_curated', write_origin: { channel: 'import' },
-  flagged: false, guest: false, byId: true, ...over,
+  flagged: false, guest: false, precedence: 'curated', byId: true, ...over,
 });
 
 const fenceChunk = () => ({

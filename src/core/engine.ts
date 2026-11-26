@@ -275,12 +275,12 @@ export interface OwnerReachSpec { id: number; sourceId: string; identity: readon
 export interface GuestSourceLookupRow { hidden: boolean; source_id: string | null; writers: string[] | null; trust_ceiling: string | null }
 /** `readPageTrustRows` input: page ids, and (source_id, slug) keys read live unless `includeDeleted`. */
 export interface PageTrustLookup { ids?: readonly number[]; keys?: ReadonlyArray<{ source_id: string; slug: string }>; includeDeleted?: boolean }
-/** One page's trust fields; `byId` marks a row found by id, `flagged` an activation-suppressed page, `guest` a page in a guest source. */
-export interface PageTrustRow { id: number; source_id: string; slug: string; trust_tier: string; write_origin: unknown; flagged: boolean; guest: boolean; byId: boolean }
+/** One page's trust fields; `byId` marks a row found by id, `flagged` an activation-suppressed page, `guest` a page in a guest source, `precedence` the class of source it came from (eligibility/precedence.ts, C3). */
+export interface PageTrustRow { id: number; source_id: string; slug: string; trust_tier: string; write_origin: unknown; flagged: boolean; guest: boolean; precedence: string; byId: boolean }
 /** `readRowTrustRows` input: a row table and the row ids to read. */
 export interface RowTrustLookup { table: 'facts' | 'takes' | 'timeline_entries'; ids: readonly number[] }
-/** One fact, take or timeline row's trust fields; `flagged` marks an activation-suppressed row, `contested` its first pending supersede proposal (`tp<id>:challenger|challenged`, never set on a timeline row). */
-export interface RowTrustRow { id: number; trust_tier: string; write_origin: unknown; flagged: boolean; contested: string | null }
+/** One fact, take or timeline row's trust fields; `flagged` marks an activation-suppressed row, `contested` its first pending supersede proposal (`tp<id>:challenger|challenged`, never set on a timeline row), `precedence` a fact's source class, or `approved` when it came from an allowed-claims page (eligibility/precedence.ts, C3; null on a take or timeline row). */
+export interface RowTrustRow { id: number; trust_tier: string; write_origin: unknown; flagged: boolean; contested: string | null; precedence: string | null }
 /** A live page with its frontmatter aliases and knowledge revision (`listLinkPageMetadata`). */
 export interface LinkPageMetadataRow { slug: string; source_id: string; type: string; title: string; aliases?: unknown; knowledge_revision: string }
 /** One stored non-event timeline row (`listStoredTimelineRows`); `date` is `YYYY-MM-DD`. */

@@ -97,7 +97,7 @@ async function dropPrivateSlugs(
  * GST-3058 (R94): a caller bound to the brain owner speaking for itself keeps the facts fence as stored, and the takes
  * fence too when it reads every holder (ownerFenceView), the way the local CLI reads the page.
  */
-async function stripPrivacyFencesForRemoteReader(ctx: OperationContext, page: Page): Promise<Page> {
+export async function stripPrivacyFencesForRemoteReader(ctx: OperationContext, page: Page): Promise<Page> {
   const omitRows = await heldRowsForCaller(ctx.engine, ctx.remote, { sourceId: page.source_id, slug: page.slug, compiled_truth: page.compiled_truth, timeline: page.timeline });
   const opts = { includeWithdrawn: true, keepMaterializedMarkers: true, omitRows, owner: ownerFenceView(readHolders(ctx)) }; // #5567: markers round-trip remote edits
   return { ...page, compiled_truth: sanitizeRemoteBody(page.compiled_truth, opts), timeline: sanitizeRemoteBody(page.timeline ?? '', opts) };
@@ -466,6 +466,7 @@ const delete_page: Operation = {
       }
       return { dry_run: true, action: p.purge === true ? 'purge_page' : 'delete_page', slug: p.slug };
     }
+    if (typeof p.slug === 'string') await (await import('../household/placement.ts')).householdDeleteAdmission(ctx.engine, sourceId, p.slug, ctx.remote);
     return (await import('../repair/origin-carry.ts')).deletePageCarryingPrivate(ctx, p, sourceId);
   },
   cliHints: { name: 'delete', positional: ['slug'] },

@@ -95,7 +95,7 @@ async function rpc(base: string, token: string, method: string, params?: unknown
   return JSON.parse(dataLine ? dataLine.slice('data:'.length) : text).result;
 }
 
-const FULL_SURFACE_KEYS = ['actor', 'admissionOrigin', 'auth', 'config', 'guest', 'inboundFrameBytes', 'isListed', 'logger', 'mcpCaller', 'metaHook', 'noticeLedger', 'onBehalfOf', 'remote', 'resultRows', 'room', 'sourceId', 'surface', 'surfaceCeiling', 'takesHoldersAllowList', 'transport'];
+const FULL_SURFACE_KEYS = ['actor', 'admissionOrigin', 'auth', 'config', 'guest', 'inboundFrameBytes', 'isListed', 'logger', 'mcpCaller', 'metaHook', 'noticeLedger', 'notifyToolListChanged', 'onBehalfOf', 'remote', 'resultRows', 'room', 'sourceId', 'surface', 'surfaceCeiling', 'takesHoldersAllowList', 'transport'];
 
 describe('POST /mcp dispatch context', () => {
   test('full surface: remote http dispatch with the verified auth and token source scope', async () => {
@@ -106,6 +106,7 @@ describe('POST /mcp dispatch context', () => {
     const { opts } = calls[0];
     expect(Object.keys(opts).sort()).toEqual(FULL_SURFACE_KEYS);
     expect(opts.remote).toBe(true);
+    expect(typeof opts.notifyToolListChanged).toBe('function');
     expect(opts.config?.eval?.capture).toBe(false);
     // #6696 (A5): a remote MCP write is interactive, so the background pause line never refuses it.
     expect(opts.admissionOrigin).toBe('interactive');

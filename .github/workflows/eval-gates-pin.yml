@@ -1,0 +1,81 @@
+name: Eval gates pin
+
+# Attaches `gbrain-eval-gates.pin.json` to a release once gbrain-evals has published the FINAL eval-gates file for
+# that release (swap criterion 10, docs/designs/RUST_ENGINE.md "Eval gates"). The pin names the file by commit-pinned
+# URL and SHA-256; `gbrain engine shadow drill --evals` downloads and checks both, and the shadow status and the swap
+# read only the cached copy. The job targets the file's own gbrain_tag, not today's VERSION: a release whose file
+# lands two days later is still pinned after a newer release exists.
+#
+# scripts/eval-gates-pin.ts reads and parses data only; nothing it fetches runs. Only the `publish` job can write
+# (contents: write); it uploads files the `plan` job wrote and takes tag names from a validated list. An existing pin
+# is never replaced: an identical one is left alone, a different one fails the run for an explicit repair.
+
+on:
+  schedule:
+    - cron: '17 */3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: eval-gates-pin
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    if: github.repository == 'garrytan/gbrain'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      tags: ${{ steps.plan.outputs.tags }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/eval-gates-pin.ts
+            src/shadow/eval-gates.ts
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.4.4
+      - id: plan
+        name: Find releases whose FINAL eval-gates file exists and has no pin yet
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bun scripts/eval-gates-pin.ts --out pins --github-output
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        if: steps.plan.outputs.tags != ''
+        with:
+          name: eval-gates-pins
+          path: pins
+          retention-days: 1
+
+  publish:
+    needs: plan
+    if: needs.plan.outputs.tags != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          name: eval-gates-pins
+          path: pins
+      - name: Attach each pin to its release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAGS: ${{ needs.plan.outputs.tags }}
+        run: |
+          read -ra tags <<< "$TAGS"
+          for tag in "${tags[@]}"; do
+            case "$tag" in
+              v[0-9]*) ;;
+              *) echo "refusing tag name: $tag" >&2; exit 1 ;;
+            esac
+            case "$tag" in
+              *[!0-9v.]*) echo "refusing tag name: $tag" >&2; exit 1 ;;
+            esac
+            gh release upload "$tag" "pins/$tag/gbrain-eval-gates.pin.json" --repo "$GITHUB_REPOSITORY"
+          done
