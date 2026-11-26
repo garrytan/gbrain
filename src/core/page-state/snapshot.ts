@@ -89,12 +89,6 @@ async function readSnapshotStatement(query: ReadQuery, slug: string, opts?: Page
   if (opts?.requireLiveSource) filters.push('EXISTS (SELECT 1 FROM sources s WHERE s.id=p.source_id AND NOT s.archived)');
   params.push(opts?.sourceIds?.[0] ?? 'default');
   const and = filters.map(filter => ` AND ${filter}`).join('');
-  // A page at the exact slug that the caller may not see does not count as a page there: the same visibility and
-  // live-source tests as `and`, over the exact page, so a hidden page reads exactly as a missing one.
-  const exactVisible = [
-    ...(opts?.excludePrivate ? [privatePagesFilterForCaller('exact_page')] : []),
-    ...(opts?.requireLiveSource ? ['EXISTS (SELECT 1 FROM sources es WHERE es.id=exact_page.source_id AND NOT es.archived)'] : []),
-  ].map(filter => ` AND ${filter}`).join('');
   // Alias resolution is part of the statement text, not a parameter, so a cached plan for an exact-slug read keeps
   // using the slug index. #6281: the alias read is a UNION ALL of two indexable branches (the exact slug, and pages an
   // alias row names), never `slug=$1 OR EXISTS(alias)`, which scans every page; `p.slug<>$1` keeps the branches disjoint
@@ -104,7 +98,7 @@ async function readSnapshotStatement(query: ReadQuery, slug: string, opts?: Page
     SELECT p.* FROM slug_aliases a JOIN pages p ON p.source_id=a.source_id AND p.slug=a.canonical_slug
     WHERE a.alias_slug=$1 AND p.slug<>$1
       AND EXISTS (SELECT 1 FROM sources alias_source WHERE alias_source.id=a.source_id ${opts?.includeDeleted ? '' : 'AND NOT alias_source.archived'})
-      ${opts?.preserveExactIdentity ? `AND NOT EXISTS (SELECT 1 FROM pages exact_page WHERE exact_page.source_id=a.source_id AND exact_page.slug=$1${exactVisible})` : ''}${and}) p`
+      ${opts?.preserveExactIdentity ? 'AND NOT EXISTS (SELECT 1 FROM pages exact_page WHERE exact_page.source_id=a.source_id AND exact_page.slug=$1)' : ''}${and}) p`
     : `pages p WHERE p.slug=$1${and}`;
   const rows = await query<Record<string, unknown>>(`WITH chosen AS (
     SELECT p.*${opts?.requireUnambiguous ? ', count(*) OVER () AS snapshot_matches' : ''} FROM ${candidates}

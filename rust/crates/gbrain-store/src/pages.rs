@@ -1009,8 +1009,7 @@ fn snapshot_page(read: &dyn KvRead, slug: &str, scope: &ReadScope) -> Result<Opt
 /// The readable page the alias `slug` of `source` names, as the alias branch of PGLite's
 /// snapshot statement joins it: the alias's source exists (and, unless `include_deleted`, is not
 /// archived), the canonical slug differs from `slug`, and under `preserve_exact_identity` the
-/// source has no page at `slug` in any deleted state that the caller may see (a page the caller
-/// may not see reads as no page at all).
+/// source has no page at `slug` in any deleted state.
 fn alias_target(
     read: &dyn KvRead,
     source: &str,
@@ -1023,7 +1022,7 @@ fn alias_target(
     if alias.canonical_slug == slug
         || crate::sources::read_source(read, source)?
             .is_none_or(|s| s.archived && !scope.include_deleted)
-        || (scope.preserve_exact_identity && exact_identity_held(read, source, slug, scope)?)
+        || (scope.preserve_exact_identity && read_page(read, source, slug)?.is_some())
     {
         return Ok(None);
     }
@@ -1033,33 +1032,12 @@ fn alias_target(
     }
 }
 
-/// Whether the source holds a page at `slug` that this read's caller may see, in any deleted
-/// state: the live-source and `exclude_private` tests of `snapshot_visible`, so a page the caller
-/// may not see does not count and the alias resolves as if the slug held no page.
-fn exact_identity_held(
-    read: &dyn KvRead,
-    source: &str,
-    slug: &str,
-    scope: &ReadScope,
-) -> Result<bool> {
-    match read_page(read, source, slug)? {
-        Some(page) => caller_may_see(read, &page, scope),
-        None => Ok(false),
-    }
-}
-
 /// Whether a snapshot read may answer `page`: live unless `include_deleted`, in a live source
 /// under `require_live_source`, and not hidden by the `exclude_private` page policy.
 fn snapshot_visible(read: &dyn KvRead, page: &PageRecord, scope: &ReadScope) -> Result<bool> {
     if !scope.include_deleted && page.deleted_at_us.is_some() {
         return Ok(false);
     }
-    caller_may_see(read, page, scope)
-}
-
-/// The part of `snapshot_visible` that is about the caller: a live source under
-/// `require_live_source`, and not hidden by the `exclude_private` page policy.
-fn caller_may_see(read: &dyn KvRead, page: &PageRecord, scope: &ReadScope) -> Result<bool> {
     if scope.require_live_source
         && crate::sources::read_source(read, &page.source_id)?.is_none_or(|s| s.archived)
     {
