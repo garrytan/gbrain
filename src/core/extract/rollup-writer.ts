@@ -77,30 +77,6 @@ export function haltReasonsWithUnknown(haltCount: number, recorded: Record<strin
   return reasons;
 }
 
-/**
- * The halt reasons recorded over the last 7 days, summed per kind. A brain
- * whose schema is behind v239 has no column: every halt then reads as
- * `unknown` (a backfill never runs; `unknown` is computed on read).
- */
-export async function readRecordedHaltReasons7d(engine: Pick<BrainEngine, 'executeRaw'>): Promise<Map<string, Record<string, number>>> {
-  const recorded = new Map<string, Record<string, number>>();
-  try {
-    const rows = await engine.executeRaw<{ kind: string; reason: string; n: number | string }>(
-      `SELECT r.kind, e.key AS reason, SUM(e.value::int) AS n
-         FROM extract_rollup_7d r, jsonb_each_text(r.halt_reasons) e
-        WHERE r.day >= CURRENT_DATE - 7
-        GROUP BY r.kind, e.key`, []);
-    for (const row of rows) {
-      const perKind = recorded.get(row.kind) ?? {};
-      perKind[row.reason] = Number(row.n) || 0;
-      recorded.set(row.kind, perKind);
-    }
-  } catch (err) {
-    if (!isMissingSchemaObject(err, 'column', 'halt_reasons')) throw err;
-  }
-  return recorded;
-}
-
 /** The most frequent halt reason, `unknown` included, or null without halts. */
 export function topHaltReason(reasons: Record<string, number>): { reason: string; count: number } | null {
   let top: { reason: string; count: number } | null = null;

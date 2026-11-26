@@ -7,7 +7,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { checkSyncFreshness, computeExtractHealthCheck } from '../src/commands/doctor/checks/extraction-sync.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { readRecordedHaltReasons7d, upsertExtractRollup } from '../src/core/extract/rollup-writer.ts';
+import { upsertExtractRollup } from '../src/core/extract/rollup-writer.ts';
 import { isMissingSchemaObject } from '../src/core/utils.ts';
 
 let real: PGLiteEngine;
@@ -30,8 +30,9 @@ test('reader propagates non-schema errors and contradictory missing-column ident
     { code: '08006', message: 'column r.halt_reasons does not exist' },
   ]) {
     const error = Object.assign(new Error(fields.message), fields);
-    await expect(readRecordedHaltReasons7d(throwingEngine(error))).rejects.toBe(error);
-    expect((await computeExtractHealthCheck(throwingEngine(error))).status).toBe('warn');
+    const check = await computeExtractHealthCheck(throwingEngine(error));
+    expect(check.status).toBe('warn');
+    expect(check.message).toContain(fields.message);
   }
 });
 
@@ -44,7 +45,18 @@ test('reader accepts exact driver metadata and PostgreSQL/PGLite missing-column 
     { message: 'column r.halt_reasons does not exist' },
     { message: 'column "halt_reasons" of relation "extract_rollup_7d" does not exist' },
   ]) {
-    expect((await readRecordedHaltReasons7d(throwingEngine(Object.assign(new Error(fields.message), fields)))).size).toBe(0);
+    const queries: string[] = [];
+    const check = await computeExtractHealthCheck({
+      async executeRaw(sql) {
+        queries.push(sql);
+        if (queries.length === 1) throw Object.assign(new Error(fields.message), fields);
+        return [];
+      },
+    });
+    expect(check.status).toBe('ok');
+    expect(queries).toHaveLength(2);
+    expect(queries[0]).toContain('r.halt_reasons AS halt_reasons');
+    expect(queries[1]).not.toContain('r.halt_reasons AS halt_reasons');
   }
 });
 

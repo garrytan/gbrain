@@ -8,7 +8,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { computeExtractHealthCheck } from '../src/commands/doctor/checks/extraction-sync.ts';
-import { readRecordedHaltReasons7d, upsertExtractRollup } from '../src/core/extract/rollup-writer.ts';
+import { upsertExtractRollup } from '../src/core/extract/rollup-writer.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
 
@@ -40,7 +40,6 @@ test('corrupt numeric reasons containing schema-like text warn and preserve the 
       VALUES ('schema-error', 'default', CURRENT_DATE, 3,
         jsonb_build_object('item_error', 'no such table halt_reasons'))`);
     try {
-      await expect(readRecordedHaltReasons7d(engine)).rejects.toMatchObject({ code: '22P02' });
       const check = await computeExtractHealthCheck(engine);
       expect(check.status).toBe('warn');
       expect(check.message).toContain('invalid input syntax');

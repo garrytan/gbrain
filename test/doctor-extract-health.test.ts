@@ -121,6 +121,31 @@ describe('computeExtractHealthCheck — WARN paths', () => {
     });
   });
 
+  test('the halt count and reason breakdown use the same UTC day boundary', async () => {
+    await clearRollup();
+    await engine.transaction(async tx => {
+      const [clock] = await tx.executeRaw<{ utc_day: string; zone: string }>(
+        `SELECT (now() AT TIME ZONE 'UTC')::date::text AS utc_day,
+                CASE WHEN (now() AT TIME ZONE 'Pacific/Kiritimati')::date <> (now() AT TIME ZONE 'UTC')::date
+                     THEN 'Pacific/Kiritimati' ELSE 'Pacific/Pago_Pago' END AS zone`, []);
+      await tx.executeRaw("SELECT set_config('TimeZone', $1, true)", [clock!.zone]);
+      const [session] = await tx.executeRaw<{ day: string }>('SELECT CURRENT_DATE::text AS day', []);
+      expect(session!.day).not.toBe(clock!.utc_day);
+      await tx.executeRaw(
+        `INSERT INTO extract_rollup_7d (kind, source_id, day, halt_count, round_completed_count, halt_reasons)
+         VALUES ('atoms', 'default', $1::date - 8, 4, 0, '{"provider_auth":4}'),
+                ('atoms', 'default', $1::date - 7, 1, 2, '{"item_error":1}')`, [clock!.utc_day]);
+      const check = await computeExtractHealthCheck(tx);
+      const { kinds: [kind] } = check.details as {
+        kinds: Array<{ halt_count: number; round_completed_count: number; halt_reasons: Record<string, number> }>;
+      };
+      expect(kind.halt_count).toBe(1);
+      expect(kind.round_completed_count).toBe(2);
+      expect(kind.halt_reasons).toEqual({ item_error: 1 });
+      expect(check.message).toContain('top reason: item_error');
+    });
+  });
+
   test('the age is the last halt, not the last clean run (#5863)', async () => {
     await clearRollup();
     await engine.executeRaw(

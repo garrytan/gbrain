@@ -66,7 +66,7 @@ async function rollupRow(engine: BrainEngine, kind: string) {
   return { ...row!, halt_reasons: reasons as Record<string, number> };
 }
 
-async function doctorKind(engine: BrainEngine, kind: string) {
+async function doctorKind(engine: Pick<BrainEngine, 'executeRaw'>, kind: string) {
   const check = await computeExtractHealthCheck(engine);
   const kinds = (check.details as { kinds: Array<{ kind: string; halt_count: number; halt_reasons: Record<string, number>; top_halt_reason: string | null }> }).kinds;
   return { check, kind: kinds.find(k => k.kind === kind)! };
@@ -145,6 +145,37 @@ test('reasons increment in the same UPSERT; old and new writers on one day keep 
     const raced = await rollupRow(engine, racy);
     expect(raced).toMatchObject({ halt_count: 20, halt_reasons: { item_error: 10 } });
     expect((await doctorKind(engine, racy)).kind.halt_reasons).toEqual({ item_error: 10, unknown: 10 });
+  }
+}, 120_000);
+
+test('doctor reads halt totals and reasons from the same snapshot when a writer commits', async () => {
+  for (const engine of engines) {
+    const kind = freshKind();
+    await upsertExtractRollup(engine, { kind, source_id: 'default', halt_delta: 1, halt_reason: 'item_error' });
+    let committed = false;
+    const read: Pick<BrainEngine, 'executeRaw'> = {
+      async executeRaw<T>(sql: string, params?: unknown[]) {
+        const rows = await engine.executeRaw<T>(sql, params);
+        if (!committed) {
+          // Commit another rollup after the first Doctor query has read its rows.
+          expect(await upsertExtractRollup(engine, {
+            kind, source_id: 'default', halt_delta: 2, halt_reason: 'provider_auth',
+          })).toEqual({ ok: true });
+          committed = true;
+        }
+        return rows;
+      },
+    };
+
+    const first = await doctorKind(read, kind);
+    expect(committed).toBe(true);
+    expect(first.check.status).toBe('warn');
+    expect(first.kind).toMatchObject({ halt_count: 1, top_halt_reason: 'item_error' });
+    expect(first.kind.halt_reasons).toEqual({ item_error: 1 });
+    const next = await doctorKind(engine, kind);
+    expect(next.kind).toMatchObject({
+      halt_count: 3, halt_reasons: { item_error: 1, provider_auth: 2 }, top_halt_reason: 'provider_auth',
+    });
   }
 }, 120_000);
 
