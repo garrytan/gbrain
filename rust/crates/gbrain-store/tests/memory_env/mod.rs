@@ -11,6 +11,14 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, AtomicU32, AtomicU64, Ordering};
 
+// The store modes and `both_modes!`, shared with `common` (see the note in that file).
+#[path = "../common/mode.rs"]
+#[allow(clippy::duplicate_mod)]
+pub mod mode;
+pub use mode::StoreMode;
+#[allow(unused_imports)]
+pub(crate) use mode::both_modes;
+
 static NEXT: AtomicU32 = AtomicU32::new(0);
 
 /// 2027-01-15T08:00:00Z.
@@ -22,6 +30,13 @@ pub struct Clock {
 }
 
 impl Clock {
+    /// A clock that reads `micros` until it is moved.
+    pub fn at(micros: i64) -> Arc<Clock> {
+        Arc::new(Clock {
+            now: AtomicI64::new(micros),
+            ids: AtomicU64::new(1),
+        })
+    }
     pub fn set(&self, micros: i64) {
         self.now.store(micros, Ordering::SeqCst);
     }
@@ -66,6 +81,25 @@ impl Drop for Brain {
 }
 
 pub fn brain(name: &str) -> Brain {
+    let concurrent = std::env::var("GBRAIN_RUST_CONCURRENT_WRITES").is_ok_and(|v| v == "1");
+    brain_with(name, concurrent, false)
+}
+
+/// A brain in an explicit mode on the same injected clock, whatever the environment says.
+pub fn brain_in(name: &str, mode: StoreMode) -> Brain {
+    brain_with(name, mode.optimistic(), false)
+}
+
+/// An optimistic brain with the multi-user switch explicitly on, on the injected clock: protected members then need a fence.
+pub fn brain_mu(name: &str) -> Brain {
+    brain_with(name, true, true)
+}
+
+fn brain_with(name: &str, concurrent: bool, multiuser: bool) -> Brain {
+    let options = OpenOptions {
+        multiuser,
+        ..OpenOptions::default()
+    };
     let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!(
         "mem-{name}-{}-{}",
         std::process::id(),
@@ -77,7 +111,6 @@ pub fn brain(name: &str) -> Brain {
         now: AtomicI64::new(T0),
         ids: AtomicU64::new(1),
     });
-    let concurrent = std::env::var("GBRAIN_RUST_CONCURRENT_WRITES").is_ok_and(|v| v == "1");
     #[cfg(feature = "fjall")]
     if std::env::var("GBRAIN_RUST_BAKEOFF_STORE").is_ok_and(|v| v == "fjall") {
         use gbrain_store::fjall_kv::FjallKv;
@@ -87,7 +120,7 @@ pub fn brain(name: &str) -> Brain {
         } else {
             Arc::new(kv)
         };
-        let store = Store::open_kv(kv, clock.clone(), OpenOptions::default()).unwrap();
+        let store = Store::open_kv(kv, clock.clone(), options.clone()).unwrap();
         return Brain { store, clock, dir };
     }
     let kv = RedbKv::open_path(&dir.join("records.redb")).unwrap();
@@ -96,6 +129,34 @@ pub fn brain(name: &str) -> Brain {
     } else {
         Arc::new(kv)
     };
-    let store = Store::open_kv(kv, clock.clone(), OpenOptions::default()).unwrap();
+    let store = Store::open_kv(kv, clock.clone(), options.clone()).unwrap();
     Brain { store, clock, dir }
+}
+
+/// Opens (or reopens) the brain whose record file is `<dir>/records.redb` on `clock`, in `mode`. The clock is the store's:
+/// a test sets it below a persisted floor before a reopen to see that written times never go under it.
+pub fn open_at(dir: &std::path::Path, clock: Arc<Clock>, mode: StoreMode) -> Store {
+    open_at_with(dir, clock, mode, true)
+}
+
+/// `open_at` with the multi-user switch given explicitly. The multi-writer twins always say `true` (a fresh brain is never silently
+/// a plain one); the extra argument keeps that a visible choice at the call.
+pub fn open_at_with(
+    dir: &std::path::Path,
+    clock: Arc<Clock>,
+    mode: StoreMode,
+    multiuser: bool,
+) -> Store {
+    std::fs::create_dir_all(dir).unwrap();
+    let base = RedbKv::open_path(&dir.join("records.redb")).unwrap();
+    let kv: Arc<dyn Kv> = if mode.optimistic() {
+        Arc::new(OccKv::new(base).unwrap())
+    } else {
+        Arc::new(base)
+    };
+    let options = OpenOptions {
+        multiuser,
+        ..OpenOptions::default()
+    };
+    Store::open_kv(kv, clock, options).unwrap()
 }

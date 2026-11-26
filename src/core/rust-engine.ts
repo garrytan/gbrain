@@ -38,6 +38,8 @@ import { callEndCheck, installOwnerClient, untilCallEnds } from './rust-engine/o
 import { ownerWholeOperations } from './rust-engine/owner-ipc/owner-ops.ts';
 import type { OwnerServerStats } from './rust-engine/owner-ipc/server.ts';
 import { withAccessStore } from './rust-engine/access-self-check.ts';
+import type { CommitLogPage, CommitPosition } from './engine-members/commit-log.ts';
+import * as commitLog from './rust-engine/store-members/commit-log.ts';
 
 /**
  * The empty async context: no request, job, deadline, signal or caller mark. The engine runs its election, and the
@@ -103,6 +105,8 @@ export interface RustTransactionScope {
   ended: boolean;
   /** The attribution and source-scope settings applied in it (store-members/transactions.ts); trust ones live in the store. */
   readonly settings: Map<string, string>;
+  /** The position its commit got (`lastCommitPosition` on its engine), set once it committed. */
+  committedAt?: CommitPosition;
 }
 
 /** The transactions whose callback the current async context runs inside, innermost first. */
@@ -533,7 +537,7 @@ export class RustEngine implements BrainEngine {
       scope.live = false;
       if (scope.ended) throw mapStoreError({ code: 'store_closed' }, { member: 'transaction' });
       try {
-        await brain.commitTransaction();
+        scope.committedAt = await brain.commitTransaction() as CommitPosition;
       } catch (error) {
         await brain.rollbackTransaction().catch(() => undefined);
         throw mapStoreError(error, { member: 'transaction' });
@@ -570,6 +574,10 @@ export class RustEngine implements BrainEngine {
     await this.disconnect();
     await this.connect(config);
   }
+
+  /** engine-members/commit-log.ts; refused naming commit_log unless the store keeps a commit log. */
+  readCommitLog(after: CommitPosition | null, limit: number): Promise<CommitLogPage> { return commitLog.readCommitLog(this as never, after, limit); }
+  lastCommitPosition(): Promise<CommitPosition | null> { return commitLog.lastCommitPosition(this as never); }
 
   registerBeforeDisconnect(stop: () => Promise<void>): () => void {
     this._beforeDisconnect.add(stop);

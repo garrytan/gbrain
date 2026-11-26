@@ -530,6 +530,17 @@ These answer questions raised while building the leases (I-5) and the switch (I-
    takes the lease again with `acquire_lease`, which gives a new epoch. So a machine that comes back after a
    partition is refused for any work it started under the old epoch, even if no other machine took the lease
    meanwhile.
+7. **Calls with no fence (I-5).** A protected call (a job, write-claim, effect, drain-lease or cycle-lock write) with no
+   fence is not refused for lacking one: a single host that never registered a lease (a one-shot command, a cycle lock
+   taken outside a consumer, a served caller) works as it does with the switch off. With a fence the lease must be held
+   now, as above. With none, on a multi-user store: the entry check passes and writes nothing; a claim it takes gets an
+   implicit lease in the same write (`implicit:<family byte as 2 hex digits>:<claim id>`, epoch one past the name's last, a
+   UUID v7 token, holder origin `unregistered`, a time to live equal to the claim's own lease or 60 s) and the claim's
+   epoch record names it; a finish of a claim whose epoch record names a registered (not implicit) lease that is live now
+   refuses `lease_lost` with reason `held_by_another` and writes nothing; any other unfenced finish goes on to the
+   member's own token check. A fenced finish of a claim taken implicitly or under another epoch still refuses
+   `claim_epoch_mismatch`. The reason `fence_missing` is retired: nothing emits it, and the error registry keeps it as a
+   tombstone because a receipt may hold it.
 
 ### Rule for multi-user code paths: rerun-safe callbacks
 

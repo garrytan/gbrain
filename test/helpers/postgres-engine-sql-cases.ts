@@ -1437,6 +1437,8 @@ export const DOMAIN_OF: Record<string, string> = {
   'countSourcePages': 'sources', 'readSourcesNotReadable': 'sources', 'insertSource': 'sources', 'readSourceDeleteImpact': 'sources', 'deleteSourceRecord': 'sources',
   'advanceSourceCommit': 'sources', 'listSourcePathPages': 'sources', 'listQuarantinedSlugs': 'sources', 'readRenameIdentityRows': 'sources', 'readLiveIdentityHolders': 'sources', 'readPageSizeRows': 'sources', 'holdPageEmbedding': 'sources', 'readReasonPurgeTombstones': 'sources', 'writeReasonPurgeTombstones': 'sources',
   'listSourceIds': 'sources', 'readSoleSourceId': 'sources', 'readFirstSourceId': 'sources', 'lockAllSourceRows': 'sources',
+  // The commit log and commit positions (engine-members/commit-log.ts): both SQL engines refuse with no SQL.
+  'readCommitLog': OOS.stub, 'lastCommitPosition': OOS.stub,
   'readSourceLastCommit': 'sources', 'advanceSourcePurgeEpoch': 'sources', 'readPageIdentity': 'sources', 'writeSourceSyncHeartbeat': 'sources',
   'writeSourceUpstreamObservation': 'sources',
   // files

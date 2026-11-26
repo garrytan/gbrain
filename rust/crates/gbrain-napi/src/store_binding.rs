@@ -142,6 +142,11 @@ impl Brain {
         })
     }
 
+    /// This handle's worker pool (the follower family runs its calls there).
+    pub(crate) fn pool_handle(&self) -> pool::Pool {
+        self.pool.clone()
+    }
+
     /// The open store, taken now on the calling thread; `None` when the handle is closed.
     pub(crate) fn current(&self) -> Option<Arc<Store>> {
         self.slot.lock().unwrap_or_else(|e| e.into_inner()).clone()

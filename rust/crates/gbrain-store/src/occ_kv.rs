@@ -393,8 +393,7 @@ struct Shared {
     published: AtomicU64,
     poisoned: AtomicBool,
     stats: Arc<OccStats>,
-    /// Messages sent to the pipeline and not yet taken by a step (`OccKv::queued_commits`).
-    #[cfg(feature = "sim")]
+    /// Commits sent to the pipeline that it has not taken off its queue yet (`OccKv::queued_commits`).
     queued: AtomicUsize,
     /// The commit log, once enabled: only the pipeline writes it (one record per accepted
     /// transaction, in the batch's own record-file commit).
@@ -405,18 +404,6 @@ struct Shared {
 }
 
 impl Shared {
-    /// Counts one message about to be sent to the pipeline (the simulation seam only).
-    fn sent(&self) {
-        #[cfg(feature = "sim")]
-        self.queued.fetch_add(1, Ordering::SeqCst);
-    }
-
-    /// Takes back [`Shared::sent`] for a message that could not be sent.
-    fn unsent(&self) {
-        #[cfg(feature = "sim")]
-        self.queued.fetch_sub(1, Ordering::SeqCst);
-    }
-
     fn register(&self, version: u64) {
         let mut open = self.open.lock().unwrap_or_else(|p| p.into_inner());
         *open.entry(version).or_insert(0) += 1;
@@ -458,7 +445,10 @@ impl Pipeline {
                 },
             };
             let first = match first {
-                Msg::Commit(req) => req,
+                Msg::Commit(req) => {
+                    self.shared.queued.fetch_sub(1, Ordering::AcqRel);
+                    req
+                }
                 Msg::Exclusive { granted, end } => {
                     self.exclusive(granted, end);
                     continue;
@@ -469,6 +459,7 @@ impl Pipeline {
             while batch.len() < MAX_BATCH_TXNS && bytes < MAX_BATCH_BYTES {
                 match rx.try_recv() {
                     Ok(Msg::Commit(next)) => {
+                        self.shared.queued.fetch_sub(1, Ordering::AcqRel);
                         bytes += approx_bytes(&next);
                         batch.push(next);
                     }
@@ -754,6 +745,13 @@ struct Stepped {
 }
 
 impl OccKv {
+    /// Commits waiting on the pipeline's queue right now (sent, not yet taken into a batch). While an
+    /// exclusive write holds the pipeline, this counts the commits that will form the next group
+    /// commit, so a test can queue an exact batch, in an exact order, before it lets the pipeline go.
+    pub fn queued_commits(&self) -> usize {
+        self.shared.queued.load(Ordering::Acquire)
+    }
+
     pub fn new(base: RedbKv) -> Result<OccKv> {
         Self::over(Arc::new(base))
     }
@@ -784,7 +782,6 @@ impl OccKv {
             published: AtomicU64::new(version),
             poisoned: AtomicBool::new(false),
             stats: Arc::new(OccStats::default()),
-            #[cfg(feature = "sim")]
             queued: AtomicUsize::new(0),
             log: Mutex::new(None),
             log_on: AtomicBool::new(false),
@@ -817,12 +814,6 @@ impl OccKv {
         })
     }
 
-    /// Commit requests (and exclusive-write messages) queued and not yet taken by a step.
-    #[cfg(feature = "sim")]
-    pub fn queued_commits(&self) -> usize {
-        self.shared.queued.load(Ordering::SeqCst)
-    }
-
     /// One iteration of the pipeline loop on the calling thread: takes up to `max_batch` queued
     /// commits in arrival order (an exclusive-write message ends the batch, and a step that starts
     /// with one runs that exclusive write alone), validates and writes them as one batch and answers
@@ -847,7 +838,6 @@ impl OccKv {
         let Some(first) = take(stepped) else {
             return Ok(None);
         };
-        self.shared.queued.fetch_sub(1, Ordering::SeqCst);
         let stats = &self.shared.stats;
         let commits_before = stats.commits.load(Ordering::Relaxed);
         let version_before = stepped.pipeline.version;
@@ -857,11 +847,13 @@ impl OccKv {
                 1
             }
             Msg::Commit(req) => {
+                // `queued_commits` counts commits only, as the pipeline thread does.
+                self.shared.queued.fetch_sub(1, Ordering::AcqRel);
                 let mut batch = vec![req];
                 while batch.len() < max_batch.max(1) {
                     match take(stepped) {
                         Some(Msg::Commit(next)) => {
-                            self.shared.queued.fetch_sub(1, Ordering::SeqCst);
+                            self.shared.queued.fetch_sub(1, Ordering::AcqRel);
                             batch.push(next);
                         }
                         Some(exclusive) => {
@@ -899,16 +891,12 @@ impl OccKv {
             let Some(sender) = sender.as_ref() else {
                 return Err(StoreError::new(STORE_CLOSED, "the brain is closing"));
             };
-            self.shared.sent();
             sender
                 .send(Msg::Exclusive {
                     granted: granted_tx,
                     end,
                 })
-                .map_err(|_| {
-                    self.shared.unsent();
-                    StoreError::new(STORE_CLOSED, "the brain is closing")
-                })?;
+                .map_err(|_| StoreError::new(STORE_CLOSED, "the brain is closing"))?;
         }
         let version = granted
             .recv()
@@ -1427,11 +1415,11 @@ impl KvWrite for OccTxn {
             let Some(sender) = sender.as_ref() else {
                 return Err(StoreError::new(STORE_CLOSED, "the brain is closing"));
             };
-            this.shared.sent();
-            sender.send(Msg::Commit(request)).map_err(|_| {
-                this.shared.unsent();
-                StoreError::new(STORE_CLOSED, "the brain is closing")
-            })?;
+            this.shared.queued.fetch_add(1, Ordering::AcqRel);
+            if sender.send(Msg::Commit(request)).is_err() {
+                this.shared.queued.fetch_sub(1, Ordering::AcqRel);
+                return Err(StoreError::new(STORE_CLOSED, "the brain is closing"));
+            }
         }
         let result = answer
             .recv()

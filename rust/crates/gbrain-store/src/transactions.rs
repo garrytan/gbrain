@@ -1430,7 +1430,9 @@ impl Store {
             if !meta.is_empty() {
                 base.set_commit_meta(meta);
             }
-            return base.commit_position();
+            let at = base.commit_position()?;
+            self.note_commit(at);
+            return Ok(at);
         }
         // Every end that commits nothing below goes through this: data dropped, ids written
         // forward, single-flight keys given back last. A failure to write the ids forward is the
@@ -1486,6 +1488,11 @@ impl Store {
         }
         tx.release_flights();
         cleanup?;
+        if let Ok(at) = &outcome
+            && !tx.opened_read_only
+        {
+            self.note_commit(*at);
+        }
         outcome
     }
 
