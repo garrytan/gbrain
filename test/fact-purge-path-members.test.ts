@@ -252,9 +252,9 @@ describe('the fact purge calls only what the list names', () => {
       ['belief ledger: real', 'rich page: real', 'rich page: resume', 'segmented page and staged upload: real']);
     for (const trace of runs) {
       const called = trace.names.filter(name => stops.has(name));
-      // The purge transaction's members and the receipt's belief probe are served on Rust: only a real run on a source that
-      // records belief events still reaches stops (the belief-ledger raw sites); a resume reaches none.
-      expect(called.length).toBeGreaterThanOrEqual(trace.scenario === 'belief ledger' && trace.phase === 'real' ? 1 : 0);
+      // Every member and site of the purge is served on Rust, the belief-ledger steps included (purge-ledger-sites): no run
+      // reaches a stop.
+      expect(called).toEqual([]);
       // Lists, not sets: the order in which a run first made each call, against the order of the list.
       expect({ run: `${trace.scenario}: ${trace.phase}`, called }).toEqual({ run: `${trace.scenario}: ${trace.phase}`, called: [...called].sort((a, b) => rank(a) - rank(b)) });
     }
@@ -297,21 +297,16 @@ describe('the fact purge calls only what the list names', () => {
     expect(real.map(stop => stop.name)).toEqual(FACT_PURGE_PATH
       .filter(entry => 'site' in entry ? entry.stop : entry.refuses || rustMemberCapability(entry.member) !== null).map(purgeEntryName));
     expect(resume.map(stop => stop.name)).toEqual(real.filter(stop => stop.entry.entry !== 'purge').map(stop => stop.name));
-    // Everything the continue reaches is served on Rust (the sweep, the effect read and the fingerprint count), so it has no
-    // stop left; the real run keeps the receipt's belief probe and the segmented raw-SQL sites.
-    expect(resume).toEqual([]);
-    expect(resume.length).toBeLessThan(real.length);
+    // Everything a real run and a continue reach is served on Rust (the transaction, the receipt and the belief-ledger
+    // steps), so neither has a stop left.
+    expect({ real, resume }).toEqual({ real: [], resume: [] });
   });
 
-  test('the refusal names the first stop with its owner and due date, in the message and the detail', async () => {
-    const [first] = await factPurgeStops({ kind: 'rust' }, 'purge');
-    const error = await requireFactPurgeServed({ kind: 'rust' }, 'purge').then(() => null, (e: unknown) => e as { code: string; message: string; detail: string });
-    expect(error?.code).toBe('engine_capability_missing');
-    expect(error?.message).toContain(`which needs ${first!.name}: `);
-    expect(error?.message).toContain(`owner ${first!.owner}, due ${first!.due}`);
-    expect(error?.detail).toContain('outcome=none');
-    expect(error?.detail).toContain(`owner="${first!.owner}" due="${first!.due}"`);
-    expect(await requireFactPurgeServed({ kind: 'pglite' }, 'purge')).toBeUndefined();
+  test('with no stop left, the check lets a real run and a continue through on every engine', async () => {
+    for (const kind of ['rust', 'pglite', 'postgres']) {
+      expect(await requireFactPurgeServed({ kind }, 'purge')).toBeUndefined();
+      expect(await requireFactPurgeServed({ kind }, 'continue')).toBeUndefined();
+    }
   });
 
   test('which requests the check covers: a real run and --status --continue, never a read or a remote call', () => {

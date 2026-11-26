@@ -424,6 +424,9 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'listRevivalPages', 'listSourceRequestsByRequestId', 'lockEffectRow', 'readHeldHitRows', 'readSourceRequestById',
   // The segmented write path's reads (engine-sql/segmented-writes.ts). lockSegmentedGenerationPage takes a row lock only.
   'readSegmentedLivePage', 'listSegmentedRechunkCandidates', 'readSegmentedRechunkPage', 'listOccurrenceChunks', 'readMaterializingRevision', 'readSegmentedRewritePage', 'lockSegmentedGenerationPage', 'hasLiveSegmentedPage', 'countSegmentedEmbedRows', 'listSegmentedStaleRows', 'readSegmentChunkInputHashes', 'listLiveEmbedSegments', 'listSegmentChunkRows',
+  // The belief-ledger half of a purge (engine-sql/belief-purge-ledger.ts; trust/belief_purge_ledger.rs, `self.read` only): plain SELECTs.
+  'listDerivedStreamSlugs', 'listMissingPreimages', 'listBeliefCarrierEvents', 'readBeliefEventValue', 'listBeliefQuotingRows', 'listPageBeliefLifetimes',
+  'listPagePurgeLiveClaims', 'listPageVersionFenceBodies', 'listLifetimeClaimEvents', 'listPurgeCarrierVersions', 'listKnownBeliefSubjectKeys',
 ];
 
 const nothingSetting = 'nothing: the setting lasts only for the call, so running it again repeats no write';
@@ -866,6 +869,9 @@ export const OWNER_IPC_TYPED_CONFIRMING_READS: Readonly<Record<string, string>> 
   registerPurgeRedaction: 'readBeliefRedactions',
   releasePurgeRedactionsForField: 'readBeliefRedactions',
   replayPagePurges: 'readBeliefRedactions',
+  redactPurgedBeliefKeys: 'listBeliefEventsForPurgeProbe for that source',
+  rewriteBeliefEventFields: 'readBeliefEventValue',
+  rechainBeliefPriorHash: 'readBeliefEventValue for that subject\'s later events',
   writeOpCheckpointRecord: 'readOpCheckpointRecord for that operation',
   // Added when the batch 10 lanes merged: typed writes and the read that confirms each.
   acknowledgeSharedSkillDeliveryBatch: 'readSharedSkillDeliveryBatch for that batch',

@@ -101,6 +101,7 @@ import * as trustWithdrawalsImpl from './engine-sql/trust-withdrawals.ts';
 import * as beliefLedgerImpl from './engine-sql/belief-ledger.ts';
 import * as beliefStateImpl from './engine-sql/belief-state.ts';
 import * as beliefPurgeImpl from './engine-sql/belief-purge.ts';
+import * as beliefPurgeLedgerImpl from './engine-sql/belief-purge-ledger.ts';
 import * as openLoopsImpl from './engine-sql/open-loops.ts';
 import * as loopMutesImpl from './engine-sql/loop-mutes.ts';
 import * as sourceArchiveImpl from './engine-sql/source-archive.ts';
@@ -2683,6 +2684,20 @@ export class PGLiteEngine implements BrainEngine {
   releasePurgeRedactionsForField(row: beliefPurgeImpl.PurgeRedactionRelease) { return beliefPurgeImpl.releasePurgeRedactionsForField(this.engineSql, row); }
   replayPagePurges(row: beliefPurgeImpl.ReplayPagePurges) { return beliefPurgeImpl.replayPagePurges(this.engineSql, row); }
   readPurgeReplaySchema(stores: readonly string[]) { return beliefPurgeImpl.readPurgeReplaySchema(unscopedExecutor(this.engineSql, 'belief: the purge replay ran these probes through executeRaw unscoped'), stores); }
+  listDerivedStreamSlugs(sourceId: string, factIds: readonly number[], takeIds: readonly number[], pageIds: readonly number[]) { return beliefPurgeLedgerImpl.listDerivedStreamSlugs(unscopedExecutor(this.engineSql, 'belief: the purge ran this read through executeRaw unscoped'), sourceId, factIds, takeIds, pageIds); }
+  listMissingPreimages(pageIds: readonly number[], revisions: readonly string[]) { return beliefPurgeLedgerImpl.listMissingPreimages(unscopedExecutor(this.engineSql, 'belief: the purge ran this read through executeRaw unscoped'), pageIds, revisions); }
+  redactPurgedBeliefKeys(input: beliefPurgeLedgerImpl.RedactPurgedKeysInput) { return beliefPurgeLedgerImpl.redactPurgedBeliefKeys(this.engineSql, input); }
+  listBeliefCarrierEvents(sourceId: string, after: number) { return beliefPurgeLedgerImpl.listBeliefCarrierEvents(unscopedExecutor(this.engineSql, 'belief: the purge ran this read through executeRaw unscoped'), sourceId, after); }
+  readBeliefEventValue(sourceId: string, id: number) { return beliefPurgeLedgerImpl.readBeliefEventValue(unscopedExecutor(this.engineSql, 'belief: the purge ran this read through executeRaw unscoped'), sourceId, id); }
+  rewriteBeliefEventFields(input: beliefPurgeLedgerImpl.BeliefEventRewrite) { return beliefPurgeLedgerImpl.rewriteBeliefEventFields(this.engineSql, input); }
+  rechainBeliefPriorHash(input: beliefPurgeLedgerImpl.BeliefPriorRechain) { return beliefPurgeLedgerImpl.rechainBeliefPriorHash(this.engineSql, input); }
+  listBeliefQuotingRows(kind: beliefPurgeLedgerImpl.BeliefQuotingKind, sourceId: string, after: number) { return beliefPurgeLedgerImpl.listBeliefQuotingRows(unscopedExecutor(this.engineSql, 'belief: the purge ran this read through executeRaw unscoped'), kind, sourceId, after); }
+  listPageBeliefLifetimes(sourceId: string, slug: string, pageId: number) { return beliefPurgeLedgerImpl.listPageBeliefLifetimes(unscopedExecutor(this.engineSql, 'belief: the purge ran this read through executeRaw unscoped'), sourceId, slug, pageId); }
+  listPagePurgeLiveClaims(sourceId: string, slug: string, pageId: number) { return beliefPurgeLedgerImpl.listPagePurgeLiveClaims(unscopedExecutor(this.engineSql, 'belief: the purge ran this read through executeRaw unscoped'), sourceId, slug, pageId); }
+  listPageVersionFenceBodies(pageId: number, after: number) { return beliefPurgeLedgerImpl.listPageVersionFenceBodies(unscopedExecutor(this.engineSql, 'belief: the purge ran this read through executeRaw unscoped'), pageId, after); }
+  listLifetimeClaimEvents(sourceId: string, lifetimes: readonly string[], after: number) { return beliefPurgeLedgerImpl.listLifetimeClaimEvents(unscopedExecutor(this.engineSql, 'belief: the purge ran this read through executeRaw unscoped'), sourceId, lifetimes, after); }
+  listPurgeCarrierVersions(sourceId: string, versionIds: readonly number[]) { return beliefPurgeLedgerImpl.listPurgeCarrierVersions(unscopedExecutor(this.engineSql, 'belief: the purge ran this read through executeRaw unscoped'), sourceId, versionIds); }
+  listKnownBeliefSubjectKeys(sourceId: string, keys: readonly string[]) { return beliefPurgeLedgerImpl.listKnownBeliefSubjectKeys(unscopedExecutor(this.engineSql, 'belief: the purge ran this read through executeRaw unscoped'), sourceId, keys); }
   async listCoveredSources(subjectKey: string) { return beliefImpl.listCoveredSources(this, subjectKey); }
   isFolderRestricted(sourceId: string, slug: string) { return accessControlImpl.isFolderRestricted(unscopedExecutor(this.engineSql, 'access: folder rule read ran unscoped through executeRaw'), sourceId, slug); }
   readFolderAccess(readers: readonly string[]) { return accessControlImpl.readFolderAccess(this, readers); }

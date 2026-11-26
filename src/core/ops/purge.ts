@@ -37,10 +37,7 @@ const purge_fact: Operation = {
     // `--match` only read and are not checked.
     const { factPurgeEntryPoint, requireFactPurgeServed } = await import('../persistence/fact-purge-path-members.ts');
     const entryPoint = factPurgeEntryPoint(ctx, p);
-    // The belief-ledger stops apply only to a source that records belief events; only a Rust brain has stops to read it for.
-    const ledger = entryPoint === 'purge' && ctx.engine.kind === 'rust'
-      ? await ctx.engine.hasBeliefEvents(typeof p.source_id === 'string' ? p.source_id : ctx.sourceId ?? 'default') : undefined;
-    if (entryPoint) await requireFactPurgeServed(ctx.engine, entryPoint, { ledger });
+    if (entryPoint) await requireFactPurgeServed(ctx.engine, entryPoint);
     const { submitPurgeFactMutation } = await import('../facts/purge.ts');
     return submitPurgeFactMutation(ctx, p);
   },

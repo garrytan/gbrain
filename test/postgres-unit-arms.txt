@@ -178,6 +178,7 @@ test/engine-parity/attest-rights.test.ts
 test/engine-parity/attested-actor-link.test.ts
 test/engine-parity/backup-readiness-callers.test.ts
 test/engine-parity/belief-ledger.test.ts
+test/engine-parity/belief-purge-ledger.test.ts
 test/engine-parity/belief-purge-probes.test.ts
 test/engine-parity/bench-save-repro.test.ts
 test/engine-parity/bound-write.test.ts

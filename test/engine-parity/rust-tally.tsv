@@ -20,6 +20,7 @@ test/engine-parity/attest-rights.test.ts	1	0
 test/engine-parity/attested-actor-link.test.ts	1	0
 test/engine-parity/backup-readiness-callers.test.ts	3	0
 test/engine-parity/belief-ledger.test.ts	12	0
+test/engine-parity/belief-purge-ledger.test.ts	6	1
 test/engine-parity/belief-purge-probes.test.ts	8	0
 test/engine-parity/bench-save-repro.test.ts	2	1
 test/engine-parity/bound-write.test.ts	1	2
@@ -125,7 +126,7 @@ test/engine-parity/fact-purge-inventory-probes.test.ts	5	0
 test/engine-parity/fact-purge-ledger.test.ts	3	0
 test/engine-parity/fact-purge-members.test.ts	14	1
 test/engine-parity/fact-purge-probes.test.ts	4	0
-test/engine-parity/fact-purge-receipt-e2e.test.ts	1	1
+test/engine-parity/fact-purge-receipt-e2e.test.ts	2	0
 test/engine-parity/fact-purge-sites.test.ts	14	6
 test/engine-parity/fact-recall-pool-widening.test.ts	2	0
 test/engine-parity/fact-relink-attempts.test.ts	3	0

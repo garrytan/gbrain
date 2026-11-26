@@ -6,9 +6,8 @@
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: the dry run's receipt and the committed receipt (every store's status and counts, the residuals, the
- *    completion) are the same on PGLite, Postgres and Rust, and the claim is gone from the live stores afterwards. On a
- *    source that records belief events, a Rust purge stops at its pre-write check on the belief-ledger raw sites
- *    (persistence/fact-purge-path-members.ts, owner lane 3, due 5 PM PST Nov 28) with nothing journaled or removed.
+ *    completion) are the same on PGLite, Postgres and Rust, and the claim is gone from the live stores afterwards, on a
+ *    source with and without the belief ledger (whose steps, belief/purge.ts, run through typed members).
  *  - Regression: an engine whose purge stops part way, or whose receipt reads a store differently (the belief ledger's
  *    recorded values, a fact context that quotes the claim, a segmented page's rewrite), tells the user a different
  *    story about what was erased.
@@ -23,7 +22,8 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import type { OperationContext } from '../../src/core/ops/contract.ts';
 import { operations } from '../../src/core/operations.ts';
 import { registerLocalWriter } from '../../src/core/persistence/identity.ts';
-import { enableBeliefCoverage, parityArms } from './harness.ts';
+import { recordDerivationInputs } from '../../src/core/facts/derivation-inputs.ts';
+import { enableBeliefCoverage, parityArms, type ParityBackend } from './harness.ts';
 import { chunk, installChunks } from './chunk-fixtures.ts';
 import { readPageBodyPolicy } from '../../src/core/page-body/limits.ts';
 import { sealSegmentedPage, stageSegmentedImport } from '../../src/core/persistence/segmented-apply.ts';
@@ -37,6 +37,7 @@ const SRC = 'default';
 const CLAIM = 'Gate code at the lake house is 7731';
 const KEPT = 'Likes green tea';
 const INLINE = 'people/alice-example';
+const DIARY = 'notes/diary-example';
 const SEGMENTED = 'people/bob-example';
 const REQUEST = 'a0000000-0000-4000-8000-0000000000e1';
 const purge = operations.find((o) => o.name === 'purge_fact')!;
@@ -106,6 +107,11 @@ function receipt({ tell_user_to_run: _vacuum, ...value }: Record<string, unknown
 async function seed(engine: BrainEngine): Promise<{ id: number; bob: number }> {
   const alice = await engine.putPage(INLINE, { type: 'person', title: 'Alice Example', compiled_truth: inlineBody, timeline: '' } as never);
   await installChunks(engine, INLINE, [chunk(0, 'Prose about the lake house.'), chunk(1, `${CLAIM}. ${KEPT}.`)]);
+  // A page whose prose quotes the claim, with a saved version: the purge lists the version as prose it cannot reach, and the
+  // ledger registers the version's fence context that quotes the claim (registerVersionCarriers).
+  await engine.putPage(DIARY, { type: 'note', title: 'Diary', timeline: '',
+    compiled_truth: `I wrote down: ${CLAIM}.\n\n## Facts\n\n${fence([`| 1 | Diary is kept in a drawer | fact | 1.0 | world | medium | 2026-01-01 |  | chat | per ${CLAIM} |`])}\n` } as never);
+  await engine.createVersion(DIARY);
   await engine.setConfig('pages.segmented_storage', 'on');
   const bob = await segmentedPage(engine, SEGMENTED, segmentedBodyText);
   const fact = (text: string, entity: string, over: Record<string, unknown> = {}) =>
@@ -114,6 +120,8 @@ async function seed(engine: BrainEngine): Promise<{ id: number; bob: number }> {
     fact(CLAIM, INLINE), fact(KEPT, INLINE), fact(CLAIM, SEGMENTED),
     // A live fact whose context quotes the claim: the purge keeps it, and the receipt names it.
     fact('Alice owns a lake house', INLINE, { context: `She said: ${CLAIM}.` }),
+    // A fact derived from the purged one: the purge hides it and the ledger records that.
+    fact('Alice keeps the gate code written down', INLINE),
   ] as never, { source_id: SRC });
   await engine.addTakesBatch([
     { page_id: alice.id, row_num: 1, claim: CLAIM, kind: 'take', holder: 'people/alice-example', weight: 0.7 },
@@ -124,52 +132,52 @@ async function seed(engine: BrainEngine): Promise<{ id: number; bob: number }> {
   const facts = await engine.listFactsSince(SRC, new Date(0), { activeOnly: false, limit: 100 } as never);
   const idOf = (text: string, entity: string) => Number(facts.find((f) => f.fact === text && f.entity_slug === entity)!.id);
   const target = idOf(CLAIM, INLINE);
+  await recordDerivationInputs(engine, { table: 'facts', id: String(idOf('Alice keeps the gate code written down', INLINE)), sourceId: SRC },
+    [{ table: 'facts', id: String(target) }]);
   // A supersession proposal between the purged fact and a kept one: the purge drops it with the fact.
   await engine.insertDecideProposal({ source_id: SRC, sweep_id: 'sweep-1', pair_index: 0, new_fact_id: target, old_fact_id: idOf(KEPT, INLINE),
     direction: 'new_supersedes_old', p_supersede: 0.9, threshold: 0.8, proposal_floor: 0.5, model_resolved: 'model-a' });
   return { id: target, bob };
 }
 
+/** Seeds the brain, runs the dry run and the commit, and answers the receipts and what is left. */
+async function purgeAndRead(engine: BrainEngine, backend: ParityBackend, ledger: boolean) {
+  await registerLocalWriter(engine, 'cli');
+  if (ledger) await enableBeliefCoverage(engine, backend, SRC);
+  const { id, bob } = await seed(engine);
+  const ctx = contextFor(engine);
+  const dry = await purge.handler(ctx, { id, all_subjects: true, dry_run: true }) as Record<string, unknown>;
+  const done = await purge.handler(ctx, { id, all_subjects: true, confirm: dry.confirm_token, expected_revision: dry.expected_revision,
+    request_id: REQUEST }) as Record<string, unknown>;
+  expect(done.state).toBe('committed');
+  const left = (await engine.listFactsSince(SRC, new Date(0), { activeOnly: false, limit: 100 } as never)).map((f) => String(f.fact)).sort();
+  const page = await engine.getPage(INLINE);
+  return {
+    dry: receipt(dry), done: receipt(done), left,
+    // Only a Postgres brain hands the operator a VACUUM command.
+    vacuumCommand: ('tell_user_to_run' in done) === (backend === 'postgres'),
+    inline: { claim: page!.compiled_truth.includes(CLAIM), kept: page!.compiled_truth.includes(KEPT) },
+    segmented: (await segmentedBody(engine, bob)).includes(CLAIM),
+    chunks: (await engine.getChunks(INLINE, { includeUnsealed: true } as never)).map((c) => c.chunk_text.includes(CLAIM)),
+  };
+}
+
 describe('engine parity: the receipt of a whole fact purge', () => {
-  for (const ledger of [false, true]) {
-    parityTest(`purge_fact on a brain where the claim reaches facts, takes, proposals, an inline and a segmented page${ledger ? ' and the belief ledger' : ''} gives the same receipt`, {
-      methods: ['putPage', 'insertFacts', 'addTakesBatch', 'insertTakeProposal', 'insertDecideProposal', 'listFactsSince', 'transaction',
-        'loadPurgeTarget', 'planFactPurgeIds', 'planFactPurgeTakes', 'insertFactPurge', 'deletePurgedTakes', 'deletePurgedFacts', 'deletePurgeTakeProposals',
-        'deletePurgeDecideProposals', 'listBeliefEventsForPurgeProbe', 'listFactContextsForPurgeProbe', 'countPurgeProbe', 'hasBeliefEvents'],
-      // With the ledger, a Rust purge stops at the pre-write check on the belief-ledger raw sites (lane 3).
-      ...(ledger ? { requires: 'raw_sql' as const } : {}),
-      timeout: 600_000,
-    }, async (engine, backend) => {
-      await registerLocalWriter(engine, 'cli');
-      if (ledger) await enableBeliefCoverage(engine, backend, SRC);
-      const { id, bob } = await seed(engine);
-      const ctx = contextFor(engine);
-      const dry = await purge.handler(ctx, { id, all_subjects: true, dry_run: true }) as Record<string, unknown>;
-      const run = await purge.handler(ctx, { id, all_subjects: true, confirm: dry.confirm_token, expected_revision: dry.expected_revision,
-        request_id: REQUEST }).then((outcome) => ({ outcome: outcome as Record<string, unknown> }), (error: unknown) => ({ error }));
-      if ('error' in run) {
-        // Only the Rust arm with a ledger stops: before it journals or writes anything, naming the first ledger stop.
-        const error = run.error as { code?: unknown; message?: string; detail?: string };
-        expect({ backend, ledger, code: error.code }).toEqual({ backend: 'rust', ledger: true, code: 'engine_capability_missing' });
-        expect(error.message).toContain('which needs derivedStreamSlugs (belief/purge.ts)');
-        expect(error.detail).toContain('outcome=none');
-        expect(error.detail).toContain('owner="lane 3 (rust-belief-purge)" due="5 PM PST Nov 28"');
-        const facts = (await engine.listFactsSince(SRC, new Date(0), { activeOnly: false, limit: 100 } as never)).map((f) => String(f.fact));
-        expect(facts.filter((f) => f === CLAIM)).toHaveLength(2);
-        throw run.error;
-      }
-      const done = run.outcome;
-      expect(done.state).toBe('committed');
-      const left = (await engine.listFactsSince(SRC, new Date(0), { activeOnly: false, limit: 100 } as never)).map((f) => String(f.fact)).sort();
-      const page = await engine.getPage(INLINE);
-      return {
-        dry: receipt(dry), done: receipt(done), left,
-        // Only a Postgres brain hands the operator a VACUUM command.
-        vacuumCommand: ('tell_user_to_run' in done) === (backend === 'postgres'),
-        inline: { claim: page!.compiled_truth.includes(CLAIM), kept: page!.compiled_truth.includes(KEPT) },
-        segmented: (await segmentedBody(engine, bob)).includes(CLAIM),
-        chunks: (await engine.getChunks(INLINE, { includeUnsealed: true } as never)).map((c) => c.chunk_text.includes(CLAIM)),
-      };
-    });
-  }
+  parityTest('purge_fact on a brain where the claim reaches facts, takes, proposals, an inline and a segmented page gives the same receipt', {
+    methods: ['putPage', 'insertFacts', 'addTakesBatch', 'insertTakeProposal', 'insertDecideProposal', 'listFactsSince', 'transaction',
+      'loadPurgeTarget', 'planFactPurgeIds', 'planFactPurgeTakes', 'insertFactPurge', 'deletePurgedTakes', 'deletePurgedFacts', 'deletePurgeTakeProposals',
+      'deletePurgeDecideProposals', 'listBeliefEventsForPurgeProbe', 'listFactContextsForPurgeProbe', 'countPurgeProbe', 'hasBeliefEvents',
+      'createVersion', 'recordDerivationEdges'],
+    timeout: 600_000,
+  }, (engine, backend) => purgeAndRead(engine, backend, false));
+
+  parityTest('purge_fact on a brain where the claim reaches facts, takes, proposals, an inline and a segmented page and the belief ledger gives the same receipt', {
+    methods: ['putPage', 'insertFacts', 'addTakesBatch', 'insertTakeProposal', 'insertDecideProposal', 'listFactsSince', 'transaction',
+      'loadPurgeTarget', 'planFactPurgeIds', 'planFactPurgeTakes', 'insertFactPurge', 'deletePurgedTakes', 'deletePurgedFacts', 'deletePurgeTakeProposals',
+      'deletePurgeDecideProposals', 'listBeliefEventsForPurgeProbe', 'listFactContextsForPurgeProbe', 'countPurgeProbe', 'hasBeliefEvents',
+      'createVersion', 'recordDerivationEdges',
+      // The belief-ledger steps, on a source that records belief events.
+      'listDerivedStreamSlugs', 'redactPurgedBeliefKeys', 'listBeliefCarrierEvents', 'listBeliefQuotingRows', 'listPurgeCarrierVersions', 'listKnownBeliefSubjectKeys'],
+    timeout: 600_000,
+  }, (engine, backend) => purgeAndRead(engine, backend, true));
 });

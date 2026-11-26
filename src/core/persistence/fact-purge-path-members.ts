@@ -51,8 +51,8 @@ import { PURGE_DUE, PURGE_OWNERS, entryStops, type PurgePathEntry, type PurgePat
 export type FactPurgeEntryPoint = 'purge' | 'continue';
 export type FactPurgeEntry = PurgePathEntry<'purge'>;
 
-const { ours, beliefProbe, factContextProbe, receiptReads, factPurgeTx, segmentedRewrite } = PURGE_OWNERS;
-const { nov23, nov28 } = PURGE_DUE;
+const { ours, beliefProbe, factContextProbe, receiptReads, factPurgeTx, segmentedRewrite, beliefLedger } = PURGE_OWNERS;
+const { nov23 } = PURGE_DUE;
 const served = (owner: string, ...members: Array<keyof BrainEngine & string>): FactPurgeEntry[] => members.map(member => ({ member, owner }));
 
 /**
@@ -73,14 +73,6 @@ const GUARDED_SITES: FactPurgeEntry[] = [
 ].map(([site, guarded]) => ({ site: site!, owner: ours, guarded: guarded! }));
 
 /**
- * The belief-ledger half of a purge (belief/purge.ts, belief/preimages.ts): raw SQL a purge sends only when its source
- * records belief events. A Rust brain does record them (rust-belief-batch), so on such a source each one is a stop; a
- * source with no ledger never reaches them, and its purge has no stop here.
- */
-const LEDGER_STOP_OWNER = 'lane 3 (rust-belief-purge)';
-const ledgerStop = (site: string, stop: string): FactPurgeEntry => ({ site, owner: LEDGER_STOP_OWNER, due: nov28, entry: 'purge', ledger: true, stop });
-
-/**
  * The purge's path, in the order a real run reaches it: the members it calls (lane 4's rust-5a serves the purge
  * transaction's statements, the fact-context probe and the effect read, so they are no stops), the raw-SQL stops, then
  * the members the Rust engine serves, then the raw sites guarded away from it.
@@ -89,7 +81,8 @@ export const FACT_PURGE_PATH: readonly FactPurgeEntry[] = [
   // assertNoPendingPublication, then the belief streams of the facts.
   ...served(factPurgeTx, 'findPurgeBlockedPublication'),
   ...served(factPurgeTx, 'listPurgeStreamSlugs'),
-  ledgerStop('derivedStreamSlugs (belief/purge.ts)', 'the belief streams of the derived rows are read with raw SQL'),
+  // On a source that records belief events: the derived rows' belief streams (belief/purge.ts derivedStreamSlugs).
+  ...served(beliefLedger, 'listDerivedStreamSlugs'),
   // hideDerivedRows: the rows derived from the facts are hidden through their own tables and marked for re-derivation.
   ...served(factPurgeTx, 'expireDerivedFacts'),
   ...served(factPurgeTx, 'deactivateDerivedTakes'),
@@ -117,11 +110,10 @@ export const FACT_PURGE_PATH: readonly FactPurgeEntry[] = [
   // The purge effects of the git mirror.
   ...served(factPurgeTx, 'listPurgedPageRevisions'),
   ...served(factPurgeTx, 'insertPurgeEffects'),
-  // The belief batch's preimage check, then the ledger redaction after the deletes.
-  ledgerStop('missingPreimages (belief/preimages.ts)', 'the belief batch checks its page preimages with raw SQL'),
-  ledgerStop('redactPurgedKeys (belief/purge.ts)', 'the purged keys lose their recorded values through a raw UPDATE of belief_events'),
-  ledgerStop('redactCarryingFields (belief/purge.ts)', 'the recorded fields that quote the claim are read and rewritten with raw SQL'),
-  ledgerStop('quotingSlugs (belief/purge.ts)', 'the live rows whose fields quote the claim are found with raw SQL'),
+  // On a source that records belief events: the belief batch's preimage check, then the ledger redaction after the deletes
+  // (belief/purge.ts: purged keys, carrying fields, live and version carriers, the derived-hidden keys).
+  ...served(beliefLedger, 'listMissingPreimages', 'redactPurgedBeliefKeys', 'listBeliefCarrierEvents', 'readBeliefEventValue', 'rewriteBeliefEventFields',
+    'rechainBeliefPriorHash', 'listBeliefQuotingRows', 'listPurgeCarrierVersions', 'listKnownBeliefSubjectKeys'),
   // verifyFactPurge: the receipt.
   // The receipt pages the recorded values for the purged claims (trust/belief_purge.rs).
   ...served(beliefProbe, 'listBeliefEventsForPurgeProbe'),
@@ -171,18 +163,15 @@ export function factPurgeEntryPoint(ctx: { remote?: unknown; dryRun?: unknown },
   return 'purge';
 }
 
-/**
- * Every listed entry that stops a fact purge on `engine` from `entryPoint`, in list order. `ledger`: whether the purge's source
- * records belief events; unknown counts as yes, so the belief-ledger stops are listed.
- */
-export const factPurgeStops = (engine: object, entryPoint: FactPurgeEntryPoint = 'purge', opts: { ledger?: boolean } = {}): Promise<PurgePathStop<'purge'>[]> =>
-  entryStops(FACT_PURGE_PATH, engine, entry => (entry.entry !== 'purge' || entryPoint === 'purge') && (entry.ledger !== true || opts.ledger !== false));
+/** Every listed entry that stops a fact purge on `engine` from `entryPoint`, in list order. */
+export const factPurgeStops = (engine: object, entryPoint: FactPurgeEntryPoint = 'purge'): Promise<PurgePathStop<'purge'>[]> =>
+  entryStops(FACT_PURGE_PATH, engine, entry => entry.entry !== 'purge' || entryPoint === 'purge');
 
 /**
  * The pre-write check: throws the typed `engine_capability_missing` refusal naming the first stop, its owner lane and its
  * due date (in the message and the detail), with outcome `none` (nothing ran). Call it before the purge reads or writes anything.
  */
-export async function requireFactPurgeServed(engine: object, entryPoint: FactPurgeEntryPoint = 'purge', opts: { ledger?: boolean } = {}): Promise<void> {
-  const [first] = await factPurgeStops(engine, entryPoint, opts);
+export async function requireFactPurgeServed(engine: object, entryPoint: FactPurgeEntryPoint = 'purge'): Promise<void> {
+  const [first] = await factPurgeStops(engine, entryPoint);
   refusePurgeEntryStop(entryPoint === 'continue' ? 'purge_fact --status --continue' : 'purge_fact (forget --purge)', first);
 }

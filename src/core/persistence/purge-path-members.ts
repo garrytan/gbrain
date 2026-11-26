@@ -44,6 +44,8 @@ export const PURGE_OWNERS = {
   factPurgeTx: 'lane 4 (rust-5a bc4cc890fe)',
   /** The segmented rewrite statements and their chunk probes, typed and served on Rust by segmented-staging-2 (34fa27c472): Ember's ruling, Nov 21. */
   segmentedRewrite: 'trunk (segment-pending-stamp f71c844551, contains 34fa27c472)',
+  /** The belief-ledger half of a purge (belief/purge.ts, belief/preimages.ts): typed members the Rust store serves (rust-engine/purge-ledger-sites). */
+  beliefLedger: 'lane 3 (purge-ledger-sites)',
 } as const;
 
 /**
@@ -52,7 +54,7 @@ export const PURGE_OWNERS = {
  * stops served on other branches (request index, origin twin, publication stamp, generation-ledger scrub) are due Nov 25,
  * the last landing date. The fact purge's transaction statements, served on rust-5a, are due Nov 23 (the step 6 ruling).
  */
-export const PURGE_DUE = { nov23: '5 PM PST Nov 23', nov24: '5 PM PST Nov 24', nov25: '5 PM PST Nov 25', nov28: '5 PM PST Nov 28' } as const;
+export const PURGE_DUE = { nov23: '5 PM PST Nov 23', nov24: '5 PM PST Nov 24', nov25: '5 PM PST Nov 25' } as const;
 
 export type PurgeEntryPoint = 'delete_page' | 'retention';
 
@@ -60,11 +62,7 @@ export type PurgeEntryPoint = 'delete_page' | 'retention';
  * `due`: when the owning lane lifts the stop. Every stop another lane owns carries one (test/page-purge-path-members.test.ts).
  * `entry`: the entry point that alone reaches the entry (`E`; the page purge's is `retention`, the fact purge's `purge`).
  */
-/**
- * `ledger`: reached only when the purge's source records belief events (`hasBeliefEvents`), so the check counts it as a stop
- * only for such a source.
- */
-interface Base<E extends string = 'retention'> { owner: string; entry?: E; due?: string; ledger?: true }
+interface Base<E extends string = 'retention'> { owner: string; entry?: E; due?: string }
 /** A BrainEngine member the purge calls. `stop`: not served on Rust (must match the classification). `refuses`: served, but refuses the purge's arguments. */
 export interface PurgePathMember<E extends string = 'retention'> extends Base<E> { member: keyof BrainEngine & string; stop?: string; refuses?: string }
 /** A raw-SQL site, named `function (file under src/core)` as the recording test attributes it. */
@@ -116,12 +114,6 @@ const GUARDED_SITES: PurgePathSite[] = [
   ['isMirrorOnlyPage (persistence/mirror-read-only.ts)', 'a worktree file target: a brain without managed_persistence binds no worktree'],
   ['isUnboundSourcePage (persistence/unbound-source.ts)', 'a worktree file target: a brain without managed_persistence binds no worktree'],
   ['readSyncImportProvenance (persistence/sync-holds.ts)', 'a worktree file target: a brain without managed_persistence binds no worktree'],
-  ['derivedStreamSlugs (belief/purge.ts)', 'the belief-ledger purge runs only when hasBeliefEvents is true; a Rust brain has no ledger'],
-  ['pageLifetimesOf (belief/purge.ts)', 'the belief-ledger purge runs only when hasBeliefEvents is true; a Rust brain has no ledger'],
-  ['pagePurgeClaims (belief/purge.ts)', 'the belief-ledger purge runs only when hasBeliefEvents is true; a Rust brain has no ledger'],
-  ['redactPurgedKeys (belief/purge.ts)', 'the belief-ledger purge runs only when hasBeliefEvents is true; a Rust brain has no ledger'],
-  ['redactCarryingFields (belief/purge.ts)', 'the belief-ledger purge runs only when hasBeliefEvents is true; a Rust brain has no ledger'],
-  ['quotingSlugs (belief/purge.ts)', 'the belief-ledger purge runs only when hasBeliefEvents is true; a Rust brain has no ledger'],
 ].map(([site, guarded]) => ({ site: site!, owner: ours, guarded: guarded! }));
 
 /**
@@ -139,6 +131,11 @@ export const PURGE_PATH: readonly PurgePathEntry[] = [
   // ledgerReports: runs for every purge whose page has fact claims, belief ledger or not.
   // The receipt pages the recorded values for the purged claims (trust/belief_purge.rs).
   ...served(beliefProbe, 'listBeliefEventsForPurgeProbe'),
+  // The belief-ledger steps on a source that records belief events (belief/purge.ts): the derived rows' streams, the page's
+  // lifetimes and claim inventory, the purged-key and carrying-field redactions, the live carriers and the derived-hidden keys.
+  ...served(PURGE_OWNERS.beliefLedger, 'listDerivedStreamSlugs', 'listPageBeliefLifetimes', 'listPagePurgeLiveClaims', 'listPageVersionFenceBodies',
+    'listLifetimeClaimEvents', 'listMissingPreimages', 'redactPurgedBeliefKeys', 'listBeliefCarrierEvents', 'readBeliefEventValue', 'rewriteBeliefEventFields',
+    'rechainBeliefPriorHash', 'listBeliefQuotingRows', 'listKnownBeliefSubjectKeys'),
   // The members the purge calls and the Rust engine serves.
   ...served(ours,
     // the purge itself
