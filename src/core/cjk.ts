@@ -241,10 +241,37 @@ export function stripKoreanParticle(term: string): string {
 }
 
 /**
- * The terms every CJK keyword builder matches: whitespace-split, Korean
- * particles stripped, deduplicated in order. The count, the keyword pages and
- * the chunk search all read this, so a count never disagrees with the rows.
+ * #10417: what a CJK keyword query requires, as AND-ed groups of OR-ed
+ * substrings, with the operators the non-CJK branch's websearch_to_tsquery
+ * honors. A double-quoted phrase is one exact substring (particles kept; an
+ * unclosed quote runs to the end of the query), `OR` between two items puts
+ * them in one group, a dangling `OR` is dropped, and every other
+ * whitespace-split word is its own group with its Korean particle stripped.
+ * Quote characters never reach a pattern. The count, the keyword pages and the
+ * chunk search all read this, so a count never disagrees with the rows.
  */
+export function cjkMatchGroups(query: string): string[][] {
+  const items: Array<{ term: string } | 'OR'> = [];
+  for (const [, quoted, word] of query.matchAll(/"([^"]*)(?:"|$)|([^\s"]+)/g)) {
+    if (quoted !== undefined) { const phrase = quoted.trim(); if (phrase) items.push({ term: phrase }); }
+    else if (word === 'OR') items.push('OR');
+    else items.push({ term: stripKoreanParticle(word!) });
+  }
+  const groups: string[][] = [];
+  let join = false;
+  for (const item of items) {
+    if (item === 'OR') { join = groups.length > 0; continue; }
+    if (join) groups[groups.length - 1]!.push(item.term); else groups.push([item.term]);
+    join = false;
+  }
+  const seen = new Set<string>();
+  return groups.map(group => Array.from(new Set(group))).filter(group => {
+    const key = JSON.stringify([...group].sort());
+    return !seen.has(key) && !!seen.add(key);
+  });
+}
+
+/** Every substring cjkMatchGroups names, deduplicated in order: ranking and the any-term fallback read it. */
 export function cjkMatchTerms(query: string): string[] {
-  return Array.from(new Set(splitCJKQueryTerms(query).map(stripKoreanParticle)));
+  return Array.from(new Set(cjkMatchGroups(query).flat()));
 }
