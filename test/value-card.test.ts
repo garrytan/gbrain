@@ -145,6 +145,26 @@ for (const kind of testBackends()) {
       expect(after.searches).toBe(mid.searches + 1);
     });
 
+    test('a page kind named __proto__ is counted in the breakdown and the total', async () => {
+      const before = row(await local(), 'pages').value as { total: number };
+      await page('notes/proto-kind-example', 'type: __proto__\ntitle: Proto Kind Example');
+      const after = row(await local(), 'pages').value as { total: number; by_kind: Record<string, number> };
+      expect(after.total).toBe(before.total + 1);
+      expect(Object.prototype.hasOwnProperty.call(after.by_kind, '__proto__')).toBe(true);
+      expect(Object.getOwnPropertyDescriptor(after.by_kind, '__proto__')?.value).toBe(1);
+      await engine.executeRaw("UPDATE pages SET deleted_at = now() WHERE slug = 'notes/proto-kind-example'");
+    });
+
+    test('a fact whose page was soft-deleted is not counted as active', async () => {
+      const facts = async () => row(await local(), 'facts').value as { active: number };
+      await page('people/dave-example', 'type: person\ntitle: Dave Example');
+      await fact('people/dave-example', 'Dave plays chess');
+      const before = await facts();
+      await engine.executeRaw("UPDATE pages SET deleted_at = now() WHERE slug = 'people/dave-example'");
+      expect((await engine.listFactsByEntity('default', 'people/dave-example')).length).toBe(0);
+      expect((await facts()).active).toBe(before.active - 1);
+    });
+
     test('nightly items are counted without stamping them seen', async () => {
       const [f] = await engine.executeRaw<{ id: number | string }>("SELECT id FROM facts WHERE fact = 'Carol owns a boat'");
       await engine.executeRaw("INSERT INTO learning_items (run_id, source_id, kind, target_table, target_id, subject_slug) VALUES ('00000000-0000-4000-8000-000000000001', 'default', 'fact_added', 'facts', $1, 'people/carol-example')", [Number(f!.id)]);
@@ -257,12 +277,13 @@ describe('value card wiring', () => {
       const init = Bun.spawnSync(['bun', 'src/cli.ts', 'init', '--pglite', '--no-embedding'], { env, stdout: 'pipe', stderr: 'pipe' });
       expect(init.exitCode).toBe(0);
       expect(Bun.spawnSync(['bun', 'src/cli.ts', 'recall', 'people/nobody-example'], { env, stdout: 'pipe', stderr: 'pipe' }).exitCode).toBe(0);
+      expect(Bun.spawnSync(['bun', 'src/cli.ts', 'recall', 'nobody here example'], { env, stdout: 'pipe', stderr: 'pipe' }).exitCode).toBe(0);
       const json = Bun.spawnSync(['bun', 'src/cli.ts', 'value', '--json'], { env, stdout: 'pipe', stderr: 'pipe' });
       expect(json.exitCode).toBe(0);
       const doc = JSON.parse(json.stdout.toString()) as ValueCard;
       expect(doc).toMatchObject({ schema: 'gbrain.value', schema_version: 1, state: 'complete' });
       expect(row(doc, 'brain_score').value).toMatchObject({ keyless: true });
-      expect(row(doc, 'lookups_served').value).toMatchObject({ recalls: 1 });
+      expect(row(doc, 'lookups_served').value).toMatchObject({ recalls: 2 });
       const human = Bun.spawnSync(['bun', 'src/cli.ts', 'value'], { env, stdout: 'pipe', stderr: 'pipe' });
       expect(human.exitCode).toBe(0);
       expect(human.stdout.toString()).toContain('reachable without a key');
