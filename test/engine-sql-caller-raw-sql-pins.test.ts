@@ -2799,6 +2799,17 @@ const PINS: Pin[] = [
      ORDER BY COALESCE(p.effective_date, p.updated_at) DESC, p.id DESC LIMIT ${MAX_ANCHORED}`],
   },
   {
+    from: 'src/core/sync-pending.ts:168 readEmbedBacklog (the per-source embed backlog; at a597e7a6c6)',
+    case: { method: 'readEmbedBacklogRows', variant: 'default', run: e => e.readEmbedBacklogRows('embedding', ['default']) },
+    // The caller's interpolations (the quoted column and chunkGenerationFilter) are rebuilt from their builders, so a drift in either fails.
+    texts: () => [`SELECT p.source_id, count(*)::int AS pending, count(*) FILTER (WHERE cc.embedding_pending_since IS NULL)::int AS unaged,
+            min(cc.embedding_pending_since) AS oldest
+       FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
+      WHERE cc.${quoteIdentifier('embedding')} IS NULL AND p.deleted_at IS NULL AND p.source_id = ANY($1::text[]) AND ${chunkGenerationFilter('p', 'cc')}
+        AND NOT jsonb_exists(COALESCE(p.frontmatter, '{}'::jsonb), 'embed_skip')
+      GROUP BY p.source_id`],
+  },
+  {
     from: 'src/core/persistence/concept-rebuild.ts:140 statedKinds (STATED_SQL; at 7c85d5696f)',
     case: { method: 'readConceptStatedKinds', variant: 'default', run: e => e.readConceptStatedKinds(7, 'default', 'concepts/a', { derivedLinkSources: ['markdown'], statedLabelKeys: ['readable_by'], synthesisKeys: ['type'] }) },
     // The caller's interpolations are rebuilt here from their builders, so a drift in either fails.

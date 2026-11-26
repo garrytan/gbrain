@@ -372,7 +372,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'readChronicleLedgerStats', 'readChunkColumnTypes', 'readCounterDrift', 'readCredentialBindingForUpdate',
   'readCredentialMemberId', 'readDeltaSessionRow', 'readDoctorLastKnown', 'readDoctorSources',
   'readDrainHolderProgress', 'readDrainLeaseBeacon', 'readDrainRunStart', 'readDriftSchema',
-  'readEmbeddingBacklogAge', 'readEntityAnchoredPages', 'readEntityNewestFacts', 'readExtractRollup7d', 'readExtractKindRollup7d',
+  'readEmbeddingBacklogAge', 'readEmbedBacklogRows', 'readEntityAnchoredPages', 'readEntityNewestFacts', 'readExtractRollup7d', 'readExtractKindRollup7d',
   'readFeedbackStatus', 'readFencePassHorizon', 'readFenceScanRecord', 'readFenceTrendRecords', 'readFirstSourceId',
   'readIgnoredPrivacyLabelCounts', 'readImagePageCoverage', 'readImageSealPages', 'readJobDataByIdempotencyKey',
   'readKnowledgeRevisionNotNull', 'readLatestCatalogProvenanceAudit', 'readLatestConnectorReceipt',
