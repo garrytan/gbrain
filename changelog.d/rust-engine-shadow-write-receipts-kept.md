@@ -10,7 +10,7 @@
 
 ### Changed
 - `gbrain engine shadow status` counts every sent count still on disk as a replay with no verdict (so no evidence), and lists them as `outstanding_receipts`. A sent count that names another evidence epoch than the current one counts the same way (commands write none, because they cannot know which epoch their worker opens, so only a hand-written one can).
-- A sent count left by a command that has died is added once, as `uncomparable` with the new reason `receipt_orphaned`, by the next shadow worker that owns the store. It may count samples that were already compared as lost as well, never fewer. Each shadow save now lists the shadow directory once to find these. A kept sent count is counted whole, so it can count more samples as lost than were lost, never fewer; and the "no evidence" from a warning line lasts for the whole epoch even if the count was written down afterwards.
+- A sent count whose worker is gone (its process is not running, or the file is over 10 minutes old) is added once, as `uncomparable` with the new reason `receipt_orphaned`, by the next shadow worker that owns the store. It may count samples that were already compared as lost as well, never fewer. Each shadow save now lists the shadow directory once to find these. A kept sent count is counted whole, so it can count more samples as lost than were lost, never fewer; and the "no evidence" from a warning line lasts for the whole epoch even if the count was written down afterwards.
 - Nothing about what counts as `comparable` changes, and a lost or uncompared sample is never counted as compared.
 
 ### Known limits
