@@ -37,7 +37,9 @@ import { loadActivePackForLocalEngine } from '../core/schema-pack/best-effort.ts
 import { safeCliToken, sanitizeTypeForDisplay, storedTypeMissesPack, type TypeUsagePack } from '../core/schema-pack/type-usage.ts';
 import { parseLineGrammar } from '../core/line-grammar.ts';
 import { stripCodeBlocks } from '../core/markdown-code.ts';
-import { pathToSlug } from '../core/sync.ts';
+import { pathToSlug, isSyncable, readMetafilePagesMode } from '../core/sync.ts';
+import { metafilePagePredicate, diskMetafileHeads } from '../core/sync-metafile-pages.ts';
+import { isReservedSkillBundlePath } from '../core/skill-reserved-paths.ts';
 import { isManagedBrain } from '../core/cycle/phase-table.ts';
 import { maintenancePreflight, publishMaintenancePage, type MaintenanceAuthority } from '../core/persistence/prepared-maintenance.ts';
 import { fileMatchesSnapshot, prepareFileTarget } from '../core/persistence/page-prepare.ts';
@@ -780,7 +782,13 @@ export async function runLintCore(opts: LintOpts): Promise<LintResult> {
   }
 
   const isSingleFile = statSync(opts.target).isFile();
-  const pages = isSingleFile ? [opts.target] : collectPages(opts.target, opts.exclude ?? []);
+  let pages = isSingleFile ? [opts.target] : collectPages(opts.target, opts.exclude ?? []);
+  if (managed && !isSingleFile) {
+    // A managed source's sync leaves scaffolding and reserved skill bundles out of the brain, so their page-format
+    // findings are not about knowledge pages. An explicit single-file target still lints whatever it names.
+    const metafilePage = metafilePagePredicate(await readMetafilePagesMode(opts.engine!), diskMetafileHeads(opts.target));
+    pages = pages.filter(page => { const rel = relative(opts.target, page).replaceAll('\\', '/'); return !isReservedSkillBundlePath(rel) && isSyncable(rel, { strategy: 'markdown', metafilePage }); });
+  }
   opts.onPagesCollected?.(pages.length);
 
   // Resolve content-sanity config and the active pack once for this lint
