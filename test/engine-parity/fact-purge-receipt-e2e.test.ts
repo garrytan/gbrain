@@ -140,6 +140,25 @@ async function seed(engine: BrainEngine): Promise<{ id: number; bob: number }> {
   return { id: target, bob };
 }
 
+/**
+ * The source's whole belief_events chain after a purge, as one text: per event in id order its subject (lifetimes
+ * folded), type, value hash, prior hash, purged flag, redacted fields and value. Byte-equal on every engine means the
+ * redaction and the prior_hash re-chain left the same ledger, not only the same redacted rows.
+ */
+async function ledgerChain(engine: BrainEngine, sourceId = SRC): Promise<string> {
+  const rows = await engine.readBeliefHistoryRows({ sourceId, slug: null, subjectKey: null, afterId: 0, limit: 1000, recordedAfter: null,
+    recordedUntil: null, subjectKeys: null, beforeId: null, descending: false });
+  const fold = (text: string) => text.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, '<uuid>');
+  const values = rows.map(r => JSON.stringify(typeof r.value === 'string' ? JSON.parse(r.value as string) : r.value ?? null));
+  // A value that names a page revision or lifetime (random per brain) has a per-brain hash: such a hash, and a prior hash
+  // that names it, print as the position of the event that has it, so the chain still compares link by link.
+  const minted = new Map<string, string>();
+  rows.forEach((r, i) => { if (r.value_hash && fold(values[i]!) !== values[i]) minted.set(String(r.value_hash), `#${i}`); });
+  const hash = (h: unknown) => h == null ? 'null' : minted.get(String(h)) ?? String(h);
+  return rows.map((r, i) => fold([r.subject_kind, r.subject_key, r.event_type, hash(r.value_hash), hash(r.prior_hash), r.purged,
+    JSON.stringify(r.redacted_fields ?? null), values[i]].map(String).join('|'))).join('\n');
+}
+
 /** Seeds the brain, runs the dry run and the commit, and answers the receipts and what is left. */
 async function purgeAndRead(engine: BrainEngine, backend: ParityBackend, ledger: boolean) {
   await registerLocalWriter(engine, 'cli');
@@ -159,6 +178,8 @@ async function purgeAndRead(engine: BrainEngine, backend: ParityBackend, ledger:
     inline: { claim: page!.compiled_truth.includes(CLAIM), kept: page!.compiled_truth.includes(KEPT) },
     segmented: (await segmentedBody(engine, bob)).includes(CLAIM),
     chunks: (await engine.getChunks(INLINE, { includeUnsealed: true } as never)).map((c) => c.chunk_text.includes(CLAIM)),
+    // The whole belief_events chain after the purge (empty without the ledger).
+    chain: await ledgerChain(engine),
   };
 }
 
@@ -177,7 +198,8 @@ describe('engine parity: the receipt of a whole fact purge', () => {
       'deletePurgeDecideProposals', 'listBeliefEventsForPurgeProbe', 'listFactContextsForPurgeProbe', 'countPurgeProbe', 'hasBeliefEvents',
       'createVersion', 'recordDerivationEdges',
       // The belief-ledger steps, on a source that records belief events.
-      'listDerivedStreamSlugs', 'redactPurgedBeliefKeys', 'listBeliefCarrierEvents', 'listBeliefQuotingRows', 'listPurgeCarrierVersions', 'listKnownBeliefSubjectKeys'],
+      'listDerivedStreamSlugs', 'redactPurgedBeliefKeys', 'listBeliefCarrierEvents', 'listBeliefQuotingRows', 'listPurgeCarrierVersions', 'listKnownBeliefSubjectKeys',
+      'readBeliefHistoryRows'],
     timeout: 600_000,
   }, (engine, backend) => purgeAndRead(engine, backend, true));
 });

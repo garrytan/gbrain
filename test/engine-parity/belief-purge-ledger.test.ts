@@ -51,6 +51,25 @@ function event(sourceId: string, incarnation: string, ord: number, value: Record
   };
 }
 
+/**
+ * The source's whole belief_events chain after a purge, as one text: per event in id order its subject (lifetimes
+ * folded), type, value hash, prior hash, purged flag, redacted fields and value. Byte-equal on every engine means the
+ * redaction and the prior_hash re-chain left the same ledger, not only the same redacted rows.
+ */
+async function ledgerChain(engine: BrainEngine, sourceId = SRC): Promise<string> {
+  const rows = await engine.readBeliefHistoryRows({ sourceId, slug: null, subjectKey: null, afterId: 0, limit: 1000, recordedAfter: null,
+    recordedUntil: null, subjectKeys: null, beforeId: null, descending: false });
+  const fold = (text: string) => text.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, '<uuid>');
+  const values = rows.map(r => JSON.stringify(typeof r.value === 'string' ? JSON.parse(r.value as string) : r.value ?? null));
+  // A value that names a page revision or lifetime (random per brain) has a per-brain hash: such a hash, and a prior hash
+  // that names it, print as the position of the event that has it, so the chain still compares link by link.
+  const minted = new Map<string, string>();
+  rows.forEach((r, i) => { if (r.value_hash && fold(values[i]!) !== values[i]) minted.set(String(r.value_hash), `#${i}`); });
+  const hash = (h: unknown) => h == null ? 'null' : minted.get(String(h)) ?? String(h);
+  return rows.map((r, i) => fold([r.subject_kind, r.subject_key, r.event_type, hash(r.value_hash), hash(r.prior_hash), r.purged,
+    JSON.stringify(r.redacted_fields ?? null), values[i]].map(String).join('|'))).join('\n');
+}
+
 /** The source's events that keep a recorded value, as subject key and value, in id order. */
 async function valued(engine: BrainEngine, sourceId = SRC) {
   return (await engine.listBeliefEventsForPurgeProbe(sourceId, 0))
@@ -77,7 +96,7 @@ const row = (n: number, claim: string, context = '') => `| ${n} | ${claim} | fac
 
 describe('engine parity: the belief-ledger steps of a purge', () => {
   parityTest('redactPurgedKeys clears the recorded values of the claim\'s fact and take events and of the page lifetimes\' events, once', {
-    methods: ['readLedgerSource', 'insertBeliefEvents', 'transaction', 'listBeliefEventsForPurgeProbe', 'redactPurgedBeliefKeys'],
+    methods: ['readLedgerSource', 'insertBeliefEvents', 'transaction', 'listBeliefEventsForPurgeProbe', 'redactPurgedBeliefKeys', 'readBeliefHistoryRows'],
   }, async (engine, backend) => {
     await createSource(engine, backend, 'other');
     const inc = (await engine.readLedgerSource(SRC))!.incarnation;
@@ -96,7 +115,7 @@ describe('engine parity: the belief-ledger steps of a purge', () => {
     ]);
     const first = await engine.transaction(tx => redactPurgedKeys(tx, { sourceId: SRC, claimFps: ['fpX'], lifetimes: [LIFE2] }));
     const again = await engine.transaction(tx => redactPurgedKeys(tx, { sourceId: SRC, claimFps: ['fpX'], lifetimes: [LIFE2] }));
-    const answers = { first, again, left: await valued(engine), other: await valued(engine, 'other') };
+    const answers = { first, again, left: await valued(engine), other: await valued(engine, 'other'), chain: await ledgerChain(engine) };
     expect({ first, again }).toEqual({ first: 3, again: 0 });
     expect(answers.left.map(r => r.subject_key)).toEqual(['link:3', 'fact:5']);
     return answers;
@@ -104,7 +123,7 @@ describe('engine parity: the belief-ledger steps of a purge', () => {
 
   parityTest('redactCarryingFields writes the marker into each recorded field that quotes the claim, registers it, and leaves the rest', {
     methods: ['readLedgerSource', 'insertBeliefEvents', 'transaction', 'listBeliefEventsForPurgeProbe', 'readBeliefRedactions',
-      'listBeliefCarrierEvents', 'readBeliefEventValue', 'rewriteBeliefEventFields', 'rechainBeliefPriorHash', 'registerPurgeRedaction'],
+      'listBeliefCarrierEvents', 'readBeliefEventValue', 'rewriteBeliefEventFields', 'rechainBeliefPriorHash', 'registerPurgeRedaction', 'readBeliefHistoryRows'],
   }, async (engine) => {
     const inc = (await engine.readLedgerSource(SRC))!.incarnation;
     await engine.insertBeliefEvents([
@@ -123,7 +142,11 @@ describe('engine parity: the belief-ledger steps of a purge', () => {
       redacted: redacted.map(r => ({ ...r, event_id: r.event_id - base })),
       left: await valued(engine),
       suppressions: await suppressions(engine, ['fact:1', 'take:3', 'link:4', 'fact:5', 'page:6']),
+      chain: await ledgerChain(engine),
     };
+    // The later event of fact:1 was chained to the first one's old value hash; it now names the rewritten hash.
+    const [first, second] = answers.chain.split('\n').filter(line => line.startsWith('fact|fact:1|'));
+    expect(second!.split('|')[4]).toBe(first!.split('|')[3]);
     expect(redacted.map(r => `${r.field}@${r.subject_key}`)).toEqual(['context@fact:1', 'resolved_source@take:3', 'context@link:4']);
     expect(JSON.stringify(answers.left).toLowerCase().split(CLAIM.toLowerCase()).length - 1).toBe(1);
     return answers;
@@ -233,7 +256,7 @@ const notePage = (title: string, body: string) => ['---', `title: ${title}`, 'ty
 
 describe('engine parity: a page purge on a source that records belief events', () => {
   parityTest('delete_page --purge redacts the page\'s recorded history on the SQL engines; on Rust it stops only at the request-index read, never at a ledger step', {
-    methods: ['readPageSnapshot', 'listBeliefEventsForPurgeProbe', 'readBeliefRedactions'],
+    methods: ['readPageSnapshot', 'listBeliefEventsForPurgeProbe', 'readBeliefRedactions', 'readBeliefHistoryRows'],
     // On Rust the page purge still stops at its pre-write check on lane 14's request-index read (purge-path-members.ts).
     requires: 'raw_sql',
     timeout: 120_000,
@@ -258,7 +281,7 @@ describe('engine parity: a page purge on a source that records belief events', (
     const after = await valued(engine);
     const keys = [...new Set([...before, ...after].map(e => e.subject_key))];
     const answers = { status: done.status, before: before.length, after: after.map(e => JSON.parse(keyShape(JSON.stringify(e)))),
-      suppressions: await suppressions(engine, keys) };
+      suppressions: await suppressions(engine, keys), chain: await ledgerChain(engine) };
     expect(JSON.stringify(answers.after).toLowerCase().includes(CLAIM.toLowerCase())).toBe(false);
     return answers;
   });
