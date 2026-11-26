@@ -33,7 +33,8 @@ From an agent, the MCP tool is `correct`:
 ```
 
 Leave out `fact_id` to save only the rule (for a mistake no stored fact caused). Add `--question "<q>" --expect a,b
---reject c` (or `checks` over MCP) to give the rule a regression check.
+--reject c` (or `checks` over MCP) to give the rule a regression check. With `dry_run: true`, `correct` writes nothing
+and returns a preview of the rule and the fact change.
 
 ## The receipt
 
@@ -77,7 +78,9 @@ a remote connection cannot clear the problem itself).
   whose agents it applies to), is refused (`rule_transition`). A replacement fact is always saved on the page the old
   fact is on, with or without `entity`. A correction whose `entity` is a rule page in any spelling (`/rules/...` too),
   is not the page the fact is on, or names a page for a fact on no page, is refused (`invalid_params`); a remote caller
-  that cannot read the fact, or the page the fact is about, gets `fact_not_found` instead. One connection can have at most 20 corrections waiting at a time, counted under a
+  that cannot read the fact, or the page the fact is about, gets `fact_not_found` instead, and so does any caller naming
+  a fact that is already withdrawn. A member's agent can withdraw a fact on the member's own memory page but not
+  replace it. One connection can have at most 20 corrections waiting at a time, counted under a
   lock so calls sent together cannot pass it (`correct_proposals_capped`). A member's `me` rule loads only for that member's
   agents, never for yours; a connection that acts for no member cannot save a `me` rule (`invalid_params`). A team rule
   a member proposes is readable by every agent of the brain, never only by the member who wrote it.
