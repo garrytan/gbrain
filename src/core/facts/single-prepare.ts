@@ -103,16 +103,17 @@ async function memberPageWithdrawal(engine: BrainEngine, sourceId: string, input
 }
 
 /**
- * The refusal for a claim `isFactWithdrawn` matched. A caller that reads private pages (`excludePrivate` off) gets the
- * `withdrawn` detail from the withdrawal ledger alone (never a purge): the most specific subject first, then the newest
+ * The refusal for a claim `isFactWithdrawn` matched. A caller that is neither remote (`remote: true`) nor barred from
+ * private pages (`excludePrivate`) gets the `withdrawn` detail from the withdrawal ledger alone (never a purge): the most specific subject first, then the newest
  * withdrawal. It covers the exact normalized claim only. Any other caller gets the plain refusal with no detail, whether
  * the withdrawn rows sit on pages it can read, on pages it cannot read, or on no page at all, so the refusal never tells
  * those cases apart and never carries anything read from a page the caller may not see.
  */
-export async function factWithdrawnRefusal(engine: BrainEngine, sourceId: string, input: SingleFactIntent, opts: { excludePrivate?: boolean } = {}): Promise<OperationError> {
+export async function factWithdrawnRefusal(engine: BrainEngine, sourceId: string, input: SingleFactIntent, opts: { excludePrivate?: boolean; remote?: boolean } = {}): Promise<OperationError> {
   // GST-359 D: a member writing to its own member page sees that page's withdrawn rows.
   const seen = (param: number) => `(${remoteProvenanceFloorSql('f')} OR COALESCE(f.source_markdown_slug = $${param}::text, false))`;
-  if (opts.excludePrivate === true) return withdrawnRefusal(undefined);
+  // A remote caller gets no detail, even where an operator relaxed remote page privacy (excludePrivate off).
+  if (opts.excludePrivate === true || opts.remote === true) return withdrawnRefusal(undefined);
   const [row] = await engine.executeRaw<WithdrawalRow>(`SELECT w.subject,w.visibility,w.withdrawn_at::text AS withdrawn_at
     FROM fact_withdrawals w LEFT JOIN facts f ON f.source_id=w.source_id AND f.visibility=w.visibility AND f.expired_at IS NOT NULL
       AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact),gbrain_fact_fingerprint_v1(f.fact)) AND ${withdrawalReachedFactSql('w', 'f')}

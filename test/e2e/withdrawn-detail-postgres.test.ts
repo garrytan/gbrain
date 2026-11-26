@@ -8,7 +8,7 @@ import { hasDatabase } from './helpers.ts';
 import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
 import { configureGateway, resetGateway } from '../../src/core/ai/gateway.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
-import { detailOnEverySurface, hiddenBackingOmitsDetail, mostSpecificSubjectFirst, receiptKeepsDetail, storedDetailStaysLocal,
+import { detailOnEverySurface, hiddenBackingOmitsDetail, mostSpecificSubjectFirst, receiptKeepsDetail, storedDetailStaysLocal, relaxedPrivacyStillPlain,
   singleWriterSameRule } from '../helpers/withdrawn-detail-scenarios.ts';
 
 const d = hasDatabase() ? describe : describe.skip;
@@ -27,5 +27,6 @@ d('fact_withdrawn refusals carry the withdrawal (Postgres)', () => {
   test('a remote refusal is byte-identical whether the withdrawn rows are hidden, visible or absent', () => hiddenBackingOmitsDetail(engine), 60_000);
   test('a remote failed receipt carries no object in get_write_request or replay', () => receiptKeepsDetail(engine), 60_000);
   test('a stored withdrawal detail reaches a trusted local reader only', () => storedDetailStaysLocal(engine), 60_000);
+  test('relaxed remote page privacy still gives a remote caller no withdrawal detail', () => relaxedPrivacyStillPlain(engine), 60_000);
   test('the single-fact writer applies the same rule; a purge supplies no object', () => singleWriterSameRule(engine), 60_000);
 });

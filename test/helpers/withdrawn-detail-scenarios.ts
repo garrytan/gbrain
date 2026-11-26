@@ -10,6 +10,7 @@ import { dispatchToolCall } from '../../src/mcp/dispatch.ts';
 import { FACT_WITHDRAWN_MESSAGE, FACT_WITHDRAWN_SUGGESTION } from '../../src/core/facts/withdrawal.ts';
 import { writeSingleFact } from '../../src/core/facts/write-single.ts';
 import { OperationError } from '../../src/core/ops/contract.ts';
+import { __resetPrivateVisibilityCacheForTests } from '../../src/core/search/private-visibility.ts';
 
 const CLAIM = 'Acme Example renewed for three years at 40 seats.';
 
@@ -162,6 +163,29 @@ export async function storedDetailStaysLocal(engine: BrainEngine): Promise<void>
   await fail(localId);
   expect((await call(engine, 'get_write_request', { request_id: localId }, 'local')).body.withdrawn).toEqual(withdrawn);
   expect((await remember(engine, 'local', { request_id: localId, fact: 'Acme Example hired a new auditor.' })).body.withdrawn).toEqual(withdrawn);
+}
+
+/** An operator who relaxed remote page privacy still gives a remote or unset caller no detail; a local caller keeps it. */
+export async function relaxedPrivacyStillPlain(engine: BrainEngine): Promise<void> {
+  await seedPages(engine);
+  await engine.setConfig('search.remote_private_pages', 'visible');
+  __resetPrivateVisibilityCacheForTests();
+  try {
+    const saved = await call(engine, 'remember', { fact: CLAIM, provenance: 'call notes', infer_entity: false }, 'local');
+    expect((await call(engine, 'forget', { id: String(saved.body.id) }, 'local')).body.expired).toBe(true);
+    const remote = await remember(engine);
+    expect(remote.body).toMatchObject({ code: 'invalid_params', message: FACT_WITHDRAWN_MESSAGE });
+    expect(remote.body.withdrawn).toBeUndefined();
+    const write = (remote?: boolean) => writeSingleFact(engine, 'default', { fact: CLAIM, provenance: 'call notes', entity: 'crm/acme-example', visibility: 'world', ...(remote === undefined ? {} : { remote }) })
+      .then(() => null, (e: unknown) => e as OperationError);
+    expect((await write())?.withdrawn).toBeUndefined();
+    expect((await write(true))?.withdrawn).toBeUndefined();
+    expect((await write(false))?.withdrawn).toMatchObject({ subject: 'all_entities', visibility: 'world' });
+    expect((await remember(engine, 'local')).body.withdrawn).toMatchObject({ subject: 'all_entities' });
+  } finally {
+    await engine.setConfig('search.remote_private_pages', 'hidden');
+    __resetPrivateVisibilityCacheForTests();
+  }
 }
 
 /** The single-fact writer applies the same rule (a caller with `remote` unset reads as remote); a purge never supplies the object. */
