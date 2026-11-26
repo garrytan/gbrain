@@ -269,11 +269,11 @@ Every `jobs get --json`, `jobs list --json`, `get_job` and `list_jobs` row carri
 - `heartbeat_age_ms`, `lock_expires_in_ms` and `stalled` for an active job: how long since its lease was last renewed, measured on the database clock, and whether the lease has already run out.
 - `spend`: the token counts plus `cost_usd`, the settled, priced spend of the job and its children. `cost_usd` is `null` (`cost_basis: 'unpriced'`) when nothing priced it, never a made-up 0.
 
-An agent token without admin sees another principal only by kind: a foreign submitter, parent, slot holder or lock holder is never named, and another principal's children are left out of its spend.
+A fenced remote caller (every remote credential, admin scope included, except an admin credential bound to the brain owner that names no person or audience) sees only the jobs it submitted and another principal only by kind: a foreign submitter, parent, slot holder or lock holder is never named, and another principal's children are left out of its spend and token counts.
 
 `gbrain jobs wait <id> [--timeout 10m] [--json]` blocks until the job ends and prints it. It exits 0 when the job completed, 1 when it failed, died or was cancelled, and 124 when the timeout elapsed and the job is still running (the job is not cancelled). MCP agents call `wait_job {id, timeout_s}`, which answers after at most 55 s with `terminal: true|false`; call it again while `terminal` is false.
 
-To learn about every job that finished without polling each one, read the terminal event cursor: `gbrain jobs list --finished-since <ISO time> --json` (MCP: `list_jobs {finished_since}`) returns `{jobs, next_cursor}`, oldest first. Pass `next_cursor` back on the next call. Rows deleted on completion or pruned are not in it.
+To learn about every job that finished without polling each one, read the terminal event cursor: `gbrain jobs list --finished-since <ISO time> --json` (MCP: `list_jobs {finished_since}`) returns `{jobs, next_cursor}`, oldest first. Pass `next_cursor` back on the next call. Rows deleted on completion or pruned are not in it, and over MCP it lists only the jobs the caller can see.
 
 #### Terminal hook
 

@@ -166,7 +166,8 @@ export async function openEngine(settings: EngineSettings): Promise<BrainEngine>
   const engine = await constructEngine(config);
   markEmbeddedEngine(engine, held);
   setEngineHostId(engine, held.host.id);
-  const dropUsageSink = registerEngineChatUsageSink(engine, makeEngineChatUsageSink(engine));
+  const usageSink = makeEngineChatUsageSink(engine);
+  const dropUsageSink = registerEngineChatUsageSink(engine, usageSink);
   let closed = false;
   const insideReconnect = new AsyncLocalStorage<true>();
   const disconnect = engine.disconnect.bind(engine);
@@ -174,6 +175,7 @@ export async function openEngine(settings: EngineSettings): Promise<BrainEngine>
     if (insideReconnect.getStore()) return disconnect();
     closed = true;
     dropUsageSink();
+    await usageSink.drain();
     releaseEngineGatewayState(engine);
     releaseEmbeddedEngine(engine);
     await disconnect();
