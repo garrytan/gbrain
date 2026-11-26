@@ -245,6 +245,7 @@ describe('usage files', () => {
     used(dir, null, { getTags: { offered: 1 } });
     expect(readEpochUsage(dir, 'e1')!.map((l) => Object.keys(l.ops))).toEqual([['getPage']]);
     expect(readEpochUsage(tmp(), 'e1')).toEqual([]);
+    // pregate-literal: SHADOW_ADAPTER_VERSION=10 the number 10 on the next line is test data (a count, size, index or slice), not the adapter version
     const file = join(dir, 'usage', `${new Date(NOW.getTime() - DAY).toISOString().slice(0, 10)}.jsonl`);
     appendFileSync(file, '{"ts":"torn');
     expect(readEpochUsage(dir, 'e1')).toHaveLength(1);
@@ -267,6 +268,7 @@ describe('reads', () => {
     expect(renderEvidenceStatus(s).join('\n')).toContain('lacking samples: getBacklinks 0/100 (offered 12, sampled out 12');
   });
 
+  // pregate-literal: SHADOW_ADAPTER_VERSION=10 10,000 is a row total in the test title, not the adapter version
   test('a class at 99 is named while the total is over 10,000; successful means a match or a collation_order', () => {
     const { dir, epoch } = epochDir();
     put(dir, rowsOf(epoch, 'getPage', { match: 10_500 }));
@@ -284,6 +286,7 @@ describe('reads', () => {
     expect(s.evidence!.ops_lacking_samples).toEqual(['listPages 99/100']);
     expect(s.evidence!.collation_order).toEqual({ getTags: 2 });
     put(dir, rowsOf(epoch, 'getPage', { collation_order: 10_000 }));
+    // pregate-literal: SHADOW_ADAPTER_VERSION=10 the number 10 on the next line is test data (a count, size, index or slice), not the adapter version
     expect(status(dir).reads!.ops.reduce((n, o) => n + o.successful, 0)).toBe(100 + 99 + 10_000); // the 10,000 total counts it too
   });
 
@@ -326,6 +329,7 @@ describe('reads', () => {
     expect(status(dir).evidence).toMatchObject({ epoch_id: epoch });
     put(dir, rowsOf(epoch, 'getPage', { match: 1 }));
     expect(status(dir).reads!.ops).toHaveLength(1);
+    // pregate-literal: SHADOW_ADAPTER_VERSION=10 the number 10 on the next line is test data (a count, size, index or slice), not the adapter version
     const day = join(ledgerDir(dir), `${new Date(NOW.getTime() - DAY).toISOString().slice(0, 10)}.jsonl`);
     appendFileSync(day, '{"ts":"torn');
     expect(status(dir).reads!.ops).toHaveLength(1); // a torn last line is skipped
