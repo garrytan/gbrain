@@ -692,6 +692,7 @@
     "slug_root_mode_mismatch",
     "slug_spelling_collision",
     "slug_spelling_encoding",
+    "slug_too_long",
     "source_binding_required",
     "source_changed",
     "source_id_taken",
