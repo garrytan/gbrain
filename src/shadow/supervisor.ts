@@ -111,6 +111,7 @@ export class ShadowSupervisor implements MirrorTransport {
   /** Write samples (with the losses they carry) accepted for the current child, sent or staged: the count the owed record states, so the child can settle what its pipe never delivered. */
   private acceptedWeight = 0;
   private owedWritten = ''; // the record `writeOwedRecord` last made durable (session, count and flags)
+  private oweDirty = false; // `owe` raised the accepted weight and the record is not durable yet
   private childExited = false;
   private closedRecord = false; // a closed record was made durable for this session: later records stay closed
   private stdinRef: (NodeJS.WritableStream & { writableFinished?: boolean }) | null = null;
@@ -169,6 +170,17 @@ export class ShadowSupervisor implements MirrorTransport {
     return true;
   }
 
+  /**
+   * Makes `n` more samples owed with no line behind them: samples the sampler could not send (a loss-only line the pipe refused) and could not record. The owed record is made durable in a later turn like any other, so status reads the session as unsettled
+   * (owed above settled) until the worker books them, as `pipe_unflushed` at the end of its input or as `receipt_orphaned` by the next owner. False when there is no running worker to owe them to.
+   */
+  owe(n: number): boolean {
+    if (!this.session || !this.child || this.disabledReason || !Number.isInteger(n) || n < 1) return false;
+    this.acceptedWeight += n; this.oweDirty = true;
+    this.scheduleFlush();
+    return true;
+  }
+
   /** One flush per event-loop turn, after the caller's synchronous work: the durable owed write never runs inside a request. Not held open for: an exit with lines staged is covered by the exit hook's owed record. */
   private scheduleFlush(): void {
     if (this.flushScheduled) return;
@@ -181,8 +193,9 @@ export class ShadowSupervisor implements MirrorTransport {
    * unless the record that owes it is on disk. True when nothing is left staged.
    */
   private flushStaged(closed = false): boolean {
-    if (this.staged.length === 0) return true;
+    if (this.staged.length === 0 && !this.oweDirty) return true;
     if (!this.writeOwedRecord(closed)) { this.scheduleRetry(); return false; }
+    this.oweDirty = false;
     const stdin = this.child?.stdin;
     const lines = this.staged; this.staged = []; this.stagedBytes = 0;
     for (const { line, entry } of lines) {
@@ -333,7 +346,7 @@ export class ShadowSupervisor implements MirrorTransport {
       });
       this.child = child;
       this.stdinRef = child.stdin as never;
-      this.dropStaged(); this.session = session; this.acceptedWeight = 0; this.owedWritten = ''; this.childExited = false; this.closedRecord = false;
+      this.dropStaged(); this.oweDirty = false; this.session = session; this.acceptedWeight = 0; this.owedWritten = ''; this.childExited = false; this.closedRecord = false;
       liveSupervisors.add(this); watchProcessExit();
       this.controlBuffer = '';
       this.lastHeartbeat = this.o.now();

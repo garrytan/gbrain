@@ -24,6 +24,7 @@ import { managedFilesystemDatastorePath, registerManagedFilesystemEngine } from 
 import { SHADOW_READ_MEMBERS } from '../src/shadow/reads.ts';
 import { buildProvisionalReport, renderProvisionalMarkdown } from '../src/shadow/report.ts';
 import { closeAllOwedAtExit, sampleWeight, ShadowSupervisor } from '../src/shadow/supervisor.ts';
+import { createWriteSampler } from '../src/shadow/write-capture.ts';
 import { ensureEpoch } from '../src/shadow/evidence-epoch.ts';
 import { buildFollowStatus } from '../src/shadow/follow-status.ts';
 import { owedPath, readOwed, writeOwed, type OwedRecord } from '../src/shadow/write-compare.ts';
@@ -887,6 +888,40 @@ describe('supervisor sample accounting (a sample is owed in a durable record bef
     await turn();
     expect(h.owed(1)).toMatchObject({ owed: 1, child_exited: false });
     expect(h.sessions[0]).not.toBe(h.sessions[1]);
+    h.done();
+  });
+
+  test('G2: owe(n) adds n to the owed weight durably in a later turn, with no line sent; a failing owed write is retried, and it needs a running child', async () => {
+    const h = harness({ maxBufferedBytes: 1_000_000 });
+    expect(h.sup.owe(2)).toBe(false); // no child yet: nothing to owe it to
+    h.sup.send(sample(0)); await turn();
+    expect(h.owed()).toMatchObject({ owed: 1 });
+    expect(h.sup.owe(3)).toBe(true);
+    expect(h.owedWrites).toEqual([1]); // nothing durable inside the call
+    await turn();
+    expect(h.owed()).toMatchObject({ owed: 4, closed: false }); // 1 sent + 3 owed with no line
+    expect(h.children[0]!.writes).toHaveLength(1); // no line went to the pipe for them
+    mkdirSync(join(h.dir, `write-owed.${h.sessions[0]}.json.${process.pid}.tmp`)); // the next record cannot be written
+    h.sup.owe(2); await turn(); await new Promise((r) => setTimeout(r, 30));
+    expect(h.owed()).toMatchObject({ owed: 4 });
+    rmSync(join(h.dir, `write-owed.${h.sessions[0]}.json.${process.pid}.tmp`), { recursive: true });
+    await new Promise((r) => setTimeout(r, 60)); // the retry
+    expect(h.owed()).toMatchObject({ owed: 6 });
+    h.sup.closeOwed(); expect(h.owed()).toMatchObject({ owed: 6, closed: true });
+    h.done();
+  });
+
+  test('G3: wired together, a sampler whose follow-up loss-only line is refused by the real supervisor leaves the remainder owed in the durable record, so owed exceeds what a worker can settle and status cannot read measured', async () => {
+    const h = harness({ maxBufferedBytes: 50 }); // the main line (about 100 bytes) fills the byte budget: the next sample line is refused
+    let refuse = 10_001;
+    const sampler = createWriteSampler({ rate: 1, random: () => 0, active: () => true, send: (line) => { if (refuse > 0) { refuse--; return false; } return h.sup.send(line); }, owe: (n) => h.sup.owe(n) });
+    const fn = async () => 1; const ctx = { engine: {}, inTransaction: false, mayWrite: () => true };
+    const wrap = () => (sampler.wrap('addTag', fn, ctx as never) as () => Promise<unknown>)();
+    for (let i = 0; i < 10_001; i++) await wrap();
+    await wrap(); await turn();
+    const weights = h.children[0]!.writes.map(sampleWeight);
+    expect(weights).toEqual([10_001]); // the main line (1 + 10,000); the extra line was refused by the supervisor
+    expect(h.owed()).toMatchObject({ owed: 10_002 }); // and the one remaining sample is owed, durably: 10,001 + 1 (was 10,001: it waited only in memory)
     h.done();
   });
 

@@ -32,6 +32,8 @@ export interface WriteSamplerOptions {
   active: () => boolean;
   /** Records a sample that will never reach the child (`send_shed`, `readback_abandoned`) for the child to count uncomparable; false when it could not be recorded, and the count then rides on the next accepted line. */
   lost?: (reason: string) => boolean;
+  /** Makes `n` samples the sampler could not send owed in the serving process's durable record (supervisor.ts `owe`), so the worker books them and status cannot read measured past them; false when it could not (no running worker), and they then wait in the sampler as a refused send's do. */
+  owe?: (n: number) => boolean;
   /** How long the preimage read may hold a write; default PREIMAGE_TIMEOUT_MS (a seam for tests). */
   preimageTimeoutMs?: number;
 }
@@ -212,6 +214,7 @@ export function createWriteSampler(o: WriteSamplerOptions): WriteSampler {
           if (!o.send(JSON.stringify({ t: 'write', op: event.op, outcome: 'uncomparable', reason: 'send_shed', dropped: more }) + '\n')) break;
           unsaid.splice(0, more);
         }
+        if (unsaid.length > 0 && o.owe?.(unsaid.length)) unsaid.length = 0; // a refusal ended the drain: what is left is owed durably (the worker books it as lost), never left only in memory
       } else if (!o.lost?.('send_shed')) unsaid.push('send_shed');
     } catch { /* the shadow never fails a write */ }
   };

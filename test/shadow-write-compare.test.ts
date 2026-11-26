@@ -1448,6 +1448,27 @@ describe('S2c: every credit site settles exactly the weight it stands for', () =
     expect(more.map(raw)).toEqual([10_000, 10_000, 5_000]);
   });
 
+  test('G1: when an extra loss-only line is refused, the sampler makes the remainder owed (owe(n)) and empties unsaid: nothing waits only in memory', async () => {
+    const lines: string[] = []; const owedCalls: number[] = []; let refuse = 10_001; let acceptNext = 1;
+    const sampler = createWriteSampler({ rate: 1, random: () => 0, active: () => true,
+      send: (line) => { if (refuse > 0) { refuse--; return false; } if (acceptNext-- > 0) { lines.push(line); return true; } return false; }, // the main line is accepted, the extra one refused
+      owe: (n) => { owedCalls.push(n); return true; } });
+    const fn = async () => 1; const ctx = { engine: {}, inTransaction: false, mayWrite: () => true };
+    const wrap = () => (sampler.wrap('addTag', fn, ctx as never) as () => Promise<unknown>)();
+    for (let i = 0; i < 10_001; i++) await wrap();
+    await wrap();
+    expect(lines.map((l) => droppedWeight(Number(/"dropped":(\d+)/.exec(l)?.[1] ?? 0)))).toEqual([10_000]);
+    expect(owedCalls).toEqual([1]); // the one remaining sample is owed, not left in memory (was: nothing recorded it)
+    acceptNext = 5; await wrap(); expect(/"dropped"/.test(lines[1]!)).toBe(false); // unsaid is empty: the next line carries nothing
+    // an owe that cannot be taken (no session) leaves the remainder in unsaid, as a refused send does
+    const keptLines: string[] = []; refuse = 10_001; acceptNext = 1;
+    const noOwe = createWriteSampler({ rate: 1, random: () => 0, active: () => true, send: (line) => { if (refuse > 0) { refuse--; return false; } if (acceptNext-- > 0) { keptLines.push(line); return true; } return false; }, owe: () => false });
+    const wrapB = () => (noOwe.wrap('addTag', fn, ctx as never) as () => Promise<unknown>)();
+    for (let i = 0; i < 10_001; i++) await wrapB();
+    await wrapB(); acceptNext = 5; await wrapB();
+    expect(keptLines.map((l) => /"dropped":(\d+)/.exec(l)?.[1])).toEqual(['10000', '1']); // the remainder rides the next accepted send
+  });
+
   test('F1: end to end, a line the serving process owed as 1 is settled as 1 by the child, whatever its dropped field says', async () => {
     await withEnv({ GBRAIN_HOME: tmp() }, async () => {
       const dir = tmp(); writeSeedRecord(dir, SEED_F1);
