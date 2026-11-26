@@ -338,28 +338,9 @@ jobs:
           done < <(printf '%s\n' test/engine-parity/*.test.ts | LC_ALL=C sort)
           echo "parity shard $SHARD of $SHARDS: ran $ran of $position files"
           [ "$ran" -gt 0 ] || { echo "::error::parity shard $SHARD of $SHARDS ran no file"; exit 1; }
-      # Managed mode on Rust with the user-facing hold kept (test/engine-parity/rust-managed.ts): the parity files whose
-      # Rust counts change when GBRAIN_TEST_RUST_MANAGED=1 lifts the managed_persistence hold on the test engine, checked
-      # against their own pins in test/engine-parity/rust-managed-tally.tsv. Shard 1 only; the list is the rows of the two
-      # pin files that differ, so it grows by itself as managed parity cases are added.
-      - name: Parity files with the managed hold lifted on the Rust test engine
-        if: matrix.shard == '1'
-        shell: bash
-        env:
-          GBRAIN_TEST_RUST_ADDON_REQUIRED: '1'
-          GBRAIN_TEST_RUST_ARM: '1'
-          GBRAIN_TEST_RUST_MANAGED: '1'
-        run: |
-          set -euo pipefail
-          ran=0
-          while IFS= read -r file; do
-            [ -f "$file" ] || { echo "::error::managed parity file $file does not exist"; exit 1; }
-            bun test --timeout=60000 "$file"
-            ran=$((ran + 1))
-          done < <(awk -F'\t' 'FNR == 1 { next } NR == FNR { pin[$1] = $2 FS $3; next } pin[$1] != $2 FS $3 { print $1 }' \
-            test/engine-parity/rust-tally.tsv test/engine-parity/rust-managed-tally.tsv | LC_ALL=C sort)
-          echo "managed parity: ran $ran files"
-          [ "$ran" -gt 0 ] || { echo "::error::no parity file differs with the managed hold lifted"; exit 1; }
+      # Managed mode on Rust (lane LM): slice 2 lifted the managed_persistence hold on a single-host store, so the
+      # ordinary parity run above covers the managed files and rust-managed-tally.tsv equals rust-tally.tsv. The refusal
+      # on a multi-user store is pinned by test/rust-managed-hold.test.ts in the store-test step.
       # Each read command runs through the real CLI on a PGLite brain and a Rust brain. A command
       # that is equal, refused with engine_capability_missing, or has no Rust engine passes; a
       # diverged command (another answer, an untyped error) fails. The flag makes a missing addon
