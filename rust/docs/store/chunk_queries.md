@@ -19,7 +19,7 @@ methods in `rust/crates/gbrain-napi/src/families/chunk_queries.rs` and the membe
 | `listQualifiedSymbolNames(sourceId, symbol, { match, limit })` | served |
 | `listSymbolLanguages(sourceId, qualified)` | served (`chunk_queries/walk_reads.rs`); the code walk's language gate: distinct languages of served live pages' chunks that define the name, byte order, any `page_kind` |
 | `listSupportedChunkIds(chunkIds, languages)` | served (`walk_reads.rs`); any stored chunk row, in id order, as the SQL reads |
-| `listSymbolChunkIds(symbols, { sourceId?, limit })` | served (`walk_reads.rs`); the two-pass walk's near-symbol anchors and unresolved edge targets: any stored chunk row, in id order |
+| `listSymbolChunkIds(lookup, symbols, sourceId?)` | served (`walk_reads.rs`, input `{ symbols, sourceId, limit: 50 }`); the two-pass walk's near-symbol anchors and unresolved edge targets: any stored chunk row, in id order. PGLite and Postgres run master's statements with no ORDER BY, so past the limit the rows kept and their order differ (expected difference, `test/rust-expected-divergence/two_pass.tsv`) |
 | `readReindexSpendInputs(chunkerVersion, type)` | served (`walk_reads.rs`); see `remediation-records.md` |
 | `countOversizedEmbedSkips`, `countOrphanChunks`, `countCodeChunkPages` | served |
 | `listWithdrawalChunks`, `deleteChunksForPages` | served |

@@ -222,8 +222,8 @@ export interface ReadStatementMembers {
   listSymbolLanguages(sourceId: string, qualified: string): Promise<string[]>;
   /** The chunks among `chunkIds` written in one of `languages`, in id order (the code walk's mixed-language filter). */
   listSupportedChunkIds(chunkIds: readonly number[], languages: readonly string[]): Promise<number[]>;
-  /** Chunk ids whose qualified symbol is one of `symbols`, of `sourceId` when named, in id order, at most `limit` (the two-pass walk). */
-  listSymbolChunkIds(symbols: readonly string[], opts: { sourceId?: string; limit: number }): Promise<number[]>;
+  /** The two-pass walk's chunk ids defining the near symbol or the unresolved edge targets, of `sourceId` when named, at most 50. */
+  listSymbolChunkIds(lookup: 'near_symbol' | 'edge_targets', symbols: readonly string[], sourceId?: string): Promise<number[]>;
   /** The takes a fact purge removes: consolidated from a purged fact, or echoing the purged claim. */
   planFactPurgeTakes(spec: PurgeTakesSpec): Promise<Array<{ id: number; page_id: number }>>;
   /** The page's stored takes, row number to claim. */

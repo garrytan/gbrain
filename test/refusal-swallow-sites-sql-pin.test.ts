@@ -3,9 +3,8 @@
  * anchor and unresolved-edge target lookups (search/two-pass.ts), the reindex spend estimate
  * (reindex-consent.ts) and the remediation impact log (onboard/impact-capture.ts) ran through `executeRaw` before they
  * moved to engine-sql/chunk-reads.ts and engine-sql/remediation-records.ts. The language read gains only a byte-order
- * `ORDER BY` (its caller asks only whether some language is supported). The symbol chunk lookup gains `ORDER BY id`
- * (its LIMIT took rows in plan order), binds its limit, and binds the near-symbol name as a one-element array. Every
- * other statement and parameter list is the text the callers composed.
+ * `ORDER BY` (its caller asks only whether some language is supported). The two-pass symbol lookups are master's four
+ * statements byte for byte. Every other statement and parameter list is the text the callers composed.
  */
 import { expect, test } from 'bun:test';
 import { listSupportedChunkIds, listSymbolChunkIds, listSymbolLanguages } from '../src/core/engine-sql/chunk-reads.ts';
@@ -80,23 +79,26 @@ test('the impact log insert is master\'s statement; details bind as text for the
   }]);
 });
 
-test('the two-pass symbol lookup is master\'s statement in id order, scoped by source when one is named', async () => {
-  const { calls, exec } = recorder([{ id: '3' }, { id: 5 }]);
-  expect(await listSymbolChunkIds(exec, ['mod.helper'], { sourceId: 'src-a', limit: 50 })).toEqual([3, 5]);
-  expect(await listSymbolChunkIds(exec, ['mod.a', 'mod.b'], { limit: 50 })).toEqual([3, 5]);
-  expect(await listSymbolChunkIds(exec, [], { limit: 50 })).toEqual([]);
+/** Master's four statements in search/two-pass.ts at a597e7a6c6, byte for byte (whitespace included). */
+const MASTER_TWO_PASS = {
+  nearScoped: "SELECT cc.id FROM content_chunks cc\n             JOIN pages p ON p.id = cc.page_id\n             WHERE cc.symbol_name_qualified = $1 AND p.source_id = $2\n             LIMIT 50",
+  nearAnySource: "SELECT id FROM content_chunks WHERE symbol_name_qualified = $1 LIMIT 50",
+  targetsScoped: "SELECT cc.id FROM content_chunks cc\n                 JOIN pages p ON p.id = cc.page_id\n                 WHERE cc.symbol_name_qualified = ANY($1::text[])\n                   AND p.source_id = $2\n                 LIMIT 50",
+  targetsAnySource: "SELECT id FROM content_chunks WHERE symbol_name_qualified = ANY($1::text[]) LIMIT 50",
+};
+
+test('the two-pass symbol lookups send master\'s four statements byte for byte, with master\'s parameters', async () => {
+  const calls: Array<{ sql: string; params: unknown[] }> = [];
+  const exec = { executeRaw: async (sql: string, params: unknown[] = []) => { calls.push({ sql, params }); return [{ id: '3' }, { id: 5 }]; } } as never;
+  expect(await listSymbolChunkIds(exec, 'near_symbol', ['mod.helper'], 'src-a')).toEqual([3, 5]);
+  expect(await listSymbolChunkIds(exec, 'near_symbol', ['mod.helper'])).toEqual([3, 5]);
+  expect(await listSymbolChunkIds(exec, 'edge_targets', ['mod.a', 'mod.b'], 'src-a')).toEqual([3, 5]);
+  expect(await listSymbolChunkIds(exec, 'edge_targets', ['mod.a', 'mod.b'])).toEqual([3, 5]);
+  expect(await listSymbolChunkIds(exec, 'edge_targets', [])).toEqual([]);
   expect(calls).toEqual([
-    {
-      sql: squash(`SELECT cc.id FROM content_chunks cc
-         JOIN pages p ON p.id = cc.page_id
-        WHERE cc.symbol_name_qualified = ANY($1::text[]) AND p.source_id = $2
-        ORDER BY cc.id
-        LIMIT $3`),
-      params: [['mod.helper'], 'src-a', 50],
-    },
-    {
-      sql: 'SELECT id FROM content_chunks WHERE symbol_name_qualified = ANY($1::text[]) ORDER BY id LIMIT $2',
-      params: [['mod.a', 'mod.b'], 50],
-    },
+    { sql: MASTER_TWO_PASS.nearScoped, params: ['mod.helper', 'src-a'] },
+    { sql: MASTER_TWO_PASS.nearAnySource, params: ['mod.helper'] },
+    { sql: MASTER_TWO_PASS.targetsScoped, params: [['mod.a', 'mod.b'], 'src-a'] },
+    { sql: MASTER_TWO_PASS.targetsAnySource, params: [['mod.a', 'mod.b']] },
   ]);
 });

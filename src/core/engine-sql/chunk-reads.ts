@@ -259,26 +259,55 @@ export async function listSupportedChunkIds(exec: LegacyUnscopedRead, chunkIds: 
   return found.map(r => Number(r.id));
 }
 
+/** How many chunk ids one two-pass symbol lookup returns (master's `LIMIT 50`, the walk's per-hop neighbor cap). */
+export const SYMBOL_CHUNK_LOOKUP_LIMIT = 50;
+
 /**
- * Chunk ids whose qualified symbol name is one of `symbols`, on pages of `sourceId` when one is named (any source
- * otherwise), in id order, at most `limit` (the two-pass walk's near-symbol anchors and unresolved edge targets).
- * Any stored chunk row, as master's read. Master's text had no ORDER BY (its LIMIT took rows in plan order) and bound
- * the near-symbol name as a scalar; it now binds a one-element array, and the order is by id on every engine.
+ * The two-pass walk's symbol chunk lookups (search/two-pass.ts): `near_symbol` reads the chunks defining the one
+ * near-symbol name, `edge_targets` the chunks defining any unresolved edge target; each on pages of `sourceId` when one
+ * is named, at most 50. Master's four statements, text and parameters unchanged (pinned by
+ * test/refusal-swallow-sites-sql-pin.test.ts): there is no ORDER BY, so which rows come back past the limit, and their
+ * order, is the plan's (unspecified, and on PGLite it can change once the statement's plan is cached). The Rust store
+ * answers in id order (rust/docs/store/chunk_queries.md; the difference past the limit has a row in
+ * test/rust-expected-divergence/two_pass.tsv).
  */
 export async function listSymbolChunkIds(
-  exec: LegacyUnscopedRead, symbols: readonly string[], opts: { sourceId?: string; limit: number },
+  exec: LegacyUnscopedRead, lookup: 'near_symbol' | 'edge_targets', symbols: readonly string[], sourceId?: string,
 ): Promise<number[]> {
   if (symbols.length === 0) return [];
-  const found = await rows<{ id: number | string }>(exec, opts.sourceId !== undefined
-    // chunk-visibility-ok: code symbol anchors and targets: code pages are never segmented (chooseBodyStorage)
-    ? sqlFragment`SELECT cc.id FROM content_chunks cc
-         JOIN pages p ON p.id = cc.page_id
-        WHERE cc.symbol_name_qualified = ANY(${[...symbols]}::text[]) AND p.source_id = ${opts.sourceId}
-        ORDER BY cc.id
-        LIMIT ${opts.limit}`
-    // chunk-visibility-ok: code symbol anchors and targets: code pages are never segmented (chooseBodyStorage)
-    : sqlFragment`SELECT id FROM content_chunks WHERE symbol_name_qualified = ANY(${[...symbols]}::text[]) ORDER BY id LIMIT ${opts.limit}`,
-  );
+  let found: Array<{ id: number | string }>;
+  if (lookup === 'near_symbol') {
+    found = sourceId
+      ? await exec.executeRaw<{ id: number | string }>(
+          // chunk-visibility-ok: code symbol anchors: code pages are never segmented (chooseBodyStorage)
+          `SELECT cc.id FROM content_chunks cc
+             JOIN pages p ON p.id = cc.page_id
+             WHERE cc.symbol_name_qualified = $1 AND p.source_id = $2
+             LIMIT 50`,
+          [symbols[0], sourceId],
+        )
+      : await exec.executeRaw<{ id: number | string }>(
+          // chunk-visibility-ok: code symbol anchors: code pages are never segmented (chooseBodyStorage)
+          `SELECT id FROM content_chunks WHERE symbol_name_qualified = $1 LIMIT 50`,
+          [symbols[0]],
+        );
+  } else {
+    found = sourceId
+      ? await exec.executeRaw<{ id: number | string }>(
+          // chunk-visibility-ok: code symbol targets: code pages are never segmented (chooseBodyStorage)
+          `SELECT cc.id FROM content_chunks cc
+                 JOIN pages p ON p.id = cc.page_id
+                 WHERE cc.symbol_name_qualified = ANY($1::text[])
+                   AND p.source_id = $2
+                 LIMIT 50`,
+          [[...symbols], sourceId],
+        )
+      : await exec.executeRaw<{ id: number | string }>(
+          // chunk-visibility-ok: code symbol targets: code pages are never segmented (chooseBodyStorage)
+          `SELECT id FROM content_chunks WHERE symbol_name_qualified = ANY($1::text[]) LIMIT 50`,
+          [[...symbols]],
+        );
+  }
   return found.map(r => Number(r.id));
 }
 

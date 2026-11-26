@@ -86,7 +86,7 @@ export async function expandAnchors(
   // filter; undefined → cross-source (matches the documented contract).
   if (opts.nearSymbol) {
     try {
-      const ids = await engine.listSymbolChunkIds([opts.nearSymbol], { ...(opts.sourceId ? { sourceId: opts.sourceId } : {}), limit: 50 }); // engine-sql/chunk-reads.ts
+      const ids = await engine.listSymbolChunkIds('near_symbol', [opts.nearSymbol], opts.sourceId || undefined); // engine-sql/chunk-reads.ts
       const baseScore = anchors.length > 0 ? anchors[0]!.score : 1.0;
       for (const id of ids) {
         if (!seen.has(id)) {
@@ -151,7 +151,7 @@ export async function expandAnchors(
       // boundaries silently in multi-source brains.
       if (unresolvedTargets.length > 0) {
         try {
-          const resolved = await engine.listSymbolChunkIds(unresolvedTargets, { ...(opts.sourceId ? { sourceId: opts.sourceId } : {}), limit: NEIGHBOR_CAP_PER_HOP }); // engine-sql/chunk-reads.ts
+          const resolved = await engine.listSymbolChunkIds('edge_targets', unresolvedTargets, opts.sourceId || undefined); // engine-sql/chunk-reads.ts
           directChunkIds.push(...resolved);
         } catch (e) {
           // best-effort, but an engine that cannot run the lookup refuses

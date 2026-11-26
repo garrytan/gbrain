@@ -135,7 +135,7 @@ getPage	pages	yes	280	yes	yes	yes	serves
 readPageSnapshot	pages	yes	100	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	7	no	yes	yes	serves
 lockPageKeys	pages	yes	17	no	yes	yes	serves
-putPage	pages	yes	1325	yes	yes	yes	serves
+putPage	pages	yes	1327	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	43	yes	yes	yes	serves
@@ -353,8 +353,8 @@ deleteChunksForPages	chunks	yes	3	no	yes	yes	serves
 listContextualModeCandidates	chunks	yes	1	no	yes	yes	serves
 resolveFrozenHits	chunks	yes	6	no	yes	yes	serves
 upsertChunks	chunks	yes	74	yes	yes	yes	serves
-sealChunks	chunks	yes	96	no	yes	yes	serves
-getChunks	chunks	yes	76	yes	yes	yes	serves
+sealChunks	chunks	yes	98	no	yes	yes	serves
+getChunks	chunks	yes	78	yes	yes	yes	serves
 getChunkPage	chunks	yes	14	no	yes	yes	serves
 getChunkWindows	chunks	yes	14	no	yes	yes	serves
 countStaleChunks	chunks	yes	9	no	yes	yes	serves
@@ -386,7 +386,7 @@ getChunksWithEmbeddings	chunks	yes	4	no	yes	yes	serves
 readSegmentRegions	chunks	no	0	no	-	-	-
 listSymbolLanguages	chunks	yes	1	no	yes	yes	serves
 listSupportedChunkIds	chunks	yes	1	no	yes	yes	serves
-listSymbolChunkIds	chunks	yes	1	no	yes	yes	serves
+listSymbolChunkIds	chunks	yes	3	no	yes	yes	serves
 readReindexSpendInputs	chunks	yes	1	no	yes	yes	serves
 readPageProvenanceComplete	chunks	yes	3	no	yes	yes	serves
 countStalePagesForExtraction	extraction	yes	4	yes	yes	yes	serves
@@ -1867,12 +1867,12 @@ runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 executeRaw	raw_sql	yes	89	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-addCodeEdges	code_edges	yes	8	yes	yes	yes	serves
+addCodeEdges	code_edges	yes	10	yes	yes	yes	serves
 deleteCodeEdgesForChunks	code_edges	yes	1	no	yes	yes	serves
 clearCodeEdgesLeavingChunks	code_edges	yes	2	no	yes	yes	serves
 getCallersOf	code_edges	yes	5	no	yes	yes	serves
 getCalleesOf	code_edges	yes	2	yes	yes	yes	serves
-getEdgesByChunk	code_edges	yes	5	no	yes	yes	serves
+getEdgesByChunk	code_edges	yes	7	no	yes	yes	serves
 getCodeTraversalCache	code_edges	yes	7	no	yes	yes	serves
 putCodeTraversalCache	code_edges	yes	7	no	yes	yes	serves
 clearCodeTraversalCache	code_edges	yes	2	no	yes	yes	serves

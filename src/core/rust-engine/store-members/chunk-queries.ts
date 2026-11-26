@@ -21,6 +21,7 @@
  * reads and `currentCodeChunksExist`, and of the frozen-hit read on resolveFrozenHits. The other chunk-reads members refuse a trust or flag option: no production caller passes one, so no store read was
  * built. getChunkPage and getChunkWindows ignore both, as their SQL does. See rust/docs/store/chunk_queries.md.
  */
+import { SYMBOL_CHUNK_LOOKUP_LIMIT } from '../../engine-sql/chunk-reads.ts';
 import { mapChunkWindowRows, type ChunkWindowOpts, type ChunkWindowPage, type ChunkWindowRequest } from '../../search/chunk-windows.ts';
 import type { Chunk, ChunklessPageRow, PageReadScope } from '../../types.ts';
 import { DEF_TYPES } from '../../chunkers/def-types.ts';
@@ -250,13 +251,12 @@ export const listSupportedChunkIds: StoreMember<[chunkIds: readonly number[], la
     return storeCall({ member: 'listSupportedChunkIds' }, () => brain.listSupportedChunkIds({ chunkIds: ids, languages: [...languages] }));
   };
 
-export const listSymbolChunkIds: StoreMember<[symbols: readonly string[], opts: { sourceId?: string; limit: number }], number[]> =
-  async (brain, symbols, opts) => {
-    const limit = Math.max(0, Math.floor(opts.limit));
-    if (!Number.isSafeInteger(limit)) refuseMember('listSymbolChunkIds', 'a limit that is not a finite number');
+/** In id order (deterministic); the SQL engines run master's statements, whose order past the limit is the plan's. */
+export const listSymbolChunkIds: StoreMember<[lookup: 'near_symbol' | 'edge_targets', symbols: readonly string[], sourceId?: string], number[]> =
+  async (brain, lookup, symbols, sourceId) => {
     if (symbols.length === 0) return [];
-    return storeCall({ member: 'listSymbolChunkIds' },
-      () => brain.listSymbolChunkIds({ symbols: [...symbols], sourceId: opts.sourceId ?? null, limit }));
+    return storeCall({ member: 'listSymbolChunkIds' }, () => brain.listSymbolChunkIds({
+      symbols: lookup === 'near_symbol' ? [symbols[0]!] : [...symbols], sourceId: sourceId || null, limit: SYMBOL_CHUNK_LOOKUP_LIMIT }));
   };
 
 export const listWithdrawalChunks: StoreMember<[sourceId: string, keys: WithdrawalChunkKey[], opts: { after: number; limit: number; subjects: string[] | null }], WithdrawalChunkRow[]> =
