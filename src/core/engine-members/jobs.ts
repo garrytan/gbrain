@@ -133,7 +133,7 @@ export interface JobsMembers {
   /** Ids of the live jobs in one queue, ascending. */
   listOpenJobIdsInQueue(queue: string): Promise<number[]>;
   /** Extend the owner lease of a private queue's live jobs this owner token holds; the count renewed. */
-  renewPrivateQueueLease(queue: string, ownerToken: string, leaseMs: number): Promise<number>;
+  renewPrivateQueueLease(queue: string, ownerToken: string, leaseMs: number, opts?: FenceOpts): Promise<number>;
   /** Private queues with live jobs and owner metadata, oldest first, at most `maxQueues`. */
   listOwnedPrivateQueues(maxQueues: number): Promise<string[]>;
   /** The recovery verdict's inputs for one private queue. */

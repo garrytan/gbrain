@@ -489,7 +489,11 @@ export class MinionQueue {
     // renewal racing a creation-time horizon sized to the phase's wait timeout
     // must never shrink the window a healthy long run still needs — shrinking
     // is what would let startup recovery cancel a LIVE ownerless queue.
-    return this.engine.renewPrivateQueueLease(queueName, ownerToken, Math.max(1, Math.floor(leaseMs)));
+    // The host fence (multi-user Rust, I-5): a host whose registration moved is refused lease_lost; none elsewhere.
+    const fence = this.fences.registrationOpts();
+    return fence.fence
+      ? this.engine.renewPrivateQueueLease(queueName, ownerToken, Math.max(1, Math.floor(leaseMs)), fence)
+      : this.engine.renewPrivateQueueLease(queueName, ownerToken, Math.max(1, Math.floor(leaseMs)));
   }
 
   /**

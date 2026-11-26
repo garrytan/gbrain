@@ -16,6 +16,7 @@ import { detectAddonTarget } from '../src/core/rust-engine/addon-target.ts';
 import { openRustEngine, type RustEngine } from '../src/core/rust-engine.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { acquirePageEmbeddingLease } from '../src/core/page-embedding-lease.ts';
+import { DREAM_INLINE_PRIVATE_QUEUE_PREFIX, MinionQueue } from '../src/core/minions/queue.ts';
 import { claimHousekeepingTurn, completeHousekeepingTurn } from '../src/core/persistence/housekeeping-turn.ts';
 import { registerHostLease } from './helpers/rust-host-fence.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -87,6 +88,18 @@ describe('family 2, the housekeeping turn', () => {
       await takeOver();
       expect(await refusal(() => completeHousekeepingTurn(e, hostId))).toEqual({ code: 'lease_lost', reason: 'epoch_moved' });
       expect(await refusal(() => claimHousekeepingTurn(e, hostId, 0))).toEqual({ code: 'lease_lost', reason: 'epoch_moved' });
+    });
+  });
+});
+
+describe('family 3, the private queue owner lease', () => {
+  withAddon('after a takeover the old holder cannot renew its private queue lease', async () => {
+    await onStaleableHost(async (engine, takeOver) => {
+      const queue = new MinionQueue(engine as unknown as BrainEngine);
+      const name = `${DREAM_INLINE_PRIVATE_QUEUE_PREFIX}lf3`;
+      expect(await queue.renewPrivateQueueLease(name, 'tok')).toBe(0);
+      await takeOver();
+      expect(await refusal(() => queue.renewPrivateQueueLease(name, 'tok'))).toEqual({ code: 'lease_lost', reason: 'epoch_moved' });
     });
   });
 });

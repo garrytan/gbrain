@@ -184,3 +184,56 @@ fn lf2_a_stale_host_cannot_claim_or_complete_a_housekeeping_turn() {
     b.store.complete_housekeeping_turn(&turn(&new)).unwrap();
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// Family 3: the private queue owner lease.
+
+fn add_job(b: &Brain, extra: Value) -> i64 {
+    let mut insert = json!({
+        "name": "work", "queue": "default", "status": "waiting", "priority": 0, "data": {},
+        "max_attempts": 3, "backoff_type": "exponential", "backoff_delay": 1000,
+        "backoff_jitter": 0.2, "on_child_fail": "fail_parent", "remove_on_complete": false,
+        "remove_on_fail": false, "submission_authority": {"version": 1, "kind": "application"},
+    });
+    for (k, v) in extra.as_object().unwrap() {
+        insert[k] = v.clone();
+    }
+    let spec: gbrain_store::jobs::AdmitSpec =
+        serde_json::from_value(json!({ "insert": insert, "maxSpawnDepth": 5 })).unwrap();
+    b.store.admit_job(&spec).unwrap().row["id"]
+        .as_i64()
+        .unwrap()
+}
+
+#[test]
+fn lf3_a_stale_host_cannot_renew_a_private_queue_lease() {
+    let b = brain("lf3-private", true);
+    assert!(b.store.multiuser(), "multi-user mode is on");
+    let q = "dream-private:cycle-1";
+    let a = b.lease("consumer:h", "a");
+    add_job(
+        &b,
+        json!({"queue": q, "private_queue_owner_token": "tok", "private_queue_lease_until": "2027-01-15T08:00:30Z"}),
+    );
+    assert_eq!(
+        b.store
+            .renew_private_queue_lease_fenced(q, "tok", 60_000.0, Some(&a))
+            .unwrap(),
+        1
+    );
+    let new = b.take_over("consumer:h", &a);
+    let before = b.dump();
+    refused(
+        &b.store
+            .renew_private_queue_lease_fenced(q, "tok", 600_000.0, Some(&a))
+            .unwrap_err(),
+        "epoch_moved",
+    );
+    assert_eq!(b.dump(), before, "a refused renewal changed the brain");
+    assert_eq!(
+        b.store
+            .renew_private_queue_lease_fenced(q, "tok", 600_000.0, Some(&new))
+            .unwrap(),
+        1
+    );
+}
+
