@@ -23,11 +23,33 @@ The writer's read policy is gathered by `persistence/page-visibility.ts` (`write
 renders it as PGLite renders it and serves it only when the text equals the no-caller member-access rendering or a fresh
 record's rendering for the writer's one reader identity, with or without the owner flag; the store then judges each page
 with `page_hidden` (facts/privacy.rs), as `readCallerPageAccess` does. The owner speaking for itself renders the identity
-text without the owner-only clause, which the store reads as no owner-only test, the answer PGLite gives the owner. Any
-other writer (folder rules, any other owner record, a labelled-only grant, several identities, an empty policy object)
-refuses `engine_capability_missing` before any read. The remote page write check (`authorizePageVisibility`) reads the
-live page against the writer's policy through this member.
-Also served, for a writer with no identity: a fresh record of its own folder coverage (sent as `folder_coverage` with `caller_record`, so the record's prefixes replace the store's live pending prefixes, as `coverageSql` reads them inside a record). Satisfied folder rules, an owner record other than the owner speaking for itself, a labelled-only grant and several identities still refuse (see above).
+text without the owner-only clause, which the store reads as no owner-only test, the answer PGLite gives the owner.
 
-An OAuth client writer (the HTTP transport) is not served: `readWriterSlugFence` refuses for `oauth_client`, since the
-store keeps no OAuth client write grant yet.
+Also served:
+
+- A writer with no identity: a fresh record of its own folder coverage (sent as `folder_coverage` with `caller_record`, so the
+  record's prefixes replace the store's live pending prefixes, as `coverageSql` reads them inside a record).
+- One identity that satisfies folder rules, or whose record names pending prefixes: the same record with `satisfied_rule_ids` and
+  `folder_coverage` (sent with `caller_record`), judged for that identity. A page stamped with a rule the writer does not satisfy
+  (a retired stamp too, which `stamped_rules` keeps) is not readable; a page under a pending prefix is not readable.
+- A labelled-only writer (`labelledOnly`, GBRA-108 design 1). `renderWriterReadPolicy` renders the rest of the policy ANDed with
+  `labelledOnlyForSql`; the member checks the text is exactly those two parts, serves the rest as above, and sends the conjunct to
+  the store as `labelledOnly: { identity, satisfiedRuleIds }`, the two sets `labelledOnlySql` embeds (`labelledOnlyTerms`). The
+  store hides a page unless its readers name one of `identity` (`page_readers && identity`, the `access_readers` normalization, a
+  malformed `readable_by` names nobody) or a folder rule stamped on it is in `satisfiedRuleIds` (`folder_rule_ids && satisfied`,
+  retired stamps included). No lineage: a write never reads through derived origins. So a labelled-only writer's rewrite of an open
+  page, or of a page that names only other members, is `readable: false` and the remote write ends on `page_not_found`, as on PGLite
+  and Postgres (`test/engine-parity/labelled-only-policy.test.ts`).
+
+Any other writer (an owner record other than the owner speaking for itself, several identities, an empty policy object) refuses
+`engine_capability_missing` before any read. The remote page write check (`authorizePageVisibility`) reads the live page against
+the writer's policy through this member.
+
+A labelled-only writer's create or capture of a new page still stops on `engine_capability_missing` on Rust, whether or not the page
+names the writer: the slug has no live row, so `hiddenUnder` runs its raw fallback, and the create check reads the folder rules that
+cover the slug through `gbrain_access_folder_rules`, which has no typed member. Nothing is written. This is the named loss
+32e-b-3 (docs/designs/RUST_ENGINE.md), pinned in the same parity file.
+
+An OAuth client writer (the HTTP transport) can use these reads: `readWriterSlugFence` reads its stored
+client's bound or delegated slug prefixes, and `readOAuthClientWriteGrant` serves its stored write grant
+([oauth-clients.md](oauth-clients.md)). The writer policy must still match one of the supported forms above.
