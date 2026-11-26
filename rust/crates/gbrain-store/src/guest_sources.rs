@@ -253,6 +253,15 @@ pub(crate) fn seed_row(
     Ok(true)
 }
 
+/// The shadow follower's removal of a guest row the primary deleted; false when the store holds none.
+pub(crate) fn remove_row(tx: &mut dyn KvWrite, source_id: &str) -> Result<bool> {
+    if read_guest_row(&*tx, source_id)?.is_none() {
+        return Ok(false);
+    }
+    tx.delete(&row_key(source_id))?;
+    Ok(true)
+}
+
 /// A source delete removes its guest row (the table's `ON DELETE CASCADE`).
 pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Result<()> {
     tx.delete(&row_key(source_id))

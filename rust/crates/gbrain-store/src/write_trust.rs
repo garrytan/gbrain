@@ -445,8 +445,19 @@ mod tests {
                     principal_kind: Some("application".into()),
                     principal_id: Some("host:test".into()),
                 },
+                guest_note_is_request: false,
             }
         );
+        // `gbrain.guest_note` names this write's request: the write publishes a guest note.
+        s.apply_write_trust(
+            &strings(&[WRITE_GUEST_NOTE]),
+            &strings(&["0b9c4f0e-1a2b-4c3d-8e4f-5a6b7c8d9e01"]),
+        )
+        .unwrap();
+        assert!(s.write_trust().unwrap().guest_note_is_request);
+        s.apply_write_trust(&strings(&[WRITE_GUEST_NOTE]), &strings(&["another"]))
+            .unwrap();
+        assert!(!s.write_trust().unwrap().guest_note_is_request);
         assert_eq!(
             s.read_write_trust(&strings(&[WRITE_REQUEST])).unwrap(),
             vec![Some("0B9C4F0E-1A2B-4C3D-8E4F-5A6B7C8D9E01".to_string())]
