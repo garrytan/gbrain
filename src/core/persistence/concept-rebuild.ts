@@ -11,7 +11,6 @@
  * later record of "a person deleted this concept" must stay outside it. Everything lives in the database, so a
  * repo-less brain gets it unchanged.
  */
-import { holdAppliesToPageSql } from '../write-gate-binding.ts';
 import { randomUUID } from 'node:crypto';
 import type { BrainEngine, PageSnapshot } from '../engine.ts';
 import type { MaintenanceAuthority } from './prepared-maintenance.ts';
@@ -24,26 +23,11 @@ import { declarePersistenceProtocol } from './protocol.ts';
 import { withBeliefBatch } from '../belief/ledger.ts';
 import { markBeliefCommits } from '../belief/append.ts';
 import { pendingRequestId } from '../cycle/dream-write-deferral.ts';
-import { OWED_PURGE_OP } from './derived-origin-hold.ts';
-import { extractedFromPageSql } from '../facts/gone-page-facts.ts';
-import { PRIVACY_ALIASES, privacyPartSql, privatePagesFilterFragment } from '../search/private-visibility.ts';
+import { PRIVACY_ALIASES } from '../search/private-visibility.ts';
 import { preservedConceptSections } from '../cycle/concept-sections.ts';
-import { boundedBodyPrefixSql } from '../page-window/bounded-lead.ts';
 import { BOUNDED_PREFIX_BYTES } from '../page-window/document.ts';
-import { HELD_CONCEPT_SQL } from '../engine-sql/concept-rebuild.ts';
-import { requireRawSql } from '../rust-engine/errors.ts';
+import type { RebuildAccess } from '../engine-sql/concept-rebuild.ts';
 import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
-
-type Sql = Pick<BrainEngine, 'executeRaw'> & Partial<Pick<BrainEngine, 'capabilities'>>;
-
-/**
- * Three reads here stay raw SQL (statedKinds, readRebuildAccess, readHeldConceptRows: they splice the privacy and
- * page-extraction predicates). An engine without raw SQL (Rust) is refused at the start of every rebuild entry point,
- * with `engine_capability_missing` naming it, before any lock, purge or write, never part of the way through.
- */
-function refuseWithoutRawSql(engine: Partial<Pick<BrainEngine, 'capabilities'>>, member: string): void {
-  requireRawSql(engine, `${member} (the concept rebuild's stated-row, access and held-concept reads are raw SQL)`);
-}
 
 /** The tombstone a synthesis rebuilds: its row, delete instant and revision, and the members (at the revisions read). */
 export interface ConceptRebuild { page_id: number; deleted_us: string; revision: string; members: Array<{ slug: string; revision: string }> }
@@ -92,52 +76,9 @@ const SYNTHESIS_KEYS: readonly string[] = ['type', 'title', 'trust_tier', 'tier'
 const WIDER = 'its current members are all world-readable and the hidden concept was not';
 
 
-/**
- * What on or about the concept row `$1` (source `$2`, slug `$3`) synthesis did not write: REBUILD_STORES kinds for rows a
- * person or an agent stated, plus a title other than the slug's, a frontmatter key synthesis does not write, a stored
- * timeline, a file other than `<slug>.md`, dated link transitions, an attached raw_data payload, a person's decision on an
- * edge proposal (rejected, undone or reverted), an entity identity, a guest mark or promotion, and a sealed secret original the purge would delete with the page
- * (one also recorded on another page or a commit survives it and holds nothing).
- */
-const STATED_SQL = `SELECT array_remove(ARRAY[
-  CASE WHEN EXISTS (SELECT 1 FROM facts f WHERE f.source_id = $2 AND (f.entity_slug = $3 OR f.source_markdown_slug = $3) AND NOT ${extractedFromPageSql('f', '$3')}) THEN 'facts' END,
-  CASE WHEN EXISTS (SELECT 1 FROM takes t WHERE t.page_id = $1) THEN 'takes' END,
-  CASE WHEN EXISTS (SELECT 1 FROM timeline_entries t WHERE t.page_id = $1) THEN 'timeline_entries' END,
-  CASE WHEN EXISTS (SELECT 1 FROM links l WHERE (l.to_page_id = $1 OR l.from_page_id = $1) AND l.link_source IS NOT NULL
-    AND l.link_source <> ALL($4::text[])) THEN 'links' END,
-  CASE WHEN EXISTS (SELECT 1 FROM tags t WHERE t.page_id = $1) THEN 'tags' END,
-  CASE WHEN EXISTS (SELECT 1 FROM files x WHERE x.page_id = $1) THEN 'files' END,
-  CASE WHEN EXISTS (SELECT 1 FROM page_aliases a WHERE a.source_id = $2 AND a.slug = $3) THEN 'page_aliases' END,
-  CASE WHEN EXISTS (SELECT 1 FROM slug_aliases a WHERE a.source_id = $2 AND a.canonical_slug = $3) THEN 'slug_aliases' END,
-  CASE WHEN EXISTS (SELECT 1 FROM core_edit_notices c WHERE c.source_id = $2 AND c.slug = $3) THEN 'core_edit_notices' END,
-  CASE WHEN EXISTS (SELECT 1 FROM write_gate_holds h WHERE h.source_id = $2 AND ${holdAppliesToPageSql('h', '$1', '$3')}) THEN 'write_gate_holds' END,
-  CASE WHEN EXISTS (SELECT 1 FROM pages p WHERE p.id = $1 AND p.title <> replace(regexp_replace(p.slug, '^.*/', ''), '-', ' ')) THEN 'title' END,
-  CASE WHEN EXISTS (SELECT 1 FROM pages p, jsonb_each(p.frontmatter) e WHERE p.id = $1 AND e.key <> ALL($6::text[]) AND e.key <> ALL($5::text[])
-    AND NOT (e.key = 'tags' AND e.value = '[]'::jsonb)) THEN 'frontmatter' END,
-  CASE WHEN EXISTS (SELECT 1 FROM pages p WHERE p.id = $1 AND p.body_storage IS DISTINCT FROM 'segmented' AND coalesce(p.timeline, '') <> '') THEN 'timeline' END,
-  CASE WHEN EXISTS (SELECT 1 FROM pages p WHERE p.id = $1 AND ((p.source_path IS NOT NULL AND p.source_path <> p.slug || '.md')
-    OR p.source_uri IS NOT NULL OR p.withheld_source_path IS NOT NULL)) THEN 'source_path' END,
-  CASE WHEN EXISTS (SELECT 1 FROM link_transitions t WHERE t.from_page_id = $1 OR t.to_page_id = $1 OR t.origin_page_id = $1) THEN 'link_transitions' END,
-  CASE WHEN EXISTS (SELECT 1 FROM raw_data r WHERE r.page_id = $1) THEN 'raw_data' END,
-  CASE WHEN EXISTS (SELECT 1 FROM link_edge_proposals e WHERE $1 IN (e.from_page_id, e.a_to_page_id, e.b_to_page_id, e.ending_to_page_id)
-    AND e.status IN ('rejected', 'undone', 'reverted_by_user')) THEN 'link_edge_proposals' END,
-  CASE WHEN EXISTS (SELECT 1 FROM entity_identities i WHERE i.page_id = $1) THEN 'entity_identities' END,
-  CASE WHEN EXISTS (SELECT 1 FROM guest_marks g WHERE g.page_id = $1) THEN 'guest_marks' END,
-  CASE WHEN EXISTS (SELECT 1 FROM guest_promotions g WHERE g.guest_page_id = $1) THEN 'guest_promotions' END,
-  CASE WHEN EXISTS (SELECT 1 FROM secret_store_occurrence o WHERE o.source_id = $2 AND o.commit_sha IS NULL
-    AND (o.page_id = $1 OR (o.page_id IS NULL AND o.slug = $3)) AND NOT EXISTS (SELECT 1 FROM secret_store_occurrence k WHERE k.entry_id = o.entry_id
-      AND NOT (k.source_id = $2 AND k.commit_sha IS NULL AND (k.page_id = $1 OR (k.page_id IS NULL AND k.slug = $3)))
-      AND (k.commit_sha IS NOT NULL OR EXISTS (SELECT 1 FROM pages pk WHERE pk.deleted_at IS NULL
-        AND (pk.id = k.page_id OR (k.page_id IS NULL AND pk.source_id = k.source_id AND pk.slug = k.slug)))))) THEN 'secret_store_occurrence' END,
-  CASE WHEN EXISTS (SELECT 1 FROM page_label_guards g WHERE g.page_id = $1) OR EXISTS (SELECT 1 FROM pages p WHERE p.id = $1
-    AND p.frontmatter ?| $5::text[]) THEN 'labels' END
-], NULL) AS kinds,
-  (SELECT ${boundedBodyPrefixSql('p')} FROM pages p WHERE p.id = $1) AS lead, (SELECT p.body_storage = 'segmented' FROM pages p WHERE p.id = $1) AS segmented`;
-
 /** What the concept carries that synthesis did not write, as kinds; empty when it carries nothing else. */
-export async function statedKinds(engine: Sql, pageId: number, sourceId: string, slug: string): Promise<string[]> {
-  refuseWithoutRawSql(engine, 'statedKinds');
-  const [row] = await engine.executeRaw<{ kinds: string[] | null; lead: string | null; segmented: boolean | null }>(STATED_SQL, [pageId, sourceId, slug, DERIVED_LINK_SOURCES, STATED_LABEL_KEYS, SYNTHESIS_KEYS]);
+export async function statedKinds(engine: Pick<BrainEngine, 'readConceptStatedKinds'>, pageId: number, sourceId: string, slug: string): Promise<string[]> {
+  const row = await engine.readConceptStatedKinds(pageId, sourceId, slug, { derivedLinkSources: DERIVED_LINK_SOURCES, statedLabelKeys: STATED_LABEL_KEYS, synthesisKeys: SYNTHESIS_KEYS });
   // A body past the bounded lead is not scanned, so it may hold curated sections and counts as if it did.
   const unread = row?.segmented === true || (row?.lead ?? '').length >= BOUNDED_PREFIX_BYTES;
   return [...row?.kinds ?? [], ...unread || preservedConceptSections(row?.lead ?? '').length ? ['curated_sections'] : []];
@@ -153,7 +94,6 @@ export async function stillHeld(engine: Pick<BrainEngine, 'isConceptStillHeld'>,
  * longer held at that delete, or something was stated on it since), or null. `hold` is the purge's internal concept_hold.
  */
 export async function conceptPurgeRefusal(tx: BrainEngine, sourceId: string, slug: string, hold: unknown): Promise<string | null> {
-  refuseWithoutRawSql(tx, 'conceptPurgeRefusal');
   const { page_id: pageId, deleted_us: deletedUs } = (hold ?? {}) as { page_id?: unknown; deleted_us?: unknown };
   if (typeof pageId !== 'number' || typeof deletedUs !== 'string') return 'its concept hold is malformed';
   if (!await stillHeld(tx, pageId, deletedUs)) return 'the concept is no longer held for a rebuild (a person or sync deleted, restored or purged it)';
@@ -167,13 +107,10 @@ export async function membersUnchanged(engine: Pick<BrainEngine, 'lockLiveConcep
 }
 
 /** Who may read a page, as the read predicate decides it: compared before and after a rebuild (rebuildWidens). */
-export interface RebuildAccess { open: boolean; public_part: boolean; readers: string[] | null; page_readers: string[] | null; folder_rule_ids: string[] | null }
-const ACCESS_SQL = `SELECT ${privatePagesFilterFragment('p')} AS open, ${privacyPartSql('p')} AS public_part, gbrain_access_readers(p.frontmatter) AS readers,
-  p.page_readers, p.folder_rule_ids FROM pages p WHERE p.id = $1`;
+export type { RebuildAccess } from '../engine-sql/concept-rebuild.ts';
 
-export async function readRebuildAccess(engine: Sql, pageId: number): Promise<RebuildAccess | null> {
-  refuseWithoutRawSql(engine, 'readRebuildAccess');
-  return (await engine.executeRaw<RebuildAccess>(ACCESS_SQL, [pageId]))[0] ?? null;
+export async function readRebuildAccess(engine: Pick<BrainEngine, 'readRebuildAccess'>, pageId: number): Promise<RebuildAccess | null> {
+  return engine.readRebuildAccess(pageId);
 }
 
 /** Why the fresh page would be readable by someone who could not read the tombstone, or null. Anything it cannot tell widens. */
@@ -196,7 +133,6 @@ export function rebuildWidens(before: RebuildAccess | null | undefined, after: R
  */
 export async function heldConceptRebuild(engine: BrainEngine, sourceId: string, snapshot: PageSnapshot, members: readonly string[],
   read: ReadonlyArray<string | undefined>, visibility: 'private' | 'world'): Promise<{ rebuild: ConceptRebuild } | { kept: RebuildKept } | null> {
-  refuseWithoutRawSql(engine, 'heldConceptRebuild');
   const pageId = Number(snapshot.page.id);
   const held = await engine.readHeldConcept(pageId);
   if (!held) return null;
@@ -252,7 +188,6 @@ async function finishConceptRebuild(tx: BrainEngine, sourceId: string, slug: str
  * its link streams, so the ledger ends the old page's lifetime as `page.expired` and the fresh page starts a new one.
  */
 export async function rebuildHeldConcept(engine: BrainEngine, sourceId: string, slug: string, rebuild: ConceptRebuild, write: (tx: BrainEngine) => Promise<unknown>): Promise<void> {
-  refuseWithoutRawSql(engine, 'rebuildHeldConcept');
   const publicationId = randomUUID(), report = { appended: 0 };
   let parked: string | undefined;
   await engine.transaction(async tx => {
@@ -285,7 +220,6 @@ export async function prepareConceptPurge(engine: BrainEngine, row: WriteRequest
  * refused purge returns why, and the next synthesis handles whatever it finds.
  */
 export async function submitHeldConceptPurge(engine: BrainEngine, authority: MaintenanceAuthority, sourceId: string, slug: string, rebuild: ConceptRebuild): Promise<true | string> {
-  refuseWithoutRawSql(engine, 'submitHeldConceptPurge');
   if (!await membersUnchanged(engine, sourceId, rebuild.members)) return 'a member the rebuilt narrative was built from changed or was removed during synthesis';
   if (!await stillHeld(engine, rebuild.page_id, rebuild.deleted_us)) return 'the concept is no longer held for a rebuild (a person or sync deleted, restored or purged it)';
   if ((await statedKinds(engine, rebuild.page_id, sourceId, slug)).length) return 'something was stated on the concept during synthesis';
@@ -305,10 +239,9 @@ export async function submitHeldConceptPurge(engine: BrainEngine, authority: Mai
  * Every held concept and, for those the next synthesis will not rebuild, why (the purge previews name them). `model`:
  * whether a synthesis model is configured; without one a concept built from many atoms is not rebuilt.
  */
-export async function readHeldConcepts(engine: Sql, model: boolean): Promise<{ held: Array<{ source_id: string; slug: string }>; kept: RebuildKept[] }> {
-  // Report-only: a failed read leaves the previews without it, never the purge or the status that asked for it. An
-  // engine that cannot run the read (Rust) refuses instead of reporting no held concepts.
-  refuseWithoutRawSql(engine, 'readHeldConcepts');
+export async function readHeldConcepts(engine: Pick<BrainEngine, 'readHeldConceptRows' | 'readConceptStatedKinds'>, model: boolean): Promise<{ held: Array<{ source_id: string; slug: string }>; kept: RebuildKept[] }> {
+  // Report-only: a failed read leaves the previews without it, never the purge or the status that asked for it. A typed
+  // capability refusal is rethrown instead of reporting no held concepts.
   return readHeldConceptRows(engine, model).catch((e: unknown) => {
     rethrowCapabilityRefusal(e);
     console.warn(`[purge] held-concept report skipped: ${e instanceof Error ? e.message : String(e)}`);
@@ -316,12 +249,8 @@ export async function readHeldConcepts(engine: Sql, model: boolean): Promise<{ h
   });
 }
 
-async function readHeldConceptRows(engine: Sql, model: boolean): Promise<{ held: Array<{ source_id: string; slug: string }>; kept: RebuildKept[] }> {
-  const rows = await engine.executeRaw<{ id: number; source_id: string; slug: string; private: boolean; members_private: boolean }>(`SELECT p.id, p.source_id, p.slug,
-    NOT ${privacyPartSql('p')} AS private,
-    EXISTS (SELECT 1 FROM derivation_inputs d JOIN pages m ON m.id::text = d.input_id AND d.input_table = 'pages'
-      WHERE d.derived_table = 'pages' AND d.derived_id = p.id::text AND m.deleted_at IS NULL AND NOT (${privatePagesFilterFragment('m')})) AS members_private
-    FROM (SELECT $1::text AS owed_op) q, pages p WHERE ${HELD_CONCEPT_SQL} ORDER BY p.source_id, p.slug`, [OWED_PURGE_OP]);
+async function readHeldConceptRows(engine: Pick<BrainEngine, 'readHeldConceptRows' | 'readConceptStatedKinds'>, model: boolean): Promise<{ held: Array<{ source_id: string; slug: string }>; kept: RebuildKept[] }> {
+  const rows = await engine.readHeldConceptRows();
   const kept: RebuildKept[] = [];
   for (const row of rows) {
     const kinds = await statedKinds(engine, Number(row.id), row.source_id, row.slug);

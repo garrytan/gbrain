@@ -438,6 +438,7 @@ export const FACTS_MEMBERS = {
   readFactsEmbeddingColumn: 'facts',
   listNearestFacts: 'facts',
   listFactSourcePages: 'facts',
+  listTypedClaimFactsAtPages: 'facts',
   listSlotRows: 'facts',
   listPoolUnbackedKeys: 'facts',
   listCallOffCueFacts: 'facts',

@@ -211,9 +211,11 @@ export const TRANSCRIPTS: readonly Transcript[] = [
     after: (doc) => {
       const env = body(doc);
       const options = ((env.decisions as Json[])[0].options as Json[]).map(o => `\`${o.id}\``).join(' or ');
-      return `\`reason: ${env.reason}\` names the owner (\`lock_owner.pid\`). \`fix.next\` is \`${(env.fix as Json).next}\` because only the user can close `
+      return `\`reason: ${env.reason}\` names the owner (\`lock_owner.pid\`, and \`lock_owner.started_at\` when known). \`fix.next\` is \`${(env.fix as Json).next}\` because only the user can close `
         + `the other session: the agent relays \`user_message\` and offers ${options}. Calling \`gbrain_status\` again after the owner exits `
-        + 'opens the brain in place and the full tool list arrives through `tools/list_changed`.';
+        + 'opens the brain in place and the full tool list arrives through `tools/list_changed`.'
+        + (env.expected === true ? ' The owner here is another agent session\'s stdio serve (Claude Code and Codex open at once), so the payload carries `expected: true`: '
+          + 'tell the user nothing needs fixing, and offer `share_http` only if they want memory tools in both sessions at once.' : '');
     },
   },
 ];

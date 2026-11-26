@@ -184,6 +184,94 @@ pub(crate) fn select_claimable_effect_in(
         .cloned())
 }
 
+/// `claimCoalescedGitEffects(input)`'s input: the host, its worktree, how many, the owner keys
+/// proved dead, and the `claim_owner` owner as JSON text (`$5::text::jsonb`).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CoalescedGitClaim {
+    pub host_id: String,
+    pub worktree_id: String,
+    pub limit: i64,
+    #[serde(default)]
+    pub dead_owners: Vec<String>,
+    pub owner_json: String,
+}
+
+/// `CLAIM_COALESCED_GIT_EFFECTS_SQL`: up to `limit` ready single-file Git effects of the worktree
+/// (a `relative_path` key and no `targets`, `source_scan` or `version` key), oldest due first, each
+/// claimed under a fresh token with `claim_owner = { token, owner }`, a 2-minute lease and one more
+/// attempt. The worktree must be owned by the host, unfenced and free of recoveries
+/// (`effect_claimable_on_worktree`, the statement's InitPlan); an effect behind an unsettled
+/// withdrawal mirror of its request is skipped. The claimed rows, in claim order.
+///
+/// Guarantee (no row lock): the statement's `FOR UPDATE ... SKIP LOCKED` keeps two claimers from
+/// taking one effect. Here the read of every candidate and its stamp run in one store write
+/// transaction, so no other commit interleaves (an explicit transaction is Serialized today); under
+/// optimistic transactions the stamped rows are in the read set and a racing claim aborts with
+/// `write_conflict` instead of claiming twice.
+pub(crate) fn claim_coalesced_git_effects_in(
+    tx: &mut dyn KvWrite,
+    env: &dyn Env,
+    input: &CoalescedGitClaim,
+) -> Result<Vec<Value>> {
+    let host = pg_uuid(&input.host_id)?;
+    let worktree = pg_uuid(&input.worktree_id)?;
+    let limit = usize::try_from(input.limit)
+        .map_err(|_| StoreError::invalid("LIMIT must not be negative".to_string()))?;
+    let owner: Value = serde_json::from_str(&input.owner_json)
+        .map_err(|e| StoreError::invalid(format!("invalid input syntax for type json: {e}")))?;
+    let now = env.now_micros();
+    let effects = all_effects(&*tx)?;
+    let requests = all_requests(&*tx)?;
+    let refreshes = all_refreshes(&*tx)?;
+    if limit == 0
+        || !effect_claimable_on_worktree(&*tx, &worktree, &host, &effects, &requests, &refreshes)?
+    {
+        return Ok(Vec::new());
+    }
+    let mirror_pending = |e: &EffectRecord| {
+        effects.iter().any(|m| {
+            m.request_id == e.request_id
+                && m.kind == "withdrawal-mirror"
+                && (m.state == "queued" || m.state == "running")
+        })
+    };
+    let has = |e: &EffectRecord, key: &str| e.data.get(key).is_some();
+    let mut ready: Vec<&EffectRecord> = effects
+        .iter()
+        .filter(|e| {
+            let due_state = e.state == "queued"
+                || (e.state == "running" && e.claim_expires_at_us.is_some_and(|t| t < now))
+                || dead_owner_claim(e, &input.dead_owners);
+            e.worktree_id.as_deref() == Some(worktree.as_str())
+                && e.kind == "git"
+                && has(e, "relative_path")
+                && !has(e, "targets")
+                && !has(e, "source_scan")
+                && !has(e, "version")
+                && due_state
+                && e.next_attempt_at_us <= now
+                && e.recovery.is_none()
+                && !mirror_pending(e)
+        })
+        .collect();
+    ready.sort_by_key(|e| (e.next_attempt_at_us, e.id));
+    let mut claimed = Vec::new();
+    for e in ready.into_iter().take(limit) {
+        let mut e = e.clone();
+        let token = env.new_uuid();
+        e.state = "running".into();
+        e.execution_token = Some(token.clone());
+        e.claim_owner = Some(json!({ "token": token, "owner": owner.clone() }));
+        e.claim_expires_at_us = Some(now + CLAIM_LEASE_US);
+        e.attempts += 1;
+        e.updated_at_us = now;
+        write_effect(tx, &e)?;
+        claimed.push(e.to_row());
+    }
+    Ok(claimed)
+}
+
 /// The effect a settle statement names: `WHERE id=$1 AND execution_token=$2::uuid`, plus
 /// `recovery IS NULL` when `no_recovery` is set.
 fn claimed(
@@ -616,6 +704,11 @@ impl Store {
             }
             Ok(row)
         })
+    }
+
+    /// `claimCoalescedGitEffects(input)`: the claimed rows, in claim order.
+    pub fn claim_coalesced_git_effects(&self, input: &CoalescedGitClaim) -> Result<Vec<Value>> {
+        self.write(|tx| claim_coalesced_git_effects_in(tx, &*self.env, input))
     }
 
     /// One settle statement (`renewEffectClaim`, `advanceEffectRow`, `completeEffectRow`, ...):
