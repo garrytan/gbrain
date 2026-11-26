@@ -11,6 +11,8 @@
  *    connected, the store's `open_dir` created a new empty store at the configured path, and doctor scored it 75 with
  *    exit 0 (gbrain-evals check health-1).
  *  - Why existing coverage misses it: test/doctor-missing-brain.test.ts configures PGLite only.
+ *  - Not covered here: the other commands that connect (status, get, search, query, stats, list, sources list) still
+ *    create the store on a Rust brain (owner-ipc/election.ts electOwner, the store's open_dir); doctor alone refuses.
  *  - Seam: the real CLI entry in a child process (test/helpers/cli-spawn.ts) with the built addon; the store is made by
  *    `gbrain import` and moved with a rename.
  */
