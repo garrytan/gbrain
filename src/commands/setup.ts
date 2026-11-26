@@ -238,7 +238,7 @@ function parseFlags(args: string[]): SetupFlags | string {
   if (template !== undefined && template !== 'team') return `unknown --template '${template}'; pass team (a brand-new brain for a team)`;
   const team = template === 'team';
   if (team) {
-    for (const f of TEAM_REFUSED_FLAGS) if (args.some(a => a === f || a.startsWith(`${f}=`))) return `${f} is not part of --template team, which sets up a brand-new brain for a team (--members, --groups, --owner, --source); nothing was written`;
+    for (const f of TEAM_REFUSED_FLAGS) if (args.some(a => a.split('=')[0] === f)) return `${f} is not part of --template team, which sets up a brand-new brain for a team (--members, --groups, --owner, --source); nothing was written`;
     if (!['claude-code', 'codex'].includes(positionals[0] ?? '')) return '--template team sets up the brain behind gbrain setup claude-code or codex; nothing was written';
     if (!value('--members')?.trim()) return '--template team needs --members <id,...>, the people on the team besides the owner; nothing was written';
   }
