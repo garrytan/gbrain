@@ -4,6 +4,7 @@
  * verifier, the per-request effective surface, tools/list and tools/call
  * through the shared dispatcher, request logging and the admin SSE feed.
  */
+import { withHttpPrincipalSession } from '../core/rust-engine/served/http-session.ts';
 import { createHash } from 'node:crypto';
 import type { Express, NextFunction, Request, Response } from 'express';
 import { buildDefaultLimiters, type RateLimiter } from '../mcp/rate-limit.ts';
@@ -452,7 +453,8 @@ async function callMcpTool(ctx: ServeHttpContext, state: McpRequestState, reques
   const sessionId = requestMetaSessionId(request.params);
   let toolResult: Awaited<ReturnType<typeof dispatchToolCall>>;
   try {
-    toolResult = await dispatchToolCall(engine, name, params as Record<string, unknown> | undefined, {
+    toolResult = await withHttpPrincipalSession(engine, authInfo.token, principalSession => dispatchToolCall(engine, name, params as Record<string, unknown> | undefined, {
+      ...(principalSession ? { principalSession } : {}),
       remote: true,
       admissionOrigin: 'interactive',
       config: ctx.config,
@@ -493,7 +495,7 @@ async function callMcpTool(ctx: ServeHttpContext, state: McpRequestState, reques
         warn: (msg: string) => console.error(`[WARN] ${msg}`),
         error: (msg: string) => console.error(`[ERROR] ${msg}`),
       },
-    });
+    }));
   } catch (e) {
     // dispatchToolCall absorbs OperationError + Error and returns
     // isError:true; only an unexpected throw lands here. Treat as the
