@@ -1856,6 +1856,23 @@
           {
             "lane": "tx",
             "params": [
+              "array<string>"
+            ],
+            "sql": "SELECT current_setting(t.name, true) AS value FROM unnest($1::text[]) WITH ORDINALITY AS t(name, position) ORDER BY t.position",
+            "textSha256": "b9fb1ea4b0273886752e85cdbb2dc7838809fa86d5b404104af0ae8015ca07c4"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "array<string>",
+              "array<string>"
+            ],
+            "sql": "SELECT set_config(t.name, t.value, true) FROM unnest($1::text[], $2::text[]) AS t(name, value)",
+            "textSha256": "ec1a147ffc19676b214e760f7743c4caf08aadeaf9a5357468d19da5b73cfaea"
+          },
+          {
+            "lane": "tx",
+            "params": [
               "string",
               "string",
               "string",
@@ -2037,6 +2054,15 @@
           {
             "event": "savepoint-release",
             "lane": "tx>sp"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "array<string>",
+              "array<string>"
+            ],
+            "sql": "SELECT set_config(t.name, t.value, true) FROM unnest($1::text[], $2::text[]) AS t(name, value)",
+            "textSha256": "ec1a147ffc19676b214e760f7743c4caf08aadeaf9a5357468d19da5b73cfaea"
           },
           {
             "lane": "tx",
