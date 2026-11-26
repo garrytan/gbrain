@@ -2,8 +2,9 @@
  * Read-your-writes across two protocol v3 connections (interfaces I-2 and I-7; multi-writer conformance C21): a write
  * acknowledged on connection A is seen on connection B when B's read carries A's commit position as its token.
  *
- * Mode: the owner opens with GBRAIN_RUST_MULTIUSER=1 set in-run (after the preload) and the test asserts its store
- * reports `multiuser: true`; both clients are served engines (`rust_server`) over a TLS-free loopback v3 listener.
+ * Mode: the owner opens with GBRAIN_RUST_MULTIUSER=1 and GBRAIN_RUST_COMMIT_LOG=1 set in-run (after the preload) and the
+ * test asserts its store reports `multiuser: true` and the engine `commit_log`; both clients are served engines
+ * (`rust_server`) over a plain loopback v3 listener.
  *
  * 1. Protects: `readPositionToken(engine)` gives the `cp1:` token of the newest write a served engine's connection
  *    acknowledged; `withReadPosition(token, fn)` makes every served read in `fn` carry it as `min_position`, so B's
@@ -30,6 +31,7 @@ if (!HAVE_ADDON && process.env.GBRAIN_TEST_RUST_ADDON_REQUIRED === '1') throw ne
 const describeAddon = HAVE_ADDON ? describe : describe.skip;
 
 const saved = process.env.GBRAIN_RUST_MULTIUSER;
+const savedLog = process.env.GBRAIN_RUST_COMMIT_LOG;
 const TOKEN = 'read-position-owner-token';
 let dir = '';
 let owner: RustEngine;
@@ -48,10 +50,12 @@ async function served(): Promise<RustEngine> {
 describeAddon('read-your-writes across two protocol v3 connections', () => {
   beforeAll(async () => {
     process.env.GBRAIN_RUST_MULTIUSER = '1';
+    // The optimistic multi-user store orders commits by its commit log (lane L2); without it the server refuses tokens.
+    process.env.GBRAIN_RUST_COMMIT_LOG = '1';
     dir = mkdtempSync(join(tmpdir(), 'gbrain-read-position-'));
     owner = openRustEngine({ addon: await loadRustArmAddon(), databasePath: dir, servedOptions: {
       verify: {
-        verify: async (_engine, token) => { if (token !== TOKEN) throw new Error('Invalid token'); return { name: 'owner', scopes: ['read', 'write', 'admin'], member: null } as never; },
+        verify: async (_engine, token) => { if (token !== TOKEN) throw new Error('Invalid token'); return { principal: { kind: 'legacy_token', id: 'owner' }, scopes: ['read', 'write', 'admin'], sourceId: 'default', hasSourceGrant: false, member: null, mayActFor: null, attest: null }; },
         ownerIds: async () => new Set(['owner']),
       },
     } });
@@ -68,11 +72,12 @@ describeAddon('read-your-writes across two protocol v3 connections', () => {
     await owner?.disconnect().catch(() => undefined);
     if (dir) rmSync(dir, { recursive: true, force: true });
     if (saved === undefined) delete process.env.GBRAIN_RUST_MULTIUSER; else process.env.GBRAIN_RUST_MULTIUSER = saved;
+    if (savedLog === undefined) delete process.env.GBRAIN_RUST_COMMIT_LOG; else process.env.GBRAIN_RUST_COMMIT_LOG = savedLog;
   });
 
   test('the owner runs multi-user and both clients are served', () => {
-    expect({ multiuser: owner.openStore('read-position').multiuser, a: a.capabilities.has('served'), b: b.capabilities.has('served') })
-      .toEqual({ multiuser: true, a: true, b: true });
+    expect({ multiuser: owner.openStore('read-position').multiuser, commitLog: owner.capabilities.has('commit_log'), a: a.capabilities.has('served'), b: b.capabilities.has('served') })
+      .toEqual({ multiuser: true, commitLog: true, a: true, b: true });
   });
 
   test('a write acknowledged on A is read on B with A\'s token', async () => {
