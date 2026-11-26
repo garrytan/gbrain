@@ -424,6 +424,9 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'listRevivalPages', 'listSourceRequestsByRequestId', 'lockEffectRow', 'readHeldHitRows', 'readSourceRequestById',
   // The segmented write path's reads (engine-sql/segmented-writes.ts). lockSegmentedGenerationPage takes a row lock only.
   'readSegmentedLivePage', 'listSegmentedRechunkCandidates', 'readSegmentedRechunkPage', 'listOccurrenceChunks', 'readMaterializingRevision', 'readSegmentedRewritePage', 'lockSegmentedGenerationPage', 'hasLiveSegmentedPage', 'countSegmentedEmbedRows', 'listSegmentedStaleRows', 'readSegmentChunkInputHashes', 'listLiveEmbedSegments', 'listSegmentChunkRows',
+  // The memory-trust evals' harness reads (engine-sql/eval-harness-reads.ts): SELECTs over the catalog, facts and pages; the
+  // store functions (eval_harness_reads.rs, eval_harness_catalog.rs) only `self.read`.
+  'getFactsByIds', 'findLiveFactsByText', 'listPageIdSlugs', 'hasTable', 'hasColumn', 'listTextBearingColumns', 'scanTextColumns',
 ];
 
 const nothingSetting = 'nothing: the setting lasts only for the call, so running it again repeats no write';
@@ -981,4 +984,7 @@ export const OWNER_IPC_TYPED_CONFIRMING_READS: Readonly<Record<string, string>> 
   writeFenceTakeResolutions: 'listTakes for that page (the resolution columns)',
   // A tier-only row change (engine-sql/row-tier.ts).
   setRowTrustTier: 'readRowTrustTier for that row',
+  // The evals' harness pause (engine-sql/eval-harness-reads.ts): the brain row's enabled flag; mode_epoch never moves.
+  pauseManagedPersistence: 'readWriterAdminState (the brain row: enabled false at the prior mode_epoch)',
+  restoreManagedPersistence: 'readWriterAdminState (the brain row: enabled back at the prior mode_epoch, or the moved epoch kept)',
 };

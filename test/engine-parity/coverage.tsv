@@ -6,8 +6,8 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2401/2425
-# lifecycle: 12/12
+# covered: 2409/2435
+# lifecycle: 20/22
 # pages: 141/142
 # search: 8/8
 # search_reads: 9/9
@@ -131,18 +131,28 @@ withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
 listCatalogRelations	lifecycle	yes	1	no	yes	yes	serves
 readCatalogSchemaVersion	lifecycle	yes	1	no	yes	yes	serves
 listCatalogForeignKeys	lifecycle	yes	1	no	yes	yes	serves
+getFactsByIds	lifecycle	yes	1	no	yes	yes	serves
+findLiveFactsByText	lifecycle	yes	1	no	yes	yes	serves
+listPageIdSlugs	lifecycle	yes	1	no	yes	yes	serves
+hasTable	lifecycle	yes	1	no	yes	yes	serves
+hasColumn	lifecycle	yes	1	no	yes	yes	serves
+listTextBearingColumns	lifecycle	yes	1	no	yes	yes	serves
+scanTextColumns	lifecycle	yes	1	no	yes	yes	serves
+pauseManagedPersistence	lifecycle	no	0	no	-	-	-
+restoreManagedPersistence	lifecycle	no	0	no	-	-	-
+withManagedPersistencePaused	lifecycle	yes	4	no	yes	yes	serves
 getPage	pages	yes	280	yes	yes	yes	serves
 readPageSnapshot	pages	yes	100	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	7	no	yes	yes	serves
 lockPageKeys	pages	yes	17	no	yes	yes	serves
-putPage	pages	yes	1324	yes	yes	yes	serves
+putPage	pages	yes	1327	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	43	yes	yes	yes	serves
 deletePages	pages	yes	9	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	2	yes	yes	yes	serves
 softDeletePage	pages	yes	333	yes	yes	yes	serves
-softDeletePages	pages	yes	4	yes	yes	yes	serves
+softDeletePages	pages	yes	7	yes	yes	yes	serves
 restorePage	pages	yes	15	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	10	no	yes	yes	serves
 listPages	pages	yes	21	yes	yes	yes	serves
@@ -444,7 +454,7 @@ listMaterializedMarkerPages	timeline	yes	3	no	yes	yes	serves
 rewriteTimelineRow	timeline	yes	2	no	yes	yes	serves
 listDateBulletPages	timeline	yes	2	no	yes	yes	serves
 listConnectorFencePages	timeline	yes	2	no	yes	yes	serves
-addTimelineEntry	timeline	yes	85	yes	yes	yes	serves
+addTimelineEntry	timeline	yes	87	yes	yes	yes	serves
 addTimelineEntriesBatch	timeline	yes	4	no	yes	yes	serves
 getTimeline	timeline	yes	40	yes	yes	yes	serves
 getTimelineForDate	timeline	yes	9	no	yes	yes	serves
@@ -497,7 +507,7 @@ listReadableFilePaths	raw_files	yes	3	no	yes	yes	serves
 hasTakeClaim	takes	yes	1	no	yes	yes	serves
 listTakeRowNums	takes	yes	1	no	yes	yes	serves
 readTakeRowTierByClaim	takes	yes	1	no	yes	yes	serves
-addTakesBatch	takes	yes	130	yes	yes	yes	serves
+addTakesBatch	takes	yes	132	yes	yes	yes	serves
 updateTakeEmbeddings	takes	yes	10	no	yes	yes	serves
 listTakes	takes	yes	71	no	yes	yes	serves
 searchTakes	takes	yes	7	no	yes	yes	serves
@@ -639,10 +649,10 @@ hasActiveFactText	facts	yes	2	no	yes	yes	serves
 readFactTrustTier	facts	yes	2	no	yes	yes	serves
 listFenceFactRowNums	facts	yes	2	no	yes	yes	serves
 readLiveFactRowTier	facts	yes	1	no	yes	yes	serves
-insertFact	facts	yes	198	yes	yes	yes	serves
+insertFact	facts	yes	202	yes	yes	yes	serves
 insertFacts	facts	yes	269	no	yes	yes	serves
 deleteFactsForPage	facts	yes	8	no	yes	yes	serves
-expireFact	facts	yes	94	no	yes	yes	serves
+expireFact	facts	yes	98	no	yes	yes	serves
 listFactsByEntity	facts	yes	62	yes	yes	yes	serves
 listFactsSince	facts	yes	42	yes	yes	yes	serves
 listFactsKeyset	facts	yes	11	no	yes	yes	serves
@@ -1966,10 +1976,10 @@ getWorktreeBinding	write_misc	yes	25	no	yes	yes	serves
 listHostTopologyRows	write_misc	yes	2	no	yes	yes	serves
 listWorktreeMembers	write_misc	yes	2	no	yes	yes	serves
 worktreeClaimStore	write_misc	yes	32	no	yes	yes	serves
-readWriterAdminState	write_misc	yes	10	no	yes	yes	serves
+readWriterAdminState	write_misc	yes	14	no	yes	yes	serves
 readWorktreeManifest	write_misc	yes	1	no	yes	yes	serves
 writerAdminStore	write_misc	yes	3	no	yes	yes	serves
-writerReleaseStore	write_misc	yes	13	no	yes	yes	serves
+writerReleaseStore	write_misc	yes	16	no	yes	yes	serves
 publicationJournalStore	write_misc	yes	2	no	yes	yes	serves
 chronicleStore	write_misc	yes	2	no	yes	yes	serves
 hasExtractedEvents	write_misc	yes	1	no	yes	yes	serves

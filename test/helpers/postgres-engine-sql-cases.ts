@@ -32,6 +32,7 @@ export type W1Domain = typeof W1_DOMAINS[number];
  * `cjk-search` domain (cases tagged `#cjk`), the FTS branch is `search`.
  */
 const OOS = {
+  evalHarness: 'out-of-scope:eval-harness (born in engine-sql/eval-harness-reads.ts; pinned by test/eval-harness-sql-pin.test.ts and test/engine-parity/eval-harness-reads.test.ts)',
   listReads: 'out-of-scope:list-reads (born in engine-sql/list-reads.ts; pinned by test/list-reads-sql-pin.test.ts and the engine-parity collate files)',
   lifecycle: 'out-of-scope:lifecycle (connection, pool, transaction, raw seams)',
   helper: 'out-of-scope:internal-helper (private; exercised through public callers)',
@@ -1326,6 +1327,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'deletePurgedSlugStoreRows': OOS.purgeSlugStores, 'listPageSecretOccurrences': OOS.purgeSlugStores, 'deletePurgedSlugHolds': OOS.purgeSlugStores,
   'readHeldConcept': OOS.conceptRebuild, 'isConceptStillHeld': OOS.conceptRebuild, 'lockHeldConcept': OOS.conceptRebuild, 'lockLiveConceptMembers': OOS.conceptRebuild, 'listLiveConceptMemberRevisions': OOS.conceptRebuild, 'listConceptIncomingLinks': OOS.conceptRebuild, 'carryConceptIncomingLinks': OOS.conceptRebuild, 'readTombstoneWindow': OOS.conceptRebuild,
   'listCatalogRelations': OOS.graduationCatalog, 'readCatalogSchemaVersion': OOS.graduationCatalog, 'listCatalogForeignKeys': OOS.graduationCatalog,
+  'getFactsByIds': OOS.evalHarness, 'findLiveFactsByText': OOS.evalHarness, 'listPageIdSlugs': OOS.evalHarness, 'hasTable': OOS.evalHarness, 'hasColumn': OOS.evalHarness, 'listTextBearingColumns': OOS.evalHarness, 'scanTextColumns': OOS.evalHarness, 'pauseManagedPersistence': OOS.evalHarness, 'restoreManagedPersistence': OOS.evalHarness, 'withManagedPersistencePaused': OOS.evalHarness,
   'readExtractReceiptSlot': OOS.extractBookkeeping, 'readExtractReceiptSeal': OOS.extractBookkeeping, 'upsertExtractRollupDay': OOS.extractBookkeeping,
   'countMcpResolvedTakes': OOS.takesReads,
   'listTopResolvedTakesForHolder': OOS.takesReads,

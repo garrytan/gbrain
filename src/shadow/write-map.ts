@@ -230,6 +230,9 @@ export const IGNORED_MEMBERS: ReadonlySet<string> = new Set([
   // The applied-capture records (ingest_applied_captures): bookkeeping the seed does not copy (rust/docs/store/seed.md), so
   // the stale purge changes nothing the shadow follows.
   'purgeStaleAppliedCaptures',
+  // The eval harness pause (engine-sql/eval-harness-reads.ts): it calls pauseManagedPersistence and restoreManagedPersistence
+  // on the engine itself, which the unmapped-write list names; it is still a writer (IGNORED_WRITE_MEMBERS).
+  'withManagedPersistencePaused',
 ]);
 
 /**
@@ -243,6 +246,7 @@ export const IGNORED_WRITE_MEMBERS: ReadonlySet<string> = new Set([
   'clearCodeTraversalCache', 'insertLocalWriterRow',
   'allocateBodyOccurrenceIds', 'stageSegmentTexts', 'stageManifestRows', 'openBodyStaging', 'setBodyStagingState',
   'upsertSegmentDerivations', 'retireSegmentDerivations',
+  'withManagedPersistencePaused',
 ]);
 
 /** Members that run caller SQL; the wrapper parses it (sql-writes.ts). */
@@ -259,6 +263,8 @@ export const READ_ONLY_MEMBERS: ReadonlySet<string> = new Set([
   // The read-view digest cache read (the name carries a read prefix; listed so the class is explicit).
   'readPageViewDigest',
   // Batch 11 typed reads (page purge port, caller-links, chronicle): row locks and statements that only read.
+  // The eval harness text scan (engine-sql/eval-harness-reads.ts): SELECTs only.
+  'scanTextColumns',
   'factsOrAliasesMayMatch', 'lockHeldConcept', 'lockLiveConceptMembers', 'lockSourceForUpdate', 'relationExists', 'sweepJournalChunk', 'takeProposalCached',
   // The trunk's typed reads whose names carry no read prefix (the owner socket's read classes, owner-ipc/typed-member-classes.ts).
   'accessTokenLive', 'closedLoopWithActiveFact', 'codeChunksExist', 'computeFactFingerprints', 'currentCodeChunksExist',
@@ -417,6 +423,8 @@ export const UNMAPPED_WRITE_MEMBERS: ReadonlySet<string> = new Set([
   'applyRetrievalRatings', 'insertPinnedQuestion', 'insertRetrievalEvents', 'insertVolunteerEvents',
   // Lane 4 (sweep-facts-rust) typed edge-proposal writes: not mapped to a write plan yet.
   'deleteEdgeProposalError', 'deleteHeldEdgeProposalErrors', 'markEdgeProposalDated',
+  // Lane 5 eval harness pause (engine-sql/eval-harness-reads.ts): the brain row's enabled flag, not mapped to a write plan yet.
+  'pauseManagedPersistence', 'restoreManagedPersistence',
 ]);
 export type MemberKind = 'read_name' | 'raw' | 'reserved' | 'ignored' | 'schema' | 'mapped' | 'unmapped';
 
