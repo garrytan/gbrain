@@ -1,6 +1,7 @@
 import { existsSync } from 'fs';
 import { dirname, join, relative, resolve, sep } from 'path';
 import type { BrainEngine } from '../core/engine.ts';
+import { isNeverFiledDerivedPage } from '../core/persistence/git-declared.ts';
 import { hasUnresolvedDbOnlyDeclaration, loadStorageConfig, validateStorageConfig, getStorageTier, isDbOnly } from '../core/storage-config.ts';
 import type { StorageConfig, StorageTier } from '../core/storage-config.ts';
 import { walkBrainRepo, type DiskFileEntry } from '../core/disk-walk.ts';
@@ -308,6 +309,8 @@ export async function getStorageStatus(
     // db_only dir (a db_tracked parent dir does not exempt it) whose recorded
     // source_path, else <slug>.md, is absent, checked the way export checks.
     if (!config || !isDbOnly(page.slug, config)) continue;
+    // Never-filed derived pages (synthesized concepts) have no file by design.
+    if (isNeverFiledDerivedPage(page.slug, page)) continue;
     const sourcePath = page.source_path ?? null;
     // Fast path, no per-page syscall: the walk saw the exact file export
     // checks as a regular file under real (non-symlink) directories, so
