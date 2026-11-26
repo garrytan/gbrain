@@ -13,7 +13,7 @@
 ### Fixed
 - A fact saved without an event date (`gbrain remember` without `--valid-from`, `extract_facts` without a date, or a `## Facts` row with an empty date cell on a page that states no date) now stores the event date as unknown instead of the save time. Recall returns it with `valid_from: null` and keeps the save time in `created_at`. (#10288)
 - An event-time window (`recall --since`, the recall tool's `since` and search's fact pool) only matches facts with a known event date. General and entity recall still return undated facts, ordered by save time. `recall --today` and `--since-last-run` still show undated facts saved in their window, locally and on a thin client; the recall tool's new optional `include_undated` parameter widens a `since` window the same way, and an older server ignores it with a warning. Trajectories and same-metric supersession treat an undated claim as dated at its save time. (#10288)
-- Schema migration v338 lets `facts.valid_from` be empty. Nothing is rewritten on upgrade: facts saved before it keep the save time they were stamped with. (#10288)
+- Schema migration v339 lets `facts.valid_from` be empty. Nothing is rewritten on upgrade: facts saved before it keep the save time they were stamped with. (#10288)
 - Re-extracting a conversation page's facts (`extract-conversation-facts --force`, or a newer extractor) expires the previous facts instead of deleting them, so a claim the new pass did not reproduce stays in history. (#10443)
 - `forget` on a read-only mirror with no canonical owner now says the source is a read-only mirror (`detail: read_only_mirror`) and names the two ways forward: remove the claim upstream and run `gbrain sources refresh <id>`, or make the source writable and bind it. (#10067)
 

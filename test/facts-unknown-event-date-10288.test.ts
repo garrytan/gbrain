@@ -3,11 +3,11 @@
  *
  * 1. Protects: `recall --since` (an event-time window) leaves out a fact whose event date was never given, while
  *    general recall still returns it with `valid_from: null`; a fact dated before the window stays out; a `## Facts`
- *    fence row with an empty date cell round-trips as unknown; v338 makes the column nullable without rewriting rows.
+ *    fence row with an empty date cell round-trips as unknown; v339 makes the column nullable without rewriting rows.
  * 2. Fails when: remember, a fence row or put_page stamp the save time as the event date, an event window matches an
  *    undated fact, or an entity read drops one.
  * 3. Real seams: remember and recall dispatched as MCP does (remote: false) on a repo-less brain, PGLite and (with
- *    DATABASE_URL) Postgres; the fence parser, renderer and extractor; the v338 migration SQL.
+ *    DATABASE_URL) Postgres; the fence parser, renderer and extractor; the v339 migration SQL.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -16,7 +16,7 @@ import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { parseFactsFence, renderFactsTable } from '../src/core/facts-fence.ts';
 import { extractFactsFromFenceText } from '../src/core/facts/extract-from-fence.ts';
 import { fenceRowOf } from '../src/core/facts/unfenced-facts.ts';
-import { v338 } from '../src/core/schema-migrations/v338-facts-valid-from-nullable.ts';
+import { v339 } from '../src/core/schema-migrations/v339-facts-valid-from-nullable.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
 
@@ -102,14 +102,14 @@ for (const backend of backends) {
       expect(await storedFrom(engine(), 'The fictional test device shipped.')).toBeNull();
     });
 
-    test('v338 makes valid_from nullable, keeps its default and rewrites no row', async () => {
+    test('v339 makes valid_from nullable, keeps its default and rewrites no row', async () => {
       const column = async () => (await engine().executeRaw<{ is_nullable: string; column_default: string | null }>(
         `SELECT is_nullable, column_default FROM information_schema.columns WHERE table_name = 'facts' AND column_name = 'valid_from'`))[0]!;
       expect((await column()).is_nullable).toBe('YES');
       await engine().executeRaw('UPDATE facts SET valid_from = created_at WHERE valid_from IS NULL');
       await engine().executeRaw('ALTER TABLE facts ALTER COLUMN valid_from SET NOT NULL');
       const before = await engine().executeRaw<{ id: number; valid_from: Date | string }>('SELECT id, valid_from FROM facts ORDER BY id');
-      await engine().runMigration(338, v338.sql);
+      await engine().runMigration(339, v339.sql);
       expect(await column()).toMatchObject({ is_nullable: 'YES', column_default: 'now()' });
       expect(await engine().executeRaw('SELECT id, valid_from FROM facts ORDER BY id')).toEqual(before);
     });

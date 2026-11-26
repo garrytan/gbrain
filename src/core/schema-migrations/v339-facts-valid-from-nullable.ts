@@ -9,8 +9,8 @@ import type { Migration } from './types.ts';
 // inserts that omit it; every gbrain writer names the column and passes NULL when
 // it knows no date. Existing rows are not rewritten. The ALTER runs only while the
 // column is still NOT NULL, so a replay takes no lock on facts.
-export const v338: Migration = {
-  version: 338,
+export const v339: Migration = {
+  version: 339,
   name: 'facts_valid_from_nullable',
   idempotent: true,
   sql: `
