@@ -35,6 +35,7 @@ import type { CommitPosition } from '../../src/core/engine-members/commit-log.ts
 import type { PageInput } from '../../src/core/types.ts';
 import type { LeaseToken, FenceOpts } from '../../src/core/engine-sql/lease-token.ts';
 import { rustLeases, type RustLeases, type WriteOrigin } from '../../src/core/rust-engine/store-members/leases.ts';
+import { withEnv } from '../helpers/with-env.ts';
 import { parityArms, type ParityBackend, type ParityContext, rustArmModeProblem, rustArmMultiuser, rustMultiuserView } from './harness.ts';
 import { clearHostRegistration, fenceOpts, hostLeaseName, setHostRegistration } from '../../src/core/persistence/host-fence.ts';
 import { openRustBrainAt, resolvedMultiuser, RUST_MULTIUSER_CONFIG_KEY } from './rust-arm.ts';
@@ -802,17 +803,13 @@ describe('engine parity: multi-writer conformance', () => {
     try {
       /** An older-format brain: made in plain mode (the switches off), three pages, closed. On the config route it carries the row that turns multi-user on at its next open. */
       const oldBrain = async (dir: string) => {
-        const saved = SWITCHES.map(name => process.env[name]);
-        for (const name of SWITCHES) delete process.env[name];
-        try {
+        await withEnv(Object.fromEntries(SWITCHES.map(name => [name, undefined])), async () => {
           const plain = await openRustBrainAt(dir);
           try {
             for (let i = 0; i < 3; i++) await plain.putPage(`notes/c16-${i}`, NOTE(`C16 ${i}`, `kept across the upgrade ${i}`));
             if (route === 'config') await plain.setConfig(RUST_MULTIUSER_CONFIG_KEY, 'true');
           } finally { await plain.disconnect(); }
-        } finally {
-          SWITCHES.forEach((name, i) => { if (saved[i] === undefined) delete process.env[name]; else process.env[name] = saved[i]; });
-        }
+        });
         expect(formatOf(dir).log, 'the brain was not made in the older format').toBeUndefined();
         expect(formatOf(dir).format_version, 'the brain was not made in the older format').not.toBe(13);
       };
