@@ -101,6 +101,19 @@ describe('per-source extract_atoms opt-out (#9888)', () => {
     expect(calls).toBe(1);
   });
 
+  test('an opt-out that lands after an item is prepared sends nothing', async () => {
+    await seed('article/prepared', 'source-a');
+    let calls = 0;
+    const chat = (async () => { calls++; throw new Error('provider must not be called'); }) as never;
+    const realGetPage = engine.getPage.bind(engine);
+    const spy = spyOn(engine, 'getPage').mockImplementation((async (...args: Parameters<typeof engine.getPage>) => {
+      await optOut('source-a');
+      return realGetPage(...args);
+    }) as typeof engine.getPage);
+    try { await runPhaseExtractAtoms(engine, { sourceId: 'source-a', _chat: chat }); } finally { spy.mockRestore(); }
+    expect(calls).toBe(0);
+  });
+
   test('doctor counts opted-out pages apart and never asks to drain them', async () => {
     for (let i = 0; i < 12; i++) await seed(`article/a-${i}`, 'source-a');
     await optOut('source-a');

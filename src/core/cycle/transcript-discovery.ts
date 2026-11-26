@@ -273,10 +273,9 @@ function passesFileDates(filePath: string, nameDate: string | null, fm: Record<s
   inferredDate: string | null, opts: TranscriptDateFilter): boolean {
   const { sinceMs } = opts;
   const datedAt = sinceMs === undefined ? null : latestInstant(nameDate) ?? latestInstant(fm.date);
-  const spooled = !!parseWbFileName(basename(filePath));
-  const useCaptureDay = !inferredDate && (opts.date || opts.from || opts.to) && spooled;
+  const useCaptureDay = !inferredDate && (opts.date || opts.from || opts.to) && parseWbFileName(basename(filePath));
   let captureTime: Date | undefined;
-  if ((sinceMs !== undefined && datedAt === null && spooled) || useCaptureDay) {
+  if ((sinceMs !== undefined && datedAt === null) || useCaptureDay) {
     try { captureTime = statSync(filePath).mtime; } catch { return false; }
   }
   return (sinceMs === undefined || (datedAt ?? captureTime?.getTime() ?? -Infinity) >= sinceMs)
@@ -286,8 +285,7 @@ function passesFileDates(filePath: string, nameDate: string | null, fm: Record<s
 /** The last instant a transcript date covers: a day-only date covers its whole UTC day, so a session dated on the cutoff day stays a candidate. */
 function latestInstant(value: unknown): number | null {
   const ms = parseTranscriptDate(value);
-  const dayOnly = typeof value === 'string' ? /^\d{4}-\d{2}-\d{2}$/.test(value.trim()) : ms !== null && ms % 86_400_000 === 0; // YAML reads a bare day as UTC midnight
-  return ms !== null && dayOnly ? ms + 86_399_999 : ms;
+  return ms !== null && typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value.trim()) ? ms + 86_399_999 : ms;
 }
 
 /** Labels of every compiled pattern that matches `text` (empty when none). */

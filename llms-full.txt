@@ -6902,12 +6902,12 @@ synthesized. A paused or cooling synthesize phase reports those counts
 without calling the triage model.
 
 Conversation pages use their frontmatter `date`; pages with no usable date
-are left out. A date with no time of day counts as the whole UTC day, so a
-session dated on the cutoff day stays in. Corpus files use a leading
-`YYYY-MM-DD` in the filename, then their frontmatter `date`; a writeback file
-gbrain spooled itself with neither uses its modification time, and any other
-undated file is left out (copying or restoring a corpus resets modification
-times, which would otherwise readmit old files). The cutoff also applies to `--input` and combines with any
+are left out. A filename date, or a quoted date with no time of day, counts as
+the whole UTC day, so a session dated on the cutoff day stays in. Corpus files
+use a leading `YYYY-MM-DD` in the filename, then their frontmatter `date`,
+then the file's modification time. Copying or restoring a corpus without
+keeping modification times makes its undated files look new, so preview with
+`gbrain dream --dry-run --json` after a restore. The cutoff also applies to `--input` and combines with any
 `--date` / `--from` / `--to` window. For undated writeback files, those
 windows use the file's modification day in UTC.
 

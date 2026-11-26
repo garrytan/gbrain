@@ -1110,7 +1110,7 @@ export async function runPhaseExtractAtoms(
   let stoppedEarly = false;
   await withBudgetTracker(budgetTracker, async () => {
   for (const item of work) {
-    if (opts.signal?.aborted || opts.stopSignal?.aborted || await sourceAtomPolicySkip(engine, sourceId)) { stoppedEarly = true; break; } // #9888: an opt-out mid-run sends nothing more
+    if (opts.signal?.aborted || opts.stopSignal?.aborted) { stoppedEarly = true; break; }
     await maybeYield();
     if (budgetExhausted || budgetTracker.totalSpent >= budgetCap) {
       if (item.kind === 'transcript') transcriptsSkipped++;
@@ -1141,7 +1141,7 @@ export async function runPhaseExtractAtoms(
       if (!opts.dryRun && !truncated && await heldForInput(engine, atomGenerationOrigin(sourceId, item).key, origin ? atomOriginPin(origin) : atomInputPin(item))) { duplicatesSkipped++; continue; }
       const cutLine = truncated ? inputTruncatedLine(originLabel, input, maxInputChars) : null; // A7: a complete appended-tail read prints nothing
       if (cutLine) { inputTruncated++; console.error(cutLine); } // counted only for a model call
-
+      if (await sourceAtomPolicySkip(engine, sourceId)) { stoppedEarly = true; break; } // #9888: read at dispatch, so an opt-out sends nothing more
       const result = await chat({
         model: extractModel,
         ...atomsPrompt(dateGrounding, originLabel, promptContent),

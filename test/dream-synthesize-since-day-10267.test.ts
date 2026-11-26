@@ -35,12 +35,21 @@ test('corpus files named for the cutoff day stay candidates; the day before does
   expect(found.map(t => t.basename).sort()).toEqual(['2026-09-02-same-day']);
 });
 
-test('under a cutoff an undated file counts by modification time only when gbrain spooled it', () => {
+test('under a cutoff, undated session-end, segment and writeback files written after it stay candidates', () => {
   const dir = mkdtempSync(join(tmpdir(), 'gbrain-since-undated-'));
   try {
-    writeFileSync(join(dir, 'copied-session.txt'), BODY);
+    writeFileSync(join(dir, 'session-end-a.src-default.txt'), BODY);
+    writeFileSync(join(dir, 'session-a.seg-444444444444444444444444.src-default.txt'), BODY);
     writeFileSync(join(ensureCorpusSpoolDir(dir), wbFileName('spooled-session', '3'.repeat(24), 'default')), BODY);
     const found = discoverTranscripts({ corpusDir: dir, minChars: 20, sinceMs: Date.now() - 60_000 });
-    expect(found.map(t => t.basename)).toEqual([expect.stringContaining('spooled-session')]);
+    expect(found.length).toBe(3);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a noon cutoff excludes an explicit midnight timestamp on the cutoff day', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gbrain-since-midnight-'));
+  try {
+    writeFileSync(join(dir, 'midnight.md'), `---\ndate: 2026-09-02T00:00:00Z\n---\n${BODY}`);
+    expect(discoverTranscripts({ corpusDir: dir, minChars: 20, sinceMs })).toEqual([]);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
