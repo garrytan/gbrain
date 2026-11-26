@@ -6617,6 +6617,16 @@ More: [docs/guides/skill-resolver.md#skill_resolver_library_missing](../../docs/
 
 More: [docs/guides/skill-resolver.md#skill_resolver_library_skew](../../docs/guides/skill-resolver.md#skill_resolver_library_skew)
 
+### skill_resolver_owner_unverified
+
+<a id="skill_resolver_owner_unverified"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An OpenClaw agent with the skill resolver live puts every direct message on its shared main session (session.dmScope main), has no owner sender set, and OpenClaw sends no memory audience, so anyone who messages it directly gets the owner's pins, brief, operator rule and owner-only skill suggestions. | The request itself was wrong or no longer matches the brain; nothing was changed. | Run gbrain setup openclaw --skills-index-only --agent <id> --owner-sender <your sender id>, or add --require-owner-sender so the main session counts as another person's DM until an owner sender is set. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/skill-resolver.md#skill_resolver_owner_unverified](../../docs/guides/skill-resolver.md#skill_resolver_owner_unverified)
+
 ### skill_resolver_pin_unknown
 
 <a id="skill_resolver_pin_unknown"></a>
@@ -6636,6 +6646,16 @@ More: [docs/guides/skill-resolver.md#skill_resolver_pin_unknown](../../docs/guid
 | gbrain setup openclaw wrote the skill-resolver plugin, but OpenClaw has not installed or loaded it: no openclaw on PATH, an openclaw command failed, or plugins inspect does not show it loaded. | A partial install injects nothing, so setup never reports it as success; the files and the state are kept so the remaining commands finish it. | Run the remaining openclaw commands the message names on the OpenClaw host, restart the gateway, then gbrain doctor --only skill_resolver. | user | `repeat the read that failed` | 3 | no |
 
 More: [docs/guides/skill-resolver.md#skill_resolver_plugin_not_installed](../../docs/guides/skill-resolver.md#skill_resolver_plugin_not_installed)
+
+### skill_resolver_plugin_outdated
+
+<a id="skill_resolver_plugin_outdated"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The OpenClaw skill-resolver plugin code installed in OpenClaw is older than this gbrain, so it ignores settings added since (the operator rule line, --brief pins, --require-owner-sender). | The request itself was wrong or no longer matches the brain; nothing was changed. | Rerun the gbrain setup openclaw command you installed with (its --workspace, --name and --agent flags), which rewrites and reinstalls the plugin files, then restart the gateway once. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/skill-resolver.md#skill_resolver_plugin_outdated](../../docs/guides/skill-resolver.md#skill_resolver_plugin_outdated)
 
 ### skill_resolver_selftest_failed
 
