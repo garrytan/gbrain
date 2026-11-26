@@ -91,6 +91,8 @@ export interface JobInsight {
   lock_expires_in_ms: number | null;
   stalled: boolean | null;
   spend: JobSpend;
+  /** Fenced callers: the job's parent belongs to another caller, so its parent_job_id is withheld (never serialized). */
+  parent_hidden?: true;
 }
 
 export interface InsightOpts {
@@ -219,8 +221,15 @@ export async function describeJobs(engine: BrainEngine, jobs: MinionJob[], opts:
   const foreignTokens = new Map<number, { i: number; o: number; c: number }>();
   if (owner !== null) {
     const rows = await engine.executeRaw<{ parent_job_id: number; i: number | string; o: number | string; c: number | string }>(
-      `SELECT c.parent_job_id, sum(c.tokens_input) AS i, sum(c.tokens_output) AS o, sum(c.tokens_cache_read) AS c FROM minion_jobs c
-        WHERE c.parent_job_id = ANY($1::int[]) AND c.status = 'completed' AND NOT ${owned('c', 2)}
+      `WITH RECURSIVE walk(root, id, depth) AS (
+         SELECT s.id, s.id, 0 FROM minion_jobs s WHERE s.id = ANY($1::int[])
+         UNION ALL
+         SELECT w.root, k.id, w.depth + 1 FROM minion_jobs k JOIN walk w ON k.parent_job_id = w.id
+          WHERE w.depth < 20 AND k.status = 'completed' AND ${owned('k', 2)}
+       )
+       SELECT w.root AS parent_job_id, sum(c.tokens_input) AS i, sum(c.tokens_output) AS o, sum(c.tokens_cache_read) AS c
+         FROM walk w JOIN minion_jobs c ON c.parent_job_id = w.id
+        WHERE c.status = 'completed' AND NOT ${owned('c', 2)}
         GROUP BY 1`, [ids, ...ownerArgs]);
     for (const r of rows) foreignTokens.set(Number(r.parent_job_id), { i: num(r.i), o: num(r.o), c: num(r.c) });
   }
@@ -232,6 +241,7 @@ export async function describeJobs(engine: BrainEngine, jobs: MinionJob[], opts:
       blocked_by: blockedBy(job, ctx),
       ...liveness(job, now),
       spend: spendOf(job, spendRows.filter(r => Number(r.root) === job.id), foreignTokens.get(job.id)),
+      ...(owner !== null && job.parent_job_id != null && meta.get(job.id)?.parent_owned !== true ? { parent_hidden: true as const } : {}),
     });
   }
   return out;
@@ -335,10 +345,17 @@ function spendOf(job: MinionJob, rows: SpendRow[], foreign: { i: number; o: numb
  */
 export function withInsight<T extends object>(job: T, insight: JobInsight | undefined): T & Partial<JobInsight> {
   if (!insight) return job;
+  const { parent_hidden: _hidden, ...visible } = insight;
+  return { ...withFencedCounts(job, insight), ...visible };
+}
+
+/** A fenced caller's job row: token counts without other callers' children, and no foreign parent id. */
+export function withFencedCounts<T extends object>(job: T, insight: JobInsight | undefined): T {
+  if (!insight) return job;
   const tokens = insight.spend.excludes_foreign_children
     ? { tokens_input: insight.spend.tokens_input, tokens_output: insight.spend.tokens_output, tokens_cache_read: insight.spend.tokens_cache_read }
     : {};
-  return { ...job, ...tokens, ...insight };
+  return { ...job, ...tokens, ...(insight.parent_hidden ? { parent_job_id: null } : {}) };
 }
 
 /** One compact cell for `jobs list`: why a job waits, or the liveness of a running one. */

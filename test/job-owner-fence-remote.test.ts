@@ -163,6 +163,9 @@ describe('who keeps the whole-queue view', () => {
     const all = body(await dispatchToolCall(engine, 'list_jobs', {}, owner)) as Array<{ id: number }>;
     expect(ids(all)).toEqual([operator.id, theirs.id].sort((a, b) => a - b));
     expect(body(await dispatchToolCall(engine, 'get_job', { id: operator.id }, owner)).id).toBe(operator.id);
+    const forBob = await withCallerAccess({ owner: true, audience: ['member:bob-example'] }, () => op('list_jobs').handler(remote('client-owner'), {}));
+    expect(forBob).toEqual([]);
+    expect(ids(await withCallerAccess({ owner: true }, () => op('list_jobs').handler(remote('client-owner'), {})))).toEqual([operator.id, theirs.id].sort((a, b) => a - b));
     const notOwner = { ...owner, auth: credential('client-a', { member: null }) };
     expect(body(await dispatchToolCall(engine, 'list_jobs', {}, notOwner))).toEqual([]);
   }));
@@ -218,9 +221,35 @@ describe('job insight for a fenced admin credential', () => {
       expect(listed.find(j => j.id === underForeign.id)?.parent_job_id).toBeNull();
     }
     expect(((await op('get_job').handler(local(), { id: underForeign.id })) as Record<string, unknown>).parent_job_id).toBe(foreignParent.id);
+    expect(((await op('cancel_job').handler(mine, { id: underForeign.id })) as Record<string, unknown>).parent_job_id).toBeNull();
+    await engine.executeRaw("UPDATE minion_jobs SET status = 'failed', finished_at = now() WHERE id = $1", [underForeign.id]);
+    const finished = (await op('list_jobs').handler(mine, { finished_since: '2020-01-01T00:00:00Z' })) as { jobs: Array<{ id: number; parent_job_id: number | null }> };
+    expect(finished.jobs.find(j => j.id === underForeign.id)?.parent_job_id).toBeNull();
     await engine.executeRaw("UPDATE minion_jobs SET status = 'active', claim_generation = claim_generation + 1, lock_token = 'w:' || id::text, lock_until = now() + interval '1 minute', started_at = now() WHERE id = $1", [foreignRoot.id]);
     const queued = (await op('get_job').handler(mine, { id: own.id })) as Record<string, any>;
     const slot = queued.blocked_by.find((b: { kind: string }) => b.kind === 'queue');
     expect(slot).toMatchObject({ active: 1, active_jobs: [] });
+  }));
+
+  test('token counts leave out foreign descendants on every fenced response, through owned intermediate jobs too', () => isolated(async () => {
+    const mine = remote('client-a');
+    const submittedLike = async (id: number, from: number) => engine.executeRaw(`UPDATE minion_jobs SET submission_authority = (SELECT submission_authority FROM minion_jobs WHERE id = $2) WHERE id = $1`, [id, from]);
+    const own = await submit(mine);
+    const foreign = await submit(remote('client-b'));
+    const root = await queue.add('noop', { n: 1 }, {}, { allowProtectedSubmit: true });
+    const ownChild = await queue.add('noop', { n: 2 }, { parent_job_id: root.id }, { allowProtectedSubmit: true });
+    const foreignChild = await queue.add('noop', { n: 3 }, { parent_job_id: root.id }, { allowProtectedSubmit: true });
+    const foreignGrandchild = await queue.add('noop', { n: 4 }, { parent_job_id: ownChild.id }, { allowProtectedSubmit: true });
+    for (const id of [root.id, ownChild.id]) await submittedLike(id, own.id);
+    for (const id of [foreignChild.id, foreignGrandchild.id]) await submittedLike(id, foreign.id);
+    await engine.executeRaw("UPDATE minion_jobs SET status = 'completed', finished_at = now(), tokens_input = 60 WHERE id = $1", [foreignChild.id]);
+    await engine.executeRaw("UPDATE minion_jobs SET status = 'completed', finished_at = now(), tokens_input = 7 WHERE id = $1", [foreignGrandchild.id]);
+    await engine.executeRaw("UPDATE minion_jobs SET status = 'completed', finished_at = now(), tokens_input = 9 WHERE id = $1", [ownChild.id]);
+    await engine.executeRaw('UPDATE minion_jobs SET tokens_input = 100 WHERE id = $1', [root.id]);
+    expect(((await op('get_job').handler(mine, { id: root.id })) as { tokens_input: number }).tokens_input).toBe(33);
+    const projected = (await op('list_jobs').handler(mine, { fields: ['id', 'tokens_input'] })) as Array<{ id: number; tokens_input: number }>;
+    expect(projected.find(j => j.id === root.id)?.tokens_input).toBe(33);
+    expect(((await op('cancel_job').handler(mine, { id: root.id })) as { tokens_input: number }).tokens_input).toBe(33);
+    expect(((await op('get_job').handler(local(), { id: root.id })) as { tokens_input: number }).tokens_input).toBe(100);
   }));
 });

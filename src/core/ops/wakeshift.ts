@@ -67,7 +67,12 @@ export interface WatchPrincipal { kind: 'oauth_client' | 'legacy_token' | 'local
 
 /** A watch and its terms acceptance are keyed to the credential (principal, bound member), so an attested person (x-qm-actor) never runs one. */
 function refuseAttested(): void {
-  if (currentCallerAccess().actor) {
+  const { actor, audience } = currentCallerAccess();
+  if (!actor && audience?.length) {
+    throw opError('actor_not_attested', 'Wakeshift watches cannot run for an audience yet: a watch and its terms acceptance are kept to the credential, not the audience a call names, so one audience would see or end another\'s. Nothing was read or written.',
+      'Call it without an audience; for a job, call wait_job instead, and for a write, get_write_request.', { reason: 'audience_not_supported' });
+  }
+  if (actor) {
     throw opError('actor_not_attested', `Wakeshift watches cannot run as an attested person yet: a watch and its terms acceptance are kept to the credential, not the person ${ACTOR_HEADER} names, so one person would see or end another's. Nothing was read or written.`,
       `Call it without ${ACTOR_HEADER}; for a write, call get_write_request instead.`, { reason: 'op_not_attested' });
   }
@@ -217,10 +222,6 @@ const watch_job: Operation = {
     const step = await termsStep(ctx, runtime, principal, 'watch_job');
     if (step) return step;
     const owner = agentOwnerFence(ctx, 'watch_job');
-    if (owner !== null && owner.actor[3] !== '') {
-      throw opError('actor_not_attested', 'watch_job cannot run for an audience yet: a watch is kept to the credential, not the audience it serves, so one audience would see or end another\'s. Nothing was read or written.',
-        `Call wait_job ${id} instead.`, { reason: 'audience_not_supported' });
-    }
     if (owner !== null) await assertJobOwned(ctx, id, owner);
     const [job] = await ctx.engine.executeRaw<{ status: string }>('SELECT status FROM minion_jobs WHERE id = $1', [id]);
     if (!job) throw jobNotFound(`Job not found: ${id}`);

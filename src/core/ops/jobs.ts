@@ -8,22 +8,19 @@ function publicJob(job: MinionJob) {
   return { ...visible, private_queue_owner_token: job.private_queue_owner_token == null ? null : '[redacted]' };
 }
 
-/** Public jobs for a caller: a fenced caller sees parent_job_id only for a parent it owns. */
+/** Public jobs for a caller; a fenced caller's rows leave out other callers' child tokens and parent id (withFencedCounts). */
 async function visibleJobs(ctx: OperationContext, jobs: MinionJob[], owner: JobOwner | null) {
-  const rows = jobs.map(publicJob);
-  const parents = owner === null ? [] : [...new Set(jobs.flatMap(j => (j.parent_job_id == null ? [] : [j.parent_job_id])))];
-  if (owner === null || parents.length === 0) return rows;
-  const owned = new Set((await ctx.engine.executeRaw<{ id: number }>(
-    `SELECT p.id FROM minion_jobs p WHERE p.id = ANY($1::int[]) AND ${jobOwnedSql(2, 'p')}`, [parents, ...jobOwnerParams(owner)])).map(r => Number(r.id)));
-  return rows.map(r => (r.parent_job_id != null && !owned.has(Number(r.parent_job_id)) ? { ...r, parent_job_id: null } : r));
+  if (owner === null) return jobs.map(publicJob);
+  const { describeJobs, withFencedCounts } = await import('../minions/job-insight.ts');
+  const insight = await describeJobs(ctx.engine, jobs, { owner, remote: ctx.remote !== false });
+  return jobs.map(job => withFencedCounts(publicJob(job), insight.get(job.id)));
 }
 
 /** #7241: public jobs with submitted_by, blocked_by, liveness and spend (job-insight.ts), fenced like the row read. */
 async function insightJobs(ctx: OperationContext, jobs: MinionJob[], owner: JobOwner | null) {
   const { describeJobs, withInsight } = await import('../minions/job-insight.ts');
   const insight = await describeJobs(ctx.engine, jobs, { owner, remote: ctx.remote !== false });
-  const visible = await visibleJobs(ctx, jobs, owner);
-  return jobs.map((job, i) => withInsight(visible[i]!, insight.get(job.id)));
+  return jobs.map(job => withInsight(publicJob(job), insight.get(job.id)));
 }
 
 /** Fields `list_jobs` may project to (F10 token trim): every public job field. */
@@ -95,7 +92,7 @@ export function agentOwnerFence(ctx: OperationContext, opName: string): JobOwner
   if (ctx.remote === false) return null;
   if (!ctx.auth && ctx.transport === 'stdio') return null;
   const access = currentCallerAccess();
-  if (hasScope(ctx.auth?.scopes ?? [], 'admin') && access.owner && !access.actor) return null;
+  if (hasScope(ctx.auth?.scopes ?? [], 'admin') && access.owner && !access.actor && !access.audience?.length) return null;
   const owner = callerJobOwner(ctx);
   if (!owner) {
     throw scopeDeniedError({

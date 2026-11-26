@@ -174,6 +174,17 @@ describe('access', () => {
     expect(row).toMatchObject({ state: 'ended', last_error: 'principal_revoked' });
   });
 
+  test('a watch whose job its credential can no longer read is ended at delivery without an emit', async () => {
+    await engine.executeRaw(`INSERT INTO oauth_clients (client_id, client_name) VALUES ('client-v', 'client-v') ON CONFLICT DO NOTHING`);
+    const id = await seedJob('active', 'client-v');
+    expect((await dispatchToolCall(engine, 'watch_job', { id }, agent('client-v'))).isError).toBeFalsy();
+    await engine.executeRaw(`UPDATE minion_jobs SET data = data || '{"__owner_client_id":"client-other"}'::jsonb WHERE id = $1`, [id]);
+    await finish(id);
+    expect(await drainWakes(engine)).toMatchObject({ delivered: 0, ended: 1 });
+    expect(emits()).toHaveLength(0);
+    expect(await engine.executeRaw('SELECT state, last_error FROM wake_subscriptions')).toEqual([{ state: 'ended', last_error: 'job_not_visible' }]);
+  });
+
   test('two watchers of one job each get their own emit with distinct ids', async () => {
     await engine.executeRaw(`INSERT INTO oauth_clients (client_id, client_name) VALUES ('client-c', 'client-c') ON CONFLICT DO NOTHING`);
     const id = await seedJob('active', 'client-c');
@@ -187,14 +198,21 @@ describe('access', () => {
     expect(new Set(emits().map(e => e.body.to[0].user)).size).toBe(2);
   });
 
-  test('a job watch for an audience is refused, so one audience never sees or ends another\'s watch', async () => {
+  test('every watch call for an audience is refused, so one audience never sees or ends another\'s watch', async () => {
     await engine.executeRaw(`INSERT INTO oauth_clients (client_id, client_name) VALUES ('client-e', 'client-e') ON CONFLICT DO NOTHING`);
     const id = await seedJob('active', 'client-e');
     const c = { engine, config: {}, dryRun: false, logger: { info() {}, warn() {}, error() {}, debug() {} }, ...agent('client-e') } as unknown as OperationContext;
     const refused = await withCallerAccess({ audience: ['member:alice-example'] }, () => operationsByName.watch_job!.handler(c, { id })).then(() => null, (e: unknown) => e);
     expect(JSON.stringify(refused)).toContain('audience_not_supported');
     expect(await engine.executeRaw('SELECT id FROM wake_subscriptions')).toEqual([]);
-    expect(fake.calls).toHaveLength(0);
+    expect((await dispatchToolCall(engine, 'watch_job', { id }, agent('client-e'))).isError).toBeFalsy();
+    const opened = fake.calls.length;
+    for (const [name, args] of [['list_watches', {}], ['unwatch', { job: id }]] as const) {
+      const r = await withCallerAccess({ audience: ['member:alice-example'] }, () => operationsByName[name]!.handler(c, args)).then(() => null, (e: unknown) => e);
+      expect([name, JSON.stringify(r)]).toEqual([name, expect.stringContaining('audience_not_supported')]);
+    }
+    expect(await engine.executeRaw("SELECT state FROM wake_subscriptions")).toEqual([{ state: 'open' }]);
+    expect(fake.calls).toHaveLength(opened);
   });
 
   test('list_watches and unwatch act only on the caller\'s own watches', async () => {
