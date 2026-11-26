@@ -69,7 +69,7 @@ test/engine-parity/config-ingest.test.ts	9	0
 test/engine-parity/connect-gate.test.ts	7	0
 test/engine-parity/connector-attempts.test.ts	2	0
 test/engine-parity/connector-sync-stamp.test.ts	2	0
-test/engine-parity/core-edit-notices.test.ts	12	0
+test/engine-parity/core-edit-notices.test.ts	13	0
 test/engine-parity/core-page-member-reads.test.ts	4	0
 test/engine-parity/credential-grant-writes.test.ts	6	0
 test/engine-parity/cycle-locks.test.ts	11	0
