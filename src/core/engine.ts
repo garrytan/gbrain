@@ -72,7 +72,7 @@ import type {
   SourceStateRow, WorktreeBinding, HostTopologyRow,
 } from './engine-sql/write-misc.ts';
 import type { ChronicleJudgeKey, ChronicleRowKey, ChronicleRowUpsert } from './engine-sql/chronicle-ledger.ts';
-import type { StoredPageHead } from './engine-sql/page-mutation-reads.ts';
+import type { StoredPageHead, StoredPageLabels } from './engine-sql/page-mutation-reads.ts';
 import type { ChronicleLedgerRow } from './chronicle/contract.ts';
 import type { WorktreeClaimStore } from './engine-sql/worktree-claim.ts';
 import type { WriterAdminStateOptions, WriterAdminStore } from './engine-sql/writer-admin.ts';
@@ -1738,6 +1738,14 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   readStoredPageHead(sourceId: string, slug: string): Promise<StoredPageHead | null>;
   /** A version's `source_path` when the version belongs to `pageId`, or null. */
   readVersionSourcePath(versionId: number, pageId: number): Promise<string | null>;
+  /** The columns the enforced member's label check compares, as stored (soft-deleted too, no withdrawal overlay), or null. */
+  readStoredPageLabels(sourceId: string, slug: string): Promise<StoredPageLabels | null>;
+  /** Whether the member's read policy admits the page at (source, slug), soft-deleted too; null when no row is there. */
+  readMemberPageReadable(sourceId: string, slug: string, identity: readonly string[], satisfied: readonly string[], labelled: boolean): Promise<boolean | null>;
+  /** The `<source>:<rule id>` of every folder rule covering `slug` in the source, with or without a page; null when none. */
+  readSlugFolderRules(sourceId: string, slug: string): Promise<string[] | null>;
+  /** Each of `slugs` that names a page and no page the caller's policy admits outside `hiddenSources`, in byte order. */
+  readHiddenPageSlugs(slugs: readonly string[], hiddenSources: readonly string[]): Promise<string[]>;
   listActiveAccessMembers(): Promise<string[]>;
   /** Whether any access member, live or not, carries the labelled-only grant; a failed read throws (engine-sql/write-misc.ts). */
   hasLabelledOnlyMember(): Promise<boolean>;

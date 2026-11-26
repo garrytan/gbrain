@@ -305,6 +305,8 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   // the write-time chronicle decision's reads (engine-sql/chronicle-ledger.ts) and a page write's pre-admission reads
   // (engine-sql/page-mutation-reads.ts): SELECTs only
   'countRecentChronicleReservations', 'hasPendingAutoChronicleRow', 'readChronicleRow', 'readPageTruthLead', 'readStoredPageHead', 'readVersionSourcePath',
+  // the enforced member CLI's pre-write and output-guard reads (engine-sql/page-mutation-reads.ts): SELECTs only
+  'readStoredPageLabels', 'readMemberPageReadable', 'readSlugFolderRules', 'readHiddenPageSlugs',
   // Added when the batch 10 lanes merged (cli-members-next and the lanes after it): each reads only (a row-lock read included),
   // as its engine-sql function and the Rust store function it calls show (test/rust-owner-ipc-read-classes.test.ts scans both).
   'accessTokenLive', 'countAtomExtractionBacklog', 'countChunkColumnCoverage', 'countClaimLiftedRows',

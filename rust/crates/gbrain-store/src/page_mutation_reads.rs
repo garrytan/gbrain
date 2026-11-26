@@ -1,11 +1,18 @@
 //! The reads a page write makes before admission (`src/core/persistence/page-mutations.ts`), as the members of
 //! `src/core/engine-sql/page-mutation-reads.ts` run them (rust/docs/store/page-mutation-reads.md).
 //!
-//! Members: readStoredPageHead, readVersionSourcePath (`readSourceLocalPath` is `memory_mutation_reads.rs`). Each reads the records the source, page and
-//! version families already keep; nothing here writes.
+//! Members: readStoredPageHead, readVersionSourcePath (`readSourceLocalPath` is `memory_mutation_reads.rs`), and the
+//! four reads the enforced member CLI makes before a write and when it checks the output: readStoredPageLabels,
+//! readMemberPageReadable, readSlugFolderRules, readHiddenPageSlugs. Each reads the records the source, page, access
+//! rule and version families already keep; nothing here writes.
 
+use std::collections::{BTreeMap, BTreeSet};
+
+use crate::access_rules::folder_rules;
 use crate::error::Result;
-use crate::pages::{VersionRecord, read_page};
+use crate::facts::{PrivacyPolicy, page_hidden, page_hidden_with};
+use crate::owner_only::OwnerOnlySources;
+use crate::pages::{VersionRecord, all_pages, read_page};
 use crate::{Store, get_json, keys};
 use serde_json::{Value, json};
 
@@ -41,6 +48,86 @@ impl Store {
         Ok(row
             .filter(|v| v.id == version_id as u64 && v.page_id == page_id as u64)
             .and_then(|v| v.source_path))
+    }
+}
+
+impl Store {
+    /// `readStoredPageLabels(sourceId, slug)`: the columns the enforced member's label check compares
+    /// (`SELECT type, frontmatter, compiled_truth, timeline, body_storage, body_bytes FROM pages WHERE source_id = $1 AND
+    /// slug = $2`), as stored: no withdrawal overlay, a soft-deleted page too, none for no such page. A segmented
+    /// page's two body columns are null, as in SQL; `body_storage` reads `inline` for a page that is not segmented.
+    pub fn read_stored_page_labels(&self, source_id: &str, slug: &str) -> Result<Option<Value>> {
+        let read = self.read()?;
+        let Some(record) = read_page(&*read, source_id, slug)? else {
+            return Ok(None);
+        };
+        let page = record.to_page_with_columns(&*read)?;
+        let column = |name: &str| page.get(name).cloned().unwrap_or(Value::Null);
+        Ok(Some(json!({
+            "type": column("type"),
+            "frontmatter": column("frontmatter"),
+            "compiled_truth": column("compiled_truth"),
+            "timeline": column("timeline"),
+            "body_storage": page.get("body_storage").cloned().unwrap_or_else(|| json!("inline")),
+            "body_bytes": column("body_bytes"),
+        })))
+    }
+
+    /// `readMemberPageReadable(sourceId, slug, policy)`: none when the source holds no row at the slug (a
+    /// soft-deleted row is a row); else whether `policy` (the member's read policy with the privacy part) admits it.
+    pub fn read_member_page_readable(
+        &self,
+        source_id: &str,
+        slug: &str,
+        policy: &PrivacyPolicy,
+    ) -> Result<Option<bool>> {
+        let read = self.read()?;
+        read_page(&*read, source_id, slug)?
+            .map(|page| page_hidden(&*read, &page, policy).map(|hidden| !hidden))
+            .transpose()
+    }
+
+    /// `readSlugFolderRules(sourceId, slug)`: the `<source>:<rule id>` of every rule of the source whose prefix covers
+    /// the slug, by rule id (`gbrain_access_folder_rules`), whether or not a page exists there; none when no rule
+    /// covers it.
+    pub fn read_slug_folder_rules(
+        &self,
+        source_id: &str,
+        slug: &str,
+    ) -> Result<Option<Vec<String>>> {
+        let rules = folder_rules(&*self.read()?, source_id, slug)?;
+        Ok((!rules.is_empty()).then(|| {
+            rules
+                .into_iter()
+                .map(|r| format!("{}:{}", r.source_id, r.rule_id))
+                .collect()
+        }))
+    }
+
+    /// `readHiddenPageSlugs(slugs, hiddenSources, policy)`: each of `slugs` that names a page in some source and no
+    /// page `policy` admits outside `hidden_sources` (a soft-deleted row counts), in byte order.
+    pub fn read_hidden_page_slugs(
+        &self,
+        slugs: &[String],
+        hidden_sources: &[String],
+        policy: &PrivacyPolicy,
+    ) -> Result<Vec<String>> {
+        let read = self.read()?;
+        let wanted: BTreeSet<&str> = slugs.iter().map(String::as_str).collect();
+        let owner_only = OwnerOnlySources::read(&*read)?;
+        let mut all_hidden: BTreeMap<String, bool> = BTreeMap::new();
+        for page in all_pages(&*read)? {
+            if !wanted.contains(page.slug.as_str()) {
+                continue;
+            }
+            let hidden = hidden_sources.contains(&page.source_id)
+                || page_hidden_with(&*read, &page, policy, &owner_only)?;
+            *all_hidden.entry(page.slug).or_insert(true) &= hidden;
+        }
+        Ok(all_hidden
+            .into_iter()
+            .filter_map(|(slug, hidden)| hidden.then_some(slug))
+            .collect())
     }
 }
 

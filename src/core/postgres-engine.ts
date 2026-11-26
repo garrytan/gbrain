@@ -2867,6 +2867,10 @@ export class PostgresEngine implements BrainEngine {
   listAccessTokens() { return whenNotAborted(() => accessCredentials.listAccessTokens(this)); }
   readOpCheckpointKeys(op: string, fingerprint: string) { return whenNotAborted(() => this.engineSqlRead(exec => writeMiscImpl.readOpCheckpointKeys(unscopedExecutor(exec, 'write misc: page writes ran these unscoped through executeRaw'), op, fingerprint))); }
   async readStoredPageHead(sourceId: string, slug: string) { return pageMutationReads.readStoredPageHead(this, sourceId, slug); }
+  async readStoredPageLabels(sourceId: string, slug: string) { return pageMutationReads.readStoredPageLabels(this, sourceId, slug); }
+  async readMemberPageReadable(sourceId: string, slug: string, identity: readonly string[], satisfied: readonly string[], labelled: boolean) { return pageMutationReads.readMemberPageReadable(this, sourceId, slug, identity, satisfied, labelled); }
+  async readSlugFolderRules(sourceId: string, slug: string) { return pageMutationReads.readSlugFolderRules(this, sourceId, slug); }
+  async readHiddenPageSlugs(slugs: readonly string[], hiddenSources: readonly string[]) { return pageMutationReads.readHiddenPageSlugs(this, slugs, hiddenSources); }
   async readVersionSourcePath(versionId: number, pageId: number) { return pageMutationReads.readVersionSourcePath(this, versionId, pageId); }
   // Resumable-op checkpoint writes (engine-sql/op-checkpoint.ts) run on executeRawDirect and the purge on executeRaw, as op-checkpoint.ts ran them.
   writeOpCheckpointKeys(op: string, fingerprint: string, keys: string[]) { return opCheckpointImpl.writeOpCheckpointKeys(this, op, fingerprint, keys); }

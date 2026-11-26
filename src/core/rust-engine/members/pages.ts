@@ -60,6 +60,11 @@ export const PAGES_MEMBERS = {
   readPageTruthLead: 'pages',
   readStoredPageHead: 'pages',
   readVersionSourcePath: 'pages',
+  // the enforced member CLI's pre-write and output-guard reads (engine-sql/page-mutation-reads.ts)
+  readStoredPageLabels: 'pages',
+  readMemberPageReadable: 'pages',
+  readSlugFolderRules: 'pages',
+  readHiddenPageSlugs: 'pages',
   readPageSnapshotsBatch: 'pages',
   putPage: 'pages',
   findDuplicatePage: 'pages',
