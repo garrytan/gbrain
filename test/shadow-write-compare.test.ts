@@ -1412,9 +1412,40 @@ describe('S2c: every credit site settles exactly the weight it stands for', () =
     for (let i = 0; i < 25_000; i++) await (sampler.wrap('addTag', fn, ctx as never) as () => Promise<unknown>)();
     for (let i = 0; i < 4; i++) await (sampler.wrap('addTag', fn, ctx as never) as () => Promise<unknown>)(); // accepted lines now
     const carried = lines.map((l) => droppedWeight(Number(/"dropped":(\d+)/.exec(l)?.[1] ?? 0)));
-    expect(carried).toEqual([10_000, 10_000, 5_000, 0]); // was: the first line carried all 25,000 (weight 1 on the supervisor, 10,001 credited) and the rest was cleared
+    expect(carried).toEqual([10_000, 10_000, 5_000, 0, 0, 0]); // was [10000, 10000, 5000, 0]: the remainder waited for later sampled writes; now the first accepted send emits loss-only lines until nothing is left (earlier still: one line carried all 25,000 and the rest was cleared)
     expect(carried.reduce((a, b) => a + b, 0)).toBe(25_000); // every refused sample is carried once
     for (const l of lines) expect(sampleWeight(l)).toBe(1 + droppedWeight(Number(/"dropped":(\d+)/.exec(l)?.[1] ?? 0)));
+  });
+
+  test('F3: after the first accepted send every refused sample is carried (10,001 unsaid: 10,000 on the line and 1 on a loss-only line in the same flush), unsaid is empty, owed equals settled and nothing is outstanding', async () => {
+    const lines: string[] = []; let refuse = 10_001;
+    const sampler = createWriteSampler({ rate: 1, random: () => 0, active: () => true, send: (line) => { if (refuse > 0) { refuse--; return false; } lines.push(line); return true; } });
+    const fn = async () => 1; const ctx = { engine: {}, inTransaction: false, mayWrite: () => true };
+    const wrap = () => (sampler.wrap('addTag', fn, ctx as never) as () => Promise<unknown>)();
+    for (let i = 0; i < 10_001; i++) await wrap(); // every send refused, no journal: all 10,001 wait in the sampler
+    await wrap(); // one accepted send
+    const carriedAfterFirst = lines.map((l) => droppedWeight(Number(/"dropped":(\d+)/.exec(l)?.[1] ?? 0)));
+    expect(carriedAfterFirst).toEqual([10_000, 1]); // was [10000]: the remaining 1 sat only in memory until another sampled write
+    expect(lines[1]).toContain('"reason":"send_shed"'); expect(lines[1]!.startsWith('{"t":"write"')).toBe(true);
+    await wrap(); expect(/"dropped"/.test(lines[2]!)).toBe(false); // unsaid is empty: nothing more to carry
+    // the owed count (the supervisor's weight of every line) equals what the worker settles, and nothing is outstanding
+    const owed = lines.reduce((n, l) => n + sampleWeight(l), 0);
+    const r = rig(); r.owe(owed);
+    for (const l of lines) r.c.handle(JSON.parse(l) as WriteEvent, l.length);
+    await r.c.idle();
+    expect(r.settled()).toBe(owed);
+    expect(r.status().outstanding_sessions).toBeUndefined();
+    expect(readWriteTally(r.dir, r.epoch)!.uncomparable_by_reason.send_shed).toBe(10_002); // the 10,001 refused samples counted once, plus the loss-only line's own sample (an over-count of one uncomparable, never a loss)
+    // a refusal in the middle of the extra lines stops it: the rest stays for the next accepted send
+    const more: string[] = []; let accept = 1; refuse = 25_000;
+    const again = createWriteSampler({ rate: 1, random: () => 0, active: () => true, send: (line) => { if (refuse > 0) { refuse--; return false; } if (accept-- > 0) { more.push(line); return true; } accept = 0; return false; } });
+    const wrapAgain = () => (again.wrap('addTag', fn, ctx as never) as () => Promise<unknown>)();
+    for (let i = 0; i < 25_000; i++) await wrapAgain();
+    accept = 2; await wrapAgain(); // the main line and one extra are accepted, the second extra is refused
+    const raw = (l: string): number => Number(/"dropped":(\d+)/.exec(l)?.[1] ?? 0);
+    expect(more.map(raw)).toEqual([10_000, 10_000]); // each bounded
+    accept = 10; await wrapAgain(); // the next accepted send: the remainder (25,000 - 20,000) was kept, not cleared, by the refusal
+    expect(more.map(raw)).toEqual([10_000, 10_000, 5_000]);
   });
 
   test('F1: end to end, a line the serving process owed as 1 is settled as 1 by the child, whatever its dropped field says', async () => {

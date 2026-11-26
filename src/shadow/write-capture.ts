@@ -204,7 +204,15 @@ export function createWriteSampler(o: WriteSamplerOptions): WriteSampler {
       const carry = Math.min(unsaid.length, MAX_DROPPED); // a line carries at most what the weight rule counts; the rest waits for later lines, never cleared unsaid
       let line = JSON.stringify({ ...event, ...(carry ? { dropped: carry } : {}) }) + '\n';
       if (Buffer.byteLength(line) > MAX_SAMPLE_BYTES) line = JSON.stringify({ t: 'write', op: event.op, outcome: 'uncomparable', reason: 'sample_too_large', ...(carry ? { dropped: carry } : {}) }) + '\n';
-      if (o.send(line)) unsaid.splice(0, carry); else if (!o.lost?.('send_shed')) unsaid.push('send_shed');
+      if (o.send(line)) {
+        unsaid.splice(0, carry);
+        // What the line could not carry goes out now, in the same flush, as loss-only lines of at most MAX_DROPPED each (each is one more uncomparable sample plus its losses, owed and settled like any line): nothing is left waiting in memory for a later sampled write. A refusal stops it; the rest waits exactly as a refused send's does.
+        while (unsaid.length > 0) {
+          const more = Math.min(unsaid.length, MAX_DROPPED);
+          if (!o.send(JSON.stringify({ t: 'write', op: event.op, outcome: 'uncomparable', reason: 'send_shed', dropped: more }) + '\n')) break;
+          unsaid.splice(0, more);
+        }
+      } else if (!o.lost?.('send_shed')) unsaid.push('send_shed');
     } catch { /* the shadow never fails a write */ }
   };
   const uncomparable = (op: string, reason: string): void => send({ t: 'write', op, outcome: 'uncomparable', reason });
