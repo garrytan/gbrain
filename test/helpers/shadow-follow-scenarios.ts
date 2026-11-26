@@ -3,7 +3,7 @@
  * and test/e2e/shadow-follow.test.ts (Postgres). Each runs on a seeded store with the real follower, follow child
  * and reconciler (test/helpers/follow-rig.ts) and the real Rust addon.
  */
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
@@ -122,6 +122,34 @@ export function defineFollowScenarios(ctx: FollowScenarioContext): void {
         expect(pass.repaired_rows).toBe(0);
         expect(pass.follower_misses).toBe(0);
         expect(pass.repaired_by_relation).toEqual({});
+      } finally { await r.close(); }
+    }, 90_000);
+
+    test('a probe that fails in a dirty pass for purge tombstones clears the cached verdict and keeps coverage invalid until a probe succeeds', async () => {
+      const r = await rig();
+      try {
+        expect(status(r).fingerprints.probe.state).toBe('pass');
+        await r.wrapped.executeRaw(`INSERT INTO fact_purges (source_id, visibility, subject, fact_hash, actor) VALUES ('default', 'world', '*', gbrain_fact_fingerprint('Bob owes Acme money'), 'owner')`);
+        await r.settle();
+        expect(status(r).follower.coverage_watermark).toMatchObject({ valid: false, invalidated_reason: 'relation_dirty' });
+        await tick();
+        const failing = spyOn(r.reconciler, 'probe').mockRejectedValueOnce(Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' }));
+        try {
+          const failed = await r.reconciler.run('dirty', ['fact_purges']);
+          expect(failed.error).toBe('probe:57014');
+        } finally { failing.mockRestore(); }
+        // The old passing verdict no longer stands, and the rows are not covered.
+        expect(status(r).fingerprints.probe.state).toBe('not_run');
+        expect(status(r).follower.coverage_watermark.valid).toBe(false);
+        // A later pass whose probe succeeds records a fresh verdict and restores coverage: nothing is wedged.
+        await tick();
+        const again = await r.reconciler.run('dirty', ['fact_purges']);
+        expect(again.error).toBeUndefined();
+        // The fresh verdict follows the host: a host whose lower() or whitespace rules differ from PGLite's fails it while a tombstone exists.
+        const probe = status(r).fingerprints.probe;
+        expect(probe.state).toBe(probe.differing_code_points_total > 0 ? 'fail' : 'pass');
+        expect(probe.checked_at).not.toBeNull();
+        expect(status(r).follower.coverage_watermark.valid).toBe(true);
       } finally { await r.close(); }
     }, 90_000);
 
