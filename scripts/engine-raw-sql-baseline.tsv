@@ -69,7 +69,6 @@ src/commands/frontmatter-install-hook.ts	execute_raw	3
 src/commands/git.ts	execute_raw	1	GST-2988 PR 2 gbrain git redact-unpushed: reads sources.local_path for --source; branched before the #9641 ratchet; no typed engine method for a source's local path exists yet
 src/commands/google-attachments.ts	execute_raw	3
 src/commands/google-setup-tail.ts	execute_raw	1
-src/commands/guests.ts	execute_raw	1
 src/commands/import-calls.ts	execute_raw	3	GST-2904 (open before #9641): reads the committed call page's id, frontmatter readers and whether a page_label_guards row exists, locked FOR UPDATE inside the maintenance transaction that raises the guard; no typed engine method exists yet
 src/commands/import.ts	execute_raw	3
 src/commands/init-prefer-postgres.ts	execute_raw	5

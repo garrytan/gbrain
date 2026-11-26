@@ -115,7 +115,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'listFenceHoldRows', 'listFenceRetireCandidates', 'listFenceRewriteRows', 'listFenceRowClaims', 'listFenceRowTrust',
   'listFenceRowGroups', 'listFenceRowSupersession', 'listFencedFactsOfMissingPages', 'listFileRowsForVerify',
   'listForcedCutSeqs', 'listFreshExtractionOutcomes', 'listGatedMirrorRequests', 'listGitEffectsCarryingReason',
-  'listGuardedTakeRows', 'listGuestSourceIds', 'listHeldFactRows', 'listHeldFactSlots', 'listHeldFenceCells',
+  'listGuardedTakeRows', 'listGuestSourceIds', 'hasGuestSourceRow', 'listHeldFactRows', 'listHeldFactSlots', 'listHeldFenceCells',
   'listHeldFenceFactRows', 'listHeldFenceTakeRows', 'listHeldMoveRows', 'listHeldRows', 'listHeldWideningFactIds',
   'listHostConsumerRows', 'listInactiveTakeIds', 'listJobAttachmentNames', 'listJobAttachments', 'listJobPage',
   'listJobs', 'listJunkEntityHubs', 'listKnownEdgeProposals', 'listLaterPersistenceRequests',

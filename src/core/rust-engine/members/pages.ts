@@ -247,6 +247,8 @@ export const PAGES_MEMBERS = {
   readBeliefCoverageEvents: 'belief_ledger',
   hasCompanyBrainReceipt: 'sources',
   readGuestSourceRow: 'sources',
+  // Not served: the store keeps no guest_sources, so a Rust brain refuses naming guest_sources (row 32m-3).
+  hasGuestSourceRow: 'guest_sources',
   listGuestSourceIds: 'sources',
   hasGuestSource: 'sources',
   getSourceStrictness: 'sources',

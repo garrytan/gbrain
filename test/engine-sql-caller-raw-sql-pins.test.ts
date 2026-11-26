@@ -132,6 +132,11 @@ interface Pin {
 }
 
 const PINS: Pin[] = [
+  {
+    from: 'src/commands/guests.ts:140 runGrantOwnerClients, the guest-source check (at a597e7a6c6)',
+    case: { method: 'hasGuestSourceRow', variant: 'default', run: e => e.hasGuestSourceRow('guests') },
+    texts: ['SELECT 1 FROM guest_sources WHERE source_id = $1'],
+  },
   // The refusal-swallow sites (lane 8's triage) whose statements moved verbatim into typed members, at b7b18e5ab3.
   {
     from: 'src/commands/extract-explain.ts:169 the kind rollup (at b7b18e5ab3)',

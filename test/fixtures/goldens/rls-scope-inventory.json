@@ -9812,6 +9812,7 @@
         "hasFenceAbsentHold": "none",
         "hasFileWithHash": "none",
         "hasGuestSource": "none",
+        "hasGuestSourceRow": "none",
         "hasHiddenFactCopy": "none",
         "hasLabelledOnlyMember": "none",
         "hasLabelledOnlyMemberAmong": "none",

@@ -1639,6 +1639,8 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   hasCompanyBrainReceipt(sourceId: string): Promise<boolean>;
   /** The source's guest_sources row and whether row-level security hides guest_sources; throws the missing-table error on an old schema. */
   readGuestSourceRow(sourceId: string): Promise<GuestSourceLookupRow>;
+  /** Whether guest_sources holds a row for the source (the record `guests init` writes). A Rust brain keeps none and refuses (capability guest_sources). */
+  hasGuestSourceRow(sourceId: string): Promise<boolean>;
   /** The guest sources (config `guest: true` or a guest_sources row) among `sourceIds`, in no particular order. */
   listGuestSourceIds(sourceIds: readonly string[]): Promise<string[]>;
   /** Whether any source is a guest source. */
