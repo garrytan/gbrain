@@ -46,8 +46,9 @@ adopted an attacker's false claim in 10.2% of later sessions, against 2.8% with 
 ## Access control per page and folder
 
 **What it does.** A page can carry `readable_by` with members or groups, and a folder rule can cover a whole folder. Each
-member's credential is bound to that member, and search, reads, links and facts all honour it, so a restricted page
-never reaches that member's agent. Guides: [access designations](access-designations.md),
+member's credential is bound to that member, and search, reads, links and facts all honour it, so gbrain never hands a
+restricted page to that member's agent. The page is still an ordinary Markdown file in the brain's git repository, so
+anyone who can clone the repository can read it: keep repository access to the people every page is meant for. Guides: [access designations](access-designations.md),
 [company brain](../tutorials/company-brain.md).
 
 **The simpler alternative.** Separate folders or separate brains per audience, or filtering results after search.

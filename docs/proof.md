@@ -6,7 +6,8 @@ on resisting planted false claims. You should give your agent gbrain's `query`, 
 depend on notes and old conversations.
 
 We also learned that a simpler setup is sometimes as good or better: pasting a whole chat history into the prompt
-matches gbrain when the history fits, and an agent that greps the raw files beat gbrain on very long chat histories.
+showed no measurable difference from gbrain on LongMemEval and beat it on LoCoMo, and an agent that greps the raw files
+beat gbrain on very long chat histories.
 You should test those baselines on your own workload before choosing.
 
 Every number below comes from [gbrain-evals](https://github.com/garrytan/gbrain-evals), gbrain's public eval
