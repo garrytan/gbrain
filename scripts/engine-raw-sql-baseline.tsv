@@ -9,7 +9,6 @@ src/commands/access-read-by-nobody.ts	execute_raw	1
 src/commands/access-rules.ts	execute_raw	4
 src/commands/access.ts	execute_raw	1
 src/commands/agent-logs.ts	execute_raw	1
-src/commands/agent-register.ts	execute_raw	1
 src/commands/agent-register.ts	sql_template	4
 src/commands/agent.ts	execute_raw	1
 src/commands/auth-read-shared.ts	execute_raw	2	reads sources (ids that exist and are not archived) and oauth_clients.member_id for the auth CLI read-set lines (GST-2898 read-shared switch, #9590, open before this ratchet landed); no typed engine method exists yet

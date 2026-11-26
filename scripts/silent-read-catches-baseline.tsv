@@ -23,7 +23,6 @@ src/cli/main.ts#parseOpArgs	catch_empty	1
 src/cli/main.ts#printIdentityBannerBestEffort	catch_empty	1
 src/cli/migrations-notice.ts#pendingUpgradeMigrationsNotice	catch_empty	1
 src/cli/op-notices.ts#cliBrainKey	catch_empty	1
-src/commands/agent-register.ts#runAgentRegister	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/commands/apple-contacts.ts#runAppleContacts	promise_catch_empty	9	raised 7->9: landed on master (#9950) after this guard was written; known debt, fix by a typed degraded marker
 src/commands/apply-migrations-schema.ts#schemaAheadRefusal	catch_empty	1
 src/commands/auth.ts#registerClient<anon@1>	promise_catch_empty	1
