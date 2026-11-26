@@ -348,6 +348,9 @@ fn steady(key: &[u8], value: &[u8]) -> Vec<u8> {
 #[test]
 fn every_record_the_old_seed_wrote_matches_this_builds_seed() {
     let (old, new) = (old_store(), new_store());
+    // This build's writes leave keyword postings pending until a fold (store format 13); fold them
+    // so both stores hold the postings themselves.
+    new.write(|w| crate::keyword::fold_pending(w)).unwrap();
     let old = dump(&*old.read().unwrap());
     let new = dump(&*new.read().unwrap());
     let keep = |records: Vec<(Vec<u8>, Vec<u8>)>| -> std::collections::BTreeMap<Vec<u8>, Vec<u8>> {

@@ -9,7 +9,7 @@ use serde_json::json;
 use super::{BATCH_PAGES, build_batch, reset};
 use crate::error::{FORMAT_UNKNOWN, INVALID_STATE, StoreError};
 use crate::keys;
-use crate::keyword::index::tests::{corpus, members, opts, postings, put, same};
+use crate::keyword::index::tests::{members, opts, postings, put, same};
 use crate::keyword::index::{INDEX_VERSION, IndexState, read_state};
 use crate::kv::{Kv, KvRead};
 use crate::pages::all_pages;
@@ -22,6 +22,15 @@ fn open(kv: &Arc<dyn Kv>, builder: bool) -> crate::error::Result<Store> {
         ..OpenOptions::default()
     };
     Store::open_kv(kv.clone(), Arc::new(SystemEnv), options)
+}
+
+/// The shared corpus with every pending record folded, so the stored postings are the ones a
+/// build writes directly.
+fn corpus(store: &Store) {
+    crate::keyword::index::tests::corpus(store);
+    store
+        .write(|w| crate::keyword::pending::fold_all(w))
+        .unwrap();
 }
 
 fn state(store: &Store) -> IndexState {

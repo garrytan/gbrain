@@ -73,8 +73,8 @@ fn the_registry_numbers_every_format_once_in_order() {
             "format numbers must be unique and run 1, 2, 3, … with no gap"
         );
         assert!(
-            row.status == "shipped" || row.status == "reserved",
-            "format {} has status {:?}; use shipped or reserved",
+            row.status == "shipped" || row.status == "reserved" || row.status == "allotted",
+            "format {} has status {:?}; use shipped, reserved or allotted (a number the trunk holds for another lane's branch)",
             row.format,
             row.status
         );

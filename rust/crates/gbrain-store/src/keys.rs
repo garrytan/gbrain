@@ -189,6 +189,9 @@ pub const KW_TITLE_TRIGRAM: u8 = 0x03;
 pub const KW_BASENAME: u8 = 0x04;
 pub const KW_CHUNK_FORWARD: u8 = 0x05;
 pub const KW_PAGE_FORWARD: u8 = 0x06;
+pub const KW_CHUNK_PENDING: u8 = 0x07;
+pub const KW_PAGE_PENDING: u8 = 0x08;
+pub const KW_PENDING_COUNT: u8 = 0x09;
 
 /// `R kind len(2) text`: the start of the postings of one lexeme or basename. The length prefix
 /// keeps one text's range apart from a longer text that starts with it.
@@ -243,6 +246,27 @@ pub fn page_forward(page_id: u64) -> Vec<u8> {
     let mut key = vec![TRIGRAM, KW_PAGE_FORWARD];
     key.extend_from_slice(&page_id.to_be_bytes());
     key
+}
+
+/// `R 0x07 page_id chunk_index`: a chunk's postings written since the last fold (store format 13,
+/// `keyword/pending.rs`).
+pub fn chunk_pending(page_id: u64, index: u32) -> Vec<u8> {
+    let mut key = vec![TRIGRAM, KW_CHUNK_PENDING];
+    key.extend_from_slice(&page_id.to_be_bytes());
+    key.extend_from_slice(&index.to_be_bytes());
+    key
+}
+
+/// `R 0x08 page_id`: a page's postings written since the last fold.
+pub fn page_pending(page_id: u64) -> Vec<u8> {
+    let mut key = vec![TRIGRAM, KW_PAGE_PENDING];
+    key.extend_from_slice(&page_id.to_be_bytes());
+    key
+}
+
+/// `R 0x09`: how many pending records exist (8-byte little-endian i64).
+pub fn keyword_pending_count() -> Vec<u8> {
+    vec![TRIGRAM, KW_PENDING_COUNT]
 }
 
 /// `P source \0 slug`

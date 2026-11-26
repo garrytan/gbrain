@@ -123,8 +123,8 @@ exists, every
 write handle chain in `lib.rs` `write_chain`): `K` chunk records mark the chunk; `P` page records mark the page, with
 the record stored before the statement's first write of the key; `M page_search_timeline/<id>`, `b 0x05 page_id` and
 `E page_id ...` mark the page. Other keys mark nothing. The flush at the end of each OCC attempt or bound statement
-resolves the touched set and rebuilds each touched document's postings through the inner handle
-(`keyword/index.rs` `reindex_chunk`, `reindex_page`). The wrapper forwards `allocate`, `raise_counter`, `add_i64` and
+resolves the touched set and stages each touched document's postings through the inner handle
+(`keyword/index.rs` `stage_chunk`, `stage_page`; pending records below). The wrapper forwards `allocate`, `raise_counter`, `add_i64` and
 `counter_below`, and so must every wrapper inside it.
 
 The postings (`keyword/index.rs`, numbers big-endian, `len` two bytes):
@@ -136,10 +136,26 @@ The postings (`keyword/index.rs`, numbers big-endian, `len` two bytes):
 | `R 0x03 len trigram page_id` | empty: one raw pg_trgm trigram of the page's title (`trgm.rs`, CRC-compacted for multibyte characters), soft-deleted pages included |
 | `R 0x04 len basename page_id` | empty: the page's slug basename, for the handle arm (a basename over 65,535 bytes has none) |
 | `R 0x05 page_id chunk_index`, `R 0x06 page_id` | the forward record: the postings the document owns, `kind(1) len(2) text` each |
+| `R 0x07 page_id chunk_index`, `R 0x08 page_id` | a pending record (store format 13): the document's whole posting set as the last write left it, `kind(1) len(2) text vlen(2) value` each; a document left with no postings has no pending record |
+| `R 0x09` | the pending count: how many pending records exist (an `add_i64` counter) |
 
 The postings are the output of the same `chunk_vector` and page vector code the scan reads, so the store has one
 tokenizer. A vector past the tsvector size cap has no postings and matches nothing, as in the scan. A reindex deletes
 the postings the forward record lists and the new vector lacks, and writes only the entries that changed.
+
+Pending records (`keyword/pending.rs`, store format 13). The postings are keyed by text, so rewriting one page's
+postings used to put or delete a few hundred keys spread over the whole record file, and the copy-on-write tree
+rewrote one leaf per key before the write's disk sync. A write instead stages each touched document: it writes the
+document's pending record, unless the document's effective postings already equal the new set, and adds one to the
+pending count for a new record. A document left with no postings (deleted, purged or emptied) has its postings deleted
+at once and its pending record dropped, so a purge leaves none of its text behind; until the fold, the terms an edit
+removed stay in the stored postings, hidden from every read. A document's effective postings are its pending set when it has one, else its
+postings. The write that brings the count to 64 also folds every pending record into the postings and forward
+records (a reindex, as above) and deletes the pending records, in the same transaction. Every reader of the postings
+(`Postings::read`, the basename and title-trigram reads) drops the pending documents from the posting lists and adds
+their pending entries, so each member answers exactly as when every write rewrote its postings. A build batch writes a
+document's postings directly and drops its pending record. `verify` checks a pending document's set against the set
+rebuilt from its records, and the pending count against the number of pending records.
 
 The postings serve a read when the state in its snapshot is complete and of `INDEX_VERSION`, and
 `GBRAIN_RUST_KEYWORD_SCAN=1` is not set. A member reads the postings of every lexeme of its match, rank and phrase

@@ -25,12 +25,15 @@ use std::time::Duration;
 use serde::Serialize;
 
 use super::index::{
-    INDEX_VERSION, IndexState, expected_records, read_state, reindex_page_and_chunks,
+    Doc, INDEX_VERSION, IndexState, expected_postings, expected_records, read_state, record_doc,
+    reindex_page_and_chunks,
 };
+use super::pending::{Overlay, pending_count};
 use crate::error::{FORMAT_UNKNOWN, Result, StoreError};
 use crate::keys;
 use crate::kv::{Kv, KvRead, KvWrite, scan_prefix};
 use crate::{Store, put_json};
+use std::collections::BTreeSet;
 
 /// Pages one build batch reindexes.
 pub(crate) const BATCH_PAGES: usize = 256;
@@ -208,6 +211,18 @@ impl From<IndexState> for KeywordIndexState {
 pub(crate) fn verify(read: &dyn KvRead, max_pages: Option<u64>) -> Result<KeywordIndexReport> {
     let state = read_state(read)?;
     let (mut pages, mut expected, mut missing, mut changed) = (0u64, 0u64, 0u64, 0u64);
+    // Documents with a pending set: their stored postings are the last fold's, so the pending set
+    // is what must match (`pending.rs`).
+    let chunk_pending = Overlay::read(read, true)?;
+    let page_pending = Overlay::read(read, false)?;
+    let is_pending = |(chunk, doc): (bool, Doc)| {
+        if chunk {
+            chunk_pending.holds(doc)
+        } else {
+            page_pending.holds(doc)
+        }
+    };
+    let mut skipped = 0u64;
     let mut complete_walk = true;
     let mut ids = Vec::new();
     scan_prefix(read, &[keys::PAGE_ID], false, &mut |k, _| {
@@ -220,10 +235,14 @@ pub(crate) fn verify(read: &dyn KvRead, max_pages: Option<u64>) -> Result<Keywor
         }
         true
     })?;
-    for id in ids {
+    for &id in &ids {
         pages += 1;
         for (key, value) in expected_records(read, id)? {
             expected += 1;
+            if record_doc(&key).is_some_and(is_pending) {
+                skipped += 1;
+                continue;
+            }
             match read.get(&key)? {
                 None => missing += 1,
                 Some(stored) if stored != value => changed += 1,
@@ -231,14 +250,36 @@ pub(crate) fn verify(read: &dyn KvRead, max_pages: Option<u64>) -> Result<Keywor
             }
         }
     }
+    let walked: BTreeSet<u64> = ids.iter().copied().collect();
+    for (chunk, overlay) in [(true, &chunk_pending), (false, &page_pending)] {
+        for doc in overlay.docs() {
+            if !complete_walk && !walked.contains(&doc.0) {
+                continue;
+            }
+            if overlay.get(doc) != Some(expected_postings(read, chunk, doc)?.as_slice()) {
+                changed += 1;
+            }
+        }
+    }
+    if pending_count(read)? != (chunk_pending.len() + page_pending.len()) as i64 {
+        changed += 1;
+    }
     let orphan = if complete_walk {
         let state_key = keys::keyword_index_state();
         let mut stored = 0u64;
         scan_prefix(read, &[keys::TRIGRAM], false, &mut |k, _| {
-            stored += u64::from(k != state_key.as_slice());
+            let bookkeeping = k == state_key.as_slice()
+                || matches!(
+                    k.get(1),
+                    Some(
+                        &(keys::KW_CHUNK_PENDING | keys::KW_PAGE_PENDING | keys::KW_PENDING_COUNT)
+                    )
+                );
+            let stale = record_doc(k).is_some_and(is_pending);
+            stored += u64::from(!bookkeeping && !stale);
             true
         })?;
-        Some(stored - (expected - missing))
+        Some(stored - (expected - missing - skipped))
     } else {
         None
     };

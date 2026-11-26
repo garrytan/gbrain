@@ -40,9 +40,17 @@ use std::path::Path;
 ///   access member links, whose scans started on it (`access_key_split.rs`). The upgrade moves the
 ///   one record in the one transaction, or refuses a record under `x 0x04` it cannot classify with
 ///   `shadow_reseed_required`. A build that keeps both kinds at `x 0x04` refuses a format-8 brain.
-pub const FORMAT_VERSION: u32 = 8;
+/// - 13 (the trunk's allotment; formats 9 to 12 belong to other lanes and are not opened by this
+///   build): a write keeps one pending record per document it changed instead of rewriting that
+///   document's keyword postings, and a later write folds the pending records into the postings
+///   (`keyword/pending.rs`); every keyword read applies the pending records. The upgrade writes no
+///   record: a format-8 brain has no pending record. A build that stops at format 8 would read the
+///   postings without the pending records, so it refuses a format-13 brain. The trunk may
+///   renumber this at merge by landing order: change this constant only; every test and the
+///   upgrade read it.
+pub const FORMAT_VERSION: u32 = 13;
 /// Every format version this build can open. Addon exports list these as `formatVersions`.
-pub const FORMAT_VERSIONS: &[u32] = &[1, 2, 3, 4, 5, 6, 7, FORMAT_VERSION];
+pub const FORMAT_VERSIONS: &[u32] = &[1, 2, 3, 4, 5, 6, 7, 8, FORMAT_VERSION];
 
 pub const FORMAT_FILE: &str = "FORMAT";
 pub const RECORDS_FILE: &str = "records.redb";

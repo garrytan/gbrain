@@ -25,8 +25,9 @@
 //! transaction's statement, so a flush error fails the statement and its writes and postings go
 //! together. `Store::write` makes a fresh wrapper for each OCC attempt and each bound statement.
 //!
-//! The flush rebuilds the postings of each touched document (`index.rs`) through the inner handle,
-//! so the postings never mark a document themselves. While the index is off the wrapper reads
+//! The flush stages the postings of each touched document as one pending record (`pending.rs`,
+//! store format 13) through the inner handle, and folds every pending record into the postings
+//! once enough are pending, so the postings never mark a document themselves. While the index is off the wrapper reads
 //! nothing and tracks nothing.
 
 use crate::error::{INVALID_STATE, Result, StoreError};
@@ -131,8 +132,9 @@ impl<'a> IndexingWriter<'a> {
         Ok(Some(touched))
     }
 
-    /// Ends the statement's index work (see the module docs): rebuilds the postings of every
-    /// touched chunk and page from the records as the statement leaves them.
+    /// Ends the statement's index work (see the module docs): stages the postings of every touched
+    /// chunk and page from the records as the statement leaves them (`pending.rs`), then folds
+    /// every pending record once enough are pending.
     pub(crate) fn flush(mut self) -> Result<()> {
         let Some(touched) = self.resolve()? else {
             return Ok(());
@@ -140,12 +142,12 @@ impl<'a> IndexingWriter<'a> {
         #[cfg(test)]
         tests::FLUSHED.with(|flushed| flushed.borrow_mut().push(touched.clone()));
         for &(page_id, index) in &touched.chunks {
-            super::index::reindex_chunk(self.inner, page_id, index)?;
+            super::index::stage_chunk(self.inner, page_id, index)?;
         }
         for &page_id in &touched.pages {
-            super::index::reindex_page(self.inner, page_id)?;
+            super::index::stage_page(self.inner, page_id)?;
         }
-        Ok(())
+        super::pending::maybe_fold(self.inner)
     }
 }
 
