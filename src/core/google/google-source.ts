@@ -425,6 +425,7 @@ async function walkGmailWindow(g: GmailSweep, floorKey: 'gmail_backfill_floor_ms
   let spanMs = floorMs - lowerMs;
   let bankedFirst = false;
   let earlyBankTries = 0;
+  let limited = false;
   while (floorMs > lowerMs) {
     if (signal?.aborted) return 'aborted';
     const afterMs = Math.max(lowerMs, floorMs - spanMs);
@@ -441,12 +442,14 @@ async function walkGmailWindow(g: GmailSweep, floorKey: 'gmail_backfill_floor_ms
     let batchFailed = false;
     // The listing's `before:` bound is whole seconds, so a bank proves and saves the start of the oldest thread's second:
     // every thread in that second is settled, and the next listing does not name the banked thread again.
+    // A proof only spares the next sweep a re-walk, so a listing that fails or is cut short proves nothing and the walk
+    // goes on. After a usage limit it gets ABORT_PROOF_MS, and none on gbrain.io, whose allowance is spent for the account.
     const bank = async (oldestMs: number): Promise<boolean> => {
       const atMs = Math.floor(oldestMs / 1000) * 1000;
-      if (atMs >= floorMs) return false;
-      const below = signal?.aborted
-        ? await list(atMs, floorMs, WINDOW_LIST_PAGES, AbortSignal.timeout(ABORT_PROOF_MS)).catch(() => null)
-        : await list(atMs, floorMs, WINDOW_LIST_PAGES);
+      if (atMs >= floorMs || (limited && !gmail.supportsHistory)) return false;
+      const bounded = signal?.aborted || limited;
+      const proofSignal = bounded ? AbortSignal.any([AbortSignal.timeout(ABORT_PROOF_MS), ...(signal && !signal.aborted ? [signal] : [])]) : signal;
+      const below = await list(atMs, floorMs, WINDOW_LIST_PAGES, proofSignal).catch(() => null);
       if (!below?.complete || !below.ids.every(m => settled.has(m.threadId))) return false;
       state[floorKey] = floorMs = atMs;
       await saveGoogleState(deps, state);
@@ -472,7 +475,7 @@ async function walkGmailWindow(g: GmailSweep, floorKey: 'gmail_backfill_floor_ms
           // A rate limit is per-user: defer the rest of the batch.
           if (!batchFailed) landedOldest = batchOldest;
           batchFailed = true;
-          if (outcome.kind === 'rate_limited') break;
+          if (outcome.kind === 'rate_limited') { limited = true; break; }
         } else settled.add(tid);
       }
       if (deps.managed && signal?.aborted) break;

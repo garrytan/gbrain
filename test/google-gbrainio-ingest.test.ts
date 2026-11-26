@@ -432,3 +432,18 @@ test('gbrain.io source: a usage limit on the profile read stops the run as a usa
     expect(io.shows()).toEqual([]);
   }
 }), 180_000);
+
+test('gbrain.io source: after a usage limit the sweep sends no more searches, not even a checkpoint proof', async () => withEnv(env, async () => {
+  for (const engine of engines) {
+    const config = gbrainioConfig();
+    const f = await source(engine, config);
+    const cfg = parseGoogleSourceConfig(config, f.dir);
+    const limit = { exitCode: 1, stdout: '', stderr: 'daily usage limit reached' };
+    const io = fakeGbrainio(MAIL, { override: (args) => args[2] === 'thread' && args[4] === 'c3c3c3c3c3c3c300' ? limit : null });
+    const limited = await runGoogleSync(engine, f.id, cfg, options);
+    expect((limited as { stopped_on?: string }).stopped_on).toBe('usage_limit');
+    const stop = io.calls.findIndex((a) => a[2] === 'thread' && a[4] === 'c3c3c3c3c3c3c300');
+    expect(stop).toBeGreaterThan(0);
+    expect(io.calls.slice(stop + 1).filter((a) => a[3] === 'search')).toEqual([]);
+  }
+}), 120_000);

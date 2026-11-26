@@ -202,5 +202,17 @@ for (const kind of testBackends()) {
       expect(operations.filter(op => op.mutating && /version|history/.test(op.name)).map(op => op.name).sort()).toEqual(['revert_version']);
       expect(CLI_COMMANDS.find(c => c.name === 'pages')?.thinClient).toBe('refuse');
     });
+    test('the preview prints an apply command that pastes into a shell as the same arguments', async () => {
+      await history(`notes/quoted-${kind}`, ['First.', 'Second.', 'Third.'], 'meeting notes');
+      const out: string[] = [];
+      _resetCliExitVerdictForTests();
+      const write = spyOn(process.stdout, 'write').mockImplementation(((chunk: string | Uint8Array) => { out.push(String(chunk)); return true; }) as never);
+      setStdoutCapture(text => { out.push(text); });
+      try { await runPages(engine, ['prune-history', '--type', 'meeting notes', '--keep', '1']); } finally { setStdoutCapture(null); write.mockRestore(); }
+      _resetCliExitVerdictForTests();
+      process.exitCode = 0;
+      const hash = /plan_hash: (ph_[0-9a-f]+)/.exec(out.join(''))?.[1];
+      expect(out.join('')).toContain(`Apply, only after the user agrees: gbrain pages prune-history --type 'meeting notes' --keep 1 --yes --expect ${hash}`);
+    });
   });
 }

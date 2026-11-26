@@ -30,7 +30,7 @@ const config = { ...googleConfig, g_services: 'gmail', g_history_days: 400 };
 /** 100 archive threads, 40..139 days old: one listing, four 25-thread batches. */
 const OLD = Array.from({ length: 100 }, (_, i) => ({ tid: `17bb00000000a${String(i).padStart(3, '0')}`, ms: NOW_MS - (40 + i) * DAY }));
 
-function gmail(account: string, opts: { fetchMs?: number; onThread?: (tid: string, n: number) => void | Promise<void>; rateLimit?: string } = {}) {
+function gmail(account: string, opts: { fetchMs?: number; onThread?: (tid: string, n: number) => void | Promise<void>; rateLimit?: string; failList?: (after: number) => boolean } = {}) {
   const fetched: string[] = [];
   const fetcher = async (url: string) => {
     const u = new URL(url);
@@ -40,6 +40,7 @@ function gmail(account: string, opts: { fetchMs?: number; onThread?: (tid: strin
       const q = u.searchParams.get('q') ?? '';
       const after = Number(/after:(\d+)/.exec(q)?.[1] ?? 0);
       const before = Number(/before:(\d+)/.exec(q)?.[1] ?? Infinity);
+      if (opts.failList?.(after)) return json({ error: { message: 'listing refused' } }, 400);
       const hits = OLD.filter(m => m.ms / 1000 >= after && m.ms / 1000 < before).sort((a, b) => b.ms - a.ms);
       return json({ messages: hits.map((m, i) => ({ id: `18d2f4a9b3d2${String(i).padStart(4, '0')}`, threadId: m.tid })) });
     }
@@ -289,5 +290,19 @@ test('#10473: a managed sweep cut off by its deadline inside its first batch sti
     expect((await runGoogleSync(engine, f.id, cfg, options, next.fetcher)).status).not.toBe('partial');
     expect(next.fetched[0]).toBe(OLD[1].tid);
     expect((await gmailState(engine, f.id))?.gmail_backfill_done).toBe(true);
+  }
+}), 240_000);
+
+test('#10473: a checkpoint proof listing that fails never stops the sweep; the walk goes on and the backfill finishes', async () => withEnv(env, async () => {
+  for (const engine of engines) {
+    const f = await boundSource(engine, config);
+    const cfg = parseGoogleSourceConfig(config, f.dir);
+    // Every listing that starts at a thread's own second is a proof; the window listings start at the history cutoff.
+    const proofs = new Set(OLD.map(o => Math.floor(o.ms / 1000)));
+    const sweep = gmail(cfg.account, { failList: after => proofs.has(after) });
+    expect((await runGoogleSync(engine, f.id, cfg, options, sweep.fetcher)).status).not.toBe('partial');
+    await settleConnectorWrites(engine, f.id);
+    expect((await gmailState(engine, f.id))?.gmail_backfill_done).toBe(true);
+    expect([...new Set(sweep.fetched)].sort()).toEqual(OLD.map(o => o.tid).sort());
   }
 }), 240_000);

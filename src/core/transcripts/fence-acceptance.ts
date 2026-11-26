@@ -10,7 +10,8 @@
  * calendar and GitHub pages, and any page a remote writer or another local writer last wrote, stay for per-page
  * review. An acceptance binds the page id and a fingerprint of the page's indexed fence rows (fact, take and link ids),
  * and the check re-reads the provenance each run, so a new row, a removed row or a later non-importer write puts the
- * page back on the list. The record is the config row `transcripts.fence_acceptance` (no operation writes config),
+ * page back on the list. A write with no request keeps the importer's first-write stamp, so on that path the stamp
+ * counts only while no later write moved the page past it (`ingested_at >= updated_at`, both the write's own server time). The record is the config row `transcripts.fence_acceptance` (no operation writes config),
  * and nothing in a page or its rows changes, so repo-less and repo-backed brains behave the same.
  */
 import type { BrainEngine } from '../engine.ts';
@@ -18,6 +19,11 @@ import { computePlanHash } from '../consent.ts';
 import { IMPORTER_INGESTED_VIA, importerWroteLiveRevisionSql } from './importer-provenance.ts';
 
 export const FENCE_ACCEPTANCE_KEY = 'transcripts.fence_acceptance';
+
+/** A fact's or take's fields that maintenance rewrites without changing the row (the managed writer guard's physical projections). */
+const PROJECTION_KEYS = `ARRAY['embedding','embedded_at','embedding_model','embedded_text_hash','last_retrieved_at','retrieval_count','write_origin',
+  'write_request_id','write_principal_kind','write_principal_id','last_write_request_id','last_write_principal_kind','last_write_principal_id',
+  'last_written_at','created_at','updated_at']`;
 
 /** What the doctor check lists per page: location and counts, never a cell value. */
 export interface OutsideFenceItem { source_id: string; slug: string; type: string; facts: number; world_facts: number; takes: number; links: number }
@@ -31,11 +37,12 @@ export async function listOutsideFencePages(engine: BrainEngine): Promise<Outsid
     `SELECT p.id AS page_id, p.source_id, p.slug, p.type, sum(x.facts)::int AS facts, sum(x.world_facts)::int AS world_facts,
             sum(x.takes)::int AS takes, sum(x.links)::int AS links, md5(string_agg(x.k, ',' ORDER BY x.k)) AS fingerprint,
             bool_and(p.type = 'conversation' AND p.frontmatter ? 'transcript_import' AND ${importerWroteLiveRevisionSql('p', 'r', '$1')}
-                     AND COALESCE(r.intent->>'ingested_via', p.ingested_via) = $1) AS imported_transcript
-       FROM (SELECT fp.id AS page_id, 1 AS facts, CASE WHEN f.visibility = 'world' THEN 1 ELSE 0 END AS world_facts, 0 AS takes, 0 AS links, 'f' || f.id || ':' || md5((to_jsonb(f) - 'embedding' - 'embedded_at' - 'created_at' - 'updated_at' - 'consolidated_at' - 'consolidated_into')::text) AS k
+                     AND COALESCE(r.intent->>'ingested_via', p.ingested_via) = $1
+                     AND (p.revision_write_request_id IS NOT NULL OR p.ingested_at >= p.updated_at)) AS imported_transcript
+       FROM (SELECT fp.id AS page_id, 1 AS facts, CASE WHEN f.visibility = 'world' THEN 1 ELSE 0 END AS world_facts, 0 AS takes, 0 AS links, 'f' || f.id || ':' || md5((to_jsonb(f) - ${PROJECTION_KEYS} - 'consolidated_at' - 'consolidated_into')::text) AS k
                FROM facts f JOIN pages fp ON fp.source_id = f.source_id AND fp.slug = f.source_markdown_slug
               WHERE f.row_num IS NOT NULL AND f.expired_at IS NULL
-             UNION ALL SELECT t.page_id, 0, 0, 1, 0, 't' || t.id || ':' || md5((to_jsonb(t) - 'embedding' - 'embedded_at' - 'created_at' - 'updated_at')::text) FROM takes t WHERE t.active
+             UNION ALL SELECT t.page_id, 0, 0, 1, 0, 't' || t.id || ':' || md5((to_jsonb(t) - ${PROJECTION_KEYS})::text) FROM takes t WHERE t.active
              UNION ALL SELECT l.origin_page_id, 0, 0, 0, 1, 'l' || l.id || ':' || md5((to_jsonb(l) - 'created_at')::text) FROM links l WHERE l.origin_field = 'links_fence') x
        JOIN pages p ON p.id = x.page_id
        JOIN sources s ON s.id = p.source_id

@@ -12,12 +12,13 @@
  * 3. Repo-less brains on in-memory PGLite, and Postgres when DATABASE_URL is set (the command writes one config row; a
  *    repo-backed brain runs the same path).
  */
-import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
+import { afterAll, beforeAll, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import { runExtractFacts } from '../src/core/cycle/extract-facts.ts';
 import { outsideContentFencesEntry } from '../src/commands/doctor/checks/outside-content-fences.ts';
 import { runTranscripts } from '../src/commands/transcripts.ts';
+import { FENCE_ACCEPTANCE_KEY } from '../src/core/transcripts/fence-acceptance.ts';
 import { _resetCliExitVerdictForTests, currentExitCode, setStdoutCapture } from '../src/core/cli-force-exit.ts';
 import type { DoctorContext } from '../src/commands/doctor/context.ts';
 import type { Check } from '../src/commands/doctor.ts';
@@ -40,13 +41,18 @@ const EMAIL = 'emails/2026/01/outside-thread';
 for (const kind of testBackends()) describe(`transcripts accept-fences (${kind})`, () => {
 let engine: BrainEngine;
 let close: () => Promise<void>;
+const conversation = (slug: string, via: string | undefined, heading = 'Session') => importFromContent(engine, slug,
+  `---\ntype: conversation\ntitle: Session\ntranscript_import:\n  harness: codex\n  session_id: ${slug.slice(-9)}\n---\n\n# ${heading}\n\n${FENCE}\n`,
+  { sourceId: 'default', noEmbed: true, ...(via ? { ingested_via: via } : {}) });
 beforeAll(async () => {
   if (kind === 'postgres') ({ engine, close } = await isolatedPersistencePostgres(process.env.DATABASE_URL!));
   else { engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema(); close = () => engine.disconnect(); }
   await engine.executeRaw(`INSERT INTO sources (id, name, local_path, config) VALUES ('google-example', 'google-example', NULL, '{"kind":"google","g_account":"owner@example.com"}'::jsonb)`);
-  const conversation = (slug: string, via: string) => importFromContent(engine, slug,
-    `---\ntype: conversation\ntitle: Session\ntranscript_import:\n  harness: codex\n  session_id: ${slug.slice(-9)}\n---\n\n# Session\n\n${FENCE}\n`,
-    { sourceId: 'default', noEmbed: true, ingested_via: via });
+}, 120_000);
+// Every test starts from the same five pages and no acceptance, so the tests pass in any order.
+beforeEach(async () => {
+  for (const table of ['facts', 'takes', 'links', 'pages']) await engine.executeRaw(`DELETE FROM ${table}`);
+  await engine.executeRaw('DELETE FROM config WHERE key = $1', [FENCE_ACCEPTANCE_KEY]);
   for (const slug of TRANSCRIPTS) await conversation(slug, 'cli:transcripts-ingest');
   await conversation(REMOTE, 'mcp:put_page');
   await importFromContent(engine, EMAIL, `---\ntype: email\ntitle: Thread\n---\n\n# Thread\n\n${FENCE}\n`, { sourceId: 'google-example', noEmbed: true });
@@ -155,12 +161,38 @@ async function cli(args: string[]): Promise<{ doc: Record<string, unknown>; exit
 
   test('a conversation page with no importer stamp stays for per-page review', async () => {
     const slug = 'conversations/sessions/2026-01-06-unstamped-example';
-    await importFromContent(engine, slug, `---\ntype: conversation\ntitle: Session\ntranscript_import:\n  harness: codex\n  session_id: unstamped\n---\n\n# Session\n\n${FENCE}\n`,
-      { sourceId: 'default', noEmbed: true });
+    await conversation(slug, undefined);
     await runExtractFacts(engine, { sourceId: 'default' });
     const preview = await cli([]);
     expect((preview.doc.pages as Array<{ slug: string }>).map(p => p.slug)).not.toContain(slug);
     expect((preview.doc.not_eligible as Array<{ slug: string }>).map(p => p.slug)).toContain(slug);
+  }, 60_000);
+  test('an acceptance survives maintenance that rewrites a row without changing it (embedding, write attribution)', async () => {
+    const [page] = await engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE slug = $1', [TRANSCRIPTS[0]]);
+    await engine.executeRaw(`INSERT INTO takes (page_id, row_num, claim, kind, holder, weight) VALUES ($1, 9, 'A take', 'take', 'owner', 0.5)`, [page!.id]);
+    await acceptAll();
+    const before = await cli([]);
+    for (const table of ['facts', 'takes']) {
+      await engine.executeRaw(`UPDATE ${table} SET embedding_model = 'model-example', embedded_text_hash = 'hash-example', embedded_at = now(),
+        last_written_at = now(), last_write_principal_kind = 'maintenance'`);
+    }
+    expect(await listed()).toEqual([EMAIL, REMOTE].sort());
+    const after = await cli([]);
+    expect(after.doc).toMatchObject({ pages: [], already_accepted: 3 });
+    expect(after.doc.plan_hash).toBe(before.doc.plan_hash);
+  }, 60_000);
+
+  test('a later direct write over an imported transcript takes it out of the batch, and an importer rewrite with the same rows restores its acceptance', async () => {
+    await acceptAll();
+    await conversation(TRANSCRIPTS[0]!, undefined, 'Session, edited by hand');
+    expect(await listed()).toEqual([EMAIL, TRANSCRIPTS[0]!, REMOTE].sort());
+    const edited = await cli([]);
+    expect((edited.doc.pages as unknown[])).toEqual([]);
+    expect((edited.doc.not_eligible as Array<{ slug: string }>).map(p => p.slug)).toContain(TRANSCRIPTS[0]);
+
+    await conversation(TRANSCRIPTS[0]!, 'cli:transcripts-ingest', 'Session, imported again');
+    expect(await listed()).toEqual([EMAIL, REMOTE].sort());
+    expect((await cli([])).doc).toMatchObject({ pages: [], already_accepted: 3 });
   }, 60_000);
 }
 });

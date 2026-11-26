@@ -14,6 +14,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { usageError, writeCliError } from '../cli/cli-error.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { opError } from '../core/ops/contract.ts';
+import { shellQuote } from '../core/agent-output.ts';
 import { OLDER_THAN_RE } from '../cli/strict-args.ts';
 import { applyHistoryPrune, planHistoryPrune, type HistoryPrunePlan, type HistoryPruneSelection } from '../core/page-state/history-prune.ts';
 
@@ -68,7 +69,7 @@ export function parseHistoryPruneArgs(args: readonly string[]): HistoryPruneArgs
     throw usageError('Say which versions go: --keep N, --older-than <72h|30d>, or --version <id>; nothing was pruned.', `Usage: ${USAGE}`);
   }
   if (out.yes !== (out.expect !== undefined)) {
-    throw usageError('Applying needs both --yes and --expect <plan_hash> from the preview; nothing was pruned.', `Preview first: ${previewArgv(out).join(' ')}`);
+    throw usageError('Applying needs both --yes and --expect <plan_hash> from the preview; nothing was pruned.', `Preview first: ${shellQuote(previewArgv(out))}`);
   }
   return out;
 }
@@ -92,7 +93,7 @@ function describePlan(plan: HistoryPrunePlan, apply: string[] | null): string {
   const kept = plan.kept_by_rule;
   if (kept.segmented_versions || kept.agent_policy_pages) lines.push(`Kept by rule: ${kept.segmented_versions} segmented version(s), every version of ${kept.agent_policy_pages} agent_policy page(s).`);
   lines.push(`plan_hash: ${plan.plan_hash}`);
-  if (apply) lines.push(`A pruned version can't be restored. Apply, only after the user agrees: ${apply.join(' ')}`);
+  if (apply) lines.push(`A pruned version can't be restored. Apply, only after the user agrees: ${shellQuote(apply)}`);
   return lines.join('\n');
 }
 
@@ -101,7 +102,7 @@ async function prune(engine: BrainEngine, args: string[]): Promise<void> {
   const plan = await planHistoryPrune(engine, parsed);
   const sources = plan.slug_sources ?? [];
   if (sources.length > 1) {
-    throw usageError(`${parsed.slug} names a page in ${sources.length} sources (${sources.join(', ')}); nothing was pruned.`, `Name the one you mean: ${previewArgv({ ...parsed, sourceId: sources[0] }).join(' ')}`);
+    throw usageError(`${parsed.slug} names a page in ${sources.length} sources (${sources.join(', ')}); nothing was pruned.`, `Name the one you mean: ${shellQuote(previewArgv({ ...parsed, sourceId: sources[0] }))}`);
   }
   const print = (doc: unknown, text: string) => process.stdout.write((parsed.json ? JSON.stringify(doc, null, 2) : text) + '\n');
   if (!parsed.yes || parsed.dryRun) {
