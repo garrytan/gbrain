@@ -257,8 +257,7 @@ src/core/grants/model.ts	execute_raw	1
 src/core/grants/rescope.ts	sql_template	7
 src/core/grants/service.ts	sql_template	11	+1: stampReadShared writes oauth_clients.read_shared_revision beside a client grant write (GST-2898 read-shared switch, #9590, open before this ratchet landed); no typed engine method exists yet
 src/core/guard-ledger-checks.ts	execute_raw	3
-src/core/guests/admission.ts	execute_raw	3
-src/core/guests/marker.ts	execute_raw	1
+src/core/guests/admission.ts	execute_raw	1
 src/core/guests/promote.ts	execute_raw	3
 src/core/guests/sources.ts	execute_raw	2	came from master #9625 (shared company brains: owner setup, member keys), which landed after this ratchet was cut
 src/core/guests/stamp-readable.ts	execute_raw	1

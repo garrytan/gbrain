@@ -27,7 +27,7 @@ interface PageRef {
 
 type FenceRowExec = Pick<BrainEngine, 'listFenceRowTrust'>;
 type HeldExec = Pick<BrainEngine, 'listHeldFenceCells'>;
-type TrustExec = Pick<BrainEngine, 'executeRaw' | 'readPageTrustRows' | 'readRowTrustRows' | 'listHeldFenceCells' | 'listFenceRowTrust'>;
+type TrustExec = Pick<BrainEngine, 'executeRaw' | 'readPageTrustRows' | 'readRowTrustRows' | 'listHeldFenceCells' | 'listFenceRowTrust' | 'readGuestMarks'>;
 
 const key = (source: string | null | undefined, slug: string) => `${source ?? 'default'}\u0000${slug}`;
 

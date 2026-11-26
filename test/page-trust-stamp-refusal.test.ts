@@ -26,6 +26,8 @@ const fake = (raw: Raw, pages: PageTrustRow[] = []) => ({
   // Only a hideHeld read (dropHeldFenceRows) calls it; these cases never pass hideHeld.
   listHeldFenceCells: async () => [],
   listFenceRowTrust: (async () => raw('listFenceRowTrust')) as never,
+  // Only a guest page's stamp calls it; these pages are not guest pages.
+  readGuestMarks: async () => [],
 });
 
 const page = (over: Partial<PageTrustRow> = {}): PageTrustRow => ({

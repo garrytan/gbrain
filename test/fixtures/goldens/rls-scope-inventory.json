@@ -287,6 +287,17 @@
         ],
         "flagOnScopes": []
       },
+      "claimGuestNotePublication#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "claimHousekeepingTurn#default": {
         "flagOffLanes": [
           "pool"
@@ -2680,6 +2691,17 @@
         "flagOnLanes": [
           "pool",
           "tx"
+        ],
+        "flagOnScopes": []
+      },
+      "insertGuestMark#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
         ],
         "flagOnScopes": []
       },
@@ -6213,6 +6235,17 @@
         ],
         "flagOnScopes": []
       },
+      "readGuestMarks#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readHeldCoverageRows#all": {
         "flagOffLanes": [
           "pool"
@@ -9345,6 +9378,7 @@
         "chunkRead": "none",
         "claimCoalescedGitEffects": "none",
         "claimFilePage": "none",
+        "claimGuestNotePublication": "none",
         "claimHousekeepingTurn": "none",
         "claimNextJob": "none",
         "claimNotifierLease": "none",
@@ -9905,6 +9939,7 @@
         "insertFactPurge": "none",
         "insertFactWithdrawal": "none",
         "insertFacts": "none",
+        "insertGuestMark": "none",
         "insertHoldingPagePurges": "none",
         "insertJobAttachment": "none",
         "insertLeasePressure": "none",
@@ -11005,6 +11040,7 @@
         "readGlobalMaintenanceDeaths": "none",
         "readGraduationGateRow": "none",
         "readGroupSpendTotals": "none",
+        "readGuestMarks": "none",
         "readGuestSourceRow": "none",
         "readHandoverRow": "none",
         "readHeadBlockerRows": "none",

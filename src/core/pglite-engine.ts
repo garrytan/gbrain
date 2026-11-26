@@ -92,6 +92,7 @@ import {
 } from './search/embedding-column.ts';
 import { hasCJK } from './cjk.ts';
 import * as collateGuestSourcesImpl from './engine-sql/collate-guest-sources.ts';
+import * as guestNotesImpl from './engine-sql/guest-notes.ts';
 import * as factsImpl from './engine-sql/facts.ts';
 import * as embedStaleWorkImpl from './engine-sql/embed-stale-work.ts';
 import * as embeddingProvenanceImpl from './engine-sql/embedding-provenance.ts';
@@ -3111,6 +3112,9 @@ export class PGLiteEngine implements BrainEngine {
   hasGuestSourceRow(sourceId: string) { return cliReadsImpl.hasGuestSourceRow(this.cliReads, sourceId); }
   upsertGuestSource(sourceId: string, writers: readonly string[], trustCeiling: string) { return collateGuestSourcesImpl.upsertGuestSource(this.rawRead, sourceId, writers, trustCeiling); }
   listGuestNotes(slug: string, guestSource?: string) { return collateGuestSourcesImpl.listGuestNotes(this.rawRead, slug, guestSource); }
+  claimGuestNotePublication(sourceId: string, requestId: string) { return guestNotesImpl.claimGuestNotePublication(this.rawRead, sourceId, requestId); }
+  insertGuestMark(mark: guestNotesImpl.GuestMarkInsert) { return guestNotesImpl.insertGuestMark(this.rawRead, mark); }
+  readGuestMarks(pageIds: readonly number[]) { return guestNotesImpl.readGuestMarks(this.rawRead, pageIds); }
   listGuestSourceIds(sourceIds: readonly string[]) { return cliReadsImpl.listGuestSourceIds(this.cliReads, sourceIds); }
   hasGuestSource() { return cliReadsImpl.hasGuestSource(this.cliReads); }
   readPageTrustRows(lookup: PageTrustLookup) { return cliReadsImpl.readPageTrustRows(this.cliReads, lookup); }

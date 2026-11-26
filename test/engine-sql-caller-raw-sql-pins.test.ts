@@ -154,6 +154,25 @@ const PINS: Pin[] = [
     case: { method: 'hasGuestSourceRow', variant: 'default', run: e => e.hasGuestSourceRow('guests') },
     texts: ['SELECT 1 FROM guest_sources WHERE source_id = $1'],
   },
+  {
+    from: 'src/core/guests/admission.ts:210 assertGuestWriterAtPublication (at 1d59d7eb0d)',
+    case: { method: 'claimGuestNotePublication', variant: 'default', run: e => e.claimGuestNotePublication('guests', '00000000-0000-4000-8000-000000000001') },
+    texts: ["SELECT writers, set_config('gbrain.guest_note', $2, true) AS guest_note FROM guest_sources WHERE source_id = $1 FOR SHARE"],
+  },
+  {
+    from: 'src/core/guests/admission.ts:220 insertGuestMark (at 1d59d7eb0d)',
+    case: { method: 'insertGuestMark', variant: 'default', run: e => e.insertGuestMark({ sourceId: 'guests', slug: 'notes/a', audienceMember: 'alice-example',
+      groupSlug: 'team-a', senderLabel: 'Agent One', writerKind: 'oauth_client', writerId: 'broker-a', requestId: '00000000-0000-4000-8000-000000000001' }) },
+    texts: [`INSERT INTO guest_marks (page_id, source_id, slug_at_write, audience_member, group_slug, sender_label, saved_at, writer_kind, writer_id, request_id)
+    SELECT p.id, p.source_id, p.slug, $3, $4, $5, now(), $6, $7, $8 FROM pages p WHERE p.source_id = $1 AND p.slug = $2 RETURNING page_id`],
+  },
+  {
+    from: 'src/core/guests/marker.ts:119 loadGuestMarks (at 1d59d7eb0d)',
+    case: { method: 'readGuestMarks', variant: 'default', run: e => e.readGuestMarks([1, 2]) },
+    texts: [`SELECT m.page_id, m.sender_label, m.group_slug, m.audience_member, m.saved_at, m.writer_kind, m.writer_id,
+        EXISTS (SELECT 1 FROM guest_promotions g WHERE g.guest_page_id = m.page_id) AS promoted
+      FROM guest_marks m WHERE m.page_id = ANY($1::int[])`],
+  },
   // The refusal-swallow sites (lane 8's triage) whose statements moved verbatim into typed members, at b7b18e5ab3.
   {
     from: 'src/commands/extract-explain.ts:169 the kind rollup (at b7b18e5ab3)',
