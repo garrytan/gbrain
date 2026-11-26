@@ -23,7 +23,7 @@ function receipts(dir: string, artifact: string, o: { shard: number; of: number;
   writeFileSync(join(at, `${id}.junit.xml`), `<?xml version="1.0"?><testsuites tests="${o.cases.length}"><testsuite name="s" tests="${o.cases.length}">${cases}</testsuite></testsuites>`);
 }
 
-function withRepo(fn: (dir: string, sha: string, record: (manifest: unknown) => { tree: Record<string, unknown>; stdout: string }) => void) {
+function withRepo(fn: (dir: string, sha: string, record: (manifest: unknown, attempt?: number) => { tree: Record<string, unknown>; stdout: string }) => void) {
   const dir = mkdtempSync(join(tmpdir(), 'gbrain-rerun-evidence-'));
   try {
     const git = (...args: string[]) => spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { cwd: dir, encoding: 'utf8' });
@@ -32,13 +32,13 @@ function withRepo(fn: (dir: string, sha: string, record: (manifest: unknown) => 
     git('add', 'a.txt');
     git('commit', '-qm', 'a');
     const sha = git('rev-parse', 'HEAD').stdout.trim();
-    const record = (manifest: unknown) => {
+    const record = (manifest: unknown, attempt = (manifest as { run_attempt: number }).run_attempt) => {
       const path = join(dir, 'ci-manifest.json');
       writeFileSync(path, JSON.stringify(manifest));
       const out = join(dir, 'out');
       const result = spawnSync('bash', [join(root, 'scripts/ci-full-suite-tree.sh')], {
         cwd: dir, encoding: 'utf8',
-        env: { ...process.env, ARTIFACT_DIR: out, RUN_ID: String(RUN), RUN_ATTEMPT: String((manifest as { run_attempt: number }).run_attempt), WORKFLOW: 'Test', EVENT: 'workflow_dispatch', MANIFEST: path, GITHUB_STEP_SUMMARY: join(dir, 'summary.md') },
+        env: { ...process.env, ARTIFACT_DIR: out, RUN_ID: String(RUN), RUN_ATTEMPT: String(attempt), WORKFLOW: 'Test', EVENT: 'workflow_dispatch', MANIFEST: path, EXECUTED_RECEIPTS: 'success', GITHUB_STEP_SUMMARY: join(dir, 'summary.md') },
       });
       expect(result.status, result.stderr).toBe(0);
       return { tree: JSON.parse(readFileSync(join(out, 'tree.json'), 'utf8')), stdout: result.stdout };
@@ -75,6 +75,25 @@ describe('a rerun of only the failed jobs keeps complete, honest run evidence', 
       ]);
       expect([...passedFiles(m)]).toEqual(['test/a.test.ts']);
       expect(rerunProblem(m)).toBe(`run ${RUN} attempt 2 re-ran only failed jobs (attempts 1, 2); 2 file(s) passed only on that re-run (test/b.test.ts, test/c.test.ts), so the run cannot clear a failure`);
+    });
+  });
+
+  test('a re-run of only full-suite keeps the earlier attempt\'s manifest as evidence (GST-3429)', () => {
+    withRepo((dir, sha, record) => {
+      const r = join(dir, 'receipts');
+      receipts(r, 'receipts-unit-1', { shard: 1, of: 2, attempt: 1, sha, cases: [['test/a.test.ts', 'a1', 'pass']] });
+      receipts(r, 'receipts-unit-2', { shard: 2, of: 2, attempt: 1, sha, cases: [['test/b.test.ts', 'b1', 'pass']] });
+      const m = buildManifest(loadReceiptDir(r), bind(sha, 1));
+      expect(m.complete).toBe(true);
+      const { tree, stdout } = record(m, 2);
+      expect(stdout).not.toContain('::warning::');
+      expect(tree.run_attempt).toBe(2);
+      expect(tree.files).toEqual(['test/a.test.ts', 'test/b.test.ts']);
+      expect(tree.tests).toBe(2);
+      expect(tree.rerun_files).toBeUndefined();
+      const newer = record(m, 0);
+      expect(newer.tree.files).toBeUndefined();
+      expect(newer.stdout).toContain(`ci-manifest.json belongs to run ${RUN} attempt 1, newer than this attempt 0`);
     });
   });
 

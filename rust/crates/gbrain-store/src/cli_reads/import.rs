@@ -93,6 +93,8 @@ pub struct PageTrustRow {
     pub write_origin: Option<Value>,
     pub flagged: bool,
     pub guest: bool,
+    /// The class of source the page came from (`cli_reads/precedence.rs`).
+    pub precedence: String,
     #[serde(rename = "byId")]
     pub by_id: bool,
 }
@@ -114,6 +116,9 @@ pub struct RowTrustRow {
     pub write_origin: Option<Value>,
     pub flagged: bool,
     pub contested: Option<String>,
+    /// A fact's class of source, or `approved` when it came from an allowed-claims page
+    /// (`cli_reads/precedence.rs`); none on a take or timeline row.
+    pub precedence: Option<String>,
 }
 
 /// A live page with its aliases and knowledge revision (`listLinkPageMetadata`).
@@ -177,6 +182,7 @@ fn trust_row(read: &dyn KvRead, page: &PageRecord, by_id: bool) -> Result<PageTr
         write_origin: page.write_origin.clone(),
         flagged: crate::trust::activation_suppressed(read, "pages", page.id, tier)?,
         guest: source_is_guest(read, &page.source_id)?,
+        precedence: crate::cli_reads::precedence::page_precedence(read, page)?.to_owned(),
         by_id,
     })
 }
@@ -307,13 +313,13 @@ impl Store {
         }
         let wanted: BTreeSet<u64> = lookup.ids.iter().copied().collect();
         let read = self.read()?;
-        let mut found: Vec<(u64, RowTrust)> = Vec::new();
+        let mut found: Vec<(u64, RowTrust, Option<String>)> = Vec::new();
         match table {
             "timeline_entries" if !wanted.is_empty() => {
                 let mut failure = None;
                 scan_prefix(&*read, &[keys::TIMELINE], false, &mut |_, v| {
                     match serde_json::from_slice::<TimelineRecord>(v) {
-                        Ok(r) if wanted.contains(&r.id) => found.push((r.id, r.trust)),
+                        Ok(r) if wanted.contains(&r.id) => found.push((r.id, r.trust, None)),
                         Ok(_) => {}
                         Err(e) => failure = Some(StoreError::from(e)),
                     }
@@ -322,7 +328,7 @@ impl Store {
                 if let Some(e) = failure {
                     return Err(e);
                 }
-                found.sort_by_key(|(id, _)| *id);
+                found.sort_by_key(|(id, _, _)| *id);
             }
             "facts" => {
                 for &id in &wanted {
@@ -331,14 +337,19 @@ impl Store {
                             trust_tier: Some(f.trust_tier.clone()),
                             write_origin: f.write_origin.clone(),
                         };
-                        found.push((id, trust));
+                        let precedence = crate::cli_reads::precedence::fact_precedence(
+                            &*read,
+                            &f.source_id,
+                            f.source_markdown_slug.as_deref(),
+                        )?;
+                        found.push((id, trust, Some(precedence.to_owned())));
                     }
                 }
             }
             "takes" => {
                 for &id in &wanted {
                     if let Some(t) = read_take(&*read, id)? {
-                        found.push((id, t.trust));
+                        found.push((id, t.trust, None));
                     }
                 }
             }
@@ -346,7 +357,7 @@ impl Store {
         }
         found
             .into_iter()
-            .map(|(id, trust)| {
+            .map(|(id, trust, precedence)| {
                 let tier = trust.tier();
                 let contested = match (table, i64::try_from(id)) {
                     ("timeline_entries", _) | (_, Err(_)) => None,
@@ -360,6 +371,7 @@ impl Store {
                     write_origin: trust.write_origin.as_ref().map(jsonb_value),
                     flagged: crate::trust::activation_suppressed(&*read, table, id, tier)?,
                     contested,
+                    precedence,
                 })
             })
             .collect()

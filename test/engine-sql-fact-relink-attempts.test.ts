@@ -3,7 +3,8 @@
  *
  * 1. Contract: the paid re-extraction memo's upsert (`keepModelAndRun`) keeps the stored `model` and `run_id`
  *    on a conflict, and the plain upsert replaces them. `countFactRelinkOutcomes` counts the linked attempts
- *    of the last 7 days and every no_subject attempt.
+ *    of the last 7 days and every no_subject attempt. A page created at the attempt's own timestamp re-arms a
+ *    conversation miss (`conversationTriedSql`, created_at >= attempted_at).
  * 2. Regressions: the keep variant falling back to the plain UPSERT (the memo then loses the model and run of
  *    the first paid pass), or the 7-day cutoff being dropped or moved.
  * 3. Existing coverage: no typed reader returns `model` or `run_id`, and the parity harness cannot age a row,
@@ -66,6 +67,24 @@ for (const kind of testBackends()) {
         { outcome: 'linked', tier: 'mention', n: 1 },
         { outcome: 'no_subject', tier: 'model', n: 1 },
       ]);
+    });
+
+    test('a page created in the clock tick of a conversation miss re-arms it (created_at = attempted_at)', async () => {
+      // One unlinked conversation row, a re-armed miss on it (no_mention), then a page in the same source.
+      const factId = (await engine.insertFacts([{ fact: 'met at the cafe', source: 'cli:extract-conversation-facts', row_num: 1,
+        source_markdown_slug: 'conv/tick' }], { source_id: 'default' })).ids[0]!;
+      await engine.upsertFactRelinkAttempt('default', { factId, outcome: 'conversation_unresolved', reason: 'no_mention', tier: 'mention',
+        model: null, targetSlug: null, runId: null });
+      await engine.putPage('people/tick-example', { type: 'person', title: 'Tick', compiled_truth: 'body', frontmatter: {} });
+      // The page and the attempt share one timestamp, as when both land in one clock tick.
+      await engine.executeRaw(`UPDATE fact_relink_attempts SET attempted_at = (SELECT max(created_at) FROM pages WHERE source_id = 'default')
+        WHERE source_id = 'default' AND fact_id = $1`, [factId]);
+      const [same] = await engine.executeRaw<{ same: boolean }>(`SELECT a.attempted_at = (SELECT max(created_at) FROM pages WHERE source_id = 'default') AS same
+        FROM fact_relink_attempts a WHERE a.source_id = 'default' AND a.fact_id = $1`, [factId]);
+      const stats = await engine.countUnlinkedFactStats({ sourceIds: ['default'], auditSources: [], hasAttempts: true });
+      expect({ same: same?.same, unresolved: stats?.conversation_unresolved }).toEqual({ same: true, unresolved: 0 });
+      await engine.executeRaw(`DELETE FROM facts WHERE id = $1`, [factId]);
+      await engine.executeRaw(`DELETE FROM pages WHERE slug = 'people/tick-example'`);
     });
   });
 }

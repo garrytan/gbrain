@@ -35,7 +35,7 @@ export interface StatusModeState {
   /** PGLite data dir (lock_held) — what the lock owner holds. */
   brain_path?: string;
   config_path: string;
-  lock_owner?: { pid?: number; transport: 'stdio' | 'http' | 'unknown'; serve: boolean };
+  lock_owner?: { pid?: number; transport: 'stdio' | 'http' | 'unknown'; serve: boolean; started_at?: string };
   /** repair_failed: the durable marker automatic PGLite repair left. */
   repair_failed?: RepairFailedMarker;
   recovered: boolean;
@@ -84,7 +84,8 @@ export function probeStatus(): Omit<StatusModeState, 'recovered'> | null {
   const peek = peekLock(dataDir);
   return {
     reason: 'lock_held', config_path: cfgPath, brain_path: dataDir, checked_at: now,
-    lock_owner: { pid: holder.pid, transport: peek.isServe ? (peek.http ? 'http' : 'stdio') : 'unknown', serve: !!holder.serve },
+    lock_owner: { pid: holder.pid, transport: peek.isServe ? (peek.http ? 'http' : 'stdio') : 'unknown', serve: !!holder.serve,
+      ...(peek.acquiredAt !== undefined ? { started_at: new Date(peek.acquiredAt).toISOString() } : {}) },
   };
 }
 
@@ -129,17 +130,24 @@ export async function statusReconnect<E>(state: StatusModeState, probe: () => Pr
   return engine;
 }
 
+/** A stdio serve another agent session started owns the brain: the ordinary concurrent-sessions case (Claude Code and Codex at once). */
+function concurrentSession(state: StatusModeState): boolean {
+  return state.reason === 'lock_held' && state.lock_owner?.serve === true && state.lock_owner.transport === 'stdio';
+}
+
+const CONCURRENT_OK = 'That is expected when two agent sessions (for example Claude Code and Codex) are open at once: nothing is broken and nothing needs fixing.';
+
 function ownerPhrase(state: StatusModeState): string {
   const o = state.lock_owner;
   if (!o) return 'another process';
-  const pid = o.pid !== undefined ? ` (PID ${o.pid})` : '';
+  const pid = o.pid !== undefined ? ` (PID ${o.pid}${o.started_at ? `, started ${o.started_at}` : ''})` : o.started_at ? ` (started ${o.started_at})` : '';
   if (!o.serve) return `another gbrain process${pid}`;
   return o.transport === 'http' ? `a shared \`gbrain serve --http\`${pid}` : `another \`gbrain serve\`${pid}, usually started by another agent session`;
 }
 
 /** One sentence naming the cause plainly (lock owner, brain path, config path). */
 export function statusHeadline(state: StatusModeState): string {
-  if (state.reason === 'lock_held') return `This brain (${state.brain_path ?? 'its data directory'}) is open in ${ownerPhrase(state)}, so this server cannot open it.`;
+  if (state.reason === 'lock_held') return `This brain (${state.brain_path ?? 'its data directory'}) is open in ${ownerPhrase(state)}, so this server cannot open it.${concurrentSession(state) ? ` ${CONCURRENT_OK}` : ''}`;
   if (state.reason === 'config_unreadable') return `The gbrain config at ${state.config_path} exists but cannot be read (invalid JSON or unreadable), so this server cannot open a brain.`;
   if (state.reason === 'brain_unopenable') return `The brain at ${state.brain_path ?? 'its configured path'} exists, but its writer lock file next to it cannot be opened (a read-only or unmounted drive, or permissions), so this server cannot open it.`;
   if (state.reason === 'missing_brain') return `The brain configured in ${state.config_path} is not at ${state.brain_path ?? 'its configured path'} (an unmounted drive or a moved folder?), so this server cannot open it. Nothing was created there.`;
@@ -255,9 +263,13 @@ export function statusFix(state: StatusModeState, t: StatusTransport = 'stdio'):
     : startHttp;
   const waitFix: Action = {
     ...statusCall(t), consent: [], actor: 'user', requires_exclusive: false,
-    why: `Close the session that owns the brain (${owner}); then ${recheck(t)} (re-checked at most every 5 s). ${restartNote(t)}`,
+    why: concurrentSession(state)
+      ? `Nothing needs fixing: once the session that owns the brain (${owner}) ends, ${recheck(t)} (re-checked at most every 5 s). ${restartNote(t)}`
+      : `Close the session that owns the brain (${owner}); then ${recheck(t)} (re-checked at most every 5 s). ${restartNote(t)}`,
   };
-  const user_message = `Your gbrain brain is already open in ${owner.replace(/`/g, '')}, so this session can't use memory right now. Close that session and I'll reconnect, or I can set up one shared gbrain server so both sessions work at once. Which do you prefer?`;
+  const user_message = concurrentSession(state)
+    ? `Your gbrain brain is open in ${owner.replace(/`/g, '')}. That's expected with two agent sessions open, and nothing needs fixing: session-start context still reaches this session through that server, and this session's memory tools come back once that session ends. If you want both sessions to use memory tools at the same time, I can set up one shared gbrain server. Want that?`
+    : `Your gbrain brain is already open in ${owner.replace(/`/g, '')}, so this session can't use memory right now. Close that session and I'll reconnect, or I can set up one shared gbrain server so both sessions work at once. Which do you prefer?`;
   return {
     fix: { ...waitFix, user_message },
     user_message,
@@ -339,6 +351,7 @@ export function statusPayload(state: StatusModeState, t: StatusTransport = 'stdi
     ...(state.brain_path ? { brain_path: state.brain_path } : {}),
     config_path: state.config_path,
     ...(state.lock_owner ? { lock_owner: state.lock_owner } : {}),
+    ...(concurrentSession(state) ? { expected: true } : {}),
     ...(state.repair_failed ? { repair_failed: state.repair_failed } : {}),
     fix: renderAction(fix, STATUS_RENDER),
     user_message,

@@ -12,6 +12,8 @@ import { inspectSharedMemberMigration, type SharedMemberMigration } from './migr
 import { sharedSkillSourcePolicyOrPreserve } from './setup-source-policy.ts';
 import { INVENTORY_LIMIT_CEILINGS, readInventoryLimits, type InventoryLimits } from './inventory-limits.ts';
 import { SHARED_SKILL_LIMITS } from './model.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
+import { isRustBrain, rustHeads, rustPack } from './rust-publication.ts';
 
 export type MigrationPublication = 'disabled' | 'prose_only' | 'consent_required';
 export interface SharedMigrationStage {
@@ -89,6 +91,44 @@ export async function legacyPublication(ctx: OperationContext): Promise<Migratio
   return 'consent_required';
 }
 
+type SourceRoot = { id: string; incarnation: string; local_path: string | null };
+type SealedSkill = { name: string; files: Array<{ path: string; sha256: string }> };
+
+/**
+ * The live (not archived) sources in byte order of id, with incarnation and registered root, from one typed read (no
+ * SQL here), so the same code serves every engine, a Rust brain's owner and its clients included. One read keeps each
+ * root paired with its own incarnation, and it parses no source config, so a malformed config stays that source's own
+ * policy matter.
+ */
+async function liveSourceRoots(engine: OperationContext['engine']): Promise<SourceRoot[]> {
+  return (await engine.listOnboardingSources(null)).map(row => ({ id: row.id, incarnation: row.incarnation, local_path: row.local_path }));
+}
+
+/** The sealed pack's manifest hash for a source incarnation, or undefined without a pack. */
+async function sealedManifestHash(engine: OperationContext['engine'], sourceId: string, incarnation: string): Promise<string | undefined> {
+  if (isRustBrain(engine)) return (await rustPack(engine, sourceId, incarnation))?.manifest_hash;
+  const [pack] = await engine.executeRaw<{ manifest_hash: string }>('SELECT manifest_hash FROM shared_skill_packs WHERE source_id=$1 AND source_incarnation=$2::uuid', [sourceId, incarnation]);
+  return pack?.manifest_hash;
+}
+
+/**
+ * The live head revisions of a source incarnation (name and files), for the skills `names` declares. On a Rust brain the
+ * store keeps one pack per source incarnation, so the heads read are that pack's. Like the catalog adoption that
+ * follows these reads (catalog.ts, publication.ts), a Rust brain answers them in the process that owns the brain.
+ */
+async function sealedSkills(engine: OperationContext['engine'], sourceId: string, incarnation: string, names: string[]): Promise<SealedSkill[]> {
+  if (isRustBrain(engine)) {
+    const pack = await rustPack(engine, sourceId, incarnation);
+    if (!pack || names.length === 0) return [];
+    return (await rustHeads(engine, sourceId, incarnation, pack.pack_id, names))
+      .filter(revision => !revision.deleted)
+      .map(revision => ({ name: revision.name, files: revision.files as SealedSkill['files'] }));
+  }
+  return engine.executeRaw<SealedSkill>(`SELECT r.name,r.files FROM shared_skill_heads h JOIN shared_skill_revisions r
+          ON r.source_id=h.source_id AND r.source_incarnation=h.source_incarnation AND r.pack_id=h.pack_id AND r.name=h.name AND r.revision=h.revision
+          WHERE h.source_id=$1 AND h.source_incarnation=$2::uuid AND NOT r.deleted`, [sourceId, incarnation]);
+}
+
 export async function runSharedSkillsMigration(ctx: OperationContext, options: { dryRun?: boolean; acceptReviewedInventory?: Record<string, string> } = {}): Promise<SharedMigrationReport> {
   if (ctx.remote !== false) {
     throw opError('permission_denied', 'Shared-skills migration requires the trusted local host.',
@@ -106,7 +146,7 @@ export async function runSharedSkillsMigration(ctx: OperationContext, options: {
   report.brain_id = brain.brain_id;
   const publication = await legacyPublication(ctx);
   const limits = await readInventoryLimits(ctx.engine);
-  const roots = await ctx.engine.executeRaw<{ id: string; incarnation: string; local_path: string | null }>('SELECT id,incarnation,local_path FROM sources WHERE NOT archived ORDER BY id COLLATE "C"');
+  const roots = await liveSourceRoots(ctx.engine);
   const fallback = await ctx.engine.getConfig('sync.repo_path');
   for (const source of roots) {
     const sourcePolicy = await sharedSkillSourcePolicyOrPreserve(ctx.engine, source.id);
@@ -175,7 +215,10 @@ export async function runSharedSkillsMigration(ctx: OperationContext, options: {
       if (prior?.inventory && (!row.inventory || !sameInventory(prior.inventory.hashes, row.inventory.hashes))) {
         const original = { ...prior.inventory.hashes }, current = { ...row.inventory?.hashes };
         delete original['skillpack.json']; delete current['skillpack.json'];
-        const [sealed] = await ctx.engine.executeRaw<{ manifest_hash: string }>('SELECT manifest_hash FROM shared_skill_packs WHERE source_id=$1 AND source_incarnation=$2::uuid', [source.id, source.incarnation]);
+        const reviewed = prior.inventory;
+        // A sealed read that fails keeps the inventory taken before the edit, so a retry still compares against it.
+        const sealed = { manifest_hash: await sealedManifestHash(ctx.engine, source.id, source.incarnation)
+          .catch((error: unknown) => { row.inventory = reviewed; throw error; }) };
         const digest = row.inventory ? inventoryDigest(row.inventory.hashes) : null;
         if ((!row.inventory || !sameInventory(original, current) || sealed?.manifest_hash !== row.inventory.hashes['skillpack.json'])
           && (digest === null || options.acceptReviewedInventory?.[source.id] !== digest)) {
@@ -193,6 +236,8 @@ export async function runSharedSkillsMigration(ctx: OperationContext, options: {
         continue;
       }
     } catch (error) {
+      // A typed capability refusal is a stop for the whole migration, not this source's pending row.
+      rethrowCapabilityRefusal(error);
       if (error instanceof OperationError && error.code === 'payload_too_large' && error.detail) {
         row.inventory = prior?.inventory ?? null;
         row.parked = { limit: error.detail, limits, reason: error.message, parked_at: prior?.parked?.parked_at ?? new Date().toISOString() };
@@ -245,10 +290,8 @@ export async function runSharedSkillsMigration(ctx: OperationContext, options: {
     }
     if (!dryRun) {
       try {
-        const [pack] = await ctx.engine.executeRaw<{ manifest_hash: string }>('SELECT manifest_hash FROM shared_skill_packs WHERE source_id=$1 AND source_incarnation=$2::uuid', [source.id, source.incarnation]);
-        const sealed = await ctx.engine.executeRaw<{ name: string; files: Array<{ path: string; sha256: string }> }>(`SELECT r.name,r.files FROM shared_skill_heads h JOIN shared_skill_revisions r
-          ON r.source_id=h.source_id AND r.source_incarnation=h.source_incarnation AND r.pack_id=h.pack_id AND r.name=h.name AND r.revision=h.revision
-          WHERE h.source_id=$1 AND h.source_incarnation=$2::uuid AND NOT r.deleted`, [source.id, source.incarnation]);
+        const pack = { manifest_hash: await sealedManifestHash(ctx.engine, source.id, source.incarnation) };
+        const sealed = await sealedSkills(ctx.engine, source.id, source.incarnation, row.inventory.names);
         const complete = pack?.manifest_hash === row.inventory.hashes['skillpack.json'] && row.inventory.names.every(name =>
           sealed.some(skill => skill.name === name && skill.files.some(file => file.path === `skills/${name}/SKILL.md` && file.sha256 === row.inventory!.hashes[file.path])));
         if (!complete) {
@@ -262,6 +305,8 @@ export async function runSharedSkillsMigration(ctx: OperationContext, options: {
         }
         row.inventory = inventorySkillpack(row.root, limits);
       } catch (error) {
+        // A typed capability refusal is a stop for the whole migration, not this source's pending row.
+        rethrowCapabilityRefusal(error);
         await pending('projection', error instanceof OperationError ? `${error.code}: ${error.message}` : 'Catalog adoption failed; retry after inspecting the canonical publication receipt.');
         continue;
       }

@@ -56,6 +56,12 @@ import { NEWEST_SYNC_RECEIPT_EXCLUSION, OPEN_SYNC_CURSOR_EXCLUSION } from '../sr
 import { UNRESOLVED_CALLER_REFUSAL_SQL } from '../src/core/persistence/terminal-classify.ts';
 import { COMPACTED_RECEIPT_BYTES_SQL } from '../src/core/persistence/receipt-bytes.ts';
 import { CLAIMABLE_EFFECT_SQL } from '../src/core/engine-sql/persistence-effect-scans.ts';
+import { CLAIM_COALESCED_GIT_EFFECTS_SQL } from '../src/core/engine-sql/persistence-effect-worker.ts';
+import { TOPOLOGY_STORE_STATEMENTS } from '../src/core/engine-sql/topology-store.ts';
+import { MANUAL_LINK_STATEMENTS } from '../src/core/engine-sql/manual-links.ts';
+import { LINKS_FENCE_ORIGIN_FIELD } from '../src/core/links-fence.ts';
+import { EXPIRED_ARCHIVE_SQL } from '../src/core/engine-sql/sources.ts';
+import { ACTIVE_REFRESH_STATES_SQL } from '../src/core/persistence/worktree-refresh-schema.ts';
 import { requireSynchronousCommit, SYNCHRONOUS_COMMIT_SQL } from '../src/core/engine-sql/persistence-declaration.ts';
 import { claimHeadStatement, claimHeadText } from '../src/core/engine-sql/persistence-claims.ts';
 import { CLAIM_ORDER, FOREGROUND_WAITING_ON } from '../src/core/persistence/journal.ts';
@@ -227,6 +233,25 @@ describe('the effect claim read copies the claim fragments', () => {
     expect(CLAIMABLE_EFFECT_SQL).toContain(`AND (e.worktree_id IS NULL OR ${refreshFenceClear('e')})\n`);
     expect(CLAIMABLE_EFFECT_SQL).toContain('w.owner_host_id=$1::uuid');
     expect(CLAIMABLE_EFFECT_SQL.endsWith('ORDER BY e.next_attempt_at,e.id LIMIT 1 FOR UPDATE OF e SKIP LOCKED')).toBe(true);
+  });
+
+  test('claimCoalescedGitEffects sends the statement the journal built, fragments written out', () => {
+    expect(CLAIM_COALESCED_GIT_EFFECTS_SQL).toBe(`WITH ready AS (SELECT e.id,gen_random_uuid() AS token FROM persistence_effects e
+      WHERE EXISTS (SELECT 1 FROM persistence_worktrees w WHERE w.id=$2::uuid AND w.owner_host_id=$1::uuid
+        AND ${refreshFenceClear('w', 'id')}
+        AND NOT EXISTS (SELECT 1 FROM persistence_effects blocked WHERE blocked.worktree_id=w.id AND blocked.recovery IS NOT NULL)
+        AND NOT EXISTS (SELECT 1 FROM persistence_requests blocked WHERE blocked.worktree_id=w.id AND blocked.recovery IS NOT NULL))
+      AND e.worktree_id=$2::uuid AND e.kind='git' AND e.data ? 'relative_path'
+      AND NOT (e.data ? 'targets') AND NOT (e.data ? 'source_scan') AND NOT (e.data ? 'version')
+      AND (e.state='queued' OR e.state='running' AND e.claim_expires_at<now() OR ${DEAD_OWNER_EFFECT_SQL('e', '$4')}) AND e.next_attempt_at<=now()
+      AND e.recovery IS NULL
+      AND NOT EXISTS (SELECT 1 FROM persistence_effects mirror
+        WHERE mirror.request_id=e.request_id AND mirror.kind='withdrawal-mirror' AND mirror.state IN ('queued','running'))
+      ORDER BY e.next_attempt_at,e.id LIMIT $3 FOR UPDATE OF e SKIP LOCKED)
+      UPDATE persistence_effects p SET state='running',execution_token=ready.token,
+      claim_owner=jsonb_build_object('token',ready.token::text,'owner',$5::text::jsonb),
+      claim_expires_at=now()+interval '2 minutes',attempts=attempts+1,updated_at=now()
+      FROM ready WHERE p.id=ready.id RETURNING p.*`);
   });
 });
 
@@ -556,5 +581,31 @@ describe('the no-op embedding settle statements are one text on both engines', (
     const pglite = await record(PGLiteEngine.prototype);
     expect(await record(PostgresEngine.prototype)).toEqual(pglite);
     expectGolden('sql-text-extra/persistence-embedding-noop-settle', pglite, defineNormalizer<Record<string, unknown[][]>>('noop-settle-statements-v1', m => m));
+  });
+});
+
+describe('the topology store sends the statements the lifecycle built, fragments written out', () => {
+  test('the active refresh, retire state and expired archive reads carry their shared fragments', () => {
+    expect(TOPOLOGY_STORE_STATEMENTS.ACTIVE_REFRESH_SQL).toBe(`SELECT id,state,source_ids FROM persistence_worktree_refreshes
+    WHERE worktree_id=ANY($1::uuid[]) AND state IN ${ACTIVE_REFRESH_STATES_SQL} AND ($2::uuid IS NULL OR id<>$2::uuid) LIMIT 1`);
+    expect(TOPOLOGY_STORE_STATEMENTS.RETIRE_STATE_EXPIRED_SQL).toBe(`SELECT incarnation,archived,${EXPIRED_ARCHIVE_SQL} AS due FROM sources WHERE id=$1`);
+    expect(TOPOLOGY_STORE_STATEMENTS.EXPIRED_ARCHIVE_ROW_SQL).toBe(`SELECT id FROM sources WHERE id=$1 AND ${EXPIRED_ARCHIVE_SQL}`);
+  });
+});
+
+describe('the manual link store sends the statements manual-links.ts built, fragments written out', () => {
+  // The fragments persistence/manual-links.ts composed its statements from before they moved (engine-sql/manual-links.ts).
+  const RELATIONSHIP = `l.from_page_id=$1 AND l.to_page_id=t.id AND t.source_id=$2 AND t.slug=$3
+  AND ($5::text IS NULL OR l.link_type=$5) AND ($6::text IS NULL OR l.link_source=$6)`;
+  const DATABASE_ONLY = `l.origin_field IS DISTINCT FROM '${LINKS_FENCE_ORIGIN_FIELD}' AND l.link_source <> ALL($4::text[])`;
+  const FENCED = `l.origin_field='${LINKS_FENCE_ORIGIN_FIELD}' AND l.origin_page_id=$1`;
+  test('the relationship deletes, count and derived read', () => {
+    expect(MANUAL_LINK_STATEMENTS.DELETE_DATABASE_ONLY_SQL).toBe(`DELETE FROM links l USING pages t WHERE ${RELATIONSHIP} AND ${DATABASE_ONLY} AND l.origin_page_id IS NULL`);
+    expect(MANUAL_LINK_STATEMENTS.COUNT_RELATIONSHIP_SQL).toBe(`SELECT count(*)::int AS n FROM links l, pages t WHERE ${RELATIONSHIP} AND ((${DATABASE_ONLY}) OR (${FENCED}))`);
+    expect(MANUAL_LINK_STATEMENTS.DROP_RELATIONSHIP_SQL).toBe(`DELETE FROM links l USING pages t
+      WHERE ${RELATIONSHIP} AND ((${DATABASE_ONLY}) OR ($7::boolean AND ${FENCED}))
+      RETURNING l.to_page_id, l.link_type, l.link_source, l.origin_field IS NOT DISTINCT FROM '${LINKS_FENCE_ORIGIN_FIELD}' AS fenced`);
+    expect(MANUAL_LINK_STATEMENTS.DERIVED_EDGES_SQL).toBe(`SELECT DISTINCT l.link_type COLLATE "C" AS link_type, l.link_source COLLATE "C" AS link_source FROM links l, pages t
+      WHERE ${RELATIONSHIP} AND l.link_source = ANY($4::text[]) ORDER BY l.link_type COLLATE "C", l.link_source COLLATE "C"`);
   });
 });
