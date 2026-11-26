@@ -40,22 +40,22 @@ It sets the brain up as a company brain (`--shape company`), then adds, in order
 4. **Two folder rules.** `company/` (in the `company` source) and `rules/team/` are readable by you and the team group. A decision saved to `company/` reaches the whole team; `gbrain correct --scope team` saves a rule every member's agent reads.
 5. **Guest notes (optional).** `--guests oauth_client:<client id>` sets up the guest source for notes saved by outside guests, writable only by those writers, and lets each of your own credentials read it.
 
-The template never changes a group or folder rule it did not make. If a group called `team-members` already exists, or a hand-written rule already covers `company/` or `rules/team/`, that line reads BLOCKED with the command that changes it, and nothing is written. Use `--team-group <id>` to give the team another group.
+The template never changes a group or folder rule it did not make. A rule that already names exactly the team's readers is kept. A `team-members` group it made on an earlier run is kept, and a rerun adds anyone new in `--members` to it; if that group also holds someone not in `--members`, the line reads BLOCKED, because the template never removes a member. The line also reads BLOCKED, and the template writes nothing, when a `team-members` group exists that the template did not make, when no such group exists yet but pages or rules already name `group:team-members` as a reader, or when a hand-written rule with other readers covers `company/` or `rules/team/`. Each BLOCKED line carries the command that changes it. Use `--team-group <id>` to give the team another group.
 
 If this brain already serves just you and holds notes that no rule or `readable_by` restricts, turning it shared would let every member's key read them, so the run reads BLOCKED until you choose: add `--labelled-only` to keep those notes private (members read the team folders and their own), or `--open-history` to let every member read them. The choice is kept in the receipt, so a later run that adds people keeps it.
 
-On a brain that already exists, setup runs this preview before it changes anything, the harness entry included, so a BLOCKED line means nothing was written.
+On a brain that already exists, setup runs this preview before it changes anything, the harness entry included: when setup refuses with `setup_team_blocked`, nothing was written. If the preview cannot run first (a brain setup creates in the same run, one that this connection's own running gbrain server holds open, or a preview that prints no result setup can read), a BLOCKED line from the template itself leaves what setup already wrote, such as the harness entry and the company starter pages, in place; fix the line and run setup again.
 
 Every step is safe to run again. Setup keeps a receipt with no key values in it:
 
 ```bash
-# What ran, and per member what their key actually reads against what the rules expect.
+# What ran, and per member what their key reads in the team folders and their own folder (up to 100 pages per folder) against what the rules expect.
 gbrain setup claude-code --template team --status
 # Finish a run that stopped partway.
 gbrain setup claude-code --template team --resume <receipt id> --yes
 ```
 
-`--status` also checks that each key file holds the key issued to that member, and reports `mismatch` when it does not. `gbrain access check --token member-<member> --as <member>` shows one member's grant in detail. The rest of this tutorial covers the larger, hosted shape: Postgres, OAuth clients per teammate and per-person crons.
+`--status` also checks that each key file holds the key issued to that member, and reports `mismatch` when it does not. A read that fails for a reason other than a denial is reported as inconclusive, never as proof, and a folder with more than 100 pages is compared on its first 100 only, so that member's proof reads NOT ok. `gbrain access check --token member-<member> --as <member>` shows one member's grant in detail. The rest of this tutorial covers the larger, hosted shape: Postgres, OAuth clients per teammate and per-person crons.
 
 ---
 

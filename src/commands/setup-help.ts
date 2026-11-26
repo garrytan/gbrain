@@ -51,8 +51,9 @@ Flags:
   --labelled-only      With --serves several or --template team: each member's key reads only pages labelled for
                        that member (readable_by or a rule), never the owner's. Opt-in.
   --open-history       With --serves several or --template team on a brain that serves one person and already holds
-                       pages: let the members read them. Without it or --labelled-only, setup
-                       refuses (setup_history_choice_required) and writes nothing.
+                       pages: let the members read them. Without it or --labelled-only, --serves several
+                       refuses (setup_history_choice_required) and writes nothing; --template team
+                       reads BLOCKED on its history line instead.
   --members-file PATH  The same, one id per line.
   --owner ID           With --serves several, --shape household or --template team: the brain owner, added as a member and named with
                        gbrain access owner set when the brain has none (default: your login name
