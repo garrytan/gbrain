@@ -635,6 +635,7 @@
     "search_cursor_requires_keyword",
     "search_mode_local_only",
     "search_offset_over_cap",
+    "secret_in_write",
     "secret_reveal_forbidden",
     "secret_store_key_mismatch",
     "secret_store_key_missing",

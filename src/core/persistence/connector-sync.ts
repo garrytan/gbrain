@@ -108,6 +108,9 @@ function callReads(engine: BrainEngine): BrainEngine {
       const shared = sharedWriterRow(target, typed, once);
       return (id: string, opts?: { lock?: boolean }) => shared(id, opts).then(row => row && structuredClone(row));
     }
+    // The mirror read-only check reads the source row through the typed member; once per call, as its raw read was (CALL_STABLE_READS).
+    if (key === 'readSourceState') return (sourceId: string, opts?: { lock?: 'share' }) => opts?.lock === 'share' ? target.readSourceState(sourceId, opts)
+      : once(JSON.stringify(['readSourceState', sourceId]), () => target.readSourceState(sourceId)).then(row => row && structuredClone(row));
     if (key === 'getWorktreeBinding') return (sourceId: string, hostId: string | null) =>
       once(JSON.stringify(['getWorktreeBinding', sourceId, hostId]), () => target.getWorktreeBinding(sourceId, hostId)).then(row => row && structuredClone(row));
     if (key === 'executeRaw') return (sql: string, params?: unknown[], opts?: { signal?: AbortSignal }) => {

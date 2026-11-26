@@ -43,6 +43,7 @@ import { invalidateStaleSignatureEmbeddingsGuarded } from '../src/core/embedding
 import { estimateCostFromChars } from '../src/core/embedding-pricing.ts';
 import { AUDIT_ROW_SOURCES } from '../src/core/facts/audit-sources.ts';
 import { operations } from '../src/core/operations.ts';
+import { assertRetainedEmbeddingRebuildability } from '../src/core/embedding-migration-retention.ts';
 
 let engine: PGLiteEngine;
 let colDim: number;
@@ -616,6 +617,55 @@ describe('#4305 false target stamps + #4306 embed_skip-safe invalidation', () =>
     expect(await chunkState('skip-drift')).toEqual({ embedded: 1, nulls: 0 });
   });
 
+  test('#10231: a database config that names the model without its provider is not converged; apply rewrites only the label', async () => {
+    const sig = migrationSignature(TARGET, colDim);
+    await seedModeled('qualified', 'abcde', { model: TARGET, signature: sig });
+    const vec = `[${new Array(colDim).fill(0.02).join(',')}]`;
+    await engine.executeRaw(
+      `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, notability, source, confidence, embedding, embedding_model, embedded_text_hash)
+       VALUES ('default', 'e', 'kept fact', 'fact', 'private', 'medium', 'test', 1.0, $1::vector, $2, md5('kept fact'))`,
+      [vec, TARGET],
+    );
+    const [page] = await engine.executeRaw<{ id: number }>("SELECT id FROM pages WHERE slug='qualified' AND source_id='default'");
+    await engine.addTakesBatch([{ page_id: page.id, row_num: 1, claim: 'Kept take', kind: 'take', holder: 'brain', weight: 0.6 }]);
+    await engine.executeRaw("UPDATE takes SET embedding=$1::vector, embedding_model=$2, embedded_text_hash=md5(claim), embedded_at=now() WHERE page_id=$3",
+      [vec, TARGET, page.id]);
+    await engine.setConfig('embedding_model', 'text-embedding-3-small');
+    await engine.setConfig('embedding_dimensions', String(colDim));
+
+    const verify = await verifyMigrationComplete(engine, { toModel: TARGET, toDims: colDim }, {
+      filePlane: { model: TARGET, dims: colDim },
+    });
+    expect(verify.complete).toBe(false);
+    expect(verify.details.db_plane_ok).toBe(false);
+    expect(verify.details.stale_wide).toBe(0);
+    expect(verify.blockers).toContain(`database config records text-embedding-3-small at ${colDim}d, target is ${TARGET} at ${colDim}d`);
+
+    const plan = await planEmbeddingMigration(engine, { to: TARGET, dim: colDim });
+    expect(plan.chunks_to_embed).toBe(0);
+    const res = await applyEmbeddingMigration(engine, plan);
+    expect(res).toMatchObject({ status: 'applied', invalidated: 0 });
+    expect(await engine.getConfig('embedding_model')).toBe(TARGET);
+    expect(await chunkState('qualified')).toEqual({ embedded: 1, nulls: 0 });
+    const companions = await engine.executeRaw<{ facts: number; takes: number }>(
+      `SELECT (SELECT count(*)::int FROM facts WHERE fact='kept fact' AND embedding IS NOT NULL) AS facts,
+              (SELECT count(*)::int FROM takes WHERE page_id=$1 AND embedding IS NOT NULL AND embedded_at IS NOT NULL) AS takes`, [page.id]);
+    expect(companions[0]).toEqual({ facts: 1, takes: 1 });
+    const after = await verifyMigrationComplete(engine, { toModel: TARGET, toDims: colDim }, {
+      filePlane: { model: TARGET, dims: colDim }, ignoreMarker: true,
+    });
+    expect(after.details.db_plane_ok).toBe(true);
+    expect(after.blockers.filter(b => b.startsWith('database config'))).toEqual([]);
+  });
+
+  test('#10231: only a label without any provider counts as the target model; another provider still clears companion vectors', async () => {
+    await engine.setConfig('embedding_model', 'openai:text-embedding-3-small');
+    const clears = (model: string, from: string) => engine.transaction(tx => assertRetainedEmbeddingRebuildability(tx, colDim, model, { from_model: from, from_dims: colDim }));
+    expect(await clears('litellm:openai:text-embedding-3-small', 'openai:text-embedding-3-small')).toBe(true);
+    await engine.setConfig('embedding_model', 'text-embedding-3-small');
+    expect(await clears('openai:text-embedding-3-small', 'text-embedding-3-small')).toBe(false);
+  });
+
   test('#4306: verify reports embed_skip NULL chunks without blocking completion', async () => {
     // The already-damaged shape: an embed_skip page whose chunks were NULLed
     // by a pre-fix run. Nothing re-embeds it by design — completion must not
@@ -625,6 +675,9 @@ describe('#4305 false target stamps + #4306 embed_skip-safe invalidation', () =>
       frontmatter: { embed_skip: { reason: 'oversized' } },
       embedded: false,
     });
+    // A converged brain's database config names the target too (#10231).
+    await engine.setConfig('embedding_model', TARGET);
+    await engine.setConfig('embedding_dimensions', String(colDim));
     const verify = await verifyMigrationComplete(engine, { toModel: TARGET, toDims: colDim }, {
       filePlane: { model: TARGET, dims: colDim },
     });

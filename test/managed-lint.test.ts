@@ -186,6 +186,55 @@ test('unmanaged lint keeps the legacy filesystem write path', async () => {
   }
 }, 30_000);
 
+// #10442: a managed source's directory lint covers the files its sync imports, not scaffolding or skill bundles.
+test('managed directory lint skips files managed sync never imports; a single-file target is still linted', async () => {
+  const note = '---\ntitle: Example\ntype: note\ndate: 2026-01-01\n---\n\nBody.\n';
+  const files: Record<string, string> = {
+    'README.md': 'A plain folder guide.\n',
+    'notes/bare/README.md': 'A plain folder guide.\n',
+    'skills/example/SKILL.md': '---\nname: example\ndescription: An example skill.\n---\n\nSteps.\n',
+    'skillpack.md': 'Not reserved: only skillpack.json is.\n',
+    'drafts/scratch.md': 'Excluded by sync.exclude.\n',
+    'notes/typed/README.md': note,
+    'notes/empty.md': `${note}\n## Empty\n`,
+  };
+  await fixture(async (engine, sourceId, root) => {
+    for (const [rel, text] of Object.entries(files)) {
+      mkdirSync(join(root, rel, '..'), { recursive: true });
+      writeFileSync(join(root, rel), text);
+    }
+    await engine.setConfig('sync.exclude', 'drafts/');
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+    try {
+      const flagged: string[] = [];
+      const result = await runLintCore({ target: root, dryRun: true, engine, sourceId, onPageIssues: rel => flagged.push(rel) });
+      expect(result.pages_scanned).toBe(3);
+      expect(flagged.sort()).toEqual(['notes/empty.md', 'skillpack.md']);
+      const single = await runLintCore({ target: join(root, 'README.md'), dryRun: true, engine, sourceId });
+      expect(single).toMatchObject({ pages_scanned: 1 });
+      expect(single.total_issues).toBeGreaterThan(0);
+      // A subdirectory target is judged by each file's path below the source root, not below the target.
+      const scanned = async (rel: string) => (await runLintCore({ target: join(root, rel), dryRun: true, engine, sourceId })).pages_scanned;
+      expect(await scanned('drafts')).toBe(0);
+      expect(await scanned('skills')).toBe(0);
+      expect(await scanned('notes')).toBe(2);
+      // The root is the source's active binding on this host, even when sources.local_path is unset (a managed default source).
+      const setLocalPath = (path: string | null) => engine.transaction(async tx => {
+        await tx.executeRaw('SET LOCAL session_replication_role = replica');
+        await tx.executeRaw('UPDATE sources SET local_path=$2 WHERE id=$1', [sourceId, path]);
+      });
+      await setLocalPath(null);
+      expect(await scanned('.')).toBe(3);
+      await setLocalPath(root);
+      // The source's own strategy decides: a code source imports no Markdown.
+      await engine.executeRaw(`UPDATE sources SET config = config || '{"strategy":"code"}'::jsonb WHERE id=$1`, [sourceId]);
+      expect(await scanned('.')).toBe(0);
+    } finally {
+      await engine.setConfig('sync.exclude', '');
+    }
+  });
+}, 30_000);
+
 // ── Diverged files (P1-1): the coordinator's source_changed refusal is a pending issue, never a failed run ──
 
 const JANE = 'people/jane-doe';

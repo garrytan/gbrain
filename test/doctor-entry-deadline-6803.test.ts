@@ -54,12 +54,14 @@ function ctxFor(engine: BrainEngine | null, args: string[]): DoctorContext {
  * The engine with executeRaw delayed for statements matching `slow›, and statements matching `count› counted.
  * `settled()` resolves once every delayed statement has finished, so none outlives its test.
  */
-function instrumented(engine: BrainEngine, opts: { slow?: { match: RegExp; ms: number }; count?: RegExp } = {}): BrainEngine & { counted: number; settled: () => Promise<void> } {
+function instrumented(engine: BrainEngine, opts: { slow?: { match: RegExp; ms: number }; count?: RegExp; countMember?: string } = {}): BrainEngine & { counted: number; settled: () => Promise<void> } {
   const state = { counted: 0, delayed: new Set<Promise<unknown>>() };
   return new Proxy(engine, {
     get(target, key) {
       if (key === 'counted') return state.counted;
       if (key === 'settled') return async () => { await Promise.allSettled([...state.delayed]); };
+      // The forecast's topology read is one statement inside the typed readCapacityForecastInputs member now; the member's calls are counted.
+      if (opts.countMember && key === opts.countMember) return (...args: unknown[]) => { state.counted++; return (target as unknown as Record<string, (...a: unknown[]) => unknown>)[key](...args); };
       if (key === 'executeRaw') {
         return (sql: string, params?: unknown[], o?: unknown) => {
           if (opts.count?.test(sql)) state.counted++;
@@ -332,7 +334,7 @@ for (const kind of testBackends()) {
     }, 30_000);
 
     test('Postgres: entry A out of time mid-forecast never makes entry B report a counter-only ok, and the run forecasts once', async () => {
-      const counting = instrumented(engine, { count: /FROM persistence_topology_changes/ });
+      const counting = instrumented(engine, { count: /FROM persistence_topology_changes/, countMember: 'readCapacityForecastInputs' });
       const lock = await lockTable(databaseUrl, 'persistence_requests', 1_500);
       try {
         const a = { ...persistenceCapacityEntry, name: 'capacity_a' };

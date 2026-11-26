@@ -42,8 +42,12 @@ interface HostAdoption {
   initial_files?: Record<string, string>;
   expected_hashes?: Record<string, string | null>;
   mode?: 'proposal';
+  /** The skills were read from the source's checkout (adoptSharedSkillpack without explicit skills). */
+  from_checkout?: true;
 }
-type SkillAuthority = WriteAuthority & { skillSlugsUsed?: string[]; skillAdoptionPreconditions?: Record<string, string | null>; skillAdoptionInventory?: Record<string, string | null> };
+type SkillAuthority = WriteAuthority & { skillSlugsUsed?: string[]; skillAdoptionPreconditions?: Record<string, string | null>; skillAdoptionInventory?: Record<string, string | null>;
+  /** Which loss check an adoption gets: 'checkout' (a pack adoption read from the checkout), 'proposal' (import_skill_proposal) or 'explicit' (packaged skills). Absent on requests accepted before the check existed. */
+  skillAdoptionCheck?: 'checkout' | 'proposal' | 'explicit' };
 const DOCTOR_FIX = readFix('Shows the brain host\'s storage and catalog health so the inconsistency can be reported with evidence.', { argv: ['gbrain', 'doctor', '--json'] });
 function ownerStatusFix(sourceId: string, ctx?: OperationContext): Action {
   const argv = ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--json'];
@@ -312,6 +316,11 @@ export async function submitSharedSkillMutation(ctx: OperationContext, operation
     affected.push({ name: proposal.name, revision: keys.find(key => key.name === proposal.name)?.revision ?? null });
   }
   authority.skillSlugsUsed = affected.map(r => `skills/${r.name}/SKILL.md`).sort();
+  if (adoption) {
+    const check = adoption.mode === 'proposal' ? 'proposal' : adoption.from_checkout ? 'checkout' : 'explicit';
+    for (const proposal of proposals) refuseLossyAdoption(sourceId, proposal, current.find(r => r.name === proposal.name && !r.deleted), check);
+    authority.skillAdoptionCheck = check;
+  }
   if (adoption) authority.skillAdoptionPreconditions = Object.fromEntries(proposals.map(p => [p.name, p.expected_revision]));
   if (adoption?.expected_hashes) authority.skillAdoptionInventory = { ...adoption.expected_hashes };
   for (const target of authority.skillSlugsUsed) await authorizeWrite(ctx.engine, authority, operation, target);
@@ -341,6 +350,7 @@ export async function submitSharedSkillMutation(ctx: OperationContext, operation
         `skillpack.json in source ${sourceId}'s checkout must name pack ${packId} and set brain_resident: true. Publish with the pack_id the manifest declares, or have the brain host's operator correct the manifest.`);
     }
   }
+  if (adoption?.mode === 'proposal') refuseManifestLoss(sourceId, manifest, keys, proposals);
   if (!pack && adoption && manifestInput) {
     if (!Array.isArray(manifest.skills) || manifest.skills.some(path => typeof path !== 'string' || !/^skills\/[a-z0-9][a-z0-9_-]*$/.test(path)) ||
       manifest.skills.some(path => !proposals.some(proposal => path === `skills/${proposal.name}`))) {
@@ -439,6 +449,12 @@ export async function prepareSharedSkillMutation(engine: BrainEngine, row: Write
     throw changedAfterAdmission('The pack or a skill in its closure changed after admission.');
   }
   const proposals = intent.proposals;
+  // A queued adoption is checked again before it touches the checkout; one accepted before the check existed gets the
+  // strictest (checkout) check, so a request from an older release never republishes a skill from SKILL.md alone.
+  const adoptionAuthority = row.authority as SkillAuthority;
+  if (adoptionAuthority.skillAdoptionPreconditions) {
+    for (const proposal of proposals) refuseLossyAdoption(row.source_id, proposal, current.find(r => r.name === proposal.name && !r.deleted), adoptionAuthority.skillAdoptionCheck ?? 'checkout');
+  }
   const replacement = new Map(proposals.flatMap(p => p.files).map(f => [f.path, f]));
   const revisions = intent.affected.map(target => {
     const old = current.find(r => r.name === target.name);
@@ -549,6 +565,67 @@ export async function importSharedSkillProposal(ctx: OperationContext, params: R
   }
   return submitSharedSkillMutation(ctx, 'put_skill', input, { mode: 'proposal', skills: [input as unknown as SharedSkillPutInput], expected_hashes: hashes as Record<string, string | null> });
 }
+/**
+ * An adoption never loses what a sealed skill was published with. Its proposal must keep the sealed revision's
+ * effective private flag, requirements, tools_declared (when the sealed revision recorded it), description and triggers,
+ * whatever their source, and must not widen the audience of a file both hold. A pack adoption from the checkout
+ * (check 'checkout') republishes from SKILL.md alone, so it must also keep every sealed file and the SKILL.md's own
+ * media type and dependencies. Refusing happens before anything is written; the remedy is a reviewed import that
+ * states the same values.
+ */
+function refuseLossyAdoption(sourceId: string, proposal: { name: string; files: StoredSkillFile[]; metadata: SkillMetadata },
+  sealed: StoredSkillRevision | undefined, check: 'checkout' | 'proposal' | 'explicit'): void {
+  if (!sealed || check === 'explicit') return;
+  const sorted = (list: readonly string[] | undefined) => JSON.stringify([...(list ?? [])].sort());
+  const reasons: string[] = [];
+  const was = sealed.metadata, now = proposal.metadata;
+  if (Boolean(was.private) !== Boolean(now.private)) reasons.push(was.private ? 'it is published private' : 'it is published visible');
+  if (sorted(was.requirements) !== sorted(now.requirements) || (was.tools_declared !== undefined && was.tools_declared !== now.tools_declared)) reasons.push('its requirements would change');
+  if (was.description !== now.description || sorted(was.triggers) !== sorted(now.triggers)) reasons.push('its description or triggers would change');
+  for (const file of sealed.files) {
+    const next = proposal.files.find(candidate => candidate.path === file.path);
+    if (!next) { if (check === 'checkout') reasons.push(`it holds ${file.path}, which would be deleted`); continue; }
+    if (next.audience.some(audience => !file.audience.includes(audience))) reasons.push(`${file.path} would reach a wider audience`);
+    if (check === 'checkout' && file.path === `skills/${proposal.name}/SKILL.md`
+      && (file.media_type !== next.media_type || sorted(file.depends_on) !== sorted(next.depends_on))) reasons.push('its SKILL.md has its own media type or dependencies');
+  }
+  if (!reasons.length) return;
+  const remedy = check === 'checkout'
+    ? 'Publish the reviewed change to this skill with import_skill_proposal on the brain host, with its full file set, its expected_hashes and the same private, requirements, description and triggers values'
+    : 'Resubmit the import with its full file set and the same private, requirements, description and triggers values as the published skill';
+  throw opError('local_conflict', `skills/${proposal.name} was not adopted: ${reasons.join('; ')}. ${remedy}; nothing was written and no file was deleted.`,
+    `skills/${proposal.name} in source ${sourceId} is already published, and adopting this proposal would lose or widen what it was published with. ${remedy}. Check the skill's visibility and file set after publishing.`);
+}
+
+/** An import regenerates skillpack.json from the sealed heads, so a skill the checkout declares but never published would vanish from it. */
+function refuseManifestLoss(sourceId: string, manifest: Record<string, unknown>, keys: HeadKey[], proposals: Array<{ name: string }>): void {
+  const declared = (Array.isArray(manifest.skills) ? manifest.skills : []).filter((path): path is string => typeof path === 'string' && path.startsWith('skills/')).map(path => path.slice('skills/'.length));
+  const unpublished = declared.filter(name => !keys.some(key => key.name === name && !key.deleted) && !proposals.some(proposal => proposal.name === name));
+  if (unpublished.length) {
+    throw opError('local_conflict', `The import was not published: skillpack.json declares ${unpublished.map(name => `skills/${name}`).join(', ')}, which ${unpublished.length === 1 ? 'is' : 'are'} not published yet, and the import would drop ${unpublished.length === 1 ? 'it' : 'them'} from the manifest; nothing was written.`,
+      `Adopt or publish ${unpublished.map(name => `skills/${name}`).join(', ')} first (or remove ${unpublished.length === 1 ? 'it' : 'them'} from skillpack.json), then import again in source ${sourceId}.`);
+  }
+}
+
+/**
+ * The SKILL.md files and the manifest that adoption read must be the exact bytes the operator reviewed: admission reads
+ * the checkout again later, so a file changed in between would otherwise be published unreviewed.
+ */
+function assertReviewedBytes(sourceId: string, inputs: SharedSkillPutInput[], manifestBytes: Buffer | null, reviewed: Record<string, string | null>): void {
+  const read: Array<[string, Buffer | null]> = [['skillpack.json', manifestBytes],
+    ...inputs.flatMap(input => input.files.map(file => [file.path, Buffer.from(file.content, file.encoding === 'base64' ? 'base64' : 'utf8')] as [string, Buffer]))];
+  for (const [path, bytes] of read) {
+    if (!Object.hasOwn(reviewed, path) && path !== 'skillpack.json') {
+      throw opError('local_conflict', 'A file adoption would publish was not in the reviewed inventory.',
+        `${path} in source ${sourceId}'s checkout has no reviewed hash, so it was not published. Review the current inventory (it now includes this file), then adopt again; nothing was written.`);
+    }
+    if (!Object.hasOwn(reviewed, path)) continue;
+    if ((bytes === null ? null : sha256(bytes)) !== reviewed[path]) {
+      throw opError('local_conflict', 'The reviewed inventory changed before publication.',
+        `${path} in source ${sourceId}'s checkout changed after its hash was reviewed. Review the current file, recompute its SHA-256 in expected_hashes, and submit again; nothing was written.`);
+    }
+  }
+}
 export async function adoptSharedSkillpack(ctx: OperationContext, sourceId: string, options: AdoptSharedSkillpackOptions = {}) {
   if (ctx.remote !== false) {
     throw opError('permission_denied', 'Canonical pack adoption is a trusted host operation.',
@@ -598,6 +675,7 @@ export async function adoptSharedSkillpack(ctx: OperationContext, sourceId: stri
       ...((exclusions as string[] | undefined)?.some(value => value === name || value === relative) ? { private: true } : {}),
       files: [{ path: `${relative}/SKILL.md`, content: content.toString('utf8'), file_class: 'prose' as const }] };
   });
+  if (!options.skills && options.expected_hashes) assertReviewedBytes(sourceId, inputs, manifestBytes, options.expected_hashes);
   if (!inputs.length) {
     throw opError('invalid_params', 'No declared skill bundle is available to adopt.',
       `Source ${sourceId}'s skillpack.json declares no skills. Add its skills/ entries to the manifest (or pass the skills explicitly), then adopt again.`);
@@ -627,6 +705,6 @@ export async function adoptSharedSkillpack(ctx: OperationContext, sourceId: stri
   }
   const input = inputs[0];
   const receipts = [await submitSharedSkillMutation(ctx, 'put_skill', { ...input, pack_id: packId, source_id: sourceId,
-    source_incarnation: source.incarnation, request_id: requestId }, { skills: inputs, initial_files: options.initial_files, expected_hashes: expectedHashes })];
+    source_incarnation: source.incarnation, request_id: requestId }, { skills: inputs, initial_files: options.initial_files, expected_hashes: expectedHashes, ...(options.skills ? {} : { from_checkout: true }) })];
   return { schema_version: 2 as const, source_id: sourceId, source_incarnation: source.incarnation, pack_id: packId, receipts };
 }

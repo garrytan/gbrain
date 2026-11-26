@@ -21,10 +21,12 @@ export async function createEngine(config: EngineConfig): Promise<BrainEngine> {
   // top-of-stack best-effort; the sink is fail-open, so a not-yet-migrated
   // engine never breaks a chat call. An engine opened from settings never
   // comes through here (engine-open.ts): its sink is its own.
-  const deregisterUsageSink = registerChatUsageSink(makeEngineChatUsageSink(engine), engine);
+  const usageSink = makeEngineChatUsageSink(engine);
+  const deregisterUsageSink = registerChatUsageSink(usageSink, engine);
   const origDisconnect = engine.disconnect.bind(engine);
   engine.disconnect = async (): Promise<void> => {
     deregisterUsageSink();
+    await usageSink.drain();
     await origDisconnect();
   };
 
