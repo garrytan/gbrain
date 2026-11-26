@@ -19,7 +19,7 @@ gbrain's opt-in telemetry lands here: two Supabase edge functions and the SQL be
 
 ## The daily ceiling
 
-Clients send at most one request per install every 6 hours, so 15,000 accepted requests a day covers about 3,700 opted-in installs (about 450,000 a month). With gstack's traffic (about 310,000 invocations a month on 2026-11-22) that stays under half of the Pro plan's 2 million monthly invocations. The ceiling caps what lands in the tables. It can't cap what a caller sends: Supabase counts an invocation before the function runs, so a flood still spends invocations even when every request gets a 429.
+Background sends run at most once every 6 hours per install, so 15,000 accepted requests a day covers about 3,700 opted-in installs at that rate (about 450,000 requests a month). With gstack's traffic (about 310,000 invocations a month on 2026-11-22) that stays under half of the Pro plan's 2 million monthly invocations. The ceiling caps what lands in the tables. It can't cap what a caller sends: Supabase counts an invocation before the function runs, so a flood still spends invocations even when every request gets a 429.
 
 The ceiling is one bucket shared by every caller, so one caller can fill it. The pulse reports the requests refused in its 7 days as `ceiling_refusals`, so a full day reads as missing data rather than a quiet one. Per-caller limits would mean storing caller addresses, which this design doesn't do.
 

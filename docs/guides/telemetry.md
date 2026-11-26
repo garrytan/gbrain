@@ -6,13 +6,12 @@ background. The only connections it makes then are the ones you ask for with
 `gbrain telemetry pulse` and `gbrain telemetry forget`, and only when a telemetry
 address is set.
 
-**This release sends nothing at all.** It ships no address to send to, because
-the server side is not deployed yet, so setup asks you nothing and any choice you
-make with `gbrain telemetry` stays on your machine. Only `GBRAIN_TELEMETRY_URL`
-and `GBRAIN_TELEMETRY_KEY` set in your own environment give it an address (a
-`.env` file in the current directory can't set them), and that is meant for
-testing a server. The release that deploys the server turns the question on;
-this page describes how it works from then on.
+**This release sends nothing by default.** It ships no telemetry address, so
+setup doesn't ask and any telemetry choice stays on your machine. To test a
+server, set `GBRAIN_TELEMETRY_URL` in your own environment and supply its
+publishable key in `GBRAIN_TELEMETRY_KEY` if it needs one. A `.env` file in the
+current directory cannot set either. The question appears when an address is
+configured and you haven't answered yet.
 
 ## The question
 
@@ -37,7 +36,10 @@ the same commands, and anything it holds expires unsent after 7 days.
 | `anonymous` | Setup, upgrade and doctor results and daily counts, with no install id. |
 | `community` | The same, plus a random install id, so a setup and a later upgrade on one machine can be linked. |
 
-`GBRAIN_TELEMETRY=off` in the environment forces `off` whatever the setting says.
+`GBRAIN_TELEMETRY=off` in the environment forces `off` whatever the setting says,
+with one known gap listed in the deployment blockers: a `.env` file in the current
+directory that sets `GBRAIN_TELEMETRY` also drops an exported
+`GBRAIN_TELEMETRY=off`, so the saved answer applies there.
 
 ## What is sent, and what never is
 
@@ -85,13 +87,15 @@ as anonymous rows until they expire. It keeps the local id until
 the server confirms the deletion (`telemetry_forget_failed` otherwise, also
 while a send is in progress), then deletes the local queue so nothing recorded
 under the old id goes out under a new one. It leaves your tier as it was:
-`gbrain telemetry off` stops sending. `pulse` and `forget` contact the server at
-any tier, `off` included, because you ran them.
+`gbrain telemetry off` turns off reporting. At any tier, `pulse` can contact a
+configured server, and `forget` can too if a local install id exists. With no
+local id, `forget` returns `no_id` without a request. The human-readable
+`show` output summarizes recent sends; use `show --json` for their payloads.
 
 ## Known limits
 
-The server side is not deployed yet, and the gaps listed in the telemetry section
-of `TODOS.md` must close before it is. Among them, a send still finishing on the
+The server side is not deployed yet. The [telemetry deployment blockers](../../TODOS.md#opt-in-telemetry-client-follow-ups-filed-2026-11-22-telemetry-pr-2)
+must be fixed first. Among them, a send still finishing on the
 server can bring back a record `forget` just deleted, an opt-out that lands while a
 send is starting can still let that one batch go, and `pulse` exits 0 on an
 answer that carries no data.
