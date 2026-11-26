@@ -340,6 +340,53 @@ function servedSideOf(engine: BrainEngine,
   };
 }
 
+/** A call the owner will not start because it is handing the brain over: answered as never run (`owner_handoff`). */
+function answerHandedOver(call: PendingCall, release: () => void): void {
+  call.timer?.clear();
+  call.reply({ t: 'result', id: call.id, ok: false, error: callError(call, ownerHandoff(call.member, process.pid)) });
+  release();
+}
+
+/**
+ * The handoff drain: every call that has not started is answered as never run, so its client sends it to the next
+ * owner; every call that started is finished (and answered) before any connection closes.
+ */
+async function drainForHandoff(lanes: Map<unknown, PendingCall[]>, running: Set<Promise<unknown>>, handOff: (call: PendingCall) => void,
+  leaveQueue: (call: PendingCall) => void): Promise<void> {
+  for (const calls of [...lanes.values()]) for (const call of [...calls]) { if (!call.done) handOff(call); leaveQueue(call); }
+  while (running.size) await Promise.allSettled([...running]);
+}
+
+/** Ends each connection so the answers just written reach their clients, then cuts what lingers past one second. */
+async function endConnections(list: Socket[]): Promise<void> {
+  await Promise.all(list.map(socket => new Promise<void>(resolve => {
+    if (socket.destroyed) { resolve(); return; }
+    const cut = setTimeout(() => { socket.destroy(); resolve(); }, 1_000);
+    cut.unref?.();
+    socket.once('close', () => { clearTimeout(cut); resolve(); });
+    socket.end();
+  })));
+}
+
+/** The owner server's close: the handoff drain (multi-user mode), the calls left, the connections, the server. */
+async function closeOwnerServer(o: {
+  server: Server; lanes: Map<unknown, PendingCall[]>; running: Set<Promise<unknown>>;
+  handOff: ((call: PendingCall) => void) | null; leaveQueue: (call: PendingCall) => void; live: () => Socket[];
+}): Promise<void> {
+  const serverClosed = new Promise<void>(resolve => o.server.close(() => resolve()));
+  if (o.handOff) await drainForHandoff(o.lanes, o.running, o.handOff, o.leaveQueue);
+  for (const calls of [...o.lanes.values()]) {
+    for (const call of [...calls]) {
+      o.leaveQueue(call);
+      if (!call.done) { call.done = true; call.controller.abort(new DOMException('The brain owner is closing.', 'AbortError')); }
+    }
+  }
+  if (o.handOff) await endConnections(o.live());
+  for (const socket of o.live()) socket.destroy();
+  while (o.running.size) await Promise.allSettled([...o.running]);
+  await serverClosed;
+}
+
 /** A connection that closes aborts every call it started; calls of other connections keep running. */
 function endConnectionCalls(calls: Map<number, PendingCall>, leaveQueue: (call: PendingCall) => void): void {
   for (const call of calls.values()) {
@@ -419,13 +466,8 @@ export async function serveOwnerEngine(
   let active = 0;
   let inflightBytes = 0;
   let closing = false;
-  // Multi-user mode only (the served options exist only then): an owner that closes hands the brain over instead of
-  // dropping the calls it has not started. Off, null, and close is what it always was.
-  const handOff: ((call: PendingCall) => void) | null = opts.served ? (call: PendingCall) => {
-    call.timer?.clear();
-    call.reply({ t: 'result', id: call.id, ok: false, error: callError(call, ownerHandoff(call.member, process.pid)) });
-    releaseBytes(call);
-  } : null;
+  // Multi-user mode only (served options): a closing owner hands over what it has not started; off, null (server.ts close).
+  const handOff = opts.served ? (call: PendingCall) => answerHandedOver(call, () => releaseBytes(call)) : null;
   let closed: Promise<void> | undefined;
   // Engine work that has started and not settled. close() waits for all of it before the owner lock can be released.
   const running = new Set<Promise<unknown>>();
@@ -685,32 +727,7 @@ export async function serveOwnerEngine(
     // A second close() gets the same promise, so no caller can release the lock before the drain ends.
     close: () => (closed ??= (async () => {
       closing = true;
-      const serverClosed = new Promise<void>(resolve => server.close(() => resolve()));
-      if (handOff) {
-        // Multi-user mode: a handoff. Every call that has not started is answered as never run, so its client sends it
-        // to the next owner; every call that started is finished and answered before any connection closes.
-        for (const calls of [...lanes.values()]) for (const call of [...calls]) { if (!call.done) handOff(call); leaveQueue(call); }
-        while (running.size) await Promise.allSettled([...running]);
-      }
-      for (const calls of [...lanes.values()]) {
-        for (const call of [...calls]) {
-          leaveQueue(call);
-          if (!call.done) { call.done = true; call.controller.abort(new DOMException('The brain owner is closing.', 'AbortError')); }
-        }
-      }
-      if (handOff) {
-        // The answers just written must reach their clients: end each connection (it flushes), then cut what lingers.
-        await Promise.all([...sockets, ...refused].map(socket => new Promise<void>(resolve => {
-          if (socket.destroyed) { resolve(); return; }
-          const cut = setTimeout(() => { socket.destroy(); resolve(); }, 1_000);
-          cut.unref?.();
-          socket.once('close', () => { clearTimeout(cut); resolve(); });
-          socket.end();
-        })));
-      }
-      for (const socket of [...sockets, ...refused]) socket.destroy();
-      while (running.size) await Promise.allSettled([...running]);
-      await serverClosed;
+      await closeOwnerServer({ server, lanes, running, handOff, leaveQueue, live: () => [...sockets, ...refused] });
     })()),
   };
 }
