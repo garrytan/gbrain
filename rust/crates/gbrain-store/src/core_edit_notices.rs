@@ -242,22 +242,41 @@ pub(crate) fn count_claim_text(
     claim: &str,
     cap: usize,
 ) -> Result<usize> {
+    // One pass over the source's index, reading each row as it comes and stopping at `cap`, so a probe that finds its
+    // matches early reads no further history.
+    let prefix = source_prefix(source_id);
     let mut count = 0;
-    for id in source_ids(read, source_id)? {
-        let record =
-            read_notice(read, id)?.ok_or_else(|| corrupt("an index entry names no row"))?;
-        if record
-            .base_text
-            .as_deref()
-            .is_some_and(|t| pg_lower(t).contains(claim))
-        {
-            count += 1;
-            if count >= cap {
-                break;
+    let mut failure: Option<StoreError> = None;
+    scan_prefix(read, &prefix, false, &mut |k, _| {
+        let Some((_, id)) = parse_index(k, prefix.len()) else {
+            failure = Some(corrupt("a bad index key"));
+            return false;
+        };
+        match read_notice(read, id) {
+            Ok(Some(record)) => {
+                if record
+                    .base_text
+                    .as_deref()
+                    .is_some_and(|t| pg_lower(t).contains(claim))
+                {
+                    count += 1;
+                }
+                count < cap
+            }
+            Ok(None) => {
+                failure = Some(corrupt("an index entry names no row"));
+                false
+            }
+            Err(e) => {
+                failure = Some(e);
+                false
             }
         }
+    })?;
+    match failure {
+        Some(e) => Err(e),
+        None => Ok(count),
     }
-    Ok(count)
 }
 
 /// The concept rebuild's stated-store read (`SELECT 1 FROM core_edit_notices c WHERE c.source_id = $2 AND c.slug = $3`):
@@ -576,6 +595,50 @@ mod tests {
         let left = s.list_pending_core_edit_notices(None).unwrap();
         assert_eq!(left.len(), 1);
         assert_eq!(left[0]["source_id"], "default");
+    }
+
+    /// Counts the index and row entries a read visits.
+    struct Counted<'a>(&'a dyn KvRead, std::cell::Cell<usize>);
+    impl KvRead for Counted<'_> {
+        fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
+            self.1.set(self.1.get() + 1);
+            self.0.get(key)
+        }
+        fn scan(
+            &self,
+            start: &[u8],
+            end: &[u8],
+            reverse: bool,
+            f: &mut dyn FnMut(&[u8], &[u8]) -> bool,
+        ) -> Result<()> {
+            self.0.scan(start, end, reverse, &mut |k, v| {
+                self.1.set(self.1.get() + 1);
+                f(k, v)
+            })
+        }
+    }
+
+    #[test]
+    fn a_capped_claim_probe_stops_reading_at_its_cap() {
+        let s = store();
+        for n in 0..50 {
+            let mut row = input("default", &format!("core/p{n:02}"), "r1");
+            row.base_text = Some("Alice works at Acme".into());
+            s.insert_core_edit_notice(&row).unwrap();
+        }
+        let read = s.read().unwrap();
+        let counted = Counted(&*read, std::cell::Cell::new(0));
+        assert_eq!(count_claim_text(&counted, "default", "acme", 2).unwrap(), 2);
+        // Two index entries and their two rows: the 48 later notices are never visited.
+        assert_eq!(counted.1.get(), 4);
+        assert_eq!(
+            count_claim_text(&*read, "default", "acme", 1000).unwrap(),
+            50
+        );
+        assert_eq!(
+            count_claim_text(&*read, "default", "nobody", 1000).unwrap(),
+            0
+        );
     }
 
     #[test]

@@ -406,7 +406,7 @@ describe('members that write more than their arguments name', () => {
     const h = followHarness(engine);
     await h.engine.deletePages(['people/sven'], { sourceId: 'default' });
     const items = h.batches.flatMap((b) => b.items) as Array<{ relation?: string }>;
-    expect(relations(items)).toEqual(expect.arrayContaining(['pages', 'owner_only_marks', 'slug_aliases', 'page_aliases', 'slug_rename_history', 'open_loops']));
+    expect(relations(items)).toEqual(expect.arrayContaining(['pages', 'owner_only_marks', 'slug_aliases', 'page_aliases', 'slug_rename_history', 'open_loops', 'core_edit_notices']));
   });
 });
 

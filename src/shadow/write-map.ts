@@ -47,7 +47,7 @@ const originLinks = (slug: string, source: string, del: boolean, extra: Record<s
 /** BEFORE DELETE triggers on pages, facts, takes and timeline_entries (and sources changes) write the owner-only marks. */
 const OWNER_MARKS: Target[] = whole('owner_only_marks');
 /** What deleting a page leaves behind by slug (no foreign key): deletePages scrubs these stores. */
-const SLUG_STORES: Target[] = whole('slug_aliases', 'page_aliases', 'slug_rename_history', 'open_loops');
+const SLUG_STORES: Target[] = whole('slug_aliases', 'page_aliases', 'slug_rename_history', 'open_loops', 'core_edit_notices');
 /** A page write that carries `readable_by` frontmatter sets this config flag (trigger pages_access_mark_restricted). */
 const RESTRICTIONS_FLAG: Target = { relation: 'config', sel: { key: 'access.restrictions_present' } };
 const derivedLinks = (origin: { slug: string; sourceId: string }): Target[] => [
@@ -61,13 +61,13 @@ export const WRITE_MAP: Record<string, WriteSpec> = {
   putPage: { tables: ['pages', 'config'], plan: (a) => [pages(a[0], a[2]?.sourceId), RESTRICTIONS_FLAG] },
   deletePage: { tables: ['pages', 'owner_only_marks'], plan: (a) => [pages(a[0], a[1]?.sourceId, true), ...OWNER_MARKS] },
   deletePages: {
-    tables: ['pages', 'owner_only_marks', 'slug_aliases', 'page_aliases', 'slug_rename_history', 'open_loops'],
+    tables: ['pages', 'owner_only_marks', 'slug_aliases', 'page_aliases', 'slug_rename_history', 'open_loops', 'core_edit_notices'],
     plan: (a) => [...each<string>(a[0], (slug) => [pages(slug, a[1]?.sourceId, true)]), ...OWNER_MARKS, ...SLUG_STORES],
   },
   softDeletePage: { tables: ['pages'], plan: (a) => [pages(a[0], a[1]?.sourceId)] },
   softDeletePages: { tables: ['pages'], plan: (a) => each<string>(a[0], (slug) => [pages(slug, a[1]?.sourceId)]) },
   restorePage: { tables: ['pages'], plan: (a) => [pages(a[0], a[1]?.sourceId)] },
-  purgeDeletedPages: { tables: ['pages', 'owner_only_marks', 'slug_aliases', 'page_aliases', 'slug_rename_history', 'open_loops'], plan: (a) => (a[1]?.dryRun ? [] : null) },
+  purgeDeletedPages: { tables: ['pages', 'owner_only_marks', 'slug_aliases', 'page_aliases', 'slug_rename_history', 'open_loops', 'core_edit_notices'], plan: (a) => (a[1]?.dryRun ? [] : null) },
   updateSlug: {
     tables: ['pages', 'slug_aliases', 'slug_rename_history', 'page_versions', 'page_aliases', 'facts', 'fact_withdrawals', 'owner_only_marks'],
     // A rename also snapshots the page, rebinds facts, aliases and withdrawals to the new slug, and can delete a fact on either slug.

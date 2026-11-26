@@ -58,7 +58,7 @@ export function defineFollowScenarios(ctx: FollowScenarioContext): void {
         // Deleting a page clears stores by slug that no key names: those relations are dirty until a pass for them.
         expect(status(r).follower.coverage_watermark).toMatchObject({ valid: false, invalidated_reason: 'relation_dirty' });
         await tick();
-        const dirty = await r.reconciler.run('dirty', ['owner_only_marks', 'slug_aliases', 'page_aliases', 'slug_rename_history', 'open_loops']);
+        const dirty = await r.reconciler.run('dirty', ['owner_only_marks', 'slug_aliases', 'page_aliases', 'slug_rename_history', 'open_loops', 'core_edit_notices']);
         expect(dirty.error).toBeUndefined();
         const s = status(r);
         expect(s.follower.state).toBe('following');
@@ -91,6 +91,29 @@ export function defineFollowScenarios(ctx: FollowScenarioContext): void {
         expect(pass.error).toBeUndefined();
         expect(pass.repaired_rows).toBe(0);
         expect(pass.follower_misses).toBe(0);
+      } finally { await r.close(); }
+    }, 90_000);
+
+    test('a hard delete of pages takes their core edit notices out of the store once the slug stores it reported are passed over', async () => {
+      const r = await rig();
+      try {
+        await r.wrapped.insertCoreEditNotice({ sourceId: 'default', slug: 'people/alice-example', pageId: null, revision: 'r-1', baseRevision: null, baseText: 'Alice before the edit', actor: 'agent:a-1' });
+        await r.settle();
+        expect((await r.rust.listPendingCoreEditNotices(null)).map((n) => n.slug)).toEqual(['people/alice-example']);
+        await r.wrapped.deletePages(['people/alice-example'], { sourceId: 'default' });
+        await r.settle();
+        expect(await ctx.primary().listPendingCoreEditNotices(null)).toEqual([]);
+        // The delete scrubs the notices by slug, which no key names: the relation is reported dirty, and a pass over it
+        // leaves the store without the notice or its quoted base text.
+        await tick();
+        const dirty = await r.reconciler.run('dirty', ['owner_only_marks', 'slug_aliases', 'page_aliases', 'slug_rename_history', 'open_loops', 'core_edit_notices']);
+        expect(dirty.error).toBeUndefined();
+        expect(await r.rust.listPendingCoreEditNotices(null)).toEqual([]);
+        expect(await r.rust.readOldestPendingCoreEditNotice('default', 'people/alice-example')).toBeNull();
+        expect(await r.rust.findCoreEditNoticeIdByRevision('default', 'people/alice-example', 'r-1')).toBeNull();
+        const pass = await r.reconciler.run('full');
+        expect(pass.error).toBeUndefined();
+        expect(pass.repaired_rows).toBe(0);
       } finally { await r.close(); }
     }, 90_000);
 

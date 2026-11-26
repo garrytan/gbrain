@@ -31,6 +31,8 @@ import { dispatchToolCall } from '../../src/mcp/dispatch.ts';
 import { registerLocalWriter, withVerifiedLocalRegistration } from '../../src/core/persistence/identity.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
 import { withEnv } from '../helpers/with-env.ts';
+import { refusingEngine } from '../helpers/refusing-engine.ts';
+import { capabilityMissing } from '../../src/core/rust-engine/errors.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -356,6 +358,51 @@ describe('engine parity: core edit notices', () => {
             });
             return out;
           } finally { await disposePersistenceConsumer(engine); }
+        });
+      } finally {
+        rmSync(home, { recursive: true, force: true });
+      }
+    });
+
+  parityTest('a refusal at the typed notice insert fails the remote edit of a core page and leaves the page and the notices as they were',
+    { methods: ['putPage', 'readPageSnapshot', 'transaction', 'listPendingCoreEditNotices'], timeout: 120_000 },
+    async (engine, backend) => {
+      await engine.putPage('core/about', core(), { sourceId: SRC });
+      const before = await engine.readPageSnapshot('core/about', { sourceId: SRC });
+      // Every transaction the write opens hands out a tx whose insertCoreEditNotice refuses, as an engine that cannot keep
+      // notices would; the page write itself runs on the real tx.
+      const refusal = () => capabilityMissing('core_edit_notices', 'insertCoreEditNotice');
+      const refusing = new Proxy(engine, {
+        get(target, property) {
+          if (property === 'transaction') {
+            return (fn: (tx: BrainEngine) => Promise<unknown>, ...rest: unknown[]) =>
+              (target.transaction as (...a: unknown[]) => Promise<unknown>).call(target, (tx: BrainEngine) => fn(refusingEngine(tx, { needle: null, members: ['insertCoreEditNotice'], error: refusal })), ...rest);
+          }
+          const value = Reflect.get(target, property);
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      });
+      const home = mkdtempSync(join(tmpdir(), 'gb-core-notices-'));
+      try {
+        return await withEnv({ GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
+          const registration = await registerLocalWriter(refusing, 'stdio', { sourceIds: ['*'], operations: null, scopes: ['read', 'write'], slugPrefixes: null });
+          try {
+            const auth = { token: 'fixture', clientId: 'fixture-client', scopes: ['read', 'write'], sourceId: SRC };
+            const response = await withVerifiedLocalRegistration(refusing, registration, () => dispatchToolCall(refusing, 'edit_page', {
+              slug: 'core/about', expected_revision: before!.revision, edits: [{ old_text: 'About the user.', new_text: 'About the user, edited remotely.' }], request_id: randomUUID(),
+            }, { remote: true, config: { engine: backend === 'rust' ? 'rust' : 'pglite' }, sourceId: SRC, auth, logger: { info() {}, warn() {}, error() {} } } as never));
+            const after = await engine.readPageSnapshot('core/about', { sourceId: SRC });
+            const text = JSON.stringify(response.content ?? response);
+            const out = {
+              isError: response.isError === true,
+              namesTheRefusal: text.includes('engine_capability_missing') && text.includes('core_edit_notices'),
+              body: after?.page.compiled_truth,
+              sameRevision: after?.revision === before?.revision,
+              notices: await pending(engine),
+            };
+            expect(out).toEqual({ isError: true, namesTheRefusal: true, body: 'About the user.', sameRevision: true, notices: [] });
+            return out;
+          } finally { await disposePersistenceConsumer(refusing); }
         });
       } finally {
         rmSync(home, { recursive: true, force: true });

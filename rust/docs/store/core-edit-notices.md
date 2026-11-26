@@ -91,8 +91,12 @@ not stored is copied (there is no foreign key). The follower's remove deletes th
 ## What stays different from the SQL engines
 
 - Row-level security does not apply: the store has one writer and no roles.
-- `created_at` of a notice written through `insertCoreEditNotice` is the store clock at the call (microseconds); on Postgres it
-  is `now()` of the transaction. The two agree to the precision a person reads; a test must not compare them to the
-  microsecond.
+- `created_at` of a notice written through `insertCoreEditNotice` inside a transaction (the notify insert runs in the page
+  write's publication transaction) is the transaction's start time (`TransactionClock`, `transactions.rs`), as SQL `now()`
+  is. A standalone call outside a transaction stamps the store clock at the call. Either way the value is the store's own
+  clock, not the primary's: a test must not compare times across engines to the microsecond.
+- `created_at` reads as `timestamptz::text` in UTC (`+00`), as on PGLite and on a Postgres session whose time zone is UTC.
+  A Postgres session in another zone prints the same instant with its own offset; every Rust timestamp read
+  (`cli_reads::pg_text::timestamptz_text`) answers UTC the same way.
 - The list reads at most 50 pages after reading every index entry of the pages before them, so a brain with very many
   acknowledged notices on the first pages in byte order reads those entries (not their rows) before it finds 50 pending pages.
