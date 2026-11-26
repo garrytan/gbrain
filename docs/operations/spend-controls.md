@@ -503,6 +503,9 @@ Semantics:
   into the config directly.
 - Overrides win over shipped tables — you own your bill (negotiated rates,
   markup-charging proxies).
+- The `get_usage` chat ledger uses those overrides too. Allow up to one minute
+  for a running process to pick up a price change. Existing rows aren't
+  repriced, and a call with no price still has no USD estimate.
 - Models with neither a table row nor an override stay fail-closed under a cap.
 - Invalid entries (negative, non-numeric) are dropped; those models keep the
   fail-closed behavior.
