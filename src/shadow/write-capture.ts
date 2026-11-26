@@ -126,7 +126,7 @@ async function fenced(engine: BrainEngine, op: string, args: unknown[], targets:
 }
 
 /** The options the Rust putPage takes (store-members/pages.ts `takeOptions`; `inline` it ignores). The whole options object is sent with the write, and any other key (`contextualRetrieval`, which the store refuses) is one the replay does not carry: the sample is uncomparable. */
-export const PUT_PAGE_OPTIONS: ReadonlySet<string> = new Set(['sourceId', 'allowEmptyOverwrite', 'expectedRevision', 'force', 'inline']);
+export const PUT_PAGE_OPTIONS: ReadonlySet<string> = new Set(['sourceId', 'allowEmptyOverwrite', 'expectedRevision', 'force', 'inline', 'contextualRetrieval']);
 const knownOptions = (name: string, args: unknown[]): boolean => name !== 'putPage' || Object.keys((args[2] as object | undefined) ?? {}).every((k) => PUT_PAGE_OPTIONS.has(k));
 const STAMP = 'updatePageContextualRetrievalState'; // changes a compared page column (contextual_retrieval_mode) after the page write: the replay runs the same call (WriteEvent.then)
 /** Writes after a sampled putPage in its transaction that leave the compared page row and links as the write made them (chunks are not compared). */
