@@ -1,21 +1,24 @@
 /**
- * Re-adopting a canonical pack after a reviewed edit keeps what the edit did not touch.
+ * Re-adopting a canonical pack never loses what a sealed skill was published with.
  *
- * 1. Protects: when the shared-content migration re-adopts a source's pack after the operator accepts a reviewed
- *    inventory edit (only one skill's SKILL.md changed), a reference file the skill published with put_skill stays in
- *    the canonical checkout and in the sealed revision, and a skill published private stays private to readers. A
- *    second re-adoption with nothing changed keeps the same head.
- * 2. Fails on: adoption rebuilding each skill from its SKILL.md alone, which deletes the skill's unchanged reference
- *    files from the checkout and publishes the skill as visible again.
+ * 1. Protects: a pack adoption republishes each declared skill from its SKILL.md alone. For a sealed skill that holds
+ *    more (other files, a private flag, requirements or routing put_skill supplied, a SKILL.md audience, media type or
+ *    dependency of its own), re-adoption after a reviewed SKILL.md edit refuses by name: it writes nothing, deletes no
+ *    checkout file, leaves the sealed revision as it was, and readers see no more than before. A new skill and a
+ *    prose-only sealed skill still adopt; a retried adoption replays its receipt; a SKILL.md changed after review is
+ *    refused; a re-adoption over the journal byte limit refuses and writes nothing.
+ * 2. Fails on: re-adoption deleting a skill's other files from the checkout, publishing a private skill as visible,
+ *    dropping requirements or routing, widening a SKILL.md audience, or publishing unreviewed bytes.
  * 3. Existing coverage: test/shared-skills-catalog.test.ts adopts a fresh pack; test/shared-skills-pack-bounds-5476.test.ts
- *    adopts 75 prose-only skills. Neither re-adopts a skill that has reference files or a private flag.
- * 4. Seam: none. Real PGLite (and Postgres with DATABASE_URL) through isolatedSharedSkillsEngine and the canonical
- *    coordinator; the reviewed edit is a file write in the canonical checkout.
+ *    adopts 75 prose-only skills. Neither re-adopts a skill that holds more than its SKILL.md.
+ * 4. Seam: none, except the one swap test, which changes SKILL.md back to its reviewed bytes when adoption looks up its
+ *    request. Real PGLite (and Postgres with DATABASE_URL) through isolatedSharedSkillsEngine and the canonical
+ *    coordinator.
  */
 import { describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -24,10 +27,9 @@ import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { activateSharedSkillPersistence } from '../src/core/persistence/skill-activation.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { adoptSharedSkillpack, submitSharedSkillMutation } from '../src/core/shared-skills/publication.ts';
-import { getSharedSkill, listSharedSkills } from '../src/core/shared-skills/catalog.ts';
+import { listSharedSkills } from '../src/core/shared-skills/catalog.ts';
 import { setSharedSkillPolicy } from '../src/core/shared-skills/policy.ts';
 import { inventorySkillpack } from '../src/core/shared-skills/setup-files.ts';
-import { runSharedSkillsMigration } from '../src/core/shared-skills/migration.ts';
 import type { SharedSkillPolicy } from '../src/core/shared-skills/model.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
@@ -68,212 +70,121 @@ async function fixture(run: (f: Fixture) => Promise<void>, databaseUrl?: string)
   } finally { rmSync(dir, { recursive: true, force: true }); }
 }
 
-/** Publishes alpha with a reference file through put_skill, then accepts a reviewed edit to its SKILL.md and re-adopts. */
-async function readoptAfterEdit(f: Fixture, extra: Record<string, unknown>) {
+/** Publishes alpha through put_skill and marks the pack brain-resident. */
+async function publishAlpha(f: Fixture, files: Array<Record<string, unknown>>, extra: Record<string, unknown> = {}) {
   const published = await submitSharedSkillMutation(f.editor, 'put_skill', { request_id: randomUUID(), expected_revision: null,
-    source_id: 'default', source_incarnation: f.incarnation, pack_id: 'example-pack', name: 'alpha',
-    files: [{ path: 'skills/alpha/SKILL.md', content: skillMd('Use the guide.'), file_class: 'prose', depends_on: [REFERENCE] },
-      { path: REFERENCE, content: 'Guide body', file_class: 'reference' }], ...extra });
+    source_id: 'default', source_incarnation: f.incarnation, pack_id: 'example-pack', name: 'alpha', files, ...extra });
   expect((published as { state?: string }).state).toBe('committed');
   const manifest = JSON.parse(readFileSync(join(f.root, 'skillpack.json'), 'utf8')) as Record<string, unknown>;
   writeFileSync(join(f.root, 'skillpack.json'), `${JSON.stringify({ ...manifest, brain_resident: true }, null, 2)}\n`);
-  const visibleBefore = (await listSharedSkills(f.reader)).skills.map(skill => skill.name);
-  // The reviewed edit: only SKILL.md's prose changes, and the operator accepts the inventory it produced.
-  writeFileSync(join(f.root, 'skills/alpha/SKILL.md'), skillMd('Use the guide, carefully.'));
-  const reviewed = inventorySkillpack(f.root)!;
-  const adopted = await adoptSharedSkillpack(f.local, 'default', { expected_hashes: reviewed.hashes });
-  return { visibleBefore, adopted,
-    referenceOnDisk: existsSync(join(f.root, REFERENCE)) ? readFileSync(join(f.root, REFERENCE), 'utf8') : null,
-    skillOnDisk: readFileSync(join(f.root, 'skills/alpha/SKILL.md'), 'utf8'),
-    visibleAfter: (await listSharedSkills(f.reader)).skills.map(skill => skill.name) };
 }
-
-
-/** Publishes alpha (SKILL.md depending on one reference file) through put_skill and marks the pack brain-resident. */
-async function publishWithReference(f: Fixture, extra: Record<string, unknown> = {}) {
-  await submitSharedSkillMutation(f.editor, 'put_skill', { request_id: randomUUID(), expected_revision: null,
-    source_id: 'default', source_incarnation: f.incarnation, pack_id: 'example-pack', name: 'alpha',
-    files: [{ path: 'skills/alpha/SKILL.md', content: skillMd('Use the guide.'), file_class: 'prose', depends_on: [REFERENCE] },
-      { path: REFERENCE, content: 'Guide body', file_class: 'reference' }], ...extra });
-  const manifest = JSON.parse(readFileSync(join(f.root, 'skillpack.json'), 'utf8')) as Record<string, unknown>;
-  writeFileSync(join(f.root, 'skillpack.json'), `${JSON.stringify({ ...manifest, brain_resident: true }, null, 2)}\n`);
-}
+const prose = (body = 'Use the guide.', more: Record<string, unknown> = {}) => ({ path: 'skills/alpha/SKILL.md', content: skillMd(body), file_class: 'prose', ...more });
 const HEAD_SQL = `SELECT r.revision,r.files,r.metadata FROM shared_skill_heads h JOIN shared_skill_revisions r
   ON r.source_id=h.source_id AND r.source_incarnation=h.source_incarnation AND r.pack_id=h.pack_id AND r.name=h.name AND r.revision=h.revision
   WHERE h.source_id=$1 AND h.name=$2`;
 async function headRow(f: Fixture) {
-  return (await f.engine.executeRaw<{ revision: string; files: Array<{ path: string; content: string }>; metadata: { requirements: string[]; tools_declared: boolean } }>(HEAD_SQL, ['default', 'alpha']))[0];
+  return (await f.engine.executeRaw<{ revision: string; files: Array<{ path: string; content: string }>; metadata: Record<string, unknown> }>(HEAD_SQL, ['default', 'alpha']))[0];
 }
-const headFiles = async (f: Fixture) => (await headRow(f)).files;
-const headMetadata = async (f: Fixture) => (await headRow(f)).metadata;
-const headRevision = async (f: Fixture) => (await headRow(f)).revision;
-/** The digest the migration names in its conflict message, for --accept-reviewed-inventory. */
-async function acceptableDigest(f: Fixture): Promise<string> {
-  const report = await runSharedSkillsMigration(f.local);
-  const reason = report.sources.find(row => row.source_id === 'default')?.stages.map(stage => stage.reason ?? '').join(' ') ?? '';
-  const match = /--accept-reviewed-inventory default=([a-f0-9]{64})/.exec(reason);
-  expect(match).not.toBeNull();
-  return match![1];
+/** Every file under the checkout's skills/ directory, with its bytes. */
+function checkout(root: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  const walk = (dir: string) => { for (const name of readdirSync(join(root, dir))) { const rel = `${dir}/${name}`; statSync(join(root, rel)).isDirectory() ? walk(rel) : (out[rel] = readFileSync(join(root, rel), 'utf8')); } };
+  if (existsSync(join(root, 'skills'))) walk('skills');
+  return out;
+}
+const readerView = async (f: Fixture) => (await listSharedSkills(f.reader)).skills.map(skill => skill.name);
+
+/** A reviewed SKILL.md edit, then re-adoption: what it answered, and the checkout, head and reader view after it. */
+async function readopt(f: Fixture) {
+  writeFileSync(join(f.root, 'skills/alpha/SKILL.md'), skillMd('Use the guide, carefully.'));
+  const before = { checkout: checkout(f.root), head: await headRow(f), reader: await readerView(f) };
+  const outcome = await adoptSharedSkillpack(f.local, 'default', { expected_hashes: inventorySkillpack(f.root)!.hashes })
+    .then(() => 'adopted', (error: { code?: string; message?: string }) => `${error.code}: ${error.message}`);
+  return { outcome, before, after: { checkout: checkout(f.root), head: await headRow(f), reader: await readerView(f) } };
 }
 
 const backends: Array<[string, string | undefined]> = [['PGLite', undefined], ...(process.env.DATABASE_URL ? [['Postgres', process.env.DATABASE_URL] as [string, string]] : [])];
 
+// Each case publishes alpha with something its SKILL.md alone would not reproduce.
+const lossy: Array<[string, () => Array<Record<string, unknown>>, Record<string, unknown>]> = [
+  ['another file (a reference)', () => [prose('Use the guide.', { depends_on: [REFERENCE] }), { path: REFERENCE, content: 'Guide body', file_class: 'reference' }], {}],
+  ['the private flag', () => [prose()], { private: true }],
+  ['requirements', () => [prose()], { requirements: ['tool:get_page'] }],
+  ['its own description (a routing override)', () => [prose()], { description: 'An override description' }],
+  ['a SKILL.md audience of its own', () => [prose('Use the guide.', { audience: ['oauth_client:editor'] })], {}],
+  ['a SKILL.md media type of its own', () => [prose('Use the guide.', { media_type: 'text/x-markdown' })], {}],
+];
+
 for (const [name, url] of backends) {
   describe(`re-adoption after a reviewed SKILL.md edit (${name})`, () => {
-    // Value: protects=an accepted SKILL.md edit never deletes the skill's unchanged reference files; fails_when=re-adoption rebuilds the skill from SKILL.md alone; why_new=no test re-adopted a skill with reference files; seam=none; no_claim=a reviewed edit that itself removes a reference
-    test('the reference file stays in the checkout and the edited prose is adopted', () => fixture(async f => {
-      const result = await readoptAfterEdit(f, {});
-      expect({ reference: result.referenceOnDisk, skill: result.skillOnDisk })
-        .toEqual({ reference: 'Guide body', skill: skillMd('Use the guide, carefully.') });
+    for (const [what, files, extra] of lossy) {
+      // Value: protects=re-adoption never republishes a skill from SKILL.md alone when that would lose what it was published with; fails_when=it deletes checkout files, exposes the skill, drops requirements or routing, or widens its audience; why_new=no test re-adopted such a skill; seam=none; no_claim=publishing the reviewed edit (import_skill_proposal does that)
+      test(`a skill published with ${what} refuses by name, and the checkout, sealed revision and reader view are unchanged`, () => fixture(async f => {
+        await publishAlpha(f, files(), extra);
+        const result = await readopt(f);
+        expect(result.outcome).toBe('local_conflict: Re-adopting this skill from its SKILL.md alone would lose what it was published with.');
+        expect({ checkout: result.after.checkout, head: result.after.head, reader: result.after.reader })
+          .toEqual({ checkout: result.before.checkout, head: result.before.head, reader: result.before.reader });
+      }, url), 120_000);
+    }
+
+    // Value: protects=a prose-only sealed skill still adopts its reviewed edit; fails_when=the refusal also stops the plain case; why_new=pins the case the refusal leaves open; seam=none; no_claim=none
+    test('a prose-only sealed skill still adopts the reviewed edit', () => fixture(async f => {
+      await publishAlpha(f, [prose()]);
+      const result = await readopt(f);
+      const skill = result.after.head.files.find(file => file.path === 'skills/alpha/SKILL.md')!;
+      expect({ outcome: result.outcome.split(':')[0], moved: result.after.head.revision !== result.before.head.revision, body: Buffer.from(skill.content, 'base64').toString(), reader: result.after.reader })
+        .toEqual({ outcome: 'adopted', moved: true, body: skillMd('Use the guide, carefully.'), reader: ['alpha'] });
     }, url), 120_000);
 
-    // Value: protects=a skill published private stays private after re-adoption; fails_when=re-adoption drops the put_skill private flag and readers see the skill; why_new=no test re-adopted a private skill; seam=none; no_claim=a manifest exclusion change
-    test('a skill published private stays hidden from readers', () => fixture(async f => {
-      const result = await readoptAfterEdit(f, { private: true });
-      expect({ before: result.visibleBefore, after: result.visibleAfter }).toEqual({ before: [], after: [] });
-    }, url), 120_000);
-
-    // Value: protects=a second re-adoption with nothing changed publishes nothing new and exposes nothing; fails_when=it writes a new revision, deletes the reference file or shows the private skill; why_new=no test re-adopted twice; seam=none; no_claim=none
-    test('a second re-adoption with nothing changed keeps the same head, the reference file and the private flag', () => fixture(async f => {
-      const first = await readoptAfterEdit(f, { private: true });
-      const head = async () => (await f.engine.executeRaw<{ revision: string }>('SELECT revision FROM shared_skill_heads WHERE source_id=$1 AND name=$2', ['default', 'alpha']))[0]?.revision;
-      const afterFirst = await head();
-      const again = await adoptSharedSkillpack(f.local, 'default', { expected_hashes: inventorySkillpack(f.root)!.hashes });
-      expect({ committed: again.receipts.every(receipt => (receipt.write_request as { state?: string } | undefined)?.state === 'committed'),
-        head: await head(), reference: readFileSync(join(f.root, REFERENCE), 'utf8'), visible: (await listSharedSkills(f.reader)).skills.map(skill => skill.name) })
-        .toEqual({ committed: true, head: afterFirst, reference: 'Guide body', visible: [] });
-      expect(first.visibleAfter).toEqual([]);
-    }, url), 120_000);
-
-    // Value: protects=an adoption retried after it committed replays its receipt; fails_when=the carried sealed state changes the request and a second revision is published; why_new=no test adopted a fresh pack twice through this path; seam=none; no_claim=none
-    test('a fresh adoption retried after it committed replays the same revision', () => fixture(async f => {
+    // Value: protects=an adoption retried after it committed replays its receipt; fails_when=a second revision is published; why_new=pins replay identity; seam=none; no_claim=none
+    test('a new skill adopts, and the adoption retried after it committed replays the same revision', () => fixture(async f => {
       mkdirSync(join(f.root, 'skills/alpha'), { recursive: true });
       writeFileSync(join(f.root, 'skills/alpha/SKILL.md'), skillMd('Fresh instructions.'));
       writeFileSync(join(f.root, 'skillpack.json'), `${JSON.stringify({ name: 'example-pack', brain_resident: true, skills: ['skills/alpha'] }, null, 2)}\n`);
       const revision = (result: Awaited<ReturnType<typeof adoptSharedSkillpack>>) => (result.receipts[0] as { revision?: string }).revision;
       const first = await adoptSharedSkillpack(f.local, 'default');
       const again = await adoptSharedSkillpack(f.local, 'default');
-      expect({ first: revision(first), again: revision(again), requests: again.receipts.length }).toEqual({ first: revision(first), again: revision(first), requests: 1 });
-      expect(revision(first)).toBeString();
+      expect({ same: revision(again) === revision(first), reader: await readerView(f) }).toEqual({ same: true, reader: ['alpha'] });
     }, url), 120_000);
 
-    // Value: protects=a fresh adoption of a skill private through its frontmatter replays its receipt; fails_when=the carried private flag changes the request and a second revision is published; why_new=no test retried a frontmatter-private adoption; seam=none; no_claim=none
-    test('a fresh adoption of a frontmatter-private skill retried after it committed replays the same revision', () => fixture(async f => {
+    // Value: protects=a frontmatter-private skill adopts and stays private on retry; fails_when=the refusal treats frontmatter privacy as lossy, or a retry republishes; why_new=pins the frontmatter-private case; seam=none; no_claim=none
+    test('a frontmatter-private skill adopts, stays hidden, and a retry replays the same revision', () => fixture(async f => {
       mkdirSync(join(f.root, 'skills/alpha'), { recursive: true });
       writeFileSync(join(f.root, 'skills/alpha/SKILL.md'), `---\nname: alpha\ndescription: A synthetic fixture\nprivate: true\n---\n\nPrivate instructions.\n`);
       writeFileSync(join(f.root, 'skillpack.json'), `${JSON.stringify({ name: 'example-pack', brain_resident: true, skills: ['skills/alpha'] }, null, 2)}\n`);
       const revision = (result: Awaited<ReturnType<typeof adoptSharedSkillpack>>) => (result.receipts[0] as { revision?: string }).revision;
       const first = await adoptSharedSkillpack(f.local, 'default');
       const again = await adoptSharedSkillpack(f.local, 'default');
-      expect({ same: revision(again) === revision(first), visible: (await listSharedSkills(f.reader)).skills.map(skill => skill.name) })
-        .toEqual({ same: true, visible: [] });
+      expect({ same: revision(again) === revision(first), reader: await readerView(f) }).toEqual({ same: true, reader: [] });
     }, url), 120_000);
 
-    // Value: protects=re-adoption keeps a file's restricted audience and media type, so a reader sees no more than before; fails_when=the carried file falls back to the readers audience or the default media type; why_new=no test re-adopted a restricted file; seam=none; no_claim=none
-    test('a reference file with a restricted audience and its own media type keeps both, and readers see no more', () => fixture(async f => {
-      await submitSharedSkillMutation(f.editor, 'put_skill', { request_id: randomUUID(), expected_revision: null,
-        source_id: 'default', source_incarnation: f.incarnation, pack_id: 'example-pack', name: 'alpha',
-        files: [{ path: 'skills/alpha/SKILL.md', content: skillMd('Use the guide.'), file_class: 'prose', depends_on: [REFERENCE] },
-          { path: REFERENCE, content: 'Guide body', file_class: 'reference', audience: ['oauth_client:editor'], media_type: 'text/plain' }] });
-      const manifest = JSON.parse(readFileSync(join(f.root, 'skillpack.json'), 'utf8')) as Record<string, unknown>;
-      writeFileSync(join(f.root, 'skillpack.json'), `${JSON.stringify({ ...manifest, brain_resident: true }, null, 2)}\n`);
-      const readerFiles = async () => (await getSharedSkill(f.reader, { name: 'alpha' })).files.map((file: { path: string }) => file.path).sort();
-      const before = await readerFiles();
-      writeFileSync(join(f.root, 'skills/alpha/SKILL.md'), skillMd('Use the guide, carefully.'));
-      await adoptSharedSkillpack(f.local, 'default', { expected_hashes: inventorySkillpack(f.root)!.hashes });
-      const head = (await f.engine.executeRaw<{ files: Array<{ path: string; audience: string[]; media_type: string }> }>(`SELECT r.files FROM shared_skill_heads h JOIN shared_skill_revisions r
-        ON r.source_id=h.source_id AND r.source_incarnation=h.source_incarnation AND r.pack_id=h.pack_id AND r.name=h.name AND r.revision=h.revision
-        WHERE h.source_id=$1 AND h.name=$2`, ['default', 'alpha']))[0];
-      const reference = head.files.find(file => file.path === REFERENCE);
-      expect({ audience: reference?.audience, media_type: reference?.media_type, readerBefore: before, readerAfter: await readerFiles() })
-        .toEqual({ audience: ['oauth_client:editor'], media_type: 'text/plain', readerBefore: before, readerAfter: before });
-      expect(before).not.toContain(REFERENCE);
-    }, url), 120_000);
-
-    // Value: protects=removing a guide never deletes a nested file the operator kept; fails_when=adoption drops the unreachable nested file and the publisher unlinks it; why_new=no test removed a transitive dependency; seam=none; no_claim=none
-    test('a reviewed removal of a guide refuses while a file only it reached is still in the checkout, and deletes nothing', () => fixture(async f => {
-      const NESTED = 'skills/alpha/references/nested.md';
-      await submitSharedSkillMutation(f.editor, 'put_skill', { request_id: randomUUID(), expected_revision: null,
-        source_id: 'default', source_incarnation: f.incarnation, pack_id: 'example-pack', name: 'alpha',
-        files: [{ path: 'skills/alpha/SKILL.md', content: skillMd('Use the guide.'), file_class: 'prose', depends_on: [REFERENCE] },
-          { path: REFERENCE, content: 'Guide body', file_class: 'reference', depends_on: [NESTED] },
-          { path: NESTED, content: 'Nested body', file_class: 'reference' }] });
-      const manifest = JSON.parse(readFileSync(join(f.root, 'skillpack.json'), 'utf8')) as Record<string, unknown>;
-      writeFileSync(join(f.root, 'skillpack.json'), `${JSON.stringify({ ...manifest, brain_resident: true }, null, 2)}\n`);
-      rmSync(join(f.root, REFERENCE));
-      writeFileSync(join(f.root, 'skills/alpha/SKILL.md'), skillMd('No guide any more.'));
+    // Value: protects=adoption publishes only the SKILL.md bytes whose hash was reviewed; fails_when=a SKILL.md changed between adoption's read and admission's re-read is published or wedges the writer; why_new=no test changed a file between the two reads; seam=SKILL.md is swapped back to its reviewed bytes when adoption looks up its request; no_claim=none
+    test('a SKILL.md changed after review is refused, and the sealed revision is unchanged', () => fixture(async f => {
+      await publishAlpha(f, [prose()]);
+      writeFileSync(join(f.root, 'skills/alpha/SKILL.md'), skillMd('Reviewed edit.'));
       const reviewed = inventorySkillpack(f.root)!;
-      // The nested file is still in the checkout, and nothing names it any more: adoption must not delete it.
-      const outcome = await adoptSharedSkillpack(f.local, 'default', { expected_hashes: { ...reviewed.hashes, [REFERENCE]: null } })
-        .then(() => 'adopted', (error: { code?: string }) => error.code);
-      expect({ outcome, reference: existsSync(join(f.root, REFERENCE)), nested: existsSync(join(f.root, NESTED)) ? readFileSync(join(f.root, NESTED), 'utf8') : null })
-        .toEqual({ outcome: 'local_conflict', reference: false, nested: 'Nested body' });
-    }, url), 120_000);
-
-    // Value: protects=adoption publishes exactly the bytes whose hash was reviewed; fails_when=a carried file read before admission differs from the reviewed bytes that admission re-reads; why_new=no test changed a file between the carry read and admission; seam=the file is swapped back when adoption looks up its request; no_claim=none
-    test('a carried file changed between the carry read and admission is never published', () => fixture(async f => {
-      await publishWithReference(f);
-      writeFileSync(join(f.root, 'skills/alpha/SKILL.md'), skillMd('Use the guide, carefully.'));
-      writeFileSync(join(f.root, REFERENCE), 'Reviewed guide');
-      const reviewed = inventorySkillpack(f.root)!;
-      writeFileSync(join(f.root, REFERENCE), 'Unreviewed guide');
+      writeFileSync(join(f.root, 'skills/alpha/SKILL.md'), skillMd('Unreviewed edit.'));
+      const before = await headRow(f);
       const raw = f.engine.executeRaw.bind(f.engine);
-      let swapped = false;
       (f.engine as { executeRaw: unknown }).executeRaw = async (sql: string, ...rest: unknown[]) => {
-        if (!swapped && sql.startsWith('SELECT * FROM persistence_requests WHERE principal_kind')) { swapped = true; writeFileSync(join(f.root, REFERENCE), 'Reviewed guide'); }
+        if (sql.startsWith('SELECT * FROM persistence_requests WHERE principal_kind')) writeFileSync(join(f.root, 'skills/alpha/SKILL.md'), skillMd('Reviewed edit.'));
         return (raw as (...args: unknown[]) => Promise<unknown>)(sql, ...rest);
       };
-      const outcome = await adoptSharedSkillpack(f.local, 'default', { expected_hashes: reviewed.hashes })
-        .then(() => 'adopted', (error: { code?: string }) => error.code);
+      const outcome = await adoptSharedSkillpack(f.local, 'default', { expected_hashes: reviewed.hashes }).then(() => 'adopted', (error: { code?: string }) => error.code);
       (f.engine as { executeRaw: unknown }).executeRaw = raw;
-      const sealed = (await headFiles(f)).find(file => file.path === REFERENCE);
-      // The unreviewed bytes are refused before admission; the sealed reference is still the published one.
-      expect({ outcome, sealed: sealed ? Buffer.from(sealed.content, 'base64').toString() : null }).toEqual({ outcome: 'local_conflict', sealed: 'Guide body' });
-    }, url), 120_000);
+      expect({ outcome, head: await headRow(f) }).toEqual({ outcome: 'local_conflict', head: before });
+    }, url), 60_000);
 
-    // Value: protects=re-adoption keeps the tool requirements put_skill published; fails_when=requirements become [] and tools_declared false, so the catalog offers every tool; why_new=no test re-adopted a skill with requirements; seam=none; no_claim=none
-    test('re-adoption keeps the requirements and tools_declared put_skill published', () => fixture(async f => {
-      await publishWithReference(f, { requirements: ['tool:get_page'] });
-      writeFileSync(join(f.root, 'skills/alpha/SKILL.md'), skillMd('Use the guide, carefully.'));
-      await adoptSharedSkillpack(f.local, 'default', { expected_hashes: inventorySkillpack(f.root)!.hashes });
-      const metadata = await headMetadata(f);
-      expect({ requirements: metadata.requirements, tools_declared: metadata.tools_declared }).toEqual({ requirements: ['tool:get_page'], tools_declared: true });
-    }, url), 120_000);
-
-    // Value: protects=the migration adopts a reviewed removal of a reference file; fails_when=its accepted inventory has no entry for the removed path and adoption refuses local_conflict; why_new=no test removed a file through the migration; seam=none; no_claim=none
-    test('the migration adopts an accepted inventory that removes a reference file', () => fixture(async f => {
-      await publishWithReference(f);
-      expect((await runSharedSkillsMigration(f.local)).sources.find(row => row.source_id === 'default')?.inventory).toBeTruthy();
-      rmSync(join(f.root, REFERENCE));
-      writeFileSync(join(f.root, 'skills/alpha/SKILL.md'), skillMd('No guide any more.').replace('triggers: [example task]\n', 'triggers: [example task]\n'));
-      const digest = await acceptableDigest(f);
-      const accepted = await runSharedSkillsMigration(f.local, { acceptReviewedInventory: { default: digest } });
-      const row = accepted.sources.find(source => source.source_id === 'default')!;
-      expect({ conflict: row.stages.some(stage => stage.status === 'conflict'), sealedPaths: (await headFiles(f)).map(file => file.path).sort() })
-        .toEqual({ conflict: false, sealedPaths: ['skills/alpha/SKILL.md'] });
-    }, url), 120_000);
-
-    // Value: protects=an accepted edit to a reference file alone is published; fails_when=the migration marks projection complete while the sealed revision still serves the old reference; why_new=no test edited only a reference file; seam=none; no_claim=none
-    test('the migration publishes an accepted edit to a reference file alone', () => fixture(async f => {
-      await publishWithReference(f);
-      await runSharedSkillsMigration(f.local);
-      writeFileSync(join(f.root, REFERENCE), 'Guide body, revised');
-      const digest = await acceptableDigest(f);
-      await runSharedSkillsMigration(f.local, { acceptReviewedInventory: { default: digest } });
-      const sealed = (await headFiles(f)).find(file => file.path === REFERENCE);
-      expect(sealed ? Buffer.from(sealed.content, 'base64').toString() : null).toBe('Guide body, revised');
-    }, url), 120_000);
-
-    // Value: protects=a re-adoption over the journal byte limit refuses by name, publishes nothing and deletes nothing; fails_when=it commits a partial revision or removes a checkout file; why_new=pins the fail-closed path until shared files are stored once per publication; seam=persistence.limits.principal_intent_bytes is lowered after the first publication; no_claim=packs that fit the default 64 MiB limit
+    // Value: protects=a re-adoption over the journal byte limit refuses by name, publishes nothing and deletes nothing; fails_when=it commits a partial revision or removes a checkout file; why_new=pins the fail-closed path; seam=persistence.limits.principal_intent_bytes is lowered after the first publication; no_claim=packs within the default 64 MiB limit
     test('a re-adoption over the journal byte limit refuses queue_capacity, publishes nothing and deletes nothing', () => fixture(async f => {
-      await publishWithReference(f);
-      const before = await headRevision(f);
+      await publishAlpha(f, [prose()]);
       await f.engine.setConfig('persistence.limits.principal_intent_bytes', '2048');
       writeFileSync(join(f.root, 'skills/alpha/SKILL.md'), skillMd(`Use the guide, carefully. ${'x'.repeat(4096)}`));
+      const before = { checkout: checkout(f.root), head: await headRow(f) };
       const outcome = await adoptSharedSkillpack(f.local, 'default', { expected_hashes: inventorySkillpack(f.root)!.hashes })
         .then(() => 'adopted', (error: { code?: string }) => error.code);
-      expect({ outcome, head: await headRevision(f), reference: readFileSync(join(f.root, REFERENCE), 'utf8'), skill: readFileSync(join(f.root, 'skills/alpha/SKILL.md'), 'utf8').includes('carefully') })
-        .toEqual({ outcome: 'queue_capacity', head: before, reference: 'Guide body', skill: true });
+      expect({ outcome, checkout: checkout(f.root), head: await headRow(f) }).toEqual({ outcome: 'queue_capacity', ...before });
     }, url), 120_000);
   });
 }
