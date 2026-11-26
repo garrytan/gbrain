@@ -50,6 +50,11 @@ be retained as though they belonged to the target. A width change uses the
 guarded transition for all three dim-pinned text columns, not a PGLite wipe.
 Image/multimodal embeddings remain separate.
 
+Adding a missing provider prefix to the same model at the same width, when
+the stored name carries no tag, is a label repair, not a model swap. Review the [migration preview](guides/embedding-migration.md#status-read-only-spend-free):
+an approved run keeps existing vectors that already match the target, but
+still runs the provider probe under the approved cap.
+
 Completion requires inspecting the actual remaining work, not just the configured
 model. An incomplete or failed run may have committed projection repairs,
 configuration/schema changes, vectors or authorization debits. Inspect `--status`

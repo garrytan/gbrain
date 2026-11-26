@@ -464,10 +464,13 @@ const memory_propose: Operation = {
     if (ctx.dryRun) return { dry_run: true, action: 'memory_propose', kind, target };
     // OV4: the published provenance names the member; the external id stays on the proposal row, read by the owner.
     const note = `${PROPOSAL_LINK_SOURCE}; member:${actor.member}; approved by owner`;
-    const payload: Record<string, unknown> = kind === 'timeline'
+    const proposed: Record<string, unknown> = kind === 'timeline'
       ? { slug: target, date: p.date, summary: (p.summary as string).trim(), ...(p.detail !== undefined ? { detail: p.detail } : {}), source: p.source ? `${note}; ${p.source}` : note }
       : { slug: target, to, link_type: (p.link_type as string | undefined) ?? '', link_source: PROPOSAL_LINK_SOURCE, context: p.context ? `${p.context} (${note})` : note,
         ...(p.valid_from !== undefined ? { valid_from: p.valid_from } : {}), ...(p.valid_until !== undefined ? { valid_until: p.valid_until } : {}) };
+    // secrets.on_write: the owner's approval replays this payload as its own write, so it is screened as it is held.
+    const { screenWriteSecrets } = await import('../persistence/write-secrets.ts');
+    const { params: payload } = screenWriteSecrets(ctx, 'memory_propose', proposed);
     const { row, created } = await insertProposal(ctx.engine, { principal, requestId, actor, sourceId, sourceIncarnation: String(source.incarnation), kind, operation,
       slug: target, toSlug: to, payload, digest, expectedRevision: snapshot?.revision ?? null, authority }, limits);
     if (!created) return replay(row);

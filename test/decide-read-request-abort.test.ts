@@ -83,7 +83,7 @@ const MOVED_CALLS: Record<string, (engine: BrainEngine) => Promise<unknown>> = {
   listActiveAccessMembers: (e) => e.listActiveAccessMembers(),
   hasLabelledOnlyMember: (e) => e.hasLabelledOnlyMember(),
   listAccessTokens: (e) => e.listAccessTokens(),
-  notifierCoverageRecorded: (e) => e.notifierCoverageRecorded(),
+  hasNotifierCoverage: (e) => e.hasNotifierCoverage(),
   readOpCheckpointKeys: (e) => e.readOpCheckpointKeys('op', 'fingerprint'),
   readHealthMemoClock: (e) => e.readHealthMemoClock(),
   listSynopsisSourceIds: (e) => e.listSynopsisSourceIds(),

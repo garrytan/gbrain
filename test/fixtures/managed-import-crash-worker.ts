@@ -19,6 +19,14 @@ Engine.prototype.executeRaw = async function (this: BrainEngine, sql: string, pa
   }
   return original.call(this, sql, params);
 } as typeof original;
+// The closing page write is the typed `sealImportedPage` member now (it was one executeRaw statement): kill at its call too.
+if (boundary === 'closing_write') {
+  Engine.prototype.sealImportedPage = async function () {
+    process.stdout.write(`${JSON.stringify({ event: 'boundary', boundary })}\n`);
+    process.kill(process.pid, 'SIGKILL');
+    await new Promise(() => {});
+  } as unknown as typeof Engine.prototype.sealImportedPage;
+}
 const engine = new Engine();
 await engine.connect(kind === 'pglite' ? { database_path: target } : { database_url: target, poolSize: 4 });
 await importManagedFile(engine, file, sourcePath, { sourceId, noEmbed: true });
