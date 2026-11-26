@@ -78,7 +78,12 @@ never a pass. With no shadow running, every criterion is `missing`.
    outside the write's own footprint must be unchanged afterwards, no link may have appeared between the copied pages that
    the write did not add (a link counts as the write's own only when its from page, to page, type, source and origin page
    all match what the write named; a link that names no origin matches only a row with no origin), and a `putPage` must
-   read back the revision it returned; otherwise the sample is `uncomparable` (`moved`). A PGLite brain samples no
+   read back the revision it returned (or, when its transaction wrote the page again, the revision the page was about to
+   commit with); otherwise the sample is `uncomparable` (`moved`). The serving process's own count of writes to pages
+   or links (bookkeeping writes do not count) also marks a sample moved, except for an in-transaction page write whose
+   page was pinned just before the commit (its revision and compared fields, read again afterwards) and whose fence
+   completed: for that write the fence and the pin decide. A pin that cannot be taken because another call is still
+   running leaves the sample `uncomparable` (`in_transaction_busy`), never a match. A PGLite brain samples no
    writes (below), so the fence never runs there. Open gaps: another process editing the very rows the
    write changes is not seen, and would show as an unexplained difference (it can fail criterion 5, never pass it); and a
    link write that names no type, or no source, treats a link another process adds between the same two pages with any

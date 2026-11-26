@@ -123,8 +123,9 @@ function fenceKit(ctx: WriteCompareContext) {
     }
     /** Runs `act` once, between the commit and the read-back of the first sampled write (the first read-back's page read). */
     function between(act: () => Promise<unknown>): { restore: () => void } {
-      const original = primary().getPage.bind(primary()); let once = true;
-      const hook = spyOn(primary(), 'getPage').mockImplementation((async (...args: Parameters<BrainEngine['getPage']>) => { if (once) { once = false; await act(); } return original(...args); }) as never);
+      const realGetPage = primary().getPage as (...a: Parameters<BrainEngine['getPage']>) => ReturnType<BrainEngine['getPage']>; let once = true;
+      // The read-back is the one getPage on the primary itself; the pin read (a nested transaction's engine, inside the sampled transaction) must not trigger it.
+      const hook = spyOn(primary(), 'getPage').mockImplementation((async function (this: unknown, ...args: Parameters<BrainEngine['getPage']>) { if (once && this === primary()) { once = false; await act(); } return realGetPage.apply(this, args); }) as never);
       return { restore: () => hook.mockRestore() };
     }
     const fresh = async () => { await ctx.reset(); await fillSeedFixture(primary()); await primary().setConfig('search.contextual_retrieval', 'none'); };
@@ -1288,6 +1289,18 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       if (ctx.addon) expect(await replay(sampled(inbox, 'putPage'))).toMatchObject({ comparable: 4, unexplained_difference: 0 });
     }, 120_000);
 
+    test('a concurrent wrapped addLink that updates the same edge before the first read-back marks the first sample moved: the fence exempts the write\'s own edge, so the counter still decides for a link write', async () => {
+      await fresh(); await primary().putPage('people/bob-example', page('Bob Example'));
+      const { inbox, wrapped } = prod();
+      const hook = between(() => wrapped.addLink('people/alice-example', 'people/bob-example', 'second context', 'works_at'));
+      try {
+        await wrapped.addLink('people/alice-example', 'people/bob-example', 'first context', 'works_at');
+        await until(() => sampled(inbox, 'addLink').length >= 2);
+      } finally { hook.restore(); }
+      const first = sampled(inbox, 'addLink').find((e) => (e.args as unknown[])[2] === 'first context')!;
+      expect(Boolean(first.moved)).toBe(true);
+    }, 120_000);
+
     test('a page imported with tags is compared: the tags it adds later in the same transaction rewrite the revision, and that is not another writer (no counter in this rig, so only the revision check can say moved)', async () => {
       await fresh();
       const { inbox, wrapped } = rig();
@@ -1316,6 +1329,14 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
         try { await wrapped.transaction(async (tx) => { await tx.putPage('companies/acme-example', page(`Acme ${Math.random()}`)); }); await until(() => putEvents(inbox).length >= 1); } finally { hook.restore(); fail?.restore(); }
         return Boolean(putEvents(inbox)[0]!.moved);
       };
+      const runStandalone = async (engine: BrainEngine, g: ReturnType<typeof jump>) => {
+        const inbox: WriteEvent[] = [];
+        const sampler = createWriteSampler({ rate: 1, generation: g.gen, send: (line) => { inbox.push(JSON.parse(line)); return true; }, active: () => true });
+        const wrapped = wrapShadowEngine(engine, { counters: newMirrorCounters(), offer: () => {}, active: () => true }, { sampleRate: 0, writes: sampler });
+        const hook = between(async () => { g.bump(); });
+        try { await wrapped.putPage('companies/acme-example', page(`Acme Alone ${Math.random()}`)); await until(() => putEvents(inbox).length >= 1); } finally { hook.restore(); }
+        return Boolean(putEvents(inbox)[0]!.moved);
+      };
       // No data-fence capability (what PGLite is, and what any engine without `postgres_admin` is): the counter decides.
       const own = Object.getOwnPropertyDescriptor(primary(), 'capabilities');
       const without = (): void => { Object.defineProperty(primary(), 'capabilities', { configurable: true, value: new Set([...primary().capabilities].filter((c) => c !== 'postgres_admin')) }); };
@@ -1325,6 +1346,8 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       if (pg) {
         // A completed fence decides: the counter jumped and the rows did not move, so it is not moved.
         expect(await run(primary(), jump())).toBe(false);
+        // A completed fence is not enough where nothing pins the target row: a putPage outside a transaction (and every link write) keeps the counter.
+        expect(await runStandalone(primary(), jump())).toBe(true);
         // A fence that cannot finish (its read fails) never passes: moved even though the counter never moved.
         const real = primary().transaction.bind(primary()) as (fn: unknown, o?: { readOnly?: boolean }) => Promise<unknown>;
         const sabotage = () => { const spy = spyOn(primary(), 'transaction').mockImplementation(((fn: unknown, o?: { readOnly?: boolean }) => (o?.readOnly ? Promise.reject(new Error('fence read failed')) : real(fn, o))) as never); return { restore: () => spy.mockRestore() }; };
@@ -1333,30 +1356,23 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       }
     }, 120_000);
 
-    test('a revision read that cannot run because another call is in flight leaves the sample uncomparable (in_transaction_busy), never a pass; and a sample with no later write reads no revision', async () => {
+    test('a pin that cannot be taken because another call is in flight leaves the sample uncomparable (in_transaction_busy), never a pass; a pinned page with tags written after it is not moved', async () => {
       await fresh();
-      const { inbox, wrapped } = prod({ generation: () => 0 });
-      let reads = 0; // the typed revision reads the sampler makes inside a transaction; PGLite: none at all (no fence), so nothing is busy
-      const proto = Object.getPrototypeOf(primary()) as { readPageSnapshot: (...a: unknown[]) => Promise<unknown> }; const realRead = proto.readPageSnapshot;
-      const count = spyOn(proto, 'readPageSnapshot').mockImplementation(function (this: unknown, ...a: unknown[]) { reads++; return realRead.apply(this, a); } as never);
-      try {
-        await wrapped.transaction(async (tx) => { await tx.putPage('companies/acme-example', page('Acme No Later Write')); });
-        await until(() => putEvents(inbox).length >= 1);
-        const alone = reads; // the typed reads a put makes by itself, with no later write beside it: the sampler adds none
-        expect(Boolean(putEvents(inbox)[0]!.moved)).toBe(false);
-        await wrapped.transaction(async (tx) => { const written = await tx.putPage('companies/acme-example', page('Acme With Tags')); await tx.addPageTagsById(written.id, ['alpha']); });
-        await until(() => putEvents(inbox).length >= 2);
-        expect(Boolean(putEvents(inbox)[1]!.moved)).toBe(false);
-        if (pg) expect(reads - alone).toBe(alone + 1); // the tags rewrote the revision: the sampler reads it once, just before the commit (Postgres), and the sample is not moved
-        await wrapped.transaction(async (tx) => {
-          const written = await tx.putPage('people/alice-example', page('Alice Busy'));
-          await tx.addPageTagsById(written.id, ['alpha']);
-          void tx.deleteChunks('people/alice-example'); // still running when the callback returns
-        });
-        await until(() => putEvents(inbox).length >= 3);
-        if (pg) { expect(putEvents(inbox)[2]).toMatchObject({ outcome: 'uncomparable', reason: 'in_transaction_busy' }); expect(putEvents(inbox)[2]!.moved).toBeUndefined(); }
-        else expect(putEvents(inbox)[2]!.reason).not.toBe('in_transaction_busy'); // no fence, no revision read, nothing to be busy about
-      } finally { count.mockRestore(); }
+      const { inbox, wrapped } = prod();
+      await wrapped.transaction(async (tx) => { await tx.putPage('companies/acme-example', page('Acme No Later Write')); });
+      await until(() => putEvents(inbox).length >= 1);
+      expect(Boolean(putEvents(inbox)[0]!.moved)).toBe(false);
+      await wrapped.transaction(async (tx) => { const written = await tx.putPage('companies/acme-example', page('Acme With Tags')); await tx.addPageTagsById(written.id, ['alpha']); });
+      await until(() => putEvents(inbox).length >= 2);
+      expect(Boolean(putEvents(inbox)[1]!.moved)).toBe(false); // the tags rewrote the revision: the pin read just before the commit is the one the page commits with
+      await wrapped.transaction(async (tx) => {
+        const written = await tx.putPage('people/alice-example', page('Alice Busy'));
+        await tx.addPageTagsById(written.id, ['alpha']);
+        void tx.deleteChunks('people/alice-example'); // still running when the callback returns
+      });
+      await until(() => putEvents(inbox).length >= 3);
+      if (pg) { expect(putEvents(inbox)[2]).toMatchObject({ outcome: 'uncomparable', reason: 'in_transaction_busy' }); expect(putEvents(inbox)[2]!.moved).toBeUndefined(); }
+      else expect(putEvents(inbox)[2]!.reason).not.toBe('in_transaction_busy'); // no fence, no pin, nothing to be busy about
     }, 120_000);
   });
 }
@@ -1425,6 +1441,15 @@ export function defineFenceNegatives(ctx: WriteCompareContext): void {
       await quiet.wrapped.addLink('people/alice-example', 'people/bob-example', 'founded', 'founded');
       await until(() => sampled(quiet.inbox, 'addLink').length >= 1);
       expect(Boolean(sampled(quiet.inbox, 'addLink')[0]!.moved)).toBe(false); // the same wiring with no writer beside it is clean
+    }, 120_000);
+
+    test('a contextual-retrieval stamp written to the target page after the commit and before the read-back marks the sample moved: it changes a compared column but not the revision', async () => {
+      await linked();
+      const { inbox, wrapped } = prod();
+      await cleanPutPage(wrapped, inbox);
+      const hook = between(() => primary().updatePageContextualRetrievalState('people/alice-example', 'default', 'title', 'generation-after-commit'));
+      try { await putAlice(wrapped); await until(() => ofPage(inbox, 'people/alice-example').length >= 1); } finally { hook.restore(); }
+      expect(Boolean(ofPage(inbox, 'people/alice-example')[0]!.moved)).toBe(true);
     }, 120_000);
 
     test('the page row stays locked by the transaction\'s own putPage until it commits: another transaction\'s update of it waits, so the revision read just before the commit is the transaction\'s own', async () => {

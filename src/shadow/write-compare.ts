@@ -64,8 +64,9 @@ const sameRow = (a: Row, b: Row): boolean => Object.keys(a).length === Object.ke
  * The data fence for a brain other processes can write (Postgres): true when the copied rows changed in a way the write does not explain, so the sample
  * is uncomparable (`moved`). Every row copied before the write that lies outside its footprint must be the same afterwards, and no link may have appeared
  * that the write did not add. PGLite skips this: its single-writer file lock means no other process can write between the copy and the read-back.
- * Where it runs and completes it decides alone (write-capture.ts): the serving process's own write counter no longer also marks the sample, so a same-process write to a copied row is caught here only.
- * Open gap: another process (or call) editing the very rows the write changes is not seen here; it can show as a difference, never as a match.
+ * It exempts the write's own rows, so write-capture.ts adds a second guard there: the serving process's own write counter (pages and links only) also marks a sample moved, except for an in-transaction putPage whose page
+ * was pinned just before the commit (the revision and every compared field), where the fence and the pin decide.
+ * Open gap: another process editing the very rows the write changes is not seen here; it can show as a difference, never as a match.
  */
 export function movedOutsideFootprint(op: string, args: any[], pre: PreImage, now: PreImage): boolean {
   const fp = footprint(op, args);
