@@ -349,6 +349,7 @@ describe('evidence epoch in the child', () => {
     await runChild(probe, [], { openEngine: engine });
     const inputs = manifest(probe).inputs; // what this child's epoch is made of, but for the comparator
     const dir = seeded();
+    // pregate-literal: SHADOW_ADAPTER_VERSION=11 the number 11 on the next line is test data (a count, size, index or date), not the adapter version
     const old = ensureEpoch(dir, { ...inputs, comparator_version: 2 } as never, Date.parse('2026-11-24T00:00:00Z'));
     for (let i = 0; i < 30; i++) appendRecall(dir, { ts: new Date().toISOString(), epoch_id: old.epoch_id, vector: 1, primary: 1, overlap: 1, ref_size: 10 }); // thirty perfect scores of the old rule
     await runChild(dir, [], { openEngine: engine }); // the shadow restarts on the new build
