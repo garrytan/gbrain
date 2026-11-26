@@ -356,6 +356,15 @@ on its next turn, so no OpenClaw command runs and the gateway does not reload:
   DM (conversation pins and rule, no brief, no owner-only skill).
   `--no-require-owner-sender` turns it off. It is off by default, so an
   existing single-user install keeps treating its main session as the owner's.
+- `--owner-skill <name>` (repeatable): keep a skill to the owner's sessions by
+  name, whatever copy OpenClaw loads. Use it when a host-local copy in the
+  agent's workspace overrides a shared copy and lacks `audience: owner` in its
+  front matter: the name is never suggested or pinned in a conversation, and
+  gbrain never edits the host's skill files. Each run adds to the agent's
+  list; `--no-owner-skill <name>` (repeatable) removes a name. The setup
+  output (`owner_skills` per agent in `--json`) and `owner_skill_ids` in
+  `~/.gbrain/openclaw-skill-resolver.json` show the list. A name not in the
+  catalog yet is kept, with a note, so it is owner-only once installed.
 - `--suggest-in owner|conversation|owner,conversation`: which session classes
   get suggestions (default both). Pins are unaffected.
 - `--skill-loading off`: uninstalls the plugin and removes its files and
@@ -419,8 +428,22 @@ reach a session that is not the owner's. Without one and without
 whoever wrote: under OpenClaw's default `session.dmScope: main` that includes
 anyone who messages the agent directly, which is why setup and doctor warn.
 
-A skill whose `SKILL.md` front matter says `audience: owner` is suggested
-and pinned only in the owner's sessions. `owner` is the only defined value;
+**Shared sessions.** OpenClaw pins a session's system prompt when the
+session starts and sends later changes as appended updates, so an owner turn's
+rule and pins stay in the prompt of a session the owner shares with others
+(OpenClaw's default `session.dmScope: main`) until something replaces them.
+On every live conversation turn the plugin therefore sends an
+`<owner_context_withdrawn>` block ahead of the conversation rule and pins,
+which tells the model that any owner rule, pins, brief or suggestions from an
+earlier turn no longer apply; the log line says `withdrawn: true`. Silent
+turns (relay, cron, heartbeat, webhook, internal) are the owner's own
+machinery and get nothing, as before. The other person still shares the
+session's transcript, so give each DM its own session (`per-channel-peer`)
+when others message the agent.
+
+A skill whose `SKILL.md` front matter says `audience: owner`, or whose name is
+in the agent's `--owner-skill` list, is suggested and pinned only in the
+owner's sessions. `owner` is the only defined value;
 any other non-empty `audience` (a list, a typo, `true`, a number, a mapping)
 is treated as `owner`, and so is an `Audience:` key in another letter case (a
 leading byte order mark is ignored), and an `audience:` line in front matter
@@ -1263,8 +1286,9 @@ the root, then run setup again. gbrain never edits these limits itself.
 ### skill_resolver_plugin_outdated
 
 The plugin code installed in OpenClaw is older than this gbrain's, so it
-ignores settings added since: the operator rule line, `--brief` pins and
-`--require-owner-sender`. This happens when only the state was refreshed
+ignores settings added since: the operator rule line, `--brief` pins,
+`--require-owner-sender` and `--owner-skill`, and before version 7 it does
+not withdraw the owner's context on another person's turn. This happens when only the state was refreshed
 (`--skills-index-only`, which the plugin runs on its own after a gbrain
 upgrade), or when the files are new but the gateway has not restarted since
 (doctor reads the version each logged turn ran). Rerun the `gbrain setup
