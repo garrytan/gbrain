@@ -251,7 +251,7 @@ export interface PageBatchMember { id: string; index: number; size: number; requ
 export async function submitPageMutation(ctx: OperationContext,
   input: { operation: string; params: Record<string, unknown>; waitMs?: number; managedFileImport?: true; timelineSection?: TimelineSection; databaseOnly?: 'overwrite_restore' | 'detached';
     /** commit_page_upload: `params.body_ref` names the caller's sealed upload session (persistence/page-upload.ts). */
-    stagedBody?: true; unsourcedForkGuard?: true }): Promise<Record<string, unknown>> {
+    stagedBody?: true; unsourcedForkGuard?: true; serverComposed?: true }): Promise<Record<string, unknown>> {
   assertPersistenceAccepting(ctx.engine);
   // #6007: wait_ms is a reply deadline from arrival, never part of the write's identity.
   const arrived = performance.now();
@@ -382,7 +382,9 @@ export async function preparePageAdmission(ctx: OperationContext,
     /** #6712 `repair overwritten-edits`: publish to the database only, so the restore never rewrites the committed file. */
     databaseOnly?: 'overwrite_restore' | 'detached'; stagedBody?: true;
     /** pages-02: put_page's handler (and put_pages, and commit_page_upload for a new page, when the caller named no source) asks for the unsourced-put fork refusal, applied to a fresh request after the write authority. */
-    unsourcedForkGuard?: true }
+    unsourcedForkGuard?: true;
+    /** GST-4024: the page text is rebuilt by the server from the stored page; the operation screened the caller's own text (secrets.on_write). */
+    serverComposed?: true }
 ): Promise<{ prior: WriteRequest; admission?: undefined; typeWarning?: undefined; slugAdvisory?: undefined; secretsRedacted?: undefined }
   | { prior?: undefined; admission: WriteAdmission; typeWarning: PageTypeWarning | null; slugAdvisory: string | null; secretsRedacted: SecretsRedacted | null }> {
   if (input.operation === 'put_page' && ['kind', 'preview', 'backup_reference'].some(key => Object.hasOwn(input.params, key))) {
@@ -426,7 +428,8 @@ export async function preparePageAdmission(ctx: OperationContext,
       `Nothing was admitted or written, and the same content is refused on every retry. Pages up to ${PAGE_MAX_BYTES} bytes are stored and searchable; send a smaller page.`);
   }
   // secrets.on_write: a remote write's text is screened before anything reads it, so a refused or redacted value is never journaled.
-  const screened = screenWriteSecrets(ctx, input.operation, input.params);
+  // A server-composed resubmit carries stored text the caller never sent, so only what its operation screened is screened.
+  const screened = input.serverComposed ? { params: input.params, redacted: null } : screenWriteSecrets(ctx, input.operation, input.params);
   const { page_batch: _forged, timeline_section: _section, [GUEST_NOTE_INTENT_KEY]: _guestNote, ...params } = screened.params;
   const p: Record<string, unknown> = { ...params, ...parseMutationPrecondition(params) };
   if (p.content_origin !== undefined) contentOriginTier(p.content_origin);

@@ -11,6 +11,8 @@
  * any content.
  */
 import { normalizeSlug } from '../utils.ts';
+import { scanText } from '../secret-scan.ts';
+import { stripNul } from '../batch-rows.ts';
 import { randomUUID } from 'node:crypto';
 import { pageQuarantinedNotice } from '../quarantine.ts';
 import type { OperationContext } from '../ops/contract.ts';
@@ -124,7 +126,12 @@ async function readBatch(ctx: OperationContext, batchId: string): Promise<WriteR
 
 function pageEntry(result: PageResult): Record<string, unknown> {
   const base = { index: result.index, slug: result.slug, ...(result.repeatOf !== undefined ? { repeat_of: result.repeatOf } : {}) };
-  if (result.refusal) return { ...base, state: 'refused', error: result.refusal.toJSON() };
+  if (result.refusal) {
+    // GST-4024: a slug that itself holds the secret the screen refused is never echoed back; the index names the entry.
+    const { slug: _slug, ...unnamed } = base;
+    const secretSlug = result.refusal.canonicalCode === 'secret_in_write' && scanText(stripNul(result.slug)).length > 0;
+    return { ...(secretSlug ? unnamed : base), state: 'refused', error: result.refusal.toJSON() };
+  }
   if (!result.row) return { ...base, state: 'not_admitted' };
   const row = result.row;
   const warning = { ...(result.typeWarning ? { type_warning: result.typeWarning } : {}), ...(result.secretsRedacted ? { secrets_redacted: result.secretsRedacted } : {}) };

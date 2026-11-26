@@ -9,6 +9,7 @@ import { loadConfigFileOnly } from '../config.ts';
 import { opError, type OperationContext } from '../ops/contract.ts';
 import { applyRedaction, planRedaction, scanText, type RedactionPlan, type SecretFinding } from '../secret-scan.ts';
 import { scanTextStream } from '../secret-scan-stream.ts';
+import { stripNul } from '../batch-rows.ts';
 
 export const ON_WRITE_KEY = 'secrets.on_write';
 export const ON_WRITE_MODES = ['off', 'redact', 'block'] as const;
@@ -49,7 +50,8 @@ function secretInWrite(operation: string, findings: SecretFinding[], mode: OnWri
 /**
  * Admission screen for a remote write's parameters: unchanged when the policy is off, the caller is local or nothing
  * is found; a refusal under block; under redact the parameters with every claimed value (and its echoes in other
- * fields) replaced, with the count and pattern names.
+ * fields) replaced, with the count and pattern names. Text is screened as it will be stored, without U+0000
+ * (stripPageTextNul), so a value split by NUL bytes is found; a redacted write's text comes back without them.
  */
 export function screenWriteSecrets(ctx: Pick<OperationContext, 'remote'>, operation: string, params: Record<string, unknown>):
   { params: Record<string, unknown>; redacted: SecretsRedacted | null } {
@@ -58,7 +60,7 @@ export function screenWriteSecrets(ctx: Pick<OperationContext, 'remote'>, operat
   if (mode === 'off') return { params, redacted: null };
   const plans: RedactionPlan[] = [];
   const echoValues = new Map<string, string>();
-  mapStored(params, text => (plans.push(planRedaction(text, { allowlist: allowlist(), echoValues })), text));
+  mapStored(params, text => (plans.push(planRedaction(stripNul(text), { allowlist: allowlist(), echoValues })), text));
   const findings = plans.flatMap(plan => plan.redactions);
   if (!findings.length) return { params, redacted: null };
   if (mode === 'block') throw secretInWrite(operation, findings, mode);

@@ -33,8 +33,8 @@ const VALUE = String.raw`(?<v>[A-Za-z]{1,3}-\d{4,10}|\d{2,4}(?:[ -]\d{2,4}){1,2}
 const GAP = String.raw`(?:[^\S\n]+(?:for|from)\b[^\d\n:]{1,40}?)?(?:[^\S\n]*(?:is|was|below|here|:|=|-|–|—))*[^\S\n]*(?:\n[^\S\n]*){0,2}[*_\x60"'“]{0,2}`;
 const VALUE_START = String.raw`(?<![A-Za-z0-9#$.,/-])`;
 /** `context`: a bare `code` label needs a sign-in or verification message; a reverse form needs that or a qualifier. */
-const OTP_PATTERNS: Array<{ re: RegExp; context: 'none' | 'message' | 'qualifier' }> = [
-  { re: new RegExp(String.raw`\b${LABEL}\b${GAP}${VALUE}`, 'gid'), context: 'none' },
+const OTP_PATTERNS: Array<{ re: RegExp; context: 'none' | 'message' | 'qualifier'; explicitLabel?: true }> = [
+  { re: new RegExp(String.raw`\b${LABEL}\b${GAP}${VALUE}`, 'gid'), context: 'none', explicitLabel: true },
   { re: new RegExp(String.raw`(?<!\b${NOT_OTP_CODE}[- ]?)\bcode\b${GAP}${VALUE}`, 'gid'), context: 'message' },
   { re: new RegExp(String.raw`${VALUE_START}${VALUE}\s+is\s+(?:your|the)\s+(?:[\w.'-]+\s+){0,3}?(?<q>${QUALIFIER}\s+)?(?:pass)?code\b`, 'gid'), context: 'qualifier' },
   { re: new RegExp(String.raw`\b(?:use|enter|type|input|paste)\s+(?:the\s+|this\s+)?(?:(?:${QUALIFIER}\s+)?code\s+)?${VALUE}\s+(?:to|as|for|when|on|in)\s+(?:[\w'-]+\s+){0,3}?(?:sign|log|verify|confirm|complete|continue|finish|authenticate|reset|access|activate|validate|unlock|(?:pass)?code)`, 'gid'), context: 'none' },
@@ -60,11 +60,12 @@ export async function gmailRedactionOn(engine: Pick<BrainEngine, 'getConfig'>): 
   return ON.has(String((await engine.getConfig(GMAIL_REDACT_CREDENTIALS_KEY)) ?? '').trim().toLowerCase());
 }
 
-function codeShaped(v: string): boolean {
+/** After an explicit label (a verification code, a passcode) any letter case is a code; an ambiguous one needs capitals only. */
+function codeShaped(v: string, explicitLabel: boolean): boolean {
   const digits = v.replace(/\D/g, '').length;
   if (/^[\d -]+$/.test(v)) return digits >= 4 && digits <= 10;
   if (/^[A-Za-z]{1,3}-\d+$/.test(v)) return true;
-  return /\d/.test(v) && /[A-Z]/.test(v) && !/[a-z]/.test(v);
+  return /\d/.test(v) && (explicitLabel || (/[A-Z]/.test(v) && !/[a-z]/.test(v)));
 }
 
 function tokenish(v: string): boolean {
@@ -100,9 +101,9 @@ export function redactMailSecrets(text: string, context = ''): string {
     }
   }
   const otpContext = OTP_CONTEXT_RE.test(about);
-  for (const { re, context } of OTP_PATTERNS) {
+  for (const { re, context, explicitLabel } of OTP_PATTERNS) {
     for (const m of text.matchAll(re)) {
-      if (!codeShaped(m.groups!.v!)) continue;
+      if (!codeShaped(m.groups!.v!, explicitLabel === true)) continue;
       if (context !== 'none' && !otpContext && (context === 'message' || m.groups!.q === undefined)) continue;
       const [start, end] = m.indices!.groups!.v!;
       take(start, end, 'otp');

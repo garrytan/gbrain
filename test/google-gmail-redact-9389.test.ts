@@ -48,6 +48,13 @@ describe('labelled one-time codes', () => {
     expect(redactMailSecrets(input)).toBe(expected);
   });
 
+  test('a mixed-case code after an explicit verification label is redacted; after an ambiguous label it still needs capitals', () => {
+    expect(redactMailSecrets('Your verification code is aB3dE9.')).toBe(`Your verification code is ${OTP}.`);
+    expect(redactMailSecrets('One-time passcode: k7Qm2x')).toBe(`One-time passcode: ${OTP}`);
+    expect(redactMailSecrets('Verify your sign-in.\ncode: aB3dE9')).toBe('Verify your sign-in.\ncode: aB3dE9');
+    expect(redactMailSecrets('Verify your sign-in.\ncode: AB3DE9')).toBe(`Verify your sign-in.\ncode: ${OTP}`);
+  });
+
   test('a bare "code" label counts only in a sign-in or verification message', () => {
     expect(redactMailSecrets('Verify your sign-in.\ncode: 4829-13')).toBe(`Verify your sign-in.\ncode: ${OTP}`);
     expect(redactMailSecrets('Our new office opens soon.\ncode: 4829-13')).toBe('Our new office opens soon.\ncode: 4829-13');

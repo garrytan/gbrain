@@ -19,6 +19,7 @@ import { callerIdentities, callerIsOwner, currentCallerAccess, resolveExcludePri
 import { assertRemoteReadersValid, pageNotVisibleError, remoteTargetHidden } from '../persistence/page-visibility.ts';
 import { initializeLocalPersistence, pageMutationSource, requestPrincipalForContext, submitPageMutation } from '../persistence/page-mutations.ts';
 import { admitChangeReason } from '../persistence/change-reason.ts';
+import { screenWriteSecrets } from '../persistence/write-secrets.ts';
 import { assertReplayIntent, getWriteRequest, intentDigest } from '../persistence/journal.ts';
 import { parseWriteRequestId } from '../persistence/preconditions.ts';
 import { serializeMarkdown } from '../markdown.ts';
@@ -256,7 +257,8 @@ async function classifySubjectPages(ctx: OperationContext, sourceId: string, abo
     const fm = { ...(live?.page.frontmatter ?? {}), household_role: role };
     const content = serializeMarkdown(Object.fromEntries(Object.entries(fm).filter(([k]) => !['type', 'title', 'tags'].includes(k))),
       live?.page.compiled_truth ?? `# ${title}`, live?.page.timeline ?? '', { type: (live?.page.type ?? (slug.startsWith('people/') ? 'person' : 'note')) as never, title, tags: live?.tags ?? [] });
-    await submitPageMutation(ctx, { operation: 'put_page', params: { slug, content, source_id: sourceId, ...(snapshot ? { expected_revision: snapshot.revision } : {}) } });
+    await submitPageMutation(ctx, { operation: 'put_page', params: { slug, content, source_id: sourceId, ...(snapshot ? { expected_revision: snapshot.revision } : {}) },
+      ...(live ? { serverComposed: true as const } : {}) });
     changed.push(slug);
   }
   return { classified: changed, pinned };
@@ -286,7 +288,7 @@ export async function replaceHouseholdRecords(ctx: OperationContext, sourceId: s
       if (JSON.stringify([fm.household_audience ?? null, fm.readable_by ?? null]) === before) continue;
       assertInlineBody(snap.page, 'household_replace');
       await submitPageMutation(ctx, { operation: 'put_page', params: { slug: row.slug, source_id: sourceId, expected_revision: snap.revision,
-        content: serializeRecord(fm, snap.page.title, snap.page.compiled_truth, snap.page.timeline ?? '', snap.tags) } });
+        content: serializeRecord(fm, snap.page.title, snap.page.compiled_truth, snap.page.timeline ?? '', snap.tags) }, serverComposed: true });
       replaced.push(row.slug);
     }
     if (rows.length < 500) break;
@@ -469,8 +471,10 @@ const household_mark: Operation = {
     if (!HOUSEHOLD_EVENTS.includes(event)) throw invalidParam(ctx, 'household_mark', 'event', 'household_mark: unknown event.', { choices: HOUSEHOLD_EVENTS });
     const slug = typeof p.slug === 'string' ? p.slug.trim().toLowerCase().replace(/\.md$/, '') : '';
     if (!slug) throw invalidParam(ctx, 'household_mark', 'slug', 'household_mark: slug is required.', { example: 'household/money/bill/water' });
-    const note = capText(p.note);
     refuseAccountNumbers(accountNumberFields({ note: p.note, due: p.due }));
+    // GST-4024: the write below carries the stored record too, so secrets.on_write screens only the caller's note here.
+    const screened = screenWriteSecrets(ctx, 'household_mark', { note: capText(p.note) });
+    const note = screened.params.note as string | null;
     const due = p.due === undefined ? null : strictDate(p.due);
     if (p.due !== undefined && !due) throw invalidParam(ctx, 'household_mark', 'due', 'household_mark: due must be YYYY-MM-DD.', { example: '2026-12-10' });
     const sourceId = pageMutationSource(ctx, p, 'household_mark');
@@ -494,8 +498,8 @@ const household_mark: Operation = {
     applyEvent(ctx, read.record, fm, event, day, due);
     const timeline = [snap.page.timeline?.trim(), timelineLine(day, event, note)].filter(Boolean).join('\n');
     const result = await submitPageMutation(ctx, { operation: 'put_page', params: { slug, source_id: sourceId, expected_revision: snap.revision,
-      content: serializeRecord(fm, snap.page.title, snap.page.compiled_truth, timeline, snap.tags), ...(typeof p.request_id === 'string' ? { request_id: p.request_id } : {}) } });
-    return { ...result, slug, event, on: day, status: fm.status ?? 'active' };
+      content: serializeRecord(fm, snap.page.title, snap.page.compiled_truth, timeline, snap.tags), ...(typeof p.request_id === 'string' ? { request_id: p.request_id } : {}) }, serverComposed: true });
+    return { ...result, slug, event, on: day, status: fm.status ?? 'active', ...(screened.redacted ? { secrets_redacted: screened.redacted } : {}) };
   },
 };
 
