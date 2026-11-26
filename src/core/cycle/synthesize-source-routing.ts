@@ -169,10 +169,13 @@ export async function synthesisRotation(engine: BrainEngine, home: string, rotat
   turn: { sourceId: string; brainDir: string } | null; settle: (result: PhaseResult, dryRun: boolean) => Promise<void>;
 } | null> {
   if (!rotates) return null;
-  const turn = await synthesisTurn(engine, home);
+  const note = (what: string, err: unknown) => process.stderr.write(`[dream] synthesize rotation: ${what} (${err instanceof Error ? err.message : String(err)}); this cycle stays on source ${home}.\n`);
+  let turn: { sourceId: string; brainDir: string } | null = null;
+  try { turn = await synthesisTurn(engine, home); } catch (err) { note('could not read the turn', err); } // capability-refusal-ok: a brain that cannot list its sources (an old schema, an engine refusal) synthesizes its own source, as before the rotation
   return { turn, settle: async (result, dryRun) => {
     if (turn) result.details = { ...result.details, source_id: turn.sourceId };
-    if (!dryRun) await passSynthesisTurn(engine, home, turn?.sourceId ?? home, result);
+    if (dryRun) return;
+    try { await passSynthesisTurn(engine, home, turn?.sourceId ?? home, result); } catch (err) { note('could not pass the turn', err); } // capability-refusal-ok: the turn stays where it was; the phase result already stands
   } };
 }
 
