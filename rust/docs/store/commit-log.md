@@ -79,8 +79,10 @@ What a record holds:
 
 - Optimistic store: the transaction's own buffered writes, exactly (`put`, `delete`, `add_i64`, `raise_counter`).
   A follower applies records in `(sequence, index)` order, which is the order the pipeline resolved them.
-- Single-writer store: the final value or delete of each key the commit wrote (its counter helpers already write
-  puts there).
+- Single-writer store: the final value or delete of each key the commit wrote; an id sequence the commit only raised
+  is logged as `raise_counter` (replayed as a max).
+- A rolled-back or dropped explicit transaction leaves no data in the log: its writes are dropped uncommitted, and
+  the commit that carries its id sequences forward holds `raise_counter` ops and nothing else.
 - Origin: the open's host id and incarnation (a UUID v7 per open), and the writer `<principal_kind>:<principal_id>`
   from the write trust context or the first journal request the write admitted; empty when unknown. Write ids: the
   persistence request ids the write admitted or ran for. Inside an explicit transaction they belong to the statement
@@ -132,6 +134,26 @@ With write origin on, the native admission (`admit_write`, `submit_page_mutation
 (the open's host id, unless the caller gave one; an admission's `origin.hostId` overrides it), `admitter_incarnation`
 (the open's, or `origin.incarnation`) and `writer_id`. The row the members return shows `admitter_host_id` in its
 existing column; the other two are not in any row. Off, `origin` on an admission is ignored and `extra` is unchanged.
+
+## Followers and promotion
+
+`gbrain_store::follower::Follower` (`follower.rs`) keeps a copy of a commit log brain from its primary's log. It is a
+replica of the whole brain, log included: the primary's records (with its own retention), commit sequence and durable
+commit time. Its cursor is its own log's `newest`, written in the same redb transaction as the data it applied.
+
+| Call | What it does |
+|---|---|
+| `Follower::open(dir)` | Opens or creates the follower in `dir`; an empty one accepts only a snapshot. A brain without a log is refused. |
+| `apply_page(&LogPage)` / `apply_raw(lineage, &[(position, record bytes)])` | Applies the records after the cursor in one redb transaction: data ops, the records, the log meta, the sequence (pinned to the primary's) and `M\0ctime`. Records at or before the cursor are skipped, so applying twice is a no-op. A gap, a cursor the log no longer reaches, or another history refuses `snapshot_required` and changes nothing. |
+| `install_snapshot(dir, manifest)` | Validates and copies a snapshot (`Store::snapshot_to`) from one held read state, in one redb transaction that replaces every key. Refused, changing nothing: no log, another brain, a manifest mismatch, an inconsistent log, or a snapshot behind the follower on the same history. On another history it may move the follower back. |
+| `cursor()`, `lineage()`, `sequence()`, `last_commit_time()`, `records()` | What the follower holds. |
+| `promote(options)` | Starts a new timeline at the cursor and opens the brain as a logged multi-user `Store`. Its next commit is `(cursor.sequence + 1, 0)`; its commit clock starts above max(`M\0ctime`, the newest record's time). |
+
+History: the log meta keeps `lineage`, the timelines `{ id, from }` the log went through after its first one (absent
+until a promotion). Every `LogPage` carries it. A follower continues only when its own lineage is a prefix of the
+page's and every newer timeline starts at or after its cursor (`commit_log::lineage_continues`). Fencing the old
+primary before a promotion is the caller's job (lane L5's leases); the store does not fence it. Cost: a snapshot
+install is one redb transaction the size of the brain.
 
 ## Tests
 
