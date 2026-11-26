@@ -43,7 +43,7 @@ export function writePins(read: Exclude<ResolverConfigRead, { state: 'unreadable
   const skills = (doc.skills && typeof doc.skills === 'object' && !Array.isArray(doc.skills) ? doc.skills : {}) as Record<string, unknown>;
   const resolver = (skills.resolver && typeof skills.resolver === 'object' && !Array.isArray(skills.resolver) ? skills.resolver : {}) as Record<string, unknown>;
   const all = section(doc);
-  if (pins.length) all[catalog] = pins.map((p) => ({ name: p.name, ...(p.line ? { line: p.line } : {}), ...(p.classes ? { classes: p.classes } : {}) }));
+  if (pins.length) all[catalog] = pins.map((p) => ({ name: p.name, ...(p.line ? { line: p.line } : {}), ...(p.classes ? { classes: p.classes } : {}), ...(p.brief ? { brief: true } : {}) }));
   else delete all[catalog];
   if (Object.keys(all).length) resolver.pins = all; else delete resolver.pins;
   if (Object.keys(resolver).length) skills.resolver = resolver; else delete skills.resolver;
@@ -57,16 +57,17 @@ export function writePins(read: Exclude<ResolverConfigRead, { state: 'unreadable
  * name each SKILL.md, as its load line reads the path first. With a session class (OpenClaw), only the pins for that
  * class render, and a pin the host hides from the agent (hidden: not visible to its model, or a shadowed copy), or an
  * `audience: owner` skill outside the owner's class, is left out and listed in `withheld`; a catalog built before audiences
- * were recorded withholds every conversation pin until it is rebuilt.
+ * were recorded withholds every conversation pin until it is rebuilt. With a session class, a brief pin renders only with
+ * opts.brief (OpenClaw's once-per-session list, owner sessions only) and every other pin only without it.
  */
-export function pinnedBlockFor(home: string, catalog: string, harness?: string, readRoot?: string, opts: { cls?: PinClass; hidden?: readonly string[] } = {}): PinnedBlock & { withheld: string[] } {
+export function pinnedBlockFor(home: string, catalog: string, harness?: string, readRoot?: string, opts: { cls?: PinClass; hidden?: readonly string[]; brief?: boolean } = {}): PinnedBlock & { withheld: string[] } {
   const cat = catalogSkills(home, catalog);
   const all = readPins(readResolverConfig(home), catalog);
-  const pins = opts.cls ? all.filter((p) => (p.classes ?? ['owner']).includes(opts.cls!)) : all;
+  const pins = opts.cls ? all.filter((p) => (p.classes ?? ['owner']).includes(opts.cls!) && !!p.brief === !!opts.brief && (!p.brief || opts.cls === 'owner')) : all;
   const unrecorded = opts.cls === 'conversation' && cat !== null && readReceipt(home, catalog)?.catalog.audiences !== 1;
   const drop = new Set([...(opts.hidden ?? []), ...(opts.cls === 'conversation' && cat ? (unrecorded ? cat.paths.keys() : cat.ownerOnly) : [])]);
   const withheld = cat ? pins.filter((p) => cat.paths.has(p.name) && drop.has(p.name)).map((p) => p.name) : [];
   const known = cat ? new Set([...cat.paths.keys()].filter((id) => !drop.has(id))) : null;
-  const r = renderPinnedBlock(pins.filter((p) => !withheld.includes(p.name)), { harness, known, ...(harness === 'openclaw' && cat ? { paths: cat.paths } : {}), ...(readRoot === undefined ? {} : { readRoot }) });
+  const r = renderPinnedBlock(pins.filter((p) => !withheld.includes(p.name)), { harness, known, ...(harness === 'openclaw' && cat ? { paths: cat.paths } : {}), ...(readRoot === undefined ? {} : { readRoot }), ...(opts.brief ? { brief: true } : {}) });
   return { ...r, withheld };
 }
