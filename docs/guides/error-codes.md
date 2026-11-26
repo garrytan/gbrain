@@ -6339,6 +6339,16 @@ More: [docs/tutorials/household-brain.md#if-a-run-stops](../../docs/tutorials/ho
 |---|---|---|---|---|---|---|
 | gbrain setup could not read whether the existing brain serves several people, so it wrote nothing. | Setup writes an unbound connection only on a brain it knows serves one person; a brain it cannot read might serve several. | Run gbrain access serves --json to see why the brain cannot be read, fix that, then run setup again. Run: gbrain access serves --json | agent | `repeat the read that failed` | 1 | no |
 
+### setup_team_unbound
+
+<a id="setup_team_unbound"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain setup --template team was refused because the team template would set the brain to serve several people while this harness's connection stays bound to nobody (a shared stdio harness such as OpenClaw or Hermes is installed), so nothing was written. | On a brain that serves several people a connection bound to nobody is refused on every read, so the owner's own agent could not use the team brain. | Run the team template on a machine without a shared stdio harness, or run gbrain access team alone and give the owner a key over HTTP (gbrain auth create <name> --member <owner>). | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/setup.md#a-brand-new-brain-for-a-team](../../docs/guides/setup.md#a-brand-new-brain-for-a-team)
+
 ### shadow_drill_failed
 
 <a id="shadow_drill_failed"></a>
@@ -7292,6 +7302,26 @@ More: [docs/guides/write-refusals.md#tail_exposure_approval](../../docs/guides/w
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | The skill target must remain within its selected root. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+### team_template_not_fresh
+
+<a id="team_template_not_fresh"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The team template (gbrain setup <harness> --template team, gbrain access team) refused a brain that is not brand-new: it holds pages (soft-deleted ones included), facts or page history, a source folder holds files a sync would import, or members, groups, an owner, folder rules or unbound credentials exist beyond what the template itself writes. Nothing was written. | The first version of the team template only sets up fresh brains, so no existing note or credential can end up readable by the wrong teammate; converting a brain that already holds notes is not supported. | Create a new brain for the team (a new GBRAIN_HOME) and run the template there, or label an existing brain by hand with gbrain setup <harness> --serves several --members <id,...>. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/setup.md#a-brand-new-brain-for-a-team](../../docs/guides/setup.md#a-brand-new-brain-for-a-team)
+
+### team_template_rules_pending
+
+<a id="team_template_rules_pending"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The team template wrote its folder rules, but the rule write was recorded rather than applied, so it issued no member key. | Member keys come last, after every rule is in force, so no member reads anything before the rules keep each person's folder to them. | Finish the rule write with gbrain access resume --source <id>, then run the team template again; every step is idempotent. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/setup.md#a-brand-new-brain-for-a-team](../../docs/guides/setup.md#a-brand-new-brain-for-a-team)
 
 ### timeline_comment_markup
 

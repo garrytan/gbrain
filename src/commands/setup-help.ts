@@ -47,14 +47,16 @@ Flags:
                        proves it. A one-person setup on a brain that already serves several
                        people (2+ enabled members) refuses rather than write a connection bound
                        to nobody, unless this harness's entry or config mcp.stdio_member binds it.
-  --members IDS        The people of --serves several, comma-separated (e.g. alice-example,bob-example).
+  --members IDS        The people the brain serves, comma-separated (e.g. alice-example,bob-example).
+                       Naming them turns on per-member access (--serves several is implied).
+                       With --template team: the people on the team besides the owner.
   --labelled-only      With --serves several: each member's key reads only pages labelled for
                        that member (readable_by or a rule), never the owner's. Opt-in.
   --open-history       With --serves several on a brain that serves one person and already holds
                        pages: let the members read them. Without it or --labelled-only, setup
                        refuses (setup_history_choice_required) and writes nothing.
   --members-file PATH  The same, one id per line.
-  --owner ID           With --serves several or --shape household: the brain owner, added as a member and named with
+  --owner ID           With --serves several, --shape household or --template team: the brain owner, added as a member and named with
                        gbrain access owner set when the brain has none (default: your login name
                        as a member id). An existing owner is kept. No key is rebound: setup lists
                        the keys bound to no member with the auth rescope command for each.
@@ -130,6 +132,14 @@ Flags:
                        --status [--receipt ID] prints the run's receipt and what each key
                        reads; --resume ID --yes finishes a stopped run.
                        Guide: docs/tutorials/household-brain.md.
+  --template team      claude-code, codex: set up a brand-new brain for a team. Preview first;
+                       --yes applies: the owner, each --members person (labelled-only), group
+                       team, folder rules people/<id>/ (that person only), team/ (everyone)
+                       and groups/<name>/ per --groups name:a+b, and one key per member in a
+                       0600 file under <config>/member-keys/ (never printed). Fresh brains
+                       only: a brain with pages, history or access state of its own refuses
+                       (team_template_not_fresh) before anything is written. No --guests,
+                       --transcripts, --shape or --history. Guide: docs/guides/setup.md.
   --shape none         Remove that block; the pages stay.
   --notes DIR          With --shape personal or both: import a notes folder (absolute or
                        ~/), read only, then check keyless search finds a note in it. Over

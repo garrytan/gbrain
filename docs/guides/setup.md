@@ -172,8 +172,8 @@ One bot reading for all of them with one unbound key pulls one person's notes in
 another person's answers, so setup labels each person instead:
 
 ```bash
-gbrain setup claude-code --serves several --members alice-example,bob-example
-# or --members-file people.txt (one id per line)
+gbrain setup claude-code --members alice-example,bob-example
+# or --members-file people.txt (one id per line); naming people implies --serves several
 ```
 
 For each person this adds a member (existing ones are kept), a folder rule
@@ -270,6 +270,43 @@ a brain setup cannot read refuses (`setup_serves_unreadable`).
 `people/<name>/` folder with pages and no rule naming its readers.
 `gbrain access serves several --members ...` does the labelling alone (preview, then
 `--yes`).
+
+### A brand-new brain for a team
+
+To start a new brain for a team, let setup lay it out in one run:
+
+```bash
+gbrain setup claude-code --template team --members alice-example,bob-example --groups eng:alice-example
+# preview first; add --yes to apply. Works on codex too.
+```
+
+It works the same on a repo-less brain (the default keyless one: rules live in the
+database) and on a repo-backed one (rules are committed to `.gbrain/access.yml`).
+With `--yes` it adds the owner (`--owner`, default your login name) and each
+member, marks each member labelled-only, adds group `team` (everyone) and one
+`team-<name>` group per `--groups` entry, writes these folder rules, ties your own
+Claude Code or Codex entry to the owner, and issues one key per member last:
+
+| Folder | Who reads it |
+|---|---|
+| `people/<id>/` | that person only, the owner included |
+| `team/` | everyone on the team |
+| `groups/<name>/` | the owner and that group |
+| anything else | the owner, plus the members a page names in `readable_by` |
+
+A page a member writes is labelled for that member, so it stays theirs until they
+name more readers. The brain host's own CLI still reads every page. The run ends with
+who reads what and the next steps: serve the brain over HTTP, hand each key over
+(below), and check a key with `gbrain access check --token member-<id>`.
+
+It only sets up brand-new brains. Before it writes anything it checks that the brain
+holds no pages (soft-deleted ones count), no facts or page history, that no source
+folder holds notes a sync would import, and that no member, group, owner, folder rule
+or credential bound to no member exists beyond its own. Any of these refuses with
+`team_template_not_fresh`, lists every problem and writes nothing, not even the
+harness entry. To share a brain that already holds notes, label it with `--members`
+as above. `--guests`, `--transcripts`, `--shape` and `--history` are refused
+with `--template team`. `gbrain access team` runs the brain part alone.
 
 ### A member's key into their harness
 

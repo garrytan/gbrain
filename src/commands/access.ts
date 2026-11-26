@@ -20,6 +20,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { exitCliError, usageError } from '../cli/cli-error.ts';
 import { runAccessRules } from './access-rules.ts';
 import { runAccessServes } from './access-serves.ts';
+import { runTeamTemplate } from './access-team.ts';
 import { readAccessLog, readLogLines, whoRead, whoReadLines } from './access-read-log.ts';
 import { disableReadByNobodyLines, readByNobodyNote } from './access-read-by-nobody.ts';
 import { rescopeArchiveAfter, rescopeArchiveBefore } from './archive-rescope.ts';
@@ -113,6 +114,13 @@ Serves several people (GST-363):
                                              pages labelled for it (never the owner); --owner names the brain owner
                                              when none is set (an existing owner is kept) and lists the keys bound to
                                              no member with the command that binds each; it rebinds none
+  gbrain access team --members a,b [--groups name:a+b,...] [--owner <id>] [--source <id>] [--yes]
+                                             A brand-new brain for a team (gbrain setup <harness> --template team).
+                                             Refuses a brain with pages, history or access state of its own
+                                             (team_template_not_fresh). --yes adds the owner and members (members
+                                             labelled-only), groups team and team-<name>, rules people/<id>/ read
+                                             only by that person, team/ read by everyone and groups/<name>/ read
+                                             by the owner and that group, then one 0600 key file per member
 
 Folder rules (one rulebook per source; the database store on a repo-less source, .gbrain/access.yml on a git one):
   gbrain access rule add --prefix <folder/> | --slug <page> --readers a,group:b [--raw-only] [--allow-without-owner] [--id <rule>] [--source <id>] [--yes]
@@ -575,6 +583,7 @@ export async function runAccess(engine: BrainEngine, args: string[]): Promise<vo
           : 'Members read lineage: off. Derived pages and facts of a page that names readers or sits under a rule are hidden from every member but the owner. Turn on: gbrain access members-read-lineage on']);
       }
       case 'serves': return await runAccessServes(engine, positionals(rest)[0], rest, json, flagValue);
+      case 'team': return await runTeamTemplate(engine, rest, json, flagValue);
       case 'group': return await groupCmd(engine, rest[0], rest.slice(1), json);
       case 'who-can-read': {
         const slug = positionals(rest)[0];
@@ -611,7 +620,7 @@ export async function runAccess(engine: BrainEngine, args: string[]): Promise<vo
         return print(json, r, () => whoReadLines(r));
       }
       default:
-        throw usageError(`Unknown access subcommand: ${cmd}.`, 'Use member, owner, members-read-lineage, serves, group, rule, apply, resume, who-can-read, who-read, log or check (gbrain access --help).', { code: 'unknown_command' });
+        throw usageError(`Unknown access subcommand: ${cmd}.`, 'Use member, owner, members-read-lineage, serves, team, group, rule, apply, resume, who-can-read, who-read, log or check (gbrain access --help).', { code: 'unknown_command' });
     }
   } catch (e) {
     exitCliError(e, 'access');
