@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2456/2483
+# covered: 2457/2488
 # lifecycle: 12/12
 # pages: 141/142
 # search: 8/8
@@ -52,8 +52,8 @@
 # facts_cycle_sites: 34/34
 # facts_purge: 103/103
 # purge_plan: 4/4
-# projection_rebuild: 32/33
-# facts_repair: 75/75
+# projection_rebuild: 32/36
+# facts_repair: 76/77
 # facts_trust: 56/57
 # facts_recall: 10/10
 # facts_conversation: 30/30
@@ -137,7 +137,7 @@ getPage	pages	yes	289	yes	yes	yes	serves
 readPageSnapshot	pages	yes	104	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	7	no	yes	yes	serves
 lockPageKeys	pages	yes	17	no	yes	yes	serves
-putPage	pages	yes	1367	yes	yes	yes	serves
+putPage	pages	yes	1371	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	45	yes	yes	yes	serves
@@ -649,7 +649,7 @@ readFactTrustTier	facts	yes	2	no	yes	yes	serves
 listFenceFactRowNums	facts	yes	2	no	yes	yes	serves
 readLiveFactRowTier	facts	yes	1	no	yes	yes	serves
 insertFact	facts	yes	199	yes	yes	yes	serves
-insertFacts	facts	yes	278	no	yes	yes	serves
+insertFacts	facts	yes	279	no	yes	yes	serves
 deleteFactsForPage	facts	yes	8	no	yes	yes	serves
 expireFact	facts	yes	94	no	yes	yes	serves
 listFactsByEntity	facts	yes	66	yes	yes	yes	serves
@@ -1609,6 +1609,9 @@ listQueuedPageProjections	projection_rebuild	yes	18	no	yes	yes	serves
 readProjectionJobReason	projection_rebuild	yes	10	no	yes	yes	serves
 readChunkKeepState	projection_rebuild	yes	5	no	yes	yes	serves
 clearUnkeptChunkVectors	projection_rebuild	yes	4	no	yes	yes	serves
+readChunkInputHashes	projection_rebuild	no	0	no	-	-	-
+clearChunkEmbeddingsByIds	projection_rebuild	no	0	no	-	-	-
+writeChunkInputHashes	projection_rebuild	no	0	no	-	-	-
 setProjectionChunkerVersion	projection_rebuild	yes	2	no	yes	yes	serves
 hasDrainableProjectionJob	projection_rebuild	yes	1	no	yes	yes	serves
 readChunkRowsFingerprint	projection_rebuild	yes	2	no	yes	yes	serves
@@ -1675,7 +1678,7 @@ listChronicleEventVisibilityRows	facts_repair	yes	1	no	yes	yes	serves
 listAliasOnlyPrivatePages	facts_repair	yes	1	no	yes	yes	serves
 countPurgedPageFacts	facts_repair	yes	5	no	yes	yes	serves
 listUnwithdrawnFacts	facts_repair	yes	4	no	yes	yes	serves
-listWorldFactsFromPrivateSources	facts_repair	yes	8	no	yes	yes	serves
+listWorldFactsFromPrivateSources	facts_repair	yes	12	no	yes	yes	serves
 listActiveSourceIds	facts_repair	yes	2	no	yes	yes	serves
 readRepairBrainId	facts_repair	yes	1	no	yes	yes	serves
 listAgentSessionTakeCandidates	facts_repair	yes	2	no	yes	yes	serves
@@ -1701,6 +1704,8 @@ moveFactClaimDates	facts_repair	yes	1	no	yes	yes	serves
 lockApprovedFacts	facts_repair	yes	1	no	yes	yes	serves
 expireApprovedFacts	facts_repair	yes	1	no	yes	yes	serves
 tightenDatabaseFactVisibility	facts_repair	yes	1	no	yes	yes	serves
+readFactLiveVisibility	facts_repair	yes	1	no	yes	yes	serves
+tightenFencedFactVisibility	facts_repair	no	0	no	-	-	-
 listPageAccessKeys	facts_repair	yes	1	no	yes	yes	serves
 listOpenTwinRows	facts_repair	yes	1	no	yes	yes	serves
 listOpenFactsWindow	facts_repair	yes	1	no	yes	yes	serves
@@ -1866,7 +1871,7 @@ readBeliefHistoryRows	trust_tier_reads	yes	11	no	yes	yes	serves
 listVisibleBeliefLifetimes	trust_tier_reads	yes	2	no	yes	yes	serves
 listVersionTrustTiers	trust_tier_reads	yes	1	no	yes	yes	serves
 listVersionReasonWriters	trust_tier_reads	yes	1	no	yes	yes	serves
-listPageRefsByIds	trust_tier_reads	yes	2	no	yes	yes	serves
+listPageRefsByIds	trust_tier_reads	yes	6	no	yes	yes	serves
 listPageQuoteTiers	trust_tier_reads	yes	3	no	yes	yes	serves
 listPageTrustTiersByKey	trust_tier_reads	yes	1	no	yes	yes	serves
 lockLivePagesByKey	trust_tier_reads	yes	1	no	yes	yes	serves

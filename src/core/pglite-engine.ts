@@ -2039,6 +2039,9 @@ export class PGLiteEngine implements BrainEngine {
   readProjectionJobReason(key: projectionRebuildImpl.ProjectionJobKey) { return projectionRebuildImpl.readProjectionJobReason(this.rawRead, key); }
   readChunkKeepState(pageId: number, provenanceModel: string | null, column: projectionRebuildImpl.KeepColumn) { return projectionRebuildImpl.readChunkKeepState(this.rawRead, pageId, provenanceModel, column); }
   clearUnkeptChunkVectors(pageId: number, provenanceModel: string | null, column: projectionRebuildImpl.KeepColumn, currentIds: readonly number[]) { return projectionRebuildImpl.clearUnkeptChunkVectors(this.rawRead, pageId, provenanceModel, column, currentIds); }
+  readChunkInputHashes(pageId: number) { return projectionRebuildImpl.readChunkInputHashes(this.rawRead, pageId); }
+  clearChunkEmbeddingsByIds(pageId: number, column: projectionRebuildImpl.KeepColumn, ids: readonly number[]) { return projectionRebuildImpl.clearChunkEmbeddingsByIds(this.rawRead, pageId, column, ids); }
+  writeChunkInputHashes(pageId: number, ids: readonly number[], hashes: readonly string[]) { return projectionRebuildImpl.writeChunkInputHashes(this.rawRead, pageId, ids, hashes); }
   setProjectionChunkerVersion(sourceId: string, slug: string, version: number) { return projectionRebuildImpl.setProjectionChunkerVersion(this.rawRead, sourceId, slug, version); }
   hasDrainableProjectionJob(opts: { media?: boolean } = {}) { return projectionRebuildImpl.hasDrainableProjectionJob(this.rawRead, opts); }
   readChunkRowsFingerprint(pageId: number) { return projectionRebuildImpl.readChunkRowsFingerprint(this.rawRead, pageId); }
@@ -2246,6 +2249,8 @@ export class PGLiteEngine implements BrainEngine {
   lockApprovedFacts(sourceId: string, factIds: readonly number[]) { return repairAppliesImpl.lockApprovedFacts(this.rawRead, sourceId, factIds); }
   expireApprovedFacts(sourceId: string, factIds: readonly number[]) { return repairAppliesImpl.expireApprovedFacts(this.rawRead, sourceId, factIds); }
   tightenDatabaseFactVisibility(sourceId: string, factIds: readonly number[]) { return repairAppliesImpl.tightenDatabaseFactVisibility(this.rawRead, sourceId, factIds); }
+  readFactLiveVisibility(factId: number) { return repairAppliesImpl.readFactLiveVisibility(this.rawRead, factId); }
+  tightenFencedFactVisibility(sourceId: string, factId: number, rowNum: number) { return repairAppliesImpl.tightenFencedFactVisibility(this.rawRead, sourceId, factId, rowNum); }
   listPageAccessKeys(pageIds: readonly number[]) { return repairAppliesImpl.listPageAccessKeys(this.rawRead, pageIds); }
   listOpenTwinRows(pages: ReadonlyArray<{ source_id: string; slug: string }>, outside: readonly OpenTwinsSql.OpenTwinReader[]) { return openTwinsImpl.listOpenTwinRows(this.rawRead, pages, outside); }
   listOpenFactsWindow(sel: OpenFactsScansSql.OpenFactsSelection, after: number, upper: number | null, classes: readonly string[], limit: number, timeoutMs: number) { return openFactsScansImpl.listOpenFactsWindow(this.rawRead, sel, after, upper, classes, limit, timeoutMs); }
