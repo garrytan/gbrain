@@ -48,8 +48,8 @@ export interface RustAddonInstallDeps {
   target: string | null;
   /** Bytes of a release asset of `v<version>`; null when the release has no such asset (HTTP 404). Throws on any other failure. */
   fetchAsset(version: string, name: string): Promise<Uint8Array | null>;
-  /** The build-provenance attestations for a SHA-256, or null when none can be read. */
-  fetchAttestation(digest: string): Promise<ParsedAttestation[] | null>;
+  /** The build-provenance attestations for a SHA-256, or null when none can be read (after passing `onUnavailable` why). */
+  fetchAttestation(digest: string, onUnavailable?: (detail: string) => void): Promise<ParsedAttestation[] | null>;
   computeDigest(path: string): string;
 }
 
@@ -143,9 +143,10 @@ async function fetchOrRefuse(deps: RustAddonInstallDeps, name: string): Promise<
 }
 
 async function verifyAttested(deps: RustAddonInstallDeps, path: string, name: string): Promise<void> {
-  const failure = await verifyIntegrity(path, name, deps.computeDigest, deps.fetchAttestation);
+  let why = '';
+  const failure = await verifyIntegrity(path, name, deps.computeDigest, (digest) => deps.fetchAttestation(digest, (detail) => { why = detail; }));
   if (failure === 'integrity_unavailable') {
-    throw addonMissing('fetch_failed', `The build attestation for ${name} of gbrain v${deps.version} could not be read from GitHub, so it was not installed; try again later.`);
+    throw addonMissing('fetch_failed', `The build attestation for ${name} of gbrain v${deps.version} could not be read from GitHub${why ? ` (${why})` : ''}, so it was not installed; try again later.`);
   }
   if (failure) {
     throw addonMismatch('verification_failed', `${name} of gbrain v${deps.version} has no build attestation from the gbrain release workflow for its SHA-256, so it was deleted and not installed.`);

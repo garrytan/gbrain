@@ -234,6 +234,24 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
     ]));
   };
 
+  /**
+   * The warm single-write lane (`withReservedConnection`'s connection, whose `transaction` the persistence consumer lends to its writers): the transaction it
+   * opens is handed the sampler's scope exactly like `transaction`, so a page write in it is compared on the same fail-closed rules. Only the sampler: reads, follow and
+   * the writer observer stay as they were for it (the inactive sink passes reads through). The caller's options, `pipelineFirst` included, go through untouched and nothing
+   * is sent before the first statement, so the preimage reads can only follow it.
+   */
+  const laneConnection = (conn: any): unknown => {
+    if (!opts.writes || !conn || typeof conn.transaction !== 'function') return conn;
+    const quiet = { ...opts, follow: undefined, onCommittedWrite: undefined };
+    const quietSink: ShadowSink = { ...sink, active: () => false };
+    return new Proxy(conn, { get: (target, prop) => (prop !== 'transaction' ? Reflect.get(target, prop, target) : function laneTransaction(callback: unknown, ...rest: unknown[]) {
+      if (typeof callback !== 'function') return target.transaction(callback, ...rest);
+      const scope = opts.writes!.scope(engine);
+      const writes: TxWrites = { wrote: false, scope, nested: false, path: [] };
+      return committed(target.transaction((tx: BrainEngine) => (callback as (tx: BrainEngine) => unknown)(tx && typeof tx === 'object' ? buildProxy(tx, quietSink, quiet, true, null, writes) : tx), ...rest), scope);
+    }) });
+  };
+
   /** A member outside the mirrored reads: ignored and read-named ones stay bound; raw SQL and writes publish invalidations. */
   const wrapFollowed = (name: string, fn: Function, target: E): Function => {
     const kind = memberKind(name);
@@ -259,6 +277,7 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
       if (opts.writes && typeof prop === 'string' && !isShadowReadMember(prop) && !TX_MEMBERS.has(prop)) wrapped = opts.writes.wrap(prop, wrapped, { engine, inTransaction, mayWrite, scope, nested: txWrites?.nested });
       if (opts.onCommittedWrite && typeof prop === 'string' && !isShadowReadMember(prop) && !TX_MEMBERS.has(prop)) wrapped = wrapObserved(prop, wrapped);
       if (scope) wrapped = gated(prop, wrapped, scope);
+      if (prop === 'withReservedConnection' && opts.writes && !inTransaction) { const reserved = wrapped; wrapped = function laneReserved(this: unknown, callback: unknown, ...rest: unknown[]) { return reserved.call(this, typeof callback === 'function' ? (conn: unknown) => (callback as (conn: unknown) => unknown)(laneConnection(conn)) : callback, ...rest); }; }
       cache.set(prop, { original: value, wrapped });
       return wrapped;
     },

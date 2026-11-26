@@ -10,7 +10,7 @@
  * 2. Fails when: a member's key reads another member's folder, a re-run mints a second key or rewrites a key file, a
  *    key value reaches the receipt, a key file is group- or world-readable or lands in a checkout, an empty roster
  *    writes anything, the default setup output changes, or an unbound connection is written on a several brain.
- * 3. Existing coverage: setup.test.ts (the one-person install), access-folder-rules*.test.ts (the rule path),
+ * 3. Existing coverage: setup-claude-install.test.ts (the one-person install), access-folder-rules*.test.ts (the rule path),
  *    member-read-access.test.ts (bound reads).
  * 4. Real seams: the minted key verified by the serve --http verifier and dispatched remote=true (PGLite repo-less,
  *    Postgres when DATABASE_URL is set); `bun src/cli.ts setup` spawned against a temp HOME / GBRAIN_HOME; a real
