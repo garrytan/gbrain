@@ -495,4 +495,56 @@ mod tests {
         let (cols, _) = text_columns(&[0xff, b'h', b'i']);
         assert_eq!(cols[0].0, "value");
     }
+
+    /// The listed columns of a mapped table are fields its stored record carries (a timestamp's `_us`
+    /// suffix dropped), so `hasColumn` does not drift from the records.
+    #[test]
+    fn mapped_columns_are_fields_of_the_stored_records() {
+        let fields = |v: &Value| -> BTreeSet<String> {
+            v.as_object()
+                .unwrap()
+                .keys()
+                .map(|k| k.strip_suffix("_us").unwrap_or(k).to_string())
+                .collect()
+        };
+        let check = |table: &str, have: BTreeSet<String>| {
+            let m = MAPPED.iter().find(|m| m.table == table).unwrap();
+            let missing: Vec<_> = m.columns.iter().filter(|c| !have.contains(**c)).collect();
+            assert!(
+                missing.is_empty(),
+                "{table} lists columns its record does not carry: {missing:?}"
+            );
+        };
+        // `embedding` and `source_window` are left out of a record while unset (skip_serializing_if).
+        let mut facts = fields(&serde_json::to_value(crate::facts::FactRecord::default()).unwrap());
+        facts.extend(["embedding".to_string(), "source_window".to_string()]);
+        check("facts", facts);
+        let store = crate::test_support::store();
+        let input: crate::pages::PageInput =
+            serde_json::from_value(json!({"type": "note", "title": "t", "compiled_truth": "x"}))
+                .unwrap();
+        let opts: crate::pages::PutPageOptions = serde_json::from_value(json!({})).unwrap();
+        store.put_page("notes/t", &input, &opts).unwrap();
+        let read = store.read().unwrap();
+        let mut page = None;
+        scan_prefix(&*read, &[keys::PAGE], false, &mut |_, v| {
+            page = serde_json::from_slice::<Value>(v).ok();
+            false
+        })
+        .unwrap();
+        // These page fields are left out of a record while unset (skip_serializing_if).
+        let mut pages = fields(&page.unwrap());
+        pages.extend(
+            [
+                "database_only_reason",
+                "tag_sources",
+                "trust_tier",
+                "write_origin",
+                "version_history_gap_at",
+                "revision_receipt",
+            ]
+            .map(String::from),
+        );
+        check("pages", pages);
+    }
 }
