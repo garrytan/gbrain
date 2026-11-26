@@ -98,7 +98,7 @@ import type { WriteReceipt } from '../persistence/types.ts';
 import { acceptedPendingReceipt } from '../persistence/accepted-pending.ts';
 import { AtomPageStateError, MAX_DETERMINISTIC_FAILURES, readAtomPageIdentity, writeAtomPageState, type AtomPageInput } from './extract-atoms-page-state.ts';
 import { atomGenerationOrigin, atomInputPin, heldLine, publishUnmanagedAtoms, resolveTranscriptAtomSlug, resolveTranscriptKeys, transcriptRoot } from './extract-atoms-generation.ts';
-import { heldForInput } from '../generations/publish.ts';
+import { currentHoldIds, heldForInput } from '../generations/publish.ts';
 import { ATOM_TYPES, ATOMS_RESPONSE_SCHEMA } from './extract-atoms-schema.ts';
 import { parseAtomsOutcome } from './extract-atoms-parse.ts';
 export { parseAtomsOutcome, parseAtomsResponse, type AtomsParseOutcome } from './extract-atoms-parse.ts';
@@ -386,6 +386,18 @@ never explain in prose.
 Output ONLY the JSON object, no prose. Use null for unavailable optional metadata.`;
 
 /**
+ * #10270: a page whose complete read already has a held result for its current input pin and the current policy (the
+ * hold ids `currentHoldIds` returns, bound at `placeholder`) is skipped by the phase (`heldForInput`), so discovery and
+ * the backlog leave it out too; doctor's `generation_held` lists it with its release.
+ */
+function heldAtomInputExclusionSql(placeholder: string): string {
+  return `AND NOT EXISTS (SELECT 1 FROM derived_generations dg
+        WHERE dg.source_id = p.source_id AND dg.kind = 'atom' AND dg.state = 'held' AND dg.owner_key = 'source_slug:' || p.slug
+          AND dg.hold_id = ANY(${placeholder}::text[]) AND COALESCE(dg.held_context->>'partial', 'false') <> 'true'
+          AND dg.input_pin IN (p.content_hash, p.content_hash || ':' || p.id::text || ':' || p.knowledge_revision::text))`;
+}
+
+/**
  * v0.41.2.1 (D2) — single-SQL discovery + idempotency filter for brain
  * pages. Discovers extractable pages whose content_hash has no
  * corresponding atom row yet. One round-trip; replaces the
@@ -432,7 +444,8 @@ export async function discoverExtractablePages(
       ${MANAGED_ATOM_DISCOVERY_SQL}
       ${PAGE_SCAN_STATE_EXCLUSION_SQL}
       ${connectorExclusion}
-      ${hasFilter ? "AND p.slug = ANY($5::text[])" : ''}
+      ${heldAtomInputExclusionSql('$5')}
+      ${hasFilter ? "AND p.slug = ANY($6::text[])" : ''}
       AND NOT EXISTS (
         SELECT 1
         FROM pages atom
@@ -445,15 +458,15 @@ export async function discoverExtractablePages(
     ORDER BY p.updated_at DESC
     LIMIT $4
   `;
-  const params: unknown[] = [
-    sourceId,
-    await resolveExtractableTypes(),
-    MIN_PAGE_CHARS_FOR_EXTRACTION,
-    limit,
-  ];
-  if (hasFilter) params.push(affectedSlugs);
-
   try {
+    const params: unknown[] = [
+      sourceId,
+      await resolveExtractableTypes(),
+      MIN_PAGE_CHARS_FOR_EXTRACTION,
+      limit,
+      await currentHoldIds(engine, 'atom'),
+    ];
+    if (hasFilter) params.push(affectedSlugs);
     const rows = await engine.executeRaw<{
       id: number;
       knowledge_revision: string;
@@ -507,6 +520,7 @@ export async function countExtractAtomsBacklog(
     // brain-wide form keys the NOT EXISTS on `atom.source_id = p.source_id`.
     const scoped = sourceId !== undefined;
     const connectorExclusion = await connectorAtomExclusionSql(engine);
+    const holdIds = await currentHoldIds(engine, 'atom');
     const sql = scoped
       ? `SELECT COUNT(*) AS cnt FROM pages p
          WHERE p.source_id = $1
@@ -520,6 +534,7 @@ export async function countExtractAtomsBacklog(
            ${managedAtomDiscoverySql('$4::integer')}
            ${pageScanStateExclusionSql('$4::integer')}
            ${connectorExclusion}
+           ${heldAtomInputExclusionSql('$5')}
            AND NOT EXISTS (
              SELECT 1 FROM pages atom
              WHERE atom.type = 'atom' AND atom.source_id = $1
@@ -538,6 +553,7 @@ export async function countExtractAtomsBacklog(
            ${managedAtomDiscoverySql('$3::integer')}
            ${pageScanStateExclusionSql('$3::integer')}
            ${connectorExclusion}
+           ${heldAtomInputExclusionSql('$4')}
            AND NOT EXISTS (
              SELECT 1 FROM pages atom
              WHERE atom.type = 'atom' AND atom.source_id = p.source_id
@@ -548,8 +564,8 @@ export async function countExtractAtomsBacklog(
     const extractableTypes = await resolveExtractableTypes();
     const maxInputChars = await resolveExtractAtomsInputCap(engine);
     const params = scoped
-      ? [sourceId, extractableTypes, MIN_PAGE_CHARS_FOR_EXTRACTION, maxInputChars]
-      : [extractableTypes, MIN_PAGE_CHARS_FOR_EXTRACTION, maxInputChars];
+      ? [sourceId, extractableTypes, MIN_PAGE_CHARS_FOR_EXTRACTION, maxInputChars, holdIds]
+      : [extractableTypes, MIN_PAGE_CHARS_FOR_EXTRACTION, maxInputChars, holdIds];
     const rows = await engine.executeRaw<{ cnt: string | number }>(sql, params, { signal: opts.signal });
     return Number(rows[0]?.cnt ?? 0);
   } catch (err) {
