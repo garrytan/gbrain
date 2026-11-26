@@ -73,11 +73,11 @@ function unlabelledWriterPolicy(policy: WriterReadPolicy, member = 'readLinkTarg
   if (policy.identities.length === 1 && identity?.length && !applied.identity.length) {
     // One identity holding an invalid entry reads as a writer with no identity. Beside rules the SQL still applies it is a policy
     // the store cannot hold (it judges the rules only for a named identity), and an owner record is not modelled for it.
-    if (applied.satisfiedRuleIds.length) refuseMember('readLinkTargetPages', 'a writer whose identity holds an invalid entry beside satisfied folder rules');
+    if (applied.satisfiedRuleIds.length) refuseMember(member, 'a writer whose identity holds an invalid entry beside satisfied folder rules');
     if (text === fragment({ identity: [], satisfiedRuleIds: [], folderCoverage })) {
       return { ...off, identity: [], ...(folderCoverage.length ? { folderCoverage } : {}), callerRecord: true };
     }
-    refuseMember('readLinkTargetPages', 'a writer whose identity holds an invalid entry and whose record is not a plain member record');
+    refuseMember(member, 'a writer whose identity holds an invalid entry and whose record is not a plain member record');
   }
   // The owner speaking for itself renders the same text without the owner-only clause (CallerAccess.owner), which `off` reads as no test.
   const oneIdentity = (owner: boolean, folders: object) => policy.identities.length === 1 && identity
