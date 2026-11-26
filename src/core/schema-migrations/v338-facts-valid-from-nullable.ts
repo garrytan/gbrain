@@ -7,12 +7,18 @@ import type { Migration } from './types.ts';
 // unknown") instead of its save time, so an event-time window (`recall --since`)
 // no longer reads it as a recent event. The column keeps DEFAULT now() for raw
 // inserts that omit it; every gbrain writer names the column and passes NULL when
-// it knows no date. Existing rows are not rewritten.
+// it knows no date. Existing rows are not rewritten. The ALTER runs only while the
+// column is still NOT NULL, so a replay takes no lock on facts.
 export const v338: Migration = {
   version: 338,
   name: 'facts_valid_from_nullable',
   idempotent: true,
   sql: `
-    ALTER TABLE facts ALTER COLUMN valid_from DROP NOT NULL;
+    DO $$
+    BEGIN
+      IF EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'facts'::regclass AND attname = 'valid_from' AND attnotnull) THEN
+        ALTER TABLE facts ALTER COLUMN valid_from DROP NOT NULL;
+      END IF;
+    END $$;
   `,
 };

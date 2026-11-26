@@ -314,7 +314,11 @@ export async function runPhaseConsolidate(
         const best = cluster.reduce((a, b) => (b.confidence > a.confidence ? b : a));
         const avgWeight = cluster.reduce((s, f) => s + f.confidence, 0) / cluster.length;
         const sources = Array.from(new Set(cluster.map(c => c.source_session ?? c.source).filter(Boolean))).join(',');
-        const sinceISO = new Date(Math.min(...cluster.map(c => (c.valid_from ?? c.created_at).getTime()))).toISOString().slice(0, 10);
+        const sinceISO = cluster
+          .map(c => c.valid_from ?? c.created_at)
+          .reduce((min, d) => (d < min ? d : min))
+          .toISOString()
+          .slice(0, 10);
         const inputs = cluster.map(f => taint.get(f.id)!);
         const derivation = { inputs, trust: derivedWriteTrust({ channel: 'derive:consolidate', inputs }) };
 

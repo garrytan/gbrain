@@ -5515,8 +5515,8 @@
         "idempotent": true,
         "name": "facts_valid_from_nullable",
         "sql": {
-          "length": 64,
-          "sha256": "4a59f214527ebc34001cf6dd8b0549aeb19f6fe3bf9fabc0220cf06d75040291"
+          "length": 241,
+          "sha256": "dd6f72061b3e5339570d9d0933568be17d043206a77ed2750946612c2f77dc61"
         },
         "sqlFor": "absent",
         "transaction": "absent",

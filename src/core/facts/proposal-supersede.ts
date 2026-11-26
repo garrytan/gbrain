@@ -139,9 +139,9 @@ export function staleReason(proposal: Pick<ProposalRow, 'source_id'>, oldF: Pair
   return null;
 }
 
-/** The old fact's validity end on accept (supersede-interval.ts's rule). */
-const acceptedUntil = (oldF: PairFact, newF: PairFact): Date =>
-  supersededValidUntil({ valid_from: oldF.valid_from ?? null, valid_until: oldF.valid_until }, newF.valid_from ? new Date(newF.valid_from) : null);
+/** The old fact's validity end on accept (supersede-interval.ts's rule), or undefined when the pair carries no dates. */
+const acceptedUntil = (oldF: PairFact, newF: PairFact): Date | undefined =>
+  oldF.valid_from ? supersededValidUntil({ valid_from: oldF.valid_from, valid_until: oldF.valid_until }, newF.valid_from ? new Date(newF.valid_from) : null) : undefined;
 
 /** The old fact's fence row struck as superseded (with `#N` when the new fact lives on the same page), ending where the rule says. */
 export function planAcceptFence(body: string, oldF: PairFact, newF: PairFact, today: string): { body: string; before: ParsedFact; after: ParsedFact } | null {

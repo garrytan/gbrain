@@ -358,24 +358,24 @@ describe('extractFactsFromFenceText — date parse tolerance', () => {
     expect(out[0].valid_from!.getUTCFullYear()).toBe(2017);
   });
 
-  test('empty validFrom → undefined (engine layer defaults to now())', () => {
+  test('empty validFrom → null (event date unknown)', () => {
     const out = extractFactsFromFenceText(
       [baseFact({ validFrom: undefined })],
       'people/alice',
       'default',
       { nowOverride: FROZEN_TODAY },
     );
-    expect(out[0].valid_from).toBeUndefined();
+    expect(out[0].valid_from).toBeNull();
   });
 
-  test('completely invalid validFrom string → undefined (lenient)', () => {
+  test('completely invalid validFrom string → null (lenient, event date unknown)', () => {
     const out = extractFactsFromFenceText(
       [baseFact({ validFrom: 'not a date at all' })],
       'people/alice',
       'default',
       { nowOverride: FROZEN_TODAY },
     );
-    expect(out[0].valid_from).toBeUndefined();
+    expect(out[0].valid_from).toBeNull();
   });
 });
 
