@@ -205,7 +205,7 @@ describe.skipIf(!NODE)('gbrain setup openclaw --skill-loading', () => {
       const copy = join(b.root, 'capture-' + mode);
       mkdirSync(copy);
       for (const f of ['index.js', 'worker.js']) writeFileSync(join(copy, f), readFileSync(join(pluginDir(b), f), 'utf8'));
-      const script = "import { rmSync } from 'node:fs'; const [entry, dir, mode] = process.argv.slice(1); import(entry).then((m) => { m.default.register({ on() {}, registrationMode: mode }); rmSync(dir, { recursive: true, force: true }); setTimeout(() => process.exit(0), 1500); });";
+      const script = "import { rmSync } from 'node:fs'; const [entry, dir, mode] = process.argv.slice(1); import(entry).then((m) => { m.default.register({ on() {}, registrationMode: mode }); rmSync(dir, { recursive: true, force: true }); setTimeout(() => process.exit(0), 1500) });";
       const r = Bun.spawnSync([NODE!, '--input-type', 'module', '-e', script, join(copy, 'index.js'), copy, mode], { env: { PATH: b.env.PATH!, HOME: b.home }, stdout: 'pipe', stderr: 'pipe', timeout: 30_000 });
       expect(r.exitCode, r.stderr.toString()).toBe(0);
       expect([mode, crashes()]).toEqual([mode, []]);
