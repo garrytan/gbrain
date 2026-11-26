@@ -31,7 +31,7 @@ describe('gbrain identity (CLI)', () => {
   test('--json on a fresh brain: no identifiers, the reserved owner page', () => {
     const { stdout, status, stderr } = run(['identity', '--json']);
     expect({ status, stderr: status === 0 ? '' : stderr }).toEqual({ status: 0, stderr: '' });
-    expect(JSON.parse(stdout)).toEqual({ member: null, identifiers: [], entity: { slug: 'memory/owner', source_id: null, basis: 'reserved_page' }, conflicts: [], skipped_sources: [] });
+    expect(JSON.parse(stdout)).toEqual({ member: null, identifiers: [], entity: { slug: 'memory/owner', source_id: null, basis: 'reserved_page' }, pages: [], conflicts: [], skipped_sources: [] });
   }, 120_000);
 
   test('human output names the owner page and says no identifier is known yet', () => {

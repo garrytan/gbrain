@@ -101,6 +101,7 @@ test/conversation-facts-keep-quiet-gst3170.test.ts
 test/conversation-facts-outcome-marker-purge-7778.test.ts
 test/conversation-facts-oversized-sidecar.test.ts
 test/conversation-facts-purged-claim-7438.test.ts
+test/conversation-owner-guard-gst3216.test.ts
 test/cycle-world-fence-rows.test.ts
 test/cycle/derived-write-through-commit.test.ts
 test/cycle/dream-reverse-write-commit.test.ts

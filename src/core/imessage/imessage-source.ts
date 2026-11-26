@@ -38,7 +38,7 @@ import { slugifyPath } from '../sync.ts';
 import { nextSlackDay, slackAlignToDay, slackDayKey, slackDayStartMs } from '../slack/render.ts';
 import { IMESSAGE_THREADS_LIMIT, helperNotRunning, imessageHelper, type IMessageHelper } from '../apple/helper-client.ts';
 import { imessageChatKey, imessageDayFingerprint, imessagePagePath, renderIMessageDay, shownMessages } from './render.ts';
-import { connectorSpeakerOwnerStamp, type SpeakerOwnerStamp } from '../identity/speaker-owner.ts';
+import { sourceSpeakerOwnerStamp, type SpeakerOwnerStamp } from '../identity/speaker-owner.ts';
 import { IMESSAGE_HELPER_PORT_KEY, type IMessageMessage, type IMessageSourceConfig, type IMessageThread } from './types.ts';
 import { resolveOwnedDestination, type OwnedDatabaseOnlyReason } from '../owned-folder/destination.ts';
 import { git } from '../git/git-run.ts';
@@ -111,7 +111,7 @@ function staleHolds(recorded: Record<string, string>, paths: string[], detail: s
 
 export async function runIMessageSync(engine: BrainEngine, sourceId: string, cfg: IMessageSourceConfig, opts: SyncOpts, deps: IMessageSyncDeps = {}): Promise<SyncResult> {
   return withConnectorSync(engine, sourceId, 'imessage', cfg, opts,
-    async (managed, options) => options.dryRun ? connectorDryRunResult('iMessage', sourceId) : runIMessageSyncInner(engine, sourceId, cfg, options, managed, deps, await connectorSpeakerOwnerStamp(engine, sourceId)), pendingConnectorResult);
+    async (managed, options) => options.dryRun ? connectorDryRunResult('iMessage', sourceId) : runIMessageSyncInner(engine, sourceId, cfg, options, managed, deps, await sourceSpeakerOwnerStamp(engine, sourceId)), pendingConnectorResult);
 }
 
 async function runIMessageSyncInner(engine: BrainEngine, sourceId: string, cfg: IMessageSourceConfig, opts: SyncOpts,

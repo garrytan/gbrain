@@ -68,15 +68,16 @@ for (const kind of testBackends()) {
       expect(renderIdentity(id)).toContain(`Conflict: ${OWNER_MAIL} is claimed by`);
     });
 
-    test('two person pages carrying the owner email warn as several_pages', async () => {
+    test('two person pages carrying the owner email are ok: each counts as the owner', async () => {
       await engine.executeRaw("INSERT INTO sources (id, name, config) VALUES ('mail-a', 'mail-a', jsonb_build_object('kind', 'google', 'g_account', $1::text))", [OWNER_MAIL]);
       for (const slug of ['people/alice-example', 'people/alice-example-work']) {
         await engine.putPage(slug, { type: 'person', title: 'Alice Example', compiled_truth: 'A person.', frontmatter: { email: OWNER_MAIL } });
       }
       const c = await ownerIdentityCheck(engine);
-      expect(c.status).toBe('warn');
+      expect(c.status).toBe('ok');
       expect(c.details).toMatchObject({ several_pages: true, entity_basis: 'reserved_page' });
-      expect(c.message).toContain('several person pages');
+      expect(c.message).toContain('2 person pages carry an owner email; each counts as the owner.');
+      expect(JSON.stringify(c)).not.toContain(OWNER_MAIL);
     });
 
     test('an unloadable schema pack warns instead of reporting ok', async () => {

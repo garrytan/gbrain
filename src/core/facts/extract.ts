@@ -298,6 +298,11 @@ export interface ExtractInput {
   variant?: ExtractorVariant;
   /** #8064: the agent (session-speaker label) that wrote the turn's user side; the owner when absent. */
   userSpeaker?: string;
+  /**
+   * GST-3216 PR 3: the speaker label the page proves is the brain's owner (a trusted speaker_owner marker, with a turn
+   * by that label in this window), and the owner's entity slug. The agent line above takes precedence.
+   */
+  owner?: { label: string; entity: string };
   /** Optional pre-embedding admission selector for extracted fact tiers. */
   notabilityAdmission?: {
     allowed: readonly FactNotability[];
@@ -659,7 +664,9 @@ export async function extractFactsFromTurnWithOutcome(
   const dateLine = variant.dateGrounding ? `${observationDateLine(input.observationDate ?? null)}\n` : '';
   const speakerLine = input.userSpeaker
     ? `The user turns below were written by the automated agent "${input.userSpeaker}", not by the brain's owner: phrase their claims as "Agent ${input.userSpeaker} …" and attribute them "other".\n`
-    : '';
+    : input.owner
+      ? `The brain's owner is the speaker labelled ${JSON.stringify(input.owner.label)} in this conversation. Set entity to ${JSON.stringify(input.owner.entity)} for that speaker's first-person claims about themselves.\n`
+      : '';
   const userContent = `${dateLine}${speakerLine}<turn>\n${cleaned}\n</turn>\n\nExtract up to ${cap} facts.${
     input.entityHints && input.entityHints.length
       ? ` Known entity slugs the user already mentioned: ${input.entityHints.slice(0, input.entityHintsCap ?? ENTITY_HINTS_CAP).join(', ')}.`

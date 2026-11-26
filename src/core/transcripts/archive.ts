@@ -51,8 +51,8 @@ import { classifyItemFailure } from '../item-failure.ts';
 import { classifyBrainAudience } from '../facts/writeback-audience.ts';
 import { ARCHIVE_ENABLED_KEY, resolveArchiveEnabled } from './archive-default.ts';
 import { listGroups, listMembers } from '../access/members.ts';
-import { ownerMemberId, ownerView } from '../access/owner.ts';
-import { SPEAKER_OWNER_KEY } from '../identity/speaker-owner.ts';
+import { ownerView } from '../access/owner.ts';
+import { SPEAKER_OWNER_KEY, sourceSpeakerOwnerStamp } from '../identity/speaker-owner.ts';
 import { holdPageEmbedding } from '../page-embedding-budget.ts';
 import { PAGE_MAX_BYTES } from '../page-size-policy.ts';
 import type { ParsedSession, TranscriptFormat } from './types.ts';
@@ -809,7 +809,7 @@ async function archiveSource(engine: BrainEngine, opts: ArchiveRunOpts, ctx: { e
 
   const redact = opts.redact ?? ((s: ParsedSession) => redactSession(s, { patterns }));
   const pageCeiling = dryRun ? Math.floor(PAGE_MAX_BYTES * PAGE_CEILING_FILL) : await transcriptPageCeiling(engine);
-  const ownerMember = dryRun ? null : await ownerMemberId(engine);
+  const ownerStamp = dryRun ? { member: null } : await sourceSpeakerOwnerStamp(engine, sourceId);
   const quietMs = positiveInt(await engine.getConfig(ARCHIVE_QUIET_MINUTES_KEY), DEFAULT_QUIET_MINUTES) * 60_000;
   const groups = new Map<string, boolean>();
   const pending: ArchiveDayOutcome[] = [];
@@ -881,7 +881,7 @@ async function archiveSource(engine: BrainEngine, opts: ArchiveRunOpts, ctx: { e
       const hold: DayWrite['hold'] = opts.mode === 'backfill' ? 'backfill' : (!complete && !quiet ? 'open' : 'release');
       const dayInput = {
         harness: conv.harness, conversationKey: conv.conversationKey, ...(conv.scopeKey ? { scopeKey: conv.scopeKey } : {}), channel: conv.channel, day: outcome.day, timezone: tz.timezone,
-        redacted, slice, complete, partTargetBytes: pageCeiling, readableBy, owner: { member: ownerMember } as SpeakerOwnerStamp | undefined,
+        redacted, slice, complete, partTargetBytes: pageCeiling, readableBy, owner: (ownerStamp ?? undefined) as SpeakerOwnerStamp | undefined,
       };
       let rendered = renderArchiveDay(dayInput);
       let contentHash = sha256(rendered.parts.map(p => p.content).join('\u0000'));
