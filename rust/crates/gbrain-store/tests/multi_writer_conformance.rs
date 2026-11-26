@@ -663,10 +663,13 @@ fn c05_expired_claim_is_reclaimed_once() {
 /// C05, `reclaim_stalled_jobs` and `renew_job_lease`: concurrent sweeps from several hosts, each under its own fence, reclaim an
 /// expired claim once in total, and the old claimant's renewal (its lease moved, then expired) is refused. Real members, fenced.
 #[test]
-#[ignore = "multi_writer"]
 fn c05_expired_claim_is_reclaimed_once_multi_writer() {
     const TTL_MS: u64 = 60_000;
     let b = Arc::new(memory_env::brain_mu("c05m"));
+    assert!(
+        b.multiuser(),
+        "C05: the store did not resolve multi-user mode on"
+    );
     let a_lease = b
         .acquire_lease("claimant", &origin(1), TTL_MS)
         .unwrap()
@@ -1506,13 +1509,15 @@ fn c10_facts_of_one_entity_form_one_total_order() {
     facts_of_one_entity_form_one_total_order(Arc::new(open(&dir)));
 }
 
-/// C10, `append_fact`: the same, with the appenders on different hosts; per-entity order across hosts waits for the
-/// host lane (I-5).
+/// C10, `append_fact`: the same on a multi-user optimistic store whose writer holds a host lease (I-5).
 #[test]
-#[ignore = "multi_writer"]
 fn c10_facts_of_one_entity_form_one_total_order_multi_writer() {
     let dir = TempDir::new("c10m");
     let store = Arc::new(open_optimistic(&dir));
+    assert!(
+        store.multiuser(),
+        "C10: the store did not resolve multi-user mode on"
+    );
     require_host_lease(&store);
     facts_of_one_entity_form_one_total_order(store);
 }

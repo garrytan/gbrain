@@ -191,8 +191,8 @@ export const MW_CASES: readonly MwCase[] = [
     reference: 'compare',
     members: ['admitJob', 'claimNextJob', 'reclaimStalledJobs', 'renewJobLease', 'getJob'],
     storeTests: {
-      runnable: ['c05_expired_claim_is_reclaimed_once'],
-      pending: ['c05_expired_claim_is_reclaimed_once_multi_writer'],
+      runnable: ['c05_expired_claim_is_reclaimed_once', 'c05_expired_claim_is_reclaimed_once_multi_writer'],
+      pending: [],
     },
     cells: {
       pglite: RUNS, postgres: RUNS,
@@ -296,8 +296,8 @@ export const MW_CASES: readonly MwCase[] = [
     reference: 'compare',
     members: ['insertFact', 'listFactsByEntity'],
     storeTests: {
-      runnable: ['c10_facts_of_one_entity_form_one_total_order'],
-      pending: ['c10_facts_of_one_entity_form_one_total_order_multi_writer'],
+      runnable: ['c10_facts_of_one_entity_form_one_total_order', 'c10_facts_of_one_entity_form_one_total_order_multi_writer'],
+      pending: [],
     },
     cells: {
       pglite: RUNS, postgres: RUNS,
