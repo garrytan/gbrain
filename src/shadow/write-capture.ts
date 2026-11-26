@@ -125,9 +125,16 @@ async function fenced(engine: BrainEngine, op: string, args: unknown[], targets:
   } catch { return true; }
 }
 
-/** The options the Rust putPage takes (store-members/pages.ts `takeOptions`; `inline` it ignores). The whole options object is sent with the write, and any other key (`contextualRetrieval`, which the store refuses) is one the replay does not carry: the sample is uncomparable. */
-export const PUT_PAGE_OPTIONS: ReadonlySet<string> = new Set(['sourceId', 'allowEmptyOverwrite', 'expectedRevision', 'force', 'inline']);
-const knownOptions = (name: string, args: unknown[]): boolean => name !== 'putPage' || Object.keys((args[2] as object | undefined) ?? {}).every((k) => PUT_PAGE_OPTIONS.has(k));
+/** The options the Rust putPage takes (store-members/pages.ts `takeOptions`; `inline` it ignores). The whole options object is sent with the write, and any other key is one the replay does not carry: the sample is uncomparable. */
+export const PUT_PAGE_OPTIONS: ReadonlySet<string> = new Set(['sourceId', 'allowEmptyOverwrite', 'expectedRevision', 'force', 'contextualRetrieval', 'inline']);
+/** A put_page option set that asks the write to stamp contextual retrieval (`contextualRetrieval` with a mode other than 'none'; an import passes it only then). The store takes the option, but the stamp is a later write the comparison does not replay, so such a write is named uncomparable. */
+const stampsContextualRetrieval = (opts: object | undefined): boolean => {
+  const cr = (opts as { contextualRetrieval?: { mode?: unknown } | null } | undefined)?.contextualRetrieval;
+  return cr !== undefined && cr !== null && cr.mode !== 'none';
+};
+/** Whether a put_page's options are ones the replay can compare: every key is one the store takes, and the write does not stamp contextual retrieval. */
+export const putPageOptionsComparable = (opts: object | undefined): boolean => Object.keys(opts ?? {}).every((k) => PUT_PAGE_OPTIONS.has(k)) && !stampsContextualRetrieval(opts);
+const knownOptions = (name: string, args: unknown[]): boolean => name !== 'putPage' || putPageOptionsComparable(args[2] as object | undefined);
 const STAMP = 'updatePageContextualRetrievalState'; // changes a compared page column (contextual_retrieval_mode) after the page write: the replay runs the same call (WriteEvent.then)
 /** Writes after a sampled putPage in its transaction that leave the compared page row and links as the write made them (chunks are not compared). */
 const LATER_WRITES: ReadonlySet<string> = new Set(['upsertChunks', 'deleteChunks', 'deleteChunksExcept', 'moveChunkIndexes', 'setPageAliases', 'replaceDerivedAliases', 'pruneFrontmatterTags', 'addPageTagsById', 'writeTextProjectionSeal', STAMP]);
