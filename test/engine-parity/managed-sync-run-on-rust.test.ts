@@ -47,6 +47,8 @@ import type { SyncStatementName } from '../../src/core/engine-sql/managed-sync-s
 import { servedCapabilities } from '../../src/core/rust-engine/store-capabilities.ts';
 
 type OrderedRow = Parameters<typeof claimedPredecessor>[1];
+import { fenceOpts } from '../../src/core/persistence/host-fence.ts';
+import { ensureProcessRegistration } from '../../src/core/persistence/managed-registration.ts';
 const { parityTest } = parityArms(testBackends());
 
 const GIT_ID = ['-c', 'user.name=Example', '-c', 'user.email=example@example.invalid'];
@@ -439,10 +441,12 @@ async function seededId(engine: BrainEngine, requestId: string): Promise<string>
 
 /** Settles a seeded request to a terminal `state`, as the typed fixture does. */
 async function settle(engine: BrainEngine, id: string, state: 'failed' | 'cancelled' | 'committed'): Promise<void> {
+  // A multi-user Rust brain's protected write carries the process's own host fence (a no-op elsewhere).
+  await ensureProcessRegistration(engine, 'parity');
   const { declarePersistenceProtocol } = await import('../../src/core/persistence/protocol.ts');
   await engine.transaction(async tx => {
     await declarePersistenceProtocol(tx);
     await tx.completeWriteRow({ id, state, outcome: null, errorCode: null, errorMessage: null, consumerVersion: 'v-run-seed', consumerHostId: null, errorDetail: null, resultBytes: 0,
-      counterKeys: [], intentBytes: 0, retainedBytes: 0, terminalReservation: 0, probePurges: false } as never);
+      counterKeys: [], intentBytes: 0, retainedBytes: 0, terminalReservation: 0, probePurges: false, ...fenceOpts(tx) } as never);
   });
 }

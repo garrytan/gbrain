@@ -39,6 +39,8 @@ import { disposePersistenceConsumer } from '../../src/core/persistence/service.t
 import { submitPageMutation } from '../../src/core/persistence/page-mutations.ts';
 import { installFaultHook } from '../../src/core/persistence/fault-points.ts';
 import { hostIdFor, readLocalWriter } from '../../src/core/persistence/identity.ts';
+import { fenceOpts } from '../../src/core/persistence/host-fence.ts';
+import { ensureProcessRegistration } from '../../src/core/persistence/managed-registration.ts';
 import { claimNextLaneHead, claimNextWrite, completeWrite, reclaimReleasedWrite, releaseUnpublishedClaim } from '../../src/core/persistence/journal.ts';
 import { releaseChargedInterruption } from '../../src/core/persistence/coordinator.ts';
 import { claimAndRecoverEffect } from '../../src/core/persistence/effects.ts';
@@ -60,6 +62,8 @@ async function withManagedBrain<T>(engine: BrainEngine, backend: ParityBackend, 
   const home = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-managed-claims-')));
   try {
     return await withEnv({ GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined, GBRAIN_GIT_ALLOW_FILE_TRANSPORT: '1' }, async () => {
+      // On a multi-user Rust brain a claim carries the process's own host fence (a no-op on every other brain).
+      await ensureProcessRegistration(engine, 'parity');
       const root = join(home, 'checkout');
       mkdirSync(join(root, 'notes'), { recursive: true });
       execFileSync('git', ['-C', root, 'init', '-q', '-b', 'main']);
@@ -163,7 +167,7 @@ describe('managed claims on a Rust brain, hold kept for users', () => {
     const head = async (hostId = host, run = RUN) => { const row = await claimNextLaneHead(engine, hostId, wt, run, 30_000, null); return row && { ...shape(row, labels), seenIsNewest: row.seen_sequence === await sequenceOf(engine, second) }; };
     const queuedEarlier = await head();
     // The earlier write is claimed and running: it is a running request of no lane, so it still blocks the lane head.
-    await engine.stampWriteClaim(early, randomUUID(), 60_000, JSON.stringify({ phase: 'preparing' }));
+    await engine.stampWriteClaim(early, randomUUID(), 60_000, JSON.stringify({ phase: 'preparing' }), fenceOpts(engine));
     const runningEarlier = await head();
     await engine.transaction(async tx => { await completeWrite(tx, (await tx.lockWriteRequest(early))!, 'committed', {}); });
     const wrongHost = await head(OTHER_HOST);
@@ -190,7 +194,7 @@ describe('managed claims on a Rust brain, hold kept for users', () => {
     const first = await laneGroup(engine, wt);
     await laneGroup(engine, wt);
     const waiting = await foreground(engine, wt);
-    await engine.stampWriteClaim(committed, randomUUID(), 60_000, JSON.stringify({ phase: 'preparing' }));
+    await engine.stampWriteClaim(committed, randomUUID(), 60_000, JSON.stringify({ phase: 'preparing' }), fenceOpts(engine));
     await engine.transaction(async tx => { await tx.lockPersistenceCounters(KEYS); await completeWrite(tx, (await tx.lockWriteRequest(committed))!, 'committed', {}); });
     const committedSequence = await sequenceOf(engine, committed);
     const labels = new Map([[first, 'first']]);
@@ -201,7 +205,7 @@ describe('managed claims on a Rust brain, hold kept for users', () => {
     const overridden = await withEnv({ GBRAIN_SYNC_FOREGROUND_PRIORITY: '1' }, () => claim(committedSequence));
     // Another process claimed the waiting write and has not begun it: it still waits; this process's own claim does not hold its lane.
     await engine.setConfig('sync.foreground_priority', 'true');
-    await engine.stampWriteClaim(waiting, randomUUID(), 60_000, JSON.stringify({ phase: 'preparing', owner: { nonce: 'another-process' } }));
+    await engine.stampWriteClaim(waiting, randomUUID(), 60_000, JSON.stringify({ phase: 'preparing', owner: { nonce: 'another-process' } }), fenceOpts(engine));
     const claimedElsewhere = await claim(committedSequence);
     const earned = await claim(null);
     const answer = { heldBack, overridden, claimedElsewhere, earned, nonce: typeof consumerIdentity().nonce };
@@ -220,7 +224,7 @@ describe('managed claims on a Rust brain, hold kept for users', () => {
     const release = holdConsumer();
     const id = await foreground(engine, wt);
     const token = randomUUID();
-    await engine.stampWriteClaim(id, token, 60_000, JSON.stringify({ phase: 'publishing' }));
+    await engine.stampWriteClaim(id, token, 60_000, JSON.stringify({ phase: 'publishing' }), fenceOpts(engine));
     const before = (await readOwnerRecoveryHeads(engine, host, [])).length;
     const record: PagesRecoveryRecord = { version: 3, target: 'pages', root, ownerEpoch: '1', attempt: token, files: [] };
     await engine.transaction(async tx => {

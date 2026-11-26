@@ -24,6 +24,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { rustLeases, type LeaseToken } from '../rust-engine/store-members/leases.ts';
 import { storeErrorCode } from '../rust-engine/store-errors.ts';
+import { rustMultiuserFromEnv } from '../rust-engine/multiuser-switch.ts';
 import { acquireNativeLock, tryAcquireNativeLock, type NativeLockHandle } from './native-lock.ts';
 import { hostRegistrationOf } from './host-fence.ts';
 import { rustMultiuserEngine } from './host-registration.ts';
@@ -80,6 +81,11 @@ export function nativeLockFailureAsBusy(error: unknown): null {
   return null;
 }
 
+/** True for a Rust engine that reaches its brain over another process's owner socket. */
+function isOwnerClient(engine: object): boolean {
+  return (engine as { ownerRole?: unknown }).ownerRole === 'client';
+}
+
 /** Whether a handle was lost (its lease was taken over, released or expired). False for a native-only handle. */
 export function managedLockLost(handle: NativeLockHandle | null | undefined): boolean {
   return (handle as ManagedLockHandle | null | undefined)?.lost === true;
@@ -101,7 +107,12 @@ export async function managedLock(engine: BrainEngine | object | undefined, kind
     if (multiuserRustEngineOpen(rustMultiuserEngine)) throw leaseLostError(new Error(JSON.stringify({ reason: 'fence_missing', name: managedLeaseName(kind, id), epoch: 0 })));
     return nativeLock(opts, opts.waitMs);
   }
-  if (!managedLeasesApply(engine)) return nativeLock(opts, opts.waitMs);
+  if (!managedLeasesApply(engine)) {
+    // A second process that reaches a multi-user brain over its owner's socket holds no store, so it can take no lease and has no
+    // registration: it refuses instead of holding a native lock alone while the owner runs the work (its whole operations run in the owner).
+    if (isOwnerClient(engine) && rustMultiuserFromEnv()) throw leaseLostError(new Error(JSON.stringify({ reason: 'fence_missing', name: managedLeaseName(kind, id), epoch: 0 })));
+    return nativeLock(opts, opts.waitMs);
+  }
   const root = managedRoot(engine);
   const registration = hostRegistrationOf(root) ?? await ensureProcessRegistration(root, `managed_${kind}`);
   if (!registration) throw leaseLostError(new Error(JSON.stringify({ reason: 'fence_missing', name: managedLeaseName(kind, id), epoch: 0 })));
