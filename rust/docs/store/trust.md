@@ -295,11 +295,14 @@ the family adds no key prefix. Versions have no by-id index: the version reads s
   not an integer; the trust scan reads pages, facts, takes and timeline entries. The store refuses any other
   table and a NUL byte with `invalid_argument`.
 - The belief history reads (`readBeliefHistoryRows`, `listVisibleBeliefLifetimes`) are store members over the
-  ledger's rows (`trust::belief_history`, "The belief ledger", below). Their members refuse only a labelled-only
-  caller, whose floor the page policy cannot carry.
-- `listAmendmentsNotApplied` refuses a date that is not `YYYY-MM-DD`, a non-integer page id or limit and a caller
-  whose remote floor is not the page policy of no readers (a labelled-only caller); any other caller reads the floor
-  (`test/engine-parity/valid-time-member-reads.test.ts`). A failure is an error: the old read answered an empty list for any failure.
+  ledger's rows (`trust::belief_history`, "The belief ledger", below). Their members serve supported remote page-floor
+  renderings, including labelled-only callers and ordinary callers with pending folder coverage; the matched floor
+  carries its labelled-only terms and pending prefixes to the store. Unsupported renderings still refuse.
+- `listAmendmentsNotApplied` refuses a date that is not `YYYY-MM-DD`, a non-integer page id or limit and an
+  unsupported remote page-floor rendering. Under `excludePrivate`, its floor goes through `storePageTextPolicy`, which
+  serves supported labelled-only callers and ordinary callers carrying pending prefixes when the SQL text matches a
+  fresh reference rendering. A failure is an error: the old read answered an empty list for any failure.
+  Parity: `test/engine-parity/valid-time-member-reads.test.ts`.
 - `pickValidTimeEdition` also refuses a date that is not `YYYY-MM-DD`. It reads the history the store keeps after its
   version prune (`pages.md`, "Version prune"). `reason` is a version's stored change reason and `introduced_because`
   the reason of the edition before, unless that edition's successor was pruned; under `excludePrivate` a reason reads

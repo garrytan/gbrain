@@ -246,11 +246,16 @@ export async function whoCanRead(engine: BrainEngine, slug: string, sourceId?: s
         : 'Derived pages (atoms, facts, chronicle events) of a page that names readers are hidden from every remote caller.',
       ...(ownerOpened ? [`The owner (${optIn}) reads it too, and its derived pages and facts: access.owner_reads_restricted is on (gbrain access owner reads-restricted off turns it off).`] : []),
       ...(audienceOpened || (audiencePage && ownerOpened) ? [`It is the member page of an audience member (gbrain access member kind), so the owner (${ownerId}) reads it, its older versions, its derived pages and its facts as if it named the owner.`] : []),
-      ...(labelledOnlyIds.length ? [`Labelled-only members (${labelledOnlyIds.join(', ')}) read it only when it names them: readable_by or a rule listing them or their groups${readers === null && !ruled ? ', so none of them reads it' : ''}; a derived page or fact that names nobody is hidden from them${memberLineage ? ' unless every origin names them' : ''}.`] : []),
+      ...(labelledOnlyIds.length ? [`Labelled-only members (${labelledOnlyIds.join(', ')}) read it only when it names them: readable_by or a rule listing them or their groups${readers === null && !ruled ? (memberLineage && derivedPage(row.type, fm) ? ', or (it is a derived page) when every origin names them; they are not listed here for that case' : ', so none of them reads it') : ''}; a derived page or fact that names nobody is hidden from them${memberLineage ? ' unless every origin names them' : ''}.`] : []),
     ];
     entries.push({ slug: row.slug, source_id: row.source_id, readers, private: priv, members: readers === null && !ruled && !ownerOnly ? 'every_source_reader' : allowed, note: notes.join(' ') });
   }
   return entries;
+}
+
+/** A page that derives from others: an atom, question, concept or event, or one with a `derived_from` key (the pages access.members_read_lineage walks to their origins). */
+function derivedPage(type: string | null | undefined, frontmatter: unknown): boolean {
+  return ['atom', 'question', 'concept', 'event'].includes(String(type)) || (typeof frontmatter === 'object' && frontmatter !== null && 'derived_from' in frontmatter);
 }
 
 export interface AccessCheckResult {

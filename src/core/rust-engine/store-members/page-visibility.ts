@@ -8,8 +8,8 @@
  * fresh record of only a reader identity and a private-readable grant (`page_hidden` in facts/privacy.rs). The member
  * renders the PGLite fragment over `p` in the current context and serves the read only when it equals one of those:
  * the `read` part through storePageTextPolicy, the `access` part (member access alone) here, with the privacy part
- * off. Any other caller (folder rules, an audience, lineage, a labelled-only grant) refuses with
- * `engine_capability_missing`, before any read.
+ * off. A labelled-only grant or a member's lineage read is served with the caller's folder rules (callerReference); any other
+ * caller (folder rules alone, an audience) refuses with `engine_capability_missing`, before any read.
  *
  * The store keeps OAuth clients, but this read does not read a client's fence yet, so it refuses; a local writer's fence is its stored grant
  * ceiling's `slugPrefixes`. What each member answers and why: rust/docs/store/page-visibility.md.
@@ -18,7 +18,7 @@ import type { CallerPageAccessRow, PagePolicyPart, PrivateOnlySlugScope, WriteVi
 import { callerAccessAllowedSql, currentCallerAccess, privacyPartSql, privatePagesFilterForCaller, privatePagesFilterFragment, readPolicyFragment, withCallerAccess } from '../../search/private-visibility.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 import { readOauthClient } from './jobs-oauth-clients.ts';
-import { judgeWidenedCaller, ownerOnlyFormIn, pagePolicyFlags, renderForStoreCaller, storePageTextPolicy, type StorePrivacyPolicy } from './private-provenance.ts';
+import { callerFolders, callerReference, judgeWidenedCaller, ownerOnlyFormIn, pagePolicyFlags, renderForStoreCaller, storePageTextPolicy, type StorePrivacyPolicy } from './private-provenance.ts';
 
 /**
  * The store policy for page policy part `part` of the current caller, or a refusal. The caller is judged by
@@ -32,7 +32,18 @@ function callerPolicy(member: string, part: PagePolicyPart): StorePrivacyPolicy 
     const off = { honorAliases: false, entityPrivacy: false, ownerOnly: ownerOnlyFormIn(text, 'pages', 'p') };
     if (text === renderForStoreCaller({}, () => callerAccessAllowedSql('p'))) return off;
     const canonical = renderForStoreCaller({ ...readers, hidePrivate: true }, () => callerAccessAllowedSql('p'));
-    return text === canonical ? { ...off, ...readers } : undefined;
+    if (text === canonical) return { ...off, ...readers };
+    // The same record with the caller's folder rules (an ordinary member that satisfies a rule too), and with the grants when it has any.
+    const reference = callerReference();
+    if (!reference) return undefined;
+    const folders = callerFolders();
+    const withGrants = renderForStoreCaller({ ...readers, ...folders, ...reference.record, hidePrivate: true }, () => callerAccessAllowedSql('p'));
+    if (text !== withGrants) return undefined;
+    return {
+      ...off, ...readers, callerRecord: true, ...reference.flags,
+      ...(folders.satisfiedRuleIds.length ? { satisfiedRuleIds: folders.satisfiedRuleIds } : {}),
+      ...(folders.folderCoverage.length ? { folderCoverage: folders.folderCoverage } : {}),
+    };
   });
   if (policy) return policy;
   refuseMember(member, 'a caller whose member pages, grants or lineage widen the member-access policy');

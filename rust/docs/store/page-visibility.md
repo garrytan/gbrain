@@ -26,9 +26,10 @@ member-access part alone (the page's readers, and the origin of a derived page):
 
 - `readPageHiddenFromCaller` and `readCallerPageAccess` take `{ policy: 'read' | 'access' }`. The `read` part
   renders `privatePagesFilterForCaller('p')` and maps it through `storePageTextPolicy`, as the other page reads do.
-  The `access` part renders `callerAccessAllowedSql('p')` in the current access record and serves it only when it
-  equals the no-caller rendering or the rendering of a fresh record with only the caller's reader identity and
-  private-readable grant. The capability is `pages`.
+  The `access` part renders `callerAccessAllowedSql('p')` in the current access record and serves matching no-caller
+  or fresh reference renderings with the caller's reader identity, private-readable grant, satisfied folder rules,
+  pending prefixes, labelled-only grant and member-lineage fields. The extended reference forwards its folder fields
+  with `callerRecord: true`. The capability is `pages`.
 - `readWriteVisibilityProbe(sourceId, slug)` renders `readPolicyFragment('p', [], true)` (the empty identity with
   privacy, which equals the no-caller rendering) and maps it through `storePageTextPolicy`.
 - `readPagePrivacyHidden(sourceId, slug)` passes `honorAliases` as `pagePolicyFlags(privacyPartSql('p')).honorAliases`, so it
@@ -74,8 +75,10 @@ member-access part alone (the page's readers, and the origin of a derived page):
   any other value (`null` too) is refused before the store reads
   (`tests/owner_only_form_contract.rs`).
 
-- **Callers the store does not render.** A caller whose access record adds folder rules, an audience, a lineage
-  or a labelled-only grant renders a policy the store cannot judge. Both page members then refuse with
+- **Callers the store does not render.** Both the `read` and `access` parts serve matching reference records with
+  the caller's folder rules and pending prefixes, including ordinary members, labelled-only members and member-lineage
+  reads (`callerReference`). An audience whose policy matches none of the supported reference renderings, including
+  a labelled-only audience of several identities, is refused by both page members with
   `engine_capability_missing` before any read. A remote write's writer is the exception: `readLinkTargetPages` serves
   the writer's one identity with the folder rules it satisfies and the labelled-only grant
   ([remote-links.md](remote-links.md)), so a labelled-only member's rewrite of a page it is not named on ends on
