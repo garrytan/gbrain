@@ -253,6 +253,30 @@ describe('coalesced Git effects', () => {
     });
   });
 
+  withAddon('L0 follow-up: a second host sees a coalesced claim\'s lease and cannot settle it; a stale host\'s claim changes nothing', async () => {
+    await on(true, async engine => {
+      const a = await register(engine, 'a');
+      const b = await register(engine, 'b');
+      await setup(engine, 2);
+      const rows = await claim(engine, a);
+      expect(rows).toHaveLength(2);
+      const store = await engine.gitEffectStore();
+      const effectStates = async () => Promise.all(rows.map(async r => (await engine.readRequestEffects((r as unknown as { request_id: string }).request_id, 'git'))[0]?.state));
+      // Host b: the claimed effects are not claimable again, and every settle under b's fence is refused.
+      expect(await claim(engine, b)).toEqual([]);
+      const bComplete = await refusal(() => engine.completeEffectRow({ id: rows[0]!.id, token: rows[0]!.execution_token, fence: b, outcomeJson: '{}' }));
+      const bYield = await refusal(() => store.yieldToPublications(refs(rows), 1000, { fence: b }));
+      const bOutcome = await refusal(() => store.recordPlainOutcome(refs(rows), '{}', { fence: b }));
+      expect({ bComplete, bYield, bOutcome }).toEqual({ bComplete: lost('claim_epoch_mismatch'), bYield: lost('claim_epoch_mismatch'), bOutcome: lost('claim_epoch_mismatch') });
+      // Host a's lease is taken over: a's stale fence claims nothing and stamps nothing.
+      await takeover(engine, a);
+      expect(await refusal(() => claim(engine, a))).toEqual(lost('epoch_moved'));
+      expect(await refusal(() => store.recordPlainOutcome(refs(rows), '{}', { fence: a }))).toEqual(lost('epoch_moved'));
+      // Nothing either refused call touched changed: both effects stay claimed and running.
+      expect(await effectStates()).toEqual(['running', 'running']);
+    });
+  });
+
   withAddon('a call with no fence on a multi-user brain is not refused for lacking one, and cannot touch a live holder\'s claim', async () => {
     await on(true, async engine => {
       const a = await register(engine);
