@@ -529,6 +529,7 @@
     "proposal_closed",
     "proposal_expired",
     "proposals_pending_limit",
+    "propose_owner_only",
     "provenance_required",
     "provider_response_unparseable",
     "publication_pending",

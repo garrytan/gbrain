@@ -9035,5 +9035,66 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       "hidden": true
     },
     "area": "onboarding"
+  },
+  {
+    "name": "propose_jobs",
+    "mutating": false,
+    "idempotent": true,
+    "outputRedaction": "no_stored_text",
+    "description": "Jobs your agent could take on, found in data already in the brain with no model call: people waiting on the user, threads they owe a reply, recurring meetings with no prep page, bulk senders they never wrote to, and the same question asked in two agents. Each job has a count, the pages it rests on, a sentence, and the installed skill or gbrain command that does it. The owner only. Offer one job at a time; propose_decide records the user's yes or no.",
+    "params": {
+      "days": {
+        "type": "number",
+        "description": "How many days back to look (1-90, default 7)."
+      }
+    },
+    "scope": "read",
+    "annotations": {
+      "readOnlyHint": true
+    },
+    "cliHints": {
+      "name": "propose-jobs",
+      "hidden": true
+    },
+    "area": "onboarding"
+  },
+  {
+    "name": "propose_decide",
+    "mutating": true,
+    "idempotent": true,
+    "outputRedaction": "no_stored_text",
+    "description": "Record the user's answer to one proposed job (the owner only): accepted or declined, by signal. A declined job is not offered again at session start. Writes only the first-session record, then reads it back: say it was recorded only when verified is true.",
+    "params": {
+      "signal": {
+        "type": "string",
+        "required": true,
+        "enum": [
+          "waiting_on_you",
+          "owe_reply",
+          "meeting_prep",
+          "repeat_question",
+          "bulk_senders"
+        ],
+        "description": "The job's signal, as propose_jobs returns it."
+      },
+      "decision": {
+        "type": "string",
+        "required": true,
+        "enum": [
+          "accepted",
+          "declined"
+        ],
+        "description": "The user's answer."
+      }
+    },
+    "scope": "write",
+    "annotations": {
+      "idempotentHint": true
+    },
+    "cliHints": {
+      "name": "propose-decide",
+      "hidden": true
+    },
+    "area": "onboarding"
   }
 ];

@@ -180,6 +180,9 @@
       "profile": [
         "./commands/profile.ts"
       ],
+      "propose": [
+        "./commands/propose.ts"
+      ],
       "quarantine": [
         "./commands/trust.ts",
         "./commands/quarantine.ts"

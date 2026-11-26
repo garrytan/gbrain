@@ -5101,6 +5101,16 @@ Reasons: `actor`, `credential`.
 
 More: [docs/guides/qm.md#proposed-writes](../../docs/guides/qm.md#proposed-writes)
 
+### propose_owner_only
+
+<a id="propose_owner_only"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Only the owner of this install can read or answer job proposals, and this connection is not bound to the owner, so nothing was read or changed. | Job proposals read the owner's mail, calendar, open loops and agent history; a member-bound connection never sees them. | Ask the brain owner to run gbrain propose on the brain host. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/job-proposals.md#who-can-see-them](../../docs/guides/job-proposals.md#who-can-see-them)
+
 ### provenance_required
 
 <a id="provenance_required"></a>
