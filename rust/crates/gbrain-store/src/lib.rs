@@ -1038,7 +1038,7 @@ impl Store {
         &self,
         after: Option<CommitPosition>,
         max: usize,
-    ) -> Result<(LogPage, Vec<(CommitPosition, Vec<u8>)>)> {
+    ) -> Result<(LogPage, commit_log::RawRecords)> {
         let read = self.kv.snapshot()?;
         let mut page = commit_log::read_commit_log(&*read, after, max)?;
         let mut raw = Vec::with_capacity(page.records.len());
