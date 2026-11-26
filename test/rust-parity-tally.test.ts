@@ -5,7 +5,7 @@
 import { describe, expect, test } from 'bun:test';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { checkRustTally, keepStopReasons, parsePins, renderPins, RUST_TALLY_PATH } from './engine-parity/rust-tally.ts';
+import { checkRustTally, keepStopReasons, parsePins, renderPins, RUST_MANAGED_TALLY_PATH, RUST_TALLY_PATH, tallyTarget } from './engine-parity/rust-tally.ts';
 
 const FILE = 'test/engine-parity/search.test.ts';
 const pins = parsePins(renderPins([[FILE, { equal: 14, stopped: 2 }]]));
@@ -15,7 +15,7 @@ const outcome = (run: () => unknown) => {
   try {
     return { value: run() };
   } catch (error) {
-    return { threw: (error as Error).message.includes('rust-tally.tsv pins') || (error as Error).message.includes('has no row') };
+    return { threw: (error as Error).message.includes('tally.tsv pins') || (error as Error).message.includes('has no row') };
   }
 };
 
@@ -56,8 +56,17 @@ describe('Rust parity tally pin', () => {
     });
   });
 
-  test('the checked-in pin has one row per parity file and round-trips', () => {
-    const text = readFileSync(RUST_TALLY_PATH, 'utf8');
+  test('the lifted-hold mode (GBRAIN_TEST_RUST_MANAGED=1) checks and names its own pin file', () => {
+    expect([tallyTarget({}).path, tallyTarget({ GBRAIN_TEST_RUST_MANAGED: '1' }).path]).toEqual([RUST_TALLY_PATH, RUST_MANAGED_TALLY_PATH]);
+    const managed = { GBRAIN_TEST_RUST_MANAGED: '1' };
+    let message = '';
+    try { checkRustTally(FILE, tally(13, 3), 16, pins, managed); } catch (error) { message = (error as Error).message; }
+    expect(message).toContain('but rust-managed-tally.tsv pins 14 equal and 2 stopped');
+    expect(message).toContain('GBRAIN_TEST_RUST_MANAGED=1 bun test/engine-parity/rust-tally.ts --write');
+  });
+
+  test.each([['rust-tally.tsv', RUST_TALLY_PATH], ['rust-managed-tally.tsv', RUST_MANAGED_TALLY_PATH]])('the checked-in pin %s has one row per parity file and round-trips', (_name, path) => {
+    const text = readFileSync(path, 'utf8');
     const files = readdirSync(join(import.meta.dir, 'engine-parity')).filter((f) => f.endsWith('.test.ts') && f !== 'coverage.test.ts')
       .map((f) => `test/engine-parity/${f}`).sort();
     const pinned = [...parsePins(text).keys()].sort();

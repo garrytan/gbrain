@@ -146,6 +146,12 @@ export async function withoutRequestConfigSnapshot<T>(fn: () => Promise<T>): Pro
   }
 }
 
+/** Run a read-only `fn` reading config live; unlike withoutRequestConfigSnapshot, the request's snapshot stays in place. */
+export async function withLiveConfigRead<T>(fn: () => Promise<T>): Promise<T> {
+  const store = requestSnapshot.getStore();
+  return store ? requestSnapshot.run({ held: store.held, live: true }, fn) : fn();
+}
+
 function snapshotRows(engine: BulkConfigReader, held: RequestSnapshot): Promise<Map<string, string> | null> {
   held.rows ??= requestSnapshot.run({ held, live: true }, () => loadConfigSnapshot(engine))
     .then(rows => rows ? new Map(Object.entries(rows)) : null);
