@@ -3870,6 +3870,28 @@
         ],
         "flagOnScopes": []
       },
+      "listNameVariantCardCandidates#all": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listNameVariantCardCandidates#caller": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listNotifierHostSourceRows#default": {
         "flagOffLanes": [
           "pool"
@@ -4838,6 +4860,28 @@
         "flagOnScopes": []
       },
       "listUnretiredPagesBySlugPattern#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listVisibleNameVariantCandidates#all": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listVisibleNameVariantCandidates#caller": {
         "flagOffLanes": [
           "pool"
         ],
@@ -7485,6 +7529,28 @@
         "flagOnScopes": []
       },
       "readVersionSourcePath#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readVisibleVariantPages#all": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readVisibleVariantPages#caller": {
         "flagOffLanes": [
           "pool"
         ],
@@ -10274,6 +10340,7 @@
         "listMissingPreimages": "none",
         "listMuteRecheckThreads": "none",
         "listNameVariantCandidates": "none",
+        "listNameVariantCardCandidates": "none",
         "listNamedVisibilityRows": "none",
         "listNearestFacts": "none",
         "listNearestFactsForPurge": "none",
@@ -10611,6 +10678,7 @@
         "listVersionsByChangeReason": "none",
         "listVisibilityCandidatePages": "none",
         "listVisibleBeliefLifetimes": "none",
+        "listVisibleNameVariantCandidates": "none",
         "listVisiblePageSlugs": "none",
         "listVolunteerChannels": "none",
         "listWaitingByQueue": "none",
@@ -11371,6 +11439,7 @@
         "readVersionAttributions": "none",
         "readVersionContent": "none",
         "readVersionSourcePath": "none",
+        "readVisibleVariantPages": "none",
         "readVoiceGateHealth": "none",
         "readVolunteerUsage": "none",
         "readWaitingQueueDepths": "none",
