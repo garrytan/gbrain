@@ -1,3 +1,2 @@
 # Declined options of served members that the stop-pin harness now flags. The member and the case are byte-identical at batch 11 (24ea949f3f), so each stopped there too; none is a merge break (each names its owning lane; due 2026-11-26 UTC).
 # Columns: parity file, case name, member that refused, owner, due date, what Rust declines.
-test/engine-parity/search-reads.test.ts	supersedingPageSlugs: a read that cannot run rejects instead of answering an empty map; an edge written after an empty answer is seen at once	supersedingPageSlugs	lane 4 (links reads; refusal of a non-integer page id replaces the SQL cast error)	2026-11-26	Rust declines supersedingPageSlugs (a page id that is not an integer), capability links

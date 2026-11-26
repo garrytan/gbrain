@@ -212,7 +212,7 @@ the stored `model` and `run_id` (a first write stores the given ones). The row h
 key, as in Postgres: deleting a fact or its page leaves the attempt in place, and the source
 check is the caller's. `listFactRelinkOutcomes` answers in fact-id order. The doctor's unlinked
 reads use the attempts as memos: a row is tried when its attempt is `conversation_unresolved`,
-unless a page created in the source after the attempt re-arms a NULL or re-armed reason
+unless a page created in the source at or after the attempt (in its clock tick too) re-arms a NULL or re-armed reason
 (`REARMED_REASONS` in `facts/conversation-memo.ts`, passed in by the TypeScript member); it is
 paid when a `paid_reextract` attempt for its page has the page's current `content_hash` as its
 reason. `countFactRelinkOutcomes` counts `no_subject` rows and the `linked` rows of the last 7
@@ -237,7 +237,7 @@ leave active that a withdrawal of its claim reaches on the new entity is saved e
 the source's rows in one snapshot and counts, per `source_markdown_slug`, the live rows written by
 a conversation extractor (not an audit row), user or unattributed, with no entity (or, with
 `unbacked`, on an unbacked name key). With `skipTried` it leaves out a row whose attempt is a
-`conversation_unresolved` miss, unless a newer live page re-armed the reason (`rearmedReasons`,
+`conversation_unresolved` miss, unless a live page created at or after the attempt re-armed the reason (`rearmedReasons`,
 passed from `REARMED_REASONS` of facts/conversation-memo.ts). Pages sort by count, most first,
 then by slug in byte order (COLLATE "C"), and the list stops at `limit`.
 
@@ -1306,7 +1306,8 @@ with the typed `raw_sql` refusal until the store holds what it reads. The ten he
 receipt reads by `facts/purge_receipt.rs` and `facts/purge_plan.rs` (see "Purge receipt reads" below), the journal
 statements by `facts/purge_journal.rs` and `persistence/purge_effects.rs` (see "Purge journal statements" below), the
 reason tombstone write by `writeReasonPurgeTombstones` (see [sources.md](sources.md)), and the derivation probe by
-`page_body/purge_probe.rs` (see [purge-plan.md](purge-plan.md)). The other 2 have no Rust implementation yet, and `test/engine-parity/facts-purge-sites.test.ts` stops on that refusal for their cases. The Postgres text of each
+`page_body/purge_probe.rs` (see [purge-plan.md](purge-plan.md)), and `listBeliefEventsForPurgeProbe` by the store's belief
+ledger (`trust::belief_purge`, see [trust.md](trust.md)). The other 1 has no Rust implementation yet, and `test/engine-parity/facts-purge-sites.test.ts` stops on that refusal for their cases. The Postgres text of each
 statement is pinned byte for byte by `test/facts-purge-sites-sql-pin.test.ts`.
 
 | Member | What it does |
@@ -1332,7 +1333,7 @@ statement is pinned byte for byte by `test/facts-purge-sites-sql-pin.test.ts`.
 | `listSegmentedVersionBodies` | The source's retained versions stored in segments, in id order, `limit` of them. Reads page_versions and pages. |
 | `setPurgeProbeTimeout` | Bounds the statements of the transaction it runs in to `ms` milliseconds (set_config, local). |
 | `probePurgeDerivations` | One batch of stored derivation results after the cursor (page, pipeline, occurrence): the rows scanned, the claim candidates, those a sweep covers and holds the claim, and those it does not, and the last key. Reads page_segment_derivations and pages. |
-| `listBeliefEventsForPurgeProbe` | The next 1000 belief events of the source after id `after` with a recorded value, in id order. Reads belief_events. |
+| `listBeliefEventsForPurgeProbe` | The next 1000 belief events of the source after id `after` with a recorded value, in id order. Reads belief_events. The store keeps no row for a recorded JSON-null value, so it returns fewer raw rows than PGLite and Postgres (2 against 5 in `test/engine-parity/belief-purge-probes.test.ts`); the purge receipt's report skips null values, so its bytes match on every engine. |
 | `listFactContextsForPurgeProbe` | The next 1000 live facts of the source after id `after` that have a context, in id order. Reads facts. |
 | `listPageSourcePathsForPurge` | The distinct relative file paths (64 at most) of the pages and their versions, none absolute or climbing out. Reads pages and page_versions. |
 | `listNearestFactsForPurge` | The five same-model facts of the source nearest to the embedding, each with whether it contains the claim. Reads facts. |

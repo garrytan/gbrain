@@ -400,6 +400,8 @@ describe('count unavailable: a degraded stage, never a number', () => {
     expect(searchCountLine([], { keyword_total: null, degraded: [{ stage: 'keyword_count_unavailable' }] }))
       .toContain('Keyword match count unavailable (failed; not a count of zero)');
     expect(searchCountLine([], { returned_count: 0 })).toBeNull();
+    expect(searchCountLine([], { keyword_total: 2, keyword_unlisted_filters: ['lang'] }, 'query'))
+      .toContain('match: "keyword". That listing ignores lang, so it also holds pages this count left out.');
   });
 });
 

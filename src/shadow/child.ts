@@ -16,14 +16,12 @@ import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { join } from 'node:path';
-import { gbrainPath } from '../core/config.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { withCallerAccess, type CallerAccess } from '../core/search/private-visibility.ts';
 import { openRustEngine, type RustEngineAddonHandle } from '../core/rust-engine.ts';
 import { policyHash, READINESS_POLICY } from '../core/engine-swap/policy.ts';
 import { RUST_ENGINE_ABI } from '../core/rust-engine/addon-manifest.ts';
-import { installedAddonPath, type RustAddon } from '../core/rust-engine/addon-loader.ts';
-import { VERSION } from '../version.ts';
+import { loadedAddonPath, type RustAddon } from '../core/rust-engine/addon-loader.ts';
 import { servedCapabilities } from '../core/rust-engine/store-capabilities.ts';
 import { loadRustEngineAddonOffline, type RustEngineAddonLoaderFn } from './addon.ts';
 import { RERUN_DEADLINE_MS } from './checks.ts';
@@ -35,6 +33,8 @@ import { exactnessArm, qualifyMismatch, SHADOW_COMPARATOR_VERSION } from './exac
 import { FollowChild, type FollowEvent, type FollowStore } from './follow-child.ts';
 import { appendFault, appendLedgerRows, writeSummaryFile, type ShadowLedgerRow, type ShadowSummaryFile } from './ledger.ts';
 import { newMirrorCounters, type MirrorCounters } from './mirror.ts';
+import { createWriteComparer } from './write-compare-child.ts';
+import { WriteTally } from './write-compare.ts';
 import { appendRecall, IntervalGate, recallEligible, RECALL_INTERVAL_MS, scoreRecall, type RankedKey } from './recall.ts';
 import { isShadowReadMember, SHADOW_READ_MEMBERS, type ShadowReadMember } from './reads.ts';
 import { readSeedRecord } from './seed.ts';
@@ -98,7 +98,7 @@ export interface ShadowChildDeps {
 
 /** SHA-256 of the addon file the loader opened: the development override, else the cached build (addon-loader.ts). */
 function addonFileSha256(addon: RustAddon): string | null {
-  const path = process.env.GBRAIN_RUST_ENGINE_ADDON?.trim() || installedAddonPath(gbrainPath('engines', 'rust'), VERSION, String(addon.target));
+  const path = loadedAddonPath(addon, process.env.GBRAIN_RUST_ENGINE_ADDON);
   if (!path) return null;
   try { return createHash('sha256').update(readFileSync(path)).digest('hex'); } catch { return null; } // silent-read-ok: null is the typed marker; the epoch records `unreadable`, never a digest
 }
@@ -258,6 +258,41 @@ function createWedgeWatch(pending: () => Promise<unknown>, track: (chain: Promis
   };
 }
 
+/**
+ * The evidence epoch a child session belongs to, read lazily. It names the addon THIS child loaded, so it is only valid while this
+ * child is the owner of the Rust store: a client of another process's owner reads answers from an addon whose digest
+ * the owner handshake does not carry, so it cannot name an epoch and its rows and counts carry none (fail closed).
+ * Without a seed or a writable manifest there is no epoch either. The role is checked on every use, so a client that
+ * takes over opens (or joins) the epoch for its own addon from then on.
+ */
+function childEpoch(
+  shadowDir: string, deps: ShadowChildDeps, load: Awaited<ReturnType<RustEngineAddonLoaderFn>>,
+  deleted: () => boolean, isClient: () => boolean, now: () => number,
+): () => EpochManifest | null {
+  let epoch: EpochManifest | null = null;
+  let epochTried = false;
+  const seed = readSeedRecord(shadowDir);
+  return () => {
+    if (isClient()) return null;
+    if (!epochTried) {
+      epochTried = true;
+      if (seed && !deleted()) { // a deleted shadow directory must not be recreated by the manifest
+        try {
+          epoch = ensureEpoch(shadowDir, {
+            seed_id: seed.seed_id,
+            rust_addon_sha256: load.ok ? ((deps.addonSha256 ?? addonFileSha256)(load.addon) ?? 'unreadable') : null,
+            comparator_version: SHADOW_COMPARATOR_VERSION,
+            adapter_version: adapterIdentity(RUST_ENGINE_ABI, load.ok ? String(load.addon.catalogVersion) : 'none', deps.adapterVersion),
+            capability_set_hash: load.ok ? capabilitySetHash((deps.capabilities ?? servedCapabilities)()) : null,
+            readiness_policy_hash: (deps.readinessPolicyHash ?? (() => policyHash(READINESS_POLICY)))(),
+          }, now(), (deps.build ?? currentBuild)());
+        } catch { epoch = null; }
+      }
+    }
+    return epoch;
+  };
+}
+
 /** Runs the child loop until stdin closes. Resolves with the number of events handled. */
 export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): Promise<number> {
   const now = deps.now ?? Date.now;
@@ -280,34 +315,8 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
   // `stop --delete` can land while the addon loads: opening the store now would recreate the directory it removed.
   const hadState = existsSync(shadowStatePath(shadowDir));
   const deleted = (): boolean => !existsSync(shadowDir) || (hadState && !existsSync(shadowStatePath(shadowDir)));
-  // The evidence epoch this child session belongs to. It names the addon THIS child loaded, so it is only valid while this
-  // child is the owner of the Rust store: a client of another process's owner reads answers from an addon whose digest
-  // the owner handshake does not carry, so it cannot name an epoch and its rows and counts carry none (fail closed).
-  // Without a seed or a writable manifest there is no epoch either. The role is checked on every use, so a client that
-  // takes over opens (or joins) the epoch for its own addon from then on.
-  let epoch: EpochManifest | null = null;
-  let epochTried = false;
-  const seed = readSeedRecord(shadowDir);
   const isClient = (): boolean => (engine as { ownerRole?: string | null } | null)?.ownerRole === 'client';
-  const epochNow = (): EpochManifest | null => {
-    if (isClient()) return null;
-    if (!epochTried) {
-      epochTried = true;
-      if (seed && !deleted()) { // a deleted shadow directory must not be recreated by the manifest
-        try {
-          epoch = ensureEpoch(shadowDir, {
-            seed_id: seed.seed_id,
-            rust_addon_sha256: load.ok ? ((deps.addonSha256 ?? addonFileSha256)(load.addon) ?? 'unreadable') : null,
-            comparator_version: SHADOW_COMPARATOR_VERSION,
-            adapter_version: adapterIdentity(RUST_ENGINE_ABI, load.ok ? String(load.addon.catalogVersion) : 'none', deps.adapterVersion),
-            capability_set_hash: load.ok ? capabilitySetHash((deps.capabilities ?? servedCapabilities)()) : null,
-            readiness_policy_hash: (deps.readinessPolicyHash ?? (() => policyHash(READINESS_POLICY)))(),
-          }, now(), (deps.build ?? currentBuild)());
-        } catch { epoch = null; }
-      }
-    }
-    return epoch;
-  };
+  const epochNow = childEpoch(shadowDir, deps, load, deleted, isClient, now);
   const curEpoch = (): string | null => epochNow()?.epoch_id ?? null;
   const recordRustError = internalErrorRecorder(shadowDir, () => epochNow()?.epoch_id ?? null, now);
   const opened = await openRustStore(shadowDir, deps, load, deleted, recordRustError);
@@ -336,11 +345,8 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
   }, deps.heartbeatMs ?? SHADOW_HEARTBEAT_MS);
   if (!openTimedOut) try { deps.writeControl('{"t":"hb"}\n'); } catch { /* parent gone */ }
 
-  const pending: ReadEvent[] = [];
-  const rows: ShadowLedgerRow[] = [];
-  let handled = 0;
-  let paused = false;
-  let lastFlush = now();
+  const pending: ReadEvent[] = []; const rows: ShadowLedgerRow[] = [];
+  let handled = 0; let paused = false; let lastFlush = now();
 
   const flush = (force: boolean): void => {
     if (!force && rows.length < 50 && now() - lastFlush < 2_000) return;
@@ -383,6 +389,8 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
     flush(false);
   };
 
+  // Write comparisons (write-compare.ts): sampled page and link writes replayed on a scratch store, counted under the current epoch.
+  const writes = createWriteComparer({ dir: shadowDir, load, tally: new WriteTally(shadowDir, curEpoch, () => !deleted()), alive: () => !deleted(), openEngine: deps.openEngine, onError: recordRustError });
   const session = deps.session ?? process.env.GBRAIN_SHADOW_SESSION ?? '';
   const ask = createAsker(deps.writeControl, session);
 
@@ -536,6 +544,7 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
     try { event = JSON.parse(line); } catch { continue; }
     if (event.t === 'apply' || event.t === 'watermark' || event.t === 'depth' || event.t === 'rpc') { follow.handle(event as FollowEvent); continue; }
     if (event.t === 'answer') { ask.answer(event as never); continue; }
+    if (event.t === 'write') { writes.handle(event as never); continue; }
     if (event.t === 'stats' && event.counters) { summary.primary = { ...newMirrorCounters(), ...event.counters }; summary.primary_pid = event.pid; continue; }
     if (event.t !== 'read' || paused) continue;
     if (pending.length >= SHADOW_CHILD_QUEUE_BOUND) { summary.child_shed++; continue; }
@@ -551,7 +560,7 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
   for (const task of reruns.drop()) record(task.event, task.c, task.rustMs, task.rows, 'skipped:child_closing');
   await drain();
   await reruns.idle();
-  await recalling;
+  await recalling; await writes.idle();
   await follow.close();
   clearInterval(heartbeat);
   clearInterval(flusher);

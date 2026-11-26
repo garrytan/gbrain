@@ -6,8 +6,7 @@
  * `readSourceLocalPath`. `vacuumPurgedTables` has nothing to compact in a store and resolves once the store is open. A
  * number that PGLite binds as `LIMIT` or `int[]` and the store cannot read the same way (a fraction, a negative limit)
  * refuses rather than guess at PGLite's cast error. `listNearestFactsForPurge` is the probe's vector read.
- * `listBeliefEventsForPurgeProbe` stays refused: an empty answer would make a purge receipt report `belief_events`
- * clean on a store that records belief events (lane 3 serves it as a keyset read of `belief_events`).
+ * `listBeliefEventsForPurgeProbe` is served by belief-purge.ts, as a keyset read of the store's `belief_events`.
  */
 import type { BrainEngine } from '../../engine.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';

@@ -49,8 +49,10 @@ test/access-unborn-head-gbra706.test.ts
 test/access-ungranted-member-writes.test.ts
 test/access-who-can-read-owner-only.test.ts
 test/access-writes.test.ts
+test/action-ledger.test.ts
 test/activation-unbound-rooted-6449.test.ts
 test/adopt-local-edit.test.ts
+test/agent-policy.test.ts
 test/alias-source-cascade-5094.test.ts
 test/atom-retirement-keeps-trust-9456.test.ts
 test/attribution-backfill-history.test.ts
@@ -97,6 +99,7 @@ test/collate-repair-propose.test.ts
 test/colon-slug-windows-5032.test.ts
 test/company-brain-policy.test.ts
 test/company-brain-runtime.test.ts
+test/company-two-member-first-use.test.ts
 test/concept-purge-rebuild-9653.test.ts
 test/concept-rebuild-holds-managed-9653.test.ts
 test/concept-rebuild-holds-unmanaged-9653.test.ts
@@ -120,6 +123,7 @@ test/db-wins-unimported-gst2579.test.ts
 test/decide-sql-move-parity.test.ts
 test/decide/conflict-proposals-managed.test.ts
 test/declared-lineage-visibility.test.ts
+test/dedupe-collapse.test.ts
 test/degraded-engine-recovered-surface-9224.test.ts
 test/delta-beliefs-link-context-2957.test.ts
 test/derived-link-reconciliation.test.ts
@@ -178,6 +182,7 @@ test/engine-parity/attest-rights.test.ts
 test/engine-parity/attested-actor-link.test.ts
 test/engine-parity/backup-readiness-callers.test.ts
 test/engine-parity/belief-ledger.test.ts
+test/engine-parity/belief-purge-ledger.test.ts
 test/engine-parity/belief-purge-probes.test.ts
 test/engine-parity/bench-save-repro.test.ts
 test/engine-parity/bound-write.test.ts
@@ -230,6 +235,7 @@ test/engine-parity/connector-sync-stamp.test.ts
 test/engine-parity/core-page-member-reads.test.ts
 test/engine-parity/credential-grant-writes.test.ts
 test/engine-parity/cycle-locks.test.ts
+test/engine-parity/cycle-reads.test.ts
 test/engine-parity/decide-proposals.test.ts
 test/engine-parity/decide-store.test.ts
 test/engine-parity/delegated-grant.test.ts
@@ -283,6 +289,7 @@ test/engine-parity/fact-purge-inventory-probes.test.ts
 test/engine-parity/fact-purge-ledger.test.ts
 test/engine-parity/fact-purge-members.test.ts
 test/engine-parity/fact-purge-probes.test.ts
+test/engine-parity/fact-purge-receipt-e2e.test.ts
 test/engine-parity/fact-purge-sites.test.ts
 test/engine-parity/fact-recall-pool-widening.test.ts
 test/engine-parity/fact-relink-attempts.test.ts
@@ -300,6 +307,7 @@ test/engine-parity/facts-quoted.test.ts
 test/engine-parity/facts-repair-sites.test.ts
 test/engine-parity/facts-repair.test.ts
 test/engine-parity/facts-rest-sites.test.ts
+test/engine-parity/facts-superseded-claims.test.ts
 test/engine-parity/facts-trust-owner.test.ts
 test/engine-parity/facts-trust.test.ts
 test/engine-parity/facts-unique-violation.test.ts
@@ -329,6 +337,7 @@ test/engine-parity/git-holds.test.ts
 test/engine-parity/graduation-catalog.test.ts
 test/engine-parity/handover-reads.test.ts
 test/engine-parity/harness-consumer-stop.test.ts
+test/engine-parity/held-fact-folder-rule.test.ts
 test/engine-parity/held-fence-cells.test.ts
 test/engine-parity/hidden-refusals-2.test.ts
 test/engine-parity/hidden-refusals.test.ts
@@ -355,7 +364,10 @@ test/engine-parity/journal-purge-terminal.test.ts
 test/engine-parity/journal-typed-sites.test.ts
 test/engine-parity/keyword-visibility.test.ts
 test/engine-parity/label-guard-tiers.test.ts
+test/engine-parity/labelled-only-for.test.ts
+test/engine-parity/labelled-only-policy.test.ts
 test/engine-parity/large-page.test.ts
+test/engine-parity/legacy-slug-spellings-doctor.test.ts
 test/engine-parity/lifecycle.test.ts
 test/engine-parity/link-read-options.test.ts
 test/engine-parity/link-reads.test.ts
@@ -363,6 +375,7 @@ test/engine-parity/link-temporal.test.ts
 test/engine-parity/links.test.ts
 test/engine-parity/list-reads.test.ts
 test/engine-parity/loop-mutes.test.ts
+test/engine-parity/managed-on-rust.test.ts
 test/engine-parity/mcp-get-tags.test.ts
 test/engine-parity/meeting-pages.test.ts
 test/engine-parity/meetings-sync.test.ts
@@ -370,6 +383,7 @@ test/engine-parity/memory-mutation-reads.test.ts
 test/engine-parity/memory-proposal-reads.test.ts
 test/engine-parity/mention-coverage.test.ts
 test/engine-parity/mention-pass.test.ts
+test/engine-parity/migrate-embeddings-usage.test.ts
 test/engine-parity/migrate-engine-source.test.ts
 test/engine-parity/notifier-freshness.test.ts
 test/engine-parity/notifier-resident.test.ts
@@ -391,6 +405,7 @@ test/engine-parity/owner-recovery-scans.test.ts
 test/engine-parity/owner-write-privacy.test.ts
 test/engine-parity/page-delete-slug-stores.test.ts
 test/engine-parity/page-embedding-budget.test.ts
+test/engine-parity/page-extraction-state.test.ts
 test/engine-parity/page-fence-writes.test.ts
 test/engine-parity/page-lock-anchors.test.ts
 test/engine-parity/page-mutation-reads.test.ts
@@ -409,6 +424,7 @@ test/engine-parity/page-snapshot-alias.test.ts
 test/engine-parity/page-vector-flip.test.ts
 test/engine-parity/page-vector-overflow.test.ts
 test/engine-parity/page-visibility.test.ts
+test/engine-parity/page-window-chunk-reads.test.ts
 test/engine-parity/page-withdrawal-overlay.test.ts
 test/engine-parity/page-write-readers.test.ts
 test/engine-parity/pages.test.ts
@@ -416,6 +432,8 @@ test/engine-parity/persistence-binding-reads.test.ts
 test/engine-parity/persistence-declaration.test.ts
 test/engine-parity/persistence.test.ts
 test/engine-parity/person-duplicates.test.ts
+test/engine-parity/plain-member-reads.test.ts
+test/engine-parity/plain-member-writes.test.ts
 test/engine-parity/privacy-hold-reply.test.ts
 test/engine-parity/private-page-reads.test.ts
 test/engine-parity/private-reads-remote.test.ts
@@ -440,6 +458,7 @@ test/engine-parity/read-shared-sources.test.ts
 test/engine-parity/reads-privacy.test.ts
 test/engine-parity/reason-tombstones.test.ts
 test/engine-parity/recall-members.test.ts
+test/engine-parity/rechunk-chunk-ids.test.ts
 test/engine-parity/referrer-reads.test.ts
 test/engine-parity/refusal-blocker-sites.test.ts
 test/engine-parity/refusal-swallow-extract.test.ts
@@ -453,6 +472,7 @@ test/engine-parity/remember-members.test.ts
 test/engine-parity/remember-meta.test.ts
 test/engine-parity/remember-supersede.test.ts
 test/engine-parity/remember-whole.test.ts
+test/engine-parity/remote-access-matrix.test.ts
 test/engine-parity/remote-links.test.ts
 test/engine-parity/remote-policy.test.ts
 test/engine-parity/repair-aliases.test.ts
@@ -479,6 +499,8 @@ test/engine-parity/repair-slug-spelling.test.ts
 test/engine-parity/repair-source-reads.test.ts
 test/engine-parity/repair-takes-timeline.test.ts
 test/engine-parity/repair-twin-merge.test.ts
+test/engine-parity/repair-visibility-default.test.ts
+test/engine-parity/request-index-states.test.ts
 test/engine-parity/request-tools-persist.test.ts
 test/engine-parity/resident-projection.test.ts
 test/engine-parity/resolve-reads.test.ts
@@ -486,6 +508,7 @@ test/engine-parity/restriction-flag-reads.test.ts
 test/engine-parity/retrieval-coverage.test.ts
 test/engine-parity/retrieval-reflex.test.ts
 test/engine-parity/schema-detect.test.ts
+test/engine-parity/search-caller-refusals.test.ts
 test/engine-parity/search-cjk.test.ts
 test/engine-parity/search-deep-query.test.ts
 test/engine-parity/search-privacy-retention.test.ts
@@ -511,6 +534,8 @@ test/engine-parity/shared-skill-members.test.ts
 test/engine-parity/slot-ends-callers.test.ts
 test/engine-parity/slot-ends-refusal.test.ts
 test/engine-parity/slug-normalize.test.ts
+test/engine-parity/slug-spelling-repair-reads.test.ts
+test/engine-parity/soak-counter-writes.test.ts
 test/engine-parity/source-admin-writes.test.ts
 test/engine-parity/source-archive.test.ts
 test/engine-parity/source-delete.test.ts
@@ -584,6 +609,7 @@ test/engine-parity/unrestricted-member-page-reads.test.ts
 test/engine-parity/valid-time-member-reads.test.ts
 test/engine-parity/vector-options.test.ts
 test/engine-parity/versions-raw.test.ts
+test/engine-parity/volunteer-events.test.ts
 test/engine-parity/wanted-links.test.ts
 test/engine-parity/wanted-markers.test.ts
 test/engine-parity/wedged-reservation.test.ts
@@ -652,6 +678,7 @@ test/fenced-embed-reuse-6961.test.ts
 test/file-drift-normalisation-gst2568.test.ts
 test/file-drift-soft-delete-hold-release-gbra133.test.ts
 test/file-upload-follows-rename.test.ts
+test/first-session-suggestion.test.ts
 test/folder-holding-coverage-gst2497.test.ts
 test/folder-holding-page-gst2492.test.ts
 test/forecast-journal.test.ts
@@ -736,6 +763,7 @@ test/keyword-timeout-rerun-7082.test.ts
 test/known-as-of-owner-r94.test.ts
 test/label-only-repairs.test.ts
 test/label-repair-derived-stamps-gst2603.test.ts
+test/labelled-only-owner-snapshot.test.ts
 test/lane-apply-pipelining.test.ts
 test/large-pages/append-concurrency.test.ts
 test/large-pages/append-cost.test.ts
@@ -916,6 +944,7 @@ test/notifier-retry-unwatched-gst2515.test.ts
 test/notifier-sync-disabled-gst2515.test.ts
 test/ns-read-move-parity.test.ts
 test/on-commit-embedding.serial.test.ts
+test/onboarding-ops.test.ts
 test/oneshot-consumer-direct-route.test.ts
 test/oneshot-housekeeping-cli.test.ts
 test/ontology-raw-files-parity.test.ts

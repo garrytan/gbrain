@@ -57,8 +57,8 @@ export async function bodySubjects(engine: BrainEngine, sourceId: string, lifeti
   const facts = parseFactsFence(text);
   const takes = parseTakesFence(text);
   const active = facts.facts.filter(f => f.active);
-  const fps = active.length ? await engine.executeRaw<{ fp: string }>('SELECT gbrain_fact_fingerprint(c) AS fp FROM unnest($1::text[]) WITH ORDINALITY AS t(c, n) ORDER BY n',
-    [active.map(f => f.claim)]) : [];
+  // computeFactFingerprints runs the statement this read sent (engine-sql/facts-trust.ts), so a Rust brain serves it too.
+  const fps = active.length ? (await engine.computeFactFingerprints(active.map(f => f.claim))).map(fp => ({ fp })) : [];
   // A claim recorded under its pre-v341 fingerprint keeps it (legacy-fingerprint.ts), as the stream reads do.
   const legacy = await legacyClaimFingerprints(engine, sourceId, [...active.map(f => f.claim), ...takes.takes.map(t => t.claim)]);
   const subject = lifetimeRef(lifetime);
@@ -77,8 +77,7 @@ export async function bodySubjects(engine: BrainEngine, sourceId: string, lifeti
     return { kind: 'fact', key, value, vhash: valueHash(value), visibility: raw.visibility, claimFp: raw.fp, validFrom: raw.valid_from, validUntil: raw.valid_until };
   });
   const rows = takes.takes.filter(t => t.source !== TAKE_RESERVATION_SOURCE);
-  const takeFps = rows.length ? await engine.executeRaw<{ fp: string }>('SELECT gbrain_fact_fingerprint(c) AS fp FROM unnest($1::text[]) WITH ORDINALITY AS t(c, n) ORDER BY n',
-    [rows.map(t => t.claim)]) : [];
+  const takeFps = rows.length ? (await engine.computeFactFingerprints(rows.map(t => t.claim))).map(fp => ({ fp })) : [];
   const byClaim = new Map<string, Array<{ t: typeof rows[number]; fp: string }>>();
   rows.forEach((t, i) => { const h = takeClaimHash(t.claim, t.kind, t.holder); byClaim.set(h, [...byClaim.get(h) ?? [], { t, fp: legacy.get(t.claim) ?? takeFps[i]!.fp }]); });
   for (const [hash, group] of byClaim) {
