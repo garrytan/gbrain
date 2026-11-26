@@ -1177,3 +1177,97 @@ fn a_member_reads_a_fact_by_its_provenance_page_under_lineage() {
         ["open/origin-dana", "open/plain"]
     );
 }
+
+/// A labelled-only member under lineage whose `member` is absent or malformed: the own-page arm reads `FALSE`, but a provenance page that
+/// names the caller (or an atom whose origin does) is still read, because that arm tests the page and not the member id. A fact with no
+/// provenance page has none to name the caller, so a labelled-only lineage read denies it while an ordinary lineage read allows it.
+#[test]
+fn a_labelled_lineage_read_without_a_member_reads_by_page_labels_and_never_an_unpaged_fact() {
+    let b = brain("facts-lineage-no-member");
+    let pages: [(&str, &str, Value); 5] = [
+        (
+            "note",
+            "memory/members/carol",
+            json!({ "readable_by": ["member:carol"] }),
+        ),
+        ("note", "open/plain", json!({})),
+        (
+            "note",
+            "open/origin-carol",
+            json!({ "readable_by": ["member:carol"] }),
+        ),
+        (
+            "atom",
+            "walk/atom-carol",
+            json!({ "visibility": "world", "source_slug": "open/origin-carol" }),
+        ),
+        (
+            "note",
+            "walk/note-carol",
+            json!({ "visibility": "world", "derived_from": ["open/origin-carol.md"] }),
+        ),
+    ];
+    for (kind, slug, frontmatter) in &pages {
+        let page: gbrain_store::pages::PageInput = args(json!({
+            "type": kind, "title": slug, "compiled_truth": "x", "frontmatter": frontmatter }));
+        b.put_page(slug, &page, &args(json!({}))).unwrap();
+    }
+    let held: Vec<(&str, &str)> = pages
+        .iter()
+        .map(|(_, slug, _)| (*slug, "subject"))
+        .collect();
+    batch(&b, Value::Array(pages_rows(&held)));
+    // A fact with no provenance page at all.
+    insert(
+        &b,
+        json!({ "fact": "unpaged", "entity_slug": "subject", "source": "chat", "visibility": "world" }),
+    );
+    let read = |who: &str, labelled: Option<Value>| {
+        let mut policy = json!({
+            "honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn",
+            "identity": [format!("member:{who}")], "ownerRead": true, "callerRecord": true,
+            "provenanceLineage": true, "memberPage": format!("memory/members/{who}"),
+        });
+        if let Some(terms) = labelled {
+            policy["labelledOnly"] = terms;
+        }
+        let q: FactQuery = args(
+            json!({ "sourceId": "default", "entitySlug": "subject", "activeOnly": true, "limit": 50, "excludePrivate": policy }),
+        );
+        let mut seen: Vec<String> = facts(&b.list_facts_by_entity(&q).unwrap())
+            .into_iter()
+            .map(str::to_string)
+            .collect();
+        seen.sort();
+        seen
+    };
+    let terms = |member: Option<&str>| {
+        let mut t =
+            json!({ "identity": ["member:carol"], "satisfiedRuleIds": [], "lineage": true });
+        if let Some(m) = member {
+            t["member"] = json!(m);
+        }
+        t
+    };
+    let by_labels = [
+        "memory/members/carol",
+        "open/origin-carol",
+        "walk/atom-carol",
+        "walk/note-carol",
+    ];
+    // With the member id, absent, or malformed, the labelled lineage read is the same: the pages that name carol and the derived pages
+    // whose origins do. It never reads the open page or the unpaged fact.
+    for member in [Some("carol"), None, Some("Not A Member")] {
+        assert_eq!(
+            read("carol", Some(terms(member))),
+            by_labels,
+            "member {member:?}"
+        );
+    }
+    // An ordinary lineage read of the same caller allows the unpaged fact (no provenance page, nothing to hide), and every page that
+    // names carol through her identity; the labelled one denies it.
+    let ordinary = read("carol", None);
+    assert!(ordinary.contains(&"unpaged".to_string()));
+    assert!(ordinary.contains(&"open/plain".to_string()));
+    assert!(!read("carol", Some(terms(Some("carol")))).contains(&"unpaged".to_string()));
+}
