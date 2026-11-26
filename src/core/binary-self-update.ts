@@ -279,7 +279,9 @@ export function parseAttestationBundle(bundle: any): ParsedAttestation | null {
 /**
  * Reads the build-provenance attestations GitHub holds for a SHA-256. When GH_TOKEN or GITHUB_TOKEN is set it is sent
  * as a bearer token, because unauthenticated calls share GitHub's 60-an-hour limit per IP address, which CI runners
- * exhaust; with neither set the call stays keyless, and a token GitHub rejects (401) is retried once without it.
+ * exhaust; with neither set the call stays keyless. A token GitHub refuses for this repository (401, 403, or a 404 that
+ * hides a repository the token cannot see) is retried once without it, so a token scoped elsewhere never blocks a read
+ * the keyless call can make.
  * Returns null when no usable attestation can be read, after telling `onUnavailable` why: the HTTP status with the
  * rate-limit headers, or the network error. The token itself is never part of that detail.
  */
@@ -300,7 +302,7 @@ export async function defaultFetchAttestation(
   try {
     let authenticated = token.length > 0;
     let res = await request(authenticated);
-    if (res.status === 401 && authenticated) {
+    if (authenticated && [401, 403, 404].includes(res.status)) {
       authenticated = false;
       res = await request(false);
     }

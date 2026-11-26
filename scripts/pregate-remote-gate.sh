@@ -72,7 +72,7 @@ runs_may_attest() {
   base=$(git merge-base origin/master HEAD) || { echo "pregate-remote-gate: HEAD shares no history with origin/master" >&2; return 1; }
   for path in .github/workflows/test.yml .github/workflows/e2e.yml scripts/ci-reuse.ts scripts/ci-full-suite-tree.sh scripts/ci-executed-counts.ts scripts/ci-manifest.ts scripts/lib/gh-issue.ts "$@"; do
     git diff --quiet "$base" HEAD -- "$path" && continue
-    echo "pregate-remote-gate: the tree changes $path relative to origin/master, so its own runs cannot attest to it" >&2
+    echo "pregate-remote-gate: the tree changes $path since its merge base with origin/master, so its own runs cannot attest to it" >&2
     return 1
   done
 }

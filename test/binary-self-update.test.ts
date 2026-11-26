@@ -461,10 +461,15 @@ describe('defaultFetchAttestation: GitHub token and failure detail', () => {
     expect(blank.auth).toEqual([null]);
   });
 
-  test('a token GitHub rejects (401) is retried once without it', async () => {
-    const r = await fetchWith({ GH_TOKEN: TOKEN }, [new Response('bad credentials', { status: 401 }), Response.json(VALID)]);
-    expect(r.auth).toEqual([`Bearer ${TOKEN}`, null]);
-    expect(r.parsed?.[0]?.builderId).toBe(VALID_BUILDER);
+  test('a token GitHub refuses (401, 403, or a masked 404) is retried once without it', async () => {
+    for (const status of [401, 403, 404]) {
+      const r = await fetchWith({ GH_TOKEN: TOKEN }, [new Response('refused', { status }), Response.json(VALID)]);
+      expect({ status, auth: r.auth }).toEqual({ status, auth: [`Bearer ${TOKEN}`, null] });
+      expect(r.parsed?.[0]?.builderId).toBe(VALID_BUILDER);
+    }
+    const both = await fetchWith({ GH_TOKEN: TOKEN }, [new Response('refused', { status: 403 }), new Response('API rate limit exceeded', { status: 403, headers: { 'x-ratelimit-remaining': '0' } })]);
+    expect(both.parsed).toBeNull();
+    expect(both.details).toEqual(['HTTP 403 from the GitHub attestation API (no GitHub token), x-ratelimit-remaining 0']);
   });
 
   test('a rate-limited response is null, with the status and rate-limit headers in the detail and never the token', async () => {

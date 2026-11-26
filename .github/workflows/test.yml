@@ -1217,7 +1217,7 @@ jobs:
 
 
   # ──────────────────────────────────────────────────────────────────────
-  # coverage-report: merges the PR corpus (40 unit + 4 serial + 2 slow
+  # coverage-report: merges the PR corpus (42 unit + 4 serial + 2 slow
   # lanes) into one honest number, renders it to the step summary, and runs
   # the diff + baseline gates in report-only mode (COVERAGE_GATE_ENFORCE=0).
   # ADVISORY during the report-only window: deliberately NOT in test-status's

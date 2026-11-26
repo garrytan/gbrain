@@ -856,7 +856,7 @@ describe.skipIf(!NODE)('session classes and the session-start brief', () => {
   test('a second rebuild inside the refresh cooldown is not dropped: one trailing refresh runs after it', async () => {
     const b = box();
     expectExit(await setup(b, ['--skill-loading', 'resolve']), 0);
-    const cooldownMs = 4000;
+    const cooldownMs = 10_000;
     const env = { OPENCLAW_STATE_DIR: b.state, OPENCLAW_CALLS: b.calls, GBRAIN_HOME: b.home, GBRAIN_TEST_OPENCLAW_SKILL_REFRESH_MS: String(cooldownMs), GBRAIN_TEST_OPENCLAW_SKILL_REBUILD_MS: '1' };
     // The second rebuild waits for the first refresh to finish (its log line), not for a fixed sleep a slow refresh outlasts.
     drive(b, [['changed', {}], ['logs', { lines: 2 }], ['changed', {}]], undefined, { ...env, DRIVE_LOG_LINES: '4' });

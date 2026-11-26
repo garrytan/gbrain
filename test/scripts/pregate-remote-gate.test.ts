@@ -200,7 +200,7 @@ describe('pregate-remote-gate.sh', () => {
         const r = run(gateMarking, { GBRAIN_PREGATE_REPO: 'owner-example/repo-example', GBRAIN_PREGATE_REUSE_CMD: reuser("echo 'GBRAIN_REUSE_RESULT tests=9 failed=0'") });
         expect(ran('reuse-args')).toBe(false);
         expect(ran('gate-ran')).toBe(true);
-        expect(r.err).toContain(`pregate-remote-gate: the tree changes ${path} relative to origin/master`);
+        expect(r.err).toContain(`pregate-remote-gate: the tree changes ${path} since its merge base with origin/master`);
         expect(r.out.trim().split('\n').at(-1)).toBe(`PREGATE_REMOTE: tree=${contentTree()} tests=4 failed=0`);
         git('update-ref', 'refs/remotes/origin/master', 'HEAD');
       }
@@ -352,7 +352,7 @@ describe('pregate-remote-gate.sh --list', () => {
       git('commit', '-q', '-m', `change ${path}`);
       const r = list(gate);
       refused(r);
-      expect(r.err).toContain(`pregate-remote-gate: the tree changes ${path} relative to origin/master`);
+      expect(r.err).toContain(`pregate-remote-gate: the tree changes ${path} since its merge base with origin/master`);
       expect(r.err).toContain('no inventory');
       git('update-ref', 'refs/remotes/origin/master', 'HEAD');
     }
