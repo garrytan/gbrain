@@ -17,6 +17,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { PostgresEngine } from '../src/core/postgres-engine.ts';
 import * as statementDeadline from '../src/core/statement-deadline.ts';
+import { readDeadline, readDeadlineSignal } from '../src/core/read-deadline.ts';
 import { StatementDeadlineError, deadlineBoundEngine, deadlineFailure, withStatementDeadline, type StatementDeadline } from '../src/core/statement-deadline.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
@@ -119,6 +120,38 @@ for (const kind of testBackends()) {
         expect(past.expired).toBe(true);
       });
     } else {
+      // The two bounds, asserted apart: under the doctor's deadline each Part A source read must reach the engine's read path
+      // with the statement timeout (the scope's deadline, which the engine turns into a server statement_timeout) AND the abort
+      // signal (which discards the connection at the deadline), as master's executeRaw call received both.
+      const PART_A_MEMBERS = CASES.filter((c) => ['listLocalPathSources', 'listSourceRoutingRows', 'countDefaultSourceSplit', 'readSourceRow', 'listActiveSourceConfigs', 'listSourceRecords'].includes(c.member));
+      for (const { member, call } of PART_A_MEMBERS) {
+        test(`${member} reaches the engine with the doctor's statement timeout`, async () => {
+          const seen: Array<{ deadlineAt: number | undefined }> = [];
+          const target = engine as unknown as { preparationRead: (...a: unknown[]) => Promise<unknown> };
+          const real = target.preparationRead;
+          target.preparationRead = function (this: unknown, ...args: unknown[]) { seen.push({ deadlineAt: readDeadline() }); return real.apply(this, args); };
+          try {
+            const scope = scopeFor(5_000);
+            await withStatementDeadline(scope, async () => call(deadlineBoundEngine(engine)));
+            expect(seen.length, `${member} never reached the read path`).toBeGreaterThan(0);
+            expect(seen.every((s) => s.deadlineAt === scope.deadlineAt), `${member} lost the statement timeout`).toBe(true);
+          } finally { target.preparationRead = real; }
+        }, 30_000);
+        test(`${member} reaches the engine with the doctor's abort signal`, async () => {
+          const signals: Array<AbortSignal | undefined> = [];
+          const target = engine as unknown as { preparationRead: (...a: unknown[]) => Promise<unknown> };
+          const real = target.preparationRead;
+          target.preparationRead = function (this: unknown, ...args: unknown[]) { signals.push(readDeadlineSignal()); return real.apply(this, args); };
+          try {
+            const scope = scopeFor(600);
+            await withStatementDeadline(scope, async () => call(deadlineBoundEngine(engine)));
+            expect(signals.length, `${member} never reached the read path`).toBeGreaterThan(0);
+            expect(signals.every((s) => s instanceof AbortSignal), `${member} lost the abort signal`).toBe(true);
+            await new Promise((r) => setTimeout(r, 700));
+            expect(signals.every((s) => s?.aborted === true), `${member}'s signal does not abort at the deadline`).toBe(true);
+          } finally { target.preparationRead = real; }
+        }, 30_000);
+      }
       for (const { member, table, call } of CASES) {
         test(`${member} ends at the doctor deadline while ${table} is locked`, async () => {
           const bound = deadlineBoundEngine(engine);

@@ -7,7 +7,7 @@
  * the bound and no backend is left waiting on the lock.
  *
  * Protects: a notice read behind a locked `config` table returns within the bound, counts as "has a repo" (an unreadable
- * answer does), and leaves no backend waiting on the lock.
+ * answer does), leaves no backend waiting on the lock, and leaves no checkout held in the pool's own gauge.
  * Fails when the config read is only abandoned by the client (a backend still waits) or has no bound at all.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
@@ -48,7 +48,9 @@ const LOCK_MS = 4_000;
       // Read it straight after the notice returns: a client-side race would leave its query waiting here.
       const [{ n }] = await engine.executeRaw<{ n: number }>(
         "SELECT count(*)::int AS n FROM pg_stat_activity WHERE pid <> pg_backend_pid() AND datname = current_database() AND wait_event_type = 'Lock' AND query ILIKE '%FROM config%'");
-      expect({ answer, quick: took < 2_500, waiting: n }).toEqual({ answer: true, quick: true, waiting: 0 });
+      // The pool's own counter: no checkout (raw, direct, reserved or transaction) is still held once the notice has returned.
+      const held = (engine as unknown as { checkoutGauge: { snapshot(): Record<string, number> } }).checkoutGauge.snapshot();
+      expect({ answer, quick: took < 2_500, waiting: n, held }).toEqual({ answer: true, quick: true, waiting: 0, held: { raw: 0, direct: 0, reserved: 0, tx: 0 } });
     } finally {
       await held.catch(() => undefined);
       await locker.end();
