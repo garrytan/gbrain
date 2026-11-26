@@ -28,7 +28,7 @@ import { opError } from './ops/contract.ts';
 import { transactionAborted } from './postgres-engine/transaction-abort.ts';
 import { mapStoreError } from './rust-engine/store-errors.ts';
 import { STORE_MEMBERS } from './rust-engine/store-members/index.ts';
-import { servedCapabilities } from './rust-engine/store-capabilities.ts';
+import { MULTIUSER_WITHHELD, servedCapabilities, storeCapabilities } from './rust-engine/store-capabilities.ts';
 import { RECEIPT_STOP_OWNERS } from './rust-engine/receipt-stops.ts';
 import { electOwner, type OwnerRole } from './rust-engine/owner-ipc/election.ts';
 import { callEndCheck, installOwnerClient, untilCallEnds } from './rust-engine/owner-ipc/client.ts';
@@ -307,8 +307,8 @@ export class RustEngine implements BrainEngine {
     if (prior) {
       // The members of the owner that went away give way to this engine's own, which run on the store opened above.
       prior();
-      for (const capability of servedCapabilities()) (this.capabilities as Set<Capability>).add(capability);
     }
+    this._reportStoreCapabilities();
     this._connected = true;
   }
 
@@ -319,7 +319,17 @@ export class RustEngine implements BrainEngine {
     if (!leave) return;
     leave();
     // Leaving the owner empties the capability set; this engine reports what its own store serves again.
-    for (const capability of servedCapabilities()) (this.capabilities as Set<Capability>).add(capability);
+    this._reportStoreCapabilities();
+  }
+
+  /**
+   * Reports what this engine's own store serves: every served capability, less what a multi-user store withholds
+   * (store-capabilities.ts MULTIUSER_WITHHELD: managed mode is single-host until its locks are I-5 leases).
+   */
+  private _reportStoreCapabilities(): void {
+    const caps = this.capabilities as Set<Capability>;
+    for (const capability of storeCapabilities(this._store)) caps.add(capability);
+    if (this._store?.multiuser === true) for (const capability of MULTIUSER_WITHHELD) caps.delete(capability);
   }
 
   async disconnect(): Promise<void> {

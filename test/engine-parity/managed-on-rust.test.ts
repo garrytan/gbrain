@@ -1,9 +1,9 @@
 /**
- * Engine parity: managed mode on a Rust brain, with the user-facing hold kept (lane LM, slice 1).
+ * Engine parity: managed mode on a Rust brain (lane LM, slices 1 and 2).
  *
- * Every case lifts the `managed_persistence` hold on its own Rust test engine (rust-managed.ts `liftManagedHold`), so the
- * ordinary Rust arm runs the managed path for real; `servedCapabilities()` still withholds the capability, so a user's
- * Rust brain keeps refusing. Each case returns its answers and the arms must agree.
+ * A single-host Rust engine serves `managed_persistence` (slice 2 lifted the hold; a multi-user store still withholds it),
+ * so the ordinary Rust arm runs the managed path for real. `liftManagedHold` stays in the cases and changes nothing on such
+ * an engine. Each case returns its answers and the arms must agree.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: on a claimed checkout, a put_page to the bound source commits the page and writes its file; a refusal at
@@ -30,7 +30,7 @@ import { liftManagedHold } from './rust-managed.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { withEnv } from '../helpers/with-env.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
-import { servedCapabilities } from '../../src/core/rust-engine/store-capabilities.ts';
+import { servedCapabilities, storeCapabilities } from '../../src/core/rust-engine/store-capabilities.ts';
 import { writerAdminState } from '../../src/core/persistence/admin-intent.ts';
 import { runPersistenceAdministration } from '../../src/core/persistence/administration.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
@@ -119,13 +119,13 @@ async function putSettled(engine: BrainEngine, sourceId: string, slug: string, t
 
 const codeOf = (run: () => Promise<unknown>) => run().then(() => null, (e: { code?: string }) => e?.code ?? String(e));
 
-describe('managed mode on a Rust brain, hold kept for users', () => {
-  parityTest('the hold is still reported off for every user Rust engine', {
+describe('managed mode on a Rust brain', () => {
+  parityTest('managed mode is served on a single-host Rust brain and withheld on a multi-user store', {
     methods: ['getConfig'],
   }, async (engine) => {
     await engine.getConfig('managed_on_rust_probe');
-    const out = { held: !servedCapabilities().has('managed_persistence') };
-    expect(out).toEqual({ held: true });
+    const out = { served: servedCapabilities().has('managed_persistence'), multiuser: storeCapabilities({ multiuser: true }).has('managed_persistence') };
+    expect(out).toEqual({ served: true, multiuser: false });
     return out;
   });
 

@@ -48,7 +48,7 @@ const NONE = 'None: the plan and every refusal before a run are read only.';
 /** The recovery table (RUST_ENGINE.md "Errors"); test/engine-swap-refusals.test.ts checks every row and anchor. */
 export const SWAP_RECOVERY: Readonly<Record<SwapRefusalReason, SwapRecoveryRow>> = {
   refresh_unsettled: { class: 'retryable', exit: 1, blocker: 'A worktree refresh row is draining, fenced, merged, syncing or recovery_required. The Rust engine resumes no refresh, so a carried row would fence its sources for good (row L7-1).', authority: KEPT, side_effects: NONE, next: 'run', retry: 'Once per refresh, after `gbrain sources refresh <id> --resume` (or `--abandon`, with the user) settles it.', anchor: `${SWAP_GUIDE}#refresh_unsettled` },
-  managed_storage: { class: 'consent', exit: 3, blocker: 'The brain uses managed storage (`persistence_brain.enabled` is true). The Rust engine never holds managed storage, and the cutover would fail after the write fence is up.', authority: KEPT, side_effects: NONE, next: 'ask_user', retry: 'Only after the user turns managed storage off for this brain; there is no override.', anchor: `${SWAP_GUIDE}#managed_storage` },
+  managed_storage: { class: 'consent', exit: 3, blocker: 'The brain uses managed storage (`persistence_brain.enabled` is true) and the Rust destination cannot hold it: multi-user mode is on (managed mode is single-host until its locks are leases), or the build does not serve managed mode. The cutover would fail after the write fence is up.', authority: KEPT, side_effects: NONE, next: 'ask_user', retry: 'After the user turns managed storage off for this brain, or plans the swap with multi-user mode off; there is no override.', anchor: `${SWAP_GUIDE}#managed_storage` },
   no_shadow: { class: 'consent', exit: 3, blocker: 'No shadow runs for this brain, so there is no readiness evidence: `gbrain engine shadow status` has no shadow directory for it.', authority: KEPT, side_effects: NONE, next: 'ask_user', retry: 'Only after the user seeds and starts a shadow (`gbrain engine shadow seed`, then `gbrain engine shadow start`) and it has run for the readiness window.', anchor: `${SWAP_GUIDE}#no_shadow` },
   not_ready: { class: 'caller', exit: 1, blocker: 'A readiness criterion is failing or has no evidence; the plan lists each one.', authority: KEPT, side_effects: NONE, next: 'report', retry: 'Never on a timer: keep shadowing and read the plan again when the shadow report changes. There is no override.', anchor: `${SWAP_GUIDE}#not_ready` },
   multiple_writer_hosts: { class: 'consent', exit: 3, blocker: 'Durable writer observations show writers on more than one machine in the last 7 days.', authority: KEPT, side_effects: NONE, next: 'ask_user', retry: 'Only after the user changes the topology. A brain with writers on more than one machine stays on Postgres until the Rust server phase passes the D17 bar (D19).', anchor: `${SWAP_GUIDE}#multiple_writer_hosts` },
@@ -92,15 +92,22 @@ export function refreshUnsettledError(rows: readonly UnsettledRefresh[]): Operat
     { reason: 'refresh_unsettled', why, docs: row.anchor, fix, detail: `refreshes: ${list}. Next: ${rows.map(r => `${r.id}: ${r.next ?? `gbrain sources refresh ${r.source_ids[0] ?? '<source>'} --resume`}`).join('; ')}. ${row.authority}` });
 }
 
-/** `engine_swap_refused` / `managed_storage`: checked before any readiness criterion, next to the refresh gate. */
-export function managedStorageError(): OperationError {
+/**
+ * `engine_swap_refused` / `managed_storage`: checked before any readiness criterion, next to the refresh gate. `multiuser`:
+ * the multi-user switch is on, and a multi-user Rust store withholds managed mode until its locks are I-5 leases;
+ * `unsupported`: this build's Rust engine does not serve managed mode.
+ */
+export function managedStorageError(cause: 'multiuser' | 'unsupported' = 'unsupported'): OperationError {
   const row = SWAP_RECOVERY.managed_storage;
-  const why = 'This brain uses managed storage (persistence_brain.enabled is true). The Rust engine never holds managed storage, so the cutover could not carry it and would fail after writes are fenced. The swap refuses now, before anything is read or written.';
-  return opError('engine_swap_refused', 'The swap is refused: this brain uses managed storage, which the Rust engine does not support.',
+  const held = cause === 'multiuser'
+    ? 'The Rust engine holds managed storage on one host only, and multi-user mode (GBRAIN_RUST_MULTIUSER) is on'
+    : 'This build of the Rust engine does not hold managed storage';
+  const why = `This brain uses managed storage (persistence_brain.enabled is true). ${held}, so the cutover could not carry it and would fail after writes are fenced. The swap refuses now, before anything is read or written.`;
+  return opError('engine_swap_refused', `The swap is refused: this brain uses managed storage, which the Rust engine does not support ${cause === 'multiuser' ? 'in multi-user mode' : 'in this build'}.`,
     'Ask the user whether this brain should stay on its current engine (fix); nothing changed.',
     { reason: 'managed_storage', why, docs: row.anchor, detail: row.authority,
       fix: { ask_user: true, consent: [], actor: 'user', requires_exclusive: false, docs: row.anchor, verify: PLAN_VERIFY, why,
-        user_message: 'This brain uses managed storage, and the Rust engine cannot hold a managed brain, so the engine swap is refused. Do you want to keep this brain on its current engine? Nothing changed.' } });
+        user_message: `This brain uses managed storage, and the Rust engine cannot hold it ${cause === 'multiuser' ? 'in multi-user mode' : 'in this build'}, so the engine swap is refused. Do you want to keep this brain on its current engine? Nothing changed.` } });
 }
 
 /** `engine_swap_refused` / `team_brain` for a mounted brain: the preview swaps the host's personal brain only. */

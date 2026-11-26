@@ -91,11 +91,11 @@ const pageText = async (engine: BrainEngine, slug: string) => ((await engine.get
 const holdsOf = async (engine: BrainEngine) => ((await readGitSourceHolds(engine, { sourceIds: ['work'] }))[0]?.holds ?? []).map(hold => `${hold.path}:${hold.code}`).sort();
 const named = <R = Record<string, unknown>>(engine: BrainEngine, name: SyncStatementName, params: unknown[] = []) => engine.runSyncStatement<R>(name, params);
 
-describe('the managed sync run on a Rust brain, hold lifted for the test', () => {
-  parityTest('the hold is still reported off for every user Rust engine', { methods: ['getConfig'] }, async engine => {
+describe('the managed sync run on a Rust brain', () => {
+  parityTest('managed mode is served on a single-host Rust brain', { methods: ['getConfig'] }, async engine => {
     await engine.getConfig('managed_sync_run_on_rust_probe');
-    const out = { held: !servedCapabilities().has('managed_persistence') };
-    expect(out).toEqual({ held: true });
+    const out = { served: servedCapabilities().has('managed_persistence') };
+    expect(out).toEqual({ served: true });
     return out;
   });
 
@@ -176,7 +176,7 @@ async function deletedPage(engine: BrainEngine, root: string, sync: Sync, slug: 
   return { pageId: snapshot!.page.id, revision: snapshot!.revision };
 }
 
-describe('the waiver transaction, the window, lane and stall reads on a Rust brain, hold lifted for the test', () => {
+describe('the waiver transaction, the window, lane and stall reads on a Rust brain', () => {
   parityTest('a no-op delete waives through its transaction, and an unfinished request for the page stops the prefix', {
     methods: ['worktreeClaimStore', 'readPageSnapshot', 'getWorktreeBinding', 'insertWriteRequest', 'runSyncStatement'], timeout: 240_000,
   }, async (engine, backend) => withManagedSource(engine, backend, {

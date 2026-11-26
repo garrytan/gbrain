@@ -1,11 +1,18 @@
 # Managed mode on the Rust store
 
 A managed brain keeps its pages as files in a Git checkout; every write goes to the database and to
-that checkout. The Rust engine holds the `managed_persistence` capability back
-(`src/core/rust-engine/store-capabilities.ts` `HELD_FOR_CALLERS`), so a user's Rust brain refuses
-managed mode by name. The members below serve managed mode behind that hold; a test lifts the hold
-on one engine instance (`test/engine-parity/rust-managed.ts`) and
-`test/engine-parity/managed-on-rust.test.ts` compares them with PGLite and Postgres.
+that checkout. A single-host Rust store reports the `managed_persistence` capability
+(`src/core/rust-engine/store-capabilities.ts`), and the members below serve managed mode; the
+`test/engine-parity/managed-*-on-rust.test.ts` files compare them with PGLite and Postgres on all three arms.
+
+A multi-user store withholds the capability (`MULTIUSER_WITHHELD`, applied when the store opens), so a
+multi-user Rust brain refuses managed mode by name: managed mode coordinates a checkout with native file locks
+on one host (`withTopologyLocks`, `GBRAIN_HOME/locks`), and file locks do not fence writers on two hosts. Slice 3
+moves those locks and the managed claims (coalesced Git, group completion, refresh, sync) to I-5 leases. Until
+then group completion builds its write completion with no fence, which is safe only because a multi-user store
+never reaches it. On such an engine each managed store member refuses exactly as the `executeRaw` it replaced
+did (`store-members/managed-hold.ts`). On an owner-IPC client the store members that answer an object of
+functions refuse by name (`owner-ipc/routes.ts`): managed mode runs in the owner process.
 
 Each family is one BrainEngine store member whose SQL lives unchanged in `src/core/engine-sql/`, and
 on this engine one tagged read call and one tagged write call (`{ kind, ...args }`).
@@ -104,6 +111,6 @@ Rust). One tagged read call (`syncStoreRows`) and one tagged write call (`syncSt
   landing gaps), the dry run's writer state, the recorded stop, the hold sweep's soak counters and needs-human stamp, and the freshness
   aggregate (commit to searchable and to embedded, from the visible chunks of each sampled page). The knock-on predicate's strings
   (`sync-knock-on.ts`) go in as the statement's last parameter, as the doctor terminal reads send theirs.
-- Where it stops: statements the pass reaches only for a held cursor of an older release (`sync-run.ts` cursor saves, the legacy
-  waivers), `sync-pass-fold.ts`' refused-checkpoint read and the Postgres planner statistics still refuse on Rust
-  naming `executeRaw`. The managed hold stays: the member refuses while `managed_persistence` is held, as `executeRaw` did.
+- Where it stops: the Postgres-only bulk admission (`sync-run.ts` `admitAndSave` and its reads, `sync-drain.ts` warm-up) is
+  unreachable on Rust (`resolveGrouping` enables bulk only on Postgres), and the Postgres planner statistics refuse naming
+  `executeRaw`. On an engine that withholds `managed_persistence` the member refuses as `executeRaw` did.

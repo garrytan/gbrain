@@ -12,6 +12,8 @@ import type { BrainEngine } from '../engine.ts';
 import { readManagedMode } from '../persistence/managed-mode.ts';
 import { activeWorktreeRefreshes } from '../persistence/worktree-refresh.ts';
 import { usableDestination, type DestinationOptions } from './destination.ts';
+import { servedCapabilities } from '../rust-engine/store-capabilities.ts';
+import { rustMultiuserFromEnv } from '../rust-engine/multiuser-switch.ts';
 import { evaluateReadiness, type ReadinessVerdict, type ShadowStatus } from './readiness.ts';
 import { managedStorageError, refreshUnsettledError, type SwapRefusalReason, type UnsettledRefresh } from './refusals.ts';
 
@@ -87,11 +89,22 @@ export async function assertRefreshesSettled(engine: BrainEngine): Promise<void>
   if (rows.length) throw refreshUnsettledError(rows);
 }
 
-/** Throws `engine_swap_refused` / `managed_storage` when the brain uses managed storage, which Rust never holds. A
- * persistence state that is missing or malformed refuses `storage_error` (readManagedMode), never reads as unmanaged. */
-export async function assertNotManaged(engine: BrainEngine): Promise<void> {
+/**
+ * Whether the Rust destination can hold a managed brain: this build's Rust engine serves `managed_persistence`, and the
+ * multi-user switch is off (a multi-user store withholds managed mode until its locks are I-5 leases;
+ * rust-engine/store-capabilities.ts MULTIUSER_WITHHELD).
+ */
+export function rustHoldsManagedStorage(destination: DestinationOptions | undefined): boolean {
+  if (!servedCapabilities().has('managed_persistence')) return false;
+  return !(destination?.multiuser ?? rustMultiuserFromEnv());
+}
+
+/** Throws `engine_swap_refused` / `managed_storage` when the brain uses managed storage and the Rust destination cannot
+ * hold it (rustHoldsManagedStorage). A persistence state that is missing or malformed refuses `storage_error`
+ * (readManagedMode), never reads as unmanaged. */
+export async function assertNotManaged(engine: BrainEngine, destination?: DestinationOptions): Promise<void> {
   const managed = await readManagedMode(engine, { refusal: { subject: 'The engine swap plan', consequence: 'the swap refuses rather than guess whether the brain uses managed storage' } });
-  if (managed) throw managedStorageError();
+  if (managed && !rustHoldsManagedStorage(destination)) throw managedStorageError(servedCapabilities().has('managed_persistence') ? 'multiuser' : 'unsupported');
 }
 
 /** The plan hash binds what a run would act on, never volatile readings (time, free space). */
@@ -106,9 +119,10 @@ function planHash(p: Omit<SwapPlan, 'plan_hash'>, dest: DestinationOptions | und
   return createHash('sha256').update(JSON.stringify(bound)).digest('hex').slice(0, 16);
 }
 
-/** Builds the read-only plan. Throws `engine_swap_refused` (`managed_storage`, `refresh_unsettled`) before reading any criterion. */
+/** Builds the read-only plan. Throws `engine_swap_refused` (`managed_storage` when the destination cannot hold a managed brain,
+ * `refresh_unsettled`) before reading any criterion. */
 export async function planEngineSwap(engine: BrainEngine, deps: SwapPlanInputs = {}): Promise<SwapPlan> {
-  await assertNotManaged(engine);
+  await assertNotManaged(engine, deps.destination);
   await assertRefreshesSettled(engine);
   const status = deps.readShadowStatus ? await deps.readShadowStatus(engine) : null;
   const readiness = evaluateReadiness(status, deps.now ?? new Date(), deps.destination);

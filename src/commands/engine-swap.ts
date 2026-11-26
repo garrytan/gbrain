@@ -162,7 +162,8 @@ export async function runEngineSwap(args: readonly string[], deps: EngineSwapCli
     const dataDir = deps.dataDir ?? home;
     // The destination is read from the destination, never from `engine`; with the switch off nothing is read at all.
     const multiuser = rustMultiuserFromEnv(deps.env);
-    const destination = multiuser ? { multiuser, expectedBrainId: brainId, destination: await resolveSwapDestination(brainId, deps.resolveDestination) } : undefined;
+    // With the switch off, `{ multiuser: false }` carries only the switch (no evidence counts; managed_storage reads it).
+    const destination = multiuser ? { multiuser, expectedBrainId: brainId, destination: await resolveSwapDestination(brainId, deps.resolveDestination) } : { multiuser: false };
     const plan = await planEngineSwap(engine, {
       readShadowStatus: deps.readShadowStatus, now: deps.now,
       destination,
