@@ -1,21 +1,25 @@
-import { expect, test } from 'bun:test';
+import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { readActiveClaim } from '../src/core/minions/claim-readback.ts';
 import { MinionQueue } from '../src/core/minions/queue.ts';
 import { MinionWorker } from '../src/core/minions/worker.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { waitForValue } from './helpers/wait-for.ts';
 import { withEnv } from './helpers/with-env.ts';
 
+let engine: PGLiteEngine;
+beforeAll(async () => {
+  engine = new PGLiteEngine();
+  await engine.connect({});
+  await engine.initSchema();
+});
+afterAll(() => engine.disconnect());
+
 test('a committed claim with a lost reply runs once under its original token', async () => {
   const home = mkdtempSync(join(tmpdir(), 'gbrain-claim-readback-'));
-  const engine = new PGLiteEngine();
   try {
     await withEnv({ GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_MINION_STALL_RECLAIM_GRACE_MS: '0' }, async () => {
-      await engine.connect({});
-      await engine.initSchema();
       const queue = new MinionQueue(engine);
       const submitted = await queue.add('readback-fixture', {}, { queue: 'readback', max_stalled: 1, max_attempts: 1 });
       const execute = engine.executeRawDirect.bind(engine);
@@ -48,33 +52,18 @@ test('a committed claim with a lost reply runs once under its original token', a
           running.then(() => { throw new Error('Worker stopped before the claim settled'); }),
         ]);
         expect(lostToken).toBeDefined();
-        expect(observedTokens).toEqual([lostToken]);
+        expect(observedTokens).toEqual([lostToken ?? null]);
         expect(settled).toMatchObject({ status: 'completed', attempts_started: 1, attempts_made: 0, stalled_counter: 0 });
       } finally {
         worker.stop();
-        await running;
+        try {
+          await running;
+        } finally {
+          engine.executeRawDirect = execute;
+        }
       }
     });
   } finally {
-    await engine.disconnect();
     rmSync(home, { recursive: true, force: true });
   }
 }, 20_000);
-
-test('claim readback ignores another queue, another token, and an expired lease', async () => {
-  const engine = new PGLiteEngine();
-  try {
-    await engine.connect({});
-    await engine.initSchema();
-    const queue = new MinionQueue(engine);
-    const submitted = await queue.add('readback-fixture', {}, { queue: 'readback' });
-    await queue.claim('worker:receipt', 30_000, 'readback', ['readback-fixture']);
-    expect(await readActiveClaim(engine, 'readback', 'worker:receipt')).toMatchObject({ id: submitted.id, status: 'active' });
-    expect(await readActiveClaim(engine, 'another-queue', 'worker:receipt')).toBeNull();
-    expect(await readActiveClaim(engine, 'readback', 'worker:another-receipt')).toBeNull();
-    await engine.executeRaw("UPDATE minion_jobs SET lock_until = now() - interval '1 second' WHERE id = $1", [submitted.id]);
-    expect(await readActiveClaim(engine, 'readback', 'worker:receipt')).toBeNull();
-  } finally {
-    await engine.disconnect();
-  }
-});

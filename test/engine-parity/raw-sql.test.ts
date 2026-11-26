@@ -19,6 +19,8 @@
  *    family where a case may call it.
  */
 import { describe, expect } from 'bun:test';
+import { MinionQueue } from '../../src/core/minions/queue.ts';
+import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
 import { parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
@@ -58,6 +60,28 @@ describe('engine parity: raw_sql', () => {
       });
       expect([direct, inTx]).toEqual([[{ slug: 'notes/direct' }], [{ slug: 'notes/direct-tx' }]]);
       return { direct, inTx };
+    },
+  );
+
+  parityTest(
+    'findLiveMinionClaim matches the queue and token only while the lease is live',
+    { methods: ['findLiveMinionClaim'], requires: 'raw_sql' },
+    async (engine) => {
+      // The parity harness empties config while retaining the migrated schema.
+      await engine.setConfig('version', String(LATEST_SCHEMA_VERSION));
+      const queue = new MinionQueue(engine);
+      const live = await queue.add('readback-fixture', {}, { queue: 'readback' });
+      expect((await queue.claim('worker:live', 30_000, 'readback', ['readback-fixture']))?.id).toBe(live.id);
+      const expired = await queue.add('readback-fixture', {}, { queue: 'readback' });
+      expect((await queue.claim('worker:expired', -1_000, 'readback', ['readback-fixture']))?.id).toBe(expired.id);
+
+      const result = await engine.findLiveMinionClaim('readback', 'worker:live');
+      expect(result).toMatchObject({ id: live.id, status: 'active', lock_token: 'worker:live' });
+      const otherQueue = await engine.findLiveMinionClaim('other', 'worker:live');
+      const otherToken = await engine.findLiveMinionClaim('readback', 'worker:other');
+      const expiredLease = await engine.findLiveMinionClaim('readback', 'worker:expired');
+      expect([otherQueue, otherToken, expiredLease]).toEqual([null, null, null]);
+      return { status: result?.status, otherQueue, otherToken, expiredLease };
     },
   );
 

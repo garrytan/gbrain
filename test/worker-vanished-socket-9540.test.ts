@@ -49,7 +49,7 @@ test.each([
       if (sql.includes('SELECT id, submission_authority FROM minion_jobs') && sql.includes('submission_authority IS DISTINCT FROM')) return [];
       throw new Error('Unexpected SQL in worker socket fixture');
     },
-    executeRawDirect: async () => { events.push('read-claim'); return []; },
+    findLiveMinionClaim: async () => { events.push('read-claim'); return null; },
     reconnect: async () => { events.push('reconnect'); },
   } as unknown as BrainEngine;
   const worker = new MinionWorker(engine, { pollInterval: 1, stalledInterval: 60_000, healthCheckInterval: 0 });

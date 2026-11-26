@@ -22,6 +22,7 @@ export const RUST_ENGINE_MEMBERS = {
   withReservedConnection: 'raw_sql',
   executeRaw: 'raw_sql',
   executeRawDirect: 'raw_sql',
+  findLiveMinionClaim: 'raw_sql',
   keywordBoundedRead: 'raw_sql',
   runMigration: 'raw_sql',
   // schema
