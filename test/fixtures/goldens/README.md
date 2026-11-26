@@ -132,7 +132,7 @@ reproduce byte for byte. Each file is written by `test/helpers/golden.ts` as
 
 ## Setup migration ledger
 
-- `setup/fresh-setup-migration-ledger.json` (`test/setup.test.ts`, `setup-migration-ledger-v1`):
+- `setup/fresh-setup-migration-ledger.json` (`test/setup-migrations.test.ts`, `setup-migration-ledger-v1`):
   the files a fresh `gbrain setup claude-code` leaves in `migrations/` (`completed.jsonl`,
   `pending-host-work.jsonl`, `v0.22.4-audit.json`), line by line, with timestamps, the temp
   home, the brain id and the release stamp scrubbed. Captured on master `95b1ad61c`
