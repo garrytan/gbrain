@@ -134,7 +134,7 @@
 # multi-writer C10 [compare]: pglite=runs postgres=runs rust=runs rust-mu=runs store-single=runs store-optimistic=runs
 # multi-writer C11 [compare]: pglite=pending(L5 hosts) postgres=pending(L5 hosts) rust=pending(L5 hosts) rust-mu=pending(L5 hosts) store-single=runs store-optimistic=runs
 # multi-writer C12 [compare]: pglite=runs postgres=runs rust=runs rust-mu=runs store-single=runs store-optimistic=runs
-# multi-writer C13 [standalone, needs multi_writer]: pglite=n/a postgres=runs rust=pending(L1 optimistic transactions) rust-mu=pending(L1 optimistic transactions) store-single=runs store-optimistic=runs
+# multi-writer C13 [standalone, needs multi_writer]: pglite=n/a postgres=runs rust=n/a rust-mu=runs store-single=runs store-optimistic=runs
 # multi-writer C14 [compare]: pglite=runs postgres=runs rust=runs rust-mu=runs store-single=runs store-optimistic=runs
 # multi-writer C15 [compare]: pglite=runs postgres=runs rust=runs rust-mu=runs store-single=runs store-optimistic=runs
 # multi-writer C16 [standalone, needs commit_log]: pglite=n/a postgres=pending(L6 harness) rust=n/a rust-mu=runs store-single=runs store-optimistic=runs

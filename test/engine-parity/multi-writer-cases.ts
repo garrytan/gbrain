@@ -356,8 +356,8 @@ export const MW_CASES: readonly MwCase[] = [
     },
     cells: {
       pglite: na('PGLite has one connection: a second transaction queues behind the open one (test/pglite-checkpoint-guard.test.ts:193-207)'), postgres: RUNS,
-      rust: pending('L1 optimistic transactions', 'today an open transaction holds the one writer, so a commit on another key waits (concurrency.rs:349)'),
-      'rust-mu': pending('L1 optimistic transactions', 'today an open transaction holds the one writer, so a commit on another key waits (concurrency.rs:349)'),
+      rust: na('the single-writer Rust store: an open transaction holds the one writer, so a commit on another key waits by design (concurrency.rs, embedded one owner); optimistic transactions run only in multi-user mode'),
+      'rust-mu': RUNS,
       'store-single': RUNS, 'store-optimistic': RUNS,
     },
   },

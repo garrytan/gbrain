@@ -172,7 +172,7 @@ describe('multi-writer support matrix', () => {
   });
 
   // Rows whose scenario exists only in multi-user mode: plain Rust is n/a, rust-mu runs (the log, its upgrade, the owner handover).
-  const MULTIUSER_ONLY = ['C16', 'C17', 'C21', 'C22'];
+  const MULTIUSER_ONLY = ['C13', 'C16', 'C17', 'C21', 'C22'];
 
   test('rust-mu runs what rust runs and waits on the same owner where rust waits; the multi-user-only rows are n/a on plain Rust and run on rust-mu', () => {
     for (const id of MULTIUSER_ONLY) {
@@ -192,7 +192,7 @@ describe('multi-writer support matrix', () => {
 
   test('the single-writer Rust arm runs every case whose invariant holds there; the rest wait for a second connection, a new rule, or the multi-writer work', () => {
     expect(MW_CASES.filter(c => c.cells.rust.status !== 'runs').map(c => [c.id, c.cells.rust.status])).toEqual([
-      ['C11', 'pending'], ['C13', 'pending'], ['C16', 'n/a'], ['C17', 'n/a'], ['C18', 'pending'], ['C21', 'n/a'], ['C22', 'n/a'],
+      ['C11', 'pending'], ['C13', 'n/a'], ['C16', 'n/a'], ['C17', 'n/a'], ['C18', 'pending'], ['C21', 'n/a'], ['C22', 'n/a'],
     ]);
   });
 
