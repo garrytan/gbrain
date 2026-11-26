@@ -201,6 +201,7 @@ Reserved tags:
 | entity_identities | `i` | `ENTITY_IDENTITY` | yes |
 | persistence_journal, the `derived_generations` ledger (with its attempt counters and valve windows), the `derivation_inputs` edges and their input index (`h 0x0A`, `h 0x0B`) | `h` | `DERIVED_GENERATION` | no (a source delete removes its rows) |
 | access_rules (folder rules, pending prefixes, policy state and revisions; the module owns the sub-tags) | `z` | `ACCESS_RULES` | no |
+| guest_sources (writers and trust ceiling of each guest source) | `0` | `GUEST_SOURCE` | no (a source delete removes its row) |
 | reason_purge_tombstones | `1` | `REASON_TOMBSTONE` | no |
 | session_state | `y` | `SESSION_STATE` | no |
 | access_members | `x`, sub-tags `0x01` members, `0x02` groups, `0x03` group members | `ACCESS_MEMBERS` | no |
@@ -238,7 +239,7 @@ change to this table and to `keys.rs`.
 ### Tag registry
 
 The one-byte tags on `rust-engine/main` are the "Key layout" and "Reserved tags" tables above: every capital letter,
-every small letter but `x` and `y`, and the digits `1` and `2`. The "Reserved tags" row for `x` (`ACCESS_MEMBERS`)
+every small letter but `x` and `y`, and the digits `1` and `2` (and `0` on rust-engine/guest-sources-rust). The "Reserved tags" row for `x` (`ACCESS_MEMBERS`)
 records a claim whose constant is still only on the access branches, listed below as a branch claim. This table lists every other tag claimed on any
 branch, and the reserved ones, with the owner who claimed it. The rules:
 
@@ -259,7 +260,7 @@ branch, and the reserved ones, with the owner who claimed it. The rules:
 |---|---|---|---|
 | `x` | `ACCESS_MEMBERS` | interfaces lane (session a9fd5b22) | branch rust-engine/access-rules-rust (row 32a-1) and the access branches stacked on it |
 | `y` | `SESSION_STATE` | not named on the branch; the trunk names it at intake | branch rust-engine/sync-checkpoint and the branches that contain 4601da37e0 |
-| `0` | `GUEST_SOURCE` | not named on the branch; the trunk names it at intake | branch rust-engine/collate-equal |
+| `0` | `GUEST_SOURCE` | lane 6 (guest sources, row 32m-3) | branch rust-engine/guest-sources-rust (from rust-engine/collate-equal 4573663d7f) |
 | `3` | `SECRET_STORE` | lane 10 | reserved (the trunk holds it for the secret store) |
 | `~` | `FAMILY_ESCAPE` | core | main once this lands: the escape for two-byte family tags |
 | `~e` | `PAGE_EXTRACTION_STATE` | lane 8 (rust-members-tail) | branch rust-engine/rust-members-tail: the `page_extraction_state` family (the extraction watermark and partial-input receipt of a page); a hard page delete removes the page's rows; the tag `2` stays free |
