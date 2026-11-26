@@ -112,6 +112,19 @@ const ENFORCED_SCRIPT: Step[] = [
   { args: ['access', 'member', 'add', 'tess-example', '--name', 'Tess Example', '--json'] },
   // A put that names no source, on a brain of several members: the result carries the placement notice.
   { label: 'draft', args: ['put', 'notes/launch-plan', '--content', PLAN('Tess Example drafts the launch plan.'), '--json'] },
+  // A member the page does not list: refused, and nothing changes. The next read shows the draft as it was.
+  { label: 'refused', args: ['put', 'notes/launch-plan', '--expected-revision', '{rev}', '--json'], rev: 'draft', member: 'bob-example', stdin: PLAN('Bob Example rewrote this plan.'), exit: 3 },
+  { args: ['get', 'notes/launch-plan'] },
+  // A member the page lists may not change the readers list: refused, nothing changes.
+  { label: 'relabel', args: ['put', 'notes/launch-plan', '--expected-revision', '{rev}', '--json'], rev: 'draft', member: 'tess-example', stdin: PLAN('Tess Example drafts the launch plan.').replace('  - tess-example\n', '  - tess-example\n  - bob-example\n'), exit: 3 },
+  // A member the page lists: written, the readers list kept, and the rewrite reads back.
+  { label: 'rewrite', args: ['put', 'notes/launch-plan', '--expected-revision', '{rev}', '--json'], rev: 'draft', member: 'tess-example', stdin: PLAN('Tess Example drafts the launch plan. Revised by Tess Example on Friday.') },
+  { args: ['get', 'notes/launch-plan'] },
+  { args: ['get', 'notes/launch-plan'], member: 'tess-example' },
+  { args: ['get', 'notes/launch-plan'], member: 'bob-example', exit: 1 },
+  // A new page: the member creates it (no folder rule covers it).
+  { label: 'created', args: ['put', 'notes/tess-notes', '--json'], member: 'tess-example', stdin: '---\ntitle: Tess notes\n---\n# Tess notes\n\nA first note.\n' },
+  { args: ['get', 'notes/tess-notes'], member: 'tess-example' },
 ];
 
 type Engine = 'pglite' | 'postgres' | 'rust';
@@ -239,6 +252,9 @@ describe('token and member commands on every engine', () => {
   }
 });
 
+/** The backup-readiness notice a first read prints once counts the brain's own assets, which no two engines share (Postgres differs from PGLite on any command); it is not part of a put. */
+const withoutBackupNotice = (text: string) => text.split('\n').filter((l) => !l.startsWith('[backup] ')).join('\n');
+
 describe('a put on a brain of several members, plain and under GBRAIN_ENFORCED_MEMBER, on every engine', () => {
   test('the script runs as written on PGLite', () => {
     const codes = enforcedRuns.get('pglite')!.map((r, i) => `${r.exitCode} ${ENFORCED_SCRIPT[i].label ?? ENFORCED_SCRIPT[i].args[0]}`);
@@ -251,7 +267,7 @@ describe('a put on a brain of several members, plain and under GBRAIN_ENFORCED_M
       if (!theirs) return; // that engine is not configured on this run
       const ours = enforcedRuns.get('pglite')!;
       const view = (r: Run[]) => r.slice(1).map((run, i) => ({
-        command: ENFORCED_SCRIPT[i + 1].label ?? ENFORCED_SCRIPT[i + 1].args.join(' '), exitCode: run.exitCode, stdout: masked(run.stdout), stderr: masked(run.stderr),
+        command: ENFORCED_SCRIPT[i + 1].label ?? ENFORCED_SCRIPT[i + 1].args.join(' '), exitCode: run.exitCode, stdout: masked(run.stdout), stderr: withoutBackupNotice(masked(run.stderr)),
       }));
       expect(view(theirs)).toEqual(view(ours));
     });
