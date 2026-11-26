@@ -22,7 +22,7 @@ The card counts the whole brain, every source and every page, because only the b
 | Conversations archived | Conversations and the days they cover, from the conversation archive's published pages |
 | Pages | Live pages by kind (person, company, note, ...) |
 | Links | Links between two live pages |
-| Facts kept | Facts that are active, superseded by a newer fact, or withdrawn with `forget` |
+| Facts kept | Facts that are active, superseded by a newer fact, or withdrawn with `forget`; a fact whose page was deleted is not counted as active |
 | Lookups served | Searches and recalls search telemetry recorded in the last 30 days, including searches gbrain runs for itself |
 | Pages brought up on their own | Pages gbrain put into an agent's context without being asked, in the last 30 days |
 | Of those, later retrieved | How many of those pages a search or read later surfaced |
