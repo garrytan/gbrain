@@ -59,7 +59,9 @@ const target = { sourceId: 'default', localPath: '', slug: 'people/ttl-example',
 describe('formatFenceDate', () => {
   test('UTC midnight renders as a date, anything else as a UTC timestamp', () => {
     expect(formatFenceDate(new Date('2026-03-01T00:00:00.000Z'))).toBe('2026-03-01');
-    expect(formatFenceDate(new Date('2026-03-01T22:02:52.123Z'))).toBe('2026-03-01T22:02:52Z');
+    expect(formatFenceDate(new Date('2026-03-01T22:02:52.000Z'))).toBe('2026-03-01T22:02:52Z');
+    expect(formatFenceDate(new Date('2026-03-01T22:02:52.123Z'))).toBe('2026-03-01T22:02:52.123Z');
+    expect(formatFenceDate(new Date('2026-03-01T00:00:00.001Z'))).toBe('2026-03-01T00:00:00.001Z');
   });
 });
 
@@ -71,7 +73,7 @@ describe('fence date round trip', () => {
 
     const file = readFileSync(join(brainDir, 'people/ttl-example.md'), 'utf-8');
     const [row] = parseFactsFence(parseMarkdown(file, 'people/ttl-example.md').compiled_truth).facts;
-    expect(new Date(row.validUntil!).getTime()).toBe(Math.floor(until.getTime() / 1000) * 1000);
+    expect(new Date(row.validUntil!).getTime()).toBe(until.getTime());
 
     const active = await engine.listFactsByEntity('default', 'people/ttl-example', { activeOnly: true });
     expect(active.map(f => f.fact)).toEqual(['Is traveling this week']);
@@ -81,7 +83,7 @@ describe('fence date round trip', () => {
     await engine.executeRaw('DELETE FROM facts');
     await runExtractFacts(engine, { slugs: ['people/ttl-example'] });
     const rebuilt = await engine.listFactsByEntity('default', 'people/ttl-example', { activeOnly: true });
-    expect(rebuilt.map(f => new Date(f.valid_until!).getTime())).toEqual([Math.floor(until.getTime() / 1000) * 1000]);
+    expect(rebuilt.map(f => new Date(f.valid_until!).getTime())).toEqual([until.getTime()]);
   });
 
   test('a default valid_from is the write instant, not the UTC date', async () => {
@@ -90,7 +92,7 @@ describe('fence date round trip', () => {
     const file = readFileSync(join(brainDir, 'people/ttl-example.md'), 'utf-8');
     const [row] = parseFactsFence(parseMarkdown(file, 'people/ttl-example.md').compiled_truth).facts;
     const stamped = new Date(row.validFrom!).getTime();
-    expect(stamped).toBeGreaterThanOrEqual(Math.floor(before / 1000) * 1000);
+    expect(stamped).toBeGreaterThanOrEqual(before);
     expect(stamped).toBeLessThanOrEqual(Date.now());
   });
 

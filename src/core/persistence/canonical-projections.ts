@@ -3,7 +3,7 @@ import { isQuarantined } from '../quarantine.ts';
 import type { ParsedPage } from '../import-file.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { pipelined } from '../page-state/transactions.ts';
-import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, parseFactsFence } from '../facts-fence.ts';
+import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, parseFactsFence, isLegacySecondCell, type ParsedFact } from '../facts-fence.ts';
 import { TAKES_FENCE_BEGIN, TAKES_FENCE_END, parseTakesFence } from '../takes-fence.ts';
 import { extractFactsFromFenceText, pageFactDate } from '../facts/extract-from-fence.ts';
 import { takesPreparation } from '../takes-write.ts';
@@ -624,7 +624,26 @@ export function compileCanonicalProjections(page: ParsedPage, slug: string, sour
   const scan=scanCanonicalFences({ ...page, slug });
   if(scan.defects.length) throw fenceOperationError(scan.defects[0]!, slug, sourceId);
   const fields:Array<[FenceSection,string]>=[['body',page.compiled_truth],['timeline',page.timeline ?? '']];
-  return { factRows: extractFactsFromFenceText(scan.facts,slug,sourceId,{ pageEffectiveDate: factDate }), takes: scan.takes, sections: scan.sections, quoted: scan.quoting ? quotedFenceRows(fields) : null };
+  return { factCells: scan.facts, factRows: extractFactsFromFenceText(scan.facts,slug,sourceId,{ pageEffectiveDate: factDate }), takes: scan.takes, sections: scan.sections, quoted: scan.quoting ? quotedFenceRows(fields) : null };
+}
+
+// Older remember fences rendered a fractional instant as a whole UTC second. Only an unchanged,
+// explicit cell of the same row on a revision-bound edit can retain that stored precision.
+function unchangedSecondCells(prior: PageSnapshot | null, incoming: ParsedFact[], writer: ProjectionWriter) {
+  const matches = new Map<number, { start: boolean; end: boolean }>();
+  if (writer !== 'editing' || !prior || prior.page.deleted_at || prior.page.body_storage === 'segmented' ||
+      !incoming.some(cell => isLegacySecondCell(cell.validFrom) || isLegacySecondCell(cell.validUntil))) return matches;
+  const previous = scanCanonicalFences(prior.page);
+  if (previous.defects.length) return matches;
+  const cells = new Map(previous.facts.map(cell => [cell.rowNum, cell]));
+  for (const cell of incoming) {
+    const old = cells.get(cell.rowNum);
+    if (!old || old.claim !== cell.claim || old.visibility !== cell.visibility) continue;
+    const start = isLegacySecondCell(cell.validFrom) && old.validFrom === cell.validFrom;
+    const end = isLegacySecondCell(cell.validUntil) && old.validUntil === cell.validUntil && old.active === cell.active;
+    if (start || end) matches.set(cell.rowNum, { start, end });
+  }
+  return matches;
 }
 
 /**
@@ -668,7 +687,8 @@ export async function prepareCanonicalProjections(engine: BrainEngine, page: Par
   prior: PageSnapshot | null, writer: ProjectionWriter, policy?: TimelineWritePolicy): Promise<(tx: BrainEngine, pageId?: number) => Promise<CanonicalProjectionResult>> {
   // #7247: a fence row without a valid_from takes the page's stated date, as extract_facts does, never the import time.
   const factDate = pageFactDate({ slug, frontmatter: page.frontmatter, timeZone: await engine.getConfig('brain.timezone') });
-  const { factRows, takes, quoted, sections } = compileCanonicalProjections(page, slug, sourceId, factDate);
+  const { factRows, factCells, takes, quoted, sections } = compileCanonicalProjections(page, slug, sourceId, factDate);
+  const unchangedSeconds = unchangedSecondCells(prior, factCells, writer);
   // #6259: a page the content-quality gate hid as junk projects no facts or takes. Rows projected before it
   // was quarantined are left as they are (hiding them would need a new row state); only new projection stops.
   const projectFences = !isQuarantined(page.frontmatter);
@@ -750,20 +770,36 @@ export async function prepareCanonicalProjections(engine: BrainEngine, page: Par
         WHERE n.row_num=f.row_num AND n.fact=f.fact AND n.visibility=f.visibility)
       AND NOT ${openedFactRowSql('f', '$3')}`, [sourceId, slug, incoming, ids]);
     // #6574: every fence row's fields refresh in one statement, not one round trip per row.
-    const fieldRows = JSON.stringify([...new Map(factRows.map(fact => [fact.row_num, fact])).values()].map(fact => ({ row_num: fact.row_num, kind: fact.kind, notability: fact.notability,
-      context: fact.context, valid_from: fact.valid_from?.toISOString() ?? null, valid_until: fact.valid_until?.toISOString() ?? null,
-      expired_at: fact.expired_at?.toISOString() ?? null, source: fact.source, confidence: fact.confidence, claim_metric: fact.claim_metric ?? null,
-      claim_value: fact.claim_value ?? null, claim_unit: fact.claim_unit ?? null, claim_period: fact.claim_period ?? null, attributed_to: fact.attributed_to ?? null })));
+    const uniqueFacts = new Map(factRows.map(fact => [fact.row_num, fact]));
+    const fieldRows = JSON.stringify([...uniqueFacts.values()].map(fact => {
+      const keep = unchangedSeconds.get(fact.row_num);
+      return {
+        row_num: fact.row_num, kind: fact.kind, notability: fact.notability, context: fact.context,
+        ...(keep && { claim: fact.fact, visibility: fact.visibility, keep_start: keep.start, keep_end: keep.end }),
+        valid_from: fact.valid_from?.toISOString() ?? null, valid_until: fact.valid_until?.toISOString() ?? null,
+        expired_at: fact.expired_at?.toISOString() ?? null, source: fact.source, confidence: fact.confidence,
+        claim_metric: fact.claim_metric ?? null, claim_value: fact.claim_value ?? null, claim_unit: fact.claim_unit ?? null,
+        claim_period: fact.claim_period ?? null, attributed_to: fact.attributed_to ?? null,
+      };
+    }));
+    // Compute each date the same way in SET and in the no-op guard. A precision-only
+    // difference on an untouched cell must not fire the fact attribution trigger.
+    const dateValue = (field: 'valid_from' | 'valid_until' | 'expired_at', keep: 'keep_start' | 'keep_end', fallback: string) =>
+      `CASE WHEN r.${keep} AND f.fact=r.claim AND f.visibility=r.visibility
+        AND date_trunc('second',f.${field})=r.${field}::timestamptz THEN f.${field} ELSE ${fallback} END`;
+    const startTime = dateValue('valid_from', 'keep_start', 'COALESCE(r.valid_from::timestamptz,f.valid_from)');
+    const endTime = dateValue('valid_until', 'keep_end', 'r.valid_until::timestamptz');
+    const expiryTime = dateValue('expired_at', 'keep_end', 'r.expired_at::timestamptz');
     const factFields = () => factRows.length ? tx.executeRaw(`UPDATE facts f SET kind=r.kind,notability=r.notability,context=r.context,
-        valid_from=COALESCE(r.valid_from::timestamptz,f.valid_from),valid_until=r.valid_until::timestamptz,expired_at=r.expired_at::timestamptz,
+        valid_from=${startTime},valid_until=${endTime},expired_at=${expiryTime},
         source=r.source,confidence=r.confidence,claim_metric=r.claim_metric,claim_value=r.claim_value,claim_unit=r.claim_unit,
         claim_period=r.claim_period,attributed_to=r.attributed_to
-      FROM jsonb_to_recordset($3::text::jsonb) AS r(row_num integer,kind text,notability text,context text,valid_from text,valid_until text,
+      FROM jsonb_to_recordset($3::text::jsonb) AS r(row_num integer,claim text,visibility text,keep_start boolean,keep_end boolean,kind text,notability text,context text,valid_from text,valid_until text,
         expired_at text,source text,confidence real,claim_metric text,claim_value double precision,claim_unit text,claim_period text,attributed_to text)
       WHERE f.source_id=$1 AND f.source_markdown_slug=$2 AND f.row_num=r.row_num
         AND (f.kind,f.notability,f.context,f.valid_from,f.valid_until,f.expired_at,f.source,f.confidence,f.claim_metric,f.claim_value,f.claim_unit,
-          f.claim_period,f.attributed_to) IS DISTINCT FROM (r.kind,r.notability,r.context,COALESCE(r.valid_from::timestamptz,f.valid_from),
-          r.valid_until::timestamptz,r.expired_at::timestamptz,r.source,r.confidence,r.claim_metric,r.claim_value,r.claim_unit,r.claim_period,r.attributed_to)`,
+          f.claim_period,f.attributed_to) IS DISTINCT FROM (r.kind,r.notability,r.context,${startTime},
+          ${endTime},${expiryTime},r.source,r.confidence,r.claim_metric,r.claim_value,r.claim_unit,r.claim_period,r.attributed_to)`,
       [sourceId, slug, fieldRows]) : Promise.resolve([]);
     const checkTakes = () => refuseCollisions(tx, id);
     const dropTakes = (held: boolean) => () => held ? Promise.resolve([])

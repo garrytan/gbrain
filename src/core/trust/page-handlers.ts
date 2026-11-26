@@ -504,7 +504,10 @@ export async function prepareTrustOwnerPageMutation(engine: BrainEngine, row: Wr
   } else content = markdownWithoutMarker(state.snapshot, null, intent.labels);
   // The request keeps its own operation, so page-prepare stamps no CEO-21 marker and files no lower_page item for it.
   const { preparePageMutation } = await import('../persistence/page-prepare.ts');
-  const page = await preparePageMutation(engine, row, config, { content, expectedRevision: intent.expected_revision, ...(tags ? { tags } : {}) });
+  // Restamping alters only the page marker. Reprojecting its unchanged fence can overwrite
+  // a fact's exact stored timestamp with the second-precision value in an older file.
+  const page = await preparePageMutation(engine, row, config, { content, expectedRevision: intent.expected_revision, ...(tags ? { tags } : {}) },
+    undefined, intent.mode === 'repair_marker' ? { unprojected: true } : {});
   const apply = page.apply;
   page.trust = ownerTrust(tier, intent.mode, intent.via);
   page.apply = (tx, preimage) => withTrustPromotion(tx, tier, () => withTrustKeep(tx, FENCE_TABLES, async () => {

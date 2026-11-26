@@ -386,6 +386,37 @@ for (const kind of testBackends()) {
     const repair = (engine: BrainEngine, apply: boolean, expect?: string) => (async () => (await repairRunner(engine, { apply, logger }))
       .run('provenance', await resolveRepairScope(engine, 'default'), { explicit: true, sourceFlag: 'default', ...(expect ? { expect } : {}) }))() as Promise<Record<string, any>>;
 
+    test('restamping a page keeps the original fact timestamp and write attribution', () => managedBrain(async ({ engine, ctx, root }) => {
+      const slug = 'notes/unmarked-legacy-fence';
+      const precise = '2026-01-05T10:11:12.273Z';
+      const content = [
+        '---', 'type: note', 'title: Synthetic', '---', '## Facts', '',
+        '<!--- gbrain:facts:begin -->',
+        '| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |',
+        '|---|---|---|---|---|---|---|---|---|---|',
+        '| 1 | A fixture fact | fact | 1 | private | medium | 2026-01-05T10:11:12Z | | synthetic | |',
+        '<!--- gbrain:facts:end -->', '',
+      ].join('\n');
+      await operationsByName.put_page.handler(ctx, { slug, content });
+      await settleManagedGitEffects(engine);
+      // Old fences stored seconds while remember's row retained milliseconds.
+      await withManagedFixtureWrite(engine, ['default'], async tx => {
+        await tx.executeRaw("UPDATE pages SET frontmatter=frontmatter-'trust_tier', trust_tier='external_untrusted' WHERE source_id='default' AND slug=$1", [slug]);
+        await tx.executeRaw("UPDATE facts SET valid_from=$1::timestamptz WHERE source_id='default' AND source_markdown_slug=$2", [precise,slug]);
+      });
+      const pre = (await engine.readPageSnapshot(slug, { sourceId: 'default' }))!;
+      fs.writeFileSync(path.join(root, slug + '.md'), serializePageToMarkdown(pre.page, pre.tags));
+      const rows = () => engine.executeRaw("SELECT to_jsonb(f) AS data FROM facts f WHERE source_id='default' AND source_markdown_slug=$1 ORDER BY id", [slug]);
+      const before = await rows();
+      expect(before).toHaveLength(1);
+      const preview = await repair(engine, false);
+      expect(preview.listing.map((entry: { class: string }) => entry.class)).toEqual(['restamp']);
+      await repair(engine, true, preview.preview_hash);
+      const updated = (await engine.readPageSnapshot(slug, { sourceId: 'default' }))!;
+      expect(updated.page.frontmatter.trust_tier).toBe('external_untrusted');
+      expect(await rows()).toEqual(before);
+    }, { databaseUrl }), 120_000);
+
     test('apply publishes the restore through the coordinator: the file and the row carry the restored stamps and marker', () => managedBrain(async brain => {
       const { engine, root } = brain;
       const slug = 'inbox/managed-restore';

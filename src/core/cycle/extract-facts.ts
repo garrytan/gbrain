@@ -84,7 +84,8 @@ import { writeReceipt } from '../extract/receipt-writer.ts';
 import { fenceUnfencedFacts, isFenceHold, planUnfencedFacts } from '../facts/unfenced-facts.ts';
 import { heldMoveIncomplete, moveHeldFacts } from '../facts/held-fact-move.ts';
 import { classifyRunStop, upsertExtractRollup } from '../extract/rollup-writer.ts';
-import { factsFenceView } from '../facts-fence.ts';
+import { factsFenceView, isLegacySecondCell } from '../facts-fence.ts';
+import { keepRememberPrecision } from '../facts/remember-precision.ts';
 import { fenceReadOf, publishFenceGeneration, readFenceBlocks, FACT_FENCE_KIND, type FenceRead } from '../generations/fence.ts';
 import { factsFenceHeld, moveKeptRows } from '../generations/fence-evidence.ts';
 import type { BodyStorage } from '../page-body/types.ts';
@@ -129,6 +130,7 @@ interface ExistingPageFact {
   notability: string;
   context: string | null;
   valid_from: Date | string | null;
+  original_remember_start: string | null;
   valid_until: Date | string | null;
   confidence: number | string;
   claim_metric: string | null;
@@ -360,18 +362,26 @@ async function listExistingFactsForPage(
   engine: BrainEngine,
   slug: string,
   sourceId: string,
+  legacyStarts: boolean,
 ): Promise<ExistingPageFact[]> {
   return engine.executeRaw<ExistingPageFact>(
     `SELECT id, fact, source, row_num, superseded_by, expired_at, kind, visibility, notability, context,
             valid_from, valid_until, confidence, claim_metric, claim_value, claim_unit, claim_period,
-            embedding IS NOT NULL AS has_embedding
-       FROM facts
+            embedding IS NOT NULL AS has_embedding,
+            CASE WHEN $3::boolean AND f.valid_from <> date_trunc('second', f.valid_from) THEN (
+              SELECT r.intent->>'valid_from' FROM persistence_requests r
+              JOIN sources s ON s.id=r.source_id AND s.incarnation=r.source_incarnation
+              WHERE r.id=f.last_write_request_id AND r.source_id=f.source_id AND r.slug=f.source_markdown_slug
+                AND r.operation='remember' AND r.state='committed' AND r.outcome->>'status'='inserted'
+                AND r.outcome->>'id'=f.id::text AND r.intent->>'fact'=f.fact
+            ) END AS original_remember_start
+       FROM facts f
       WHERE source_id = $1
         AND source_markdown_slug = $2
         AND COALESCE(source, '') NOT LIKE 'cli:%'
         AND NOT (row_num IS NULL AND expired_at IS NOT NULL)
       ORDER BY row_num ASC, id ASC`,
-    [sourceId, slug],
+    [sourceId, slug, legacyStarts],
   );
 }
 
@@ -451,7 +461,8 @@ async function planFenceReconcile(db: BrainEngine, page: PageFenceInput, slug: s
   // (row_num, claim) is still in the fence keeps its id and has its other
   // cells updated in place; a row whose number disappeared or whose claim
   // was rewritten is expired and detached (row_num NULL), never deleted.
-  const existing = await listExistingFactsForPage(db, slug, sourceId);
+  const legacyStarts = new Set(managed ? parsed.facts.filter(cell => isLegacySecondCell(cell.validFrom)).map(cell => cell.rowNum) : []);
+  const existing = await listExistingFactsForPage(db, slug, sourceId, legacyStarts.size > 0);
   const desiredByRow = new Map(extracted.map(f => [f.row_num, f]));
   const matched = new Map<number, ExistingPageFact>();
   const stale: ExistingPageFact[] = [];
@@ -460,6 +471,7 @@ async function planFenceReconcile(db: BrainEngine, page: PageFenceInput, slug: s
     if (desired && desired.fact === fact.fact) matched.set(desired.row_num, fact);
     else stale.push(fact);
   }
+  if (legacyStarts.size) keepRememberPrecision(legacyStarts, extracted, matched);
   // GST-2511: a contested row whose widening the owner has not accepted keeps its visibility; the fence's world cell is
   // the lower-tier writer's request, which only the owner's accept applies (trust/fence-guard.ts).
   const widening = extracted.flatMap(f => {

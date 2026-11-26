@@ -158,8 +158,11 @@ for (const kind of testBackends()) {
       expect(rows).toHaveLength(1);
       expect(rows[0]).toMatchObject({ source_id: SCOPE_A, visibility: 'world', source_markdown_slug: 'memory/scope' });
       expect(String(rows[0]!.source)).toContain('qm:' + ALICE_ID + '; slack:C0SCOPE/p1');
-      const [page] = await engine.executeRaw<{ page_readers: string[] | null }>('SELECT page_readers FROM pages WHERE source_id = $1 AND slug = $2', [SCOPE_A, 'memory/scope']);
+      const [page] = await engine.executeRaw<{ page_readers: string[] | null; tier: string; marker: string | null }>(
+        "SELECT page_readers, trust_tier AS tier, frontmatter->>'trust_tier' AS marker FROM pages WHERE source_id=$1 AND slug=$2",
+        [SCOPE_A, 'memory/scope']);
       expect(page!.page_readers).toBeNull();
+      expect(page!.marker).toBe(page!.tier);
       const named = await call(bob, 'memory_recall', { query: 'launch Thursday', source_id: SCOPE_A });
       expect(named.isError).toBe(false);
       expect(named.text).toContain('canaryscopea');

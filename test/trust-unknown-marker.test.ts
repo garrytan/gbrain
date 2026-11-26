@@ -24,3 +24,10 @@ test('a classified lower stored tier and an explicit unknown marker still lower 
   stampPageTrustMarker(row, explicit, capped, 'unknown');
   expect(explicit.trust_tier).toBe('unknown');
 });
+
+test('appending a fact to a member page preserves the tier of its first publication', () => {
+  const next = { id: 'r2', operation: 'remember', authority: { remote: true }, intent: { member_page: true, content_origin: 'tool_output' } } as never;
+  const frontmatter = { trust_tier: 'agent_written' };
+  stampPageTrustMarker(next, frontmatter, pageWriteTrust(next, frontmatter), 'agent_written');
+  expect(frontmatter.trust_tier).toBe('agent_written');
+});

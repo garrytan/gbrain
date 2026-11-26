@@ -124,18 +124,24 @@ for (const kind of testBackends()) {
       expect(out.json.status).toBe('inserted');
       const [row] = await engine.executeRaw<Record<string, unknown>>('SELECT visibility, source_markdown_slug, entity_slug, row_num FROM facts WHERE fact LIKE $1', ['%' + CANARY.alice + '%']);
       expect(row).toMatchObject({ visibility: 'private', source_markdown_slug: 'memory/members/alice-example', entity_slug: ACME });
-      const [pageRow] = await engine.executeRaw<{ page_readers: string[]; compiled_truth: string }>('SELECT page_readers, compiled_truth FROM pages WHERE source_id = $1 AND slug = $2', [SRC, 'memory/members/alice-example']);
-      expect(pageRow!.page_readers).toEqual(['member:alice-example']);
+      const [pageRow] = await engine.executeRaw<{ page_readers: string[]; compiled_truth: string; tier: string; marker: string | null }>(
+        "SELECT page_readers, compiled_truth, trust_tier AS tier, frontmatter->>'trust_tier' AS marker FROM pages WHERE source_id=$1 AND slug=$2",
+        [SRC, 'memory/members/alice-example']);
+      expect(pageRow).toMatchObject({ page_readers: ['member:alice-example'], tier: 'agent_written', marker: 'agent_written' });
       expect(pageRow!.compiled_truth).toContain(CANARY.alice);
       const acme = await engine.executeRaw<{ compiled_truth: string }>('SELECT compiled_truth FROM pages WHERE source_id = $1 AND slug = $2', [SRC, ACME]);
       expect(acme[0]!.compiled_truth).not.toContain(CANARY.alice);
     }, 60_000);
 
     test('a member-bound credential writes to its own member page too', async () => {
-      const out = await remember(who.bobToken(), 'Bob keeps the harbor keys ' + CANARY.bob, { entity: ACME });
+      const out = await remember(who.bobToken(), 'Bob keeps the harbor keys ' + CANARY.bob, { entity: ACME, content_origin: 'tool_output' });
       expect(out.isError).toBe(false);
       const [row] = await engine.executeRaw<Record<string, unknown>>('SELECT visibility, source_markdown_slug FROM facts WHERE fact LIKE $1', ['%' + CANARY.bob + '%']);
       expect(row).toMatchObject({ visibility: 'private', source_markdown_slug: 'memory/members/bob-example' });
+      const [page] = await engine.executeRaw<{ tier: string; marker: string | null }>(
+        "SELECT trust_tier AS tier, frontmatter->>'trust_tier' AS marker FROM pages WHERE source_id=$1 AND slug=$2",
+        [SRC, 'memory/members/bob-example']);
+      expect(page).toMatchObject({ tier: 'external_untrusted', marker: 'external_untrusted' });
     }, 60_000);
 
     test('each member recalls only its own facts; the bare client and an unbound credential recall neither', async () => {

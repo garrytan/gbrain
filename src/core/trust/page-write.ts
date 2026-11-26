@@ -98,8 +98,11 @@ export async function storedPageTier(engine: BrainEngine, sourceId: string, slug
  */
 export function stampPageTrustMarker(row: Pick<WriteRequest, 'operation' | 'intent'>, frontmatter: Record<string, unknown>, trust: WriteTrust | undefined, stored: TrustTier | null,
   storedFrontmatter?: Record<string, unknown> | null): void {
-  if (!trust || isFenceEditWrite(row)) return;
-  if (!CONTENT_OPERATIONS.includes(row.operation) && !declaresDerivation(row.intent)) return;
+  if (!trust) return;
+  // The first remember creates the canonical memory page. Later appends keep the page's existing tier.
+  if (isFenceEditWrite(row)) {
+    if (stored !== null || row.operation !== 'remember' || !(row.intent?.member_page === true || row.intent?.scope_page === true)) return;
+  } else if (!CONTENT_OPERATIONS.includes(row.operation) && !declaresDerivation(row.intent)) return;
   const prior = stored && stored !== 'unknown' ? [stored] : frontmatterTrustCaps(storedFrontmatter);
   const tier = minTrust(trust.tier, ...prior);
   const stamped = stampTrustMarker(frontmatter, tier);

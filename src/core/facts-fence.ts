@@ -492,7 +492,7 @@ export function fenceCellReadBackProblem(cell: ParsedFact | undefined, fact: { f
 /**
  * Render an instant for a `valid_from` / `valid_until` cell. A UTC-midnight
  * value keeps the `YYYY-MM-DD` shape (date-only cells never churn); any other
- * instant is written as a UTC timestamp to the second, so a TTL or a default
+ * instant keeps its UTC timestamp, including any milliseconds, so a TTL or a default
  * "now" valid_from survives a re-read of the fence instead of being truncated
  * to the UTC date (which expired same-day TTLs and stamped evening writes west
  * of UTC with tomorrow's date). The parser already accepts both shapes.
@@ -500,7 +500,12 @@ export function fenceCellReadBackProblem(cell: ParsedFact | undefined, fact: { f
 export function formatFenceDate(d: Date): string {
   const iso = d.toISOString();
   if (iso.endsWith('T00:00:00.000Z')) return iso.slice(0, 10);
-  return iso.replace(/\.\d{3}Z$/, 'Z');
+  return iso.replace(/\.000Z$/, 'Z');
+}
+
+/** A timestamp shape that older remember writers also used for fractional instants. */
+export function isLegacySecondCell(value: string | undefined): boolean {
+  return value !== undefined && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(value);
 }
 
 function formatConfidence(c: number): string {
