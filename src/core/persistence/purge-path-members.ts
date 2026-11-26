@@ -73,16 +73,15 @@ const { ours, beliefProbe, requestIndexes } = PURGE_OWNERS;
 const { nov25 } = PURGE_DUE;
 const served = (owner: string, ...members: Array<keyof BrainEngine & string>): PurgePathMember[] => members.map(member => ({ member, owner }));
 
-/** Retention-only raw sites: the carry's parks and the candidate selection of purgeDeletedPagesCoordinated. */
+/**
+ * Retention-only raw sites: the expiry of a brain without managed persistence (purgeExpired's unmanaged branch). The
+ * carry's parks, the owed-purge records and the managed candidate selection are typed members the Rust store serves
+ * (engine-sql/retention-purge.ts, listed below); these reads are not yet, so a retention purge on a Rust brain still
+ * stops here, before it writes anything.
+ */
 const RETENTION_STOPS: PurgePathSite[] = [
-  ['releaseStaleHolds (persistence/derived-origin-hold.ts)', 'the stale-hold release (op_checkpoints UPDATE)'],
-  ['readOwedPurges (persistence/derived-origin-hold.ts)', 'the owed-purge read'],
-  ['pruneOwedPurges (persistence/derived-origin-hold.ts)', 'the owed-purge prune'],
-  ['pruneDerivedOriginParks (persistence/derived-origin-hold.ts)', 'the park prune'],
-  ['<anonymous> (repair/origin-carry.ts)', 'expiringOrigins: the expired-origin read'],
-  ['selectPurgeCandidates (persistence/purge-deleted.ts)', 'the candidate selection'],
-  ['prunePurgeParks (persistence/purge-parks.ts)', 'the purge park prune'],
-  ['notePurgeSourceWriter (persistence/purge-parks.ts)', 'the source writer note'],
+  ['<anonymous> (persistence/purge-deleted.ts)', "purgeExpired's unmanaged expiry: the expired-page reads of its purge transaction (the `only` filter's and the recheck's)"],
+  ['readRederiveHeldConcepts (persistence/purge-deleted.ts)', 'the rebuild-held concept read of an automatic unmanaged purge'],
 ].map(([site, what]) => ({ site: site!, owner: ours, entry: 'retention' as const, stop: `${what} runs through raw SQL` }));
 
 /**
@@ -179,6 +178,14 @@ export const PURGE_PATH: readonly PurgePathEntry[] = [
     'claimCoalescedGitEffects', 'gitEffectStore',
     // the held concept read of the retention purge (persistence/concept-rebuild.ts): a typed member the Rust store serves since concept-rebuild-rust, no longer a raw-SQL stop
     'readHeldConceptRows',
+    // the retention purge's bookkeeping (engine-sql/retention-purge.ts), typed members the Rust store serves since lane 4
+    // retention-purge-rust: the stale-hold release, the owed-purge records and their prune, the park prunes, the failure
+    // records and the source writer note, the managed and released candidate reads, and the carry's expiring-origin read
+    'releaseStaleOriginParkHolds', 'listOwedPurgeRecords', 'pruneOwedPurgeRecords', 'pruneOriginParkRecords', 'prunePurgeParkRecords',
+    'recordPurgeFailureRecord', 'deletePurgeParkRecord', 'markPurgeParksInactive', 'dropRearmedPurgeParks', 'listReleasedPurgeOrigins',
+    'listManagedPurgeCandidates', 'listExpiringOriginPages',
+    // the unmanaged expiry's engine purge and its recorded-tombstone read
+    'purgeDeletedPages', 'listRecordedTombstones',
     // config and the background ticks that share the consumer
     'getConfig', 'getConfigValues', 'getAllConfig', 'setConfig', 'expireMemoryProposals', 'listAwaitingMemoryProposals', 'purgeMemoryProposals',
     'ensureDreamMapConfigRow', 'lockDreamMapConfigRow', 'writeDreamMapConfigRow',

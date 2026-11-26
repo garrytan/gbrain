@@ -56,6 +56,10 @@ import { SAVED_FACT_COLLAPSE_COLUMNS } from '../src/core/search/saved-fact-colla
 import { PINNED_QUESTION_MARKER } from '../src/core/questions/identity.ts';
 import { MAX_ANCHORED } from '../src/core/search/entity-anchor.ts';
 import { MARKDOWN_CHUNKER_VERSION } from '../src/core/chunkers/recursive.ts';
+import { identityDowngradePurgeHold } from '../src/core/sync-identity-downgrades.ts';
+import { atomRetirementPurgeHold } from '../src/core/persistence/atom-retirement-hold.ts';
+import { derivedRetirementPurgeHold } from '../src/core/persistence/derived-retirement-hold.ts';
+import { derivedOriginPurgeHold } from '../src/core/persistence/derived-origin-hold.ts';
 import { syncDeleteOrigin } from '../src/core/persistence/sync-delete-tombstones.ts';
 import { syncAdmissionEffectSql, syncAdmissionSettingSql } from '../src/core/persistence/sync-admission.ts';
 import { GIT_PUSH_CODES } from '../src/core/persistence/git-push-holds.ts';
@@ -4146,6 +4150,85 @@ const PINS: Pin[] = [
     case: { method: 'listTypedClaimFactsAtPages', variant: 'default', run: e => e.listTypedClaimFactsAtPages(['meetings/a'], ['people/a']) },
     texts: [`SELECT f.id, f.source_markdown_slug, f.source_id, f.entity_slug, f.claim_metric, f.claim_period, f.valid_from FROM facts f
      WHERE f.source_markdown_slug = ANY($1::text[]) AND f.entity_slug = ANY($2::text[]) AND f.claim_metric IS NOT NULL`],
+  },
+  // The retention purge's bookkeeping (engine-sql/retention-purge.ts), copied verbatim from its callers at 85ad984039 with
+  // the module constants spelled in (DELETED_US, OWED_TOMBSTONE, TOMBSTONE, LIVE_TOMBSTONE, the ops) and the hold
+  // predicates called as their callers spliced them.
+  {
+    from: 'src/core/persistence/derived-origin-hold.ts:64 releaseStaleHolds, at 85ad984039',
+    case: { method: 'releaseStaleOriginParkHolds', variant: 'default', run: e => e.releaseStaleOriginParkHolds('derived-origin-park') },
+    texts: [`UPDATE op_checkpoints o SET updated_at=now(), completed_keys=jsonb_build_array((o.completed_keys->0) - 'held_request_id' - 'held_deleted_us')
+    FROM pages p WHERE o.op=$1 AND o.fingerprint=p.id::text AND (o.completed_keys->0) ? 'held_deleted_us'
+      AND (p.deleted_at IS NULL OR floor(extract(epoch FROM p.deleted_at)*1000000)::bigint::text <> o.completed_keys->0->>'held_deleted_us')`],
+  },
+  {
+    from: 'src/core/persistence/derived-origin-hold.ts:72 readOwedPurges, at 85ad984039',
+    case: { method: 'listOwedPurgeRecords', variant: 'default', run: e => e.listOwedPurgeRecords('owed-page-purge') },
+    texts: [`SELECT o.completed_keys->0 AS owed FROM op_checkpoints o WHERE o.op=$1 AND EXISTS (SELECT 1 FROM pages p WHERE p.id::text = o.fingerprint AND p.deleted_at IS NOT NULL AND floor(extract(epoch FROM p.deleted_at)*1000000)::bigint::text = o.completed_keys->0->>'deleted_us')
+    ORDER BY o.fingerprint`],
+  },
+  {
+    from: 'src/core/persistence/derived-origin-hold.ts:79 pruneOwedPurges, at 85ad984039',
+    case: { method: 'pruneOwedPurgeRecords', variant: 'default', run: e => e.pruneOwedPurgeRecords('owed-page-purge') },
+    texts: [`DELETE FROM op_checkpoints o WHERE o.op=$1 AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.id::text = o.fingerprint AND p.deleted_at IS NOT NULL AND floor(extract(epoch FROM p.deleted_at)*1000000)::bigint::text = o.completed_keys->0->>'deleted_us')`],
+  },
+  {
+    from: 'src/core/persistence/derived-origin-hold.ts:97 pruneDerivedOriginParks, at 85ad984039',
+    case: { method: 'pruneOriginParkRecords', variant: 'default', run: e => e.pruneOriginParkRecords('derived-origin-park') },
+    texts: ['DELETE FROM op_checkpoints o WHERE o.op=$1 AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.id::text = o.fingerprint AND p.deleted_at IS NOT NULL)'],
+  },
+  {
+    from: 'src/core/persistence/purge-parks.ts:54 prunePurgeParks, at 85ad984039',
+    case: { method: 'prunePurgeParkRecords', variant: 'default', run: e => e.prunePurgeParkRecords('purge-deleted-park') },
+    texts: [`DELETE FROM op_checkpoints o WHERE o.op=$1 AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id=o.completed_keys->0->>'source_id' AND p.slug=o.completed_keys->0->>'slug'
+  AND p.deleted_at IS NOT NULL AND floor(extract(epoch FROM p.deleted_at)*1000000)::bigint::text=o.completed_keys->0->>'deleted_us')`],
+  },
+  {
+    from: 'src/core/persistence/purge-parks.ts:59 recordPurgeFailure, at 85ad984039',
+    case: { method: 'recordPurgeFailureRecord', variant: 'default', run: e => e.recordPurgeFailureRecord({ op: 'purge-deleted-park', key: '["default","a","1"]', first: '[{}]', code: null, reason: 'r', failedAt: '2026-11-26T00:00:00.000Z', version: '1' }) },
+    texts: [`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,$3::text::jsonb)
+    ON CONFLICT (op,fingerprint) DO UPDATE SET updated_at=now(), completed_keys=jsonb_build_array((op_checkpoints.completed_keys->0)
+      || jsonb_build_object('failures', COALESCE((op_checkpoints.completed_keys->0->>'failures')::int, 0) + 1, 'code', $4::text, 'reason', $5::text, 'failed_at', $6::text, 'version', $7::text))`],
+  },
+  {
+    from: 'src/core/persistence/purge-parks.ts:66 clearPurgePark, at 85ad984039',
+    case: { method: 'deletePurgeParkRecord', variant: 'default', run: e => e.deletePurgeParkRecord('purge-deleted-park', '["default","a","1"]') },
+    texts: ['DELETE FROM op_checkpoints WHERE op=$1 AND fingerprint=$2'],
+  },
+  {
+    from: 'src/core/persistence/purge-parks.ts:75 notePurgeSourceWriter (writer not active), at 85ad984039',
+    case: { method: 'markPurgeParksInactive', variant: 'default', run: e => e.markPurgeParksInactive('purge-deleted-park', 'default') },
+    texts: [`UPDATE op_checkpoints SET completed_keys=jsonb_build_array((completed_keys->0) || '{"inactive_seen":true}'::jsonb)
+      WHERE op=$1 AND completed_keys->0->>'source_id'=$2 AND completed_keys->0->>'inactive_seen' IS NULL`],
+  },
+  {
+    from: 'src/core/persistence/purge-parks.ts:79 notePurgeSourceWriter (writer active again), at 85ad984039',
+    case: { method: 'dropRearmedPurgeParks', variant: 'default', run: e => e.dropRearmedPurgeParks('purge-deleted-park', 'default') },
+    texts: [`DELETE FROM op_checkpoints WHERE op=$1 AND completed_keys->0->>'source_id'=$2
+    AND completed_keys->0->>'inactive_seen'='true' RETURNING 1`],
+  },
+  {
+    from: 'src/core/persistence/purge-deleted.ts:301 selectPurgeCandidates (released origins), at 85ad984039',
+    case: { method: 'listReleasedPurgeOrigins', variant: 'default', run: e => e.listReleasedPurgeOrigins([1], [2], '72') },
+    texts: () => [`SELECT p.slug, p.source_id, p.deleted_at FROM pages p
+      WHERE p.id = ANY($1::int[]) AND p.id <> ALL($2::int[]) AND p.deleted_at IS NOT NULL AND p.deleted_at < now() - ($3 || ' hours')::interval
+        AND ${identityDowngradePurgeHold('p')} AND ${atomRetirementPurgeHold('p')} AND ${derivedRetirementPurgeHold('p')}`],
+  },
+  {
+    from: 'src/core/persistence/purge-deleted.ts:315 selectPurgeCandidates (managed), at 85ad984039',
+    case: { method: 'listManagedPurgeCandidates', variant: 'default', run: e => e.listManagedPurgeCandidates('72', [1], [2]) },
+    // purgeHoldsSql('p', 's', '$2::int[]') at 85ad984039 (purge-deleted.ts:279), spelled in.
+    texts: () => [`SELECT p.id, p.source_id, p.slug, (now() - ($1 || ' hours')::interval)::text AS cutoff,
+      floor(extract(epoch FROM p.deleted_at)*1000000)::bigint::text AS deleted_us FROM pages p JOIN sources s ON s.id = p.source_id
+      WHERE p.deleted_at IS NOT NULL AND p.deleted_at < now() - ($1 || ' hours')::interval AND NOT s.archived AND ${identityDowngradePurgeHold('p')} AND ${atomRetirementPurgeHold('p')} AND ${derivedRetirementPurgeHold('p')} AND (${derivedOriginPurgeHold('p')} OR p.id = ANY($2::int[])) AND p.id <> ALL($3::int[])
+      ORDER BY p.deleted_at ASC, p.source_id COLLATE "C" ASC, p.slug COLLATE "C" ASC`],
+  },
+  {
+    from: 'src/core/repair/origin-carry.ts:196 expiringOrigins, at 85ad984039',
+    case: { method: 'listExpiringOriginPages', variant: 'default', run: e => e.listExpiringOriginPages('48') },
+    // originSql('p') at 85ad984039 (origin-carry.ts:43), spelled in; the caller sent it bounded (jit off, 120 s timeout).
+    texts: () => ["SELECT current_setting('jit') AS jit", 'BEGIN READ WRITE; SET LOCAL jit = off; SET LOCAL statement_timeout = 120000', `SELECT p.id, p.source_id, p.slug FROM pages p
+      WHERE p.deleted_at IS NOT NULL AND p.deleted_at < now() - ($1 || ' hours')::interval AND (p.type = 'atom' OR NOT ${privacyPartSql('p')}) ORDER BY p.id`, 'COMMIT'],
   },
 ];
 

@@ -504,6 +504,7 @@ test/engine-parity/request-tools-persist.test.ts
 test/engine-parity/resident-projection.test.ts
 test/engine-parity/resolve-reads.test.ts
 test/engine-parity/restriction-flag-reads.test.ts
+test/engine-parity/retention-purge.test.ts
 test/engine-parity/retrieval-coverage.test.ts
 test/engine-parity/retrieval-reflex.test.ts
 test/engine-parity/schema-detect.test.ts

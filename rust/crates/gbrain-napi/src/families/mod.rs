@@ -172,6 +172,7 @@ mod raw_files;
 mod relations;
 mod remote_links;
 mod repair_applies;
+mod retention_purge;
 mod salience;
 mod schema_detect;
 mod secret_store;
