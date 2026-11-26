@@ -195,6 +195,11 @@ pub struct CoalescedGitClaim {
     #[serde(default)]
     pub dead_owners: Vec<String>,
     pub owner_json: String,
+    /// The caller's host registration (lane L5). Each claimed effect records its lease name and epoch
+    /// (`CLAIM_EFFECT`, the effect id as decimal text), as the ordinary effect claim does, so `settle_effect` and the
+    /// Git effect writes finish it only under the same epoch.
+    #[serde(default)]
+    pub fence: Option<LeaseToken>,
 }
 
 /// `CLAIM_COALESCED_GIT_EFFECTS_SQL`: up to `limit` ready single-file Git effects of the worktree
@@ -632,7 +637,19 @@ impl Store {
 
     /// `claimCoalescedGitEffects(input)`: the claimed rows, in claim order.
     pub fn claim_coalesced_git_effects(&self, input: &CoalescedGitClaim) -> Result<Vec<Value>> {
-        self.write(|tx| claim_coalesced_git_effects_in(tx, &*self.env, input))
+        self.write(|tx| {
+            fence::begin(
+                self,
+                tx,
+                input.fence.as_ref(),
+                "claim_coalesced_git_effects",
+            )?;
+            let rows = claim_coalesced_git_effects_in(tx, &*self.env, input)?;
+            for id in rows.iter().filter_map(|row| row["id"].as_str()) {
+                fence::claim_taken(tx, CLAIM_EFFECT, id, input.fence.as_ref())?;
+            }
+            Ok(rows)
+        })
     }
 
     /// One settle statement (`renewEffectClaim`, `advanceEffectRow`, `completeEffectRow`, ...):

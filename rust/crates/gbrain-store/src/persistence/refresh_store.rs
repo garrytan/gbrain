@@ -13,6 +13,15 @@
 //! The unique index that allows one active refresh per worktree is checked at the insert, in the same transaction. No file
 //! lock, no process-wide mutex and no busy error is added.
 //!
+//! Fences (lane LM slice 3, I-5). A refresh row is a claim of the run that holds it, identified by the row id under the
+//! claim family `CLAIM_REFRESH`. Every write here runs `fence::begin` once in its own write transaction. The claim is
+//! taken when the row is created (`insert_draining`) or adopted by a new holder (`adopt_claim`, and `set_holder`, which
+//! makes the caller the holder): resume and recovery by a new holder take a NEW claim and overwrite the record, never
+//! borrow the old one. Every state mutation (`transition`, `replan`, `mark_merge_started`) checks the claim before it writes
+//! (`lease_lost` / `claim_epoch_mismatch` otherwise, nothing written), the terminal states end it, and `hold_for_import`,
+//! which releases a request's write claim, checks and ends that claim (`CLAIM_WRITE`). A call with no fence on a store that
+//! is not multi-user does none of this and writes no `~L` key.
+//!
 //! Triggers. `gbrain_release_refresh_barrier` stamps `released_at` when a refresh first reaches `completed` or `aborted`;
 //! `transition` does the same.
 
@@ -29,8 +38,10 @@ use super::worktrees::read_worktree_record;
 use super::{all_requests, extra_is_null, json_text, request_by_id, sync_kind};
 use crate::env::{Env, iso, parse_iso};
 use crate::error::{CONSTRAINT_VIOLATION, Result, StoreError};
+use crate::fence;
 use crate::journal::{RequestRecord, write_request};
 use crate::kv::{KvRead, KvWrite};
+use crate::leases::{CLAIM_REFRESH, CLAIM_WRITE, LeaseToken};
 use crate::sources::{read_source, source_key};
 use crate::{Store, put_json};
 use serde::Deserialize;
@@ -122,11 +133,15 @@ pub enum RefreshWrite {
         to: String,
         outcome: Value,
         terminal: bool,
+        #[serde(default)]
+        fence: Option<LeaseToken>,
     },
     Replan {
         id: String,
         old_head: String,
         target_head: String,
+        #[serde(default)]
+        fence: Option<LeaseToken>,
     },
     InsertDraining {
         worktree_id: String,
@@ -139,14 +154,27 @@ pub enum RefreshWrite {
         upstream_ref: String,
         preserved: Vec<String>,
         outcome: Value,
+        #[serde(default)]
+        fence: Option<LeaseToken>,
     },
     MarkMergeStarted {
         id: String,
         at_ms: f64,
+        #[serde(default)]
+        fence: Option<LeaseToken>,
     },
     SetHolder {
         id: String,
         holder: Value,
+        #[serde(default)]
+        fence: Option<LeaseToken>,
+    },
+    /// The explicit adoption of an active refresh row by a new holder (resume or recovery): takes a new claim of the
+    /// row under the fence, overwriting the record. Rust only (no statement); `true` when the row is active.
+    AdoptClaim {
+        id: String,
+        #[serde(default)]
+        fence: Option<LeaseToken>,
     },
     RecordMergedUpstream {
         source_ids: Vec<String>,
@@ -156,7 +184,25 @@ pub enum RefreshWrite {
         id: String,
         token: String,
         import_from: String,
+        #[serde(default)]
+        fence: Option<LeaseToken>,
     },
+}
+
+/// The fence a refresh write carries and the name `fence::begin` reports; `None` for the one write that holds no claim.
+fn write_fence(what: &RefreshWrite) -> Option<(&'static str, Option<&LeaseToken>)> {
+    Some(match what {
+        RefreshWrite::Transition { fence, .. } => ("refresh_transition", fence.as_ref()),
+        RefreshWrite::Replan { fence, .. } => ("refresh_replan", fence.as_ref()),
+        RefreshWrite::InsertDraining { fence, .. } => ("refresh_insert_draining", fence.as_ref()),
+        RefreshWrite::MarkMergeStarted { fence, .. } => {
+            ("refresh_mark_merge_started", fence.as_ref())
+        }
+        RefreshWrite::SetHolder { fence, .. } => ("refresh_set_holder", fence.as_ref()),
+        RefreshWrite::AdoptClaim { fence, .. } => ("refresh_adopt_claim", fence.as_ref()),
+        RefreshWrite::HoldForImport { fence, .. } => ("refresh_hold_for_import", fence.as_ref()),
+        RefreshWrite::RecordMergedUpstream { .. } => return None,
+    })
 }
 
 fn same(a: &str, b: &str) -> bool {
@@ -532,12 +578,21 @@ pub(crate) fn refresh_rows_in(
     }
 }
 
+/// The row's claim is held under `fence` (a row no write would change has no claim to check).
+fn refresh_held(tx: &mut dyn KvWrite, r: &RefreshRecord, fence: Option<&LeaseToken>) -> Result<()> {
+    fence::claim_held(tx, CLAIM_REFRESH, &r.id.to_lowercase(), fence)
+}
+
 pub(crate) fn refresh_write_in(
+    store: &Store,
     tx: &mut dyn KvWrite,
-    env: &dyn Env,
     what: &RefreshWrite,
 ) -> Result<Value> {
+    let env = &*store.env;
     let now = env.now_micros();
+    if let Some((name, fence)) = write_fence(what) {
+        fence::begin(store, tx, fence, name)?;
+    }
     match what {
         RefreshWrite::Transition {
             id,
@@ -545,6 +600,7 @@ pub(crate) fn refresh_write_in(
             to,
             outcome,
             terminal,
+            fence,
         } => {
             let Some(mut r) = read_refresh(&*tx, &pg_uuid(id)?)? else {
                 return Ok(json!(false));
@@ -552,6 +608,7 @@ pub(crate) fn refresh_write_in(
             if !from.iter().any(|state| state == &r.state) {
                 return Ok(json!(false));
             }
+            refresh_held(tx, &r, fence.as_ref())?;
             // `gbrain_release_refresh_barrier`: the first move into a terminal state releases the barrier.
             if is_terminal(to) && !is_terminal(&r.state) && r.released_at_us.is_none() {
                 r.released_at_us = Some(now);
@@ -563,12 +620,22 @@ pub(crate) fn refresh_write_in(
                 r.completed_at_us = Some(now);
             }
             put_refresh(tx, &r)?;
+            if is_terminal(&r.state) {
+                fence::claim_ended(
+                    store,
+                    tx,
+                    CLAIM_REFRESH,
+                    &r.id.to_lowercase(),
+                    fence.as_ref(),
+                )?;
+            }
             Ok(json!(true))
         }
         RefreshWrite::Replan {
             id,
             old_head,
             target_head,
+            fence,
         } => {
             let Some(mut r) = read_refresh(&*tx, &pg_uuid(id)?)? else {
                 return Ok(Value::Null);
@@ -580,6 +647,7 @@ pub(crate) fn refresh_write_in(
             if r.state != "fenced" || started.as_deref() == Some("true") {
                 return Ok(Value::Null);
             }
+            refresh_held(tx, &r, fence.as_ref())?;
             r.extra.insert("old_head".into(), json!(old_head));
             r.target_head = target_head.clone();
             r.updated_at_us = now;
@@ -597,6 +665,7 @@ pub(crate) fn refresh_write_in(
             upstream_ref,
             preserved,
             outcome,
+            fence,
         } => {
             let w = pg_uuid(worktree_id)?;
             if read_worktree_row(&*tx, &w)?.is_none() {
@@ -640,15 +709,17 @@ pub(crate) fn refresh_write_in(
                 extra,
             };
             put_refresh(tx, &record)?;
+            fence::claim_taken(tx, CLAIM_REFRESH, &record.id.to_lowercase(), fence.as_ref())?;
             Ok(refresh_row(&record))
         }
-        RefreshWrite::MarkMergeStarted { id, at_ms } => {
+        RefreshWrite::MarkMergeStarted { id, at_ms, fence } => {
             let Some(mut r) = read_refresh(&*tx, &pg_uuid(id)?)? else {
                 return Ok(json!(false));
             };
             if r.state != "fenced" {
                 return Ok(json!(false));
             }
+            refresh_held(tx, &r, fence.as_ref())?;
             r.outcome.insert("merge_started".into(), json!(true));
             r.outcome
                 .insert("merge_started_at".into(), json!(*at_ms as i64));
@@ -656,13 +727,25 @@ pub(crate) fn refresh_write_in(
             put_refresh(tx, &r)?;
             Ok(json!(true))
         }
-        RefreshWrite::SetHolder { id, holder } => {
+        RefreshWrite::AdoptClaim { id, fence } => {
+            let Some(r) = read_refresh(&*tx, &pg_uuid(id)?)? else {
+                return Ok(json!(false));
+            };
+            if !active(&r) {
+                return Ok(json!(false));
+            }
+            fence::claim_taken(tx, CLAIM_REFRESH, &r.id.to_lowercase(), fence.as_ref())?;
+            Ok(json!(true))
+        }
+        RefreshWrite::SetHolder { id, holder, fence } => {
             let Some(mut r) = read_refresh(&*tx, &pg_uuid(id)?)? else {
                 return Ok(Value::Null);
             };
             if !active(&r) {
                 return Ok(Value::Null);
             }
+            // The caller becomes the holder: a new claim of the row, never the old holder's.
+            fence::claim_taken(tx, CLAIM_REFRESH, &r.id.to_lowercase(), fence.as_ref())?;
             let previous = r
                 .outcome
                 .get("previous_holder")
@@ -693,6 +776,7 @@ pub(crate) fn refresh_write_in(
             id,
             token,
             import_from,
+            fence,
         } => {
             let rid = pg_uuid(id)?;
             let Some(mut r) = request_by_id(&*tx, &rid)? else {
@@ -711,6 +795,7 @@ pub(crate) fn refresh_write_in(
             if !token_matches || r.state != "running" || !extra_is_null(&r, "recovery") || started {
                 return Ok(Value::Null);
             }
+            fence::claim_held(tx, CLAIM_WRITE, &r.id.to_lowercase(), fence.as_ref())?;
             r.state = "deferred".into();
             r.blocked_reason = None;
             r.updated_at_us = now;
@@ -725,6 +810,8 @@ pub(crate) fn refresh_write_in(
                 r.extra.insert(column.into(), Value::Null);
             }
             write_request(tx, &r)?;
+            // The claim is released with the move to `deferred`.
+            fence::claim_ended(store, tx, CLAIM_WRITE, &r.id.to_lowercase(), fence.as_ref())?;
             Ok(r.to_row())
         }
     }
@@ -738,7 +825,7 @@ impl Store {
 
     /// One `refreshStore()` write (`RefreshWrite`); its result as JSON.
     pub fn refresh_write(&self, what: &RefreshWrite) -> Result<Value> {
-        self.write(|tx| refresh_write_in(tx, &*self.env, what))
+        self.write(|tx| refresh_write_in(self, tx, what))
     }
 }
 
@@ -774,6 +861,7 @@ mod tests {
             upstream_ref: "origin/main".into(),
             preserved: vec![],
             outcome: json!({ "holder": { "pid": 1 } }),
+            fence: None,
         })
         .unwrap()
     }
@@ -785,6 +873,7 @@ mod tests {
             to: to.into(),
             outcome: json!({}),
             terminal,
+            fence: None,
         })
         .unwrap()
         .as_bool()
@@ -845,6 +934,7 @@ mod tests {
                 upstream_ref: "o".into(),
                 preserved: vec![],
                 outcome: json!({}),
+                fence: None,
             })
             .unwrap_err();
         assert_eq!(err.code, CONSTRAINT_VIOLATION);
@@ -859,6 +949,7 @@ mod tests {
                 id: id.clone(),
                 old_head: "ccc".into(),
                 target_head: "ddd".into(),
+                fence: None,
             })
             .unwrap()
         };
@@ -867,7 +958,8 @@ mod tests {
         assert!(
             s.refresh_write(&RefreshWrite::MarkMergeStarted {
                 id: id.clone(),
-                at_ms: 5.0
+                at_ms: 5.0,
+                fence: None,
             })
             .unwrap()
             .as_bool()

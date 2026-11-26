@@ -34,6 +34,12 @@ impl Clock {
     }
 }
 
+impl Clock {
+    pub(super) fn advance_ms(&self, ms: i64) {
+        self.now.fetch_add(ms * 1000, Ordering::SeqCst);
+    }
+}
+
 impl Env for Clock {
     fn now_micros(&self) -> i64 {
         self.now.load(Ordering::SeqCst)
@@ -54,15 +60,22 @@ pub(super) fn origin(host: &str) -> WriteOrigin {
 
 /// A store on an in-memory file; `multiuser` as the brain was opened.
 pub(super) fn open(multiuser: bool) -> Store {
-    Store::open_kv(
+    open_with_clock(multiuser).0
+}
+
+/// `open`, with the clock the test moves by hand.
+pub(super) fn open_with_clock(multiuser: bool) -> (Store, Arc<Clock>) {
+    let clock = Clock::new();
+    let store = Store::open_kv(
         mem_kv(),
-        Clock::new(),
+        clock.clone(),
         OpenOptions {
             multiuser,
             ..OpenOptions::default()
         },
     )
-    .unwrap()
+    .unwrap();
+    (store, clock)
 }
 
 /// The consumer registration of host `host`: its lease token.
@@ -125,7 +138,6 @@ pub(super) fn lease_keys(s: &Store) -> usize {
     .unwrap();
     n
 }
-
 
 pub(super) fn request_id(n: u8) -> String {
     format!("b0000000-0000-4000-8000-0000000000{n:02x}")
@@ -595,6 +607,970 @@ mod group {
                 "committed"
             );
         }
+        assert_eq!(lease_keys(&s), 0, "no ~L key without a fence");
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Coalesced Git effects.
+
+mod effect {
+    use super::*;
+    use crate::persistence::effects::all_effects;
+    use crate::persistence::worktree_rows::rows::put_worktree;
+    use crate::persistence::{
+        CoalescedGitClaim, EffectSettle, GitEffectWrite, PublicationEffectsSpec, Settle,
+    };
+
+    const WT: &str = "f0000000-0000-4000-8000-0000000000a1";
+    const HOST: &str = "a0000000-0000-4000-8000-0000000000a1";
+
+    /// A store with a worktree owned by HOST and `n` queued single-file Git effects (one request each).
+    fn setup(multiuser: bool, n: u8) -> (Store, Arc<Clock>) {
+        let (s, clock) = open_with_clock(multiuser);
+        s.write(|tx| put_worktree(tx, WT, Some(HOST), "active"))
+            .unwrap();
+        let incarnation =
+            s.read_source_membership("default").unwrap().unwrap()["incarnation"].clone();
+        for i in 1..=n {
+            let input: WriteRequestInsert = serde_json::from_value(json!({
+                "principalKind": "local_cli", "principalId": "p1", "requestId": request_id(i),
+                "operation": "put_page", "sourceId": "default", "sourceIncarnation": incarnation, "slug": format!("notes/n{i}"),
+                "digest": "d", "intent": { "kind": "put_page" }, "authority": {}, "intentBytes": 1, "terminalReservation": 4096,
+                "targetKind": "page", "protocolVersion": 1, "admitterVersion": "v", "counterKeys": [], "state": "committed",
+                "worktreeId": WT,
+            }))
+            .unwrap();
+            let row_id = s.insert_write_request(&input).unwrap()["id"]
+                .as_str()
+                .unwrap()
+                .to_owned();
+            let spec: PublicationEffectsSpec =
+                serde_json::from_value(json!({ "requestId": row_id, "revision": null,
+                "sourceId": "default", "sourceIncarnation": incarnation, "worktreeId": WT,
+                "effects": [{ "kind": "git", "data": { "relative_path": format!("n{i}.md") } }] }))
+                .unwrap();
+            s.insert_publication_effects(&spec).unwrap();
+        }
+        (s, clock)
+    }
+
+    fn input(fence: Option<&LeaseToken>) -> CoalescedGitClaim {
+        serde_json::from_value(json!({ "hostId": HOST, "worktreeId": WT, "limit": 10,
+            "ownerJson": json!({ "pid": 1 }).to_string(), "fence": fence }))
+        .unwrap()
+    }
+
+    /// The claimed effects: id and execution token.
+    fn claim(s: &Store, fence: Option<&LeaseToken>) -> Vec<(String, String)> {
+        s.claim_coalesced_git_effects(&input(fence))
+            .unwrap()
+            .iter()
+            .map(|r| {
+                (
+                    r["id"].as_str().unwrap().to_owned(),
+                    r["execution_token"].as_str().unwrap().to_owned(),
+                )
+            })
+            .collect()
+    }
+
+    fn refs(held: &[(String, String)]) -> Vec<Value> {
+        held.iter()
+            .map(|(id, token)| json!({ "id": id, "token": token }))
+            .collect()
+    }
+
+    fn write(kind: &str, held: &[(String, String)], fence: Option<&LeaseToken>) -> GitEffectWrite {
+        let mut body = json!({ "kind": kind, "claims": refs(held), "fence": fence });
+        if kind == "yield_to_publications" {
+            body["delayMs"] = json!(1000.0);
+        } else {
+            body["outcomeJson"] = json!("{\"ok\":true}");
+        }
+        serde_json::from_value(body).unwrap()
+    }
+
+    fn settle(id: &str, token: &str, fence: Option<&LeaseToken>) -> EffectSettle {
+        serde_json::from_value(
+            json!({ "id": id, "token": token, "outcomeJson": "{}", "fence": fence }),
+        )
+        .unwrap()
+    }
+
+    fn snapshot(s: &Store) -> (Value, usize) {
+        (
+            json!(
+                all_effects(&*s.read().unwrap())
+                    .unwrap()
+                    .iter()
+                    .map(|e| e.to_row())
+                    .collect::<Vec<_>>()
+            ),
+            epoch_records(s),
+        )
+    }
+
+    #[test]
+    fn a_coalesced_claim_records_its_epoch_and_settles_only_under_it() {
+        let (s, _) = setup(true, 3);
+        let a = register(&s, "a");
+        let held = claim(&s, Some(&a));
+        assert_eq!(held.len(), 3);
+        assert_eq!(
+            epoch_records(&s),
+            3,
+            "one CLAIM_EFFECT record per claimed effect"
+        );
+        for (id, token) in &held {
+            assert!(
+                s.settle_effect(Settle::Renew, &settle(id, token, Some(&a)))
+                    .unwrap()
+            );
+        }
+        for (id, token) in &held {
+            assert!(
+                s.settle_effect(Settle::Complete, &settle(id, token, Some(&a)))
+                    .unwrap()
+            );
+        }
+        assert_eq!(epoch_records(&s), 0, "a settled claim clears its record");
+    }
+
+    #[test]
+    fn the_git_group_yield_and_plain_outcome_run_under_the_claim_epoch_and_end_it() {
+        let (s, _) = setup(true, 4);
+        let a = register(&s, "a");
+        let held = claim(&s, Some(&a));
+        assert_eq!(held.len(), 4);
+        s.git_effect_write(&write("yield_to_publications", &held[..2], Some(&a)))
+            .unwrap();
+        assert_eq!(epoch_records(&s), 2, "the yielded claims ended");
+        s.git_effect_write(&write("record_plain_outcome", &held[2..], Some(&a)))
+            .unwrap();
+        assert_eq!(epoch_records(&s), 0);
+        let states: Vec<String> = all_effects(&*s.read().unwrap())
+            .unwrap()
+            .iter()
+            .map(|e| e.state.clone())
+            .collect();
+        assert_eq!(states, ["queued", "queued", "committed", "committed"]);
+    }
+
+    #[test]
+    fn a_stale_fence_refuses_the_claim_the_settle_and_the_git_writes_and_changes_nothing() {
+        let (s, _) = setup(true, 3);
+        let a = register(&s, "a");
+        let held = claim(&s, Some(&a));
+        let stale = a.clone();
+        take_over(&s, &a);
+        let before = snapshot(&s);
+        let e = s
+            .claim_coalesced_git_effects(&input(Some(&stale)))
+            .unwrap_err();
+        assert_eq!(reason(&e), "epoch_moved");
+        for action in [Settle::Renew, Settle::Complete, Settle::Retry, Settle::Fail] {
+            let e = s
+                .settle_effect(action, &settle(&held[0].0, &held[0].1, Some(&stale)))
+                .unwrap_err();
+            assert_eq!(reason(&e), "epoch_moved", "{action:?}");
+        }
+        for kind in ["yield_to_publications", "record_plain_outcome"] {
+            let e = s
+                .git_effect_write(&write(kind, &held, Some(&stale)))
+                .unwrap_err();
+            assert_eq!(reason(&e), "epoch_moved", "{kind}");
+        }
+        assert_eq!(snapshot(&s), before);
+    }
+
+    #[test]
+    fn a_replacement_epoch_of_the_same_host_cannot_settle_or_release_the_old_claim() {
+        let (s, _) = setup(true, 3);
+        let a1 = register(&s, "a");
+        let held = claim(&s, Some(&a1));
+        let a2 = register_again(&s, &a1);
+        let before = snapshot(&s);
+        let e = s
+            .settle_effect(Settle::Complete, &settle(&held[0].0, &held[0].1, Some(&a2)))
+            .unwrap_err();
+        assert_eq!(reason(&e), "claim_epoch_mismatch");
+        for kind in ["yield_to_publications", "record_plain_outcome"] {
+            let e = s
+                .git_effect_write(&write(kind, &held, Some(&a2)))
+                .unwrap_err();
+            assert_eq!(reason(&e), "claim_epoch_mismatch", "{kind}");
+        }
+        assert_eq!(snapshot(&s), before);
+    }
+
+    #[test]
+    fn a_later_claim_that_refuses_rolls_back_every_earlier_effect() {
+        let (s, _) = setup(true, 3);
+        let a = register(&s, "a");
+        let held = claim(&s, Some(&a));
+        let other = register(&s, "other");
+        s.write(|tx| {
+            crate::leases::record_claim_epoch(tx, crate::leases::CLAIM_EFFECT, &held[2].0, &other)
+        })
+        .unwrap();
+        let before = snapshot(&s);
+        for kind in ["yield_to_publications", "record_plain_outcome"] {
+            let e = s
+                .git_effect_write(&write(kind, &held, Some(&a)))
+                .unwrap_err();
+            assert_eq!(reason(&e), "claim_epoch_mismatch", "{kind}");
+            assert_eq!(snapshot(&s), before, "{kind}: the earlier effects stayed");
+        }
+    }
+
+    #[test]
+    fn a_reclaim_after_expiry_takes_a_new_claim_and_the_old_holder_cannot_settle_it() {
+        let (s, clock) = setup(true, 2);
+        let a = register(&s, "a");
+        let old = claim(&s, Some(&a));
+        assert_eq!(old.len(), 2);
+        clock.advance_ms(3 * 60 * 1000);
+        let c = register(&s, "c");
+        let fresh = claim(&s, Some(&c));
+        assert_eq!(fresh.len(), 2, "the expired claims were reclaimed");
+        let before = snapshot(&s);
+        // The old execution token no longer holds: nothing settles.
+        assert!(
+            !s.settle_effect(Settle::Complete, &settle(&old[0].0, &old[0].1, Some(&c)))
+                .unwrap()
+        );
+        assert_eq!(snapshot(&s), before);
+        // The new claim carries the new epoch; the old fence with the new token refuses.
+        let e = s
+            .settle_effect(
+                Settle::Complete,
+                &settle(&fresh[0].0, &fresh[0].1, Some(&a)),
+            )
+            .unwrap_err();
+        assert!(matches!(
+            reason(&e).as_str(),
+            "claim_epoch_mismatch" | "epoch_moved" | "expired"
+        ));
+        assert!(
+            s.settle_effect(
+                Settle::Complete,
+                &settle(&fresh[0].0, &fresh[0].1, Some(&c))
+            )
+            .unwrap()
+        );
+    }
+
+    #[test]
+    fn a_call_with_no_fence_on_a_multiuser_store_refuses_before_anything_is_written() {
+        let (s, _) = setup(true, 2);
+        let a = register(&s, "a");
+        let held = claim(&s, Some(&a));
+        let before = snapshot(&s);
+        assert_eq!(
+            reason(&s.claim_coalesced_git_effects(&input(None)).unwrap_err()),
+            "fence_missing"
+        );
+        for kind in ["yield_to_publications", "record_plain_outcome"] {
+            let e = s.git_effect_write(&write(kind, &held, None)).unwrap_err();
+            assert_eq!(reason(&e), "fence_missing", "{kind}");
+        }
+        assert_eq!(snapshot(&s), before);
+    }
+
+    #[test]
+    fn with_multiuser_off_and_no_fence_the_calls_are_what_they_were_and_write_no_lease_key() {
+        let (s, _) = setup(false, 3);
+        let held = claim(&s, None);
+        assert_eq!(held.len(), 3);
+        s.git_effect_write(&write("yield_to_publications", &held[..1], None))
+            .unwrap();
+        s.git_effect_write(&write("record_plain_outcome", &held[1..2], None))
+            .unwrap();
+        assert!(
+            s.settle_effect(Settle::Complete, &settle(&held[2].0, &held[2].1, None))
+                .unwrap()
+        );
+        assert_eq!(lease_keys(&s), 0, "no ~L key without a fence");
+    }
+
+    #[test]
+    fn the_bound_transaction_route_runs_the_guards() {
+        let (s, _) = setup(true, 2);
+        let a = register(&s, "a");
+        let tx = s.begin_transaction(false).unwrap();
+        let held = claim(&tx, Some(&a));
+        assert_eq!(held.len(), 2);
+        assert_eq!(epoch_records(&tx), 2);
+        tx.git_effect_write(&write("record_plain_outcome", &held, Some(&a)))
+            .unwrap();
+        tx.commit_transaction().unwrap();
+        assert_eq!(epoch_records(&s), 0);
+        // A stale or missing fence refuses inside a transaction, which rolls back unchanged.
+        let (s, _) = setup(true, 2);
+        let a = register(&s, "a");
+        let stale = a.clone();
+        take_over(&s, &a);
+        let before = snapshot(&s);
+        let tx = s.begin_transaction(false).unwrap();
+        assert_eq!(
+            reason(
+                &tx.claim_coalesced_git_effects(&input(Some(&stale)))
+                    .unwrap_err()
+            ),
+            "epoch_moved"
+        );
+        assert_eq!(
+            reason(&tx.claim_coalesced_git_effects(&input(None)).unwrap_err()),
+            "fence_missing"
+        );
+        tx.rollback_transaction().unwrap();
+        assert_eq!(snapshot(&s), before);
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Refresh rows.
+
+mod refresh {
+    use super::*;
+    use crate::persistence::worktree_rows::rows::put_worktree;
+    use crate::persistence::{ClaimStamp, RefreshRead, RefreshWrite};
+
+    const WT: &str = "d0000000-0000-4000-8000-0000000000d1";
+    const HOST: &str = "a0000000-0000-4000-8000-0000000000a1";
+    const PRINCIPAL: &str = "b0000000-0000-4000-8000-0000000000b1";
+
+    fn setup(multiuser: bool) -> Store {
+        let s = open(multiuser);
+        s.write(|tx| put_worktree(tx, WT, Some(HOST), "active"))
+            .unwrap();
+        s
+    }
+
+    fn write(kind: &str, mut body: Value, fence: Option<&LeaseToken>) -> RefreshWrite {
+        body["kind"] = json!(kind);
+        body["fence"] = json!(fence);
+        serde_json::from_value(body).unwrap()
+    }
+
+    fn insert(fence: Option<&LeaseToken>) -> RefreshWrite {
+        write(
+            "insert_draining",
+            json!({ "worktreeId": WT, "sourceIds": ["default"], "principalId": PRINCIPAL, "ownerEpoch": "1",
+                "topologyGeneration": "1", "oldHead": "aaa", "targetHead": "bbb", "upstreamRef": "origin/main",
+                "preserved": [], "outcome": { "holder": { "pid": 1 } } }),
+            fence,
+        )
+    }
+
+    fn start(s: &Store, fence: Option<&LeaseToken>) -> String {
+        s.refresh_write(&insert(fence)).unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    }
+
+    fn transition(id: &str, from: &[&str], to: &str, fence: Option<&LeaseToken>) -> RefreshWrite {
+        let terminal = matches!(to, "completed" | "aborted");
+        write(
+            "transition",
+            json!({ "id": id, "from": from, "to": to, "outcome": {}, "terminal": terminal }),
+            fence,
+        )
+    }
+
+    fn row(s: &Store, id: &str) -> Value {
+        s.refresh_rows(&RefreshRead::Row { id: id.into() }).unwrap()
+    }
+
+    fn snapshot(s: &Store, id: &str) -> (Value, usize) {
+        (row(s, id), epoch_records(s))
+    }
+
+    fn state(s: &Store, id: &str) -> String {
+        row(s, id)["state"].as_str().unwrap().to_owned()
+    }
+
+    /// The mutations a fenced holder makes on a `fenced` row, as calls.
+    fn mutations(id: &str, fence: Option<&LeaseToken>) -> Vec<RefreshWrite> {
+        vec![
+            transition(id, &["fenced"], "merged", fence),
+            write(
+                "replan",
+                json!({ "id": id, "oldHead": "ccc", "targetHead": "ddd" }),
+                fence,
+            ),
+            write(
+                "mark_merge_started",
+                json!({ "id": id, "atMs": 5.0 }),
+                fence,
+            ),
+        ]
+    }
+
+    #[test]
+    fn a_refresh_is_claimed_at_insert_checked_on_every_move_and_ended_at_the_terminal_state() {
+        let s = setup(true);
+        let a = register(&s, "a");
+        let id = start(&s, Some(&a));
+        assert_eq!(epoch_records(&s), 1, "one CLAIM_REFRESH record: the row id");
+        assert_eq!(
+            s.refresh_write(&transition(&id, &["draining"], "fenced", Some(&a)))
+                .unwrap(),
+            json!(true)
+        );
+        assert_eq!(
+            s.refresh_write(&write(
+                "replan",
+                json!({ "id": id, "oldHead": "ccc", "targetHead": "ddd" }),
+                Some(&a)
+            ))
+            .unwrap()["target_head"],
+            "ddd"
+        );
+        assert_eq!(
+            s.refresh_write(&write(
+                "mark_merge_started",
+                json!({ "id": id, "atMs": 5.0 }),
+                Some(&a)
+            ))
+            .unwrap(),
+            json!(true)
+        );
+        for (from, to) in [("fenced", "merged"), ("merged", "syncing")] {
+            assert_eq!(
+                s.refresh_write(&transition(&id, &[from], to, Some(&a)))
+                    .unwrap(),
+                json!(true)
+            );
+            assert_eq!(
+                epoch_records(&s),
+                1,
+                "the claim stays while the row is active"
+            );
+        }
+        s.refresh_write(&write(
+            "set_holder",
+            json!({ "id": id, "holder": { "pid": 2 } }),
+            Some(&a),
+        ))
+        .unwrap();
+        assert_eq!(
+            s.refresh_write(&transition(&id, &["syncing"], "completed", Some(&a)))
+                .unwrap(),
+            json!(true)
+        );
+        assert_eq!(state(&s, &id), "completed");
+        assert_eq!(epoch_records(&s), 0, "a terminal state ends the claim");
+    }
+
+    #[test]
+    fn a_stale_fence_refuses_every_refresh_write_and_changes_nothing() {
+        let s = setup(true);
+        let a = register(&s, "a");
+        let id = start(&s, Some(&a));
+        s.refresh_write(&transition(&id, &["draining"], "fenced", Some(&a)))
+            .unwrap();
+        let stale = a.clone();
+        take_over(&s, &a);
+        let before = snapshot(&s, &id);
+        let mut calls = mutations(&id, Some(&stale));
+        calls.push(write(
+            "set_holder",
+            json!({ "id": id, "holder": { "pid": 2 } }),
+            Some(&stale),
+        ));
+        calls.push(write("adopt_claim", json!({ "id": id }), Some(&stale)));
+        calls.push(insert(Some(&stale)));
+        for call in &calls {
+            let e = s.refresh_write(call).unwrap_err();
+            assert_eq!(reason(&e), "epoch_moved", "{call:?}");
+            assert_eq!(snapshot(&s, &id), before, "{call:?} changed something");
+        }
+    }
+
+    #[test]
+    fn a_replacement_epoch_cannot_move_the_old_row_until_it_adopts_it() {
+        let s = setup(true);
+        let a1 = register(&s, "a");
+        let id = start(&s, Some(&a1));
+        s.refresh_write(&transition(&id, &["draining"], "fenced", Some(&a1)))
+            .unwrap();
+        let a2 = register_again(&s, &a1);
+        let before = snapshot(&s, &id);
+        for call in mutations(&id, Some(&a2)) {
+            let e = s.refresh_write(&call).unwrap_err();
+            assert_eq!(reason(&e), "claim_epoch_mismatch", "{call:?}");
+            assert_eq!(snapshot(&s, &id), before, "{call:?} changed something");
+        }
+        // Explicit adoption takes a new claim; the move then goes through.
+        assert_eq!(
+            s.refresh_write(&write("adopt_claim", json!({ "id": id }), Some(&a2)))
+                .unwrap(),
+            json!(true)
+        );
+        assert_eq!(
+            s.refresh_write(&transition(&id, &["fenced"], "merged", Some(&a2)))
+                .unwrap(),
+            json!(true)
+        );
+    }
+
+    #[test]
+    fn a_new_holder_adopts_the_row_and_the_old_live_holder_is_then_refused() {
+        let s = setup(true);
+        let a = register(&s, "a");
+        let c = register(&s, "c");
+        let id = start(&s, Some(&a));
+        // Adoption by set_holder (the caller becomes the holder).
+        s.refresh_write(&write(
+            "set_holder",
+            json!({ "id": id, "holder": { "pid": 9 } }),
+            Some(&c),
+        ))
+        .unwrap();
+        assert_eq!(
+            epoch_records(&s),
+            1,
+            "the record was overwritten, not added"
+        );
+        let before = snapshot(&s, &id);
+        let e = s
+            .refresh_write(&transition(&id, &["draining"], "fenced", Some(&a)))
+            .unwrap_err();
+        assert_eq!(reason(&e), "claim_epoch_mismatch");
+        assert_eq!(snapshot(&s, &id), before);
+        assert_eq!(
+            s.refresh_write(&transition(&id, &["draining"], "fenced", Some(&c)))
+                .unwrap(),
+            json!(true)
+        );
+        // Adoption by adopt_claim, then abandonment ends the claim.
+        let d = register(&s, "d");
+        assert_eq!(
+            s.refresh_write(&write("adopt_claim", json!({ "id": id }), Some(&d)))
+                .unwrap(),
+            json!(true)
+        );
+        s.refresh_write(&transition(&id, &["fenced"], "aborted", Some(&d)))
+            .unwrap();
+        assert_eq!(epoch_records(&s), 0);
+        // A finished row is adopted by nobody.
+        assert_eq!(
+            s.refresh_write(&write("adopt_claim", json!({ "id": id }), Some(&d)))
+                .unwrap(),
+            json!(false)
+        );
+        assert_eq!(epoch_records(&s), 0);
+    }
+
+    #[test]
+    fn a_call_with_no_fence_on_a_multiuser_store_refuses_before_anything_is_written() {
+        let s = setup(true);
+        let a = register(&s, "a");
+        let id = start(&s, Some(&a));
+        s.refresh_write(&transition(&id, &["draining"], "fenced", Some(&a)))
+            .unwrap();
+        let before = snapshot(&s, &id);
+        let mut calls = mutations(&id, None);
+        calls.push(write(
+            "set_holder",
+            json!({ "id": id, "holder": { "pid": 2 } }),
+            None,
+        ));
+        calls.push(write("adopt_claim", json!({ "id": id }), None));
+        calls.push(insert(None));
+        calls.push(write(
+            "hold_for_import",
+            json!({ "id": request_id(1), "token": "t", "importFrom": "x" }),
+            None,
+        ));
+        for call in &calls {
+            let e = s.refresh_write(call).unwrap_err();
+            assert_eq!(reason(&e), "fence_missing", "{call:?}");
+            assert_eq!(snapshot(&s, &id), before);
+        }
+    }
+
+    /// A running request claimed under `fence`; returns its row id and token.
+    fn running_request(s: &Store, fence: Option<&LeaseToken>) -> (String, String) {
+        let incarnation =
+            s.read_source_membership("default").unwrap().unwrap()["incarnation"].clone();
+        let input: crate::persistence::WriteRequestInsert = serde_json::from_value(json!({
+            "principalKind": "local_cli", "principalId": "p1", "requestId": request_id(1),
+            "operation": "put_page", "sourceId": "default", "sourceIncarnation": incarnation, "slug": "notes/n1",
+            "digest": "d", "intent": { "kind": "put_page" }, "authority": {}, "intentBytes": 1, "terminalReservation": 4096,
+            "targetKind": "page", "protocolVersion": 1, "admitterVersion": "v", "counterKeys": [], "state": "queued",
+            "worktreeId": WT,
+        }))
+        .unwrap();
+        let id = s.insert_write_request(&input).unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let token = "c0000000-0000-4000-8000-0000000000c1".to_owned();
+        let stamp: ClaimStamp =
+            serde_json::from_value(json!({ "id": id, "token": token, "leaseMs": 30000.0,
+            "phaseJson": "{\"phase\":\"preparing\"}", "fence": fence }))
+            .unwrap();
+        s.stamp_write_claim(&stamp).unwrap().unwrap();
+        (id, token)
+    }
+
+    #[test]
+    fn holding_a_claimed_write_for_an_import_releases_its_claim_under_the_epoch_it_was_taken_with()
+    {
+        let s = setup(true);
+        let a1 = register(&s, "a");
+        let (id, token) = running_request(&s, Some(&a1));
+        assert_eq!(epoch_records(&s), 1);
+        let hold = |fence: Option<&LeaseToken>| {
+            write(
+                "hold_for_import",
+                json!({ "id": id, "token": token, "importFrom": "abc" }),
+                fence,
+            )
+        };
+        let a2 = register_again(&s, &a1);
+        let before = (s.read_write_request_by_id(&id).unwrap(), epoch_records(&s));
+        let e = s.refresh_write(&hold(Some(&a2))).unwrap_err();
+        assert_eq!(reason(&e), "claim_epoch_mismatch");
+        let e = s.refresh_write(&hold(Some(&a1))).unwrap_err();
+        assert_eq!(reason(&e), "epoch_moved");
+        assert_eq!(
+            (s.read_write_request_by_id(&id).unwrap(), epoch_records(&s)),
+            before
+        );
+        // The holder of the claim holds the write: the claim is released with the move to `deferred`.
+        let (s, a) = {
+            let s = setup(true);
+            let a = register(&s, "a");
+            (s, a)
+        };
+        let (id, token) = running_request(&s, Some(&a));
+        let row = s
+            .refresh_write(&write(
+                "hold_for_import",
+                json!({ "id": id, "token": token, "importFrom": "abc" }),
+                Some(&a),
+            ))
+            .unwrap();
+        assert_eq!(row["state"], "deferred");
+        assert_eq!(
+            epoch_records(&s),
+            0,
+            "the released claim cleared its record"
+        );
+    }
+
+    #[test]
+    fn the_bound_transaction_route_runs_the_guards() {
+        let s = setup(true);
+        let a = register(&s, "a");
+        let tx = s.begin_transaction(false).unwrap();
+        let id = start(&tx, Some(&a));
+        assert_eq!(epoch_records(&tx), 1);
+        tx.refresh_write(&transition(&id, &["draining"], "aborted", Some(&a)))
+            .unwrap();
+        tx.commit_transaction().unwrap();
+        assert_eq!(state(&s, &id), "aborted");
+        assert_eq!(epoch_records(&s), 0);
+        // A stale and a missing fence refuse inside a transaction; it rolls back unchanged.
+        let s = setup(true);
+        let a = register(&s, "a");
+        let id = start(&s, Some(&a));
+        let stale = a.clone();
+        take_over(&s, &a);
+        let before = snapshot(&s, &id);
+        let tx = s.begin_transaction(false).unwrap();
+        let e = tx
+            .refresh_write(&transition(&id, &["draining"], "aborted", Some(&stale)))
+            .unwrap_err();
+        assert_eq!(reason(&e), "epoch_moved");
+        let e = tx
+            .refresh_write(&transition(&id, &["draining"], "aborted", None))
+            .unwrap_err();
+        assert_eq!(reason(&e), "fence_missing");
+        tx.rollback_transaction().unwrap();
+        assert_eq!(snapshot(&s, &id), before);
+    }
+
+    #[test]
+    fn with_multiuser_off_and_no_fence_the_calls_are_what_they_were_and_write_no_lease_key() {
+        let s = setup(false);
+        let id = start(&s, None);
+        for (from, to) in [
+            ("draining", "fenced"),
+            ("fenced", "merged"),
+            ("merged", "completed"),
+        ] {
+            assert_eq!(
+                s.refresh_write(&transition(&id, &[from], to, None))
+                    .unwrap(),
+                json!(true)
+            );
+        }
+        s.refresh_write(&write(
+            "set_holder",
+            json!({ "id": id, "holder": { "pid": 2 } }),
+            None,
+        ))
+        .unwrap();
+        assert_eq!(
+            s.refresh_write(&write("adopt_claim", json!({ "id": id }), None))
+                .unwrap(),
+            json!(false)
+        );
+        let (rid, token) = running_request(&s, None);
+        s.refresh_write(&write(
+            "hold_for_import",
+            json!({ "id": rid, "token": token, "importFrom": "abc" }),
+            None,
+        ))
+        .unwrap();
+        assert_eq!(lease_keys(&s), 0, "no ~L key without a fence");
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Managed sync checkpoints.
+
+mod sync {
+    use super::*;
+
+    const OP: &str = "managed-sync";
+    const MANIFEST: &str = "managed-sync-manifest";
+    const KEY: &str = "cursor-1";
+
+    fn header(index: u64, done: bool) -> String {
+        json!([{ "runId": "run-1", "index": index, "total": 3, "done": done }]).to_string()
+    }
+
+    fn call(
+        s: &Store,
+        name: &str,
+        params: Vec<Value>,
+        fence: Option<&LeaseToken>,
+    ) -> crate::error::Result<Value> {
+        s.sync_store_write_fenced(name, &params, fence)
+    }
+
+    fn insert(s: &Store, fence: Option<&LeaseToken>) -> crate::error::Result<Value> {
+        call(
+            s,
+            "cursor_insert",
+            vec![json!(OP), json!(KEY), json!(header(0, false))],
+            fence,
+        )
+    }
+
+    fn swap(
+        s: &Store,
+        from: u64,
+        to: u64,
+        fence: Option<&LeaseToken>,
+    ) -> crate::error::Result<Value> {
+        call(
+            s,
+            "cursor_swap",
+            vec![
+                json!(OP),
+                json!(KEY),
+                json!(header(from, false)),
+                json!(header(to, false)),
+            ],
+            fence,
+        )
+    }
+
+    fn adopt(s: &Store, fence: Option<&LeaseToken>) -> crate::error::Result<Value> {
+        call(s, "checkpoint_touch", vec![json!(OP), json!(KEY)], fence)
+    }
+
+    fn mark_done(s: &Store, fence: Option<&LeaseToken>) -> crate::error::Result<Value> {
+        call(s, "cursor_mark_done", vec![json!(KEY)], fence)
+    }
+
+    fn finish_delete(s: &Store, fence: Option<&LeaseToken>) -> crate::error::Result<Value> {
+        call(s, "finished_cursor_delete", vec![json!(KEY)], fence)
+    }
+
+    fn cursor(s: &Store) -> Value {
+        s.sync_store_rows("checkpoint_keys", &[json!(OP), json!(KEY)])
+            .unwrap()
+    }
+
+    fn snapshot(s: &Store) -> (Value, usize) {
+        (cursor(s), epoch_records(s))
+    }
+
+    /// Every fenced statement as a call, for the refusal tests.
+    fn every(s: &Store, fence: Option<&LeaseToken>) -> Vec<crate::error::Result<Value>> {
+        vec![
+            insert(s, fence),
+            swap(s, 0, 1, fence),
+            adopt(s, fence),
+            mark_done(s, fence),
+            finish_delete(s, fence),
+        ]
+    }
+
+    #[test]
+    fn a_cursor_is_claimed_at_insert_checked_on_every_swap_and_ended_when_it_is_done_and_deleted() {
+        let s = open(true);
+        let a = register(&s, "a");
+        assert_eq!(insert(&s, Some(&a)).unwrap().as_array().unwrap().len(), 1);
+        assert_eq!(epoch_records(&s), 1, "one CLAIM_SYNC_CHECKPOINT record");
+        // A second insert of the same key loses and takes nothing.
+        let c = register(&s, "c");
+        assert!(insert(&s, Some(&c)).unwrap().as_array().unwrap().is_empty());
+        assert_eq!(epoch_records(&s), 1);
+        assert_eq!(
+            swap(&s, 0, 1, Some(&a)).unwrap().as_array().unwrap().len(),
+            1
+        );
+        assert_eq!(
+            swap(&s, 1, 2, Some(&a)).unwrap().as_array().unwrap().len(),
+            1
+        );
+        // A manifest touch has no claim: it runs with no fence and writes no record.
+        call(
+            &s,
+            "checkpoint_touch",
+            vec![json!(MANIFEST), json!("run-1")],
+            None,
+        )
+        .unwrap();
+        assert_eq!(epoch_records(&s), 1);
+        mark_done(&s, Some(&a)).unwrap();
+        assert_eq!(epoch_records(&s), 0, "a finished cursor ends its claim");
+        assert_eq!(
+            finish_delete(&s, Some(&a))
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(cursor(&s), json!([]));
+    }
+
+    #[test]
+    fn a_stale_fence_refuses_every_checkpoint_statement_and_changes_nothing() {
+        let s = open(true);
+        let a = register(&s, "a");
+        insert(&s, Some(&a)).unwrap();
+        let stale = a.clone();
+        take_over(&s, &a);
+        let before = snapshot(&s);
+        for result in every(&s, Some(&stale)) {
+            assert_eq!(reason(&result.unwrap_err()), "epoch_moved");
+            assert_eq!(snapshot(&s), before);
+        }
+    }
+
+    #[test]
+    fn a_replacement_epoch_cannot_swap_the_old_cursor_until_it_adopts_it() {
+        let s = open(true);
+        let a1 = register(&s, "a");
+        insert(&s, Some(&a1)).unwrap();
+        let a2 = register_again(&s, &a1);
+        let before = snapshot(&s);
+        assert_eq!(
+            reason(&swap(&s, 0, 1, Some(&a2)).unwrap_err()),
+            "claim_epoch_mismatch"
+        );
+        assert_eq!(snapshot(&s), before);
+        // A swap that would lose (another value) writes nothing and has no claim to check.
+        assert!(
+            swap(&s, 7, 8, Some(&a2))
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        // The explicit adoption takes a new claim, overwriting the record; the swap then goes through.
+        adopt(&s, Some(&a2)).unwrap();
+        assert_eq!(epoch_records(&s), 1);
+        assert_eq!(
+            swap(&s, 0, 1, Some(&a2)).unwrap().as_array().unwrap().len(),
+            1
+        );
+        // A second live holder adopts it again: the first is then refused.
+        let c = register(&s, "c");
+        adopt(&s, Some(&c)).unwrap();
+        assert_eq!(
+            reason(&swap(&s, 1, 2, Some(&a2)).unwrap_err()),
+            "claim_epoch_mismatch"
+        );
+        assert_eq!(
+            swap(&s, 1, 2, Some(&c)).unwrap().as_array().unwrap().len(),
+            1
+        );
+    }
+
+    #[test]
+    fn a_call_with_no_fence_on_a_multiuser_store_refuses_before_anything_is_written() {
+        let s = open(true);
+        let a = register(&s, "a");
+        insert(&s, Some(&a)).unwrap();
+        let before = snapshot(&s);
+        for result in every(&s, None) {
+            assert_eq!(reason(&result.unwrap_err()), "fence_missing");
+            assert_eq!(snapshot(&s), before);
+        }
+    }
+
+    #[test]
+    fn deleting_or_purging_a_cursor_ends_its_claim() {
+        let s = open(true);
+        let a = register(&s, "a");
+        insert(&s, Some(&a)).unwrap();
+        assert_eq!(epoch_records(&s), 1);
+        s.delete_op_checkpoint(OP, KEY).unwrap();
+        assert_eq!(epoch_records(&s), 0);
+        // A row that is not a sync cursor never had a claim.
+        insert(&s, Some(&a)).unwrap();
+        s.delete_op_checkpoint("embed", "f1").unwrap();
+        assert_eq!(epoch_records(&s), 1);
+    }
+
+    #[test]
+    fn the_bound_transaction_route_runs_the_guards() {
+        let s = open(true);
+        let a = register(&s, "a");
+        let tx = s.begin_transaction(false).unwrap();
+        insert(&tx, Some(&a)).unwrap();
+        swap(&tx, 0, 1, Some(&a)).unwrap();
+        assert_eq!(epoch_records(&tx), 1);
+        tx.commit_transaction().unwrap();
+        assert_eq!(epoch_records(&s), 1);
+        let stale = a.clone();
+        take_over(&s, &a);
+        let before = snapshot(&s);
+        let tx = s.begin_transaction(false).unwrap();
+        assert_eq!(
+            reason(&swap(&tx, 1, 2, Some(&stale)).unwrap_err()),
+            "epoch_moved"
+        );
+        assert_eq!(reason(&swap(&tx, 1, 2, None).unwrap_err()), "fence_missing");
+        tx.rollback_transaction().unwrap();
+        assert_eq!(snapshot(&s), before);
+    }
+
+    #[test]
+    fn with_multiuser_off_and_no_fence_the_calls_are_what_they_were_and_write_no_lease_key() {
+        let s = open(false);
+        assert_eq!(insert(&s, None).unwrap().as_array().unwrap().len(), 1);
+        assert_eq!(swap(&s, 0, 1, None).unwrap().as_array().unwrap().len(), 1);
+        adopt(&s, None).unwrap();
+        mark_done(&s, None).unwrap();
+        assert_eq!(
+            finish_delete(&s, None).unwrap().as_array().unwrap().len(),
+            1
+        );
+        s.delete_op_checkpoint(OP, KEY).unwrap();
         assert_eq!(lease_keys(&s), 0, "no ~L key without a fence");
     }
 }
