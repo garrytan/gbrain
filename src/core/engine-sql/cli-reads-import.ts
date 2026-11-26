@@ -98,11 +98,13 @@ export async function hasGuestSource(exec: LegacyUnscopedRead): Promise<boolean>
 
 /** The guest flag of a brain whose schema is behind the guest-notes migration: the config record alone (guests/marker.ts withGuestSourceSql). */
 const configGuestSql = (config: string) => `COALESCE(${config}->>'guest' = 'true', false)`;
+/** The guest predicate over caller-given constant aliases: the table-backed one, or the config record alone. */
+const guestPredicateSql = (tableGuest: boolean, config: string, id: string) => (tableGuest ? guestSourceSql(config, id) : configGuestSql(config));
 
 const trustColumns = (tableGuest: boolean) => {
-  const guest = tableGuest ? guestSourceSql('s.config', 'pages.source_id') : configGuestSql('s.config');
+  const guest = guestPredicateSql(tableGuest, 's.config', 'pages.source_id');
   return sqlFragment`pages.id, pages.source_id, pages.slug, trust_tier, write_origin, ${trustedSql(activationSuppressedSql('pages', 'pages'))} AS flagged,
-  ${trustedSql(guest)} AS guest,
+  ${trustedSql(guestPredicateSql(tableGuest, 's.config', 'pages.source_id'))} AS guest,
   ${trustedSql(precedenceSql({ source: 's', sourceId: 'pages.source_id', guest, page: 'pages' }))} AS precedence
   FROM pages LEFT JOIN sources s ON s.id = pages.source_id`;
 };
@@ -120,7 +122,7 @@ export async function readRowTrustRows(exec: LegacyUnscopedRead, lookup: RowTrus
   if (!table) throw new Error(`readRowTrustRows: unknown table ${JSON.stringify(lookup.table)}`);
   if (lookup.ids.length === 0) return [];
   const run = async (tableGuest: boolean): Promise<RowTrustRow[]> => {
-    const guest = tableGuest ? guestSourceSql('rs.config', 'r.source_id') : configGuestSql('rs.config');
+    const guest = guestPredicateSql(tableGuest, 'rs.config', 'r.source_id');
     const { text, params } = renderFragment(table === 'facts'
       ? sqlFragment`SELECT r.id, r.trust_tier, r.write_origin, ${trustedSql(activationSuppressedSql(table, 'r'))} AS flagged,
         ${trustedSql(contestedRefSql(table, 'r'))} AS contested,
