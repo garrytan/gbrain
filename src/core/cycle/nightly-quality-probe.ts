@@ -35,7 +35,7 @@ import {
   type QualityProbeAuditEvent,
   type QualityProbeFailure,
 } from '../audit-quality-probe.ts';
-import { withChatCallMeter, type ChatCallMeter } from '../ai/chat-usage.ts';
+import { withChatCallMeter, withDefaultChatPhase, type ChatCallMeter } from '../ai/chat-usage.ts';
 import { withBudgetTracker } from '../ai/gateway.ts';
 import {
   BudgetExhausted,
@@ -410,8 +410,10 @@ export async function runNightlyQualityProbe(deps: NightlyProbeDeps): Promise<Ni
     const runTracker = tracker;
     meter = { calls: 0, cost_usd: 0, unpriced_calls: 0, ...(policy.pricingOverrides ? { pricing_overrides: policy.pricingOverrides } : {}) };
     const runMeter = meter;
-    await withBudgetTracker(runTracker, () => withChatCallMeter(runMeter, () =>
-      deps.runLongMemEval({ fixturePath, outputPath: lmeOutPath, searchConfigSnapshot, modelRoutes })));
+    // #10425: the run's calls carry its phase in chat_usage_log; an enclosing job's phase still wins.
+    const metered = <T>(stage: () => Promise<T>): Promise<T> => withDefaultChatPhase('phase:nightly_quality_probe', () =>
+      withBudgetTracker(runTracker, () => withChatCallMeter(runMeter, stage)));
+    await metered(() => deps.runLongMemEval({ fixturePath, outputPath: lmeOutPath, searchConfigSnapshot, modelRoutes }));
     if (runTracker.exhausted) {
       const fields = stopped();
       process.stderr.write(`[nightly-quality-probe] ${fields.detail}\n`);
@@ -432,13 +434,12 @@ export async function runNightlyQualityProbe(deps: NightlyProbeDeps): Promise<Ni
       });
       return { outcome: 'budget_exceeded', exit_code: 1, detail: fields.detail };
     }
-    const { exitCode, summary } = await withBudgetTracker(runTracker, () => withChatCallMeter(runMeter, () =>
-      deps.runCrossModalBatch({
-        batchPath: lmeOutPath,
-        summaryPath,
-        maxUsd,
-        modelRoutes,
-      })));
+    const { exitCode, summary } = await metered(() => deps.runCrossModalBatch({
+      batchPath: lmeOutPath,
+      summaryPath,
+      maxUsd,
+      modelRoutes,
+    }));
 
     const verdict: NightlyProbeResult['outcome'] = (() => {
       if (runTracker.exhausted) return 'budget_exceeded';

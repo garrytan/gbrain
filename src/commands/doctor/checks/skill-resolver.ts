@@ -190,6 +190,20 @@ export function skillResolverCheck(v: SkillResolverView | null): Check | null {
         user_message: `${slow.harness}: ${what}. Check the catalog size with gbrain skills index status and whether the machine is busy during turns; gbrain setup ${slow.harness} --skill-loading off turns the resolver off.` } };
   }
   const oc = v.openclaw ? describeOpenclawSkill(v.openclaw).problem : null;
+  if (oc?.code === 'skill_resolver_plugin_outdated') {
+    return { name, status: 'warn', message: `${describeSkillResolver(v)} OpenClaw: ${oc.what}.`, details: { ...details, code: oc.code },
+      fix: { consent: ['persistent_install'], actor: 'user', requires_exclusive: false, verify: doctorVerify(name), docs: `docs/guides/skill-resolver.md#${oc.code}`,
+        why: 'Setup rewrites and reinstalls the plugin only when it runs with the flags the install used (--workspace, --name, --agent), which only the user knows; a gateway restart then loads the new code. Modes, pins and settings stay as they are.',
+        user_message: 'The OpenClaw skill-resolver plugin running in your gateway is older than this gbrain, so it ignores the operator rule, --brief pins and --require-owner-sender. Rerun the gbrain setup openclaw command you installed with (keep its --workspace, --name and --agent flags), then restart the OpenClaw gateway once.' } };
+  }
+  if (oc?.code === 'skill_resolver_owner_unverified') {
+    const argv = ['gbrain', 'setup', 'openclaw', '--skills-index-only', '--agent', oc.agent ?? 'main', '--owner-sender', '<sender-id>'];
+    return { name, status: 'warn', message: `${describeSkillResolver(v)} OpenClaw: ${oc.what}.`, details: { ...details, code: oc.code },
+      fix: { argv, consent: [], actor: 'user', requires_exclusive: false, verify: doctorVerify(name), docs: `docs/guides/skill-resolver.md#${oc.code}`,
+        inputs: [{ name: 'sender-id', how: "Ask the user for their own sender id on the channel they message the agent from: the bare id the channel reports (for example 123456789 on Telegram), or the <channel>:<id> form OpenClaw's commands.ownerAllowFrom uses (telegram:123456789)." }],
+        why: 'Only the owner knows their sender id. With it set, a turn on the shared main session from anyone else is treated as another person\'s DM: conversation pins only, no owner-only skill, no brief.',
+        user_message: `Anyone who messages OpenClaw agent ${oc.agent ?? 'main'} directly lands on its main session and is treated as you. Run: ${argv.join(' ')} (your id on that channel). Or add --require-owner-sender instead, so the main session is treated as another person's DM until an owner sender is set.` } };
+  }
   if (oc) {
     return { name, status: 'warn', message: `${describeSkillResolver(v)} OpenClaw: ${oc.what}.`, details: { ...details, code: oc.code },
       fix: { argv: ['gbrain', 'setup', 'openclaw', '--skills-index-only'], consent: [], actor: 'agent', requires_exclusive: false, verify: doctorVerify(name), docs: `docs/guides/skill-resolver.md#${oc.code}`,
