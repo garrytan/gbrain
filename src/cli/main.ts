@@ -503,6 +503,14 @@ async function main() {
       const flagOp = cliOps.get(command) ?? cliAliases.get(command);
       const curated = findCliCommand(command)?.help;
       const known = curated ? (await curated()).help.flags.map(f => f.name) : CLI_FLAG_REGISTRY[command] ?? Object.keys(flagOp?.params ?? {}).map(k => `--${k.replace(/_/g, '-')}`);
+      const bare = unknown.split('=')[0];
+      if (flagOp && opOwnsSource(flagOp) && (bare === '--source-id' || bare === '--all-sources')) {
+        const at = subArgs.findIndex(a => a.split('=')[0] === bare);
+        const id = bare === '--source-id' ? (subArgs[at]!.includes('=') ? subArgs[at]!.slice(bare.length + 1) : subArgs[at + 1]) : undefined;
+        const route = `GBRAIN_SOURCE=${id && !id.startsWith('--') ? id : '<id>'}`;
+        const scoped = `${message}: its --source is the entry's provenance, not the source it writes to; set ${route} to choose that`;
+        exitCliError(unknownFlagError(command, unknown, scoped), command, { legacy: { status: 'error', reason: 'invalid_flag', message: scoped } });
+      }
       exitCliError(unknownFlagError(command, unknown, message, known), command, { legacy: { status: 'error', reason: 'invalid_flag', message } });
     }
     const curated = await curatedFlagError(command, subArgs);
