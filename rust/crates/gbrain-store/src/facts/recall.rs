@@ -413,4 +413,24 @@ impl Store {
         }
         Ok(out)
     }
+
+    /// `listFactHoldingRefs(ids)`: `{ id, source_id, slug, entity_slug }` for each of `ids` that names a fact, with
+    /// `slug` its `source_markdown_slug`; facts of any source and any state, in id order (the SQL sets no order). A
+    /// missing fact gives no row.
+    pub fn list_fact_holding_refs(&self, ids: &[f64]) -> Result<Vec<Value>> {
+        let mut wanted = BTreeSet::new();
+        for id in ids {
+            if let Ok(id) = u64::try_from(super::bigint("listFactHoldingRefs", "ids", *id)?) {
+                wanted.insert(id);
+            }
+        }
+        let read = self.read()?;
+        let mut out = Vec::new();
+        for id in wanted {
+            if let Some(fact) = super::read_fact(&*read, id)? {
+                out.push(json!({ "id": fact.id, "source_id": fact.source_id, "slug": fact.source_markdown_slug, "entity_slug": fact.entity_slug }));
+            }
+        }
+        Ok(out)
+    }
 }

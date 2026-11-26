@@ -2094,6 +2094,7 @@ export class PostgresEngine implements BrainEngine {
   listNearestFacts(q: factsRecallImpl.NearestFactsQuery) { return factsRecallImpl.listNearestFacts(this.executeRaw.bind(this), this.rawTransaction, q); }
   listFactSourcePages(ids: readonly number[]) { return factsRecallImpl.listFactSourcePages(this.executeRaw.bind(this), ids); }
   listTypedClaimFactsAtPages(pageSlugs: readonly string[], entitySlugs: readonly string[]) { return factsRecallImpl.listTypedClaimFactsAtPages(this.executeRaw.bind(this), pageSlugs, entitySlugs); }
+  listFactHoldingRefs(ids: readonly number[]) { return factsRecallImpl.listFactHoldingRefs(this.executeRaw.bind(this), ids); }
   listSlotRows(scope: factsTrustImpl.FactPoolScope, slots: ReadonlyArray<{ source_id: string; entity_slug: string; dimension: string }>) { return factsRecallImpl.listSlotRows(this.executeRaw.bind(this), scope, slots); }
   listPoolUnbackedKeys(scope: factsTrustImpl.FactPoolScope, keys: readonly string[], limit: number) { return factsRecallImpl.listPoolUnbackedKeys(this.executeRaw.bind(this), scope, keys, limit); }
   listCallOffCueFacts(scope: factsTrustImpl.FactPoolScope, pairs: ReadonlyArray<{ source_id: string; entity_slug: string }>) { return factsRecallImpl.listCallOffCueFacts(this.executeRaw.bind(this), scope, pairs); }
@@ -2542,6 +2543,7 @@ export class PostgresEngine implements BrainEngine {
   deleteVolunteerEventsOlderThan(ttlDays: number) { return volunteerEventsImpl.deleteVolunteerEventsOlderThan(this, ttlDays); }
   insertRetrievalEvents(events: RetrievalEventInsert[]) { return retrievalFeedbackImpl.insertRetrievalEvents(this, events); }
   readRetrievalEvent(id: string) { return retrievalFeedbackImpl.readRetrievalEvent(this, id); }
+  readPageFeedbackWeights(pageIds: readonly number[]) { return retrievalFeedbackImpl.readPageFeedbackWeights(this, pageIds); }
   applyRetrievalRatings(args: RetrievalRatingBatch) { return retrievalFeedbackImpl.applyRetrievalRatings(this, args); }
   readGitGapSourceRow(sourceId: string) { return gitGapCensusImpl.readGitGapSourceRow(this, sourceId); }
   countGitGapLivePages(sourceId: string) { return gitGapCensusImpl.countGitGapLivePages(this, sourceId); }
@@ -5206,6 +5208,8 @@ export class PostgresEngine implements BrainEngine {
   hasCompletedFactsExtraction(pageId: number | string) { return factsBackstopImpl.hasCompletedFactsExtraction(unscopedExecutor(this.engineSql, 'facts backstop: completed extraction read ran unscoped through executeRaw'), pageId); }
   readStoredBodyBytes(slug: string, sourceId: string) { return this.preparationRead(exec => largePageImpl.readStoredBodyBytes(unscopedExecutor(exec, 'large page: stored body size read ran unscoped through executeRaw'), slug, sourceId)); }
   readAdmittedPageRefs(refs: readonly relationalReadsImpl.PageRefRow[], policy: PageReadPolicy) { return this.preparationRead(exec => relationalReadsImpl.readAdmittedPageRefs(unscopedExecutor(exec, 'relational recall: seed admit read ran unscoped through executeRaw'), refs, policy)); }
+  readAdmittedPageDateFields(refs: readonly relationalReadsImpl.PageRefRow[], policy: PageReadPolicy) { return this.preparationRead(exec => relationalReadsImpl.readAdmittedPageDateFields(unscopedExecutor(exec, 'evidence date: page date-field read ran unscoped through executeRaw'), refs, policy)); }
+  readPageDateFieldsByIds(ids: readonly number[]) { return this.preparationRead(exec => relationalReadsImpl.readPageDateFieldsByIds(unscopedExecutor(exec, 'evidence date: page date-field read by id ran unscoped through executeRaw'), ids)); }
   readPageSynopses(refs: readonly relationalReadsImpl.PageRefRow[], policy?: PageReadPolicy) { return this.preparationRead(exec => relationalReadsImpl.readPageSynopses(unscopedExecutor(exec, 'relational recall: hydrate read ran unscoped through executeRaw'), refs, policy)); }
   readSeedTitleSlugs(sourceId: string, types: readonly string[], title: string) { return this.preparationRead(exec => relationalReadsImpl.readSeedTitleSlugs(unscopedExecutor(exec, 'relational recall: title seed read ran unscoped through executeRaw'), sourceId, types, title)); }
   async readPageBodySizes(pageId: number) { return largePageImpl.readPageBodySizes(this, pageId); }

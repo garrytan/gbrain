@@ -441,6 +441,7 @@ export const FACTS_MEMBERS = {
   listNearestFacts: 'facts',
   listFactSourcePages: 'facts',
   listTypedClaimFactsAtPages: 'facts',
+  listFactHoldingRefs: 'facts',
   listSlotRows: 'facts',
   listPoolUnbackedKeys: 'facts',
   listCallOffCueFacts: 'facts',

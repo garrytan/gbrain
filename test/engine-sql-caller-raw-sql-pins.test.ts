@@ -51,6 +51,7 @@ import { quarantineFilterFragment } from '../src/core/quarantine.ts';
 import { MANAGED_MODE_SQL } from '../src/core/persistence/managed-mode.ts';
 import { FACT_PREIMAGE_SQL } from '../src/core/engine-sql/facts.ts';
 import { pageReadFilter } from '../src/core/search/read-policy-sql.ts';
+import { NEUTRAL_WEIGHT } from '../src/core/feedback/store.ts';
 import type { TrustTier } from '../src/core/trust/tier.ts';
 import { SAVED_FACT_COLLAPSE_COLUMNS } from '../src/core/search/saved-fact-collapse.ts';
 import { PINNED_QUESTION_MARKER } from '../src/core/questions/identity.ts';
@@ -4221,6 +4222,41 @@ const PINS: Pin[] = [
     texts: [`SELECT f.id, f.source_markdown_slug, f.source_id, f.entity_slug, f.claim_metric, f.claim_period, f.valid_from FROM facts f
      WHERE f.source_markdown_slug = ANY($1::text[]) AND f.entity_slug = ANY($2::text[]) AND f.claim_metric IS NOT NULL`],
   },
+  // The observed-date read of the facts arm and recall's date header (search/evidence-date.ts factObservationDates).
+  {
+    from: 'src/core/search/evidence-date.ts:110 loadPageDateHeaders, at 4ca2fa285e',
+    case: { method: 'readPageDateFieldsByIds', variant: 'default', run: e => e.readPageDateFieldsByIds([1, 2]) },
+    texts: ['SELECT id, slug, frontmatter, import_filename FROM pages WHERE id = ANY($1::int[])'],
+  },
+  // The search feedback stage's weight read; NEUTRAL_WEIGHT (0.5) was interpolated into the text.
+  {
+    from: 'src/core/search/feedback-boost.ts:40 readPageFeedback, at 4ca2fa285e',
+    case: { method: 'readPageFeedbackWeights', variant: 'default', run: e => e.readPageFeedbackWeights([1, 2]) },
+    texts: [`SELECT p.id, p.content_hash,
+            CASE WHEN w.weight IS NULL THEN NULL
+                 WHEN p.content_hash IS DISTINCT FROM w.content_hash
+                   THEN ${NEUTRAL_WEIGHT} + (w.weight - ${NEUTRAL_WEIGHT}) / 2
+                 ELSE w.weight END AS weight
+       FROM pages p
+       LEFT JOIN retrieval_weights w
+         ON w.source_id = p.source_id AND w.element_kind = 'page' AND w.element_key = p.slug
+      WHERE p.id = ANY($1::int[])`],
+  },
+  {
+    from: 'src/core/search/evidence-date.ts:158 factObservationDates, at 4ca2fa285e',
+    case: { method: 'listFactHoldingRefs', variant: 'default', run: e => e.listFactHoldingRefs([1, 2]) },
+    texts: ['SELECT id, source_id, source_markdown_slug AS slug, entity_slug FROM facts WHERE id = ANY($1::bigint[])'],
+  },
+  {
+    from: 'src/core/search/evidence-date.ts:165 factObservationDates (no read scope), at 4ca2fa285e',
+    case: { method: 'readAdmittedPageDateFields', variant: 'default', run: e => e.readAdmittedPageDateFields([{ source_id: 'default', slug: 'meetings/a' }], {}) },
+    texts: [pinnedPageDateFields({})],
+  },
+  {
+    from: 'src/core/search/evidence-date.ts:165 factObservationDates (a scoped, private-filtered caller), at 4ca2fa285e',
+    case: { method: 'readAdmittedPageDateFields', variant: 'scoped', run: e => e.readAdmittedPageDateFields([{ source_id: 'default', slug: 'meetings/a' }], { sourceIds: ['default'], excludePrivate: true }) },
+    texts: [pinnedPageDateFields({ sourceIds: ['default'], excludePrivate: true })],
+  },
 ];
 
 type PinPrivacy = 'none' | 'caller' | 'floor';
@@ -4365,6 +4401,14 @@ function pinnedNewestFacts(remote: boolean, worldOnly: boolean, minTrust?: Trust
         AND ${projectionEligibleSql('facts', 'f', { floor: minTrust })}
       ORDER BY (CASE WHEN f.valid_from > now() THEN f.created_at ELSE f.valid_from END) DESC, f.id DESC
       LIMIT 50`;
+}
+
+/** search/evidence-date.ts factObservationDates' page read at 4ca2fa285e, verbatim. */
+function pinnedPageDateFields(scope: { sourceId?: string; sourceIds?: string[]; minTrust?: TrustTier; excludePrivate?: boolean }): string {
+  const params: unknown[] = [['default'], ['meetings/a']];
+  const policy = pageReadFilter('p', scope, params, true);
+  return `SELECT p.source_id, p.slug, p.frontmatter, p.import_filename FROM pages p
+     JOIN unnest($1::text[], $2::text[]) AS w(source_id, slug) ON p.source_id = w.source_id AND p.slug = w.slug WHERE ${policy}`;
 }
 
 /** ops/search-type-filter.ts reconcileTypeFilter's probe statement at efeb078093, verbatim (`{ ...scope, excludePrivate }`). */

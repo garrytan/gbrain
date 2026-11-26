@@ -63,7 +63,7 @@ import type { ImportedPageSeal, InlinePageRegionsRow, LivePageBodyRow, OriginCla
 import type { PageEmbeddingBudgetRow, PageEmbeddingReservation, PageEmbeddingReserveInput } from './engine-sql/page-embedding-budget.ts';
 import type { EmbeddingCompletionOpts, EmbeddingCompletionRow } from './engine-sql/embedding-install.ts';
 import type { CallerPageAccessRow, PagePolicyPart, WriteVisibilityProbe } from './engine-sql/page-visibility.ts';
-import type { PageRefRow, RelationalPageRow } from './engine-sql/relational-reads.ts';
+import type { PageDateFieldsByIdRow, PageDateFieldsRow, PageRefRow, RelationalPageRow } from './engine-sql/relational-reads.ts';
 import type { DefaultSourceSplit, LiveIdentityHolderRow, LocalPathSourceRow, PlainSyncSourceRow, RenameIdentityRow, SourceCheckRow, SourceInsert, SourcesNotReadableOpts, SourceUpstreamObservation, PageIdentityRow, PageSizeRow, ReasonPurgeTombstone, SourcePathPageRow, SourceRoutingRow, SourcePathRow } from './engine-sql/sources.ts';
 import type {
   Coverage as NotifierCoverage, MarkerIntent, NotifierHostSourceRow, NotifierLeaseClaim, NotifierLeaseClaimInput, NotifierLeaseHolder,
@@ -4090,6 +4090,10 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   // Relational recall arm page reads (engine-sql/relational-reads.ts).
   /** The refs naming a live, unquarantined page of an unarchived source that `policy` admits (`pageReadFilter` live); in no set order. */
   readAdmittedPageRefs(refs: readonly PageRefRow[], policy: PageReadPolicy): Promise<PageRefRow[]>;
+  /** The observation-date inputs (frontmatter, import filename) of the refs' live pages that `policy` admits (search/evidence-date.ts); in no set order. */
+  readAdmittedPageDateFields(refs: readonly PageRefRow[], policy: PageReadPolicy): Promise<PageDateFieldsRow[]>;
+  /** The observation-date inputs of the page rows `ids` name, soft-deleted included (search/evidence-date.ts); in no set order. */
+  readPageDateFieldsByIds(ids: readonly number[]): Promise<PageDateFieldsByIdRow[]>;
   /** The refs' pages that `policy` admits and the search visibility clause shows, with the bounded body prefix as `synopsis`; in no set order. */
   readPageSynopses(refs: readonly PageRefRow[], policy?: PageReadPolicy): Promise<RelationalPageRow[]>;
   /** At most two slugs of live, unretired pages of `sourceId` whose type is in `types` and whose title matches `title` case-insensitively; in no set order. */
