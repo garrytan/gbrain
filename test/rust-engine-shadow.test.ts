@@ -24,6 +24,8 @@ import { managedFilesystemDatastorePath, registerManagedFilesystemEngine } from 
 import { SHADOW_READ_MEMBERS } from '../src/shadow/reads.ts';
 import { buildProvisionalReport, renderProvisionalMarkdown } from '../src/shadow/report.ts';
 import { recordAllSentAtExit, sampleWeight, ShadowSupervisor } from '../src/shadow/supervisor.ts';
+import { ensureEpoch } from '../src/shadow/evidence-epoch.ts';
+import { buildFollowStatus } from '../src/shadow/follow-status.ts';
 import { readSent } from '../src/shadow/write-compare.ts';
 import { wrapShadowEngine, type ShadowSink } from '../src/shadow/wrapper.ts';
 import { shadowChildArgv } from '../src/shadow/attach.ts';
@@ -787,6 +789,60 @@ describe('supervisor sample accounting (a sample is received, refused and counte
     expect(waited).toBeLessThan(1_000);
     h.sup.stop();
     expect(h.sent()).toBe(3); // the child counts 3 minus what it read; whatever the callbacks said
+    h.done();
+  });
+
+  test('a clean disconnect (drain, then stop) writes the sent count once: a count the child already took is never written again', async () => {
+    const h = harness();
+    h.sup.send(sample(0)); h.sup.send(sample(1));
+    const waiting = h.sup.drain(5_000);
+    h.children[0]!.flush();
+    await waiting;
+    expect(h.sent()).toBe(2);
+    rmSync(join(h.dir, `write-sent.${h.sessions[0]}.json`)); // the child took it and removed it
+    h.sup.stop();
+    expect(h.sent()).toBeNull(); // before: stop() wrote it again, and the next worker counted two samples that had arrived as lost
+    h.done();
+  });
+
+  test('a receipt that could not be written is written again at stop(); one that was published is not', () => {
+    const h = harness();
+    h.sup.send(sample(0)); h.sup.send(sample(1));
+    const tmpPath = join(h.dir, `write-sent.${h.sessions[0]}.json.tmp`);
+    mkdirSync(tmpPath); // the write fails (EISDIR stands for a full disk)
+    h.sup.recordSent();
+    expect(h.faults.map((f) => f.detail)).toEqual(['sent_count n=2']);
+    expect(h.sent()).toBeNull();
+    rmSync(tmpPath, { recursive: true });
+    h.sup.stop();
+    expect(h.sent()).toBe(2); // before: the failed attempt was remembered as done, so stop() wrote nothing and 2 samples had no receipt
+    h.done();
+  });
+
+  test('a sent count that could not be published but whose fault line was written still keeps status at no evidence for the epoch', () => {
+    let where = '';
+    const h = harness({ recordFault: (f: ShadowFault) => appendFault(where, f) }); where = h.dir;
+    const epoch = ensureEpoch(h.dir, { seed_id: 's', rust_addon_sha256: 'a', comparator_version: 1, adapter_version: 'x', capability_set_hash: null, readiness_policy_hash: 'p' }, Date.now()).epoch_id;
+    writeFileSync(join(h.dir, 'write-comparisons.json'), JSON.stringify({ version: 1, epoch_id: epoch, updated_at: '', comparable: 1000, unexplained_difference: 0, uncomparable: 0, capability_missing: 0, capability_missing_by_family: {}, uncomparable_by_reason: {}, in_flight: [] }) + '\n');
+    const status = () => buildFollowStatus(h.dir, { sample_rate: 0.1 } as never, new Date()).write_comparisons;
+    expect(status().state).toBe('measured');
+    h.sup.send(sample(0)); h.sup.send(sample(1));
+    mkdirSync(join(h.dir, `write-sent.${h.sessions[0]}.json.tmp`)); // the receipt cannot be published, at drain or at stop
+    h.sup.stop();
+    expect(h.sent()).toBeNull();
+    expect(readFileSync(join(h.dir, 'faults.jsonl'), 'utf8')).toContain('sent_count n=2'); // the fault line landed
+    expect(status()).toMatchObject({ state: 'capability_missing', unrecorded_sample_faults: 1, unresolved_replays: 1 }); // before: measured, the fault line was ignored
+    h.done();
+  });
+
+  test('the receipt names the worker\'s pid and no epoch: this process cannot know the epoch its worker will open, and a wrong stamp would make the worker read its own receipt as another\'s', () => {
+    const h = harness();
+    ensureEpoch(h.dir, { seed_id: 's', rust_addon_sha256: 'a', comparator_version: 1, adapter_version: 'x', capability_set_hash: null, readiness_policy_hash: 'p' }, Date.now());
+    h.sup.send(sample(0));
+    h.sup.recordSent();
+    const file = JSON.parse(readFileSync(join(h.dir, `write-sent.${h.sessions[0]}.json`), 'utf8'));
+    expect(file).toMatchObject({ session: h.sessions[0], sent: 1 });
+    expect(file.epoch_id).toBeUndefined(); // before: stamped with the epoch on disk, which a new addon's worker replaces
     h.done();
   });
 

@@ -19,7 +19,7 @@ const EXPECTED_UNMAPPED: ReadonlySet<string> = new Set(['generation']);
 /**
  * Replays waiting behind the one that runs: a sync sends a page sample every 15-25 ms and a replay takes about 42 ms, so a burst of 28 edits found room for 16 and shed 12 (`queue_full`).
  * 256 samples is about 11 s of replay (inside the 30 s exit deadline), a few MB for the usual few-KB sample; the byte bound holds the worst case (a sample line is at most 512 KB), counted at
- * the line's size (the parsed event is a few times larger in memory). A sample past either bound is still counted `uncomparable` / `queue_full` (except a disk-write failure, see S2b), never dropped by the queue and never comparable.
+ * the line's size (the parsed event is a few times larger in memory). A sample past either bound is still counted `uncomparable` / `queue_full` (except a disk-write failure, a known limit in the changelog), never dropped by the queue and never comparable.
  */
 export const WRITE_QUEUE_BOUND = 256;
 export const WRITE_QUEUE_BYTES = 16 * 1024 * 1024;
@@ -46,7 +46,7 @@ export interface WriteComparerDeps {
 export const scratchRootDefault = (): string => join(configDir(), 'scratch');
 type Verdict = [WriteOutcome, string?];
 
-export function createWriteComparer(d: WriteComparerDeps): { handle(event: WriteEvent, bytes?: number): void; idle(): Promise<void>; abandon(): void } {
+export function createWriteComparer(d: WriteComparerDeps): { handle(event: WriteEvent, bytes?: number): void; idle(): Promise<boolean>; abandon(): void } {
   // Each replay gets a private (0700) directory named for this process, removed when the replay ends, whatever its outcome. Directories of processes
   // that no longer exist (a killed child) are swept here, at shadow start; another child never deletes a live one.
   const scratchRoot = d.scratchRoot ?? scratchRootDefault();
@@ -133,7 +133,7 @@ export function createWriteComparer(d: WriteComparerDeps): { handle(event: Write
       queued++; queuedBytes += bytes; waiting.add(event);
       chain = chain.then(() => run(event)).finally(() => { queued--; queuedBytes -= bytes; }); // every path (a replay, an abandoned one, an early return) ends here
     },
-    idle: () => chain.then(() => { d.tally.save(); }), // the last save also folds the lost samples the serving process recorded
+    idle: () => chain.then(() => d.tally.save()), // the last save also folds the lost samples the serving process recorded; true only when everything this child counted is saved (the caller keeps the sent count when it is not)
     /** At the child's exit deadline: replays still queued will never run, so each is counted `uncomparable`, then one last save. The running replay keeps its in-flight mark. */
     abandon() {
       if (waiting.size) d.tally.note('uncomparable', 'child_exit_deadline', waiting.size);
