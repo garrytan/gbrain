@@ -38,6 +38,7 @@ import { registerServeLocalWriters } from '../../src/core/persistence/provider.t
 import { persistenceOperations } from '../../src/core/ops/persistence.ts';
 import { brainMembershipOperations } from '../../src/core/ops/brain-membership.ts';
 import { readTrustGeneration } from '../../src/core/eligibility/generation.ts';
+import { rethrowByDesignStop } from '../helpers/rust-by-design-stop.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -203,11 +204,11 @@ describe('engine parity: access-grant reads', () => {
 
   // The member is trust-withdrawals.ts's readTrustGeneration (it throws on a missing row; the move on a trust config
   // write is pinned in trust-withdrawals.test.ts). This case pins that the cache identity read fails closed with it.
-  // Pinned Rust stop: Rust keeps no singleton row, by design (this case deletes one with raw SQL).
+  // The Rust arm's stop, by design (RUST_ENGINE.md row 56): Rust keeps no singleton row (this case deletes one with raw SQL).
   parityTest('a brain with no trust_policy_state row fails the generation read, and the cache identity read fails closed', {
     methods: ['readTrustGeneration'],
   }, async (engine) => {
-    await engine.executeRaw('DELETE FROM trust_policy_state');
+    await engine.executeRaw('DELETE FROM trust_policy_state').catch((e: unknown) => rethrowByDesignStop(e, 'executeRaw', '56'));
     const member = await engine.readTrustGeneration().then(() => null, (e: Error) => e.message);
     const refused = await readTrustGeneration(engine).then(() => null, (e: Error) => e.message);
     const unreadable = 'trust generation unreadable: trust_policy_state has no row';
@@ -232,12 +233,12 @@ describe('engine parity: access-grant reads', () => {
     return result;
   }));
 
-  // Pinned Rust stop: Rust keeps no singleton row, by design (this case deletes one with raw SQL).
+  // The Rust arm's stop, by design (RUST_ENGINE.md row 56): Rust keeps no singleton row (this case deletes one with raw SQL).
   parityTest('a brain with no shared_skill_state row reads a null serving epoch, and membership denies', {
     methods: ['readSharedSkillServingEpoch', 'readLocalWriterMemberGrant'],
   }, (engine) => inFreshHome(async () => {
     await registerServeLocalWriters(engine);
-    await engine.executeRaw('DELETE FROM shared_skill_state');
+    await engine.executeRaw('DELETE FROM shared_skill_state').catch((e: unknown) => rethrowByDesignStop(e, 'executeRaw', '56'));
     const epoch = await engine.readSharedSkillServingEpoch();
     const leave = await answer(engine, 'leave_brain', { installation_id: UNKNOWN, enrollment_epoch: 1 });
     expect({ epoch, leave }).toEqual({ epoch: null, leave: { code: 'permission_denied' } });
