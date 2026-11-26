@@ -749,11 +749,19 @@ pub const DEFAULT_WRITE_GATE_DETECTOR_VERSION: u32 = 2;
 /// token secret off the member links' prefix (`access_key_split.rs`). The format record is re-read inside the transaction:
 /// another handle on the same records may have upgraded the brain first.
 fn upgrade_format(kv: &dyn Kv) -> Result<StoredFormat> {
+    upgrade_format_to(kv, FORMAT_VERSION)
+}
+
+/// [`upgrade_format`] to `target`, the format it stamps. Each step runs only for a brain older
+/// than the format that introduced it, never because the brain is older than `target`, so a later
+/// format's upgrade does not run an earlier format's step again. Tests pass a `target` above
+/// `FORMAT_VERSION` to act as the next build.
+fn upgrade_format_to(kv: &dyn Kv, target: u32) -> Result<StoredFormat> {
     let mut tx = kv.begin_write_exclusive()?;
     let mut stored: StoredFormat = get_json(&*tx, &keys::meta("format"))?
         .ok_or_else(|| StoreError::new(error::STORE_CORRUPT, "the format record went missing"))?;
     format::check_version(stored.format_version)?;
-    if stored.format_version >= FORMAT_VERSION {
+    if stored.format_version >= target {
         return Ok(stored);
     }
     if stored.format_version == 1 {
@@ -812,12 +820,12 @@ fn upgrade_format(kv: &dyn Kv) -> Result<StoredFormat> {
             )
         })?;
     }
-    // Format 14: the legacy word postings are gone (`legacy_postings.rs`), deleted in this one
-    // transaction.
-    if stored.format_version < FORMAT_VERSION {
+    // The legacy word postings are gone (`legacy_postings.rs`), deleted in this one transaction,
+    // for a brain older than the format that dropped them.
+    if stored.format_version < legacy_postings::DROPPED_AT_FORMAT {
         legacy_postings::delete_all(&mut *tx)?;
     }
-    stored.format_version = FORMAT_VERSION;
+    stored.format_version = target;
     put_json(&mut *tx, &keys::meta("format"), &stored)?;
     tx.commit()?;
     Ok(stored)

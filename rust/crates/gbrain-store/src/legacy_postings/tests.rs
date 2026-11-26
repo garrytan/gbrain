@@ -329,3 +329,24 @@ fn a_concurrent_open_of_a_format_8_directory_upgrades_it() {
     drop(store);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The next format's upgrade (a build one format past this one) does not run the legacy delete
+/// again: a record under the legacy tag in a brain at this build's format survives it.
+#[test]
+fn a_later_format_s_upgrade_does_not_run_the_legacy_delete_again() {
+    assert_eq!(DROPPED_AT_FORMAT, crate::FORMAT_VERSION);
+    let kv = crate::test_support::mem_kv();
+    let store = Store::open_kv(kv.clone(), env(), OpenOptions::default()).unwrap();
+    let mut key = vec![keys::POSTING];
+    key.extend_from_slice(b"marker\0\0\0\0\0\0\0\0\x01\0\0\0\0");
+    store.write(|w| w.put(&key, b"kept")).unwrap();
+    drop(store);
+    assert_eq!(legacy_count(&*kv), 1);
+    let stored = crate::upgrade_format_to(&*kv, crate::FORMAT_VERSION + 1).unwrap();
+    assert_eq!(stored.format_version, crate::FORMAT_VERSION + 1);
+    assert_eq!(
+        legacy_count(&*kv),
+        1,
+        "the next format's upgrade ran the legacy delete again"
+    );
+}

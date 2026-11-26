@@ -10,6 +10,11 @@ use crate::error::Result;
 use crate::keys;
 use crate::kv::KvWrite;
 
+/// The store format that dropped the legacy word postings: the upgrade deletes them only for a
+/// brain older than this, so a later format's upgrade never runs the delete again. It equals
+/// `FORMAT_VERSION` on this branch; a renumber at merge changes both.
+pub(crate) const DROPPED_AT_FORMAT: u32 = 14;
+
 /// Keys read per step of [`delete_all`].
 const BATCH: usize = if cfg!(test) { 7 } else { 10_000 };
 
