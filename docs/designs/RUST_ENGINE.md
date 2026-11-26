@@ -241,6 +241,21 @@ The maintainer's principle (D20) is no PGLite-style locking. gbrain's TypeScript
 - `check:rust-capability-coverage` prints the share of operations, commands, phases and handlers available on Rust. It is the progress number and the first PGLite-deprecation criterion. It is derived from the member table and the dispatch table, not kept as a separate list.
 - Postgres-only administration (pool diagnostics, `pg_stat` checks, RLS scope binding, Postgres graduation targets, PgBouncer handling) needs `postgres_admin` and stays unavailable on Rust by design.
 
+### Named permanent losses
+
+Some parity cases test a path that only a SQL engine has. On the Rust arm each one stops on the `raw_sql` refusal, and
+it stays stopped: there is nothing in the Rust store for it to compare. Each row names the case, the reason, and what a
+Rust brain answers instead. A case whose stop is listed here points back to this section. `test/rust-permanent-losses.test.ts`
+fails when a row names a case that no longer exists.
+
+| Parity file | Case | Why it is SQL-only | What a Rust brain does instead |
+|---|---|---|---|
+| `collate-doctor.test.ts` | function-search-path reads list overloads by byte signature | The case creates two Postgres function overloads and reads `pg_proc`. The Rust store has no SQL functions. | `gbrain doctor` reports `function_search_path` as skipped (`no_sql_functions`), so there is no function to pin. |
+| `owner-only-marks.test.ts` | ownerOnlyMarkTriggers names a dropped trigger and ensure recreates it on a table the role owns | The case drops a Postgres delete trigger and checks that `ensure` recreates it. The Rust store has no SQL triggers: every delete path marks in code. | `ownerOnlyMarkTriggers` answers `missing: []`, and `ensure` has nothing to create. The fresh-brain case in the same file is equal on all three engines. Lane 11's `c6c1ea95e7` does not touch this file or this member. |
+| `fact-purge-members.test.ts` | the raw-only purge tables are reachable only through executeRaw, which the Rust arm refuses | `page_body_staging_parts`, `page_view_digests` and `core_edit_notices` have no typed writer; the SQL engines write them with raw SQL. | The Rust store keeps none of the three tables, so a purge has no row there to delete or blank. |
+| `fact-purge-sites.test.ts` | listStagingPartEdges, deletePurgedStagingParts and deletePageViewDigests read and delete the upload parts and read-view digests, which have no typed writer | The upload parts and read-view digests exist only on the SQL engines. | A Rust brain refuses segmented uploads by design and keeps no view digests, so the purge has none to remove. |
+| `fact-purge-sites.test.ts` | blankPurgeCoreEditNotices blanks the base text of the source's core edit notices that quote a purged claim, which have no typed writer | Core edit notices exist only on the SQL engines. | The Rust store keeps no core edit notices, so a purge has no notice text to blank. This row covers only the purge case. What `core remove` does on Rust is W6's change, not this row. |
+
 ### Error contract for the Rust engine
 
 - Every new code and reason is a row in `src/core/error-registry.ts` (class, summary, why, reasons, suggestion, default read-only fix, docs anchor). `bun run build:error-codes` regenerates `docs/guides/error-codes.md`, and `gbrain errors <code>` answers offline. Errors use the existing envelope (`docs/protocol/AGENT_OPERATOR_v1.md`): stderr and a non-zero exit on the CLI, one `--json` document, `isError` over MCP.
