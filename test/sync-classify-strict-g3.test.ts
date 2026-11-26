@@ -60,6 +60,15 @@ describe('G3: Git wins on a strict source', () => {
     expect(strict(tombstone)).toMatchObject({ cls: 'import', action: 'import', gitWins: 'deleted_edited' });
   });
 
+  test('LC-1: a deleted page\'s own bytes back after its delete removed the file stay deleted_same: Git wins, no consent hold', () => {
+    const tombstone = { ...base, page: { live: false, revision: 'R1', originMatches: true }, removedFile: true as const };
+    expect(classifySyncPath(tombstone)).toMatchObject({ cls: 'deleted_edited', action: 'hold', state: 'tombstone_edited', restored: true });
+    expect(strict(tombstone)).toMatchObject({ cls: 'deleted_same', settled: true, action: 'none' });
+    const purged = { ...base, page: null, record: null, marker: { kind: 'deleted' as const, blobOids: ['B'] }, removedFile: true as const };
+    expect(classifySyncPath(purged)).toMatchObject({ cls: 'deleted_edited', action: 'hold', state: 'purged_differs', restored: true });
+    expect(strict(purged)).toMatchObject({ cls: 'deleted_same', settled: true, action: 'none' });
+  });
+
   test('the working tree is invisible: any dirtiness reads as the committed blob', () => {
     for (const dirty of ['modified', 'staged', 'deleted', 'untracked', 'unknown'] as SyncDirtiness[]) {
       const s = { ...base, dirty, diskOid: 'D', levelSha256: 'sha-D' };

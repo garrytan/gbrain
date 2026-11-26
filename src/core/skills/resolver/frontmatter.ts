@@ -1,6 +1,7 @@
 /**
  * Bounded SKILL.md reader for the resolver: name, description,
- * when_to_use, triggers, `disable-model-invocation` and `eligible`, plus
+ * when_to_use, triggers, `disable-model-invocation`, `eligible`, `deprecated`,
+ * `replaced_by` and `audience: owner` (a skill only the agent's owner sees), plus
  * the first 4 KB of the body. Reads at most 64 KB of a file. Leaf module
  * (alias-bounded js-yaml via data-frontmatter.ts and the one-line description rule only).
  *
@@ -21,6 +22,9 @@ export interface SkillDoc {
   triggers: string[];
   modelInvocable: boolean;
   eligible: boolean;
+  deprecated: boolean;
+  replacedBy?: string;
+  audience?: 'owner';
   body: string;
 }
 
@@ -42,6 +46,14 @@ function yamlFields(raw: string): Record<string, unknown> | null {
   }
 }
 
+/** Any non-empty `audience` keeps a skill to the owner: only `owner` is defined, and an unknown value or a typo fails closed. */
+export function restricted(v: unknown): boolean {
+  if (v === undefined || v === null) return false;
+  if (typeof v === 'string') return cleanText(v) !== '';
+  if (Array.isArray(v)) return v.some((x) => restricted(x));
+  return true;
+}
+
 function stringList(v: unknown): string[] {
   if (typeof v === 'string') return [cleanText(v)].filter(Boolean);
   if (!Array.isArray(v)) return [];
@@ -58,6 +70,7 @@ export function parseSkillDoc(input: string): SkillDoc {
   const yamlDescription = fm && typeof fm.description === 'string' ? cleanText(fm.description) : '';
   const description = yamlDescription || cleanText(oneLineDescription(raw, bodyText.replace(/^\n/, '')));
   const whenToUse = fm ? cleanText(fm.when_to_use ?? fm['when-to-use'] ?? '') : '';
+  const replacedBy = fm && typeof fm.replaced_by === 'string' ? cleanText(fm.replaced_by) : '';
   return {
     name: fm && (typeof fm.name === 'string' || typeof fm.name === 'number') ? cleanText(fm.name) || undefined : undefined,
     description,
@@ -65,6 +78,9 @@ export function parseSkillDoc(input: string): SkillDoc {
     triggers: fm ? stringList(fm.triggers) : [],
     modelInvocable: !(fm && (fm['disable-model-invocation'] === true || fm['disable-model-invocation'] === 'true')),
     eligible: !(fm && (fm.eligible === false || fm.eligible === 'false')),
+    deprecated: Boolean(fm && (fm.deprecated === true || fm.deprecated === 'true')),
+    ...(replacedBy ? { replacedBy } : {}),
+    ...((fm ? restricted(fm.audience) : /^audience\s*:/m.test(raw)) ? { audience: 'owner' as const } : {}),
     body: boundBody(text),
   };
 }

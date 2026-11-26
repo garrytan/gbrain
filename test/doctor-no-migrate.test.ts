@@ -51,10 +51,14 @@ async function runCli(
   }
 }
 
-function makeHome(prefix: string): { home: string; dataDir: string; env: Record<string, string> } {
+async function makeHome(prefix: string): Promise<{ home: string; dataDir: string; env: Record<string, string> }> {
   const home = mkdtempSync(join(tmpdir(), prefix));
   const dataDir = join(home, '.gbrain', 'brain.pglite');
   mkdirSync(join(home, '.gbrain'), { recursive: true });
+  // Raw pgdata with no gbrain schema: an initialized but never-migrated brain. A configured folder that
+  // does not exist at all is a missing brain, which doctor refuses (brain_missing) before it connects.
+  const raw = await PGlite.create({ dataDir, extensions: { vector, pg_trgm } });
+  await raw.close();
   writeFileSync(
     join(home, '.gbrain', 'config.json'),
     JSON.stringify({
@@ -85,7 +89,7 @@ async function pagesRegclass(dataDir: string): Promise<string | null> {
 
 describe('doctor --no-migrate keeps a clean DB unmigrated (#4364)', () => {
   test.skipIf(SKIP)('schema is NOT created by doctor when --no-migrate is passed', async () => {
-    const { home, dataDir, env } = makeHome('gbrain-doctor-nomigrate-');
+    const { home, dataDir, env } = await makeHome('gbrain-doctor-nomigrate-');
     try {
       // Deliberately NO `init --migrate-only` first: the point is observing
       // what doctor does to a never-initialized brain.
@@ -95,6 +99,7 @@ describe('doctor --no-migrate keeps a clean DB unmigrated (#4364)', () => {
       // schema check below can't pass vacuously), and without it doctor's
       // connectEngine() auto-migrated the clean DB.
       expect(doctor.stderr).not.toContain('unknown flag');
+      expect(doctor.stdout + doctor.stderr).not.toContain('brain_missing');
       // Doctor may exit nonzero here (an uninitialized brain is unhealthy);
       // the contract under test is purely "no mutation", not the verdict.
       expect(await pagesRegclass(dataDir)).toBeNull();
@@ -104,9 +109,10 @@ describe('doctor --no-migrate keeps a clean DB unmigrated (#4364)', () => {
   }, 300_000);
 
   test.skipIf(SKIP)('contrast: plain doctor still auto-migrates (detection harness is live)', async () => {
-    const { home, dataDir, env } = makeHome('gbrain-doctor-migrate-');
+    const { home, dataDir, env } = await makeHome('gbrain-doctor-migrate-');
     try {
-      await runCli(['doctor', '--json'], env, 180_000);
+      const doctor = await runCli(['doctor', '--json'], env, 180_000);
+      expect(doctor.stdout + doctor.stderr).not.toContain('brain_missing');
       // Guards the test above against a vacuous pass: proves this harness
       // observes the schema whenever doctor's connectEngine() migrates.
       expect(await pagesRegclass(dataDir)).toBe('pages');

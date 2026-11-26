@@ -12,11 +12,13 @@
  * build if any new code path emits an unredacted postgresql:// URL.
  */
 
-const PG_URL_RE = /^(postgres(?:ql)?:\/\/)([^@/?]*@)?([^?]*)(\?.*)?$/i;
+const PG_URL_RE = /^(postgres(?:ql)?:\/\/)([^/?]*@)?([^?]*)(\?.*)?$/i;
 
 /**
  * Returns the URL with userinfo replaced by `***`. Preserves scheme, host,
- * port, db, and query string.
+ * port, db, and query string. Userinfo runs to the LAST `@` before the path
+ * or query, which is where the driver splits it, so a raw `@` inside a
+ * password is redacted whole instead of leaking the password's tail.
  *
  * Examples:
  *   redactPgUrl('postgresql://user:pass@host:5432/db')

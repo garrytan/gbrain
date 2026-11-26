@@ -7,7 +7,8 @@
  * side of `repair file-drift` carries the old page (`--prefer file` drops its links, facts, timeline and versions,
  * `--prefer database` writes a stale duplicate back). This repair pairs them on proof read from Git
  * (persistence/moved-pages.ts): the old path's last committed content is the moved file's content at the move, and the old
- * page still holds it. Exactly one page may descend from it; anything else is listed with its reason and kept.
+ * page still holds it, or Git renamed the path (or one live file has its name) and the moved page holds every line of the old
+ * page. Exactly one page may descend from it; anything else is listed with its reason and kept.
  *
  * Explicit-only, preview-bound, trusted local CLI on the source's owner host. `--apply --expect <hash> --yes` folds exactly
  * the previewed pairs, one coordinated maintenance write per pair (`managed_maintenance_fold_moved_page`; an unmanaged
@@ -57,7 +58,7 @@ const sameOwner = (a: GhostOwner | undefined, b: GhostOwner) => !!a && a.host_id
 /** The consent payload of `--apply --expect <hash>` (registry `consentText`). */
 export const MOVED_PAGES_CONSENT_TEXT = {
   what: 'Fold each previewed page whose file moved into the page the moved file imported as',
-  why: 'Each old page was left behind when its file moved while its deletion was held; Git shows the moved file started from exactly what the old page still holds, so folding it loses no edit.',
+  why: 'Each old page was left behind when its file moved while its deletion was held; Git shows the moved file started from exactly what the old page still holds, or the moved page holds every line of the old page, so folding it loses no edit.',
   risk: `The old page's links in every role, relationship dates, timeline, raw data, files, user tags, aliases, facts and saved versions move to the moved page, its slug becomes an alias, its hold is cleared, and it is soft-deleted and purged ${MOVED_PAGES_PURGE_FUSE_HOURS} h later; gbrain restore brings back its text as a database-only page until then, and moved references stay on the moved page. No file is written.`,
   user_message: `Fold the previewed pages whose file moved into their moved pages? Each old page is soft-deleted and purged after ${MOVED_PAGES_PURGE_FUSE_HOURS} h`,
 };
@@ -71,8 +72,14 @@ function item(pair: MovedPair, owner: GhostOwner, hash: string, last: boolean): 
   return { cursor: { phase: 1, id: pair.old.page_id }, source_id: pair.source_id, slug: pair.old.slug, chars: 0, action: 'fold:moved_page', pair, owner, hash, last };
 }
 
+const EVIDENCE_LINE: Record<MovedEvidence, (p: MovedPair) => string> = {
+  same_commit: p => `commit ${p.move_commit.slice(0, 12)}, blob ${p.old_blob.slice(0, 12)}`,
+  first_commit: p => `first commit ${p.evidence_commit.slice(0, 12)} of ${p.survivor.path}, blob ${p.old_blob.slice(0, 12)}`,
+  renamed_contained: p => `renamed by commit ${p.move_commit.slice(0, 12)}; ${p.survivor.slug} holds every line of ${p.old.slug}`,
+  named_contained: p => `the one live file of that name; ${p.survivor.slug} holds every line of ${p.old.slug}`,
+};
 const pairLine = (p: MovedPair) => `${p.old.slug} (id ${p.old.page_id}, revision ${p.old.revision}) folds into ${p.survivor.slug} (id ${p.survivor.page_id}): ${p.old.path} moved to ${p.survivor.path} `
-  + `(${p.evidence === 'same_commit' ? `commit ${p.move_commit.slice(0, 12)}` : `first commit ${p.evidence_commit.slice(0, 12)} of ${p.survivor.path}`}, blob ${p.old_blob.slice(0, 12)})`;
+  + `(${EVIDENCE_LINE[p.evidence](p)})`;
 
 export const movedPagesRepair: RepairHandler = {
   kind: 'moved-pages',

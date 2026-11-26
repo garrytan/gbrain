@@ -433,6 +433,7 @@ describe('config set — self_upgrade.* keys are FILE-plane canonical (#5489)', 
     { leaf: 'last_check_ts', raw: '1790000000000', stored: 1790000000000 },
     { leaf: 'last_applied_version', raw: '0.57.1.0', stored: '0.57.1.0' },
     { leaf: 'autopilot_launcher', raw: 'external', stored: 'external' },
+    { leaf: 'serve_launcher', raw: 'external', stored: 'external' },
   ];
 
   test('the cases cover every registered self_upgrade.* key', async () => {

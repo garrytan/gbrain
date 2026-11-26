@@ -9,7 +9,9 @@ import { markNoResults } from './no-results.ts';
 /* eslint-disable @typescript-eslint/no-explicit-any -- renders the verb's JSON envelope */
 
 /** #7177: `gbrain entity` found no page and no text mention: with GBRAIN_FAIL_ON_EMPTY=1, exit NO_RESULTS_EXIT_CODE (human and --json alike). */
-export function markEntityMiss(opName: string, r: any): void {
+export function markEntityMiss(opName: string, r: any, retrieval?: { degraded?: Array<{ stage?: string }> } | null): void {
+  // A lookup whose read failed (`entity_lookup_failed`) is not a miss, so it never claims "nothing matched".
+  if (retrieval?.degraded?.some(d => d?.stage === 'entity_lookup_failed')) return;
   if (opName === 'entity' && r && r.found === false && !r.text_mentions?.total) markNoResults('entity');
 }
 

@@ -18,7 +18,7 @@ Keys, under the family tag `keys::JOBS` (`m`):
 
 | Key | Holds |
 | --- | --- |
-| `m 0x00 <name>` | the id sequences `job` (`minion_jobs.id`), `inbox` (`minion_inbox.id`) and `attachment` (`minion_attachments.id`); a refused write takes no id |
+| `m 0x00 <name>` | the last id a kept write took from each id sequence: `job` (`minion_jobs.id`), `inbox` (`minion_inbox.id`), `attachment` (`minion_attachments.id`) and the other job-family tables. The ids come from the allocator `M next_jobs_seq_<name>`, which starts after this record and never rolls back: an id taken inside a transaction or savepoint that rolls back is not handed out again, as with Postgres `nextval`. A refused write outside a transaction takes no id (with concurrent writes on it may, as `nextval`) |
 | `m 0x01 <id>` | one job row, every `minion_jobs` column |
 | `m 0x02 <queue> 0x00 <priority> <created_at> <id>` | the claim index: `waiting` rows only, in claim order |
 | `m 0x03 <parent> <id>` | the children of a parent |
@@ -34,7 +34,7 @@ The `dream_synthesis_completions` archive (`rust/crates/gbrain-store/src/jobs/sy
 
 | Key | Holds |
 | --- | --- |
-| `a <source_id> 0x00 <idempotency_key>` | `{ completed_at }` (microseconds): one archive row, keyed by the table's primary key `(source_id, idempotency_key)`. Neither part holds `0x00`, so a scan of `a <source_id> 0x00 <prefix>` is `idempotency_key LIKE '<prefix>%'` |
+| `f <source_id> 0x00 <idempotency_key>` | `{ completed_at }` (microseconds): one archive row, keyed by the table's primary key `(source_id, idempotency_key)`. Neither part holds `0x00`, so a scan of `f <source_id> 0x00 <prefix>` is `idempotency_key LIKE '<prefix>%'` |
 
 Integers are big-endian, signed ones with the sign bit flipped. Every call reads the store clock once, as one
 Postgres transaction reads one `now()`. A millisecond duration becomes `round(ms * 1000)` microseconds. The one
@@ -48,6 +48,8 @@ foreign keys do.
 | --- | --- | --- |
 | `brain.admitJob({ insert, paramCoalesce?, quotaMaxWaiting?, backpressure?, maxSpawnDepth })` | `{ outcome, row, audit }`. In order: the idempotency key (same authority: a live row is `coalesced`, a `dead`/`cancelled` one has its key moved into `data.__released_idempotency_key` and the insert goes on); the identical waiting payload (`data.__param_hash`, newest first, within `maxAgeHours`); the name quota; the pending and waiting caps; the parent checks; the insert and the parent flip to `waiting-children`. A row held under another authority is `conflict` and nothing is written. `admission_refused` (`queue_quota_exceeded:<name>:<waiting>:<max>`) at the quota, `invalid_state` for a parent refusal (message as PGLite's), `constraint_violation` for a `minion_jobs` CHECK or a private-queue owner that is not a job. An insert without an authority is `constraint_violation` with the `minion_queue_protocol` trigger's message (`Minion queue protocol 1 required: …`), as on the SQL engines; an existing row without one (only a pre-protocol SQL row has none) is `released` when `dead`/`cancelled`, `coalesced` when `completed`/`failed` and the caller is an `application`, else `conflict`. The private-queue owner, token and lease (ISO) are stored as given | `admitJob` |
 | `brain.getJob(id)` | the row, or null | `getJob` |
+| `brain.readJobDataByIdempotencyKey(key)` | `{ data }` of the row holding the key, whatever its status, or null | `readJobDataByIdempotencyKey` |
+| `brain.coalesceOnIdempotencyKey(key, authority)` | `{ outcome, row? }`: the idempotency-key step of `admitJob` alone, in one write and under the same rule. `none` when no row holds the key; `coalesced` with the row; `released` after a `dead`/`cancelled` row's key was freed (kept in its data as `__released_idempotency_key`); `conflict` with the row, nothing written, for a row the caller refuses | `coalesceOnIdempotencyKey` |
 | `brain.listJobs({ status?, queue?, name?, ownerClientId?, limit?, offset? }?)` | rows matching every non-empty filter, `created_at DESC, id DESC`, 50 from 0 by default | `listJobs` |
 | `brain.claimNextJob(spec)` | the claimed row, or null: the first `waiting` row of `names` in `queue` with an authority, not in `excludeNames`, not marked with `suspectMark` when `excludeWatchdogSuspects`. With `suspectWaitMs` a row marked and untouched for that long is overdue: it leads the claim order (unless in `excludeNames`), and with `excludeWatchdogSuspects` any overdue eligible row makes the claim return null. Either option without `suspectMark` is `invalid_argument`. Stamps the lease (row, then handler map, clamped to 5 s..1 h; else the worker's), the timeout, `claim_generation`, `spend_claim_token`, `attempts_started`, `started_at` and the `legacy_default` spend record of a consent-gated producer | `claimNextJob` |
 | `brain.renewJobLease(id, token, ms)` | true when an `active` row this token holds got a new lease | `renewJobLease` |
@@ -55,7 +57,12 @@ foreign keys do.
 | `brain.failJob(id, token, errorText, status, backoffMs?, result?)` | the row (before a `remove_on_fail` delete), or null. `delayed` retries after `backoffMs`; `failed`/`dead` post `child_done` and apply `on_child_fail` (`fail_parent` fails a `waiting-children` parent; `remove_dep` detaches the child; then the parent wakes when its children are done) | `failJob` |
 | `brain.reclaimStalledJobs(graceMs, suspectMark)` | `{ requeued, dead }` in id order. Drops drain-lease holder rows (`gbrain-drain-lease`) whose lease and cycle lock are gone; requeues a dead multi-claim worker's expired co-runners marked with `suspectMark` and no stall counted; requeues the rest with one stall counted, or kills them at `max_stalled` (notifying and waking their parents) | `reclaimStalledJobs` |
 | `brain.acquireCycleLock(id, opts)` / `refreshCycleLock` / `releaseCycleLock` / `deleteCycleLockIfStale` / `readCycleLocks(filter)` | as the SQL engines (`cycle-locks.ts`); `deleteCycleLock` is the release statement | the cycle lock members |
+| `brain.readLiveJobIds(ids)` | the listed ids whose job is `waiting`, `active`, `delayed`, `waiting-children` or `paused`, ascending and once each; a finished or missing job is left out | `readLiveJobIds` (the resident notifier's `liveJobs`) |
+| `brain.writeDrainLeaseHolder(sourceId, lockToken, data, ttlMinutes)` | the new row's id. One write: deletes the source's `sync` holder rows in `gbrain-drain-lease` (`data.sourceId` = `sourceId`), then inserts an `active` `sync` row there with application authority, one attempt, `max_stalled` 0, the lease token, `lock_until` `ttlMinutes` ahead, started now, removed on completion or failure | `writeDrainLeaseHolder` |
+| `brain.refreshDrainLeaseHolder(lockToken, ttlMinutes)` / `releaseDrainLeaseHolder(lockToken)` | how many holder rows carry the token; one write that moves their `lock_until` `ttlMinutes` ahead and stamps `updated_at`, or deletes them | `refreshDrainLeaseHolder`, `releaseDrainLeaseHolder` |
+| `brain.readDrainLeaseBeacon(lockToken)` | `data.drain_lease_beacon` of the holder row carrying the token (the lowest id when several do), or `null` | `readDrainLeaseBeacon` |
 | `brain.assertCycleLease(id, token)` | true when the lease is held under `token` and unexpired. A read: `FOR KEY SHARE` has nothing to wait for in one write transaction | `assertCycleLease` |
+| `brain.takePageEmbeddingLease(id, { holderPid, holderHost, acquisitionToken, ttlMinutes })` / `renewPageEmbeddingLease(id, { acquisitionToken, ttlMinutes })` / `releasePageEmbeddingLease(id, { acquisitionToken })` | the page embedding lease (`embed-page:<page id>`, page-embedding-lease.ts) on the same lock rows. Take writes the row when none stands or it expired, with no steal grace; renew matches the token alone, not the pid; release deletes this holder's row and every expired `embed-page:` row. A renew inside `transaction(fn)` runs in that write transaction | the page embedding lease members |
 
 Jobs slice 2 members. Each is one write transaction (or one read) and resolves what the `queue.ts` statement
 at the line cited in the TypeScript member returns. A row is a job row as above; "rows" are in id order unless
@@ -84,7 +91,7 @@ said.
 | `brain.readJobStats(since, queue)` / `readQueueFamilyStats(since, prefix)` | `{ by_status, types, drained, depth, stalled, wedge }`; one row per queue family, by family name |
 | `brain.hasOverdueWatchdogSuspect({ queue, names, mark, waitMs })` | true when a `waiting` row with an authority is marked and untouched for `waitMs` |
 | `brain.listUnreviewedJobs()` / `getFailedJobForRetry(id)` | `{ id, submission_authority }` of live rows whose authority is not exactly the application one (NULL included); `{ name, data }` of a `failed`/`dead` row |
-| `brain.readJobSourceState(sourceId)` | `{ archived, created_at }` (`created_at` ISO) of the source an agent job was accepted against, or null for an unknown id; the job authority check (`assertCurrentAgent`) denies the job when the source is gone, archived or created again after acceptance |
+| `brain.readJobSourceState(sourceId)` | `{ archived, created_at, local_path, config }` (`created_at` ISO) of the source a remote job was accepted against, or null for an unknown id; the agent job check (`assertCurrentAgent`) denies the job when the source is gone, archived or created again after acceptance, and a generic remote job (`sourceBoundary`: sync, import, lint) reads its registered root and config from it |
 | `brain.countOpenJobsByOwner(clientId)` | how many `subagent` rows in a non-terminal status (`waiting`, `active`, `delayed`, `waiting-children`, `paused`), in any queue, have `data->>'__owner_client_id'` equal to `clientId` (a number owner matches its text; a null owner matches nothing) |
 | `brain.readJobInsight(spec)` | the six reads behind `describeJobs`: submitter, queue position, slot holders, live children, live leases with their beacon, foreign-owner tokens; see [jobs-insight.md](jobs-insight.md) |
 | `brain.readJobSpendTree(spec)`, `insertSpendReservation`, `expireSpendReservations`, `settleSpendReservation`, `markSpendUsageUnknown`, `insertLeasePressure`, `countLeasePressure`, `listRecentLeasePressure` | the spend reservations and the lease-pressure log; see [jobs-spend.md](jobs-spend.md) |
@@ -97,24 +104,35 @@ The actor match of `cancelJobs` and `listJobPage` is `jobActorSql`: the `grant.a
 distinct elements sorted and joined with `,` when it is an array (`''` when empty), `!` for any other
 value, and `''` when missing. A NULL authority or no grant matches the four `''`.
 
-Delegated client admission (`admitJob` with a `lock` or `checkCapacity` policy, and `retryJob` of a delegated
-job) runs the TypeScript policy on a narrow handle (`src/core/rust-engine/delegated-policy-handle.ts`): the job
-reads, `countOpenJobsByOwner` and `readJobSourceState` come from the store. The store keeps no `oauth_clients` table, so the handle's
-`lockOAuthClient` locks nothing and the policy's next step, the client's grant read, refuses
-(`engine_capability_missing`, capability `minion_queue`) before anything is written.
+Delegated client admission (`admitJob` with a `lock` or `checkCapacity` policy) runs in one engine transaction, in
+the SQL order: the policy's lock, then a store admission with `capacityCheck: true` that answers a coalesce (or a
+conflict) or stops where the capacity check runs and answers `capacity` with nothing written, then the policy's
+capacity check on the transaction, then the store admission. The policy reads the transaction's state
+(`countOpenJobsByOwner`, `readOauthClient`, `listAllSources`), and the store admits one write transaction at a time,
+so the check and the insert are one admission. `lockOAuthClient` resolves with nothing to do: inside a transaction the
+store's single writer already holds what the row lock holds, and outside one Postgres releases the lock at once.
+`retryJob` reads the job, runs the policy and updates the job in one engine transaction, as PGLite does.
 
 `MinionQueue.retryJob` runs the job authority check first. An application job needs no read. An agent job
 (`remote_agent`) reads its source with `readJobSourceState`, so a source that is gone, archived or created again
-is denied on the store as on PGLite; a current source goes on to the owner's `oauth_clients` read, which refuses.
+is denied on the store as on PGLite; a current source goes on to the owner's `oauth_clients` read, which the store serves.
+A generic remote job (sync, import, lint) reads its source registration with the same member, at submit and when it
+runs, so an OAuth client's remote submit is accepted or refused on the store as on PGLite.
 The archived-source branch is pinned by cargo only (`job_source_state_reads_archived_and_the_creation_stamp` in
 `tests/jobs_slice2.rs`). The parity suite cannot reach it: no member the Rust engine serves archives a source, so
 a mutant that always reads `archived` as false passes parity and fails cargo.
-A generic remote job (`remote_generic`) reads its principal first (`SELECT client_id, deleted_at, scope, source_id,
-bound_slug_prefixes, surface, allowed_operations FROM oauth_clients WHERE client_id = $1`, or `SELECT * FROM
-access_tokens WHERE id = $1` for a legacy token), so its retry refuses at that read until the grants family is in
-the store. A policy that got past the
-lock would still refuse before the write: the lock, the capacity count and the write are separate store calls, so
-they are not one admission. `lockOAuthClient` called directly is not served and refuses the same way.
+A generic remote job (`remote_generic`) reads its principal first, through the typed `readOauthClient` or
+`readJobPrincipal` (both served by the store), then its source registration (`SELECT id, local_path, config, archived,
+created_at FROM sources WHERE id = $1`, caller raw SQL), so its submit and its retry refuse at that source read.
+
+Facts extraction reads (`jobs/facts_extraction.rs`, TypeScript `engine-sql/facts-backstop.ts`): the facts backstop
+effect (`persistence/effect-facts.ts`) asks whether a page still has an extraction waiting and whether one finished.
+Both match `data->>'page_id'` as PostgreSQL's `->>` reads it (a JSON number is its text).
+
+| JS | Resolves | Mirrors |
+| --- | --- | --- |
+| `brain.hasPendingFactsExtraction(pageId, jobStates)` | `true` when a `facts-backstop` effect of the page is `queued` or `running`, or a `facts-absorb` job of the page has a status in `jobStates` | `hasPendingFactsExtraction` |
+| `brain.hasCompletedFactsExtraction(pageId)` | `true` when a `completed` `facts-absorb` job of the page has no `result.skipped` (no result, no key, or JSON null) | `hasCompletedFactsExtraction` |
 
 Differences from PGLite:
 

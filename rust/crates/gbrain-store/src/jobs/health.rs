@@ -353,6 +353,16 @@ impl Store {
             .map(|oldest| seconds_between(now, oldest)))
     }
 
+    /// `countWaitingJobs(excludeFactsAbsorb)`: the `waiting` jobs, without the `facts-absorb`
+    /// jobs when `exclude_facts_absorb`.
+    pub fn count_waiting_jobs(&self, exclude_facts_absorb: bool) -> Result<u64> {
+        let read = self.read()?;
+        Ok(rows_with_status(&*read, "waiting")?
+            .iter()
+            .filter(|r| !(exclude_facts_absorb && r.name == "facts-absorb"))
+            .count() as u64)
+    }
+
     /// `listStuckActiveJobsByName()`: `{ name, n }` of the active jobs whose lock lapsed or whose
     /// stalled counter reached two, the most first and bytewise by name on a tie.
     pub fn list_stuck_active_jobs_by_name(&self) -> Result<Value> {

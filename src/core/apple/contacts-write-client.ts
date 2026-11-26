@@ -22,6 +22,9 @@ import { sendKeyPairFromSeed, signSendRequest } from './send-sign.ts';
 import type { AppleContactsSourceConfig } from '../apple-contacts/types.ts';
 
 export const CONTACTS_WRITE_ROUTE = '/v1/contacts/batch';
+export const WRITE_CONFIG_KEY = 'apple_contacts.write';
+export const DESTRUCTIVE_CONFIG_KEY = 'apple_contacts.destructive_writes';
+export const OWNER_KEY_FILE_CONFIG_KEY = 'apple_contacts.owner_key_file';
 const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 120_000;
 

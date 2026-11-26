@@ -8,11 +8,12 @@
  *
  *  - Claude Code: its own entries in the user settings file, marked
  *    `skill-resolver-v1`: UserPromptSubmit (`hook user-prompt`) and
- *    SessionStart (`hook session-start`, which only resets a session's
- *    dedupe state after a compaction).
+ *    SessionStart (`hook session-start`, matcher-less so it fires on every
+ *    source: it resets a session's dedupe state after a compaction and
+ *    prints the pins and session_start block, hook-lane.ts).
  *  - Codex: its own UserPromptSubmit group in CODEX_HOME/hooks.json
  *    (`hook user-prompt --harness codex`) and its own SessionStart group
- *    (`hook session-start --harness codex`, the same compaction reset:
+ *    (`hook session-start --harness codex`, the same reset and block:
  *    Codex sends SessionStart with source "compact" after it compacts),
  *    each trusted by its hash in config.toml beside it, like the turn-rule
  *    lane.

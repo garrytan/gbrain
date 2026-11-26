@@ -54,7 +54,7 @@ export interface EnforcedMemberBrain {
   readonly root: string;
   /** A read-scope token bound to OWNER, for reading back what a member wrote. */
   readonly ownerToken: string;
-  cli(args: string[], opts?: { member?: string | null; stdin?: string }): Promise<{ stdout: string; stderr: string; exitCode: number }>;
+  cli(args: string[], opts?: { member?: string | null; stdin?: string; env?: Record<string, string>; preload?: string }): Promise<{ stdout: string; stderr: string; exitCode: number }>;
   withBrain<T>(run: (engine: BrainEngine) => Promise<T>): Promise<T>;
 }
 
@@ -72,9 +72,9 @@ export function enforcedMemberBrain(kind: TestBackend): EnforcedMemberBrain {
     const merged: Record<string, string | undefined> = { ...out, HOME: home, GBRAIN_HOME: home, GBRAIN_SELF_UPGRADE_MODE: 'off', GBRAIN_SKIP_STARTUP_HOOKS: '1', GBRAIN_SWEEP: '0', GBRAIN_CLI_SOCKET: '0', ...extra };
     return Object.fromEntries(Object.entries(merged).filter(([, v]) => v !== undefined)) as Record<string, string>;
   }
-  async function cli(args: string[], opts: { member?: string | null; stdin?: string } = {}) {
+  async function cli(args: string[], opts: { member?: string | null; stdin?: string; env?: Record<string, string>; preload?: string } = {}) {
     const member = opts.member === undefined ? MEMBER : opts.member;
-    const proc = Bun.spawn(['bun', 'run', CLI, ...args], { cwd: root, env: env({ GBRAIN_ENFORCED_MEMBER: member ?? undefined }),
+    const proc = Bun.spawn(['bun', 'run', ...(opts.preload ? ['--preload', opts.preload] : []), CLI, ...args], { cwd: root, env: env({ GBRAIN_ENFORCED_MEMBER: member ?? undefined, ...opts.env }),
       stdin: opts.stdin === undefined ? 'ignore' : new Blob([opts.stdin]), stdout: 'pipe', stderr: 'pipe' });
     const [stdout, stderr, exitCode] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
     return { stdout, stderr, exitCode };

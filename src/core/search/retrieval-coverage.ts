@@ -23,7 +23,8 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import { budgetRowAppliesFilter } from '../page-size-policy.ts';
-import { projectionClassSql } from '../page-state/projection-class.ts';
+import { embeddingsDisabled } from '../embedding-disabled.ts';
+import { projectionClassSql, textClassSql } from '../page-state/projection-class.ts';
 import { pageReadFilter } from './read-policy-sql.ts';
 import { servedTextProjectionFilter } from './safe-chunks.ts';
 import type { ProjectionReadinessScope } from './projection-readiness.ts';
@@ -112,6 +113,9 @@ export function coverageScopeFilters(scope: ProjectionReadinessScope, params: un
 /**
  * Pages in scope matching `where` (over `pages p` joined to `sources s` and `join`), up to the cap, and how many could affect the query.
  * `classed` also counts the could-affect images in the `sealable` or `reimport` class. Null when the count fails: unknown, never zero.
+ * The classed count runs JIT off, as the readiness probe does (#8033): the class's per-page subplans and a remote caller's
+ * visibility subplans lift its estimate past `jit_above_cost`, and on a large brain compiling them cost more than a second
+ * on every search while the read itself took a fraction of that. The unclassed count stays a plain statement.
  */
 async function countInScope(engine: Pick<BrainEngine, 'executeRaw'>, scope: ProjectionReadinessScope, relevance: CoverageRelevance,
   join: string, where: string, classed = false): Promise<ScopedCount | null> {
@@ -134,6 +138,7 @@ async function countInScope(engine: Pick<BrainEngine, 'executeRaw'>, scope: Proj
         WHERE p.deleted_at IS NULL AND ${where} AND ${filters.join(' AND ')}
         LIMIT ${COVERAGE_COUNT_CAP}) x`,
       params,
+      classed ? { jitOff: true } : undefined,
     );
     const total = Number(row?.total), couldAffect = Number(row?.could_affect);
     if (!Number.isFinite(total) || !Number.isFinite(couldAffect)) return null;
@@ -150,8 +155,12 @@ export function countPendingProjections(engine: Pick<BrainEngine, 'executeRaw'>,
     `NOT ${servedTextProjectionFilter('p')} AND ${projectionClassSql('p', 's')} NOT IN ('protected','archived')`, true);
 }
 
-/** Pages in scope held from embedding: a held or capped budget row that still applies, on a page no `embed_skip` marker keeps out of embedding for good. */
-export function countEmbeddingHeld(engine: Pick<BrainEngine, 'executeRaw'>, scope: ProjectionReadinessScope, relevance: CoverageRelevance): Promise<ScopedCount | null> {
+/**
+ * Pages in scope held from embedding: a held or capped budget row that still applies, on a page no `embed_skip` marker keeps out of
+ * embedding for good. Null on a brain with embeddings off on purpose, where a held page is no degradation.
+ */
+export async function countEmbeddingHeld(engine: Pick<BrainEngine, 'executeRaw' | 'getConfig'>, scope: ProjectionReadinessScope, relevance: CoverageRelevance): Promise<ScopedCount | null> {
+  if (await embeddingsDisabled(engine)) return null;
   return countInScope(engine, scope, relevance, 'JOIN page_embedding_budget b ON b.page_id = p.id',
     `${budgetRowAppliesFilter('b', 'p')} AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')`);
 }
@@ -160,18 +169,31 @@ export function countEmbeddingHeld(engine: Pick<BrainEngine, 'executeRaw'>, scop
  * #9192: progress of the index rebuild an upgrade's activation queued (rows still queued with reason
  * `protocol_activation`), over the pages in scope: how many are done of the total, and the rate measured from the
  * start of the rebuild. Null when no such rebuild is running or the count fails.
+ *
+ * The rebuild runs while an activation row waits on a `text` page in scope: the resident drain rebuilds only those.
+ * Rows left on images (`sealable`, `reimport`) wait for an operator, whom the pending-images notice already names,
+ * so they never make a rebuild look like it runs for good. That check reads the queue first, on its own (#10367: a
+ * materialized read, so its few rows reach pages through the (source_id, slug) key; joined on incarnation alongside the
+ * pages, the planner could pair every queued row with every page of a source list and filter on slug afterwards, about
+ * 3 s a search while image rows sat in the queue), and the count of every
+ * page in scope, a read of the whole pages table, sits behind it (a filter on the outer row alone, so Postgres never
+ * starts the scan when no rebuild runs): it runs only while the rebuild runs, never on every search. JIT off for the
+ * same reason as the classed `countInScope`: the never-run count still prices into the estimate.
  */
 export async function countProjectionRebuild(engine: Pick<BrainEngine, 'executeRaw'>, scope: ProjectionReadinessScope): Promise<ProjectionRebuildProgress | null> {
   const params: unknown[] = [];
-  const filters = coverageScopeFilters(scope, params);
+  const filters = coverageScopeFilters(scope, params).join(' AND ');
   try {
     const [row] = await engine.executeRaw<{ seconds: number | null; total: number; done: number }>(
-      `WITH started AS (SELECT EXTRACT(EPOCH FROM now() - min(updated_at))::float8 AS seconds FROM page_projection_jobs WHERE reason = 'protocol_activation')
-      SELECT started.seconds, count(p.id)::int AS total,
-        count(p.id) FILTER (WHERE p.text_projection_revision IS NOT DISTINCT FROM p.knowledge_revision)::int AS done
-      FROM started LEFT JOIN (pages p JOIN sources s ON s.id = p.source_id) ON started.seconds IS NOT NULL AND p.deleted_at IS NULL
-        AND ${projectionClassSql('p', 's')} NOT IN ('protected','archived') AND ${filters.join(' AND ')}
-      GROUP BY started.seconds`, params);
+      `WITH queued AS MATERIALIZED (SELECT s.id AS source_id, j.slug, j.updated_at
+          FROM page_projection_jobs j JOIN sources s ON s.incarnation = j.source_incarnation WHERE j.reason = 'protocol_activation'),
+        started AS (SELECT EXTRACT(EPOCH FROM now() - min(q.updated_at))::float8 AS seconds
+        FROM queued q JOIN pages p ON p.source_id = q.source_id AND p.slug = q.slug JOIN sources s ON s.id = p.source_id
+        WHERE p.deleted_at IS NULL AND ${textClassSql('p', 's')} AND ${filters})
+      SELECT started.seconds, c.total, c.done FROM started, LATERAL (SELECT count(p.id)::int AS total,
+          count(p.id) FILTER (WHERE p.text_projection_revision IS NOT DISTINCT FROM p.knowledge_revision)::int AS done
+        FROM pages p JOIN sources s ON s.id = p.source_id
+        WHERE started.seconds IS NOT NULL AND p.deleted_at IS NULL AND ${projectionClassSql('p', 's')} NOT IN ('protected','archived') AND ${filters}) c`, params, { jitOff: true });
     if (row?.seconds === null || row?.seconds === undefined) return null;
     const done = Number(row.done), total = Number(row.total), seconds = Number(row.seconds);
     return { done, total, pages_per_second: seconds > 0 && done > 0 ? done / seconds : null };

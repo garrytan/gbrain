@@ -67,7 +67,8 @@ export function fieldText(s: SkillRecord, f: Field, variant: Variant): string {
   return s.body;
 }
 
-export interface SkillMeta { id: string; name: string; summary: string; path?: string; ns?: string; t: 0 | 1 }
+/** aud: 1 marks an `audience: owner` skill, never offered outside its owner's sessions. */
+export interface SkillMeta { id: string; name: string; summary: string; path?: string; ns?: string; t: 0 | 1; dep?: 1; rep?: string; aud?: 1 }
 export interface IndexHeader {
   format: number; endian: 'le'; ranker: { id: string; version: number; variant: Variant; params: Bm25Params }; tokenizer: string;
   n_skills: number; n_terms: number; n_postings: number; truncated_skills: number;
@@ -133,7 +134,7 @@ export function encodeIndex(records: readonly SkillRecord[], variant: Variant): 
       for (let f = 0; f < 5; f++) postTf[k * 5 + f] = tfs[j * 5 + f]!;
     }
   }
-  const metaLines = records.map(s => JSON.stringify({ id: s.id, name: s.name, summary: summaryOf(s.description), ...(s.path ? { path: s.path } : {}), ...(s.namespace ? { ns: s.namespace } : {}), t: s.triggers.length || s.routing.length ? 1 : 0 }));
+  const metaLines = records.map(s => JSON.stringify({ id: s.id, name: s.name, summary: summaryOf(s.description), ...(s.path ? { path: s.path } : {}), ...(s.namespace ? { ns: s.namespace } : {}), t: s.triggers.length || s.routing.length ? 1 : 0, ...(s.deprecated ? { dep: 1, ...(s.replacedBy ? { rep: s.replacedBy } : {}) } : {}), ...(s.audience === 'owner' ? { aud: 1 } : {}) }));
   const enc = new TextEncoder();
   const metaParts = metaLines.map(l => enc.encode(l));
   const metaOff = new Uint32Array(n + 1);

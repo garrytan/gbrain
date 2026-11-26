@@ -14,22 +14,29 @@
 //! keep each page's best chunk (highest score, then lowest chunk id), apply the keyset
 //! `score < s OR (score = s AND page_id > p)`, order by score descending and page id, and take
 //! `LIMIT $limit OFFSET $offset` without clamping. The query is the raw one (no dash-run
-//! collapse), and `stale` is always false. With `handlesOnly` only the handle arm runs
+//! collapse), and `stale` is always false, as `keyword-statement.ts` reports on both SQL
+//! engines (Postgres reads no `timeline_entries` here). With `handlesOnly` only the handle arm runs
 //! (`searchHandlePages`, the keyword arm's rows for the pages a slug handle names).
+//!
+//! A CJK query (`cjkTerms` set) runs `buildKeywordMatch`'s CJK arm instead: a text chunk matches
+//! when it holds every term (LIKE, or ILIKE for a term with case), scored
+//! `((Σ term occurrences) * factor)::float8`; no handle arm, and `handlesOnly` matches nothing.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-use super::filters::{
-    KeywordOptions, PageFilter, readable_chunk_vector, result_row, row_count, source_factor,
-};
+use super::cjk::{CjkMatcher, CjkTerm};
+use super::filters::{KeywordOptions, PageFilter, result_row, row_count, source_factor};
+use super::index::{basename, basename_pages};
 use super::rank::ts_rank;
 use super::tsearch::{
     TsQuery, phraseto_tsquery, ts_matches, websearch_to_tsquery, with_query_stack,
 };
+use super::walk::{Admit, ChunkSource, PageOrder, walk_chunks, walk_text_chunks};
 use crate::Store;
-use crate::chunks::{ChunkRecord, read_chunks, read_segment_view};
+use crate::chunks::ChunkRecord;
 use crate::error::{Result, StoreError};
-use crate::pages::{PageRecord, all_pages};
+use crate::pages::PageRecord;
+use crate::timeline::latest_entry_micros;
 use serde_json::Value;
 
 /// `KEYWORD_COUNT_CAP` (search/keyword-statement.ts).
@@ -38,10 +45,11 @@ const KEYWORD_COUNT_CAP: usize = 10_000;
 /// `KEYWORD_PHRASE_FACTOR` (search/sql-ranking.ts).
 const KEYWORD_PHRASE_FACTOR: f64 = 2.0;
 
-/// A page's best matching chunk.
+/// A page's best matching chunk, and whether the page is stale (only read when asked for).
 struct Best {
     score: f64,
     chunk: ChunkRecord,
+    stale: bool,
 }
 
 struct Matcher {
@@ -51,14 +59,19 @@ struct Matcher {
 
 impl Store {
     /// Visits every page that matches with its best chunk; `visit` returns false to stop.
+    /// `with_stale` reads each matched page's newest timeline entry for `Best::stale`.
     fn keyword_pages(
         &self,
         query: &str,
         options: &KeywordOptions,
+        with_stale: bool,
         mut visit: impl FnMut(PageRecord, Best) -> bool + Send,
     ) -> Result<()> {
         if query.trim().is_empty() {
             return Ok(());
+        }
+        if let Some(terms) = &options.cjk_terms {
+            return self.cjk_keyword_pages(terms, options, with_stale, visit);
         }
         let matcher = Matcher {
             query: websearch_to_tsquery(query)?,
@@ -77,66 +90,133 @@ impl Store {
         with_query_stack(items, || {
             let read = self.read()?;
             let mut filter = PageFilter::new(options)?;
-            for page in all_pages(&*read)? {
-                if !filter.keeps(&*read, &page)? {
+            let text_queries: Vec<&TsQuery> = if options.handles_only {
+                Vec::new()
+            } else {
+                vec![&matcher.query]
+            };
+            let mut extra: Vec<&TsQuery> = vec![&matcher.query];
+            extra.extend(matcher.phrase.as_ref());
+            let source = ChunkSource::plan(&*read, &text_queries, &extra, |read| {
+                if options.handles.is_empty() {
+                    Ok(Some(BTreeSet::new()))
+                } else {
+                    basename_pages(read, &options.handles)
+                }
+            })?;
+            let mut admit = Admit {
+                filter: Some(&mut filter),
+                text_only: true,
+                basenames: options.handles_only.then_some(&options.handles[..]),
+            };
+            walk_chunks(
+                &*read,
+                &source,
+                PageOrder::Any,
+                &mut admit,
+                &mut |page, chunks| {
+                    let handle = options.handles.iter().any(|h| h == basename(&page.slug));
+                    let mut factor: Option<f64> = None;
+                    let mut best: Option<Best> = None;
+                    for (chunk, vector) in chunks {
+                        let text = !options.handles_only && ts_matches(&vector, &matcher.query);
+                        if !text && !handle {
+                            continue;
+                        }
+                        let factor =
+                            *factor.get_or_insert_with(|| source_factor(&page, &options.boosts));
+                        let phrase = match &matcher.phrase {
+                            Some(p) if ts_matches(&vector, p) => KEYWORD_PHRASE_FACTOR,
+                            _ => 1.0,
+                        };
+                        let rank = f64::from(ts_rank(&vector, &matcher.query)) * phrase;
+                        // A chunk in both arms keeps its higher score: the handle arm's.
+                        let score = if handle {
+                            (1.0 + rank) * factor
+                        } else {
+                            rank * factor
+                        };
+                        let better = best.as_ref().is_none_or(|b| {
+                            score > b.score || (score == b.score && chunk.id < b.chunk.id)
+                        });
+                        if better {
+                            best = Some(Best {
+                                score,
+                                chunk,
+                                stale: false,
+                            });
+                        }
+                    }
+                    let Some(mut best) = best else {
+                        return Ok(true);
+                    };
+                    if with_stale {
+                        best.stale = latest_entry_micros(&*read, page.id)?
+                            .is_some_and(|latest| page.updated_at_us < latest);
+                    }
+                    Ok(visit(page, best))
+                },
+            )?;
+            Ok(())
+        })
+    }
+
+    /// `keyword_pages` on a CJK query (`buildKeywordMatch`'s CJK arm): every term matches the text
+    /// chunk (`LIKE` / `ILIKE`), scored `((Σ count(t, term_i)) * factor)::float8`, with no
+    /// handle arm, so a handles-only call matches nothing.
+    fn cjk_keyword_pages(
+        &self,
+        terms: &[CjkTerm],
+        options: &KeywordOptions,
+        with_stale: bool,
+        mut visit: impl FnMut(PageRecord, Best) -> bool,
+    ) -> Result<()> {
+        if terms.is_empty() || options.handles_only {
+            return Ok(());
+        }
+        let matcher = CjkMatcher::new(terms);
+        let read = self.read()?;
+        let mut filter = PageFilter::new(options)?;
+        let mut admit = Admit {
+            filter: Some(&mut filter),
+            text_only: true,
+            basenames: None,
+        };
+        walk_text_chunks(&*read, &mut admit, &mut |page, chunks| {
+            let mut factor: Option<f64> = None;
+            let mut best: Option<Best> = None;
+            for chunk in chunks {
+                if !matcher.all(&chunk.chunk_text) {
                     continue;
                 }
-                let basename = page.slug.rsplit('/').next().unwrap_or(&page.slug);
-                let handle = options.handles.iter().any(|h| h == basename);
-                if options.handles_only && !handle {
-                    continue;
-                }
-                let generation = read_segment_view(&*read, page.id)?.generation;
-                let mut factor: Option<f64> = None;
-                let mut best: Option<Best> = None;
-                for chunk in read_chunks(&*read, page.id)? {
-                    if !chunk.visible_at(generation)
-                        || chunk.modality != "text"
-                        || !filter.keeps_chunk(&chunk)
-                    {
-                        continue;
-                    }
-                    let Some(vector) = readable_chunk_vector(&chunk) else {
-                        continue;
-                    };
-                    let text = !options.handles_only && ts_matches(&vector, &matcher.query);
-                    if !text && !handle {
-                        continue;
-                    }
-                    let factor =
-                        *factor.get_or_insert_with(|| source_factor(&page, &options.boosts));
-                    let phrase = match &matcher.phrase {
-                        Some(p) if ts_matches(&vector, p) => KEYWORD_PHRASE_FACTOR,
-                        _ => 1.0,
-                    };
-                    let rank = f64::from(ts_rank(&vector, &matcher.query)) * phrase;
-                    // A chunk in both arms keeps its higher score: the handle arm's.
-                    let score = if handle {
-                        (1.0 + rank) * factor
-                    } else {
-                        rank * factor
-                    };
-                    let better = best.as_ref().is_none_or(|b| {
-                        score > b.score || (score == b.score && chunk.id < b.chunk.id)
+                let factor = *factor.get_or_insert_with(|| source_factor(&page, &options.boosts));
+                let score = matcher.term_counts(&chunk.chunk_text) as f64 * factor;
+                let better = best
+                    .as_ref()
+                    .is_none_or(|b| score > b.score || (score == b.score && chunk.id < b.chunk.id));
+                if better {
+                    best = Some(Best {
+                        score,
+                        chunk,
+                        stale: false,
                     });
-                    if better {
-                        best = Some(Best { score, chunk });
-                    }
-                }
-                if let Some(best) = best
-                    && !visit(page, best)
-                {
-                    break;
                 }
             }
-            Ok(())
+            let Some(mut best) = best else {
+                return Ok(true);
+            };
+            if with_stale {
+                best.stale = latest_entry_micros(&*read, page.id)?
+                    .is_some_and(|latest| page.updated_at_us < latest);
+            }
+            Ok(visit(page, best))
         })
     }
 
     /// `countKeywordPages`: the matching pages, at most `KEYWORD_COUNT_CAP + 1`.
     pub fn count_keyword_pages(&self, query: &str, options: &KeywordOptions) -> Result<u64> {
         let mut n = 0usize;
-        self.keyword_pages(query, options, |_, _| {
+        self.keyword_pages(query, options, false, |_, _| {
             n += 1;
             n <= KEYWORD_COUNT_CAP
         })?;
@@ -165,7 +245,7 @@ impl Store {
         // Keyed by (score descending, page id) so the walk is the final order.
         let mut kept: BTreeMap<(std::cmp::Reverse<OrdF64>, u64), (PageRecord, Best)> =
             BTreeMap::new();
-        self.keyword_pages(query, options, |page, best| {
+        self.keyword_pages(query, options, false, |page, best| {
             let passes = after
                 .is_none_or(|(s, p)| best.score < s || (best.score == s && (page.id as f64) > p));
             if passes {
@@ -180,7 +260,7 @@ impl Store {
             .into_values()
             .skip(offset)
             .take(limit.unwrap_or(usize::MAX))
-            .map(|(page, best)| result_row(&page, &best.chunk, best.score, false))
+            .map(|(page, best)| result_row(&page, &best.chunk, best.score, best.stale))
             .collect())
     }
 }
@@ -363,5 +443,46 @@ mod tests {
             score(&plain, "notes/one") * 2.0
         );
         assert_eq!(score(&phrased, "notes/three"), score(&plain, "notes/three"));
+    }
+
+    #[test]
+    fn page_search_reports_stale_false_even_with_a_newer_timeline_entry_as_the_sql_engines_do() {
+        let store = seed();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let entry = crate::timeline::TimelineInput {
+            date: Some("2026-01-02".into()),
+            summary: Some("met".into()),
+            ..crate::timeline::TimelineInput::default()
+        };
+        store
+            .add_timeline_entry(
+                "notes/two",
+                &entry,
+                &crate::timeline::AddTimelineOptions::default(),
+            )
+            .unwrap();
+        let stale = |rows: &[Value]| {
+            rows.iter()
+                .map(|r| (r["slug"].as_str().unwrap().to_string(), r["stale"].clone()))
+                .collect::<Vec<_>>()
+        };
+        let text = store
+            .search_keyword_pages("red apple", &opts(json!({})))
+            .unwrap();
+        assert_eq!(
+            stale(&text),
+            [
+                ("notes/two".to_string(), json!(false)),
+                ("notes/one".to_string(), json!(false)),
+                ("notes/three".to_string(), json!(false)),
+            ]
+        );
+        let handles = store
+            .search_keyword_pages(
+                "two",
+                &opts(json!({ "handles": ["two"], "handlesOnly": true })),
+            )
+            .unwrap();
+        assert_eq!(stale(&handles), [("notes/two".to_string(), json!(false))]);
     }
 }

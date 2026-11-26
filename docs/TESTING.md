@@ -134,8 +134,11 @@ pass, `run-serial-tests.sh` pooled runs and rescues, `run-slow-tests.sh`,
 run attempt, exit code), `<id>.files` (the assigned files) and Bun's native
 JUnit report. `GBRAIN_TEST_RECEIPT_LANE` overrides the runner's lane name.
 `scripts/lib/test-env.sh` (`receipts_init`) reads both variables and unsets
-them, so tests and nested runners never inherit them. `bun run test` writes
-receipts to `.context/test-receipts/` by default, cleared per run.
+them, so tests and nested runners never inherit them. `run-with-receipt.sh`
+also reads and unsets `GBRAIN_TEST_RECEIPT_ARM`, the receipt's arm, so matrix
+cells that run one lane and file (the OpenClaw versions) stay separate
+identities. `bun run test` writes receipts to `.context/test-receipts/` by
+default, cleared per run.
 
 `bun run verify` records each check as pass, fail, timeout or skip in
 `<log dir>/outcomes.tsv` and in a JUnit receipt. A check that skips itself
@@ -425,6 +428,7 @@ Test command tiers, each with a clear scope:
 | `bun run test:e2e` | Real Postgres E2E. Requires Docker + `DATABASE_URL`. Sequential within a shard; `SHARD=N/M` fans out against separate databases (ci-local runs 4 containers). Activates the PGLite snapshot like every other runner (per-file cold-path opt-outs where the test asserts the path TO post-initSchema state), exporting it as an ABSOLUTE path so CLI children spawned with varying cwd still find it. | ~5-10min | Pre-ship; nightly. |
 | `bun run test:compile-smoke` | Self-update integrity verify under a REAL `bun build --compile` binary, offline; also runs unconditionally in the serial lane. The unit suite mocks the network seams; this proves the dependency-free crypto/base64/JSON verify path survives compilation — the failure mode `sigstore-js` would have hit. | under 1s (one small compile) | When touching `src/core/binary-self-update.ts`; pre-ship on self-update changes. |
 | `bun run regen:all` | Regenerates every generated artifact (schema, migrations registry, error-code docs, protocol blocks, tool catalog, skills manifest, structural suites, `llms.txt` last, and the others in `scripts/regen-all.ts`) offline and keyless, and lists what changed; a second run changes nothing. `--check` is read-only and runs in `verify` as `check:regen-all`. `--goldens` also regenerates the offline contract goldens, a deliberate act each PR justifies; Postgres goldens are named with their own commands. | about a minute | After any change a freshness check flags; before `/ship`. |
+| `bun scripts/check-bytecode-parity.ts` | Builds the release compile line (read from `.github/workflows/release.yml`) for this host twice, as written and without `--bytecode --format=esm`, then runs a fixed command set (version, help, init, put, get, list, search, embed, query against a loopback embeddings stub, doctor, a `serve` MCP `tools/list`, `setup claude-code`, the skill-resolver hook) on a temporary PGLite brain with each binary. stdout, stderr and exit code must match and every command must succeed; only clock, ids, ports and timings are masked, and clock-driven decimals (7 or more places, such as recency scores) are compared within 1e-5; a failing step prints a short masked diff of the two outputs (`BYTECODE_PARITY_RAW=1` compares raw text, `--keep` keeps the work directory). CI runs it as a step of test.yml's verify job, not through `verify`'s CHECKS; `test/scripts/check-bytecode-parity.test.ts` pins the flags on every shipped compile line. | ~40s | When changing the compile line or anything the compiled binary prints. |
 | `bun run test:agent-voice` | The agent-voice recipe's vitest unit suite (`recipes/agent-voice/tests/unit`), via `scripts/test-agent-voice.sh`: installs pinned vitest + ws into a temporary prefix and links it as the recipe's `node_modules` for the run. Needs node + npm and registry access. CI runs it in test.yml's verify job. | ~10s | When touching `recipes/agent-voice/`. |
 | `scripts/ship-remote-tests.sh` | Pushes the branch, dispatches `test.yml` (or `--workflow`) on GitHub's runners for that branch or `--ref`, and waits with `gh run watch --exit-status`, so its exit code is the run's. Needs an authenticated `gh`; unlike `ci:ubicloud` it needs no Ubicloud credential and runs the workflow's own job inventory. | one CI run | Offloading the suite from a saturated local machine. |
 | `bun run test:profile` | Reads a captured `bun test` log on stdin and prints the N slowest tests (`-n N`, default 10): `bun test 2>&1 \| bun run test:profile`. | seconds | Finding slow tests to fix or demote to `*.slow.test.ts`. |
@@ -544,7 +548,7 @@ above, and each E2E file keeps a PGLite arm in the unit lane.
 ### Rust parity arm (opt-in)
 
 Every `test/engine-parity/` file can add a Rust engine to its arms, next to PGLite and (with `DATABASE_URL`) Postgres.
-Nothing selects the Rust engine outside the test, and without the flag the suite runs as before.
+Without the flag the suite runs as before, on PGLite and (with `DATABASE_URL`) Postgres.
 
 ```bash
 bun run rust:build                                              # writes the addon under rust/target/addon
@@ -562,6 +566,12 @@ GBRAIN_TEST_RUST_ARM=1 bun test test/engine-parity/search.test.ts   # one file; 
   removed. A thrown error never passes. `search.tsv` is empty today.
 - Rules: `test/engine-parity/rust-arm.ts` header; what the engine serves and refuses: `docs/ENGINES.md` ("What a Rust
   brain serves now").
+- CLI parity: `test/rust-cli-parity.serial.test.ts` runs each read command through the real CLI on a PGLite brain and on
+  a brain whose config says `engine: 'rust'`, both filled from `test/fixtures/rust-cli-parity-brain/`. A command ends
+  `equal`, `refused` with the typed `engine_capability_missing`, or `diverged` (another answer or an untyped error),
+  and only `diverged` fails. It needs the addon from `bun run rust:build` and skips without it;
+  `GBRAIN_TEST_REQUIRE_RUST_ADDON=1` makes a missing addon an error, which the Rust engine workflow sets for this test
+  and `test/rust-cli-source-target.test.ts`.
 
 ### Native writer locks
 

@@ -63,7 +63,7 @@ export const resolveSlugWithAlias: StoreMember<[slug: string, sourceOrSources: s
   async (brain, slug, sourceOrSources, opts) => (await detailed(brain, 'resolveSlugWithAlias', slug, sourceOrSources, opts))?.canonical_slug ?? slug;
 
 /** The keys of the alias hop's option bag (alias-hop.ts `IdentityTierOpts` and its hop switches) that are not page policy. */
-const ALIAS_HOP_KEYS = ['excludeSlugs', 'excludeSlugPrefixes', 'tokenHop', 'qualified'] as const;
+const ALIAS_HOP_KEYS = ['excludeSlugs', 'excludeSlugPrefixes', 'type', 'types', 'tokenHop', 'qualified'] as const;
 
 export const resolveAliases: StoreMember<[aliasNorms: string[], opts?: PageReadScope], Map<string, AliasRef[]>> = async (brain, aliasNorms, opts) => {
   // The alias hop hands over its whole identity-tier bag; PGLite's read looks only at the scope keys in it, so the

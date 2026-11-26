@@ -48,6 +48,9 @@ const PEOPLE_BASE = 'https://people.googleapis.com/v1';
 
 const PAGINATION_CAP = 500;
 
+/** A paginated listing's bounds: `onCutShort` runs when a `partialOk` listing stops at `maxPages` with pages left. */
+export interface GmailListOptions { signal?: AbortSignal; maxPages?: number; partialOk?: boolean; onCutShort?: () => void }
+
 /** Retry budget for a 401 needing a token refresh-and-retry. */
 const DEFAULT_RETRIES = 2;
 
@@ -188,13 +191,14 @@ export class GoogleApiClient {
    * treat a truncated list as complete), or returns the partial batch when
    * `partialOk` is set (callers with their own resume cursor — the Gmail
    * backfill — make forward progress from whatever landed instead of
-   * wedging forever on a >cap window).
+   * wedging forever on a >cap window), calling `onCutShort` first so the
+   * caller can tell a partial batch from a complete one.
    */
   async drainPages<T>(
     build: (pageToken: string | null) => string,
     pick: (body: Record<string, unknown>) => { items: T[]; nextPageToken: string | null },
     apiHint: ApiHint,
-    opts: { signal?: AbortSignal; maxPages?: number; partialOk?: boolean } = {},
+    opts: GmailListOptions = {},
   ): Promise<T[]> {
     const out: T[] = [];
     let pageToken: string | null = null;
@@ -206,7 +210,10 @@ export class GoogleApiClient {
       if (!nextPageToken) return out;
       pageToken = nextPageToken;
     }
-    if (opts.partialOk) return out;
+    if (opts.partialOk) {
+      opts.onCutShort?.();
+      return out;
+    }
     throw new CredentialError('upstream', `: pagination cap (${cap}) hit on ${apiHint}`);
   }
 }
@@ -414,6 +421,9 @@ export function extractCalendarMethod(part: RawGmailPart | undefined): string | 
 }
 
 export class GmailClient extends GoogleApiClient {
+  /** history.list is available: the sweep follows the change feed (gbrainio-gmail.ts has none). */
+  readonly supportsHistory: boolean = true;
+
   async getProfile(opts: { signal?: AbortSignal } = {}): Promise<{ emailAddress: string; historyId: string }> {
     return this.fetchJSON(`${GMAIL_BASE}/users/me/profile`, 'gmail', opts);
   }
@@ -425,10 +435,7 @@ export class GmailClient extends GoogleApiClient {
   }
 
   /** Message ids matching a Gmail search query (includes SENT; excludes SPAM/TRASH). */
-  async listMessageIds(
-    q: string,
-    opts: { signal?: AbortSignal; maxPages?: number; partialOk?: boolean } = {},
-  ): Promise<Array<{ id: string; threadId: string }>> {
+  async listMessageIds(q: string, opts: GmailListOptions = {}): Promise<Array<{ id: string; threadId: string }>> {
     return this.drainPages(
       (t) =>
         `${GMAIL_BASE}/users/me/messages?maxResults=100&q=${encodeURIComponent(q)}${t ? `&pageToken=${encodeURIComponent(t)}` : ''}`,
@@ -743,9 +750,12 @@ interface RawContactGroup {
  * #6324: the People field mask every contacts request carries. A syncToken is
  * only valid for requests with the parameters that minted it, so the sweep
  * records this string next to the token (`contacts_person_fields`) and
- * re-lists when it changes. Change it here and nowhere else.
+ * re-lists when it changes. Change it here and nowhere else. #10246: `metadata`
+ * is what carries `deleted: true` on a delta's tombstone (a deleted or
+ * merged-away contact); without it the API sends a bare {resourceName, etag}
+ * and the page is never retired.
  */
-export const CONTACT_PERSON_FIELDS = 'names,emailAddresses,organizations,phoneNumbers,memberships';
+export const CONTACT_PERSON_FIELDS = 'names,emailAddresses,organizations,phoneNumbers,memberships,metadata';
 
 /** Google's built-in groups (`contactGroups/myContacts`, `starred`, …) say nothing a page should carry. */
 const SYSTEM_CONTACT_GROUPS = new Set(
@@ -867,3 +877,8 @@ export class PeopleClient extends GoogleApiClient {
     return { names, complete: !morePages };
   }
 }
+
+/** What the Gmail sweep reads: the Gmail API client, or a reader such as GbrainioGmailReader with no change feed. */
+export type GmailReader = Pick<GmailClient, 'getProfile' | 'getLabels' | 'listMessageIds' | 'listHistoryThreadIds' | 'getThread'> & {
+  readonly supportsHistory: boolean;
+};

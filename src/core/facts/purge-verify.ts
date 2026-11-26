@@ -36,6 +36,8 @@ import { CARRYING_FIELDS } from '../belief/keys.ts';
 import { relationExists } from '../persistence/rebuildable-cache.ts';
 import { canonicalChangeReason } from '../persistence/change-reason.ts';
 import { outcomeMarkerSql } from './audit-sources.ts';
+import { purgeProbeSelect, type PurgeProbe } from './purge-plan-statements.ts';
+import { holdResidueOfDeletedPageSql } from '../write-gate-binding.ts';
 
 export type StoreCount = Record<string, number>;
 export type StoreStatus = 'deleted' | 'would_remove' | 'retained_inactive' | 'unverified' | 'out_of_reach' | 'out_of_scope' | 'not_present' | 'incomplete';
@@ -206,12 +208,31 @@ type ProbeResult = { count: number } | { unverified: string };
 const missingCache = (store: string): StoreReport => ({ store, status: 'not_present', removed: 0, reason: 'table_missing',
   detail: `The ${store} table does not exist on this brain; it is a rebuildable cache, so there was nothing to clear. gbrain doctor reports it under schema_missing_tables.` });
 
+/**
+ * One bounded inventory probe through the engine's typed probe (`countPurgeProbe`), under the same deadline, row bound
+ * and statement time as boundedCount. A probe with nothing to search counts 0 without a statement.
+ */
+async function boundedProbe(engine: BrainEngine, probe: PurgeProbe, deadline: number): Promise<ProbeResult> {
+  if (!purgeProbeSelect(probe)) return { count: 0 };
+  if (performance.now() > deadline) return { unverified: 'verification_deadline' };
+  try {
+    return await engine.transaction(async tx => {
+      await tx.setPurgeProbeTimeout(probeLimits.statementMs);
+      const count = await tx.countPurgeProbe(probe, probeLimits.rows);
+      return count > probeLimits.rows ? { unverified: 'row_bound' } : { count };
+    });
+  } catch (error) {
+    if (getCode(error) === '57014') return { unverified: 'statement_deadline' };
+    throw error;
+  }
+}
+
 /** One bounded probe: `sql` selects matching rows (no LIMIT); the adapter caps rows and the statement time. */
 async function boundedCount(engine: BrainEngine, sql: string, params: unknown[], deadline: number): Promise<ProbeResult> {
   if (performance.now() > deadline) return { unverified: 'verification_deadline' };
   try {
     return await engine.transaction(async tx => {
-      await tx.executeRaw("SELECT set_config('statement_timeout',$1,true)", [`${probeLimits.statementMs}ms`]);
+      await tx.setPurgeProbeTimeout(probeLimits.statementMs);
       const [row] = await tx.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM (${sql} LIMIT ${probeLimits.rows + 1}) bounded`, params);
       const count = Number(row?.n ?? 0);
       return count > probeLimits.rows ? { unverified: 'row_bound' } : { count };
@@ -629,7 +650,8 @@ export async function verifyPagePurge(engine: BrainEngine, input: { sourceId: st
   await keyed('context_volunteer_events', 'SELECT 1 FROM context_volunteer_events WHERE source_id=$1 AND slug=$2', [src, slug]);
   await keyed('mention_gazetteer_entries', 'SELECT 1 FROM mention_gazetteer_entries WHERE source_id=$1 AND target_slug=$2', [src, slug]);
   await keyed('files', 'SELECT 1 FROM files WHERE page_id IS NULL AND page_slug=$2 AND (source_id=$1 OR source_id IS NULL)', [src, slug]);
-  await keyed('write_gate_holds', 'SELECT 1 FROM write_gate_holds WHERE source_id=$1 AND slug=$2', [src, slug]);
+  // The purged page's holds: those bound to its id (whatever it was called), the unbound ones at its slug and any candidate-marked hold still naming it; a hold bound to another page that reused the name is not a residue.
+  await keyed('write_gate_holds', `SELECT 1 FROM write_gate_holds h WHERE h.source_id=$1 AND ${holdResidueOfDeletedPageSql('h', '$3', '$2')}`, [src, slug, context?.pageId ?? null]);
   if (!await relationExists(engine, 'query_cache')) stores.push(missingCache('query_cache'));
   else await keyed('query_cache', 'SELECT 1 FROM query_cache WHERE $1::text IS NOT NULL', [src]);
   // The page's own segment texts, and unreferenced texts holding one of its claims (plain or as a fence cell stores it),

@@ -26,6 +26,7 @@ import { isAvailable } from '../core/ai/gateway.ts';
 import { findGbrainRoot } from '../core/skillpack/bundle.ts';
 import { FixtureValidationError, loadCorpus } from '../eval/brainbench/fixtures.ts';
 import { runBrainBench } from '../eval/brainbench/harness.ts';
+import { type BenchmarkEngineKind, parseBenchmarkEngineKind } from '../eval/longmemeval/harness.ts';
 import {
   DECIDE_EVAL_FLAGS, DecideEvalRefusal, applyDecideEvalFlag, newDecideEvalOptions, prepareDecideEval, summarizeDecideReceipts,
   type DecideEvalOptions, type DecideEvalRun,
@@ -87,6 +88,9 @@ function usage(): void {
       `  --allow-regression "reason" One-off escape hatch; reason recorded in the output.\n` +
       `  --llm                       Write-back suite uses the real LLM extractor.\n` +
       `  --budget-usd N              Spend cap for --llm (default: $${DEFAULT_LLM_BUDGET_USD}).\n` +
+      `  --engine pglite|rust        Engine the benchmark brain is built on (default: pglite).\n` +
+      `                              rust needs the Rust engine addon; without it the run stops\n` +
+      `                              with rust_engine_addon_missing before any work.\n` +
       `  --seed N                    Recorded in the receipt (default: 42). Reserved —\n` +
       `                              the v1 run is fully deterministic; no knob consumes it yet.\n` +
       DECIDE_EVAL_FLAGS.map((f) => `  ${`${f.name} ${f.arg}`.padEnd(27)} ${f.help.join(`\n${' '.repeat(30)}`)}\n`).join('') +
@@ -113,6 +117,7 @@ interface Args {
   llm: boolean;
   budgetUsd: number;
   seed: number;
+  engine: BenchmarkEngineKind;
   decide: DecideEvalOptions;
 }
 
@@ -133,6 +138,7 @@ function parseArgs(argv: string[]): Args | { usageError: string } {
     llm: false,
     budgetUsd: DEFAULT_LLM_BUDGET_USD,
     seed: 42,
+    engine: 'pglite',
     decide: newDecideEvalOptions(),
   };
   const need = (flag: string, v: string | undefined): string => {
@@ -214,6 +220,9 @@ function parseArgs(argv: string[]): Args | { usageError: string } {
           if (!Number.isFinite(args.budgetUsd) || args.budgetUsd <= 0) {
             return { usageError: '--budget-usd must be a positive number' };
           }
+          break;
+        case '--engine':
+          args.engine = parseBenchmarkEngineKind(a, need(a, argv[++i]));
           break;
         case '--seed':
           args.seed = Number(need(a, argv[++i]));
@@ -334,6 +343,7 @@ export async function runEvalBrainBench(argv: string[]): Promise<never> {
       budgetUsd: args.budgetUsd,
       onProgress: (note) => reporter.tick(1, note),
       decide: decideRun,
+      engine: args.engine,
     });
     reporter.finish();
 

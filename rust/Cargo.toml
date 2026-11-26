@@ -1,8 +1,8 @@
 [workspace]
 resolver = "3"
 members = ["crates/*"]
-# rust/bench is a separate standalone workspace (its own Cargo.lock); it is not part of the addon build.
-exclude = ["bench"]
+# rust/bench and rust/concurrency-bench are separate standalone workspaces (own Cargo.lock); not part of the addon build.
+exclude = ["bench", "concurrency-bench"]
 
 [workspace.package]
 edition = "2024"

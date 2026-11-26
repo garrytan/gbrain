@@ -1,9 +1,10 @@
 /**
  * One turn: `resolveSkills(input)` reads the catalog index(es), ranks the
  * message, applies the session's no-repeat and budget rules and renders the
- * block. It never rebuilds, never touches the network, a model or a brain,
- * and its output outside `meta` is byte-identical for the same index,
- * input and session state. Committing the session state is the caller's
+ * block. It never rebuilds and never opens a brain. It touches the network
+ * only for the skill vectors and the model picker below; without them its
+ * output outside `meta` is byte-identical for the same index, input and
+ * session state. Committing the session state is the caller's
  * second step (`result.commit()`), taken only after the block was
  * delivered.
  *
@@ -27,6 +28,31 @@
  * catalog's maxIdf, the block is empty (block_reason weak_top_match), unless
  * the turn names a skill. A message that matches no catalog word falls back to
  * previous_user_message.
+ *
+ * The model picker (router.ts) runs only when the caller passes
+ * opts.router and skills.resolver.router is on: after the acknowledgement
+ * check, it reads the catalog (every skill up to PICKER_FULL_CATALOG_MAX,
+ * else the top PICKER_SHORTLIST ranked) and its picks fill the block in its
+ * order, match_strength picked, under the same exclude, floor, dedupe,
+ * pacing and budget rules (top_gate does not apply to them). Its "no skill"
+ * answer empties the block (no_match). When it cannot answer, the turn is
+ * the word matcher's. Only then is the output not byte-identical across
+ * runs; `router` reports which answered and why.
+ *
+ * Skill vectors (vectors.ts): when a catalog has a vectors.bin made by the
+ * brain's current embedder (config.json embedding_model) and its key is
+ * configured, the turn embeds the message once (at most VECTOR_WAIT_MS, or
+ * inside the picker's wait when the picker is on, and never closer to the
+ * caller's deadline than VECTOR_DEADLINE_RESERVE_MS) and ranks that catalog by
+ * the reciprocal rank fusion of its word ranking and its cosine list (skills
+ * at or above the model's cosine floor). The fused order is what the block
+ * shows when the picker is off or cannot answer, and the picker's shortlist
+ * above PICKER_FULL_CATALOG_MAX (there, every skill's cosine counts). With
+ * vectors the no-skill gate is the cosine floor: the block shows only when a
+ * skill it holds from a catalog with vectors is at or above it (a skill from
+ * a catalog without vectors keeps top_gate). A network result changes the
+ * ranking, so the output is not byte-identical across runs either; `vectors`
+ * reports whether they were used and why not.
  */
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -42,8 +68,11 @@ import { ensureDir, writeFileAtomic } from './fsutil.ts';
 import { EXCLUDE_MAX, MATCH_STRENGTHS, type MatchStrength, STRENGTH_FIELDS, TOP_GATE_DEFAULT, TOP_GATE_MAX, TOP_K_DEFAULT, TOP_K_MAX } from './limits.ts';
 import { IndexReader, RANKER_ID, RANKER_VERSION } from './index-format.ts';
 import { assertCatalogName, catalogFile, logsDir, resolverHome } from './paths.ts';
-import { isAcknowledgement, maxIdf, mentionsSkill, rankIndex, reasonText, type RankResult } from './rank.ts';
+import { isAcknowledgement, maxIdf, mentionsSkill, rankIndex, reasonText, type Ranked, type RankResult } from './rank.ts';
 import { commitSession, freshState, loadSession, sessionKey, type SessionState, type TurnDelta } from './session.ts';
+import { PICKER_FULL_CATALOG_MAX, PICKER_SHORTLIST, pickSkills, routerTimeoutMs, type PickerSkill, type PickOutcome, type RouterFallbackCode } from './router.ts';
+import { readBounded } from './fsutil.ts';
+import { cosine, embedQuery, readCatalogVectors, RRF_K, turnEmbedder, vectorFloor, vectorsOutdated, VECTOR_DEADLINE_RESERVE_MS, VECTOR_WAIT_MS, type CatalogVectors, type EmbedSkipCode, type QueryOutcome } from './vectors.ts';
 
 export const SCHEMA_VERSION = 1;
 export const MESSAGE_CAP_BYTES = 8192;
@@ -71,6 +100,10 @@ export interface Suggestion { id: string; name: string; score: number; summary: 
 export interface TurnError { code: string; message: string; fix: { suggestion: string; command?: string } }
 /** Why a block is empty; null when it has a suggestion. */
 export type BlockReason = 'ack' | 'no_match' | 'filtered' | 'weak_top_match' | 'deduped' | 'paced' | 'budget_exhausted' | 'shadow' | 'error';
+/** Set when the model picker was on for the turn: who answered, with which model, how long it waited, its estimated cost, and why it did not answer. */
+export interface RouterReport { mode: 'picker'; answered_by: 'picker' | 'words'; model: string | null; ms: number; est_usd: number; fallback: { code: RouterFallbackCode } | null }
+/** Set when a catalog of the turn has skill vectors: whether the turn ranked with them, the embedder, how long it waited for the message's vector, and why it did without. */
+export interface VectorsReport { used: boolean; model: string | null; ms: number; fallback: { code: EmbedSkipCode } | null }
 export interface TurnOutput {
   schema_version: 1;
   gbrain_version: string;
@@ -89,6 +122,8 @@ export interface TurnOutput {
   deduped: string[];
   shadow: boolean;
   error?: TurnError;
+  router?: RouterReport;
+  vectors?: VectorsReport;
   meta: { timing_ms: number; index_age_s: number | null; index_stale: boolean };
 }
 
@@ -99,8 +134,16 @@ export interface ResolveOptions {
   deadlineMs?: number;
   sessionTokenBudget?: number;
   loadHint?: string;
+  /** OpenClaw: the only directory the agent may read files from by path; a suggestion outside it leads the load line with skills_read. */
+  readRoot?: string;
+  /** OpenClaw: 'others' for a turn outside the agent owner's own sessions. An `audience: owner` skill is never offered then, and a catalog built before audiences were recorded offers nothing until it is rebuilt. */
+  audience?: 'owner' | 'others';
+  /** Skill ids the host hides from the agent (the caller's own list, not the turn's, so EXCLUDE_MAX does not cut it). */
+  hidden?: readonly string[];
   namesOnly?: boolean;
   explainTarget?: string;
+  /** Let the turn call the model picker when skills.resolver.router is on. Only the command line and the Claude Code and Codex hook lanes pass it. */
+  router?: boolean;
   env?: NodeJS.ProcessEnv;
   now?: () => number;
 }
@@ -117,6 +160,8 @@ export interface Explain {
   in_block: boolean;
   skip_reason: string | null;
   session: { turn: number; spent: number; budget: number; remaining: number } | null;
+  /** With skill vectors in the turn: the target's cosine with the message and its catalog's floor. `rank` and `score` stay the word ranking's. */
+  vector?: { cosine: number; floor: number };
 }
 
 export interface ResolveResult {
@@ -228,7 +273,7 @@ export function openCatalogIndex(home: string, name: string): OpenedCatalog {
  * catalog gbrain can rebuild gets stale.stamp once (no fsync; an existing
  * stamp is left alone); an adapter-owned stdin catalog never does.
  */
-function turnStaleness(home: string, c: OpenedCatalog, now: number, autoRebuild: boolean): string | null {
+function turnStaleness(home: string, c: OpenedCatalog, now: number, autoRebuild: boolean, want: () => string | null): string | null {
   const { name, receipt } = c;
   let stale: string | null = c.publishing ? 'publishing' : null;
   if (!stale && receipt.gbrain_version !== VERSION) stale = 'gbrain_version_changed';
@@ -244,11 +289,16 @@ function turnStaleness(home: string, c: OpenedCatalog, now: number, autoRebuild:
       try { writeFileAtomic(stamp, JSON.stringify({ verdict: slice.changed ? 'stale' : 'fresh', cursor: slice.changed ? 0 : slice.next })); } catch { /* read-only home: check again next turn */ }
     }
   }
-  if (stale && autoRebuild && receipt.build?.rebuild_argv) {
-    const stamp = catalogFile(home, name, 'stale.stamp');
-    if (!existsSync(stamp)) { try { writeFileAtomic(stamp, `${JSON.stringify({ reason: stale })}\n`); } catch { /* best effort */ } }
-  }
+  if (!stale && vectorsOutdated(receipt, now, want)) stale = 'vectors_changed';
+  if (stale) stampStale(home, c, stale, autoRebuild);
   return stale;
+}
+
+/** Leave stale.stamp (once) on a catalog gbrain can rebuild, so the lane schedules its rebuild. */
+function stampStale(home: string, c: OpenedCatalog, reason: string, autoRebuild: boolean): void {
+  if (!autoRebuild || !c.receipt.build?.rebuild_argv) return;
+  const stamp = catalogFile(home, c.name, 'stale.stamp');
+  if (!existsSync(stamp)) { try { writeFileAtomic(stamp, `${JSON.stringify({ reason })}\n`); } catch { /* best effort */ } }
 }
 
 function emptyOutput(input: { shadow?: boolean }, extra: Partial<TurnOutput>): TurnOutput {
@@ -264,6 +314,20 @@ function emptyOutput(input: { shadow?: boolean }, extra: Partial<TurnOutput>): T
 export function errorTurnOutput(err: ResolverError, opts: { shadow?: boolean; catalog?: string | null } = {}): TurnOutput {
   const hash = err.code === 'skill_catalog_mismatch' && typeof err.context.catalog_hash === 'string' ? err.context.catalog_hash : null;
   return emptyOutput({ shadow: opts.shadow }, { error: err.toJSON(), catalog: opts.catalog ?? null, catalog_hash: hash });
+}
+
+/** Time the picker leaves the turn for its own steps after the call (window, render). */
+const PICKER_RENDER_RESERVE_MS = 20;
+const PICKER_FILE_CAP_BYTES = 16 * 1024 * 1024;
+
+/** A catalog's picker.json descriptions by id, or null when it is missing or from another build (the index's summaries are used then). */
+function readPickerDescriptions(home: string, c: OpenedCatalog): Map<string, string> | null {
+  try {
+    const b = readBounded(catalogFile(home, c.name, 'picker.json'), PICKER_FILE_CAP_BYTES);
+    if (b === 'too_large') return null;
+    const j = JSON.parse(b.toString('utf8')) as { v?: unknown; catalog_hash?: unknown; skills?: unknown };
+    return j?.v === 1 && j.catalog_hash === c.receipt.catalog.catalog_hash && Array.isArray(j.skills) ? new Map(j.skills as [string, string][]) : null;
+  } catch { return null; } // silent-read-ok: a catalog built before picker.json existed has none; the picker uses each skill's index summary
 }
 
 function logUnexpected(home: string, e: unknown): void {
@@ -307,8 +371,14 @@ async function resolveInner(input: ReturnType<typeof normalizeTurnInput>, opts: 
   const budget = opts.sessionTokenBudget === undefined ? settings.sessionTokenBudget : validateSessionTokenBudget(opts.sessionTokenBudget, 'sessionTokenBudget');
   const names = opts.catalogs?.length ? [...new Set(opts.catalogs.map(assertCatalogName))] : defaultCatalogs(home);
   const loaded: Loaded[] = [];
+  const env = opts.env ?? process.env;
+  let wanted: string | null | undefined;
+  const want = () => {
+    if (wanted === undefined) { const f = turnEmbedder(home, env); wanted = 'skip' in f || vectorFloor(f.embedder.model) === null ? null : f.embedder.model; }
+    return wanted;
+  };
   try {
-    for (const n of names) { const l: Loaded = { ...source.open(home, n), stale: null }; loaded.push(l); l.stale = turnStaleness(home, l, now, settings.autoRebuild); check(); }
+    for (const n of names) { const l: Loaded = { ...source.open(home, n), stale: null }; loaded.push(l); l.stale = turnStaleness(home, l, now, settings.autoRebuild, want); check(); }
     const single = loaded.length === 1 ? loaded[0]! : null;
     const catalog = loaded.map(l => l.name).join('+');
     const catalogHash = single ? single.receipt.catalog.catalog_hash : sha(JSON.stringify(loaded.map(l => [l.name, l.receipt.catalog.catalog_hash])));
@@ -340,26 +410,124 @@ async function resolveInner(input: ReturnType<typeof normalizeTurnInput>, opts: 
     };
 
     if (isAcknowledgement(input.message)) return finish({ ...base, no_skill: true, no_skill_reason: 'ack', block_reason: 'ack' }, { tokens: 0, suggested: [], resuggested: [] });
+    const others = opts.audience === 'others';
+    const unrecorded = others ? loaded.filter(l => l.receipt.catalog.audiences !== 1) : [];
+    if (unrecorded.length) {
+      for (const l of unrecorded) stampStale(home, l, 'audiences_missing', settings.autoRebuild);
+      base.meta.index_stale = true;
+      return finish({ ...base, no_skill: true, no_skill_reason: 'no_match', block_reason: 'no_match' }, { tokens: 0, suggested: [], resuggested: [] });
+    }
+
+    const pickerOn = Boolean(opts.router && settings.router.on);
+    const total = loaded.reduce((n, l) => n + l.ix.n, 0);
+    const waitStart = performance.now();
+    const leftNow = () => (opts.deadlineMs === undefined ? Infinity : opts.deadlineMs - (performance.now() - t0) - PICKER_RENDER_RESERVE_MS);
+    let vecs: (CatalogVectors | null)[] = [];
+    let query: Promise<QueryOutcome> | null = null;
+    const cancelQuery = new AbortController();
+    if (loaded.some(l => l.receipt.vectors && 'model' in l.receipt.vectors)) {
+      const found = turnEmbedder(home, env);
+      const t = 'skip' in found || vectorFloor(found.embedder.model) !== null ? found : { skip: 'unmeasured_model' as const };
+      const report: VectorsReport = { used: false, model: 'skip' in t ? null : t.embedder.model, ms: 0, fallback: 'skip' in t ? { code: t.skip } : null };
+      base.vectors = report;
+      if (!('skip' in t)) {
+        vecs = loaded.map(l => (l.receipt.vectors && 'model' in l.receipt.vectors ? readCatalogVectors(catalogFile(home, l.name, 'vectors.bin'), l.receipt.catalog.catalog_hash, t.embedder.model) : null));
+        if (!vecs.some(Boolean)) report.fallback = { code: 'stale_vectors' };
+        else query = embedQuery(t.embedder, t.key, input.message, Math.min(pickerOn ? routerTimeoutMs(input.harness, settings.router) / (total > PICKER_FULL_CATALOG_MAX ? 2 : 1) : VECTOR_WAIT_MS, leftNow() - VECTOR_DEADLINE_RESERVE_MS), cancelQuery.signal);
+      }
+      check();
+    }
 
     const rankText = (text: string): RankResult[] => loaded.map(l => { const r = rankIndex(l.ix, text, check); check(); return r; });
     let ranks = rankText(input.message);
     if (ranks.every(r => r.idfSum === 0) && input.previous_user_message?.trim()) ranks = rankText(input.previous_user_message);
-    if (ranks.every(r => r.idfSum === 0)) return finish({ ...base, no_skill: true, no_skill_reason: 'no_match', block_reason: 'no_match' }, { tokens: 0, suggested: [], resuggested: [] });
-
-    interface Cand { c: number; doc: number; score: number; id: string; explicit: boolean }
     const metaOf = (c: number, doc: number) => loaded[c]!.ix.meta(doc);
+
+    const cos: (Float64Array | null)[] = loaded.map(() => null);
+    const awaitVectors = async () => {
+      if (!query) return;
+      const q = await query;
+      query = null;
+      const report = base.vectors!;
+      report.ms = q.ms;
+      if (!q.ok) { report.fallback = { code: q.code }; return; }
+      loaded.forEach((l, c) => {
+        const v = vecs[c];
+        if (!v) return;
+        if (v.dims !== q.vector.length) { stampStale(home, l, 'vectors_changed', settings.autoRebuild); base.meta.index_stale = true; return; }
+        const a = new Float64Array(l.ix.n).fill(-1);
+        for (let d = 0; d < l.ix.n; d++) { const row = v.rows.get(metaOf(c, d).id); if (row) a[d] = cosine(row, q.vector); }
+        cos[c] = a;
+      });
+      report.used = cos.some(Boolean);
+      if (!report.used) report.fallback = { code: 'stale_vectors' };
+      check();
+    };
+    const floorFor = (base.vectors?.model ? vectorFloor(base.vectors.model) : null) ?? Infinity;
+    const fused = (c: number, floor: number): Ranked[] => {
+      const a = cos[c];
+      const words = ranks[c]!.ranked;
+      if (!a) return words;
+      const ix = loaded[c]!.ix;
+      const name = (d: number) => ix.meta(d).name;
+      const id = (d: number) => ix.meta(d).id;
+      const tie = (x: number, y: number) => (name(x) < name(y) ? -1 : name(x) > name(y) ? 1 : id(x) < id(y) ? -1 : id(x) > id(y) ? 1 : 0);
+      const close: number[] = [];
+      for (let d = 0; d < ix.n; d++) if (a[d]! >= floor) close.push(d);
+      close.sort((x, y) => a[y]! - a[x]! || tie(x, y));
+      const score = new Map<number, number>();
+      const wordAt = new Map<number, Ranked>();
+      words.forEach((r, i) => { score.set(r.doc, 1 / (RRF_K + i)); wordAt.set(r.doc, r); });
+      close.forEach((d, i) => score.set(d, (score.get(d) ?? 0) + 1 / (RRF_K + i)));
+      return [...score.keys()].sort((x, y) => score.get(y)! - score.get(x)! || tie(x, y)).map(d => wordAt.get(d) ?? { doc: d, score: 0, norm: 0 });
+    };
+
+    const offered = new Map<string, { c: number; doc: number }>();
+    let pick: Extract<PickOutcome, { ok: true }> | null = null;
+    if (pickerOn) {
+      const descriptions = loaded.map(l => readPickerDescriptions(home, l));
+      const offer = (c: number, doc: number) => { const m = metaOf(c, doc); if (!m.dep && !(others && m.aud) && !offered.has(m.id)) offered.set(m.id, { c, doc }); };
+      if (total <= PICKER_FULL_CATALOG_MAX) loaded.forEach((l, c) => { for (let d = 0; d < l.ix.n; d++) offer(c, d); });
+      else {
+        await awaitVectors();
+        const lists = loaded.map((_, c) => fused(c, -Infinity));
+        for (let i = 0; i < Math.max(...lists.map(r => r.length)) && offered.size < PICKER_SHORTLIST; i++) loaded.forEach((_, c) => { const r = lists[c]![i]; if (r && offered.size < PICKER_SHORTLIST) offer(c, r.doc); });
+      }
+      const skills: PickerSkill[] = [...offered].map(([id, { c, doc }]) => ({ id, description: loaded[c]!.receipt.catalog.hints === 'names_only' ? '' : descriptions[c]?.get(id) ?? metaOf(c, doc).summary }));
+      const r0 = performance.now();
+      const left = leftNow();
+      const wait = routerTimeoutMs(input.harness, settings.router) - (r0 - waitStart);
+      const outcome: PickOutcome | null = offered.size === 0 && !settings.router.invalid ? null : left < 1 || wait < 1 ? { ok: false, code: 'timeout', model: settings.router.model, usd: 0 } : await pickSkills(home, input.message, skills, settings.router, Math.min(wait, left), env, opts.now);
+      base.router = !outcome ? { mode: 'picker', answered_by: 'words', model: settings.router.model, ms: 0, est_usd: 0, fallback: null }
+        : { mode: 'picker', answered_by: outcome.ok ? 'picker' : 'words', model: outcome.model, ms: Math.round(performance.now() - r0), est_usd: outcome.usd, fallback: outcome.ok ? null : { code: outcome.code } };
+      check();
+      if (outcome?.ok) pick = outcome;
+    }
+    if (pick && query) {
+      cancelQuery.abort();
+      query = null;
+      base.vectors!.fallback = { code: 'not_needed' };
+    }
+    await awaitVectors();
+    const order = loaded.map((_, c) => fused(c, floorFor));
+    const nearHit = cos.some(a => a?.some(x => x >= floorFor));
+    if (!pick && ranks.every(r => r.idfSum === 0) && !nearHit) return finish({ ...base, no_skill: true, no_skill_reason: 'no_match', block_reason: 'no_match' }, { tokens: 0, suggested: [], resuggested: [] });
+
+    interface Cand { c: number; doc: number; score: number; id: string; explicit: boolean; picked?: boolean }
+    const near = (x: { c: number; doc: number }) => (cos[x.c] ? cos[x.c]![x.doc]! >= floorFor : false);
     const strengthOf = (x: Cand): MatchStrength => {
       if (x.explicit) return 'named';
+      if (x.picked) return 'picked';
       const fields = ranks[x.c]!.matchedFields(x.doc).fields;
-      return STRENGTH_FIELDS.find(f => fields[f]?.length) ?? 'body';
+      return STRENGTH_FIELDS.find(f => f !== 'body' && fields[f]?.length) ?? (near(x) ? 'vector' : 'body');
     };
-    const excluded = new Set(input.exclude);
+    const excluded = new Set([...input.exclude, ...(opts.hidden ?? [])]);
     const floor = MATCH_STRENGTHS.indexOf(input.min_match_strength ?? 'body');
     const window: Cand[] = [];
     const seen = new Set<string>();
     const admit = (x: Cand) => {
       seen.add(x.id);
-      if (window.length < kEff && !excluded.has(x.id) && MATCH_STRENGTHS.indexOf(strengthOf(x)) <= floor) window.push(x);
+      if (window.length < kEff && !excluded.has(x.id) && (x.explicit || !metaOf(x.c, x.doc).dep) && !(others && metaOf(x.c, x.doc).aud) && MATCH_STRENGTHS.indexOf(strengthOf(x)) <= floor) window.push(x);
     };
     loaded.forEach((_, c) => {
       for (const r of ranks[c]!.ranked) {
@@ -368,17 +536,22 @@ async function resolveInner(input: ReturnType<typeof normalizeTurnInput>, opts: 
         if (!seen.has(m.id) && mentionsSkill(input.message, m.id, m.name)) admit({ c, doc: r.doc, score: r.score, id: m.id, explicit: true });
       }
     });
-    const longest = Math.max(...ranks.map(r => r.ranked.length));
+    for (const id of pick?.ids ?? []) {
+      const at = offered.get(id)!;
+      if (!seen.has(id)) admit({ ...at, score: ranks[at.c]!.ranked.find(r => r.doc === at.doc)?.score ?? 0, id, explicit: false, picked: true });
+    }
+    if (pick && window.length === 0 && pick.ids.length === 0) return finish({ ...base, no_skill: true, no_skill_reason: 'no_match', block_reason: 'no_match' }, { tokens: 0, suggested: [], resuggested: [] });
+    const longest = pick ? 0 : Math.max(...order.map(r => r.length));
     for (let i = 0; i < longest && window.length < kEff; i++) {
       loaded.forEach((_, c) => {
-        const r = ranks[c]!.ranked[i];
+        const r = order[c]![i];
         if (!r) return;
         const m = metaOf(c, r.doc);
         if (!seen.has(m.id)) admit({ c, doc: r.doc, score: r.score, id: m.id, explicit: false });
       });
       check();
     }
-    const strong = (x: Cand) => x.explicit || ranks[x.c]!.matchedFields(x.doc).strong;
+    const strong = (x: Cand) => x.explicit || x.picked === true || ranks[x.c]!.matchedFields(x.doc).strong;
     const picked: Cand[] = [];
     const resuggested: string[] = [];
     const deduped: string[] = [];
@@ -395,25 +568,26 @@ async function resolveInner(input: ReturnType<typeof normalizeTurnInput>, opts: 
         picked.push(x);
       });
     }
-    const gated = input.top_gate !== undefined && picked.length > 0 && !picked.some(x => x.explicit)
-      && Math.max(...picked.map(x => x.score / maxIdf(loaded[x.c]!.ix.n))) < input.top_gate;
+    const passesGate = (x: Cand) => (cos[x.c] ? near(x) : x.score / maxIdf(loaded[x.c]!.ix.n) >= input.top_gate!);
+    const gated = !pick && input.top_gate !== undefined && picked.length > 0 && !picked.some(x => x.explicit) && !picked.some(passesGate);
     if (gated) picked.length = 0;
     const remaining = Math.max(0, budget - state.spent);
     const lines: BlockLine[] = picked.map(x => {
       const m = metaOf(x.c, x.doc);
       return { id: m.id, name: m.name, summary: m.summary, ...(m.path ? { path: m.path } : {}), namesOnly: Boolean(opts.namesOnly) || loaded[x.c]!.receipt.catalog.hints === 'names_only' };
     });
-    let r = renderBlock(lines, { harness: input.harness, loadHint: opts.loadHint, cap: Math.min(BLOCK_TOKEN_CAP, remaining) });
+    let r = renderBlock(lines, { harness: input.harness, loadHint: opts.loadHint, readRoot: opts.readRoot, cap: Math.min(BLOCK_TOKEN_CAP, remaining) });
     const exhausted = budget === 0 || remaining === 0 || (picked.length > 0 && r.kept === 0 && remaining < BLOCK_TOKEN_CAP);
     const named = picked.filter(x => x.explicit).length;
-    if (budget > 0 && r.kept === 0 && named > 0) r = renderBlock(lines.slice(0, named), { harness: input.harness, loadHint: opts.loadHint, cap: BLOCK_TOKEN_CAP });
+    if (budget > 0 && r.kept === 0 && named > 0) r = renderBlock(lines.slice(0, named), { harness: input.harness, loadHint: opts.loadHint, readRoot: opts.readRoot, cap: BLOCK_TOKEN_CAP });
     const kept = picked.slice(0, r.kept);
     const suggestions: Suggestion[] = kept.map(x => {
       const m = metaOf(x.c, x.doc);
       const namesOnly = lines.find(l => l.id === m.id)!.namesOnly;
       const fields = ranks[x.c]!.matchedFields(x.doc).fields;
       const match_strength = strengthOf(x);
-      return { id: m.id, name: m.name, score: round4(x.score), summary: namesOnly ? '' : m.summary, reason: x.explicit ? `named in the turn; ${reasonText(fields)}` : reasonText(fields), match_strength, ...(m.path ? { path: m.path } : {}), catalog: loaded[x.c]!.name };
+      const words = near(x) ? [reasonText(fields), `meaning: cosine ${cos[x.c]![x.doc]!.toFixed(3)}`].filter(Boolean).join('; ') : reasonText(fields);
+      return { id: m.id, name: m.name, score: round4(x.score), summary: namesOnly ? '' : m.summary, reason: x.explicit ? `named in the turn; ${m.dep ? `deprecated${m.rep ? `, use ${m.rep} instead` : ''}; ` : ''}${words}` : x.picked ? 'picked by the model picker' : words, match_strength, ...(m.path ? { path: m.path } : {}), catalog: loaded[x.c]!.name };
     });
     const blockReason: BlockReason | null = suggestions.length ? null : exhausted ? 'budget_exhausted' : gated ? 'weak_top_match' : paced ? 'paced' : window.length ? 'deduped' : 'filtered';
     const out: TurnOutput = { ...base, budget_exhausted: exhausted, block_reason: blockReason, suggestions, block: r.block, block_tokens: r.tokens, deduped };
@@ -429,6 +603,7 @@ async function resolveInner(input: ReturnType<typeof normalizeTurnInput>, opts: 
         target, indexed: Boolean(f), catalog: f ? loaded[f.c]!.name : null, rank: pos >= 0 ? pos + 1 : null, score: pos >= 0 ? round4(ranks[f!.c]!.ranked[pos]!.score) : null,
         fields: f ? ranks[f.c]!.matchedFields(f.doc).fields : {}, excluded: excluded.has(target), deduped: deduped.includes(target), in_block: suggestions.some(s => s.id === target),
         skip_reason: skip?.reason ?? null, session: key ? { turn: state.turn, spent: state.spent, budget, remaining } : null,
+        ...(f && cos[f.c] ? { vector: { cosine: round4(cos[f.c]![f.doc]!), floor: floorFor } } : {}),
       };
     }
     return finish(out, { tokens: r.tokens, suggested: kept.map(x => x.id), resuggested: resuggested.filter(id => kept.some(x => x.id === id)) }, explain);

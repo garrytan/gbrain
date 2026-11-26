@@ -572,7 +572,7 @@ async function runIngest(engine: BrainEngine, args: string[], dispatch: Pick<Cli
     }
     const firstImported = result.files.flatMap((f) => f.sessions).find((s) => !s.error && s.baseSlug);
     if (firstImported && !parsed.dryRun) {
-      console.log(`try it: gbrain query "${firstImported.baseSlug.split('/').pop()}"`);
+      console.log(`try it: gbrain get ${firstImported.baseSlug} --source-id ${sourceId}`);
     }
   }
 

@@ -28,7 +28,7 @@ export function makeEnrichHandler(engine: BrainEngine): MinionHandler {
     const result = await runEnrichCore(engine, {
       sourceId,
       types: types as import('../../types.ts').PageType[] | undefined,
-      order: order as ('inbound-links' | 'salience' | 'updated') | undefined,
+      order: order as import('../../../commands/enrich.ts').EnrichOrder | undefined,
       limit: typeof job.data.limit === 'number' ? job.data.limit : undefined,
       workers: typeof job.data.workers === 'number' ? job.data.workers : undefined,
       model: typeof job.data.model === 'string' ? job.data.model : undefined,

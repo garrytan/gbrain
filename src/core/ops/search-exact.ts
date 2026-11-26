@@ -4,6 +4,7 @@
  * src/core/search/exact-scan.ts; this file validates params and resolves the
  * caller's scope the way `search` does.
  */
+import { alsoPrefixes } from './slug-params.ts';
 import type { Operation, OperationContext } from './contract.ts';
 import { invalidParam } from './op-fix.ts';
 import { assertExplicitSourceLive, federatedSearchScope, parseSourceIdParam } from './context.ts';
@@ -135,7 +136,7 @@ const search_exact: Operation = {
       caseSensitive: params.caseSensitive,
       ...scope,
       ...(params.types ? { types: params.types } : {}),
-      ...(params.slugPrefix ? { slugPrefix: params.slugPrefix } : {}),
+      ...(params.slugPrefix ? { slugPrefix: params.slugPrefix, ...alsoPrefixes('slugPrefixAlso', params.slugPrefix) } : {}),
       excludeSlugPrefixes,
       excludePrivate,
       remote: ctx.remote !== false,

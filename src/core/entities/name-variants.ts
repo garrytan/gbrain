@@ -141,6 +141,9 @@ function sameGivenName(a: string, b: string): boolean {
   return false;
 }
 
+/** A word that is a given name the nickname table knows (`sarah`, `michael`, `mike`), lowercased. */
+export const isKnownGivenName = (word: string) => NICKNAMES.has(word.toLowerCase());
+
 /** Alternate forms that are English stopwords: full-text search drops them, so a variant would lose its given name. */
 const STOPWORD_GIVEN_FORMS: ReadonlySet<string> = new Set(['will', 'don']);
 
@@ -214,6 +217,23 @@ export function matchNameVariant(query: string, candidate: string): NameMatchKin
   const cLast = c.core[last]!;
   if (qLast.length >= 5 && q.core.slice(0, last).every((w, i) => w === c.core[i] || sameGivenName(w, c.core[i]!)) && editDistance(qLast, cLast) === 1) return 'typo';
   return null;
+}
+
+/**
+ * Can these two names belong to one person? null when either has no name words or reads as an address or a number
+ * (nothing to compare); true for any variant matchNameVariant knows, the same surname (or its initial) with the same
+ * given name, a nickname or an initial of it (a middle name may be missing on one side), or a one-word name equal to the
+ * other's given name, a nickname of it, or the surname; false otherwise.
+ */
+export function namesAgree(a: string, b: string): boolean | null {
+  const x = parsePersonName(a).core;
+  const y = parsePersonName(b).core;
+  if (!x.length || !y.length || /[@\d]/.test(`${a}${b}`)) return null;
+  if (matchNameVariant(a, b) || matchNameVariant(b, a)) return true;
+  const [short, long] = x.length <= y.length ? [x, y] : [y, x];
+  if (short.length === 1) return sameGivenName(short[0]!, long[0]!) || short[0] === long.at(-1);
+  const same = (p: string, q: string) => p === q || (p.length === 1 && q.startsWith(p)) || (q.length === 1 && p.startsWith(q));
+  return same(short.at(-1)!, long.at(-1)!) && (sameGivenName(short[0]!, long[0]!) || same(short[0]!, long[0]!));
 }
 
 /**

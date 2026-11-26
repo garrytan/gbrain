@@ -26,6 +26,7 @@ import { probeQueueState } from '../src/core/minions/supervisor.ts';
 import { autopilotPausedMarkerPath } from '../src/core/autopilot-paths.ts';
 import { operationsByName } from '../src/core/operations.ts';
 
+
 let engine: PGLiteEngine;
 
 beforeAll(async () => {
@@ -177,18 +178,12 @@ describe('submit_job wiring — probe never blocks a successful enqueue', () => 
   });
 
   it('a throwing probe degrades to queue_state {probe_failed: true} — the enqueue still succeeds', async () => {
-    // Delegate everything to the real engine EXCEPT the wedge-signal query
-    // (identified by its waiting_claimable alias), which the probe — and only
-    // the probe — runs.
+    // Delegate everything to the real engine EXCEPT the wedge-signal read
+    // (the readWedgeSignals member), which the probe — and only the probe — runs.
     const throwOnWedge: any = new Proxy(engine, {
       get(target, prop) {
-        if (prop === 'executeRaw') {
-          return async (sql: string, ...rest: unknown[]) => {
-            if (typeof sql === 'string' && sql.includes('waiting_claimable')) {
-              throw new Error('probe-only failure');
-            }
-            return (target as any).executeRaw(sql, ...rest);
-          };
+        if (prop === 'readWedgeSignals') {
+          return async () => { throw new Error('probe-only failure'); };
         }
         const v = Reflect.get(target as object, prop, target);
         return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(target) : v;

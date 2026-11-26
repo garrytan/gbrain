@@ -38,6 +38,40 @@ export async function run(args: string[], ctx: CliDispatchContext): Promise<void
     return;
   }
 
+  // A configured PGLite brain (the host's, or the mounted one --brain / GBRAIN_BRAIN_ID selects) that is not
+  // there (unmounted drive, moved folder) or is an empty mount point is refused before any connect:
+  // connecting would create a new empty brain and report it healthy. Host probe is serve's status-only missing_brain. Runs that never connect (--fast, filesystem-only --only) keep running.
+  // The connect waits for the datastore's lock, and the folder can move meanwhile, so the same test runs again under the held lock.
+  let releaseGuard = (): void => {};
+  if (await doctorWillConnect(args)) {
+    const { missingBrainRefusal, refuseMissingBrain, guardMissingBrainAtLock } = await import('../../commands/doctor/missing-brain.ts');
+    const brainId = dbMarkerBrainId() ?? 'host';
+    const refusal = missingBrainRefusal(brainId);
+    if (refusal) { await refuseMissingBrain(args, refusal); return; }
+    releaseGuard = guardMissingBrainAtLock(brainId);
+  }
+  try {
+    await runLocalDoctor(args, ctx);
+  } catch (e) {
+    if (!isMissingBrainRefusal(e)) throw e;
+    await (await import('../../commands/doctor/missing-brain.ts')).refuseMissingBrain(args, e as import('../../core/ops/contract.ts').OperationError); // refused under the held lock (the datastore went missing while doctor waited): the same refusal, never the filesystem-only fallback
+  } finally {
+    // A connect abandoned at the budget still waits for the lock and can still create the folder: the guard outlives it.
+    const abandoned = abandonedConnects.splice(0);
+    if (abandoned.length) void Promise.allSettled(abandoned).then(releaseGuard); else releaseGuard();
+  }
+}
+
+/** Connects `runDoctorWithDeadline` stopped waiting for, until each settles. */
+const abandonedConnects: Promise<unknown>[] = [];
+
+/** The refusal under the held lock (`missing-brain.ts` builds it); doctor's filesystem-only fallback must not swallow it. Matched on the code so this file need not load that module until a refusal is rendered. */
+const isMissingBrainRefusal = (e: unknown): boolean => (e as { code?: unknown } | null)?.code === 'brain_missing';
+
+/** The local-engine doctor (everything after the thin-client route and the missing-brain refusal). */
+async function runLocalDoctor(args: string[], ctx: CliDispatchContext): Promise<void> {
+  const { connectEngine, dbMarkerBrainId } = ctx;
+
   // v0.36+ brain-health-100: --remediation-plan and --remediate go
   // through dedicated functions that compute from engine.getHealth()
   // (cheap path D7), NOT the full doctor walk.
@@ -90,6 +124,7 @@ export async function run(args: string[], ctx: CliDispatchContext): Promise<void
       eng = await connectEngine({ probeOnly: args.includes('--no-migrate') });
       await runDoctor(eng, args, undefined, undefined, deadline);
     } catch (e) {
+      if (isMissingBrainRefusal(e)) throw e;
       // DB unavailable OR the DB-backed run threw — still run filesystem
       // checks. Say so on stderr: a silent fallback looks identical to a
       // healthy DB-backed run (minus the DB checks), which has misread as
@@ -114,6 +149,16 @@ export async function run(args: string[], ctx: CliDispatchContext): Promise<void
       if (eng) await finishCliTeardown({ engine: eng });
     }
   }
+}
+
+/** Whether this doctor invocation opens the brain engine (the connect paths below), so the missing-brain refusal applies. */
+async function doctorWillConnect(args: string[]): Promise<boolean> {
+  if (args.includes('--remediation-plan') || args.includes('--remediate')) return true;
+  const { parseOnlyChecks, doctorCheckNames, onlyNeedsEngine } = await import('../../commands/doctor/registry.ts');
+  const only = parseOnlyChecks(args);
+  if (!only) return !args.includes('--fast');
+  const known = doctorCheckNames();
+  return only.size > 0 && [...only].every((n) => known.has(n)) && onlyNeedsEngine(only);
 }
 
 /** A `--tier` / `--budget-ms` value doctor cannot use: the structured error, exit 2. */
@@ -143,13 +188,14 @@ async function runDoctorWithDeadline(
   try {
     const connected = await raceBudget(connecting, deadline.deadlineAt! - Date.now());
     if (budgetExpired(connected)) {
-      connecting.then((late) => finishCliTeardown({ engine: late }), () => undefined);
+      abandonedConnects.push(connecting.then((late) => finishCliTeardown({ engine: late }), () => undefined));
       await runDoctor(null, args, getDbUrlSource(), new DoctorBudgetError(Date.now() - deadline.startedAt), deadline);
       return;
     }
     eng = connected;
     await runDoctor(eng, args, undefined, undefined, deadline);
   } catch (e) {
+    if (isMissingBrainRefusal(e)) throw e;
     await runDoctor(null, args, getDbUrlSource(), e, deadline);
   } finally {
     if (eng) await finishCliTeardown({ engine: eng });
@@ -200,6 +246,7 @@ async function runDoctorOnly(
     eng = await connectEngine({ probeOnly: true });
     await runDoctor(eng, args, undefined, undefined, deadline);
   } catch (e) {
+    if (isMissingBrainRefusal(e)) throw e;
     await runDoctor(null, args, getDbUrlSource(), e, deadline);
   } finally {
     if (eng) await finishCliTeardown({ engine: eng });

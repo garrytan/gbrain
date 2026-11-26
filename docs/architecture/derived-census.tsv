@@ -29,3 +29,4 @@ src/core/rust-engine/store-members/page-ops.ts	1	engine	the Rust engine's softDe
 src/core/rust-engine/store-members/pages.ts	1	engine	the Rust engine's softDeletePage member forwards one soft delete to the store
 src/core/schema-pack/page-to-alias.ts	1	pending:inventory	derived or mixed writer not yet on the generation primitive; reviewed in a later GBRA-161 PR
 src/core/schema-pack/page-to-link.ts	1	pending:inventory	derived or mixed writer not yet on the generation primitive; reviewed in a later GBRA-161 PR
+src/core/engine-sql/facts-trust.ts	1	pending:inventory	softDeleteDerivedPages, the derived-page soft delete derivation-inputs.ts runs; not yet on the generation primitive, reviewed in a later GBRA-161 PR

@@ -28,8 +28,9 @@ export const OP_READ_TRUST: Readonly<Record<string, ReadTrustHandling>> = {
   recall: 'filtered', context_pack: 'filtered', delta: 'filtered', memory_recall: 'labeled',
   search: 'filtered', search_exact: 'filtered', query: 'filtered', get_page: 'filtered', fetch: 'filtered',
   get_chunks: 'filtered', get_timeline: 'filtered', takes_list: 'filtered', takes_search: 'filtered',
-  assemble_evidence: 'filtered',
+  assemble_evidence: 'filtered', check_claims: 'labeled',
   entity: 'labeled', synthesize: 'labeled', think: 'labeled',
+  household_due: 'labeled',
   search_by_image: 'labeled', list_pages: 'labeled', find_pages: 'labeled', volunteer_context: 'filtered',
   get_versions: 'labeled', get_raw_data: 'labeled', resolve_slugs: 'labeled', whois: 'labeled',
   get_recent_salience: 'labeled', find_anomalies: 'labeled', get_recent_transcripts: 'labeled',
@@ -40,7 +41,7 @@ export const OP_READ_TRUST: Readonly<Record<string, ReadTrustHandling>> = {
   extraction_pending: 'labeled', entity_identity_list: 'labeled', find_contradictions: 'filtered',
   storage_find: 'labeled', storage_get: 'labeled', storage_list: 'labeled', reveal_secret: 'labeled',
   find_experts: 'labeled', find_trajectory: 'labeled', takes_scorecard: 'labeled', takes_calibration: 'labeled',
-  open_loops: 'labeled', schema_review_orphans: 'labeled',
+  open_loops: 'labeled', learned: 'labeled', schema_review_orphans: 'labeled',
   questions_list: 'labeled', questions_status: 'labeled',
   code_callers: 'labeled', code_callees: 'labeled', code_def: 'labeled', code_refs: 'labeled', code_blast: 'labeled', code_flow: 'labeled',
   // no stored memory text
@@ -52,6 +53,11 @@ export const OP_READ_TRUST: Readonly<Record<string, ReadTrustHandling>> = {
   get_active_schema_pack: 'text_free', list_schema_packs: 'text_free', schema_stats: 'text_free', schema_lint: 'text_free',
   schema_graph: 'text_free', schema_explain_type: 'text_free',
   list_write_conflicts: 'text_free', get_brain_health: 'text_free',
+  // L1: the owner-approved agent policy (rules and decisions, no page text) and per-op callable flags.
+  policy_check: 'text_free', agent_policy: 'text_free', capabilities: 'text_free',
+  // L2: ledger totals carry counterparty names agents wrote, so a floored connection is refused rather than served them.
+  ledger: 'labeled',
+  onboarding_status: 'text_free',
   // Held at the unlisted default (refused under a token floor) pending a trust-posture call: it returns config-derived
   // settings and rule text, no stored memory text, so text_free would describe it but would admit floored connections.
   get_memory_settings: 'labeled',

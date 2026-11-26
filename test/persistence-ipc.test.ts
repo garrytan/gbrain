@@ -8,7 +8,7 @@ import { OperationError } from '../src/core/ops/contract.ts';
 import { printRefreshOutcome } from '../src/commands/sources-refresh.ts';
 import { _resetCliExitVerdictForTests } from '../src/core/cli-force-exit.ts';
 import {
-  PERSISTENCE_IPC_MAX_BYTES, PersistenceIpcTransportError,
+  PERSISTENCE_IPC_MAX_BYTES, PERSISTENCE_IPC_READ_EXTENSIONS, PersistenceIpcTransportError,
   persistenceSocketPathForConfig, requestPersistenceAdministration, requestPersistenceCapabilities, requestPersistenceOperation,
   startPersistenceIpcServer, type PersistenceIpcBinding, type PersistenceIpcRequest,
 } from '../src/core/persistence/ipc.ts';
@@ -37,6 +37,13 @@ async function bind(path: string, dispatch: (request: PersistenceIpcRequest) => 
   expect(result).not.toBeNull();
   bindings.push(result!);
   return result!;
+}
+
+async function rawOwner(capabilities: Record<string, unknown>) {
+  const path = socketPath();
+  const server = net.createServer(socket => socket.once('data', () => socket.end(`${JSON.stringify({ version: 1, ok: true, result: capabilities })}\n`)));
+  rawServers.push(server); server.listen(path); await once(server, 'listening');
+  return path;
 }
 
 async function rawExchange(path: string, payload: string): Promise<Record<string, any>> {
@@ -73,6 +80,26 @@ describe('dedicated persistence IPC', () => {
     expect(capabilities.max_frame_bytes).toBe(PERSISTENCE_IPC_MAX_BYTES);
     if (process.platform !== 'win32') expect(statSync(path).mode & 0o777).toBe(0o600);
     expect(persistenceSocketPathForConfig({ engine: 'pglite', database_path: tmpdir() })).toBe(join(tmpdir(), '.gbrain-persistence.sock'));
+  });
+
+  test('G8: the operations list stays what an older CLI knows; the new reads and the read env ride beside it', async () => {
+    const PRE_G8 = ['put_page', 'put_pages', 'capture', 'delete_page', 'restore_page', 'revert_version', 'edit_page', 'append_page',
+      'remember', 'forget', 'extract_facts', 'get_write_request', 'list_write_requests', 'cancel_write_request',
+      'get_page', 'fetch', 'get_recent_transcripts', 'list_skills', 'get_skill', 'get_skill_asset', 'list_brain_skillpack',
+      'put_skill', 'delete_skill', 'join_brain', 'sync_brain_skills', 'leave_brain',
+      'get_skill_policy', 'set_skill_policy', 'get_skill_retention', 'prune_skill_revisions', 'retain_skill_revision', 'import_skill_proposal',
+      'add_tag', 'remove_tag', 'add_timeline_entry', 'add_link', 'remove_link', 'takes_add', 'takes_update', 'takes_supersede', 'takes_resolve',
+      'takes_remove', 'takes_rebuild', 'purge_fact', 'list_page_purges', 'unpurge_page'];
+    const path = socketPath();
+    await bind(path, async () => { throw new Error('Capabilities must not dispatch.'); });
+    const raw = await rawExchange(path, JSON.stringify({ version: 1, kind: 'capabilities' }) + '\n');
+    expect([...raw.result.operations].sort()).toEqual([...PRE_G8].sort());
+    expect(raw.result.read_extensions).toEqual([...PERSISTENCE_IPC_READ_EXTENSIONS]);
+    expect(Object.keys(raw.result.read_env).sort()).toEqual(['credentials', 'values']);
+    const base = { version: 1, brain_id: BRAIN, operations: ['get_page'], max_frame_bytes: 1024 };
+    const future = await requestPersistenceCapabilities(await rawOwner({ ...base, read_extensions: ['search', 'read_from_the_future'], read_env: 'x' }));
+    expect(future.read_extensions).toEqual(['search']);
+    expect(future.read_env).toBeUndefined();
   });
 
   test('preserves explicit source, client cwd, principal credential, and request ID', async () => {

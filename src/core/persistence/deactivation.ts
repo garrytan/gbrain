@@ -47,6 +47,7 @@ import { assertPhysicalRoot, assertPhysicalRootReservation, PHYSICAL_ROOT_MARKER
 import { preActivationClaims, releasePreActivationClaims, type PreActivationClaim } from './pre-activation-release.ts';
 import { PARK_AFTER_FAILURES } from './effect-model.ts';
 import { EMBEDDING_ZERO_NORM } from '../ai/embedding-guard.ts';
+import { lacksRawSql } from '../engine-capabilities.ts';
 
 export const DEACTIVATE_DOCS = 'docs/architecture/topologies.md#deactivate-runbook';
 
@@ -356,6 +357,8 @@ function readJson(path: string): Record<string, unknown> | null {
  */
 export async function cleanupRetiredManagedMarkers(engine: BrainEngine): Promise<LocalMarkerReport> {
   const report: LocalMarkerReport = { state: 'cleared', removed: [], pending: [] };
+  // An engine without raw SQL (Rust, D18) has no topology-change table, so it has no retired epoch to clean up.
+  if (lacksRawSql(engine)) return report;
   const [present] = await engine.executeRaw<{ present: boolean }>("SELECT to_regclass('persistence_topology_changes') IS NOT NULL AS present");
   if (!present?.present) return report;
   const brainRead = readPersistenceBrain(engine);

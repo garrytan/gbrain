@@ -5,6 +5,7 @@
  * ../operations.ts. Never import from '../operations.ts' here (cycle).
  */
 
+import { normalizeSlug } from '../utils.ts';
 import type { Operation, OperationContext } from './contract.ts';
 import { fenceTranscriptText, quotesStored, unquoteTranscriptText } from '../search/transcript-quote.ts';
 import { enforceClientSlugFence, readPolicyOpts } from './context.ts';
@@ -15,7 +16,7 @@ import { MERGE_PRECONDITION_PARAMS, WRITE_REQUEST_PARAM } from '../persistence/p
 
 /** #8384: a remote caller's tag copied out of a quoted read (get_tags, get_page, fetch) names the tag, not its fence. */
 function unquotedTag(ctx: OperationContext, p: Record<string, unknown>): Record<string, unknown> {
-  return ctx.remote === false || typeof p.tag !== 'string' || typeof p.slug !== 'string' ? p : { ...p, tag: unquoteTranscriptText(p.tag, p.slug.toLowerCase()) };
+  return ctx.remote === false || typeof p.tag !== 'string' || typeof p.slug !== 'string' ? p : { ...p, tag: unquoteTranscriptText(p.tag, normalizeSlug(p.slug)) };
 }
 
 const add_tag: Operation = {

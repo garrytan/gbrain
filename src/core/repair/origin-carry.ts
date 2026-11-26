@@ -14,6 +14,7 @@
  * origin, and when the origin lookup itself fails it soft-deletes and keeps any park (purge_held derived_origin_unchecked). Every expiry (carryPrivateBeforePurge, from purgeDeletedPagesCoordinated) labels the dependents of each expired
  * private origin and parks the ones it could not (persistence/derived-origin-hold.ts), so no purge removes them.
  */
+import { normalizeSlug } from '../utils.ts';
 import { createHash, randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
 import { assertPurgeAge } from '../engine-errors.ts';
@@ -144,7 +145,7 @@ export async function deletePageCarryingPrivate(ctx: OperationContext, p: Record
   const { finishPagePurge } = await import('../persistence/page-purge.ts');
   p.request_id ??= randomUUID();
   const batch = `derived-origin-carry:${String(p.request_id)}`;
-  const slug = typeof p.slug === 'string' ? p.slug.toLowerCase() : null;
+  const slug = typeof p.slug === 'string' ? normalizeSlug(p.slug) : null;
   if (p.purge !== true) {
     const origin = slug ? await originOf(ctx.engine, sourceId, slug).catch(() => null) : null;
     const result = await submitPageMutation(ctx, { operation: 'delete_page', params: p });

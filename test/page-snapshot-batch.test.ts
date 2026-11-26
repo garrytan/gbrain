@@ -7,7 +7,7 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { pageSnapshotBatchMatchesPerPageReads, pageSnapshotBatchMatchesPurgedReads, pageSnapshotBatchRespectsByteBudget } from './helpers/page-snapshot-batch-cases.ts';
+import { pageSnapshotBatchCarriesSourceWideOnce, pageSnapshotBatchMatchesPerPageReads, pageSnapshotBatchMatchesPurgedReads, pageSnapshotBatchRespectsByteBudget } from './helpers/page-snapshot-batch-cases.ts';
 
 let engine: BrainEngine;
 beforeAll(async () => {
@@ -20,3 +20,4 @@ afterAll(async () => { await engine?.disconnect(); });
 test('batched snapshots equal the per-page reads, missing and deleted refs included', () => pageSnapshotBatchMatchesPerPageReads(engine));
 test('batched snapshots drop page-subject and \'*\' purged fence rows as the per-page read does', () => pageSnapshotBatchMatchesPurgedReads(engine));
 test('a batch covers the longest prefix that fits the byte budget, never less than one ref', () => pageSnapshotBatchRespectsByteBudget(engine));
+test('a source\'s \'*\' withdrawals cross once per batch, and every snapshot still equals the per-page read (#9350)', () => pageSnapshotBatchCarriesSourceWideOnce(engine));

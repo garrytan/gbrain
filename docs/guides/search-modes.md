@@ -181,8 +181,10 @@ Several of the knobs deserve a sentence:
   integer milliseconds, default 3000, range 500 to 30000; for example
   `gbrain config set search.cjk_keyword_deadline_ms 5000`) is the total time
   budget of hybrid search's CJK keyword arm, split between full scoring and
-  one capped retry (see [multi-language FTS](multi-language-fts.md)). A cut
-  arm reports `keyword_candidates_incomplete`; another value is refused
+  one capped retry (see [multi-language FTS](multi-language-fts.md)), and of
+  keyword-only CJK search under `search.mcp_keyword_only` (`--match keyword`
+  stays under `keyword_statement_timeout_ms` and returns no rows when cut). Either
+  cut reports `keyword_candidates_incomplete` instead of an error; another value is refused
   with exit 2.
 - **`keyword_statement_timeout_ms`** (Postgres only; config key
   `search.keyword_statement_timeout_ms`, integer milliseconds, default 8000,

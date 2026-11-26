@@ -5,7 +5,8 @@
  * session); staleness of ordinary edits of at most CORE_MEMO_TTL_MS is
  * accepted. The pressure notice fires once per session until its next
  * compaction (at the warn ratio, or earlier when the context grows fast),
- * only when a remember tool is available.
+ * only when a remember tool is available. Nightly learning's count line (learning/push.ts) rides the same fetch and is
+ * added once per session for each run that recorded unseen items.
  *
  * #5575 ENG-11: the memo's identity is the brain's trust policy generation
  * plus the core_delivery eligibility (eligibility/generation.ts). Every
@@ -23,7 +24,9 @@ import { loadContextModule } from './load-warning.ts';
 
 export const CORE_MEMO_TTL_MS = 60_000;
 
-interface CoreFetch { text: string; pressure: PressureGate | null }
+/** Nightly learning's count line (learning/push.ts), with the run that recorded the newest unseen item. */
+export interface LearnedLine { text: string; run_id: string }
+interface CoreFetch { text: string; pressure: PressureGate | null; learned?: LearnedLine | null }
 
 /**
  * One refresh: a fresh core with its trust identity (null: do not memoize),
@@ -32,7 +35,7 @@ interface CoreFetch { text: string; pressure: PressureGate | null }
  */
 export type CoreRefresh =
   | { kind: 'fresh'; value: CoreFetch; identity: string | null }
-  | { kind: 'unchanged'; identity: string; pressure: PressureGate | null }
+  | { kind: 'unchanged'; identity: string; pressure: PressureGate | null; learned?: LearnedLine | null }
   | null;
 
 /** A core fetch given the memo's identity (when one is still inside the TTL window). */
@@ -48,13 +51,25 @@ export async function coreTrustIdentity(engine: BrainEngine): Promise<string | n
   }
 }
 
+/** The learned count line for a source, or null (none, turned off, or unreadable). Read on every refresh, never memoized. */
+export async function learnedLineFromEngine(engine: BrainEngine, sourceId: string): Promise<LearnedLine | null> {
+  try {
+    const { learnedPushLine } = await loadContextModule('src/core/learning/push.ts', () => import('../learning/push.ts'));
+    const line = await learnedPushLine(engine, sourceId);
+    return line ? { text: line.text, run_id: line.run_id } : null;
+  } catch { // silent-read-ok: the count line is optional; a failed read must never drop core memory, and the next refresh reads it again
+    return null;
+  }
+}
+
 /** The direct-engine refresh: identity first, then assembly only when it changed. The serve's coreOnly arm follows the same order. */
 export async function refreshCoreFromEngine(engine: BrainEngine, sourceId: string, memoIdentity: string | null): Promise<CoreRefresh> {
   const identity = await coreTrustIdentity(engine);
   const pressure = await readPressureGate(engine, true).catch(() => null);
-  if (identity !== null && identity === memoIdentity) return { kind: 'unchanged', identity, pressure };
+  const learned = await learnedLineFromEngine(engine, sourceId);
+  if (identity !== null && identity === memoIdentity) return { kind: 'unchanged', identity, pressure, learned };
   const { loadCoreBlock } = await loadContextModule('src/core/core-memory.ts', () => import('../core-memory.ts'));
-  return { kind: 'fresh', value: { text: (await loadCoreBlock(engine, { sessionSourceId: sourceId, excludePrivate: true })).text, pressure }, identity };
+  return { kind: 'fresh', value: { text: (await loadCoreBlock(engine, { sessionSourceId: sourceId, excludePrivate: true })).text, pressure, learned }, identity };
 }
 
 /** The engine's token estimate for a message list (chars / 4 per message; content-less messages count 0, #2880). */
@@ -88,6 +103,8 @@ function realLater(ms: number, fn: () => void): void {
 export function createOpenClawCoreLane(opts: OpenClawCoreLaneOptions): OpenClawCoreLane {
   let memo: { at: number; identity: string; value: CoreFetch } | null = null;
   const warned = new Set<string>();
+  /** The run whose learned line each session already got: one line per run per session, compactions included. */
+  const learnedRun = new Map<string, string>();
   const lastTokens = new Map<string, number>();
 
   async function fetchCore(sessionId: string | null, memoIdentity: string | null): Promise<CoreRefresh> {
@@ -110,8 +127,9 @@ export function createOpenClawCoreLane(opts: OpenClawCoreLaneOptions): OpenClawC
           if (res === ipc.IPC_UNAVAILABLE || !('ok' in res) || !res.ok || !res.block) return null;
           const trust = res.block.coreTrust;
           const pressure = res.block.pressure ?? null;
-          if (trust?.unchanged) return memoIdentity && trust.identity === memoIdentity ? { kind: 'unchanged', identity: trust.identity, pressure } : null;
-          return { kind: 'fresh', value: { text: res.block.core?.text ?? '', pressure }, identity: trust?.identity ?? null };
+          const learned = res.block.learned ?? null;
+          if (trust?.unchanged) return memoIdentity && trust.identity === memoIdentity ? { kind: 'unchanged', identity: trust.identity, pressure, learned } : null;
+          return { kind: 'fresh', value: { text: res.block.core?.text ?? '', pressure, learned }, identity: trust?.identity ?? null };
         }
         const { getDirectPostgresEngine } = await loadContextModule('src/core/context/reflex.ts', () => import('./reflex.ts'));
         const pg = await getDirectPostgresEngine(cfg);
@@ -132,7 +150,7 @@ export function createOpenClawCoreLane(opts: OpenClawCoreLaneOptions): OpenClawC
       memo = null;
       return { text: '', pressure: null };
     }
-    if (refresh.kind === 'unchanged') return { text: live!.value.text, pressure: refresh.pressure };
+    if (refresh.kind === 'unchanged') return { text: live!.value.text, pressure: refresh.pressure, learned: refresh.learned ?? null };
     memo = refresh.identity === null ? null : { at: Date.now(), identity: refresh.identity, value: refresh.value };
     return refresh.value;
   }
@@ -147,6 +165,10 @@ export function createOpenClawCoreLane(opts: OpenClawCoreLaneOptions): OpenClawC
       const gate = core.pressure;
       const window = gate?.context_window ?? tokenBudget ?? 0;
       const key = sessionId ?? 'default';
+      if (core.learned && learnedRun.get(key) !== core.learned.run_id) {
+        learnedRun.set(key, core.learned.run_id);
+        out.push(core.learned.text);
+      }
       const rememberTool = [...(availableTools ?? [])].some((t) => /(^|[_.:-])remember$/.test(t));
       const growth = Math.max(0, estimatedTokens - (lastTokens.get(key) ?? estimatedTokens));
       lastTokens.set(key, estimatedTokens);

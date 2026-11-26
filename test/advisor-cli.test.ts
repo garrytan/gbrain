@@ -79,8 +79,9 @@ function fakeEngine(opts: FakeEngineOpts = {}): BrainEngine {
       if (sql.includes("interval '7 days'")) {
         return (opts.staleSyncIds ?? []).map((id) => ({ id }));
       }
-      return []; // minion_jobs, sources, chronicle gap, mcp-client-fit → quiet
+      return []; // sources, chronicle gap, mcp-client-fit → quiet
     },
+    listStuckActiveJobsByName: async () => [], // collect-stalled-jobs' stuck-jobs arm → quiet
     getStats: async () => ({
       page_count: 0,
       chunk_count: 0,

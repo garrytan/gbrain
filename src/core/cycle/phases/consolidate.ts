@@ -390,7 +390,7 @@ export async function runPhaseConsolidate(
         // Write gate on a new take: reject skips the cluster; hold records it for review and leaves the facts unconsolidated.
         const takeRow = { page_id: pageId, row_num: nextRowNum, claim: best.fact, kind: 'fact', holder: 'self', weight: clamp01(avgWeight),
           since_date: sinceISO, source: sources.slice(0, 200), active: true };
-        const gate = existing.length ? null : await gateNewTake(engine, derivation, takeRow, { sourceId: b.source_id, slug: b.entity_slug },
+        const gate = existing.length ? null : await gateNewTake(engine, derivation, takeRow, { sourceId: b.source_id, slug: b.entity_slug, pageId },
           gateConfig ??= (await loadImportSanityConfig(engine)).writeGate ?? DEFAULT_WRITE_GATE_CONFIG);
         if (gate && gate.action !== 'insert') { if (gate.action === 'hold') clustersGateHeld++; else clustersGateRejected++; continue; }
         const written = await derivedMaintenanceTransaction<{ created: boolean; takeId: number | null } | null>(engine, derivation, async tx => {
@@ -480,7 +480,7 @@ export async function runPhaseConsolidate(
  * inserts on `insert` (recording a flag receipt) and skips otherwise.
  */
 async function gateNewTake(engine: BrainEngine, derivation: { trust: WriteTrust; inputs: readonly TaintInput[] },
-  takeRow: { claim: string; source: string } & Record<string, unknown>, at: { sourceId: string; slug: string }, cfg: WriteGateConfig): Promise<GatedRowDecision> {
+  takeRow: { claim: string; source: string } & Record<string, unknown>, at: { sourceId: string; slug: string; pageId?: number }, cfg: WriteGateConfig): Promise<GatedRowDecision> {
   const gate = decideTakeWrite({ claim: takeRow.claim, source: takeRow.source }, { ...at, payload: takeRow,
     input: { tier: derivation.trust.tier, origin: derivation.trust.origin, requestId: null }, cfg });
   if (gate.action === 'hold') await derivedMaintenanceTransaction(engine, derivation, async tx => ({ result: await recordWriteGateHold(tx, gate.hold!), rows: [] }));

@@ -888,6 +888,15 @@
         },
         {
           "category": "ops",
+          "elapsed_ms": "<volatile>",
+          "message": "Not applicable: Rust engine shadow mode is off for this brain.",
+          "name": "rust_engine_addon",
+          "readiness_state": "not_applicable",
+          "severity": "info",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
           "details": {
             "fix_hint": "Connection refused: nothing accepted the connection at the configured host and port. Check that the database server is running and that the URL names the right host and port. Run: gbrain db-repair",
             "reason": "conn_refused",

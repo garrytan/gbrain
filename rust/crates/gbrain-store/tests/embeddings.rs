@@ -12,6 +12,7 @@ use gbrain_store::embeddings::{
 };
 use gbrain_store::pages::{PageInput, PutPageOptions};
 use gbrain_store::takes::TakeInput;
+use gbrain_store::vectors::TakesVectorOptions;
 use memory_env::{T0, brain};
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
@@ -399,6 +400,98 @@ fn a_take_vector_counts_only_for_the_claim_it_was_computed_from() {
     );
 }
 
+#[test]
+fn take_vector_search_ranks_current_vectors_by_cosine_distance_and_refuses_a_bad_query() {
+    let b = brain("emb-take-search");
+    let (open, _) = page(&b, "notes/open", json!({}));
+    let (held, _) = page(&b, "notes/held", json!({"quarantine": true}));
+    let take = |page_id: u64, row: i64, claim: &str, holder: &str| -> TakeInput {
+        de(json!({
+            "page_id": page_id, "row_num": row, "claim": claim, "kind": "bet", "holder": holder,
+            "weight": 0.5, "active": true,
+        }))
+    };
+    b.add_takes_batch(&[
+        take(open, 1, "near", "garry"),
+        take(open, 2, "far", "alice"),
+        take(open, 3, "reworded", "garry"),
+        take(open, 4, "never embedded", "garry"),
+        take(held, 1, "held", "garry"),
+    ])
+    .unwrap();
+    let ids: std::collections::HashMap<String, u64> = b
+        .list_stale_takes(&StaleTakeOptions::default())
+        .unwrap()
+        .iter()
+        .map(|r| {
+            (
+                r["claim"].as_str().unwrap().to_string(),
+                r["take_id"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    let lean = |axis: usize, by: f64| {
+        let mut v = basis(0, 1536);
+        v[axis] = by;
+        v
+    };
+    let rows: Vec<TakeEmbeddingInput> = [
+        ("near", 0.1),
+        ("far", 0.5),
+        ("reworded", 0.01),
+        ("held", 0.05),
+    ]
+    .iter()
+    .enumerate()
+    .map(|(i, (claim, by))| TakeEmbeddingInput {
+        take_id: ids[*claim],
+        embedding: lean(i + 1, *by),
+        claim: claim.to_string(),
+        model: "m1".to_string(),
+    })
+    .collect();
+    assert_eq!(b.update_take_embeddings(&rows).unwrap(), 4);
+    // A reworded claim leaves its vector stale, so it is not searched.
+    b.add_takes_batch(&[take(open, 3, "reworded again", "garry")])
+        .unwrap();
+    let search = |embedding: &[f64], options: Value| -> Vec<Value> {
+        b.search_takes_vector(embedding, &de::<TakesVectorOptions>(options))
+            .unwrap()
+    };
+    let query: Vec<f64> = basis(0, 1536);
+    let claims = |hits: &[Value]| -> Vec<String> {
+        hits.iter()
+            .map(|h| h["claim"].as_str().unwrap().to_string())
+            .collect()
+    };
+    let all = search(&query, json!({}));
+    assert_eq!(claims(&all), ["held", "near", "far"]);
+    assert_eq!(all[1]["take_id"], json!(ids["near"]));
+    assert_eq!(all[1]["page_slug"], json!("notes/open"));
+    assert_eq!(all[1]["weight"], json!(0.5));
+    // (1 - distance)::real of [1, .., 0.1 on axis 2] against axis 0: 1/sqrt(1.01) as f32.
+    assert_eq!(all[1]["score"], json!(0.9950372));
+    assert_eq!(claims(&search(&query, json!({ "limit": 1 }))), ["held"]);
+    assert_eq!(
+        claims(&search(&query, json!({ "allow_list": ["alice"] }))),
+        ["far"]
+    );
+    assert_eq!(
+        claims(&search(&query, json!({ "eligible_only": true }))),
+        ["near", "far"]
+    );
+    let refused = |embedding: &[f64]| {
+        b.search_takes_vector(embedding, &TakesVectorOptions::default())
+            .unwrap_err()
+            .to_string()
+    };
+    assert!(refused(&basis(0, 3)).contains("different vector dimensions 3 and 1536"));
+    assert!(refused(&[1.0, f64::NAN]).contains("NaN not allowed in vector"));
+    assert!(refused(&[]).contains("at least 1 dimension"));
+    // No candidate take means no distance is computed, so another width finds nothing.
+    assert!(search(&basis(0, 3), json!({ "allow_list": [] })).is_empty());
+}
+
 /// `cosinesByChunkIds`: ids of a page's chunks, in chunk index order.
 fn chunk_ids(store: &Store, slug: &str) -> Vec<u64> {
     chunks_of(store, slug)
@@ -496,4 +589,33 @@ fn cosines_refuse_a_query_pgvector_cannot_parse_before_reading_any_row() {
         let err = b.cosines_by_chunk_ids(&[1], &query).unwrap_err();
         assert_eq!(err.message, message);
     }
+}
+
+#[test]
+fn require_safe_chunks_reads_a_page_chunked_below_the_safe_fence_as_no_chunks() {
+    let b = brain("emb-safe-fence");
+    let (_, rev) = page(&b, "notes/a", json!({}));
+    seal(
+        &b,
+        "notes/a",
+        &rev,
+        json!([{"chunk_index": 0, "chunk_text": "alpha", "model": "m1", "embedding": basis(0, 1536)}]),
+    );
+    let safe = |b: &Store| {
+        b.get_chunks_with(
+            "notes/a",
+            &GetChunksOptions {
+                include_embedding: true,
+                require_safe_chunks: true,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .len()
+    };
+    assert_eq!(safe(&b), 1);
+    b.set_chunker_version("notes/a", "3", None).unwrap();
+    assert_eq!(safe(&b), 0);
+    // Without the option the short page still reads its chunks.
+    assert_eq!(chunks_of(&b, "notes/a").len(), 1);
 }

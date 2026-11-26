@@ -31,6 +31,7 @@ checks ([below](#full-ci-on-pull-requests)), never per-cell matrix names.
 | `test.yml`, `persistence-validation.yml` | Cheap tier on pull requests: no unit shards, serial, slow, BrainBench, admin-browser, shared-skills, coverage or `test-status`; of the persistence lanes only the crash robot and convergence, and those and the native cells only when the diff selects them | Named exception ([below](#full-ci-on-pull-requests)) | The full-ci dispatch on the head before merge (merge-train requires `full-suite`), every push to master, the merge queue and the nightly Test schedule |
 | `test.yml` | `enumeration-census-tests` on pull requests that aren't doc-only | Named exception ([below](#enumeration-and-census-tests)): pull requests only, an early copy of files the unit shards already run | The full-ci dispatch, every push to master, the merge queue and the nightly Test schedule run every one of these files in the unit shards |
 | `e2e.yml` | No `pull_request` trigger | Named exception ([below](#full-ci-on-pull-requests)) | The full-ci dispatch on the head before merge (merge-train requires `e2e-full-suite`), every push to master, the merge queue and the nightly E2E schedule |
+| `test.yml` | `unit-suite-gate`: every event; named `unit-suite-not-run` on a pull request that changes more than changelog entries or release stamps and on a scoped dispatch | Named exception ([below](#unit-suite-gate)) | The full-ci dispatch on the head, every push to master, the merge queue and the nightly Test schedule |
 | `test.yml`, `e2e.yml` | A push to master skips its full lanes when it reuses a passed full-suite run of its exact tree | Named exception ([below](#master-push-reuse)) | The reused run (same tree, full profile); schedules never reuse |
 | `persistence-validation.yml` | `convergence` selected on pull requests by `scripts/ci-convergence-scope.sh` (test.yml `changes`; never by `package.json` alone) | Named exception | Every merge-queue run and every push to master; the nightly cell runs in `convergence-nightly.yml` |
 | `openclaw-skill-resolver-bench.yml` | The skill-resolver plugin's labelled-set bench in a real OpenClaw gateway (`scripts/bench/openclaw-skill-resolver-real.ts`), idle and loaded: dispatch only (run by hand after a resolver change), reports numbers and gates nothing | Named exception | Itself (a manual dispatch) |
@@ -54,7 +55,7 @@ checks ([below](#full-ci-on-pull-requests)), never per-cell matrix names.
 | `osv-scanner.yml` | Pull requests scan only on a manifest change | Named exception | Weekly OSV schedule; `dependency-audit` on every PR |
 | `nightly-watch.yml` | `workflow_run` event guard | Not a test scope: it files issues from qualifying scheduled and push-to-master runs | — |
 | `fix-wave-gate.yml`, `fix-wave-closeout.yml` | Pull-request action and merge state | Not a test scope: merge-process automation | — |
-| `vorflux-notify.yml` | Comments, reviews, pushes, merge or close, and failed full runs on `rust-engine` pull requests from this repository | Not a test scope: notifies the Rust engine agent | — |
+| `vorflux-notify.yml` | Capy and maintainer comments and reviews, merge or close, and failed full runs on `rust-engine` pull requests from this repository at once; a schedule at :05 and :35 sends everything else on them as one digest | Not a test scope: notifies the Rust engine agent | — |
 | `harness-check.yml` | `pull_request` only; a missing `HARNESS_EVALS_READ_TOKEN` skips the job (succeeds with a notice); a fork head is refused | Named exception: advisory, non-required check ([below](#harness-check)) | None: pushes to master and schedules do not run it; the pin bump runs its steps by hand on master |
 | `full-ci.yml` | `full-ci` label, same-repository head; the label comes off once both dispatches are accepted | Not a test scope: dispatches the full profile on the head | — |
 | `test.yml`, `scale-tier.yml` | `dynamic-ci` filter (Trunk Dynamic CI) on pull requests; its gated jobs run unless the verdict is exactly `'false'` | Named exception ([below](#trunk-dynamic-ci)): pull requests only, Learning mode skips nothing | The full-ci dispatch, every push to master, the merge queue and the nightly schedules, which never run the filter |
@@ -110,6 +111,43 @@ queue and the nightly Test schedule run every macOS cell, so a macOS-only
 break shows up at full-ci before landing instead of on the first push.
 `test/scripts/macos-runner-events.test.ts` evaluates both workflows'
 conditions for each event.
+
+## Advisory native cells
+
+Three `native-locks.yml` cells run on every full event and report their own
+result, but a failure in them fails neither `native-locks` nor `test-status`
+and `full-suite` (job-level `continue-on-error`): the darwin-arm64 and
+darwin-x64 cells, whose runners wedge or wait a long time for a slot, and the
+OpenClaw context-engine startup cell, which flaps (#6143, GST-3494). A red
+advisory cell still shows on the run, so read it before landing a change to
+native, lock or OpenClaw code. Every other native cell still gates.
+`test/scripts/macos-runner-events.test.ts` checks which cells are advisory.
+
+## Unit suite gate
+
+`unit-suite-gate` in `test.yml` is one check with a fixed name (no Bun version
+or shard count) that says whether the unit suite, the `test` shards, passed. It
+runs on every event (`if: always()`) and fails when the suite failed, was
+cancelled, or was skipped with no reason. It passes when the suite passed or
+was rightly skipped:
+
+- a push to master that reuses a passed full run of its exact tree
+  ([below](#master-push-reuse));
+- a pull request that changes only changelog entries (`changelog.d/*.md`,
+  `CHANGELOG.md`), or only those plus release stamps: `VERSION` and the ship
+  policy's `stamp_files` with every changed line matching a `stamp_patterns`
+  line. The `changes` job classifies the pull request's files
+  (`bun scripts/ci-unit-suite-gate.ts scope`); a file list it cannot read in
+  full, a file without a patch, a rename and any other line count as code, so
+  a release PR that also regenerates `src/core/behavior-changes.generated.ts`
+  still needs the full-ci dispatch.
+
+On any other pull request, and on a native-only, race-hunt or stress dispatch,
+the job is named `unit-suite-not-run` and passes, so it never reports
+`unit-suite-gate` for a run that did not judge the suite; the full-ci dispatch
+on the head reports it. `test/scripts/unit-suite-gate.test.ts` covers the
+scope, the verdict on each event, the CLI on a skipped-suite path and a
+failing-suite path, and the job's name expression.
 
 ## Enumeration and census tests
 
@@ -234,7 +272,10 @@ inventory:
 - `tree.json` carries `files` (every test file the run executed, repo-relative)
   and `tests` (its executed tests). `scripts/ci-full-suite-tree.sh` takes them from
   the run's `ci-manifest.json`, and only when that manifest is complete and names
-  the same run, attempt and commit. Otherwise both are left out with a warning:
+  the same run and commit, from this attempt or an earlier one (a re-run of only
+  `full-suite` keeps the earlier attempt's manifest, which counts only when the
+  `executed-receipts` job that writes it succeeded; a manifest newer than the
+  attempt is refused). Otherwise both are left out with a warning:
   the run still counts for merge, but gstack refuses it (`inventory_uncovered`).
   A push that reused a run has no `full-suite` job, so it is never evidence.
 - `tree.json` carries `os`, the runner's OS from `RUNNER_OS` (`Linux` for both
@@ -442,10 +483,11 @@ Measured by hand on 2026-10-26 against master at `b06ac32b` (0.60.465.0) on a 2-
 
 ## Trunk Dynamic CI
 
-Trunk Dynamic CI (private beta; [docs](https://docs.trunk.io/ci/dynamic-ci)) decides per pull-request push which jobs still need to run, from this repository's own CI history. A `dynamic-ci` job in `test.yml` and in `scale-tier.yml` runs `trunk-io/dynamic-ci` (pinned to v1) with the `TRUNK_API_TOKEN` repository secret and writes one output per gated job. The step has `continue-on-error: true` and a 3-minute step timeout inside the job's 5, so a failed or hung Trunk call leaves the outputs empty and the check green instead of red on the head (a lost runner still fails the job).
+Trunk Dynamic CI (private beta; [docs](https://docs.trunk.io/ci/dynamic-ci)) decides per pull-request push which jobs still need to run, from this repository's own CI history. A `dynamic-ci` job in `test.yml`, `scale-tier.yml`, `tla-spec.yml` and the reusable `persistence-validation.yml` runs `trunk-io/dynamic-ci` (pinned to v1, v0.1.12) with the `TRUNK_API_TOKEN` repository secret and writes one output per gated job. The step has `continue-on-error: true` and a 3-minute step timeout inside the job's 5, so a failed or hung Trunk call leaves the outputs empty and the check green instead of red on the head (a lost runner still fails the job).
 
-- **Gated jobs.** `test.yml`: `security-regressions` (including the Windows and macOS cells), `native-locks`, `persistence-validation`, `stress-changed-tests` and the pull-request-only `enumeration-census-tests` ([above](#enumeration-and-census-tests)). `scale-tier.yml`: `scale`. The first five were chosen from the seven days before 2026-11-04 as the pull-request jobs that take minutes and nearly always pass. `changes`, `gitleaks`, `dependency-audit`, `verify`, `typecheck`, `semgrep`, the scale `plan` and the aggregates are not gated.
-- **Form.** A gated job lists `dynamic-ci` in `needs` and its `if` starts `!cancelled() && needs.dynamic-ci.outputs.<job key> != 'false' &&`, followed by `needs.<other>.result == 'success'` for every other job it needs and then its original condition. `!cancelled()` keeps a skipped or failed filter from skipping the job, `!= 'false'` makes an empty output (no token, a Trunk outage, no verdict yet) run it, and the `result == 'success'` checks keep what the implicit `success()` did before.
-- **Events.** The filter's `if` is `github.event_name == 'pull_request'`. On a push, merge-queue entry, schedule or dispatch (the full-ci run) it is skipped, every output is empty, and every gated job runs exactly as before (`enumeration-census-tests` runs only on pull requests anyway), so `full-suite`, `e2e-full-suite` and the ci-reuse evidence are unchanged. `e2e.yml` has no pull-request trigger and no filter.
+- **Gated jobs.** `test.yml`: `security-regressions` (including the Windows and macOS cells), `native-locks`, `stress-changed-tests` and the pull-request-only `enumeration-census-tests` ([above](#enumeration-and-census-tests)). `persistence-validation.yml`: `crash-robot` and `convergence`, each on its own verdict, so the crash robot's flakes never decide whether convergence runs; `test.yml` calls it ungated and passes `TRUNK_API_TOKEN` in, and its five full-profile lanes, which never run on a pull request, are not asked about. `scale-tier.yml`: `scale`. `tla-spec.yml`: `tla` (`tla-nightly` is not gated; master pushes and the nightly run still run `tla`). The `test.yml` jobs were chosen from the seven days before 2026-11-04 as the pull-request jobs that take minutes and nearly always pass; `tla` because a replay of pull requests from 11-06 to 11-16 found it nearly always passing where Trunk would have skipped it. `harness-check.yml`'s `keyless` stays ungated: it runs only on pull requests and no push, schedule or full-ci dispatch runs it, so under enforcement a `false` verdict would remove the only run of the cross-scope check for that head. `changes`, `gitleaks`, `dependency-audit`, `verify`, `typecheck`, `semgrep`, the scale `plan` and the aggregates are not gated.
+- **Form.** A gated job lists `dynamic-ci` in `needs` and its `if` is `!cancelled() && needs.dynamic-ci.outputs.<job key> != 'false'`, or starts with that and ` &&`, followed by `needs.<other>.result == 'success'` for every other job it needs and then its original condition. `!cancelled()` keeps a skipped or failed filter from skipping the job, `!= 'false'` makes an empty output (no token, a Trunk outage, no verdict yet) run it, and the `result == 'success'` checks keep what the implicit `success()` did before.
+- **Events.** The filter's `if` is `github.event_name == 'pull_request'`. On a push, merge-queue entry, schedule or dispatch (the full-ci run) it is skipped, every output is empty, and every gated job runs exactly as before (`enumeration-census-tests` runs only on pull requests anyway), so `full-suite`, `e2e-full-suite` and the ci-reuse evidence are unchanged. Inside the reusable `persistence-validation.yml`, `github.event_name` is the caller's, so the same holds there. `e2e.yml` has no pull-request trigger and no filter.
+- **Token.** A pull request from a fork gets no repository secrets, so its filter has no token: v0.1.12 says so in the log and sets every output to `true`, and every gated job runs. That is the "Input required and not supplied: token" fail-open the 2026-11-17 replay counted on red pull-request runs (v0.1.7 left the outputs empty); every sampled one came from a fork. A reusable workflow gets no secret its caller does not pass, so each caller of `persistence-validation.yml` passes `TRUNK_API_TOKEN` and grants `pull-requests: read`; without them the filter would fail open on every run and Trunk would never learn. A failed job inside a called workflow fails the whole call, so that filter job also carries job-level `continue-on-error: true`: a lost runner or a job timeout there leaves the cheap tier green, as it does for `test.yml`'s filter.
 - **Modes.** A repository starts in Learning mode: Trunk records a verdict for every gated job and skips nothing. Enforcement is the Mode dropdown in the repository's row on the Dynamic CI settings page in the Trunk web app (app.trunk.io), not this file; Learning mode can also enforce only for listed engineers or labels (the Allow list column). Under enforcement `cheap-tier` accepts a gated lane that skipped only when its verdict was exactly `'false'` and `changes` succeeded (`scripts/ci-cheap-tier.sh`). Before enforcing, weigh three gaps. `stress-changed-tests` repeats changed tests only on pull requests (no full run repeats them), so a skip there removes that check for the push. A `'false'` verdict also skips `scale` on a pull request that carries the `scale-tier` label, since Trunk does not read labels. And Trunk learns false skips from its own merge queue; gbrain's backstop is the full-ci dispatch, which skips the filter, so a gated lane that a pull request skipped and full-ci then failed never reaches Trunk as a false skip. Pin a job to run on the Configuration tab when a gap matters.
-- **Guard.** `scripts/check-dynamic-ci.ts` (in `bun run verify`) fails when a filter job can run on another event, sits in a workflow without a pull-request trigger, is not SHA-pinned, lacks `continue-on-error: true` or a step timeout below the job's, or exports outputs that differ from its `job-keys`; when a gated job's `if` lacks the form above or has a top-level `||` after it; and when a merge or release aggregate is gated.
+- **Guard.** `scripts/check-dynamic-ci.ts` (in `bun run verify`) fails when a filter job can run on another event, sits in a workflow with neither a pull-request trigger nor `workflow_call`, is not SHA-pinned, lacks `continue-on-error: true` or a step timeout below the job's, or exports outputs that differ from its `job-keys`; when a gated job's `if` lacks the form above or has a top-level `||` after it; when a merge or release aggregate is gated; and when a filter job in a reusable workflow lacks job-level `continue-on-error: true`, the workflow does not declare an optional `TRUNK_API_TOKEN` secret, or a caller does not pass it or explicitly grant `pull-requests: read`.

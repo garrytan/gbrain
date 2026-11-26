@@ -238,6 +238,20 @@ export interface ContextPackRequest {
    * serve ignores it and returns the full block without an identity.
    */
   coreIdentity?: string;
+  /**
+   * Onboarding PR 2 (additive): the named SessionStart sections this client composes and acknowledges itself
+   * (session-start-sections.ts). With it the serve returns them in `block.sections` instead of folding nightly
+   * learning into the text, and may add the first-session section. An older serve ignores it; a client without it
+   * (an older hook) never gets the first-session section, because it could not acknowledge one.
+   */
+  sections?: string[];
+  /** Onboarding PR 2 (additive): the harness whose hook asks (claude-code, codex), for the import the section names. */
+  harness?: string;
+  /**
+   * Onboarding PR 2 (additive, bankOnly companion): the emission receipt for a section the hook's final payload
+   * still held after trimming and wrote. An older serve ignores it.
+   */
+  sectionAck?: { section: string; receipt: string };
 }
 
 export type IpcRequest =
@@ -365,7 +379,8 @@ function hash12(value: string): string {
 
 /** Minimal config slice the engine-uniform path resolvers key on (loadConfig's shape). */
 export interface IpcPathConfig {
-  engine?: 'postgres' | 'pglite';
+  /** `rust` keys like PGLite: one store directory, sockets inside it (rust-engine/owner-ipc/). */
+  engine?: 'postgres' | 'pglite' | 'rust';
   database_path?: string;
   database_url?: string;
 }
@@ -401,7 +416,7 @@ export interface IpcPathConfig {
  */
 export function resolveSocketPathForConfig(cfg: IpcPathConfig | null | undefined, kind: 'resolve' | 'persistence' | 'read' = 'resolve', sourceId?: string): string | null {
   if (!cfg) return null;
-  if (cfg.engine === 'pglite' && cfg.database_path) return kind === 'read' ? null : localIpcSocketPath(join(cfg.database_path, `.gbrain-${kind}.sock`));
+  if ((cfg.engine === 'pglite' || cfg.engine === 'rust') && cfg.database_path) return kind === 'read' ? null : localIpcSocketPath(join(cfg.database_path, `.gbrain-${kind}.sock`));
   if (cfg.engine === 'postgres' && cfg.database_url) {
     const sourceKey = kind !== 'persistence' && sourceId ? `-${hash12(sourceId)}` : '';
     return localIpcSocketPath(join(ipcRunDir(), `${kind}-${hash12(cfg.database_url)}${sourceKey}.sock`));

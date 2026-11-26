@@ -32,7 +32,8 @@ import { ruleCoversSql, validPrefix, validQualifiedRuleId } from '../access/fold
 import { holdingSlugSql } from '../facts-fence.ts';
 import { NAME_KEY_PAGE_DIRS } from '../entities/basename-dirs.ts';
 import { atomMovedOriginPrivateSql, atomOriginSlugsSql } from '../persistence/atom-origin.ts';
-import { ownerOnlyFactSql, ownerOnlyForm, ownerOnlyPageSql, ownerOnlySourcesPresent, ownerOnlyTakeSql, ownerOnlyTimelineSql } from '../access/owner-only.ts';
+import { ownerOnlyFactSql, ownerOnlyForm, ownerOnlyPageSql, ownerOnlySourcesPresent, ownerOnlyTakeSql, ownerOnlyTimelineSql, type OwnerOnlyForm } from '../access/owner-only.ts';
+import { readConfigRows, type ConfigReader } from '../config-values.ts';
 
 export const REMOTE_PRIVATE_PAGES_KEY = 'search.remote_private_pages';
 
@@ -921,6 +922,50 @@ export function folderRestrictedSql(alias: string): string {
 }
 
 /**
+ * GST-3815: page row `p` reads to everyone who reads page row `t`, as SQL, for a derivation that copies text from `p`
+ * onto `t` (enrich filling a page from other pages' facts, links and chunks). `p` is `t` itself, or: no privacy rule
+ * hides it (privacyPartSql: visibility, aliases, pinned questions, lineage), no origin of it names readers, every reader
+ * `t` names is one of its readers, every folder rule over it also covers `t`, no pending folder prefix covers it, and
+ * it is owner-only only when `t` is. A `t` that names readers or sits under a folder rule admits labelled-only members,
+ * who read only pages labelled for them (labelledOnlySql), so `p` must then name readers too, or sit under a rule of
+ * `t`'s. Anything it cannot tell (readers not yet derived, unreadable access tables, owner-only lineage on a read with
+ * no schema version) fails closed.
+ */
+export function pageReadsToReadersOfSql(p: string, t: string): string {
+  const unlabelled = (a: string) => `(${a}.page_readers IS NULL AND NOT ${namesReadersSql(a)} AND ${a}.folder_rule_ids IS NULL)`;
+  const readersWithin = `(${p}.page_readers IS NOT NULL AND ${t}.page_readers IS NOT NULL AND ${t}.page_readers <@ ${p}.page_readers)`;
+  const rulesWithin = `(${p}.folder_rule_ids IS NOT NULL AND ${t}.folder_rule_ids IS NOT NULL AND ${p}.folder_rule_ids <@ ${t}.folder_rule_ids)`;
+  return `(${p}.id = ${t}.id OR (${privacyPartSql(p)} AND ${originAllowedSql(p)}
+    AND ((${p}.page_readers IS NULL AND NOT ${namesReadersSql(p)}) OR ${readersWithin})
+    AND (${p}.folder_rule_ids IS NULL OR ${rulesWithin})
+    AND (${unlabelled(t)} OR (${t}.page_readers IS NOT NULL AND ${readersWithin}) OR (${t}.page_readers IS NULL AND NOT ${namesReadersSql(t)} AND ${rulesWithin}))
+    AND NOT gbrain_access_pending_covers(${p}.source_id, ${p}.slug) AND NOT (SELECT gbrain_access_state_unreadable())
+    AND ${ownerOnlyWithinSql(ownerOnlyPageSql, p, t)}))`;
+}
+
+/** GST-3815: row `alias` is owner-only only when page row `t` is; with no schema version the lineage is unknown, so any owner-only data refuses it. */
+function ownerOnlyWithinSql(rowSql: (alias: string, form: OwnerOnlyForm) => string, alias: string, t: string): string {
+  const form = ownerOnlyForm(readSchemaVersion());
+  return form === 'closed' ? `NOT ${rowSql(alias, form)}` : `(NOT ${rowSql(alias, form)} OR ${ownerOnlyPageSql(t, form)})`;
+}
+
+/** GST-3815: page row `t` names readers or sits under a folder rule, so labelled-only members may read it, as SQL. */
+export function pageAdmitsLabelledOnlySql(t: string): string {
+  return `(${t}.page_readers IS NOT NULL OR ${namesReadersSql(t)} OR ${t}.folder_rule_ids IS NOT NULL)`;
+}
+
+/**
+ * GST-3815: fact row `f` is owner-only only when page row `t` is, and when `t` admits labelled-only members (it names
+ * readers or sits under a folder rule) the fact is held on a page they can be judged on, as SQL. A labelled-only member
+ * reads a fact only through a page labelled for it (labelledOnlyFactSql), so a fact with no holding page never fills such a
+ * `t`. The holding page itself is judged by pageReadsToReadersOfSql.
+ */
+export function factWithinPageReadersSql(f: string, t: string): string {
+  return `(${ownerOnlyWithinSql(ownerOnlyFactSql, f, t)} AND (NOT ${pageAdmitsLabelledOnlySql(t)} OR EXISTS (SELECT 1 FROM pages held_page
+    WHERE held_page.source_id = ${f}.source_id AND held_page.slug = ${f}.source_markdown_slug AND held_page.deleted_at IS NULL)))`;
+}
+
+/**
  * folderRestrictedSql for a page known by its slug (a parsed page, a row read without the column, a page about to be
  * written): judged against the applied folder rules, not the stamp. A failed read counts as restricted.
  */
@@ -1269,18 +1314,20 @@ export function servesPolicyFrom(config: Record<string, string | undefined>): Se
 /**
  * The remote read policy read fresh, for publication: whether an operator
  * relaxed privacy (the env hatch or the config opt-out, uncached) and whether
- * the brain holds member-access restrictions. Takes any executeRaw engine (a
- * transaction included). An unreadable config counts as not opted out and
+ * the brain holds member-access restrictions. Reads through the typed keyed
+ * config read (getConfigValues) when the engine has it, so the Rust engine
+ * serves it, and through executeRaw otherwise (a bare transaction handle
+ * included; readConfigRows). An unreadable config counts as not opted out and
  * restricted (fail closed); the env hatch needs no read. Whom the brain serves
  * is then unknown (servesUnknown, GST-363): the requester-scope gate reads the
  * serves keys once more (readServesPolicy) and refuses an unbound read when that
  * fails too, because a timeout or a dropped pooled connection can fail this one
  * statement while the next read succeeds.
  */
-export async function readRemotePolicyNow(engine: Pick<BrainEngine, 'executeRaw'>): Promise<RemotePolicy> {
+export async function readRemotePolicyNow(engine: ConfigReader): Promise<RemotePolicy> {
   try {
-    const rows = await engine.executeRaw<{ key: string; value: string }>('SELECT key, value FROM config WHERE key = ANY($1::text[])', [[REMOTE_PRIVATE_PAGES_KEY, ACCESS_RESTRICTIONS_KEY, OWNER_MEMBER_KEY, OWNER_READS_RESTRICTED_KEY, MEMBERS_READ_LINEAGE_KEY,
-      SERVES_KEY, SERVES_DERIVED_KEY, SERVES_SINCE_KEY, REQUESTER_SCOPE_ENFORCE_KEY, SCHEMA_VERSION_KEY]]);
+    const rows = await readConfigRows(engine, [REMOTE_PRIVATE_PAGES_KEY, ACCESS_RESTRICTIONS_KEY, OWNER_MEMBER_KEY, OWNER_READS_RESTRICTED_KEY, MEMBERS_READ_LINEAGE_KEY,
+      SERVES_KEY, SERVES_DERIVED_KEY, SERVES_SINCE_KEY, REQUESTER_SCOPE_ENFORCE_KEY, SCHEMA_VERSION_KEY]);
     return remotePolicyFrom(Object.fromEntries(rows.map(r => [r.key, r.value])));
   } catch {
     return { privacyRelaxed: process.env.GBRAIN_REMOTE_PRIVATE_PAGES === '1', restricted: true, ownerMember: null, ownerReadsRestricted: false, membersReadLineage: false, servesUnknown: true };
@@ -1288,14 +1335,14 @@ export async function readRemotePolicyNow(engine: Pick<BrainEngine, 'executeRaw'
 }
 
 /** GST-2687: the schema version a scope or attested caller record carries, read now; absent when unreadable, so the read rule stays inline. */
-export async function schemaVersionNow(engine: Pick<BrainEngine, 'executeRaw'>): Promise<Pick<RemotePolicy, 'schemaVersion'>> {
+export async function schemaVersionNow(engine: ConfigReader): Promise<Pick<RemotePolicy, 'schemaVersion'>> {
   const { schemaVersion } = await readRemotePolicyNow(engine);
   return schemaVersion === undefined ? {} : { schemaVersion };
 }
 
 /** GST-363: whom the brain serves, read on its own (the requester-scope gate's re-read after an unreadable policy read). Throws when unreadable. */
-export async function readServesPolicy(engine: Pick<BrainEngine, 'executeRaw'>): Promise<ServesPolicy> {
-  const rows = await engine.executeRaw<{ key: string; value: string }>('SELECT key, value FROM config WHERE key = ANY($1::text[])', [[SERVES_KEY, SERVES_DERIVED_KEY, SERVES_SINCE_KEY, REQUESTER_SCOPE_ENFORCE_KEY]]);
+export async function readServesPolicy(engine: ConfigReader): Promise<ServesPolicy> {
+  const rows = await readConfigRows(engine, [SERVES_KEY, SERVES_DERIVED_KEY, SERVES_SINCE_KEY, REQUESTER_SCOPE_ENFORCE_KEY]);
   return servesPolicyFrom(Object.fromEntries(rows.map(r => [r.key, r.value])));
 }
 

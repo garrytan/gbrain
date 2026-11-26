@@ -30,13 +30,16 @@ export const SCOPE_ATTEST_OPS: ReadonlySet<string> = new Set(['forget', 'forget_
  */
 export const ACTOR_DEFERRED_OPS: ReadonlySet<string> = new Set([
   'list_write_conflicts',
-  'capture', 'extract_facts', 'ontology_propose', 'confirm_memory', 'promote_guest_note', 'loops_close',
+  'capture', 'extract_facts', 'ontology_propose', 'confirm_memory', 'promote_guest_note', 'loops_close', 'learned_keep', 'learned_undo',
   'takes_add', 'takes_update', 'takes_resolve', 'takes_supersede',
   'add_timeline_entry', 'add_link', 'remove_link', 'add_tag', 'remove_tag',
   'put_page', 'put_pages', 'edit_page', 'append_page', 'delete_page', 'restore_page', 'revert_version',
   'begin_page_upload', 'upload_page_part', 'commit_page_upload', 'abort_page_upload',
   'put_raw_data', 'extract_entities', 'questions_pin', 'questions_refresh', 'questions_unpin',
   'rate_answer', 'log_ingest', 'loops_mute', 'loops_unmute',
+  'household_add', 'household_mark',
+  'log_action', 'policy_reserve',
+  'correct',
 ]);
 
 /** Canonical person ids: 1-256 visible ASCII characters (QM's credential broker rule), no case folding. */

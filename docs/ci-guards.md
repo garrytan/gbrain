@@ -165,6 +165,77 @@ A check after other statements, inside a nested function, on a shadowing name
 or through a cast (`kind as never`) does not exempt a switch. Baseline
 `scripts/engine-kind-branches-baseline.tsv`, same rules as above.
 
+### Silent read-catches
+
+`scripts/check-silent-read-catches.ts` (`bun run check:silent-read-catches`, in
+`bun run verify`) counts, per file and enclosing function over `src/**/*.ts`,
+the catches that turn a failed read into an empty answer: `catch_empty` (a
+`catch` around a read whose handler is empty, or returns, assigns or pushes
+`[]`, `{}`, `null`, `undefined`, `0`, `false`, `'ok'`, `{ status: 'ok' }`,
+`new Map()`, `new Set()` or a local initialized to one of those before the
+`try`) and `promise_catch_empty` (the same for `.catch(() => [])` and
+`.catch(() => {})`). A read is a call on an engine or database receiver
+(`engine`, `tx`, `exec`, `db`, `sql`, `store`, ...) or a read-verb name
+(`get`, `list`, `load`, `read`, `find`, ...), minus the named write-only
+methods in `WRITE_ONLY_METHODS` (`setConfig`, `putPage`, ...; one list, one
+reason per entry, never a name prefix). A leading `rethrowCapabilityRefusal(err)`
+(or an inline `.catch(err => rethrowCapabilityRefusal(err))`) does not exempt a site. The user then hears "nothing found" or "healthy" when
+the truth is "I could not look", and the Rust engine copies that answer. The
+header of the script lists the shapes it does not count.
+
+A third metric, `capability_refusal_swallowed` (rule in
+`scripts/capability-refusal-rule.ts`), counts a catch around a raw-SQL engine
+call (`executeRaw`, `executeRawDirect`, `executeRawJsonb`, including the bare
+`executeRawJsonb(engine, ...)` helper and a call inside a callback the try
+awaits) whose handler can fall back before it lets a capability refusal
+through. A Rust brain refuses untyped SQL by name
+(`engine_capability_missing`); such a catch turns that refusal into a quiet
+default. Fix: make `rethrowCapabilityRefusal(err)` the handler's first
+statement, or `if (isEngineCapabilityRefusal(err)) throw err`; where the
+fallback is right on every engine, write `// capability-refusal-ok: <reason>`.
+Engine implementation files (the engines, `engine-sql/`, migrations) are out of
+scope, because Rust never runs them. The rule sees `try`/`catch` and
+`.catch(fn)` with an inline function; a `.then(ok, onError)` second argument, a
+named `.catch(handler)` and a promise held in a variable before `.catch` are
+not counted.
+
+A new site fails with the file, function and fix. The three fixes:
+
+1. Return a typed degraded marker (`DegradedStageEntry`,
+   `src/core/search/hybrid/degraded.ts`), never the empty value, after
+   `rethrowCapabilityRefusal(err)`.
+2. In a doctor check, use `checkError(name, what, err)` (warn plus health
+   unknown), not `status: 'ok'`.
+3. Where an empty answer is truly right (a pre-migration "relation does not
+   exist"), catch only that error and write `// silent-read-ok: <reason>` on
+   the catch line or the line above (`/* silent-read-ok: <reason> */` works too; the reason is only the text inside the
+   comment, never the code after it). An empty reason fails.
+
+Baseline `scripts/silent-read-catches-baseline.tsv`: rows
+`path#function<TAB>metric<TAB>count[<TAB>note]`, generated from the tree
+(`--print`; `--list` shows every site with its line). Class methods are
+`Class.method`, a nested function `outer>inner`, an anonymous callback
+`outer<anon@N>`, with N the order among all anonymous functions under `outer`
+(adding or removing an earlier one renumbers the rest: one stale row and one
+rise for unchanged code, fixed by renaming those rows in place, never by
+re-printing the whole file), code outside a function `<module>`. Counts only
+fall: a rise or a stale row fails, and `--prune` lowers stale rows. The note
+column names the behavior-audit finding that a fix deletes the row for.
+
+**Adding a rule.** Rules are one exported list, `SILENT_READ_RULES` in
+`scripts/silent-read-rules.ts`: `{ name, metric, matcher }` (plus an optional
+`okMarker` and a one-line `fix` the guard prints when the count rises). A rule
+may live in its own file and be added as one entry, as the capability-refusal
+rule is. The matcher receives the catch node, the try block or `.catch`
+receiver, the handler statements, the enclosing function and the error name,
+and returns true for a violation. Add one entry, its fixtures (a
+`bad-<rule>/` tree and a case in `good/` under
+`test/fixtures/guards/check-silent-read-catches.ts/`, and cases in
+`test/scripts/silent-read-catches.test.ts`), then generate its baseline rows
+with `bun scripts/check-silent-read-catches.ts --print`, keeping the rows of
+the new metric. The scanner, the baseline format and the manifest row do not
+change; rows are keyed by metric, so rules never share counts.
+
 ### Page body readers
 
 `bun run check:page-body-readers` (in verify): every site that reads or writes

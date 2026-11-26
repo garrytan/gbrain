@@ -3,7 +3,8 @@
 One file per planned removal or rename of something stable promises to keep
 (see [What stays the same on stable](../docs/STABILITY.md#what-stays-the-same-on-stable)):
 a command, a documented flag, an MCP tool or parameter, a documented config
-key, a page-format rule, an exit code or a top-level `--json` field.
+key, a page-format rule, an exit code, a top-level `--json` field or a skill
+gbrain bundles.
 
 ## Before you remove or rename something
 
@@ -26,7 +27,10 @@ key, a page-format rule, an exit code or a top-level `--json` field.
    ```
 
    `surface` is one of `cli-command`, `cli-flag`, `mcp-tool`, `mcp-param`,
-   `config-key`, `page-format`, `exit-code` or `json-field`.
+   `config-key`, `page-format`, `exit-code`, `json-field` or `bundled-skill`
+   (a skill name, as `gbrain bundled-skill <name>` and `gbrain skillpack
+   scaffold <name>` take it; the moved skills' records are written by
+   `bun scripts/announce-moved-skills.ts` from skills/moved-skills.json).
    `remove_after` is at least 14 days after the stable release that first
    carries the announcement. `bun run check:public-surface` refuses a new
    record whose date is less than 14 days after the day it is added; the
@@ -48,10 +52,10 @@ old name is gone. That row's front matter is `kind: breaking` and
 `deprecation: <id>`, naming this record. Until `remove_after` has passed, the
 check refuses a pull request that drops a command, flag, MCP tool or
 parameter, config key or exit code this record names. A `cli-command` record
-also covers that command's flags, and an `mcp-tool` record its parameters,
-so retiring a whole command or tool takes one record. A page-format rule or
-`--json` field is not on the check's list, so its removal is checked in
-review.
+also covers that command's subcommands and flags, and an `mcp-tool` record its parameters,
+so retiring a whole command or tool takes one record. A page-format rule, a
+`--json` field the list does not name, or a bundled skill is not on the
+check's list, so its removal is checked in review.
 
 ## Security and data-loss fixes
 

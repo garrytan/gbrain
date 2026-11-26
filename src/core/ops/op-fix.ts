@@ -97,15 +97,16 @@ function exampleValue(def: ParamDef | undefined, choices: readonly string[] | un
 
 /**
  * B2/B3: `invalid_params` naming the parameter on the caller's surface, its
- * valid choices (or type and description) and one example call. The caller's
- * raw value is never echoed (messages can be persisted to request logs).
+ * valid choices (or type and description) and one example call (`call`, when
+ * the parameter alone does not make a valid call). The caller's raw value is
+ * never echoed (messages can be persisted to request logs).
  */
 export function invalidParam(
   ctx: TransportCtx,
   tool: string,
   param: string,
   message: string,
-  opts: { choices?: readonly string[]; example?: unknown; def?: ParamDef; legacy_error?: string; fix?: Action } = {},
+  opts: { choices?: readonly string[]; example?: unknown; call?: string; def?: ParamDef; legacy_error?: string; fix?: Action } = {},
 ): OperationError {
   const example = opts.example ?? exampleValue(opts.def, opts.choices ?? opts.def?.enum);
   const choices = opts.choices ?? opts.def?.enum;
@@ -114,7 +115,7 @@ export function invalidParam(
   const what = choices?.length
     ? `one of: ${choices.join(', ')}`
     : `a ${opts.def?.type ?? 'value'}${opts.def?.description ? ` (${opts.def.description.replace(/\.$/, '')})` : ''}`;
-  const call = cli ? paramUse(ctx, param, example) : `${tool} {"${param}": ${JSON.stringify(example)}}`;
+  const call = opts.call ?? (cli ? paramUse(ctx, param, example) : `${tool} {"${param}": ${JSON.stringify(example)}}`);
   return opError('invalid_params', message, `Pass ${name} as ${what}. Example: ${call}.`, {
     ...(opts.legacy_error ? { legacy_error: opts.legacy_error } : {}),
     ...(opts.fix ? { fix: opts.fix } : {}),

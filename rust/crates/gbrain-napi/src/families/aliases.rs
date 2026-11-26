@@ -42,8 +42,20 @@ impl Brain {
         })
     }
 
-    /// `resolveAliases(aliasNorms, { sourceId?, sourceIds? }?)`: resolves `[aliasNorm, [{ slug,
-    /// source_id }]]` pairs, aliases in order.
+    /// `listSlugAliases(sourceId)`: resolves every `{ alias_slug, canonical_slug }` row of the
+    /// source, in alias byte order.
+    #[napi]
+    pub fn list_slug_aliases<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_slug_aliases(&source_id))
+    }
+
+    /// `resolveAliases(aliasNorms, { sourceId?, sourceIds?, excludePrivate?, minTrust?,
+    /// suppressFlagged? }?)` (`AliasScope`): resolves `[aliasNorm, [{ slug, source_id }]]` pairs,
+    /// aliases in order.
     #[napi]
     pub fn resolve_aliases<'env>(
         &self,
@@ -106,5 +118,49 @@ impl Brain {
                 corpus_generation.as_deref(),
             )
         })
+    }
+
+    /// `replaceDerivedAliases(slug, sourceId, aliases)`: replaces the page's declared and subject
+    /// alias rows with `aliases` (`[{ alias_norm, origin, case_sensitive, alias_text }]`).
+    #[napi]
+    pub fn replace_derived_aliases<'env>(
+        &self,
+        env: &'env Env,
+        slug: String,
+        source_id: String,
+        aliases: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let aliases: Vec<gbrain_store::aliases::DerivedAliasRow> =
+                required(aliases, "replaceDerivedAliases aliases")?;
+            s.replace_derived_aliases(&slug, &source_id, &aliases)
+        })
+    }
+
+    /// `listAliasTargets(sourceIds?)`: resolves `{ source_id, slug, page, page_aliases,
+    /// slug_redirects }` for every alias target whose page is missing or soft-deleted, by source
+    /// then slug in byte order; every source when `sourceIds` is null.
+    #[napi]
+    pub fn list_alias_targets<'env>(
+        &self,
+        env: &'env Env,
+        source_ids: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let source_ids: Option<Vec<String>> = arg(source_ids, "listAliasTargets sourceIds")?;
+            s.list_alias_targets(source_ids.as_deref())
+        })
+    }
+
+    /// `deleteOrphanedAliases(sourceId, slug)`: resolves how many alias rows of both tables went;
+    /// 0 when the slug has a page row, live or soft-deleted.
+    #[napi]
+    pub fn delete_orphaned_aliases<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slug: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.delete_orphaned_aliases(&source_id, &slug))
     }
 }

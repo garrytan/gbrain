@@ -352,6 +352,8 @@ export interface PageFilters {
    * queries to a tier directory without loading every page into memory.
    */
   slugPrefix?: string;
+  /** More literal prefixes whose pages are listed too, with `slugPrefix`: one name stored under another spelling (see ops/slug-params.ts). */
+  slugPrefixAlso?: string[];
   /** Literal slug prefixes to omit before ordering/pagination. Opt-in: ordinary listings remain unrestricted. */
   excludeSlugPrefixes?: string[];
   /**
@@ -401,6 +403,8 @@ export interface PageFilters {
    * read none of those fields (list_pages).
    */
   listColumnsOnly?: boolean;
+  /** The listing columns plus frontmatter: `compiled_truth` and `timeline` come back as '', so a frontmatter scan never ships page bodies. */
+  omitBodies?: boolean;
   /** #7159: frontmatter equality (search/frontmatter-where.ts). */
   where?: import('./search/frontmatter-where.ts').FrontmatterWhere;
 }
@@ -531,6 +535,8 @@ export interface SalienceOpts extends PageReadPolicy {
   limit?: number;
   /** Optional slug-prefix filter (e.g., `personal`, `wiki/people`). */
   slugPrefix?: string;
+  /** More prefixes read with `slugPrefix` (one name stored under another spelling). */
+  slugPrefixAlso?: string[];
   /**
    * v0.29.1 — recency-decay treatment for the salience formula's third term.
    *   - 'flat' (default): v0.29.0 behavior, `1.0 / (1 + days_old)` for every page
@@ -579,7 +585,14 @@ export interface EnrichCandidatesOpts {
   /** Body-length (chars) below which a page is "thin". */
   thinThreshold: number;
   /** Ordering signal. Whitelisted via ENRICH_ORDER_SQL. */
-  order: 'inbound-links' | 'updated' | 'salience';
+  order: 'inbound-links' | 'updated' | 'salience' | 'owner-contact';
+  /**
+   * `owner-contact` only: the owner's own page. A candidate linked to or from
+   * it scores one more point. The caller resolves it (trusted local only, see
+   * `src/core/identity/owner.ts`); omitted, no candidate gets the point.
+   */
+  ownerSlug?: string;
+  ownerSourceId?: string;
   /** Max rows to return. */
   limit: number;
   /**
@@ -604,6 +617,8 @@ export interface EnrichCandidate {
   body_len: number;
   /** Source-correct inbound-link count (excludes `link_source='mentions'`). */
   inbound_count: number;
+  /** `owner-contact` order only: the score it ranked by (see engine-sql/salience.ts). */
+  contact_score?: number;
 }
 
 /**
@@ -616,6 +631,7 @@ export const ENRICH_ORDER_SQL: Record<EnrichCandidatesOpts['order'], string> = {
   'inbound-links': 'inbound_count DESC, p.source_id ASC, p.slug ASC',
   'updated':       'p.updated_at DESC, p.source_id ASC, p.slug ASC',
   'salience':      'p.emotional_weight DESC, inbound_count DESC, p.source_id ASC, p.slug ASC',
+  'owner-contact': 'contact_score DESC, inbound_count DESC, p.source_id ASC, p.slug ASC',
 };
 
 /**
@@ -2106,7 +2122,9 @@ export const DEGRADED_STAGES = [
   'rescore_skipped',
   'vector_arm_failed',
   'keyword_arm_failed',
+  'supersede_check_failed',
   'title_arm_failed',
+  'entity_lookup_failed',
   'budget_dropped_all',
   'budget_truncated',
   'keyword_zero',
@@ -2355,7 +2373,7 @@ export interface HybridSearchMeta {
 export interface EngineConfig {
   database_url?: string;
   database_path?: string;
-  engine?: 'postgres' | 'pglite';
+  engine?: 'postgres' | 'pglite' | 'rust';
   /** #6495 file-plane `search.keyword_statement_timeout_ms`, read by the Postgres engine at connect (postgres-engine/keyword-statement-timeout.ts). */
   keyword_statement_timeout_ms?: number;
   /** PGLite `shared_buffers` for this open (e.g. '32MB'); unset keeps the data directory's setting. */

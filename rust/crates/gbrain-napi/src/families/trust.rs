@@ -31,6 +31,44 @@ impl Brain {
         })
     }
 
+    /// `isFactWithdrawn(sourceId, visibility | null, claim, entitySlug | null, memberPage |
+    /// null)`: resolves a boolean.
+    #[napi]
+    pub fn is_fact_withdrawn<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        visibility: Option<String>,
+        claim: String,
+        entity_slug: Option<String>,
+        member_page: Option<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.is_fact_withdrawn(
+                &source_id,
+                visibility.as_deref(),
+                &claim,
+                entity_slug.as_deref(),
+                member_page.as_deref(),
+            )
+        })
+    }
+
+    /// `isFactPurged(sourceId, visibility, claim, entitySlug | null)`: resolves a boolean.
+    #[napi]
+    pub fn is_fact_purged<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        visibility: String,
+        claim: String,
+        entity_slug: Option<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.is_fact_purged(&source_id, &visibility, &claim, entity_slug.as_deref())
+        })
+    }
+
     /// `insertFactWithdrawal(sourceId, visibility, claim, subject, withdrawnAt | null)`: resolves
     /// true when it recorded the withdrawal, false when it was already recorded.
     #[napi]
@@ -98,6 +136,36 @@ impl Brain {
         })
     }
 
+    /// `readSourcePurgeFlags(sourceId)`: resolves `{ facts, takes }`.
+    #[napi]
+    pub fn read_source_purge_flags<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_source_purge_flags(&source_id)
+                .map(|(facts, takes)| serde_json::json!({ "facts": facts, "takes": takes }))
+        })
+    }
+
+    /// `listPurgedTakeRows(sourceId, [{ row_num, claim }], subject | null)`: resolves the matched
+    /// row numbers, ascending.
+    #[napi]
+    pub fn list_purged_take_rows<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        takes: Value,
+        subject: Option<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let takes: Vec<gbrain_store::facts::take_purges::TakeClaimRow> =
+                required(takes, "listPurgedTakeRows takes")?;
+            s.list_purged_take_rows(&source_id, &takes, subject.as_deref())
+        })
+    }
+
     /// `listFactWithdrawalKeys(sourceId, limit)`: resolves `[{ visibility, fact_hash, subject }]`.
     #[napi]
     pub fn list_fact_withdrawal_keys<'env>(
@@ -107,6 +175,24 @@ impl Brain {
         limit: i64,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.list_fact_withdrawal_keys(&source_id, limit))
+    }
+
+    /// `readFactCacheWatermark(sourceId)`: resolves `{ withdrawals, latest_withdrawn_at,
+    /// access_rules }`.
+    #[napi]
+    pub fn read_fact_cache_watermark<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_fact_cache_watermark(&source_id))
+    }
+
+    /// `readTrustGeneration()`: resolves the trust policy generation as decimal text (the
+    /// store's commit sequence).
+    #[napi]
+    pub fn read_trust_generation<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_trust_generation())
     }
 
     /// `upsertWriteGateReceipt(input)`: resolves the receipt id.

@@ -11,7 +11,8 @@ What it does on day one:
   job title and Contacts groups (as tags). A contact with no email and no phone gets no page.
 - **Exact links to your people pages.** When a contact's email or phone equals the email or phone on exactly one
   person page in your brain, the contact page is linked to that person (an identity link, the same kind
-  `gbrain dedupe confirm` makes). Names never match: two people called Alice stay two people.
+  `gbrain dedupe confirm` makes). Names never match: two people called Alice stay two people. `gbrain dedupe reject`
+  on a contact and person pair removes the link, and that pair is never linked again.
 - **Facts on that person page.** The matched `people/` page gets rows in its `## Facts` section, one each for the
   company, the job title and every group name (`Company: …`, `Job title: …`, `Contacts group: …`), with the
   source `apple-contacts:<id>`. Phones, emails, the nickname and the contact id stay on the owner-only contact page and
@@ -23,8 +24,9 @@ What it does on day one:
 - **`whois` by phone.** `gbrain whois "+1 555 555 0100"` finds the person whose `phone` or `phones` holds that
   number in any format.
 
-What it does not do: syncing never writes to Contacts, never copies phones or emails onto people pages, and never
-extracts facts from contact cards. Changing a contact is a separate, owner-only command that is off by default; see
+What it does not do: syncing never copies phones or emails onto people pages and never extracts facts from contact
+cards, and it writes to Contacts only if you switch on [enrichment](#filling-in-contacts-from-your-brain), which only
+adds. Changing a contact is a separate, owner-only command that is off by default; see
 [Changing contacts](#changing-contacts).
 
 ## Privacy
@@ -99,6 +101,36 @@ Three switches, all off by default:
 The owner key lives in a 0600 JSON file, `{"key_name": "<name>", "seed": "<32-byte Ed25519 seed, base64url>"}`, named
 with `gbrain config set apple_contacts.owner_key_file <absolute path>`. Register its public half at the Mac with
 `gbrain-apple-helper contacts-write key add --name <name> --public-key-file <path>`.
+
+## Filling in contacts from your brain
+
+After each pull that finishes cleanly, gbrain can send one batch of additions to your cards, using only what your own
+brain already knows. It never changes or removes anything already on a card, never deletes or merges, and never asks
+an outside service.
+
+- **Empty company and job title:** filled from the one person page the card is linked to (its `company` and `role`,
+  or a `Company:` / `Job title:` fact another writer left there). When those disagree, nothing is filled.
+- **Emails and phones you confirmed:** added beside the card's own, when they come from your Google Contacts entry that
+  shares an email or phone with that card alone, or from a fact on the linked person page that you stated, confirmed
+  or curated and that is written as `Email: <address>` or `Phone: <number>` and nothing else (an address or number
+  mentioned inside other text is never taken, nor is a fact whose validity has ended). Never a value another card
+  already has, or one an extractor guessed from mail or the web.
+- **New cards, only if you switch them on** (`gbrain config set apple_contacts.enrich.create_cards true`; off by
+  default): at most 10 a run (the helper allows 50 a day), for a Google Contacts entry that no card shares a value with
+  and whose email or phone matches exactly one person page. The helper puts each one in the group "Added by GBrain".
+- A card linked to two or more people gets nothing until you settle who it is.
+
+Switches, all off by default:
+
+1. `gbrain config set apple_contacts.enrich dry_run` works out the batch after each pull and records it without sending.
+   `on` sends it, and also needs `apple_contacts.write` = `on`.
+2. `gbrain config set apple_contacts.write_token_file <absolute path>` names a 0600 file holding the helper's
+   `write:contacts:enrich` token as `{"accessToken": "..."}`. That token can only create, fill and add.
+
+`gbrain apple-contacts enrich status` shows the last run: each change, the page its value came from, and what the
+helper did with it (the record keeps no email or phone). `gbrain apple-contacts enrich dry-run` lists what the next run
+would send, values included, and sends nothing. Every change has a fixed key, so a run that is cut off and repeated
+never applies a change twice; `gbrain-apple-helper contacts-restore --batch <id>` at the Mac undoes a batch.
 
 ## Errors
 

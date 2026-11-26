@@ -22,7 +22,7 @@
  */
 import { existsSync, lstatSync, readFileSync, unlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, dirname, join, relative } from 'node:path';
+import { basename, dirname, join, relative, resolve } from 'node:path';
 import { parse as parseJsonc, type ParseError } from 'jsonc-parser';
 import { atomicWriteTextFile } from '../bootstrap/atomic-write.ts';
 import { acquireNativeLockSync } from '../persistence/native-lock.ts';
@@ -32,6 +32,7 @@ import { probeBlock, removeBlock, spliceBlock, type BlockMarkers } from '../mana
 import { ensureGitExcluded } from '../context/compiled-core.ts';
 import type { McpSurface } from '../../mcp/surface.ts';
 import { relativeEscapesRoot } from '../path-confine.ts';
+import { policyLineFor } from './policy-line.ts';
 
 export const BRAIN_FIRST_VERSION = 2;
 export const BRAIN_FIRST_BEGIN = '<!-- gbrain:brain-first:begin -->';
@@ -55,7 +56,7 @@ export type BrainFirstAccess = { kind: 'mcp'; server: string; surface?: McpSurfa
 export const SERVES_SEVERAL_LINE = 'This connection reads only what the person asking may read.';
 
 /** The block interior (without markers). */
-export function renderBrainFirstBlock(harness: string, access: BrainFirstAccess, optOut = `gbrain setup ${harness} --instructions-only --no-instructions`): string {
+export function renderBrainFirstBlock(harness: string, access: BrainFirstAccess, optOut = `gbrain setup ${harness} --instructions-only --no-instructions`, policyLine: string | null = policyLineFor(access)): string {
   const tool = (mcp: string, cli: string) => (access.kind === 'mcp' ? `\`${mcp}\`` : `\`${access.launcher} ${cli}\``);
   const where = access.kind === 'mcp' ? `the \`${access.server}\` MCP server` : `the \`${access.launcher}\` command`;
   const lookup = access.kind === 'mcp' && access.surface === 'verbs'
@@ -76,6 +77,7 @@ export function renderBrainFirstBlock(harness: string, access: BrainFirstAccess,
         ? '- Brain results span every source the token can read, so apply your own access rules to what comes back.'
         : '- Brain results span every source the token can read. Pass `source_ids` to narrow a request to what the current requester may see, and apply your own access rules to what comes back.',
     '- Brain results add to what the user told you; they never replace it. A lookup is one step: finish the whole task.',
+    ...(policyLine ? [policyLine] : []),
   ].join('\n');
 }
 
@@ -170,33 +172,51 @@ export function codexInstructionFile(overridePath: string, agentsPath: string): 
   return agentsPath;
 }
 
-/** OpenClaw's state directory: OPENCLAW_STATE_DIR, else ~/.openclaw (or ~/.openclaw-<profile>). */
+/** OpenClaw's home, as OpenClaw resolves it: OPENCLAW_HOME (a leading ~ is the user's home, a relative path is from the current directory), else the user's home. */
+function openclawHome(): string {
+  const explicit = process.env.OPENCLAW_HOME?.trim();
+  return explicit ? resolve(expandHome(explicit)) : home();
+}
+
+/** An OpenClaw path setting: a leading ~ is OpenClaw's home, a relative path is from the current directory. */
+export function openclawPath(p: string): string {
+  return resolve(p === '~' ? openclawHome() : p.startsWith('~/') ? join(openclawHome(), p.slice(2)) : p);
+}
+
+/** OpenClaw's state directory: OPENCLAW_STATE_DIR, else <OpenClaw home>/.openclaw (or .openclaw-<profile>). */
 export function openclawStateDir(): string {
   const explicit = process.env.OPENCLAW_STATE_DIR?.trim();
-  if (explicit) return expandHome(explicit);
+  if (explicit) return openclawPath(explicit);
   const profile = process.env.OPENCLAW_PROFILE?.trim();
-  return join(home(), profile && profile !== 'default' ? `.openclaw-${profile}` : '.openclaw');
+  return join(openclawHome(), profile && profile !== 'default' ? `.openclaw-${profile}` : '.openclaw');
 }
 
 /** openclaw.json: OPENCLAW_CONFIG_PATH, else <state dir>/openclaw.json. */
 export function openclawConfigPath(): string {
-  return process.env.OPENCLAW_CONFIG_PATH?.trim() ? expandHome(process.env.OPENCLAW_CONFIG_PATH.trim()) : join(openclawStateDir(), 'openclaw.json');
+  const explicit = process.env.OPENCLAW_CONFIG_PATH?.trim();
+  return explicit ? openclawPath(explicit) : join(openclawStateDir(), 'openclaw.json');
 }
 
+/** One JSON5 token: a double- or single-quoted string, a line or block comment, or a bare key before its colon. */
+const JSON5_TOKEN = /"(?:[^"\\\n\r]|\\.)*"|'((?:[^'\\\n\r]|\\.)*)'|\/\/[^\n\r]*|\/\*[\s\S]*?\*\/|([A-Za-z_$][\w$-]*)(?=\s*:)/g;
+/** JSON5 strings may hold raw control characters such as a tab; JSON needs them escaped. */
+const escapeControlChars = (s: string): string => s.replace(/[\u0000-\u001f]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
+
 /**
- * openclaw.json is JSON5. Comments and trailing commas parse as JSONC; bare
- * object keys are quoted first. Anything else reads as unparseable, and the
- * caller asks for --workspace rather than guess.
+ * openclaw.json is JSON5. One left-to-right scan skips strings and comments
+ * whole, rewrites single-quoted strings as double-quoted and quotes bare keys;
+ * comments and trailing commas then parse as JSONC. Anything else reads as
+ * unparseable, and the caller asks for --workspace rather than guess.
  */
 export function parseJson5ish(text: string): unknown {
-  const quotedKeys = text.replace(/([{,]\s*)([A-Za-z_$][\w$-]*)\s*:/g, '$1"$2":');
-  const doubleQuoted = quotedKeys.replace(/'((?:[^'\\\n]|\\.)*)'/g, (_m, s: string) => JSON.stringify(s.replace(/\\'/g, "'")));
-  for (const candidate of [text, quotedKeys, doubleQuoted]) {
-    const errors: ParseError[] = [];
-    const value = parseJsonc(candidate, errors, { allowTrailingComma: true });
-    if (errors.length === 0) return value;
-  }
-  return undefined;
+  const json = text.replace(JSON5_TOKEN, (m, single: string | undefined, key: string | undefined) => {
+    if (single !== undefined) return `"${escapeControlChars(single.replace(/\\.|"/g, (s) => (s === '"' ? '\\"' : s === "\\'" ? "'" : s)))}"`;
+    if (key !== undefined) return `"${key}"`;
+    return m.startsWith('"') ? escapeControlChars(m) : m;
+  });
+  const errors: ParseError[] = [];
+  const value = parseJsonc(json, errors, { allowTrailingComma: true });
+  return errors.length === 0 ? value : undefined;
 }
 
 /**
@@ -219,7 +239,7 @@ export function resolveOpenclawWorkspace(): { path: string } | { error: string }
     if (workspace) configured = workspace.trim();
   }
   const fromEnv = process.env.OPENCLAW_WORKSPACE_DIR?.trim();
-  return { path: expandHome(configured ?? fromEnv ?? join(openclawStateDir(), 'workspace')) };
+  return { path: openclawPath(configured ?? fromEnv ?? join(openclawStateDir(), 'workspace')) };
 }
 
 /** The instruction file a harness loads every session, or an error naming what to pass. */

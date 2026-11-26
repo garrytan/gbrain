@@ -13,6 +13,7 @@ import { readsPageInPieces } from '../page-body/page-shape.ts';
 import { codeEntry, ERROR_CATALOGUE } from '../error-catalogue.ts';
 import { SOURCE_CHECKOUT_MISSING, type CheckoutRefusalOrigin } from './publication-failure.ts';
 import { ownershipRecordNotPrivateError, physicalRootDirectoryChangedError, PHYSICAL_ROOT_MOVED_MESSAGE } from './physical-root-record.ts';
+import { OWNERSHIP_RESERVATION_MISSING_MESSAGE, ownershipReservationMissingError } from './owner-marker.ts';
 
 /** GST-465: a page write to a source whose canonical checkout is missing on this host. The path is left to the read-only fix, which a remote caller cannot run. */
 export function sourceCheckoutMissingRefusal(sourceId: string, slug: string | null): OperationError {
@@ -36,6 +37,8 @@ export function storedCheckoutRefusal(origin: unknown, sourceId: string, slug: s
     error.docs = 'docs/guides/write-refusals.md#ownership_record_not_private';
     return error;
   }
+  if (origin === ('ownership_reservation_missing' satisfies CheckoutRefusalOrigin)) return Object.assign(ownershipReservationMissingError(sourceId), {
+    suggestion: 'Nothing was written. The brain host\'s owner re-creates the reservation with the self-transfer in fix (without --confirm-relocated-root), then you submit again with a new request_id. Never move, copy or delete the ownership stamp.' });
   if (origin !== ('physical_root_directory_changed' satisfies CheckoutRefusalOrigin)) return undefined;
   const state = { name: 'admin_state', how: `admin_state from gbrain sources writer status ${sourceId} --json on the brain host, read again before each phase` };
   const intent = (phase: string) => ['--self-transfer', '--confirm-relocated-root', '--admin-intent', `writer_transfer_${phase}`, '--expected-state', '<admin_state>'];
@@ -167,6 +170,9 @@ export function writeFailureDiagnostic(code: string, message?: string | null): {
   // #6501: a checkout recreated (or drifted beyond the birth tolerance) at its recorded path; the #5914 relocated-root self-transfer is the exit.
   if (code === 'recovery_required' && message?.startsWith('The checkout directory at the recorded root is not the one this owner stamped')) return { reason: 'physical_root_directory_changed', message,
     suggestion: 'On the brain host, gbrain sources writer status <source> --json shows the filled commands: gbrain sources writer transfer prepare <source> --self-transfer --confirm-relocated-root, then transfer accept <source> --path <root> --expected-epoch <epoch> --manifest <digest from prepare> --self-transfer --confirm-relocated-root (each with its admin intent). Retry the original write with the same request_id afterwards; never remove the ownership markers.' };
+  // #10260: the reservation beside the checkout is gone while its stamp still identifies it; the plain self-transfer re-creates it.
+  if (code === 'recovery_required' && message === OWNERSHIP_RESERVATION_MISSING_MESSAGE) return { reason: 'ownership_reservation_missing', message,
+    suggestion: 'On the brain host, gbrain sources writer status <source> --json shows the filled commands: gbrain sources writer transfer prepare <source> --self-transfer, then transfer accept <source> --path <root> --expected-epoch <epoch> --manifest <digest from prepare> --self-transfer (each with its admin intent, never --confirm-relocated-root). Then submit the original write again with a new request_id; this one stays refused. Never move, copy or delete the ownership stamp.' };
   // #8625: the source's folder holds the stamp of a checkout moved from its recorded path; the path-free refusal of the automatic claim.
   if (code === 'recovery_required' && message === PHYSICAL_ROOT_MOVED_MESSAGE) return { reason: 'physical_root_moved', message,
     suggestion: 'Nothing was written. On the brain host, the owner runs the same gbrain sources add, set-path or writer claim with --dry-run in a terminal: it names the recorded path and the commands that bring the checkout back (a symlink and set-path, or moving the folder back). Moving folders is the user\'s decision; never remove the ownership markers.' };

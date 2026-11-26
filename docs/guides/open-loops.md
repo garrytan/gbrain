@@ -382,6 +382,8 @@ an empty inbox. Any Google access path works to fix it: `gbrain google setup`
 (BYO OAuth) or `--access command|env` on `sources add` (an existing Google
 CLI or token-minting gateway; see
 [google-connect.md](google-connect.md#other-ways-to-reach-google-no-gbrain-oauth)).
+`--access gbrainio` reads Gmail through a gbrain.io terminal instead (see
+[google-connect.md](google-connect.md#reading-mail-through-gbrainio)).
 A remote caller (MCP) gets no digest, so when its answer is empty and its
 scope holds no google source it gets a `loops_no_google_in_scope` notice
 instead: the answer covered only the sources the call read (named, all inside

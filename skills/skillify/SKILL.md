@@ -48,7 +48,6 @@ tools:
   - write
   - edit
 mutating: true
-upstream: skillify@fc834ee
 ---
 
 # Skillify — The Meta Skill

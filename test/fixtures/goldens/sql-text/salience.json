@@ -226,6 +226,45 @@
             "textSha256": "1a1f91975382b6f97f2ba8119b0a344c48a2383f19a21040b553657652875f01"
           }
         ],
+        "owner-contact": [
+          {
+            "lane": "pool",
+            "params": [
+              "array<string>",
+              "number",
+              "string",
+              "string",
+              "number",
+              "array<string>",
+              "string",
+              "string",
+              "string",
+              "number",
+              "number"
+            ],
+            "sql": "WITH cand AS ( SELECT p.id, p.slug, p.source_id, p.title, p.type, (char_length(p.compiled_truth) + char_length(COALESCE(p.timeline, ''))) AS body_len FROM pages p WHERE p.deleted_at IS NULL AND p.type = ANY($1::text[]) AND (char_length(p.compiled_truth) + char_length(COALESCE(p.timeline, ''))) < $2 AND p.source_id = $3 AND (p.frontmatter ->> 'dream_generated') IS DISTINCT FROM 'true' ), inbound AS ( SELECT l.to_page_id AS page_id, COUNT(*) AS n FROM links l JOIN cand c ON c.id = l.to_page_id WHERE l.link_source IS DISTINCT FROM 'mentions' AND l.link_type <> ALL(ARRAY['amends']::text[]) GROUP BY l.to_page_id ), recent AS ( SELECT r.id, LEAST(1, GREATEST(0, 1 - EXTRACT(EPOCH FROM ($4::timestamptz - COALESCE(r.effective_date, r.updated_at)))::float8 / $5::float8)) AS w FROM pages r WHERE r.deleted_at IS NULL AND r.type = ANY($6::text[]) AND COALESCE(r.effective_date, r.updated_at) >= $7::timestamptz ), touches AS ( SELECT DISTINCT l.from_page_id, l.to_page_id FROM links l JOIN recent r ON r.id = l.from_page_id JOIN cand c ON c.id = l.to_page_id WHERE l.link_type <> ALL(ARRAY['amends']::text[]) ), evidence AS ( SELECT t.to_page_id AS page_id, SUM(r.w) AS w FROM touches t JOIN recent r ON r.id = t.from_page_id GROUP BY t.to_page_id ), loops AS ( SELECT c.id AS page_id, COUNT(*) AS n FROM open_loops ol JOIN cand c ON c.source_id = ol.source_id AND c.slug = ol.counterparty_slug WHERE ol.status = 'open' GROUP BY c.id ), owner_page AS (SELECT op.id FROM pages op WHERE op.slug = $8 AND op.source_id = $9 AND op.deleted_at IS NULL), hop AS ( SELECT l.to_page_id AS page_id FROM links l JOIN owner_page op ON op.id = l.from_page_id UNION SELECT l.from_page_id AS page_id FROM links l JOIN owner_page op ON op.id = l.to_page_id ) SELECT p.slug, p.source_id, p.title, p.type, p.body_len, COALESCE(i.n, 0)::int AS inbound_count, ((COALESCE(e.w, 0) + COALESCE(lp.n, 0) + CASE WHEN h.page_id IS NULL THEN 0 ELSE 1 END) / (1 + p.body_len::float8 / $10::float8))::float8 AS contact_score FROM cand p LEFT JOIN inbound i ON i.page_id = p.id LEFT JOIN evidence e ON e.page_id = p.id LEFT JOIN loops lp ON lp.page_id = p.id LEFT JOIN hop h ON h.page_id = p.id ORDER BY contact_score DESC, inbound_count DESC, p.source_id ASC, p.slug ASC LIMIT $11",
+            "textSha256": "fa1fc624f5febaa16ea5d2ad1524528c2838ae676f544c319804139fb0e08baa"
+          }
+        ],
+        "owner-contact-no-owner": [
+          {
+            "lane": "pool",
+            "params": [
+              "array<string>",
+              "number",
+              "array<string>",
+              "string",
+              "string",
+              "number",
+              "array<string>",
+              "string",
+              "number",
+              "number"
+            ],
+            "sql": "WITH cand AS ( SELECT p.id, p.slug, p.source_id, p.title, p.type, (char_length(p.compiled_truth) + char_length(COALESCE(p.timeline, ''))) AS body_len FROM pages p WHERE p.deleted_at IS NULL AND p.type = ANY($1::text[]) AND (char_length(p.compiled_truth) + char_length(COALESCE(p.timeline, ''))) < $2 AND p.source_id = ANY($3::text[]) AND NOT ( p.frontmatter ->> 'enriched_at' IS NOT NULL AND p.frontmatter ->> 'enriched_at' > $4 ) AND (p.frontmatter ->> 'dream_generated') IS DISTINCT FROM 'true' ), inbound AS ( SELECT l.to_page_id AS page_id, COUNT(*) AS n FROM links l JOIN cand c ON c.id = l.to_page_id WHERE l.link_source IS DISTINCT FROM 'mentions' AND l.link_type <> ALL(ARRAY['amends']::text[]) GROUP BY l.to_page_id ), recent AS ( SELECT r.id, LEAST(1, GREATEST(0, 1 - EXTRACT(EPOCH FROM ($5::timestamptz - COALESCE(r.effective_date, r.updated_at)))::float8 / $6::float8)) AS w FROM pages r WHERE r.deleted_at IS NULL AND r.type = ANY($7::text[]) AND COALESCE(r.effective_date, r.updated_at) >= $8::timestamptz ), touches AS ( SELECT DISTINCT l.from_page_id, l.to_page_id FROM links l JOIN recent r ON r.id = l.from_page_id JOIN cand c ON c.id = l.to_page_id WHERE l.link_type <> ALL(ARRAY['amends']::text[]) ), evidence AS ( SELECT t.to_page_id AS page_id, SUM(r.w) AS w FROM touches t JOIN recent r ON r.id = t.from_page_id GROUP BY t.to_page_id ), loops AS ( SELECT c.id AS page_id, COUNT(*) AS n FROM open_loops ol JOIN cand c ON c.source_id = ol.source_id AND c.slug = ol.counterparty_slug WHERE ol.status = 'open' GROUP BY c.id ), owner_page AS (SELECT NULL::int AS id WHERE FALSE), hop AS ( SELECT l.to_page_id AS page_id FROM links l JOIN owner_page op ON op.id = l.from_page_id UNION SELECT l.from_page_id AS page_id FROM links l JOIN owner_page op ON op.id = l.to_page_id ) SELECT p.slug, p.source_id, p.title, p.type, p.body_len, COALESCE(i.n, 0)::int AS inbound_count, ((COALESCE(e.w, 0) + COALESCE(lp.n, 0) + CASE WHEN h.page_id IS NULL THEN 0 ELSE 1 END) / (1 + p.body_len::float8 / $9::float8))::float8 AS contact_score FROM cand p LEFT JOIN inbound i ON i.page_id = p.id LEFT JOIN evidence e ON e.page_id = p.id LEFT JOIN loops lp ON lp.page_id = p.id LEFT JOIN hop h ON h.page_id = p.id ORDER BY contact_score DESC, inbound_count DESC, p.source_id ASC, p.slug ASC LIMIT $10",
+            "textSha256": "e5de023fff238aec125e53ff2ace9d13b81b8841c445bc4ff9229328d1f8f2ec"
+          }
+        ],
         "sourceId": [
           {
             "lane": "pool",

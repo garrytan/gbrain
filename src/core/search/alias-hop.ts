@@ -60,6 +60,15 @@ export interface IdentityTierOpts {
   requireSafeChunks?: boolean;
   excludeSlugs?: string[];
   excludeSlugPrefixes?: string[];
+  /** The caller's shape filters (#4480, #9923): `type` and `types` AND-applied, both empty = no gate. */
+  type?: string;
+  types?: string[];
+}
+
+/** True when an identity injection may add a page of `type` under the caller's type filters. */
+export function identityTypeAllowed(type: string | undefined | null, opts: Pick<IdentityTierOpts, 'type' | 'types'>): boolean {
+  if (opts.type && type !== opts.type) return false;
+  return !(opts.types && opts.types.length > 0 && (type == null || !opts.types.includes(type)));
 }
 
 /** True when an identity injection must skip `slug` under the caller's excludes. */
@@ -296,7 +305,7 @@ async function fetchAliasCanonical(
   } catch {
     return null;
   }
-  if (!page) return null;
+  if (!page || !identityTypeAllowed(page.type, opts)) return null;
   // #4352 — the alias inject path bypasses the engines' SQL visibility
   // clause (getPage, not search); re-apply the private predicate here so
   // an untrusted caller can't hop into a `visibility: private` page.

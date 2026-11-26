@@ -387,3 +387,31 @@ describe('findPrimaryResolverPath', () => {
     expect(findPrimaryResolverPath(skillsDir)).toBeNull();
   });
 });
+
+describe('loadSkillTriggerIndex — deprecated skills', () => {
+  test('a skill with deprecated: true contributes no entries, from its frontmatter or from RESOLVER.md', () => {
+    const skillsDir = makeSkillsDir();
+    writeSkill(skillsDir, 'old-query', `---
+name: old-query
+description: Old query skill.
+deprecated: true
+replaced_by: query
+triggers:
+  - "look it up the old way"
+---
+
+# old-query
+`);
+    writeSkill(skillsDir, 'query', skillWithTriggers('query', ['what is']));
+    writeFileSync(join(skillsDir, 'RESOLVER.md'), `## Brain operations
+
+| trigger | skill |
+| --- | --- |
+| old lookup | \`skills/old-query/SKILL.md\` |
+| tell me about | \`skills/query/SKILL.md\` |
+`);
+    const entries = loadSkillTriggerIndex(skillsDir);
+    expect(entries.filter(e => e.skillPath === 'skills/old-query/SKILL.md')).toEqual([]);
+    expect(entries.map(e => e.trigger).sort()).toEqual(['tell me about', 'what is']);
+  });
+});

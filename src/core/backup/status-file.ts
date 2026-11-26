@@ -159,7 +159,10 @@ export function isRemoteTimeout(a: BackupAssetVerdict): boolean {
  * currentBackupEvidence and the doctor message both read this.
  */
 export function assetBlocksRecovery(a: BackupAssetVerdict): boolean {
-  return isRepoAsset(a) ? !isVerifiedRecoverable(a) : a.state === 'no_remote' || a.state === 'unpushed' || a.state === 'failing';
+  if (isRepoAsset(a)) return !isVerifiedRecoverable(a);
+  // An unreadable gbrain.yml leaves the db_only tiering unknown: that is not an all-clear.
+  if (a.kind === 'db_only' && a.state === 'unknown') return true;
+  return a.state === 'no_remote' || a.state === 'unpushed' || a.state === 'failing';
 }
 
 /**
@@ -167,7 +170,7 @@ export function assetBlocksRecovery(a: BackupAssetVerdict): boolean {
  * aggregate surface echoes only these, so a future free-text detail cannot
  * carry a path or a branch name to a remote reader.
  */
-const UNKNOWN_DETAIL_CODES = new Set(['not_a_git_repo', 'probes_skipped', 'probe_cap', 'probe_failed', 'local_path not found on this machine']);
+const UNKNOWN_DETAIL_CODES = new Set(['not_a_git_repo', 'probes_skipped', 'probe_cap', 'probe_failed', 'receipt_unreadable', 'storage_config_unreadable', 'local_path not found on this machine']);
 
 /**
  * #5505: one entry per asset that keeps the verdict in warn, with the reason
@@ -204,7 +207,7 @@ export function currentBackupEvidence(s: BackupStatus, now = Date.now()): Backup
     assets,
     recovery_scope: BACKUP_RECOVERY_SCOPE,
     totals: { ...s.totals, recoverable_repos: recoverable },
-    overall: s.degraded || stale || repos.length > recoverable || s.totals.no_remote > 0 || s.totals.unpushed > 0 || s.totals.failing > 0 ? 'warn' : s.overall,
+    overall: s.degraded || stale || repos.length > recoverable || s.totals.no_remote > 0 || s.totals.unpushed > 0 || s.totals.failing > 0 || assets.some(assetBlocksRecovery) ? 'warn' : s.overall,
   };
 }
 

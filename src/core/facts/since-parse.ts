@@ -12,6 +12,8 @@
  * month's length (March 31 minus one month is February 28 or 29).
  */
 
+import { isCalendarDay } from '../since.ts';
+
 const UNITS: Array<[RegExp, 'second' | 'minute' | 'hour' | 'day' | 'week' | 'month' | 'year']> = [
   [/^(?:s|secs?|seconds?)$/, 'second'],
   [/^(?:mins?|minutes?)$/, 'minute'],
@@ -65,6 +67,7 @@ export function parseSinceParam(raw: unknown): Date | null {
   const s = raw.trim();
   if (!s) return null;
 
+  if (/^\d{4}-\d{2}-\d{2}/.test(s) && !isCalendarDay(s)) return null;
   // Try ISO first.
   const iso = Date.parse(s);
   if (Number.isFinite(iso)) return new Date(iso);

@@ -9,10 +9,10 @@
 //!   the chunks whose index the new set does not keep (a kept index keeps its id). A hard page
 //!   delete calls it before `remove_page_rows`.
 //! - `remove_source_rows`: a source delete (`ON DELETE CASCADE` of `sources.id`), for records keyed
-//!   by source rather than by page. The Rust engine does not serve source delete yet, so nothing
-//!   calls it; when core serves it, core removes each page of the source with
-//!   `pages::remove_page` first (the page and chunk hooks fire for those), then calls this list,
-//!   then deletes the source record, all in one write transaction.
+//!   by source rather than by page. The source delete (`Store::delete_source_record`,
+//!   `sources/archive.rs`) removes each page of the source with `pages::remove_page` first (the
+//!   page and chunk hooks fire for those), then calls this list, then deletes the source record,
+//!   all in one write transaction.
 //! - `rename_slug_rows`: a page rename (`updateSlug`), for records keyed by `(source, slug)` rather
 //!   than by page id (PGLite `moveSlugBindings`, `page-state/rename-alias.ts`). The rename caller
 //!   calls it in the rename transaction after `pages::rename_page`, only when the slug changed;
@@ -34,7 +34,12 @@ pub(crate) fn remove_page_rows(tx: &mut dyn KvWrite, page: &PageRecord) -> Resul
     crate::vectors::remove_page_rows(tx, page)?;
     crate::embeddings::remove_page_rows(tx, page)?;
     crate::wanted_links::remove_page_rows(tx, page)?;
+    crate::link_queries::link_temporal::remove_page_rows(tx, page)?;
+    crate::edge_proposals::remove_page_rows(tx, page)?;
     crate::facts::reconcile::remove_page_rows(tx, page)?;
+    crate::page_ops::remove_page_rows(tx, page)?;
+    crate::entity_identities::remove_page_rows(tx, page)?;
+    crate::mention_state::remove_page_rows(tx, page)?;
     Ok(())
 }
 
@@ -52,8 +57,6 @@ pub(crate) fn remove_chunk_rows(
     Ok(())
 }
 
-// Core's source delete is the first caller.
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Result<()> {
     crate::facts::remove_source_rows(tx, source_id)?;
     crate::aliases::remove_source_rows(tx, source_id)?;
@@ -65,7 +68,11 @@ pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Resul
     crate::extraction::remove_source_rows(tx, source_id)?;
     crate::trust::remove_source_rows(tx, source_id)?;
     crate::facts::loops::remove_source_rows(tx, source_id)?;
+    crate::persistence::remove_notifier_source_rows(tx, source_id)?;
+    crate::reason_tombstones::remove_source_rows(tx, source_id)?;
+    crate::generations::remove_source_rows(tx, source_id)?;
     crate::eval_capture::calibration_profiles::remove_source_rows(tx, source_id)?;
+    crate::mention_state::remove_source_rows(tx, source_id)?;
     Ok(())
 }
 

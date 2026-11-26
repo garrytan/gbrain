@@ -21,7 +21,7 @@ const ALLOWED: Record<string, string> = {
   'src/core/persistence/writer-guard-schema.ts': 'DDL: the managed-writer trigger body runs in the database',
   'src/core/shared-skills/persistence-schema.ts': 'DDL: shared-skill trigger bodies',
   'src/core/persistence/graduation-target.ts': 'target seed census (bool_and(NOT enabled) over an expected-empty target), not a mode read',
-  'src/core/persistence/admin-intent.ts': 'the writer-admin state digest hashes the whole row inside jsonb_build_object; it routes nothing',
+  'src/core/engine-sql/writer-admin.ts': 'the writer-admin state read (WRITER_ADMIN_STATE_SQL) returns the whole row inside jsonb_build_object for the digest persistence/admin-intent.ts hashes; it routes nothing',
   'src/core/engine-sql/persistence-state.ts': 'the mode statement text (MANAGED_MODE_SQL, re-exported by managed-mode.ts) and the typed readManagedModeRows read; both return the rows as stored, and callers interpret them only through managedModeFromRows',
 };
 const GENERATED = /\.generated\.ts$|^src\/core\/schema-migrations\//;

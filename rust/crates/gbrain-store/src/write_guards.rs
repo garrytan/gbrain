@@ -4,7 +4,9 @@
 //! `engine-sql/write-guards.ts`).
 //!
 //! Members: readPageOrigin, listOriginClaims, bindPageOrigin, stampPageIngest, sealImportedPage,
-//! readLivePageBody, hasSegmentStorage.
+//! readLivePageBody, readPageIndexingState, readInlinePageRegions, readStoredPageTier, hasSegmentStorage,
+//! detachPageOrigin, readPageDatabaseOnlyReason, bumpPageKnowledgeRevision, removePageFrontmatterKeys,
+//! setPageType.
 //!
 //! Locks: PGLite takes an advisory lock per origin spelling before it lists the claims, so two
 //! writes of one file queue. The store runs one write transaction at a time, so every lock is
@@ -24,6 +26,14 @@ use crate::pages::{
     read_page_by_id, record_search_timeline, write_page,
 };
 use crate::{Result, Store, StoreError, keys};
+
+/// `readLivePageByPath({ sourceId, path })`: the live page of the source that records `path`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+pub struct PageByPathArgs {
+    pub source_id: String,
+    pub path: String,
+}
 
 /// Which page: by id within the source when `page_id` is given, else by slug.
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -108,6 +118,23 @@ pub struct LivePageBodyRow {
     pub timeline: Option<String>,
     pub body_storage: &'static str,
     pub content_hash: Option<String>,
+}
+
+/// What a text projection is keyed on, as PGLite's `SELECT chunker_version,corpus_generation`
+/// and `SELECT page_kind` of one page row.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct PageIndexingState {
+    pub chunker_version: Option<i16>,
+    pub corpus_generation: Option<String>,
+    pub page_kind: String,
+}
+
+/// A page's stored body columns, as PGLite's `SELECT compiled_truth, timeline FROM pages WHERE
+/// id=$1`: `None` for a column the page does not store inline (a segmented shell).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct InlinePageRegions {
+    pub compiled_truth: Option<String>,
+    pub timeline: Option<String>,
 }
 
 /// The id and the sealed page of `sealImportedPage`.
@@ -204,11 +231,28 @@ impl Store {
         Ok(rows)
     }
 
+    /// `readLivePageByPath(sourceId, path)`: `{ id, slug }` of the live page of the source that records `path`, the
+    /// lowest id when two do not (the SQL's `ORDER BY id LIMIT 1`; the live-origin index keeps one), or `None`. An
+    /// empty path is never an origin.
+    pub fn read_live_page_by_path(&self, a: &PageByPathArgs) -> Result<Option<Value>> {
+        let read = self.read()?;
+        let mut pages = Vec::new();
+        if !a.path.is_empty() && !a.source_id.contains('\0') && !a.path.contains('\0') {
+            claims_of(&*read, &a.source_id, &a.path, None, &mut pages)?;
+        }
+        pages.sort_by_key(|p| p.id);
+        Ok(pages
+            .into_iter()
+            .next()
+            .map(|p| serde_json::json!({ "id": p.id, "slug": p.slug })))
+    }
+
     /// `bindPageOrigin(bind)`: records `source_path` on the page the bind names when it records a
     /// different origin (`only_if_unset`: none at all) and, with `live_only`, is live. Returns the
     /// number of pages changed, 0 or 1. A live page may not take an origin another live page of
     /// the source records (`origin_claimed`), as PGLite's `pages_live_origin_key` refuses it.
-    /// PGLite also clears `database_only_reason = 'origin_twin'`; the store keeps no such column.
+    /// A page that then records `source_path` drops an `origin_twin` database-only marker, also
+    /// when its origin did not change, as PGLite's second statement does.
     pub fn bind_page_origin(&self, bind: &PageOriginBind) -> Result<u64> {
         self.write(|tx| {
             let Some(mut page) = find_page(&*tx, &bind.target)? else {
@@ -219,21 +263,28 @@ impl Store {
             } else {
                 page.source_path.as_deref() == Some(bind.source_path.as_str())
             };
-            if unchanged || (bind.live_only && page.deleted_at_us.is_some()) {
-                return Ok(0);
+            let changed = !(unchanged || (bind.live_only && page.deleted_at_us.is_some()));
+            if changed {
+                if page.deleted_at_us.is_none() {
+                    assert_origin_unclaimed(
+                        &*tx,
+                        &page.source_id,
+                        &page.slug,
+                        Some(&page),
+                        Some(&bind.source_path),
+                    )?;
+                }
+                page.source_path = Some(bind.source_path.clone());
             }
-            if page.deleted_at_us.is_none() {
-                assert_origin_unclaimed(
-                    &*tx,
-                    &page.source_id,
-                    &page.slug,
-                    Some(&page),
-                    Some(&bind.source_path),
-                )?;
+            let clears = page.source_path.as_deref() == Some(bind.source_path.as_str())
+                && page.database_only_reason.as_deref() == Some("origin_twin");
+            if clears {
+                page.database_only_reason = None;
             }
-            page.source_path = Some(bind.source_path.clone());
-            write_page(tx, &page)?;
-            Ok(1)
+            if changed || clears {
+                write_page(tx, &page)?;
+            }
+            Ok(u64::from(changed))
         })
     }
 
@@ -311,6 +362,123 @@ impl Store {
                     content_hash: page.content_hash,
                 }
             }))
+    }
+
+    /// `readPageIndexingState(pageId)`: the page's stored chunker version, corpus generation and
+    /// page kind, live or a tombstone, or `None` when no page has the id.
+    pub fn read_page_indexing_state(&self, page_id: u64) -> Result<Option<PageIndexingState>> {
+        let read = self.read()?;
+        let Some(page) = read_page_by_id(&*read, page_id)? else {
+            return Ok(None);
+        };
+        Ok(Some(PageIndexingState {
+            chunker_version: page.chunker_version,
+            corpus_generation: crate::aliases::corpus_generation(&*read, page.id)?,
+            page_kind: page.page_kind,
+        }))
+    }
+
+    /// `readInlinePageRegions(pageId)`: the body columns of page `page_id`, live or a tombstone,
+    /// or `None` when no page has the id. The append path reads them raw, as PGLite does.
+    pub fn read_inline_page_regions(&self, page_id: u64) -> Result<Option<InlinePageRegions>> {
+        let read = self.read()?;
+        Ok(
+            read_page_by_id(&*read, page_id)?.map(|page| InlinePageRegions {
+                compiled_truth: text_of(&page.compiled_truth),
+                timeline: text_of(&page.timeline),
+            }),
+        )
+    }
+
+    /// `readStoredPageTier(sourceId, slug)`: the page's stored `trust_tier`, live or a tombstone, or
+    /// `None` without a page. A record that stores no tier reads `unknown`, the column default; the
+    /// value is returned as stored, as PGLite's raw column read is.
+    pub fn read_stored_page_tier(&self, source_id: &str, slug: &str) -> Result<Option<String>> {
+        let read = self.read()?;
+        Ok(read_page(&*read, source_id, slug)?
+            .map(|page| page.trust_tier.unwrap_or_else(|| "unknown".to_owned())))
+    }
+
+    /// `detachPageOrigin(pageId, reason)`: the page forgets its recorded file (`source_path` and
+    /// `source_uri`) and records `reason` as why it is database-only, live or a tombstone. The
+    /// knowledge revision stays, as PGLite's revision trigger reads none of the three columns.
+    pub fn detach_page_origin(&self, page_id: u64, reason: &str) -> Result<()> {
+        self.write(|tx| {
+            let Some(mut page) = read_page_by_id(&*tx, page_id)? else {
+                return Ok(());
+            };
+            page.source_path = None;
+            page.source_uri = None;
+            page.database_only_reason = Some(reason.to_owned());
+            write_page(tx, &page)
+        })
+    }
+
+    /// `readPageDatabaseOnlyReason(sourceId, slug)`: the page's database-only marker, live or a
+    /// tombstone; `None` without one or without a page.
+    pub fn read_page_database_only_reason(
+        &self,
+        source_id: &str,
+        slug: &str,
+    ) -> Result<Option<String>> {
+        let read = self.read()?;
+        Ok(read_page(&*read, source_id, slug)?.and_then(|page| page.database_only_reason))
+    }
+
+    /// `bumpPageKnowledgeRevision(pageId)`: a new knowledge revision for the page, live or a
+    /// tombstone, which clears its text projection seal as PGLite's revision trigger does.
+    pub fn bump_page_knowledge_revision(&self, page_id: u64) -> Result<()> {
+        self.write(|tx| {
+            let Some(mut page) = read_page_by_id(&*tx, page_id)? else {
+                return Ok(());
+            };
+            page.knowledge_revision = self.env.new_uuid();
+            page.text_projection_revision = None;
+            write_page(tx, &page)
+        })
+    }
+
+    /// `removePageFrontmatterKeys(sourceId, pageId, keys)`: removes `keys` from the frontmatter of
+    /// the live page of the source. Only a page that held one of them changes, and it takes a new
+    /// knowledge revision, as the revision trigger reads the frontmatter.
+    pub fn remove_page_frontmatter_keys(
+        &self,
+        source_id: &str,
+        page_id: u64,
+        keys: &[String],
+    ) -> Result<()> {
+        self.write(|tx| {
+            let Some(mut page) = read_page_by_id(&*tx, page_id)? else {
+                return Ok(());
+            };
+            if page.source_id != source_id
+                || page.deleted_at_us.is_some()
+                || !keys.iter().any(|k| page.frontmatter.contains_key(k))
+            {
+                return Ok(());
+            }
+            page.frontmatter.retain(|k, _| !keys.contains(k));
+            page.knowledge_revision = self.env.new_uuid();
+            page.text_projection_revision = None;
+            write_page(tx, &page)
+        })
+    }
+
+    /// `setPageType(sourceId, slug, type)`: the page's type, live or a tombstone. A changed type
+    /// takes a new knowledge revision, as the revision trigger reads the type.
+    pub fn set_page_type(&self, source_id: &str, slug: &str, page_type: &str) -> Result<()> {
+        self.write(|tx| {
+            let Some(mut page) = read_page(&*tx, source_id, slug)? else {
+                return Ok(());
+            };
+            if page.page_type == page_type {
+                return Ok(());
+            }
+            page.page_type = page_type.to_owned();
+            page.knowledge_revision = self.env.new_uuid();
+            page.text_projection_revision = None;
+            write_page(tx, &page)
+        })
     }
 
     /// `hasSegmentStorage()`: whether any segment text or body staging is stored.

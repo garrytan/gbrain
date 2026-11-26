@@ -361,6 +361,9 @@ export async function runLoopsExtract(
   const page = await engine.getPage(payload.slug, { sourceId: payload.sourceId });
   if (!page) return { ...empty, reason: 'page_missing' };
   const fm = (page.frontmatter ?? {}) as Record<string, unknown>;
+  if (fm.extract_atoms === false || fm.extract_atoms === 'false' || fm.ingest_tier === 'record' || fm.ingest_tier === 'private') {
+    return { ...empty, reason: 'model_reads_off' };
+  }
   const threadId =
     payload.threadId ?? (typeof fm.thread_id === 'string' ? fm.thread_id : payload.slug);
 

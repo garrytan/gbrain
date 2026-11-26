@@ -95,6 +95,34 @@ impl Brain {
         self.run(env, move |s| s.read_mcp_rollup_pruned_before())
     }
 
+    /// `countMcpRequestsLastDay(kind)`: the count of the last 24 hours.
+    #[napi]
+    pub fn count_mcp_requests_last_day<'env>(
+        &self,
+        env: &'env Env,
+        kind: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.count_mcp_requests_last_day(&kind))
+    }
+
+    /// `readPendingWriteHealth()`: the in-flight writes, the oldest one's age, and the pending writes that later failed.
+    #[napi]
+    pub fn read_pending_write_health<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_pending_write_health())
+    }
+
+    /// `countMcpRequestsLastDayByToken(tokenNames)`: `{ token_name, requests }` rows.
+    #[napi]
+    pub fn count_mcp_requests_last_day_by_token<'env>(
+        &self,
+        env: &'env Env,
+        token_names: Option<Vec<Option<String>>>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.count_mcp_requests_last_day_by_token(token_names.as_deref())
+        })
+    }
+
     /// `readMcpLifetimeUsage(tokenNames)`: `{ token_name, requests, last_used_at }` rows,
     /// `last_used_at` as ISO text.
     #[napi]
@@ -127,5 +155,19 @@ impl Brain {
         days: Option<f64>,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.read_chat_usage(days))
+    }
+
+    /// `readMcpRequestLogPage(spec)`: `{ rows, total }`, one page of the request log.
+    #[napi]
+    pub fn read_mcp_request_log_page<'env>(
+        &self,
+        env: &'env Env,
+        input: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let input: gbrain_store::telemetry::McpRequestLogPageInput =
+                required(input, "readMcpRequestLogPage input")?;
+            s.read_mcp_request_log_page(&input)
+        })
     }
 }

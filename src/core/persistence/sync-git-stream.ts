@@ -11,7 +11,7 @@ import { randomUUID } from 'node:crypto';
 import { lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync, type BigIntStats } from 'node:fs';
 import { join, relative, resolve, sep } from 'node:path';
 import { configDir } from '../config.ts';
-import { hardenedGitStream, hardenedStreamComplete, NulRecordSplitter, type HardenedGitStreamResult } from '../hardened-git.ts';
+import { HISTORY_LOG_OPTIONS, hardenedGitStream, hardenedStreamComplete, NulRecordSplitter, type HardenedGitStreamResult } from '../hardened-git.ts';
 import { gitBlobOid, sha256 } from './digest.ts';
 import { readSyncFile } from './sync-discovery.ts';
 import { faultPointNow } from './fault-points.ts';
@@ -33,8 +33,10 @@ export class SyncTreeReadIncomplete extends Error {
 }
 
 const READ_TIMEOUT_MS = 120_000;
-/** GST-2515: held paths per history read, so one read of a path's specs stays well inside READ_TIMEOUT_MS on a deep history. */
-const HISTORY_GROUP_PATHS = 2_000;
+/** GST-2515, GST-3328: held paths per history read: one pathspec each, so a group's command line stays short on every platform. */
+const HISTORY_GROUP_PATHS = 100;
+/** GST-3328 follow-up: the shortest gap between two liveness beats while a history read streams. */
+const HISTORY_BEAT_MS = 1_000;
 const PROBE_TIMEOUT_MS = 60_000;
 const LFS_POINTER_MAX_BYTES = 1024;
 const OID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
@@ -242,40 +244,62 @@ export async function readRenameHints(gitRoot: string, from: string, to: string)
   return hints.sort((a, b) => (a.to < b.to ? -1 : a.to > b.to ? 1 : 0));
 }
 
+/** Ends a history walk early: every path of its group already holds `depth` blobs. */
+class HistoryRead extends Error {}
+
 /**
- * #7199, GST-2515: the blob ids each path had at `commit` and its first `depth - 1` first-parent ancestors, newest first, one
- * per commit that has the path. One `cat-file --batch-check` per group of paths answers every `<commit>~k:<path>` spec (no
- * bodies are read); `onPath` runs as each path's last answer arrives, and a throw from it (an abort) kills the read and rejects.
- * A group whose read is incomplete leaves its unanswered paths out of the map; a path a spec line cannot carry has no entry.
+ * #7199, GST-2515: the distinct blob ids each path held in the commits that changed it, from `commit` back, newest first, at
+ * most `depth` each. GST-3328: read from the path's own history (one filter-free `git log --raw` per group of paths, the
+ * HISTORY_LOG_OPTIONS shape), so an earlier version is found however many commits to other paths came since. The walk stops
+ * once every path of the group holds `depth` blobs. `onPath` runs for each path that got an entry as its group's read ends;
+ * `beat` runs at most every HISTORY_BEAT_MS while a group streams, so a long walk still reports progress. A throw from either
+ * (an abort) rejects. No group starts at or after `deadline` (epoch ms), and a group's read ends by it; the paths of groups
+ * never started go to `unstarted`. A group whose read is incomplete (a timeout, the deadline, a Git failure) keeps the blobs
+ * it read for the paths that got some, and adds its paths with fewer than `depth` to `partial`: each blob is a version that
+ * path held, so a match against it is as sound as after a full walk, and a path with none has no entry. A path a pathspec
+ * cannot carry has no entry and is in neither set.
  */
 export async function pathBlobHistories(gitRoot: string, commit: string, paths: readonly string[], depth: number,
-  onPath?: (path: string) => void): Promise<Map<string, string[]>> {
+  onPath?: (path: string) => void, options: { beat?: () => void; deadline?: number; partial?: Set<string>; unstarted?: Set<string> } = {}): Promise<Map<string, string[]>> {
   const histories = new Map<string, string[]>();
   if (!OID.test(commit) || depth < 1) return histories;
   const carried = paths.filter(path => !/[\n\r]/.test(path));
+  let beatAt = Date.now();
   for (let start = 0; start < carried.length; start += HISTORY_GROUP_PATHS) {
+    const left = (options.deadline ?? Infinity) - Date.now();
+    if (left <= 0) { for (const path of carried.slice(start)) options.unstarted?.add(path); break; }
     const group = carried.slice(start, start + HISTORY_GROUP_PATHS);
-    let header: Buffer[] = [], answered = 0, oids: string[] = [];
-    await gitStream(gitRoot, ['cat-file', '--batch-check'], { timeoutMs: READ_TIMEOUT_MS,
-      stdin: lines(group.flatMap(path => Array.from({ length: depth }, (_, k) => `${commit}~${k}:${path}`)), '\n'), onChunk: chunk => {
-        let at = 0;
-        while (at < chunk.length) {
-          const newline = chunk.indexOf(10, at);
-          if (newline < 0) { header.push(chunk.subarray(at)); break; }
-          const line = Buffer.concat([...header, chunk.subarray(at, newline)]).toString('utf8');
-          header = []; at = newline + 1;
-          if (!line.endsWith(' missing') && !line.endsWith(' ambiguous')) {
-            const [oid = '', type = '', size = ''] = line.split(' ');
-            if (!OID.test(oid) || !/^\d+$/.test(size)) throw malformed('cat-file', line);
-            if (type === 'blob') oids.push(oid);
+    const wanted = new Set(group), found = new Map<string, string[]>();
+    const splitter = new NulRecordSplitter();
+    let raw: string | null = null, full = 0;
+    const result = await gitStream(gitRoot, ['log', ...HISTORY_LOG_OPTIONS, '--end-of-options', commit, '--', ...group.map(path => `:(literal)${path}`)], {
+      timeoutMs: Math.min(READ_TIMEOUT_MS, left), onChunk: chunk => {
+        if (options.beat && Date.now() - beatAt >= HISTORY_BEAT_MS) { beatAt = Date.now(); options.beat(); }
+        for (const record of splitter.push(chunk)) {
+          if (raw === null) {
+            const token = record.toString('utf8').replace(/^\n+/, '');
+            if (token.startsWith(':')) raw = token;
+            continue;
           }
-          if (++answered % depth) continue;
-          const path = group[answered / depth - 1]!;
-          histories.set(path, oids);
-          oids = [];
-          onPath?.(path);
+          const path = record.toString('utf8');
+          const [, mode = '', , oid = '', status = ''] = raw.slice(1).split(' ');
+          raw = null;
+          if (!wanted.has(path) || status === 'D' || !REGULAR_MODES.has(mode) || !OID.test(oid)) continue;
+          const list = found.get(path) ?? [];
+          if (list.length >= depth || list.includes(oid)) continue;
+          list.push(oid);
+          found.set(path, list);
+          if (list.length === depth && ++full === wanted.size) throw new HistoryRead();
         }
-      } }).catch((error: unknown) => { if (!(error instanceof SyncTreeReadIncomplete)) throw error; });
+      } }).catch((error: unknown) => { if (error instanceof HistoryRead) return null; throw error; });
+    const complete = result === null || (hardenedStreamComplete(result) && splitter.atRecordBoundary);
+    for (const path of wanted) {
+      const list = found.get(path);
+      if (!complete && (list?.length ?? 0) < depth) options.partial?.add(path);
+      if (!complete && !list) continue;
+      histories.set(path, list ?? []);
+      onPath?.(path);
+    }
   }
   return histories;
 }

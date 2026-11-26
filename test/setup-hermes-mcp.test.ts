@@ -129,6 +129,40 @@ describe('gbrain setup hermes registers MCP through hermes mcp add', () => {
     expect(doc.hooks.pre_llm_call).toHaveLength(1);
   });
 
+  test('a bare re-run keeps the surface an earlier --surface chose', async () => {
+    const b = box({ hermes: true });
+    await setup(b, ['--surface', 'full']);
+    const again = await setup(b, []);
+    expect(again.doc.mcp.setup).toBe('keep');
+    expect((load(config(b)) as any).mcp_servers.gbrain.args).toEqual([b.bin, 'serve', '--surface', 'full']);
+    expect(calls(b).filter((c) => c.argv[1] === 'add')).toHaveLength(1);
+  });
+
+  test('a bare re-run writes the turn rule for the full surface the entry keeps', async () => {
+    const b = box({ hermes: true });
+    await setup(b, ['--surface', 'full']);
+    await setup(b, []);
+    expect(config(b)).toContain('mcp__gbrain__get_page');
+  });
+
+  test('a bare re-run writes the brain-first block and turn rule for the verbs surface the entry keeps', async () => {
+    const v = box({ hermes: true });
+    await setup(v, ['--surface', 'verbs']);
+    const again = await setup(v, []);
+    expect(again.doc.mcp.setup).toBe('keep');
+    expect(readFileSync(join(v.home, '.hermes', 'SOUL.md'), 'utf8')).toContain('`recall` for what was said or decided');
+    expect(config(v)).toContain('mcp__gbrain__remember');
+  });
+
+  test('a malformed config.yaml is an MCP error on a bare run, and the rest of setup still runs', async () => {
+    const b = box({ hermes: true });
+    writeFileSync(join(b.home, '.hermes', 'config.yaml'), 'mcp_servers: {gbrain: [a b\n');
+    const r = await setup(b, []);
+    expect(r.doc, r.stderr).not.toBeNull();
+    expect(r.doc.mcp.setup).toBe('error');
+    expect(r.doc.instructions).toBeDefined();
+  });
+
   test('without a hermes command, setup prints the one command to run and writes no MCP entry', async () => {
     const b = box({ hermes: false });
     const r = await setup(b, []);

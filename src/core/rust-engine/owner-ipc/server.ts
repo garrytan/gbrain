@@ -27,8 +27,9 @@
  *   engine call settles, or when it leaves the queue without running (cancel, deadline, closed connection, close()).
  * - Peer identity: the owner reads each connecting process's uid from the kernel (cli-socket/peer-cred.ts) and refuses
  *   any other uid, or one it cannot read, with a `refused` frame carrying `owner_ipc_peer_refused` (`peer_uid`); no
- *   frame of that connection is read. Where the platform cannot read peer uids (Windows, other Unixes), the private
- *   0700 directory and the 0600 socket are the only guard.
+ *   frame of that connection is read. Peer uids are read on Linux x64 and arm64 and on macOS. On other Unix systems
+ *   and other Linux architectures the private 0700 directory and the 0600 socket are the only guard; a Windows named
+ *   pipe gets no check.
  * - `close()` aborts every call and resolves only after all engine work that started has settled, so the owner lock
  *   (released by RustEngine.disconnect after close) never frees while the old owner still runs a call. An owner that
  *   exits therefore never leaves a started write running behind a new owner: `ownerGone` after the send stays final.

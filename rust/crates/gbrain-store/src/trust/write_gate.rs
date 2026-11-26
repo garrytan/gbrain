@@ -12,8 +12,9 @@
 //!   re-opens a hold when the same content arrives again.
 //!
 //! Ids come from the `write_gate_receipts` and `write_gate_holds` counters and start at 1. Neither
-//! table has a foreign key in Postgres, so a source or page delete leaves these rows; the callers
-//! that scrub them (source delete, purge) still run raw SQL, which the Rust engine refuses.
+//! table has a foreign key in Postgres, so a source or page delete leaves these rows; a source
+//! delete (`sources::delete_source_record`) removes the source's holds with their receipts through
+//! [`remove_source_holds`], as `removedSourceScrubCtes` does.
 
 use crate::env::iso;
 use crate::error::{Result, StoreError};
@@ -155,7 +156,9 @@ struct HoldRecord {
     reason_families: Vec<String>,
     reasons: Vec<String>,
     detector_error: bool,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     payload: Value,
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     write_origin: Option<Value>,
     request_id: Option<String>,
     status: String,
@@ -178,8 +181,8 @@ impl HoldRecord {
             "detector_error": self.detector_error,
             "reason_families": self.reason_families,
             "reasons": self.reasons,
-            "payload": self.payload,
-            "write_origin": self.write_origin,
+            "payload": crate::jsonb::order(self.payload.clone()),
+            "write_origin": self.write_origin.clone().map(crate::jsonb::order),
             "request_id": self.request_id,
             "status": self.status,
             "seen_count": self.seen_count,
@@ -355,6 +358,63 @@ fn delete_receipt(tx: &mut dyn KvWrite, record: &ReceiptRecord) -> Result<()> {
     tx.delete(&by_id(RECEIPT, record.id))
 }
 
+/// `deletePurgeWriteGateHolds` (a fact purge): deletes the holds of `source_id` whose
+/// `COALESCE(payload->>'fact', payload->>'claim', '')` has fingerprint `fact_hash`, with their
+/// dedupe entries; the ids deleted, as text, in id order.
+pub(crate) fn purge_holds(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    fact_hash: &str,
+) -> Result<Vec<String>> {
+    let mut deleted = Vec::new();
+    for h in all_holds(tx)? {
+        if h.source_id != source_id {
+            continue;
+        }
+        let field = |name: &str| h.payload.get(name).and_then(jsonb_field_text);
+        let text = field("fact").or_else(|| field("claim")).unwrap_or_default();
+        if crate::facts::fact_fingerprint(&text) != fact_hash {
+            continue;
+        }
+        let version = h.detector_version.to_string();
+        let index = tagged(
+            HOLD_DEDUPE,
+            &[&h.source_id, &h.slug, &h.fingerprint, &version],
+        );
+        if read_id(tx, &index)? == Some(h.id) {
+            tx.delete(&index)?;
+        }
+        tx.delete(&by_id(HOLD, h.id))?;
+        deleted.push(h.id);
+    }
+    deleted.sort_unstable();
+    Ok(deleted.into_iter().map(|id| id.to_string()).collect())
+}
+
+/// `deletePurgeWriteGateReceipts` (a fact purge): deletes the receipts on a purged fact, take or
+/// hold (`target_id` in the matching id list); how many.
+pub(crate) fn purge_receipts(
+    tx: &mut dyn KvWrite,
+    facts: &std::collections::HashSet<String>,
+    takes: &std::collections::HashSet<String>,
+    holds: &std::collections::HashSet<String>,
+) -> Result<u64> {
+    let mut deleted = 0;
+    for r in all_receipts(tx)? {
+        let ids = match r.target_table.as_str() {
+            "facts" => facts,
+            "takes" => takes,
+            "write_gate_holds" => holds,
+            _ => continue,
+        };
+        if ids.contains(&r.target_id) {
+            delete_receipt(tx, &r)?;
+            deleted += 1;
+        }
+    }
+    Ok(deleted)
+}
+
 fn all_receipts(read: &dyn KvRead) -> Result<Vec<ReceiptRecord>> {
     let mut out = Vec::new();
     let mut failure = None;
@@ -398,6 +458,19 @@ pub(crate) fn activation_suppressed(
                     .iter()
                     .any(|f| ACTIVATION_REASON_FAMILIES.contains(&f.as_str()))
         }))
+}
+
+/// Whether target (`target_table`, `target_id`) holds a `flag` receipt naming `family` in its
+/// reason families (`r.verdict = 'flag' AND family = ANY(r.reason_families)`).
+pub(crate) fn flagged_for(
+    read: &dyn KvRead,
+    target_table: &str,
+    target_id: u64,
+    family: &str,
+) -> Result<bool> {
+    Ok(receipts_of(read, target_table, &target_id.to_string())?
+        .iter()
+        .any(|r| r.verdict == "flag" && r.reason_families.iter().any(|f| f == family)))
 }
 
 fn receipts_of(
@@ -444,6 +517,45 @@ fn all_holds(read: &dyn KvRead) -> Result<Vec<HoldRecord>> {
         failure.is_none()
     })?;
     failure.map_or(Ok(out), Err)
+}
+
+/// The `scrub_write_gate_holds` and `scrub_write_gate_receipts` steps of a source delete
+/// (`removedSourceScrubCtes`): every hold of `source_id`, whatever its status, with its dedupe
+/// entry and the receipts whose target is that hold (`target_table = 'write_gate_holds'`).
+pub(crate) fn remove_source_holds(tx: &mut dyn KvWrite, source_id: &str) -> Result<()> {
+    for hold in all_holds(&*tx)?
+        .into_iter()
+        .filter(|h| h.source_id == source_id)
+    {
+        let id = hold.id.to_string();
+        for receipt in receipts_of(&*tx, "write_gate_holds", &id)? {
+            delete_receipt(tx, &receipt)?;
+        }
+        let version = hold.detector_version.to_string();
+        tx.delete(&tagged(
+            HOLD_DEDUPE,
+            &[&hold.source_id, &hold.slug, &hold.fingerprint, &version],
+        ))?;
+        tx.delete(&by_id(HOLD, hold.id))?;
+    }
+    Ok(())
+}
+
+/// The fingerprints of the holds with `kind = 'fact'` and `status = 'held'` on page (`source_id`,
+/// `slug`), as the fence overlay (`engine-sql/cli-reads-ops.ts` `readFenceOverlayRows`) matches a
+/// fence row's fingerprint against them.
+pub(crate) fn held_fact_fingerprints(
+    read: &dyn KvRead,
+    source_id: &str,
+    slug: &str,
+) -> Result<std::collections::HashSet<String>> {
+    Ok(all_holds(read)?
+        .into_iter()
+        .filter(|h| {
+            h.kind == "fact" && h.status == "held" && h.source_id == source_id && h.slug == slug
+        })
+        .map(|h| h.fingerprint)
+        .collect())
 }
 
 /// A released fact hold, as `listUnpreviewedTrustFacts` (src/core/engine-sql/facts-doctor.ts) joins
@@ -900,6 +1012,49 @@ mod tests {
             .unwrap()
             .unwrap();
         p.id.to_string()
+    }
+
+    #[test]
+    fn a_source_delete_drops_its_holds_their_dedupe_entries_and_receipts_only() {
+        let s = store();
+        let doomed = s.upsert_write_gate_hold(hold("fp-1")).unwrap();
+        let other = s
+            .upsert_write_gate_hold(HoldInput {
+                source_id: "kept".into(),
+                ..hold("fp-1")
+            })
+            .unwrap();
+        let id = doomed.to_string();
+        let kept_id = other.to_string();
+        s.upsert_write_gate_receipt(receipt("write_gate_holds", &id, fields("h1", "flag")))
+            .unwrap();
+        s.upsert_write_gate_receipt(receipt("write_gate_holds", &kept_id, fields("h1", "flag")))
+            .unwrap();
+        s.upsert_write_gate_receipt(receipt("facts", &id, fields("h1", "flag")))
+            .unwrap();
+
+        s.write(|tx| remove_source_holds(tx, "default")).unwrap();
+
+        assert_eq!(
+            ids(&s.list_write_gate_hold_rows(&opts("held")).unwrap()),
+            vec![other]
+        );
+        let read = s.read().unwrap();
+        assert!(
+            receipts_of(&*read, "write_gate_holds", &id)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            receipts_of(&*read, "write_gate_holds", &kept_id)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(receipts_of(&*read, "facts", &id).unwrap().len(), 1);
+        drop(read);
+        // The dedupe entry went with the hold: the same key opens a new hold.
+        assert_ne!(s.upsert_write_gate_hold(hold("fp-1")).unwrap(), doomed);
     }
 
     #[test]

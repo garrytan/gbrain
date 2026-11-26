@@ -27,7 +27,7 @@ export function identityReviewStatus(sourceId: string, raw: unknown): IdentityRe
   if (typeof value === 'string') { try { value = JSON.parse(value); } catch { value = null; } }
   if (!Array.isArray(value)) return [];
   return value.flatMap((entry: unknown) => {
-    const r = entry as { slug?: unknown; candidates?: unknown; decided?: unknown } | null;
+    const r = entry as { slug?: unknown; candidates?: unknown; decided?: unknown; reason?: unknown } | null;
     if (!r || typeof r.slug !== 'string' || !Array.isArray(r.candidates)) return [];
     const candidates = (r.candidates as Array<{ source_id?: unknown; slug?: unknown }>)
       .filter(c => typeof c?.source_id === 'string' && typeof c?.slug === 'string') as Array<{ source_id: string; slug: string }>;
@@ -35,7 +35,9 @@ export function identityReviewStatus(sourceId: string, raw: unknown): IdentityRe
     const names = candidates.map(c => `${c.slug} (${c.source_id})`).join(', ');
     return [{ contact_slug: r.slug, candidates, decided, needs_human: decided === null,
       human_reason: decided ? `Contact ${r.slug} matches ${names}, which the owner recorded as different people; it stays unlinked.`
-        : `Contact ${r.slug} has an email or phone that matches ${candidates.length} person pages (${names}); it is not linked to any of them until the owner says whether they are one person.`,
+        : r.reason === 'name_disagrees'
+          ? `Contact ${r.slug} has the email or phone of ${names}, but that page has another name; it is not linked until the owner says whether they are one person.`
+          : `Contact ${r.slug} has an email or phone that matches ${candidates.length} person pages (${names}); it is not linked to any of them until the owner says whether they are one person.`,
       fix: { argv: ['gbrain', 'dedupe', '--preview', '--source', candidates[0]?.source_id ?? sourceId], consent: [], actor: 'user', requires_exclusive: false,
         why: `Lists the duplicate groups with their evidence: gbrain dedupe confirm <group-id> if ${names} are one person (the next sync of ${sourceId} links the contact), gbrain dedupe reject <group-id> if they are not.` } }];
   });

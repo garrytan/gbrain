@@ -116,7 +116,8 @@ export function checkSelfUpgradeHealth(restart?: RestartPlan | null): Check {
     const parts: string[] = [`mode=${mode}`];
     if (resolution.source !== 'default') parts.push(`channel=${resolution.channel} (${resolution.source})`);
     for (const step of restart?.steps ?? []) {
-      if (step.kind === 'handoff') parts.push(`upgrades restart autopilot pid ${step.pid} through ${launcherName(step.launcher)}`);
+      if (step.kind === 'handoff') parts.push(`upgrades restart ${step.role} pid ${step.pid} through ${launcherName(step.launcher, step.role)}`);
+      if (step.kind === 'service' && step.role === 'serve' && step.argv[0] === 'systemctl' && step.argv.at(-1) !== 'gbrain-serve.service') parts.push(`upgrades restart serve pid ${step.pids.join(', ')} with \`${step.argv.join(' ')}\``);
       if (step.kind === 'replace_copy') parts.push(`pid ${step.pids.join(', ')} run${step.pids.length === 1 ? 's' : ''} from a second install at ${step.root} (${step.from ? `v${step.from}` : 'version unknown'}), which upgrades replace too`);
     }
     // Shared stale/foreign-cache guard: only report an upgrade strictly newer

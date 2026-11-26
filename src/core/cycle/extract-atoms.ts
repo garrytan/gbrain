@@ -83,6 +83,7 @@ import { throwIfAborted } from '../abort-check.ts';
 import { createHash } from 'crypto';
 import { slugifySegment } from '../sync.ts';
 import { resolveAlias, resolveTierDefault } from '../model-config.ts';
+import { isTimeoutError } from '../search/hybrid/degraded.ts';
 import { isMissingSchemaObject, warnOncePerProcess } from '../utils.ts';
 import { utcDate } from './cycle-date.ts';
 import { atomSourceDate, transcriptAtomSourceDate } from './atom-source-date.ts';
@@ -658,8 +659,7 @@ export async function tombstonedTranscriptsForHashes(
         `[extract_atoms] extract_atoms_transcript_state is missing (run gbrain migrate); transcript failure counts and tombstones are off until then.`);
       return new Set();
     }
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error(`[extract_atoms] transcript tombstone check failed (assuming none tombstoned): ${msg}`);
+    console.error(`[extract_atoms] transcript tombstone check failed (assuming none tombstoned): ${isTimeoutError(err) ? 'timeout' : 'provider_error'}`); // class only: an error message can carry a connection string
     return new Set();
   }
 }
@@ -936,9 +936,9 @@ export async function runPhaseExtractAtoms(
   try {
     extractModel = await resolveExtractAtomsModel(engine);
     const configuredBudget = await engine.getConfig('cycle.extract_atoms.budget_usd');
-    if (configuredBudget) {
+    if (configuredBudget?.trim()) {
       const n = Number(configuredBudget);
-      if (Number.isFinite(n) && n > 0) { budgetCap = n; explicitBudget = true; }
+      if (Number.isFinite(n) && n >= 0) { budgetCap = n; explicitBudget = true; }
     }
     const configuredMaxOutput = await engine.getConfig('cycle.extract_atoms.max_output_tokens');
     if (configuredMaxOutput) {

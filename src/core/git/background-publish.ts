@@ -2,8 +2,8 @@
  * GST-2988 PR 2: the background retry of a publish that ran past its budget. When a managed worktree's Git effect
  * publishes and the keep-checkout child stops with publish_secret_rebuild_unbounded (redacting a long unpushed range)
  * or with a scan timeout (publish_scan_unreadable, timed_out), the owner starts the same publish once more in a
- * detached child with BACKGROUND_BUDGET_FACTOR times the budget (gbrain git commit-push --scan-timeout, which bounds
- * the scan and the redaction) and moves on: the root's Git effects retry as a dependency wait while it runs, and
+ * detached child with BACKGROUND_BUDGET_FACTOR times the budget (gbrain git commit-push --scan-timeout, one bound on
+ * the whole publish: its scans, the redaction and the scans after it, so the child holds the publish lock no longer) and moves on: the root's Git effects retry as a dependency wait while it runs, and
  * effects of other roots are not held. The child's JSON result is kept beside the commit ledger; the next attempt
  * reads it. A run that ends over budget again, or racing new commits (publish_secret_rebuild_race), is final: the
  * effects are held as publish_scan_unreadable until the remote branch moves (a publish by hand), whatever HEAD does.
@@ -15,8 +15,8 @@ import { isPidAlive } from '../autopilot-lock.ts';
 import { DEFAULT_SCAN_TIMEOUT_MS } from './range-secret-scan.ts';
 import { ledgerLocation } from './commit-ledger.ts';
 
-export const BACKGROUND_BUDGET_FACTOR = 4;
-/** The budget the background run gets: 4x the default scan and redaction budget (20 minutes). */
+export const BACKGROUND_BUDGET_FACTOR = 2;
+/** The budget the background run gets: 2x the default publish budget (10 minutes), the longest it holds the publish lock past one in-flight fetch or push. */
 export const BACKGROUND_BUDGET_MS = BACKGROUND_BUDGET_FACTOR * DEFAULT_SCAN_TIMEOUT_MS;
 /** A background run older than this is treated as gone (fetches, pushes and both budgets fit well inside it). */
 const MAX_AGE_MS = 2 * BACKGROUND_BUDGET_MS + 600_000;

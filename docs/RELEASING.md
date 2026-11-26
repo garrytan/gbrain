@@ -662,6 +662,16 @@ already-published bad binaries; an affected release needs its own explicitly
 approved recovery and asset verification. The template and plugin publishing
 jobs pin the same Bun version.
 
+The executable build compiles with `--bytecode --format=esm` (the same flags
+sit in `bun run build` and `build:all`), so a binary starts from a stored
+parse of its bundle instead of parsing it on every command. Plain `--bytecode`
+builds CommonJS, which cannot hold top-level await, so `--format=esm` stays
+with it. `bun scripts/check-bytecode-parity.ts`, a step in the Test workflow's
+verify job, builds the release compile line for the host with and without the
+two flags and requires the same stdout, stderr and exit code from a fixed set
+of commands on a temporary PGLite brain; only clock, ids and timings are
+masked. Installs through `bun install -g` run the source and are unaffected.
+
 ### Release CI gate
 
 The `ci-gate` job (`scripts/release-gate.ts`) holds build, publication and the
@@ -683,6 +693,17 @@ succeed on the release commit.
   commit carries the same VERSION with unreleased changes, so the gate then
   refuses and names the re-run of the release commit's push Release run.
   Other refs are refused.
+- **Release dry run (Rust engine addon and gbrain binaries):**
+  `gh workflow run release.yml --ref <branch> -f addon_dry_run=true`
+  builds both addons from that branch, writes the manifest and installs the
+  packaged addon on each platform with the real installer. It also runs the
+  `build` job from that branch: the darwin-arm64 and linux-x64 gbrain binaries
+  are compiled and pass every smoke step, then each runs from an empty
+  directory with a fresh home, as a downloaded install does (`--version`,
+  `init --pglite --no-embedding`, `doctor --json`). It publishes nothing:
+  ci-gate and every publishing job are skipped, no attestation is made, and it
+  runs in its own concurrency group. Without the input the dispatch is the
+  backfill above.
 - The gate waits up to 110 minutes, then fails naming the re-run of the
   Release run.
 - **Reused push run:** a push run that reused a passed full-suite run of its
@@ -785,7 +806,9 @@ gh workflow run promote-stable.yml -f version=<VERSION> \
   message: a title line (`gbrain`, then `stable channel: v<VERSION>`), then one
   `key: value` line each for `version`, `commit`, `tree`, `soak_run`,
   `scoreboard`, `matrix_run` (only when the promotion named one; `stable.json`
-  always has the key, `null` without one), `promoted_by`, `promoted_at` (UTC), `previous`
+  always has the key, `null` without one), `install_canary` (the install
+  canary's status description, or `waived: <reason>`; absent on a rollback,
+  `null` in `stable.json`), `promoted_by`, `promoted_at` (UTC), `previous`
   (`none` on the first promotion), `rollback` and `reason` (`-` when
   empty).
 - **Inputs.** `version` (an existing `v<VERSION>` release tag),
@@ -797,7 +820,8 @@ gh workflow run promote-stable.yml -f version=<VERSION> \
   `withdraw` (versions added to the carried-forward `known_bad` list;
   clients on one are offered the current stable, even when older), and
   `not_promotable` with `not_promotable_reason` and `not_promotable_fixed_in`,
-  and `not_promotable_remove` (see below).
+  and `not_promotable_remove` (see below), and `canary_waiver` (optional:
+  why to promote a release the install canary failed or has not tested yet).
 - **Not promotable.** A release can soak clean and still be bad, when the
   evidence comes from outside the soak (a regression found on a large brain,
   say). Record it so the daily check never soaks or promotes it: dispatch this
@@ -835,6 +859,26 @@ gh workflow run promote-stable.yml -f version=<VERSION> \
   without one, for example past an upgrade break the matrix found: the record
   then says `matrix_run: null` and names the maintainer as `promoted_by`. A
   scheduled promotion always names one.
+- **Install canary.** The install canary installs each release tag into every
+  supported agent harness and reports by posting a commit status with context
+  `gbrain/install-canary` on the tag's commit: `success` when the release is
+  promotable, `failure` when a failure blocks stable, `pending` when its job
+  starts. The description starts with the tag, as `v<VERSION> run <run id>: pass`
+  or `v<VERSION> run <run id>: fail <harness,...>`, and the newest status wins
+  (`scripts/stable-canary.ts` `judgeCanary`). Only statuses posted by an account
+  on the `STABLE_CANARY_POSTERS` repository variable count (comma-separated
+  GitHub logins, `capy-ai[bot]`, the account the canary posts as, when
+  unset), so the list can change with no
+  workflow edit; a status from anyone else, or naming another tag, is ignored.
+  A release with no counted status, or whose newest one is `pending` (a job
+  that died leaves one behind), is not tested yet. A forward promotion of a
+  release the canary failed or has not tested yet is refused unless a
+  maintainer passes `canary_waiver`, which the record keeps as
+  `install_canary: waived: <reason>`; a scheduled promotion never takes a
+  waiver. A real rollback (to an older release, or back to one that was stable
+  before) is not checked; `rollback=true` on a newer release that was never
+  stable is. Every page of the commit's statuses is read, and if they cannot be
+  read the run refuses, so re-run it. Both workflows need `statuses: read`.
 - **Published release.** The tag's `VERSION` file must say the version, and
   its GitHub release must exist and not be a draft, so binary clients can
   fetch the stable release.
@@ -905,7 +949,8 @@ and keeps stable between one day and one week behind what matters:
   commit is on master and whose exact tree passed a successful
   `STABLE_SOAK_WORKFLOW` run with the integrity gates (`privacy_leaks`,
   `read_errors`, `version_skew`, `residents_alive`, `session_refusals`)
-  passing in every cell; the latency gates stay record-only. The soak must be
+  passing in every cell and the [search speed gate](#search-speed-gate)
+  passing in the 2 ms cell; the other latency gates stay record-only. The soak must be
   the full default one: both the 65 ms and 2 ms cells, at least 2 hours each,
   on the requested 600,000-page fixture, with privacy probes run and none
   erroring, so a smaller smoke dispatch never qualifies. On the important-only path the candidate must contain the fix.
@@ -932,6 +977,18 @@ and keeps stable between one day and one week behind what matters:
   newest release it dispatches the matrix on that release too. A red or
   foreign run holds stable with a warning and is never re-dispatched by the
   schedule: a maintainer fixes the break or promotes by hand.
+- **Install canary last.** The candidate also needs the install canary's pass
+  on its release commit, checked as under "Install canary" above and again by
+  `promote()`, and recorded as `install_canary`. A release the canary failed is
+  skipped right after its soak, before its upgrade matrix is dispatched or
+  judged, and logged, and an older qualifying release is promoted instead. When the
+  newest release has no soak yet, the soak is dispatched on it as usual. When it
+  has one and no release qualifies, a candidate the canary has not tested yet
+  makes the run wait (`waiting`, naming the version: "v<VERSION> is not tested
+  yet") with nothing dispatched or pushed, and a later run promotes once the
+  canary passes it; past the weekly floor that wait also raises a warning, so a
+  stopped canary is noticed. A candidate only the canary failed holds stable with
+  a warning until a maintainer fixes it or promotes by hand with `canary_waiver`.
 - **Upgrade breaks hold.** While the matrix's own break issue is open (the
   one the nightly run opens with the `<!-- gbrain-upgrade-matrix:nightly -->`
   marker; another issue with the `upgrade-break` label holds nothing), the
@@ -968,6 +1025,64 @@ and keeps stable between one day and one week behind what matters:
   downgrade on their own. The daily check stays paused until the next manual
   promotion.
 
+<a id="search-speed-gate"></a>
+### Search speed gate
+
+Every release gets the production soak on its tag: `release.yml`'s `soak` job
+dispatches `production-soak.yml` right after it publishes. After each cell's
+soak, `scripts/bench/production-soak/search-gate.ts` measures warm search on
+that cell's 600,000-page brain the way a remote MCP caller sees it:
+
+- **State.** It first parks 9,400 upgrade rows on image pages: queued
+  `protocol_activation` rebuilds that only an operator clears, which a brain
+  upgraded across migration v153 keeps and a fresh soak load never has. The
+  warm-search regression of v0.60.723.0 to v0.60.759.0 cost about 2 s per
+  search only in that state, so the soak's own search numbers never moved.
+- **Measure.** With Postgres JIT on (the stock default) and then off, a fresh
+  `gbrain serve` runs 5 warm-up and 60 timed searches from a fixed query list
+  (mock embedding 200 ms and rerank 300 ms, like real providers).
+- **Judge.** Each arm fails when p50 reaches 2 s or p95 reaches 3 s, when a search fails, or
+  when p50 (p95) is both 1.5 times and 250 ms (400 ms) above the last release
+  whose soak passed this gate with the same settings, read from that run's
+  artifact. A failing arm is measured once more on a fresh server and keeps
+  the better reading whole, so one noisy reading cannot fail a release. When
+  an earlier release's result cannot be read (GitHub down or rate-limited, a
+  corrupt artifact) or the soak did not run the 600,000-page fixture, the arm
+  fails with the cause named instead of silently skipping the regression
+  check; the first release after this gate shipped, which has no earlier
+  result at all, is checked on the fixed bars alone. The p95 bar
+  is 3 s, not 2 s, because on good builds the slowest searches (four-word
+  queries, whose title arm takes about 1.3 s) already sit near 2 s.
+
+The 2 ms cell blocks: a failure turns the soak run red with a message naming
+the arm, the numbers, the slowest timed part and the last release's numbers,
+and the [daily stable check](#daily-stable-check) never promotes that release.
+The 65 ms cell records the same numbers without failing. `search-gate.md` in
+the cell's artifact and the run summary hold the table; `search-gate.json`
+holds every reading.
+
+**The regression check could not run** (the message says why): re-dispatch
+the soak on the same tag once GitHub recovers, or, to release on the fixed bars
+alone, re-dispatch it with `search_gate_override` set to the reason, as below.
+
+**A failure you believe is noise** (the second reading failed too, so rare):
+look at `search-gate-calls.jsonl` first. Then either re-dispatch the soak on
+the same tag (`gh workflow run production-soak.yml --ref v<VERSION>`) and let a
+clean run qualify the release, or, when the slowdown is known and accepted,
+re-dispatch it with a reason: `gh workflow run production-soak.yml --ref
+v<VERSION> -f search_gate_override="<issue link and why>"`. An overridden run
+still measures and reports; the gate passes with the reason and the actor
+recorded in `search-gate.json` and the scoreboard, and the run summary warns.
+An overridden run never serves as the next release's baseline. To compare two
+builds on one loaded brain, run the script again with `--repo <other
+checkout>`.
+
+Cost: each release now gets its own soak, about 9.5 hours of Ubicloud
+standard-16 time (about $6 at $0.010 a minute), so the daily cost is $6 times
+the releases cut that day, and soaks on consecutive tags run at the same time.
+Before this, a soak was dispatched by hand on nearly every release. The gate
+itself adds about 10 to 15 minutes per cell, about $0.30.
+
 ### The `publish-template` job
 
 After the release job, a `publish-template` job force-pushes the rendered
@@ -1001,7 +1116,10 @@ Invariants:
   platform means updating BOTH plus the version job's completeness check;
   `test/release-workflow.test.ts` pins all of it.
 - **Idempotent + self-repairing.** The version job skips when a release for
-  `v<VERSION>` already exists with all expected assets; a partial release
+  `v<VERSION>` already exists with all expected assets (a subset check: an
+  extra asset, such as `gbrain-eval-gates.pin.json`, which
+  `.github/workflows/eval-gates-pin.yml` attaches after the release, does not
+  make it incomplete); a partial release
   (tag but no release, or missing assets) is completed on re-run. Racing
   master pushes queue via the `release` concurrency group — a skipped
   intermediate version is fine, latest is what matters.

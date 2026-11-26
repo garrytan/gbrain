@@ -1,0 +1,207 @@
+{
+ "relations": [
+  [
+   "pages",
+   [
+    {
+     "chunker_version": "3",
+     "compiled_truth": "Alice builds widgets.",
+     "content_hash": "abc123",
+     "created_at": "2026-01-02 03:04:05.123456+00",
+     "frontmatter": "{\"role\": \"founder\"}",
+     "generation": "1",
+     "id": "7",
+     "knowledge_revision": "11111111-1111-4111-8111-111111111111",
+     "page_kind": "markdown",
+     "slug": "people/alice-example",
+     "source_id": "default",
+     "text_projection_revision": "11111111-1111-4111-8111-111111111111",
+     "timeline": "",
+     "title": "Alice Example",
+     "trust_tier": "user_confirmed",
+     "type": "person",
+     "updated_at": "2026-02-03 04:05:06.5+00",
+     "write_origin": "{\"kind\": \"cli\"}"
+    },
+    {
+     "chunker_version": "3",
+     "compiled_truth": "Acme body.",
+     "content_hash": "def456",
+     "created_at": "2026-01-02 03:04:05.123456+00",
+     "frontmatter": "{\"role\": \"founder\"}",
+     "generation": "1",
+     "id": "9",
+     "knowledge_revision": "11111111-1111-4111-8111-111111111111",
+     "page_kind": "markdown",
+     "slug": "companies/acme-example",
+     "source_id": "default",
+     "text_projection_revision": "11111111-1111-4111-8111-111111111111",
+     "timeline": "",
+     "title": "Acme",
+     "trust_tier": "user_confirmed",
+     "type": "person",
+     "updated_at": "2026-02-03 04:05:06.5+00",
+     "write_origin": "{\"kind\": \"cli\"}"
+    }
+   ]
+  ],
+  [
+   "facts",
+   [
+    {
+     "created_at": "2026-01-01 12:00:00+00",
+     "entity_slug": "people/alice-example",
+     "expired_at": "2026-02-01 00:00:00+00",
+     "fact": "Alice founded acme",
+     "id": "501",
+     "kind": "fact",
+     "source": "meeting",
+     "source_id": "default",
+     "valid_from": "2026-01-01 00:00:00+00",
+     "visibility": "world"
+    }
+   ]
+  ],
+  [
+   "page_purges",
+   [
+    {
+     "content_hash": "h1",
+     "purged_at": "2026-11-01 00:00:00+00",
+     "request_id": "0a1b2c3d-0000-4000-8000-00000000000a",
+     "slug": "early",
+     "source_id": "default"
+    },
+    {
+     "content_hash": "h2",
+     "purged_at": "2026-11-02 00:00:00+00",
+     "slug": "purged",
+     "source_id": "default"
+    }
+   ]
+  ],
+  [
+   "oauth_clients",
+   [
+    {
+     "bound_max_concurrent": "1",
+     "budget_usd_per_day": "5.00",
+     "client_id": "c-agent",
+     "client_name": "Agent One",
+     "client_secret_hash": "abc",
+     "created_at": "2026-01-02 03:04:05+00",
+     "federated_read": "{}",
+     "grant_revision": "0",
+     "grant_types": "{client_credentials}",
+     "private_pages": "none",
+     "redirect_uris": "{https://example.test/cb}",
+     "scope": "read agent"
+    },
+    {
+     "bound_tools": "{search,\"get page\"}",
+     "client_id": "c-bound",
+     "client_name": "Bound"
+    },
+    {
+     "client_id": "c-gone",
+     "client_name": "Gone",
+     "deleted_at": "2026-02-03 04:05:06+00",
+     "scope": "agent"
+    },
+    {
+     "client_id": "c-plain",
+     "client_name": "Plain"
+    }
+   ]
+  ],
+  [
+   "derived_generations",
+   [
+    {
+     "attempts": "0",
+     "completeness": "{}",
+     "created_at": "2026-10-01 00:00:00.5+00",
+     "generation": "4",
+     "id": "301",
+     "input_pin": "pin",
+     "item_set_hash": "hash",
+     "kind": "fence",
+     "operation_id": "op-301",
+     "owner_key": "page:people/alice-example",
+     "run_id": "run-1",
+     "source_id": "default",
+     "state": "superseded",
+     "updated_at": "2026-10-02 00:00:00+00"
+    },
+    {
+     "attempts": "0",
+     "completeness": "{}",
+     "created_at": "2026-10-01 00:00:00.5+00",
+     "generation": "4",
+     "id": "302",
+     "input_pin": "pin",
+     "item_set_hash": "hash",
+     "kind": "fence",
+     "operation_id": "op-302",
+     "owner_key": "page:companies/acme-example",
+     "run_id": "run-1",
+     "source_id": "default",
+     "state": "live",
+     "updated_at": "2026-10-02 00:00:00+00"
+    },
+    {
+     "attempts": "0",
+     "completeness": "{}",
+     "created_at": "2026-10-01 00:00:00.5+00",
+     "generation": "4",
+     "id": "303",
+     "input_pin": "pin",
+     "item_set_hash": "hash",
+     "kind": "fence",
+     "operation_id": "op-303",
+     "owner_key": "page:people/alice-example",
+     "run_id": "run-1",
+     "source_id": "default",
+     "state": "held",
+     "updated_at": "2026-10-02 00:00:00+00"
+    }
+   ]
+  ],
+  [
+   "derived_generation_items",
+   [
+    {
+     "action": "retired",
+     "generation_id": "301",
+     "identity_hash": "id-hash",
+     "item_key": "fact:501",
+     "pending": "f",
+     "preimage": "{\"id\": 501, \"row_num\": 1, \"fact\": \"Alice founded acme\", \"visibility\": \"world\"}"
+    },
+    {
+     "action": "published",
+     "generation_id": "301",
+     "identity_hash": "id-hash",
+     "item_key": "fact:502",
+     "pending": "f"
+    },
+    {
+     "action": "kept",
+     "generation_id": "302",
+     "identity_hash": "id-hash",
+     "item_key": "fact:9",
+     "pending": "f"
+    },
+    {
+     "action": "retired",
+     "generation_id": "303",
+     "identity_hash": "id-hash",
+     "item_key": "fact:501",
+     "pending": "f",
+     "preimage": "{\"id\": 501, \"row_num\": 1, \"fact\": \"Alice founded acme\", \"visibility\": \"world\"}"
+    }
+   ]
+  ]
+ ],
+ "seed_id": "seed-v0.60.766"
+}

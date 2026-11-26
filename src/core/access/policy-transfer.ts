@@ -31,7 +31,7 @@ export const SOURCE_POLICY_DIR = '.gbrain/access';
 /** The policy files an export carries for one source, or for every source with folder rules when sourceId is null. */
 export async function exportPolicyFiles(engine: BrainEngine, sourceId: string | null): Promise<Array<{ path: string; content: string }>> {
   const sources = sourceId ? [sourceId]
-    : (await engine.executeRaw<{ source_id: string }>('SELECT source_id FROM access_policy_state ORDER BY source_id')).map(r => r.source_id);
+    : await engine.listAccessPolicySourceIds();
   const files: Array<{ path: string; content: string }> = [];
   for (const source of sources) {
     const invalid = (await coverageRows(engine, source)).filter(c => c.reason === 'invalid');

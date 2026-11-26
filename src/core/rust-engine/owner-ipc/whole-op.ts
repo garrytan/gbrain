@@ -1,8 +1,12 @@
 /**
  * Whole operations a client of a Rust brain's owner sends as one request. A write path that opens its own
  * transaction (the file and content imports) cannot run in a client, because transactions do not cross the owner
- * socket (routes.ts). Its entry point calls `forwardWholeOperation` first; on a client engine the whole operation runs
- * inside the owner, transaction included, and its result or error comes back as the in-process call would give it.
+ * socket (routes.ts). An entry point that calls `forwardWholeOperation` first has the whole operation run inside the
+ * owner, transaction included, and gets its result or error back as the in-process call would give it. No entry point
+ * calls it yet for the imports, so a client's page and memory writes still stop at write admission
+ * (persistence/admission-retry.ts), which opens a transaction, on `engine_capability_missing` reason `transactions`.
+ * `snapshotStore` and `snapshotStatus` are the whole operations that are not imports: one copy of the whole brain at one
+ * committed generation, and what became of it (store-snapshot.ts). Their caller is the shadow drill and `gbrain backup`.
  *
  * Only data crosses: an option that is a function (a coordinator `prepare` seam) refuses with
  * `engine_capability_missing`, and so does a caller that is not the trusted local CLI (a remote MCP caller of a second
@@ -21,7 +25,8 @@ import { OperationError } from '../../ops/contract.ts';
 import { callerIsRemote, ownerConnectionFor, ownerRejoinFor, untilCallEnds, type OwnerConnection } from './client.ts';
 import { ownerGone, ownerIpcRefusal } from './routes.ts';
 
-export type WholeOperationName = 'importFromContent' | 'importFromFile' | 'importImageFile' | 'importManagedFiles';
+export type WholeOperationName =
+  | 'importFromContent' | 'importFromFile' | 'importImageFile' | 'importManagedFiles' | 'snapshotStore' | 'snapshotStatus';
 
 /** True when `engine` reaches its brain through another process (a client of the Rust brain's owner). */
 export function isOwnerClient(engine: object): boolean {
@@ -35,6 +40,8 @@ const PATH_ARGS: Readonly<Record<WholeOperationName, readonly number[]>> = {
   importFromFile: [0],
   importImageFile: [0],
   importManagedFiles: [],
+  snapshotStore: [0],
+  snapshotStatus: [],
 };
 
 /**
