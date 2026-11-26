@@ -7,17 +7,28 @@
  * Protects: the options list names every option the store takes; an option set with a contextual-retrieval stamp is not
  * comparable; one without it, or with mode 'none', is; a key the store does not take still is not.
  * Fails when the list lacks a key the store takes, or a stamping write is judged comparable.
- * Pure: no engine.
+ * No engine: the Rust putPage member runs on a stand-in brain that records the call.
  */
 import { expect, test } from 'bun:test';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { STORE_MEMBERS } from '../src/core/rust-engine/store-members/index.ts';
+import { isEngineCapabilityRefusal } from '../src/core/engine-capability-refusal.ts';
 import { PUT_PAGE_OPTIONS, putPageOptionsComparable } from '../src/shadow/write-capture.ts';
 
-test('the options list is the store\'s own, contextualRetrieval included', () => {
-  const source = readFileSync(join(import.meta.dir, '..', 'src', 'core', 'rust-engine', 'store-members', 'pages.ts'), 'utf8');
-  const taken = /takeOptions\('putPage', opts, \[([^\]]*)\], \[([^\]]*)\]\)/.exec(source)!.slice(1).flatMap((list) => [...list.matchAll(/'([A-Za-z]+)'/g)].map((m) => m[1]));
-  expect([...PUT_PAGE_OPTIONS].sort()).toEqual(taken.sort());
+/** Whether the Rust putPage member refuses `opts` with the typed capability refusal (the store's own option list), on a brain that records the call. */
+async function storeRefusesOption(key: string): Promise<boolean> {
+  const brain = { putPage: async () => ({}) } as never;
+  const page = { type: 'note', title: 'Opt Example', compiled_truth: 'body' } as never;
+  try { await STORE_MEMBERS.putPage(brain, 'people/opt-example', page, { [key]: true } as never); } catch (error) { return isEngineCapabilityRefusal(error); }
+  return false;
+}
+
+test('the options list is the store\'s own, contextualRetrieval included', async () => {
+  // Every option the list names is one the store takes (or ignores); a key it does not name is refused by the store.
+  for (const key of PUT_PAGE_OPTIONS) expect(await storeRefusesOption(key), `${key} is on the list but the store refuses it`).toBe(false);
+  for (const key of ['reuseSegments', 'somethingNew', 'prepare']) {
+    expect(PUT_PAGE_OPTIONS.has(key)).toBe(false);
+    expect(await storeRefusesOption(key), `${key} is not on the list, so the store must refuse it`).toBe(true);
+  }
   expect(PUT_PAGE_OPTIONS.has('contextualRetrieval')).toBe(true);
 });
 
