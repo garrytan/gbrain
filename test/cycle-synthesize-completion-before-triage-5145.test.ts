@@ -98,4 +98,31 @@ describe('#5145 completed synthesis is screened out before triage', () => {
     rmSync(brainDir, { recursive: true, force: true });
     rmSync(corpusDir, { recursive: true, force: true });
   }, 60_000);
+
+  test.each([
+    ['preview', true, ['expired', 'fresh']],
+    ['real run', false, ['fresh']],
+  ] as const)('%s sweeps expired cache rows only during real synthesis', async (_mode, dryRun, retained) => {
+    try {
+      const name = '2026-09-04-done.txt';
+      const done = writeTranscript(name);
+      await seedCompleted(`dream:synth-v2:default:filename:${encodeURIComponent(name)}:${done.hash16}`);
+      await engine.executeRaw(`
+        INSERT INTO dream_verdicts (file_path, content_hash, worth_processing, expires_at)
+        VALUES ('/fixture/prior-expired.txt', 'expired', false, now() - interval '1 day'),
+               ('/fixture/prior-fresh.txt', 'fresh', true, now() + interval '1 day')
+      `);
+
+      const result = await runPhaseSynthesize(engine, { brainDir, dryRun });
+      expect(result.status).toBe('ok');
+      expect(result.details).toMatchObject({ transcripts_processed: 0, pages_written: 0 });
+      const rows = await engine.executeRaw<{ content_hash: string }>(
+        'SELECT content_hash FROM dream_verdicts ORDER BY content_hash',
+      );
+      expect(rows.map(row => row.content_hash)).toEqual([...retained]);
+    } finally {
+      rmSync(brainDir, { recursive: true, force: true });
+      rmSync(corpusDir, { recursive: true, force: true });
+    }
+  }, 60_000);
 });

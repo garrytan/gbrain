@@ -535,14 +535,14 @@ async function runPhaseSynthesizeInner(
       return noCandidates('no transcripts to process', { transcripts_discovered: 0 });
     }
 
-    // Best-effort housekeeping (#4069): expiry is enforced on reads
-    // regardless, so a sweep failure must not block synthesis when the
-    // database is otherwise usable.
-    try {
-      const swept = await engine.sweepDreamVerdicts();
-      if (swept > 0) process.stderr.write(`[dream] swept ${swept} expired verdict cache row(s)\n`);
-    } catch (e) {
-      process.stderr.write(`[dream] warning: verdict cache sweep failed: ${e instanceof Error ? e.message : String(e)}\n`);
+    // Only real synthesis needs the best-effort sweep (#4069). Reads enforce expiry.
+    if (!opts.dryRun) {
+      try {
+        const swept = await engine.sweepDreamVerdicts();
+        if (swept > 0) process.stderr.write(`[dream] swept ${swept} expired verdict cache row(s)\n`);
+      } catch (e) {
+        process.stderr.write(`[dream] warning: verdict cache sweep failed: ${e instanceof Error ? e.message : String(e)}\n`);
+      }
     }
 
     const { completed, retainedSkips, successfulV2Keys, synthesisIdentity } = await partitionCompletedSynthesis(engine, transcripts, opts.sourceId ?? 'default', maintenance, opts.dryRun);
