@@ -419,6 +419,7 @@ import * as schemaDetectImpl from './engine-sql/schema-detect.ts';
 import * as queryCacheInvalidateImpl from './engine-sql/query-cache-invalidate.ts';
 import * as accessReadLogImpl from './engine-sql/access-read-log.ts';
 import * as handoverReadsImpl from './engine-sql/handover-reads.ts';
+import { commitLogMissing } from './engine-members/commit-log.ts';
 import * as sweepReadsImpl from './engine-sql/sweep-reads.ts';
 import * as sessionStateImpl from './engine-sql/session-state.ts';
 import type { DrainLeaseHolderRecord } from './engine-sql/cycle-locks.ts';
@@ -1452,6 +1453,10 @@ export class PGLiteEngine implements BrainEngine {
     const guard = this._checkpointGuard ??= new PgliteCheckpointGuard();
     return this._dbWork.admit(db => guard.runOutermost(sql => db.query(sql), () => run(db)));
   }
+
+  // The commit log is the Rust store's (engine-members/commit-log.ts): a SQL engine refuses both members.
+  readCommitLog(): Promise<never> { return commitLogMissing('readCommitLog'); }
+  lastCommitPosition(): Promise<never> { return commitLogMissing('lastCommitPosition'); }
 
   async transactionDirect<T>(fn: (engine: BrainEngine) => Promise<T>, opts?: TransactionOptions): Promise<T> {
     return this.transaction(fn, opts);
