@@ -1072,7 +1072,7 @@ fn a_labelled_only_caller_reads_a_fact_only_on_its_own_member_page() {
 }
 
 /// A member's fact read with `access.members_read_lineage` on (row 32e-b-4), as the TypeScript member sends it
-/// (`lineageProvenance`, `ownerRead`, `callerRecord`): the first form's provenance page is judged by the member's lineage,
+/// (`provenanceLineage`, `ownerRead`, `callerRecord`): the first form's provenance page is judged by the member's lineage,
 /// the second form's by the plain policy, and a labelled-only member also reads a fact on a page that names it or whose
 /// every origin does. Another member's page and a derived page with a null origin are never read.
 #[test]
@@ -1130,7 +1130,7 @@ fn a_member_reads_a_fact_by_its_provenance_page_under_lineage() {
         let mut policy = json!({
             "honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn",
             "identity": [format!("member:{who}")], "ownerRead": true, "callerRecord": true,
-            "lineageProvenance": first_form, "folderCoverage": coverage,
+            "provenanceLineage": first_form, "folderCoverage": coverage,
         });
         if first_form {
             policy["memberPage"] = json!(format!("memory/members/{who}"));

@@ -20,7 +20,7 @@ The census comes from reading the code. It was not built or run against `cd8eac4
   the caller satisfies, a labelled-only grant and a member's lineage read (row 32e-b-2, `callerReference` in
   `private-provenance.ts`). The page policy judges the lineage read with the owner read rule and, for a labelled-only
   caller, with the labelled-only conjunct and its origin walk; the fact policy serves a labelled-only grant (a fact is read
-  on the caller's own member page, and with lineage on also on a provenance page that names it or whose every origin does) and a member's lineage read (row 32e-b-4: `lineageProvenance` in the policy; `search` is served with lineage on too, through its saved-facts arm). The remote read floor of a labelled-only caller (`remoteReadFloorSql`, used by `search`, `list_pages` and `recall` when no source is named) is served by `storePageTextPolicy`.
+  on the caller's own member page, and with lineage on also on a provenance page that names it or whose every origin does) and a member's lineage read (row 32e-b-4: `provenanceLineage` in the policy; `search` is served with lineage on too, through its saved-facts arm). The remote read floor of a labelled-only caller (`remoteReadFloorSql`, used by `search`, `list_pages` and `recall` when no source is named) is served by `storePageTextPolicy`.
   An audience of several identities for a labelled-only member stops too.
 - `storePrivacyPolicy` (fact policy) stops at `private-provenance.ts:166`. `storePageTextPolicy` and `storePagePolicy`
   stop at `:271` after `judgeWidenedCaller` (`:293`).

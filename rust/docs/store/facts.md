@@ -85,7 +85,7 @@ second form has no CASE and sends no `memberPage`. A labelled-only caller is ser
 store hides a fact unless it sits on `memory/members/<member>` and that page names `member:<member>` (`own_page_fact`,
 `labelledOnlyFactSql`); the entity and holding pages are judged without the labelled-only conjunct, as
 `privateEntityFilterForCaller` does. A non-owner caller under `access.members_read_lineage` (ordinary or labelled-only) is served too (row 32e-b-4): the member sends
-`lineageProvenance` (`provenance_lineage` in `facts/privacy.rs`) and `callerRecord`, with the record's satisfied rules and pending prefixes.
+`provenanceLineage` (`provenance_lineage` in `facts/privacy.rs`) and `callerRecord`, with the record's satisfied rules and pending prefixes.
 In the first form (`privateProvenanceFilterUnderPolicy`) the provenance page is judged by `provenance_judge`: the caller's own member page by its
 identity and the plain origin rule, any other `memory/members/` page by the empty identity, and every other page by the member's lineage as an
 origin (`lineageAccessSql`, `derived` true) and the privacy part. In the second form (`privateFactFilterForCaller`) the provenance part is the plain

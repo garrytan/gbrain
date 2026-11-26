@@ -11,7 +11,7 @@
  * provenance page by the identity only on the caller's own member page (`memberPage`, the member-page case of
  * privateProvenanceFilterUnderPolicy; the other form has none), plus a labelled-only grant (callerReference: the store keeps a fact
  * to the caller's own member page, and with lineage to a provenance page that names it) and a member's lineage read
- * (`lineageProvenance`: the first form's lineage case judges the provenance page by the member's lineage; the second form's
+ * (`provenanceLineage`: the first form's lineage case judges the provenance page by the member's lineage; the second form's
  * provenance part is the plain one, so lineage changes only its labelled-only conjunct and its entity gate; RUST_ENGINE.md row
  * 32e-b-4). Any other caller (an audience, an owner's lineage read, a relaxed remote read) refuses with `engine_capability_missing`.
  *
@@ -108,7 +108,7 @@ export interface StorePrivacyPolicy {
    * identity, every other page by `lineageAccessSql` judged as an origin and the privacy part). false: the plain provenance part
    * (privateFactFilterForCaller). Absent: no lineage (`provenance_lineage` in privacy.rs).
    */
-  lineageProvenance?: boolean;
+  provenanceLineage?: boolean;
   /**
    * The labelled-only conjunct (`labelledOnlySql`): the page names one of `identity` or has a folder rule in `satisfiedRuleIds`
    * (`LabelledOnly` in privacy.rs). `lineage`: access.members_read_lineage is on, so a derived page also passes when every
@@ -235,7 +235,7 @@ export function storePrivacyPolicy(
         // is read off the canonical text; the second form has none.
         const lineage = record.lineage === true && record.owner !== true;
         const lineageCase = form.memberCase && canonical.includes(`CASE WHEN starts_with(pp.slug, '${MEMBER_PAGE_PREFIX}') THEN`);
-        const lineageFlags = lineage ? { lineageProvenance: lineageCase, callerRecord: true } : {};
+        const lineageFlags = lineage ? { provenanceLineage: lineageCase, callerRecord: true } : {};
         return { ...factPolicyFlags(canonical), ...readers, ...(withFolders ? stored : {}), ...(judged ? { memberPage } : {}), ...(provenancePrivacyOff ? { provenancePrivacyOff: true } : {}), ...reference.flags, ...lineageFlags };
       }
     }

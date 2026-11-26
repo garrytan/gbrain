@@ -91,8 +91,8 @@ describe('the Rust page and fact policy translator under excludePrivate', () => 
       // The first form's text holds the lineage case; the second form's provenance part is the plain one.
       const one = first(record);
       const two = second(record);
-      expect({ name, lineageProvenance: one?.lineageProvenance, ownerRead: one?.ownerRead, callerRecord: one?.callerRecord }).toEqual({ name, lineageProvenance: true, ownerRead: true, callerRecord: true });
-      expect({ name, lineageProvenance: two?.lineageProvenance, ownerRead: two?.ownerRead, callerRecord: two?.callerRecord }).toEqual({ name, lineageProvenance: false, ownerRead: true, callerRecord: true });
+      expect({ name, provenanceLineage: one?.provenanceLineage, ownerRead: one?.ownerRead, callerRecord: one?.callerRecord }).toEqual({ name, provenanceLineage: true, ownerRead: true, callerRecord: true });
+      expect({ name, provenanceLineage: two?.provenanceLineage, ownerRead: two?.ownerRead, callerRecord: two?.callerRecord }).toEqual({ name, provenanceLineage: false, ownerRead: true, callerRecord: true });
       // The pending prefixes and satisfied rules of the record are sent, so the store hides what the text hides (a missing field was a leak in row 32e-b-2).
       for (const policy of [one, two]) expect({ name, folders: { satisfiedRuleIds: policy?.satisfiedRuleIds, folderCoverage: policy?.folderCoverage } }).toEqual({ name, folders });
       expect({ name, terms: one?.labelledOnly }).toEqual({ name, terms: 'labelledOnly' in record ? { identity: ['member:alice-example'], satisfiedRuleIds: ['default:r1'], lineage: true, member: 'alice-example' } : undefined });
@@ -100,7 +100,7 @@ describe('the Rust page and fact policy translator under excludePrivate', () => 
     // Without lineage the policy carries none of it: the earlier rule stays.
     for (const read of [first, second]) {
       const plain = read({ ...MEMBER, ...folders });
-      expect({ lineageProvenance: plain?.lineageProvenance, ownerRead: plain?.ownerRead, callerRecord: plain?.callerRecord }).toEqual({ lineageProvenance: undefined, ownerRead: undefined, callerRecord: undefined });
+      expect({ provenanceLineage: plain?.provenanceLineage, ownerRead: plain?.ownerRead, callerRecord: plain?.callerRecord }).toEqual({ provenanceLineage: undefined, ownerRead: undefined, callerRecord: undefined });
     }
   });
 });
