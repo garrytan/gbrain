@@ -945,6 +945,18 @@ pub(crate) fn insert_write_request_in(
         completed_at_us: None,
         extra,
     };
+    let mut record = record;
+    crate::journal::stamp_origin(
+        &mut record.extra,
+        &record.principal_kind,
+        &record.principal_id,
+        None,
+    );
+    crate::commit_log::scope::note(
+        &record.request_id,
+        &record.principal_kind,
+        &record.principal_id,
+    );
     write_request(tx, &record)?;
     tx.put(
         &keys::request_by_principal(&record.principal_kind, &record.principal_id, &request_id),

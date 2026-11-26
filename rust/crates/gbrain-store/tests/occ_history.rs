@@ -20,12 +20,18 @@
 //! was refused after it may be there. An id allocated after the reopen must be higher than every
 //! id the recovered transactions hold.
 //!
+//! The logged runs (`logged_*`) do the same with the commit log on (`commit_log.rs`), activated
+//! before the first write: besides the checks above, replaying the recovered log from an empty
+//! state must give exactly the recovered records (no record without its data, no data without its
+//! record), and the log must be gap-free and end at the recovered commit sequence.
+//!
 //! The workload of each thread comes from the seed, but the thread interleaving does not: the
 //! operating system schedules the threads, so a failing seed is not always reproducible. A run
 //! that fails prints its seed, writer count and kind.
 
 use gbrain_sim::seed::seeds;
 use gbrain_sim::{CrashMode, FaultPlan, SimDisk, SimFile, SimRng};
+use gbrain_store::commit_log::{self, CommitPosition, LogOp, LogSettings};
 use gbrain_store::error::{STORE_IO, WRITE_CONFLICT};
 use gbrain_store::occ_kv::OccKv;
 use gbrain_store::redb_kv::RedbKv;
@@ -67,6 +73,103 @@ impl FileBackend for SimBackend {
 
 fn open(disk: &SimDisk) -> Result<OccKv, StoreError> {
     OccKv::new(RedbKv::open_backend(Box::new(SimBackend(disk.open(FILE))))?)
+}
+
+/// `open`, then, for a logged run, the log: activated on a fresh file (one commit that holds only
+/// the log's meta record), enabled on a reopen.
+fn open_as(disk: &SimDisk, logged: bool) -> Result<OccKv, StoreError> {
+    let kv = open(disk)?;
+    if logged {
+        kv.set_commit_clock(std::sync::Arc::new(gbrain_store::SystemEnv), None)?;
+        if commit_log::read_meta(&*kv.snapshot()?)?.is_none() {
+            let mut tx = kv.begin_write()?;
+            let since = CommitPosition::new(kv.version()? + 1, 0);
+            commit_log::write_activation(&mut *tx, since)?;
+            tx.commit()?;
+        }
+        kv.enable_commit_log(LogSettings::default())?;
+    }
+    Ok(kv)
+}
+
+/// The logged run's extra check: the log, replayed from an empty state, is exactly the store's
+/// records (all but the log's own), gap-free, and it ends at the store's commit sequence.
+fn check_log(kv: &dyn Kv) -> Result<(), String> {
+    let read = kv.snapshot().map_err(|e| e.to_string())?;
+    let version = kv.version().map_err(|e| e.to_string())?;
+    let page = commit_log::read_commit_log(&*read, None, usize::MAX).map_err(|e| e.to_string())?;
+    if page.snapshot_required {
+        return Err("the log does not reach back to its start".into());
+    }
+    let mut model: BTreeMap<Vec<u8>, Vec<u8>> = BTreeMap::new();
+    let mut last = None;
+    let mut last_time = None;
+    for record in &page.records {
+        if last_time.is_some_and(|t| record.commit_time <= t) {
+            return Err(format!(
+                "commit time goes back at {}",
+                record.position.token()
+            ));
+        }
+        last_time = Some(record.commit_time);
+        for (key, op) in &record.ops {
+            match op {
+                LogOp::Put(v) => {
+                    model.insert(key.clone(), v.clone());
+                }
+                LogOp::Delete => {
+                    model.remove(key);
+                }
+                LogOp::AddI64(d) => {
+                    let base = model
+                        .get(key)
+                        .map(|b| i64::from_le_bytes(b.as_slice().try_into().unwrap()))
+                        .unwrap_or(0);
+                    model.insert(key.clone(), base.wrapping_add(*d).to_le_bytes().to_vec());
+                }
+                LogOp::RaiseCounter(m) => {
+                    let base = model
+                        .get(key)
+                        .map(|b| u64::from_be_bytes(b.as_slice().try_into().unwrap()))
+                        .unwrap_or(0);
+                    model.insert(key.clone(), base.max(*m).to_be_bytes().to_vec());
+                }
+            }
+        }
+        last = Some(record.position);
+    }
+    let mut stored = BTreeMap::new();
+    read.scan(&[1], &[0xFF; 64], false, &mut |k, v| {
+        if !commit_log::is_log_key(k) {
+            stored.insert(k.to_vec(), v.to_vec());
+        }
+        true
+    })
+    .map_err(|e| e.to_string())?;
+    if stored != model {
+        return Err(format!(
+            "the log replays to {} keys, the store holds {} (a record without its data or data without its record)",
+            model.len(),
+            stored.len()
+        ));
+    }
+    if let Some(t) = last_time {
+        let durable = kv.last_commit_time().map_err(|e| e.to_string())?;
+        if durable != Some(t) {
+            return Err(format!(
+                "the newest record's time is {t}, the durable time {durable:?}"
+            ));
+        }
+    }
+    if let Some(last) = last
+        && last.sequence != version
+    {
+        return Err(format!(
+            "the log ends at sequence {}, the store at {version}",
+            last.sequence
+        ));
+    }
+    Ok(())
 }
 
 fn register(i: usize) -> Vec<u8> {
@@ -427,9 +530,9 @@ struct Tally {
     in_doubt_dropped: usize,
 }
 
-fn honest_run(seed: u64, writers: usize, tally: &mut Tally) -> Result<(), String> {
+fn honest_run(seed: u64, writers: usize, logged: bool, tally: &mut Tally) -> Result<(), String> {
     let disk = SimDisk::new(seed, FaultPlan::none());
-    let kv = open(&disk).map_err(|e| e.to_string())?;
+    let kv = open_as(&disk, logged).map_err(|e| e.to_string())?;
     let h = run_writers(&kv, seed, writers);
     if !h.in_doubt.is_empty() || !h.refused.is_empty() {
         return Err("a write failed on an honest disk".into());
@@ -450,6 +553,9 @@ fn honest_run(seed: u64, writers: usize, tally: &mut Tally) -> Result<(), String
     if counted != expected {
         return Err(format!("counter is {counted}, {expected} commits"));
     }
+    if logged {
+        check_log(&kv)?;
+    }
     tally.runs += 1;
     tally.acked += h.acked.len();
     tally.conflicts += h.conflicts;
@@ -457,11 +563,17 @@ fn honest_run(seed: u64, writers: usize, tally: &mut Tally) -> Result<(), String
     Ok(())
 }
 
-fn crash_run(seed: u64, writers: usize, kind: Kind, tally: &mut Tally) -> Result<(), String> {
+fn crash_run(
+    seed: u64,
+    writers: usize,
+    kind: Kind,
+    logged: bool,
+    tally: &mut Tally,
+) -> Result<(), String> {
     // Calibration: the I/O an honest run of this seed does after the store opens.
     let budget = {
         let disk = SimDisk::new(seed, FaultPlan::none());
-        let kv = open(&disk).map_err(|e| e.to_string())?;
+        let kv = open_as(&disk, logged).map_err(|e| e.to_string())?;
         let setup = disk.stats().io_ops;
         run_writers(&kv, seed, writers);
         drop(kv);
@@ -475,7 +587,9 @@ fn crash_run(seed: u64, writers: usize, kind: Kind, tally: &mut Tally) -> Result
     ];
     let mode = modes[rng.below(modes.len())];
     let disk = SimDisk::new(seed, FaultPlan::none());
-    let kv = open(&disk).map_err(|e| e.to_string())?;
+    let kv = open_as(&disk, logged).map_err(|e| e.to_string())?;
+    // The version the run starts from: 0, or the log activation commit on a logged run.
+    let base_version = kv.version().map_err(|e| e.to_string())?;
     let setup = disk.stats().io_ops;
     disk.set_plan(FaultPlan {
         fsync_error_pm: if kind == Kind::FsyncFault {
@@ -493,6 +607,7 @@ fn crash_run(seed: u64, writers: usize, kind: Kind, tally: &mut Tally) -> Result
     drop(kv);
     check_ids(&h)?;
     let (acked_model, acked_last) = replay_acked(&h.acked)?;
+    let acked_last = acked_last.max(base_version);
     let mut with_doubt = acked_model.clone();
     let doubt: Vec<&Txn> = h.in_doubt.iter().collect();
     replay_batch(&mut with_doubt, &doubt).map_err(|e| format!("the in-doubt batch: {e}"))?;
@@ -500,13 +615,20 @@ fn crash_run(seed: u64, writers: usize, kind: Kind, tally: &mut Tally) -> Result
     disk.reboot();
     disk.set_plan(FaultPlan::none());
     let reopened = catch_unwind(AssertUnwindSafe(|| -> Result<_, StoreError> {
-        let kv = open(&disk)?;
+        let kv = open_as(&disk, logged)?;
+        if logged {
+            // Checked as recovered, before the write below adds to it.
+            check_log(&kv).map_err(|e| StoreError::new("log_check", e))?;
+        }
         let version = kv.version()?;
         let state = stored(&kv)?;
         let mut tx = kv.begin_write()?;
         let next_id = tx.allocate(SEQUENCE, 1)?;
         tx.put(b"r/after", b"x")?;
         let after = tx.commit()?;
+        if logged {
+            check_log(&kv).map_err(|e| StoreError::new("log_check", e))?;
+        }
         Ok((version, state, next_id, after))
     }));
     let (version, state, next_id, after) = match reopened {
@@ -564,21 +686,25 @@ fn crash_run(seed: u64, writers: usize, kind: Kind, tally: &mut Tally) -> Result
 }
 
 fn sweep(kind: Kind, default_seeds: u64) {
+    sweep_as(kind, default_seeds, false);
+}
+
+fn sweep_as(kind: Kind, default_seeds: u64, logged: bool) {
     for &writers in WRITERS {
         let mut tally = Tally::default();
         for seed in seeds(default_seeds) {
             let outcome = match kind {
-                Kind::Honest => honest_run(seed, writers, &mut tally),
-                _ => crash_run(seed, writers, kind, &mut tally),
+                Kind::Honest => honest_run(seed, writers, logged, &mut tally),
+                _ => crash_run(seed, writers, kind, logged, &mut tally),
             };
             if let Err(e) = outcome {
                 panic!(
-                    "{kind:?} run with {writers} writers failed (GBRAIN_SIM_SEED={seed}; the \
+                    "{kind:?} run (logged {logged}) with {writers} writers failed (GBRAIN_SIM_SEED={seed}; the \
                      thread interleaving is not replayed): {e}"
                 );
             }
         }
-        eprintln!("{kind:?} {writers} writers: {tally:?}");
+        eprintln!("{kind:?} logged={logged} {writers} writers: {tally:?}");
         assert_eq!(tally.gave_up, 0, "a writer gave up after 1,000 conflicts");
         if kind == Kind::Honest {
             assert!(tally.acked >= tally.runs * TXNS, "{tally:?}");
@@ -599,6 +725,354 @@ fn a_crash_keeps_every_acknowledged_commit_and_the_in_flight_batch_whole() {
 #[test]
 fn a_failed_fsync_leaves_the_in_flight_batch_whole() {
     sweep(Kind::FsyncFault, 10);
+}
+
+#[test]
+fn logged_concurrent_writers_leave_a_serializable_history_and_a_matching_log() {
+    sweep_as(Kind::Honest, 6, true);
+}
+
+#[test]
+fn logged_a_crash_keeps_the_log_and_the_records_in_step() {
+    sweep_as(Kind::Crash, 10, true);
+}
+
+#[test]
+fn logged_a_failed_fsync_keeps_the_log_and_the_records_in_step() {
+    sweep_as(Kind::FsyncFault, 10, true);
+}
+
+/// Every record of `kv` but the log's own.
+fn all_data(kv: &dyn Kv) -> BTreeMap<Vec<u8>, Vec<u8>> {
+    let mut out = BTreeMap::new();
+    kv.snapshot()
+        .unwrap()
+        .scan(&[1], &[0xFF; 64], false, &mut |k, v| {
+            if !commit_log::is_log_key(k) {
+                out.insert(k.to_vec(), v.to_vec());
+            }
+            true
+        })
+        .unwrap();
+    out
+}
+
+/// Waits (bounded) until `n` commits sit on the pipeline's queue: the schedule the batch tests force.
+fn wait_queued(kv: &OccKv, n: usize) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while kv.queued_commits() < n {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the commits never queued ({} of {n})",
+            kv.queued_commits()
+        );
+        std::thread::yield_now();
+    }
+}
+
+/// One forced group commit: the pipeline is held while three transactions queue, in this order and
+/// whatever the machine's load (each is on the queue before the next is sent): two in write skew,
+/// so the second is refused, and one with a counter, an id sequence and a 200 KB value. Then they go
+/// as one batch. Returns how many were acknowledged.
+fn forced_batch(kv: &std::sync::Arc<OccKv>) -> usize {
+    let exclusive = kv.begin_write_exclusive().unwrap();
+    let queue = |reads: &'static [u8], write: &'static [u8]| {
+        let mut tx = kv.begin_write().unwrap();
+        tx.get(reads).unwrap();
+        tx.put(write, write).unwrap();
+        std::thread::spawn(move || tx.commit_position())
+    };
+    let t1 = queue(b"r/01", b"r/00");
+    wait_queued(kv, 1);
+    let t2 = queue(b"r/00", b"r/01");
+    wait_queued(kv, 2);
+    let t3 = {
+        let mut tx = kv.begin_write().unwrap();
+        tx.add_i64(COUNTER, 3).unwrap();
+        tx.raise_counter(SEQUENCE, 77).unwrap();
+        tx.put(b"r/big", &vec![9u8; 200_000]).unwrap();
+        std::thread::spawn(move || tx.commit_position())
+    };
+    wait_queued(kv, 3);
+    drop(exclusive);
+    [t1, t2, t3]
+        .into_iter()
+        .map(|t| t.join().expect("a writer thread panicked"))
+        .filter(Result::is_ok)
+        .count()
+}
+
+/// What the crash sweep accepts after a reboot.
+#[derive(Clone, Copy, PartialEq)]
+enum Oracle {
+    /// The batch is there whole or not at all (the one batch `forced_batch` forms).
+    WholeOrNone,
+    /// Any committed prefix of the schedule's commits (a schedule that commits more than once).
+    CommittedPrefix,
+}
+
+/// A schedule the sweep runs: it commits the three transactions of `forced_batch`.
+type Schedule = fn(&std::sync::Arc<OccKv>) -> usize;
+
+/// The schedule the earlier, sleep-based `forced_batch` fell into on a loaded machine: the third
+/// transaction reaches the pipeline only after the first two were taken into a batch, so the three
+/// commit as two record-file commits instead of one.
+fn forced_split(kv: &std::sync::Arc<OccKv>) -> usize {
+    let exclusive = kv.begin_write_exclusive().unwrap();
+    let queue = |reads: &'static [u8], write: &'static [u8]| {
+        let mut tx = kv.begin_write().unwrap();
+        tx.get(reads).unwrap();
+        tx.put(write, write).unwrap();
+        std::thread::spawn(move || tx.commit_position())
+    };
+    let t1 = queue(b"r/01", b"r/00");
+    wait_queued(kv, 1);
+    let t2 = queue(b"r/00", b"r/01");
+    wait_queued(kv, 2);
+    drop(exclusive);
+    let first: Vec<_> = [t1, t2]
+        .into_iter()
+        .map(|t| t.join().expect("a writer thread panicked"))
+        .collect();
+    let mut tx = kv.begin_write().unwrap();
+    tx.add_i64(COUNTER, 3).unwrap();
+    tx.raise_counter(SEQUENCE, 77).unwrap();
+    tx.put(b"r/big", &vec![9u8; 200_000]).unwrap();
+    first.iter().filter(|r| r.is_ok()).count() + usize::from(tx.commit_position().is_ok())
+}
+
+/// The record states a committed prefix of `schedule` can leave, from an honest run: after each of
+/// its record-file commits.
+fn prefix_states(seed: u64, schedule: Schedule) -> Vec<BTreeMap<Vec<u8>, Vec<u8>>> {
+    let disk = SimDisk::new(seed, FaultPlan::none());
+    let kv = sweep_start(&disk);
+    let base = kv.version().unwrap();
+    schedule(&kv);
+    let page = commit_log::read_commit_log(
+        &*kv.snapshot().unwrap(),
+        Some(CommitPosition::new(base, 0)),
+        100,
+    )
+    .unwrap();
+    // Replay the honest log one record-file commit at a time onto the starting records.
+    let mut states = Vec::new();
+    let mut model = all_data(&*sweep_start(&SimDisk::new(seed, FaultPlan::none())));
+    let mut at = base;
+    for record in &page.records {
+        if record.position.sequence != at {
+            states.push(model.clone());
+            at = record.position.sequence;
+        }
+        for (key, op) in &record.ops {
+            match op {
+                LogOp::Put(v) => {
+                    model.insert(key.clone(), v.clone());
+                }
+                LogOp::Delete => {
+                    model.remove(key);
+                }
+                LogOp::AddI64(d) => {
+                    let b = model
+                        .get(key)
+                        .map(|b| i64::from_le_bytes(b.as_slice().try_into().unwrap()))
+                        .unwrap_or(0);
+                    model.insert(key.clone(), b.wrapping_add(*d).to_le_bytes().to_vec());
+                }
+                LogOp::RaiseCounter(m) => {
+                    let b = model
+                        .get(key)
+                        .map(|b| u64::from_be_bytes(b.as_slice().try_into().unwrap()))
+                        .unwrap_or(0);
+                    model.insert(key.clone(), b.max(*m).to_be_bytes().to_vec());
+                }
+            }
+        }
+    }
+    states.push(model);
+    states
+}
+
+fn sweep_start(disk: &SimDisk) -> std::sync::Arc<OccKv> {
+    let kv = std::sync::Arc::new(open_as(disk, true).unwrap());
+    let mut tx = kv.begin_write().unwrap();
+    tx.put(b"r/00", b"0").unwrap();
+    tx.put(b"r/01", b"0").unwrap();
+    tx.commit().unwrap();
+    kv
+}
+
+/// A crash at every I/O call of the crashed runs' schedule, calibrated on `forced_batch`'s one
+/// group commit. Returns (runs that kept everything, runs that kept nothing).
+fn group_commit_sweep(
+    crashed: Schedule,
+    oracle: Oracle,
+    commits_more_than_once: bool,
+) -> (u32, u32) {
+    let seed = 0xB47C;
+    let disk = SimDisk::new(seed, FaultPlan::none());
+    let kv = sweep_start(&disk);
+    let before_data = all_data(&*kv);
+    let before_version = kv.version().unwrap();
+    let before_ops = disk.stats().io_ops;
+    forced_batch(&kv);
+    let after_ops = disk.stats().io_ops;
+    let after_data = all_data(&*kv);
+    let page = commit_log::read_commit_log(
+        &*kv.snapshot().unwrap(),
+        Some(CommitPosition::new(before_version, 0)),
+        10,
+    )
+    .unwrap();
+    assert_eq!(
+        page.records.iter().map(|r| r.position).collect::<Vec<_>>(),
+        vec![
+            CommitPosition::new(before_version + 1, 0),
+            CommitPosition::new(before_version + 1, 1)
+        ],
+        "the honest batch has two accepted transactions"
+    );
+    check_log(&*kv).unwrap();
+    drop(kv);
+    let prefixes = prefix_states(seed, crashed);
+    let modes = [
+        CrashMode::DropUnsynced,
+        CrashMode::TearLast,
+        CrashMode::Subset,
+    ];
+    let (mut whole, mut none) = (0, 0);
+    // A few more points than the calibrated batch has I/O calls, so a schedule that commits more
+    // than once is crashed after its first commit too, and the last point is past the last fsync.
+    let extra = if commits_more_than_once {
+        after_ops - before_ops
+    } else {
+        0
+    };
+    for k in 0..=(after_ops - before_ops + extra) {
+        let disk = SimDisk::new(seed, FaultPlan::none());
+        let kv = sweep_start(&disk);
+        assert_eq!(
+            disk.stats().io_ops,
+            before_ops,
+            "the setup is not deterministic"
+        );
+        disk.set_plan(FaultPlan {
+            fsync_error_pm: 0,
+            fsync_lie_pm: 0,
+            crash_at_op: Some(before_ops + 1 + k),
+            crash_mode: modes[k as usize % modes.len()],
+        });
+        crashed(&kv);
+        disk.crash_now();
+        drop(kv);
+        disk.reboot();
+        disk.set_plan(FaultPlan::none());
+        let kv = open_as(&disk, true).unwrap();
+        check_log(&kv).unwrap_or_else(|e| panic!("crash at I/O {k}: {e}"));
+        let data = all_data(&kv);
+        match oracle {
+            Oracle::WholeOrNone => {
+                if data == after_data {
+                    assert_eq!(
+                        kv.version().unwrap(),
+                        before_version + 1,
+                        "crash at I/O {k}"
+                    );
+                    whole += 1;
+                } else {
+                    assert_eq!(data, before_data, "crash at I/O {k}: the batch is torn");
+                    assert_eq!(kv.version().unwrap(), before_version, "crash at I/O {k}");
+                    none += 1;
+                }
+            }
+            Oracle::CommittedPrefix => {
+                let at = prefixes
+                    .iter()
+                    .position(|state| *state == data)
+                    .unwrap_or_else(|| {
+                        panic!("crash at I/O {k}: the records match no committed prefix")
+                    });
+                if at == 0 {
+                    none += 1;
+                } else if at == prefixes.len() - 1 {
+                    whole += 1;
+                }
+            }
+        }
+    }
+    eprintln!("group commit crash sweep: {whole} whole, {none} absent");
+    (whole, none)
+}
+
+/// A crash at every I/O call of one forced group commit (two accepted transactions and one
+/// refused): after the reboot the batch is there whole, with its two records, or not at all, and
+/// the log replays to exactly the records the store holds. `forced_batch` queues the batch in a
+/// fixed order before it lets the pipeline go, so every run crashes the same I/O sequence.
+#[test]
+fn logged_a_crash_at_every_io_of_one_group_commit_keeps_it_whole() {
+    let (whole, none) = group_commit_sweep(forced_batch, Oracle::WholeOrNone, false);
+    assert!(
+        none > 0,
+        "no crash point dropped the batch: the sweep did not reach its commit"
+    );
+    assert!(
+        whole > 0,
+        "no crash point kept the batch: the sweep never got past its fsync"
+    );
+}
+
+/// The "torn batch" seen once on a loaded machine (rust-engine/multiuser dc25d27bce, seed 0xB47C,
+/// crash at I/O 10: r/00 written, the counter, id sequence and r/big not): the sleep-based schedule
+/// let the third transaction miss the batch, so the run committed twice, and a crash between the
+/// two commits left the first commit alone, which the whole-or-nothing oracle reports as torn.
+/// Forcing that schedule reproduces it on every run.
+#[test]
+#[should_panic(expected = "the batch is torn")]
+fn logged_a_split_schedule_is_what_the_whole_or_nothing_oracle_called_torn() {
+    group_commit_sweep(forced_split, Oracle::WholeOrNone, true);
+}
+
+/// The same split schedule, crashed at every I/O call: every reboot holds a committed prefix (none,
+/// the first commit, or both), and the log agrees: each record-file commit is whole.
+#[test]
+fn logged_a_split_schedule_crashed_anywhere_keeps_each_commit_whole() {
+    let (whole, none) = group_commit_sweep(forced_split, Oracle::CommittedPrefix, true);
+    assert!(
+        none > 0 && whole > 0,
+        "the sweep did not cover both commits"
+    );
+}
+
+/// The log check must catch what it claims to catch: a record without its data and data without
+/// its record.
+#[test]
+fn the_log_check_catches_a_record_without_data_and_data_without_a_record() {
+    let disk = SimDisk::new(1, FaultPlan::none());
+    let kv = open_as(&disk, true).unwrap();
+    let mut tx = kv.begin_write().unwrap();
+    tx.put(b"r/00", b"x").unwrap();
+    tx.commit().unwrap();
+    assert!(check_log(&kv).is_ok());
+    // Data with no record: written around the log by a store that does not log.
+    let base = RedbKv::open_backend(Box::new(SimBackend(
+        SimDisk::new(2, FaultPlan::none()).open(FILE),
+    )))
+    .unwrap();
+    let unlogged = OccKv::new(base).unwrap();
+    let mut tx = unlogged.begin_write().unwrap();
+    let since = CommitPosition::new(unlogged.version().unwrap() + 1, 0);
+    commit_log::write_activation(&mut *tx, since).unwrap();
+    tx.commit().unwrap();
+    let mut tx = unlogged.begin_write().unwrap();
+    tx.put(b"r/00", b"x").unwrap();
+    tx.commit().unwrap();
+    assert!(check_log(&unlogged).is_err());
+    // A record with no data: the record's key deleted behind the log's back.
+    drop(kv);
+    let kv = open(&disk).unwrap();
+    let mut tx = kv.begin_write().unwrap();
+    tx.delete(b"r/00").unwrap();
+    tx.commit().unwrap();
+    assert!(check_log(&kv).is_err());
 }
 
 /// The checker must catch what it claims to catch. A lost update (two writers that read the

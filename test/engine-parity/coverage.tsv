@@ -118,24 +118,48 @@
 # doctor_sources: 5/5
 # session_state: 7/7
 # doctor_join: 6/6
+# multi-writer cases: 22/22
+# multi-writer C01 [compare]: pglite=runs postgres=runs rust=runs rust-mu=runs store-single=runs store-optimistic=runs
+# multi-writer C02 [compare]: pglite=runs postgres=runs rust=runs rust-mu=runs store-single=runs store-optimistic=runs
+# multi-writer C03 [compare]: pglite=runs postgres=runs rust=runs rust-mu=runs store-single=runs store-optimistic=runs
+# multi-writer C04 [compare]: pglite=runs postgres=runs rust=runs rust-mu=runs store-single=runs store-optimistic=runs
+# multi-writer C05 [compare]: pglite=runs postgres=runs rust=runs rust-mu=runs store-single=runs store-optimistic=runs
+# multi-writer C06 [compare]: pglite=runs postgres=runs rust=runs rust-mu=runs store-single=runs store-optimistic=runs
+# multi-writer C06.partition [compare]: pglite=runs postgres=runs rust=runs rust-mu=runs store-single=n/a store-optimistic=n/a
+# multi-writer C07 [compare]: pglite=runs postgres=runs rust=runs rust-mu=runs store-single=runs store-optimistic=runs
+# multi-writer C08 [compare]: pglite=runs postgres=runs rust=runs rust-mu=runs store-single=runs store-optimistic=runs
+# multi-writer C09 [compare]: pglite=runs postgres=runs rust=runs rust-mu=runs store-single=runs store-optimistic=runs
+# multi-writer C10 [compare]: pglite=runs postgres=runs rust=runs rust-mu=runs store-single=runs store-optimistic=runs
+# multi-writer C11 [compare]: pglite=pending(L5 hosts) postgres=pending(L5 hosts) rust=pending(L5 hosts) rust-mu=pending(L5 hosts) store-single=runs store-optimistic=runs
+# multi-writer C12 [compare]: pglite=runs postgres=runs rust=runs rust-mu=runs store-single=runs store-optimistic=runs
+# multi-writer C13 [standalone, needs multi_writer]: pglite=n/a postgres=runs rust=pending(L1 optimistic transactions) rust-mu=pending(L1 optimistic transactions) store-single=runs store-optimistic=runs
+# multi-writer C14 [compare]: pglite=runs postgres=runs rust=runs rust-mu=runs store-single=runs store-optimistic=runs
+# multi-writer C15 [compare]: pglite=runs postgres=runs rust=runs rust-mu=runs store-single=runs store-optimistic=runs
+# multi-writer C16 [standalone]: pglite=n/a postgres=pending(L3 server) rust=pending(L3 server) rust-mu=pending(L3 server) store-single=runs store-optimistic=runs
+# multi-writer C17 [standalone, needs multi_writer]: pglite=n/a postgres=runs rust=pending(L3 server) rust-mu=pending(L3 server) store-single=runs store-optimistic=runs
+# multi-writer C18 [standalone]: pglite=n/a postgres=runs rust=pending(L3 server) rust-mu=pending(L3 server) store-single=runs store-optimistic=runs
+# multi-writer C19 [standalone]: pglite=n/a postgres=runs rust=runs rust-mu=runs store-single=runs store-optimistic=runs
+# multi-writer C20 [compare]: pglite=runs postgres=runs rust=runs rust-mu=runs store-single=runs store-optimistic=runs
+# multi-writer C21 [standalone, needs multi_writer]: pglite=n/a postgres=pending(L3 server) rust=pending(L3 server) rust-mu=pending(L3 server) store-single=runs store-optimistic=runs
+# multi-writer C22 [standalone]: pglite=pending(L2 commit log) postgres=pending(L2 commit log) rust=pending(L2 commit log) rust-mu=pending(L2 commit log) store-single=runs store-optimistic=runs
 method	family	covered	parity_cases	legacy_e2e	pglite	postgres	rust
 connect	lifecycle	yes	3	yes	yes	yes	serves
 disconnect	lifecycle	yes	3	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	4	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	389	no	yes	yes	serves
-transactionDirect	lifecycle	yes	24	no	yes	yes	serves
+transaction	lifecycle	yes	396	no	yes	yes	serves
+transactionDirect	lifecycle	yes	26	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
 listCatalogRelations	lifecycle	yes	1	no	yes	yes	serves
 readCatalogSchemaVersion	lifecycle	yes	1	no	yes	yes	serves
 listCatalogForeignKeys	lifecycle	yes	1	no	yes	yes	serves
-getPage	pages	yes	288	yes	yes	yes	serves
-readPageSnapshot	pages	yes	104	no	yes	yes	serves
+getPage	pages	yes	292	yes	yes	yes	serves
+readPageSnapshot	pages	yes	112	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	7	no	yes	yes	serves
-lockPageKeys	pages	yes	17	no	yes	yes	serves
-putPage	pages	yes	1324	yes	yes	yes	serves
+lockPageKeys	pages	yes	20	no	yes	yes	serves
+putPage	pages	yes	1338	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	43	yes	yes	yes	serves
@@ -352,9 +376,9 @@ listWithdrawalChunks	chunks	yes	1	no	yes	yes	serves
 deleteChunksForPages	chunks	yes	3	no	yes	yes	serves
 listContextualModeCandidates	chunks	yes	1	no	yes	yes	serves
 resolveFrozenHits	chunks	yes	6	no	yes	yes	serves
-upsertChunks	chunks	yes	73	yes	yes	yes	serves
+upsertChunks	chunks	yes	74	yes	yes	yes	serves
 sealChunks	chunks	yes	94	no	yes	yes	serves
-getChunks	chunks	yes	75	yes	yes	yes	serves
+getChunks	chunks	yes	76	yes	yes	yes	serves
 getChunkPage	chunks	yes	14	no	yes	yes	serves
 getChunkWindows	chunks	yes	14	no	yes	yes	serves
 countStaleChunks	chunks	yes	9	no	yes	yes	serves
@@ -639,11 +663,11 @@ hasActiveFactText	facts	yes	2	no	yes	yes	serves
 readFactTrustTier	facts	yes	2	no	yes	yes	serves
 listFenceFactRowNums	facts	yes	2	no	yes	yes	serves
 readLiveFactRowTier	facts	yes	1	no	yes	yes	serves
-insertFact	facts	yes	198	yes	yes	yes	serves
+insertFact	facts	yes	200	yes	yes	yes	serves
 insertFacts	facts	yes	269	no	yes	yes	serves
 deleteFactsForPage	facts	yes	8	no	yes	yes	serves
 expireFact	facts	yes	94	no	yes	yes	serves
-listFactsByEntity	facts	yes	62	yes	yes	yes	serves
+listFactsByEntity	facts	yes	64	yes	yes	yes	serves
 listFactsSince	facts	yes	42	yes	yes	yes	serves
 listFactsKeyset	facts	yes	11	no	yes	yes	serves
 listFactsBySession	facts	yes	13	yes	yes	yes	serves
@@ -763,7 +787,7 @@ replaceDerivedAliases	sync_aliases	yes	18	no	yes	yes	serves
 refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	3	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	2	no	yes	yes	serves
-getConfig	config	yes	61	no	yes	yes	serves
+getConfig	config	yes	62	no	yes	yes	serves
 setConfig	config	yes	98	no	yes	yes	serves
 unsetConfig	config	yes	4	no	yes	yes	serves
 listConfigKeys	config	yes	5	no	yes	yes	serves
@@ -817,7 +841,7 @@ writeDrainLeaseHolder	persistence_journal	yes	2	no	yes	yes	serves
 refreshDrainLeaseHolder	persistence_journal	no	0	no	-	-	-
 releaseDrainLeaseHolder	persistence_journal	yes	2	no	yes	yes	serves
 readChronicleBackfillBatch	persistence_journal	yes	2	no	yes	yes	serves
-declarePersistence	persistence_journal	yes	41	no	yes	yes	serves
+declarePersistence	persistence_journal	yes	42	no	yes	yes	serves
 requireSynchronousCommit	persistence_journal	yes	1	no	yes	yes	serves
 readJournalLimitRows	persistence_journal	yes	1	no	yes	yes	serves
 readHeldPageRows	persistence_journal	yes	3	no	yes	yes	serves
@@ -825,11 +849,11 @@ readHeldHitRows	persistence_journal	yes	2	no	yes	yes	serves
 readHeldCoverageRows	persistence_journal	yes	3	no	yes	yes	serves
 listFenceHoldRows	persistence_journal	yes	5	no	yes	yes	serves
 readFenceOriginGone	persistence_journal	yes	1	no	yes	yes	serves
-lockGenerationKey	persistence_journal	yes	2	no	yes	yes	serves
+lockGenerationKey	persistence_journal	yes	3	no	yes	yes	serves
 clearFenceHoldRows	persistence_journal	yes	1	no	yes	yes	serves
 readFenceHoldFiles	persistence_journal	yes	1	no	yes	yes	serves
-readLiveGenerationRow	persistence_journal	yes	6	no	yes	yes	serves
-activateGenerationRows	persistence_journal	yes	19	no	yes	yes	serves
+readLiveGenerationRow	persistence_journal	yes	7	no	yes	yes	serves
+activateGenerationRows	persistence_journal	yes	20	no	yes	yes	serves
 recordHeldGenerationRow	persistence_journal	yes	12	no	yes	yes	serves
 readGitHoldRecords	persistence_journal	yes	3	no	yes	yes	serves
 readGitHoldRetryRequest	persistence_journal	yes	2	no	yes	yes	serves
@@ -931,11 +955,11 @@ readAccessTokenWriteGrant	persistence_journal	yes	4	no	yes	yes	serves
 shareLockWriteCredential	persistence_journal	yes	1	no	yes	yes	serves
 readCounterRows	persistence_journal	yes	15	no	yes	yes	serves
 readAdmissionRate	persistence_journal	yes	3	no	yes	yes	serves
-lockPersistenceCounters	persistence_journal	yes	103	no	yes	yes	serves
-insertWriteRequest	persistence_journal	yes	137	no	yes	yes	serves
+lockPersistenceCounters	persistence_journal	yes	105	no	yes	yes	serves
+insertWriteRequest	persistence_journal	yes	139	no	yes	yes	serves
 insertWriteRequestGroup	persistence_journal	yes	2	no	yes	yes	serves
 readOwnerHostBinding	persistence_journal	yes	1	no	yes	yes	serves
-stampWriteClaim	persistence_journal	yes	53	no	yes	yes	serves
+stampWriteClaim	persistence_journal	yes	54	no	yes	yes	serves
 selectClaimableLaneHead	persistence_journal	yes	2	no	yes	yes	serves
 stampLaneHeadClaim	persistence_journal	yes	2	no	yes	yes	serves
 reclaimReleasedWrite	persistence_journal	yes	1	no	yes	yes	serves
@@ -945,7 +969,7 @@ completeWriteRow	persistence_journal	yes	60	no	yes	yes	serves
 lockWriteRequestsById	persistence_journal	yes	2	no	yes	yes	serves
 compactTerminalIntent	persistence_journal	no	0	no	-	-	-
 cancelWriteRow	persistence_journal	yes	3	no	yes	yes	serves
-insertPublicationEffects	persistence_journal	yes	27	no	yes	yes	serves
+insertPublicationEffects	persistence_journal	yes	28	no	yes	yes	serves
 insertWithdrawalEffects	persistence_journal	yes	8	no	yes	yes	serves
 insertRemirrorEffects	persistence_journal	yes	1	no	yes	yes	serves
 readRemirrorEffects	persistence_journal	yes	1	no	yes	yes	serves
@@ -995,13 +1019,13 @@ moveTwinPageChildren	persistence_journal	yes	4	no	yes	yes	serves
 moveTwinFacts	persistence_journal	yes	3	no	yes	yes	serves
 recordRenameAlias	persistence_journal	yes	3	no	yes	yes	serves
 movePageVersions	persistence_journal	yes	1	no	yes	yes	serves
-readSourceMembership	persistence_journal	yes	141	no	yes	yes	serves
+readSourceMembership	persistence_journal	yes	143	no	yes	yes	serves
 findTopologyChanges	persistence_journal	yes	3	no	yes	yes	serves
 readTopologyChangeDigest	persistence_journal	yes	2	no	yes	yes	serves
 listTopologyRecoveries	persistence_journal	yes	7	no	yes	yes	serves
 readTopologyChange	persistence_journal	yes	4	no	yes	yes	serves
 insertTopologyChange	persistence_journal	yes	10	no	yes	yes	serves
-renewWriteClaim	persistence_journal	yes	1	no	yes	yes	serves
+renewWriteClaim	persistence_journal	yes	2	no	yes	yes	serves
 releaseUnpublishedClaim	persistence_journal	yes	5	no	yes	yes	serves
 expireStaleWriteClaims	persistence_journal	yes	1	no	yes	yes	serves
 hasClaimableWrite	persistence_journal	yes	3	no	yes	yes	serves
@@ -1010,7 +1034,7 @@ readRecoveringHeadRow	persistence_journal	yes	1	no	yes	yes	serves
 readIncompleteSyncReceipt	persistence_journal	yes	1	no	yes	yes	serves
 readOpenPassWork	persistence_journal	yes	1	no	yes	yes	serves
 readIncompleteSyncReceiptRows	persistence_journal	yes	1	no	yes	yes	serves
-selectClaimableWrite	persistence_journal	yes	2	no	yes	yes	serves
+selectClaimableWrite	persistence_journal	yes	3	no	yes	yes	serves
 listHostConsumerRows	persistence_journal	yes	2	no	yes	yes	serves
 probeLiveConsumerRows	persistence_journal	yes	1	no	yes	yes	serves
 renewConsumerRow	persistence_journal	yes	1	no	yes	yes	serves
@@ -1036,8 +1060,8 @@ deleteProjectionJob	persistence_journal	yes	11	no	yes	yes	serves
 markProjectionRebuildFailed	persistence_journal	yes	5	no	yes	yes	serves
 listGatedMirrorRequests	persistence_journal	yes	2	no	yes	yes	serves
 listEffectRecoveries	persistence_journal	yes	1	no	yes	yes	serves
-selectClaimableEffect	persistence_journal	yes	9	no	yes	yes	serves
-readRequestEffects	persistence_journal	yes	13	no	yes	yes	serves
+selectClaimableEffect	persistence_journal	yes	10	no	yes	yes	serves
+readRequestEffects	persistence_journal	yes	14	no	yes	yes	serves
 readSourceRequestById	persistence_journal	yes	1	no	yes	yes	serves
 listSourceRequestsByRequestId	persistence_journal	yes	2	no	yes	yes	serves
 listRetryTrackedEffects	persistence_journal	yes	2	no	yes	yes	serves
@@ -1048,12 +1072,12 @@ lockOverdueHold	persistence_journal	yes	1	no	yes	yes	serves
 listOwnerRecoveryHeads	persistence_journal	yes	2	no	yes	yes	serves
 listResumableRefreshes	persistence_journal	yes	1	no	yes	yes	serves
 listSourceLastCommits	persistence_journal	yes	1	no	yes	yes	serves
-stampEffectClaim	persistence_journal	yes	6	no	yes	yes	serves
+stampEffectClaim	persistence_journal	yes	7	no	yes	yes	serves
 claimEffectRecovery	persistence_journal	yes	1	no	yes	yes	serves
 claimCoalescedGitEffects	persistence_journal	yes	2	no	yes	yes	serves
 renewEffectClaim	persistence_journal	yes	1	no	yes	yes	serves
 advanceEffectRow	persistence_journal	yes	1	no	yes	yes	serves
-completeEffectRow	persistence_journal	yes	2	no	yes	yes	serves
+completeEffectRow	persistence_journal	yes	3	no	yes	yes	serves
 retryEffectRow	persistence_journal	yes	2	no	yes	yes	serves
 retryBusyEffectRow	persistence_journal	yes	3	no	yes	yes	serves
 requeueEffectRow	persistence_journal	yes	1	no	yes	yes	serves
@@ -1193,26 +1217,26 @@ readLivePageFrontmatter	entity_reads	yes	2	no	yes	yes	serves
 readEntityAnchoredPages	entity_reads	yes	2	no	yes	yes	serves
 readPageTitlesById	entity_reads	yes	2	no	yes	yes	serves
 readTextMentionPages	entity_reads	yes	2	no	yes	yes	serves
-acquireCycleLock	cycle_locks	yes	17	no	yes	yes	serves
-refreshCycleLock	cycle_locks	yes	1	no	yes	yes	serves
-releaseCycleLock	cycle_locks	yes	1	no	yes	yes	serves
-readCycleLocks	cycle_locks	yes	14	no	yes	yes	serves
+acquireCycleLock	cycle_locks	yes	19	no	yes	yes	serves
+refreshCycleLock	cycle_locks	yes	2	no	yes	yes	serves
+releaseCycleLock	cycle_locks	yes	2	no	yes	yes	serves
+readCycleLocks	cycle_locks	yes	15	no	yes	yes	serves
 deleteCycleLock	cycle_locks	yes	1	no	yes	yes	serves
 deleteCycleLockIfStale	cycle_locks	yes	1	no	yes	yes	serves
 takePageEmbeddingLease	cycle_locks	yes	1	no	yes	yes	serves
 renewPageEmbeddingLease	cycle_locks	yes	1	no	yes	yes	serves
 releasePageEmbeddingLease	cycle_locks	yes	1	no	yes	yes	serves
-assertCycleLease	cycle_locks	yes	1	no	yes	yes	serves
-admitJob	minion_jobs	yes	139	no	yes	yes	serves
-getJob	minion_jobs	yes	48	no	yes	yes	serves
+assertCycleLease	cycle_locks	yes	3	no	yes	yes	serves
+admitJob	minion_jobs	yes	144	no	yes	yes	serves
+getJob	minion_jobs	yes	50	no	yes	yes	serves
 readJobDataByIdempotencyKey	minion_jobs	yes	2	no	yes	yes	serves
 coalesceOnIdempotencyKey	minion_jobs	yes	2	no	yes	yes	serves
-listJobs	minion_jobs	yes	1	no	yes	yes	serves
-claimNextJob	minion_jobs	yes	98	no	yes	yes	serves
-renewJobLease	minion_jobs	yes	1	no	yes	yes	serves
+listJobs	minion_jobs	yes	4	no	yes	yes	serves
+claimNextJob	minion_jobs	yes	101	no	yes	yes	serves
+renewJobLease	minion_jobs	yes	2	no	yes	yes	serves
 completeJob	minion_jobs	yes	56	no	yes	yes	serves
 failJob	minion_jobs	yes	43	no	yes	yes	serves
-reclaimStalledJobs	minion_jobs	yes	2	no	yes	yes	serves
+reclaimStalledJobs	minion_jobs	yes	3	no	yes	yes	serves
 readActiveAccessTokenGrant	minion_queue	yes	3	no	yes	yes	serves
 accessTokenLive	minion_queue	yes	2	no	yes	yes	serves
 oauthClientLive	minion_queue	yes	10	no	yes	yes	serves
@@ -1982,8 +2006,8 @@ hasExtractedEvents	write_misc	yes	1	no	yes	yes	serves
 upsertChronicleRow	write_misc	yes	8	no	yes	yes	serves
 readChronicleRow	write_misc	yes	13	no	yes	yes	serves
 hasPendingAutoChronicleRow	write_misc	yes	1	no	yes	yes	serves
-countRecentChronicleReservations	write_misc	yes	5	no	yes	yes	serves
-reserveChronicleJudgeSlot	write_misc	yes	6	no	yes	yes	serves
+countRecentChronicleReservations	write_misc	yes	6	no	yes	yes	serves
+reserveChronicleJudgeSlot	write_misc	yes	7	no	yes	yes	serves
 pruneChronicleReservations	write_misc	yes	2	no	yes	yes	serves
 insertConfigIfAbsent	write_misc	yes	1	no	yes	yes	serves
 readPageTruthLead	write_misc	yes	2	no	yes	yes	serves

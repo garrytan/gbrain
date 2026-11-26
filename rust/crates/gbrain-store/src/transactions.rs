@@ -51,6 +51,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use serde::{Deserialize, Serialize};
 
+use crate::commit_log::{CommitMeta, CommitPosition};
 use crate::env::Env;
 use crate::error::{
     INVALID_STATE, READ_ONLY_TRANSACTION, Result, SOURCE_CHANGED, SOURCE_NOT_FOUND, STORE_CLOSED,
@@ -110,6 +111,9 @@ pub struct PageKeyHint {
 struct Layer {
     writes: Writes,
     locks: BTreeSet<HeldKey>,
+    /// What the layer's statements say about themselves for the commit record (multi-user mode):
+    /// kept and dropped with the layer's writes.
+    meta: CommitMeta,
 }
 
 struct State {
@@ -130,6 +134,8 @@ struct State {
     /// absent). A rollback that must write sequences forward puts these back in the same base
     /// write, so it never releases the writer before the sequences are saved.
     undo: BTreeMap<Vec<u8>, Option<Vec<u8>>>,
+    /// The commit meta of the statements merged into the base (`Layer::meta`).
+    meta: CommitMeta,
 }
 
 /// An open transaction. Shared by the bound [`Store`] and every reader it hands out.
@@ -150,7 +156,7 @@ pub struct Transaction {
 impl Drop for Transaction {
     fn drop(&mut self) {
         let state = self.state.get_mut().unwrap_or_else(|e| e.into_inner());
-        let _ = state.roll_back();
+        let _ = state.roll_back(&*self.kv);
     }
 }
 
@@ -342,9 +348,11 @@ impl State {
         if let Some(parent) = self.savepoints.last_mut() {
             parent.writes.extend(layer.writes);
             parent.locks.extend(layer.locks);
+            parent.meta.absorb(layer.meta);
             return Ok(());
         }
         self.root_locks.extend(layer.locks);
+        self.meta.absorb(layer.meta);
         self.base()?;
         for (key, value) in layer.writes {
             self.write_base(&key, value.as_deref())?;
@@ -357,13 +365,15 @@ impl State {
     /// every key the transaction wrote gets its earlier value back, every sequence is raised to
     /// the highest value the transaction took, and that write commits: no other writer can take
     /// an id the transaction handed out. Rolling back an ended transaction does nothing.
-    fn roll_back(&mut self) -> Result<()> {
+    fn roll_back(&mut self, kv: &dyn Kv) -> Result<()> {
         let Some(mut base) = self.base.take() else {
             return Ok(());
         };
         self.savepoints.clear();
         self.statement = None;
         self.root_locks.clear();
+        // A rollback carries no write: its commit (counters only) names no request.
+        self.meta = CommitMeta::default();
         let undo = std::mem::take(&mut self.undo);
         let mut counters = std::mem::take(&mut self.counters);
         for (key, value) in std::mem::take(&mut self.allocated) {
@@ -371,6 +381,18 @@ impl State {
             *seen = (*seen).max(value);
         }
         if counters.is_empty() {
+            return Ok(());
+        }
+        if kv.commit_log_enabled() {
+            // With the commit log on, the rolled-back writes are dropped with their write (it never
+            // commits), and a new write carries only the id sequences forward: its record holds
+            // counter ops and nothing else, so a rollback leaves no data in the log.
+            drop(base);
+            let mut forward = kv.begin_write()?;
+            for (key, value) in counters {
+                forward.raise_counter(&key, value)?;
+            }
+            forward.commit()?;
             return Ok(());
         }
         for (key, before) in undo {
@@ -509,6 +531,12 @@ impl KvWrite for StatementWriter<'_> {
             "a statement inside a transaction commits with the transaction",
         ))
     }
+    /// The statement's meta joins its layer, so it is kept or dropped with the statement.
+    fn set_commit_meta(&mut self, meta: CommitMeta) {
+        if let Some(layer) = lock(&self.0.state).statement.as_mut() {
+            layer.meta.absorb(meta);
+        }
+    }
 }
 
 impl Transaction {
@@ -578,6 +606,7 @@ impl Store {
                 counters: BTreeMap::new(),
                 allocated: BTreeMap::new(),
                 undo: BTreeMap::new(),
+                meta: CommitMeta::default(),
             }),
             exclusive: Mutex::new(()),
             kv: self.kv.clone(),
@@ -657,6 +686,13 @@ impl Store {
     /// released first. A transaction opened read-only commits nothing and returns the current
     /// sequence; one made read-only later commits the writes it made before.
     pub fn commit_transaction(&self) -> Result<u64> {
+        self.commit_transaction_at().map(|p| p.sequence)
+    }
+
+    /// [`Store::commit_transaction`] with the commit's own position (`commit_log.rs`). A
+    /// transaction opened read-only commits nothing and reports `CommitPosition::end_of` the
+    /// current sequence.
+    pub fn commit_transaction_at(&self) -> Result<CommitPosition> {
         let tx = self.transaction()?;
         let _exclusive = lock(&tx.exclusive);
         let mut state = lock(&tx.state);
@@ -669,11 +705,16 @@ impl Store {
         state.counters.clear();
         state.allocated.clear();
         state.undo.clear();
+        let meta = std::mem::take(&mut state.meta);
         if tx.opened_read_only {
             drop(base);
-            return tx.kv.version();
+            return Ok(CommitPosition::end_of(tx.kv.version()?));
         }
-        base.commit()
+        let mut base = base;
+        if !meta.is_empty() {
+            base.set_commit_meta(meta);
+        }
+        base.commit_position()
     }
 
     /// Rolls the transaction back. Counters it advanced are written forward before the writer is
@@ -685,7 +726,7 @@ impl Store {
         let ended = {
             let mut state = lock(&tx.state);
             let open = state.base.is_some();
-            let result = state.roll_back();
+            let result = state.roll_back(&*tx.kv);
             if open {
                 self.vectors.clear();
             }

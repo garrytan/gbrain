@@ -34,8 +34,23 @@ const HEADER = 'file\tequal\tstopped\tstop_reason';
 
 /** A file's pinned counts; `reason` says why its stopped cases stop by design (no tab or newline). */
 export interface TallyPin { equal: number; stopped: number; reason?: string }
-/** What the Rust arm did with one file's cases (harness.ts RustTally plus the cases an `n/a` capability skipped). */
-export interface FileTally { compared: number; refused: number; diverged: number; skipped: number }
+/**
+ * What the Rust arm did with one file's cases (harness.ts RustTally plus the cases an `n/a` capability skipped).
+ * `standalone` counts multi-writer cases that passed on their inline invariant alone (no reference arm to compare with):
+ * they are a column of their own, join the sum check so a file of them can finish, and never raise `compared` (the pin's
+ * `equal`), so a standalone case is never counted as equal to PGLite.
+ */
+export interface FileTally {
+  compared: number; refused: number; diverged: number; skipped: number; standalone?: number;
+  /**
+   * The `rust-mu` view only. Cases the matrix runs on `rust` but holds pending on `rust-mu` (a known gap of the multi-user
+   * view). They stay in `skipped` and never in `compared`; the pin check accepts `compared + knownGaps >= pin.equal` so the
+   * view is held to the off pin for everything else. The caller names them in its printed line.
+   */
+  knownGaps?: number;
+  /** Set by a `rust-mu` run: it never writes the regenerate output (the pin is the off arm's count). */
+  muView?: boolean;
+}
 
 export function parsePins(text: string): Map<string, TallyPin> {
   const pins = new Map<string, TallyPin>();
@@ -76,11 +91,13 @@ function readPins(env: Record<string, string | undefined> = process.env): Map<st
  */
 export function checkRustTally(file: string, tally: FileTally, registered: number,
   pins?: Map<string, TallyPin>, env: Record<string, string | undefined> = process.env): string | null {
-  if (tally.compared + tally.refused + tally.diverged + tally.skipped !== registered) return null;
+  if (tally.compared + tally.refused + tally.diverged + tally.skipped + (tally.standalone ?? 0) !== registered) return null;
   // The pin covers test/engine-parity/ only. A file outside it that runs the parity harness (doctor-catalog-probes,
   // rust-arm-harness) has no parity file name and no pin row.
   if (file === '') return null;
   const out = env[OUT_ENV];
+  // The pin is what the off Rust arm answers: a rust-mu run is checked against it and never regenerates it.
+  if (out && tally.muView === true) return null;
   if (out) {
     appendFileSync(out, `${file}\t${tally.compared}\t${tally.refused}\n`);
     return null;
@@ -89,12 +106,13 @@ export function checkRustTally(file: string, tally: FileTally, registered: numbe
   const pin = (pins ?? readPins(env)).get(file);
   const now = `${file}\t${tally.compared}\t${tally.refused}`;
   if (pin === undefined) throw new Error(`[rust arm] ${file} has no row in test/engine-parity/${target.name}; run ${target.regen}`);
-  if (tally.compared < pin.equal || tally.refused > pin.stopped) {
+  const gaps = tally.muView === true ? tally.knownGaps ?? 0 : 0;
+  if (tally.compared + gaps < pin.equal || tally.refused > pin.stopped) {
     throw new Error(`[rust arm] ${file}: ${tally.compared} equal and ${tally.refused} stopped, but ${target.name} pins ` +
       `${pin.equal} equal and ${pin.stopped} stopped. A case that PGLite answers now stops on a typed refusal on Rust. ` +
       `Fix the member, or, when the change is intended, run ${target.regen}`);
   }
-  if (tally.compared > pin.equal || tally.refused < pin.stopped) {
+  if (tally.compared + gaps > pin.equal || tally.refused < pin.stopped) {
     return `[rust arm] ${file} did better than its pin; pin the new counts (${now.replaceAll('\t', ' ')}) with ${target.regen}`;
   }
   return null;

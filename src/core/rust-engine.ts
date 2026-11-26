@@ -29,6 +29,8 @@ import { transactionAborted } from './postgres-engine/transaction-abort.ts';
 import { mapStoreError } from './rust-engine/store-errors.ts';
 import { STORE_MEMBERS } from './rust-engine/store-members/index.ts';
 import { MULTIUSER_WITHHELD, servedCapabilities, storeCapabilities } from './rust-engine/store-capabilities.ts';
+import { rustMultiuserFromEnv, rustMultiuserSubSwitch } from './rust-engine/multiuser-switch.ts';
+import { existingHostIdFor, hostIdFor } from './persistence/identity.ts';
 import { RECEIPT_STOP_OWNERS } from './rust-engine/receipt-stops.ts';
 import { electOwner, type OwnerRole } from './rust-engine/owner-ipc/election.ts';
 import { callEndCheck, installOwnerClient, untilCallEnds } from './rust-engine/owner-ipc/client.ts';
@@ -248,13 +250,17 @@ export class RustEngine implements BrainEngine {
           this._claiming = true;
           let store: RustStore;
           try {
-            store = await openRustStore(this.addon, this.databasePath, await seedEmbeddingIdentity(this));
+            store = await openRustStore(
+              this.addon, this.databasePath, await seedEmbeddingIdentity(this),
+              this._multiuserOrigin(),
+            );
             if (generation !== this._generation) {
               await store.close().catch(() => undefined);
               throw abandoned();
             }
             opened = store;
             this._store = store;
+            if (store.commitLog) (this.capabilities as Set<Capability>).add('commit_log');
           } catch (error) {
             storeFailure = { error };
             throw error;
@@ -329,7 +335,31 @@ export class RustEngine implements BrainEngine {
   private _reportStoreCapabilities(): void {
     const caps = this.capabilities as Set<Capability>;
     for (const capability of storeCapabilities(this._store)) caps.add(capability);
+    if (this._store?.commitLog) caps.add('commit_log');
     if (this._store?.multiuser === true) for (const capability of MULTIUSER_WITHHELD) caps.delete(capability);
+  }
+
+  /**
+   * The host id the multi-user write origin stamps, read only when a sub-switch asks for it. With the switch itself on
+   * the identity may be minted (`hostIdFor`); otherwise (a brain that may be on through its config row) only an
+   * existing identity is sent, and `mint` names this machine only after the store answered that the brain is on and
+   * needs it (`HOST_ID_REQUIRED`), so a brain that is off never mints an identity.
+   */
+  private _multiuserOrigin(): { hostId?: string; mint: () => string } | undefined {
+    const wanted = rustMultiuserSubSwitch('GBRAIN_RUST_WRITE_ORIGIN', { multiuser: true })
+      || rustMultiuserSubSwitch('GBRAIN_RUST_COMMIT_LOG', { multiuser: true });
+    if (!wanted) return undefined;
+    const mint = () => hostIdFor(this);
+    if (rustMultiuserFromEnv()) return { hostId: mint(), mint };
+    let existing: string | null = null;
+    try {
+      existing = existingHostIdFor(this);
+    } catch (error) {
+      // silent-read-ok: an unreadable identity is sent as none; the store refuses the open if it needs one, and the
+      // retry mints it through hostIdFor, whose own error then surfaces
+      void error;
+    }
+    return existing ? { hostId: existing, mint } : { mint };
   }
 
   async disconnect(): Promise<void> {

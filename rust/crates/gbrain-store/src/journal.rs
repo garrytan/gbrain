@@ -108,6 +108,47 @@ pub struct WriteAdmission {
     pub caller_intent: Value,
     pub intent: Option<Value>,
     pub authority: Value,
+    /// Multi-user mode only (write origin on): the machine and engine run this write comes from,
+    /// when not this store's own (a server stamping a client's). Ignored while the switch is off.
+    pub origin: Option<AdmissionOrigin>,
+}
+
+/// `WriteAdmission.origin` / `PageMutation.origin`: overrides of the store's own write origin.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct AdmissionOrigin {
+    pub host_id: Option<String>,
+    pub incarnation: Option<String>,
+}
+
+/// Stamps a journal row's `extra` with the running write's origin (I-3) when write origin is on:
+/// `admitter_host_id` (the override's, else the store's, unless the caller gave one), the engine run
+/// as `admitter_incarnation` and the principal as `writer_id`. With the switch off nothing is added,
+/// so the row keeps its bytes.
+pub(crate) fn stamp_origin(
+    extra: &mut Map<String, Value>,
+    principal_kind: &str,
+    principal_id: &str,
+    over: Option<&AdmissionOrigin>,
+) {
+    let Some(origin) = crate::commit_log::scope::row_origin() else {
+        return;
+    };
+    let host = over
+        .and_then(|o| o.host_id.clone())
+        .unwrap_or(origin.host_id);
+    let given = extra.get("admitter_host_id").is_some_and(|v| !v.is_null());
+    if !given || over.is_some_and(|o| o.host_id.is_some()) {
+        extra.insert("admitter_host_id".into(), Value::String(host));
+    }
+    let incarnation = over
+        .and_then(|o| o.incarnation.clone())
+        .unwrap_or(origin.incarnation);
+    extra.insert("admitter_incarnation".into(), Value::String(incarnation));
+    extra.insert(
+        "writer_id".into(),
+        Value::String(format!("{principal_kind}:{principal_id}")),
+    );
 }
 
 /// A page write for `submit_page_mutation`: the admission fields plus the page and its options.
@@ -123,6 +164,8 @@ pub struct PageMutation {
     pub page: Value,
     pub options: Value,
     pub authority: Value,
+    /// As `WriteAdmission.origin`.
+    pub origin: Option<AdmissionOrigin>,
 }
 
 /// How a request ends (`finish_write`).
@@ -535,6 +578,18 @@ fn admit_in(
         completed_at_us: None,
         extra: Map::new(),
     };
+    let mut record = record;
+    stamp_origin(
+        &mut record.extra,
+        &record.principal_kind,
+        &record.principal_id,
+        admission.origin.as_ref(),
+    );
+    crate::commit_log::scope::note(
+        &record.request_id,
+        &record.principal_kind,
+        &record.principal_id,
+    );
     write_request(tx, &record)?;
     tx.put(
         &keys::request_by_principal(&record.principal_kind, &record.principal_id, &request_id),
@@ -601,6 +656,7 @@ impl PageMutation {
             caller_intent: json!({"page": self.page, "options": self.options}),
             intent: None,
             authority: self.authority.clone(),
+            origin: self.origin.clone(),
         }
     }
 }
