@@ -7,12 +7,14 @@
  * cancel ONLY the jobs it owns (fenced SQL-side on
  * `data->>'__owner_client_id'` — the predicate submit_agent stamps).
  * Foreign-owned and missing ids share one uniform error (anti-enumeration).
- * Admin/local callers stay unfenced.
+ * The local CLI and an admin credential bound to the brain owner stay unfenced;
+ * any other remote admin credential is fenced to the jobs it submitted.
  */
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { MinionQueue } from '../src/core/minions/queue.ts';
 import { operationsByName, type OperationContext } from '../src/core/operations.ts';
+import { withCallerAccess } from '../src/core/search/private-visibility.ts';
 
 let engine: PGLiteEngine;
 let queue: MinionQueue;
@@ -50,6 +52,8 @@ const agentCtx = (clientId = 'agent-a') =>
 const adminCtx = () =>
   ctx({ auth: { clientId: 'admin-tok', scopes: ['admin'] } as OperationContext['auth'] });
 const localCtx = () => ctx({ remote: false });
+/** An admin call from a credential bound to the brain owner (dispatch sets owner on the caller-access record). */
+const asOwner = <T>(fn: () => Promise<T>) => withCallerAccess({ owner: true }, fn);
 
 let seedSeq = 0;
 async function seedJob(owner: string | null, name = 'subagent'): Promise<number> {
@@ -104,15 +108,22 @@ describe('get_job / get_job_progress — ownership fence', () => {
     await expect(get_job.handler(noIdentity, { id })).rejects.toThrow(/client identity/);
   });
 
-  test('admin token and local CLI stay unfenced', async () => {
+  test('local CLI and an owner-bound admin stay unfenced', async () => {
     const theirs = await seedJob('agent-b');
-    expect(((await get_job.handler(adminCtx(), { id: theirs })) as { id: number }).id).toBe(theirs);
     expect(((await get_job.handler(localCtx(), { id: theirs })) as { id: number }).id).toBe(theirs);
+    expect(((await asOwner(() => get_job.handler(adminCtx(), { id: theirs }))) as { id: number }).id).toBe(theirs);
+  });
+
+  test('a remote admin token that is not the owner is fenced to its own jobs', async () => {
+    const theirs = await seedJob('agent-b');
+    const mine = await seedJob('admin-tok');
+    await expect(get_job.handler(adminCtx(), { id: theirs })).rejects.toThrow(/not found/i);
+    expect(((await get_job.handler(adminCtx(), { id: mine })) as { id: number }).id).toBe(mine);
   });
 });
 
 describe('list_jobs — ownership fence', () => {
-  test('agent lists only its own jobs; admin sees all', async () => {
+  test('agent lists only its own jobs; a non-owner admin only its own; local and owner see all', async () => {
     await seedJob('agent-a');
     await seedJob('agent-a');
     await seedJob('agent-b');
@@ -122,7 +133,9 @@ describe('list_jobs — ownership fence', () => {
     expect(mine.length).toBe(2);
     for (const j of mine) expect(j.data.__owner_client_id).toBe('agent-a');
 
-    const all = (await list_jobs.handler(adminCtx(), {})) as unknown[];
+    const admin = (await list_jobs.handler(adminCtx(), {})) as unknown[];
+    expect(admin.length).toBe(0);
+    const all = (await asOwner(() => list_jobs.handler(adminCtx(), {}))) as unknown[];
     expect(all.length).toBe(4);
     const local = (await list_jobs.handler(localCtx(), {})) as unknown[];
     expect(local.length).toBe(4);
@@ -155,9 +168,10 @@ describe('cancel_job — ownership fence rides the recursive cancel', () => {
     expect(row[0]!.status).toBe('waiting');
   });
 
-  test('admin cancel stays unfenced', async () => {
+  test('owner-bound admin cancel stays unfenced; a non-owner admin cannot cancel a foreign job', async () => {
     const theirs = await seedJob('agent-b');
-    const cancelled = (await cancel_job.handler(adminCtx(), { id: theirs })) as { status: string };
+    await expect(cancel_job.handler(adminCtx(), { id: theirs })).rejects.toThrow(/Cannot cancel/);
+    const cancelled = (await asOwner(() => cancel_job.handler(adminCtx(), { id: theirs }))) as { status: string };
     expect(cancelled.status).toBe('cancelled');
   });
 });

@@ -6,7 +6,7 @@
  * (remove_on_complete / remove_on_fail) and pruned rows are not events.
  */
 import type { BrainEngine } from '../engine.ts';
-import { jobActorSql, NO_JOB_ACTOR, rowToMinionJob, type JobActor, type MinionJob } from './types.ts';
+import { jobActorSql, jobOwnerSql, NO_JOB_ACTOR, rowToMinionJob, type JobActor, type MinionJob } from './types.ts';
 
 export class TerminalCursorError extends Error {
   constructor(message: string) { super(message); this.name = 'TerminalCursorError'; }
@@ -35,7 +35,7 @@ export async function listFinishedSince(engine: BrainEngine, since: string, opts
   if (opts.queue) { params.push(opts.queue); where.push(`queue = $${params.length}`); }
   if (opts.name) { params.push(opts.name); where.push(`name = $${params.length}`); }
   if (opts.ownerClientId) {
-    params.push(opts.ownerClientId); where.push(`data->>'__owner_client_id' = $${params.length}`);
+    params.push(opts.ownerClientId); where.push(`${jobOwnerSql()} = $${params.length}`);
     where.push(jobActorSql(params.length + 1)); params.push(...(opts.ownerActor ?? NO_JOB_ACTOR));
   }
   params.push(Math.max(1, Math.min(500, Math.floor(opts.limit ?? 50))));

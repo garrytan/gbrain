@@ -4711,7 +4711,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "outputRedaction": {
       "exempt": "admin-scoped job introspection: job params and results are operator data, not retrieved brain text"
     },
-    "description": "Get job status and details by ID. Agent-scoped tokens (no admin) see only jobs they own.",
+    "description": "Get job status and details by ID. Remote callers see only jobs they submitted.",
     "params": {
       "id": {
         "type": "number",
@@ -4730,7 +4730,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "outputRedaction": {
       "exempt": "admin-scoped job introspection: job params and results are operator data, not retrieved brain text"
     },
-    "description": "Wait until a job is completed, failed, dead or cancelled (at most 55 s per call), then return it like get_job plus terminal. terminal: false means it is still running: call again. Agent-scoped tokens (no admin) wait only on jobs they own.",
+    "description": "Wait until a job is completed, failed, dead or cancelled (at most 55 s per call), then return it like get_job plus terminal. terminal: false means it is still running: call again. Remote callers wait only on jobs they submitted.",
     "params": {
       "id": {
         "type": "number",
@@ -4753,7 +4753,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "outputRedaction": {
       "exempt": "admin-scoped job introspection: job params and results are operator data, not retrieved brain text"
     },
-    "description": "List background jobs with optional status/queue/name filters; pass fields to project each job to the columns you need. Use when checking queued or failed work. Needs admin scope (agent-scoped tokens see only jobs they own).",
+    "description": "List background jobs with optional status/queue/name filters; pass fields to project each job to the columns you need. Use when checking queued or failed work. Needs admin scope; remote callers see only jobs they submitted (agent-scoped tokens too).",
     "params": {
       "status": {
         "type": "string",
@@ -4835,7 +4835,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "outputRedaction": {
       "exempt": "admin-scoped job introspection: job params and results are operator data, not retrieved brain text"
     },
-    "description": "Get structured progress for a running job. Agent-scoped tokens (no admin) see only jobs they own.",
+    "description": "Get structured progress for a running job. Remote callers see only jobs they submitted.",
     "params": {
       "id": {
         "type": "number",

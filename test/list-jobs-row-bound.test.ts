@@ -17,6 +17,7 @@ import { MinionQueue } from '../src/core/minions/queue.ts';
 import { operationsByName, type OperationContext } from '../src/core/operations.ts';
 import type { Notice } from '../src/core/agent-output.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { withCallerAccess } from '../src/core/search/private-visibility.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 
 const JOBS = 620;
@@ -66,7 +67,9 @@ function scenarios(name: 'PGLite' | 'Postgres'): void {
       ...(captured ? { emitNotice: (n: Notice) => { captured.notices.push(n); }, emitResponseMeta: (k: string, v: unknown) => { captured.meta[k] = v; } } : {}),
       ...over,
     } as OperationContext);
-    const list = async (c: OperationContext, params: Record<string, unknown>) => await operationsByName.list_jobs.handler(c, params) as Row[];
+    // The remote admin is bound to the brain owner (whole-queue view); a non-owner remote caller sees only its own jobs.
+    const list = async (c: OperationContext, params: Record<string, unknown>) =>
+      await withCallerAccess({ owner: c.auth?.clientId === 'admin-tok' }, () => operationsByName.list_jobs.handler(c, params)) as Row[];
 
     test('a remote limit of 100000 returns 500 jobs, marks the cut, and the cursor reads the rest exactly once', async () => {
       const first: Captured = { notices: [], meta: {} };

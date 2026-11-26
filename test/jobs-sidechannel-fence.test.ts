@@ -60,13 +60,13 @@ const AUTHED = {
   scopes: ['admin'],
 } as OperationContext['auth'];
 
-/** Direct SQL seed (same shape as test/jobs-ops-token-redaction.test.ts). */
-async function seedJob(status = 'waiting'): Promise<number> {
+/** Direct SQL seed (same shape as test/jobs-ops-token-redaction.test.ts), owned by AUTHED's client unless `owner` says otherwise. */
+async function seedJob(status = 'waiting', owner: string = AUTHED!.clientId): Promise<number> {
   const rows = await engine.executeRaw<{ id: number }>(
     `INSERT INTO minion_jobs (submission_authority, name, queue, status, data)
-     VALUES ('{"version":1,"kind":"application"}'::jsonb, 'embed', 'default', $1, '{}'::jsonb)
+     VALUES ('{"version":1,"kind":"application"}'::jsonb, 'embed', 'default', $1, jsonb_build_object('__owner_client_id', $2::text))
      RETURNING id`,
-    [status],
+    [status, owner],
   );
   return Number(rows[0].id);
 }
@@ -116,6 +116,12 @@ describe('send_job_message — remote sidechannel fence (fail-closed)', () => {
     expect(rows[0].sender).toBe('mcp:client-a');
     expect(rows[0].sender).not.toBe('admin');
     expect(rows[0].payload).toEqual({ directive: 'focus on X' });
+  });
+
+  it('remote + authenticated: a job another client submitted reads as not found, nothing persisted', async () => {
+    const id = await seedJob('waiting', 'another-client');
+    await expect(send_job_message.handler(ctxOf({ auth: AUTHED }), { id, payload: { x: 1 } })).rejects.toThrow(/not found/i);
+    expect(await inboxRows(id)).toHaveLength(0);
   });
 
   it('remote + authenticated: a caller-supplied sender param is IGNORED, derived identity wins', async () => {

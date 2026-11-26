@@ -861,6 +861,16 @@ export function jobAudienceKey(audience: readonly string[] | null | undefined): 
   return [...new Set(audience ?? [])].sort().join(',');
 }
 
+/**
+ * SQL: the owner key a remote-submitted job was accepted under (`submission_authority.grant.owner`, written by
+ * prepareRemoteJob / prepareRemoteAgent from the credential and the declared end user), falling back to the
+ * `__owner_client_id` stamp submit_agent jobs carried before the key existed. NULL for local (application) jobs.
+ */
+export function jobOwnerSql(alias?: string): string {
+  const a = alias ? `${alias}.` : '';
+  return `COALESCE(${a}submission_authority->'grant'->>'owner', ${a}data->>'__owner_client_id')`;
+}
+
 /** SQL: the job's accepted actor and audience equal the four parameters starting at `$first`. `alias` is a code-provided table alias. */
 export function jobActorSql(first: number, alias?: string): string {
   const grant = `${alias ? alias + '.' : ''}submission_authority->'grant'`;

@@ -1,0 +1,5 @@
+---
+kind: breaking
+exception: security
+---
+A remote MCP caller now sees and steers only the background jobs it submitted, admin scope included. get_job, wait_job, list_jobs (both pages), get_job_progress, watch_job, cancel_job, pause_job, send_job_message, retry_job, resume_job and replay_job answer a remote caller only for jobs queued by its own credential and, when a trusted gateway declares one (X-Gbrain-End-User), its own end user; any other job reads as not found. Before, any remote credential with the admin scope could list every job on the brain, including other clients' agent prompts, data and results. Jobs queued remotely from now on record their submitting credential and declared end user, and an agent job's writes are attributed to that end user. The local CLI, a local stdio server and an admin credential bound to the brain owner (access.owner_member) keep the whole-queue view. If a remote admin client of yours needs to watch the whole queue, bind its credential to the owner member or use gbrain jobs list on the brain host.

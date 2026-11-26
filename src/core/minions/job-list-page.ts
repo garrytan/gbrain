@@ -4,7 +4,7 @@
  * resumes after the last row returned. The per-call cap for remote callers lives in ops/read-paging.ts.
  */
 import type { BrainEngine } from '../engine.ts';
-import { jobActorSql, NO_JOB_ACTOR, rowToMinionJob, type JobActor, type MinionJob } from './types.ts';
+import { jobActorSql, jobOwnerSql, NO_JOB_ACTOR, rowToMinionJob, type JobActor, type MinionJob } from './types.ts';
 
 export class JobListCursorError extends Error {
   constructor(message: string) { super(message); this.name = 'JobListCursorError'; }
@@ -33,7 +33,7 @@ export async function listJobPage(engine: BrainEngine, opts: {
   if (opts.queue) { params.push(opts.queue); where.push(`queue = $${params.length}`); }
   if (opts.name) { params.push(opts.name); where.push(`name = $${params.length}`); }
   if (opts.ownerClientId) {
-    params.push(opts.ownerClientId); where.push(`data->>'__owner_client_id' = $${params.length}`);
+    params.push(opts.ownerClientId); where.push(`${jobOwnerSql()} = $${params.length}`);
     where.push(jobActorSql(params.length + 1)); params.push(...(opts.ownerActor ?? NO_JOB_ACTOR));
   }
   params.push(opts.limit + 1);

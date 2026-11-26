@@ -314,6 +314,8 @@ function brainTool(op: Operation, opts: BuildBrainToolsOpts): ToolDef {
       const params = normalizeOptionalParams(op, raw);
       const submitted = currentSubmissionAuthority();
       const agent = submitted?.kind === 'remote_agent' ? submitted : undefined;
+      // The job's writes are attributed to the end user its submitting call declared, as that call's own writes were.
+      if (agent?.grant.endUser) opCtx.endUser = agent.grant.endUser;
       // #9669: a remote agent job calls tools as the connection that submitted it: a tool or parameter its surface
       // leaves out is refused exactly as MCP dispatch refuses it, before validation and the handler.
       const surface = agent?.grant.surface ?? 'full';
