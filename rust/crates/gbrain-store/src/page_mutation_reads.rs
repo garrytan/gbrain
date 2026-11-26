@@ -11,8 +11,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::access_rules::folder_rules;
 use crate::error::Result;
 use crate::facts::{PrivacyPolicy, page_hidden, page_hidden_with};
+use crate::kv::KvRead;
 use crate::owner_only::OwnerOnlySources;
-use crate::pages::{VersionRecord, all_pages, read_page};
+use crate::pages::{VersionRecord, read_page};
+use crate::sources::all_sources;
 use crate::{Store, get_json, keys};
 use serde_json::{Value, json};
 
@@ -112,27 +114,43 @@ impl Store {
         hidden_sources: &[String],
         policy: &PrivacyPolicy,
     ) -> Result<Vec<String>> {
-        let read = self.read()?;
-        let wanted: BTreeSet<&str> = slugs.iter().map(String::as_str).collect();
-        let owner_only = OwnerOnlySources::read(&*read)?;
-        let mut all_hidden: BTreeMap<String, bool> = BTreeMap::new();
-        for page in all_pages(&*read)? {
-            if !wanted.contains(page.slug.as_str()) {
+        hidden_page_slugs(&*self.read()?, slugs, hidden_sources, policy)
+    }
+}
+
+/// [`Store::read_hidden_page_slugs`] over one read view. One point read per (source, slug): every source, archived ones
+/// too (the SQL has no source filter), and no scan of the pages themselves, so the read costs the requested slugs and
+/// not the size of the brain.
+fn hidden_page_slugs(
+    read: &dyn KvRead,
+    slugs: &[String],
+    hidden_sources: &[String],
+    policy: &PrivacyPolicy,
+) -> Result<Vec<String>> {
+    let wanted: BTreeSet<&str> = slugs.iter().map(String::as_str).collect();
+    let owner_only = OwnerOnlySources::read(read)?;
+    let sources = all_sources(read)?;
+    let mut all_hidden: BTreeMap<String, bool> = BTreeMap::new();
+    for slug in wanted {
+        for source in &sources {
+            let Some(page) = read_page(read, &source.id, slug)? else {
                 continue;
-            }
+            };
             let hidden = hidden_sources.contains(&page.source_id)
-                || page_hidden_with(&*read, &page, policy, &owner_only)?;
+                || page_hidden_with(read, &page, policy, &owner_only)?;
             *all_hidden.entry(page.slug).or_insert(true) &= hidden;
         }
-        Ok(all_hidden
-            .into_iter()
-            .filter_map(|(slug, hidden)| hidden.then_some(slug))
-            .collect())
     }
+    Ok(all_hidden
+        .into_iter()
+        .filter_map(|(slug, hidden)| hidden.then_some(slug))
+        .collect())
 }
 
 #[cfg(test)]
 mod tests {
+    use super::hidden_page_slugs;
+    use crate::kv::counting::Counting;
     use crate::pages::{CreateVersionOptions, PageInput, PutPageOptions};
     use crate::sources::SourceInput;
     use serde_json::{Map, json};
@@ -249,11 +267,9 @@ mod tests {
     #[test]
     fn the_enforced_member_reads_answer_as_their_sql_does() {
         let store = crate::test_support::store();
-        for id in ["vault"] {
-            let source: SourceInput =
-                serde_json::from_value(json!({ "id": id, "name": id })).unwrap();
-            store.upsert_source(&source).unwrap();
-        }
+        let vault: SourceInput =
+            serde_json::from_value(json!({ "id": "vault", "name": "vault" })).unwrap();
+        store.upsert_source(&vault).unwrap();
         store.put_access_policy_state("default").unwrap();
         store
             .put_access_rule(crate::access_rules::AccessRuleRecord {
@@ -410,5 +426,96 @@ mod tests {
         );
         assert_eq!(hidden(&all, &[], &grouped), ["notes/private"]);
         assert!(hidden(&[], &["vault"], &tess).is_empty());
+    }
+
+    #[test]
+    fn hidden_slugs_read_archived_sources_and_soft_deleted_pages() {
+        let store = crate::test_support::store();
+        let old: SourceInput =
+            serde_json::from_value(json!({ "id": "old", "name": "old" })).unwrap();
+        store.upsert_source(&old).unwrap();
+        put(
+            &store,
+            "old",
+            "notes/old-only",
+            r#"{"readable_by":["member:bob-example"]}"#,
+        );
+        put(&store, "old", "notes/shared", "{}");
+        put(
+            &store,
+            "default",
+            "notes/shared",
+            r#"{"readable_by":["member:bob-example"]}"#,
+        );
+        put(
+            &store,
+            "default",
+            "notes/gone-private",
+            r#"{"visibility":"private"}"#,
+        );
+        store.soft_delete_page("notes/gone-private", None).unwrap();
+        store.set_source_archived("old", true).unwrap();
+        let tess = member_policy("member:tess-example", &[]);
+        let hidden = |slugs: &[&str], sources: &[&str]| {
+            let slugs: Vec<String> = slugs.iter().map(|s| s.to_string()).collect();
+            let sources: Vec<String> = sources.iter().map(|s| s.to_string()).collect();
+            store
+                .read_hidden_page_slugs(&slugs, &sources, &tess)
+                .unwrap()
+        };
+        // An archived source's page is read like any other; a slug is hidden only when every page of it is.
+        assert_eq!(hidden(&["notes/old-only"], &[]), ["notes/old-only"]);
+        assert!(hidden(&["notes/shared"], &[]).is_empty());
+        assert_eq!(hidden(&["notes/shared"], &["old"]), ["notes/shared"]);
+        // A soft-deleted page is still a page.
+        assert_eq!(hidden(&["notes/gone-private"], &[]), ["notes/gone-private"]);
+        assert!(hidden(&["notes/missing"], &[]).is_empty());
+    }
+
+    /// Every entry of the store, held in a map that counts what a scan hands out and what a get reads.
+    fn snapshot(store: &crate::Store) -> Counting {
+        let mut copy = Counting::default();
+        store
+            .read()
+            .unwrap()
+            .scan(&[0], &[0xff, 0xff], false, &mut |k, v| {
+                copy.entries.insert(k.to_vec(), v.to_vec());
+                true
+            })
+            .unwrap();
+        copy
+    }
+
+    #[test]
+    fn hidden_slugs_do_not_scan_the_pages_of_the_brain() {
+        // The entries a scan hands out, and the keys a get reads, for one requested slug among `n` other pages.
+        let measure = |n: usize| {
+            let store = crate::test_support::store();
+            put(
+                &store,
+                "default",
+                "notes/asked",
+                r#"{"readable_by":["member:bob-example"]}"#,
+            );
+            for i in 0..n {
+                put(&store, "default", &format!("notes/other-{i}"), "{}");
+            }
+            let view = snapshot(&store);
+            let slugs = vec!["notes/asked".to_string()];
+            let found = hidden_page_slugs(
+                &view,
+                &slugs,
+                &[],
+                &member_policy("member:tess-example", &[]),
+            )
+            .unwrap();
+            assert_eq!(found, ["notes/asked"]);
+            (view.delivered.get(), view.gets.get())
+        };
+        let (small, large) = (measure(2), measure(40));
+        assert_eq!(
+            small, large,
+            "the read grew with the number of unrelated pages"
+        );
     }
 }
