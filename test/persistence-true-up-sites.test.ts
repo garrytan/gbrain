@@ -20,7 +20,8 @@ const SRC = join(ROOT, 'src');
 const SITES: Record<string, string> = {
   // The completeEffect / parkEffect / failEffect statements; the helpers run only under the effect runner, which trues up every request it claimed.
   'src/core/engine-sql/persistence-effect-worker.ts': 'src/core/persistence/effects.ts',
-  'src/core/persistence/effects.ts': 'src/core/persistence/effects.ts',
+  // The Git effect's plain outcome (gitEffectStore().recordPlainOutcome, moved from effects.ts); only the effect runner in effects.ts calls it.
+  'src/core/engine-sql/git-effects.ts': 'src/core/persistence/effects.ts',
   'src/core/persistence/embedding-settlement.ts': 'src/core/persistence/embedding-settlement.ts',
   'src/core/engine-sql/persistence-embedding-noop-settle.ts': 'src/core/persistence/embedding-noop-settle.ts',
   'src/core/persistence/effect-retry.ts': 'src/core/persistence/effect-retry.ts',
@@ -58,7 +59,7 @@ test('the effect-journal settle helpers are called only under the effect runner'
 const COMPLETIONS: Record<string, number> = {
   // completeWrite (committed, conflict, failed, cancelled): the plain completion and the one that also probes purges.
   'src/core/engine-sql/persistence-journal.ts': 2,
-  'src/core/persistence/group-publish.ts': 1, // completeGroup: committed
+  'src/core/engine-sql/group-publish-store.ts': 1, // completeGroup: committed (groupPublishStore, moved unchanged from persistence/group-publish.ts)
 };
 /** An UPDATE of persistence_requests assigning `state` in its SET list, with the statement text up to the closing backtick. */
 const REQUEST_STATE = /UPDATE\s+persistence_requests\b(?:(?!\bWHERE\b)[^`;])*?\bSET\b(?:(?!\bWHERE\b)[^`;])*?(?<![.\w])state\s*=\s*([^,\n]+)[^`]*/g;
