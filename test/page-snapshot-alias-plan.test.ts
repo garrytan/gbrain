@@ -94,7 +94,8 @@ for (const kind of testBackends()) {
       expect((await read('alice', { resolveAlias: true }))?.page.source_id).toBe('default');
       await expect(read('alice', { resolveAlias: true, requireUnambiguous: true })).rejects.toBeInstanceOf(PageSnapshotAmbiguousError);
       expect((await read('people/bob-example', { resolveAlias: true, requireUnambiguous: true, sourceId: 'default' }))?.page.slug).toBe('people/bob-example');
-      expect(await read('people/private-example', { resolveAlias: true, excludePrivate: true, preserveExactIdentity: true })).toBeNull();
+      // A hidden exact page counts as no page for a caller that may not see it: the visible alias target answers.
+      expect((await read('people/private-example', { resolveAlias: true, excludePrivate: true, preserveExactIdentity: true }))?.page.slug).toBe('people/carol-example');
       expect((await read('people/private-example', { resolveAlias: true, excludePrivate: true }))?.page.slug).toBe('people/carol-example');
       expect(await read('carol', { resolveAlias: true })).toBeNull();
       expect((await read('carol', { resolveAlias: true, includeDeleted: true }))?.page.source_id).toBe('gone');
