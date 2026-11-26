@@ -11,6 +11,7 @@ import { confirmBodyPin, openSegmentedBody, readBodyRange, type BodyAudience } f
 import { privacyPartSql } from '../search/private-visibility.ts';
 import { authorizeStoredRequest } from './authority.ts';
 import { completeEffect } from './effect-journal.ts';
+import { sourceBasenameIndex } from './links-preparation.ts';
 import { REMOTE_AUTO_LINKS_KEY, REMOTE_MENTION_LINK_SOURCE, type AppendedRange, type PersistenceEffect } from './effect-model.ts';
 import { guardEffectSource } from './effect-recovery.ts';
 import type { SqlEngine, WriteAuthority, WriteRequest } from './model.ts';
@@ -45,7 +46,7 @@ const SKIPPED_TARGET_LIMIT = 50;
  */
 async function mentionTargets(engine: BrainEngine, snapshot: PageSnapshot, sourceId: string) {
   const { page } = snapshot;
-  const resolver = makeResolver(engine, { mode: 'live', sourceId });
+  const resolver = liveResolver(engine, sourceId);
   const opts = await mentionOptions(engine);
   const { candidates } = isSegmentedPage(page)
     ? await extractSegmentedPageLinks(engine, { id: Number(page.id), slug: page.slug, source_id: sourceId, type: page.type, frontmatter: {} }, resolver,
@@ -53,6 +54,9 @@ async function mentionTargets(engine: BrainEngine, snapshot: PageSnapshot, sourc
     : await extractPageLinks(page.slug, page.compiled_truth, {}, page.type, resolver, opts);
   return mentionCandidates(candidates, page.slug, sourceId);
 }
+
+/** #10101: the per-source basename index write preparation keeps (freshness-checked), so a page effect never lists every slug of its source. */
+const liveResolver = (engine: BrainEngine, sourceId: string) => makeResolver(engine, { mode: 'live', sourceId, basenameIndex: () => sourceBasenameIndex(engine, sourceId) });
 
 const mentionOptions = async (engine: BrainEngine) => ({ skipFrontmatter: true, pack: null, globalBasename: await isGlobalBasenameEnabled(engine) });
 
@@ -154,7 +158,7 @@ async function runAppendLinksEffect(engine: BrainEngine, effect: PersistenceEffe
   const text = await appendedText(engine, snapshot, range, snapshot.revision !== effect.revision, audience);
   if (text === null) return skip(engine, 'superseded');
   const { page } = snapshot;
-  const { candidates } = await extractPageLinks(page.slug, text, {}, page.type, makeResolver(engine, { mode: 'live', sourceId }), await mentionOptions(engine));
+  const { candidates } = await extractPageLinks(page.slug, text, {}, page.type, liveResolver(engine, sourceId), await mentionOptions(engine));
   const { targets, skipped } = mentionCandidates(candidates, page.slug, sourceId);
   const beliefs = unmanagedBeliefPoint(sourceId, [page.slug], 'remote_auto_links');
   await engine.transaction(async tx => {

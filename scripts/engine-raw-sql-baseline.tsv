@@ -8,6 +8,7 @@ src/cli/enforced-member.ts	execute_raw	6
 src/commands/access-read-by-nobody.ts	execute_raw	2
 src/commands/access-read-log.ts	execute_raw	4	GST-2476 gap 1: the access read log readers (access log, who-read) over the new access_read_log table (v331); the access area is still raw SQL (access.ts, access-rules.ts) and converts with it
 src/commands/access-rules.ts	execute_raw	4
+src/commands/household-template.ts	execute_raw	2	H2 household template: the member-key lookup and the revoke on a failed key-file write, the same two statements access-serves.ts runs for its member keys
 src/commands/access-serves.ts	execute_raw	8	came from master #9625 (shared company brains: owner setup, member keys), which landed after this ratchet was cut
 src/commands/access.ts	execute_raw	6
 src/commands/agent-logs.ts	execute_raw	1
@@ -124,8 +125,7 @@ src/commands/doctor/checks/projection-readiness.ts	execute_raw	1
 src/commands/doctor/checks/provenance-stamp-drift.ts	execute_raw	1
 src/commands/doctor/checks/purge-mirror.ts	execute_raw	1
 src/commands/doctor/checks/purged-page-facts.ts	execute_raw	1
-src/commands/doctor/checks/queue-assets.ts	execute_raw	3
-src/commands/doctor/checks/queue-assets.ts	sql_template	1
+src/commands/doctor/checks/queue-assets.ts	execute_raw	4	+1 #9966: index_audit moved from the module connection sql template (that row removed) to engine.executeRaw, so it runs on the engine doctor was given
 src/commands/doctor/checks/queue-jobs.ts	execute_raw	2
 src/commands/doctor/checks/routing-federation.ts	execute_raw	7
 src/commands/doctor/checks/rows-behind.ts	execute_raw	1
@@ -420,6 +420,7 @@ src/core/cycle/synthesize-completion.ts	execute_raw	4
 src/core/cycle/synthesize-concepts.ts	execute_raw	1
 src/core/cycle/synthesize-generations.ts	execute_raw	1
 src/core/cycle/synthesize-postprocess.ts	execute_raw	3
+src/core/cycle/synthesize-source-routing.ts	execute_raw	1	+1 #8669: the global synthesize rotation lists live sources with a checkout (until sources get a typed engine member)
 src/core/cycle/synthesize-verify-epochs.ts	execute_raw	3
 src/core/cycle/synthesize.ts	execute_raw	6
 src/core/cycle/transcript-discovery.ts	execute_raw	2
@@ -539,7 +540,7 @@ src/core/generations/fence-restore.ts	execute_raw	3
 src/core/generations/fence.ts	execute_raw	5
 src/core/generations/ledger-scrub.ts	execute_raw	7
 src/core/generations/managed.ts	execute_raw	7
-src/core/generations/publish.ts	execute_raw	19
+src/core/generations/publish.ts	execute_raw	20	+1 #10270: currentHoldIds reads held atom rows so the extract-atoms backlog skips items the phase already holds (matches heldForInput; until generations get a typed engine member)
 src/core/generations/repair.ts	execute_raw	6
 src/core/ghost-pages.ts	execute_raw	4
 src/core/git/redact-finish.ts	execute_raw	8	GST-2988 PR 2 publish redaction finish: reads sources.local_path and persistence_host_bindings to find the checkout that owns a pushed root, reads and compare-and-sets sources.last_commit to the rebuilt sha, and lists persistence_effects worktree ids to remap parked effects; branched before the #9641 ratchet; no typed engine method for these source and effect reads exists yet
@@ -666,6 +667,7 @@ src/core/oauth-grants.ts	sql_template	16
 src/core/oauth-provider.ts	sql_template	22
 src/core/onboard/checks.ts	execute_raw	5
 src/core/onboard/first-session.ts	execute_raw	3	first-session suggestion: the onboarding.first_session record compare-and-swap in config (insert and update) and the pointer read of recent world-visible pages under remoteReadFloorSql; converts with setup-history.ts
+src/core/onboard/propose.ts	execute_raw	7	lane 5 O2 job proposals: five bounded keyless detector reads over open_loops, meeting, email and conversation pages under the caller source scope, the prep-page probe, and the google-synced source check; converts when the detectors get engine-sql members
 src/core/onboard/checks.ts	sql_template	2
 src/core/onboard/impact-capture.ts	execute_raw	3
 src/core/onboard/mcp-onboarding.ts	execute_raw	1
@@ -860,7 +862,7 @@ src/core/persistence/origin-twins.ts	execute_raw	2
 src/core/persistence/orphan-bindings.ts	execute_raw	2
 src/core/persistence/overwritten-edits.ts	execute_raw	3
 src/core/persistence/owner-activity.ts	execute_raw	1
-src/core/persistence/ownership.ts	execute_raw	24
+src/core/persistence/ownership.ts	execute_raw	25	+1 #10123: acceptWriterTransfer reads the previous owner binding git_durability inside the accept transaction (one SELECT beside the binding INSERT it carries into)
 src/core/persistence/page-advisories.ts	execute_raw	1
 src/core/persistence/page-append.ts	execute_raw	3
 src/core/persistence/page-batch.ts	execute_raw	2
@@ -1016,7 +1018,7 @@ src/core/repair/facts-rehome.ts	execute_raw	4
 src/core/repair/failed-writes.ts	execute_raw	19
 src/core/repair/fences.ts	execute_raw	4
 src/core/repair/file-drift-class.ts	execute_raw	12	came from #9614 and #9615 (whole-class held file-drift preview and apply), opened before this ratchet: the preview reads the held file_drift checkpoints and the source incarnation, and the apply adds its lease, progress and manifest reads and writes; these move behind typed engine methods with the next change in the repair area
-src/core/repair/file-drift.ts	execute_raw	6
+src/core/repair/file-drift.ts	execute_raw	7	+1 #9711: slugFileDriftHold reads one file_drift hold by slug for a --slug selection on a mirror
 src/core/repair/frontmatter.ts	execute_raw	8
 src/core/repair/ghost-pages.ts	execute_raw	1
 src/core/repair/label-write.ts	execute_raw	1
@@ -1062,6 +1064,7 @@ src/core/repair/url-clone-fences.ts	execute_raw	5
 src/core/repair/visibility.ts	execute_raw	11
 src/core/restore-target.ts	execute_raw	4
 src/core/review-lists.ts	execute_raw	1
+src/core/rules/correct.ts	execute_raw	1	GST-3827 C2: the atomic claim of a new correction receipt (INSERT INTO config ... ON CONFLICT DO NOTHING RETURNING); no typed engine method claims a config key
 src/core/schema-migrations/helpers.ts	execute_raw	12
 src/core/schema-migrations/v039-multimodal-dual-column-v0-27-1.ts	execute_raw	1
 src/core/schema-migrations/v045-facts-hot-memory-v0-31.ts	execute_raw	2
@@ -1231,6 +1234,7 @@ src/core/trust/timeline-projection.ts	execute_raw	2
 src/core/uncommitted-deletions.ts	execute_raw	1
 src/core/url-clone.ts	execute_raw	2
 src/core/url-source-origin.ts	execute_raw	4
+src/core/value/card.ts	execute_raw	6	value card (roadmap PR 3): read-only whole-brain counts for the trusted local CLI (pages by kind, links, facts by state, search_telemetry, context_volunteer_events with page_retrievals); converts with the stats domain
 src/core/vector-index.ts	driver_call	2
 src/core/vector-index.ts	execute_raw	9
 src/core/vector-prewarm.ts	execute_raw	4

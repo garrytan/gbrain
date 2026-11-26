@@ -67,8 +67,10 @@ notice). User guide: [core memory](../../guides/core-memory.md).
   (`gbrain profile [--json]`, local or thin client), `src/core/profile/import.ts`
   + `src/core/profile/import-run.ts` + `src/commands/profile-import.ts`
   (`gbrain profile import`: parse, preview hash, batched `remember` apply and
-  the resume receipt). Tests: `test/profile-core.test.ts`,
-  `test/profile-import.test.ts`.
+  the resume receipt), `src/core/profile/export.ts` + `src/commands/profile-export.ts`
+  (`gbrain profile export`: world-visible facts by default, memory-text, the
+  marked Muse block that `--into` replaces in place, markdown). Tests:
+  `test/profile-core.test.ts`, `test/profile-import.test.ts`, `test/profile-export.test.ts`.
 - `src/commands/core.ts` (`gbrain core`), `src/commands/doctor/checks/core-memory.ts`
   (`core_memory`), schema `src/core/core-memory-schema.ts` + migration v213.
 - Tests: `test/core-memory.test.ts`, `test/core-guard.test.ts`,

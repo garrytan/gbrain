@@ -167,7 +167,7 @@ export const BUILT_IN_JUNK_PATTERNS: ReadonlyArray<JunkPattern> = Object.freeze(
   // Cloudflare interstitials — the dominant scraper-junk class.
   {
     name: 'cloudflare_attention_required',
-    pattern: /attention required.*cloudflare/i,
+    pattern: /(?:^[ \t]*(?:#+[ \t]*|title:[ \t]*)?|<title[^>]*>[ \t]*)attention required.*cloudflare/im,
     applies_to: 'both',
   },
   {

@@ -15,11 +15,14 @@ const unrelatedColumn = (relation: string) =>
 const missingTable = (table: string) => Object.assign(new Error(`relation "${table}" does not exist`), { code: '42P01' });
 
 /** A transaction handle whose statements throw `error` (the withdrawal-subject move, which runs outside a savepoint, succeeds). */
-function tx(error: Error): Pick<BrainEngine, 'transaction' | 'executeRaw'> {
+function tx(error: Error): Pick<BrainEngine, 'transaction' | 'executeRaw' | 'readTransactionSettings' | 'applyTransactionSettings'> {
   const savepoint = { executeRaw: async () => { throw error; } } as unknown as BrainEngine;
   return {
     transaction: (async <T>(fn: (t: BrainEngine) => Promise<T>) => fn(savepoint)) as BrainEngine['transaction'],
     executeRaw: (async () => []) as BrainEngine['executeRaw'],
+    // moveSlugBindings keeps the trust tier of the facts it re-keys (#10003) through these transaction settings.
+    readTransactionSettings: (async (names: readonly string[]) => names.map(() => null)) as BrainEngine['readTransactionSettings'],
+    applyTransactionSettings: (async () => undefined) as BrainEngine['applyTransactionSettings'],
   };
 }
 

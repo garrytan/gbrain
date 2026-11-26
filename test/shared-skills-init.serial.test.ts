@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { packagedSharedSkills } from '../src/core/shared-skills/setup-bundle.ts';
@@ -13,12 +13,17 @@ const directories: string[] = [];
 afterEach(() => { for (const path of directories.splice(0)) rmSync(path, { recursive: true, force: true }); });
 function temp() { const path = mkdtempSync(join(tmpdir(), 'gbrain-shared-init-')); directories.push(path); return path; }
 
-async function init(home: string, args: string[] = [], binary?: string) {
+async function runInit(home: string, args: string[] = [], binary?: string) {
   const command = binary ? [binary] : [process.execPath, join(import.meta.dir, '../src/cli.ts')];
   const env = { ...process.env, GBRAIN_HOME: home, GBRAIN_SKIP_STARTUP_HOOKS: '1' };
   for (const key of ['DATABASE_URL', 'GBRAIN_DATABASE_URL', 'GBRAIN_SOURCE', 'GBRAIN_BRAIN_ID', 'GBRAIN_IN_AGENT_SETUP']) delete env[key as keyof typeof env];
   const child = Bun.spawn([...command, 'init', '--pglite', '--no-embedding', '--non-interactive', '--json', ...args], { cwd: home, env, stdout: 'pipe', stderr: 'pipe' });
   const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+  return { stdout, stderr, code };
+}
+
+async function init(home: string, args: string[] = [], binary?: string) {
+  const { stdout, stderr, code } = await runInit(home, args, binary);
   expect({ code, error: code ? stderr + stdout : '' }).toEqual({ code: 0, error: '' });
   const result = stdout.split('\n').filter(line => line.startsWith('{')).map(line => JSON.parse(line)).find(row => row.status === 'success');
   expect(result).toBeDefined();
@@ -81,6 +86,29 @@ describe('real combined brain initialization', () => {
     const git = Bun.spawn(['git', '-C', result.content.root, 'remote'], { stdout: 'pipe', stderr: 'pipe' });
     expect((await new Response(git.stdout).text()).trim()).toBe('');
     expect(await git.exited).toBe(0);
+  }, 120_000);
+  test('a brain home under a symlinked ancestor initializes at the resolved path (#9925)', async () => {
+    const real = temp(), link = join(temp(), 'link');
+    symlinkSync(real, link);
+    const home = join(link, 'home');
+    mkdirSync(home);
+    const result = await init(home);
+    expect(result.content.status).toBe('ready');
+    expect(result.content.root).toBe(join(realpathSync(real), 'home', '.gbrain', 'content', result.content.brain_id, 'default'));
+    expect(existsSync(join(result.content.root, 'skillpack.json'))).toBe(true);
+  }, 120_000);
+  test('a home inside another Git worktree can still choose a content root outside it with --content-root (#10287)', async () => {
+    const parent = temp(), elsewhere = temp();
+    expect(Bun.spawnSync(['git', 'init', '-q', parent]).exitCode).toBe(0);
+    const home = join(parent, 'home');
+    mkdirSync(home);
+    const refused = await runInit(home);
+    expect(refused.code).not.toBe(0);
+    expect(refused.stderr + refused.stdout).toContain('inside another Git worktree');
+    const root = join(realpathSync(elsewhere), 'content');
+    const result = await init(home, ['--content-root', root]);
+    expect(result.content.status).toBe('ready');
+    expect(result.content.root).toBe(root);
   }, 120_000);
   test('DB-only init stays memory-capable but does not claim content publication', async () => {
     const home = temp();

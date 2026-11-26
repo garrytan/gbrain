@@ -27,7 +27,7 @@ import { hardenedGitSync } from '../hardened-git.ts';
 import { assertWriterAdminUnlocked } from './admin-lock.ts';
 import { inspectPhysicalRootRecovery, repairPhysicalRoot, type PhysicalRootRecovery } from './physical-root-recovery.ts';
 import type { ContentReceiptRebind } from '../shared-skills/receipt-root.ts';
-import { getWorktreeBindingRaw, type WorktreeBinding } from '../engine-sql/write-misc.ts';
+import { getWorktreeBindingRaw, type GitDurabilitySetting, type WorktreeBinding } from '../engine-sql/write-misc.ts';
 
 const writerStatusFix = (sourceId: string): Action => readFix(
   `Shows source ${sourceId}'s owner host, epoch, worktree state, admin_state and any publication still recovering, read-only.`,
@@ -437,7 +437,7 @@ export async function cancelWriterTransfer(engine: BrainEngine, sourceId: string
   } finally { await lock.release(); }
 }
 export async function acceptWriterTransfer(engine: BrainEngine, sourceId: string, path: string, expectedEpoch: string, expectedManifest: string, hostId = hostIdFor(engine), expectedAdminState?: string,
-  opts: WriterTransferOptions = {}): Promise<{ content_receipts: ContentReceiptRebind[] }> {
+  opts: WriterTransferOptions = {}): Promise<{ content_receipts: ContentReceiptRebind[]; durability_probe_failure?: string }> {
   const root = realpathSync(resolve(path));
   const binding = await getWorktreeBinding(engine, sourceId, hostId);
   if (!binding) throw opError('not_found', 'Source has no worktree owner.',
@@ -454,6 +454,11 @@ export async function acceptWriterTransfer(engine: BrainEngine, sourceId: string
   if (!coordination) throw opError('recovery_required', 'The recorded coordination path is missing.',
     `Source ${sourceId}'s host binding has no coordination lock path, so no transfer was accepted. Inspect writer status and show it to the user; repairing the binding is a deliberate topology change (docs/architecture/topologies.md).`,
     { fix: writerStatusFix(sourceId) });
+  // #10123: a cross-host accept carries the owner's Git durability; `enabled` only when the --enable push probe passes here.
+  const crossHost = binding.owner_host_id !== hostId;
+  const ownerDurability = async (sql: SqlEngine) => (await sql.executeRaw<{ git_durability: GitDurabilitySetting }>(
+    'SELECT git_durability FROM persistence_host_bindings WHERE worktree_id=$1::uuid AND host_id=$2::uuid', [binding.worktree_id, binding.owner_host_id]))[0]?.git_durability ?? null;
+  let probed = false, probeFailure: string | undefined;
   const lock = await acquireNativeLock(coordination, { timeoutMs: 5000 });
   if (!lock) throw opError('write_pending', 'Successor worktree is busy.',
     `Another gbrain process holds the successor checkout's coordination lock, so source ${sourceId}'s transfer was not accepted. Run transfer accept again once that process has finished.`,
@@ -463,6 +468,14 @@ export async function acceptWriterTransfer(engine: BrainEngine, sourceId: string
     const [prepared] = await engine.executeRaw<{ manifest: StoredWorktreeManifest | null }>('SELECT manifest FROM persistence_worktrees WHERE id=$1::uuid', [binding.worktree_id]);
     const candidate = worktreeManifest(root, { progress: humanManifestProgress(), scope: storedManifestScope(prepared?.manifest) });
     if (candidate.digest !== expectedManifest) throw successorManifestMismatch(sourceId, root, expectedManifest, prepared?.manifest ?? null, candidate);
+    if (crossHost && !opts.dryRun && await ownerDurability(engine) === 'enabled') {
+      const { inspectDurabilityCheckout, probeDurabilityPush } = await import('./git-durability-administration.ts');
+      try {
+        const probe = await probeDurabilityPush(root, await inspectDurabilityCheckout(root), () => '', { noHooks: true });
+        if (!probe.ok || probe.skipped) probeFailure = probe.ok ? probe.skipped : probe.reason;
+      } catch { probeFailure = 'git_unavailable'; }
+      probed = true;
+    }
     return await engine.transaction(async tx => {
       await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
       await assertWriterAdminState(tx, expectedAdminState);
@@ -488,12 +501,15 @@ export async function acceptWriterTransfer(engine: BrainEngine, sourceId: string
       if (opts.selfTransfer) repairPhysicalRoot(root, owner.manifest.self_transfer!, { hostId, worktreeId: binding.worktree_id, coordinationPath: coordination }, opts.dryRun);
       else if (!opts.dryRun) await preparePhysicalRootTransfer(tx, root, { hostId, worktreeId: binding.worktree_id, coordinationPath: coordination, expectedEpoch });
       if (opts.dryRun) return { content_receipts: [] };
-      await tx.executeRaw(`INSERT INTO persistence_host_bindings(worktree_id,host_id,local_path,coordination_path)
-        VALUES($1::uuid,$2::uuid,$3,$4) ON CONFLICT(worktree_id,host_id) DO UPDATE SET local_path=EXCLUDED.local_path,coordination_path=EXCLUDED.coordination_path`, [binding.worktree_id, hostId, root, coordination]);
+      const from = crossHost ? await ownerDurability(tx) : null;
+      const carried: GitDurabilitySetting = from === 'disabled' || (from === 'enabled' && probed && !probeFailure) ? from : null;
+      await tx.executeRaw(`INSERT INTO persistence_host_bindings(worktree_id,host_id,local_path,coordination_path,git_durability)
+        VALUES($1::uuid,$2::uuid,$3,$4,$5) ON CONFLICT(worktree_id,host_id) DO UPDATE SET local_path=EXCLUDED.local_path,coordination_path=EXCLUDED.coordination_path${
+          crossHost ? ',git_durability=COALESCE(EXCLUDED.git_durability,persistence_host_bindings.git_durability)' : ''}`, [binding.worktree_id, hostId, root, coordination, carried]);
       const contentReceipts = await (await import('../shared-skills/receipt-root.ts')).rebindContentReceipts(tx, [binding.worktree_id], hostId);
       await tx.executeRaw(`UPDATE persistence_worktrees SET owner_host_id=$2::uuid,owner_epoch=owner_epoch+1,state='active',heartbeat_at=now() WHERE id=$1::uuid`, [binding.worktree_id, hostId]);
       await refreshManagedFilesystemRoots(tx, managedFilesystemDatastorePath(engine));
-      return { content_receipts: contentReceipts };
+      return { content_receipts: contentReceipts, ...(from === 'enabled' && probeFailure ? { durability_probe_failure: probeFailure } : {}) };
     });
   } finally { await lock.release(); }
 }

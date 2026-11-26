@@ -172,7 +172,10 @@ export async function countEmbeddingHeld(engine: Pick<BrainEngine, 'executeRaw' 
  *
  * The rebuild runs while an activation row waits on a `text` page in scope: the resident drain rebuilds only those.
  * Rows left on images (`sealable`, `reimport`) wait for an operator, whom the pending-images notice already names,
- * so they never make a rebuild look like it runs for good. That check reads only the queue, and the count of every
+ * so they never make a rebuild look like it runs for good. That check reads the queue first, on its own (#10367: a
+ * materialized read, so its few rows reach pages through the (source_id, slug) key; joined on incarnation alongside the
+ * pages, the planner could pair every queued row with every page of a source list and filter on slug afterwards, about
+ * 3 s a search while image rows sat in the queue), and the count of every
  * page in scope, a read of the whole pages table, sits behind it (a filter on the outer row alone, so Postgres never
  * starts the scan when no rebuild runs): it runs only while the rebuild runs, never on every search. JIT off for the
  * same reason as the classed `countInScope`: the never-run count still prices into the estimate.
@@ -182,9 +185,11 @@ export async function countProjectionRebuild(engine: Pick<BrainEngine, 'executeR
   const filters = coverageScopeFilters(scope, params).join(' AND ');
   try {
     const [row] = await engine.executeRaw<{ seconds: number | null; total: number; done: number }>(
-      `WITH started AS (SELECT EXTRACT(EPOCH FROM now() - min(j.updated_at))::float8 AS seconds
-        FROM page_projection_jobs j JOIN sources s ON s.incarnation = j.source_incarnation JOIN pages p ON p.source_id = s.id AND p.slug = j.slug
-        WHERE j.reason = 'protocol_activation' AND p.deleted_at IS NULL AND ${textClassSql('p', 's')} AND ${filters})
+      `WITH queued AS MATERIALIZED (SELECT s.id AS source_id, j.slug, j.updated_at
+          FROM page_projection_jobs j JOIN sources s ON s.incarnation = j.source_incarnation WHERE j.reason = 'protocol_activation'),
+        started AS (SELECT EXTRACT(EPOCH FROM now() - min(q.updated_at))::float8 AS seconds
+        FROM queued q JOIN pages p ON p.source_id = q.source_id AND p.slug = q.slug JOIN sources s ON s.id = p.source_id
+        WHERE p.deleted_at IS NULL AND ${textClassSql('p', 's')} AND ${filters})
       SELECT started.seconds, c.total, c.done FROM started, LATERAL (SELECT count(p.id)::int AS total,
           count(p.id) FILTER (WHERE p.text_projection_revision IS NOT DISTINCT FROM p.knowledge_revision)::int AS done
         FROM pages p JOIN sources s ON s.id = p.source_id
