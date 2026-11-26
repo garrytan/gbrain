@@ -549,6 +549,37 @@ export async function importSharedSkillProposal(ctx: OperationContext, params: R
   }
   return submitSharedSkillMutation(ctx, 'put_skill', input, { mode: 'proposal', skills: [input as unknown as SharedSkillPutInput], expected_hashes: hashes as Record<string, string | null> });
 }
+/**
+ * A pack adoption republishes each declared skill from its SKILL.md. A skill that is already sealed keeps what that
+ * SKILL.md does not carry: its private flag, the SKILL.md file's declared dependencies, audience and media type, and
+ * each other file of the sealed revision that is still in the checkout (read from the checkout, so a reviewed edit to
+ * it is adopted). A file the checkout no longer holds is left out, as the operator removed it.
+ */
+async function carrySealedSkillState(engine: BrainEngine, root: string, sourceId: string, incarnation: string, packId: string,
+  inputs: SharedSkillPutInput[]): Promise<void> {
+  const sealed = (await heads(engine, sourceId, incarnation, packId, inputs.map(input => input.name))).filter(revision => !revision.deleted);
+  for (const input of inputs) {
+    const revision = sealed.find(row => row.name === input.name);
+    if (!revision) continue;
+    if (revision.metadata?.private === true) input.private = true;
+    const skillPath = `skills/${input.name}/SKILL.md`;
+    const sealedSkill = revision.files.find(file => file.path === skillPath);
+    const skill = input.files.find(file => file.path === skillPath);
+    if (skill && sealedSkill) {
+      if (sealedSkill.depends_on?.length) skill.depends_on = [...sealedSkill.depends_on];
+      if (sealedSkill.audience?.length) skill.audience = [...sealedSkill.audience];
+      if (sealedSkill.media_type) skill.media_type = sealedSkill.media_type;
+    }
+    for (const file of revision.files) {
+      if (file.path === skillPath) continue;
+      const bytes = canonicalRead(root, file.path);
+      if (!bytes) continue;
+      input.files.push({ path: file.path, content: bytes.toString('base64'), encoding: 'base64', file_class: file.file_class,
+        ...(file.audience?.length ? { audience: [...file.audience] } : {}), ...(file.media_type ? { media_type: file.media_type } : {}),
+        ...(file.depends_on?.length ? { depends_on: [...file.depends_on] } : {}) });
+    }
+  }
+}
 export async function adoptSharedSkillpack(ctx: OperationContext, sourceId: string, options: AdoptSharedSkillpackOptions = {}) {
   if (ctx.remote !== false) {
     throw opError('permission_denied', 'Canonical pack adoption is a trusted host operation.',
@@ -598,6 +629,7 @@ export async function adoptSharedSkillpack(ctx: OperationContext, sourceId: stri
       ...((exclusions as string[] | undefined)?.some(value => value === name || value === relative) ? { private: true } : {}),
       files: [{ path: `${relative}/SKILL.md`, content: content.toString('utf8'), file_class: 'prose' as const }] };
   });
+  if (!options.skills) await carrySealedSkillState(ctx.engine, root, sourceId, source.incarnation, packId, inputs);
   if (!inputs.length) {
     throw opError('invalid_params', 'No declared skill bundle is available to adopt.',
       `Source ${sourceId}'s skillpack.json declares no skills. Add its skills/ entries to the manifest (or pass the skills explicitly), then adopt again.`);
