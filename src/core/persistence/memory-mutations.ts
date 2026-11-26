@@ -22,6 +22,8 @@ import { admitWrite, assertPageRequestIdentity, assertReplayIntent, getWriteRequ
 import { assertPersistenceAccepting, registerMutationPreparer, waitForWrite, writeResponse } from './service.ts';
 import { claimWorktree, getWorktreeBinding } from './ownership.ts';
 import { resolveFactWriteTarget } from './fact-write-target.ts';
+import { readOnlyCheckout } from './mirror-read-only.ts';
+import { readOnlyMirrorForgetError } from './unbound-source.ts';
 import { clientRequestIdOf, parseMutationPrecondition } from './preconditions.ts';
 import { grantedWriteSource, readsButWritesOnly, writeGrantRefusal } from './write-grant.ts';
 import type { WriteRequest } from './model.ts';
@@ -471,7 +473,11 @@ export async function submitForgetMutation(ctx: OperationContext, operation: 'fo
   const fileBacked = struck.length > 0 && (await ctx.engine.executeRaw(
     'SELECT 1 FROM pages WHERE source_id=$1 AND slug=ANY($2::text[]) AND deleted_at IS NULL AND source_path IS NOT NULL LIMIT 1', [sourceId, struck])).length > 0;
   const target = await resolveFactWriteTarget(ctx.engine, sourceId, source, { sandbox, fileBacked, remote })
-    .catch((error: unknown) => { if (!fileBacked && error instanceof OperationError) return null; throw error; });
+    .catch(async (error: unknown) => {
+      if (!fileBacked && error instanceof OperationError) return null;
+      const mirror = error instanceof OperationError && error.detail === 'unbound_source' ? await readOnlyCheckout(ctx.engine, sourceId) : null;
+      throw mirror ? readOnlyMirrorForgetError(sourceId, id, mirror, remote ? null : source.local_path) : error;
+    });
   // Likewise with sync.write_through off or from a sandboxed subagent: the struck file would not be written, so the claim
   // would come back from Git.
   if (fileBacked && target?.kind === 'publish' && target.databaseOnlyReason === 'subagent_sandbox') {

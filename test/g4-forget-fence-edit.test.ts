@@ -195,6 +195,26 @@ for (const backend of testBackends()) describe(`[${backend}] G4: forget is a fen
     expect((await engine.executeRaw<{ active: boolean }>('SELECT expired_at IS NULL AS active FROM facts WHERE id=$1', [id]))[0]!.active).toBe(true);
   }, { databaseUrl, setup }), 180_000);
 
+  test('#10067: on a read-only mirror with no owner, forget still refuses a claim a page file carries, and says it is a mirror', () => managedBrain(async ({ engine, ctx, root }) => {
+    expect(await call(ctx, 'put_page', { slug: 'notes/a', content: note('A', [`| 1 | ${CLAIM} | fact | 1.0 | world | medium | 2026-01-01 |  | test |  |`]) })).toMatchObject({ state: 'committed' });
+    const { settleManagedGitEffects } = await import('./helpers/managed-brain.ts');
+    await settleManagedGitEffects(engine);
+    const id = (await engine.executeRaw<{ id: number }>(`SELECT id FROM facts WHERE source_id='default' AND fact=$1 AND expired_at IS NULL`, [CLAIM]))[0]!.id;
+    await unbind(engine);
+    await engine.executeRaw(`UPDATE sources SET config = config || '{"mirror_read_only":"true"}'::jsonb WHERE id='default'`);
+    const before = readFileSync(join(root, 'notes/a.md'), 'utf8');
+    const refused = await call(ctx, 'forget', { id: String(id) }).catch((error: { code?: string; detail?: string; message?: string; suggestion?: string; fix?: Record<string, unknown> }) => error);
+    expect({ code: refused.code, detail: refused.detail }).toEqual({ code: 'unavailable', detail: 'read_only_mirror' });
+    expect(refused.message).toBe(`Source 'default' is a read-only mirror with no canonical owner, so forget cannot withdraw fact ${id}: a page file in the mirror carries it, and gbrain never writes the mirror's checkout.`);
+    expect(refused.suggestion).toContain('Nothing was withdrawn. Remove the claim at the authoritative source');
+    expect(refused.suggestion).toContain('gbrain sources refresh default');
+    expect(refused.suggestion).toContain('gbrain sources mirror-writable default --dry-run');
+    expect(refused.fix).toMatchObject({ ask_user: true, actor: 'user' });
+    expect(readFileSync(join(root, 'notes/a.md'), 'utf8')).toBe(before);
+    expect(await ledger(engine, CLAIM)).toEqual([]);
+    expect((await engine.executeRaw<{ active: boolean }>('SELECT expired_at IS NULL AS active FROM facts WHERE id=$1', [id]))[0]!.active).toBe(true);
+  }, { databaseUrl, setup }), 180_000);
+
   test('with sync.write_through off, forget refuses a claim a canonical file carries and still withdraws a database-only one', () => managedBrain(async ({ engine, ctx, root }) => {
     expect(await call(ctx, 'put_page', { slug: 'notes/a', content: note('A', [`| 1 | ${CLAIM} | fact | 1.0 | world | medium | 2026-01-01 |  | test |  |`]) })).toMatchObject({ state: 'committed' });
     const { settleManagedGitEffects } = await import('./helpers/managed-brain.ts');

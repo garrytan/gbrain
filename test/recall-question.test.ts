@@ -4,8 +4,8 @@
  * policy. Pins the ranking, the empty answer, every row of the parameter
  * contract, the read-policy composition (trust floor, quarantine and rederive
  * hiding, remote world-only, the private-provenance filter and its operator
- * opt-out), row-shape parity with the newest path, the degraded paths, the
- * recall_hint notice, and that the question's embedding goes through the
+ * opt-out), row-shape parity with the newest path, the degraded paths, a
+ * query with no fact selector ranking facts like a question (#10225), and that the question's embedding goes through the
  * gateway's query-embedding cache.
  *
  * The embedder is a deterministic bag-of-words transport ($0, no keys) shared
@@ -405,16 +405,19 @@ for (const kind of testBackends()) {
       expect(ranked.facts_degraded?.reason).toBeUndefined();
     });
 
-    test('recall_hint: query without question or fact filter names question and carries the retry call; otherwise no hint', async () => {
+    test('#10225: query with no fact selector ranks facts by the query, so an older match outranks newer unrelated facts', async () => {
       const r = await recall(local(), { query: COFFEE });
-      expect(r.facts_order).toBe('newest');
-      const hint = notices.find(n => n.code === 'recall_hint')!;
-      expect(hint.kind).toBe('info');
-      expect(hint.fix?.mcp).toEqual({ tool: 'recall', arguments: { query: COFFEE, question: COFFEE } });
-      for (const p of [{ query: COFFEE, question: COFFEE }, { query: COFFEE, entity: ENTITY }, { query: COFFEE, since: '30d' }, {}]) {
-        notices = [];
-        await recall(local(), p);
-        expect(notices.some(n => n.code === 'recall_hint')).toBe(false);
+      expect(r.facts_order).toBe('relevance');
+      const got = markers(r.facts);
+      expect(got[0]).toBe('ROAST');
+      expect(got).not.toContain('OFFSITE');
+      expect(got).not.toContain('HIRING');
+      expect(r.facts.map((f: R) => f.fact)).toEqual((await recall(local(), { question: COFFEE })).facts.map((f: R) => f.fact));
+      expect(notices.some(n => n.code === 'recall_hint')).toBe(false);
+      expect((await recall(local(), { query: 'zymurgy xylophone quokka' })).facts).toEqual([]);
+      expect(markers((await recall(local(), { query: '   ' })).facts).slice(0, 2)).toEqual(['OFFSITE', 'HIRING']);
+      for (const p of [{ query: COFFEE, entity: ENTITY }, { query: COFFEE, since: '30d' }, { query: COFFEE, session_id: SESSION }, { query: COFFEE, supersessions: true }, {}]) {
+        expect((await recall(local(), p)).facts_order).toBe('newest');
       }
     });
   });

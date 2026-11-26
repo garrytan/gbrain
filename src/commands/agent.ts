@@ -92,7 +92,7 @@ SUBMITTING
   gbrain agent run <prompt>
     --subagent-def <name>        Named plugin subagent (from GBRAIN_PLUGIN_PATH)
     --model <id>                 Model id as provider:model (default: subagent tier model,
-                                  anthropic:claude-sonnet-4-6). Non-Anthropic providers need
+                                  anthropic:claude-sonnet-5-5). Non-Anthropic providers need
                                   agent.use_gateway_loop enabled — see NOTES below.
     --max-turns <n>              Max assistant turns (default 20)
     --tools a,b,c                Subset of registered tool names (comma list)

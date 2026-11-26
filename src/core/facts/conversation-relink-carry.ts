@@ -6,8 +6,8 @@
  * context; the row stays the page's derived row, so it has no fence to lose
  * and fence projection never touches it). A replacement of the page's batch
  * (`extract-conversation-facts --force`, a newer extractor version) clears
- * the page first: `clearConversationFacts` expires those relinked rows
- * instead of deleting them (and deletes the previous run's expired copies), and
+ * the page first: `clearConversationFacts` expires those relinked rows, like
+ * every other prior row of the batch, and
  * each inserted row with no entity whose claim matches one of them inherits
  * its entity and note. The relink holds, and the page never carries two active
  * copies of the claim.

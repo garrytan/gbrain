@@ -355,22 +355,6 @@ export function groupFactsByEntity<R extends { id: number; source_id: string; en
   return { rows: [...buckets.values()].flat(), fields: { facts_groups: groups, entity_unspecified: { candidates: named, suggestion: ENTITY_UNSPECIFIED_SUGGESTION } } };
 }
 
-/**
- * TC7: a recall that passed `query` but no `question` and no fact filter got
- * its facts newest first; the hint names `question` and carries the same call
- * with it added.
- */
-export function recallHintNotice(p: Record<string, unknown>, queryText: string): Notice {
-  const retry = { ...callArgs(p), question: queryText };
-  return {
-    code: 'recall_hint',
-    kind: 'info',
-    why: 'The facts in this response are the newest saved facts: `query` searches pages and does not rank facts. `question` ranks saved facts by relevance to a question (it does not search pages).',
-    fix: { argv: recallArgv(retry), mcp: { tool: 'recall', arguments: retry }, consent: [], actor: 'agent', requires_exclusive: false,
-      why: 'The same recall with question set to the query, so saved facts come back ranked by relevance and pages are still searched.' },
-  };
-}
-
 const FACT_FLOORS_VERIFY = { argv: ['gbrain', 'doctor', '--only', 'fact_admission_floors', '--json'] };
 
 /**

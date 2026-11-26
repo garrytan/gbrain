@@ -117,8 +117,8 @@ describe('claude-cli recipe registration', () => {
   test('recipe aliases map short names to canonical model ids', async () => {
     const { getRecipe } = await import('../src/core/ai/recipes/index.ts');
     const recipe = getRecipe('claude-cli');
-    expect(recipe!.aliases!['sonnet']).toBe('claude-sonnet-4-6');
-    expect(recipe!.aliases!['haiku']).toBe('claude-haiku-4-5-20251001');
+    expect(recipe!.aliases!['sonnet']).toBe('claude-sonnet-5-5');
+    expect(recipe!.aliases!['haiku']).toBe('claude-haiku-5-5');
   });
 });
 

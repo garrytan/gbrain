@@ -2083,7 +2083,7 @@ function buildTriageSample(content: string, maxChars: number): { text: string; s
 export async function judgeSignificance(
   client: JudgeClient,
   t: DiscoveredTranscript,
-  verdictModel = 'claude-haiku-4-5-20251001',
+  verdictModel = 'claude-haiku-5-5',
   opts: { maxChars?: number; maxTokens?: number; signal?: AbortSignal } = {},
 ): Promise<TriageResult> {
   const maxChars = Math.max(1000, opts.maxChars ?? DEFAULT_TRIAGE_MAX_CHARS);

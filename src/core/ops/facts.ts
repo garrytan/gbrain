@@ -59,7 +59,7 @@ import { AUDIT_ROW_SOURCES } from '../facts/audit-sources.ts';
 import { parseSinceParam } from '../facts/since-parse.ts';
 import { callerSessionKey } from '../access/member-facts.ts';
 import { applySlotEnds } from '../search/slot-ends.ts';
-import { groupFactsByEntity, parseQuestionParam, questionRecallNotices, rankFactsByQuestion, recallHintNotice, namesakesOrMerge, unlinkedNamesakes, type EntityCandidate, type QuestionRecall } from '../facts/question-recall.ts';
+import { groupFactsByEntity, parseQuestionParam, QUESTION_MAX_CHARS, questionRecallNotices, rankFactsByQuestion, namesakesOrMerge, unlinkedNamesakes, type EntityCandidate, type QuestionRecall } from '../facts/question-recall.ts';
 
 // ============================================================
 // v0.31 — Hot memory ops: extract_facts / recall / forget_fact
@@ -305,7 +305,7 @@ const recall: Operation = {
   params: {
     entity: { type: 'string', description: 'Entity slug; its facts.' },
     question: { type: 'string', description: 'Rank facts by relevance to it.' },
-    query: { type: 'string', description: 'Also search pages (results[]).' },
+    query: { type: 'string', description: 'Also search pages (results[]); with no fact selector, also ranks facts.' },
     budget_tokens: { type: 'number', description: 'Token budget; facts pack first.' },
     budget_policy: { type: 'string', enum: ['facts_first', 'query_first'], description: 'Default facts_first.', fullSurfaceOnly: true },
     source_id: { type: 'string', description: 'One readable source.' },
@@ -417,9 +417,12 @@ const recall: Operation = {
         'Pass an ISO 8601 datetime (e.g. "2026-08-11T00:00:00Z"), Unix epoch millis, a duration such as "8 hours ago" / "2d", or a relative phrase such as "6 weeks ago" / "last month".',
       );
     }
-    const question = parseQuestionParam(p);
     const entityParam = typeof p.entity === 'string' && p.entity.length > 0 ? (p.entity as string) : null;
     const sessionParam = typeof p.session_id === 'string' && p.session_id.length > 0 ? (p.session_id as string) : null;
+    const queryText = typeof p.query === 'string' && p.query.trim().length > 0 ? p.query.trim() : null;
+    // #10225: a query with no fact selector ranks facts by the query instead of returning the newest ones.
+    const question = parseQuestionParam(p) ?? (queryText && !entityParam && !sessionParam && !since && p.supersessions !== true
+      ? queryText.slice(0, QUESTION_MAX_CHARS) : null);
     let ranking: QuestionRecall | null = null;
     // Shared per-source opts for the fact-list arms (visibility, grep and the
     // audit exclusion all filter at the ENGINE level, before each source's
@@ -528,13 +531,11 @@ const recall: Operation = {
     // ── MEMORY_VERBS v1 — query arm (G1B superset). Hybrid search over pages
     // when `query` is present; degrades to keyword-only with a note (never an
     // error) when no embedding provider is configured [F-B].
-    const queryText = typeof p.query === 'string' && p.query.trim().length > 0 ? p.query.trim() : null;
     const budgetTokens =
       typeof p.budget_tokens === 'number' && Number.isFinite(p.budget_tokens) && p.budget_tokens > 0
         ? Math.floor(p.budget_tokens)
         : null;
 
-    if (queryText && question === null && !entityParam && !sessionParam && !since && p.supersessions !== true) ctx.emitNotice?.(recallHintNotice(p, queryText));
     let searchResults: SearchResult[] = [];
     let searchDegraded: string | undefined;
     let pageSearchCounted = false;

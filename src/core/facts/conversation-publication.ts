@@ -78,7 +78,7 @@ import { AUDIT_ROW_SOURCES, CONVERSATION_EXTRACTOR_VERSION, CONVERSATION_FACTS_S
 import { ALLOWED_TYPES, pageTypesForAllowed, type AllowedType } from './conversation-types.ts';
 import { withWriteTrust } from '../persistence/context.ts';
 import { conversationDerivation } from '../persistence/derived-facts.ts';
-import { RELINKED_DERIVED_ROW, inheritRelinkedEntities } from './conversation-relink-carry.ts';
+import { inheritRelinkedEntities } from './conversation-relink-carry.ts';
 import { recordReextractMemo } from './conversation-memo.ts';
 import { tightenToStoredPage } from './visibility.ts';
 import { recordTaintEdges } from '../trust/taint.ts';
@@ -627,19 +627,10 @@ async function insertableSlots(tx: BrainEngine, sourceId: string, slug: string, 
 export const LABEL_RETIRED_MARKER = 'retired: conversation-labels';
 
 /**
- * Clears a page's prior extractor batch before a replacement, keeping the
- * history other records depend on: a row an open loop (`open_loops.fact_id`,
- * no FK) or another fact's `superseded_by` references is expired, never
- * deleted, and rows `gbrain repair conversation-labels` retired stay expired.
- * A row `gbrain facts relink --conversation` linked is expired too, so the
- * replacement inherits its entity (conversation-relink-carry.ts); the previous
- * clear's expired relinked rows go first. Every other extractor row of the
- * page is deleted. Returns the rows removed from the active batch.
- */
-/** The page's conversation facts, audit rows aside: what a clear would lose that a window extraction may not see again. */
+/** The page's active conversation facts, audit rows aside: what a clear would lose that a window extraction may not see again. */
 export async function countConversationFacts(db: BrainEngine, sourceId: string, slug: string): Promise<number> {
   const [row] = await db.executeRaw<{ count: string }>(`SELECT count(*)::text AS count FROM facts f WHERE f.source_id=$1 AND f.source_markdown_slug=$2
-    AND f.source LIKE '${CONVERSATION_FACTS_SOURCE_PREFIX}%' AND NOT (f.source = ANY($3::text[]))`, [sourceId, slug, [...AUDIT_ROW_SOURCES]]);
+    AND f.source LIKE '${CONVERSATION_FACTS_SOURCE_PREFIX}%' AND f.expired_at IS NULL AND NOT (f.source = ANY($3::text[]))`, [sourceId, slug, [...AUDIT_ROW_SOURCES]]);
   return Number(row?.count ?? 0);
 }
 
@@ -659,6 +650,11 @@ export async function countConversationFactsOutside(db: BrainEngine, sourceId: s
 }
 
 /**
+ * Clears a page's prior extractor batch before a replacement without losing history (#10443): every active
+ * extractor fact is expired and keeps its row, so active reads drop it while `recall --include-expired` and the
+ * open loops and `superseded_by` links that reference it keep it. A row `gbrain facts relink --conversation`
+ * linked is expired the same way, so the replacement inherits its entity (conversation-relink-carry.ts). Only the
+ * page's audit checkpoint rows are deleted. Returns the rows removed from the active batch.
  * With `windows`, only the page's anchored facts whose window key is in `keys` (`keep` false) or not in it (`keep` true),
  * and its unanchored facts when `unanchored`.
  */
@@ -666,20 +662,16 @@ export async function clearConversationFacts(db: BrainEngine, sourceId: string, 
   windows?: { keys: readonly string[]; keep: boolean; unanchored: boolean }): Promise<number> {
   const page = `f.source_id=$1 AND f.source_markdown_slug=$2 AND f.source LIKE '${CONVERSATION_FACTS_SOURCE_PREFIX}%'` + (windows
     ? ` AND NOT (f.source = ANY($3::text[])) AND (CASE WHEN f.source_window IS NULL THEN $4::boolean ELSE (${WINDOW_KEY_SQL} = ANY($5::text[])) <> $6::boolean END)` : '');
-  const params = windows ? [sourceId, slug, [...AUDIT_ROW_SOURCES], windows.unanchored, [...windows.keys], windows.keep] : [sourceId, slug];
-  const referenced = 'EXISTS (SELECT 1 FROM open_loops o WHERE o.fact_id=f.id) OR EXISTS (SELECT 1 FROM facts g WHERE g.superseded_by=f.id)';
+  const params = windows ? [sourceId, slug, [...AUDIT_ROW_SOURCES], windows.unanchored, [...windows.keys], windows.keep] : [sourceId, slug, [...AUDIT_ROW_SOURCES]];
   // GBRA-574 B2: a row kept expired gives up its slot, so the replacement can hold the same slot key.
   const unslot = 'dimension=NULL, value=NULL, value_hash=NULL, dim_status=NULL';
-  await db.executeRaw(`DELETE FROM facts f WHERE ${page} AND f.expired_at IS NOT NULL AND ${RELINKED_DERIVED_ROW} AND NOT (${referenced})`, params);
-  await db.executeRaw(`UPDATE facts f SET ${unslot} WHERE ${page} AND f.expired_at IS NOT NULL AND f.dimension IS NOT NULL`, params);
-  const [relinked] = await db.executeRaw<{ count: string }>(`WITH up AS (UPDATE facts f SET expired_at=now(), ${unslot}
-    WHERE ${page} AND f.expired_at IS NULL AND ${RELINKED_DERIVED_ROW} RETURNING 1) SELECT COUNT(*)::text AS count FROM up`, params);
-  const [expired] = await db.executeRaw<{ count: string }>(`WITH up AS (UPDATE facts f SET expired_at=now(), ${unslot}
-    WHERE ${page} AND f.expired_at IS NULL AND (${referenced}) RETURNING 1) SELECT COUNT(*)::text AS count FROM up`, params);
-  const [deleted] = await db.executeRaw<{ count: string }>(`WITH del AS (DELETE FROM facts f
-    WHERE ${page} AND NOT (${referenced}) AND COALESCE(f.context,'') NOT LIKE '%${LABEL_RETIRED_MARKER}%' AND NOT (${RELINKED_DERIVED_ROW}) RETURNING 1)
+  await db.executeRaw(`UPDATE facts f SET ${unslot} WHERE ${page} AND NOT (f.source = ANY($3::text[])) AND f.expired_at IS NOT NULL AND f.dimension IS NOT NULL`, params);
+  const [audit] = windows ? [] : await db.executeRaw<{ count: string }>(`WITH del AS (DELETE FROM facts f WHERE ${page} AND f.source = ANY($3::text[]) RETURNING 1)
     SELECT COUNT(*)::text AS count FROM del`, params);
-  return Number(relinked?.count ?? 0) + Number(expired?.count ?? 0) + Number(deleted?.count ?? 0);
+  const [expired] = await db.executeRaw<{ count: string }>(`WITH up AS (UPDATE facts f SET expired_at=now(), ${unslot}
+    WHERE ${page} AND f.expired_at IS NULL AND NOT (f.source = ANY($3::text[])) RETURNING 1)
+    SELECT COUNT(*)::text AS count FROM up`, params);
+  return Number(audit?.count ?? 0) + Number(expired?.count ?? 0);
 }
 
 
