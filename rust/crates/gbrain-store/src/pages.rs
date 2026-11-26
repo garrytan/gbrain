@@ -2013,6 +2013,11 @@ impl Store {
                 // A row that does not parse is kept as `None` in key (id) order: it is never listed,
                 // and as a successor it counts as withholding, so the version before it shows no
                 // reason (fail closed) instead of taking the next readable row as its successor.
+                // The labelled-only conjunct of a version asks its live page once, however many versions it has.
+                let live_labelled = match policy {
+                    Some(policy) => crate::facts::live_labelled(&*read, &page, policy)?,
+                    None => None,
+                };
                 let mut versions: Vec<Option<VersionRecord>> = Vec::new();
                 scan_prefix(
                     &*read,
@@ -2040,6 +2045,7 @@ impl Store {
                                             &next.page_type,
                                             &next.frontmatter,
                                             policy,
+                                            live_labelled,
                                         )
                                     })
                                 })
@@ -2059,6 +2065,7 @@ impl Store {
                             &row.page_type,
                             &row.frontmatter,
                             policy,
+                            live_labelled,
                         )
                     }) {
                         rows.push((row, reason));
