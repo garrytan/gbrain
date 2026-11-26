@@ -785,6 +785,7 @@
     "upstream_rewritten",
     "upstream_unknown",
     "valid_time_undeclared",
+    "value_unavailable",
     "vault_generation_changed",
     "vault_lock_busy",
     "vector_prewarm_extension_missing",

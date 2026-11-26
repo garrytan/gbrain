@@ -7535,6 +7535,16 @@ More: [docs/guides/troubleshooting.md#upstream-rewritten](../../docs/guides/trou
 
 More: [docs/guides/page-history.md#valid_time_undeclared](../../docs/guides/page-history.md#valid_time_undeclared)
 
+### value_unavailable
+
+<a id="value_unavailable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Every count on the value card failed to read, so nothing was counted. | The card reads pages, links, facts, the archive ledger, telemetry and the brain score with separate queries; it fails only when all of them fail, which means the brain itself could not be read. | Run gbrain doctor --json on the brain host to see why the brain cannot be read, then ask again. Run: gbrain doctor --json | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/value-card.md#when-a-count-is-unavailable](../../docs/guides/value-card.md#when-a-count-is-unavailable)
+
 ### vault_generation_changed
 
 <a id="vault_generation_changed"></a>
