@@ -35,7 +35,7 @@ Append an entry to the canonical Markdown timeline and structured timeline store
 
 ## `cancel_job`
 
-Cancel a waiting, active, or delayed job. Agent-scoped tokens (no admin) can cancel only jobs they own.
+Cancel a waiting, active, or delayed job. Remote callers, admin scope included, can cancel only the jobs they submitted, unless their credential is bound to the brain owner.
 
 | Parameter | Type | Guidance |
 | --- | --- | --- |

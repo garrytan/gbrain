@@ -111,7 +111,7 @@ d('wakeshift PR 2 on Postgres', () => {
     await getEngine().executeRaw("INSERT INTO oauth_clients (client_id, client_name, scope, member_id) VALUES ('wk2-m', 'wk2-m', 'read write admin', 'alice-example') ON CONFLICT (client_id) DO UPDATE SET member_id = 'alice-example'");
     writeConfig({ terms_url: 'https://example.com/terms', privacy_url: 'https://example.com/privacy' });
     const [job] = await getEngine().executeRaw<{ id: number }>(`INSERT INTO minion_jobs (submission_authority, name, queue, status, data)
-      VALUES ('{"version":1,"kind":"application"}'::jsonb, 'sync', 'default', 'active', '{"__submitter":"cli:test"}'::jsonb) RETURNING id`);
+      VALUES ('{"version":1,"kind":"application"}'::jsonb, 'sync', 'default', 'active', '{"__submitter":"cli:test","__owner_client_id":"wk2-m"}'::jsonb) RETURNING id`);
     const step = body(await call('watch_job', { id: Number(job!.id) }, client('wk2-m')));
     expect(step).toMatchObject({ agreement_required: true });
     expect(body(await call('accept_wakeshift_terms', { terms_version: step.terms_version }, client('wk2-m')))).toMatchObject({ accepted: true });
