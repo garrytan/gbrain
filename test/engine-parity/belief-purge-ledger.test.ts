@@ -27,7 +27,7 @@ import { derivedStreamSlugs, pageLifetimesOf, pagePurgeClaims, redactCarryingFie
 import { missingPreimages } from '../../src/core/belief/preimages.ts';
 import { operationsByName, type OperationContext } from '../../src/core/operations.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
-import { PURGE_OWNERS, purgePathStops } from '../../src/core/persistence/purge-path-members.ts';
+import { PURGE_OWNERS } from '../../src/core/persistence/purge-path-members.ts';
 import { createSource, enableBeliefCoverage, parityArms, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
@@ -255,9 +255,9 @@ const localCtx = (engine: BrainEngine) => ({ engine, config: { engine: engine.ki
 const notePage = (title: string, body: string) => ['---', `title: ${title}`, 'type: note', '---', `# ${title}`, '', body].join('\n');
 
 describe('engine parity: a page purge on a source that records belief events', () => {
-  parityTest('delete_page --purge redacts the page\'s recorded history on the SQL engines; on Rust it stops only at the request-index read, never at a ledger step', {
+  parityTest('delete_page --purge redacts the page\'s recorded history the same on every engine; on Rust no purge-path member stops it', {
     methods: ['readPageSnapshot', 'listBeliefEventsForPurgeProbe', 'readBeliefRedactions', 'readBeliefHistoryRows'],
-    // On Rust the page purge still stops at its pre-write check on lane 14's request-index read (purge-path-members.ts).
+    // The Rust purge-path list is empty on main (lane 14's readRequestIndexStates is served), so Rust runs the whole purge.
     requires: 'raw_sql',
     timeout: 120_000,
   }, async (engine, backend) => {
@@ -269,14 +269,6 @@ describe('engine parity: a page purge on a source that records belief events', (
     const before = await valued(engine);
     const snapshot = await engine.readPageSnapshot('notes/doomed', { sourceId: SRC });
     const args = { slug: 'notes/doomed', purge: true, request_id: randomUUID(), expected_revision: snapshot?.revision };
-    if (backend === 'rust') {
-      const error = await operationsByName.delete_page.handler(localCtx(engine), args).then(() => null, (e: unknown) => e);
-      // Every belief-ledger step is a served member: the only stop is lane 14's, and nothing was written.
-      expect((await purgePathStops(engine)).map(stop => stop.name)).toEqual(['readRequestIndexStates (persistence/checkpoint-validation.ts)']);
-      expect((error as { code?: string } | null)?.code).toBe('engine_capability_missing');
-      expect({ page: (await engine.getPage('notes/doomed', { sourceId: SRC })) !== null, events: await valued(engine) }).toEqual({ page: true, events: before });
-      throw error;
-    }
     const done = await operationsByName.delete_page.handler(localCtx(engine), args) as Record<string, unknown>;
     const after = await valued(engine);
     const keys = [...new Set([...before, ...after].map(e => e.subject_key))];
