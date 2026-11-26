@@ -83,4 +83,28 @@ describe('readLinkTargetPages writer policy (Rust engine member)', () => {
     expect(rulesEmptied.policy).toMatchObject({ identity: ['member:carol-example'] });
     expect(rulesEmptied.policy).not.toHaveProperty('satisfiedRuleIds');
   });
+
+  test('a mixed identity beside the owner flag refuses before the store is called', async () => {
+    const mixed = [['member:carol-example', 'Bad Id']];
+    expect(await asked(writer({ identities: mixed, owner: true }))).toEqual({ outcome: 'engine_capability_missing', policy: null, calls: 0 });
+    expect(await asked(writer({ identities: mixed, owner: true, labelledOnly: true }))).toEqual({ outcome: 'engine_capability_missing', policy: null, calls: 0 });
+  });
+
+  test('the empty-identity fallback keeps the record\'s folder coverage', async () => {
+    const folderCoverage = [{ source_id: 'work', prefix: 'team/' }];
+    const served = await asked(writer({ identities: [['member:carol-example', 'Bad Id']], folderCoverage }));
+    expect(served.outcome).toBe('served');
+    expect(served.policy).toMatchObject({ identity: [], callerRecord: true, folderCoverage });
+    expect(served.policy).not.toHaveProperty('satisfiedRuleIds');
+  });
+
+  test('an invalid identity with invalid satisfied rules (both sets emptied) is served as the no-identity form', async () => {
+    const both = await asked(writer({ identities: [['member:carol-example', 'Bad Id']], satisfiedRuleIds: ['not a rule'] }));
+    const none = await asked(writer({ identities: [] }));
+    expect(both.outcome).toBe('served');
+    expect(both.policy).toMatchObject({ identity: [], callerRecord: true });
+    expect(both.policy).not.toHaveProperty('satisfiedRuleIds');
+    expect(JSON.stringify(both.policy)).not.toContain('carol-example');
+    expect(both.policy).toEqual(none.policy);
+  });
 });
