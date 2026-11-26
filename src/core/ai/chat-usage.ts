@@ -241,8 +241,23 @@ export function recordChatUsage(input: {
  */
 export function makeEngineChatUsageSink(engine: {
   executeRaw: (sql: string, params?: unknown[]) => Promise<unknown>;
+  getConfig?: (key: string) => Promise<string | null>;
 }): ChatUsageSink {
   return async (r: ChatUsageRecord): Promise<void> => {
+    // A model priced only by the operator's `pricing.overrides` (the meter's
+    // resolver) is priced here too; rows stay NULL when nothing knows it.
+    if (r.cost_usd === null && engine.getConfig) {
+      try {
+        const { loadPricingOverrides } = await import('../budget/budget-tracker.ts');
+        const overrides = await loadPricingOverrides({ getConfig: engine.getConfig.bind(engine) });
+        const price = overrides ? priceFor(r.model, 'chat', overrides) : null;
+        if (price) {
+          r = { ...r, cost_usd: (r.input_tokens * price.pricing.input + r.output_tokens * price.pricing.output) / 1_000_000 };
+        }
+      } catch {
+        /* fail-open: keep NULL */
+      }
+    }
     await engine.executeRaw(
       `INSERT INTO chat_usage_log
          (model, provider, phase, input_tokens, output_tokens,
