@@ -9,10 +9,11 @@
 import type { BrainEngine } from '../../engine.ts';
 import type { GBrainConfig } from '../../config.ts';
 import type { Notice } from '../../agent-output.ts';
-import type { OperationContext } from '../../ops/contract.ts';
+import { OperationError, type OperationContext } from '../../ops/contract.ts';
 import { importFromContent, importFromFile, importImageFile } from '../../import-file.ts';
 import { importManagedFiles } from '../../persistence/import-mutations.ts';
-import { ownerIpcRefusal } from './routes.ts';
+import { ownerHandoff, ownerIpcRefusal } from './routes.ts';
+import { PERSISTENCE_CLOSING_MESSAGE } from '../../persistence/service.ts';
 import { snapshotStatus, snapshotStore, type SnapshotStoreOptions } from '../store-snapshot.ts';
 import type { OwnerWholeOperation } from './server.ts';
 import { IMPORT_CLIENT_FILE, importClientFile } from '../served/client-files.ts';
@@ -54,13 +55,25 @@ async function runOperation(engine: BrainEngine, config: GBrainConfig | undefine
 }
 
 /** `config` is the owner's own (the engine's connect config); a registry operation runs with it. */
+/**
+ * Multi-user mode: an owner whose persistence service is closing refuses a forwarded write as "nothing accepted"
+ * (persistence/service.ts). Over the owner socket that is a handoff: the client sends it, with its request id, to the
+ * next owner (client side: whole-op.ts forwardOwnerOperation). Off, every error passes unchanged.
+ */
+export function handedOverIfClosing(engine: BrainEngine, name: unknown, error: unknown): unknown {
+  const store = (engine as { openStoreIfOpen?: (m: string) => { multiuser?: boolean } | null }).openStoreIfOpen?.('runOperation');
+  const closing = error instanceof OperationError && error.code === 'unavailable' && error.message.startsWith(PERSISTENCE_CLOSING_MESSAGE);
+  return closing && store?.multiuser === true ? ownerHandoff(String(name), process.pid) : error;
+}
+
 export function ownerWholeOperations(opts: { config?: GBrainConfig } = {}): Readonly<Record<string, OwnerWholeOperation>> {
   return {
     importFromContent: (engine, ...args) => importFromContent(engine, ...(args as Args<typeof importFromContent>)),
     importFromFile: (engine, ...args) => importFromFile(engine, ...(args as Args<typeof importFromFile>)),
     importImageFile: (engine, ...args) => importImageFile(engine, ...(args as Args<typeof importImageFile>)),
     importManagedFiles: (engine, ...args) => importManagedFiles(engine, ...(args as Args<typeof importManagedFiles>)),
-    [OWNER_RUN_OPERATION]: (engine, name, params, context) => runOperation(engine, opts.config, name, params, context),
+    [OWNER_RUN_OPERATION]: (engine, name, params, context) => runOperation(engine, opts.config, name, params, context)
+      .catch((error: unknown) => { throw handedOverIfClosing(engine, name, error); }),
     snapshotStore: (engine, target, options) => snapshotStore(engine, String(target), options as SnapshotStoreOptions),
     snapshotStatus: (_engine, opId) => Promise.resolve(snapshotStatus(String(opId))),
     // Protocol v3 only: a network client's file import, sent as bytes (served/client-files.ts). The owner dispatcher

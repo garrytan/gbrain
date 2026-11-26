@@ -253,7 +253,9 @@ export class RustEngine implements BrainEngine {
     // connection (a bound method) finds the engine already elected, and does nothing: a second election would make the
     // owner a client of its own socket and drop the owner lock it holds.
     const current = this._owner?.role === 'client' && this._owner.connection === from;
-    return current && this._connected && !this._disconnecting ? this._electOnce() : Promise.resolve();
+    if (current && this._connected && !this._disconnecting) return this._electOnce();
+    // A takeover another call of this engine already started: wait for it, so this call runs on what it elects.
+    return this._opening ?? Promise.resolve();
   }
 
   private async _open(generation: number): Promise<void> {
@@ -411,6 +413,9 @@ export class RustEngine implements BrainEngine {
     // opening, and another process could then open the same brain.
     await opening?.catch(() => undefined);
     await this._endOpenTransaction();
+    // Multi-user mode (the owner speaks protocol v3): a handoff. The owner answers what it has not started as handed
+    // over and finishes what it started on the store, which stays open until that drain ends (owner-ipc/server.ts).
+    if (this._owner?.role === 'owner' && this._owner.server.attachServed) await this._owner.server.close();
     const owner = this._owner;
     this._owner = null;
     this._connected = false;

@@ -2,7 +2,7 @@
  * The owner of a Rust brain hands it to another process (multi-user Rust; the "processes" phase of the multi-writer
  * suite, where short `gbrain` processes come and go on one brain).
  *
- * Mode: the owner is a separate process (test/helpers/rust-owner-child.ts) that turns multi-user Rust on in its own
+ * Mode: the owner is a separate process (test/helpers/rust-owner-handoff-child.ts) that turns multi-user Rust on in its own
  * environment and reports its store's `multiuser`, asserted true; this process turns it on in-run
  * (GBRAIN_RUST_MULTIUSER=1 after the preload) and is the owner's client.
  *
@@ -36,7 +36,7 @@ const children: ChildProcessWithoutNullStreams[] = [];
 interface Owner { child: ChildProcessWithoutNullStreams; ready: Record<string, unknown>; ran: string[]; exited: Promise<number | null> }
 
 async function startOwner(dir: string): Promise<Owner> {
-  const child = spawn(process.execPath, [join(import.meta.dir, 'helpers', 'rust-owner-child.ts'), dir, rustArmAddonPath()], {
+  const child = spawn(process.execPath, [join(import.meta.dir, 'helpers', 'rust-owner-handoff-child.ts'), dir, rustArmAddonPath()], {
     env: { ...process.env, GBRAIN_RUST_MULTIUSER: '1' }, stdio: ['pipe', 'pipe', 'pipe'],
   });
   children.push(child);
@@ -93,12 +93,12 @@ describeAddon('a Rust owner hands its brain to the next process', () => {
       const results = await Promise.all(calls);
       expect(await owner.exited).toBe(0);
       expect(results.filter(r => !r.ok)).toEqual([]);
-      expect(engine.ownerRole).toBe('owner');
-      expect(engine.openStore('handoff-check').multiuser).toBe(true);
-      // Some ran on the old owner before it exited, the rest on this process after the handoff.
+      // Some ran on the old owner before it exited, the rest after the handoff (so the handoff really happened).
       expect(owner.ran.length).toBeGreaterThan(0);
       expect(owner.ran.length).toBeLessThan(refs.length);
       const log = await engine.getIngestLog({ limit: 1000 });
+      expect(engine.ownerRole).toBe('owner');
+      expect(engine.openStore('handoff-check').multiuser).toBe(true);
       const counts = new Map<string, number>();
       for (const row of log) counts.set(row.source_ref, (counts.get(row.source_ref) ?? 0) + 1);
       expect(refs.filter(ref => counts.get(ref) !== 1)).toEqual([]);
@@ -131,4 +131,19 @@ describeAddon('a Rust owner hands its brain to the next process', () => {
       expect(engine.ownerRole).toBe('owner');
     } finally { await engine.disconnect(); }
   }, 120_000);
+});
+
+describe('a closing persistence owner hands a forwarded write over (multi-user mode only)', () => {
+  test('the "persistence owner is closing" refusal becomes owner_handoff on a multi-user owner, and passes unchanged off', async () => {
+    const { handedOverIfClosing } = await import('../src/core/rust-engine/owner-ipc/owner-ops.ts');
+    const { OperationError } = await import('../src/core/ops/contract.ts');
+    const { PERSISTENCE_CLOSING_MESSAGE } = await import('../src/core/persistence/service.ts');
+    const closing = new OperationError('unavailable', `${PERSISTENCE_CLOSING_MESSAGE} Retry the same request_id after restart.`, 'x');
+    const on = { openStoreIfOpen: () => ({ multiuser: true }) };
+    const off = { openStoreIfOpen: () => ({ multiuser: false }) };
+    expect(handedOverIfClosing(on as never, 'put_page', closing)).toMatchObject({ code: 'owner_unavailable', reason: 'owner_handoff' });
+    expect(handedOverIfClosing(off as never, 'put_page', closing)).toBe(closing);
+    const other = new OperationError('unavailable', 'Something else.', 'x');
+    expect(handedOverIfClosing(on as never, 'put_page', other)).toBe(other);
+  });
 });

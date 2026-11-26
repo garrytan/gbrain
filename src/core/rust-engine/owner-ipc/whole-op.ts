@@ -34,9 +34,10 @@ import type { Notice } from '../../agent-output.ts';
 import { OperationError, type OperationContext } from '../../ops/contract.ts';
 import { capabilityMissing } from '../errors.ts';
 import {
-  callEndCheck, callerIsRemote, ownerConnectionFor, ownerRejoinFor, rustOwnerServesPersistence, untilCallEnds, type OwnerConnection,
+  callEndCheck, callerIsRemote, ownerConnectionFor, ownerRejoinFor, rustOwnerServesPersistence, untilCallEnds, untilOwnerClosed, type OwnerConnection,
 } from './client.ts';
-import { ownerGone, ownerIpcRefusal } from './routes.ts';
+import { isOwnerHandoff, ownerGone, ownerIpcRefusal } from './routes.ts';
+import { rustMultiuserFromEnv } from '../multiuser-switch.ts';
 import { IMPORT_CLIENT_FILE, readClientFile, type ClientFilePayload } from '../served/client-files.ts';
 
 export type WholeOperationName =
@@ -125,7 +126,24 @@ export function forwardWholeOperation<T>(engine: object, name: WholeOperationNam
   if (name === 'importManagedFiles' && Array.isArray(sent[0])) {
     sent[0] = (sent[0] as Array<{ filePath: string }>).map(file => ({ ...file, filePath: resolve(file.filePath) }));
   }
-  if (!rejoin) return connection.request('fn', name, sent) as Promise<T>;
+  if (!rejoin) {
+    // A whole operation the old owner handed over never ran: it goes to the next owner (multi-user mode only sends
+    // `owner_handoff`). A whole operation whose outcome is unknown is not sent again here.
+    const handedOver = ownerRejoinFor(connection);
+    const send = (via: OwnerConnection, resends: number): Promise<T> => (via.request('fn', name, sent) as Promise<T>).catch(async (error: unknown) => {
+      if (!handedOver || !isOwnerHandoff(error) || resends >= HANDOFF_RESENDS) throw error;
+      await untilOwnerClosed(via);
+      await untilCallEnds(name, args, (ownerRejoinFor(via) ?? handedOver)()).catch((e: unknown) => {
+        if (!(e instanceof OperationError && e.code === 'owner_unavailable')) throw e;
+      });
+      const next = ownerConnectionFor(engine);
+      // This process became the owner: nothing was sent, so the caller's retry runs it in process.
+      if (!next || next.closed) throw ownerGone(name, via.hello.pid, false);
+      requireOwnerJournal(next, name);
+      return send(next, resends + 1);
+    });
+    return send(connection, 0);
+  }
   // The owner has gone: run the election again. A new owner elsewhere takes the operation; when this process became
   // the owner it cannot run it from here, so it is not sent and the caller's retry runs it in process. An election
   // that fails for its own reason (a store that will not open, a disconnect that won) ends the operation with that
@@ -145,7 +163,10 @@ export function forwardWholeOperation<T>(engine: object, name: WholeOperationNam
  * when `ctx.engine` is not an owner client, or this process became the owner after the old one went away (the caller
  * then runs the handler in process). Notices and log lines the handler gave in the owner are given to `ctx` here.
  */
-export async function forwardOwnerOperation(ctx: OperationContext, name: string, params: Record<string, unknown>): Promise<{ result: unknown } | undefined> {
+/** How many times a handed-over operation goes to a next owner before its refusal is the answer. */
+const HANDOFF_RESENDS = 5;
+
+export async function forwardOwnerOperation(ctx: OperationContext, name: string, params: Record<string, unknown>, resends = 0): Promise<{ result: unknown } | undefined> {
   const connection = ownerConnectionFor(ctx.engine);
   if (!connection || !OWNER_FORWARDED_OPERATIONS.has(name)) return undefined;
   if (connection.closed) {
@@ -160,7 +181,7 @@ export async function forwardOwnerOperation(ctx: OperationContext, name: string,
     });
     stillWanted();
     if (ownerConnectionFor(ctx.engine) === connection) throw ownerGone(name, connection.hello.pid, false);
-    return forwardOwnerOperation(ctx, name, params);
+    return forwardOwnerOperation(ctx, name, params, resends);
   }
   const record = ctx as unknown as Record<string, unknown>;
   if (ctx.remote !== false || UNFORWARDED_AUTHORITY_KEYS.some(key => record[key] !== undefined)) {
@@ -170,7 +191,18 @@ export async function forwardOwnerOperation(ctx: OperationContext, name: string,
   requireOwnerJournal(connection, name);
   const context: ForwardedOperationContext = {};
   for (const key of FORWARDED_CONTEXT_KEYS) if (ctx[key] !== undefined) (context as Record<string, unknown>)[key] = ctx[key];
-  const answer = await connection.request('fn', OWNER_RUN_OPERATION, [name, params, context]) as ForwardedOperationResult;
+  const answer = await (connection.request('fn', OWNER_RUN_OPERATION, [name, params, context]) as Promise<ForwardedOperationResult>)
+    .catch(async (error: unknown): Promise<ForwardedOperationResult | { rerun: true }> => {
+      // Multi-user mode: an operation the old owner handed over never ran; a journaled write that carries its request id
+      // (put_page) is answered by the write journal when it is sent again with that id, so it never writes twice.
+      const journaled = typeof params.request_id === 'string' && params.request_id !== '' && rustMultiuserFromEnv()
+        && connection.closed && error instanceof OperationError && error.code === 'owner_unavailable'
+        && (error as { reason?: unknown }).reason === 'outcome_unknown';
+      if ((!isOwnerHandoff(error) && !journaled) || resends >= HANDOFF_RESENDS) throw error;
+      await untilOwnerClosed(connection);
+      return { rerun: true };
+    });
+  if ('rerun' in answer) return forwardOwnerOperation(ctx, name, params, resends + 1);
   for (const notice of answer.notices) ctx.emitNotice?.(notice);
   for (const [level, message] of answer.logs) ctx.logger?.[level]?.(message);
   return { result: answer.result };

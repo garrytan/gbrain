@@ -139,7 +139,7 @@ export function startPersistenceConsumer(engine: BrainEngine, config: GBrainConf
   const prior = services.get(engine);
   if (prior) {
     if (prior.stopping) {
-      throw new OperationError('unavailable', 'The persistence owner is closing.',
+      throw new OperationError('unavailable', PERSISTENCE_CLOSING_MESSAGE,
         'The persistence owner in this process is shutting down; start the command again after it exits. Accepted writes stay journaled and resume on the next owner.');
     }
     return prior.consumer;
@@ -220,9 +220,12 @@ export function persistenceConsumerStatus(engine: BrainEngine) {
   return service ? { state: service.stopping ? 'closing' : 'open', ...service.consumer.status() }
     : { state: 'not_running', accepting: false, active_preparations: 0, active_worktrees: 0 };
 }
+/** The message of the refusals a closing persistence owner gives: nothing new was accepted (owner handoff, owner-ops.ts). */
+export const PERSISTENCE_CLOSING_MESSAGE = 'The persistence owner is closing.';
+
 export function assertPersistenceAccepting(engine: BrainEngine): void {
   if (services.get(engine)?.stopping) {
-    throw new OperationError('unavailable', 'The persistence owner is closing. Retry the same request_id after restart.',
+    throw new OperationError('unavailable', `${PERSISTENCE_CLOSING_MESSAGE} Retry the same request_id after restart.`,
       'Nothing new was accepted. After the owner restarts, resubmit with the same request_id so a write that was already accepted is never applied twice.');
   }
 }

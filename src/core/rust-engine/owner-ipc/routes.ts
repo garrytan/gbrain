@@ -21,7 +21,7 @@
  * forwarded by default; a forwarded call whose arguments carry a function the client cannot send refuses the same way.
  */
 import type { Capability } from '../../engine-capabilities.ts';
-import { opError, type OperationError } from '../../ops/contract.ts';
+import { OperationError, opError } from '../../ops/contract.ts';
 import { CODES } from '../../error-registry.ts';
 import { RUST_ENGINE_MEMBERS, type RustEngineMember } from '../members.ts';
 import {
@@ -141,6 +141,24 @@ export function ownerEarlierCallRunning(member: string, earlier: string, ms: num
     { reason: 'earlier_call_running', retryable: false,
       detail: `member=${member} via=owner_ipc earlier=${earlier} deadline_ms=${ms} sent=true ran=false`,
       why: 'The owner does not stop a store call it started, so a write whose caller timed out or cancelled can still commit. A read that confirms it waits until it has ended, so an empty answer can never come from a write that is about to commit.' });
+}
+
+/**
+ * Multi-user Rust only: the owner is handing the brain over (it is closing) and did not start this call, so nothing of
+ * it ran. The client runs the election again and sends the call to the next owner (client.ts), which is safe for a write
+ * too. Reason `owner_handoff`, retryable.
+ */
+export function ownerHandoff(member: string, ownerPid: number | null): OperationError {
+  return opError('owner_unavailable',
+    `The process that owns this brain${ownerPid ? ` (pid ${ownerPid})` : ''} is handing it over and did not start ${member}, so nothing of it ran.`,
+    'The client sends it to the next owner by itself; if this reaches you, run the command again.',
+    { reason: 'owner_handoff', retryable: true, detail: `member=${member} via=owner_ipc owner_pid=${ownerPid ?? 'unknown'} sent=true ran=false`,
+      why: 'In multi-user mode an owner that exits answers every call it has not started with this refusal before it closes, and finishes the ones it started, so the next owner can take the rest.' });
+}
+
+/** True for the refusal `ownerHandoff` gives: the call never ran. */
+export function isOwnerHandoff(error: unknown): boolean {
+  return error instanceof OperationError && error.code === 'owner_unavailable' && (error as { reason?: unknown }).reason === 'owner_handoff';
 }
 
 /** The owner went away. `sent` says whether the owner may have started the call (its outcome is then unknown). */

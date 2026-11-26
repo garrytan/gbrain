@@ -49,8 +49,9 @@ import {
 } from './protocol.ts';
 import {
   OWNER_IPC_CALLBACK_KEYS, OWNER_IPC_REMOTE_READS, OWNER_IPC_ROUTES, ownerCallCancelled, ownerCallTimeout, ownerGone, ownerIpcProtocol, ownerIpcRefusal,
-  ownerPeerRefused,
+  ownerPeerRefused, isOwnerHandoff, ownerMemberOnlyReads,
 } from './routes.ts';
+import { rustMultiuserFromEnv } from '../multiuser-switch.ts';
 import { remoteFrameMark } from './remote-check.ts';
 import { setDeadlineTimer, type DeadlineTimer } from './timer.ts';
 
@@ -76,6 +77,16 @@ interface Pending {
 }
 
 const connections = new WeakMap<object, OwnerConnection>();
+/**
+ * Waits until the old owner has closed `connection` (it does right after it finished its handoff), at most
+ * HANDOFF_CLOSE_WAIT_MS, so the election that follows looks for the next owner, not the one leaving.
+ */
+export const HANDOFF_CLOSE_WAIT_MS = 2_000;
+export async function untilOwnerClosed(connection: OwnerConnection): Promise<void> {
+  const until = Date.now() + HANDOFF_CLOSE_WAIT_MS;
+  while (!connection.closed && Date.now() < until) await new Promise(r => setTimeout(r, 10));
+}
+
 /** The election rerun of the engine a connection serves (InstallOwnerClientOptions.rejoin). */
 const rejoins = new WeakMap<OwnerConnection, () => Promise<void>>();
 /** countPagesBy grouper functions the client resolved to a fixed table; they cross the socket as that table. */
@@ -504,7 +515,20 @@ export function installOwnerClient(engine: object, connection: OwnerConnection, 
           return (now as (...a: unknown[]) => unknown).apply(engine, args);
         }
       }
-      return direct(...args);
+      // Multi-user mode: a call the old owner handed over (`owner_handoff`: it never ran, and only a multi-user owner
+      // sends it), or a read in flight when the owner went away, goes to the next owner. A write whose outcome is
+      // unknown is never sent again: it may have run.
+      return (direct(...args) as Promise<unknown>).catch(async (error: unknown) => {
+        const readLost = ownerMemberOnlyReads(member) && connection.closed && rustMultiuserFromEnv()
+          && error instanceof OperationError && error.code === 'owner_unavailable' && (error as { reason?: unknown }).reason === 'outcome_unknown';
+        if (!isOwnerHandoff(error) && !readLost) throw error;
+        await untilOwnerClosed(connection);
+        const failure = await untilCallEnds(member, args, rejoin()).then(() => null, (e: unknown) => ({ error: e }));
+        if (failure && !(failure.error instanceof OperationError && failure.error.code === 'owner_unavailable')) throw failure.error;
+        const now = record[member];
+        if (now === value || typeof now !== 'function') throw error;
+        return (now as (...a: unknown[]) => unknown).apply(engine, args);
+      });
     };
     Object.defineProperty(record, member, { value, writable: true, configurable: true, enumerable: false });
     installed.push(member);

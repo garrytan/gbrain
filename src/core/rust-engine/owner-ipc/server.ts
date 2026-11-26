@@ -57,7 +57,7 @@ import {
 } from './protocol.ts';
 import {
   OWNER_IPC_ROUTES, ownerBusy, ownerCallTimeout, ownerEarlierCallRunning, ownerIpcProtocol, ownerIpcRefusal, ownerMemberOnlyReads,
-  ownerPeerRefused, ownerResponseTooLarge,
+  ownerPeerRefused, ownerResponseTooLarge, ownerHandoff,
 } from './routes.ts';
 import { ownerRemoteRefusal } from './remote-check.ts';
 import { membersWaitingFor } from './confirming-reads.ts';
@@ -283,10 +283,12 @@ function takeInTurn(lanes: Lanes, ready: (calls: PendingCall[]) => PendingCall |
  */
 function runnableCall(
   calls: PendingCall[], closing: boolean, started: ReadonlySet<PendingCall>, leaveQueue: (call: PendingCall) => void,
+  handoff: ((call: PendingCall) => void) | null = null,
 ): PendingCall | undefined {
   for (let at = 0; at < calls.length;) {
     const call = calls[at]!;
     if (call.done) { leaveQueue(call); continue; }
+    if (closing && handoff) { handoff(call); leaveQueue(call); continue; }
     if (closing) { call.done = true; leaveQueue(call); call.controller.abort(new DOMException('The brain owner is closing.', 'AbortError')); continue; }
     const earlier = orphanAhead(started, call);
     // A timer fires on a later turn, so a call whose deadline passed while it waited is checked here, before it runs.
@@ -417,6 +419,13 @@ export async function serveOwnerEngine(
   let active = 0;
   let inflightBytes = 0;
   let closing = false;
+  // Multi-user mode only (the served options exist only then): an owner that closes hands the brain over instead of
+  // dropping the calls it has not started. Off, null, and close is what it always was.
+  const handOff: ((call: PendingCall) => void) | null = opts.served ? (call: PendingCall) => {
+    call.timer?.clear();
+    call.reply({ t: 'result', id: call.id, ok: false, error: callError(call, ownerHandoff(call.member, process.pid)) });
+    releaseBytes(call);
+  } : null;
   let closed: Promise<void> | undefined;
   // Engine work that has started and not settled. close() waits for all of it before the owner lock can be released.
   const running = new Set<Promise<unknown>>();
@@ -440,7 +449,7 @@ export async function serveOwnerEngine(
   // the orphan settles.
   const pump = () => {
     while (active < permits) {
-      const next = takeInTurn(lanes, calls => runnableCall(calls, closing, started, leaveQueue));
+      const next = takeInTurn(lanes, calls => runnableCall(calls, closing, started, leaveQueue, handOff));
       if (!next) return;
       start(next);
     }
@@ -552,6 +561,8 @@ export async function serveOwnerEngine(
       served?.neverRan?.(null);
       send({ t: 'result', id, ok: false, error: served ? served.encodeError(error) : encodeError(error) }, member);
     };
+    // A call that arrives while a handoff drains never starts here: the next owner takes it.
+    if (closing && handOff) { refusedEarly(ownerHandoff(member, process.pid)); return; }
     // These refusals never touch `calls`: a duplicate id must not take the first call's entry, its cancel or its abort.
     const protocolRefusal = (reason: Parameters<typeof ownerIpcProtocol>[0], detail: string) =>
       refusedEarly(ownerIpcProtocol(reason, member, detail));
@@ -675,11 +686,27 @@ export async function serveOwnerEngine(
     close: () => (closed ??= (async () => {
       closing = true;
       const serverClosed = new Promise<void>(resolve => server.close(() => resolve()));
+      if (handOff) {
+        // Multi-user mode: a handoff. Every call that has not started is answered as never run, so its client sends it
+        // to the next owner; every call that started is finished and answered before any connection closes.
+        for (const calls of [...lanes.values()]) for (const call of [...calls]) { if (!call.done) handOff(call); leaveQueue(call); }
+        while (running.size) await Promise.allSettled([...running]);
+      }
       for (const calls of [...lanes.values()]) {
         for (const call of [...calls]) {
           leaveQueue(call);
           if (!call.done) { call.done = true; call.controller.abort(new DOMException('The brain owner is closing.', 'AbortError')); }
         }
+      }
+      if (handOff) {
+        // The answers just written must reach their clients: end each connection (it flushes), then cut what lingers.
+        await Promise.all([...sockets, ...refused].map(socket => new Promise<void>(resolve => {
+          if (socket.destroyed) { resolve(); return; }
+          const cut = setTimeout(() => { socket.destroy(); resolve(); }, 1_000);
+          cut.unref?.();
+          socket.once('close', () => { clearTimeout(cut); resolve(); });
+          socket.end();
+        })));
       }
       for (const socket of [...sockets, ...refused]) socket.destroy();
       while (running.size) await Promise.allSettled([...running]);
