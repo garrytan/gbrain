@@ -226,6 +226,62 @@ export async function listQualifiedSymbolNames(
   return found.map(r => r.symbol_name_qualified);
 }
 
+/**
+ * The distinct languages of the chunks of served live pages of `sourceId` that define `qualified`, in byte order
+ * (the recursive code walk's language gate). Not only code pages: a namesake in any served page counts.
+ */
+export async function listSymbolLanguages(exec: LegacyUnscopedRead, sourceId: string, qualified: string): Promise<string[]> {
+  const found = await rows<{ language: string }>(exec,
+    // Byte order (COLLATE "C"), as PGLite and the Rust store sort; master's text had no ORDER BY (its caller only asks
+    // whether some language is supported, so the order never changed an answer).
+    // chunk-visibility-ok: the served projection filter of codeReadFilter is master's visibility test here
+    sqlFragment`SELECT DISTINCT content_chunks.language COLLATE "C" AS language
+         FROM content_chunks
+         JOIN pages p ON p.id = content_chunks.page_id
+        WHERE p.source_id = ${sourceId} AND ${codeFilter({})}
+          AND content_chunks.symbol_name_qualified = ${qualified}
+          AND content_chunks.language IS NOT NULL
+        ORDER BY language`,
+  );
+  return found.map(r => r.language);
+}
+
+/**
+ * Which of the chunks `chunkIds` are written in one of `languages`, in id order (the walk keeps only edges whose origin
+ * chunk is in a supported language). Any stored chunk row, as master's read: the edges named them.
+ */
+export async function listSupportedChunkIds(exec: LegacyUnscopedRead, chunkIds: readonly number[], languages: readonly string[]): Promise<number[]> {
+  if (chunkIds.length === 0 || languages.length === 0) return [];
+  const found = await rows<{ id: number | string }>(exec,
+    // chunk-visibility-ok: reads the language of chunk ids an edge read already returned, as master did
+    sqlFragment`SELECT id FROM content_chunks WHERE id = ANY(${[...chunkIds]}::int[]) AND language = ANY(${[...languages]}::text[]) ORDER BY id`,
+  );
+  return found.map(r => Number(r.id));
+}
+
+/**
+ * Chunk ids whose qualified symbol name is one of `symbols`, on pages of `sourceId` when one is named (any source
+ * otherwise), in id order, at most `limit` (the two-pass walk's near-symbol anchors and unresolved edge targets).
+ * Any stored chunk row, as master's read. Master's text had no ORDER BY (its LIMIT took rows in plan order) and bound
+ * the near-symbol name as a scalar; it now binds a one-element array, and the order is by id on every engine.
+ */
+export async function listSymbolChunkIds(
+  exec: LegacyUnscopedRead, symbols: readonly string[], opts: { sourceId?: string; limit: number },
+): Promise<number[]> {
+  if (symbols.length === 0) return [];
+  const found = await rows<{ id: number | string }>(exec, opts.sourceId !== undefined
+    // chunk-visibility-ok: code symbol anchors and targets: code pages are never segmented (chooseBodyStorage)
+    ? sqlFragment`SELECT cc.id FROM content_chunks cc
+         JOIN pages p ON p.id = cc.page_id
+        WHERE cc.symbol_name_qualified = ANY(${[...symbols]}::text[]) AND p.source_id = ${opts.sourceId}
+        ORDER BY cc.id
+        LIMIT ${opts.limit}`
+    // chunk-visibility-ok: code symbol anchors and targets: code pages are never segmented (chooseBodyStorage)
+    : sqlFragment`SELECT id FROM content_chunks WHERE symbol_name_qualified = ANY(${[...symbols]}::text[]) ORDER BY id LIMIT ${opts.limit}`,
+  );
+  return found.map(r => Number(r.id));
+}
+
 /** One withdrawal key: a subject slug (`*` for every page) and the LIKE patterns a chunk's lowered text must all match. */
 export interface WithdrawalChunkKey { subject: string; patterns: string[] }
 export interface WithdrawalChunkRow { id: number; page_id: number; slug: string; chunk_text: string }

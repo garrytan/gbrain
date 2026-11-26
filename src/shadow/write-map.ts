@@ -417,6 +417,8 @@ export const UNMAPPED_WRITE_MEMBERS: ReadonlySet<string> = new Set([
   'applyRetrievalRatings', 'insertPinnedQuestion', 'insertRetrievalEvents', 'insertVolunteerEvents',
   // Lane 4 (sweep-facts-rust) typed edge-proposal writes: not mapped to a write plan yet.
   'deleteEdgeProposalError', 'deleteHeldEdgeProposalErrors', 'markEdgeProposalDated',
+  // The remediation impact log row (engine-sql/remediation-records.ts): not mapped to a write plan yet.
+  'insertImpactLogRow',
 ]);
 export type MemberKind = 'read_name' | 'raw' | 'reserved' | 'ignored' | 'schema' | 'mapped' | 'unmapped';
 

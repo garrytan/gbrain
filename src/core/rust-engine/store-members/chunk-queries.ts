@@ -4,7 +4,7 @@
  * (countChunklessPagesWithContent, listChunklessPagesWithContent), the import's deleteChunksExcept, and the chunk reads
  * and deletes of src/core/engine-sql/chunk-reads.ts (findCodeDefinitions, listSymbolTypesForName, findCodeRefChunks,
  * countOversizedEmbedSkips, countOrphanChunks, countCodeChunkPages, codeChunksExist, hasUnsealedPages, currentCodeChunksExist,
- * listQualifiedSymbolNames, listWithdrawalChunks, deleteChunksForPages, listContextualModeCandidates,
+ * listQualifiedSymbolNames, listSymbolLanguages, listSupportedChunkIds, listSymbolChunkIds, listWithdrawalChunks, deleteChunksForPages, listContextualModeCandidates,
  * resolveFrozenHits), and search dedup's segmented-region read (readSegmentRegions).
  *
  * Export only BrainEngine members from this file, each a `StoreMember` named after the member it serves (see tags.ts):
@@ -237,6 +237,26 @@ export const listQualifiedSymbolNames: StoreMember<[sourceId: string, symbol: st
     if (!Number.isSafeInteger(limit)) refuseMember('listQualifiedSymbolNames', 'a limit that is not a finite number');
     return storeCall({ member: 'listQualifiedSymbolNames' },
       () => brain.listQualifiedSymbolNames({ sourceId, symbol, match: opts.match === 'contains' ? 'contains' : 'exact', limit }));
+  };
+
+export const listSymbolLanguages: StoreMember<[sourceId: string, qualified: string], string[]> = (brain, sourceId, qualified) =>
+  storeCall({ member: 'listSymbolLanguages' }, () => brain.listSymbolLanguages({ sourceId, qualified }));
+
+export const listSupportedChunkIds: StoreMember<[chunkIds: readonly number[], languages: readonly string[]], number[]> =
+  async (brain, chunkIds, languages) => {
+    const ids = [...chunkIds].map(Number);
+    if (!ids.every(Number.isSafeInteger)) refuseMember('listSupportedChunkIds', 'a chunk id that is not an integer');
+    if (ids.length === 0 || languages.length === 0) return [];
+    return storeCall({ member: 'listSupportedChunkIds' }, () => brain.listSupportedChunkIds({ chunkIds: ids, languages: [...languages] }));
+  };
+
+export const listSymbolChunkIds: StoreMember<[symbols: readonly string[], opts: { sourceId?: string; limit: number }], number[]> =
+  async (brain, symbols, opts) => {
+    const limit = Math.max(0, Math.floor(opts.limit));
+    if (!Number.isSafeInteger(limit)) refuseMember('listSymbolChunkIds', 'a limit that is not a finite number');
+    if (symbols.length === 0) return [];
+    return storeCall({ member: 'listSymbolChunkIds' },
+      () => brain.listSymbolChunkIds({ symbols: [...symbols], sourceId: opts.sourceId ?? null, limit }));
   };
 
 export const listWithdrawalChunks: StoreMember<[sourceId: string, keys: WithdrawalChunkKey[], opts: { after: number; limit: number; subjects: string[] | null }], WithdrawalChunkRow[]> =

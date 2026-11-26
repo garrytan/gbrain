@@ -95,7 +95,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'deleteChunks', 'getChunksWithEmbeddings', 'deleteChunksExcept', 'setChunkerVersion', 'readSourceChunkerVersion', 'setSourceChunkerVersion', 'writeTextProjectionSeal',
     'moveChunkIndexes', 'getChunkReuseRows', 'findCodeDefinitions', 'listSymbolTypesForName', 'findCodeRefChunks',
     'countOversizedEmbedSkips', 'countOrphanChunks', 'countCodeChunkPages', 'codeChunksExist', 'hasUnsealedPages', 'currentCodeChunksExist',
-    'listQualifiedSymbolNames', 'listWithdrawalChunks', 'deleteChunksForPages', 'listContextualModeCandidates', 'resolveFrozenHits', 'readSegmentRegions'],
+    'listQualifiedSymbolNames', 'listSymbolLanguages', 'listSupportedChunkIds', 'listSymbolChunkIds', 'readReindexSpendInputs', 'listWithdrawalChunks', 'deleteChunksForPages', 'listContextualModeCandidates', 'resolveFrozenHits', 'readSegmentRegions'],
   extraction: ['countStalePagesForExtraction', 'listStalePagesForExtraction', 'markPagesExtractedBatch', 'markPagesAttendanceBlocked',
     'countStaleFrontmatterKeyPages', 'listStaleFrontmatterKeyPages', 'stripStaleFrontmatterKeys',
     'listFactsFencePages', 'listSweepStalePages', 'listSweepDeferredPages', 'listPageRefsForSlugs', 'readExtractReceiptSlot', 'readExtractReceiptSeal', 'upsertExtractRollupDay'],
@@ -128,7 +128,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'countStaleTakes', 'listStaleTakes', 'updateTake', 'supersedeTake', 'resolveTake', 'getScorecard', 'getCalibrationCurve',
     'addSynthesisEvidence', 'listActiveTakesForPages', 'matchTakeRows', 'deleteTakeRows',
     // group D (takes reads)
-    'countOffGridTakeWeights', 'countTakes', 'planFactPurgeTakes', 'listTakeRowsForPage', 'readTakePreimages', 'countMcpResolvedTakes',
+    'countOffGridTakeWeights', 'countTakes', 'insertImpactLogRow', 'planFactPurgeTakes', 'listTakeRowsForPage', 'readTakePreimages', 'countMcpResolvedTakes',
     'listTakeSupersessionCandidates', 'listHeldFenceTakeRows',
     // the reads and the delete of `gbrain extract takes`
     'listTakeIdsLeavingFence', 'listTakePreimages', 'deleteTakesByIds', 'findTakeId',

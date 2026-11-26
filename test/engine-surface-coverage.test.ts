@@ -97,7 +97,7 @@ const INTERFACE_METHODS: readonly string[] = [
   // group B (subagent transcript and tool ledger)
   'listSubagentMessages', 'countSubagentMessages', 'insertSubagentMessage', 'listSubagentToolExecutions', 'hasSubagentToolExecution', 'listSubagentWriteOutcomes', 'listSubagentOneshotLedger', 'summarizeSubagentToolExecutions', 'listSubagentPutPageSlugs', 'listSubagentPutPageWrites', 'listSubagentRetainedPutPages', 'listSubagentStagedPages', 'listSubagentTimelineAppendCalls', 'recordSubagentToolExecutions', 'startSubagentToolExecution', 'completeSubagentToolExecution', 'failSubagentToolExecution',
   // group D (takes, salience and code-edge reads)
-  'countOffGridTakeWeights', 'countTakes', 'planFactPurgeTakes',
+  'countOffGridTakeWeights', 'countTakes', 'insertImpactLogRow', 'planFactPurgeTakes',
   'listTakeRowsForPage', 'readTakePreimages', 'countMcpResolvedTakes', 'listTakeSupersessionCandidates', 'countZeroWeightWithTakes', 'hasCodeEdgesSymbol',
   'listHeldFenceTakeRows', 'readTakeRowTrust', 'readTakeTrustRef', 'listTopResolvedTakesForHolder', 'listAbandonedTakes',
   'readLivePageIdBySlug', 'readPageTierRef', 'readPageTierRows', 'pageHasFrontmatterKey', 'listTakeIdsLeavingFence', 'listTakePreimages', 'deleteTakesByIds', 'findTakeId', 'stampTakeResolvedAt', 'recordTakeHoldersUsed', 'listTakeHoldersAtRows',
@@ -159,7 +159,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'readProjectionReadinessGeneration', 'readProjectionReadiness',
   // Code, doctor, withdrawal, repair and evidence chunk reads (engine-sql/chunk-reads.ts)
   'findCodeDefinitions', 'listSymbolTypesForName', 'findCodeRefChunks', 'countOversizedEmbedSkips', 'countOrphanChunks',
-  'countCodeChunkPages', 'codeChunksExist', 'hasUnsealedPages', 'currentCodeChunksExist', 'listQualifiedSymbolNames', 'listWithdrawalChunks',
+  'countCodeChunkPages', 'codeChunksExist', 'hasUnsealedPages', 'currentCodeChunksExist', 'listQualifiedSymbolNames', 'listSymbolLanguages', 'listSupportedChunkIds', 'listSymbolChunkIds', 'readReindexSpendInputs', 'listWithdrawalChunks',
   'deleteChunksForPages', 'listContextualModeCandidates', 'resolveFrozenHits',
   // CLI reads (engine-sql/cli-reads-ops.ts; covered by test/engine-parity/cli-reads-ops.test.ts)
   'scanExactBatch', 'nextLivePageAfter', 'listExactIdentityCandidates', 'rankEntities', 'listExtractionPendingPages',
