@@ -1283,8 +1283,10 @@ agent). Without a memory audience from OpenClaw, the plugin can only tell the
 owner apart by sender id, so anyone who messages the agent directly gets the
 owner's pins, brief, operator rule and owner-only suggestions. Setup prints it
 as a note; doctor warns unless every turn the agent logged in the last 24 hours
-carried OpenClaw's memory audience. Fix it with your sender id (as OpenClaw's
-`commands.ownerAllowFrom` names it):
+carried OpenClaw's memory audience. Fix it with your sender id on that channel:
+the bare id the channel reports (for example `123456789` on Telegram), or the
+`telegram:123456789` form OpenClaw's `commands.ownerAllowFrom` uses, which
+matches only on turns from that channel:
 
 ```bash
 gbrain setup openclaw --skills-index-only --agent main --owner-sender <your sender id>

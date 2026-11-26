@@ -298,7 +298,7 @@ function sessionClassOf(event, ctx, a, sessionKey) {
   const owners = Array.isArray(a.owner_sender_ids) ? a.owner_sender_ids : [];
   if ((keyed === 'direct' || keyed === 'main') && (owners.length || a.require_owner_sender === true)) {
     const sender = senderOf(event, ctx);
-    if (sender === null || !owners.includes(sender)) return of('direct');
+    if (!isOwnerSender(owners, sender, event, ctx)) return of('direct');
     if (keyed === 'direct') return of('owner');
   }
   return of(keyed);
@@ -367,6 +367,13 @@ function readRootOf(a) {
 function senderOf(event, ctx) {
   const v = (ctx && (ctx.senderId || (ctx.sender && ctx.sender.id))) || (event && (event.senderId || (event.sender && event.sender.id)));
   return v === undefined || v === null ? null : String(v);
+}
+
+// An owner id matches the sender exactly, or as <channel>:<id> (commands.ownerAllowFrom's form) when the turn names that channel.
+function isOwnerSender(owners, sender, event, ctx) {
+  if (sender === null) return false;
+  const provider = String((ctx && (ctx.messageProvider || ctx.channel)) || (event && (event.messageProvider || event.channel)) || '').toLowerCase();
+  return owners.some((o) => o === sender || (!!provider && o.toLowerCase() === provider + ':' + sender.toLowerCase()));
 }
 
 function remember(map, key, value, max) {
@@ -518,7 +525,7 @@ async function resolveTurn(event, ctx, opts) {
   if (!text) return finish({ outcome: 'skipped_empty' });
   if (Array.isArray(a.owner_sender_ids) && a.owner_sender_ids.length) {
     const sender = senderOf(event, ctx);
-    if (sender === null || !a.owner_sender_ids.includes(sender)) return finish({ outcome: 'skipped_sender' });
+    if (!isOwnerSender(a.owner_sender_ids, sender, event, ctx)) return finish({ outcome: 'skipped_sender' });
   }
   if (prior && !prior.unresolved) return finish({ outcome: 'retry' }, arm === 'live' && !carried(prior.block) ? prior.block : '');
   const w = ensureWorker(s);

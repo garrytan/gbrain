@@ -967,6 +967,25 @@ describe.skipIf(!NODE)('session classes and the session-start brief', () => {
     expect(readState(b).agents.main.conversation_operator_rule).toBeUndefined();
   });
 
+  test('an owner sender in commands.ownerAllowFrom form (telegram:<id>) matches the bare id Telegram reports, only on Telegram turns', async () => {
+    const b = box();
+    ownerSkill(b);
+    expectExit(await setup(b, ['--skill-loading', 'resolve', '--require-owner-sender', '--owner-sender', 'telegram:424242']), 0);
+    await pin(b, 'deploy-service');
+    const text = 'review the private household ledger';
+    const out = drive(b, [
+      ['turn', { text, sender: '424242', session: 'agent:main:main', ctx: { messageProvider: 'telegram' } }],
+      ['turn', { text, sender: '424242', session: 'agent:main:main', ctx: { messageProvider: 'discord' } }],
+      ['turn', { text, sender: 'telegram:424242', session: 'agent:main:main', ctx: { messageProvider: 'discord' } }],
+    ], undefined, { DRIVE_LOG_LINES: '3' });
+    expect(out[0].appendSystemContext).toContain('"deploy-service"');
+    expect(out[0].appendContext).toContain('private-ledger');
+    expect(JSON.stringify(out[1] ?? {})).not.toContain('deploy-service');
+    expect(JSON.stringify(out[1] ?? {})).not.toContain('private-ledger');
+    expect(out[2].appendSystemContext).toContain('"deploy-service"');
+    expect(logLines(b).map((l) => l.session_class)).toEqual(['main', 'direct', 'main']);
+  });
+
   test('a stranger turn that shares an owner turn\'s id on the main session gets none of the owner\'s remembered brief or suggestions', async () => {
     const b = box();
     ownerSkill(b);

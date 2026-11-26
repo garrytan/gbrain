@@ -200,7 +200,7 @@ export function skillResolverCheck(v: SkillResolverView | null): Check | null {
     const argv = ['gbrain', 'setup', 'openclaw', '--skills-index-only', '--agent', oc.agent ?? 'main', '--owner-sender', '<sender-id>'];
     return { name, status: 'warn', message: `${describeSkillResolver(v)} OpenClaw: ${oc.what}.`, details: { ...details, code: oc.code },
       fix: { argv, consent: [], actor: 'user', requires_exclusive: false, verify: doctorVerify(name), docs: `docs/guides/skill-resolver.md#${oc.code}`,
-        inputs: [{ name: 'sender-id', how: "Ask the user for their own sender id on the channel they message the agent from, as OpenClaw's commands.ownerAllowFrom names it (for example telegram:123456789)." }],
+        inputs: [{ name: 'sender-id', how: "Ask the user for their own sender id on the channel they message the agent from: the bare id the channel reports (for example 123456789 on Telegram), or the <channel>:<id> form OpenClaw's commands.ownerAllowFrom uses (telegram:123456789)." }],
         why: 'Only the owner knows their sender id. With it set, a turn on the shared main session from anyone else is treated as another person\'s DM: conversation pins only, no owner-only skill, no brief.',
         user_message: `Anyone who messages OpenClaw agent ${oc.agent ?? 'main'} directly lands on its main session and is treated as you. Run: ${argv.join(' ')} (your id on that channel). Or add --require-owner-sender instead, so the main session is treated as another person's DM until an owner sender is set.` } };
   }
