@@ -139,3 +139,43 @@ describe('remote put_page graph freshness', () => {
     }
   }, 120_000);
 });
+
+describe('links effect slug listing (#10101)', () => {
+  async function countListings(run: () => Promise<void>) {
+    let listings = 0;
+    const getAllSlugs = engine.getAllSlugs.bind(engine);
+    engine.getAllSlugs = (async (...args: Parameters<typeof getAllSlugs>) => { listings++; return getAllSlugs(...args); }) as typeof engine.getAllSlugs;
+    try { await run(); } finally { engine.getAllSlugs = getAllSlugs; }
+    return listings;
+  }
+
+  test('ten same-source page effects share one cached basename index instead of listing every slug each', async () => {
+    const listings = await countListings(async () => {
+      for (let i = 0; i < 10; i++) {
+        await remoteWrite(`notes/listing-${i}`, `---\ntype: note\ntitle: Listing ${i}\n---\n\nSee [[custom/no-such-page]] and [[people/alice-example]].\n`);
+        await drainEffects();
+      }
+    });
+    const [queued] = await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM persistence_effects WHERE state='queued'");
+    expect(queued!.n).toBe(0);
+    expect(listings).toBe(0);
+    expect((await edges('notes/listing-9')).filter(e => e.link_type === 'mentions').map(e => e.to_slug)).toEqual(['people/alice-example']);
+  }, 120_000);
+
+  test('the shared index still sees a page created after it was built', async () => {
+    await engine.setConfig('link_resolution.global_basename', 'true');
+    try {
+      await remoteWrite('notes/basename-warm', '---\ntype: note\ntitle: Warm\n---\n\nSee [[Fresh Target Example]].\n');
+      await drainEffects();
+      await engine.putPage('people/fresh-target-example', { type: 'person', title: 'Fresh Target Example', compiled_truth: 'fixture.', timeline: '', frontmatter: {} }, { sourceId: SOURCE });
+      expect(await countListings(async () => {
+        await remoteWrite('notes/basename-after', '---\ntype: note\ntitle: After\n---\n\nSee [[Fresh Target Example]].\n');
+        await drainEffects();
+      })).toBe(0);
+      expect((await edges('notes/basename-after')).filter(e => e.link_type === 'mentions').map(e => e.to_slug)).toEqual(['people/fresh-target-example']);
+    } finally {
+      await engine.unsetConfig('link_resolution.global_basename');
+    }
+  }, 120_000);
+});
+

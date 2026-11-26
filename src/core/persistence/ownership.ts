@@ -29,7 +29,7 @@ import { inspectPhysicalRootRecovery, repairPhysicalRoot, type PhysicalRootRecov
 import type { ContentReceiptRebind } from '../shared-skills/receipt-root.ts';
 import type { RawSqlEngine } from './model.ts';
 import { readWedgedPhysicalRootReservation } from './physical-root-record.ts';
-import { getWorktreeBindingRaw, type WorktreeBinding } from '../engine-sql/write-misc.ts';
+import { getWorktreeBindingRaw, type GitDurabilitySetting, type WorktreeBinding } from '../engine-sql/write-misc.ts';
 import { claimWorktreeBinding } from '../engine-sql/worktree-claim.ts';
 import { writerAdminTransaction } from '../engine-sql/writer-admin.ts';
 
@@ -429,7 +429,7 @@ export async function cancelWriterTransfer(engine: BrainEngine, sourceId: string
   } finally { await lock.release(); }
 }
 export async function acceptWriterTransfer(engine: BrainEngine, sourceId: string, path: string, expectedEpoch: string, expectedManifest: string, hostId = hostIdFor(engine), expectedAdminState?: string,
-  opts: WriterTransferOptions = {}): Promise<{ content_receipts: ContentReceiptRebind[] }> {
+  opts: WriterTransferOptions = {}): Promise<{ content_receipts: ContentReceiptRebind[]; durability_probe_failure?: string }> {
   const root = realpathSync(resolve(path));
   const binding = await getWorktreeBinding(engine, sourceId, hostId);
   if (!binding) throw opError('not_found', 'Source has no worktree owner.',
@@ -446,6 +446,10 @@ export async function acceptWriterTransfer(engine: BrainEngine, sourceId: string
   if (!coordination) throw opError('recovery_required', 'The recorded coordination path is missing.',
     `Source ${sourceId}'s host binding has no coordination lock path, so no transfer was accepted. Inspect writer status and show it to the user; repairing the binding is a deliberate topology change (docs/architecture/topologies.md).`,
     { fix: writerStatusFix(sourceId) });
+  // #10123: a cross-host accept carries the owner's Git durability; `enabled` only when the --enable push probe passes here.
+  const crossHost = binding.owner_host_id !== hostId;
+  const ownerDurability = async (sql: SqlEngine): Promise<GitDurabilitySetting> => (await getWorktreeBinding(sql, sourceId, binding.owner_host_id))?.git_durability ?? null;
+  let probed = false, probeFailure: string | undefined;
   const lock = await acquireNativeLock(coordination, { timeoutMs: 5000 });
   if (!lock) throw opError('write_pending', 'Successor worktree is busy.',
     `Another gbrain process holds the successor checkout's coordination lock, so source ${sourceId}'s transfer was not accepted. Run transfer accept again once that process has finished.`,
@@ -455,6 +459,14 @@ export async function acceptWriterTransfer(engine: BrainEngine, sourceId: string
     const prepared = await engine.readWorktreeManifest(binding.worktree_id);
     const candidate = worktreeManifest(root, { progress: humanManifestProgress(), scope: storedManifestScope(prepared) });
     if (candidate.digest !== expectedManifest) throw successorManifestMismatch(sourceId, root, expectedManifest, prepared, candidate);
+    if (crossHost && !opts.dryRun && await ownerDurability(engine) === 'enabled') {
+      const { inspectDurabilityCheckout, probeDurabilityPush } = await import('./git-durability-administration.ts');
+      try {
+        const probe = await probeDurabilityPush(root, await inspectDurabilityCheckout(root), () => '', { noHooks: true });
+        if (!probe.ok || probe.skipped) probeFailure = probe.ok ? probe.skipped : probe.reason;
+      } catch { probeFailure = 'git_unavailable'; }
+      probed = true;
+    }
     return await writerAdminTransaction(engine, async (store, tx) => {
       await store.assertAdminState(expectedAdminState);
       await store.assertAdminUnlocked();
@@ -478,11 +490,13 @@ export async function acceptWriterTransfer(engine: BrainEngine, sourceId: string
       if (opts.selfTransfer) repairPhysicalRoot(root, manifest.self_transfer!, { hostId, worktreeId: binding.worktree_id, coordinationPath: coordination }, opts.dryRun);
       else if (!opts.dryRun) await preparePhysicalRootTransfer(store, root, { hostId, worktreeId: binding.worktree_id, coordinationPath: coordination, expectedEpoch });
       if (opts.dryRun) return { content_receipts: [] };
-      await store.upsertHostBinding({ worktreeId: binding.worktree_id, hostId, localPath: root, coordinationPath: coordination });
+      const from = crossHost ? await ownerDurability(tx) : null;
+      const carried: GitDurabilitySetting = from === 'disabled' || (from === 'enabled' && probed && !probeFailure) ? from : null;
+      await store.upsertHostBinding({ worktreeId: binding.worktree_id, hostId, localPath: root, coordinationPath: coordination, gitDurability: carried, carryDurability: crossHost });
       const contentReceipts = await (await import('../shared-skills/receipt-root.ts')).rebindContentReceipts(store, [binding.worktree_id], hostId);
       await store.acceptWorktreeOwner(binding.worktree_id, hostId);
       await refreshManagedFilesystemRoots(tx, managedFilesystemDatastorePath(engine));
-      return { content_receipts: contentReceipts };
+      return { content_receipts: contentReceipts, ...(from === 'enabled' && probeFailure ? { durability_probe_failure: probeFailure } : {}) };
     });
   } finally { await lock.release(); }
 }

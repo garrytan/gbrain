@@ -506,7 +506,7 @@ export function resolveParsedSubtype(
  * file and keeps going instead of failing the whole sync. Defined once here;
  * managed and legacy sync, import and `validate --importable` share it.
  */
-export const HOLD_CODES = ['invalid_frontmatter', 'frontmatter_slug_conflict', 'file_too_large', 'rename_held', 'parser_regression', 'tag_too_long'] as const;
+export const HOLD_CODES = ['invalid_frontmatter', 'frontmatter_slug_conflict', 'file_too_large', 'rename_held', 'parser_regression', 'tag_too_long', 'slug_too_long'] as const;
 export type HoldCode = typeof HOLD_CODES[number];
 export const INVALID_FRONTMATTER_REASONS = ['yaml_parse', 'needs_interpretation', 'ambiguous_identity_key', 'ambiguous_protected_key'] as const;
 export type InvalidFrontmatterReason = typeof INVALID_FRONTMATTER_REASONS[number];
@@ -565,6 +565,8 @@ export function classifyImportHold(parsed: ParsedMarkdown, ctx: {
   /** The sync exemption: a page keeping its recorded origin keeps its declared slug. */
   slugExempt?: (declared: string) => boolean;
   slugConflictMessage?: (found: string, expected: string) => string;
+  /** #10080: the screen admits a new page, so a slug over 255 characters (which no later operation names) is held. */
+  createsPage?: boolean;
 } = {}): ContentHold | null {
   const size = ctx.byteLength !== undefined && ctx.maxBytes !== undefined ? contentSizeHold(ctx.byteLength, ctx.maxBytes, ctx.codeFile) : null;
   if (size) return size;
@@ -590,6 +592,8 @@ export function classifyImportHold(parsed: ParsedMarkdown, ctx: {
     return { code: 'frontmatter_slug_conflict', key: 'slug',
       message: ctx.slugConflictMessage?.(parsed.slug, expected) ?? `Frontmatter slug "${parsed.slug}" does not match path-derived slug "${expected}".` };
   }
+  const slug = ctx.createsPage ? parsed.slug || expected : null;
+  if (slug && slug.length > 255) return { code: 'slug_too_long', key: 'slug', message: `The page slug is ${slug.length} characters; a slug can be at most 255, so the page was not written. Shorten the file's path (or its slug: line), then write the page again.` };
   return tagLengthHold(parsed.tags);
 }
 

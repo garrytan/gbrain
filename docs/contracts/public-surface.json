@@ -3284,6 +3284,7 @@
     "slug_root_mode_mismatch": 1,
     "slug_spelling_collision": 1,
     "slug_spelling_encoding": 1,
+    "slug_too_long": 1,
     "source_binding_required": 1,
     "source_changed": 1,
     "source_id_taken": 1,
