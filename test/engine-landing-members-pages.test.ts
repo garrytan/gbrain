@@ -948,3 +948,19 @@ describe('live takes and link effect re-arming', () => {
     expect(await engine.rearmLinksEffects({ sourceId: 'default', requestIds: [one.id, two.id, three.id] })).toBe(0);
   });
 });
+
+describe('access member reads', () => {
+  test('readAccessMembers reads one member by id or by exact email, and all members with or without the removed ones', async () => {
+    await raw(`INSERT INTO access_members (id, display_name, email, kind) VALUES ('read-alice', 'Alice', 'alice@example.com', 'person'), ('read-bob', 'Bob', 'bob@example.com', 'person')`);
+    await raw(`UPDATE access_members SET tombstoned_at = now() WHERE id = 'read-bob'`);
+    expect((await engine.readAccessMembers({ id: 'read-alice' })).map((m) => [m.id, m.email])).toEqual([['read-alice', 'alice@example.com']]);
+    expect(await engine.readAccessMembers({ id: 'read-nobody' })).toEqual([]);
+    expect((await engine.readAccessMembers({ email: 'bob@example.com' })).map((m) => m.id)).toEqual(['read-bob']);
+    const live = (await engine.readAccessMembers({ includeRemoved: false })).map((m) => m.id);
+    const all = (await engine.readAccessMembers({ includeRemoved: true })).map((m) => m.id);
+    expect(live).toContain('read-alice');
+    expect(live).not.toContain('read-bob');
+    expect(all).toEqual(expect.arrayContaining(['read-alice', 'read-bob']));
+    expect((await engine.readAccessMembers({ includeRemoved: true })).find((m) => m.id === 'read-bob')!.tombstoned_at).not.toBeNull();
+  });
+});
