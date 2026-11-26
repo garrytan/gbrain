@@ -19,6 +19,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { operationsByName, type OperationContext } from '../src/core/operations.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
+import { capabilityMissing } from '../src/core/rust-engine/errors.ts';
 import type { GBrainConfig } from '../src/core/config.ts';
 import type { Notice } from '../src/core/agent-output.ts';
 import { configureGateway, getEmbeddingModel, resetGateway, __setEmbedTransportForTests } from '../src/core/ai/gateway.ts';
@@ -426,6 +427,20 @@ for (const kind of testBackends()) {
       for (const p of [{ query: COFFEE, entity: ENTITY }, { query: COFFEE, since: '30d' }, { query: COFFEE, session_id: SESSION }, { query: COFFEE, supersessions: true }, {}]) {
         expect((await recall(local(), p)).facts_order).toBe('newest');
       }
+    });
+
+    test('#10225: on an engine without raw SQL (Rust), a plain query keeps the newest-facts read instead of refusing', async () => {
+      const sqlless = new Proxy(engine, {
+        get(target, prop, receiver) {
+          if (prop === 'capabilities') return new Set([...target.capabilities].filter(c => c !== 'raw_sql'));
+          if (prop === 'executeRaw' || prop === 'transaction') return async () => { throw capabilityMissing('raw_sql', String(prop)); };
+          const value = Reflect.get(target, prop, receiver);
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      }) as unknown as BrainEngine;
+      const r = await recall({ ...local(), engine: sqlless }, { query: COFFEE });
+      expect(r.facts_order).toBe('newest');
+      expect(r.facts.length).toBeGreaterThan(0);
     });
   });
 }
