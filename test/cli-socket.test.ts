@@ -113,8 +113,6 @@ const NOT_READ_BEHAVIOR = new Set([
   'GBRAIN_RUST_ENGINE_ADDON',
   // Rust multi-user write origin: stamps the host on each write the store commits; no read answers differently.
   'GBRAIN_RUST_WRITE_ORIGIN',
-  // Rust multi-user owner-side remote check: the owner socket refuses a remote caller's write; reads run as before.
-  'GBRAIN_RUST_OWNER_REMOTE_CHECK',
   // Rust brain server listener: the address `gbrain serve` opens its protocol v3 listener on, and that listener's TLS
   // certificate and key; they open and secure a second door to the same store, so no read answers differently.
   'GBRAIN_RUST_SERVER_LISTEN', 'GBRAIN_RUST_SERVER_TLS_CERT', 'GBRAIN_RUST_SERVER_TLS_KEY',

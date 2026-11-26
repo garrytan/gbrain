@@ -47,7 +47,7 @@ pub const FORMAT_VERSIONS: &[u32] = &[1, 2, 3, 4, 5, 6, 7, FORMAT_VERSION];
 /// log on (`GBRAIN_RUST_MULTIUSER=1`). Its records are a base format's shapes; the format record
 /// keeps that base as `log.base_format`. A new brain never starts here, `FORMAT_VERSIONS` does not
 /// list it, and a build without the log refuses it as newer.
-pub const LOG_FORMAT_VERSION: u32 = 13;
+pub const LOG_FORMAT_VERSION: u32 = 16;
 /// Every format this build opens: the base formats and the commit log format.
 pub const OPENED_FORMATS: &[u32] = &[1, 2, 3, 4, 5, 6, 7, FORMAT_VERSION, LOG_FORMAT_VERSION];
 

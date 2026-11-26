@@ -1,8 +1,12 @@
 /**
- * Multi-user groundwork K (owner-ipc/remote-check.ts): with GBRAIN_RUST_MULTIUSER=1 and
- * GBRAIN_RUST_OWNER_REMOTE_CHECK=1, the brain owner refuses a remote caller's write itself, so a client that skips its
- * own check (client.ts) is still refused. Driven with raw frames, as such a client would send them. With the switches
- * off, the owner runs the same frames as before.
+ * Multi-user groundwork K (owner-ipc/remote-check.ts, audit row B2): whenever the brain runs in multi-user mode, the
+ * brain owner refuses a remote caller's write itself, so a client that skips its own check (client.ts) is still
+ * refused. There is no separate switch: multi-user mode alone turns the check on. Driven with raw frames, as such a
+ * client would send them, on an owner with no store (the environment switch decides) and on a real Rust store opened
+ * in multi-user mode (the store's own mode decides, asserted in the run). With multi-user mode off, the owner runs the
+ * same frames as before.
+ *
+ * Needs the addon `bun run rust:build` writes (or GBRAIN_TEST_RUST_ENGINE_ADDON) for the Rust store cases.
  */
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -16,12 +20,15 @@ import { ownerRemoteRefusal, remoteFrameMark } from '../src/core/rust-engine/own
 import { OWNER_IPC_REMOTE_READS } from '../src/core/rust-engine/owner-ipc/routes.ts';
 import type { OperationError } from '../src/core/ops/contract.ts';
 import { rawSession, type Frame } from './helpers/owner-ipc-raw.ts';
+import { loadRustAddon } from '../src/core/rust-engine/addon-loader.ts';
+import { openRustEngine, type RustEngine } from '../src/core/rust-engine.ts';
+import { rustArmAddonPath } from './engine-parity/rust-arm.ts';
 
 const SWITCHES = ['GBRAIN_RUST_MULTIUSER', 'GBRAIN_RUST_OWNER_REMOTE_CHECK'] as const;
 const saved: Record<string, string | undefined> = {};
 beforeAll(() => { for (const k of SWITCHES) { saved[k] = process.env[k]; delete process.env[k]; } });
 afterAll(() => { for (const k of SWITCHES) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; } });
-const on = () => { process.env.GBRAIN_RUST_MULTIUSER = '1'; process.env.GBRAIN_RUST_OWNER_REMOTE_CHECK = '1'; };
+const on = () => { process.env.GBRAIN_RUST_MULTIUSER = '1'; };
 const off = () => { for (const k of SWITCHES) delete process.env[k]; };
 
 const cleanups: Array<() => Promise<void> | void> = [];
@@ -33,7 +40,7 @@ const FAKE = {};
 const errorOf = (frame: Frame | null | undefined) => decodeError(frame?.error as Wire) as OperationError;
 
 /** An owner whose getConfig only reads and whose setConfig writes; `ran` lists what ran. */
-async function owner() {
+async function owner(): Promise<{ raw: ReturnType<typeof rawSession>; ran: string[] }> {
   const dir = mkdtempSync(join(tmpdir(), 'gbrain-owner-remote-check-'));
   const ran: string[] = [];
   const engine = {
@@ -115,9 +122,52 @@ describe('with the switches off nothing changes', () => {
     expect(remoteFrameMark(true)).toEqual({});
   });
 
-  test('the sub-switch alone changes nothing', async () => {
+  test('the retired GBRAIN_RUST_OWNER_REMOTE_CHECK switch changes nothing on its own', async () => {
     process.env.GBRAIN_RUST_OWNER_REMOTE_CHECK = '1';
     expect(ownerRemoteRefusal(FAKE, { t: 'call', member: 'setConfig', remote: true }, 'setConfig')).toBeNull();
     expect(remoteFrameMark(true)).toEqual({});
+  });
+});
+
+describe('on a real Rust store the store\'s own multi-user mode turns the check on', () => {
+  /** A Rust brain served on an owner socket; the store resolves multi-user mode when it opens. */
+  async function rustOwner(multiuser: boolean): Promise<{ engine: RustEngine; raw: ReturnType<typeof rawSession> }> {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-owner-remote-check-rust-'));
+    const db = join(dir, 'db');
+    if (multiuser) on(); else off();
+    const engine = openRustEngine({ addon: await loadRustAddon({ env: { GBRAIN_RUST_ENGINE_ADDON: rustArmAddonPath() } }), databasePath: db });
+    await engine.connect({ engine: 'rust', database_path: db } as never);
+    await engine.initSchema();
+    await engine.setConfig('k', 'before');
+    const server = await serveOwnerEngine(engine, join(dir, 'owner.sock'));
+    if (!server) throw new Error('no socket');
+    cleanups.push(async () => { await server.close(); await engine.disconnect(); rmSync(dir, { recursive: true, force: true }); });
+    const raw = rawSession(server.socketPath);
+    cleanups.push(() => { raw.destroy(); });
+    await raw.send(hello);
+    return { engine, raw };
+  }
+
+  test('in multi-user mode a remote write frame is refused and the store keeps its value; a remote read runs', async () => {
+    const { engine, raw } = await rustOwner(true);
+    expect(engine.openStore('owner-remote-check-test').multiuser).toBe(true);
+    await raw.send(call(1, 'setConfig', ['k', 'after'], { remote: true }));
+    const refused = await raw.next(f => f.t === 'result' && f.id === 1);
+    expect({ ok: refused?.ok, code: refused?.ok === false ? errorOf(refused).code : null }).toEqual({ ok: false, code: 'engine_capability_missing' });
+    await raw.send(call(2, 'getConfig', ['k'], { remote: true }));
+    const read = await raw.next(f => f.t === 'result' && f.id === 2);
+    expect(read?.ok).toBe(true);
+    expect(await engine.getConfig('k')).toBe('before');
+    await raw.send(fn(3, 'put_page', { remote: true }));
+    expect((await raw.next(f => f.t === 'result' && f.id === 3))?.ok).toBe(false);
+  });
+
+  test('a store opened single-user runs the same remote write frame, even with the switch set afterwards', async () => {
+    const { engine, raw } = await rustOwner(false);
+    on();
+    expect(engine.openStore('owner-remote-check-test').multiuser).toBe(false);
+    await raw.send(call(1, 'setConfig', ['k', 'after'], { remote: true }));
+    expect((await raw.next(f => f.t === 'result' && f.id === 1))?.ok).toBe(true);
+    expect(await engine.getConfig('k')).toBe('after');
   });
 });
