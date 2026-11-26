@@ -222,32 +222,23 @@ describe.skipIf(!rustArmRequested())('a Rust brain that withholds managed mode (
 });
 
 describe.skipIf(!rustArmRequested())('a real multi-user Rust store withholds managed mode (until slice 3)', () => {
-  test('opened with GBRAIN_RUST_MULTIUSER=1, the engine does not report managed_persistence and a managed store refuses as executeRaw did', async () => {
-    const saved = process.env.GBRAIN_RUST_MULTIUSER;
-    process.env.GBRAIN_RUST_MULTIUSER = '1';
-    let brain: RustBrainDir | null = null;
-    try {
-      brain = await openRustBrain();
-      const engine = brain.engine as unknown as BrainEngine;
+  /** Opens a Rust brain with the multi-user switch as given (read when the store opens), runs `check`, then closes it. */
+  const withBrain = (multiuser: string | undefined, check: (engine: BrainEngine) => Promise<void>) =>
+    withEnv({ GBRAIN_RUST_MULTIUSER: multiuser }, async () => {
+      const brain = await openRustBrain();
+      try { await check(brain.engine as unknown as BrainEngine); }
+      finally { await (brain.engine as unknown as BrainEngine).disconnect(); removeBrainDir(brain.dir); }
+    });
+
+  test('opened with GBRAIN_RUST_MULTIUSER=1, the engine does not report managed_persistence and a managed store refuses as executeRaw did', () =>
+    withBrain('1', async engine => {
       expect(engine.capabilities.has('managed_persistence')).toBe(false);
       expect(engine.capabilities.has('persistence_journal')).toBe(true);
       expect(await refusal(async () => (await engine.gitDurabilityStore()).hostBindingPaths())).toEqual(RAW);
-    } finally {
-      if (saved === undefined) delete process.env.GBRAIN_RUST_MULTIUSER; else process.env.GBRAIN_RUST_MULTIUSER = saved;
-      if (brain) { await (brain.engine as unknown as BrainEngine).disconnect(); removeBrainDir(brain.dir); }
-    }
-  }, 60_000);
+    }), 60_000);
 
-  test('opened without the switch, the same engine reports managed_persistence (the hold is lifted on a single host)', async () => {
-    const saved = process.env.GBRAIN_RUST_MULTIUSER;
-    delete process.env.GBRAIN_RUST_MULTIUSER;
-    let brain: RustBrainDir | null = null;
-    try {
-      brain = await openRustBrain();
-      expect((brain.engine as unknown as BrainEngine).capabilities.has('managed_persistence')).toBe(true);
-    } finally {
-      if (saved !== undefined) process.env.GBRAIN_RUST_MULTIUSER = saved;
-      if (brain) { await (brain.engine as unknown as BrainEngine).disconnect(); removeBrainDir(brain.dir); }
-    }
-  }, 60_000);
+  test('opened without the switch, the same engine reports managed_persistence (the hold is lifted on a single host)', () =>
+    withBrain(undefined, async engine => {
+      expect(engine.capabilities.has('managed_persistence')).toBe(true);
+    }), 60_000);
 });
