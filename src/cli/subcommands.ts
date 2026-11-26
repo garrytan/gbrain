@@ -29,6 +29,8 @@ export const QUARANTINE_SUBCOMMANDS = ['list', 'clear', 'scan', 'release', 'drop
 export const CORE_SUBCOMMANDS = ['list', 'show', 'status', 'add', 'remove', 'diff', 'ack', 'init', 'suggest'] as const;
 export const LOOPS_SUBCOMMANDS = ['list', 'show', 'done', 'drop', 'mute', 'unmute'] as const;
 export const HOUSEHOLD_SUBCOMMANDS = ['due', 'add', 'mark', 'list', 'replace', 'template'] as const;
+export const CORRECT_SUBCOMMANDS = ['status', 'resume'] as const;
+export const RULES_SUBCOMMANDS = ['list', 'show', 'approve', 'retire', 'check'] as const;
 export const GUESTS_SUBCOMMANDS = ['init', 'promote', 'grant-owner-clients'] as const;
 export const CLAIMS_SUBCOMMANDS = ['check'] as const;
 export const SCHEMA_SUBCOMMANDS = [
@@ -66,6 +68,9 @@ export const ROUTERS: Readonly<Record<string, RouterInventory>> = {
   household: { subcommands: HOUSEHOLD_SUBCOMMANDS, bareHelpFirst: true },
   guests: { subcommands: GUESTS_SUBCOMMANDS, bareHelpFirst: true },
   claims: { subcommands: CLAIMS_SUBCOMMANDS, bareHelpFirst: true },
+  // `gbrain correct "<rule>"` takes free text; a one-word rule `help` prints usage instead, so --help never opens the brain.
+  correct: { subcommands: CORRECT_SUBCOMMANDS, bareHelpFirst: true },
+  rules: { subcommands: RULES_SUBCOMMANDS, bareHelpFirst: true },
 };
 
 /** `--help` / `-h` before any `--` terminator. */

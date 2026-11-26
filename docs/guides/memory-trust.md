@@ -36,6 +36,11 @@ it. The exact wording is
 Nothing ever becomes "confirmed by you" without you typing a confirmation
 token at a terminal on the brain host. `--yes` never confirms.
 
+A correction you give an agent can be saved as a standing rule with `correct`
+(see [standing rules](standing-rules.md)). The rule reads "you told your
+agent this" and reaches every session only after you approve its exact
+revision at your own terminal; it never raises any page's or fact's trust tier.
+
 ## What you get by default
 
 - **Labels on everything.** Every item an agent reads back (search, recall,

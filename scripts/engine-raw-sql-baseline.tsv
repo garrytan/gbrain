@@ -1063,6 +1063,7 @@ src/core/repair/url-clone-fences.ts	execute_raw	5
 src/core/repair/visibility.ts	execute_raw	11
 src/core/restore-target.ts	execute_raw	4
 src/core/review-lists.ts	execute_raw	1
+src/core/rules/correct.ts	execute_raw	1	GST-3827 C2: the atomic claim of a new correction receipt (INSERT INTO config ... ON CONFLICT DO NOTHING RETURNING); no typed engine method claims a config key
 src/core/schema-migrations/helpers.ts	execute_raw	12
 src/core/schema-migrations/v039-multimodal-dual-column-v0-27-1.ts	execute_raw	1
 src/core/schema-migrations/v045-facts-hot-memory-v0-31.ts	execute_raw	2

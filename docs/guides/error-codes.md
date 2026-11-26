@@ -1699,6 +1699,46 @@ More: [docs/guides/core-memory.md#remote-edits](../../docs/guides/core-memory.md
 |---|---|---|---|---|---|---|
 | A corpus window failed after its model call on every allowed attempt, so the sweep stopped paying for it; its file stays pending until an operator retries it. | A window that can never commit was re-extracted forever before #6785. The count is per window and source incarnation; tail growth and changing error codes do not reset it, and one extraction-config change (model, provider, key presence) retries it once. | Fix the cause the last code names (for writer_coordinator_required: gbrain sources writer status <source>), then ask the user before gbrain sweep --retry-failed --apply: the retry pays for the extraction again. Run: gbrain sweep --retry-failed --json | agent | `repeat the read that failed` | 1 | no |
 
+### correct_guest_refused
+
+<a id="correct_guest_refused"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| correct was refused because the write source is a guest source, so no rule was saved and no fact changed. | A guest writes only guest notes; a standing rule changes what every agent loads, so only the brain's owner or its members save one. | Tell the user what should be corrected; the brain's owner saves the rule. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/standing-rules.md#correct_guest_refused](../../docs/guides/standing-rules.md#correct_guest_refused)
+
+### correct_instruction_refused
+
+<a id="correct_instruction_refused"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| correct was refused because the rule reads like an instruction to override an agent, send data out or handle credentials, so nothing was written. | Standing rules reach every agent at session start; the write gate's override, exfiltration and credential families never become one. | Rephrase the rule as the user's own preference about a fact or a way of working. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/standing-rules.md#correct_instruction_refused](../../docs/guides/standing-rules.md#correct_instruction_refused)
+
+### correct_origin_refused
+
+<a id="correct_origin_refused"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| correct was refused because content_origin was not user_said (tool output or an inference), so nothing was written. | A standing rule is what the user told their agent; text a tool returned or an agent inferred could plant a rule nobody asked for. | Call correct only with the user's own correction; save what a tool returned with remember instead. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/standing-rules.md#correct_origin_refused](../../docs/guides/standing-rules.md#correct_origin_refused)
+
+### correct_receipt_not_found
+
+<a id="correct_receipt_not_found"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| No correction receipt with that id was made by this connection. | A receipt is read and resumed only by the caller that made it, or on the brain host, so one connection never learns about another's corrections. | Use the receipt_id that correct returned to this connection, or run gbrain correct status <receipt> on the brain host. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/standing-rules.md#correct_receipt_not_found](../../docs/guides/standing-rules.md#correct_receipt_not_found)
+
 ### cost_cap_exceeded
 
 <a id="cost_cap_exceeded"></a>
@@ -5824,6 +5864,56 @@ More: [docs/guides/windowed-reads.md#revision_changed](../../docs/guides/windowe
 | The Google grant behind a socket mint or broker call was revoked or expired; reconnect the account. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/google-socket.md#error-codes](../../docs/guides/google-socket.md#error-codes)
+
+### rule_exists
+
+<a id="rule_exists"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| correct was refused because a proposed or active rule with the same words already exists, so nothing was written. | One rule per wording keeps approvals and retirements unambiguous. | Ask the owner to approve the existing rule, or leave it: it is already saved. Run: gbrain rules list | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/standing-rules.md#rule_exists](../../docs/guides/standing-rules.md#rule_exists)
+
+### rule_owner_only
+
+<a id="rule_owner_only"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A remote caller tried to write, move or retype a standing rule page outside the correct verb, so nothing was written. | Rules change only through correct (which writes the rule and its fact fix together, with a receipt) or gbrain rules on the brain host, so an agent cannot edit a rule its owner confirmed. | Use correct to save a rule; ask the owner to retire one with gbrain rules retire <id>. | user | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/standing-rules.md#rule_owner_only](../../docs/guides/standing-rules.md#rule_owner_only)
+
+### rule_proposed
+
+<a id="rule_proposed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The standing rule is saved but waits for the owner: it is proposed, or active for retrieval and not yet confirmed for the standing-rules section. | An agent can sound like its user; a rule reaches every session only after the owner confirms its exact revision in their own terminal. | Relay the receipt's next.user_message to the user; they run gbrain rules approve <id>@<revision> in their own terminal. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/standing-rules.md#rule_proposed](../../docs/guides/standing-rules.md#rule_proposed)
+
+### rule_revision_stale
+
+<a id="rule_revision_stale"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The revision named for approval is not the rule page's current revision, so nothing was approved. | Approval binds one exact revision; approving another would load words the owner did not see. | Run gbrain rules show <id> to read the current revision, then approve that one. Run: gbrain rules list | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/standing-rules.md#rule_revision_stale](../../docs/guides/standing-rules.md#rule_revision_stale)
+
+### rule_transition
+
+<a id="rule_transition"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A write to a standing rule page was refused because it moves the rule's status in a way rules never move (proposed → active → retired, never back), so nothing was written. | A retired rule stays retired so an old approval can never come back to life; a new rule gets its own confirmation. | Save a new rule with correct instead of reviving a retired one. Run: gbrain rules list | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/standing-rules.md#rule_transition](../../docs/guides/standing-rules.md#rule_transition)
 
 ### runtime_build_skew
 
