@@ -23,3 +23,5 @@ export function connectorDirKey(kind: ConnectorKind): string {
 }
 /** The connector kinds as a quoted SQL list (`'google','github','meetings','slack','imessage','apple-contacts'`): every SQL filter on connector kinds interpolates it. */
 export const CONNECTOR_KINDS_SQL = CONNECTOR_SOURCE_KINDS.map(kind => `'${kind}'`).join(',');
+/** The same list in parentheses (`('google',...)`), for engine-sql statements, which splice it as one constant after `IN`. */
+export const CONNECTOR_KIND_LIST_SQL = `(${CONNECTOR_KINDS_SQL})`;

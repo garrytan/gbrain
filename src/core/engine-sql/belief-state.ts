@@ -129,3 +129,11 @@ SELECT p.id, p.slug, p.source_id, s.incarnation::text AS incarnation FROM pages 
     writer_tier: (row!.writer_tier as string | null) ?? null,
   };
 }
+
+/** Fact rows by id, in the state read's columns with a fresh fingerprint, for a guard event whose row lives outside the batch's streams. No set order. */
+export async function readBeliefFactsById(exec: LegacyUnscopedRead, ids: readonly number[]): Promise<Row[]> {
+  if (!ids.length) return [];
+  return (await exec.run<Row>(sqlFragment`SELECT f.id, f.entity_slug, f.source_markdown_slug AS sms, pe.id AS entity_page_id, f.fact,
+      gbrain_fact_fingerprint(f.fact) AS fp, ${trustedSql(FACT_TEXT_HASH)} AS th, ${trustedSql(FACT_COLUMNS)}
+    FROM facts f LEFT JOIN pages pe ON pe.source_id = f.source_id AND pe.slug = f.entity_slug WHERE f.id = ANY(${[...ids]}::bigint[])`)).rows;
+}

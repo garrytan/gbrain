@@ -6,32 +6,33 @@ import type { SqlEngine } from './model.ts';
 import { readManagedMode, readPersistenceBrain } from './managed-mode.ts';
 import { viewedEngine } from './switches.ts';
 import { canonicalFilesystemPath, checkoutGitMetadata, managedRootMarkerFor, recordManagedRoots, registeredManagedRootRecords, type ManagedRootRecord } from './root-registry.ts';
+import type { BrainEngine } from '../engine.ts';
 
 interface FileCapability { roots: string[]; active: boolean; }
 const active = new AsyncLocalStorage<FileCapability>();
 const managedRoots = new Map<string, Map<string, string | undefined>>();
 const datastorePaths = new WeakMap<SqlEngine, string>();
+/** What recording the managed roots reads: the persistence brain row, the table probe and the root bindings. */
+export type RootsEngine = SqlEngine & Pick<BrainEngine, 'hasPersistenceTable' | 'listManagedRootBindings'>;
 /** The path is recorded on the engine that connected; a read-through view (the shadow wrapper) asks for the engine it reads through. */
 export function managedFilesystemDatastorePath(engine: SqlEngine): string | undefined { return datastorePaths.get(viewedEngine(engine)); }
 /** Record the selected engine path, never a guessed default from ambient config. */
-export async function registerManagedFilesystemEngine(engine: SqlEngine, databasePath?: string): Promise<void> {
+export async function registerManagedFilesystemEngine(engine: RootsEngine, databasePath?: string): Promise<void> {
   if (!databasePath) return;
   datastorePaths.set(engine, databasePath);
-  const [table] = await engine.executeRaw<{ present: boolean }>("SELECT to_regclass('persistence_brain') IS NOT NULL AS present");
-  if (table?.present) await refreshManagedFilesystemRoots(engine, databasePath);
+  if (await engine.hasPersistenceTable('persistence_brain')) await refreshManagedFilesystemRoots(engine, databasePath);
 }
 function encloses(root: string, path: string): boolean {
   const rel = relative(canonicalFilesystemPath(root), canonicalFilesystemPath(path));
   return !isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${sep}`);
 }
-export async function refreshManagedFilesystemRoots(engine: SqlEngine, databasePath = datastorePaths.get(viewedEngine(engine)), signal?: AbortSignal): Promise<void> {
+export async function refreshManagedFilesystemRoots(engine: RootsEngine, databasePath = datastorePaths.get(viewedEngine(engine)), signal?: AbortSignal): Promise<void> {
   // Mode and epoch come from one snapshot, so roots are never recorded under the epoch of a concurrent deactivation.
   const brain = await readPersistenceBrain(engine, { signal });
   if (!brain.enabled) { managedRoots.set(brain.brain_id, new Map()); return; }
   // Rows are deduplicated by filesystem identity in recordManagedRoots, never by the stored spelling (#7203).
-  const rows = await engine.executeRaw<ManagedRootRecord>(`SELECT h.local_path,s.source_id,s.source_incarnation,s.worktree_id,s.topology_generation
-      FROM persistence_host_bindings h JOIN persistence_source_bindings s ON s.worktree_id=h.worktree_id WHERE h.host_id=$1::uuid
-      UNION SELECT local_path,id,incarnation,NULL,NULL FROM sources WHERE local_path IS NOT NULL`, [hostIdFor(engine)], { signal });
+  // The stored nulls stay nulls: recordManagedRoots reads a null and an absent field alike.
+  const rows = await engine.listManagedRootBindings(hostIdFor(engine), signal ? { signal } : undefined) as ManagedRootRecord[];
   signal?.throwIfAborted();
   // #7630: a relative local_path (a legacy ".") names whatever directory gbrain runs from; it is never a managed root.
   const owned = rows.filter(row => isAbsolute(row.local_path));
@@ -85,7 +86,7 @@ export async function withFilesystemPublication<T>(roots: string[], fn: () => Pr
   const context = { roots: roots.map(root => resolve(root)), active: true };
   return active.run(context, async () => { try { return await fn(); } finally { context.active = false; } });
 }
-export async function assertLegacyFilesystemWriter(engine: SqlEngine, path: string): Promise<void> {
+export async function assertLegacyFilesystemWriter(engine: RootsEngine, path: string): Promise<void> {
   await refreshManagedFilesystemRoots(engine);
   assertManagedFilesystemWrite(path);
 }
@@ -95,7 +96,7 @@ export async function assertLegacyFilesystemWriter(engine: SqlEngine, path: stri
  * canonical worktree refuses every fence write with writer_coordinator_required).
  * A managed brain writes through the coordinator and is never refused here.
  */
-export async function assertSourceLegacyWriter(engine: SqlEngine, sourceId: string): Promise<void> {
+export async function assertSourceLegacyWriter(engine: RootsEngine, sourceId: string): Promise<void> {
   if (await readManagedMode(engine)) return;
   const [source] = await engine.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id=$1', [sourceId]);
   if (source?.local_path) await assertLegacyFilesystemWriter(engine, source.local_path);
