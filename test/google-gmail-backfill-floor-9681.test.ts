@@ -30,7 +30,7 @@ const config = { ...googleConfig, g_services: 'gmail', g_history_days: 400 };
 /** 100 archive threads, 40..139 days old: one listing, four 25-thread batches. */
 const OLD = Array.from({ length: 100 }, (_, i) => ({ tid: `17bb00000000a${String(i).padStart(3, '0')}`, ms: NOW_MS - (40 + i) * DAY }));
 
-function gmail(account: string, opts: { fetchMs?: number; onThread?: (tid: string, n: number) => void | Promise<void> } = {}) {
+function gmail(account: string, opts: { fetchMs?: number; onThread?: (tid: string, n: number) => void | Promise<void>; rateLimit?: string } = {}) {
   const fetched: string[] = [];
   const fetcher = async (url: string) => {
     const u = new URL(url);
@@ -49,6 +49,7 @@ function gmail(account: string, opts: { fetchMs?: number; onThread?: (tid: strin
       fetched.push(m[1]);
       await opts.onThread?.(m[1], fetched.length);
       if (opts.fetchMs) await sleep(opts.fetchMs);
+      if (m[1] === opts.rateLimit) return json({ error: { message: 'rate limit' } }, 429, { 'retry-after': '0' });
       const t = OLD.find(x => x.tid === m[1])!;
       return json({ id: t.tid, messages: [{ id: `18d2f4a9b3d3${t.tid.slice(-4)}`, threadId: t.tid, labelIds: [], internalDate: String(t.ms),
         payload: { mimeType: 'text/plain', headers: [{ name: 'From', value: 'Peer Example <peer@example.invalid>' },
@@ -259,3 +260,34 @@ test('#9681: a brain stuck with a frozen floor and a retained publication recove
     await settleConnectorWrites(engine, f.id);
   }
 }), 300_000);
+
+test('#10473: a managed sweep rate limited inside its first batch moves the floor past the threads that landed ahead of it', async () => withEnv(env, async () => {
+  for (const engine of engines) {
+    const f = await boundSource(engine, config);
+    const cfg = parseGoogleSourceConfig(config, f.dir);
+    const sweep = gmail(cfg.account, { rateLimit: OLD[3].tid });
+    expect((await runGoogleSync(engine, f.id, cfg, options, sweep.fetcher)).status).toBe('partial');
+    await settleConnectorWrites(engine, f.id);
+    expect(await gmailState(engine, f.id)).toMatchObject({ gmail_backfill_done: false, gmail_backfill_floor_ms: OLD[2].ms });
+    expect(sweep.fetched.slice(0, 3)).toEqual(OLD.slice(0, 3).map(o => o.tid));
+    expect(sweep.fetched.filter(tid => tid !== OLD[3].tid)).toEqual(OLD.slice(0, 3).map(o => o.tid));
+  }
+}), 120_000);
+
+test('#10473: a managed sweep cut off by its deadline inside its first batch still moves the floor', async () => withEnv(env, async () => {
+  for (const engine of engines) {
+    const f = await boundSource(engine, config);
+    const cfg = parseGoogleSourceConfig(config, f.dir);
+    const controller = new AbortController();
+    const sweep = gmail(cfg.account, { onThread: (_tid, n) => { if (n >= 3) controller.abort(); } });
+    await runGoogleSync(engine, f.id, cfg, { ...options, signal: controller.signal }, sweep.fetcher).catch(() => undefined);
+    await settleConnectorWrites(engine, f.id);
+    const floor = (await gmailState(engine, f.id))?.gmail_backfill_floor_ms;
+    expect(floor).toBe(OLD[0].ms);
+    // The next run starts below the banked thread.
+    const next = gmail(cfg.account);
+    expect((await runGoogleSync(engine, f.id, cfg, options, next.fetcher)).status).not.toBe('partial');
+    expect(next.fetched[0]).toBe(OLD[1].tid);
+    expect((await gmailState(engine, f.id))?.gmail_backfill_done).toBe(true);
+  }
+}), 240_000);

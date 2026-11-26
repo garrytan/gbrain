@@ -229,6 +229,33 @@ refusal while one carrying a reason is being written. Its receipt checks both
 stores (`persistence_requests`, `persistence_effects`). Commits already in the
 repository keep their messages, as above.
 
+<a id="removing-saved-versions"></a>
+## Removing saved versions
+
+Every write saves the page's prior text as a version, so a page an agent
+rewrites often can keep thousands of copies of itself (#9737). The brain owner
+removes them with `gbrain pages prune-history` (local CLI only; a thin client
+is refused). Pick the pages: one slug, `--prefix <p>`, `--type <t>` or
+`--all`, with `--source <id>` to stay in one source. Pick what goes:
+`--keep N` keeps each page's newest N versions, `--older-than 30d` only takes
+versions saved before then (the two combine), and `--version <id>` names exact
+versions of one slug.
+
+1. Preview: `gbrain pages prune-history --prefix notes/ --keep 20 --json`. It
+   lists the pages, how many versions each loses and keeps, their dates and a
+   `plan_hash`, and changes nothing.
+2. Apply that exact plan by adding `--yes --expect <plan_hash>`. If anything
+   changed since the preview it refuses with `preview_changed`; preview again.
+3. Verify with the same preview command: nothing is left to remove.
+
+The live page never changes. `agent_policy` pages, deleted pages and segmented
+versions keep their history, and later answers about dates inside a removed
+span say `history_pruned` (see [When history is incomplete](#when-history-is-incomplete)).
+A removed version can't be restored from gbrain; on a brain with a Git
+repository the file's commits are untouched.
+
+**Say to your agent:** *"My notes pages have years of versions. Show me what keeping the newest 20 would remove, then do it."*
+
 ## Choosing how to record a change
 
 A reason explains an edit to one document. Pick the shape that matches what

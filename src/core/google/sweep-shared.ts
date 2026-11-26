@@ -99,6 +99,8 @@ export interface GoogleSyncDeps {
   cfg: GoogleSourceConfig;
   opts: SyncOpts;
   entry: CredentialEntry;
+  /** #10094: who the owner is in loop direction and ingest tiers: myAddressSet(entry) plus loops.owner_addresses, read once per sync. */
+  myAddresses: Set<string>;
   log: (msg: string) => void;
   /**
    * #5349: one forward-progress note per imported item. The progress-aware

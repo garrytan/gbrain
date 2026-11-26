@@ -39,6 +39,7 @@
  * must never skip work permanently.
  */
 
+import { IMPORTER_INGESTED_VIA, importerWroteLiveRevisionSql } from './importer-provenance.ts';
 import type { BrainEngine } from '../engine.ts';
 import { randomUUID } from 'node:crypto';
 import { importFromContent } from '../import-file.ts';
@@ -672,9 +673,6 @@ export async function transcriptPageCeiling(engine: BrainEngine): Promise<number
   return Math.floor(Math.min(policy.maxBytes, block) * PAGE_CEILING_FILL);
 }
 
-/** The provenance the importer stamps on every part it writes (importFromContent and the coordinated put_page). */
-const IMPORTER_INGESTED_VIA = 'cli:transcripts-ingest';
-
 /**
  * How a session renders, from what is stored (one query by the part 1 and
  * part 2 identities, which also finds part 1's slug for adoption). The
@@ -714,9 +712,7 @@ async function storedTranscriptLayout(engine: BrainEngine, sourceId: string, met
   const rows = await engine.executeRaw<{ slug: string; title: string; fid: string; ti: unknown; trusted: boolean; marked: boolean }>(
     `SELECT p.slug, p.title, p.frontmatter->>'id' AS fid, p.frontmatter->'transcript_import' AS ti,
             (p.frontmatter->'${SPEAKER_OWNER_KEY}') IS NOT NULL AS marked,
-            CASE WHEN p.revision_write_request_id IS NULL THEN p.ingested_via IS NULL OR p.ingested_via = $4
-                 WHEN r.id IS NOT NULL THEN r.principal_kind = 'local_cli' AND r.intent->>'ingested_via' IS NOT DISTINCT FROM $4
-                 ELSE p.revision_principal_kind IS NOT DISTINCT FROM 'local_cli' AND p.ingested_via IS NOT DISTINCT FROM $4 END AS trusted
+            ${importerWroteLiveRevisionSql('p', 'r', '$4')} AS trusted
        FROM pages p LEFT JOIN persistence_requests r ON r.id = p.revision_write_request_id
       WHERE p.source_id = $1 AND p.deleted_at IS NULL AND p.frontmatter->>'id' IN ($2, $3) ORDER BY p.id`,
     [sourceId, first, second, IMPORTER_INGESTED_VIA],

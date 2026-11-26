@@ -44,6 +44,7 @@ import { getCliOptions, cliOptsToProgressOptions } from '../cli-options.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
 import { atomicWriteFileSync, mkdirPrivate } from '../atomic-write.ts';
 import { importRendered, isUsageLimit, markPartial, myAddressSet, type ActivePack, type GoogleSyncDeps, type GoogleSyncSummary } from './sweep-shared.ts';
+import { ownerAddressSet } from './loops-owner-addresses.ts';
 import { connectorSpeakerOwnerStamp } from '../identity/speaker-owner.ts';
 export { myAddressSet } from './sweep-shared.ts';
 import { sweepCalendar, sweepContacts } from './people-calendar-sweep.ts';
@@ -231,7 +232,7 @@ async function processThread(
   if (deps.cfg.ingestTiers || deps.privateSenders) {
     const privateSenders = deps.privateSenders ?? null;
     tier = deps.cfg.ingestTiers
-      ? await classifyThreadTier(deps.engine, thread, myAddressSet(deps.entry), privateSenders)
+      ? await classifyThreadTier(deps.engine, thread, deps.myAddresses, privateSenders)
       : privateSenders && isPrivateThread(thread, privateSenders) ? 'private' : 'full';
     summary.ingestTiers = { ...summary.ingestTiers, [tier]: (summary.ingestTiers?.[tier] ?? 0) + 1 };
     seen.tier = tier;
@@ -253,7 +254,7 @@ async function processThread(
   }
   deps.processedThreads.add(thread.threadId);
   const verdict = await applyLoopDetection(deps, thread, slug);
-  if (verdict && deps.loopState) recordGraceVerdict(deps.loopState, thread, verdict, slug, myAddressSet(deps.entry), deps.log, deps.exclusion);
+  if (verdict && deps.loopState) recordGraceVerdict(deps.loopState, thread, verdict, slug, deps.myAddresses, deps.log, deps.exclusion);
   if (verdict && deps.loopState) recordWithheldVerdict(deps.loopState, verdict);
   if (verdict?.withheld) summary.loopsWithheld[verdict.withheld.reason] = (summary.loopsWithheld[verdict.withheld.reason] ?? 0) + 1;
   // LLM extraction candidates: trickle + the bounded recent window only —
@@ -264,7 +265,7 @@ async function processThread(
     // Structural eligibility, not "everything recent": bulk mail the owner
     // never joined would otherwise both pay for model calls AND crowd real
     // threads out of the sweep.
-    const verdict = loopExtractionEligibility(thread, myAddressSet(deps.entry), deps.exclusion);
+    const verdict = loopExtractionEligibility(thread, deps.myAddresses, deps.exclusion);
     summary.extractEligibility[verdict.reason] =
       (summary.extractEligibility[verdict.reason] ?? 0) + 1;
     if (verdict.eligible) {
@@ -420,6 +421,7 @@ async function walkGmailWindow(g: GmailSweep, floorKey: 'gmail_backfill_floor_ms
   };
   let floorMs = state[floorKey] ?? Date.now() + 60_000;
   let spanMs = floorMs - lowerMs;
+  let bankedFirst = false;
   while (floorMs > lowerMs) {
     if (signal?.aborted) return 'aborted';
     const afterMs = Math.max(lowerMs, floorMs - spanMs);
@@ -434,33 +436,44 @@ async function walkGmailWindow(g: GmailSweep, floorKey: 'gmail_backfill_floor_ms
     for (const m of listing.ids) if (!versions.has(m.threadId)) versions.set(m.threadId, m.id);
     const threadIds = [...versions.keys()];
     let batchFailed = false;
+    const bank = async (oldestMs: number): Promise<void> => {
+      const below = signal?.aborted
+        ? await list(oldestMs, floorMs, WINDOW_LIST_PAGES, AbortSignal.timeout(ABORT_PROOF_MS)).catch(() => null)
+        : await list(oldestMs, floorMs, WINDOW_LIST_PAGES);
+      if (below?.complete && below.ids.every(m => settled.has(m.threadId))) {
+        state[floorKey] = floorMs = oldestMs;
+        await saveGoogleState(deps, state);
+      }
+    };
     for (let i = 0; i < threadIds.length; i += BACKFILL_BATCH_THREADS) {
       if (signal?.aborted) break;
       let batchOldest = floorMs;
+      let landedOldest = floorMs;
       for (const tid of threadIds.slice(i, i + BACKFILL_BATCH_THREADS)) {
         if (signal?.aborted) break;
         const outcome = await attemptThread(g, tid, versions.get(tid) ?? null);
         if (outcome.kind === 'landed') {
           settled.add(tid);
           if (outcome.newestMs > 0 && outcome.newestMs < batchOldest) batchOldest = outcome.newestMs;
+          // #10473: a managed sweep cannot write once its deadline aborts it, so it banks its first landed thread at once
+          // (as the delta drain does); a sweep cut off inside its first batch still moves the floor.
+          if (deps.managed && !batchFailed && !bankedFirst && batchOldest < floorMs) { bankedFirst = true; await bank(batchOldest); }
         } else if (outcome.kind === 'failed' || outcome.kind === 'rate_limited') {
           // A failed thread NEWER than a committed floor would fall outside
           // the resume window (`before:floor`) forever, so the batch holds the
-          // floor. A rate limit is per-user: defer the rest of the batch.
+          // floor below the threads that landed ahead of it and no further.
+          // A rate limit is per-user: defer the rest of the batch.
+          if (!batchFailed) landedOldest = batchOldest;
           batchFailed = true;
           if (outcome.kind === 'rate_limited') break;
         } else settled.add(tid);
       }
-      if (batchFailed || deps.managed && signal?.aborted) break;
-      if (batchOldest < floorMs && (signal?.aborted || i + BACKFILL_BATCH_THREADS < threadIds.length)) {
-        const below = signal?.aborted
-          ? await list(batchOldest, floorMs, WINDOW_LIST_PAGES, AbortSignal.timeout(ABORT_PROOF_MS)).catch(() => null)
-          : await list(batchOldest, floorMs, WINDOW_LIST_PAGES);
-        if (below?.complete && below.ids.every(m => settled.has(m.threadId))) {
-          state[floorKey] = floorMs = batchOldest;
-          await saveGoogleState(deps, state);
-        }
-      }
+      if (deps.managed && signal?.aborted) break;
+      // #10473: a batch cut short by a failure or a rate limit still banks the threads that landed ahead of it, so the
+      // next sweep resumes at the failed thread instead of re-walking the whole batch.
+      const oldestMs = batchFailed ? landedOldest : batchOldest;
+      if (oldestMs < floorMs && (signal?.aborted || batchFailed || i + BACKFILL_BATCH_THREADS < threadIds.length)) await bank(oldestMs);
+      if (batchFailed) break;
     }
     if (signal?.aborted) return 'aborted';
     if (batchFailed) return 'failed';
@@ -1025,7 +1038,7 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
   const tick = (note: string): void => progress.tick(1, note);
   // A configured private-senders list that cannot be read stops the run here, before any page is written.
   const privateSenders = cfg.privateSendersFile ? loadPrivateSenders(cfg.privateSendersFile) : null;
-  const deps: GoogleSyncDeps = { engine, sourceId, cfg, opts, entry, log, tick, exclusion: NO_EXCLUSION, extractCandidates: [], managed, processedThreads: new Set(),
+  const deps: GoogleSyncDeps = { engine, sourceId, cfg, opts, entry, myAddresses: await ownerAddressSet(engine, entry, cfg.services.includes('gmail'), log), log, tick, exclusion: NO_EXCLUSION, extractCandidates: [], managed, processedThreads: new Set(),
     privateSenders };
 
   const summary: GoogleSyncSummary = {
@@ -1193,7 +1206,7 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
       if (deps.graceBackfillSeeded) state.loop_grace_backfill_done = true;
       if (managed) {
         try {
-          catchup = await runLoopsCatchup({ engine, sourceId, state, log, signal: opts.signal, myAddresses: myAddressSet(entry),
+          catchup = await runLoopsCatchup({ engine, sourceId, state, log, signal: opts.signal, myAddresses: deps.myAddresses,
             exclusion: deps.exclusion, inFlight: new Set(deps.extractCandidates.map(c => c.slug)),
             fetchThread: async (tid) => {
               try { return await gmail.getThread(tid, cfg.account, opts.signal ? { signal: opts.signal } : {}); }

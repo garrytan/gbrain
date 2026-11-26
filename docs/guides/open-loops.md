@@ -337,6 +337,21 @@ thread. Off, the default, Updates mail opens loops like any other mail, so a
 cold introduction Gmail files under Updates is never hidden. Withheld threads
 are recorded as `updates_without_reciprocity`.
 
+**Your other mailboxes.** Gmail knows the connected account and its send-as
+aliases as you. Mail you forward in from another address of yours (a work
+mailbox that forwards to this account, for example) would otherwise read as
+someone else writing to you and open a reply-owed loop. List those addresses
+with `gbrain config set loops.owner_addresses "me@example.net, Me <me@example.org>"`
+(key `loops.owner_addresses`, a comma, semicolon or newline list or a JSON
+array, default none; `config set` refuses anything that is not an address).
+From the next Gmail sync, mail from them opens no reply-owed loop, and a reply
+sent from one closes the thread's loop as `reply_detected`, the same as a reply
+from the account itself. Loops already open from those addresses are not
+closed for you: preview them with
+`gbrain loops drop sender <email> --source <id> --dry-run`.
+
+**Say to your agent:** *"me@example.net is also me; stop treating mail from it as waiting on me."*
+
 MCP: the `open_loops`, `loops_close`, `loops_mute`, `loops_unmute` ops.
 `loops_mute` returns the closed loop ids in `closed` (dry run: `would_close`)
 and an `undo_command`; `loops_unmute` returns `requeued`, `unverifiable`,
