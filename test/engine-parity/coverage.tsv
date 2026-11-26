@@ -133,10 +133,10 @@ listCatalogRelations	lifecycle	yes	1	no	yes	yes	serves
 readCatalogSchemaVersion	lifecycle	yes	1	no	yes	yes	serves
 listCatalogForeignKeys	lifecycle	yes	1	no	yes	yes	serves
 getPage	pages	yes	288	yes	yes	yes	serves
-readPageSnapshot	pages	yes	102	no	yes	yes	serves
-readPageSnapshotsBatch	pages	yes	7	no	yes	yes	serves
+readPageSnapshot	pages	yes	103	no	yes	yes	serves
+readPageSnapshotsBatch	pages	yes	8	no	yes	yes	serves
 lockPageKeys	pages	yes	17	no	yes	yes	serves
-putPage	pages	yes	1360	yes	yes	yes	serves
+putPage	pages	yes	1361	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	45	yes	yes	yes	serves
@@ -1907,7 +1907,7 @@ findAnomalies	salience_enrich	yes	9	yes	yes	yes	serves
 countZeroWeightWithTakes	salience_enrich	yes	1	no	yes	yes	serves
 listGlobalPurgeWithdrawals	trust	yes	1	no	yes	yes	serves
 hasCoveringFactWithdrawal	trust	yes	6	no	yes	yes	serves
-insertFactWithdrawal	trust	yes	68	no	yes	yes	serves
+insertFactWithdrawal	trust	yes	69	no	yes	yes	serves
 isFactWithdrawn	trust	yes	5	no	yes	yes	serves
 isFactPurged	trust	yes	8	no	yes	yes	serves
 listFactWithdrawalDates	trust	yes	3	no	yes	yes	serves
