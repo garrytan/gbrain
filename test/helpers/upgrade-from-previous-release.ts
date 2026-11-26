@@ -139,7 +139,8 @@ export async function previousReleaseBrain(engine: UpgradeEngine, shape: BrainSh
   }, null, 2) + '\n';
   writeFileSync(config, configText);
   const url = engine === 'postgres' ? new URL(brain) : null;
-  const redacted = url ? url.protocol + '//***@' + url.host + url.pathname : null;
+  // Match the full redacted fixture URL, including query parameters the CLI must preserve.
+  const redacted = url ? url.protocol + '//***@' + url.host + url.pathname + url.search : null;
   const normalize = (text: string) => {
     const out = redacted ? text.replaceAll(redacted, '<BRAIN, credentials redacted>') : text;
     return out.replaceAll(brain, '<BRAIN>').replaceAll(home, '<HOME>');
