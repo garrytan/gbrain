@@ -6941,6 +6941,11 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
         "type": "string",
         "description": "ISO 8601 or \"8 hours ago\"."
       },
+      "include_undated": {
+        "type": "boolean",
+        "description": "With since: also facts with no event date saved inside the window.",
+        "fullSurfaceOnly": true
+      },
       "session_id": {
         "type": "string",
         "description": "This session's facts."

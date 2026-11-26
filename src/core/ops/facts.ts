@@ -311,6 +311,7 @@ const recall: Operation = {
     source_id: { type: 'string', description: 'One readable source.' },
     source_ids: { ...SOURCE_IDS_PARAM, fullSurfaceOnly: true },
     since: { type: 'string', description: 'ISO 8601 or "8 hours ago".' },
+    include_undated: { type: 'boolean', description: 'With since: also facts with no event date saved inside the window.', fullSurfaceOnly: true },
     session_id: { type: 'string', description: "This session's facts." },
     include_expired: { type: 'boolean', description: 'Also expired; question ranks them.', fullSurfaceOnly: true },
     supersessions: { type: 'boolean', description: 'Supersession log only.', fullSurfaceOnly: true },
@@ -458,7 +459,7 @@ const recall: Operation = {
       const resolvedLists = await Promise.all(factSources.map(async (src) => {
         const entitySlug = entityParam ? ((await resolveEntitySlug(ctx.engine, src, entityParam)) ?? entityParam) : undefined;
         const rows = await readEntityFacts(ctx, src, entitySlug, MAX_SEARCH_LIMIT,
-          s => ctx.engine.listFactsSince(src, since, { ...listOpts, eventTime: true, entitySlug: s, sessionId: sessionParam ?? undefined }));
+          s => ctx.engine.listFactsSince(src, since, { ...listOpts, eventTime: true, includeUndated: p.include_undated === true, entitySlug: s, sessionId: sessionParam ?? undefined }));
         return { slug: entitySlug, rows };
       }));
       ({ ambiguousEntity, mergedSources } = await namesakesOrMerge(ctx, entityParam ? await unlinkedNamesakes(ctx.engine, resolvedLists.map(l => l.rows.map(r => ({ ...r, entity_slug: l.slug ?? r.entity_slug })))) : null));

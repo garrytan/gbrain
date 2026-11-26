@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 335670,
-    "stdoutSha256": "864cf16bebd8db168852ddcf20c7aee6109d7f6be8cb4a980304276b60d6c8a0",
+    "stdoutBytes": 335870,
+    "stdoutSha256": "f163a8641c34cdbb9320fd1daa47d2ad067c551810791d53eacc74d6b6edbad6",
     "toolNames": [
       "remember",
       "entity",
@@ -7965,6 +7965,7 @@
           "grep": "string?",
           "include_expired": "boolean?",
           "include_pending": "boolean?",
+          "include_undated": "boolean?",
           "limit": "number?",
           "max_chars": "integer?",
           "min_trust": "string?",
@@ -8007,6 +8008,10 @@
             },
             "include_pending": {
               "description": "Pending count.",
+              "type": "boolean"
+            },
+            "include_undated": {
+              "description": "With since: also facts with no event date saved inside the window.",
               "type": "boolean"
             },
             "limit": {

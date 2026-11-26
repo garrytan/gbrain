@@ -724,7 +724,7 @@ export async function findTrajectory(exec: LegacyUnscopedRead, opts: import('../
       source_markdown_slug: string | null;
       embedding: string | null;
     }>(sqlFragment`
-      SELECT id, valid_from, valid_until,
+      SELECT id, COALESCE(valid_from, created_at) AS valid_from, valid_until,
              claim_metric, claim_value, claim_unit, claim_period,
              event_type,
              fact, source_session, source_markdown_slug,
@@ -734,16 +734,15 @@ export async function findTrajectory(exec: LegacyUnscopedRead, opts: import('../
       WHERE ${useArray ? sqlFragment`source_id = ANY(${sourceIds}::text[])` : sqlFragment`source_id = ${sourceId}`}
         AND entity_slug = ${opts.entitySlug}
         AND expired_at IS NULL
-        AND valid_from IS NOT NULL
         ${remoteFilter ? visibilityClause(['world']) : sqlFragment``}${privacyClause(opts)}
         AND ${trustedSql(projectionEligibleSql('facts', 'facts', undefined))}
         AND (claim_metric IS NULL OR claim_metric !~* ${PROFILE_METRIC_SQL_PATTERN})
         ${metric !== null ? sqlFragment`AND claim_metric = ${metric}` : sqlFragment``}
         ${kind === 'metric' ? sqlFragment`AND claim_metric IS NOT NULL` : sqlFragment``}
         ${kind === 'event' ? sqlFragment`AND event_type IS NOT NULL` : sqlFragment``}
-        ${sinceDate ? sqlFragment`AND valid_from >= ${sinceDate}` : sqlFragment``}
-        ${untilDate ? sqlFragment`AND valid_from <= ${untilDate}` : sqlFragment``}
-      ORDER BY valid_from DESC, id DESC
+        ${sinceDate ? sqlFragment`AND COALESCE(valid_from, created_at) >= ${sinceDate}` : sqlFragment``}
+        ${untilDate ? sqlFragment`AND COALESCE(valid_from, created_at) <= ${untilDate}` : sqlFragment``}
+      ORDER BY COALESCE(valid_from, created_at) DESC, id DESC
       LIMIT ${limit}
     `)).rows;
 
