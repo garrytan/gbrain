@@ -102,9 +102,10 @@ export function subjectClass(page: { type?: string | null; frontmatter?: Record<
  */
 export async function sharedRecordsAbout(engine: Pick<BrainEngine, 'listPages' | 'executeRaw' | 'getConfig'>, sourceId: string, slug: string): Promise<string[]> {
   const adults = tableReaders('adults', await ownerMemberId(engine));
+  const missing = (await brainServes(engine as BrainEngine)).serves === 'several' ? null : [];
   const shared: string[] = [];
   for (const row of await recordsAbout(engine, sourceId, slug)) {
-    if (await readersWiden(engine, readerList(row.frontmatter?.readable_by) ?? [], adults)) shared.push(row.slug);
+    if (await readersWiden(engine, readerList(row.frontmatter?.readable_by) ?? missing, adults)) shared.push(row.slug);
   }
   return shared;
 }
@@ -202,8 +203,8 @@ export async function placeHouseholdFrontmatter(engine: Pick<BrainEngine, 'execu
   const classes = await classifySubjects(engine, sourceId, about);
   const decision = placeRecord({ kind: frontmatter.kind, school: tags.map(t => t.toLowerCase()).includes('school'), subjects: [...classes.values()], requested: frontmatter.audience });
   frontmatter.household_audience = decision.audience;
-  const [serves, owner] = await Promise.all([brainServes(engine as BrainEngine), ownerMemberId(engine)]);
-  const table = serves.serves === 'several' ? tableReaders(decision.audience, owner) : null;
+  const owner = await ownerMemberId(engine);
+  const table = await placedReaders(engine, decision.audience);
   const written = readerList(frontmatter.readable_by);
   const authored = written && !(['adults', 'shared'] as const).some(a => sameList(written, tableReaders(a, owner))) ? written : null;
   if (!authored) {
@@ -216,6 +217,12 @@ export async function placeHouseholdFrontmatter(engine: Pick<BrainEngine, 'execu
   for (const entry of authored) if (await readerCovered(engine, entry, table)) kept.push(entry);
   frontmatter.readable_by = kept.length ? kept : owner ? [owner] : [`group:${HOUSEHOLD_GROUPS.adults}`];
   return decision;
+}
+
+/** The readers the placement table gives an audience on a brain that serves several people; null on a brain that serves one. */
+export async function placedReaders(engine: Pick<BrainEngine, 'executeRaw' | 'getConfig'>, audience: HouseholdAudience): Promise<string[] | null> {
+  const [serves, owner] = await Promise.all([brainServes(engine as BrainEngine), ownerMemberId(engine)]);
+  return serves.serves === 'several' ? tableReaders(audience, owner) : null;
 }
 
 /** True when some reader in `next` (null: everyone) is not covered by `before` (null: everyone). */
@@ -232,6 +239,12 @@ function reclassifyRefusal(message: string, hint: string, argv: string[], why: s
   return opError('household_reclassify', message, hint, { fix: { argv, consent: [], actor: 'host_admin' as const, requires_exclusive: false, why } });
 }
 
+/** The one refusal a remote non-owner gets for making a subject a child on a brain that serves several people, before any record about it is read. */
+export function nonOwnerChildRefusal(subject: string) {
+  return opError('household_reclassify', `Only the brain's owner can make ${subject} a child, since the household records about it have to be narrowed to adults, so nothing was written.`,
+    `Ask the brain's owner to run gbrain household replace --about ${subject} --role child on the brain host, or to add this record as the owner.`);
+}
+
 /**
  * Write admission for a page's household fields, on every import path (put_page, edit_page, the household ops, sync
  * projection and staged imports; import-file.ts, which holds a caller that does not say it is trusted to the remote
@@ -240,7 +253,10 @@ function reclassifyRefusal(message: string, hint: string, argv: string[], why: s
  *
  * - A subject page's class (household_role; a household record is never a subject) changes only when the records
  *   about it follow: a remote caller cannot take a subject out of child, or give it a role that would widen records
- *   kept to adults because of it; nobody narrows a subject while records about it are still shared with helpers.
+ *   kept to adults because of it; nobody narrows a subject, or makes a child of one that has no class (a page
+ *   deleted by sync and written again), while records about it are still shared with helpers. On a brain that serves
+ *   several people a remote caller other than the owner cannot narrow a subject at all, and is refused the same way
+ *   whatever records exist, so the refusal tells it nothing about records it cannot read.
  * - A household record is placed (placeHouseholdFrontmatter). A remote write cannot widen it: it cannot retype it to
  *   another type, move it from adults to shared (dropping a child from about, removing audience: adults, changing its
  *   kind), or widen its stored readers.
@@ -249,13 +265,13 @@ function reclassifyRefusal(message: string, hint: string, argv: string[], why: s
  */
 export async function householdWriteAdmission(engine: Pick<BrainEngine, 'executeRaw' | 'getConfig' | 'getPage' | 'listPages'>, sourceId: string, slug: string,
   parsed: { type: string; frontmatter: Record<string, unknown>; tags: readonly string[]; compiled_truth?: string | null; timeline?: string | null },
-  previous: StoredPage | null | undefined, remote: boolean): Promise<void> {
+  previous: StoredPage | null | undefined, remote: boolean, owner?: () => Promise<boolean>): Promise<void> {
   const live = previous && !previous.deleted_at ? previous : null;
   if (live?.type === HOUSEHOLD_TYPE && parsed.type !== HOUSEHOLD_TYPE && remote) {
     throw reclassifyRefusal(`Only the brain's owner can change ${slug} from a household record to another type, since that would drop the readers the placement table gives it, so nothing was written.`,
       'Keep type: household, or ask the brain\'s owner to make the change on the brain host.', ['gbrain', 'get', slug], 'Shows the record as stored; changes nothing.');
   }
-  if (live?.frontmatter?.household_role !== undefined || parsed.frontmatter.household_role !== undefined) await subjectAdmission(engine, sourceId, slug, parsed, live, remote);
+  if (live?.frontmatter?.household_role !== undefined || parsed.frontmatter.household_role !== undefined) await subjectAdmission(engine, sourceId, slug, parsed, live, remote, owner);
   if (parsed.type !== HOUSEHOLD_TYPE) return;
   const record = live?.type === HOUSEHOLD_TYPE ? live : null;
   const decision = await placeHouseholdFrontmatter(engine, sourceId, parsed.frontmatter, parsed.tags, previous, parsed);
@@ -268,7 +284,7 @@ export async function householdWriteAdmission(engine: Pick<BrainEngine, 'execute
 }
 
 async function subjectAdmission(engine: Pick<BrainEngine, 'executeRaw' | 'getConfig' | 'getPage' | 'listPages'>, sourceId: string, slug: string,
-  parsed: { type: string; frontmatter: Record<string, unknown> }, live: StoredPage | null, remote: boolean): Promise<void> {
+  parsed: { type: string; frontmatter: Record<string, unknown> }, live: StoredPage | null, remote: boolean, owner: (() => Promise<boolean>) | undefined): Promise<void> {
   const from = subjectClass(live);
   const to = subjectClass(parsed);
   const role = parsed.type === HOUSEHOLD_TYPE ? '' : String(parsed.frontmatter.household_role ?? '').trim().toLowerCase();
@@ -278,7 +294,13 @@ async function subjectAdmission(engine: Pick<BrainEngine, 'executeRaw' | 'getCon
       'Keep the page\'s type and household_role as they are, or ask the brain\'s owner to run gbrain household replace --about ' + slug + (keep ? '' : ' --role ' + role) + '.',
       ['gbrain', 'household', 'replace', '--about', slug, ...(keep ? [] : ['--role', role])], 'Changes the role on the brain host and re-places the records about it.');
   }
-  if (from !== 'not_child' || to === 'not_child') return;
+  if (from === to || to === 'not_child' || from === 'child') return;
+  if (remote && owner && await placedReaders(engine, 'adults') && !await owner()) {
+    if (to === 'child') throw nonOwnerChildRefusal(slug);
+    throw reclassifyRefusal('Only the brain\'s owner can take ' + slug + ' out of its household_role, since the household records about it may have to be narrowed to adults first, so nothing was written.',
+      'Keep the page\'s household_role, or ask the brain\'s owner to run gbrain household replace --about ' + slug + ' on the brain host.',
+      ['gbrain', 'household', 'replace', '--about', slug], 'Narrows the records about the subject to adults on the brain host.');
+  }
   const shared = await sharedRecordsAbout(engine, sourceId, slug);
   if (!shared.length) return;
   throw reclassifyRefusal(shared.length + ' household record(s) about ' + slug + ' are shared with helpers, and this change would leave them readable by helpers, so nothing was written.',

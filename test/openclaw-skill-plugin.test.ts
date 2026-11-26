@@ -15,9 +15,15 @@
  * PR 2: a skill OpenClaw hides from the agent's model, or does not list, is
  * excluded and never suggested; a failed list or one naming none of the
  * catalog filters nothing.
+ * Every skill source OpenClaw loads (extra dirs, bundled, workspace) is
+ * indexed with OpenClaw's precedence, from the gateway's skills.status or the
+ * CLI fallback; the state names roots, paths and the gbrain home; a read of a
+ * SKILL.md path or a dispatched skills_read counts once with its source and
+ * session class; workspaceOnly leads with skills_read for a skill outside the
+ * workspace; doctor reads "listing off, resolver live".
  */
 import { afterAll, describe, expect, setDefaultTimeout, test } from 'bun:test';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -49,6 +55,8 @@ case "$1 $2" in
   "config set") node -e 'const f=require("fs"),p=process.argv[1],c=JSON.parse(f.readFileSync(p,"utf8"));const id=process.argv[2].split(".")[2];c.plugins.entries[id].hooks={allowConversationAccess:true};f.writeFileSync(p,JSON.stringify(c))' "$cfg" "$3";;
   "plugins inspect") [ -n "$INSPECT_BROKEN" ] && { echo '{"status":"error"}'; exit 0; }; echo '{"status":"loaded","hooks":["before_prompt_build"]}';;
   "plugins uninstall") ;;
+  "gateway call") [ -n "$SKILLS_STATUS_JSON" ] && { cat "$SKILLS_STATUS_JSON"; exit 0; }; echo '{"ok":false,"error":{"type":"gateway_transport_error"}}'; exit 1;;
+  "skills info") [ -n "$SKILLS_INFO_DIR" ] && [ -f "$SKILLS_INFO_DIR/$3.json" ] && { cat "$SKILLS_INFO_DIR/$3.json"; exit 0; }; exit 1;;
   "skills list") [ -n "$SKILLS_LIST_STDERR" ] && echo "$SKILLS_LIST_STDERR" >&2; [ -n "$SKILLS_LIST_JSON" ] && { echo "[plugins] loaded"; cat "$SKILLS_LIST_JSON"; [ -n "$SKILLS_LIST_STDERR" ] && echo "$SKILLS_LIST_STDERR" >&2; exit 0; }; exit 1;;
 esac
 `;
@@ -117,7 +125,7 @@ await sleep(500);
 const out = [];
 for (const [kind, a] of JSON.parse(stepsJson)) {
   const sessionKey = a.session || 'agent:main:s1';
-  const ctx = { ...real.first_turn.ctx, runId: a.run || 'drive-' + out.length, sessionKey, inputProvenance: { kind: a.provenance || 'external_user' }, ...(a.sender ? { senderId: a.sender } : {}),
+  const ctx = { ...real.first_turn.ctx, runId: a.run || 'drive-' + out.length, sessionKey, inputProvenance: { kind: a.provenance || 'external_user' }, ...(a.sender ? { senderId: a.sender } : {}), ...(a.ctx || {}),
     hookInvocation: { assertActive: () => { assertActiveCalls += 1; if (a.inactive) throw new Error('run is no longer active'); } } };
   if (kind === 'turn') {
     const messages = history.get(sessionKey) || [];
@@ -126,6 +134,7 @@ for (const [kind, a] of JSON.parse(stepsJson)) {
     const [user, runtime, assistant] = real.second_turn.event.messages;
     history.set(sessionKey, [...messages, { ...user, content: a.carry && got && got.appendContext ? a.text + '\n\n' + got.appendContext : a.text }, runtime, assistant]);
   }
+  else if (kind === 'tool') { h.after_tool_call({ ...a.event }, { ...real.after_tool_call.ctx, sessionKey, toolCallId: a.event.toolCallId, runId: a.event.runId }); out.push('tool'); }
   else if (kind === 'read') { h.after_tool_call({ ...real.after_tool_call.event, params: { name: a.name } }, { ...real.after_tool_call.ctx, sessionKey }); out.push('read'); }
   else if (kind === 'asserts') out.push(assertActiveCalls);
   else if (kind === 'compact') { h.after_compaction({}, ctx); out.push('compact'); }
@@ -162,7 +171,7 @@ describe.skipIf(!NODE)('gbrain setup openclaw --skill-loading', () => {
     expect(turnCalls()).toEqual(first);
     expect(again.doc.turn_hook).toMatchObject({ action: 'keep', unchanged: true });
     expect(again.doc.turn_hook_check).toBeUndefined();
-    expect(readFileSync(b.calls, 'utf8').slice(all.length).split('\n').filter((l) => l && !l.startsWith('skills list'))).toEqual([]);
+    expect(readFileSync(b.calls, 'utf8').slice(all.length).split('\n').filter((l) => l && !l.startsWith('skills list') && !l.startsWith('gateway call skills.status'))).toEqual([]);
   });
 
   test('loading the entry file alone, as openclaw plugins inspect --runtime does from a copy without worker.js, logs no worker crash', async () => {
@@ -364,6 +373,154 @@ describe.skipIf(!NODE)('the OpenClaw eligibility filter', () => {
     const none = box({ openclaw: false });
     expectExit(await setup(none, ['--skill-loading', 'resolve']), 3);
     expect(readState(none).agents.main.exclude_ids).toEqual([]);
+  });
+});
+
+describe.skipIf(!NODE)('every skill source OpenClaw loads', () => {
+  const ws = (b: Box) => join(b.state, 'workspace', 'skills');
+  /** An extra dir (skills.load.extraDirs) holding a new skill and an older copy of a workspace skill, and a bundled root outside both. */
+  function sources(b: Box, cfg: Record<string, unknown> = {}): { extra: string; bundled: string } {
+    const extra = join(b.root, 'extra'), bundled = join(b.root, 'oc-pkg', 'skills');
+    skill(extra, 'invoice-maker', 'Use when you create and send a customer invoice');
+    skill(extra, 'deploy-service', 'An older extra copy of the deploy skill');
+    skill(bundled, 'weather-report', 'Use when you check the weather forecast');
+    writeFileSync(join(b.state, 'openclaw.json'), JSON.stringify({ skills: { load: { extraDirs: [extra] } }, ...cfg }));
+    return { extra, bundled };
+  }
+  const entry = (name: string, source: string, filePath: string) => ({ name, source, filePath, baseDir: join(filePath, '..'), eligible: true, modelVisible: true });
+  function status(b: Box, skills: object[]): Record<string, string> {
+    const f = join(b.root, 'status.json');
+    writeFileSync(f, JSON.stringify({ workspaceDir: join(b.state, 'workspace'), managedSkillsDir: join(b.state, 'skills'), agentId: 'main', skills }));
+    return { SKILLS_STATUS_JSON: f };
+  }
+  const hostEntries = (b: Box, s: { extra: string; bundled: string }, deployFrom = ws(b)) => [
+    entry('deploy-service', deployFrom === ws(b) ? 'openclaw-workspace' : 'openclaw-extra', join(deployFrom, 'deploy-service', 'SKILL.md')),
+    ...['email-triage', 'calendar-sync'].map((n) => entry(n, 'openclaw-workspace', join(ws(b), n, 'SKILL.md'))),
+    entry('invoice-maker', 'openclaw-extra', join(s.extra, 'invoice-maker', 'SKILL.md')),
+    entry('weather-report', 'openclaw-bundled', join(s.bundled, 'weather-report', 'SKILL.md')),
+  ];
+
+  test("the gateway's skills.status: extra and bundled skills are indexed, OpenClaw's precedence keeps the workspace copy, and the state records roots, paths and the gbrain home", async () => {
+    const b = box();
+    const s = sources(b);
+    const r = await setup(b, ['--skill-loading', 'resolve'], status(b, hostEntries(b, s)));
+    expectExit(r, 0);
+    const st = readState(b);
+    expect(st.gbrain_home).toBe(gbrainHome(b));
+    const a = st.agents.main;
+    expect(a.skill_roots.map((x: any) => x.source)).toEqual(['openclaw-workspace', 'openclaw-bundled', 'openclaw-extra']);
+    expect(a.skill_dirs).toEqual(a.skill_roots.map((x: any) => x.dir));
+    expect(a.skill_files['deploy-service']).toBe(realpathSync(join(ws(b), 'deploy-service', 'SKILL.md')));
+    expect(a.skill_files['invoice-maker']).toBe(realpathSync(join(s.extra, 'invoice-maker', 'SKILL.md')));
+    expect(a.exclude_ids).toEqual([]);
+    expect(r.resolver.agents[0]).toMatchObject({ skills: 5, sources: { 'openclaw-workspace': 3, 'openclaw-bundled': 1, 'openclaw-extra': 1 } });
+    const made = readFileSync(b.calls, 'utf8');
+    expect(made).toContain('gateway call skills.status --params {"agentId":"main"} --json');
+    expect(made).not.toContain('skills info');
+    expect(drive(b, [['turn', { text: 'create and send a customer invoice' }]])[0].appendContext).toContain('invoice-maker');
+  });
+
+  test('without a gateway: skills list, plus one skills info for a source whose folder is unknown; extraDirs need none', async () => {
+    const b = box();
+    const s = sources(b);
+    skill(s.bundled, 'sun-dial', 'Use when you read a sundial');
+    const listF = join(b.root, 'list.json');
+    writeFileSync(listF, JSON.stringify({ workspaceDir: join(b.state, 'workspace'), managedSkillsDir: join(b.state, 'skills'), skills: [
+      ...['deploy-service', 'email-triage', 'calendar-sync'].map((name) => ({ name, source: 'openclaw-workspace', modelVisible: true })),
+      { name: 'invoice-maker', source: 'openclaw-extra', modelVisible: true }, { name: 'weather-report', source: 'openclaw-bundled', modelVisible: true }, { name: 'sun-dial', source: 'openclaw-bundled', modelVisible: true },
+    ] }));
+    const info = join(b.root, 'info');
+    mkdirSync(info);
+    writeFileSync(join(info, 'weather-report.json'), JSON.stringify({ name: 'weather-report', source: 'openclaw-bundled', filePath: join(s.bundled, 'weather-report', 'SKILL.md') }));
+    const r = await setup(b, ['--skill-loading', 'resolve'], { SKILLS_LIST_JSON: listF, SKILLS_INFO_DIR: info });
+    expectExit(r, 0);
+    const a = readState(b).agents.main;
+    expect(a.skill_roots.map((x: any) => x.source)).toEqual(['openclaw-workspace', 'openclaw-bundled', 'openclaw-extra']);
+    expect(Object.keys(a.skill_files).sort()).toEqual(['calendar-sync', 'deploy-service', 'email-triage', 'invoice-maker', 'sun-dial', 'weather-report']);
+    expect(readFileSync(b.calls, 'utf8').split('\n').filter((l) => l.startsWith('skills info'))).toEqual(['skills info weather-report --json --agent main']);
+  });
+
+  test('a skill folder symlinked into the workspace (gstack-style install) is the copy OpenClaw loads, so it stays suggestible', async () => {
+    const b = box();
+    const s = sources(b);
+    const checkout = join(b.root, 'checkout');
+    skill(checkout, 'notes-sync', 'Use when you sync meeting notes to the shared drive');
+    symlinkSync(join(checkout, 'notes-sync'), join(ws(b), 'notes-sync'));
+    const r = await setup(b, ['--skill-loading', 'resolve'], status(b, [...hostEntries(b, s), entry('notes-sync', 'openclaw-workspace', realpathSync(join(checkout, 'notes-sync', 'SKILL.md')))]));
+    expectExit(r, 0);
+    const a = readState(b).agents.main;
+    expect(a.exclude_ids).toEqual([]);
+    expect(drive(b, [['turn', { text: 'sync meeting notes to the shared drive' }]])[0].appendContext).toContain('notes-sync');
+  });
+
+  test('a skill whose loaded copy is not the one the catalog holds is never suggested, and setup says so', async () => {
+    const b = box();
+    const s = sources(b);
+    const r = await setup(b, ['--skill-loading', 'resolve'], status(b, hostEntries(b, s, s.extra)));
+    expectExit(r, 0);
+    expect(readState(b).agents.main.exclude_ids).toEqual(['deploy-service']);
+    expect(r.resolver.notes.join('\n')).toContain('OpenClaw loads a different copy than openclaw-main holds');
+  });
+
+  test('a read of a catalog SKILL.md path counts as a read of that skill, a dispatched call counts once, and every line names the session class and the source', async () => {
+    const b = box();
+    sources(b);
+    expectExit(await setup(b, ['--skill-loading', 'resolve']), 0);
+    const path = readState(b).agents.main.skill_files['invoice-maker'];
+    drive(b, [
+      ['turn', { text: 'create and send a customer invoice', session: 'agent:main:r1' }],
+      ['tool', { session: 'agent:main:r1', event: { toolName: 'read', params: { path }, runId: 'r1', toolCallId: 'call_1' } }],
+      ['tool', { session: 'agent:main:r1', event: { toolName: 'skills_read', params: { name: 'deploy-service' }, runId: 'r1', toolCallId: 'tool_call:call_2:skills_read:1' } }],
+      ['tool', { session: 'agent:main:r1', event: { toolName: 'dispatch_action', params: { id: 'skills_read', args: { name: 'deploy-service' } }, runId: 'r1', toolCallId: 'call_2' } }],
+      ['tool', { session: 'agent:main:r1', event: { toolName: 'dispatch_action', params: { id: 'read', args: { path: join(b.root, 'notes.md') } }, runId: 'r1', toolCallId: 'call_3' } }],
+      ['turn', { text: 'triage the email inbox', session: 'agent:main:r2', ctx: { memoryAudience: { kind: 'owner-private', agentId: 'main' } } }],
+      ['turn', { text: 'triage the email inbox', session: 'agent:main:r3', ctx: { memoryAudience: { kind: 'conversation', agentId: 'main', sessionKey: 'agent:main:r3', sessionId: 's3' }, channelContext: { chat: { id: '1', type: 'supergroup' } } } }],
+      ['turn', { text: 'triage the email inbox', session: 'agent:main:r4', provenance: 'inter_session' }],
+      ['turn', { text: 'triage the email inbox', session: 'agent:main:r5', ctx: { trigger: 'event' } }],
+    ], undefined, { DRIVE_LOG_LINES: '7' });
+    const lines = logLines(b);
+    expect(lines.find((l) => l.outcome === 'suggested')).toMatchObject({ suggested: ['invoice-maker'], sources: ['openclaw-extra'], session_class: 'unknown' });
+    expect(lines.filter((l) => l.outcome === 'read').map((l) => [l.skill, l.tool, l.via, l.source, l.suggested, l.session_class])).toEqual([
+      ['invoice-maker', 'read', 'direct', 'openclaw-extra', true, 'unknown'],
+      ['deploy-service', 'skills_read', 'dispatch', 'openclaw-workspace', false, 'unknown'],
+    ]);
+    expect(lines.filter((l) => l.outcome !== 'read').slice(1).map((l) => l.session_class)).toEqual(['owner', 'group', 'relay', 'webhook']);
+    expect(JSON.stringify(lines)).not.toContain('customer invoice');
+  });
+
+  test('an agent kept to its workspace (tools.fs.workspaceOnly) gets skills_read first for a skill outside it, and the path first for one inside', async () => {
+    const b = box();
+    sources(b, { tools: { fs: { workspaceOnly: true } } });
+    expectExit(await setup(b, ['--skill-loading', 'resolve']), 0);
+    expect(readState(b).agents.main).toMatchObject({ path_reads: 'workspace', workspace_dir: realpathSync(join(b.state, 'workspace')) });
+    const out = drive(b, [['turn', { text: 'create and send a customer invoice', session: 'agent:main:w1' }], ['turn', { text: 'triage the email inbox', session: 'agent:main:w2' }]]);
+    expect(out[0].appendContext).toContain('invoice-maker');
+    expect(out[0].appendContext).toContain('To use one, load it with skills_read({name})');
+    expect(out[1].appendContext).toContain('email-triage');
+    expect(out[1].appendContext).toContain('To use one, read the SKILL.md at its path with read before acting');
+    expect((await runCli(['skills', 'pin', 'add', 'invoice-maker', '--catalog', 'openclaw-main'], { env: b.env })).exitCode).toBe(0);
+    const pinned = readState(b).agents.main.pinned_block;
+    expect(pinned).toContain('To use one, load it with skills_read({name})');
+    expect(pinned).not.toContain('read the SKILL.md at its path');
+  });
+
+  test('listing off (maxSkillsPromptChars 0) with the resolver live: doctor reads "listing off, resolver live", splits counts by session class and source, names the gbrain home, and a load cut a path read still reaches does not warn', async () => {
+    const b = box();
+    sources(b, { agents: { entries: { main: { skillsLimits: { maxSkillsPromptChars: 0 } } } } });
+    expectExit(await setup(b, ['--skill-loading', 'resolve']), 0);
+    const path = readState(b).agents.main.skill_files['invoice-maker'];
+    drive(b, [['turn', { text: 'create and send a customer invoice', session: 'agent:main:d1' }], ['tool', { session: 'agent:main:d1', event: { toolName: 'read', params: { path }, runId: 'd1', toolCallId: 'call_1' } }]], undefined, { DRIVE_LOG_LINES: '2' });
+    const listF = join(b.root, 'list.json');
+    writeFileSync(listF, JSON.stringify({ workspaceDir: join(b.state, 'workspace'), skills: ['deploy-service', 'calendar-sync', 'invoice-maker'].map((name) => ({ name, modelVisible: true })) }));
+    const r = await runCli(['doctor', '--only', 'skill_resolver', '--json'], { env: { ...b.env, SKILLS_LIST_JSON: listF } });
+    const check = JSON.parse(r.stdout).checks.find((c: any) => c.name === 'skill_resolver');
+    expect(check.status).toBe('ok');
+    expect(check.message).toContain('listing off, resolver live');
+    const oc = check.details.openclaw;
+    expect(oc.gbrain_home).toBe(gbrainHome(b));
+    expect(oc.agents[0]).toMatchObject({ id: 'main', listing: 'off', path_reads: 'any', verdict: 'listing off, resolver live', host: { cut: ['email-triage'] } });
+    expect(oc.recent.by_source['openclaw-extra']).toEqual({ suggested: 1, would_suggest: 0, reads: 1, reads_of_suggested: 1 });
+    expect(oc.recent.by_session_class.unknown).toMatchObject({ turns: 1, suggested: 1, reads: 1, reads_of_suggested: 1 });
   });
 });
 
@@ -643,7 +800,7 @@ describe.skipIf(!NODE)('doctor skill_resolver: the OpenClaw plugin', () => {
     expect((await doctor(hiddenList)).status).toBe('ok');
     expect(readFileSync(join(b.state, 'gbrain', 'gbrain-turn-rule', 'index.js'), 'utf8')).toBe(turnRule);
     expect(readFileSync(join(b.state, 'openclaw.json'), 'utf8')).toBe(config);
-    expect(readFileSync(b.calls, 'utf8').slice(before.length).split('\n').filter((l) => l && !l.startsWith('skills list'))).toEqual([]);
+    expect(readFileSync(b.calls, 'utf8').slice(before.length).split('\n').filter((l) => l && !l.startsWith('skills list') && !l.startsWith('gateway call skills.status'))).toEqual([]);
   });
 
   test('reports the deadline-miss rate from the daily logs and warns above 5% once there are 20 turns', async () => {

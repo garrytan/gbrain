@@ -73,6 +73,9 @@ Flags:
                        (accept: --history-decision ID). Private archive source only, no model.
   --history-dir DIR    Read DIR/claude-code, DIR/codex and DIR/openclaw instead of the harness folders.
   --no-extract         Import without deriving links.
+  --no-suggestion      claude-code or codex: turn the first-session suggestion off for this
+                       install (the agent's offer of one thing it found, then one more import,
+                       in the first 3 sessions). Later: gbrain onboarding off.
 
   --remove             Remove exactly what setup wrote (unchanged entries only), the
                        brain-first instruction block included. The brain and your

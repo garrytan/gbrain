@@ -523,6 +523,8 @@ for (const kind of testBackends()) {
         ['loops_mute', { sender: 'x@example.com' }], ['loops_unmute', { sender: 'x@example.com' }],
         // GST-3825 H1: household records are pages every reader of them sees.
         ['household_add', { kind: 'supply', title: 'x', cadence: '7d' }], ['household_mark', { slug: 'household/supplies/x', event: 'bought' }],
+        // GST-3824 L2: action records feed the owner's ledger totals and budgets.
+        ['log_action', { verb: 'buy', summary: 'x', currency: 'USD', spent: 1, estimated: true }], ['policy_reserve', { verb: 'buy', amount: 1, currency: 'USD', request_id: 'r1' }],
       ];
       expect(new Set(deferredCalls.map(([op]) => op))).toEqual(new Set(ACTOR_DEFERRED_OPS));
       for (const [op, params] of deferredCalls) {

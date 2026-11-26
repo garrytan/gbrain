@@ -98,7 +98,9 @@ function refuse(scope: StatementDeadline): never {
  */
 export const BOUNDED_TYPED_READS: ReadonlySet<string> = new Set(['readDecideState', 'decideSlotUsage', 'dailyDecideSpend', 'listDecideResolvedModels', 'listDecideMixedModelDecisions', 'listDecideReceiptStats', 'listDecideCalibrations',
   'readQueueHealthSignals', 'listWaitingByQueue', 'readQueueDivergence', 'listQueueWedgeCounts', 'listPrivateQueueHealth', 'readWedgeSignals', 'readOldestWaitingAge', 'listStuckActiveJobsByName', 'listCoveredSources', 'listExportWithdrawals', 'readExportWithdrawalLedgerBytes',
-  'readMaxTimelineEntryId', 'storedTimelineRowsByPageIds', 'countSegmentedTimelinePages', 'notifierCoverageRecorded', 'getWorktreeBinding']);
+  'readMaxTimelineEntryId', 'storedTimelineRowsByPageIds', 'countSegmentedTimelinePages', 'notifierCoverageRecorded', 'getWorktreeBinding',
+  // Part A: the source reads source resolution makes inside a doctor check, each a statement the doctor bounded through executeRaw on master.
+  'listLocalPathSources', 'listSourceRoutingRows', 'countDefaultSourceSplit', 'readSourceRow', 'listActiveSourceConfigs', 'listSourceRecords']);
 
 type RawCall = (sql: string, params?: unknown[], opts?: Record<string, unknown> & { signal?: AbortSignal; timeoutMs?: number }) => Promise<unknown[]>;
 

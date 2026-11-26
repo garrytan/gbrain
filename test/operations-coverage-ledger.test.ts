@@ -30,6 +30,8 @@ const REPO_ROOT = join(import.meta.dir, '..');
  */
 const LEDGER: Record<string, string> = {
   remember: 'test/memory-verbs-conformance.test.ts',
+  onboarding_status: 'test/onboarding-ops.test.ts',
+  onboarding_off: 'test/onboarding-ops.test.ts',
   entity: 'test/memory-verbs-conformance.test.ts',
   synthesize: 'test/memory-verbs-conformance.test.ts',
   forget: 'test/memory-verbs-conformance.test.ts',
@@ -39,6 +41,9 @@ const LEDGER: Record<string, string> = {
   policy_check: 'test/agent-policy.test.ts',
   agent_policy: 'test/agent-policy.test.ts',
   capabilities: 'test/agent-policy.test.ts',
+  log_action: 'test/action-ledger.test.ts',
+  ledger: 'test/action-ledger.test.ts',
+  policy_reserve: 'test/action-ledger.test.ts',
   get_page: 'test/get-page-federated-scope.test.ts',
   put_page: 'test/put-page-provenance.test.ts',
   put_pages: 'test/put-pages-batch.test.ts',

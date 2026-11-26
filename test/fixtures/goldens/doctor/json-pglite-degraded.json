@@ -2885,6 +2885,21 @@
         },
         {
           "category": "brain",
+          "details": {
+            "delivered_sessions": 0,
+            "last_session": null,
+            "max_sessions": 3,
+            "reason": "not_new_install",
+            "state": "off",
+            "window_ends_at": null
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "The first-session suggestion is off: this brain was not created by a gbrain setup run (an upgrade, a restored or imported brain, or an older install), so there is no first session to suggest for. Details: gbrain onboarding status.",
+          "name": "first_session_suggestion",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
           "elapsed_ms": "<volatile>",
           "message": "No memory proposals await the owner.",
           "name": "memory_proposals_pending",
@@ -4432,7 +4447,7 @@
         {
           "category": "meta",
           "elapsed_ms": "<volatile>",
-          "message": "Active pack gbrain-base-v2@1.7.0+bd981792 is current (no successor declared)",
+          "message": "Active pack gbrain-base-v2@1.7.0+b64f249b is current (no successor declared)",
           "name": "pack_upgrade_available",
           "status": "ok"
         },

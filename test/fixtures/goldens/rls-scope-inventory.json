@@ -4394,6 +4394,7 @@
         "slugsEndingIn": "none",
         "softDeletePage": "none",
         "softDeletePages": "none",
+        "sourceRead": "none",
         "sql": "none",
         "stageManifestRows": "none",
         "stageSegmentChunks": "none",

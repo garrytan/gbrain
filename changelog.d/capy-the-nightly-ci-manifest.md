@@ -1,6 +1,0 @@
-**The nightly CI failure manifest now keeps each OpenClaw version's skill-resolver result on its own, so a version that fails stays listed as failing even when another version passes later.**
-
-### Fixed
-- The three OpenClaw cells of the nightly skill-resolver E2E job (one per OpenClaw version) wrote test receipts under the same identity, so `ci-manifest.json` kept only the cell that started last. A later passing cell hid an earlier failing one, and the matrix was undercounted. Each cell's receipts now carry the arm `openclaw-<version>` (`run-with-receipt.sh` takes it from `GBRAIN_TEST_RECEIPT_ARM` and unsets it before the tests run), so every cell is its own manifest entry. Merge gating was already correct, because the E2E status check fails when any cell fails.
-- Each failing cell's manifest row now carries its own JUnit failure message and signature. Messages were matched by file and test name only, so two cells failing the same test for different reasons both showed the first cell's message.
-- The first local base-versus-head receipt comparison across this change lists the OpenClaw tests as dropped, because their arm changed from empty to `openclaw-<version>`. CI's ledger is report-only, so no check fails.
