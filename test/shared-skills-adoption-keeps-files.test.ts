@@ -3,7 +3,8 @@
  *
  * 1. Protects: when the shared-content migration re-adopts a source's pack after the operator accepts a reviewed
  *    inventory edit (only one skill's SKILL.md changed), a reference file the skill published with put_skill stays in
- *    the canonical checkout and in the sealed revision, and a skill published private stays private to readers.
+ *    the canonical checkout and in the sealed revision, and a skill published private stays private to readers. A
+ *    second re-adoption with nothing changed keeps the same head.
  * 2. Fails on: adoption rebuilding each skill from its SKILL.md alone, which deletes the skill's unchanged reference
  *    files from the checkout and publishes the skill as visible again.
  * 3. Existing coverage: test/shared-skills-catalog.test.ts adopts a fresh pack; test/shared-skills-pack-bounds-5476.test.ts
@@ -98,6 +99,18 @@ for (const [name, url] of backends) {
     test('a skill published private stays hidden from readers', () => fixture(async f => {
       const result = await readoptAfterEdit(f, { private: true });
       expect({ before: result.visibleBefore, after: result.visibleAfter }).toEqual({ before: [], after: [] });
+    }, url), 120_000);
+
+    // Value: protects=a second re-adoption with nothing changed publishes nothing new and exposes nothing; fails_when=it writes a new revision, deletes the reference file or shows the private skill; why_new=no test re-adopted twice; seam=none; no_claim=none
+    test('a second re-adoption with nothing changed keeps the same head, the reference file and the private flag', () => fixture(async f => {
+      const first = await readoptAfterEdit(f, { private: true });
+      const head = async () => (await f.engine.executeRaw<{ revision: string }>('SELECT revision FROM shared_skill_heads WHERE source_id=$1 AND name=$2', ['default', 'alpha']))[0]?.revision;
+      const afterFirst = await head();
+      const again = await adoptSharedSkillpack(f.local, 'default', { expected_hashes: inventorySkillpack(f.root)!.hashes });
+      expect({ committed: again.receipts.every(receipt => (receipt.write_request as { state?: string } | undefined)?.state === 'committed'),
+        head: await head(), reference: readFileSync(join(f.root, REFERENCE), 'utf8'), visible: (await listSharedSkills(f.reader)).skills.map(skill => skill.name) })
+        .toEqual({ committed: true, head: afterFirst, reference: 'Guide body', visible: [] });
+      expect(first.visibleAfter).toEqual([]);
     }, url), 120_000);
   });
 }
