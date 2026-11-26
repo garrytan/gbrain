@@ -17,6 +17,8 @@ import type { SchemaPackManifest } from './manifest-v1.ts';
 export interface DetectOpts {
   /** Source to detect against. Defaults to 'default'. */
   sourceId?: string;
+  /** Suggest-only admission, applied before prefix grouping and its candidate limit. */
+  knownSchema?: { types: string[]; pathPrefixes: string[] };
   /** Min page count per prefix to include in candidate. Default 5. */
   minPagesPerPrefix?: number;
   /** Max candidate types in the output. Default 50. */
@@ -103,6 +105,12 @@ export async function runDetect(
   const sourceId = opts.sourceId ?? 'default';
   const minPagesPerPrefix = opts.minPagesPerPrefix ?? 5;
   const maxTypes = opts.maxTypes ?? 50;
+  const knownSchema = opts.knownSchema;
+  const admission = knownSchema ? `
+       AND NOT (COALESCE(type, '') = ANY($4::text[]))
+       AND NOT (lower(regexp_replace(split_part(slug, '/', 1), '[^a-z0-9]+', '-', 'gi')) = ANY($4::text[]))
+       AND NOT EXISTS (SELECT 1 FROM unnest($5::text[]) AS known(prefix)
+                       WHERE starts_with(slug, known.prefix))` : '';
 
   // Total + null-type counts (the schema-mismatch signal Persona A needs).
   const totals = await engine.executeRaw<{ total: string | number; untyped: string | number; typed: string | number }>(
@@ -130,11 +138,14 @@ export async function runDetect(
      WHERE source_id = $1
        AND deleted_at IS NULL
        AND slug LIKE '%/%'
+       ${admission}
      GROUP BY substring(slug from '^[^/]+/')
      HAVING COUNT(*) >= $2
      ORDER BY COUNT(*) DESC
      LIMIT $3`,
-    [sourceId, minPagesPerPrefix, maxTypes],
+    knownSchema
+      ? [sourceId, minPagesPerPrefix, maxTypes, knownSchema.types, knownSchema.pathPrefixes]
+      : [sourceId, minPagesPerPrefix, maxTypes],
   );
 
   const prefixes: PrefixRow[] = prefixRows.map((r) => ({

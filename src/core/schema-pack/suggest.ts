@@ -11,6 +11,7 @@
 // Test seam via `opts.suggestFn` lets unit tests stub the LLM entirely.
 
 import type { BrainEngine } from '../engine.ts';
+import { loadActivePackForEngine } from './engine-resolution.ts';
 import { runDetect, type DetectResult } from './detect.ts';
 
 export interface SuggestOpts {
@@ -74,7 +75,16 @@ export async function runSuggest(
   const sourceId = opts.sourceId ?? 'default';
   const maxSampleSize = opts.maxSampleSize ?? 200;
 
-  const detected = await runDetect(engine, { sourceId, maxTypes: 50 });
+  // Resolve the effective source override plus inherited types/aliases, not just
+  // the global file config. Covered rows must not crowd real gaps out of LIMIT.
+  const pack = await loadActivePackForEngine(engine, { sourceId, remote: false });
+  const detected = await runDetect(engine, {
+    sourceId: opts.sourceId,
+    knownSchema: {
+      types: [...pack.alias_graph.keys()],
+      pathPrefixes: pack.manifest.page_types.flatMap(type => type.path_prefixes),
+    },
+  });
   const notes: string[] = [];
 
   const promptInput: SuggestPromptInput = {

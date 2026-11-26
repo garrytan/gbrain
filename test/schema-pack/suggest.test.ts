@@ -38,6 +38,7 @@ interface DetectRows {
 /** Stub the three executeRaw calls runDetect issues, routed on SQL text. */
 function detectEngine(rows: DetectRows = {}): BrainEngine {
   return {
+    getConfig: async () => null,
     executeRaw: async (sql: string) => {
       if (sql.includes('FILTER (WHERE type IS NULL')) {
         return [
