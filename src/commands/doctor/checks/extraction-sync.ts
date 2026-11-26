@@ -38,7 +38,7 @@ import { connectorAuthorities } from '../../../core/persistence/connector-author
 import { parseSourceConfig } from '../../../core/sources-load.ts';
 import { checkError } from '../check-fix.ts';
 import { checkpointMovedFix, firstSyncRunning, noSuccessfulSync, receiptContentDirectory, stoppedConnectorIssues, type SyncOutcomeEntry } from '../sync-outcome.ts';
-import { haltReasonsWithUnknown, topHaltReason } from '../../../core/extract/rollup-writer.ts';
+import { haltReasonsWithUnknown, readExtractRollupWindow, topHaltReason } from '../../../core/extract/rollup-writer.ts';
 
 /** Local alias; the shared warn-once memo lives in core so it can't fork per module. */
 const _resolveSyncFreshnessHours = resolveHoursEnv;
@@ -966,70 +966,7 @@ export async function computeExtractHealthCheck(
 ): Promise<Check> {
   const name = 'extract_health';
   try {
-    type RollupRow = {
-      kind: string;
-      cost_7d_usd: number;
-      eval_pass_count: number;
-      eval_fail_count: number;
-      halt_count: number;
-      round_completed_count: number;
-      expected_limit_count: number;
-      rollup_write_failures: number;
-      halt_reasons: Record<string, number | string> | null;
-      last_updated_at: Date | string | null;
-      last_halt_age_days: number | string | null;
-    };
-
-    // A writer updates reasons and totals together. Read both in one statement
-    // so a commit or UTC day rollover cannot put them in different snapshots.
-    const rollupQuery = (withExpected: boolean, withReasons: boolean) =>
-      `WITH recent AS (
-         SELECT kind, day, cost_usd, eval_pass_count, eval_fail_count, halt_count,
-                round_completed_count, rollup_write_failures, updated_at,
-                ${withExpected ? 'r.expected_limit_count' : '0'} AS expected_limit_count,
-                ${withReasons ? 'r.halt_reasons' : "'{}'::jsonb"} AS halt_reasons
-         FROM extract_rollup_7d r
-         WHERE day >= (now() AT TIME ZONE 'UTC')::date - 7
-       ), totals AS (
-         SELECT kind,
-                SUM(cost_usd) AS cost_7d_usd,
-                SUM(eval_pass_count) AS eval_pass_count,
-                SUM(eval_fail_count) AS eval_fail_count,
-                SUM(halt_count) AS halt_count,
-                SUM(round_completed_count) AS round_completed_count,
-                SUM(expected_limit_count) AS expected_limit_count,
-                SUM(rollup_write_failures) AS rollup_write_failures,
-                MAX(updated_at) AS last_updated_at,
-                (now() AT TIME ZONE 'UTC')::date - MAX(day) FILTER (WHERE halt_count > 0) AS last_halt_age_days
-         FROM recent
-         GROUP BY kind
-       ), reason_counts AS (
-         SELECT r.kind, e.key AS reason, SUM(e.value::int) AS n
-         FROM recent r CROSS JOIN LATERAL jsonb_each_text(r.halt_reasons) e
-         GROUP BY r.kind, e.key
-       ), reasons AS (
-         SELECT kind, jsonb_object_agg(reason, n) AS halt_reasons
-         FROM reason_counts
-         GROUP BY kind
-       )
-       SELECT totals.*, reasons.halt_reasons
-       FROM totals LEFT JOIN reasons USING (kind)
-       ORDER BY totals.kind`;
-    // Pre-v141 has no expected caps and pre-v239 has no classified reasons.
-    // Keep historical counts and retry only a column the schema lacks.
-    let withExpected = true;
-    let withReasons = true;
-    let rows: RollupRow[];
-    while (true) {
-      try {
-        rows = await engine.executeRaw<RollupRow>(rollupQuery(withExpected, withReasons), []);
-        break;
-      } catch (err) {
-        if (withExpected && isMissingSchemaObject(err, 'column', 'expected_limit_count')) withExpected = false;
-        else if (withReasons && isMissingSchemaObject(err, 'column', 'halt_reasons')) withReasons = false;
-        else throw err;
-      }
-    }
+    const rows = await readExtractRollupWindow(engine);
 
     if (rows.length === 0) {
       return {

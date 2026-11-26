@@ -158,7 +158,6 @@ src/commands/doctor/checks/extraction-sync.ts#checkUndeclaredDbOnlyPages	capabil
 src/commands/doctor/checks/extraction-sync.ts#checkUndeclaredDbOnlyPages	catch_empty	1
 src/commands/doctor/checks/extraction-sync.ts#checkUnverifiedExtractions	capability_refusal_swallowed	1
 src/commands/doctor/checks/extraction-sync.ts#computeAtomProvenanceDriftCheck	capability_refusal_swallowed	1
-src/commands/doctor/checks/extraction-sync.ts#computeExtractHealthCheck	capability_refusal_swallowed	2
 src/commands/doctor/checks/extraction-sync.ts#countExtractAtomsBacklogBySource	capability_refusal_swallowed	1
 src/commands/doctor/checks/extraction-sync.ts#countExtractAtomsBacklogBySource	catch_empty	1
 src/commands/doctor/checks/extractor-facts.ts#extractorFactsCheck	capability_refusal_swallowed	1
@@ -1075,7 +1074,6 @@ src/core/extract-frontmatter.ts#resolveIncludeFrontmatter	catch_empty	1
 src/core/extract-takes-from-pages.ts#databaseOnlyPage	catch_empty	1
 src/core/extract-takes-from-pages.ts#extractTakesFromPages	catch_empty	1
 src/core/extract-takes-from-pages.ts#resolveBudgetUsd	promise_catch_empty	1
-src/core/extract/rollup-writer.ts#readRecordedHaltReasons7d	capability_refusal_swallowed	1
 src/core/extract/rollup-writer.ts#upsertExtractRollup	capability_refusal_swallowed	2
 src/core/extract/rollup-writer.ts#upsertExtractRollup	catch_empty	1
 src/core/extraction-watermark.ts#commitExtractionPlan	capability_refusal_swallowed	1

@@ -68,7 +68,7 @@ src/commands/doctor/checks/embedding-identity.ts	execute_raw	1
 src/commands/doctor/checks/embedding-plane.ts	execute_raw	1
 src/commands/doctor/checks/entity-duplicates.ts	execute_raw	3
 src/commands/doctor/checks/extraction-input.ts	execute_raw	2
-src/commands/doctor/checks/extraction-sync.ts	execute_raw	12
+src/commands/doctor/checks/extraction-sync.ts	execute_raw	10
 src/commands/doctor/checks/extractor-facts.ts	execute_raw	1
 src/commands/doctor/checks/facts-pages.ts	execute_raw	1
 src/commands/doctor/checks/facts-redaction-marker.ts	execute_raw	1
