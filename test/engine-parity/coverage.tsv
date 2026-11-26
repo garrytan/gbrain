@@ -133,10 +133,10 @@ listCatalogRelations	lifecycle	yes	1	no	yes	yes	serves
 readCatalogSchemaVersion	lifecycle	yes	1	no	yes	yes	serves
 listCatalogForeignKeys	lifecycle	yes	1	no	yes	yes	serves
 getPage	pages	yes	288	yes	yes	yes	serves
-readPageSnapshot	pages	yes	106	no	yes	yes	serves
+readPageSnapshot	pages	yes	108	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	7	no	yes	yes	serves
 lockPageKeys	pages	yes	17	no	yes	yes	serves
-putPage	pages	yes	1371	yes	yes	yes	serves
+putPage	pages	yes	1374	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	45	yes	yes	yes	serves
@@ -761,7 +761,7 @@ listVisiblePageSlugs	stats_ingest	yes	1	no	yes	yes	serves
 readPagesForVersionHistory	stats_ingest	yes	1	no	yes	yes	serves
 logIngest	stats_ingest	yes	10	no	yes	yes	serves
 getIngestLog	stats_ingest	yes	2	no	yes	yes	serves
-updateSlug	sync_aliases	yes	45	no	yes	yes	serves
+updateSlug	sync_aliases	yes	46	no	yes	yes	serves
 rewriteLinks	sync_aliases	yes	1	no	yes	yes	serves
 resolveSlugWithAlias	sync_aliases	yes	3	yes	yes	yes	serves
 resolveSlugWithAliasDetailed	sync_aliases	yes	1	yes	yes	yes	serves
@@ -2229,8 +2229,8 @@ readLivePageBody	write_guards	yes	1	no	yes	yes	serves
 readInlinePageRegions	write_guards	yes	1	no	yes	yes	serves
 readStoredPageTier	write_guards	yes	1	no	yes	yes	serves
 readPageIndexingState	write_guards	yes	1	no	yes	yes	serves
-readPageHiddenFromCaller	page_visibility	yes	3	no	yes	yes	serves
-readCallerPageAccess	page_visibility	yes	3	no	yes	yes	serves
+readPageHiddenFromCaller	page_visibility	yes	4	no	yes	yes	serves
+readCallerPageAccess	page_visibility	yes	4	no	yes	yes	serves
 readWriteVisibilityProbe	page_visibility	yes	9	no	yes	yes	serves
 readPagePrivacyHidden	page_visibility	yes	3	no	yes	yes	serves
 readWriterSlugFence	page_visibility	yes	2	no	yes	yes	serves
@@ -2393,9 +2393,9 @@ readBriefWorldFacts	brief_reads	yes	1	no	yes	yes	serves
 readBriefEditPage	brief_reads	yes	1	no	yes	yes	serves
 readBriefTimelineEntry	brief_reads	yes	1	no	yes	yes	serves
 readBriefPageVersions	brief_reads	yes	1	no	yes	yes	serves
-readReflexLiveKeys	reflex_reads	yes	2	no	yes	yes	serves
-readReflexPages	reflex_reads	yes	4	no	yes	yes	serves
-readBriefEntityPages	reflex_reads	yes	2	no	yes	yes	serves
+readReflexLiveKeys	reflex_reads	yes	3	no	yes	yes	serves
+readReflexPages	reflex_reads	yes	5	no	yes	yes	serves
+readBriefEntityPages	reflex_reads	yes	3	no	yes	yes	serves
 readIgnoredPrivacyLabelCounts	doctor_derived	yes	1	no	yes	yes	serves
 countSafeIndexPending	doctor_derived	yes	1	no	yes	yes	serves
 countCredentialProjectionPending	doctor_derived	yes	1	no	yes	yes	serves

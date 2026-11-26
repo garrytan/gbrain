@@ -28,8 +28,11 @@ import { join } from 'node:path';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { chunk, installChunks } from './chunk-fixtures.ts';
 import { createMember, parityArms, restrictFolder, type ParityBackend } from './harness.ts';
+import { rustAccessBrain } from './rust-arm.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { withEnv } from '../helpers/with-env.ts';
+import { remoteCallerAccess } from '../../src/core/access/caller.ts';
+import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 import { setMemberLabelledOnly } from '../../src/core/access/labelled-only.ts';
 import { setMembersReadLineage } from '../../src/core/access/lineage.ts';
 import { setOwner } from '../../src/core/access/owner.ts';
@@ -367,6 +370,135 @@ describe('engine parity: named stop of search under lineage (RUST_ENGINE.md, row
       answers[member] = slugsOf(answer);
     }
     expect(answers).toEqual({ [CAROL]: [...VISIBLE[CAROL]!.on].sort(), [DANA]: [...VISIBLE[DANA]!.on].sort() });
+    return answers;
+  }));
+});
+
+/** The caller record a remote read builds for `member` (a stdio read: the member's identity, folder rules and pending prefixes, its labelled-only grant and lineage). */
+async function recordOf(engine: BrainEngine, member: string): Promise<Record<string, unknown>> {
+  return { ...await remoteCallerAccess(engine, undefined, [], 'stdio', null, member, true) };
+}
+
+/**
+ * A raw-only folder rule (covers_derived false) over `prefix`, listing alice, carol and dana: a page under it names its readers through the
+ * rule, and a page derived from one is not closed by it. Harness-only SQL behind the backend switch, as restrictFolder is.
+ */
+async function rawOnlyRule(engine: BrainEngine, backend: ParityBackend, prefix: string, ruleId: string): Promise<void> {
+  const readers = ['member:alice-example', `member:${CAROL}`, `member:${DANA}`];
+  if (backend === 'rust') {
+    await restrictFolder(engine, backend, 'default', 'unused-seed-prefix/', 'pending'); // gives the source its access state, as restrictFolder does
+    await rustAccessBrain(engine).putAccessRule({ source_id: 'default', rule_id: ruleId, prefix, readable_by: readers, revision: 1, covers_derived: false });
+    return;
+  }
+  await restrictFolder(engine, backend, 'default', 'unused-seed-prefix/', 'pending');
+  await engine.executeRaw(`INSERT INTO access_rules (source_id, rule_id, prefix, readable_by, revision, covers_derived) VALUES ('default', $1, $2, $3::text[], 1, false)`, [ruleId, prefix, readers]);
+}
+
+describe('engine parity: the remote read floor keeps the pending folder prefixes of the caller record', () => {
+  // The floor reads (reflex pages, reflex live keys, brief pages) render the plain page fragment under the caller's record, which hides a
+  // page under a pending folder prefix (coverageSql reads the record's coverage). The store must be sent that coverage, or a record
+  // caller skips its live pending lookup and reads a page PGLite hides. The page that reaches the floor is an atom derived from a page
+  // under a raw-only rule the member satisfies (so no readers and no stamped rule of its own); with lineage on a labelled-only member reads
+  // it through its origin. The pending prefix covers one such atom; the control atom, outside it, is read.
+  const SLUGS = ['open/plain', 'ctrl/atom-raw', 'derived/atom-raw', 'derived/atom-raw-two'];
+
+  for (const member of [CAROL, DANA]) {
+    parityTest(`${member}: reflex pages, reflex live keys, brief pages and the remote page reads hide a page under a pending prefix and read the control page`, {
+      methods: ['putPage', 'readReflexPages', 'readReflexLiveKeys', 'readBriefEntityPages', 'readPageSnapshot'], timeout: 240_000,
+    }, (engine, backend) => inFreshHome(async () => {
+      await seedMembers(engine, backend);
+      await rawOnlyRule(engine, backend, 'raw/', 'rule-raw');
+      await seedShapes(engine);
+      await put(engine, 'raw/origin', 'note', {});
+      for (const slug of ['ctrl/atom-raw', 'derived/atom-raw', 'derived/atom-raw-two']) await put(engine, slug, 'atom', { visibility: 'world', source_slug: 'raw/origin' });
+      await drainProjections(engine);
+      await restrictFolder(engine, backend, 'default', 'derived/', 'pending');
+      return eachLineage(engine, async (lineage) => {
+        const record = await recordOf(engine, member);
+        expect((record.folderCoverage as unknown[]).length).toBeGreaterThan(0);
+        const keys = (rows: ReadonlyArray<{ slug: string; source_id: string }>) => rows.map(r => `${r.source_id}:${r.slug}`).sort();
+        const read = await withCallerAccess(record as never, async () => ({
+          pages: keys(await engine.readReflexPages({ sourceIds: ['default'], privacy: 'floor' }, { kind: 'slugs', slugs: SLUGS })),
+          live: keys(await engine.readReflexLiveKeys({ sourceIds: ['default'], privacy: 'floor' }, SLUGS)),
+          brief: (await engine.readBriefEntityPages('default', SLUGS, { privacy: 'floor' })).map(r => r.slug).sort(),
+          caller: (await engine.readBriefEntityPages('default', SLUGS, { privacy: 'caller' })).map(r => r.slug).sort(),
+        }));
+        const remoteReads: Record<string, unknown> = {};
+        for (const slug of SLUGS) {
+          const got = await remote(engine, member, 'get_page', { slug });
+          remoteReads[slug] = refusedOf(got) ? got : got === 'not_found' ? got : 'visible';
+        }
+        // No page under the pending prefix is ever read. The control atom is read by dana always, and by carol when lineage is on; dana also reads the open page, which names nobody.
+        const ordinary = member === DANA;
+        const control = ordinary || lineage === 'on';
+        expect({ lineage, member, pages: read.pages, live: read.live, brief: read.brief }).toEqual({
+          lineage, member,
+          pages: ordinary ? ['default:ctrl/atom-raw', 'default:open/plain'] : control ? ['default:ctrl/atom-raw'] : [],
+          live: ordinary ? ['default:ctrl/atom-raw', 'default:open/plain'] : control ? ['default:ctrl/atom-raw'] : [],
+          brief: ordinary ? ['ctrl/atom-raw', 'open/plain'] : control ? ['ctrl/atom-raw'] : [],
+        });
+        expect(read.caller.some(slug => slug.startsWith('derived/'))).toBe(false);
+        expect({ lineage, derived: remoteReads['derived/atom-raw'], two: remoteReads['derived/atom-raw-two'] }).toEqual({ lineage, derived: 'not_found', two: 'not_found' });
+        expect(remoteReads['ctrl/atom-raw']).toBe(control ? 'visible' : 'not_found');
+        return { read, remoteReads };
+      });
+    }));
+  }
+});
+
+describe('engine parity: the access part of the page policy, and a rename or alias whose every extant origin must name the member', () => {
+  parityTest('readCallerPageAccess and readPageHiddenFromCaller under the access part answer the same for a labelled-only and an ordinary member, lineage off and on', {
+    methods: ['putPage', 'readCallerPageAccess', 'readPageHiddenFromCaller'], timeout: 240_000,
+  }, (engine, backend) => inFreshHome(async () => {
+    await seedMembers(engine, backend);
+    await seedShapes(engine);
+    const refs = SHAPES.map(s => ({ source_id: 'default', slug: s.slug }));
+    return eachLineage(engine, async (lineage) => {
+      const out: Record<string, unknown> = {};
+      for (const member of [CAROL, DANA]) {
+        const record = await recordOf(engine, member);
+        out[member] = await withCallerAccess(record as never, async () => ({
+          access: (await engine.readCallerPageAccess(refs, { policy: 'access' })).map(r => `${r.slug}:${r.readable}`).sort(),
+          hidden: (await Promise.all(SHAPES.map(async s => `${s.slug}:${await engine.readPageHiddenFromCaller('default', s.slug, { policy: 'access' })}`))).sort(),
+          read: (await engine.readCallerPageAccess(refs, { policy: 'read' })).map(r => `${r.slug}:${r.readable}`).sort(),
+        }));
+      }
+      // carol's access part is its member access AND the labelled-only conjunct: a page that names nobody is not readable for it,
+      // which a page that names bob or group-less open pages show against dana's.
+      const carol = out[CAROL] as { access: string[] };
+      expect(carol.access.includes('open/plain:false')).toBe(true);
+      expect(carol.access.includes('open/readers-carol:true')).toBe(true);
+      expect((out[DANA] as { access: string[] }).access.includes('open/plain:true')).toBe(true);
+      return { lineage, out };
+    });
+  }));
+
+  parityTest('an atom whose source slug was renamed is read by a labelled-only member only when every extant origin names it', {
+    methods: ['putPage', 'updateSlug', 'readPageSnapshot'], timeout: 240_000,
+  }, (engine, backend) => inFreshHome(async () => {
+    await seedMembers(engine, backend);
+    // Each case renames old to new (the rename history and the alias point at new), then writes a page at old again, so old and new
+    // are both extant origins of an atom whose source_slug is old.
+    const cases = [
+      { id: 'g3a', oldReaders: ['carol-example'], newReaders: ['carol-example'], carol: true },
+      { id: 'g3b', oldReaders: ['bob-example'], newReaders: ['carol-example'], carol: false },
+      { id: 'g3c', oldReaders: ['carol-example'], newReaders: ['bob-example'], carol: false },
+      { id: 'g3d', oldReaders: ['carol-example'], newReaders: ['carol-example', 'bob-example'], carol: true },
+    ];
+    for (const c of cases) {
+      await put(engine, `open/${c.id}-old`, 'note', { readable_by: c.oldReaders });
+      await engine.updateSlug(`open/${c.id}-old`, `open/${c.id}-new`, { sourceId: 'default' });
+      await put(engine, `open/${c.id}-new`, 'note', { readable_by: c.newReaders });
+      await put(engine, `open/${c.id}-old`, 'note', { readable_by: c.oldReaders });
+      await put(engine, `walk/${c.id}`, 'atom', { visibility: 'world', source_slug: `open/${c.id}-old` });
+    }
+    await setMembersReadLineage(engine, true, { remote: false });
+    const answers: Record<string, unknown> = {};
+    for (const c of cases) {
+      const got = await remote(engine, CAROL, 'get_page', { slug: `walk/${c.id}` });
+      answers[c.id] = refusedOf(got) ? got : got === 'not_found' ? got : 'visible';
+    }
+    expect(answers).toEqual(Object.fromEntries(cases.map(c => [c.id, answerOf(c.carol)])));
     return answers;
   }));
 });
