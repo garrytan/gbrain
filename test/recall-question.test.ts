@@ -412,7 +412,14 @@ for (const kind of testBackends()) {
       expect(got[0]).toBe('ROAST');
       expect(got).not.toContain('OFFSITE');
       expect(got).not.toContain('HIRING');
-      expect(r.facts.map((f: R) => f.fact)).toEqual((await recall(local(), { question: COFFEE })).facts.map((f: R) => f.fact));
+      // The question ranking comes first in the same order; a query also admits a fact that holds every query term,
+      // however long (here only the term-stuffed fact, ranked last).
+      const asQuestion = (await recall(local(), { question: COFFEE })).facts.map((f: R) => f.fact);
+      expect(r.facts.slice(0, asQuestion.length).map((f: R) => f.fact)).toEqual(asQuestion);
+      expect(markers(r.facts.slice(asQuestion.length))).toEqual(['STUFFED']);
+      // A one-word query keeps a long fact that contains the word, which the question rule's term-stuffing guard drops.
+      expect(markers((await recall(local(), { query: 'grinder' })).facts)).toEqual(['NOVEC']);
+      expect((await recall(local(), { question: 'grinder' })).facts).toEqual([]);
       expect(notices.some(n => n.code === 'recall_hint')).toBe(false);
       expect((await recall(local(), { query: 'zymurgy xylophone quokka' })).facts).toEqual([]);
       expect(markers((await recall(local(), { query: '   ' })).facts).slice(0, 2)).toEqual(['OFFSITE', 'HIRING']);

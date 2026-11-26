@@ -205,7 +205,8 @@ Response — an additive SUPERSET of the plain facts envelope on EVERY call
 A call that passes `query` without `question` and without `entity`,
 `session_id`, `since` or `supersessions` ranks its facts by relevance to the
 query, as if `question` were the query (`facts_order: relevance`; #10225).
-Before, it returned the newest facts with a `recall_hint` notice, and agents
+A query is read as keywords, so a fact that holds every query word is kept
+however long it is. Before, it returned the newest facts with a `recall_hint` notice, and agents
 answered from facts unrelated to the query. A call with none of `query`,
 `question` or a fact selector still returns the newest facts.
 

@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 335911,
-    "stdoutSha256": "6d7e1fa8239dec51989b3a352d49ba47fffc1a572d6d24bb61346d4e6dbb7d82",
+    "stdoutBytes": 335868,
+    "stdoutSha256": "8a5b9610e18cbf99d07d411becac748e00cd2c2e525126606745c18b61c71286",
     "toolNames": [
       "remember",
       "entity",
@@ -8035,7 +8035,7 @@
               "type": "string"
             },
             "query": {
-              "description": "Also search pages (results[]); with no fact selector, also ranks facts.",
+              "description": "Search pages and rank facts.",
               "type": "string"
             },
             "question": {

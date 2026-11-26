@@ -305,7 +305,7 @@ const recall: Operation = {
   params: {
     entity: { type: 'string', description: 'Entity slug; its facts.' },
     question: { type: 'string', description: 'Rank facts by relevance to it.' },
-    query: { type: 'string', description: 'Also search pages (results[]); with no fact selector, also ranks facts.' },
+    query: { type: 'string', description: 'Search pages and rank facts.' },
     budget_tokens: { type: 'number', description: 'Token budget; facts pack first.' },
     budget_policy: { type: 'string', enum: ['facts_first', 'query_first'], description: 'Default facts_first.', fullSurfaceOnly: true },
     source_id: { type: 'string', description: 'One readable source.' },
@@ -422,7 +422,8 @@ const recall: Operation = {
     const sessionParam = typeof p.session_id === 'string' && p.session_id.length > 0 ? (p.session_id as string) : null;
     const queryText = typeof p.query === 'string' && p.query.trim().length > 0 ? p.query.trim() : null;
     // #10225: a query with no fact selector ranks facts by the query instead of returning the newest ones.
-    const question = parseQuestionParam(p) ?? (queryText && !entityParam && !sessionParam && !since && p.supersessions !== true
+    const explicitQuestion = parseQuestionParam(p);
+    const question = explicitQuestion ?? (queryText && !entityParam && !sessionParam && !since && p.supersessions !== true
       ? queryText.slice(0, QUESTION_MAX_CHARS) : null);
     let ranking: QuestionRecall | null = null;
     // Shared per-source opts for the fact-list arms (visibility, grep and the
@@ -436,7 +437,7 @@ const recall: Operation = {
     };
 
     if (question !== null && !readsNoSource) {
-      ranking = await rankFactsByQuestion(ctx, { question, params: p, factSources, limit, entity: entityParam, sessionId: sessionParam, since, grep, includeExpired, scope: factScope });
+      ranking = await rankFactsByQuestion(ctx, { question, params: p, factSources, limit, entity: entityParam, sessionId: sessionParam, since, grep, includeExpired, scope: factScope, fromQuery: explicitQuestion === null });
       ({ rows, ambiguousEntity } = ranking); mergedSources = ranking.mergedSources ?? null;
       for (const notice of questionRecallNotices(ranking, ctx.brainId)) ctx.emitNotice?.(notice);
     } else if (p.supersessions === true) {

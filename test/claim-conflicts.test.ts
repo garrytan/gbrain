@@ -192,7 +192,10 @@ for (const kind of testBackends()) {
       const cases: Array<[string | null, string]> = [[null, '2026-03-20T23:30:00Z'], ['monthly', '2026-03-02T00:00:00Z'], ['quarterly', '2026-03-30T00:00:00Z'],
         ['annual', '2026-12-31T12:00:00Z'], ['weekly', '2025-12-29T00:00:00Z'], ['weekly', '2027-01-03T00:00:00Z'], ['per launch', '2026-05-05T05:00:00Z']];
       for (const [period, at] of cases) {
-        const [row] = await engine.executeRaw<{ b: string }>('SELECT ' + claimBucketSql('f') + ' AS b FROM (SELECT $1::text AS claim_period, $2::timestamptz AS valid_from) f', [period, at]);
+        const [row] = await engine.executeRaw<{ b: string }>('SELECT ' + claimBucketSql('f') + ' AS b FROM (SELECT $1::text AS claim_period, $2::timestamptz AS valid_from, $2::timestamptz AS created_at) f', [period, at]);
+        // An undated claim (#10288) buckets at its save time.
+        const [undated] = await engine.executeRaw<{ b: string }>('SELECT ' + claimBucketSql('f') + ' AS b FROM (SELECT $1::text AS claim_period, NULL::timestamptz AS valid_from, $2::timestamptz AS created_at) f', [period, at]);
+        expect(undated!.b).toBe(claimBucket(period, at));
         expect(row!.b).toBe(claimBucket(period, at));
       }
     });

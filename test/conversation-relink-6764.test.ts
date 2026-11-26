@@ -160,8 +160,9 @@ describe('#6764 the link survives re-extraction and fence reconcile', () => {
       await expectKept(engine);
       await reextract(engine);
       await expectKept(engine);
+      // Each forced re-extraction expires the previous copy and keeps it as history (#10443): two reruns, two expired copies.
       const expired = await engine.executeRaw<{ n: number }>(`SELECT COUNT(*)::int AS n FROM facts WHERE fact=$1 AND expired_at IS NOT NULL`, [LINKED]);
-      expect(expired[0]!.n).toBe(1);
+      expect(expired[0]!.n).toBe(2);
     } finally { await engine.unsetConfig('facts.entity_inference'); }
   });
 });

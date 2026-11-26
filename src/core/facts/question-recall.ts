@@ -191,6 +191,8 @@ export interface QuestionRecallInput {
   grep: string | null;
   /** Rank expired, superseded and lapsed facts too (recall's `include_expired`). */
   includeExpired?: boolean;
+  /** #10225: the question is recall's `query` (keywords): a fact holding every query term is admitted however long it is. */
+  fromQuery?: boolean;
 }
 
 export interface QuestionRecall {
@@ -251,7 +253,7 @@ export async function rankFactsByQuestion(ctx: OperationContext, input: Question
     const weighted = switches.weighting;
     const grouped = switches.grouping && !input.entity;
     const scored = scoreFactCandidates(question, pool.candidates, pool.terms, pool.stems);
-    const ranked = scored.filter(s => admitted(s, rule));
+    const ranked = scored.filter(s => admitted(s, rule) || (input.fromQuery === true && s.terms > 0 && s.matched === s.terms));
     const unembedded = uncomparable.reduce((n, r) => n + r.n, 0);
     const why = reason ?? (embedding && !pool.column ? 'facts_embedding_column_missing' : undefined);
     const degraded: FactsDegraded | undefined = why || unembedded ? { ...(why ? { reason: why } : {}), ...(unembedded ? { unembedded } : {}) } : undefined;

@@ -6910,7 +6910,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "query": {
         "type": "string",
-        "description": "Also search pages (results[]); with no fact selector, also ranks facts."
+        "description": "Search pages and rank facts."
       },
       "budget_tokens": {
         "type": "number",
