@@ -16,8 +16,12 @@ The census comes from reading the code. It was not built or run against `cd8eac4
   below stops on the CLI.
 - An MCP caller (`remote: true`) builds its access record from the bound credential
   (`src/core/access/caller.ts:285-308`).
-- A member with `callerReaders` serves a record that carries only reader identity and private-readable grants. A
-  record widened by folder-rule readers, lineage or a labelled-only grant stops.
+- A member with `callerReaders` serves a record that carries reader identity, private-readable grants, the folder rules
+  the caller satisfies, a labelled-only grant and a member's lineage read (row 32e-b-2, `callerReference` in
+  `private-provenance.ts`). The page policy judges the lineage read with the owner read rule and, for a labelled-only
+  caller, with the labelled-only conjunct and its origin walk; the fact policy serves a labelled-only grant (a fact is read
+  on the caller's own member page only) and still stops for every member under `access.members_read_lineage` (row 32e-b-4; `search` stops there too through its saved-facts arm). The remote read floor of a labelled-only caller (`remoteReadFloorSql`, used by `search`, `list_pages` and `recall` when no source is named) is served by `storePageTextPolicy`.
+  An audience of several identities for a labelled-only member stops too.
 - `storePrivacyPolicy` (fact policy) stops at `private-provenance.ts:166`. `storePageTextPolicy` and `storePagePolicy`
   stop at `:271` after `judgeWidenedCaller` (`:293`).
 - `storeFloorPolicy` (the remote provenance floor) stops at `:179` for a labelled-only grant or an owner read.
@@ -26,8 +30,10 @@ The census comes from reading the code. It was not built or run against `cd8eac4
 
 ## Widened-caller stops (MCP only)
 
-On MCP each of these serves a caller with only identity and grants, and stops for a caller with folder-rule readers,
-lineage or a labelled-only grant. On the plain CLI none of them is asked for a policy.
+On MCP each of these serves a caller with identity, grants, the folder rules it satisfies, a labelled-only grant and a
+member's lineage read, where the member opts in with `callerReaders`; the fact reads in the next section stop under lineage
+(row 32e-b-4). A member that does not opt in still stops for a caller with folder-rule readers, lineage or a labelled-only
+grant. On the plain CLI none of them is asked for a policy.
 
 | Store member | File:line (cd8eac4d0c) | Reached from | Stops at |
 | --- | --- | --- | --- |

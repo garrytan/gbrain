@@ -67,8 +67,10 @@ member-access part alone (the page's readers, and the origin of a derived page):
   any other value (`null` too) is refused before the store reads
   (`tests/owner_only_form_contract.rs`).
 
-- **Callers the store does not render.** A caller whose access record adds folder rules, an audience, a lineage
-  or a labelled-only grant renders a policy the store cannot judge. Both page members then refuse with
+- **Callers the store does not render.** The `read` part serves a caller whose record adds folder rules, a labelled-only
+  grant or a member's lineage read (`callerReference`); the `access` part serves the labelled-only grant and the lineage read
+  with the caller's folder rules. A caller whose record adds an audience, or a labelled-only grant over an audience of several
+  identities, renders a policy the store cannot judge, and both page members then refuse with
   `engine_capability_missing` before any read. A remote write's writer is the exception: `readLinkTargetPages` serves
   the writer's one identity with the folder rules it satisfies and the labelled-only grant
   ([remote-links.md](remote-links.md)), so a labelled-only member's rewrite of a page it is not named on ends on

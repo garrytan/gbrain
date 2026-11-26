@@ -81,9 +81,12 @@ both. The provenance gate reads neither, with one exception in the first form: i
 judges the caller's own member page (`memory/members/<member>`, the actor's member or the first
 `member:` principal) with the identity. The member then sends that slug as `memberPage`, and
 `hidden_by_private_provenance` reads the identity on that page only (`provenance_identity`). The
-second form has no CASE and sends no `memberPage`. Any other caller (folder rules, audiences,
-lineage, labelled-only members) is refused with
-`engine_capability_missing` (`src/core/rust-engine/store-members/private-provenance.ts`). A keyed-slug entity
+second form has no CASE and sends no `memberPage`. A labelled-only caller is served too: the member sends `labelledOnly: { identity, satisfiedRuleIds, member }`, and the
+store hides a fact unless it sits on `memory/members/<member>` and that page names `member:<member>` (`own_page_fact`,
+`labelledOnlyFactSql`); the entity and holding pages are judged without the labelled-only conjunct, as
+`privateEntityFilterForCaller` does. A caller under `access.members_read_lineage` (every member, labelled-only or not), an
+audience, or a labelled-only audience of several identities is refused with
+`engine_capability_missing` (row 32e-b-4 for lineage; `src/core/rust-engine/store-members/private-provenance.ts`). A keyed-slug entity
 (an `entity_slug` with no `/`) is judged at the name-key page directories (`NAME_KEY_PAGE_DIRS`) by
 `facts/privacy.rs`, as `privateEntityFilterForCaller` does.
 An anonymous caller on a brain that never named readers (`restricted` false in its
