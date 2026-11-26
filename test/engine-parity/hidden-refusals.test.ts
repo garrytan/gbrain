@@ -27,7 +27,6 @@ import { withEnv } from '../helpers/with-env.ts';
 import { resetFtsLanguageCache } from '../../src/core/fts-language.ts';
 import { readNewerMentions } from '../../src/core/mentions/newer-mentions.ts';
 import { matchingSavedFacts } from '../../src/core/search/saved-facts-match.ts';
-import { isEngineCapabilityRefusal } from '../../src/core/engine-capability-refusal.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -108,24 +107,18 @@ describe('engine parity: reads a fail-soft caller used to run as raw SQL', () =>
     return answer;
   });
 
-  // The Rust store stems in English only. With another language the saved-facts match must refuse where a caller can see
-  // it; an empty block would read as "no saved fact matches". PGLite and Postgres stem in that language and answer.
-  parityTest('with a non-English full-text language the Rust engine refuses the saved-facts match instead of answering none', {
+  // Under the german configuration the saved-facts match stems German on every engine (the Rust store ports the
+  // German Snowball dictionary, keyword/stem_german.rs). The words stem alike on PGLite and Postgres 16, whose German
+  // stemmers differ for the feminine -in/-innen endings (test/engine-parity/fts-german.test.ts).
+  parityTest('with the german full-text language every engine answers the saved-facts match with German stems', {
     methods: ['insertFact', 'matchSavedFacts'],
-  }, async (engine, backend) => withEnv({ GBRAIN_FTS_LANGUAGE: 'german' }, async () => {
+  }, async (engine) => withEnv({ GBRAIN_FTS_LANGUAGE: 'german' }, async () => {
     resetFtsLanguageCache();
     try {
-      await remember(engine, [{ fact: 'Widget Umsatz Quartal 50000', day: 1 }]);
-      const run = () => matchingSavedFacts(local(engine), { sourceId: SRC }, 'widget umsatz quartal');
-      if (backend !== 'rust') {
-        const out = await run();
-        expect(out.facts.map(f => f.fact)).toEqual(['Widget Umsatz Quartal 50000']);
-        return out.facts.map(f => f.fact);
-      }
-      const refusal = await run().then(() => null, (error: unknown) => error);
-      expect(isEngineCapabilityRefusal(refusal)).toBe(true);
-      expect(String((refusal as Error).message)).toContain('FTS language german');
-      throw refusal;
+      await remember(engine, [{ fact: 'Umsatz des Quartals 50000', day: 1 }]);
+      const out = await matchingSavedFacts(local(engine), { sourceId: SRC }, 'umsatzes quartal');
+      expect(out.facts.map(f => f.fact)).toEqual(['Umsatz des Quartals 50000']);
+      return out.facts.map(f => f.fact);
     } finally {
       resetFtsLanguageCache();
     }

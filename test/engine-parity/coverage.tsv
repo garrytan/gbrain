@@ -302,7 +302,7 @@ countInboundLinks	link_reads	yes	4	no	yes	yes	serves
 readEntityInboundEdges	link_reads	yes	1	no	yes	yes	serves
 listLinkEndpointPages	link_reads	yes	1	no	yes	yes	serves
 listPagesTitledIn	link_reads	yes	9	no	yes	yes	serves
-wordLexemes	link_reads	yes	2	no	yes	yes	serves
+wordLexemes	link_reads	yes	4	no	yes	yes	serves
 readLinkContextMatches	link_reads	yes	2	no	yes	yes	serves
 readLinkContextOriginPages	link_reads	yes	2	no	yes	yes	serves
 readLinkRelationshipEvidence	link_temporal	yes	3	no	yes	yes	serves
@@ -639,7 +639,7 @@ hasActiveFactText	facts	yes	2	no	yes	yes	serves
 readFactTrustTier	facts	yes	2	no	yes	yes	serves
 listFenceFactRowNums	facts	yes	2	no	yes	yes	serves
 readLiveFactRowTier	facts	yes	1	no	yes	yes	serves
-insertFact	facts	yes	198	yes	yes	yes	serves
+insertFact	facts	yes	200	yes	yes	yes	serves
 insertFacts	facts	yes	269	no	yes	yes	serves
 deleteFactsForPage	facts	yes	8	no	yes	yes	serves
 expireFact	facts	yes	94	no	yes	yes	serves
@@ -654,7 +654,7 @@ readFactPreimages	facts	yes	5	no	yes	yes	serves
 restoreFactPreimage	facts	yes	2	no	yes	yes	serves
 listFactIdsBySourcePrefix	facts	yes	2	no	yes	yes	serves
 expireFactRows	facts	yes	1	no	yes	yes	serves
-findCandidateDuplicates	facts	yes	6	yes	yes	yes	serves
+findCandidateDuplicates	facts	yes	7	yes	yes	yes	serves
 consolidateFact	facts	yes	11	no	yes	yes	serves
 findTrajectory	facts	yes	7	yes	yes	yes	serves
 getFactsHealth	facts	yes	3	yes	yes	yes	serves
@@ -1698,12 +1698,12 @@ hasDatabaseOnlyClaim	facts_repair	yes	1	no	yes	yes	serves
 readSourceCloneRow	facts_repair	yes	1	no	yes	yes	serves
 listFactProvenance	facts_trust	yes	5	no	yes	yes	serves
 listDerivedRows	facts_trust	yes	6	no	yes	yes	serves
-listFactsForRelevance	facts_trust	yes	9	no	yes	yes	serves
+listFactsForRelevance	facts_trust	yes	10	no	yes	yes	serves
 countUncomparableFacts	facts_trust	yes	5	no	yes	yes	serves
-matchSavedFacts	facts_trust	yes	8	no	yes	yes	serves
+matchSavedFacts	facts_trust	yes	9	no	yes	yes	serves
 readEntityNewestFacts	facts_trust	yes	2	no	yes	yes	serves
 readClaimWithdrawal	facts_trust	yes	3	no	yes	yes	serves
-matchHeadStems	facts_trust	yes	2	no	yes	yes	serves
+matchHeadStems	facts_trust	yes	3	no	yes	yes	serves
 readFactForOwnerAction	facts_trust	yes	2	no	yes	yes	serves
 listStandingPreferences	facts_trust	yes	2	no	yes	yes	serves
 listLexicalContestCandidates	facts_trust	yes	2	no	yes	yes	serves

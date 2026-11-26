@@ -320,6 +320,7 @@ test/engine-parity/forget-rebuild.test.ts
 test/engine-parity/forget-remember.test.ts
 test/engine-parity/forget-whole-cli.test.ts
 test/engine-parity/forget-whole.test.ts
+test/engine-parity/fts-german.test.ts
 test/engine-parity/generation-output-parity.test.ts
 test/engine-parity/generation-page-rows-order.test.ts
 test/engine-parity/generation-write-parity.test.ts

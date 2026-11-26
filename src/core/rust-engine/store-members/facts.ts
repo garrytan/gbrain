@@ -22,8 +22,7 @@ import { clampSearchLimit, MAX_SEARCH_LIMIT, type BrainEngine, type FactListOpts
 import { escapeLikePattern } from '../../cjk.ts';
 import { valueHash } from '../../chronicle/ontology.ts';
 import { ensureWellFormed } from '../../text-safe.ts';
-import { getFtsLanguage } from '../../fts-language.ts';
-import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
+import { refuseMember, storeCall, storeFtsConfig, takeOptions, type StoreMember } from './common.ts';
 import { storePrivacyPolicy } from './private-provenance.ts';
 import { storeVisibility } from './fact-visibility.ts';
 import { privateProvenanceFilterUnderPolicy } from '../../search/private-visibility.ts';
@@ -299,12 +298,12 @@ export const findCandidateDuplicates: Member<'findCandidateDuplicates'> = async 
     ['k', 'embedding', 'embeddingModel', 'arm', 'attributedTo', 'excludeMemberPages', 'onlyPage']) as NonNullable<typeof opts>;
   const keyword = o.arm === 'keyword';
   if (o.embedding && !o.embeddingModel) return [];
-  // The store's full-text search is the `english` configuration only.
-  if (keyword && getFtsLanguage() !== 'english') refuseMember('findCandidateDuplicates', `the keyword arm in FTS language ${getFtsLanguage()}`);
+  // The keyword arm parses both texts at query time, under a configuration the store ports.
+  const ftsConfig = keyword ? storeFtsConfig('findCandidateDuplicates', 'the keyword arm in FTS language') : undefined;
   const rows: Row[] = await storeCall({ member: 'findCandidateDuplicates' }, () => brain.findCandidateDuplicates({
     sourceId, entitySlug, k: Math.min(Math.max(o.k ?? 5, 1), 20), attributedTo: o.attributedTo || undefined,
     onlyPage: o.onlyPage || undefined, excludeMemberPages: o.excludeMemberPages === true,
-    ...(keyword ? { keyword: true, factText: wellFormed(factText) } : {}),
+    ...(keyword ? { keyword: true, factText: wellFormed(factText), ftsConfig } : {}),
     ...(o.embedding ? { embedding: vectorLiteral(o.embedding), embeddingModel: o.embeddingModel } : {}),
   }));
   return facts(rows);
