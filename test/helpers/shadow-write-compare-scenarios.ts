@@ -22,10 +22,11 @@ import { newMirrorCounters } from '../../src/shadow/mirror.ts';
 import { writeSeedRecord } from '../../src/shadow/seed.ts';
 import { wrapShadowEngine } from '../../src/shadow/wrapper.ts';
 import { completeWriteRow, insertPublicationEffects, lockPersistenceCounters } from '../../src/core/engine-sql/persistence-journal.ts';
+import { sqlWrites } from '../../src/shadow/sql-writes.ts';
 import { sealImportedPage } from '../../src/core/engine-sql/write-guards.ts';
 import { renderFragment } from '../../src/core/engine-sql/fragment.ts';
 import { pageSearchVectorSql } from '../../src/core/fts-language.ts';
-import { createWriteSampler, JOURNAL_MEMBER_STATEMENTS, PUT_PAGE_OPTIONS, readPreimage } from '../../src/shadow/write-capture.ts';
+import { bookkeepingStatements, createWriteSampler, JOURNAL_MEMBER_STATEMENTS, PUT_PAGE_OPTIONS, readPreimage } from '../../src/shadow/write-capture.ts';
 import { createWriteComparer } from '../../src/shadow/write-compare-child.ts';
 import { openRustEngine, type RustEngineAddonHandle } from '../../src/core/rust-engine.ts';
 import { readWriteTally, WriteTally, type WriteEvent } from '../../src/shadow/write-compare.ts';
@@ -983,6 +984,14 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       }
       expect([...JOURNAL_MEMBER_STATEMENTS.keys()].sort()).toEqual(['completeWriteRow', 'insertPublicationEffects', 'lockPersistenceCounters']); // upsertWriteGateReceipt is not bookkeeping: it stays an ordinary write
     }, 30_000);
+
+    test('insertPublicationEffects is bookkeeping only while its statement writes persistence_effects and nothing else: a statement that writes another table is an ordinary write', () => {
+      const [effects] = JOURNAL_MEMBER_STATEMENTS.get('insertPublicationEffects')!;
+      expect(sqlWrites(effects!).map((w) => `${w.kind}:${(w as { relation?: string }).relation}`)).toEqual(['relation:persistence_effects']);
+      expect(bookkeepingStatements([effects!])).toBe(true);
+      expect(bookkeepingStatements([`WITH moved AS (INSERT INTO pages (slug) VALUES ('x') RETURNING 1) ${effects!}`])).toBe(false);
+      expect(bookkeepingStatements([effects!, 'UPDATE pages SET title = title'])).toBe(false);
+    });
 
     test('the closing seal the sampler treats as a seal is exactly the page update the sealImportedPage member sends: any other text is an ordinary write again', async () => {
       let sent = '';

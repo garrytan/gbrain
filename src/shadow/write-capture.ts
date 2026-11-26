@@ -153,7 +153,7 @@ function rawKind(args: unknown[]): 'bookkeeping' | 'seal' | undefined {
   try { const writes = sqlWrites(sql); return writes.length > 0 && writes.every((w) => w.kind === 'relation' && BOOKKEEPING.has(w.relation)) ? 'bookkeeping' : undefined; } catch { return undefined; }
 }
 /** True when every statement is read-only or writes only bookkeeping tables (the raw rule above) and at least one writes; a statement the parser cannot read, or one that writes any other table, makes it false. */
-function bookkeepingStatements(sqls: readonly string[]): boolean {
+export function bookkeepingStatements(sqls: readonly string[]): boolean {
   let wrote = false;
   for (const sql of sqls) {
     let writes; try { writes = sqlWrites(sql); } catch { return false; }
@@ -164,7 +164,8 @@ function bookkeepingStatements(sqls: readonly string[]): boolean {
 }
 /**
  * Typed journal members and every statement each one sends (engine-sql/persistence-journal.ts): the counter rows' create-and-lock before a journaled page write, and the
- * request's completion after it. They were raw statements the rule above judged bookkeeping; as members their text is hidden from rawKind, so each is judged here by the
+ * request's completion after it, and the publication's effects insert (insertPublicationEffects, which writes only persistence_effects: judged bookkeeping by its statement text,
+ * pinned by test/helpers/shadow-write-compare-scenarios.ts; a change that makes it write another table drops it back to an ordinary write). They were raw statements the rule above judged bookkeeping; as members their text is hidden from rawKind, so each is judged here by the
  * same rule on the statements it sends. A member whose statements stop passing that rule is an ordinary write again. (upsertWriteGateReceipt is not listed: it stays an
  * ordinary write, which fails closed.)
  */
