@@ -17,7 +17,6 @@ import { createSource, parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 import { runCore } from '../../src/commands/core.ts';
-import { isCapabilityRefusal } from './arm-capabilities.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -66,18 +65,28 @@ describe('engine parity: core-memory page list for a member caller', () => {
 });
 
 describe('engine parity: gbrain core remove', () => {
-  // `core remove` un-cores the page and closes its pending remote-edit notices. A Rust brain keeps no notices, so it must
-  // refuse before it un-cores the page: the page stays core and nothing changes. PGLite and Postgres un-core it.
-  parityTest('core remove un-cores the page, and an engine without notices refuses it before changing anything', {
-    methods: ['putPage', 'readPageSnapshot'], requires: 'raw_sql',
+  // `core remove` un-cores the page on every engine and prints the same line. An engine with raw SQL (PGLite, Postgres)
+  // also closes the page's pending remote-edit notices; a Rust brain keeps no notices, so there is nothing to close and
+  // the close is skipped. The notice rows are only read where the engine has them, so the returned value is the same on
+  // every arm.
+  parityTest('core remove un-cores the page and prints the same line on every engine, closing pending notices where they are kept', {
+    methods: ['putPage', 'readPageSnapshot'],
   }, async (engine: BrainEngine, backend) => {
     await engine.putPage('core/about', core({}), { sourceId: 'default' });
+    await engine.putPage('core/other', core({}), { sourceId: 'default' });
+    const keepsNotices = backend !== 'rust';
+    const notice = (slug: string) => engine.executeRaw(
+      `INSERT INTO core_edit_notices (source_id, slug, page_id, revision, base_revision, base_text, actor) VALUES ('default', $1, NULL, 'rev-1', NULL, 'before', 'agent:test')`, [slug]);
+    if (keepsNotices) { await notice('core/about'); await notice('core/other'); }
+    const pending = async (slug: string) => (await engine.executeRaw<{ n: number }>(
+      `SELECT count(*)::int AS n FROM core_edit_notices WHERE source_id = 'default' AND slug = $1 AND acked_at IS NULL`, [slug]))[0]?.n;
     const isCore = async () => (await engine.readPageSnapshot('core/about', { sourceId: 'default' }))?.page.frontmatter?.always_load === true;
     const errors: string[] = [];
+    const printed: string[] = [];
     const error = console.error;
     const log = console.log;
     console.error = (...a: unknown[]) => { errors.push(a.join(' ')); };
-    console.log = () => {};
+    console.log = (...a: unknown[]) => { printed.push(a.join(' ')); };
     let refused: unknown = null;
     try {
       await runCore(engine, ['remove', 'core/about']);
@@ -87,12 +96,13 @@ describe('engine parity: gbrain core remove', () => {
       console.error = error;
       console.log = log;
     }
-    if (backend === 'rust') {
-      expect({ refused: isCapabilityRefusal(refused, 'raw_sql'), stillCore: await isCore(), errors }).toEqual({ refused: true, stillCore: true, errors: [] });
-      throw refused;
+    if (keepsNotices) {
+      // The page's notice is closed; another page's notice stays pending.
+      expect({ closed: await pending('core/about'), other: await pending('core/other') }).toEqual({ closed: 0, other: 1 });
     }
-    const out = { refused, core: await isCore(), errors };
-    expect(out).toEqual({ refused: null, core: false, errors: [] });
+    const out = { refused, core: await isCore(), errors, printed };
+    expect(out.refused).toBeNull();
+    expect(out).toEqual({ refused: null, core: false, errors: [], printed: [expect.stringMatching(/^Now out of core: default:core\/about\. Core uses \d+\/\d+ chars\.$/)] });
     return out;
   });
 });
