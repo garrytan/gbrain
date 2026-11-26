@@ -101,6 +101,9 @@ export const CONTENT_MEMBERS = {
   getChunks: 'chunks',
   getChunkPage: 'chunks',
   getChunkWindows: 'chunks',
+  // get_page's chunk reads (engine-sql/page-window-chunks.ts)
+  readWindowChunk: 'chunks',
+  countPageChunks: 'chunks',
   countChunklessPagesWithContent: 'chunks',
   findCodeDefinitions: 'chunks',
   listSymbolTypesForName: 'chunks',
@@ -316,6 +319,7 @@ export const CONTENT_MEMBERS = {
   readStaleEmbeddingCounts: 'persistence_journal',
   listStaleEmbeddingEffects: 'persistence_journal',
   listOrphanBindingRows: 'persistence_journal',
+  readRequestIndexStates: 'persistence_journal',
   readPersistenceBrainIdText: 'persistence_journal',
   listWorktreeIds: 'persistence_journal',
   listManagedRoots: 'persistence_journal',

@@ -382,7 +382,9 @@ export async function mcpOnboardingNotices(
       const notice = featuresAutoFixNotice(s.features);
       if (notice) out.push(notice);
     }
-    return out;
+    // Onboarding PR 2: after a confirmed first-session delivery through this serve, only coaching goes quiet.
+    const { firstSessionCoachingQuiet } = await import('./first-session.ts');
+    return firstSessionCoachingQuiet() ? out.filter(n => n.kind !== 'coaching') : out;
   } catch {
     return [];
   }

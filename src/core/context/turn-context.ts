@@ -156,6 +156,12 @@ export interface TurnContextResult {
   pressure?: import('./pressure.ts').PressureGate;
   /** coreOnly requests: nightly learning's count line (learning/push.ts) when the note holds unseen items; an older serve omits it. */
   learned?: import('./openclaw-core.ts').LearnedLine;
+  /** Onboarding PR 2, session-start requests that declare `sections`: the named sections, fitted and in priority order. */
+  sections?: import('./session-start-sections.ts').SessionStartSection[];
+  /** Onboarding PR 2: whether the first-session section was due for this request, and why not. Absent from older serves. */
+  firstSession?: { due: boolean; reason?: string };
+  /** Onboarding PR 2, bankOnly requests carrying `sectionAck`: what the serve recorded. */
+  sectionAck?: { recorded: 'new' | 'already' | 'refused'; reason?: string };
   /** Reflex pointers that survived suppression + budget. */
   pointers: ReflexPointer[];
   /**

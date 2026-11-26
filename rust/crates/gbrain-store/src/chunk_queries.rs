@@ -41,6 +41,7 @@ use std::collections::{BTreeMap, HashMap};
 mod segment_regions;
 mod site_reads;
 mod walk_reads;
+mod window_reads;
 pub use segment_regions::SegmentHit;
 pub use site_reads::{
     ChunkReadScope, CodeChunksExistInput, CodeSymbolInput, DeleteChunksExceptInput, FrozenHit,

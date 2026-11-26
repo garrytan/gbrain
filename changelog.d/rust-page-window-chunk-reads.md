@@ -1,0 +1,1 @@
+- On the Rust engine, `get_page` with `body: 'window'` around a search hit's `chunk_id`, and `get_page` with `body: 'none'` on an ordinary page, now answer instead of refusing. Both read the page's chunks with raw SQL, which that engine refuses; they now run through typed engine members with the same SQL on PGLite and Postgres.

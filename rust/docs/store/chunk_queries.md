@@ -155,6 +155,16 @@ the page projection, repair contextual-mode and evidence delivery. Each answers 
   member: `segmentRegions` (`src/core/search/dedup.ts`) reads the same rows there through `keywordBoundedRead`, which
   refuses on Rust as raw SQL. Pinned by `test/engine-parity/segment-regions.test.ts`.
 
+## get_page's chunk reads
+
+- `readWindowChunk(chunkId, pageId)` (`chunk_queries/window_reads.rs`): the text chunk a `get_page` `body: 'window'`
+  read with `around_chunk_id` centers on, as `{ chunk_text, chunk_source, occurrence_id, projected_byte_start,
+  projected_byte_end }`, or null. `countPageChunks(pageId)`: `{ total, embedded }` for a `body: 'none'` read of an
+  unsegmented page. Both read the chunks of the page's live body (`chunkGenerationFilter`, `chunks::in_live_body`),
+  as `src/core/engine-sql/page-window-chunks.ts` runs them on PGLite and Postgres; a page id with no page reads as no
+  chunks. `occurrence_id` is null on an inline chunk; a span end is null when the chunk has none. `embedded` counts
+  chunks with `embedded_at` set. Pinned by `test/engine-parity/page-window-chunk-reads.test.ts`.
+
 ## Known differences
 
 - `sealed` is `COALESCE(chunker_version, 0) >= 4`, as in SQL: a page with no recorded version reads `sealed: false`.

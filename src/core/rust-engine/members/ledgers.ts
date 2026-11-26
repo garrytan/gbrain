@@ -81,6 +81,9 @@ export const LEDGER_MEMBERS = {
   listConceptIncomingLinks: 'pages',
   carryConceptIncomingLinks: 'pages',
   readTombstoneWindow: 'pages',
+  readConceptStatedKinds: 'pages',
+  readRebuildAccess: 'pages',
+  readHeldConceptRows: 'pages',
   // the engine graduation inventory's catalog reads (engine-sql/graduation-catalog.ts)
   listCatalogRelations: 'schema',
   readCatalogSchemaVersion: 'schema',
@@ -167,6 +170,12 @@ export const LEDGER_MEMBERS = {
   hasBeliefBaseline: 'belief_ledger',
   listBeliefBaselinePending: 'belief_ledger',
   countBeliefBaselineSlugs: 'belief_ledger',
+  listBeliefDriftCandidates: 'belief_ledger',
+  readNewestBeliefEvent: 'belief_ledger',
+  listOrphanLifetimes: 'belief_ledger',
+  // the cycle's changed-page window (engine-sql/cycle-reads.ts)
+  readCycleListingInstant: 'pages',
+  listSourceChangedPagesAfter: 'pages',
   readBeliefRedactions: 'belief_ledger',
   insertBeliefRedaction: 'belief_ledger',
   releaseBeliefRedactions: 'belief_ledger',

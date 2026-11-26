@@ -10,11 +10,10 @@ src/core/embedding-migration-worst-case.ts	2
 src/core/embedding-migration.ts	8
 src/core/engine-sql/chunks.ts	6
 src/core/engine-sql/code-edges.ts	1
-src/core/engine-sql/entity-reads.ts	2
+src/core/engine-sql/entity-reads.ts	3
 src/core/engine-sql/facts-purge.ts	1
 src/core/engine-sql/health.ts	3
 src/core/engine-sql/pages.ts	2
-src/core/import-file.ts	1
 src/core/oversized-backfill.ts	2
 src/core/page-state/contextual-proof.ts	1
 src/core/pglite-engine.ts	1

@@ -61,7 +61,8 @@ and `grant_repair_reasons` `{}`, `bound_max_concurrent` 1, `delegated_namespace`
 `persistence/page-visibility.ts` (`defaultSourceMemberWriter`, the client's `member_id`) and the Rust store member
 `readOAuthClientWriteGrant` (the grant `authorizeWrite` re-checks, [journal.md](journal.md)).
 `listOauthClients` serves `listClientRows` (`commands/auth-client-rows.ts`, behind `gbrain auth clients`), which picks the
-columns it shows out of each row; a brain from before a column returns rows without it, so the old six-step projection
+columns it shows out of each row, and the duplicate-name check of `src/commands/agent-register.ts`, which filters the rows by
+`client_name` and `deleted_at`; a brain from before a column returns rows without it, so the old six-step projection
 ladder is gone and the surface and source columns read as null there, as before. The listing's order is now byte order
 (`COLLATE "C"`) where it followed the database's collation on PostgreSQL. `readOauthClient` also
 returns every column, so a caller that named columns checks the ones it needs with `requireOauthClientColumns`, which
@@ -72,8 +73,8 @@ name) and two concurrent reissues end with one winner and one `reissue_conflict`
 token target goes through the `access_tokens` members ([access-tokens.md](access-tokens.md)). A function that also runs a
 raw statement keeps refusing on a Rust brain at that statement. `gbrain auth register-client` registers through `planManualClient` (`oauth-provider.ts`) and
 `insertOauthClientGrant` when the engine has every grant column (`registerScopedClient` in `src/commands/auth.ts`), then
-`setOauthClientTokenTtl`; a grant that reads a named source still runs the raw scope-source check (`assertScopeSourceGrant`)
-and stops on Rust. `auth revoke-client` calls `deleteOAuthClient`, and the Wakeshift drain calls `oauthClientLive`.
+`setOauthClientTokenTtl`; a grant that reads a named source runs `assertScopeSourceGrant` through the engine's typed
+`readScopeSourceConfigs`, so that check is served on Rust. `auth revoke-client` calls `deleteOAuthClient`, and the Wakeshift drain calls `oauthClientLive`.
 
 ## Constraints
 

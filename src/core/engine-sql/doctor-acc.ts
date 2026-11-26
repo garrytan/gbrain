@@ -502,3 +502,53 @@ const VOLUNTEER_ALL_SQL = `SELECT channel, count(*)::int AS n, max(volunteered_a
 export function listVolunteerChannels(raw: EngineRawRead, sourceIds: readonly string[] | null): Promise<VolunteerChannelRow[]> {
   return sourceIds === null ? raw<VolunteerChannelRow>(VOLUNTEER_ALL_SQL) : raw<VolunteerChannelRow>(VOLUNTEER_SCOPED_SQL, [sourceIds]);
 }
+
+// ---- pages that name readers (the member-access checks) -----------------------------------------------------------
+
+export interface MalformedReaderPageRow { source_id: string; slug: string; total: number }
+export interface UnknownReaderRow { reader: string; kind: 'unknown' | 'retired' | 'empty_group'; pages: number; sample: { source_id: string; slug: string } }
+export interface ReaderNarrowingRow { source_id: string; slug: string; readers: string[]; writer: string | null; updated_at: string; total: number }
+
+/** Live pages whose `readable_by` normalizes to nobody, by source then slug in byte order (the first `limit`), each with the total. */
+export function listMalformedReaderPages(raw: EngineRawRead, limit: number): Promise<MalformedReaderPageRow[]> {
+  return raw<MalformedReaderPageRow>(
+    `SELECT source_id, slug, count(*) OVER ()::int AS total FROM pages
+      WHERE deleted_at IS NULL AND frontmatter->'readable_by' IS NOT NULL AND gbrain_access_readers(frontmatter) = ARRAY['!nobody']::text[]
+      ORDER BY source_id COLLATE "C", slug COLLATE "C" LIMIT $1`, [limit]);
+}
+
+/**
+ * The readers pages name that match no live member or no group (or a group with no member), each with its page count and the
+ * first page naming it, by kind then reader in byte order (the first `limit`).
+ */
+export function listUnknownReaders(raw: EngineRawRead, limit: number): Promise<UnknownReaderRow[]> {
+  return raw<UnknownReaderRow>(
+    `WITH named AS (
+       SELECT p.source_id, p.slug, r AS reader FROM pages p, unnest(gbrain_access_readers(p.frontmatter)) AS r
+        WHERE p.deleted_at IS NULL AND p.frontmatter->'readable_by' IS NOT NULL AND r <> '!nobody'),
+     classified AS (
+       SELECT n.*, CASE
+         WHEN n.reader LIKE 'member:%' THEN (SELECT CASE WHEN m.id IS NULL THEN 'unknown' WHEN m.tombstoned_at IS NOT NULL THEN 'retired' END
+           FROM (SELECT 1) one LEFT JOIN access_members m ON m.id = substr(n.reader, 8))
+         ELSE (SELECT CASE WHEN g.id IS NULL THEN 'unknown' WHEN NOT EXISTS (SELECT 1 FROM access_group_members gm WHERE gm.group_id = g.id) THEN 'empty_group' END
+           FROM (SELECT 1) one LEFT JOIN access_groups g ON g.id = substr(n.reader, 7)) END AS kind
+       FROM named n)
+     SELECT reader, kind, count(*)::int AS pages, (array_agg(jsonb_build_object('source_id', source_id, 'slug', slug) ORDER BY source_id COLLATE "C", slug COLLATE "C"))[1] AS sample
+       FROM classified WHERE kind IS NOT NULL GROUP BY reader, kind ORDER BY kind COLLATE "C", reader COLLATE "C" LIMIT $1`, [limit]);
+}
+
+/**
+ * Live pages written in the last `days` days that name readers where the newest earlier version named none, newest first
+ * (a tie by page id, the first `limit`), each with the total and the principal that wrote the revision.
+ */
+export function listRecentReaderNarrowings(raw: EngineRawRead, days: number, limit: number): Promise<ReaderNarrowingRow[]> {
+  return raw<ReaderNarrowingRow>(
+    `SELECT p.source_id, p.slug, gbrain_access_readers(p.frontmatter) AS readers, p.updated_at::text AS updated_at,
+            CASE WHEN p.revision_principal_kind IS NULL THEN NULL ELSE p.revision_principal_kind || ':' || p.revision_principal_id END AS writer,
+            count(*) OVER ()::int AS total
+       FROM pages p
+       JOIN LATERAL (SELECT v.frontmatter FROM page_versions v WHERE v.page_id = p.id ORDER BY v.snapshot_at DESC, v.id DESC LIMIT 1) prev ON true
+      WHERE p.deleted_at IS NULL AND p.frontmatter->'readable_by' IS NOT NULL AND prev.frontmatter->'readable_by' IS NULL
+        AND p.updated_at > now() - make_interval(days => $1::int)
+      ORDER BY p.updated_at DESC, p.id LIMIT $2`, [days, limit]);
+}
