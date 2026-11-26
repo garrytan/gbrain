@@ -111,6 +111,8 @@ describe('the self-check workflow', () => {
     const lane = job.steps.findIndex(s => (s.run ?? '').includes('scripts/ci-rust-multiuser-selfcheck.sh'));
     expect({ proof: proof >= 0, lane: lane >= 0, order: proof < lane }).toEqual({ proof: true, lane: true, order: true });
     expect(job.steps[lane]!.if).toBeUndefined();
+    // Each shard proves the mode on its own runner: neither step is limited to one shard.
+    expect(job.steps[proof]!.if).toBeUndefined();
     expect(job.steps[lane]!.run).toContain('"$SHARD" "$SHARDS"');
     expect(job.steps[lane]!.env).toMatchObject({
       GBRAIN_TEST_KEEP_AMBIENT_ENV: '1', GBRAIN_RUST_MULTIUSER: '1', GBRAIN_RUST_ACCESS_SELF_CHECK: '1',
