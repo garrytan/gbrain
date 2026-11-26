@@ -346,8 +346,24 @@ jobs:
           echo "parity shard $SHARD of $SHARDS: ran $ran of $position files"
           [ "$ran" -gt 0 ] || { echo "::error::parity shard $SHARD of $SHARDS ran no file"; exit 1; }
       # Managed mode on Rust (lane LM): slice 2 lifted the managed_persistence hold on a single-host store, so the
-      # ordinary parity run above covers the managed files and rust-managed-tally.tsv equals rust-tally.tsv. The refusal
-      # on a multi-user store is pinned by test/rust-managed-hold.test.ts in the store-test step.
+      # ordinary parity run above covers the managed files and rust-managed-tally.tsv equals rust-tally.tsv. Slice 3 serves
+      # a multi-user store too: the managed parity files run again with the multi-user switch on for the Rust arm
+      # (`rust-mu-env`, equal to PGLite and Postgres), with the multi-user lock, caller, fairness and claim-fence tests.
+      - name: Managed mode on a multi-user Rust brain (parity with the multi-user switch on, lock and fence tests)
+        if: matrix.shard == '1'
+        shell: bash
+        timeout-minutes: 40
+        env:
+          GBRAIN_TEST_RUST_ADDON_REQUIRED: '1'
+          GBRAIN_TEST_RUST_ARM: '1'
+          GBRAIN_TEST_RUST_MU_ARM: env
+        run: |
+          set -euo pipefail
+          bun test --timeout=120000 test/managed-lock.test.ts test/managed-multiuser-callers.test.ts test/managed-multiuser-fairness.test.ts test/rust-managed-claim-fences.test.ts test/managed-lock-callers.test.ts
+          for file in test/engine-parity/managed-*-on-rust.test.ts test/engine-parity/sync-stamp.test.ts; do
+            [ -f "$file" ] || { echo "::error::parity file $file does not exist"; exit 1; }
+            bun test --timeout=240000 "$file"
+          done
       # Each read command runs through the real CLI on a PGLite brain and a Rust brain. A command
       # that is equal, refused with engine_capability_missing, or has no Rust engine passes; a
       # diverged command (another answer, an untyped error) fails. The flag makes a missing addon

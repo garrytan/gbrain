@@ -14,7 +14,7 @@
  * Needs the addon `bun run rust:build` writes; skips without it (GBRAIN_TEST_RUST_ADDON_REQUIRED=1 makes that an error).
  */
 import { afterEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadRustAddon, type RustAddon } from '../src/core/rust-engine/addon-loader.ts';
@@ -308,6 +308,43 @@ describe('managedLock on a multi-user Rust brain', () => {
       expect(await refusal(() => engine.transaction(async tx => { await tx.setConfig('window.after', 'no'); }))).toEqual({ code: 'lease_lost', reason: 'epoch_moved' });
       expect(await engine.getConfig('window.after')).toBeNull();
       await lock.release();
+    });
+  });
+
+  withAddon('F1: a paused holder\'s native lock still keeps a same-host successor out of the checkout files; the old store write is refused after the takeover', async () => {
+    await withBrain(true, async (engine, home) => {
+      const path = join(home, 'locks', 'wt.lock');
+      const checkout = join(home, 'checkout');
+      mkdirSync(checkout, { recursive: true });
+      const file = join(checkout, 'page.md');
+      writeFileSync(file, 'v1');
+      const leases = rustLeases(engine);
+      const name = `managed:worktree:${WORKTREE}`;
+      // Process A takes the double guard, then pauses (no renewal) right before it publishes its file.
+      const a = (await managedLock(engine, 'worktree', WORKTREE, { path, waitMs: 0, timing: { ttlMs: 250, renewMs: 600_000 } }))!;
+      await sleep(330);
+      expect((await leases.read(name))!.live).toBe(false);
+      // The lease has expired. A successor on the same host (the next epoch) gets the lease but not the native lock, so it
+      // is refused before it can recover or publish anything: the checkout bytes are exactly what A left.
+      const successor = await managedLock(engine, 'worktree', WORKTREE, { path, waitMs: 0 });
+      expect(successor).toBeNull();
+      expect(readFileSync(file, 'utf8')).toBe('v1');
+      expect((await leases.read(name))!.epoch).toBe(a.tokens![0]!.epoch + 1);
+      // A resumes. Its file write is the one the native lock still allowed (the lease cannot revoke it), and its store write is
+      // refused: the epoch moved, so no row changes. Both facts are asserted, neither is hidden.
+      writeFileSync(file, 'v2-from-A');
+      const outcome = await refusal(() => engine.transaction(async tx => { await tx.setConfig('paused.holder', 'wrote'); }));
+      expect(outcome).toEqual({ code: 'lease_lost', reason: 'epoch_moved' });
+      expect(await engine.getConfig('paused.holder')).toBeNull();
+      expect(readFileSync(file, 'utf8')).toBe('v2-from-A');
+      await a.release();
+      // Once A is gone the successor takes both guards and finds the bytes A left.
+      const next = (await managedLock(engine, 'worktree', WORKTREE, { path, waitMs: 0 }))!;
+      expect(next.tokens![0]!.epoch).toBeGreaterThan(a.tokens![0]!.epoch + 1);
+      expect(readFileSync(file, 'utf8')).toBe('v2-from-A');
+      await engine.transaction(async tx => { await tx.setConfig('successor.write', 'ok'); });
+      expect(await engine.getConfig('successor.write')).toBe('ok');
+      await next.release();
     });
   });
 });
