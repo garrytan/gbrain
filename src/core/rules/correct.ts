@@ -38,6 +38,7 @@ import { parseWriteRequestId } from '../persistence/preconditions.ts';
 import { detectInstructionLike } from '../write-gate.ts';
 import { confirmOnTerminal, confirmRequiredError, terminalAuthorityProblem, type OwnerProof, type TerminalProbe } from '../policy/authority.ts';
 import { withRuleWriter } from './admission.ts';
+import { currentCliWriteWait } from '../persistence/write-wait.ts';
 import { approvalDigest, clearApproval, readApproval, readConfirmations, saveApproval, saveConfirmation, type ApprovedFact, type PendingApproval } from './confirm.ts';
 import { isRuleSlug, parseChecks, readRule, renderRulePage, ruleDigest, ruleIdOf, ruleName, ruleSlugOf, RULE_PREFIX, RULE_SCOPES, RULE_TEXT_MAX, type RuleCheck, type RuleScope, type RuleStatus } from './record.ts';
 
@@ -588,7 +589,7 @@ export async function resumeCorrect(ctx: OperationContext, id: string, _opts: Co
 }
 
 export function localRulesCtx(engine: BrainEngine, sourceId = 'default'): OperationContext {
-  return { engine, config: loadConfig() ?? { engine: engine.kind }, remote: false, dryRun: false, sourceId,
+  return { engine, config: loadConfig() ?? { engine: engine.kind }, remote: false, dryRun: false, sourceId, writeWaitMs: currentCliWriteWait().waitMs,
     logger: { info: () => {}, warn: (m: string) => console.error(m), error: (m: string) => console.error(m) } } as unknown as OperationContext;
 }
 
