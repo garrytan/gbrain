@@ -171,6 +171,7 @@ async function missingSourceFiles(engine: BrainEngine, dir: string, location: 's
   try { names = readdirSync(scan); } catch { return out; }
   for (const name of names) {
     if (!name.endsWith('.txt') || names.includes(name + '.ingested') && !corpusFileAwaitsExtraction(join(scan, name), name)) continue;
+    // silent-read-ok: an unresolvable file stays in the normal backlog count (not excluded)
     const r = await resolveCorpusFileSource(engine, dir, name, location, { readOnly: true }).catch(() => null);
     if (!r || r.ok || r.reason !== 'corpus_source_missing') continue;
     out.names.add(name);
