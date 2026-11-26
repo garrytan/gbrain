@@ -15,14 +15,14 @@ import type { RegistryCode } from '../error-registry.ts';
 import { currentSubmissionAuthority } from '../minions/submission-authority.ts';
 import { sealPageTextProjection } from '../page-state/projections.ts';
 import { loadActivePackForEngine } from '../schema-pack/engine-resolution.ts';
-import { authorizeStoredRequest, authorizeWrite, LOCAL_WRITER_SQL } from './authority.ts';
+import { authorizeStoredRequest, authorizeWrite, sharedWriterRow } from './authority.ts';
 import { MIRROR_READ_ONLY_SQL } from './mirror-read-only.ts';
 import { registerEngineView } from './switches.ts';
 import { SLUG_ROOT_MODE_SQL } from '../sync-anchor.ts';
 import { materializeTimeline, prepareCanonicalProjections } from './canonical-projections.ts';
 import { digest, sha256 } from './digest.ts';
 import { admitWriteInTransaction, assertReplayIntent, getWriteRequest, getWriteRequestById, intentDigest, receiptFor } from './journal.ts';
-import { acquireWorktree, containsPath, getWorktreeBinding, probeWorktreeWriter, readManagedMode, WORKTREE_BINDING_SQL, type WorktreeBinding } from './ownership.ts';
+import { acquireWorktree, containsPath, getWorktreeBinding, probeWorktreeWriter, readManagedMode, type WorktreeBinding } from './ownership.ts';
 import { hostIdFor } from './identity.ts';
 import { assertPersistenceAccepting, startPersistenceConsumer, waitForWrite, writeResponse } from './service.ts';
 import { maintenancePublishWaitMs } from './maintenance-wait.ts';
@@ -86,14 +86,30 @@ const SOURCE_SQL = 'SELECT incarnation,archived,local_path,config FROM sources W
  * nine times each; far from the database that was most of an item's cost. Admission and publication re-check them under
  * their locks.
  */
-const CALL_STABLE_READS = new Set([LEASE_SQL, SOURCE_SQL, WORKTREE_BINDING_SQL, LOCAL_WRITER_SQL, MIRROR_READ_ONLY_SQL, SLUG_ROOT_MODE_SQL]
+const CALL_STABLE_READS = new Set([LEASE_SQL, SOURCE_SQL, MIRROR_READ_ONLY_SQL, SLUG_ROOT_MODE_SQL]
   .map(sql => sql.replace(/\s+/g, ' ').trim()));
 const FORGET_CALL_READS = Symbol('forgetCallReads');
-/** `engine` for one connector call: each read in CALL_STABLE_READS is sent once for the call; every other statement goes through. */
+/**
+ * `engine` for one connector call: each read in CALL_STABLE_READS is sent once for the call, and so are the owner binding
+ * and the unlocked writer row, now typed members (`getWorktreeBinding`, `readLocalWriterRow`); every other statement
+ * goes through. A caller gets its own copy of each row.
+ */
 function callReads(engine: BrainEngine): BrainEngine {
   const reads = new Map<string, Promise<Record<string, unknown>[]>>();
+  const typed = new Map<string, Promise<unknown>>();
+  const once = <T>(id: string, read: () => Promise<T>): Promise<T> => {
+    let value = typed.get(id) as Promise<T> | undefined;
+    if (!value) { value = read(); typed.set(id, value); value.catch(() => typed.delete(id)); }
+    return value;
+  };
   return registerEngineView(new Proxy(engine, { get(target, key) {
-    if (key === FORGET_CALL_READS) return () => reads.clear();
+    if (key === FORGET_CALL_READS) return () => { reads.clear(); typed.clear(); };
+    if (key === 'readLocalWriterRow') {
+      const shared = sharedWriterRow(target, typed, once);
+      return (id: string, opts?: { lock?: boolean }) => shared(id, opts).then(row => row && structuredClone(row));
+    }
+    if (key === 'getWorktreeBinding') return (sourceId: string, hostId: string | null) =>
+      once(JSON.stringify(['getWorktreeBinding', sourceId, hostId]), () => target.getWorktreeBinding(sourceId, hostId)).then(row => row && structuredClone(row));
     if (key === 'executeRaw') return (sql: string, params?: unknown[], opts?: { signal?: AbortSignal }) => {
       const text = sql.replace(/\s+/g, ' ').trim();
       const stable = CALL_STABLE_READS.has(text) && !opts?.signal;
