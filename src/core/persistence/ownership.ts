@@ -16,7 +16,7 @@ import { repairWedgedReservation, resolveCoordinationLock } from './coordination
 import type { RawSqlEngine, SqlEngine, WriteRequest } from './model.ts';
 import type { PublicationJournalStore, WorktreeOwnerRow } from '../engine-sql/publication-journal.ts';
 import { tryAcquireNativeLock, type NativeLockHandle } from './native-lock.ts';
-import { leaseEngine, managedLeasesApply, managedLock } from './managed-lock.ts';
+import { managedLeasesApply, managedLock } from './managed-lock.ts';
 import { acquireShared, deferToLease, exclusiveAcquired, foreignWaiterAhead, joinLease, noteWaiting, yieldLease } from './worktree-lease.ts';
 import { managedFilesystemDatastorePath, refreshManagedFilesystemRoots } from './filesystem-guard.ts';
 import { assertPhysicalRoot, claimPhysicalRoot, preparePhysicalRootTransfer, readPhysicalRootReservation, restampPhysicalRoot } from './physical-root.ts';
@@ -202,13 +202,14 @@ export async function claimWorktree(engine: BrainEngine, sourceId: string, path:
  * reports busy while lanes hold the lease, and the lease drains for it after `DEFER_WAIT_MS`.
  */
 export async function acquireWorktree(binding: WorktreeBinding, waitMs = 0, signal?: AbortSignal, engine?: BrainEngine,
-  opts: { yieldLanes?: boolean; identity?: 'strict' | 'reservation' } = {}): Promise<NativeLockHandle | null> {
+  /** `restamp: false`: the engine only selects the multi-user lease; a drifted filesystem device is refused, not re-stamped (callers that never had an engine before slice 3). */
+  opts: { yieldLanes?: boolean; identity?: 'strict' | 'reservation'; restamp?: boolean } = {}): Promise<NativeLockHandle | null> {
   if (!binding.local_path || !binding.coordination_path) return null;
   // #5984 lanes: an exclusive writer drains this process's lane lease first; while lanes still hold it the worktree is busy.
   if (waitMs <= 0 && !opts.yieldLanes ? !deferToLease(binding.coordination_path) : !await yieldLease(binding.coordination_path, waitMs, signal)) return null;
   // GBRA-133: a no-wait take yields to another process's background writer that has waited its grace (worktree-lease.ts).
   if (waitMs <= 0 && foreignWaiterAhead(binding.coordination_path)) return null;
-  const lock = await lockWorktree(binding, waitMs, signal, engine, opts.identity);
+  const lock = await lockWorktree(binding, waitMs, signal, engine, opts.identity, opts.restamp !== false);
   if (lock) exclusiveAcquired(binding.coordination_path);
   return lock;
 }
@@ -249,8 +250,9 @@ export function joinWorktreeLease(binding: WorktreeBinding): NativeLockHandle | 
  * and token, without the inode/birth comparison a recreated directory fails.
  */
 async function lockWorktree(binding: WorktreeBinding, waitMs: number, signal: AbortSignal | undefined, engine: BrainEngine | undefined,
-  identityCheck: 'strict' | 'reservation' = 'strict'): Promise<NativeLockHandle | null> {
+  identityCheck: 'strict' | 'reservation' = 'strict', restamp = true): Promise<NativeLockHandle | null> {
   if (!binding.coordination_path || !binding.local_path) return null;
+  const verifier = restamp ? engine : undefined; // who may re-stamp a drifted device
   // Lane LM slice 3: on a multi-user Rust store the owner host's native lock sits beneath the worktree's I-5 lease (managed-lock.ts).
   const lock = await managedLock(engine, 'worktree', binding.worktree_id, { path: binding.coordination_path, waitMs, ...(signal ? { signal } : {}) });
   if (!lock) return null;
@@ -277,8 +279,8 @@ async function lockWorktree(binding: WorktreeBinding, waitMs: number, signal: Ab
         throw error;
       }
       if (!(error instanceof OperationError) || error.detail !== 'physical_root_device_changed') throw error;
-      if (engine && await restampPhysicalRoot(engine, binding, hostIdFor(engine))) { assertPhysicalRoot(binding.local_path, identity); return lock; }
-      const why = !engine ? 'this caller cannot verify database ownership'
+      if (verifier && await restampPhysicalRoot(verifier, binding, hostIdFor(verifier))) { assertPhysicalRoot(binding.local_path, identity); return lock; }
+      const why = !verifier ? 'this caller cannot verify database ownership'
         : readPhysicalRootStamp(binding.local_path)?.birth === '0' ? 'this filesystem reports no birth time'
           : 'database ownership of this checkout did not verify';
       error.suggestion = `The automatic device re-stamp did not apply because ${why}. On the brain host, run gbrain sources writer status ${binding.source_id} and note admin_state, `
@@ -384,7 +386,7 @@ export async function prepareWriterTransfer(engine: BrainEngine, sourceId: strin
   if (!binding.coordination_path) throw opError('recovery_required', 'The recorded coordination path is missing.',
     `Source ${sourceId}'s host binding has no coordination lock path, so no transfer was prepared. Inspect writer status and show it to the user; repairing the binding is a deliberate topology change (docs/architecture/topologies.md).`,
     { fix: writerStatusFix(sourceId) });
-  const lock = opts.selfTransfer ? await managedLock(engine, 'worktree', binding.worktree_id, { path: binding.coordination_path, waitMs: 5000 }) : await acquireWorktree(binding, 5000, undefined, leaseEngine(engine)); // an ordinary prepare never re-stamps a drifted device, as before slice 3
+  const lock = opts.selfTransfer ? await managedLock(engine, 'worktree', binding.worktree_id, { path: binding.coordination_path, waitMs: 5000 }) : await acquireWorktree(binding, 5000, undefined, engine, { restamp: false }); // an ordinary prepare never re-stamps a drifted device, as before slice 3
   if (!lock) throw opError('write_pending', 'The worktree is busy; retry transfer preparation.',
     `A write still holds source ${sourceId}'s worktree lock, so nothing was prepared. Wait until writer status shows no write in flight, then run transfer prepare again.`,
     { fix: writerStatusFix(sourceId) });

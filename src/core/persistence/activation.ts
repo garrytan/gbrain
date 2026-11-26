@@ -19,7 +19,6 @@ import { isConnectorSourceKind } from './connector-identity.ts';
 import { gitDurabilityPolicy, gitDurabilityState } from './git-durability-policy.ts';
 import { writeThroughConfigured } from './switches.ts';
 import { DATABASE_ONLY_SOURCES_KEY, unboundBindCommand } from './unbound-source.ts';
-import { leaseEngine } from './managed-lock.ts';
 
 export interface ActivationReport {
   enabled: boolean;
@@ -219,7 +218,7 @@ export async function activatePersistence(engine: BrainEngine, opts: { confirmQu
     const local = [...new Map(initial.filter(binding => binding.owner_host_id === hostId).map(binding => [binding.worktree_id, binding])).values()]
       .sort((a, b) => a.worktree_id.localeCompare(b.worktree_id));
     for (const binding of local) {
-      const lock = await acquireWorktree(binding, 0, undefined, leaseEngine(engine), { yieldLanes: true });
+      const lock = await acquireWorktree(binding, 0, undefined, engine, { yieldLanes: true, restamp: false });
       if (!lock) throw quiescence();
       locks.push(lock);
     }

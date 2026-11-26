@@ -25,7 +25,6 @@ import { assertStoreAdminUnlocked } from './admin-lock.ts';
 import { managedFilesystemDatastorePath, refreshManagedFilesystemRoots } from './filesystem-guard.ts';
 import { recordTopologyChange } from './topology-receipts.ts';
 import { lockTopologyPrincipal, topologyPrincipal } from './topology-locks.ts';
-import { leaseEngine } from './managed-lock.ts';
 
 export interface PreActivationClaim { source_id: string; worktree_id: string; roots: string[] }
 
@@ -62,7 +61,7 @@ export async function releasePreActivationClaims(engine: BrainEngine, opts: { ex
       if (!binding || binding.owner_host_id !== hostId || !binding.local_path || locked.has(binding.worktree_id)) continue;
       locked.add(binding.worktree_id);
       // #5914: the release publishes nothing, so it needs the native lock and the reservation's worktree id and token, not the inode of a recreated directory.
-      const lock = await acquireWorktree(binding, 0, undefined, leaseEngine(engine), { yieldLanes: true, identity: 'reservation' });
+      const lock = await acquireWorktree(binding, 0, undefined, engine, { yieldLanes: true, identity: 'reservation', restamp: false });
       if (!lock) throw new OperationError('writer_lock_unavailable', `A local process holds the worktree lock of claimed source '${claim.source_id}'.`,
         'Stop the gbrain process on this host that holds it (gbrain serve or autopilot), then rerun deactivate.');
       locks.push(lock);

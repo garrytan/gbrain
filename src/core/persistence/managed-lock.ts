@@ -68,15 +68,6 @@ export function managedLeasesApply(engine: BrainEngine | object | undefined): bo
 }
 
 /**
- * The engine to hand `acquireWorktree` by a caller that never passed one: it selects the multi-user lease and nothing else.
- * Any other engine is withheld, because an engine also lets the lock re-stamp a drifted filesystem device (ownership.ts
- * lockWorktree), and those callers refused the drift before slice 3 and must keep refusing it.
- */
-export function leaseEngine(engine: BrainEngine | undefined): BrainEngine | undefined {
-  return engine !== undefined && managedLeasesApply(engine) ? engine : undefined;
-}
-
-/**
  * A read-only liveness probe of a native lock: takes it for an instant and releases it, so it holds no authority and takes
  * no lease. It answers only whether some process of THIS host holds the lock (a managed operation keeps its native lock
  * for as long as it holds its lease, so the answer is the same under the double guard). The probes are the only raw
