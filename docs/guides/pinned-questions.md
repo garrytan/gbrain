@@ -154,11 +154,15 @@ Pinned questions are owner-private:
   sees only pins whose question page it can read under its source grant and
   [reader rules](access-designations.md), and the answer leaves out every
   sentence whose evidence has gone stale or that it cannot read
-  (`sentences.stale` and `sentences.withheld` count them). A credential that
-  reads only some take holders (any `takes_holders` grant short of every
-  holder) gets the pin list and status with every answer sentence withheld,
-  because an answer is written from whole pages, takes included, and a
-  citation doesn't prove which of them a sentence came from. Pinning, refreshing and
+  (`sentences.stale` and `sentences.withheld` count them). A fact whose page
+  is in the trash counts as unreadable. Every answer sentence is withheld
+  when the credential reads only some take holders (any `takes_holders`
+  grant short of every holder), or when the pin's scope (its source, under
+  its slug prefix if it has one) holds a page, fact or timeline row the
+  credential cannot read. The refresh writes the answer from the whole
+  scope, takes included, and a citation doesn't prove which input a
+  sentence came from. To read answers over MCP, pin under a slug prefix
+  the credential reads in full. Pinning, refreshing and
   unpinning stay on the brain host for this credential, and its
   `context_pack` shows no pinned answers.
 
