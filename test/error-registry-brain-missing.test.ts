@@ -47,6 +47,15 @@ describe('brain_missing registry entry matches what doctor does', () => {
     expect(entry.why).not.toContain('is `gbrain init`, a decision for the user');
   });
 
+  // Value: protects=the engine-agnostic entry every PGLite and Postgres user sees (`gbrain errors brain_missing`, the
+  // guide row) keeps main's bytes while the Rust store guard puts its own wording in the Rust refusal's message;
+  // fails_when=the summary or why names the Rust store; why_new=the Rust guard first edited the shared entry; seam=none;
+  // no_claim=the Rust refusal's own text (test/rust-missing-store-read-commands.test.ts)
+  test('the shared entry is the PGLite text, byte for byte: the Rust store wording lives in the Rust refusal', () => {
+    expect(entry.summary).toBe("The configured PGLite datastore (the host brain's, or the selected mount's) is not at its path, or its folder is empty (an unmounted drive or a moved folder?), so doctor refused before connecting and created nothing in the folder.");
+    expect(entry.why).toBe("A health check never creates the thing it checks: connecting to a missing PGLite path would build a new empty brain there, migrate it and report it healthy while the real notes sit elsewhere. Creating a new empty datastore is the user's decision, since the old notes would not be in it: for the host brain it is `gbrain init --pglite --no-embedding --path <where>`; for a mount, `gbrain init` is not the way, because it rewrites the host brain's config.");
+  });
+
   test('the generated guide row carries the same meaning, why and exit', () => {
     const row = errorCodeRow('brain_missing')!;
     expect(row.exit_code).toBe(1);
