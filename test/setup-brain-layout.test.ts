@@ -12,7 +12,7 @@
  *     shared brain, anything created for the company part with --team.
  *     --transcripts (PR 3): a call imported twice, a planted credential stored, a call page readable more widely
  *     than its source, a call page under conversations/, a missing archive line.
- *  3. New flags on an existing command; test/setup.test.ts keeps the rest of setup.
+ *  3. New flags on an existing command; test/setup-claude-install.test.ts covers the Claude Code install.
  */
 import { afterAll, describe, expect, test } from 'bun:test';
 import { execSync } from 'node:child_process';

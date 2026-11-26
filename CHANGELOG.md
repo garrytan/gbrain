@@ -10,6 +10,264 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.776.0] - 2026-11-26
+
+**`gbrain setup claude-code --shape household` (or `codex`) sets up a brain for a home in one command: a member and a key for each person, the household groups and folder rules, and the owner's agent wired to answer "what needs doing at home?". It previews every step first and applies only with `--yes`.**
+
+### Added
+- `gbrain setup <harness> --shape household [--owner <id>] [--household-members role:id,...|none] [--yes]` previews, then applies, the household template. It sets up the owner and one member per adult, helper and group chat, the `household-adults`, `household-helpers` and `household-chats` groups, one folder rule per household folder (each naming the owner) and one 0600 key file per member that reads only what that person's role allows. A child gets a page, never a member or a key. Every member key is labelled-only, so it reads the household records and none of the owner's other notes; `gbrain access member labelled-only <id> off` lifts that for one person.
+- `gbrain household template` runs the same template on its own. A re-run converges: it keeps what already matches and lists anything that differs as a BLOCKED line with the exact command that fixes it, writing nothing until every line is clear.
+- Each run writes a receipt. `gbrain setup <harness> --shape household --status` (or `gbrain household template --status`) prints it with a read proof per member: each key reads exactly the records its role allows, without adding a read-log entry or touching the key's last-used time. `--resume <receipt id> --yes` finishes a run that stopped part way.
+- New refusals: `setup_household_unbound` (the template would make the brain serve several people while this harness's connection stays bound to nobody, for example on a host where OpenClaw or Hermes is installed), `setup_receipt_not_found` and `setup_receipt_target_mismatch`.
+- Tutorial: [Set up a household brain](docs/tutorials/household-brain.md).
+
+**On a brain that serves several people, only the owner can give, change or remove a person's household role or delete their page over MCP, so another agent can no longer learn about hidden household records by trying.**
+
+### Changed
+- On a brain that serves several people, a remote `put_page`, `edit_page`, sync row or `household_add about_role` from anyone but the owner that gives, changes or removes a subject's `household_role` is refused with one `household_reclassify` message whatever records exist. Before, giving a person with no role the role `adult` was refused only when a record about them was kept to adults, which told the caller that record existed even when it could not read it. The owner, and `gbrain household replace` on the brain host, set roles as before.
+
+### Fixed
+- On a brain that serves several people, a remote `delete_page` of a household subject from anyone but the owner is refused with one `household_reclassify` message whatever records exist. Before, the refusal counted the records about the subject, hidden ones included.
+- `bun scripts/synthetic-household.ts <dir>` reserves the same `.gbrain` folder it seeds (a trailing space no longer slips past the "already exists" check) and removes that folder when seeding or saving the config fails.
+- The live household check's opt-in is now `GBRAIN_TEST_LIVE_HOUSEHOLD=1`, matching the naming rule for paid opt-ins; the old name stops the run with the rename. Its no-gbrain baseline is reported in the log instead of asserted.
+
+**Host transfers keep committing and pushing, sync stops storing pages no command can reach, and several repair checks stop failing or misreporting.**
+
+<!-- behavior-change: sync_slug_too_long_10080 -->
+<!-- behavior-change: transfer_carries_git_durability_10123 -->
+<!-- behavior-change: gitignore_anchored_db_only_10102 -->
+
+### Fixed
+- `gbrain sources writer transfer accept` on another host carries the previous owner's Git durability to the new host (enabled only when the push probe passes there) and warns with the enable command when the new host will not commit or push. Before, every cross-host transfer silently turned durability off (#10123).
+- `transfer accept` and the commands that read the managed-root registry no longer abort when an old recorded root sits under a directory this user cannot enter (EACCES or EPERM); the record keeps fencing its literal path, and an unreadable record now names its file and the cause (#10122). Guarded file writes and the doctor checks that test whether a path is managed still fail with EACCES on such a host; that is a follow-up.
+- Sync writes a single-folder `db_only` entry to `.gitignore` as `/folder/`, so a tracked nested folder of the same name is no longer ignored and `git pull --ff-only` no longer breaks over it (#10102).
+- A page an older sync stored under a slug over 255 characters can be deleted, restored and purged, and keeps syncing and reindexing; sync now holds a new file with such a slug as `slug_too_long` (and `gbrain import` on an unmanaged brain skips it) instead of storing a page nothing can name (#10080).
+- The post-write links effect reuses the per-source slug index write preparation keeps, instead of listing every slug of the source for each landed page (about 15 MB per page on a 121k-page source) (#10101).
+- Remote `get_versions` lists a page's history when one stored version's segment rows no longer cover its body (a page `repair segmented-tiling` republished): that version is flagged `body_unreadable` with no size or `body_ref`, instead of the whole list failing `page_body_rows_unreadable` (#10002).
+- `gbrain repair file-drift --slug <slug>` on a read-only mirror compares a held page through its hold, as `--held` does, so the command a hold's fix names no longer reports `no_drift` for it; its comparison form no longer crashes on `page.exceptions` (#9711).
+- A held `file_gone` page an import stored while its source was a read-only mirror is no longer listed `side_changed` ("its file is present now") forever by `repair file-drift --held` (#9576).
+
+**Nine bugs reported from outside the project are fixed: starter-tier recall takes `max_chars`, the global maintenance cycle synthesizes every source's captured sessions, and init, Hermes skill suggestions, doctor and keyword search paging work as documented.**
+
+### Fixed
+- A remote client on the starter MCP surface (the Claude Code and opencode default) can pass `max_chars` to `recall` and gets a reply cut to whole facts within it, instead of `param_not_on_surface` (#9514).
+- The global maintenance cycle runs the synthesize phase for one source that owns captured sessions at a time, in turn, so sessions captured in another source's checkout are synthesized under that source instead of being reported `corpus_source_other` forever. Archived sources and the storage shelf never take a turn (#8669).
+- `gbrain init` works when the brain home sits under a symlinked folder, such as `/var` on macOS (#9925). A new content directory inside another Git repository is refused before setup records it, so a rerun with `--content-root` works, and `--git` whose `git init` fails is refused the same way instead of claiming the parent repository (#10287).
+- `gbrain timeline-add --source-id` explains that `--source` is the entry's provenance and names `GBRAIN_SOURCE=<id>` as the way to choose the source it writes to (on a remote brain, the connection's grant), instead of suggesting `--source` (#8343).
+- `gbrain doctor`'s index audit no longer lists primary-key and unique-constraint indexes as unused (#9966).
+- Long Hermes sessions get their skill suggestions again, because the hook's deadline starts once its input has arrived. `gbrain doctor` warns when a harness times out on 20% or more of at least 20 recent prompts (#10334).
+- A page whose re-extraction is held at its current content leaves the `extract_atoms` backlog and discovery, so `gbrain dream --drain` finishes instead of stopping `no_progress` every night. The hold stays visible in doctor (#10270).
+- Keyword-only search applies `offset` as rows to skip, so pages past three times the limit are no longer empty, up to the existing three-times-the-search-cap pool (#9922).
+
+**Twelve small fixes from outside reports: doctor, schema, dream, search diagnose, Slack sync and error messages now say what is true and point at commands that work.**
+
+### Fixed
+- The schema-pack advisor suggests `gbrain schema list` for a pack it cannot resolve; it used to suggest `gbrain schema packs`, which does not exist (#10307).
+- `gbrain schema active` refuses a configured pack that is not installed with `invalid_params` and a `gbrain schema list` fix, instead of an internal error that pointed back at doctor (#10201).
+- Capture accepts a page type the active schema pack declares as an alias, as `gbrain schema lint` already does (#10103).
+- Doctor `fact_bulk_dates` no longer states that a day holding many facts records when they were loaded. Same-day events look the same, and only a claim with an earlier date contradicts the stored date (#10275).
+- Doctor `minions_migration` says its dry-run preview never clears the warning, names `gbrain sources shared-skills <source> off` for a source that should not take shared skills, and says the real `gbrain apply-migrations --yes` run clears it (#10040).
+- Doctor `unlinked_facts` names the real `gbrain facts relink --conversation` command instead of its dry run, which records nothing and so never moved the warning (#10039).
+- Doctor `extract_health` counts a halt's age in UTC days, the calendar the extractor writes, so a database in another time zone no longer shows today's halt as a day old (#10356).
+- `gbrain search diagnose` reports `source_id: null` and "every source" when no `--source` filter was given, instead of claiming `default` (#10314).
+- `gbrain dream --input` is a usage error when the value is missing or an explicit `--phase` list leaves out `synthesize`; the file used to be ignored silently (#10318).
+- A Slack sync names users first seen on a later day of the same run from that run's one `users.list` call, instead of writing their raw ids (#10220).
+- An interrupted PostgreSQL data-file read (`Interrupted system call`) is reported as `storage_interrupted` with host-side advice, not as damaged data with a repair command (#10351).
+- The `cloudflare_attention_required` junk pattern matches the interstitial's title or heading, not prose that quotes the error line, so such pages are no longer quarantined (#9868).
+
+<!-- behavior-change: search_diagnose_source_filter_10314 -->
+<!-- behavior-change: dream_input_needs_synthesize_10318 -->
+
+**Self-upgrade and `gbrain engine install rust` read release attestations with your GitHub token when one is set, so a busy network no longer makes them refuse a genuine release; CI also stops failing on timing-sensitive tests.**
+
+### Changed
+- Reading a release's build attestation now sends `GH_TOKEN` (or `GITHUB_TOKEN`) as a bearer token to `api.github.com` when one is set, because keyless reads share GitHub's 60-an-hour limit per IP address. Any failed attempt with the token is followed by one keyless attempt, so a token scoped to other repositories never blocks a read. With no token set the read stays keyless, as before.
+- When no attestation can be read, `gbrain engine install rust` names the HTTP status with the rate-limit headers, or the network error. An attempt made with the token reports only that it failed, so the token never appears in the message.
+
+### Fixed
+- `gbrain upgrade`'s restart check no longer asks you to restart a `gbrain` process that exited, or is a zombie, after `ps` listed it (#10342).
+- The release workflow's addon smoke can read attestations again (`attestations: read`), and `scripts/ubicloud/ubi-runner.sh` passes the Ubicloud key to curl through a header file instead of its command line.
+- `scripts/pregate-remote-gate.sh` judges whether a branch changed the CI files from its merge base with master, so a branch behind master is no longer refused for master's own CI edits.
+- Timing-sensitive tests are fixed at the cause (the OpenClaw refresh cooldown, the Postgres write-lock wait, the withdrawn-fence midnight boundary and the shard budget timeout), and the slow setup suite is split into nine files across 42 unit shards.
+
+**Keyword search on the Rust engine now returns later pages too: asking for results past three times the page size no longer comes back empty.**
+
+### Fixed
+- On the Rust engine, `searchKeyword` with an offset at or past three times the limit (for example limit 1, offset 4) returned no rows, because it kept only `limit x 3` candidates before skipping the offset. It now keeps `(offset + limit) x 3`, capped at three times the search limit cap, the same window PGLite and Postgres use since #9922.
+
+**A new page shows how gbrain compares with simpler setups, with the eval numbers behind each claim, and `gbrain value` links to it.**
+
+### Added
+- `docs/proof.md` lists six measured results from gbrain-evals at a pinned commit, each with its gbrain build, date, size, judge and 95% interval where one was published: four where gbrain helps (answers about your own notes, LongMemEval against plain hybrid search, permission leaks, planted false claims) and two where a simpler setup wins (an agent that greps the files on very long chat histories, and a pasted whole conversation on LoCoMo). It also lists other memory systems' published LongMemEval figures and why they aren't comparable.
+- `docs/guides/what-youd-build.md` names each part of gbrain, what it does, and what a simpler setup covers instead.
+
+### Changed
+- The text form of `gbrain value` ends with a link to the comparison page. `gbrain value --json` is unchanged.
+
+**`gbrain value` shows what your brain holds and has done for you, as real counts.**
+
+### Added
+- `gbrain value` prints one card with conversations archived and the days they cover, pages by kind, links, facts kept (active, superseded, withdrawn), lookups served, pages brought up on their own and how many were later retrieved, nightly items and the brain score. Every row is a measured number, `off` with the command that turns it on, or `unavailable` with a code and the reason; a row never shows 0 for a number that could not be read. `gbrain value --json` prints the same card as a versioned JSON document (`gbrain.value`, version 1). On a brain with no embedding key the score reads "N of N reachable without a key".
+- The card is a local command on the computer that holds the brain. It is not an MCP tool on any surface, and a thin client refuses it. If every count fails to read, it exits non-zero with the error `value_unavailable`.
+
+### Fixed
+- A recall answered without a ranked search (facts only, or keyword search on a keyless brain) and a keyword-only `search` now count as lookups in search telemetry, so lookup totals no longer miss them on the default keyless install. Lookups served also counts searches gbrain runs for itself, such as the nightly cycle.
+
+<!-- behavior-change: value_card_cli -->
+
+**The test that checks an extract_facts page walk stops on a timer abort passes again on PostgreSQL.**
+
+### Fixed
+- The test armed its abort timer before the walk read its fence holds, so on PostgreSQL the timer fired during that read and the walk stopped before its first page. It now arms the timer when the walk reads its first page, and it still fails when the walk stops yielding to timers. Test-only change; nothing to do on upgrade.
+
+### Fixed
+- `gbrain value` counts a recall once when it falls back to a question recall on a brain without embeddings; it used to count it twice.
+- Facts whose page was deleted no longer count as active facts on the card.
+- A page whose kind is the literal word `__proto__` is no longer dropped from the card's page breakdown and total.
+- The value card guide now says the Nightly items row reads "at least N" when its read reaches the 100-item limit.
+
+**When you correct your agent, one `correct` call saves your words as a standing rule and fixes the wrong fact, and your agents load the rule once you approve it.**
+
+<!-- behavior-change: standing_rules_correct_gst3827 -->
+
+### Added
+- The MCP tool `correct` and `gbrain correct "<rule>" [--fact-id N --corrected-fact "<text>"]` save a standing rule (`rules/me/<name>` or `rules/team/<name>`), then replace the wrong fact (or withdraw it, never purge it), then mark the rule active. Each step has its own request id, so `gbrain correct resume <receipt>` or a replay finishes a stopped correction without writing twice.
+- The receipt says `committed`, `pending`, `partial`, `proposed` or `conflicted`, what has taken effect, and the next step with who takes it (the agent, the owner, or the brain host's operator).
+- A rule from your own agent is searchable at once and reaches the standing-rules section only after you approve its exact revision with `gbrain rules approve <id>@<revision>`; at your own terminal, `gbrain correct` asks for a short code and confirms it there. Another member's rule stays proposed, and the fact unchanged, until you approve it.
+- `context_pack` takes `include_rules: true` and `gbrain compile-context` takes `--include-rules`; both add your confirmed rules (at most 30 rules and 1,500 characters) as labelled data. The session-start section stays off until `gbrain config set rules.session_start on`.
+- `gbrain rules list|show|approve|retire|check` and the doctor check `rules_regression`.
+
+### Changed
+- Remote writes to `rules/` pages, or of `type: rule` pages, outside `correct` are refused (`rule_owner_only`), and a standing rule (a `rules/` page) only moves forward: from proposed to active, and from active to retired, never back.
+- The correction-pipeline skill uses `correct` for wrong facts in the facts table and for hallucination guards.
+
+**Your agent can offer jobs it could take on, found in what is already in your brain, with no model call.**
+
+### Added
+- `gbrain propose [--days 7]` and the MCP tool `propose_jobs` list five kinds of job. They are people waiting on you, email threads you owe a reply, recurring meetings with no prep page, bulk senders you never wrote to, and the same question asked in two agents. Each job gives a count, the pages it found and the installed skill or gbrain command that does it; the skill is picked by the skill resolver's word match on a fixed description, with skill vectors and the model picker off. Only the install's owner can read them (`propose_owner_only` otherwise), a remote call sees only pages it can read, and a connection with a trust floor is refused.
+- `gbrain propose accept|decline <signal>` and `propose_decide` record your answer in the first-session record and read it back.
+- On a new personal brain, once a Google source has synced, the first-session suggestion also offers the top job you have not answered. It is computed after the sync and cached, so session start runs no detector.
+- `gbrain onboard --propose` points to `gbrain propose`.
+
+<!-- behavior-change: propose_jobs_gst3955 -->
+
+**OpenClaw group chats stop seeing a pinned skill as soon as it is marked owner-only, and front matter that is never closed can no longer make an owner-only skill public.**
+
+### Fixed
+- After a skill catalog is rebuilt (a skill edit, or `gbrain skills index build`), OpenClaw conversations get no pins until the plugin's background refresh renders them from the new build. A pin whose skill was just marked `audience: owner` never reaches a group in between, and a refresh that fails is tried again on a later turn.
+- A `SKILL.md` whose front matter is never closed, quotes the `audience` key, spells it `Audience` or starts with a byte order mark is kept to the owner instead of being indexed with no audience.
+
+**OpenClaw's skill suggestions now know who is talking: the owner, a group or channel, or an automated run, and the owner gets a one-time skill brief at the start of each session.**
+
+### Added
+- Session classes for the OpenClaw skill resolver. Each turn is the owner's (the main session, an owner-private memory audience, or a direct message from an `--owner-sender`), a conversation (a group, a channel, or a direct message from someone else), or silent (relay, cron, heartbeat, webhook and subagent runs). When OpenClaw reports no memory audience, the class comes from the session key and the turn log says `audience: unknown`; with `--owner-sender` set, a message on the shared main session from anyone else, or with no sender id, counts as another person's DM.
+- `audience: owner` in a skill's frontmatter keeps that skill out of every suggestion and pin outside the owner's sessions. Any other non-empty `audience` value (a typo, a list, `true`, a number) is treated the same way, and so is front matter that does not parse but has an `audience:` line, so a mistake never makes a skill public.
+- `gbrain skills pin add <id> --class owner,conversation` chooses where an OpenClaw pin appears (adding it again with only `--line` keeps its classes); `gbrain setup openclaw --suggest-in owner|conversation|owner,conversation` chooses where suggestions appear.
+- With `--pins-route first_turn`, the owner's pinned skills become a session-start brief. The first turn of each owner session gets it once, and a gateway restart or a retried run does not repeat it. A new session after `/new` or a compaction gets a fresh one.
+- `gbrain doctor` shows each agent's conversation pins, where suggestions appear, and turns by memory audience.
+
+### Changed
+- OpenClaw pins apply to the owner's sessions unless you add `--class conversation`; relay and webhook turns get no suggestions and no pins.
+- A worker that rebuilt a stale index refreshes the OpenClaw pin and exclude lists in the background (at most every 5 minutes; a rebuild during that wait gets one refresh when it ends).
+- The OpenClaw skill probes time out after 20 seconds instead of 120.
+
+### Fixed
+- Pins no longer render a skill that is hidden or shadowed by a higher-precedence copy.
+- The exclude list is no longer cut at 1,024 entries; each turn passes only its own pins, and hidden skills travel separately.
+- A non-main agent with `workspaceOnly` reads and no workspace entry now uses OpenClaw's default workspace for that agent instead of being treated as readable anywhere.
+- When OpenClaw does not answer during a refresh, the skill roots it reported and the skills it hid last time are kept instead of dropped, so a hidden skill is not suggested or pinned again.
+- A first turn that carries the session-start brief and runs past its deadline is resolved when OpenClaw retries it, and the retry carries the brief once.
+- The session-brief ledger is compacted across gateway restarts instead of growing until one process writes 5,000 lines.
+
+<!-- behavior-change: openclaw_pins_owner_only_gst3896 -->
+
+**The Gmail backfill no longer skips mail that was migrated in from another account, deleted Google contacts now retire their pages, and four slow paths (remote search, OpenClaw's prompt cache, big-source sync and managed facts) are fast again.**
+
+### Fixed
+- Gmail backfill: the floor only moves past mail a complete listing has shown and the sync has settled. Mail imported from another account keeps its old date but lists among the mail of its import day, and one such thread used to drop the floor past years of mail, which was never listed and the backfill still finished as done. Windows that list more than 20 pages are narrowed until they list completely (#9129). Reported by @LeslieCBarry; first fix by @javieraldape.
+- Google contacts: the People field mask now asks for `metadata`, which is what carries `deleted: true` on a deleted or merged-away contact. Without it the API sent a bare tombstone and the contact's page stayed for good. Contacts deleted from now on retire their pages; a page left by a contact deleted before this upgrade stays until you remove it. The mask change re-lists contacts once on the next sync (#10246). Reported by @thebergerking91; first fix by @Masashi-Ono0611.
+- Remote search over several sources no longer spends about 3 s per call counting rebuild progress while image rows wait in the projection queue: the queue is read on its own first and reaches pages by source and slug (#10367). Reported by @ryangu00; first fix by @Masashi-Ono0611.
+- OpenClaw: the Live Context clock shows the local hour instead of the second, so the block stays byte-identical between turns in the same hour and the host's prompt cache is no longer rewritten on every new message (169k of a 220k-token prompt in the report) (#9998). Reported by @PropFunderBrett; first fix by @Masashi-Ono0611.
+- Page snapshots read a source's source-wide fact withdrawals once per batch instead of once per page, so a plain-directory sync of a large source with thousands of them fits its freshness deadline again (#9350). Reported by @DaCal90; first fix by @javieraldape.
+- Managed fact extraction finds a stored batch through indexed reads (the completion by request id, its entities by id) instead of scanning and detoasting every fact receipt the writer ever journaled, which took about 14 s per batch on a small Postgres (#9302). Reported by @lumbering-vocalist.
+
+**Trust tiers, retired-fact history and provenance stamps now stay correct through relowers, renames, withdrawals, page edits and a first `remember`.**
+
+### Fixed
+- `gbrain trust claim-sources --relower` (the fix doctor `trust_sources_unclaimed` offers) no longer lowers a row the owner confirmed or lowered with `gbrain trust confirm`/`lower`, keeps its owner decision, and no longer lowers facts on a page the owner confirmed (#10178).
+- A Life Chronicle event summary projected onto its depth page's timeline now ranks no higher than its event page under a claim, and `--relower` lowers the rows an earlier claim lifted (#10176).
+- A retired fact keeps its retirement time, `valid_until` and original context when an unrelated row of its page is edited or the extract_facts reconcile reads the generated `superseded by #N` marker; an explicit note in the cell still updates it (#10055).
+- Sync rename carries, renames onto a tombstone, the rename-identity repair and `gbrain repair facts-rehome` keep the trust tier of the pages and facts they re-key instead of dropping them to unknown (#10003).
+- The withdrawal mirror's page strike and a local `forget`/`forget_fact` with a reason keep the trust tier of the page and fact they rewrite (#9739).
+- The `memory/unattributed` page a first `remember` creates carries its `trust_tier` marker, so doctor `provenance_stamp_drift` stays ok on a fresh brain (#10286).
+- The member and scope memory pages a first `remember` creates carry `captured_at`, so a content lint finds temporal provenance (#9945).
+- A `fence_absent` hold clears once the page's facts fence parses again and its rows are already in sync, instead of staying in doctor `generation_held` forever (#10067).
+
+**`gbrain profile export` writes your own profile as text another assistant keeps: a memory list for Claude, a marked GBrain block in Muse's Memory.md, or a readable page.**
+
+### Added
+- `gbrain profile export --format memory-text|muse-memory|markdown [--include-private] [--json]`. Only facts visible to everyone leave unless you pass `--include-private`, which warns and makes an `--into` file readable only by you. A fact a tool or an outside source wrote keeps a "not confirmed by you" label. Facts your credential cannot read, and facts cut at 500 characters, are named in the output and in `--json`.
+- `--into <Memory.md>` replaces only the previous GBrain block and leaves your own lines alone. It refuses, changing nothing, a damaged block, a file that changed during the write, an incomplete profile read or a symlink loop; it follows symlinks to their target, and marker lines inside fenced code are left alone. `gbrain profile import` skips that block, so an exported profile is never read back as new facts.
+- The Muse connector brief (docs/connectors/muse.md) and the grok.com connector path in docs/guides/grok-bot.md.
+
+### Changed
+- The owner login page leads with the owner's own `gbrain mcp admin login-link` command, with the URL quoted and a waiting connector's request kept; the prompt for someone else who runs the brain host is folded below it. The expired-link page says the same.
+- On the starter tool surface, `remember` accepts `content_origin` only as `inferred` or `tool_output`; `user_said` is refused as off the surface, and the refusal quotes nothing the caller sent beyond that value.
+
+### Fixed
+- `gbrain profile import` keeps an honest receipt. A resume reads the write's own error, a write held for review counts as not saved and names its release command, an unknown outcome is checked on resume, and one line the brain refuses or holds costs only itself. A damaged receipt is refused the same way by apply, `--resume` and `--status`.
+
+**Fact and page purges and the writer checks now go through named engine members instead of raw SQL, and nothing you run changes.**
+
+### Changed
+- About 35 more `BrainEngine` members now carry the statements that fact and page purges, writer admin, write-gate holds, embedding budgets, trust proposals and the access and credential reads used to run inline. PGLite and Postgres run the same SQL as before, behind typed members that a Rust-backed brain can serve later.
+- A held write (a quarantined fact or take) now keeps its page binding when the page is renamed, because the hold member writes the same bound and unbound statements as master.
+- The Rust shadow evidence epoch restarts when this ships (adapter version 6 to 7). No migration.
+
+**Shadow mode's help now says a brain that cannot be opened stops the seed.**
+
+### Fixed
+- `gbrain engine shadow --help` now says that a brain that cannot be opened stops `seed` with exit 1 (`could not open the brain (pglite_busy)` while another process holds a PGLite brain) and that nothing is written. The command already behaved this way; only the help text was missing it.
+
+**Shadow mode can now compare sync-import page writes on a default brain.**
+
+### Changed
+- The Rust store's `put_page` now takes the contextual-retrieval option and stores the same stamp as the primary. Sync imports and `put_page` send that option in the default mode, so their page writes were counted uncomparable (`unknown_option`) on a default brain. They are now replayed and compared like any other page write.
+- Page writes in the default mode can now count toward the swap's write check. It still covers page and link writes only.
+
+**Shadow mode can now compare a page write that ran inside a transaction, which is how `put_page` and sync imports write.**
+
+### Changed
+- A sampled `put_page` or import page write inside a transaction used to be counted as uncomparable. It is now compared after the transaction commits, with the same checks as a page write outside one. The rows it touches are read on the transaction's own connection before the write, in a savepoint that is rolled back, so the write is never changed. The result is replayed on a throwaway Rust store. A transaction that rolls back is never compared.
+- A sample is counted uncomparable, with a named reason, when the transaction made an earlier write to the page, its links, chunks, tags or versions (a version row for the same page is allowed), wrote one page twice, or sent an option the Rust store does not take. It is also uncomparable when the page write is not alone on its transaction (`in_transaction_busy`), because the comparison's savepoint could otherwise roll back another call's statements.
+- A pass of the swap's write check still covers page and link writes only. Chunks, tags, aliases, timeline entries and takes are not compared.
+
+### Known limits
+- A sync import sends the contextual-retrieval option, which is on by default and which the Rust store does not take from this path yet. On a default brain those samples are counted uncomparable (`unknown_option`).
+- A new page whose import adds tags comes out uncomparable as `moved`, because the tag write moves the page's revision.
+- On Postgres, an update through `put_page` or a managed sync is usually busy, and the warm single-write lane is not sampled at all.
+
+**Shadow mode now compares page writes made on the warm single-write lane too.**
+
+### Changed
+- The persistence consumer lends a reserved connection's own transaction to single writes. A sampled page write in it was never sampled before. It now follows the same rules as a write in an ordinary transaction: the rows it touches are read after the transaction's first statement, in a savepoint that is rolled back, and the comparison runs after the commit. A first statement sent ahead of BEGIN's answer stays first. A write that is not alone on its transaction is counted uncomparable (`in_transaction_busy`), so the savepoint never rolls back another call's statements. A rolled-back transaction is never compared.
+- The swap report's criterion 5 sentence no longer lists the warm single-write path among the write types that are not compared. Reads, follow and writer evidence for that lane are unchanged.
+
+**Shadow mode no longer loses a sampled write from its write comparison count.**
+
+### Fixed
+- A sampled write that never reached a verdict used to vanish from the write comparison count: one the shadow could not hand to its child when mirroring stopped, one still being read back when the process disconnected, and replays still queued when the shadow child hit its exit deadline. Each is now counted as uncomparable with a named reason (`send_shed`, `readback_abandoned`, `child_exit_deadline`). A lost sample can only make the swap's write check stricter, never pass it.
+- The swap guide now says that above about a 0.05 write sample rate, bursts of writes only add `queue_full` (uncomparable) samples.
+
+**A Rust brain restore can now refuse to publish work that would run by surprise, and a restored brain gets a fresh brain id.**
+
+### Added
+- The Rust store has a restore safety check and a restore step for the backup commands to call. The check counts unfinished write requests, recovery records, live effects, purges the backup lacks and kinds of record it cannot classify, and refuses with a named reason. `gbrain backup restore` will report it as `restore_step_unsupported` once that command calls the restore step; it does not yet. The step turns archived automation off, detaches sources from the old machine's folders, and cancels unfinished jobs. It does not revoke anything yet: a backup that holds a live OAuth client, a local writer registration, activated shared-skill publication, a shared-skill member or policy, or an access token is refused by name (`archived_authority`, `shared_skill_state`, or `unclassified_state` for tokens), and the error says to re-issue tokens on the live brain and restore from an archive taken without them, or to wait for the follow-up that adds revocation. Most MCP users have OAuth clients, so they cannot restore a Rust brain until that follow-up lands.
+- A restored Rust brain gets a new brain id, so it is never the same brain as the one it was copied from. The old and the new id are in the restore report. If the process stops between the two writes that record the id, the next open repairs the file from the record.
+- A restore refuses, and changes nothing, when it runs inside an open transaction, when rebasing page origins would put two live pages on one file, or when its settings list leaves out a setting the store holds. Windows and UNC page origins are kept unchanged and counted in the report; rebasing them is not done yet.
+
+Postgres and PGLite brains are unchanged and keep `pg_dump` and the PGLite backup. Nothing to do on upgrade.
+
 ## [0.60.775.0] - 2026-11-26
 
 ### Fixed
