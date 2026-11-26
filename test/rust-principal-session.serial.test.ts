@@ -137,16 +137,13 @@ describe('a multi-user session on a Rust store', () => {
     const addon = { deriveAccessPolicy: (ctx: unknown) => { derived++; return (engine.addon as unknown as { deriveAccessPolicy(c: unknown): unknown }).deriveAccessPolicy(ctx); } };
     const session = await openPrincipalSession(store(), 'secret-owner', addon);
     // The owner's session reads it, even inside the stranger's record, and every policy came from the store.
-    // (A write-class call: an owner's read-only call carries member lineage, which neither the store nor TypeScript
-    // models for a Rust brain yet, so both refuse it; the next lines pin that the two agree.)
-    const seen = await withCallerAccess({ identity: ['member:mallory-example'], hidePrivate: true },
-      () => session.run('readPageHiddenFromCaller', { readOnly: false }, read));
-    expect(seen).toBe(false);
-    expect(derived).toBeGreaterThan(0);
-    const lineage = await session.run('readPageHiddenFromCaller', { readOnly: true }, read).catch(e => e);
-    expect((lineage as { code?: string }).code).toBe('engine_capability_missing');
-    const tsLineage = await withCallerAccess({ identity: ['member:owner-example'], owner: true, lineage: true, hidePrivate: false }, read).catch(e => e);
-    expect((tsLineage as { code?: string }).code).toBe('engine_capability_missing');
+    for (const readOnly of [false, true]) {
+      // A read-only call carries the owner's member lineage, served as the owner read rule.
+      const seen = await withCallerAccess({ identity: ['member:mallory-example'], hidePrivate: true },
+        () => session.run('readPageHiddenFromCaller', { readOnly }, read));
+      expect({ readOnly, seen }).toEqual({ readOnly, seen: false });
+    }
+    expect(derived).toBeGreaterThan(1);
     session.release();
   });
 

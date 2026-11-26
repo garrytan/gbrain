@@ -100,6 +100,15 @@ const EDGE_PATCHES: Array<Partial<CallerAccess> | null> = [
   { identity: ['member:alice-example'], labelledOnly: true, lineage: true, owner: true, hidePrivate: false, remotePolicy: { privacyRelaxed: false, restricted: true, schemaVersion: 330 } },
   { identity: [], labelledOnly: true, lineage: true, owner: true },
   { identity: ['group:team-a'], labelledOnly: true, lineage: true, owner: true, satisfiedRuleIds: ['wiki:team'] },
+  // Owner lineage reads served as the owner read rule (opt-in off, no audience members), with and without folders.
+  { identity: ['member:alice-example'], owner: true, lineage: true },
+  { identity: ['member:alice-example'], owner: true, lineage: true, hidePrivate: false },
+  { identity: ['group:team-a', 'member:alice-example'], owner: true, lineage: true, satisfiedRuleIds: ['wiki:team'], folderCoverage: [{ source_id: 'wiki', prefix: 'p/' }] },
+  { identity: ['member:alice-example'], owner: true, ownerReads: true, lineage: true, remotePolicy: { privacyRelaxed: false, restricted: true, schemaVersion: 330 } },
+  { identity: ['member:alice-example'], owner: true, lineage: true, restricted: false },
+  // Not served: the owner opt-in, and audience-kind members, still refuse.
+  { identity: ['member:alice-example'], owner: true, lineage: true, ownerReadsRestricted: true },
+  { identity: ['member:alice-example'], owner: true, lineage: true, audienceKindMembers: ['room-a'] },
   { identity: ['member:alice-example'], privateFactSources: ['wiki'] },
   { identity: ['member:alice-example'], privateReadableSources: ['wiki'], satisfiedRuleIds: ['wiki:team'], folderCoverage: [{ source_id: 'wiki', prefix: 'p/' }] },
   { identity: [], audience: ['member:alice-example', 'member:bob-example'], audienceIdentities: [['member:alice-example'], ['member:bob-example']] },
