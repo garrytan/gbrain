@@ -136,7 +136,7 @@ getPage	pages	yes	288	yes	yes	yes	serves
 readPageSnapshot	pages	yes	106	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	7	no	yes	yes	serves
 lockPageKeys	pages	yes	17	no	yes	yes	serves
-putPage	pages	yes	1370	yes	yes	yes	serves
+putPage	pages	yes	1371	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	45	yes	yes	yes	serves
@@ -356,7 +356,7 @@ deleteChunksForPages	chunks	yes	3	no	yes	yes	serves
 listContextualModeCandidates	chunks	yes	1	no	yes	yes	serves
 resolveFrozenHits	chunks	yes	6	no	yes	yes	serves
 upsertChunks	chunks	yes	73	yes	yes	yes	serves
-sealChunks	chunks	yes	99	no	yes	yes	serves
+sealChunks	chunks	yes	100	no	yes	yes	serves
 getChunks	chunks	yes	77	yes	yes	yes	serves
 getChunkPage	chunks	yes	14	no	yes	yes	serves
 getChunkWindows	chunks	yes	14	no	yes	yes	serves
@@ -1716,7 +1716,7 @@ listFactProvenance	facts_trust	yes	5	no	yes	yes	serves
 listDerivedRows	facts_trust	yes	6	no	yes	yes	serves
 listFactsForRelevance	facts_trust	yes	9	no	yes	yes	serves
 countUncomparableFacts	facts_trust	yes	5	no	yes	yes	serves
-matchSavedFacts	facts_trust	yes	8	no	yes	yes	serves
+matchSavedFacts	facts_trust	yes	9	no	yes	yes	serves
 readEntityNewestFacts	facts_trust	yes	2	no	yes	yes	serves
 readClaimWithdrawal	facts_trust	yes	3	no	yes	yes	serves
 matchHeadStems	facts_trust	yes	2	no	yes	yes	serves

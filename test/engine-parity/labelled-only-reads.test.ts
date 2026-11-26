@@ -21,13 +21,13 @@
  *  - Seam: members through createMember and the typed labelled-only write; folder rules through restrictFolder; the read is
  *    the real dispatchToolCall with a stdio member.
  */
-import { describe, expect, test } from 'bun:test';
+import { describe, expect } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { chunk, installChunks } from './chunk-fixtures.ts';
-import { createMember, parityArms, resetArm, restrictFolder, type ParityBackend } from './harness.ts';
+import { createMember, parityArms, restrictFolder, type ParityBackend } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { withEnv } from '../helpers/with-env.ts';
 import { setMemberLabelledOnly } from '../../src/core/access/labelled-only.ts';
@@ -36,7 +36,7 @@ import { setOwner } from '../../src/core/access/owner.ts';
 import { dispatchToolCall } from '../../src/mcp/dispatch.ts';
 import { drainProjections } from '../../src/core/page-state/projections.ts';
 
-const { arms, parityTest } = parityArms(testBackends());
+const { parityTest } = parityArms(testBackends());
 
 const CAROL = 'carol-example';
 const DANA = 'dana-example';
@@ -101,6 +101,12 @@ async function remote(engine: BrainEngine, member: string, tool: string, args: R
   return { error: code ?? text.slice(0, 200) };
 }
 
+/** The refusal body of `member`'s search, for rethrowing it as the typed refusal the harness classifies. */
+async function refusalOf(engine: BrainEngine, member: string): Promise<Record<string, unknown>> {
+  const out = await dispatchToolCall(engine, 'search', { query: WORD, limit: 50 }, { remote: true, transport: 'stdio', sourceId: 'default', stdioMember: member } as never);
+  return JSON.parse(out.content.map(part => (part as { text?: string }).text ?? '').join('')) as Record<string, unknown>;
+}
+
 const slugsOf = (rows: unknown): string[] => (Array.isArray(rows) ? rows : ((rows as { results?: unknown[] } | null)?.results ?? []))
   .map(r => (r as { slug?: string; from_slug?: string }).slug ?? (r as { from_slug?: string }).from_slug).filter((s): s is string => typeof s === 'string').sort();
 const refusedOf = (a: Answer): string | undefined => (a && typeof a === 'object' && 'refused' in (a as object) ? String((a as { refused: string }).refused) : undefined);
@@ -157,7 +163,7 @@ describe('engine parity: remote page reads of a labelled-only member and of an o
           reads[s.slug] = { get: refusedOf(got) ? got : got === 'not_found' ? got : 'visible', versions: refusedOf(versions) ? versions : Array.isArray(versions) ? versions.length : versions };
         }
         // With lineage on, search also reads saved facts under the fact policy, which the Rust store refuses (row 32e-b-4): the
-        // named-loss case below pins it. With lineage off it is the page arm alone and answers the same on every engine.
+        // named-stop case below pins it. With lineage off it is the page arm alone and answers the same on every engine.
         const search = lineage === 'off' ? await remote(engine, member, 'search', { query: WORD, limit: 50 }) : [];
         const list = await remote(engine, member, 'list_pages', { limit: 100 });
         const backlinks = await remote(engine, member, 'get_backlinks', { slug: HUB });
@@ -342,25 +348,25 @@ describe('engine parity: a null entry in derived_from', () => {
   }));
 });
 
-describe('engine parity: named loss of search under lineage (RUST_ENGINE.md, row 32e-b-4)', () => {
-  // Not a parityTest: the arms answer differently on purpose. With access.members_read_lineage on, search also matches saved facts
-  // under the fact policy of a lineage read, which the Rust store does not model, so Rust declines the whole call for every member
-  // while PGLite and Postgres answer the pages. The day Rust answers it this fails and the row goes.
-  test('with access.members_read_lineage on, search answers the readable pages on PGLite and Postgres and Rust declines it, for both members', async () => {
-    for (const arm of arms()) {
-      await resetArm(arm);
-      await inFreshHome(async () => {
-        await seedMembers(arm.engine, arm.backend);
-        await seedShapes(arm.engine);
-        await drainProjections(arm.engine);
-        await setMembersReadLineage(arm.engine, true, { remote: false });
-        for (const member of [CAROL, DANA]) {
-          const answer = await remote(arm.engine, member, 'search', { query: WORD, limit: 50 });
-          if (arm.backend === 'rust') expect({ backend: arm.backend, member, refused: refusedOf(answer) }).toEqual({ backend: arm.backend, member, refused: 'engine_capability_missing' });
-          else expect({ backend: arm.backend, member, slugs: slugsOf(answer) }).toEqual({ backend: arm.backend, member, slugs: [...VISIBLE[member]!.on].sort() });
-        }
-      });
+describe('engine parity: named stop of search under lineage (RUST_ENGINE.md, row 32e-b-4)', () => {
+  // With access.members_read_lineage on, search also matches saved facts under the fact policy of a lineage read, which the Rust
+  // store does not model: PGLite and Postgres answer the readable pages, and the Rust arm stops on matchSavedFacts for every member
+  // (stop pin test/rust-stop-pins/labelled-reads-lineage-facts.tsv, due 2026-12-01). The day Rust answers it the case fails and the row goes.
+  parityTest('with access.members_read_lineage on, search answers the readable pages on PGLite and Postgres and the Rust store stops on matchSavedFacts, for both members (row 32e-b-4)', {
+    methods: ['putPage', 'sealChunks', 'matchSavedFacts'], timeout: 240_000,
+  }, (engine, backend) => inFreshHome(async () => {
+    await seedMembers(engine, backend);
+    await seedShapes(engine);
+    await drainProjections(engine);
+    await setMembersReadLineage(engine, true, { remote: false });
+    const answers: Record<string, string[]> = {};
+    for (const member of [CAROL, DANA]) {
+      const answer = await remote(engine, member, 'search', { query: WORD, limit: 50 });
+      // A refusal is rethrown as one, so the harness classifies it (the stop pin names the member that refused).
+      if (refusedOf(answer)) throw Object.assign(new Error(`search refused: ${refusedOf(answer)}`), await refusalOf(engine, member));
+      answers[member] = slugsOf(answer);
     }
-    expect(arms().length).toBeGreaterThan(0);
-  }, 120_000);
+    expect(answers).toEqual({ [CAROL]: [...VISIBLE[CAROL]!.on].sort(), [DANA]: [...VISIBLE[DANA]!.on].sort() });
+    return answers;
+  }));
 });
