@@ -6314,7 +6314,7 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   `mismatches`, and a `probe`, described below); `allocators`;
   `seed`; `primary_refreshes` (`nonterminal_rows`: primary `gbrain sources refresh` rows that are neither completed nor
   aborted, counted by the last full pass, with its `checked_at`; `null` before one; a swap must drain them first, and
-  this is a reading, not the swap's own check); and `write_comparisons` (the pilot page and link writes only; `capability_missing` until a comparison has a verdict (`comparable` or `unexplained_difference`), and while any replay has none or a sample owed to a session is not yet settled, `outstanding_sessions`). The
+  this is a reading, not the swap's own check); and `write_comparisons` (the pilot page and link writes only; `capability_missing` until a comparison has a verdict (`comparable` or `unexplained_difference`), and while any replay has none or a sample owed to a session is not yet settled, `outstanding_sessions`, and for the rest of the epoch once a write window is lost in a crash, `write_windows_lost`). The
   `write_comparisons` and `fingerprints` counts are totals for the current evidence epoch. An epoch is not a seed: `epoch_id`
   names the candidate whose evidence counts (the seed, the Rust addon's SHA-256, the comparator and adapter versions, the
   capability set and the hash of the swap's readiness policy, `src/core/engine-swap/policy.ts`), and a change to any of them
