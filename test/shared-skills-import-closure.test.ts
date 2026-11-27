@@ -28,7 +28,7 @@ import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { activateSharedSkillPersistence } from '../src/core/persistence/skill-activation.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { sha256 } from '../src/core/persistence/digest.ts';
-import { importSharedSkillProposal, prepareSharedSkillMutation, submitSharedSkillMutation } from '../src/core/shared-skills/publication.ts';
+import { adoptSharedSkillpack, importSharedSkillProposal, prepareSharedSkillMutation, submitSharedSkillMutation } from '../src/core/shared-skills/publication.ts';
 import { getSharedSkill, getSharedSkillAsset } from '../src/core/shared-skills/catalog.ts';
 import { setSharedSkillPolicy } from '../src/core/shared-skills/policy.ts';
 import { normalizeSkillFiles, skillMetadata } from '../src/core/shared-skills/manifest.ts';
@@ -306,6 +306,34 @@ for (const [name, url] of backends) {
       }
       const result = await put(f, f.editor, 'beta', [prose('beta', 'Use the root.', [ROOT]), root([GUIDE]), guide(['readers'])]);
       expect({ state: (result as { state?: string }).state, reader: await readerCopy(f, 'beta') }).toEqual({ state: 'committed', reader: 'Synthetic shared guide body.\n' });
+    }, url), 120_000);
+
+    // Value: protects=a hidden skill's convention stays hidden when an adoption batch also lists that skill unchanged; fails_when=the batch shows the guide to readers through beta; why_new=a skill in the batch that keeps hiding the file must limit another skill's gain as an unchanged one does; seam=none; no_claim=none
+    test('an adoption batch that lists a hidden holder unchanged cannot show its convention to readers through another skill', () => fixture(async f => {
+      await publishHidden(f, 'audience');
+      const alpha = [{ ...prose('alpha', 'Use the guide.', [GUIDE]), audience: RESTRICTED }, guide(['readers'])];
+      const skills = [['alpha', alpha], ['beta', [prose('beta', 'Now uses the guide.', [GUIDE]), guide(['readers'])]]] as const;
+      const before = { heads: await heads(f), checkout: checkout(f.root) };
+      const input = await Promise.all(skills.map(async ([name, files]) => ({ pack_id: 'example-pack', name, files: [...files], expected_revision: await revisionOf(f, name) })));
+      const outcome = await adoptSharedSkillpack(f.local, 'default', { pack_id: 'example-pack', skills: input as never })
+        .then(() => 'published', (error: { code?: string; message?: string }) => `${error.code}: ${error.message}`);
+      expect(outcome).toBe(`local_conflict: The publication was refused: ${GUIDE} would reach a wider audience than skills/alpha gives it. Nothing was written.`);
+      expect({ heads: await heads(f), reader: await readerCopy(f, 'beta'), checkout: checkout(f.root) }).toEqual({ ...before, reader: 'skill_asset_not_found' });
+    }, url), 120_000);
+
+    // Value: protects=a skill that widens its own copy of a convention cannot show it to readers while a hidden skill in the same batch keeps it; fails_when=the batch's holders authorize the union of their audiences rather than what each keeps showing; why_new=every keeper limits the gain, not just one; seam=none; no_claim=none
+    test('an adoption batch cannot widen a convention past a hidden holder listed in the same batch', () => fixture(async f => {
+      const alpha = [{ ...prose('alpha', 'Use the guide.', [GUIDE]), audience: RESTRICTED }, guide(['readers'])];
+      for (const [name, files] of [['alpha', alpha], ['delta', [prose('delta', 'Use the guide.', [GUIDE]), guide(RESTRICTED)]]] as const) {
+        expect((await put(f, f.local, name, [...files]) as { state?: string }).state).toBe('committed');
+      }
+      const skills = [['alpha', alpha], ['delta', [prose('delta', 'Use the guide.', [GUIDE]), guide(['readers'])]]] as const;
+      const before = { heads: await heads(f), checkout: checkout(f.root) };
+      const input = await Promise.all(skills.map(async ([name, files]) => ({ pack_id: 'example-pack', name, files: [...files], expected_revision: await revisionOf(f, name) })));
+      const outcome = await adoptSharedSkillpack(f.local, 'default', { pack_id: 'example-pack', skills: input as never })
+        .then(() => 'published', (error: { code?: string; message?: string }) => `${error.code}: ${error.message}`);
+      expect(outcome).toBe(`local_conflict: The publication was refused: ${GUIDE} would reach a wider audience than skills/alpha gives it. Nothing was written.`);
+      expect({ heads: await heads(f), reader: await readerCopy(f, 'delta'), checkout: checkout(f.root) }).toEqual({ ...before, reader: 'skill_asset_not_found' });
     }, url), 120_000);
 
     // Value: protects=an owner who shows a convention to readers can still hand it to a skill restricted to one reader; fails_when=the reader's principal is not listed literally next to readers, so the publication is refused; why_new=readers covers every principal and the new check must not over-refuse; seam=none; no_claim=none

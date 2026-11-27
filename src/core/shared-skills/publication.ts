@@ -715,9 +715,9 @@ async function unchangedHolders(engine: BrainEngine, sourceId: string, incarnati
 
 /**
  * A publication must not show a shared convention file to callers that no sealed holder already showed it to while
- * another skill that keeps holding it hides it from them. A readers file in a skill whose SKILL.md audience is narrower,
- * or that is private, is not public. Only sealed copies authorize: a copy this publication creates never does. A file
- * that no other skill held before, or that the rewrite stops every other holder reaching, has nothing to hide.
+ * a skill that keeps holding it hides it from them. A readers file in a skill whose SKILL.md audience is narrower, or
+ * that is private, is not public. Only a skill that held the file before can authorize a new reach, and only as far as
+ * every such skill that keeps it now shows it. A file that no skill held before, or that no holder keeps, has nothing to hide.
  */
 async function refuseHiddenExposure(engine: BrainEngine, sourceId: string, incarnation: string, packId: string, inventory: PackSkill[],
   proposals: Holder[], rebuilt: Holder[], sealed: StoredSkillRevision[], approved: string[], detailed: boolean): Promise<void> {
@@ -734,12 +734,17 @@ async function refuseHiddenExposure(engine: BrainEngine, sourceId: string, incar
     for (const a of reach(unchanged)) prior.add(a);
     // 'readers' covers every principal (policy.ts approvedFiles), so a file some holder already shows to readers cannot widen.
     if (prior.has('readers')) continue;
-    const others = [...rebuilt.filter(skill => sealedHolds(skill.name) && keeps(skill)), ...unchanged.filter(keeps)];
-    // Another skill that keeps hiding the file limits every new reach. A proposal that keeps hiding it limits only the
-    // reach a rebuilt skill gains, since a proposal's own new audience is the change under review.
-    const authorized = new Set([...prior, ...(others.length ? [] : reach(proposals))]);
-    const remaining = others.length ? others : proposals.filter(skill => sealedHolds(skill.name) && keeps(skill));
-    if (!remaining.length || (authorized.has('readers') || [...(others.length ? after : reach(rebuilt))].every(a => authorized.has(a)))) continue;
+    // Every skill that held the file and keeps it, whether this publication changes it or not. A new reach is authorized
+    // only as far as each of them now shows the file, so a skill that keeps hiding it limits every other skill's gain,
+    // including a skill in the same batch, while a sole holder may still widen its own publication.
+    const keepers = [...affected.filter(skill => sealedHolds(skill.name) && keeps(skill)), ...unchanged.filter(keeps)];
+    if (!keepers.length) continue;
+    const shown = (skill: Holder) => new Set(reach([skill]));
+    const covers = (audiences: Set<string>, a: string) => audiences.has('readers') || audiences.has(a);
+    const common = keepers.map(shown).reduce((left, right) => left.has('readers') ? right : new Set([...left].filter(a => covers(right, a))));
+    const authorized = new Set([...prior, ...common]);
+    if ([...after].every(a => covers(authorized, a))) continue;
+    const remaining = keepers.filter(skill => [...after].some(a => !covers(shown(skill), a)));
     paths.push(path);
     for (const skill of remaining) holders.add(skill.name);
     reasons.push(`${path} would reach a wider audience than ${bounded(remaining.map(skill => `skills/${skill.name}`), ', ')} ${remaining.length === 1 ? 'gives' : 'give'} it`);
