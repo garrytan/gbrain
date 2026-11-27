@@ -39,9 +39,15 @@ const KNOWN_TAGS: &[u8] = b"MCSPIKTVJjWLlUOEDGopekbFNAQYZHgsnrquRcXBwvdmtafixzyh
 /// The tags of `keys.rs` this restore deliberately leaves unclassified, so a record under one refuses by name
 /// (`unclassified_state`) until a restore step classifies it: the guest sources (`0`, `guest_sources.rs`; each record
 /// carries the guest write rules, authority nothing revokes), the secret store (`3`, `secret_store.rs`) and the two-byte
-/// family escape (`~`, `keys::family_tag`). `test/restore.rs` checks `KNOWN_TAGS` plus this list against `keys.rs`.
+/// family escape (`~`, `keys::family_tag`), except the families in `KNOWN_FAMILIES`. `test/restore.rs` checks
+/// `KNOWN_TAGS` plus this list against `keys.rs`.
 #[cfg(test)]
 const UNCLASSIFIED_TAGS: &[u8] = b"03~";
+/// The two-byte families under the escape `~` (`keys::family_tag`) this restore classifies: the
+/// keyed lookups (`~k`, `keyed_index.rs`), entries derived from page, chunk and link records that
+/// every `Store::write` keeps in step, so a restore's own writes carry them along. A record under
+/// any other family (the guest marks `~g` among them) still refuses as `tag 0x7e`.
+const KNOWN_FAMILIES: &[[u8; 2]] = &[keys::KEYED_INDEX];
 /// The `jobs` sub-tags (`jobs.rs` lists them); a later one may hold authority (a token table).
 const JOBS_SUBTAGS: &[u8] = &[
     0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x10, 0x11, 0x13, 0x14, 0x15, 0x16,
@@ -337,6 +343,15 @@ fn unclassified_state(read: &dyn KvRead) -> Result<Vec<String>> {
     for (prefix, known, label) in checks {
         let first = if prefix.is_empty() { 1 } else { 0 };
         for byte in next_bytes(read, prefix, first)? {
+            if byte == keys::FAMILY_ESCAPE && prefix.is_empty() {
+                let families = next_bytes(read, &[keys::FAMILY_ESCAPE], 0)?;
+                if families
+                    .iter()
+                    .all(|f| KNOWN_FAMILIES.contains(&[keys::FAMILY_ESCAPE, *f]))
+                {
+                    continue;
+                }
+            }
             if !known.contains(&byte) {
                 out.push(describe_unclassified(label, byte));
             }

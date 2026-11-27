@@ -14,8 +14,9 @@ listed as row 50 of docs/designs/RUST_ENGINE.md. A `Page` is PGLite's `Page` plu
 (`2026-08-10T12:00:00.000123Z`) or `null`, and the TypeScript wrapper turns them into `Date`.
 A page's `knowledge_revision` is a UUID that changes when its type, kind, title, body, timeline,
 frontmatter, deletion or tags change. `text_projection_revision` is `null` until chunks are
-installed for that revision. `listPages` and `resolveSlugs` scan every page; there are no
-secondary indexes yet.
+installed for that revision. `resolveSlugs` scans every page. `listPages` sorted by `updated_at` with no type, tag or
+slug filter walks the updated-order keyed lookup ([keyed-index.md](keyed-index.md)) and reads only the pages it
+returns; any other `listPages` scans every page.
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
@@ -114,7 +115,7 @@ PGLite lets four `pages` columns hold NULL, and the page record holds NULL in th
   throws the raw Postgres error (code `23514`); the store uses `constraint_violation` with the same message.
 - A version snapshot copies the page's NULLs.
 - Format: records written before these fields were nullable hold strings and read unchanged; a record without
-  `chunker_version` reads it as NULL, and `chunker_version` is written only when set. This change took no format number; the store is at format 7
+  `chunker_version` reads it as NULL, and `chunker_version` is written only when set. This change took no format number; the store is at format 14
   now ([format.md](format.md)).
 
 ## Search timeline

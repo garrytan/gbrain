@@ -1,4 +1,4 @@
-//! Keyword search (BM25; design D5).
+//! Keyword search: `searchKeyword`, the keyword arm with the query as match and rank query.
 //!
 //! One `#[napi] impl Brain` block per family file; `families/mod.rs` lists every family once.
 //! Each method decodes its arguments, runs one `Store` call on the pool through `Brain::run`,
@@ -13,8 +13,8 @@ use crate::store_binding::{Brain, arg};
 
 #[napi]
 impl Brain {
-    /// `searchKeyword(query, opts?)`: `SearchResult[]`, one per page, best chunk first. Ranking is
-    /// BM25, not the Postgres full-text rank; see the README.
+    /// `searchKeyword(query, opts?)`: what `searchKeywordArm(query, query, opts?)` answers, the
+    /// keyword arm over the live keyword index (`gbrain_store::search`).
     #[napi]
     pub fn search_keyword<'env>(
         &self,

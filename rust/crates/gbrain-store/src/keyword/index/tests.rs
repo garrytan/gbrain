@@ -380,12 +380,14 @@ pub(crate) fn members(store: &Store) -> usize {
     by_index + fuzzy_members(store)
 }
 
-/// Every `R` record but the state.
+/// Every `R` record but the state and the pending count.
 pub(crate) fn postings(store: &Store) -> BTreeMap<Vec<u8>, Vec<u8>> {
     let read = store.read().unwrap();
     let mut out = BTreeMap::new();
     scan_prefix(&*read, &[keys::TRIGRAM], false, &mut |k, v| {
-        if k != keys::keyword_index_state().as_slice() {
+        if k != keys::keyword_index_state().as_slice()
+            && k != keys::keyword_pending_count().as_slice()
+        {
             out.insert(k.to_vec(), v.to_vec());
         }
         true
@@ -394,8 +396,17 @@ pub(crate) fn postings(store: &Store) -> BTreeMap<Vec<u8>, Vec<u8>> {
     out
 }
 
-/// Asserts the postings the writes kept equal the postings rebuilt from every page and chunk.
+/// Asserts the postings the writes kept, with the pending records folded in, equal the postings
+/// rebuilt from every page and chunk; first, that `verify` finds the index as kept (pending records
+/// included) in step.
 fn assert_fresh(store: &Store) {
+    let report = super::super::index_build::verify(&*store.read().unwrap(), None).unwrap();
+    assert!(report.ok, "verify before the fold: {report:?}");
+    store.write(|w| super::super::pending::fold_all(w)).unwrap();
+    assert_eq!(
+        super::super::pending::pending_count(&*store.read().unwrap()).unwrap(),
+        0
+    );
     let kept = postings(store);
     store
         .write(|w| {
@@ -436,9 +447,11 @@ fn page_of(store: &Store, slug: &str) -> crate::pages::PageRecord {
         .unwrap()
 }
 
-/// Each write shape, each followed by every member and a freshness check.
+/// Each write shape, each followed by every member (with whatever pending records the writes
+/// left, so the readers' pending overlay answers as the scan) and a freshness check.
 fn exercise(store: &Store) {
     corpus(store);
+    assert!(members(store) > 0);
     assert_fresh(store);
     assert!(members(store) > 0);
 
@@ -452,6 +465,7 @@ fn exercise(store: &Store) {
     timeline(store, "notes/log", "apple festival");
     seal(store, "notes/sealed", "sealed zebra");
     chunks(store, "media/pic", &[("red apple", "text")]);
+    assert!(members(store) > 0);
     assert_fresh(store);
     assert!(members(store) > 0);
 
@@ -464,18 +478,30 @@ fn exercise(store: &Store) {
         "",
         json!({}),
     );
+    assert!(members(store) > 0);
     assert_fresh(store);
     assert!(members(store) > 0);
 }
 
+/// Runs `f` with the fold threshold `n` on this thread (1: every write folds, as before format 13).
+fn with_fold_at(n: i64, f: impl FnOnce()) {
+    super::super::pending::FOLD_AT_OVERRIDE.with(|c| c.set(Some(n)));
+    f();
+    super::super::pending::FOLD_AT_OVERRIDE.with(|c| c.set(None));
+}
+
 #[test]
 fn every_member_answers_as_the_scan_across_writes() {
-    exercise(&indexed(store()));
+    for n in [1, 2, 3, 7, super::super::pending::FOLD_AT] {
+        with_fold_at(n, || exercise(&indexed(store())));
+    }
 }
 
 #[test]
 fn every_member_answers_as_the_scan_on_the_occ_store() {
-    exercise(&indexed(occ_store()));
+    for n in [1, 3, super::super::pending::FOLD_AT] {
+        with_fold_at(n, || exercise(&indexed(occ_store())));
+    }
 }
 
 /// A tree with no candidate bound scans; a bounded one reads the postings.

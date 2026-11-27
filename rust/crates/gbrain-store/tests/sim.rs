@@ -9,7 +9,7 @@
 //! - against the commits the store acknowledged (`gbrain_sim::check::check_recovery`): nothing
 //!   acknowledged is lost, and the one batch in flight at the crash is all there or not at all;
 //! - against the store's own invariants (`integrity`): every page has its id index entry, every
-//!   chunk its postings, the index totals match the chunks, every journal request its index entry,
+//!   chunk record its key, no legacy word posting exists (store format 14), the index totals match the chunks, every journal request its index entry,
 //!   and the outstanding counters match the requests that have not ended.
 //!
 //! Run more seeds with `GBRAIN_SIM_SEEDS=10000`; repeat one with `GBRAIN_SIM_SEED=<n>`.
@@ -669,8 +669,7 @@ fn integrity(kv: &dyn Kv) -> Result<Vec<String>, StoreError> {
         }
     }
 
-    // chunks, postings and the index totals
-    let mut expected_postings: BTreeMap<(String, u64, u32), u32> = BTreeMap::new();
+    // chunks and the index totals; no legacy word posting (store format 14 keeps none)
     let (mut chunk_count, mut total_length) = (0u64, 0u64);
     for (key, value) in entries(read, keys::CHUNK)? {
         let (page_id, index) = (
@@ -694,40 +693,10 @@ fn integrity(kv: &dyn Kv) -> Result<Vec<String>, StoreError> {
         }
         chunk_count += 1;
         total_length += terms.len() as u64;
-        for term in terms {
-            *expected_postings.entry((term, page_id, index)).or_insert(0) += 1;
-        }
     }
-    let mut postings: BTreeMap<(String, u64, u32), u32> = BTreeMap::new();
-    for (key, value) in entries(read, keys::POSTING)? {
-        let Some(split) = key[1..].iter().position(|b| *b == 0).map(|i| i + 1) else {
-            bad.push("a posting key has no separator".into());
-            continue;
-        };
-        let rest = &key[split + 1..];
-        let term = String::from_utf8_lossy(&key[1..split]).into_owned();
-        let count = <[u8; 4]>::try_from(value.as_slice())
-            .map(u32::from_be_bytes)
-            .unwrap_or(0);
-        if rest.len() != 12 {
-            bad.push(format!("posting {term:?} has a malformed key"));
-            continue;
-        }
-        postings.insert(
-            (
-                term,
-                keys::be8(&rest[..8]).unwrap_or(0),
-                keys::be4(&rest[8..]).unwrap_or(0),
-            ),
-            count,
-        );
-    }
-    if postings != expected_postings {
-        bad.push(format!(
-            "the postings ({}) do not match the chunk text ({})",
-            postings.len(),
-            expected_postings.len()
-        ));
+    let legacy = entries(read, keys::POSTING)?.len();
+    if legacy != 0 {
+        bad.push(format!("{legacy} legacy word postings are left"));
     }
     // The legacy JSON record plus the per-counter records written since the concurrent store.
     let mut stats = read
@@ -1279,7 +1248,6 @@ fn the_integrity_check_sees_damage() {
     // The first seed from 7 whose final state holds a record of every damaged kind.
     let wanted = [
         keys::PAGE_ID,
-        keys::POSTING,
         keys::CHUNK,
         keys::REQUEST_ID,
         keys::LINK,
@@ -1315,7 +1283,11 @@ fn the_integrity_check_sees_damage() {
     type Damage = (&'static str, Vec<u8>, Option<Vec<u8>>);
     let damages: Vec<Damage> = vec![
         ("an id index entry", first(keys::PAGE_ID), None),
-        ("a posting", first(keys::POSTING), None),
+        (
+            "a legacy word posting",
+            keys::posting("stray", 1, 0),
+            Some(1u32.to_be_bytes().to_vec()),
+        ),
         ("a chunk", first(keys::CHUNK), None),
         ("an idempotency index entry", first(keys::REQUEST_ID), None),
         ("a link", first(keys::LINK), None),
@@ -1348,9 +1320,12 @@ fn the_integrity_check_sees_damage() {
         tx.commit().unwrap();
         let problems = integrity(&*run.kv).unwrap();
         assert!(!problems.is_empty(), "damage to {what} went unnoticed");
-        // put the record back for the next case
+        // put the record back for the next case (a stray record the damage added is removed)
         let mut tx = run.kv.begin_write().unwrap();
-        tx.put(&key, &state[&key]).unwrap();
+        match state.get(&key) {
+            Some(value) => tx.put(&key, value).unwrap(),
+            None => tx.delete(&key).unwrap(),
+        }
         tx.commit().unwrap();
         assert_eq!(
             integrity(&*run.kv).unwrap(),

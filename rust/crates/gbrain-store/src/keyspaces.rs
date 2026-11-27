@@ -90,6 +90,9 @@ pub const KEYWORD_KINDS: &[KeyKind] = &[
     k(keys::KW_BASENAME, "keyword_slug_basename"),
     k(keys::KW_CHUNK_FORWARD, "keyword_chunk_forward"),
     k(keys::KW_PAGE_FORWARD, "keyword_page_forward"),
+    k(keys::KW_CHUNK_PENDING, "keyword_chunk_pending"),
+    k(keys::KW_PAGE_PENDING, "keyword_page_pending"),
+    k(keys::KW_PENDING_COUNT, "keyword_pending_count"),
 ];
 
 /// Every top-level tag, in tag-byte order. The tags `keys.rs` lists first, with no family
@@ -148,7 +151,11 @@ pub const KEYSPACES: &[Keyspace] = &[
         kinds: KEYWORD_KINDS,
     },
     ks(keys::SOURCE, "core", "sources"),
-    ks(keys::POSTING, "core", "search postings"),
+    ks(
+        keys::POSTING,
+        "core",
+        "legacy word postings (none from store format 14)",
+    ),
     ks(keys::LINK_UNIQUE, "core", "link uniqueness index"),
     ks(keys::VERSION, "core", "page versions"),
     ks(keys::WRITER, "core", "local writers"),

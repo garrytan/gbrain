@@ -143,6 +143,11 @@ pub const SECRET_STORE: u8 = b'3';
 /// each in its own contiguous range. No one-byte family ever takes `~`.
 pub const FAMILY_ESCAPE: u8 = b'~';
 
+/// Family `keyed_index` (`keyed_index.rs`, store format 9), the two-byte tag `~k`: the keyed lookups, entries derived
+/// from page, chunk, link and link transition records. The byte after the tag names the lookup
+/// (`keyed_index::CHUNK_ID` and the rest; `rust/docs/store/keyed-index.md`).
+pub const KEYED_INDEX: [u8; 2] = family_tag(b'k');
+
 /// The two-byte tag of a family under `FAMILY_ESCAPE`. `family` is never `0x00` (the storage adapter's byte).
 pub const fn family_tag(family: u8) -> [u8; 2] {
     assert!(family != 0, "a family byte is never 0x00");
@@ -201,6 +206,9 @@ pub const KW_TITLE_TRIGRAM: u8 = 0x03;
 pub const KW_BASENAME: u8 = 0x04;
 pub const KW_CHUNK_FORWARD: u8 = 0x05;
 pub const KW_PAGE_FORWARD: u8 = 0x06;
+pub const KW_CHUNK_PENDING: u8 = 0x07;
+pub const KW_PAGE_PENDING: u8 = 0x08;
+pub const KW_PENDING_COUNT: u8 = 0x09;
 
 /// `R kind len(2) text`: the start of the postings of one lexeme or basename. The length prefix
 /// keeps one text's range apart from a longer text that starts with it.
@@ -257,6 +265,27 @@ pub fn page_forward(page_id: u64) -> Vec<u8> {
     key
 }
 
+/// `R 0x07 page_id chunk_index`: a chunk's postings written since the last fold (store format 13,
+/// `keyword/pending.rs`).
+pub fn chunk_pending(page_id: u64, index: u32) -> Vec<u8> {
+    let mut key = vec![TRIGRAM, KW_CHUNK_PENDING];
+    key.extend_from_slice(&page_id.to_be_bytes());
+    key.extend_from_slice(&index.to_be_bytes());
+    key
+}
+
+/// `R 0x08 page_id`: a page's postings written since the last fold.
+pub fn page_pending(page_id: u64) -> Vec<u8> {
+    let mut key = vec![TRIGRAM, KW_PAGE_PENDING];
+    key.extend_from_slice(&page_id.to_be_bytes());
+    key
+}
+
+/// `R 0x09`: how many pending records exist (8-byte little-endian i64).
+pub fn keyword_pending_count() -> Vec<u8> {
+    vec![TRIGRAM, KW_PENDING_COUNT]
+}
+
 /// `P source \0 slug`
 pub fn page(source_id: &str, slug: &str) -> Vec<u8> {
     text(PAGE, &[source_id, slug])
@@ -281,7 +310,8 @@ pub fn chunk_prefix(page_id: u64) -> Vec<u8> {
     key
 }
 
-/// `T term \0 page_id chunk_index`
+/// `T term \0 page_id chunk_index`: a legacy word posting (none from store format 14;
+/// `legacy_postings.rs`).
 pub fn posting(term: &str, page_id: u64, index: u32) -> Vec<u8> {
     let mut key = posting_prefix(term);
     key.extend_from_slice(&page_id.to_be_bytes());

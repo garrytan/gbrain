@@ -100,7 +100,7 @@ Keys are byte strings compared byte by byte. The first byte is the tag.
 | `S` | sources | core |
 | `P` / `I` | page by `(source, slug)` / page id to page key | core (pages) |
 | `K` | chunk by `(page id, chunk index)` | core (chunks) |
-| `T` | keyword postings | core (search) |
+| `T` | legacy word postings (none from store format 14; the keyword index is under `R`) | core (search) |
 | `V` | page versions | core (versions) |
 | `J` / `j` | journal requests | core (journal) |
 | `W` | local writers | core (journal) |
@@ -131,9 +131,11 @@ Rules:
   the family's `page_columns` hook ("Core hooks"). The family keeps the value under its own tag; until it adds the
   column, the page read returns the fixed default in `PAGE_ROW_DEFAULTS` (`store-codec.ts`). No family edits
   `PAGE_ROW_DEFAULTS`, `store-codec.ts` or `pages.rs`.
-- **Format.** `FORMAT_VERSION` 8 (`format.rs` lists each version; a build opens formats 1 to 8), `engineAbi` 1, a `FORMAT` file plus `records.redb`. New tags and new records under
+- **Format.** `FORMAT_VERSION` 14 on the drop-legacy-word-index branch (`format.rs` lists each version; it opens formats 1 to 9, 12, 13 and 14), 13 on rust-engine/lean-keyword-writes, 12 on rust-engine/keyed-lookups-2, 9 on rust-engine/keyed-lookups and 8 on rust-engine/main (the ledger below), `engineAbi` 1, a `FORMAT` file plus `records.redb`. New tags and new records under
   them do not change the format version: an older build never reads a tag it does not know, and a newer build reads
-  an absent tag as "no rows". A family that changes the encoding of records that already exist on disk asks core.
+  an absent tag as "no rows". A family that changes the encoding of records that already exist on disk asks core,
+  and so does a family whose entries are derived from records that already exist, because an older build's writes
+  would leave them stale (format 9: the keyed lookups, `~k`, `rust/docs/store/keyed-index.md`).
   Format 2 keeps each chunk-stats and unfinished-request counter in its own record; a format-1 brain is upgraded in
   one write transaction when it opens, and a format-1-only build refuses a format-2 brain.
 
@@ -148,9 +150,13 @@ Rules:
   | 10 | `vector-rank-key` | `4930072d` | planned, lands after the Nov 26 shadow release |
   | 11 | Refresh evidence reads (head 2) | `66e6c7ae` | planned |
   | 12 | Keyed lookups 2 (PR 10328, stacked on PR 10277) | `7896376b` | planned, lands after the Nov 26 shadow release |
-  | 13 | Packed keyword index | `7896376b` | planned |
+  | 13 | Pending keyword records (`rust-engine/lean-keyword-writes`, PR 10468, merges PR 10328) | `7896376b` | shipped on its branch, lands in order |
+  | 14 | Drop the legacy word index (`rust-engine/drop-legacy-word-index`, PR 10354, merges PR 10468) | this change | shipped on its branch, lands in order |
+  | 15 | Core-edit notices (lane 13, W6, `rust-engine/core-edit-notices-rust`) | lane 13 | allotted |
+  | 16 | Multi-user commit log (`rust-engine/mu-commit-log-format16`) | its lane | allotted |
+  | 17 | extract_atoms ledgers (`rust-engine/extract-atoms-state`) | its lane | allotted |
 
-  The next free number is 14. A head that takes a number that is not its own in this table renumbers before it lands.
+  The next free number is 18. A head that takes a number that is not its own in this table renumbers before it lands.
 
 - **`SHADOW_ADAPTER_VERSION` ledger** (`src/shadow/evidence-epoch.ts`). One version per distinct adapter source (the
   digest of `store-members/**`, `store-codec.ts` and `members.ts` that `test/shadow-evidence.test.ts` pins). A lander
@@ -269,6 +275,7 @@ branch, and the reserved ones, with the owner who claimed it. The rules:
 | `0` | `GUEST_SOURCE` | lane 6 (guest sources, row 32m-3) | branch rust-engine/guest-sources-rust (from rust-engine/collate-equal 4573663d7f) |
 | `3` | `SECRET_STORE` | lane 10 | reserved (the trunk holds it for the secret store) |
 | `~` | `FAMILY_ESCAPE` | core | main once this lands: the escape for two-byte family tags |
+| `~k` | `KEYED_INDEX` | the keyed-lookups lane (the keyed lookups of `keyed_index.rs`, store formats 9 and 12) | branch rust-engine/keyed-lookups |
 | `~e` | `PAGE_EXTRACTION_STATE` | lane 8 (rust-members-tail) | branch rust-engine/rust-members-tail: the `page_extraction_state` family (the extraction watermark and partial-input receipt of a page); a hard page delete removes the page's rows; the tag `2` stays free |
 | `~g` | `GUEST_MARK` | lane 6 (guest-note save) | branch rust-engine/guest-note-save-rust: the `guest_marks` family (who a guest note was saved for); a hard page delete removes the page's mark |
 
@@ -453,8 +460,8 @@ decided the write is allowed. The contract is the "Segment chunks" comment in `c
   for visible chunks, so a staged chunk is not searchable. `count_chunks` counts every chunk record, staged and
   retired included, as PGLite does.
 - **Publish.** The flip calls `publish_segment_chunks` in its transaction. It records the page's new generation and
-  the manifest `byte_start` of each live occurrence, and writes or removes the postings of the chunks whose
-  visibility changed.
+  the manifest `byte_start` of each live occurrence. It writes no postings: the legacy word postings are gone since
+  store format 14, and the keyword index (`keyword/index_writer.rs`) keeps its own postings.
 - **`get_chunks` filters by the current body generation.** It returns the visible chunks only, in PGLite's document
   order: segment chunks whose occurrence has a live offset by `(byte_start, local_ordinal, chunk_index)`, then the
   rest by `(local_ordinal, inline last, chunk_index)`. The output has no segment fields, as PGLite's `getChunks`
@@ -1464,8 +1471,8 @@ Keyword search members of the keyword_search capability (all served), and title 
 - **Members (6), capability:** `keyword_search` (6).
 - **Store and binding:** `searchKeyword` (`search_keyword`; the hybrid arm is in `keyword/arm.rs`), `countKeywordPages` (`count_keyword_pages`), `searchKeywordPages` (`search_keyword_pages`), `searchTitles` (`search_titles`), `searchKeywordChunks` (`search_keyword_chunks`), `findByTitleFuzzy` (`find_by_title_fuzzy`).
 - **Postgres tables:** `content_chunks.search_vector`, `pages.search_vector`, title trigrams.
-- **Keys:** The keyword index of store format 4 under the `R` tag (`TRIGRAM`), one kind byte after the tag: `0x00` the index state, `0x01` chunk and `0x02` page lexeme postings, `0x03` title trigrams, `0x04` slug basenames, `0x05`/`0x06` forward records (`keys.rs`, `rust/docs/store/keyword.md`, "Keys"). Until the state is complete every member scans the live pages and rebuilds vectors from text.
-- **Depends on:** The family writes the `ts_rank` and `ts_rank_cd` compatibility rankers (design D5) in `keyword/rank.rs` over vectors built from the row text; the core `T` postings are not used; the facts keyword arm reuses the rankers. Ports `pg_trgm` similarity for `findByTitleFuzzy` and `searchTitles`; the takes family reuses it.
+- **Keys:** The keyword index of store format 4 under the `R` tag (`TRIGRAM`), one kind byte after the tag: `0x00` the index state, `0x01` chunk and `0x02` page lexeme postings, `0x03` title trigrams, `0x04` slug basenames, `0x05`/`0x06` forward records, and from store format 13 `0x07`/`0x08` pending records with the pending count at `0x09` (`keys.rs`, `rust/docs/store/keyword.md`, "Keys"). Until the state is complete every member scans the live pages and rebuilds vectors from text.
+- **Depends on:** The family writes the `ts_rank` and `ts_rank_cd` compatibility rankers (design D5) in `keyword/rank.rs` over vectors built from the row text; the core `T` postings are gone since store format 14 and were not used before it; the facts keyword arm reuses the rankers. Ports `pg_trgm` similarity for `findByTitleFuzzy` and `searchTitles`; the takes family reuses it.
 - **Estimate:** about 5 days: 3 for the members, about 2 for the `ts_rank` ranker (a judgment; the ranker came to this family after the first estimate).
 - **Notes:** Every keyword case must match PGLite exactly, order and score within `1e-6`; `search.tsv` is empty.
 - **Parity cases (4, in `links.test.ts`, `search.test.ts`):**

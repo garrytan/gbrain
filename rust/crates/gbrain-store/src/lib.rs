@@ -19,6 +19,7 @@ mod cascade;
 pub mod chronicle_reads;
 pub mod chunks;
 pub mod cli_reads;
+pub mod commit_profile;
 pub mod concept_rebuild;
 pub mod config;
 pub mod env;
@@ -31,9 +32,11 @@ pub mod format;
 pub mod git_gap_census;
 pub mod journal;
 pub(crate) mod jsonb;
+pub(crate) mod keyed_index;
 pub mod keys;
 pub mod keyspaces;
 pub mod kv;
+pub(crate) mod legacy_postings;
 pub mod link_slug_reads;
 pub mod links;
 pub mod occ_kv;
@@ -265,7 +268,12 @@ pub struct Store {
 /// a build with the `fjall` feature (never the addon's) keeps the records in a fjall database
 /// instead when `GBRAIN_RUST_BAKEOFF_STORE=fjall`.
 /// The record file of `dir`; with `create` false only one that is already there (never created).
-fn open_records_as(dir: &Path, concurrent: bool, create: bool) -> Result<Arc<dyn Kv>> {
+fn open_records_as(
+    dir: &Path,
+    concurrent: bool,
+    create: bool,
+    known: &[u32],
+) -> Result<Arc<dyn Kv>> {
     #[cfg(feature = "fjall")]
     if std::env::var("GBRAIN_RUST_BAKEOFF_STORE").is_ok_and(|v| v == "fjall") {
         let kv = fjall_kv::FjallKv::open_dir(&dir.join("records.fjall"))?;
@@ -282,10 +290,27 @@ fn open_records_as(dir: &Path, concurrent: bool, create: bool) -> Result<Arc<dyn
         redb_kv::RedbKv::open_existing_path(&path)?
     };
     Ok(if concurrent {
+        upgrade_before_occ(&kv, known)?;
         Arc::new(occ_kv::OccKv::new(kv)?)
     } else {
         Arc::new(kv)
     })
+}
+
+/// Runs a pending format upgrade on the record file itself, before the concurrent-writes layer
+/// wraps it. The upgrade is still one write transaction, but its writes go to the record file's
+/// own transaction instead of the concurrent layer's in-memory write set, which would hold every
+/// key the upgrade deletes until it commits (a format-14 upgrade over 2 million legacy postings
+/// peaked at about 1 GB that way, against about 150 MB here). A format this build does not open is
+/// left to `open_kv_in`, which refuses it.
+fn upgrade_before_occ(kv: &dyn Kv, known: &[u32]) -> Result<()> {
+    let stored: Option<StoredFormat> = get_json(&*kv.snapshot()?, &keys::meta("format"))?;
+    match stored {
+        Some(s) if known.contains(&s.format_version) && s.format_version < FORMAT_VERSION => {
+            upgrade_format(kv).map(|_| ())
+        }
+        _ => Ok(()),
+    }
 }
 
 /// How many times `Store::write` runs a transaction that keeps losing conflicts.
@@ -382,7 +407,12 @@ impl Store {
                 format::check_version_in(stored.format_version, known)?;
             }
         }
-        let kv = open_records_as(dir, options.concurrent_writes, options.create_missing)?;
+        let kv = open_records_as(
+            dir,
+            options.concurrent_writes,
+            options.create_missing,
+            known,
+        )?;
         let mut store = Store::open_kv_in(kv, Arc::new(SystemEnv), options.clone(), known)?;
         store.dir = Some(dir.to_path_buf());
         // FORMAT follows the records: written when missing (a crash before it, or a deleted
@@ -493,7 +523,7 @@ impl Store {
         let schema_version = config::read_config(&*kv.snapshot()?, "version")?
             .and_then(|v| v.parse().ok())
             .unwrap_or(0);
-        Ok(Store {
+        let store = Store {
             kv,
             env,
             vectors: vectors::VectorCache::default(),
@@ -509,12 +539,11 @@ impl Store {
             runs_builder: options.keyword_index_builder,
             flag_assumed,
             dir: None,
-        })
-        .inspect(|store| {
-            if index.needs_build && store.runs_builder {
-                store.start_keyword_index_builder();
-            }
-        })
+        };
+        if index.needs_build && store.runs_builder {
+            store.start_keyword_index_builder();
+        }
+        Ok(store)
     }
 
     /// A store on the same records with no transaction and no builder: the build thread's handle.
@@ -710,8 +739,12 @@ impl Store {
             let outcome = {
                 let _clock = crate::env::transaction_clock::open(self.env.clone());
                 let _trust = crate::write_trust::stamp_context::open(stamp_trust()?);
+                let body = std::time::Instant::now();
                 match write_chain(&mut *tx, &mut f) {
-                    Ok(value) => tx.commit().map(|_| value),
+                    Ok(value) => {
+                        commit_profile::note_write_body(body);
+                        tx.commit().map(|_| value)
+                    }
                     Err(e) => Err(e),
                 }
             };
@@ -748,17 +781,24 @@ impl Store {
 
 /// Runs `f` on the store's write handle chain over `inner`: every `Store::write` run (one OCC
 /// attempt, or one bound statement) goes through it, and it ends the run's handle work before
-/// the run is kept. Today the chain is `keyword::IndexingWriter(access_flag::FlaggingWriter(inner))`; a
-/// wrapper added later goes inside it (`IndexingWriter(FlaggingWriter(OtherWriter(inner)))`), and each wrapper forwards the special
-/// `KvWrite` primitives (`allocate`, `raise_counter`, `add_i64`, `counter_below`).
+/// the run is kept. Today the chain is
+/// `keyword::IndexingWriter(access_flag::FlaggingWriter(keyed_index::KeyedWriter(inner)))`; a wrapper added later
+/// goes inside the flagging writer, and each wrapper forwards the special `KvWrite` primitives (`allocate`,
+/// `raise_counter`, `add_i64`, `counter_below`). The keyed writer flushes last, after the keyword postings, so it
+/// sees every record the run wrote.
 fn write_chain<T>(
     inner: &mut dyn KvWrite,
     f: &mut impl FnMut(&mut dyn KvWrite) -> Result<T>,
 ) -> Result<T> {
-    let mut flagging = access_flag::FlaggingWriter(inner);
-    let mut indexing = keyword::IndexingWriter::new(&mut flagging);
-    let value = f(&mut indexing)?;
-    indexing.flush()?;
+    let mut keyed = keyed_index::KeyedWriter::new(inner);
+    let value = {
+        let mut flagging = access_flag::FlaggingWriter(&mut keyed);
+        let mut indexing = keyword::IndexingWriter::new(&mut flagging);
+        let value = f(&mut indexing)?;
+        indexing.flush()?;
+        value
+    };
+    keyed.flush()?;
     Ok(value)
 }
 
@@ -788,15 +828,26 @@ pub const DEFAULT_WRITE_GATE_DETECTOR_VERSION: u32 = 2;
 /// (`keyword/index_build.rs`), 4 to 5 rewrites nothing (a take stored before its trust tier
 /// reads `unknown`), so a format-4 brain keeps its postings, and 5 to 6 carries over the records
 /// the v0.60.766.0 addon's shadow seed kept in other shapes (`seed/format_5.rs`), 6 to 7 moves the
-/// loop mutes off the take purge prefix (`facts/key_split.rs`) and 7 to 8 moves the shared-skill
-/// token secret off the member links' prefix (`access_key_split.rs`). The format record is re-read inside the transaction:
+/// loop mutes off the take purge prefix (`facts/key_split.rs`), 7 to 8 moves the shared-skill
+/// token secret off the member links' prefix (`access_key_split.rs`), 8 or 9 to 12 builds the keyed
+/// lookups (`keyed_index.rs`), 12 to 13 writes nothing (a brain before 13 has no pending keyword
+/// record, `keyword/pending.rs`) and 13 or older to 14 deletes the legacy word postings
+/// (`legacy_postings.rs`). The format record is re-read inside the transaction:
 /// another handle on the same records may have upgraded the brain first.
 fn upgrade_format(kv: &dyn Kv) -> Result<StoredFormat> {
+    upgrade_format_to(kv, FORMAT_VERSION)
+}
+
+/// [`upgrade_format`] to `target`, the format it stamps. Each step runs only for a brain older
+/// than the format that introduced it, never because the brain is older than `target`, so a later
+/// format's upgrade does not run an earlier format's step again. Tests pass a `target` above
+/// `FORMAT_VERSION` to act as the next build.
+fn upgrade_format_to(kv: &dyn Kv, target: u32) -> Result<StoredFormat> {
     let mut tx = kv.begin_write_exclusive()?;
     let mut stored: StoredFormat = get_json(&*tx, &keys::meta("format"))?
         .ok_or_else(|| StoreError::new(error::STORE_CORRUPT, "the format record went missing"))?;
     format::check_version(stored.format_version)?;
-    if stored.format_version >= FORMAT_VERSION {
+    if stored.format_version >= target {
         return Ok(stored);
     }
     if stored.format_version == 1 {
@@ -855,7 +906,18 @@ fn upgrade_format(kv: &dyn Kv) -> Result<StoredFormat> {
             )
         })?;
     }
-    stored.format_version = FORMAT_VERSION;
+    // Format 9 built the keyed lookups (`keyed_index.rs`); format 12 added the updated-order
+    // entry (`keyed_index::REBUILT_AT_FORMAT`). Both are built from the records, after every step above has left them in
+    // this build's shapes: every keyed entry is dropped and rewritten in this one transaction.
+    if stored.format_version < keyed_index::REBUILT_AT_FORMAT {
+        keyed_index::rebuild(&mut *tx)?;
+    }
+    // The legacy word postings are gone (`legacy_postings.rs`), deleted in this one transaction,
+    // for a brain older than the format that dropped them.
+    if stored.format_version < legacy_postings::DROPPED_AT_FORMAT {
+        legacy_postings::delete_all(&mut *tx)?;
+    }
+    stored.format_version = target;
     put_json(&mut *tx, &keys::meta("format"), &stored)?;
     tx.commit()?;
     Ok(stored)
@@ -1292,11 +1354,11 @@ mod older_build_tests {
             assert_refused(&dir, &known, n + 1);
             let _ = fs::remove_dir_all(dir.parent().unwrap());
         }
-        // This build's own list is the case above with n = FORMAT_VERSION.
-        assert_eq!(
-            FORMAT_VERSIONS,
-            (1..=FORMAT_VERSION).collect::<Vec<_>>().as_slice()
-        );
+        // This build's own list: every format from 1 to 9, then 12, 13 and its own (formats 10 and
+        // 11 belong to other lanes and are not opened).
+        let mut own: Vec<u32> = (1..=9).collect();
+        own.extend([12, 13, FORMAT_VERSION]);
+        assert_eq!(FORMAT_VERSIONS, own.as_slice());
     }
 }
 

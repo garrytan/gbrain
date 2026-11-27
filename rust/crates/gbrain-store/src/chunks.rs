@@ -398,20 +398,13 @@ fn kept_meta(input: &ChunkInput) -> Map<String, Value> {
         .collect()
 }
 
-/// Writes a chunk record, its postings when the chunk is visible at `view_generation`, and its
-/// share of the stats (the caller stores them).
-fn write_chunk(
-    tx: &mut dyn KvWrite,
-    record: &ChunkRecord,
-    view_generation: u64,
-    stats: &mut StatsDelta,
-) -> Result<()> {
+/// Writes a chunk record and its share of the stats (the caller stores them). The keyword index
+/// (`keyword/index_writer.rs`) keeps its own postings in step; the legacy word postings (`T`) are
+/// gone since store format 14.
+fn write_chunk(tx: &mut dyn KvWrite, record: &ChunkRecord, stats: &mut StatsDelta) -> Result<()> {
     // `chunk_search_vector_trigger` builds the vector before the row is stored and its error aborts the statement.
     crate::keyword::check_chunk_vector(record)?;
     put_json(tx, &keys::chunk(record.page_id, record.chunk_index), record)?;
-    if record.visible_at(view_generation) {
-        put_postings(tx, record)?;
-    }
     stats.chunks += 1;
     stats.total_length += i64::from(record.length);
     Ok(())
@@ -427,9 +420,8 @@ pub(crate) fn seed_chunk(
     vector: Option<(&str, i64, &[f32])>,
 ) -> Result<()> {
     record.length = term_frequencies(&record.chunk_text).1;
-    let view_generation = segment_view_generation(&*tx, record.page_id)?;
     let mut stats = StatsDelta::default();
-    write_chunk(tx, &record, view_generation, &mut stats)?;
+    write_chunk(tx, &record, &mut stats)?;
     add_stats(tx, &stats)?;
     if let Some((model, embedded_at_us, values)) = vector {
         crate::embeddings::put_chunk_vector(
@@ -444,32 +436,13 @@ pub(crate) fn seed_chunk(
     Ok(())
 }
 
-fn put_postings(tx: &mut dyn KvWrite, record: &ChunkRecord) -> Result<()> {
-    for (term, count) in &term_frequencies(&record.chunk_text).0 {
-        tx.put(
-            &keys::posting(term, record.page_id, record.chunk_index),
-            &count.to_be_bytes(),
-        )?;
-    }
-    Ok(())
-}
-
-fn delete_postings(tx: &mut dyn KvWrite, record: &ChunkRecord) -> Result<()> {
-    for term in term_frequencies(&record.chunk_text).0.keys() {
-        tx.delete(&keys::posting(term, record.page_id, record.chunk_index))?;
-    }
-    Ok(())
-}
-
-/// Deletes a chunk record and its postings (deleting a posting that was never written is a
-/// no-op) and takes its share off the stats (the caller stores them). It does not call the
-/// chunk-delete hook.
+/// Deletes a chunk record and its vector and takes its share off the stats (the caller stores
+/// them). It does not call the chunk-delete hook.
 fn remove_chunk_record(
     tx: &mut dyn KvWrite,
     chunk: &ChunkRecord,
     stats: &mut StatsDelta,
 ) -> Result<()> {
-    delete_postings(tx, chunk)?;
     tx.delete(&keys::chunk(chunk.page_id, chunk.chunk_index))?;
     crate::embeddings::remove_chunk_vector(tx, chunk.page_id, chunk.chunk_index)?;
     stats.chunks -= 1;
@@ -611,7 +584,6 @@ pub(crate) fn replace_chunks_at(
         0
     };
     let mut stats = StatsDelta::default();
-    let view_generation = segment_view_generation(&*tx, page.id)?;
     // `chunkWriteInvalidations`: a stored chunk the write leaves out (or an empty write that removes any) changes the page.
     let mut changes_chunks = leaves_out;
     for (index, input) in by_index {
@@ -717,7 +689,7 @@ pub(crate) fn replace_chunks_at(
             segment: old.and_then(|old| old.segment),
             embed,
         };
-        write_chunk(tx, &record, view_generation, &mut stats)?;
+        write_chunk(tx, &record, &mut stats)?;
         if let Some((model, embedded_at_us, vector)) = vector {
             crate::embeddings::put_chunk_vector(
                 tx,
@@ -966,10 +938,6 @@ pub(crate) fn read_segment_view(read: &dyn KvRead, page_id: u64) -> Result<Segme
     Ok(get_json(read, &segment_view_key(page_id))?.unwrap_or_default())
 }
 
-fn segment_view_generation(read: &dyn KvRead, page_id: u64) -> Result<u64> {
-    Ok(read_segment_view(read, page_id)?.generation)
-}
-
 impl ChunkRecord {
     /// PGLite's `body_generation IS NULL OR body_generation <= page.body_generation`.
     pub(crate) fn visible_at(&self, generation: u64) -> bool {
@@ -1077,7 +1045,6 @@ pub(crate) fn append_segment_chunks(
         .map(|c| c.chunk_index + 1)
         .max()
         .unwrap_or(0);
-    let view_generation = segment_view_generation(&*tx, page_id)?;
     let mut stats = StatsDelta::default();
     let mut indexes = Vec::with_capacity(chunks.len());
     for (offset, input) in chunks.iter().enumerate() {
@@ -1139,7 +1106,7 @@ pub(crate) fn append_segment_chunks(
             }),
             embed,
         };
-        write_chunk(tx, &record, view_generation, &mut stats)?;
+        write_chunk(tx, &record, &mut stats)?;
         if let Some(vector) = vector {
             crate::embeddings::put_chunk_vector(tx, page_id, index, &model, now_us, &vector)?;
         }
@@ -1149,8 +1116,7 @@ pub(crate) fn append_segment_chunks(
     Ok(indexes)
 }
 
-/// Records the page's new body generation and live occurrence offsets, and writes or removes
-/// the postings of the chunks whose visibility changed.
+/// Records the page's new body generation and live occurrence offsets.
 // The page-body family is the first caller.
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn publish_segment_chunks(
@@ -1159,16 +1125,6 @@ pub(crate) fn publish_segment_chunks(
     generation: u64,
     offsets: BTreeMap<u64, u64>,
 ) -> Result<()> {
-    let before = segment_view_generation(&*tx, page_id)?;
-    if before != generation {
-        for chunk in read_chunks(&*tx, page_id)? {
-            match (chunk.visible_at(before), chunk.visible_at(generation)) {
-                (false, true) => put_postings(tx, &chunk)?,
-                (true, false) => delete_postings(tx, &chunk)?,
-                _ => {}
-            }
-        }
-    }
     put_json(
         tx,
         &segment_view_key(page_id),
@@ -1837,7 +1793,12 @@ mod segment_tests {
         let store = crate::test_support::store();
         let id = page(&store);
         append(&store, id, 1, &[seg(1, 0, "one"), seg(2, 0, "two")]);
-        append(&store, id, 2, &[seg(1, 0, "one again"), seg(3, 0, "three")]);
+        append(
+            &store,
+            id,
+            2,
+            &[seg(1, 0, "one aardvark"), seg(3, 0, "three")],
+        );
         publish(&store, id, 2, &[(1, 0), (3, 5)]);
         let ids: HashMap<String, u64> = read_chunks(&*store.read().unwrap(), id)
             .unwrap()
@@ -1858,16 +1819,17 @@ mod segment_tests {
             .unwrap();
         assert_eq!(gone, vec![ids["one"]]);
         assert_eq!(fired(), vec![(id, vec![ids["one"]])]);
-        assert_eq!(hits(&store, "again"), 1);
+        // "again" is an English stopword the keyword index drops, so the probe word is "aardvark".
+        assert_eq!(hits(&store, "aardvark"), 1);
 
         // Generation 2 except occurrence 3: occurrence 1's second chunk.
         let keep: BTreeSet<u64> = [3].into();
         let gone = store
             .write(|tx| delete_generation_chunks(tx, id, 2, &keep))
             .unwrap();
-        assert_eq!(gone, vec![ids["one again"]]);
-        assert_eq!(fired(), vec![(id, vec![ids["one again"]])]);
-        assert_eq!(hits(&store, "again"), 0);
+        assert_eq!(gone, vec![ids["one aardvark"]]);
+        assert_eq!(fired(), vec![(id, vec![ids["one aardvark"]])]);
+        assert_eq!(hits(&store, "aardvark"), 0);
         assert_eq!(texts(&store), vec!["three", "two", "inline body"]);
         assert_eq!(store.count_chunks().unwrap(), 3);
 
@@ -1928,15 +1890,8 @@ mod segment_tests {
         let records = read_chunks(&*store.read().unwrap(), id).unwrap();
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].segment.map(|p| p.occurrence_id), Some(5));
-        // Still staged above the view: no posting.
-        assert!(
-            store
-                .read()
-                .unwrap()
-                .get(&keys::posting("rewritten", id, 1))
-                .unwrap()
-                .is_none()
-        );
+        // Still staged above the view: keyword search does not find it.
+        assert_eq!(hits(&store, "rewritten"), 0);
     }
 
     #[test]

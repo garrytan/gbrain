@@ -6,7 +6,7 @@ A page import runs a few page and chunk statements around its chunk write: the s
 origin refresh, the chunker stamp, the text projection seal, the in-place chunk moves and the
 vector-reuse read. PGLite and Postgres run them from `src/core/engine-sql/pages.ts`,
 `engine-sql/chunks.ts` and `engine-sql/sources.ts`. The store answers the same members from its page,
-chunk, posting and vector records and the source record's `chunker_version` field
+chunk and vector records and the source record's `chunker_version` field
 (`crates/gbrain-store/src/import_members.rs`); it adds no keys.
 `replaceDerivedAliases` is in the aliases family ([aliases.md](aliases.md)).
 
@@ -22,7 +22,7 @@ one write at a time.
 | `brain.readSourceChunkerVersion(sourceId)` | the chunker version on the source record, or `null` before the first stamp and for an unknown source | `readSourceChunkerVersion` |
 | `brain.setSourceChunkerVersion(sourceId, version)` | whether the source exists. Stamps `version` on the source record; an unknown source changes nothing. The TypeScript member returns nothing | `setSourceChunkerVersion` |
 | `brain.writeTextProjectionSeal(slug, { sourceId, revision, timelineText })` | nothing. When `revision` equals the page's `knowledge_revision` (case-insensitive, as a uuid compares), sets `text_projection_revision` and records `timelineText` as the timeline the keyword index reads. A page whose revision moved on, or a missing page, changes nothing. A `revision` that is not a uuid is `invalid_argument` (`invalid input syntax for type uuid: "nope"`) | `writeTextProjectionSeal` |
-| `brain.moveChunkIndexes(pageId, waves)` | nothing. Each wave is a list of `{ id, to, projected_byte_start?, projected_byte_end? }`. Wave by wave, each chunk of the page with the id moves to `to` with its postings and vector; a chunk that lands (`to >= 0`) takes the move's span (`NULL` when the move has none), a parked one (`to < 0`) keeps its own. An id the page does not hold is ignored. A wave that leaves two chunks at one index is `constraint_violation` (`duplicate key value violates unique constraint "idx_chunks_page_index"`) | `moveChunkIndexes` |
+| `brain.moveChunkIndexes(pageId, waves)` | nothing. Each wave is a list of `{ id, to, projected_byte_start?, projected_byte_end? }`. Wave by wave, each chunk of the page with the id moves to `to` with its vector; a chunk that lands (`to >= 0`) takes the move's span (`NULL` when the move has none), a parked one (`to < 0`) keeps its own. An id the page does not hold is ignored. A wave that leaves two chunks at one index is `constraint_violation` (`duplicate key value violates unique constraint "idx_chunks_page_index"`) | `moveChunkIndexes` |
 | `brain.getChunkReuseRows(slug, sourceId?)` | `[{ chunk_index, embedding_input_hash, contextual_retrieval_mode, text_only, unembedded }]`, every stored chunk of the page (soft deleted or not), by chunk index. `text_only` is true when the chunk's embedded text hash equals the hash of its text; `unembedded` when it has no vector and no recorded input or text hash | `getChunkReuseRows` |
 
 ## Differences from PGLite
@@ -34,7 +34,7 @@ one write at a time.
   same call.
 - **Hashes.** `getChunkReuseRows` compares the sha256 text hash the store keeps, not md5. The store
   keeps no image or multimodal vector, so those columns read as `NULL`.
-- **Stats.** `moveChunkIndexes` moves postings with their chunks; the document count and term
+- **Stats.** `moveChunkIndexes` moves chunks with their vectors; the document count and term
   statistics of the keyword index do not change, as a move adds and removes nothing.
 - **A claimed origin.** `refreshPageOrigin` refuses an origin another live page of the source holds with
   `origin_claimed` itself; PGLite leaves it to the unique index `pages_live_origin_key`, whose violation the

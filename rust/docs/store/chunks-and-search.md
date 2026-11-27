@@ -3,7 +3,7 @@
 Part of the store contract in [rust/README.md](../../README.md) ("The brain store"): the rules there apply to every method here.
 
 A page's text is indexed as chunks (`chunk_source` is `compiled_truth`, `timeline`, `fenced_code` or
-`image_asset`; a chunk is one record plus one posting per word). The store's own `putPage`, unless it is
+`image_asset`; a chunk is one record; its keyword postings belong to the keyword index, `keyword.md`). The store's own `putPage`, unless it is
 given `index: false`, installs the chunks in the same transaction as the page: `opts.chunks` when the
 caller passes `ChunkInput[]`, otherwise the built-in chunker (paragraphs packed to about 1500 characters;
 simpler than the TypeScript chunker). The TypeScript engine does not use that: its `putPage` passes
@@ -30,22 +30,16 @@ page from search until the store's indexing `putPage` or a seal indexes it again
 
 | `brain.deleteChunks(slug, { sourceId? }?)` | `null`; the page stays | `deleteChunks` |
 | `brain.countChunks()` | number of chunks in the brain | none |
-| `brain.searchKeyword(query, opts?)` | `SearchResult[]` (`slug, page_id, title, type, source_id, chunk_text, chunk_source, chunk_id, chunk_index, score, stale`, plus `effective_date` when set). `stale` is PGLite's rule: the page's `updated_at` is older than the newest `created_at` of its timeline entries | `searchKeyword` |
+| `brain.searchKeyword(query, opts?)` | the rows of `brain.searchKeywordArm(query, query, opts?)` (see below) | `searchKeyword` |
 
 One difference in `upsertChunks`: with `sealChunkerVersion`, `pageId` and `deferSeal`, PGLite does not check
 `pageId` and writes the rows into the page with that id. The store refuses another page's id with or without
 `deferSeal`, so a sealed write never lands in a page the slug does not name.
 
-This is the core BM25 method. The TypeScript `searchKeyword` member no longer calls it: it runs the `ts_rank` arm in
-`keyword.md`, and this method stays in the addon unused. `searchKeyword` here is not parity with PGLite. Ranking is BM25 over chunks with index-wide statistics
-(`k1` 1.2, `b` 0.75), not the Postgres `ts_rank`, so scores and order differ. There is no stemming;
-the English stop words are dropped from the query (a query of only stop words keeps them); each CJK
-character is its own term; `websearch` syntax (quotes, `or`, `-`) is not interpreted. Like PGLite:
-every term must match, a page is one result represented by its best chunk, order is `score DESC,
-page_id ASC, chunk_id ASC`, `limit` defaults to 20 and is clamped to 100, soft-deleted pages,
-archived sources, image chunks and pages whose frontmatter has a `quarantine` or `pinned_question` key (whatever its value) are hidden, `test/`, `attachments/` and `.raw/` slugs are hidden
-(`include_slug_prefixes` opts back in; `exclude_slug_prefixes` adds to them), and `type`, `types`,
-`exclude_slugs`, `sourceId`, `sourceIds` (wins), `detail: "low"` (compiled-truth chunks), `language`
-and `symbolKind` filter. `where`, `afterDate` and `beforeDate` reject `invalid_argument` instead of
-being ignored. A query reads the posting list of every term, so cost grows with the number of
-matching chunks.
+`brain.searchKeyword(query, opts?)` answers exactly what `brain.searchKeywordArm(query, query, opts?)` answers: the
+keyword arm's statement (`keyword.md`) with the query as both the match and the rank query, over the live keyword
+index. `opts` is the arm's options (`limit`, `offset`, `type`, `types`, `sources`, `hardExcludes`, `excludeSlugs`,
+`detailLow`, `where`, `afterDate`, `beforeDate` and the rest of `KeywordOptions`). Until store format 14 it was a BM25
+search over its own word postings (`T`), which no TypeScript member called; format 14 dropped those postings and
+their upkeep on every chunk write, and its upgrade deletes them in one write transaction (`legacy_postings.rs`).
+The TypeScript `searchKeyword` member is unchanged, and it runs the arm and its retries (`keyword.md`).
