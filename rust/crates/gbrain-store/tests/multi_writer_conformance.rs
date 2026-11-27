@@ -2816,11 +2816,11 @@ fn c21_read_your_writes_token_on_a_second_connection() {
 fn c21_read_your_writes_token_on_a_second_connection_multi_writer() {
     let dir = TempDir::new("c21m");
     let store = Arc::new(open_optimistic(&dir));
-    // The token on a connection that is another process: the v3 wire has `min_position`, but no typed engine member or client option
-    // sends it (engine C21 is pending on that missing member), so this stays ignored.
+    // The token on a connection that is another process. A raw Store has no client path (as for the C17 twin), so this stays
+    // ignored; engine C21 proves it on the served arm with a second v3 connection (`ctx.servedPeerEngine()`) and on rust-mu.
     mu::pending_member::<()>(
         L3_SERVER,
-        "a read token on a second connection: no typed read-with-position member (engine C21)",
+        "a read token on a second connection: a raw Store has no client path; proven at the engine level by engine C21 (served arm, rust-mu)",
     )
     .unwrap_or_else(|e| panic!("{e}"));
     let tx = begin_host(&store, 1);
