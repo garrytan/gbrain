@@ -193,6 +193,8 @@ export interface WriterConfig {
   muRoute?: 'env' | 'config';
   /** Rust only: the process started with GBRAIN_RUST_MULTIUSER=1 (an ambient multi-user run); the child's store must resolve it on. */
   ambient?: boolean;
+  /** Rust served arm only: the child is a served v3 client of the arm's brain server (url, token, CA), not an owner-socket client. */
+  served?: { url: string; token: string; ca: string };
   /** crash: stop after this many acknowledged writes, or at the deadline. stress: this process's number. */
   max?: number;
   index?: number;

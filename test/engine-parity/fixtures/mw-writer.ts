@@ -26,7 +26,13 @@ async function connect(c: WriterConfig): Promise<BrainEngine> {
   if (c.muRoute === 'env') process.env.GBRAIN_RUST_MULTIUSER = '1';
   // The commit log is on for the whole rust-mu view (both routes); a brain that keeps a log must be written with it on.
   if (c.muRoute !== undefined) process.env.GBRAIN_RUST_COMMIT_LOG = '1';
-  const { openRustBrainAt, resolvedMultiuser } = await import('../rust-arm.ts');
+  const { openRustBrainAt, openServedClientAt, resolvedMultiuser } = await import('../rust-arm.ts');
+  // The served arm: this process is one more served v3 client of the brain server (the parent asserted the owner's mode).
+  if (c.served !== undefined) {
+    const served = await openServedClientAt(c.databasePath!, c.served);
+    process.stdout.write('RESOLVED served\n');
+    return served as unknown as BrainEngine;
+  }
   // With a route the open asserts, and fails on, a store that did not resolve multi-user mode (assertRustMultiuserResolved).
   const engine = await openRustBrainAt(c.databasePath!, c.muRoute);
   // Plain Rust: the writer's store must not be multi-user either.

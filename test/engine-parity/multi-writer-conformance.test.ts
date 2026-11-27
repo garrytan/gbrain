@@ -41,7 +41,7 @@ import { C16_PG_OPENERS, runC16Postgres } from './c16-postgres.ts';
 import { LATEST_VERSION } from '../../src/core/migrate.ts';
 import { parityArms, type ParityBackend, type ParityContext, rustArmModeProblem, rustArmMultiuser, rustMultiuserSwitch, rustMultiuserView } from './harness.ts';
 import { clearHostRegistration, fenceOpts, hostLeaseName, setHostRegistration } from '../../src/core/persistence/host-fence.ts';
-import { assertRustCommitLogResolved, assertRustMultiuserResolved, installMuConnect, loadRustArmAddon, openRustBrainAt, removeBrainDir, resolvedMultiuser, RUST_MULTIUSER_CONFIG_KEY, rustServedRequested, type MuConnectable } from './rust-arm.ts';
+import { assertRustCommitLogResolved, assertRustMultiuserResolved, installMuConnect, loadRustArmAddon, openRustBrainAt, removeBrainDir, resolvedMultiuser, RUST_MULTIUSER_CONFIG_KEY, rustServedRequested, servedOwnerOf, servedPeerCredentials, type MuConnectable } from './rust-arm.ts';
 import { openRustEngine, type RustEngine } from '../../src/core/rust-engine.ts';
 import { listenServed } from '../../src/core/rust-engine/served/listener.ts';
 import { mintOwnerServerToken } from '../../src/core/rust-engine/served/owner-token.ts';
@@ -1093,27 +1093,36 @@ describe('engine parity: multi-writer conformance', () => {
   // barrier: it sends `GO` only after all seven children reported READY, and the case proves the loads overlapped (every
   // process started before any finished). It then checks every expected page slug and body, every request key once, and that the
   // claimed ids are exactly the stored jobs' ids. No lost update, no double claim, no busy error. Postgres: seven pools.
-  // Rust: this process owns the brain and the seven are owner-socket clients (a second Rust process is a client; its `admitJob`
-  // carries a policy object with functions, which do not cross the owner socket, so the cell is pending). PGLite is in-memory (n/a).
+  // Rust: this process owns the brain and the seven are owner-socket clients (a client's `admitJob` keeps its policy's `decide`
+  // hook, owner-ipc/held-row.ts). The served arm (GBRAIN_TEST_RUST_SERVED=1): this process runs the brain server and its owner,
+  // the case's engine is a served client of it, and the seven are served v3 clients of the same server, each with its own token
+  // (servedPeerCredentials). PGLite is in-memory (n/a).
   parityTest('C18 64 writers in 8 processes, no busy error', { methods: ['putPage', 'readPageSnapshot', 'admitJob', 'claimNextJob', 'listJobs'], mwCase: 'C18' }, async (engine, backend, ctx) => {
     if (backend !== 'postgres' && backend !== 'rust') throw new Error(`C18 runs its writer processes on Postgres and Rust only, not on ${backend}`);
     // Postgres: each child has its own pool on the arm's database. Rust: the brain has one owner (this process, asserted below) and
     // each child is an owner-socket client of it, opened in the mode the arm runs (the child asserts what its brain resolved).
     const mode = rustArmMultiuser();
     const route = rustMultiuserView();
+    const served = backend === 'rust' && rustServedRequested();
     if (backend === 'rust') {
-      expect((engine as unknown as { ownerRole?: string }).ownerRole, 'this process does not own the brain the writer processes share').toBe('owner');
-      expect(rustArmModeProblem(resolvedMultiuser(engine), mode), 'the owner of the brain').toBeNull();
+      const ownerEngine = (servedOwnerOf(engine) ?? engine) as unknown as { ownerRole?: string };
+      expect(ownerEngine.ownerRole, 'this process does not own the brain the writer processes share').toBe('owner');
+      expect(rustArmModeProblem(resolvedMultiuser(ownerEngine as never), mode), 'the owner of the brain').toBeNull();
     }
     const writerConfig = (index: number): WriterConfig => backend === 'postgres'
       ? { role: 'stress', backend: 'postgres', databaseUrl: (ctx.unconnectedEngine().config as { database_url?: string }).database_url!, index, startOnGo: true, deadlineMs: 90_000 }
       : { role: 'stress', backend: 'rust', databasePath: (engine as unknown as { databasePath: string }).databasePath, index, startOnGo: true, deadlineMs: 90_000,
-        ...(route !== 'off' && { muRoute: route }), ...(mode === 'ambient' && { ambient: true }) };
+        ...(route !== 'off' && { muRoute: route }), ...(mode === 'ambient' && { ambient: true }),
+        ...(served && { served: servedPeerCredentials(engine) }) };
+    // The served arm: the writer processes reach this process's brain server as served clients, so it must hand out credentials.
+    if (served) expect(servedPeerCredentials(engine), 'the served arm gave no credentials for a writer process').toBeDefined();
     const children: ReturnType<typeof startWriter>[] = [];
     let reports: StressReport[];
     try {
       for (let i = 0; i < 7; i++) children.push(startWriter(writerConfig(i + 1)));
       await Promise.all(children.map(c => c.until(lines => lines.includes('READY'), 30_000, 'connect')));
+      // The served arm: every writer process is a served v3 client of this process's brain server, not an owner-socket client.
+      if (served) expect(children.map(c => c.lines().includes('RESOLVED served')), 'a writer process is not a served client').toEqual(children.map(() => true));
       // The barrier: everyone is connected; the children start on GO and this process starts at once.
       for (const c of children) c.go();
       const startedAt = Date.now();

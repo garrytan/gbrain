@@ -303,6 +303,11 @@ async function serveRustBrain(owned: RustBrainDir): Promise<RustBrainDir> {
     peers.push(peer);
     return peer;
   } });
+  Object.defineProperty(client, SERVED_PEER_CREDENTIALS, { configurable: true, enumerable: false, value: (): ServedPeerCredentials => {
+    const peerToken = `${SERVED_ARM_TOKEN}_peer_${++servedPeerCount}`;
+    servedArmTokens.set(peerToken, `served-arm-peer-${servedPeerCount}`);
+    return { url: `gbrain+tls://localhost:${listener.port}`, token: peerToken, ca: tls.cert.toString('utf8') };
+  } });
   return { engine: client, dir: owned.dir };
 }
 
@@ -317,6 +322,27 @@ const SERVED_OWNER: unique symbol = Symbol('gbrain.test.served-owner') as never;
 export function servedOwnerOf(engine: object): object | undefined { return (engine as Record<symbol, object | undefined>)[SERVED_OWNER]; }
 
 const SERVED_PEER: unique symbol = Symbol('gbrain.test.served-peer') as never;
+const SERVED_PEER_CREDENTIALS: unique symbol = Symbol('gbrain.test.served-peer-credentials') as never;
+
+/** What another process needs to reach the served arm's brain server as its own served client: the URL, a fresh token, the CA. */
+export interface ServedPeerCredentials { url: string; token: string; ca: string }
+
+/**
+ * Credentials for one more served client of the served arm's brain server, for a client in another process (C18's writer
+ * processes): a fresh token the server admits like the arm's own. Undefined for any other engine.
+ */
+export function servedPeerCredentials(engine: object): ServedPeerCredentials | undefined {
+  const mint = (engine as Record<symbol, (() => ServedPeerCredentials) | undefined>)[SERVED_PEER_CREDENTIALS];
+  return mint ? mint() : undefined;
+}
+
+/** A served v3 client of a brain server, opened from its credentials (servedPeerCredentials) in another process. The caller disconnects it. */
+export async function openServedClientAt(dir: string, served: ServedPeerCredentials): Promise<RustEngine> {
+  const loaded = await loadRustArmAddon();
+  const engine = openRustEngine({ addon: loaded, databasePath: dir, served: { url: served.url, token: served.token, ca: Buffer.from(served.ca, 'utf8') } });
+  await engine.connect({ engine: 'rust', database_path: dir } as never);
+  return engine;
+}
 
 /**
  * The members the served arm's owner engine runs for a case count as the case's calls: a remote whole operation (put_page

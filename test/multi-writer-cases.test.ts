@@ -204,7 +204,7 @@ describe('multi-writer support matrix', () => {
 
   test('the single-writer Rust arm runs every case whose invariant holds there; the rest wait for a second connection, a new rule, or the multi-writer work', () => {
     expect(MW_CASES.filter(c => c.cells.rust.status !== 'runs').map(c => [c.id, c.cells.rust.status])).toEqual([
-      ['C11', 'n/a'], ['C13', 'n/a'], ['C16', 'n/a'], ['C17', 'n/a'], ['C18', 'pending'], ['C21', 'n/a'], ['C22', 'n/a'],
+      ['C11', 'n/a'], ['C13', 'n/a'], ['C16', 'n/a'], ['C17', 'n/a'], ['C21', 'n/a'], ['C22', 'n/a'],
     ]);
   });
 
@@ -214,13 +214,8 @@ describe('multi-writer support matrix', () => {
       expect(mwCell(id, 'postgres').status, `${id} postgres`).toBe('runs');
     }
     expect(mwCell('C19', 'rust').status).toBe('runs');
-    // C18 on Rust: the eight processes run and the seven clients are refused admitJob; the reason names the refusal and its cause.
-    for (const arm of ['rust', 'rust-mu'] as const) {
-      const cell = mwCell('C18', arm);
-      expect(cell.status, `C18 ${arm}`).toBe('pending');
-      expect(cell.status === 'pending' ? cell.owner : '', `C18 ${arm} owner`).toBe('L3 server');
-      expect(cell.status === 'pending' ? cell.why : '', `C18 ${arm} reason`).toMatch(/admitJob.*minion_queue.*functions/);
-    }
+    // C18 on Rust: the eight processes run, and the seven client processes admit and claim jobs (the served arm included).
+    for (const arm of ['rust', 'rust-mu'] as const) expect(mwCell('C18', arm).status, `C18 ${arm}`).toBe('runs');
   });
 
   test('the C19 check rejects a missing and a duplicated acknowledged write, and accepts a brain that kept them once', () => {
@@ -306,7 +301,7 @@ describe('multi-writer support matrix', () => {
     expect(mwCase('C19').scope).toMatch(/not a database-server crash/);
     expect(mwCase('C19').scope).toMatch(/Postgres durability \(WAL, fsync\) is not exercised/);
     expect(mwCase('C18').scope).toMatch(/Postgres runs/);
-    expect(mwCase('C18').scope).toMatch(/Rust stays pending/);
+    expect(mwCase('C18').scope).toMatch(/Rust runs/);
     const header = read('test', 'engine-parity', 'multi-writer-conformance.test.ts');
     expect(header).toMatch(/NOT a database-server crash test/);
   });

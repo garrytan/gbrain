@@ -107,6 +107,7 @@ test/engine-parity/mcp-get-tags.test.ts	served
 test/engine-parity/meetings-sync.test.ts	served	
 test/engine-parity/memory-mutation-reads.test.ts	served	
 test/engine-parity/mention-pass.test.ts	served	
+test/engine-parity/multi-writer-conformance.test.ts	served	
 test/engine-parity/oauth-clients.test.ts	served	
 test/engine-parity/oauth-dcr.test.ts	served	
 test/engine-parity/oauth-http.test.ts	served	

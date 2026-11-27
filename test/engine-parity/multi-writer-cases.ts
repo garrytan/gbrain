@@ -475,7 +475,7 @@ export const MW_CASES: readonly MwCase[] = [
     operation: 'all rows; the plan\'s stress cell',
     invariant: 'no lost update, no double claim, no busy error',
     reference: 'standalone',
-    scope: 'Postgres runs: this process plus seven writer processes, 8 writers each, started together by a parent barrier. PGLite is in-memory (n/a); Rust: the same eight processes run (this one owns the brain, seven are owner-socket clients) and fail on admitJob from a client process, so Rust stays pending.',
+    scope: 'Postgres runs: this process plus seven writer processes, 8 writers each, started together by a parent barrier. PGLite is in-memory (n/a); Rust runs: the same eight processes (this one owns the brain, seven are owner-socket clients whose admitJob keeps its decide hook on the client); on the served arm this process runs the brain server and the seven are its served v3 clients.',
     members: ['putPage', 'readPageSnapshot', 'admitJob', 'claimNextJob', 'listJobs'],
     storeTests: {
       runnable: ['c18_sixty_four_writers_no_busy_error'],
@@ -483,8 +483,8 @@ export const MW_CASES: readonly MwCase[] = [
     },
     cells: {
       pglite: na('PGLite is in-memory and one connection: seven writer processes cannot share it'), postgres: RUNS,
-      rust: pending('L3 server', 'admitJob from a second process refuses engine_capability_missing (capability minion_queue): its policy argument carries functions (decide, parentAuthorityKind), which do not cross the owner socket, so nothing ran; 56 of 64 writers (the seven client processes) were refused. Page writes and claimNextJob from clients succeed. Needs a job-admission path a client can send (whole operation or a policy the owner builds)'),
-      'rust-mu': pending('L3 server', 'admitJob from a second process refuses engine_capability_missing (capability minion_queue): its policy argument carries functions (decide, parentAuthorityKind), which do not cross the owner socket, so nothing ran; 56 of 64 writers (the seven client processes) were refused. Page writes and claimNextJob from clients succeed. Needs a job-admission path a client can send (whole operation or a policy the owner builds)'),
+      rust: RUNS,
+      'rust-mu': RUNS,
       'store-single': RUNS, 'store-optimistic': RUNS,
     },
   },
