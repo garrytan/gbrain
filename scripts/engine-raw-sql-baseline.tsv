@@ -363,7 +363,6 @@ src/core/persistence/consumer.ts	execute_raw	3
 src/core/persistence/context.ts	execute_raw	1
 src/core/persistence/core-guard.ts	execute_raw	2
 src/core/persistence/database-write.ts	execute_raw	2
-src/core/persistence/derived-origin-hold.ts	execute_raw	4
 src/core/persistence/detached-pages.ts	execute_raw	3
 src/core/persistence/diagnostics.ts	execute_raw	1
 src/core/persistence/drift-conflicts.ts	execute_raw	4
@@ -428,8 +427,7 @@ src/core/persistence/preparation-budget.ts	execute_raw	1
 src/core/persistence/prepared-maintenance.ts	execute_raw	13	batch 12 sync 14: master's maintenance reads (GST-3637, #10182) add raw sites the trunk typed elsewhere; 14 on master, 12 on trunk, 13 after the merge
 src/core/persistence/protocol.ts	execute_raw	1
 src/core/persistence/publication-deadline.ts	execute_raw	1
-src/core/persistence/purge-deleted.ts	execute_raw	7	#9653: the automatic purge's read of concepts hidden by an input purge, beside the sync-tombstone hold it mirrors
-src/core/persistence/purge-parks.ts	execute_raw	5
+src/core/persistence/purge-deleted.ts	execute_raw	5	#9653: the automatic purge's read of concepts hidden by an input purge, beside the sync-tombstone hold it mirrors
 src/core/persistence/purged-intent.ts	execute_raw	2
 src/core/persistence/put-page-screen.ts	execute_raw	1
 src/core/persistence/rebuildable-cache.ts	execute_raw	1
@@ -512,7 +510,6 @@ src/core/repair/file-drift-class.ts	execute_raw	10	came from #9614 and #9615 (wh
 src/core/repair/file-drift.ts	execute_raw	3
 src/core/repair/missing-tables.ts	execute_raw	2
 src/core/repair/open-facts.ts	execute_raw	9
-src/core/repair/origin-carry.ts	execute_raw	1
 src/core/repair/origin-twins-heal.ts	execute_raw	4
 src/core/repair/provenance.ts	execute_raw	1
 src/core/repair/readers.ts	execute_raw	3

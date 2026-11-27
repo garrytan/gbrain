@@ -36,7 +36,7 @@ pub struct PurgeOrigin {
 }
 
 /// `jsonb` refuses `\u0000`, as the SQL's `$3::text::jsonb` parse does.
-fn has_nul(v: &Value) -> bool {
+pub(super) fn has_nul(v: &Value) -> bool {
     match v {
         Value::String(t) => t.contains('\0'),
         Value::Array(items) => items.iter().any(has_nul),
@@ -46,7 +46,7 @@ fn has_nul(v: &Value) -> bool {
 }
 
 /// `completed_keys -> 0`: the first element of an array, else none (`->` on anything else is SQL NULL).
-fn first_doc(row: &HousekeepingRow) -> Option<&Value> {
+pub(super) fn first_doc(row: &HousekeepingRow) -> Option<&Value> {
     match &row.completed_keys {
         Value::Array(items) => items.first(),
         _ => None,
@@ -54,7 +54,7 @@ fn first_doc(row: &HousekeepingRow) -> Option<&Value> {
 }
 
 /// `->>` of a document's field: a string is its text, JSON null and a missing field are SQL NULL, anything else its JSON text.
-fn field_text(doc: &Value, name: &str) -> Option<String> {
+pub(super) fn field_text(doc: &Value, name: &str) -> Option<String> {
     match doc.get(name) {
         None | Some(Value::Null) => None,
         Some(Value::String(s)) => Some(s.clone()),

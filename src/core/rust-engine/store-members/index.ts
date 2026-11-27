@@ -125,6 +125,7 @@ import * as checkpointValidation from './checkpoint-validation.ts';
 import * as labelDoor from './label-door.ts';
 import * as pagePurge from './page-purge.ts';
 import * as pagePurgeHolds from './page-purge-holds.ts';
+import * as retentionPurge from './retention-purge.ts';
 import * as pagePurgeJournal from './page-purge-journal.ts';
 import * as pagePurgeScrubs from './page-purge-scrubs.ts';
 import * as purgeReceipt from './purge-receipt.ts';
@@ -292,6 +293,7 @@ export const STORE_MEMBERS = {
   ...purgeReceipt,
   // The parks and owed-purge records of a derived-origin purge (rust/docs/store/label_door.md).
   ...pagePurgeHolds,
+  ...retentionPurge,
   ...memoryMutationReads,
   // The statements a forget's withdrawal commits and the fact_withdrawn refusal reads (rust/docs/store/trust.md).
   ...withdrawalCommit,
