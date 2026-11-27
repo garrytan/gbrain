@@ -112,7 +112,7 @@ PGLite lets four `pages` columns hold NULL, and the page record holds NULL in th
   throws the raw Postgres error (code `23514`); the store uses `constraint_violation` with the same message.
 - A version snapshot copies the page's NULLs.
 - Format: records written before these fields were nullable hold strings and read unchanged; a record without
-  `chunker_version` reads it as NULL, and `chunker_version` is written only when set. This change took no format number; the store is at format 7
+  `chunker_version` reads it as NULL, and `chunker_version` is written only when set. This change took no format number; the store is at format 17
   now ([format.md](format.md)).
 
 ## Search timeline
