@@ -207,6 +207,19 @@ for (const kind of testBackends()) {
           .toEqual([{ source_kind: null, ingested_via: null, ingested_at: null }]);
       });
 
+      // Value: protects=GST-4056 a remote put_page that revives a soft-deleted page keeps its empty first-ingest columns empty; fails_when=the tombstone is treated as a new page and the request's channel or time fills source_kind / ingested_via / ingested_at; why_new=the row above covers a live page; seam=none; no_claim=a purged page (a new id)
+      test('a remote put_page that revives a soft-deleted page does not fill its empty first-ingest columns (GST-4056)', async () => {
+        const slug = 'inbox/put-revive-empty-columns';
+        const before = await seed(slug, STORED, 'external_untrusted');
+        await engine.executeRaw('UPDATE pages SET source_kind = NULL, ingested_via = NULL, ingested_at = NULL, deleted_at = now() WHERE source_id = $1 AND slug = $2', ['default', slug]);
+        const replaced = serializePageToMarkdown({ ...before.page, compiled_truth: 'Captured body, revived' }, before.tags);
+        const tombstone = (await engine.readPageSnapshot(slug, { sourceId: 'default', includeDeleted: true }))!;
+        await call('put_page', { slug, content: replaced, expected_revision: tombstone.revision });
+        const [row] = await engine.executeRaw<Record<string, unknown>>('SELECT id, deleted_at, compiled_truth, source_kind, ingested_via, ingested_at FROM pages WHERE source_id = $1 AND slug = $2', ['default', slug]);
+        expect(row).toMatchObject({ id: before.page.id, deleted_at: null, source_kind: null, ingested_via: null, ingested_at: null });
+        expect(String(row!.compiled_truth)).toContain('revived');
+      });
+
       // Value: protects=GST-4037 D a remote capture over an existing page keeps its first-ingest columns; fails_when=mcp:capture or the capture's time reaches source_kind / ingested_via / ingested_at; why_new=the put_page row above; seam=none; no_claim=a capture that creates the page
       test('a remote capture over an existing page keeps its first-ingest columns', async () => {
         const slug = 'inbox/capture-existing';

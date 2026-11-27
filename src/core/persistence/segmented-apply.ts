@@ -175,7 +175,7 @@ export async function applySegmentedBody(tx: BrainEngine, input: SegmentedApplyI
   if (pageId === null) throw new Error(`Segmented replace of ${input.slug} has no page id.`);
   const flip = await tx.flipBodyGeneration({ pageId, expectedGeneration: prepared.expectedGeneration, newGeneration: prepared.newGeneration,
     stagingId: prepared.stagingId, closeOccurrences: prepared.closeOccurrences, retireChunkOccurrences: prepared.retireChunkOccurrences,
-    retireInlineChunks: input.promotion, retireMaxRows: input.retireMaxRows, body: prepared.body, meta: input.meta, bodyUnchanged: prepared.bodyUnchanged });
+    retireInlineChunks: input.promotion, retireMaxRows: input.retireMaxRows, body: prepared.body, meta: input.meta, textUnchanged: prepared.textUnchanged });
   if (!prepared.createRows) await tx.executeRaw('DELETE FROM content_chunks WHERE page_id=$1 AND body_generation=$2 AND NOT (chunk_index = ANY($3::int[]))',
     [pageId, prepared.newGeneration, prepared.stagedChunkIndexes]);
   const createChunks = prepared.createChunks?.slug === input.slug ? prepared.createChunks.chunks : null;

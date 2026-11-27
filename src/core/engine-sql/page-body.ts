@@ -386,7 +386,7 @@ export async function flipBodyGeneration(exec: SqlExecutor, input: BodyFlipInput
         source_path = COALESCE(${m.sourcePath}::text, source_path), source_kind = COALESCE(${m.sourceKind}::text, source_kind),
         source_uri = COALESCE(${m.sourceUri}::text, source_uri), ingested_via = COALESCE(${m.ingestedVia}::text, ingested_via),
         ingested_at = COALESCE(${m.ingestedAt}::timestamptz, ingested_at),
-        content_author = CASE WHEN ${input.bodyUnchanged === true}::boolean
+        content_author = CASE WHEN ${input.textUnchanged === true}::boolean
             AND (type, title, ${trustedSql(textFrontmatterSql('frontmatter'))}) IS NOT DISTINCT FROM (${input.meta.type}::text, ${m.title}::text,
               CASE WHEN jsonb_typeof(${m.frontmatter}::jsonb) = 'object' THEN ${m.frontmatter}::jsonb - ${trustedSql(NON_TEXT_FRONTMATTER_KEYS_SQL)} ELSE ${m.frontmatter}::jsonb END)
           THEN CASE WHEN content_author_hash = content_hash THEN content_author END ELSE ${m.contentAuthor}::text END,

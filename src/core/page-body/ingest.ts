@@ -98,6 +98,8 @@ export interface PreparedSegmentedBody {
   body: SegmentedBodyColumns;
   /** No manifest row changed: the write changes metadata only. */
   bodyUnchanged: boolean;
+  /** GST-4056: no manifest row changed and none closed, so the body text is the stored one, whatever chunk projection the write rebuilds. */
+  textUnchanged: boolean;
   rows: { texts: number; manifest: number; chunks: number };
   /** `chunk_index` of every chunk row this preparation staged; the flip drops any other row staged under `newGeneration` (a dead preparation's). */
   stagedChunkIndexes: number[];
@@ -327,7 +329,7 @@ async function stageBody(engine: BrainEngine, input: SegmentedBodyInput, staging
     if (createChunks) await stageOccurrenceChunks(engine, { pageId: 0, sourceId: input.sourceId, slug: input.slug, generation: newGeneration, occurrences: rows,
       title: input.title, frontmatter: input.frontmatter, flags: body.body_flags, chunking: input.chunking, retiredOccurrences: [], hold: createChunks.chunks });
     return { stagingId, expectedGeneration, newGeneration, createRows: rows, createChunks, closeOccurrences: [], retireChunkOccurrences: [],
-      unchunked: createChunks ? 0 : rows.length, priorStale: false, body, bodyUnchanged: false, rows: { texts, manifest: rows.length, chunks: createChunks?.chunks.length ?? 0 }, stagedChunkIndexes: [] };
+      unchunked: createChunks ? 0 : rows.length, priorStale: false, body, bodyUnchanged: false, textUnchanged: false, rows: { texts, manifest: rows.length, chunks: createChunks?.chunks.length ?? 0 }, stagedChunkIndexes: [] };
   }
   if (changed.length) await writes(exec => exec.stageManifestRows(changed));
   await faultPoint('segmented:manifest_staged', { sourceId: input.sourceId });
@@ -341,7 +343,8 @@ async function stageBody(engine: BrainEngine, input: SegmentedBodyInput, staging
   const priorStale = !!live && await hasStaleChunks(engine, live.id, expectedGeneration, liveRows.map(row => Number(row.occurrenceId)));
   return { stagingId, expectedGeneration, newGeneration, createRows: null, createChunks: null, closeOccurrences, retireChunkOccurrences,
     unchunked: input.chunking.quarantined ? 0 : chunkable.length - chunks.occurrences, priorStale, body,
-    bodyUnchanged: changed.length === 0 && retireChunkOccurrences.length === 0, rows: { texts, manifest: changed.length, chunks: chunks.rows },
+    bodyUnchanged: changed.length === 0 && retireChunkOccurrences.length === 0, textUnchanged: changed.length === 0 && closeOccurrences.length === 0,
+    rows: { texts, manifest: changed.length, chunks: chunks.rows },
     stagedChunkIndexes: chunks.indexes };
 }
 

@@ -145,10 +145,11 @@ export interface BodyFlipInput {
   body: SegmentedBodyColumns;
   meta: SegmentedPageMeta;
   /**
-   * GST-4056: no manifest row changed (the staged body is the live one). A flip that also keeps the type, title and text
+   * GST-4056: no manifest row changed or closed, so the staged body text is the live one, whatever chunk projection the
+   * write rebuilds. A flip that also keeps the type, title and text
    * frontmatter changes no text, so it keeps the page's verified content author, or none, instead of `meta.content_author`.
    */
-  bodyUnchanged?: boolean;
+  textUnchanged?: boolean;
 }
 
 export interface BodyFlipResult {

@@ -189,7 +189,7 @@ function putProvenance(row: WriteRequest, snapshot: PageSnapshot | null, parsed:
   keepStoredProvenance(parsed.frontmatter, snapshot?.page.frontmatter);
   if (!managedPut) return undefined;
   const first = snapshot?.page;
-  if (row.authority.remote && first && !first.deleted_at && !(first.source_kind && first.ingested_via && first.ingested_at)) return undefined;
+  if (row.authority.remote && first && !(first.source_kind && first.ingested_via && first.ingested_at)) return undefined;
   const tags = [...new Set([...(snapshot?.tags ?? []), ...parsed.tags])].sort();
   if (snapshot && !snapshot.page.deleted_at && digest(canonical(snapshot.page, snapshot.tags)) === digest(canonical(parsed, tags))) {
     return undefined;

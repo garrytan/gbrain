@@ -471,6 +471,18 @@ for (const backend of testBackends()) describe(`[${backend}] importer trust foll
     expect(await trust(slug)).toEqual(UNTRUSTED);
   });
 
+  test('a tag-only re-import of a segmented page whose chunks are missing never makes untrusted text the importer\'s', async () => {
+    const id = randomUUID().slice(0, 8);
+    const slug = `conversations/sessions/2026-01-02-codex-${id}`;
+    const content = transcript(id, LARGE);
+    await importFromContent(engine, slug, content, { sourceId: 'default', noEmbed: true });
+    expect(await trust(slug)).toEqual(UNTRUSTED);
+    await engine.executeRaw("DELETE FROM content_chunks WHERE page_id = (SELECT id FROM pages WHERE source_id = 'default' AND slug = $1)", [slug]);
+    expect((await importer(slug, content.replace('type: conversation\n', 'type: conversation\ntags: [retagged-example]\n'))).status).toBe('imported');
+    expect((await author(slug)).content_author).not.toBe(VIA);
+    expect(await trust(slug)).toEqual(UNTRUSTED);
+  });
+
   test('a segmented re-import that rebuilds a stale projection from identical bytes keeps the importer\'s trust', async () => {
     const id = randomUUID().slice(0, 8);
     const slug = `conversations/sessions/2026-01-02-codex-${id}`;
