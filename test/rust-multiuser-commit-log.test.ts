@@ -57,7 +57,7 @@ describe('Rust multi-user commit log', () => {
       expect(engine.openStore('test').multiuser).toBe(false);
       const format = JSON.parse(readFileSync(join(dir, 'FORMAT'), 'utf8'));
       expect(format.log).toBeUndefined();
-      expect(format.format_version).not.toBe(13);
+      expect(format.format_version).not.toBe(16);
     });
   });
 
@@ -66,7 +66,7 @@ describe('Rust multi-user commit log', () => {
       const { engine, dir } = await open();
       expect(engine.capabilities.has('commit_log')).toBe(true);
       const format = JSON.parse(readFileSync(join(dir, 'FORMAT'), 'utf8'));
-      expect(format.format_version).toBe(13);
+      expect(format.format_version).toBe(16);
       expect(format.log.since).toEqual({ sequence: expect.any(Number), index: 0 });
       // The engine's transaction returns the callback's value, never a position.
       expect(await engine.transaction(async () => 'value')).toBe('value');

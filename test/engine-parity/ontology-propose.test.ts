@@ -22,7 +22,7 @@
  *    mergeOntologyFact under a declared user_confirmed write trust.
  */
 import { describe, expect } from 'bun:test';
-import { parityArms } from './harness.ts';
+import { OWNER_ONLY_STOP, parityArms, stopOnOwnerOnlyRefusal } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { callTool, startServeHttp } from '../helpers/live-mcp-servers.ts';
@@ -59,6 +59,7 @@ async function propose(base: string, token: string, args: Record<string, unknown
   const text = result.content[0]?.text ?? '';
   let body: any = text;
   try { body = JSON.parse(text); } catch { /* plain text */ }
+  if (result.isError) stopOnOwnerOnlyRefusal(text); // the multi-user owner-only gate: the case stops here (rustMultiuserStop)
   if (result.isError) return { ok: false, code: String(body?.code ?? body?.error?.code ?? body?.error ?? text).slice(0, 160) };
   return hotMemory ? { ok: true, value: body, hot: result._meta?.brain_hot_memory ?? null } : { ok: true, value: body };
 }
@@ -72,8 +73,16 @@ function shape(out: Out, ids: Record<string, unknown> = {}): Record<string, unkn
     contested: contested ? { proposal_ref: /^tp\d+$/.test(String(contested.proposal_ref)) } : null };
 }
 
+/** The pin's no-effect check: while the owner-only gate refuses the call, no observation from the agent exists and no proposal was filed. */
+const untouched = (entity: string) => async (engine: BrainEngine): Promise<void> => {
+  const rows = await engine.getOntology(entity, { asof: '2031-01-01' });
+  expect(rows.filter(r => /^notes\/(agent|intro|later)$/.test(String(r.source)) || r.value === 'advisor')).toEqual([]);
+  expect(await engine.listTrustProposals({ action: 'supersede_fact' } as never)).toEqual([]);
+};
+
 describe('ontology_propose over serve --http', () => {
   parityTest('a remote observation is inserted, its repeat is a noop, and a newer value closes the agent stint', {
+    rustMultiuserStop: OWNER_ONLY_STOP(untouched('people/gina-example')),
     methods: ['putPage', 'insertAccessToken', 'mergeOntologyFact', 'listOntologyStreamSlugs', 'readOntologyRival', 'getOntology'], timeout: 120_000,
   }, async (engine) => {
     await put(engine, 'people/gina-example');
@@ -97,6 +106,7 @@ describe('ontology_propose over serve --http', () => {
   });
 
   parityTest('a more trusted open stint stays open: the agent observation is inserted contested, with one proposal against it', {
+    rustMultiuserStop: OWNER_ONLY_STOP(untouched('people/hank-example')),
     methods: ['putPage', 'insertAccessToken', 'mergeOntologyFact', 'listOntologyStreamSlugs', 'readOntologyRival', 'getTrustProposal', 'listTrustProposals', 'getOntology'], timeout: 120_000,
   }, async (engine) => {
     await put(engine, 'people/hank-example');
@@ -127,6 +137,7 @@ describe('ontology_propose over serve --http', () => {
   });
 
   parityTest('a newer conversation slot is no rival: the confirmed stint stays the one contested', {
+    rustMultiuserStop: OWNER_ONLY_STOP(untouched('people/ivy-example')),
     methods: ['putPage', 'insertAccessToken', 'mergeOntologyFact', 'insertFacts', 'listOntologyStreamSlugs', 'readOntologyRival', 'getTrustProposal', 'listTrustProposals'], timeout: 120_000,
   }, async (engine) => {
     await put(engine, 'people/ivy-example');
@@ -157,6 +168,7 @@ describe('ontology_propose over serve --http', () => {
   });
 
   parityTest('hot memory on: a private observation leaves the reply\'s payload to the withheld flagged fact', {
+    rustMultiuserStop: OWNER_ONLY_STOP(untouched('people/kim-example')),
     methods: ['putPage', 'insertAccessToken', 'setConfig', 'insertFacts', 'upsertWriteGateReceipt', 'mergeOntologyFact', 'listFactsSince', 'readRowTrustRows', 'getOntology'], timeout: 120_000,
   }, async (engine) => {
     await put(engine, 'people/kim-example');
@@ -182,6 +194,7 @@ describe('ontology_propose over serve --http', () => {
   });
 
   parityTest('a remote observation on a private entity page is refused before any write', {
+    rustMultiuserStop: OWNER_ONLY_STOP(untouched('people/jo-example')),
     methods: ['putPage', 'insertAccessToken', 'getOntology'], timeout: 120_000,
   }, async (engine) => {
     await put(engine, 'people/jo-example', { visibility: 'private' });

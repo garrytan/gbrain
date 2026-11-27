@@ -113,6 +113,64 @@ async function putSettled(engine: BrainEngine, sourceId: string, slug: string, t
   throw new Error(`the effects of ${slug} did not settle`);
 }
 
+/**
+ * What a stuck Git effect's checkout looks like from inside this process, for the settle deadline's message: the git binary
+ * and its version, HOME and the safe.directory / hooks settings, the owner of the checkout, each read-only git command the
+ * effect runs (exit code and stderr) with the process environment and with gbrain's sanitized git environment, and the
+ * error the effect's own commit step (commitGitTargets) returns for the stuck paths, message and cause included.
+ */
+async function gitEffectDiagnosis(root: string, paths: string[]): Promise<string> {
+  const { spawnSync } = await import('node:child_process');
+  const { statSync } = await import('node:fs');
+  const { gitChildEnv } = await import('../../src/core/git-env.ts');
+  const { commitGitTargets } = await import('../../src/core/persistence/effect-git.ts');
+  const run = (args: string[], env?: NodeJS.ProcessEnv) => {
+    const r = spawnSync('git', args, { cwd: root, env, encoding: 'utf8', timeout: 20_000 });
+    return { args: args.join(' '), code: r.status, signal: r.signal, error: r.error?.message ?? null, stdout: String(r.stdout ?? '').trim().slice(0, 300), stderr: String(r.stderr ?? '').trim().slice(0, 500) };
+  };
+  const owner = (() => { try { return statSync(root).uid; } catch (error) { return String(error); } })();
+  const which = spawnSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' });
+  const reads: string[][] = [['--version'], ['-C', root, 'rev-parse', '--show-toplevel'], ['-C', root, 'rev-parse', '--git-path', 'index'],
+    ['-C', root, 'status', '--porcelain'], ['-C', root, 'ls-files', '--', ...paths], ['-C', root, 'add', '--dry-run', '--', ...paths],
+    ['config', '--show-origin', '--get-all', 'safe.directory'], ['config', '--show-origin', '--get', 'core.hooksPath'],
+    ['-C', root, 'config', '--show-origin', '--list']];
+  const outcomes = await commitGitTargets(root, paths).then(map => [...map].map(([path, outcome]) => outcome instanceof Error
+    ? { path, code: (outcome as { code?: string }).code, message: outcome.message, suggestion: (outcome as { suggestion?: string }).suggestion }
+    : { path, outcome }), (error: unknown) => [{ thrown: String(error), code: (error as { code?: string }).code, suggestion: (error as { suggestion?: string }).suggestion }]);
+  return JSON.stringify({
+    git: which.stdout.trim() || `command -v git: exit ${which.status}`, home: process.env.HOME ?? null, uid: process.getuid?.() ?? null, checkoutOwner: owner,
+    processEnv: reads.map(args => run(args)), gbrainGitEnv: reads.map(args => run(args, gitChildEnv())), commitGitTargets: outcomes,
+  }, null, 1);
+}
+
+/**
+ * The longest a queued Git effect can wait before it is claimable again: a worktree another holder keeps busy backs its
+ * effects off up to BUSY_RETRY_MAX_MS (60 s, effect-journal.ts), and a dependency refusal (owner_unavailable and the
+ * other DEPENDENCY_CODES, effects.ts) retries after 30 s. Under CI load the in-process consumer can push an effect into
+ * either backoff, so a fixed number of short passes is not a bound; the settle loop waits for the states instead.
+ */
+const GIT_SETTLE_DEADLINE_MS = 60_000 + 30_000 + 15_000;
+
+/**
+ * Drives effect passes until no Git effect `read` returns is queued or running, or GIT_SETTLE_DEADLINE_MS passes; at the
+ * deadline it fails naming each effect's state and error code, so a stuck effect (one no pass makes claimable) is told
+ * apart from a slow one. A pass that finds nothing due returns at once, so the loop polls every 250 ms.
+ */
+async function settleGitEffects(engine: BrainEngine, read: () => Promise<{ state: string; error_code: string | null }[]>,
+  diagnose?: () => Promise<string>): Promise<void> {
+  const deadline = Date.now() + GIT_SETTLE_DEADLINE_MS;
+  for (;;) {
+    const effects = await read();
+    if (!effects.some(effect => effect.state === 'queued' || effect.state === 'running')) return;
+    if (Date.now() >= deadline) {
+      const detail = diagnose ? `\n${await diagnose().catch((error: unknown) => `diagnosis failed: ${String(error)}`)}` : '';
+      throw new Error(`Git effects did not settle within ${GIT_SETTLE_DEADLINE_MS} ms: ${JSON.stringify(effects)} (queued or running at the deadline; a queued effect whose error_code stays the same across passes is stuck)${detail}`);
+    }
+    await runPersistenceEffects(engine, { engine: engine.kind } as never, { hostId: hostIdFor(engine), limit: 20 });
+    await Bun.sleep(250);
+  }
+}
+
 const codeOf = (run: () => Promise<unknown>) => run().then(() => null, (e: { code?: string }) => e?.code ?? String(e));
 
 describe('managed mode on a Rust brain, hold kept for users', () => {
@@ -140,7 +198,8 @@ describe('managed mode on a Rust brain, hold kept for users', () => {
 
   parityTest('the Git effects of two bound writes commit and push the checkout', {
     methods: ['worktreeClaimStore', 'readRequestEffects', 'claimCoalescedGitEffects'],
-    timeout: 120_000,
+    // The settle deadline (GIT_SETTLE_DEADLINE_MS) on each of the three arms, plus the checkout setup.
+    timeout: 150_000,
   }, async (engine, backend) => withManagedCheckout(engine, backend, { durable: true }, async (home, root) => {
     const ids = [randomUUID(), randomUUID()];
     await submitPageMutation(ctxFor(engine) as never, { operation: 'put_page',
@@ -148,16 +207,13 @@ describe('managed mode on a Rust brain, hold kept for users', () => {
     await submitPageMutation(ctxFor(engine) as never, { operation: 'put_page',
       params: { slug: 'notes/hank-example', content: '---\ntype: note\ntitle: Hank Example\n---\nWorks at widget-co.\n', request_id: ids[1] } });
     const writer = (await readLocalWriter(engine, 'cli')).id;
-    const gitStates = async () => Promise.all(ids.map(async id => {
+    const gitEffects = async () => Promise.all(ids.map(async id => {
       const row = await engine.readWriteRequest('local_cli', writer, id);
-      return row ? (await engine.readRequestEffects(row.id, 'git'))[0]?.state ?? 'none' : 'no request';
+      const effect = row ? (await engine.readRequestEffects(row.id, 'git'))[0] : undefined;
+      return { state: row ? effect?.state ?? 'none' : 'no request', error_code: effect?.error_code ?? null };
     }));
-    // The consumer may already have run them, and an effect waits (publication_pending) until its write is published;
-    // bounded passes settle whatever is left.
-    for (let i = 0; i < 100 && (await gitStates()).some(state => state === 'queued' || state === 'running'); i++) {
-      await runPersistenceEffects(engine, { engine: engine.kind } as never, { hostId: hostIdFor(engine), limit: 20 });
-      await Bun.sleep(100);
-    }
+    const gitStates = async () => (await gitEffects()).map(effect => effect.state);
+    await settleGitEffects(engine, gitEffects, () => gitEffectDiagnosis(root, ['notes/gina-example.md', 'notes/hank-example.md']));
     // A direct claim on the worktree now finds nothing left to coalesce.
     const worktree = (await engine.getWorktreeBinding('work', hostIdFor(engine)))!.worktree_id;
     const left = await engine.claimCoalescedGitEffects({ hostId: hostIdFor(engine), worktreeId: worktree, limit: 5, deadOwners: [], ownerJson: '{}' });

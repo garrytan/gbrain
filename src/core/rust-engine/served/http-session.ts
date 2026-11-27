@@ -5,12 +5,15 @@
  * `session.run` (the store's caller record and derivation, never one the request built), and releases it. Anything
  * else refuses `permission_denied` before a tool runs. With the switch off nothing here applies.
  */
-import { rustMultiuserFromEnv } from '../multiuser-switch.ts';
 import { storeMultiuser } from '../access-self-check.ts';
 
-/** True when `engine` is a Rust brain this process serves over HTTP in multi-user mode. */
+/**
+ * True when `engine` is a Rust brain this process serves over HTTP in multi-user mode. The store's resolved mode decides
+ * (I-0.v2: the environment switch OR the brain's own config row), never the environment alone: a brain that is
+ * multi-user only through its config row gets the owner-only gate too.
+ */
 export function rustHttpServing(engine: { kind?: unknown; openStoreIfOpen?: (member: string) => object | null }): boolean {
-  if (engine.kind !== 'rust' || !rustMultiuserFromEnv()) return false;
+  if (engine.kind !== 'rust') return false;
   const store = engine.openStoreIfOpen?.('serveHttp');
   return !!store && storeMultiuser(store);
 }

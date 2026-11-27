@@ -472,8 +472,8 @@ against a stub that implements exactly this contract, behind the same switch.
   path, record, frame and output is byte-identical to `rust-engine/main` at the branch's merge base.
 - Branches may add sub-switches for development, but each is read only when `GBRAIN_RUST_MULTIUSER=1` is also set.
   The groundwork sub-flags (`GBRAIN_RUST_WRITE_ORIGIN`, `GBRAIN_RUST_COMMIT_LOG`, `GBRAIN_RUST_OWNER_REQUEST_IDS`,
-  `GBRAIN_RUST_ACCESS_SELF_CHECK`, `GBRAIN_RUST_TXN_DEADLINE_MS`, `GBRAIN_RUST_OWNER_REMOTE_CHECK`) become sub-switches
-  under it.
+  `GBRAIN_RUST_ACCESS_SELF_CHECK`, `GBRAIN_RUST_TXN_DEADLINE_MS`) become sub-switches under it. The owner-side
+  remote check (G11, audit row B2) has no switch of its own: multi-user mode turns it on.
 - `GBRAIN_RUST_CONCURRENT_WRITES=1` (existing optimistic store) stays as is; multi-user mode implies it.
 
 ### I-1. Store transactions (Rust, `gbrain-store`)
@@ -658,6 +658,9 @@ store side: `Store::authenticate_bearer`, `Scope::from_principal` and `Scope::re
    lineage, folder-rule access, labelled-only and audience members) and in server mode, where every privacy policy is
    the store's derivation of that record (`access_derive.rs`). A caller record the client set, and the TypeScript
    rendering, never apply; a policy the store does not model refuses. The private sources come from `session.grant`.
+   The owner-only form (audit row A12) is the store's too: the schema version that picks it (closed before v320, the
+   lineage function since) is the one in the record the store built, never the version the TypeScript engine scope
+   recorded.
 
 What the session does not do yet: admit keys other than the owner's (ruling A1), and carry a session across a
 reconnect (a reconnect opens a new session). An owner's read-only call carries member lineage, which the store serves
@@ -835,7 +838,7 @@ Ranked by what it buys for the server phases per line and per unit of risk:
 | G8 | Access self-check. With a flag on, the store re-derives the caller's privacy policy and owner-only form from the access record and refuses when it differs from what TypeScript sent (audit rows A12, B1). This is the first step of "only the authentication boundary builds a scope". | dark code + test mode | about 250 | `GBRAIN_RUST_ACCESS_SELF_CHECK=1`, default off. | Off: unchanged. On in a CI cell: every privacy parity case must still pass, which proves the store and TypeScript agree. | Touches visibility members: after the swap only. | After Dec 4; needs decision P first. |
 | G9 | Split the tests that bake in one writer into an embedded variant and a pending multi-writer twin (list in "Tests to write now"). | tests | about 250 | Twins are pending. | Embedded assertions stay; names change to say "embedded, one owner". | Renames touch test files swap branches edit; after the swap. | Dec 2 or later. |
 | G10 | Bounded waits. The optimistic store's key-lock wait ends at the caller's deadline with `timeout` (audit row A9); an explicit transaction gets a wrapper deadline that rolls it back (A2). | dark code | about 100 | Key-lock wait: only on the opt-in optimistic store. Transaction deadline: `GBRAIN_RUST_TXN_DEADLINE_MS`, unset by default. | Off: no timer exists. | Small; after the swap. | Dec 3 or later. |
-| G11 | Owner-side remote check. The owner applies `OWNER_IPC_REMOTE_READS` itself to frames marked remote, instead of trusting the client to (audit row B2). | dark code | about 70 | `GBRAIN_RUST_OWNER_REMOTE_CHECK=1`, default off. | Off: unchanged. On: the remote-caller tests pass unchanged, since the client already refuses first. | Owner socket: after the swap. | Dec 4 or later. |
+| G11 | Owner-side remote check. The owner applies `OWNER_IPC_REMOTE_READS` itself to frames marked remote, instead of trusting the client to (audit row B2). | dark code | about 70 | On whenever the store runs in multi-user mode (no switch of its own); off with multi-user mode off. | Off: unchanged. On: the remote-caller tests pass unchanged, since the client already refuses first. | Owner socket: after the swap. | Dec 4 or later. |
 | G12 | Small cleanups: the process-wide vector cache moves onto `Store` (A10); the comments in A14 say "while explicit transactions hold the writer". | cleanup | about 60 | No flag: same results; the 64 MiB bound becomes per store. | Unchanged answers; vector cache tests. | None; after the swap. | Ride with G1. |
 
 Not on the list on purpose: a scope type threaded through every store entry point (L, it is M2 work
