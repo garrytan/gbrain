@@ -803,7 +803,9 @@ export async function runPhaseExtractAtoms(
 
   // An engine that keeps no extract_atoms page or transcript state cannot record what this run settles, so every
   // cycle would spend the model on the same items again. It refuses here, after discovery and before the first model
-  // call (dry runs call the model too); the SQL engines pass. The refusal is the phase's result, never "no work".
+  // call (dry runs call the model too); the SQL engines pass. A client of a Rust brain's owner refuses here too: it
+  // could not publish the atoms, which needs a transaction (owner-ipc/routes.ts). The refusal is the phase's result,
+  // never "no work".
   if (work.length > 0) await engine.assertAtomStateStore();
 
   // 4. Per work-item: extract atoms via the configured extract_atoms model

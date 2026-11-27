@@ -69,6 +69,7 @@ async function expectClientRefusesBeforeTheModel(socketPath: string, owner: Brai
       expect((error as OperationError).code).toBe('engine_capability_missing');
       expect((error as OperationError).detail).toContain('member=assertAtomStateStore');
       expect((error as OperationError).detail).toContain('via=owner_ipc');
+      expect((error as OperationError).reason).toBe('transactions');
     }
     expect(calls).toBe(0);
     expect(await owner.listPages({ type: 'atom' } as never)).toEqual([]);

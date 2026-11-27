@@ -48,7 +48,7 @@ import {
   OWNER_IPC_MAX_FRAME_BYTES, OWNER_IPC_VERSION, frameLine, ownerSocketPath, readFrames, type OwnerHello,
 } from './protocol.ts';
 import {
-  OWNER_IPC_CALLBACK_KEYS, OWNER_IPC_REMOTE_READS, OWNER_IPC_ROUTES, ownerCallCancelled, ownerCallTimeout, ownerGone, ownerIpcProtocol, ownerIpcRefusal,
+  OWNER_IPC_CALLBACK_KEYS, OWNER_IPC_CLIENT_REFUSALS, OWNER_IPC_REMOTE_READS, OWNER_IPC_ROUTES, ownerCallCancelled, ownerCallTimeout, ownerGone, ownerIpcProtocol, ownerIpcRefusal,
   ownerPeerRefused,
 } from './routes.ts';
 import { setDeadlineTimer, type DeadlineTimer } from './timer.ts';
@@ -477,7 +477,9 @@ export function installOwnerClient(engine: object, connection: OwnerConnection, 
     const direct = missing !== null
       ? () => Promise.reject(capabilityMissing(missing, member))
       : route === 'refuse'
-      ? () => Promise.reject(ownerIpcRefusal(member, 'transactions, reserved connections and engine callbacks do not cross the owner socket'))
+      ? () => Promise.reject(Object.hasOwn(OWNER_IPC_CLIENT_REFUSALS, member)
+        ? ownerIpcRefusal(member, OWNER_IPC_CLIENT_REFUSALS[member]!.why, OWNER_IPC_CLIENT_REFUSALS[member]!.capability)
+        : ownerIpcRefusal(member, 'transactions, reserved connections and engine callbacks do not cross the owner socket'))
       : member === 'countPagesBy'
         ? (...args: unknown[]) => countPagesByThroughOwner(connection, args)
         : (...args: unknown[]) => connection.request('call', member, args);

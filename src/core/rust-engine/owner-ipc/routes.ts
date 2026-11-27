@@ -6,8 +6,9 @@
  * - `forward`: the call crosses the owner socket as data and runs on the owner engine. Every member that takes only
  *   data is forwarded, executeRaw included (one statement, never a transaction).
  * - `refuse`: the member takes a callback that must run against the engine (a transaction body, a reserved
- *   connection, a schema lock, a store whose calls run inside a transaction: worktreeClaimStore and writerAdminStore).
- *   Transactions do not cross the socket, so the member rejects at once with `engine_capability_missing` and nothing runs.
+ *   connection, a schema lock, a store whose calls run inside a transaction: worktreeClaimStore and writerAdminStore),
+ *   or it gates work that would need one (OWNER_IPC_CLIENT_REFUSALS). Transactions do not cross the socket, so the
+ *   member rejects at once with `engine_capability_missing` and nothing runs.
  *   owner-ipc/whole-op.ts can send a whole operation that needs a transaction to run inside the owner, but no entry point
  *   calls it yet: a journaled write from a client (put_page, remember) stops at write admission, which opens a transaction,
  *   on this refusal with reason `transactions`.
@@ -34,8 +35,22 @@ const LOCAL: ReadonlySet<string> = new Set(['kind', 'capabilities', 'connect', '
 const REFUSE: ReadonlySet<string> = new Set(['transaction', 'transactionDirect', 'withReservedConnection', 'holdSchemaMigrationLock', 'keywordBoundedRead',
   'worktreeClaimStore', 'writerAdminStore']);
 
+/**
+ * Members that take only data but stand for work that cannot finish from a client, so the client refuses them at once,
+ * with the reason and capability the refusal names. `assertAtomStateStore` is the extract_atoms gate that runs before the
+ * phase's first model call: the atoms that call returns are published in a transaction, so a forwarded gate would pass
+ * and every run would pay for a model call whose atoms are then refused. Remove the entry when a client can publish atoms.
+ */
+export const OWNER_IPC_CLIENT_REFUSALS: Readonly<Record<string, { why: string; capability: Capability }>> = {
+  assertAtomStateStore: {
+    why: 'extract_atoms publishes the atoms a model call returns in a transaction, and transactions do not cross the owner socket, so the phase stops before it pays for the call',
+    capability: 'transactions',
+  },
+};
+
 export const OWNER_IPC_ROUTES: Readonly<Record<RustEngineMember, OwnerIpcRoute>> = Object.fromEntries(
-  Object.keys(RUST_ENGINE_MEMBERS).map(member => [member, LOCAL.has(member) ? 'local' : REFUSE.has(member) ? 'refuse' : 'forward']),
+  Object.keys(RUST_ENGINE_MEMBERS).map(member => [member,
+    LOCAL.has(member) ? 'local' : REFUSE.has(member) || Object.hasOwn(OWNER_IPC_CLIENT_REFUSALS, member) ? 'refuse' : 'forward']),
 ) as Record<RustEngineMember, OwnerIpcRoute>;
 
 /**
@@ -94,8 +109,7 @@ function memberCapability(member: string): Capability {
 }
 
 /** A member (or one of its arguments) that cannot run from a client process; nothing ran. */
-export function ownerIpcRefusal(member: string, why: string): OperationError {
-  const capability = memberCapability(member);
+export function ownerIpcRefusal(member: string, why: string, capability: Capability = memberCapability(member)): OperationError {
   return opError('engine_capability_missing',
     `${member} cannot run from a second process on this brain: ${why}, so nothing ran.`,
     'Run it in the process that owns the brain (for example through gbrain serve tools), or stop the owner process and run it again.',
