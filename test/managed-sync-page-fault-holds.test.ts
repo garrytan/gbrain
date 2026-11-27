@@ -32,6 +32,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
+import { markGitDurable } from './helpers/git-fixture.ts';
 import { DEFER_PER_ENTRY, performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { readGitHold, readGitSourceHolds, requestGitHoldRetry } from '../src/core/persistence/sync-holds.ts';
 import { readManagedSyncFailures } from '../src/core/persistence/sync-failures.ts';
@@ -57,6 +58,8 @@ const note = (body: string) => `---\ntitle: Example\n---\n${body}\n`;
 async function fixture(engine: BrainEngine, files: Record<string, string>) {
   const id = `fault-${randomUUID().replace(/-/g, '').slice(0, 20)}`; sources.push(id);
   const root = join(home, id); mkdirSync(root); git(root, 'init', '-q');
+  // GST-3743: write-back reaches a non-default checkout only when this host commits it (durable); a foreign one stays database-only.
+  markGitDurable(root);
   for (const [path, body] of Object.entries(files)) { const full = join(root, path); mkdirSync(join(full, '..'), { recursive: true }); writeFileSync(full, body); }
   const head = commit(root);
   await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');

@@ -20,6 +20,7 @@ import { dirname, join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
+import { markGitDurable } from './helpers/git-fixture.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { readSyncImportProvenance, SYNC_IMPORT_PARSER_VERSION, SYNC_IMPORT_PROVENANCE_OP, syncImportParserFor } from '../src/core/persistence/sync-holds.ts';
@@ -59,6 +60,8 @@ describe('managed-sync import provenance records the bytes on disk, the revision
     await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
     const id = `prov-${randomUUID().slice(0, 12)}`, root = join(home, id);
     mkdirSync(root, { recursive: true }); git(root, 'init', '-q');
+    // GST-3743: write-back reaches a non-default checkout only when this host commits it (durable); a foreign one stays database-only.
+    markGitDurable(root);
     for (const [path, body] of Object.entries(files)) { mkdirSync(dirname(join(root, path)), { recursive: true }); writeFileSync(join(root, path), body); }
     const head = commit(root, 'seed');
     await engine.executeRaw('INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,$3::text::jsonb)', [id, root, JSON.stringify(config)]);

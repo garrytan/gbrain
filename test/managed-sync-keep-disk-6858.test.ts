@@ -21,6 +21,7 @@ import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { WriteRequest } from '../src/core/persistence/model.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
+import { markGitDurable } from './helpers/git-fixture.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { readManagedSyncFailures } from '../src/core/persistence/sync-failures.ts';
 import { fileChangedAfterAdmission } from '../src/core/persistence/sync-page-fault.ts';
@@ -46,6 +47,8 @@ const STAMP = 'embed_skip:\n  reason: oversized\n  assessed_at: 2026-10-15T21:27
 async function fixture(engine: BrainEngine, files: Record<string, string>) {
   const id = `keepdisk-${randomUUID().replace(/-/g, '').slice(0, 16)}`; sources.push(id);
   const root = join(home, id); mkdirSync(root); git(root, 'init', '-q');
+  // GST-3743: write-back reaches a non-default checkout only when this host commits it (durable); a foreign one stays database-only.
+  markGitDurable(root);
   for (const [path, body] of Object.entries(files)) writeFileSync(join(root, path), body);
   commit(root);
   await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
