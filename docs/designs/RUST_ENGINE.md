@@ -538,6 +538,26 @@ Minder's ruling GBRA-108: the engine-bench default-on gate is the 95% paired low
 - Each target has a named step in `rust/bench/` that prints machine, engine, data size, N, p50 and p99, with PGLite and Postgres measured on the same machine in the same run. Write throughput is measured through `transaction(fn)` with the writer held across awaits and includes the outbox apply before return. Peak and steady resident memory at 200k and 1M chunks is reported against the memory envelope and the per-100k-chunk budget in `bakeoff.md`, beside Postgres RSS for the same corpus (f32 vectors at 1M chunks and 1,024 dimensions are about 3.8 GiB raw before any graph).
 - A Rust cell joins `scale-tier.yml`. While Rust is default off, the Rust cell reports and does not gate CI (D23).
 
+#### Measured losses (A3 + store format 14, single writer)
+
+Measured on an Intel Xeon 6975P-C, 8 vCPU, 30.8 GB, Linux 7.0.0-1014-aws, with gbrain-evals engine-bench `--dev` at
+10,000 pages. The build was the trial merge 40294050c1 of the pending keyword records (store format 13,
+https://github.com/garrytan/gbrain/pull/10468) and the dropped word index (store format 14, this change). The values are
+medians of N=3 runs, single writer, and each run was paired with its own PGLite arm. Rust import took 256 s, and the
+Rust store was 570 MB on disk. Keyword top-10 was identical to PGLite for 71 of 71 queries in every run.
+
+- (a) Page writes: `put_page` p50/p95 was 40.4/56.1 ms on Rust and 28.0 ms on PGLite (1.4x). Writes/s at 1, 4 and 16
+  clients were 22.6, 36.5 and 38.6 on Rust and 51, 56 and 56 on PGLite.
+- (b) Hybrid search: p50 was 152 ms on Rust and 88 ms on PGLite.
+- (c) Page listing: `list_pages` p50 was 36 ms on Rust and 2 ms on PGLite, until the updated-order keyed lookup lands
+  (https://github.com/garrytan/gbrain/pull/10328).
+- (d) Single-client reads: 25 per second on Rust and 35 on PGLite. At 4 and 16 clients Rust was about 3x faster (65 and
+  59 against 23 and 21).
+- (e) Multi-user mode was not measured on this build.
+
+These losses do not gate the opt-in swap. Equal or better on every metric is the gate for turning Rust on by default
+(D23).
+
 ### Crash, property, concurrency and fuzz tests
 
 - Crash: SIGKILL between record commit and index apply, during import, during migration copy and during index rebuild; the open recovers, index lag returns to zero, and a deleted or withdrawn item is never returned.
