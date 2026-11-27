@@ -41,7 +41,7 @@ export const COLLATION_SITES: readonly CollationSite[] = [
     note: 'the preview list order feeds its approval hash, so a preview made before the swap does not match after it' },
   { command: 'gbrain repair lost-fence-rows (preview)', site: 'src/core/engine-sql/lost-fence-reads.ts:21', key: 'source_id, owner_key, id, item_key', class: 'reordered',
     note: 'owner keys name page slugs; previews list rows in this order' },
-  { command: 'gbrain doctor entity-duplicates', site: 'src/core/engine-sql/entity-keys.ts:73', key: 'source_id, slug (keyset pages of 5000)', class: 'capped',
+  { command: 'gbrain doctor entity-duplicates', site: 'src/core/engine-sql/entity-keys.ts:77', key: 'source_id, slug (keyset pages of 5000)', class: 'capped',
     note: 'a page boundary can fall at another row; the whole scan still covers every row' },
   { command: 'entity resolution (fuzzy match, internal)', site: 'src/core/engine-sql/entity-reads.ts:193', key: 'score, then slug (LIMIT 5)', class: 'capped',
     note: 'on an exact score tie a different slug can be kept, which can change the entity a new fact is attributed to' },

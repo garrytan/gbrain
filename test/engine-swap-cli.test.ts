@@ -228,7 +228,9 @@ describe('engine_swap_refused recovery table', () => {
 describe('the swap report names each write type criterion 5 does not compare', () => {
   const NAMED_LOSS = 'Named loss: only putPage, deletePage, addLink, addLinksBatch and removeLink are compared, so these other page and link writes are counted capability_missing and are not compared: pages:deletePages, pages:softDeletePage, pages:softDeletePages, pages:restorePage, pages:purgeDeletedPages, pages:updateSlug, pages:refreshPageBody, pages:refreshPageOrigin, pages:updatePageContextualRetrievalState, pages:stripStaleFrontmatterKeys, pages:markPagesExtractedBatch, pages:markPagesAttendanceBlocked, pages:setPageEmbeddingSignature, pages:setChunkerVersion, pages:writeTextProjectionSeal, pages:revertToVersion, pages:setEmotionalWeightBatch, pages:invalidateWithdrawnPages, pages:createSegmentedPageShell, pages:sealSegmentedPage, pages:flipBodyGeneration, links:removeLinksByPagesAndSource, links:replaceDerivedLinks, links:replaceDerivedLinksBatch. A write that touches several tables is counted under its first table only, so the side effects of deletePages, purgeDeletedPages and updateSlug (aliases, open loops, owner-only marks, fact withdrawals) land under pages:* keys, and a type\'s line above reads only the writes whose first table it is.';
   const sampled = (byFamily: Record<string, unknown>) => ({
-    write_comparisons: { state: 'measured', sample_rate: 1, comparable: 5, unexplained_difference: 0, uncomparable: 0, capability_missing: 0, capability_missing_by_family: byFamily },
+    write_comparisons: { state: 'measured', sample_rate: 1, comparable: 5, unexplained_difference: 0, uncomparable: 0, capability_missing: 0, capability_missing_by_family: byFamily,
+      // The write bar's call history (write-bar.ts); empty here, so the bar is its floor and 5 compared writes fail it.
+      qualifying_writes: { by_day: {}, first_seen: null } },
   }) as unknown as ShadowStatus;
   const plan = async (doc: ShadowStatus, json: boolean) => {
     const r = await run(['--to', 'rust', '--plan', ...(json ? ['--json'] : [])], { readShadowStatus: async () => doc });
@@ -324,7 +326,9 @@ describe('the swap report names each write type criterion 5 does not compare', (
     // The other line carries these, so the lines name them as sampled and no count is dropped.
     const other = new Set(['raw_sql', 'unmapped', 'other', 'config', 'wanted_links', 'entity_identities', 'raw_data', 'files', 'page_versions', 'synthesis_evidence', 'code_edges_chunk',
       // The trunk's chronicle ledger row (upsertChronicleRow, src/shadow/write-map.ts) is a non-pilot write counted on the other line.
-      'chronicle_page_state']);
+      'chronicle_page_state',
+      // The guest-source record, guest marks and trust allow rules (src/shadow/write-map.ts) are non-pilot writes counted on the other line.
+      'guest_sources', 'guest_marks', 'trust_allow_rules']);
     const stray = Object.keys(WRITE_MAP).filter(op => !PILOT_WRITES.has(op)).map(writeFamily)
       .filter(f => !named.has(f) && !other.has(f) && !/^(pages|links):[A-Za-z]+$/.test(f));
     expect(stray).toEqual([]);
