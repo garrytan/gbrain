@@ -17,6 +17,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { ChatOpts, ChatResult } from '../src/core/ai/gateway.ts';
 import { countExtractAtomsBacklog, runPhaseExtractAtoms } from '../src/core/cycle/extract-atoms.ts';
+import { canonicalPageInputs } from '../src/core/cycle/extract-atoms-page-state.ts';
 import { renderFactsTable, type ParsedFact } from '../src/core/facts-fence.ts';
 import { computeAtomProvenanceDriftCheck } from '../src/commands/doctor/checks/extraction-sync.ts';
 import { renamePageOntoSlug } from '../src/commands/sync/rename-collision.ts';
@@ -352,17 +353,43 @@ describe('GST-4020 extract_atoms input and skip', () => {
 
   test('a confidential page made public with its prose unchanged is extracted again as world', async () => {
     for (const { backend, engine } of engines) {
-      const sourceId = await fresh(backend, engine);
-      await put(engine, sourceId, PROSE('canaryrename3306'), { access: 'confidential' });
-      await run(engine, sourceId, copyingChat().chat);
-      const before = await liveAtoms(engine, sourceId);
-      expect(before.length, backend).toBeGreaterThan(0);
-      for (const atom of before) expect(atom.visibility, backend).toBe('private');
-      await put(engine, sourceId, PROSE('canaryrename3306'));
-      const again = copyingChat();
-      await run(engine, sourceId, again.chat);
-      expect(again.prompts.length, backend).toBe(1);
-      for (const atom of await liveAtoms(engine, sourceId)) expect(atom.visibility, backend).not.toBe('private');
+      for (const variant of ['stamped atoms', 'unstamped atoms'] as const) {
+        const sourceId = await fresh(backend, engine);
+        await put(engine, sourceId, PROSE('canaryrename3306'), { access: 'confidential' });
+        await run(engine, sourceId, copyingChat().chat);
+        const before = await liveAtoms(engine, sourceId);
+        expect(before.length, backend).toBeGreaterThan(0);
+        for (const atom of before) expect(atom.visibility, backend).toBe('private');
+        if (variant === 'unstamped atoms') await engine.executeRaw(`UPDATE pages SET frontmatter = frontmatter - 'visibility' WHERE source_id=$1 AND type='atom'`, [sourceId]);
+        await put(engine, sourceId, PROSE('canaryrename3306'));
+        const again = copyingChat();
+        await run(engine, sourceId, again.chat);
+        expect(again.prompts.length, `${backend} ${variant}`).toBe(1);
+        const after = await liveAtoms(engine, sourceId);
+        expect(after.length, `${backend} ${variant}`).toBeGreaterThan(0);
+        for (const atom of after) expect(atom.visibility, `${backend} ${variant}`).toBe('world');
+      }
     }
+  }, 120_000);
+
+  test('a stop during the page-by-page snapshot fallback starts no further reads', async () => {
+    const { engine } = engines.find(e => e.backend === 'pglite') ?? engines[0]!;
+    const sourceId = await fresh('snapshot-stop', engine);
+    for (const n of [1, 2, 3]) await put(engine, sourceId, PROSE(`page ${n}`), {}, `notes/page-${n}`);
+    const rows = await engine.executeRaw<{ id: number; knowledge_revision: string; source_incarnation: string; slug: string; content_hash: string }>(
+      `SELECT p.id, p.knowledge_revision, s.incarnation AS source_incarnation, p.slug, p.content_hash FROM pages p JOIN sources s ON s.id=p.source_id WHERE p.source_id=$1 ORDER BY p.slug`, [sourceId]);
+    const stop = new AbortController();
+    let singles = 0;
+    const target = engine as unknown as { readPageSnapshotsBatch: (...args: unknown[]) => Promise<unknown> };
+    const original = target.readPageSnapshotsBatch;
+    target.readPageSnapshotsBatch = async (...args: unknown[]) => {
+      if ((args[0] as unknown[]).length > 1) { stop.abort(); throw new Error('withdrawal_capacity: fence too large'); }
+      singles++;
+      return original.apply(engine, args);
+    };
+    try {
+      expect(await canonicalPageInputs(engine, sourceId, rows, { stopSignal: stop.signal })).toEqual([]);
+    } finally { target.readPageSnapshotsBatch = original; }
+    expect(singles).toBe(0);
   }, 120_000);
 });

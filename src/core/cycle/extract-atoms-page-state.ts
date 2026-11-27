@@ -122,7 +122,7 @@ export async function reusableAtomScan(engine: SqlEngine, sourceId: string, item
     [sourceId, item.slug, item.identity.pageId]);
   const scanned = scan.content_hash.slice(0, 16), current = item.contentHash.slice(0, 16);
   const fits = atoms.every(atom => atom.source_slug === item.slug && (atom.source_hash === scanned || atom.source_hash === current)
-    && sameInstant(atom.date, page.date) && (page.visibility === 'private') === (atom.visibility === 'private') && !atom.predates_withdrawal);
+    && sameInstant(atom.date, page.date) && (page.visibility === 'world') === (atom.visibility === 'world') && !atom.predates_withdrawal);
   return fits ? atoms.map(atom => atom.slug) : null;
 }
 
@@ -223,31 +223,36 @@ export async function canonicalPageInputs(engine: BrainEngine, sourceId: string,
   rows: ReadonlyArray<{ id: number; knowledge_revision: string; source_incarnation: string; slug: string; content_hash: string }>,
   opts: { signal?: AbortSignal; stopSignal?: AbortSignal }): Promise<AtomPageInput[]> {
   const pages: AtomPageInput[] = [];
+  const stopped = () => opts.signal?.aborted || opts.stopSignal?.aborted;
+  const unreadable = (what: string) => (error: unknown) => {
+    console.error(`[extract_atoms] ${what}: ${error instanceof Error ? error.message : String(error)}`);
+    return null;
+  };
   for (let start = 0; start < rows.length;) {
-    if (opts.signal?.aborted || opts.stopSignal?.aborted) break;
+    if (stopped()) break;
     const [clock] = await engine.executeRaw<{ at: string }>(`SELECT clock_timestamp()::text AS at`);
-    const batch = rows.slice(start, start + PAGE_SNAPSHOT_BATCH);
-    const read = await engine.readPageSnapshotsBatch(batch.map(row => ({ slug: row.slug, sourceId }))).catch(() => null);
-    const snapshots = new Map(read?.snapshots ?? []);
-    // A snapshot the batch cannot read (withdrawal_capacity on one fence) is read page by page: only that page waits.
-    if (!read) for (const row of batch) {
-      const key = pageSnapshotKey(sourceId, row.slug);
-      const one = await engine.readPageSnapshotsBatch([{ slug: row.slug, sourceId }]).catch((error: unknown) => {
-        console.error(`[extract_atoms] ${row.slug}: snapshot read failed, page left pending: ${error instanceof Error ? error.message : String(error)}`);
-        return null;
-      });
-      const snapshot = one?.snapshots.get(key);
-      if (snapshot) snapshots.set(key, snapshot);
-    }
-    const step = Math.max(read ? read.covered : batch.length, 1);
-    for (const r of rows.slice(start, start + step)) {
-      const snapshot = snapshots.get(pageSnapshotKey(sourceId, r.slug));
+    const accept = (r: typeof rows[number], snapshot: PageSnapshot | undefined) => {
       if (!snapshot || Number(snapshot.page.id) !== Number(r.id) || snapshot.revision !== r.knowledge_revision
-        || snapshot.sourceIncarnation !== r.source_incarnation || snapshot.page.content_hash !== r.content_hash) continue;
+        || snapshot.sourceIncarnation !== r.source_incarnation || snapshot.page.content_hash !== r.content_hash) return;
       pages.push({ slug: r.slug, content: snapshot.page.compiled_truth, contentHash: r.content_hash,
         identity: { pageId: r.id, sourceIncarnation: r.source_incarnation, revision: r.knowledge_revision }, readAt: clock?.at });
+    };
+    const batch = rows.slice(start, start + PAGE_SNAPSHOT_BATCH);
+    const read = await engine.readPageSnapshotsBatch(batch.map(row => ({ slug: row.slug, sourceId })))
+      .catch(unreadable('snapshot batch read failed, reading its pages one by one'));
+    if (read) {
+      const step = Math.max(read.covered, 1);
+      for (const r of rows.slice(start, start + step)) accept(r, read.snapshots.get(pageSnapshotKey(sourceId, r.slug)));
+      start += step;
+      continue;
     }
-    start += step;
+    // A snapshot the batch cannot read (withdrawal_capacity on one fence) is read page by page: only that page waits.
+    for (const r of batch) {
+      if (stopped()) return pages;
+      const one = await engine.readPageSnapshotsBatch([{ slug: r.slug, sourceId }]).catch(unreadable(`${r.slug}: snapshot read failed, page left pending`));
+      accept(r, one?.snapshots.get(pageSnapshotKey(sourceId, r.slug)));
+    }
+    start += batch.length;
   }
   return pages;
 }
