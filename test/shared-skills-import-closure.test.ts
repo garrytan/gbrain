@@ -124,6 +124,20 @@ for (const [name, url] of backends) {
       expect({ heads: await heads(f), reader: await readerGuide(f), checkout: checkout(f.root) }).toEqual({ heads: before.heads, reader: 'skill_asset_not_found', checkout: before.checkout });
     }, url), 120_000);
 
+    // Value: protects=a dependency rewrite that stops another skill reaching a restricted file still publishes; fails_when=the check compares a file the rebuilt skill no longer holds and refuses; why_new=the dependent check now runs at submission; seam=none; no_claim=none
+    test('a shared rewrite that drops the restricted file from the other skill publishes', () => fixture(async f => {
+      const ROOT = 'skills/conventions/root.md';
+      const root = (depends_on: string[]) => ({ path: ROOT, content: 'Synthetic shared root.\n', file_class: 'reference', audience: ['readers'], depends_on });
+      for (const result of [await put(f, f.local, 'alpha', [prose('alpha', 'Use the root.', [ROOT]), root([GUIDE]), guide(RESTRICTED)]), await put(f, f.local, 'beta', [prose('beta', 'Standalone.')])]) {
+        expect((result as { state?: string }).state).toBe('committed');
+      }
+      const result = await put(f, f.local, 'beta', [prose('beta', 'Uses both.', [ROOT, GUIDE]), root([]), guide(['readers'])]);
+      const beta = await getSharedSkill(f.reader, { source_id: 'default', pack_id: 'example-pack', name: 'beta' });
+      const betaGuide = await getSharedSkillAsset(f.reader, { ...beta, path: GUIDE }).then(asset => Buffer.from(asset.content, 'base64').toString(), (error: { code?: string }) => error.code);
+      expect({ state: (result as { state?: string }).state, betaGuide, alphaGuide: await readerGuide(f) })
+        .toEqual({ state: 'committed', betaGuide: 'Synthetic shared guide body.\n', alphaGuide: 'skill_asset_not_found' });
+    }, url), 120_000);
+
     // Value: protects=a remote editor cannot widen another skill's restricted convention through its own skill, and the refusal hides that skill; fails_when=put_skill on beta republishes alpha's guide to readers, or the refusal names alpha; why_new=the remote widening check covered only the named skill; seam=none; no_claim=none
     test('a remote put_skill that newly references a restricted convention with a wider audience refuses, and nothing changes', () => fixture(async f => {
       await publishBoth(f);

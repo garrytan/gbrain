@@ -177,6 +177,24 @@ function affectedSkills(current: PackSkill[], name: string, files: StoredSkillFi
   const changedShared = new Map(files.filter(f => f.path.startsWith('skills/conventions/')).map(({ content: _content, ...file }) => [file.path, stableJson(file)]));
   return current.filter(row => row.name === name || row.files.some(file => changedShared.has(file.path) && changedShared.get(file.path) !== stableJson(file)));
 }
+/**
+ * The files a dependent would hold once the proposed shared files replace its copies, found by walking depends_on
+ * the way rebuildDependentClosure does but without copying or re-encoding any content. Files that become unreachable
+ * drop out. A missing dependency or a cycle stops the walk here; preparation reports those errors.
+ */
+function reachableAfterReplacement(name: string, previous: StoredSkillFile[], replacements: Map<string, StoredSkillFile>): StoredSkillFile[] {
+  const available = new Map(previous.map(file => [file.path, file]));
+  for (const [path, file] of replacements) available.set(path, file);
+  const reached = new Map<string, StoredSkillFile>();
+  const pending = [`skills/${name}/SKILL.md`];
+  for (let path = pending.pop(); path !== undefined; path = pending.pop()) {
+    const file = available.get(path);
+    if (!file || reached.has(path)) continue;
+    reached.set(path, file);
+    pending.push(...file.depends_on);
+  }
+  return [...reached.values()];
+}
 function rebuildDependentClosure(name: string, previous: StoredSkillFile[], replacements: Map<string, StoredSkillFile>): StoredSkillFile[] {
   const available = new Map(previous.map(file => [file.path, file]));
   for (const [path, file] of replacements) if (path.startsWith('skills/conventions/')) available.set(path, file);
@@ -331,10 +349,9 @@ export async function submitSharedSkillMutation(ctx: OperationContext, operation
       `A skill that shares files with ${packId}/${name} changed while this publication was being admitted, so nothing was accepted. Read ${packId}/${name} again and resubmit with a new request_id.`,
       { fix: skillHeadFix(sourceId, packId, name) });
   }
-  // Compares metadata only: each file a dependent already holds against the proposed copy, without rebuilding closures.
   const replacement = new Map(proposals.flatMap(p => p.files).filter(f => f.path.startsWith('skills/conventions/')).map(f => [f.path, f]));
   refuseDependentWidening(sourceId, current.filter(head => dependents.includes(head.name) && !head.deleted)
-    .map(head => ({ name: head.name, files: head.files.map(file => replacement.get(file.path) ?? file) })), current, ctx.remote === false);
+    .map(head => ({ name: head.name, files: reachableAfterReplacement(head.name, head.files, replacement) })), current, ctx.remote === false);
   const manifestBytes = canonicalRead(root, 'skillpack.json');
   if (!pack && manifestBytes && (!adoption || adoption.mode === 'proposal')) {
     throw opError('approval_required', 'An unadopted skillpack already exists on disk. A trusted host must adopt its complete reviewed inventory before individual skill publication.',
