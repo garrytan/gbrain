@@ -145,6 +145,14 @@ another, public skill, and an adoption batch that lists the hidden skill
 unchanged. Narrow the file's audience to match, or fork it. A new file that no
 skill held before publishes.
 
+That refusal's reason is `shared_file_hidden_holder`. A publication also
+refuses when a skill that holds the file narrows its own SKILL.md audience in
+it, and another skill in the same publication would show the file to the
+callers the holder stops showing it to. That refusal's reason is
+`shared_file_holder_narrowed`. Keep the holder's audience, or fork the file.
+Both reasons stay under the code `local_conflict`. A queued publication that is
+refused keeps its reason in the waiter's answer and in a replay.
+
 Paths are compared the way a case-insensitive checkout (macOS, Windows) stores
 them. A publication that adds a path differing only by letter case from a path
 another skill publishes, such as `skills/conventions/guide.md` next to
