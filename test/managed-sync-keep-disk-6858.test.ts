@@ -22,6 +22,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import type { WriteRequest } from '../src/core/persistence/model.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { markGitDurable } from './helpers/git-fixture.ts';
+import { settleManagedGitEffects } from './helpers/managed-brain.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { readManagedSyncFailures } from '../src/core/persistence/sync-failures.ts';
 import { fileChangedAfterAdmission } from '../src/core/persistence/sync-page-fault.ts';
@@ -62,6 +63,8 @@ async function fixture(engine: BrainEngine, files: Record<string, string>) {
 async function abandonedMidRun(engine: BrainEngine, stamped: (root: string) => void) {
   const f = await fixture(engine, { 'a.md': note('Alpha one.'), 'b.md': fixable('Beta one.'), 'c.md': note('Gamma one.') });
   expect((await performManagedSync(engine, f.opts)).status).toBe('first_sync');
+  // The checkout is durable (GST-3743): let the Git effect commit the first sync's writeback before the next edit.
+  await settleManagedGitEffects(engine, f.id);
   writeFileSync(join(f.root, 'a.md'), note('Alpha two.')); writeFileSync(join(f.root, 'b.md'), fixable('Beta two.')); writeFileSync(join(f.root, 'c.md'), note('Gamma two.'));
   const pin = commit(f.root, 'version two');
   let fired = false;
@@ -132,11 +135,18 @@ test('#6858: a page abandoned by repair stuck-recovery --keep disk with uncommit
 test('#6858: when the kept disk bytes are HEAD (the lossless --keep disk case) the re-freeze imports them in the same pass', async () => withEnv({ GBRAIN_HOME: home, GBRAIN_SYNC_FAILURES_DIR: home }, async () => {
   for (const engine of engines) {
     const { f, pin } = await abandonedMidRun(engine, root => { commit(root, 'the stamped bytes are committed'); });
+    await settleManagedGitEffects(engine, f.id);
     const head = git(f.root, 'rev-parse', 'HEAD');
     expect(head).not.toBe(pin);
-    // The pass pins HEAD, the commit of the stamped bytes, where the cursor finished at its frozen target.
+    // The pass pins HEAD, the commit of the stamped bytes, where the cursor finished at its frozen target. The checkout
+    // is durable (GST-3743), so a retry may pin the Git effect's commit of that pass's own writeback on top of it.
     const resumed = await settle(engine, f.opts);
-    expect(resumed).toMatchObject({ status: 'synced', toCommit: head, pass: { kind: 'full', outcome: 'synced', remaining: 0 } });
+    expect(resumed).toMatchObject({ status: 'synced', pass: { kind: 'full', outcome: 'synced', remaining: 0 } });
+    const pinned = String(resumed.toCommit);
+    if (pinned !== head) {
+      expect(git(f.root, 'rev-parse', pinned + '^')).toBe(head);
+      expect(git(f.root, 'log', '-1', '--format=%s', pinned)).toStartWith('gbrain: ');
+    }
     expect(resumed.held ?? []).toEqual([]);
     expect(resumed.failedFiles ?? 0).toBe(0);
     expect(await readManagedSyncFailures(engine, [f.id])).toEqual([]);
