@@ -5,7 +5,7 @@
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { spawn as spawnChild, spawnSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import { cpSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { PassThrough } from 'node:stream';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -681,5 +681,62 @@ describe('OWC ship-p5 A: the supervisor\'s late exit publication must not erase 
       expect(readOwed(r.dir, key)).toMatchObject({ v: 2, owed: 3, booked_epoch: r.epoch }); expect(oldBooks(r.dir, key)).toBe('skips');
       expect(ownerPass(r.dir, r.epoch)).toEqual({ receipt_orphaned: 2, write_window_lost: 1 }); // once
     } finally { r.done(); }
+  });
+});
+
+describe('OWC ship-p6: no path of the supervisor writes a v:1 record over a booked tombstone, and an unreadable file is a failed write', () => {
+  const booked = (r: ReturnType<typeof rig>): string => { // 3 samples accepted, the worker dies, another serving process's owner worker books the window (the tombstone)
+    for (let i = 0; i < 3; i++) expect(r.sup.send(sample(i))).toBe(true);
+    const key = r.sessions[0]!;
+    expect(ownerPass(r.dir, r.epoch)).toEqual({ write_window_lost: 1 });
+    expect(readOwed(r.dir, key)).toMatchObject({ v: 2, booked_epoch: r.epoch });
+    return key;
+  };
+  const stays = (r: ReturnType<typeof rig>, key: string): void => { // after the exit callback and another owner pass the tombstone is still there, and an older reader still reads no evidence
+    ownerPass(r.dir, r.epoch);
+    expect(readOwed(r.dir, key)).toMatchObject({ v: 2, booked_epoch: r.epoch });
+    expect(oldBooks(r.dir, key)).toBe('skips');
+    expect(readWriteTally(r.dir, r.epoch)!.uncomparable_by_reason).toEqual({ receipt_orphaned: 2, write_window_lost: 1 });
+  };
+  test('stop() before the exit callback: the close record is written under the lock and leaves the tombstone', () => {
+    const r = rig();
+    try { const key = booked(r); r.sup.stop(); r.children[0]!.emit('exit', 1, null); stays(r, key); } finally { r.done(); }
+  });
+  test('the window close or drain before the exit callback leaves the tombstone, and so does the exit that follows it', () => {
+    const r = rig();
+    try { const key = booked(r); r.internals.flushStaged(); expect(readOwed(r.dir, key)).toMatchObject({ v: 2, booked_epoch: r.epoch }); r.children[0]!.emit('exit', 1, null); stays(r, key); } finally { r.done(); }
+  });
+  test('a sample accepted after the close opens a new window marker: it leaves the tombstone too', () => {
+    const r = rig();
+    try {
+      const key = booked(r); r.internals.flushStaged();
+      expect(r.sup.send(sample(3))).toBe(true); // the window opens again: its marker is written over the same file
+      expect(readOwed(r.dir, key)).toMatchObject({ v: 2, booked_epoch: r.epoch }); expect(oldBooks(r.dir, key)).toBe('skips');
+    } finally { r.done(); }
+  });
+  test('the owed file cannot be read when the exit record is published: the publication fails (kept and marked), the tombstone is not replaced, and the keeper publishes once the file reads again', async () => {
+    const r = rig();
+    try {
+      const key = booked(r); const path = owedPath(r.dir, key);
+      chmodSync(path, 0o000); // a read error (EACCES here, EIO on a failing disk): the file is there and cannot be judged
+      r.children[0]!.emit('exit', 1, null);
+      await sleep(60); // the keeper retries while the file stays unreadable: it must not write over it
+      chmodSync(path, 0o600);
+      expect(readOwed(r.dir, key)).toMatchObject({ v: 2, booked_epoch: r.epoch }); // was a v:1 record, written over the unreadable file
+      await sleep(150); // the file reads again: the keeper publishes the exit record onto the tombstone
+      stays(r, key);
+    } finally { try { chmodSync(owedPath(r.dir, r.sessions[0]!), 0o600); } catch { /* gone */ } r.done(); }
+  });
+  test('the same for a record the keeper already holds: while the owed file cannot be read the keeper publishes nothing over it', async () => {
+    const r = rig();
+    try {
+      const key = booked(r); const path = owedPath(r.dir, key);
+      r.state.fault = 'before-rename'; r.children[0]!.emit('exit', 1, null); // the exit record could not be written: kept and marked
+      r.state.fault = null; chmodSync(path, 0o000);
+      await sleep(60); // several keeper ticks over an unreadable file
+      chmodSync(path, 0o600);
+      expect(readOwed(r.dir, key)).toMatchObject({ v: 2, booked_epoch: r.epoch }); // was a v:1 record, written by the keeper over the unreadable file
+      await sleep(150); stays(r, key);
+    } finally { try { chmodSync(owedPath(r.dir, r.sessions[0]!), 0o600); } catch { /* gone */ } r.done(); }
   });
 });

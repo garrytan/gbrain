@@ -413,7 +413,7 @@ function applyVerdict(file: WriteTallyFile, outcome: WriteOutcome, key: string |
   if (outcome === 'capability_missing') bump(file.capability_missing_by_family, name, n);
   if (outcome === 'uncomparable') bump(file.uncomparable_by_reason, name, n);
 }
-const running = (pid: number): boolean => { try { process.kill(pid, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException).code === 'EPERM'; } };
+export const running = (pid: number): boolean => { try { process.kill(pid, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException).code === 'EPERM'; } };
 
 /** A save that keeps failing for this long, with outcomes it still holds, ends the child (the supervisor restarts it, and the next owner books what it never settled). */
 export const SAVE_FAILURE_EXIT_MS = 60_000;

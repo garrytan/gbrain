@@ -27,7 +27,7 @@ import { readEpoch } from './evidence-epoch.ts';
 import { appendFault, type ShadowFault } from './ledger.ts';
 import type { MirrorTransport } from './mirror.ts';
 import { readShadowState } from './state.ts';
-import { carriesKnownLoss, owedPath, pendingPath, readOwed, sampleWeight, sessionKey, withTallyLock, writeOwed, type OwedRecord } from './write-compare.ts';
+import { carriesKnownLoss, owedPath, pendingPath, readOwed, running, sampleWeight, sessionKey, withTallyLock, writeOwed, type OwedRecord } from './write-compare.ts';
 
 /**
  * How long the owed record's flush window stays open (ms): the first plain write sample of a window writes a durable OPEN marker (`v: 2`, `open_until`), the samples of the window wait in memory, and ONE full record closes it (then the lines go to the pipe).
@@ -225,7 +225,7 @@ export class ShadowSupervisor implements MirrorTransport {
   private openWindow(): boolean {
     if (!this.session) return false;
     const rec: OwedRecord = { v: 2, session: this.session, serving_pid: process.pid, ...(this.child?.pid ? { child_pid: this.child.pid } : {}), owed: this.acceptedWeight + 1, closed: false, child_exited: false, open_until: this.o.now() + this.o.owedWindowMs };
-    try { this.o.writeOwed(this.o.dir, rec); } catch { this.markerStray = true; this.owedWritten = ''; this.armStrayRepair(); return false; } // the marker may stand: a retry replaces it with a record that states what was accepted, with or without another sample
+    try { this.putOwed(rec); } catch { this.markerStray = true; this.owedWritten = ''; this.armStrayRepair(); return false; } // the marker may stand: a retry replaces it with a record that states what was accepted, with or without another sample
     this.markerStray = false; this.owedWritten = `${this.session}:open:${rec.owed}`; this.windowOpen = true;
     return true;
   }
@@ -293,19 +293,18 @@ export class ShadowSupervisor implements MirrorTransport {
 
   /**
    * Makes the owed record for the current session durable (once per distinct content). False when it could not be written: the exact record is then kept (`keep`) and its marker is made, so status blocks and the record is retried until it is on disk, whatever
-   * the worker does. `locked`: the write takes the tally lock (a record written after its worker may be gone is one a remover could be judging); it always does when no worker is live, the child has exited or a record is kept for the session.
+   * the worker does. Every write takes the tally lock and judges the file read again there (`putOwed`).
    */
-  private writeOwedRecord(closed = false, childExited = false, locked = false): boolean {
+  private writeOwedRecord(closed = false, childExited = false): boolean {
     if (!this.session) return true;
     const kept = this.kept.get(sessionKey(this.session))?.rec; // a retained record's lifecycle flags only ever go up: a later write for the session cannot take back an exit or a close
     const exited = childExited || this.childExited || kept?.child_exited === true;
     closed ||= this.closedRecord || kept?.closed === true;
     const mark = `${this.session}:${this.acceptedWeight}:${closed}:${exited}`;
     if (this.owedWritten === mark) return true;
-    locked ||= !this.child || exited || this.kept.has(sessionKey(this.session)); // a record written with no live worker, after the child's exit, or for a session whose record is already kept is one a remover may be judging: every such write takes the lock (a timeout is a failed write: kept and retried). A live worker's own session is settled by that worker, which is why the close at a drain stays unlocked
     const rec: OwedRecord = { v: 1, session: this.session, serving_pid: process.pid, ...(this.child?.pid ? { child_pid: this.child.pid } : {}), owed: this.acceptedWeight, closed, child_exited: exited };
     try {
-      if (locked) withTallyLock(this.o.dir, () => this.publishLocked(rec), KEPT_LOCK_WAIT_MS); else this.o.writeOwed(this.o.dir, rec);
+      this.putOwed(rec);
       this.owedWritten = mark; this.closedRecord = closed; this.childExited = exited; this.markerStray = false; // a full record replaced any marker this process left
       const entry = this.kept.get(sessionKey(this.session));
       if (entry) { entry.rec = null; this.armKept(true); } // the record is durable: only its marker is left to clear
@@ -313,10 +312,22 @@ export class ShadowSupervisor implements MirrorTransport {
     } catch { this.keep(rec); return false; }
   }
 
-  /** Writes `rec` (the caller holds the tally lock). A booked tombstone of the session (v:2, `booked_epoch`) is never replaced by a v:1 record: it stays v:2 with the larger `owed`, so an older reader keeps reading an unreadable file and the next owner pass books the rest. */
+  /**
+   * The one way this process writes the session's owed file (the open marker, every full record, the keeper's publication). While the session's worker is running nothing can book its marker (an owner books it only once the worker exited or its pid is gone),
+   * so the file is ours alone and the write takes no lock: a worker saving every few milliseconds holds the lock too often for a close at the end of the CLI to wait for it. Otherwise (no live worker, its exit seen, a record kept for the session) the write takes the
+   * tally lock and judges the file read again there: a booked tombstone of the session (v:2, `booked_epoch`) is never replaced by a record of ours, it stays v:2 with the larger `owed`, so an older reader keeps reading an unreadable file and the next owner pass books
+   * the rest. A file that is there and cannot be read is a failed write (the caller keeps the record and retries): it may be a tombstone. A lock that stays held is a failed write too.
+   */
+  private putOwed(rec: OwedRecord): void {
+    const live = this.child?.pid !== undefined && this.child.pid > 1 && !rec.child_exited && !this.kept.has(sessionKey(rec.session)) && running(this.child.pid);
+    if (live) this.o.writeOwed(this.o.dir, rec); else withTallyLock(this.o.dir, () => this.publishLocked(rec), KEPT_LOCK_WAIT_MS);
+  }
+
+  /** `putOwed` with the caller already holding the tally lock. */
   private publishLocked(rec: OwedRecord): void {
     const cur = readOwed(this.o.dir, rec.session);
-    if (cur !== null && cur !== 'unreadable' && cur.v === 2 && cur.booked_epoch !== undefined) this.o.writeOwed(this.o.dir, { ...cur, owed: Math.max(cur.owed, rec.owed), child_exited: cur.child_exited || rec.child_exited });
+    if (cur === 'unreadable') throw new Error(`the owed record of ${rec.session} cannot be read: not written over`);
+    if (cur !== null && cur.v === 2 && cur.booked_epoch !== undefined) this.o.writeOwed(this.o.dir, { ...cur, owed: Math.max(cur.owed, rec.owed), child_exited: cur.child_exited || rec.child_exited });
     else this.o.writeOwed(this.o.dir, rec);
   }
 
@@ -566,7 +577,7 @@ export class ShadowSupervisor implements MirrorTransport {
 
   private onExit(child: ChildProcess | null, code: number | null, signal: string | null): void {
     if (child && this.child !== child) return;
-    if (child && (this.acceptedWeight > 0 || this.markerStray)) this.writeOwedRecord(false, true, true); // durable before anything about this session is reset (or kept, marked and retried): the next owner worker settles what the dead child never did
+    if (child && (this.acceptedWeight > 0 || this.markerStray)) this.writeOwedRecord(false, true); // durable before anything about this session is reset (or kept, marked and retried): the next owner worker settles what the dead child never did
     this.dropStaged(); this.oweDirty = false; // nothing queued is left for a flush to write: the exit-time record (written or kept) already states everything accepted
     this.child = null; if (this.kept.size === 0) liveSupervisors.delete(this);
     this.clearWatchdog();
