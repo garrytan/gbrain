@@ -25,6 +25,10 @@ const ESCAPED = /[\u0000-\u001f\u007f-\u009f\u2028\u2029'\\[]/gu;
  */
 export function quotedWord(arg: string): string {
   if (!UNPRINTABLE.test(arg)) return `'${arg.replace(/'/g, "'\\''")}'`;
-  const bytes = (ch: string) => [...new TextEncoder().encode(ch)].map(b => `\\${b.toString(8).padStart(3, '0')}`).join('');
-  return `$'${arg.replace(ESCAPED, bytes)}'`;
+  return `$'${arg.replace(ESCAPED, octalBytes)}'`;
+}
+
+/** The fixed three-digit octal UTF-8 bytes of one character (`\033` for ESC); inertText escapes controls with it too. */
+export function octalBytes(ch: string): string {
+  return [...new TextEncoder().encode(ch)].map(b => `\\${b.toString(8).padStart(3, '0')}`).join('');
 }

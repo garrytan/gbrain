@@ -288,8 +288,10 @@ export async function runSyncStatus(engine: BrainEngine, args: string[]): Promis
   for (const hold of status.git_commit_holds) {
     const fix = renderAction(hold.fix, ctx);
     // GCH-06: an identity fix is the user's answer; its argv only reads which identity the checkout sees.
-    console.log(hold.fix.ask_user ? `  ${gitCommitHoldLine(hold)}\n    ASK THE USER: ${hold.fix.user_message}\n    check (read-only): ${fix.command ?? fix.argv?.join(' ')}`
-      : `  ${gitCommitHoldLine(hold)}\n    fix: ${fix.command ?? fix.argv?.join(' ')}`);
+    // GCH5-06/05: the rendered (escaped) text only; argv no shell can carry prints the unavailable note, never raw.
+    const step = fix.command ?? 'command unavailable; --json shows the exact argv';
+    console.log(hold.fix.ask_user ? `  ${gitCommitHoldLine(hold)}\n    ASK THE USER: ${fix.user_message}\n    check (read-only): ${step}`
+      : `  ${gitCommitHoldLine(hold)}\n    fix: ${step}`);
   }
   const connector = status.connector_last_error;
   if (connector) console.log(`  connector: ${connector.stopped ? 'STOPPED, ' : ''}the last ${connector.consecutive} run(s) ended on ${connector.code}${connector.slug ? ` at ${connector.slug}` : ''}: ${connector.message}`);
