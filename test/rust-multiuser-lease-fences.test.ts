@@ -17,6 +17,7 @@ import { openRustEngine, type RustEngine } from '../src/core/rust-engine.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { acquirePageEmbeddingLease } from '../src/core/page-embedding-lease.ts';
 import { DREAM_INLINE_PRIVATE_QUEUE_PREFIX, MinionQueue } from '../src/core/minions/queue.ts';
+import { drainWakes } from '../src/core/wakeshift/drain.ts';
 import { claimHousekeepingTurn, completeHousekeepingTurn } from '../src/core/persistence/housekeeping-turn.ts';
 import { registerHostLease } from './helpers/rust-host-fence.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -100,6 +101,31 @@ describe('family 3, the private queue owner lease', () => {
       expect(await queue.renewPrivateQueueLease(name, 'tok')).toBe(0);
       await takeOver();
       expect(await refusal(() => queue.renewPrivateQueueLease(name, 'tok'))).toEqual({ code: 'lease_lost', reason: 'epoch_moved' });
+    });
+  });
+});
+
+describe('family 6, the wake watch and wake forget leases', () => {
+  const runtime = { key: {}, url: 'https://wakeshift.invalid', file: {}, api: { emit: async () => ({ matched: 1 }), end: async () => true } } as never;
+  const watch = { event: 'gbrain.job.finished', target: '1', targetRef: null, principalKind: 'local_stdio' as const, principalId: 'me', memberId: null,
+    wakeUser: '0'.repeat(31) + '1', wsSubscriptionId: 'ws-1', expiresAt: '2099-01-01T00:00:00.000Z' };
+
+  withAddon('after a takeover the old holder cannot lease a due watch: the drain is refused and the watch stays unleased', async () => {
+    await onStaleableHost(async (engine, takeOver) => {
+      const e = engine as unknown as BrainEngine;
+      const id = await engine.openWakeWatch(watch);
+      await takeOver();
+      expect(await refusal(() => drainWakes(e, { ids: [id], runtime }))).toEqual({ code: 'lease_lost', reason: 'epoch_moved' });
+      expect((await engine.listDueWakeWatches({ ids: [id] })).map(r => r.id)).toEqual([id]);
+    });
+  });
+
+  withAddon('after a takeover the old holder cannot lease a queued forget: the drain is refused', async () => {
+    await onStaleableHost(async (engine, takeOver) => {
+      const e = engine as unknown as BrainEngine;
+      await engine.queueWakeForget('0'.repeat(31) + '2', null);
+      await takeOver();
+      expect(await refusal(() => drainWakes(e, { runtime }))).toEqual({ code: 'lease_lost', reason: 'epoch_moved' });
     });
   });
 });

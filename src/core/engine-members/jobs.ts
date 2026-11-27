@@ -382,7 +382,7 @@ export interface JobsMembers {
   /** The open, due, unleased watches whose target settled (at most 20), each with the job, write request or cron run it watches. */
   listDueWakeWatches(spec?: { ids?: readonly number[] }): Promise<JobsWake.WakeRow[]>;
   /** Lease one due watch; its lease token and attempts, or null when it is not due or leased. */
-  claimWakeWatch(id: number, leaseSeconds: number): Promise<{ lease: string; attempts: number } | null>;
+  claimWakeWatch(id: number, leaseSeconds: number, opts?: FenceOpts): Promise<{ lease: string; attempts: number } | null>;
   /** Settle a leased watch; false when it was ended or re-leased meanwhile. */
   settleWakeWatch(settle: JobsWake.WakeWatchSettle): Promise<boolean>;
   /** Queue a Wakeshift forget of a user (once while one is pending); with a member id, only when that member is not removed. */
@@ -392,7 +392,7 @@ export interface JobsMembers {
   /** A revoked token's or deleted OAuth client's Wakeshift state: queue a forget of each user its member-less watches ran under, end its open watches, drop its terms acceptances. */
   forgetWakeCredential(kind: JobsWake.WakeCredentialKind, id: string): Promise<{ ended: number; queued: number }>;
   /** Lease up to `limit` due pending forgets. */
-  claimWakeForgets(spec: { leaseSeconds: number; limit: number }): Promise<JobsWake.WakeForgetClaim[]>;
+  claimWakeForgets(spec: { leaseSeconds: number; limit: number } & FenceOpts): Promise<JobsWake.WakeForgetClaim[]>;
   /** Settle a leased forget; false when its lease no longer matches. */
   settleWakeForget(settle: JobsWake.WakeForgetSettle): Promise<boolean>;
 }

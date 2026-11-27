@@ -237,3 +237,84 @@ fn lf3_a_stale_host_cannot_renew_a_private_queue_lease() {
     );
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// Family 6: the wake watch and wake forget leases.
+
+fn open_watch(b: &Brain, n: u32) -> i64 {
+    let insert: gbrain_store::jobs::WatchInsert = serde_json::from_value(json!({
+        "event": "gbrain.job.finished", "target": "1", "targetRef": null, "principalKind": "local_stdio",
+        "principalId": "me", "memberId": null, "wakeUser": format!("{:032x}", 1), "wsSubscriptionId": format!("ws-{n}"),
+        "expiresAt": "2099-01-01T00:00:00.000000Z",
+    }))
+    .unwrap();
+    b.store.open_wake_watch(&insert).unwrap()
+}
+
+#[test]
+fn lf6_a_stale_host_cannot_claim_or_settle_a_wake_watch_or_forget() {
+    let b = brain("lf6-wake", true);
+    assert!(b.store.multiuser(), "multi-user mode is on");
+    let a = b.lease("consumer:h", "a");
+    let first = open_watch(&b, 1);
+    let second = open_watch(&b, 2);
+    let lease = b
+        .store
+        .claim_wake_watch_fenced(first, 60, Some(&a))
+        .unwrap()
+        .unwrap()["lease"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    b.store
+        .queue_wake_forget(&format!("{:032x}", 1), None)
+        .unwrap();
+    b.store
+        .queue_wake_forget(&format!("{:032x}", 2), None)
+        .unwrap();
+    let forgets = b
+        .store
+        .claim_wake_forgets(&fenced(json!({ "leaseSeconds": 60, "limit": 1 }), &a))
+        .unwrap();
+    assert_eq!(forgets.len(), 1);
+    let new = b.take_over("consumer:h", &a);
+    let before = b.dump();
+    let watch_settle = |fence: &LeaseToken| -> gbrain_store::jobs::WatchSettle {
+        fenced(
+            json!({ "id": first, "lease": lease, "state": "delivered" }),
+            fence,
+        )
+    };
+    refused(
+        &b.store.settle_wake_watch(&watch_settle(&a)).unwrap_err(),
+        "epoch_moved",
+    );
+    refused(
+        &b.store
+            .claim_wake_watch_fenced(second, 60, Some(&a))
+            .unwrap_err(),
+        "epoch_moved",
+    );
+    let forget_settle = |fence: &LeaseToken| -> gbrain_store::jobs::ForgetSettle {
+        fenced(
+            json!({ "id": forgets[0]["id"], "lease": forgets[0]["lease"], "state": "done", "attempts": 1, "error": null }),
+            fence,
+        )
+    };
+    refused(
+        &b.store.settle_wake_forget(&forget_settle(&a)).unwrap_err(),
+        "epoch_moved",
+    );
+    refused(
+        &b.store
+            .claim_wake_forgets(&fenced(json!({ "leaseSeconds": 60, "limit": 1 }), &a))
+            .unwrap_err(),
+        "epoch_moved",
+    );
+    assert_eq!(
+        b.dump(),
+        before,
+        "a refused wake lease write changed the brain"
+    );
+    assert!(b.store.settle_wake_watch(&watch_settle(&new)).unwrap());
+    assert!(b.store.settle_wake_forget(&forget_settle(&new)).unwrap());
+}

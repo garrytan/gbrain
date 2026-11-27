@@ -14,6 +14,7 @@
  * `wakeshift/forget.ts` are typed: `forgetWakeMember` and `forgetWakeCredential`.
  */
 import type { BrainEngine } from '../engine.ts';
+import type { FenceOpts } from './lease-token.ts';
 import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
 import { CRON_FINISHED, JOB_FINISHED, WRITE_SETTLED } from '../wakeshift/events.ts';
 
@@ -323,7 +324,7 @@ export async function claimWakeWatch(tx: Raw, id: number, leaseSeconds: number):
 }
 
 /** How a leased watch settles: its new state and the fields that change with it (a null or absent field keeps the column). */
-export interface WakeWatchSettle {
+export interface WakeWatchSettle extends FenceOpts {
   id: number;
   lease: string;
   state: 'open' | 'delivered' | 'dead' | 'ended';
@@ -427,7 +428,7 @@ export async function claimWakeForgets(tx: Raw, spec: { leaseSeconds: number; li
   return rows.map(r => ({ id: Number(r.id), wake_user: r.wake_user, attempts: Number(r.attempts), lease: r.lease }));
 }
 
-export interface WakeForgetSettle {
+export interface WakeForgetSettle extends FenceOpts {
   id: number;
   lease: string;
   state: 'pending' | 'done' | 'dead';
