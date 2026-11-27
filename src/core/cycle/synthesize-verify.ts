@@ -620,18 +620,47 @@ function numbersBySpeaker(content: string, turns: SpeakerTurn[]): Map<string, Se
   return statedBySpeaker(content, turns, numericFacts);
 }
 
+const WEEKDAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+
+/**
+ * ISO dates a transcript's relative references resolve to from the date in its
+ * file name (the observation date the synthesis prompt gives the child): a
+ * weekday name (the coming such day, or the earlier one after "last"/"previous"), yesterday, today, tomorrow.
+ * No file-name date, no resolved dates.
+ */
+function resolvedRelativeDates(content: string, name: string): string[] {
+  const anchor = name.match(/(\d{4})-(\d{2})-(\d{2})/);
+  if (!anchor) return [];
+  const base = Date.UTC(Number(anchor[1]), Number(anchor[2]) - 1, Number(anchor[3]));
+  if (!Number.isFinite(base)) return [];
+  const lower = content.toLowerCase();
+  const offsets = new Set<number>();
+  if (/\byesterday\b/.test(lower)) offsets.add(-1);
+  if (/\btoday\b/.test(lower)) offsets.add(0);
+  if (/\btomorrow\b/.test(lower)) offsets.add(1);
+  const dow = new Date(base).getUTCDay();
+  WEEKDAYS.forEach((w, i) => {
+    const ahead = ((i - dow + 6) % 7) + 1;
+    // One date per mention: "last/previous <day>" is the earlier occurrence, any other phrasing the coming one.
+    for (const m of lower.matchAll(new RegExp(`(?:\\b(last|previous)\\s+)?\\b${w}s?\\b`, 'g'))) offsets.add(m[1] ? ahead - 7 : ahead);
+  });
+  return [...offsets].map(d => new Date(base + d * 86400000).toISOString().slice(0, 10));
+}
+
 /** Prepare one transcript for verification. */
 export function groundSource(path: string, content: string, opts: { tolerant?: boolean } = {}): GroundedSource {
   const { norm, map } = normalizeForGrounding(content, { tolerant: opts.tolerant });
   const turns = parseSpeakerTurns(content);
   const name = basename(path);
+  const numbers = numericFacts(`${content}\n${name}`);
+  for (const d of resolvedRelativeDates(content, name)) for (const k of numericFacts(d)) if (/^(?:date|md):/.test(k)) numbers.add(k);
   return {
     path,
     content,
     norm,
     map,
     turns,
-    numbers: numericFacts(`${content}\n${name}`),
+    numbers,
     numbersBySpeaker: numbersBySpeaker(content, turns),
     nameNorm: normForGrounding(name),
     speakers: speakerMentionPatterns(turns),
