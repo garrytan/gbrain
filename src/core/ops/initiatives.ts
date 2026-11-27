@@ -8,8 +8,10 @@
  *   finish_initiative       write  mark done or cancelled; a job runs the final Slack sync, leaves the
  *                                  channels and (done) proposes the merge into the target pages
  *   initiative_merge_apply  write  apply the proposed merge plan (minus skipped items)
- *   idea_submit             write  add an idea, or find the existing duplicate; returns similar ideas,
- *                                  initiatives in progress and existing core pages
+ *   idea_submit             write  add an idea, or record a near-identical one as support on the existing
+ *                                  idea; returns similar ideas (with their resolution), initiatives in
+ *                                  progress and existing core pages
+ *   idea_resolve            write  accept, reject, obsolete, withdraw or reopen an idea, recording who and why
  *
  * Every write runs as the caller through the page mutation coordinator, so
  * scopes, slug fences, revisions and end-user attribution apply. Pages live in
@@ -20,8 +22,8 @@ import { opError, type Operation, type OperationContext } from './contract.ts';
 import { enforceClientSlugFence, sourceScopeOpts, validatePageSlug } from './context.ts';
 import { WRITE_REQUEST_PARAM } from '../persistence/params.ts';
 import {
-  INITIATIVE_TYPE, ideaStatusOf, initiativeStatusOf, readInitiativesConfig, slugSegment, stringList, today,
-  type InitiativesConfig,
+  IDEA_RESOLUTIONS, INITIATIVE_TYPE, ideaResolutionOf, ideaStatusOf, initiativeStatusOf, readInitiativesConfig, slugSegment,
+  stringList, today, type IdeaResolutionStatus, type InitiativesConfig,
 } from '../initiatives/model.ts';
 import {
   initiativeChannels, listIdeas, listInitiatives, readPage, resolveUnderPrefix, slackChannelsOf, updatePage, writePage,
@@ -54,7 +56,7 @@ async function initiativeSlug(ctx: OperationContext, cfg: InitiativesConfig, ref
 const initiatives_list: Operation = {
   name: 'initiatives_list',
   outputRedaction: 'no_stored_text',
-  description: 'List ideas or initiatives with status (filter by status). Ideas: open/planned/implemented/obsolete/rejected/withdrawn; initiatives: active/done/cancelled.',
+  description: 'List ideas or initiatives with status (filter by status). Ideas: open/accepted/planned/implemented/obsolete/rejected/withdrawn, each with its resolution (who set it, when, why); initiatives: active/done/cancelled.',
   params: {
     kind: { type: 'string', enum: ['initiative', 'idea'], description: 'What to list (default initiative).' },
     status: { type: 'string', description: 'Only this status.' },
@@ -69,7 +71,8 @@ const initiatives_list: Operation = {
     const rows = kind === 'idea' ? await listIdeas(ctx.engine, cfg) : await listInitiatives(ctx.engine, cfg);
     const items = rows.map(r => kind === 'idea'
       ? { slug: r.slug, title: r.title, status: ideaStatusOf(r.frontmatter), author: r.frontmatter.author ?? null,
-          votes: Number(r.frontmatter.votes) || 0, implemented_by: r.frontmatter.implemented_by ?? null, similar: stringList(r.frontmatter.similar) }
+          votes: Number(r.frontmatter.votes) || 0, implemented_by: r.frontmatter.implemented_by ?? null, similar: stringList(r.frontmatter.similar),
+          resolution: ideaResolutionOf(r.frontmatter) }
       : { slug: r.slug, title: r.title, status: initiativeStatusOf(r.frontmatter), tracker: r.frontmatter.tracker ?? null,
           implements: stringList(r.frontmatter.implements), targets: stringList(r.frontmatter.targets),
           slack_channels: slackChannelsOf(r.frontmatter), started: r.frontmatter.started ?? null,
@@ -312,7 +315,7 @@ const initiative_merge_apply: Operation = {
 const idea_submit: Operation = {
   name: 'idea_submit',
   outputRedaction: 'no_stored_text',
-  description: 'Add an idea (problem + proposal). Checks first: a near-identical idea returns status duplicate instead of a new page; always returns similar ideas, initiatives in progress and existing project/concept pages (maybe already implemented). dry_run only checks.',
+  description: 'Add an idea (problem + proposal). Checks first: a near-identical idea returns status duplicate and records the submission as support (a vote) on the existing idea instead of a new page; always returns similar ideas with their status and resolution (accepted/rejected/… by whom, why), initiatives in progress and existing project/concept pages (maybe already implemented). Tell the person the resolution of a duplicate or similar idea. dry_run only checks.',
   params: {
     text: { type: 'string', required: true, description: 'The idea in plain words.' },
     title: { type: 'string', description: 'Short title (default from the text).' },
@@ -344,6 +347,41 @@ const idea_submit: Operation = {
   },
 };
 
+/** Who resolves an idea: the agent label, the OAuth client, or the local operator. */
+function callerName(ctx: OperationContext): string {
+  const auth = ctx.auth as { clientName?: string; clientId?: string } | undefined;
+  return ctx.agentLabel ?? auth?.clientName ?? auth?.clientId ?? (ctx.remote === false ? 'local operator' : 'unknown caller');
+}
+
+const idea_resolve: Operation = {
+  name: 'idea_resolve',
+  outputRedaction: 'no_stored_text',
+  description: 'Set an idea\'s status by hand and record who did it, when and why: accepted (approved, not planned yet), rejected, obsolete, withdrawn, or open to reopen. planned / implemented come from initiatives (an implemented idea cannot be resolved). The resolution is shown on later duplicate or similar submissions and, for ideas from Slack, replied in their thread. dry_run previews.',
+  params: {
+    slug: { type: 'string', required: true, description: 'Idea slug or name.' },
+    status: { type: 'string', required: true, enum: [...IDEA_RESOLUTIONS], description: 'accepted, rejected, obsolete, withdrawn, or open (reopen).' },
+    reason: { type: 'string', description: 'Why, one or two sentences (shown to everyone who submits a similar idea).' },
+    dry_run: { type: 'boolean', description: 'Preview without writing.' },
+  },
+  scope: 'write',
+  mutating: true,
+  area: 'initiatives',
+  handler: async (ctx, p) => {
+    const cfg = await scopedConfig(ctx, 'idea_resolve');
+    const ref = typeof p.slug === 'string' ? p.slug.trim() : '';
+    if (!ref) throw opError('invalid_params', 'idea_resolve: slug is required.', 'Pass the idea slug (initiatives_list { kind: "idea" } shows them).');
+    const slug = await resolveUnderPrefix(ctx.engine, cfg.sourceId, cfg.ideasPrefix, ref) ?? ref;
+    const { resolveIdea } = await import('../initiatives/ideas.ts');
+    return resolveIdea(ctx, cfg, slug, {
+      status: String(p.status ?? '').trim().toLowerCase() as IdeaResolutionStatus,
+      by: callerName(ctx),
+      ...(typeof p.reason === 'string' && p.reason.trim() ? { reason: p.reason.trim() } : {}),
+      dryRun: p.dry_run === true || ctx.dryRun,
+    });
+  },
+};
+
 export const initiativeOperations: Operation[] = [
   initiatives_list, initiative_status, initiative_start, initiative_bind_slack, finish_initiative, initiative_merge_apply, idea_submit,
+  idea_resolve,
 ];

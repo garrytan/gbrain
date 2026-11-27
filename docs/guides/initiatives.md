@@ -59,6 +59,7 @@ ideas/<slug>  ◀─implements─  initiatives/<slug>  ─targets─▶  project
 |---|---|
 | Find duplicates / similar work, add an idea | `idea_submit` (`dry_run: true` only checks) |
 | List ideas or initiatives | `initiatives_list` |
+| Accept, reject, obsolete, withdraw or reopen an idea (who, when, why) | `idea_resolve` |
 | Create an initiative | `initiative_start` (title, requirements body, `implements`, `targets`, `tracker`) |
 | Bind a Slack channel | `initiative_bind_slack` (the bot must be in the channel) |
 | Progress, finish job state | `initiative_status` (`finish_job`, facts with provenance) |
@@ -90,12 +91,29 @@ existing one (`votes`). Thread replies become the idea's discussion. When an
 initiative implementing the idea starts or finishes, the `ideas` phase replies in
 the same thread.
 
+## Resolving ideas
+
+**Say to your agent:** *"Reject the dark-mode idea: covered by the theme initiative."*
+
+`idea_resolve` sets an idea to `accepted` (approved, not planned yet), `rejected`,
+`obsolete` or `withdrawn`, or reopens it (`open`), and records who did it (the
+MCP end user, agent label or client), when and the reason in frontmatter
+`resolution` (history in `resolutions[]`, one line per change under
+`## Resolution`). An implemented idea cannot be resolved.
+
+A later submission that is a near-duplicate is recorded as support on the
+existing idea, and the reply says how that idea was resolved ("rejected by
+alice-example (2026-11-27). Reason: …"); similar ideas are listed with their
+resolution too. For an idea that came from Slack, the next `ideas` phase replies
+in its thread once.
+
 ## The `ideas` cycle phase
 
 Runs with the dream cycle (`cycle.ideas.enabled`, default on):
 
 - idea status from initiatives: active implementer → `planned`, done → `implemented`
-  (`implemented_by`), only cancelled → back to `open`;
+  (`implemented_by`), only cancelled → back to `accepted` if it was accepted, else `open`;
+  a manual `rejected` / `obsolete` / `withdrawn` stands until an implementer is done;
 - similar ideas and initiatives linked both ways (`similar:`), above
   `initiatives.ideas.similar_threshold` (default 0.85).
 

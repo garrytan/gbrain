@@ -12,7 +12,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { parseLlmJson } from '../llm-json.ts';
 import { scanText } from '../secret-scan.ts';
-import { IDEA_TYPE, today, type InitiativesConfig } from './model.ts';
+import { IDEA_TYPE, formatResolution, today, type InitiativesConfig } from './model.ts';
 import { localContext, updatePage } from './store.ts';
 import { findSlackIdea, sectionOf, setSection, submitIdea, titleFromText, type IdeasDeps, type SimilarHit, type SubmitIdeaResult } from './ideas.ts';
 
@@ -135,14 +135,17 @@ function esc(s: string): string {
 }
 
 function hitLine(h: SimilarHit): string {
-  return `• ${esc(h.title)} (\`${h.slug}\`${h.status ? `, ${h.status}` : ''})`;
+  const resolution = h.resolution && h.resolution.status === h.status ? ` — ${esc(formatResolution(h.resolution))}` : '';
+  return `• ${esc(h.title)} (\`${h.slug}\`${h.status ? `, ${h.status}` : ''})${resolution}`;
 }
 
 /** The intake reply in Slack mrkdwn. */
 export function formatSimilarReply(result: SubmitIdeaResult): string {
   const out: string[] = [];
   if (result.status === 'duplicate' && result.duplicateOf) {
-    out.push(`This looks like an existing idea: *${esc(result.duplicateOf.title)}* (\`${result.duplicateOf.slug}\`, ${result.duplicateOf.status ?? 'open'}). I added your message as support.`);
+    const d = result.duplicateOf;
+    const resolution = d.resolution && d.resolution.status === d.status ? ` It was ${esc(formatResolution(d.resolution))}` : '';
+    out.push(`This looks like an existing idea: *${esc(d.title)}* (\`${d.slug}\`, ${d.status ?? 'open'}).${resolution}${resolution && !/[.!?]$/.test(resolution) ? '.' : ''} I added your message as support.`);
   } else if (result.status === 'dry_run') {
     out.push(`Would record this as idea \`${result.slug ?? ''}\`.`);
   } else {

@@ -9,8 +9,10 @@ import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { _resetWriteThroughCacheForTest } from '../src/core/write-through.ts';
 import type { InitiativesConfig } from '../src/core/initiatives/model.ts';
-import { localContext, readPage, writePage } from '../src/core/initiatives/store.ts';
-import { submitIdea, type IdeasDeps, type SimilarSearchHit } from '../src/core/initiatives/ideas.ts';
+import { localContext, readPage, updatePage, writePage } from '../src/core/initiatives/store.ts';
+import { resolveIdea, submitIdea, type IdeasDeps, type SimilarSearchHit } from '../src/core/initiatives/ideas.ts';
+import { loadOperation } from '../src/core/operation-load.ts';
+import type { OperationContext } from '../src/core/ops/contract.ts';
 import { appendIdeaDiscussion, formatSimilarReply, handleIntakeMessage } from '../src/core/initiatives/intake.ts';
 import { runIdeasPhase, type IdeaStatusNotice } from '../src/core/initiatives/ideas-phase.ts';
 
@@ -216,5 +218,100 @@ describe('intake', () => {
     const p3 = (await readPage(engine, 'default', 'ideas/z'))!;
     expect(p3.body).toContain('third');
     expect(p3.body.match(/## Discussion/g)).toHaveLength(1);
+  });
+});
+
+describe('idea resolution (idea_resolve)', () => {
+  const at = () => new Date('2026-11-27T09:00:00Z');
+
+  test('records who, when and why; keeps a history; refuses implemented ideas and unknown statuses', async () => {
+    const ctx = localContext(engine, 'default');
+    await seed('ideas/csv', 'idea', 'CSV export', { status: 'open' }, '## Proposal\n\nExport CSV.\n');
+    const r = await resolveIdea(ctx, cfg, 'ideas/csv', { status: 'rejected', by: 'alice-example', reason: 'Covered by the PDF report' }, { now: at });
+    expect(r).toMatchObject({ slug: 'ideas/csv', status: 'rejected', previous_status: 'open', dry_run: false });
+    let page = (await readPage(engine, 'default', 'ideas/csv'))!;
+    expect(page.frontmatter.status).toBe('rejected');
+    expect(page.frontmatter.resolution).toEqual({ status: 'rejected', by: 'alice-example', at: '2026-11-27T09:00:00.000Z', reason: 'Covered by the PDF report' });
+    expect(page.body).toContain('## Resolution');
+    expect(page.body).toContain('- 2026-11-27 **rejected** by alice-example: Covered by the PDF report');
+
+    await resolveIdea(ctx, cfg, 'ideas/csv', { status: 'open', by: 'bob-example' }, { now: at });
+    page = (await readPage(engine, 'default', 'ideas/csv'))!;
+    expect(page.frontmatter.status).toBe('open');
+    expect((page.frontmatter.resolutions as unknown[]).length).toBe(2);
+    expect(page.body).toContain('**reopened** by bob-example');
+
+    const dry = await resolveIdea(ctx, cfg, 'ideas/csv', { status: 'accepted', by: 'x', dryRun: true }, { now: at });
+    expect(dry.dry_run).toBe(true);
+    expect((await readPage(engine, 'default', 'ideas/csv'))!.frontmatter.status).toBe('open');
+
+    await seed('ideas/shipped', 'idea', 'Shipped', { status: 'implemented', implemented_by: 'initiatives/x' });
+    await expect(resolveIdea(ctx, cfg, 'ideas/shipped', { status: 'rejected', by: 'x' })).rejects.toMatchObject({ code: 'idea_implemented' });
+    await expect(resolveIdea(ctx, cfg, 'ideas/csv', { status: 'planned' as never, by: 'x' })).rejects.toMatchObject({ code: 'invalid_params' });
+    await expect(resolveIdea(ctx, cfg, 'ideas/nope', { status: 'rejected', by: 'x' })).rejects.toMatchObject({ code: 'idea_not_found' });
+
+    // accepted while an initiative works on it: stays planned, the resolution is kept.
+    await seed('ideas/busy', 'idea', 'Busy', { status: 'planned' });
+    const busy = await resolveIdea(ctx, cfg, 'ideas/busy', { status: 'accepted', by: 'x' }, { now: at });
+    expect(busy.status).toBe('planned');
+    expect((await readPage(engine, 'default', 'ideas/busy'))!.frontmatter.resolution).toMatchObject({ status: 'accepted' });
+  });
+
+  test('the op records the caller (agent label) as resolver', async () => {
+    await seed('ideas/op-idea', 'idea', 'Op idea', { status: 'open' });
+    const op = await loadOperation('idea_resolve');
+    const ctx = { ...localContext(engine, 'default'), agentLabel: 'carol-example' } as OperationContext;
+    const r = await op!.handler(ctx, { slug: 'op-idea', status: 'accepted', reason: 'Fits the Q1 roadmap' }) as Record<string, any>;
+    expect(r.resolution).toMatchObject({ status: 'accepted', by: 'carol-example', reason: 'Fits the Q1 roadmap' });
+    const list = await (await loadOperation('initiatives_list'))!.handler(localContext(engine, 'default'), { kind: 'idea' }) as Record<string, any>;
+    expect(list.items[0]).toMatchObject({ slug: 'ideas/op-idea', status: 'accepted', resolution: { by: 'carol-example' } });
+  });
+
+  test('a duplicate is recorded as support (also without Slack) and the reply tells its resolution; similar ideas show theirs', async () => {
+    const ctx = localContext(engine, 'default');
+    await seed('ideas/dark-mode', 'idea', 'Dark mode', { status: 'open' });
+    await resolveIdea(ctx, cfg, 'ideas/dark-mode', { status: 'rejected', by: 'alice-example', reason: 'Not for this year' }, { now: at });
+
+    const dup = fakeDeps([{ slug: 'ideas/dark-mode', title: 'Dark mode', type: 'idea', score: 0.96 }]);
+    const d = await submitIdea(ctx, cfg, { text: 'please add a dark theme', author: 'dave-example' }, dup);
+    expect(d).toMatchObject({ status: 'duplicate', support_added: true });
+    expect(d.duplicateOf?.resolution).toMatchObject({ status: 'rejected', by: 'alice-example', reason: 'Not for this year' });
+    expect((await readPage(engine, 'default', 'ideas/dark-mode'))!.frontmatter.votes).toBe(1);
+    const again = await submitIdea(ctx, cfg, { text: 'please add a dark theme', author: 'dave-example' }, dup);
+    expect(again.support_added).toBe(false);
+    expect((await readPage(engine, 'default', 'ideas/dark-mode'))!.frontmatter.votes).toBe(1);
+    const reply = formatSimilarReply(d);
+    expect(reply).toContain('This looks like an existing idea: *Dark mode* (`ideas/dark-mode`, rejected). It was rejected by alice-example (2026-11-27). Reason: Not for this year. I added your message as support.');
+
+    const near = fakeDeps([{ slug: 'ideas/dark-mode', title: 'Dark mode', type: 'idea', score: 0.88 }]);
+    const n = await submitIdea(ctx, cfg, { title: 'Night theme', text: 'night theme for the viewer', author: 'erin-example' }, near);
+    expect(n.status).toBe('created');
+    expect(formatSimilarReply(n)).toContain('• Dark mode (`ideas/dark-mode`, rejected) — rejected by alice-example (2026-11-27). Reason: Not for this year');
+  });
+
+  test('the ideas phase keeps manual resolutions, returns cancelled work to accepted, and tells Slack once', async () => {
+    const ctx = localContext(engine, 'default');
+    await seed('ideas/r', 'idea', 'Rejected one', { status: 'open', slack_channel: 'C0123456', slack_ts: '2.1' });
+    await seed('ideas/acc', 'idea', 'Accepted one', { status: 'open' });
+    await resolveIdea(ctx, cfg, 'ideas/r', { status: 'rejected', by: 'alice-example', reason: 'Duplicate of billing work' }, { now: at });
+    await resolveIdea(ctx, cfg, 'ideas/acc', { status: 'accepted', by: 'bob-example' }, { now: at });
+    await seed('initiatives/live', 'initiative', 'Live', { status: 'active', implements: ['ideas/r', 'ideas/acc'] });
+
+    const notices: IdeaStatusNotice[] = [];
+    const notify = async (n: IdeaStatusNotice) => { notices.push(n); };
+    await runIdeasPhase(engine, { notify, config: cfg, deps: noAi });
+    const fm = async (s: string) => (await readPage(engine, 'default', s))!.frontmatter;
+    expect((await fm('ideas/r')).status).toBe('rejected');
+    expect((await fm('ideas/acc')).status).toBe('planned');
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toMatchObject({ ideaSlug: 'ideas/r', status: 'rejected' });
+    expect(notices[0]!.text).toBe('The idea *Rejected one* was rejected by alice-example (2026-11-27). Reason: Duplicate of billing work');
+
+    await runIdeasPhase(engine, { notify, config: cfg, deps: noAi });
+    expect(notices).toHaveLength(1);
+
+    await updatePage(ctx, 'default', 'initiatives/live', p => ({ frontmatter: { ...p.frontmatter, status: 'cancelled' } }));
+    await runIdeasPhase(engine, { notify, config: cfg, deps: noAi });
+    expect((await fm('ideas/acc')).status).toBe('accepted');
   });
 });

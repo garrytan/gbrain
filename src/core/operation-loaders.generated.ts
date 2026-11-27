@@ -217,6 +217,7 @@ export const OPERATION_LOADERS: Record<string, readonly [() => Promise<Record<st
   "finish_initiative": [load_initiatives, "initiativeOperations"],
   "initiative_merge_apply": [load_initiatives, "initiativeOperations"],
   "idea_submit": [load_initiatives, "initiativeOperations"],
+  "idea_resolve": [load_initiatives, "initiativeOperations"],
   "whoami": [load_sources, "sourcesOperations"],
   "sources_add": [load_sources, "sourcesOperations"],
   "sources_list": [load_sources, "sourcesOperations"],

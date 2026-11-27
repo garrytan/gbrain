@@ -3,7 +3,7 @@
  * fields, config). Pages are ordinary brain pages typed by the
  * gbrain-initiatives schema pack:
  *
- *   idea        `<ideas_prefix><slug>`        status open | planned | implemented | obsolete | rejected | withdrawn
+ *   idea        `<ideas_prefix><slug>`        status open | accepted | planned | implemented | obsolete | rejected | withdrawn
  *   initiative  `<initiatives_prefix><slug>`  status active | done | cancelled
  *
  * Everything the lifecycle needs lives in frontmatter (remote put_page skips
@@ -12,7 +12,7 @@
  *   initiative: implements[], targets[], slack_channels[], tracker, started,
  *               finished_at, finish_note, slack_released_at, merge_status, merged_at
  *   idea:       author, similar[], related[], slack_channel, slack_ts, slack_permalink,
- *               implemented_by, status_notified
+ *               implemented_by, status_notified, resolution {status, by, at, reason}, resolutions[] (history)
  *
  * Generic on purpose: no deployment names, every prefix is config.
  */
@@ -21,7 +21,7 @@ import type { BrainEngine } from '../engine.ts';
 export const IDEA_TYPE = 'idea';
 export const INITIATIVE_TYPE = 'initiative';
 
-export const IDEA_STATUSES = ['open', 'planned', 'implemented', 'obsolete', 'rejected', 'withdrawn'] as const;
+export const IDEA_STATUSES = ['open', 'accepted', 'planned', 'implemented', 'obsolete', 'rejected', 'withdrawn'] as const;
 export type IdeaStatus = typeof IDEA_STATUSES[number];
 export const INITIATIVE_STATUSES = ['active', 'done', 'cancelled'] as const;
 export type InitiativeStatus = typeof INITIATIVE_STATUSES[number];
@@ -123,6 +123,33 @@ export const SLACK_CHANNEL_ID = /^[CGD][A-Z0-9]{6,}$/;
 export function initiativeStatusOf(frontmatter: Record<string, unknown> | null | undefined): InitiativeStatus {
   const s = String(frontmatter?.status ?? 'active').trim().toLowerCase();
   return (INITIATIVE_STATUSES as readonly string[]).includes(s) ? s as InitiativeStatus : 'active';
+}
+
+/** Statuses a person sets on an idea (idea_resolve); `open` reopens it. planned / implemented come from initiatives. */
+export const IDEA_RESOLUTIONS = ['open', 'accepted', 'rejected', 'obsolete', 'withdrawn'] as const;
+export type IdeaResolutionStatus = typeof IDEA_RESOLUTIONS[number];
+
+/** Who set an idea's status by hand, when and why. */
+export interface IdeaResolution { status: IdeaResolutionStatus; by: string; at: string; reason?: string }
+
+/** The latest manual resolution in an idea's frontmatter, or null. */
+export function ideaResolutionOf(frontmatter: Record<string, unknown> | null | undefined): IdeaResolution | null {
+  const r = frontmatter?.resolution;
+  if (!r || typeof r !== 'object' || Array.isArray(r)) return null;
+  const o = r as Record<string, unknown>;
+  const status = String(o.status ?? '').trim().toLowerCase();
+  if (!(IDEA_RESOLUTIONS as readonly string[]).includes(status)) return null;
+  const by = typeof o.by === 'string' && o.by.trim() ? o.by.trim() : 'someone';
+  const at = typeof o.at === 'string' ? o.at : '';
+  const reason = typeof o.reason === 'string' && o.reason.trim() ? o.reason.trim() : undefined;
+  return { status: status as IdeaResolutionStatus, by, at, ...(reason ? { reason } : {}) };
+}
+
+/** "rejected by alice (2026-11-27). Reason: …" — the one line every reply uses. */
+export function formatResolution(r: IdeaResolution): string {
+  const date = r.at ? ` (${r.at.slice(0, 10)})` : '';
+  const verb = r.status === 'open' ? 'reopened' : r.status;
+  return `${verb} by ${r.by}${date}${r.reason ? `. Reason: ${r.reason}` : ''}`;
 }
 
 export function ideaStatusOf(frontmatter: Record<string, unknown> | null | undefined): IdeaStatus {

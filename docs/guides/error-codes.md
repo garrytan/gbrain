@@ -3487,6 +3487,22 @@ More: [docs/guides/household.md#household_scale](../../docs/guides/household.md#
 
 More: [docs/guides/household.md#household_transition](../../docs/guides/household.md#household_transition)
 
+### idea_implemented
+
+<a id="idea_implemented"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An implemented idea keeps its status; its initiative shipped it. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+### idea_not_found
+
+<a id="idea_not_found"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| No idea page with that slug exists in the initiatives source. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
 ### idempotency_conflict
 
 <a id="idempotency_conflict"></a>

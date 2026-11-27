@@ -4,7 +4,7 @@
 <!-- Regenerate: bun run scripts/generate-tool-catalog.ts -->
 <!-- Freshness-guarded by scripts/check-tool-catalog-fresh.sh (bun run verify). -->
 
-Every non-localOnly operation on the MCP surface: 205 tools across 34 areas. **Starter** marks membership in the ~43-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
+Every non-localOnly operation on the MCP surface: 206 tools across 34 areas. **Starter** marks membership in the ~43-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
 
 ## action-ledger
 
@@ -118,6 +118,7 @@ Every non-localOnly operation on the MCP surface: 205 tools across 34 areas. **S
 | Tool | Description | Scope | Starter | Gate |
 |---|---|---|---|---|
 | `finish_initiative` | Finish an active initiative as done or cancelled. | write |  |  |
+| `idea_resolve` | Set an idea's status by hand and record who did it, when and why: accepted (approved, not planned yet), rejected, obsolete, withdrawn, or open to reopen. | write |  |  |
 | `idea_submit` | Add an idea (problem + proposal). | write |  |  |
 | `initiative_bind_slack` | Bind a Slack channel (name or id) to an active initiative: its messages and threads are synced and their facts land on the initiative. | write |  |  |
 | `initiative_merge_apply` | Apply the merge plan of a finished (done) initiative to its target pages: facts added, replaced (old kept as history) or withdrawn, new project pages created, timeline entries linking back. | write |  |  |

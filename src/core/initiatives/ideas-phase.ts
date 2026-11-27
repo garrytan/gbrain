@@ -16,7 +16,10 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import type { PhaseResult } from '../cycle.ts';
-import { ideaStatusOf, initiativeStatusOf, readInitiativesConfig, stringList, type IdeaStatus, type InitiativesConfig } from './model.ts';
+import {
+  formatResolution, ideaResolutionOf, ideaStatusOf, initiativeStatusOf, readInitiativesConfig, stringList,
+  type IdeaResolution, type IdeaStatus, type InitiativesConfig,
+} from './model.ts';
 import { listIdeas, listInitiatives, localContext, readPage, updatePage, type InitiativeRow } from './store.ts';
 import { embeddingAvailable, findSimilar, linkSimilar, substanceHash, type IdeasDeps } from './ideas.ts';
 
@@ -52,23 +55,34 @@ function implementersByIdea(cfg: InitiativesConfig, ideas: InitiativeRow[], init
 
 export interface StatusTarget { status: IdeaStatus; implementedBy?: string; initiative?: InitiativeRow }
 
-/** The status an idea should have given its implementers, or null to leave it as is. */
-export function targetStatus(current: IdeaStatus, implementers: InitiativeRow[]): StatusTarget | null {
+/** Statuses a person set by hand (idea_resolve) that only a done initiative overrides. */
+const MANUAL_NOTICE: readonly IdeaStatus[] = ['accepted', 'rejected', 'withdrawn', 'obsolete'];
+
+/**
+ * The status an idea should have given its implementers, or null to leave it as is. When the last active
+ * implementer is cancelled, the idea returns to its manual resolution (accepted) or open.
+ */
+export function targetStatus(current: IdeaStatus, implementers: InitiativeRow[], resolution: IdeaResolution | null = null): StatusTarget | null {
   if (implementers.length === 0) return null;
   const done = implementers.find(i => initiativeStatusOf(i.frontmatter) === 'done');
   if (done) return { status: 'implemented', implementedBy: done.slug, initiative: done };
   if (HUMAN_FINAL.includes(current) || current === 'implemented') return null;
   const active = implementers.find(i => initiativeStatusOf(i.frontmatter) === 'active');
   if (active) return { status: 'planned', initiative: active };
-  if (current === 'planned') return { status: 'open' };
+  if (current === 'planned') return { status: resolution?.status === 'accepted' ? 'accepted' : 'open' };
   return null;
 }
 
-function noticeText(title: string, t: StatusTarget): string {
+function noticeText(title: string, t: StatusTarget, resolution: IdeaResolution | null = null): string {
+  if (resolution && resolution.status === t.status && MANUAL_NOTICE.includes(t.status)) {
+    return `The idea *${title}* was ${formatResolution(resolution)}`;
+  }
   const ini = t.initiative ? `*${t.initiative.title}* (\`${t.initiative.slug}\`)` : 'an initiative';
   if (t.status === 'implemented') return `The idea *${title}* has been implemented by ${ini}.`;
   if (t.status === 'planned') return `The idea *${title}* is now being worked on in ${ini}.`;
+  if (t.status === 'open' && resolution?.status === 'open' && !t.initiative) return `The idea *${title}* was ${formatResolution(resolution)}`;
   if (t.status === 'open') return `The initiative working on the idea *${title}* was cancelled; the idea is open again.`;
+  if (t.status === 'accepted') return `The initiative working on the idea *${title}* was cancelled; the idea stays accepted.`;
   return `The idea *${title}* is now ${t.status}.`;
 }
 
@@ -91,12 +105,15 @@ export async function runIdeasPhase(engine: BrainEngine, opts: IdeasPhaseOpts = 
     opts.signal?.throwIfAborted();
     const fm = idea.frontmatter;
     const current = ideaStatusOf(fm);
-    const target = targetStatus(current, byIdea[idea.slug] ?? []);
+    const resolution = ideaResolutionOf(fm);
+    const target = targetStatus(current, byIdea[idea.slug] ?? [], resolution);
     const changed = !!target && (target.status !== current || (target.implementedBy !== undefined && fm.implemented_by !== target.implementedBy));
     const status = changed ? target!.status : current;
     const slackBorn = typeof fm.slack_channel === 'string' && typeof fm.slack_ts === 'string' && !!fm.slack_channel && !!fm.slack_ts;
     const wantsNotice = slackBorn && String(fm.status_notified ?? '') !== status
-      && ((changed && target!.status !== current) || status === 'planned' || status === 'implemented');
+      && ((changed && target!.status !== current) || status === 'planned' || status === 'implemented'
+        // a manual resolution (idea_resolve), told once in the idea's Slack thread
+        || (resolution !== null && resolution.status === status && (MANUAL_NOTICE.includes(status) || (status === 'open' && !!fm.status_notified))));
     if (!changed && !wantsNotice) continue;
     if (changed) changes.push({ slug: idea.slug, from: current, to: status });
     if (dryRun) { if (changed) tally.status_changed++; continue; }
@@ -106,7 +123,7 @@ export async function runIdeasPhase(engine: BrainEngine, opts: IdeasPhaseOpts = 
         await opts.notify({
           ideaSlug: idea.slug, channel: String(fm.slack_channel), ts: String(fm.slack_ts), status,
           ...(target?.initiative ? { initiativeSlug: target.initiative.slug } : {}),
-          text: noticeText(idea.title, target ?? { status }),
+          text: noticeText(idea.title, target ?? { status }, resolution),
         });
         notified = true; tally.notified++;
       } catch { tally.notify_failed++; }

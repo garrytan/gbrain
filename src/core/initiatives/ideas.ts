@@ -15,10 +15,14 @@ import { createHash } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
 import type { OperationContext } from '../ops/contract.ts';
 import type { PageType } from '../types.ts';
-import { IDEA_TYPE, INITIATIVE_TYPE, ideaStatusOf, initiativeStatusOf, slugSegment, stringList, today, type InitiativesConfig } from './model.ts';
-import { listIdeas, updatePage, writePage } from './store.ts';
+import {
+  IDEA_RESOLUTIONS, IDEA_TYPE, INITIATIVE_TYPE, ideaResolutionOf, ideaStatusOf, initiativeStatusOf, slugSegment, stringList, today,
+  type IdeaResolution, type IdeaResolutionStatus, type InitiativesConfig,
+} from './model.ts';
+import { OperationError } from '../ops/contract.ts';
+import { listIdeas, readPage, updatePage, writePage } from './store.ts';
 
-export interface SimilarHit { slug: string; title: string; type: string; score: number; status?: string }
+export interface SimilarHit { slug: string; title: string; type: string; score: number; status?: string; resolution?: IdeaResolution }
 /** `core` = any other type (project, concept, ...) in cfg.sourceId. */
 export interface SimilarGroups { ideas: SimilarHit[]; initiatives: SimilarHit[]; core: SimilarHit[] }
 
@@ -104,7 +108,10 @@ export async function findSimilar(engine: BrainEngine, cfg: InitiativesConfig, t
   const initiativeHits = dedupe(initiatives.filter(h => h.type === INITIATIVE_TYPE && keep(h))).slice(0, limit);
   const coreHits = dedupe(any.filter(h => h.type !== IDEA_TYPE && h.type !== INITIATIVE_TYPE && keep(h))).slice(0, limit);
   const fm = await statusesOf(engine, cfg.sourceId, [...ideaHits, ...initiativeHits].map(h => h.slug));
-  groups.ideas = ideaHits.map(h => ({ ...h, status: ideaStatusOf(fm[h.slug]) }));
+  groups.ideas = ideaHits.map(h => {
+    const resolution = ideaResolutionOf(fm[h.slug]);
+    return { ...h, status: ideaStatusOf(fm[h.slug]), ...(resolution ? { resolution } : {}) };
+  });
   groups.initiatives = initiativeHits.map(h => ({ ...h, status: initiativeStatusOf(fm[h.slug]) }));
   groups.core = coreHits.map(h => ({ ...h }));
   return groups;
@@ -122,7 +129,14 @@ export interface SubmitIdeaInput {
   allowDuplicate?: boolean;
 }
 
-export interface SubmitIdeaResult { status: 'created' | 'duplicate' | 'dry_run'; slug?: string; duplicateOf?: SimilarHit; similar: SimilarGroups }
+export interface SubmitIdeaResult {
+  status: 'created' | 'duplicate' | 'dry_run';
+  slug?: string;
+  duplicateOf?: SimilarHit;
+  /** A duplicate's submission was recorded as support (a vote) on the existing idea. */
+  support_added?: boolean;
+  similar: SimilarGroups;
+}
 
 /** First non-empty line of a text, max 80 chars. */
 export function titleFromText(text: string): string {
@@ -143,9 +157,9 @@ export function ideaBody(input: { problem?: string; proposal?: string; text: str
   return `${parts.join('\n\n')}\n`;
 }
 
-/** The body without the sections that change with conversation (Discussion, Support). */
+/** The body without the sections that change with conversation and triage (Discussion, Support, Resolution). */
 export function ideaSubstance(title: string, body: string): string {
-  return `${title}\n${body.replace(/\n?## (Discussion|Support)\n[\s\S]*?(?=\n## |$)/g, '')}`.trim();
+  return `${title}\n${body.replace(/\n?## (Discussion|Support|Resolution)\n[\s\S]*?(?=\n## |$)/g, '')}`.trim();
 }
 
 export function substanceHash(title: string, body: string): string {
@@ -203,19 +217,29 @@ function slackDate(ts: string, fallback: Date): string {
   return Number.isFinite(n) && n > 0 ? today(new Date(n * 1000)) : today(fallback);
 }
 
-async function addSupport(ctx: OperationContext, cfg: InitiativesConfig, slug: string, input: SubmitIdeaInput, now: Date): Promise<void> {
-  const slack = input.slack!;
-  const marker = `<!-- slack:${slack.channel}:${slack.ts} -->`;
+/**
+ * Records a near-identical submission as support on the existing idea: one line under `## Support` and votes + 1.
+ * Idempotent per Slack message, or per author + text for other callers.
+ */
+async function addSupport(ctx: OperationContext, cfg: InitiativesConfig, slug: string, input: SubmitIdeaInput, now: Date): Promise<boolean> {
+  const slack = input.slack;
+  const who = input.author?.trim() || 'someone';
+  const text = input.text.trim().replace(/\s*\n\s*/g, ' ');
+  const marker = slack
+    ? `<!-- slack:${slack.channel}:${slack.ts} -->`
+    : `<!-- support:${createHash('sha256').update(`${who}\u0000${text}`).digest('hex').slice(0, 16)} -->`;
+  let added = false;
   await updatePage(ctx, cfg.sourceId, slug, page => {
     const support = sectionOf(page.body, 'Support');
     if (support.includes(marker)) return null;
-    const who = input.author?.trim() || 'someone';
-    const link = slack.permalink ? ` ([Slack](${slack.permalink}))` : '';
-    const text = input.text.trim().replace(/\s*\n\s*/g, ' ');
-    const line = `- **${who}** (${slackDate(slack.ts, now)})${link}: ${text} ${marker}`;
+    const link = slack?.permalink ? ` ([Slack](${slack.permalink}))` : '';
+    const date = slack ? slackDate(slack.ts, now) : today(now);
+    const line = `- **${who}** (${date})${link}: ${text} ${marker}`;
     const votes = (Number(page.frontmatter.votes) || 0) + 1;
+    added = true;
     return { frontmatter: { ...page.frontmatter, votes }, body: setSection(page.body, 'Support', support ? `${support}\n${line}` : line) };
   });
+  return added;
 }
 
 /**
@@ -236,8 +260,8 @@ export async function submitIdea(ctx: OperationContext, cfg: InitiativesConfig, 
   const similar = await findSimilar(engine, cfg, `${title}\n${input.text}`, {}, deps);
   const top = similar.ideas[0];
   if (top && top.score >= cfg.duplicateThreshold && !input.allowDuplicate) {
-    if (input.slack && !input.dryRun && !ctx.dryRun) await addSupport(ctx, cfg, top.slug, input, now);
-    return { status: 'duplicate', slug: top.slug, duplicateOf: top, similar };
+    const supportAdded = !input.dryRun && !ctx.dryRun ? await addSupport(ctx, cfg, top.slug, input, now) : false;
+    return { status: 'duplicate', slug: top.slug, duplicateOf: top, support_added: supportAdded, similar };
   }
   const slug = await freeSlug(engine, cfg.sourceId, `${cfg.ideasPrefix}${slugSegment(title)}`);
   if (input.dryRun || ctx.dryRun) return { status: 'dry_run', slug, similar };
@@ -265,4 +289,51 @@ export async function submitIdea(ctx: OperationContext, cfg: InitiativesConfig, 
     await linkSimilar(ctx, cfg, other.slug, [slug]);
   }
   return { status: 'created', slug, similar };
+}
+
+export interface ResolveIdeaInput { status: IdeaResolutionStatus; by: string; reason?: string; dryRun?: boolean }
+export interface ResolveIdeaResult {
+  slug: string; title: string; status: string; previous_status: string; resolution: IdeaResolution; dry_run: boolean;
+}
+
+const RESOLUTION_HISTORY_MAX = 50;
+
+/**
+ * Set an idea's status by hand (accepted, rejected, obsolete, withdrawn, or open to reopen) and record who did it,
+ * when and why: frontmatter `resolution` (the latest), `resolutions[]` (history) and a line under `## Resolution`.
+ * An implemented idea is not resolvable: its initiative shipped it. The ideas phase keeps manual resolutions.
+ */
+export async function resolveIdea(ctx: OperationContext, cfg: InitiativesConfig, ideaSlug: string, input: ResolveIdeaInput,
+  deps: { now?: () => Date } = {}): Promise<ResolveIdeaResult> {
+  if (!(IDEA_RESOLUTIONS as readonly string[]).includes(input.status)) {
+    throw new OperationError('invalid_params', `idea_resolve: status must be one of ${IDEA_RESOLUTIONS.join(', ')}.`,
+      'planned and implemented come from initiatives; pick accepted, rejected, obsolete, withdrawn, or open to reopen.');
+  }
+  const current = await readPage(ctx.engine, cfg.sourceId, ideaSlug);
+  if (!current || current.type !== IDEA_TYPE) {
+    throw new OperationError('idea_not_found', `No idea ${ideaSlug} in source ${cfg.sourceId}.`,
+      'List ideas with initiatives_list { kind: "idea" } and pass one of their slugs.');
+  }
+  const previous = ideaStatusOf(current.frontmatter);
+  if (previous === 'implemented') {
+    throw new OperationError('idea_implemented', `Idea ${current.slug} is implemented by ${String(current.frontmatter.implemented_by ?? 'an initiative')}.`,
+      'An implemented idea stays implemented; submit a new idea for follow-up work.');
+  }
+  const now = (deps.now ?? (() => new Date()))();
+  const reason = input.reason?.trim() || undefined;
+  const resolution: IdeaResolution = { status: input.status, by: input.by.trim() || 'someone', at: now.toISOString(), ...(reason ? { reason } : {}) };
+  // While an initiative works on it the idea stays planned; the resolution is kept and applies when that ends.
+  const status = previous === 'planned' && (input.status === 'accepted' || input.status === 'open') ? 'planned' : input.status;
+  const result: ResolveIdeaResult = { slug: current.slug, title: current.title, status, previous_status: previous, resolution, dry_run: !!input.dryRun || ctx.dryRun };
+  if (result.dry_run) return result;
+  await updatePage(ctx, cfg.sourceId, current.slug, page => {
+    const history = Array.isArray(page.frontmatter.resolutions) ? (page.frontmatter.resolutions as unknown[]) : [];
+    const line = `- ${resolution.at.slice(0, 10)} **${resolution.status === 'open' ? 'reopened' : resolution.status}** by ${resolution.by}${reason ? `: ${reason}` : ''}`;
+    const section = sectionOf(page.body, 'Resolution');
+    return {
+      frontmatter: { ...page.frontmatter, status, resolution, resolutions: [...history, resolution].slice(-RESOLUTION_HISTORY_MAX) },
+      body: setSection(page.body, 'Resolution', section ? `${section}\n${line}` : line),
+    };
+  });
+  return result;
 }

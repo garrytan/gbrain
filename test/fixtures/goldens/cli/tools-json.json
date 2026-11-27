@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 345040,
-    "stdoutSha256": "12cc995a25850f0fed4ed5162bfe6a47b11f102156b5adcdf07d27377aa97b53",
+    "stdoutBytes": 346795,
+    "stdoutSha256": "214db549a90f0c86c7f97ed0e71c3747f0db945226b0b8d28da50603ed596f32",
     "toolNames": [
       "remember",
       "entity",
@@ -149,6 +149,7 @@
       "finish_initiative",
       "initiative_merge_apply",
       "idea_submit",
+      "idea_resolve",
       "whoami",
       "sources_add",
       "sources_list",
@@ -6808,7 +6809,7 @@
         "scope": "write"
       },
       {
-        "description": "List ideas or initiatives with status (filter by status). Ideas: open/planned/implemented/obsolete/rejected/withdrawn; initiatives: active/done/cancelled.",
+        "description": "List ideas or initiatives with status (filter by status). Ideas: open/accepted/planned/implemented/obsolete/rejected/withdrawn, each with its resolution (who set it, when, why); initiatives: active/done/cancelled.",
         "idempotent": false,
         "local_only": false,
         "mutating": false,
@@ -7055,7 +7056,7 @@
         "scope": "write"
       },
       {
-        "description": "Add an idea (problem + proposal). Checks first: a near-identical idea returns status duplicate instead of a new page; always returns similar ideas, initiatives in progress and existing project/concept pages (maybe already implemented). dry_run only checks.",
+        "description": "Add an idea (problem + proposal). Checks first: a near-identical idea returns status duplicate and records the submission as support (a vote) on the existing idea instead of a new page; always returns similar ideas with their status and resolution (accepted/rejected/… by whom, why), initiatives in progress and existing project/concept pages (maybe already implemented). Tell the person the resolution of a duplicate or similar idea. dry_run only checks.",
         "idempotent": false,
         "local_only": false,
         "mutating": true,
@@ -7106,6 +7107,53 @@
           },
           "required": [
             "text"
+          ],
+          "type": "object"
+        },
+        "scope": "write"
+      },
+      {
+        "description": "Set an idea's status by hand and record who did it, when and why: accepted (approved, not planned yet), rejected, obsolete, withdrawn, or open to reopen. planned / implemented come from initiatives (an implemented idea cannot be resolved). The resolution is shown on later duplicate or similar submissions and, for ideas from Slack, replied in their thread. dry_run previews.",
+        "idempotent": false,
+        "local_only": false,
+        "mutating": true,
+        "name": "idea_resolve",
+        "parameters": {
+          "dry_run": "boolean?",
+          "reason": "string?",
+          "slug": "string",
+          "status": "string"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "dry_run": {
+              "description": "Preview without writing.",
+              "type": "boolean"
+            },
+            "reason": {
+              "description": "Why, one or two sentences (shown to everyone who submits a similar idea).",
+              "type": "string"
+            },
+            "slug": {
+              "description": "Idea slug or name.",
+              "type": "string"
+            },
+            "status": {
+              "description": "accepted, rejected, obsolete, withdrawn, or open (reopen).",
+              "enum": [
+                "open",
+                "accepted",
+                "rejected",
+                "obsolete",
+                "withdrawn"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "slug",
+            "status"
           ],
           "type": "object"
         },

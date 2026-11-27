@@ -5862,7 +5862,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
   {
     "name": "initiatives_list",
     "outputRedaction": "no_stored_text",
-    "description": "List ideas or initiatives with status (filter by status). Ideas: open/planned/implemented/obsolete/rejected/withdrawn; initiatives: active/done/cancelled.",
+    "description": "List ideas or initiatives with status (filter by status). Ideas: open/accepted/planned/implemented/obsolete/rejected/withdrawn, each with its resolution (who set it, when, why); initiatives: active/done/cancelled.",
     "params": {
       "kind": {
         "type": "string",
@@ -6039,7 +6039,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
   {
     "name": "idea_submit",
     "outputRedaction": "no_stored_text",
-    "description": "Add an idea (problem + proposal). Checks first: a near-identical idea returns status duplicate instead of a new page; always returns similar ideas, initiatives in progress and existing project/concept pages (maybe already implemented). dry_run only checks.",
+    "description": "Add an idea (problem + proposal). Checks first: a near-identical idea returns status duplicate and records the submission as support (a vote) on the existing idea instead of a new page; always returns similar ideas with their status and resolution (accepted/rejected/… by whom, why), initiatives in progress and existing project/concept pages (maybe already implemented). Tell the person the resolution of a duplicate or similar idea. dry_run only checks.",
     "params": {
       "text": {
         "type": "string",
@@ -6072,6 +6072,41 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       "allow_duplicate": {
         "type": "boolean",
         "description": "Create even when a near-identical idea exists."
+      }
+    },
+    "scope": "write",
+    "mutating": true,
+    "area": "initiatives"
+  },
+  {
+    "name": "idea_resolve",
+    "outputRedaction": "no_stored_text",
+    "description": "Set an idea's status by hand and record who did it, when and why: accepted (approved, not planned yet), rejected, obsolete, withdrawn, or open to reopen. planned / implemented come from initiatives (an implemented idea cannot be resolved). The resolution is shown on later duplicate or similar submissions and, for ideas from Slack, replied in their thread. dry_run previews.",
+    "params": {
+      "slug": {
+        "type": "string",
+        "required": true,
+        "description": "Idea slug or name."
+      },
+      "status": {
+        "type": "string",
+        "required": true,
+        "enum": [
+          "open",
+          "accepted",
+          "rejected",
+          "obsolete",
+          "withdrawn"
+        ],
+        "description": "accepted, rejected, obsolete, withdrawn, or open (reopen)."
+      },
+      "reason": {
+        "type": "string",
+        "description": "Why, one or two sentences (shown to everyone who submits a similar idea)."
+      },
+      "dry_run": {
+        "type": "boolean",
+        "description": "Preview without writing."
       }
     },
     "scope": "write",
