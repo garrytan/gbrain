@@ -33,7 +33,7 @@ rows outlive a deleted source, as in Postgres.
 | `listSourcePageAtomTitles(sourceId, sourceSlug)` | served |
 | `releasePartialAtomDispositions(sourceId, maxInputChars)` | served |
 | `listTombstonedTranscripts(sourceId, hashes)` | served |
-| `assertAtomStateStore()` | served: passes |
+| `assertAtomStateStore()` | served: passes in the process that owns the brain; a client of the owner socket refuses it before the call, `engine_capability_missing` reason `transactions` (`OWNER_IPC_CLIENT_REFUSALS`, `src/core/rust-engine/owner-ipc/routes.ts`), so extract_atoms stops before its first model call |
 | `readAtomPageIdentity(sourceId, slug, contentHash)` | served |
 | `writeAtomPageState(pin, failIncrement, tombstone)` | served |
 | `recordAtomPagePartial(pin, maxInputChars)` | served |
