@@ -187,4 +187,36 @@ describe('GST-4020 extract_atoms input and skip', () => {
       }
     }
   }, 120_000);
+  test('a withdrawal rescan that fails stays offered until an extraction succeeds', async () => {
+    for (const { backend, engine } of engines) {
+      const sourceId = await fresh(backend, engine);
+      const withdrawn = 'Acme-example withdrawn launch claim canarywithdrawn3303';
+      await put(engine, sourceId, PROSE('the launch') + '\n\n' + renderFactsTable([fact(1, withdrawn), fact(2, 'Acme-example retained launch claim canaryretained3305')]));
+      await run(engine, sourceId, copyingChat().chat);
+      await engine.executeRaw('INSERT INTO fact_withdrawals(source_id, visibility, subject, fact_hash) VALUES($1,$2,$3,gbrain_fact_fingerprint($4))', [sourceId, 'world', SLUG, withdrawn]);
+      const malformed = async (): Promise<ChatResult> => ({ text: 'not json', blocks: [{ type: 'text', text: 'not json' }], stopReason: 'end',
+        usage: { input_tokens: 10, output_tokens: 10, cache_read_tokens: 0, cache_creation_tokens: 0 }, model: 'anthropic:claude-haiku-4-5', providerId: 'anthropic' });
+      await runPhaseExtractAtoms(engine, { sourceId, _chat: malformed, _transcripts: [] });
+      expect(await countExtractAtomsBacklog(engine, sourceId), backend).toBe(1);
+      await run(engine, sourceId, copyingChat().chat);
+      expect((await liveAtoms(engine, sourceId)).map(a => a.text).join('\n'), backend).not.toContain('canarywithdrawn3303');
+      expect(await countExtractAtomsBacklog(engine, sourceId), backend).toBe(0);
+    }
+  }, 120_000);
+
+  test('a slug a later page held and moved off is not this page\'s old name: that page\'s atoms stay', async () => {
+    const { engine } = engines.find(e => e.backend === 'pglite') ?? engines[0]!;
+    const sourceId = await fresh('reused-slug', engine);
+    const A = 'notes/shared-name', B = 'notes/first-moved', C = 'notes/second-moved';
+    await put(engine, sourceId, PROSE('canaryalpha3301'), {}, A);
+    await run(engine, sourceId, copyingChat().chat);
+    await renamePageOntoSlug(engine, { sourceId, oldSlug: A, newSlug: B, to: B + '.md' });
+    await put(engine, sourceId, PROSE('canarybeta3302'), {}, A);
+    await run(engine, sourceId, copyingChat().chat);
+    expect((await liveAtoms(engine, sourceId)).map(a => a.text).join('\n')).toContain('canarybeta3302');
+    await renamePageOntoSlug(engine, { sourceId, oldSlug: A, newSlug: C, to: C + '.md' });
+    await put(engine, sourceId, PROSE('canaryalpha3301') + '\n\nOne more line.', {}, B);
+    await run(engine, sourceId, copyingChat().chat);
+    expect((await liveAtoms(engine, sourceId)).map(a => a.text).join('\n')).toContain('canarybeta3302');
+  }, 120_000);
 });

@@ -39,13 +39,16 @@ export async function publishUnmanagedAtoms(engine: BrainEngine, sourceId: strin
 
 /**
  * GST-4020: retire, through each old key's generation, the atoms a page's earlier extraction left under a slug a rename
- * moved it from (renamedOriginSlugs). The page is gone from that slug, so the old key's input is gone (`originGone`); a
- * page since created there, or atoms no live generation records, are held and left live. Returns the retired slugs.
+ * moved it from (renamedOriginSlugs: only a generation this same page produced, by the page id its pin carries). The page
+ * is gone from that slug, so the old key's input is gone (`originGone`); a page since created there is held and left
+ * live. It runs before the page's own publication, so a stop between the two leaves nothing old live. Returns the
+ * retired slugs.
  */
-export async function retireRenamedOriginAtoms(engine: BrainEngine, sourceId: string, slug: string,
+export async function retireRenamedOriginAtoms(engine: BrainEngine, sourceId: string, item: { slug: string; identity?: { pageId: number } },
   opts: { runId: string; originLabel: string; signal?: AbortSignal }): Promise<string[]> {
   const retired: string[] = [];
-  for (const from of await renamedOriginSlugs(engine, sourceId, slug)) {
+  if (!item.identity) return retired;
+  for (const from of await renamedOriginSlugs(engine, sourceId, item.slug, item.identity.pageId)) {
     throwIfAborted(opts.signal, 'extract_atoms');
     const key: GenerationKey = { kind: ATOM_KIND, sourceId, ownerKey: atomOwnerKey({ kind: 'page', slug: from }) };
     const outcome = await publishGeneration(engine, atomGenerationAdapter, { key, items: [], proof: originGone(), runId: opts.runId, context: { postCommit: [] } });

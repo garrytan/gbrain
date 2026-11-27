@@ -50,8 +50,8 @@ export async function readAtomPageIdentity(engine: SqlEngine, sourceId: string, 
 /**
  * Record a scan of the page's current content. `inputSha256` (a successful complete scan only) is the digest of the
  * model input it read (atomInputDigest); a later content hash whose input digests the same reuses its atoms
- * (reusableAtomScan). GST-4020: a failure clears the row's completion, so a page offered again on content it had
- * completed (a newer world withdrawal, a revert) stays retryable instead of reading as done.
+ * (reusableAtomScan). GST-4020: a failure clears the row's completion and keeps its time, so a page offered again on
+ * content it had completed (a newer world withdrawal, a revert) stays retryable instead of reading as done.
  */
 export async function writeAtomPageState(
   engine: SqlEngine, sourceId: string, item: AtomPageInput, outcome: 'complete' | 'failure', inputSha256?: string,
@@ -67,7 +67,8 @@ export async function writeAtomPageState(
       FOR SHARE OF p, s
       ON CONFLICT (source_incarnation, page_id, content_hash) DO UPDATE
         SET fail_count=extract_atoms_page_state.fail_count + EXCLUDED.fail_count,
-            tombstoned=EXCLUDED.tombstoned, input_sha256=EXCLUDED.input_sha256, updated_at=now()
+            tombstoned=EXCLUDED.tombstoned, input_sha256=EXCLUDED.input_sha256,
+            updated_at=CASE WHEN EXCLUDED.tombstoned THEN now() ELSE extract_atoms_page_state.updated_at END
       RETURNING fail_count`,
     [pageId, sourceIncarnation, sourceId, item.slug, item.contentHash, revision,
       outcome === 'failure' ? 1 : 0, outcome === 'complete', outcome === 'complete' ? inputSha256 ?? null : null]).catch((error: unknown) => {
@@ -113,9 +114,15 @@ export async function reusableAtomScan(engine: SqlEngine, sourceId: string, item
     [sourceId, item.slug, item.identity.pageId]);
   const scanned = scan.content_hash.slice(0, 16), current = item.contentHash.slice(0, 16);
   const fits = atoms.every(atom => atom.source_slug === item.slug && (atom.source_hash === scanned || atom.source_hash === current)
-    && (atom.date ?? '').slice(0, 10) === (page.date ?? '').slice(0, 10) && !(page.visibility === 'private' && atom.visibility !== 'private'));
+    && sameInstant(atom.date, page.date) && !(page.visibility === 'private' && atom.visibility !== 'private'));
   return fits ? atoms.map(atom => atom.slug) : null;
 }
+
+/** Two stored dates name the same instant (a YAML date read back as a timestamp included); both absent counts. */
+const sameInstant = (a: string | null, b: string | null) => {
+  const at = Date.parse(a ?? ''), bt = Date.parse(b ?? '');
+  return Number.isNaN(at) || Number.isNaN(bt) ? (a ?? null) === (b ?? null) : at === bt;
+};
 
 /** SQL (params $1 source id, $2 slug): every slug a rename moved the page now at $2 away from. */
 const renamedFromSql = `SELECT alias_slug FROM slug_aliases WHERE source_id=$1 AND canonical_slug=$2 AND notes='rename'
@@ -136,18 +143,22 @@ export async function reuseUnchangedAtoms(engine: SqlEngine, sourceId: string, i
 }
 
 /**
- * GST-4020: the slugs a rename moved the page now at `slug` away from that live extractor atoms (unmanaged) still name.
+ * GST-4020: the slugs a rename moved the page now at `slug` away from that live extractor atoms (unmanaged) still name,
+ * where the live generation of that slug was read from this page (`pageId`, in its input pin): a later page that held
+ * the slug and moved on is another origin.
  * Their origin is this page, so its complete re-extraction supersedes them; left live they keep the visibility the page
  * had before the rename.
  */
-export async function renamedOriginSlugs(engine: SqlEngine, sourceId: string, slug: string): Promise<string[]> {
+export async function renamedOriginSlugs(engine: SqlEngine, sourceId: string, slug: string, pageId: number): Promise<string[]> {
   const rows = await engine.executeRaw<{ slug: string }>(
     `SELECT DISTINCT a.frontmatter->>'source_slug' AS slug FROM pages a
       WHERE a.source_id=$1 AND a.type='atom' AND a.deleted_at IS NULL
         AND COALESCE(a.frontmatter->>'managed_extraction', '') <> 'true'
         AND COALESCE(a.frontmatter->>'extracted_by', '') LIKE 'extract\\_atoms%'
-        AND a.frontmatter->>'source_slug' = ANY(ARRAY(${renamedFromSql}))`,
-    [sourceId, slug]);
+        AND a.frontmatter->>'source_slug' = ANY(ARRAY(${renamedFromSql}))
+        AND EXISTS (SELECT 1 FROM derived_generations dg WHERE dg.source_id=$1 AND dg.kind='atom' AND dg.state='live'
+          AND dg.owner_key = 'source_slug:' || (a.frontmatter->>'source_slug') AND split_part(dg.input_pin, ':', 2) = $3::text)`,
+    [sourceId, slug, String(pageId)]);
   return rows.map(row => row.slug);
 }
 
@@ -173,7 +184,7 @@ export const PAGE_ATOMS_CURRENT_EXCLUSION_SQL = `AND (NOT EXISTS (
     SELECT 1 FROM extract_atoms_page_state done
     JOIN fact_withdrawals w ON w.source_id=p.source_id AND w.visibility='world' AND w.subject IN ('*', p.slug) AND w.withdrawn_at > done.updated_at
     WHERE done.source_incarnation=(SELECT s.incarnation FROM sources s WHERE s.id=p.source_id)
-      AND done.page_id=p.id AND done.content_hash=p.content_hash AND done.tombstoned
+      AND done.page_id=p.id AND done.content_hash=p.content_hash
   ))`;
 
 /** Canonical page snapshots discovery reads per statement. */
