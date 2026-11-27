@@ -24,10 +24,10 @@ describe('the closed list of remote whole operations', () => {
     expect(Object.hasOwn(REMOTE_WHOLE_OPERATIONS, 'put_page')).toBe(true);
   });
 
-  test('every listed operation is a registered write operation that is not local-only', () => {
+  test('every listed operation is a registered write operation that is neither local-only nor CLI-only', () => {
     const bad = Object.keys(REMOTE_WHOLE_OPERATIONS).filter(name => {
       const op = operationsByName[name];
-      return !op || op.scope !== 'write' || op.localOnly === true || op.cliOnly === true;
+      return !op || op.scope !== 'write' || op.localOnly === true || op.cliOnly !== undefined;
     });
     expect(bad).toEqual([]);
   });

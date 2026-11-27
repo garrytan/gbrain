@@ -34,6 +34,7 @@ import {
 } from '../owner-ipc/protocol.ts';
 import { OWNER_IPC_REMOTE_READS, ownerIpcRefusal, ownerMemberOnlyReads } from '../owner-ipc/routes.ts';
 import { OWNER_RUN_OPERATION } from '../owner-ipc/whole-op.ts';
+import { remoteWholeOperationCall } from './remote-whole-ops.ts';
 import { LOCAL_OWNER, RECHECK_MS, authenticateToken, effectiveRemote, recheckToken, type AuthenticatedPrincipal, type VerifyDeps } from './auth.ts';
 import {
   servedAdminPath, servedAuthRefused, servedPositionNotReached, servedPositionRefused, servedProtocol, servedReqConflict,
@@ -304,7 +305,13 @@ export function servedSession(side: ServedServerSide, opts: ServedServerOptions,
     if (stale) { replyDirect(id, member, stale); return; }
     let remote: boolean;
     try { remote = effectiveRemote(principal!, frame.remote, member); } catch (error) { replyDirect(id, member, error); return; }
-    if (remote && (kind === 'fn' || !OWNER_IPC_REMOTE_READS.has(member))) {
+    // A remote write crosses only as a whole operation of the closed list, and only for the owner's floor until A1 lifts
+    // (served/remote-whole-ops.ts); any other principal's remote whole operation is refused before anything runs.
+    if (remote && remoteWholeOperationCall(kind, member, frame.args) && !ownerFloor(principal!)) {
+      replyDirect(id, member, ownerIpcRefusal(member, 'a remote whole operation of a principal other than the brain owner waits for per-user access'));
+      return;
+    }
+    if (remote && !remoteWholeOperationCall(kind, member, frame.args) && (kind === 'fn' || !OWNER_IPC_REMOTE_READS.has(member))) {
       replyDirect(id, member, ownerIpcRefusal(member, kind === 'fn'
         ? 'a remote caller\'s whole operation is not sent to the brain owner'
         : 'a remote caller\'s write is not sent to the brain owner'));
@@ -460,4 +467,10 @@ export function servedSession(side: ServedServerSide, opts: ServedServerOptions,
       follower?.close();
     },
   };
+}
+
+/** The brain owner's floor: the local owner or an owner server token, with no store-built record (B3) and not remote. */
+function ownerFloor(principal: AuthenticatedPrincipal): boolean {
+  return (principal.kind === 'local_owner' || principal.kind === 'owner_token') && !principal.floorRemote
+    && (principal as { record?: unknown }).record === undefined;
 }

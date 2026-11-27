@@ -653,7 +653,7 @@ export async function serveOwnerEngine(
     calls.set(id, call);
     const refuse = (error: unknown) => call.reply({ t: 'result', id, ok: false, error: served ? served.encodeError(error) : encodeError(error) });
     // Multi-user groundwork K: in multi-user mode the owner refuses a remote caller's write itself (remote-check.ts).
-    const remoteRefusal = ownerRemoteRefusal(engine, frame, member);
+    const remoteRefusal = ownerRemoteRefusal(engine, frame, member, undefined, served !== undefined && served !== null);
     if (remoteRefusal) { refuse(remoteRefusal); return; }
     let target: (...args: unknown[]) => Promise<unknown>;
     if (frame.t === 'fn') {
