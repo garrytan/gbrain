@@ -1,7 +1,7 @@
 /**
  * The multi-writer pass mark: one command that prints, per case C01..C22, what each arm did.
  *
- *   bun test/engine-parity/multi-writer-bar.ts [--arms pglite,postgres,rust,rust-mu-env,rust-mu-config,store-single,store-optimistic]
+ *   bun test/engine-parity/multi-writer-bar.ts [--arms pglite,postgres,rust,rust-mu-env,rust-mu-config,rust-mu-ambient,store-single,store-optimistic]
  *                                              [--log-dir <dir>] [--timeout-ms <ms>]
  *
  * The engine arms run `test/engine-parity/multi-writer-conformance.test.ts` once per Rust label (so the Rust arm has the SQL
@@ -31,7 +31,9 @@ import { cellArm, LEDGER_ARMS, MW_LEDGER_ENV, parseLedger, type LedgerArm, type 
 /**
  * The arms of the bar: the engine arms by the label the ledger carries (the `rust-mu` view has two routes to the multi-user
  * switch, `rust-mu-env` and `rust-mu-config`, each its own process, column and ledger label; both read the matrix's one
- * `rust-mu` cell) and the two Rust store arms. `--arms rust-mu` is shorthand for both routes.
+ * `rust-mu` cell), the self-check lane's label `rust-mu-ambient` (the process starts with GBRAIN_RUST_MULTIUSER=1 and the
+ * access self-check on, kept through the preload by GBRAIN_TEST_KEEP_AMBIENT_ENV=1; it reads the same `rust-mu` cell) and the
+ * two Rust store arms. `--arms rust-mu` is shorthand for the two rust-mu routes.
  */
 export const BAR_ARMS = [...LEDGER_ARMS, ...MW_STORE_ARMS] as const;
 export type BarArm = typeof BAR_ARMS[number];
@@ -153,7 +155,7 @@ export interface BarCommands {
 export const DEFAULT_COMMANDS: BarCommands = {
   engineSetup: (unit) => {
     const addon = unit.env.GBRAIN_TEST_RUST_ENGINE_ADDON;
-    return unit.arms.some((a) => a === 'rust' || a === 'rust-mu-env' || a === 'rust-mu-config') && addon !== undefined && addon !== ''
+    return unit.arms.some((a) => a === 'rust' || a === 'rust-mu-env' || a === 'rust-mu-config' || a === 'rust-mu-ambient') && addon !== undefined && addon !== ''
       ? [{ name: `the Rust addon file exists (${addon})`, cmd: ['test', '-f', addon] }] : [];
   },
   engineRun: () => ['bun', 'test', '--timeout=60000', ENGINE_FILE],
@@ -181,7 +183,7 @@ export interface BarReport {
   logDir: string;
 }
 
-const RUST_ENV_FLAGS = ['GBRAIN_TEST_RUST_ARM', 'GBRAIN_TEST_RUST_MU_ARM', 'GBRAIN_TEST_BACKEND', 'GBRAIN_RUST_CONCURRENT_WRITES', 'GBRAIN_RUST_MULTIUSER'] as const;
+const RUST_ENV_FLAGS = ['GBRAIN_TEST_RUST_ARM', 'GBRAIN_TEST_RUST_MU_ARM', 'GBRAIN_TEST_BACKEND', 'GBRAIN_RUST_CONCURRENT_WRITES', 'GBRAIN_RUST_MULTIUSER', 'GBRAIN_RUST_COMMIT_LOG', 'GBRAIN_RUST_ACCESS_SELF_CHECK', 'GBRAIN_TEST_KEEP_AMBIENT_ENV'] as const;
 
 /**
  * The engine processes the selection needs. Without a Rust label, one process holds the selected SQL arms. With one, a process
@@ -212,11 +214,12 @@ export function planEngineUnits(opts: BarOptions): { units: EngineUnit[]; proble
   const wantsRust = selected.has('rust');
   const wantsMuEnv = selected.has('rust-mu-env');
   const wantsMuConfig = selected.has('rust-mu-config');
+  const wantsMuAmbient = selected.has('rust-mu-ambient');
   const sqlSelected = (['pglite', 'postgres'] as const).filter((a) => selected.has(a));
   if (selected.has('postgres') && !havePg) {
     problems.push({ code: 'setup_failed', message: 'the postgres arm is selected but DATABASE_URL is not set (set it with GBRAIN_TEST_ALLOW_DATABASE_URL=1, or leave postgres out of --arms)', rerun: rerun([...opts.arms].join(',')) });
   }
-  if (!wantsRust && !wantsMuEnv && !wantsMuConfig) {
+  if (!wantsRust && !wantsMuEnv && !wantsMuConfig && !wantsMuAmbient) {
     // Only the SQL arms: PGLite alone runs without DATABASE_URL, Postgres alone with GBRAIN_TEST_BACKEND=postgres, both as is.
     const running = sqlSelected.filter((a) => a !== 'postgres' || havePg);
     if (running.length > 0) {
@@ -229,6 +232,13 @@ export function planEngineUnits(opts: BarOptions): { units: EngineUnit[]; proble
   if (wantsRust) add('rust', [...reference, 'rust'], { ...databaseEnv, GBRAIN_TEST_RUST_ARM: '1' });
   if (wantsMuEnv) add('rust-mu-env', [...reference, 'rust-mu-env'], { ...databaseEnv, GBRAIN_TEST_RUST_MU_ARM: 'env' });
   if (wantsMuConfig) add('rust-mu-config', [...reference, 'rust-mu-config'], { ...databaseEnv, GBRAIN_TEST_RUST_MU_ARM: 'config' });
+  // The self-check lane's environment (.github/workflows/rust-multiuser-selfcheck.yml): the switches are on when the process
+  // starts and the preload keeps them; the harness labels the arm `rust-mu-ambient` and asserts what each brain resolved.
+  if (wantsMuAmbient) {
+    add('rust-mu-ambient', [...reference, 'rust-mu-ambient'], {
+      ...databaseEnv, GBRAIN_TEST_RUST_ARM: '1', GBRAIN_RUST_MULTIUSER: '1', GBRAIN_RUST_ACCESS_SELF_CHECK: '1', GBRAIN_TEST_KEEP_AMBIENT_ENV: '1',
+    });
+  }
   return { units, problems };
 }
 
@@ -481,7 +491,7 @@ export function parseArms(arg: string | undefined): BarArm[] | string {
   // `rust-mu` is shorthand for both routes to the multi-user switch.
   const arms = arg.split(',').map((a) => a.trim()).filter((a) => a !== '').flatMap((a) => (a === 'rust-mu' ? ['rust-mu-env', 'rust-mu-config'] : [a]));
   const unknown = arms.filter((a) => !(BAR_ARMS as readonly string[]).includes(a));
-  if (arms.length === 0 || unknown.length > 0) return `unknown arm ${unknown.join(', ') || '(none given)'}; arms are ${BAR_ARMS.join(', ')} (rust-mu means both rust-mu routes)`;
+  if (arms.length === 0 || unknown.length > 0) return `unknown arm ${unknown.join(', ') || '(none given)'}; arms are ${BAR_ARMS.join(', ')} (rust-mu means the two rust-mu routes)`;
   return unique(arms) as BarArm[];
 }
 

@@ -96,6 +96,7 @@ function goodRig(): Rig {
   r.ledgers.set('rust', ledgerText(goodLines(['pglite', 'postgres', 'rust'])));
   r.ledgers.set('rust-mu-env', ledgerText(goodLines(['pglite', 'postgres', 'rust-mu-env'])));
   r.ledgers.set('rust-mu-config', ledgerText(goodLines(['pglite', 'postgres', 'rust-mu-config'])));
+  r.ledgers.set('rust-mu-ambient', ledgerText(goodLines(['pglite', 'postgres', 'rust-mu-ambient'])));
   return r;
 }
 
@@ -104,12 +105,12 @@ describe('a correct run', () => {
     const r = goodRig();
     const report = await runBar(r.opts());
     expect(report.failures).toEqual([]);
-    expect(Object.fromEntries(['C01:pglite', 'C01:rust', 'C01:rust-mu-env', 'C01:rust-mu-config', 'C02:pglite', 'C02:rust', 'C01:store-single', 'C01:store-optimistic', 'C02:store-single'].map((k) => [k, report.cells.get(k)])))
-      .toEqual({ 'C01:pglite': 'pass', 'C01:rust': 'pass', 'C01:rust-mu-env': 'pending', 'C01:rust-mu-config': 'pending', 'C02:pglite': 'n/a', 'C02:rust': 'pass', 'C01:store-single': 'pass',
+    expect(Object.fromEntries(['C01:pglite', 'C01:rust', 'C01:rust-mu-env', 'C01:rust-mu-config', 'C01:rust-mu-ambient', 'C02:pglite', 'C02:rust', 'C01:store-single', 'C01:store-optimistic', 'C02:store-single'].map((k) => [k, report.cells.get(k)])))
+      .toEqual({ 'C01:pglite': 'pass', 'C01:rust': 'pass', 'C01:rust-mu-env': 'pending', 'C01:rust-mu-config': 'pending', 'C01:rust-mu-ambient': 'pending', 'C02:pglite': 'n/a', 'C02:rust': 'pass', 'C01:store-single': 'pass',
         'C01:store-optimistic': 'pending', 'C02:store-single': 'n/a' });
-    expect(report.table).toContain('4 pass (compare), 2 pass (standalone, invariant only), 5 pending, 3 n/a');
+    expect(report.table).toContain('4 pass (compare), 2 pass (standalone, invariant only), 7 pending, 3 n/a');
     // The pending store test was listed, never run; the runnable one ran by exact name.
-    expect(marksOf(r)).toEqual(['engine-rust', 'engine-rust-mu-env', 'engine-rust-mu-config', 'build', 'list', 'run:c01_ok']);
+    expect(marksOf(r)).toEqual(['engine-rust', 'engine-rust-mu-env', 'engine-rust-mu-config', 'engine-rust-mu-ambient', 'build', 'list', 'run:c01_ok']);
   });
 
   test('the store modes differ only in GBRAIN_RUST_CONCURRENT_WRITES, which the single-writer run leaves unset', async () => {
@@ -313,7 +314,22 @@ describe('single-arm modes', () => {
     expect(shape(['rust'], { DATABASE_URL: 'u' }).units).toEqual([{ id: 'rust', arms: ['pglite', 'postgres', 'rust'], rust: '1', mu: undefined, db: 'kept', backend: undefined }]);
     expect(shape(['rust-mu-env'], { DATABASE_URL: 'u' }).units).toEqual([{ id: 'rust-mu-env', arms: ['pglite', 'postgres', 'rust-mu-env'], rust: undefined, mu: 'env', db: 'kept', backend: undefined }]);
     expect(shape(['rust-mu-config'], { DATABASE_URL: 'u' }).units).toEqual([{ id: 'rust-mu-config', arms: ['pglite', 'postgres', 'rust-mu-config'], rust: undefined, mu: 'config', db: 'kept', backend: undefined }]);
-    expect(shape(['rust', 'rust-mu-env', 'rust-mu-config'], {}).units.map((u) => u.id)).toEqual(['rust', 'rust-mu-env', 'rust-mu-config']);
+    expect(shape(['rust', 'rust-mu-env', 'rust-mu-config', 'rust-mu-ambient'], {}).units.map((u) => u.id)).toEqual(['rust', 'rust-mu-env', 'rust-mu-config', 'rust-mu-ambient']);
+  });
+
+  test('rust-mu-ambient is the self-check lane: the switches are on when the process starts and the preload keeps them', () => {
+    const { units } = plan(['rust-mu-ambient'], { DATABASE_URL: 'u', GBRAIN_RUST_COMMIT_LOG: '1' });
+    expect(units.map((u) => [u.id, u.arms])).toEqual([['rust-mu-ambient', ['pglite', 'postgres', 'rust-mu-ambient']]]);
+    const env = units[0]!.env;
+    expect({ rust: env.GBRAIN_TEST_RUST_ARM, mu: env.GBRAIN_TEST_RUST_MU_ARM, multiuser: env.GBRAIN_RUST_MULTIUSER, selfCheck: env.GBRAIN_RUST_ACCESS_SELF_CHECK, keep: env.GBRAIN_TEST_KEEP_AMBIENT_ENV })
+      .toEqual({ rust: '1', mu: undefined, multiuser: '1', selfCheck: '1', keep: '1' });
+    // The commit log is the harness's to turn on for the multi-writer file, never the caller's environment.
+    expect('GBRAIN_RUST_COMMIT_LOG' in env && env.GBRAIN_RUST_COMMIT_LOG === undefined).toBe(true);
+    // The two rust-mu routes never inherit the lane's switches.
+    for (const id of ['rust-mu-env', 'rust-mu-config'] as const) {
+      const other = plan([id], { DATABASE_URL: 'u' }).units[0]!.env;
+      expect([other.GBRAIN_RUST_MULTIUSER, other.GBRAIN_RUST_ACCESS_SELF_CHECK, other.GBRAIN_TEST_KEEP_AMBIENT_ENV]).toEqual([undefined, undefined, undefined]);
+    }
   });
 
   test('a store arm alone starts no engine process', () => {
@@ -346,7 +362,7 @@ describe('variants and both rust-mu routes', () => {
 
   test('the expected set is the rows on engine and store arms plus the variant on engine arms only; the variant is its own table row', async () => {
     const r = rig();
-    for (const id of ['rust', 'rust-mu-env', 'rust-mu-config'] as const) r.ledgers.set(id, ledgerText(goodLines(['pglite', 'postgres', id], WITH_VARIANT)));
+    for (const id of ['rust', 'rust-mu-env', 'rust-mu-config', 'rust-mu-ambient'] as const) r.ledgers.set(id, ledgerText(goodLines(['pglite', 'postgres', id], WITH_VARIANT)));
     const report = await runBar(r.opts({ matrix: WITH_VARIANT }));
     expect(report.failures).toEqual([]);
     expect(report.table.split('\n').filter((l) => /^C0\d/.test(l)).map((l) => l.split(/\s+/)[0])).toEqual(['C01', 'C01.partition', 'C02']);

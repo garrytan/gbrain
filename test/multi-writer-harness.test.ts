@@ -20,7 +20,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assertMultiuserCapabilityName, recordingEngine, rustArmModeProblem, rustArmMultiuser, checkMwArm, checkRustArm, mwArmPlan, runMwCase, rustMultiuserView, MultiuserStopError, multiuserStopArmed, OWNER_ONLY_MESSAGE, OWNER_ONLY_STOP, pinnedMultiuserStop, REMOTE_WRITE_REFUSALS, REMOTE_WRITE_STOP, stopOnOwnerOnlyRefusal, stopOnRemoteWriteRefusal, type MwArmHandle, type MwArmStarted, type RustTally } from './engine-parity/harness.ts';
+import { assertMultiuserCapabilityName, recordingEngine, rustArmModeProblem, rustArmMultiuser, rustMultiuserSwitch, checkMwArm, checkRustArm, mwArmPlan, runMwCase, rustMultiuserView, MultiuserStopError, multiuserStopArmed, OWNER_ONLY_MESSAGE, OWNER_ONLY_STOP, pinnedMultiuserStop, REMOTE_WRITE_REFUSALS, REMOTE_WRITE_STOP, stopOnOwnerOnlyRefusal, stopOnRemoteWriteRefusal, type MwArmHandle, type MwArmStarted, type RustTally } from './engine-parity/harness.ts';
 import { checkRustTally } from './engine-parity/rust-tally.ts';
 import { MW_ARMS, type MwArm, type MwCase, type MwCell } from './engine-parity/multi-writer-cases.ts';
 import { type LedgerLine } from './engine-parity/multi-writer-ledger.ts';
@@ -124,7 +124,7 @@ describe('strict acceptance of a `runs` cell (checkMwArm)', () => {
   });
 
   test('a row that needs multi_writer fails on a Rust label unless the engine itself reports it, on both labels', async () => {
-    for (const label of ['rust', 'rust-mu-env', 'rust-mu-config'] as const) {
+    for (const label of ['rust', 'rust-mu-env', 'rust-mu-config', 'rust-mu-ambient'] as const) {
       const without = base({ row: row({ needs: 'multi_writer', reference: 'standalone' }), label, backend: 'rust', capabilities: new Set(['pages']) });
       await expect(checkMwArm(without.call)).rejects.toThrow(/needs multi_writer, but the engine does not report it \(engine\.capabilities has pages\)/);
       expect(without.ledger.lines.map((l) => l.outcome)).toEqual(['fail']);
@@ -134,7 +134,7 @@ describe('strict acceptance of a `runs` cell (checkMwArm)', () => {
   });
 
   test('a row that needs commit_log fails on a Rust label unless the engine itself reports it, naming it, on both labels; a SQL arm never has it', async () => {
-    for (const label of ['rust-mu-env', 'rust-mu-config'] as const) {
+    for (const label of ['rust-mu-env', 'rust-mu-config', 'rust-mu-ambient'] as const) {
       const without = base({ row: row({ needs: 'commit_log', reference: 'standalone' }), label, backend: 'rust', capabilities: new Set(['pages', 'multi_writer']) });
       await expect(checkMwArm(without.call)).rejects.toThrow(/needs commit_log, but the engine does not report it \(engine\.capabilities has multi_writer, pages\)/);
       const withIt = base({ row: row({ needs: 'commit_log', reference: 'standalone' }), label, backend: 'rust', capabilities: new Set(['pages', 'commit_log']) });
@@ -286,9 +286,11 @@ describe('the rust-tally sum check with skipped and standalone cases', () => {
 });
 
 describe('both rust-mu routes read the matrix\'s one rust-mu cell and keep their own ledger label', () => {
-  test('rust-mu-env and rust-mu-config skip or run by the rust-mu cell; rust reads its own', () => {
+  test('rust-mu-env, rust-mu-config and the lane\'s rust-mu-ambient skip or run by the rust-mu cell; rust reads its own', () => {
     const r = row({ cells: { 'rust-mu': { status: 'pending', owner: 'L5 hosts', why: 'fence' } } });
-    expect([mwArmPlan(r, 'rust').action, mwArmPlan(r, 'rust-mu-env').action, mwArmPlan(r, 'rust-mu-config').action]).toEqual(['run', 'skip', 'skip']);
+    expect([mwArmPlan(r, 'rust').action, mwArmPlan(r, 'rust-mu-env').action, mwArmPlan(r, 'rust-mu-config').action, mwArmPlan(r, 'rust-mu-ambient').action]).toEqual(['run', 'skip', 'skip', 'skip']);
+    const plain = row({ cells: { rust: { status: 'n/a', why: 'a plain store keeps no commit log' } } });
+    expect([mwArmPlan(plain, 'rust').action, mwArmPlan(plain, 'rust-mu-ambient').action]).toEqual(['skip', 'run']);
   });
 
   test('a ledger note, when an arm handle carries one, is appended to every line of that arm, skips included', async () => {
@@ -604,6 +606,16 @@ describe('the Rust arm under an ambient multi-user mode', () => {
     expect(rustArmMultiuser({}, true)).toBe('ambient');
     expect(rustArmMultiuser({ GBRAIN_TEST_RUST_MU_ARM: 'env' }, true)).toBe('env');
     expect(rustArmMultiuser({ GBRAIN_TEST_RUST_MU_ARM: 'config' }, false)).toBe('config');
+  });
+
+  // Value: protects=a scenario that opens its own owner on the self-check lane resolves multi-user mode by the variable the lane
+  // started with, so C16, C17.served and C21 run there instead of failing as `off`; fails_when=the ambient lane maps to off or to
+  // config; why_new=the lane reads the rust-mu cell (rust-mu-ambient); seam=pure functions
+  test('the switch a scenario\'s own brains use: the view\'s route, env on an ambient run, else off', () => {
+    expect(rustMultiuserSwitch({}, false)).toBe('off');
+    expect(rustMultiuserSwitch({}, true)).toBe('env');
+    expect(rustMultiuserSwitch({ GBRAIN_TEST_RUST_MU_ARM: 'config' }, true)).toBe('config');
+    expect(rustMultiuserSwitch({ GBRAIN_TEST_RUST_MU_ARM: 'env' }, false)).toBe('env');
   });
 
   test('a normal run still fails a plain brain that resolved multi-user mode; an ambient run fails one that did not', () => {
