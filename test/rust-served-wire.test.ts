@@ -377,7 +377,7 @@ describe('off is identical', () => {
     });
   });
 
-  test('the v3-only file import is refused on v2 exactly as an operation the owner does not run', async () => {
+  test('the v3-only operations (file import, store calls, store keys, brain calls) are refused on v2 exactly as an operation the owner does not run', async () => {
     const offDir = mkdtempSync(join(tmpdir(), 'gbrain-served-v2op-'));
     const { ownerWholeOperations } = await import('../src/core/rust-engine/owner-ipc/owner-ops.ts');
     const { connectOwner } = await import('../src/core/rust-engine/owner-ipc/client.ts');
@@ -385,7 +385,7 @@ describe('off is identical', () => {
     try {
       const c = await connectOwner(off.socketPath);
       const refused = (name: string) => c.request('fn', name, []).then(() => null, (e: unknown) => ({ code: (e as { code?: string }).code, message: (e as Error).message.replace(name, '<op>') }));
-      expect(await refused('importClientFile')).toEqual(await refused('noSuchOperation'));
+      for (const op of ['importClientFile', 'servedStoreCall', 'servedStoreKeys', 'servedBrainCall']) expect(await refused(op)).toEqual(await refused('noSuchOperation'));
       c.close();
     } finally {
       await off.close();

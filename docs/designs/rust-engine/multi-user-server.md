@@ -268,8 +268,16 @@ refuses with `engine_capability_missing` reason `served`: run it on the server.
 ### Stores a member returns, and the publication store calls
 
 Members that return a store object (`worktreeClaimStore`, `writerAdminStore`, `writerReleaseStore`,
-`publicationJournalStore`, `chronicleStore`) are proxies on a served client: each method crosses as
-`<member>.<method>` inside a transaction, or as the v3-only whole operation `servedStoreCall`. The shared-skill
+`publicationJournalStore`, `chronicleStore`, and the managed-mode stores `manualLinkStore`, `topologyStore`,
+`gitEffectStore`, `gitDurabilityStore`, `refreshStore`, `groupPublishStore`) are plain objects on a served client: each
+method crosses as `<member>.<method>` inside a transaction, or as the v3-only whole operation `servedStoreCall`. The
+client builds each store from the v3-only whole operation `servedStoreKeys(member)`, which answers the method names of
+the owner's store (names only, never values; only for those members), once per connection, so the store has the owner
+store's methods as its own keys and a spread or a wrapper keeps every one. `servedStoreKeys` is read-only metadata: it
+runs no store method and reads no brain data, and it needs no access beyond the store getter's own. On the owner socket
+(protocol v2) all three v3-only operations (`servedStoreCall`, `servedStoreKeys`, `servedBrainCall`) refuse with
+`engine_capability_missing` ("the owner does not run this operation for other processes"), as an unknown name does, and
+a remote caller's `servedStoreKeys` is refused like any whole operation off the closed list. The shared-skill
 publication path, which calls a few store methods directly (`shared-skills/rust-publication.ts`), reaches them as
 `brain.<method>` or `servedBrainCall`, limited to the methods `served/store-returning.ts` lists. A transaction handle
 records the page keys its `lockPageKeys` took on the server, so held-key checks answer as in process. A plain member
