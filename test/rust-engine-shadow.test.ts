@@ -1185,6 +1185,80 @@ describe('supervisor sample accounting (a sample is owed in a durable record bef
         for (let i = 0; i < 8; i++) expect(h.owed(i)).toMatchObject({ child_exited: true });
       } finally { h.done(); }
     }, 30_000);
+
+    // ---- /ship round 1: three findings on the keeper (the timer, the exit flags, the marker flag) ----
+    test('ship-r1 A: during a continuous burst of refused samples (never a pause near a retry interval) every status read taken after two retry intervals from the first refusal blocks, and the marker exists', async () => {
+      const h = flakyHarness({ retryMs: 40 });
+      try {
+        h.sup.send(sample(0)); await turn(); const s0 = h.sessions[0]!; h.settle({ [s0]: 1 });
+        await h.respawn(0); h.disk.failing = true; h.attempts.length = 0;
+        const t0 = Date.now(); let maxGap = 0; let last = t0; let reads = 0; const bad: string[] = [];
+        h.sup.oweRefused(1);
+        while (Date.now() - t0 < 400) {
+          await wait(10); const now = Date.now(); maxGap = Math.max(maxGap, now - last); last = now;
+          h.sup.oweRefused(1); // the burst: a refusal every ~10 ms, status read after each
+          if (now - t0 >= 80) { // two retry intervals after the first refusal (one interval, plus a timer's lateness)
+            reads++; const st = h.status().state; const markers = readdirSync(h.dir).filter((n) => /^write-pending\.r/.test(n)).length;
+            if (st === 'measured' || markers !== 1) bad.push(`${now - t0}ms:${st}:markers=${markers}`);
+          }
+        }
+        expect(maxGap).toBeLessThan(40); // the burst really was continuous: no gap as long as one retry interval
+        expect(reads).toBeGreaterThan(10);
+        expect(bad).toEqual([]);
+        expect(h.attempts.length).toBeGreaterThan(0);
+      } finally { h.done(); }
+    });
+
+    test('ship-r1 A: successful samples cannot postpone the clearing of a marker whose record is already durable', async () => {
+      const h = flakyHarness({ retryMs: 40 });
+      try {
+        h.sup.send(sample(0)); await turn(); const s0 = h.sessions[0]!; h.settle({ [s0]: 1 });
+        h.disk.failing = true; h.sup.owe(1); await turn();
+        expect(existsSync(join(h.dir, `write-pending.${s0}.json`))).toBe(true);
+        h.disk.failing = false; h.settle({ [s0]: 2 });
+        const until = Date.now() + 400; let cleared = false;
+        while (Date.now() < until) { h.sup.owe(1); await wait(10); h.settle({ [s0]: h.owed(0).owed as number }); if (!existsSync(join(h.dir, `write-pending.${s0}.json`))) { cleared = true; break; } } // traffic keeps arriving, each sample a flush
+        expect(cleared).toBe(true);
+      } finally { h.done(); }
+    });
+
+    test('ship-r1 B: a flush queued before the worker exited cannot downgrade the kept exit record: child_exited stays true and the next owner pass books the samples', async () => {
+      const h = flakyHarness({ retryMs: 60_000 });
+      const { WriteTally, readWriteTally } = await import('../src/shadow/write-compare.ts');
+      const epoch = (): string => ensureEpoch(h.dir, INPUTS_S2D, NOW_S2D.getTime()).epoch_id;
+      try {
+        h.sup.send(sample(0)); await turn(); const s0 = h.sessions[0]!; h.settle({ [s0]: 1 });
+        h.disk.failing = true;
+        h.sup.owe(1); // the owe-only flush is queued for the next turn ...
+        await h.respawn(0); // ... and the worker exits before it runs: the exit-time record cannot be written and is kept
+        await turn(); // the queued flush runs now, with no worker
+        h.disk.failing = false; h.sup.publishKeptNow();
+        expect(h.owed(0)).toMatchObject({ owed: 2, child_exited: true });
+        new WriteTally(h.dir, epoch, () => true, process.pid, 'owner').recover();
+        expect(readWriteTally(h.dir, epoch())!.uncomparable_by_reason).toMatchObject({ receipt_orphaned: 1 });
+        expect(readdirSync(h.dir).filter((n) => n.startsWith('write-owed.'))).toEqual([]);
+      } finally { h.done(); }
+    });
+
+    test('ship-r1 C: a marker removed whose directory flush then failed is not still counted as published: the next failed write makes its marker again', async () => {
+      const durable = await import('../src/core/fs-durable.ts');
+      const h = flakyHarness({ retryMs: 60_000 });
+      const real = durable.flushDirectory; let failOnce = true; let marker = '';
+      const spy = spyOn(durable, 'flushDirectory').mockImplementation(((path: string, options?: unknown) => {
+        if (marker && failOnce && !existsSync(marker)) { failOnce = false; throw new Error('EIO'); }
+        return (real as (p: string, o?: unknown) => void)(path, options);
+      }) as never);
+      try {
+        h.sup.send(sample(0)); await turn(); const s0 = h.sessions[0]!; h.settle({ [s0]: 1 }); marker = join(h.dir, `write-pending.${s0}.json`);
+        h.disk.failing = true; h.sup.owe(2); await turn();
+        expect(existsSync(marker)).toBe(true);
+        h.disk.failing = false; h.sup.publishKeptNow(); // the record is written and the marker unlinked, then the flush throws
+        expect(failOnce).toBe(false); expect(h.owed(0)).toMatchObject({ owed: 3 });
+        h.disk.failing = true; h.sup.owe(1); await turn(); // a later record fails too
+        expect(existsSync(marker)).toBe(true);
+        expect(h.status()).toMatchObject({ state: 'capability_missing', outstanding_sessions: [`write-pending.${s0}.json`] });
+      } finally { spy.mockRestore(); h.done(); }
+    });
   });
 
   test('a sample weighs 1 plus the earlier losses it carries (its last field); a page key named dropped, nested or not, changes nothing', () => {
