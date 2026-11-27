@@ -113,7 +113,7 @@ async function memoryRecall(engine: BrainEngine, member: string): Promise<unknow
 /** A Rust case pinned as a named stop (test/rust-stop-pins/memory-recall-dates.tsv): the refusal must name `member`, then the case stops on it. */
 function stopOnRefusal(backend: ParityBackend, answer: unknown, member: string): void {
   if (backend !== 'rust' || !(answer && typeof answer === 'object' && 'refused' in answer)) return;
-  const refusal = (answer as { error: Error & { detail?: unknown } }).error;
+  const refusal = (answer as unknown as { error: Error & { detail?: unknown } }).error;
   expect({ refused: (answer as { refused: string }).refused, names: String(refusal.detail ?? '').includes(`member=${member}`) }).toEqual({ refused: 'engine_capability_missing', names: true });
   throw refusal;
 }
