@@ -713,7 +713,11 @@ system config), every page write still commits to the database, but its Git
 effect fails `git_unavailable`: the file stays untracked, the effect is retried
 every 30 seconds, and after 5 failures (about 2.5 minutes) it parks. Its message
 says "a missing Git identity (user.name, user.email) in that checkout is one
-cause to check". Set the identity in the checkout, then retry the parked effects:
+cause to check". `gbrain sync status --source <source>` shows them as
+`git commits not made: … at step commit-tree: "Author identity unknown"`; its `--json` has `git_commit_holds`
+(each with the failed step, git's first error line with secrets removed, and `identity_missing`), and `Next:` names
+the fix. Another failing step (a clean filter, a hook) shows its own step and line instead. Set the identity in the
+checkout, then retry the parked effects:
 
 ```bash
 git -C <checkout> config user.name "<name>"
@@ -721,8 +725,10 @@ git -C <checkout> config user.email "<email>"
 gbrain sources writer retry-effects <source> --parked-code git_unavailable --dry-run
 ```
 
-Run the printed command without `--dry-run` to retry them. This is the same on
-PGLite, Postgres and Rust brains ([troubleshooting](troubleshooting.md#symptom-table)).
+Run the printed command without `--dry-run` to retry them. PGLite and Postgres work this way today. On a Rust brain
+the failure record still refuses `raw_sql` instead of parking until lane 7's typed recovery read lands
+([RUST_ENGINE.md](../designs/RUST_ENGINE.md) conflict row 55); `gbrain sync status` reads the holds the same way there
+([troubleshooting](troubleshooting.md#symptom-table)).
 
 CLI and stdio registrations are durable, separate principals. The CLI lane is
 trusted local administration; stdio remains an untrusted memory caller.
