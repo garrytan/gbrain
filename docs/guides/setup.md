@@ -172,8 +172,8 @@ One bot reading for all of them with one unbound key pulls one person's notes in
 another person's answers, so setup labels each person instead:
 
 ```bash
-gbrain setup claude-code --serves several --members alice-example,bob-example
-# or --members-file people.txt (one id per line)
+gbrain setup claude-code --members alice-example,bob-example
+# or --members-file people.txt (one id per line); naming people implies --serves several
 ```
 
 For each person this adds a member (existing ones are kept), a folder rule
