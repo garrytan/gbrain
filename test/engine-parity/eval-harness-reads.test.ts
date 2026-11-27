@@ -37,7 +37,9 @@
  *    returning a promise hid fn's error; activeOnly kept the aliases of a hard-deleted page; Rust read a whole jsonb
  *    number with an exponent (1e-7) and a derived alias's display text only outside page_aliases; a pause token an older
  *    gbrain took (its topology_changes counted every change) let the restore turn the brain back on after a brain-wide
- *    deactivation.
+ *    deactivation. Parity follow-up (each failed on the Rust arm before the fix): Rust printed a 17-digit jsonb number
+ *    from an f64 (a tie of two shortest forms, a literal parsed one bit off), skipped a generation's whole-number
+ *    completeness, and scanned the dates of a link transition and relationship, which are not SQL text columns.
  *  - Seam: real engines; ids and timestamps are compared by shape, not by literal. The both-errors case alone replaces
  *    the engine's restoreManagedPersistence with a rejecting, then a throwing, stub (deleted in finally): no real store
  *    fails a restore on demand. The owner-upgrade case wraps pauseManagedPersistence to return the token an older gbrain
@@ -374,6 +376,52 @@ describe('engine parity: the eval harness reads', () => {
       .some(h => h.value === 'true' && h.slug === 'notes/raw-scalar'),
       exponent: (await engine.scanTextColumns({ pattern: '0.0000001', activeOnly: false })).map(h => [h.value, h.slug]) };
     expect(result).toEqual({ number: [['4815162342', 'notes/raw-scalar']], boolean: true, exponent: [['0.0000001', 'notes/raw-scalar']] });
+    return result;
+  });
+
+  parityTest('scanTextColumns gives every digit of a long jsonb number as Postgres prints it', {
+    methods: ['putPage', 'putRawData', 'readPageRedactionRows', 'setRawDataValue', 'scanTextColumns'],
+  }, async (engine) => {
+    const page = await engine.putPage('notes/raw-long', { type: 'note', title: 'Raw', compiled_truth: 'A page with long numbers.' });
+    await engine.putRawData('notes/raw-long', 'crm', { placeholder: 'x' });
+    await engine.putRawData('notes/raw-long', 'mail', { placeholder: 'y' });
+    await engine.putRawData('notes/raw-long', 'web', { placeholder: 'z' });
+    const [first, second, third] = (await engine.readPageRedactionRows(page.id, 'default', 'notes/raw-long')).rawData;
+    // 17 significant digits: an exact tie of two shortest forms, and a number a fast float parser reads one bit off.
+    await engine.setRawDataValue(page.id, first!.id, 100000000000000.12);
+    await engine.setRawDataValue(page.id, second!.id, 123456789.12345679);
+    // 20 digits: a JavaScript number keeps 17 of them on every engine, so the scan finds the JSON.stringify digits.
+    await engine.setRawDataValue(page.id, third!.id, 12345678901234567890);
+    const values = async (pattern: string) =>
+      (await engine.scanTextColumns({ pattern, activeOnly: false })).filter(h => h.slug === 'notes/raw-long').map(h => h.value);
+    const result = { tie: await values('100000000000000.12'), off_by_one_bit: await values('123456789.12345679'),
+      twenty_digits: await values('1234567890123456') };
+    expect(result).toEqual({ tie: ['100000000000000.12'], off_by_one_bit: ['123456789.12345679'], twenty_digits: ['12345678901234567000'] });
+    return result;
+  });
+
+  parityTest('scanTextColumns finds a token in a derived generation\'s completeness stored as a whole jsonb number', {
+    methods: ['transaction', 'activateGenerationRows', 'scanTextColumns'],
+  }, async (engine) => {
+    await engine.transaction(async tx => {
+      await tx.activateGenerationRows({ sourceId: 'default', kind: 'scan-kind', ownerKey: 'owner' }, null, { generation: 1, runId: null,
+        operationId: 'op-scan', inputPin: null, inputSize: null, completeness: JSON.stringify(8675309), setHash: 'hash', restoreOf: null,
+        activationId: null, locator: null }, []);
+    });
+    const hits = (await engine.scanTextColumns({ pattern: '8675309', activeOnly: false })).map(h => h.value);
+    expect(hits).toEqual(['8675309']);
+    return hits;
+  });
+
+  parityTest('scanTextColumns does not scan the dates of a link transition or relationship, which are not text columns', {
+    methods: ['putPage', 'writeManualLinkTransitions', 'scanTextColumns'],
+  }, async (engine) => {
+    await engine.putPage('notes/date-from', { type: 'note', title: 'From', compiled_truth: 'A page.' });
+    await engine.putPage('people/date-to', { type: 'person', title: 'To', compiled_truth: 'A person.' });
+    await engine.writeManualLinkTransitions({ from: 'notes/date-from', to: 'people/date-to', linkType: 'datetypetoken', sourceId: 'default' },
+      [{ kind: 'start', occurred_on: '1986-03-27' }, { kind: 'end', occurred_on: '1987-04-28' }]);
+    const result = { link_type: await found(engine, 'datetypetoken'), start: await found(engine, '1986-03-27'), end: await found(engine, '1987-04-28') };
+    expect(result).toEqual({ link_type: true, start: false, end: false });
     return result;
   });
 

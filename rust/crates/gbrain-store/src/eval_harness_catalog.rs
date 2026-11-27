@@ -30,6 +30,7 @@
 //! (`str::to_lowercase`, which agrees with Postgres `lower()` on ASCII text).
 
 use crate::Store;
+use crate::cli_reads::pg_jsonb::{self, Jsonb};
 use crate::error::{Result, StoreError};
 use crate::keys;
 use crate::keyspaces::KEYSPACES;
@@ -335,13 +336,19 @@ fn alias_owner(key: &[u8]) -> Option<(String, String)> {
     Some((text(parts.first()?), text(parts.get(at)?)))
 }
 
+/// The record kind of a link query key: the byte after `q <source> \0` (`W` a wanted link, `R` a
+/// link relationship, `T` a link transition).
+fn link_query_kind(key: &[u8]) -> Option<u8> {
+    if key.first() != Some(&keys::LINK_QUERIES) {
+        return None;
+    }
+    let nul = key.iter().position(|b| *b == 0)?;
+    key.get(nul + 1).copied()
+}
+
 /// Whether the key is a wanted link record: `q <source> \0 W ...`.
 fn is_wanted(key: &[u8]) -> bool {
-    key.first() == Some(&keys::LINK_QUERIES)
-        && key
-            .iter()
-            .position(|b| *b == 0)
-            .is_some_and(|nul| key.get(nul + 1) == Some(&WANTED))
+    link_query_kind(key) == Some(WANTED)
 }
 
 /// `scanTextColumns({ pattern, tables?, activeOnly, limit? })`.
@@ -411,6 +418,11 @@ const JSONB_FIELDS: &[(&[u8], &[&str])] = &[
     (&[keys::RAW_FILES, 0x02], &["metadata"]),
     (&[keys::INGEST_LOG], &["pages_updated"]),
     (&[keys::DERIVED_GENERATION, 0x03], &["preimage"]),
+    // The generation record (generations.rs `RECORD`).
+    (
+        &[keys::DERIVED_GENERATION, 0x01],
+        &["completeness", "held_context", "proposal"],
+    ),
     (
         &[keys::JOBS, 0x01],
         &[
@@ -437,6 +449,42 @@ fn jsonb_field(key: &[u8], field: &str) -> bool {
     JSONB_FIELDS
         .iter()
         .any(|(prefix, fields)| key.starts_with(prefix) && fields.contains(&field))
+}
+
+/// The string fields of a link query record that a SQL engine keeps in a column that is not text
+/// (`DATE`, `DATEMULTIRANGE`), by the sub-tag after `q <source> \0` (link_temporal.rs). The SQL
+/// scan reads only text and jsonb columns, so these fields are not scanned.
+const NOT_TEXT_FIELDS: &[(u8, &[&str])] = &[
+    (b'T', &["occurred_on"]),
+    (
+        b'R',
+        &["valid_ranges", "first_start", "last_start", "last_end"],
+    ),
+];
+
+/// Whether `field` of the record stored at `key` is a SQL column that is not text
+/// (`NOT_TEXT_FIELDS`).
+fn not_text_field(key: &[u8], field: &str) -> bool {
+    link_query_kind(key).is_some_and(|kind| {
+        NOT_TEXT_FIELDS
+            .iter()
+            .any(|(k, fields)| *k == kind && fields.contains(&field))
+    })
+}
+
+/// The text Postgres prints for a jsonb field that holds a whole number, read from the digits the
+/// record stores, not from an `f64`. A JSON float parse can be one bit off, and `f64` printing can
+/// break a tie of two shortest forms the other way. The stored digits are the shortest form of the
+/// JavaScript number (serde_json writes it with ryu, as `JSON.stringify` does). So the text is that
+/// literal as `numeric` prints it, without the `.0` serde_json adds to a whole float.
+fn number_text(parsed: Option<&Jsonb>, field: &str, value: &Value) -> String {
+    match parsed.and_then(|record| record.get(field)) {
+        Some(Jsonb::Number(text)) => match text.split_once('.') {
+            Some((whole, fraction)) if fraction.bytes().all(|b| b == b'0') => whole.to_string(),
+            _ => text.clone(),
+        },
+        _ => crate::cli_reads::pg_text::jsonb_text(value),
+    }
 }
 
 /// One text column of a stored value: its name, its text and its kind (`text` or `jsonb`).
@@ -484,13 +532,26 @@ fn text_columns(
     let (mut out, record) = match serde_json::from_slice::<Value>(value) {
         Ok(Value::Object(map)) => {
             let mut out = Vec::new();
+            // The record as jsonb, read from its JSON text only when a number field needs it.
+            let mut parsed: Option<Option<Jsonb>> = None;
             for (field, v) in &map {
                 match v {
+                    Value::String(_) if not_text_field(key, field) => {}
                     Value::String(s) => out.push((field.clone(), s.clone(), "text")),
                     Value::Object(_) | Value::Array(_) => {
                         out.push((field.clone(), v.to_string(), "jsonb"))
                     }
-                    Value::Number(_) | Value::Bool(_) if jsonb_field(key, field) => out.push((
+                    Value::Number(_) if jsonb_field(key, field) => {
+                        let record = parsed.get_or_insert_with(|| {
+                            std::str::from_utf8(value).ok().and_then(pg_jsonb::parse)
+                        });
+                        out.push((
+                            field.clone(),
+                            number_text(record.as_ref(), field, v),
+                            "jsonb",
+                        ))
+                    }
+                    Value::Bool(_) if jsonb_field(key, field) => out.push((
                         field.clone(),
                         crate::cli_reads::pg_text::jsonb_text(v),
                         "jsonb",
@@ -619,8 +680,10 @@ impl Store {
 
     /// `scanTextColumns`: `{ table, column, slug, page_id, entity_slug, value }` for each text value
     /// of each stored record that contains `pattern` (case-insensitive), by table, column and value,
-    /// at most `limit`. `activeOnly` leaves out an expired fact, a deleted page, an inactive take and
-    /// any record of a deleted page.
+    /// at most `limit`. `activeOnly` leaves out an expired fact, a fact past its `valid_until`, a
+    /// deleted page, an inactive take, any record of a deleted page (by its page id, a wanted link's
+    /// origin page or a page id in its key), an alias whose page is not live, and the derived index
+    /// keyspaces.
     pub fn scan_text_columns(&self, q: &TextScanQuery) -> Result<Vec<Value>> {
         let pattern = q.pattern.to_lowercase();
         if pattern.is_empty() {
@@ -841,6 +904,11 @@ mod tests {
             ("0.30000000000000004", "0.30000000000000004"),
             ("-2.0", "-2"),
             ("0.0", "0"),
+            // The stored digits, not an f64: a tie of two shortest forms, a literal a fast float
+            // parse reads one bit off, and 17 of 20 digits as JavaScript keeps them.
+            ("100000000000000.12", "100000000000000.12"),
+            ("123456789.12345679", "123456789.12345679"),
+            ("1.2345678901234567e19", "12345678901234567000"),
         ] {
             let value = format!(r#"{{"data":{stored}}}"#);
             let (cols, _) = text_columns("raw/raw", &raw, value.as_bytes());
@@ -850,6 +918,40 @@ mod tests {
         assert_eq!(cols[0].1, "1.5");
         let (cols, _) = text_columns("x", b"x", br#"{"data":true}"#);
         assert!(cols.is_empty());
+        // A generation record's completeness is a jsonb column, a whole number included.
+        let generation = [keys::DERIVED_GENERATION, 0x01, 0, 0, 0, 0, 0, 0, 0, 1];
+        let (cols, _) = text_columns(
+            "h/h",
+            &generation,
+            br#"{"completeness":8675309,"generation":1}"#,
+        );
+        assert_eq!(
+            cols,
+            vec![("completeness".to_string(), "8675309".to_string(), "jsonb")]
+        );
+        // The dates of a link transition and a link relationship are not text columns.
+        let mut transition = vec![keys::LINK_QUERIES];
+        transition.extend_from_slice(b"default\0T");
+        let (cols, _) = text_columns(
+            "q/q",
+            &transition,
+            br#"{"link_type":"works_at","occurred_on":"1986-03-27"}"#,
+        );
+        assert_eq!(
+            cols,
+            vec![("link_type".to_string(), "works_at".to_string(), "text")]
+        );
+        let mut relationship = vec![keys::LINK_QUERIES];
+        relationship.extend_from_slice(b"default\0R");
+        let (cols, _) = text_columns(
+            "q/q",
+            &relationship,
+            br#"{"status_now":"live","valid_ranges":"{[1986-03-27,)}","first_start":"1986-03-27","last_start":"1986-03-27","last_end":null}"#,
+        );
+        assert_eq!(
+            cols,
+            vec![("status_now".to_string(), "live".to_string(), "text")]
+        );
         // A page alias row is its page-side key, with a derived alias's text from its value.
         let mut by_page = vec![keys::ALIAS, ALIAS_BY_PAGE];
         by_page.extend_from_slice(b"default\0companies/acme\0acme corp\0declared");

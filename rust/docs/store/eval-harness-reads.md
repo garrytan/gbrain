@@ -38,9 +38,13 @@ The store has no SQL catalog, so the catalog reads and the text scan answer from
 - **Columns.** A JSON object record is read field by field. A string field is a text column. An object
   or array field is a `jsonb` column, read as its compact JSON text (Postgres reads a `text[]` as
   `{a,b}`). A number or boolean is text only in a jsonb field (the `jsonb::de_value` fields,
-  listed in `JSONB_FIELDS`), as the SQL scan reads a whole jsonb `42` as `42`, in Postgres's plain decimal text (`1e-7` reads as
-  `0.0000001`); any other number or
-  boolean is a SQL number or boolean column, not text. A config row is raw text (it may parse as
+  listed in `JSONB_FIELDS`, a generation record's `completeness` included), as the SQL scan reads a
+  whole jsonb `42` as `42`. A number is read from the digits the record stores, never from an `f64`,
+  in Postgres's plain decimal text (`1e-7` reads as `0.0000001`, `100000000000000.12` keeps every
+  digit, a whole float drops its `.0`); any other number or
+  boolean is a SQL number or boolean column, not text. A string field that a SQL engine keeps in a
+  column that is not text is not read either: a link transition's `occurred_on` and a link
+  relationship's `valid_ranges`, `first_start`, `last_start` and `last_end` (`NOT_TEXT_FIELDS`). A config row is raw text (it may parse as
   JSON), so it is one text column, `value`, read as UTF-8, as is any other stored value that is not
   a JSON object. Keys are not read, except the text columns some keys hold: a config row's `key`, a
   `page_purges` key's `source_id` and `content_hash`, and a `page_aliases` row's four key columns

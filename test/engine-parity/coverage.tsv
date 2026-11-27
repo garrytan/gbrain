@@ -127,7 +127,7 @@ disconnect	lifecycle	yes	3	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	4	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	407	no	yes	yes	serves
+transaction	lifecycle	yes	408	no	yes	yes	serves
 transactionDirect	lifecycle	yes	27	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
@@ -140,7 +140,7 @@ listPageIdSlugs	lifecycle	yes	1	no	yes	yes	serves
 hasTable	lifecycle	yes	1	no	yes	yes	serves
 hasColumn	lifecycle	yes	2	no	yes	yes	serves
 listTextBearingColumns	lifecycle	yes	1	no	yes	yes	serves
-scanTextColumns	lifecycle	yes	14	no	yes	yes	serves
+scanTextColumns	lifecycle	yes	17	no	yes	yes	serves
 pauseManagedPersistence	lifecycle	yes	2	no	yes	yes	serves
 restoreManagedPersistence	lifecycle	no	0	no	-	-	-
 withManagedPersistencePaused	lifecycle	yes	10	no	yes	yes	serves
@@ -148,7 +148,7 @@ getPage	pages	yes	295	yes	yes	yes	serves
 readPageSnapshot	pages	yes	121	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	8	no	yes	yes	serves
 lockPageKeys	pages	yes	17	no	yes	yes	serves
-putPage	pages	yes	1433	yes	yes	yes	serves
+putPage	pages	yes	1435	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	46	yes	yes	yes	serves
@@ -324,7 +324,7 @@ linkRelationshipKeysForPages	link_temporal	yes	2	no	yes	yes	serves
 staleLinkRelationshipKeys	link_temporal	yes	2	no	yes	yes	serves
 linkRelationshipKeysForOrigin	link_temporal	yes	3	no	yes	yes	serves
 applyLinkTemporalRows	link_temporal	yes	2	no	yes	yes	serves
-writeManualLinkTransitions	link_temporal	yes	7	no	yes	yes	serves
+writeManualLinkTransitions	link_temporal	yes	8	no	yes	yes	serves
 removeManualLinkTransitions	link_temporal	yes	1	no	yes	yes	serves
 listRelationshipNoteRows	link_temporal	yes	9	no	yes	yes	serves
 edgeValidityCounts	link_temporal	yes	2	no	yes	yes	serves
@@ -494,7 +494,7 @@ repointSupersededToKept	ontology	yes	1	no	yes	yes	serves
 clearOntologySlots	ontology	yes	1	no	yes	yes	serves
 deleteRekeyLosers	ontology	yes	1	no	yes	yes	serves
 restoreOntologyFact	ontology	yes	2	no	yes	yes	serves
-putRawData	raw_files	yes	24	yes	yes	yes	serves
+putRawData	raw_files	yes	25	yes	yes	yes	serves
 getRawData	raw_files	yes	10	yes	yes	yes	serves
 upsertFile	raw_files	yes	21	no	yes	yes	serves
 getFile	raw_files	yes	5	no	yes	yes	serves
@@ -855,7 +855,7 @@ lockGenerationKey	persistence_journal	yes	2	no	yes	yes	serves
 clearFenceHoldRows	persistence_journal	yes	1	no	yes	yes	serves
 readFenceHoldFiles	persistence_journal	yes	1	no	yes	yes	serves
 readLiveGenerationRow	persistence_journal	yes	6	no	yes	yes	serves
-activateGenerationRows	persistence_journal	yes	20	no	yes	yes	serves
+activateGenerationRows	persistence_journal	yes	21	no	yes	yes	serves
 recordHeldGenerationRow	persistence_journal	yes	14	no	yes	yes	serves
 readGitHoldRecords	persistence_journal	yes	3	no	yes	yes	serves
 readGitHoldRetryRequest	persistence_journal	yes	2	no	yes	yes	serves
@@ -1002,7 +1002,7 @@ countUnreferencedSecretEntries	persistence_journal	yes	3	no	yes	yes	serves
 readRestorePageHit	persistence_journal	yes	2	no	yes	yes	serves
 markSecretEntryAllowed	persistence_journal	yes	2	no	yes	yes	serves
 readPageRedactionRow	persistence_journal	yes	5	no	yes	yes	serves
-readPageRedactionRows	persistence_journal	yes	4	no	yes	yes	serves
+readPageRedactionRows	persistence_journal	yes	5	no	yes	yes	serves
 listTimelineDedupRows	persistence_journal	yes	3	no	yes	yes	serves
 listVersionBodiesForRedaction	persistence_journal	yes	2	no	yes	yes	serves
 countPageVersionRows	persistence_journal	yes	2	no	yes	yes	serves
@@ -1011,7 +1011,7 @@ listChunkTextsForRedaction	persistence_journal	yes	2	no	yes	yes	serves
 deleteChunksByIds	persistence_journal	yes	2	no	yes	yes	serves
 setRedactedPageFields	persistence_journal	yes	2	no	yes	yes	serves
 readRawDataValue	persistence_journal	yes	2	no	yes	yes	serves
-setRawDataValue	persistence_journal	yes	3	no	yes	yes	serves
+setRawDataValue	persistence_journal	yes	4	no	yes	yes	serves
 setRedactedRowText	persistence_journal	yes	2	no	yes	yes	serves
 moveTwinRelationships	persistence_journal	yes	4	no	yes	yes	serves
 moveTwinPageChildren	persistence_journal	yes	4	no	yes	yes	serves
