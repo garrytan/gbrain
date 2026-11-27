@@ -2957,9 +2957,11 @@
       {
         "kind": "interface",
         "members": [
+          "create_store?: boolean | undefined",
           "database_path?: string | undefined",
           "database_url?: string | undefined",
           "engine?: \"postgres\" | \"pglite\" | \"rust\" | undefined",
+          "guard_store?: boolean | undefined",
           "keyword_statement_timeout_ms?: number | undefined",
           "pglite_shared_buffers?: string | undefined",
           "pool_max?: number | undefined"
@@ -19486,9 +19488,11 @@
       {
         "kind": "interface",
         "members": [
+          "create_store?: boolean | undefined",
           "database_path?: string | undefined",
           "database_url?: string | undefined",
           "engine?: \"postgres\" | \"pglite\" | \"rust\" | undefined",
+          "guard_store?: boolean | undefined",
           "keyword_statement_timeout_ms?: number | undefined",
           "pglite_shared_buffers?: string | undefined",
           "pool_max?: number | undefined"
