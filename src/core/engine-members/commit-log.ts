@@ -29,6 +29,13 @@ export interface CommitLogPage {
   snapshot_required: boolean;
 }
 
+/** One fact of an entity in commit order (`listEntityFactsInCommitOrder`): the number its commit gave it, and its row id. */
+export interface EntityFactCommitPosition {
+  /** The entity's commit sequence: 1 for its first fact, then one more for each later fact, in commit order. */
+  sequence: number;
+  fact_id: number;
+}
+
 export interface CommitLogMembers {
   /** Up to `limit` (at most 10,000) commit records after `after` (null: from where the log starts), from one snapshot. */
   readCommitLog(after: CommitPosition | null, limit: number): Promise<CommitLogPage>;
@@ -38,6 +45,14 @@ export interface CommitLogMembers {
    * after it ended; null while it is open or when it rolled back.
    */
   lastCommitPosition(): Promise<CommitPosition | null>;
+  /**
+   * The facts of one entity in `sourceId`, in the order their writers committed them (conformance C11): up to `limit`
+   * (at most 10,000), after `afterSequence` (omitted: from the first). Facts later deleted or moved to another entity
+   * are left out, so the sequence can show gaps. Existing fact reads (`listFactsByEntity`) keep their own order.
+   */
+  listEntityFactsInCommitOrder(
+    sourceId: string, entitySlug: string, opts: { afterSequence?: number; limit: number },
+  ): Promise<EntityFactCommitPosition[]>;
 }
 
 /** The refusal of a commit-log member on an engine that keeps no commit log (`engine_capability_missing`, reason `commit_log`). */

@@ -115,6 +115,7 @@ const DECIDE = 'the decide store: the owner\'s paid-provider spend, proposals an
 export const OWNER_IPC_REMOTE_DENY: Readonly<Record<string, string>> = {
   readCommitLog: 'the commit log lists every key family\'s write ids and origins, across all callers',
   lastCommitPosition: 'a commit position from the log; the served side answers positions from the store itself',
+  listEntityFactsInCommitOrder: 'fact ids in commit order, before any visibility filter; a remote caller reads facts through the filtered reads',
   beginSnapshotRead: 'opens a snapshot on the server that outlives the call; not a plain read',
   readStoredBodyBytes: 'the stored body bytes before any visibility or quoting is applied',
   readPageBodySizes: 'body sizes of every page, private ones included, reveal what exists',

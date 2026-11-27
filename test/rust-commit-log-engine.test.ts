@@ -1,10 +1,11 @@
 /**
- * The typed commit-log members (engine-members/commit-log.ts): `readCommitLog(after, limit)` and `lastCommitPosition()`.
+ * The typed commit-log members (engine-members/commit-log.ts): `readCommitLog(after, limit)`, `lastCommitPosition()` and
+ * `listEntityFactsInCommitOrder(sourceId, entitySlug, opts)`.
  *
  * - Rust, multi-user mode with the commit log on (set in-run with withEnv, and asserted on the opened store): every
  *   transaction's own engine answers the position it committed at, also after it ended; positions strictly increase;
  *   `readCommitLog` returns those commits at those positions with their write ids; out-of-range cursors are refused.
- * - Rust with the mode off, and PGLite: both members refuse `engine_capability_missing` with reason `commit_log`.
+ * - Rust with the mode off, and PGLite: every member refuses `engine_capability_missing` with reason `commit_log`.
  *
  * Needs the addon `bun run rust:build` writes; the Rust cases skip without it (GBRAIN_TEST_RUST_ADDON_REQUIRED=1 makes
  * that an error).
@@ -94,18 +95,33 @@ describe('commit log engine members', () => {
         // Out-of-range cursors are refused, never truncated.
         expect((await refusal(engine.readCommitLog({ sequence: 2 ** 53, index: 0 }, 1))).code).toBe('invalid_argument');
         expect((await refusal(engine.readCommitLog({ sequence: 1, index: 2 ** 32 }, 1))).code).toBe('invalid_argument');
+        // An entity's facts in commit order: one number each, from 1, in the order their transactions committed.
+        const ids: number[] = [];
+        for (const n of [0, 1, 2]) {
+          await engine.transaction(async (tx) => {
+            ids.push(Number((await tx.insertFact({ fact: `order ${n}`, entity_slug: 'people/alice-example', source: 'mcp:remember' }, { source_id: 'default' })).id));
+          });
+        }
+        expect(await engine.listEntityFactsInCommitOrder('default', 'people/alice-example', { limit: 10 }))
+          .toEqual(ids.map((fact_id, i) => ({ sequence: i + 1, fact_id })));
+        expect(await engine.listEntityFactsInCommitOrder('default', 'people/alice-example', { afterSequence: 1, limit: 1 }))
+          .toEqual([{ sequence: 2, fact_id: ids[1] }]);
+        expect(await engine.listEntityFactsInCommitOrder('default', 'people/nobody-example', { limit: 10 })).toEqual([]);
+        for (const bad of [{ limit: 0 }, { limit: 10_001 }, { limit: 1.5 }, { afterSequence: -1, limit: 1 }, { afterSequence: 2 ** 53, limit: 1 }]) {
+          expect((await refusal(engine.listEntityFactsInCommitOrder('default', 'people/alice-example', bad))).code, JSON.stringify(bad)).toBe('invalid_argument');
+        }
       } finally {
         await engine.disconnect();
       }
     });
   });
 
-  withAddon('the mode off: both members refuse naming commit_log', async () => {
+  withAddon('the mode off: every member refuses naming commit_log', async () => {
     await withEnv(OFF, async () => {
       const engine = await openRust();
       try {
         expect(engine.openStore('test').commitLog).toBe(false);
-        for (const p of [engine.readCommitLog(null, 10), engine.lastCommitPosition()]) {
+        for (const p of [engine.readCommitLog(null, 10), engine.lastCommitPosition(), engine.listEntityFactsInCommitOrder('default', 'people/alice-example', { limit: 10 })]) {
           const e = await refusal(p);
           expect(e.code).toBe('engine_capability_missing');
           expect(e.reason).toBe('commit_log');
@@ -126,9 +142,9 @@ describe('commit log engine members on PGLite', () => {
   }, 120_000);
   afterAll(async () => { await pglite.disconnect(); });
 
-  test('PGLite refuses both members naming commit_log, and does not report the capability', async () => {
+  test('PGLite refuses every member naming commit_log, and does not report the capability', async () => {
     expect(pglite.capabilities.has('commit_log')).toBe(false);
-    for (const p of [pglite.readCommitLog(null, 10), pglite.lastCommitPosition()]) {
+    for (const p of [pglite.readCommitLog(null, 10), pglite.lastCommitPosition(), pglite.listEntityFactsInCommitOrder('default', 'people/alice-example', { limit: 10 })]) {
       const e = await refusal(p);
       expect(e.code).toBe('engine_capability_missing');
       expect(e.reason).toBe('commit_log');

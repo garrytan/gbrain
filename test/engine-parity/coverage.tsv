@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2450/2479
+# covered: 2451/2480
 # lifecycle: 12/12
 # pages: 141/142
 # search: 8/8
@@ -119,7 +119,7 @@
 # doctor_sources: 5/5
 # session_state: 7/7
 # doctor_join: 6/6
-# commit_log: 2/2
+# commit_log: 3/3
 # multi-writer cases: 22/22
 # multi-writer C01 [compare]: pglite=runs postgres=runs rust=runs rust-mu=runs store-single=runs store-optimistic=runs
 # multi-writer C02 [compare]: pglite=runs postgres=runs rust=runs rust-mu=runs store-single=runs store-optimistic=runs
@@ -132,7 +132,7 @@
 # multi-writer C08 [compare]: pglite=runs postgres=runs rust=runs rust-mu=runs store-single=runs store-optimistic=runs
 # multi-writer C09 [compare]: pglite=runs postgres=runs rust=runs rust-mu=runs store-single=runs store-optimistic=runs
 # multi-writer C10 [compare]: pglite=runs postgres=runs rust=runs rust-mu=runs store-single=runs store-optimistic=runs
-# multi-writer C11 [compare]: pglite=pending(L5 hosts) postgres=pending(L5 hosts) rust=pending(L5 hosts) rust-mu=pending(L5 hosts) store-single=runs store-optimistic=runs
+# multi-writer C11 [standalone, needs commit_log]: pglite=n/a postgres=n/a rust=n/a rust-mu=runs store-single=runs store-optimistic=runs
 # multi-writer C12 [compare]: pglite=runs postgres=runs rust=runs rust-mu=runs store-single=runs store-optimistic=runs
 # multi-writer C13 [standalone, needs multi_writer]: pglite=n/a postgres=runs rust=n/a rust-mu=runs store-single=runs store-optimistic=runs
 # multi-writer C14 [compare]: pglite=runs postgres=runs rust=runs rust-mu=runs store-single=runs store-optimistic=runs
@@ -151,7 +151,7 @@ disconnect	lifecycle	yes	3	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	4	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	408	no	yes	yes	serves
+transaction	lifecycle	yes	409	no	yes	yes	serves
 transactionDirect	lifecycle	yes	26	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
@@ -2624,4 +2624,5 @@ listRulePagesReadByNobody	doctor_join	yes	1	no	yes	yes	serves
 listGoogleSourceMembers	doctor_join	yes	1	no	yes	yes	serves
 listOwnerMemberLinks	doctor_join	yes	1	no	yes	yes	serves
 readCommitLog	commit_log	yes	2	no	n/a:commit_log	pending:L6 harness	serves
-lastCommitPosition	commit_log	yes	1	no	n/a:commit_log	n/a:commit_log	serves
+lastCommitPosition	commit_log	yes	2	no	n/a:commit_log	n/a:commit_log	serves
+listEntityFactsInCommitOrder	commit_log	yes	1	no	n/a:commit_log	n/a:commit_log	serves

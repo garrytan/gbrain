@@ -555,14 +555,14 @@ describe('multi_writer is a multi-user capability', () => {
 describe('a case no selected arm runs is a todo, not a pass, and still writes its ledger lines', () => {
   const REPO = join(import.meta.dir, '..');
 
-  test('C11 (every cell pending) in a plain Bun run: reported as todo, exit 0, no pass, one ledger line per selected arm naming the owner', () => {
+  test('C11 (n/a on every arm but rust-mu) in a plain Bun run: reported as todo, exit 0, no pass, one ledger line per selected arm saying why', () => {
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-mw-todo-'));
     try {
       const fixture = join(dir, 'todo.test.ts');
       writeFileSync(fixture, `import { parityArms } from ${JSON.stringify(join(REPO, 'test/engine-parity/harness.ts'))};
 import { testBackends } from ${JSON.stringify(join(REPO, 'test/helpers/test-backends.ts'))};
 const { parityTest } = parityArms(testBackends());
-parityTest('C11 a case every arm holds pending', { methods: ['getConfig'], mwCase: 'C11' }, async (engine) => { await engine.getConfig('version'); return 1; });
+parityTest('C11 a case no plain arm runs', { methods: ['getConfig'], mwCase: 'C11' }, async (engine) => { await engine.getConfig('version'); return 1; });
 `);
       const ledger = join(dir, 'ledger.jsonl');
       writeFileSync(ledger, '');
@@ -570,11 +570,11 @@ parityTest('C11 a case every arm holds pending', { methods: ['getConfig'], mwCas
       const proc = spawnSync('bun', ['test', '--timeout=60000', fixture], { cwd: REPO, env: env as NodeJS.ProcessEnv, encoding: 'utf8' });
       const text = `${proc.stdout}\n${proc.stderr}`;
       expect(proc.status).toBe(0);
-      expect(text).toMatch(/\(todo\) C11 a case every arm holds pending \[no selected arm runs it: pglite: L5 hosts/);
+      expect(text).toMatch(/\(todo\) C11 a case no plain arm runs \[no selected arm runs it: pglite: not applicable: commit order is a multi-user Rust guarantee/);
       expect(text).toMatch(/\b1 todo\b/);
       expect(text).not.toMatch(/\b[1-9]\d* pass\b/);
       const lines = readFileSync(ledger, 'utf8').trim().split('\n').map((l) => JSON.parse(l) as { case: string; arm: string; outcome: string; detail: string });
-      expect(lines.map((l) => [l.case, l.arm, l.outcome, l.detail.startsWith('L5 hosts')])).toEqual([['C11', 'pglite', 'pending', true]]);
+      expect(lines.map((l) => [l.case, l.arm, l.outcome, l.detail.startsWith('not applicable: commit order')])).toEqual([['C11', 'pglite', 'n/a', true]]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
