@@ -886,14 +886,14 @@ readSyncPassRow	persistence_journal	yes	1	no	yes	yes	serves
 readLiveSyncPassRows	persistence_journal	yes	1	no	yes	yes	serves
 writeSyncPassRow	persistence_journal	yes	2	no	yes	yes	serves
 readSyncStatusSourceRow	persistence_journal	yes	5	no	yes	yes	serves
-readSyncStatusCommittedRow	persistence_journal	yes	3	no	yes	yes	serves
+readSyncStatusCommittedRow	persistence_journal	yes	6	no	yes	yes	serves
 readManagedSyncCursorHeader	persistence_journal	yes	2	no	yes	yes	serves
 readRetiredManagedSyncCursor	persistence_journal	yes	2	no	yes	yes	serves
 readManagedSyncFailureRows	persistence_journal	yes	2	no	yes	yes	serves
 listFreshnessTargets	persistence_journal	yes	2	no	yes	yes	serves
 readOrphanedManagedSyncFailureRows	persistence_journal	yes	2	no	yes	yes	serves
 readSyncHeadRequestRow	persistence_journal	yes	1	no	yes	yes	serves
-readSyncRecoveryProbeRow	persistence_journal	yes	1	no	yes	yes	serves
+readSyncRecoveryProbeRow	persistence_journal	yes	2	no	yes	yes	serves
 readIdentityDowngradeRows	persistence_journal	yes	6	no	yes	yes	serves
 readIdentityDowngradeOldPage	persistence_journal	yes	2	no	yes	yes	serves
 countIdentityDowngradeCarry	persistence_journal	yes	2	no	yes	yes	serves
@@ -1073,7 +1073,7 @@ markProjectionRebuildFailed	persistence_journal	yes	5	no	yes	yes	serves
 listGatedMirrorRequests	persistence_journal	yes	2	no	yes	yes	serves
 listEffectRecoveries	persistence_journal	yes	1	no	yes	yes	serves
 selectClaimableEffect	persistence_journal	yes	10	no	yes	yes	serves
-readRequestEffects	persistence_journal	yes	16	no	yes	yes	serves
+readRequestEffects	persistence_journal	yes	19	no	yes	yes	serves
 readSourceRequestById	persistence_journal	yes	1	no	yes	yes	serves
 listSourceRequestsByRequestId	persistence_journal	yes	2	no	yes	yes	serves
 listRetryTrackedEffects	persistence_journal	yes	2	no	yes	yes	serves
@@ -1092,8 +1092,8 @@ advanceEffectRow	persistence_journal	yes	1	no	yes	yes	serves
 completeEffectRow	persistence_journal	yes	3	no	yes	yes	serves
 retryEffectRow	persistence_journal	yes	2	no	yes	yes	serves
 retryBusyEffectRow	persistence_journal	yes	3	no	yes	yes	serves
-requeueEffectRow	persistence_journal	yes	3	no	yes	yes	serves
-parkEffectRow	persistence_journal	yes	7	no	yes	yes	serves
+requeueEffectRow	persistence_journal	yes	6	no	yes	yes	serves
+parkEffectRow	persistence_journal	yes	8	no	yes	yes	serves
 failEffectRow	persistence_journal	yes	5	no	yes	yes	serves
 readMirrorGateRows	persistence_journal	yes	2	no	yes	yes	serves
 lockEffectGuard	persistence_journal	yes	1	no	yes	yes	serves
@@ -2020,7 +2020,7 @@ listSharedSkillPackRoots	write_misc	yes	1	no	yes	yes	serves
 getWorktreeBinding	write_misc	yes	40	no	yes	yes	serves
 listHostTopologyRows	write_misc	yes	2	no	yes	yes	serves
 listWorktreeMembers	write_misc	yes	2	no	yes	yes	serves
-worktreeClaimStore	write_misc	yes	77	no	yes	yes	serves
+worktreeClaimStore	write_misc	yes	80	no	yes	yes	serves
 readWriterAdminState	write_misc	yes	10	no	yes	yes	serves
 readWorktreeManifest	write_misc	yes	1	no	yes	yes	serves
 writerAdminStore	write_misc	yes	3	no	yes	yes	serves
@@ -2475,7 +2475,7 @@ listOlderDriftReceiptSlugs	doctor_persistence	yes	2	no	yes	yes	serves
 readPublicationRefusals	doctor_persistence	yes	2	no	yes	yes	serves
 countParkedEffects	doctor_persistence	yes	2	no	yes	yes	serves
 listParkedEffects	doctor_persistence	yes	2	no	yes	yes	serves
-listGitPushHoldRows	doctor_persistence	yes	4	no	yes	yes	serves
+listGitPushHoldRows	doctor_persistence	yes	7	no	yes	yes	serves
 listStalledCatchupRows	doctor_persistence	yes	3	no	yes	yes	serves
 listParkedGroupRows	doctor_persistence	yes	3	no	yes	yes	serves
 readStaleEmbeddingCounts	doctor_persistence	yes	2	no	yes	yes	serves
