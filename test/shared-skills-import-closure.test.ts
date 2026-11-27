@@ -33,12 +33,12 @@ import { withEnv } from './helpers/with-env.ts';
 import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
 
 const OPERATIONS = ['list_skills', 'get_skill', 'get_skill_asset', 'put_skill', 'delete_skill'];
-const POLICY: SharedSkillPolicy = { version: 1, enabled: true, classes: ['prose', 'reference'], audiences: ['readers', 'oauth_client:editor'], requirements: [], allow_follow: true };
+const POLICY: SharedSkillPolicy = { version: 1, enabled: true, classes: ['prose', 'reference', 'asset'], audiences: ['readers', 'oauth_client:editor'], requirements: [], allow_follow: true };
 const GUIDE = 'skills/conventions/guide.md';
 const RESTRICTED = ['oauth_client:editor'];
 const skillMd = (name: string, body: string) => `---\nname: ${name}\ndescription: A synthetic ${name} fixture\n---\n\n${body}\n`;
 const prose = (name: string, body: string, depends_on: string[] = []) => ({ path: `skills/${name}/SKILL.md`, content: skillMd(name, body), file_class: 'prose', depends_on });
-const guide = (audience: string[]) => ({ path: GUIDE, content: 'Synthetic shared guide body.\n', file_class: 'reference', audience });
+const guide = (audience: string[], file_class = 'reference') => ({ path: GUIDE, content: 'Synthetic shared guide body.\n', file_class, audience });
 
 interface Fixture { engine: BrainEngine; root: string; local: OperationContext; reader: OperationContext; editor: OperationContext; incarnation: string }
 
@@ -97,12 +97,14 @@ async function readerGuide(f: Fixture) {
   const detail = await getSharedSkill(f.reader, { source_id: 'default', pack_id: 'example-pack', name: 'alpha' });
   return getSharedSkillAsset(f.reader, { ...detail, path: GUIDE }).then(asset => Buffer.from(asset.content, 'base64').toString(), (error: { code?: string }) => error.code);
 }
-/** Beta's reviewed checkout edit that newly references the guide, imported with the current hash of every affected file. */
-async function importBeta(f: Fixture, audience: string[]) {
-  writeFileSync(join(f.root, 'skills/beta/SKILL.md'), skillMd('beta', 'Now uses the guide.'));
+/** Beta's reviewed checkout edit that newly references the guide. */
+const stageBeta = (f: Fixture) => writeFileSync(join(f.root, 'skills/beta/SKILL.md'), skillMd('beta', 'Now uses the guide.'));
+/** Imports beta's staged edit with the current hash of every affected file (staging it first unless `staged`). */
+async function importBeta(f: Fixture, audience: string[], file_class = 'reference', staged = false) {
+  if (!staged) stageBeta(f);
   const hashes = Object.fromEntries(['skills/alpha/SKILL.md', 'skills/beta/SKILL.md', GUIDE, 'skillpack.json'].map(path => [path, sha256(readFileSync(join(f.root, path)))]));
   return importSharedSkillProposal(f.local, { request_id: randomUUID(), expected_revision: await revisionOf(f, 'beta'), source_id: 'default', source_incarnation: f.incarnation,
-    pack_id: 'example-pack', name: 'beta', files: [prose('beta', 'Now uses the guide.', [GUIDE]), guide(audience)], expected_hashes: hashes });
+    pack_id: 'example-pack', name: 'beta', files: [prose('beta', 'Now uses the guide.', [GUIDE]), guide(audience, file_class)], expected_hashes: hashes });
 }
 
 const backends: Array<[string, string | undefined]> = [['PGLite', undefined], ...(process.env.DATABASE_URL ? [['Postgres', process.env.DATABASE_URL] as [string, string]] : [])];
@@ -113,23 +115,25 @@ for (const [name, url] of backends) {
     test('an import that newly references a restricted convention with a wider audience refuses, and nothing changes', () => fixture(async f => {
       await publishBoth(f);
       expect(await readerGuide(f)).toBe('skill_asset_not_found');
-      const before = { heads: await heads(f) };
-      const outcome = await importBeta(f, ['readers']).then(() => 'imported', (error: { code?: string; message?: string }) => `${error.code}: ${error.message}`);
-      const disk = checkout(f.root);
+      stageBeta(f);
+      const before = { heads: await heads(f), checkout: checkout(f.root) };
+      const outcome = await importBeta(f, ['readers'], 'reference', true).then(() => 'imported', (error: { code?: string; message?: string }) => `${error.code}: ${error.message}`);
       expect(outcome).toStartWith('local_conflict: ');
       expect(outcome).toContain('skills/alpha');
       expect(outcome).toContain(GUIDE);
-      expect({ heads: await heads(f), reader: await readerGuide(f), checkout: checkout(f.root) }).toEqual({ heads: before.heads, reader: 'skill_asset_not_found', checkout: disk });
+      expect({ heads: await heads(f), reader: await readerGuide(f), checkout: checkout(f.root) }).toEqual({ heads: before.heads, reader: 'skill_asset_not_found', checkout: before.checkout });
     }, url), 120_000);
 
-    // Value: protects=a remote editor cannot widen another skill's restricted convention through its own skill; fails_when=put_skill on beta republishes alpha's guide to readers; why_new=the remote widening check covered only the named skill; seam=none; no_claim=none
+    // Value: protects=a remote editor cannot widen another skill's restricted convention through its own skill, and the refusal hides that skill; fails_when=put_skill on beta republishes alpha's guide to readers, or the refusal names alpha; why_new=the remote widening check covered only the named skill; seam=none; no_claim=none
     test('a remote put_skill that newly references a restricted convention with a wider audience refuses, and nothing changes', () => fixture(async f => {
       await publishBoth(f);
       const before = { heads: await heads(f), checkout: checkout(f.root) };
       const outcome = await put(f, f.editor, 'beta', [prose('beta', 'Now uses the guide.', [GUIDE]), guide(['readers'])])
-        .then(() => 'published', (error: { code?: string }) => error.code);
-      expect({ outcome, heads: await heads(f), reader: await readerGuide(f), checkout: checkout(f.root) })
-        .toEqual({ outcome: 'local_conflict', heads: before.heads, reader: 'skill_asset_not_found', checkout: before.checkout });
+        .then(() => 'published', (error: { code?: string; message?: string }) => `${error.code}: ${error.message}`);
+      // A remote caller learns the shared path it proposed and a count, never the other skill's name or file class.
+      expect(outcome).toBe(`local_conflict: The publication was refused: ${GUIDE} would reach a wider audience or another file class in 1 other skill that already holds it. Nothing was written.`);
+      expect({ heads: await heads(f), reader: await readerGuide(f), checkout: checkout(f.root) })
+        .toEqual({ heads: before.heads, reader: 'skill_asset_not_found', checkout: before.checkout });
     }, url), 120_000);
 
     // Value: protects=the refusal does not block sharing a convention at the audience it already has; fails_when=a same-audience import refuses; why_new=the new check must not over-refuse; seam=none; no_claim=none
@@ -138,6 +142,40 @@ for (const [name, url] of backends) {
       const result = await importBeta(f, RESTRICTED);
       expect((result as { state?: string }).state).toBe('committed');
       expect(await readerGuide(f)).toBe('skill_asset_not_found');
+    }, url), 120_000);
+
+    // Value: protects=readers covers every principal, so naming one principal narrows a readers file and still publishes; fails_when=the check compares audience labels literally and refuses a real narrowing; why_new=the new check must not over-refuse; seam=none; no_claim=none
+    test('an import that gives a readers convention a narrower audience publishes, and the narrower audience applies to alpha', () => fixture(async f => {
+      for (const result of [await put(f, f.local, 'alpha', [prose('alpha', 'Use the guide.', [GUIDE]), guide(['readers'])]), await put(f, f.local, 'beta', [prose('beta', 'Standalone.')])]) {
+        expect((result as { state?: string }).state).toBe('committed');
+      }
+      expect(await readerGuide(f)).toBe('Synthetic shared guide body.\n');
+      const result = await importBeta(f, RESTRICTED);
+      expect((result as { state?: string }).state).toBe('committed');
+      expect(await readerGuide(f)).toBe('skill_asset_not_found');
+    }, url), 120_000);
+
+    // Value: protects=the refusal stays bounded however many skills hold the convention, so a queued request settles inside its receipt reservation; fails_when=the message lists every dependent; why_new=the reasons list grows with the closure; seam=none; no_claim=the exact receipt reservation size
+    test('a refusal that names many skills stays bounded', () => fixture(async f => {
+      for (const name of ['alpha', 'gamma', 'delta', 'epsilon']) {
+        expect((await put(f, f.local, name, [prose(name, 'Use the guide.', [GUIDE]), guide(RESTRICTED)]) as { state?: string }).state).toBe('committed');
+      }
+      expect((await put(f, f.local, 'beta', [prose('beta', 'Standalone.')]) as { state?: string }).state).toBe('committed');
+      const outcome = await importBeta(f, ['readers']).then(() => 'imported', (error: { code?: string; message?: string }) => `${error.code}: ${error.message}`);
+      expect(outcome).toStartWith('local_conflict: ');
+      expect(outcome).toContain('; and 1 more.');
+      expect(outcome.split('would publish').length - 1).toBe(3);
+    }, url), 120_000);
+
+    // Value: protects=a publication cannot change a convention's file class in a skill that already holds it; fails_when=the import republishes alpha's reference guide as an asset; why_new=class changes had no dependent check; seam=none; no_claim=none
+    test('an import that gives the convention another file class refuses, and nothing changes', () => fixture(async f => {
+      await publishBoth(f);
+      stageBeta(f);
+      const before = { heads: await heads(f), checkout: checkout(f.root) };
+      const outcome = await importBeta(f, RESTRICTED, 'asset', true).then(() => 'imported', (error: { code?: string; message?: string }) => `${error.code}: ${error.message}`);
+      expect(outcome).toStartWith('local_conflict: ');
+      expect(outcome).toContain('as asset instead of reference');
+      expect({ heads: await heads(f), reader: await readerGuide(f), checkout: checkout(f.root) }).toEqual({ heads: before.heads, reader: 'skill_asset_not_found', checkout: before.checkout });
     }, url), 120_000);
 
     // Value: protects=a request queued by an older release is checked again before it touches the checkout; fails_when=resume prepares a rebuild of alpha with the wider guide; why_new=no check ran at prepare; seam=the request row is shaped like one an older release accepted, from this brain's own committed put_skill; no_claim=none

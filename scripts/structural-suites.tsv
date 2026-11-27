@@ -432,7 +432,7 @@ test/shadow-replay.test.ts	the per-brain hash key (review of 3e7a623341)	3	readF
 test/shared-skills-adoption-keeps-files.test.ts	re-adoption after a reviewed SKILL.md edit (${name})	12	readFileSync
 test/shared-skills-catalog.test.ts	(file-level)	22	readFileSync
 test/shared-skills-export.serial.test.ts	(file-level)	15	readFileSync
-test/shared-skills-import-closure.test.ts	(file-level)	4	readFileSync
+test/shared-skills-import-closure.test.ts	(file-level)	7	readFileSync
 test/shared-skills-init.serial.test.ts	real combined brain initialization	6	readFileSync
 test/shared-skills-migration-cli.serial.test.ts	(file-level)	1	readFileSync
 test/shared-skills-optimizer.serial.test.ts	(file-level)	15	readFileSync
