@@ -140,7 +140,7 @@ export async function openclawSkillView(home: string, now = Date.now()): Promise
   }
   for (const a of agents) {
     const seen = recent.by_agent_audience[a.id];
-    if (seen && (seen.host ?? 0) > 0 && !seen.unknown) a.owner_unverified = false;
+    if (seen && (seen.host ?? 0) > 0 && !seen.unknown && !seen.sender) a.owner_unverified = false;
   }
   const plugin = files ? (openclawSkillPluginRegistered(dir) ? 'installed' : 'files_only') : 'absent';
   for (const a of agents) if (a.listing === 'off' && a.mode === 'live' && plugin === 'installed') a.verdict = LISTING_OFF_RESOLVER_LIVE;

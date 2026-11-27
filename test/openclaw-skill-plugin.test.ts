@@ -642,7 +642,7 @@ describe.skipIf(!NODE)('session classes and the session-start brief', () => {
     expect(out[2].appendSystemContext).not.toContain('"deploy-service"');
     expect(out[2]?.appendContext ?? '').not.toContain('private-ledger');
     expect(out.slice(3, 6)).toEqual([null, null, null]);
-    expect(out[6]).toEqual({ appendSystemContext: out[2].appendSystemContext });
+    expect(out[6]).toEqual({ appendSystemContext: WITHDRAWN + '\n\n' + out[2].appendSystemContext });
     expect(out[7]).toEqual({ appendSystemContext: WITHDRAWN + '\n\n' + out[2].appendSystemContext });
     const lines = logLines(b);
     expect(lines.map((l) => [l.session_class, l.outcome])).toEqual([
@@ -676,13 +676,14 @@ describe.skipIf(!NODE)('session classes and the session-start brief', () => {
       ['turn', { text, sender: 'owner-1', session: 'agent:main:main', ctx: { ...dm, ...CONVERSATION('agent:main:main') } }],
       ['turn', { text, sender: 'owner-1', session: 'agent:main:telegram:group:-100', ctx: { ...CONVERSATION('agent:main:telegram:group:-100'), channelContext: { sender: { id: 'owner-1' }, chat: { id: '-100', type: 'supergroup' } } } }],
       ['turn', { text, sender: 'owner-1', session: 'agent:main:main', ctx: { channelContext: { sender: { id: 'owner-1' }, chat: { id: 'g-1', type: 'group_dm' } } } }],
-    ], undefined, { DRIVE_LOG_LINES: '17' });
+      ['turn', { text, sender: 'owner-1', session: 'agent:main:telegram:direct:owner-1', ctx: { channelContext: { sender: { id: 'owner-1' }, chat: { id: 'g-1', type: 2 } } } }],
+    ], undefined, { DRIVE_LOG_LINES: '18' });
     for (const i of [0, 1]) {
       expect(out[i].appendSystemContext).toContain('Owner rule.');
       expect(out[i].appendSystemContext).toContain('"deploy-service"');
       expect(out[i].appendContext).toContain('private-ledger');
     }
-    for (const i of [2, 3, 4, 5, 6, 7, 8, 9, 14, 15, 16]) {
+    for (const i of [2, 3, 4, 5, 6, 7, 8, 9, 14, 15, 16, 17]) {
       const got = JSON.stringify(out[i] ?? {});
       expect(got, 'turn ' + i).not.toContain('Owner rule.');
       expect(got, 'turn ' + i).not.toContain('deploy-service');
@@ -693,8 +694,9 @@ describe.skipIf(!NODE)('session classes and the session-start brief', () => {
       ['owner', 'sender'], ['owner', 'sender'],
       ['direct', 'unknown'], ['direct', 'unknown'], ['direct', 'unknown'], ['direct', 'unknown'], ['direct', 'unknown'], ['direct', 'unknown'], ['direct', 'unknown'],
       ['group', 'unknown'], ['cron', 'unknown'], ['heartbeat', 'unknown'], ['webhook', 'unknown'], ['relay', 'unknown'],
-      ['direct', 'host'], ['group', 'host'], ['direct', 'unknown'],
+      ['direct', 'host'], ['group', 'host'], ['direct', 'unknown'], ['direct', 'unknown'],
     ]);
+    for (const i of [6, 17]) expect(out[i].appendSystemContext.startsWith(WITHDRAWN), 'turn ' + i).toBe(true);
     const check = JSON.parse((await runCli(['doctor', '--only', 'skill_resolver', '--json'], { env: b.env })).stdout).checks.find((c: any) => c.name === 'skill_resolver');
     expect(check.details.openclaw.recent.by_audience).toMatchObject({ sender: 2 });
     expect(check.message).toContain('2 owner turns verified by sender id');
@@ -1132,6 +1134,8 @@ describe.skipIf(!NODE)('session classes and the session-start brief', () => {
     writeFileSync(file, JSON.stringify({ at, plugin: String(OPENCLAW_SKILL_PLUGIN_CODE_VERSION), agent: 'main', outcome: 'skipped_provenance', session_class: 'heartbeat', audience: 'unknown' }) + '\n', { flag: 'a' });
     const doctor = async () => JSON.parse((await runCli(['doctor', '--only', 'skill_resolver', '--json'], { env: b.env })).stdout).checks.find((c: any) => c.name === 'skill_resolver');
     expect((await doctor()).status).toBe('ok');
+    writeFileSync(file, JSON.stringify({ at, plugin: String(OPENCLAW_SKILL_PLUGIN_CODE_VERSION), agent: 'main', outcome: 'no_match', session_class: 'owner', audience: 'sender' }) + '\n', { flag: 'a' });
+    expect((await doctor()).details.code).toBe('skill_resolver_owner_unverified');
     writeFileSync(file, JSON.stringify({ at, plugin: String(OPENCLAW_SKILL_PLUGIN_CODE_VERSION), agent: 'main', outcome: 'no_match', session_class: 'main', audience: 'unknown' }) + '\n', { flag: 'a' });
     expect((await doctor()).details.code).toBe('skill_resolver_owner_unverified');
   });

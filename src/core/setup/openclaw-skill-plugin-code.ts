@@ -302,7 +302,7 @@ function sessionClassOf(event, ctx, a, sessionKey) {
   }
   const owners = Array.isArray(a.owner_sender_ids) ? a.owner_sender_ids : [];
   if ((keyed === 'direct' || keyed === 'main') && (owners.length || a.require_owner_sender === true)) {
-    return verifiedOwner(owners, event, ctx, trigger) ? { cls: 'owner', audience: 'sender' } : of('direct');
+    return verifiedOwner(owners, event, ctx, trigger) ? { cls: 'owner', audience: 'sender' } : { ...of('direct'), rejected: true };
   }
   return of(keyed);
 }
@@ -319,8 +319,9 @@ function verifiedOwner(owners, event, ctx, trigger) {
   const cc = pick('channelContext');
   const said = cc && cc.sender && cc.sender.id;
   if (said !== undefined && said !== null && String(said) !== sender) return false;
-  const type = cc && cc.chat && typeof cc.chat.type === 'string' ? cc.chat.type.toLowerCase() : '';
-  return type === '' || type === 'private' || type === 'direct' || type === 'dm';
+  const type = cc && cc.chat ? cc.chat.type : undefined;
+  if (type === undefined || type === null) return true;
+  return typeof type === 'string' && ['private', 'direct', 'dm'].includes(type.toLowerCase());
 }
 
 // owner (the owner's own sessions), silent (no pins, no suggestions) or conversation (everything else, unknown included).
@@ -494,7 +495,7 @@ async function resolveTurn(event, ctx, opts) {
   const t0 = Date.now();
   const sessionKey = sessionOf(event, ctx, agentId);
   const arm = armFor(a, sessionKey);
-  const { cls, audience } = sessionClassOf(event, ctx, a, sessionKey);
+  const { cls, audience, rejected } = sessionClassOf(event, ctx, a, sessionKey);
   const tier = tierOf(cls);
   const result = {};
   const stalePins = tier === 'conversation' && !!a.conversation_pinned_block && !pinsCurrent(a);
@@ -509,7 +510,7 @@ async function resolveTurn(event, ctx, opts) {
   const briefBlock = [briefRoute && pinsOn ? pinBlock : '', listed].filter(Boolean).join('\n\n');
   const rule = live ? ruleBlock(tier === 'owner' ? a.operator_rule : tier === 'conversation' ? a.conversation_operator_rule : null) : '';
   const keyed = keyClassOf(sessionKey);
-  const withdraw = live && tier === 'conversation' && cls !== 'group' && cls !== 'channel' && (audience === 'host' || keyed === 'main');
+  const withdraw = live && tier === 'conversation' && cls !== 'group' && cls !== 'channel' && (audience === 'host' || keyed === 'main' || !!rejected);
   const system = [withdraw ? OWNER_WITHDRAWN : '', rule, pinsOn && !briefRoute ? pinBlock : ''].filter(Boolean).join('\n\n');
   if (system) result.appendSystemContext = system;
   const text = turnText(event);
