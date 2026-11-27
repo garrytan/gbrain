@@ -58,6 +58,10 @@ const REMOTE_URL = 'https://example.invalid/brain.git';
 function gitCheckout(root: string, note: string, body: string): void {
   mkdirSync(join(root, 'notes'), { recursive: true });
   execFileSync('git', ['-C', root, 'init', '-q', '-b', 'main']);
+  // The checkout's own identity, as a managed checkout on a real host has one: the managed Git effect commits with the
+  // checkout's config, and a host with no Git identity (a fresh CI runner) would park the retried effect on git_unavailable.
+  execFileSync('git', ['-C', root, 'config', 'user.name', 'Example']);
+  execFileSync('git', ['-C', root, 'config', 'user.email', 'example@example.invalid']);
   writeFileSync(join(root, 'notes', note), body);
   execFileSync('git', ['-C', root, 'add', '.']);
   execFileSync('git', ['-C', root, ...GIT_ID, 'commit', '-qm', 'notes']);

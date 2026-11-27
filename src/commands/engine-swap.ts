@@ -112,6 +112,9 @@ export interface EngineSwapCliDeps extends Pick<SwapPlanInputs, 'readShadowStatu
   home?: string;
   /** Directory whose file system the plan reports free space for (default: home). */
   dataDir?: string;
+  /** Reads the free bytes of the file system holding a path (default: statfs). The disk is shared, so two reads differ
+   * whenever anything else writes; a caller that compares two plans byte for byte passes a fixed reader. */
+  freeBytes?: (path: string) => number | null;
   /** Opens the brain without migrating it (default: the configured engine). */
   openEngine?: () => Promise<BrainEngine>;
   /** Resolves the selected brain id (default: resolveBrainId, which reads --brain, GBRAIN_BRAIN_ID and .gbrain-mount). */
@@ -170,7 +173,7 @@ export async function runEngineSwap(args: readonly string[], deps: EngineSwapCli
       destination,
       envNames: ENGINE_SELECTING_ENV.filter(v => (env[v] ?? '') !== ''),
       services: home ? serviceDefinitions(home) : [],
-      disk: { path: dataDir, free_bytes: dataDir ? freeBytes(dataDir) : null },
+      disk: { path: dataDir, free_bytes: dataDir ? (deps.freeBytes ?? freeBytes)(dataDir) : null },
     });
     out(parsed.json ? JSON.stringify(plan, null, 2) : renderPlanText(plan));
     return 0;
