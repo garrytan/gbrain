@@ -21,6 +21,7 @@ import { hostIdFor } from '../persistence/identity.ts';
 import { withCoordinatedWrite } from '../persistence/context.ts';
 import { requestAttribution } from '../persistence/attribution.ts';
 import { normalizeSkillFiles, skillMetadata, skillName, skillPath } from './manifest.ts';
+import { refuseNewCaseCollisions } from './case-collisions.ts';
 import { forgetSharedPacks } from './knowledge-guard.ts';
 import { assertSkillCapability, assertStoredSkillCapability, publicationEnabled, readSharedSkillPolicy, setSharedSkillPolicy } from './policy.ts';
 import { SHARED_SKILL_LIMITS, type SharedSkillFile, type SharedSkillPolicy, type SharedSkillPutInput, type SkillMetadata, type StoredSkillFile, type StoredSkillRevision } from './model.ts';
@@ -404,6 +405,9 @@ export async function submitSharedSkillMutation(ctx: OperationContext, operation
     }
     extraFiles[path] = content;
   }
+  const inventoryPaths = ['skillpack.json', ...inventory.flatMap(entry => entry.files.map(file => file.path))];
+  refuseNewCaseCollisions(sourceId, inventoryPaths, ['skillpack.json', ...Object.keys(extraFiles), ...allProposedFiles.map(file => file.path),
+    ...inventory.filter(entry => !proposals.some(p => p.name === entry.name)).flatMap(entry => entry.files.map(file => file.path))], ctx.remote === false);
   const touched = new Set([...allProposedFiles.map(f => f.path), ...current.filter(r => affected.some(p => p.name === r.name)).flatMap(r => r.files.map(f => f.path)), ...Object.keys(extraFiles)]);
   for (const [path, expectedHash] of Object.entries(adoption?.expected_hashes ?? {})) {
     if (path !== 'skillpack.json') skillPath(path);
@@ -493,6 +497,9 @@ export async function prepareSharedSkillMutation(engine: BrainEngine, row: Write
     name: entry.name, revision: entry.revision, files: entry.files.map(({ content: _content, ...file }) => file),
   }))];
   const allFiles = new Set(next.flatMap(entry => entry.files.map(file => file.path)));
+  // A request accepted before the case check existed is checked here too, before it touches the checkout.
+  refuseNewCaseCollisions(row.source_id, ['skillpack.json', ...inventory.flatMap(entry => entry.files.map(file => file.path))],
+    ['skillpack.json', ...Object.keys(intent.extra_files), ...allFiles], false);
   const changedFiles = new Map<string, StoredSkillFile | null>();
   for (const file of proposals.flatMap(p => p.files)) changedFiles.set(file.path, file);
   for (const file of current.filter(r => revisions.some(p => p.name === r.name)).flatMap(r => r.files)) if (!allFiles.has(file.path)) changedFiles.set(file.path, null);
