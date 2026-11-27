@@ -48,7 +48,7 @@ test/engine-parity/cli-reads-ops.test.ts	24	0
 test/engine-parity/code-eval-salience.test.ts	13	0
 test/engine-parity/collate-aggregated-lists.test.ts	5	0
 test/engine-parity/collate-belief-cycle-walks.test.ts	6	0
-test/engine-parity/collate-command-listings.test.ts	7	2
+test/engine-parity/collate-command-listings.test.ts	8	1
 test/engine-parity/collate-core-page-lists.test.ts	16	1
 test/engine-parity/collate-doctor-access.test.ts	11	0
 test/engine-parity/collate-doctor-persistence.test.ts	14	3
@@ -99,6 +99,7 @@ test/engine-parity/doctor-terminal.test.ts	2	0
 test/engine-parity/dream-config-members.test.ts	5	0
 test/engine-parity/dream-cycle-sites.test.ts	10	0
 test/engine-parity/edge-proposals-cli.test.ts	3	0
+test/engine-parity/effect-claim-upkeep.test.ts	2	0
 test/engine-parity/effect-scans.test.ts	3	0
 test/engine-parity/embed-stale-work.test.ts	10	0
 test/engine-parity/embedding-catalog.test.ts	8	0
@@ -112,6 +113,7 @@ test/engine-parity/entity-fuzzy.test.ts	3	0
 test/engine-parity/entity-identities.test.ts	13	0
 test/engine-parity/entity-names-siblings.test.ts	1	0
 test/engine-parity/entity-reads.test.ts	14	0
+test/engine-parity/entity-variants.test.ts	4	0
 test/engine-parity/eval-harness-reads.test.ts	20	0
 test/engine-parity/export-bytes.test.ts	2	0
 test/engine-parity/extract-all-segmented.test.ts	1	0
@@ -139,16 +141,17 @@ test/engine-parity/fact-relink-writes.test.ts	4	0
 test/engine-parity/fact-trajectory-widening.test.ts	3	0
 test/engine-parity/fact-update-guard.test.ts	5	0
 test/engine-parity/fact-visibility-widening.test.ts	5	0
+test/engine-parity/facts-arm-query-strict.test.ts	3	0
 test/engine-parity/facts-conversation-sites.test.ts	22	0
 test/engine-parity/facts-cycle-sites.test.ts	16	0
 test/engine-parity/facts-cycle.test.ts	15	0
 test/engine-parity/facts-doctor.test.ts	17	0
 test/engine-parity/facts-purge-sites.test.ts	30	0
-test/engine-parity/facts-purge.test.ts	29	0
+test/engine-parity/facts-purge.test.ts	30	0
 test/engine-parity/facts-quoted.test.ts	5	0
 test/engine-parity/facts-repair-sites.test.ts	20	0
 test/engine-parity/facts-repair.test.ts	21	0
-test/engine-parity/facts-rest-sites.test.ts	24	4
+test/engine-parity/facts-rest-sites.test.ts	28	1
 test/engine-parity/facts-superseded-claims.test.ts	1	0
 test/engine-parity/facts-trust-owner.test.ts	6	0
 test/engine-parity/facts-trust.test.ts	13	0
@@ -208,11 +211,12 @@ test/engine-parity/jobs-worker-liveness.test.ts	5	1
 test/engine-parity/jobs.test.ts	16	0
 test/engine-parity/journal-purge-terminal.test.ts	2	0
 test/engine-parity/journal-typed-sites.test.ts	6	1
+test/engine-parity/journal-upkeep-steps.test.ts	5	0
 test/engine-parity/keyword-visibility.test.ts	7	0
 test/engine-parity/label-guard-tiers.test.ts	2	0
 test/engine-parity/labelled-access-allowed.test.ts	2	0
 test/engine-parity/labelled-only-for.test.ts	1	0
-test/engine-parity/labelled-only-policy.test.ts	17	0
+test/engine-parity/labelled-only-policy.test.ts	29	0
 test/engine-parity/labelled-only-reads.test.ts	10	1
 test/engine-parity/large-page.test.ts	3	0
 test/engine-parity/legacy-slug-spellings-doctor.test.ts	2	0
@@ -233,6 +237,7 @@ test/engine-parity/mention-coverage.test.ts	9	0
 test/engine-parity/mention-pass.test.ts	4	0
 test/engine-parity/migrate-embeddings-usage.test.ts	1	0
 test/engine-parity/migrate-engine-source.test.ts	2	0
+test/engine-parity/mixed-set-forwarding.test.ts	4	0
 test/engine-parity/notifier-freshness.test.ts	3	0
 test/engine-parity/notifier-resident.test.ts	4	0
 test/engine-parity/notifier.test.ts	4	0
@@ -251,7 +256,7 @@ test/engine-parity/owner-only-marks.test.ts	1	1
 test/engine-parity/owner-only-reads.test.ts	4	0
 test/engine-parity/owner-only-row-delete-marks.test.ts	2	0
 test/engine-parity/owner-recovery-scans.test.ts	5	0
-test/engine-parity/owner-write-privacy.test.ts	5	0
+test/engine-parity/owner-write-privacy.test.ts	7	0
 test/engine-parity/page-delete-slug-stores.test.ts	2	0
 test/engine-parity/page-embedding-budget.test.ts	9	0
 test/engine-parity/page-extraction-state.test.ts	4	0
@@ -308,6 +313,7 @@ test/engine-parity/read-shared-sources.test.ts	5	0
 test/engine-parity/reads-privacy.test.ts	52	0
 test/engine-parity/reason-tombstones.test.ts	3	0
 test/engine-parity/recall-members.test.ts	4	0
+test/engine-parity/receipt-compaction-step.test.ts	1	0
 test/engine-parity/rechunk-chunk-ids.test.ts	2	0
 test/engine-parity/referrer-reads.test.ts	5	0
 test/engine-parity/refusal-blocker-sites.test.ts	6	0
@@ -323,7 +329,7 @@ test/engine-parity/remember-meta.test.ts	3	0
 test/engine-parity/remember-supersede.test.ts	3	0
 test/engine-parity/remember-whole.test.ts	1	0
 test/engine-parity/remote-access-matrix.test.ts	3	2
-test/engine-parity/remote-links.test.ts	9	0
+test/engine-parity/remote-links.test.ts	10	0
 test/engine-parity/remote-policy.test.ts	2	0
 test/engine-parity/repair-aliases.test.ts	1	0
 test/engine-parity/repair-bookkeeping.test.ts	8	0
@@ -362,6 +368,7 @@ test/engine-parity/schema-detect.test.ts	4	0
 test/engine-parity/search-caller-refusals.test.ts	4	1
 test/engine-parity/search-cjk.test.ts	7	0
 test/engine-parity/search-deep-query.test.ts	1	0
+test/engine-parity/search-feedback-and-date-headers.test.ts	2	0
 test/engine-parity/search-privacy-retention.test.ts	5	0
 test/engine-parity/search-privacy.test.ts	25	0
 test/engine-parity/search-private-fence.test.ts	5	0
@@ -371,6 +378,7 @@ test/engine-parity/search-space-separators.test.ts	1	0
 test/engine-parity/search.test.ts	23	0
 test/engine-parity/segment-pending-stamp.test.ts	3	0
 test/engine-parity/segment-regions.test.ts	1	0
+test/engine-parity/segment-sweep-managed.test.ts	1	0
 test/engine-parity/segmented-body.test.ts	22	0
 test/engine-parity/segmented-callers.test.ts	3	0
 test/engine-parity/segmented-embedding.test.ts	2	0
@@ -421,7 +429,7 @@ test/engine-parity/sync-status-reads.test.ts	10	0
 test/engine-parity/sync-swap-reads.test.ts	6	0
 test/engine-parity/sync20-trust-a.test.ts	2	0
 test/engine-parity/take-held-rows.test.ts	2	0
-test/engine-parity/take-proposals.test.ts	8	0
+test/engine-parity/take-proposals.test.ts	9	0
 test/engine-parity/take-purge-ledger.test.ts	4	0
 test/engine-parity/take-purge-loop-mute-keys.test.ts	2	0
 test/engine-parity/take-purge-overlay.test.ts	2	0
