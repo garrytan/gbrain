@@ -314,17 +314,29 @@ export interface EvidenceSubject { id: string; slug: string; revision: string | 
 interface HistoryEntry { oid: string; at: number; seq: number }
 
 /**
- * One filter-free `git log --raw` walk of `tip` under `scope` (Git-root relative; '' is the whole repository): per path of
+ * One filter-free, path-limited `git log --raw` walk of `tip` under `scope` (Git-root relative; '' is the whole repository): per path of
  * `interest` (Git-root relative), the blobs it held, newest first, a blob it held again after another kept again (a
  * revert), at most `depth` + 1 each (the tip's own blob is usually the first). Null when Git could not answer.
  */
 export async function readPathHistory(root: string, tip: string, scope: string, interest: ReadonlySet<string>, depth = EVIDENCE_DEPTH): Promise<Map<string, HistoryEntry[]> | null> {
   const history = new Map<string, HistoryEntry[]>();
-  if (!interest.size) return history;
+  const prefix = scope.replace(/\/+$/, '');
+  const paths = [...interest].filter(path => path && (!prefix || prefix === '.' || path === prefix || path.startsWith(prefix + '/')));
+  if (!paths.length) return history;
+  if (paths.some(path => path.includes('\0'))) return null;
+  // Git log's --stdin path records are LF-delimited and do not unquote C strings.
+  // Keep LF/CR names in argv; normal names stream after a mandatory -- so no
+  // filename can become a revision or option. One walk preserves cross-path seq.
+  const unusual = paths.filter(path => /[\r\n]/.test(path)).map(path => `:(literal)${path}`);
+  // Even an adversarial inventory of newline names must not exceed exec's argv
+  // bound. The old scope-wide walk remains a conservative fallback for that case.
+  const scopedFallback = unusual.reduce((n, path) => n + Buffer.byteLength(path) + 1, 0) > 32_768;
+  const pathArgs = scopedFallback ? (scope ? [`:(literal)${scope}`] : []) : unusual;
+  const stdin = scopedFallback ? undefined : ['--', ...paths.filter(path => !/[\r\n]/.test(path)).map(path => `:(literal)${path}`), ''].join('\n');
   const splitter = new NulRecordSplitter();
   let at = 0, seq = 0, raw: string | null = null;
-  const result = await hardenedGitStream(root, ['log', ...HISTORY_LOG_OPTIONS, '--end-of-options', tip, '--', ...(scope ? [`:(literal)${scope}`] : [])], {
-    timeoutMs: 600_000, onChunk: chunk => {
+  const result = await hardenedGitStream(root, ['log', ...HISTORY_LOG_OPTIONS, ...(stdin === undefined ? [] : ['--stdin']), '--end-of-options', tip, '--', ...pathArgs], {
+    stdin, timeoutMs: 600_000, onChunk: chunk => {
       for (const record of splitter.push(chunk)) {
         if (raw !== null) {
           const path = record.toString('utf8');

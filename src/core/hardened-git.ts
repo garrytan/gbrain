@@ -121,7 +121,9 @@ export const REASON_LOG_OPTIONS: readonly string[] = ['-z', '--first-parent', '-
 export const HISTORY_LOG_OPTIONS: readonly string[] = ['-z', '--raw', '--no-abbrev', '--full-history', '--root', '--diff-merges=first-parent', '--no-renames', '--no-relative',
   '--no-ext-diff', '--no-textconv', '--no-show-signature', '--format=%x1e%H%x1f%ct'];
 /** Each `log` shape allowed: its options exactly, all of them. */
-const LOG_SHAPES: ReadonlyArray<readonly string[]> = [REASON_LOG_OPTIONS, HISTORY_LOG_OPTIONS];
+// --stdin is allowed only for the raw direction-evidence shape, never the
+// reason-trailer walk. Its caller supplies -- before literal path records.
+const LOG_SHAPES: ReadonlyArray<readonly string[]> = [REASON_LOG_OPTIONS, HISTORY_LOG_OPTIONS, [...HISTORY_LOG_OPTIONS, '--stdin']];
 
 /**
  * The exact options each allowed plumbing subcommand may take; anything not
