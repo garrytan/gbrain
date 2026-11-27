@@ -106,7 +106,15 @@ export function assertRustCommitLogResolved(engine: unknown): void {
   const e = engine as { ownerRole?: unknown; capabilities?: ReadonlySet<string>; openStoreIfOpen?: (member: string) => unknown };
   if (e.ownerRole === 'client') return;
   const store = e.openStoreIfOpen?.('commitLogSwitch') as { commitLog?: unknown } | null | undefined;
-  if (store === null || store === undefined) throw new Error('[rust-mu] no open store to read the commit log switch from; assert it after connect');
+  if (store === null || store === undefined) {
+    // A served v3 client has no store of its own: the owner it reaches keeps the log, and the client reports the log's
+    // capability only when that owner serves it (it is refused commit_log otherwise), so the capability is the proof here.
+    if (e.capabilities?.has('served') === true) {
+      if (e.capabilities.has('commit_log') !== true) throw new Error('[rust-mu] the served client does not report the capability commit_log: the owner it reaches keeps no commit log');
+      return;
+    }
+    throw new Error('[rust-mu] no open store to read the commit log switch from; assert it after connect');
+  }
   if (store.commitLog !== true) throw new Error('[rust-mu] the store keeps no commit log although the arm set GBRAIN_RUST_COMMIT_LOG=1 (the sub-switch is read only while the store is multi-user)');
   if (e.capabilities?.has('commit_log') !== true) throw new Error('[rust-mu] the engine does not report the capability commit_log although its store keeps a commit log');
 }

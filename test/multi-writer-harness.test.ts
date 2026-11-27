@@ -756,3 +756,17 @@ describe('rustMultiuserStop: a case pinned to the multi-user owner-only refusal 
     expect(() => checkRustTally(f, { compared: 1, refused: 0, diverged: 0, skipped: 2 }, 3, pins, {})).toThrow(/pins 3 equal/); // the switch off gets no allowance
   });
 });
+
+describe('the commit log check on a served client', () => {
+  // Value: protects=on the served arm a client engine (no store of its own) is accepted only when it reports the owner's
+  // commit_log capability; fails_when=a served client without the log passes, or one with it is refused for having no store;
+  // why_new=C21 on the served arm ended on "no open store"; seam=stand-in engines
+  test('a served client passes with commit_log, fails without it; a storeless non-served engine still fails', async () => {
+    const { assertRustCommitLogResolved } = await import('./engine-parity/rust-arm.ts');
+    const served = (caps: string[]) => ({ ownerRole: null, capabilities: new Set(caps), openStoreIfOpen: () => null });
+    expect(() => assertRustCommitLogResolved(served(['served', 'commit_log']))).not.toThrow();
+    expect(() => assertRustCommitLogResolved(served(['served']))).toThrow(/served client does not report the capability commit_log/);
+    expect(() => assertRustCommitLogResolved(served([]))).toThrow(/no open store/);
+  });
+});
+
