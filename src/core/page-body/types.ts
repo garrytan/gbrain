@@ -144,6 +144,11 @@ export interface BodyFlipInput {
   retireMaxRows: number;
   body: SegmentedBodyColumns;
   meta: SegmentedPageMeta;
+  /**
+   * GST-4056: no manifest row changed (the staged body is the live one). A flip that also keeps the type, title and text
+   * frontmatter changes no text, so it keeps the page's verified content author, or none, instead of `meta.content_author`.
+   */
+  bodyUnchanged?: boolean;
 }
 
 export interface BodyFlipResult {

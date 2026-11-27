@@ -350,6 +350,73 @@ for (const backend of testBackends()) describe(`[${backend}] importer trust foll
     expect(await trust(slug)).toEqual(UNTRUSTED);
   });
 
+  test('a re-import that changes only tags never makes untrusted text of a segmented page the importer\'s, and keeps a genuine one', async () => {
+    const id = randomUUID().slice(0, 8);
+    const slug = `conversations/sessions/2026-01-02-codex-${id}`;
+    const content = transcript(id, LARGE);
+    await importFromContent(engine, slug, content, { sourceId: 'default', noEmbed: true });
+    const [row] = await engine.executeRaw<{ body_storage: string }>("SELECT body_storage FROM pages WHERE source_id = 'default' AND slug = $1", [slug]);
+    expect(row!.body_storage).toBe('segmented');
+    expect(await trust(slug)).toEqual(UNTRUSTED);
+    expect((await importer(slug, content.replace('type: conversation\n', 'type: conversation\ntags: [retagged-example]\n'))).status).toBe('imported');
+    expect((await author(slug)).content_author).not.toBe(VIA);
+    expect(await trust(slug)).toEqual(UNTRUSTED);
+    const genuine = `conversations/sessions/2026-01-02-codex-${randomUUID().slice(0, 8)}`;
+    await importer(genuine, content);
+    expect((await importer(genuine, content.replace('type: conversation\n', 'type: conversation\ntags: [retagged-example]\n'))).status).toBe('imported');
+    expect(await author(genuine)).toEqual({ content_author: VIA, stamped: true });
+  });
+
+  test('the v342 backfill never stamps a page a remote writer edited before a tag change and a rename', async () => {
+    const id = randomUUID().slice(0, 8);
+    const slug = `conversations/sessions/2026-01-02-codex-${id}`;
+    await importer(slug, transcript(id, 'Short body.'));
+    await remote('edit_page', { slug, expected_revision: await revision(slug), request_id: randomUUID(),
+      edits: [{ old_text: 'hello', new_text: 'hello, I founded acme-example' }] });
+    await maintenanceTag(slug);
+    const renamed = `${slug}-renamed`;
+    await engine.updateSlug(slug, renamed, { sourceId: 'default' });
+    await legacy(renamed);
+    await engine.executeRaw(CONTENT_AUTHOR_BACKFILL_SQL);
+    expect(await author(renamed)).toEqual({ content_author: null, stamped: false });
+    expect(await trust(renamed)).toEqual(UNTRUSTED);
+  });
+
+  test('the v342 backfill counts a remote add_link as a text write (a managed add_link edits the links fence)', async () => {
+    const id = randomUUID().slice(0, 8);
+    const slug = `conversations/sessions/2026-01-02-codex-${id}`;
+    await importer(slug, transcript(id, 'Short body.'));
+    // A repo-less brain journals no add_link, so a journaled remote text write is recorded as one, with its versions pruned.
+    await remote('edit_page', { slug, expected_revision: await revision(slug), request_id: randomUUID(),
+      edits: [{ old_text: 'hello', new_text: 'hello, I founded acme-example' }] });
+    await maintenanceTag(slug);
+    await engine.executeRaw("UPDATE persistence_requests SET operation = 'add_link' WHERE slug = $1 AND principal_kind = 'local_stdio'", [slug]);
+    await engine.executeRaw("DELETE FROM page_versions WHERE page_id = (SELECT id FROM pages WHERE source_id = 'default' AND slug = $1)", [slug]);
+    await legacy(slug);
+    await engine.executeRaw(CONTENT_AUTHOR_BACKFILL_SQL);
+    expect(await author(slug)).toEqual({ content_author: null, stamped: false });
+  });
+
+  test('the v342 backfill gives a page whose live revision is a compacted local edit no author', async () => {
+    const id = randomUUID().slice(0, 8);
+    const slug = `conversations/sessions/2026-01-02-codex-${id}`;
+    await importer(slug, transcript(id, 'Short body.'));
+    const ctx = { remote: false, config: { engine: engine.kind }, sourceId: 'default', logger: { info() {}, warn() {}, error() {} } } as never;
+    const expected = await revision(slug);
+    const out = await withEnv({ GBRAIN_HOME: home }, () => dispatchToolCall(engine, 'edit_page', { slug, expected_revision: expected, request_id: randomUUID(),
+      edits: [{ old_text: 'hello', new_text: 'hello, I founded acme-example' }] }, ctx)) as { isError?: boolean; content: Array<{ text: string }> };
+    expect(out.isError ? out.content.map(c => c.text).join('\n') : '').toBe('');
+    // Compaction keeps the newest receipt's intent; one compacted later leaves it empty.
+    await engine.executeRaw("UPDATE persistence_requests SET intent = NULL, compacted = true WHERE id = (SELECT revision_write_request_id FROM pages WHERE source_id = 'default' AND slug = $1)", [slug]);
+    const [live] = await engine.executeRaw<{ operation: string; principal_kind: string; has_intent: boolean }>(
+      `SELECT r.operation, r.principal_kind, r.intent IS NOT NULL AS has_intent FROM pages p JOIN persistence_requests r ON r.id = p.revision_write_request_id
+        WHERE p.source_id = 'default' AND p.slug = $1`, [slug]);
+    expect(live).toEqual({ operation: 'edit_page', principal_kind: 'local_cli', has_intent: false });
+    await legacy(slug);
+    await engine.executeRaw(CONTENT_AUTHOR_BACKFILL_SQL);
+    expect(await author(slug)).toEqual({ content_author: null, stamped: false });
+  });
+
   test('an engine copy over identical text replaces the target\'s author with the source\'s', async () => {
     const id = randomUUID().slice(0, 8);
     const slug = `conversations/sessions/2026-01-02-codex-${id}`;

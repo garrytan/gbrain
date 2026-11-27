@@ -42,14 +42,20 @@ export const EXACT_AUTHOR_MARK = 'gbrain:exact-author';
 
 /** Principals that reach the brain from outside (MCP over HTTP, legacy tokens, stdio MCP). */
 const REMOTE_PRINCIPAL_KINDS = ['oauth_client', 'legacy_token', 'local_stdio'];
-/** Journaled operations that change no page text. */
-const METADATA_OPERATIONS = ['add_tag', 'remove_tag', 'add_link', 'remove_link'];
+/** Journaled operations that change no page text (a managed add_link or remove_link edits the links fence, so it does). */
+const METADATA_OPERATIONS = ['add_tag', 'remove_tag'];
+/** Operations that write an importer's or connector's text: a compacted request for any other operation is never theirs. */
+const IMPORT_OPERATIONS = ['put_page', 'submit_job'];
 /** Frontmatter keys that are not text: the content hash ignores them too (utils.ts contentHashFrontmatterAndTags). */
 const NON_TEXT_FRONTMATTER_KEYS = [...HASH_EPHEMERAL_FRONTMATTER_KEYS, 'tags'];
 
 const list = (values: readonly string[]) => values.map(value => `'${value}'`).join(',');
 
-const strip = (row: 'NEW' | 'OLD') => `CASE WHEN jsonb_typeof(${row}.frontmatter) = 'object' THEN ${row}.frontmatter - ARRAY[${list(NON_TEXT_FRONTMATTER_KEYS)}]::text[] ELSE ${row}.frontmatter END`;
+/** SQL array of the frontmatter keys that are not text. */
+export const NON_TEXT_FRONTMATTER_KEYS_SQL = `ARRAY[${list(NON_TEXT_FRONTMATTER_KEYS)}]::text[]`;
+/** SQL: frontmatter expression `fm` without the keys that are not text. */
+export const textFrontmatterSql = (fm: string) => `CASE WHEN jsonb_typeof(${fm}) = 'object' THEN ${fm} - ${NON_TEXT_FRONTMATTER_KEYS_SQL} ELSE ${fm} END`;
+const strip = (row: 'NEW' | 'OLD') => textFrontmatterSql(`${row}.frontmatter`);
 const text = (row: 'NEW' | 'OLD') => `(${row}.type, ${row}.title, ${row}.compiled_truth, ${row}.timeline, ${row}.body_generation, ${strip(row)})`;
 
 export const CONTENT_AUTHOR_FUNCTION_SQL = `CREATE OR REPLACE FUNCTION gbrain_guard_content_author() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $fn$
@@ -75,25 +81,33 @@ END $fn$`;
 
 /**
  * Legacy pages, never more trusted than the rule before GST-4056 left them, and never with a remote writer on record
- * (a committed remote request that changed text, or an archived version a remote principal wrote):
+ * (a committed remote request that changed text, matched by page id or by source and slug, or an archived version a remote
+ * principal wrote or replaced):
  * - a live importer request (any first-ingest channel) or a connector import job: that author;
  * - a live revision whose request row is gone, or no request and `ingested_at >= updated_at` (the old fence rule): the
  *   first-ingest channel;
- * - a tag or link request, a compacted request, or no request after a later update: `legacy:<channel>` for an importer
- *   page, honored by speaker markers only, as before; a connector page keeps its connector author.
+ * - a tag request, a compacted put_page or connector job, or no request after a later update: `legacy:<channel>` for an
+ *   importer page, honored by speaker markers only, as before; a connector page keeps its connector author;
+ * - any other compacted request (a local edit, append or capture): none.
+ * Only the request fields the rule reads are projected, and only pages an importer or connector could have written are
+ * read, so the scan never carries stored page bodies.
  * What the journal and the version history no longer show cannot be seen; such a page keeps the old trust until its next
  * write or re-import. The update re-checks each page's hash, revision and empty author on the row it locks, so a write
  * that lands while the backfill runs is never stamped with the eligibility of the revision it replaced.
  */
-export const CONTENT_AUTHOR_BACKFILL_SQL = `WITH remote_pages AS MATERIALIZED (
-  SELECT DISTINCT r.source_id, r.slug FROM persistence_requests r
+export const CONTENT_AUTHOR_BACKFILL_SQL = `WITH remote_requests AS MATERIALIZED (
+  SELECT r.source_id, r.slug, r.page_id FROM persistence_requests r
    WHERE r.principal_kind IN (${list(REMOTE_PRINCIPAL_KINDS)}) AND r.state = 'committed' AND r.operation NOT IN (${list(METADATA_OPERATIONS)})
      AND (r.outcome->>'noop') IS DISTINCT FROM 'true'
 ), remote_versions AS MATERIALIZED (
-  SELECT DISTINCT v.page_id FROM page_versions v LEFT JOIN persistence_requests r ON r.id = v.write_request_id
+  SELECT v.page_id FROM page_versions v LEFT JOIN persistence_requests r ON r.id = v.write_request_id
    WHERE v.write_principal_kind IN (${list(REMOTE_PRINCIPAL_KINDS)}) AND (r.id IS NULL OR r.operation NOT IN (${list(METADATA_OPERATIONS)}))
+  UNION
+  SELECT v.page_id FROM page_versions v LEFT JOIN persistence_requests r ON r.id = v.archived_write_request_id
+   WHERE v.archived_principal_kind IN (${list(REMOTE_PRINCIPAL_KINDS)}) AND (r.id IS NULL OR r.operation NOT IN (${list(METADATA_OPERATIONS)}))
 ), candidates AS MATERIALIZED (
-  SELECT p.id, p.content_hash AS hash, p.knowledge_revision AS revision, r.id AS request_id, r.principal_kind, r.operation, r.intent, p.revision_write_request_id, p.revision_principal_kind,
+  SELECT p.id, p.content_hash AS hash, p.knowledge_revision AS revision, r.id AS request_id, r.principal_kind, r.operation,
+         r.intent IS NOT NULL AS has_intent, r.intent->>'ingested_via' AS intent_via, r.intent->>'kind' AS intent_kind, p.revision_write_request_id, p.revision_principal_kind,
          p.ingested_at >= p.updated_at AS untouched,
          CASE WHEN p.ingested_via IN (${list(TRUSTED_IMPORTER_VIAS)}) THEN p.ingested_via
               WHEN p.ingested_via IS NULL AND s.config->>'kind' IN (${list(CONNECTOR_AUTHOR_KINDS)}) THEN '${CONNECTOR_AUTHOR_PREFIX}' || (s.config->>'kind') END AS base,
@@ -101,16 +115,18 @@ export const CONTENT_AUTHOR_BACKFILL_SQL = `WITH remote_pages AS MATERIALIZED (
     FROM pages p JOIN sources s ON s.id = p.source_id
     LEFT JOIN persistence_requests r ON r.id = p.revision_write_request_id
    WHERE p.content_author IS NULL AND p.content_hash IS NOT NULL
+     AND (p.ingested_via IN (${list(TRUSTED_IMPORTER_VIAS)}) OR s.config->>'kind' IN (${list(CONNECTOR_AUTHOR_KINDS)}) OR r.intent->>'ingested_via' IN (${list(TRUSTED_IMPORTER_VIAS)}))
      AND (p.revision_principal_kind IS NULL OR p.revision_principal_kind NOT IN (${list(REMOTE_PRINCIPAL_KINDS)}))
-     AND NOT EXISTS (SELECT 1 FROM remote_pages x WHERE x.source_id = p.source_id AND x.slug = p.slug)
+     AND NOT EXISTS (SELECT 1 FROM remote_requests x WHERE x.page_id = p.id OR (x.source_id = p.source_id AND x.slug = p.slug))
      AND NOT EXISTS (SELECT 1 FROM remote_versions x WHERE x.page_id = p.id)
 ), legacy AS (
   SELECT c.id, c.hash, c.revision, CASE
       WHEN c.request_id IS NOT NULL AND c.principal_kind IS DISTINCT FROM 'local_cli' THEN NULL
-      WHEN c.request_id IS NOT NULL AND c.intent->>'ingested_via' IN (${list(TRUSTED_IMPORTER_VIAS)}) THEN c.intent->>'ingested_via'
-      WHEN c.request_id IS NOT NULL AND c.operation = 'submit_job' AND c.intent->>'kind' = 'connector_v2_import' AND c.connector_source
+      WHEN c.request_id IS NOT NULL AND c.intent_via IN (${list(TRUSTED_IMPORTER_VIAS)}) THEN c.intent_via
+      WHEN c.request_id IS NOT NULL AND c.operation = 'submit_job' AND c.intent_kind = 'connector_v2_import' AND c.connector_source
         THEN '${CONNECTOR_AUTHOR_PREFIX}' || c.kind
-      WHEN c.request_id IS NOT NULL AND c.intent IS NOT NULL AND c.operation NOT IN (${list(METADATA_OPERATIONS)}) THEN NULL
+      WHEN c.request_id IS NOT NULL AND c.has_intent AND c.operation NOT IN (${list(METADATA_OPERATIONS)}) THEN NULL
+      WHEN c.request_id IS NOT NULL AND c.operation NOT IN (${list([...METADATA_OPERATIONS, ...IMPORT_OPERATIONS])}) THEN NULL
       WHEN c.request_id IS NULL AND c.revision_write_request_id IS NOT NULL
         THEN CASE WHEN c.revision_principal_kind IS NOT DISTINCT FROM 'local_cli' THEN c.base END
       WHEN c.request_id IS NULL AND c.untouched THEN c.base
