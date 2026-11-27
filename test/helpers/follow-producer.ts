@@ -261,3 +261,58 @@ export async function nestedFollowedWritesStayInTheirSavepoint(primary: BrainEng
   if (ms > 1_500) throw new Error(`a write inside a nested transaction waited on that transaction (${ms} ms)`);
   if (h.batches.flatMap((b) => b.items).some((i) => i.kind === 'relation' && i.reason === 'pre_read_busy')) throw new Error('a nested write was planned pre_read_busy');
 }
+
+/** Writes keep their submission order while a sibling nested transaction runs: an unset sent before a set of the same key never lands after it. */
+export async function writesKeepOrderBesideNestedTransaction(primary: BrainEngine): Promise<void> {
+  const h = followHarness(primary);
+  await primary.setConfig('test.follow.order', 'first');
+  let release!: () => void; const latch = new Promise<void>((r) => { release = r; });
+  await h.engine.transaction(async (tx) => {
+    const sibling = tx.transaction(async (nested) => { await latch; await nested.getConfig('test.follow.order'); });
+    const unset = tx.unsetConfig('test.follow.order');
+    await new Promise((r) => setTimeout(r, 20));
+    const set = tx.setConfig('test.follow.order', 'replacement');
+    setTimeout(release, 50);
+    await Promise.all([sibling, unset, set]);
+  });
+  const [row] = await primary.executeRaw<{ value: string }>("SELECT value FROM config WHERE key = 'test.follow.order'");
+  if (row?.value !== 'replacement') throw new Error(`the unset landed after the later set (value ${JSON.stringify(row?.value)})`);
+}
+
+/**
+ * A statement sent straight to the transaction's driver handle (`tx.sql` on Postgres, `tx.db` on PGLite) while a sibling's shadow pre-read fails:
+ * the failed read must not undo it, and the follower must see its table, as it does for the same statement sent through `executeRaw`.
+ */
+export async function driverWriteSurvivesFailedPreRead(primary: BrainEngine): Promise<void> {
+  const proto = Object.getPrototypeOf(primary) as Record<string, unknown>;
+  proto.testBadPreRead = async () => undefined;
+  // The failing pre-read is on another table, so the follower's pages item can only come from the driver writes (items on one table merge).
+  WRITE_MAP.testBadPreRead = { tables: ['tags'], plan: () => [{ relation: 'tags', sel: { tag: 'driver' }, del: true }] };
+  restorers.push(() => { delete proto.testBadPreRead; delete WRITE_MAP.testBadPreRead; });
+  const h = followHarness(primary, { preReadSql: 'SELECT 1/(extract(epoch FROM clock_timestamp()) * 0)::int FROM pg_sleep(0.3)' });
+  await primary.putPage('people/driver', PAGE('Driver'));
+  await primary.putPage('people/driver-two', PAGE('Driver Two'));
+  await h.engine.transaction(async (tx) => {
+    const driver = (tx as unknown as { sql?: any; db?: any });
+    const send = (text: string): Promise<unknown> => (primary.kind === 'postgres' ? driver.sql.unsafe(text) : driver.db.query(text));
+    await Promise.all([
+      (tx as unknown as { testBadPreRead(): Promise<void> }).testBadPreRead(),
+      (async () => { // sent once the pre-read has opened its savepoint
+        await new Promise((r) => setTimeout(r, 50));
+        await send("UPDATE pages SET title = 'Driver Write' WHERE slug = 'people/driver'");
+      })(),
+      (async () => {
+        await new Promise((r) => setTimeout(r, 60));
+        if (primary.kind === 'postgres') await driver.sql`UPDATE pages SET title = ${'Tagged Write'} WHERE slug = ${'people/driver-two'}`;
+        else await driver.db.query('UPDATE pages SET title = $1 WHERE slug = $2', ['Tagged Write', 'people/driver-two']);
+      })(),
+    ]);
+  });
+  const lost = [
+    ...((await primary.getPage('people/driver'))?.title === 'Driver Write' ? [] : ['the driver page update']),
+    ...((await primary.getPage('people/driver-two'))?.title === 'Tagged Write' ? [] : ['the parameterized driver update']),
+  ];
+  if (lost.length) throw new Error(`the failed shadow pre-read rolled back driver writes that reported success: ${lost.join(', ')}`);
+  const items = h.batches.flatMap((b) => b.items);
+  if (!items.some((i) => i.kind === 'relation' && i.relation === 'pages' && i.reason === 'raw_sql')) throw new Error(`the follower did not see the driver writes: ${JSON.stringify(items)}`);
+}
