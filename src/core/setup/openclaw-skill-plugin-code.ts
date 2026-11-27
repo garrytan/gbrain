@@ -540,7 +540,7 @@ async function resolveTurn(event, ctx, opts) {
   const reset = resetNext.delete(sessionKey);
   const input = { message: text, session_id: sessionKey, harness: 'openclaw', top_k: Number.isInteger(a.top_k) ? a.top_k : 3, exclude: [...new Set([...pinIds, ...briefIds])].slice(0, 64), shadow: arm !== 'live', ...(typeof a.top_gate === 'number' ? { top_gate: a.top_gate } : {}), ...(reset ? { reset_session: true } : {}) };
   const reply = await ask(w, { type: 'resolve', input, catalog: a.catalog, deadlineMs: DEADLINE_MS - 5, floor: a.min_match || null, dirs: a.skill_dirs || [], readRoot: readRootOf(a),
-    audience: tier === 'owner' ? 'owner' : 'others', hidden: [...(Array.isArray(a.exclude_ids) ? a.exclude_ids : []), ...(tier !== 'owner' && Array.isArray(a.owner_skill_ids) ? a.owner_skill_ids : [])] });
+    audience: tier === 'owner' ? 'owner' : 'others', hidden: [...(Array.isArray(a.exclude_ids) ? a.exclude_ids : []), ...(tier !== 'owner' && Array.isArray(a.owner_skill_ids) ? [...a.owner_skill_ids, ...Object.keys(a.skill_files || {}).filter((id) => a.owner_skill_ids.some((n) => id.endsWith(':' + n)))] : [])] });
   if (reply.late) {
     if (reset) resetNext.add(sessionKey);
     timeouts += 1;

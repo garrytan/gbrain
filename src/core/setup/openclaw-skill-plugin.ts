@@ -323,6 +323,10 @@ export function sourceOfPath(path: string, roots: readonly OpenclawSkillRoot[]):
   return roots.find((r) => within(path, realOr(r.dir)))?.source ?? null;
 }
 
+function ownerHiddenIds(names: readonly string[], ids: Iterable<string>): string[] {
+  return [...new Set([...names, ...[...ids].filter((id) => names.some((n) => id.endsWith(':' + n)))])];
+}
+
 function catalogBuiltAt(home: string, catalog: string): string | null {
   // silent-read-ok: no readable receipt records no build, and the loader withholds conversation pins once a receipt with a build appears
   try { const at = JSON.parse(readFileSync(join(skillIndexRoot(home), catalog, 'receipt.json'), 'utf8'))?.build?.built_at; return typeof at === 'string' ? at : null; } catch { return null; }
@@ -554,7 +558,7 @@ export async function syncOpenclawSkillPlugin(opts: OpenclawSkillSyncOptions): P
     const builtAt = catalogBuiltAt(home, catalog);
     const pins = dryRun ? none : pinnedBlockFor(home, catalog, 'openclaw', root, { cls: 'owner', hidden });
     const ownerSkills = [...new Set([...(before?.owner_skill_ids ?? []), ...(tune.owner_skills_add ?? [])])].filter((n) => !(tune.owner_skills_remove ?? []).includes(n)).sort();
-    const talk = dryRun ? none : pinnedBlockFor(home, catalog, 'openclaw', root, { cls: 'conversation', hidden: [...hidden, ...ownerSkills] });
+    const talk = dryRun ? none : pinnedBlockFor(home, catalog, 'openclaw', root, { cls: 'conversation', hidden: [...hidden, ...ownerHiddenIds(ownerSkills, files.keys())] });
     const brief = dryRun ? none : pinnedBlockFor(home, catalog, 'openclaw', root, { cls: 'owner', hidden, brief: true });
     const rule = (key: 'operator_rule' | 'conversation_operator_rule') => {
       const v = tune[key] ?? before?.[key];
@@ -574,7 +578,7 @@ export async function syncOpenclawSkillPlugin(opts: OpenclawSkillSyncOptions): P
       brief_block: brief.block, brief_ids: brief.ids, ...rule('operator_rule'), ...rule('conversation_operator_rule'), ...(requireOwner ? { require_owner_sender: true } : {}),
       ...(ownerSkills.length ? { owner_skill_ids: ownerSkills } : {}),
     };
-    const absent = ownerSkills.filter((n) => !files.has(n));
+    const absent = ownerSkills.filter((n) => !ownerHiddenIds([n], files.keys()).some((x) => files.has(x)));
     if (absent.length) out.notes.push(`agent ${id}: owner-only skill name(s) not in ${catalog}, kept so they stay owner-only once installed: ${someNames(absent)}`);
     if (openclawOwnerUnverified(id, agents[id]!)) out.notes.push(`agent ${id}: OpenClaw puts every direct message on this agent's main session (session.dmScope main) and no --owner-sender is set, so unless OpenClaw sends a memory audience, anyone who messages the agent directly gets the owner's pins, brief, operator rule and owner-only suggestions. Fix: ${ownerSenderFix(id)} (your id on the channel: the bare id, for example 123456789 on Telegram, or commands.ownerAllowFrom's telegram:123456789 form), or add --require-owner-sender to treat the main session as another person's DM until one is set (skill_resolver_owner_unverified)`);
     const unknown = [...new Set([...pins.unknown, ...talk.unknown, ...brief.unknown])];
@@ -668,7 +672,7 @@ export function refreshOpenclawPins(home: string): string[] {
     const root = readRootFor(a.path_reads, a.workspace_dir);
     const builtAt = catalogBuiltAt(home, a.catalog);
     const pins = pinnedBlockFor(home, a.catalog, 'openclaw', root, { cls: 'owner', hidden });
-    const talk = pinnedBlockFor(home, a.catalog, 'openclaw', root, { cls: 'conversation', hidden: [...hidden, ...(a.owner_skill_ids ?? [])] });
+    const talk = pinnedBlockFor(home, a.catalog, 'openclaw', root, { cls: 'conversation', hidden: [...hidden, ...ownerHiddenIds(a.owner_skill_ids ?? [], Object.keys(a.skill_files ?? {}))] });
     const brief = pinnedBlockFor(home, a.catalog, 'openclaw', root, { cls: 'owner', hidden, brief: true });
     if (pins.block === a.pinned_block && JSON.stringify(pins.ids) === JSON.stringify(a.pinned_ids)
       && talk.block === (a.conversation_pinned_block ?? '') && JSON.stringify(talk.ids) === JSON.stringify(a.conversation_pinned_ids ?? [])

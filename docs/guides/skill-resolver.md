@@ -357,7 +357,8 @@ on its next turn, so no OpenClaw command runs and the gateway does not reload:
   `--no-require-owner-sender` turns it off. It is off by default, so an
   existing single-user install keeps treating its main session as the owner's.
 - `--owner-skill <name>` (repeatable): keep a skill to the owner's sessions by
-  name, whatever copy OpenClaw loads. Use it when a host-local copy in the
+  name, whatever copy OpenClaw loads (a bare name also covers a plugin's
+  namespaced copy, such as `acme-tools:<name>`). Use it when a host-local copy in the
   agent's workspace overrides a shared copy and lacks `audience: owner` in its
   front matter: the name is never suggested or pinned in a conversation, and
   gbrain never edits the host's skill files. Each run adds to the agent's

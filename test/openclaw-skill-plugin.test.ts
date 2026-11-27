@@ -1283,6 +1283,28 @@ describe.skipIf(!NODE)('session classes and the session-start brief', () => {
     expect(readState(b).agents.main.owner_skill_ids).toEqual(['calendar-sync']);
   });
 
+  test('--owner-skill by bare name also keeps a plugin-namespaced copy (acme-tools:ledger-review) out of conversations, in suggestions and pins, when OpenClaw lists no skills (GST-4030)', async () => {
+    const b = box();
+    const plugin = join(b.state, 'workspace', 'skills', 'acme-tools');
+    skill(plugin, 'ledger-review', 'Use when you review the household ledger');
+    mkdirSync(join(plugin, '.claude-plugin'), { recursive: true });
+    writeFileSync(join(plugin, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'acme-tools' }));
+    const r = await setup(b, ['--skill-loading', 'resolve', '--owner-skill', 'ledger-review']);
+    expectExit(r, 0);
+    expect(r.resolver.notes.join('\n')).not.toContain('owner-only skill name(s) not in');
+    await pin(b, 'acme-tools:ledger-review', '--class', 'owner,conversation');
+    expect(readState(b).agents.main.pinned_ids).toEqual(['acme-tools:ledger-review']);
+    expect(readState(b).agents.main.conversation_pinned_ids).toEqual([]);
+    const group = 'agent:main:telegram:group:-9';
+    const text = 'review the household ledger';
+    const out = drive(b, [
+      ['turn', { text, ctx: OWNER }],
+      ['turn', { text, session: group, ctx: CONVERSATION(group) }],
+    ], undefined, { DRIVE_LOG_LINES: '2' });
+    expect(JSON.stringify(out[0])).toContain('acme-tools:ledger-review');
+    expect(JSON.stringify(out[1] ?? {})).not.toContain('ledger-review');
+  });
+
   test('--owner-skill keeps a suggested skill out of conversations by name: a conversation turn never gets it, the owner still does', async () => {
     const b = box();
     expectExit(await setup(b, ['--skill-loading', 'resolve', '--owner-skill', 'email-triage']), 0);
