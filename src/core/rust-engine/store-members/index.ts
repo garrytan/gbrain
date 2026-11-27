@@ -209,6 +209,7 @@ import * as fenceCensus from './fence-census.ts';
 import * as doctorSources from './doctor-sources.ts';
 import * as sweepReads from './sweep-reads.ts';
 import * as graduationCatalog from './graduation-catalog.ts';
+import * as remediationRecords from './remediation-records.ts';
 import * as cliReadsExport from './cli-reads-export.ts';
 import * as beliefLedger from './belief-ledger.ts';
 import * as cycleReads from './cycle-reads.ts';
@@ -417,6 +418,7 @@ export const STORE_MEMBERS = {
   ...decideStore,
   // The engine graduation inventory's catalog reads, answered from the store's keyspace list (rust/docs/store/keyspaces.md).
   ...graduationCatalog,
+  ...remediationRecords,
   // The source-side reads of `gbrain migrate --to <engine>` (rust/docs/store/engine-migration.md).
   ...engineMigration,
   // The synopsis tier's configuration read (rust/docs/store/synopsis-tier.md).

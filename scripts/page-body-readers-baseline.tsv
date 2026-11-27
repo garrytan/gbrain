@@ -247,6 +247,7 @@ src/core/engine-sql/pages.ts	toDomainBankRow	field	LEAD	maps sampled rows; segme
 src/core/engine-sql/pages.ts	putPage	call:contentHash	META	hash of the incoming inline body
 src/core/engine-sql/pages.ts	putPage	field	SEGW	incoming PageInput body (a string); see putPage sql
 src/core/engine-sql/reflex-reads.ts	reflexPagesStatement	sql	LEAD	moved from context/retrieval-reflex.ts resolveEntitiesToPointers and weakTitleHits (boundedBodyPrefixSql AS compiled_truth)
+src/core/engine-sql/remediation-records.ts	REMEDIATION_RECORDS_SQL	sql	META	moved from reindex-consent.ts estimateReindexSpend, same statement: character length of inline bodies for the reindex cost estimate; a segmented page's NULL columns add nothing to the sum
 src/core/engine-sql/salience.ts	listEnrichCandidates	sql	META	
 src/core/engine-sql/search-reads.ts	generatedPagesIn	sql	LEAD	moved from search/provenance-demotion.ts readGeneratedPages (same statement, typed engine method)
 src/core/engine-sql/secret-spans-rows.ts	PAGE_SQL	sql	INLINE	inline body columns; a segmented body is read whole through materializeSegmentedBody by repair/secret-spans.ts readFields, refused page_too_large over the single-string ceiling
@@ -596,7 +597,6 @@ src/core/questions/pages.ts	readQuestionPage	field	INLINE	see sql row
 src/core/questions/refresh.ts	refreshPin	field	INLINE	owner claims of the question page (readQuestionPage asserts inline)
 src/core/questions/refresh.ts	retrieveEvidence	sql	LEAD	segmented candidate pages excluded in SQL (skip): their excerpt and laundering check need the body
 src/core/questions/refresh.ts	retrieveEvidence	field	LEAD	inline candidates only
-src/core/reindex-consent.ts	estimateReindexSpend	sql	META	
 src/core/repair/accepted-takes.ts	archivedRow	field	SEGW	inline versions only: a segmented archived version counts as version_missing (the v0.60.253.0 accept refused segmented pages, so none exists)
 src/core/repair/accepted-takes.ts	livePage	call:serializePageToMarkdown	SEGW	materializedSnapshot within the single-string ceiling; over it counts as fence_unreadable (no fences there)
 src/core/repair/agent-session-facts.ts	retireTakes	call:serializePageToMarkdown	INLINE	inline pages only: a segmented page returns before the read and its takes are kept (changed_since_preview)

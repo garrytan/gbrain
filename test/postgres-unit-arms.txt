@@ -620,6 +620,7 @@ test/engine-parity/trust-tier-reads.test.ts
 test/engine-parity/trust-withdrawals.test.ts
 test/engine-parity/trust-write-gate.test.ts
 test/engine-parity/twin-merge-rows.test.ts
+test/engine-parity/two-pass-symbol-order.test.ts
 test/engine-parity/typed-config-reads.test.ts
 test/engine-parity/unbound-claim.test.ts
 test/engine-parity/unowned-refusal-sites.test.ts

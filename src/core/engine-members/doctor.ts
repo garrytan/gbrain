@@ -3,6 +3,7 @@
  * Declarations moved verbatim out of engine.ts; `BrainEngine` extends this interface, so the member set is unchanged.
  */
 import type * as AtomBacklogSql from '../engine-sql/atom-backlog.ts';
+import type * as RemediationRecordsSql from '../engine-sql/remediation-records.ts';
 import type * as DoctorAccSql from '../engine-sql/doctor-acc.ts';
 import type * as DoctorBrainSql from '../engine-sql/doctor-brain.ts';
 import type * as DoctorCheckpointsSql from '../engine-sql/doctor-checkpoints.ts';
@@ -42,6 +43,10 @@ export interface DoctorMembers {
   readSlugRepairPage(pageId: number, sourceId: string): Promise<SlugSpellingRepairSql.SourceSlugSpellingCandidateRow | null>;
   /** The slug of page `pageId` when it belongs to `sourceId`, or null. */
   readPageSlugInSource(pageId: number, sourceId: string): Promise<string | null>;
+  /** The live markdown pages a reindex would re-chunk (chunker below `chunkerVersion` or no contextual mode), of `type` when named, and their body characters. */
+  readReindexSpendInputs(chunkerVersion: number, type: string | null): Promise<RemediationRecordsSql.ReindexSpendInputs>;
+  /** Writes one remediation step's `migration_impact_log` row. */
+  insertImpactLogRow(row: RemediationRecordsSql.ImpactLogRow): Promise<void>;
   // Doctor reads (engine-sql/doctor-reads.ts): the statements doctor checks ran through executeRaw.
 
   // Doctor reads, second set (engine-sql/doctor-derived.ts): the statements more doctor checks and their repairs ran through executeRaw.
