@@ -816,6 +816,7 @@ test/setup-serves-several.test.ts
 test/share-about-member-gst2897.test.ts
 test/shared-content-freshness.test.ts
 test/shared-skills-adoption-keeps-files.test.ts
+test/shared-skills-case-collisions.test.ts
 test/shared-skills-catalog.test.ts
 test/shared-skills-import-closure.test.ts
 test/shared-skills-retention-capacity.test.ts

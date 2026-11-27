@@ -430,6 +430,7 @@ test/shadow-replay.test.ts	review fixes (ship final review of the queued head)	4
 test/shadow-replay.test.ts	review fixes (ship pass 2)	3	readFileSync
 test/shadow-replay.test.ts	the per-brain hash key (review of 3e7a623341)	3	readFileSync
 test/shared-skills-adoption-keeps-files.test.ts	re-adoption after a reviewed SKILL.md edit (${name})	12	readFileSync
+test/shared-skills-case-collisions.test.ts	two skills cannot publish paths that collide by letter case (${name})	7	readFileSync
 test/shared-skills-catalog.test.ts	(file-level)	22	readFileSync
 test/shared-skills-export.serial.test.ts	(file-level)	15	readFileSync
 test/shared-skills-import-closure.test.ts	(file-level)	28	readFileSync
