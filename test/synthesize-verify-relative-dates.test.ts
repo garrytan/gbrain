@@ -26,4 +26,9 @@ describe('weekday direction', () => {
     expect(unsupportedNumericClaims('Shipped 2026-03-06.', [last])).toEqual([]);
     expect(unsupportedNumericClaims('Shipped 2026-03-13.', [last])).toEqual(['2026-03-13']);
   });
+  test('"last Monday" on a Monday is the prior week, not the anchor date', () => {
+    const last = groundSource('conversations/2026-03-09-sync.txt', 'Alex: we met last Monday.');
+    expect(unsupportedNumericClaims('Met 2026-03-02.', [last])).toEqual([]);
+    expect(unsupportedNumericClaims('Met 2026-03-16.', [last])).toEqual(['2026-03-16']);
+  });
 });

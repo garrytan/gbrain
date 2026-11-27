@@ -620,6 +620,9 @@ function numbersBySpeaker(content: string, turns: SpeakerTurn[]): Map<string, Se
   return statedBySpeaker(content, turns, numericFacts);
 }
 
+/** YYYY-MM-DD of an absolute UTC instant derived from a file-name date (not a "today" lookup). */
+const isoOfUtc = (ms: number): string => new Date(ms).toISOString().split('T')[0];
+
 const WEEKDAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
 
 /**
@@ -642,9 +645,9 @@ function resolvedRelativeDates(content: string, name: string): string[] {
   WEEKDAYS.forEach((w, i) => {
     const ahead = ((i - dow + 6) % 7) + 1;
     // One date per mention: "last/previous <day>" is the earlier occurrence, any other phrasing the coming one.
-    for (const m of lower.matchAll(new RegExp(`(?:\\b(last|previous)\\s+)?\\b${w}s?\\b`, 'g'))) offsets.add(m[1] ? ahead - 7 : ahead);
+    for (const m of lower.matchAll(new RegExp(`(?:\\b(last|previous)\\s+)?\\b${w}s?\\b`, 'g'))) offsets.add(m[1] ? (ahead === 7 ? -7 : ahead - 7) : ahead);
   });
-  return [...offsets].map(d => new Date(base + d * 86400000).toISOString().slice(0, 10));
+  return [...offsets].map(d => isoOfUtc(base + d * 86400000));
 }
 
 /** Prepare one transcript for verification. */
