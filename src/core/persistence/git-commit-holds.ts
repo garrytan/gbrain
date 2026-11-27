@@ -14,7 +14,7 @@ import type { Action } from '../agent-output.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { shellQuote } from '../shell-quote.ts';
 import { GIT_COMMIT_CODES } from './sync-status-sql.ts';
-import { GIT_REASONS, GIT_STEP, type GitDiagnostic, type GitReason } from './git-diagnostic.ts';
+import { storedGitDiagnostic, type GitDiagnostic } from './git-diagnostic.ts';
 import { existingHostIdFor } from './identity.ts';
 
 export interface GitCommitHold {
@@ -39,20 +39,6 @@ export interface GitCommitHold {
   fix: Action;
 }
 
-/**
- * A stored diagnostic as a fixed-shape object, so every engine prints the same bytes (jsonb reorders keys). Only the
- * phase, a plain step name and a listed reason code survive; anything else an older release stored (git's own stderr
- * line) is dropped, never printed.
- */
-function diagnostic(value: unknown): GitDiagnostic | null {
-  if (!value || typeof value !== 'object') return null;
-  const v = value as Record<string, unknown>;
-  if (typeof v.step !== 'string') return null;
-  const identity = v.identity === true || v.reason === 'identity_missing';
-  const reason: GitReason = identity ? 'identity_missing' : (GIT_REASONS as readonly unknown[]).includes(v.reason) ? v.reason as GitReason : 'other';
-  return { phase: v.phase === 'push' ? 'push' : 'commit', step: GIT_STEP.test(v.step) ? v.step : 'git', reason, ...(identity ? { identity: true as const } : {}) };
-}
-
 /** This host's id, or null when it has none yet (or the engine was opened without one). */
 function thisHost(engine: BrainEngine): string | null {
   try { return existingHostIdFor(engine)?.toLowerCase() ?? null; } catch { return null; }
@@ -65,7 +51,7 @@ export async function readGitCommitHolds(engine: BrainEngine, sourceIds?: string
   const rows = await engine.listGitPushHoldRows([...GIT_COMMIT_CODES], sourceIds ?? null);
   const host = rows.length ? thisHost(engine) : null;
   const holds = rows.map(row => {
-    const last = diagnostic(row.last_error);
+    const last = storedGitDiagnostic(row.last_error);
     const owner = row.owner_host_id ? row.owner_host_id.toLowerCase() : null;
     const owner_host: GitCommitHold['owner_host'] = !owner || !host ? 'unknown' : owner === host ? 'this_host' : 'other_host';
     // This host's own binding only: another host's path is never the target of a local command.

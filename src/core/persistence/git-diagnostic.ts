@@ -70,3 +70,17 @@ export function withGitDiagnostic<E extends object>(error: E, diagnostic: GitDia
 export function gitDiagnosticOf(error: unknown): GitDiagnostic | undefined {
   return error !== null && typeof error === 'object' ? (error as Record<string, GitDiagnostic | undefined>)[DIAGNOSTIC] : undefined;
 }
+
+/**
+ * A stored diagnostic as a fixed-shape object, so every engine prints the same bytes (jsonb reorders keys). Only the
+ * phase, a plain step name and a listed reason code survive; anything else an older release stored (git's own stderr
+ * line) is dropped, never printed. The commit holds and the push holds both read their `last_error` through it.
+ */
+export function storedGitDiagnostic(value: unknown): GitDiagnostic | null {
+  if (!value || typeof value !== 'object') return null;
+  const v = value as Record<string, unknown>;
+  if (typeof v.step !== 'string') return null;
+  const identity = v.identity === true || v.reason === 'identity_missing';
+  const reason: GitReason = identity ? 'identity_missing' : (GIT_REASONS as readonly unknown[]).includes(v.reason) ? v.reason as GitReason : 'other';
+  return { phase: v.phase === 'push' ? 'push' : 'commit', step: GIT_STEP.test(v.step) ? v.step : 'git', reason, ...(identity ? { identity: true as const } : {}) };
+}

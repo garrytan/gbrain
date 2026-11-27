@@ -210,7 +210,7 @@ test/engine-parity/links.test.ts	38	0
 test/engine-parity/list-reads.test.ts	2	0
 test/engine-parity/loop-mutes.test.ts	5	0
 test/engine-parity/managed-claims-on-rust.test.ts	6	0
-test/engine-parity/managed-git-commit-holds.test.ts	1	1
+test/engine-parity/managed-git-commit-holds.test.ts	3	2
 test/engine-parity/managed-on-rust.test.ts	12	0
 test/engine-parity/managed-recovery-on-rust.test.ts	8	0
 test/engine-parity/managed-refresh-on-rust.test.ts	5	0

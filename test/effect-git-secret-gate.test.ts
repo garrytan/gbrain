@@ -29,6 +29,7 @@ import { claimWorktree, getWorktreeBinding } from '../src/core/persistence/owner
 import { runPersistenceEffects } from '../src/core/persistence/effects.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { readSyncStatus } from '../src/core/persistence/sync-status.ts';
+import { runSyncStatus } from '../src/commands/sync/operator.ts';
 import { scanText } from '../src/core/secret-scan.ts';
 import { recordCommit, resetLedgerCacheForTests } from '../src/core/git/commit-ledger.ts';
 import { retryParkedPushes } from '../src/core/persistence/git-durability-administration.ts';
@@ -311,6 +312,15 @@ function racingGit(c: Checkout, match: string[], when: 'before' | 'after', step:
 /** The git call after which the Git effect's commit exists: the porcelain commit, or the plumbing commit's ref move. */
 const EFFECT_COMMIT = ['commit --only', 'update-ref -m commit:'];
 
+/** `gbrain sync status` text as the CLI prints it. */
+async function statusText(engine: BrainEngine, sourceId: string): Promise<string> {
+  const lines: string[] = [];
+  const log = console.log;
+  console.log = (...a: unknown[]) => { lines.push(a.join(' ')); };
+  try { await runSyncStatus(engine, ['--source', sourceId]); } finally { console.log = log; }
+  return lines.join('\n');
+}
+
 interface ManagedWrite { engine: BrainEngine; sourceId: string; worktreeId: string; runEffects: () => Promise<void>; effect: () => Promise<{ state: string; error_code: string | null }> }
 
 /** A managed source on the checkout with git durability on; `script` commits into the checkout before one page write whose Git effect is queued. */
@@ -364,11 +374,24 @@ describe('#8896 through the effect worker', () => {
       expect(hold).toMatchObject({ retrying: 1, parked: 0, codes: ['publish_secret_found'] });
       expect(hold.fix).toMatchObject({ ask_user: true, actor: 'user' });
       expect(hold.fix.user_message).toContain('look like secrets');
+      // F2a: a push hold that asks the user sets needs_human and the text prints ASK THE USER for it.
+      const status = await readSyncStatus(w.engine, w.sourceId);
+      expect({ needs_human: status.needs_human, from: status.needs_human_from, reason: status.human_reason })
+        .toEqual({ needs_human: true, from: { kind: 'git_push', code: 'publish_secret_found', root: hold.root }, reason: hold.fix.user_message });
+      // F2a: alone, the queued asking hold is not `next` (nothing for gbrain to run), and the text never says it holds nothing.
+      expect(status.next).toBeNull();
+      const text = await statusText(w.engine, w.sourceId);
+      expect(text).toContain(`\n    ASK THE USER: ${hold.fix.user_message}`);
+      expect(text).toContain('Next: nothing gbrain runs on its own; it waits on the user');
+      expect(text).not.toContain('holds nothing');
 
       writeFileSync(join(c.root, '.gbrain-scan-allow'), `${scanText(`Deploy token ${token}\n`)[0]!.fingerprint}\n`);
       await w.runEffects();
       expect(await w.effect()).toMatchObject({ state: 'committed', error_code: null });
       expect(remoteTip(c)).toBe(git(c.root, 'rev-parse', 'HEAD').trim());
+      const after = await readSyncStatus(w.engine, w.sourceId);
+      expect({ holds: after.git_push_holds, needs_human: after.needs_human, from: after.needs_human_from }).toEqual({ holds: [], needs_human: false, from: null });
+      expect(await statusText(w.engine, w.sourceId)).not.toContain('it waits on the user');
     });
   }, 180_000);
 
@@ -387,6 +410,10 @@ describe('#8896 through the effect worker', () => {
       const hold = (await readSyncStatus(w.engine, w.sourceId)).git_push_holds[0]!;
       expect(hold).toMatchObject({ retrying: 1, parked: 0, codes: ['publish_scan_unreadable'] });
       expect(hold.fix).toMatchObject({ ask_user: true, actor: 'user', argv: ['git', '-C', c.root, 'fsck'] });
+      const status = await readSyncStatus(w.engine, w.sourceId);
+      expect({ needs_human: status.needs_human, from: status.needs_human_from })
+        .toEqual({ needs_human: true, from: { kind: 'git_push', code: 'publish_scan_unreadable', root: hold.root } });
+      expect(await statusText(w.engine, w.sourceId)).toContain(`\n    ASK THE USER: ${hold.fix.user_message}`);
 
       writeFileSync(join(c.home, 'restored.txt'), 'plain text\n');
       git(c.root, 'hash-object', '-w', join(c.home, 'restored.txt'));

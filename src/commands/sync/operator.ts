@@ -12,7 +12,7 @@ import type { BrainEngine } from '../../core/engine.ts';
 import { cliRenderContext, renderAction } from '../../core/agent-output.ts';
 import { writeJsonDocument } from '../../core/cli-force-exit.ts';
 import { opError } from '../../core/ops/contract.ts';
-import { readSyncStatus, unblockSync, type SyncStatus, type SyncStatusHold } from '../../core/persistence/sync-status.ts';
+import { askingHolds, readSyncStatus, unblockSync, type SyncStatus, type SyncStatusHold } from '../../core/persistence/sync-status.ts';
 import { gitCommitHoldLine } from '../../core/persistence/git-commit-holds.ts';
 import { pageSortedRows, topCounts } from '../../core/bounded-listing.ts';
 import { nextListingCommand, parseListingFlags } from '../../core/bounded-listing-cli.ts';
@@ -281,8 +281,10 @@ export async function runSyncStatus(engine: BrainEngine, args: string[]): Promis
       + `${landing.gaps ? ` (${Object.entries(landing.by_state).map(([state, n]) => `${state} ${n}`).join(', ')})` : ''}`);
     for (const page of landing.pages) console.log(`    ${page.slug}: ${page.state}, synced ${page.age_seconds} s ago${page.fix?.argv ? `; fix: ${page.fix.argv.join(' ')}` : ''}`);
   } else if (landing) console.log(`  synced but not searchable: ${landing.status} (${landing.reason})`);
-  for (const hold of status.fence_holds) console.log(`  ${hold.kind} held (${hold.reason}) on ${hold.slug}: ${hold.rows} row(s) kept live; ASK THE USER: ${hold.fix.user_message ?? hold.fix.why}`);
-  for (const hold of status.git_push_holds) console.log(`  git backups not pushed: ${hold.retrying} retrying, ${hold.parked} parked (${hold.codes.join(', ')}) since ${hold.oldest_at}${hold.conflict ? `; CONFLICT in ${hold.conflict.paths.join(', ')} needs a person` : ''}`);
+  // F2a: ASK THE USER appears for exactly the holds askingHolds lists (fix.ask_user), the same ones that set needs_human.
+  for (const hold of status.fence_holds) console.log(`  ${hold.kind} held (${hold.reason}) on ${hold.slug}: ${hold.rows} row(s) kept live; ${hold.fix.ask_user ? 'ASK THE USER' : 'fix'}: ${hold.fix.user_message ?? hold.fix.why}`);
+  for (const hold of status.git_push_holds) console.log(`  git backups not pushed: ${hold.retrying} retrying, ${hold.parked} parked (${hold.codes.join(', ')}) since ${hold.oldest_at}${hold.last_error ? ` at step ${hold.last_error.step} (reason: ${hold.last_error.reason})` : ''}${hold.conflict ? `; CONFLICT in ${hold.conflict.paths.join(', ')} needs a person` : ''}`
+    + (hold.fix.ask_user ? `\n    ASK THE USER: ${hold.fix.user_message}` : ''));
   for (const hold of status.git_commit_holds) {
     const fix = renderAction(hold.fix, ctx);
     // GCH-06: an identity fix is the user's answer; its argv only reads which identity the checkout sees.
@@ -293,7 +295,9 @@ export async function runSyncStatus(engine: BrainEngine, args: string[]): Promis
   if (connector) console.log(`  connector: ${connector.stopped ? 'STOPPED, ' : ''}the last ${connector.consecutive} run(s) ended on ${connector.code}${connector.slug ? ` at ${connector.slug}` : ''}: ${connector.message}`);
   for (const notice of notices) console.log(`  [gbrain notice ${notice.code}] ${notice.why}`);
   if (rendered.next) console.log(`  Next: ${rendered.next.command ?? rendered.next.argv?.join(' ')}\n  Why: ${rendered.next.why}`
-    + (status.git_commit_holds.some(hold => hold.fix.ask_user && hold.fix.user_message === status.next?.user_message) ? `\n  ASK THE USER: ${status.next?.user_message}` : ''));
+    + (askingHolds(status).some(ask => ask.fix.user_message === status.next?.user_message) ? `\n  ASK THE USER: ${status.next?.user_message}` : ''));
+  // F2a: with no step for gbrain to run, a listed hold that asks the user still waits on a person: never "holds nothing".
+  else if (askingHolds(status).length) console.log('  Next: nothing gbrain runs on its own; it waits on the user (ASK THE USER above). Nothing moves until they answer.');
   else console.log('  Next: nothing; the source is synced and holds nothing.');
 }
 

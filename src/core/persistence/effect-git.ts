@@ -11,6 +11,7 @@ import { adoptedBy, type GitCommitNote } from './effect-model.ts';
 import { persistenceHome } from './identity.ts';
 import { nativeFileTarget } from './native-file-target.ts';
 import { gitChildEnv, literalPathspecs } from '../git-env.ts';
+import { shellQuote } from '../shell-quote.ts';
 import type { Action } from '../agent-output.ts';
 import type { NativeLockHandle } from './native-lock.ts';
 import { proveIndexLockAbandoned, reclaimIndexLock, type IndexLockReclaim } from './index-lock-reclaim.ts';
@@ -638,8 +639,8 @@ export function fileDigests(path: string, objectFormat: string): string | null {
  * #7089: whether `root`'s branch has commits its upstream (the local remote-tracking ref, never fetched) lacks; false
  * without an upstream. A Git effect whose target is absent asks this before completing: its removal may have been
  * committed by an earlier attempt whose push failed, and only a root that is ahead owes a push.
- * GCH-03: false only when there is no upstream to push to (none configured, a detached HEAD, or a tracking ref never
- * fetched). When the upstream resolves but git cannot count past it (a damaged ref or object), or a step does not
+ * GCH-03: false only when there is no upstream to push to (none configured, or a detached HEAD). GCH-03a: an upstream
+ * that is configured but has no tracking ref (pruned, or never fetched) answers true, so the guarded push decides. When the upstream resolves but git cannot count past it (a damaged ref or object), or a step does not
  * finish, the answer is unknown, so this throws `git_push_unavailable` with the push phase: the effect stays a push
  * hold and retries, never completes without its push and never reads as a commit that was not made.
  */
@@ -649,12 +650,26 @@ export async function gitRootAhead(root: string, signal?: AbortSignal): Promise<
       const count = await git(session, ['rev-list', '--count', '@{upstream}..HEAD']);
       if (count.code === 0) return Number(count.stdout.trim()) > 0;
       const upstream = await git(session, ['rev-parse', '--symbolic-full-name', '@{upstream}']);
-      if (upstream.code !== 0) return false;
+      // GCH-03a: an upstream that is configured but has no tracking ref here (pruned after a failed push, or never
+      // fetched) may still owe a push, so it counts as ahead and pushGitRoot decides (ls-remote, scan, push or hold).
+      if (upstream.code !== 0) return configuredUpstream(session);
       throw withGitDiagnostic(opError('git_push_unavailable', 'Cannot tell whether the canonical checkout has commits its upstream lacks; its push will retry.',
         `git rev-list could not count the commits past the checkout's upstream ${upstream.stdout.trim()}, so gbrain does not know whether a commit still owes a push. Nothing is lost locally and the worker tries again on a later pass. If it keeps failing, check the checkout with git status and git fsck on the brain host.`,
         { fix: effectStatusFix }), gitDiagnostic('push', 'rev-list', count.stderr));
     });
   } catch (error) { throw pushPhaseFailure(error); }
+}
+
+/**
+ * GCH-03a: whether the current branch names an upstream to push to, read as pushCommittedRoot reads it
+ * (`branch.<name>.remote` and `branch.<name>.merge`, a remote other than `.`); false on a detached HEAD.
+ */
+async function configuredUpstream(session: GitSession): Promise<boolean> {
+  const branch = await git(session, ['symbolic-ref', '--quiet', '--short', 'HEAD']);
+  if (branch.code !== 0) return false;
+  const remote = await git(session, ['config', '--get', `branch.${branch.stdout.trim()}.remote`]);
+  const merge = await git(session, ['config', '--get', `branch.${branch.stdout.trim()}.merge`]);
+  return remote.code === 0 && merge.code === 0 && !!remote.stdout.trim() && remote.stdout.trim() !== '.' && !!merge.stdout.trim();
 }
 
 /** Git's refusal of a push because the remote branch moved (LC_ALL=C keeps it untranslated). */
@@ -816,9 +831,12 @@ async function publishKeepingCheckout(root: string, signal?: AbortSignal, head?:
       { ...(typeof doc.detail === 'string' ? { detail: doc.detail } : {}), ...(doc.fix ? { fix: doc.fix as Action } : {}), retryable: doc.retryable === true });
     throw error.code === 'integrate_conflict' ? heldConflict(root, error) : error.code === 'publish_secret_found' || error.code === 'publish_scan_unreadable' ? heldSecret(root, error) : error;
   }
-  throw opError('push_unconfirmed', 'The canonical commit is durable locally; its push will retry.',
-    `The remote branch moved and the keep-checkout publish did not report a push (${child.error ? `exit ${String(child.error.code ?? child.error.signal ?? 'unknown')}` : `outcome ${String(doc?.outcome ?? 'unreadable')}`}: ${child.stderr.trim().slice(0, 300) || 'no detail'}). Nothing is lost locally; the worker pushes again on a later pass.`,
-    { fix: effectStatusFix, retryable: true });
+  // a7689d79: the child's stderr can carry a token, a private path or a URL password, so it is read once, in memory, for
+  // a reason code (git-diagnostic.ts) and never copied into the message, the stored effect or sync status.
+  const diagnostic = gitDiagnostic('push', 'commit-push', child.stderr);
+  throw withGitDiagnostic(opError('push_unconfirmed', 'The canonical commit is durable locally; its push will retry.',
+    `The remote branch moved and the keep-checkout publish did not report a push (${child.error ? `exit ${String(child.error.code ?? child.error.signal ?? 'unknown')}` : `outcome ${String(doc?.outcome ?? 'unreadable')}`}, reason ${diagnostic.reason}). Nothing is lost locally; the worker pushes again on a later pass. To see git's own words, run gbrain git commit-push --push-only --keep-checkout --scan-secrets --path ${shellQuote(root)} on the brain host.`,
+    { fix: effectStatusFix, retryable: true }), diagnostic);
 }
 
 /**

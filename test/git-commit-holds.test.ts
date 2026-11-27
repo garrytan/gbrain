@@ -26,6 +26,7 @@ import * as gitDiagnosticModule from '../src/core/persistence/git-diagnostic.ts'
 import { gitCommitHoldLine, readGitCommitHolds } from '../src/core/persistence/git-commit-holds.ts';
 import { gitFailure, pushPhaseFailure } from '../src/core/persistence/effect-git.ts';
 import { setEngineHostId } from '../src/core/persistence/identity.ts';
+import { readGitPushHolds } from '../src/core/persistence/git-push-holds.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 
@@ -117,6 +118,25 @@ describe('GCH-01: a stored diagnostic reads back in a fixed shape', () => {
     expect(Object.keys(legacyIdentity!.last_error!)).toEqual(['phase', 'step', 'reason', 'identity']);
     const [unlisted] = await holds(row({ last_error: { phase: 'commit', step: '$(boom)', reason: 'made up' } }));
     expect(unlisted!.last_error).toEqual({ phase: 'commit', step: 'git', reason: 'other' });
+  });
+});
+
+describe('F1 (slice 4): a push hold carries the same fixed-shape diagnostic', () => {
+  const pushHolds = async (...rows: Array<Record<string, unknown>>) => {
+    const engine = { listGitPushHoldRows: async () => rows } as unknown as BrainEngine;
+    setEngineHostId(engine, HOST);
+    return readGitPushHolds(engine);
+  };
+  test('a classified push failure keeps its step and reason; a legacy line is dropped; a row with none reads null', async () => {
+    const [classified] = await pushHolds(row({ codes: ['push_unconfirmed'], root: null, last_error: { reason: 'auth_failed', step: 'commit-push', phase: 'push' } }));
+    expect(classified!.last_error).toEqual({ phase: 'push', step: 'commit-push', reason: 'auth_failed' });
+    expect(Object.keys(classified!.last_error!)).toEqual(['phase', 'step', 'reason']);
+    const [legacy] = await pushHolds(row({ codes: ['git_push_unavailable'], root: null,
+      last_error: { phase: 'push', step: 'push', line: "fatal: unable to access 'https://alice-example:pa/ss@git.example.invalid/' sk_live_8fJ2kQ9xZ7vP3mN1" } }));
+    expect(legacy!.last_error).toEqual({ phase: 'push', step: 'push', reason: 'other' });
+    expect(JSON.stringify(legacy)).not.toMatch(/sk_live_|pa\/ss|alice-example|git\.example/);
+    const [none] = await pushHolds(row({ codes: ['git_push_unavailable'], root: null, last_error: null }));
+    expect(none!.last_error).toBeNull();
   });
 });
 
