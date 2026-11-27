@@ -53,10 +53,10 @@ test/engine-parity/collate-core-page-lists.test.ts	16	1
 test/engine-parity/collate-doctor-access.test.ts	11	0
 test/engine-parity/collate-doctor-persistence.test.ts	14	3
 test/engine-parity/collate-doctor.test.ts	9	1
-test/engine-parity/collate-engine-sql.test.ts	32	3
+test/engine-parity/collate-engine-sql.test.ts	35	0
 test/engine-parity/collate-facts-home.test.ts	1	0
 test/engine-parity/collate-ontology-config.test.ts	4	1
-test/engine-parity/collate-outputs.test.ts	5	2
+test/engine-parity/collate-outputs.test.ts	7	0
 test/engine-parity/collate-persistence-a.test.ts	16	7
 test/engine-parity/collate-persistence-b.test.ts	14	10
 test/engine-parity/collate-referrer-ties.test.ts	3	0
