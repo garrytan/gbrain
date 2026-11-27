@@ -841,7 +841,7 @@ fn c16_format_upgrade_runs_once_under_concurrent_openers() {
     assert_eq!(live.len(), 1, "one opener wins a single-writer brain");
     assert_eq!(
         (live[0].brain_id(), live[0].count_pages(None).unwrap()),
-        (id.as_str(), pages)
+        (id.clone(), pages)
     );
 }
 
@@ -870,7 +870,7 @@ fn c16_format_upgrade_runs_once_under_concurrent_openers_multi_writer() {
         errors.is_empty(),
         "a concurrent opener was refused: {errors:?}"
     );
-    let ids: BTreeSet<&str> = opened.iter().flatten().map(|s| s.brain_id()).collect();
+    let ids: BTreeSet<String> = opened.iter().flatten().map(|s| s.brain_id()).collect();
     assert_eq!(ids.len(), 1);
 }
 
