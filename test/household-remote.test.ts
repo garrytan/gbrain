@@ -414,8 +414,8 @@ describe('household privacy over remote MCP', () => {
     }
   });
 
-  test('a remote household_add with a role for a new subject writes both the subject and the record (follow-up review)', async () => {
-    const out = await remote(ADULT, 'household_add', { kind: 'supply', title: 'Newbie glue', cadence: '30d', about: ['people/newbie-example'], about_role: 'adult' });
+  test('the owner\'s remote household_add with a role for a new subject writes both the subject and the record (follow-up review)', async () => {
+    const out = await remote(OWNER, 'household_add', { kind: 'supply', title: 'Newbie glue', cadence: '30d', about: ['people/newbie-example'], about_role: 'adult' });
     expect(out.isError).toBe(false);
     expect((await engine.getPage('people/newbie-example'))!.frontmatter.household_role).toBe('adult');
     expect((await engine.getPage(out.json.slug))!.frontmatter.household_audience).toBe('shared');
@@ -485,6 +485,53 @@ describe('household privacy over remote MCP', () => {
     await local('put_page', { slug: 'people/ivy-example', content: md({ type: 'person', title: 'ivy-example', household_role: 'adult' }, 'Ivy.') });
     await importFromContent(engine, 'people/ivy-example', md({ type: 'person', title: 'ivy-example', household_role: 'child' }, 'Ivy.'), { sourceId: 'default', noEmbed: true });
     expect((await engine.getPage('people/ivy-example'))!.frontmatter.household_role).toBe('child');
+  });
+
+  test('a remote non-owner cannot delete a subject, with one refusal whatever records exist (W1a follow-up)', async () => {
+    for (const who of ['dana', 'eli', 'fay']) await local('put_page', { slug: 'people/' + who + '-example', content: md({ type: 'person', title: who + '-example', household_role: 'adult' }, who + '.') });
+    const hidden = await local('household_add', { kind: 'supply', title: 'Eli snacks', cadence: '30d', about: ['people/eli-example'] });
+    const page = await engine.getPage(hidden.slug);
+    const { revision } = await local('get_page', { slug: hidden.slug });
+    await local('put_page', { slug: hidden.slug, expected_revision: revision, content: md({ title: page!.title, ...page!.frontmatter, readable_by: [OWNER] }, page!.compiled_truth) });
+    for (const title of ['Fay snacks', 'Fay paints']) await local('household_add', { kind: 'supply', title, cadence: '30d', about: ['people/fay-example'] });
+    __resetPrivateVisibilityCacheForTests();
+    const strip = (out: { json: any }, who: string) => JSON.stringify({ code: out.json.code, message: out.json.message, fix: out.json.fix }).replaceAll(who + '-example', 'X');
+    const out = await Promise.all(['dana', 'eli', 'fay'].map(async who => strip(await remote(ADULT, 'delete_page', { slug: 'people/' + who + '-example', expected_revision: (await local('get_page', { slug: 'people/' + who + '-example' })).revision }), who)));
+    expect(out[0]).toContain('household_reclassify');
+    expect(out[0]).not.toMatch(/\d+ household record/);
+    expect(out[1]).toBe(out[0]);
+    expect(out[2]).toBe(out[0]);
+    for (const who of ['dana', 'eli', 'fay']) expect(await engine.getPage('people/' + who + '-example')).not.toBeNull();
+    const upper = await remote(ADULT, 'delete_page', { slug: 'People/Dana-Example', expected_revision: (await local('get_page', { slug: 'people/dana-example' })).revision });
+    expect(upper.text).toContain('household_reclassify');
+    expect(await engine.getPage('people/dana-example')).not.toBeNull();
+    const dana = await remote(OWNER, 'delete_page', { slug: 'people/dana-example', expected_revision: (await local('get_page', { slug: 'people/dana-example' })).revision });
+    expect(dana.isError, dana.text).toBe(false);
+  });
+
+  test('a remote non-owner giving a subject a role gets one refusal whether or not hidden records name it (W1a follow-up, option A)', async () => {
+    const hidden = await local('household_add', { kind: 'supply', title: 'Gus snacks', cadence: '30d', about: ['people/gus-example'] });
+    const page = await engine.getPage(hidden.slug);
+    const { revision } = await local('get_page', { slug: hidden.slug });
+    await local('put_page', { slug: hidden.slug, expected_revision: revision, content: md({ title: page!.title, ...page!.frontmatter, readable_by: [OWNER] }, page!.compiled_truth) });
+    __resetPrivateVisibilityCacheForTests();
+    const strip = (out: { json: any }, who: string) => JSON.stringify({ code: out.json.code, message: out.json.message, fix: out.json.fix }).replaceAll(who + '-example', 'X');
+    const put = await Promise.all(['gus', 'hal'].map(async who => strip(await remote(ADULT, 'put_page', { slug: 'people/' + who + '-example', content: md({ type: 'person', title: who + '-example', household_role: 'adult' }, who + '.') }), who)));
+    expect(put[0]).toContain('household_reclassify');
+    expect(put[1]).toBe(put[0]);
+    const add = await Promise.all(['gus', 'hal'].map(async who => strip(await remote(ADULT, 'household_add', { kind: 'supply', title: who + ' glue', cadence: '30d', about: ['people/' + who + '-example'], about_role: 'adult' }), who)));
+    expect(add[0]).toContain('household_reclassify');
+    expect(add[1]).toBe(add[0]);
+    for (const who of ['gus', 'hal']) expect(await engine.getPage('people/' + who + '-example')).toBeNull();
+    expect(await engine.executeRaw("SELECT slug FROM pages WHERE slug LIKE '%glue%' AND (slug LIKE '%gus%' OR slug LIKE '%hal%')")).toEqual([]);
+    expect((await engine.getPage(hidden.slug))!.frontmatter.readable_by).toEqual([OWNER]);
+    await local('put_page', { slug: 'people/ida-example', content: md({ type: 'person', title: 'ida-example', household_role: 'adult' }, 'Ida.') });
+    await local('household_add', { kind: 'supply', title: 'Ida snacks', cadence: '30d', about: ['people/ida-example'] });
+    __resetPrivateVisibilityCacheForTests();
+    const listed = await rewrite(ADULT, 'people/ida-example', fm => ({ ...fm, household_role: ['adult'] }));
+    expect(strip(listed, 'ida')).toBe(strip(await rewrite(ADULT, 'people/ida-example', ({ household_role: _, ...fm }) => fm), 'ida'));
+    expect(listed.text).not.toMatch(/\d+ household record/);
+    expect((await engine.getPage('people/ida-example'))!.frontmatter.household_role).toBe('adult');
   });
 
   test('a subject the owner changes back to adult after the pre-check is not made a child by a non-owner (merged-head review #2)', async () => {

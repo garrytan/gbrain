@@ -313,9 +313,11 @@ export async function defaultSourceMemberWriter(engine: BrainEngine, authority: 
  * GST-2059: whether a default-source member writer is the brain owner (config access.owner_member, an enabled member),
  * whose new pages stay shared. A disabled or removed owner member is not the owner here, so its pages keep the stamp.
  */
-export async function defaultSourceWriterIsOwner(engine: Pick<BrainEngine, 'getConfig' | 'readLiveMember'>, writer: string | null): Promise<boolean> {
+export async function defaultSourceWriterIsOwner(engine: Pick<BrainEngine, 'getConfigValues' | 'readLiveMember'>, writer: string | null): Promise<boolean> {
   if (!writer) return false;
-  const owner = (await engine.getConfig(OWNER_MEMBER_KEY))?.trim();
+  // The config table itself through the keyed typed read, never `getConfig`: a batch's config snapshot would keep a former
+  // owner exempt from the member-only reader labels (master's P-0 fix, test/owner-writer-fresh-read.test.ts).
+  const owner = (await engine.getConfigValues([OWNER_MEMBER_KEY])).find(row => row.key === OWNER_MEMBER_KEY)?.value?.trim();
   if (!owner || !ACCESS_ID_RE.test(owner) || writer !== `member:${owner}`) return false;
   return (await engine.readLiveMember('member', owner)) !== null;
 }

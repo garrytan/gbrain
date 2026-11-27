@@ -99,7 +99,7 @@ import type { WriteReceipt } from '../persistence/types.ts';
 import { acceptedPendingReceipt } from '../persistence/accepted-pending.ts';
 import { AtomPageStateError, MAX_DETERMINISTIC_FAILURES, readAtomPageIdentity, writeAtomPageState, type AtomPageInput } from './extract-atoms-page-state.ts';
 import { atomGenerationOrigin, atomInputPin, heldLine, publishUnmanagedAtoms, resolveTranscriptAtomSlug, resolveTranscriptKeys, transcriptRoot } from './extract-atoms-generation.ts';
-import { heldForInput } from '../generations/publish.ts';
+import { currentHoldIds, heldForInput } from '../generations/publish.ts';
 import { ATOM_TYPES, ATOMS_RESPONSE_SCHEMA } from './extract-atoms-schema.ts';
 import { parseAtomsOutcome } from './extract-atoms-parse.ts';
 export { parseAtomsOutcome, parseAtomsResponse, type AtomsParseOutcome } from './extract-atoms-parse.ts';
@@ -400,6 +400,7 @@ export async function discoverExtractablePages(
     limit,
     affectedSlugs: hasFilter ? affectedSlugs : null,
     connectorExclusion: await connectorAtomExclusion(engine),
+    holdIds: await currentHoldIds(engine, 'atom'),
   };
 
   try {
@@ -450,8 +451,10 @@ export async function countExtractAtomsBacklog(
     const connectorExclusion = await connectorAtomExclusion(engine);
     const extractableTypes = await resolveExtractableTypes();
     const maxInputChars = await resolveExtractAtomsInputCap(engine);
+    // A page whose input still matches a current hold is left out, as discovery leaves it out (#10270).
+    const holdIds = await currentHoldIds(engine, 'atom');
     return await engine.countAtomExtractionBacklog(
-      { sourceId: sourceId ?? null, types: extractableTypes, minChars: MIN_PAGE_CHARS_FOR_EXTRACTION, maxInputChars, connectorExclusion },
+      { sourceId: sourceId ?? null, types: extractableTypes, minChars: MIN_PAGE_CHARS_FOR_EXTRACTION, maxInputChars, connectorExclusion, holdIds },
       { signal: opts.signal },
     );
   } catch (err) {

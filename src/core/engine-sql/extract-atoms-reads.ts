@@ -23,6 +23,11 @@ export interface ExtractablePageQuery {
   affectedSlugs: string[] | null;
   /** When connector email and meeting pages are opted out: the lists the statement names. Null when they are extracted. */
   connectorExclusion: { pageTypes: string[]; sourceKinds: string[] } | null;
+  /**
+   * The hold ids `currentHoldIds(engine, 'atom')` returns (#10270): a page whose held atom generation carries one of them,
+   * for the page's current input pin and not a partial hold, is skipped by the phase and so is left out of discovery.
+   */
+  holdIds: readonly string[];
 }
 
 /** One extractable page with the identity its state rows pin to. */
@@ -63,6 +68,10 @@ export const EXTRACTABLE_PAGES_SQL = `
     AND (scan.tombstoned OR scan.partial_input_chars IS NOT NULL)
 )
       AND COALESCE(p.frontmatter->>'extract_atoms', '') <> 'false'
+      AND NOT EXISTS (SELECT 1 FROM derived_generations dg
+        WHERE dg.source_id = p.source_id AND dg.kind = 'atom' AND dg.state = 'held' AND dg.owner_key = 'source_slug:' || p.slug
+          AND dg.hold_id = ANY($5::text[]) AND COALESCE(dg.held_context->>'partial', 'false') <> 'true'
+          AND dg.input_pin IN (p.content_hash, p.content_hash || ':' || p.id::text || ':' || p.knowledge_revision::text))
       
       AND NOT EXISTS (
         SELECT 1
@@ -105,7 +114,11 @@ export const EXTRACTABLE_PAGES_FILTERED_SQL = `
     AND (scan.tombstoned OR scan.partial_input_chars IS NOT NULL)
 )
       AND COALESCE(p.frontmatter->>'extract_atoms', '') <> 'false'
-      AND p.slug = ANY($5::text[])
+      AND NOT EXISTS (SELECT 1 FROM derived_generations dg
+        WHERE dg.source_id = p.source_id AND dg.kind = 'atom' AND dg.state = 'held' AND dg.owner_key = 'source_slug:' || p.slug
+          AND dg.hold_id = ANY($5::text[]) AND COALESCE(dg.held_context->>'partial', 'false') <> 'true'
+          AND dg.input_pin IN (p.content_hash, p.content_hash || ':' || p.id::text || ':' || p.knowledge_revision::text))
+      AND p.slug = ANY($6::text[])
       AND NOT EXISTS (
         SELECT 1
         FROM pages atom
@@ -148,6 +161,10 @@ export const EXTRACTABLE_PAGES_CONNECTORS_OUT_SQL = `
 )
       AND COALESCE(p.frontmatter->>'extract_atoms', '') <> 'false' AND NOT (p.type IN ('email','meeting') AND EXISTS (SELECT 1 FROM sources cs
         WHERE cs.id = p.source_id AND cs.config->>'kind' IN ('google','github','meetings','slack','imessage','apple-contacts')))
+      AND NOT EXISTS (SELECT 1 FROM derived_generations dg
+        WHERE dg.source_id = p.source_id AND dg.kind = 'atom' AND dg.state = 'held' AND dg.owner_key = 'source_slug:' || p.slug
+          AND dg.hold_id = ANY($5::text[]) AND COALESCE(dg.held_context->>'partial', 'false') <> 'true'
+          AND dg.input_pin IN (p.content_hash, p.content_hash || ':' || p.id::text || ':' || p.knowledge_revision::text))
       
       AND NOT EXISTS (
         SELECT 1
@@ -191,7 +208,11 @@ export const EXTRACTABLE_PAGES_CONNECTORS_OUT_FILTERED_SQL = `
 )
       AND COALESCE(p.frontmatter->>'extract_atoms', '') <> 'false' AND NOT (p.type IN ('email','meeting') AND EXISTS (SELECT 1 FROM sources cs
         WHERE cs.id = p.source_id AND cs.config->>'kind' IN ('google','github','meetings','slack','imessage','apple-contacts')))
-      AND p.slug = ANY($5::text[])
+      AND NOT EXISTS (SELECT 1 FROM derived_generations dg
+        WHERE dg.source_id = p.source_id AND dg.kind = 'atom' AND dg.state = 'held' AND dg.owner_key = 'source_slug:' || p.slug
+          AND dg.hold_id = ANY($5::text[]) AND COALESCE(dg.held_context->>'partial', 'false') <> 'true'
+          AND dg.input_pin IN (p.content_hash, p.content_hash || ':' || p.id::text || ':' || p.knowledge_revision::text))
+      AND p.slug = ANY($6::text[])
       AND NOT EXISTS (
         SELECT 1
         FROM pages atom
@@ -233,14 +254,14 @@ export const RELEASE_PARTIAL_DISPOSITIONS_SQL = [
 
 /**
  * Pages of `sourceId` awaiting atom extraction (no atom of their current content, no tombstoned, partial, completed or
- * held disposition), newest first, at most `limit`.
+ * held disposition, no held atom generation for their current input), newest first, at most `limit`.
  */
 export async function listExtractablePages(raw: Raw, query: ExtractablePageQuery): Promise<ExtractablePageRow[]> {
   const filtered = query.affectedSlugs !== null && query.affectedSlugs.length > 0;
   const sql = query.connectorExclusion
     ? (filtered ? EXTRACTABLE_PAGES_CONNECTORS_OUT_FILTERED_SQL : EXTRACTABLE_PAGES_CONNECTORS_OUT_SQL)
     : (filtered ? EXTRACTABLE_PAGES_FILTERED_SQL : EXTRACTABLE_PAGES_SQL);
-  const params: unknown[] = [query.sourceId, query.types, query.minChars, query.limit];
+  const params: unknown[] = [query.sourceId, query.types, query.minChars, query.limit, [...query.holdIds]];
   if (filtered) params.push(query.affectedSlugs);
   return raw.executeRaw<ExtractablePageRow>(sql, params);
 }

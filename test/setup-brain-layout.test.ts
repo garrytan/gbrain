@@ -12,7 +12,7 @@
  *     shared brain, anything created for the company part with --team.
  *     --transcripts (PR 3): a call imported twice, a planted credential stored, a call page readable more widely
  *     than its source, a call page under conversations/, a missing archive line.
- *  3. New flags on an existing command; test/setup.test.ts keeps the rest of setup.
+ *  3. New flags on an existing command; test/setup-claude-install.test.ts covers the Claude Code install.
  */
 import { afterAll, describe, expect, test } from 'bun:test';
 import { execSync } from 'node:child_process';
@@ -193,7 +193,7 @@ describe('setup --shape personal', () => {
     const b = box();
     const r = await setup(b, ['claude-code', '--shape', 'team']);
     expect(r.exitCode).not.toBe(0);
-    expect(r.stderr + r.stdout).toContain('pass personal, company, both or none');
+    expect(r.stderr + r.stdout).toContain('pass personal, company, both, household or none');
     expect(existsSync(join(b.home, '.claude.json'))).toBe(false);
   }, 60_000);
 });

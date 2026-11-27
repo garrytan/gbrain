@@ -7,7 +7,8 @@
 //! payload pointer, opted in (`extract_atoms` is not `false`), with a compiled truth of at least `minChars`
 //! characters, not a connector page of an opted-out connector source, and no live, unmanaged atom of the source
 //! carrying its content hash's first 16 characters as `source_hash`. It also skips a page whose current content has
-//! a completed or held `managed-atoms` checkpoint, which the store does keep. The `extract_atoms_page_state`
+//! a completed or held `managed-atoms` checkpoint, which the store does keep, and a page whose current input is held
+//! (#10270, the same rule the backlog count applies: `generations::atom_reads::held_atom_inputs`). The `extract_atoms_page_state`
 //! exclusion finds nothing here: the store keeps no page state (`assertAtomStateStore` refuses before a run could
 //! write any). Rows come newest first (`ORDER BY p.updated_at DESC`), at most `limit`, optionally only of the named
 //! slugs.
@@ -16,6 +17,7 @@ use super::atom_backlog::ConnectorExclusion;
 use crate::Store;
 use crate::cli_reads::pg_text::fm_text;
 use crate::error::Result;
+use crate::generations::atom_reads::held_atom_inputs;
 use crate::pages::{PageRecord, all_pages};
 use crate::persistence::managed_atom_discovery_skips_in;
 use crate::sources::all_sources;
@@ -38,6 +40,9 @@ pub struct ExtractablePageQuery {
     pub affected_slugs: Option<Vec<String>>,
     #[serde(default)]
     pub connector_exclusion: Option<ConnectorExclusion>,
+    /// The hold ids of the held atom generations whose input is still current (`currentHoldIds(engine, 'atom')`).
+    #[serde(default)]
+    pub hold_ids: Vec<String>,
 }
 
 fn hash_head(hash: &str) -> String {
@@ -69,6 +74,8 @@ impl Store {
             })
             .collect();
         let skips = managed_atom_discovery_skips_in(&*read)?;
+        let hold_ids: BTreeSet<&str> = query.hold_ids.iter().map(String::as_str).collect();
+        let held = held_atom_inputs(&*read, &hold_ids)?;
         let atoms: BTreeSet<String> = pages
             .iter()
             .filter(|p| p.source_id == query.source_id && unmanaged_atom(p))
@@ -120,6 +127,15 @@ impl Store {
                 && kind
                     .as_ref()
                     .is_some_and(|k| connectors.source_kinds.contains(k))
+            {
+                continue;
+            }
+            // `heldAtomInputExclusionSql`: a held atom generation for the page's current input (#10270).
+            let owner = format!("source_slug:{}", page.slug);
+            let current = format!("{hash}:{}:{}", page.id, page.knowledge_revision);
+            if [hash, current.as_str()]
+                .into_iter()
+                .any(|pin| held.contains(&(page.source_id.clone(), owner.clone(), pin.to_string())))
             {
                 continue;
             }

@@ -113,6 +113,9 @@ export const SYNC_FAULT_TABLE: ReadonlyArray<SyncFaultRule> = [
   // #7052: a frontmatter tag is over the tags index's byte limit; only an edit to the file clears it.
   { code: 'tag_too_long', class: 'page', safe_actions: ['none'], needs_human: true, escalate: 'always: only an edit to the file clears it',
     human_reason: 'A frontmatter tag is longer than a tag can be; shorten it or split it into shorter tags and commit.' },
+  // #10080: the file's slug is over 255 characters, which no later write or repair could name; only a move of the file clears it.
+  { code: 'slug_too_long', class: 'page', safe_actions: ['none'], needs_human: true, escalate: 'always: only a move or rename of the file clears it',
+    human_reason: 'The file\'s page slug (its path, or its slug: line) is over 255 characters; move it to a shorter path or give it a shorter slug and commit.' },
   // #7848: the file asks for visibility: private in a spelling page privacy does not read; only an edit to the file clears it.
   { code: 'visibility_noncanonical', class: 'page', safe_actions: ['none'], needs_human: true, escalate: 'always: only an edit to the file clears it',
     human_reason: 'The file asks for visibility: private in a spelling page privacy does not read; write visibility: private on its own frontmatter line (lowercase) and commit.' },

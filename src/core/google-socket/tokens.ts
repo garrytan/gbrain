@@ -80,7 +80,8 @@ export class SocketTokens {
     }
   }
 
-  async mintIngest(account: string): Promise<MintedToken> {
+  /** fresh skips the cache, for a caller whose cached token Google refused with a 401. */
+  async mintIngest(account: string, fresh = false): Promise<MintedToken> {
     try {
       const e = await this.entry(account);
       const generation = grantGeneration(e) ?? 0;
@@ -90,7 +91,7 @@ export class SocketTokens {
       const scope = [...GOOGLE_BASE_SCOPES.filter(s => granted.includes(s)), ...ingest];
       const key = `${account}\u0000ingest\u0000${scope.join(' ')}`;
       const hit = this.ingest.get(key);
-      if (hit && hit.generation === generation && hit.expiresAtMs - REMINT_MARGIN_MS > this.now()) {
+      if (!fresh && hit && hit.generation === generation && hit.expiresAtMs - REMINT_MARGIN_MS > this.now()) {
         return { access_token: hit.token, expires_at: new Date(hit.expiresAtMs).toISOString(), scopes: hit.scopes, account };
       }
       const { token, generation: refreshed } = await this.refresh(e, scope);

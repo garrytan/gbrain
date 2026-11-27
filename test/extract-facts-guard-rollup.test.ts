@@ -45,6 +45,8 @@ function mkEngine(legacyCount: number): { calls: CapturedCall[]; engine: BrainEn
     // The held-fact move's two reads (held-fact-move.ts) moved off executeRaw onto typed members; the raw stub answered both with no rows.
     async listHeldMoveRows() { return []; },
     async listStruckHeldRows() { return []; },
+    // The fence-hold list (generations/fence.ts listFenceHolds, master #10067 on the trunk's typed member) reads no held fence result.
+    async listFenceHoldRows() { return []; },
     async getAllSlugs() { return []; },
     async getPage() { return null; },
     async deleteFactsForPage() { return { deleted: 0 }; },
