@@ -137,8 +137,7 @@ async function runGrantOwnerClients(engine: BrainEngine, rest: string[]): Promis
   const { flags, on, positional } = parseFlags(rest, ['--source'], ['--yes', '--json']);
   if (positional.length) usageError(`Unknown or incomplete argument: ${positional[0]}`);
   const sourceId = checkedSource(flags['--source']?.at(-1) ?? 'guests');
-  const [guest] = await engine.executeRaw('SELECT 1 FROM guest_sources WHERE source_id = $1', [sourceId]);
-  if (!guest) {
+  if (!(await engine.hasGuestSourceRow(sourceId))) {
     console.error(`Source "${sourceId}" is not a guest source. Set one up with: gbrain guests init --source ${sourceId}`);
     process.exit(2);
   }

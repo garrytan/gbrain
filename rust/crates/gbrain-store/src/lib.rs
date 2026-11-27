@@ -87,12 +87,16 @@ pub mod embeddings;
 pub mod engine_migration;
 pub mod entity_identities;
 pub mod eval_capture;
+pub mod eval_harness_catalog;
+pub mod eval_harness_reads;
 pub mod extract_bookkeeping;
 pub mod extraction;
 pub mod facts;
 pub mod federation_exposure;
 pub mod field_usage;
 pub mod generations;
+pub mod guest_marks;
+pub mod guest_sources;
 pub mod handover_reads;
 pub mod identity_auto;
 pub mod identity_reviews;
@@ -128,6 +132,7 @@ pub mod repair_scans;
 pub mod repair_secret_spans;
 pub mod repair_twin_merge;
 pub mod repair_versions;
+pub mod restore;
 pub mod salience;
 pub mod schema_detect;
 pub mod secret_store;
@@ -155,7 +160,7 @@ pub mod write_trust;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 pub use crate::env::{Env, SystemEnv};
@@ -193,6 +198,9 @@ pub struct OpenOptions {
     /// brain records the write gate's scan baseline under it, as migration v227 does on the SQL engines;
     /// `None` records it under `DEFAULT_WRITE_GATE_DETECTOR_VERSION`.
     pub write_gate_detector_version: Option<u32>,
+    /// False: the directory must already hold a brain (its record file); `open_dir` creates no file or folder
+    /// and refuses with `store_missing` otherwise, also when the store moves away during the open. True (the default) creates a missing brain, as before.
+    pub create_missing: bool,
 }
 
 impl Default for OpenOptions {
@@ -206,6 +214,7 @@ impl Default for OpenOptions {
             keyword_index_builder: true,
             initial_config: Vec::new(),
             write_gate_detector_version: None,
+            create_missing: true,
         }
     }
 }
@@ -234,7 +243,9 @@ pub struct Store {
     pub(crate) vectors: vectors::VectorCache,
     /// The write trust context: the transaction-local trust settings (`write_trust.rs`).
     pub(crate) write_context: write_trust::WriteContextSlot,
-    info: StoreInfo,
+    /// What `open` told the caller. Shared with the store's views; a restore that rotates the brain id
+    /// updates it, so the open handle never reports the id the restore replaced.
+    info: Arc<Mutex<StoreInfo>>,
     /// The open transaction this store runs on (`transactions.rs`); `None` for the brain's own
     /// store, whose writes each commit on their own.
     pub(crate) bound: Option<Arc<transactions::Transaction>>,
@@ -248,13 +259,14 @@ pub struct Store {
     pub(crate) flag_assumed: bool,
     /// The brain directory, when the store was opened on one (`open_dir`, `open_dir_read_only`):
     /// the snapshot copies its `FORMAT` (`snapshot.rs`). `None` over `open_kv`.
-    dir: Option<std::path::PathBuf>,
+    pub(crate) dir: Option<PathBuf>,
 }
 
 /// The record file of a brain directory, with one writer or many. Only for the storage bake-off:
 /// a build with the `fjall` feature (never the addon's) keeps the records in a fjall database
 /// instead when `GBRAIN_RUST_BAKEOFF_STORE=fjall`.
-fn open_records(dir: &Path, concurrent: bool) -> Result<Arc<dyn Kv>> {
+/// The record file of `dir`; with `create` false only one that is already there (never created).
+fn open_records_as(dir: &Path, concurrent: bool, create: bool) -> Result<Arc<dyn Kv>> {
     #[cfg(feature = "fjall")]
     if std::env::var("GBRAIN_RUST_BAKEOFF_STORE").is_ok_and(|v| v == "fjall") {
         let kv = fjall_kv::FjallKv::open_dir(&dir.join("records.fjall"))?;
@@ -264,7 +276,12 @@ fn open_records(dir: &Path, concurrent: bool) -> Result<Arc<dyn Kv>> {
             Arc::new(kv)
         });
     }
-    let kv = redb_kv::RedbKv::open_path(&dir.join(format::RECORDS_FILE))?;
+    let path = dir.join(format::RECORDS_FILE);
+    let kv = if create {
+        redb_kv::RedbKv::open_path(&path)?
+    } else {
+        redb_kv::RedbKv::open_existing_path(&path)?
+    };
     Ok(if concurrent {
         Arc::new(occ_kv::OccKv::new(kv)?)
     } else {
@@ -338,8 +355,22 @@ impl Store {
     /// `open_dir` for a build that opens only the formats in `known`: the seam the older-build
     /// tests use (`format::check_version_in`).
     pub(crate) fn open_dir_in(dir: &Path, options: OpenOptions, known: &[u32]) -> Result<Store> {
-        fs::create_dir_all(dir)
-            .map_err(|e| StoreError::io(format!("creating {}: {e}", dir.display())))?;
+        // With `create_missing` false nothing below creates a file or folder: the directory and its
+        // record file must be there, and a store moved away mid-open is refused, not recreated.
+        if !options.create_missing && !dir.join(format::RECORDS_FILE).is_file() {
+            return Err(StoreError::new(
+                error::STORE_MISSING,
+                format!(
+                    "{} holds no brain (no {}); nothing was created",
+                    dir.display(),
+                    format::RECORDS_FILE
+                ),
+            ));
+        }
+        if options.create_missing {
+            fs::create_dir_all(dir)
+                .map_err(|e| StoreError::io(format!("creating {}: {e}", dir.display())))?;
+        }
         // FORMAT is judged before the record file is opened: a newer brain is never touched.
         let existing = format::read_in(dir, known)?;
         if existing.is_none() {
@@ -352,14 +383,19 @@ impl Store {
                 format::check_version_in(stored.format_version, known)?;
             }
         }
-        let kv = open_records(dir, options.concurrent_writes)?;
+        let kv = open_records_as(dir, options.concurrent_writes, options.create_missing)?;
         let mut store = Store::open_kv_in(kv, Arc::new(SystemEnv), options.clone(), known)?;
         store.dir = Some(dir.to_path_buf());
         // FORMAT follows the records: written when missing (a crash before it, or a deleted
         // file) and repaired when it is behind the records.
         let record = store.format_record(&options)?;
         match existing {
-            Some(on_disk) if on_disk.brain_id != record.brain_id => {
+            // A restore that rotated the brain id committed the record first: FORMAT still names
+            // the id the record says it rotated from, and is rebuilt from the record below.
+            Some(on_disk)
+                if on_disk.brain_id != record.brain_id
+                    && !store.rotated_from(&on_disk.brain_id)? =>
+            {
                 return Err(StoreError::new(
                     error::STORE_CORRUPT,
                     "FORMAT names a different brain than the record file",
@@ -391,7 +427,10 @@ impl Store {
         };
         let mut store = Store::open_kv_in(kv, Arc::new(SystemEnv), options, FORMAT_VERSIONS)?;
         store.dir = Some(dir.to_path_buf());
-        if existing.is_some_and(|on_disk| on_disk.brain_id != store.info.brain_id) {
+        if let Some(on_disk) = existing
+            && on_disk.brain_id != store.brain_id()
+            && !store.rotated_from(&on_disk.brain_id)?
+        {
             return Err(StoreError::new(
                 error::STORE_CORRUPT,
                 "FORMAT names a different brain than the record file",
@@ -430,6 +469,7 @@ impl Store {
                     format_version: FORMAT_VERSION,
                     brain_id: env.new_uuid(),
                     created_at_us: env.now_micros(),
+                    rotated_from: None,
                 };
                 let mut tx = kv.begin_write()?;
                 // Another handle may have created the brain between the read and this write.
@@ -459,12 +499,12 @@ impl Store {
             env,
             vectors: vectors::VectorCache::default(),
             write_context: write_trust::WriteContextSlot::default(),
-            info: StoreInfo {
+            info: Arc::new(Mutex::new(StoreInfo {
                 brain_id: stored.brain_id,
                 format_version: stored.format_version,
                 schema_version,
                 created,
-            },
+            })),
             bound: None,
             builder: Mutex::new(None),
             runs_builder: options.keyword_index_builder,
@@ -485,13 +525,20 @@ impl Store {
             env: self.env.clone(),
             vectors: vectors::VectorCache::default(),
             write_context: write_trust::WriteContextSlot::default(),
-            info: self.info.clone(),
+            info: Arc::clone(&self.info),
             bound: None,
             builder: Mutex::new(None),
             runs_builder: false,
             flag_assumed: self.flag_assumed,
             dir: self.dir.clone(),
         }
+    }
+
+    /// Whether the format record says this brain's id was rotated away from `id` (a restore gave
+    /// it a fresh one and `FORMAT` has not caught up yet).
+    fn rotated_from(&self, id: &str) -> Result<bool> {
+        let stored: Option<StoredFormat> = get_json(&*self.kv.snapshot()?, &keys::meta("format"))?;
+        Ok(stored.is_some_and(|s| s.rotated_from.as_deref() == Some(id)))
     }
 
     /// Starts the background build unless one is running on this store.
@@ -553,7 +600,7 @@ impl Store {
             // The write trust context belongs to the transaction's handle, not the shared store: it
             // starts empty and ends with the handle (`write_trust.rs`, "Lifetime").
             write_context: write_trust::WriteContextSlot::default(),
-            info: self.info.clone(),
+            info: Arc::clone(&self.info),
             bound: Some(tx),
             builder: Mutex::new(None),
             runs_builder: false,
@@ -562,12 +609,17 @@ impl Store {
         }
     }
 
-    pub fn info(&self) -> &StoreInfo {
-        &self.info
+    pub fn info(&self) -> StoreInfo {
+        self.info.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
-    pub fn brain_id(&self) -> &str {
-        &self.info.brain_id
+    pub fn brain_id(&self) -> String {
+        self.info().brain_id
+    }
+
+    /// A restore gave the committed store a fresh brain id (`restore_quarantine`).
+    pub(crate) fn set_brain_id(&self, id: &str) {
+        self.info.lock().unwrap_or_else(|e| e.into_inner()).brain_id = id.to_string();
     }
 
     /// The commit sequence of the latest commit.
@@ -683,12 +735,13 @@ impl Store {
     }
 
     fn format_record(&self, options: &OpenOptions) -> Result<FormatRecord> {
+        let info = self.info();
         Ok(FormatRecord {
-            format_version: self.info.format_version,
+            format_version: info.format_version,
             engine_abi: options.engine_abi,
             catalog_version: options.catalog_version,
-            schema_version: self.info.schema_version,
-            brain_id: self.info.brain_id.clone(),
+            schema_version: info.schema_version,
+            brain_id: info.brain_id,
             created_by: options.created_by.clone(),
         })
     }
@@ -716,6 +769,10 @@ pub(crate) struct StoredFormat {
     pub format_version: u32,
     pub brain_id: String,
     pub created_at_us: i64,
+    /// Set by a restore that gave the brain a fresh id: the id it had before. `FORMAT` is rebuilt
+    /// from this record, so one that still names this id is stale, not another brain's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rotated_from: Option<String>,
 }
 
 /// The config key of the write gate's scan baseline (TypeScript `WRITE_GATE_SCAN_BASELINE_KEY`).
@@ -1174,6 +1231,56 @@ mod older_build_tests {
         assert_eq!(kept.unwrap().as_deref(), Some(&b"kept"[..]));
         drop(store);
         let _ = fs::remove_dir_all(dir.parent().unwrap());
+    }
+
+    /// An open that must find its brain refuses an empty or missing directory and creates nothing; the default still
+    /// creates one.
+    #[test]
+    fn an_open_without_create_missing_refuses_a_directory_without_a_brain_and_creates_nothing() {
+        let root = fresh_dir("create-missing");
+        let missing = root.join("gone");
+        let options = || OpenOptions {
+            create_missing: false,
+            keyword_index_builder: false,
+            ..OpenOptions::default()
+        };
+        let err = Store::open_dir(&missing, options()).err().unwrap();
+        assert_eq!(err.code, error::STORE_MISSING);
+        assert!(!missing.exists(), "the refused open created the directory");
+        fs::create_dir_all(&missing).unwrap();
+        assert_eq!(
+            Store::open_dir(&missing, options()).err().unwrap().code,
+            error::STORE_MISSING
+        );
+        assert_eq!(
+            fs::read_dir(&missing).unwrap().count(),
+            0,
+            "the refused open wrote into the folder"
+        );
+        // A FORMAT file without the record file is no brain either; the open writes nothing.
+        fs::write(missing.join(format::FORMAT_FILE), b"{}").unwrap();
+        assert_eq!(
+            Store::open_dir(&missing, options()).err().unwrap().code,
+            error::STORE_MISSING
+        );
+        assert!(
+            !missing.join(format::RECORDS_FILE).exists(),
+            "the refused open created the record file"
+        );
+        fs::remove_file(missing.join(format::FORMAT_FILE)).unwrap();
+        // The default creates it, and then an open that must find it does.
+        drop(
+            Store::open_dir(
+                &missing,
+                OpenOptions {
+                    keyword_index_builder: false,
+                    ..OpenOptions::default()
+                },
+            )
+            .unwrap(),
+        );
+        drop(Store::open_dir(&missing, options()).unwrap());
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

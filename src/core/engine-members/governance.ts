@@ -154,6 +154,12 @@ export interface GovernanceMembers {
   listWriteGateHoldRows(opts: TrustWriteGateSql.WriteGateHoldListOpts): Promise<TrustWriteGateSql.WriteGateHoldRow[]>;
   /** The owner's write-gate allow rules as stored, by id: active ones only unless `includeRemoved`, in the given sources (all when none). */
   listTrustAllowRuleRows(opts?: TrustWriteGateSql.TrustAllowRuleListOpts): Promise<Array<Record<string, unknown>>>;
+  /** `trust allow add`: nothing when the source is not active; else inserts the rule or returns the active one with the same key. */
+  addTrustAllowRule(rule: TrustWriteGateSql.TrustAllowRuleInsert): Promise<TrustWriteGateSql.TrustAllowRuleAdd>;
+  /** `trust allow remove`: marks the active rule removed and returns it (the receipt), or null when none is active. */
+  removeTrustAllowRule(id: number, removedBy: string): Promise<Record<string, unknown> | null>;
+  /** One allow rule by id, active or removed, or null. */
+  readTrustAllowRule(id: number): Promise<Record<string, unknown> | null>;
   /** One hold by id, any status. */
   getWriteGateHoldRow(id: number): Promise<TrustWriteGateSql.WriteGateHoldRow | null>;
   /** Mark a held row released or dropped; false when it does not exist or was already decided. */

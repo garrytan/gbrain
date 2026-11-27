@@ -121,6 +121,8 @@ pub const ACCESS_MEMBERS: u8 = b'x';
 /// Family `access_rules` (`access_rules.rs`): folder rules, pending prefixes, policy state and
 /// revisions. The byte after the tag names the table; the module owns the sub-tags.
 pub const ACCESS_RULES: u8 = b'z';
+/// Family `guest_sources` (`guest_sources.rs`): one record per guest source row. Every letter was taken, so the tag is a digit.
+pub const GUEST_SOURCE: u8 = b'0';
 /// Family `reason_tombstones` (`reason_tombstones.rs`): the purged `(commit, path)` pairs of
 /// `reason_purge_tombstones`, `1 source \0 commit \0 path`. Every letter is taken, so this family
 /// uses a digit; `y` is `SESSION_STATE`.
@@ -167,6 +169,10 @@ pub fn family_text(tag: [u8; 2], parts: &[&str]) -> Vec<u8> {
 /// the first version of this family on a branch used tag `2`, which `CORE_EDIT_NOTICE` now holds; no store holds a record
 /// of this family under `2`.
 pub const PAGE_EXTRACTION_STATE: [u8; 2] = family_tag(b'e');
+
+/// Family `guest_marks` (`guest_marks.rs`): who a guest note was saved for, one record per guest page, `~g <page id>`. A
+/// two-byte family tag: the one-byte tags are taken.
+pub const GUEST_MARK: [u8; 2] = family_tag(b'g');
 
 pub fn text(tag: u8, parts: &[&str]) -> Vec<u8> {
     let mut key = vec![tag];

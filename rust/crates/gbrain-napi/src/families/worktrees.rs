@@ -210,6 +210,28 @@ impl Brain {
         self.run(env, move |s| s.list_host_topology_rows(&host_id))
     }
 
+    /// `listPendingGitEffectPaths(hostId)`: the relative paths of the queued and running git effects, with their roots.
+    #[napi]
+    pub fn list_pending_git_effect_paths<'env>(
+        &self,
+        env: &'env Env,
+        host_id: Option<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_pending_git_effect_paths(host_id.as_deref())
+        })
+    }
+
+    /// `listHostRepositoryRoots(hostId)`: the host's bound local paths, each with its source (or null), by byte path.
+    #[napi]
+    pub fn list_host_repository_roots<'env>(
+        &self,
+        env: &'env Env,
+        host_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_host_repository_roots(&host_id))
+    }
+
     /// `listWorktreeMembers(worktreeId)`: the worktree's source bindings by byte source id.
     #[napi]
     pub fn list_worktree_members<'env>(

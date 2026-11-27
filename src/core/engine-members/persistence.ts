@@ -28,6 +28,7 @@ import type { LedgerScrubCounts } from '../engine-sql/generation-ledger.ts';
 import type { LedgerSource } from '../engine-sql/belief.ts';
 import type { NoopSettleCandidate, NoopSettleCandidateSpec, NoopSettleWindow, NoopSettledRow } from '../engine-sql/persistence-embedding-noop-settle.ts';
 import type { OverdueHold, OverdueHoldKind } from '../engine-sql/persistence-owner-scans.ts';
+import type { PersistenceUpkeepStore } from '../engine-sql/persistence-upkeep.ts';
 import type { ProjectionScanCursor } from '../page-state/projection-window.ts';
 import type { RecentWriterVersionRow, WriterVersionRow } from '../engine-sql/writer-versions.ts';
 import type { ReservedConnection } from '../engine.ts';
@@ -271,6 +272,8 @@ export interface PersistenceMembers {
   cancelWriteRow(cancel: WriteCancellation): Promise<WriteCancelResult | null>;
   /** Inserts a publication's effects in queue order (a gated one only while auto-linking is on); returns the kinds inserted. */
   insertPublicationEffects(spec: PublicationEffectsSpec): Promise<string[]>;
+  /** The write journal's upkeep statements: receipt compaction and the effect claim upkeep (engine-sql/persistence-upkeep.ts). */
+  persistenceUpkeepStore(): Promise<PersistenceUpkeepStore>;
   /** Queues a managed-request withdrawal's three effects for its source; an unknown source queues none, a kind already queued is kept. */
   insertWithdrawalEffects(spec: WithdrawalEffectsSpec): Promise<void>;
   /** `gbrain repair segmented-mirror`: queues a re-mirror's `withdrawal-mirror` and `git` effects for request row `requestId` (engine-sql/segmented-mirror-effects.ts); run it in the re-mirror's write transaction. */

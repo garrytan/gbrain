@@ -22,6 +22,7 @@ use crate::kv::KvWrite;
 use crate::pages::{NEXT_VERSION_ID, PageText, VersionRecord, seed_version};
 use crate::raw_files::{FileRecord, NEXT_FILE_ID, RawRecord, seed_file, seed_raw_data};
 use crate::takes::{fk_failed, seed_evidence};
+use crate::trust::allow_rules::{AllowRuleRecord, COUNTER as NEXT_ALLOW_RULE_ID, seed_rule};
 use crate::trust::proposals::{ProposalRecord, seed_proposal};
 use crate::wanted_links::{ID_COUNTER as NEXT_WANTED_LINK_ID, WantedRecord, seed_wanted};
 use crate::write_receipt::VersionReceipt;
@@ -38,6 +39,7 @@ pub(super) const RELATIONS: &[(&str, &Relation)] = &[
     ("core_edit_notices", &CORE_EDIT_NOTICES),
     ("synthesis_evidence", &SYNTHESIS_EVIDENCE),
     ("trust_proposals", &TRUST_PROPOSALS),
+    ("trust_allow_rules", &TRUST_ALLOW_RULES),
     ("wanted_links", &WANTED_LINKS),
     ("page_facts_reconcile", &PAGE_FACTS_RECONCILE),
     ("fact_relink_attempts", &FACT_RELINK_ATTEMPTS),
@@ -519,6 +521,45 @@ fn import_proposal(tx: &mut dyn KvWrite, row: &Row, _: &mut Losses) -> Result<Ou
         return Ok(Outcome::Skipped);
     }
     raise_counter(tx, "trust_proposals", id)?;
+    Ok(Outcome::Imported)
+}
+
+// ---- trust_allow_rules ---------------------------------------------------------------------
+
+/// Every column is kept: a removed rule keeps `removed_at` and `removed_by`, its receipt.
+static TRUST_ALLOW_RULES: Relation = Relation {
+    key: &["id"],
+    columns: &[
+        ("id", Kept),
+        ("source_id", Kept),
+        ("uri_prefix", Kept),
+        ("reason_family", Kept),
+        ("created_by", Kept),
+        ("created_at", Kept),
+        ("removed_at", Kept),
+        ("removed_by", Kept),
+        ("reason", Kept),
+    ],
+    import: import_allow_rule,
+};
+
+fn import_allow_rule(tx: &mut dyn KvWrite, row: &Row, _: &mut Losses) -> Result<Outcome> {
+    let id = row.req_id("id")?;
+    let record = AllowRuleRecord {
+        id,
+        source_id: row.req("source_id")?,
+        uri_prefix: row.text("uri_prefix"),
+        reason_family: row.text("reason_family"),
+        created_by: row.req("created_by")?,
+        created_at_us: row.req_ts("created_at")?,
+        removed_at_us: row.ts("removed_at")?,
+        removed_by: row.text("removed_by"),
+        reason: row.text("reason"),
+    };
+    if !seed_rule(tx, &record)? {
+        return Ok(Outcome::Skipped);
+    }
+    raise_counter(tx, NEXT_ALLOW_RULE_ID, id)?;
     Ok(Outcome::Imported)
 }
 

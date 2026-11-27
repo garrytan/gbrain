@@ -454,6 +454,8 @@ describe('engine parity: the fact purge transaction members', () => {
   parityTest('the raw-only purge tables are reachable only through executeRaw, which the Rust arm refuses', {
     methods: ['executeRaw'], requires: 'raw_sql',
   }, async (engine) => {
+    // Named permanent loss (docs/designs/RUST_ENGINE.md#named-permanent-losses): these tables have no typed writer, and
+    // the Rust store keeps none of them.
     const counts: Record<string, number> = {};
     for (const table of Object.keys(RAW_ONLY_WRITERS)) {
       counts[table] = Number((await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM ${table}`))[0]!.n);

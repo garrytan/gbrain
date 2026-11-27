@@ -130,13 +130,13 @@ pub use fence_overlay::{FenceOverlayIncomingRow, FenceOverlayInput, FenceRowKey}
 pub use held_cells::{HeldFenceCellKey, HeldFenceCellsInput, HeldFenceMember};
 pub use page_purges::PagePurgeUpsert;
 pub(crate) use page_purges::has_page_purges;
-pub use privacy::PrivacyPolicy;
 use privacy::hidden_by_private_provenance;
+pub use privacy::{LabelledOnly, PrivacyPolicy};
 pub(crate) use privacy::{
     OwnerOnlyCache, access_id, access_readers, caller_version_hidden, chronicle_depth,
-    concept_inputs, declared_slugs, hidden_by_provenance_page, names_no_readers_or_rules,
-    owner_reads_page, page_hidden, page_hidden_with, privacy_allows, stamped_rules,
-    successor_withholds_reason, version_hidden,
+    concept_inputs, declared_slugs, hidden_by_provenance_page, live_labelled,
+    names_no_readers_or_rules, owner_reads_page, page_hidden, page_hidden_with, privacy_allows,
+    stamped_rules, successor_withholds_reason, version_hidden,
 };
 pub use widen::VisibilityWidening;
 use widen::{visibility_admits, world_admits};
@@ -147,7 +147,8 @@ use crate::dream::int4;
 use crate::env::{iso, parse_iso};
 use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, Result, StoreError};
 use crate::keyword::{
-    or_of_lexemes, plainto_tsquery, to_tsvector, ts_matches, ts_rank_cd, with_query_stack,
+    FtsConfig, or_of_lexemes, plainto_tsquery_in, to_tsvector_in, ts_matches, ts_rank_cd,
+    with_query_stack,
 };
 use crate::kv::{KvRead, KvWrite, for_each_prefix_paged, scan_prefix};
 use crate::links::no_nul;
@@ -694,6 +695,17 @@ pub(crate) fn write_fact(
     old: Option<&FactRecord>,
     new: &FactRecord,
 ) -> Result<()> {
+    crate::guest_sources::guard_row(
+        &*tx,
+        crate::guest_sources::GuardTable::Facts,
+        Some(new.source_id.as_str()),
+        match old {
+            None => crate::guest_sources::GuardOp::Insert,
+            Some(old) => crate::guest_sources::GuardOp::Update {
+                content_changed: old.trust_content_changed(new),
+            },
+        },
+    )?;
     let mut stamped = stamp_fact(trust, old, new)?;
     preserve_withdrawal(tx, old, &mut stamped)?;
     let new = &stamped;
@@ -1326,6 +1338,9 @@ pub struct DuplicateQuery {
     pub embedding: Option<String>,
     /// The model of `embedding`: only rows stamped with it compare.
     pub embedding_model: Option<String>,
+    /// The text search configuration (`GBRAIN_FTS_LANGUAGE`): absent is `english`; `german` is
+    /// the other one ported, and any other name refuses.
+    pub fts_config: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -2077,8 +2092,9 @@ impl Store {
             )?),
             _ => None,
         };
+        let config = FtsConfig::parse(q.fts_config.as_deref())?;
         let query = if q.keyword {
-            match or_of_lexemes(&plainto_tsquery(&q.fact_text)?) {
+            match or_of_lexemes(&plainto_tsquery_in(config, &q.fact_text)?) {
                 Some(query) => Some(query),
                 None => return Ok(Vec::new()),
             }
@@ -2135,7 +2151,7 @@ impl Store {
         let mut ranked = with_query_stack(query.items.len(), || -> Result<Vec<_>> {
             let mut ranked = Vec::new();
             for row in rows {
-                let vector = to_tsvector(&row.fact)?;
+                let vector = to_tsvector_in(config, &row.fact)?;
                 if ts_matches(&vector, &query) {
                     ranked.push((ts_rank_cd(&vector, &query), row));
                 }

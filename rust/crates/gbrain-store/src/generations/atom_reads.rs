@@ -16,9 +16,10 @@
 use super::activations::activation_activated;
 use super::fence_evidence::page_versions;
 use super::page_rows::text_of;
+use super::{GenerationRecord, RECORD};
 use crate::error::{INVALID_ARGUMENT, Result, StoreError};
 use crate::journal::RequestRecord;
-use crate::kv::scan_prefix;
+use crate::kv::{KvRead, scan_prefix};
 use crate::links::no_nul;
 use crate::page_body::segmented_reference;
 use crate::pages::read_page;
@@ -34,6 +35,61 @@ fn slug_set<'a>(op: &str, slugs: &'a [String]) -> Result<BTreeSet<&'a str>> {
         no_nul(op, &[("slugs", slug.as_str())])?;
     }
     Ok(slugs.iter().map(String::as_str).collect())
+}
+
+/// The held atom inputs a backlog leaves out (#10270, `heldAtomInputExclusionSql` in
+/// src/core/cycle/extract-atoms-generation.ts): per held `atom` generation whose hold id is one of `hold_ids`, that is not a
+/// partial hold (`held_context.partial` is not `true`) and records an input pin, the triple (source id, owner key, input pin).
+/// A page is held for its current input when its source, `source_slug:<slug>` and either its content hash or
+/// `<content hash>:<id>:<knowledge revision>` is in the set.
+pub(crate) fn held_atom_inputs(
+    read: &dyn KvRead,
+    hold_ids: &BTreeSet<&str>,
+) -> Result<BTreeSet<(String, String, String)>> {
+    let mut held = BTreeSet::new();
+    if hold_ids.is_empty() {
+        return Ok(held);
+    }
+    let mut failure = None;
+    scan_prefix(
+        read,
+        &[keys::DERIVED_GENERATION, RECORD],
+        false,
+        &mut |_, v| {
+            let record = match serde_json::from_slice::<GenerationRecord>(v) {
+                Ok(record) => record,
+                Err(e) => {
+                    failure = Some(StoreError::from(e));
+                    return false;
+                }
+            };
+            let partial = record
+                .held_context
+                .as_ref()
+                .and_then(|context| context.get("partial"))
+                .is_some_and(|partial| {
+                    partial.as_str() == Some("true") || partial == &Value::Bool(true)
+                });
+            if let (Some(hold_id), Some(pin)) =
+                (record.hold_id.as_deref(), record.input_pin.as_ref())
+                && record.kind == "atom"
+                && record.state == "held"
+                && !partial
+                && hold_ids.contains(hold_id)
+            {
+                held.insert((
+                    record.source_id.clone(),
+                    record.owner_key.clone(),
+                    pin.clone(),
+                ));
+            }
+            true
+        },
+    )?;
+    match failure {
+        Some(e) => Err(e),
+        None => Ok(held),
+    }
 }
 
 impl Store {

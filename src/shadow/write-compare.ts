@@ -10,7 +10,7 @@
  * Counts live in `write-comparisons.json`, written only through the locked tally below; `status` reads them.
  */
 import { randomBytes } from 'node:crypto';
-import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { flushDirectory, flushFile } from '../core/fs-durable.ts';
 import { readEpoch, withLock } from './evidence-epoch.ts';
@@ -26,7 +26,7 @@ export interface PageRef { source: string; slug: string }
 /** Text-valued rows of the primary as the seed reads them (seed.ts `relationRead`). */
 export interface PreImage { sources: Array<Record<string, string | null>>; pages: Array<Record<string, string | null>>; links: Array<Record<string, string | null>> }
 /** What the serving process sends for one sampled write: a full sample (`pre`, `post`), or just its outcome (`outcome`, `reason`/`family`). */
-export interface WriteEvent { t: 'write'; op: string; outcome?: WriteOutcome; reason?: string; family?: string; /** Earlier samples the pipe refused (counted uncomparable, `send_shed`). */ dropped?: number; args?: unknown[]; pre?: PreImage; post?: unknown; moved?: boolean }
+export interface WriteEvent { t: 'write'; op: string; outcome?: WriteOutcome; reason?: string; family?: string; /** Earlier samples the pipe refused (counted uncomparable, `send_shed`). */ dropped?: number; args?: unknown[]; pre?: PreImage; post?: unknown; moved?: boolean; /** Calls the transaction made on the page after the write that change a compared column, replayed in order (`updatePageContextualRetrievalState`). */ then?: unknown[][] }
 
 const ref = (slug: unknown, source: unknown): PageRef | null =>
   (typeof slug === 'string' && slug ? { source: typeof source === 'string' && source ? source : 'default', slug: slug.toLowerCase() } : null);
@@ -126,6 +126,8 @@ export interface WriteTallyFile {
   in_flight: number[];
   /** The last batch number of each child (`<pid>.<nonce>`) this file has taken: a save that may have landed is added once. */
   applied?: Record<string, number>;
+  /** Bytes of each serving process's `write-lost.<pid>.jsonl` this file has taken (the lost samples counted `uncomparable`): a line is added once. */
+  lost_applied?: Record<string, number>;
 }
 export const writeTallyPath = (dir: string): string => join(dir, 'write-comparisons.json');
 const OUTCOMES = ['comparable', 'unexplained_difference', 'uncomparable', 'capability_missing'] as const;
@@ -138,7 +140,7 @@ function loadTally(dir: string): WriteTallyFile | null {
   let text: string;
   try { text = readFileSync(writeTallyPath(dir), 'utf8'); } catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null; throw e; }
   const f = JSON.parse(text) as WriteTallyFile;
-  if (!(f?.version === 1 && typeof f.epoch_id === 'string' && OUTCOMES.every((o) => count(f[o])) && counts(f.capability_missing_by_family) && counts(f.uncomparable_by_reason) && (f.applied === undefined || counts(f.applied)) && Array.isArray(f.in_flight) && f.in_flight.every(Number.isInteger))) throw new Error('not a write tally');
+  if (!(f?.version === 1 && typeof f.epoch_id === 'string' && OUTCOMES.every((o) => count(f[o])) && counts(f.capability_missing_by_family) && counts(f.uncomparable_by_reason) && (f.applied === undefined || counts(f.applied)) && (f.lost_applied === undefined || counts(f.lost_applied)) && Array.isArray(f.in_flight) && f.in_flight.every(Number.isInteger))) throw new Error('not a write tally');
   return f;
 }
 
@@ -146,6 +148,30 @@ function loadTally(dir: string): WriteTallyFile | null {
 export function readWriteTally(dir: string, epochId: string | null): WriteTallyFile | null {
   try { const f = loadTally(dir); return f && epochId !== null && f.epoch_id === epochId ? f : null; } catch { return null; } // silent-read-ok: no readable tally is no count; the status shows zero and criterion 5 stays missing
 }
+
+/** Samples the serving process lost (a refused send, a read-back abandoned at disconnect) are never written into the tally by that process (a locked write could stall it): each is one `{epoch_id, reason}` line appended, with no lock, to its own file; the owner child folds them in. True only when the line and its directory entry are flushed to disk; false otherwise. */
+export const lostPath = (dir: string, pid: number): string => join(dir, `write-lost.${pid}.jsonl`);
+export function recordLost(dir: string, epoch: string, reason: string): boolean {
+  const path = lostPath(dir, process.pid);
+  try { appendFileSync(path, JSON.stringify({ epoch_id: epoch, reason }) + '\n', { flag: 'a', mode: 0o600 }); flushFile(path); flushDirectory(dir); return true; } catch { return false; } // silent-read-ok: false is the answer, never a pass: the sampler then carries the count on its next line
+}
+/** The lost lines past what `applied` took, per file: the complete lines' end offset and the reasons of this epoch's (another epoch's are retired and skipped; a line that is not readable, or an unfinished one whose writer is dead, counts as `lost_unreadable`). */
+function readLost(dir: string, epoch: string, applied: Record<string, number> = {}): Array<{ name: string; end: number; reasons: string[]; unreadable?: true }> {
+  let names: string[] = [];
+  try { names = readdirSync(dir).filter((n) => /^write-lost\.\d+\.jsonl$/.test(n)); } catch (e) { return (e as NodeJS.ErrnoException).code === 'ENOENT' ? [] : [{ name: '', end: 0, reasons: [], unreadable: true }]; } // a directory that is gone has nothing to fold; one that cannot be listed is unresolved, never empty
+  return names.flatMap((name) => {
+    try {
+      const buf = readFileSync(join(dir, name)); const from = applied[name] ?? 0; const cut = buf.lastIndexOf(10) + 1;
+      const open = buf.length > Math.max(cut, from); // bytes after the last newline: a line still being appended, or one a crash cut short
+      const end = open && !running(Number(/\d+/.exec(name)![0])) ? buf.length : cut; // its writer is gone: it ends as one lost_unreadable (its offset moves past it); while the writer lives it is unresolved
+      if (end <= from && !open) return [];
+      const reasons = buf.subarray(from, end).toString('utf8').split('\n').filter(Boolean).flatMap((l) => { try { const e = JSON.parse(l); return e?.epoch_id === epoch ? [String(e.reason)] : []; } catch { return ['lost_unreadable']; } });
+      return [{ name, end: Math.max(end, from), reasons, ...(open && end < buf.length ? { unreadable: true as const } : {}) }];
+    } catch { return [{ name, end: 0, reasons: [], unreadable: true }]; } // a file that cannot be read stays unfolded and unresolved: status reads it as no evidence
+  });
+}
+/** Lost samples of `epoch` that no tally has taken yet: status reads any as no evidence, like a standing in-flight mark. */
+export function unfoldedLost(dir: string, epoch: string | null, taken?: Record<string, number>): number { return epoch === null ? 0 : readLost(dir, epoch, taken).reduce((n, l) => n + l.reasons.length + (l.unreadable ? 1 : 0), 0); }
 
 const MAX_KEYS = 64;
 const bump = (map: Record<string, number>, key: string, n: number): void => { const k = key in map || Object.keys(map).length < MAX_KEYS ? key : 'other'; map[k] = (map[k] ?? 0) + n; };
@@ -188,7 +214,10 @@ export class WriteTally {
         file.in_flight = file.in_flight.filter((p) => !dead.includes(p));
         for (const id of Object.keys(file.applied)) if (id !== this.id && !running(Number.parseInt(id, 10))) delete file.applied[id];
         const todo = batches.filter((b) => b.seq > (file.applied![this.id] ?? 0));
-        if (!change && !dead.length && !todo.length) return;
+        const lost = readLost(this.dir, epoch, file.lost_applied).filter((l) => l.end > (file.lost_applied?.[l.name] ?? 0)); // the serving processes' lost samples, taken once under the same lock
+        if (!change && !dead.length && !todo.length && !lost.length) return;
+        file.lost_applied ??= {};
+        for (const l of lost) { for (const r of l.reasons) applyVerdict(file, 'uncomparable', r, 1); file.lost_applied[l.name] = l.end; }
         for (const b of todo) {
           for (const o of OUTCOMES) file[o] += b.delta[o];
           for (const [k, n] of Object.entries(b.delta.capability_missing_by_family)) bump(file.capability_missing_by_family, k, n);
@@ -212,6 +241,8 @@ export class WriteTally {
   begin(): boolean { return this.update((file) => { if (!file.in_flight.includes(this.pid)) file.in_flight.push(this.pid); }); }
   /** At child start: counts the marks of dead processes (and of an earlier process with this pid), and saves any verdict still unsaved. */
   recover(): void { this.update(undefined, true); }
+  /** One more try to save batches an earlier save could not take (true when nothing is left unsaved). */
+  save(): boolean { return this.update(); }
   /** Counts one outcome; `ends` is a replay's own verdict, which removes its mark. */
   note(outcome: WriteOutcome, key?: string, n = 1, ends = false): void {
     const epoch = this.epoch();

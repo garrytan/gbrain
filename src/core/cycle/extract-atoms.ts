@@ -98,8 +98,8 @@ import { isOpPageSlug } from '../ops/context.ts';
 import type { WriteReceipt } from '../persistence/types.ts';
 import { acceptedPendingReceipt } from '../persistence/accepted-pending.ts';
 import { AtomPageStateError, MAX_DETERMINISTIC_FAILURES, readAtomPageIdentity, writeAtomPageState, type AtomPageInput } from './extract-atoms-page-state.ts';
-import { atomGenerationOrigin, atomInputPin, heldLine, publishUnmanagedAtoms, resolveTranscriptAtomSlug, resolveTranscriptKeys, transcriptRoot } from './extract-atoms-generation.ts';
-import { heldForInput } from '../generations/publish.ts';
+import { atomGenerationOrigin, atomInputPin, heldAtomInputExclusionSql, heldLine, publishUnmanagedAtoms, resolveTranscriptAtomSlug, resolveTranscriptKeys, transcriptRoot } from './extract-atoms-generation.ts';
+import { currentHoldIds, heldForInput } from '../generations/publish.ts';
 import { ATOM_TYPES, ATOMS_RESPONSE_SCHEMA } from './extract-atoms-schema.ts';
 import { parseAtomsOutcome } from './extract-atoms-parse.ts';
 export { parseAtomsOutcome, parseAtomsResponse, type AtomsParseOutcome } from './extract-atoms-parse.ts';
@@ -433,7 +433,8 @@ export async function discoverExtractablePages(
       ${MANAGED_ATOM_DISCOVERY_SQL}
       ${PAGE_SCAN_STATE_EXCLUSION_SQL}
       ${connectorExclusion}
-      ${hasFilter ? "AND p.slug = ANY($5::text[])" : ''}
+      ${heldAtomInputExclusionSql('$5')}
+      ${hasFilter ? "AND p.slug = ANY($6::text[])" : ''}
       AND NOT EXISTS (
         SELECT 1
         FROM pages atom
@@ -446,15 +447,15 @@ export async function discoverExtractablePages(
     ORDER BY p.updated_at DESC
     LIMIT $4
   `;
-  const params: unknown[] = [
-    sourceId,
-    await resolveExtractableTypes(),
-    MIN_PAGE_CHARS_FOR_EXTRACTION,
-    limit,
-  ];
-  if (hasFilter) params.push(affectedSlugs);
-
   try {
+    const params: unknown[] = [
+      sourceId,
+      await resolveExtractableTypes(),
+      MIN_PAGE_CHARS_FOR_EXTRACTION,
+      limit,
+      await currentHoldIds(engine, 'atom'),
+    ];
+    if (hasFilter) params.push(affectedSlugs);
     const rows = await engine.executeRaw<{
       id: number;
       knowledge_revision: string;
@@ -509,8 +510,10 @@ export async function countExtractAtomsBacklog(
     const connectorExclusion = await connectorAtomExclusion(engine);
     const extractableTypes = await resolveExtractableTypes();
     const maxInputChars = await resolveExtractAtomsInputCap(engine);
+    // A page whose input still matches a current hold is left out, as discovery leaves it out (#10270).
+    const holdIds = await currentHoldIds(engine, 'atom');
     return await engine.countAtomExtractionBacklog(
-      { sourceId: sourceId ?? null, types: extractableTypes, minChars: MIN_PAGE_CHARS_FOR_EXTRACTION, maxInputChars, connectorExclusion },
+      { sourceId: sourceId ?? null, types: extractableTypes, minChars: MIN_PAGE_CHARS_FOR_EXTRACTION, maxInputChars, connectorExclusion, holdIds },
       { signal: opts.signal },
     );
   } catch (err) {

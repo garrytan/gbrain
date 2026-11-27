@@ -991,3 +991,84 @@ fn a_widening_record_admits_own_member_and_granted_open_private_facts_only() {
     );
     assert!(sup(Value::Null).is_empty());
 }
+
+/// `labelledOnlyFactSql`: a labelled-only caller reads a fact only on its own member page, while that page names it.
+/// The entity and holding pages are judged without the conjunct, and a policy under lineage is not answered.
+#[test]
+fn a_labelled_only_caller_reads_a_fact_only_on_its_own_member_page() {
+    let b = brain("facts-labelled-own-page");
+    let pages = [
+        (
+            "memory/members/carol",
+            json!({ "readable_by": ["member:carol"] }),
+        ),
+        (
+            "memory/members/dana",
+            json!({ "readable_by": ["member:dana"] }),
+        ),
+        ("memory/members/erin", json!({})),
+        ("open/plain", json!({})),
+    ];
+    for (slug, frontmatter) in pages {
+        let page: gbrain_store::pages::PageInput = args(json!({
+            "type": "note", "title": slug, "compiled_truth": "x", "frontmatter": frontmatter }));
+        b.put_page(slug, &page, &args(json!({}))).unwrap();
+    }
+    batch(
+        &b,
+        Value::Array(pages_rows(&[
+            ("memory/members/carol", "subject"),
+            ("memory/members/dana", "subject"),
+            ("memory/members/erin", "subject"),
+            ("open/plain", "subject"),
+        ])),
+    );
+    let read = |member: Option<&str>, lineage: bool, member_page: &str| {
+        let mut policy = json!({
+            "honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn",
+            "identity": ["member:carol"], "memberPage": member_page,
+            "labelledOnly": { "identity": ["member:carol"], "satisfiedRuleIds": [], "lineage": lineage },
+        });
+        if let Some(member) = member {
+            policy["labelledOnly"]["member"] = json!(member);
+        }
+        let q: FactQuery = args(
+            json!({ "sourceId": "default", "entitySlug": "subject", "activeOnly": true, "limit": 50, "excludePrivate": policy }),
+        );
+        b.list_facts_by_entity(&q)
+    };
+    // The caller reads the fact on its own member page, which names it, and on no other page.
+    assert_eq!(
+        facts(&read(Some("carol"), false, "memory/members/carol").unwrap()),
+        ["memory/members/carol"]
+    );
+    // Another member's page, a page that names nobody, and an open page are never the caller's own page.
+    assert!(
+        read(Some("dana"), false, "memory/members/dana")
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        read(Some("erin"), false, "memory/members/erin")
+            .unwrap()
+            .is_empty()
+    );
+    // No member (or one that is not a member id) reads as FALSE: no fact passes.
+    assert!(
+        read(None, false, "memory/members/carol")
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        read(Some("Not A Member"), false, "memory/members/carol")
+            .unwrap()
+            .is_empty()
+    );
+    // A fact policy under lineage is never answered by the store.
+    assert_eq!(
+        read(Some("carol"), true, "memory/members/carol")
+            .unwrap_err()
+            .code,
+        INVALID_ARGUMENT
+    );
+}

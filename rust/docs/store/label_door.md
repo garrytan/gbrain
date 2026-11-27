@@ -52,8 +52,46 @@ the `op_checkpoints` parents of `persistence/op_checkpoint.rs`.
   answers how many existed; any other op is refused, so the member cannot clear another op's checkpoints.
 
 All four run on the store handle the caller holds, so inside a purge transaction they are part of it. They read the
-alias-honoring setting and write nothing outside `op_checkpoints`. `releaseStaleHolds`, `readOwedPurges`, `pruneOwedPurges`,
-`readDerivedOriginParks` and `pruneDerivedOriginParks` still read and write through `executeRaw`.
+alias-honoring setting and write nothing outside `op_checkpoints`. The reads and prunes of the same rows are below.
+
+## The retention purge's bookkeeping
+
+The retention purge (`persistence/purge-deleted.ts` `purgeDeletedPagesCoordinated`) releases stale holds, lists and prunes
+the owed-purge records and parks, keeps the managed purge's failure records (op `purge-deleted-park`, keyed by
+`[source, slug, deleted_us]`), selects its candidates and reads the origins the carry judges. Twelve BrainEngine members
+carry those statements (`src/core/engine-sql/retention-purge.ts`); the store serves them from `persistence/retention_purge.rs`
+over the page records and the `op_checkpoints` parents. `deleted_us` is the tombstone's `deleted_at` in microseconds as
+text, and a page-keyed record joins its page only when its fingerprint is the page id's text exactly.
+
+- `releaseStaleOriginParkHolds(op)`: a park whose page exists and whose document has `held_deleted_us` loses
+  `held_request_id` and `held_deleted_us`, stamped now, when the page is live or its `deleted_us` differs. A JSON null
+  `held_deleted_us` is released only by a live page (`<> NULL` is not true).
+- `listOwedPurgeRecords(op)`: `{ owed }` for each record whose page is a tombstone with the recorded `deleted_us`, by
+  fingerprint. `pruneOwedPurgeRecords(op)` removes the others.
+- `pruneOriginParkRecords(op)`: removes the parks whose page is not a tombstone.
+- `prunePurgeParkRecords(op)`: removes the failure records whose page (`source_id`, `slug`) is not a tombstone with the
+  recorded `deleted_us`.
+- `recordPurgeFailureRecord(row)`: the first failure stores `first` parsed as `::jsonb` (text jsonb refuses, refuses here);
+  a repeat merges `failures + 1`, `code`, `reason`, `failed_at` and `version` into the document (a `failures` the int cast
+  refuses, refuses here). Both stamp now. `deletePurgeParkRecord(op, key)` removes one record.
+- `markPurgeParksInactive(op, sourceId)`: each record of the source without `inactive_seen` gets `inactive_seen: true`; the
+  stamp stays, as the statement sets no `updated_at`. `dropRearmedPurgeParks(op, sourceId)` removes the source's records
+  whose `inactive_seen` reads `true` and answers how many.
+- `listManagedPurgeCandidates(hours, release, hold)`: the tombstones deleted before now minus `hours` whose source exists
+  and is not archived, under the identity-downgrade hold (an open record: no `disposition`, `old_deleted_at` the page's
+  `deleted_at`; text the timestamptz cast refuses, refuses here), the atom and derived retirement holds (`PurgeHolds`,
+  page_ops.md) and the origin park unless the id is in `release`, minus `hold`. Ordered by `deleted_at`, then source and slug
+  in byte order; `cutoff` is the cutoff as `timestamptz::text` in UTC.
+- `listReleasedPurgeOrigins(release, excludeIds, hours)`: the tombstones among `release`, minus `excludeIds`, deleted before
+  the cutoff, under the identity-downgrade and retirement holds, by id (the statement has no order; the caller sorts).
+  `deleted_at` is ISO text; the TypeScript member hands it back as a Date, as the SQL engines do.
+- `listExpiringOriginPages(hours)`: the tombstones deleted before the cutoff that are origins (`is_origin`), by id. The
+  TypeScript member passes `honorAliases`.
+
+An hour count is text, as the statements bind it; text that is not a finite number refuses, as the interval cast does.
+The unmanaged expiry's own reads (`purgeExpired` and `readRederiveHeldConcepts` in `persistence/purge-deleted.ts`) still
+run through `executeRaw`, so the retention purge on a Rust brain stops at the pre-write check before it writes anything
+(`persistence/purge-path-members.ts`).
 
 ## What still refuses
 

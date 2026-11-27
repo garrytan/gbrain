@@ -37,6 +37,13 @@ async function stagedPage(engine: BrainEngine, slug: string, truth: string) {
   expect(await staged.afterCommit(engine)).toBe(true);
 }
 
+/** Stage a segmented rewrite of `slug` and leave it unpublished: its chunks are stored, outside the live body. */
+async function stagedOnly(engine: BrainEngine, slug: string, truth: string) {
+  const existing = await engine.getPage(slug);
+  await stageSegmentedImport(engine, { slug, sourceId: 'default', existing, policy: await readPageBodyPolicy(engine), baseRevision: null,
+    page: { title: slug, type: 'note', compiled_truth: truth, timeline: '', frontmatter: {}, tags: [] }, chunking: { quarantined: false, corpusGeneration: null, tier: 'none' } });
+}
+
 describe('engine parity: the pending stamp of a segment chunk', () => {
   parityTest('a segment chunk written without a vector is pending with a stamp, never unstamped',
     { methods: ['setConfig', 'getPage', 'transaction', 'stageSegmentChunks', 'readEmbeddingStateCounts', 'listEmbeddingStateRows'], timeout: 600_000 },
@@ -54,16 +61,29 @@ describe('engine parity: the pending stamp of a segment chunk', () => {
     });
 
   parityTest('the sync and doctor backlog readers age a segmented page\'s pending chunks',
-    { methods: ['setConfig', 'getPage', 'transaction', 'stageSegmentChunks', 'executeRaw'], requires: 'raw_sql', timeout: 600_000 },
+    { methods: ['setConfig', 'getPage', 'transaction', 'stageSegmentChunks', 'readEmbedBacklogRows', 'readEmbeddingStateCounts'], timeout: 600_000 },
     async (engine) => {
       await engine.setConfig('pages.segmented_storage', 'on');
       await stagedPage(engine, 'notes/pending-age', conversationBody(1300 * 1024, { seed: 62 }));
       const backlog = (await readEmbedBacklog(engine, ['default'])).get('default')!;
       expect(backlog.state).toBe('behind');
       expect(backlog.oldest_pending_since).not.toBeNull();
-      const [row] = await engine.executeRaw<{ unaged: number }>(
-        `SELECT count(*) FILTER (WHERE embedding_pending_since IS NULL)::int AS unaged FROM content_chunks WHERE embedding IS NULL`);
-      expect(Number(row!.unaged)).toBe(0);
-      return { state: backlog.state, pending: backlog.pending_chunks > 1, aged: backlog.age_seconds !== null, unaged: Number(row!.unaged) };
+      const { unstamped_pending: unaged } = await engine.readEmbeddingStateCounts({ mode: 'full', purgeWindowHours: 72 });
+      expect(unaged).toBe(0);
+      return { state: backlog.state, pending: backlog.pending_chunks > 1, aged: backlog.age_seconds !== null, unaged };
+    });
+
+  parityTest('the sync backlog counts only the live body of a segmented page, not a staged rewrite\'s chunks',
+    { methods: ['setConfig', 'getPage', 'transaction', 'stageSegmentChunks', 'readEmbedBacklogRows', 'readEmbeddingStateCounts'], timeout: 600_000 },
+    async (engine) => {
+      // A staged rewrite stores its segment chunks before it publishes; chunkGenerationFilter keeps them out of the
+      // live body, so the backlog counts the chunks the embedding state reads count as pending, no more.
+      await engine.setConfig('pages.segmented_storage', 'on');
+      await stagedPage(engine, 'notes/pending-live', conversationBody(1300 * 1024, { seed: 63 }));
+      await stagedOnly(engine, 'notes/pending-live', conversationBody(1300 * 1024, { seed: 64 }));
+      const backlog = (await readEmbedBacklog(engine, ['default'])).get('default')!;
+      const { counts } = await engine.readEmbeddingStateCounts({ mode: 'full', purgeWindowHours: 72 });
+      expect(backlog.pending_chunks).toBe(counts.pending ?? 0);
+      return { pending: backlog.pending_chunks, state: backlog.state };
     });
 });

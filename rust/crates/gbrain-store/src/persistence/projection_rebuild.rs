@@ -357,6 +357,81 @@ impl Store {
         })
     }
 
+    /// `readChunkInputHashes(pageId)`: every stored chunk of the page with its recorded embedding input hash,
+    /// `{ id, embedding_input_hash }` (the contextual-mode proof read, page-state/contextual-proof.ts).
+    pub fn read_chunk_input_hashes(&self, page_id: f64) -> Result<Vec<Value>> {
+        let page_id = id_of(page_id, "pageId")?;
+        Ok(read_chunks(&*self.read()?, page_id)?
+            .iter()
+            .map(|c| json!({ "id": c.id, "embedding_input_hash": c.embed.input_hash }))
+            .collect())
+    }
+
+    /// `clearChunkEmbeddingsByIds(pageId, column, ids)`: clears the vector and its embedding record on each named
+    /// chunk of the page and marks it pending now (`embedding_pending_since=now()`).
+    pub fn clear_chunk_embeddings_by_ids(&self, page_id: f64, ids: &[f64]) -> Result<()> {
+        let page_id = id_of(page_id, "pageId")?;
+        let ids: Vec<u64> = ids
+            .iter()
+            .map(|id| id_of(*id, "ids"))
+            .collect::<Result<_>>()?;
+        self.write(|tx| {
+            let now = transaction_clock::transaction_now().ok_or_else(|| {
+                StoreError::invalid(
+                    "clearChunkEmbeddingsByIds ran outside a store write transaction",
+                )
+            })?;
+            for mut chunk in read_chunks(&*tx, page_id)? {
+                if !ids.contains(&chunk.id) {
+                    continue;
+                }
+                chunk.embed.dims = 0;
+                chunk.embed.embedded_at_us = None;
+                chunk.embed.text_hash = None;
+                chunk.embed.input_hash = None;
+                chunk.embed.pending_since_us = Some(now);
+                put_json(tx, &keys::chunk(chunk.page_id, chunk.chunk_index), &chunk)?;
+                remove_chunk_vector(tx, chunk.page_id, chunk.chunk_index)?;
+            }
+            Ok(())
+        })
+    }
+
+    /// `writeChunkInputHashes(pageId, ids, hashes)`: records each hash as the embedding input hash of the chunk of
+    /// the page with the id at the same position (`FROM unnest(ids, hashes)`).
+    pub fn write_chunk_input_hashes(
+        &self,
+        page_id: f64,
+        ids: &[f64],
+        hashes: &[String],
+    ) -> Result<()> {
+        let page_id = id_of(page_id, "pageId")?;
+        if ids.len() != hashes.len() {
+            return Err(StoreError::invalid(
+                "writeChunkInputHashes: ids and hashes differ in length",
+            ));
+        }
+        let mut proof: std::collections::BTreeMap<u64, &str> = std::collections::BTreeMap::new();
+        for (id, hash) in ids.iter().zip(hashes) {
+            if hash.contains('\0') {
+                return Err(StoreError::invalid(
+                    "writeChunkInputHashes: a hash holds a NUL byte",
+                ));
+            }
+            proof.entry(id_of(*id, "ids")?).or_insert(hash.as_str());
+        }
+        self.write(|tx| {
+            for mut chunk in read_chunks(&*tx, page_id)? {
+                let Some(hash) = proof.get(&chunk.id) else {
+                    continue;
+                };
+                chunk.embed.input_hash = Some((*hash).to_string());
+                put_json(tx, &keys::chunk(chunk.page_id, chunk.chunk_index), &chunk)?;
+            }
+            Ok(())
+        })
+    }
+
     /// `readChunkRowsFingerprint(pageId)`: the page's chunk rows as `id:index` pairs, hashed.
     pub fn read_chunk_rows_fingerprint(&self, page_id: f64) -> Result<String> {
         let page_id = id_of(page_id, "pageId")?;

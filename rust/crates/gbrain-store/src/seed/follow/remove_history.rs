@@ -109,6 +109,20 @@ pub(super) static SPECS: &[(&str, Follow)] = &[
         ),
     ),
     (
+        "trust_allow_rules",
+        keyed(
+            &[
+                "id",
+                "source_id",
+                "uri_prefix",
+                "reason_family",
+                "removed_at",
+            ],
+            &[&["source_id", "uri_prefix", "reason_family", "removed_at"]],
+            remove_allow_rule,
+        ),
+    ),
+    (
         "wanted_links",
         keyed(
             &[
@@ -201,6 +215,10 @@ fn remove_evidence(tx: &mut dyn KvWrite, id: &Identity, _: Mode) -> Result<bool>
 
 fn remove_proposal(tx: &mut dyn KvWrite, id: &Identity, _: Mode) -> Result<bool> {
     crate::trust::proposals::remove_proposal(tx, need!(id, "id", u64))
+}
+
+fn remove_allow_rule(tx: &mut dyn KvWrite, id: &Identity, _: Mode) -> Result<bool> {
+    crate::trust::allow_rules::remove_rule(tx, need!(id, "id", u64))
 }
 
 fn remove_wanted(tx: &mut dyn KvWrite, id: &Identity, _: Mode) -> Result<bool> {

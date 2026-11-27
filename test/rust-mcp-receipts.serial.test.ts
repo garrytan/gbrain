@@ -2,8 +2,9 @@
  * The write-request receipt tools over a real stdio `gbrain serve` on a Rust-engine brain, against the same serve on a
  * PGLite brain, for an installation that has no local writer registration yet.
  *
- * Each brain is new: `gbrain stats --json` creates its database and registers no writer, so its gbrain home holds no
- * cli or stdio writer registration. The test then starts `gbrain serve` (the real CLI entry, one child process per brain), sends the MCP initialize handshake, waits
+ * Each brain is new and its gbrain home holds no cli or stdio writer registration: the PGLite brain's database is
+ * created by `gbrain stats --json`, and the Rust brain's store by opening the store directly (openRustStore, the same
+ * open the engine makes), since a read command never creates a missing Rust store (it refuses with brain_missing). The test then starts `gbrain serve` (the real CLI entry, one child process per brain), sends the MCP initialize handshake, waits
  * until the serve has written its stdio writer registration (bounded), and then calls get_write_request,
  * list_write_requests and cancel_write_request. Nothing was ever written, so both brains must answer not_found, an
  * empty list and not_found.
@@ -85,12 +86,31 @@ function outcome(response: any): unknown {
   return response.result.isError ? { error: parsed.code ?? parsed.error } : parsed;
 }
 
-/** Creates the brain's database through a read command, which registers no local writer. */
+/** True once any local writer of this brain registered (a cli or stdio registration file). */
+function anyWriterRegistered(brain: Brain): boolean {
+  const dir = join(brain.home, '.gbrain', 'persistence');
+  return existsSync(dir) && readdirSync(dir).some((name) => /\.(cli|stdio)\.json$/.test(name));
+}
+
+/**
+ * Creates the brain's database and registers no local writer. PGLite: a read command (`gbrain stats --json`) creates
+ * it. Rust: a read command refuses a missing store (brain_missing), so the store is created by opening it directly, the
+ * open the engine makes, with no CLI and no gbrain home involved.
+ */
 async function createBrain(brain: Brain): Promise<Brain> {
-  const proc = Bun.spawn(['bun', CLI, 'stats', '--json'], { cwd: root, env: childEnv(brain), stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' });
-  const [stdout, stderr, exitCode] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
-  if (exitCode !== 0) throw new Error(`stats on ${brain.backend} exited ${exitCode}: ${stdout}${stderr}`);
-  expect(stdioRegistered(brain)).toBe(false);
+  if (brain.backend === 'rust') {
+    const { loadRustAddon } = await import('../src/core/rust-engine/addon-loader.ts');
+    const { openRustStore } = await import('../src/core/rust-engine/store.ts');
+    const addon = await loadRustAddon({ env: { GBRAIN_RUST_ENGINE_ADDON: ADDON } });
+    const store = await openRustStore(addon, brain.db);
+    await store.close();
+    expect(existsSync(join(brain.db, 'FORMAT'))).toBe(true);
+  } else {
+    const proc = Bun.spawn(['bun', CLI, 'stats', '--json'], { cwd: root, env: childEnv(brain), stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' });
+    const [stdout, stderr, exitCode] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+    if (exitCode !== 0) throw new Error(`stats on ${brain.backend} exited ${exitCode}: ${stdout}${stderr}`);
+  }
+  expect(anyWriterRegistered(brain)).toBe(false);
   return brain;
 }
 
