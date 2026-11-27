@@ -257,7 +257,7 @@ async function publishReleasedFact(tx: BrainEngine, hold: WriteGateHold, bound: 
     slugs: entity ? [entity] : [], op: 'trust_release', remote: false, cause: { hold: `wh${hold.id}` } }, () => tx.insertFact({ // gbrain-allow-direct-insert: owner release of a held fact (CEO-9), inside the owner's coordinated transaction
     fact: String(p.fact ?? ''), kind: (str(p.kind) ?? 'fact') as never, entity_slug: entity, visibility: (p.visibility === 'world' ? 'world' : 'private'),
     source: str(p.source) ?? `trust release h${hold.id}`, context: str(p.context), source_session: str(p.source_session), confidence: 1,
-    valid_from: str(p.valid_from) ? new Date(String(p.valid_from)) : new Date(), valid_until: str(p.valid_until) ? new Date(String(p.valid_until)) : null,
+    valid_from: str(p.valid_from) ? new Date(String(p.valid_from)) : null, valid_until: str(p.valid_until) ? new Date(String(p.valid_until)) : null,
     embedding: null, embedding_model: null, ...claimColumns(p as never),
   }, { source_id: hold.source_id }))));
   if (await managedPersistenceEnabled(tx)) await withCoordinatedWrite(tx, [hold.source_id], write, await maintenanceAttribution(tx));

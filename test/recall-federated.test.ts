@@ -37,17 +37,17 @@ beforeAll(async () => {
   // B (writes proj-widget): a world fact — the cross-agent continuity payload.
   await remember.handler(
     ctx({ remote: true, sourceId: 'proj-widget' }),
-    { fact: 'The payments provider decision is Stripe-shaped (test marker QQF1)', provenance: 'recall-federated test', visibility: 'world' },
+    { fact: 'The payments provider decision is Stripe-shaped (test marker QQF1)', provenance: 'recall-federated test', visibility: 'world', valid_from: '2026-01-01' },
   );
   // A private fact in proj-widget: must never cross to remote readers.
   await remember.handler(
     ctx({ remote: false, sourceId: 'proj-widget' }),
-    { fact: 'Private hunch marker QQF2', provenance: 'recall-federated test', visibility: 'private' },
+    { fact: 'Private hunch marker QQF2', provenance: 'recall-federated test', visibility: 'private', valid_from: '2026-01-01' },
   );
   // A fact in an UNGRANTED source: must not leak through the federated arm.
   await remember.handler(
     ctx({ remote: true, sourceId: 'nova-notes' }),
-    { fact: 'Ungranted-source marker QQF3', provenance: 'recall-federated test', visibility: 'world' },
+    { fact: 'Ungranted-source marker QQF3', provenance: 'recall-federated test', visibility: 'world', valid_from: '2026-01-01' },
   );
 });
 

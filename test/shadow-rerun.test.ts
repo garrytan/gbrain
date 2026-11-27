@@ -108,7 +108,7 @@ describe('the barrier', () => {
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-shadow-busy-'));
     const epoch = ensureEpoch(dir, { seed_id: 's', rust_addon_sha256: null, comparator_version: 2, adapter_version: 'a', capability_set_hash: null, readiness_policy_hash: 'p' });
     const samples = new SampleRegistry();
-    const ask = { id: 1, kind: 'rerun', sid: samples.add({ op: 'listPages', args: [], at: Date.now() }, 10), epoch_id: epoch.epoch_id };
+    const ask = { id: 1, kind: 'rerun', sid: samples.add({ op: 'listPages', args: [], at: Date.now() }, 10), epoch_id: epoch.epoch_id }; // pregate-literal: SHADOW_ADAPTER_VERSION=10 an unrelated 10 (a count or size), not the adapter version
     let clock = 0;
     const handler = (idle: boolean, rpc: () => Promise<unknown>) => makeAskHandler({ engine, reads: {} as never, dir, rpc: rpc as never, samples, now: () => (clock += 20_000),
       follower: { idle: () => idle, blocked: () => null, settle: async () => {}, published: 0, lastInvalidatedAt: 0 } as never });
@@ -123,7 +123,7 @@ describe('the barrier', () => {
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-shadow-spin-'));
     const epoch = ensureEpoch(dir, { seed_id: 's', rust_addon_sha256: null, comparator_version: 2, adapter_version: 'a', capability_set_hash: null, readiness_policy_hash: 'p' });
     const samples = new SampleRegistry();
-    const ask = { id: 1, kind: 'rerun', sid: samples.add({ op: 'listPages', args: [], at: Date.now() }, 10), epoch_id: epoch.epoch_id };
+    const ask = { id: 1, kind: 'rerun', sid: samples.add({ op: 'listPages', args: [], at: Date.now() }, 10), epoch_id: epoch.epoch_id }; // pregate-literal: SHADOW_ADAPTER_VERSION=10 an unrelated 10 (a count or size), not the adapter version
     const handler = (follower: Record<string, unknown>, deadlineMs?: number) => makeAskHandler({ engine, reads: {} as never, dir, samples, rpc: (async () => ({ stamp: 1 })) as never, deadlineMs, follower: { published: 0, lastInvalidatedAt: 0, ...follower } as never });
     // pendingInvalid set, nothing queued: idle() stays false and settle() resolves at once
     const started = Date.now();
@@ -171,7 +171,7 @@ describe('rerun attempts', () => {
     const rows = [{ payload: 'x', id: 9 }];
     for (const attempt of [undefined, 'nope']) expect(await handler({ id: 2, kind: 'privacy', sid, phase: 'rerun', attempt, rows })).toEqual({ verdict: 'privacy_check_moved', complete: false });
     await expect(handler({ id: 3, kind: 'vector', sid, phase: 'rerun', attempt: 'nope' })).rejects.toMatchObject({ code: 'moved' });
-    for (let i = 0; i < 10; i++) await handler(ask); // more attempts than the sample keeps: the oldest are dropped
+    for (let i = 0; i < 10; i++) await handler(ask); // more attempts than the sample keeps: the oldest are dropped // pregate-literal: SHADOW_ADAPTER_VERSION=10 an unrelated 10 (a count or size), not the adapter version
     expect(samples.get(sid)!.reruns!.size).toBe(8);
     expect(await handler({ id: 4, kind: 'privacy', sid, phase: 'rerun', attempt: a1.attempt, rows })).toEqual({ verdict: 'privacy_check_moved', complete: false });
     rmSync(dir, { recursive: true, force: true });

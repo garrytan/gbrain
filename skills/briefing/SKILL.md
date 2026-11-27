@@ -1,6 +1,7 @@
 ---
 name: briefing
 version: 1.3.0
+audience: owner
 description: Compile daily briefing with meeting context, active deals, and citation tracking
 triggers:
   - "daily briefing"

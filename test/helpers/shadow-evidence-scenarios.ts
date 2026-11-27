@@ -98,7 +98,7 @@ export function defineEvidenceScenarios(ctx: EvidenceScenarioContext): void {
         attached.supervisor.stop();
         attached.reconciler!.stop();
         expect(lines).toHaveLength(1);
-        expect(lines[0]).toMatchObject({ vector: 1, primary: 1, ref_size: 10 }); // the real Rust engine returned the exact top ten
+        expect(lines[0]).toMatchObject({ vector: 1, primary: 1, ref_size: 10 }); // the real Rust engine returned the exact top ten // pregate-literal: SHADOW_ADAPTER_VERSION=10 an unrelated 10 (a count or size), not the adapter version
       });
     } finally { rmSync(home, { recursive: true, force: true }); }
   }, 120_000);

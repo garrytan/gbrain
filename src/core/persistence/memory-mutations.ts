@@ -23,6 +23,8 @@ import { admitWrite, assertPageRequestIdentity, assertReplayIntent, getWriteRequ
 import { assertPersistenceAccepting, registerMutationPreparer, waitForWrite, writeResponse } from './service.ts';
 import { claimWorktree, getWorktreeBinding } from './ownership.ts';
 import { resolveFactWriteTarget } from './fact-write-target.ts';
+import { readOnlyCheckout } from './mirror-read-only.ts';
+import { readOnlyMirrorForgetError } from './unbound-source.ts';
 import { clientRequestIdOf, parseMutationPrecondition } from './preconditions.ts';
 import { grantedWriteSource, readsButWritesOnly, writeGrantRefusal } from './write-grant.ts';
 import type { WriteRequest } from './model.ts';
@@ -33,6 +35,7 @@ import { projectionEligibleSql } from '../eligibility/sql.ts';
 import { resolveReadEligibility } from '../eligibility/policy.ts';
 import { callerMember, factVisibilitySql, memberFactPage, memberPageIsOwn, memberPageNotOwned, memberPageSlug, ownMemberFactIds, scopePageIsShared, scopePageNotShared, SCOPE_PAGE_SLUG } from '../access/member-facts.ts';
 import { perCallWriteSource } from '../access/attest-sources.ts';
+import { MEMBER_PAGE_PREFIX } from '../access/principals.ts';
 import { isGitCheckoutRoot } from '../git-checkout.ts';
 import { entityPageMissingNotice } from '../interop-notices.ts';
 
@@ -254,8 +257,11 @@ export async function submitRememberMutation(ctx: OperationContext, params: Reco
   // GST-359 C2: a remote member's fact is private, on its member page, and never inferred onto another page.
   // GST-1113: an attested memory_write that named a scope source saves world facts on that source's scope page instead.
   // GST-2243: share: true saves a member's fact as anyone else's, on the subject's page for every reader of the source.
+  // GST-4031: a local replacement of a fact on a member page is saved on that same page (a correction never moves a fact).
   const scopePage = perCallWriteSource(ctx, sourceId);
-  const ownPage = scopePage ? null : memberFactPage(ctx);
+  const replacedOn = ctx.remote === false && !scopePage && p.replaces !== undefined && p.replaces !== null && Number.isSafeInteger(Number(p.replaces))
+    ? (await readForgetTarget(ctx.engine, Number(p.replaces), sourceId, false, false))?.source_markdown_slug ?? null : null;
+  const ownPage = scopePage ? null : memberFactPage(ctx) ?? (replacedOn?.startsWith(MEMBER_PAGE_PREFIX) ? replacedOn : null);
   // GST-2346 D1: the brain owner speaking for itself saves as a caller with no member page does, unless it asks for private.
   const ownerShares = ownPage !== null && p.share !== true && ownerSpeaksForItself(ctx) && (opts.visibilityDefaulted === true
     ? !await ownerDefaultKeptPrivate(ctx, sourceId, resolved?.slug ?? null, p.replaces) : p.visibility !== 'private');
@@ -300,7 +306,7 @@ export async function submitRememberMutation(ctx: OperationContext, params: Reco
     slug, pageId: snapshot?.page.id ?? null, requestId, clientRequestId, callerIntent,
     // The transport's session (MCP `_meta.session_id`) is recorded on the fact, as extract_facts records
     // it, so recall's session_id filter finds single facts too. Identity only — never a trust surface.
-    intent: { ...callerIntent, entity_slug: entitySlug, fence, valid_from: typeof p.valid_from === 'string' ? new Date(p.valid_from).toISOString() : new Date().toISOString(), valid_until: validUntil?.toISOString() ?? null,
+    intent: { ...callerIntent, entity_slug: entitySlug, fence, valid_from: typeof p.valid_from === 'string' ? new Date(p.valid_from).toISOString() : null, valid_until: validUntil?.toISOString() ?? null,
       visibility, ...(call.visibilityDefaulted ? { visibility_defaulted: true } : {}), ...(scopePage ? { scope_page: true } : memberPage ? { member_page: true } : {}),
       ...(linked ? { entity_inferred: linked.via } : {}), ...(inference && 'warning' in inference ? { entity_warning: inference.warning } : {}),
       session_id: ctx.sessionId ?? null, share_held: heldFor ?? undefined },
@@ -474,7 +480,11 @@ export async function submitForgetMutation(ctx: OperationContext, operation: 'fo
   const fileBacked = struck.length > 0 && (await ctx.engine.executeRaw(
     'SELECT 1 FROM pages WHERE source_id=$1 AND slug=ANY($2::text[]) AND deleted_at IS NULL AND source_path IS NOT NULL LIMIT 1', [sourceId, struck])).length > 0;
   const target = await resolveFactWriteTarget(ctx.engine, sourceId, source, { sandbox, fileBacked, remote })
-    .catch((error: unknown) => { if (!fileBacked && error instanceof OperationError) return null; throw error; });
+    .catch(async (error: unknown) => {
+      if (!fileBacked && error instanceof OperationError) return null;
+      const mirror = error instanceof OperationError && error.detail === 'unbound_source' ? await readOnlyCheckout(ctx.engine, sourceId) : null;
+      throw mirror ? readOnlyMirrorForgetError(sourceId, id, mirror, remote ? null : source.local_path) : error;
+    });
   // Likewise with sync.write_through off or from a sandboxed subagent: the struck file would not be written, so the claim
   // would come back from Git.
   if (fileBacked && target?.kind === 'publish' && target.databaseOnlyReason === 'subagent_sandbox') {

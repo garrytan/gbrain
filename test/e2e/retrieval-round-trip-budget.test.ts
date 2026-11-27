@@ -25,8 +25,14 @@ import { readSqlTrace } from '../helpers/statement-counter.ts';
 import { seedPage } from '../helpers/keyword-paging-fixture.ts';
 
 const CLI = join(import.meta.dir, '../../src/cli.ts');
-/** Measured on v0.60.333.0 (after #7169) with no provider keys (keyword search): search 59, get 17, recall 35. */
-const BUDGET: Record<string, number> = { search: 65, get: 19, recall: 38 };
+/**
+ * Measured on v0.60.333.0 (after #7169) with no provider keys (keyword search): search 59, get 17, recall 35.
+ * search +1 (GST-4029): `search.long_page_unit` defaults to `section`, so a search with a non-conversation hit
+ * runs the one long-page size preflight that buys section delivery: selectLongPages' `SELECT p.id,
+ * char_length(...) AS chars, octet_length(...) AS bytes FROM pages p WHERE p.id = ANY($1)` (search/evidence-delivery.ts).
+ * Search hits carry no page size, so it cannot be skipped without one.
+ */
+const BUDGET: Record<string, number> = { search: 66, get: 19, recall: 38 };
 
 const run = process.env.DATABASE_URL ? describe : describe.skip;
 let home = '';

@@ -90,6 +90,15 @@ export function remainingVectorBudget(deadline: number): number {
   return remaining;
 }
 
+/**
+ * The pooled attempts, widening the window x4 up to three times, then (Postgres,
+ * indexed) the exact fallback. `hnswOrdered` says the attempts can only be
+ * ordered by an iterative HNSW scan (HNSW_ORDERED_POOL_SETTINGS): a short
+ * window then means the scan reached `hnsw.max_scan_tuples`, which a wider
+ * window does not raise, so the exact fallback comes next with the rest of the
+ * deadline. A non-iterative scan stops at `ef_search`, which widening raises,
+ * so it keeps widening.
+ */
 export async function searchVectorPool(
   limit: number,
   initialLimit: number,
@@ -99,6 +108,7 @@ export async function searchVectorPool(
   run: (attempt: VectorPoolAttempt) => Promise<VectorPoolBatch>,
   hasMore: (pool: number, remainingMs: number) => Promise<boolean>,
   onMeta: SearchOpts['onVectorPoolMeta'],
+  hnswOrdered = false,
 ): Promise<Record<string, unknown>[]> {
   const deadline = performance.now() + 8_000;
   const remaining = () => Math.max(0, Math.floor(deadline - performance.now()));
@@ -117,6 +127,7 @@ export async function searchVectorPool(
         if (!indexed) return batch.rows;
         if (remaining() === 0) { reason = 'deadline'; break; }
         if (!(await hasMore(batch.eligiblePool ?? batch.candidatePool, remaining()))) return batch.rows;
+        if (hnswOrdered) break;
       }
       if (escalations >= 3 || (indexed && !iterative)) break;
       innerLimit = Math.min(innerLimit * 4, Math.max(initialLimit, 20_000));

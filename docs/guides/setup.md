@@ -95,9 +95,9 @@ Setup reports how far the wiring is proven:
    fresh session of this harness yet. Open a new session (the harness reads
    its config at session start) and check that `/mcp` lists gbrain.
 
-In a new Claude Code session (SessionStart `startup` or `resume`) the
-SessionStart hook waits up to 4 seconds for the stdio serve Claude Code starts
-alongside it, then prints the context pack (recent world-visible facts; private
+In a new Claude Code or Codex session (SessionStart `startup` or `resume`)
+the SessionStart hook waits up to 4 seconds for the stdio serve the harness
+starts alongside it, then prints the context pack (recent world-visible facts; private
 facts are never pushed). Without the wait a fresh session got nothing, because
 the serve binds its socket about 2 seconds after spawn.
 4. `native-verified`: the capability table records an observed push for the
@@ -172,8 +172,8 @@ One bot reading for all of them with one unbound key pulls one person's notes in
 another person's answers, so setup labels each person instead:
 
 ```bash
-gbrain setup claude-code --serves several --members alice-example,bob-example
-# or --members-file people.txt (one id per line)
+gbrain setup claude-code --members alice-example,bob-example
+# or --members-file people.txt (one id per line); naming people implies --serves several
 ```
 
 For each person this adds a member (existing ones are kept), a folder rule
