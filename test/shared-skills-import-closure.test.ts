@@ -384,16 +384,16 @@ for (const [name, url] of backends) {
       for (const [name, files] of holders) expect((await put(f, f.local, name, files) as { state?: string }).state).toBe('committed');
       expect(await readerCopy(f, 'gamma')).toBe('Synthetic shared guide body.\n');
     }
-    const adopt = async (f: Fixture, skills: Array<[string, Array<Record<string, unknown>>]>) => adoptSharedSkillpack(f.local, 'default', { pack_id: 'example-pack',
+    const adopt = async (f: Fixture, skills: Array<[string, Array<Record<string, unknown>>]>, typed = false) => adoptSharedSkillpack(f.local, 'default', { pack_id: 'example-pack',
       skills: await Promise.all(skills.map(async ([name, files]) => ({ pack_id: 'example-pack', name, files, expected_revision: await revisionOf(f, name) }))) as never })
-      .then(() => 'published', (error: { code?: string; message?: string }) => `${error.code}: ${error.message}`);
+      .then(() => 'published', (error: { code?: string; message?: string; reason?: string }) => `${error.code}${typed ? `/${error.reason}` : ''}: ${error.message}`);
 
     // Value: protects=a public holder that gives up a convention cannot hand its reach to another skill while a hidden holder keeps it; fails_when=the departing skill's sealed readers audience still authorizes beta, so readers fetch alpha's guide through beta; why_new=only holders that keep the file may authorize a new reach; seam=none; no_claim=none
     test('an adoption batch in which a public holder drops the convention cannot show it to readers through another skill while a hidden holder keeps it', () => fixture(async f => {
       await publishDeparting(f);
       const before = { heads: await heads(f), checkout: checkout(f.root) };
-      const outcome = await adopt(f, [['gamma', [prose('gamma', 'Use the root.', [ROOT]), root()]], ['beta', [prose('beta', 'Now uses the guide.', [GUIDE]), guide(['readers'])]]]);
-      expect(outcome).toBe(`local_conflict: The publication was refused: ${GUIDE} would reach a wider audience than skills/alpha gives it. Nothing was written.`);
+      const outcome = await adopt(f, [['gamma', [prose('gamma', 'Use the root.', [ROOT]), root()]], ['beta', [prose('beta', 'Now uses the guide.', [GUIDE]), guide(['readers'])]]], true);
+      expect(outcome).toBe(`local_conflict/shared_file_hidden_holder: The publication was refused: ${GUIDE} would reach a wider audience than skills/alpha gives it. Nothing was written.`);
       expect({ heads: await heads(f), reader: await readerCopy(f, 'beta'), checkout: checkout(f.root) }).toEqual({ ...before, reader: 'skill_asset_not_found' });
     }, url), 120_000);
 
@@ -440,6 +440,16 @@ for (const [name, url] of backends) {
       const result = await put(f, f.editor, 'beta', [prose('beta', 'Uses both.', [ROOT, GUIDE]), root(), guide(['readers'])]);
       expect({ state: (result as { state?: string }).state, beta: await readerCopy(f, 'beta'), gamma: await readerCopy(f, 'gamma') })
         .toEqual({ state: 'committed', beta: 'Synthetic shared guide body.\n', gamma: 'skill_asset_not_found' });
+    }, url), 120_000);
+
+    // Value: protects=a sole holder that narrows its own audience cannot hand the callers it drops to another skill in the same batch, and the refusal names it with a typed reason; fails_when=the batch publishes, or refuses as if a hidden skill the caller never touched blocked it; why_new=a holder now vouches only for what it still shows (a behaviour change); seam=none; no_claim=none
+    test('an adoption batch in which the sole holder narrows its audience while another skill gains the convention for readers refuses by name', () => fixture(async f => {
+      await publishDeparting(f, false);
+      const before = { heads: await heads(f), checkout: checkout(f.root) };
+      const outcome = await adopt(f, [['gamma', [{ ...prose('gamma', 'Use the root.', [ROOT]), audience: RESTRICTED }, root([GUIDE]), guide(['readers'])]],
+        ['beta', [prose('beta', 'Now uses the guide.', [GUIDE]), guide(['readers'])]]], true);
+      expect(outcome).toBe(`local_conflict/shared_file_holder_narrowed: The publication was refused: ${GUIDE} would reach a wider audience than skills/gamma gives it after narrowing its own audience in this publication. Nothing was written.`);
+      expect({ heads: await heads(f), reader: await readerCopy(f, 'beta'), checkout: checkout(f.root) }).toEqual({ ...before, reader: 'skill_asset_not_found' });
     }, url), 120_000);
   });
 }

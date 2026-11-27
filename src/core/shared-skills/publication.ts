@@ -740,6 +740,7 @@ async function refuseHiddenExposure(engine: BrainEngine, sourceId: string, incar
   const reasons: string[] = [];
   const paths: string[] = [];
   const holders = new Set<string>();
+  let narrowing = 0;
   for (const [path, { prior, after }] of candidates) {
     const sealedHolds = (name: string) => sealed.some(revision => revision.name === name && !revision.deleted && revision.files.some(file => file.path === path));
     const keeps = (skill: Holder) => skill.files.some(file => file.path === path);
@@ -758,16 +759,27 @@ async function refuseHiddenExposure(engine: BrainEngine, sourceId: string, incar
     const authorized = new Set([...prior, ...common]);
     if ([...after].every(a => covers(authorized, a))) continue;
     const remaining = keepers.filter(skill => [...after].some(a => !covers(shown(skill), a)));
+    // A holder in this publication that now shows the file to fewer callers than it did: its own narrowing limits the
+    // other skill's gain, so the refusal says so instead of reading as a hidden skill the caller never touched.
+    const was = (skill: Holder) => sealed.find(revision => revision.name === skill.name && !revision.deleted)!;
+    const narrowed = remaining.filter(skill => affected.includes(skill) && reach([{ ...skill, ...was(skill) }]).some(a => !covers(shown(skill), a)));
     paths.push(path);
     for (const skill of remaining) holders.add(skill.name);
-    reasons.push(`${path} would reach a wider audience than ${bounded(remaining.map(skill => `skills/${skill.name}`), ', ')} ${remaining.length === 1 ? 'gives' : 'give'} it`);
+    if (narrowed.length === remaining.length) narrowing++;
+    const names = bounded(remaining.map(skill => `skills/${skill.name}`), ', ');
+    reasons.push(narrowed.length === remaining.length
+      ? `${path} would reach a wider audience than ${names} ${remaining.length === 1 ? 'gives' : 'give'} it after narrowing ${remaining.length === 1 ? 'its' : 'their'} own audience in this publication`
+      : `${path} would reach a wider audience than ${names} ${remaining.length === 1 ? 'gives' : 'give'} it`);
   }
   if (!reasons.length) return;
   const count = holders.size;
   const what = detailed ? bounded(reasons)
     : `${bounded(paths)} would reach a wider audience than the ${count} skill${count === 1 ? '' : 's'} that already hold${count === 1 ? 's' : ''} it give${count === 1 ? 's' : ''} it`;
-  throw opError('local_conflict', `The publication was refused: ${what}. Nothing was written.`,
-    `A skill in source ${sourceId} holds the shared file but shows it to fewer callers, because its SKILL.md audience is narrower or it is private, and this publication would show the file to more callers through another skill. Give the file an audience no wider than that skill gives it, or fork it under the publishing skill's own directory and point depends_on there, then submit again with a new request_id.`);
+  const selfNarrowed = narrowing === reasons.length;
+  throw opError('local_conflict', `The publication was refused: ${what}. Nothing was written.`, selfNarrowed
+    ? `A skill in source ${sourceId} that holds the shared file narrows its own audience in this publication, and another skill would show the file to the callers it stops showing it to. A skill that keeps a shared file limits every other skill's audience for it, so keep the holder's audience, or fork the file under the gaining skill's own directory and point depends_on there, then submit again with a new request_id.`
+    : `A skill in source ${sourceId} holds the shared file but shows it to fewer callers, because its SKILL.md audience is narrower or it is private, and this publication would show the file to more callers through another skill. Give the file an audience no wider than that skill gives it, or fork it under the publishing skill's own directory and point depends_on there, then submit again with a new request_id.`,
+    { reason: selfNarrowed ? 'shared_file_holder_narrowed' : 'shared_file_hidden_holder' });
 }
 
 /** An import regenerates skillpack.json from the sealed heads, so a skill the checkout declares but never published would vanish from it. */
