@@ -809,7 +809,7 @@ fn list_pages_by_update_time_keeps_its_tie_breaks() {
 #[test]
 fn a_later_format_s_upgrade_does_not_rebuild_the_keyed_entries_again() {
     assert!(crate::FORMAT_VERSIONS.contains(&REBUILT_AT_FORMAT));
-    assert!(REBUILT_AT_FORMAT <= crate::FORMAT_VERSION);
+    const { assert!(REBUILT_AT_FORMAT <= crate::FORMAT_VERSION) };
     let kv = crate::test_support::mem_kv();
     let store = Store::open_kv(
         kv.clone(),
