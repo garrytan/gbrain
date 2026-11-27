@@ -335,6 +335,7 @@ test/engine-parity/git-durability-credential.test.ts
 test/engine-parity/git-holds.test.ts
 test/engine-parity/graduation-catalog.test.ts
 test/engine-parity/guest-note-save.test.ts
+test/engine-parity/guest-promote.test.ts
 test/engine-parity/guest-sources.test.ts
 test/engine-parity/guests-grant-owner-clients.test.ts
 test/engine-parity/handover-reads.test.ts

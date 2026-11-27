@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2462/2489
+# covered: 2466/2493
 # lifecycle: 12/12
 # pages: 141/142
 # search: 8/8
@@ -76,7 +76,7 @@
 # loop_mutes: 8/8
 # source_archive: 6/6
 # entity_identities: 5/5
-# cli_reads_import: 22/22
+# cli_reads_import: 26/26
 # wanted_links: 2/2
 # write_misc: 123/138
 # repair_bookkeeping: 59/59
@@ -133,7 +133,7 @@ withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
 listCatalogRelations	lifecycle	yes	1	no	yes	yes	serves
 readCatalogSchemaVersion	lifecycle	yes	1	no	yes	yes	serves
 listCatalogForeignKeys	lifecycle	yes	1	no	yes	yes	serves
-getPage	pages	yes	292	yes	yes	yes	serves
+getPage	pages	yes	294	yes	yes	yes	serves
 readPageSnapshot	pages	yes	104	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	7	no	yes	yes	serves
 lockPageKeys	pages	yes	17	no	yes	yes	serves
@@ -1980,13 +1980,17 @@ readSourceIncarnation	cli_reads_import	yes	18	no	yes	yes	serves
 readSyncDispatchRow	cli_reads_import	yes	1	no	yes	yes	serves
 readRetainedSources	cli_reads_import	yes	1	no	yes	yes	serves
 hasCompanyBrainReceipt	cli_reads_import	yes	1	no	yes	yes	serves
-readGuestSourceRow	cli_reads_import	yes	1	no	yes	yes	serves
-hasGuestSourceRow	cli_reads_import	yes	5	no	yes	yes	serves
+readGuestSourceRow	cli_reads_import	yes	2	no	yes	yes	serves
+hasGuestSourceRow	cli_reads_import	yes	6	no	yes	yes	serves
 upsertGuestSource	cli_reads_import	yes	7	no	yes	yes	serves
 listGuestNotes	cli_reads_import	yes	1	no	yes	yes	serves
 claimGuestNotePublication	cli_reads_import	yes	1	no	yes	yes	serves
 insertGuestMark	cli_reads_import	yes	1	no	yes	yes	serves
-readGuestMarks	cli_reads_import	yes	1	no	yes	yes	serves
+readGuestMarks	cli_reads_import	yes	2	no	yes	yes	serves
+readGuestPromotionKept	cli_reads_import	yes	1	no	yes	yes	serves
+linkGuestPromotion	cli_reads_import	yes	2	no	yes	yes	serves
+readGuestDeleteCheck	cli_reads_import	yes	2	no	yes	yes	serves
+readGuestRefPages	cli_reads_import	yes	1	no	yes	yes	serves
 listGuestSourceIds	cli_reads_import	yes	3	no	yes	yes	serves
 hasGuestSource	cli_reads_import	yes	1	no	yes	yes	serves
 readPageTrustRows	cli_reads_import	yes	23	no	yes	yes	serves

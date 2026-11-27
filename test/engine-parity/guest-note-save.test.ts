@@ -1,5 +1,5 @@
 /**
- * BrainEngine parity: a guest note saved over remote MCP on every engine (loss row 32m-4). A Rust brain keeps the guest
+ * BrainEngine parity: a guest note saved over remote MCP on every engine (formerly loss row 32m-4). A Rust brain keeps the guest
  * marks (rust/crates/gbrain-store/src/guest_marks.rs) and serves the publication's guest-source recheck, so a listed
  * writer's put_page with guest attribution publishes the page and its mark, and every read stamps the page as a guest
  * note.
@@ -13,8 +13,8 @@
  *    listed writer's guest note was refused at publication (engine_capability_missing, raw_sql) and nothing was saved.
  *  - Why existing coverage misses it: test/guest-notes-*.test.ts run on PGLite and Postgres only; guest-sources.test.ts
  *    sets gbrain.guest_note by hand and writes no mark.
- *  - Not covered here, named in row 32m-4: promotion, the remote guest delete check and a remote reader's guest stamp
- *    still run raw SQL and refuse typed on Rust.
+ *  - Not covered here: promotion, the remote guest delete check and a remote reader's guest stamp are in
+ *    guest-promote.test.ts.
  *  - Seam: the access token is verified by the OAuth provider on the SQL engines in production; here every arm gets
  *    the same hand-built AuthInfo for the minted token (the provider's read is raw SQL on Rust), so the dispatcher, the
  *    admission and the publication run for real.

@@ -429,7 +429,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'listUnverifiedArchivedSourceIds', 'listSourceOAuthClients'],
   // entity_identities: the identity link, unlink and group reads (engine-sql/entity-identities.ts)
   entity_identities: ['linkEntityIdentityRow', 'unlinkEntityIdentityRow', 'listEntityIdentityRows', 'readEntityIdentityIdsForPages', 'readCanonicalTwin'],
-  cli_reads_import: ['listSourceRecords', 'readSourceIncarnation', 'readSyncDispatchRow', 'hasCompanyBrainReceipt', 'readGuestSourceRow', 'listGuestSourceIds', 'hasGuestSourceRow', 'upsertGuestSource', 'listGuestNotes', 'claimGuestNotePublication', 'insertGuestMark', 'readGuestMarks', 'readRetainedSources',
+  cli_reads_import: ['listSourceRecords', 'readSourceIncarnation', 'readSyncDispatchRow', 'hasCompanyBrainReceipt', 'readGuestSourceRow', 'listGuestSourceIds', 'hasGuestSourceRow', 'upsertGuestSource', 'listGuestNotes', 'claimGuestNotePublication', 'insertGuestMark', 'readGuestMarks', 'readGuestPromotionKept', 'linkGuestPromotion', 'readGuestDeleteCheck', 'readGuestRefPages', 'readRetainedSources',
     'hasGuestSource', 'readPageTrustRows', 'readRowTrustRows', 'readDatabaseClock', 'listLinkPageMetadata', 'listLinkPageMetadataForSlugs', 'listAttendedOriginSlugs', 'listStoredTimelineRows', 'filterPagesAtRevision'],
   wanted_links: ['lockRegisteredSourceIds', 'replaceWantedLinkRows'],
   write_misc: ['readJobPrincipal', 'readSourceState', 'readAdmissionSource', 'sharedSkillPackTablePresent', 'listSharedSkillPackRoots', 'getWorktreeBinding', 'listHostTopologyRows', 'listWorktreeMembers', 'isSourceClaimed',

@@ -213,7 +213,7 @@ const INTERFACE_METHODS: readonly string[] = [
   // Proactive brief reads (engine-sql/brief-reads.ts; covered by test/engine-parity/brief-reads.test.ts)
   'readBriefMeetingPages', 'readBriefEmailAliasPages', 'readBriefWorldFacts', 'readBriefEditPage', 'readBriefTimelineEntry', 'readBriefPageVersions',
   // CLI import and extract reads (engine-sql/cli-reads-import.ts; covered by test/engine-parity/cli-reads-import.test.ts)
-  'listSourceRecords', 'readSourceIncarnation', 'readSyncDispatchRow', 'hasCompanyBrainReceipt', 'readGuestSourceRow', 'listGuestSourceIds', 'hasGuestSourceRow', 'upsertGuestSource', 'listGuestNotes', 'claimGuestNotePublication', 'insertGuestMark', 'readGuestMarks', 'readRetainedSources',
+  'listSourceRecords', 'readSourceIncarnation', 'readSyncDispatchRow', 'hasCompanyBrainReceipt', 'readGuestSourceRow', 'listGuestSourceIds', 'hasGuestSourceRow', 'upsertGuestSource', 'listGuestNotes', 'claimGuestNotePublication', 'insertGuestMark', 'readGuestMarks', 'readGuestPromotionKept', 'linkGuestPromotion', 'readGuestDeleteCheck', 'readGuestRefPages', 'readRetainedSources',
   'hasGuestSource', 'readPageTrustRows', 'readRowTrustRows', 'readDatabaseClock', 'listLinkPageMetadata', 'listLinkPageMetadataForSlugs', 'listAttendedOriginSlugs', 'listStoredTimelineRows',
   'filterPagesAtRevision',
   // Wanted-link writes (engine-sql/wanted-links.ts; covered by test/engine-parity/wanted-links.test.ts)
