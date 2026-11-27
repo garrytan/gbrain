@@ -43,6 +43,7 @@ import { persistenceFileHash } from './coordinator.ts';
 import { sourceDbOnlyDir } from './source-storage.ts';
 import { declarePersistenceProtocol } from './protocol.ts';
 import { GIT_PUSH_CODES } from './git-push-holds.ts';
+import { storedParkedTargets } from './git-diagnostic.ts';
 import type { EffectSettlement, ParkedTarget, PersistenceEffect, RetiredTarget, SettlementProof, SettledTarget } from './effect-model.ts';
 import type { WriteRequest } from './model.ts';
 
@@ -66,7 +67,8 @@ async function gitRead(root: string, args: string[]): Promise<string | null> {
 
 /** The targets an effect owes: its parked targets, or (a push that failed without parking) its own page. */
 function effectTargets(effect: PersistenceEffect): ParkedTarget[] {
-  return effect.data.parked ?? [{ ...(effect.data.slug ? { slug: effect.data.slug } : {}), error_code: effect.error_code ?? 'unknown' }];
+  // GCH-01a: a stored target's git line (an older release kept it) is dropped, never printed.
+  return effect.data.parked ? storedParkedTargets(effect.data.parked) : [{ ...(effect.data.slug ? { slug: effect.data.slug } : {}), error_code: effect.error_code ?? 'unknown' }];
 }
 
 /** The proof that a later, pushed Git effect of the current worktree holds this target's current canonical bytes on the fetched remote. */

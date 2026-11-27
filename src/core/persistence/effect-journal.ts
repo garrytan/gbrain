@@ -20,6 +20,7 @@ import { pageBatchChildRequestIds } from './page-batch-id.ts';
 import { EFFECT_FAULT_POINTS, faultPoint } from './fault-points.ts';
 import { REARMABLE_SQL } from '../engine-sql/persistence-effect-worker.ts';
 import { bindClaimFence, bindClaimFences, claimFenceOpts, fenceOpts } from './host-fence.ts';
+import { storedGitData } from './git-diagnostic.ts';
 
 /**
  * `snapshot` is the publication's final read of the page, including deleted rows, in this transaction.
@@ -221,8 +222,8 @@ export async function rearmWithheldTargets(engine: SqlEngine, requestIds: readon
     const retrying = [...new Set([...(data.retry_slugs ?? []), ...slugs])];
     await engine.executeRaw(`UPDATE persistence_effects SET state='queued',data=$2::text::jsonb,error_code=NULL,claim_expires_at=NULL,claim_owner=NULL,
       next_attempt_at=now(),updated_at=now() WHERE id=$1 AND execution_token IS NULL AND recovery IS NULL AND ${PERSISTENCE_PROTOCOL_PREDICATE}`,
-    [effect.id, JSON.stringify({ ...data, ...(kept.length ? { parked: kept } : {}), ...(retrying.length ? { retry_slugs: retrying } : {}),
-      ...(effect.kind === 'embedding' ? { embedding_attempt_base: effect.attempts } : {}) })]);
+    [effect.id, JSON.stringify(storedGitData({ ...data, ...(kept.length ? { parked: kept } : {}), ...(retrying.length ? { retry_slugs: retrying } : {}),
+      ...(effect.kind === 'embedding' ? { embedding_attempt_base: effect.attempts } : {}) }))]);
   }
   return rows.length;
 }
@@ -356,12 +357,16 @@ export async function retryBusyEffect(engine: Pick<BrainEngine, 'retryBusyEffect
   await engine.retryBusyEffectRow({ id: effect.id, token: effect.execution_token, ...claimFenceOpts(engine, effect.execution_token), dataJson: JSON.stringify(busy),
     delayMs: Math.min(BUSY_RETRY_MAX_MS, 250 * 2 ** Math.min(streak - 1, 8)) });
 }
-/** Release a claim with replacement bookkeeping; parking never applies while recovery is recorded. */
+/**
+ * Release a claim with replacement bookkeeping; parking never applies while recovery is recorded. requeueEffect and
+ * parkEffect store `data` through storedGitData (GCH-01a), so a git line an older release kept on the row is not
+ * written back.
+ */
 export async function requeueEffect(engine: Pick<BrainEngine, 'requeueEffectRow'>, effect: PersistenceEffect, data: PersistenceEffect['data'], reason: string | null, delayMs: number): Promise<void> {
-  await engine.requeueEffectRow({ id: effect.id, token: effect.execution_token, ...claimFenceOpts(engine, effect.execution_token), dataJson: JSON.stringify(data), reason, delayMs });
+  await engine.requeueEffectRow({ id: effect.id, token: effect.execution_token, ...claimFenceOpts(engine, effect.execution_token), dataJson: JSON.stringify(storedGitData(data)), reason, delayMs });
 }
 export async function parkEffect(engine: Pick<BrainEngine, 'parkEffectRow'>, effect: PersistenceEffect, data: PersistenceEffect['data']): Promise<void> {
-  await engine.parkEffectRow({ id: effect.id, token: effect.execution_token, ...claimFenceOpts(engine, effect.execution_token), dataJson: JSON.stringify(data) });
+  await engine.parkEffectRow({ id: effect.id, token: effect.execution_token, ...claimFenceOpts(engine, effect.execution_token), dataJson: JSON.stringify(storedGitData(data)) });
 }
 export async function failEffect(engine: Pick<BrainEngine, 'failEffectRow'>, effect: PersistenceEffect, reason: string): Promise<void> {
   await engine.failEffectRow({ id: effect.id, token: effect.execution_token, ...claimFenceOpts(engine, effect.execution_token), reason });
