@@ -254,10 +254,13 @@ export const cases: Case[] = [
       assert.equal(addon.engineAbi, 1);
       assert.match(addon.engineBuild, /^[0-9a-f]{64}$/);
       assert.equal(addon.catalogVersion, 0);
-      // Every format from 1 to the newest this build writes (never pinned as a literal); 9 holds the keyed lookups.
+      // Formats 1 to 9, then the newest this build writes (never pinned as a literal); formats allotted to other
+      // lanes between them are not opened.
       const newest = Math.max(...addon.formatVersions);
       assert.ok(newest >= 9, `newest store format ${newest}`);
-      assert.deepEqual(addon.formatVersions, Array.from({ length: newest }, (_, i) => i + 1));
+      const own = Array.from({ length: 9 }, (_, i) => i + 1);
+      if (newest > 9) own.push(newest);
+      assert.deepEqual(addon.formatVersions, own);
     },
   },
   {

@@ -495,7 +495,7 @@ impl Store {
         let schema_version = config::read_config(&*kv.snapshot()?, "version")?
             .and_then(|v| v.parse().ok())
             .unwrap_or(0);
-        Ok(Store {
+        let store = Store {
             kv,
             env,
             vectors: vectors::VectorCache::default(),
@@ -511,12 +511,11 @@ impl Store {
             runs_builder: options.keyword_index_builder,
             flag_assumed,
             dir: None,
-        })
-        .inspect(|store| {
-            if index.needs_build && store.runs_builder {
-                store.start_keyword_index_builder();
-            }
-        })
+        };
+        if index.needs_build && store.runs_builder {
+            store.start_keyword_index_builder();
+        }
+        Ok(store)
     }
 
     /// A store on the same records with no transaction and no builder: the build thread's handle.
@@ -802,15 +801,23 @@ pub const DEFAULT_WRITE_GATE_DETECTOR_VERSION: u32 = 2;
 /// reads `unknown`), so a format-4 brain keeps its postings, and 5 to 6 carries over the records
 /// the v0.60.766.0 addon's shadow seed kept in other shapes (`seed/format_5.rs`), 6 to 7 moves the
 /// loop mutes off the take purge prefix (`facts/key_split.rs`), 7 to 8 moves the shared-skill
-/// token secret off the member links' prefix (`access_key_split.rs`) and 8 to 9 builds the keyed
-/// lookups (`keyed_index.rs`). The format record is re-read inside the transaction:
+/// token secret off the member links' prefix (`access_key_split.rs`) and 8 or 9 to this build's format
+/// builds the keyed lookups (`keyed_index.rs`). The format record is re-read inside the transaction:
 /// another handle on the same records may have upgraded the brain first.
 fn upgrade_format(kv: &dyn Kv) -> Result<StoredFormat> {
+    upgrade_format_to(kv, FORMAT_VERSION)
+}
+
+/// [`upgrade_format`] to `target`, the format it stamps. Each step runs only for a brain older
+/// than the format that introduced it, never because the brain is older than `target`, so a later
+/// format's upgrade does not run an earlier format's step again. Tests pass a `target` above
+/// `FORMAT_VERSION` to act as the next build.
+fn upgrade_format_to(kv: &dyn Kv, target: u32) -> Result<StoredFormat> {
     let mut tx = kv.begin_write_exclusive()?;
     let mut stored: StoredFormat = get_json(&*tx, &keys::meta("format"))?
         .ok_or_else(|| StoreError::new(error::STORE_CORRUPT, "the format record went missing"))?;
     format::check_version(stored.format_version)?;
-    if stored.format_version >= FORMAT_VERSION {
+    if stored.format_version >= target {
         return Ok(stored);
     }
     if stored.format_version == 1 {
@@ -869,12 +876,13 @@ fn upgrade_format(kv: &dyn Kv) -> Result<StoredFormat> {
             )
         })?;
     }
-    // Format 9: the keyed lookups (`keyed_index.rs`) are built from the records, after every step
-    // above has left them in this build's shapes.
-    if stored.format_version <= 8 {
+    // Format 9 built the keyed lookups (`keyed_index.rs`); format 12 added the updated-order
+    // entry (`keyed_index::REBUILT_AT_FORMAT`). Both are built from the records, after every step above has left them in
+    // this build's shapes: every keyed entry is dropped and rewritten in this one transaction.
+    if stored.format_version < keyed_index::REBUILT_AT_FORMAT {
         keyed_index::rebuild(&mut *tx)?;
     }
-    stored.format_version = FORMAT_VERSION;
+    stored.format_version = target;
     put_json(&mut *tx, &keys::meta("format"), &stored)?;
     tx.commit()?;
     Ok(stored)
@@ -1311,11 +1319,13 @@ mod older_build_tests {
             assert_refused(&dir, &known, n + 1);
             let _ = fs::remove_dir_all(dir.parent().unwrap());
         }
-        // This build's own list is the case above with n = FORMAT_VERSION.
-        assert_eq!(
-            FORMAT_VERSIONS,
-            (1..=FORMAT_VERSION).collect::<Vec<_>>().as_slice()
-        );
+        // This build's own list: every format from 1 to 9, then its own (formats between 9 and
+        // FORMAT_VERSION belong to other lanes and are not opened).
+        let mut own: Vec<u32> = (1..=9).collect();
+        if FORMAT_VERSION > 9 {
+            own.push(FORMAT_VERSION);
+        }
+        assert_eq!(FORMAT_VERSIONS, own.as_slice());
     }
 }
 

@@ -131,7 +131,7 @@ Rules:
   the family's `page_columns` hook ("Core hooks"). The family keeps the value under its own tag; until it adds the
   column, the page read returns the fixed default in `PAGE_ROW_DEFAULTS` (`store-codec.ts`). No family edits
   `PAGE_ROW_DEFAULTS`, `store-codec.ts` or `pages.rs`.
-- **Format.** `FORMAT_VERSION` 9 (`format.rs` lists each version; a build opens formats 1 to 9), `engineAbi` 1, a `FORMAT` file plus `records.redb`. New tags and new records under
+- **Format.** `FORMAT_VERSION` 12 on the keyed-lookups-2 branch (`format.rs` lists each version; it opens formats 1 to 9 and 12), 9 on rust-engine/keyed-lookups and 8 on rust-engine/main (the ledger below), `engineAbi` 1, a `FORMAT` file plus `records.redb`. New tags and new records under
   them do not change the format version: an older build never reads a tag it does not know, and a newer build reads
   an absent tag as "no rows". A family that changes the encoding of records that already exist on disk asks core,
   and so does a family whose entries are derived from records that already exist, because an older build's writes
@@ -271,7 +271,7 @@ branch, and the reserved ones, with the owner who claimed it. The rules:
 | `0` | `GUEST_SOURCE` | lane 6 (guest sources, row 32m-3) | branch rust-engine/guest-sources-rust (from rust-engine/collate-equal 4573663d7f) |
 | `3` | `SECRET_STORE` | lane 10 | reserved (the trunk holds it for the secret store) |
 | `~` | `FAMILY_ESCAPE` | core | main once this lands: the escape for two-byte family tags |
-| `~k` | `KEYED_INDEX` | the keyed-lookups lane | branch rust-engine/keyed-lookups (store format 9: the keyed lookups of `keyed_index.rs`) |
+| `~k` | `KEYED_INDEX` | the keyed-lookups lane (the keyed lookups of `keyed_index.rs`, store formats 9 and 12) | branch rust-engine/keyed-lookups |
 | `~e` | `PAGE_EXTRACTION_STATE` | lane 8 (rust-members-tail) | branch rust-engine/rust-members-tail: the `page_extraction_state` family (the extraction watermark and partial-input receipt of a page); a hard page delete removes the page's rows; the tag `2` stays free |
 | `~g` | `GUEST_MARK` | lane 6 (guest-note save) | branch rust-engine/guest-note-save-rust: the `guest_marks` family (who a guest note was saved for); a hard page delete removes the page's mark |
 

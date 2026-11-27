@@ -45,9 +45,15 @@ use std::path::Path;
 ///   duplicate-page and transition-origin reads look rows up instead of reading every record. The upgrade builds every
 ///   entry in the one transaction. A build without the lookups refuses a format-9 brain, as its
 ///   writes would leave them stale.
-pub const FORMAT_VERSION: u32 = 9;
+/// - 12 (the trunk's allotment; formats 10 and 11 belong to other lanes and are not opened by this
+///   build): the keyed lookups gain the updated-order entry (`keyed_index::UPDATED`), so `listPages`
+///   sorted by `updated_at` reads only the pages it returns. The upgrade rebuilds every keyed entry
+///   in its one write transaction. A build that stops at format 9 refuses a format-12 brain.
+///   The trunk may renumber this at merge by landing order: change this constant only; every test
+///   and the upgrade read it.
+pub const FORMAT_VERSION: u32 = 12;
 /// Every format version this build can open. Addon exports list these as `formatVersions`.
-pub const FORMAT_VERSIONS: &[u32] = &[1, 2, 3, 4, 5, 6, 7, 8, FORMAT_VERSION];
+pub const FORMAT_VERSIONS: &[u32] = &[1, 2, 3, 4, 5, 6, 7, 8, 9, FORMAT_VERSION];
 
 pub const FORMAT_FILE: &str = "FORMAT";
 pub const RECORDS_FILE: &str = "records.redb";

@@ -249,6 +249,53 @@ fn check_readers(store: &Store) {
         }
     }
     same("hasSupersedeEdges", || store.has_supersede_edges().unwrap());
+    let stamp = |name: &str| -> Option<String> {
+        let page = crate::pages::read_page(&*store.read().ok()?, "default", name).ok()??;
+        Some(crate::env::iso(page.updated_at_us))
+    };
+    let mid = stamp("notes/c").or_else(|| stamp("notes/a"));
+    let mut lists: Vec<Value> = Vec::new();
+    for sort in [
+        None,
+        Some("updated_desc"),
+        Some("updated_asc"),
+        Some("created_desc"),
+        Some("slug"),
+    ] {
+        for (limit, offset) in [
+            (None, None),
+            (Some(3), None),
+            (Some(2), Some(3)),
+            (Some(500), Some(1)),
+        ] {
+            for include_deleted in [false, true] {
+                let mut f = json!({"limit": limit, "offset": offset, "sort": sort, "includeDeleted": include_deleted});
+                lists.push(f.clone());
+                f["sourceId"] = json!("work");
+                lists.push(f.clone());
+                if let Some(ts) = &mid {
+                    let mut g = f.clone();
+                    g.as_object_mut().unwrap().remove("sourceId");
+                    g["updated_after"] = json!(ts);
+                    lists.push(g.clone());
+                    g.as_object_mut().unwrap().remove("updated_after");
+                    g["updatedAfterKeyset"] = json!({"updatedAt": ts, "slug": "notes/b"});
+                    lists.push(g);
+                }
+            }
+        }
+    }
+    lists.push(json!({"limit": 0}));
+    lists.push(json!({"limit": 4, "excludePrivate": {"honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn"}}));
+    lists.push(json!({"limit": 4, "sort": "updated_asc", "excludePrivate": {"honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn"}}));
+    lists.push(json!({"type": "person", "limit": 3}));
+    lists.push(json!({"slugPrefix": "notes/", "limit": 3}));
+    for f in lists {
+        let filters: crate::pages::PageFilters = de(f.clone());
+        same(&format!("listPages {f}"), || {
+            store.list_pages(&filters).unwrap()
+        });
+    }
     for page_id in 1..30 {
         same("linkRelationshipKeysForOrigin", || {
             store
@@ -318,7 +365,8 @@ fn the_index_stays_in_step_and_the_members_answer_as_the_scans() {
                 CONTENT_HASH,
                 FRONTMATTER_ID,
                 LONG_TITLE,
-                TRANSITION_ORIGIN
+                TRANSITION_ORIGIN,
+                UPDATED
             ]
             .into_iter()
             .collect(),
@@ -393,36 +441,230 @@ fn rebuild_writes_exactly_the_derived_entries() {
     assert_eq!(stored_entries(&*store.read().unwrap()).unwrap(), want);
 }
 
-#[test]
-fn a_format_8_brain_gets_its_index_when_it_opens() {
+/// A brain built by this build, then turned back into what a format-8 build leaves: no keyed
+/// entries and the format record at 8. Returns the record store, the entries the brain had and
+/// what its members answered before it was turned back.
+fn format_8_brain(
+    seed: u64,
+) -> (
+    std::sync::Arc<dyn crate::kv::Kv>,
+    BTreeSet<Vec<u8>>,
+    Vec<String>,
+) {
+    old_format_brain(seed, 8)
+}
+
+/// [`format_8_brain`] stamped `version` instead. At 9 it stands for a brain the format-9 build
+/// left: here it has no keyed entries at all, so the upgrade must build every one, the
+/// updated-order entries included (a format-9 brain's own entries are dropped and rewritten too).
+fn old_format_brain(
+    seed: u64,
+    version: u32,
+) -> (
+    std::sync::Arc<dyn crate::kv::Kv>,
+    BTreeSet<Vec<u8>>,
+    Vec<String>,
+) {
     let kv = crate::test_support::mem_kv();
     let env: std::sync::Arc<dyn crate::env::Env> = std::sync::Arc::new(crate::SystemEnv);
-    let want = {
-        let store = Store::open_kv(kv.clone(), env.clone(), crate::OpenOptions::default()).unwrap();
-        source(&store, "work");
-        let mut rng = Lcg(11);
-        for _ in 0..120 {
-            step(&store, &mut rng);
-        }
-        let want = stored_entries(&*store.read().unwrap()).unwrap();
-        assert!(!want.is_empty());
-        // What a format-8 build leaves: no keyed entries, format record at 8.
-        let mut tx = kv.begin_write().unwrap();
-        for key in &want {
-            tx.delete(key).unwrap();
-        }
-        let mut stored: crate::StoredFormat = crate::get_json(&*tx, &keys::meta("format"))
-            .unwrap()
-            .unwrap();
-        stored.format_version = 8;
-        crate::put_json(&mut *tx, &keys::meta("format"), &stored).unwrap();
-        tx.commit().unwrap();
-        want
+    let store = Store::open_kv(kv.clone(), env, crate::OpenOptions::default()).unwrap();
+    source(&store, "work");
+    let mut rng = Lcg(seed);
+    for _ in 0..120 {
+        step(&store, &mut rng);
+    }
+    let want = stored_entries(&*store.read().unwrap()).unwrap();
+    assert!(!want.is_empty());
+    let said = answers(&store);
+    drop(store);
+    let mut tx = kv.begin_write().unwrap();
+    for key in &want {
+        tx.delete(key).unwrap();
+    }
+    let mut stored: crate::StoredFormat = crate::get_json(&*tx, &keys::meta("format"))
+        .unwrap()
+        .unwrap();
+    stored.format_version = version;
+    crate::put_json(&mut *tx, &keys::meta("format"), &stored).unwrap();
+    tx.commit().unwrap();
+    (kv, want, said)
+}
+
+/// Every record of a store, key and value (the commit sequence and other reserved keys aside).
+fn dump(kv: &dyn crate::kv::Kv) -> Vec<(Vec<u8>, Vec<u8>)> {
+    let mut out = Vec::new();
+    kv.snapshot()
+        .unwrap()
+        .scan(&[], &[0xFF; 64], false, &mut |k, v| {
+            out.push((k.to_vec(), v.to_vec()));
+            true
+        })
+        .unwrap();
+    out
+}
+
+/// What the members that read the keyed lookups answer, for comparing two opens of a brain.
+fn answers(store: &Store) -> Vec<String> {
+    let ids: Vec<u64> = (1..40).collect();
+    let titled = TitledInput {
+        query_lower: "the acme launch and widget plan".into(),
+        scope: GraphScope::default(),
     };
+    let q: DuplicateQuery = de(json!({"hash": "h1", "frontmatterId": "doc-1"}));
+    let mut out = vec![
+        format!(
+            "{:?}",
+            store.find_pages_by_titles(&TitleQuery {
+                title_norms: titles().iter().map(|t| t.to_lowercase()).collect(),
+                source_ids: vec!["default".into(), "work".into()],
+                types: vec!["note".into(), "person".into()],
+                exclude_private: None,
+            })
+        ),
+        format!("{:?}", store.list_pages_titled_in(&titled)),
+        format!("{:?}", store.find_duplicate_page("default", &q)),
+        format!("{:?}", store.has_supersede_edges()),
+        format!("{:?}", store.read_projection_readiness(&de(json!({})))),
+        format!("{:?}", store.cosines_by_chunk_ids(&ids, &basis(1))),
+        format!("{:?}", store.list_pages(&de(json!({"limit": 7})))),
+        format!(
+            "{:?}",
+            store.list_pages(&de(
+                json!({"limit": 5, "sort": "updated_asc", "includeDeleted": true})
+            ))
+        ),
+    ];
+    for page_id in 1..30 {
+        out.push(format!(
+            "{:?}",
+            store.link_relationship_keys_for_origin(&KeysForOriginInput {
+                page_id,
+                link_types: vec!["works_at".into()],
+            })
+        ));
+    }
+    out
+}
+
+#[test]
+fn a_format_9_brain_gets_every_keyed_lookup_when_it_opens() {
+    let (kv, want, said) = old_format_brain(17, 9);
+    let env: std::sync::Arc<dyn crate::env::Env> = std::sync::Arc::new(crate::SystemEnv);
     let store = Store::open_kv(kv, env, crate::OpenOptions::default()).unwrap();
     assert_eq!(store.info().format_version, crate::FORMAT_VERSION);
     assert_eq!(stored_entries(&*store.read().unwrap()).unwrap(), want);
+    assert!(want.iter().any(|k| k[keys::KEYED_INDEX.len()] == UPDATED));
+    assert_eq!(answers(&store), said);
     check_readers(&store);
+}
+
+#[test]
+fn a_format_8_brain_gets_its_index_when_it_opens() {
+    let (kv, want, said) = format_8_brain(11);
+    let env: std::sync::Arc<dyn crate::env::Env> = std::sync::Arc::new(crate::SystemEnv);
+    let store = Store::open_kv(kv, env, crate::OpenOptions::default()).unwrap();
+    assert_eq!(store.info().format_version, crate::FORMAT_VERSION);
+    assert_eq!(stored_entries(&*store.read().unwrap()).unwrap(), want);
+    assert_eq!(answers(&store), said);
+    check_readers(&store);
+}
+
+/// The 8 to 9 upgrade fails at its last write (the format record) or at its commit: the open
+/// reports the failure, the brain is left exactly as a format-8 build left it (format 8, every
+/// record byte for byte, no keyed entry), and the next open upgrades it and every member answers
+/// as it did before the brain was turned back to format 8.
+/// The upgrade must be one transaction: a step committed on its own would leave keyed entries.
+fn upgrade_fails_then_succeeds(op: crate::test_support::FaultOp, from: u32) {
+    use crate::test_support::FaultyKv;
+    let (inner, want, said) = old_format_brain(13, from);
+    let env: std::sync::Arc<dyn crate::env::Env> = std::sync::Arc::new(crate::SystemEnv);
+    let before = dump(&*inner);
+    let faulty: std::sync::Arc<dyn crate::kv::Kv> = std::sync::Arc::new(FaultyKv {
+        inner: inner.clone(),
+        code: crate::error::STORE_IO,
+        ops: match op {
+            crate::test_support::FaultOp::Commit => &[crate::test_support::FaultOp::Commit],
+            _ => &[crate::test_support::FaultOp::Put],
+        },
+        fail_on: |key| key == keys::meta("format").as_slice(),
+    });
+    let err = Store::open_kv(faulty, env.clone(), crate::OpenOptions::default())
+        .err()
+        .expect("the open must fail");
+    assert_eq!(err.code, crate::error::STORE_IO, "{}", err.message);
+    let after = dump(&*inner);
+    let stored: crate::StoredFormat =
+        crate::get_json(&*inner.snapshot().unwrap(), &keys::meta("format"))
+            .unwrap()
+            .unwrap();
+    assert_eq!(
+        stored.format_version, from,
+        "the failed upgrade moved the format"
+    );
+    assert!(
+        stored_entries(&*inner.snapshot().unwrap())
+            .unwrap()
+            .is_empty(),
+        "the failed upgrade left keyed entries behind"
+    );
+    assert!(after == before, "the failed upgrade changed records");
+    // The next open runs the upgrade again, and it holds what an upgrade with no failure holds.
+    let store = Store::open_kv(inner, env.clone(), crate::OpenOptions::default()).unwrap();
+    assert_eq!(store.info().format_version, crate::FORMAT_VERSION);
+    assert_eq!(stored_entries(&*store.read().unwrap()).unwrap(), want);
+    assert_eq!(answers(&store), said);
+    check_readers(&store);
+}
+
+#[test]
+fn an_upgrade_that_fails_at_its_last_write_leaves_the_format_8_brain_and_runs_again() {
+    upgrade_fails_then_succeeds(crate::test_support::FaultOp::Put, 8);
+}
+
+#[test]
+fn an_upgrade_that_fails_at_its_commit_leaves_the_format_8_brain_and_runs_again() {
+    upgrade_fails_then_succeeds(crate::test_support::FaultOp::Commit, 8);
+}
+
+/// The same for the upgrade from format 9 to this build's format (`crate::FORMAT_VERSION`): the
+/// brain stays readable at format 9, with no entry the new format adds, and the next open upgrades.
+#[test]
+fn an_upgrade_from_format_9_that_fails_at_its_last_write_leaves_the_brain_at_9_and_runs_again() {
+    upgrade_fails_then_succeeds(crate::test_support::FaultOp::Put, 9);
+}
+
+#[test]
+fn an_upgrade_from_format_9_that_fails_at_its_commit_leaves_the_brain_at_9_and_runs_again() {
+    upgrade_fails_then_succeeds(crate::test_support::FaultOp::Commit, 9);
+}
+
+/// A build that opens formats 1 to 9 only (the format-9 build) refuses a brain this build
+/// upgraded, before it writes anything, so it cannot leave the updated-order entries stale.
+#[test]
+fn a_format_9_build_refuses_a_brain_at_this_build_s_format() {
+    let (kv, _, _) = old_format_brain(19, 9);
+    let env: std::sync::Arc<dyn crate::env::Env> = std::sync::Arc::new(crate::SystemEnv);
+    let store = Store::open_kv(kv.clone(), env.clone(), crate::OpenOptions::default()).unwrap();
+    assert_eq!(store.info().format_version, crate::FORMAT_VERSION);
+    drop(store);
+    let before = dump(&*kv);
+    let format_9_build: Vec<u32> = (1..=9).collect();
+    let err = Store::open_kv_in(
+        kv.clone(),
+        env,
+        crate::OpenOptions::default(),
+        &format_9_build,
+    )
+    .err()
+    .expect("a format-9 build must refuse the upgraded brain");
+    assert_eq!(err.code, crate::error::FORMAT_UNKNOWN, "{}", err.message);
+    assert!(
+        err.message
+            .contains(&format!("store format {}", crate::FORMAT_VERSION)),
+        "{}",
+        err.message
+    );
+    assert!(dump(&*kv) == before, "the refused open changed records");
 }
 
 #[test]
@@ -498,4 +740,90 @@ fn new_transitions_with_no_link_are_in_keys_after() {
     // Applying the same evidence again replaces the row: still one key, still reported.
     let again = store.apply_link_temporal_rows(&input).unwrap();
     assert_eq!(again.keys_after, want);
+}
+
+/// Pages written in one transaction share one `updated_at`, so `listPages` orders them by its
+/// tie-breaks alone (slug, then source, then id). Every sort, limit, offset and cursor over such
+/// ties answers as the member's own scan, sort and slice (the walk is off under `FULL_SCAN`).
+#[test]
+fn list_pages_by_update_time_keeps_its_tie_breaks() {
+    let store = crate::test_support::store();
+    source(&store, "work");
+    let tx = store.begin_transaction(false).unwrap();
+    for slug in ["notes/b", "notes/a", "notes/c", "people/a"] {
+        for src in ["work", "default"] {
+            let input: PageInput =
+                de(json!({"type": "note", "title": slug, "compiled_truth": "x"}));
+            let options: PutPageOptions = de(json!({"sourceId": src, "index": false}));
+            tx.put_page(slug, &input, &options).unwrap();
+        }
+    }
+    tx.commit_transaction().unwrap();
+    drop(tx);
+    let mut rng = Lcg(23);
+    // Pages written later, at other times, around the tied ones.
+    for i in 0..30 {
+        put(&store, &mut rng, &format!("extra/{i}"), "default");
+    }
+    let tied = {
+        let read = store.read().unwrap();
+        crate::env::iso(
+            crate::pages::read_page(&*read, "work", "notes/a")
+                .unwrap()
+                .unwrap()
+                .updated_at_us,
+        )
+    };
+    let tie_count = crate::pages::all_pages(&*store.read().unwrap())
+        .unwrap()
+        .iter()
+        .filter(|p| crate::env::iso(p.updated_at_us) == tied)
+        .count();
+    assert!(
+        tie_count >= 8,
+        "only {tie_count} pages share the transaction's time"
+    );
+    for sort in [None, Some("updated_asc")] {
+        for (limit, offset) in [
+            (Some(1), None),
+            (Some(3), Some(2)),
+            (Some(5), Some(6)),
+            (Some(50), None),
+        ] {
+            for cursor in [None, Some("notes/a"), Some("notes/b"), Some("people/a")] {
+                let mut f = json!({"limit": limit, "offset": offset, "sort": sort});
+                if let Some(slug) = cursor {
+                    f["updatedAfterKeyset"] = json!({"updatedAt": tied, "slug": slug});
+                }
+                let filters: crate::pages::PageFilters = de(f.clone());
+                same(&format!("listPages over ties {f}"), || {
+                    store.list_pages(&filters).unwrap()
+                });
+            }
+        }
+    }
+}
+
+/// The next format's upgrade (a build one format past this one) does not rebuild the keyed entries
+/// again: a record under the keyed tag in a brain at this build's format survives it.
+#[test]
+fn a_later_format_s_upgrade_does_not_rebuild_the_keyed_entries_again() {
+    assert_eq!(REBUILT_AT_FORMAT, crate::FORMAT_VERSION);
+    let kv = crate::test_support::mem_kv();
+    let store = Store::open_kv(
+        kv.clone(),
+        std::sync::Arc::new(crate::SystemEnv),
+        crate::OpenOptions::default(),
+    )
+    .unwrap();
+    let mut marker = keys::KEYED_INDEX.to_vec();
+    marker.extend_from_slice(b"\xffmarker");
+    store.write(|w| w.put(&marker, b"")).unwrap();
+    drop(store);
+    let stored = crate::upgrade_format_to(&*kv, crate::FORMAT_VERSION + 1).unwrap();
+    assert_eq!(stored.format_version, crate::FORMAT_VERSION + 1);
+    assert!(
+        kv.snapshot().unwrap().get(&marker).unwrap().is_some(),
+        "the next format's upgrade rebuilt the keyed entries again"
+    );
 }

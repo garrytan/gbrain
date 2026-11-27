@@ -6,6 +6,7 @@
 //! | `0x01` | chunk id, page id, chunk index | each chunk record `K page_id index` (its `id`) | `cosinesByChunkIds`, `getEmbeddingsByChunkIds` |
 //! | `0x02` | lower-cased title, NUL, page id | each page record: `title.to_lowercase()` and `pg_lower(title)`, when at most `RAW_TITLE_MAX` bytes | `findPagesByTitles`, `listPagesTitledIn` |
 //! | `0x07` | h(lower-cased title), page id | the same, for a longer lower-cased title | `findPagesByTitles`, `listPagesTitledIn` |
+//! | `0x09` | updated_at (sign-flipped, big-endian), slug, NUL, source, NUL, page id | each page record (the format after 9) | `listPages` sorted by `updated_at` |
 //! | `0x08` | origin page id, the transition's record key | each link transition record (`q source NUL T ...`) with an origin page | `applyLinkTemporalRows`, `linkRelationshipKeysForOrigin` |
 //! | `0x03` | page id | each page record whose text projection is not served | `readProjectionReadiness` |
 //! | `0x04` | from page id, link id | each link record `L from link` with `link_type = 'supersedes'` | `hasSupersedeEdges` |
@@ -47,6 +48,7 @@ pub(crate) const CONTENT_HASH: u8 = 0x05;
 pub(crate) const FRONTMATTER_ID: u8 = 0x06;
 pub(crate) const LONG_TITLE: u8 = 0x07;
 pub(crate) const TRANSITION_ORIGIN: u8 = 0x08;
+pub(crate) const UPDATED: u8 = 0x09;
 
 /// The record tag of a link transition after its source in the `q` family (`link_temporal.rs`).
 const TRANSITION_TAG: u8 = b'T';
@@ -174,8 +176,29 @@ fn raw_title_of(key: &[u8]) -> Option<(&[u8], u64)> {
 }
 
 /// The entries one page record derives.
+/// `~k 0x09 updated_at`: the start of the updated-order entries at or after `updated_at_us`.
+fn updated_prefix(updated_at_us: i64) -> Vec<u8> {
+    let mut key = kind_prefix(UPDATED);
+    key.extend_from_slice(&((updated_at_us as u64) ^ (1 << 63)).to_be_bytes());
+    key
+}
+
+/// The updated-order entry of a page. Its bytes sort as `listPages` orders by `updated_at`
+/// (`cmp_updated` in `pages.rs`: updated_at, slug, source, id): the time is sign-flipped big-endian,
+/// and a slug or source never holds NUL, so NUL ends each one below any byte it could hold.
+fn updated_entry(page: &PageRecord) -> Vec<u8> {
+    let mut key = updated_prefix(page.updated_at_us);
+    key.extend_from_slice(page.slug.as_bytes());
+    key.push(0);
+    key.extend_from_slice(page.source_id.as_bytes());
+    key.push(0);
+    key.extend_from_slice(&page.id.to_be_bytes());
+    key
+}
+
 fn page_entries(page: &PageRecord, out: &mut BTreeSet<Vec<u8>>) {
     let id = page.id;
+    out.insert(updated_entry(page));
     out.insert(title_entry(&page.title.to_lowercase(), id));
     out.insert(title_entry(&crate::keyword::pg_lower(&page.title), id));
     if !crate::link_queries::retrieval_coverage::served(page) {
@@ -379,7 +402,14 @@ pub(crate) fn stored_entries(read: &dyn KvRead) -> Result<BTreeSet<Vec<u8>>> {
     Ok(out)
 }
 
-/// Drops every entry and writes the ones the stored records derive (the store format 9 upgrade).
+/// The store format whose upgrade last rebuilt the keyed entries (12: the updated-order entry).
+/// The upgrade rebuilds them only for a brain older than this, so a later format's upgrade never
+/// runs the rebuild again. It equals `FORMAT_VERSION` on this branch; a renumber at merge changes
+/// both.
+pub(crate) const REBUILT_AT_FORMAT: u32 = 12;
+
+/// Drops every entry and writes the ones the stored records derive (the format upgrade, in its one
+/// write transaction).
 pub(crate) fn rebuild(tx: &mut dyn KvWrite) -> Result<()> {
     for key in stored_entries(&*tx)? {
         tx.delete(&key)?;
@@ -400,7 +430,7 @@ thread_local! {
     pub(crate) static FULL_SCAN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-fn full_scan() -> bool {
+pub(crate) fn full_scan() -> bool {
     #[cfg(test)]
     {
         FULL_SCAN.with(std::cell::Cell::get)
@@ -586,6 +616,71 @@ pub(crate) fn transitions_by_origin(read: &dyn KvRead, page_id: u64) -> Result<V
         true
     })?;
     Ok(out)
+}
+
+/// Visits the stored pages (soft-deleted included) in `listPages`' updated order, oldest first, or
+/// newest first when `newest_first`; `from_us` starts an oldest-first walk at that time. `visit`
+/// returns false to stop. Pages are read back by id in batches, so a walk that stops early reads
+/// only what it visited.
+pub(crate) fn walk_pages_by_updated(
+    read: &dyn KvRead,
+    newest_first: bool,
+    from_us: Option<i64>,
+    visit: &mut dyn FnMut(PageRecord) -> Result<bool>,
+) -> Result<()> {
+    if full_scan() {
+        let mut pages = crate::pages::all_pages(read)?;
+        pages.sort_by_key(updated_entry);
+        if newest_first {
+            pages.reverse();
+        }
+        for page in pages {
+            if !visit(page)? {
+                break;
+            }
+        }
+        return Ok(());
+    }
+    // Small under test, so the workloads there walk past a batch boundary.
+    const BATCH: usize = if cfg!(test) { 3 } else { 256 };
+    let prefix = kind_prefix(UPDATED);
+    let mut start = match (newest_first, from_us) {
+        (false, Some(us)) => updated_prefix(us),
+        _ => prefix.clone(),
+    };
+    let Some(mut end) = crate::kv::prefix_end(&prefix) else {
+        return Ok(());
+    };
+    loop {
+        let mut keys: Vec<Vec<u8>> = Vec::with_capacity(BATCH);
+        read.scan(&start, &end, newest_first, &mut |k, _| {
+            keys.push(k.to_vec());
+            keys.len() < BATCH
+        })?;
+        let full = keys.len() == BATCH;
+        for key in &keys {
+            let Some(id) = keys::be8(&key[key.len() - 8..]) else {
+                continue;
+            };
+            if let Some(page) = read_page_by_id(read, id)?
+                && !visit(page)?
+            {
+                return Ok(());
+            }
+        }
+        let Some(last) = keys.pop() else {
+            return Ok(());
+        };
+        if !full {
+            return Ok(());
+        }
+        if newest_first {
+            end = last;
+        } else {
+            start = last;
+            start.push(0);
+        }
+    }
 }
 
 /// Whether any stored link has `link_type = 'supersedes'`. Each entry's link record is read back

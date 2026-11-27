@@ -384,11 +384,13 @@ fn a_format_1_brain_is_upgraded_on_open_and_keeps_its_counts() {
 #[test]
 fn an_older_build_refuses_a_brain_in_the_new_format() {
     // What an older build does with this build's brains: `check_version` refuses any version it
-    // does not list. This build lists every format from 1 to its own (never pinned as a literal).
-    assert_eq!(
-        gbrain_store::FORMAT_VERSIONS,
-        (1..=FORMAT_VERSION).collect::<Vec<_>>().as_slice()
-    );
+    // does not list. This build lists formats 1 to 9, then its own (never pinned as a literal):
+    // formats between 9 and FORMAT_VERSION belong to other lanes and are not opened.
+    let mut own: Vec<u32> = (1..=9).collect();
+    if FORMAT_VERSION > 9 {
+        own.push(FORMAT_VERSION);
+    }
+    assert_eq!(gbrain_store::FORMAT_VERSIONS, own.as_slice());
     assert_eq!(gbrain_store::FORMAT_VERSIONS.first(), Some(&1));
     assert_eq!(gbrain_store::FORMAT_VERSIONS.last(), Some(&FORMAT_VERSION));
 }
