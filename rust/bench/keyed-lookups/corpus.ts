@@ -64,7 +64,8 @@ export function queries(pages: Array<{ title: string }>, q: number): string[] {
 export const pct = (xs: number[], p: number) => {
   if (!xs.length) return NaN;
   const s = [...xs].sort((a, b) => a - b);
-  return s[Math.min(s.length - 1, Math.floor(p * s.length))]!;
+  // Nearest rank: the sample at rank ceil(p * N), which is index ceil(p * N) - 1, kept inside [0, N - 1].
+  return s[Math.min(s.length - 1, Math.max(0, Math.ceil(p * s.length) - 1))]!;
 };
 export const median = (xs: number[]) => pct(xs, 0.5);
 export const round = (x: number, d = 2) => Math.round(x * 10 ** d) / 10 ** d;

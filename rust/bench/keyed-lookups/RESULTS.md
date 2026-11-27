@@ -11,15 +11,21 @@
 
 | Stage | 300 before | 300 after | 10k before | 10k after |
 |---|---|---|---|---|
-| Query p50 (ms) | 15.7 | 12.3 | 336.8 | 195.4 |
-| Query p95 (ms) | 18.5 | 15.0 | 366.1 | 234.3 |
+| Query p50 (ms), old rank | 15.7 | 12.3 | 336.8 | 195.4 |
+| Query p95 (ms), old rank | 18.5 | 15.0 | 366.1 | 234.3 |
 | The 5 helpers per query (ms) | 6.9 | 1.7 | 186.6 | 2.6 |
-| Import, page p50 (ms) | 19.7 | 20.6 | 45.3 | 47.0 |
-| Import, page p95 (ms) | 26.0 | 26.8 | 58.7 | 60.7 |
+| Import, page p50 (ms), old rank | 19.7 | 20.6 | 45.3 | 47.0 |
+| Import, page p95 (ms), old rank | 26.0 | 26.8 | 58.7 | 60.7 |
 | `findDuplicatePage` per page (ms) | 0.53 | 0.07 | 12.2 | 0.08 |
 | Import commit per page (ms) | 11.5 | 12.3 | 26.7 | 40.5 |
 | Link extraction per 10k pages (s) | 73.6 | 8.7 | 133.1 | 9.4 |
 | Link extraction commits | 738 | 3 | 24,600 | 100 |
+
+The rows marked "old rank" were measured with the old rank (one sample high): the bench's `pct()` took the sample at
+index floor(p x N) instead of the nearest rank, index ceil(p x N) - 1. With an even number of samples that is one
+sample past the nearest rank, for p50 as well as p95; for example the p95 of 120 samples was the 115th instead of the
+114th. `corpus.ts` now takes the nearest rank; these rows were not re-measured. The other rows are counts and means,
+which `pct()` does not touch.
 
 The 5 helpers are `cosinesByChunkIds`, `findPagesByTitles`, `listPagesTitledIn`, `readProjectionReadiness` and
 `hasSupersedeEdges`. Row counts were equal in both arms (300: 435 chunks, 997 links; 10k: 14,500 chunks, 33,250
@@ -59,3 +65,13 @@ the format-12 head.
 A format-9 brain of 10,000 pages (14,500 chunks, 33,250 links) made by the 3e149c4d29ec build upgrades to format 12
 on its first writable open in 285 ms; the next open takes 3 ms. The 3e149c4d29ec addon then refuses the brain:
 "store format 12, newer than the formats this build opens".
+
+## Known loss: long repeated-prefix title queries
+
+The substring title lookup (`listPagesTitledIn`, `keyed_index::pages_titled_within`) reads one key range for each
+starting character of the query. When the query repeats one character many times, those ranges overlap, so the same
+title entries are read again for each character. On 10,000 pages all titled `aaa`, a 512-character query
+of `a` took about 454 ms, and a 513-character query, which takes the full-scan path instead, took about 20 ms (one
+measurement, from the /ship review of PR 10354). Both returned the same rows. Ordinary titles are not affected. The
+keyed-lookups lane owns the follow-up: skip ranges already read, or cap the total work per query.
+

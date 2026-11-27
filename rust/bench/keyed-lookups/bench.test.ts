@@ -44,6 +44,13 @@ describe('keyed-lookups bench', () => {
     expect(median([3, 1, 2])).toBe(2);
     expect(pct([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 0.95)).toBe(10);
     expect(Number.isNaN(pct([], 0.5))).toBe(true);
+    // Nearest rank: the zero-based index is ceil(p * N) - 1, so an integer rank must not take the next sample.
+    const upTo = (n: number) => Array.from({ length: n }, (_, i) => i + 1);
+    expect(pct(upTo(20), 0.95)).toBe(19);
+    expect(pct(upTo(120), 0.95)).toBe(114);
+    expect(pct(upTo(10), 0.5)).toBe(5);
+    expect(pct(upTo(3), 0)).toBe(1);
+    expect(pct(upTo(3), 1)).toBe(3);
     expect(round(1.23456, 2)).toBe(1.23);
   });
 
