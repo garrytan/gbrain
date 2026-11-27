@@ -168,6 +168,7 @@ mod page_purge_holds;
 mod page_purge_journal;
 mod page_purge_sweep;
 mod page_spend;
+mod persistence_upkeep;
 mod purge_effects;
 mod purge_plan;
 mod raw_files;

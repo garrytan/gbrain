@@ -940,6 +940,7 @@ export const OWNER_IPC_TYPED_CONFIRMING_READS: Readonly<Record<string, string>> 
   publicationJournalStore: 'a SELECT of the rows the call writes',
   gitDurabilityStore: 'a SELECT of the rows the call writes', gitEffectStore: 'a SELECT of the rows the call writes',
   topologyStore: 'a SELECT of the rows the call writes', manualLinkStore: 'a SELECT of the rows the call writes',
+  persistenceUpkeepStore: 'a SELECT of the rows the call writes',
   queuePageProjectionJob: 'projectionRebuildProgress',
   rebindSharedSkillMember: 'readSharedSkillMember for that member',
   recountMentionIndexStatus: 'a SELECT of the rows the call writes',
