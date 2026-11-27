@@ -1032,7 +1032,10 @@ async function fenceDraining(engine: BrainEngine, sourceId: string, plan: Plan, 
     }
     return store.insertDraining({ worktreeId: plan.binding.worktree_id, sourceIds: plan.members, principalId: principal, ownerEpoch: String(current.owner_epoch),
       topologyGeneration: String(current.topology_generation), oldHead: plan.oldHead, targetHead: plan.targetHead, upstreamRef: plan.upstreamRef, preserved: plan.preserved,
-      outcome: { holder: refreshHolder(engine) }, ...fenceOpts(engine) });
+      // The claim is taken under the fence the refresh's later writes carry (transition, replan, mark_merge_started all pass
+      // fenceOpts(tx)): the registration of the engine the transaction runs on. `engine` may be a wrapper (a recording proxy, a
+      // consumer's view) that holds another registration of the same host, whose lease name the later writes would not match.
+      outcome: { holder: refreshHolder(engine) }, ...fenceOpts(tx) });
   })).catch(async error => {
     if ((error as { code?: string }).code === '23505' && !classifyOriginUniqueViolation(error)) throw inProgress('Another refresh of this worktree started first.', sourceId);
     if ((error as { code?: string }).code === LOCK_NOT_AVAILABLE) throw await lockTimeoutRefusal(engine, sourceId);
