@@ -10,7 +10,7 @@
  */
 import { afterAll, describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { VERSION } from '../src/version.ts';
@@ -20,8 +20,11 @@ const NEW_VERSION = '9.9.9.9';
 const homes: string[] = [];
 afterAll(() => { for (const home of homes) rmSync(home, { recursive: true, force: true }); });
 
-/** A bun global install whose `gbrain` lives only in $BUN_INSTALL/bin, which the upgrade's PATH does not include. */
-function upgradeWithoutBunBinOnPath(opts: { helpExit?: number; installGbrain?: boolean } = {}) {
+/**
+ * A bun global install whose `gbrain` entry lives only in $BUN_INSTALL/bin (a symlink into the global package, as Bun
+ * writes it), which the upgrade's PATH does not include. `foreignEntry` makes that entry another install instead.
+ */
+function upgradeWithoutBunBinOnPath(opts: { helpExit?: number; installGbrain?: boolean; foreignEntry?: boolean } = {}) {
   const home = mkdtempSync(join(tmpdir(), 'gbrain-upgrade-10536-'));
   homes.push(home);
   const bunInstall = join(home, '.bun');
@@ -36,8 +39,13 @@ function upgradeWithoutBunBinOnPath(opts: { helpExit?: number; installGbrain?: b
   const driver = join(pkg, 'src', 'cli.ts');
   writeFileSync(driver, `const { runUpgrade } = await import(${JSON.stringify(join(REPO, 'src/commands/upgrade.ts'))});\nawait runUpgrade(['--no-autopilot-install', '--no-bun-floor-check', '--no-restart']);\n`);
   writeFileSync(join(pathBin, 'bun'), `#!/bin/sh\nprintf 'bun:%s\\n' "$*" >> "$HOME/calls.log"\n`, { mode: 0o755 });
-  if (opts.installGbrain !== false) {
-    writeFileSync(join(bunBin, 'gbrain'), [
+  if (opts.foreignEntry) {
+    writeFileSync(join(home, 'foreign-gbrain'), '#!/bin/sh\nprintf \'foreign:%s\\n\' "$*" >> "$HOME/calls.log"\necho gbrain ' + NEW_VERSION + '\n', { mode: 0o755 });
+    symlinkSync(join(home, 'foreign-gbrain'), join(bunBin, 'gbrain'));
+  } else if (opts.installGbrain !== false) {
+    mkdirSync(join(pkg, 'bin'));
+    symlinkSync(join(pkg, 'bin', 'gbrain'), join(bunBin, 'gbrain'));
+    writeFileSync(join(pkg, 'bin', 'gbrain'), [
       '#!/bin/sh',
       'printf \'gbrain:%s\\n\' "$*" >> "$HOME/calls.log"',
       `if [ "$1" = '--version' ]; then echo 'gbrain ${NEW_VERSION}'; fi`,
@@ -82,6 +90,13 @@ describe('#10536 upgrade checks the installed gbrain by path, not through PATH',
     expect(run.out).toContain(`To return to ${VERSION}:`);
     expect(run.calls).not.toContain('gbrain:post-upgrade');
     expect(run.errors.at(-1)).toMatchObject({ phase: 'post-swap-smoke', from_version: VERSION, to_version: NEW_VERSION });
+  }, 90_000);
+
+  test('a Bun bin entry that resolves into another install is never run as the upgraded gbrain', () => {
+    const run = upgradeWithoutBunBinOnPath({ foreignEntry: true });
+    expect(run.calls).not.toContain('foreign:');
+    expect(run.status, run.out).toBe(1);
+    expect(run.out).toContain('found no gbrain executable to check that it starts');
   }, 90_000);
 
   test('no gbrain anywhere is reported as not found, without advice to downgrade', () => {

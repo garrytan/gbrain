@@ -1,7 +1,7 @@
 import type { BrainEngine } from '../core/engine.ts';
 import { execFileSync, spawnSync } from '../core/spawn.ts';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, realpathSync } from 'fs';
-import { basename, delimiter, join, dirname, resolve } from 'path';
+import { basename, join, dirname, resolve, sep } from 'path';
 import { isNewerVersion, parseSemver, semverGt } from '../core/semver.ts';
 import { cliChildStdio, jsonRequested, setCliExitVerdict, writeJsonDocument } from '../core/cli-force-exit.ts';
 import { opError, type OperationError } from '../core/ops/contract.ts';
@@ -303,7 +303,7 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
   let migrationsLine = 'Migrations: complete';
   const gbrain = installedGbrain(method);
   try {
-    execFileSync(gbrain, ['post-upgrade', ...(noAutopilotInstall ? ['--no-autopilot-install'] : [])], { env: gbrainOnPath(gbrain, upgradeEnv), stdio: 'inherit', timeout: postUpgradeTimeoutMs });
+    execFileSync(gbrain, ['post-upgrade', ...(noAutopilotInstall ? ['--no-autopilot-install'] : [])], { env: upgradeEnv, stdio: 'inherit', timeout: postUpgradeTimeoutMs });
   } catch (e) {
     migrationsLine = await describeMigrationFailure(e, newVersion);
     // post-upgrade is best-effort, don't fail the upgrade. BUT leave a
@@ -321,7 +321,7 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
   }
   // Run features scan to show what's new and what to fix
   try {
-    execFileSync(gbrain, ['features'], { env: gbrainOnPath(gbrain, process.env), stdio: 'inherit', timeout: 30_000 });
+    execFileSync(gbrain, ['features'], { stdio: 'inherit', timeout: 30_000 });
   } catch {
     // features scan is best-effort
   }
@@ -338,7 +338,7 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
 
 /** GBRA-175: the new build restarts every process onto itself and verifies one build runs; returns the summary line. */
 function restartOntoNewBuild(gbrain: string, stopMcp: boolean, newVersion: string): string {
-  const restart = spawnSync(gbrain, ['upgrade', '--restart-only', ...(stopMcp ? ['--stop-mcp'] : [])], { stdio: cliChildStdio(), env: { ...gbrainOnPath(gbrain, process.env), GBRAIN_SKIP_STARTUP_HOOKS: '1' }, timeout: 900_000 });
+  const restart = spawnSync(gbrain, ['upgrade', '--restart-only', ...(stopMcp ? ['--stop-mcp'] : [])], { stdio: cliChildStdio(), env: { ...process.env, GBRAIN_SKIP_STARTUP_HOOKS: '1' }, timeout: 900_000 });
   if (restart.status === 0) return `Restart: every gbrain process on this host runs ${newVersion || 'the new build'}`;
   setCliExitVerdict(restart.status ?? 1);
   return `Restart: incomplete (exit ${restart.status ?? restart.signal ?? 'unknown'}). Follow the steps above, then run \`gbrain upgrade --restart-only\``;
@@ -468,19 +468,21 @@ interface SmokeRecovery { method: string; oldVersion: string; repoRoot?: string;
 
 /**
  * #10536: the gbrain this upgrade installed, by absolute path, so the checks after the swap never depend on the PATH of
- * the shell that ran the upgrade (a non-interactive shell often lacks Bun's bin directory). A bun or bun-link install
- * lives in Bun's global bin directory and a release binary is replaced in place; a bare `gbrain` is the fallback.
+ * the shell that ran the upgrade (a non-interactive shell often lacks Bun's bin directory). A release binary is replaced
+ * in place; a bun or bun-link install's entry in Bun's global bin directory counts only when it resolves into the install
+ * this upgrade updated (the global package, or the linked checkout). A bare `gbrain` on PATH is the fallback.
  */
 function installedGbrain(method: string): string {
-  const candidate = method === 'binary' ? process.execPath
-    : method === 'bun' || method === 'bun-link' ? join(dirname(dirname(resolveBunGlobalRoot())), 'bin', process.platform === 'win32' ? 'gbrain.exe' : 'gbrain')
-    : null;
-  return candidate && existsSync(candidate) ? candidate : 'gbrain';
-}
-
-/** #10536: a child that itself runs `gbrain` by name finds the installed one first. */
-function gbrainOnPath(gbrain: string, env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  return gbrain === 'gbrain' ? env : { ...env, PATH: `${dirname(gbrain)}${delimiter}${env.PATH ?? ''}` };
+  if (method === 'binary') return process.execPath && existsSync(process.execPath) ? process.execPath : 'gbrain';
+  const root = method === 'bun' ? join(resolveBunGlobalRoot(), 'node_modules', 'gbrain') : method === 'bun-link' ? detectBunLink()?.repoRoot : undefined;
+  if (!root) return 'gbrain';
+  const entry = join(dirname(dirname(resolveBunGlobalRoot())), 'bin', process.platform === 'win32' ? 'gbrain.exe' : 'gbrain');
+  try {
+    const target = realpathSync(entry);
+    return target.startsWith(realpathSync(root) + sep) ? entry : 'gbrain';
+  } catch {
+    return 'gbrain';
+  }
 }
 
 /**
@@ -494,10 +496,10 @@ function postSwapSmoke(newVersion: string, r: SmokeRecovery): boolean {
     encoding: 'utf-8',
     stdio: ['ignore', 'ignore', 'pipe'],
     timeout: 60_000,
-    env: { ...gbrainOnPath(gbrain, process.env), GBRAIN_SKIP_STARTUP_HOOKS: '1' },
+    env: { ...process.env, GBRAIN_SKIP_STARTUP_HOOKS: '1' },
   });
   if (run.status === 0) return true;
-  if ((run.error as NodeJS.ErrnoException | undefined)?.code === 'ENOENT') {
+  if (gbrain === 'gbrain' && (run.error as NodeJS.ErrnoException | undefined)?.code === 'ENOENT') {
     console.error(`gbrain ${newVersion || '(new version)'} was installed, but this upgrade found no gbrain executable to check that it starts: none in Bun's bin directory and none on PATH.`);
     console.error('Recovery: add the directory gbrain is installed in to PATH, then run gbrain --help and gbrain post-upgrade.');
     recordUpgradeError({

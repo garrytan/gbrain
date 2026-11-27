@@ -327,7 +327,7 @@ export async function maybeDelegateSyncToServe(dataDir: string, args: string[], 
   return true;
 }
 
-const RESTART_SERVE = '`gbrain upgrade --restart-only` (add `--stop-mcp` for a serve an agent harness started, then reconnect gbrain there)';
+const RESTART_SERVE = '`gbrain upgrade --restart-only` (for a serve an agent harness started, it names the extra step)';
 
 /** #10537: what a lazy import throws inside a serve whose module graph no longer matches the install on disk (Bun, Node). */
 const STALE_MODULE_GRAPH = /Export named '[^']+' not found in module|does not provide an export named/;
