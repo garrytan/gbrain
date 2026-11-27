@@ -72,6 +72,16 @@ describeAddon('store-returning members on a protocol v3 client', () => {
     expect(MANAGED_STORES.filter(member => !STORE_RETURNING_MEMBERS.has(member))).toEqual([]);
   });
 
+  test('a served store has the owner store\'s method names as its own keys, so a spread or a wrapper keeps every method', async () => {
+    // doctor's owner_host_stale check (and its parity case) wraps topologyStore with { ...store, ownerActivity }: a store
+    // whose methods only appear on property reads spreads to an empty object.
+    for (const member of MANAGED_STORES) {
+      const own = Object.keys(await (owner as unknown as Record<string, () => Promise<object>>)[member]!()).sort();
+      const served = await (client as unknown as Record<string, () => Promise<object>>)[member]!();
+      expect({ member, keys: Object.keys({ ...served }).sort() }).toEqual({ member, keys: own });
+    }
+  });
+
   test('manualLinkStore: a read answers on the client as on the owner, outside and inside a client transaction', async () => {
     const pageId = Number((await owner.getPage('notes/a'))?.id);
     const onOwner = await outcome((await owner.manualLinkStore()).fencedEdges(pageId, 'links'));
