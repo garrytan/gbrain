@@ -9,6 +9,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { checkLinksExtractionLag } from '../src/commands/doctor.ts';
+import { extractionLagStatement } from '../src/core/engine-sql/pages.ts';
 
 let engine: PGLiteEngine;
 
@@ -102,6 +103,44 @@ describe('links_extraction_lag doctor check', () => {
     const c = await checkLinksExtractionLag(engine, { sourceId: 'dept-x' });
     expect(c.status).toBe('warn'); // all 10 stale, assessed despite < 100
     expect(c.message).toContain("source 'dept-x'");
+  });
+
+  test('shares a wanted-link lookup across counts without changing source or producer scope', async () => {
+    await engine.executeRaw(`INSERT INTO sources (id, name) VALUES ('target-source', 'Targets')`);
+    await seedPages(5);
+    await seedPages(2, 'target-source', 'ref');
+    const generation = '2026-01-01T00:00:00Z';
+    await engine.executeRaw(`UPDATE pages SET updated_at = '2026-02-01', links_extracted_at = '2026-03-01'`);
+    await engine.executeRaw(`UPDATE pages SET links_attendance_blocked_revision = knowledge_revision WHERE slug = 'p/2'`);
+    await engine.executeRaw(
+      `UPDATE pages SET links_extract_failure = jsonb_build_object(
+         'state', 'held', 'revision', knowledge_revision::text, 'generation', $1::text
+       ) WHERE slug = 'p/3'`, [generation],
+    );
+    await engine.executeRaw(`
+      INSERT INTO wanted_links (origin_page_id, source_id, producer, ref_kind, target_source_id, target_ref, checked_at)
+       SELECT p.id, p.source_id, w.producer, w.ref_kind, 'target-source', w.target_ref, w.checked_at::timestamptz
+        FROM pages p JOIN (VALUES
+          ('p/1', 'body', 'slug', 'ref/1', '2026-01-15'),
+          ('p/1', 'frontmatter', 'name', '1', '2026-01-15'),
+          ('p/2', 'body', 'slug', 'ref/1', '2026-01-15'),
+          ('p/3', 'body', 'slug', 'ref/1', '2026-01-15'),
+          ('p/4', 'frontmatter', 'name', '1', '2026-01-15'),
+          ('p/5', 'body', 'slug', 'ref/2', '2026-03-01')
+        ) AS w(origin, producer, ref_kind, target_ref, checked_at) ON p.slug = w.origin
+    `);
+
+    const opts = { sourceId: 'default', versionTs: generation, attendance: true, held: true };
+    const all = extractionLagStatement(opts);
+    expect(all.text.match(/FROM wanted_links w/g)).toHaveLength(2);
+    expect(await engine.executeRaw(all.text, all.params)).toEqual([
+      { total: 5, stale: 2, attendance_blocked: 1, held: 1 },
+    ]);
+
+    const body = extractionLagStatement({ ...opts, wantedProducers: ['body'] });
+    expect(await engine.executeRaw(body.text, body.params)).toEqual([
+      { total: 5, stale: 1, attendance_blocked: 1, held: 1 },
+    ]);
   });
 
   test('pre-v112 brain (column missing) → ok (graceful)', async () => {

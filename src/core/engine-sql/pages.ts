@@ -822,14 +822,14 @@ export async function resolveSlugs(
  * settle a frontmatter row, so counting one made the page stale after every sweep; the row stays unchecked and a
  * frontmatter sweep still finds it.
  */
-function wantedOriginIsStale(producers?: readonly string[]) {
+function wantedStaleOriginIds(producers?: readonly string[]) {
   const producer = producers ? sqlFragment` AND w.producer = ANY(${[...producers]}::text[])` : sqlFragment``;
-  return sqlFragment`id IN (SELECT w.origin_page_id FROM wanted_links w
+  return sqlFragment`SELECT w.origin_page_id FROM wanted_links w
       JOIN pages t ON t.source_id = w.target_source_id AND t.slug = w.target_ref AND t.deleted_at IS NULL
       WHERE t.updated_at > w.checked_at${producer}
     UNION SELECT w.origin_page_id FROM wanted_links w
       JOIN pages t ON t.source_id = w.target_source_id AND regexp_replace(t.slug, '^.*/', '') = w.target_ref AND t.deleted_at IS NULL
-      WHERE w.ref_kind = 'name' AND t.updated_at > w.checked_at${producer})`;
+      WHERE w.ref_kind = 'name' AND t.updated_at > w.checked_at${producer}`;
 }
 
 /**
@@ -850,8 +850,10 @@ type StaleOpts = { sourceId?: string; versionTs?: string; attendance?: 'exclude'
  * reconsidering blocked pages. `held` (GBRA-130 A-1) excludes or selects pages
  * whose link extraction is held (linkExtractionHeld); managed extraction excludes them.
  */
-function stalePagesWhere(opts?: StaleOpts) {
-  const wanted = wantedOriginIsStale(opts?.wantedProducers);
+function stalePagesWhere(opts?: StaleOpts, wantedFilter?: SqlFragment) {
+  const wanted = wantedFilter ?? sqlFragment`id IN (
+    SELECT origin_page_id FROM (${wantedStaleOriginIds(opts?.wantedProducers)}) AS wanted_origins
+  )`;
   const version = opts?.versionTs
     ? sqlFragment`(links_extracted_at IS NULL OR links_extracted_at < ${opts.versionTs}::timestamptz OR updated_at > links_extracted_at OR ${wanted})`
     : sqlFragment`(links_extracted_at IS NULL OR updated_at > links_extracted_at OR ${wanted})`;
@@ -881,10 +883,17 @@ export function staleForExtractionSql(versionTs: string): SqlFragment {
 export function extractionLagStatement(opts: { sourceId?: string; versionTs: string; attendance: boolean; held?: boolean; guests?: boolean; wantedProducers?: readonly string[] }): { text: string; params: unknown[] } {
   const source = opts.sourceId ? sqlFragment` AND source_id = ${opts.sourceId}` : sqlFragment``;
   const base = { versionTs: opts.versionTs, wantedProducers: opts.wantedProducers, guests: opts.guests };
-  const stale = stalePagesWhere({ ...base, ...(opts.attendance ? { attendance: 'exclude' as const } : {}), ...(opts.held ? { held: 'exclude' as const } : {}) });
-  const blocked = opts.attendance ? sqlFragment`count(*) FILTER (WHERE ${stalePagesWhere({ ...base, attendance: 'blocked' })})::int` : sqlFragment`0`;
-  const held = opts.held ? sqlFragment`count(*) FILTER (WHERE ${stalePagesWhere({ ...base, held: 'only' })})::int` : sqlFragment`0`;
-  return renderFragment(sqlFragment`SELECT count(*)::int AS total, count(*) FILTER (WHERE ${stale})::int AS stale, ${blocked} AS attendance_blocked, ${held} AS held
+  // The three counts use the same target lookup. Build it once so source
+  // maintenance and Doctor do not repeat both wanted-link joins per count.
+  const sharedLookup = opts.attendance || opts.held;
+  const prefix = sharedLookup
+    ? sqlFragment`WITH wanted_stale_origins AS MATERIALIZED (${wantedStaleOriginIds(opts.wantedProducers)}) `
+    : sqlFragment``;
+  const wanted = sharedLookup ? sqlFragment`id IN (SELECT origin_page_id FROM wanted_stale_origins)` : undefined;
+  const stale = stalePagesWhere({ ...base, ...(opts.attendance ? { attendance: 'exclude' as const } : {}), ...(opts.held ? { held: 'exclude' as const } : {}) }, wanted);
+  const blocked = opts.attendance ? sqlFragment`count(*) FILTER (WHERE ${stalePagesWhere({ ...base, attendance: 'blocked' }, wanted)})::int` : sqlFragment`0`;
+  const held = opts.held ? sqlFragment`count(*) FILTER (WHERE ${stalePagesWhere({ ...base, held: 'only' }, wanted)})::int` : sqlFragment`0`;
+  return renderFragment(sqlFragment`${prefix}SELECT count(*)::int AS total, count(*) FILTER (WHERE ${stale})::int AS stale, ${blocked} AS attendance_blocked, ${held} AS held
     FROM pages WHERE deleted_at IS NULL AND ${trustedSql(quarantineFilterFragment('pages'))}${source}`);
 }
 
