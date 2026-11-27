@@ -4,7 +4,7 @@
  * fake engines, the report and the doctor check. CLI, engine-factory and real-child coverage live in
  * rust-engine-shadow.serial.test.ts (they set GBRAIN_HOME).
  */
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import { EventEmitter } from 'node:events';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -755,7 +755,7 @@ describe('supervisor sample accounting (a sample is owed in a durable record bef
     const sup = new ShadowSupervisor({
       dir, argv: ['g'], spawn: ((_cmd: string, _args: string[], options: { env: Record<string, string> }) => { const c = new HeldPipeChild(); c.onWrite = () => { c.owedAtWrite.push((readOwed(dir, sessions[children.indexOf(c)]!) as { owed: number } | null)?.owed ?? -1); }; children.push(c); sessions.push(options.env.GBRAIN_SHADOW_SESSION!); return c; }) as never,
       recordFault: (f: ShadowFault) => faults.push(f), stillEnabled: () => true, maxBufferedBytes: 1_000, drainMs: 60, retryMs: 10,
-      writeOwed: (d: string, rec: OwedRecord) => { owedWrites.push(rec.owed); writeOwed(d, rec); }, ...overrides,
+      writeOwed: (d: string, rec: OwedRecord) => { owedWrites.push(rec.owed); writeOwed(d, rec); }, owedWindowMs: 0, ...overrides,
     } as never);
     return { sup, children, sessions, faults, dir, owedWrites, owed: (i = 0) => readOwed(dir, sessions[i]!), done: () => { sup.stop(); rmSync(dir, { recursive: true, force: true }); } };
   }
@@ -950,6 +950,57 @@ describe('supervisor sample accounting (a sample is owed in a durable record bef
     expect(h.owed()).toMatchObject({ owed: 5 + 1 });
     h.done();
   });
+
+  // OWC: the cost of the owed record. Every write sample used to cost its own durable record (a temp file written, flushed, renamed, then the directory flushed): about 37 per save at rate 1.0.
+  async function countDurable<T>(run: () => Promise<T>): Promise<{ result: T; fileFlushes: number; directoryFlushes: number }> {
+    const durable = await import('../src/core/fs-durable.ts');
+    let fileFlushes = 0; let directoryFlushes = 0;
+    const file = durable.flushFile; const directory = durable.flushDirectory;
+    const f = spyOn(durable, 'flushFile').mockImplementation((path: string) => { fileFlushes++; return file(path); });
+    const d = spyOn(durable, 'flushDirectory').mockImplementation(((path: string, options?: never) => { directoryFlushes++; return directory(path, options); }) as never);
+    try { const result = await run(); return { result, fileFlushes, directoryFlushes }; } finally { f.mockRestore(); d.mockRestore(); }
+  }
+  const sleep = (ms: number): Promise<void> => new Promise((resolve) => { setTimeout(resolve, ms); });
+
+  test('OWC: a save of 37 write samples at rate 1.0 (one per event-loop turn) costs at most about two durable owed records (the window\'s open marker and its close), at most four flushes (two per record); the accounting and the order are unchanged', async () => {
+    const SAVES = 5; const PER_SAVE = 37;
+    const h = harness({ maxBufferedBytes: 1_000_000, owedWindowMs: 100 });
+    const { fileFlushes, directoryFlushes } = await countDurable(async () => {
+      let i = 0;
+      for (let save = 0; save < SAVES; save++) {
+        for (let n = 0; n < PER_SAVE; n++) { expect(h.sup.send(sample(i++))).toBe(true); await turn(); }
+        await sleep(250); // the next save comes after the window (a save is a burst, saves are apart)
+        h.children[0]!.flush();
+      }
+    });
+    expect(h.children[0]!.writes).toHaveLength(SAVES * PER_SAVE);
+    const durableOwedWrites = h.owedWrites.length; const fsyncs = fileFlushes + directoryFlushes;
+    expect({ durableOwedWrites, fsyncs }).toEqual({ durableOwedWrites: Math.min(durableOwedWrites, 2 * SAVES), fsyncs: Math.min(fsyncs, 4 * SAVES) }); // the lane owner's bar: at most about 2 durable records (4 flushes) per save, from 37 and 74
+    // unchanged: every sample is owed, the record states exactly what was accepted, and it was on disk (covering the line) before each line reached the pipe
+    expect(h.owedWrites.at(-1)).toBe(SAVES * PER_SAVE);
+    expect(h.owedWrites).toEqual([...h.owedWrites].sort((a, b) => a - b));
+    h.children[0]!.owedAtWrite.forEach((owed, k) => expect(owed).toBeGreaterThanOrEqual(k + 1));
+    expect(h.owed()).toMatchObject({ owed: SAVES * PER_SAVE, closed: false, child_exited: false });
+    expect((h.owed() as { open_until?: number }).open_until).toBeUndefined(); // the window is closed: the last record is the full one, not a marker
+    h.done();
+  }, 20_000);
+
+  test('OWC: a steady stream of samples (one every ~3 ms) costs at most two durable owed records (open marker, close) per flush window, however long it runs', async () => {
+    const WINDOW_MS = 60;
+    const h = harness({ maxBufferedBytes: 1_000_000, owedWindowMs: WINDOW_MS });
+    const started = performance.now();
+    const { fileFlushes, directoryFlushes } = await countDurable(async () => {
+      for (let i = 0; i < 80; i++) { expect(h.sup.send(sample(i))).toBe(true); await sleep(3); }
+      await sleep(2 * WINDOW_MS);
+    });
+    const elapsed = performance.now() - started;
+    const allowed = Math.ceil(elapsed / WINDOW_MS) + 1;
+    const durableOwedWrites = h.owedWrites.length; const fsyncs = fileFlushes + directoryFlushes;
+    expect({ durableOwedWrites, fsyncs }).toEqual({ durableOwedWrites: Math.min(durableOwedWrites, 2 * allowed), fsyncs: Math.min(fsyncs, 4 * allowed) }); // at most two durable records (four flushes) per window
+    expect(h.owedWrites.at(-1)).toBe(80);
+    expect(h.children[0]!.writes).toHaveLength(80);
+    h.done();
+  }, 20_000);
 });
 
 describe('Bun child stdin write callbacks (what the sample accounting stands on)', () => {

@@ -199,6 +199,11 @@ export function sampleWeight(line: string): number {
   const dropped = /,"dropped":(\d{1,5})\}\n$/.exec(line.length > 40 ? line.slice(-40) : line);
   return 1 + (dropped ? droppedWeight(Number(dropped[1])) : 0);
 }
+/**
+ * Whether a write sample line carries a loss that is already known (it must not wait in a window): a `dropped` count (weight above 1) or an `uncomparable` outcome the sampler wrote itself (`readback_failed`,
+ * `primary_write_failed`, `preimage_timeout`). Reads only the sampler's own first keys (`t`, `op`, `outcome`); a sample's page content comes after `args`.
+ */
+export const carriesKnownLoss = (line: string): boolean => sampleWeight(line) > 1 || /^\{"t":"write","op":"[^"\\]*","outcome":"uncomparable"/.test(line);
 /** The most earlier losses one sample line carries (the sampler cuts to it and keeps the rest for later lines). */
 export const MAX_DROPPED = 10_000;
 /**
@@ -218,14 +223,18 @@ export const sessionKey = (session: string): string => session.replace(/[^A-Za-z
 export const owedPath = (dir: string, session: string): string => join(dir, `write-owed.${sessionKey(session)}.json`);
 const OWED_NAME = /^write-owed\.([A-Za-z0-9_-]+)\.json$/;
 const MAX_OWED = 1_000_000_000_000;
-export interface OwedRecord { v: 1; session: string; serving_pid: number; child_pid?: number; owed: number; closed: boolean; child_exited: boolean }
+/**
+ * `v: 1` is every record the serving process writes outside a flush window. `v: 2` is the OPEN MARKER of a window (`open_until`: epoch ms): `owed` is one more than it has accepted for the pipe, so every reader sees an unsettled session, and a crash
+ * leaves it for the child or an owner worker to book as one `write_window_lost`. An older reader parses only `v: 1`: it reads a marker as unreadable, which is no evidence, never a settled session (it books and removes nothing).
+ */
+export interface OwedRecord { v: 1 | 2; session: string; serving_pid: number; child_pid?: number; owed: number; closed: boolean; child_exited: boolean; open_until?: number }
 function parseOwed(path: string): OwedRecord | null | 'unreadable' {
   let text: string;
   try { text = readFileSync(path, 'utf8'); } catch (e) { return (e as NodeJS.ErrnoException).code === 'ENOENT' ? null : 'unreadable'; }
   try {
     const f = JSON.parse(text) as Partial<OwedRecord>;
-    if (f?.v !== 1 || typeof f.session !== 'string' || !Number.isSafeInteger(f.owed) || f.owed! < 0 || f.owed! > MAX_OWED || !Number.isSafeInteger(f.serving_pid) || typeof f.closed !== 'boolean' || typeof f.child_exited !== 'boolean' || (f.child_pid !== undefined && !Number.isSafeInteger(f.child_pid))) return 'unreadable';
-    return { v: 1, session: f.session, serving_pid: f.serving_pid!, ...(f.child_pid !== undefined ? { child_pid: f.child_pid } : {}), owed: f.owed!, closed: f.closed, child_exited: f.child_exited };
+    if ((f?.v !== 1 && f?.v !== 2) || (f.v === 2) !== (f.open_until !== undefined) || (f.open_until !== undefined && (!Number.isSafeInteger(f.open_until) || f.open_until < 0)) || typeof f.session !== 'string' || !Number.isSafeInteger(f.owed) || f.owed! < 0 || f.owed! > MAX_OWED || !Number.isSafeInteger(f.serving_pid) || typeof f.closed !== 'boolean' || typeof f.child_exited !== 'boolean' || (f.child_pid !== undefined && !Number.isSafeInteger(f.child_pid))) return 'unreadable';
+    return { v: f.v, session: f.session, serving_pid: f.serving_pid!, ...(f.child_pid !== undefined ? { child_pid: f.child_pid } : {}), owed: f.owed!, closed: f.closed, child_exited: f.child_exited, ...(f.open_until !== undefined ? { open_until: f.open_until } : {}) };
   } catch { return 'unreadable'; }
 }
 /** The owed record of `session`: the record, null (none), or `'unreadable'` (there, and not usable: never the same as none). */
@@ -338,7 +347,9 @@ export function readWriteSnapshot(dir: string, epoch: string | null, between?: (
 }
 
 const MAX_KEYS = 64;
-const bump = (map: Record<string, number>, key: string, n: number): void => { const k = key in map || Object.keys(map).length < MAX_KEYS ? key : 'other'; map[k] = (map[k] ?? 0) + n; };
+/** The one reason a full map never folds into `other`: status reads it as a lost window of unknown size (never measured), so it must stay countable (the map may hold one key more than `MAX_KEYS` for it). */
+export const WINDOW_LOST_REASON = 'write_window_lost';
+const bump = (map: Record<string, number>, key: string, n: number): void => { const k = key in map || Object.keys(map).length < MAX_KEYS || key === WINDOW_LOST_REASON ? key : 'other'; map[k] = (map[k] ?? 0) + n; };
 function applyVerdict(file: WriteTallyFile, outcome: WriteOutcome, key: string | undefined, n: number): void {
   file[outcome] += n;
   const name = typeof key === 'string' && /^[A-Za-z][A-Za-z0-9_:]{0,59}$/.test(key) ? key : 'other'; // a name, never text that could hold content
@@ -512,7 +523,12 @@ export class WriteTally {
         const orphaned = rec.child_exited || (rec.child_pid !== undefined && rec.child_pid > 1 && !running(rec.child_pid)) || (rec.closed && age > STALE_RECEIPT_MS) || (rec.serving_pid > 1 && !running(rec.serving_pid) && age > STALE_RECEIPT_MS);
         if (!orphaned && !rec.closed) continue;
         const missing = rec.owed - ((tally?.settled?.[key] ?? 0) + (lines.bySession[key] ?? 0));
-        if (orphaned && missing > 0) { if (recordLostCount(this.dir, epoch, 'receipt_orphaned', missing, key) < missing) continue; booked = true; }
+        if (orphaned && missing > 0) { // an open marker (v:2) left by a crash: one of the missing samples stands for the whole lost window; every other is a plain orphan
+          const window = rec.v === 2 ? 1 : 0; // the window's one is booked LAST: a retry after a partial booking finds what is left (`missing` shrinks by what was credited), so it books the window exactly once
+          if (missing - window > 0 && recordLostCount(this.dir, epoch, 'receipt_orphaned', missing - window, key) < missing - window) continue;
+          if (window > 0 && recordLostCount(this.dir, epoch, WINDOW_LOST_REASON, window, key) < window) continue;
+          booked = true;
+        }
         removable.push({ key, owed: rec.owed });
       }
       if (booked && !this.update()) return;
@@ -560,11 +576,19 @@ export class WriteTally {
     batch.ending ||= ends;
     this.update();
   }
-  /** `n` samples the pipe never delivered (the serving process owed them, the child never read them): `uncomparable` `pipe_unflushed`, settling that many. */
-  missing(n: number): void {
+  /**
+   * `n` samples the pipe never delivered (the serving process owed them, the child never read them): `uncomparable` `pipe_unflushed`, settling that many. `windowLost`: the session's owed record was the open marker of a window the serving
+   * process never closed (a crash): the first of the `n` stands for a whole window of unknown size, booked as one `write_window_lost` (status reads no evidence for the rest of the epoch), the rest are `pipe_unflushed`.
+   */
+  missing(n: number, windowLost = 0): void {
     if (n <= 0 || !this.alive()) return;
-    if (this.epoch() === null) { const settles = this.key ? n : 0; this.addJournal('pipe_unflushed', true, settles); this.addJournal('pipe_unflushed', false, n - settles); return; }
-    this.note('uncomparable', 'pipe_unflushed', n, false, n);
+    const lost = Math.min(Math.max(0, windowLost), n);
+    if (this.epoch() === null) {
+      for (const [reason, count] of [[WINDOW_LOST_REASON, lost], ['pipe_unflushed', n - lost]] as const) { const settles = this.key ? count : 0; this.addJournal(reason, true, settles); this.addJournal(reason, false, count - settles); }
+      return;
+    }
+    if (lost > 0) this.note('uncomparable', WINDOW_LOST_REASON, lost, false, lost);
+    if (n - lost > 0) this.note('uncomparable', 'pipe_unflushed', n - lost, false, n - lost);
   }
   /**
    * At the end of this child's input, after its final save: removes this session's owed file when the serving process closed it and the settled count read back from disk covers what was owed. True when the file is gone or there was none.

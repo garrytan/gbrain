@@ -26,7 +26,15 @@ import { readEpoch } from './evidence-epoch.ts';
 import { appendFault, type ShadowFault } from './ledger.ts';
 import type { MirrorTransport } from './mirror.ts';
 import { readShadowState } from './state.ts';
-import { sampleWeight, writeOwed } from './write-compare.ts';
+import { carriesKnownLoss, sampleWeight, writeOwed, type OwedRecord } from './write-compare.ts';
+
+/**
+ * How long the owed record's flush window stays open (ms): the first plain write sample of a window writes a durable OPEN marker (`v: 2`, `open_until`), the samples of the window wait in memory, and ONE full record closes it (then the lines go to the pipe).
+ * A save is then two durable records, not one per sample (about 37 per save at sample rate 1.0). A crash inside a window leaves the marker: the session is booked as a lost window (`write_window_lost`), never read as measured.
+ */
+export const OWED_WINDOW_MS = 100;
+/** The most samples a window holds before it closes at once. */
+export const OWED_WINDOW_SAMPLES = 256;
 
 export interface ShadowSupervisorOptions {
   dir: string;
@@ -48,6 +56,8 @@ export interface ShadowSupervisorOptions {
   retryMs?: number;
   /** Seam for tests: writes the owed record (default: `writeOwed`, durable). Throws when it failed. */
   writeOwed?: typeof writeOwed;
+  /** The flush window of the owed record in ms (default `OWED_WINDOW_MS`); 0 writes one record per event-loop turn that accepted a sample, with no open marker. */
+  owedWindowMs?: number;
   /** How long `drain` waits at disconnect for the pipe to flush what it holds (default 2 s). */
   drainMs?: number;
   /** Seam for tests; default appends to faults.jsonl. */
@@ -112,6 +122,12 @@ export class ShadowSupervisor implements MirrorTransport {
   private acceptedWeight = 0;
   private owedWritten = ''; // the record `writeOwedRecord` last made durable (session, count and flags)
   private oweDirty = false; // `owe` raised the accepted weight and the record is not durable yet
+  // The flush window (see OWED_WINDOW_MS): open from its marker's write until a record that states everything accepted is durable.
+  private windowOpen = false;
+  private windowTimer: ReturnType<typeof setTimeout> | null = null;
+  private stagedWeight = 0; // samples accepted into the open window (the cap closes it)
+  private closing = false; // a close was tried and has not reported success: `writeOwed` renames before it flushes the directory, so a failed close may have made its record visible. No sample is accepted until a close is durable
+  private markerStray = false; // a marker write failed after it may have renamed: a record this process never counted may stand on disk, and the closing record replaces it
   private childExited = false;
   private closedRecord = false; // a closed record was made durable for this session: later records stay closed
   private stdinRef: (NodeJS.WritableStream & { writableFinished?: boolean }) | null = null;
@@ -121,7 +137,7 @@ export class ShadowSupervisor implements MirrorTransport {
   constructor(opts: ShadowSupervisorOptions) {
     this.o = {
       now: Date.now, minBackoffMs: 1_000, maxBackoffMs: 60_000, maxRestarts: 5, restartWindowMs: 10 * 60_000,
-      hangMs: 60_000, stateCheckMs: 30_000, maxBufferedBytes: 8 * 1024 * 1024, maxStagedBytes: 0, retryMs: 100, writeOwed, drainMs: 2_000,
+      hangMs: 60_000, stateCheckMs: 30_000, maxBufferedBytes: 8 * 1024 * 1024, maxStagedBytes: 0, retryMs: 100, writeOwed, drainMs: 2_000, owedWindowMs: OWED_WINDOW_MS,
       ...opts,
     };
     if (!this.o.maxStagedBytes) this.o.maxStagedBytes = 2 * this.o.maxBufferedBytes;
@@ -154,6 +170,7 @@ export class ShadowSupervisor implements MirrorTransport {
     // Under Bun `writableLength` reads 0 and `drain` never fires while megabytes are queued, so the pipe is watched through the write callbacks. A write sample over the budget of samples still in
     // the pipe is refused (the caller counts it `send_shed`); `write()` returning false is "queued", not "refused". Other lines (reads, follower lines, answers) are never refused for size.
     const weight = sampleWeight(line);
+    if (weight > 0 && this.closing) return false; // a close is in doubt: the accepted count is fixed until one is durable; the refused sample is counted `send_shed` by the caller, like one the pipe refused
     if (weight > 0 && this.sampleBytes > this.o.maxBufferedBytes) return false;
     // Lines wait behind a staged one, whatever they are, so order holds; behind a failing owed write that wait is bounded for lines of every kind, not for samples alone.
     if (this.staged.length > 0 && this.stagedBytes > this.o.maxStagedBytes) return false;
@@ -163,10 +180,20 @@ export class ShadowSupervisor implements MirrorTransport {
       try { stdin.write(line, () => this.forget(entry)); } catch { this.forget(entry); return false; }
       return true;
     }
+    // A plain sample (weight 1, no loss it carries) joins the flush window; with no window open its first sample writes the durable open marker HERE, before it is accepted (a refused marker refuses the sample). Known-loss lines, `owe`
+    // and a sample behind a flush that is already scheduled keep the per-turn flush; a window is never opened over staged lines or a pending retry (an older record kept for retry could replace its marker).
+    let windowed = false;
+    if (weight === 1 && this.o.owedWindowMs > 0 && !this.flushScheduled && !carriesKnownLoss(line)) {
+      if (this.windowOpen) windowed = true;
+      else if (this.staged.length === 0 && !this.retryTimer && !this.closedRecord && !this.childExited) { if (!this.openWindow()) return false; windowed = true; }
+    }
     this.flight.add(entry); if (weight > 0) this.sampleBytes += entry.bytes;
     this.staged.push({ line, entry }); this.stagedBytes += line.length;
     this.acceptedWeight += weight;
-    this.scheduleFlush();
+    if (!windowed) { if (weight === 0 && this.windowOpen) return true; this.scheduleFlush(); return true; } // a line that is no sample waits behind the window's samples for its close (order holds)
+    this.stagedWeight += weight;
+    if (!this.windowTimer) { this.windowTimer = setTimeout(() => { this.windowTimer = null; this.flushStaged(); }, this.o.owedWindowMs); (this.windowTimer as { unref?: () => void }).unref?.(); }
+    if (this.stagedWeight >= OWED_WINDOW_SAMPLES) this.scheduleFlush();
     return true;
   }
 
@@ -177,8 +204,24 @@ export class ShadowSupervisor implements MirrorTransport {
   owe(n: number): boolean {
     if (!this.session || !this.child || this.disabledReason || !Number.isInteger(n) || n < 1) return false;
     this.acceptedWeight += n; this.oweDirty = true;
+    if (this.closing) { this.flushStaged(); return true; } // a close is in doubt: the debt is published at once with the record that closes it (the keeper retains the larger record on a failure), never held where an exit-time record could discharge a lower count
     this.scheduleFlush();
     return true;
+  }
+
+  /** Writes the window's open marker (durable, through the `writeOwed` seam): `owed` is one more than accepted so far, which is the sample about to be accepted. False when the write threw (the sample is then refused). */
+  private openWindow(): boolean {
+    if (!this.session) return false;
+    const rec: OwedRecord = { v: 2, session: this.session, serving_pid: process.pid, ...(this.child?.pid ? { child_pid: this.child.pid } : {}), owed: this.acceptedWeight + 1, closed: false, child_exited: false, open_until: this.o.now() + this.o.owedWindowMs };
+    try { this.o.writeOwed(this.o.dir, rec); } catch { this.markerStray = true; return false; }
+    this.markerStray = false; this.owedWritten = `${this.session}:open:${rec.owed}`; this.windowOpen = true;
+    return true;
+  }
+
+  /** The window is over (its record is durable or the lines it covered were dropped): back to per-sample state. */
+  private endWindow(): void {
+    this.windowOpen = false; this.closing = false; this.stagedWeight = 0;
+    if (this.windowTimer) { clearTimeout(this.windowTimer); this.windowTimer = null; }
   }
 
   /** One flush per event-loop turn, after the caller's synchronous work: the durable owed write never runs inside a request. Not held open for: an exit with lines staged is covered by the exit hook's owed record. */
@@ -194,8 +237,9 @@ export class ShadowSupervisor implements MirrorTransport {
    */
   private flushStaged(closed = false): boolean {
     if (this.staged.length === 0 && !this.oweDirty) return true;
+    if (this.windowOpen) this.closing = true; // before the write: it may rename and then throw (see `closing`)
     if (!this.writeOwedRecord(closed)) { this.scheduleRetry(); return false; }
-    this.oweDirty = false;
+    this.oweDirty = false; this.markerStray = false; this.endWindow();
     const stdin = this.child?.stdin;
     const lines = this.staged; this.staged = []; this.stagedBytes = 0;
     for (const { line, entry } of lines) {
@@ -239,7 +283,7 @@ export class ShadowSupervisor implements MirrorTransport {
    * exit came from anywhere else. A record that cannot be written leaves the older one on disk: the child that settles the session books only what that one owes (a count that is too low, never a hidden mismatch).
    */
   closeOwed(): void {
-    if (!this.session || this.acceptedWeight === 0) return;
+    if (!this.session || (this.acceptedWeight === 0 && !this.markerStray)) return;
     this.flushStaged(true);
     this.writeOwedRecord(true);
   }
@@ -248,6 +292,7 @@ export class ShadowSupervisor implements MirrorTransport {
   private dropStaged(): void {
     const lines = this.staged; this.staged = []; this.stagedBytes = 0;
     for (const { entry } of lines) this.forget(entry);
+    this.endWindow();
     if (this.retryTimer) { clearTimeout(this.retryTimer); this.retryTimer = null; }
   }
 
@@ -346,7 +391,7 @@ export class ShadowSupervisor implements MirrorTransport {
       });
       this.child = child;
       this.stdinRef = child.stdin as never;
-      this.dropStaged(); this.oweDirty = false; this.session = session; this.acceptedWeight = 0; this.owedWritten = ''; this.childExited = false; this.closedRecord = false;
+      this.dropStaged(); this.oweDirty = false; this.markerStray = false; this.session = session; this.acceptedWeight = 0; this.owedWritten = ''; this.childExited = false; this.closedRecord = false;
       liveSupervisors.add(this); watchProcessExit();
       this.controlBuffer = '';
       this.lastHeartbeat = this.o.now();

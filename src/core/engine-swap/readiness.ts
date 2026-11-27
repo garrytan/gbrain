@@ -36,6 +36,9 @@ export interface ShadowStatus {
     capability_missing_by_family?: Record<string, number>;
     /** Sessions with an owed sample still unsettled, replays with no verdict and lost samples no tally has taken (shadow/follow-status.ts); the swap check waits for it to be absent. */
     unresolved_replays?: number;
+    /** Write windows a crash of the serving process lost, of unknown sample count (shadow/follow-status.ts): no evidence for the rest of the epoch, never counted toward the write bar. */
+    write_windows_lost?: number;
+    uncomparable_by_reason?: Record<string, number>;
   };
   fingerprints?: {
     checked_rows?: number;
@@ -286,6 +289,8 @@ function writeComparisons(r: Reader): Check {
     if (state === undefined || comparable === undefined || unexplained === undefined) return { state: 'missing', detail: '' };
     // A shadow that cannot compare writes never passes (S3 rule: capability_missing refuses, like a missing field).
     if (state === 'capability_missing') {
+      const lostWindows = r.peek<number>('write_comparisons.write_windows_lost');
+      if (num(lostWindows) && lostWindows > 0) return { state: 'missing', detail: `no evidence: ${lostWindows} write window(s) lost in a crash, sample count unknown; no evidence for the rest of this epoch; never counted toward the write bar` };
       const unsettled = r.peek<number>('write_comparisons.unresolved_replays');
       if (num(unsettled) && unsettled > 0) return { state: 'missing', detail: BRAIN_BUSY }; // the swap check already waited for a lull (plan.ts)
       return { state: 'missing', detail: 'no evidence: write_comparisons.state is capability_missing' };

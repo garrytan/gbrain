@@ -46,7 +46,7 @@ export interface WriteComparerDeps {
 export const scratchRootDefault = (): string => join(configDir(), 'scratch');
 type Verdict = [WriteOutcome, string?];
 
-export function createWriteComparer(d: WriteComparerDeps): { handle(event: WriteEvent, bytes?: number): void; unreadable(weight: number): void; idle(): Promise<boolean>; abandon(): void; flush(): boolean; pass(): boolean; missing(n: number): void; finish(): boolean } {
+export function createWriteComparer(d: WriteComparerDeps): { handle(event: WriteEvent, bytes?: number): void; unreadable(weight: number): void; idle(): Promise<boolean>; abandon(): void; flush(): boolean; pass(): boolean; missing(n: number, windowLost?: number): void; finish(): boolean } {
   // Each replay gets a private (0700) directory named for this process, removed when the replay ends, whatever its outcome. Directories of processes
   // that no longer exist (a killed child) are swept here, at shadow start; another child never deletes a live one.
   const scratchRoot = d.scratchRoot ?? scratchRootDefault();
@@ -142,7 +142,7 @@ export function createWriteComparer(d: WriteComparerDeps): { handle(event: Write
     /** The 10 s pass: one more save, the lost lines held, the gone sessions settled. True when saves have been failing for `SAVE_FAILURE_EXIT_MS` with outcomes held: the child should exit (it is restarted, and the next owner books what it never settled). */
     pass() { d.tally.save(); return d.tally.stuckMs() >= SAVE_FAILURE_EXIT_MS; },
     /** Samples the serving process owed that never reached this child's pipe: `uncomparable` / `pipe_unflushed`. */
-    missing: (n) => d.tally.missing(n),
+    missing: (n, windowLost) => d.tally.missing(n, windowLost),
     /** After the final save: removes this session's owed file when it is closed and settled. */
     finish: () => d.tally.finish(),
     idle: () => chain.then(() => d.tally.save()), // the last save also folds the lost samples the serving process recorded; true only when everything this child counted is saved (the caller keeps the sent count when it is not)

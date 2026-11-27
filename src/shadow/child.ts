@@ -568,7 +568,7 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
   // The serving process wrote down, durably and before any line reached the pipe, how many write samples it owes this session (`write-owed.<session>.json`). What it owed and this child never read was dropped in its pipe at its exit: it is
   // booked as `pipe_unflushed`, settled in this child's own saves. A file that is there and cannot be read stays, and status reads it as no evidence.
   const owedRecord = readOwed(shadowDir, session);
-  if (owedRecord !== null && owedRecord !== 'unreadable') writes.missing(Math.max(0, owedRecord.owed - received));
+  if (owedRecord !== null && owedRecord !== 'unreadable') writes.missing(Math.max(0, owedRecord.owed - received), owedRecord.v === 2 ? 1 : 0); // a marker (v:2) the serving process never closed: one of the missing is a lost window
   // The serving process ended our stdin: nothing it was asked can still be answered. A queued rerun ends as skipped.
   ask.closeAll(); waiter.close(); // a rerun waiting for a quiet window ends now, as skipped
   for (const task of reruns.drop()) record(task.event, task.c, task.rustMs, task.rows, 'skipped:child_closing');
