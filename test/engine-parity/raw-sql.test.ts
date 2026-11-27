@@ -40,7 +40,7 @@ describe('engine parity: raw_sql', () => {
     async (engine) => {
       await engine.putPage('notes/raw-a', PAGE('Raw A', 'first'));
       await engine.putPage('notes/raw-b', PAGE('Raw B', 'second'));
-      // The Rust arm's stop, by design (RUST_ENGINE.md row 55): no SQL dialect.
+      // The Rust arm's stop, by design (RUST_ENGINE.md row 60): no SQL dialect.
       const scalar = await engine.executeRaw<{ n: number; s: string; nothing: null }>(
         'SELECT $1::int + 1 AS n, $2::text AS s, NULL AS nothing', [41, 'text'],
       ).catch((e: unknown) => rethrowByDesignStop(e, 'executeRaw', '55'));
