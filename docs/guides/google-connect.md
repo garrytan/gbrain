@@ -294,8 +294,14 @@ title, phone numbers and user-created contact groups:
   group it cannot name at all is carried as its raw `contactGroups/<id>`. A
   renamed or deleted group reaches a page when that contact next changes, or
   on `gbrain sync --full`.
-- A contact with phones but no email gets a page too; one with no name
-  either lives at `contact-<id-hash>` (never at its phone number). A contact
+- `emails:` and `phones:` hold the values on the contact card itself. In a
+  Google Workspace domain Google also returns every address on the account
+  the card is linked to, aliases included; those are left out, so two cards
+  never claim each other's addresses. A card with no address of its own keeps
+  the linked account's primary address.
+- A contact with phones but no email gets a page too. One with no name, or
+  a name with no Latin letters or digits (`张三`), lives at `contact-<id-hash>`
+  (never at its phone number) and keeps its name as the page title. A contact
   with neither emails nor phones renders nothing.
 
 The contacts cursor is bound to the field mask that minted it: the People

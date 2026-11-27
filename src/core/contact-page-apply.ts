@@ -8,6 +8,8 @@
  *   - a deletion retires only the page this contact owns (found by id, else among its slug candidates);
  *   - a page another contact owns at the same slug (two "Alice Example"s) is neither rewritten nor deleted: the
  *     contact gets a disambiguated slug; a hand-authored page at the slug (no id) is skipped, body and frontmatter;
+ *   - the path finally rendered is checked again: one another contact still owns refuses the contact before anything
+ *     is written or retired (#10450);
  *   - a rename lands the new page first, then retires the one it owned at the old path, so a run that dies in
  *     between leaves the contact with a page rather than none.
  */
@@ -45,9 +47,13 @@ export async function applyContactPage(contactId: string, deleted: boolean, io: 
   const collides = baseOwner !== null && baseOwner !== 'hand-authored' && baseOwner !== contactId;
   const rendered = io.render(collides);
   if (!rendered) return;
-  if (await io.owner(rendered.relPath) === 'hand-authored') {
+  const owner = await io.owner(rendered.relPath);
+  if (owner === 'hand-authored') {
     io.skippedHandAuthored(rendered.relPath);
     return;
+  }
+  if (owner !== null && owner !== contactId) {
+    throw new Error(`Contact page ${rendered.relPath} belongs to another contact; contact ${contactId} was not written and its existing page was kept.`);
   }
   await io.write(rendered.relPath, rendered.markdown);
   if (existingPath && existingPath !== rendered.relPath && await io.owner(existingPath) === contactId) {

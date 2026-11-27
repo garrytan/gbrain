@@ -1109,7 +1109,9 @@ export class ManagedConnectorSync {
         if (this.binding || prepared.noop !== true) return false;
       } else {
         const databaseOnly = !this.binding || !prepared.file && await strictPrivateImport(reads, this.sourceId, intent.content ?? '', sourcePath ?? `${slug}.md`, snapshot);
-        const verdict = await inspectUnchanged(reads, { prepared, snapshot, sourcePath, databaseOnly });
+        // #10559: like working-tree sync (#5751), a pending contextual-mode stamp is waived: a no-op publication never
+        // stamps it, so admitting it wrote a receipt for the same unchanged page on every sweep that re-fetched it.
+        const verdict = await inspectUnchanged(reads, { prepared, snapshot, sourcePath, databaseOnly, waive: ['contextual_mode'] });
         if (verdict.admitReason) return false;
       }
       await prepared.validate?.(reads);
