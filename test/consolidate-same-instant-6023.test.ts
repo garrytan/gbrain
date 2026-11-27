@@ -30,20 +30,24 @@ const ORIGINAL = 'The deposit amount was initially reported as $100,000.';
 const CORRECTION = 'Correction: the deposit amount is $82,000, replacing the initially reported $100,000.';
 
 async function seedTyped(engine: BrainEngine, slug: string, fact: string, confidence: number, value: number,
-  at = AT, claim: { metric: string; unit: string; period: string } | null = DEPOSIT): Promise<number> {
+  at = AT, claim: { metric: string; unit: string; period: string } | null = DEPOSIT, undated = false): Promise<number> {
   const [row] = await engine.executeRaw<{ id: number }>(
-    `INSERT INTO facts(source_id,entity_slug,fact,kind,source,visibility,valid_from,confidence,embedding,embedded_at,embedding_model,
+    `INSERT INTO facts(source_id,entity_slug,fact,kind,source,visibility,valid_from,created_at,confidence,embedding,embedded_at,embedding_model,
        embedded_text_hash,claim_metric,claim_unit,claim_period,claim_value)
-     VALUES('default',$1,$2,'fact','synthetic fixture','world',$3::timestamptz,$4,$5::vector,$3::timestamptz,'openai:text-embedding-3-large',md5($2),
+     VALUES('default',$1,$2,'fact','synthetic fixture','world',CASE WHEN $10::boolean THEN NULL ELSE $3::timestamptz END,
+       CASE WHEN $10::boolean THEN $3::timestamptz ELSE now() END,$4,$5::vector,$3::timestamptz,'openai:text-embedding-3-large',md5($2),
        $6,$7,$8,$9) RETURNING id`,
-    [slug, fact, at, confidence, VECTOR, claim?.metric ?? null, claim?.unit ?? null, claim?.period ?? null, claim ? value : null]);
+    [slug, fact, at, confidence, VECTOR, claim?.metric ?? null, claim?.unit ?? null, claim?.period ?? null, claim ? value : null, undated]);
   return Number(row.id);
 }
 
-/** The issue's fixture: the original and its correction at one instant, plus an unrelated unembedded fact for the bucket minimum. */
-async function seedIssueFixture(engine: BrainEngine, slug: string): Promise<number[]> {
-  const original = await seedTyped(engine, slug, ORIGINAL, 1, 100000);
-  const correction = await seedTyped(engine, slug, CORRECTION, 0.9, 82000);
+/**
+ * The issue's fixture: the original and its correction at one instant, plus an unrelated unembedded fact for the bucket minimum.
+ * `undated` saves both claims with no event date in one instant, as one page's fence reconcile does (#10288).
+ */
+async function seedIssueFixture(engine: BrainEngine, slug: string, undated = false): Promise<number[]> {
+  const original = await seedTyped(engine, slug, ORIGINAL, 1, 100000, AT, DEPOSIT, undated);
+  const correction = await seedTyped(engine, slug, CORRECTION, 0.9, 82000, AT, DEPOSIT, undated);
   await engine.executeRaw(`INSERT INTO facts(source_id,entity_slug,fact,kind,source,visibility,valid_from)
     VALUES('default',$1,'A separate invoice has not been approved.','fact','synthetic fixture','world',$2::timestamptz)`, [slug, AT]);
   return [original, correction];
@@ -103,6 +107,16 @@ for (const backend of testBackends()) {
       expect([...(held.fact_ids as number[])].sort((a, b) => a - b)).toEqual([original, correction].sort((a, b) => a - b));
       expect(held.fix).toMatchObject({ ask_user: true, argv: ['gbrain', 'forget', '<FACT_ID>'] });
       expect(String(result.summary)).toContain('same effective time');
+    });
+
+    test('undated claims saved in one instant are held the same way, never closed at their own save time', async () => {
+      await seedIssueFixture(engine, 'companies/probe-example', true);
+      const before = await factRows(engine);
+      const result = await runPhaseConsolidate(engine, { sourceId: 'default' });
+      expect(await factRows(engine)).toEqual(before);
+      expect(await takeCount(engine)).toBe(0);
+      expect(result.details.facts_consolidated).toBe(0);
+      expect(result.details.clusters_held_same_instant).toBe(1);
     });
 
     test('exact duplicates at one instant are held too', async () => {
@@ -173,10 +187,10 @@ for (const backend of testBackends()) {
   });
 
   describe(`#6023 same-instant typed claims on a managed brain (${backend})`, () => {
-    const seedManaged = async (engine: BrainEngine, ctx: OperationContext) => {
+    const seedManaged = async (engine: BrainEngine, ctx: OperationContext, undated = false) => {
       await operationsByName.put_page.handler(ctx, { slug: 'companies/probe-example', content: '---\ntitle: Probe Example\ntype: company\n---\n\n# Probe Example\n' });
       await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
-      try { return await seedIssueFixture(engine, 'companies/probe-example'); }
+      try { return await seedIssueFixture(engine, 'companies/probe-example', undated); }
       finally { await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1'); }
     };
 
@@ -192,9 +206,9 @@ for (const backend of testBackends()) {
       }, { databaseUrl });
     }, 120_000);
 
-    test('an intent admitted before this release publishes nothing: the preparer skips it', async () => {
+    for (const undated of [false, true]) test(`an intent admitted before this release publishes nothing: the preparer skips it${undated ? ' (undated claims saved in one instant)' : ''}`, async () => {
       await managedBrain(async ({ engine, ctx }) => {
-        await seedManaged(engine, ctx);
+        await seedManaged(engine, ctx, undated);
         const before = await factRows(engine);
         const cluster = (await engine.listFactsByEntity('default', 'companies/probe-example', { activeOnly: true, unconsolidatedOnly: true, limit: 100 }))
           .filter(f => f.fact === ORIGINAL || f.fact === CORRECTION);
