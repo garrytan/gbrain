@@ -38,6 +38,8 @@ export interface WriteSamplerOptions {
   lost?: (reason: string) => boolean;
   /** Makes `n` samples the sampler could not send owed in the serving process's durable record (supervisor.ts `owe`), so the worker books them and status cannot read measured past them; false when it could not (no running worker), and they then wait in the sampler as a refused send's do. */
   owe?: (n: number) => boolean;
+  /** Makes `n` samples whose count `lost` could not write down owed in a kept record (supervisor.ts `oweRefused`: with or without a running worker), so none lives only in this sampler's memory; false when it could not, and they then stay in `unsaid`. */
+  refuse?: (n: number) => boolean;
   /** How long the preimage read may hold a write; default PREIMAGE_TIMEOUT_MS (a seam for tests). */
   preimageTimeoutMs?: number;
 }
@@ -281,7 +283,7 @@ export function createWriteSampler(o: WriteSamplerOptions, unsaid: string[] = []
           unsaid.splice(0, more);
         }
         if (unsaid.length > 0 && o.owe?.(unsaid.length)) unsaid.length = 0; // a refusal ended the drain: what is left is owed durably (the worker books it as lost), never left only in memory
-      } else if (!o.lost?.('send_shed')) unsaid.push('send_shed');
+      } else if (!o.lost?.('send_shed') && !o.refuse?.(1)) unsaid.push('send_shed');
     } catch { /* the shadow never fails a write */ }
   };
   const uncomparable = (op: string, reason: string): void => send({ t: 'write', op, outcome: 'uncomparable', reason });
@@ -348,7 +350,7 @@ export function createWriteSampler(o: WriteSamplerOptions, unsaid: string[] = []
       clearTimeout(timer);
       for (const r of reading) { r.abandoned = true; if (!(o.lost?.('readback_abandoned'))) unsaid.push('readback_abandoned'); } // not sent later
       reading.clear();
-      for (const reason of unsaid.splice(0)) if (!o.lost?.(reason)) unsaid.push(reason); // the final handoff, whether or not another sample comes
+      for (const reason of unsaid.splice(0)) if (!o.lost?.(reason) && !o.refuse?.(1)) unsaid.push(reason); // the final handoff, whether or not another sample comes
     },
     wrap(name, fn, ctx) {
       const kind = memberKind(name);
