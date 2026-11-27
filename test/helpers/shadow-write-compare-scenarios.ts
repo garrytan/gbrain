@@ -1260,10 +1260,12 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       await primary().setConfig('search.contextual_retrieval', 'none');
       const { inbox, wrapped } = rig();
       const ctxOf = { engine: wrapped, config: {}, logger: { info() {}, warn() {}, error() {} }, dryRun: false, remote: true } as unknown as OperationContext;
-      await operationsByName.put_page.handler(ctxOf, { slug: 'notes/op-example', content: '---\ntitle: Op Example\n---\nFirst body.\n' });
-      const current = await primary().readPageSnapshot('notes/op-example');
-      await operationsByName.put_page.handler(ctxOf, { slug: 'notes/op-example', content: '---\ntitle: Op Example\n---\nSecond body.\n', expected_revision: current?.revision } as never);
-      await until(() => putEvents(inbox).length >= 2);
+      try {
+        await operationsByName.put_page.handler(ctxOf, { slug: 'notes/op-example', content: '---\ntitle: Op Example\n---\nFirst body.\n' });
+        const current = await primary().readPageSnapshot('notes/op-example');
+        await operationsByName.put_page.handler(ctxOf, { slug: 'notes/op-example', content: '---\ntitle: Op Example\n---\nSecond body.\n', expected_revision: current?.revision } as never);
+        await until(() => putEvents(inbox).length >= 2);
+      } finally { await disposePersistenceConsumer(wrapped); } // the handler's consumer is keyed by this wrapper: left open, it takes later tests' write requests and effects
       const tally = await real(putEvents(inbox));
       // An update sends its version row (with the page it read) in the same wave as the page write on Postgres: the page write waits for that row before its preimage read.
       expect(tally).toMatchObject({ comparable: 2, unexplained_difference: 0, uncomparable: 0 }); // master on Postgres: the edit was in_transaction_busy
