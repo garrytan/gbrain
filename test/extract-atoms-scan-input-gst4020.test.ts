@@ -330,4 +330,39 @@ describe('GST-4020 extract_atoms input and skip', () => {
       expect(await countExtractAtomsBacklog(engine, sourceId), backend).toBe(1);
     }
   }, 120_000);
+
+  test('a page whose canonical snapshot cannot be read waits alone; its batch neighbours are still extracted', async () => {
+    const { engine } = engines.find(e => e.backend === 'pglite') ?? engines[0]!;
+    const sourceId = await fresh('snapshot-read', engine);
+    await put(engine, sourceId, PROSE('canaryalpha3301'), {}, 'notes/a-broken');
+    await put(engine, sourceId, PROSE('canarybeta3302'), {}, 'notes/b-healthy');
+    const target = engine as unknown as { readPageSnapshotsBatch: (...args: unknown[]) => Promise<unknown> };
+    const original = target.readPageSnapshotsBatch;
+    target.readPageSnapshotsBatch = async (...args: unknown[]) => {
+      if (JSON.stringify(args[0]).includes('notes/a-broken')) throw new Error('withdrawal_capacity: fence too large');
+      return original.apply(engine, args);
+    };
+    const chat = copyingChat();
+    try {
+      await run(engine, sourceId, chat.chat);
+    } finally { target.readPageSnapshotsBatch = original; }
+    expect(chat.prompts.some(p => p.includes('canarybeta3302'))).toBe(true);
+    expect(chat.prompts.some(p => p.includes('canaryalpha3301'))).toBe(false);
+  }, 120_000);
+
+  test('a confidential page made public with its prose unchanged is extracted again as world', async () => {
+    for (const { backend, engine } of engines) {
+      const sourceId = await fresh(backend, engine);
+      await put(engine, sourceId, PROSE('canaryrename3306'), { access: 'confidential' });
+      await run(engine, sourceId, copyingChat().chat);
+      const before = await liveAtoms(engine, sourceId);
+      expect(before.length, backend).toBeGreaterThan(0);
+      for (const atom of before) expect(atom.visibility, backend).toBe('private');
+      await put(engine, sourceId, PROSE('canaryrename3306'));
+      const again = copyingChat();
+      await run(engine, sourceId, again.chat);
+      expect(again.prompts.length, backend).toBe(1);
+      for (const atom of await liveAtoms(engine, sourceId)) expect(atom.visibility, backend).not.toBe('private');
+    }
+  }, 120_000);
 });

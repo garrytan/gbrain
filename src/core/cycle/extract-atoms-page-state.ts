@@ -122,7 +122,7 @@ export async function reusableAtomScan(engine: SqlEngine, sourceId: string, item
     [sourceId, item.slug, item.identity.pageId]);
   const scanned = scan.content_hash.slice(0, 16), current = item.contentHash.slice(0, 16);
   const fits = atoms.every(atom => atom.source_slug === item.slug && (atom.source_hash === scanned || atom.source_hash === current)
-    && sameInstant(atom.date, page.date) && !(page.visibility === 'private' && atom.visibility !== 'private') && !atom.predates_withdrawal);
+    && sameInstant(atom.date, page.date) && (page.visibility === 'private') === (atom.visibility === 'private') && !atom.predates_withdrawal);
   return fits ? atoms.map(atom => atom.slug) : null;
 }
 
@@ -226,8 +226,20 @@ export async function canonicalPageInputs(engine: BrainEngine, sourceId: string,
   for (let start = 0; start < rows.length;) {
     if (opts.signal?.aborted || opts.stopSignal?.aborted) break;
     const [clock] = await engine.executeRaw<{ at: string }>(`SELECT clock_timestamp()::text AS at`);
-    const { snapshots, covered } = await engine.readPageSnapshotsBatch(rows.slice(start, start + PAGE_SNAPSHOT_BATCH).map(row => ({ slug: row.slug, sourceId })));
-    const step = Math.max(covered, 1);
+    const batch = rows.slice(start, start + PAGE_SNAPSHOT_BATCH);
+    const read = await engine.readPageSnapshotsBatch(batch.map(row => ({ slug: row.slug, sourceId }))).catch(() => null);
+    const snapshots = new Map(read?.snapshots ?? []);
+    // A snapshot the batch cannot read (withdrawal_capacity on one fence) is read page by page: only that page waits.
+    if (!read) for (const row of batch) {
+      const key = pageSnapshotKey(sourceId, row.slug);
+      const one = await engine.readPageSnapshotsBatch([{ slug: row.slug, sourceId }]).catch((error: unknown) => {
+        console.error(`[extract_atoms] ${row.slug}: snapshot read failed, page left pending: ${error instanceof Error ? error.message : String(error)}`);
+        return null;
+      });
+      const snapshot = one?.snapshots.get(key);
+      if (snapshot) snapshots.set(key, snapshot);
+    }
+    const step = Math.max(read ? read.covered : batch.length, 1);
     for (const r of rows.slice(start, start + step)) {
       const snapshot = snapshots.get(pageSnapshotKey(sourceId, r.slug));
       if (!snapshot || Number(snapshot.page.id) !== Number(r.id) || snapshot.revision !== r.knowledge_revision
