@@ -6,7 +6,7 @@
  */
 import { describe, expect, spyOn, test } from 'bun:test';
 import { EventEmitter } from 'node:events';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -1096,6 +1096,37 @@ describe('supervisor sample accounting (a sample is owed in a durable record bef
         await h.respawn(0); calls.length = 0;
         expect(h.sup.send(sample(1))).toBe(true); expect(h.children).toHaveLength(2); expect(calls).toEqual([]); // respawn
         await turn(); expect(calls).toContain('write');
+      } finally { spy.mockRestore(); h.done(); }
+    });
+
+    test('fallback chain: a session whose very first record cannot be written (no record yet) still gets a marker (child.log, else state.json) that blocks status and stays until the record is durable', async () => {
+      const h = flakyHarness({ retryMs: 60_000 }); // no retry inside the test: nothing but an operator or the retry would clear it
+      try {
+        h.disk.failing = true;
+        h.sup.send(sample(0)); await turn(); const s0 = h.sessions[0]!;
+        expect(existsSync(join(h.dir, `write-owed.${s0}.json`))).toBe(false); // no record yet
+        expect(statSync(join(h.dir, `write-pending.${s0}.json`)).ino).toBe(statSync(join(h.dir, 'child.log')).ino); // linked to child.log
+        expect(h.status()).toMatchObject({ state: 'capability_missing', unresolved_replays: 1, pending_markers: [join(h.dir, `write-pending.${s0}.json`)] });
+        await wait(30); expect(existsSync(join(h.dir, `write-pending.${s0}.json`))).toBe(true); // nothing cleared it
+        // no child.log: the chain falls to state.json
+        rmSync(join(h.dir, `write-pending.${s0}.json`)); rmSync(join(h.dir, 'child.log')); writeFileSync(join(h.dir, 'state.json'), '{}');
+        expect((h.sup as unknown as { markPending(s: string): boolean }).markPending(s0)).toBe(true);
+        expect(statSync(join(h.dir, `write-pending.${s0}.json`)).ino).toBe(statSync(join(h.dir, 'state.json')).ino);
+      } finally { h.done(); }
+    });
+
+    test('named limit 1: when the hard-link call itself fails, the record is still kept and retried and is published after the disk recovers (status cannot see it meanwhile)', async () => {
+      const fs = await import('node:fs');
+      const h = flakyHarness();
+      const spy = spyOn(fs, 'linkSync').mockImplementation((() => { throw Object.assign(new Error('ENOSPC'), { code: 'ENOSPC' }); }) as never);
+      try {
+        h.sup.send(sample(0)); await turn(); const s0 = h.sessions[0]!; h.settle({ [s0]: 1 });
+        h.disk.failing = true; h.sup.owe(1); await turn(); await wait(40);
+        expect(existsSync(join(h.dir, `write-pending.${s0}.json`))).toBe(false); // the limit: no marker
+        expect(h.status()).toMatchObject({ state: 'measured' }); // and so status cannot see it
+        h.disk.failing = false; spy.mockRestore(); await wait(150);
+        expect(h.owed(0)).toMatchObject({ owed: 2 }); // kept and retried: durable after recovery
+        expect(h.status()).toMatchObject({ state: 'capability_missing', outstanding_sessions: [`write-owed.${s0}.json`] });
       } finally { spy.mockRestore(); h.done(); }
     });
 

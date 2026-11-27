@@ -146,7 +146,7 @@ export const WRITE_SETTLE_LIMIT = 'the child keeps up only below ~19 samples/s o
 /** What criterion 5 says when the swap check waited 60 s (`SWAP_SETTLE_WAIT_MS`, plan.ts) and never read a moment with every sample settled. */
 export const BRAIN_BUSY = 'brain busy: no 60 s lull with all samples settled; retry when idle';
 /** What an operator does about a pending marker (`write-pending.<session>.json` in the shadow state directory): the serving process could not write an owed record down, so no one knows how many samples it holds. Nothing clears it automatically. */
-export const PENDING_MARKER_STEP = "confirm the disk is healthy, then delete the marker file, then restart shadow; on a managed or owner-operated brain this step goes through Capy Workflow Improver, never to the brain's owner by hand";
+export const PENDING_MARKER_STEP = "confirm the disk is healthy, then delete the marker file, then restart shadow; on a managed or owner-operated brain, this step goes through Capy Workflow Improver, never to the brain's owner by hand";
 
 const DAY_MS = 86_400_000;
 

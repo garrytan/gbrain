@@ -1611,6 +1611,15 @@ describe('S2d: a pending marker blocks status, and every owed-file remover re-re
     expect(worker(dir, epoch, 'sl').finish()).toBe(true); // the next pass, with the lock free, removes it
   }, 15_000);
 
+  test('D1-F2: the orphan pass that cannot take the tally lock defers: a settled, dead session\'s record is not removed until the lock is free', () => {
+    const dir = tmp(); const epoch = epochOf(dir);
+    owe(dir, 'so', 1, { child_exited: true }); passing(dir, epoch, { settled: { so: 1 } });
+    withLock(join(dir, 'write-comparisons.lock'), () => { worker(dir, epoch, 'owner').recover(); }); // another process holds the lock
+    expect(readOwed(dir, 'so')).toMatchObject({ owed: 1 });
+    worker(dir, epoch, 'owner').recover();
+    expect(readOwed(dir, 'so')).toBeNull();
+  }, 15_000);
+
   test('a pending marker keeps its session out of every remover and out of the pruning, and status blocks on it by name (counted once)', () => {
     const dir = tmp(); const epoch = epochOf(dir);
     owe(dir, 'sm', 1, { child_exited: true }); passing(dir, epoch, { settled: { sm: 1 } });

@@ -6,8 +6,8 @@
 - A sample refused while no worker runs (the restart backoff, a failed spawn), whose refusal could not be written down either, is now made owed in a record of its own (kept, marked and retried like any other) instead of waiting only in the sampler's memory.
 
 ### Changed
-- `gbrain engine shadow status` and the swap report print `pending_markers` (the paths) and the operator step when a marker exists: confirm the disk is healthy, delete the marker file, then restart shadow. On a managed or owner-operated brain this step goes through Capy Workflow Improver, never to the brain's owner by hand. Nothing clears a marker automatically.
-- Mirroring does not pause and no default changes. Nothing about what counts as `comparable` changes.
+- `gbrain engine shadow status` and the swap report print `pending_markers` (the paths) and the operator step when a marker exists: confirm the disk is healthy, delete the marker file, then restart shadow. On a managed or owner-operated brain, this step goes through Capy Workflow Improver, never to the brain's owner by hand. Nothing clears a marker automatically.
+- Nothing about what counts as `comparable` changes, mirroring does not pause and no default changes.
 
 ### Known limits
 - The hard-link call itself can fail (a full disk can refuse a directory entry); the record is still kept and retried, but status cannot see it until the disk takes it.
