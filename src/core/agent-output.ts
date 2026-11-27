@@ -25,6 +25,7 @@ import { redactUrlsInText } from './url-redact.ts';
 import { parseRepoBase } from './repo-base.ts';
 import { recordAgentContractEvent } from './agent-contract-log.ts';
 import { cliRouting, pinRouting, type FixRouting } from './fix-routing.ts';
+import { quotedWord } from './shell-quote.ts';
 
 export const CONTRACT_VERSION = 1 as const;
 
@@ -178,7 +179,8 @@ export function shellQuote(argv: readonly string[]): string {
   return argv.map(arg => {
     if (arg === '') return "''";
     if (SAFE_SHELL.test(arg)) return arg;
-    return `'${inertText(arg).replace(/'/g, `'\\''`)}'`;
+    // GCH-02a: a line break or marker is escaped inside `$'...'` (shell-quote.ts quotedWord), never flattened.
+    return quotedWord(arg.length > MAX_INLINE ? `${arg.slice(0, MAX_INLINE - 1)}…` : arg);
   }).join(' ');
 }
 

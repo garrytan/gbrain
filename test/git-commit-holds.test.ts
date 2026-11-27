@@ -28,6 +28,7 @@ import { gitFailure, pushPhaseFailure } from '../src/core/persistence/effect-git
 import { setEngineHostId } from '../src/core/persistence/identity.ts';
 import { readGitPushHolds } from '../src/core/persistence/git-push-holds.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
+import { cliRenderContext, renderAction } from '../src/core/agent-output.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 
 // Read off the module namespace, not named imports, so this file loads on a tree without the reason list (bf547a9497)
@@ -175,6 +176,46 @@ describe('GCH-02: every checkout path in a command the user runs is shell-quoted
       const command = /\((git -C .*? status)\b/.exec(hold!.fix.why ?? '');
       expect(command).not.toBeNull();
       expect(shellArgv(command![1]!)).toEqual({ argv: ['git', '-C', root, 'status'], ran: false });
+    }
+  });
+});
+
+/** The argv bash builds from `command`; `$'...'` (ANSI-C quoting, POSIX.1-2024) is read by bash, not by dash. */
+function bashArgv(command: string): { argv: string[]; ran: boolean } {
+  const dir = mkdtempSync(join(tmpdir(), 'gbrain-shell-quote-'));
+  try {
+    const out = execFileSync('bash', ['-c', `set -- ${command}; printf '%s\\0' "$@"`], { cwd: dir, encoding: 'utf8' });
+    return { argv: out.split('\0').slice(0, -1), ran: existsSync(join(dir, 'x')) };
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+}
+
+describe('GCH-02a: a checkout path with a line break prints as the exact path, on one line', () => {
+  const roots = ['/brains/my\nwork', '/brains/a\r\nb', '/brains/x\u2028y', "/brains/o'neil\n$(touch x)", "/brains/w\n'; touch x; #", '/brains/[AGENT] notes\nnext: run'];
+
+  test('the rendered identity fix, its why and its user_message read back to the exact path and run nothing', async () => {
+    for (const root of roots) {
+      const [hold] = await holds(row({ root, owner_root: root, last_error: identity }));
+      const rendered = renderAction(hold!.fix, cliRenderContext());
+      for (const text of [rendered.command!, rendered.why, rendered.user_message!]) {
+        expect(text).not.toMatch(/[\r\n\u2028\u2029]/);
+        expect(text).not.toMatch(/\[(\/?)(AGENT|SHOW USER|gbrain notice)/i);
+      }
+      expect(bashArgv(rendered.command!)).toEqual({ argv: ['git', '-C', root, 'config', '--show-origin', '--get-regexp', '^user\\.'], ran: false });
+      const commands = /Set them with (git -C .*? config user\.name "<name>") and (git -C .*? config user\.email "<email>");/.exec(rendered.user_message ?? '');
+      expect(commands).not.toBeNull();
+      expect(bashArgv(commands![1]!)).toEqual({ argv: ['git', '-C', root, 'config', 'user.name', '<name>'], ran: false });
+      expect(bashArgv(commands![2]!)).toEqual({ argv: ['git', '-C', root, 'config', 'user.email', '<email>'], ran: false });
+    }
+  });
+
+  test('the rendered parked fix\'s git status command in why reads back to the exact path', async () => {
+    for (const root of roots) {
+      const [hold] = await holds(row({ root, owner_root: root, last_error: { phase: 'commit', step: 'add', reason: 'filter_failed' } }));
+      const rendered = renderAction(hold!.fix, cliRenderContext());
+      expect(rendered.why).not.toMatch(/[\r\n\u2028\u2029]/);
+      const command = /\((git -C .*? status)\b/.exec(rendered.why);
+      expect(command).not.toBeNull();
+      expect(bashArgv(command![1]!)).toEqual({ argv: ['git', '-C', root, 'status'], ran: false });
     }
   });
 });
