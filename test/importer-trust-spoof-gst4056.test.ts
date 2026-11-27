@@ -33,6 +33,8 @@ import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { registerLocalWriter, withVerifiedLocalRegistration } from '../src/core/persistence/identity.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { CONTENT_AUTHOR_BACKFILL_SQL } from '../src/core/persistence/content-author-schema.ts';
+import { rechunkWork, runSegmentedRechunk } from '../src/core/page-body/rechunk.ts';
+import { needlePageBody, sealAtOldChunker } from './helpers/rechunk-segmented-cases.ts';
 import { compactWriteReceipts } from '../src/core/persistence/journal.ts';
 import { resetGateway } from '../src/core/ai/gateway.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
@@ -298,8 +300,76 @@ for (const backend of testBackends()) describe(`[${backend}] importer trust foll
     const other = `conversations/sessions/2026-01-02-codex-${randomUUID().slice(0, 8)}`;
     await importFromContent(engine, other, content, { sourceId: 'default', noEmbed: true });
     expect(await trust(other)).toEqual(UNTRUSTED);
-    expect((await importer(other, content)).status).toBe('skipped');
+    expect((await importer(other, content)).status).toBe('imported');
     expect(await trust(other)).toEqual(TRUSTED);
+    expect((await importer(other, content)).status).toBe('skipped');
+  });
+
+  test('a timeline change that leaves the stored hash stale is never certified by an unchanged re-import', async () => {
+    const id = randomUUID().slice(0, 8);
+    const slug = `conversations/sessions/2026-01-02-codex-${id}`;
+    const content = transcript(id, 'Short body.');
+    await importer(slug, content);
+    await engine.executeRaw("UPDATE pages SET timeline = coalesce(timeline, '') || E'\\n- 2026-01-03: I founded acme-example.' WHERE source_id = 'default' AND slug = $1", [slug]);
+    await engine.executeRaw("UPDATE pages SET text_projection_revision = knowledge_revision WHERE source_id = 'default' AND slug = $1", [slug]);
+    expect((await author(slug)).content_author).toBeNull();
+    await importer(slug, content);
+    const [row] = await engine.executeRaw<{ timeline: string | null }>("SELECT timeline FROM pages WHERE source_id = 'default' AND slug = $1", [slug]);
+    const trusted = (await author(slug)).stamped && (await author(slug)).content_author === VIA;
+    expect(trusted && (row!.timeline ?? '').includes('acme-example')).toBe(false);
+    expect(await trust(slug)).toEqual(TRUSTED);
+  });
+
+  test('a segmented re-import that rebuilds a stale projection from identical bytes keeps the importer\'s trust', async () => {
+    const id = randomUUID().slice(0, 8);
+    const slug = `conversations/sessions/2026-01-02-codex-${id}`;
+    const content = transcript(id, LARGE);
+    await importer(slug, content);
+    expect(await author(slug)).toEqual({ content_author: VIA, stamped: true });
+    await engine.executeRaw("UPDATE pages SET text_projection_revision = gen_random_uuid() WHERE source_id = 'default' AND slug = $1", [slug]);
+    await importer(slug, content);
+    expect(await author(slug)).toEqual({ content_author: VIA, stamped: true });
+    expect(await trust(slug)).toEqual(TRUSTED);
+  });
+
+  test('a segmented re-chunk keeps the importer\'s trust (the bytes do not change)', async () => {
+    const id = randomUUID().slice(0, 8);
+    const slug = `conversations/sessions/2026-01-02-codex-${id}`;
+    await importer(slug, transcript(id, needlePageBody(), false));
+    expect(await author(slug)).toEqual({ content_author: VIA, stamped: true });
+    await sealAtOldChunker(engine, slug);
+    const flips = rechunkWork.flips;
+    await runSegmentedRechunk(engine, { apply: true, slug });
+    expect(rechunkWork.flips).toBeGreaterThan(flips);
+    expect(await author(slug)).toEqual({ content_author: VIA, stamped: true });
+    expect((await readSpeakerOwners(engine, [{ source_id: 'default', slug }]))[0]?.status).toBe('trusted');
+  });
+
+  test.skipIf(backend !== 'postgres')('the v342 backfill never stamps a page a write changed while the backfill waited for its row', async () => {
+    const id = randomUUID().slice(0, 8);
+    const slug = `conversations/sessions/2026-01-02-codex-${id}`;
+    await importer(slug, transcript(id, 'Short body.'));
+    await legacy(slug);
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let locked!: () => void;
+    const holding = new Promise<void>(resolve => { locked = resolve; });
+    const editor = engine.transaction(async tx => {
+      await tx.executeRaw("UPDATE pages SET compiled_truth = compiled_truth || ' I founded acme-example.', content_hash = 'edited-' || content_hash WHERE source_id = 'default' AND slug = $1", [slug]);
+      locked();
+      await gate;
+    });
+    await holding;
+    const backfill = engine.executeRaw(CONTENT_AUTHOR_BACKFILL_SQL);
+    for (let i = 0; i < 100; i++) {
+      const [{ n }] = await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE '%content_author%'");
+      if (n > 0) break;
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    release();
+    await editor;
+    await backfill;
+    expect(await author(slug)).toEqual({ content_author: null, stamped: false });
   });
 
   test('the v342 backfill honors a page only its first-ingest stamp vouches for in speaker markers, not in fence acceptance', async () => {
@@ -313,7 +383,7 @@ for (const backend of testBackends()) describe(`[${backend}] importer trust foll
     await engine.executeRaw(CONTENT_AUTHOR_BACKFILL_SQL);
     expect(await author(slug)).toEqual({ content_author: `legacy:${VIA}`, stamped: true });
     expect(await trust(slug)).toEqual({ speaker: 'trusted', imported: false });
-    expect((await importer(slug, content)).status).toBe('skipped');
+    expect((await importer(slug, content)).status).toBe('imported');
     expect(await trust(slug)).toEqual(TRUSTED);
   });
 });

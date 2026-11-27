@@ -111,7 +111,7 @@ export async function prepareGoogleReceiptPatch(engine: BrainEngine, row: WriteR
         await tx.createVersion(row.slug, { sourceId: row.source_id });
         // GST-4056: receipt metadata is the connector's own write, so an intact connector author follows the new hash.
         const changed = await tx.executeRaw(`UPDATE pages SET frontmatter=jsonb_set(frontmatter,'{gmail_attachment_receipts}',$3::text::jsonb),content_hash=$4,updated_at=now(),
-          content_author_hash=CASE WHEN content_author LIKE 'connector:%' AND content_author_hash=content_hash THEN $4 ELSE NULL END,
+          content_author_hash=NULL,
           content_author=CASE WHEN content_author LIKE 'connector:%' AND content_author_hash=content_hash THEN content_author ELSE NULL END
           WHERE source_id=$1 AND slug=$2 AND id=$5 AND knowledge_revision=$6::uuid AND deleted_at IS NULL RETURNING id`,
         [row.source_id, row.slug, JSON.stringify(receipts), contentHash({ ...page, tags: current.tags }), current.page.id, current.revision]);

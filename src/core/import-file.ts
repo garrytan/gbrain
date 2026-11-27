@@ -1,5 +1,5 @@
 import { assertUnmanagedCanonicalWriter } from './persistence/maintenance.ts';
-import { claimUnchangedText } from './persistence/content-author-schema.ts';
+import { importerAuthorPending } from './persistence/content-author-schema.ts';
 import { legacyImportHold } from './persistence/legacy-slug-put.ts';
 import { suffixedFrontmatterSlugHold } from './persistence/suffixed-slug.ts';
 import { noncanonicalPrivateHold } from './persistence/visibility-request.ts';
@@ -547,8 +547,9 @@ export async function importFromContent(
       && !trustMarkerChanged(existing.frontmatter, page.frontmatter) && (existing.content_hash === hash
         ? !opts.prepare || sameCanonicalImport(existingSnapshot, page)
         : !legacyHashMatch && await sameContentAnyKeyOrder(engine, existing, existingSnapshot?.tags ?? null, page, sourceId ?? 'default'));
-    const unchanged = await unchangedAs(parsedPage) || (suppliedTrustMarker !== parsed.frontmatter.trust_tier
-      && await unchangedAs({ ...parsedPage, frontmatter: suppliedTrustMarkerView(parsed.frontmatter, suppliedTrustMarker) }));
+    const unchanged = (await unchangedAs(parsedPage) || (suppliedTrustMarker !== parsed.frontmatter.trust_tier
+      && await unchangedAs({ ...parsedPage, frontmatter: suppliedTrustMarkerView(parsed.frontmatter, suppliedTrustMarker) })))
+      && !await importerAuthorPending(engine, existing!.id, opts.content_author !== undefined ? opts.content_author : opts.ingested_via);
     if (existing && unchanged) {
       // #5050: unchanged content chunked before the safe-chunk fence is re-sealed
       // projection-only; the canonical write stays a no-op.
@@ -557,11 +558,9 @@ export async function importFromContent(
         const result: ImportResult = { slug, status: 'skipped', chunks: 0, parsedPage, ...(typeWarning ? { type_warning: typeWarning } : {}), ...fenceFields };
         return opts.prepare({ slug, parsedPage, observedRevision: (existing as typeof existing & { knowledge_revision?: string }).knowledge_revision ?? null,
           noop: true, result, validate: async () => {},
-          apply: async tx => { if (reseal) await queuePageProjection(tx, sourceId ?? 'default', slug, 'safe_chunk_reseal');
-            await claimUnchangedText(tx, existing.id, existing.content_hash, opts.content_author !== undefined ? opts.content_author : opts.ingested_via); } });
+          apply: async tx => { if (reseal) await queuePageProjection(tx, sourceId ?? 'default', slug, 'safe_chunk_reseal'); } });
       }
       await persistUnchanged();
-      await claimUnchangedText(engine, existing.id, existing.content_hash, opts.content_author !== undefined ? opts.content_author : opts.ingested_via);
       const resealed = reseal ? await resealSafeChunks(engine, slug, sourceId ?? 'default') : null;
       return { slug, status: 'skipped', chunks: 0, parsedPage, ...(typeWarning ? { type_warning: typeWarning } : {}), ...(resealed ? { resealed } : {}), ...fenceFields };
     }

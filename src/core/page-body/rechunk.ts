@@ -57,7 +57,7 @@ interface RechunkPageRow {
   body_generation: number | string; body_flags: JsonObject | null; chunker_version: number | null; contextual_retrieval_mode: string | null;
   corpus_generation: string | null; knowledge_revision: string; sealed: boolean; updated_us: string; deleted_at: string | null;
   content_hash: string; body_bytes: number | string; truth_bytes: number | string; body_lines: number | string; segment_count: number;
-  segmenter_version: number; truth_lead: string | null; timeline_lead: string | null;
+  segmenter_version: number; truth_lead: string | null; timeline_lead: string | null; content_author: string | null;
 }
 
 class PageMoved extends Error {}
@@ -65,7 +65,8 @@ class PageMoved extends Error {}
 const PAGE_SQL = `SELECT id, slug, source_id, title, type, page_kind, frontmatter, body_generation, body_flags, chunker_version,
     contextual_retrieval_mode, corpus_generation, knowledge_revision::text AS knowledge_revision,
     (text_projection_revision = knowledge_revision) IS TRUE AS sealed, (extract(epoch FROM updated_at) * 1000000)::bigint::text AS updated_us, deleted_at, content_hash, body_bytes, truth_bytes,
-    body_lines, segment_count, segmenter_version, truth_lead, timeline_lead
+    body_lines, segment_count, segmenter_version, truth_lead, timeline_lead,
+    CASE WHEN content_author_hash = content_hash THEN content_author END AS content_author
   FROM pages WHERE id=$1 AND body_storage='segmented'`;
 
 /** Sealed, live segmented pages below the current segmented chunker, in a stable order. */
@@ -167,7 +168,7 @@ async function flipBatch(tx: BrainEngine, page: RechunkPageRow, plan: BatchPlan,
   await tx.executeRaw("SELECT set_config('gbrain.materializing_revision', $1, true)", [page.knowledge_revision]);
   const applied = await withPageTierKept(tx, { sourceId: page.source_id, slug: page.slug }, () => applySegmentedBody(tx, {
     slug: page.slug, sourceId: page.source_id, pageId: page.id, promotion: false, retireMaxRows,
-    meta: { title: page.title, type: page.type as never, frontmatter: page.frontmatter ?? {}, page_kind: page.page_kind as never },
+    meta: { title: page.title, type: page.type as never, frontmatter: page.frontmatter ?? {}, page_kind: page.page_kind as never, content_author: page.content_author },
     prepared: { stagingId, expectedGeneration: generation, newGeneration: next, createRows: null, createChunks: null, closeOccurrences: [],
       retireChunkOccurrences: plan.changed, unchunked: 0, priorStale: false, bodyUnchanged: false, stagedChunkIndexes: indexes,
       rows: { texts: 0, manifest: 0, chunks: indexes.length },

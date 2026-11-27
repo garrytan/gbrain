@@ -198,9 +198,9 @@ export async function putPage(
         source_uri            = COALESCE(EXCLUDED.source_uri,            pages.source_uri),
         ingested_via          = COALESCE(EXCLUDED.ingested_via,          pages.ingested_via),
         ingested_at           = COALESCE(EXCLUDED.ingested_at,           pages.ingested_at),
-        -- GST-4056: this write's author; the pages_content_author trigger settles it (content-author-schema.ts).
+        -- GST-4056: this write declares its author (a NULL hash); the pages_content_author trigger settles it (content-author-schema.ts).
         content_author        = EXCLUDED.content_author,
-        content_author_hash   = EXCLUDED.content_author_hash
+        content_author_hash   = NULL
       RETURNING knowledge_revision, text_projection_revision, id, source_id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at, effective_date, effective_date_source, import_filename, source_kind, source_uri, ingested_via, ingested_at
       ), ${HOLD_BIND_CTE}
       SELECT * FROM ins

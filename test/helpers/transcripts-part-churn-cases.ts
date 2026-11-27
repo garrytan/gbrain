@@ -316,10 +316,12 @@ export function defineTranscriptPartChurnCases(opts: { getEngine: () => BrainEng
       });
     }
     await engine.executeRaw(CONTENT_AUTHOR_BACKFILL_SQL);
+    // The importer writes each part once to become its verified author again (GST-4056), keeping the layout; then it skips them.
     const again = await ingest(engine, path);
-    expect(again.pages).toMatchObject({ imported: 0, skipped: parts.length, errored: 0 });
+    expect(again.pages).toMatchObject({ imported: parts.length, skipped: 0, errored: 0 });
     expect(again.partsDeleted).toBe(0);
     for (const page of await liveParts(engine, base)) expect(page.frontmatter.transcript_import.part_bytes).toBe(54_000);
+    expect((await ingest(engine, path)).pages).toMatchObject({ imported: 0, skipped: parts.length, errored: 0 });
   }), 180_000);
 
   test('an instruction-shaped message in a grown split session is counted on its own part only', () => withDir(async (dir) => {
@@ -461,6 +463,25 @@ export function defineTranscriptPartChurnCases(opts: { getEngine: () => BrainEng
       expect(splitAfter.map(p => p.slug)).toEqual(splitBefore.map(p => p.slug));
       expect(splitAfter.map(p => p.frontmatter.transcript_import.part_bytes)).toEqual([54_000, 54_000, 54_000, 54_000]);
       expect(splitAfter.slice(1, 3).map(p => p.hash)).toEqual(splitBefore.slice(1, 3).map(p => p.hash));
+    }), { databaseUrl: opts.databaseUrl }), 300_000);
+
+  test('on a managed brain, re-ingesting an unchanged session whose page only a legacy author vouches for makes the importer its author (GST-4056)', () =>
+    managedBrain(async ({ engine, ctx }) => withDir(async (dir) => {
+      const id = `managed-reclaim-${randomUUID().slice(0, 8)}`;
+      const path = writeSession(dir, id, regular(6));
+      const managedIngest = () => runTranscriptsIngest(engine, { paths: [path], sourceId: 'default', context: ctx, ...NO_PATTERNS });
+      const author = async () => (await engine.executeRaw<{ content_author: string | null; stamped: boolean }>(
+        'SELECT content_author, content_author_hash IS NOT DISTINCT FROM content_hash AS stamped FROM pages WHERE source_id = $1 AND slug = $2', ['default', baseSlugOf(id)]))[0];
+      expect((await managedIngest()).pages).toMatchObject({ imported: 1, errored: 0 });
+      expect(await author()).toEqual({ content_author: 'cli:transcripts-ingest', stamped: true });
+      await engine.transaction(async tx => {
+        await tx.executeRaw('ALTER TABLE pages DISABLE TRIGGER pages_content_author');
+        await tx.executeRaw("UPDATE pages SET content_author = 'legacy:cli:transcripts-ingest' WHERE source_id = $1 AND slug = $2", ['default', baseSlugOf(id)]);
+        await tx.executeRaw('ALTER TABLE pages ENABLE TRIGGER pages_content_author');
+      });
+      expect((await managedIngest()).pages).toMatchObject({ imported: 1, errored: 0 });
+      expect(await author()).toEqual({ content_author: 'cli:transcripts-ingest', stamped: true });
+      expect((await managedIngest()).pages).toMatchObject({ imported: 0, skipped: 1, errored: 0 });
     }), { databaseUrl: opts.databaseUrl }), 300_000);
 
   test('a remote page carrying the session\'s part-2 id is not split evidence; an importer-written part 2 still is', () => withDir(async (dir) => {

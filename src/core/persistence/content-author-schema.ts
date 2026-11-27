@@ -9,10 +9,12 @@
  * every later write keeps) and the revision attribution (which tag changes and maintenance move), the author follows
  * the text:
  *
- * - putPage and the segmented flip declare it on every write from the write's own channel (import-file.ts
- *   `content_author`); the BEFORE UPDATE trigger below settles it.
+ * - A write declares its author by setting `content_author` and leaving `content_author_hash` NULL; the BEFORE UPDATE
+ *   trigger below stamps the hash. putPage and the segmented flip declare it on every write from the write's own channel
+ *   (import-file.ts `content_author`), so a repeated declaration still counts (a statement that writes the same author
+ *   and hash it found declares nothing).
  * - New text: the declared author, or none when the statement declared none (a raw UPDATE, a maintenance rewrite that
- *   keeps the hash, an older binary).
+ *   keeps the hash, a projection-only flip that does not carry the author, an older binary).
  * - The same text (title, type, body, timeline, body generation and frontmatter other than the hash-ephemeral keys and
  *   `tags`): a trusted importer or connector that declares itself takes it; otherwise a verified author stays and its
  *   hash follows the content hash (a tag change restamps the hash), so a remote write of identical text, a tag change or
@@ -54,7 +56,7 @@ const text = (row: 'NEW' | 'OLD') => `(${row}.type, ${row}.title, ${row}.compile
 
 export const CONTENT_AUTHOR_FUNCTION_SQL = `CREATE OR REPLACE FUNCTION gbrain_guard_content_author() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $fn$
 DECLARE
-  declared boolean := (NEW.content_author, NEW.content_author_hash) IS DISTINCT FROM (OLD.content_author, OLD.content_author_hash);
+  declared boolean := NEW.content_author IS NOT NULL AND NEW.content_author_hash IS NULL;
 BEGIN
   IF ${text('NEW')} IS NOT DISTINCT FROM ${text('OLD')} THEN
     IF declared AND ${trustedAuthorSql('NEW.content_author')} THEN
@@ -62,11 +64,15 @@ BEGIN
     ELSIF OLD.content_author IS NOT NULL AND OLD.content_author_hash = OLD.content_hash THEN
       NEW.content_author := OLD.content_author;
       NEW.content_author_hash := NEW.content_hash;
-    ELSIF NOT declared THEN
+    ELSIF declared THEN
+      NEW.content_author_hash := NEW.content_hash;
+    ELSE
       NEW.content_author := NULL;
       NEW.content_author_hash := NULL;
     END IF;
-  ELSIF NOT declared THEN
+  ELSIF declared THEN
+    NEW.content_author_hash := NEW.content_hash;
+  ELSE
     NEW.content_author := NULL;
     NEW.content_author_hash := NULL;
   END IF;
@@ -82,7 +88,8 @@ END $fn$`;
  * - a tag or link request, a compacted request, or no request after a later update: `legacy:<channel>` for an importer
  *   page, honored by speaker markers only, as before; a connector page keeps its connector author.
  * What the journal and the version history no longer show cannot be seen; such a page keeps the old trust until its next
- * write or re-import.
+ * write or re-import. The update re-checks each page's hash, revision and empty author on the row it locks, so a write
+ * that lands while the backfill runs is never stamped with the eligibility of the revision it replaced.
  */
 export const CONTENT_AUTHOR_BACKFILL_SQL = `WITH remote_pages AS MATERIALIZED (
   SELECT DISTINCT r.source_id, r.slug FROM persistence_requests r
@@ -91,7 +98,7 @@ export const CONTENT_AUTHOR_BACKFILL_SQL = `WITH remote_pages AS MATERIALIZED (
   SELECT DISTINCT v.page_id FROM page_versions v LEFT JOIN persistence_requests r ON r.id = v.write_request_id
    WHERE v.write_principal_kind IN (${list(REMOTE_PRINCIPAL_KINDS)}) AND (r.id IS NULL OR r.operation NOT IN (${list(METADATA_OPERATIONS)}))
 ), candidates AS MATERIALIZED (
-  SELECT p.id, r.id AS request_id, r.principal_kind, r.operation, r.intent, p.revision_write_request_id, p.revision_principal_kind,
+  SELECT p.id, p.content_hash AS hash, p.knowledge_revision AS revision, r.id AS request_id, r.principal_kind, r.operation, r.intent, p.revision_write_request_id, p.revision_principal_kind,
          p.ingested_at >= p.updated_at AS untouched,
          CASE WHEN p.ingested_via IN (${list(TRUSTED_IMPORTER_VIAS)}) THEN p.ingested_via
               WHEN p.ingested_via IS NULL AND s.config->>'kind' IN (${list(CONNECTOR_AUTHOR_KINDS)}) THEN '${CONNECTOR_AUTHOR_PREFIX}' || (s.config->>'kind') END AS base,
@@ -103,7 +110,7 @@ export const CONTENT_AUTHOR_BACKFILL_SQL = `WITH remote_pages AS MATERIALIZED (
      AND NOT EXISTS (SELECT 1 FROM remote_pages x WHERE x.source_id = p.source_id AND x.slug = p.slug)
      AND NOT EXISTS (SELECT 1 FROM remote_versions x WHERE x.page_id = p.id)
 ), legacy AS (
-  SELECT c.id, CASE
+  SELECT c.id, c.hash, c.revision, CASE
       WHEN c.request_id IS NOT NULL AND c.principal_kind IS DISTINCT FROM 'local_cli' THEN NULL
       WHEN c.request_id IS NOT NULL AND c.intent->>'ingested_via' IN (${list(TRUSTED_IMPORTER_VIAS)}) THEN c.intent->>'ingested_via'
       WHEN c.request_id IS NOT NULL AND c.operation = 'submit_job' AND c.intent->>'kind' = 'connector_v2_import' AND c.connector_source
@@ -116,7 +123,8 @@ export const CONTENT_AUTHOR_BACKFILL_SQL = `WITH remote_pages AS MATERIALIZED (
       ELSE '${LEGACY_AUTHOR_PREFIX}' || c.base END AS author
     FROM candidates c
 )
-UPDATE pages p SET content_author = legacy.author, content_author_hash = p.content_hash FROM legacy WHERE p.id = legacy.id AND legacy.author IS NOT NULL`;
+UPDATE pages p SET content_author = legacy.author, content_author_hash = NULL FROM legacy
+ WHERE p.id = legacy.id AND legacy.author IS NOT NULL AND p.content_author IS NULL AND p.content_hash = legacy.hash AND p.knowledge_revision = legacy.revision`;
 
 export const CONTENT_AUTHOR_SCHEMA_SQL = `ALTER TABLE pages ADD COLUMN IF NOT EXISTS content_author TEXT, ADD COLUMN IF NOT EXISTS content_author_hash TEXT;
 ${CONTENT_AUTHOR_FUNCTION_SQL};
@@ -134,12 +142,12 @@ export function contentAuthoredBySql(page: string, authors: string, opts: { lega
 }
 
 /**
- * A trusted importer or connector that re-imports a page's unchanged text takes it over (the import skips the write),
- * so a page another writer stored with the same text becomes the importer's again. The trigger advances the hash.
+ * A trusted importer or connector re-importing a page whose live text no trusted importer is the verified author of: the
+ * import must write its text (never skip it as unchanged), so the trigger stamps the author only on text it wrote.
  */
-export async function claimUnchangedText(exec: { executeRaw: (sql: string, params?: unknown[]) => Promise<unknown> },
-  pageId: number | string, contentHash: string | null | undefined, author: string | null | undefined): Promise<void> {
-  if (!isTrustedContentAuthor(author) || !contentHash) return;
-  await exec.executeRaw(`UPDATE pages SET content_author = $2, content_author_hash = content_hash
-    WHERE id = $1 AND content_hash = $3 AND content_author IS DISTINCT FROM $2`, [Number(pageId), author, contentHash]);
+export async function importerAuthorPending(exec: { executeRaw: <T>(sql: string, params?: unknown[]) => Promise<T[]> },
+  pageId: number | string, author: string | null | undefined): Promise<boolean> {
+  if (!isTrustedContentAuthor(author)) return false;
+  const rows = await exec.executeRaw(`SELECT 1 FROM pages WHERE id = $1 AND ${trustedAuthorSql('content_author')} AND content_author_hash = content_hash`, [Number(pageId)]);
+  return rows.length === 0;
 }
