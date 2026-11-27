@@ -17,7 +17,7 @@
  * 4. Seams: none. The Rust arm needs the addon `bun run rust:build` writes and skips without it
  *    (GBRAIN_TEST_RUST_ADDON_REQUIRED=1 makes a missing addon an error); the Postgres arm runs with DATABASE_URL.
  */
-import { afterAll, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -41,6 +41,15 @@ const DATABASE_URL = process.env.DATABASE_URL;
 type Arm = 'pglite' | 'postgres' | 'rust';
 const dirs: string[] = [];
 const engines: BrainEngine[] = [];
+let pgliteEngine: PGLiteEngine;
+beforeAll(async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gbrain-rust-import-content-pglite-'));
+  dirs.push(dir);
+  pgliteEngine = new PGLiteEngine();
+  engines.push(pgliteEngine);
+  await pgliteEngine.connect({ engine: 'pglite', database_path: dir } as never);
+  await pgliteEngine.initSchema();
+});
 afterAll(async () => {
   for (const engine of engines.splice(0)) await engine.disconnect().catch(() => undefined);
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
@@ -54,15 +63,9 @@ async function open(arm: Arm): Promise<BrainEngine> {
     await engine.initSchema();
     return engine;
   }
-  const dir = mkdtempSync(join(tmpdir(), `gbrain-rust-import-content-${arm}-`));
+  if (arm === 'pglite') return pgliteEngine;
+  const dir = mkdtempSync(join(tmpdir(), 'gbrain-rust-import-content-rust-'));
   dirs.push(dir);
-  if (arm === 'pglite') {
-    const engine = new PGLiteEngine();
-    engines.push(engine);
-    await engine.connect({ engine: 'pglite', database_path: dir } as never);
-    await engine.initSchema();
-    return engine;
-  }
   const addon = await loadRustAddon({ env: { GBRAIN_RUST_ENGINE_ADDON: ADDON } });
   const engine = openRustEngine({ addon, databasePath: dir });
   engines.push(engine);
