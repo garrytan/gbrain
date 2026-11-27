@@ -26,11 +26,17 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { activateSharedSkillPersistence } from '../src/core/persistence/skill-activation.ts';
-import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
+import { disposePersistenceConsumer, stopPersistenceConsumer, writeResponse } from '../src/core/persistence/service.ts';
+import { admitWrite, claimNextWrite, getWriteRequestById } from '../src/core/persistence/journal.ts';
+import { finishUnpublishedFailure } from '../src/core/persistence/coordinator.ts';
+import { hostIdFor } from '../src/core/persistence/identity.ts';
+import { getWorktreeBinding } from '../src/core/persistence/ownership.ts';
+import { submissionAuthority } from '../src/core/persistence/authority.ts';
+import { requestPrincipalForContext } from '../src/core/persistence/page-mutations.ts';
 import { sha256 } from '../src/core/persistence/digest.ts';
 import { adoptSharedSkillpack, importSharedSkillProposal, prepareSharedSkillMutation, submitSharedSkillMutation } from '../src/core/shared-skills/publication.ts';
 import { getSharedSkill, getSharedSkillAsset } from '../src/core/shared-skills/catalog.ts';
-import { setSharedSkillPolicy } from '../src/core/shared-skills/policy.ts';
+import { readSharedSkillPolicy, setSharedSkillPolicy } from '../src/core/shared-skills/policy.ts';
 import { normalizeSkillFiles, skillMetadata } from '../src/core/shared-skills/manifest.ts';
 import type { SharedSkillPolicy } from '../src/core/shared-skills/model.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -450,6 +456,51 @@ for (const [name, url] of backends) {
         ['beta', [prose('beta', 'Now uses the guide.', [GUIDE]), guide(['readers'])]]], true);
       expect(outcome).toBe(`local_conflict/shared_file_holder_narrowed: The publication was refused: ${GUIDE} would reach a wider audience than skills/gamma gives it after narrowing its own audience in this publication. Nothing was written.`);
       expect({ heads: await heads(f), reader: await readerCopy(f, 'beta'), checkout: checkout(f.root) }).toEqual({ ...before, reader: 'skill_asset_not_found' });
+    }, url), 120_000);
+
+    // Queues a batch the way an older release accepted it (no audience check at admission), lets preparation refuse it,
+    // stores the failure the way the consumer does, and reads the response a waiter or a replay of the request gets.
+    async function queuedRefusal(f: Fixture, batch: Array<[string, Array<Record<string, unknown>>]>) {
+      await stopPersistenceConsumer(f.engine);
+      const current = await heads(f);
+      const [pack] = await f.engine.executeRaw<{ revision: string; manifest_hash: string }>('SELECT revision::text AS revision, manifest_hash FROM shared_skill_packs WHERE source_id=$1', ['default']);
+      const policy = await readSharedSkillPolicy(f.engine, 'default', f.incarnation, true);
+      const binding = (await getWorktreeBinding(f.engine, 'default'))!;
+      const slug = `skills/${batch[0][0]}/SKILL.md`;
+      const authority = { ...await submissionAuthority(f.local, 'put_skill', 'default', f.incarnation, slug), skillSlugsUsed: batch.map(([name]) => `skills/${name}/SKILL.md`) };
+      const proposals = batch.map(([name, input]) => {
+        const files = normalizeSkillFiles(name, input as never);
+        return { name, files, metadata: skillMetadata(name, files, {}), expected_revision: current.find(head => head.name === name)!.revision };
+      });
+      const intent = { pack_id: 'example-pack', name: batch[0][0], expected_revision: proposals[0].expected_revision, policy_epoch: policy.epoch,
+        affected: current.map(head => ({ name: head.name, revision: head.revision })), expected_pack_revision: pack.revision, manifest_before_hash: pack.manifest_hash,
+        original_manifest: {}, before_hashes: {}, proposals, extra_files: {} };
+      await admitWrite(f.engine, { principal: await requestPrincipalForContext(f.local), operation: 'put_skill', sourceId: 'default', sourceIncarnation: f.incarnation,
+        slug, requestId: randomUUID(), targetKind: 'skill_bundle', protocolVersion: 2, callerIntent: {}, intent, authority,
+        worktreeId: binding.worktree_id, topologyGeneration: binding.topology_generation } as never);
+      const claimed = (await claimNextWrite(f.engine, hostIdFor(f.engine)))!;
+      const refusal = await prepareSharedSkillMutation(f.engine, claimed, f.local.config).then(() => null, (error: unknown) => error);
+      const done = await finishUnpublishedFailure(f.engine, claimed, refusal, 'preparation');
+      const replay = (await getWriteRequestById(f.engine, done.id))!;
+      const response = (row: typeof done) => { try { writeResponse(row); return 'delivered'; } catch (error) { const e = error as { code?: string; reason?: string; message?: string }; return `${e.code}/${e.reason}: ${e.message}`; } };
+      return { state: done.state, waiter: response(done), replay: response(replay) };
+    }
+
+    // Value: protects=a queued refusal keeps its typed reason when a waiter or a replay reads it, and stays anonymous; fails_when=the stored failure drops the reason, so the response reads local_conflict with no reason; why_new=the reason was only on the thrown error, never on the stored row; seam=the queued row is built as an older release admitted it, then claimed, prepared and failed by the real coordinator functions; no_claim=the consumer loop itself
+    test('a queued publication refused because a sole holder narrows its audience answers the waiter and a replay with its typed reason', () => fixture(async f => {
+      await publishDeparting(f, false);
+      const outcome = await queuedRefusal(f, [['gamma', [{ ...prose('gamma', 'Use the root.', [ROOT]), audience: RESTRICTED }, root([GUIDE]), guide(['readers'])]],
+        ['beta', [prose('beta', 'Now uses the guide.', [GUIDE]), guide(['readers'])]]]);
+      const text = `local_conflict/shared_file_holder_narrowed: The publication was refused: ${GUIDE} would reach a wider audience than the 1 skill that already holds it gives it. Nothing was written.`;
+      expect({ ...outcome, reader: await readerCopy(f, 'beta') }).toEqual({ state: 'failed', waiter: text, replay: text, reader: 'skill_asset_not_found' });
+    }, url), 120_000);
+
+    // Value: protects=a queued refusal caused by a hidden holder keeps its own typed reason; fails_when=the stored failure drops it; why_new=as above; seam=as above; no_claim=the consumer loop itself
+    test('a queued publication refused because a hidden holder keeps the convention answers the waiter and a replay with its typed reason', () => fixture(async f => {
+      await publishDeparting(f);
+      const outcome = await queuedRefusal(f, [['gamma', [prose('gamma', 'Use the root.', [ROOT]), root()]], ['beta', [prose('beta', 'Now uses the guide.', [GUIDE]), guide(['readers'])]]]);
+      const text = `local_conflict/shared_file_hidden_holder: The publication was refused: ${GUIDE} would reach a wider audience than the 1 skill that already holds it gives it. Nothing was written.`;
+      expect({ ...outcome, reader: await readerCopy(f, 'beta') }).toEqual({ state: 'failed', waiter: text, replay: text, reader: 'skill_asset_not_found' });
     }, url), 120_000);
   });
 }

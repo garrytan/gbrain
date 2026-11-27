@@ -49,7 +49,7 @@ import { assertBundleRecoveryBinding, bundleFileHash, prepareBundleRecovery, pub
 import { assertKnowledgePublicationAllowed } from '../shared-skills/knowledge-guard.ts';
 import { classifyMirrorPage, sourceMirrorReadOnly } from './mirror-read-only.ts';
 import { headCommit, landedCommit, PENDING_IMPORT, SYNC_HELD } from './pending-import.ts';
-import { CANONICAL_FILE_MISSING, CHECKOUT_REFUSAL_ORIGINS, type CheckoutRefusalOrigin, GRANDFATHER_RETIRED, SOURCE_CHANGED_ORIGINS, type SourceChangedDetail, type SourceChangedOrigin, databaseRefusal, ownerExceptionFailure, stagingFailureDetail, withAttempt, type PublicationFailure, type PublicationFailureDetail, type PublicationStage } from './publication-failure.ts';
+import { CANONICAL_FILE_MISSING, CHECKOUT_REFUSAL_ORIGINS, sharedFileAudienceReason, type SharedFileAudienceReason, type CheckoutRefusalOrigin, GRANDFATHER_RETIRED, SOURCE_CHANGED_ORIGINS, type SourceChangedDetail, type SourceChangedOrigin, databaseRefusal, ownerExceptionFailure, stagingFailureDetail, withAttempt, type PublicationFailure, type PublicationFailureDetail, type PublicationStage } from './publication-failure.ts';
 import { SYNC_CURSOR_REPLACED, SYNC_PASS_SUPERSEDED } from './sync-checkpoint-replaced.ts';
 import { fenceFailureDetail } from '../fence-repair/refusal.ts';
 import { withdrawalFailureDetail } from '../facts/withdrawal.ts';
@@ -229,6 +229,10 @@ function sourceChangedDetail(message: string): SourceChangedDetail | undefined {
   const { reason } = writeFailureDiagnostic('source_changed', message);
   return (SOURCE_CHANGED_ORIGINS as readonly string[]).includes(reason) ? { origin: reason as SourceChangedOrigin } : undefined;
 }
+function sharedFileAudienceDetail(error: OperationError): { origin: SharedFileAudienceReason } | undefined {
+  const origin = error.code === 'local_conflict' ? sharedFileAudienceReason({ origin: error.reason }) : undefined;
+  return origin ? { origin } : undefined;
+}
 function requestError(error: unknown): PublicationFailure {
   if (error instanceof OperationError) {
     // #6188: a typed fence refusal keeps its location in the bounded detail, which outlives receipt compaction.
@@ -238,7 +242,9 @@ function requestError(error: unknown): PublicationFailure {
       // #6693: a refusal on a page whose file awaits import or is held by sync; the replay after import selects on it.
       ?? (error.code === 'source_changed' && (error.reason === PENDING_IMPORT || error.reason === SYNC_HELD) ? { origin: error.reason } : undefined)
       ?? stagingFailureDetail(error)
-      ?? (error.code === 'source_changed' ? sourceChangedDetail(error.message) : undefined);
+      ?? (error.code === 'source_changed' ? sourceChangedDetail(error.message) : undefined)
+      // A shared-file audience refusal keeps its closed reason, so the stored response names the same cause.
+      ?? sharedFileAudienceDetail(error);
     return { code: error.code, message: error.message, ...(detail ? { detail } : {}) };
   }
   const refusal = databaseRefusal(error);
