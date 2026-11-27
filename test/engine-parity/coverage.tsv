@@ -1524,7 +1524,7 @@ listRelinkCandidateRows	facts_purge	yes	1	no	yes	yes	serves
 countRelinkCandidates	facts_purge	yes	1	no	yes	yes	serves
 listSimilarActiveFacts	facts_purge	yes	3	no	yes	yes	serves
 findActiveSingleFact	facts_purge	yes	7	no	yes	yes	serves
-listSingleFactMetadata	facts_purge	yes	2	no	yes	yes	serves
+listSingleFactMetadata	facts_purge	yes	3	no	yes	yes	serves
 countUnfencedFactGroups	facts_purge	yes	1	no	yes	yes	serves
 listUnfencedFactRows	facts_purge	yes	2	no	yes	yes	serves
 listHeldFenceFactRows	facts_purge	yes	1	no	yes	yes	serves
