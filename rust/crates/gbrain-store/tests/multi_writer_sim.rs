@@ -13,47 +13,30 @@
 //! - P-H on both stores over `GBRAIN_SIM_SEEDS` seeds (default 200; the gate is 10,000 with
 //!   `GBRAIN_SIM_SEEDS=10000 cargo test -p gbrain-store --release --test multi_writer_sim -- --include-ignored p_h`; the
 //!   P-H twin with the commit log is named `crash_with_the_log_keeps_…` so that filter never selects it; it runs in the default
-//!   build): a
-//!   simulated disk crashes (or fails an fsync) at a seeded point, the store reopens, and `check_recovery` plus the batch
+//!   build): a simulated disk crashes (or fails an fsync) at a seeded point, the store reopens, and `check_recovery` plus the batch
 //!   checker judge it. Each test prints and asserts a non-zero count of executed histories, checked commits and checked
 //!   reads. The optimistic store runs on OS threads here (as `occ_history.rs` does), so its interleaving is not replayed
 //!   from the seed; its workload and crash point are.
 //!
-//! The seeded driver of the optimistic store is the one piece that waits: it lives in `mod optimistic_driver`, compiled
-//! only with `--features sim`, written against the `step_pipeline()` seam that the optimistic-transaction lane adds.
+//! The seeded driver of the optimistic store is `mod optimistic_driver`, compiled only with `--features sim`: it runs on the
+//! `step_pipeline()` seam of `OccKv` (`OccKv::new_stepped`, `queued_commits`, `step_pipeline`).
 //!
-//! DECISION (the seam, to be relayed to the optimistic-transaction lane). Today the commit pipeline is one thread that loops
-//! "take the first queued commit, take every other one already queued up to a batch limit, `commit_batch`"
-//! (`Pipeline::run` in `src/occ_kv.rs`), and `OccTxn::commit` blocks until the pipeline replies. A single-threaded scheduler
-//! needs to decide when that loop body runs and how many commits it sees, so the seam is three items on `OccKv`, all behind
-//! `#[cfg(feature = "sim")]`:
+//! The seam (landed with the optimistic-transaction lane, `src/occ_kv.rs`, behind `#[cfg(feature = "sim")]`). The commit
+//! pipeline is one thread that loops "take the first queued commit, take every other one already queued up to a batch limit,
+//! `commit_batch`" (`Pipeline::run`), and `OccTxn::commit` blocks until the pipeline replies. A single-threaded scheduler decides when
+//! that loop body runs and how many commits it sees:
 //!
 //! ```ignore
 //! impl OccKv {
-//!     /// Like `OccKv::new`, but starts no pipeline thread: commits queue until `step_pipeline` runs.
-//!     pub fn new_stepped(base: RedbKv) -> Result<OccKv>;
-//!     /// Commit requests queued and not yet taken by a step.
-//!     pub fn queued_commits(&self) -> usize; // landed on the trunk with this exact signature (L2); the stub no longer declares it
-//!     /// One iteration of `Pipeline::run`'s loop on the calling thread: takes up to `max_batch` queued commits in
-//!     /// arrival order (an exclusive-write message ends the batch), validates and writes them as one batch, answers
-//!     /// each, and reports what happened. `Ok(None)` when nothing was queued.
-//!     pub fn step_pipeline(&self, max_batch: usize) -> Result<Option<PipelineStep>>;
+//!     pub fn new_stepped(base: RedbKv) -> Result<OccKv>;          // no pipeline thread: commits queue until a step
+//!     pub fn queued_commits(&self) -> usize;
+//!     pub fn step_pipeline(&self, max_batch: usize) -> Result<Option<PipelineStep>>; // one loop iteration on the caller
 //! }
-//! pub struct PipelineStep {
-//!     /// The batch's commit sequence; `None` when every request in it conflicted.
-//!     pub sequence: Option<u64>,
-//!     pub taken: usize,
-//!     pub accepted: usize,
-//!     pub conflicts: usize,
-//! }
+//! pub struct PipelineStep { pub sequence: Option<u64>, pub taken: usize, pub accepted: usize, pub conflicts: usize }
 //! ```
 //!
-//! `Box<dyn KvWrite>` is `Send`, so the driver commits each transaction on a helper thread and waits until
-//! `queued_commits()` shows the request landed before it takes its next step; that fixes the arrival order, and with it the
-//! batch, from the seed. Until the seam lands, `optimistic_driver::seam` is a test-only stub with exactly these
-//! signatures, so `cargo clippy --all-targets --features sim -- -D warnings` and `cargo test --features sim --no-run`
-//! typecheck the driver. When the real methods land they shadow the stub (inherent methods win); delete `seam`, then
-//! remove the `#[ignore]` from `p_a_optimistic_store_replays_serially_by_seed` and run
+//! `Box<dyn KvWrite>` is `Send`, so the driver commits each transaction on a helper thread and waits until `queued_commits()` shows the
+//! request landed before it takes its next step; that fixes the arrival order, and with it the batch, from the seed. Run it with
 //! `cargo test -p gbrain-store --features sim --test multi_writer_sim`.
 
 mod common;

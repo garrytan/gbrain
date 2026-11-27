@@ -119,8 +119,8 @@ export const MW_CASES: readonly MwCase[] = [
     reference: 'compare',
     members: ['putPage', 'readPageSnapshot'],
     storeTests: {
-      runnable: ['c01_same_page_writers_lose_no_update'],
-      pending: ['c01_same_page_writers_lose_no_update_multi_writer'],
+      runnable: ['c01_same_page_writers_lose_no_update', 'c01_same_page_writers_lose_no_update_multi_writer'],
+      pending: [],
     },
     cells: {
       pglite: RUNS, postgres: RUNS,
@@ -137,8 +137,8 @@ export const MW_CASES: readonly MwCase[] = [
     reference: 'compare',
     members: ['putPage', 'readPageSnapshot', 'upsertChunks', 'getChunks'],
     storeTests: {
-      runnable: ['c02_stale_revision_gets_a_typed_conflict'],
-      pending: ['c02_stale_revision_gets_a_typed_conflict_multi_writer'],
+      runnable: ['c02_stale_revision_gets_a_typed_conflict', 'c02_stale_revision_gets_a_typed_conflict_multi_writer'],
+      pending: [],
     },
     cells: {
       pglite: RUNS, postgres: RUNS,
@@ -155,8 +155,8 @@ export const MW_CASES: readonly MwCase[] = [
     reference: 'compare',
     members: ['readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'transactionDirect', 'selectClaimableWrite', 'stampWriteClaim', 'renewWriteClaim'],
     storeTests: {
-      runnable: ['c03_two_claimers_of_one_write_never_both_claim'],
-      pending: ['c03_two_claimers_of_one_write_never_both_claim_multi_writer'],
+      runnable: ['c03_two_claimers_of_one_write_never_both_claim', 'c03_two_claimers_of_one_write_never_both_claim_multi_writer'],
+      pending: [],
     },
     cells: {
       pglite: RUNS, postgres: RUNS,
@@ -173,8 +173,8 @@ export const MW_CASES: readonly MwCase[] = [
     reference: 'compare',
     members: ['admitJob', 'claimNextJob', 'getJob'],
     storeTests: {
-      runnable: ['c04_eight_workers_claim_each_job_once'],
-      pending: ['c04_eight_workers_claim_each_job_once_multi_writer'],
+      runnable: ['c04_eight_workers_claim_each_job_once', 'c04_eight_workers_claim_each_job_once_multi_writer'],
+      pending: [],
     },
     cells: {
       pglite: RUNS, postgres: RUNS,
@@ -209,8 +209,8 @@ export const MW_CASES: readonly MwCase[] = [
     reference: 'compare',
     members: ['acquireCycleLock', 'transaction', 'assertCycleLease', 'putPage', 'readPageSnapshot'],
     storeTests: {
-      runnable: ['c06_stale_holder_data_write_refused_by_its_token', 'c06_old_holder_cannot_refresh_release_or_write_after_a_takeover', 'c06_partitioned_host_claims_and_leases_are_refused_by_reason'],
-      pending: ['c06_stale_holder_data_write_refused_by_its_token_multi_writer', 'c06_partitioned_host_old_epoch_work_refused_multi_writer'],
+      runnable: ['c06_stale_holder_data_write_refused_by_its_token', 'c06_old_holder_cannot_refresh_release_or_write_after_a_takeover', 'c06_partitioned_host_claims_and_leases_are_refused_by_reason', 'c06_stale_holder_data_write_refused_by_its_token_multi_writer', 'c06_partitioned_host_old_epoch_work_refused_multi_writer'],
+      pending: [],
     },
     cells: {
       pglite: RUNS, postgres: RUNS,
@@ -242,8 +242,8 @@ export const MW_CASES: readonly MwCase[] = [
     reference: 'compare',
     members: ['readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'transactionDirect', 'declarePersistence', 'insertPublicationEffects', 'selectClaimableEffect', 'stampEffectClaim', 'completeEffectRow', 'readRequestEffects'],
     storeTests: {
-      runnable: ['c07_effect_claimed_once_rerun_after_owner_crash', 'c07_effect_claimed_once_rerun_after_host_lease_expiry'],
-      pending: ['c07_effect_claimed_once_by_racing_hosts_multi_writer'],
+      runnable: ['c07_effect_claimed_once_rerun_after_owner_crash', 'c07_effect_claimed_once_rerun_after_host_lease_expiry', 'c07_effect_claimed_once_by_racing_hosts_multi_writer'],
+      pending: [],
     },
     cells: {
       pglite: RUNS, postgres: RUNS,
@@ -260,8 +260,8 @@ export const MW_CASES: readonly MwCase[] = [
     reference: 'compare',
     members: ['reserveChronicleJudgeSlot', 'countRecentChronicleReservations'],
     storeTests: {
-      runnable: ['c08_counter_never_over_admits'],
-      pending: ['c08_counter_never_over_admits_multi_writer'],
+      runnable: ['c08_counter_never_over_admits', 'c08_counter_never_over_admits_multi_writer'],
+      pending: [],
     },
     cells: {
       pglite: RUNS, postgres: RUNS,
@@ -278,8 +278,8 @@ export const MW_CASES: readonly MwCase[] = [
     reference: 'compare',
     members: ['admitJob', 'listJobs'],
     storeTests: {
-      runnable: ['c09_idempotency_key_maps_to_one_row'],
-      pending: ['c09_idempotency_key_maps_to_one_row_multi_writer'],
+      runnable: ['c09_idempotency_key_maps_to_one_row', 'c09_idempotency_key_maps_to_one_row_multi_writer'],
+      pending: [],
     },
     cells: {
       pglite: RUNS, postgres: RUNS,
@@ -314,8 +314,8 @@ export const MW_CASES: readonly MwCase[] = [
     reference: 'compare',
     members: ['insertFact', 'listFactsByEntity'],
     storeTests: {
-      runnable: ['c11_per_entity_commit_sequences_are_distinct_and_no_fact_is_lost'],
-      pending: ['c11_per_entity_order_equals_commit_order', 'c11_per_entity_order_equals_commit_order_multi_writer'],
+      runnable: ['c11_per_entity_commit_sequences_are_distinct_and_no_fact_is_lost', 'c11_per_entity_order_equals_commit_order_multi_writer'],
+      pending: ['c11_per_entity_order_equals_commit_order'],
     },
     cells: {
       pglite: pending('L5 hosts', 'new rule: SQL reads order facts by created_at, id, which is not commit order; facts carry no sequence assigned at commit yet'), postgres: pending('L5 hosts', 'new rule: SQL reads order facts by created_at, id, which is not commit order; facts carry no sequence assigned at commit yet'),
@@ -332,8 +332,8 @@ export const MW_CASES: readonly MwCase[] = [
     reference: 'compare',
     members: ['transaction', 'putPage', 'getPage'],
     storeTests: {
-      runnable: ['c12_two_transactions_read_only_their_own_writes'],
-      pending: ['c12_two_transactions_read_only_their_own_writes_multi_writer'],
+      runnable: ['c12_two_transactions_read_only_their_own_writes', 'c12_two_transactions_read_only_their_own_writes_multi_writer'],
+      pending: [],
     },
     cells: {
       pglite: RUNS, postgres: RUNS,
@@ -351,8 +351,8 @@ export const MW_CASES: readonly MwCase[] = [
     needs: 'multi_writer',
     members: ['putPage', 'transaction', 'lockPageKeys'],
     storeTests: {
-      runnable: ['c13_transactions_on_different_keys_both_land'],
-      pending: ['c13_transactions_on_different_keys_do_not_wait_multi_writer'],
+      runnable: ['c13_transactions_on_different_keys_both_land', 'c13_transactions_on_different_keys_do_not_wait_multi_writer'],
+      pending: [],
     },
     cells: {
       pglite: na('PGLite has one connection: a second transaction queues behind the open one (test/pglite-checkpoint-guard.test.ts:193-207)'), postgres: RUNS,
@@ -369,8 +369,8 @@ export const MW_CASES: readonly MwCase[] = [
     reference: 'compare',
     members: ['readLiveGenerationRow', 'activateGenerationRows', 'lockGenerationKey', 'transaction'],
     storeTests: {
-      runnable: ['c14_concurrent_publishers_one_winner'],
-      pending: ['c14_concurrent_publishers_one_winner_multi_writer'],
+      runnable: ['c14_concurrent_publishers_one_winner', 'c14_concurrent_publishers_one_winner_multi_writer'],
+      pending: [],
     },
     cells: {
       pglite: RUNS, postgres: RUNS,
@@ -387,8 +387,8 @@ export const MW_CASES: readonly MwCase[] = [
     reference: 'compare',
     members: ['transaction', 'lockPageKeys', 'putPage', 'readPageSnapshot'],
     storeTests: {
-      runnable: ['c15_single_flight_holds_only_its_keys'],
-      pending: ['c15_single_flight_holds_only_its_keys_multi_writer'],
+      runnable: ['c15_single_flight_holds_only_its_keys', 'c15_single_flight_holds_only_its_keys_multi_writer'],
+      pending: [],
     },
     cells: {
       pglite: RUNS, postgres: RUNS,
@@ -464,8 +464,8 @@ export const MW_CASES: readonly MwCase[] = [
     scope: 'Postgres: a writer-process crash (SIGKILL after acknowledged writes), not a database-server crash: the reopening engine is the parent\'s connected pool, so Postgres durability (WAL, fsync) is not exercised; that guarantee is Postgres\'s own. Rust: the store\'s own recovery of a brain directory the killed writer owned. PGLite is in-memory (n/a).',
     members: ['putPage', 'readPageSnapshot', 'admitJob', 'listJobs'],
     storeTests: {
-      runnable: ['c19_crash_after_commit_keeps_acknowledged_writes', 'c19_crash_keeps_commit_times_rising_and_equal_to_last_commit_time'],
-      pending: ['c19_crash_after_commit_keeps_acknowledged_writes_multi_writer'],
+      runnable: ['c19_crash_after_commit_keeps_acknowledged_writes', 'c19_crash_keeps_commit_times_rising_and_equal_to_last_commit_time', 'c19_crash_after_commit_keeps_acknowledged_writes_multi_writer'],
+      pending: [],
     },
     cells: {
       pglite: na('PGLite is in-memory: there is no durable brain for a killed writer to leave behind'), postgres: RUNS,
@@ -482,8 +482,8 @@ export const MW_CASES: readonly MwCase[] = [
     reference: 'compare',
     members: ['putPage', 'readPageSnapshot', 'transaction', 'lockPageKeys'],
     storeTests: {
-      runnable: ['c20_no_deadlock_across_two_pages_in_both_orders'],
-      pending: ['c20_no_deadlock_across_two_pages_in_both_orders_multi_writer'],
+      runnable: ['c20_no_deadlock_across_two_pages_in_both_orders', 'c20_no_deadlock_across_two_pages_in_both_orders_multi_writer'],
+      pending: [],
     },
     cells: {
       pglite: RUNS, postgres: RUNS,
