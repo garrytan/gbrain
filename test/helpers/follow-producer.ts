@@ -316,3 +316,22 @@ export async function driverWriteSurvivesFailedPreRead(primary: BrainEngine): Pr
   const items = h.batches.flatMap((b) => b.items);
   if (!items.some((i) => i.kind === 'relation' && i.relation === 'pages' && i.reason === 'raw_sql')) throw new Error(`the follower did not see the driver writes: ${JSON.stringify(items)}`);
 }
+
+/**
+ * Postgres only: a postgres.js query built as a fragment of another query (sql`... ${sql`slug = ${v}`}`) is never sent on its own through the driver
+ * handle's wrapping, a query keeps its own members (`.values()`), and the follower still sees the statement.
+ */
+export async function driverFragmentStaysAFragment(primary: BrainEngine): Promise<void> {
+  const h = followHarness(primary);
+  await primary.putPage('people/fragment', PAGE('Fragment'));
+  let values: unknown;
+  await h.engine.transaction(async (tx) => {
+    const sql = (tx as unknown as { sql: any }).sql;
+    await sql`UPDATE pages SET title = ${'Fragment Write'} WHERE ${sql`slug = ${'people/fragment'}`}`;
+    values = await sql`SELECT title FROM pages WHERE slug = ${'people/fragment'}`.values();
+  });
+  if ((await primary.getPage('people/fragment'))?.title !== 'Fragment Write') throw new Error('the update built from a fragment did not land');
+  if (JSON.stringify(values) !== JSON.stringify([['Fragment Write']])) throw new Error(`.values() lost its row shape: ${JSON.stringify(values)}`);
+  const items = h.batches.flatMap((b) => b.items);
+  if (!items.some((i) => i.kind === 'relation' && i.relation === 'pages' && i.reason === 'raw_sql')) throw new Error(`the follower did not see the update: ${JSON.stringify(items)}`);
+}

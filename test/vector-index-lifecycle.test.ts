@@ -202,6 +202,7 @@ describe('dropAndRebuild — A3 atomic-swap', () => {
 
   test('temp name format: <name>_rebuild_<unix-ms>', async () => {
     let executedSql = '';
+    const swap: string[] = [];
     const fakeEngine = {
       kind: 'postgres' as const,
       executeRaw: async () => [], // no active build
@@ -212,8 +213,8 @@ describe('dropAndRebuild — A3 atomic-swap', () => {
         },
       }),
       transaction: async (fn: any) => {
-        // Provide a no-op tx with sql.unsafe.
-        await fn({ sql: { unsafe: async () => [] } });
+        // The swap goes through the transaction engine's executeRaw, never its driver handle.
+        await fn({ executeRaw: async (sql: string) => { swap.push(sql); return []; } });
       },
     } as never;
     const spec: IndexSpec = {
@@ -227,5 +228,6 @@ describe('dropAndRebuild — A3 atomic-swap', () => {
     expect(r.tempName).toMatch(/^idx_chunks_embedding_rebuild_\d+$/);
     expect(executedSql).toContain('CREATE INDEX CONCURRENTLY');
     expect(executedSql).toContain(r.tempName);
+    expect(swap).toEqual(['DROP INDEX IF EXISTS idx_chunks_embedding', `ALTER INDEX ${r.tempName} RENAME TO idx_chunks_embedding`]);
   });
 });

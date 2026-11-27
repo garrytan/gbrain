@@ -1231,8 +1231,7 @@ src/core/uncommitted-deletions.ts	execute_raw	1
 src/core/url-clone.ts	execute_raw	2
 src/core/url-source-origin.ts	execute_raw	4
 src/core/value/card.ts	execute_raw	6	value card (roadmap PR 3): read-only whole-brain counts for the trusted local CLI (pages by kind, links, facts by state, search_telemetry, context_volunteer_events with page_retrievals); converts with the stats domain
-src/core/vector-index.ts	driver_call	2
-src/core/vector-index.ts	execute_raw	9
+src/core/vector-index.ts	execute_raw	11	dropAndRebuild sends its index swap (DROP INDEX, ALTER INDEX RENAME) through the transaction engine executeRaw instead of the driver handle (its two driver_call sites removed), so a shadowed transaction sees it
 src/core/vector-prewarm.ts	execute_raw	4
 src/core/verbs/entity-card.ts	execute_raw	7
 src/core/verbs/entity-names.ts	execute_raw	1
