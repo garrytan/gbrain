@@ -198,6 +198,7 @@ The consumer's housekeeping after a write (`persistence-housekeeping.ts`).
 | `brain.listQueuedPageProjections(filter)` | the queued jobs of unsegmented pages a rebuild can take now (`{ jobs, pages }`), with `filter` `{ sourceId?, slug?, slugs?, keys?, after?, limit, model, dims, staleText?, served? }` as `listQueuedPageProjections` (engine-sql/projection-rebuild.ts) reads it; `served: 'waiting'` keeps the pages the activation has not served | `listQueuedPageProjections` |
 | `brain.readProjectionJobReason(key)` | the job's reason, or `null` (the rebuild deletes the job with `deleteProjectionJob` above) | `readProjectionJobReason` |
 | `brain.readChunkKeepState(pageId, model, dims)` / `brain.clearUnkeptChunkVectors(pageId, model, dims, currentIds)` | the chunk ids whose vector the rebuild keeps for the model and dimensions; the clear drops the vector of every other chunk of the page, in one write | `readChunkKeepState`, `clearUnkeptChunkVectors` |
+| `brain.readChunkInputHashes(pageId)` / `brain.clearChunkEmbeddingsByIds(pageId, ids)` / `brain.writeChunkInputHashes(pageId, ids, hashes)` | the contextual-mode proof (`page-state/contextual-proof.ts`): every stored chunk of the page with its recorded embedding input hash; the named chunks' vector and embedding record cleared and marked pending now; each named chunk's input hash recorded (the first hash given for an id wins; lists of different length are refused). The TS member refuses a vector column other than `embedding`. |
 | `brain.hasDrainableProjectionJob()` | whether a job of a live inline page of an active source is queued with a reason other than `rebuild_failed`; the TypeScript member refuses the `media` option | `hasDrainableProjectionJob` |
 | `brain.readChunkRowsFingerprint(pageId)` | an opaque text that changes when the page's chunk rows (their ids and indexes) change: the row count and the sha256 of the `id:index` pairs. It is compared only with itself, never with the Postgres `hashtext` sum | `readChunkRowsFingerprint` |
 | `brain.deleteUnkeptChunks(pageId, keptIds)` | every chunk row of the page whose id is not in `keptIds` deleted | `deleteUnkeptChunks` |
@@ -710,6 +711,8 @@ store keeps the three rows and refuses what the tables' keys, foreign keys and C
 | `brain.isSourceClaimed(sourceId)` | whether a binding names the source at its current incarnation | `isSourceClaimed` |
 | `brain.listHostWorktrees(hostId)` | host `hostId`'s bindings with their worktree's owner: the claim's overlap read | the claim's overlap statement |
 | `brain.readWorktree(id)`, `brain.readHostBinding(worktreeId, hostId)` | `{ owner_host_id, state }`; `{ local_path, coordination_path }`; `null` when absent | the physical-root reads |
+| `brain.listHostRepositoryRoots(hostId)` | `[{ local_path, source_id }]`: each host binding of `hostId`, joined to the source bindings of its worktree (`source_id` null with none), by local path in byte order, then source id | `listHostRepositoryRoots` (doctor `foreign_writers`) |
+| `brain.listPendingGitEffectPaths(hostId)` | `[{ rel, source_path, worktree_path }]`: each queued or running `git` effect whose data names a `relative_path`, with its source's local path and its worktree's local path on `hostId` (null without a host or a binding), at most 10,000, in effect order (Postgres sets none) | `listPendingGitEffectPaths` (doctor `foreign_writers`) |
 | `brain.insertWorktree(row)`, `brain.insertHostBinding(row)`, `brain.insertSourceBinding(row)` | the row is stored with the column defaults the SQL relies on. `constraint_violation` for a taken key, an unknown worktree, or a state or Git-durability value the CHECK refuses | the claim's three `INSERT`s |
 | `brain.stampWorktreeHeartbeats(hostId)` | the number of worktrees `hostId` owns, each stamped now | `stampWorktreeHeartbeats` |
 | `brain.listHostRootBindings(hostId)` | one row per source bound under a worktree `hostId` binds, `topology_generation` as text | the first half of `listManagedRootBindings` |
@@ -879,6 +882,45 @@ counter row changes nothing. recoverPublication and upgradeRecoveryStaging move 
 `addPersistenceCounters` ("Writer release"). A bound write is admitted through `requireManagedPersistence` (`journal.ts`
 admission), which a user's Rust brain refuses while `managed_persistence` is held; the managed-mode
 families beside this one are in `managed-mode.md`. The owner pending-wait read in `owner-activity.ts` stays raw SQL.
+
+## Upkeep
+
+`persistenceUpkeepStore()` (`src/core/engine-sql/persistence-upkeep.ts`, store `persistence/upkeep.rs`, one
+`persistenceUpkeep(op, args)` binding) carries the write journal's upkeep statements:
+
+- Receipt compaction (`compactReceipt` in `src/core/persistence/journal.ts`): `lockCompactionReceipt` answers the
+  request row with `eligible_age` (null for a receipt with no completion time when a cutoff is given, as SQL's NULL
+  comparison is), `open_cursor` (a `managed-sync` checkpoint of its run whose cursor is not done) and `open_pass` (a
+  `managed-sync-pass` checkpoint of its pass whose telemetry outcome is `open`), or null; `hasUnfinishedEffect`,
+  `requestEffectBytes` (`EFFECT_BYTES_SQL` summed, as text), `newestSyncReceiptId` (the worktree's newest committed
+  `managed_sync_*` request by completion time, then sequence), `markReceiptCompacted` (no intent, no error message,
+  compacted, the reservation given; `updated_at` unchanged) and `releaseTerminalBytes` (each named counter once, never
+  below zero). `limitCompactionWaits` sets Postgres's transaction-local waits and changes nothing here: the store
+  runs one write transaction at a time.
+- Effect claim upkeep (`rearmWithheldTargets` and `effectClaimKeeper` in `src/core/persistence/effect-journal.ts`):
+  `lockRearmableEffects` is `REARMABLE_SQL` (the same rule as `hasRearmableTargets`), in id order; `rearmEffect`
+  queues an unclaimed effect with no recovery again, due now, with the data given; `renewHeldEffectClaim` renews a
+  running claim under its token for two minutes, also while the effect holds a recovery record.
+
+- The preparation-attempt counters (`floorPreparationAttempts`, `chargePreparationAttempt` in journal.ts): a floor
+  raises a queued or running request's count to the limit; a charge adds one to a request running under the token and
+  answers the new count (null when no claim matched).
+- A write receipt's health facts (`writeHealthFacts`): `readHealthFacts(roots)` answers each root, a worktree id or
+  `db:<source incarnation>`, with its head request (the first pending one by sequence: queued, running or recovering, a
+  held recovery record or, on a worktree, a released deferred write), the first started sequences, and the recovery,
+  owner and inspection flags, as the SQL's lateral join does. An uppercase worktree id matches no row, as `w.id::text`
+  does not.
+- The segment sweep's owned sources (`sweepSegmentStorage`): `listOwnedBoundSources(hostId)`, the sources bound to an
+  active worktree that host owns, in source id order.
+- An effect attempt (effects.ts): `nextScanSlug` is the next slug of the source in byte order (soft-deleted pages
+  included, as the SQL reads `pages` unfiltered), `effectRecovering` whether the effect holds a recovery record (null
+  for no effect), and `recordSkippedTarget` appends to the effect's `skipped` list under its claim token while the list
+  is shorter than the limit. `recordFailure`'s source read is the existing `readSourceMembership`.
+- The queue vacuum (`vacuumPersistenceQueues`) runs on PGLite only, so a Rust brain answers 0 with no store call, as
+  Postgres does (`test/persistence-upkeep-rust-noop.test.ts`).
+
+Pinned by `test/engine-parity/receipt-compaction-step.test.ts`, `test/engine-parity/effect-claim-upkeep.test.ts` and
+`test/engine-parity/journal-upkeep-steps.test.ts`.
 
 ## TypeScript members with no stored state
 

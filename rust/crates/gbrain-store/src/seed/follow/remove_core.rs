@@ -188,6 +188,8 @@ pub(super) static SPECS: &[(&str, Follow)] = &[
         follow(&["source_id", "content_hash"], remove_purge),
     ),
     ("oauth_clients", follow(&["client_id"], remove_client)),
+    ("guest_sources", follow(&["source_id"], remove_guest_source)),
+    ("guest_marks", follow(&["page_id"], remove_guest_mark)),
 ];
 
 /// `version` is the store's own schema version; the store's migrations own it.
@@ -335,6 +337,14 @@ fn remove_withdrawal(tx: &mut dyn KvWrite, id: &Identity, _: Mode) -> Result<boo
 
 fn remove_purge(tx: &mut dyn KvWrite, id: &Identity, _: Mode) -> Result<bool> {
     crate::facts::remove_purge(tx, need!(id, "source_id"), need!(id, "content_hash"))
+}
+
+fn remove_guest_source(tx: &mut dyn KvWrite, id: &Identity, _: Mode) -> Result<bool> {
+    crate::guest_sources::remove_row(tx, need!(id, "source_id"))
+}
+
+fn remove_guest_mark(tx: &mut dyn KvWrite, id: &Identity, _: Mode) -> Result<bool> {
+    crate::guest_marks::remove_mark(tx, need!(id, "page_id", u64))
 }
 
 fn remove_client(tx: &mut dyn KvWrite, id: &Identity, _: Mode) -> Result<bool> {

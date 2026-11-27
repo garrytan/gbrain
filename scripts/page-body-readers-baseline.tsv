@@ -27,6 +27,7 @@ src/commands/enrich.ts	readableEvidence	field	INLINE	segmented holding page: bod
 src/commands/extract-mentions-explain.ts	explainMention	field	STREAM	
 src/core/engine-sql/embed-stale-work.ts	countArchivedEmbeddingWork	sql	META	moved from embedding-readiness.ts: body <> '' predicate on archived pages
 src/core/engine-sql/embed-stale-work.ts	sumEmbedBackfillChars	sql	META	moved from embed-consent.ts estimateEmbedBackfillUsd: character length of chunkless inline bodies for the cost estimate; a segmented page's NULL columns add nothing
+src/core/engine-sql/embedding-catalog.ts	FALSE_STAMPED_SQL	sql	META	moved from embedding-invalidation.ts countFalseStampedChunks: literal copy of the page-embedding-budget.ts applying-hold predicate inside falseStampPageWhere, octet_length metadata for inline pages, body_bytes for segmented
 src/core/engine-sql/mention-reads.ts	readExplainScanPage	sql	STREAM	moved from src/commands/extract-mentions-explain.ts explainMention, same statement
 src/core/engine-sql/mention-reads.ts	readPageNameText	sql	STREAM	moved from src/commands/extract-mentions-explain.ts pageNames, same statement
 src/core/engine-sql/mention-reads.ts	listRejectedDeclarationPages	sql	STREAM	moved from src/commands/extract-mentions-explain.ts rejectedDeclaration, same statement
@@ -246,6 +247,7 @@ src/core/engine-sql/pages.ts	toDomainBankRow	field	LEAD	maps sampled rows; segme
 src/core/engine-sql/pages.ts	putPage	call:contentHash	META	hash of the incoming inline body
 src/core/engine-sql/pages.ts	putPage	field	SEGW	incoming PageInput body (a string); see putPage sql
 src/core/engine-sql/reflex-reads.ts	reflexPagesStatement	sql	LEAD	moved from context/retrieval-reflex.ts resolveEntitiesToPointers and weakTitleHits (boundedBodyPrefixSql AS compiled_truth)
+src/core/engine-sql/remediation-records.ts	REMEDIATION_RECORDS_SQL	sql	META	moved from reindex-consent.ts estimateReindexSpend, same statement: character length of inline bodies for the reindex cost estimate; a segmented page's NULL columns add nothing to the sum
 src/core/engine-sql/salience.ts	listEnrichCandidates	sql	META	
 src/core/engine-sql/search-reads.ts	generatedPagesIn	sql	LEAD	moved from search/provenance-demotion.ts readGeneratedPages (same statement, typed engine method)
 src/core/engine-sql/secret-spans-rows.ts	PAGE_SQL	sql	INLINE	inline body columns; a segmented body is read whole through materializeSegmentedBody by repair/secret-spans.ts readFields, refused page_too_large over the single-string ceiling
@@ -596,7 +598,6 @@ src/core/questions/pages.ts	readQuestionPage	field	INLINE	see sql row
 src/core/questions/refresh.ts	refreshPin	field	INLINE	owner claims of the question page (readQuestionPage asserts inline)
 src/core/questions/refresh.ts	retrieveEvidence	sql	LEAD	segmented candidate pages excluded in SQL (skip): their excerpt and laundering check need the body
 src/core/questions/refresh.ts	retrieveEvidence	field	LEAD	inline candidates only
-src/core/reindex-consent.ts	estimateReindexSpend	sql	META	
 src/core/repair/accepted-takes.ts	archivedRow	field	SEGW	inline versions only: a segmented archived version counts as version_missing (the v0.60.253.0 accept refused segmented pages, so none exists)
 src/core/repair/accepted-takes.ts	livePage	call:serializePageToMarkdown	SEGW	materializedSnapshot within the single-string ceiling; over it counts as fence_unreadable (no fences there)
 src/core/repair/agent-session-facts.ts	retireTakes	call:serializePageToMarkdown	INLINE	inline pages only: a segmented page returns before the read and its takes are kept (changed_since_preview)
@@ -656,6 +657,7 @@ src/core/repair/timeline.ts	timelineRepair	call:serializePageToMarkdown	SEGW
 src/core/repair/visibility.ts	applyFactItem	field	INLINE	inline pages only: a segmented page returns before the read and its fenced fact is left for the owner
 src/core/repair/visibility.ts	visibilityWrite	call:serializePageToMarkdown	SEGW	
 src/core/repair/visibility.ts	applyFactItem	call:serializePageToMarkdown	INLINE	inline pages only: a segmented page returns before the read and its fenced fact is left for the owner
+src/core/rules/record.ts	renderRulePage	call:serializeMarkdown	NONE	serializes a new rule page from its own short fields; reads no stored body
 src/core/rust-engine/snapshot-overlay.ts	overlayStoreLead	field	STREAM	the Rust arm of readSnapshotStatement's withdrawal overlay (page-state/snapshot.ts): the Rust store keeps every body inline; the seal lead of a segmented page (a bounded timeline prefix), overlaid as PGLite's seal overlays it
 src/core/rust-engine/snapshot-overlay.ts	overlayStoreSnapshots	field	STREAM	the Rust arm of readSnapshotStatement's withdrawal overlay (page-state/snapshot.ts): the Rust store keeps every body inline; the body strike skips a segmented page as readSnapshotStatement does (per-window overlay in PR 2)
 src/core/rust-engine/store-members/chunks.ts	sealChunks	field	STREAM	mirrors sealPageTextProjection (text-seal.ts): sends sanitizeRemoteBody(timeline) with the seal for the page keyword vector; a segmented page (null timeline from the Rust store) sends none
@@ -670,7 +672,7 @@ src/core/schema-migrations/v123-configurable-fts-language.ts	v123	sql	NONE	not t
 src/core/schema-migrations/v124-page-search-vector-drop-compiled-truth.ts	v124	sql	NONE	not the page body: historical search-vector trigger
 src/core/schema-migrations/v189-pages-credential-projection-pending.ts	v189	sql	NONE	not a live reader: historical migration over inline pages (segmented pages did not exist)
 src/core/schema-migrations/v248-segmented-page-storage.ts	COMMON_SQL	sql	NONE	not a live reader: migration DDL for the segmented body columns and their CHECK
-src/core/schema-migrations/v341-fact-fingerprint-v3.ts	FACT_FINGERPRINT_V3_SQL	sql	NONE	not a live reader: one-shot migration that reads inline bodies from pages and segmented bodies from page_segment_texts to find fence cells needing a twin withdrawal row
+src/core/schema-migrations/v353-fact-fingerprint-v3.ts	FACT_FINGERPRINT_V3_SQL	sql	NONE	not a live reader: one-shot migration that reads inline bodies from pages and segmented bodies from page_segment_texts to find fence cells needing a twin withdrawal row
 src/core/schema-pack/field-usage.ts	runFieldUsage	field	LEAD	
 src/core/schema-pack/page-to-alias.ts	resolveValue	field	LEAD	
 src/core/schema-pack/page-to-alias.ts	runPageToAliasCore	field	LEAD	
@@ -791,3 +793,5 @@ src/core/engine-sql/repair-applies.ts	readFactRestorePage	sql	STREAM	moved from 
 src/core/engine-sql/visibility-scans.ts	listAliasOnlyPrivatePages	sql	META	moved from src/core/repair/visibility.ts planAliases, same statement
 src/core/engine-sql/visibility-scans.ts	listAtomLineageRows	sql	META	moved from src/core/repair/visibility.ts planLineage, same statement
 src/core/engine-sql/visibility-scans.ts	listChronicleEventVisibilityRows	sql	META	moved from src/core/repair/visibility.ts planEvents, same statement
+src/core/engine-swap/failback-copy.ts	writePage	call:putPage	SEGW	failback writes the Rust engine's answer for a changed page back into the fenced old primary; a page kept in segments on either engine refuses failback_unavailable at the plan, before any write
+src/core/engine-swap/failback-copy.ts	writePage	field	SEGW	failback writes the Rust engine's answer for a changed page back into the fenced old primary; a page kept in segments on either engine refuses failback_unavailable at the plan, before any write

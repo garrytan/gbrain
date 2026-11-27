@@ -27,6 +27,21 @@ type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infe
 export const readChunkVectorColumn: Member<'readChunkVectorColumn'> = (brain, column) =>
   storeCall({ member: 'readChunkVectorColumn' }, () => brain.readChunkVectorColumn({ name: column }));
 
+export const readEmbeddingColumnTypmod: Member<'readEmbeddingColumnTypmod'> = (brain, table) =>
+  storeCall({ member: 'readEmbeddingColumnTypmod' }, () => brain.readEmbeddingColumnTypmod(table));
+export const readEmbeddingSignatureCensus: Member<'readEmbeddingSignatureCensus'> = (brain) =>
+  storeCall({ member: 'readEmbeddingSignatureCensus' }, () => brain.readEmbeddingSignatureCensus());
+export const countUnembeddedLiveFacts: Member<'countUnembeddedLiveFacts'> = (brain, excludedSources) =>
+  storeCall({ member: 'countUnembeddedLiveFacts' }, () => brain.countUnembeddedLiveFacts([...excludedSources]));
+export const countSynopsisTierPages: Member<'countSynopsisTierPages'> = (brain) =>
+  storeCall({ member: 'countSynopsisTierPages' }, () => brain.countSynopsisTierPages());
+export const countEmbedSkipNullChunks: Member<'countEmbedSkipNullChunks'> = (brain) =>
+  storeCall({ member: 'countEmbedSkipNullChunks' }, () => brain.countEmbedSkipNullChunks());
+export const readFalseStampedChunkCounts: Member<'readFalseStampedChunkCounts'> = (brain, column, signature, model) => {
+  if (column !== 'embedding') refuseMember('readFalseStampedChunkCounts', `column ${column}; the store keeps embedding only`);
+  return storeCall({ member: 'readFalseStampedChunkCounts' }, () => brain.readFalseStampedChunkCounts(signature, model));
+};
+
 export const readEmbeddingIdentity: Member<'readEmbeddingIdentity'> = (brain) =>
   storeCall({ member: 'readEmbeddingIdentity' }, () => brain.readEmbeddingIdentity());
 

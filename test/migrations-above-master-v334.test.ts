@@ -1,13 +1,14 @@
 /**
- * The trunk's four schema migrations (v338 byte_order_slug_indexes, v339 projection_jobs_byte_order_index, v340
- * pages_projection_waiting_haystack_trgm, v341 fact_fingerprint_v3) sit above master's newest, v337 (write_gate_hold_rechecks,
+ * The trunk's four schema migrations (v350 byte_order_slug_indexes, v351 projection_jobs_byte_order_index, v352
+ * pages_projection_waiting_haystack_trgm, v353 fact_fingerprint_v3) sit above master's newest here, v337 (write_gate_hold_rechecks,
  * #10317; v336 is files_follow_page_slug, #10294, and v335 pages_spelling_key_index), so a brain stamped at schema version 337 (a
  * master brain) runs all four on upgrade, and one stamped at 336 runs v337 and then the four. Brains at schema_version N never
  * run a migration numbered at or below N, so a trunk migration numbered 337 or lower would be skipped forever on such a brain.
- * No released brain ran the trunk's earlier numbers (v336 to v339).
+ * No released brain ran the trunk's earlier numbers (v336 to v341). They moved to v350 to v353 in sync 20, above master's
+ * v338 (oauth_refresh_rotations, #10485) and the v339 that two open master PRs claim, leaving room for master to land first.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Contract: a brain at version 337 applies exactly the migrations above it (the trunk ones: 338, 339, 340 and 341), builds
+ *  - Contract: a brain at version 337 applies exactly the migrations above it (the trunk ones: 350, 351, 352 and 353), builds
  *    the index migrations' indexes, and ends at the latest version; a second run applies nothing.
  *  - Regression: the trunk's migrations had taken master's numbers (334, then 336 and 337), so a master brain at that number
  *    skipped them.
@@ -38,11 +39,11 @@ const present = async (): Promise<string[]> => (await engine.executeRaw<{ indexn
 describe('trunk migrations above master v337', () => {
   test('a brain stamped at 337, master newest, runs every trunk migration above it: the indexes appear and nothing is skipped', async () => {
     const trunk = MIGRATIONS.filter(m => ['byte_order_slug_indexes', 'projection_jobs_byte_order_index', 'pages_projection_waiting_haystack_trgm', 'fact_fingerprint_v3'].includes(m.name));
-    expect(trunk.map(m => m.version)).toEqual([338, 339, 340, 341]);
+    expect(trunk.map(m => m.version)).toEqual([350, 351, 352, 353]);
     expect(Math.min(...trunk.map(m => m.version))).toBeGreaterThan(MASTER_NEWEST);
     // Every registered migration above master's newest (v337): the three index migrations and fact_fingerprint_v3.
     const above = MIGRATIONS.filter(m => m.version > MASTER_NEWEST).map(m => m.version).sort((a, b) => a - b);
-    expect(above).toEqual([338, 339, 340, 341]);
+    expect(above).toEqual([350, 351, 352, 353]);
     for (const index of TRUNK_INDEXES) await engine.executeRaw(`DROP INDEX IF EXISTS ${index}`);
     expect(await present()).toEqual([]);
     await engine.setConfig('version', String(MASTER_NEWEST));

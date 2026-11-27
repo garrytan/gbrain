@@ -2,18 +2,18 @@
  * The belief ledger keeps one subject per claim across the fact fingerprint change (migration fact_fingerprint_v3).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Contract: a claim the ledger recorded under the fingerprint Postgres computed before v341 keeps its subject after
+ *  - Contract: a claim the ledger recorded under the fingerprint Postgres computed before v353 keeps its subject after
  *    the upgrade: a revision reads as 'changed' with its before value, a purge redacts the whole recorded history, a
  *    later private flip still hides the earlier world history from a remote reader, a purge recorded before the
  *    upgrade still tombstones the claim, and a restore replays a purge made before or after the upgrade onto the claim's
  *    recorded subject. Every engine gives the same answers.
- *  - Regression: Postgres folded the locale's [[:space:]] before v341 (U+0085 kept, U+1680 folded), so a claim holding
+ *  - Regression: Postgres folded the locale's [[:space:]] before v353 (U+0085 kept, U+1680 folded), so a claim holding
  *    one of those characters got a new fingerprint at the upgrade, and every ledger match keyed on the old one missed.
  *  - Why existing coverage misses it: the ledger probes write no claim holding a character the two folds disagree on,
  *    and no probe writes ledger rows before the fingerprint migration; PGLite's [[:space:]] already is the explicit
  *    list, so only a Postgres arm can show it.
- *  - Seam: before the upgrade, gbrain_fact_fingerprint is replaced by the pre-v341 fold spelled out in this file (the
- *    locale's [[:space:]]), independent of the source under test, then v341 is run again; the process-local
+ *  - Seam: before the upgrade, gbrain_fact_fingerprint is replaced by the pre-v353 fold spelled out in this file (the
+ *    locale's [[:space:]]), independent of the source under test, then v353 is run again; the process-local
  *    fingerprint cache is cleared at the upgrade, as a restart does. Synthetic claims only.
  */
 import { afterEach, describe, expect, test } from 'bun:test';
@@ -34,7 +34,7 @@ const OGHAM = 'Ogham\u1680space claim of Acme';
 const slug = 'companies/acme-example';
 const purgeOp = operations.find(o => o.name === 'purge_fact')!;
 
-/** The pre-v341 fingerprint: Postgres's locale [[:space:]] fold. */
+/** The pre-v353 fingerprint: Postgres's locale [[:space:]] fold. */
 const LEGACY_FINGERPRINT = `CREATE OR REPLACE FUNCTION gbrain_fact_fingerprint(claim TEXT) RETURNS TEXT LANGUAGE SQL IMMUTABLE STRICT AS $fn$
   SELECT pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(pg_catalog.btrim(pg_catalog.regexp_replace(pg_catalog.regexp_replace(
     pg_catalog.regexp_replace(pg_catalog.translate(pg_catalog.lower(claim), '${FINGERPRINT_PUNCTUATION.replace(/'/g, "''")}',
@@ -43,7 +43,7 @@ $fn$`;
 
 const legacy = async (b: BeliefBrain) => { await b.engine.executeRaw(LEGACY_FINGERPRINT); clearCache(); };
 const clearCache = () => { const c = __fingerprintCacheForTests(); c.fingerprints.clear(); c.streams.clear(); };
-/** The upgrade: v341 again, then a fresh process's empty fingerprint cache. */
+/** The upgrade: v353 again, then a fresh process's empty fingerprint cache. */
 async function upgrade(b: BeliefBrain): Promise<void> {
   const migration = MIGRATIONS.find(m => m.name === 'fact_fingerprint_v3')!;
   await b.engine.runMigration(migration.version, migration.sql);

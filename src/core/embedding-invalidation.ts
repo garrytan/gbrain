@@ -116,29 +116,12 @@ export function falseStampPageWhere(colId: string, signatureParam = 1, modelPara
  * page-level, so that is the true re-embed workload.
  */
 export async function countFalseStampedChunks(
-  engine: Pick<BrainEngine, 'executeRaw'>,
+  engine: Pick<BrainEngine, 'executeRaw' | 'readFalseStampedChunkCounts'>,
   toModel: string,
   toDims: number,
 ): Promise<{ pages: number; chunks: number; chars: number }> {
-  const colId = await activeColId(engine);
-  const rows = await engine.executeRaw<{ pages: number; chunks: number; chars: number | string }>(
-    `WITH fs AS (
-       SELECT p.id FROM pages p
-        WHERE ${falseStampPageWhere(colId)}
-     )
-     SELECT count(DISTINCT fs.id)::int AS pages,
-            count(cc.id)::int AS chunks,
-            COALESCE(sum(length(cc.chunk_text)), 0)::bigint AS chars
-       FROM fs
-       JOIN content_chunks cc ON cc.page_id = fs.id
-      WHERE cc.${colId} IS NOT NULL`,
-    [targetSignature(toModel, toDims), toModel],
-  );
-  return {
-    pages: Number(rows[0]?.pages ?? 0),
-    chunks: Number(rows[0]?.chunks ?? 0),
-    chars: Number(rows[0]?.chars ?? 0),
-  };
+  const col = await resolveActiveEmbeddingColumnFromEngine(engine);
+  return engine.readFalseStampedChunkCounts(col.name, targetSignature(toModel, toDims), toModel);
 }
 
 /**

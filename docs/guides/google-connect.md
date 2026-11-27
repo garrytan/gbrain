@@ -593,6 +593,10 @@ The overrides are `gbrain sources retry-held <id>` and
 
 ## Other ways to reach Google (no gbrain OAuth)
 
+To give a local agent read-only Google tokens, or Google Workspace writes you
+approve, without handing it your refresh token, use the token socket:
+[Google token socket](google-socket.md).
+
 If your stack already holds Google access another way — a Google CLI with its
 own auth store, `gcloud`, or a credential gateway that can mint short-lived
 access tokens — the source can use it directly and skip gbrain's OAuth flow

@@ -5,7 +5,8 @@
  * `--yes --expect <hash>` all succeed on a managed brain, print the line "this brain cannot swap while it uses managed
  * storage", and record `storage: { managed: true, checked_at }` in state.json; `status --json` and the report carry it.
  * A mode that cannot be read (open or read failure, a busy PGLite brain, no brain at the path) never blocks start: it is
- * recorded as `managed: null` with a reason. Nothing on this path emits `engine_swap_refused`. And start leaves the
+ * recorded as `managed: null` with a reason, and that start compares every write (the brain may be one that can opt in).
+ * Nothing on this path emits `engine_swap_refused`. And start leaves the
  * primary untouched: every `persistence_*` table and the content root beside the brain are byte-identical before and after.
  * Uses a real PGLite brain on disk and the real default open path (no injected engine) unless a test injects a failure.
  * Serial because it sets GBRAIN_HOME.
@@ -20,7 +21,7 @@ import { runEngineShadow, shadowPlan } from '../src/commands/engine-shadow.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { EngineConfig } from '../src/core/types.ts';
-import { DEFAULT_SHADOW_QUEUE_BOUND, DEFAULT_SHADOW_SAMPLE_RATE, readShadowState, shadowBrainKey, shadowDirFor } from '../src/shadow/state.ts';
+import { DEFAULT_SHADOW_QUEUE_BOUND, DEFAULT_SHADOW_SAMPLE_RATE, DEFAULT_SHADOW_WRITE_SAMPLE_RATE, OPT_IN_WRITE_SAMPLE_RATE, readShadowState, shadowBrainKey, shadowDirFor } from '../src/shadow/state.ts';
 import { snapshotPersistence, snapshotTree } from './helpers/primary-snapshot.ts';
 
 const LINE = 'this brain cannot swap while it uses managed storage';
@@ -57,8 +58,9 @@ async function snapshotPrimary(): Promise<{ tables: Record<string, string[]>; fi
 const MANAGED = 'UPDATE persistence_brain SET enabled=true WHERE singleton=1';
 const UNMANAGED = 'UPDATE persistence_brain SET enabled=false WHERE singleton=1';
 const shadowDir = (): string => shadowDirFor(shadowBrainKey(config)!);
-const planHash = (): string => shadowPlan(shadowBrainKey(config)!, 'pglite', shadowDir(),
-  { sampleRate: DEFAULT_SHADOW_SAMPLE_RATE, queueBound: DEFAULT_SHADOW_QUEUE_BOUND }).hash;
+/** The plan hash `start` shows: a managed brain keeps the default write sample rate; an unmanaged or unread one compares every write. */
+const planHash = (managed = true): string => shadowPlan(shadowBrainKey(config)!, 'pglite', shadowDir(),
+  { sampleRate: DEFAULT_SHADOW_SAMPLE_RATE, queueBound: DEFAULT_SHADOW_QUEUE_BOUND, writeSampleRate: managed ? DEFAULT_SHADOW_WRITE_SAMPLE_RATE : OPT_IN_WRITE_SAMPLE_RATE }).hash;
 const okAddon = async () => ({ ok: true as const, addon: { target: 'linux-x64-glibc', engineAbi: 1, engineBuild: 'b1' } as never });
 const NOW = new Date('2026-03-04T05:06:07.000Z');
 
@@ -116,6 +118,8 @@ describe('engine shadow start on a managed-storage brain', () => {
     const state = readShadowState(shadowDir())!;
     expect(state.enabled).toBe(true);
     expect(state.storage).toEqual({ managed: true, checked_at: NOW.toISOString() });
+    // A managed brain cannot opt in to the swap: its shadow keeps the general write sample rate.
+    expect(state.write_sample_rate).toBe(DEFAULT_SHADOW_WRITE_SAMPLE_RATE);
     expect(JSON.parse(readFileSync(join(shadowDir(), 'state.json'), 'utf8')).storage).toEqual({ managed: true, checked_at: NOW.toISOString() });
   });
 
@@ -183,7 +187,8 @@ describe('engine shadow start on a managed-storage brain', () => {
     writeFileSync(sidecar, JSON.stringify({ episodeStartedAt: 1_700_000_000_000, episodeBackupPath: backups[0], attempts: [] }));
     const watched = (): string[] => [readFileSync(sidecar, 'utf8'), ...backups.map((b) => String(existsSync(join(b, 'pg_wal', 'x'))))];
     const before = watched();
-    for (const args of [['start', '--plan'], ['start'], ['start', '--yes', '--expect', planHash()]]) {
+    // The mode is unread, so the plan compares every write (D1): its hash is the rate-1.0 plan.
+    for (const args of [['start', '--plan'], ['start'], ['start', '--yes', '--expect', planHash(false)]]) {
       expect((await run(args)).err, args.join(' ')).toEqual([]);
     }
     expect(readShadowState(shadowDir())?.storage).toEqual({ managed: null, checked_at: NOW.toISOString(), reason: 'repair_episode_open' });
@@ -227,7 +232,7 @@ describe('engine shadow start on a managed-storage brain', () => {
     const plan = await run(['start', '--plan']);
     expect(plan.code).toBe(0);
     expect(plan.text).not.toContain('storage:');
-    const go = await run(['start', '--yes', '--expect', planHash()]);
+    const go = await run(['start', '--yes', '--expect', planHash(false)]);
     expect(go.code).toBe(0);
     expect(go.text).not.toContain('storage:');
     expect(readShadowState(shadowDir())?.storage).toEqual({ managed: false, checked_at: NOW.toISOString() });
@@ -238,7 +243,7 @@ describe('engine shadow start on a managed-storage brain', () => {
 
   test('a state file written before the field existed still reads, and reports storage: null', async () => {
     await onBrain(UNMANAGED);
-    await run(['start', '--yes', '--expect', planHash()]);
+    await run(['start', '--yes', '--expect', planHash(false)]);
     const file = join(shadowDir(), 'state.json');
     const old = JSON.parse(readFileSync(file, 'utf8'));
     delete old.storage;
@@ -259,22 +264,41 @@ describe('a brain whose storage mode cannot be read does not block start', () =>
     const c = cfg ?? config;
     const key = shadowBrainKey(c)!;
     const dir = shadowDirFor(key);
-    const hash = shadowPlan(key, 'pglite', dir, { sampleRate: DEFAULT_SHADOW_SAMPLE_RATE, queueBound: DEFAULT_SHADOW_QUEUE_BOUND }).hash;
+    // An unread mode may hide a brain that can opt in, so it compares every write (D1): the hash is the rate-1.0 plan.
+    const hash = shadowPlan(key, 'pglite', dir, { sampleRate: DEFAULT_SHADOW_SAMPLE_RATE, queueBound: DEFAULT_SHADOW_QUEUE_BOUND, writeSampleRate: OPT_IN_WRITE_SAMPLE_RATE }).hash;
     const opts = { ...extra, ...(cfg ? { config: () => cfg } : {}) };
     const plan = await run(['start', '--plan'], opts);
     expect(plan.err).toEqual([]);
     expect(plan.code).toBe(0);
-    expect(plan.out.join('\n')).toContain(`  storage: ${READ_LINE}; the swap will check it (${reason})`);
+    const text = plan.out.join('\n');
+    expect(text).toContain(`  storage: ${READ_LINE}; the swap will check it (${reason})`);
+    expect(text).toContain(`  write comparisons: storage could not be read (${reason}); every write is compared (rate ${OPT_IN_WRITE_SAMPLE_RATE})`);
+    expect(text).toContain('if this brain uses managed storage, each save is about 2x slower until gbrain engine shadow start runs again and reads the mode');
+    expect(text).toContain(`plan_hash: ${hash}`);
     const go = await run(['start', '--yes', '--expect', hash], opts);
     expect(go.err).toEqual([]);
     expect(go.code).toBe(0);
     expect(go.text).not.toContain('engine_swap_refused');
     expect(readShadowState(dir)?.enabled).toBe(true);
     expect(readShadowState(dir)?.storage).toEqual(unread(reason));
+    expect(readShadowState(dir)?.write_sample_rate).toBe(OPT_IN_WRITE_SAMPLE_RATE);
     const status = JSON.parse((await run(['status', '--json'], opts)).out.join('\n'));
     expect(status.storage).toEqual({ ...unread(reason), note: `${READ_LINE}; the swap will check it` });
     rmSync(dir, { recursive: true, force: true });
   }
+
+  test('--write-sample-rate still sets the rate when the mode is unread, and the plan prints no every-write line', async () => {
+    const key = shadowBrainKey(config)!;
+    const dir = shadowDirFor(key);
+    const opts = { openPrimary: async () => { throw new Error('connection refused by the test'); } };
+    const plan = await run(['start', '--plan', '--write-sample-rate', '0.2'], opts);
+    expect(plan.code).toBe(0);
+    expect(plan.text).not.toContain('every write is compared');
+    const hash = shadowPlan(key, 'pglite', dir, { sampleRate: DEFAULT_SHADOW_SAMPLE_RATE, queueBound: DEFAULT_SHADOW_QUEUE_BOUND, writeSampleRate: 0.2 }).hash;
+    expect((await run(['start', '--yes', '--expect', hash, '--write-sample-rate', '0.2'], opts)).code).toBe(0);
+    expect(readShadowState(dir)?.write_sample_rate).toBe(0.2);
+    rmSync(dir, { recursive: true, force: true });
+  });
 
   test('a brain that cannot be opened', async () => {
     await startsWith({ openPrimary: async () => { throw new Error('connection refused by the test'); } }, 'open_failed');

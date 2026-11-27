@@ -1,18 +1,22 @@
-import type { BrainEngine } from '../engine.ts';
+import type { SqlEngine } from './model.ts';
 import { OperationError } from '../ops/contract.ts';
 import { sha256 } from './digest.ts';
+import { readWriterAdminState as readWriterAdminStateOver } from '../engine-sql/writer-admin.ts';
+import type { BrainEngine } from '../engine.ts';
 
 type WriterAdminStateEngine = Pick<BrainEngine, 'readWriterAdminState'>;
 
 export const WRITER_INSPECTION_HINT = 'Inspect gbrain sources writer status --json on the selected brain host first to identify the designated owner and any recovery. Routine repair must not claim, activate, or transfer ownership. Ask the operator to review docs/architecture/topologies.md before a deliberate topology change.';
 
 /**
- * The digest a reviewed `--expected-state` names: the SHA-256 of the writer topology's jsonb text
- * (BrainEngine readWriterAdminState; SQL in engine-sql/writer-admin.ts). A page embedding lease is per-page vector
- * work, not writer topology, so it never invalidates a reviewed state.
+ * The digest a reviewed `--expected-state` names: the SHA-256 of the writer topology's jsonb text. It is read through the
+ * one statement (engine-sql/writer-admin.ts `readWriterAdminState`, source ids in byte order) that `assertWriterAdminState`
+ * checks it against, so a digest taken here is never stale on arrival, whatever the server's locale. An engine that carries
+ * the typed member answers it (a Rust brain does); an `executeRaw`-only handle (a persistence SqlEngine) runs the same statement.
+ * A page embedding lease is per-page vector work, not writer topology, so it never invalidates a reviewed state.
  */
-export async function writerAdminState(engine: WriterAdminStateEngine): Promise<string> {
-  return sha256(await engine.readWriterAdminState());
+export async function writerAdminState(engine: SqlEngine | WriterAdminStateEngine): Promise<string> {
+  return sha256('readWriterAdminState' in engine ? await engine.readWriterAdminState() : await readWriterAdminStateOver(engine));
 }
 
 /** Inside a transaction, `lock` holds the brain row and the topology tables until commit (a no-op on a Rust brain). */

@@ -25,7 +25,7 @@ import { promisify } from 'node:util';
 import { CredentialError } from '../creds/errors.ts';
 import { execFile } from '../spawn.ts';
 import { truncateUtf8 } from '../text-safe.ts';
-import { GoogleCursorExpiredError } from './google-clients.ts';
+import { GoogleCursorExpiredError, type GmailListOptions } from './google-clients.ts';
 import { trimQuotedReply } from './google-render.ts';
 import {
   bareAddress,
@@ -192,12 +192,15 @@ export class GbrainioGmailReader {
   }
 
   /** Every page of one search. maxPages bounds it; past the bound, partialOk keeps what was listed. */
-  private async search(query: string, opts: { signal?: AbortSignal; maxPages: number; partialOk: boolean }): Promise<ListedMessage[]> {
+  private async search(query: string, opts: { signal?: AbortSignal; maxPages: number; partialOk: boolean; onCutShort?: () => void }): Promise<ListedMessage[]> {
     const out: ListedMessage[] = [];
     let cursor: string | null = null;
     for (let page = 0; ; page++) {
       if (page >= opts.maxPages) {
-        if (opts.partialOk) return out;
+        if (opts.partialOk) {
+          opts.onCutShort?.();
+          return out;
+        }
         throw new CredentialError('gbrainio_command_failed', ' (a listing needed more than ' + opts.maxPages + ' pages; it is treated as cut short)');
       }
       const args = ['message', 'search', query, '--limit', String(PAGE_LIMIT), ...(cursor ? ['--cursor', cursor] : [])];
@@ -236,12 +239,13 @@ export class GbrainioGmailReader {
    * ('after:<epoch> before:<epoch>', what the floor walk sends) each tag
    * listing runs over the range the main listing reached, drained to its end.
    */
-  async listMessageIds(q: string, opts: { signal?: AbortSignal; maxPages?: number; partialOk?: boolean } = {}): Promise<Array<{ id: string; threadId: string }>> {
+  async listMessageIds(q: string, opts: GmailListOptions = {}): Promise<Array<{ id: string; threadId: string }>> {
     const signal = opts.signal;
     const rows = await this.search(q, {
       ...(signal ? { signal } : {}),
       maxPages: Math.max(1, (opts.maxPages ?? 20) * 4),
       partialOk: opts.partialOk ?? false,
+      ...(opts.onCutShort ? { onCutShort: opts.onCutShort } : {}),
     });
     for (const r of rows) {
       const t = this.tagsFor(r.id);

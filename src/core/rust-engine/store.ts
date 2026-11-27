@@ -8,6 +8,7 @@ import { embeddedSchemaEmbedding } from '../embedded-engine.ts';
 import { DEFAULT_EMBEDDING_DIMENSIONS, DEFAULT_EMBEDDING_MODEL } from '../ai/defaults.ts';
 import { WRITE_GATE_DETECTOR_VERSION } from '../write-gate-schema.ts';
 import { mapStoreError } from './store-errors.ts';
+import type { RestoreCensus, RestoreQuarantinePlan, RestoreQuarantineReport } from './restore-types.ts';
 
 /** Worker threads the store's pool runs its calls on. One write runs at a time; reads overlap. */
 const STORE_POOL_THREADS = 4;
@@ -97,6 +98,8 @@ export interface RustStore {
    * not reported; an unknown relation in `primaryMax` is `invalid_argument`.
    */
   allocatorCheck(seedId: string, primaryMax: Record<string, string | null>): Promise<SeedAllocatorCheck[]>;
+  /** Raises every id counter so its next id is above the floor (the primary's highest id per relation); never lowers one. Resolves the allocatorCheck report taken after the write. */
+  allocatorAdvance(seedId: string, primaryFloor: Record<string, string | null>): Promise<SeedAllocatorCheck[]>;
   /** The store's fact fingerprints of `texts`: the normalized one and the earlier raw-text one. */
   factFingerprints(texts: string[]): Promise<FactFingerprints[]>;
   /**
@@ -115,6 +118,19 @@ export interface RustStore {
   snapshotTo(target: string, options: StoreSnapshotOptions): Promise<StoreSnapshotManifest>;
   /** Asks the snapshot `opId` to stop; true when one was running. It returns at once and does not wait for the copy. */
   snapshotCancel(opId: string): boolean;
+  /**
+   * `gbrain backup restore` only (not a BrainEngine member): one read of what could still run in a restored store, the
+   * authority it holds and the settings a restore changes, with the named `blockers` that refuse a publish. An addon built
+   * before the restore step lacks it (`restoreAddonSupportsSafety`).
+   */
+  restoreCensus(purgeRequestIds: string[]): Promise<RestoreCensus>;
+  /**
+   * `gbrain backup restore` only: detaches sources, rebases managed paths and origins, turns off automation settings,
+   * cancels unfinished jobs, in one write transaction. It revokes nothing: a live OAuth client or local writer is the
+   * blocker `archived_authority`. Rejects `restore_refused` while a blocker stands, `invalid_argument` when the plan
+   * does not match the store and `invalid_state` for a restore id already applied; each leaves the store as it was.
+   */
+  restoreQuarantine(plan: RestoreQuarantinePlan): Promise<RestoreQuarantineReport>;
   close(): Promise<void>;
 }
 
@@ -272,7 +288,12 @@ export interface SeedImportResult {
  * Opens (or creates) the brain store at `databasePath`. A second open of the same directory rejects `rust_store_locked`.
  * A created brain records `embedding` as its embedding identity; an existing brain keeps its own.
  */
-export async function openRustStore(addon: object, databasePath: string, embedding?: { model: string; dimensions: number }): Promise<RustStore> {
+export async function openRustStore(
+  addon: object,
+  databasePath: string,
+  embedding?: { model: string; dimensions: number },
+  opts: { createMissing?: boolean } = {},
+): Promise<RustStore> {
   const { Pool, Brain } = addon as StoreAddon;
   const pool = new Pool(STORE_POOL_THREADS);
   const brain = new Brain(pool);
@@ -281,6 +302,8 @@ export async function openRustStore(addon: object, databasePath: string, embeddi
       schemaVersion: LATEST_SCHEMA_VERSION, createdBy: 'gbrain', chunkStrategy: SEED_CHUNK_STRATEGY,
       writeGateDetectorVersion: WRITE_GATE_DETECTOR_VERSION,
       ...(embedding ? { embeddingModel: embedding.model, embeddingDimensions: embedding.dimensions } : {}),
+      // Sent only when the store must already be there, so every other open sends what it always sent.
+      ...(opts.createMissing === false ? { createMissing: false } : {}),
     });
   } catch (error) {
     await pool.shutdown(0).catch(() => undefined);
@@ -304,6 +327,7 @@ export async function openRustStore(addon: object, databasePath: string, embeddi
     relationDigest: (seedId, relation, lo, hi) => call('relationDigest', () => brain.relationDigest(seedId, relation, lo, hi)),
     relationEntries: (seedId, relation, lo, hi, limit) => call('relationEntries', () => brain.relationEntries(seedId, relation, lo, hi, limit)),
     allocatorCheck: (seedId, primaryMax) => call('allocatorCheck', () => brain.allocatorCheck(seedId, primaryMax)),
+    allocatorAdvance: (seedId, primaryFloor) => call('allocatorAdvance', () => brain.allocatorAdvance(seedId, primaryFloor)),
     factFingerprints: (texts) => call('factFingerprints', () => brain.factFingerprints(texts)),
     seedPlan: () => call('seedPlan', () => brain.seedPlan()),
     snapshotTo: (target, options) => call('snapshotTo', () => brain.snapshotTo(target, { v: 1, ...options })),
@@ -311,6 +335,8 @@ export async function openRustStore(addon: object, databasePath: string, embeddi
       if (typeof brain.snapshotCancel !== 'function') throw mapStoreError(new Error('this addon has no snapshotCancel'), { member: 'snapshotCancel' });
       return brain.snapshotCancel(opId) as boolean;
     },
+    restoreCensus: (purgeRequestIds) => call('restoreCensus', () => brain.restoreCensus(purgeRequestIds)),
+    restoreQuarantine: (plan) => call('restoreQuarantine', () => brain.restoreQuarantine(plan)),
     async close() {
       try { await brain.close(); } finally { await pool.shutdown(STORE_SHUTDOWN_WAIT_MS).catch(() => undefined); }
     },

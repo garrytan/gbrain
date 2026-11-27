@@ -8,9 +8,11 @@
  *        replays), give every chunk of the page a new id from the shared counter, in chunk order, above every id it had;
  *    (b) `get_page` with `around_chunk_id` set to a chunk id from before the rewrite answers `revision_changed`, never a
  *        window of the new text under the old id;
+ *    (c) the code edges that leave a re-chunked calling page go with its old chunk ids, so the code walk finds no calls
+ *        from it until its edges are written again;
  *  - Regression: the Rust store kept a chunk's id when a full replacement (sealChunks, its own putPage re-chunk) wrote new
- *    text at the same index, so a chunk_id from before still opened a window there (around the new text), and a shadow
- *    copy kept other chunk ids than its primary.
+ *    text at the same index, so a chunk_id from before still opened a window there (around the new text), a shadow
+ *    copy kept other chunk ids than its primary, and a re-chunked calling page kept the call edges of its old chunks.
  *  - Why existing coverage misses it: the chunk parity cases compare chunk text and order, never the ids across a rewrite,
  *    and no vector case has an exact tie across pages.
  *  - Seam: none. Real engines and the real put_page and get_page operations.
@@ -25,6 +27,7 @@ import { testBackends } from '../helpers/test-backends.ts';
 import { withEnv } from '../helpers/with-env.ts';
 import { dispatchToolCall } from '../../src/mcp/dispatch.ts';
 import { chunk, installChunks } from './chunk-fixtures.ts';
+import type { CodeEdgeResult } from '../../src/core/types.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -71,5 +74,43 @@ describe('engine parity: a rewritten page gets new chunk ids', () => {
         return value;
       });
     } finally { rmSync(home, { recursive: true, force: true }); }
+  });
+
+  parityTest('a re-chunked calling page loses the call edges of its old chunks, so the code walk finds no calls from it', {
+    methods: ['putPage', 'sealChunks', 'getChunks', 'addCodeEdges', 'getCalleesOf', 'getCallersOf', 'getEdgesByChunk'],
+    timeout: 120_000,
+  }, async (engine) => {
+    const code = (slug: string, symbols: string[]) => symbols.map((s, i) => ({
+      chunk_index: i, chunk_text: `function ${s}() {}`, chunk_source: 'compiled_truth' as const,
+      language: 'typescript', symbol_name: s, symbol_type: 'function', symbol_name_qualified: s,
+    }));
+    const seed = async (slug: string, symbols: string[]) => {
+      await engine.putPage(slug, { type: 'code', page_kind: 'code', title: slug, compiled_truth: symbols.map(s => `function ${s}() {}`).join('\n'), timeline: '' } as never);
+      await installChunks(engine, slug, code(slug, symbols));
+      return (await engine.getChunks(slug)).map(c => Number(c.id));
+    };
+    const [run] = await seed('src-caller-ts', ['run']);
+    const [helper] = await seed('src-callee-ts', ['helper']);
+    await engine.addCodeEdges([
+      { from_chunk_id: run!, to_chunk_id: helper!, from_symbol_qualified: 'run', to_symbol_qualified: 'helper', edge_type: 'calls' },
+      { from_chunk_id: run!, to_chunk_id: null, from_symbol_qualified: 'run', to_symbol_qualified: 'external.fetch', edge_type: 'calls' },
+    ]);
+    const walk = async () => ({
+      callees: (await engine.getCalleesOf('run', { allSources: true })).map((e: CodeEdgeResult) => e.to_symbol_qualified).sort(),
+      callers: (await engine.getCallersOf('helper', { allSources: true })).length,
+      intoHelper: (await engine.getEdgesByChunk(helper!, { direction: 'in' })).length,
+    });
+    const before = await walk();
+    // The calling page's chunks are replaced with the same text: every chunk gets a new id.
+    await installChunks(engine, 'src-caller-ts', code('src-caller-ts', ['run']));
+    const [runAfter] = (await engine.getChunks('src-caller-ts')).map(c => Number(c.id));
+    const after = await walk();
+    const value = { before, after, newId: runAfter! > run!, outOfNew: (await engine.getEdgesByChunk(runAfter!, { direction: 'out' })).length };
+    expect(value).toEqual({
+      before: { callees: ['external.fetch', 'helper'], callers: 1, intoHelper: 1 },
+      after: { callees: [], callers: 0, intoHelper: 0 },
+      newId: true, outOfNew: 0,
+    });
+    return value;
   });
 });

@@ -16,7 +16,7 @@
  *  - Regression: an engine that keeps two canonical members, keeps the flag across a group move, unlinks from the
  *    wrong group, lists a soft-deleted or private member, seeds a group from a page outside the caller's grant, or
  *    leaves a membership behind a hard delete, merges or splits a person's pages across sources. A Rust store that
- *    shows an owner-only source's member page to a non-owner caller leaks it; the shell refuses that read typed.
+ *    shows an owner-only source's member page to a non-owner caller leaks it; the store hides it as the SQL forms do.
  *  - Why existing coverage misses it: test/entity-identity.test.ts runs the caller functions on PGLite only.
  *  - Order: byte order (PGLite's collation and the Rust store). A Postgres database with a locale collation orders
  *    punctuation differently (TODOS.md); the order case re-sorts the Postgres answer and asserts its set.
@@ -240,7 +240,7 @@ describe('engine parity: entity identities', () => {
           await engine.putPage('people/alice-example', page('Alice (texts)'), { sourceId: 'texts' });
           await link(engine, 'g-alice', 'default', 'people/alice-example', true);
           await link(engine, 'g-alice', 'texts', 'people/alice-example');
-          // The Rust store does not read owner-only sources yet: the shell refuses typed rather than show the page.
+          // Every arm hides the owner-only page; the Rust store applies the same page test as readIdentitySiblingCandidates.
           const rows = await withCallerAccess({ identity: ['member:bob-example'], hidePrivate: true, owner: false }, () =>
             list(engine, seed ? { slug: 'people/alice-example', slugSourceId: 'texts', excludePrivate: true } : { entityId: 'g-alice', excludePrivate: true }));
           const keys = rows.map((r) => `${r.source_id}:${r.slug}`);
@@ -375,9 +375,12 @@ describe('entity identity union: a refused Rust read is not "no identity"', () =
     }) as unknown as BrainEngine;
     const viaStore: BrainEngine['listEntityIdentityRows'] = (filter) =>
       (STORE_MEMBERS.listEntityIdentityRows as (b: unknown, f: unknown) => Promise<never>)(brain, filter);
-    // A lineage caller still widens the page policy past what the store reads, so the store member refuses typed.
+    // A member's lineage read is served now (row 32e-b-2: test/engine-parity/labelled-only-reads.test.ts, and the translator cases in
+    // test/rust-private-reads-policy.test.ts). A labelled-only member speaking for an audience of several identities still widens
+    // the page policy past what the store reads, so the store member refuses typed.
     const widened = <T>(fn: () => Promise<T>) => withCallerAccess({
-      identity: ['member:alice-example'], hidePrivate: true, lineage: true,
+      identity: ['member:alice-example'], hidePrivate: true, labelledOnly: true,
+      audienceIdentities: [['member:alice-example'], ['member:bob-example']],
     }, fn);
     const run = (engine: BrainEngine) => widened(() => unionLinksAcrossIdentity(engine, 'people/alice-example', base, 'in',
       { sourceId: 'default', excludePrivate: true } as never));

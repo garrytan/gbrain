@@ -44,17 +44,17 @@ export const deleteOwnedLinks: StoreMember<[originPageId: number | string, linkS
  * with the labelled-only conjunct (`renderWriterReadPolicy`): the rest is served as for any writer, and the conjunct goes to the
  * store as data (the sets `labelledOnlySql` embeds), once the text is shown to be exactly those two parts.
  */
-function writerPolicy(policy: WriterReadPolicy): StorePrivacyPolicy {
-  if (!policy.labelledOnly) return unlabelledWriterPolicy(policy);
-  const rest = unlabelledWriterPolicy({ ...policy, labelledOnly: false });
+function writerPolicy(policy: WriterReadPolicy, member = 'readLinkTargetPages'): StorePrivacyPolicy {
+  if (!policy.labelledOnly) return unlabelledWriterPolicy(policy, member);
+  const rest = unlabelledWriterPolicy({ ...policy, labelledOnly: false }, member);
   const terms = labelledOnlyTerms({ identity: [], audienceIdentities: policy.identities, satisfiedRuleIds: policy.satisfiedRuleIds });
   const expected = `(${renderWriterReadPolicy({ ...policy, labelledOnly: false }, 'p', false)} AND ${labelledOnlyForSql('p', policy.identities, policy.satisfiedRuleIds)})`;
-  if (renderWriterReadPolicy(policy, 'p', false) !== expected) refuseMember('readLinkTargetPages', 'a labelled-only writer whose policy is not the member-access policy and the labelled-only conjunct');
+  if (renderWriterReadPolicy(policy, 'p', false) !== expected) refuseMember(member, 'a labelled-only writer whose policy is not the member-access policy and the labelled-only conjunct');
   return { ...rest, labelledOnly: terms };
 }
 
 /** The store policy for the member-access and privacy parts of the writer's read policy, or a refusal. */
-function unlabelledWriterPolicy(policy: WriterReadPolicy): StorePrivacyPolicy {
+function unlabelledWriterPolicy(policy: WriterReadPolicy, member = 'readLinkTargetPages'): StorePrivacyPolicy {
   const text = renderWriterReadPolicy(policy, 'p', false);
   const off = { honorAliases: false, entityPrivacy: false, ownerOnly: ownerOnlyFormIn(text, 'pages', 'p') };
   const fragment = (record: Parameters<typeof renderForStoreCaller>[0]) =>
@@ -73,11 +73,11 @@ function unlabelledWriterPolicy(policy: WriterReadPolicy): StorePrivacyPolicy {
   if (policy.identities.length === 1 && identity?.length && !applied.identity.length) {
     // One identity holding an invalid entry reads as a writer with no identity. Beside rules the SQL still applies it is a policy
     // the store cannot hold (it judges the rules only for a named identity), and an owner record is not modelled for it.
-    if (applied.satisfiedRuleIds.length) refuseMember('readLinkTargetPages', 'a writer whose identity holds an invalid entry beside satisfied folder rules');
+    if (applied.satisfiedRuleIds.length) refuseMember(member, 'a writer whose identity holds an invalid entry beside satisfied folder rules');
     if (text === fragment({ identity: [], satisfiedRuleIds: [], folderCoverage })) {
       return { ...off, identity: [], ...(folderCoverage.length ? { folderCoverage } : {}), callerRecord: true };
     }
-    refuseMember('readLinkTargetPages', 'a writer whose identity holds an invalid entry and whose record is not a plain member record');
+    refuseMember(member, 'a writer whose identity holds an invalid entry and whose record is not a plain member record');
   }
   // The owner speaking for itself renders the same text without the owner-only clause (CallerAccess.owner), which `off` reads as no test.
   const oneIdentity = (owner: boolean, folders: object) => policy.identities.length === 1 && identity
@@ -95,7 +95,7 @@ function unlabelledWriterPolicy(policy: WriterReadPolicy): StorePrivacyPolicy {
         ...(satisfiedRuleIds.length ? { satisfiedRuleIds } : {}), ...(folderCoverage.length ? { folderCoverage } : {}) };
     }
   }
-  refuseMember('readLinkTargetPages', 'a writer whose owner record or identities widen the member-access policy');
+  refuseMember(member, 'a writer whose owner record or identities widen the member-access policy');
 }
 
 export const readLinkTargetPages: StoreMember<[sourceId: string, slugs: readonly string[], policy: WriterReadPolicy | null], LinkTargetPage[]> =
@@ -105,6 +105,18 @@ export const readLinkTargetPages: StoreMember<[sourceId: string, slugs: readonly
     const { honorAliases } = pagePolicyFlags(privacyPartSql('p'));
     return storeCall({ member: 'readLinkTargetPages', sourceId }, () =>
       brain.readLinkTargetPages(sourceId, [...slugs], storePolicy, honorAliases));
+  };
+
+/**
+ * Whether a row of the slug, live or soft-deleted, fails the writer's read policy (and the privacy part when `hidePrivate`).
+ * The writer shapes are the ones readLinkTargetPages serves, refused before the store is asked; the store judges the row.
+ */
+export const readPageHiddenFromWriter: StoreMember<[sourceId: string, slug: string, policy: WriterReadPolicy, hidePrivate: boolean], boolean> =
+  async (brain, sourceId, slug, policy, hidePrivate) => {
+    const storePolicy = writerPolicy(policy, 'readPageHiddenFromWriter');
+    const { honorAliases } = pagePolicyFlags(privacyPartSql('p'));
+    return Boolean(await storeCall({ member: 'readPageHiddenFromWriter', sourceId, slug }, () =>
+      brain.readPageHiddenFromWriter(sourceId, slug, storePolicy, hidePrivate, honorAliases)));
   };
 
 export const rearmLinksEffects: StoreMember<[opts: LinksRearm], number> = async (brain, opts) => {

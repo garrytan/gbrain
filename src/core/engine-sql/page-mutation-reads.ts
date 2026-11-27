@@ -7,6 +7,7 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import { callerAccessAllowedSql, labelledOnlyForSql, privacyPartSql, readPolicyFragment } from '../search/private-visibility.ts';
+import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
 
 type Raw = Pick<BrainEngine, 'executeRaw'>;
 
@@ -68,8 +69,8 @@ export function memberViewPolicySql(identity: readonly string[], satisfied: read
  * holds no row there. A policy that evaluates to NULL does not admit it.
  */
 export async function readMemberPageReadable(tx: Raw, sourceId: string, slug: string, identity: readonly string[], satisfied: readonly string[], labelled: boolean): Promise<boolean | null> {
-  const [row] = await tx.executeRaw<{ ok: boolean | null }>(
-    'SELECT (' + memberViewPolicySql(identity, satisfied, labelled) + ') AS ok FROM pages p WHERE p.source_id = $1 AND p.slug = $2 LIMIT 1', [sourceId, slug]);
+  const { text, params } = renderFragment(sqlFragment`SELECT (${trustedSql(memberViewPolicySql(identity, satisfied, labelled))}) AS ok FROM pages p WHERE p.source_id = ${sourceId} AND p.slug = ${slug} LIMIT 1`);
+  const [row] = await tx.executeRaw<{ ok: boolean | null }>(text, params);
   return row ? row.ok === true : null;
 }
 
@@ -90,9 +91,10 @@ export const hiddenSlugsPolicySql = (): string => '(' + callerAccessAllowedSql('
  * caller's policy outside `hiddenSources`, in byte order. A row whose policy evaluates to NULL counts as visible.
  */
 export async function readHiddenPageSlugs(tx: Raw, slugs: readonly string[], hiddenSources: readonly string[]): Promise<string[]> {
-  const hidden = hiddenSources.length ? '(NOT ' + hiddenSlugsPolicySql() + ' OR p.source_id = ANY($2::text[]))' : 'NOT ' + hiddenSlugsPolicySql();
-  const rows = await tx.executeRaw<{ slug: string }>(
-    'SELECT p.slug FROM pages p WHERE p.slug = ANY($1::text[]) GROUP BY p.slug HAVING bool_and(COALESCE(' + hidden + ', false)) ORDER BY p.slug COLLATE "C"',
-    hiddenSources.length ? [[...slugs], [...hiddenSources]] : [[...slugs]]);
+  const hidden = hiddenSources.length
+    ? sqlFragment`(NOT ${trustedSql(hiddenSlugsPolicySql())} OR p.source_id = ANY(${[...hiddenSources]}::text[]))`
+    : sqlFragment`NOT ${trustedSql(hiddenSlugsPolicySql())}`;
+  const { text, params } = renderFragment(sqlFragment`SELECT p.slug FROM pages p WHERE p.slug = ANY(${[...slugs]}::text[]) GROUP BY p.slug HAVING bool_and(COALESCE(${hidden}, false)) ORDER BY p.slug COLLATE "C"`);
+  const rows = await tx.executeRaw<{ slug: string }>(text, params);
   return rows.map(r => r.slug);
 }

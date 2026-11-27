@@ -43,10 +43,10 @@ export async function readBeliefTombstones(exec: LegacyUnscopedRead, sourceId: s
 export interface LegacyClaimFingerprintRow { claim: string; fingerprint: string }
 
 /**
- * For each of `claims` whose pre-v341 Postgres fingerprint (gbrain_fact_fingerprint before fact_fingerprint_v3, which folded
+ * For each of `claims` whose pre-v353 Postgres fingerprint (gbrain_fact_fingerprint before fact_fingerprint_v3, which folded
  * whitespace by the locale's `[[:space:]]`) differs from the current one and names an event of `sourceId` that recorded
  * this claim (the event's fact or claim text has the claim's current fingerprint, so a new claim never joins an older,
- * different claim that shares the old fold), the claim and its pre-v341 fingerprint. A claim with none is absent.
+ * different claim that shares the old fold), the claim and its pre-v353 fingerprint. A claim with none is absent.
  */
 export async function readLegacyClaimFingerprints(exec: LegacyUnscopedRead, sourceId: string, claims: readonly string[]): Promise<LegacyClaimFingerprintRow[]> {
   if (!claims.length) return [];
@@ -62,7 +62,7 @@ export interface LegacyTombstoneProbe { kind: 'fact' | 'take'; claimFp: string; 
 
 /**
  * The `claimFp` of each probe whose claim text a purge of the source tombstoned under the claim's current fingerprint or a
- * pre-v341 one no current fingerprint can equal (legacyFingerprintV2Sql): a purge recorded before v341 matches a draft keyed
+ * pre-v353 one no current fingerprint can equal (legacyFingerprintV2Sql): a purge recorded before v353 matches a draft keyed
  * by the current fingerprint, and a purge recorded after matches a draft keyed by the claim's old one. A fact probe reads
  * `fact_purges`, a take probe `take_purges`. No set order.
  */

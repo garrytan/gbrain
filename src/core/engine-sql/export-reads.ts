@@ -63,6 +63,23 @@ export async function listExportWithdrawals(tx: Raw, sourceId: string): Promise<
     ORDER BY visibility COLLATE "C",fact_hash COLLATE "C",subject COLLATE "C"`, [sourceId]);
 }
 
+/** One fact purge tombstone of a source, as `fact_purges` stores it (the request id as text). */
+export interface FactPurgeTombstone { subject: string; visibility: string; fact_hash: string; request_id: string | null; actor: string | null; reason: string | null }
+/** One take purge tombstone of a source, as `take_purges` stores it (the request id as text). */
+export interface TakePurgeTombstone { subject: string; claim_hash: string; request_id: string | null }
+
+/**
+ * The source's fact purge tombstones by visibility, subject and fact hash, and its take purge tombstones by subject and
+ * claim hash, each in byte order: what a purge stored, with the request, actor and reason it recorded.
+ */
+export async function listPurgeTombstones(tx: Raw, sourceId: string): Promise<{ facts: FactPurgeTombstone[]; takes: TakePurgeTombstone[] }> {
+  const facts = await tx.executeRaw<FactPurgeTombstone>(`SELECT subject, visibility, fact_hash, request_id::text AS request_id, actor, reason FROM fact_purges
+    WHERE source_id = $1 ORDER BY visibility COLLATE "C", subject COLLATE "C", fact_hash COLLATE "C"`, [sourceId]);
+  const takes = await tx.executeRaw<TakePurgeTombstone>(`SELECT subject, claim_hash, request_id::text AS request_id FROM take_purges
+    WHERE source_id = $1 ORDER BY subject COLLATE "C", claim_hash COLLATE "C"`, [sourceId]);
+  return { facts, takes };
+}
+
 /** A page the export writes, with its tags in tag order. */
 export interface ExportPageRow { page: Page; tags: string[] }
 
