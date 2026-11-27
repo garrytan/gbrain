@@ -5,21 +5,20 @@
  * of times. `gbrain transcripts accept-fences` previews every such page with a plan_hash, and an apply with that hash
  * records the owner's acceptance of each page's exact rows.
  *
- * Only imported transcripts qualify: `type: conversation`, `transcript_import` frontmatter, AND a live revision the
- * importer wrote (importerWroteLiveRevisionSql: a remote put_page is a journaled request that never passes it). Email,
+ * Only imported transcripts qualify: `type: conversation`, `transcript_import` frontmatter, AND live text the importer
+ * wrote (importerWroteLiveTextSql: a remote write names its own operation as the text's author). Email,
  * calendar and GitHub pages, and any page a remote writer or another local writer last wrote, stay for per-page
  * review. An acceptance binds the page id and a fingerprint of the page's indexed fence rows (fact, take and link ids),
  * and the check re-reads the provenance each run, so a new row, a removed row or a later non-importer write puts the
- * page back on the list. A write with no request keeps the importer's first-write stamp, so on that path the preview
- * offers a page only while no later write moved it past the stamp (`ingested_at >= updated_at`, both the write's own
- * server time). An acceptance also binds the page's content_hash (GST-4026) and holds while the importer's stamp and that
- * exact content do, so maintenance that moves a page's timestamps without changing it keeps it accepted, a write that
- * changes it puts it back, and an importer rewrite with the same rows still counts by the stamp. The record is the config row `transcripts.fence_acceptance` (no operation writes config),
+ * page back on the list. Tag changes, re-embedding and other maintenance change no text, so they keep a page eligible and
+ * accepted (GST-4056, GST-4026); an importer rewrite with the same rows stays accepted. An acceptance records the page's
+ * content_hash it was given for; a page the upgrade attributed as `legacy:` is never offered, and keeps an acceptance
+ * recorded before the upgrade only for that exact content. The record is the config row `transcripts.fence_acceptance` (no operation writes config),
  * and nothing in a page or its rows changes, so repo-less and repo-backed brains behave the same.
  */
 import type { BrainEngine } from '../engine.ts';
 import { computePlanHash } from '../consent.ts';
-import { IMPORTER_INGESTED_VIA, importerWroteLiveRevisionSql } from './importer-provenance.ts';
+import { IMPORTER_INGESTED_VIA, importerWroteLiveTextSql } from './importer-provenance.ts';
 
 export const FENCE_ACCEPTANCE_KEY = 'transcripts.fence_acceptance';
 
@@ -31,11 +30,9 @@ const PROJECTION_KEYS = `ARRAY['embedding','embedded_at','embedding_model','embe
 /** What the doctor check lists per page: location and counts, never a cell value. */
 export interface OutsideFenceItem { source_id: string; slug: string; type: string; facts: number; world_facts: number; takes: number; links: number }
 export interface OutsideFencePage extends OutsideFenceItem {
-  page_id: number; fingerprint: string; imported_transcript: boolean;
-  /** The live revision has no write request (the direct importer's path), where an acceptance binds `content_hash`. */
-  direct: boolean; content_hash: string;
-  /** imported_transcript without the timestamp rule: what a direct-path acceptance holds on while the content is unchanged. */
-  importer_stamped: boolean;
+  page_id: number; fingerprint: string; imported_transcript: boolean; content_hash: string;
+  /** An imported transcript whose live text the v343 backfill attributed to the importer as `legacy:` (never offered for acceptance). */
+  legacy_transcript: boolean;
 }
 export interface FenceAcceptance { page_id: number; source_id: string; slug: string; fingerprint: string; accepted_at: string; content_hash?: string }
 
@@ -45,10 +42,9 @@ export async function listOutsideFencePages(engine: BrainEngine): Promise<Outsid
   const rows = await engine.transaction(async tx => { await tx.executeRaw("SET LOCAL TimeZone = 'UTC'"); return tx.executeRaw<OutsideFencePage & { page_id: number | string }>(
     `WITH listed AS (SELECT p.id AS page_id, p.source_id, p.slug, p.type, sum(x.facts)::int AS facts, sum(x.world_facts)::int AS world_facts,
             sum(x.takes)::int AS takes, sum(x.links)::int AS links, md5(string_agg(x.k, ',' ORDER BY x.k)) AS fingerprint,
-            bool_and(p.revision_write_request_id IS NULL) AS direct, COALESCE(max(p.content_hash), '') AS content_hash,
-            bool_and(p.type = 'conversation' AND p.frontmatter ? 'transcript_import' AND ${importerWroteLiveRevisionSql('p', 'r', '$1')}
-                     AND COALESCE(r.intent->>'ingested_via', p.ingested_via) = $1) AS importer_stamped,
-            bool_and(p.revision_write_request_id IS NOT NULL OR p.ingested_at >= p.updated_at) AS stamp_current
+            COALESCE(max(p.content_hash), '') AS content_hash,
+            bool_and(p.type = 'conversation' AND p.frontmatter ? 'transcript_import' AND ${importerWroteLiveTextSql('p', '$1')}) AS imported_transcript,
+            bool_and(p.type = 'conversation' AND p.frontmatter ? 'transcript_import' AND ${importerWroteLiveTextSql('p', '$1', { legacy: true })}) AS legacy_transcript
        FROM (SELECT fp.id AS page_id, 1 AS facts, CASE WHEN f.visibility = 'world' THEN 1 ELSE 0 END AS world_facts, 0 AS takes, 0 AS links, 'f' || f.id || ':' || md5((to_jsonb(f) - ${PROJECTION_KEYS} - 'consolidated_at' - 'consolidated_into')::text) AS k
                FROM facts f JOIN pages fp ON fp.source_id = f.source_id AND fp.slug = f.source_markdown_slug
               WHERE f.row_num IS NOT NULL AND f.expired_at IS NULL
@@ -56,15 +52,14 @@ export async function listOutsideFencePages(engine: BrainEngine): Promise<Outsid
              UNION ALL SELECT l.origin_page_id, 0, 0, 0, 1, 'l' || l.id || ':' || md5((to_jsonb(l) - 'created_at')::text) FROM links l WHERE l.origin_field = 'links_fence') x
        JOIN pages p ON p.id = x.page_id
        JOIN sources s ON s.id = p.source_id
-       LEFT JOIN persistence_requests r ON r.id = p.revision_write_request_id
       WHERE p.deleted_at IS NULL AND s.archived IS NOT TRUE
         AND ((s.config->>'kind' = 'google' AND p.type IN ('email', 'meeting')) OR s.config->>'kind' = 'github'
              OR p.frontmatter ? 'transcript_import')
       GROUP BY p.id, p.source_id, p.slug, p.type)
-     SELECT *, importer_stamped AND stamp_current AS imported_transcript FROM listed
+     SELECT * FROM listed
       ORDER BY source_id, slug`, [IMPORTER_INGESTED_VIA]); });
   return rows.map(row => ({ ...row, page_id: Number(row.page_id), imported_transcript: row.imported_transcript === true,
-    importer_stamped: row.importer_stamped === true, direct: row.direct === true }));
+    legacy_transcript: row.legacy_transcript === true }));
 }
 
 export async function loadFenceAcceptance(engine: BrainEngine): Promise<FenceAcceptance[]> {
@@ -78,13 +73,13 @@ export async function loadFenceAcceptance(engine: BrainEngine): Promise<FenceAcc
 }
 
 /**
- * An acceptance counts only for an importer-written transcript whose fence rows are exactly the ones accepted. On the
- * direct path an acceptance also holds while the importer's stamp and the content it accepted do (GST-4026), whatever
- * maintenance did to the page's timestamps.
+ * An acceptance counts only for an importer-written transcript whose fence rows are exactly the ones accepted. A page the
+ * upgrade attributed as `legacy:` keeps an acceptance recorded for its exact content (GST-4026's content_hash) while that
+ * text stays; a hash-less acceptance never counts for one.
  */
 export function isAccepted(page: OutsideFencePage, acceptance: readonly FenceAcceptance[]): boolean {
   return acceptance.some(a => a.page_id === page.page_id && a.fingerprint === page.fingerprint
-    && (page.imported_transcript || (page.direct && page.importer_stamped && a.content_hash === page.content_hash)));
+    && (page.imported_transcript || (page.legacy_transcript && !!a.content_hash && a.content_hash === page.content_hash)));
 }
 
 export const fenceItem = ({ source_id, slug, type, facts, world_facts, takes, links }: OutsideFencePage): OutsideFenceItem =>

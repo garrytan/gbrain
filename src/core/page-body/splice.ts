@@ -403,7 +403,7 @@ export async function spliceSegmentedBody(engine: BrainEngine, input: SegmentedS
     await engine.setBodyStagingState(stagingId, 'prepared');
     return { rescanned: false, prepared: { stagingId, expectedGeneration: page.generation, newGeneration: generation, createRows: null, createChunks: null,
       closeOccurrences, retireChunkOccurrences, unchunked: input.chunking.quarantined ? 0 : chunkable.length - chunks.occurrences, priorStale: !page.sealed, body,
-      bodyUnchanged: changed.length === 0 && retireChunkOccurrences.length === 0, rows: { texts: fresh.length, manifest: changed.length, chunks: chunks.rows },
+      bodyUnchanged: changed.length === 0 && retireChunkOccurrences.length === 0, textUnchanged: changed.length === 0 && closeOccurrences.length === 0, rows: { texts: fresh.length, manifest: changed.length, chunks: chunks.rows },
       stagedChunkIndexes: chunks.indexes } };
   } catch (error) {
     await engine.setBodyStagingState(stagingId, 'aborted').catch(() => undefined);

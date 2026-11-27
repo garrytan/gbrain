@@ -59,6 +59,7 @@ import { prepareFactsBackstop, type FactsBackstopStatus } from './effect-facts.t
 import { CONNECTOR_FACTS_PAGE_LIMIT } from '../connectors/api-source.ts';
 import type { GoogleSourceConfig } from '../google/types.ts';
 import { isTrustTier, minTrust } from '../trust/tier.ts';
+import { CONNECTOR_AUTHOR_PREFIX } from './content-author-schema.ts';
 
 interface ConnectorLease { handle: DbLockHandle; signal: AbortSignal; }
 type ConnectorIntentKind = 'connector_v2_import' | 'connector_v2_delete' | 'connector_v2_checkpoint' | 'connector_v2_google_receipts';
@@ -1417,7 +1418,7 @@ export async function prepareConnectorMutation(engine: BrainEngine, row: WriteRe
   let prepared: PreparedContentImport | undefined;
   const tier = 'external_untrusted';
   const result = await importFromContent(engine, row.slug, content, { sourceId: row.source_id, sourcePath: p.sourcePath,
-    filename: basename(p.sourcePath).replace(/\.mdx?$/i, ''), noEmbed: true, allowEmptyOverwrite: true, activePack,
+    filename: basename(p.sourcePath).replace(/\.mdx?$/i, ''), noEmbed: true, allowEmptyOverwrite: true, activePack, content_author: `${CONNECTOR_AUTHOR_PREFIX}${p.connector}`,
     // #5575 A3: connector free text (mail bodies, invite descriptions, issue text) is external and gated.
     writeGate: { tier, origin: { channel: `connector:${p.connector}`, connector: String(p.connector), source_uri: p.sourcePath }, requestId: row.id },
     prepareFrontmatter: page => {

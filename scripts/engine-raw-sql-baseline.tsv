@@ -770,6 +770,7 @@ src/core/persistence/consumer-diagnostics.ts	execute_raw	3
 src/core/persistence/consumer-heartbeat.ts	execute_raw	4
 src/core/persistence/consumer-lane.ts	execute_raw	2
 src/core/persistence/consumer.ts	execute_raw	6
+src/core/persistence/content-author-schema.ts	execute_raw	1	GST-4056: verifiedContentAuthor, one read of a page's verified content author at a revision (oversized backfill); moves behind a typed engine method with the pages readers
 src/core/persistence/context.ts	execute_raw	2
 src/core/persistence/control.ts	execute_raw	2
 src/core/persistence/coordinator.ts	execute_raw	9
