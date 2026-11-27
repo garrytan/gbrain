@@ -249,6 +249,121 @@ describe('engine parity: the eval harness reads', () => {
     return result;
   });
 
+  parityTest('scanTextColumns with activeOnly keeps a live page\'s wanted links and leaves out a deleted page\'s', {
+    methods: ['putPage', 'getPage', 'replaceWantedLinkRows', 'softDeletePages', 'scanTextColumns'],
+  }, async (engine) => {
+    const note = (title: string) => ({ type: 'note' as const, title, compiled_truth: `${title}.` });
+    for (const [slug, token] of [['notes/wants-live', 'wantedlivetoken'], ['notes/wants-gone', 'wantedgonetoken']] as const) {
+      await engine.putPage(slug, note(slug));
+      const origin = await engine.getPage(slug, { sourceId: 'default' });
+      await engine.replaceWantedLinkRows({ pageId: Number(origin!.id), sourceId: 'default' }, {
+        rows: [{ producer: 'body', ref_kind: 'name', target_source_id: 'default', target_ref: token, link_type: '', context: `see ${token}` }],
+        producers: ['body'], readAt: '2026-01-02T03:04:05.678Z' });
+    }
+    await engine.softDeletePages(['notes/wants-gone'], { sourceId: 'default' });
+    const result = {
+      live: { kept: await found(engine, 'wantedlivetoken', { activeOnly: true }), deleted: await found(engine, 'wantedgonetoken', { activeOnly: true }) },
+      all: { kept: await found(engine, 'wantedlivetoken'), deleted: await found(engine, 'wantedgonetoken') },
+    };
+    expect(result).toEqual({ live: { kept: true, deleted: false }, all: { kept: true, deleted: true } });
+    return result;
+  });
+
+  parityTest('scanTextColumns with activeOnly keeps the link transitions and relationships of live pages', {
+    methods: ['putPage', 'writeManualLinkTransitions', 'scanTextColumns'],
+  }, async (engine) => {
+    await engine.putPage('notes/rel-from', { type: 'note', title: 'From', compiled_truth: 'A page.' });
+    await engine.putPage('people/rel-to', { type: 'person', title: 'To', compiled_truth: 'A person.' });
+    await engine.writeManualLinkTransitions({ from: 'notes/rel-from', to: 'people/rel-to', linkType: 'reltypetoken', sourceId: 'default' }, [{ kind: 'start', occurred_on: '2026-02-03' }]);
+    const result = { live: await found(engine, 'reltypetoken', { activeOnly: true }), all: await found(engine, 'reltypetoken') };
+    expect(result).toEqual({ live: true, all: true });
+    return result;
+  });
+
+  parityTest('scanTextColumns finds a token in a config key', {
+    methods: ['setConfig', 'scanTextColumns'],
+  }, async (engine) => {
+    await engine.setConfig('eval.scan.cfgnametoken', 'plain value');
+    const result = { all: await found(engine, 'cfgnametoken'), live: await found(engine, 'cfgnametoken', { activeOnly: true }) };
+    expect(result).toEqual({ all: true, live: true });
+    return result;
+  });
+
+  parityTest('scanTextColumns with activeOnly leaves out the sealed timeline of a deleted page', {
+    methods: ['putPage', 'sealChunks', 'softDeletePages', 'scanTextColumns'],
+  }, async (engine) => {
+    await engine.putPage('notes/sealed', { type: 'note', title: 'Sealed', compiled_truth: 'A sealed page.', timeline: '- 2026-11-20: sealtimelinetoken moved' });
+    await engine.sealChunks('notes/sealed', [{ chunk_index: 0, chunk_text: 'A sealed page.', chunk_source: 'compiled_truth' }], { sourceId: 'default' });
+    const before = await found(engine, 'sealtimelinetoken', { activeOnly: true });
+    await engine.softDeletePages(['notes/sealed'], { sourceId: 'default' });
+    const result = { before, live: await found(engine, 'sealtimelinetoken', { activeOnly: true }), all: await found(engine, 'sealtimelinetoken') };
+    expect(result).toEqual({ before: true, live: false, all: true });
+    return result;
+  });
+
+  parityTest('scanTextColumns breaks a tie of equal values by slug before the limit', {
+    methods: ['putPage', 'scanTextColumns'],
+  }, async (engine) => {
+    for (const slug of ['notes/tie-c', 'notes/tie-a', 'notes/tie-b']) {
+      await engine.putPage(slug, { type: 'note', title: 'Tie', compiled_truth: 'tieprobe the same body' });
+    }
+    const hits = await engine.scanTextColumns({ pattern: 'tieprobe', activeOnly: false, tables: ['pages'] });
+    const [first] = await engine.scanTextColumns({ pattern: 'tieprobe', activeOnly: false, tables: ['pages'], limit: 1 });
+    const result = { slugs: hits.map(h => h.slug), first: first?.slug ?? null };
+    expect(result).toEqual({ slugs: ['notes/tie-a', 'notes/tie-b', 'notes/tie-c'], first: 'notes/tie-a' });
+    return result;
+  });
+
+  parityTest('scanTextColumns finds a page alias, and activeOnly leaves out the aliases of a deleted page', {
+    methods: ['putPage', 'setPageAliases', 'softDeletePages', 'scanTextColumns'],
+  }, async (engine) => {
+    await engine.putPage('companies/aliased-live', { type: 'company', title: 'Live', compiled_truth: 'A company.' });
+    await engine.putPage('companies/aliased-gone', { type: 'company', title: 'Gone', compiled_truth: 'A company.' });
+    await engine.setPageAliases('companies/aliased-live', 'default', ['AliasLiveToken']);
+    await engine.setPageAliases('companies/aliased-gone', 'default', ['AliasGoneToken']);
+    await engine.softDeletePages(['companies/aliased-gone'], { sourceId: 'default' });
+    const result = {
+      all: { live: await found(engine, 'aliaslivetoken'), gone: await found(engine, 'aliasgonetoken') },
+      live: { live: await found(engine, 'aliaslivetoken', { activeOnly: true }), gone: await found(engine, 'aliasgonetoken', { activeOnly: true }) },
+      slugs: await slugsByToken(engine, ['aliaslivetoken'], true),
+    };
+    expect(result).toEqual({ all: { live: true, gone: true }, live: { live: true, gone: false }, slugs: { aliaslivetoken: ['companies/aliased-live'] } });
+    return result;
+  });
+
+  parityTest('scanTextColumns finds a number or a boolean stored as a whole jsonb value', {
+    methods: ['putPage', 'putRawData', 'readPageRedactionRows', 'setRawDataValue', 'scanTextColumns'],
+  }, async (engine) => {
+    const page = await engine.putPage('notes/raw-scalar', { type: 'note', title: 'Raw', compiled_truth: 'A page with raw data.' });
+    await engine.putRawData('notes/raw-scalar', 'crm', { placeholder: 'x' });
+    await engine.putRawData('notes/raw-scalar', 'mail', { placeholder: 'y' });
+    const [first, second] = (await engine.readPageRedactionRows(page.id, 'default', 'notes/raw-scalar')).rawData;
+    await engine.setRawDataValue(page.id, first!.id, 4815162342);
+    await engine.setRawDataValue(page.id, second!.id, true);
+    const hits = await engine.scanTextColumns({ pattern: '4815162342', activeOnly: false });
+    const result = { number: hits.map(h => [h.value, h.slug]), boolean: (await engine.scanTextColumns({ pattern: 'true', activeOnly: false }))
+      .some(h => h.value === 'true' && h.slug === 'notes/raw-scalar') };
+    expect(result).toEqual({ number: [['4815162342', 'notes/raw-scalar']], boolean: true });
+    return result;
+  });
+
+  parityTest('findLiveFactsByText and scanTextColumns with activeOnly leave out a fact whose valid_until has passed', {
+    methods: ['insertFact', 'findLiveFactsByText', 'scanTextColumns'],
+  }, async (engine) => {
+    const lapsed = { fact: 'lapsedfacttoken held until 2020', entity_slug: 'people/alice-example', visibility: 'world', source: 'test', embedding: null,
+      valid_from: new Date('2019-01-01T00:00:00Z'), valid_until: new Date('2020-01-01T00:00:00Z') } as NewFact;
+    const current = { ...lapsed, fact: 'currentfacttoken holds until 2099', valid_until: new Date('2099-01-01T00:00:00Z') } as NewFact;
+    await engine.insertFact(lapsed, { source_id: 'default' });
+    await engine.insertFact(current, { source_id: 'default' });
+    const result = {
+      byText: (await engine.findLiveFactsByText('default', [lapsed.fact, current.fact])).map(r => r.fact),
+      live: { lapsed: await found(engine, 'lapsedfacttoken', { activeOnly: true }), current: await found(engine, 'currentfacttoken', { activeOnly: true }) },
+      all: { lapsed: await found(engine, 'lapsedfacttoken'), current: await found(engine, 'currentfacttoken') },
+    };
+    expect(result).toEqual({ byText: [current.fact], live: { lapsed: false, current: true }, all: { lapsed: true, current: true } });
+    return result;
+  });
+
   parityTest('listTextBearingColumns names the text columns of the tables the evals scan', {
     methods: ['putPage', 'addTakesBatch', 'addTimelineEntry', 'insertFact', 'expireFact', 'softDeletePages', 'listTextBearingColumns'],
   }, async (engine) => {
@@ -367,6 +482,67 @@ describe('engine parity: the eval harness reads', () => {
       await disposePersistenceConsumer(engine);
     }
   }));
+
+  /** Records one committed topology change of `sourceId` ('*' is brain-wide), as a lifecycle writer does. */
+  const topologyChange = (engine: BrainEngine, sourceId: string, operation: string, requestId: string) =>
+    engine.transaction(tx => tx.insertTopologyChange({ principalId: 'd0000000-0000-4000-8000-0000000000f2', requestId, digest: 'e'.repeat(64), operation,
+      sourceId, sourceIncarnation: null, worktreeIds: [], state: 'committed', recovery: null, terminalBytes: 4096, outcome: { source_id: sourceId } }));
+
+  parityTest('withManagedPersistencePaused restores the brain after a change to another source during fn, and keeps a brain-wide change', {
+    methods: ['writerReleaseStore', 'readWriterAdminState', 'withManagedPersistencePaused', 'insertTopologyChange'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'work');
+    await setEnabled(engine, true);
+    const before = await brainState(engine);
+    const sourceChange = await engine.withManagedPersistencePaused(async () => {
+      await topologyChange(engine, 'work', 'company-brain-connect', 'd0000000-0000-4000-8000-0000000000a1');
+    });
+    const afterSource = await brainState(engine);
+    const brainChange = await engine.withManagedPersistencePaused(async () => {
+      await topologyChange(engine, '*', 'writer_deactivate', 'd0000000-0000-4000-8000-0000000000a2');
+    });
+    const afterBrain = await brainState(engine);
+    const result = {
+      sourceChange: sourceChange.restore, afterSource: { enabled: afterSource.enabled, sameEpoch: afterSource.epoch === before.epoch },
+      brainChange: brainChange.restore, afterBrain: { enabled: afterBrain.enabled, sameEpoch: afterBrain.epoch === before.epoch },
+    };
+    expect(result).toEqual({ sourceChange: 'restored', afterSource: { enabled: true, sameEpoch: true },
+      brainChange: 'paused_state_changed', afterBrain: { enabled: false, sameEpoch: true } });
+    return result;
+  });
+
+  parityTest('withManagedPersistencePaused gives the caller both errors when fn throws and the restore also fails', {
+    methods: ['writerReleaseStore', 'withManagedPersistencePaused'],
+  }, async (engine) => {
+    await setEnabled(engine, true);
+    const restoreFailure = new Error('restore failed');
+    const target = engine as unknown as { restoreManagedPersistence: BrainEngine['restoreManagedPersistence'] };
+    target.restoreManagedPersistence = () => Promise.reject(restoreFailure);
+    const errorOf = (e: unknown) => {
+      const err = e as { message?: string; restoreError?: unknown; errors?: unknown[] };
+      return { name: e instanceof AggregateError ? 'AggregateError' : typeof e, message: err.message ?? String(e),
+        restoreError: err.restoreError === restoreFailure, errors: err.errors?.map(x => x === restoreFailure ? 'restore' : String((x as Error)?.message ?? x)) ?? null };
+    };
+    let outcomes: unknown[];
+    try {
+      const frozen = Object.freeze(new Error('frozen import failed'));
+      outcomes = [
+        await engine.withManagedPersistencePaused(async () => { throw new Error('import failed'); }).then(() => 'resolved', errorOf),
+        await engine.withManagedPersistencePaused(async () => { throw 'import failed as text'; }).then(() => 'resolved', errorOf),
+        await engine.withManagedPersistencePaused(async () => { throw frozen; }).then(() => 'resolved', errorOf),
+      ];
+    } finally {
+      delete (target as Partial<typeof target>).restoreManagedPersistence;
+    }
+    await setEnabled(engine, true);
+    const result = { outcomes };
+    expect(result).toEqual({ outcomes: [
+      { name: 'object', message: 'import failed', restoreError: true, errors: null },
+      { name: 'AggregateError', message: 'withManagedPersistencePaused: fn failed and the restore failed; the brain may still be paused', restoreError: true, errors: ['import failed as text', 'restore'] },
+      { name: 'AggregateError', message: 'withManagedPersistencePaused: fn failed and the restore failed; the brain may still be paused', restoreError: true, errors: ['frozen import failed', 'restore'] },
+    ] });
+    return result;
+  });
 
   parityTest('a pause whose reply was lost leaves the brain at enabled=false, and activation turns it back on with a new epoch', {
     methods: ['writerReleaseStore', 'readWriterAdminState', 'pauseManagedPersistence'],

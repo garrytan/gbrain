@@ -7,7 +7,8 @@
  *    running role cannot read every row of a scanned table (no SELECT, or row-level security applies to it).
  *  - Regression: the scan used unqualified names (a temporary table of the same name was read instead), joined every
  *    page_id to pages.id (a uuid page_id aborted the whole scan with 42883), and a role that row security filtered got
- *    an empty answer, which reads as "the text is gone".
+ *    an empty answer, which reads as "the text is gone" (also when the table's only text column is a domain over
+ *    text, which the visibility check did not count as text).
  *  - Why existing coverage misses it: the engine parity file runs only gbrain's own tables as their owner, and the
  *    byte-for-byte pins answer the catalog with a recorder.
  *  - Seam: none. Real PGLite and, with DATABASE_URL, real Postgres; the row security case needs a real role.
@@ -92,6 +93,23 @@ describe.if(backends.includes('postgres'))('scanTextColumns on Postgres', () => 
       expect(refused).toBe('scanTextColumns: the running role cannot read every row of facts, pages; run the scan as the table owner or a BYPASSRLS role');
     });
     expect(await factHits(engine, 'hiddentoken')).toEqual([['facts', 'hiddentoken is stored']]);
+  }, 120_000);
+
+  test('a role that row security filters is refused for a table whose only text column is a domain over text', async () => {
+    await rolledBack(engine, async tx => {
+      const [{ schema }] = await tx.executeRaw<{ schema: string }>('SELECT current_schema()::text AS schema');
+      await tx.executeRaw('CREATE DOMAIN eval_scan_note AS text');
+      await tx.executeRaw('CREATE TABLE eval_scan_domain (id bigint, note eval_scan_note)');
+      await tx.executeRaw("INSERT INTO eval_scan_domain VALUES (1, 'domaintoken is stored')");
+      await tx.executeRaw('ALTER TABLE eval_scan_domain ENABLE ROW LEVEL SECURITY');
+      await tx.executeRaw(`GRANT USAGE ON SCHEMA "${schema}" TO ${reader}`);
+      await tx.executeRaw(`GRANT SELECT ON eval_scan_domain, pages TO ${reader}`);
+      // The owner reads the row: the catalog lists the domain column as text.
+      expect((await tx.scanTextColumns({ pattern: 'domaintoken', activeOnly: false, tables: ['eval_scan_domain'] })).map(h => h.value)).toEqual(['domaintoken is stored']);
+      await tx.executeRaw(`SET LOCAL ROLE ${reader}`);
+      const refused = await tx.scanTextColumns({ pattern: 'domaintoken', activeOnly: false, tables: ['eval_scan_domain'] }).then(h => JSON.stringify(h), (e: Error) => e.message);
+      expect(refused).toBe('scanTextColumns: the running role cannot read every row of eval_scan_domain, pages; run the scan as the table owner or a BYPASSRLS role');
+    });
   }, 120_000);
 
   test('a role with no privilege on a scanned table is refused, naming it, instead of answering no hits', async () => {

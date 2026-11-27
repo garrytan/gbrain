@@ -31,7 +31,7 @@ const toDate = (v: unknown): Date | null => (v === null || v === undefined ? nul
 const toId = (v: unknown): number | null => (v === null || v === undefined ? null : Number(v));
 
 export const FACTS_BY_IDS_SQL = 'SELECT id, source_id, fact, entity_slug, expired_at, superseded_by FROM facts WHERE id = ANY($1::bigint[]) ORDER BY id';
-export const LIVE_FACTS_BY_TEXT_SQL = 'SELECT id, fact FROM facts WHERE source_id = $1 AND fact = ANY($2::text[]) AND expired_at IS NULL ORDER BY id';
+export const LIVE_FACTS_BY_TEXT_SQL = 'SELECT id, fact FROM facts WHERE source_id = $1 AND fact = ANY($2::text[]) AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now()) ORDER BY id';
 export const PAGE_ID_SLUGS_SQL = 'SELECT id, slug, source_id, deleted_at FROM pages ORDER BY id';
 
 /** The facts with these ids in any source, by id; a missing id answers nothing and a repeated id answers once. */
@@ -44,7 +44,10 @@ export async function getFactsByIds(engine: Raw, ids: readonly number[]): Promis
   }));
 }
 
-/** The live (unexpired) facts of `sourceId` whose text is exactly one of `texts`, by id. */
+/**
+ * The live facts of `sourceId` whose text is exactly one of `texts`, by id: not expired and not past their
+ * `valid_until` (the active-fact predicate of the fact reads, engine-sql/facts.ts).
+ */
 export async function findLiveFactsByText(engine: Raw, sourceId: string, texts: readonly string[]): Promise<Array<{ id: number; fact: string }>> {
   if (!texts.length) return [];
   const rows = await engine.executeRaw<{ id: number | string; fact: string }>(LIVE_FACTS_BY_TEXT_SQL, [sourceId, [...texts]]);
@@ -112,7 +115,9 @@ export function catalogIdentifierSql(name: string): string {
 /** What a scanned table carries besides its text columns: its schema and every column (a page_id kept only when it is an integer). */
 export interface TextScanTable { schema: string; table: string; text: readonly string[]; all: ReadonlySet<string> }
 
-const scanPageId = (t: TextScanTable): string | null => (t.table === 'pages' ? 'x."id"' : t.all.has('page_id') ? 'x."page_id"' : null);
+/** The page a row of the table is about: a page's own id, a wanted link's origin page, else its page_id. */
+const scanPageId = (t: TextScanTable): string | null => (t.table === 'pages' ? 'x."id"'
+  : t.table === 'wanted_links' && t.all.has('origin_page_id') ? 'x."origin_page_id"' : t.all.has('page_id') ? 'x."page_id"' : null);
 const qualified = (t: TextScanTable, table: string): string => `${catalogIdentifierSql(t.schema)}.${catalogIdentifierSql(table)}`;
 
 /** The slug, page id and entity columns of one scanned table's arm (catalog identifiers quoted by catalogIdentifierSql). */
@@ -137,18 +142,23 @@ export function catalogScanJoinSql(t: TextScanTable): string {
 }
 
 /**
- * The live-row filters of activeOnly: an unexpired, undeleted row, an active take, a row of no deleted page (by its
- * page id, or a fence row by its source and source_markdown_slug).
+ * The live-row filters of activeOnly: an unexpired, undeleted row, a fact not past its valid_until, an active take, a
+ * row of no deleted page (by its page id or a wanted link's origin page, a fence row by its source and
+ * source_markdown_slug, a page alias by its source and slug).
  */
 export function catalogScanLiveSql(t: TextScanTable, activeOnly: boolean): string {
   if (!activeOnly) return '';
   return [
     t.all.has('expired_at') ? ' AND x."expired_at" IS NULL' : '',
     t.all.has('deleted_at') ? ' AND x."deleted_at" IS NULL' : '',
+    t.table === 'facts' && t.all.has('valid_until') ? ' AND (x."valid_until" IS NULL OR x."valid_until" > now())' : '',
     t.table === 'takes' && t.all.has('active') ? ' AND x."active"' : '',
     scanPageId(t) ? ' AND (p."id" IS NULL OR p."deleted_at" IS NULL)' : '',
     t.all.has('source_id') && t.all.has('source_markdown_slug')
       ? ` AND NOT EXISTS (SELECT 1 FROM ${qualified(t, 'pages')} q WHERE q."source_id" = x."source_id" AND q."slug" = x."source_markdown_slug" AND q."deleted_at" IS NOT NULL)`
+      : '',
+    t.table === 'page_aliases' && t.all.has('source_id') && t.all.has('slug')
+      ? ` AND NOT EXISTS (SELECT 1 FROM ${qualified(t, 'pages')} q WHERE q."source_id" = x."source_id" AND q."slug" = x."slug" AND q."deleted_at" IS NOT NULL)`
       : '',
   ].join('');
 }
@@ -164,17 +174,28 @@ export function catalogTextScanSql(t: TextScanTable, activeOnly: boolean, patter
 
 /**
  * The current schema, and the tables of it the running role cannot read in full (no SELECT, or row security applies),
- * among every base table with a text-bearing column (only those named in $1 when it is not null) and pages. It reads
- * pg_catalog, which lists every table whatever the role's privileges; information_schema hides a table the role has
- * no privilege on.
+ * among every base table with a text-bearing column (only those named in $1 when it is not null) and pages. A column
+ * of a domain counts by the domain's base type, as information_schema's data_type reads it. It reads pg_catalog,
+ * which lists every table whatever the role's privileges; information_schema hides a table the role has no privilege
+ * on.
  */
 export const SCAN_VISIBILITY_SQL = `SELECT current_schema()::text AS schema,
       COALESCE(array_agg(c.relname::text ORDER BY c.relname::text COLLATE "C") FILTER (WHERE NOT pg_catalog.has_table_privilege(c.oid, 'SELECT') OR pg_catalog.row_security_active(c.oid)), '{}') AS hidden
     FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
     WHERE n.nspname = current_schema() AND c.relkind IN ('r', 'p')
       AND (c.relname = 'pages' OR (($1::text[] IS NULL OR c.relname = ANY($1::text[]))
-        AND EXISTS (SELECT 1 FROM pg_catalog.pg_attribute a WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
-          AND a.atttypid IN ('text'::regtype, 'varchar'::regtype, 'json'::regtype, 'jsonb'::regtype, 'text[]'::regtype, 'varchar[]'::regtype))))`;
+        AND EXISTS (SELECT 1 FROM pg_catalog.pg_attribute a JOIN pg_catalog.pg_type ty ON ty.oid = a.atttypid
+          WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+          AND (CASE WHEN ty.typtype = 'd' THEN ty.typbasetype ELSE a.atttypid END)
+            IN ('text'::regtype, 'varchar'::regtype, 'json'::regtype, 'jsonb'::regtype, 'text[]'::regtype, 'varchar[]'::regtype))))`;
+
+/**
+ * The scan's hit order: table, column and value, then the slug, page id and entity a tie of equal values is about, each
+ * in UTF-8 byte order with a missing one first (the Rust store sorts the same way), so a limit keeps the same hits on
+ * every engine.
+ */
+export const SCAN_ORDER_SQL = `convert_to(hit."table", 'UTF8'), convert_to(hit."column", 'UTF8'), convert_to(hit.value, 'UTF8'), `
+  + `convert_to(hit.slug, 'UTF8') NULLS FIRST, hit.page_id NULLS FIRST, convert_to(hit.entity_slug, 'UTF8') NULLS FIRST`;
 
 /** A limit the scan accepts: absent, or a whole number of zero or more. */
 export function assertScanLimit(limit: number | undefined): void {
@@ -182,8 +203,8 @@ export function assertScanLimit(limit: number | undefined): void {
 }
 
 /**
- * Each value of a text-bearing column that contains the pattern (case-insensitive), by table, column and value in
- * UTF-8 byte order, at most `limit`. One statement reads every table, so it sees one snapshot and the database keeps
+ * Each value of a text-bearing column that contains the pattern (case-insensitive), in SCAN_ORDER_SQL order (table,
+ * column, value, then the slug, page id and entity of a tie), at most `limit`. One statement reads every table, so it sees one snapshot and the database keeps
  * only `limit` hits. Refuses first, naming them, when the running role cannot read a table it would scan in full: an
  * empty answer from a table it cannot see would read as "the text is gone".
  */
@@ -209,40 +230,48 @@ export async function scanTextColumns(engine: Raw, spec: TextScanSpec): Promise<
   const schema = seen!.schema;
   const arms = joinFragments([...byTable].map(([table, text]) => catalogTextScanSql({ schema, table, text, all: all.get(table) ?? new Set() }, spec.activeOnly, spec.pattern)), ' UNION ALL ');
   const limit = spec.limit === undefined ? sqlFragment`` : sqlFragment` LIMIT ${spec.limit}`;
-  const { text: sql, params } = renderFragment(sqlFragment`SELECT * FROM (${arms}) hit ORDER BY convert_to(hit."table", 'UTF8'), convert_to(hit."column", 'UTF8'), convert_to(hit.value, 'UTF8')${limit}`);
+  const { text: sql, params } = renderFragment(sqlFragment`SELECT * FROM (${arms}) hit ORDER BY ${trustedSql(SCAN_ORDER_SQL)}${limit}`);
   const rows = await engine.executeRaw<Record<string, unknown>>(sql, params);
   return rows.map(r => ({ table: String(r.table), column: String(r.column), slug: (r.slug as string | null) ?? null, page_id: toId(r.page_id),
     entity_slug: (r.entity_slug as string | null) ?? null, value: String(r.value) }));
 }
 
 /**
- * The brain row's managed state before a harness pause: `enabled`, `mode_epoch` and the count of recorded topology
- * changes (each as text).
+ * The brain row's managed state before a harness pause: `enabled`, `mode_epoch` and the count of recorded brain-wide
+ * topology changes (`source_id = '*'`), each as text. A change to one source (a source add, claim, removal or a
+ * company-brain connect) does not change the brain's own state, so it is not counted.
  */
 export interface ManagedPausePrior { enabled: boolean; mode_epoch: string; topology_changes: string }
 
 /** What withManagedPersistencePaused reports: fn's result and whether the prior state was put back. */
 export interface ManagedPauseOutcome<T> { result: T; restore: 'restored' | 'paused_state_changed' }
 
-/** Reads the brain row's enabled, mode_epoch and topology change count and turns enabled off in one statement, moving nothing else. */
-export const PAUSE_MANAGED_SQL = `WITH prior AS (SELECT enabled, mode_epoch, (SELECT count(*) FROM persistence_topology_changes) AS topology_changes
+/** Reads the brain row's enabled, mode_epoch and brain-wide topology change count and turns enabled off in one statement, moving nothing else. */
+export const PAUSE_MANAGED_SQL = `WITH prior AS (SELECT enabled, mode_epoch, (SELECT count(*) FROM persistence_topology_changes WHERE source_id = '*') AS topology_changes
         FROM persistence_brain WHERE singleton = 1 FOR UPDATE),
       paused AS (UPDATE persistence_brain SET enabled = false WHERE singleton = 1)
     SELECT enabled, mode_epoch::text AS mode_epoch, topology_changes::text AS topology_changes FROM prior`;
 /**
- * Puts `enabled` back only while the row is still paused at the epoch the pause read and no topology change was
- * recorded since (compare-and-set). A deactivation of a disabled brain releases its claims without moving the epoch,
- * but it records a topology change.
+ * Puts `enabled` back only while the row is still paused at the epoch the pause read and no brain-wide topology change
+ * was recorded since (compare-and-set). A deactivation of a disabled brain releases its claims without moving the
+ * epoch, but it records a brain-wide topology change.
  */
 export const RESTORE_MANAGED_SQL = `UPDATE persistence_brain SET enabled = $1 WHERE singleton = 1 AND enabled = false AND mode_epoch = $2::bigint
-      AND (SELECT count(*) FROM persistence_topology_changes) = $3::bigint RETURNING true AS restored`;
+      AND (SELECT count(*) FROM persistence_topology_changes WHERE source_id = '*') = $3::bigint RETURNING true AS restored`;
 
-/** Takes the brain row's lock, so the restore statement after it sees every topology change committed before it. */
+/** Takes the brain row's lock, so the statement after it sees every topology change committed before it. */
 export const LOCK_BRAIN_SQL = 'SELECT 1 FROM persistence_brain WHERE singleton = 1 FOR UPDATE';
 
-/** Turns managed persistence off with no mode_epoch bump; returns the prior state. Refuses a brain with no brain row. */
-export async function pauseManagedPersistence(engine: Raw): Promise<ManagedPausePrior> {
-  const [row] = await engine.executeRaw<{ enabled: boolean; mode_epoch: string; topology_changes: string }>(PAUSE_MANAGED_SQL);
+/**
+ * Turns managed persistence off with no mode_epoch bump; returns the prior state. Refuses a brain with no brain row.
+ * One transaction: the brain row lock first, then the pause in a later statement, whose snapshot then counts a
+ * deactivation that held the lock (a statement's snapshot is taken before it waits for a lock).
+ */
+export async function pauseManagedPersistence(engine: Pick<BrainEngine, 'transaction'>): Promise<ManagedPausePrior> {
+  const [row] = await engine.transaction(async tx => {
+    await tx.executeRaw(LOCK_BRAIN_SQL);
+    return tx.executeRaw<{ enabled: boolean; mode_epoch: string; topology_changes: string }>(PAUSE_MANAGED_SQL);
+  });
   if (!row) throw new Error('pauseManagedPersistence: this brain has no persistence brain row');
   return { enabled: row.enabled === true, mode_epoch: String(row.mode_epoch), topology_changes: String(row.topology_changes) };
 }
@@ -260,6 +289,24 @@ export async function restoreManagedPersistence(engine: Pick<BrainEngine, 'trans
   });
 }
 
+/** The message of the error thrown when fn failed and the restore failed too, and fn's error cannot carry the restore error. */
+export const PAUSE_BOTH_FAILED = 'withManagedPersistencePaused: fn failed and the restore failed; the brain may still be paused';
+
+/**
+ * The error to throw when fn threw `error` and the restore threw `restoreError`: fn's error with `restoreError`
+ * attached when it is an object that takes the property, else an AggregateError of both (also with `restoreError`),
+ * so neither error hides the other.
+ */
+function withRestoreError(error: unknown, restoreError: unknown): unknown {
+  if (error && typeof error === 'object') {
+    try {
+      Object.assign(error, { restoreError });
+      if ((error as { restoreError?: unknown }).restoreError === restoreError) return error;
+    } catch { /* a frozen or non-extensible error: fall through to the AggregateError */ }
+  }
+  return Object.assign(new AggregateError([error, restoreError], PAUSE_BOTH_FAILED), { restoreError });
+}
+
 /** The engines (in this process) that hold a harness pause now. */
 const pausesHeld = new WeakSet<object>();
 
@@ -275,8 +322,10 @@ const restoreUncancelled = (engine: Pick<BrainEngine, 'restoreManagedPersistence
 /**
  * Runs `fn` with managed persistence paused (a harness step such as one import), on any engine: pause with no
  * mode_epoch bump, run fn, then compare-and-set the prior enabled value back. An activation or deactivation that ran
- * during fn moved the epoch or recorded a topology change, so it is kept and the outcome reports paused_state_changed.
- * When fn throws, the restore still runs and fn's error is rethrown (a failed restore is attached as `restoreError`).
+ * during fn moved the epoch or recorded a brain-wide topology change, so it is kept and the outcome reports
+ * paused_state_changed; a change to one source only is not, so the brain is restored. When fn throws, the restore still
+ * runs and fn's error is rethrown; a failed restore is attached to it as `restoreError`, or, when fn's error cannot
+ * take the property (not an object, or frozen), an AggregateError of both is thrown instead.
  * The restore runs outside the request's abort signal and the read and statement deadlines.
  *
  * Contract: this is the eval harness's hook only, one pause at a time per brain. A second pause on the same engine
@@ -298,10 +347,9 @@ export async function withManagedPersistencePaused<T>(
     try {
       result = await fn();
     } catch (error) {
-      await restoreUncancelled(engine, prior).catch((restoreError: unknown) => {
-        if (error && typeof error === 'object') Object.assign(error, { restoreError });
-      });
-      throw error;
+      let restoreFailure: { error: unknown } | null = null;
+      await restoreUncancelled(engine, prior).catch((restoreError: unknown) => { restoreFailure = { error: restoreError }; });
+      throw restoreFailure ? withRestoreError(error, (restoreFailure as { error: unknown }).error) : error;
     }
     const restored = await restoreUncancelled(engine, prior);
     return { result, restore: restored ? 'restored' : 'paused_state_changed' };
