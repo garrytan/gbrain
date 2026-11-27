@@ -7,7 +7,8 @@
  * Protects: when a per-file import ends in `engine_capability_missing`, `runImport` rejects with that same refusal, writes no
  * failure ledger row and prints no partial result; every other per-file failure still ends the run "partial" with its
  * failures listed and its ledger rows, and an import on an engine that serves every member is unchanged.
- * Fails when the per-file catch records a capability refusal as a file failure.
+ * Fails when the per-file catch records a capability refusal as a file failure, or when the Rust-engine stand-in refuses a
+ * member a markdown import reaches (the Rust store serves the put path).
  * Hermetic PGLite in-memory behind the Rust-engine stand-in (test/helpers/rust-stand-in.ts); GBRAIN_HOME is a temp directory.
  */
 import { afterAll, beforeAll, beforeEach, expect, test } from 'bun:test';
@@ -20,6 +21,7 @@ import { runImport } from '../src/commands/import.ts';
 import { loadSyncFailures } from '../src/core/sync-failure-ledger.ts';
 import { isEngineCapabilityRefusal } from '../src/core/engine-capability-refusal.ts';
 import { rustStandIn } from './helpers/rust-stand-in.ts';
+import { capabilityMissing } from '../src/core/rust-engine/errors.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { withEnv } from './helpers/with-env.ts';
 
@@ -58,8 +60,20 @@ async function runCaptured(view: BrainEngine) {
   return { stdout: lines.join('\n'), error, ledger, returned: out.r };
 }
 
+/**
+ * The Rust-engine stand-in with its per-file write refused: the Rust store now serves every member a markdown import
+ * reaches, so the refusal is injected at the same per-file step the "disk on fire" case below breaks.
+ */
+function refusingWrite(view: BrainEngine): BrainEngine {
+  return new Proxy(view, { get(target, key) {
+    if (key === 'transaction') return async () => { throw capabilityMissing('pages', 'putPage'); };
+    const value = (target as unknown as Record<PropertyKey, unknown>)[key];
+    return typeof value === 'function' ? value.bind(target) : value;
+  } }) as unknown as BrainEngine;
+}
+
 test('a capability refusal on a file ends the import with that refusal, no partial result and no ledger row', async () => {
-  const { stdout, error, ledger } = await runCaptured(rustStandIn(engine));
+  const { stdout, error, ledger } = await runCaptured(refusingWrite(rustStandIn(engine)));
   expect(isEngineCapabilityRefusal(error), `rejected with ${String(error)}`).toBe(true);
   expect(ledger).toBe(0);
   expect(stdout).not.toContain('"status":"partial"');
@@ -80,6 +94,16 @@ test('any other per-file failure still ends the run partial with its failures an
 test('an engine that serves every member imports the same files', async () => {
   const { stdout, error, ledger } = await runCaptured(engine);
   expect(error).toBeNull();
+  expect(ledger).toBe(0);
+  expect(stdout).toContain('"status":"success"');
+  expect(stdout).toContain('"imported":3');
+});
+
+test('the Rust-engine stand-in serves every member a markdown import reaches', async () => {
+  const refused: string[] = [];
+  const { stdout, error, ledger } = await runCaptured(rustStandIn(engine, refused));
+  expect(error, `rejected with ${String(error)}`).toBeNull();
+  expect(refused).toEqual([]);
   expect(ledger).toBe(0);
   expect(stdout).toContain('"status":"success"');
   expect(stdout).toContain('"imported":3');

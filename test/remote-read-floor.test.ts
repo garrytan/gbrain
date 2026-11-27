@@ -17,6 +17,7 @@ import { privatePagesFilterFragment, privateProvenanceFilterFragment, remoteProv
 const PLAIN: Record<string, string> = {
   'src/core/engine-sql/trust-tier-reads.ts listValidTimeIdentities privatePagesFilterFragment': 'the world flag of the page; the read itself is gated by privatePagesFilterForCaller',
   'src/core/engine-sql/link-temporal.ts readLinkRelationshipEvidence privatePagesFilterFragment': 'write-side: records whether a link origin is public',
+  'src/core/rust-engine/store-members/link-temporal.ts originPolicy privatePagesFilterFragment': 'write-side: the Rust store records whether a link origin is public under the same policy',
   'src/core/engine-sql/belief-state.ts readBeliefStateRows privatePagesFilterFragment': 'the ledger and purge read the stored world visibility, not a caller view',
   'src/commands/sources-add-next.ts noGrantFloorNext privatePagesFilterFragment': 'local CLI hint after sources add; never a remote read',
   'src/core/ai/decide/egress.ts visiblePages privatePagesFilterFragment': 'egress policy: which pages may leave the machine, judged as world',
@@ -27,7 +28,6 @@ const PLAIN: Record<string, string> = {
   'src/core/engine-sql/identity-decisions.ts listRestrictedIdentityMembers privatePagesFilterFragment': 'write-side: which duplicate-decision members may be written into the home repository, judged as world; local dedupe only',
   'src/core/engine-sql/facts-purge.ts readHeldRowVisibility privatePagesFilterFragment': 'write-side: whether the target page is world (the held-fact move plan read)',
   'src/core/facts/held-fact-move.ts planHeldMoves privatePagesFilterFragment': 'write-side: whether the target page is world',
-  'src/core/link-relationships.ts refreshRelationships privatePagesFilterFragment': 'write-side: records whether a link origin is public',
   'src/core/ops/valid-time-read.ts resolveIdentity privatePagesFilterFragment': 'the world flag of the page; the read itself is gated by privatePagesFilterForCaller',
   'src/core/persistence/change-reason.ts pageWorldVisible privatePagesFilterFragment': 'write-side: whether a change reason may be published',
   'src/core/persistence/concept-rebuild.ts ACCESS_SQL privatePagesFilterFragment': 'maintenance: compares a hidden concept\'s access with its rebuild\'s, to refuse a wider one',

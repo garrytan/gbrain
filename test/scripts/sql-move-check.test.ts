@@ -141,22 +141,23 @@ describe('sql-move-check', () => {
   });
 });
 
-// The eleven statements copied into engine-sql, each found by the text it starts with, and the file whose inline text
-// it must equal byte for byte. The callers still hold their own copy until the cut that switches them over; that cut
-// moves each row's origin to the engine-sql text it now calls, or drops the row with the inline statement.
+// The eleven statements copied into engine-sql, each found by the text it starts with, and the file that held the inline
+// text. A row whose callers still hold their own copy must equal it byte for byte. A row marked `cut` is done: its callers
+// delegate to the engine-sql member (wanted-links, takes and timeline), so the statement lives in engine-sql only and its
+// old origin no longer holds it.
 const REPO = resolve(import.meta.dir, '..', '..');
-const COPIED: { module: string; start: string; origin: string }[] = [
+const COPIED: { module: string; start: string; origin: string; cut?: true }[] = [
   { module: 'code-traversal-cache', start: 'SELECT response_json, computed_at', origin: 'code-intel/traversal-cache.ts' },
   { module: 'code-traversal-cache', start: 'INSERT INTO code_traversal_cache', origin: 'code-intel/traversal-cache.ts' },
   { module: 'code-traversal-cache', start: 'WITH deleted AS (DELETE FROM code_traversal_cache RETURNING 1)', origin: 'code-intel/traversal-cache.ts' },
   { module: 'code-traversal-cache', start: 'WITH deleted AS (\n       DELETE FROM code_traversal_cache WHERE source_id', origin: 'code-intel/traversal-cache.ts' },
-  { module: 'wanted-links', start: 'SELECT id FROM sources WHERE id = ANY', origin: 'wanted-links-store.ts' },
-  { module: 'wanted-links', start: 'DELETE FROM wanted_links w', origin: 'wanted-links-store.ts' },
-  { module: 'wanted-links', start: 'INSERT INTO wanted_links\n', origin: 'wanted-links-store.ts' },
-  { module: 'takes', start: 'SELECT k.row_num FROM takes k', origin: 'persistence/canonical-projections.ts' },
-  { module: 'takes', start: 'DELETE FROM takes WHERE page_id=$1 AND row_num=ANY', origin: 'persistence/canonical-projections.ts' },
-  { module: 'timeline', start: 'DELETE FROM timeline_entries t USING jsonb_to_recordset', origin: 'persistence/canonical-projections.ts' },
-  { module: 'timeline', start: 'UPDATE timeline_entries t SET detail=r.next', origin: 'persistence/canonical-projections.ts' },
+  { module: 'wanted-links', start: 'SELECT id FROM sources WHERE id = ANY', origin: 'wanted-links-store.ts', cut: true },
+  { module: 'wanted-links', start: 'DELETE FROM wanted_links w', origin: 'wanted-links-store.ts', cut: true },
+  { module: 'wanted-links', start: 'INSERT INTO wanted_links\n', origin: 'wanted-links-store.ts', cut: true },
+  { module: 'takes', start: 'SELECT k.row_num FROM takes k', origin: 'persistence/canonical-projections.ts', cut: true },
+  { module: 'takes', start: 'DELETE FROM takes WHERE page_id=$1 AND row_num=ANY', origin: 'persistence/canonical-projections.ts', cut: true },
+  { module: 'timeline', start: 'DELETE FROM timeline_entries t USING jsonb_to_recordset', origin: 'persistence/canonical-projections.ts', cut: true },
+  { module: 'timeline', start: 'UPDATE timeline_entries t SET detail=r.next', origin: 'persistence/canonical-projections.ts', cut: true },
 ];
 
 /** The literal (template or quoted string) in `src` that begins right after a quote at `start`, or null. */
@@ -178,16 +179,19 @@ describe('sql-move-check: the real engine-sql copies', () => {
     expect(COPIED.length).toBe(11);
   });
 
-  for (const { module, start, origin } of COPIED) {
-    it(`${module}: "${start.replace(/\n/g, ' ').slice(0, 44)}" equals its origin in ${origin} byte for byte`, () => {
+  for (const { module, start, origin, cut } of COPIED) {
+    const label = `${module}: "${start.replace(/\n/g, ' ').slice(0, 44)}"`;
+    it(cut ? `${label} lives in engine-sql only; ${origin} no longer holds it` : `${label} equals its origin in ${origin} byte for byte`, () => {
       const text = literalStartingWith(read(`engine-sql/${module}.ts`), start);
       expect(text).not.toBeNull();
-      expect(read(origin)).toContain(text!);
+      if (cut) expect(read(origin)).not.toContain(text!);
+      else expect(read(origin)).toContain(text!);
     });
   }
 
   it('a one-character change to a copied statement is caught', () => {
-    for (const { module, start, origin } of COPIED) {
+    for (const { module, start, origin, cut } of COPIED) {
+      if (cut) continue; // nothing left to compare: the origin no longer holds the statement
       const text = literalStartingWith(read(`engine-sql/${module}.ts`), start)!;
       const changed = text.replace(/\s=\s|\sAND\s|\sFROM\s|\sON\s/, (m) => m.replace(' ', '  '));
       expect(changed).not.toBe(text);
