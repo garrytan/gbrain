@@ -131,7 +131,7 @@ Rules:
   the family's `page_columns` hook ("Core hooks"). The family keeps the value under its own tag; until it adds the
   column, the page read returns the fixed default in `PAGE_ROW_DEFAULTS` (`store-codec.ts`). No family edits
   `PAGE_ROW_DEFAULTS`, `store-codec.ts` or `pages.rs`.
-- **Format.** `FORMAT_VERSION` 12 on the keyed-lookups-2 branch, 9 on the trunk (`format.rs` lists each version; that build opens formats 1 to 9 and 12), `engineAbi` 1, a `FORMAT` file plus `records.redb`. New tags and new records under
+- **Format.** `FORMAT_VERSION` 12 on the keyed-lookups-2 branch (`format.rs` lists each version; it opens formats 1 to 9 and 12), 9 on rust-engine/keyed-lookups and 8 on rust-engine/main (the ledger below), `engineAbi` 1, a `FORMAT` file plus `records.redb`. New tags and new records under
   them do not change the format version: an older build never reads a tag it does not know, and a newer build reads
   an absent tag as "no rows". A family that changes the encoding of records that already exist on disk asks core,
   and so does a family whose entries are derived from records that already exist, because an older build's writes
