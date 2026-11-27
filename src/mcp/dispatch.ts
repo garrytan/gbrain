@@ -6,7 +6,7 @@
  * + missing-context bugs; this module exists to prevent that recurring.
  */
 
-import { ownerLineageRefusal, remoteAccessRefusal } from './engine-access-refusal.ts';
+import { remoteAccessRefusal } from './engine-access-refusal.ts';
 import { savedFactsNoticeBlock, wholeItemsWithin, type SavedFactNotice } from './saved-facts-notice.ts';
 import { writeReceiptCapacityNotices } from '../core/persistence/capacity-snapshot.ts';
 import type { BrainEngine } from '../core/engine.ts';
@@ -1090,9 +1090,6 @@ export async function dispatchToolCall(
       return qmMemoryToolResult(name, actorNamed ? actorRefusal(e, opts, name, header, args) : errorResult(e, opts, { op: name }));
     }
     if (audience || attested?.actor) assertion('accepted');
-    // The owner's remote read on an engine that does not model the owner lineage read refuses by name (engine-access-refusal.ts).
-    const ownerRefusal = ownerLineageRefusal(engine, name, access);
-    if (ownerRefusal) return errorResult(ownerRefusal, opts, { op: name });
     const callParams = attested ? attested.params : args;
     return withCallerAccess({ ...access, privateFactSources: privateFactSources && !audience && !attested?.actor && readMode === null && !opts.enforcedMember ? privateFactSources : [], ...(access.owner && opts.auth && opts.transport !== 'stdio' && !roomDeclaration && !audience && !attested?.actor && readMode === null && !opts.enforcedMember ? { ownerReads: true } : {}) }, async () => {
       // GST-2476 gap 1: a member's or audience's read is logged after the response (access/read-log.ts); every other read only pays the test.
