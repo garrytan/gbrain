@@ -6,7 +6,7 @@
  * bin directory by absolute path; a binary that really does not start still fails, records the row and names the way back.
  *
  * Spawned (not in-process): Bun snapshots PATH at process start for child-spawn lookup, so the stripped PATH has to be
- * the child's startup PATH. Serial: each case spawns a full upgrade.
+ * the child's startup PATH. The test only spawns children with their own HOME and env, so it shares a process safely.
  */
 import { afterAll, describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
