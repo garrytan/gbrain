@@ -1,13 +1,13 @@
 /**
  * BrainEngine parity: the lane 6 refusal-swallow sites on the extract path (lane 8's triage, rule
- * capability_refusal_swallowed). Three now read typed members, so a Rust brain answers; the extract-atoms state reads
- * and writes, which a Rust brain has no store for, now let the refusal through.
+ * capability_refusal_swallowed). Every site reads or writes through a typed member, so a Rust brain answers: the
+ * extract_atoms ledgers are Rust store records from store format 17.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: `extract --explain <kind>` prints the same 7-day rollup on every arm; siblingCanonical names the same
- *    group page; the extract-atoms stale-run read names the same stale sources. Each extract-atoms state statement
- *    answers on PGLite and Postgres and throws the typed `engine_capability_missing` refusal on Rust, and so does the
- *    phase, instead of reporting `no_work`.
+ *    group page; the extract-atoms stale-run read names the same stale sources. Each extract-atoms ledger write and
+ *    read gives the same answer on every engine, and the phase with work runs, records what it settled and skips it on
+ *    the next run, on every engine.
  *  - Regression: on a Rust brain each catch answered a default: explain said "no runs recorded" with no rollup, no
  *    sibling group formed (facts went under a slug no page has), the stale-run warning never fired, page discovery
  *    found nothing and the phase reported no work, and the idempotency and tombstone reads said "none", which
@@ -25,7 +25,6 @@ import { LAST_EXTRACT_ATOMS_AT_KEY, sourcesWithStaleExtractAtomsRun } from '../.
 import { atomsExistingForHashes, discoverExtractablePages, runPhaseExtractAtoms, tombstonedTranscriptsForHashes } from '../../src/core/cycle/extract-atoms.ts';
 import { releasePartialDispositions, stampTranscriptTombstone } from '../../src/core/cycle/extract-atoms-input.ts';
 import { createSource, parityArms } from './harness.ts';
-import { isCapabilityRefusal } from './arm-capabilities.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -35,16 +34,6 @@ const page = (type: string, title: string, body: string, frontmatter: Record<str
 const reply = (text: string): ChatResult => ({ text, blocks: [{ type: 'text', text }], stopReason: 'end',
   usage: { input_tokens: 1, output_tokens: 1, cache_read_tokens: 0, cache_creation_tokens: 0 }, model: 'anthropic:claude-haiku-4-5', providerId: 'anthropic' });
 const HASH = 'abcdef0123456789abcdef0123456789';
-
-/** The Rust store's named stop for the extract_atoms state store (RUST_ENGINE.md, lane 7, until the store format change). */
-const STATE_STORE_STOP = {
-  code: 'engine_capability_missing', reason: 'raw_sql',
-  detail: 'member=assertAtomStateStore (the store keeps no extract_atoms page or transcript state) capability=raw_sql outcome=none written=nothing',
-};
-const stopOf = (e: unknown) => {
-  const err = e as { code?: unknown; reason?: unknown; detail?: unknown } | null;
-  return { code: err?.code, reason: err?.reason, detail: err?.detail };
-};
 
 /** What a command printed to stdout. */
 async function stdoutOf(run: () => Promise<unknown>): Promise<string> {
@@ -98,15 +87,22 @@ describe('refusal-swallow extract sites', () => {
     return kept;
   });
 
-  parityTest('extract-atoms-input.ts:138 a transcript tombstone is stamped or refused, never dropped', { methods: ['executeRaw'], requires: 'raw_sql' }, async (engine) => {
-    try {
-      await stampTranscriptTombstone(engine, 'default', '/fake/session.txt', HASH);
-    } catch (error) {
-      // The Rust store keeps no transcript state until the store format change (RUST_ENGINE.md, lane 7): the write refuses.
-      expect(isCapabilityRefusal(error, 'raw_sql')).toBe(true);
-      throw error;
-    }
-    return [...await tombstonedTranscriptsForHashes(engine, 'default', [HASH.slice(0, 16)])];
+  parityTest('extract-atoms-input.ts:138 a transcript tombstone is stamped, and the tombstone read finds it', {
+    methods: ['stampAtomTranscriptTombstone', 'strikeAtomTranscript', 'recordAtomTranscriptPartial', 'listTombstonedTranscripts', 'releasePartialAtomDispositions'],
+  }, async (engine) => {
+    const h = (n: number) => `${n}`.repeat(16).slice(0, 16);
+    await stampTranscriptTombstone(engine, 'default', '/fake/session.txt', HASH);
+    // A strike alone is not a tombstone; a partial row is skipped until a raised cap releases it.
+    expect(await engine.strikeAtomTranscript('default', '/fake/struck.txt', h(1))).toBe(1);
+    expect(await engine.strikeAtomTranscript('default', '/fake/struck.txt', h(1))).toBe(2);
+    await engine.recordAtomTranscriptPartial('default', '/fake/cut.txt', h(2), 500);
+    await engine.recordAtomTranscriptPartial('default', '/fake/cut-high.txt', h(3), 5000);
+    const read = async () => [...await tombstonedTranscriptsForHashes(engine, 'default', [HASH.slice(0, 16), h(1), h(2), h(3)])].sort();
+    const before = await read();
+    await releasePartialDispositions(engine, 'default', 1000);
+    const after = await read();
+    const otherSource = [...await tombstonedTranscriptsForHashes(engine, 'other', [HASH.slice(0, 16)])];
+    return { before, after, otherSource };
   });
 
   parityTest('extract-atoms.ts:470 page discovery finds the live, long, unextracted pages of the source, newest first', {
@@ -168,19 +164,20 @@ describe('refusal-swallow extract sites', () => {
     return rows;
   });
 
-  // The strike write (extract-atoms.ts:1020) is reached only after a model call. A Rust brain refuses earlier, at the
-  // transcript key read, before any model call; the SQL arms record the strike.
-  parityTest('extract-atoms.ts:1020 a failed transcript records its strike, and the phase refuses where it cannot, before any model call', { methods: ['executeRaw'], requires: 'raw_sql' }, async (engine) => {
+  parityTest('extract-atoms.ts:1020 a failed transcript records its strike on every engine, and three strikes tombstone it', {
+    methods: ['strikeAtomTranscript', 'listLiveTranscriptGenerations', 'listTombstonedTranscripts'],
+  }, async (engine) => {
     let calls = 0;
-    try {
-      const result = await runPhaseExtractAtoms(engine, { sourceId: 'default', _pages: [], _chat: async () => { calls++; return reply('not valid output'); },
-        _transcripts: [{ filePath: '/fake/session.txt', content: 'A synthetic session about durable decisions. '.repeat(20), contentHash: HASH }] });
-      return { status: result.status, calls };
-    } catch (error) {
-      expect(isCapabilityRefusal(error, 'raw_sql')).toBe(true);
-      expect(calls).toBe(0);
-      throw error;
+    const run = () => runPhaseExtractAtoms(engine, { sourceId: 'default', _pages: [], _chat: async () => { calls++; return reply('not valid output'); },
+      _transcripts: [{ filePath: '/fake/session.txt', content: 'A synthetic session about durable decisions. '.repeat(20), contentHash: HASH }] });
+    const statuses: string[] = [];
+    const tombstoned: number[] = [];
+    for (let i = 0; i < 4; i++) {
+      statuses.push((await run()).status);
+      tombstoned.push((await tombstonedTranscriptsForHashes(engine, 'default', [HASH.slice(0, 16)])).size);
     }
+    // Three failures of the same content tombstone the transcript; the fourth run does not call the model.
+    return { statuses, tombstoned, calls };
   });
 
   parityTest('extract-atoms phase with nothing to extract reports no work on every engine', {
@@ -191,18 +188,19 @@ describe('refusal-swallow extract sites', () => {
     return { status: result.status, reason: (result.details as { reason?: string } | undefined)?.reason ?? null };
   });
 
-  parityTest('extract-atoms phase with work refuses on an engine without the state store, before any model call', {
-    methods: ['putPage', 'assertAtomStateStore'], requires: 'raw_sql',
+  parityTest('extract-atoms phase with work runs on every engine, records the page as settled and skips it on the next run', {
+    methods: ['putPage', 'assertAtomStateStore', 'writeAtomPageState', 'listExtractablePages'],
   }, async (engine) => {
     await engine.putPage('meetings/example', page('meeting', 'Example', 'We met and decided many durable things. '.repeat(40)));
     let calls = 0;
-    try {
+    const run = async () => {
       const result = await runPhaseExtractAtoms(engine, { _transcripts: [], _chat: async () => { calls++; return reply('[]'); } });
-      return { status: result.status, reason: (result.details as { reason?: string } | undefined)?.reason ?? null, calls };
-    } catch (error) {
-      // No model spend before the refusal: the gate runs after discovery, before the first model call.
-      expect({ refused: isCapabilityRefusal(error, 'raw_sql'), stop: stopOf(error), calls }).toEqual({ refused: true, stop: STATE_STORE_STOP, calls: 0 });
-      throw error;
-    }
+      const details = result.details as { reason?: string; pages_processed?: number; atoms_extracted?: number } | undefined;
+      return { status: result.status, reason: details?.reason ?? null, pages: details?.pages_processed ?? null, atoms: details?.atoms_extracted ?? null };
+    };
+    const first = await run();
+    const second = await run();
+    const discovered = (await discoverExtractablePages(engine, 'default')).map(p => p.slug);
+    return { first, second, discovered, calls };
   });
 });
