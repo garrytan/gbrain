@@ -27,7 +27,10 @@
 import { createHash } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
 import { memberIdentityFor } from '../access/caller.ts';
-import { normalizeTokenScopes } from '../legacy-token-scope.ts';
+import { grantFromTokenRow, type TokenGrantRow } from '../grants/model.ts';
+import { tokenReadSources } from '../grants/read-shared.ts';
+import { NO_SOURCES } from '../source-id.ts';
+import { sqlQueryForEngine } from '../sql-query.ts';
 import { hasScope, parseScopeString } from '../scope.ts';
 import { WakeshiftError, type WakeshiftApi } from './client.ts';
 import { wakeshiftRuntime, type WakeshiftRuntime } from './config.ts';
@@ -170,24 +173,31 @@ export async function principalLive(engine: BrainEngine, row: Pick<WakeRow, 'pri
 
 /**
  * GST-4023: agentOwnerFence's whole-queue rule, read live at delivery: the watch is bound to the brain owner now
- * (config access.owner_member) and its credential still holds admin scope.
+ * (config access.owner_member) and its credential still holds admin scope and a live source grant (GST-4045): an OAuth
+ * client without the explicit no-source grant whose granted sources are not all archived, or a legacy token whose
+ * grant still resolves to a source the way a request resolves it (tokenReadSources), so a token narrowed to no source
+ * or whose write source was archived reads nothing.
  */
 async function ownerReadsWholeQueue(engine: BrainEngine, row: Pick<WakeRow, 'principal_kind' | 'principal_id' | 'member_id'>): Promise<boolean> {
   if (!row.member_id) return false;
-  const [live] = await engine.executeRaw<{ owner: string | null; client_scope: string | null; token: boolean; token_scopes: unknown }>(
+  const [live] = await engine.executeRaw<{ owner: string | null; client_scope: string | null; token: Record<string, unknown> | null }>(
     `SELECT (SELECT value FROM config WHERE key = 'access.owner_member') AS owner,
             (SELECT c.scope FROM oauth_clients c WHERE $1 = 'oauth_client' AND c.client_id = $2 AND c.deleted_at IS NULL
+               AND to_jsonb(c)->>'source_grant' IS DISTINCT FROM 'none'
                AND (to_jsonb(c)->>'source_id' IS NULL OR EXISTS (SELECT 1 FROM sources s WHERE s.id = to_jsonb(c)->>'source_id'
                  AND NOT COALESCE((to_jsonb(s)->>'archived')::boolean, false)))
                AND (COALESCE(jsonb_array_length(NULLIF(to_jsonb(c)->'federated_read', 'null'::jsonb)), CASE WHEN to_jsonb(c)->>'source_id' IS NULL THEN 0 ELSE 1 END) = 0
                  OR EXISTS (SELECT 1 FROM sources s WHERE NOT COALESCE((to_jsonb(s)->>'archived')::boolean, false)
                    AND s.id IN (SELECT jsonb_array_elements_text(COALESCE(NULLIF(to_jsonb(c)->'federated_read', 'null'::jsonb), jsonb_build_array(to_jsonb(c)->>'source_id'))))))) AS client_scope,
-            EXISTS (SELECT 1 FROM access_tokens WHERE $1 = 'legacy_token' AND id::text = $2 AND revoked_at IS NULL) AS token,
-            (SELECT scopes FROM access_tokens WHERE $1 = 'legacy_token' AND id::text = $2 AND revoked_at IS NULL) AS token_scopes`,
+            (SELECT to_jsonb(t) FROM access_tokens t WHERE $1 = 'legacy_token' AND t.id::text = $2 AND t.revoked_at IS NULL) AS token`,
     [row.principal_kind, row.principal_id]);
   if (!live || live.owner !== row.member_id) return false;
   if (row.principal_kind === 'oauth_client') return hasScope(parseScopeString(live.client_scope), 'admin');
-  return live.token && hasScope(normalizeTokenScopes(live.token_scopes) ?? ['read', 'write', 'admin'], 'admin');
+  if (!live.token) return false;
+  const grant = grantFromTokenRow(live.token as TokenGrantRow);
+  if (!hasScope(grant.scopes, 'admin')) return false;
+  const sources = await tokenReadSources(sqlQueryForEngine(engine), grant, async () => row.member_id);
+  return sources.sourceId !== NO_SOURCES;
 }
 
 /** End a watch at Wakeshift once (best effort: the conversation is told; a failure leaves Wakeshift's own ttl to end it). */

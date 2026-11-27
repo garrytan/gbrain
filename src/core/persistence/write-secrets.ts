@@ -82,12 +82,26 @@ export function screenWriteSecrets(ctx: Pick<OperationContext, 'remote'>, operat
 /**
  * Commit screen for a remote upload's assembled body, read part by part: null when the policy is off, the caller is
  * local or nothing is found, else the refusal (under redact too, since the body is bound to the sha256 declared at begin).
+ * As screenWriteSecrets does, the body is screened as sent and, when it holds a NUL byte, read again as it will be
+ * stored, without U+0000 (a 0x00 byte is only ever U+0000 in UTF-8), so a value split by NUL bytes is found; a value
+ * the first pass already claimed is not counted twice.
  */
-export async function screenUploadedSecrets(ctx: Pick<OperationContext, 'remote'>, parts: AsyncIterable<Uint8Array | null>) {
+export async function screenUploadedSecrets(ctx: Pick<OperationContext, 'remote'>, parts: () => AsyncIterable<Uint8Array | null>) {
   if (ctx.remote === false) return null;
   const mode = onWriteMode();
   if (mode === 'off') return null;
-  async function* bytes() { for await (const part of parts) { if (!part) return; yield part; } }
-  const findings = await scanTextStream(bytes(), { allowlist: allowlist() });
+  let nul = false;
+  async function* bytes(strip: boolean) {
+    for await (const part of parts()) {
+      if (!part) return;
+      if (strip) yield part.filter(byte => byte !== 0);
+      else { nul ||= part.includes(0); yield part; }
+    }
+  }
+  const findings = await scanTextStream(bytes(false), { allowlist: allowlist() });
+  if (nul) {
+    const claimed = new Set(findings.map(finding => finding.fingerprint));
+    findings.push(...(await scanTextStream(bytes(true), { allowlist: allowlist() })).filter(finding => !claimed.has(finding.fingerprint)));
+  }
   return findings.length ? secretInWrite('commit_page_upload', findings, mode, true) : null;
 }
