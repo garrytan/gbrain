@@ -694,9 +694,10 @@ impl Store {
   That late commit is safe: no other holder exists, and the owner host's native lock still excludes a same-host successor
   from the checkout files. Takeover fencing and expiry at commit are different properties; only the first is provided.
   Waiting for a managed lease polls `acquire` within the caller's own deadline and ends with the caller's existing busy
-  answer (`write_pending`, `writer_lock_unavailable`); the store has no waiter order. Fairness for a background writer
-  (the effect worker) comes from the native layer, which stays: its waiter marker orders writers of one host. Across hosts
-  there is no such priority yet.
+  answer (`write_pending`, `writer_lock_unavailable`). Inside the store, the key locks (`KeyLocks`, `occ_kv.rs`) and the
+  single-flight table (`SingleFlight`, `transactions.rs`) serve waiters for one page key in arrival order; a lease waiter
+  polls and has no place in that order. Fairness for a background writer (the effect worker) comes from the native layer,
+  which stays: its waiter marker orders writers of one host. Across hosts there is no such priority yet.
 
 - **I-5, cycle lock fence (2026-11-25).** On a multi-user store the cycle lock carries the host fence (the I-5 epoch
   and token), so a host that lost its lease cannot run a cycle. Under optimistic transactions an old-epoch commit is
