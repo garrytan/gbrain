@@ -137,6 +137,15 @@ audience and class, or fork it under the publishing skill's own directory.
 A remote editor's refusal names only the shared file, never the other skills
 that hold it.
 
+Paths are compared the way a case-insensitive checkout (macOS, Windows) stores
+them. A publication that adds a path differing only by letter case from a path
+another skill publishes, such as `skills/conventions/guide.md` next to
+`skills/conventions/Guide.md`, or a file inside a directory whose name folds to
+another skill's file, refuses `local_conflict` and writes nothing. Use the
+exact spelling the other skill publishes to share the file, or pick another
+name. A remote editor's refusal names only the path it proposed. A pack that
+already holds such a pair keeps publishing its other changes.
+
 Beyond the fresh-setup default, the owner approves a versioned policy through
 `set_skill_policy`, not through an editor's content update. For example, the
 following **MCP arguments** approve only prose and the tools used by the default
