@@ -678,13 +678,22 @@ function effectiveAudience(metadata: Pick<SkillMetadata, 'private' | 'audience'>
   return own.filter(audience => skill.includes(audience));
 }
 
+/** The callers both audiences admit, where 'readers' admits every principal (policy.ts approvedFiles). */
+function overlap(left: string[], right: string[]): string[] {
+  if (left.includes('readers')) return right;
+  if (right.includes('readers')) return left;
+  return left.filter(audience => right.includes(audience));
+}
+
 type Holder = { name: string; files: Array<Pick<StoredSkillFile, 'path' | 'audience'>>; metadata: Pick<SkillMetadata, 'private' | 'audience'> };
 type Exposure = { prior: Set<string>; after: Set<string> };
 
 /**
  * The shared convention files this publication would show to callers no sealed holder showed them to: through a
  * proposal, or through another skill the rewrite gives the file. The audiences come only from the affected skills, so
- * a republication that keeps every file's reach reads no other skill's head.
+ * a republication that keeps every file's reach reads no other skill's head. An affected skill vouches only for the
+ * callers it showed the file to before and still shows it to now, so a holder that drops the file or narrows its own
+ * audience cannot hand its old reach to another skill.
  */
 function exposureCandidates(affected: Holder[], sealed: StoredSkillRevision[], approved: string[]): Map<string, Exposure> {
   const found = new Map<string, Exposure>();
@@ -694,7 +703,11 @@ function exposureCandidates(affected: Holder[], sealed: StoredSkillRevision[], a
   }
   for (const skill of affected) {
     const was = sealed.find(revision => revision.name === skill.name && !revision.deleted);
-    for (const file of was?.files ?? []) if (found.has(file.path)) effectiveAudience(was!.metadata, file, approved).forEach(a => entry(file.path).prior.add(a));
+    for (const file of was?.files ?? []) {
+      const now = skill.files.find(kept => kept.path === file.path);
+      if (!found.has(file.path) || !now) continue;
+      overlap(effectiveAudience(was!.metadata, file, approved), effectiveAudience(skill.metadata, now, approved)).forEach(a => entry(file.path).prior.add(a));
+    }
   }
   for (const [path, { prior, after }] of found) if (prior.has('readers') || [...after].every(a => prior.has(a))) found.delete(path);
   return found;
@@ -716,8 +729,8 @@ async function unchangedHolders(engine: BrainEngine, sourceId: string, incarnati
 /**
  * A publication must not show a shared convention file to callers that no sealed holder already showed it to while
  * a skill that keeps holding it hides it from them. A readers file in a skill whose SKILL.md audience is narrower, or
- * that is private, is not public. Only a skill that held the file before can authorize a new reach, and only as far as
- * every such skill that keeps it now shows it. A file that no skill held before, or that no holder keeps, has nothing to hide.
+ * that is private, is not public. Only a skill that held the file before and keeps it can authorize a new reach, and
+ * only as far as every such skill now shows it. A file that no skill held before, or that no holder keeps, has nothing to hide.
  */
 async function refuseHiddenExposure(engine: BrainEngine, sourceId: string, incarnation: string, packId: string, inventory: PackSkill[],
   proposals: Holder[], rebuilt: Holder[], sealed: StoredSkillRevision[], approved: string[], detailed: boolean): Promise<void> {

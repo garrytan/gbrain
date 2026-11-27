@@ -376,5 +376,70 @@ for (const [name, url] of backends) {
       expect({ outcome, heads: await heads(f), reader: await readerCopy(f, 'beta'), checkout: checkout(f.root) })
         .toEqual({ outcome: 'local_conflict', heads: before.heads, reader: 'skill_asset_not_found', checkout: before.checkout });
     }, url), 120_000);
+
+    /** Gamma shows the guide to readers through the root it depends on, alpha holds the guide behind its SKILL.md audience, and beta is standalone. */
+    async function publishDeparting(f: Fixture, withHidden = true) {
+      const holders: Array<[string, Array<Record<string, unknown>>]> = [['gamma', [prose('gamma', 'Use the root.', [ROOT]), root([GUIDE]), guide(['readers'])]], ['beta', [prose('beta', 'Standalone.')]]];
+      if (withHidden) holders.push(['alpha', [{ ...prose('alpha', 'Use the guide.', [GUIDE]), audience: RESTRICTED }, guide(['readers'])]]);
+      for (const [name, files] of holders) expect((await put(f, f.local, name, files) as { state?: string }).state).toBe('committed');
+      expect(await readerCopy(f, 'gamma')).toBe('Synthetic shared guide body.\n');
+    }
+    const adopt = async (f: Fixture, skills: Array<[string, Array<Record<string, unknown>>]>) => adoptSharedSkillpack(f.local, 'default', { pack_id: 'example-pack',
+      skills: await Promise.all(skills.map(async ([name, files]) => ({ pack_id: 'example-pack', name, files, expected_revision: await revisionOf(f, name) }))) as never })
+      .then(() => 'published', (error: { code?: string; message?: string }) => `${error.code}: ${error.message}`);
+
+    // Value: protects=a public holder that gives up a convention cannot hand its reach to another skill while a hidden holder keeps it; fails_when=the departing skill's sealed readers audience still authorizes beta, so readers fetch alpha's guide through beta; why_new=only holders that keep the file may authorize a new reach; seam=none; no_claim=none
+    test('an adoption batch in which a public holder drops the convention cannot show it to readers through another skill while a hidden holder keeps it', () => fixture(async f => {
+      await publishDeparting(f);
+      const before = { heads: await heads(f), checkout: checkout(f.root) };
+      const outcome = await adopt(f, [['gamma', [prose('gamma', 'Use the root.', [ROOT]), root()]], ['beta', [prose('beta', 'Now uses the guide.', [GUIDE]), guide(['readers'])]]]);
+      expect(outcome).toBe(`local_conflict: The publication was refused: ${GUIDE} would reach a wider audience than skills/alpha gives it. Nothing was written.`);
+      expect({ heads: await heads(f), reader: await readerCopy(f, 'beta'), checkout: checkout(f.root) }).toEqual({ ...before, reader: 'skill_asset_not_found' });
+    }, url), 120_000);
+
+    // Value: protects=a public holder that narrows its own audience cannot hand its old reach to another skill while a hidden holder keeps the file; fails_when=gamma's sealed readers audience authorizes beta although gamma now hides the guide; why_new=a holder authorizes only what it still shows; seam=none; no_claim=none
+    test('an adoption batch in which a public holder narrows its audience cannot show the convention to readers through another skill', () => fixture(async f => {
+      await publishDeparting(f);
+      const before = { heads: await heads(f), checkout: checkout(f.root) };
+      const outcome = await adopt(f, [['gamma', [{ ...prose('gamma', 'Use the root.', [ROOT]), audience: RESTRICTED }, root([GUIDE]), guide(['readers'])]],
+        ['beta', [prose('beta', 'Now uses the guide.', [GUIDE]), guide(['readers'])]]]);
+      expect(outcome).toStartWith('local_conflict: The publication was refused: ');
+      expect(outcome).toContain(`${GUIDE} would reach a wider audience than`);
+      expect({ heads: await heads(f), reader: await readerCopy(f, 'beta'), checkout: checkout(f.root) }).toEqual({ ...before, reader: 'skill_asset_not_found' });
+    }, url), 120_000);
+
+    // Value: protects=a remote editor cannot move a convention's public reach off a rebuilt skill and onto its own while a hidden holder keeps it; fails_when=put_skill on beta rewrites the shared root so gamma drops the guide, and gamma's sealed readers audience authorizes beta; why_new=a rebuilt dependent that drops the file no longer vouches for it; seam=none; no_claim=none
+    test('a remote put_skill that rewrites a shared root so a public skill drops the convention cannot show it to readers while a hidden holder keeps it', () => fixture(async f => {
+      await publishDeparting(f);
+      const before = { heads: await heads(f), checkout: checkout(f.root) };
+      const outcome = await put(f, f.editor, 'beta', [prose('beta', 'Uses both.', [ROOT, GUIDE]), root(), guide(['readers'])])
+        .then(() => 'published', (error: { code?: string; message?: string }) => `${error.code}: ${error.message}`);
+      expect(outcome).toBe(`local_conflict: The publication was refused: ${GUIDE} would reach a wider audience than the 1 skill that already holds it gives it. Nothing was written.`);
+      expect({ heads: await heads(f), reader: await readerCopy(f, 'beta'), checkout: checkout(f.root) }).toEqual({ ...before, reader: 'skill_asset_not_found' });
+    }, url), 120_000);
+
+    // Value: protects=the same move queued by an older release is refused on resume before it touches the checkout; fails_when=prepare publishes beta with the guide after gamma's rebuild drops it; why_new=no check ran at prepare; seam=the request row is shaped like one an older release accepted, from this brain's own committed put_skill; no_claim=none
+    test('a queued publication from an older release that moves a convention off a departing public holder is refused on resume', () => fixture(async f => {
+      await publishDeparting(f);
+      const [request] = await f.engine.executeRaw<Record<string, any>>("SELECT * FROM persistence_requests WHERE operation='put_skill' ORDER BY sequence DESC LIMIT 1");
+      const [pack] = await f.engine.executeRaw<{ revision: string }>('SELECT revision::text AS revision FROM shared_skill_packs WHERE source_id=$1', ['default']);
+      const intent = typeof request.intent === 'string' ? JSON.parse(request.intent) : request.intent;
+      const current = Object.fromEntries((await heads(f)).map(head => [head.name, head.revision]));
+      const files = normalizeSkillFiles('beta', [prose('beta', 'Uses both.', [ROOT, GUIDE]), root(), guide(['readers'])]);
+      const old = { ...request, intent: { ...intent, name: 'beta', expected_revision: current.beta, affected: ['beta', 'gamma'].map(target => ({ name: target, revision: current[target] })),
+        expected_pack_revision: pack.revision, proposals: [{ name: 'beta', files, metadata: skillMetadata('beta', files, {}), expected_revision: current.beta }] } };
+      const before = { heads: await heads(f), checkout: checkout(f.root) };
+      const outcome = await prepareSharedSkillMutation(f.engine, old as never, f.local.config).then(() => 'prepared', (error: { code?: string }) => error.code);
+      expect({ outcome, heads: await heads(f), reader: await readerCopy(f, 'beta'), checkout: checkout(f.root) })
+        .toEqual({ outcome: 'local_conflict', heads: before.heads, reader: 'skill_asset_not_found', checkout: before.checkout });
+    }, url), 120_000);
+
+    // Value: protects=moving a public convention from one skill to another still publishes when no other holder hides it; fails_when=the fix refuses a move that leaves no hidden holder; why_new=the new check must not over-refuse; seam=none; no_claim=none
+    test('a remote put_skill that moves a public convention off another skill publishes when no hidden holder keeps it', () => fixture(async f => {
+      await publishDeparting(f, false);
+      const result = await put(f, f.editor, 'beta', [prose('beta', 'Uses both.', [ROOT, GUIDE]), root(), guide(['readers'])]);
+      expect({ state: (result as { state?: string }).state, beta: await readerCopy(f, 'beta'), gamma: await readerCopy(f, 'gamma') })
+        .toEqual({ state: 'committed', beta: 'Synthetic shared guide body.\n', gamma: 'skill_asset_not_found' });
+    }, url), 120_000);
   });
 }
