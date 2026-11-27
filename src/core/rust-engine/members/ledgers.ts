@@ -100,6 +100,7 @@ export const LEDGER_MEMBERS = {
   restoreManagedPersistence: 'persistence_journal',
   withManagedPersistencePaused: 'implemented',
   insertImpactLogRow: 'raw_sql',
+  assertAtomStateStore: 'raw_sql',
   countMcpResolvedTakes: 'takes',
   listTopResolvedTakesForHolder: 'takes',
   listAbandonedTakes: 'takes',

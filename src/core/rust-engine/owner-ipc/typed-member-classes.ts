@@ -313,7 +313,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'countRecentChronicleReservations', 'hasPendingAutoChronicleRow', 'readChronicleRow', 'readPageTruthLead', 'readStoredPageHead', 'readVersionSourcePath',
   // Added when the batch 10 lanes merged (cli-members-next and the lanes after it): each reads only (a row-lock read included),
   // as its engine-sql function and the Rust store function it calls show (test/rust-owner-ipc-read-classes.test.ts scans both).
-  'accessTokenLive', 'countAtomExtractionBacklog', 'countChunkColumnCoverage', 'countClaimLiftedRows',
+  'accessTokenLive', 'assertAtomStateStore', 'countAtomExtractionBacklog', 'listAtomSourceHashes', 'listExtractablePages', 'listSourcePageAtomTitles', 'listTombstonedTranscripts', 'countChunkColumnCoverage', 'countClaimLiftedRows',
   'countCompactedCallerRefusals', 'countConversationPipelinePages', 'countCredentialProjectionPending',
   'countDatedMeetingPages', 'countDefaultSourceFiles', 'countDerivedVisibility', 'countDistinctInboundLinkers',
   'countImageModalityMismatches', 'countLedgerCoveredAtomRetirements', 'countLegacyUnknownBySource',
@@ -642,6 +642,7 @@ export const OWNER_IPC_TYPED_CONFIRMING_READS: Readonly<Record<string, string>> 
   expireApprovedFacts: 'listActivePositionedFactIds for those facts (an expired fact is no longer active)',
   // Additive: a rerun bumps the generation once more, which only re-keys the page's next atom extraction (a rebuildable run key).
   recordAtomGenerationBump: 'readAtomGeneration for that page (the generation moved on)',
+  releasePartialAtomDispositions: 'listExtractablePages for that source (the released items are offered again)',
   closeOpenLoop: 'listOpenLoops for that source', upsertOpenLoop: 'listOpenLoops for that source',
   completeSubagentToolExecution: 'summarizeSubagentToolExecutions for that job',
   failSubagentToolExecution: 'summarizeSubagentToolExecutions for that job',

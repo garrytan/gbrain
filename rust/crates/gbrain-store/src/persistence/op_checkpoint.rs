@@ -716,6 +716,47 @@ fn first_key_text(row: &HousekeepingRow, field: &str) -> Option<String> {
         .and_then(crate::timeline_queries::jsonb_field_text)
 }
 
+/// The `managed-atoms` checkpoints that make extraction discovery skip a page: `(sourceId, incarnation, pageId,
+/// contentHash)` of each page checkpoint that completed (no `failure`) or is held (`held = 'true'`), as text (the
+/// `MANAGED_ATOM_DISCOVERY_SQL` test). A row whose first key lacks a field matches no page.
+pub(crate) fn managed_atom_discovery_skips_in(
+    read: &dyn KvRead,
+) -> Result<std::collections::BTreeSet<(String, String, String, String)>> {
+    let mut prefix = vec![keys::PERSISTENCE, super::HOUSEKEEPING];
+    prefix.extend_from_slice(MANAGED_ATOMS_OP.as_bytes());
+    prefix.push(0);
+    let mut out = std::collections::BTreeSet::new();
+    let mut bad = false;
+    scan_prefix(read, &prefix, false, &mut |_k, v| {
+        match serde_json::from_slice::<HousekeepingRow>(v) {
+            Ok(row) => {
+                let settled = first_key_text(&row, "failure").is_none()
+                    || first_key_text(&row, "held").as_deref() == Some("true");
+                if settled
+                    && first_key_text(&row, "kind").as_deref() == Some("page")
+                    && let (Some(source), Some(incarnation), Some(page), Some(hash)) = (
+                        first_key_text(&row, "sourceId"),
+                        first_key_text(&row, "incarnation"),
+                        first_key_text(&row, "pageId"),
+                        first_key_text(&row, "contentHash"),
+                    )
+                {
+                    out.insert((source, incarnation, page, hash));
+                }
+            }
+            Err(_) => bad = true,
+        }
+        !bad
+    })?;
+    if bad {
+        return Err(StoreError::new(
+            crate::error::STORE_CORRUPT,
+            "an op checkpoint row is not readable",
+        ));
+    }
+    Ok(out)
+}
+
 impl Store {
     /// `readAtomGeneration(pageId, contentHash)`: of the page's `managed-atoms-generation` ledger row, `keep_generation`
     /// when `keep` is `contentHash`, else `generation`, as a number (`Number(text ?? 0)`); 0 with no row.
@@ -783,6 +824,66 @@ impl Store {
             })?;
             if bad {
                 return Err(StoreError::new(crate::error::STORE_CORRUPT, "an op checkpoint row is not readable"));
+            }
+            for fp in gone {
+                delete_op_checkpoint_in(tx, MANAGED_ATOMS_OP, &fp)?;
+            }
+            Ok(())
+        })
+    }
+
+    /// `releasePartialAtomDispositions(sourceId, maxInputChars)`: the `managed-atoms` checkpoints of the source whose
+    /// `partial` is below the cap are deleted with their paths (`(completed_keys->0->>'partial')::integer < $2`; a row
+    /// with no `partial` stays). The store keeps no `extract_atoms_page_state` or `extract_atoms_transcript_state`
+    /// rows, so the two state updates clear nothing here.
+    pub fn release_partial_atom_dispositions(
+        &self,
+        source_id: &str,
+        max_input_chars: i64,
+    ) -> Result<()> {
+        self.write(|tx| {
+            let mut prefix = vec![keys::PERSISTENCE, super::HOUSEKEEPING];
+            prefix.extend_from_slice(MANAGED_ATOMS_OP.as_bytes());
+            prefix.push(0);
+            let mut gone: Vec<String> = Vec::new();
+            let mut failure: Option<StoreError> = None;
+            scan_prefix(&*tx, &prefix, false, &mut |k, v| {
+                match (
+                    std::str::from_utf8(&k[prefix.len()..]),
+                    serde_json::from_slice::<HousekeepingRow>(v),
+                ) {
+                    (Ok(fp), Ok(row)) => {
+                        if first_key_text(&row, "sourceId").as_deref() != Some(source_id) {
+                            return true;
+                        }
+                        let Some(text) = first_key_text(&row, "partial") else {
+                            return true;
+                        };
+                        match text.trim().parse::<i32>() {
+                            Ok(partial) if i64::from(partial) < max_input_chars => {
+                                gone.push(fp.to_string())
+                            }
+                            Ok(_) => {}
+                            Err(_) => {
+                                failure = Some(StoreError::invalid(format!(
+                                    "invalid input syntax for type integer: \"{text}\""
+                                )));
+                                return false;
+                            }
+                        }
+                    }
+                    _ => {
+                        failure = Some(StoreError::new(
+                            crate::error::STORE_CORRUPT,
+                            "an op checkpoint row is not readable",
+                        ));
+                        return false;
+                    }
+                }
+                true
+            })?;
+            if let Some(err) = failure {
+                return Err(err);
             }
             for fp in gone {
                 delete_op_checkpoint_in(tx, MANAGED_ATOMS_OP, &fp)?;

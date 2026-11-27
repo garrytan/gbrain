@@ -2,6 +2,7 @@
  * The doctor and fence census read statements of BrainEngine.
  * Declarations moved verbatim out of engine.ts; `BrainEngine` extends this interface, so the member set is unchanged.
  */
+import type * as ExtractAtomsReadsSql from '../engine-sql/extract-atoms-reads.ts';
 import type * as AtomBacklogSql from '../engine-sql/atom-backlog.ts';
 import type * as RemediationRecordsSql from '../engine-sql/remediation-records.ts';
 import type * as DoctorAccSql from '../engine-sql/doctor-acc.ts';
@@ -224,6 +225,19 @@ export interface DoctorMembers {
   listSlugPathCandidates(sourceIds: string[] | null): Promise<DoctorPagesSql.SlugPathCandidate[]>;
   /** Pages awaiting atom extraction (no atom of their current content yet, no held or tombstoned disposition) in the query's source scope; `opts.signal` cancels the count on the SQL engines. */
   countAtomExtractionBacklog(query: AtomBacklogSql.AtomBacklogQuery, opts?: { signal?: AbortSignal }): Promise<number>;
+  // The extract_atoms phase's reads, its partial-disposition release and its state-store gate (engine-sql/extract-atoms-reads.ts).
+  /** Pages awaiting atom extraction in one source, newest first, at most `query.limit`. */
+  listExtractablePages(query: ExtractAtomsReadsSql.ExtractablePageQuery): Promise<ExtractAtomsReadsSql.ExtractablePageRow[]>;
+  /** The `source_hash` of each live, unmanaged atom of `sourceId` among `hashes`. */
+  listAtomSourceHashes(sourceId: string, hashes: readonly string[]): Promise<string[]>;
+  /** The transcripts of `sourceId` among `hashes` that are tombstoned or partial. */
+  listTombstonedTranscripts(sourceId: string, hashes: readonly string[]): Promise<Array<{ file_path: string; content_hash: string }>>;
+  /** The live atoms of `sourceId` bound to the source page `sourceSlug`. */
+  listSourcePageAtomTitles(sourceId: string, sourceSlug: string): Promise<Array<{ slug: string; title: string }>>;
+  /** Clears the partial dispositions recorded below `maxInputChars` (page state, transcript state, managed-atoms checkpoints). */
+  releasePartialAtomDispositions(sourceId: string, maxInputChars: number): Promise<void>;
+  /** Passes when the engine keeps extract_atoms page and transcript state; refuses by name when it does not. */
+  assertAtomStateStore(): Promise<void>;
   /** The sources with a live page, by id in byte order (the extract_atoms_backlog roster). */
   listAtomBacklogSourceIds(): Promise<Array<{ source_id: string }>>;
   /** The projection queue by class (pending text, failed, sealable and reimport images, protected, archived) in a read scope, the age of the oldest job that needs work, and the database time of the count. */

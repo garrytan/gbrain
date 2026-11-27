@@ -75,7 +75,7 @@ import { commitExtractionPlan, readPageWatermark } from '../extraction-watermark
 import { claudeCliSelfSessionIds } from '../ai/providers/claude-cli-scratch.ts';
 import { BudgetExhausted, BudgetTracker, loadPricingOverrides } from '../budget/budget-tracker.ts';
 import type { MaintenanceWriteWait } from '../persistence/maintenance-wait.ts';
-import { connectorAtomExclusion, connectorAtomExclusionSql } from './connector-atoms.ts';
+import { connectorAtomExclusion } from './connector-atoms.ts';
 import { resolveExtractAtomsCostGate, resolveEmbedModelForCostGate, settleExtractAtomsCostGate } from './extract-atoms-cost-gate.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
 import { classifyRunStop, providerHaltReason, upsertExtractRollup } from '../extract/rollup-writer.ts';
@@ -91,7 +91,7 @@ import { atomSourceDate, transcriptAtomSourceDate } from './atom-source-date.ts'
 import { normalizeForGrounding, isGroundingQuoteMark } from './synthesize-verify.ts';
 import type { TranscriptPageIndex } from '../transcripts/discover.ts';
 import { atomOriginPin, atomWriteFailure, type AtomWriteFailure, concurrentAtomBatch, managedAtomSession, readAtomOrigin, resumeManagedAtoms, publishManagedAtoms, publishManagedAtomGeneration, resumeManagedGenerationMembers,
-  MANAGED_ATOM_DISCOVERY_SQL, managedAtomDiscoverySql, type AtomOrigin } from '../persistence/atom-maintenance.ts';
+  type AtomOrigin } from '../persistence/atom-maintenance.ts';
 import { effectiveVisibility, folderRestricted } from '../search/private-visibility.ts';
 import { OperationError } from '../ops/contract.ts';
 import { isOpPageSlug } from '../ops/context.ts';
@@ -140,30 +140,9 @@ const SYNTHESIS_OUTPUT_TYPES = new Set<string>(['atom', 'concept']);
 
 const PAGE_DISCOVERY_BUDGET = 50;
 const MIN_PAGE_CHARS_FOR_EXTRACTION = 500;
-/** `compiled_truth` has >= `param` characters: octet_length reads a TOASTed size from its header and a character is
- *  1-4 bytes, so only bodies of param..4x param bytes are decompressed (length() decompressed all: 1.3 s at 50k). */
-const minCompiledTruthChars = (param: string) =>
-  `(octet_length(p.compiled_truth) >= 4 * ${param} OR (octet_length(p.compiled_truth) >= ${param} AND length(p.compiled_truth) >= ${param}))`;
-// Source pages whose frontmatter declares a `raw` payload pointer hold raw
-// import data, not extractable prose. Extraction on them yields zero atoms,
-// so no atom row is ever written and they re-enter discovery + the doctor
-// backlog count on every cycle — a permanent no-progress loop. Shared by
-// discoverExtractablePages and countExtractAtomsBacklog so the phase and the
-// doctor check can't drift.
-const RAW_SOURCE_HOLDER_EXCLUSION_SQL =
-  `AND NOT (p.type = 'source' AND COALESCE(p.frontmatter ? 'raw', false))`;
-
-// #6503: a partial row (the page was cut at the input cap) is skipped like a
-// tombstone until releasePartialDispositions clears it under a raised cap.
-// #7391: the backlog count passes the current cap, so a row recorded below it
-// (one the phase's release clears) counts before any phase has run.
-const pageScanStateExclusionSql = (maxInputChars?: string) => `AND NOT EXISTS (
-  SELECT 1 FROM extract_atoms_page_state scan
-  WHERE scan.source_incarnation=(SELECT s.incarnation FROM sources s WHERE s.id=p.source_id)
-    AND scan.page_id=p.id AND scan.content_hash=p.content_hash
-    AND (scan.tombstoned OR ${maxInputChars ? `scan.partial_input_chars >= ${maxInputChars}` : 'scan.partial_input_chars IS NOT NULL'})
-)`;
-const PAGE_SCAN_STATE_EXCLUSION_SQL = pageScanStateExclusionSql();
+// Discovery's predicate (the minimum compiled-truth length, the raw source-holder exclusion, the managed-atoms and
+// page-state dispositions, the connector opt-out and the atom-exists test) is written out in
+// engine-sql/extract-atoms-reads.ts; the backlog count keeps the same predicate in engine-sql/atom-backlog.ts.
 
 /**
  * Pure allowlist policy: the legacy floor (minus floor types the pack declares not extractable, #5756: the floor
@@ -405,7 +384,7 @@ Output ONLY the JSON object, no prose. Use null for unavailable optional metadat
  *   #5 raw source-holder exclusion — source pages that only point at a raw
  *      import payload are not extractable prose; counting them creates a
  *      permanent backlog/no-progress loop (see
- *      RAW_SOURCE_HOLDER_EXCLUSION_SQL).
+ *      engine-sql/extract-atoms-reads.ts).
  */
 export async function discoverExtractablePages(
   engine: BrainEngine,
@@ -414,55 +393,17 @@ export async function discoverExtractablePages(
   limit: number = PAGE_DISCOVERY_BUDGET,
 ): Promise<AtomPageInput[]> {
   const hasFilter = Array.isArray(affectedSlugs) && affectedSlugs.length > 0;
-  const connectorExclusion = await connectorAtomExclusionSql(engine);
-  const sql = `
-    SELECT p.id, p.knowledge_revision,
-           (SELECT s.incarnation FROM sources s WHERE s.id=p.source_id) AS source_incarnation,
-           p.slug,
-           p.compiled_truth,
-           p.content_hash
-    FROM pages p
-    WHERE p.source_id = $1
-      AND p.type = ANY($2::text[])
-      AND p.deleted_at IS NULL
-      AND p.content_hash IS NOT NULL
-      AND COALESCE(p.frontmatter->>'imported_from',   '') <> 'markdown-greenfield'
-      AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
-      ${RAW_SOURCE_HOLDER_EXCLUSION_SQL}
-      AND ${minCompiledTruthChars('$3')}
-      ${MANAGED_ATOM_DISCOVERY_SQL}
-      ${PAGE_SCAN_STATE_EXCLUSION_SQL}
-      ${connectorExclusion}
-      ${hasFilter ? "AND p.slug = ANY($5::text[])" : ''}
-      AND NOT EXISTS (
-        SELECT 1
-        FROM pages atom
-        WHERE atom.type = 'atom'
-          AND atom.source_id = $1
-          AND atom.frontmatter->>'source_hash' = substring(p.content_hash from 1 for 16)
-          AND COALESCE(atom.frontmatter->>'managed_extraction', '') <> 'true'
-          AND atom.deleted_at IS NULL
-      )
-    ORDER BY p.updated_at DESC
-    LIMIT $4
-  `;
-  const params: unknown[] = [
+  const query = {
     sourceId,
-    await resolveExtractableTypes(),
-    MIN_PAGE_CHARS_FOR_EXTRACTION,
+    types: await resolveExtractableTypes(),
+    minChars: MIN_PAGE_CHARS_FOR_EXTRACTION,
     limit,
-  ];
-  if (hasFilter) params.push(affectedSlugs);
+    affectedSlugs: hasFilter ? affectedSlugs : null,
+    connectorExclusion: await connectorAtomExclusion(engine),
+  };
 
   try {
-    const rows = await engine.executeRaw<{
-      id: number;
-      knowledge_revision: string;
-      source_incarnation: string;
-      slug: string;
-      compiled_truth: string;
-      content_hash: string;
-    }>(sql, params);
+    const rows = await engine.listExtractablePages(query); // engine-sql/extract-atoms-reads.ts
     return rows.map((r) => ({
       slug: r.slug,
       content: r.compiled_truth,
@@ -556,17 +497,7 @@ export async function atomsExistingForHashes(
 ): Promise<Set<string>> {
   if (contentHash16s.length === 0) return new Set();
   try {
-    const rows = await engine.executeRaw<{ h: string }>(
-      `SELECT frontmatter->>'source_hash' AS h
-         FROM pages
-        WHERE type = 'atom'
-          AND source_id = $1
-          AND deleted_at IS NULL
-          AND COALESCE(frontmatter->>'managed_extraction', '') <> 'true'
-          AND frontmatter->>'source_hash' = ANY($2::text[])`,
-      [sourceId, contentHash16s],
-    );
-    return new Set(rows.map(r => r.h));
+    return new Set(await engine.listAtomSourceHashes(sourceId, contentHash16s)); // engine-sql/extract-atoms-reads.ts
   } catch (err) {
     rethrowCapabilityRefusal(err); // "none extracted" would re-spend every page
     const msg = err instanceof Error ? err.message : String(err);
@@ -604,14 +535,7 @@ export async function tombstonedTranscriptsForHashes(
 ): Promise<Set<string>> {
   if (contentHash16s.length === 0) return new Set();
   try {
-    const rows = await engine.executeRaw<{ file_path: string; content_hash: string }>(
-      `SELECT file_path, content_hash
-         FROM extract_atoms_transcript_state
-        WHERE source_id = $1
-          AND (tombstoned OR partial_input_chars IS NOT NULL)
-          AND content_hash = ANY($2::text[])`,
-      [sourceId, contentHash16s],
-    );
+    const rows = await engine.listTombstonedTranscripts(sourceId, contentHash16s); // engine-sql/extract-atoms-reads.ts
     return new Set(rows.map(r => transcriptStateKey(r.file_path, r.content_hash)));
   } catch (err) {
     rethrowCapabilityRefusal(err); // "none tombstoned" would re-spend every tombstoned transcript
@@ -871,6 +795,11 @@ export async function runPhaseExtractAtoms(
       },
     }, atomFiles, 'atom'), sourceRouting, sourceId, 'extract_atoms');
   }
+
+  // An engine that keeps no extract_atoms page or transcript state cannot record what this run settles, so every
+  // cycle would spend the model on the same items again. It refuses here, after discovery and before the first model
+  // call (dry runs call the model too); the SQL engines pass. The refusal is the phase's result, never "no work".
+  if (work.length > 0) await engine.assertAtomStateStore();
 
   // 4. Per work-item: extract atoms via the configured extract_atoms model
   let totalAtomsExtracted = 0;
@@ -1547,9 +1476,7 @@ async function resolvePageAtomSlug(
   let titles = pageAtomTitles.get(sourcePageSlug);
   if (!titles) {
     titles = new Map();
-    const rows = await engine.executeRaw<{ slug: string; title: string }>(
-      `SELECT slug, title FROM pages WHERE type = 'atom' AND deleted_at IS NULL AND source_id = $1 AND frontmatter->>'source_slug' = $2`,
-      [sourceId, sourcePageSlug]);
+    const rows = await engine.listSourcePageAtomTitles(sourceId, sourcePageSlug); // engine-sql/extract-atoms-reads.ts
     for (const row of rows) titles.set(row.title.toLowerCase(), [...(titles.get(row.title.toLowerCase()) ?? []), row.slug]);
     pageAtomTitles.set(sourcePageSlug, titles);
   }

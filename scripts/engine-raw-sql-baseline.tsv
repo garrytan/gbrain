@@ -189,9 +189,9 @@ src/core/cycle/concept-redirects.ts	execute_raw	2
 src/core/cycle/derived-write-through.ts	execute_raw	5
 src/core/cycle/drift.ts	execute_raw	2
 src/core/cycle/extract-atoms-generation.ts	execute_raw	4
-src/core/cycle/extract-atoms-input.ts	execute_raw	6
+src/core/cycle/extract-atoms-input.ts	execute_raw	3
 src/core/cycle/extract-atoms-page-state.ts	execute_raw	4
-src/core/cycle/extract-atoms.ts	execute_raw	5
+src/core/cycle/extract-atoms.ts	execute_raw	1
 src/core/cycle/extract-takes.ts	execute_raw	3
 src/core/cycle/inline-drain.ts	execute_raw	3
 src/core/cycle/pattern-claim-sources.ts	execute_raw	1

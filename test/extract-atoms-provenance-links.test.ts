@@ -971,9 +971,10 @@ describe('case-insensitive same-page atom adoption (#5030)', () => {
     let scans = 0;
     const counting = new Proxy(engine, {
       get(target, key) {
-        if (key === 'executeRaw') return (sql: string, params?: unknown[]) => {
-          if (/SELECT slug, title FROM pages WHERE type = 'atom'/.test(sql)) scans++;
-          return target.executeRaw(sql, params);
+        // The page-atom scan is the typed read listSourcePageAtomTitles (engine-sql/extract-atoms-reads.ts).
+        if (key === 'listSourcePageAtomTitles') return (sourceId: string, sourceSlug: string) => {
+          scans++;
+          return target.listSourcePageAtomTitles(sourceId, sourceSlug);
         };
         const value = Reflect.get(target, key);
         return typeof value === 'function' ? value.bind(target) : value;
