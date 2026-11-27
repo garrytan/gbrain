@@ -37,6 +37,7 @@ import { openRustEngine, type RustEngineAddonHandle } from '../../src/core/rust-
 import { readWriteTally, WriteTally, type WriteEvent } from '../../src/shadow/write-compare.ts';
 import { ensureEpoch, readEpoch } from '../../src/shadow/evidence-epoch.ts';
 import { withEnv } from './with-env.ts';
+import { withStoredSlug } from '../../src/core/utils.ts';
 import { fillSeedFixture, seedInto } from './shadow-seed-fixture.ts';
 
 export interface WriteCompareContext {
@@ -1413,6 +1414,85 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       await sampleOf(inbox, 'addLinksBatch');
       expect(verdictsOf(inbox, 'addLinksBatch')).toEqual([['sample', undefined]]);
     }, 120_000);
+
+    test('a callback that throws at once, after starting a sampled link write that waits behind a slow call, rolls it back: nothing is sent after the ROLLBACK', async () => {
+      for (const viaLane of ctx.kind === 'postgres' ? [true, false] : [false]) {
+        await ctx.reset(); await fillSeedFixture(primary());
+        const { inbox, wrapped } = rig();
+        let pending: Promise<unknown> | undefined;
+        const body = ((tx: BrainEngine) => {
+          void tx.executeRaw('SELECT pg_sleep(0.2)').catch(() => undefined);
+          pending = tx.addLink('people/alice-example', 'companies/acme-example', 'x', 'thrown_away'); // sampled: waits for the call ahead of it
+          throw new Error('abort');
+        }) as never;
+        const run = viaLane ? (wrapped as any).withReservedConnection((conn: any) => conn.transaction(body)) : wrapped.transaction(body);
+        await expect(run).rejects.toThrow('abort');
+        await pending?.catch(() => undefined);
+        await new Promise((r) => setTimeout(r, 300));
+        expect((await primary().getLinks('people/alice-example')).filter((l: { link_type?: string }) => l.link_type === 'thrown_away')).toHaveLength(0); // without the fix (lane): sent after the ROLLBACK, in autocommit
+        expect(inbox.filter((e) => e.op === 'addLink')).toEqual([]);
+      }
+    }, 60_000);
+
+    test('a call held behind a sampled write runs in its own caller\'s context: a write scoped to a page\'s stored legacy spelling updates that page, never a twin', async () => {
+      await ctx.reset(); await fillSeedFixture(primary());
+      await primary().putPage('people/legacy-seed', page('Legacy'));
+      await primary().executeRaw("UPDATE pages SET slug='People/Legacy' WHERE slug='people/legacy-seed'");
+      const { wrapped } = rig();
+      await wrapped.transaction(async (tx) => {
+        await Promise.all([
+          tx.putPage('people/gate-example', page('Gate Example'), { sourceId: 'default', inline: true }), // sampled: holds the gate
+          withStoredSlug('People/Legacy', () => tx.putPage('People/Legacy', page('Legacy Updated'), { sourceId: 'default', inline: true })), // held behind it
+        ]);
+      });
+      const rows = await primary().executeRaw<{ slug: string; title: string }>("SELECT slug, title FROM pages WHERE lower(slug) = 'people/legacy' ORDER BY slug");
+      expect(rows.map((r) => [r.slug, r.title])).toEqual([['People/Legacy', 'Legacy Updated']]); // a lost context created a lowercase twin and left the stored page as it was
+    }, 60_000);
+
+    test('a nested transaction the callback already awaited is no longer running: the next sampled write is compared, not busy', async () => {
+      await ctx.reset(); await fillSeedFixture(primary());
+      const { inbox, wrapped } = rig();
+      await wrapped.transaction(async (tx) => {
+        await tx.transaction(async (nested) => { await nested.getPage('people/alice-example'); }); // a nested transaction that writes nothing the comparison reads
+        await tx.putPage('people/after-nested', page('After Nested'), { sourceId: 'default', inline: true });
+      });
+      await until(() => inbox.some((e) => e.op === 'putPage'));
+      expect(inbox.filter((e) => e.op === 'putPage').map((e) => [e.outcome ?? 'sample', e.reason])).toEqual([['sample', undefined]]); // a finished call left in the running set made it in_transaction_busy
+    }, 60_000);
+
+    test('a transaction end waits at most its bound for a call the callback did not await: then it goes ahead as without the shadow, and the unfinished sample is uncomparable (drain_timeout)', async () => {
+      await ctx.reset(); await fillSeedFixture(primary());
+      const { inbox, wrapped } = rig();
+      let release!: () => void; const stuck = new Promise<void>((r) => { release = r; });
+      const real = primary().addLink as (...a: unknown[]) => Promise<unknown>;
+      const hook = spyOn(primary(), 'addLink').mockImplementation(async function (this: unknown, ...a: unknown[]) { await stuck; return real.apply(this, a); } as never); // a write still on its way past the bound
+      const t0 = Date.now(); let pending: Promise<unknown> | undefined;
+      try {
+        await wrapped.transaction(async (tx) => { pending = tx.addLink('people/alice-example', 'companies/acme-example', 'x', 'too_slow').catch(() => undefined); });
+        expect(Date.now() - t0).toBeLessThan(4_000); // the bound (2 s), not the stuck call, decided
+      } finally { release(); hook.mockRestore(); await pending; }
+      await until(() => inbox.some((e) => e.op === 'addLink'));
+      expect(inbox.filter((e) => e.op === 'addLink').map((e) => [e.outcome, e.reason])).toEqual([['uncomparable', 'drain_timeout']]);
+    }, 60_000);
+
+    test('with the follower wired as production wires it, a sampled write the callback did not await is sent before COMMIT and commits', async () => {
+      const kit = fenceKit(ctx);
+      for (const viaLane of ctx.kind === 'postgres' ? [false, true] : [false]) {
+        await ctx.reset(); await fillSeedFixture(primary());
+        const { inbox, wrapped } = kit.prod();
+        const failures: unknown[] = [];
+        let pending: Promise<unknown> | undefined;
+        const body = async (tx: BrainEngine) => {
+          void tx.executeRaw('SELECT pg_sleep(0.2)').catch((e) => failures.push(e));
+          pending = tx.addLink('people/alice-example', 'companies/acme-example', 'x', 'unawaited_followed').catch((e) => { failures.push(e); });
+        };
+        await (viaLane ? (wrapped as any).withReservedConnection((conn: any) => conn.transaction(body)) : wrapped.transaction(body));
+        await pending;
+        expect(failures.map((e) => String((e as Error)?.message ?? e))).toEqual([]); // without the fix: CONNECTION_CLOSED, the COMMIT went before the followed write
+        expect((await primary().getLinks('people/alice-example')).filter((l: { link_type?: string }) => l.link_type === 'unawaited_followed')).toHaveLength(1);
+        await until(() => inbox.some((e) => e.op === 'addLink'));
+      }
+    }, 60_000);
 
     test('a write the callback started and did not await, held while a sampled write waits, is sent before COMMIT: it commits as it would without the shadow', async () => {
       for (const viaLane of ctx.kind === 'postgres' ? [false, true] : [false]) {
