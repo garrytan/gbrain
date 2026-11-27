@@ -26,7 +26,7 @@ const CATALOG = [
   { table: 'takes', column: 'claim', data_type: 'text', udt_name: 'text' },
 ];
 const COLUMNS: Record<string, Array<[string, string]>> = {
-  facts: [['id', 'bigint'], ['source_id', 'text'], ['entity_slug', 'text'], ['source_markdown_slug', 'text'], ['fact', 'text'], ['expired_at', 'timestamp with time zone']],
+  facts: [['id', 'bigint'], ['source_id', 'text'], ['entity_slug', 'text'], ['source_markdown_slug', 'text'], ['fact', 'text'], ['expired_at', 'timestamp with time zone'], ['valid_until', 'timestamp with time zone']],
   pages: [['id', 'integer'], ['slug', 'text'], ['compiled_truth', 'text'], ['deleted_at', 'timestamp with time zone']],
   plain_notes: [['id', 'uuid'], ['page_id', 'uuid'], ['body', 'jsonb']],
   takes: [['id', 'bigint'], ['page_id', 'integer'], ['claim', 'text'], ['active', 'boolean']],
@@ -42,8 +42,12 @@ const VISIBILITY = `SELECT current_schema()::text AS schema,
     FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
     WHERE n.nspname = current_schema() AND c.relkind IN ('r', 'p')
       AND (c.relname = 'pages' OR (($1::text[] IS NULL OR c.relname = ANY($1::text[]))
-        AND EXISTS (SELECT 1 FROM pg_catalog.pg_attribute a WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
-          AND a.atttypid IN ('text'::regtype, 'varchar'::regtype, 'json'::regtype, 'jsonb'::regtype, 'text[]'::regtype, 'varchar[]'::regtype))))`;
+        AND EXISTS (SELECT 1 FROM pg_catalog.pg_attribute a JOIN pg_catalog.pg_type ty ON ty.oid = a.atttypid
+          WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+          AND (CASE WHEN ty.typtype = 'd' THEN ty.typbasetype ELSE a.atttypid END)
+            IN ('text'::regtype, 'varchar'::regtype, 'json'::regtype, 'jsonb'::regtype, 'text[]'::regtype, 'varchar[]'::regtype))))`;
+const ORDER = `ORDER BY convert_to(hit."table", 'UTF8'), convert_to(hit."column", 'UTF8'), convert_to(hit.value, 'UTF8'), `
+  + `convert_to(hit.slug, 'UTF8') NULLS FIRST, hit.page_id NULLS FIRST, convert_to(hit.entity_slug, 'UTF8') NULLS FIRST`;
 
 describe('eval harness SQL, byte for byte', () => {
   test('getFactsByIds, findLiveFactsByText and listPageIdSlugs', async () => {
@@ -55,7 +59,7 @@ describe('eval harness SQL, byte for byte', () => {
     await sql.findLiveFactsByText(engine, 'default', []);
     expect(calls).toEqual([
       { text: 'SELECT id, source_id, fact, entity_slug, expired_at, superseded_by FROM facts WHERE id = ANY($1::bigint[]) ORDER BY id', params: [[3, 1]] },
-      { text: 'SELECT id, fact FROM facts WHERE source_id = $1 AND fact = ANY($2::text[]) AND expired_at IS NULL ORDER BY id', params: ['default', ['a', 'b']] },
+      { text: 'SELECT id, fact FROM facts WHERE source_id = $1 AND fact = ANY($2::text[]) AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now()) ORDER BY id', params: ['default', ['a', 'b']] },
       { text: 'SELECT id, slug, source_id, deleted_at FROM pages ORDER BY id', params: undefined },
     ]);
   });
@@ -87,14 +91,37 @@ describe('eval harness SQL, byte for byte', () => {
         { text: 'SELECT table_name AS "table", column_name AS "column", data_type FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = ANY($1::text[])',
           params: [['facts', 'pages', 'plain_notes', 'takes']] },
         { text: 'SELECT * FROM ('
-            + `SELECT $1::text AS "table", $2::text AS "column", COALESCE(x."entity_slug"::text, x."source_markdown_slug"::text) AS slug, NULL::bigint AS page_id, x."entity_slug"::text AS entity_slug, x."fact"::text AS value FROM "public"."facts" x WHERE strpos(lower(x."fact"::text), lower($3::text)) > 0${live(' AND x."expired_at" IS NULL AND NOT EXISTS (SELECT 1 FROM "public"."pages" q WHERE q."source_id" = x."source_id" AND q."slug" = x."source_markdown_slug" AND q."deleted_at" IS NOT NULL)')}`
+            + `SELECT $1::text AS "table", $2::text AS "column", COALESCE(x."entity_slug"::text, x."source_markdown_slug"::text) AS slug, NULL::bigint AS page_id, x."entity_slug"::text AS entity_slug, x."fact"::text AS value FROM "public"."facts" x WHERE strpos(lower(x."fact"::text), lower($3::text)) > 0${live(' AND x."expired_at" IS NULL AND (x."valid_until" IS NULL OR x."valid_until" > now()) AND NOT EXISTS (SELECT 1 FROM "public"."pages" q WHERE q."source_id" = x."source_id" AND q."slug" = x."source_markdown_slug" AND q."deleted_at" IS NOT NULL)')}`
             + ` UNION ALL SELECT $4::text AS "table", $5::text AS "column", COALESCE(x."slug"::text, p."slug") AS slug, x."id"::bigint AS page_id, NULL::text AS entity_slug, x."compiled_truth"::text AS value FROM "public"."pages" x LEFT JOIN "public"."pages" p ON p."id" = x."id" WHERE strpos(lower(x."compiled_truth"::text), lower($6::text)) > 0${live(' AND x."deleted_at" IS NULL AND (p."id" IS NULL OR p."deleted_at" IS NULL)')}`
             + ' UNION ALL SELECT $7::text AS "table", $8::text AS "column", NULL::text AS slug, NULL::bigint AS page_id, NULL::text AS entity_slug, x."body"::text AS value FROM "public"."plain_notes" x WHERE strpos(lower(x."body"::text), lower($9::text)) > 0'
             + ` UNION ALL SELECT $10::text AS "table", $11::text AS "column", COALESCE(p."slug") AS slug, x."page_id"::bigint AS page_id, NULL::text AS entity_slug, x."claim"::text AS value FROM "public"."takes" x LEFT JOIN "public"."pages" p ON p."id" = x."page_id" WHERE strpos(lower(x."claim"::text), lower($12::text)) > 0${live(' AND x."active" AND (p."id" IS NULL OR p."deleted_at" IS NULL)')}`
-            + `) hit ORDER BY convert_to(hit."table", 'UTF8'), convert_to(hit."column", 'UTF8'), convert_to(hit.value, 'UTF8')${live(' LIMIT $13')}`,
+            + `) hit ${ORDER}${live(' LIMIT $13')}`,
           params: ['facts', 'fact', 'Token', 'pages', 'compiled_truth', 'Token', 'plain_notes', 'body', 'Token', 'takes', 'claim', 'Token', ...(activeOnly ? [5] : [])] },
       ]);
     }
+  });
+
+  test('scanTextColumns with activeOnly: a wanted link by its origin page, a page alias by its source and slug', async () => {
+    const catalog = [
+      { table: 'page_aliases', column: 'alias_norm', data_type: 'text', udt_name: 'text' },
+      { table: 'wanted_links', column: 'target_ref', data_type: 'text', udt_name: 'text' },
+    ];
+    const columns: Record<string, Array<[string, string]>> = {
+      page_aliases: [['id', 'bigint'], ['source_id', 'text'], ['alias_norm', 'text'], ['slug', 'text']],
+      pages: [['id', 'integer'], ['slug', 'text'], ['source_id', 'text'], ['deleted_at', 'timestamp with time zone']],
+      wanted_links: [['id', 'bigint'], ['origin_page_id', 'integer'], ['source_id', 'text'], ['target_ref', 'text']],
+    };
+    const { engine, calls } = recorder((text) => text.startsWith('SELECT c.table_name') ? catalog
+      : text.startsWith('SELECT current_schema()') ? [{ schema: 'public', hidden: [] }]
+      : text.startsWith('SELECT table_name AS "table"') ? Object.entries(columns).flatMap(([table, cols]) => cols.map(([column, data_type]) => ({ table, column, data_type }))) : []);
+    await sql.scanTextColumns(engine, { pattern: 'Token', activeOnly: true });
+    expect(calls.at(-1)).toEqual({
+      text: 'SELECT * FROM ('
+        + 'SELECT $1::text AS "table", $2::text AS "column", COALESCE(x."slug"::text) AS slug, NULL::bigint AS page_id, NULL::text AS entity_slug, x."alias_norm"::text AS value FROM "public"."page_aliases" x WHERE strpos(lower(x."alias_norm"::text), lower($3::text)) > 0 AND EXISTS (SELECT 1 FROM "public"."pages" q WHERE q."source_id" = x."source_id" AND q."slug" = x."slug" AND q."deleted_at" IS NULL)'
+        + ' UNION ALL SELECT $4::text AS "table", $5::text AS "column", COALESCE(p."slug") AS slug, x."origin_page_id"::bigint AS page_id, NULL::text AS entity_slug, x."target_ref"::text AS value FROM "public"."wanted_links" x LEFT JOIN "public"."pages" p ON p."id" = x."origin_page_id" WHERE strpos(lower(x."target_ref"::text), lower($6::text)) > 0 AND (p."id" IS NULL OR p."deleted_at" IS NULL)'
+        + `) hit ${ORDER}`,
+      params: ['page_aliases', 'alias_norm', 'Token', 'wanted_links', 'target_ref', 'Token'],
+    });
   });
 
   test('scanTextColumns refuses, naming them, tables the running role cannot read in full, and a negative limit', async () => {
@@ -112,17 +139,21 @@ describe('eval harness SQL, byte for byte', () => {
   });
 
   test('pauseManagedPersistence and restoreManagedPersistence', async () => {
-    const { engine, calls } = recorder((text) => (text.startsWith('WITH prior') ? [{ enabled: true, mode_epoch: '7', topology_changes: '2' }] : [{ restored: true }]));
-    expect(await sql.pauseManagedPersistence(engine)).toEqual({ enabled: true, mode_epoch: '7', topology_changes: '2' });
-    expect(await sql.restoreManagedPersistence(engine, { enabled: true, mode_epoch: '7', topology_changes: '2' })).toBe(true);
+    const { engine, calls } = recorder((text) => (text.startsWith('WITH prior') ? [{ enabled: true, mode_epoch: '7', brain_topology_changes: '2' }] : [{ restored: true }]));
+    expect(await sql.pauseManagedPersistence(engine)).toEqual({ enabled: true, mode_epoch: '7', brain_topology_changes: '2' });
+    expect(await sql.restoreManagedPersistence(engine, { enabled: true, mode_epoch: '7', brain_topology_changes: '2' })).toBe(true);
+    // A pause token an older gbrain took (topology_changes, a count of every change) is refused before any statement.
+    const outdated = { enabled: true, mode_epoch: '7', topology_changes: '3' } as unknown as sql.ManagedPausePrior;
+    expect(await sql.restoreManagedPersistence(engine, outdated).then(() => 'restored', (e: { code?: string }) => e.code)).toBe(sql.PAUSE_TOKEN_OUTDATED);
     expect(calls).toEqual([
-      { text: `WITH prior AS (SELECT enabled, mode_epoch, (SELECT count(*) FROM persistence_topology_changes) AS topology_changes
+      { text: 'SELECT 1 FROM persistence_brain WHERE singleton = 1 FOR UPDATE', params: undefined },
+      { text: `WITH prior AS (SELECT enabled, mode_epoch, (SELECT count(*) FROM persistence_topology_changes WHERE source_id = '*') AS topology_changes
         FROM persistence_brain WHERE singleton = 1 FOR UPDATE),
       paused AS (UPDATE persistence_brain SET enabled = false WHERE singleton = 1)
-    SELECT enabled, mode_epoch::text AS mode_epoch, topology_changes::text AS topology_changes FROM prior`, params: undefined },
+    SELECT enabled, mode_epoch::text AS mode_epoch, topology_changes::text AS brain_topology_changes FROM prior`, params: undefined },
       { text: 'SELECT 1 FROM persistence_brain WHERE singleton = 1 FOR UPDATE', params: undefined },
       { text: `UPDATE persistence_brain SET enabled = $1 WHERE singleton = 1 AND enabled = false AND mode_epoch = $2::bigint
-      AND (SELECT count(*) FROM persistence_topology_changes) = $3::bigint RETURNING true AS restored`, params: [true, '7', '2'] },
+      AND (SELECT count(*) FROM persistence_topology_changes WHERE source_id = '*') = $3::bigint RETURNING true AS restored`, params: [true, '7', '2'] },
     ]);
   });
 });

@@ -7,7 +7,7 @@
  * SQL tables it maps keep their names; every other record is named by its keyspace.
  */
 import type { BrainEngine } from '../../engine.ts';
-import type { FactStateRow, ManagedPausePrior, PageIdSlugRow, TextColumnRow, TextScanHit } from '../../engine-sql/eval-harness-reads.ts';
+import { assertCurrentPauseToken, type FactStateRow, type ManagedPausePrior, type PageIdSlugRow, type TextColumnRow, type TextScanHit } from '../../engine-sql/eval-harness-reads.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
@@ -55,10 +55,16 @@ export const scanTextColumns: Member<'scanTextColumns'> = async (brain, spec) =>
 
 /** One store write: read the brain mode and turn enabled off with no epoch bump (gbrain-store `pause_managed_persistence`). */
 export const pauseManagedPersistence: Member<'pauseManagedPersistence'> = async (brain) => {
-  const prior: { enabled: boolean; mode_epoch: string; topology_changes: string } = await storeCall({ member: 'pauseManagedPersistence' }, () => brain.pauseManagedPersistence());
-  return { enabled: prior.enabled === true, mode_epoch: String(prior.mode_epoch), topology_changes: String(prior.topology_changes) } satisfies ManagedPausePrior;
+  const prior: { enabled: boolean; mode_epoch: string; brain_topology_changes: string } = await storeCall({ member: 'pauseManagedPersistence' }, () => brain.pauseManagedPersistence());
+  return { enabled: prior.enabled === true, mode_epoch: String(prior.mode_epoch), brain_topology_changes: String(prior.brain_topology_changes) } satisfies ManagedPausePrior;
 };
 
-/** One compare-and-set store write: put enabled back only while still paused at the prior epoch with no topology change since. */
-export const restoreManagedPersistence: Member<'restoreManagedPersistence'> = (brain, prior) =>
-  storeCall<boolean>({ member: 'restoreManagedPersistence' }, () => brain.restoreManagedPersistence({ enabled: prior.enabled, mode_epoch: prior.mode_epoch, topology_changes: prior.topology_changes }));
+/**
+ * One compare-and-set store write: put enabled back only while still paused at the prior epoch with no brain-wide
+ * topology change since. A pause token from an older gbrain is refused first, writing nothing (assertCurrentPauseToken).
+ */
+export const restoreManagedPersistence: Member<'restoreManagedPersistence'> = async (brain, prior) => {
+  assertCurrentPauseToken(prior);
+  return storeCall<boolean>({ member: 'restoreManagedPersistence' }, () =>
+    brain.restoreManagedPersistence({ enabled: prior.enabled, mode_epoch: prior.mode_epoch, brain_topology_changes: prior.brain_topology_changes }));
+};

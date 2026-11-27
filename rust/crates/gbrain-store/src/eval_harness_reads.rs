@@ -7,9 +7,9 @@
 use crate::Store;
 use crate::env::iso;
 use crate::error::Result;
-use crate::facts::{read_fact, source_rows};
+use crate::eval_harness_catalog::page_heads;
+use crate::facts::{for_each_source_fact, read_fact};
 use crate::links::no_nul;
-use crate::pages::all_pages;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::{BTreeSet, HashSet};
@@ -52,28 +52,33 @@ impl Store {
         Ok(out)
     }
 
-    /// `findLiveFactsByText`: `{ id, fact }` for each fact of `sourceId` with no `expired_at` whose
-    /// text equals one of `texts` byte for byte, by id.
+    /// `findLiveFactsByText`: `{ id, fact }` for each active fact of `sourceId` (no `expired_at`, not
+    /// past its `valid_until`) whose text equals one of `texts` byte for byte, by id. The source's
+    /// facts are read one at a time, not all at once.
     pub fn find_live_facts_by_text(&self, q: &LiveFactsByTextQuery) -> Result<Vec<Value>> {
         no_nul("findLiveFactsByText", &[("sourceId", &q.source_id)])?;
         let read = self.read()?;
         let texts: HashSet<&str> = q.texts.iter().map(String::as_str).collect();
-        let mut rows: Vec<_> = source_rows(&*read, &q.source_id)?
-            .into_iter()
-            .filter(|r| r.expired_at_us.is_none() && texts.contains(r.fact.as_str()))
-            .collect();
-        rows.sort_by_key(|r| r.id);
+        let now = self.env.now_micros();
+        let mut rows: Vec<(u64, String)> = Vec::new();
+        for_each_source_fact(&*read, &q.source_id, &mut |r| {
+            if r.active(now) && texts.contains(r.fact.as_str()) {
+                rows.push((r.id, r.fact.clone()));
+            }
+            true
+        })?;
+        rows.sort_by_key(|r| r.0);
         Ok(rows
             .iter()
-            .map(|r| json!({ "id": r.id, "fact": r.fact }))
+            .map(|(id, fact)| json!({ "id": id, "fact": fact }))
             .collect())
     }
 
     /// `listPageIdSlugs`: `{ id, slug, source_id, deleted_at }` for every page of every source, a
-    /// soft-deleted page included, by id.
+    /// soft-deleted page included, by id. Only those four fields of each page record are decoded.
     pub fn list_page_id_slugs(&self) -> Result<Vec<Value>> {
         let read = self.read()?;
-        let mut pages = all_pages(&*read)?;
+        let mut pages = page_heads(&*read)?;
         pages.sort_by_key(|p| p.id);
         Ok(pages
             .iter()

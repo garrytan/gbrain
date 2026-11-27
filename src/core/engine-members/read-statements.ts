@@ -402,9 +402,10 @@ export interface ReadStatementMembers {
   scanTextColumns(spec: EvalHarnessSql.TextScanSpec): Promise<EvalHarnessSql.TextScanHit[]>;
   /**
    * The evals' harness pause (engine-sql/eval-harness-reads.ts): pauseManagedPersistence turns managed persistence off
-   * with no mode_epoch bump and returns the prior enabled, epoch and topology change count; restoreManagedPersistence
-   * puts enabled back only while the row is still paused at that epoch with no topology change since (true when it
-   * wrote). withManagedPersistencePaused runs fn between them and reports paused_state_changed when a real mode change
+   * with no mode_epoch bump and returns the prior enabled, epoch and brain-wide topology change count;
+   * restoreManagedPersistence puts enabled back only while the row is still paused at that epoch with no brain-wide
+   * topology change since (true when it wrote), and refuses a pause token an older gbrain took
+   * (managed_pause_token_outdated), writing nothing. withManagedPersistencePaused runs fn between them and reports paused_state_changed when a real mode change
    * during fn is kept; a throw is rethrown after the restore. One pause at a time per brain (a nested one is refused).
    */
   pauseManagedPersistence(): Promise<EvalHarnessSql.ManagedPausePrior>;
