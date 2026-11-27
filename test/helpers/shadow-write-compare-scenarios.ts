@@ -1393,7 +1393,7 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       }
     }, 120_000);
 
-    test('a pin that cannot be taken because another call is in flight leaves the sample uncomparable (in_transaction_busy), never a pass; a pinned page with tags written after it is not moved', async () => {
+    test('a call still running when the callback returns is waited for before the pin, so the pin is taken; a pinned page with tags written after it is not moved', async () => {
       await fresh();
       const { inbox, wrapped } = prod();
       await wrapped.transaction(async (tx) => { await tx.putPage('companies/acme-example', page('Acme No Later Write')); });
@@ -1405,11 +1405,11 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       await wrapped.transaction(async (tx) => {
         const written = await tx.putPage('people/alice-example', page('Alice Busy'));
         await tx.addPageTagsById(written.id, ['alpha']);
-        void tx.deleteChunks('people/alice-example'); // still running when the callback returns
+        void tx.deleteChunks('people/alice-example'); // still running when the callback returns: with the follower wired, the transaction's end waits for it, so the pin is taken after it
       });
       await until(() => putEvents(inbox).length >= 3);
-      if (pg) { expect(putEvents(inbox)[2]).toMatchObject({ outcome: 'uncomparable', reason: 'in_transaction_busy' }); expect(putEvents(inbox)[2]!.moved).toBeUndefined(); }
-      else expect(putEvents(inbox)[2]!.reason).not.toBe('in_transaction_busy'); // no fence, no pin, nothing to be busy about
+      expect(putEvents(inbox)[2]!.outcome).toBeUndefined(); // a full sample (before the drain: in_transaction_busy on Postgres)
+      expect(Boolean(putEvents(inbox)[2]!.moved)).toBe(false);
     }, 120_000);
   });
 
@@ -1427,14 +1427,16 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       const said = JSON.parse(out.trim().split('\n').at(-1)!) as { sent: number; refused: number };
       await until(() => existsSync(done), (readerSleep + 30) * 1000); // the child outlives its parent: it reads what the pipe holds, then counts what it was never sent
       const t = readWriteTally(home, readEpoch(home)!.epoch_id)!;
-      return { ...said, received: t.uncomparable_by_reason.no_sample ?? 0, lost: t.uncomparable_by_reason.pipe_unflushed ?? 0, total: t.comparable + t.unexplained_difference + t.uncomparable + t.capability_missing, files: readdirSync(home) };
+      // `cut`: the pipe holds a prefix of the stream, so at most its LAST line can be cut short (seen on macOS, whose pipe takes part of a write); the child reads that line, cannot parse it and settles it
+      // `line_unreadable` (src/shadow/child.ts), so it is neither received whole nor lost in the pipe, and it is still counted.
+      return { ...said, received: t.uncomparable_by_reason.no_sample ?? 0, lost: t.uncomparable_by_reason.pipe_unflushed ?? 0, cut: t.uncomparable_by_reason.line_unreadable ?? 0, reasons: t.uncomparable_by_reason, total: t.comparable + t.unexplained_difference + t.uncomparable + t.capability_missing, files: readdirSync(home) };
     }
 
     test('a reader that catches up while the CLI waits: every sample is received and counted, none is lost', async () => {
       const r = await exitAtOnce(300, 1, 10_000);
       expect(r.refused).toBe(0);
       expect({ received: r.received, lost: r.lost, total: r.total }).toEqual({ received: r.sent, lost: 0, total: r.sent }); // master: about a quarter arrive and nothing counts the rest
-      expect(r.files.filter((f) => f.startsWith('write-sent.'))).toEqual([]); // the child took the sent count and removed it
+      expect(r.files.filter((f) => f.startsWith('write-owed.') || f.startsWith('write-sent.'))).toEqual([]); // the child settled every owed sample and removed the owed record (was: the sent count, write-sent.*)
     }, 120_000);
 
     for (const lineBytes of [200, 2_000, 20_000]) {
@@ -1443,8 +1445,9 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
         expect(r.refused).toBe(0);
         expect(r.lost).toBeGreaterThan(0);
         expect(r.received).toBeLessThan(r.sent);
-        expect(r.received + r.lost).toBe(r.sent);
-        expect(r.total).toBe(r.sent);
+        expect(r.cut, JSON.stringify(r.reasons)).toBeLessThanOrEqual(1); // only the last line in the pipe can be cut short
+        expect(r.received + r.cut + r.lost, JSON.stringify(r.reasons)).toBe(r.sent); // every sample is received whole, read cut short, or counted lost in the pipe: exactly
+        expect(r.total, JSON.stringify(r.reasons)).toBe(r.sent);
       }, 120_000);
     }
   });

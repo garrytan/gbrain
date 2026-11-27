@@ -171,7 +171,7 @@ describe('the production `gbrain engine swap` command', () => {
       const brain = new PGLiteEngine();
       await brain.connect({ database_path: config.database_path });
       await brain.initSchema();
-      await brain.executeRaw(`INSERT INTO engine_writer_observations (host_id, application_name, process_kind, gbrain_version) VALUES ('11111111-1111-4111-8111-111111111111', 'gbrain cli:1:abcdef01', 'cli', 'test')`);
+      await brain.executeRaw(`INSERT INTO engine_writer_observations (host_id, application_name, process_kind, gbrain_version, write_protocol) VALUES ('11111111-1111-4111-8111-111111111111', 'gbrain cli:1:abcdef01', 'cli', 'test', 2)`);
       if (broken) await brain.executeRaw('ALTER TABLE engine_writer_observations RENAME TO engine_writer_observations_moved');
       await brain.disconnect();
       if (broken) brokenHome = h; else healthyHome = h;
