@@ -15,6 +15,10 @@ import { MAX_PRE_LINKS, MAX_PRE_PAGES, movedOutsideFootprint, PILOT_WRITES, page
 import { sqlWrites } from './sql-writes.ts';
 import { memberKind } from './write-map.ts';
 import { COMPLETE_WRITE_PURGE_PROBE_SQL, COMPLETE_WRITE_SQL, ENSURE_COUNTERS_SQL, LOCK_COUNTERS_SQL, PUBLICATION_EFFECTS_SQL } from '../core/engine-sql/persistence-journal.ts';
+import { COMPLETE_EFFECT_SQL, EFFECT_GUARD_BRAIN_SQL, EFFECT_GUARD_WORKTREE_SQL } from '../core/engine-sql/persistence-effect-worker.ts';
+import { EFFECT_TRANSACTION_LIMITS_SQL } from '../core/engine-sql/remote-links.ts';
+import { persistenceDeclarationStatement } from '../core/engine-sql/persistence-declaration.ts';
+import { EFFECT_CLAIM_ROW_LOCK_SQL } from '../core/engine-sql/embedding-install.ts';
 
 /** How long the preimage read may hold a sampled write. */
 export const PREIMAGE_TIMEOUT_MS = 2_000;
@@ -41,6 +45,8 @@ export interface TxScope {
   gate: Promise<void> | null;
   /** Member calls on the transaction that have started and not yet settled, queued ones included (the wrapper counts them). */
   inflight: number;
+  /** Member calls the wrapper let run (not held by the gate) that have not settled yet, in the order they ran: the ones a sampled write waits for. */
+  running: Set<{ name: string; done: Promise<void> }>;
   /** A member that may write is about to run, inside the nested transactions `path` names (none: the outermost). */
   note(name: string, args: unknown[], path?: number[]): void;
   /** A nested transaction (savepoint) opened: its id. */
@@ -136,8 +142,11 @@ const knownOptions = (name: string, args: unknown[]): boolean => name !== 'putPa
 const STAMP = 'updatePageContextualRetrievalState'; // changes a compared page column (contextual_retrieval_mode) after the page write: the replay runs the same call (WriteEvent.then)
 /** Writes after a sampled putPage in its transaction that leave the compared page row and links as the write made them (chunks are not compared). */
 const LATER_WRITES: ReadonlySet<string> = new Set(['upsertChunks', 'deleteChunks', 'deleteChunksExcept', 'moveChunkIndexes', 'setPageAliases', 'replaceDerivedAliases', 'pruneFrontmatterTags', 'addPageTagsById', 'writeTextProjectionSeal', STAMP]);
-/** Tables only the writer's own bookkeeping touches; nothing the comparison reads. A raw write is benign when every table it writes is one of these. `timeline_entries`, `takes` and `content_chunks` are not compared. */
-const BOOKKEEPING: ReadonlySet<string> = new Set(['persistence_counters', 'persistence_effects', 'persistence_requests', 'op_checkpoints', 'write_gate_receipts', 'sources', 'timeline_entries', 'takes', 'content_chunks', 'page_projection_jobs', 'config']);
+/**
+ * Tables only the writer's own bookkeeping touches; nothing the comparison reads. A raw write is benign when every table it writes is one of these. `timeline_entries`, `takes`
+ * and `content_chunks` are not compared, nor is `wanted_links` (the links effect's rows for mention targets that do not exist yet): the read-back's getPage and getLinks never read it.
+ */
+const BOOKKEEPING: ReadonlySet<string> = new Set(['persistence_counters', 'persistence_effects', 'persistence_requests', 'op_checkpoints', 'write_gate_receipts', 'sources', 'timeline_entries', 'takes', 'content_chunks', 'page_projection_jobs', 'config', 'wanted_links']);
 const squash = (sql: string): string => sql.replace(/\s+/g, ' ').trim();
 /** The raw page updates a sync or put_page makes after the page write, matched by their exact text (whitespace aside): the unbound-origin clear, the chunker and text seal, and the chunker-version stamp. Any other text, drifted or new, is an ordinary write. */
 const AFTER_PAGE_WRITE: ReadonlySet<string> = new Set([
@@ -157,15 +166,18 @@ function rawKind(args: unknown[]): 'bookkeeping' | 'seal' | undefined {
   if (PURE_LOCK.test(sql)) return 'bookkeeping'; // one table lock and nothing else changes no row; a batch that holds more goes through the table check below, whole
   try { const writes = sqlWrites(sql); return writes.length > 0 && writes.every((w) => w.kind === 'relation' && BOOKKEEPING.has(w.relation)) ? 'bookkeeping' : undefined; } catch { return undefined; }
 }
-/** True when every statement is read-only or writes only bookkeeping tables (the raw rule above) and at least one writes; a statement the parser cannot read, or one that writes any other table, makes it false. */
-export function bookkeepingStatements(sqls: readonly string[]): boolean {
+/**
+ * True when every statement is read-only or writes only bookkeeping tables (the raw rule above) and, unless `readOnly` allows none, at least one writes; a statement the parser
+ * cannot read, or one that writes any other table, makes it false. A read-only statement here takes locks or sets transaction-local settings (the typed members below).
+ */
+export function bookkeepingStatements(sqls: readonly string[], readOnly = false): boolean {
   let wrote = false;
   for (const sql of sqls) {
     let writes; try { writes = sqlWrites(sql); } catch { return false; }
     if (writes.some((w) => w.kind !== 'relation' || !BOOKKEEPING.has(w.relation))) return false;
     if (writes.length) wrote = true;
   }
-  return wrote;
+  return wrote || readOnly;
 }
 /**
  * Typed journal members and every statement each one sends (engine-sql/persistence-journal.ts): the counter rows' create-and-lock before a journaled page write, and the
@@ -179,10 +191,19 @@ export const JOURNAL_MEMBER_STATEMENTS: ReadonlyMap<string, readonly string[]> =
   ['completeWriteRow', [COMPLETE_WRITE_SQL, COMPLETE_WRITE_PURGE_PROBE_SQL]],
   // The publication's effects insert (persistence_effects only): a raw statement the rule judged bookkeeping until the journal moved onto this member.
   ['insertPublicationEffects', [PUBLICATION_EFFECTS_SQL]],
+  // The links effect's own transaction around its addLinksBatch (persistence/effect-links.ts): the effect row's completion (persistence_effects only) and the members that
+  // only lock rows or set transaction-local settings (EFFECT_LOCK_MEMBERS: their statements write nothing).
+  ['completeEffectRow', [COMPLETE_EFFECT_SQL]],
+  ['setEffectTransactionLimits', [EFFECT_TRANSACTION_LIMITS_SQL]],
+  ['declarePersistence', [persistenceDeclarationStatement().sql, persistenceDeclarationStatement({ lockTimeout: '1s', statementTimeout: '1s' }).sql, persistenceDeclarationStatement({ lockTimeout: '1s', statementTimeout: '1s', idleInTransaction: '1s' }).sql]],
+  ['lockEffectGuard', [EFFECT_GUARD_BRAIN_SQL, EFFECT_GUARD_WORKTREE_SQL]],
+  ['lockEffectClaimRow', [EFFECT_CLAIM_ROW_LOCK_SQL]],
 ]);
+/** The members above whose statements only lock rows or set transaction-local settings: judged by the same rule with no write required. */
+export const EFFECT_LOCK_MEMBERS: ReadonlySet<string> = new Set(['setEffectTransactionLimits', 'declarePersistence', 'lockEffectGuard', 'lockEffectClaimRow']);
 /** The closing text seal of an imported page (engine-sql/write-guards.ts sealImportedPage): the statement AFTER_PAGE_WRITE matched by text while it was raw, pinned by test/shadow-follow-producer.test.ts. */
 const SEAL_MEMBER = 'sealImportedPage';
-const BOOKKEEPING_MEMBERS: ReadonlySet<string> = new Set([...JOURNAL_MEMBER_STATEMENTS].filter(([, sqls]) => bookkeepingStatements(sqls)).map(([name]) => name));
+const BOOKKEEPING_MEMBERS: ReadonlySet<string> = new Set([...JOURNAL_MEMBER_STATEMENTS].filter(([name, sqls]) => bookkeepingStatements(sqls, EFFECT_LOCK_MEMBERS.has(name))).map(([name]) => name));
 const pageKey = (name: string, args: unknown[]): string => { const r = pageRefs(name === STAMP ? 'putPage' : name, name === STAMP ? [args[0], undefined, { sourceId: args[1] }] : args)[0]; return r ? `${r.source}\0${r.slug}` : ''; };
 
 /** The target page as the transaction commits it (beforeCommit): its revision, and its compared fields as `readBackText` writes them. */
@@ -191,17 +212,31 @@ interface TxSample { at: number; key: string; op: string; bad?: string; pin?: Pi
 interface Scope extends TxScope { root: BrainEngine; log: Array<{ name: string; key: string; args?: unknown[]; path: number[]; kind?: 'bookkeeping' | 'seal' }>; samples: TxSample[]; nested: number }
 
 const PREIMAGE_REASONS: ReadonlySet<string> = new Set(['preimage_too_large', 'preimage_timeout', 'soft_deleted_page', 'fact_overlay']);
+/** Members whose call runs a callback: one still running may be waiting for a call held behind the gate, so a sampled write never waits for it. */
+const CALLBACK_MEMBERS: ReadonlySet<string> = new Set(['transaction', 'transactionDirect', 'withReservedConnection']);
+
+/** True when every call in `calls` settles within `ms`. */
+const settledWithin = async (calls: Promise<void>[], ms: number): Promise<boolean> => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try { return await Promise.race([Promise.all(calls).then(() => true), new Promise<boolean>((resolve) => { timer = setTimeout(() => resolve(false), ms); })]); } finally { clearTimeout(timer); }
+};
 
 const timeout = <T>(promise: Promise<T>, ms: number, onTimeout: () => void): Promise<T> => new Promise((resolve, reject) => {
   const timer = setTimeout(() => { onTimeout(); reject(new Error('preimage_timeout')); }, ms);
   promise.then((v) => { clearTimeout(timer); resolve(v); }, (e) => { clearTimeout(timer); reject(e); });
 });
 
-/** Why a putPage sample cannot be compared given the writes its transaction made, or null: an earlier write to anything the comparison reads (a version row is not read), a later one that is not a chunk write, or another putPage of the same page. */
+/**
+ * Why a sample cannot be compared given the writes its transaction made, or null. A putPage: an earlier write to anything the comparison reads (a version row is not read),
+ * a later one that is not a chunk write, or another putPage of the same page. A link write or a page delete: any other write of the transaction but a version row and the
+ * writer's own bookkeeping (locks, the effect journal), since its read-back reads the pages it names and every link among them.
+ */
 function judge(sc: Scope, s: TxSample): string | null {
+  const page = s.op === 'putPage';
   for (const [i, w] of sc.log.entries()) {
-    if (i === s.at || w.name === 'createVersion' || w.kind === 'bookkeeping' || (i > s.at && w.kind === 'seal') || (w.name === 'putPage' && w.key !== s.key) || (i > s.at && LATER_WRITES.has(w.name))) continue;
-    return w.name === 'putPage' ? 'in_transaction_same_page' : i < s.at ? 'in_transaction_prior_write' : 'in_transaction_later_write';
+    if (i === s.at || w.name === 'createVersion' || w.kind === 'bookkeeping') continue;
+    if (page && ((i > s.at && w.kind === 'seal') || (w.name === 'putPage' && w.key !== s.key) || (i > s.at && LATER_WRITES.has(w.name)))) continue;
+    return page && w.name === 'putPage' ? 'in_transaction_same_page' : i < s.at ? 'in_transaction_prior_write' : 'in_transaction_later_write';
   }
   return null;
 }
@@ -241,20 +276,25 @@ export function createWriteSampler(o: WriteSamplerOptions): WriteSampler {
     })();
     reading.add(sample); void sample.done.finally(() => reading.delete(sample));
   };
-  /** A putPage inside a transaction: the preimage is read on the transaction's own connection before the write is sent, the write runs untouched, and the sample waits for the commit (TxScope.commit). A rolled-back transaction drops it. */
+  /**
+   * A pilot write inside a transaction: the preimage is read on the transaction's own connection before the write is sent, the write runs untouched, and the sample waits for
+   * the commit (TxScope.commit). A rolled-back transaction drops it. Calls that started before it and have not settled (a pipelined version row beside an edit) could send
+   * statements inside the preimage savepoint and be rolled back with it, so the write first waits for them, with every later call held behind the gate; one that does not
+   * settle in time, or that runs a callback (a nested transaction), leaves the write unsampled through the savepoint (`in_transaction_busy`).
+   */
   const inTransaction = (scope: Scope, tx: BrainEngine, name: string, args: unknown[], run: () => unknown): Promise<unknown> => {
     const s: TxSample = { at: scope.log.length, key: pageKey(name, args), op: name };
     scope.samples.push(s);
-    // Another member call that has started and not settled (a pipelined sibling, a write waiting on a page lock) may still send statements of its own, and they would run inside the
-    // preimage savepoint and be rolled back with it. Then nothing is read and nothing is held: the write goes through untouched.
-    if (scope.inflight > 1) { s.bad = 'in_transaction_busy'; return Promise.resolve(run()); }
+    const ahead = [...scope.running];
+    if (ahead.some((c) => CALLBACK_MEMBERS.has(c.name))) { s.bad = 'in_transaction_busy'; return Promise.resolve(run()); }
     const before = o.generation?.();
     let open!: () => void;
     scope.gate = new Promise<void>((resolve) => { open = () => { scope.gate = null; resolve(); }; });
     return (async () => {
       let encoded: unknown[] = []; let pre: PreImage | undefined; let targets: PageRef[] = [];
       try {
-        s.bad = (knownOptions(name, args) ? judge(scope, s) : 'unknown_option') ?? undefined;
+        if (ahead.length && !await settledWithin(ahead.map((c) => c.done), o.preimageTimeoutMs ?? PREIMAGE_TIMEOUT_MS)) s.bad = 'in_transaction_busy';
+        s.bad ??= (knownOptions(name, args) ? judge(scope, s) : 'unknown_option') ?? undefined;
         encoded = encodeArgs(args, { left: CAPTURE_BUDGET_BYTES });
         targets = pageRefs(name, args);
         if (targets.length > MAX_PRE_PAGES) throw new Error('preimage_too_large');
@@ -287,7 +327,7 @@ export function createWriteSampler(o: WriteSamplerOptions): WriteSampler {
         try { sampled = o.active() && random() < rate && ctx.mayWrite(name, args); } catch { /* not sampled */ }
         if (!sampled) return run();
         if (!PILOT_WRITES.has(name)) { send({ t: 'write', op: name, outcome: 'capability_missing', family: writeFamily(name) }); return run(); }
-        const scope = ctx.inTransaction && name === 'putPage' && !ctx.nested ? ctx.scope as Scope | undefined : undefined;
+        const scope = ctx.inTransaction && !ctx.nested ? ctx.scope as Scope | undefined : undefined; // every pilot write of an outermost transaction is compared after its commit
         if (ctx.inTransaction && !scope) { uncomparable(name, 'in_transaction'); return run(); }
         if (scope) return inTransaction(scope, ctx.engine, name, args, run);
         if (!knownOptions(name, args)) { uncomparable(name, 'unknown_option'); return run(); }
@@ -314,7 +354,7 @@ export function createWriteSampler(o: WriteSamplerOptions): WriteSampler {
     },
     scope(root) {
       const sc: Scope = {
-        root, log: [], samples: [], gate: null, inflight: 0, nested: 0,
+        root, log: [], samples: [], gate: null, inflight: 0, running: new Set(), nested: 0,
         note: (name, args, path = []) => { sc.log.push({ name, key: name === 'putPage' || name === 'createVersion' || name === STAMP ? pageKey(name, args) : '', path, ...(name === STAMP ? { args } : {}), ...(BOOKKEEPING_MEMBERS.has(name) ? { kind: 'bookkeeping' as const } : name === SEAL_MEMBER ? { kind: 'seal' as const } : {}), ...(name === 'executeRaw' ? { kind: rawKind(args) } : {}) }); },
         beforeCommit: async (tx) => {
           try {
@@ -341,7 +381,7 @@ export function createWriteSampler(o: WriteSamplerOptions): WriteSampler {
         },
         open: () => ++sc.nested,
         drop: (id) => { for (let i = sc.log.length - 1; i >= 0; i--) if (sc.log[i]!.path.includes(id)) { sc.log.splice(i, 1); for (const s of sc.samples) if (s.at > i) s.at--; } },
-        commit: () => { for (const s of sc.samples) { const bad = s.bad ?? judge(sc, s); if (bad || !s.read) uncomparable(s.op, bad ?? 'in_transaction'); else s.read(sc.log.filter((w, i) => i > s.at && w.name === STAMP && w.key === s.key).map((w) => w.args!)); } },
+        commit: () => { for (const s of sc.samples) { const bad = s.bad ?? judge(sc, s); if (bad || !s.read) uncomparable(s.op, bad ?? 'in_transaction'); else s.read(s.op === 'putPage' ? sc.log.filter((w, i) => i > s.at && w.name === STAMP && w.key === s.key).map((w) => w.args!) : []); } },
       };
       return sc;
     },

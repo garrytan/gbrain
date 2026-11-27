@@ -212,11 +212,21 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
     return fn.apply(this, args);
   };
 
-  /** While a sampled write reads its preimage on the transaction's connection, other members wait, so the statements keep their order on it. A member that returns a plain value (never a statement) is never held: held, it would return a promise. */
+  /**
+   * While a sampled write waits for the calls ahead of it and reads its preimage on the transaction's connection, other members wait, so the statements keep their order on it.
+   * A held call looks at the gate again when it is let go: a sampled write let go just before it may have closed it again. A call that runs is in `scope.running` until it
+   * settles (the calls a sampled write waits for). A member that returns a plain value (never a statement) is never held: held, it would return a promise.
+   */
   const gated = (name: PropertyKey, fn: Function, scope: TxScope): Function => SYNC_MEMBERS.has(name) ? fn : function gatedMember(this: unknown, ...args: unknown[]) {
-    scope.inflight++; // counted from the call to the settling of its promise: a sampled write takes its savepoint only when it is the only one (write-capture.ts)
+    scope.inflight++; // counted from the call to the settling of its promise, queued ones included (beforeCommit pins nothing while one is open)
+    const start = (): unknown => {
+      if (scope.gate) return scope.gate.then(start);
+      const sent = fn.apply(this, args);
+      if (isThenable(sent)) { const call = { name: String(name), done: sent.then(() => undefined, () => undefined) }; scope.running.add(call); void call.done.then(() => scope.running.delete(call)); }
+      return sent;
+    };
     let out: unknown;
-    try { out = scope.gate ? scope.gate.then(() => fn.apply(this, args)) : fn.apply(this, args); } catch (error) { scope.inflight--; throw error; }
+    try { out = start(); } catch (error) { scope.inflight--; throw error; }
     if (isThenable(out)) out.then(() => { scope.inflight--; }, () => { scope.inflight--; }); else scope.inflight--;
     return out;
   };
