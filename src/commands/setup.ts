@@ -244,14 +244,7 @@ function parseFlags(args: string[]): SetupFlags | string {
   if (args.includes('--receipt') && !args.includes('--status')) return '--receipt names the receipt --status reads; --resume takes the receipt id itself';
   if (owner !== undefined && !ACCESS_ID_RE.test(owner)) return `invalid --owner '${owner}'; a member id is lower-case letters, digits, '.', '_' and '-' (1-64 characters, starting with a letter or digit)`;
   if (named && (!['claude-code', 'codex'].includes(positionals[0] ?? '') || ['--instructions-only', '--remove', '--skills-index-only', '--wakeshift'].some((f) => args.includes(f)))) {
-    const target = source ?? (process.env.GBRAIN_SOURCE && isValidSourceId(process.env.GBRAIN_SOURCE) ? process.env.GBRAIN_SOURCE : undefined);
-    const label = ['gbrain', 'access', 'serves', 'several', ...['--members', '--members-file'].flatMap((f) => (value(f) !== undefined ? [f, value(f)!] : [])), ...(target ? ['--source', target] : []), '--owner', owner ?? loginOwnerId() ?? '<owner-member-id>'];
-    const keep = [...label, '--labelled-only'];
-    const paths = args.includes('--labelled-only') ? `preview ${shellQuoteArgv(keep)} (members read only pages labelled for them)`
-      : args.includes('--open-history') ? `preview ${shellQuoteArgv(label)} (members also read the pages no rule restricts)`
-      : `preview ${shellQuoteArgv(keep)} to keep the existing pages private, or ${shellQuoteArgv(label)} to let every member read them`;
-    const connect = ['gbrain', 'setup', ...args.filter((a, i) => !['--members', '--members-file', '--owner', '--serves', '--labelled-only', '--open-history'].includes(a) && !['--members', '--members-file', '--owner', '--serves'].includes(args[i - 1] ?? ''))];
-    return `--members sets up per-member access only in gbrain setup claude-code or codex (not --instructions-only, --remove, --skills-index-only or --wakeshift); nothing was written. To label the people of this brain, ${paths}, then run the one you choose again with --yes; to connect memory, run ${shellQuoteArgv(connect)}`;
+    return `--members sets up per-member access only in gbrain setup claude-code or codex (not --instructions-only, --remove, --skills-index-only or --wakeshift); nothing was written. Run this setup again without --members. To label the people, preview gbrain access serves several --members <ids> with --source set to the source this harness reads, choose --labelled-only (members read only pages labelled for them) or not (they also read the pages no rule restricts), then run it again with --yes`;
   }
   let stdioMember: string | undefined;
   try { stdioMember = parseStdioMemberFlag(args); } catch (e) { return `${(e as Error).message}; nothing was written`; }

@@ -91,20 +91,19 @@ describe('per-member access by default when setup names the people (HARN-1)', ()
       ['openclaw', '--wakeshift', '--members', 'alice-example'],
     ]) expect(await said(args)).toContain('--members sets up per-member access only');
     const hint = await said(['hermes', '--members', 'alice-example,bob-example', '--source', 'team', '--labelled-only']);
-    expect(hint).toMatch(/preview gbrain access serves several --members alice-example,bob-example --source team --owner \S+ --labelled-only \(/);
-    expect(hint).not.toContain('--labelled-only --yes');
-    expect(hint).toContain('to connect memory, run gbrain setup hermes --source team');
+    expect(hint).toContain('Run this setup again without --members. To label the people, preview gbrain access serves several --members <ids>');
     expect(existsSync(join(b.home, '.gbrain'))).toBe(false);
   }, 180_000);
 
-  test('the refusal quotes every value, names the owner, offers both history choices and the setup that connects memory', async () => {
+  test('the refusal says what to do in words and builds no command from the flags it was given', async () => {
     const b = box();
     const roster = join(b.root, 'Team Files', 'people.txt');
-    const r = await setup(b, ['openclaw', '--members-file', roster, '--owner', OWNER]);
+    const r = await setup(b, ['claude-code', '--remove', '--members-file', roster, '--owner', OWNER, '--source', 'team']);
     expect(r.exitCode).toBe(2);
     const said = r.stdout + r.stderr;
-    expect(said).toContain(`preview gbrain access serves several --members-file '${roster}' --owner ${OWNER} --labelled-only to keep the existing pages private, or gbrain access serves several --members-file '${roster}' --owner ${OWNER} to let every member read them`);
-    expect(said).toContain('to connect memory, run gbrain setup openclaw --json');
+    expect(said).toContain('Run this setup again without --members');
+    expect(said).toContain('choose --labelled-only (members read only pages labelled for them) or not');
+    for (const echoed of [roster, OWNER, '--source team', 'gbrain setup claude-code --remove']) expect(said).not.toContain(echoed);
     expect(existsSync(join(b.home, '.gbrain'))).toBe(false);
   }, 120_000);
 
