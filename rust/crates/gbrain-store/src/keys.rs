@@ -172,6 +172,10 @@ pub const PAGE_EXTRACTION_STATE: [u8; 2] = family_tag(b'e');
 /// two-byte family tag: the one-byte tags are taken.
 pub const GUEST_MARK: [u8; 2] = family_tag(b'g');
 
+/// Family `guest_promotions` (`guest_promotions.rs`): the owner kept a guest page as an owner page, one record per guest
+/// page and target, `~p <guest page id> <target source> 0x00 <target slug>`. A two-byte family tag.
+pub const GUEST_PROMOTION: [u8; 2] = family_tag(b'p');
+
 pub fn text(tag: u8, parts: &[&str]) -> Vec<u8> {
     let mut key = vec![tag];
     for (i, part) in parts.iter().enumerate() {

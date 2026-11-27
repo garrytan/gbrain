@@ -10,7 +10,7 @@
 //! row goes with the page when it is deleted for good ([`remove_page_rows`], from `cascade::remove_page_rows`), as the
 //! foreign key's `ON DELETE CASCADE` drops it; a soft delete keeps it.
 //!
-//! `promoted` reads false: the store keeps no `guest_promotions`, and promoting a guest note refuses on this engine.
+//! `promoted` reads whether the page has a promotion row (`guest_promotions.rs`).
 
 use crate::error::{CONSTRAINT_VIOLATION, StoreError};
 use crate::kv::{KvRead, KvWrite};
@@ -137,7 +137,7 @@ impl Store {
 
     /// `readGuestMarks(pageIds)`: the mark of each page id that has one (each id once, in id order; the SQL sets no
     /// order), as `{page_id, sender_label, group_slug, audience_member, saved_at, writer_kind, writer_id, promoted}` with
-    /// `saved_at` an ISO time and `promoted` false.
+    /// `saved_at` an ISO time and `promoted` whether the owner kept the page.
     pub fn read_guest_marks(&self, page_ids: &[u64]) -> Result<Vec<Value>> {
         let read = self.read()?;
         let mut out = Vec::new();
@@ -151,7 +151,7 @@ impl Store {
                     "saved_at": iso(row.saved_at_us),
                     "writer_kind": row.writer_kind,
                     "writer_id": row.writer_id,
-                    "promoted": false,
+                    "promoted": crate::guest_promotions::page_promoted(&*read, *id)?,
                 }));
             }
         }

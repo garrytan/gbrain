@@ -15,7 +15,7 @@ CASCADE`); a soft delete keeps it.
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
 | `brain.insertGuestMark({sourceId, slug, audienceMember, groupSlug, senderLabel, writerKind, writerId, requestId})` | how many rows it wrote: 1 for the page at `(sourceId, slug)`, live or soft-deleted, saved and created now; 0 when no page is there. A page that already has a mark is `constraint_violation` (`guest_marks_pkey`) and writes nothing. Text holding a NUL byte is `invalid_argument` | `insertGuestMark` |
-| `brain.readGuestMarks(pageIds)` | `{page_id, sender_label, group_slug, audience_member, saved_at, writer_kind, writer_id, promoted}` for each page id that has a mark, once each, by page id; `saved_at` is ISO time. `promoted` is false | `readGuestMarks` |
+| `brain.readGuestMarks(pageIds)` | `{page_id, sender_label, group_slug, audience_member, saved_at, writer_kind, writer_id, promoted}` for each page id that has a mark, once each, by page id; `saved_at` is ISO time. `promoted` is whether the page has a guest_promotions record | `readGuestMarks` |
 
 `claimGuestNotePublication(sourceId, requestId)` has no store method of its own: the Rust engine reads the source's guest
 row (`readGuestSourceRow`, [guest_sources.md](guest_sources.md)) and, when there is one, sets `gbrain.guest_note` in the
@@ -24,5 +24,4 @@ The store serializes its writes, so the SQL statement's share lock has nothing m
 
 The seed copies `guest_marks` rows after the pages (seed/privacy.rs), and the shadow follower removes a mark by its page id.
 
-Not served: the store keeps no `guest_promotions`. Promoting a guest note, the remote guest delete check and the remote read of
-guest refs still run raw SQL and refuse typed on this engine (row 32m-4 of docs/designs/RUST_ENGINE.md).
+`promoted` of `readGuestMarks` reads the guest_promotions records ([guest_promotions.md](guest_promotions.md)).

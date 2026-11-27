@@ -322,9 +322,20 @@ fn stated_kinds(
     add("raw_data", raw);
     add("link_edge_proposals", proposals);
     add("entity_identities", identity);
-    // The store keeps no guest marks or promotions (no guest store), so neither is stated here.
-    add("guest_marks", false);
-    add("guest_promotions", false);
+    add(
+        "guest_marks",
+        match page_id {
+            Some(id) => crate::guest_marks::read_mark(read, id)?.is_some(),
+            None => false,
+        },
+    );
+    add(
+        "guest_promotions",
+        match page_id {
+            Some(id) => crate::guest_promotions::page_promoted(read, id)?,
+            None => false,
+        },
+    );
     add("secret_store_occurrence", secret);
     add(
         "labels",

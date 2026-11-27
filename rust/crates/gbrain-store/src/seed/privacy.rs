@@ -18,6 +18,7 @@ pub(super) const RELATIONS: &[(&str, &Relation)] = &[
     ("oauth_clients", &OAUTH_CLIENTS),
     ("guest_sources", &GUEST_SOURCES),
     ("guest_marks", &GUEST_MARKS),
+    ("guest_promotions", &GUEST_PROMOTIONS),
 ];
 
 /// Maps the family's "newly stored" answer to the row's outcome.
@@ -266,4 +267,41 @@ fn import_guest_mark(tx: &mut dyn KvWrite, row: &Row, _: &mut Losses) -> Result<
         created_at_us: row.req_ts("created_at")?,
     };
     Ok(stored(crate::guest_marks::seed_mark(tx, page_id, mark)?))
+}
+
+// ---- guest_promotions ----------------------------------------------------------------------
+
+static GUEST_PROMOTIONS: Relation = Relation {
+    key: &["id"],
+    columns: &[
+        ("id", Kept),
+        ("guest_page_id", Kept),
+        ("target_source_id", Kept),
+        ("target_slug", Kept),
+        ("promoted_by_kind", Kept),
+        ("promoted_by_id", Kept),
+        ("promoted_at", Kept),
+        ("request_id", Kept),
+    ],
+    import: import_guest_promotion,
+};
+
+/// The owner's promotion of a guest note (guest_promotions.rs), keyed by its guest page, which the seed imported before
+/// it. The id counter is raised past the row's id, so a later link never reuses it.
+fn import_guest_promotion(tx: &mut dyn KvWrite, row: &Row, _: &mut Losses) -> Result<Outcome> {
+    let id = row.req_id("id")?;
+    let page_id = row.req_id("guest_page_id")?;
+    require_page(&*tx, page_id)?;
+    raise_counter(tx, crate::guest_promotions::NEXT_GUEST_PROMOTION_ID, id)?;
+    let promotion = crate::guest_promotions::PromotionRecord {
+        id,
+        promoted_by_kind: row.req("promoted_by_kind")?,
+        promoted_by_id: row.req("promoted_by_id")?,
+        promoted_at_us: row.req_ts("promoted_at")?,
+        request_id: row.value("request_id").map(str::to_owned),
+    };
+    let (source, slug) = (row.req("target_source_id")?, row.req("target_slug")?);
+    Ok(stored(crate::guest_promotions::seed_promotion(
+        tx, page_id, &source, &slug, promotion,
+    )?))
 }

@@ -190,6 +190,7 @@ pub(super) static SPECS: &[(&str, Follow)] = &[
     ("oauth_clients", follow(&["client_id"], remove_client)),
     ("guest_sources", follow(&["source_id"], remove_guest_source)),
     ("guest_marks", follow(&["page_id"], remove_guest_mark)),
+    ("guest_promotions", follow(&["id"], remove_guest_promotion)),
 ];
 
 /// `version` is the store's own schema version; the store's migrations own it.
@@ -345,6 +346,10 @@ fn remove_guest_source(tx: &mut dyn KvWrite, id: &Identity, _: Mode) -> Result<b
 
 fn remove_guest_mark(tx: &mut dyn KvWrite, id: &Identity, _: Mode) -> Result<bool> {
     crate::guest_marks::remove_mark(tx, need!(id, "page_id", u64))
+}
+
+fn remove_guest_promotion(tx: &mut dyn KvWrite, id: &Identity, _: Mode) -> Result<bool> {
+    crate::guest_promotions::remove_promotion(tx, need!(id, "id", u64))
 }
 
 fn remove_client(tx: &mut dyn KvWrite, id: &Identity, _: Mode) -> Result<bool> {
