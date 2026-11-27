@@ -35,6 +35,7 @@ import { projectionEligibleSql } from '../eligibility/sql.ts';
 import { resolveReadEligibility } from '../eligibility/policy.ts';
 import { callerMember, factVisibilitySql, memberFactPage, memberPageIsOwn, memberPageNotOwned, memberPageSlug, ownMemberFactIds, scopePageIsShared, scopePageNotShared, SCOPE_PAGE_SLUG } from '../access/member-facts.ts';
 import { perCallWriteSource } from '../access/attest-sources.ts';
+import { MEMBER_PAGE_PREFIX } from '../access/principals.ts';
 import { isGitCheckoutRoot } from '../git-checkout.ts';
 import { entityPageMissingNotice } from '../interop-notices.ts';
 
@@ -256,8 +257,11 @@ export async function submitRememberMutation(ctx: OperationContext, params: Reco
   // GST-359 C2: a remote member's fact is private, on its member page, and never inferred onto another page.
   // GST-1113: an attested memory_write that named a scope source saves world facts on that source's scope page instead.
   // GST-2243: share: true saves a member's fact as anyone else's, on the subject's page for every reader of the source.
+  // GST-4031: a local replacement of a fact on a member page is saved on that same page (a correction never moves a fact).
   const scopePage = perCallWriteSource(ctx, sourceId);
-  const ownPage = scopePage ? null : memberFactPage(ctx);
+  const replacedOn = ctx.remote === false && !scopePage && p.replaces !== undefined && p.replaces !== null && Number.isSafeInteger(Number(p.replaces))
+    ? (await readForgetTarget(ctx.engine, Number(p.replaces), sourceId, false, false))?.source_markdown_slug ?? null : null;
+  const ownPage = scopePage ? null : memberFactPage(ctx) ?? (replacedOn?.startsWith(MEMBER_PAGE_PREFIX) ? replacedOn : null);
   // GST-2346 D1: the brain owner speaking for itself saves as a caller with no member page does, unless it asks for private.
   const ownerShares = ownPage !== null && p.share !== true && ownerSpeaksForItself(ctx) && (opts.visibilityDefaulted === true
     ? !await ownerDefaultKeptPrivate(ctx, sourceId, resolved?.slug ?? null, p.replaces) : p.visibility !== 'private');

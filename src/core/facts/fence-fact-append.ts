@@ -37,6 +37,7 @@ import { serializePageToMarkdown } from '../markdown.ts';
 import { isSegmentedPage, pageBodyOverCeilingError } from '../page-body/page-shape.ts';
 import { materializedPage, segmentedOverCeiling } from '../persistence/segmented-apply.ts';
 import { preparePageMutation } from '../persistence/page-prepare.ts';
+import { refuseRuleFactTarget } from '../rules/admission.ts';
 import type { CompanionPage, PreparedMutation } from '../persistence/coordinator.ts';
 import type { WriteRequest } from '../persistence/model.ts';
 import { normalizeTargetFences } from '../fence-repair/import-step.ts';
@@ -113,6 +114,7 @@ function fenceCellFor(fact: FenceFactAppendInput['fact'], rowNum: number, slug: 
  */
 export async function prepareFenceFactCreate(engine: BrainEngine, row: WriteRequest, config: GBrainConfig,
   input: { fact: NewFact & { valid_from: Date | null }; pendingTier: TrustTier; frontmatter: string; heading: string; storedVisibility?: string }, signal?: AbortSignal): Promise<FenceFactAppend> {
+  refuseRuleFactTarget(row.slug, input.fact.entity_slug);
   const page = { sourceId: row.source_id, slug: row.slug };
   const [indexedMax] = await engine.executeRaw<{ n: number }>('SELECT COALESCE(MAX(row_num),0)::int AS n FROM facts WHERE source_id=$1 AND source_markdown_slug=$2', [row.source_id, row.slug]);
   const rowNum = (indexedMax?.n ?? 0) + 1;
@@ -134,6 +136,7 @@ export async function prepareFenceFactCreate(engine: BrainEngine, row: WriteRequ
 export async function prepareFenceFactAppend(engine: BrainEngine, row: WriteRequest, config: GBrainConfig, snapshot: PageSnapshot | null,
   input: FenceFactAppendInput, signal?: AbortSignal): Promise<FenceFactAppend> {
   const { fact } = input;
+  refuseRuleFactTarget(row.slug, fact.entity_slug);
   const page = { sourceId: row.source_id, slug: row.slug };
   if (!snapshot && (!isHoldingSlug(row.slug) || input.mode === 'index-existing')) {
     throw opError('storage_error', 'The facts fence target page does not exist.',

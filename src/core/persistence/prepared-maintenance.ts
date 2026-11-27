@@ -42,6 +42,7 @@ import { lowerToDerivedTier, readDerivationDeclaration, recordTaintEdges, type D
 import { derivationWriteTrust, raisePageLabelGuard, recordAgentPageLowering, storedPageTier } from '../trust/page-write.ts';
 import { sameInstantTies } from '../facts/claim-ties.ts';
 import type { LabelEdit } from './label-edit.ts';
+import { refuseRuleFactTarget } from '../rules/admission.ts';
 import { factPreimages, recordConsolidationGeneration } from '../generations/adapters/fact-rows.ts';
 
 export interface MaintenanceAuthority {
@@ -563,6 +564,7 @@ const READ_BACK_TEXT: Record<NonNullable<ReturnType<typeof fenceCellReadBackProb
  * their step, and its preparation reads of `facts` run bounded by the remaining budget (`boundedReads`).
  */
 async function prepareFactFenceAdoption(unbounded: BrainEngine, row: WriteRequest, config: GBrainConfig, clock?: ClaimPhaseClock): Promise<PreparedMutation> {
+  refuseRuleFactTarget(row.slug);
   const engine = boundedReads(unbounded, clock);
   const p = row.intent!;
   const facts = p.facts as FactFenceAssignment[];
