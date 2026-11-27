@@ -12,6 +12,7 @@ import { pushStatusPathForRoot } from '../src/core/workspace-push.ts';
 import { assessBackupRepository, BACKUP_REMOTE_PROBE_CAP, BACKUP_REMOTE_BUDGET_MS, BACKUP_REMOTE_TIMEOUT_MS } from '../src/core/backup/repository.ts';
 import { makeGitFixture } from './helpers/git-fixture.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { listSourceRecords as listSourceRecordsSql } from '../src/core/engine-sql/cli-reads-import.ts';
 
 let tmp: string;
 let oldHome: string | undefined;
@@ -51,7 +52,7 @@ async function repository(name = 'source') {
 function engine(roots: string[]): BrainEngine {
   return {
     kind: 'pglite',
-    executeRaw: async (sql: string) => sql.includes('FROM pages') ? [{ n: 1 }]
+    listSourceRecords() { return listSourceRecordsSql(this as never); }, executeRaw: async (sql: string) => sql.includes('FROM pages') ? [{ n: 1 }]
       : roots.map((root, i) => ({ id: `fixture-${i}`, name: 'fixture', local_path: root, archived: false, config: {} })),
   } as unknown as BrainEngine;
 }
@@ -138,7 +139,7 @@ test('failed refresh cannot silently reuse verified cache as a fresh success', a
   const { root } = await repository();
   await getBackupStatus(engine([root]), { ...verified, forceRefresh: true });
   const before = readFileSync(join(tmp, 'status.json'), 'utf8');
-  const down = { kind: 'pglite', executeRaw: async () => { throw new Error('offline'); } } as unknown as BrainEngine;
+  const down = { kind: 'pglite', listSourceRecords() { return listSourceRecordsSql(this as never); }, executeRaw: async () => { throw new Error('offline'); } } as unknown as BrainEngine;
   const result = await getBackupStatus(down, { ...verified, forceRefresh: true });
   expect(result.degraded).toBe(true);
   expect(result.overall).toBe('warn');

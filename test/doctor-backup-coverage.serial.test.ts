@@ -27,6 +27,7 @@ import {
   type BackupStatus,
 } from '../src/core/backup/status-file.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { listSourceRecords as listSourceRecordsSql } from '../src/core/engine-sql/cli-reads-import.ts';
 
 const ENV_KEYS = ['GBRAIN_HOME', 'GBRAIN_BACKUP_CHECK', 'GBRAIN_BACKUP_CHECK_DAYS'] as const;
 
@@ -93,7 +94,7 @@ function makeHealthyRepo(name: string): string {
 function makeEngine(sourcePaths: Array<{ id: string; local_path: string }>, pageCount = 0): BrainEngine {
   return {
     kind: 'pglite',
-    executeRaw: async (sql: string) => {
+    listSourceRecords() { return listSourceRecordsSql(this as never); }, executeRaw: async (sql: string) => {
       if (/FROM sources/i.test(sql)) {
         return sourcePaths.map((s) => ({
           id: s.id,
@@ -214,7 +215,7 @@ describe('checkBackupCoverage — localOnly (trusted, probes run)', () => {
   test('degraded compute with no assets leads with the unreadable database', async () => {
     const engine = {
       kind: 'pglite',
-      executeRaw: async (sql: string) => {
+      listSourceRecords() { return listSourceRecordsSql(this as never); }, executeRaw: async (sql: string) => {
         if (/FROM sources/i.test(sql)) return [];
         throw new Error('pages unreadable');
       },
@@ -354,7 +355,7 @@ describe('checkBackupCoverage — localOnly catch branch', () => {
     // to, getBackupStatus rethrows and the checker's try/catch owns it.
     const throwing = {
       kind: 'pglite',
-      executeRaw: async () => {
+      listSourceRecords() { return listSourceRecordsSql(this as never); }, executeRaw: async () => {
         throw new Error('engine down');
       },
     } as unknown as BrainEngine;
@@ -385,7 +386,7 @@ describe('checkBackupCoverage — localOnly catch branch', () => {
     saveBackupStatus(cache);
     const throwing = {
       kind: 'pglite',
-      executeRaw: async () => {
+      listSourceRecords() { return listSourceRecordsSql(this as never); }, executeRaw: async () => {
         throw new Error('engine down');
       },
     } as unknown as BrainEngine;
@@ -408,7 +409,7 @@ function makeCountingEngine(kind: 'pglite' | 'postgres', sources: Array<{ id: st
   const listing = makeEngine(sources, pages);
   return {
     kind,
-    executeRaw: async (sql: string) => {
+    listSourceRecords() { return listSourceRecordsSql(this as never); }, executeRaw: async (sql: string) => {
       if (/AS pages/i.test(sql)) return [{ pages, facts, since: new Date(Date.now() - 60_000).toISOString() }];
       return listing.executeRaw(sql);
     },
@@ -483,7 +484,7 @@ describe('checkBackupCoverage — unreadable receipt and maturity', () => {
     const repo = makeNoOriginRepo('src-young');
     const engine = {
       kind: 'pglite',
-      executeRaw: async (sql: string) => {
+      listSourceRecords() { return listSourceRecordsSql(this as never); }, executeRaw: async (sql: string) => {
         if (/FROM facts/i.test(sql)) throw new Error('facts unreadable');
         if (/FROM sources/i.test(sql)) {
           return [{ id: 'src-young', name: 'src-young', local_path: repo, last_commit: null, last_sync_at: null, config: '{}', created_at: new Date(), archived: false, newest_content_at: null }];

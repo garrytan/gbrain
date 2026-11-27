@@ -32,6 +32,8 @@ function mkEngine(legacyCount: number): { calls: CapturedCall[]; engine: BrainEn
     },
     // The guest-source read moved off executeRaw onto the typed listGuestSourceIds; the raw stub answered it with no rows.
     async listGuestSourceIds() { return []; },
+    // The held-fence read moved off executeRaw onto the typed listFenceHoldRows; the raw stub answered it with no rows.
+    async listFenceHoldRows() { return []; },
     async getAllSlugs() { return []; },
     async getPage() { return null; },
     async deleteFactsForPage() { return { deleted: 0 }; },

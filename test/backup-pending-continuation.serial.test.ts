@@ -10,6 +10,7 @@ import { __setBackupStatusPathForTests, loadBackupStatus, saveBackupStatus } fro
 import { checkBackupCoverage } from '../src/commands/doctor/checks/backup-coverage.ts';
 import { BACKUP_REMOTE_PROBE_CAP } from '../src/core/backup/repository.ts';
 import { makeGitFixture } from './helpers/git-fixture.ts';
+import { listSourceRecords as listSourceRecordsSql } from '../src/core/engine-sql/cli-reads-import.ts';
 
 let tmp: string; let oldHome: string | undefined;
 const now = new Date('2026-09-22T12:00:00Z');
@@ -24,7 +25,7 @@ async function repository(name: string) {
   git(tmp, 'init', '--bare', '-b', 'main', remote); git(root, 'remote', 'add', 'origin', remote); git(root, 'push', '-u', 'origin', 'main');
   return root;
 }
-const engine = (roots: string[]) => ({ kind: 'pglite', executeRaw: async (sql: string) => sql.includes('FROM pages') ? [{ n: 1 }]
+const engine = (roots: string[]) => ({ kind: 'pglite', listSourceRecords() { return listSourceRecordsSql(this as never); }, executeRaw: async (sql: string) => sql.includes('FROM pages') ? [{ n: 1 }]
   : roots.map((root, i) => ({ id: `fixture-${i}`, name: 'fixture', local_path: root, archived: false, config: {} })) }) as unknown as BrainEngine;
 function spyLsRemote() {
   const run = childProcess.execFile; const commands: string[][] = [];

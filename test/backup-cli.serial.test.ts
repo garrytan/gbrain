@@ -36,6 +36,7 @@ import { surfaceSource } from './helpers/source-surface.ts';
 import * as snapshot from '../src/core/backup/snapshot.ts';
 import { pgliteBackupPreflight } from '../src/core/backup/preflight.ts';
 import * as fs from 'node:fs';
+import { listSourceRecords as listSourceRecordsSql } from '../src/core/engine-sql/cli-reads-import.ts';
 
 /** The exact literal thrown by src/core/pglite-engine.ts on lock contention.
  * isLockError in src/commands/backup.ts matches on the leading substring —
@@ -99,7 +100,7 @@ function stubEngine(opts: {
 } = {}): BrainEngine {
   return {
     kind: opts.kind ?? 'pglite',
-    executeRaw: async (sql: string) => {
+    listSourceRecords() { return listSourceRecordsSql(this as never); }, executeRaw: async (sql: string) => {
       if (sql.includes('FROM pages')) return [{ n: opts.pages ?? 0 }];
       if (sql.includes('FROM sources')) {
         if (opts.sourcesThrow) throw new Error('sources unreadable');

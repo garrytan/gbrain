@@ -28,6 +28,7 @@ import * as realHybrid from '../src/core/search/hybrid.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { encodeDeepResearchId } from '../src/core/deep-research-id.ts';
 import { fenceTranscriptText } from '../src/core/search/transcript-quote.ts';
+import { listSourceRecords as listSourceRecordsSql } from '../src/core/engine-sql/cli-reads-import.ts';
 
 let nextResults: unknown[] = [{ id: encodeDeepResearchId('default', 'a'), page_id: 1, source_id: 'default', slug: 'a', chunk_text: 'x' }];
 
@@ -68,7 +69,7 @@ const engineStub = {
   readPageTrustRows: async () => [],
   readRowTrustRows: async () => [],
   resolveCaseSensitiveAliases: async () => [],
-  executeRaw: async (sql: string) => {
+  listSourceRecords() { return listSourceRecordsSql(this as never); }, executeRaw: async (sql: string) => {
     rawCalls.push(String(sql));
     // countLivePages treats an EMPTY rowset as UNESTABLISHED (null → degraded
     // verdict, never persisted) — a healthy stub must answer the pages count

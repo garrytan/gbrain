@@ -20,6 +20,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { LANE_BUSY, type PersistenceConsumer } from '../src/core/persistence/consumer.ts';
 import { DRAIN_BACK_HEALTHY_TICKS, electOwner, forceOwnConsumer, PROBE_TIMEOUT_MISSES, resetOwnConsumerForTest, WaiterOnlyConsumer } from '../src/core/persistence/consumer-election.ts';
 import { CONSUMER_LAPSED_MS, CONSUMER_LIVE_MS, consumerIdentity, type ListedConsumer } from '../src/core/persistence/consumer-heartbeat.ts';
+import { deleteConsumerRow, renewConsumerRow, stampWorktreeHeartbeats, type ConsumerRenewal, type ConsumerRowKey } from '../src/core/engine-sql/persistence-claims.ts';
 
 const CEILING = 600_000;
 
@@ -27,6 +28,13 @@ function fakeEngine(kind: 'postgres' | 'pglite' = 'postgres') {
   const statements: Array<{ sql: string; params: unknown[] }> = [];
   const engine = { kind, executeRaw: async (sql: string, params: unknown[] = []) => { statements.push({ sql, params }); return []; },
     executeRawDirect: async (sql: string, params: unknown[] = []) => { statements.push({ sql, params }); return []; } } as unknown as BrainEngine;
+  // The heartbeat writes through the typed consumer-row members; they run engine-sql's statements on the fake's direct lane.
+  const direct = { executeRaw: (engine as unknown as { executeRawDirect: BrainEngine['executeRaw'] }).executeRawDirect } as never;
+  Object.assign(engine, {
+    renewConsumerRow: (r: ConsumerRenewal, opts?: { signal?: AbortSignal }) => renewConsumerRow(direct, r, opts),
+    deleteConsumerRow: (k: ConsumerRowKey, opts?: { signal?: AbortSignal }) => deleteConsumerRow(direct, k, opts),
+    stampWorktreeHeartbeats: (hostId: string, opts?: { signal?: AbortSignal }) => stampWorktreeHeartbeats(direct, hostId, opts),
+  });
   return { engine, statements, heartbeatModes: () => statements.filter(s => s.sql.includes('INSERT INTO persistence_consumers')).map(s => s.params[5]) };
 }
 

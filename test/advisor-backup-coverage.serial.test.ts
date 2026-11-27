@@ -12,6 +12,7 @@
  * status-file __set...ForTests path seams, so the real ~/.gbrain is never
  * touched. No mock.module → plain .test.ts (not serial).
  */
+import { listSourceRecords as listSourceRecordsSql } from '../src/core/engine-sql/cli-reads-import.ts';
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
@@ -109,7 +110,7 @@ function makeEngine(opts: { sources?: SourceFixture[]; pageCount?: number } = {}
   const calls: string[] = [];
   const engine = {
     kind: 'pglite',
-    executeRaw: async (sql: string) => {
+    listSourceRecords() { return listSourceRecordsSql(this as never); }, executeRaw: async (sql: string) => {
       calls.push(sql);
       if (/from\s+sources/i.test(sql)) {
         return (opts.sources ?? []).map((s) => ({
@@ -252,7 +253,7 @@ describe('collectBackupCoverage remote (remote:true)', () => {
     saveBackupStatus(warnCache());
     // Remote must never touch the engine (cache-only read).
     const engine = {
-      executeRaw: async () => {
+      listSourceRecords() { return listSourceRecordsSql(this as never); }, executeRaw: async () => {
         throw new Error('remote collect must not query the engine');
       },
     } as unknown as AdvisorContext['engine'];
@@ -287,7 +288,7 @@ describe('collectBackupCoverage remote (remote:true)', () => {
         assets: [{ kind: 'source_repo', id: 'xylophone-secret-source-991', state: 'dirty', detail: 'uncommitted changes', fix_argv: null }],
       }),
     );
-    const engine = { executeRaw: async () => { throw new Error('remote collect must not query the engine'); } } as unknown as AdvisorContext['engine'];
+    const engine = { listSourceRecords() { return listSourceRecordsSql(this as never); }, executeRaw: async () => { throw new Error('remote collect must not query the engine'); } } as unknown as AdvisorContext['engine'];
 
     const [f] = await collectBackupCoverage.collect(ctx(engine, { remote: true }));
 
@@ -339,7 +340,7 @@ describe('collectBackupCoverage remote — cached evidence age (#6942)', () => {
       ...over,
     });
   }
-  const noEngine = { executeRaw: async () => { throw new Error('remote collect must not query the engine'); } } as unknown as AdvisorContext['engine'];
+  const noEngine = { listSourceRecords() { return listSourceRecordsSql(this as never); }, executeRaw: async () => { throw new Error('remote collect must not query the engine'); } } as unknown as AdvisorContext['engine'];
 
   test('fresh verified proof (10 minutes old) → zero findings', async () => {
     saveBackupStatus(verifiedOkCache(NOW - 10 * 60 * 1000));
@@ -500,7 +501,7 @@ describe('collectBackupCoverage — GBRAIN_BACKUP_CHECK=0', () => {
 
     // Any engine touch (compute attempt) blows the test up.
     const throwing = {
-      executeRaw: async () => {
+      listSourceRecords() { return listSourceRecordsSql(this as never); }, executeRaw: async () => {
         throw new Error('disabled collect must not query the engine');
       },
     } as unknown as AdvisorContext['engine'];

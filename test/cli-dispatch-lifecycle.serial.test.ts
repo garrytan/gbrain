@@ -39,7 +39,8 @@ function fakeEngine(): Record<string, unknown> {
     getConfig: async (key: string) => (key === 'version' ? '100000' : null),
     setConfig: async () => {},
     initSchema: async () => {},
-    // The connect path's graduation gate probes for a persistence_graduation row; none exists here.
+    // The connect path's graduation gate reads the custody row through this typed member; none exists here.
+    readGraduationGateRow: async () => null,
     executeRaw: async () => [],
   };
 }

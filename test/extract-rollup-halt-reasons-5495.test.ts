@@ -196,6 +196,8 @@ test('extract_atoms records a credentials abort as provider_auth; an extract_fac
     },
     // The guest-source read moved off executeRaw onto the typed listGuestSourceIds; the raw stub answered it with no rows.
     async listGuestSourceIds() { return []; },
+    // The held-fence read moved off executeRaw onto the typed listFenceHoldRows; the raw stub answered it with no rows.
+    async listFenceHoldRows() { return []; },
     async getAllSlugs() { return []; }, async getPage() { return null; },
     async deleteFactsForPage() { return { deleted: 0 }; }, async insertFacts() { return { inserted: 0, ids: [], warnings: [], deleted: 0 }; },
     async transaction<T>(fn: (tx: BrainEngine) => Promise<T>): Promise<T> { return fn(stub); },

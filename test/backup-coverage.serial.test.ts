@@ -9,6 +9,7 @@
  * Engine is a minimal executeRaw stub cast to BrainEngine (no real PGLite);
  * loadAllSources + countLivePages are distinguished by SQL substring.
  */
+import { listSourceRecords as listSourceRecordsSql } from '../src/core/engine-sql/cli-reads-import.ts';
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -131,7 +132,7 @@ function stubEngine(opts: {
 } = {}): BrainEngine {
   return {
     kind: opts.kind ?? 'pglite',
-    executeRaw: async (sql: string, params: unknown[] = []) => {
+    listSourceRecords() { return listSourceRecordsSql(this as never); }, executeRaw: async (sql: string, params: unknown[] = []) => {
       opts.onCall?.();
       if (sql.includes('FROM persistence_brain')) return [{ enabled: opts.managed === true }];
       if (sql.includes('FROM persistence_source_bindings')) {
@@ -465,7 +466,7 @@ describe('getBackupStatus — cache choke point', () => {
     let throwCalls = 0;
     const throwing = {
       kind: 'pglite',
-      executeRaw: async () => {
+      listSourceRecords() { return listSourceRecordsSql(this as never); }, executeRaw: async () => {
         throwCalls++;
         throw new Error('boom');
       },
@@ -523,7 +524,7 @@ describe('computeBackupCoverage — pages count unestablished', () => {
   function pagesRowEngine(pagesRows: unknown[]): BrainEngine {
     return {
       kind: 'pglite',
-      executeRaw: async (sql: string) => {
+      listSourceRecords() { return listSourceRecordsSql(this as never); }, executeRaw: async (sql: string) => {
         if (sql.includes('FROM pages')) return pagesRows;
         if (sql.includes('FROM sources')) return [];
         return [];
@@ -794,7 +795,7 @@ describe('computeBackupCoverage: API connector sources', () => {
   test('a failing persistence read degrades the verdict instead of exempting the connector', async () => {
     const engine = {
       kind: 'pglite',
-      executeRaw: async (sql: string) => {
+      listSourceRecords() { return listSourceRecordsSql(this as never); }, executeRaw: async (sql: string) => {
         if (sql.includes('FROM persistence_brain')) throw new Error('persistence table unreadable');
         if (sql.includes('FROM pages')) return [{ n: 1 }];
         if (sql.includes('FROM sources')) return [srcRow('conn-src', join(tmp, 'x'), { config: { kind: 'google' } })];
@@ -942,7 +943,7 @@ describe('degraded verdict never clobbers a probed cache', () => {
       saveBackupStatus(warn);
       const broken = {
         kind: 'pglite',
-        executeRaw: async () => {
+        listSourceRecords() { return listSourceRecordsSql(this as never); }, executeRaw: async () => {
           throw new Error('engine down');
         },
       } as unknown as BrainEngine;
@@ -971,7 +972,7 @@ describe('degraded verdict never clobbers a probed cache', () => {
 function maturityFailsEngine(sources: unknown[] = []): BrainEngine {
   return {
     kind: 'pglite',
-    executeRaw: async (sql: string) => {
+    listSourceRecords() { return listSourceRecordsSql(this as never); }, executeRaw: async (sql: string) => {
       if (sql.includes('FROM facts')) throw new Error('facts table unreadable');
       if (sql.includes('FROM pages')) return [{ n: 3 }];
       if (sql.includes('FROM sources')) return sources;

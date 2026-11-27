@@ -16,6 +16,7 @@ import { runConfig } from '../src/commands/config.ts';
 import { checkSubagentCapability } from '../src/commands/doctor.ts';
 import { withEnv } from './helpers/with-env.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { stubSourceMembers } from './helpers/source-members-stub.ts';
 
 describe('KNOWN_CONFIG_KEYS', () => {
   test('contains the canonical embedding keys', () => {
@@ -280,13 +281,11 @@ describe('#2753 — the doctor-proposed gateway-loop command is accepted by `con
   // commands. These pin that `config set` refuses the same inputs.
   function sourcesEngine(registered: string[]): { engine: BrainEngine; setCalls: Array<[string, string]> } {
     const setCalls: Array<[string, string]> = [];
+    // fetchSource reads the typed listSourceRecords member.
     const engine = {
+      ...stubSourceMembers(registered.map(id => ({ id }))),
       getConfig: async () => null,
       setConfig: async (k: string, v: string) => { setCalls.push([k, v]); },
-      executeRaw: async (_sql: string, params?: unknown[]) => {
-        const id = String((params ?? [])[0] ?? '');
-        return registered.includes(id) ? [{ id, name: id }] : [];
-      },
     } as unknown as BrainEngine;
     return { engine, setCalls };
   }
@@ -368,7 +367,7 @@ describe('#2753 — the doctor-proposed gateway-loop command is accepted by `con
     const engine = {
       getConfig: async () => null,
       setConfig: async (k: string, v: string) => { setCalls.push([k, v]); },
-      executeRaw: async () => { throw new Error('connection terminated unexpectedly'); },
+      ...stubSourceMembers([], { fail: () => new Error('connection terminated unexpectedly') }),
     } as unknown as BrainEngine;
     // The real error must escape rather than be reshaped into a validation
     // message, so this rejects instead of returning an exit code.

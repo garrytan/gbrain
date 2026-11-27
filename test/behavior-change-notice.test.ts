@@ -358,7 +358,7 @@ describe('concurrent initializations', () => {
     writeFileSync(script, `
       const { takeLocalBehaviorNotice } = await import(${JSON.stringify(modulePath)});
       const old = new Date(Date.now() - 3 * 86400000).toISOString();
-      const engine = { executeRaw: async () => [{ at: old }], getConfig: async () => null };
+      const engine = { listSourceRecords: async () => [{ created_at: old }], getConfig: async () => null };
       const n = await takeLocalBehaviorNotice(engine, 'stdio', { cfg: null, brainKey: 'race' });
       console.log(JSON.stringify({ delivered: n !== null }));
     `);
@@ -388,7 +388,7 @@ describe('upgrades across releases (each step a new process pinned to a gbrain V
       const store = existsSync(storePath) ? JSON.parse(readFileSync(storePath, 'utf8')) : {};
       const created = new Date(Date.now() - ${opts.createdAgoMs ?? 3 * DAY}).toISOString();
       const engine = {
-        executeRaw: async () => [{ at: created }],
+        listSourceRecords: async () => [{ created_at: created }],
         getConfig: async (k) => store[k] ?? null,
         setConfig: async (k, v) => { store[k] = v; writeFileSync(storePath, JSON.stringify(store)); },
       };
@@ -465,7 +465,7 @@ describe('fence rows (#6188 D25, D26)', () => {
   const fenceRows = BEHAVIOR_CHANGES.filter(c => typeof c.text === 'string' && (c.text.startsWith(NORMALIZE) || c.text.startsWith(REPAIR)));
   const earliest = fenceRows.map(c => c.since).sort(compareReleases)[0]!;
   const before = BEHAVIOR_CHANGES.map(c => c.since).filter(v => compareReleases(v, earliest) < 0).sort(compareReleases).at(-1)!;
-  const freshEngine = (createdAt: string) => ({ executeRaw: async () => [{ at: createdAt }], getConfig: async () => null }) as unknown as BrainEngine;
+  const freshEngine = (createdAt: string) => ({ listSourceRecords: async () => [{ created_at: createdAt }], getConfig: async () => null }) as unknown as BrainEngine;
 
   test('an upgraded brain sees the never-block row and the automatic repair row, each with its opt-out, the sweep disclosure and undo guidance', async () => {
     expect(fenceRows.length).toBe(2);

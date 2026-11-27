@@ -28,6 +28,7 @@ import { requestSnapshotRead, withRequestConfigSnapshot, withoutRequestConfigSna
 import { localFederatedSourceIds, resolveSourceWithTier } from '../src/core/source-resolver.ts';
 import { assertGraduationConnectAllowed } from '../src/core/persistence/graduation-custody.ts';
 import { readGraduationConnectRow } from '../src/core/persistence/graduation-schema.ts';
+import { readGraduationGateRow } from '../src/core/engine-sql/connect-gate.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { withEnv } from './helpers/with-env.ts';
 
@@ -117,10 +118,12 @@ describe('the graduation connect gate', () => {
   test('a database without the custody table has no row; any other failure still throws', async () => {
     const bare = new PGlite();
     try {
-      const reader = { executeRaw: async (sql: string) => (await bare.query(sql)).rows } as unknown as BrainEngine;
+      // The engine member runs connect-gate.ts's statement on a database that has never had the migration.
+      const exec = { executeRaw: async (sql: string) => (await bare.query(sql)).rows } as never;
+      const reader = { readGraduationGateRow: (opts?: { withRunSetting?: boolean }) => readGraduationGateRow(exec, opts) } as unknown as BrainEngine;
       expect(await readGraduationConnectRow(reader)).toBeNull();
       await expect(assertGraduationConnectAllowed(reader, {})).resolves.toBeUndefined();
-      const denied = { executeRaw: async () => { throw Object.assign(new Error('permission denied for table persistence_graduation'), { code: '42501' }); } } as unknown as BrainEngine;
+      const denied = { readGraduationGateRow: async () => { throw Object.assign(new Error('permission denied for table persistence_graduation'), { code: '42501' }); } } as unknown as BrainEngine;
       await expect(assertGraduationConnectAllowed(denied, {})).rejects.toThrow(/permission denied/);
     } finally {
       await bare.close();
