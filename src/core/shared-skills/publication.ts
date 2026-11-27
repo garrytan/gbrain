@@ -353,7 +353,7 @@ export async function submitSharedSkillMutation(ctx: OperationContext, operation
   const rebuiltDependents = current.filter(head => dependents.includes(head.name) && !head.deleted)
     .map(head => ({ name: head.name, metadata: head.metadata, files: reachableAfterReplacement(head.name, head.files, replacement) }));
   refuseDependentWidening(sourceId, rebuiltDependents, current, ctx.remote === false);
-  refuseHiddenExposure(sourceId, proposals, await conventionHolders(ctx.engine, sourceId, source.incarnation, packId, inventory, proposals, rebuiltDependents, current), current, ctx.remote === false);
+  await refuseHiddenExposure(ctx.engine, sourceId, source.incarnation, packId, inventory, proposals, rebuiltDependents, current, policy.policy.audiences, ctx.remote === false);
   const manifestBytes = canonicalRead(root, 'skillpack.json');
   if (!pack && manifestBytes && (!adoption || adoption.mode === 'proposal')) {
     throw opError('approval_required', 'An unadopted skillpack already exists on disk. A trusted host must adopt its complete reviewed inventory before individual skill publication.',
@@ -491,7 +491,9 @@ export async function prepareSharedSkillMutation(engine: BrainEngine, row: Write
   // A request accepted before this check existed is checked here too, before it touches the checkout.
   const rebuiltDependents = revisions.filter(revision => !proposals.some(p => p.name === revision.name) && !revision.deleted);
   refuseDependentWidening(row.source_id, rebuiltDependents, current, false);
-  refuseHiddenExposure(row.source_id, proposals, await conventionHolders(engine, row.source_id, row.source_incarnation, intent.pack_id, inventory, proposals, rebuiltDependents, current), current, false);
+  // The approved audiences do not depend on the legacy flag, and apply refuses a request whose policy epoch changed.
+  const approved = (await readSharedSkillPolicy(engine, row.source_id, row.source_incarnation, false)).policy.audiences;
+  await refuseHiddenExposure(engine, row.source_id, row.source_incarnation, intent.pack_id, inventory, proposals, rebuiltDependents, current, approved, false);
   const revisionByName = new Map(revisions.map(r => [r.name, r]));
   const next = [...inventory.filter(entry => !revisionByName.has(entry.name)), ...revisions.filter(entry => !entry.deleted).map(entry => ({
     name: entry.name, revision: entry.revision, files: entry.files.map(({ content: _content, ...file }) => file),
@@ -663,78 +665,86 @@ const bounded = (items: string[], separator = '; ') => items.slice(0, 3).join(se
 
 /**
  * Who can read a file through one skill. The catalog shows a file only when both the skill's SKILL.md audience and the
- * file's own audience admit the caller, and never shows a private skill to a remote caller (catalog.ts).
+ * file's own audience admit the caller under the source policy's approved audiences, and never shows a private skill to a
+ * remote caller (catalog.ts).
  */
-function effectiveAudience(metadata: Pick<SkillMetadata, 'private' | 'audience'>, file: Pick<StoredSkillFile, 'audience'>): string[] {
+function effectiveAudience(metadata: Pick<SkillMetadata, 'private' | 'audience'>, file: Pick<StoredSkillFile, 'audience'>, approved: string[]): string[] {
   if (metadata.private) return [];
-  if (metadata.audience.includes('readers')) return file.audience;
-  if (file.audience.includes('readers')) return metadata.audience;
-  return file.audience.filter(audience => metadata.audience.includes(audience));
+  const skill = metadata.audience.filter(audience => approved.includes(audience));
+  const own = file.audience.filter(audience => approved.includes(audience));
+  if (skill.includes('readers')) return own;
+  if (own.includes('readers')) return skill;
+  return own.filter(audience => skill.includes(audience));
 }
 
+type Holder = { name: string; files: Array<Pick<StoredSkillFile, 'path' | 'audience'>>; metadata: Pick<SkillMetadata, 'private' | 'audience'> };
+type Exposure = { prior: Set<string>; after: Set<string> };
+
 /**
- * A proposed skill must not show a shared convention file to more callers than the other skills that hold it, and the
- * proposer's own previous head, already show it to. A readers file in a skill whose SKILL.md audience is narrower, or
- * that is private, is not public. The other holders are counted as rebuilt, so a rewrite that stops a skill reaching
- * the file does not keep it restricted.
+ * The shared convention files this publication would show to callers no sealed holder showed them to: through a
+ * proposal, or through another skill the rewrite gives the file. The audiences come only from the affected skills, so
+ * a republication that keeps every file's reach reads no other skill's head.
  */
-/**
- * The proposed shared convention files the proposer would show to callers its previous head did not. A republication
- * that keeps a file's reach needs no other skill's head, so an ordinary edit still reads only its own revision.
- */
-function exposureCandidates(proposals: Array<{ name: string; files: StoredSkillFile[]; metadata: SkillMetadata }>, sealed: StoredSkillRevision[]): Set<string> {
-  const paths = new Set<string>();
-  for (const proposal of proposals) {
-    const was = sealed.find(revision => revision.name === proposal.name && !revision.deleted);
-    for (const file of proposal.files) {
-      if (!file.path.startsWith('skills/conventions/')) continue;
-      const previous = was?.files.find(held => held.path === file.path);
-      const before = was && previous ? effectiveAudience(was.metadata, previous) : [];
-      if (!before.includes('readers') && effectiveAudience(proposal.metadata, file).some(audience => !before.includes(audience))) paths.add(file.path);
-    }
+function exposureCandidates(affected: Holder[], sealed: StoredSkillRevision[], approved: string[]): Map<string, Exposure> {
+  const found = new Map<string, Exposure>();
+  const entry = (path: string) => found.get(path) ?? found.set(path, { prior: new Set(), after: new Set() }).get(path)!;
+  for (const skill of affected) {
+    for (const file of skill.files) if (file.path.startsWith('skills/conventions/')) effectiveAudience(skill.metadata, file, approved).forEach(a => entry(file.path).after.add(a));
   }
-  return paths;
+  for (const skill of affected) {
+    const was = sealed.find(revision => revision.name === skill.name && !revision.deleted);
+    for (const file of was?.files ?? []) if (found.has(file.path)) effectiveAudience(was!.metadata, file, approved).forEach(a => entry(file.path).prior.add(a));
+  }
+  for (const [path, { prior, after }] of found) if (prior.has('readers') || [...after].every(a => prior.has(a))) found.delete(path);
+  return found;
 }
 
 /**
- * Every other skill that will hold one of those files: the rebuilt dependents, plus the skills whose copy is already
- * identical. Those are not affected by the publication, so their heads are read here, and only when a file can widen.
+ * The skills that hold one of those files and that the publication does not change. Their files come from the sealed
+ * inventory and only their head metadata is read, never file content, and only when a file can reach new callers.
  */
-async function conventionHolders(engine: BrainEngine, sourceId: string, incarnation: string, packId: string, inventory: PackSkill[],
-  proposals: Array<{ name: string; files: StoredSkillFile[]; metadata: SkillMetadata }>, rebuilt: Array<{ name: string; files: StoredSkillFile[]; metadata: SkillMetadata }>,
-  sealed: StoredSkillRevision[]) {
-  const shared = exposureCandidates(proposals, sealed);
-  if (!shared.size) return rebuilt;
-  const unchanged = inventory.filter(entry => !proposals.some(proposal => proposal.name === entry.name) && !rebuilt.some(other => other.name === entry.name) &&
-    entry.files.some(file => shared.has(file.path))).map(entry => entry.name);
-  const read = (await heads(engine, sourceId, incarnation, packId, unchanged)).filter(head => !head.deleted);
-  return [...rebuilt, ...read.map(head => ({ name: head.name, files: head.files, metadata: head.metadata }))];
+async function unchangedHolders(engine: BrainEngine, sourceId: string, incarnation: string, packId: string, inventory: PackSkill[],
+  affected: Holder[], candidates: Map<string, Exposure>): Promise<Holder[]> {
+  if (!candidates.size) return [];
+  const holding = inventory.filter(entry => !affected.some(skill => skill.name === entry.name) && entry.files.some(file => candidates.has(file.path)));
+  if (!holding.length) return [];
+  const rows = await engine.executeRaw<{ name: string; metadata: SkillMetadata; deleted: boolean }>(`SELECT name,metadata,deleted FROM shared_skill_heads
+    WHERE source_id=$1 AND source_incarnation=$2::uuid AND pack_id=$3 AND name=ANY($4::text[])`, [sourceId, incarnation, packId, holding.map(entry => entry.name)]);
+  return rows.filter(row => !row.deleted).map(row => ({ name: row.name, files: holding.find(entry => entry.name === row.name)!.files, metadata: row.metadata }));
 }
 
-function refuseHiddenExposure(sourceId: string, proposals: Array<{ name: string; files: StoredSkillFile[]; metadata: SkillMetadata }>,
-  rebuilt: Array<{ name: string; files: StoredSkillFile[]; metadata: SkillMetadata }>, sealed: StoredSkillRevision[], detailed: boolean): void {
+/**
+ * A publication must not show a shared convention file to callers that no sealed holder already showed it to while
+ * another skill that keeps holding it hides it from them. A readers file in a skill whose SKILL.md audience is narrower,
+ * or that is private, is not public. Only sealed copies authorize: a copy this publication creates never does. A file
+ * that no other skill held before, or that the rewrite stops every other holder reaching, has nothing to hide.
+ */
+async function refuseHiddenExposure(engine: BrainEngine, sourceId: string, incarnation: string, packId: string, inventory: PackSkill[],
+  proposals: Holder[], rebuilt: Holder[], sealed: StoredSkillRevision[], approved: string[], detailed: boolean): Promise<void> {
+  const affected = [...proposals, ...rebuilt];
+  const candidates = exposureCandidates(affected, sealed, approved);
+  const unchanged = await unchangedHolders(engine, sourceId, incarnation, packId, inventory, affected, candidates);
   const reasons: string[] = [];
-  const paths = new Set<string>();
+  const paths: string[] = [];
   const holders = new Set<string>();
-  for (const proposal of proposals) {
-    const was = sealed.find(revision => revision.name === proposal.name && !revision.deleted);
-    for (const file of proposal.files) {
-      if (!file.path.startsWith('skills/conventions/')) continue;
-      const others = rebuilt.flatMap(other => other.files.filter(held => held.path === file.path).map(held => ({ name: other.name, audience: effectiveAudience(other.metadata, held) })));
-      if (!others.length) continue;
-      const previous = was?.files.find(held => held.path === file.path);
-      const shown = [...others.flatMap(other => other.audience), ...(was && previous ? effectiveAudience(was.metadata, previous) : [])];
-      // 'readers' covers every principal (policy.ts approvedFiles), so a file some holder already shows to readers cannot widen.
-      if (shown.includes('readers') || effectiveAudience(proposal.metadata, file).every(audience => shown.includes(audience))) continue;
-      paths.add(file.path);
-      for (const other of others) holders.add(other.name);
-      reasons.push(`skills/${proposal.name} would publish ${file.path} to a wider audience than ${bounded(others.map(other => `skills/${other.name}`), ', ')} ${others.length === 1 ? 'gives' : 'give'} it`);
-    }
+  for (const [path, { prior, after }] of candidates) {
+    const sealedHolds = (name: string) => sealed.some(revision => revision.name === name && !revision.deleted && revision.files.some(file => file.path === path));
+    const remaining = [
+      ...rebuilt.filter(skill => sealedHolds(skill.name) && skill.files.some(file => file.path === path)),
+      ...unchanged.filter(skill => skill.files.some(file => file.path === path)),
+    ];
+    if (!remaining.length) continue;
+    for (const skill of unchanged) for (const file of skill.files) if (file.path === path) effectiveAudience(skill.metadata, file, approved).forEach(a => prior.add(a));
+    // 'readers' covers every principal (policy.ts approvedFiles), so a file some holder already shows to readers cannot widen.
+    if (prior.has('readers') || [...after].every(a => prior.has(a))) continue;
+    paths.push(path);
+    for (const skill of remaining) holders.add(skill.name);
+    reasons.push(`${path} would reach a wider audience than ${bounded(remaining.map(skill => `skills/${skill.name}`), ', ')} ${remaining.length === 1 ? 'gives' : 'give'} it`);
   }
   if (!reasons.length) return;
   const count = holders.size;
   const what = detailed ? bounded(reasons)
-    : `${bounded([...paths])} would reach a wider audience than the ${count} other skill${count === 1 ? '' : 's'} that already hold${count === 1 ? 's' : ''} it give${count === 1 ? 's' : ''} it`;
+    : `${bounded(paths)} would reach a wider audience than the ${count} other skill${count === 1 ? '' : 's'} that already hold${count === 1 ? 's' : ''} it give${count === 1 ? 's' : ''} it`;
   throw opError('local_conflict', `The publication was refused: ${what}. Nothing was written.`,
     `Another skill in source ${sourceId} holds the shared file but shows it to fewer callers, because its SKILL.md audience is narrower or it is private, and this publication would show the file to more callers without that skill being reviewed. Give the file an audience no wider than that skill gives it, or fork it under this skill's own directory and point depends_on there, then submit again with a new request_id.`);
 }

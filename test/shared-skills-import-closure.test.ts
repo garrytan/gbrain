@@ -43,6 +43,8 @@ const RESTRICTED = ['oauth_client:editor'];
 const skillMd = (name: string, body: string) => `---\nname: ${name}\ndescription: A synthetic ${name} fixture\n---\n\n${body}\n`;
 const prose = (name: string, body: string, depends_on: string[] = []) => ({ path: `skills/${name}/SKILL.md`, content: skillMd(name, body), file_class: 'prose', depends_on });
 const guide = (audience: string[], file_class = 'reference') => ({ path: GUIDE, content: 'Synthetic shared guide body.\n', file_class, audience });
+const ROOT = 'skills/conventions/root.md';
+const root = (depends_on: string[] = []) => ({ path: ROOT, content: 'Synthetic shared root.\n', file_class: 'reference', audience: ['readers'], depends_on });
 
 interface Fixture { engine: BrainEngine; root: string; local: OperationContext; reader: OperationContext; editor: OperationContext; incarnation: string }
 
@@ -245,7 +247,7 @@ for (const [name, url] of backends) {
       stageBeta(f);
       const before = { heads: await heads(f), checkout: checkout(f.root) };
       const outcome = await importBeta(f, ['readers'], 'reference', true).then(() => 'imported', (error: { code?: string; message?: string }) => `${error.code}: ${error.message}`);
-      expect(outcome).toBe(`local_conflict: The publication was refused: skills/beta would publish ${GUIDE} to a wider audience than skills/alpha gives it. Nothing was written.`);
+      expect(outcome).toBe(`local_conflict: The publication was refused: ${GUIDE} would reach a wider audience than skills/alpha gives it. Nothing was written.`);
       expect({ heads: await heads(f), reader: await readerCopy(f, 'beta'), checkout: checkout(f.root) })
         .toEqual({ heads: before.heads, reader: 'skill_asset_not_found', checkout: before.checkout });
     }, url), 120_000);
@@ -265,6 +267,47 @@ for (const [name, url] of backends) {
       }
       const result = await put(f, f.editor, 'beta', [prose('beta', 'Now uses the guide.', [GUIDE]), guide(['readers'])]);
       expect({ state: (result as { state?: string }).state, reader: await readerCopy(f, 'beta') }).toEqual({ state: 'committed', reader: 'Synthetic shared guide body.\n' });
+    }, url), 120_000);
+
+    // Value: protects=a rewrite that gives a public skill a hidden skill's convention cannot vouch for itself; fails_when=the copy gamma gains in the same publication counts as an earlier disclosure, or a private proposer skips the check; why_new=only sealed copies may authorize a wider audience; seam=none; no_claim=none
+    for (const proposer of ['public', 'private'] as const) {
+      test(`a ${proposer} skill cannot show a private skill's convention to readers by giving it to a public skill through a shared rewrite`, () => fixture(async f => {
+        await publishHidden(f, 'private');
+        expect((await put(f, f.local, 'gamma', [prose('gamma', 'Use the root.', [ROOT]), root()]) as { state?: string }).state).toBe('committed');
+        const before = { heads: await heads(f), checkout: checkout(f.root) };
+        const caller = proposer === 'public' ? f.editor : f.local;
+        const outcome = await put(f, caller, 'beta', [prose('beta', 'Use the root.', [ROOT]), root([GUIDE]), guide(['readers'])], proposer === 'private' ? { private: true } : {})
+          .then(() => 'published', (error: { code?: string; message?: string }) => `${error.code}: ${error.message}`);
+        expect(outcome).toBe(proposer === 'public'
+          ? `local_conflict: The publication was refused: ${GUIDE} would reach a wider audience than the 1 other skill that already holds it gives it. Nothing was written.`
+          : `local_conflict: The publication was refused: ${GUIDE} would reach a wider audience than skills/alpha gives it. Nothing was written.`);
+        expect({ heads: await heads(f), reader: await readerCopy(f, 'gamma'), checkout: checkout(f.root) })
+          .toEqual({ heads: before.heads, reader: 'skill_asset_not_found', checkout: before.checkout });
+      }, url), 120_000);
+    }
+
+    // Value: protects=adding a brand-new helper to a convention that a restricted skill also holds still publishes; fails_when=the restricted skill, which gains the helper in the same publication, counts as a holder that hides it; why_new=the new check must not over-refuse; seam=none; no_claim=none
+    test('a new helper added to a convention that a restricted skill also holds publishes', () => fixture(async f => {
+      for (const files of [[prose('beta', 'Use the root.', [ROOT]), root()], [{ ...prose('alpha', 'Use the root.', [ROOT]), audience: RESTRICTED }, root()]]) {
+        const name = files[0].path.split('/')[1];
+        expect((await put(f, f.local, name, files) as { state?: string }).state).toBe('committed');
+      }
+      const result = await put(f, f.editor, 'beta', [prose('beta', 'Use the root.', [ROOT]), root([GUIDE]), guide(['readers'])]);
+      expect({ state: (result as { state?: string }).state, reader: await readerCopy(f, 'beta') }).toEqual({ state: 'committed', reader: 'Synthetic shared guide body.\n' });
+    }, url), 120_000);
+
+    // Value: protects=a skill the owner's policy now hides keeps its convention hidden; fails_when=a revoked readers audience on the holder's SKILL.md still counts as showing the file to the editor; why_new=the catalog applies the source policy to both audiences; seam=none; no_claim=none
+    test('a convention held by a skill whose readers audience the policy revoked stays hidden from a remote put_skill', () => fixture(async f => {
+      for (const [name, files] of [['alpha', [prose('alpha', 'Use the guide.', [GUIDE]), guide(RESTRICTED)]], ['beta', [{ ...prose('beta', 'Standalone.'), audience: RESTRICTED }]]] as const) {
+        expect((await put(f, f.local, name, [...files]) as { state?: string }).state).toBe('committed');
+      }
+      const [policy] = await f.engine.executeRaw<{ epoch: string }>('SELECT epoch FROM shared_skill_policies WHERE source_id=$1', ['default']);
+      await setSharedSkillPolicy(f.local, 'default', { ...POLICY, audiences: RESTRICTED }, policy.epoch);
+      const before = { heads: await heads(f), checkout: checkout(f.root) };
+      const outcome = await put(f, f.editor, 'beta', [{ ...prose('beta', 'Now uses the guide.', [GUIDE]), audience: RESTRICTED }, guide(RESTRICTED)])
+        .then(() => 'published', (error: { code?: string; message?: string }) => `${error.code}: ${error.message}`);
+      expect(outcome).toBe(`local_conflict: The publication was refused: ${GUIDE} would reach a wider audience than the 1 other skill that already holds it gives it. Nothing was written.`);
+      expect({ heads: await heads(f), checkout: checkout(f.root) }).toEqual(before);
     }, url), 120_000);
 
     // Value: protects=a request queued by an older release that shows a hidden skill's convention to readers is checked again before it touches the checkout; fails_when=resume publishes beta with alpha's guide; why_new=no check ran at prepare; seam=the request row is shaped like one an older release accepted, from this brain's own committed put_skill; no_claim=none

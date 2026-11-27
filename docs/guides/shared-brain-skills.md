@@ -140,7 +140,9 @@ that hold it.
 The same refusal applies when a skill that readers cannot see is the only one
 holding the file. A readers file in a skill with a narrower SKILL.md audience,
 or in a private skill, is not public, so publishing it through a public skill
-refuses. Narrow the file's audience to match, or fork it.
+refuses. This includes a rewrite of a shared file that gives the hidden file to
+another, public skill. Narrow the file's audience to match, or fork it. A new
+file that no skill held before publishes.
 
 Beyond the fresh-setup default, the owner approves a versioned policy through
 `set_skill_policy`, not through an editor's content update. For example, the
