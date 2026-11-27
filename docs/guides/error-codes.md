@@ -1559,7 +1559,7 @@ More: [docs/guides/troubleshooting.md#consumers-without-heartbeat](../../docs/gu
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A contact's page path belongs to another contact, so the contact was refused and nothing was written or removed; it is held after repeated refusals. | Two contacts rendered to the same page path (a contact-id path or a disambiguated name path another contact already owns); writing would overwrite the other contact's page. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+| A contact's page path belongs to another contact, so the contact was refused and nothing was written or removed; it is held after repeated refusals. | Two contacts rendered to the same page path (a contact-id path or a disambiguated name path another contact already owns); writing would overwrite the other contact's page. | Show the user the held contact in gbrain sources status <id> --json. A retry gets the same refusal: the user renames one of the two contacts (in Google or Apple Contacts) or removes the other page, then the next sync writes it. Run: gbrain sources status '{source_id}' --json | user | `gbrain sources status '{source_id}' --json` | 1 | no |
 
 More: [docs/guides/google-connect.md#contact_page_owned](../../docs/guides/google-connect.md#contact_page_owned)
 
