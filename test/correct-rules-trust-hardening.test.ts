@@ -455,6 +455,30 @@ describe('follow-ups (GST-4031)', () => {
     }
   });
 
+  test('a host resume after the remote owner\'s activation committed unrecorded confirms the finished correction', async () => {
+    const wrong = await seedFact('Alice Example sits by the window.');
+    let fired = false;
+    __correctFaults.after = s => { if (s === 'activate' && !fired) { fired = true; throw new Error('stopped after activation'); } };
+    let r: any;
+    try { r = await remote(OWNER, 'correct', { rule: 'Alice Example sits by the door.', fact_id: wrong, scope: 'team' }); } finally { __correctFaults.after = undefined; }
+    expect(r.json.state).toBe('partial');
+    expect((await frontmatter('rules/' + r.json.rule_id))?.status).toBe('active');
+    const done = await hostResume(r.json.receipt_id, ownerTty());
+    expect({ state: done.state, confirmed: done.confirmed, error: done.error?.code }).toEqual({ state: 'committed', confirmed: true, error: undefined });
+    expect((await rulesSectionFor(engine, { remote: false, sourceId: 'default' }))?.text).toContain('Alice Example sits by the door.');
+  });
+
+  test('a first rule write refused once goes through when the same correction is sent again after access is fixed', async () => {
+    await setMemberLabelledOnly(engine, THIRD, true, { remote: false });
+    let first: any;
+    try { first = await remote(THIRD, 'correct', { rule: 'Desk lamps are switched off at six.', scope: 'team' }); } finally {
+      await setMemberLabelledOnly(engine, THIRD, false, { remote: false });
+    }
+    expect(first.isError).toBe(true);
+    const again = await remote(THIRD, 'correct', { rule: 'Desk lamps are switched off at six.', scope: 'team' });
+    expect({ isError: again.isError, state: again.json.state }).toEqual({ isError: false, state: 'proposed' });
+  });
+
   test('a guest-attributed call cannot read or resume a member audience\'s receipt', async () => {
     const made = await remote('bot', 'correct', { rule: 'Badges are scanned at the side door.', scope: 'team', request_id: 'gst4031-guest' }, [MEMBER]);
     expect(made.json.state).toBe('proposed');

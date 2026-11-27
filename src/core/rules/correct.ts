@@ -339,7 +339,7 @@ async function advance(ctx: OperationContext, r: CorrectReceipt, owner: boolean,
     await persist();
     try {
       if (step === 'rule') {
-        const snap = tried ? await engine.readPageSnapshot(r.rule.slug, { sourceId: r.source_id }) : null;
+        const snap = await engine.readPageSnapshot(r.rule.slug, { sourceId: r.source_id });
         const landed = snap && !snap.page.deleted_at ? readRule({ ...snap.page, source_id: r.source_id }) : null;
         if (landed?.receipt !== r.receipt_id) {
           await __correctFaults.before?.(step, r);
@@ -347,31 +347,33 @@ async function advance(ctx: OperationContext, r: CorrectReceipt, owner: boolean,
           const exists = () => opError('rule_exists', `${ruleIdOf(r.rule.slug)} was written by another call before this correction's first write, so nothing was written.`,
             `Run gbrain rules show ${ruleIdOf(r.rule.slug)}; approve that rule, or save this one with different words.`);
           if (now && !now.page.deleted_at) throw exists();
-          const own = tried ? await getWriteRequest(engine as never, submittedBy, parseWriteRequestId(requestId)!) : null;
+          let own = await getWriteRequest(engine as never, submittedBy, parseWriteRequestId(requestId)!);
           if (own && own.state !== 'committed' && !ENDED_UNCOMMITTED.has(own.state)) {
             throw new OperationError('write_pending', 'The write is accepted and is still pending.', 'Read the receipt again with correct {receipt_id}; it finishes the step once the write commits.');
           }
-          retryEnded(own);
+          for (; own && ENDED_UNCOMMITTED.has(own.state); own = await getWriteRequest(engine as never, submittedBy, parseWriteRequestId(requestId)!)) retryEnded(own);
           r.steps.rule!.principal = { kind: by.kind, id: by.id };
           await persist();
           await withRuleWriter(() => submitPageMutation(ctx, { operation: 'put_page', params: { slug: r.rule.slug, source_id: r.source_id, content: pageFor('proposed'), request_id: requestId } }))
             .catch(e => { throw codeOf(e) === 'revision_required' ? exists() : e; });
         }
       } else if (step === 'fact') {
-        const snap = await engine.readPageSnapshot(r.rule.slug, { sourceId: r.source_id });
-        const live = snap && !snap.page.deleted_at ? readRule({ ...snap.page, source_id: r.source_id }) : null;
-        if (!live || live.status !== 'proposed' || live.receipt !== r.receipt_id || String(snap!.revision) !== r.steps.rule?.revision) {
-          throw new OperationError('rule_transition', 'The rule page changed or was retired before its fact was fixed, so the fact was left unchanged.', `Run gbrain rules show ${ruleIdOf(r.rule.slug)}.`);
-        }
-        await __correctFaults.before?.(step, r);
-        const target = r.fact.action === 'replace' ? await readForgetTarget(engine, Number(r.fact.id), r.source_id, false, false) : null;
-        if (r.fact.action === 'replace' && (target?.entity_slug?.toLowerCase() ?? null) !== (r.fact.entity?.toLowerCase() ?? null)) {
-          throw new OperationError('rule_transition', 'The fact is no longer on the page this correction names, so the fact was left unchanged.', `Run gbrain rules show ${ruleIdOf(r.rule.slug)}.`);
-        }
         const entity = r.fact.action === 'replace' ? r.fact.entity : null;
         const own = tried ? await getWriteRequest(engine as never, submittedBy, parseWriteRequestId(requestId)!) : null;
         if (own?.state === 'committed' && !writesFact(own, r.fact, r.source_id, entity)) {
           throw new OperationError('rule_transition', 'Another write already used this correction\'s fact request, so the fact was left as it is.', `Run gbrain rules show ${ruleIdOf(r.rule.slug)}.`);
+        }
+        if (own?.state !== 'committed') {
+          const snap = await engine.readPageSnapshot(r.rule.slug, { sourceId: r.source_id });
+          const live = snap && !snap.page.deleted_at ? readRule({ ...snap.page, source_id: r.source_id }) : null;
+          if (!live || live.status !== 'proposed' || live.receipt !== r.receipt_id || String(snap!.revision) !== r.steps.rule?.revision) {
+            throw new OperationError('rule_transition', 'The rule page changed or was retired before its fact was fixed, so the fact was left unchanged.', `Run gbrain rules show ${ruleIdOf(r.rule.slug)}.`);
+          }
+        }
+        await __correctFaults.before?.(step, r);
+        const target = r.fact.action === 'replace' && own?.state !== 'committed' ? await readForgetTarget(engine, Number(r.fact.id), r.source_id, false, false) : null;
+        if (r.fact.action === 'replace' && own?.state !== 'committed' && (target?.entity_slug?.toLowerCase() ?? null) !== (r.fact.entity?.toLowerCase() ?? null)) {
+          throw new OperationError('rule_transition', 'The fact is no longer on the page this correction names, so the fact was left unchanged.', `Run gbrain rules show ${ruleIdOf(r.rule.slug)}.`);
         }
         if (own && !['committed', 'conflict', 'failed', 'cancelled'].includes(own.state)) {
           throw new OperationError('write_pending', 'The write is accepted and is still pending.', 'Read the receipt again with correct {receipt_id}; it finishes the step once the write commits.');
