@@ -77,6 +77,20 @@ describe('gbrain setup --serves several: which brain and which source (GST-4043)
     expect(rules.map(x => x.source_id).sort()).toEqual(['default', 'source-a']);
   }, 480_000);
 
+  test('access serves several without --source labels GBRAIN_SOURCE or sources.default, never the source of the directory it runs from', async () => {
+    const b = box();
+    expect((await gbrain(b, ['init', '--pglite', '--no-embedding', '--json'])).exitCode).toBe(0);
+    expect((await gbrain(b, ['sources', 'add', 'source-a'])).exitCode).toBe(0);
+    const dir = join(b.root, 'checkout');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, '.gbrain-source'), 'source-a\n');
+    const env = { ...CLEAN, HOME: b.home, GBRAIN_HOME: b.home };
+    const here = await runCli(['access', 'serves', 'several', '--members', ROSTER.join(','), '--json'], { env, cwd: dir, timeoutMs: 120_000 });
+    expect(JSON.parse(here.stdout).source_id, here.stdout + here.stderr).toBe('default');
+    const pinned = await runCli(['access', 'serves', 'several', '--members', ROSTER.join(','), '--json'], { env: { ...env, GBRAIN_SOURCE: 'source-a' }, cwd: dir, timeoutMs: 120_000 });
+    expect(JSON.parse(pinned.stdout).source_id, pinned.stdout + pinned.stderr).toBe('source-a');
+  }, 240_000);
+
   test('--shape company with the harness pinned to the company source adds the source first and labels the people in it', async () => {
     const b = box();
     expect((await gbrain(b, ['init', '--pglite', '--no-embedding', '--json'])).exitCode).toBe(0);

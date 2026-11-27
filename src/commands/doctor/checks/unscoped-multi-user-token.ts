@@ -13,8 +13,9 @@
  * no such chat in reach is reported as information, so a brain with nothing
  * to separate yet is not marked unhealthy. A credential holding --may-act-for
  * is skipped: the per-person fix names it, and its notice says a call that
- * names no audience reads its full grant. So are the local stdio servers once config mcp.stdio_may_act_for is set
- * (GST-4043): the bot harness fix sets it, and each turn's audience then bounds what the server reads.
+ * names no audience reads its full grant. So are the bot harnesses' stdio servers once config mcp.stdio_may_act_for is
+ * set (GST-4043): their fix sets it, and each turn's audience then bounds what the server reads; a Claude Code channel
+ * plugin keeps its finding, since its fix is setup claude-code --serves several.
  * A remote caller (run_doctor only) gets counts, never credential names.
  * Not applicable on a brain that serves one person (access.serves).
  */
@@ -63,10 +64,10 @@ async function runUnscopedMultiUserToken(ctx: DoctorContext): Promise<Check[]> {
   }
   const local: Finding[] = [];
   const actsForStdioAudience = !!(await engine.getConfig(STDIO_MAY_ACT_FOR_KEY))?.trim();
-  if (!ctx.remote && !actsForStdioAudience) {
+  if (!ctx.remote) {
     const plugins = claudeCodeChannelPlugins();
     const harnesses = [...new Set([
-      ...readBrainFirstLedger().filter(e => e.status === 'installed' && BOT_HARNESSES.includes(e.harness)).map(e => e.harness),
+      ...(actsForStdioAudience ? [] : readBrainFirstLedger().filter(e => e.status === 'installed' && BOT_HARNESSES.includes(e.harness)).map(e => e.harness)),
       ...(plugins.length ? ['claude-code'] : []),
     ])];
     const stdio = harnesses.length ? await census(await stdioReadSources(engine)) : null;

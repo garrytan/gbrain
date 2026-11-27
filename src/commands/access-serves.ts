@@ -24,8 +24,8 @@
  * while that list is still the one setup last gave the key (permissions.setup_reads): a key changed by hand is skipped
  * and named with the rescope command, a source archived since is dropped from the list, and a key whose write source is
  * archived is BLOCKED (its write source never moves); any other kept key (today's default or scalar grant) is never changed. The preview names the list and what `company` holds.
- * GST-4043: without --source the run labels the source the CLI resolves (GBRAIN_SOURCE, then sources.default), not
- * literal `default`. A re-run on another source moves a list key setup minted (its list still the one setup gave it)
+ * GST-4043: without --source the run labels GBRAIN_SOURCE, then sources.default, not literal `default`; the directory it
+ * runs from (a .gbrain-source file, a registered checkout) never decides where member keys write. A re-run on another source moves a list key setup minted (its list still the one setup gave it)
  * to write to that source, keeping what it read; any other key writing elsewhere is skipped with its rescope command.
  */
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
@@ -457,7 +457,7 @@ export async function runAccessServes(engine: BrainEngine, mode: string | undefi
   const roster = readRoster(flagValue(args, '--members'), flagValue(args, '--members-file'));
   if (!roster.length) throw rosterEmpty('gbrain access serves several');
   const owner = flagValue(args, '--owner');
-  const source = await resolveSourceId(engine, flagValue(args, '--source') ?? null);
+  const source = await resolveSourceId(engine, flagValue(args, '--source') ?? (process.env.GBRAIN_SOURCE?.trim() || null), undefined, { skipLocalSignals: true });
   const r = await labelSeveral(engine, roster, source, args.includes('--yes'), json, { labelledOnly: args.includes('--labelled-only'), ...(owner !== undefined ? { owner: assertAccessId(owner) } : {}) });
   if (r.applied) await rescopeArchiveAfter(engine);
   console.log(json ? JSON.stringify(r, null, 2) : receiptLines(r).join('\n'));

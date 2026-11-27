@@ -248,6 +248,16 @@ describe('doctor unscoped_multi_user_token', () => {
       await engine.setConfig('mcp.stdio_may_act_for', '');
     }
     expect((await doctor({}, home)).status).toBe('warn');
+    mkdirSync(join(home, '.claude'), { recursive: true });
+    writeFileSync(join(home, '.claude', 'settings.json'), JSON.stringify({ enabledPlugins: { 'telegram@claude-plugins-official': true } }));
+    await engine.setConfig('mcp.stdio_may_act_for', 'alice-example,bob-example');
+    try {
+      const plugin = await doctor({}, home);
+      expect(plugin.status).toBe('warn');
+      expect(plugin.details.flagged.map((f: any) => f.subject.harness)).toEqual(['claude-code']);
+    } finally {
+      await engine.setConfig('mcp.stdio_may_act_for', '');
+    }
   });
 
   test('a credential holding may_act_for is not flagged; a member-bound one still is', async () => {
