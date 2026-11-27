@@ -580,8 +580,9 @@ warning naming the minimum server version.
 - **Non-mutation.** The stage returns new result objects and never mutates or
   caches expanded text.
 - **Bounded work.** One engine query per request (with `search.long_page_unit`
-  on and a long page among the hits: plus one size preflight and one bounded
-  long-page fetch, see [Long pages](#long-pages-searchlong_page_unit)). It reads each hit page's
+  on, the default: plus one size preflight when a non-conversation hit is
+  present, and one bounded long-page fetch when a long page is among the hits,
+  see [Long pages](#long-pages-searchlong_page_unit)). It reads each hit page's
   body once (bounded by the import size cap) plus the chunks within
   ±`return_window` of each hit; each block ≤ 60,000 characters (under the
   64 KiB output-redaction field limit).
