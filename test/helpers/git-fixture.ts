@@ -16,6 +16,8 @@
  *     already injects commit.gpgsign=false via GIT_CONFIG_COUNT.
  */
 import { execFileSync } from 'node:child_process';
+import { chmodSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 export interface GitFixture {
   dir: string;
@@ -53,4 +55,17 @@ export async function makeGitFixture(dir: string): Promise<GitFixture> {
       git(dir, ['commit', '-q', '-m', msg]);
     },
   };
+}
+
+/**
+ * GST-3743: mark a checkout as one this host commits (Git-durable, through the legacy post-commit hook). Sync and
+ * derived writes write files back only into such a checkout; a non-default checkout without it stays database-only.
+ * The checkout gets its own commit identity, so the Git effect commits on a machine with no global one (CI).
+ */
+export function markGitDurable(dir: string): void {
+  git(dir, ['config', 'user.email', 'example@example.invalid']);
+  git(dir, ['config', 'user.name', 'Example']);
+  const hook = join(dir, '.git', 'hooks', 'post-commit');
+  writeFileSync(hook, '#!/bin/sh\n# gbrain brain-durability post-commit hook (v0.42.44+)\nexit 0\n');
+  chmodSync(hook, 0o755);
 }

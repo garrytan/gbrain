@@ -12,6 +12,7 @@ import { currentVerifiedLocalWriter, hostIdFor, registerLocalWriter } from './id
 import { admitWriteInTransaction, getWriteRequest, receiptFor } from './journal.ts';
 import { digest, requireUuid, sha256 } from './digest.ts';
 import { getWorktreeBinding, MANAGED_WRITER_PROBE_WAIT_MS, managedPersistenceEnabled, probeWorktreeWriter, type WorktreeBinding } from './ownership.ts';
+import { foreignCheckout } from './git-durability-policy.ts';
 import { isConnectorSourceKind } from './connector-identity.ts';
 import { preparePageMutation } from './page-prepare.ts';
 import { assertPersistenceAccepting, waitForWrite, writeResponse } from './service.ts';
@@ -150,7 +151,9 @@ export async function managedAtomSession(engine: BrainEngine, sourceId: string, 
   if (refusal) throw opError('owner_unavailable', refusal,
     `No extraction was started for source ${sourceId}. Check its canonical owner: run atom extraction on the host that owns the checkout, or have the user claim the checkout on this host with gbrain sources writer claim.`,
     { fix: ownerStatusFix(sourceId) });
-  if (writeThrough && binding) {
+  // GST-3743: a checkout nothing on this host commits (foreignCheckout) gets no atom file and no atom file removal.
+  const foreign = writeThrough && await foreignCheckout(engine, sourceId, binding);
+  if (writeThrough && binding && !foreign) {
     if (!await probeWorktreeWriter(binding, engine, wait.probeMs(MANAGED_WRITER_PROBE_WAIT_MS), signal)) throw opError('writer_lock_unavailable', 'The canonical atom writer is busy; no extraction was started.',
       `Another write holds source ${sourceId}'s canonical writer. Nothing was started, so run the atom drain again once the owner status shows it idle.`,
       { fix: ownerStatusFix(sourceId) });
@@ -158,7 +161,8 @@ export async function managedAtomSession(engine: BrainEngine, sourceId: string, 
   if (!writeThrough) authority.databaseOnlyReason = 'disabled_by_config';
   else if (connectorDatabase) authority.databaseOnlyReason = 'connector_database';
   else if (!binding) authority.databaseOnlyReason = 'no_repo_configured';
-  const session: ManagedAtomSession = { sourceId, incarnation: source.incarnation, authority, binding: writeThrough ? binding : null, config: { engine: engine.kind } as GBrainConfig, wait };
+  else if (foreign) authority.databaseOnlyReason = 'foreign_checkout';
+  const session: ManagedAtomSession = { sourceId, incarnation: source.incarnation, authority, binding: writeThrough && !foreign ? binding : null, config: { engine: engine.kind } as GBrainConfig, wait };
   if (retry) {
     if (!retry.retryId || retry.retryId.length > 128) throw opError('invalid_params', 'A bounded explicit atom retry identity is required.',
       `Submit the atom retry for request ${retry.requestId} as an extract-atoms-drain job; the job supplies its own bounded retry identity. Nothing was started.`,

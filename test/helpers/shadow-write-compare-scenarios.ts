@@ -9,6 +9,8 @@ import { join } from 'node:path';
 import { evaluateReadiness, WRITE_CLIENT_LIMIT, WRITE_COVERAGE_LIMIT, WRITE_COVERAGE_NAMED, WRITE_PGLITE_LIMIT, type ShadowStatus } from '../../src/core/engine-swap/readiness.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { importFile } from '../../src/core/import-file.ts';
+import { assertPreparedFactWithdrawals } from '../../src/core/facts/withdrawal.ts';
+import { writePageAliases } from '../../src/core/mentions/pass.ts';
 import { operationsByName, type OperationContext } from '../../src/core/operations.ts';
 import { performSync } from '../../src/commands/sync.ts';
 import { runImport } from '../../src/commands/import.ts';
@@ -30,11 +32,16 @@ import { sealImportedPage } from '../../src/core/engine-sql/write-guards.ts';
 import { renderFragment } from '../../src/core/engine-sql/fragment.ts';
 import { pageSearchVectorSql } from '../../src/core/fts-language.ts';
 import { bookkeepingStatements, createWriteSampler, JOURNAL_MEMBER_STATEMENTS, PUT_PAGE_OPTIONS, readPreimage } from '../../src/shadow/write-capture.ts';
+import { completeEffectRow, lockEffectGuard } from '../../src/core/engine-sql/persistence-effect-worker.ts';
+import { setEffectTransactionLimits } from '../../src/core/engine-sql/remote-links.ts';
+import { declarePersistence } from '../../src/core/engine-sql/persistence-declaration.ts';
+import { lockEffectClaimRow } from '../../src/core/engine-sql/embedding-install.ts';
 import { createWriteComparer } from '../../src/shadow/write-compare-child.ts';
 import { openRustEngine, type RustEngineAddonHandle } from '../../src/core/rust-engine.ts';
 import { readWriteTally, WriteTally, type WriteEvent } from '../../src/shadow/write-compare.ts';
 import { ensureEpoch, readEpoch } from '../../src/shadow/evidence-epoch.ts';
 import { withEnv } from './with-env.ts';
+import { withStoredSlug } from '../../src/core/utils.ts';
 import { fillSeedFixture, seedInto } from './shadow-seed-fixture.ts';
 
 export interface WriteCompareContext {
@@ -103,10 +110,10 @@ function fenceKit(ctx: WriteCompareContext) {
     const putEvents = (inbox: WriteEvent[]) => inbox.filter((e) => e.op === 'putPage');
     const sampled = (inbox: WriteEvent[], op: string) => inbox.filter((e) => e.op === op && e.outcome === undefined);
     /** The real wrapper with the real follower as its sink, the follower's write count as the sampler's `generation` (attach.ts), and the real data fence where the brain has one. The follower reads nothing (no child): only its publish counters matter here. */
-    function prod(opts: { generation?: () => number | undefined; send?: (line: string) => boolean } = {}) {
+    function prod(opts: { generation?: () => number | undefined; send?: (line: string) => boolean; preimageTimeoutMs?: number } = {}) {
       const follower = new ShadowFollower({ reads: { pauseMs: 0, read: async () => { throw new Error('no reads in this rig'); }, close: async () => {} } as never, send: () => true, rpc: async () => { throw new Error('no child in this rig'); } });
       const inbox: WriteEvent[] = [];
-      const sampler = createWriteSampler({ rate: 1, generation: opts.generation ?? writeGeneration(follower), send: opts.send ?? ((line) => { inbox.push(JSON.parse(line)); return true; }), active: () => true });
+      const sampler = createWriteSampler({ rate: 1, generation: opts.generation ?? writeGeneration(follower), send: opts.send ?? ((line) => { inbox.push(JSON.parse(line)); return true; }), active: () => true, preimageTimeoutMs: opts.preimageTimeoutMs });
       const sink = { counters: newMirrorCounters(), offer: () => {}, active: () => true };
       return { follower, inbox, wrapped: wrapShadowEngine(primary(), sink, { sampleRate: 0, follow: { sink: follower }, writes: sampler }) };
     }
@@ -209,6 +216,30 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       }, 5);
       expect(out.tally).toMatchObject({ comparable: 5, unexplained_difference: 0, uncomparable: 0, capability_missing: 0 });
       expect(readdirSync(out.scratch)).toEqual([]); // every scratch store is deleted
+    }, 120_000);
+
+    test('a link write and a page edit inside a transaction are replayed after the commit and counted comparable (master counted the link write in_transaction and the pipelined edit in_transaction_busy)', async () => {
+      const out = await replay(async (e, sampled) => {
+        await e.transaction(async (tx) => { await tx.addLinksBatch([{ from_slug: 'people/alice-example', to_slug: 'companies/acme-example', link_type: 'mentions', context: 'in a transaction' }]); }); await sampled(1);
+        const snapshot = await primary().readPageSnapshot('companies/acme-example');
+        await e.transaction(async (tx) => { await Promise.all([tx.createVersion('companies/acme-example', { sourceId: 'default', preimage: snapshot } as never), tx.putPage('companies/acme-example', page('Acme Edited'), { sourceId: 'default', inline: true })]); }); await sampled(3);
+      }, 3);
+      expect(out.inbox.map((e) => [e.op, e.outcome])).toEqual([['addLinksBatch', undefined], ['createVersion', 'capability_missing'], ['putPage', undefined]]); // the version row is a family the pilot does not compare
+      expect(out.tally).toMatchObject({ comparable: 2, unexplained_difference: 0, uncomparable: 0, capability_missing: 1 });
+    }, 120_000);
+
+    test('addLink, removeLink and deletePage inside a transaction are replayed after the commit and counted comparable; rolled back, they leave no sample and no change', async () => {
+      const out = await replay(async (e, sampled) => {
+        await e.transaction(async (tx) => { await tx.addLink('people/alice-example', 'companies/acme-example', 'in a transaction', 'works_at'); }); await sampled(1);
+        await e.transaction(async (tx) => { await tx.removeLink('people/alice-example', 'companies/acme-example', 'works_at'); }); await sampled(2);
+        for (const undo of [(tx: BrainEngine) => tx.addLink('people/alice-example', 'companies/acme-example', 'undone', 'invests_in'), (tx: BrainEngine) => tx.removeLink('people/alice-example', 'companies/acme-example'), (tx: BrainEngine) => tx.deletePage('people/alice-example')]) {
+          await expect(e.transaction(async (tx) => { await undo(tx); throw new Error('roll back'); })).rejects.toThrow('roll back');
+        }
+        expect(await primary().getPage('people/alice-example')).not.toBeNull();
+        await e.transaction(async (tx) => { await tx.deletePage('people/alice-example'); }); await sampled(3);
+      }, 3);
+      expect(out.inbox.map((e) => [e.op, e.outcome])).toEqual([['addLink', undefined], ['removeLink', undefined], ['deletePage', undefined]]); // the rolled-back ones sent nothing
+      expect(out.tally).toMatchObject({ comparable: 3, unexplained_difference: 0, uncomparable: 0, capability_missing: 0 });
     }, 120_000);
 
     test('forty samples handed to the child together all wait their turn and are replayed: none is shed queue_full (master kept 16 and shed the rest)', async () => {
@@ -345,7 +376,7 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
     const absent = await sample((e) => e.deletePage('people/never-example'));
     // The primary write failed (the link names no page), the write ran inside a transaction, and the preimage could not be read (the write still goes through).
     const failed = await sample((e) => e.addLink('people/nobody-example', 'people/ghost-example'));
-    const inTx = await sample((e) => e.transaction((tx) => tx.addLink('people/alice-example', 'companies/acme-example', 'in a transaction', 'invests_in'))); // only a putPage in a transaction is compared
+    const inTx = await sample((e) => e.transaction((tx) => tx.transaction((nested) => nested.addLink('people/alice-example', 'companies/acme-example', 'in a transaction', 'invests_in')))); // a write in a nested transaction (a savepoint) is not compared
     const snapshot = spyOn(primary(), 'transaction').mockRejectedValueOnce(new Error('no snapshot'));
     const unreadable = await sample((e) => e.putPage('people/hank-example', page('Hank Example')));
     snapshot.mockRestore();
@@ -932,7 +963,7 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       expect((await sampleOf(inbox)).length).toBe(1);
     }, 60_000);
 
-    test('a write that is not alone on the transaction is never sampled through the savepoint: concurrent inline page writes and a pipelined version row all survive the commit (in_transaction_busy)', async () => {
+    test('a write that is not alone on the transaction waits for the calls ahead of it before its savepoint: concurrent inline page writes and a pipelined version row all survive the commit, and each write is compared', async () => {
       await ctx.reset(); await fillSeedFixture(primary());
       await primary().putPage('people/kim-example', page('Kim Example'));
       const { inbox, wrapped } = rig();
@@ -949,10 +980,10 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       expect((await primary().getPage('people/kim-example'))?.title).toBe('Kim Renamed');
       expect(await primary().getVersions('people/kim-example')).toHaveLength(1); // the version row is not rolled back with a savepoint
       await sampleOf(inbox, 3);
-      expect(verdicts(inbox).filter(([, reason]) => reason === 'in_transaction_busy').length).toBe(2); // the two that were not alone; the first one was
+      expect(verdicts(inbox)).toEqual([['sample', undefined], ['sample', undefined], ['sample', undefined]]); // master: the two that were not alone were in_transaction_busy
     }, 60_000);
 
-    test('a member that is queued behind the preimage read counts as busy too, and nothing it sends is lost', async () => {
+    test('a member that is queued behind the preimage read waits its turn and is compared too, and nothing it sends is lost', async () => {
       const { inbox, wrapped } = await fresh();
       await wrapped.transaction(async (tx) => {
         const first = tx.putPage('people/ned-example', page('Ned Example'), { sourceId: 'default', inline: true });
@@ -962,7 +993,7 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       expect(await primary().getPage('people/ned-example')).not.toBeNull();
       expect(await primary().getPage('people/oli-example')).not.toBeNull();
       await sampleOf(inbox, 2);
-      expect(verdicts(inbox).map(([, reason]) => reason).sort()).toEqual([undefined, 'in_transaction_busy'].sort());
+      expect(verdicts(inbox)).toEqual([['sample', undefined], ['sample', undefined]]); // master: the second was in_transaction_busy
     }, 60_000);
 
     test('writes of a rolled-back nested transaction are forgotten: a stamp it made is neither a later write nor replayed, and the outer sample stays', async () => {
@@ -1043,7 +1074,7 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       expect(await primary().getPage('people/vic-example')).toBeNull();
     }, 60_000);
 
-    test('a warm-lane write is never sampled through the savepoint while another call runs: parallel inline writes and a version row all survive the commit', async () => {
+    test('a warm-lane write waits for the calls ahead of it before its savepoint: parallel inline writes and a version row all survive the commit, and each write is compared', async () => {
       if (ctx.kind !== 'postgres') return;
       await ctx.reset(); await fillSeedFixture(primary());
       await primary().putPage('people/wes-example', page('Wes Example'));
@@ -1061,7 +1092,7 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       expect((await primary().getPage('people/wes-example'))?.title).toBe('Wes Renamed');
       expect(await primary().getVersions('people/wes-example')).toHaveLength(1);
       await sampleOf(inbox, 3);
-      expect(verdicts(inbox).filter(([, reason]) => reason === 'in_transaction_busy').length).toBe(2);
+      expect(verdicts(inbox)).toEqual([['sample', undefined], ['sample', undefined], ['sample', undefined]]);
     }, 60_000);
 
     test('the warm lane keeps its first statement first: with pipelineFirst the declaration is sent before BEGIN is answered, and every preimage statement follows it', async () => {
@@ -1102,7 +1133,25 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       for (const dialect of ['postgres', 'pglite'] as const) {
         expect(await record(dialect, (exec) => insertPublicationEffects(exec, { requestId: '00000000-0000-4000-8000-000000000000', revision: null, sourceId: 'default', sourceIncarnation: '00000000-0000-4000-8000-000000000001', worktreeId: null, effects: [{ kind: 'links', data: {} }] } as never))).toEqual([effects[0]!]);
       }
-      expect([...JOURNAL_MEMBER_STATEMENTS.keys()].sort()).toEqual(['completeWriteRow', 'insertPublicationEffects', 'lockPersistenceCounters']); // upsertWriteGateReceipt is not bookkeeping: it stays an ordinary write
+      // The links effect's transaction: its completion writes persistence_effects only; the others lock rows or set transaction-local settings and write nothing.
+      const [completeEffect] = JOURNAL_MEMBER_STATEMENTS.get('completeEffectRow')!;
+      const [limits] = JOURNAL_MEMBER_STATEMENTS.get('setEffectTransactionLimits')!;
+      const [protocol, durable, durableIdle] = JOURNAL_MEMBER_STATEMENTS.get('declarePersistence')!;
+      const [guardBrain, guardWorktree] = JOURNAL_MEMBER_STATEMENTS.get('lockEffectGuard')!;
+      const [claimRow] = JOURNAL_MEMBER_STATEMENTS.get('lockEffectClaimRow')!;
+      for (const dialect of ['postgres', 'pglite'] as const) {
+        expect(await record(dialect, (exec) => completeEffectRow(exec, { id: 1, token: '00000000-0000-4000-8000-000000000000', outcomeJson: '{}' } as never))).toEqual([completeEffect!]);
+        expect(await record(dialect, (exec) => setEffectTransactionLimits(exec))).toEqual([limits!]);
+        expect(await record(dialect, (exec) => declarePersistence(exec))).toEqual([protocol!]);
+        expect(await record(dialect, (exec) => declarePersistence(exec, { lockTimeout: '2s', statementTimeout: '3s' }))).toEqual([durable!]);
+        expect(await record(dialect, (exec) => declarePersistence(exec, { lockTimeout: '2s', statementTimeout: '3s', idleInTransaction: '4s' }))).toEqual([durableIdle!]);
+        expect(await record(dialect, (exec) => lockEffectGuard(exec, null))).toEqual([guardBrain!]);
+        expect(await record(dialect, (exec) => lockEffectGuard(exec, '00000000-0000-4000-8000-000000000000'))).toEqual([guardBrain!, guardWorktree!]);
+        expect(await record(dialect, (exec) => lockEffectClaimRow(exec, 1))).toEqual([claimRow!]);
+      }
+      for (const name of ['setEffectTransactionLimits', 'declarePersistence', 'lockEffectGuard', 'lockEffectClaimRow']) expect(JOURNAL_MEMBER_STATEMENTS.get(name)!.flatMap((sql) => sqlWrites(sql))).toEqual([]); // they write nothing
+      expect(sqlWrites(completeEffect!).map((w) => (w as { relation?: string }).relation)).toEqual(['persistence_effects']);
+      expect([...JOURNAL_MEMBER_STATEMENTS.keys()].sort()).toEqual(['completeEffectRow', 'completeWriteRow', 'declarePersistence', 'insertPublicationEffects', 'lockEffectClaimRow', 'lockEffectGuard', 'lockPersistenceCounters', 'setEffectTransactionLimits']); // upsertWriteGateReceipt is not bookkeeping: it stays an ordinary write; deleteOwnedLinks deletes links, a real write
     }, 30_000);
 
     test('insertPublicationEffects is bookkeeping only while its statement writes persistence_effects and nothing else: a statement that writes another table is an ordinary write', () => {
@@ -1208,20 +1257,20 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       expect(await real(putEvents(second.inbox))).toMatchObject({ comparable: 0, uncomparable: 1, uncomparable_by_reason: { in_transaction_prior_write: 1 } });
     }, 120_000);
 
-    test('a real put_page through the operation layer, with contextual retrieval off, is compared: comparable when it runs alone on its transaction, otherwise busy by name; never a difference', async () => {
+    test('a real put_page through the operation layer, with contextual retrieval off, is compared: its create and its edit are both comparable, never a difference', async () => {
       await ctx.reset(); await fillSeedFixture(primary());
       await primary().setConfig('search.contextual_retrieval', 'none');
       const { inbox, wrapped } = rig();
       const ctxOf = { engine: wrapped, config: {}, logger: { info() {}, warn() {}, error() {} }, dryRun: false, remote: true } as unknown as OperationContext;
-      await operationsByName.put_page.handler(ctxOf, { slug: 'notes/op-example', content: '---\ntitle: Op Example\n---\nFirst body.\n' });
-      const current = await primary().readPageSnapshot('notes/op-example');
-      await operationsByName.put_page.handler(ctxOf, { slug: 'notes/op-example', content: '---\ntitle: Op Example\n---\nSecond body.\n', expected_revision: current?.revision } as never);
-      await until(() => putEvents(inbox).length >= 2);
+      try {
+        await operationsByName.put_page.handler(ctxOf, { slug: 'notes/op-example', content: '---\ntitle: Op Example\n---\nFirst body.\n' });
+        const current = await primary().readPageSnapshot('notes/op-example');
+        await operationsByName.put_page.handler(ctxOf, { slug: 'notes/op-example', content: '---\ntitle: Op Example\n---\nSecond body.\n', expected_revision: current?.revision } as never);
+        await until(() => putEvents(inbox).length >= 2);
+      } finally { await disposePersistenceConsumer(wrapped); } // the handler's consumer is keyed by this wrapper: left open, it takes later tests' write requests and effects
       const tally = await real(putEvents(inbox));
-      // The first write creates the page and runs alone on its transaction. An update sends its version row (with the page it read) in the same wave as the page write on Postgres, so the page write is not alone there.
-      expect(tally.unexplained_difference).toBe(0);
-      if (ctx.kind === 'pglite') expect(tally).toMatchObject({ comparable: 2, uncomparable: 0 });
-      else expect(tally).toMatchObject({ comparable: 1, uncomparable: 1, uncomparable_by_reason: { in_transaction_busy: 1 } });
+      // An update sends its version row (with the page it read) in the same wave as the page write on Postgres: the page write waits for that row before its preimage read.
+      expect(tally).toMatchObject({ comparable: 2, unexplained_difference: 0, uncomparable: 0 }); // master on Postgres: the edit was in_transaction_busy
     }, 120_000);
 
     test('a real managed sync of a new file and then a changed one: every page write ends in the tally, comparable or with a named reason, never a difference', async () => {
@@ -1244,7 +1293,7 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
           expect(await performSync(wrapped, opts as never)).toMatchObject({ status: 'first_sync' });
           write('A synthetic record about durable processing, changed.'); git.commitAll('second');
           expect(await performSync(wrapped, opts as never)).toMatchObject({ status: 'synced' });
-        } finally { await disposePersistenceConsumer(primary()); await primary().executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1'); }
+        } finally { await disposePersistenceConsumer(wrapped); await disposePersistenceConsumer(primary()); await primary().executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1'); }
       });
       await until(() => putEvents(inbox).length >= 2);
       const tally = await real(putEvents(inbox));
@@ -1301,6 +1350,272 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       await until(() => putEvents(inbox).length === 1);
       expect(await real(putEvents(inbox))).toMatchObject({ comparable: 1, unexplained_difference: 0, uncomparable: 0 });
     }, 120_000);
+  });
+
+  describe('a page edit and a link write inside a transaction are compared after the commit (put_page edits, the links effect)', () => {
+    const ofOp = (inbox: WriteEvent[], op: string) => inbox.filter((e) => e.op === op);
+    const verdictsOf = (inbox: WriteEvent[], op: string) => ofOp(inbox, op).map((e) => [e.outcome ?? 'sample', e.reason]);
+    const sampleOf = async (inbox: WriteEvent[], op: string, n = 1) => { await until(() => ofOp(inbox, op).length >= n); return ofOp(inbox, op); };
+    const opCtx = (wrapped: BrainEngine) => ({ engine: wrapped, config: {}, logger: { info() {}, warn() {}, error() {} }, dryRun: false, remote: true }) as unknown as OperationContext;
+    const note = (v: string) => `---\ntitle: Note\ntype: note\n---\nNote ${v} mentions [[people/alice-example]].\n`;
+
+    test('an edit whose version row is pipelined beside it (how put_page and sync update an existing page) waits for that row, is compared, and the row survives the commit', async () => {
+      await ctx.reset(); await fillSeedFixture(primary());
+      const { inbox, wrapped } = rig();
+      const snapshot = await primary().readPageSnapshot('companies/acme-example');
+      await wrapped.transaction(async (tx) => {
+        await Promise.all([tx.createVersion('companies/acme-example', { sourceId: 'default', preimage: snapshot } as never), tx.putPage('companies/acme-example', page('Acme Renamed'), { sourceId: 'default', inline: true })]);
+      });
+      const [event] = await sampleOf(inbox, 'putPage');
+      expect([event!.outcome ?? 'sample', event!.reason]).toEqual(['sample', undefined]); // master: uncomparable, in_transaction_busy
+      expect(event!.pre!.pages.map((p) => p.title)).toEqual(expect.arrayContaining(['Acme Example'])); // the row before the edit
+      expect((await primary().getPage('companies/acme-example'))?.title).toBe('Acme Renamed');
+      expect(await primary().getVersions('companies/acme-example')).toHaveLength(1); // the version row was not inside the preimage savepoint
+    }, 60_000);
+
+    test('a put_page edit of an existing page is a full sample, as its create is', async () => {
+      await ctx.reset(); await fillSeedFixture(primary());
+      const { inbox, wrapped } = rig();
+      try {
+        await operationsByName.put_page.handler(opCtx(wrapped), { slug: 'notes/edit-me', content: note('one') });
+        await sampleOf(inbox, 'putPage');
+        const revision = ((await primary().getPage('notes/edit-me')) as { knowledge_revision?: string } | null)?.knowledge_revision;
+        await operationsByName.put_page.handler(opCtx(wrapped), { slug: 'notes/edit-me', content: note('two'), expected_revision: revision });
+        await sampleOf(inbox, 'putPage', 2);
+      } finally { await disposePersistenceConsumer(wrapped); } // the handler's consumer is keyed by this wrapper: it must not take the next test's requests
+      expect(verdictsOf(inbox, 'putPage')).toEqual([['sample', undefined], ['sample', undefined]]); // master on Postgres: the edit was in_transaction_busy
+    }, 60_000);
+
+    test('the links effect\'s addLinksBatch after a put_page (its own transaction, with its lock and journal statements) is a full sample', async () => {
+      await ctx.reset(); await fillSeedFixture(primary());
+      const { inbox, wrapped } = rig();
+      let event: WriteEvent | undefined;
+      try {
+        await operationsByName.put_page.handler(opCtx(wrapped), { slug: 'notes/mentions', content: note('one') });
+        [event] = await sampleOf(inbox, 'addLinksBatch');
+      } finally { await disposePersistenceConsumer(wrapped); }
+      expect([event!.outcome ?? 'sample', event!.reason]).toEqual(['sample', undefined]); // master: uncomparable, in_transaction
+      expect((event!.args![0] as Array<{ to_slug: string }>).map((l) => l.to_slug)).toEqual(['people/alice-example']);
+    }, 60_000);
+
+    test('a link write is uncomparable when anything else its transaction writes could change what it reads back: a link or page write before it, a page write after it, an unknown raw write', async () => {
+      await ctx.reset(); await fillSeedFixture(primary());
+      const batch = [{ from_slug: 'people/alice-example', to_slug: 'companies/acme-example', link_type: 'mentions', context: 'x' }];
+      const cases: Array<[(tx: BrainEngine) => Promise<unknown>, string]> = [
+        [async (tx) => { await tx.addLink('people/alice-example', 'companies/acme-example', 'x', 'invests_in'); await tx.addLinksBatch(batch); }, 'in_transaction_prior_write'],
+        [async (tx) => { await tx.putPage('people/other-example', page('Other Example')); await tx.addLinksBatch(batch); }, 'in_transaction_prior_write'],
+        [async (tx) => { await tx.addLinksBatch(batch); await tx.putPage('companies/acme-example', page('Acme Later')); }, 'in_transaction_later_write'],
+        [async (tx) => { await tx.addLinksBatch(batch); await tx.executeRaw("UPDATE links SET context = context WHERE id = -1"); }, 'in_transaction_later_write'],
+        [async (tx) => { await tx.addTag('people/alice-example', 'team'); await tx.addLinksBatch(batch); }, 'in_transaction_prior_write'],
+      ];
+      for (const [body, reason] of cases) {
+        const { inbox, wrapped } = rig({ random: () => 0 });
+        await wrapped.transaction(body);
+        await sampleOf(inbox, 'addLinksBatch');
+        expect(verdictsOf(inbox, 'addLinksBatch')).toEqual([['uncomparable', reason]]);
+        await ctx.reset(); await fillSeedFixture(primary());
+      }
+      const { inbox, wrapped } = rig(); // bookkeeping alone around it (the effect journal's statements, a version row) leaves it comparable
+      await wrapped.transaction(async (tx) => { await tx.executeRaw("UPDATE persistence_effects SET updated_at = updated_at WHERE id = -1"); await tx.addLinksBatch(batch); await tx.executeRaw("DELETE FROM wanted_links WHERE origin_page_id = -1"); });
+      await sampleOf(inbox, 'addLinksBatch');
+      expect(verdictsOf(inbox, 'addLinksBatch')).toEqual([['sample', undefined]]);
+    }, 120_000);
+
+    test('a callback that throws at once, after starting a sampled link write that waits behind a slow call, rolls it back: nothing is sent after the ROLLBACK', async () => {
+      for (const viaLane of ctx.kind === 'postgres' ? [true, false] : [false]) {
+        await ctx.reset(); await fillSeedFixture(primary());
+        const { inbox, wrapped } = rig();
+        let pending: Promise<unknown> | undefined;
+        const body = ((tx: BrainEngine) => {
+          void tx.executeRaw('SELECT pg_sleep(0.2)').catch(() => undefined);
+          pending = tx.addLink('people/alice-example', 'companies/acme-example', 'x', 'thrown_away'); // sampled: waits for the call ahead of it
+          throw new Error('abort');
+        }) as never;
+        const run = viaLane ? (wrapped as any).withReservedConnection((conn: any) => conn.transaction(body)) : wrapped.transaction(body);
+        await expect(run).rejects.toThrow('abort');
+        await pending?.catch(() => undefined);
+        await new Promise((r) => setTimeout(r, 300));
+        expect((await primary().getLinks('people/alice-example')).filter((l: { link_type?: string }) => l.link_type === 'thrown_away')).toHaveLength(0); // without the fix (lane): sent after the ROLLBACK, in autocommit
+        expect(inbox.filter((e) => e.op === 'addLink')).toEqual([]);
+      }
+    }, 60_000);
+
+    test('a call held behind a sampled write runs in its own caller\'s context: a write scoped to a page\'s stored legacy spelling updates that page, never a twin', async () => {
+      await ctx.reset(); await fillSeedFixture(primary());
+      await primary().putPage('people/legacy-seed', page('Legacy'));
+      await primary().executeRaw("UPDATE pages SET slug='People/Legacy' WHERE slug='people/legacy-seed'");
+      const { wrapped } = rig();
+      await wrapped.transaction(async (tx) => {
+        await Promise.all([
+          tx.putPage('people/gate-example', page('Gate Example'), { sourceId: 'default', inline: true }), // sampled: holds the gate
+          withStoredSlug('People/Legacy', () => tx.putPage('People/Legacy', page('Legacy Updated'), { sourceId: 'default', inline: true })), // held behind it
+        ]);
+      });
+      const rows = await primary().executeRaw<{ slug: string; title: string }>("SELECT slug, title FROM pages WHERE lower(slug) = 'people/legacy' ORDER BY slug");
+      expect(rows.map((r) => [r.slug, r.title])).toEqual([['People/Legacy', 'Legacy Updated']]); // a lost context created a lowercase twin and left the stored page as it was
+    }, 60_000);
+
+    test('a nested transaction the callback already awaited is no longer running: the next sampled write is compared, not busy', async () => {
+      await ctx.reset(); await fillSeedFixture(primary());
+      const { inbox, wrapped } = rig();
+      await wrapped.transaction(async (tx) => {
+        await tx.transaction(async (nested) => { await nested.getPage('people/alice-example'); }); // a nested transaction that writes nothing the comparison reads
+        await tx.putPage('people/after-nested', page('After Nested'), { sourceId: 'default', inline: true });
+      });
+      await until(() => inbox.some((e) => e.op === 'putPage'));
+      expect(inbox.filter((e) => e.op === 'putPage').map((e) => [e.outcome ?? 'sample', e.reason])).toEqual([['sample', undefined]]); // a finished call left in the running set made it in_transaction_busy
+    }, 60_000);
+
+    test('a transaction end waits at most its bound for a call the callback did not await: then it goes ahead as without the shadow, and the unfinished sample is uncomparable (drain_timeout)', async () => {
+      await ctx.reset(); await fillSeedFixture(primary());
+      const { inbox, wrapped } = rig();
+      let release!: () => void; const stuck = new Promise<void>((r) => { release = r; });
+      const real = primary().addLink as (...a: unknown[]) => Promise<unknown>;
+      const hook = spyOn(primary(), 'addLink').mockImplementation(async function (this: unknown, ...a: unknown[]) { await stuck; return real.apply(this, a); } as never); // a write still on its way past the bound
+      const t0 = Date.now(); let pending: Promise<unknown> | undefined;
+      try {
+        await wrapped.transaction(async (tx) => { pending = tx.addLink('people/alice-example', 'companies/acme-example', 'x', 'too_slow').catch(() => undefined); });
+        expect(Date.now() - t0).toBeLessThan(4_000); // the bound (2 s), not the stuck call, decided
+      } finally { release(); hook.mockRestore(); await pending; }
+      await until(() => inbox.some((e) => e.op === 'addLink'));
+      expect(inbox.filter((e) => e.op === 'addLink').map((e) => [e.outcome, e.reason])).toEqual([['uncomparable', 'drain_timeout']]);
+    }, 60_000);
+
+    test('with the follower wired as production wires it, a nested transaction beside a followed write does not stall: its end never waits for the enclosing transaction\'s calls', async () => {
+      const kit = fenceKit(ctx);
+      await ctx.reset(); await fillSeedFixture(primary());
+      await primary().putPage('people/nested-gone', page('Nested Gone'));
+      const { wrapped } = kit.prod();
+      const t0 = Date.now();
+      await wrapped.transaction(async (tx) => {
+        await Promise.all([
+          tx.transaction(async (nested) => { await nested.getPage('people/alice-example'); }),
+          tx.deletePage('people/nested-gone'), // its follow pre-read queues behind the nested transaction
+        ]);
+      });
+      expect(Date.now() - t0).toBeLessThan(1_500); // a nested drain that waited for the enclosing transaction's calls stalled the full 2 s bound
+      expect(await primary().getPage('people/nested-gone')).toBeNull();
+    }, 60_000);
+
+    test('with the follower wired as production wires it, a sampled write the callback did not await is sent before COMMIT and commits', async () => {
+      const kit = fenceKit(ctx);
+      for (const viaLane of ctx.kind === 'postgres' ? [false, true] : [false]) {
+        await ctx.reset(); await fillSeedFixture(primary());
+        const { inbox, wrapped } = kit.prod();
+        const failures: unknown[] = [];
+        let pending: Promise<unknown> | undefined;
+        const body = async (tx: BrainEngine) => {
+          void tx.executeRaw('SELECT pg_sleep(0.2)').catch((e) => failures.push(e));
+          pending = tx.addLink('people/alice-example', 'companies/acme-example', 'x', 'unawaited_followed').catch((e) => { failures.push(e); });
+        };
+        await (viaLane ? (wrapped as any).withReservedConnection((conn: any) => conn.transaction(body)) : wrapped.transaction(body));
+        await pending;
+        expect(failures.map((e) => String((e as Error)?.message ?? e))).toEqual([]); // without the fix: CONNECTION_CLOSED, the COMMIT went before the followed write
+        expect((await primary().getLinks('people/alice-example')).filter((l: { link_type?: string }) => l.link_type === 'unawaited_followed')).toHaveLength(1);
+        await until(() => inbox.some((e) => e.op === 'addLink'));
+      }
+    }, 60_000);
+
+    test('a write the callback started and did not await, held while a sampled write waits, is sent before COMMIT: it commits as it would without the shadow', async () => {
+      for (const viaLane of ctx.kind === 'postgres' ? [false, true] : [false]) {
+        await ctx.reset(); await fillSeedFixture(primary());
+        const { inbox, wrapped } = rig();
+        const failures: unknown[] = [];
+        const body = async (tx: BrainEngine) => {
+          void tx.executeRaw('SELECT pg_sleep(0.2)').catch((e) => failures.push(e)); // still running when the callback returns
+          void tx.addLink('people/alice-example', 'companies/acme-example', 'x', 'unawaited').catch((e) => failures.push(e)); // sampled: waits for the call ahead of it
+        };
+        await (viaLane ? (wrapped as any).withReservedConnection((conn: any) => conn.transaction(body)) : wrapped.transaction(body));
+        await until(() => inbox.some((e) => e.op === 'addLink'));
+        expect(failures).toEqual([]); // without the drain: CONNECTION_CLOSED, the write was sent after COMMIT
+        expect((await primary().getLinks('people/alice-example')).filter((l: { link_type?: string }) => l.link_type === 'unawaited')).toHaveLength(1);
+        expect(inbox.filter((e) => e.op === 'addLink').map((e) => e.outcome ?? 'sample')).toEqual(['sample']);
+      }
+    }, 60_000);
+
+    test('a write held behind the preimage read is never sent after its transaction ends: when a call ahead of a sampled write fails and the transaction rolls back, nothing of it commits', async () => {
+      for (const viaLane of ctx.kind === 'postgres' ? [false, true] : [false]) {
+        await ctx.reset(); await fillSeedFixture(primary());
+        const { inbox, wrapped } = rig();
+        const links = async () => (await primary().getLinks('people/alice-example')).filter((l: { link_type?: string }) => l.link_type === 'rolled_back').length;
+        const body = async (tx: BrainEngine) => { await Promise.all([tx.executeRaw('SELECT 1/0'), tx.addLink('people/alice-example', 'companies/acme-example', 'x', 'rolled_back'), tx.putPage('people/rolled-example', page('Rolled Back')), tx.addTag('people/alice-example', 'rolled')]); };
+        const run = viaLane ? (wrapped as any).withReservedConnection((conn: any) => conn.transaction(body)) : wrapped.transaction(body);
+        await expect(run).rejects.toThrow();
+        await new Promise((r) => setTimeout(r, 300)); // a write sent late would land now
+        expect(await links()).toBe(0); // without the drain (lane): the link write was sent after ROLLBACK and committed on its own
+        expect(await primary().getPage('people/rolled-example')).toBeNull();
+        expect(await primary().getTags('people/alice-example')).not.toContain('rolled');
+        expect(inbox.filter((e) => e.op === 'putPage' || e.op === 'addLink')).toEqual([]); // a rolled-back transaction sends no sample
+      }
+    }, 60_000);
+
+    test('a link write in the warm lane (which the follower does not see) is moved by one write of this process between its commit and read-back; with none it is not', async () => {
+      if (ctx.kind !== 'postgres') return; // PGLite's reserved connection has no transaction of its own
+      const batch = [{ from_slug: 'people/alice-example', to_slug: 'companies/acme-example', link_type: 'mentions', context: 'lane' }];
+      for (const other of [false, true]) {
+        await ctx.reset(); await fillSeedFixture(primary());
+        let gen = 0;
+        const { inbox, wrapped } = rig({ generation: () => gen });
+        const realGetPage = primary().getPage as (...a: unknown[]) => Promise<unknown>; let once = true;
+        const hook = spyOn(primary(), 'getPage').mockImplementation((async function (this: unknown, ...a: unknown[]) { if (once && this === primary() && other) { once = false; gen += 1; } return realGetPage.apply(this, a); }) as never);
+        try { await (wrapped as any).withReservedConnection((conn: any) => conn.transaction(async (tx: BrainEngine) => { await tx.addLinksBatch(batch); })); await sampleOf(inbox, 'addLinksBatch'); } finally { hook.mockRestore(); }
+        expect(Boolean(ofOp(inbox, 'addLinksBatch')[0]!.moved)).toBe(other); // master: one other write was read as the sample's own, so not moved
+      }
+    }, 60_000);
+
+    (ctx.kind === 'pglite' ? test : test.skip)('a call that runs a callback (a bounded read) is never waited for: the sampled write is busy at once, and a call the callback makes is not held', async () => {
+      // PGLite only: Postgres keywordBoundedRead opens its own scoped transaction, which cannot share the outer transaction's connection with a concurrent call; the rule tested (a running call that took a function is never waited for) is the wrapper's, the same on both engines.
+      await ctx.reset(); await fillSeedFixture(primary());
+      const { inbox, wrapped } = rig();
+      const t0 = Date.now();
+      await wrapped.transaction(async (tx) => {
+        await Promise.all([
+          tx.keywordBoundedRead(async () => { await new Promise((r) => setTimeout(r, 20)); await tx.addTag('people/alice-example', 'bounded'); return null; }),
+          tx.putPage('people/cb-example', page('Callback Example')),
+        ]);
+      });
+      expect(Date.now() - t0).toBeLessThan(1_500); // master waited out the 2 s bound
+      expect(await primary().getTags('people/alice-example')).toContain('bounded');
+      await sampleOf(inbox, 'putPage');
+      expect(verdictsOf(inbox, 'putPage')).toEqual([['uncomparable', 'in_transaction_busy']]);
+    }, 60_000);
+
+    test('many writes queued behind sampled writes are each woken once, in call order, and all commit', async () => {
+      await ctx.reset(); await fillSeedFixture(primary());
+      const { inbox, wrapped, sampler } = rig();
+      let queued = 0;
+      const realScope = sampler.scope.bind(sampler);
+      sampler.scope = (e, o) => { const sc = realScope(e, o); const push = sc.waiters.push.bind(sc.waiters); sc.waiters.push = (...w: Array<() => void>) => { queued += w.length; return push(...w); }; return sc; };
+      const N = 40;
+      await wrapped.transaction(async (tx) => { await Promise.all(Array.from({ length: N }, (_, i) => tx.putPage(`people/q${i}-example`, page(`Q${i} Example`), { sourceId: 'default', inline: true }))); });
+      for (let i = 0; i < N; i += 13) expect(await primary().getPage(`people/q${i}-example`)).not.toBeNull();
+      await sampleOf(inbox, 'putPage', N);
+      expect(queued).toBeLessThanOrEqual(N); // master: every release woke every waiter again (quadratic)
+      expect(verdictsOf(inbox, 'putPage').every(([v]) => v === 'sample')).toBe(true);
+    }, 120_000);
+
+    test('a sampled write never waits for a nested transaction that is still running, nor past its bound for a slow call: it is uncomparable (in_transaction_busy) and every write commits', async () => {
+      await ctx.reset(); await fillSeedFixture(primary());
+      let { inbox, wrapped } = rig();
+      await wrapped.transaction(async (tx) => {
+        await Promise.all([tx.transaction(async (nested) => { await new Promise((r) => setTimeout(r, 50)); await nested.addTag('people/alice-example', 'nested'); }), tx.putPage('people/nia-example', page('Nia Example'))]);
+      });
+      expect(await primary().getTags('people/alice-example')).toContain('nested');
+      expect(await primary().getPage('people/nia-example')).not.toBeNull();
+      await sampleOf(inbox, 'putPage');
+      expect(verdictsOf(inbox, 'putPage')).toEqual([['uncomparable', 'in_transaction_busy']]);
+      ({ inbox, wrapped } = rig({ preimageTimeoutMs: 50 }));
+      const real = primary().createVersion as (...a: unknown[]) => Promise<unknown>;
+      const slow = spyOn(primary(), 'createVersion').mockImplementation(async function (this: unknown, ...a: unknown[]) { await new Promise((r) => setTimeout(r, 300)); return real.apply(this, a); } as never);
+      try {
+        const snapshot = await primary().readPageSnapshot('companies/acme-example');
+        await wrapped.transaction(async (tx) => { await Promise.all([tx.createVersion('companies/acme-example', { sourceId: 'default', preimage: snapshot } as never), tx.putPage('companies/acme-example', page('Acme Slow'))]); });
+      } finally { slow.mockRestore(); }
+      expect((await primary().getPage('companies/acme-example'))?.title).toBe('Acme Slow');
+      expect(await primary().getVersions('companies/acme-example')).toHaveLength(1);
+      await sampleOf(inbox, 'putPage');
+      expect(verdictsOf(inbox, 'putPage')).toEqual([['uncomparable', 'in_transaction_busy']]);
+    }, 60_000);
   });
 
   describe('the write counter and the data fence, wired as production wires them', () => {
@@ -1407,11 +1722,67 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       await wrapped.transaction(async (tx) => {
         const written = await tx.putPage('people/alice-example', page('Alice Busy'));
         await tx.addPageTagsById(written.id, ['alpha']);
-        void tx.deleteChunks('people/alice-example'); // still running when the callback returns: with the follower wired, the transaction's end waits for it, so the pin is taken after it
+        void tx.deleteChunks('people/alice-example'); // still running when the callback returns: the transaction's end waits for it, so the pin is taken after it
       });
       await until(() => putEvents(inbox).length >= 3);
       expect(putEvents(inbox)[2]!.outcome).toBeUndefined(); // a full sample (before the drain: in_transaction_busy on Postgres)
       expect(Boolean(putEvents(inbox)[2]!.moved)).toBe(false);
+    }, 120_000);
+
+    // The import pipeline (import-file.ts `applyPrepared`; every sync import runs it too), whose calls Postgres starts at once (`pipelined`): the withdrawal check,
+    // the version row (an existing page with a preimage), the edit (with the contextual-retrieval stamp after it in the 'none' mode), the chunk delete (all
+    // chunks, all but the kept ones, or none for a segmented page) and the alias writes. The version row is in the pipeline when the caller passes the page's preimage
+    // (a managed write: persistence/coordinator.ts); an unmanaged import writes it first, on its own. Every subset the import sends, in its order, plus pairs and a second edit.
+    const IMPORT_ORDERS: string[][] = [
+      ['createVersion', 'putPage'], ['putPage', 'deleteChunks'], ['withdrawals', 'putPage'], ['putPage', 'aliases'],
+      ...['', 'createVersion'].flatMap((v) => ['putPage', 'putPage+stamp'].flatMap((p) => ['', 'deleteChunks', 'deleteChunksExcept'].map((d) => ['withdrawals', v, p, d, 'aliases'].filter(Boolean)))),
+      ['putPage', 'deleteChunks', 'putPage:alice'], ['createVersion', 'putPage', 'putPage:alice', 'deleteChunks', 'aliases'],
+    ];
+    test.each(IMPORT_ORDERS.map((calls) => [calls.join(', '), calls] as const))('pipelined in one transaction with the follower wired (%s): each edit waits only for the calls before it and is compared', async (_name, calls) => {
+      await fresh();
+      // A sampled write that waits more than 50 ms for the calls ahead of it is uncomparable (in_transaction_busy): one that waited for itself, or for a call queued behind it, would.
+      const { inbox, wrapped } = prod({ preimageTimeoutMs: 50 });
+      const slug = 'companies/acme-example';
+      const snapshot = await primary().readPageSnapshot(slug);
+      const edit = (to: string, title: string, stamp: boolean) => async (tx: BrainEngine) => { await tx.putPage(to, page(title), { sourceId: 'default', inline: true }); if (stamp) await tx.updatePageContextualRetrievalState(to, 'default', 'none', null); };
+      const thunk = (call: string): ((tx: BrainEngine) => Promise<unknown>) => {
+        switch (call) {
+          case 'withdrawals': return (tx) => assertPreparedFactWithdrawals(tx, 'default', 'Acme Pipelined.', '', slug);
+          case 'createVersion': return (tx) => tx.createVersion(slug, { sourceId: 'default', preimage: snapshot } as never);
+          case 'putPage': return edit(slug, 'Acme Pipelined', false);
+          case 'putPage+stamp': return edit(slug, 'Acme Pipelined', true);
+          case 'putPage:alice': return edit('people/alice-example', 'Alice Pipelined', false);
+          case 'deleteChunks': return (tx) => tx.deleteChunks(slug, { sourceId: 'default' });
+          case 'deleteChunksExcept': return (tx) => tx.deleteChunksExcept(slug, [], { sourceId: 'default' });
+          case 'aliases': return (tx) => writePageAliases(tx, slug, 'default', { ...(page('Acme Pipelined') as object as { title: string; type: string; compiled_truth: string; timeline: string }), frontmatter: {} }, null, null);
+          default: throw new Error(`unknown call ${call}`);
+        }
+      };
+      const started = Date.now();
+      await wrapped.transaction(async (tx) => { await Promise.all(calls.map((c) => thunk(c)(tx))); });
+      const took = Date.now() - started;
+      const edits = calls.filter((c) => c.startsWith('putPage')).length;
+      await until(() => putEvents(inbox).length >= edits);
+      // The first edit has no write ahead of it in the transaction, so it is compared. A second edit after it is compared or, by the existing rule, uncomparable for
+      // that earlier write (in_transaction_prior_write); never in_transaction_busy, which is what a wait for itself or for a call behind it gives.
+      const events = putEvents(inbox);
+      expect(events.length).toBe(edits);
+      expect(events.filter((e) => !e.outcome).map((e) => (e.args as unknown[])[0])).toContain(slug);
+      expect(events.filter((e) => e.outcome).map((e) => e.reason).filter((r) => r !== 'in_transaction_prior_write')).toEqual([]);
+      expect((await primary().getPage(slug))?.title).toBe('Acme Pipelined'); // the edit committed with the calls beside it
+      expect(took).toBeLessThan(1_000); // the follower's pre-read waits up to 2 s for calls ahead of it: a pre-read and a call waiting for each other would use all of it
+    }, 120_000);
+
+    test('a real import of a changed page with the follower wired (withdrawal check, edit, chunk delete and aliases pipelined on Postgres; the version row goes first, on its own) is compared and does not wait', async () => {
+      await fresh();
+      const { inbox, wrapped } = prod({ preimageTimeoutMs: 50 });
+      const root = ctx.tempDir(); const file = join(root, 'pipelined.md');
+      const sync = async (body: string) => { writeFileSync(file, `---\ntype: note\ntitle: Pipelined\n---\n\n${body}\n`); const at = Date.now(); await importFile(wrapped as never, file, 'notes/pipelined.md', { noEmbed: true }); return Date.now() - at; };
+      await sync('First body of the page.');
+      const took = await sync('A changed body of the page.');
+      await until(() => putEvents(inbox).length >= 2);
+      expect(putEvents(inbox).map((e) => e.outcome ?? 'compared')).toEqual(['compared', 'compared']);
+      expect(took).toBeLessThan(1_500);
     }, 120_000);
   });
 
@@ -1541,6 +1912,10 @@ export function defineFenceNegatives(ctx: WriteCompareContext): void {
       await operationsByName.put_page.handler(opCtx(wrapped), { slug: 'notes/control', content: '---\ntitle: Control\ntype: note\n---\nControl mentions [[people/alice-example]].\n' });
       await until(() => ofPage(inbox, 'notes/control').length >= 1);
       expect(Boolean(ofPage(inbox, 'notes/control')[0]!.moved)).toBe(false);
+      // The page's links effect adds its mention link after the commit, and that link write is sampled and read back too: wait for its sample, so its
+      // read-back (a getPage on the primary) is over before a test arms `between` for the next write's read-back, and cannot take that hook.
+      await until(() => inbox.some((e) => e.op === 'addLinksBatch'));
+      await disposePersistenceConsumer(wrapped); // its remaining effects (the embedding lease rows) must not run during the next scenario's read-back window
     }
     /** Alice and Bob exist and are linked. A link write between them copies both pages and the links between the two; a put of Alice copies only Alice. */
     const linked = async () => { await fresh(); await primary().putPage('people/bob-example', page('Bob Example')); await primary().addLink('people/alice-example', 'people/bob-example', 'knows', 'knows'); };

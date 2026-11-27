@@ -8,6 +8,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { getWorktreeBinding, claimWorktree, acquireWorktree } from '../src/core/persistence/ownership.ts';
+import { markGitDurable } from './helpers/git-fixture.ts';
 import { admitWrite, claimNextWrite, getWriteRequest } from '../src/core/persistence/journal.ts';
 import { localHostId } from '../src/core/persistence/identity.ts';
 import { managedSyncAuthority } from '../src/core/persistence/sync-authority.ts';
@@ -39,6 +40,8 @@ function commit(root: string, message = 'test content'): string { git(root, 'add
 async function fixture(engine: BrainEngine, files: Record<string,string>, subpath?: string) {
   const id = `sync-${randomUUID().replace(/-/g,'').slice(0,20)}`; sources.push(id);
   const root = join(home, id); mkdirSync(root); git(root, 'init', '-q');
+  // GST-3743: write-back reaches a non-default checkout only when this host commits it (durable); a foreign one stays database-only.
+  markGitDurable(root);
   for (const [path, body] of Object.entries(files)) { const full = join(root,path); mkdirSync(join(full,'..'), { recursive:true }); writeFileSync(full, body); }
   const head = commit(root);
   const sourceRoot = subpath ? join(root,subpath) : root;
