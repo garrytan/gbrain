@@ -22,7 +22,7 @@ import { closeSync, existsSync, openSync, readSync } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { openclawStateDir } from '../core/setup/brain-first.ts';
-import { childBrainId, companySourceFirst, COMPANY_SOURCE, labelsInCompany, mintedKeysReadCalls, type BrainShape, type LayoutOutcome } from './setup-brain-layout.ts';
+import { chosenBrainEnv, companySourceFirst, COMPANY_SOURCE, labelsInCompany, mintedKeysReadCalls, type BrainShape, type LayoutOutcome } from './setup-brain-layout.ts';
 import { opError, OperationError } from '../core/ops/contract.ts';
 import { ACCESS_ID_RE } from '../core/access/principals.ts';
 import { bunSpawnSync } from '../core/spawn.ts';
@@ -99,11 +99,11 @@ export const PGLITE_SEVERAL_NOTE = 'PGLite lets one process at a time open this 
   + 'page and fact writes (put, remember) still work through it. For a brain several people use, move to Postgres first: gbrain migrate --to postgres (docs/ENGINES.md#pglite-live-serve)';
 
 /**
- * GST-4043: a gbrain child on childBrainId() (the brain the operator chose, else host), so a .gbrain-mount or registered
- * mount around the directory setup runs from never redirects it; a thin client ignores the variable, where an explicit --brain refuses.
+ * GST-4043: a gbrain child on the brain setup was run against (chosenBrainEnv: an explicit --brain, else what the harness
+ * resolves); a thin client ignores the variable, where an explicit --brain refuses.
  */
 function child(launcher: string, args: string[]): { ok: boolean; stdout: string; stderr: string } {
-  const r = bunSpawnSync([launcher, ...args], { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe', env: { ...process.env, GBRAIN_BRAIN_ID: childBrainId() } });
+  const r = bunSpawnSync([launcher, ...args], { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe', env: { ...process.env, ...chosenBrainEnv() } });
   return { ok: r.exitCode === 0, stdout: r.stdout?.toString() ?? '', stderr: r.stderr?.toString() ?? '' };
 }
 

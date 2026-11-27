@@ -293,15 +293,15 @@ export interface LayoutOutcome {
 }
 
 /**
- * GST-4043: the brain setup's gbrain children open: the one the operator chose (--brain, GBRAIN_BRAIN_ID), else host, so
- * a .gbrain-mount or registered mount around the directory setup runs from never redirects them.
+ * GST-4043: setup's gbrain children open the brain setup was run against: an explicit --brain is forwarded as
+ * GBRAIN_BRAIN_ID (which they inherit as it is), else they resolve it from the working directory as the harness does.
  */
-export const childBrainId = (): string => getCliOptions().brain || process.env.GBRAIN_BRAIN_ID || 'host';
+export const chosenBrainEnv = (): { GBRAIN_BRAIN_ID?: string } => { const brain = getCliOptions().brain; return brain ? { GBRAIN_BRAIN_ID: brain } : {}; };
 
-/** A gbrain child on childBrainId(), as the labelling children; `source` pins it to one source through GBRAIN_SOURCE (null: the caller's environment as it is). */
+/** A gbrain child on the brain setup was run against (chosenBrainEnv), as the labelling children; `source` pins it to one source through GBRAIN_SOURCE (null: the caller's environment as it is). */
 type Run = (argv: string[], stdin?: string, source?: string | null) => { code: number; stdout: string; stderr: string };
 const run: Run = (argv, stdin, source) => {
-  const env = { ...process.env, GBRAIN_BRAIN_ID: childBrainId(), ...(source ? { GBRAIN_SOURCE: source } : {}) };
+  const env = { ...process.env, ...chosenBrainEnv(), ...(source ? { GBRAIN_SOURCE: source } : {}) };
   const child = bunSpawnSync(argv, { stdin: stdin === undefined ? 'ignore' : new TextEncoder().encode(stdin), stdout: 'pipe', stderr: 'pipe', env });
   return { code: child.exitCode ?? 1, stdout: child.stdout?.toString() ?? '', stderr: child.stderr?.toString() ?? '' };
 };

@@ -3,7 +3,7 @@
 <!-- behavior-change: serves_several_pinned_source_gst4043 -->
 
 ### Fixed
-- `gbrain setup claude-code` and `codex` with `--serves several` label the people on the host brain even when setup runs from a directory inside a mount, so a `.gbrain-mount` there no longer gets the members, rules and keys instead. A brain chosen with `--brain` or `GBRAIN_BRAIN_ID` still gets them.
+- `gbrain --brain <id> setup claude-code` and `codex` with `--serves several` label the people on that brain; the labelling and layout steps used to ignore `--brain` and follow the working directory.
 - `--members=<ids>` and `--members-file=<path>` work like the two-argument form in `gbrain setup`.
 - A harness pinned to one source (`--source`, `GBRAIN_SOURCE` or a Codex setup receipt) gets its people labelled and its member keys writing in that source, not in `default`. `gbrain access serves several` without `--source` labels `GBRAIN_SOURCE`, then `sources.default`; the directory it runs from never decides where member keys write. A re-run on another source moves the keys an earlier setup minted to write there and keeps their secrets; a key setup did not mint that way, or whose write source someone changed by hand, is reported as skipped with the `gbrain auth rescope` command that moves it. A key whose write source has been archived is reported as blocked and never moved.
 - `--shape company` with the harness pinned to the `company` source adds that source before labelling the people in it, instead of failing because it does not exist yet. It is added out of default search (`--no-federated`), as a source added after the switch to several people would be.

@@ -1,12 +1,12 @@
 /**
  * GST-4043: what gbrain setup <harness> --serves several labels, and where.
  *
- * 1. Protects: the labelling and layout children setup spawns work on the host brain, so a setup run from a directory
- *    inside a mount labels the host brain and leaves the mount alone; --members=<ids> (the = form) labels the people
+ * 1. Protects: the labelling and layout children setup spawns open the brain the harness opens: a setup run from a
+ *    directory inside a mount labels that mount, and `gbrain --brain <id> setup` labels brain <id>; --members=<ids> (the = form) labels the people
  *    as the two-argument form does; a harness pinned to one source (GBRAIN_SOURCE) gets its people labelled and its
  *    keys writing in that source, and a re-run there moves the keys an earlier run minted without replacing them; a
  *    --shape company run whose pinned source is company adds the source first and labels the people in it.
- * 2. Fails when: a mount around the working directory gets the members, the = form is refused or dropped, the rules or
+ * 2. Fails when: the members land on another brain than the one the harness opens, --brain is ignored, the = form is refused or dropped, the rules or
  *    keys land in source default while the harness reads another source, a re-run mints new keys, or --shape company
  *    with the company pin refuses because the source does not exist yet.
  * 3. Existing coverage: setup-serves-several.test.ts (labelling on one source), setup-company-access.test.ts (the
@@ -32,7 +32,7 @@ async function inHost<T>(b: Box, read: (e: PGLiteEngine) => Promise<T>): Promise
 }
 
 describe('gbrain setup --serves several: which brain and which source (GST-4043)', () => {
-  test('run from a directory inside a mount, setup labels the host brain and leaves the mount alone', async () => {
+  test('run from a directory inside a mount, setup labels the mount the harness opens there and leaves host alone', async () => {
     const b = box();
     expect((await gbrain(b, ['init', '--pglite', '--no-embedding', '--json'])).exitCode).toBe(0);
     const mountDb = join(b.root, 'mount.pglite');
@@ -49,13 +49,13 @@ describe('gbrain setup --serves several: which brain and which source (GST-4043)
     const env = { ...CLEAN, HOME: b.home, GBRAIN_HOME: b.home, GBRAIN_MOUNTS_PATH: mountsPath, OPENCLAW_STATE_DIR: join(b.root, 'openclaw-state'), OPENCLAW_PROFILE: undefined, HERMES_HOME: join(b.root, 'hermes-home') };
     const r = await runCli(['setup', 'claude-code', '--serves', 'several', '--members', ROSTER.join(','), '--open-history', '--json', '--gbrain-bin', b.bin], { env, cwd: project, timeoutMs: 240_000 });
     expect(r.exitCode, r.stdout + r.stderr).toBe(0);
-    expect(await inHost(b, members)).toEqual(expect.arrayContaining(ROSTER));
+    expect(await inHost(b, members)).toEqual([]);
     const m = await createEngine({ engine: 'pglite', database_path: mountDb });
     await m.connect({ engine: 'pglite', database_path: mountDb });
-    try { expect(await members(m)).toEqual([]); } finally { await m.disconnect(); }
+    try { expect(await members(m)).toEqual(expect.arrayContaining(ROSTER)); } finally { await m.disconnect(); }
   }, 480_000);
 
-  test('a brain the operator chose with GBRAIN_BRAIN_ID gets the members, never the host brain', async () => {
+  test('gbrain --brain <mount> setup labels that mount, never the host brain', async () => {
     const b = box();
     expect((await gbrain(b, ['init', '--pglite', '--no-embedding', '--json'])).exitCode).toBe(0);
     const mountDb = join(b.root, 'mount.pglite');
@@ -65,8 +65,8 @@ describe('gbrain setup --serves several: which brain and which source (GST-4043)
     await mount.disconnect();
     const mountsPath = join(b.home, '.gbrain', 'mounts.json');
     writeFileSync(mountsPath, JSON.stringify({ version: 1, mounts: [{ id: 'example-mount', path: join(b.root, 'mount-clone'), engine: 'pglite', database_path: mountDb, enabled: true }] }), { mode: 0o600 });
-    const env = { ...CLEAN, HOME: b.home, GBRAIN_HOME: b.home, GBRAIN_MOUNTS_PATH: mountsPath, GBRAIN_BRAIN_ID: 'example-mount', OPENCLAW_STATE_DIR: join(b.root, 'openclaw-state'), OPENCLAW_PROFILE: undefined, HERMES_HOME: join(b.root, 'hermes-home') };
-    const r = await runCli(['setup', 'claude-code', '--serves', 'several', '--members', ROSTER.join(','), '--open-history', '--json', '--gbrain-bin', b.bin], { env, cwd: b.root, timeoutMs: 240_000 });
+    const env = { ...CLEAN, HOME: b.home, GBRAIN_HOME: b.home, GBRAIN_MOUNTS_PATH: mountsPath, OPENCLAW_STATE_DIR: join(b.root, 'openclaw-state'), OPENCLAW_PROFILE: undefined, HERMES_HOME: join(b.root, 'hermes-home') };
+    const r = await runCli(['--brain', 'example-mount', 'setup', 'claude-code', '--serves', 'several', '--members', ROSTER.join(','), '--open-history', '--json', '--gbrain-bin', b.bin], { env, cwd: b.root, timeoutMs: 240_000 });
     expect(r.exitCode, r.stdout + r.stderr).toBe(0);
     expect(await inHost(b, members)).toEqual([]);
     const m = await createEngine({ engine: 'pglite', database_path: mountDb });
