@@ -421,7 +421,7 @@ included), and nothing more until the hello is answered; at most 32 connections 
 ### Still pending
 
 - M2: the server derives each caller's scope in the store (lane L4); until its self-check passes, owner tokens only.
-- Positions on the optimistic store and C22 (lane L2); interactive transactions without the sub-switch (lane L1).
+- Interactive transactions without the sub-switch (lane L1).
 - The brain config key `engine.rust.multiuser` is read by `rustMultiuserOnFor` but the owner's election uses the
   environment switch only, so a server needs `GBRAIN_RUST_MULTIUSER=1` in its environment.
 
