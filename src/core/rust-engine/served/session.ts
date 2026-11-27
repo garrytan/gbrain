@@ -306,18 +306,8 @@ export function servedSession(side: ServedServerSide, opts: ServedServerOptions,
     if (stale) { replyDirect(id, member, stale); return; }
     let remote: boolean;
     try { remote = effectiveRemote(principal!, frame.remote, member); } catch (error) { replyDirect(id, member, error); return; }
-    // A remote write crosses only as a whole operation of the closed list, and only for the owner's floor until A1 lifts
-    // (served/remote-whole-ops.ts); any other principal's remote whole operation is refused before anything runs.
-    if (remote && remoteWholeOperationCall(kind, member, frame.args) && !ownerFloor(principal!)) {
-      replyDirect(id, member, ownerIpcRefusal(member, 'a remote whole operation of a principal other than the brain owner waits for per-user access'));
-      return;
-    }
-    if (remote && !remoteWholeOperationCall(kind, member, frame.args) && !(kind === 'call' && OWNER_IPC_REMOTE_SIDE_WRITES.has(member)) && (kind === 'fn' || !OWNER_IPC_REMOTE_READS.has(member))) {
-      replyDirect(id, member, ownerIpcRefusal(member, kind === 'fn'
-        ? 'a remote caller\'s whole operation is not sent to the brain owner'
-        : 'a remote caller\'s write is not sent to the brain owner'));
-      return;
-    }
+    const remoteRefused = remote ? remoteCallRefusal(kind, member, frame.args, principal!) : null;
+    if (remoteRefused) { replyDirect(id, member, remoteRefused); return; }
     if (kind === 'fn' && network && SERVER_PATH_OPERATIONS.has(member)) { replyDirect(id, member, servedAdminPath(member)); return; }
     let args = frame.args as Wire;
     let access = frame.access as Wire | undefined;
@@ -476,4 +466,17 @@ export function servedSession(side: ServedServerSide, opts: ServedServerOptions,
 function ownerFloor(principal: AuthenticatedPrincipal): boolean {
   return (principal.kind === 'local_owner' || principal.kind === 'owner_token') && !principal.floorRemote
     && (principal as { record?: unknown }).record === undefined;
+}
+
+/**
+ * The refusal for a remote caller's frame, or null when it may cross: a typed read of the remote list, the one side write,
+ * or a whole operation of the closed list (served/remote-whole-ops.ts) from the owner's floor (until A1 lifts, any other
+ * principal's remote whole operation is refused before anything runs).
+ */
+function remoteCallRefusal(kind: 'call' | 'fn', member: string, args: unknown, principal: AuthenticatedPrincipal): Error | null {
+  if (remoteWholeOperationCall(kind, member, args)) {
+    return ownerFloor(principal) ? null : ownerIpcRefusal(member, 'a remote whole operation of a principal other than the brain owner waits for per-user access');
+  }
+  if (kind === 'call' && (OWNER_IPC_REMOTE_SIDE_WRITES.has(member) || OWNER_IPC_REMOTE_READS.has(member))) return null;
+  return ownerIpcRefusal(member, kind === 'fn' ? 'a remote caller\'s whole operation is not sent to the brain owner' : 'a remote caller\'s write is not sent to the brain owner');
 }
