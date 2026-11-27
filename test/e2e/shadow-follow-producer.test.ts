@@ -16,7 +16,7 @@ import { hasDatabase } from './helpers.ts';
 import { persistencePostgresTemplate } from '../helpers/persistence-postgres.ts';
 import { publicationConcurrency, tryAcquirePublicationCapacity } from '../../src/core/persistence/pool-capacity.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
-import { busyPreReadIsRelationLevel, driverFragmentStaysAFragment, driverNativeExecutionWaitsForPreRead, driverQueriesKeepTheirContract, outerWriteSurvivesNestedThatWaitsForALaterCall, driverHelpersKeepTheirProperties, driverStructuralWriteIsSeen, driverWriteSurvivesFailedPreRead, writesKeepOrderBesideNestedTransaction, nestedFollowedWritesStayInTheirSavepoint, finishedNestedIsNotBusy, heldCallKeepsItsContext, heldCallRollsBackWithItsTransaction, outerWriteSurvivesNestedRollback, sampledSiblingDoesNotWaitForItself, unawaitedFollowedWriteCommits, syncThrowRollsBackHeldWrite, failedPreReadKeepsSiblingWrites, failedPreReadKeepsTransaction, followHarness, PAGE, restoreFollowProbes } from '../helpers/follow-producer.ts';
+import { busyPreReadIsRelationLevel, driverFragmentStaysAFragment, driverNativeExecutionWaitsForPreRead, driverQueriesKeepTheirContract, nestedThatWaitsForALaterCallMatchesShadowOff, driverHelpersKeepTheirProperties, driverStructuralWriteIsSeen, driverWriteSurvivesFailedPreRead, writesKeepOrderBesideNestedTransaction, nestedFollowedWritesStayInTheirSavepoint, finishedNestedIsNotBusy, heldCallKeepsItsContext, heldCallRollsBackWithItsTransaction, outerWriteSurvivesNestedRollback, sampledSiblingDoesNotWaitForItself, unawaitedFollowedWriteCommits, syncThrowRollsBackHeldWrite, failedPreReadKeepsSiblingWrites, failedPreReadKeepsTransaction, followHarness, PAGE, restoreFollowProbes } from '../helpers/follow-producer.ts';
 
 const d = hasDatabase() ? describe : describe.skip;
 
@@ -83,7 +83,7 @@ d('shadow follow producer on Postgres', () => {
   test('a driver query fragment is never sent on its own, and a query keeps .values()', async () => { await driverFragmentStaysAFragment(engine); }, 60_000);
   test('a driver write whose target or statement comes from an identifier, a builder or a fragment is seen as a write', async () => { await driverStructuralWriteIsSeen(engine); }, 60_000);
   test('a driver helper keeps its own properties (sql.typed, sql.types) inside a shadowed transaction', async () => { await driverHelpersKeepTheirProperties(engine); }, 60_000);
-  test('an outer write made while a nested transaction waits for a later outer call is never undone by the nested rollback', async () => { await outerWriteSurvivesNestedThatWaitsForALaterCall(engine); }, 60_000);
+  test('a nested transaction that waits for a later outer call commits what it commits with shadow off (a nested rollback, a later outer write)', async () => { await nestedThatWaitsForALaterCallMatchesShadowOff(engine); }, 60_000);
   test('a driver query started with .execute() or .forEach() waits behind a shadow pre-read', async () => { await driverNativeExecutionWaitsForPreRead(engine); }, 60_000);
   test('driver queries keep their native contract (start order, cursors, describe, cancel) with shadow on', async () => { await driverQueriesKeepTheirContract(engine); }, 60_000);
   test('a call held behind a slow pre-read is rolled back with its transaction when the callback fails', async () => { await heldCallRollsBackWithItsTransaction(engine); }, 60_000);

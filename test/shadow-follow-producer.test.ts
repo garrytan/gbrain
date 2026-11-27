@@ -14,7 +14,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
-import { busyPreReadIsRelationLevel, driverWriteSurvivesFailedPreRead, outerWriteSurvivesNestedThatWaitsForALaterCall, pgliteTemplateWriteIsSeen, writesKeepOrderBesideNestedTransaction, nestedFollowedWritesStayInTheirSavepoint, finishedNestedIsNotBusy, heldCallKeepsItsContext, heldCallRollsBackWithItsTransaction, outerWriteSurvivesNestedRollback, sampledSiblingDoesNotWaitForItself, unawaitedFollowedWriteCommits, syncThrowRollsBackHeldWrite, failedPreReadKeepsSiblingWrites, failedPreReadKeepsTransaction, followHarness, PAGE, restoreFollowProbes } from './helpers/follow-producer.ts';
+import { busyPreReadIsRelationLevel, driverWriteSurvivesFailedPreRead, nestedThatWaitsForALaterCallMatchesShadowOff, pgliteTemplateWriteIsSeen, writesKeepOrderBesideNestedTransaction, nestedFollowedWritesStayInTheirSavepoint, finishedNestedIsNotBusy, heldCallKeepsItsContext, heldCallRollsBackWithItsTransaction, outerWriteSurvivesNestedRollback, sampledSiblingDoesNotWaitForItself, unawaitedFollowedWriteCommits, syncThrowRollsBackHeldWrite, failedPreReadKeepsSiblingWrites, failedPreReadKeepsTransaction, followHarness, PAGE, restoreFollowProbes } from './helpers/follow-producer.ts';
 import { mergeItems, type Invalidation } from '../src/shadow/invalidations.ts';
 import { isShadowReadMember, SHADOW_TRANSACTION_MEMBERS } from '../src/shadow/reads.ts';
 import { sqlWrites } from '../src/shadow/sql-writes.ts';
@@ -264,7 +264,7 @@ describe('a failed pre-read', () => {
   test('writes keep their submission order beside a running nested transaction', async () => { await writesKeepOrderBesideNestedTransaction(engine); });
   test('a driver-handle write survives a failed shadow pre-read and reaches the follower', async () => { await driverWriteSurvivesFailedPreRead(engine); });
   test('a write sent with the transaction handle\'s tagged template reaches the follower', async () => { await pgliteTemplateWriteIsSeen(engine); });
-  test('an outer write made while a nested transaction waits for a later outer call is never undone by the nested rollback', async () => { await outerWriteSurvivesNestedThatWaitsForALaterCall(engine); });
+  test('a nested transaction that waits for a later outer call commits what it commits with shadow off (a nested rollback, a later outer write)', async () => { await nestedThatWaitsForALaterCallMatchesShadowOff(engine); }, 30_000);
   test('a call held behind a slow pre-read is rolled back with its transaction when the callback fails', async () => { await heldCallRollsBackWithItsTransaction(engine); });
   test('a write sent while a nested transaction runs is not undone by that nested rollback', async () => { await outerWriteSurvivesNestedRollback(engine); });
   test("a call held behind a pre-read keeps its own caller's context (a stored legacy slug spelling)", async () => { await heldCallKeepsItsContext(engine); });

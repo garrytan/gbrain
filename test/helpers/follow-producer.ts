@@ -389,27 +389,48 @@ export async function pgliteTemplateWriteIsSeen(primary: BrainEngine): Promise<v
 }
 
 /**
- * A write made while a nested transaction runs, where that nested transaction waits for a later outer call: the later call is not held so long that the
- * write is sent inside the nested savepoint, so the nested rollback never undoes a write that reported success.
+ * A nested transaction that waits for a later call of its enclosing transaction, while an outer write waits for the nested one: the committed result is
+ * the one the same calls give with shadow off. Two cases: the nested transaction waits for a later outer read and then rolls back (the driver runs the
+ * outer delete inside the nested savepoint, so the rollback undoes it), and it waits for a later outer write (that write must not overtake the earlier one).
  */
-export async function outerWriteSurvivesNestedThatWaitsForALaterCall(primary: BrainEngine): Promise<void> {
-  const h = followHarness(primary);
-  await primary.setConfig('test.follow.trapped', 'present');
-  let opened!: () => void; const nestedOpen = new Promise<void>((r) => { opened = r; });
-  let flush!: () => void; const flushed = new Promise<void>((r) => { flush = r; });
-  let deleted: unknown;
-  await h.engine.transaction(async (tx) => {
-    const nested = tx.transaction(async (inner) => { await inner.executeRaw('SELECT 1'); opened(); await flushed; throw new Error('nested rollback'); })
-      .catch((e: Error) => { if (e.message !== 'nested rollback') throw e; });
-    await nestedOpen;
-    const write = tx.unsetConfig('test.follow.trapped');
-    await tx.executeRaw('SELECT 1'); // a later outer call the nested transaction waits for
-    flush();
-    deleted = await write;
-    await nested;
-  });
-  const [row] = await primary.executeRaw<{ value: string }>("SELECT value FROM config WHERE key = 'test.follow.trapped'");
-  if (row) throw new Error(`the nested rollback undid the outer unsetConfig that reported ${String(deleted)} row(s)`);
+export async function nestedThatWaitsForALaterCallMatchesShadowOff(primary: BrainEngine): Promise<void> {
+  const rolledBack = async (eng: BrainEngine) => {
+    await primary.setConfig('test.follow.trapped', 'present');
+    let opened!: () => void; const nestedOpen = new Promise<void>((r) => { opened = r; });
+    let flush!: () => void; const flushed = new Promise<void>((r) => { flush = r; });
+    await eng.transaction(async (tx) => {
+      const nested = tx.transaction(async (inner) => { await inner.executeRaw('SELECT 1'); opened(); await flushed; throw new Error('nested rollback'); })
+        .catch((e: Error) => { if (e.message !== 'nested rollback') throw e; });
+      await nestedOpen;
+      const write = tx.unsetConfig('test.follow.trapped');
+      await tx.executeRaw('SELECT 1'); // a later outer call the nested transaction waits for
+      flush();
+      await write;
+      await nested;
+    });
+    return (await primary.getConfig('test.follow.trapped')) ?? 'none';
+  };
+  const overtaken = async (eng: BrainEngine) => {
+    await primary.setConfig('test.follow.order', 'original');
+    let opened!: () => void; const nestedOpen = new Promise<void>((r) => { opened = r; });
+    let release!: () => void; const latch = new Promise<void>((r) => { release = r; });
+    await eng.transaction(async (tx) => {
+      const nested = tx.transaction(async (inner) => { await inner.executeRaw('SELECT 1'); opened(); await latch; });
+      await nestedOpen;
+      const unset = tx.unsetConfig('test.follow.order');
+      await tx.setConfig('test.follow.order', 'replacement'); // a later outer write the nested transaction waits for
+      release();
+      await Promise.all([nested, unset]);
+    });
+    return (await primary.getConfig('test.follow.order')) ?? 'none';
+  };
+  const wrong: string[] = [];
+  for (const [name, run] of [['a nested rollback after a later outer read', rolledBack], ['a later outer write', overtaken]] as const) {
+    const off = await run(primary);
+    const on = await run(followHarness(primary).engine);
+    if (on !== off) wrong.push(`${name}: '${on}' with shadow on, '${off}' with shadow off`);
+  }
+  if (wrong.length) throw new Error(`shadow mode changed what a transaction committed: ${wrong.join('; ')}`);
 }
 
 /** Postgres only: a driver query started with `.execute()` or `.forEach()` waits behind a shadow pre-read like an awaited one, so the pre-read's failed savepoint never undoes it. */
