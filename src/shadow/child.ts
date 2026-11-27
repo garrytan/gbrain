@@ -34,7 +34,7 @@ import { FollowChild, type FollowEvent, type FollowStore } from './follow-child.
 import { appendFault, appendLedgerRows, writeSummaryFile, type ShadowLedgerRow, type ShadowSummaryFile } from './ledger.ts';
 import { newMirrorCounters, type MirrorCounters } from './mirror.ts';
 import { createWriteComparer } from './write-compare-child.ts';
-import { droppedWeight, readOwed, sampleQualifyingWeight, sampleWeight, WriteTally } from './write-compare.ts';
+import { droppedWeight, readOwed, sampleQualifyingWeight, sampleWeight, WriteTally, type OwedRecord } from './write-compare.ts';
 import { appendRecall, IntervalGate, recallEligible, RECALL_INTERVAL_MS, scoreRecall, type RankedKey } from './recall.ts';
 import { isShadowReadMember, SHADOW_READ_MEMBERS, type ShadowReadMember } from './reads.ts';
 import { readSeedRecord } from './seed.ts';
@@ -293,6 +293,16 @@ function childEpoch(
     }
     return epoch;
   };
+}
+
+/**
+ * Books what the serving process owed this session and this child never read. Only the lost page and link writes count against the share: the other writes owed less the other writes read are booked as
+ * `pipe_unflushed_nonqualifying`; every other lost sample, including any count the two ends disagree on, is `pipe_unflushed`. A record with no qualifying count (an older serving process) books every one as `pipe_unflushed`.
+ */
+function bookPipeLoss(writes: Pick<WriteTally, 'missing'>, owedRecord: OwedRecord, received: number, receivedQualifying: number): void {
+  const lost = Math.max(0, owedRecord.owed - received);
+  const nonqualifying = owedRecord.owed_qualifying === undefined ? 0 : Math.min(lost, Math.max(0, (owedRecord.owed - owedRecord.owed_qualifying) - (received - receivedQualifying)));
+  writes.missing(lost, nonqualifying, owedRecord.v === 2 ? 1 : 0); // a marker (v:2) the serving process never closed: one of the missing page and link writes is a lost window
 }
 
 /** Runs the child loop until stdin closes. Resolves with the number of events handled. */
@@ -578,13 +588,7 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
   // Booked only once every replay this child took has settled, never before: a child that dies (or reaches its exit deadline) while a replay is still unsettled has credited no missing sample, so the next owner worker books the whole deficit once, the
   // window included. Booked earlier, that credit is durable at once while the replays still owed are a deficit of their own, and the owner would count the window a second time.
   await writes.idle();
-  if (owedRecord !== null && owedRecord !== 'unreadable') {
-    // Only the lost page and link writes count against the share: the other writes owed less the other writes read are booked as `pipe_unflushed_nonqualifying`; every other lost sample, including any count the two ends
-    // disagree on, is `pipe_unflushed`. A record with no qualifying count (an older serving process) books every one as `pipe_unflushed`.
-    const lost = Math.max(0, owedRecord.owed - received);
-    const nonqualifying = owedRecord.owed_qualifying === undefined ? 0 : Math.min(lost, Math.max(0, (owedRecord.owed - owedRecord.owed_qualifying) - (received - receivedQualifying)));
-    writes.missing(lost, nonqualifying, owedRecord.v === 2 ? 1 : 0); // a marker (v:2) the serving process never closed: one of the missing page and link writes is a lost window
-  }
+  if (owedRecord !== null && owedRecord !== 'unreadable') bookPipeLoss(writes, owedRecord, received, receivedQualifying);
   // The owed file is removed only now, once the serving process closed it and the settled count read back from disk covers everything it owed: a failed final save (or a death or the exit deadline before it) leaves it, and the next owner
   // worker books what was never settled as receipt_orphaned (more than was lost, never less); with it gone, status would read measured with an outcome that was only ever in memory.
   if (await writes.idle()) { try { writes.finish(); } catch { /* the file stays: the next owner worker settles it, or status reads no evidence */ } }
