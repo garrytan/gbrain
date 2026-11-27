@@ -259,6 +259,9 @@ export const READ_ONLY_MEMBERS: ReadonlySet<string> = new Set([
   'dailyDecideSpend', 'decideConflictNoEntityCounts', 'decideSlotUsage',
   'normalizeFenceLines', 'sampleEffectiveDates', 'sampleEffectiveDateSources', 'sharedSkillPackTablePresent',
   'storedTimelineRowsByPageIds',
+  // The commit position of the newest write (engine-members/commit-log.ts; readCommitLog is read-named): a read, and
+  // the SQL engines refuse it.
+  'lastCommitPosition',
   // The read-view digest cache read (the name carries a read prefix; listed so the class is explicit).
   'readPageViewDigest',
   // Batch 11 typed reads (page purge port, caller-links, chronicle): row locks and statements that only read.
