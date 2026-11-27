@@ -137,7 +137,7 @@ getPage	pages	yes	291	yes	yes	yes	serves
 readPageSnapshot	pages	yes	105	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	8	no	yes	yes	serves
 lockPageKeys	pages	yes	17	no	yes	yes	serves
-putPage	pages	yes	1373	yes	yes	yes	serves
+putPage	pages	yes	1374	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	45	yes	yes	yes	serves
