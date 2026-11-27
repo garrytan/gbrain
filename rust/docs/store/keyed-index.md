@@ -31,7 +31,8 @@ their entries; the members filter them as before.
   it deletes and puts only the difference, in the same statement, so the entries commit or roll back with the records.
   A savepoint rollback drops both; an OCC rerun starts a fresh writer.
 - The upgrade from format 8 or 9 (`upgrade_format`) drops every keyed entry and builds each one from the records in
-  the upgrade's one write transaction; a failed upgrade leaves the brain at its old format with no new entry. A build
+  the upgrade's one write transaction, for a brain older than `keyed_index::REBUILT_AT_FORMAT` (12), so a later format's
+  upgrade does not rebuild them again; a failed upgrade leaves the brain at its old format with no new entry. A build
   without the lookups refuses a format-9 brain, and a format-9 build refuses a format-12 brain, as their writes would
   leave the entries stale.
 - An entry is only a candidate: `hasSupersedeEdges` reads the link record back, the page reads read the page record

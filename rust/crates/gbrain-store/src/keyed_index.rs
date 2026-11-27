@@ -402,14 +402,14 @@ pub(crate) fn stored_entries(read: &dyn KvRead) -> Result<BTreeSet<Vec<u8>>> {
     Ok(out)
 }
 
-/// Drops every entry and writes the ones the stored records derive (the format upgrade, in its one
-/// write transaction).
 /// The store format whose upgrade last rebuilt the keyed entries (12: the updated-order entry).
 /// The upgrade rebuilds them only for a brain older than this, so a later format's upgrade never
 /// runs the rebuild again. It equals `FORMAT_VERSION` on this branch; a renumber at merge changes
 /// both.
 pub(crate) const REBUILT_AT_FORMAT: u32 = 12;
 
+/// Drops every entry and writes the ones the stored records derive (the format upgrade, in its one
+/// write transaction).
 pub(crate) fn rebuild(tx: &mut dyn KvWrite) -> Result<()> {
     for key in stored_entries(&*tx)? {
         tx.delete(&key)?;
