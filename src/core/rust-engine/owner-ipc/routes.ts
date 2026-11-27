@@ -53,7 +53,9 @@ export const OWNER_IPC_CALLBACK_KEYS: ReadonlySet<string> = new Set([
  * (executeRaw, lock and lease calls, settings), is refused for a remote caller at the client with
  * `engine_capability_missing` before it is sent, because the owner would run it with the owner's own authority: the
  * call does not carry the caller's remote flag, submission authority or verified writer. A new member is a write here
- * until it is added. A local caller sends every forwarded member as before.
+ * until it is added. A local caller sends every forwarded member as before. A member is added one at a time, after a
+ * privacy review: it is never a write, and never a read of credentials, member identity, checkout paths or another
+ * principal's journal.
  */
 export const OWNER_IPC_REMOTE_READS: ReadonlySet<string> = new Set([
   'aliasCanonicalRefs', 'batchLoadEmotionalInputs', 'cosinesByChunkIds', 'countChunklessPagesWithContent',
@@ -85,6 +87,17 @@ export const OWNER_IPC_REMOTE_READS: ReadonlySet<string> = new Set([
   'resolveSlugWithAliasDetailed', 'resolveSlugs', 'resolveSlugsByPaths', 'searchKeyword', 'searchKeywordChunks',
   'searchKeywordPages', 'searchTakes', 'searchTakesVector', 'searchTitles', 'searchVector', 'slugsEndingIn',
   'sumStaleChunkChars', 'supersedingPageSlugs', 'traverseGraph', 'traversePaths', 'traversePathsDetailed',
+  // Typed reads a remote caller's read operations make (each one in OWNER_IPC_TYPED_READS, reviewed one by one for
+  // privacy: it takes the caller's read scope, or it reads no private state). whois:
+  'listExactIdentityCandidates',
+  // get_tags, chronicle_day and the facts delta quote a page or fact by its stored type, tier and provenance:
+  'listPageQuoteTiers', 'listPageRefsByIds', 'hasGuestSource', 'readPageTrustRows', 'listFactProvenance', 'listFactsFromQuotedPages',
+  'listOwnerTierFacts',
+  // get_backlinks and the mention coverage of a remote caller:
+  'listReferrerTargetSources', 'readMentionIndexStatus', 'countLivePagesInSource', 'countReferrerRows', 'listPageStatusByRef',
+  'readReferrerPageDetails', 'readReferrerRows',
+  // Reads a remote page write makes before it writes (the write itself still refuses here):
+  'readSourceMembership', 'pageAwaitsRederive', 'sharedSkillPackTablePresent', 'readJournalLimitRows',
 ]);
 
 /** The capability family a member belongs to, for the refusal's `reason`. */
