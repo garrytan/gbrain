@@ -290,17 +290,22 @@ for (const flavor of ['pglite', ...(databaseUrl ? ['postgres'] : [])] as const) 
 
   test('a reclone that read the source before a record landed clones with the recorded settings, because it reads them again under its own locks', () => brain(async home => {
     const { source, root, bare } = await managedUrlSource(home, false);
-    const executeRaw = engine.executeRaw;
+    const topologyStore = engine.topologyStore;
     let recorded: Awaited<ReturnType<typeof recordSourceOrigin>> | undefined;
     let fired = false;
-    const patched = spyOn(engine, 'executeRaw').mockImplementation((async function (this: BrainEngine, sql: string, params?: unknown[]) {
-      const rows = await executeRaw.call(this, sql, params);
-      if (!fired && this === engine && sql.startsWith('SELECT incarnation,config,last_commit,local_path FROM sources')) {
-        fired = true;
-        recorded = await recordSourceOrigin(engine, [source], { origin: 'remote', apply: true, remote: false });
-      }
-      return rows;
-    }) as typeof engine.executeRaw);
+    // The clone's first source read (the topology store's readCloneSource on the engine itself) is the one before the record lands.
+    const patched = spyOn(engine, 'topologyStore').mockImplementation((async function (this: BrainEngine) {
+      const store = await topologyStore.call(this);
+      if (this !== engine) return store;
+      return { ...store, readCloneSource: async (id: string) => {
+        const row = await store.readCloneSource(id);
+        if (!fired) {
+          fired = true;
+          recorded = await recordSourceOrigin(engine, [source], { origin: 'remote', apply: true, remote: false });
+        }
+        return row;
+      } };
+    }) as typeof engine.topologyStore);
     const seen: Array<{ skipLfs: boolean }> = [];
     try {
       expect(await reclone(source, { clone: cloneFrom(bare, seen) })).toMatchObject({ state: 'committed' });

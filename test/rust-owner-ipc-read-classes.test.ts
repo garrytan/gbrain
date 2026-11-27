@@ -30,7 +30,7 @@
  * listConnectorSources, listPageGitEffectsForStrip, lockBodyStagingState, lockLivePagesByKey, lockSegmentedGenerationPage, readConfigForUpdate, readFactSnapshots, readLoopFactState, readAccessTokenWriteGrant, readFactWithdrawalClaim, readForgetTarget,
  * readMentionGenerations, readMentionPageRevisions, readPageRevisionForShare,
  * readLiveStoredBody, readNoopEmbeddingCandidates, readOAuthClientWriteGrant, readPairFactRow, readReplacementTarget,
- * readSourceMembership, readSourceState, readWorktreeAdmission, readWriterAdminState, selectClaimableEffect,
+ * readSourceMembership, readSourceState, readWorktreeAdmission, readWriterAdminState, selectClaimableEffect, selectClaimableLaneHead (lane LM: the lane-head select, FOR UPDATE SKIP LOCKED),
  * selectClaimableWrite, listSecretHoldingPages (the batch 6c secret store), the credential, source and shared-skill row-lock reads the batch 10 lanes added
  * (the list below), and lockEffectRow.
  *
@@ -55,7 +55,7 @@ const LOCK_ONLY_READS: readonly string[] = [
   'listConnectorSources', 'listPageGitEffectsForStrip', 'lockBodyStagingState', 'lockLivePagesByKey', 'lockSegmentedGenerationPage', 'readConfigForUpdate', 'readFactSnapshots', 'readLoopFactState', 'readAccessTokenWriteGrant', 'readFactWithdrawalClaim', 'readForgetTarget',
   'readMentionGenerations', 'readMentionPageRevisions', 'readPageRevisionForShare', 'readLiveStoredBody', 'readNoopEmbeddingCandidates', 'readOAuthClientWriteGrant', 'readPairFactRow', 'readReplacementTarget',
   'readSourceMembership', 'readSourceState', 'readWorktreeAdmission', 'readWriterAdminState', 'selectClaimableEffect',
-  'selectClaimableWrite',
+  'selectClaimableWrite', 'selectClaimableLaneHead',
   // Added with the batch 6c secret store (it row-locks the pages it reads, FOR SHARE, and changes no row):
   'listSecretHoldingPages',
   // Added when the batch 10 lanes merged (credential, source and shared-skill reads that lock the row they read):

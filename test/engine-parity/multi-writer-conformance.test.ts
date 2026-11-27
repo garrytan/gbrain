@@ -27,7 +27,8 @@
  * skipped by the harness, never run, and is the edit that turns the case on when its owner lands.
  */
 import { describe, expect } from 'bun:test';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine, FactRow } from '../../src/core/engine.ts';
 import type { JobInsertValues } from '../../src/core/engine-sql/jobs.ts';
@@ -38,7 +39,13 @@ import { rustLeases, type RustLeases, type WriteOrigin } from '../../src/core/ru
 import { withEnv } from '../helpers/with-env.ts';
 import { parityArms, type ParityBackend, type ParityContext, rustArmModeProblem, rustArmMultiuser, rustMultiuserView } from './harness.ts';
 import { clearHostRegistration, fenceOpts, hostLeaseName, setHostRegistration } from '../../src/core/persistence/host-fence.ts';
-import { openRustBrainAt, resolvedMultiuser, RUST_MULTIUSER_CONFIG_KEY } from './rust-arm.ts';
+import { assertRustCommitLogResolved, assertRustMultiuserResolved, loadRustArmAddon, openRustBrainAt, removeBrainDir, resolvedMultiuser, RUST_MULTIUSER_CONFIG_KEY } from './rust-arm.ts';
+import { openRustEngine, type RustEngine } from '../../src/core/rust-engine.ts';
+import { listenServed } from '../../src/core/rust-engine/served/listener.ts';
+import { mintOwnerServerToken } from '../../src/core/rust-engine/served/owner-token.ts';
+import { readPositionToken, withReadPosition } from '../../src/core/rust-engine/served/read-position.ts';
+import { positionToken } from '../../src/core/rust-engine/owner-ipc/protocol.ts';
+import { withStatementDeadline } from '../../src/core/statement-deadline.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import {
   JOB_POLICY, acknowledgedWriteViolations, claimSpec, crashBody, crashKey, crashSlug, jobValues, runStressWriters, startWriter, stressSlug, stressViolations,
@@ -75,6 +82,29 @@ async function within<T>(ms: number, what: string, work: Promise<T>): Promise<T>
 }
 
 const BUSY_CODES = new Set(['store_locked', 'pglite_busy', 'owner_unavailable', 'owner_busy']);
+
+/**
+ * `n` served clients (protocol v3 over a loopback listener, owner server token) of the Rust brain `owner` is the owner of, and a
+ * `close` that ends them and the listener (not the owner). Only a multi-user owner serves: the listener refuses otherwise.
+ */
+async function servedClients(owner: BrainEngine, n: number): Promise<{ clients: RustEngine[]; close: () => Promise<void> }> {
+  const brain = owner as unknown as RustEngine;
+  const dir = brain.databasePath;
+  const server = brain.ownerServer();
+  if (!server) throw new Error('C21: the arm\'s engine does not own its brain, so it cannot serve it');
+  const listener = await listenServed(server, { host: '127.0.0.1', port: 0 });
+  const clients: RustEngine[] = [];
+  const close = async () => { for (const c of clients) await c.disconnect().catch(() => undefined); await listener.close().catch(() => undefined); };
+  try {
+    const { token } = await mintOwnerServerToken(owner, 'c21-owner-token');
+    for (let i = 0; i < n; i++) {
+      const client = openRustEngine({ addon: await loadRustArmAddon(), databasePath: dir, served: { url: `gbrain+tcp://127.0.0.1:${listener.port}`, token } });
+      clients.push(client);
+      await client.connect({ engine: 'rust', database_path: dir } as never);
+    }
+  } catch (error) { await close(); throw error; }
+  return { clients, close };
+}
 
 /**
  * `n` connections to the case's brain: the arm's engine and up to `n - 1` second connections. PGLite has one connection and
@@ -785,7 +815,7 @@ describe('engine parity: multi-writer conformance', () => {
 
   // C16: a format upgrade runs once under concurrent openers; each sees the whole brain, old or new, never a partial one.
   // The upgrade this case drives is the one an older brain gets when it is first opened in multi-user mode with the commit log
-  // on (the store enables the log, upgrades the format to 13 and logs its own upkeep): so it runs on the `rust-mu` view only.
+  // on (the store enables the log, upgrades the format to 16, the commit log's own, and logs its own upkeep): so it runs on the `rust-mu` view only.
   // A brain is made in plain mode (log off, older format), closed, and then five engines open it at once with the mode on:
   // the one that wins the owner lock upgrades it, and the others become clients of that owner (never an error, never a
   // second upgrade). The proof of "exactly once" is a control: the upgrade writes records to the commit log, and a brain that
@@ -796,10 +826,10 @@ describe('engine parity: multi-writer conformance', () => {
     const mode = rustArmMultiuser();
     expect(mode, 'C16 upgrades a brain by opening it in multi-user mode: the arm must be multi-user').not.toBe('off');
     const route = rustMultiuserView();
-    const SWITCHES = ['GBRAIN_RUST_MULTIUSER', 'GBRAIN_RUST_COMMIT_LOG'] as const;
     // The commit log format (rust/crates/gbrain-store/src/format.rs LOG_FORMAT_VERSION, 16 since lane L2's renumber
     // e435301421; the addon does not export it). gbrain-store tests/commit_log.rs pins the same number.
     const LOG_FORMAT_VERSION = 16;
+    const SWITCHES = ['GBRAIN_RUST_MULTIUSER', 'GBRAIN_RUST_COMMIT_LOG'] as const;
     const formatOf = (dir: string) => JSON.parse(readFileSync(join(dir, 'FORMAT'), 'utf8')) as { format_version: number; log?: unknown };
     const roleOf = (e: unknown) => (e as { ownerRole?: string }).ownerRole;
     const openers: BrainEngine[] = [];
@@ -947,11 +977,33 @@ describe('engine parity: multi-writer conformance', () => {
       const body = await bodyOf(engine, stressSlug(id, round));
       if (body !== null) pageBodies.set(stressSlug(id, round), body);
     }
+    // The drain. A writer's claim may legitimately answer null while committed waiting work exists (the rows it can see are locked by
+    // other claimers in flight, and a job committed after its statement's snapshot is invisible to it). So once every writer has
+    // finished, this process claims what is left, until null: at most 64 calls, and every job it takes must have been waiting (a
+    // job that was active would be a claim that was lost).
+    const statusBefore = new Map<number, string>();
+    for (const job of await engine.listJobs({ limit: 500 })) statusBefore.set(Number(job.id), String(job.status));
+    const drained: number[] = [];
+    for (let calls = 0; ; calls++) {
+      expect(calls, 'the drain did not reach an empty queue within 64 claims').toBeLessThan(64);
+      const row = await engine.claimNextJob(claimSpec('c18-drain:a'));
+      if (!row) break;
+      drained.push(Number(row.id));
+    }
+    expect(drained.filter(id => statusBefore.get(id) !== 'waiting').map(id => `${id}:${statusBefore.get(id)}`), 'the drain took a job that was not waiting (a lost claim)').toEqual([]);
     const jobIdsByKey = new Map<string, number[]>();
-    for (const job of await engine.listJobs({ limit: 500 })) jobIdsByKey.set(String(job.idempotency_key), [...(jobIdsByKey.get(String(job.idempotency_key)) ?? []), Number(job.id)]);
-    expect(stressViolations({ reports, pageBodies, jobIdsByKey }), 'the stress run lost or duplicated work, or did not contend').toEqual([]);
+    const statusAfter = new Map<number, string>();
+    for (const job of await engine.listJobs({ limit: 500 })) {
+      jobIdsByKey.set(String(job.idempotency_key), [...(jobIdsByKey.get(String(job.idempotency_key)) ?? []), Number(job.id)]);
+      statusAfter.set(Number(job.id), String(job.status));
+    }
+    const violations = stressViolations({ reports, pageBodies, jobIdsByKey, drained });
+    // When the claims do not add up, say what state each unclaimed stored job was in before and after the drain.
+    const unclaimed = [...jobIdsByKey.values()].flat().filter(id => !drained.includes(id) && !reports.flatMap(r => r.results).some(w => w.job === id));
+    const states = unclaimed.map(id => `${id}: ${statusBefore.get(id)} before the drain, ${statusAfter.get(id)} after`);
+    expect(violations, `the stress run lost or duplicated work, or did not contend${states.length ? `; unclaimed stored jobs: ${states.join('; ')}` : ''}`).toEqual([]);
     const jobs = [...jobIdsByKey.values()].flat();
-    const claimedIds = reports.flatMap(r => r.results).map(o => o.job).filter((id): id is number => id !== null);
+    const claimedIds = [...reports.flatMap(r => r.results).map(o => o.job).filter((id): id is number => id !== null), ...drained];
     return { processes: 8, writers: 64, pages: 128, jobs: jobs.length, claimed: claimedIds.length, twice: 0, busy: 0, overlapped: true };
   });
 
@@ -1062,17 +1114,100 @@ describe('engine parity: multi-writer conformance', () => {
     return { finished: true, updatesLanded: 8 };
   });
 
-  // C21: a write acknowledged on one connection is seen on another given its commit position as a token. The token part
-  // is new and pending on every engine (no engine returns a position; `transaction` returns the callback's value), and
-  // PGLite has one connection (n/a). The body is today's plain read-after-commit on a second connection; it gains the
-  // token (the read waits for it, or times out with `position_not_reached`) when a typed position member exists.
+  // C21: a write acknowledged on one connection is seen on another given its commit position as a token. Runs where the brain keeps a
+  // commit log and serves over the network: the Rust engine in multi-user mode with the log on (`rust-mu`, both routes, which turn the
+  // log on and prove it). A SQL engine and the plain Rust arm keep no log and serve no listener (n/a); PGLite has one connection.
+  //  1. The arm's engine owns the brain and serves a loopback v3 listener; two served clients A and B connect. Mode and log are asserted
+  //     on the owner and on every connection (a served client reports `served` and `commit_log`).
+  //  2. A writes, takes the token its acknowledgement carried (`readPositionToken`), and B reads with it (`withReadPosition`) and sees the
+  //     write; the tokens only grow. The owner writes in process, takes its own `lastCommitPosition` as the token, and B reads that too.
+  //  3. A token past every commit ends `position_not_reached` within the read's deadline and returns nothing: B really carries the token
+  //     (without it the page, which exists, would be returned) and the server really compares it.
+  //  4. An owner-socket client of the same brain (`ctx.sameBrainEngine`) reads the same writes. The owner socket sends no token, so
+  //     this one proves the plain second-connection read only.
   parityTest('C21 read-your-writes token on a second connection', { methods: ['putPage', 'getPage'], mwCase: 'C21' }, async (engine, _backend, ctx) => {
+    const route = rustMultiuserView();
+    expect(route, 'C21 runs on the rust-mu arm only: its brain must be multi-user').not.toBe('off');
+    assertRustMultiuserResolved(engine, route as 'env' | 'config');
+    assertRustCommitLogResolved(engine);
+    const caps = (e: unknown) => (e as { capabilities: ReadonlySet<string> }).capabilities;
+    expect(caps(engine).has('commit_log'), 'the owner does not report commit_log').toBe(true);
     const second = await ctx.sameBrainEngine();
-    for (let n = 0; n < 8; n++) {
-      await engine.putPage(`notes/c21-${n}`, NOTE(`N${n}`, `acknowledged on A ${n}`));
-      expect((await second.getPage(`notes/c21-${n}`))?.compiled_truth, `connection B does not see write ${n} acknowledged on A`).toBe(`acknowledged on A ${n}`);
-    }
-    return { seenByB: 8 };
+    expect(caps(second).has('commit_log'), 'the owner-socket client does not report commit_log').toBe(true);
+    const net = await servedClients(engine, 2);
+    try {
+      const [a, b] = net.clients as [RustEngine, RustEngine];
+      for (const [who, client] of [['A', a], ['B', b]] as const) {
+        expect(caps(client).has('served') && caps(client).has('commit_log'), `served client ${who} does not report served and commit_log`).toBe(true);
+      }
+      expect(readPositionToken(a), 'a client that has written nothing already has a token').toBeNull();
+      const parse = (token: string | null) => { const m = /^cp1:(\d+)\.(\d+)$/.exec(token ?? ''); expect(m, `not a token: ${token}`).not.toBeNull(); return { sequence: Number(m![1]), index: Number(m![2]) }; };
+      let previous: CommitPosition | null = null;
+      for (let n = 0; n < 8; n++) {
+        const slug = `notes/c21-a-${n}`;
+        await a.putPage(slug, NOTE(`A${n}`, `acknowledged on A ${n}`));
+        const token = readPositionToken(a)!;
+        const at = parse(token);
+        if (previous) expect(at.sequence - previous.sequence || at.index - previous.index, `the token of write ${n} did not grow`).toBeGreaterThan(0);
+        previous = at;
+        expect((await withReadPosition(token, () => b.getPage(slug)))?.compiled_truth, `connection B does not see write ${n} acknowledged on A, given token ${token}`).toBe(`acknowledged on A ${n}`);
+      }
+      for (let n = 0; n < 4; n++) {
+        const slug = `notes/c21-owner-${n}`;
+        await engine.putPage(slug, NOTE(`O${n}`, `acknowledged on the owner ${n}`));
+        const at = await engine.lastCommitPosition();
+        expect(at, `the owner's write ${n} left no commit position`).not.toBeNull();
+        const token = positionToken(at!);
+        expect((await engine.getPage(slug))?.compiled_truth, `the owner does not see its own write ${n}`).toBe(`acknowledged on the owner ${n}`);
+        expect((await withReadPosition(token, () => b.getPage(slug)))?.compiled_truth, `connection B does not see write ${n} acknowledged on the owner, given token ${token}`).toBe(`acknowledged on the owner ${n}`);
+        expect((await withReadPosition(token, () => second.getPage(slug)))?.compiled_truth, `the owner-socket client does not see write ${n}`).toBe(`acknowledged on the owner ${n}`);
+      }
+      // A token past every commit: B waits for it until the read's deadline and returns nothing.
+      const last = (await engine.lastCommitPosition())!;
+      const future = positionToken({ sequence: last.sequence + 1_000_000, index: 0 });
+      const waited = await attempt(() => withStatementDeadline({ deadlineAt: Date.now() + 300 } as never, () => withReadPosition(future, () => b.getPage('notes/c21-a-0'))));
+      expect(waited.ok, 'B returned a page for a token past every commit: it does not carry the token').toBe(false);
+      const why = refusalOf(waited as { ok: false; error: unknown });
+      expect(why, 'B\'s read of a token past every commit ended on something else').toEqual({ code: 'timeout', reason: 'position_not_reached' });
+      return { writesSeenByB: 12, tokensGrow: true, pastTokenWaited: true };
+    } finally { await net.close(); }
+  });
+
+  // C21, variant `C21.log-off`: the same read on a multi-user brain with the commit log off is refused. Without the log the optimistic
+  // multi-user store cannot order positions, so the server hands no token to a write and refuses a token on a read (the read never runs).
+  // The case opens its own multi-user brain with the log off (`withEnv`: the arm sets GBRAIN_RUST_COMMIT_LOG for its own brain), serves it,
+  // writes on A, and reads on B: with a token the read ends `owner_ipc_protocol` (reason `frame_malformed`, `min_position=unsupported`) and
+  // returns nothing; without a token the same read returns the write. The arm's own brain, log on, is the contrast.
+  parityTest('C21 read-your-writes token on a second connection: a read carrying a token is refused while the commit log is off', { methods: ['putPage', 'getPage'], mwCase: 'C21.log-off' }, async (engine) => {
+    assertRustCommitLogResolved(engine);
+    await engine.putPage('notes/c21-log-on', NOTE('On', 'written with the log on'));
+    expect((await engine.getPage('notes/c21-log-on'))?.compiled_truth).toBe('written with the log on');
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-c21-log-off-'));
+    try {
+      return await withEnv({ GBRAIN_RUST_MULTIUSER: '1', GBRAIN_RUST_COMMIT_LOG: undefined }, async () => {
+        const owner = openRustEngine({ addon: await loadRustArmAddon(), databasePath: dir });
+        await owner.connect({ engine: 'rust', database_path: dir } as never);
+        let net: Awaited<ReturnType<typeof servedClients>> | undefined;
+        try {
+          expect(resolvedMultiuser(owner), 'the log-off brain is not multi-user').toBe(true);
+          expect(owner.capabilities.has('commit_log' as never), 'the log-off brain reports commit_log').toBe(false);
+          net = await servedClients(owner as unknown as BrainEngine, 2);
+          const [a, b] = net.clients as [RustEngine, RustEngine];
+          await a.putPage('notes/c21-log-off', NOTE('Off', 'written with the log off'));
+          expect(readPositionToken(a), 'a write on a brain with no commit log carried a token').toBeNull();
+          const read = await attempt(() => withReadPosition('cp1:1.0', () => b.getPage('notes/c21-log-off')));
+          expect(read.ok, `a read carrying a token returned: ${JSON.stringify(read.ok ? read.value : null)}`).toBe(false);
+          const e = (read as { ok: false; error: { code?: string; reason?: string; detail?: string; message?: string } }).error;
+          expect({ code: e.code, reason: e.reason, detail: e.detail }).toEqual({ code: 'owner_ipc_protocol', reason: 'frame_malformed', detail: 'member=getPage via=served min_position=unsupported' });
+          expect(e.message, 'the refusal does not say the read did not run').toMatch(/carried a read token.*cannot compare positions yet.*did not run/);
+          expect((await b.getPage('notes/c21-log-off'))?.compiled_truth, 'the same read without a token does not return the write').toBe('written with the log off');
+          return { tokenRead: 'owner_ipc_protocol', returned: false, plainRead: 'written' };
+        } finally {
+          await net?.close();
+          await owner.disconnect().catch(() => undefined);
+        }
+      });
+    } finally { removeBrainDir(dir); }
   });
 
   // C22: commit positions strictly increase: no two commits share one and positions only grow. Runs where the engine keeps a

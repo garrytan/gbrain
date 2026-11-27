@@ -29,9 +29,10 @@ import { transactionAborted } from './postgres-engine/transaction-abort.ts';
 import { mapStoreError } from './rust-engine/store-errors.ts';
 import { STORE_MEMBERS } from './rust-engine/store-members/index.ts';
 import { brainWithCallDeadline, endOptimisticTransactions, runOptimisticTransaction, type OptimisticTransactions } from './rust-engine/optimistic-transaction.ts';
-import { servedCapabilities } from './rust-engine/store-capabilities.ts';
+import { servedCapabilities, storeCapabilities } from './rust-engine/store-capabilities.ts';
 import { rustMultiuserFromEnv, rustMultiuserSubSwitch } from './rust-engine/multiuser-switch.ts';
 import { existingHostIdFor, hostIdFor } from './persistence/identity.ts';
+import { noteRustEngine } from './persistence/managed-operations.ts';
 import { RECEIPT_STOP_OWNERS } from './rust-engine/receipt-stops.ts';
 import { electOwner, type OwnerRole } from './rust-engine/owner-ipc/election.ts';
 import { callEndCheck, installOwnerClient, untilCallEnds } from './rust-engine/owner-ipc/client.ts';
@@ -206,7 +207,8 @@ export class RustEngine implements BrainEngine {
 
   /** What this engine's own store serves: the served set, plus `multi_writer` in multi-user mode. */
   private _ownCapabilities(): Capability[] {
-    return this.multiuser ? [...servedCapabilities(), 'multi_writer'] : [...servedCapabilities()];
+    // A multi-user store reports the served set less what it withholds (store-capabilities.ts MULTIUSER_WITHHELD).
+    return this.multiuser ? [...storeCapabilities({ multiuser: true }), 'multi_writer'] : [...servedCapabilities()];
   }
 
   /** True between `connect()` and `disconnect()`. */
@@ -312,6 +314,7 @@ export class RustEngine implements BrainEngine {
             }
             opened = store;
             this._store = store;
+            noteRustEngine(this);
             if (store.multiuser) (this.capabilities as Set<Capability>).add('multi_writer');
             if (store.commitLog) (this.capabilities as Set<Capability>).add('commit_log');
             const served = servedServerOptionsFor(this, store);
@@ -483,6 +486,9 @@ export class RustEngine implements BrainEngine {
    * transaction-bound clone (store-members/transactions.ts) answers with its transaction's handle, never the root
    * store: a member run on the root store inside an open transaction waits for the writer that transaction holds.
    */
+  /** The engine this object stands for: a transaction-bound clone answers its root, any other call (through a wrapper too) answers the engine itself. */
+  _engineRoot(): RustEngine { return this._txScope?.root ?? this; }
+
   openStoreIfOpen(member: string): RustStore | null { return this._store ? this.openStore(member) : null; }
 
   /** The open store a served member runs on; rejects `engine_closed` when the engine is not connected. */

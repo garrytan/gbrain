@@ -5,10 +5,10 @@
 //! Every case has two parts:
 //! - the runnable part, a plain test `cNN_<name>` that holds on today's store (it runs in both store
 //!   modes: `GBRAIN_RUST_CONCURRENT_WRITES=1` puts `common::open` on the optimistic record file);
-//! - the multi-writer part, `cNN_<name>_multi_writer`, `#[ignore = "multi_writer"]`: the same rule with
-//!   writers that are independent explicit transactions or hosts. Its body compiles today and calls the
-//!   frozen interfaces I-1 to I-5 only through `common::mu`, whose stubs return a typed pending error
-//!   naming the owning lane. Run them with
+//! - the multi-writer part, `cNN_<name>_multi_writer`: the same rule with writers that are independent explicit
+//!   transactions or hosts, on a store opened with multi-user mode on (asserted at every open). It calls the
+//!   frozen interfaces I-1 to I-5 through `common::mu`. A part whose owning lane has not landed its member stays
+//!   `#[ignore = "multi_writer"]` and fails loudly, naming the lane, when run with
 //!   `cargo test -p gbrain-store --test multi_writer_conformance -- --ignored multi_writer`.
 //!
 //! Un-pending a case is a one-line edit: the owning lane replaces its stub in `common/mu.rs`, and the
@@ -22,8 +22,8 @@ mod common;
 mod memory_env;
 
 use common::mu::{
-    self, CommitPosition, L2_LOG, L3_SERVER, L5_HOSTS, LEASE_LOST, LeaseToken, LostReason, MuStore,
-    MuTxn, SingleFlightKey, TxnMode, TxnOptions, WriteOrigin,
+    self, CommitPosition, L2_LOG, L3_SERVER, LEASE_LOST, LeaseToken, LostReason, MuStore, MuTxn,
+    SingleFlightKey, TxnMode, TxnOptions, WriteOrigin,
 };
 use common::{StoreMode, TempDir, clock, open, open_in};
 use gbrain_store::chunks::{ChunkInput, UpsertChunksOptions};
@@ -223,11 +223,22 @@ fn lock(pid: i64, token: &str, ttl_minutes: f64) -> LockAcquire {
 /// A store opened on the optimistic record file with the multi-user switch on, whatever the environment says (the multi-writer
 /// parts: a fresh brain is never silently a plain one). Reopening a brain goes through here too.
 fn open_optimistic(dir: &TempDir) -> Store {
-    Store::open_dir(
+    let store = Store::open_dir(
         &dir.path().join("brain"),
         common::mode::open_options_mu(StoreMode::Optimistic),
     )
-    .unwrap()
+    .unwrap();
+    assert!(
+        store.multiuser(),
+        "the store did not resolve multi-user mode on"
+    );
+    store
+}
+
+/// `open_optimistic` with the commit log on as well (host `mu::TEST_HOST`), the resolved state asserted by `mu::open_dir_logged`:
+/// for a twin that reads the log.
+fn open_optimistic_logged(dir: &TempDir) -> Store {
+    mu::open_dir_logged(&dir.path().join("brain"), true, mu::TEST_HOST).unwrap()
 }
 
 /// The identity of writer `i`, one host each (I-3).
@@ -239,7 +250,7 @@ fn origin(i: usize) -> WriteOrigin {
     }
 }
 
-/// An explicit optimistic transaction for writer `i` (I-1). Pending until the transaction lane lands.
+/// The options of an explicit optimistic transaction for writer `i` (I-1), carrying that writer's origin.
 fn host_options(i: usize) -> TxnOptions {
     TxnOptions {
         mode: TxnMode::Optimistic,
@@ -255,8 +266,12 @@ fn begin_host(store: &Store, i: usize) -> MuTxn {
         .unwrap_or_else(|e| panic!("{e}"))
 }
 
-/// Fails, naming the owning lane, until explicit optimistic transactions exist.
+/// The store resolved multi-user mode on, and an explicit optimistic transaction opens on it and is abandoned.
 fn require_transactions(store: &Store) {
+    assert!(
+        store.multiuser(),
+        "the store did not resolve multi-user mode on"
+    );
     drop(begin_host(store, 0));
 }
 
@@ -344,7 +359,6 @@ fn c01_same_page_writers_lose_no_update() {
 /// C01, compare-and-set page write: writers in independent optimistic transactions read the page and
 /// replace it; each commit is acknowledged with its own position or is a typed, retryable `write_conflict`.
 #[test]
-#[ignore = "multi_writer"]
 fn c01_same_page_writers_lose_no_update_multi_writer() {
     let dir = TempDir::new("c01m");
     let store = Arc::new(open_optimistic(&dir));
@@ -421,7 +435,6 @@ fn c02_stale_revision_gets_a_typed_conflict() {
 /// revision, the second to commit gets `revision_conflict` (or a typed `write_conflict` at commit), and a
 /// re-read succeeds.
 #[test]
-#[ignore = "multi_writer"]
 fn c02_stale_revision_gets_a_typed_conflict_multi_writer() {
     let dir = TempDir::new("c02m");
     let store = Arc::new(open_optimistic(&dir));
@@ -513,9 +526,8 @@ fn c03_two_claimers_of_one_write_never_both_claim() {
 
 /// C03, write claim: eight claimers, each its own optimistic transaction, claim one request once. A
 /// claimer whose stamp loses the race is told so with a typed `write_conflict` at commit or sees nothing
-/// claimable; never two acknowledged claims. Cross-host claimers wait for the transaction lane.
+/// claimable; never two acknowledged claims.
 #[test]
-#[ignore = "multi_writer"]
 fn c03_two_claimers_of_one_write_never_both_claim_multi_writer() {
     let dir = TempDir::new("c03m");
     let store = Arc::new(open_optimistic(&dir));
@@ -629,7 +641,6 @@ fn c04_eight_workers_claim_each_job_once() {
 
 /// C04, `claim_next_job`: the same claim, with every worker a host that carries its origin.
 #[test]
-#[ignore = "multi_writer"]
 fn c04_eight_workers_claim_each_job_once_multi_writer() {
     let b = memory_env::brain_mu("c04m");
     require_transactions(&b);
@@ -830,7 +841,6 @@ fn c06_old_holder_cannot_refresh_release_or_write_after_a_takeover() {
 /// C06, `acquire_lease` and `assert_lease`: a holder that paused after taking its lease cannot write protected data
 /// after a takeover, whether it asserts its token before or after the takeover. Every takeover moves the epoch.
 #[test]
-#[ignore = "multi_writer"]
 fn c06_stale_holder_data_write_refused_by_its_token_multi_writer() {
     let b = memory_env::brain_mu("c06m");
     let first = b
@@ -1051,7 +1061,6 @@ fn c06_partitioned_host_claims_and_leases_are_refused_by_reason() {
 /// transaction commits. It must be refused (`lease_lost`, or a retryable `write_conflict` whose fresh run is refused `epoch_moved`)
 /// and no protected data is written. Needs two transactions open at once (`begin_with`).
 #[test]
-#[ignore = "multi_writer"]
 fn c06_partitioned_host_old_epoch_work_refused_multi_writer() {
     const TTL_MS: u64 = 1_000;
     const NAME: &str = "protected-writer";
@@ -1319,9 +1328,8 @@ fn c07_effect_claimed_once_rerun_after_host_lease_expiry() {
 type StoreResultOpt = gbrain_store::Result<Option<Value>>;
 
 /// C07, `claim_effects`: the same rule when eight claimant hosts race, each under its own fence, on an optimistic store with
-/// explicit transactions (the select and the stamp are one transaction each). Pending on the transaction lane.
+/// explicit transactions (the select and the stamp are one transaction each).
 #[test]
-#[ignore = "multi_writer"]
 fn c07_effect_claimed_once_by_racing_hosts_multi_writer() {
     let b = Arc::new(memory_env::brain_mu("c07r"));
     let id = queued_effect(&b);
@@ -1423,7 +1431,6 @@ fn c08_counter_never_over_admits() {
 
 /// C08, `reserve_capacity`: the same cap, with every admitter a host that carries its origin.
 #[test]
-#[ignore = "multi_writer"]
 fn c08_counter_never_over_admits_multi_writer() {
     let dir = TempDir::new("c08m");
     let store = Arc::new(open_optimistic(&dir));
@@ -1476,7 +1483,6 @@ fn c09_idempotency_key_maps_to_one_row() {
 
 /// C09, `admit_job`: the same key submitted by several hosts gives one row.
 #[test]
-#[ignore = "multi_writer"]
 fn c09_idempotency_key_maps_to_one_row_multi_writer() {
     let b = memory_env::brain_mu("c09m");
     require_transactions(&b);
@@ -1582,12 +1588,12 @@ fn c11_per_entity_order_equals_commit_order() {
 }
 
 /// C11, `append_fact` with a sequence assigned at commit: transactions that are open at the same time append to one
-/// entity; the order a reader sees is the order of the commit positions they were acknowledged with.
+/// entity, on a multi-user optimistic store with the commit log on; the order a reader sees by the entity's own sequence is the
+/// order of the commit positions they were acknowledged with.
 #[test]
-#[ignore = "multi_writer"]
 fn c11_per_entity_order_equals_commit_order_multi_writer() {
     let dir = TempDir::new("c11m");
-    let store = Arc::new(open_optimistic(&dir));
+    let store = Arc::new(open_optimistic_logged(&dir));
     require_host_lease(&store);
     let (s, gate) = (store.clone(), Arc::new(Barrier::new(WRITERS)));
     let committed = together(WRITERS, move |i| {
@@ -1595,19 +1601,19 @@ fn c11_per_entity_order_equals_commit_order_multi_writer() {
         let mut first_try = true;
         loop {
             let tx = begin_host(&s, i);
-            fact(tx.store(), &text);
+            let id = fact(tx.store(), &text);
             if first_try {
                 // Every transaction is open before the first one commits.
                 gate.wait();
                 first_try = false;
             }
             match s.commit_position(tx) {
-                Ok(position) => return (position, text),
+                Ok(position) => return (position, id, text),
                 Err(e) => assert!(is_conflict(&e), "an untyped refusal: {e}"),
             }
         }
     });
-    let positions: BTreeSet<CommitPosition> = committed.iter().map(|(p, _)| *p).collect();
+    let positions: BTreeSet<CommitPosition> = committed.iter().map(|(p, _, _)| *p).collect();
     assert_eq!(positions.len(), WRITERS, "two commits share a position");
     // The commit times in the log rise in position order (I-4.v2).
     let log = store
@@ -1615,15 +1621,21 @@ fn c11_per_entity_order_equals_commit_order_multi_writer() {
         .unwrap_or_else(|e| panic!("{e}"));
     clock::commit_times_rise(&log.records).unwrap_or_else(|e| panic!("{e}"));
     // The order a reader sees is the commit-position order. Not `created_at` order (I-4.v2.1): that is the transaction's
-    // clock time, and a later commit can carry an earlier one. The by-position read is the per-entity fact sequence of the hosts lane.
+    // clock time, and a later commit can carry an earlier one. The by-sequence read is the entity's own commit order.
+    let by_id: BTreeMap<u64, String> = committed
+        .iter()
+        .map(|(_, id, text)| (*id, text.clone()))
+        .collect();
+    assert_eq!(by_id.len(), WRITERS, "two facts share a row id");
     let mut by_commit = committed;
     by_commit.sort();
-    let commit_order: Vec<String> = by_commit.into_iter().map(|(_, text)| text).collect();
-    let read_order: Vec<String> = mu::pending_member::<Vec<String>>(
-        L5_HOSTS,
-        "a per-entity fact read in commit-position order (the ~L 0x03 sequence)",
-    )
-    .unwrap_or_else(|e| panic!("{e}"));
+    let commit_order: Vec<String> = by_commit.into_iter().map(|(_, _, text)| text).collect();
+    let read_order: Vec<String> = store
+        .list_entity_facts_in_commit_order("default", "people/alice", None, 1_000)
+        .unwrap()
+        .into_iter()
+        .map(|p| by_id[&p.fact_id].clone())
+        .collect();
     assert_eq!(
         read_order, commit_order,
         "the reader's order is not commit order"
@@ -1667,7 +1679,6 @@ fn c12_two_transactions_read_only_their_own_writes() {
 /// C12, `transaction(fn)`: two transactions that are open at the same time each read their own uncommitted writes and never
 /// the other's.
 #[test]
-#[ignore = "multi_writer"]
 fn c12_two_transactions_read_only_their_own_writes_multi_writer() {
     let dir = TempDir::new("c12m");
     let store = Arc::new(open_optimistic(&dir));
@@ -1721,10 +1732,9 @@ fn c13_transactions_on_different_keys_both_land() {
     assert_eq!(current_body(&store, "notes/b"), "another key");
 }
 
-/// C13, `transaction(fn)`: a commit on another key lands while a transaction is open.
-/// Pending: today the open transaction holds the writer (`embedded_one_owner_an_open_transaction_holds_off_other_commits`).
+/// C13, `transaction(fn)`: a commit on another key lands while a transaction is open. (Plain store: the open transaction holds
+/// the writer, `embedded_one_owner_an_open_transaction_holds_off_other_commits`.)
 #[test]
-#[ignore = "multi_writer"]
 fn c13_transactions_on_different_keys_do_not_wait_multi_writer() {
     let dir = TempDir::new("c13m");
     let store = Arc::new(open_optimistic(&dir));
@@ -1783,7 +1793,6 @@ fn c14_concurrent_publishers_one_winner() {
 
 /// C14, `publish_generation`: the same, with the publishers on different hosts.
 #[test]
-#[ignore = "multi_writer"]
 fn c14_concurrent_publishers_one_winner_multi_writer() {
     let dir = TempDir::new("c14m");
     let store = Arc::new(open_optimistic(&dir));
@@ -1824,7 +1833,6 @@ fn c15_single_flight_holds_only_its_keys() {
 /// C15, `single_flight(keys)`: different keys fly together, one key never has two holders, and a key is free again after
 /// a commit and after an abort.
 #[test]
-#[ignore = "multi_writer"]
 fn c15_single_flight_holds_only_its_keys_multi_writer() {
     let dir = TempDir::new("c15m");
     let store = Arc::new(open_optimistic(&dir));
@@ -2449,9 +2457,20 @@ fn principal_of(n: usize) -> gbrain_store::journal::Principal {
 /// returns exactly the receipt the child was given. Then a replay of each request id returns that same receipt, adds no row and leaves
 /// every page's history as it was. Controls: a hidden acknowledged write, an added row, a lost receipt with every page present, and
 /// a different stored receipt must all fail.
-fn crash_keeps_acknowledged_writes(dir: &TempDir, mode: StoreMode, killed: Killed, writers: usize) {
+fn crash_keeps_acknowledged_writes(
+    dir: &TempDir,
+    mode: StoreMode,
+    logged: bool,
+    killed: Killed,
+    writers: usize,
+) {
     assert!(!killed.acked.is_empty());
-    let store = open_in(dir, mode);
+    // A logged run reopens multi-user with the log on, the resolved state asserted by the open.
+    let store = if logged {
+        mu::open_dir_logged(&dir.path().join("brain"), mode.optimistic(), mu::TEST_HOST).unwrap()
+    } else {
+        open_in(dir, mode)
+    };
     let view = reopened_view(&store, &killed);
     check_acknowledged_survive(&view, &killed, writers).unwrap_or_else(|e| panic!("{e}"));
     let stored: BTreeMap<usize, Option<Value>> = killed
@@ -2545,25 +2564,42 @@ fn c19_crash_after_commit_keeps_acknowledged_writes() {
         StoreMode::Single
     };
     let killed = kill_child_writer(&dir, 1, optimistic, false, false, 40);
-    crash_keeps_acknowledged_writes(&dir, mode, killed, 1);
+    crash_keeps_acknowledged_writes(&dir, mode, false, killed, 1);
 }
 
-/// C19, crash robot: eight writers, each an explicit optimistic transaction with its origin, killed mid-stream; every acknowledged
-/// write is present exactly once after the reopen.
+/// C19, crash robot: eight writers, each an explicit optimistic transaction with its origin, on a multi-user store with the commit
+/// log on (in the child and in the parent, asserted at every open), killed mid-stream; every acknowledged write is present exactly
+/// once after the reopen, its stored receipt is the acknowledged one, and each acknowledged request id is in the write ids of
+/// exactly one commit record.
 #[test]
-#[ignore = "multi_writer"]
 fn c19_crash_after_commit_keeps_acknowledged_writes_multi_writer() {
     let dir = TempDir::new("c19m");
-    require_transactions(&open_optimistic(&dir));
-    let killed = kill_child_writer(&dir, 8, true, true, false, 80);
-    crash_keeps_acknowledged_writes(&dir, StoreMode::Optimistic, killed, 8);
+    let brain = dir.path().join("brain");
+    // The cursor before the child writes anything: open-time upkeep and the activation commit are behind it.
+    let start = {
+        let probe = mu::open_dir_logged(&brain, true, mu::TEST_HOST).unwrap();
+        require_transactions(&probe);
+        probe
+            .read_commit_log(None, 1)
+            .unwrap_or_else(|e| panic!("{e}"))
+            .newest
+    };
+    let killed = kill_child_writer(&dir, 8, true, true, true, 80);
+    let ids: Vec<String> = killed.acked.keys().map(|&n| request_id(n)).collect();
+    crash_keeps_acknowledged_writes(&dir, StoreMode::Optimistic, true, killed, 8);
+    let store = mu::open_dir_logged(&brain, true, mu::TEST_HOST).unwrap();
+    let log = store
+        .read_commit_log(start, usize::MAX)
+        .unwrap_or_else(|e| panic!("{e}"));
+    assert!(!log.snapshot_required);
+    clock::request_ids_match_records(&ids, &log.records).unwrap_or_else(|e| panic!("{e}"));
 }
 
 /// C19, I-4.v2 clocks, against the commit-log lane's real code: eight plain writers on the optimistic store, multi-user mode and the
 /// log on in the child and in the parent (asserted at every open), SIGKILL, reopen. The records after the pre-write cursor are the
 /// child's commits, in position order, with strictly rising commit times; the newest equals `last_commit_time()`; and every
 /// acknowledged request id is in the write ids of exactly one record, so an upkeep or in-flight record cannot stand in for a lost
-/// acknowledged one. (The explicit-transaction variant, `c19_crash_after_commit_keeps_acknowledged_writes_multi_writer`, waits for L1.)
+/// acknowledged one. (The explicit-transaction variant is `c19_crash_after_commit_keeps_acknowledged_writes_multi_writer`.)
 #[test]
 fn c19_crash_keeps_commit_times_rising_and_equal_to_last_commit_time() {
     let dir = TempDir::new("c19-clock");
@@ -2694,7 +2730,6 @@ fn c20_no_deadlock_across_two_pages_in_both_orders() {
 /// C20, sorted keys and compare-and-set on two pages written in both orders: no deadlock, and every writer's update lands once
 /// its retry on a typed `write_conflict` succeeds.
 #[test]
-#[ignore = "multi_writer"]
 fn c20_no_deadlock_across_two_pages_in_both_orders_multi_writer() {
     let dir = TempDir::new("c20m");
     let store = Arc::new(open_optimistic(&dir));
@@ -2703,18 +2738,19 @@ fn c20_no_deadlock_across_two_pages_in_both_orders_multi_writer() {
     let (done, finished) = mpsc::channel();
     thread::spawn(move || {
         let positions = together(8, move |i| {
-            let keys: Vec<SingleFlightKey> = ["pair/a", "pair/b"]
+            let order = if i % 2 == 0 {
+                ["pair/a", "pair/b"]
+            } else {
+                ["pair/b", "pair/a"]
+            };
+            // The keys are named in each writer's own order: the store takes them sorted, so opposite orders cannot wait on each other.
+            let keys: Vec<SingleFlightKey> = order
                 .iter()
                 .map(|slug| SingleFlightKey {
                     source_id: "default".into(),
                     slug: slug.to_string(),
                 })
                 .collect();
-            let order = if i % 2 == 0 {
-                ["pair/a", "pair/b"]
-            } else {
-                ["pair/b", "pair/a"]
-            };
             let mut mine = Vec::new();
             for round in 0..3 {
                 loop {

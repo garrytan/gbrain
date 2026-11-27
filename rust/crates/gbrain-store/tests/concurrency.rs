@@ -4,12 +4,12 @@
 //!
 //! Each test that holds in both store modes runs in both (`<name>_single`, `<name>_optimistic`, through
 //! `common::open_in`). The `embedded_one_owner_` tests assert what holds while one explicit transaction owns
-//! the writer; each has an `#[ignore = "multi_writer"]` twin for what holds once writers overlap.
+//! the writer; each has a `_multi_writer` twin for what holds once writers overlap, on a store opened with multi-user mode on.
 
 mod common;
 
 use common::mu::{MuStore, SingleFlightKey, TxnMode, TxnOptions, WriteOrigin};
-use common::{StoreMode, TempDir, both_modes, open_in, open_mu};
+use common::{StoreMode, TempDir, both_modes, open_in};
 use gbrain_store::Store;
 use gbrain_store::chunks::{ChunkInput, UpsertChunksOptions};
 use gbrain_store::error::*;
@@ -391,8 +391,22 @@ both_modes!(a_dropped_transaction_lets_the_other_writers_go_on => a_dropped_tran
 
 // ---- the multi-writer twins of the two embedded, one-owner tests above -----------------------------------------------------
 //
-// Each is `#[ignore = "multi_writer"]`, calls the new interfaces only through `common::mu`, and names the conformance
-// case it belongs to (tests/multi_writer_conformance.rs).
+// Each opens the optimistic store with multi-user mode on (asserted), calls the new interfaces through `common::mu`, and names
+// the conformance case it belongs to (tests/multi_writer_conformance.rs).
+
+/// The optimistic store with the multi-user switch on in the run, never from the environment; the resolved state is asserted.
+fn open_mu(dir: &TempDir) -> Store {
+    let store = Store::open_dir(
+        &dir.path().join("brain"),
+        common::mode::open_options_mu(StoreMode::Optimistic),
+    )
+    .unwrap();
+    assert!(
+        store.multiuser(),
+        "the store did not resolve multi-user mode on"
+    );
+    store
+}
 
 fn optimistic_options(i: usize) -> TxnOptions {
     TxnOptions {
@@ -410,7 +424,6 @@ fn optimistic_options(i: usize) -> TxnOptions {
 /// C01: with several writers a conflict is typed and visible (`write_conflict`), the transaction runs again, and ids
 /// stay unique. Twin of `embedded_one_owner_explicit_transactions_never_conflict_and_ids_stay_unique`.
 #[test]
-#[ignore = "multi_writer"]
 fn explicit_transactions_conflict_with_a_typed_error_and_ids_stay_unique_multi_writer() {
     let dir = TempDir::new("conc-tx-typed");
     let store = Arc::new(open_mu(&dir));
@@ -454,34 +467,53 @@ fn explicit_transactions_conflict_with_a_typed_error_and_ids_stay_unique_multi_w
     assert_eq!(store.count_pages(None).unwrap(), (WRITERS * 6 + 1) as u64);
 }
 
-/// C15: a commit on the same key as an open transaction conflicts or waits, and is never lost. Twin of the same-key half of
-/// `embedded_one_owner_an_open_transaction_holds_off_other_commits_until_it_ends`.
+/// C15: a transaction that names the same key as an open single flight waits for it (it is not refused and not lost), then
+/// lands after it. Twin of the same-key half of `embedded_one_owner_an_open_transaction_holds_off_other_commits_until_it_ends`.
+/// The other writer is a second transaction naming the key: a single flight holds a key against transactions that name it, and a
+/// write that does not take the flight is ordered by the commit check (the next test).
 #[test]
-#[ignore = "multi_writer"]
 fn a_commit_on_the_same_key_as_an_open_transaction_conflicts_or_waits_multi_writer() {
     let dir = TempDir::new("conc-tx-same-key");
     let store = Arc::new(open_mu(&dir));
     put(&store, "notes/a", "before");
-    let tx = store
-        .begin_with(optimistic_options(1))
-        .unwrap_or_else(|e| panic!("{e}"));
-    let key = SingleFlightKey {
+    let key = || SingleFlightKey {
         source_id: "default".into(),
         slug: "notes/a".into(),
     };
+    let tx = store
+        .begin_with(optimistic_options(1))
+        .unwrap_or_else(|e| panic!("{e}"));
     store
-        .single_flight(&tx, &[key])
+        .single_flight(&tx, &[key()])
         .unwrap_or_else(|e| panic!("{e}"));
     put(tx.store(), "notes/a", "from the transaction");
     let s = store.clone();
-    let other = thread::spawn(move || put(&s, "notes/a", "from another writer"));
+    let other = thread::spawn(move || {
+        // The younger transaction waits at its single flight until the holder ends; a commit refused as stale runs again.
+        loop {
+            let tx = s
+                .begin_with(optimistic_options(2))
+                .unwrap_or_else(|e| panic!("{e}"));
+            s.single_flight(&tx, &[key()])
+                .unwrap_or_else(|e| panic!("{e}"));
+            put(tx.store(), "notes/a", "from another writer");
+            match s.commit_position(tx) {
+                Ok(position) => return position,
+                Err(e) => assert_eq!(e.code, WRITE_CONFLICT, "an untyped refusal: {e}"),
+            }
+        }
+    });
     thread::sleep(std::time::Duration::from_millis(100));
     assert!(
         !other.is_finished(),
         "a commit on the held key landed while its single flight was open"
     );
-    store.commit_position(tx).unwrap_or_else(|e| panic!("{e}"));
-    other.join().unwrap();
+    let first = store.commit_position(tx).unwrap_or_else(|e| panic!("{e}"));
+    let second = other.join().unwrap();
+    assert!(
+        first < second,
+        "the waiting transaction did not commit after the holder: {first:?}, {second:?}"
+    );
     let page = store
         .read_page_snapshot("notes/a", &ReadScope::default())
         .unwrap()
@@ -489,10 +521,44 @@ fn a_commit_on_the_same_key_as_an_open_transaction_conflicts_or_waits_multi_writ
     assert!(page.to_string().contains("from another writer"), "{page}");
 }
 
+/// C15: a plain write that does not take the flight is not held by it; it lands, and the holder, which read the page it then wrote
+/// over, is refused at commit with a typed `write_conflict` and nothing it wrote is kept (the plain write is never lost).
+#[test]
+fn a_plain_write_on_a_flown_key_makes_the_holders_commit_a_typed_conflict_multi_writer() {
+    let dir = TempDir::new("conc-tx-plain-write");
+    let store = Arc::new(open_mu(&dir));
+    put(&store, "notes/a", "before");
+    let tx = store
+        .begin_with(optimistic_options(1))
+        .unwrap_or_else(|e| panic!("{e}"));
+    store
+        .single_flight(
+            &tx,
+            &[SingleFlightKey {
+                source_id: "default".into(),
+                slug: "notes/a".into(),
+            }],
+        )
+        .unwrap_or_else(|e| panic!("{e}"));
+    put(tx.store(), "notes/a", "from the transaction");
+    put(&store, "notes/a", "from a plain write");
+    let refused = store
+        .commit_position(tx)
+        .expect_err("the holder committed over a write it never read");
+    assert_eq!(refused.code, WRITE_CONFLICT, "{refused}");
+    assert_eq!(
+        store
+            .read_page_snapshot("notes/a", &ReadScope::default())
+            .unwrap()
+            .unwrap()["page"]["compiled_truth"],
+        "from a plain write",
+        "the refused transaction left its write, or the plain write was lost"
+    );
+}
+
 /// C13: a commit on another key lands while a transaction is open. Twin of the other-keys half of
 /// `embedded_one_owner_an_open_transaction_holds_off_other_commits_until_it_ends`.
 #[test]
-#[ignore = "multi_writer"]
 fn a_commit_on_another_key_lands_while_a_transaction_is_open_multi_writer() {
     let dir = TempDir::new("conc-tx-other-key");
     let store = Arc::new(open_mu(&dir));

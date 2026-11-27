@@ -7,9 +7,9 @@
 //! - P-F: admission never exceeds a cap under any generated arrival order;
 //! - P-G: any number of replays of one request id, from any number of threads, leaves one row.
 //!
-//! Pending, each calling the frozen interfaces only through `common::mu` (so it fails, naming the owning lane, until that lane
-//! lands): P-B (facts of one entity read back in commit order), P-D (after lease B is granted, a write under lease A's token is
-//! refused in its own transaction), P-E (a read with a write's token sees that write). They are `#[ignore = "multi_writer"]`.
+//! Multi-writer twins, on a store opened with multi-user mode on (asserted at the open; P-B and P-E also with the log on), each
+//! calling the frozen interfaces through `common::mu`: P-B (facts of one entity read back in commit order), P-D (after lease B is
+//! granted, a write under lease A's token is refused in its own transaction), P-E (a read with a write's token sees that write).
 //!
 //! Failure persistence is off and the generator seed is proptest's default, as in `store_props.rs`, so a failing case prints its
 //! minimal input and a run writes no file.
@@ -17,7 +17,7 @@
 mod common;
 
 use common::mu::{CommitPosition, MuStore, TxnMode, TxnOptions, WriteOrigin};
-use common::{StoreMode, TempDir, open_in, open_mu};
+use common::{StoreMode, TempDir, open_in};
 use gbrain_store::Store;
 use gbrain_store::error::*;
 use gbrain_store::journal::{JournalLimits, PageMutation, WriteAdmission};
@@ -239,42 +239,73 @@ fn run_property<S: Strategy>(
     }
 }
 
-/// P-B: facts of one entity read back in commit order, whatever the writers and their counts. Stays ignored for this reason:
-/// the read it compares with commit order lists facts by `created_at` (then id), and I-4.v2.1 says `created_at` is the
-/// transaction's clock time, not the commit time, so a later commit can carry an earlier one. It waits for a read in commit-position
-/// order (the per-entity fact sequence); the property then holds by position.
+/// A store opened with multi-user mode and the commit log on, on the optimistic record file (asserted by the open).
+fn open_mu_logged(dir: &TempDir) -> Store {
+    common::mu::open_dir_logged(&dir.path().join("brain"), true, common::mu::TEST_HOST).unwrap()
+}
+
+/// A store opened with multi-user mode on, on the optimistic record file, the resolved state asserted.
+fn open_mu(dir: &TempDir) -> Store {
+    let store = Store::open_dir(
+        &dir.path().join("brain"),
+        common::mode::open_options_mu(StoreMode::Optimistic),
+    )
+    .unwrap();
+    assert!(
+        store.multiuser(),
+        "the store did not resolve multi-user mode on"
+    );
+    store
+}
+
+/// P-B: facts of one entity read back in commit order, whatever the writers and their counts. Writers are independent explicit
+/// optimistic transactions on a multi-user store with the log on (a commit that loses a race is retried from a fresh read). The
+/// order compared is the entity's own commit-sequence read (`list_entity_facts_in_commit_order`) against the order of the
+/// commit positions the writers were acknowledged with; never `created_at` order (I-4.v2.1: that is the transaction's clock time,
+/// and a later commit can carry an earlier one).
 #[test]
-#[ignore = "multi_writer: I-4.v2.1, created_at order is not commit order"]
 fn p_b_facts_of_one_entity_read_back_in_commit_order_multi_writer() {
     run_property((1usize..=4, 1usize..=4), |(writers, per_writer)| {
         let dir = TempDir::new("p-b");
-        let store = Arc::new(open_mu(&dir));
+        let store = Arc::new(open_mu_logged(&dir));
         let s = store.clone();
         let committed = together(writers, move |i| {
             (0..per_writer)
                 .map(|n| {
-                    let tx = s.begin_with(host(i)).unwrap_or_else(|e| panic!("{e}"));
                     let text = format!("fact {i} {n}");
-                    let args = serde_json::from_value(json!({
-                        "input": {"fact": text, "entity_slug": "people/alice", "source": "chat"}, "sourceId": "default",
-                    }))
-                    .unwrap();
-                    tx.store().insert_fact(&args).unwrap();
-                    (s.commit_position(tx).unwrap_or_else(|e| panic!("{e}")), text)
+                    loop {
+                        let tx = s.begin_with(host(i)).unwrap_or_else(|e| panic!("{e}"));
+                        let args = serde_json::from_value(json!({
+                            "input": {"fact": text, "entity_slug": "people/alice", "source": "chat"}, "sourceId": "default",
+                        }))
+                        .unwrap();
+                        let id = tx.store().insert_fact(&args).unwrap()["id"].as_u64().unwrap();
+                        match s.commit_position(tx) {
+                            Ok(position) => return (position, id, text.clone()),
+                            Err(e) => assert_eq!(e.code, WRITE_CONFLICT, "an untyped refusal: {e}"),
+                        }
+                    }
                 })
-                .collect::<Vec<(CommitPosition, String)>>()
+                .collect::<Vec<(CommitPosition, u64, String)>>()
         });
         let mut by_commit: Vec<_> = committed.into_iter().flatten().collect();
-        by_commit.sort();
-        let q = serde_json::from_value(json!({"sourceId": "default", "entitySlug": "people/alice", "activeOnly": true, "limit": 500})).unwrap();
-        let mut read: Vec<String> = store
-            .list_facts_by_entity(&q)
-            .unwrap()
+        let names: std::collections::BTreeMap<u64, String> = by_commit
             .iter()
-            .map(|r| r["fact"].as_str().unwrap().to_string())
+            .map(|(_, id, text)| (*id, text.clone()))
             .collect();
-        read.reverse();
-        let expected: Vec<String> = by_commit.into_iter().map(|(_, t)| t).collect();
+        prop_assert_eq!(
+            names.len(),
+            writers * per_writer,
+            "two facts share a row id"
+        );
+        by_commit.sort();
+        let expected: Vec<String> = by_commit.into_iter().map(|(_, _, t)| t).collect();
+        let read: Vec<String> = store
+            .list_entity_facts_in_commit_order("default", "people/alice", None, 1_000)
+            .unwrap()
+            .into_iter()
+            .map(|p| names[&p.fact_id].clone())
+            .collect();
         prop_assert_eq!(read, expected);
         Ok(())
     });
@@ -283,7 +314,6 @@ fn p_b_facts_of_one_entity_read_back_in_commit_order_multi_writer() {
 /// P-D: after lease B is granted, any write with lease A's token is refused in its own transaction, whatever the number of
 /// takeovers and stale writers.
 #[test]
-#[ignore = "multi_writer"]
 fn p_d_a_write_with_a_replaced_leases_token_is_refused_multi_writer() {
     run_property((1usize..=3, 1usize..=4), |(takeovers, stale_writes)| {
         let dir = TempDir::new("p-d");
@@ -308,8 +338,12 @@ fn p_d_a_write_with_a_replaced_leases_token_is_refused_multi_writer() {
         for old in &tokens[..takeovers] {
             for _ in 0..stale_writes {
                 let tx = store.begin_with(host(9)).unwrap_or_else(|e| panic!("{e}"));
-                let refused = tx.assert_lease(old).is_err();
-                prop_assert!(refused, "a replaced lease's token was accepted");
+                let refused = tx.assert_lease(old).err().map(|e| e.code);
+                prop_assert_eq!(
+                    refused,
+                    Some(LEASE_LOST),
+                    "a replaced lease's token was accepted, or refused with another code"
+                );
             }
         }
         Ok(())
@@ -318,11 +352,10 @@ fn p_d_a_write_with_a_replaced_leases_token_is_refused_multi_writer() {
 
 /// P-E: a read with a write's token sees that write, for any number of writes.
 #[test]
-#[ignore = "multi_writer"]
 fn p_e_a_read_with_a_writes_token_sees_that_write_multi_writer() {
     run_property(1usize..=8, |writes| {
         let dir = TempDir::new("p-e");
-        let store = open_mu(&dir);
+        let store = open_mu_logged(&dir);
         for n in 0..writes {
             let tx = store.begin_with(host(n)).unwrap_or_else(|e| panic!("{e}"));
             tx.store()

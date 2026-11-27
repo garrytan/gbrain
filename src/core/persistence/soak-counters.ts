@@ -20,6 +20,7 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import { GIT_HOLD_OP, gitHoldFingerprint } from './sync-holds.ts';
+import { syncRows } from '../engine-sql/managed-sync-store.ts';
 import { rethrowCapabilityMissing } from '../rust-engine/errors.ts';
 
 export const SOAK_COUNTERS_OP = 'sync-soak-counters';
@@ -63,7 +64,7 @@ export function nonPlainSyncFlags(args: readonly string[]): string[] {
  * stamped per run and the rest are counted by the next. Returns what it counted.
  */
 export async function sweepNeedsHumanHolds(engine: BrainEngine, sourceId: string, now = Date.now()): Promise<{ needs_human: number; file_drift_hold: number }> {
-  const [source] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [sourceId]);
+  const [source] = await syncRows<{ incarnation: string }>(engine, 'source_incarnation_text', [sourceId]);
   const counted = { needs_human: 0, file_drift_hold: 0 };
   if (!source) return counted;
   const { fenceAutoRepairFor, readGitSourceHolds } = await import('./sync-holds.ts');
@@ -74,9 +75,7 @@ export async function sweepNeedsHumanHolds(engine: BrainEngine, sourceId: string
   const auto = await fenceAutoRepairFor(engine, records);
   const stamp = new Date(now).toISOString();
   for (const record of records.filter(hold => holdVerdict(hold, auto, now).needs_human).slice(0, SWEEP_LIMIT)) {
-    const updated = await engine.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,meta,needs_human_at}',to_jsonb($3::text))
-      WHERE op=$1 AND fingerprint=$2 AND completed_keys->0->>'code'=$4 AND NOT (completed_keys->0->'meta' ? 'needs_human_at') RETURNING 1`,
-    [GIT_HOLD_OP, gitHoldFingerprint(sourceId, source.incarnation, record.path), stamp, record.code]);
+    const updated = await syncRows(engine, 'hold_needs_human_stamp', [GIT_HOLD_OP, gitHoldFingerprint(sourceId, source.incarnation, record.path), stamp, record.code]);
     if (updated.length) counted[record.code === 'file_drift' ? 'file_drift_hold' : 'needs_human']++;
   }
   await recordSoakEvent(engine, 'needs_human', counted.needs_human);

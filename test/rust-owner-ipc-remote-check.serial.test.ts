@@ -16,7 +16,8 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { serveOwnerEngine } from '../src/core/rust-engine/owner-ipc/server.ts';
 import { OWNER_IPC_VERSION } from '../src/core/rust-engine/owner-ipc/protocol.ts';
 import { decodeError, encodeValue, type Wire } from '../src/core/rust-engine/owner-ipc/codec.ts';
-import { ownerRemoteRefusal, remoteFrameMark } from '../src/core/rust-engine/owner-ipc/remote-check.ts';
+import { OWNER_REMOTE_CHECK_CAP, ownerEngineCapabilities, ownerRemoteRefusal, remoteFrameMark } from '../src/core/rust-engine/owner-ipc/remote-check.ts';
+import { RUST_MULTIUSER_CONFIG_KEY } from '../src/core/rust-engine/multiuser-switch.ts';
 import { OWNER_IPC_REMOTE_READS } from '../src/core/rust-engine/owner-ipc/routes.ts';
 import type { OperationError } from '../src/core/ops/contract.ts';
 import { rawSession, type Frame } from './helpers/owner-ipc-raw.ts';
@@ -131,21 +132,29 @@ describe('with the switches off nothing changes', () => {
 
 describe('on a real Rust store the store\'s own multi-user mode turns the check on', () => {
   /** A Rust brain served on an owner socket; the store resolves multi-user mode when it opens. */
-  async function rustOwner(multiuser: boolean): Promise<{ engine: RustEngine; raw: ReturnType<typeof rawSession> }> {
+  async function rustOwner(multiuser: boolean | 'config_row'): Promise<{ engine: RustEngine; raw: ReturnType<typeof rawSession>; ownerHello: Frame }> {
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-owner-remote-check-rust-'));
     const db = join(dir, 'db');
-    if (multiuser) on(); else off();
+    if (multiuser === true) on(); else off();
     const engine = openRustEngine({ addon: await loadRustAddon({ env: { GBRAIN_RUST_ENGINE_ADDON: rustArmAddonPath() } }), databasePath: db });
     await engine.connect({ engine: 'rust', database_path: db } as never);
     await engine.initSchema();
     await engine.setConfig('k', 'before');
+    if (multiuser === 'config_row') {
+      // Multi-user by the brain's own config row alone: the environment switch stays unset; the store reads the row at open.
+      await engine.setConfig(RUST_MULTIUSER_CONFIG_KEY, '1');
+      await engine.disconnect();
+      await engine.connect({ engine: 'rust', database_path: db } as never);
+    }
     const server = await serveOwnerEngine(engine, join(dir, 'owner.sock'));
     if (!server) throw new Error('no socket');
     cleanups.push(async () => { await server.close(); await engine.disconnect(); rmSync(dir, { recursive: true, force: true }); });
     const raw = rawSession(server.socketPath);
     cleanups.push(() => { raw.destroy(); });
     await raw.send(hello);
-    return { engine, raw };
+    const ownerHello = await raw.next(f => f.t === 'hello');
+    if (!ownerHello) throw new Error('no owner hello');
+    return { engine, raw, ownerHello };
   }
 
   test('in multi-user mode a remote write frame is refused and the store keeps its value; a remote read runs', async () => {
@@ -162,8 +171,27 @@ describe('on a real Rust store the store\'s own multi-user mode turns the check 
     expect((await raw.next(f => f.t === 'result' && f.id === 3))?.ok).toBe(false);
   });
 
+  test('a brain multi-user by its config row alone advertises the check in its hello, and a client marks remote frames by it', async () => {
+    const { engine, raw, ownerHello } = await rustOwner('config_row');
+    expect(process.env.GBRAIN_RUST_MULTIUSER).toBeUndefined();
+    expect(engine.openStore('owner-remote-check-test').multiuser).toBe(true);
+    const caps = ownerHello.capabilities as string[];
+    expect(caps).toContain(OWNER_REMOTE_CHECK_CAP);
+    // The client's environment switch is off, so only the owner's hello can make it mark a remote caller's frame.
+    expect(remoteFrameMark(true, caps)).toEqual({ remote: true });
+    expect(remoteFrameMark(false, caps)).toEqual({});
+    expect(remoteFrameMark(true, [])).toEqual({});
+    // The client's own engine capabilities never list the hello-only mark.
+    expect(ownerEngineCapabilities(caps)).not.toContain(OWNER_REMOTE_CHECK_CAP);
+    expect(ownerEngineCapabilities(caps)).toEqual(caps.filter(c => c !== OWNER_REMOTE_CHECK_CAP));
+    await raw.send(call(1, 'setConfig', ['k', 'after'], { ...remoteFrameMark(true, caps) }));
+    expect((await raw.next(f => f.t === 'result' && f.id === 1))?.ok).toBe(false);
+    expect(await engine.getConfig('k')).toBe('before');
+  });
+
   test('a store opened single-user runs the same remote write frame, even with the switch set afterwards', async () => {
-    const { engine, raw } = await rustOwner(false);
+    const { engine, raw, ownerHello } = await rustOwner(false);
+    expect(ownerHello.capabilities as string[]).not.toContain(OWNER_REMOTE_CHECK_CAP);
     on();
     expect(engine.openStore('owner-remote-check-test').multiuser).toBe(false);
     await raw.send(call(1, 'setConfig', ['k', 'after'], { remote: true }));

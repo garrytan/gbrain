@@ -14,7 +14,7 @@ import { PENDING_WRITE_EXIT_CODE } from '../../../core/exit-codes.ts';
 import { agentFix, checkError } from '../check-fix.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 import { answersFromCatalog, catalogTableExists } from '../../../core/rust-engine/store-members/catalog.ts';
-import { servesRawSql } from '../../../core/rust-engine/errors.ts';
+import { managesWorktrees, servesRawSql } from '../../../core/rust-engine/errors.ts';
 
 const DOCS = 'docs/guides/troubleshooting.md#owner-host-stale';
 
@@ -24,21 +24,19 @@ export async function ownerHostStaleCheck(engine: BrainEngine): Promise<Check> {
       ? [{ managed: catalogTableExists(engine, 'persistence_requests') && catalogTableExists(engine, 'persistence_worktrees') }]
       : await engine.executeRaw<{ managed: boolean }>(`SELECT to_regclass('public.persistence_requests') IS NOT NULL AND to_regclass('public.persistence_worktrees') IS NOT NULL AS managed`);
     if (!present?.managed) return { name: 'owner_host_stale', status: 'ok', message: 'This brain keeps no managed write journal.', details: { count: 0, stale_after_ms: OWNER_STALE_MS, stale: [], docs: DOCS } };
-    // The waiting-write and owner-activity reads are SQL; an engine without raw SQL (Rust) skips the check by name, never a pass.
-    if (!servesRawSql(engine)) return { name: 'owner_host_stale', status: 'ok',
+    // An engine that serves neither raw SQL nor managed mode (a user's Rust brain, the managed_persistence hold on) holds no
+    // worktree and no worktree-owned write, so the check skips by name, never a pass. A Rust brain that serves managed mode
+    // reads the waiting writes and the owners through the topology store's typed reads.
+    if (!servesRawSql(engine) && !managesWorktrees(engine)) return { name: 'owner_host_stale', status: 'ok',
       message: 'Skipped: the owner-host read is not served by this engine yet (it needs the raw_sql capability). `gbrain sources writer status --json` shows each owner.',
       details: { outcome: 'skipped', reason: 'raw_sql', count: 'unknown', stale_after_ms: OWNER_STALE_MS, docs: DOCS } };
-    const open = await engine.executeRaw<{ worktree_id: string; open_writes: number; oldest_open: string | Date; source_ids: string[] | null }>(`
-      SELECT r.worktree_id::text AS worktree_id, count(*)::int AS open_writes, min(r.created_at) AS oldest_open,
-        (SELECT array_agg(b.source_id ORDER BY b.source_id COLLATE "C") FROM persistence_source_bindings b WHERE b.worktree_id=r.worktree_id) AS source_ids
-      FROM persistence_requests r WHERE r.worktree_id IS NOT NULL AND r.state IN ('queued','deferred','running','recovering')
-      GROUP BY r.worktree_id`);
+    const open = await (await engine.topologyStore()).openWrites();
     const owners = await ownerActivity(engine, open.map(row => row.worktree_id));
     const stale = open.flatMap(row => {
       const owner = owners.get(row.worktree_id);
       return owner?.stale ? [{ worktree_id: row.worktree_id, source_ids: row.source_ids ?? [], owner_host_id: owner.owner_host_id, last_active: owner.last_active,
         foreign_file_holder: owner.foreign_file_holder, open_writes: Number(row.open_writes), oldest_open: new Date(row.oldest_open).toISOString() }] : [];
-    });
+    }).sort((a, b) => (a.worktree_id < b.worktree_id ? -1 : a.worktree_id > b.worktree_id ? 1 : 0));
     const details = { count: stale.length, stale_after_ms: OWNER_STALE_MS, stale, docs: DOCS };
     if (!stale.length) return { name: 'owner_host_stale', status: 'ok', details,
       message: open.length ? `Every worktree with waiting writes has a live or recently active owner host (${open.length} checked).` : 'No managed write is waiting on an owner host.' };

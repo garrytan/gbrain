@@ -26,8 +26,9 @@
 import { OperationError } from '../ops/contract.ts';
 import { isStalePlanError } from '../retry-matcher.ts';
 import { classifyPgAccessError } from '../pg-access-classify.ts';
-import type { SqlEngine, WriteRequest } from './model.ts';
-import { PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
+import type { BrainEngine } from '../engine.ts';
+import type { WriteRequest } from './model.ts';
+import { claimFenceOpts } from './host-fence.ts';
 import { publicationDeadlinePassed } from './publication-deadline.ts';
 
 export const TRANSIENT_BACKOFF_BASE_MS = 1_000;
@@ -79,10 +80,7 @@ export function chargedInterruptionDetail(interruption: TransientInterruption | 
  * Counts one transient interruption on a claim this owner still holds and schedules its next claim. Token-fenced; run it
  * in the transaction that releases or finishes the claim, so a crash never counts an interruption twice. Returns the count.
  */
-export async function chargeTransientInterruption(engine: SqlEngine, row: WriteRequest): Promise<number> {
-  const [charged] = await engine.executeRaw<{ transient_interruptions: number }>(`UPDATE persistence_requests SET transient_interruptions=transient_interruptions+1,
-    next_attempt_at=now()+(LEAST($3::double precision*power(2::double precision,LEAST(transient_interruptions,30)),$4::double precision)*interval '1 millisecond'),
-    updated_at=now() WHERE id=$1::uuid AND execution_token=$2::uuid AND state='running' AND ${PERSISTENCE_PROTOCOL_PREDICATE} RETURNING transient_interruptions`,
-  [row.id, row.execution_token, TRANSIENT_BACKOFF_BASE_MS, TRANSIENT_BACKOFF_MAX_MS]);
+export async function chargeTransientInterruption(engine: Pick<BrainEngine, 'chargeTransientInterruption'>, row: WriteRequest): Promise<number> {
+  const charged = await engine.chargeTransientInterruption({ id: row.id, token: row.execution_token, baseMs: TRANSIENT_BACKOFF_BASE_MS, maxMs: TRANSIENT_BACKOFF_MAX_MS, ...claimFenceOpts(engine, row.execution_token) });
   return charged?.transient_interruptions ?? (row.transient_interruptions ?? 0) + 1;
 }

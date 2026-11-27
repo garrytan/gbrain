@@ -28,7 +28,28 @@ export interface GitDurabilityStore {
   planCatchUp(key: GitDurabilityCatchUpKey): Promise<GitDurabilityCatchUpEffect[]>;
   requeueCatchUp(key: Omit<GitDurabilityCatchUpKey, 'sourceId'>, ids: readonly string[]): Promise<string[]>;
   setHostBindingDurability(worktreeId: string, hostId: string, setting: GitDurabilitySetting): Promise<{ git_durability: GitDurabilitySetting } | null>;
+  /**
+   * The requests of a worktree whose failed, unsettled Git effect is held on one of `codes` (its own code, or a parked
+   * target's under `targets_parked`), one row per request, in byte order of source id, request id and journal id.
+   */
+  parkedPushRequests(worktreeId: string, codes: readonly string[]): Promise<ParkedPushRequestRow[]>;
+  /**
+   * The aggregate over a source's held, failed Git effects bound to another (former) worktree than `worktreeId`: how many,
+   * the lowest held code, the worktrees and up to five public request ids. `effects` is 0 (the rest null) when none.
+   */
+  formerWorktreeHolds(sourceId: string, worktreeId: string, codes: readonly string[]): Promise<FormerWorktreeHoldsRow>;
+  /** Queues a failed effect again with `data`; the row `{ state }` when it was still failed on `errorCode`, unclaimed and without a recovery, else null. */
+  requeueParkedEffect(id: string, data: Record<string, unknown>, errorCode: string | null): Promise<{ state: string } | null>;
+  /** The local path of every host binding (secret publish maintenance finishes redactions in each checkout); no order. */
+  hostBindingPaths(): Promise<string[]>;
+  /** Every worktree with a failed Git effect (the parked-push retry of secret publish maintenance); no order. */
+  failedGitWorktrees(): Promise<string[]>;
 }
+
+/** One request a parked-push retry covers: its source, journal id, public request id and slug. */
+export interface ParkedPushRequestRow { source_id: string; id: string; request_id: string; slug: string }
+/** The former-worktree aggregate (`formerWorktreeHolds`). */
+export interface FormerWorktreeHoldsRow { effects: number; code: string | null; worktree_ids: string[] | null; requests: string[] | null }
 
 /** `bound()`: the administration verb's transaction settings. */
 export const GIT_DURABILITY_BOUND_SQL = "SELECT set_config('lock_timeout','2000ms',true),set_config('synchronous_commit','on',true)";
@@ -54,6 +75,35 @@ export const GIT_DURABILITY_REQUEUE_SQL = `
 export const GIT_DURABILITY_SET_SQL = `UPDATE persistence_host_bindings SET git_durability=$3
       WHERE worktree_id=$1::uuid AND host_id=$2::uuid RETURNING git_durability`;
 
+/** `parkedPushRequests`: $1 worktree id, $2 the held codes. */
+export const PARKED_PUSH_REQUESTS_SQL = `
+    SELECT * FROM (SELECT DISTINCT e.source_id,r.id::text AS id,r.request_id::text AS request_id,r.slug FROM persistence_effects e
+      JOIN persistence_requests r ON r.id=e.request_id
+     WHERE e.worktree_id=$1::uuid AND e.kind='git' AND e.state='failed' AND e.recovery IS NULL AND NOT (e.data ? 'settled') AND (e.error_code=ANY($2::text[]) OR e.error_code='targets_parked'
+  AND EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(e.data->'parked','[]'::jsonb)) p WHERE p->>'error_code'=ANY($2::text[])))) d
+     ORDER BY source_id COLLATE "C",request_id COLLATE "C",id COLLATE "C"`;
+
+/** `formerWorktreeHolds`: $1 source id, $2 the held codes, $3 the current worktree id. */
+export const FORMER_WORKTREE_HOLDS_SQL = `SELECT count(*)::int AS effects,
+      min(CASE WHEN e.error_code=ANY($2::text[]) THEN e.error_code ELSE (SELECT min(p->>'error_code') FROM jsonb_array_elements(e.data->'parked') p
+        WHERE p->>'error_code'=ANY($2::text[])) END) AS code,
+      array_agg(DISTINCT e.worktree_id::text) AS worktree_ids, (array_agg(DISTINCT r.request_id::text))[1:5] AS requests
+    FROM persistence_effects e JOIN persistence_requests r ON r.id=e.request_id WHERE e.source_id=$1 AND e.worktree_id IS DISTINCT FROM $3::uuid AND e.kind='git' AND e.state='failed'
+      AND NOT (e.data ? 'settled') AND (e.error_code=ANY($2::text[]) OR e.error_code='targets_parked'
+  AND EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(e.data->'parked','[]'::jsonb)) p WHERE p->>'error_code'=ANY($2::text[])))`;
+
+/** `requeueParkedEffect`: $1 effect id, $2 the new data, $3 the error code it failed on. */
+export const REQUEUE_PARKED_EFFECT_SQL = `UPDATE persistence_effects SET state='queued',data=$2::text::jsonb,error_code=NULL,
+        next_attempt_at=now(),claim_expires_at=NULL,claim_owner=NULL,updated_at=now() WHERE id=$1 AND state='failed' AND error_code IS NOT DISTINCT FROM $3
+        AND execution_token IS NULL AND recovery IS NULL RETURNING state`;
+
+/** `hostBindingPaths`: the text git/redact-finish.ts has always sent. */
+export const HOST_BINDING_PATHS_SQL = 'SELECT local_path FROM persistence_host_bindings WHERE local_path IS NOT NULL';
+
+/** `failedGitWorktrees`: the text git/redact-finish.ts has always sent. */
+export const FAILED_GIT_WORKTREES_SQL = `SELECT DISTINCT worktree_id::text AS worktree_id FROM persistence_effects
+        WHERE kind='git' AND state='failed' AND worktree_id IS NOT NULL`;
+
 /** `gitDurabilityStore()` on PGLite and Postgres: the store over `exec` (a transaction engine runs every call in it). */
 export async function gitDurabilityStore(exec: RawSql): Promise<GitDurabilityStore> {
   return {
@@ -67,5 +117,16 @@ export async function gitDurabilityStore(exec: RawSql): Promise<GitDurabilitySto
       const [row] = await exec.executeRaw<{ git_durability: GitDurabilitySetting }>(GIT_DURABILITY_SET_SQL, [worktreeId, hostId, setting]);
       return row ?? null;
     },
+    parkedPushRequests: (worktreeId, codes) => exec.executeRaw<ParkedPushRequestRow>(PARKED_PUSH_REQUESTS_SQL, [worktreeId, [...codes]]),
+    async formerWorktreeHolds(sourceId, worktreeId, codes) {
+      const [row] = await exec.executeRaw<FormerWorktreeHoldsRow>(FORMER_WORKTREE_HOLDS_SQL, [sourceId, [...codes], worktreeId]);
+      return row!;
+    },
+    async requeueParkedEffect(id, data, errorCode) {
+      const [row] = await exec.executeRaw<{ state: string }>(REQUEUE_PARKED_EFFECT_SQL, [id, JSON.stringify(data), errorCode]);
+      return row ?? null;
+    },
+    async hostBindingPaths() { return (await exec.executeRaw<{ local_path: string }>(HOST_BINDING_PATHS_SQL)).map(r => r.local_path); },
+    async failedGitWorktrees() { return (await exec.executeRaw<{ worktree_id: string }>(FAILED_GIT_WORKTREES_SQL)).map(r => r.worktree_id); },
   };
 }
