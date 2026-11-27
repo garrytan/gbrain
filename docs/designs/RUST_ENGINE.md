@@ -538,7 +538,7 @@ Minder's ruling GBRA-108: the engine-bench default-on gate is the 95% paired low
 - Each target has a named step in `rust/bench/` that prints machine, engine, data size, N, p50 and p99, with PGLite and Postgres measured on the same machine in the same run. Write throughput is measured through `transaction(fn)` with the writer held across awaits and includes the outbox apply before return. Peak and steady resident memory at 200k and 1M chunks is reported against the memory envelope and the per-100k-chunk budget in `bakeoff.md`, beside Postgres RSS for the same corpus (f32 vectors at 1M chunks and 1,024 dimensions are about 3.8 GiB raw before any graph).
 - A Rust cell joins `scale-tier.yml`. While Rust is default off, the Rust cell reports and does not gate CI (D23).
 
-#### Measured losses (A3 + store format 14, single writer)
+#### Measured losses (pending keyword records + store format 14, single writer)
 
 Measured on an Intel Xeon 6975P-C, 8 vCPU, 30.8 GB, Linux 7.0.0-1014-aws, with gbrain-evals engine-bench `--dev` at
 10,000 pages. The build was the trial merge 40294050c1 of the pending keyword records (store format 13,
