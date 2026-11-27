@@ -6,11 +6,13 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import {
   __setDocsRefForTests, argvFromCommand, deriveNext, docsUrl, inertText, noticeBlock, orderNotices, paramRef,
-  redactForTransport, renderAction, renderCliError, renderNotice, shellQuote, toAgentError,
+  redactForTransport, renderAction, renderCliError, renderNotice, shellQuote, toAgentError, toolErrorResult, toolResultWithNotices,
   type Action, type Decision, type Effect, type Notice, type RenderContext,
 } from '../src/core/agent-output.ts';
 import { agentBlock, renderCliNotices } from '../src/core/agent-markers.ts';
 import { opError, withRelationGuard } from '../src/core/ops/contract.ts';
+import { getPageFix, pageNotFoundError } from '../src/core/ops/context.ts';
+import { PageProjectionConflictError } from '../src/core/page-state/types.ts';
 import { VERSION } from '../src/version.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { execFileSync } from 'node:child_process';
@@ -419,4 +421,118 @@ describe('a memory verb answers a capability refusal with the protocol code unav
     const env = toAgentError(refusal(), { transport: 'stdio', op: 'list_pages', render: ctx() }) as unknown as Record<string, unknown>;
     expect(env.code).toBe('engine_capability_missing');
   });
+});
+
+describe('F6: a bidirectional control in a page value cannot reorder a printed command or agent text', () => {
+  /** The nine embedding, override and isolate controls (Trojan Source): U+202A-U+202E and U+2066-U+2069. */
+  const BIDI = /[\u202a-\u202e\u2066-\u2069]/;
+  const NINE = ['\u202a', '\u202b', '\u202c', '\u202d', '\u202e', '\u2066', '\u2067', '\u2068', '\u2069'];
+  const octal = (ch: string) => [...new TextEncoder().encode(ch)].map(b => `\\${b.toString(8).padStart(3, '0')}`).join('');
+  const bash = (command: string) => execFileSync('bash', ['-c', `set -- ${command}; printf '%s\\0' "$@"`], { encoding: 'utf8' }).split('\0').slice(0, -1);
+  /** A page path that shows as `notes/evil` + `txt.md` reversed: the reader sees a different file name than the one that runs. */
+  const title = 'notes/evil\u202Edm.txt\u202C';
+  const notice = (): Notice => ({ code: 'empty_retrieval', kind: 'degraded', why: `No match in ${title}`, user_message: `Open ${title} to check it.`, fix: action({ argv: ['gbrain', 'get', title] }) });
+
+  test('inertText and both shellQuote helpers write each of the nine as octal bytes, and bash reads the exact value back', () => {
+    for (const ch of NINE) {
+      expect(inertText(`a${ch}b`)).toBe(`a${octal(ch)}b`);
+      expect(shellQuote(['x', `a${ch}b`])).toBe(`x $'a${octal(ch)}b'`);
+      expect(leafQuote(`a${ch}b`)).toBe(`$'a${octal(ch)}b'`);
+      expect(bash(shellQuote(['x', `a${ch}b`]))).toEqual(['x', `a${ch}b`]);
+    }
+  });
+
+  test('CLI: the TTY Fix line and the non-TTY [AGENT] block hold no raw bidi control; the command runs the exact page', () => {
+    const rendered = renderNotice(notice(), ctx({ transport: 'cli' }));
+    for (const tty of [true, false]) {
+      const out = renderCliNotices([rendered], { json: false, tty });
+      expect(`${out.stdout ?? ''}${out.stderr ?? ''}`).not.toMatch(BIDI);
+    }
+    expect(rendered.fix!.argv).toEqual(['gbrain', 'get', title]);
+    expect(bash(rendered.fix!.command!)).toEqual(['gbrain', 'get', title]);
+  });
+
+  for (const transport of ['stdio', 'http'] as const) {
+    test(`MCP over ${transport}: notice text blocks and their rendered fields hold no raw bidi control`, () => {
+      const c = ctx({ transport, isCallable: () => false });
+      const result = toolResultWithNotices({ ok: true }, [notice()], c);
+      expect(result.content.length).toBe(2);
+      expect(result.content[1]!.text).not.toMatch(BIDI);
+      const [n] = (result._meta as { gbrain_notices: Array<{ why: string; user_message?: string; fix?: { why: string; command?: string; argv?: string[] } }> }).gbrain_notices;
+      for (const text of [n!.why, n!.user_message!, n!.fix!.why, n!.fix!.command!]) expect(text).not.toMatch(BIDI);
+      expect(bash(n!.fix!.command!)).toEqual(['gbrain', 'get', title]);
+      if (transport === 'stdio') expect(n!.fix!.argv).toEqual(['gbrain', 'get', title]);
+    });
+
+    test(`MCP over ${transport}: the error envelope text holds no raw bidi control and parses back to the exact values`, () => {
+      const c = ctx({ transport, isCallable: () => false });
+      const env = toAgentError(opError('page_not_found', `No page ${title}`, `gbrain get ${title}`), { transport, op: 'get_page', render: c });
+      const text = toolErrorResult(env).content[0]!.text;
+      expect(text).not.toMatch(BIDI);
+      expect(JSON.parse(text)).toEqual(JSON.parse(JSON.stringify(env)));
+    });
+  }
+
+  for (const [name, ch] of [['U+202E', '\u202e'], ['U+2066', '\u2066']] as const) {
+    test(`the HTTP view masks a private path after a raw ${name} in argv, verify.argv and preview_argv`, () => {
+      const word = `label${ch}/home/owner/private`;
+      const a = action({ argv: ['git', '-C', word, 'status'], verify: { argv: ['git', '-C', word, 'log'] }, preview_argv: ['git', '-C', word, 'diff'], user_message: `in ${word}` });
+      const view = JSON.stringify(redactForTransport(renderAction(a, ctx({ transport: 'http', isCallable: () => false })), 'http'));
+      expect(view).not.toContain('/home/owner');
+      expect(view).not.toContain('private');
+      expect(renderAction(a, ctx()).argv).toEqual(['git', '-C', word, 'status']);
+    });
+  }
+});
+
+describe('F6 (d1-d3): error prose, callable MCP steps and JSON error text carry no raw bidi control', () => {
+  const BIDI = /[\u202a-\u202e\u2066-\u2069]/;
+  const slug = 'notes/evil\u202Edm.txt\u202C';
+  type Doc = { message: string; suggestion: string; why?: string; fix: { argv?: string[]; mcp?: { tool: string; arguments: Record<string, unknown> } } };
+  const local = { remote: false };
+  const errors = () => [pageNotFoundError(local, slug, { includeDeleted: false }), new PageProjectionConflictError('r1', 'r1', ['chunk_digest'], slug, 'default')];
+
+  test('CLI: a real page_not_found and a projection conflict print no raw bidi; the --json text parses to the exact argv', () => {
+    for (const e of errors()) {
+      expect(renderCliError(e, { json: false, command: 'get', tty: true }).stderr!).not.toMatch(BIDI);
+      const text = renderCliError(e, { json: true, command: 'get', tty: false }).stdout!;
+      expect(text).not.toMatch(BIDI);
+      const doc = JSON.parse(text) as Doc;
+      for (const prose of [doc.message, doc.suggestion, doc.why ?? '']) expect(prose).not.toMatch(BIDI);
+      expect(doc.fix.argv).toContain(slug);
+    }
+  });
+
+  test('CLI: an MCP-only fix relays its arguments as JSON with Unicode escapes that parse back exactly', () => {
+    const e = opError('page_not_found', 'Page not found.', 'Read it over MCP.', { fix: { mcp: { tool: 'get_page', arguments: { slug } }, consent: [], actor: 'agent', why: 'Reads it.', requires_exclusive: false } });
+    const human = renderCliError(e, { json: false, command: 'get', tty: true }).stderr!;
+    expect(human).not.toMatch(BIDI);
+    const relay = /call get_page over MCP with (\{.*\})/.exec(human)?.[1];
+    expect(JSON.parse(relay!)).toEqual({ slug });
+  });
+
+  for (const transport of ['stdio', 'http'] as const) {
+    test(`MCP over ${transport}: the page_not_found error text and its Next step hold no raw bidi; args and argv parse back exactly`, () => {
+      const c = ctx({ transport, isCallable: () => true });
+      const env = toAgentError(pageNotFoundError({ remote: true, transport, isCallable: () => true }, slug, { includeDeleted: false }), { transport, op: 'get_page', render: c });
+      const text = toolErrorResult(env).content[0]!.text;
+      expect(text).not.toMatch(BIDI);
+      const doc = JSON.parse(text) as Doc;
+      for (const prose of [doc.message, doc.suggestion]) expect(prose).not.toMatch(BIDI);
+      expect(doc.fix.mcp!.arguments.slug).toBe(slug);
+      const step = /Next: get_page (\{.*\})/.exec(doc.suggestion)?.[1];
+      expect(JSON.parse(step!)).toEqual(doc.fix.mcp!.arguments);
+    });
+
+    test(`MCP over ${transport}: a notice whose fix has argv and a callable MCP step prints a fix line with no raw bidi`, () => {
+      const n: Notice = { code: 'empty_retrieval', kind: 'degraded', why: 'w', fix: getPageFix(slug, 'Reads the page.')! };
+      const result = toolResultWithNotices({ ok: true }, [n], ctx({ transport, isCallable: () => true }));
+      const block = result.content[1]!.text;
+      expect(block).not.toMatch(BIDI);
+      const line = block.split('\n').find(l => l.startsWith('fix: get_page '))!;
+      expect(JSON.parse(line.slice('fix: get_page '.length))).toEqual({ slug });
+      const [rendered] = (result._meta as { gbrain_notices: Array<{ fix: { mcp: { arguments: unknown } } }> }).gbrain_notices;
+      expect(rendered!.fix.mcp.arguments).toEqual({ slug });
+    });
+  }
 });

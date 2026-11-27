@@ -485,3 +485,18 @@ describe('GCH5-05 (d3): a consent refusal prints each command whole or not at al
     expect(json.fix.command).toBeUndefined();
   });
 });
+
+describe('F6 (d3): a consent refusal shows no raw bidi control, and its JSON text parses to the exact argv', () => {
+  const BIDI = /[\u202a-\u202e\u2066-\u2069]/;
+  test('a page value with U+202E in the approved and preview argv', async () => {
+    const page = 'notes/evil\u202Edm.txt\u202C';
+    const e = await inHome(() => refusal(requireConsent(req(['paid'], [], { argv: ['gbrain', 'demo', page], preview_argv: ['gbrain', 'demo', page, '--dry-run'] }), env())));
+    if (!isConsentRefusal(e)) throw e;
+    expect(renderConsentRefusal(e.consent, { json: false }).stdout!).not.toMatch(BIDI);
+    const text = renderConsentRefusal(e.consent, { json: true }).stdout!;
+    expect(text).not.toMatch(BIDI);
+    const json = JSON.parse(text);
+    expect(json.fix.argv).toEqual(['gbrain', 'demo', page, '--yes']);
+    expect(json.preview.argv).toEqual(['gbrain', 'demo', page, '--dry-run']);
+  });
+});

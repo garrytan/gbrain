@@ -18,7 +18,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { CONTRACT_VERSION, cliRenderContext, invalidArgument, renderAction, shellQuote, type Action, type Actor, type CliErrorRender, type Effect, type RenderContext, type RenderedAction } from './agent-output.ts';
+import { CONTRACT_VERSION, cliRenderContext, invalidArgument, jsonText, renderAction, shellQuote, type Action, type Actor, type CliErrorRender, type Effect, type RenderContext, type RenderedAction } from './agent-output.ts';
 import { actionCommandField, AGENT_FIELD_MAX, agentBlock, argvCommand, commandField } from './agent-markers.ts';
 import { writeJsonDocument } from './cli-force-exit.ts';
 import { recordAgentContractEvent } from './agent-contract-log.ts';
@@ -344,7 +344,7 @@ function previewChangedError(req: ConsentRequest, expected: string): OperationEr
  * stdout and the one-line error on stderr. Pure: callers write the strings.
  */
 export function renderConsentRefusal(p: ConfirmationPayload, opts: { json: boolean }): CliErrorRender {
-  if (opts.json) return { stdout: `${JSON.stringify(p, null, 2)}\n`, exitCode: 3 };
+  if (opts.json) return { stdout: `${jsonText(p, 2)}\n`, exitCode: 3 };
   // GCH5-05: each command prints whole or not at all; the field budget is agentBlock's cap.
   const preview = p.preview ? actionCommandField(' To look first (read-only): ', p.preview, AGENT_FIELD_MAX - 'Nothing runs; nothing was changed.'.length) ?? '' : '';
   const preapproveArgv = p.preapprove_argv ? argvCommand(p.preapprove_argv) : undefined;

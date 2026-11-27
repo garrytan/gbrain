@@ -28,7 +28,7 @@ import { OWNER_MEMBER_KEY } from '../core/search/private-visibility.ts';
 import { credentialHolders } from '../core/access/owner.ts';
 import { hasScope, operationScopesAllowed } from '../core/scope.ts';
 import { summarizeMcpParams, dispatchToolCall, requestLogStatusForResult, requestMetaSessionId, hotMemoryOffIn, acceptedPendingReceipt, unknownToolEnvelope, errorResult, dispatchRenderContext, grantBlockedNotices, admitNotices, audienceRefusal, type ToolResult } from '../mcp/dispatch.ts';
-import { toAgentError } from '../core/agent-output.ts';
+import { jsonText, toAgentError } from '../core/agent-output.ts';
 import { STATUS_TOOL_NAME, statusModeOf, statusToolResult } from '../mcp/status-mode.ts';
 import { isCallable, publishGatesFromDisabled } from '../core/ops/callable.ts';
 import { scopeDeniedError } from '../core/ops/op-fix.ts';
@@ -598,7 +598,7 @@ async function rejectInsufficientMcpScope(
   const notices = await grantBlockedNotices(engine, opts, true);
   if (notices.length) denial.notices = admitNotices(notices, opts);
   const envelope = toAgentError(denial, { transport: 'http', op: name, render: dispatchRenderContext(opts) });
-  return { content: [{ type: 'text', text: JSON.stringify({ ...envelope, your_scopes: authInfo.scopes }) }], isError: true };
+  return { content: [{ type: 'text', text: jsonText({ ...envelope, your_scopes: authInfo.scopes }) }], isError: true };
 }
 
 async function recordMcpToolResult(
