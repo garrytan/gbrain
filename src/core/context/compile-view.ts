@@ -135,6 +135,8 @@ export interface CompileViewInput {
   excludeSlugs?: ReadonlySet<string>;
   /** Render the core block alone (no arms), e.g. the user-global codex file. */
   coreOnly?: boolean;
+  /** C2: the standing-rules section (rules/section.ts), rendered right after core. */
+  rules?: string;
 }
 
 export interface CompileViewScanDrop {
@@ -393,7 +395,7 @@ export async function compileView(input: CompileViewInput): Promise<CompileViewR
   // of the same length prices the header before the kept set is known.
   const budget = input.budget;
   const headerWithPlaceholder = headerLine('0'.repeat(16), input.target, budget, input.core);
-  const coreText = input.core?.text ? `\n\n${input.core.text}` : '';
+  const coreText = (input.core?.text ? `\n\n${input.core.text}` : '') + (input.rules ? `\n\n${input.rules}` : '');
   const headerText = `${headerWithPlaceholder}\n${COMPILED_CONTEXT_ENVELOPE}${coreText}`;
   const noFitComment = `\n\n<!-- no entries fit budget ${budget} -->`;
   // Count every non-entry byte (header, envelope, trailing newline).

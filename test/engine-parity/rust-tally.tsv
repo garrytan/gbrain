@@ -270,7 +270,7 @@ test/engine-parity/page-vector-flip.test.ts	1	0
 test/engine-parity/page-vector-overflow.test.ts	2	0
 test/engine-parity/page-visibility.test.ts	6	0
 test/engine-parity/page-window-chunk-reads.test.ts	2	0
-test/engine-parity/page-withdrawal-overlay.test.ts	5	0
+test/engine-parity/page-withdrawal-overlay.test.ts	6	0
 test/engine-parity/page-write-readers.test.ts	1	0
 test/engine-parity/pages.test.ts	46	0
 test/engine-parity/persistence-binding-reads.test.ts	3	0
@@ -415,6 +415,7 @@ test/engine-parity/sync-run.test.ts	1	0
 test/engine-parity/sync-stamp.test.ts	2	0
 test/engine-parity/sync-status-reads.test.ts	10	0
 test/engine-parity/sync-swap-reads.test.ts	6	0
+test/engine-parity/sync20-trust-a.test.ts	2	0
 test/engine-parity/take-held-rows.test.ts	2	0
 test/engine-parity/take-proposals.test.ts	8	0
 test/engine-parity/take-purge-ledger.test.ts	4	0
@@ -437,10 +438,12 @@ test/engine-parity/title-fuzzy-like-bound.test.ts	1	0
 test/engine-parity/title-fuzzy-unicode.test.ts	1	0
 test/engine-parity/topology-named-stop.test.ts	2	0
 test/engine-parity/transaction-settings.test.ts	12	0
+test/engine-parity/transfer-git-durability.test.ts	4	0
 test/engine-parity/traversal-cache.test.ts	7	0
 test/engine-parity/trust-backfill.test.ts	0	1
 test/engine-parity/trust-fence.test.ts	7	0
 test/engine-parity/trust-floor-refusal.test.ts	1	0
+test/engine-parity/trust-keep-ports-sync20.test.ts	3	1
 test/engine-parity/trust-proposals.test.ts	5	0
 test/engine-parity/trust-reads.test.ts	13	0
 test/engine-parity/trust-tier-reads.test.ts	27	0

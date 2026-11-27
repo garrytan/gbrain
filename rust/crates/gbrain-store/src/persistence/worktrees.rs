@@ -134,6 +134,10 @@ pub struct HostBindingInsert {
     pub coordination_path: String,
     #[serde(default)]
     pub git_durability: Option<String>,
+    /// `upsertHostBinding` only: a cross-host accept (#10123) also takes `git_durability` when it
+    /// is set; otherwise an existing binding keeps its own.
+    #[serde(default)]
+    pub carry_durability: bool,
 }
 
 /// `insertSourceBinding(input)`.
@@ -802,20 +806,33 @@ pub(crate) fn reactivate_worktree_in(tx: &mut dyn KvWrite, id: &str) -> Result<(
     put_json(tx, &worktree_key(&id), &w)
 }
 
-/// `upsertHostBinding(row)`: the accepting host's paths for the worktree. An existing binding
-/// keeps its Git durability; a new one has none. Refuses an unknown worktree, as the foreign key
-/// does.
+/// `upsertHostBinding(row)`: the accepting host's paths for the worktree. A new binding takes
+/// `git_durability`; an existing one keeps its own, except that `carry_durability` (a cross-host
+/// accept, #10123) takes `git_durability` when it is set (`COALESCE(EXCLUDED, existing)`).
+/// Refuses an unknown worktree, as the foreign key does, and a value the CHECK refuses.
 pub(crate) fn upsert_host_binding_in(
     tx: &mut dyn KvWrite,
     input: &HostBindingInsert,
 ) -> Result<()> {
     let worktree_id = uuid_param(&input.worktree_id, "worktreeId")?;
     let host_id = uuid_param(&input.host_id, "hostId")?;
+    if let Some(g) = &input.git_durability
+        && !GIT_DURABILITY.contains(&g.as_str())
+    {
+        return Err(violation(format!(
+            "\"{g}\" is not a Git durability setting"
+        )));
+    }
     if read_worktree_record(&*tx, &worktree_id)?.is_none() {
         return Err(violation(format!("worktree {worktree_id} does not exist")));
     }
-    let git_durability =
-        read_host_record(&*tx, &worktree_id, &host_id)?.and_then(|h| h.git_durability);
+    let git_durability = match read_host_record(&*tx, &worktree_id, &host_id)? {
+        None => input.git_durability.clone(),
+        Some(existing) if input.carry_durability => {
+            input.git_durability.clone().or(existing.git_durability)
+        }
+        Some(existing) => existing.git_durability,
+    };
     let record = HostBindingRecord {
         local_path: input.local_path.clone(),
         coordination_path: input.coordination_path.clone(),
@@ -950,7 +967,7 @@ impl Store {
 
     /// `readWriterAdminState()`: the writer topology as jsonb text.
     pub fn writer_admin_state_text(&self) -> Result<String> {
-        writer_admin_state_text_in(&*self.read()?, self.brain_id())
+        writer_admin_state_text_in(&*self.read()?, &self.brain_id())
     }
 
     /// The id of the worktree a prepared transfer holds, or None.
@@ -968,7 +985,7 @@ impl Store {
         worktree_manifest_in(&*self.read()?, id)
     }
 
-    /// Records the accepting host's paths for a worktree, keeping its Git durability.
+    /// Records the accepting host's paths for a worktree (`upsert_host_binding_in`).
     pub fn upsert_host_binding(&self, input: &HostBindingInsert) -> Result<()> {
         self.write(|tx| upsert_host_binding_in(tx, input))
     }
@@ -987,7 +1004,7 @@ impl Store {
     ) -> Result<Vec<Value>> {
         content_receipt_rows_in(
             &*self.read()?,
-            self.brain_id(),
+            &self.brain_id(),
             worktree_ids,
             host_id,
             source_ids,

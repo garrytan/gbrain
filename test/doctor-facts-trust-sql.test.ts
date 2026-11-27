@@ -60,7 +60,8 @@ describe('doctor facts, fence and trust SQL text', () => {
   test('claim-lifted rows: the channel probe of the relower dry run', async () => {
     const { raw, calls } = recorder([{ n: '2' }]);
     expect(await countClaimLiftedRows(raw, 'takes')).toBe(2);
-    expect(calls).toEqual([{ sql: "SELECT count(*) AS n FROM takes WHERE write_origin->>'channel' = 'trust_claim'", params: undefined }]);
+    // #10178: a row the owner decided since the claim (owner_decision) is settled, so the relower does not count it.
+    expect(calls).toEqual([{ sql: "SELECT count(*) AS n FROM takes WHERE write_origin->>'channel' = 'trust_claim' AND write_origin->'owner_decision' IS NULL", params: undefined }]);
   });
 
   test('legacy unknown rows per source: the legacyUnknownBySource union, ceilings and scope bound', async () => {

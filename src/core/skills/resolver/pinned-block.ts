@@ -23,7 +23,10 @@ import { claudeUserSkillsDir } from '../../bootstrap/host-specs.ts';
 export const PIN_LINE_MAX = 100;
 export const PIN_BLOCK_TOKEN_CAP = 600;
 
-export interface Pin { name: string; line?: string }
+/** The OpenClaw session classes a pin shows in: the owner's own sessions (the default) and conversations (groups, channels, other people's DMs). */
+export type PinClass = 'owner' | 'conversation';
+export const PIN_CLASSES: readonly PinClass[] = ['owner', 'conversation'];
+export interface Pin { name: string; line?: string; classes?: PinClass[] }
 export interface PinnedBlock { block: string; tokens: number; ids: string[]; unknown: string[]; cut: string[] }
 
 /** Why a pin is not valid as written, or null. */
@@ -38,9 +41,10 @@ export function parsePins(raw: unknown): Pin[] {
   if (!Array.isArray(raw)) return [];
   return raw.flatMap((p): Pin[] => {
     if (!p || typeof p !== 'object') return [];
-    const { name, line } = p as { name?: unknown; line?: unknown };
+    const { name, line, classes } = p as { name?: unknown; line?: unknown; classes?: unknown };
     if (typeof name !== 'string') return [];
-    const pin: Pin = typeof line === 'string' ? { name, line } : { name };
+    const cls = Array.isArray(classes) ? PIN_CLASSES.filter((c) => classes.includes(c)) : [];
+    const pin: Pin = { name, ...(typeof line === 'string' ? { line } : {}), ...(cls.length && (cls.length !== 1 || cls[0] !== 'owner') ? { classes: cls } : {}) };
     return pinProblem(pin) ? [] : [pin];
   });
 }
@@ -53,13 +57,19 @@ export function catalogSkillIds(home: string, catalog: string): Set<string> | nu
 
 /** Each skill id a built catalog holds with its SKILL.md path ('' when the index has none), or null when it has no readable index. */
 export function catalogSkillPaths(home: string, catalog: string): Map<string, string> | null {
+  return catalogSkills(home, catalog)?.paths ?? null;
+}
+
+/** A built catalog's skill paths and the ids marked `audience: owner`, or null when it has no readable index. */
+export function catalogSkills(home: string, catalog: string): { paths: Map<string, string>; ownerOnly: Set<string> } | null {
   if (!validCatalogName(catalog)) return null;
   let ix: IndexReader | null = null;
   try {
     ix = IndexReader.open(catalogFile(home, catalog, 'index.bin'));
-    const ids = new Map<string, string>();
-    for (let d = 0; d < ix.n; d++) { const m = ix.meta(d); ids.set(m.id, m.path ?? ''); }
-    return ids;
+    const paths = new Map<string, string>();
+    const ownerOnly = new Set<string>();
+    for (let d = 0; d < ix.n; d++) { const m = ix.meta(d); paths.set(m.id, m.path ?? ''); if (m.aud) ownerOnly.add(m.id); }
+    return { paths, ownerOnly };
   } catch { return null; } finally { ix?.close(); }
 }
 

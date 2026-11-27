@@ -1099,6 +1099,7 @@
   "test/search-vector-scope-parity.test.ts": 15394,
   "test/search/coverage-capped-count.serial.test.ts": 41000,
   "test/search/page-rank-cut.test.ts": 13426,
+  "test/search/rebuild-progress-queue-first-10367.test.ts": 9000,
   "test/search/rebuild-progress-steady-state.test.ts": 6900,
   "test/search/rerank-gate-hybrid.test.ts": 7910,
   "test/search/rerank-gate-telemetry.test.ts": 6937,
