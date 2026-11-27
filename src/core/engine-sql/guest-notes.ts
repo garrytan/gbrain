@@ -7,6 +7,7 @@
  */
 import type { EngineRawRead } from './cli-reads-ops.ts';
 import { GUEST_SOURCES_HIDDEN_SQL } from '../guests/note.ts';
+import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
 import { privatePagesFilterForCaller } from '../search/private-visibility.ts';
 
 /**
@@ -91,9 +92,9 @@ export interface GuestDeleteCheckRow { hidden: boolean; guest: boolean; kept: bo
  * missing-table error.
  */
 export async function readGuestDeleteCheck(raw: EngineRawRead, sourceId: string, slug: string): Promise<GuestDeleteCheckRow | null> {
-  const [page] = await raw<GuestDeleteCheckRow>(
-    `SELECT ${GUEST_SOURCES_HIDDEN_SQL} AS hidden, EXISTS (SELECT 1 FROM guest_sources g WHERE g.source_id = p.source_id) AS guest, EXISTS (SELECT 1 FROM guest_promotions g WHERE g.guest_page_id = p.id) AS kept,
-       (SELECT m.writer_kind || ':' || m.writer_id FROM guest_marks m WHERE m.page_id = p.id) AS writer FROM pages p WHERE p.source_id = $1 AND p.slug = $2 LIMIT 1`, [sourceId, slug]);
+  const { text, params } = renderFragment(sqlFragment`SELECT ${trustedSql(GUEST_SOURCES_HIDDEN_SQL)} AS hidden, EXISTS (SELECT 1 FROM guest_sources g WHERE g.source_id = p.source_id) AS guest, EXISTS (SELECT 1 FROM guest_promotions g WHERE g.guest_page_id = p.id) AS kept,
+       (SELECT m.writer_kind || ':' || m.writer_id FROM guest_marks m WHERE m.page_id = p.id) AS writer FROM pages p WHERE p.source_id = ${sourceId} AND p.slug = ${slug} LIMIT 1`);
+  const [page] = await raw<GuestDeleteCheckRow>(text, params);
   return page ?? null;
 }
 
@@ -106,7 +107,7 @@ export interface GuestRefPageRow { id: number; source_id: string; slug: string; 
  */
 export async function readGuestRefPages(raw: EngineRawRead, ids: readonly number[], keys: ReadonlyArray<{ source_id: string; slug: string }>,
   excludePrivate: boolean): Promise<GuestRefPageRow[]> {
-  return raw<GuestRefPageRow>(`SELECT p.id, p.source_id, p.slug, p.type, p.frontmatter FROM pages p
-      WHERE (p.id = ANY($1::int[]) OR (p.source_id, p.slug) IN (SELECT u.s, u.g FROM unnest($2::text[], $3::text[]) AS u(s, g)))${excludePrivate ? ` AND ${privatePagesFilterForCaller('p')}` : ''}`,
-    [[...ids], keys.map(k => k.source_id), keys.map(k => k.slug)]);
+  const { text, params } = renderFragment(sqlFragment`SELECT p.id, p.source_id, p.slug, p.type, p.frontmatter FROM pages p
+      WHERE (p.id = ANY(${[...ids]}::int[]) OR (p.source_id, p.slug) IN (SELECT u.s, u.g FROM unnest(${keys.map(k => k.source_id)}::text[], ${keys.map(k => k.slug)}::text[]) AS u(s, g)))${trustedSql(excludePrivate ? ` AND ${privatePagesFilterForCaller('p')}` : '')}`);
+  return raw<GuestRefPageRow>(text, params);
 }

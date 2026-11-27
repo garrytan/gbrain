@@ -22,6 +22,10 @@ enum Counter {
 const ALLOCATORS: &[(&str, Counter)] = &[
     ("pages", Counter::Meta(crate::pages::NEXT_PAGE_ID)),
     (
+        "guest_promotions",
+        Counter::Meta(crate::guest_promotions::NEXT_GUEST_PROMOTION_ID),
+    ),
+    (
         "content_chunks",
         Counter::Meta(crate::chunks::NEXT_CHUNK_ID),
     ),
