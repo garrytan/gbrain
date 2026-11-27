@@ -4,7 +4,12 @@
  * own tables, and the local writer registration every CLI write checks (persistence/identity.ts registerLocalWriter).
  */
 import type { LocalWriterInsert, LocalWriterRow } from '../../engine-sql/persistence-state.ts';
+import type { AccessTokenWriteGrant, AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, OAuthClientWriteGrant, PublicationEffectsSpec, TerminalIntentCompaction, WriteCompletion, WriteRequestInsert } from '../../engine-sql/persistence-journal.ts';
+import type { ClaimRelease, ClaimRenewal, SourceMembership, TopologyChange } from '../../engine-sql/persistence-claims.ts';
+import type { WriteRequest } from '../../persistence/model.ts';
+import { PAGE_BODY_CONFIG_KEYS } from '../../page-body/limits.ts';
 import type { StoreBrain } from '../store.ts';
+import { requestRow, topologyRow, uuidText, withDates } from '../store-codec.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
 /** The stored brain mode: `enabled` and `mode_epoch` (text) of the persistence brain row. */
@@ -37,3 +42,103 @@ export const insertLocalWriterRow: StoreMember<[row: LocalWriterInsert], boolean
   storeCall({ member: 'insertLocalWriterRow' }, () => brain.insertLocalWriterRow({
     id: row.id, lane: row.lane, credentialHash: row.credentialHash, grantCeiling: row.grant,
   }));
+
+/** The lifecycle receipt of (local writer, request id), or null: a page write refuses a request id a lifecycle change used. */
+export const readTopologyChange: StoreMember<[principalId: string, requestId: string], TopologyChange | null> = async (brain, principalId, requestId) =>
+  topologyRow(await storeCall({ member: 'readTopologyChange' }, () => brain.readTopologyChange(principalId, requestId)));
+
+/** The config keys under which the journal's admission limits live. */
+const LIMITS_PREFIX = 'persistence.limits.';
+
+export const readJournalLimitRows: StoreMember<[], Array<{ key: string | null; value: string | null }>> = async (brain) => {
+  const all = await storeCall({ member: 'readJournalLimitRows' }, () => brain.getAllConfig()) as Record<string, string>;
+  const exact = new Set<string>([PAGE_BODY_CONFIG_KEYS.segmentedStorage, PAGE_BODY_CONFIG_KEYS.maxBytes]);
+  const rows: Array<{ key: string | null; value: string | null }> = Object.keys(all)
+    .filter(key => key.startsWith(LIMITS_PREFIX) || exact.has(key))
+    .sort()
+    .map(key => ({ key, value: all[key] }));
+  rows.push({ key: null, value: null });
+  return rows;
+};
+
+export const readWriteRequest: StoreMember<[principalKind: string, principalId: string, requestId: string], WriteRequest | null> =
+  async (brain, kind, id, requestId) => requestRow(await storeCall({ member: 'readWriteRequest' }, () => brain.readWriteRequest({ kind, id }, requestId)));
+
+export const readWriteRequestById: StoreMember<[id: string, opts?: { signal?: AbortSignal }], WriteRequest | null> =
+  async (brain, id) => requestRow(await storeCall({ member: 'readWriteRequestById' }, () => brain.readWriteRequestById(id)));
+
+export const readOAuthClientWriteGrant: StoreMember<[clientId: string, opts?: { lock?: boolean }], OAuthClientWriteGrant | null> = async (brain, clientId) => {
+  const row = await storeCall({ member: 'readOAuthClientWriteGrant' }, () => brain.readOauthClientWriteGrant(clientId)) as OAuthClientWriteGrant | null;
+  return row ? withDates(row, ['deleted_at']) : null;
+};
+export const readAccessTokenWriteGrant: StoreMember<[tokenId: string, opts?: { lock?: boolean }], AccessTokenWriteGrant | null> = async (brain, tokenId) => {
+  const id = uuidText(tokenId);
+  const row = await storeCall({ member: 'readAccessTokenWriteGrant' }, () => brain.readAccessTokenWriteGrant(id)) as AccessTokenWriteGrant | null;
+  return row ? withDates(row, ['revoked_at']) : null;
+};
+export const shareLockWriteCredential: StoreMember<[kind: 'oauth_client' | 'legacy_token', id: string], void> = async () => {};
+
+export const readCounterRows: StoreMember<[keys: readonly string[]], CounterRow[]> = (brain, keys) =>
+  storeCall({ member: 'readCounterRows' }, () => brain.readCounterRows([...keys]));
+
+export const readAdmissionRate: StoreMember<[principal: { kind: string; id: string } | null, opts?: { sample?: boolean }], AdmissionRate> = async (brain, principal, opts) => {
+  const rate = await storeCall({ member: 'readAdmissionRate' }, () => brain.readAdmissionRate(principal?.kind ?? null, principal?.id ?? null)) as AdmissionRate;
+  // `{ sample: false }` saves the sample statement on Postgres; the store answers both from its rows, so only the first id is kept.
+  return opts?.sample === false ? { first_request_id: rate.first_request_id, admissions: 0, age_seconds: null, gross: null, net: null } : rate;
+};
+
+export const lockWriteRequest: StoreMember<[id: string], WriteRequest | null> =
+  async (brain, id) => requestRow(await storeCall({ member: 'lockWriteRequest' }, () => brain.readWriteRequestById(id)));
+
+export const lockPersistenceCounters: StoreMember<[keys: readonly string[]], CounterRow[]> = (brain, keys) =>
+  storeCall({ member: 'lockPersistenceCounters' }, () => brain.lockPersistenceCounters([...keys]));
+
+export const insertWriteRequest: StoreMember<[row: WriteRequestInsert], WriteRequest> = async (brain, row) =>
+  requestRow<WriteRequest>(await storeCall({ member: 'insertWriteRequest' }, () => brain.insertWriteRequest(row)))!;
+
+export const readWriteRequestsByRequestIds: StoreMember<[principalKind: string, principalId: string, requestIds: readonly string[]], WriteRequest[]> =
+  async (brain, kind, id, requestIds) => {
+    const rows: WriteRequest[] = [];
+    const seen = new Set<string>();
+    for (const requestId of new Set(requestIds.map(requestId => requestId.toLowerCase()))) {
+      const row = requestRow<WriteRequest>(await storeCall({ member: 'readWriteRequestsByRequestIds' }, () => brain.readWriteRequest({ kind, id }, requestId)));
+      if (row && !seen.has(row.id)) { seen.add(row.id); rows.push(row); }
+    }
+    return rows;
+  };
+
+export const stampWriteClaim: StoreMember<[id: string, token: string, leaseMs: number, phaseJson: string], ClaimedWriteRow | null> =
+  async (brain, id, token, leaseMs, phaseJson) =>
+    requestRow<ClaimedWriteRow>(await storeCall({ member: 'stampWriteClaim' }, () => brain.stampWriteClaim({ id, token, leaseMs, phaseJson })));
+
+export const completeWriteRow: StoreMember<[completion: WriteCompletion], CompletedWriteRow | null> = async (brain, completion) =>
+  requestRow<CompletedWriteRow>(await storeCall({ member: 'completeWriteRow' }, () => brain.completeWriteRow(completion)));
+
+export const lockWriteRequestsById: StoreMember<[ids: readonly string[]], WriteRequest[]> = async (brain, ids) => {
+  const ordered = [...new Set(ids.map(id => id.toLowerCase()))].sort();
+  const rows: WriteRequest[] = [];
+  for (const id of ordered) {
+    const row = requestRow<WriteRequest>(await storeCall({ member: 'lockWriteRequestsById' }, () => brain.readWriteRequestById(id)));
+    if (row) rows.push(row);
+  }
+  return rows;
+};
+
+export const compactTerminalIntent: StoreMember<[compaction: TerminalIntentCompaction], WriteRequest | null> = async (brain, compaction) =>
+  requestRow<WriteRequest>(await storeCall({ member: 'compactTerminalIntent' }, () => brain.compactTerminalIntent({ ...compaction, counterKeys: [...compaction.counterKeys] })));
+
+export const insertPublicationEffects: StoreMember<[spec: PublicationEffectsSpec], string[]> = async (brain, spec) =>
+  await storeCall({ member: 'insertPublicationEffects' }, () => brain.insertPublicationEffects(spec)) as string[];
+
+export const renewWriteClaim: StoreMember<[renewal: ClaimRenewal, opts?: { signal?: AbortSignal }], boolean> = (brain, renewal) =>
+  storeCall({ member: 'renewWriteClaim' }, () => brain.renewWriteClaim(renewal));
+
+export const releaseUnpublishedClaim: StoreMember<[release: ClaimRelease, opts?: { direct?: boolean }], void> = async (brain, release) => {
+  await storeCall({ member: 'releaseUnpublishedClaim' }, () => brain.releaseUnpublishedClaim(release));
+};
+
+export const readSourceMembership: StoreMember<[sourceId: string, opts?: { lock?: boolean | 'update' }], SourceMembership | null> = (brain, sourceId) =>
+  storeCall({ member: 'readSourceMembership' }, () => brain.readSourceMembership(sourceId));
+
+export const findTopologyChanges: StoreMember<[principalId: string, requestIds: string[]], Array<{ request_id: string }>> = (brain, principalId, requestIds) =>
+  storeCall({ member: 'findTopologyChanges' }, () => brain.findTopologyChanges(principalId, [...requestIds]));

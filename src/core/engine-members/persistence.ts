@@ -4,7 +4,7 @@
  */
 import type { AccessTokenWriteGrant, AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, OAuthClientWriteGrant, PublicationEffectsSpec, WriteCompletion, WriteRequestInsert } from '../engine-sql/persistence-journal.ts';
 import type { CapacityForecastInputs, ProjectionJobRef } from '../engine-sql/persistence-housekeeping.ts';
-import type { ClaimRelease, ClaimRenewal, SourceMembership } from '../engine-sql/persistence-claims.ts';
+import type { ClaimRelease, ClaimRenewal, SourceMembership, TopologyChange } from '../engine-sql/persistence-claims.ts';
 import type { EffectClaimRef, EffectWorktreeOwner } from '../engine-sql/persistence-effect-worker.ts';
 import type { RequestEffectState } from '../engine-sql/persistence-effect-scans.ts';
 import type { ManagedRootBindingRow, PersistenceTable } from '../engine-sql/connect-gate.ts';
@@ -61,6 +61,8 @@ export interface PersistenceMembers {
   readSourceMembership(sourceId: string, opts?: { lock?: boolean | 'update' }): Promise<SourceMembership | null>;
   /** `[{ request_id }]` for the first of `requestIds` a topology change of local writer `principalId` used, or []. */
   findTopologyChanges(principalId: string, requestIds: string[]): Promise<Array<{ request_id: string }>>;
+  /** The lifecycle receipt row of local writer `principalId` and `requestId`, or null. */
+  readTopologyChange(principalId: string, requestId: string): Promise<TopologyChange | null>;
   /** Extends a claim's lease (and records its phase); true while the request is running under the token. Postgres sends it on the direct pool. */
   renewWriteClaim(renewal: ClaimRenewal, opts?: { signal?: AbortSignal }): Promise<boolean>;
   /** Returns a claim that never began to publish to queued under its token; `direct` sends it on the Postgres direct pool. */

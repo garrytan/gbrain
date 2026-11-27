@@ -244,18 +244,13 @@ export const LOCK_COUNTERS_SQL = 'SELECT * FROM persistence_counters WHERE key=A
 export async function lockCounters(tx: Pick<BrainEngine, 'lockPersistenceCounters'>, keys: string[]): Promise<Counter[]> {
   return tx.lockPersistenceCounters(keys);
 }
-export async function getWriteRequest(engine: SqlEngine, principal: Principal, requestId: string): Promise<WriteRequest | null> {
-  const [row] = await engine.executeRaw<WriteRequest>(
-    'SELECT * FROM persistence_requests WHERE principal_kind=$1 AND principal_id=$2 AND request_id=$3::uuid',
-    [principal.kind, principal.id, requireUuid(requestId)]);
-  return row ?? null;
+export async function getWriteRequest(engine: Pick<BrainEngine, 'readWriteRequest'>, principal: Principal, requestId: string): Promise<WriteRequest | null> {
+  return engine.readWriteRequest(principal.kind, principal.id, requireUuid(requestId));
 }
 /** Resolve other operation domains before repeating target/provider preparation. */
-export async function assertPageRequestIdentity(engine: SqlEngine, principal: Principal, requestId: string): Promise<void> {
+export async function assertPageRequestIdentity(engine: Pick<BrainEngine, 'readTopologyChange'>, principal: Principal, requestId: string): Promise<void> {
   if (principal.kind !== 'local_cli') return;
-  const [topology] = await engine.executeRaw('SELECT id FROM persistence_topology_changes WHERE principal_id=$1::uuid AND request_id=$2::uuid',
-    [principal.id, requireUuid(requestId)]);
-  if (topology) throw lifecycleIdConflict(requestId);
+  if (await engine.readTopologyChange(principal.id, requireUuid(requestId))) throw lifecycleIdConflict(requestId);
 }
 export async function getWriteRequestById(engine: Pick<BrainEngine, 'readWriteRequestById'>, id: string, signal?: AbortSignal): Promise<WriteRequest | null> {
   return engine.readWriteRequestById(id, { signal });

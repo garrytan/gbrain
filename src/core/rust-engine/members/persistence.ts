@@ -37,6 +37,7 @@ export const PERSISTENCE_MEMBERS = {
   purgeMemoryProposals: 'persistence_journal',
   readSourceMembership: 'persistence_journal',
   findTopologyChanges: 'persistence_journal',
+  readTopologyChange: 'persistence_journal',
   renewWriteClaim: 'persistence_journal',
   releaseUnpublishedClaim: 'persistence_journal',
   readNotifierStatusRows: 'persistence_journal',

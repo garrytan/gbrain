@@ -8,6 +8,18 @@ import { guardSegmentedBody } from '../page-body/page-shape.ts';
 
 type Row = Record<string, unknown>;
 
+/**
+ * The lowercase hyphenated text of a uuid, read as Postgres reads `$1::uuid`: optional braces, a hyphen optional after
+ * any group of four hex digits, any case. Anything else throws Postgres's own message, so a Rust member keyed by a
+ * token id refuses the ids a SQL engine refuses and finds the ones it finds.
+ */
+export function uuidText(value: string): string {
+  const bare = value.startsWith('{') && value.endsWith('}') ? value.slice(1, -1) : value;
+  if (!/^[0-9a-f]{4}(?:-?[0-9a-f]{4}){7}$/i.test(bare)) throw new Error(`invalid input syntax for type uuid: "${value}"`);
+  const hex = bare.replace(/-/g, '').toLowerCase();
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 /** An ISO string (or null/undefined) to a `Date`; null and undefined stay as they are. */
 function reviveDate(value: unknown): unknown {
   return typeof value === 'string' ? new Date(value) : value;
@@ -18,6 +30,19 @@ export function withDates<T extends object>(row: T, fields: readonly string[]): 
   const out: Row = { ...(row as Row) };
   for (const field of fields) if (field in out) out[field] = reviveDate(out[field]);
   return out as T;
+}
+
+/** The write-journal request columns PGLite returns as a Date (timestamptz). */
+const REQUEST_DATES = ['claim_expires_at', 'created_at', 'updated_at', 'completed_at', 'published_at', 'next_attempt_at'];
+
+/** A stored write-journal request row as PGLite returns it: the timestamps as Dates, every other column as stored. */
+export function requestRow<R extends object>(row: unknown): R | null {
+  return row === null || row === undefined ? null : withDates(row as R, REQUEST_DATES);
+}
+
+/** A stored topology change row as PGLite returns it: created_at and updated_at as Dates. */
+export function topologyRow<R extends object>(row: unknown): R | null {
+  return row === null || row === undefined ? null : withDates(row as R, ['created_at', 'updated_at']);
 }
 
 /** A `PageInput` or any write body with its `Date` values as ISO strings, which is what the store reads. */
