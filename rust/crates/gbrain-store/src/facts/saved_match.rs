@@ -28,8 +28,8 @@
 //! the caller sends (saved-facts-match.ts); the member refuses any other.
 
 use super::{
-    AUDIT_ROW_SOURCES, FactRecord, PrivacyPolicy, hidden_by_deleted_page, hidden_by_policy,
-    hidden_by_quarantine, like, pg_lower_char, ranked_time, source_rows,
+    AUDIT_ROW_SOURCES, FactRecord, OwnerOnlyCache, PrivacyPolicy, hidden_by_deleted_page,
+    hidden_by_policy, hidden_by_quarantine, like, pg_lower_char, ranked_time, source_rows,
 };
 use crate::Store;
 use crate::cli_reads::pg_text::timestamptz_text;
@@ -195,12 +195,13 @@ impl Store {
         let read = self.read()?;
         let sources: BTreeSet<&str> = q.sources.iter().map(String::as_str).collect();
         let mut found: Vec<Candidate> = Vec::new();
+        let mut owner_only = OwnerOnlyCache::default();
         for source in &sources {
             for row in source_rows(&*read, source)? {
                 if !row.active(now)
                     || AUDIT_ROW_SOURCES.contains(&row.source.as_str())
                     || (q.world_only && row.visibility != "world")
-                    || hidden_by_policy(&*read, &row, &q.exclude_private)?
+                    || hidden_by_policy(&*read, &row, &q.exclude_private, &mut owner_only)?
                     || hidden_by_deleted_page(&*read, &row)?
                     || hidden_by_quarantine(&*read, &row)?
                     || super::hidden_by_rederive(&*read, &row)?
@@ -271,6 +272,7 @@ impl Store {
         let now = self.env.now_micros();
         let read = self.read()?;
         let mut found = Vec::new();
+        let mut owner_only = OwnerOnlyCache::default();
         for row in source_rows(&*read, &q.source_id)? {
             if !row
                 .entity_slug
@@ -279,7 +281,7 @@ impl Store {
                 || !row.active(now)
                 || AUDIT_ROW_SOURCES.contains(&row.source.as_str())
                 || (q.world_only && row.visibility != "world")
-                || hidden_by_policy(&*read, &row, &q.exclude_private)?
+                || hidden_by_policy(&*read, &row, &q.exclude_private, &mut owner_only)?
                 || hidden_by_deleted_page(&*read, &row)?
                 || hidden_by_quarantine(&*read, &row)?
                 || !trust.admits(&*read, "facts", row.id, row.tier())?

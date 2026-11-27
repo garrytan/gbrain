@@ -14,8 +14,8 @@
 use super::privacy::page_hidden;
 use super::repair::{PAGE_EXTRACTION_SOURCES, context_head};
 use super::{
-    FactRecord, PrivacyPolicy, hidden_by_deleted_page, hidden_by_policy, hidden_by_quarantine,
-    source_rows, write_fact,
+    FactRecord, OwnerOnlyCache, PrivacyPolicy, hidden_by_deleted_page, hidden_by_policy,
+    hidden_by_quarantine, source_rows, write_fact,
 };
 use crate::Store;
 use crate::env::{civil_from_days, days_from_civil};
@@ -352,10 +352,11 @@ impl Store {
         let trust = TrustPolicy::parse(q.min_trust.as_deref(), q.suppress_flagged)?;
         let now = self.env.now_micros();
         let read = self.read()?;
-        let readable = |row: &FactRecord| -> Result<bool> {
+        let mut owner_only = OwnerOnlyCache::default();
+        let mut readable = |row: &FactRecord| -> Result<bool> {
             Ok(row.active(now)
                 && (!q.remote || row.visibility == "world")
-                && !hidden_by_policy(&*read, row, &q.exclude_private)?
+                && !hidden_by_policy(&*read, row, &q.exclude_private, &mut owner_only)?
                 && !hidden_by_deleted_page(&*read, row)?
                 && !hidden_by_quarantine(&*read, row)?
                 && !super::hidden_by_rederive(&*read, row)?

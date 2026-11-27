@@ -16,8 +16,9 @@ use crate::Store;
 use crate::env::{iso, parse_iso};
 use crate::error::{INVALID_ARGUMENT, Result, StoreError};
 use crate::facts::{
-    COUNTER, FactRecord, PrivacyPolicy, check_row, entity_rows, hidden_by_deleted_page,
-    hidden_by_policy, real, require_fact_source, source_rows, stint_holder, write_fact,
+    COUNTER, FactRecord, OwnerOnlyCache, PrivacyPolicy, check_row, entity_rows,
+    hidden_by_deleted_page, hidden_by_policy, real, require_fact_source, source_rows, stint_holder,
+    write_fact,
 };
 use crate::kv::{KvRead, KvWrite};
 use crate::links::no_nul;
@@ -131,7 +132,12 @@ impl OntologyQuery {
     /// provenance or entity page, the private-provenance policy under `exclude_private`, a
     /// `life/diary/` provenance under `exclude_diary`, the visibility list and the confidence
     /// floor.
-    fn admits(&self, read: &dyn KvRead, r: &FactRecord) -> Result<bool> {
+    fn admits(
+        &self,
+        read: &dyn KvRead,
+        r: &FactRecord,
+        owner_only: &mut OwnerOnlyCache,
+    ) -> Result<bool> {
         // SQL binds the floor as the column's REAL type, so compare at f32: a stored 0.7 is
         // 0.699999988 and still meets a floor of 0.7.
         #[allow(clippy::cast_possible_truncation)]
@@ -154,7 +160,8 @@ impl OntologyQuery {
         {
             return Ok(false);
         }
-        Ok(!hidden_by_deleted_page(read, r)? && !hidden_by_policy(read, r, &self.exclude_private)?)
+        Ok(!hidden_by_deleted_page(read, r)?
+            && !hidden_by_policy(read, r, &self.exclude_private, owner_only)?)
     }
 }
 
@@ -396,6 +403,7 @@ impl Store {
         let asof = time_arg(OP, "asof", &q.asof)?.unwrap_or_else(|| self.env.now_micros());
         let read = self.read()?;
         let mut best: BTreeMap<String, FactRecord> = BTreeMap::new();
+        let mut owner_only = OwnerOnlyCache::default();
         for r in q.rows(&*read, true)? {
             let Some(dimension) = r.dimension.clone() else {
                 continue;
@@ -404,7 +412,7 @@ impl Store {
                 || r.valid_from_us > asof
                 || r.valid_until_us.is_some_and(|until| until <= asof)
                 || !(q.include_quarantined || status_active(&r))
-                || !q.admits(&*read, &r)?
+                || !q.admits(&*read, &r, &mut owner_only)?
             {
                 continue;
             }
@@ -469,11 +477,12 @@ impl Store {
         q.check("findOntologyConflicts")?;
         let read = self.read()?;
         let mut groups: BTreeMap<(bool, String, String), Vec<FactRecord>> = BTreeMap::new();
+        let mut owner_only = OwnerOnlyCache::default();
         for r in q.rows(&*read, false)? {
             if !slot_row(&r)
                 || r.valid_until_us.is_some()
                 || !status_active(&r)
-                || !q.admits(&*read, &r)?
+                || !q.admits(&*read, &r, &mut owner_only)?
             {
                 continue;
             }

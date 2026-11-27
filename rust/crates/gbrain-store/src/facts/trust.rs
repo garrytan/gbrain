@@ -28,7 +28,7 @@
 use super::embedding::{cosine_distance, md5_hex, parse_vector, to_halfvec};
 use super::widen::world_admits;
 use super::{
-    AUDIT_ROW_SOURCES, FactRecord, count_arg, entity_rows, hidden_by_deleted_page,
+    AUDIT_ROW_SOURCES, FactRecord, OwnerOnlyCache, count_arg, entity_rows, hidden_by_deleted_page,
     hidden_by_policy, invalid, like, opt_time, source_rows,
 };
 use super::{PrivacyPolicy, QUARANTINE_KEY, VisibilityWidening};
@@ -151,7 +151,12 @@ impl<'a> Pool<'a> {
     }
 
     /// The `WHERE` clauses of `poolWhere`, in the order the SQL states them.
-    pub(super) fn admits(&self, read: &dyn KvRead, row: &FactRecord) -> Result<bool> {
+    pub(super) fn admits(
+        &self,
+        read: &dyn KvRead,
+        row: &FactRecord,
+        owner_only: &mut OwnerOnlyCache,
+    ) -> Result<bool> {
         let a = self.args;
         if !self.sources.contains(row.source_id.as_str()) {
             return Ok(false);
@@ -172,7 +177,7 @@ impl<'a> Pool<'a> {
         if a.world_only && !world_admits(read, &a.widen, row)? {
             return Ok(false);
         }
-        if hidden_by_policy(read, row, &a.exclude_private)?
+        if hidden_by_policy(read, row, &a.exclude_private, owner_only)?
             || hidden_by_deleted_page(read, row)?
             || super::hidden_by_rederive(read, row)?
         {
@@ -325,8 +330,9 @@ impl Store {
             entity_rows(&*read, &entity.source_id, &entity.slug)?
         };
         let mut ranked: Vec<(f32, FactRecord)> = Vec::new();
+        let mut owner_only = OwnerOnlyCache::default();
         for row in candidates {
-            if !pool.admits(&*read, &row)? {
+            if !pool.admits(&*read, &row, &mut owner_only)? {
                 continue;
             }
             let rank = match &query {
@@ -379,6 +385,7 @@ impl Store {
         let read = self.read()?;
         let pool = Pool::new(OP, &q.pool, self.env.now_micros())?;
         let mut counts: BTreeMap<&str, u64> = BTreeMap::new();
+        let mut owner_only = OwnerOnlyCache::default();
         for source in &pool.sources {
             for row in source_rows(&*read, source)? {
                 let candidate = (q.pool.include_expired || row.expired_at_us.is_none())
@@ -387,7 +394,7 @@ impl Store {
                     } else {
                         uncomparable_undeclared(&row, &q.model, q.dims)
                     };
-                if candidate && pool.admits(&*read, &row)? {
+                if candidate && pool.admits(&*read, &row, &mut owner_only)? {
                     *counts.entry(*source).or_default() += 1;
                 }
             }

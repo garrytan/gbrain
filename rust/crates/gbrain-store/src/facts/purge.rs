@@ -19,8 +19,9 @@
 use super::embedding::{cosine_distance, float4_out};
 use super::privacy::PrivacyPolicy;
 use super::{
-    AUDIT_ROW_SOURCES, FactRecord, ROW, bigint, count_arg, fact_by_number, fact_fingerprint,
-    hidden_by_policy, invalid, opt_time, page_rows, real, rows_under, source_rows, write_fact,
+    AUDIT_ROW_SOURCES, FactRecord, OwnerOnlyCache, ROW, bigint, count_arg, fact_by_number,
+    fact_fingerprint, hidden_by_policy, invalid, opt_time, page_rows, real, rows_under,
+    source_rows, write_fact,
 };
 use crate::Store;
 use crate::env::iso;
@@ -410,6 +411,7 @@ impl Store {
             return Ok(json!({ "anchor": described, "rows": [] }));
         };
         let mut ranked: Vec<(f64, u64)> = Vec::new();
+        let mut owner_only = OwnerOnlyCache::default();
         for row in source_rows(&*read, &q.source_id)? {
             let Some(vector) = row.embedding.as_deref() else {
                 continue;
@@ -430,7 +432,7 @@ impl Store {
                     target.len()
                 )));
             }
-            if hidden_by_policy(&*read, &row, &q.exclude_private)? {
+            if hidden_by_policy(&*read, &row, &q.exclude_private, &mut owner_only)? {
                 continue;
             }
             let distance = cosine_distance(vector, target);
@@ -476,6 +478,7 @@ impl Store {
         let hash = fact_fingerprint(&q.fact);
         let page = q.page_slug.as_deref();
         let mut found: Option<FactRecord> = None;
+        let mut owner_only = OwnerOnlyCache::default();
         for row in source_rows(&*read, &q.source_id)? {
             let fits_page = match page {
                 Some("") => false,
@@ -497,7 +500,7 @@ impl Store {
                         row.id < best.id
                     }
                 })
-                && !hidden_by_policy(&*read, &row, &q.remote_floor)?
+                && !hidden_by_policy(&*read, &row, &q.remote_floor, &mut owner_only)?
             {
                 found = Some(row);
             }

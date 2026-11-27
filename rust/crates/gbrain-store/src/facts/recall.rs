@@ -20,7 +20,7 @@
 use super::embedding::{cosine_distance, parse_vector, to_halfvec};
 use super::saved_match::word_char;
 use super::trust::{Pool, PoolArgs, VectorArg, pool_row, similarity};
-use super::{FactRecord, count_arg, invalid, source_rows};
+use super::{FactRecord, OwnerOnlyCache, count_arg, invalid, source_rows};
 use crate::Store;
 use crate::chunks::embedding_dimensions;
 use crate::error::Result;
@@ -154,9 +154,10 @@ fn admitted(store: &Store, op: &str, args: &PoolArgs) -> Result<Vec<FactRecord>>
     let read = store.read()?;
     let pool = Pool::new(op, args, store.env.now_micros())?;
     let mut out = Vec::new();
+    let mut owner_only = OwnerOnlyCache::default();
     for source in &pool.sources {
         for row in source_rows(&*read, source)? {
-            if pool.admits(&*read, &row)? {
+            if pool.admits(&*read, &row, &mut owner_only)? {
                 out.push(row);
             }
         }

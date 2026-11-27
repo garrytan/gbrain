@@ -40,9 +40,10 @@
 //! to the provenance page, the entity and holding pages, and the fact row itself (`ownerOnlyFactSql`: a fact of an
 //! owner-only source, marked, or derived from an owner-only row through `derivation_inputs`, `owner_only.rs`).
 //!
-//! The owner-only sources are read once per read, on the first page it judges ([`OwnerOnlyCache`]): the page reads
-//! (`searchVector`, the link, alias, salience and page-read members) each keep one, so a read of many pages does not
-//! scan the sources for each.
+//! The owner-only sources are read once per read, on the first page or fact it judges ([`OwnerOnlyCache`]): the page
+//! reads (`searchVector`, the link, alias, salience and page-read members) and the fact reads (`hidden_by_policy`,
+//! [`hidden_by_private_provenance_with`]) each keep one, so a read of many pages or facts does not scan the sources
+//! for each.
 
 use super::FactRecord;
 use crate::access_flag::RESTRICTIONS_PRESENT_KEY;
@@ -208,6 +209,15 @@ impl FolderAccess<'_> {
 pub(crate) struct OwnerOnlyCache(Option<OwnerOnlySources>);
 
 impl OwnerOnlyCache {
+    /// The owner-only sources of this read, read from `read` on the first call only.
+    pub(crate) fn sources(&mut self, read: &dyn KvRead) -> Result<&OwnerOnlySources> {
+        let sources = match self.0.take() {
+            Some(sources) => sources,
+            None => OwnerOnlySources::read(read)?,
+        };
+        Ok(self.0.insert(sources))
+    }
+
     /// [`page_hidden_with`] with the sources of this read.
     pub(crate) fn page_hidden(
         &mut self,
@@ -215,10 +225,7 @@ impl OwnerOnlyCache {
         page: &PageRecord,
         policy: &PrivacyPolicy,
     ) -> Result<bool> {
-        let sources = match &mut self.0 {
-            Some(sources) => sources,
-            None => self.0.insert(OwnerOnlySources::read(read)?),
-        };
+        let sources = self.sources(read)?;
         page_hidden_with(read, page, policy, sources)
     }
 }
@@ -241,13 +248,26 @@ pub(crate) const EDGE_SPACE: &[char] = &[
 
 /// Whether the policy hides `row`: the fact is owner-only, its provenance page
 /// (`source_markdown_slug`) fails the page policy, or its entity page or holding page fails the
-/// entity gate. A soft-deleted page still counts, as its row stays in `pages`.
+/// entity gate. A soft-deleted page still counts, as its row stays in `pages`. It reads the
+/// owner-only sources for this one row; a read over many rows uses
+/// [`hidden_by_private_provenance_with`].
 pub(crate) fn hidden_by_private_provenance(
     read: &dyn KvRead,
     row: &FactRecord,
     policy: &PrivacyPolicy,
 ) -> Result<bool> {
-    let owner_only = &OwnerOnlySources::read(read)?;
+    hidden_by_private_provenance_with(read, row, policy, &mut OwnerOnlyCache::default())
+}
+
+/// [`hidden_by_private_provenance`] with the owner-only sources of the whole read (`owner_only`),
+/// so a read over many rows reads them once.
+pub(crate) fn hidden_by_private_provenance_with(
+    read: &dyn KvRead,
+    row: &FactRecord,
+    policy: &PrivacyPolicy,
+    owner_only: &mut OwnerOnlyCache,
+) -> Result<bool> {
+    let owner_only = owner_only.sources(read)?;
     // `ownerOnlyFactSql(facts, form)` for a caller that is not the owner: a fact of an owner-only
     // source, marked, or derived from an owner-only row (`Fn`), or any fact while the brain holds an
     // owner-only source (`Closed`).

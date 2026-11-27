@@ -19,9 +19,9 @@ use super::generations::covers_fact;
 use super::purge::withdrawal_covers;
 use super::withdrawal_guard::preserve_withdrawal;
 use super::{
-    FactRecord, PrivacyPolicy, bigint, embedding, fact_fingerprint, foreign_key,
-    hidden_by_private_provenance, like, opt_time, page_hidden, read_fact, source_rows,
-    timestamptz_text, write_fact,
+    FactRecord, OwnerOnlyCache, PrivacyPolicy, bigint, embedding, fact_fingerprint, foreign_key,
+    hidden_by_private_provenance, hidden_by_private_provenance_with, like, opt_time, page_hidden,
+    read_fact, source_rows, timestamptz_text, write_fact,
 };
 use crate::Store;
 use crate::env::iso;
@@ -656,10 +656,11 @@ impl Store {
                 })
                 .collect(),
         };
-        let seen = |f: &FactRecord, policy: &PrivacyPolicy| -> Result<bool> {
+        let mut owner_only = OwnerOnlyCache::default();
+        let mut seen = |f: &FactRecord, policy: &PrivacyPolicy| -> Result<bool> {
             Ok(
                 (args.own_page.is_some() && f.source_markdown_slug == args.own_page)
-                    || !hidden_by_private_provenance(&*read, f, policy)?,
+                    || !hidden_by_private_provenance_with(&*read, f, policy, &mut owner_only)?,
             )
         };
         if let Some(policy) = &args.exclude_private {

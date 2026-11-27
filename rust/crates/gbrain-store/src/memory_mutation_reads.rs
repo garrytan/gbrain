@@ -17,8 +17,9 @@ use crate::env::iso;
 use crate::error::Result;
 use crate::facts::purge::{outcome_marker, unbacked};
 use crate::facts::{
-    FactRecord, access_id, access_readers, fact_fingerprint, hidden_by_deleted_page,
-    hidden_by_policy, hidden_by_provenance_page, hidden_by_quarantine, read_fact, source_rows,
+    FactRecord, OwnerOnlyCache, access_id, access_readers, fact_fingerprint,
+    hidden_by_deleted_page, hidden_by_policy, hidden_by_provenance_page, hidden_by_quarantine,
+    read_fact, source_rows,
 };
 use crate::facts::{PrivacyPolicy, owner_reads_page};
 use crate::kv::KvRead;
@@ -263,7 +264,12 @@ impl Store {
             && !hidden_by_quarantine(&*read, &row)?
             && !crate::facts::hidden_by_rederive(&*read, &row)?
             && trust.admits(&*read, "facts", row.id, row.tier())?
-            && !hidden_by_policy(&*read, &row, &q.exclude_private)?)
+            && !hidden_by_policy(
+                &*read,
+                &row,
+                &q.exclude_private,
+                &mut OwnerOnlyCache::default(),
+            )?)
     }
 
     /// `readRemoteForgetTier`: the stored tier of fact `fact_id` when it belongs to `source_id` and

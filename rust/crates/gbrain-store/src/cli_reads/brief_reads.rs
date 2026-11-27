@@ -17,8 +17,8 @@ use crate::cli_reads::entities::arrow_text;
 use crate::env::{iso, parse_iso};
 use crate::error::{Result, StoreError};
 use crate::facts::{
-    PrivacyPolicy, hidden_by_deleted_page, hidden_by_policy, hidden_by_quarantine, page_hidden,
-    read_fact,
+    OwnerOnlyCache, PrivacyPolicy, hidden_by_deleted_page, hidden_by_policy, hidden_by_quarantine,
+    page_hidden, read_fact,
 };
 use crate::keys;
 use crate::kv::{KvRead, scan_prefix};
@@ -215,13 +215,14 @@ impl Store {
         let trust = trust_of(eligibility)?;
         let read = self.read()?;
         let mut out = Vec::new();
+        let mut owner_only = OwnerOnlyCache::default();
         for id in fact_ids.iter().copied().collect::<BTreeSet<_>>() {
             let Some(row) = read_fact(&*read, id)? else {
                 continue;
             };
             if row.expired_at_us.is_some()
                 || row.visibility != "world"
-                || hidden_by_policy(&*read, &row, &policy)?
+                || hidden_by_policy(&*read, &row, &policy, &mut owner_only)?
                 || hidden_by_deleted_page(&*read, &row)?
                 || hidden_by_quarantine(&*read, &row)?
                 || !trust.admits(&*read, "facts", row.id, row.tier())?

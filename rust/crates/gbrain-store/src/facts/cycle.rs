@@ -15,8 +15,9 @@
 
 use super::repair::folder_restricted;
 use super::{
-    FactRecord, PrivacyPolicy, ROW, any_entity_slug, bigint, count_arg, fact_by_number,
-    hidden_by_deleted_page, hidden_by_policy, hidden_by_quarantine, page_rows, real,
+    FactRecord, OwnerOnlyCache, PrivacyPolicy, ROW, any_entity_slug, bigint, count_arg,
+    fact_by_number, hidden_by_deleted_page, hidden_by_policy, hidden_by_quarantine, page_rows,
+    real,
 };
 use crate::Store;
 use crate::alias_fanout_reads::alias_row_exists;
@@ -637,11 +638,12 @@ impl Store {
         let trust = TrustPolicy::parse(q.min_trust.as_deref(), q.suppress_flagged)?;
         let read = self.read()?;
         let mut count = 0;
+        let mut owner_only = OwnerOnlyCache::default();
         for slug in slugs {
             for row in super::entity_rows(&*read, &q.source_id, slug)? {
                 if row.expired_at_us.is_none()
                     && (!q.world_only || row.visibility == "world")
-                    && !hidden_by_policy(&*read, &row, &q.exclude_private)?
+                    && !hidden_by_policy(&*read, &row, &q.exclude_private, &mut owner_only)?
                     && !hidden_by_deleted_page(&*read, &row)?
                     && !hidden_by_quarantine(&*read, &row)?
                     && !super::hidden_by_rederive(&*read, &row)?

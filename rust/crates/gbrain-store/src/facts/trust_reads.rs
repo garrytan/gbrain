@@ -12,7 +12,8 @@
 
 use super::privacy::PrivacyPolicy;
 use super::{
-    FactRecord, ROW, count_arg, entity_rows, hidden_by_policy, read_fact, rows_under, source_rows,
+    FactRecord, OwnerOnlyCache, ROW, count_arg, entity_rows, hidden_by_policy, read_fact,
+    rows_under, source_rows,
 };
 use crate::Store;
 use crate::error::Result;
@@ -82,11 +83,14 @@ impl Store {
             .filter_map(|&id| u64::try_from(id).ok())
             .collect();
         let mut out = Vec::with_capacity(wanted.len());
+        let mut owner_only = OwnerOnlyCache::default();
         for id in wanted {
             let Some(row) = read_fact(&*read, id)? else {
                 continue;
             };
-            if row.source_id != q.source_id || hidden_by_policy(&*read, &row, &q.remote_floor)? {
+            if row.source_id != q.source_id
+                || hidden_by_policy(&*read, &row, &q.remote_floor, &mut owner_only)?
+            {
                 continue;
             }
             out.push(json!({

@@ -7,7 +7,7 @@
 
 use crate::env::iso;
 use crate::error::StoreError;
-use crate::facts::{PrivacyPolicy, hidden_by_policy, read_fact};
+use crate::facts::{OwnerOnlyCache, PrivacyPolicy, hidden_by_policy, read_fact};
 use crate::journal::{RequestRecord, read_writer_record};
 use crate::kv::{KvRead, scan_prefix};
 use crate::owner_only::{OwnerOnlyForm, OwnerOnlySources};
@@ -271,7 +271,12 @@ impl Store {
                 if f.source_id != *source_id
                     || !slug_match
                     || (*world_only && f.visibility != "world")
-                    || hidden_by_policy(&*read, &f, exclude_private)?
+                    || hidden_by_policy(
+                        &*read,
+                        &f,
+                        exclude_private,
+                        &mut OwnerOnlyCache::default(),
+                    )?
                 {
                     return Ok(None);
                 }

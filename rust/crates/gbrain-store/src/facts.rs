@@ -130,7 +130,6 @@ pub use fence_overlay::{FenceOverlayIncomingRow, FenceOverlayInput, FenceRowKey}
 pub use held_cells::{HeldFenceCellKey, HeldFenceCellsInput, HeldFenceMember};
 pub use page_purges::PagePurgeUpsert;
 pub(crate) use page_purges::has_page_purges;
-use privacy::hidden_by_private_provenance;
 pub use privacy::{LabelledOnly, PrivacyPolicy};
 pub(crate) use privacy::{
     OwnerOnlyCache, access_id, access_readers, caller_version_hidden, chronicle_depth,
@@ -138,6 +137,7 @@ pub(crate) use privacy::{
     names_no_readers_or_rules, owner_reads_page, page_hidden, page_hidden_with, privacy_allows,
     stamped_rules, successor_withholds_reason, version_hidden,
 };
+use privacy::{hidden_by_private_provenance, hidden_by_private_provenance_with};
 pub use widen::VisibilityWidening;
 use widen::{visibility_admits, world_admits};
 
@@ -1634,15 +1634,17 @@ pub(crate) fn hidden_by_deleted_page(read: &dyn KvRead, row: &FactRecord) -> Res
     Ok(false)
 }
 
-/// `privateProvenanceFilterUnderPolicy('facts')`, when the read passes `excludePrivate`. The owner-only sources are
-/// read from the same snapshot for each row (a short scan of the source records).
+/// `privateProvenanceFilterUnderPolicy('facts')`, when the read passes `excludePrivate`. `owner_only` holds the
+/// owner-only sources of the whole read: a read declares one cache for its snapshot and passes it for every row, so
+/// the source records are scanned once per read, not once per row.
 pub(crate) fn hidden_by_policy(
     read: &dyn KvRead,
     row: &FactRecord,
     policy: &Option<PrivacyPolicy>,
+    owner_only: &mut OwnerOnlyCache,
 ) -> Result<bool> {
     match policy {
-        Some(policy) => hidden_by_private_provenance(read, row, policy),
+        Some(policy) => hidden_by_private_provenance_with(read, row, policy, owner_only),
         None => Ok(false),
     }
 }
@@ -1683,6 +1685,7 @@ impl FactQuery {
         row: &FactRecord,
         now: i64,
         trust: &TrustPolicy,
+        owner_only: &mut OwnerOnlyCache,
     ) -> Result<bool> {
         let eq = |want: &Option<String>, have: &Option<String>| want.is_none() || want == have;
         if !(eq(&self.entity_slug, &row.entity_slug)
@@ -1705,7 +1708,7 @@ impl FactQuery {
             return Ok(false);
         }
         Ok(!hidden_by_deleted_page(read, row)?
-            && !hidden_by_policy(read, row, &self.exclude_private)?
+            && !hidden_by_policy(read, row, &self.exclude_private, owner_only)?
             && !(self.eligible
                 && (hidden_by_quarantine(read, row)? || hidden_by_rederive(read, row)?))
             && trust.admits(read, "facts", row.id, row.tier())?)
@@ -1770,8 +1773,12 @@ impl Store {
         let read = self.read()?;
         let now = self.env.now_micros();
         let mut rows = Vec::new();
+        let mut owner_only = OwnerOnlyCache::default();
         for row in q.candidates(&*read)? {
-            if q.source_id == row.source_id && extra(&row) && q.admits(&*read, &row, now, &trust)? {
+            if q.source_id == row.source_id
+                && extra(&row)
+                && q.admits(&*read, &row, now, &trust, &mut owner_only)?
+            {
                 rows.push(row);
             }
         }
@@ -2009,12 +2016,13 @@ impl Store {
         let trust = TrustPolicy::parse(q.min_trust.as_deref(), q.suppress_flagged)?;
         let read = self.read()?;
         let mut rows = Vec::new();
+        let mut owner_only = OwnerOnlyCache::default();
         for row in source_rows(&*read, &q.source_id)? {
             let ended = row.expired_at_us.or(row.valid_until_us);
             if row.superseded_by.is_none()
                 || since.is_some_and(|s| ended.is_none_or(|e| e < s))
                 || !visibility_admits(&*read, &q.visibility, &q.widen, &row)?
-                || hidden_by_policy(&*read, &row, &q.exclude_private)?
+                || hidden_by_policy(&*read, &row, &q.exclude_private, &mut owner_only)?
                 || hidden_by_deleted_page(&*read, &row)?
                 || (q.eligible
                     && (hidden_by_quarantine(&*read, &row)? || hidden_by_rederive(&*read, &row)?))
@@ -2202,6 +2210,7 @@ impl Store {
         let brain_model = read_config(&*read, "embedding_model")?;
         let mut seen = HashSet::new();
         let mut rows = Vec::new();
+        let mut owner_only = OwnerOnlyCache::default();
         for source in &q.source_ids {
             if source.contains('\0') || !seen.insert(source.clone()) {
                 continue;
@@ -2219,7 +2228,7 @@ impl Store {
                     || hidden_by_deleted_page(&*read, &row)?
                     || hidden_by_quarantine(&*read, &row)?
                     || hidden_by_rederive(&*read, &row)?
-                    || hidden_by_policy(&*read, &row, &q.exclude_private)?
+                    || hidden_by_policy(&*read, &row, &q.exclude_private, &mut owner_only)?
                 {
                     continue;
                 }
@@ -2295,13 +2304,14 @@ impl Store {
         let read = self.read()?;
         let now = self.env.now_micros();
         let mut rows = Vec::new();
+        let mut owner_only = OwnerOnlyCache::default();
         for source in sources {
             for row in source_rows(&*read, source)? {
                 if row.entity_slug.is_none()
                     && row.active(now)
                     && (!q.world_only || row.visibility == "world")
                     && !hidden_by_deleted_page(&*read, &row)?
-                    && !hidden_by_policy(&*read, &row, &q.exclude_private)?
+                    && !hidden_by_policy(&*read, &row, &q.exclude_private, &mut owner_only)?
                 {
                     rows.push(row);
                 }
@@ -2674,6 +2684,9 @@ fn link_supersessions(
     }
     Ok(warnings)
 }
+
+#[cfg(test)]
+mod owner_only_once_tests;
 
 #[cfg(test)]
 mod tests {
