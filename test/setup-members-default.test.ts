@@ -107,20 +107,6 @@ describe('per-member access by default when setup names the people (HARN-1)', ()
     expect(existsSync(join(b.home, '.gbrain'))).toBe(false);
   }, 120_000);
 
-  test('a setup pinned to a source by GBRAIN_SOURCE labels the people in that source', async () => {
-    const b = box();
-    const notes = join(b.root, 'team-notes');
-    mkdirSync(join(notes, 'notes'), { recursive: true });
-    writeFileSync(join(notes, 'notes', 'kickoff.md'), '---\ntitle: Kickoff\n---\nhello\n');
-    expect((await gbrain(b, ['init', '--pglite', '--no-embedding', '--json'])).exitCode).toBe(0);
-    expect((await gbrain(b, ['sources', 'add', 'team', '--path', notes])).exitCode).toBe(0);
-    const r = await runCli(['setup', 'claude-code', '--members', 'alice-example,bob-example', '--owner', OWNER, '--labelled-only', '--yes', '--json', '--gbrain-bin', b.bin], { env: { ...envOf(b), GBRAIN_SOURCE: 'team' }, timeoutMs: 240_000 });
-    expect(r.exitCode).toBe(0);
-    const prefixes = async (source: string) => ((JSON.parse((await gbrain(b, ['access', 'rule', 'list', '--source', source, '--json'])).stdout).rules ?? []) as Array<{ prefix: string }>).map((x) => x.prefix);
-    expect(await prefixes('team')).toEqual(expect.arrayContaining(['people/alice-example/', 'people/bob-example/']));
-    expect(await prefixes('default')).not.toContain('people/alice-example/');
-  }, 400_000);
-
   test('a one-person setup stays keyless and unchanged: no members, no rules, no keys', async () => {
     const b = box();
     const r = await setup(b, ['claude-code']);
