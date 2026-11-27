@@ -61,7 +61,7 @@ export const PRE_READ_WAIT_MS = 2_000;
 export const newTxLane = (): TxLane => ({ running: new Set(), gate: null, waiters: [] });
 
 /** One member call in a lane. `parent`: the lane call it was started from (a call inside a nested transaction's callback has that transaction's entry). */
-export interface LaneEntry { callback: boolean; done: Promise<void>; parent?: LaneEntry }
+export interface LaneEntry { callback: boolean; done: Promise<void>; parent?: LaneEntry; /** Set while this call's pre-read waits for these running nested transactions: a call started inside one of them never waits for it. */ waitingFor?: LaneEntry[] }
 /** True when `entry` is `of` or was started, at any depth, from inside it. */
 export const startedWithin = (entry: LaneEntry | undefined, of: LaneEntry): boolean => { for (let e = entry; e; e = e.parent) if (e === of) return true; return false; };
 
@@ -193,7 +193,8 @@ function plan(ctx: FollowContext, spec: WriteSpec, args: unknown[], hold: { open
     if (!lane) return inSavepoint(); // a transaction the wrapper did not open (none today): as before
     const self = laneCall.getStore();
     // Never the call itself nor a transaction it runs inside: those cannot finish before it does.
-    const others = () => [...lane.running].filter((c) => !(self && startedWithin(self, c)));
+    // ... nor a call whose pre-read is waiting for a nested transaction this call runs inside (they would wait for each other until the bound).
+    const others = () => [...lane.running].filter((c) => !(self && startedWithin(self, c)) && !(self && c.waitingFor?.some((n) => startedWithin(self, n))));
     // Takes the lane and reads, once no call that runs a callback is ahead (one could be waiting for a call the lane would hold).
     const take = (): Invalidation[] | Promise<Invalidation[]> => {
       const ahead = others();
@@ -211,7 +212,10 @@ function plan(ctx: FollowContext, spec: WriteSpec, args: unknown[], hold: { open
     // A nested transaction is running: wait for it first (the lane stays open, so it is never held), as the driver's nested-transaction queue made the
     // savepoint read wait before. Only one still running after the bound leaves this write relation-level, sent at once.
     return (async () => {
-      try { return await settledWithin(nested.map((c) => c.done), PRE_READ_WAIT_MS) ? await take() : fallback('pre_read_busy'); } catch { return fallback('plan_failed'); }
+      if (self) self.waitingFor = nested;
+      try { const settled = await settledWithin(nested.map((c) => c.done), PRE_READ_WAIT_MS); if (self) self.waitingFor = undefined; return settled ? await take() : fallback('pre_read_busy'); }
+      catch { return fallback('plan_failed'); }
+      finally { if (self) self.waitingFor = undefined; }
     })();
   } catch {
     return fallback('plan_failed');
