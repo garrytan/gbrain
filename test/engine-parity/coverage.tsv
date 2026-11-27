@@ -193,7 +193,7 @@ advanceSyncCheckpoint	pages	yes	2	no	yes	yes	serves
 countSourcePages	pages	yes	6	no	yes	yes	serves
 readSourcesNotReadable	pages	yes	3	no	yes	yes	serves
 insertSource	pages	yes	20	no	yes	yes	serves
-deleteSourceRecord	pages	yes	11	no	yes	yes	serves
+deleteSourceRecord	pages	yes	12	no	yes	yes	serves
 readSourceDeleteImpact	pages	yes	2	no	yes	yes	serves
 readPageSizeRows	pages	yes	4	no	yes	yes	serves
 holdPageEmbedding	pages	yes	5	no	yes	yes	serves
@@ -1351,10 +1351,10 @@ settleSpendWithLog	minion_queue	yes	6	no	yes	yes	serves
 insertSpendLog	minion_queue	yes	2	no	yes	yes	serves
 sumClientSpendSince	minion_queue	yes	3	no	yes	yes	serves
 readClientBudgetUsd	minion_queue	yes	1	no	yes	yes	serves
-insertOauthClient	minion_queue	yes	90	no	yes	yes	serves
+insertOauthClient	minion_queue	yes	91	no	yes	yes	serves
 updateOauthClientBudget	minion_queue	yes	2	no	yes	yes	serves
 readAgentClientSpend	minion_queue	yes	2	no	yes	yes	serves
-readOauthClient	minion_queue	yes	32	no	yes	yes	serves
+readOauthClient	minion_queue	yes	33	no	yes	yes	serves
 listOauthClients	minion_queue	yes	8	no	yes	yes	serves
 patchOauthClient	minion_queue	yes	4	no	yes	yes	serves
 insertAccessToken	minion_queue	yes	57	no	yes	yes	serves
@@ -1442,8 +1442,8 @@ listGraduationPendingRequests	graduation_drain	yes	1	no	yes	yes	serves
 listGraduationTopologyRecoveries	graduation_drain	yes	1	no	yes	yes	serves
 listGraduationEffectRecoveries	graduation_drain	yes	1	no	yes	yes	serves
 listForeignHostBindings	graduation_drain	yes	1	no	yes	yes	serves
-hasOAuthBoundSourceColumn	graduation_drain	yes	1	no	yes	yes	serves
-listDanglingOAuthClients	graduation_drain	yes	1	no	yes	yes	serves
+hasOAuthBoundSourceColumn	graduation_drain	yes	2	no	yes	yes	serves
+listDanglingOAuthClients	graduation_drain	yes	2	no	yes	yes	serves
 readChunkVectorColumn	embedding_catalog	yes	4	no	yes	yes	serves
 readEmbeddingIdentity	embedding_catalog	yes	1	no	yes	yes	serves
 listEmbeddingStores	embedding_catalog	yes	1	no	yes	yes	serves

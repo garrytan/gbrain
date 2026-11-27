@@ -562,6 +562,38 @@ describe('topology status and blocker lists sort source ids by byte', () => {
     return { source: foreign.argv![5], kinds: blockers.map(blocker => blocker.kind) };
   });
 
+  // A known engine difference, named here and in RUST_ENGINE.md row 60: PGLite has no foreign key on
+  // oauth_clients.bound_source_id (v085's sqlFor.pglite skips it), so a deleted source leaves its clients bound to a gone
+  // id, which graduation then reports. Postgres (fk_oauth_clients_bound_source, ON DELETE SET NULL) and the Rust store
+  // (jobs/oauth_clients.rs remove_source_rows) clear the binding. The case asserts that per engine family, and on every
+  // arm that the dangling-client read and the graduation blockers name exactly the clients whose bound source is gone.
+  parityTest('removing a source through deleteSourceRecord clears its OAuth clients\' binding on Postgres and Rust and keeps it on PGLite, and the dangling reads name exactly the clients left bound to a gone source', {
+    methods: ['insertOauthClient', 'deleteSourceRecord', 'readOauthClient', 'hasOAuthBoundSourceColumn', 'listDanglingOAuthClients'],
+  }, async (engine, backend) => {
+    for (const id of MIXED_SRC) {
+      await createSource(engine, backend, id);
+      await engine.insertOauthClient({ client_id: `c-${id}`, client_name: `c-${id}`, scope: 'agents', bound_tools: null, source_id: null,
+        bound_source_id: id, federated_read: [], delegated_namespace: 'prefixes', delegated_slug_prefixes: null, bound_max_concurrent: 1 } as never);
+    }
+    const removed = await engine.deleteSourceRecord('a-z');
+    const live = new Set(MIXED_SRC.filter(id => id !== 'a-z'));
+    const bound = new Map<string, string | null>();
+    for (const id of MIXED_SRC) {
+      const row = await engine.readOauthClient(`c-${id}`) as { bound_source_id?: string | null } | null;
+      bound.set(`c-${id}`, row?.bound_source_id ?? null);
+    }
+    const keptOnPglite = engine.kind === 'pglite';
+    expect({ engine: engine.kind, binding: bound.get('c-a-z') }, keptOnPglite
+      ? 'PGLite keeps a deleted source\'s bound_source_id (no foreign key on PGLite, RUST_ENGINE.md row 60)'
+      : 'Postgres and Rust clear a deleted source\'s bound_source_id (ON DELETE SET NULL)')
+      .toEqual({ engine: engine.kind, binding: keptOnPglite ? 'a-z' : null });
+    const gone = [...bound].filter(([, source]) => source !== null && !live.has(source)).map(([client]) => client).sort();
+    const dangling = (await engine.listDanglingOAuthClients()).map(c => c.client_id);
+    const blockers = (await graduationBlockers(engine, randomUUID())).filter(blocker => blocker.kind === 'dangling_reference').map(blocker => blocker.id);
+    expect({ dangling, blockers }).toEqual({ dangling: gone, blockers: gone.map(client => `oauth_clients.${client}`) });
+    return { removed, others: ['c-ab', 'c-a-y'].map(client => bound.get(client)), danglingIsGone: true, blockersAreGone: true };
+  });
+
   // The Rust arm's stop, by design (RUST_ENGINE.md row 58): an OAuth client bound to a source that does not exist is a
   // state only an unchecked SQL write makes (the rows go in with session_replication_role = replica). The Rust store
   // checks the reference and clears it when its source is removed, so it never holds one; the fixture is raw SQL.
