@@ -331,6 +331,9 @@ export async function submitSharedSkillMutation(ctx: OperationContext, operation
       `A skill that shares files with ${packId}/${name} changed while this publication was being admitted, so nothing was accepted. Read ${packId}/${name} again and resubmit with a new request_id.`,
       { fix: skillHeadFix(sourceId, packId, name) });
   }
+  const replacement = new Map(proposals.flatMap(p => p.files).map(f => [f.path, f]));
+  refuseDependentWidening(sourceId, current.filter(head => dependents.includes(head.name) && !head.deleted)
+    .map(head => ({ name: head.name, files: rebuildDependentClosure(head.name, head.files, replacement) })), current);
   const manifestBytes = canonicalRead(root, 'skillpack.json');
   if (!pack && manifestBytes && (!adoption || adoption.mode === 'proposal')) {
     throw opError('approval_required', 'An unadopted skillpack already exists on disk. A trusted host must adopt its complete reviewed inventory before individual skill publication.',
@@ -465,6 +468,8 @@ export async function prepareSharedSkillMutation(engine: BrainEngine, row: Write
       deleted: target.name === intent.name && row.operation === 'delete_skill',
       files };
   });
+  // A request accepted before this check existed is checked here too, before it touches the checkout.
+  refuseDependentWidening(row.source_id, revisions.filter(revision => !proposals.some(p => p.name === revision.name)), current);
   const revisionByName = new Map(revisions.map(r => [r.name, r]));
   const next = [...inventory.filter(entry => !revisionByName.has(entry.name)), ...revisions.filter(entry => !entry.deleted).map(entry => ({
     name: entry.name, revision: entry.revision, files: entry.files.map(({ content: _content, ...file }) => file),
@@ -595,6 +600,28 @@ function refuseLossyAdoption(sourceId: string, proposal: { name: string; files: 
     : 'Resubmit the import with its full file set and the same private, requirements, description and triggers values as the published skill';
   throw opError('local_conflict', `skills/${proposal.name} was not adopted: ${reasons.join('; ')}. ${remedy}; nothing was written and no file was deleted.`,
     `skills/${proposal.name} in source ${sourceId} is already published, and adopting this proposal would lose or widen what it was published with. ${remedy}. Check the skill's visibility and file set after publishing.`);
+}
+
+/**
+ * A publication rebuilds every other skill that holds a changed shared convention file with the proposed copy. Those
+ * skills did not propose anything, so none of their files may reach a wider audience or change file class through the
+ * rebuild: a restricted convention would otherwise become readable through a skill nobody reviewed. Content changes and
+ * narrower audiences still apply. Refusing happens before anything is written.
+ */
+function refuseDependentWidening(sourceId: string, rebuilt: Array<{ name: string; files: StoredSkillFile[] }>, sealed: StoredSkillRevision[]): void {
+  const reasons: string[] = [];
+  for (const dependent of rebuilt) {
+    const was = sealed.find(revision => revision.name === dependent.name && !revision.deleted);
+    for (const file of dependent.files) {
+      const prior = was?.files.find(candidate => candidate.path === file.path);
+      if (!prior) continue;
+      if (file.audience.some(audience => !prior.audience.includes(audience))) reasons.push(`skills/${dependent.name} would publish ${file.path} to a wider audience`);
+      else if (file.file_class !== prior.file_class) reasons.push(`skills/${dependent.name} would publish ${file.path} as ${file.file_class} instead of ${prior.file_class}`);
+    }
+  }
+  if (!reasons.length) return;
+  throw opError('local_conflict', `The publication was refused: ${reasons.join('; ')}. Nothing was written.`,
+    `Another skill in source ${sourceId} already publishes the shared file with a narrower audience or another file class, and this publication would change it there without that skill being reviewed. Give the file the same file_class and an audience no wider than the other skill already has, or fork it under this skill's own directory and point depends_on there, then submit again with a new request_id.`);
 }
 
 /** An import regenerates skillpack.json from the sealed heads, so a skill the checkout declares but never published would vanish from it. */

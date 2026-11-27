@@ -128,6 +128,13 @@ only, and leaves unknown consent pending. References, assets, and scripts need
 separate owner approval; even their metadata is not an implicit disclosure.
 Private skills stay excluded from remote publication.
 
+A shared file under `skills/conventions/` has one copy for every skill that
+holds it, so changing it in one skill republishes it in the others. A
+publication that would give that file a wider audience, or another file class,
+in a skill that already holds it refuses `local_conflict` and writes nothing.
+This includes `import_skill_proposal` on the brain host. Keep the file's current
+audience and class, or fork it under the publishing skill's own directory.
+
 Beyond the fresh-setup default, the owner approves a versioned policy through
 `set_skill_policy`, not through an editor's content update. For example, the
 following **MCP arguments** approve only prose and the tools used by the default
