@@ -8,7 +8,8 @@
  * a record a client built: the call runs under the record the store built for the principal (`tokenCallerRecord`), and
  * a frame that claims a different record is refused before anything runs. A principal that is not the owner and has no
  * store-built record runs nothing (fail closed). Until ruling A1 lifts, the server admits only the owner, so only the
- * first branch runs.
+ * first branch runs. A remote whole operation the owner's floor sends for a member credential (its grant names that
+ * principal) is checked against the store as well (served/remote-claim.ts).
  */
 import { opError } from '../../ops/contract.ts';
 import type { CallerAccess } from '../../search/private-visibility.ts';

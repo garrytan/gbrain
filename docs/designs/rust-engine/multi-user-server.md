@@ -344,13 +344,31 @@ the form. Its listing and descriptor forms read the operation registry in the cl
 client and sends its inner persist whole. The caller's `surfaceCeiling` crosses as a narrowing claim: the brain server has
 no ceiling of its own, so the claim can only lower the default `full`, and a value that is not a surface name is refused
 before anything runs. The persist rate limit is the server's, per client id. After the server's answer, the client runs
-the caller's tools/list_changed hook, as the in-process persist does. Until A1 lifts only the owner's floor sends it, and
-that floor may already set any client's surface (`gbrain auth rescope-client`); a non-owner principal's persist for a client
-id that is not its own needs its own check then.
+the caller's tools/list_changed hook, as the in-process persist does. The persist lands on the caller's own OAuth client
+only: a grant whose principal is another client, or a legacy token, never sets a client's surface (the handler refuses
+`client_mismatch`, or answers `persisted: false` for a legacy token), in process and over the wire alike.
 
-**Follow-up (A1).** Once per-user access lifts, a non-owner principal's remote `put_page` needs its own privacy and
-visibility parity case (its readers, a private page it may not see, an owner-only source): today only the owner's floor sends
-remote whole operations, so `owner-write-privacy` covers the owner's own key only.
+**Claims for a member credential (A1 follow-up).** The owner's floor may serve callers that are not the owner: an HTTP MCP
+server of the owner sends, with each remote whole operation, the grant (`auth`, with its `principal`) and the access record
+of the member credential that called it. A grant with no principal is the owner's floor itself and stays a narrowing claim.
+A grant that names a principal (`oauth_client`, `legacy_token`) runs only as the store has it: before anything runs, the
+server (served/remote-claim.ts `verifyRemoteClaim`, from owner-ipc/owner-ops.ts `runOperation`) refuses, with
+`permission_denied` and one of these reasons:
+
+- `credential_revoked`: the OAuth client is deleted or the token revoked (or neither exists);
+- `client_mismatch`: an OAuth client grant whose `clientId` is not its own principal, or a principal of another kind;
+- `scope_widened`: a claimed scope the stored grant does not hold;
+- `member_mismatch`: a claimed member binding other than the one the store binds the credential to;
+- `access_mismatch`: an access record wider than the one the server builds from the store for that principal (its
+  identity, owner view, private sources, audience, actor, folder coverage and policy flags).
+
+A frame with no access record runs under the narrowest view. The write path re-reads the stored grant and the page's
+readers again (persistence/authority.ts, persistence/page-visibility.ts), so a claim that passes writes only inside its
+grant. `test/engine-parity/nonowner-remote-writes.test.ts` pins a member's remote `put_page` (its readers, a private page
+it may not see, a source its grant does not name) and its `request_tools` persist on every arm and both routes;
+`test/rust-served-nonowner-claims.serial.test.ts` drives each refusal with raw frames. No operation joined
+`REMOTE_WHOLE_OPERATIONS`. A connection whose own principal is not the owner (A1 at the connection, L4's gate) stays
+refused; once it lifts, the same check bounds its claims, next to the record the session proved for it (frame-access.ts).
 
 ### Client file limits
 

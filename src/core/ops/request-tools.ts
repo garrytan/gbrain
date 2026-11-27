@@ -240,6 +240,15 @@ const request_tools: Operation = {
         // No per-token identity and no stdio session: a surface persist has nowhere to land.
         return { persisted: false, reason: NO_CLIENT_SURFACE };
       }
+      // The surface lands on the caller's own OAuth client only: a claimed client id the credential is not (a served
+      // client's claim, served/remote-claim.ts) never sets another client's surface, and a legacy token has no surface.
+      const principal = ctx.auth?.principal;
+      if (principal?.kind === 'legacy_token') return { persisted: false, reason: NO_CLIENT_SURFACE };
+      if (principal && (principal.kind !== 'oauth_client' || principal.id !== clientId)) {
+        throw opError('permission_denied', 'request_tools sets only the calling OAuth client\'s own surface; this call names another client, so nothing changed.',
+          'Call request_tools with the credential of the client whose surface should change.',
+          { reason: 'client_mismatch', retryable: false, detail: 'member=request_tools reason=client_mismatch written=nothing' });
+      }
       if (surfaceWiderThan(requested, ceiling)) {
         const e = opError(
           'permission_denied',

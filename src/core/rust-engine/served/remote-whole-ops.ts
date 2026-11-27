@@ -15,6 +15,8 @@
  *    client built for someone else.
  *  - For the owner's floor the caller's grant the client sends (`auth`) is a narrowing claim, as the access record is
  *    (B3): it can only take scopes away, and the server checks the operation's scope against it again.
+ *  - A grant that names a member credential's principal (the owner's floor serving a member, an HTTP MCP server say)
+ *    runs only as the store has that credential: served/remote-claim.ts checks it before anything runs.
  *  - The client strips the bearer token from the grant it sends.
  *  - One operation crosses in one parameter form only (REMOTE_WHOLE_PARAM_FORMS): request_tools, as a surface persist.
  * Fencing and replay: the owner's persistence journal and claim fences, unchanged; a journaled operation reuses the wire

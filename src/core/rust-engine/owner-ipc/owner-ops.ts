@@ -9,12 +9,13 @@
 import type { BrainEngine } from '../../engine.ts';
 import type { GBrainConfig } from '../../config.ts';
 import type { Notice } from '../../agent-output.ts';
-import { OperationError, type OperationContext } from '../../ops/contract.ts';
+import { OperationError, type AuthInfo, type OperationContext } from '../../ops/contract.ts';
 import { importFromContent, importFromFile, importImageFile } from '../../import-file.ts';
 import { importManagedFiles } from '../../persistence/import-mutations.ts';
 import { ownerHandoff, ownerIpcRefusal } from './routes.ts';
 import { isRemoteCaller } from '../../remote-caller.ts';
 import { remoteOperationContext, remoteWholeOperationForm } from '../served/remote-whole-ops.ts';
+import { verifyRemoteClaim } from '../served/remote-claim.ts';
 import { PERSISTENCE_CLOSING_MESSAGE } from '../../persistence/service.ts';
 import { snapshotStatus, snapshotStore, type SnapshotStoreOptions } from '../store-snapshot.ts';
 import type { OwnerWholeOperation } from './server.ts';
@@ -49,6 +50,9 @@ async function runOperation(engine: BrainEngine, config: GBrainConfig | undefine
   // A remote caller's whole operation (served wire only, closed list; served/remote-whole-ops.ts) runs as the in-process
   // remote call does: ctx.remote true, under the caller's grant as a narrowing claim, its scope checked again here.
   const remote = isRemoteCaller() ? remoteOperationContext(name, operationsByName[name]!, context, remoteClaim) : null;
+  // A claimed member credential (a principal on the grant) runs only as the store has it: its grant, binding, client id
+  // and access record are read back before anything runs (served/remote-claim.ts).
+  if (remote?.auth) await verifyRemoteClaim(engine, name, operationsByName[name]!, remote.auth as AuthInfo, remote.transport);
   const ctx = {
     ...carried,
     ...(remote ?? {}),
